@@ -1,7 +1,7 @@
 ---
 id: FEAT-6yef51
 title: Build server-defined node registry and generic property metadata
-status: todo
+status: doing
 priority: critical
 labels:
     - nodes
@@ -12,7 +12,7 @@ deps:
 parent: EPIC-c7gbdp
 phase: p1
 created: "2026-08-29T15:40:03Z"
-updated: "2026-08-29T15:40:03Z"
+updated: "2026-08-30T07:35:27Z"
 ---
 
 ## Scope

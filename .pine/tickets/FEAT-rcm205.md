@@ -1,7 +1,7 @@
 ---
 id: FEAT-rcm205
 title: Deliver API-first workflow CRUD and lifecycle versioning
-status: todo
+status: doing
 priority: critical
 labels:
     - workflow
@@ -13,7 +13,7 @@ deps:
 parent: EPIC-c7gbdp
 phase: p1
 created: "2026-08-29T15:39:49Z"
-updated: "2026-08-29T15:39:49Z"
+updated: "2026-08-30T07:35:27Z"
 ---
 
 ## Scope
