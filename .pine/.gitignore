@@ -1,0 +1,4 @@
+# pine:sync begin
+# tickets=on attachments=off
+attachments/
+# pine:sync end

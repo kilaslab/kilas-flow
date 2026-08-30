@@ -1,0 +1,47 @@
+# Build artifacts
+bin/
+.tmp/
+*.exe
+
+# Runtime data
+data/
+*.db
+*.db-shm
+*.db-wal
+
+# Local configuration
+config.yaml
+.env
+.env.*
+!.env.example
+
+# Frontend
+node_modules/
+web/build/
+web/.svelte-kit/
+web/.tmp/
+.pnpm-store/
+
+# Scalar docs bundle, copied from node_modules by web/scripts/vendor-docs.mjs
+web/static/vendor/
+
+# Embedded SPA build output.
+# The placeholder files are committed so `go build` works on a fresh clone
+# before the frontend has ever been built. See internal/web/embed.go.
+internal/web/dist/*
+!internal/web/dist/.gitkeep
+!internal/web/dist/index.html
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Devbox
+.devbox/
+
+# n8n UI screenshots kept locally as a design reference for the editor and node
+# property panels. Not committed: they are third-party product UI, only useful
+# while designing, and would bloat the repo.
+design-refs/

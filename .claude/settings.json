@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "command": "echo \"Pine reminder: only if you learned something durable, run 'pine learn' (this repo) or 'pine learn -g' (applies to every repo) — MEMORY.md / memory topics, not a new LRN per ticket. [pine:learn-reminder]\"",
+            "type": "command"
+          }
+        ]
+      }
+    ]
+  }
+}

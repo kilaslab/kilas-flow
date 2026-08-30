@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "command": "bash \"$(git rev-parse --show-toplevel)/.codex/hooks/pine-learn-reminder.sh\"",
+            "type": "command"
+          }
+        ]
+      }
+    ]
+  }
+}

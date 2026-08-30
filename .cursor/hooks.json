@@ -1,0 +1,10 @@
+{
+  "hooks": {
+    "sessionStart": [
+      {
+        "command": ".cursor/hooks/pine-learn-reminder.sh"
+      }
+    ]
+  },
+  "version": 1
+}
