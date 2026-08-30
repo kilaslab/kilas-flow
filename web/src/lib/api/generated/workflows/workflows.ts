@@ -22,8 +22,8 @@ import type {
 } from '@tanstack/svelte-query';
 
 import type {
-  Document,
   ErrorModel,
+  WorkflowDocumentInput,
   WorkflowResource,
   WorkflowSummary
 } from '../models';
@@ -197,7 +197,7 @@ export const getCreateWorkflowUrl = () => {
  * Creates revision 1 of a canonical workflow document.
  * @summary Create a workflow draft
  */
-export const createWorkflow = async (document: NonReadonly<Document>, options?: Parameters<typeof apiFetch>[1]): Promise<createWorkflowResponse> => {
+export const createWorkflow = async (workflowDocumentInput: NonReadonly<WorkflowDocumentInput>, options?: Parameters<typeof apiFetch>[1]): Promise<createWorkflowResponse> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -210,7 +210,7 @@ return apiFetch<createWorkflowResponse>(getCreateWorkflowUrl(),
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
-    body: JSON.stringify(document)
+    body: JSON.stringify(workflowDocumentInput)
   }
 );}
 
@@ -248,9 +248,9 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
   return  { mutationFn, ...mutationOptions }}
 
     export type CreateWorkflowMutationResult = NonNullable<Awaited<ReturnType<typeof createWorkflow>>>
-    export type CreateWorkflowMutationBody = NonReadonly<Document>
+    export type CreateWorkflowMutationBody = NonReadonly<WorkflowDocumentInput>
     export type CreateWorkflowMutationError = ErrorType<ErrorModel>
-    export type CreateWorkflowMutationVariables = {data: NonReadonly<Document>}
+    export type CreateWorkflowMutationVariables = {data: NonReadonly<WorkflowDocumentInput>}
 
     /**
  * @summary Create a workflow draft
@@ -486,7 +486,7 @@ export const getUpdateWorkflowUrl = (id: string,) => {
  * @summary Save a workflow draft
  */
 export const updateWorkflow = async (id: string,
-    document: NonReadonly<Document>, options?: Parameters<typeof apiFetch>[1]): Promise<updateWorkflowResponse> => {
+    workflowDocumentInput: NonReadonly<WorkflowDocumentInput>, options?: Parameters<typeof apiFetch>[1]): Promise<updateWorkflowResponse> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -499,7 +499,7 @@ return apiFetch<updateWorkflowResponse>(getUpdateWorkflowUrl(id),
     ...options,
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
-    body: JSON.stringify(document)
+    body: JSON.stringify(workflowDocumentInput)
   }
 );}
 
@@ -537,9 +537,9 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
   return  { mutationFn, ...mutationOptions }}
 
     export type UpdateWorkflowMutationResult = NonNullable<Awaited<ReturnType<typeof updateWorkflow>>>
-    export type UpdateWorkflowMutationBody = NonReadonly<Document>
+    export type UpdateWorkflowMutationBody = NonReadonly<WorkflowDocumentInput>
     export type UpdateWorkflowMutationError = ErrorType<ErrorModel>
-    export type UpdateWorkflowMutationVariables = {id: string;data: NonReadonly<Document>}
+    export type UpdateWorkflowMutationVariables = {id: string;data: NonReadonly<WorkflowDocumentInput>}
 
     /**
  * @summary Save a workflow draft

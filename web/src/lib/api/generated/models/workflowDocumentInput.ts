@@ -6,16 +6,17 @@
  * OpenAPI spec version: 0.1.0-dev
  */
 import type { Connection } from './connection';
-import type { DocumentSettings } from './documentSettings';
 import type { Node } from './node';
+import type { WorkflowDocumentInputSettings } from './workflowDocumentInputSettings';
 
-export interface Document {
+export interface WorkflowDocumentInput {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
   /** @nullable */
   connections: Connection[] | null;
-  id: string;
   name: string;
   /** @nullable */
   nodes: Node[] | null;
   schemaVersion: number;
-  settings: DocumentSettings;
+  settings: WorkflowDocumentInputSettings;
 }

@@ -26,6 +26,8 @@ export * from './propertyOption';
 export * from './readyOutputBody';
 export * from './runWorkflowInputBody';
 export * from './visibilityCondition';
+export * from './workflowDocumentInput';
+export * from './workflowDocumentInputSettings';
 export * from './workflowResource';
 export * from './workflowSummary';
 export * from './workflowVersionResource';

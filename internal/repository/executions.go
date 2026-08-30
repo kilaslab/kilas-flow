@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/kilaslabs/kilas-flow/internal/execution"
 	"github.com/kilaslabs/kilas-flow/internal/workflow"
@@ -17,6 +18,7 @@ import (
 // implicitly by GORM.
 type ExecutionRepository interface {
 	Create(context.Context, TenantScope, execution.Record) (execution.Record, error)
+	QueueManualLatest(context.Context, TenantScope, string, workflow.Catalog, json.RawMessage) (execution.Record, error)
 	Get(context.Context, TenantScope, string) (execution.Record, error)
 	CreateNodeRun(context.Context, TenantScope, execution.NodeRun) (execution.NodeRun, error)
 }
@@ -31,6 +33,75 @@ var _ ExecutionRepository = (*GORMExecutionStore)(nil)
 // NewExecutionStore constructs the durable execution persistence boundary.
 func NewExecutionStore(db *gorm.DB) *GORMExecutionStore {
 	return &GORMExecutionStore{db: db}
+}
+
+// QueueManualLatest validates the latest workflow revision and persists a
+// queued manual execution while holding the workflow row lock. Keeping those
+// actions together prevents a concurrent draft save from making the queued
+// execution point at a revision that was already superseded when it persisted.
+func (store *GORMExecutionStore) QueueManualLatest(ctx context.Context, tenant TenantScope, workflowID string, catalog workflow.Catalog, input json.RawMessage) (execution.Record, error) {
+	if err := tenant.validate(); err != nil {
+		return execution.Record{}, err
+	}
+	if workflowID == "" {
+		return execution.Record{}, fmt.Errorf("workflow ID is required")
+	}
+	if catalog == nil {
+		return execution.Record{}, fmt.Errorf("workflow catalog is required for manual run")
+	}
+	inputPayload, err := payload(input)
+	if err != nil {
+		return execution.Record{}, fmt.Errorf("execution input: %w", err)
+	}
+	executionID, err := workflow.NewID("exec")
+	if err != nil {
+		return execution.Record{}, err
+	}
+	startedAt := time.Now().UTC()
+
+	var model executionModel
+	err = store.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var parent workflowModel
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("tenant_id = ? AND id = ?", tenant.ID, workflowID).
+			First(&parent).Error; err != nil {
+			return mapNotFound(err, "workflow")
+		}
+
+		var version workflowVersionModel
+		if err := tx.Where("tenant_id = ? AND workflow_id = ? AND revision = ?", tenant.ID, workflowID, parent.LatestRevision).
+			First(&version).Error; err != nil {
+			return mapNotFound(err, "workflow version")
+		}
+		storedVersion, err := versionFromModel(version)
+		if err != nil {
+			return err
+		}
+		if _, err := workflow.Compile(storedVersion.Document, catalog); err != nil {
+			return err
+		}
+
+		model = executionModel{
+			ID:                executionID,
+			TenantID:          tenant.ID,
+			WorkflowID:        parent.ID,
+			WorkflowVersionID: version.ID,
+			Status:            string(execution.StatusQueued),
+			Trigger:           string(execution.TriggerManual),
+			Input:             inputPayload,
+			Output:            []byte("null"),
+			Error:             []byte("null"),
+			StartedAt:         startedAt,
+		}
+		if err := tx.Create(&model).Error; err != nil {
+			return fmt.Errorf("create execution: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return execution.Record{}, err
+	}
+	return executionFromModel(model), nil
 }
 
 // Create persists an execution only when the requested workflow revision exists

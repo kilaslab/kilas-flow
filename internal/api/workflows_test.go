@@ -51,6 +51,48 @@ type executionRequestResource struct {
 	Trigger           string `json:"trigger"`
 }
 
+// saveBeforeExecutionStore simulates a draft save at the exact point a manual
+// run is about to persist. The legacy handler read revision 1, then called
+// Create, so this interleaving made it queue stale work. QueueManualLatest
+// must instead select revision 2 inside its own transaction.
+type saveBeforeExecutionStore struct {
+	*repository.GORMExecutionStore
+	before func() error
+	ran    bool
+}
+
+func (store *saveBeforeExecutionStore) beforePersist() error {
+	if store.ran {
+		return nil
+	}
+	store.ran = true
+	return store.before()
+}
+
+func (store *saveBeforeExecutionStore) Create(ctx context.Context, tenant repository.TenantScope, record execution.Record) (execution.Record, error) {
+	if err := store.beforePersist(); err != nil {
+		return execution.Record{}, err
+	}
+	return store.GORMExecutionStore.Create(ctx, tenant, record)
+}
+
+func (store *saveBeforeExecutionStore) QueueManualLatest(ctx context.Context, tenant repository.TenantScope, workflowID string, catalog workflow.Catalog, input json.RawMessage) (execution.Record, error) {
+	if err := store.beforePersist(); err != nil {
+		return execution.Record{}, err
+	}
+	return store.GORMExecutionStore.QueueManualLatest(ctx, tenant, workflowID, catalog, input)
+}
+
+// workflowDraftRequest is the public write shape. Workflow identifiers belong
+// to the URL and server responses, not draft request bodies.
+type workflowDraftRequest struct {
+	SchemaVersion int                   `json:"schemaVersion"`
+	Name          string                `json:"name"`
+	Nodes         []workflow.Node       `json:"nodes"`
+	Connections   []workflow.Connection `json:"connections"`
+	Settings      map[string]any        `json:"settings"`
+}
+
 func TestWorkflowAPICreatesListsUpdatesAndDeletesDrafts(t *testing.T) {
 	handler, _, _ := newWorkflowAPI(t)
 	created := createWorkflow(t, handler, validManualWorkflow("First draft"))
@@ -66,7 +108,7 @@ func TestWorkflowAPICreatesListsUpdatesAndDeletesDrafts(t *testing.T) {
 		t.Errorf("GET workflow = %#v, want first revision", got)
 	}
 
-	updated := requestJSON[workflowResource](t, handler, http.MethodPut, "/api/v1/workflows/"+created.ID, validManualWorkflow("Second draft"), http.StatusOK)
+	updated := requestJSON[workflowResource](t, handler, http.MethodPut, "/api/v1/workflows/"+created.ID, workflowDraft(validManualWorkflow("Second draft")), http.StatusOK)
 	if got, want := updated.LatestVersion.Revision, 2; got != want {
 		t.Errorf("updated revision = %d, want %d", got, want)
 	}
@@ -106,7 +148,7 @@ func TestWorkflowAPIActivatesAndQueuesOnlyLatestValidDraft(t *testing.T) {
 
 	invalid := validManualWorkflow("Invalid latest draft")
 	invalid.Nodes[0].Type = "kilasflow.unknown"
-	updated := requestJSON[workflowResource](t, handler, http.MethodPut, "/api/v1/workflows/"+created.ID, invalid, http.StatusOK)
+	updated := requestJSON[workflowResource](t, handler, http.MethodPut, "/api/v1/workflows/"+created.ID, workflowDraft(invalid), http.StatusOK)
 	if got, want := updated.LatestVersion.Revision, 2; got != want {
 		t.Fatalf("invalid draft revision = %d, want %d", got, want)
 	}
@@ -134,6 +176,50 @@ func TestWorkflowAPIActivatesAndQueuesOnlyLatestValidDraft(t *testing.T) {
 	}
 }
 
+func TestWorkflowAPIManualRunPinsRevisionCurrentAtPersistence(t *testing.T) {
+	_, workflows, executions := newWorkflowAPI(t)
+	registry := node.NewRegistry()
+	if err := nodes.RegisterAll(registry); err != nil {
+		t.Fatalf("RegisterAll() error = %v", err)
+	}
+
+	initialHandler := newTestServer(t, api.Deps{
+		DB:           stubPinger{},
+		NodeRegistry: registry,
+		Workflows:    workflows,
+		Executions:   executions,
+	})
+	created := createWorkflow(t, initialHandler, validManualWorkflow("Revision one"))
+
+	latestDraft := validManualWorkflow("Revision two")
+	latestDraft.ID = created.ID
+	interleavingExecutions := &saveBeforeExecutionStore{
+		GORMExecutionStore: executions,
+		before: func() error {
+			_, err := workflows.SaveDraft(context.Background(), repository.TenantScope{ID: repository.DefaultTenantID}, latestDraft)
+			return err
+		},
+	}
+	handler := newTestServer(t, api.Deps{
+		DB:           stubPinger{},
+		NodeRegistry: registry,
+		Workflows:    workflows,
+		Executions:   interleavingExecutions,
+	})
+
+	run := requestJSON[executionRequestResource](t, handler, http.MethodPost, "/api/v1/workflows/"+created.ID+"/run", nil, http.StatusAccepted)
+	stored, err := workflows.Get(context.Background(), repository.TenantScope{ID: repository.DefaultTenantID}, created.ID)
+	if err != nil {
+		t.Fatalf("Get() after run = %v", err)
+	}
+	if got, want := stored.LatestVersion.Revision, 2; got != want {
+		t.Fatalf("latest revision = %d, want %d", got, want)
+	}
+	if got, want := run.WorkflowVersionID, stored.LatestVersion.ID; got != want {
+		t.Errorf("queued execution version = %q, want current revision %q", got, want)
+	}
+}
+
 func TestWorkflowAPIOpenAPIDocumentsLifecycleResponseStatuses(t *testing.T) {
 	handler, _, _ := newWorkflowAPI(t)
 	recorder := get(t, handler, "/api/openapi.json")
@@ -144,6 +230,11 @@ func TestWorkflowAPIOpenAPIDocumentsLifecycleResponseStatuses(t *testing.T) {
 		Paths map[string]map[string]struct {
 			Responses map[string]json.RawMessage `json:"responses"`
 		} `json:"paths"`
+		Components struct {
+			Schemas map[string]struct {
+				Properties map[string]json.RawMessage `json:"properties"`
+			} `json:"schemas"`
+		} `json:"components"`
 	}
 	if err := json.NewDecoder(recorder.Body).Decode(&document); err != nil {
 		t.Fatalf("decode OpenAPI document = %v", err)
@@ -168,6 +259,13 @@ func TestWorkflowAPIOpenAPIDocumentsLifecycleResponseStatuses(t *testing.T) {
 		if _, found := operation.Responses[test.status]; !found {
 			t.Errorf("OpenAPI %s %s responses = %#v, want %s", test.method, test.path, operation.Responses, test.status)
 		}
+	}
+	input, found := document.Components.Schemas["WorkflowDocumentInput"]
+	if !found {
+		t.Fatalf("OpenAPI schemas do not contain WorkflowDocumentInput: %#v", document.Components.Schemas)
+	}
+	if _, exposesID := input.Properties["id"]; exposesID {
+		t.Error("workflow write schema exposes server-owned id")
 	}
 }
 
@@ -200,7 +298,17 @@ func newWorkflowAPI(t *testing.T) (http.Handler, *repository.GORMWorkflowStore, 
 
 func createWorkflow(t *testing.T, handler http.Handler, document workflow.Document) workflowResource {
 	t.Helper()
-	return requestJSON[workflowResource](t, handler, http.MethodPost, "/api/v1/workflows", document, http.StatusCreated)
+	return requestJSON[workflowResource](t, handler, http.MethodPost, "/api/v1/workflows", workflowDraft(document), http.StatusCreated)
+}
+
+func workflowDraft(document workflow.Document) workflowDraftRequest {
+	return workflowDraftRequest{
+		SchemaVersion: document.SchemaVersion,
+		Name:          document.Name,
+		Nodes:         document.Nodes,
+		Connections:   document.Connections,
+		Settings:      document.Settings,
+	}
 }
 
 func validManualWorkflow(name string) workflow.Document {

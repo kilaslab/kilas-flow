@@ -87,8 +87,30 @@ type WorkflowValidationIssue struct {
 	ConnectionID string             `json:"connectionId,omitempty"`
 }
 
+// workflowDocumentInput is the editable, canonical document body. Its
+// identity is deliberately absent: POST assigns it and PUT takes it from the
+// path, so a request can never choose a workflow ID or contradict its URL.
+type workflowDocumentInput struct {
+	SchemaVersion int                   `json:"schemaVersion"`
+	Name          string                `json:"name"`
+	Nodes         []workflow.Node       `json:"nodes"`
+	Connections   []workflow.Connection `json:"connections"`
+	Settings      map[string]any        `json:"settings"`
+}
+
+func (input workflowDocumentInput) document(id string) workflow.Document {
+	return workflow.Document{
+		ID:            id,
+		SchemaVersion: input.SchemaVersion,
+		Name:          input.Name,
+		Nodes:         input.Nodes,
+		Connections:   input.Connections,
+		Settings:      input.Settings,
+	}
+}
+
 type createWorkflowInput struct {
-	Body workflow.Document
+	Body workflowDocumentInput
 }
 
 type workflowPathInput struct {
@@ -97,7 +119,7 @@ type workflowPathInput struct {
 
 type updateWorkflowInput struct {
 	ID   string `path:"id" minLength:"1" doc:"Workflow identifier"`
-	Body workflow.Document
+	Body workflowDocumentInput
 }
 
 type runWorkflowInput struct {
@@ -178,14 +200,12 @@ func (handler *Workflows) Register(api huma.API) {
 	}, handler.Run)
 }
 
-// Create creates a first immutable draft snapshot. The server owns the
-// workflow identifier even if a client included one in the request payload.
+// Create creates a first immutable draft snapshot with a server-owned ID.
 func (handler *Workflows) Create(ctx context.Context, input *createWorkflowInput) (*createdWorkflowOutput, error) {
 	if err := handler.available(false); err != nil {
 		return nil, err
 	}
-	document := input.Body
-	document.ID = ""
+	document := input.Body.document("")
 	if err := workflow.ValidateDraftWithServerID(document); err != nil {
 		return nil, draftProblem(err)
 	}
@@ -236,11 +256,7 @@ func (handler *Workflows) Update(ctx context.Context, input *updateWorkflowInput
 	if _, err := handler.workflows.Get(ctx, handler.tenant(ctx), input.ID); err != nil {
 		return nil, handler.problem(err)
 	}
-	document := input.Body
-	if document.ID != "" && document.ID != input.ID {
-		return nil, draftProblem(errors.New("workflow document id must match the path"))
-	}
-	document.ID = input.ID
+	document := input.Body.document(input.ID)
 	if err := workflow.ValidateDraft(document); err != nil {
 		return nil, draftProblem(err)
 	}
@@ -292,22 +308,11 @@ func (handler *Workflows) Run(ctx context.Context, input *runWorkflowInput) (*ex
 	if err := handler.available(true); err != nil {
 		return nil, err
 	}
-	tenant := handler.tenant(ctx)
-	stored, err := handler.workflows.Get(ctx, tenant, input.ID)
-	if err != nil {
-		return nil, handler.problem(err)
-	}
-	if _, err := workflow.Compile(stored.LatestVersion.Document, handler.catalog); err != nil {
-		return nil, handler.problem(err)
-	}
 	var payload json.RawMessage
 	if input.Body != nil {
 		payload = input.Body.Input
 	}
-	created, err := handler.executions.Create(ctx, tenant, execution.Record{
-		WorkflowID: stored.ID, WorkflowVersionID: stored.LatestVersion.ID,
-		Status: execution.StatusQueued, Trigger: execution.TriggerManual, Input: payload,
-	})
+	created, err := handler.executions.QueueManualLatest(ctx, handler.tenant(ctx), input.ID, handler.catalog, payload)
 	if err != nil {
 		return nil, handler.problem(err)
 	}
