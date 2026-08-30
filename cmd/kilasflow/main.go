@@ -15,7 +15,9 @@ import (
 	"github.com/kilaslabs/kilas-flow/internal/api/handlers"
 	"github.com/kilaslabs/kilas-flow/internal/config"
 	"github.com/kilaslabs/kilas-flow/internal/database"
+	"github.com/kilaslabs/kilas-flow/internal/node"
 	"github.com/kilaslabs/kilas-flow/internal/repository"
+	"github.com/kilaslabs/kilas-flow/nodes"
 )
 
 // version is overridden at build time with -ldflags "-X main.version=...".
@@ -64,12 +66,19 @@ func run() error {
 	if err := migrate(db); err != nil {
 		return err
 	}
+	nodeRegistry := node.NewRegistry()
+	if err := nodes.RegisterAll(nodeRegistry); err != nil {
+		return fmt.Errorf("register built-in nodes: %w", err)
+	}
 
 	server := api.NewServer(api.Deps{
-		Config:  cfg,
-		Logger:  log,
-		DB:      handlers.Pinger(db),
-		Version: version,
+		Config:       cfg,
+		Logger:       log,
+		DB:           handlers.Pinger(db),
+		NodeRegistry: nodeRegistry,
+		Workflows:    repository.NewWorkflowStore(db.DB),
+		Executions:   repository.NewExecutionStore(db.DB),
+		Version:      version,
 	})
 
 	return server.Run(ctx)

@@ -6,7 +6,26 @@
  * OpenAPI spec version: 0.1.0-dev
  */
 
+export * from './connection';
+export * from './definition';
+export * from './document';
+export * from './documentSettings';
+export * from './endpoint';
 export * from './errorDetail';
 export * from './errorModel';
+export * from './executionRequestResource';
 export * from './healthOutputBody';
+export * from './node';
+export * from './nodeCredentials';
+export * from './nodeParameters';
+export * from './nodeSettings';
+export * from './port';
+export * from './position';
+export * from './propertyDefinition';
+export * from './propertyOption';
 export * from './readyOutputBody';
+export * from './runWorkflowInputBody';
+export * from './visibilityCondition';
+export * from './workflowResource';
+export * from './workflowSummary';
+export * from './workflowVersionResource';

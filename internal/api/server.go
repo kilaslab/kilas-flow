@@ -18,6 +18,8 @@ import (
 	"github.com/kilaslabs/kilas-flow/internal/api/handlers"
 	"github.com/kilaslabs/kilas-flow/internal/api/middleware"
 	"github.com/kilaslabs/kilas-flow/internal/config"
+	"github.com/kilaslabs/kilas-flow/internal/node"
+	"github.com/kilaslabs/kilas-flow/internal/repository"
 )
 
 // Path prefixes for the single-origin layout. Keeping them in one place makes
@@ -33,10 +35,14 @@ const (
 // Deps are the collaborators a Server needs, passed by the caller rather than
 // resolved from a global.
 type Deps struct {
-	Config  config.Config
-	Logger  *slog.Logger
-	DB      handlers.Pinger
-	Version string
+	Config       config.Config
+	Logger       *slog.Logger
+	DB           handlers.Pinger
+	NodeRegistry *node.Registry
+	Workflows    repository.WorkflowRepository
+	Executions   repository.ExecutionRepository
+	Tenants      handlers.TenantResolver
+	Version      string
 }
 
 // Server owns the HTTP listener and the route tree.

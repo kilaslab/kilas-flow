@@ -29,6 +29,7 @@ var ErrNotFound = errors.New("repository record not found")
 // later API handlers. The execution engine never imports GORM.
 type WorkflowRepository interface {
 	SaveDraft(context.Context, TenantScope, workflow.Document) (workflow.StoredWorkflow, error)
+	List(context.Context, TenantScope) ([]workflow.StoredWorkflow, error)
 	Get(context.Context, TenantScope, string) (workflow.StoredWorkflow, error)
 	GetVersion(context.Context, TenantScope, string, int) (workflow.Version, error)
 	Activate(context.Context, TenantScope, string, workflow.Catalog) (workflow.StoredWorkflow, error)
@@ -118,6 +119,29 @@ func (store *GORMWorkflowStore) SaveDraft(ctx context.Context, tenant TenantScop
 		return workflow.StoredWorkflow{}, err
 	}
 	return store.Get(ctx, tenant, document.ID)
+}
+
+// List returns every visible workflow for a tenant in stable dashboard order.
+func (store *GORMWorkflowStore) List(ctx context.Context, tenant TenantScope) ([]workflow.StoredWorkflow, error) {
+	if err := tenant.validate(); err != nil {
+		return nil, err
+	}
+	var models []workflowModel
+	if err := store.db.WithContext(ctx).
+		Where("tenant_id = ?", tenant.ID).
+		Order("updated_at DESC, id ASC").
+		Find(&models).Error; err != nil {
+		return nil, fmt.Errorf("list workflows: %w", err)
+	}
+	workflows := make([]workflow.StoredWorkflow, 0, len(models))
+	for _, model := range models {
+		stored, err := store.storedWorkflow(ctx, tenant, model)
+		if err != nil {
+			return nil, err
+		}
+		workflows = append(workflows, stored)
+	}
+	return workflows, nil
 }
 
 // Get returns a workflow and its latest snapshot, scoped to one tenant.

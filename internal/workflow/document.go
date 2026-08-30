@@ -294,6 +294,13 @@ func ValidateDraft(document Document) error {
 	return nil
 }
 
+// ValidateDraftWithServerID applies draft validation before a create handler
+// assigns its server-owned workflow identity.
+func ValidateDraftWithServerID(document Document) error {
+	document.ID = "workflow-server-assigned"
+	return ValidateDraft(document)
+}
+
 func knownConnectionKind(kind ConnectionKind) bool {
 	switch kind {
 	case ConnectionMain, ConnectionLanguageModel, ConnectionMemory, ConnectionTool:
