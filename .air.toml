@@ -1,0 +1,34 @@
+root = "."
+tmp_dir = ".tmp"
+
+[build]
+  cmd = "go build -o ./.tmp/kilasflow ./cmd/kilasflow"
+  bin = "./.tmp/kilasflow"
+  include_ext = ["go", "yaml", "yml", "sql"]
+  exclude_dir = [
+    ".git",
+    ".tmp",
+    "bin",
+    "data",
+    "node_modules",
+    "web",
+    # Rebuilt by `make build-web`; watching it would loop the rebuild.
+    "internal/web/dist",
+  ]
+  exclude_regex = ["_test\\.go"]
+  delay = 300
+  stop_on_error = true
+  send_interrupt = true
+  kill_delay = 500
+
+[log]
+  time = true
+
+[color]
+  main = "magenta"
+  watcher = "cyan"
+  build = "yellow"
+  runner = "green"
+
+[misc]
+  clean_on_exit = true

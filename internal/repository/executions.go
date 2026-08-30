@@ -1,0 +1,251 @@
+package repository
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"time"
+
+	"gorm.io/gorm"
+
+	"github.com/kilaslabs/kilas-flow/internal/execution"
+	"github.com/kilaslabs/kilas-flow/internal/workflow"
+)
+
+// ExecutionRepository is the persistence seam for the graph engine. Payloads
+// entering this interface are redaction-ready; transport data is never stored
+// implicitly by GORM.
+type ExecutionRepository interface {
+	Create(context.Context, TenantScope, execution.Record) (execution.Record, error)
+	Get(context.Context, TenantScope, string) (execution.Record, error)
+	CreateNodeRun(context.Context, TenantScope, execution.NodeRun) (execution.NodeRun, error)
+}
+
+// GORMExecutionStore is the GORM implementation of ExecutionRepository.
+type GORMExecutionStore struct {
+	db *gorm.DB
+}
+
+var _ ExecutionRepository = (*GORMExecutionStore)(nil)
+
+// NewExecutionStore constructs the durable execution persistence boundary.
+func NewExecutionStore(db *gorm.DB) *GORMExecutionStore {
+	return &GORMExecutionStore{db: db}
+}
+
+// Create persists an execution only when the requested workflow revision exists
+// under the caller's tenant and belongs to the supplied workflow identity.
+func (store *GORMExecutionStore) Create(ctx context.Context, tenant TenantScope, record execution.Record) (execution.Record, error) {
+	if err := tenant.validate(); err != nil {
+		return execution.Record{}, err
+	}
+	if err := validateExecution(record); err != nil {
+		return execution.Record{}, err
+	}
+	if record.ID == "" {
+		id, err := workflow.NewID("exec")
+		if err != nil {
+			return execution.Record{}, err
+		}
+		record.ID = id
+	}
+	if record.StartedAt.IsZero() {
+		record.StartedAt = time.Now().UTC()
+	}
+
+	input, err := payload(record.Input)
+	if err != nil {
+		return execution.Record{}, fmt.Errorf("execution input: %w", err)
+	}
+	output, err := payload(record.Output)
+	if err != nil {
+		return execution.Record{}, fmt.Errorf("execution output: %w", err)
+	}
+	errorPayload, err := payload(record.Error)
+	if err != nil {
+		return execution.Record{}, fmt.Errorf("execution error: %w", err)
+	}
+
+	model := executionModel{
+		ID:                record.ID,
+		TenantID:          tenant.ID,
+		WorkflowID:        record.WorkflowID,
+		WorkflowVersionID: record.WorkflowVersionID,
+		Status:            string(record.Status),
+		Trigger:           string(record.Trigger),
+		Input:             input,
+		Output:            output,
+		Error:             errorPayload,
+		StartedAt:         record.StartedAt,
+		FinishedAt:        record.FinishedAt,
+	}
+	if err := store.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var parent workflowModel
+		if err := tx.Where("tenant_id = ? AND id = ?", tenant.ID, record.WorkflowID).First(&parent).Error; err != nil {
+			return mapNotFound(err, "workflow")
+		}
+		var version workflowVersionModel
+		if err := tx.Where("tenant_id = ? AND id = ?", tenant.ID, record.WorkflowVersionID).First(&version).Error; err != nil {
+			return mapNotFound(err, "workflow version")
+		}
+		if version.WorkflowID != record.WorkflowID {
+			return fmt.Errorf("%w: workflow version", ErrNotFound)
+		}
+		if err := tx.Create(&model).Error; err != nil {
+			return fmt.Errorf("create execution: %w", err)
+		}
+		return nil
+	}); err != nil {
+		return execution.Record{}, err
+	}
+	return executionFromModel(model), nil
+}
+
+// Get loads one execution and its node runs under the requested tenant scope.
+func (store *GORMExecutionStore) Get(ctx context.Context, tenant TenantScope, executionID string) (execution.Record, error) {
+	if err := tenant.validate(); err != nil {
+		return execution.Record{}, err
+	}
+	var model executionModel
+	if err := store.db.WithContext(ctx).Where("tenant_id = ? AND id = ?", tenant.ID, executionID).First(&model).Error; err != nil {
+		return execution.Record{}, mapNotFound(err, "execution")
+	}
+	var nodeModels []executionNodeRunModel
+	if err := store.db.WithContext(ctx).
+		Where("tenant_id = ? AND execution_id = ?", tenant.ID, executionID).
+		Order("sequence ASC, attempt ASC").Find(&nodeModels).Error; err != nil {
+		return execution.Record{}, fmt.Errorf("list execution node runs: %w", err)
+	}
+	record := executionFromModel(model)
+	record.NodeRuns = make([]execution.NodeRun, 0, len(nodeModels))
+	for _, nodeModel := range nodeModels {
+		record.NodeRuns = append(record.NodeRuns, nodeRunFromModel(nodeModel))
+	}
+	return record, nil
+}
+
+// CreateNodeRun appends a node attempt only to an execution visible to the
+// current tenant.
+func (store *GORMExecutionStore) CreateNodeRun(ctx context.Context, tenant TenantScope, nodeRun execution.NodeRun) (execution.NodeRun, error) {
+	if err := tenant.validate(); err != nil {
+		return execution.NodeRun{}, err
+	}
+	if err := validateNodeRun(nodeRun); err != nil {
+		return execution.NodeRun{}, err
+	}
+	if nodeRun.ID == "" {
+		id, err := workflow.NewID("run")
+		if err != nil {
+			return execution.NodeRun{}, err
+		}
+		nodeRun.ID = id
+	}
+	if nodeRun.StartedAt.IsZero() {
+		nodeRun.StartedAt = time.Now().UTC()
+	}
+	input, err := payload(nodeRun.Input)
+	if err != nil {
+		return execution.NodeRun{}, fmt.Errorf("node run input: %w", err)
+	}
+	output, err := payload(nodeRun.Output)
+	if err != nil {
+		return execution.NodeRun{}, fmt.Errorf("node run output: %w", err)
+	}
+	errorPayload, err := payload(nodeRun.Error)
+	if err != nil {
+		return execution.NodeRun{}, fmt.Errorf("node run error: %w", err)
+	}
+	model := executionNodeRunModel{
+		ID:          nodeRun.ID,
+		TenantID:    tenant.ID,
+		ExecutionID: nodeRun.ExecutionID,
+		NodeID:      nodeRun.NodeID,
+		Attempt:     nodeRun.Attempt,
+		Sequence:    nodeRun.Sequence,
+		Status:      string(nodeRun.Status),
+		Input:       input,
+		Output:      output,
+		Error:       errorPayload,
+		StartedAt:   nodeRun.StartedAt,
+		FinishedAt:  nodeRun.FinishedAt,
+	}
+	if err := store.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var parent executionModel
+		if err := tx.Where("tenant_id = ? AND id = ?", tenant.ID, nodeRun.ExecutionID).First(&parent).Error; err != nil {
+			return mapNotFound(err, "execution")
+		}
+		if err := tx.Create(&model).Error; err != nil {
+			return fmt.Errorf("create execution node run: %w", err)
+		}
+		return nil
+	}); err != nil {
+		return execution.NodeRun{}, err
+	}
+	return nodeRunFromModel(model), nil
+}
+
+func validateExecution(record execution.Record) error {
+	if record.WorkflowID == "" || record.WorkflowVersionID == "" {
+		return fmt.Errorf("execution workflow and workflow version are required")
+	}
+	if record.Status == "" || record.Trigger == "" {
+		return fmt.Errorf("execution status and trigger are required")
+	}
+	return nil
+}
+
+func validateNodeRun(nodeRun execution.NodeRun) error {
+	if nodeRun.ExecutionID == "" || nodeRun.NodeID == "" {
+		return fmt.Errorf("node run execution and node are required")
+	}
+	if nodeRun.Attempt < 1 || nodeRun.Sequence < 1 {
+		return fmt.Errorf("node run attempt and sequence must be positive")
+	}
+	if nodeRun.Status == "" {
+		return fmt.Errorf("node run status is required")
+	}
+	return nil
+}
+
+func payload(value json.RawMessage) ([]byte, error) {
+	if len(value) == 0 {
+		return []byte("null"), nil
+	}
+	if !json.Valid(value) {
+		return nil, fmt.Errorf("must be valid JSON")
+	}
+	return append([]byte(nil), value...), nil
+}
+
+func executionFromModel(model executionModel) execution.Record {
+	return execution.Record{
+		ID:                model.ID,
+		TenantID:          model.TenantID,
+		WorkflowID:        model.WorkflowID,
+		WorkflowVersionID: model.WorkflowVersionID,
+		Status:            execution.Status(model.Status),
+		Trigger:           execution.Trigger(model.Trigger),
+		Input:             append(json.RawMessage(nil), model.Input...),
+		Output:            append(json.RawMessage(nil), model.Output...),
+		Error:             append(json.RawMessage(nil), model.Error...),
+		StartedAt:         model.StartedAt,
+		FinishedAt:        model.FinishedAt,
+	}
+}
+
+func nodeRunFromModel(model executionNodeRunModel) execution.NodeRun {
+	return execution.NodeRun{
+		ID:          model.ID,
+		TenantID:    model.TenantID,
+		ExecutionID: model.ExecutionID,
+		NodeID:      model.NodeID,
+		Attempt:     model.Attempt,
+		Sequence:    model.Sequence,
+		Status:      execution.Status(model.Status),
+		Input:       append(json.RawMessage(nil), model.Input...),
+		Output:      append(json.RawMessage(nil), model.Output...),
+		Error:       append(json.RawMessage(nil), model.Error...),
+		StartedAt:   model.StartedAt,
+		FinishedAt:  model.FinishedAt,
+	}
+}

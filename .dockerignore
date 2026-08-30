@@ -1,0 +1,16 @@
+.git
+.github
+bin
+.tmp
+data
+node_modules
+web/node_modules
+web/build
+web/.svelte-kit
+internal/web/dist
+!internal/web/dist/.gitkeep
+config.yaml
+.env
+*.md
+!README.md
+.devbox

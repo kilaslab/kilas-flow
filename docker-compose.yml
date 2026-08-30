@@ -1,0 +1,41 @@
+services:
+  kilasflow:
+    build:
+      context: .
+      args:
+        VERSION: dev
+    image: kilasflow:dev
+    ports:
+      - "8080:8080"
+    volumes:
+      - kilasflow-data:/app/data
+    environment:
+      KILASFLOW_LOG_FORMAT: json
+      # Required once credentials land (Milestone 2); unused before then.
+      # Generate with: openssl rand -base64 32
+      KILASFLOW_ENCRYPTION_KEY: ${KILASFLOW_ENCRYPTION_KEY:-}
+    restart: unless-stopped
+
+  # Optional internal PostgreSQL instead of the SQLite default:
+  #   docker compose --profile postgres up
+  # then point kilasflow at it:
+  #   KILASFLOW_DATABASE_DRIVER=postgres
+  #   KILASFLOW_DATABASE_DSN=postgres://kilasflow:kilasflow@postgres:5432/kilasflow?sslmode=disable
+  postgres:
+    profiles: ["postgres"]
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: kilasflow
+      POSTGRES_PASSWORD: kilasflow
+      POSTGRES_DB: kilasflow
+    volumes:
+      - kilasflow-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kilasflow"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  kilasflow-data:
+  kilasflow-postgres:

@@ -1,0 +1,25 @@
+{
+  "$schema": "https://raw.githubusercontent.com/jetify-com/devbox/0.16.0/.schema/devbox.schema.json",
+  "packages": [
+    "go@1.27",
+    "nodejs@24",
+    "pnpm@10",
+    "gnumake@latest",
+    "sqlite@latest",
+    "git@latest"
+  ],
+  "shell": {
+    "init_hook": [
+      "export CGO_ENABLED=0",
+      "export KILASFLOW_ENV=development",
+      "export PATH=\"$(go env GOPATH)/bin:$PATH\"",
+      "echo 'kilasflow devbox shell — run: make setup, then make dev'"
+    ],
+    "scripts": {
+      "setup": ["make setup"],
+      "dev": ["make dev"],
+      "test": ["make test"],
+      "build": ["make build-all"]
+    }
+  }
+}

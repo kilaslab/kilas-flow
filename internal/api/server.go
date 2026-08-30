@@ -1,0 +1,139 @@
+// Package api builds the kilasflow HTTP surface: the REST API, the generated
+// OpenAPI document and docs UI, the webhook entrypoint, and the embedded SPA.
+//
+// Production runs a single origin, so all of these are mounted on one router.
+package api
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+
+	"github.com/danielgtaylor/huma/v2"
+	"github.com/danielgtaylor/huma/v2/adapters/humachi"
+	"github.com/go-chi/chi/v5"
+
+	"github.com/kilaslabs/kilas-flow/internal/api/handlers"
+	"github.com/kilaslabs/kilas-flow/internal/api/middleware"
+	"github.com/kilaslabs/kilas-flow/internal/config"
+)
+
+// Path prefixes for the single-origin layout. Keeping them in one place makes
+// the Vite dev proxy easy to keep in step (see web/vite.config.ts).
+const (
+	APIPrefix     = "/api/v1"
+	OpenAPIPath   = "/api/openapi"
+	SchemasPath   = "/api/schemas"
+	DocsPath      = "/docs"
+	WebhookPrefix = "/webhook"
+)
+
+// Deps are the collaborators a Server needs, passed by the caller rather than
+// resolved from a global.
+type Deps struct {
+	Config  config.Config
+	Logger  *slog.Logger
+	DB      handlers.Pinger
+	Version string
+}
+
+// Server owns the HTTP listener and the route tree.
+type Server struct {
+	cfg    config.Config
+	log    *slog.Logger
+	router *chi.Mux
+	http   *http.Server
+}
+
+// NewServer builds the router and the underlying http.Server.
+func NewServer(deps Deps) *Server {
+	router := chi.NewMux()
+
+	router.Use(middleware.RequestID)
+	router.Use(middleware.Recover(deps.Logger))
+	router.Use(middleware.Logger(deps.Logger))
+
+	api := humachi.New(router, openAPIConfig(deps))
+
+	registerRoutes(router, api, deps)
+
+	srv := &Server{
+		cfg:    deps.Config,
+		log:    deps.Logger,
+		router: router,
+	}
+
+	srv.http = &http.Server{
+		Addr:              deps.Config.Server.Addr(),
+		Handler:           router,
+		ReadHeaderTimeout: deps.Config.Server.ReadHeaderTimeout,
+	}
+
+	return srv
+}
+
+// openAPIConfig describes the generated document and the docs UI.
+func openAPIConfig(deps Deps) huma.Config {
+	cfg := huma.DefaultConfig("KilasFlow API", deps.Version)
+
+	cfg.Info.Description = "Embeddable workflow automation engine. " +
+		"Every operation available in the editor is available here: the canvas " +
+		"is a client of this API, not the owner of workflow state."
+
+	// Served from the same origin as the SPA, so relative paths are correct.
+	cfg.OpenAPIPath = OpenAPIPath
+	cfg.SchemasPath = SchemasPath
+
+	// Huma's built-in renderers pull their JavaScript from unpkg. kilasflow serves
+	// its own page from a vendored bundle instead (see docs.go), so disable
+	// Huma's and register ours in registerRoutes.
+	cfg.DocsPath = ""
+
+	return cfg
+}
+
+// Handler exposes the route tree for testing.
+func (s *Server) Handler() http.Handler {
+	return s.router
+}
+
+// Run serves until ctx is cancelled, then shuts down gracefully so in-flight
+// requests and workflow executions are allowed to finish.
+func (s *Server) Run(ctx context.Context) error {
+	errCh := make(chan error, 1)
+
+	go func() {
+		s.log.Info("http server listening",
+			"addr", s.cfg.Server.Addr(),
+			"docs", DocsPath,
+			"openapi", OpenAPIPath+".json",
+		)
+
+		if err := s.http.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- fmt.Errorf("listen on %s: %w", s.cfg.Server.Addr(), err)
+			return
+		}
+
+		errCh <- nil
+	}()
+
+	select {
+	case err := <-errCh:
+		return err
+
+	case <-ctx.Done():
+		s.log.Info("shutting down")
+
+		shutdownCtx, cancel := context.WithTimeout(
+			context.WithoutCancel(ctx), s.cfg.Server.ShutdownTimeout)
+		defer cancel()
+
+		if err := s.http.Shutdown(shutdownCtx); err != nil {
+			return fmt.Errorf("graceful shutdown: %w", err)
+		}
+
+		return nil
+	}
+}
