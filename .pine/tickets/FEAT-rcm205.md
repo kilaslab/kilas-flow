@@ -1,7 +1,7 @@
 ---
 id: FEAT-rcm205
 title: Deliver API-first workflow CRUD and lifecycle versioning
-status: doing
+status: done
 priority: critical
 labels:
     - workflow
@@ -13,7 +13,7 @@ deps:
 parent: EPIC-c7gbdp
 phase: p1
 created: "2026-08-29T15:39:49Z"
-updated: "2026-08-30T07:58:31Z"
+updated: "2026-08-30T08:04:40Z"
 ---
 
 ## Scope
@@ -47,13 +47,9 @@ Implement REST workflow create, list, get, update, delete, activation/deactivati
 Closed by `pine close --evidence` on 2026-08-30.
 
 - Base: _(none — ticket predates git history or creation time unknown; showing uncommitted changes only)_
-- Commits (3):
+- Commits (5):
+  - `883bd8f7` — fix(workflows): keep write IDs server-owned
+  - `192b755a` — chore(pine): close registry and lifecycle tickets
   - `13d9d098` — feat(workflows): add node registry and lifecycle API
   - `f1c3c6fd` — chore(pine): mark active P1 tickets in progress
   - `6a9f56bb` — chore: initialize governance and Pine tracking
-- Files changed (base → working tree):
-
-```
- .pine/tickets/FEAT-6yef51.md | 14 ++++++++++++--
- 1 file changed, 12 insertions(+), 2 deletions(-)
-```
