@@ -1,7 +1,7 @@
 ---
 id: FEAT-6yef51
 title: Build server-defined node registry and generic property metadata
-status: doing
+status: done
 priority: critical
 labels:
     - nodes
@@ -12,7 +12,7 @@ deps:
 parent: EPIC-c7gbdp
 phase: p1
 created: "2026-08-29T15:40:03Z"
-updated: "2026-08-30T07:35:27Z"
+updated: "2026-08-30T07:50:49Z"
 ---
 
 ## Scope
@@ -41,3 +41,13 @@ Create the node registry used by both compiler/runtime and editor. Node metadata
 - `pine` — maintain registry decisions.
 - `find-docs` — mandatory for Svelte Flow or a validation-library API.
 - `test-driven-development`, `verification-before-completion`.
+
+## Work Evidence
+
+Closed by `pine close --evidence` on 2026-08-30.
+
+- Base: _(none — ticket predates git history or creation time unknown; showing uncommitted changes only)_
+- Commits (3):
+  - `13d9d098` — feat(workflows): add node registry and lifecycle API
+  - `f1c3c6fd` — chore(pine): mark active P1 tickets in progress
+  - `6a9f56bb` — chore: initialize governance and Pine tracking
