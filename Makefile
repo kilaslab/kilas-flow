@@ -2,6 +2,7 @@ APP_NAME    := kilasflow
 GO          := go
 WEB_DIR     := web
 SDK_DIR     := sdk
+DOCS_DIR    := docs
 DIST_DIR    := internal/web/dist
 BIN_DIR     := bin
 VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "0.1.0-dev")
@@ -153,6 +154,30 @@ sdk-test: ## Run the host SDK test suite
 .PHONY: sdk-build
 sdk-build: ## Build the host SDK into sdk/dist
 	cd $(SDK_DIR) && pnpm build
+
+# The documentation site. Like the SDK targets above, these assume `pnpm install`
+# has already been run in the directory — `make setup` deliberately installs only
+# web/, because that is the one a contributor needs to run the product, and
+# making every Go change wait on three dependency trees would be a poor trade.
+#
+# docs/ is a third pnpm project and not part of the binary: nothing here is
+# copied into $(DIST_DIR) or reached by a go:embed directive, which is the whole
+# reason the site is a sibling of web/ rather than a route inside it.
+.PHONY: docs
+docs: ## Run the documentation site dev server
+	cd $(DOCS_DIR) && pnpm dev
+
+# Link validation runs on build only — `astro dev` does not do it — so this is
+# the target CI calls. A broken internal link fails it exactly like a syntax
+# error would, which is the point: a page renamed by a later change cannot
+# quietly orphan a link to it.
+#
+# DOCS_SITE and DOCS_BASE are read by astro.config.mjs and left empty here. A
+# local build then serves from the root, and the deployment sets them from the
+# repository it is actually publishing to, so the subpath is never guessed.
+.PHONY: docs-build
+docs-build: ## Build the documentation site, validating internal links
+	cd $(DOCS_DIR) && pnpm build
 
 # orval loads web/tsconfig.json, which extends the generated
 # .svelte-kit/tsconfig.json. That file is gitignored, so on a fresh clone — and
@@ -308,5 +333,6 @@ smoke-postgres: ## Prove the Docker image against the temporary Compose PostgreS
 clean: ## Remove build artifacts
 	rm -rf $(BIN_DIR) .tmp coverage.out
 	rm -rf $(WEB_DIR)/build $(WEB_DIR)/.svelte-kit
+	rm -rf $(DOCS_DIR)/dist $(DOCS_DIR)/.astro
 	rm -rf $(DIST_DIR)
 	@$(MAKE) --no-print-directory dist-placeholder

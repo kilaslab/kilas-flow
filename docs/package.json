@@ -1,0 +1,20 @@
+{
+  "name": "kilasflow-docs",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.15.0",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview"
+  },
+  "dependencies": {
+    "@astrojs/markdown-satteri": "0.4.0",
+    "@astrojs/starlight": "0.42.0",
+    "astro": "7.3.1",
+    "satteri": "0.10.5",
+    "sharp": "0.34.5",
+    "starlight-links-validator": "0.26.0"
+  }
+}

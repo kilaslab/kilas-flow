@@ -1,0 +1,79 @@
+---
+// Overrides @astrojs/starlight/components/ThemeSelect.astro.
+//
+// Two changes from the stock component, both consequences of the decision
+// explained in ThemeProvider.astro.
+//
+// The "Auto" option is gone. It stored the empty string, which the provider
+// cannot tell apart from "no preference recorded", and on hydration it pushed
+// the operating system's preference back onto the document — undoing the dark
+// default a moment after the page had painted. With two options every stored
+// value is a real value and the two components cannot disagree.
+//
+// Dark is marked `selected` so the closed select reads correctly during the
+// moment before the script below runs.
+import Select from '@astrojs/starlight/components/Select.astro';
+---
+
+<starlight-theme-select>
+	<Select
+		icon="moon"
+		label={Astro.locals.t('themeSelect.accessibleLabel')}
+		options={[
+			{ label: Astro.locals.t('themeSelect.dark'), selected: true, value: 'dark' },
+			{ label: Astro.locals.t('themeSelect.light'), selected: false, value: 'light' },
+		]}
+		width="6.25em"
+	/>
+</starlight-theme-select>
+
+{/* Inlined to avoid a flash. Uses the global set up by ThemeProvider.astro. */}
+<script is:inline>
+	StarlightThemeProvider.updatePickers();
+</script>
+
+<script>
+	type Theme = 'dark' | 'light';
+
+	/** Key in `localStorage` to store the colour theme preference at. */
+	const storageKey = 'starlight-theme';
+
+	/**
+	 * Coerce any value to a theme. Anything that is not the string `'light'` —
+	 * including the empty string the stock component wrote for "Auto", so a
+	 * reader who chose it before this override existed lands somewhere sensible —
+	 * becomes `'dark'`, which is the site's default.
+	 */
+	const parseTheme = (theme: unknown): Theme => (theme === 'light' ? 'light' : 'dark');
+
+	const loadTheme = (): Theme =>
+		parseTheme(typeof localStorage !== 'undefined' && localStorage.getItem(storageKey));
+
+	function storeTheme(theme: Theme): void {
+		if (typeof localStorage !== 'undefined') localStorage.setItem(storageKey, theme);
+	}
+
+	function onThemeChange(theme: Theme): void {
+		StarlightThemeProvider.updatePickers(theme);
+		document.documentElement.dataset.theme = theme;
+		storeTheme(theme);
+	}
+
+	class StarlightThemeSelect extends HTMLElement {
+		constructor() {
+			super();
+			// Deliberately does not call storeTheme on load: a reader who has never
+			// touched the picker keeps an empty localStorage and keeps getting the
+			// default, rather than having dark frozen in on first visit.
+			const theme = loadTheme();
+			StarlightThemeProvider.updatePickers(theme);
+			document.documentElement.dataset.theme = theme;
+			this.querySelector('select')?.addEventListener('change', (e) => {
+				if (e.currentTarget instanceof HTMLSelectElement) {
+					onThemeChange(parseTheme(e.currentTarget.value));
+				}
+			});
+		}
+	}
+	customElements.define('starlight-theme-select', StarlightThemeSelect);
+</script>

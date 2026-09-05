@@ -1,0 +1,138 @@
+/* KilasFlow documentation palette: jade actions on quiet graphite surfaces.
+ *
+ * The values below are copied from web/src/app.css — the product's own token
+ * sheet — and mapped onto the --sl-color-* variables Starlight styles itself
+ * with. They are copied rather than imported on purpose. app.css is a Tailwind 4
+ * stylesheet that pulls in @custom-variant, shadcn-svelte's token layer, a
+ * variable font and Svelte Flow's canvas CSS; importing it here would make this
+ * site's build depend on the SPA's build, so a routine design change in the
+ * product could break the documentation for reasons no one would think to look
+ * for. The cost of copying is that the two can drift, which is a much cheaper
+ * failure: the site looks slightly off, and nothing stops working.
+ *
+ * If you change a colour here, change it there too, and vice versa.
+ *
+ * Starlight's own arrangement already matches the product's: its dark values sit
+ * on bare `:root` and light is opt-in under `[data-theme='light']`, exactly as
+ * app.css does it. Only the JavaScript differed — it resolved an unset
+ * preference from the operating system — and that is handled in
+ * src/components/ThemeProvider.astro rather than here.
+ */
+
+:root,
+::backdrop {
+	color-scheme: dark;
+
+	/* The neutral ramp. app.css names its greys by role rather than by number,
+	   so these interpolate between --background (0.17) and --foreground (0.95)
+	   along the same 170 hue, keeping the faint jade cast the product has. */
+	--sl-color-white: oklch(0.98 0.008 170);
+	--sl-color-gray-1: oklch(0.95 0.012 170); /* --foreground */
+	--sl-color-gray-2: oklch(0.87 0.014 170);
+	--sl-color-gray-3: oklch(0.74 0.02 170); /* --muted-foreground */
+	--sl-color-gray-4: oklch(0.52 0.022 170);
+	--sl-color-gray-5: oklch(0.31 0.024 170);
+	--sl-color-gray-6: oklch(0.215 0.02 170); /* --card */
+	--sl-color-gray-7: oklch(0.195 0.018 170); /* --sidebar */
+	--sl-color-black: oklch(0.17 0.016 170); /* --background */
+
+	/* Jade. --primary is the product's action colour; -high has to stay legible
+	   as text on the dark ground, and -low has to work as a filled background
+	   behind --sl-color-white. */
+	--sl-color-accent-low: oklch(0.31 0.055 170); /* --accent */
+	--sl-color-accent: oklch(0.74 0.13 170); /* --primary */
+	--sl-color-accent-high: oklch(0.86 0.1 170);
+
+	/* Asides and badges. Mapped from the product's semantic tokens so a caution
+	   in the documentation is the same amber as a warning in the editor. */
+	--sl-color-red: oklch(0.66 0.18 27); /* --destructive */
+	--sl-color-red-low: oklch(0.29 0.07 27);
+	--sl-color-red-high: oklch(0.85 0.09 27);
+	--sl-color-orange: oklch(0.78 0.145 80); /* --warning */
+	--sl-color-orange-low: oklch(0.3 0.06 80);
+	--sl-color-orange-high: oklch(0.88 0.08 80);
+	--sl-color-green: oklch(0.74 0.13 170); /* --success, the same jade */
+	--sl-color-green-low: oklch(0.29 0.06 170);
+	--sl-color-green-high: oklch(0.87 0.09 170);
+	--sl-color-blue: oklch(0.72 0.11 225); /* --chart-2 */
+	--sl-color-blue-low: oklch(0.29 0.06 225);
+	--sl-color-blue-high: oklch(0.87 0.07 225);
+	--sl-color-purple: oklch(0.74 0.15 305); /* --node-ai */
+	--sl-color-purple-low: oklch(0.3 0.07 305);
+	--sl-color-purple-high: oklch(0.87 0.08 305);
+
+	--sl-color-text: var(--sl-color-gray-2);
+	--sl-color-text-accent: var(--sl-color-accent-high);
+	--sl-color-bg: var(--sl-color-black);
+	--sl-color-bg-nav: var(--sl-color-gray-7);
+	--sl-color-bg-sidebar: var(--sl-color-gray-7);
+	--sl-color-bg-inline-code: oklch(0.285 0.02 170); /* --muted */
+
+	/* --border and --input in app.css are white at low alpha rather than a solid
+	   grey, so a hairline sits on whatever surface it divides instead of
+	   assuming the page background. Kept that way here. */
+	--sl-color-hairline-light: oklch(1 0.005 170 / 17%); /* --input */
+	--sl-color-hairline: oklch(1 0.005 170 / 13%); /* --border */
+	--sl-color-hairline-shade: oklch(1 0.005 170 / 8%);
+
+	--sl-color-backdrop-overlay: oklch(0.14 0.014 170 / 66%);
+
+	/* --radius in app.css, and the same derivation Starlight uses for its own. */
+	--sl-border-radius: 0.625rem;
+}
+
+:root[data-theme='light'],
+[data-theme='light'] ::backdrop {
+	color-scheme: light;
+
+	--sl-color-white: oklch(0.215 0.018 170); /* --foreground; Starlight inverts */
+	--sl-color-gray-1: oklch(0.255 0.025 170);
+	--sl-color-gray-2: oklch(0.38 0.024 170);
+	--sl-color-gray-3: oklch(0.48 0.024 170); /* --muted-foreground */
+	--sl-color-gray-4: oklch(0.68 0.02 170);
+	--sl-color-gray-5: oklch(0.89 0.014 170); /* --border */
+	--sl-color-gray-6: oklch(0.942 0.018 170); /* --secondary */
+	--sl-color-gray-7: oklch(0.968 0.01 170); /* --sidebar */
+	--sl-color-black: oklch(0.985 0.006 170); /* --background */
+
+	--sl-color-accent-low: oklch(0.914 0.038 170); /* --accent */
+	--sl-color-accent: oklch(0.44 0.105 170); /* --primary */
+	--sl-color-accent-high: oklch(0.3 0.075 170);
+
+	--sl-color-red: oklch(0.53 0.19 27); /* --destructive */
+	--sl-color-red-low: oklch(0.92 0.05 27);
+	--sl-color-red-high: oklch(0.36 0.13 27);
+	--sl-color-orange: oklch(0.52 0.12 80); /* --warning */
+	--sl-color-orange-low: oklch(0.93 0.05 80);
+	--sl-color-orange-high: oklch(0.36 0.09 80);
+	--sl-color-green: oklch(0.44 0.105 170); /* --success */
+	--sl-color-green-low: oklch(0.92 0.045 170);
+	--sl-color-green-high: oklch(0.3 0.075 170);
+	--sl-color-blue: oklch(0.58 0.11 225); /* --chart-2 */
+	--sl-color-blue-low: oklch(0.93 0.04 225);
+	--sl-color-blue-high: oklch(0.36 0.09 225);
+	--sl-color-purple: oklch(0.53 0.16 305);
+	--sl-color-purple-low: oklch(0.93 0.05 305);
+	--sl-color-purple-high: oklch(0.36 0.11 305);
+
+	--sl-color-text: var(--sl-color-gray-2);
+	--sl-color-text-accent: var(--sl-color-accent);
+	--sl-color-bg: var(--sl-color-black);
+	--sl-color-bg-nav: var(--sl-color-gray-7);
+	--sl-color-bg-sidebar: var(--sl-color-gray-7);
+	--sl-color-bg-inline-code: oklch(0.958 0.012 170); /* --muted */
+
+	--sl-color-hairline-light: oklch(0.89 0.014 170);
+	--sl-color-hairline: oklch(0.89 0.014 170);
+	--sl-color-hairline-shade: oklch(0.93 0.012 170);
+
+	--sl-color-backdrop-overlay: oklch(0.215 0.018 170 / 40%);
+}
+
+/* The SPA sets Geist Variable through @fontsource, which ships the font files as
+ * a dependency of web/. This site does not take that dependency: a webfont is
+ * the largest single asset a documentation page loads, and it would have to be
+ * fetched before the first paragraph could be read. The system stack is what
+ * Starlight already defaults to and is a deliberate difference from the product
+ * rather than an oversight.
+ */
