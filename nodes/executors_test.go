@@ -111,3 +111,107 @@ func TestIFRoutesItemsWithoutRenumberingTheirProvenance(t *testing.T) {
 		t.Errorf("false branch = %#v, want the item that was at index 1", output[1])
 	}
 }
+
+// An assignment whose value is an expression writes the resolved value, not the
+// marker.
+//
+// This was the defect: Set read `node.Parameters` directly and took the request
+// as `_`, so a workflow assigning `{{ $json.name }}` produced an item whose
+// field was the literal object `{"mode":"expression","value":"…"}`. No error,
+// no diagnostic — the workflow ran and the data was wrong. The n8n importer
+// translates every `=`-prefixed string into exactly that marker, so every
+// imported workflow using an expression in a Set was affected.
+func TestSetResolvesAnExpressionAssignmentPerItem(t *testing.T) {
+	t.Parallel()
+
+	executors := engine.NewRegistry()
+	if err := nodes.RegisterExecutors(executors, safehttp.DefaultPolicy(), sqlGuard(), nil, nil, nil); err != nil {
+		t.Fatalf("RegisterExecutors() error = %v", err)
+	}
+	executor, _ := executors.Lookup("core.set")
+
+	output, err := executor.Execute(context.Background(), workflow.IRNode{
+		ID: "set", Name: "Set", Type: "kilasflow.set", TypeVersion: workflow.V(1),
+		Parameters: map[string]any{"assignments": map[string]any{
+			"greeting": map[string]any{"mode": "expression", "value": "Hello {{ $json.name }}"},
+			"fixed":    "unchanged",
+			"index":    map[string]any{"mode": "expression", "value": "{{ $itemIndex }}"},
+		}},
+	}, workflow.NodeInput{"main": {
+		{JSON: map[string]any{"name": "Ada"}},
+		{JSON: map[string]any{"name": "Grace"}},
+	}}, engine.Request{})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	if len(output[0]) != 2 {
+		t.Fatalf("output = %#v, want one item per input item", output[0])
+	}
+	// Per item, not once for the node: resolving outside the loop would write
+	// the first item's value onto both.
+	if output[0][0].JSON["greeting"] != "Hello Ada" || output[0][1].JSON["greeting"] != "Hello Grace" {
+		t.Fatalf("greetings = %#v and %#v, want each item's own value",
+			output[0][0].JSON["greeting"], output[0][1].JSON["greeting"])
+	}
+	if output[0][0].JSON["index"] != float64(0) || output[0][1].JSON["index"] != float64(1) {
+		t.Fatalf("indexes = %#v and %#v, want each item's own position",
+			output[0][0].JSON["index"], output[0][1].JSON["index"])
+	}
+	if output[0][0].JSON["fixed"] != "unchanged" {
+		t.Fatalf("fixed = %#v, want a literal left alone", output[0][0].JSON["fixed"])
+	}
+}
+
+// An IF condition whose value is an expression compares the resolved value.
+// Against an unresolved marker every item takes the same branch, which is the
+// quiet half of the same defect.
+func TestIFResolvesAnExpressionConditionPerItem(t *testing.T) {
+	t.Parallel()
+
+	executors := engine.NewRegistry()
+	if err := nodes.RegisterExecutors(executors, safehttp.DefaultPolicy(), sqlGuard(), nil, nil, nil); err != nil {
+		t.Fatalf("RegisterExecutors() error = %v", err)
+	}
+	executor, _ := executors.Lookup("core.if")
+
+	// The value is read from the item itself, so the two rows must part.
+	output, err := executor.Execute(context.Background(), workflow.IRNode{
+		ID: "if", Name: "IF", Type: "kilasflow.if", TypeVersion: workflow.V(1),
+		Parameters: map[string]any{"conditions": []any{map[string]any{
+			"field": "tier", "operator": "equals",
+			"value": map[string]any{"mode": "expression", "value": "{{ $json.wanted }}"},
+		}}},
+	}, workflow.NodeInput{"main": {
+		{JSON: map[string]any{"tier": "vip", "wanted": "vip"}},
+		{JSON: map[string]any{"tier": "vip", "wanted": "standard"}},
+	}}, engine.Request{})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if len(output[0]) != 1 || output[0][0].JSON["wanted"] != "vip" {
+		t.Fatalf("true branch = %#v, want the matching item only", output[0])
+	}
+	if len(output[1]) != 1 || output[1][0].JSON["wanted"] != "standard" {
+		t.Fatalf("false branch = %#v, want the non-matching item only", output[1])
+	}
+}
+
+// A malformed condition is one error, not one per row.
+func TestIFReportsAMalformedConditionOnceBeforeAnyItem(t *testing.T) {
+	t.Parallel()
+
+	executors := engine.NewRegistry()
+	if err := nodes.RegisterExecutors(executors, safehttp.DefaultPolicy(), sqlGuard(), nil, nil, nil); err != nil {
+		t.Fatalf("RegisterExecutors() error = %v", err)
+	}
+	executor, _ := executors.Lookup("core.if")
+
+	_, err := executor.Execute(context.Background(), workflow.IRNode{
+		ID: "if", Name: "IF", Type: "kilasflow.if", TypeVersion: workflow.V(1),
+		Parameters: map[string]any{"conditions": []any{}},
+	}, workflow.NodeInput{"main": {{JSON: map[string]any{}}}}, engine.Request{})
+	if err == nil {
+		t.Fatal("an empty condition list was accepted")
+	}
+}

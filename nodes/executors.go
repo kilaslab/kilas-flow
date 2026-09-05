@@ -8,6 +8,7 @@ import (
 
 	"github.com/kilaslabs/kilas-flow/internal/ai"
 	"github.com/kilaslabs/kilas-flow/internal/engine"
+	"github.com/kilaslabs/kilas-flow/internal/expression"
 	"github.com/kilaslabs/kilas-flow/internal/runcode"
 	"github.com/kilaslabs/kilas-flow/internal/safehttp"
 	"github.com/kilaslabs/kilas-flow/internal/sqlnode"
@@ -57,16 +58,26 @@ func executeManual(ctx context.Context, _ workflow.IRNode, _ workflow.NodeInput,
 	return workflow.NodeOutput{{request.Input}}, nil
 }
 
-func executeSet(ctx context.Context, node workflow.IRNode, input workflow.NodeInput, _ engine.Request) (workflow.NodeOutput, error) {
+// executeSet writes assignments onto every incoming item.
+//
+// Parameters are resolved *per item*, not once for the node. That is the whole
+// difference between a Set node and a constant: an assignment reading
+// `$json.name` has to see the item it is being written onto, and resolving once
+// outside the loop writes the first item's value onto all of them.
+func executeSet(ctx context.Context, node workflow.IRNode, input workflow.NodeInput, request engine.Request) (workflow.NodeOutput, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	assignments, ok := node.Parameters["assignments"].(map[string]any)
-	if !ok || len(assignments) == 0 {
+	if declared, ok := node.Parameters["assignments"].(map[string]any); !ok || len(declared) == 0 {
 		return nil, fmt.Errorf("Set assignments must be a non-empty object")
 	}
 	items := make([]workflow.Item, 0, len(input["main"]))
-	for _, item := range input["main"] {
+	for index, item := range input["main"] {
+		resolved, err := expression.Resolve(node.Parameters, expressionContext(item, input, request, index))
+		if err != nil {
+			return nil, fmt.Errorf("node %q: %w", node.Name, err)
+		}
+		assignments, _ := resolved["assignments"].(map[string]any)
 		copy := cloneItem(item)
 		for key, value := range assignments {
 			copy.JSON[key] = cloneValue(value)
@@ -76,12 +87,19 @@ func executeSet(ctx context.Context, node workflow.IRNode, input workflow.NodeIn
 	return workflow.NodeOutput{items}, nil
 }
 
-func executeIF(ctx context.Context, node workflow.IRNode, input workflow.NodeInput, _ engine.Request) (workflow.NodeOutput, error) {
+// executeIF routes each item by its condition.
+//
+// The condition's *value* is resolved per item too. A comparison against
+// `{{ $json.tier }}` is the ordinary way to compare two fields of one item, and
+// against an unresolved marker it compares against an object and takes the same
+// branch every time.
+func executeIF(ctx context.Context, node workflow.IRNode, input workflow.NodeInput, request engine.Request) (workflow.NodeOutput, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	condition, err := ifCondition(node.Parameters["conditions"])
-	if err != nil {
+	// Validated once, before any item, so a malformed condition is one error
+	// rather than one per row.
+	if _, err := ifCondition(node.Parameters["conditions"]); err != nil {
 		return nil, err
 	}
 	// IF filters, so an output item's position no longer matches its input's.
@@ -91,6 +109,14 @@ func executeIF(ctx context.Context, node workflow.IRNode, input workflow.NodeInp
 	// right item.
 	trueItems, falseItems := []workflow.Item{}, []workflow.Item{}
 	for index, item := range input["main"] {
+		resolved, err := expression.Resolve(node.Parameters, expressionContext(item, input, request, index))
+		if err != nil {
+			return nil, fmt.Errorf("node %q: %w", node.Name, err)
+		}
+		condition, err := ifCondition(resolved["conditions"])
+		if err != nil {
+			return nil, err
+		}
 		matched, err := condition.matches(item.JSON)
 		if err != nil {
 			return nil, err
@@ -108,6 +134,12 @@ func executeIF(ctx context.Context, node workflow.IRNode, input workflow.NodeInp
 	return workflow.NodeOutput{trueItems, falseItems}, nil
 }
 
+// executeMerge concatenates two streams.
+//
+// It deliberately does not resolve expressions: its only parameter is a mode
+// chosen from a fixed list, and an expression there would name a mode that
+// depends on the data, which is not a thing this node offers. Adding a resolve
+// call it does not need would be a call nobody could explain.
 func executeMerge(ctx context.Context, node workflow.IRNode, input workflow.NodeInput, _ engine.Request) (workflow.NodeOutput, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
