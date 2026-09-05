@@ -4,11 +4,14 @@
 	import { Background, BackgroundVariant, Controls, SvelteFlow, type Connection as FlowConnection } from '@xyflow/svelte';
 	import Play from '@lucide/svelte/icons/play';
 	import Plus from '@lucide/svelte/icons/plus';
+	import Power from '@lucide/svelte/icons/power';
+	import PowerOff from '@lucide/svelte/icons/power-off';
 	import Save from '@lucide/svelte/icons/save';
 	import Trash2 from '@lucide/svelte/icons/trash-2';
 	import X from '@lucide/svelte/icons/x';
 
 	import type { CredentialResource, Definition, Document, WorkflowDocumentInput } from '$lib/api/generated/models';
+	import type { ActivationNoticeView } from '$lib/workflow-editor/activation';
 	import { setCanvasActions } from '$lib/workflow-editor/canvas-actions';
 	import {
 		cloneWorkflowDocument,
@@ -29,6 +32,7 @@
 	import { canConnect, connectionFromCanvas } from '$lib/workflow-editor/ports';
 	import type { CanvasValidationIssue } from '$lib/workflow-editor/validation';
 
+	import ActivationNotices from './activation-notices.svelte';
 	import CanvasNode from './canvas-node.svelte';
 	import NodePicker from './node-picker.svelte';
 	import PropertiesPanel from './properties-panel.svelte';
@@ -47,8 +51,15 @@
 		saveIssues = [],
 		runError = null,
 		runMessage = null,
+		active = false,
+		activating = false,
+		notices = [],
+		activationError = null,
 		onSave,
-		onRun
+		onRun,
+		onActivate,
+		onDeactivate,
+		onDismissNotice
 	}: {
 		/** Rendered at the head of the toolbar. The embed surface passes none. */
 		header?: Snippet;
@@ -67,8 +78,17 @@
 		saveIssues?: CanvasValidationIssue[];
 		runError?: string | null;
 		runMessage?: string | null;
+		/** Whether the server currently has this workflow pinned active. */
+		active?: boolean;
+		activating?: boolean;
+		/** What the last activation could not do for the user, until dismissed. */
+		notices?: ActivationNoticeView[];
+		activationError?: string | null;
 		onSave: (input: WorkflowDocumentInput) => Promise<void>;
 		onRun: () => Promise<void>;
+		onActivate?: () => Promise<void>;
+		onDeactivate?: () => Promise<void>;
+		onDismissNotice?: (key: string) => void;
 	} = $props();
 
 	const nodeTypes = { workflow: CanvasNode };
@@ -100,6 +120,15 @@
 	let inspectorRegion = $state<HTMLElement>();
 
 	const dirty = $derived(!workflowDocumentEquals(document, draft));
+	// Activation appears only for a surface that supplied both halves of it. The
+	// embed supplies neither, because a host application decides when its own
+	// workflows go live and a button inside its iframe would take that decision
+	// away from it.
+	const canActivate = $derived(!readOnly && Boolean(onActivate) && Boolean(onDeactivate));
+	// A dirty canvas has to be saved first, because activation pins the latest
+	// *saved* revision: activating here would publish something other than what
+	// the user is looking at. Deactivating is never ambiguous that way.
+	const activationBlockedByDirty = $derived(!active && dirty);
 	const selectedNode = $derived((draft.nodes ?? []).find((node) => node.id === selectedNodeID) ?? null);
 	const selectedDefinition = $derived(
 		selectedNode ? definitions.find((definition) => definition.type === selectedNode.type && definition.version === selectedNode.typeVersion) ?? null : null
@@ -306,6 +335,16 @@
 		if (hideRun || dirty || running) return;
 		await onRun();
 	}
+
+	async function toggleActivation() {
+		if (!canActivate || activating) return;
+		if (active) {
+			await onDeactivate?.();
+			return;
+		}
+		if (activationBlockedByDirty) return;
+		await onActivate?.();
+	}
 </script>
 
 <section class="relative flex h-full min-h-0 flex-col bg-background" aria-label="Workflow editor">
@@ -325,8 +364,14 @@
 			</button>
 		{/if}
 		{#if !hideRun}
-			<button type="button" class="inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-border px-2.5 text-xs font-medium transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-40" disabled={dirty || running} aria-describedby={dirty ? 'save-before-run' : undefined} onclick={() => void run()}>
+			<button type="button" class="inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-border px-2.5 text-xs font-medium transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-40" disabled={dirty || running} aria-describedby={dirty ? 'save-first-hint' : undefined} onclick={() => void run()}>
 				<Play aria-hidden="true" class="size-3.5" />{running ? 'Running…' : 'Run'}
+			</button>
+		{/if}
+		{#if canActivate}
+			<button type="button" class="inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-border px-2.5 text-xs font-medium transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-40" disabled={activating || activationBlockedByDirty} aria-describedby={activationBlockedByDirty ? 'save-first-hint' : undefined} onclick={() => void toggleActivation()}>
+				{#if active}<PowerOff aria-hidden="true" class="size-3.5" />{:else}<Power aria-hidden="true" class="size-3.5" />{/if}
+				{activating ? (active ? 'Deactivating…' : 'Activating…') : active ? 'Deactivate' : 'Activate'}
 			</button>
 		{/if}
 		{#if !readOnly && selectedEdgeID && !selectedNodeID}
@@ -335,11 +380,19 @@
 			</button>
 		{/if}
 		<span class="ml-auto flex shrink-0 items-center gap-1.5 pr-1 text-[0.6875rem] text-muted-foreground" aria-live="polite">
+			<!-- Whether the workflow is live is the state an activation notice is
+			     about, so it is stated here rather than left to be inferred from
+			     the button's label. -->
+			{#if canActivate}
+				<span aria-hidden="true" class="size-1.5 rounded-full {active ? 'bg-success' : 'bg-muted-foreground/40'}"></span>
+				<span class="whitespace-nowrap">{active ? 'Active' : 'Inactive'}</span>
+				<span aria-hidden="true" class="mx-0.5 h-3 w-px bg-border"></span>
+			{/if}
 			{#if dirty && !readOnly}<span aria-hidden="true" class="size-1.5 rounded-full bg-warning"></span>{/if}
 			<span class="hidden whitespace-nowrap sm:inline">{readOnly ? 'Read only' : dirty ? 'Unsaved changes' : 'All changes saved'}</span>
 			<span class="sr-only sm:hidden">{readOnly ? 'Read only' : dirty ? 'Unsaved changes' : 'All changes saved'}</span>
 		</span>
-		{#if dirty}<span id="save-before-run" class="sr-only">Save changes before running this workflow.</span>{/if}
+		{#if dirty}<span id="save-first-hint" class="sr-only">Save your changes before running or activating this workflow.</span>{/if}
 	</header>
 
 	{#if saveError}
@@ -357,6 +410,13 @@
 	{:else if runMessage}
 		<p role="status" class="shrink-0 border-b border-success/25 bg-success/5 px-3 py-1.5 text-xs text-success">{runMessage}</p>
 	{/if}
+	<!-- A failed activation is a failure, not a notice: the workflow is not
+	     listening, and it belongs in the destructive register beside the other
+	     things that did not happen. -->
+	{#if activationError}
+		<p role="alert" class="shrink-0 border-b border-destructive/25 bg-destructive/5 px-3 py-1.5 text-xs text-destructive">Activation failed: {activationError}</p>
+	{/if}
+	<ActivationNotices {notices} onDismiss={(key) => onDismissNotice?.(key)} />
 
 	<div class="relative flex min-h-0 flex-1 flex-col lg:grid" style={showInspector ? 'grid-template-columns: minmax(0,1fr) 20rem' : 'grid-template-columns: minmax(0,1fr)'}>
 		<!-- tabindex makes this a place focus can land after a node is deleted; -1
