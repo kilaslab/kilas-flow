@@ -95,6 +95,10 @@ run: build ## Build and run the binary
 test: dist-placeholder ## Run Go tests
 	$(GO) test ./... -race
 
+.PHONY: web-test
+web-test: ## Run the frontend test suite
+	cd $(WEB_DIR) && pnpm test
+
 .PHONY: test-cover
 test-cover: dist-placeholder ## Run Go tests with a coverage report
 	$(GO) test ./... -coverprofile=coverage.out
@@ -106,6 +110,7 @@ lint: dist-placeholder ## Vet Go code and typecheck the frontend
 	@test -z "$$(gofmt -l . | grep -v '^$(WEB_DIR)/')" || \
 		{ echo "gofmt needed:"; gofmt -l . | grep -v '^$(WEB_DIR)/'; exit 1; }
 	cd $(WEB_DIR) && pnpm check
+	cd $(WEB_DIR) && pnpm test
 
 .PHONY: tidy
 tidy: ## Tidy go.mod

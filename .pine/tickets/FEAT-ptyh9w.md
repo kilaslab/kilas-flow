@@ -60,7 +60,9 @@ So **the workflows variant is what the shell renders**, wholesale, rather than a
 
 Two things this did not do.
 
-**The Makefile target is not done.** `pnpm test` is still reachable only by hand. This ran in a worktree confined to `web/`, with the Makefile explicitly out of bounds because another change was in flight against the same tree. The change is one target and a line in `lint`:
+**The Makefile target is done now**, in the main tree rather than the worktree, and `lint` runs the frontend suite too — a target nothing invokes is a target that rots. What follows was written before that.
+
+**The Makefile target was not done in the worktree.** `pnpm test` is still reachable only by hand. This ran in a worktree confined to `web/`, with the Makefile explicitly out of bounds because another change was in flight against the same tree. The change is one target and a line in `lint`:
 
 ```make
 .PHONY: web-test
