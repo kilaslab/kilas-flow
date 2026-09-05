@@ -50,16 +50,17 @@ type PropertyDefinition struct {
 // ExecutorID is intentionally an opaque server-only binding and is omitted
 // from API responses.
 type Definition struct {
-	Type           string               `json:"type"`
-	Version        int                  `json:"version"`
-	DisplayName    string               `json:"displayName"`
-	Description    string               `json:"description,omitempty"`
-	Category       string               `json:"category"`
-	Inputs         []workflow.Port      `json:"inputs"`
-	Outputs        []workflow.Port      `json:"outputs"`
-	Parameters     []PropertyDefinition `json:"parameters"`
-	SharedSettings []PropertyDefinition `json:"sharedSettings"`
-	ExecutorID     string               `json:"-"`
+	Type           string                   `json:"type"`
+	Version        int                      `json:"version"`
+	DisplayName    string                   `json:"displayName"`
+	Description    string                   `json:"description,omitempty"`
+	Category       string                   `json:"category"`
+	Inputs         []workflow.Port          `json:"inputs"`
+	Outputs        []workflow.Port          `json:"outputs"`
+	Parameters     []PropertyDefinition     `json:"parameters"`
+	SharedSettings []PropertyDefinition     `json:"sharedSettings"`
+	ExecutorID     string                   `json:"-"`
+	Validate       workflow.ConfigValidator `json:"-"`
 }
 
 // Registry is the single process-local catalogue of node definitions. It is
@@ -138,6 +139,8 @@ func (registry *Registry) Lookup(nodeType string, version int) (workflow.NodeDef
 		Inputs:             append([]workflow.Port(nil), definition.Inputs...),
 		Outputs:            append([]workflow.Port(nil), definition.Outputs...),
 		RequiredParameters: requiredParameters(definition.Parameters),
+		ExecutorID:         definition.ExecutorID,
+		Validate:           definition.Validate,
 	}, true
 }
 

@@ -41,8 +41,11 @@ type Deps struct {
 	NodeRegistry *node.Registry
 	Workflows    repository.WorkflowRepository
 	Executions   repository.ExecutionRepository
-	Tenants      handlers.TenantResolver
-	Version      string
+	// ExecutionController owns live worker wakeups and cancellation. It is
+	// separate from the repository so HTTP never reaches into ORM state.
+	ExecutionController handlers.ExecutionController
+	Tenants             handlers.TenantResolver
+	Version             string
 }
 
 // Server owns the HTTP listener and the route tree.

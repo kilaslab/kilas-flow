@@ -49,6 +49,7 @@ func setNode() node.Definition {
 		}},
 		SharedSettings: sharedSettings(),
 		ExecutorID:     "core.set",
+		Validate:       validateSetConfiguration,
 	}
 }
 
@@ -70,6 +71,7 @@ func ifNode() node.Definition {
 		}},
 		SharedSettings: sharedSettings(),
 		ExecutorID:     "core.if",
+		Validate:       validateIFConfiguration,
 	}
 }
 
@@ -91,6 +93,7 @@ func mergeNode() node.Definition {
 		}},
 		SharedSettings: sharedSettings(),
 		ExecutorID:     "core.merge",
+		Validate:       validateMergeConfiguration,
 	}
 }
 
@@ -106,6 +109,7 @@ func sharedSettings() []node.PropertyDefinition {
 	return []node.PropertyDefinition{
 		{Key: "continueOnFail", Label: "Continue on Fail", Kind: node.PropertyBoolean, Default: false},
 		{Key: "retryOnFail", Label: "Retry on Fail", Kind: node.PropertyBoolean, Default: false},
+		{Key: "timeoutSeconds", Label: "Timeout (seconds)", Kind: node.PropertyNumber, Default: 0},
 		{
 			Key: "maxTries", Label: "Maximum Attempts", Kind: node.PropertyNumber, Default: 3,
 			VisibleWhen: []node.VisibilityCondition{{Key: "retryOnFail", Equals: true}},

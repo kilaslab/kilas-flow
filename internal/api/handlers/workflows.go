@@ -32,6 +32,13 @@ type Workflows struct {
 	executions repository.ExecutionRepository
 	catalog    workflow.Catalog
 	tenants    TenantResolver
+	waker      ExecutionWaker
+}
+
+// ExecutionWaker lets the lifecycle API notify idle runtime workers after it
+// commits a new durable execution request.
+type ExecutionWaker interface {
+	Wake()
 }
 
 // WorkflowVersionResource is one persisted canonical document snapshot. It
@@ -66,8 +73,8 @@ type WorkflowSummary struct {
 	UpdatedAt      time.Time `json:"updatedAt"`
 }
 
-// ExecutionRequestResource reports the persisted request created by a manual
-// run. The engine processes it in the subsequent runtime milestone.
+// ExecutionRequestResource reports the durable request created by a manual
+// run or updated by a cancellation request.
 type ExecutionRequestResource struct {
 	ID                string            `json:"id"`
 	WorkflowID        string            `json:"workflowId"`
@@ -152,15 +159,50 @@ type executionRequestOutput struct {
 	Body   ExecutionRequestResource
 }
 
+// ExecutionNodeRunResource is the externally inspectable trace of one node
+// attempt. Payloads were already redacted at the repository boundary.
+type ExecutionNodeRunResource struct {
+	NodeID     string           `json:"nodeId"`
+	Attempt    int              `json:"attempt"`
+	Sequence   int              `json:"sequence"`
+	Status     execution.Status `json:"status"`
+	Input      json.RawMessage  `json:"input,omitempty"`
+	Output     json.RawMessage  `json:"output,omitempty"`
+	Error      json.RawMessage  `json:"error,omitempty"`
+	StartedAt  time.Time        `json:"startedAt"`
+	FinishedAt *time.Time       `json:"finishedAt,omitempty"`
+}
+
+// ExecutionResource surfaces the durable execution state, result, structured
+// error, and ordered node-run history through the REST API.
+type ExecutionResource struct {
+	ID                      string                     `json:"id"`
+	WorkflowID              string                     `json:"workflowId"`
+	WorkflowVersionID       string                     `json:"workflowVersionId"`
+	Status                  execution.Status           `json:"status"`
+	Trigger                 execution.Trigger          `json:"trigger"`
+	Input                   json.RawMessage            `json:"input,omitempty"`
+	Output                  json.RawMessage            `json:"output,omitempty"`
+	Error                   json.RawMessage            `json:"error,omitempty"`
+	StartedAt               time.Time                  `json:"startedAt"`
+	FinishedAt              *time.Time                 `json:"finishedAt,omitempty"`
+	CancellationRequestedAt *time.Time                 `json:"cancellationRequestedAt,omitempty"`
+	NodeRuns                []ExecutionNodeRunResource `json:"nodeRuns"`
+}
+
+type executionOutput struct {
+	Body ExecutionResource
+}
+
 // NewWorkflows constructs the lifecycle handler. Missing dependencies are
 // answered as service-unavailable rather than causing startup-time panics in
 // narrow API tests.
-func NewWorkflows(workflows repository.WorkflowRepository, executions repository.ExecutionRepository, catalog workflow.Catalog, tenants TenantResolver) *Workflows {
+func NewWorkflows(workflows repository.WorkflowRepository, executions repository.ExecutionRepository, catalog workflow.Catalog, tenants TenantResolver, waker ExecutionWaker) *Workflows {
 	if tenants == nil {
 		tenants = defaultTenantResolver{}
 	}
 	return &Workflows{
-		workflows: workflows, executions: executions, catalog: catalog, tenants: tenants,
+		workflows: workflows, executions: executions, catalog: catalog, tenants: tenants, waker: waker,
 	}
 }
 
@@ -316,6 +358,9 @@ func (handler *Workflows) Run(ctx context.Context, input *runWorkflowInput) (*ex
 	if err != nil {
 		return nil, handler.problem(err)
 	}
+	if handler.waker != nil {
+		handler.waker.Wake()
+	}
 	return &executionRequestOutput{Status: http.StatusAccepted, Body: executionRequestResource(created)}, nil
 }
 
@@ -387,4 +432,22 @@ func executionRequestResource(record execution.Record) ExecutionRequestResource 
 		ID: record.ID, WorkflowID: record.WorkflowID, WorkflowVersionID: record.WorkflowVersionID,
 		Status: record.Status, Trigger: record.Trigger, Input: record.Input, CreatedAt: record.StartedAt,
 	}
+}
+
+func executionResource(record execution.Record) ExecutionResource {
+	resource := ExecutionResource{
+		ID: record.ID, WorkflowID: record.WorkflowID, WorkflowVersionID: record.WorkflowVersionID,
+		Status: record.Status, Trigger: record.Trigger, Input: record.Input, Output: record.Output,
+		Error: record.Error, StartedAt: record.StartedAt, FinishedAt: record.FinishedAt,
+		CancellationRequestedAt: record.CancellationRequestedAt,
+		NodeRuns:                make([]ExecutionNodeRunResource, 0, len(record.NodeRuns)),
+	}
+	for _, nodeRun := range record.NodeRuns {
+		resource.NodeRuns = append(resource.NodeRuns, ExecutionNodeRunResource{
+			NodeID: nodeRun.NodeID, Attempt: nodeRun.Attempt, Sequence: nodeRun.Sequence,
+			Status: nodeRun.Status, Input: nodeRun.Input, Output: nodeRun.Output, Error: nodeRun.Error,
+			StartedAt: nodeRun.StartedAt, FinishedAt: nodeRun.FinishedAt,
+		})
+	}
+	return resource
 }

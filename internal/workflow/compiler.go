@@ -25,7 +25,13 @@ type NodeDefinition struct {
 	Inputs             []Port
 	Outputs            []Port
 	RequiredParameters []string
+	ExecutorID         string
+	Validate           ConfigValidator
 }
+
+// ConfigValidator validates a node's server-owned configuration during
+// compilation, before an execution record can be created.
+type ConfigValidator func(Node) error
 
 // Port is a typed input or output exposed by a node definition.
 type Port struct {
@@ -77,6 +83,7 @@ const (
 	ErrorUnknownPort      ErrorCode = "port.unknown"
 	ErrorIncompatiblePort ErrorCode = "port.incompatible"
 	ErrorRequiredConfig   ErrorCode = "config.required"
+	ErrorInvalidConfig    ErrorCode = "config.invalid"
 )
 
 // ValidationError identifies one invalid executable concern without leaking
@@ -186,6 +193,14 @@ func Compile(document Document, catalog Catalog) (IR, error) {
 				})
 			}
 		}
+		if definition.Validate != nil {
+			if err := definition.Validate(node); err != nil {
+				issues.add(ValidationError{
+					Code: ErrorInvalidConfig, Path: fmt.Sprintf("/nodes/%d/parameters", index), NodeID: node.ID,
+					Message: fmt.Sprintf("node %q configuration is invalid: %v", node.ID, err),
+				})
+			}
+		}
 	}
 
 	for index, connection := range document.Connections {
@@ -237,12 +252,15 @@ func Compile(document Document, catalog Catalog) (IR, error) {
 		})
 	}
 
-	if hasCycle(ir.Edges) {
-		issues.add(ValidationError{
-			Code:    ErrorInvalidTopology,
-			Path:    "/connections",
-			Message: "workflow graph must not contain a cycle",
-		})
+	if len(issues.Issues) == 0 {
+		if hasCycle(ir.Edges) {
+			issues.add(ValidationError{
+				Code:    ErrorInvalidTopology,
+				Path:    "/connections",
+				Message: "workflow graph must not contain a cycle",
+			})
+		}
+		validateExecutableTopology(ir, issues)
 	}
 
 	if len(issues.Issues) > 0 {
@@ -251,6 +269,75 @@ func Compile(document Document, catalog Catalog) (IR, error) {
 	}
 
 	return ir, nil
+}
+
+// validateExecutableTopology rejects drafts that can be saved but cannot be
+// run by the native graph engine. A runnable graph has one trigger-like root
+// (a registered node with no declared inputs), every non-root node receives
+// data on each declared input port, and every node is reachable from that
+// root. The registry currently exposes Manual Trigger as the only such root.
+func validateExecutableTopology(ir IR, issues *ValidationErrors) {
+	incoming := make(map[string]map[string]int, len(ir.Nodes))
+	adjacent := make(map[string][]string, len(ir.Nodes))
+	for _, edge := range ir.Edges {
+		if incoming[edge.Target.NodeID] == nil {
+			incoming[edge.Target.NodeID] = make(map[string]int)
+		}
+		incoming[edge.Target.NodeID][edge.Target.Port]++
+		adjacent[edge.Source.NodeID] = append(adjacent[edge.Source.NodeID], edge.Target.NodeID)
+	}
+
+	roots := make([]IRNode, 0, 1)
+	for index, node := range ir.Nodes {
+		if len(node.Definition.Inputs) == 0 {
+			roots = append(roots, node)
+			if len(incoming[node.ID]) > 0 {
+				issues.add(ValidationError{
+					Code: ErrorInvalidTopology, Path: fmt.Sprintf("/nodes/%d", index), NodeID: node.ID,
+					Message: "workflow trigger must not have incoming connections",
+				})
+			}
+			continue
+		}
+		for _, port := range node.Definition.Inputs {
+			if incoming[node.ID][port.Name] == 0 {
+				issues.add(ValidationError{
+					Code: ErrorInvalidTopology, Path: fmt.Sprintf("/nodes/%d", index), NodeID: node.ID,
+					Message: fmt.Sprintf("workflow node %q requires an incoming %q connection", node.ID, port.Name),
+				})
+			}
+		}
+	}
+
+	if len(roots) != 1 {
+		issues.add(ValidationError{
+			Code: ErrorInvalidTopology, Path: "/nodes",
+			Message: "workflow graph must contain exactly one trigger root",
+		})
+		return
+	}
+
+	reachable := map[string]struct{}{roots[0].ID: {}}
+	queue := []string{roots[0].ID}
+	for len(queue) > 0 {
+		nodeID := queue[0]
+		queue = queue[1:]
+		for _, targetID := range adjacent[nodeID] {
+			if _, found := reachable[targetID]; found {
+				continue
+			}
+			reachable[targetID] = struct{}{}
+			queue = append(queue, targetID)
+		}
+	}
+	for index, node := range ir.Nodes {
+		if _, found := reachable[node.ID]; !found {
+			issues.add(ValidationError{
+				Code: ErrorInvalidTopology, Path: fmt.Sprintf("/nodes/%d", index), NodeID: node.ID,
+				Message: fmt.Sprintf("workflow node %q is disconnected from the trigger", node.ID),
+			})
+		}
+	}
 }
 
 func hasCycle(edges []IREdge) bool {
@@ -297,6 +384,8 @@ func cloneNodeDefinition(definition NodeDefinition) NodeDefinition {
 		Inputs:             append([]Port(nil), definition.Inputs...),
 		Outputs:            append([]Port(nil), definition.Outputs...),
 		RequiredParameters: append([]string(nil), definition.RequiredParameters...),
+		ExecutorID:         definition.ExecutorID,
+		Validate:           definition.Validate,
 	}
 }
 

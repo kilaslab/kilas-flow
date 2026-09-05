@@ -46,19 +46,22 @@ type workflowVersionModel struct {
 func (workflowVersionModel) TableName() string { return "workflow_versions" }
 
 type executionModel struct {
-	ID                string    `gorm:"primaryKey;size:64"`
-	TenantID          string    `gorm:"not null;size:64;index:idx_executions_tenant_started,priority:1;index:idx_executions_tenant_workflow,priority:1"`
-	WorkflowID        string    `gorm:"not null;size:64;index:idx_executions_tenant_workflow,priority:2"`
-	WorkflowVersionID string    `gorm:"not null;size:64;index"`
-	Status            string    `gorm:"not null;size:32"`
-	Trigger           string    `gorm:"not null;size:32"`
-	Input             []byte    `gorm:"not null"`
-	Output            []byte    `gorm:"not null"`
-	Error             []byte    `gorm:"not null"`
-	StartedAt         time.Time `gorm:"not null;index:idx_executions_tenant_started,priority:2"`
-	FinishedAt        *time.Time
-	Workflow          workflowModel        `gorm:"foreignKey:WorkflowID;references:ID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT"`
-	WorkflowVersion   workflowVersionModel `gorm:"foreignKey:WorkflowVersionID;references:ID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT"`
+	ID                      string    `gorm:"primaryKey;size:64"`
+	TenantID                string    `gorm:"not null;size:64;index:idx_executions_tenant_started,priority:1;index:idx_executions_tenant_workflow,priority:1"`
+	WorkflowID              string    `gorm:"not null;size:64;index:idx_executions_tenant_workflow,priority:2"`
+	WorkflowVersionID       string    `gorm:"not null;size:64;index"`
+	Status                  string    `gorm:"not null;size:32"`
+	Trigger                 string    `gorm:"not null;size:32"`
+	Input                   []byte    `gorm:"not null"`
+	Output                  []byte    `gorm:"not null"`
+	Error                   []byte    `gorm:"not null"`
+	StartedAt               time.Time `gorm:"not null;index:idx_executions_tenant_started,priority:2"`
+	FinishedAt              *time.Time
+	LeaseOwner              string               `gorm:"size:128;index"`
+	LeaseExpiresAt          *time.Time           `gorm:"index"`
+	CancellationRequestedAt *time.Time           `gorm:"index"`
+	Workflow                workflowModel        `gorm:"foreignKey:WorkflowID;references:ID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT"`
+	WorkflowVersion         workflowVersionModel `gorm:"foreignKey:WorkflowVersionID;references:ID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT"`
 }
 
 func (executionModel) TableName() string { return "executions" }

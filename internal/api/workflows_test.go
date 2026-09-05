@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/kilaslabs/kilas-flow/internal/api"
+	"github.com/kilaslabs/kilas-flow/internal/api/handlers"
 	"github.com/kilaslabs/kilas-flow/internal/config"
 	"github.com/kilaslabs/kilas-flow/internal/database"
 	"github.com/kilaslabs/kilas-flow/internal/execution"
@@ -49,6 +50,27 @@ type executionRequestResource struct {
 	WorkflowVersionID string `json:"workflowVersionId"`
 	Status            string `json:"status"`
 	Trigger           string `json:"trigger"`
+}
+
+type recordingExecutionController struct {
+	record      execution.Record
+	cancelCalls []string
+	getCalls    []string
+	wakeCalls   int
+}
+
+func (controller *recordingExecutionController) Wake() {
+	controller.wakeCalls++
+}
+
+func (controller *recordingExecutionController) Cancel(_ context.Context, _ repository.TenantScope, executionID string) (execution.Record, error) {
+	controller.cancelCalls = append(controller.cancelCalls, executionID)
+	return controller.record, nil
+}
+
+func (controller *recordingExecutionController) Get(_ context.Context, _ repository.TenantScope, executionID string) (execution.Record, error) {
+	controller.getCalls = append(controller.getCalls, executionID)
+	return controller.record, nil
 }
 
 // saveBeforeExecutionStore simulates a draft save at the exact point a manual
@@ -123,6 +145,43 @@ func TestWorkflowAPICreatesListsUpdatesAndDeletesDrafts(t *testing.T) {
 
 	requestJSON[struct{}](t, handler, http.MethodDelete, "/api/v1/workflows/"+created.ID, nil, http.StatusNoContent)
 	requestProblem(t, handler, http.MethodGet, "/api/v1/workflows/"+created.ID, nil, http.StatusNotFound)
+}
+
+func TestExecutionAPICancelsExecutionThroughRuntimeService(t *testing.T) {
+	controller := &recordingExecutionController{record: execution.Record{
+		ID: "exec-cancel", WorkflowID: "wf-1", WorkflowVersionID: "wfv-1", Status: execution.StatusCancelling, Trigger: execution.TriggerManual,
+	}}
+	handler := newTestServer(t, api.Deps{DB: stubPinger{}, ExecutionController: controller})
+
+	got := requestJSON[executionRequestResource](t, handler, http.MethodPost, "/api/v1/executions/exec-cancel/cancel", nil, http.StatusAccepted)
+	if got.ID != "exec-cancel" || got.Status != string(execution.StatusCancelling) {
+		t.Errorf("cancel response = %#v, want cancelling execution", got)
+	}
+	if len(controller.cancelCalls) != 1 || controller.cancelCalls[0] != "exec-cancel" {
+		t.Errorf("cancelled execution IDs = %v, want [exec-cancel]", controller.cancelCalls)
+	}
+
+	recorded := requestJSON[struct {
+		ID     string `json:"id"`
+		Status string `json:"status"`
+	}](t, handler, http.MethodGet, "/api/v1/executions/exec-cancel", nil, http.StatusOK)
+	if recorded.ID != "exec-cancel" || recorded.Status != string(execution.StatusCancelling) {
+		t.Errorf("execution response = %#v, want cancelling execution", recorded)
+	}
+	if len(controller.getCalls) != 1 || controller.getCalls[0] != "exec-cancel" {
+		t.Errorf("loaded execution IDs = %v, want [exec-cancel]", controller.getCalls)
+	}
+}
+
+func TestWorkflowAPIWakesRuntimeAfterQueuingManualRun(t *testing.T) {
+	controller := &recordingExecutionController{}
+	handler, _, _ := newWorkflowAPIWithController(t, controller)
+	created := createWorkflow(t, handler, validManualWorkflow("Wake worker"))
+
+	requestJSON[executionRequestResource](t, handler, http.MethodPost, "/api/v1/workflows/"+created.ID+"/run", nil, http.StatusAccepted)
+	if got, want := controller.wakeCalls, 1; got != want {
+		t.Errorf("runtime wake calls = %d, want %d", got, want)
+	}
 }
 
 func TestWorkflowAPIActivatesAndQueuesOnlyLatestValidDraft(t *testing.T) {
@@ -245,6 +304,8 @@ func TestWorkflowAPIOpenAPIDocumentsLifecycleResponseStatuses(t *testing.T) {
 		{"/api/v1/workflows", http.MethodPost, "201"},
 		{"/api/v1/workflows/{id}", http.MethodDelete, "204"},
 		{"/api/v1/workflows/{id}/run", http.MethodPost, "202"},
+		{"/api/v1/executions/{id}/cancel", http.MethodPost, "202"},
+		{"/api/v1/executions/{id}", http.MethodGet, "200"},
 	} {
 		path, found := document.Paths[test.path]
 		if !found {
@@ -270,6 +331,10 @@ func TestWorkflowAPIOpenAPIDocumentsLifecycleResponseStatuses(t *testing.T) {
 }
 
 func newWorkflowAPI(t *testing.T) (http.Handler, *repository.GORMWorkflowStore, *repository.GORMExecutionStore) {
+	return newWorkflowAPIWithController(t, nil)
+}
+
+func newWorkflowAPIWithController(t *testing.T, controller handlers.ExecutionController) (http.Handler, *repository.GORMWorkflowStore, *repository.GORMExecutionStore) {
 	t.Helper()
 	db, err := database.Open(context.Background(), config.Database{
 		Driver: "sqlite",
@@ -289,10 +354,11 @@ func newWorkflowAPI(t *testing.T) (http.Handler, *repository.GORMWorkflowStore, 
 	workflows := repository.NewWorkflowStore(db.DB)
 	executions := repository.NewExecutionStore(db.DB)
 	return newTestServer(t, api.Deps{
-		DB:           db,
-		NodeRegistry: registry,
-		Workflows:    workflows,
-		Executions:   executions,
+		DB:                  db,
+		NodeRegistry:        registry,
+		Workflows:           workflows,
+		Executions:          executions,
+		ExecutionController: controller,
 	}), workflows, executions
 }
 

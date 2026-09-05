@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -195,6 +196,161 @@ func (store *GORMExecutionStore) Get(ctx context.Context, tenant TenantScope, ex
 	return record, nil
 }
 
+// ClaimNext atomically assigns the oldest queued execution to one local
+// worker and returns the immutable document pinned by that record. A lease is
+// persisted with the claim so a later worker can recover abandoned work.
+func (store *GORMExecutionStore) ClaimNext(ctx context.Context, workerID string, leaseUntil time.Time) (execution.Record, workflow.Document, bool, error) {
+	if workerID == "" || leaseUntil.IsZero() {
+		return execution.Record{}, workflow.Document{}, false, fmt.Errorf("worker ID and lease expiry are required")
+	}
+	leaseUntil = leaseUntil.UTC()
+	leaseID, err := workflow.NewID("lease")
+	if err != nil {
+		return execution.Record{}, workflow.Document{}, false, err
+	}
+	leaseOwner := workerID + "/" + leaseID
+	var claimed executionModel
+	var document workflow.Document
+	found := false
+	now := time.Now().UTC()
+	err = store.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var candidate executionModel
+		err := tx.Where("status = ? OR ((status = ? OR status = ?) AND lease_expires_at IS NOT NULL AND lease_expires_at <= ?)",
+			string(execution.StatusQueued), string(execution.StatusRunning), string(execution.StatusCancelling), now).
+			Order("started_at ASC, id ASC").
+			First(&candidate).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("find queued execution: %w", err)
+		}
+		reclaimingExpiredLease := candidate.Status == string(execution.StatusRunning)
+		nextStatus := execution.StatusRunning
+		if candidate.Status == string(execution.StatusCancelling) {
+			nextStatus = execution.StatusCancelling
+		}
+		result := tx.Model(&executionModel{}).
+			Where("id = ? AND tenant_id = ? AND (status = ? OR ((status = ? OR status = ?) AND lease_expires_at IS NOT NULL AND lease_expires_at <= ?))",
+				candidate.ID, candidate.TenantID, string(execution.StatusQueued), string(execution.StatusRunning), string(execution.StatusCancelling), now).
+			Updates(map[string]any{
+				"status":           string(nextStatus),
+				"lease_owner":      leaseOwner,
+				"lease_expires_at": leaseUntil,
+			})
+		if result.Error != nil {
+			return fmt.Errorf("claim execution: %w", result.Error)
+		}
+		if result.RowsAffected == 0 {
+			return nil
+		}
+		if reclaimingExpiredLease {
+			// Node runs are written after the in-memory graph has completed. A
+			// process can die between individual trace writes, leaving a partial
+			// attempt that would otherwise conflict with the recovered attempt's
+			// (execution, sequence) and (execution, node, attempt) keys.
+			if err := tx.Where("tenant_id = ? AND execution_id = ?", candidate.TenantID, candidate.ID).Delete(&executionNodeRunModel{}).Error; err != nil {
+				return fmt.Errorf("clear abandoned execution trace: %w", err)
+			}
+		}
+		candidate.Status = string(nextStatus)
+		candidate.LeaseOwner = leaseOwner
+		candidate.LeaseExpiresAt = &leaseUntil
+
+		var version workflowVersionModel
+		if err := tx.Where("tenant_id = ? AND id = ?", candidate.TenantID, candidate.WorkflowVersionID).First(&version).Error; err != nil {
+			return mapNotFound(err, "workflow version")
+		}
+		storedVersion, err := versionFromModel(version)
+		if err != nil {
+			return err
+		}
+		claimed, document, found = candidate, storedVersion.Document, true
+		return nil
+	})
+	if err != nil {
+		return execution.Record{}, workflow.Document{}, false, err
+	}
+	if !found {
+		return execution.Record{}, workflow.Document{}, false, nil
+	}
+	return executionFromModel(claimed), document, true, nil
+}
+
+// UpdateRuntime persists the terminal state and safe result data written by
+// the engine after it has claimed an execution.
+func (store *GORMExecutionStore) UpdateRuntime(ctx context.Context, tenant TenantScope, record execution.Record) (execution.Record, error) {
+	if err := tenant.validate(); err != nil {
+		return execution.Record{}, err
+	}
+	if record.ID == "" || record.Status == "" || record.LeaseOwner == "" {
+		return execution.Record{}, fmt.Errorf("execution ID, status, and lease owner are required")
+	}
+	output, err := payload(record.Output)
+	if err != nil {
+		return execution.Record{}, fmt.Errorf("execution output: %w", err)
+	}
+	errorPayload, err := payload(record.Error)
+	if err != nil {
+		return execution.Record{}, fmt.Errorf("execution error: %w", err)
+	}
+	cancellationError := []byte(`{"code":"execution.cancelled","message":"execution cancellation was accepted before completion"}`)
+	result := store.db.WithContext(ctx).Model(&executionModel{}).
+		Where("tenant_id = ? AND id = ? AND lease_owner = ? AND status IN (?, ?)", tenant.ID, record.ID, record.LeaseOwner, string(execution.StatusRunning), string(execution.StatusCancelling)).
+		Updates(map[string]any{
+			"status":           gorm.Expr("CASE WHEN status = ? THEN ? ELSE ? END", string(execution.StatusCancelling), string(execution.StatusCancelled), string(record.Status)),
+			"output":           gorm.Expr("CASE WHEN status = ? THEN ? ELSE ? END", string(execution.StatusCancelling), []byte("null"), output),
+			"error":            gorm.Expr("CASE WHEN status = ? THEN ? ELSE ? END", string(execution.StatusCancelling), cancellationError, errorPayload),
+			"finished_at":      record.FinishedAt,
+			"lease_owner":      "",
+			"lease_expires_at": nil,
+		})
+	if result.Error != nil {
+		return execution.Record{}, fmt.Errorf("update execution runtime state: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return execution.Record{}, ErrNotFound
+	}
+	return store.Get(ctx, tenant, record.ID)
+}
+
+// Cancel persists a cancellation request. Queued work becomes terminal before
+// any worker can claim it; running work enters cancelling so its local worker
+// can observe the request and write the final cancelled state.
+func (store *GORMExecutionStore) Cancel(ctx context.Context, tenant TenantScope, executionID string) (execution.Record, error) {
+	if err := tenant.validate(); err != nil {
+		return execution.Record{}, err
+	}
+	if executionID == "" {
+		return execution.Record{}, fmt.Errorf("execution ID is required")
+	}
+	var model executionModel
+	if err := store.db.WithContext(ctx).Where("tenant_id = ? AND id = ?", tenant.ID, executionID).First(&model).Error; err != nil {
+		return execution.Record{}, mapNotFound(err, "execution")
+	}
+	now := time.Now().UTC()
+	updates := map[string]any{}
+	switch execution.Status(model.Status) {
+	case execution.StatusQueued:
+		updates["status"] = string(execution.StatusCancelled)
+		updates["finished_at"] = &now
+		updates["lease_owner"] = ""
+		updates["lease_expires_at"] = nil
+	case execution.StatusRunning:
+		updates["status"] = string(execution.StatusCancelling)
+		updates["cancellation_requested_at"] = &now
+	case execution.StatusCancelling, execution.StatusCancelled, execution.StatusSucceeded, execution.StatusFailed:
+		return executionFromModel(model), nil
+	default:
+		return execution.Record{}, fmt.Errorf("execution %q has unsupported status %q", executionID, model.Status)
+	}
+	if err := store.db.WithContext(ctx).Model(&executionModel{}).
+		Where("tenant_id = ? AND id = ?", tenant.ID, executionID).Updates(updates).Error; err != nil {
+		return execution.Record{}, fmt.Errorf("cancel execution: %w", err)
+	}
+	return store.Get(ctx, tenant, executionID)
+}
+
 // CreateNodeRun appends a node attempt only to an execution visible to the
 // current tenant.
 func (store *GORMExecutionStore) CreateNodeRun(ctx context.Context, tenant TenantScope, nodeRun execution.NodeRun) (execution.NodeRun, error) {
@@ -242,7 +398,7 @@ func (store *GORMExecutionStore) CreateNodeRun(ctx context.Context, tenant Tenan
 	}
 	if err := store.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var parent executionModel
-		if err := tx.Where("tenant_id = ? AND id = ?", tenant.ID, nodeRun.ExecutionID).First(&parent).Error; err != nil {
+		if err := tx.Where("tenant_id = ? AND id = ? AND lease_owner = ? AND status IN (?, ?)", tenant.ID, nodeRun.ExecutionID, nodeRun.LeaseOwner, string(execution.StatusRunning), string(execution.StatusCancelling)).First(&parent).Error; err != nil {
 			return mapNotFound(err, "execution")
 		}
 		if err := tx.Create(&model).Error; err != nil {
@@ -266,8 +422,8 @@ func validateExecution(record execution.Record) error {
 }
 
 func validateNodeRun(nodeRun execution.NodeRun) error {
-	if nodeRun.ExecutionID == "" || nodeRun.NodeID == "" {
-		return fmt.Errorf("node run execution and node are required")
+	if nodeRun.ExecutionID == "" || nodeRun.NodeID == "" || nodeRun.LeaseOwner == "" {
+		return fmt.Errorf("node run execution, node, and lease owner are required")
 	}
 	if nodeRun.Attempt < 1 || nodeRun.Sequence < 1 {
 		return fmt.Errorf("node run attempt and sequence must be positive")
@@ -290,17 +446,19 @@ func payload(value json.RawMessage) ([]byte, error) {
 
 func executionFromModel(model executionModel) execution.Record {
 	return execution.Record{
-		ID:                model.ID,
-		TenantID:          model.TenantID,
-		WorkflowID:        model.WorkflowID,
-		WorkflowVersionID: model.WorkflowVersionID,
-		Status:            execution.Status(model.Status),
-		Trigger:           execution.Trigger(model.Trigger),
-		Input:             append(json.RawMessage(nil), model.Input...),
-		Output:            append(json.RawMessage(nil), model.Output...),
-		Error:             append(json.RawMessage(nil), model.Error...),
-		StartedAt:         model.StartedAt,
-		FinishedAt:        model.FinishedAt,
+		ID:                      model.ID,
+		TenantID:                model.TenantID,
+		WorkflowID:              model.WorkflowID,
+		WorkflowVersionID:       model.WorkflowVersionID,
+		Status:                  execution.Status(model.Status),
+		Trigger:                 execution.Trigger(model.Trigger),
+		Input:                   append(json.RawMessage(nil), model.Input...),
+		Output:                  append(json.RawMessage(nil), model.Output...),
+		Error:                   append(json.RawMessage(nil), model.Error...),
+		StartedAt:               model.StartedAt,
+		FinishedAt:              model.FinishedAt,
+		CancellationRequestedAt: model.CancellationRequestedAt,
+		LeaseOwner:              model.LeaseOwner,
 	}
 }
 

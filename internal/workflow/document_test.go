@@ -10,7 +10,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kilaslabs/kilas-flow/internal/node"
 	"github.com/kilaslabs/kilas-flow/internal/workflow"
+	"github.com/kilaslabs/kilas-flow/nodes"
 )
 
 type catalog map[string]workflow.NodeDefinition
@@ -227,6 +229,46 @@ func TestCompileRejectsEmptyGraphAsInvalidTopology(t *testing.T) {
 	}
 }
 
+func TestCompileRejectsNodeDisconnectedFromTheManualTrigger(t *testing.T) {
+	document := workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_019",
+		Name:          "Disconnected node",
+		Nodes: []workflow.Node{
+			{ID: "manual", Name: "Manual Trigger", Type: "kilasflow.manual", TypeVersion: 1},
+			{ID: "set", Name: "Set", Type: "kilasflow.set", TypeVersion: 1, Parameters: map[string]any{"assignments": map[string]any{"status": "ready"}}},
+			{ID: "orphan", Name: "Orphan", Type: "kilasflow.set", TypeVersion: 1, Parameters: map[string]any{"assignments": map[string]any{"status": "orphan"}}},
+		},
+		Connections: []workflow.Connection{{
+			ID: "manual-set", Kind: workflow.ConnectionMain,
+			Source: workflow.Endpoint{NodeID: "manual", Port: "main"},
+			Target: workflow.Endpoint{NodeID: "set", Port: "main"},
+		}},
+		Settings: map[string]any{},
+	}
+
+	_, err := workflow.Compile(document, catalog{
+		"kilasflow.manual": {
+			Type: "kilasflow.manual", Version: 1,
+			Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+		},
+		"kilasflow.set": {
+			Type: "kilasflow.set", Version: 1,
+			Inputs:             []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+			Outputs:            []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+			RequiredParameters: []string{"assignments"},
+		},
+	})
+
+	var validationErrors *workflow.ValidationErrors
+	if !errors.As(err, &validationErrors) {
+		t.Fatalf("Compile() error = %v, want ValidationErrors", err)
+	}
+	if !containsValidationCode(validationErrors.Issues, workflow.ErrorInvalidTopology) {
+		t.Errorf("validation issues = %#v, want %q", validationErrors.Issues, workflow.ErrorInvalidTopology)
+	}
+}
+
 func TestCompileRejectsMissingRequiredConfiguration(t *testing.T) {
 	document := workflow.Document{
 		SchemaVersion: workflow.CurrentSchemaVersion,
@@ -252,6 +294,36 @@ func TestCompileRejectsMissingRequiredConfiguration(t *testing.T) {
 	}
 	if got, want := validationErrors.Issues[0].Code, workflow.ErrorRequiredConfig; got != want {
 		t.Errorf("validation code = %q, want %q", got, want)
+	}
+}
+
+func TestCompileRejectsMalformedCoreIFConfiguration(t *testing.T) {
+	registry := node.NewRegistry()
+	if err := nodes.RegisterAll(registry); err != nil {
+		t.Fatalf("RegisterAll() error = %v", err)
+	}
+	_, err := workflow.Compile(workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_022",
+		Name:          "Malformed IF",
+		Nodes: []workflow.Node{
+			{ID: "manual", Name: "Manual Trigger", Type: "kilasflow.manual", TypeVersion: 1},
+			{ID: "if", Name: "IF", Type: "kilasflow.if", TypeVersion: 1, Parameters: map[string]any{"conditions": []any{"not-a-condition"}}},
+		},
+		Connections: []workflow.Connection{{
+			ID: "manual-if", Kind: workflow.ConnectionMain,
+			Source: workflow.Endpoint{NodeID: "manual", Port: "main"},
+			Target: workflow.Endpoint{NodeID: "if", Port: "main"},
+		}},
+		Settings: map[string]any{},
+	}, registry)
+
+	var validationErrors *workflow.ValidationErrors
+	if !errors.As(err, &validationErrors) {
+		t.Fatalf("Compile() error = %v, want ValidationErrors", err)
+	}
+	if !containsValidationCode(validationErrors.Issues, workflow.ErrorInvalidConfig) {
+		t.Errorf("validation issues = %#v, want %q", validationErrors.Issues, workflow.ErrorInvalidConfig)
 	}
 }
 

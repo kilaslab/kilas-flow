@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/kilaslabs/kilas-flow/internal/config"
 	"github.com/kilaslabs/kilas-flow/internal/database"
@@ -139,6 +140,10 @@ func TestExecutionStorePinsWorkflowVersionAndPersistsNodeRuns(t *testing.T) {
 		t.Fatalf("execution version = %q, want %q", got, want)
 	}
 
+	claimed, _, found, err := store.ClaimNext(context.Background(), "test-worker", time.Now().Add(time.Second))
+	if err != nil || !found {
+		t.Fatalf("ClaimNext() = (%#v, %v, %v), want claimed", claimed, found, err)
+	}
 	_, err = store.CreateNodeRun(context.Background(), tenant, execution.NodeRun{
 		ExecutionID: created.ID,
 		NodeID:      "manual",
@@ -146,6 +151,7 @@ func TestExecutionStorePinsWorkflowVersionAndPersistsNodeRuns(t *testing.T) {
 		Sequence:    1,
 		Status:      execution.StatusSucceeded,
 		Output:      json.RawMessage(`[[{"json":{"customer":"Ada"}}]]`),
+		LeaseOwner:  claimed.LeaseOwner,
 	})
 	if err != nil {
 		t.Fatalf("CreateNodeRun() error = %v", err)
@@ -160,6 +166,82 @@ func TestExecutionStorePinsWorkflowVersionAndPersistsNodeRuns(t *testing.T) {
 	}
 	if got, want := loaded.NodeRuns[0].NodeID, "manual"; got != want {
 		t.Errorf("node run node ID = %q, want %q", got, want)
+	}
+}
+
+func TestExecutionStoreReclaimsAnExpiredWorkerLease(t *testing.T) {
+	db, err := database.Open(context.Background(), config.Database{
+		Driver: "sqlite",
+		DSN:    filepath.Join(t.TempDir(), "kilasflow.db"),
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := database.Migrate(db, repository.Models()...); err != nil {
+		t.Fatalf("Migrate() error = %v", err)
+	}
+	tenant := repository.TenantScope{ID: "tenant-a"}
+	workflows := repository.NewWorkflowStore(db.DB)
+	stored, err := workflows.SaveDraft(context.Background(), tenant, workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_027",
+		Name:          "Lease recovery",
+		Nodes: []workflow.Node{{
+			ID: "manual", Name: "Manual Trigger", Type: "kilasflow.manual", TypeVersion: 1,
+		}},
+		Connections: []workflow.Connection{},
+		Settings:    map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("SaveDraft() error = %v", err)
+	}
+	store := repository.NewExecutionStore(db.DB)
+	queued, err := store.QueueManualLatest(context.Background(), tenant, stored.ID, activationCatalog{
+		"kilasflow.manual": {Type: "kilasflow.manual", Version: 1, Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}}},
+	}, nil)
+	if err != nil {
+		t.Fatalf("QueueManualLatest() error = %v", err)
+	}
+	first, _, claimed, err := store.ClaimNext(context.Background(), "stopped-worker", time.Now().Add(-time.Second))
+	if err != nil || !claimed {
+		t.Fatalf("first ClaimNext() = (%#v, %v, %v), want claimed", first, claimed, err)
+	}
+	second, _, claimed, err := store.ClaimNext(context.Background(), "recovery-worker", time.Now().Add(time.Second))
+	if err != nil || !claimed {
+		t.Fatalf("second ClaimNext() = (%#v, %v, %v), want expired lease reclaimed", second, claimed, err)
+	}
+	if got, want := second.ID, queued.ID; got != want {
+		t.Errorf("reclaimed execution = %q, want %q", got, want)
+	}
+	if first.LeaseOwner == second.LeaseOwner {
+		t.Fatalf("reclaimed lease owner = %q, want a distinct fencing token", second.LeaseOwner)
+	}
+	now := time.Now().UTC()
+	_, err = store.CreateNodeRun(context.Background(), tenant, execution.NodeRun{
+		ExecutionID: queued.ID,
+		NodeID:      "manual",
+		Attempt:     1,
+		Sequence:    1,
+		Status:      execution.StatusSucceeded,
+		StartedAt:   now,
+		FinishedAt:  &now,
+		LeaseOwner:  first.LeaseOwner,
+	})
+	if !errors.Is(err, repository.ErrNotFound) {
+		t.Fatalf("CreateNodeRun(stale lease) error = %v, want ErrNotFound", err)
+	}
+	first.Status = execution.StatusSucceeded
+	first.FinishedAt = &now
+	if _, err := store.UpdateRuntime(context.Background(), tenant, first); !errors.Is(err, repository.ErrNotFound) {
+		t.Fatalf("UpdateRuntime(stale lease) error = %v, want ErrNotFound", err)
+	}
+	persisted, err := store.Get(context.Background(), tenant, queued.ID)
+	if err != nil {
+		t.Fatalf("Get(reclaimed) error = %v", err)
+	}
+	if got, want := persisted.Status, execution.StatusRunning; got != want {
+		t.Errorf("reclaimed execution status = %q, want %q", got, want)
 	}
 }
 

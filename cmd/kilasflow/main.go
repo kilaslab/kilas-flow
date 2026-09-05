@@ -15,6 +15,7 @@ import (
 	"github.com/kilaslabs/kilas-flow/internal/api/handlers"
 	"github.com/kilaslabs/kilas-flow/internal/config"
 	"github.com/kilaslabs/kilas-flow/internal/database"
+	"github.com/kilaslabs/kilas-flow/internal/engine"
 	"github.com/kilaslabs/kilas-flow/internal/node"
 	"github.com/kilaslabs/kilas-flow/internal/repository"
 	"github.com/kilaslabs/kilas-flow/nodes"
@@ -70,15 +71,34 @@ func run() error {
 	if err := nodes.RegisterAll(nodeRegistry); err != nil {
 		return fmt.Errorf("register built-in nodes: %w", err)
 	}
+	executorRegistry := engine.NewRegistry()
+	if err := nodes.RegisterExecutors(executorRegistry); err != nil {
+		return fmt.Errorf("register built-in executors: %w", err)
+	}
+	executions := repository.NewExecutionStore(db.DB)
+	runtime, err := engine.NewService(engine.ServiceDeps{
+		Executions:     executions,
+		Catalog:        nodeRegistry,
+		Runner:         engine.NewRunner(executorRegistry),
+		WorkerID:       fmt.Sprintf("kilasflow-%d", os.Getpid()),
+		DefaultTimeout: cfg.Execution.DefaultTimeout,
+	})
+	if err != nil {
+		return fmt.Errorf("configure execution runtime: %w", err)
+	}
+	if err := runtime.Start(ctx, cfg.Execution.MaxConcurrent); err != nil {
+		return fmt.Errorf("start execution runtime: %w", err)
+	}
 
 	server := api.NewServer(api.Deps{
-		Config:       cfg,
-		Logger:       log,
-		DB:           handlers.Pinger(db),
-		NodeRegistry: nodeRegistry,
-		Workflows:    repository.NewWorkflowStore(db.DB),
-		Executions:   repository.NewExecutionStore(db.DB),
-		Version:      version,
+		Config:              cfg,
+		Logger:              log,
+		DB:                  handlers.Pinger(db),
+		NodeRegistry:        nodeRegistry,
+		Workflows:           repository.NewWorkflowStore(db.DB),
+		Executions:          executions,
+		ExecutionController: runtime,
+		Version:             version,
 	})
 
 	return server.Run(ctx)

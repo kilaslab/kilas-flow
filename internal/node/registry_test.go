@@ -132,32 +132,33 @@ func TestRegistryValidatesEverySupportedConnectionKind(t *testing.T) {
 		workflow.ConnectionMemory,
 		workflow.ConnectionTool,
 	}
-	nodes := make([]workflow.Node, 0, len(kinds)*2)
+	outputs := make([]workflow.Port, 0, len(kinds))
+	for _, kind := range kinds {
+		outputs = append(outputs, workflow.Port{Name: "out-" + string(kind), Kind: kind})
+	}
+	if err := registry.Register(node.Definition{
+		Type: "kilasflow.source", Version: 1, DisplayName: "Source", Category: "Test", ExecutorID: "source",
+		Outputs: outputs,
+	}); err != nil {
+		t.Fatalf("register source = %v", err)
+	}
+	nodes := []workflow.Node{{ID: "source", Name: "source", Type: "kilasflow.source", TypeVersion: 1}}
 	connections := make([]workflow.Connection, 0, len(kinds))
 	for _, kind := range kinds {
-		sourceType := "kilasflow.source." + string(kind)
 		targetType := "kilasflow.target." + string(kind)
-		if err := registry.Register(node.Definition{
-			Type: sourceType, Version: 1, DisplayName: sourceType, Category: "Test", ExecutorID: sourceType,
-			Outputs: []workflow.Port{{Name: "out", Kind: kind}},
-		}); err != nil {
-			t.Fatalf("register source %q = %v", kind, err)
-		}
 		if err := registry.Register(node.Definition{
 			Type: targetType, Version: 1, DisplayName: targetType, Category: "Test", ExecutorID: targetType,
 			Inputs: []workflow.Port{{Name: "in", Kind: kind}},
 		}); err != nil {
 			t.Fatalf("register target %q = %v", kind, err)
 		}
-		sourceID := "source-" + string(kind)
 		targetID := "target-" + string(kind)
 		nodes = append(nodes,
-			workflow.Node{ID: sourceID, Name: sourceID, Type: sourceType, TypeVersion: 1},
 			workflow.Node{ID: targetID, Name: targetID, Type: targetType, TypeVersion: 1},
 		)
 		connections = append(connections, workflow.Connection{
 			ID: "edge-" + string(kind), Kind: kind,
-			Source: workflow.Endpoint{NodeID: sourceID, Port: "out"}, Target: workflow.Endpoint{NodeID: targetID, Port: "in"},
+			Source: workflow.Endpoint{NodeID: "source", Port: "out-" + string(kind)}, Target: workflow.Endpoint{NodeID: targetID, Port: "in"},
 		})
 	}
 	document := workflow.Document{
