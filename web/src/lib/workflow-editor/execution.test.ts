@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
 import type { Connection, Definition, ExecutionNodeRunResource, Node } from '$lib/api/generated/models';
-import { edgeItemCounts, executionDurationMs, formatDuration, latestNodeRuns, nodeRunStatus } from './execution';
+import {
+	binaryAttachments,
+	edgeItemCounts,
+	executionDurationMs,
+	formatBytes,
+	formatDuration,
+	latestNodeRuns,
+	nodeRunStatus
+} from './execution';
 
 function nodeRun(overrides: Partial<ExecutionNodeRunResource> & { nodeId: string }): ExecutionNodeRunResource {
 	return {
@@ -142,5 +150,50 @@ describe('executionDurationMs', () => {
 
 	it('returns null while a run is still in flight', () => {
 		expect(executionDurationMs({ startedAt: '2026-09-05T01:00:00.000Z' })).toBeNull();
+	});
+});
+
+describe('binaryAttachments', () => {
+	it('flattens every reference a run produced, keeping where it came from', () => {
+		const attachments = binaryAttachments([
+			[
+				{ json: { caption: 'hi' }, binary: { data: { id: 'bin-1', fileName: 'a.png', mediaType: 'image/png', size: 2048 } } },
+				{ json: { caption: 'no attachment' } }
+			],
+			[{ json: {}, binary: { report: { id: 'bin-2' }, receipt: { id: 'bin-3' } } }]
+		]);
+
+		expect(attachments.map((attachment) => [attachment.port, attachment.item, attachment.property, attachment.reference.id])).toEqual([
+			[0, 0, 'data', 'bin-1'],
+			[1, 0, 'report', 'bin-2'],
+			[1, 0, 'receipt', 'bin-3']
+		]);
+	});
+
+	it('ignores anything that is not a reference', () => {
+		// A node run's output is server JSON, not a typed value, so the shape is
+		// checked rather than trusted: a `binary` key holding a string is a bug
+		// somewhere, not something to render as an attachment.
+		expect(binaryAttachments(null)).toEqual([]);
+		expect(binaryAttachments([null, 'nope'])).toEqual([]);
+		expect(binaryAttachments([[{ binary: 'not an object' }]])).toEqual([]);
+		expect(binaryAttachments([[{ binary: { data: { fileName: 'no id' } } }]])).toEqual([]);
+	});
+});
+
+describe('formatBytes', () => {
+	it('reads the way a download dialog does', () => {
+		expect(formatBytes(0)).toBe('0 B');
+		expect(formatBytes(999)).toBe('999 B');
+		expect(formatBytes(1000)).toBe('1.0 kB');
+		expect(formatBytes(2048)).toBe('2.0 kB');
+		expect(formatBytes(15_000)).toBe('15 kB');
+		expect(formatBytes(16_777_216)).toBe('17 MB');
+	});
+
+	it('says so when the size is missing rather than showing a zero', () => {
+		expect(formatBytes(undefined)).toBe('unknown size');
+		expect(formatBytes(-1)).toBe('unknown size');
+		expect(formatBytes(Number.NaN)).toBe('unknown size');
 	});
 });

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -84,7 +85,16 @@ func httpRequestNode() node.Definition {
 					{Label: "Autodetect", Value: "autodetect"},
 					{Label: "JSON", Value: "json"},
 					{Label: "Text", Value: "text"},
+					{Label: "File", Value: "file"},
 				},
+				Description: "Autodetect attaches a response that is not text or JSON under the binary " +
+					"property `data` when this server has binary storage configured, and decodes it as " +
+					"text otherwise. File always attaches, and says so if storage is unavailable.",
+			},
+			{
+				Key: "outputPropertyName", Label: "Binary property", Kind: node.PropertyString, Default: "data",
+				Description: "Which binary property on the output item the response is attached to.",
+				VisibleWhen: []node.VisibilityCondition{{Key: "responseFormat", Equals: "file"}},
 			},
 			{
 				Key: "neverError", Label: "Never fail on HTTP error status", Kind: node.PropertyBoolean, Default: false,
@@ -295,12 +305,128 @@ func (executor *HTTPExecutor) sendOne(ctx context.Context, ir workflow.IRNode, p
 		return workflow.Item{}, fmt.Errorf("node %q: request failed with status %d", ir.Name, response.StatusCode)
 	}
 
-	return workflow.Item{JSON: map[string]any{
+	item := workflow.Item{JSON: map[string]any{
 		"statusCode": float64(response.StatusCode),
 		"headers":    responseHeaders(response),
-		"body":       decodeBody(contents, textValue(parameters["responseFormat"], "autodetect"), response.Header.Get("Content-Type")),
 		"truncated":  truncated,
-	}}, nil
+	}}
+
+	format := textValue(parameters["responseFormat"], "autodetect")
+	responseType := response.Header.Get("Content-Type")
+	if !storesAFile(format, responseType, truncated, request.Binaries != nil) {
+		item.JSON["body"] = decodeBody(contents, format, responseType)
+		return item, nil
+	}
+
+	// A truncated payload is refused rather than stored. Half a PDF that
+	// reports success is worse than a failure naming the bound, and the item
+	// carries no length a downstream node could check against.
+	if truncated {
+		return workflow.Item{}, fmt.Errorf("node %q: response exceeds the configured size limit and cannot be stored as a file", ir.Name)
+	}
+	if request.Binaries == nil {
+		return workflow.Item{}, fmt.Errorf("node %q: binary storage is not configured on this server", ir.Name)
+	}
+	reference, err := request.Binaries.Put(responseFileName(response, target), mediaType(responseType), bytes.NewReader(contents))
+	if err != nil {
+		return workflow.Item{}, fmt.Errorf("node %q: store response: %w", ir.Name, err)
+	}
+	// The payload itself never enters the item, the execution record or a log
+	// line — only the reference does.
+	item.Binary = map[string]workflow.BinaryRef{
+		textValue(parameters["outputPropertyName"], "data"): reference,
+	}
+	return item, nil
+}
+
+// storesAFile decides whether a response is attached instead of decoded.
+//
+// `file` is a request, and one that cannot be honoured is an error the caller
+// should see — a node asked for a file and got a string is a silent wrong
+// answer. `autodetect` is a preference: it diverts a non-text response only
+// when there is somewhere to divert it to, and otherwise decodes it exactly as
+// it did before. Binary storage is off by default, so the alternative would be
+// every non-text response on every unconfigured server failing at once.
+func storesAFile(format, contentType string, truncated, configured bool) bool {
+	if format == "file" {
+		return true
+	}
+	if format != "autodetect" || isTextual(contentType) {
+		return false
+	}
+	return configured && !truncated
+}
+
+// isTextual reports whether a content type is meant to be read as text.
+//
+// An absent content type is treated as text: that is what an ordinary API that
+// forgot the header sends, and turning every unlabelled response into a file
+// would be a worse default than the one it replaces.
+func isTextual(contentType string) bool {
+	media := strings.ToLower(mediaType(contentType))
+	if media == "" {
+		return true
+	}
+	if strings.HasPrefix(media, "text/") {
+		return true
+	}
+	switch media {
+	case "application/json", "application/xml", "application/xhtml+xml",
+		"application/javascript", "application/x-www-form-urlencoded",
+		"application/ld+json", "application/problem+json",
+		"application/ndjson", "application/x-ndjson",
+		"application/yaml", "application/x-yaml",
+		"application/graphql", "application/sql":
+		return true
+	}
+	// Structured suffixes: application/vnd.api+json and friends are text.
+	return strings.HasSuffix(media, "+json") || strings.HasSuffix(media, "+xml")
+}
+
+// mediaType strips parameters from a Content-Type header.
+func mediaType(contentType string) string {
+	media, _, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return strings.TrimSpace(strings.Split(contentType, ";")[0])
+	}
+	return media
+}
+
+// responseFileName names the stored payload, preferring what the server said.
+//
+// The name is metadata — the payload is keyed by a generated ID, never by this
+// — but it is shown to a person and may be handed to another node, so a remote
+// server does not get to put a path in it.
+func responseFileName(response *http.Response, target *url.URL) string {
+	if disposition := response.Header.Get("Content-Disposition"); disposition != "" {
+		if _, parameters, err := mime.ParseMediaType(disposition); err == nil {
+			if name := plainFileName(parameters["filename"]); name != "" {
+				return name
+			}
+		}
+	}
+	if target != nil {
+		if name := plainFileName(target.Path); name != "" {
+			return name
+		}
+	}
+	return "data"
+}
+
+// plainFileName reduces a candidate to a single path-free segment, or nothing.
+//
+// Both separators are cut, not just this platform's: the header comes off the
+// wire, so a Windows-shaped path is exactly as likely as a POSIX one and
+// `filepath.Base` would keep it whole on a Linux server.
+func plainFileName(candidate string) string {
+	name := strings.TrimSpace(candidate)
+	if index := strings.LastIndexAny(name, `/\`); index >= 0 {
+		name = name[index+1:]
+	}
+	if name == "." || name == ".." {
+		return ""
+	}
+	return name
 }
 
 // authenticate resolves and applies the node's credential.

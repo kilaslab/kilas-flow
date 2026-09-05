@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kilaslabs/kilas-flow/internal/binary"
 	"github.com/kilaslabs/kilas-flow/internal/credentials"
 	"github.com/kilaslabs/kilas-flow/internal/events"
 	"github.com/kilaslabs/kilas-flow/internal/execution"
@@ -35,6 +36,9 @@ type CredentialStore interface {
 
 // ServiceDeps configures one local durable execution worker.
 type ServiceDeps struct {
+	// Binaries stores item payloads. Nil leaves a node that needs one failing
+	// with a clear message rather than silently dropping an attachment.
+	Binaries    binary.Store
 	Executions  ExecutionStore
 	Catalog     workflow.Catalog
 	Runner      *Runner
@@ -55,6 +59,7 @@ type ServiceDeps struct {
 // runtime results. It is deliberately transport-independent.
 type Service struct {
 	executions     ExecutionStore
+	binaries       binary.Store
 	catalog        workflow.Catalog
 	runner         *Runner
 	credentials    CredentialStore
@@ -81,6 +86,7 @@ func NewService(deps ServiceDeps) (*Service, error) {
 	}
 	return &Service{
 		executions:     deps.Executions,
+		binaries:       deps.Binaries,
 		catalog:        deps.Catalog,
 		runner:         deps.Runner,
 		credentials:    deps.Credentials,
@@ -91,6 +97,21 @@ func NewService(deps ServiceDeps) (*Service, error) {
 		active:         make(map[string]context.CancelFunc),
 		wake:           make(chan struct{}, 1),
 	}, nil
+}
+
+// DiscardBinaries removes the payloads one execution wrote.
+//
+// A binary store with no deletion path is a disk-full incident with a delay
+// fuse. Execution retention does not exist yet — nothing in this codebase
+// removes an execution row — so this is the single call the pruner in
+// FEAT-5fv8gf makes once it does, rather than a directory tree it has to
+// reverse-engineer. It is scoped like every other tenant-facing operation, so a
+// prune that gets the tenant wrong removes nothing instead of the wrong thing.
+func (service *Service) DiscardBinaries(tenantID, executionID string) error {
+	if service.binaries == nil {
+		return nil
+	}
+	return service.binaries.DeleteExecution(binary.Scope{TenantID: tenantID, ExecutionID: executionID})
 }
 
 // RunOnce claims and completes at most one queued execution. It is exported so
@@ -309,7 +330,7 @@ func (service *Service) run(ctx context.Context, record execution.Record, docume
 	if err != nil {
 		return Result{}, err
 	}
-	return service.runner.Run(ctx, ir, Request{
+	request := Request{
 		Input:         item,
 		TriggerNodeID: record.TriggerNodeID,
 		Execution: ExecutionContext{
@@ -328,7 +349,16 @@ func (service *Service) run(ctx context.Context, record execution.Record, docume
 				NodeID: event.NodeID, Type: events.Type(event.Name), Data: event.Detail,
 			})
 		},
-	})
+	}
+	// Left nil when this server has no binary storage, so a node can ask
+	// whether storing a payload is even possible. Boxing a nil store in the
+	// interface would make that question unanswerable, and a node that has to
+	// attempt a write to find out is a node that fails where it could have
+	// degraded.
+	if service.binaries != nil {
+		request.Binaries = binary.For(service.binaries, record.TenantID, record.ID)
+	}
+	return service.runner.Run(ctx, ir, request)
 }
 
 // tenantCredentials binds credential resolution to the tenant that owns the

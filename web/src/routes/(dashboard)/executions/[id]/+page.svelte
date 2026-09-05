@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import ArrowLeft from '@lucide/svelte/icons/arrow-left';
+	import Paperclip from '@lucide/svelte/icons/paperclip';
 
 	import { ApiError } from '$lib/api/http';
 	import { createGetExecution } from '$lib/api/generated/executions/executions';
@@ -11,7 +12,9 @@
 	import ExecutionCanvas from '$lib/components/workflow-editor/execution-canvas.svelte';
 	import { applyEvents, executionEvents, latestExecutionStatus } from '$lib/workflow-editor/event-stream.svelte';
 	import {
+		binaryAttachments,
 		executionDurationMs,
+		formatBytes,
 		formatDuration,
 		formatTimestamp,
 		latestNodeRuns,
@@ -62,6 +65,10 @@
 	const liveStatus = $derived(latestExecutionStatus(live.events));
 	const status = $derived(liveStatus ?? execution.data?.status ?? 'queued');
 	const selectedRun = $derived(selectedNodeID ? (runs.get(selectedNodeID) ?? null) : null);
+	// Payloads never leave the server's binary store, so the inspector lists
+	// what an attachment *is* — name, type, size — and never tries to render
+	// one. There is nothing to render: the API serves the reference only.
+	const attachments = $derived(binaryAttachments(selectedRun?.output));
 	const selectedNode = $derived(
 		selectedNodeID ? ((version.data?.document.nodes ?? []).find((node) => node.id === selectedNodeID) ?? null) : null
 	);
@@ -195,6 +202,25 @@
 									<h3 class="text-sm font-medium">Output</h3>
 									<pre class="mt-1.5 overflow-x-auto rounded-lg bg-muted p-3 text-xs leading-5">{asJSON(selectedRun.output)}</pre>
 								</div>
+								{#if attachments.length > 0}
+									<div>
+										<h3 class="text-sm font-medium">Attachments</h3>
+										<ul class="mt-1.5 space-y-1.5">
+											{#each attachments as attachment (`${attachment.port}:${attachment.item}:${attachment.property}`)}
+												<li class="flex items-start gap-2 rounded-lg border border-border px-3 py-2">
+													<Paperclip class="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+													<div class="min-w-0">
+														<p class="truncate text-xs font-medium">{attachment.reference.fileName || attachment.property}</p>
+														<p class="mt-0.5 text-xs text-muted-foreground">
+															{attachment.reference.mediaType || 'unknown type'} · {formatBytes(attachment.reference.size)} · item {attachment.item + 1}
+														</p>
+													</div>
+												</li>
+											{/each}
+										</ul>
+										<p class="mt-1.5 text-xs text-muted-foreground">Contents are held by the server and are not shown here.</p>
+									</div>
+								{/if}
 								<p class="text-xs text-muted-foreground">
 									{formatTimestamp(selectedRun.startedAt)} · {formatDuration(executionDurationMs(selectedRun))}
 								</p>

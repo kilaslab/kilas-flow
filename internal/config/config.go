@@ -28,6 +28,7 @@ type Config struct {
 	Embed     Embed        `koanf:"embed"`
 	Branding  Branding     `koanf:"branding"`
 	Execution Execution    `koanf:"execution"`
+	Binary    Binary       `koanf:"binary"`
 	Log       Log          `koanf:"log"`
 }
 
@@ -125,6 +126,21 @@ type Execution struct {
 	DefaultTimeout time.Duration `koanf:"default_timeout"`
 }
 
+// Binary configures where item payloads are stored.
+//
+// The section name is one word deliberately: the environment override maps the
+// first underscore in KILASFLOW_* to the section separator, so a two-word
+// section could never be set from the environment.
+type Binary struct {
+	// Root is the directory payloads are written under. Empty disables binary
+	// storage, and a node that needs it then fails with a clear message
+	// instead of dropping an attachment on the floor.
+	Root string `koanf:"root"`
+	// MaxBytes bounds one payload. It is enforced while reading, so an
+	// oversized response is refused rather than truncated.
+	MaxBytes int64 `koanf:"max_bytes"`
+}
+
 // Log configures structured logging.
 type Log struct {
 	// Level is one of debug, info, warn, error.
@@ -172,6 +188,14 @@ func Default() Config {
 		Execution: Execution{
 			MaxConcurrent:  10,
 			DefaultTimeout: 60 * time.Second,
+		},
+		Binary: Binary{
+			// Empty root disables binary storage rather than defaulting to
+			// somewhere surprising: a product that silently starts writing
+			// multi-megabyte media into an unexpected directory is worse than
+			// one that says it is not configured.
+			Root:     "",
+			MaxBytes: 16 << 20,
 		},
 		Log: Log{
 			Level:  "info",

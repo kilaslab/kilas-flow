@@ -92,8 +92,13 @@ type Connection struct {
 	Target Endpoint       `json:"target"`
 }
 
-// BinaryRef is metadata for a binary item. Binary payload storage is outside
-// the workflow contract and is intentionally not part of this milestone.
+// BinaryRef is what an item carries in place of a payload.
+//
+// The bytes live in `internal/binary`, keyed by tenant, execution and this ID.
+// Only this metadata enters a workflow document, an execution record, an API
+// response body or a log line — which is why the fields here are deliberately
+// the ones a person needs to recognise an attachment (name, type, size) and
+// nothing that could carry content.
 type BinaryRef struct {
 	ID        string `json:"id"`
 	FileName  string `json:"fileName,omitempty"`

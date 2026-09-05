@@ -38,6 +38,7 @@ The n8n node also does two things badly that KilasFlow should not copy. It regis
 - [ ] When auto-registration is off, activation returns a notice naming the exact URL to paste into WAHA's session configuration, so an imported workflow cannot look correct while receiving nothing.
 - [ ] When a webhook secret is configured, `X-Webhook-Hmac` is verified as SHA-512 over the raw request body and a failing delivery is rejected before an execution is created.
 - [ ] Repeated deliveries carrying the same `X-Webhook-Request-Id` produce one execution, since WAHA retries.
+- [ ] A media-bearing delivery attaches the media through the binary store (`engine.Request.Binaries`, from FEAT-0f87fn) as a `workflow.BinaryRef` on the item, never as bytes in item JSON.
 
 ## Implementation Plan
 

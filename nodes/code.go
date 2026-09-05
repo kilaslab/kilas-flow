@@ -99,8 +99,13 @@ func (executor *CodeExecutor) Execute(ctx context.Context, ir workflow.IRNode, i
 		}
 	}
 
-	items := make([]runcode.Item, 0, len(input["main"]))
-	for _, item := range input["main"] {
+	// Binary references are carried past the sandbox rather than through it.
+	// User code sees and edits JSON; a payload it never receives is one it
+	// cannot corrupt, and dropping the reference on the way out was silently
+	// losing an attachment the next node needed.
+	incoming := input["main"]
+	items := make([]runcode.Item, 0, len(incoming))
+	for _, item := range incoming {
 		items = append(items, runcode.Item{JSON: item.JSON})
 	}
 
@@ -116,12 +121,22 @@ func (executor *CodeExecutor) Execute(ctx context.Context, ir workflow.IRNode, i
 	}
 
 	out := make([]workflow.Item, 0, len(result.Items))
-	for _, item := range result.Items {
+	for index, item := range result.Items {
 		json := item.JSON
 		if json == nil {
 			json = map[string]any{}
 		}
-		out = append(out, workflow.Item{JSON: json})
+		converted := workflow.Item{JSON: json}
+		// Positional, because that is the only correspondence there is: code
+		// that returns as many items as it received is the ordinary case, and
+		// code that reshapes the batch has no attachment to inherit.
+		if index < len(incoming) && len(incoming[index].Binary) > 0 {
+			converted.Binary = make(map[string]workflow.BinaryRef, len(incoming[index].Binary))
+			for key, reference := range incoming[index].Binary {
+				converted.Binary[key] = reference
+			}
+		}
+		out = append(out, converted)
 	}
 	return workflow.NodeOutput{out}, nil
 }

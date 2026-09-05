@@ -13,7 +13,78 @@ import type { Connection, Definition, ExecutionNodeRunResource, Node } from '$li
 export type NodeRunStatus = string | 'skipped';
 
 /** Item shape carried on a node-run output port. */
-type OutputItem = { json?: unknown; binary?: unknown };
+type OutputItem = { json?: unknown; binary?: Record<string, BinaryReference> };
+
+/**
+ * What an item carries in place of a payload.
+ *
+ * The bytes live in the server's binary store, keyed by tenant, execution and
+ * this id. Only this metadata ever reaches the browser, which is why the
+ * inspector can show an attachment at all without the editor ever being handed
+ * a multi-megabyte response it would have to decide what to do with.
+ */
+export type BinaryReference = {
+	id: string;
+	fileName?: string;
+	mediaType?: string;
+	size?: number;
+};
+
+/** One attachment, with enough context to say which item it came off. */
+export type Attachment = {
+	/** Index of the output port slot the item sat on. */
+	port: number;
+	/** Index of the item within that slot. */
+	item: number;
+	/** The binary property name the node attached it under. */
+	property: string;
+	reference: BinaryReference;
+};
+
+/**
+ * Every binary reference a node run produced, flattened for display.
+ *
+ * The inspector shows name, type and size and nothing else: a payload never
+ * leaves the store, so there is nothing here to render inline even if it wanted
+ * to, and an editor that tried would be reaching for bytes the API does not
+ * serve.
+ */
+export function binaryAttachments(output: unknown): Attachment[] {
+	if (!Array.isArray(output)) return [];
+
+	const attachments: Attachment[] = [];
+	output.forEach((slot, port) => {
+		if (!Array.isArray(slot)) return;
+		(slot as OutputItem[]).forEach((item, index) => {
+			const binary = item?.binary;
+			if (!binary || typeof binary !== 'object') return;
+			for (const [property, reference] of Object.entries(binary)) {
+				if (!reference || typeof reference !== 'object' || typeof reference.id !== 'string') continue;
+				attachments.push({ port, item: index, property, reference });
+			}
+		});
+	});
+	return attachments;
+}
+
+/**
+ * A byte count a person can read.
+ *
+ * Decimal units, because that is what every file manager and every download
+ * dialog a user has seen reports, and an attachment is a file to them.
+ */
+export function formatBytes(size: number | undefined): string {
+	if (size === undefined || !Number.isFinite(size) || size < 0) return 'unknown size';
+	if (size < 1000) return `${size} B`;
+	const units = ['kB', 'MB', 'GB', 'TB'];
+	let value = size / 1000;
+	let unit = 0;
+	while (value >= 1000 && unit < units.length - 1) {
+		value /= 1000;
+		unit += 1;
+	}
+	return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`;
+}
 
 /**
  * Reduces a node-run trace to the final attempt per node.

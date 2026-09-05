@@ -1,13 +1,17 @@
 package nodes_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
+	"github.com/kilaslabs/kilas-flow/internal/binary"
 	"github.com/kilaslabs/kilas-flow/internal/engine"
 	"github.com/kilaslabs/kilas-flow/internal/node"
 	"github.com/kilaslabs/kilas-flow/internal/safehttp"
@@ -349,5 +353,226 @@ func TestHTTPRequestResponseCanBeSerializedForPersistence(t *testing.T) {
 	// the repository is what keeps it out of storage.
 	if !strings.Contains(string(encoded), "Set-Cookie") {
 		t.Errorf("output = %s, want response headers preserved for redaction downstream", encoded)
+	}
+}
+
+func binaryStore(t *testing.T) engine.BinaryStore {
+	t.Helper()
+	store, err := binary.NewFileStore(t.TempDir(), 1<<20)
+	if err != nil {
+		t.Fatalf("NewFileStore() error = %v", err)
+	}
+	return binary.For(store, "tenant-a", "exec-1")
+}
+
+// An image forced through `string(contents)` produced an item full of
+// replacement characters and no way to recover the bytes. Autodetect now stores
+// anything that is not textual, and only the reference reaches the item.
+func TestHTTPRequestStoresANonTextResponseAsABinaryReference(t *testing.T) {
+	t.Parallel()
+
+	payload := []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0xff}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		w.Header().Set("Content-Disposition", `attachment; filename="avatar.png"`)
+		_, _ = w.Write(payload)
+	}))
+	defer server.Close()
+
+	store := binaryStore(t)
+	output, err := nodes.NewHTTPExecutor(localPolicy()).Execute(context.Background(), httpNode(map[string]any{
+		"method": "GET", "url": server.URL + "/files/ignored.bin",
+	}), workflow.NodeInput{}, engine.Request{Binaries: store})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	item := output[0][0]
+	if _, present := item.JSON["body"]; present {
+		t.Fatalf("JSON = %#v, want no body: the payload must never enter the item", item.JSON)
+	}
+	reference, found := item.Binary["data"]
+	if !found {
+		t.Fatalf("Binary = %#v, want the response attached under the default property", item.Binary)
+	}
+	// The server named the file; that name wins over the URL's last segment.
+	if reference.FileName != "avatar.png" {
+		t.Fatalf("FileName = %q, want the name from Content-Disposition", reference.FileName)
+	}
+	if reference.MediaType != "image/png" {
+		t.Fatalf("MediaType = %q, want the response's media type without parameters", reference.MediaType)
+	}
+	if reference.Size != int64(len(payload)) {
+		t.Fatalf("Size = %d, want %d", reference.Size, len(payload))
+	}
+
+	body, _, err := store.Get(reference.ID)
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	defer body.Close()
+	stored, _ := io.ReadAll(body)
+	if !bytes.Equal(stored, payload) {
+		t.Fatalf("stored payload = %#v, want the bytes the server sent", stored)
+	}
+}
+
+func TestHTTPRequestKeepsTextualResponsesInJSON(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", r.URL.Query().Get("type"))
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+
+	// A structured suffix and an unlabelled response are both text: turning
+	// every response with no Content-Type into a file would be a worse default
+	// than the one this replaces.
+	for _, contentType := range []string{"application/json", "text/csv", "application/vnd.api+json", ""} {
+		output, err := nodes.NewHTTPExecutor(localPolicy()).Execute(context.Background(), httpNode(map[string]any{
+			"method": "GET", "url": server.URL + "/?type=" + url.QueryEscape(contentType),
+		}), workflow.NodeInput{}, engine.Request{Binaries: binaryStore(t)})
+		if err != nil {
+			t.Fatalf("Execute() with %q error = %v", contentType, err)
+		}
+		if output[0][0].Binary != nil {
+			t.Fatalf("Content-Type %q was stored as a file, want it decoded", contentType)
+		}
+		if _, present := output[0][0].JSON["body"]; !present {
+			t.Fatalf("Content-Type %q produced no body", contentType)
+		}
+	}
+}
+
+// `file` is explicit: a caller that wants the bytes of a JSON response gets
+// them, under the property it names.
+func TestHTTPRequestStoresAFileOnRequestUnderTheNamedProperty(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+
+	output, err := nodes.NewHTTPExecutor(localPolicy()).Execute(context.Background(), httpNode(map[string]any{
+		"method": "GET", "url": server.URL + "/report.json",
+		"responseFormat": "file", "outputPropertyName": "attachment",
+	}), workflow.NodeInput{}, engine.Request{Binaries: binaryStore(t)})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	reference, found := output[0][0].Binary["attachment"]
+	if !found {
+		t.Fatalf("Binary = %#v, want the named property", output[0][0].Binary)
+	}
+	// No Content-Disposition, so the URL's last segment names the file.
+	if reference.FileName != "report.json" {
+		t.Fatalf("FileName = %q, want the URL's last segment", reference.FileName)
+	}
+}
+
+// Half a PDF that reports success is worse than a failure naming the bound.
+// Autodetect degrades to text instead, which the case below covers.
+func TestHTTPRequestRefusesToStoreATruncatedResponse(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/octet-stream")
+		_, _ = w.Write(make([]byte, 64))
+	}))
+	defer server.Close()
+
+	policy := localPolicy()
+	policy.MaxResponseBytes = 16
+	_, err := nodes.NewHTTPExecutor(policy).Execute(context.Background(), httpNode(map[string]any{
+		"method": "GET", "url": server.URL + "/big.bin", "responseFormat": "file",
+	}), workflow.NodeInput{}, engine.Request{Binaries: binaryStore(t)})
+	if err == nil || !strings.Contains(err.Error(), "size limit") {
+		t.Fatalf("Execute() error = %v, want a refusal naming the bound", err)
+	}
+
+	// Autodetect never asked for a file, so it keeps the behaviour it had: a
+	// truncated body and the flag that says so.
+	output, err := nodes.NewHTTPExecutor(policy).Execute(context.Background(), httpNode(map[string]any{
+		"method": "GET", "url": server.URL + "/big.bin",
+	}), workflow.NodeInput{}, engine.Request{Binaries: binaryStore(t)})
+	if err != nil {
+		t.Fatalf("Execute() with autodetect error = %v", err)
+	}
+	if output[0][0].Binary != nil {
+		t.Fatalf("Binary = %#v, want a truncated response left as text", output[0][0].Binary)
+	}
+	if output[0][0].JSON["truncated"] != true {
+		t.Fatalf("truncated = %#v, want the flag set", output[0][0].JSON["truncated"])
+	}
+}
+
+// `file` is a request, and one that cannot be honoured is an error the caller
+// should see: a node that asked for a file and got a string is a silent wrong
+// answer.
+func TestHTTPRequestSaysWhenAFileWasAskedForAndStorageIsNotConfigured(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/pdf")
+		_, _ = w.Write([]byte("%PDF-1.4"))
+	}))
+	defer server.Close()
+
+	_, err := nodes.NewHTTPExecutor(localPolicy()).Execute(context.Background(), httpNode(map[string]any{
+		"method": "GET", "url": server.URL + "/doc.pdf", "responseFormat": "file",
+	}), workflow.NodeInput{}, engine.Request{})
+	if err == nil || !strings.Contains(err.Error(), "not configured") {
+		t.Fatalf("Execute() error = %v, want it to name the missing configuration", err)
+	}
+}
+
+// Autodetect is a preference, not a request. Binary storage is off by default,
+// so a server that never configured it must keep decoding non-text responses
+// exactly as it did before rather than failing every one of them at once.
+func TestHTTPRequestAutodetectDecodesWhenThereIsNowhereToStore(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/pdf")
+		_, _ = w.Write([]byte("%PDF-1.4"))
+	}))
+	defer server.Close()
+
+	output, err := nodes.NewHTTPExecutor(localPolicy()).Execute(context.Background(), httpNode(map[string]any{
+		"method": "GET", "url": server.URL + "/doc.pdf",
+	}), workflow.NodeInput{}, engine.Request{})
+	if err != nil {
+		t.Fatalf("Execute() error = %v, want the previous decoding behaviour", err)
+	}
+	if output[0][0].Binary != nil {
+		t.Fatalf("Binary = %#v, want none with no store configured", output[0][0].Binary)
+	}
+	if output[0][0].JSON["body"] != "%PDF-1.4" {
+		t.Fatalf("body = %#v, want the response decoded as text", output[0][0].JSON["body"])
+	}
+}
+
+// A remote server does not get to put a path in a name a person will read.
+func TestHTTPRequestReducesAResponseFileNameToOneSegment(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Header().Set("Content-Disposition", `attachment; filename="..\..\windows\evil.exe"`)
+		_, _ = w.Write([]byte("bytes"))
+	}))
+	defer server.Close()
+
+	output, err := nodes.NewHTTPExecutor(localPolicy()).Execute(context.Background(), httpNode(map[string]any{
+		"method": "GET", "url": server.URL + "/download",
+	}), workflow.NodeInput{}, engine.Request{Binaries: binaryStore(t)})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if name := output[0][0].Binary["data"].FileName; name != "evil.exe" {
+		t.Fatalf("FileName = %q, want the trailing segment only", name)
 	}
 }

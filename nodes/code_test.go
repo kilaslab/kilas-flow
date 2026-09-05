@@ -187,3 +187,63 @@ func TestCodeNodeCannotRaiseTheDeploymentsLimits(t *testing.T) {
 		t.Errorf("error = %v, want the deployment ceiling to apply", err)
 	}
 }
+
+// Binary references are carried past the sandbox rather than through it: user
+// code sees JSON only, and a payload it never receives is one it cannot
+// corrupt. Before this, any attachment was gone the moment an item passed
+// through a Code node, with no error and no diagnostic.
+func TestCodeNodeCarriesBinaryReferencesThrough(t *testing.T) {
+	compiler := toolchainOrSkip(t)
+	executor := nodes.NewCodeExecutor(compiler, runcode.NewMemoryCache(), generousLimits())
+
+	attachment := workflow.BinaryRef{ID: "bin-1", FileName: "photo.jpg", MediaType: "image/jpeg", Size: 2048}
+	output, err := executor.Execute(context.Background(), codeIR(t, map[string]any{
+		"code": `
+	for index := range items {
+		items[index].JSON["seen"] = true
+	}
+	return items, nil
+`,
+	}), workflow.NodeInput{"main": {
+		{JSON: map[string]any{"caption": "hello"}, Binary: map[string]workflow.BinaryRef{"data": attachment}},
+	}}, engine.Request{})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if len(output) != 1 || len(output[0]) != 1 {
+		t.Fatalf("output = %#v, want one item", output)
+	}
+	item := output[0][0]
+	if item.JSON["seen"] != true {
+		t.Fatalf("JSON = %#v, want the user's edit applied", item.JSON)
+	}
+	if got := item.Binary["data"]; got != attachment {
+		t.Fatalf("Binary[\"data\"] = %#v, want the incoming reference %#v", got, attachment)
+	}
+}
+
+// Code that reshapes the batch has no attachment to inherit — the
+// correspondence is positional because that is the only correspondence there
+// is, and inventing one would attach the wrong file to the wrong item.
+func TestCodeNodeDoesNotInventBinaryForItemsItDidNotReceive(t *testing.T) {
+	compiler := toolchainOrSkip(t)
+	executor := nodes.NewCodeExecutor(compiler, runcode.NewMemoryCache(), generousLimits())
+
+	output, err := executor.Execute(context.Background(), codeIR(t, map[string]any{
+		"code": `return []Item{items[0], {JSON: map[string]any{"extra": true}}}, nil`,
+	}), workflow.NodeInput{"main": {
+		{JSON: map[string]any{"n": float64(1)}, Binary: map[string]workflow.BinaryRef{"data": {ID: "bin-1"}}},
+	}}, engine.Request{})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if len(output[0]) != 2 {
+		t.Fatalf("output = %#v, want two items", output)
+	}
+	if output[0][0].Binary["data"].ID != "bin-1" {
+		t.Fatalf("first item lost its reference: %#v", output[0][0].Binary)
+	}
+	if output[0][1].Binary != nil {
+		t.Fatalf("second item Binary = %#v, want none", output[0][1].Binary)
+	}
+}

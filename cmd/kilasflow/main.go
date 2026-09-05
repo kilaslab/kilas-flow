@@ -18,6 +18,7 @@ import (
 	"github.com/kilaslabs/kilas-flow/internal/ai"
 	"github.com/kilaslabs/kilas-flow/internal/api"
 	"github.com/kilaslabs/kilas-flow/internal/api/handlers"
+	"github.com/kilaslabs/kilas-flow/internal/binary"
 	"github.com/kilaslabs/kilas-flow/internal/config"
 	"github.com/kilaslabs/kilas-flow/internal/credentials"
 	"github.com/kilaslabs/kilas-flow/internal/database"
@@ -140,8 +141,20 @@ func run() error {
 		WithWebhooks(webhook.Extract(nodeRegistry, nodes.WebhookPath))
 	schedules := repository.NewScheduleStore(db.DB)
 	eventBroker := events.NewBroker(events.BrokerOptions{})
+	// Binary payloads live on a filesystem root, never in the database. An
+	// unset root leaves the store nil, and a node that needs one then fails
+	// with a message saying so rather than silently dropping an attachment.
+	var binaries binary.Store
+	if strings.TrimSpace(cfg.Binary.Root) != "" {
+		fileStore, err := binary.NewFileStore(cfg.Binary.Root, cfg.Binary.MaxBytes)
+		if err != nil {
+			return fmt.Errorf("configure binary storage: %w", err)
+		}
+		binaries = fileStore
+	}
 	runtime, err := engine.NewService(engine.ServiceDeps{
 		Executions:     executions,
+		Binaries:       binaries,
 		Events:         eventBroker,
 		Catalog:        nodeRegistry,
 		Runner:         engine.NewRunner(executorRegistry),

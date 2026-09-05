@@ -48,6 +48,16 @@ execution:
   max_concurrent: 10
   default_timeout: 60s
 
+binary:
+  # Where item payloads (WhatsApp media, downloaded files) are written.
+  # Empty disables binary storage: a node that needs it then fails with a
+  # message saying so, rather than silently dropping an attachment.
+  # Env: KILASFLOW_BINARY_ROOT
+  root: ''
+  # Largest single payload, in bytes. Enforced while reading, so an oversized
+  # response is refused rather than truncated. Env: KILASFLOW_BINARY_MAX_BYTES
+  max_bytes: 16777216
+
 log:
   # debug | info | warn | error
   level: info

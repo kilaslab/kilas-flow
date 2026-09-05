@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"sort"
 	"time"
 
@@ -74,7 +75,13 @@ type Request struct {
 	Execution ExecutionContext
 	// Env is the allowlisted environment exposed as `$env`. The runtime decides
 	// what enters it; nothing reads os.Environ during execution.
-	Env         map[string]string
+	Env map[string]string
+	// Binaries stores and reads item payloads.
+	//
+	// Threaded here alongside the credential resolver and for the same reason:
+	// an executor must not reach into storage on its own, so the runtime stays
+	// the single place tenant scoping is enforced.
+	Binaries    BinaryStore
 	Credentials CredentialResolver
 	// Events publishes nested progress from inside a node.
 	Events NodeEventSink
@@ -99,6 +106,15 @@ type Request struct {
 	// Empty means every root, which is what a manual run of a workflow means
 	// and what preserves today's behaviour for a single-root graph.
 	TriggerNodeID string
+}
+
+// BinaryStore is the slice of the payload store an executor may use.
+//
+// Scoped to this execution by the runtime before an executor sees it, so a node
+// cannot read another tenant's payload even by holding its reference.
+type BinaryStore interface {
+	Put(name, mediaType string, body io.Reader) (workflow.BinaryRef, error)
+	Get(id string) (io.ReadCloser, workflow.BinaryRef, error)
 }
 
 // Executor runs one registered node using its compiled configuration.
@@ -596,6 +612,7 @@ func cloneRequest(request Request) Request {
 	cloned := Request{
 		Input:       cloneItem(request.Input),
 		Execution:   request.Execution,
+		Binaries:    request.Binaries,
 		Credentials: request.Credentials,
 		Events:      request.Events,
 		Env:         make(map[string]string, len(request.Env)),
