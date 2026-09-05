@@ -1,7 +1,7 @@
 ---
 id: FEAT-nrfz6m
 title: Close the SQL node's expression injection and statement guard defects
-status: testing
+status: done
 priority: high
 labels:
     - persistence
@@ -10,7 +10,7 @@ labels:
 parent: EPIC-m42s3g
 phase: p6
 created: "2026-09-05T08:28:30Z"
-updated: "2026-09-05T19:04:00Z"
+updated: "2026-09-05T19:04:32Z"
 ---
 
 ## Scope
