@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { ApiError } from '$lib/api/http';
+	import { message } from '$lib/api/http';
 	import {
 		createGetHealth,
 		createGetReady
@@ -35,9 +35,11 @@
 
 	const connected = $derived(health.isSuccess);
 
+	// Keeps its own last resort — this page's whole subject is whether the
+	// backend answers, so "Backend unreachable" says more here than the shared
+	// sentence would — but the status formatting is no longer its business.
 	function errorMessage(error: unknown): string {
-		if (error instanceof ApiError) return `${error.status} — ${error.message}`;
-		return error instanceof Error ? error.message : 'Backend unreachable';
+		return error instanceof Error ? message(error) : 'Backend unreachable';
 	}
 </script>
 

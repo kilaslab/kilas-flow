@@ -2,11 +2,11 @@
 	import { goto } from '$app/navigation';
 	import FilePlus2 from '@lucide/svelte/icons/file-plus-2';
 	import MoreHorizontal from '@lucide/svelte/icons/more-horizontal';
-	import RefreshCw from '@lucide/svelte/icons/refresh-cw';
 
-	import { ApiError } from '$lib/api/http';
+	import { message } from '$lib/api/http';
 	import { createListWorkflows, createWorkflow } from '$lib/api/generated/workflows/workflows';
 	import type { WorkflowDocumentInput, WorkflowSummary } from '$lib/api/generated/models';
+	import ListStates from '$lib/components/dashboard/list-states.svelte';
 	import { Button } from '$lib/components/ui/button';
 	import * as Dialog from '$lib/components/ui/dialog';
 	import { Input } from '$lib/components/ui/input';
@@ -25,10 +25,10 @@
 	let createError = $state<string | null>(null);
 	let creating = $state(false);
 
-	function message(error: unknown): string {
-		if (error instanceof ApiError) return `${error.status} — ${error.message}`;
-		return error instanceof Error ? error.message : 'The request could not be completed.';
-	}
+	// Read once here rather than through the query object in the markup: the
+	// rows are used inside a snippet, where the `!isPending && !isError`
+	// narrowing that made `.data` non-optional no longer reaches.
+	const rows = $derived(workflows.data ?? []);
 
 	function resetCreateDialog() {
 		name = '';
@@ -80,7 +80,7 @@
 		<div class="min-w-0">
 			<h1 class="text-base font-semibold tracking-tight">Workflows</h1>
 			<p class="text-xs text-muted-foreground">
-				{#if !workflows.isPending && !workflows.isError}{workflows.data.length} in this workspace{:else}Automation flows your product exposes{/if}
+				{#if !workflows.isPending && !workflows.isError}{rows.length} in this workspace{:else}Automation flows your product exposes{/if}
 			</p>
 		</div>
 		<Dialog.Root bind:open={createOpen} onOpenChange={(open) => !open && resetCreateDialog()}>
@@ -115,38 +115,27 @@
 	</div>
 
 	<div class="mt-4">
-		{#if workflows.isPending}
-			<div aria-live="polite" class="overflow-hidden rounded-lg border border-border">
-				<p class="sr-only">Loading workflows…</p>
-				{#each Array(4) as _}
-					<div class="h-11 animate-pulse border-b border-border bg-muted/50 last:border-0" aria-hidden="true"></div>
-				{/each}
-			</div>
-		{:else if workflows.isError}
-			<div class="max-w-lg rounded-lg border border-destructive/25 bg-destructive/5 p-3">
-				<h2 class="text-sm font-medium">Workflows could not be loaded</h2>
-				<p class="mt-0.5 text-xs leading-5 text-muted-foreground">{message(workflows.error)}</p>
-				<Button class="mt-2.5" size="sm" variant="outline" onclick={() => void workflows.refetch()}>
-					<RefreshCw aria-hidden="true" />
-					Try again
+		<ListStates
+			label="Workflows"
+			loading={workflows.isPending}
+			failed={workflows.isError}
+			error={workflows.error}
+			count={rows.length}
+			rows={4}
+			onRetry={() => void workflows.refetch()}
+			emptyIcon={FilePlus2}
+			emptyTitle="Build your first flow"
+			emptyBody="A workflow starts as a private draft, then grows into the automation your product needs."
+		>
+			{#snippet emptyAction()}
+				<Button class="mt-3" size="sm" onclick={() => (createOpen = true)}>
+					<FilePlus2 aria-hidden="true" />
+					New workflow
 				</Button>
-			</div>
-		{:else if workflows.data.length === 0}
-			<div class="grid min-h-56 place-items-center rounded-lg border border-dashed border-border px-6 py-10 text-center">
-				<div class="max-w-xs">
-					<div aria-hidden="true" class="mx-auto grid size-8 place-items-center rounded-lg bg-accent text-accent-foreground"><FilePlus2 class="size-4" /></div>
-					<h2 class="mt-3 text-sm font-semibold tracking-tight">Build your first flow</h2>
-					<p class="mt-1 text-xs leading-5 text-muted-foreground">A workflow starts as a private draft, then grows into the automation your product needs.</p>
-					<Button class="mt-3" size="sm" onclick={() => (createOpen = true)}>
-						<FilePlus2 aria-hidden="true" />
-						New workflow
-					</Button>
-				</div>
-			</div>
-		{:else}
+			{/snippet}
 			<div class="overflow-hidden rounded-lg border border-border">
 				<ul aria-label="Workflows" class="divide-y divide-border">
-					{#each workflows.data as workflow (workflow.id)}
+					{#each rows as workflow (workflow.id)}
 						<li>
 							<a href={`/app/workflows/${workflow.id}`} class="group flex h-11 items-center gap-3 px-3 transition-colors hover:bg-muted/50 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring">
 								<span aria-hidden="true" class="size-1.5 shrink-0 rounded-full {workflow.active ? 'bg-success' : 'bg-muted-foreground/40'}"></span>
@@ -166,6 +155,6 @@
 					{/each}
 				</ul>
 			</div>
-		{/if}
+		</ListStates>
 	</div>
 </section>

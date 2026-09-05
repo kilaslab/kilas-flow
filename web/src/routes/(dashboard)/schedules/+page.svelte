@@ -1,12 +1,12 @@
 <script lang="ts">
 	import CalendarClock from '@lucide/svelte/icons/calendar-clock';
-	import RefreshCw from '@lucide/svelte/icons/refresh-cw';
 	import Trash2 from '@lucide/svelte/icons/trash-2';
 
-	import { ApiError } from '$lib/api/http';
+	import { message } from '$lib/api/http';
 	import { createListSchedules, createSchedule, deleteSchedule, updateSchedule } from '$lib/api/generated/schedules/schedules';
 	import { createListWorkflows } from '$lib/api/generated/workflows/workflows';
 	import type { ScheduleResource, WorkflowSummary } from '$lib/api/generated/models';
+	import ListStates from '$lib/components/dashboard/list-states.svelte';
 	import { Button } from '$lib/components/ui/button';
 	import * as Dialog from '$lib/components/ui/dialog';
 	import { Input } from '$lib/components/ui/input';
@@ -33,11 +33,10 @@
 	let formError = $state<string | null>(null);
 
 	const workflowNames = $derived(new Map((workflows.data ?? []).map((workflow) => [workflow.id, workflow.name])));
-
-	function message(error: unknown): string {
-		if (error instanceof ApiError) return `${error.status} — ${error.message}`;
-		return error instanceof Error ? error.message : 'The request could not be completed.';
-	}
+	// Read once here rather than through the query object in the markup: the
+	// rows are used inside a snippet, where the `!isPending && !isError`
+	// narrowing that made `.data` non-optional no longer reaches.
+	const rows = $derived(schedules.data ?? []);
 
 	function openCreate() {
 		editing = null;
@@ -106,33 +105,20 @@
 	</div>
 
 	<div class="mt-4">
-		{#if schedules.isPending}
-			<div aria-live="polite" class="grid gap-3">
-				<p class="text-sm text-muted-foreground">Loading schedules…</p>
-				{#each Array(2) as _}
-					<div class="h-16 animate-pulse rounded-xl bg-muted" aria-hidden="true"></div>
-				{/each}
-			</div>
-		{:else if schedules.isError}
-			<div class="max-w-xl rounded-lg border border-destructive/25 bg-destructive/5 p-3">
-				<h2 class="font-medium">Schedules could not be loaded</h2>
-				<p class="mt-0.5 text-xs leading-5 text-muted-foreground">{message(schedules.error)}</p>
-				<Button class="mt-4" variant="outline" onclick={() => void schedules.refetch()}>
-					<RefreshCw aria-hidden="true" />
-					Try again
-				</Button>
-			</div>
-		{:else if schedules.data.length === 0}
-			<div class="grid min-h-56 place-items-center rounded-2xl border border-dashed border-border bg-card px-6 py-12 text-center">
-				<div class="max-w-sm">
-					<div aria-hidden="true" class="mx-auto grid size-8 place-items-center rounded-lg bg-accent text-accent-foreground"><CalendarClock class="size-5" /></div>
-					<h2 class="mt-3 text-sm font-semibold tracking-tight">No schedules yet</h2>
-					<p class="mt-1 text-xs leading-5 text-muted-foreground">Add one to run an activated workflow on a recurring cadence.</p>
-				</div>
-			</div>
-		{:else}
+		<ListStates
+			label="Schedules"
+			loading={schedules.isPending}
+			failed={schedules.isError}
+			error={schedules.error}
+			count={rows.length}
+			rows={2}
+			onRetry={() => void schedules.refetch()}
+			emptyIcon={CalendarClock}
+			emptyTitle="No schedules yet"
+			emptyBody="Add one to run an activated workflow on a recurring cadence."
+		>
 			<ul aria-label="Schedules" class="divide-y divide-border overflow-hidden rounded-lg border border-border">
-				{#each schedules.data as schedule (schedule.id)}
+				{#each rows as schedule (schedule.id)}
 					<li class="flex h-11 items-center gap-3 px-3">
 						<div class="min-w-0 flex-1">
 							<p class="truncate text-sm font-medium">{workflowNames.get(schedule.workflowId) ?? schedule.workflowId}</p>
@@ -152,7 +138,7 @@
 					</li>
 				{/each}
 			</ul>
-		{/if}
+		</ListStates>
 	</div>
 
 	<Dialog.Root bind:open={editorOpen}>
