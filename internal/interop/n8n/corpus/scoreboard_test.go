@@ -17,11 +17,16 @@ import (
 	"github.com/kilaslabs/kilas-flow/internal/engine"
 	"github.com/kilaslabs/kilas-flow/internal/interop/n8n"
 	"github.com/kilaslabs/kilas-flow/internal/interop/n8n/corpus"
+	"github.com/kilaslabs/kilas-flow/internal/loadoptions"
 	"github.com/kilaslabs/kilas-flow/internal/node"
+	"github.com/kilaslabs/kilas-flow/internal/nodepack"
+	"github.com/kilaslabs/kilas-flow/internal/routing"
 	"github.com/kilaslabs/kilas-flow/internal/safehttp"
 	"github.com/kilaslabs/kilas-flow/internal/sqlnode"
+	"github.com/kilaslabs/kilas-flow/internal/webhook"
 	"github.com/kilaslabs/kilas-flow/internal/workflow"
 	"github.com/kilaslabs/kilas-flow/nodes"
+	"github.com/kilaslabs/kilas-flow/packs/waha"
 )
 
 // The scoreboard is a measuring instrument, not a pass/fail suite. Its job is to
@@ -90,31 +95,51 @@ type baseline struct {
 	Scores    []score        `json:"scores"`
 }
 
-func catalogue(t *testing.T) *node.Registry {
+// corpusRuntime is the catalogue and the runtime that scores against it.
+//
+// They are built together because a generated node pack registers into both at
+// once — a definition bound to an executor this runtime has not installed is
+// refused — and because the routing interpreter needs the same routing registry
+// the packs wrote into. Two independently built registries would give a WAHA
+// workflow a definition it could compile against and no executor to run.
+func corpusRuntime(t *testing.T) (*node.Registry, *engine.Registry) {
 	t.Helper()
-	registry := node.NewRegistry()
-	if err := nodes.RegisterAll(registry); err != nil {
+	catalog := node.NewRegistry()
+	if err := nodes.RegisterAll(catalog); err != nil {
 		t.Fatalf("RegisterAll() error = %v", err)
 	}
-	return registry
-}
 
-// stubbedExecutors is the tier-three runtime. The HTTP policy allows exactly
-// one host that cannot resolve, so any outbound call is refused by policy
-// before a socket is opened rather than trusted not to be attempted.
-func stubbedExecutors(t *testing.T) *engine.Registry {
-	t.Helper()
-	registry := engine.NewRegistry()
+	// The HTTP policy allows exactly one host that cannot resolve, so any
+	// outbound call is refused by policy before a socket is opened rather than
+	// trusted not to be attempted.
 	offline := safehttp.Policy{
 		AllowedHosts:     []string{"corpus.invalid"},
 		MaxRedirects:     0,
 		MaxResponseBytes: 1 << 10,
 		Timeout:          time.Second,
 	}
-	if err := nodes.RegisterExecutors(registry, offline, sqlnode.Guard{}, ai.NewLoopRuntime(), nil, nil); err != nil {
+	executors := engine.NewRegistry()
+	if err := nodes.RegisterExecutors(executors, offline, sqlnode.Guard{}, ai.NewLoopRuntime(), nil, nil); err != nil {
 		t.Fatalf("RegisterExecutors() error = %v", err)
 	}
-	return registry
+	routes := routing.NewRegistry()
+	triggers := nodepack.NewTriggerRegistry()
+	for id, executor := range map[string]engine.Executor{
+		routing.ExecutorID:         routing.NewExecutor(offline, routes, catalog),
+		nodepack.TriggerExecutorID: nodepack.NewTriggerExecutor(triggers, offline),
+	} {
+		if err := executors.Register(id, executor); err != nil {
+			t.Fatalf("Register(%s) error = %v", id, err)
+		}
+	}
+	if err := waha.Register(waha.Deps{
+		Definitions: catalog, Routes: routes, Triggers: triggers,
+		Deliveries: webhook.NewRegistry(), Lifecycles: webhook.NewLifecycleRegistry(),
+		Executors: executors, Options: loadoptions.NewResolver(offline, 0),
+	}); err != nil {
+		t.Fatalf("waha.Register() error = %v", err)
+	}
+	return catalog, executors
 }
 
 // firstLine keeps a reason to one readable line. Compiler errors aggregate, and
@@ -198,8 +223,7 @@ func TestCorpusScoreboard(t *testing.T) {
 		t.Fatalf("corpus.Load() error = %v", err)
 	}
 
-	catalog := catalogue(t)
-	executors := stubbedExecutors(t)
+	catalog, executors := corpusRuntime(t)
 
 	scores := make([]score, 0, len(fixtures))
 	tiers := map[string]int{tierImported: 0, tierActivatable: 0, tierRunnable: 0}
@@ -410,8 +434,7 @@ func TestControlFixturesPass(t *testing.T) {
 	if err != nil {
 		t.Fatalf("corpus.Load() error = %v", err)
 	}
-	catalog := catalogue(t)
-	executors := stubbedExecutors(t)
+	catalog, executors := corpusRuntime(t)
 
 	seen := 0
 	for _, fixture := range fixtures {
@@ -530,8 +553,7 @@ func TestPrivateOverlayIsScoredButNeverReported(t *testing.T) {
 
 	// Render a report from every fixture, private included, and prove the
 	// private one contributed nothing to it.
-	catalog := catalogue(t)
-	executors := stubbedExecutors(t)
+	catalog, executors := corpusRuntime(t)
 	var scores []score
 	var public []corpus.Fixture
 	for _, fixture := range fixtures {

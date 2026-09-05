@@ -2,14 +2,22 @@ package n8n_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/kilaslabs/kilas-flow/internal/engine"
 	"github.com/kilaslabs/kilas-flow/internal/interop/n8n"
+	"github.com/kilaslabs/kilas-flow/internal/loadoptions"
 	"github.com/kilaslabs/kilas-flow/internal/node"
+	"github.com/kilaslabs/kilas-flow/internal/nodepack"
+	"github.com/kilaslabs/kilas-flow/internal/routing"
+	"github.com/kilaslabs/kilas-flow/internal/safehttp"
+	"github.com/kilaslabs/kilas-flow/internal/webhook"
 	"github.com/kilaslabs/kilas-flow/internal/workflow"
 	"github.com/kilaslabs/kilas-flow/nodes"
+	"github.com/kilaslabs/kilas-flow/packs/waha"
 )
 
 // registry is the real node catalogue, so an import is validated by exactly
@@ -19,6 +27,29 @@ func registry(t *testing.T) *node.Registry {
 	catalogue := node.NewRegistry()
 	if err := nodes.RegisterAll(catalogue); err != nil {
 		t.Fatalf("RegisterAll() error = %v", err)
+	}
+	// The generated packs are part of the catalogue an import resolves
+	// against. Registering the real ones rather than a stand-in is the point:
+	// every claim about WAHA here is a claim about strings a real template
+	// contains, and a fixture written beside the mapping proves only that the
+	// two agree with each other.
+	executors := engine.NewRegistry()
+	routes := routing.NewRegistry()
+	triggers := nodepack.NewTriggerRegistry()
+	for id, executor := range map[string]engine.Executor{
+		routing.ExecutorID:         routing.NewExecutor(safehttp.DefaultPolicy(), routes, catalogue),
+		nodepack.TriggerExecutorID: nodepack.NewTriggerExecutor(triggers, safehttp.DefaultPolicy()),
+	} {
+		if err := executors.Register(id, executor); err != nil {
+			t.Fatalf("Register(%s) error = %v", id, err)
+		}
+	}
+	if err := waha.Register(waha.Deps{
+		Definitions: catalogue, Routes: routes, Triggers: triggers,
+		Deliveries: webhook.NewRegistry(), Lifecycles: webhook.NewLifecycleRegistry(),
+		Executors: executors, Options: loadoptions.NewResolver(safehttp.DefaultPolicy(), 0),
+	}); err != nil {
+		t.Fatalf("waha.Register() error = %v", err)
 	}
 	return catalogue
 }
@@ -377,7 +408,7 @@ func TestExportProducesN8NShape(t *testing.T) {
 	t.Parallel()
 
 	imported := importFixture(t, linearFixture)
-	exported, err := n8n.Export(imported.Document)
+	exported, err := n8n.Export(imported.Document, registry(t))
 	if err != nil {
 		t.Fatalf("Export() error = %v", err)
 	}
@@ -411,7 +442,7 @@ func TestRoundTripPreservesSupportedGraphSemantics(t *testing.T) {
 		"webhook":   webhookFixture,
 	} {
 		first := importFixture(t, fixture)
-		exported, err := n8n.Export(first.Document)
+		exported, err := n8n.Export(first.Document, registry(t))
 		if err != nil {
 			t.Fatalf("%s: Export() error = %v", name, err)
 		}
@@ -445,7 +476,7 @@ func TestRoundTripKeepsAnUnsupportedNodeAsItsOriginalN8NNode(t *testing.T) {
 	t.Parallel()
 
 	imported := importFixture(t, unsupportedFixture)
-	exported, err := n8n.Export(imported.Document)
+	exported, err := n8n.Export(imported.Document, registry(t))
 	if err != nil {
 		t.Fatalf("Export() error = %v", err)
 	}
@@ -489,7 +520,7 @@ func TestExportNamesWhatItCannotCarry(t *testing.T) {
 		Settings: map[string]any{},
 	}
 
-	exported, err := n8n.Export(document)
+	exported, err := n8n.Export(document, registry(t))
 	if err != nil {
 		t.Fatalf("Export() error = %v", err)
 	}
@@ -694,7 +725,7 @@ func TestStickyNoteRoundTrips(t *testing.T) {
 	t.Parallel()
 
 	imported := importFixture(t, stickyFixture)
-	exported, err := n8n.Export(imported.Document)
+	exported, err := n8n.Export(imported.Document, registry(t))
 	if err != nil {
 		t.Fatalf("Export() error = %v", err)
 	}
@@ -746,7 +777,7 @@ func TestPlaceholderKeepsItsBranchesDistinct(t *testing.T) {
 	}
 
 	// And export must put them back on three different n8n output slots.
-	exported, err := n8n.Export(imported.Document)
+	exported, err := n8n.Export(imported.Document, registry(t))
 	if err != nil {
 		t.Fatalf("Export() error = %v", err)
 	}
@@ -778,7 +809,7 @@ func TestPlaceholderCapsuleRoundTripsEveryField(t *testing.T) {
 	t.Parallel()
 
 	imported := importFixture(t, capsuleFixture)
-	exported, err := n8n.Export(imported.Document)
+	exported, err := n8n.Export(imported.Document, registry(t))
 	if err != nil {
 		t.Fatalf("Export() error = %v", err)
 	}
@@ -927,7 +958,7 @@ func TestExportReadsTheLegacyStringCapsule(t *testing.T) {
 		Settings: map[string]any{},
 	}
 
-	exported, err := n8n.Export(document)
+	exported, err := n8n.Export(document, registry(t))
 	if err != nil {
 		t.Fatalf("Export() error = %v", err)
 	}
@@ -1028,22 +1059,18 @@ func TestImportHandlesAYYYYMMTypeVersion(t *testing.T) {
 	}`
 
 	result := importFixture(t, fixture)
-	var reported workflow.TypeVersion
-	for _, issue := range result.Unsupported {
-		if issue.Type == "@devlikeapro/n8n-nodes-waha.WAHA" {
-			reported = issue.TypeVersion
-		}
+	imported := nodeByName(result.Document, "WAHA")
+	if imported.Type != n8n.WAHANodeType {
+		t.Fatalf("type = %q, want the native WAHA node", imported.Type)
 	}
-	if got := reported.String(); got != "202502" {
-		t.Errorf("reported typeVersion = %s, want 202502", got)
+	if got := imported.TypeVersion.String(); got != "202502" {
+		t.Fatalf("typeVersion = %s, want the version the workflow was authored at", got)
 	}
-	placeholder := nodeByName(result.Document, "WAHA")
-	original, ok := placeholder.Parameters["original"].(map[string]any)
-	if !ok {
-		t.Fatalf("capsule = %#v, want an object", placeholder.Parameters["original"])
-	}
-	if version, _ := original["typeVersion"].(float64); version != 202502 {
-		t.Errorf("capsule typeVersion = %#v, want 202502 preserved for the export", original["typeVersion"])
+	// Both versions are registered, and the older one has to keep resolving to
+	// itself rather than being pulled forward onto a different event order.
+	older := importFixture(t, strings.ReplaceAll(fixture, "202502", "202409"))
+	if got := nodeByName(older.Document, "WAHA").TypeVersion.String(); got != "202409" {
+		t.Fatalf("typeVersion = %s, want 202409", got)
 	}
 }
 
@@ -1172,7 +1199,7 @@ func TestAIConnectionsRoundTrip(t *testing.T) {
 	t.Parallel()
 
 	imported := importFixture(t, langchainFixture)
-	exported, err := n8n.Export(imported.Document)
+	exported, err := n8n.Export(imported.Document, registry(t))
 	if err != nil {
 		t.Fatalf("Export() error = %v", err)
 	}
@@ -1298,7 +1325,7 @@ func TestExportWritesOnlyValidN8NEnumValues(t *testing.T) {
 		Settings: map[string]any{},
 	}
 
-	exported, err := n8n.Export(document)
+	exported, err := n8n.Export(document, registry(t))
 	if err != nil {
 		t.Fatalf("Export() error = %v", err)
 	}
@@ -1334,7 +1361,7 @@ func TestWebhookResponseModeRoundTripsExactly(t *testing.T) {
 		  "connections": {}
 		}`
 		imported := importFixture(t, fixture)
-		exported, err := n8n.Export(imported.Document)
+		exported, err := n8n.Export(imported.Document, registry(t))
 		if err != nil {
 			t.Fatalf("Export(%s) error = %v", mode, err)
 		}
@@ -1570,5 +1597,207 @@ func TestImportClampsAnOutOfRangeRetryBudget(t *testing.T) {
 	document.ID = "wf_clamped"
 	if _, err := workflow.Compile(document, registry(t)); err != nil {
 		t.Fatalf("a clamped retry budget must still compile: %v", err)
+	}
+}
+
+// The node type strings a WAHA workflow carries are matched byte for byte, and
+// the capitalisation is not a typo: one package ships `WAHA` in caps for the
+// action node and `wahaTrigger` in camel case for the trigger.
+func TestBothWAHAPackageFormsImportOntoTheNativeNodes(t *testing.T) {
+	t.Parallel()
+
+	for _, sourceType := range []string{
+		"@devlikeapro/n8n-nodes-waha.WAHA",
+		"n8n-nodes-waha.WAHA",
+	} {
+		fixture := fmt.Sprintf(`{"name":"W","nodes":[{"id":"a","name":"W","type":%q,"typeVersion":202502,"position":[0,0],"parameters":{"resource":"Chatting","operation":"Send Text"}}],"connections":{}}`, sourceType)
+		imported := nodeByName(importFixture(t, fixture).Document, "W")
+		if imported.Type != n8n.WAHANodeType {
+			t.Errorf("%s imported as %q, want %q", sourceType, imported.Type, n8n.WAHANodeType)
+		}
+		// The values an imported node selects with are the package's own
+		// strings, carried through untouched.
+		if imported.Parameters["resource"] != "Chatting" || imported.Parameters["operation"] != "Send Text" {
+			t.Errorf("%s parameters = %#v, want resource and operation unchanged", sourceType, imported.Parameters)
+		}
+	}
+	for _, sourceType := range []string{
+		"@devlikeapro/n8n-nodes-waha.wahaTrigger",
+		"n8n-nodes-waha.wahaTrigger",
+	} {
+		fixture := fmt.Sprintf(`{"name":"W","nodes":[{"id":"a","name":"W","type":%q,"typeVersion":202502,"position":[0,0],"parameters":{}}],"connections":{}}`, sourceType)
+		imported := nodeByName(importFixture(t, fixture).Document, "W")
+		if imported.Type != n8n.WAHATriggerNodeType {
+			t.Errorf("%s imported as %q, want %q", sourceType, imported.Type, n8n.WAHATriggerNodeType)
+		}
+	}
+}
+
+// The mapping table and the pack cannot be allowed to disagree about the node
+// type, and nothing in the compiler stops them.
+func TestTheMappingTargetsAreThePacksOwnTypes(t *testing.T) {
+	t.Parallel()
+
+	if n8n.WAHANodeType != waha.NodeType {
+		t.Fatalf("the importer maps onto %q but the pack registers %q", n8n.WAHANodeType, waha.NodeType)
+	}
+	if n8n.WAHATriggerNodeType != waha.TriggerNodeType {
+		t.Fatalf("the importer maps onto %q but the pack registers %q", n8n.WAHATriggerNodeType, waha.TriggerNodeType)
+	}
+	advertised := strings.Join(n8n.SupportedMappings(), "\n")
+	for _, pair := range []string{
+		"@devlikeapro/n8n-nodes-waha.WAHA ↔ pack.waha",
+		"@devlikeapro/n8n-nodes-waha.wahaTrigger ↔ pack.wahaTrigger",
+		"n8n-nodes-waha.WAHA ↔ pack.waha",
+		"n8n-nodes-waha.wahaTrigger ↔ pack.wahaTrigger",
+	} {
+		if !strings.Contains(advertised, pair) {
+			t.Errorf("SupportedMappings() does not advertise %q; the subset has to be a written-down claim", pair)
+		}
+	}
+}
+
+// A template that wires two events to two branches has to keep both wires. The
+// outputs are positional in n8n and named here, and the trigger has 26 of them.
+func TestATriggersEventBranchesSurviveARoundTrip(t *testing.T) {
+	t.Parallel()
+
+	const fixture = `{
+	  "name": "Two branches",
+	  "nodes": [
+	    {"id":"a","name":"WAHA Trigger","type":"@devlikeapro/n8n-nodes-waha.wahaTrigger","typeVersion":202502,"position":[0,0],"parameters":{}},
+	    {"id":"b","name":"On message","type":"n8n-nodes-base.set","typeVersion":3.4,"position":[220,0],"parameters":{}},
+	    {"id":"c","name":"On ack","type":"n8n-nodes-base.set","typeVersion":3.4,"position":[220,200],"parameters":{}}
+	  ],
+	  "connections": {"WAHA Trigger": {"main": [
+	    [],
+	    [{"node":"On message","type":"main","index":0}],
+	    [],
+	    [],
+	    [{"node":"On ack","type":"main","index":0}]
+	  ]}}
+	}`
+
+	result := importFixture(t, fixture)
+	byTarget := map[string]string{}
+	for _, connection := range result.Document.Connections {
+		byTarget[connection.Target.NodeID] = connection.Source.Port
+	}
+	// Index 1 is `message` and index 4 is `message.ack` in the 202502 table.
+	if byTarget["b"] != "message" {
+		t.Fatalf("the first branch landed on port %q, want message", byTarget["b"])
+	}
+	if byTarget["c"] != "message.ack" {
+		t.Fatalf("the second branch landed on port %q, want message.ack", byTarget["c"])
+	}
+
+	// And back out, onto the same slots it came from.
+	exported, err := n8n.Export(result.Document, registry(t))
+	if err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+	slots := exported.Document.Connections["WAHA Trigger"]["main"]
+	if len(slots) < 5 {
+		t.Fatalf("exported %d output slots, want at least five so index 4 exists", len(slots))
+	}
+	if len(slots[1]) != 1 || slots[1][0].Node != "On message" {
+		t.Fatalf("slot 1 = %#v, want the message branch", slots[1])
+	}
+	if len(slots[4]) != 1 || slots[4][0].Node != "On ack" {
+		t.Fatalf("slot 4 = %#v, want the ack branch", slots[4])
+	}
+	for _, index := range []int{0, 2, 3} {
+		if len(slots[index]) != 0 {
+			t.Fatalf("slot %d = %#v, want empty", index, slots[index])
+		}
+	}
+}
+
+// Export reproduces the original type string, capitalisation included, and the
+// version the node is actually at.
+func TestExportReproducesTheWAHATypeStringAndVersion(t *testing.T) {
+	t.Parallel()
+
+	for _, version := range []string{"202409", "202502"} {
+		fixture := fmt.Sprintf(`{"name":"W","nodes":[{"id":"a","name":"W","type":"@devlikeapro/n8n-nodes-waha.WAHA","typeVersion":%s,"position":[0,0],"parameters":{}}],"connections":{}}`, version)
+		imported := importFixture(t, fixture)
+		exported, err := n8n.Export(imported.Document, registry(t))
+		if err != nil {
+			t.Fatalf("Export() error = %v", err)
+		}
+		if len(exported.Document.Nodes) != 1 {
+			t.Fatalf("exported %d nodes, want one", len(exported.Document.Nodes))
+		}
+		node := exported.Document.Nodes[0]
+		if node.Type != "@devlikeapro/n8n-nodes-waha.WAHA" {
+			t.Fatalf("exported type = %q, want the scoped package's own capitalisation", node.Type)
+		}
+		if fmt.Sprintf("%.0f", node.TypeVersion) != version {
+			t.Fatalf("exported typeVersion = %v, want %s", node.TypeVersion, version)
+		}
+	}
+}
+
+// An n8n credential id names a row in somebody else's database. Dropping it is
+// right; dropping it silently leaves a node that looks configured and fails at
+// run time.
+func TestAnImportedCredentialReferenceIsNamedAndNotCarried(t *testing.T) {
+	t.Parallel()
+
+	const fixture = `{
+	  "name": "W",
+	  "nodes": [{"id":"a","name":"W","type":"@devlikeapro/n8n-nodes-waha.WAHA","typeVersion":202502,"position":[0,0],
+	    "parameters":{},"credentials":{"wahaApi":{"id":"7","name":"Production WAHA"}}}],
+	  "connections": {}
+	}`
+
+	result := importFixture(t, fixture)
+	imported := nodeByName(result.Document, "W")
+	if len(imported.Credentials) != 0 {
+		t.Fatalf("credentials = %#v, want the foreign reference not carried", imported.Credentials)
+	}
+	var reported string
+	for _, issue := range result.Unsupported {
+		if issue.Field == "credentials" {
+			reported = issue.Reason
+		}
+	}
+	if reported == "" {
+		t.Fatal("the dropped credential was not reported; the node looks configured and is not")
+	}
+	for _, want := range []string{"wahaApi", "Production WAHA"} {
+		if !strings.Contains(reported, want) {
+			t.Errorf("report = %q, want it to name %q", reported, want)
+		}
+	}
+	// The foreign identifier is never repeated back, so nothing downstream can
+	// mistake it for one of ours.
+	if strings.Contains(reported, `"7"`) {
+		t.Errorf("report = %q, want no foreign credential id", reported)
+	}
+}
+
+// A version this installation does not have imports at that version and says
+// so, rather than resolving down onto a node with a different event order.
+func TestAnUnknownVersionIsReportedRatherThanSilentlyResolved(t *testing.T) {
+	t.Parallel()
+
+	const fixture = `{"name":"W","nodes":[{"id":"a","name":"W","type":"@devlikeapro/n8n-nodes-waha.WAHA","typeVersion":209912,"position":[0,0],"parameters":{}}],"connections":{}}`
+
+	result := importFixture(t, fixture)
+	if got := nodeByName(result.Document, "W").TypeVersion.String(); got != "209912" {
+		t.Fatalf("typeVersion = %s, want the version the workflow named", got)
+	}
+	var reported string
+	for _, issue := range result.Unsupported {
+		if issue.Field == "typeVersion" {
+			reported = issue.Reason
+		}
+	}
+	if reported == "" {
+		t.Fatal("an unknown version imported silently")
+	}
+	if !strings.Contains(reported, "209912") {
+		t.Errorf("report = %q, want it to name the version", reported)
 	}
 }

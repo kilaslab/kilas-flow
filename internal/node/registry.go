@@ -399,9 +399,17 @@ func (registry *Registry) Lookup(nodeType string, version workflow.TypeVersion) 
 		RequiredFor: func(parameters map[string]any, typeVersion workflow.TypeVersion) []string {
 			return visibleRequiredParameters(definition.Parameters, parameters, typeVersion.String())
 		},
-		ExecutorID: definition.ExecutorID,
-		Validate:   definition.Validate,
+		ExecutorID:           definition.ExecutorID,
+		Validate:             definition.Validate,
+		WebhookPathParameter: webhookPathParameter(definition),
 	}, true
+}
+
+func webhookPathParameter(definition Definition) string {
+	if definition.Webhook == nil {
+		return ""
+	}
+	return definition.Webhook.PathParameter
 }
 
 // HasType implements workflow.TypeCatalog, allowing the compiler to report an

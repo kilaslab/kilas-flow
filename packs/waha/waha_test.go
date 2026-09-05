@@ -21,6 +21,7 @@ import (
 	"github.com/kilaslabs/kilas-flow/internal/credentials"
 	"github.com/kilaslabs/kilas-flow/internal/engine"
 	"github.com/kilaslabs/kilas-flow/internal/execution"
+	"github.com/kilaslabs/kilas-flow/internal/interop/n8n"
 	"github.com/kilaslabs/kilas-flow/internal/interop/n8n/corpus"
 	"github.com/kilaslabs/kilas-flow/internal/loadoptions"
 	"github.com/kilaslabs/kilas-flow/internal/node"
@@ -1127,4 +1128,66 @@ func TestTheTriggerBindsItsRouteThroughRegistryDrivenExtraction(t *testing.T) {
 	if references[waha.CredentialType] != "cred-1" {
 		t.Fatalf("binding credentials = %#v, want the WAHA credential reference", bound.Parameters["$credentials"])
 	}
+}
+
+// The claim this whole phase rests on, measured rather than asserted: no real
+// WAHA template is blocked by a WAHA node any more.
+//
+// Before this work, seven of the thirteen failed to compile on a WAHA node
+// itself — three on the action node, four on the trigger. What remains is other
+// n8n nodes KilasFlow does not have yet, which is a different backlog.
+func TestNoWAHATemplateIsBlockedByAWAHANode(t *testing.T) {
+	t.Parallel()
+
+	loaded, err := corpus.Load()
+	if err != nil {
+		t.Skipf("the corpus is not present; materialise it with %s", corpus.SyncCommand)
+	}
+	set := install(t, safehttp.DefaultPolicy())
+	if err := nodes.RegisterAll(set.definitions); err != nil {
+		t.Fatalf("RegisterAll() error = %v", err)
+	}
+
+	checked := 0
+	for _, fixture := range loaded {
+		if fixture.Source != corpus.SourceWAHATemplates {
+			continue
+		}
+		checked++
+		imported, err := n8n.Import(fixture.Payload, set.definitions)
+		if err != nil {
+			t.Errorf("%s did not import: %v", fixture.Name, err)
+			continue
+		}
+		// Every WAHA node has to arrive as a native node rather than as the
+		// unsupported placeholder, whichever package form the template used.
+		for _, node := range imported.Document.Nodes {
+			if node.Type != n8n.UnsupportedNodeType {
+				continue
+			}
+			original, _ := node.Parameters["originalType"].(string)
+			if strings.Contains(strings.ToLower(original), "waha") {
+				t.Errorf("%s: %s imported as an unsupported placeholder", fixture.Name, original)
+			}
+		}
+		// And compiling has to fail, when it fails, on something that is not a
+		// WAHA node.
+		if _, err := workflow.Compile(imported.Document, set.definitions); err != nil {
+			if strings.Contains(strings.ToLower(err.Error()), "waha") {
+				t.Errorf("%s is blocked by a WAHA node: %v", fixture.Name, firstLine(err))
+			}
+		}
+	}
+	if checked == 0 {
+		t.Skip("no WAHA templates in the corpus")
+	}
+	t.Logf("checked %d WAHA templates", checked)
+}
+
+func firstLine(err error) string {
+	text := err.Error()
+	if index := strings.IndexByte(text, '\n'); index >= 0 {
+		text = text[:index]
+	}
+	return text
 }

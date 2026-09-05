@@ -154,9 +154,10 @@ type Lossy = ExportIssue
 
 // mapping is one entry in the advertised node subset.
 type mapping struct {
-	n8nType      string
-	kilasType    string
-	kilasVersion int
+	n8nType   string
+	kilasType string
+	// kilasVersion is the target version when the source names none.
+	kilasVersion workflow.TypeVersion
 	// toKilas translates n8n parameters. A nil translator means the node has
 	// no parameters worth carrying.
 	toKilas func(node Node) (map[string]any, []Unsupported)
@@ -164,6 +165,14 @@ type mapping struct {
 	toN8N func(node workflow.Node) (map[string]any, []Lossy)
 	// exportTypeVersion is the n8n typeVersion written on export.
 	exportTypeVersion float64
+	// sharedVersion marks a mapping whose two sides use the same version
+	// numbers, so export writes the node's own version rather than a fixed one.
+	//
+	// It is what a generated pack needs: the WAHA node is registered at 202409
+	// and 202502 because the package it mirrors publishes those, and exporting
+	// both as one number would send a workflow back claiming a version it was
+	// not authored at.
+	sharedVersion bool
 	// exportOnly marks a canonical node with no n8n equivalent to import from.
 	exportOnly bool
 	// importOnly marks an n8n node with no faithful export.
@@ -185,50 +194,90 @@ func SupportedMappings() []string {
 
 var mappings = []mapping{
 	{
-		n8nType: "n8n-nodes-base.manualTrigger", kilasType: "kilasflow.manual", kilasVersion: 1,
+		n8nType: "n8n-nodes-base.manualTrigger", kilasType: "kilasflow.manual", kilasVersion: workflow.V(1),
 		exportTypeVersion: 1,
 	},
 	{
-		n8nType: "n8n-nodes-base.set", kilasType: "kilasflow.set", kilasVersion: 1,
+		n8nType: "n8n-nodes-base.set", kilasType: "kilasflow.set", kilasVersion: workflow.V(1),
 		exportTypeVersion: 3.4, toKilas: setToKilas, toN8N: setToN8N,
 	},
 	{
-		n8nType: "n8n-nodes-base.if", kilasType: "kilasflow.if", kilasVersion: 1,
+		n8nType: "n8n-nodes-base.if", kilasType: "kilasflow.if", kilasVersion: workflow.V(1),
 		exportTypeVersion: 2, toKilas: ifToKilas, toN8N: ifToN8N,
 	},
 	{
-		n8nType: "n8n-nodes-base.merge", kilasType: "kilasflow.merge", kilasVersion: 1,
+		n8nType: "n8n-nodes-base.merge", kilasType: "kilasflow.merge", kilasVersion: workflow.V(1),
 		exportTypeVersion: 3, toKilas: mergeToKilas, toN8N: mergeToN8N,
 	},
 	{
-		n8nType: "n8n-nodes-base.httpRequest", kilasType: "kilasflow.httpRequest", kilasVersion: 1,
+		n8nType: "n8n-nodes-base.httpRequest", kilasType: "kilasflow.httpRequest", kilasVersion: workflow.V(1),
 		exportTypeVersion: 4.2, toKilas: httpToKilas, toN8N: httpToN8N,
 	},
 	{
-		n8nType: "n8n-nodes-base.webhook", kilasType: "kilasflow.webhook", kilasVersion: 1,
+		n8nType: "n8n-nodes-base.webhook", kilasType: "kilasflow.webhook", kilasVersion: workflow.V(1),
 		exportTypeVersion: 2, toKilas: webhookToKilas, toN8N: webhookToN8N,
 	},
 	{
-		n8nType: "n8n-nodes-base.respondToWebhook", kilasType: "kilasflow.respondToWebhook", kilasVersion: 1,
+		n8nType: "n8n-nodes-base.respondToWebhook", kilasType: "kilasflow.respondToWebhook", kilasVersion: workflow.V(1),
 		exportTypeVersion: 1.1, toKilas: respondToKilas, toN8N: respondToN8N,
 	},
 	{
-		n8nType: "n8n-nodes-base.scheduleTrigger", kilasType: "kilasflow.schedule", kilasVersion: 1,
+		n8nType: "n8n-nodes-base.scheduleTrigger", kilasType: "kilasflow.schedule", kilasVersion: workflow.V(1),
 		exportTypeVersion: 1.2, toKilas: scheduleToKilas, toN8N: scheduleToN8N,
 	},
 	{
-		n8nType: "n8n-nodes-base.postgres", kilasType: "kilasflow.postgres", kilasVersion: 1,
+		n8nType: "n8n-nodes-base.postgres", kilasType: "kilasflow.postgres", kilasVersion: workflow.V(1),
 		exportTypeVersion: 2.4, toKilas: sqlToKilas, toN8N: sqlToN8N,
 	},
 	{
-		n8nType: "n8n-nodes-base.mySql", kilasType: "kilasflow.mysql", kilasVersion: 1,
+		n8nType: "n8n-nodes-base.mySql", kilasType: "kilasflow.mysql", kilasVersion: workflow.V(1),
 		exportTypeVersion: 2.4, toKilas: sqlToKilas, toN8N: sqlToN8N,
 	},
 	{
-		n8nType: "n8n-nodes-base.stickyNote", kilasType: StickyNoteNodeType, kilasVersion: 1,
+		n8nType: "n8n-nodes-base.stickyNote", kilasType: StickyNoteNodeType, kilasVersion: workflow.V(1),
 		exportTypeVersion: 1, toKilas: stickyToKilas, toN8N: stickyToN8N,
 	},
+
+	// WAHA. Four entries for two nodes: the published package is scoped and an
+	// older one was not, and a workflow authored against either has to find the
+	// same node.
+	//
+	// The capitalisation is not a typo and must not be normalised. One package
+	// ships `WAHA` in caps for the action node and `wahaTrigger` in camel case
+	// for the trigger; these strings are matched byte for byte, exactly as
+	// `n8n-nodes-base.mySql` already is, and being helpful about case here
+	// would break both mappings at once.
+	{
+		n8nType: "@devlikeapro/n8n-nodes-waha.WAHA", kilasType: WAHANodeType,
+		kilasVersion: workflow.V(202502), sharedVersion: true,
+		toKilas: packToKilas, toN8N: packToN8N,
+	},
+	{
+		n8nType: "@devlikeapro/n8n-nodes-waha.wahaTrigger", kilasType: WAHATriggerNodeType,
+		kilasVersion: workflow.V(202502), sharedVersion: true,
+		toKilas: packToKilas, toN8N: packToN8N,
+	},
+	// The legacy unscoped forms, listed rather than prefix-matched: an explicit
+	// entry is greppable and cannot accidentally capture a package that merely
+	// begins with the same characters.
+	{
+		n8nType: "n8n-nodes-waha.WAHA", kilasType: WAHANodeType,
+		kilasVersion: workflow.V(202502), sharedVersion: true,
+		toKilas: packToKilas, toN8N: packToN8N, importOnly: true,
+	},
+	{
+		n8nType: "n8n-nodes-waha.wahaTrigger", kilasType: WAHATriggerNodeType,
+		kilasVersion: workflow.V(202502), sharedVersion: true,
+		toKilas: packToKilas, toN8N: packToN8N, importOnly: true,
+	},
 }
+
+// The WAHA pack's node types, named here so the mapping table and the pack
+// cannot disagree about them without a compile error somewhere.
+const (
+	WAHANodeType        = "pack.waha"
+	WAHATriggerNodeType = "pack.wahaTrigger"
+)
 
 func byN8NType(nodeType string) (mapping, bool) {
 	for _, entry := range mappings {
@@ -363,9 +412,19 @@ func Import(payload []byte, catalog workflow.Catalog) (ImportResult, error) {
 		// the source version means an imported node lands on the right
 		// parameter shape the moment that shape is registered — and until then
 		// the registry resolves down to the highest version it does have.
-		converted.TypeVersion = workflow.V(entry.kilasVersion)
+		converted.TypeVersion = entry.kilasVersion
 		if sourceVersion := sourceTypeVersion(node.TypeVersion); !sourceVersion.IsZero() {
 			converted.TypeVersion = sourceVersion
+		}
+		if issue, mismatched := versionIssue(catalog, entry, name, id, node, converted); mismatched {
+			unsupported = append(unsupported, issue)
+		}
+		if issue, referenced := credentialIssue(name, id, node); referenced {
+			unsupported = append(unsupported, issue)
+			// The reference itself is never carried. An n8n credential id
+			// names a row in somebody else's database; storing it would leave
+			// a node that looks configured and fails at run time.
+			converted.Credentials = nil
 		}
 		if entry.toKilas != nil {
 			parameters, issues := entry.toKilas(node)
@@ -375,6 +434,11 @@ func Import(payload []byte, catalog workflow.Catalog) (ImportResult, error) {
 				issue.NodeID = id
 				unsupported = append(unsupported, issue)
 			}
+		}
+		// After the translator, never before: a translator returns the whole
+		// parameter map and would overwrite anything written ahead of it.
+		if issue, invented := webhookPathIssue(catalog, name, id, node, &converted); invented {
+			unsupported = append(unsupported, issue)
 		}
 		if node.Disabled {
 			unsupported = append(unsupported, Unsupported{
@@ -681,7 +745,14 @@ type ExportResult struct {
 }
 
 // Export converts a canonical KilasFlow document into n8n workflow JSON.
-func Export(document workflow.Document) (ExportResult, error) {
+//
+// The catalogue is what turns a named output port back into n8n's positional
+// index. A hardcoded table could only ever describe the nodes somebody wrote it
+// for: a generated pack's trigger has twenty-six outputs nobody hardcoded, and
+// collapsing them onto slot zero would send every branch of an exported
+// workflow to the same wire. A nil catalogue falls back to the positional
+// names, which is what this did before it could ask.
+func Export(document workflow.Document, catalog workflow.Catalog) (ExportResult, error) {
 	result := ExportResult{
 		Document: Document{
 			Name:        document.Name,
@@ -741,7 +812,7 @@ func Export(document workflow.Document) (ExportResult, error) {
 		}
 
 		exported := Node{
-			ID: node.ID, Name: node.Name, Type: entry.n8nType, TypeVersion: entry.exportTypeVersion,
+			ID: node.ID, Name: node.Name, Type: entry.n8nType, TypeVersion: exportVersion(entry, node),
 			Position: []float64{node.Position.X, node.Position.Y},
 		}
 		if entry.toN8N != nil {
@@ -762,7 +833,7 @@ func Export(document workflow.Document) (ExportResult, error) {
 			})
 		}
 		result.Document.Nodes = append(result.Document.Nodes, exported)
-		portIndex[node.ID] = outputIndexesFor(node.Type)
+		portIndex[node.ID] = outputIndexesFor(catalog, node.Type, node.TypeVersion)
 	}
 
 	exported := map[string]bool{}
@@ -818,11 +889,41 @@ func Export(document workflow.Document) (ExportResult, error) {
 	return result, nil
 }
 
+// exportVersion is the typeVersion written back out.
+//
+// A shared-version mapping writes the node's own: the WAHA node is registered
+// at the versions the package it mirrors publishes, and exporting both as one
+// number would send a workflow back claiming a version it was not authored at.
+func exportVersion(entry mapping, node workflow.Node) float64 {
+	if !entry.sharedVersion {
+		return entry.exportTypeVersion
+	}
+	if node.TypeVersion.IsZero() {
+		return entry.exportTypeVersion
+	}
+	return node.TypeVersion.Float()
+}
+
 // outputIndexesFor maps a canonical node's named output ports onto n8n's
 // positional ones. It is the inverse of outputPortsFor, so a round trip lands
 // on the same branch it started from.
-func outputIndexesFor(nodeType string) map[string]int {
+func outputIndexesFor(catalog workflow.Catalog, nodeType string, version workflow.TypeVersion) map[string]int {
 	indexes := map[string]int{}
+	if catalog != nil {
+		if definition, found := catalog.Lookup(nodeType, version); found {
+			position := 0
+			for _, port := range definition.Outputs {
+				// Only the item channel is positional; a typed AI channel
+				// always writes slot zero.
+				if port.Kind != workflow.ConnectionMain {
+					continue
+				}
+				indexes[port.Name] = position
+				position++
+			}
+			return indexes
+		}
+	}
 	for index, port := range outputPortsFor(nodeType) {
 		indexes[port] = index
 	}
@@ -1078,4 +1179,139 @@ func errorHandlingSettings(node Node) map[string]any {
 		settings["waitBetweenTries"] = wait
 	}
 	return settings
+}
+
+// versionIssue reports a source typeVersion the catalogue does not register.
+//
+// Only for a shared-version mapping, and that restriction is the whole design.
+// KilasFlow's core nodes are registered at 1 while the n8n nodes they mirror are
+// at 3.4 and 1.2, so the numbers mean different things and resolving down is
+// exactly right there — reporting it would put a blocking issue on every
+// perfectly good import. A shared-version mapping is the case where the two
+// sides use the *same* numbering, so a version the catalogue does not have is a
+// genuinely different node: a WAHA workflow authored at 202409 that quietly
+// landed on 202502 would be wired against a different event order.
+func versionIssue(catalog workflow.Catalog, entry mapping, name, id string, node Node, converted workflow.Node) (ImportIssue, bool) {
+	if catalog == nil || !entry.sharedVersion || converted.TypeVersion.IsZero() {
+		return ImportIssue{}, false
+	}
+	// Lookup resolves *down* to the highest registered version, which is right
+	// for a workflow authored against a newer minor of an unchanged node and
+	// silently wrong for one registered at distinct, non-additive versions. The
+	// returned definition's own version is what says which happened.
+	if definition, found := catalog.Lookup(converted.Type, converted.TypeVersion); found &&
+		definition.Version.Compare(converted.TypeVersion) == 0 {
+		return ImportIssue{}, false
+	}
+	typed, reports := catalog.(workflow.TypeCatalog)
+	if !reports || !typed.HasType(converted.Type) {
+		// The type itself is unknown here; the unsupported branch already
+		// reported that, or the catalogue is too thin to say more.
+		return ImportIssue{}, false
+	}
+	return ImportIssue{
+		Severity: SeverityBlocking,
+		NodeName: name, NodeID: id, Field: "typeVersion",
+		Type: node.Type, TypeVersion: sourceTypeVersion(node.TypeVersion),
+		Reason: fmt.Sprintf(
+			"this workflow uses %s version %s, which this installation does not have. It was imported at that version and will not run until the version is installed or the node is changed.",
+			node.Type, converted.TypeVersion),
+	}, true
+}
+
+// credentialIssue names the credential a node expected without carrying it.
+//
+// An n8n credential reference is `{id, name}` scoped to the instance it came
+// from: the id names a row in somebody else's database and means nothing here.
+// Dropping it is right. Dropping it *silently* is not — the node then looks
+// configured and fails at run time — so the name the workflow was authored
+// against is reported, and the node arrives visibly unbound.
+func credentialIssue(name, id string, node Node) (ImportIssue, bool) {
+	if len(node.Credentials) == 0 {
+		return ImportIssue{}, false
+	}
+	described := make([]string, 0, len(node.Credentials))
+	for credentialType, value := range node.Credentials {
+		display := ""
+		if reference, ok := value.(map[string]any); ok {
+			display, _ = reference["name"].(string)
+		}
+		if display == "" {
+			described = append(described, credentialType)
+			continue
+		}
+		described = append(described, fmt.Sprintf("%s %q", credentialType, display))
+	}
+	sort.Strings(described)
+	return ImportIssue{
+		Severity: SeverityBlocking,
+		NodeName: name, NodeID: id, Field: "credentials",
+		Type: node.Type, TypeVersion: sourceTypeVersion(node.TypeVersion),
+		Reason: fmt.Sprintf(
+			"this node used %s in n8n. Credential identifiers belong to the instance they came from, so the node was imported unbound: attach a local credential before activating.",
+			strings.Join(described, ", ")),
+	}, true
+}
+
+// webhookPathIssue gives an imported trigger the route label KilasFlow needs.
+//
+// n8n mints its own webhook route and stores it as an opaque `webhookId`, so a
+// trigger imported from it carries no path at all — and a KilasFlow trigger with
+// no path binds no route, which means the workflow activates and receives
+// nothing. That is the exact failure this whole phase is about, so a label is
+// invented from the node's own name rather than left empty.
+//
+// The label is only a label: the public URL is a minted opaque route either way.
+// It is reported because a value the user did not write should never appear in
+// their workflow silently.
+func webhookPathIssue(catalog workflow.Catalog, name, id string, node Node, converted *workflow.Node) (ImportIssue, bool) {
+	if catalog == nil {
+		return ImportIssue{}, false
+	}
+	definition, found := catalog.Lookup(converted.Type, converted.TypeVersion)
+	if !found || definition.WebhookPathParameter == "" {
+		return ImportIssue{}, false
+	}
+	key := definition.WebhookPathParameter
+	if existing, present := converted.Parameters[key]; present {
+		if text, ok := existing.(string); !ok || strings.TrimSpace(text) != "" {
+			return ImportIssue{}, false
+		}
+	}
+	label := routeLabel(name)
+	if label == "" {
+		label = routeLabel(id)
+	}
+	if label == "" {
+		return ImportIssue{}, false
+	}
+	if converted.Parameters == nil {
+		converted.Parameters = map[string]any{}
+	}
+	converted.Parameters[key] = label
+	return ImportIssue{
+		Severity: SeverityDropped,
+		NodeName: name, NodeID: id, Field: key,
+		Type: node.Type, TypeVersion: sourceTypeVersion(node.TypeVersion),
+		Reason: fmt.Sprintf(
+			"n8n mints its own webhook route and carries no path, so this trigger was given the label %q. The public URL is a route KilasFlow mints on activation; rename the label freely.",
+			label),
+	}, true
+}
+
+// routeLabel turns a node name into a path-shaped label.
+func routeLabel(name string) string {
+	var builder strings.Builder
+	previousDash := true
+	for _, char := range strings.ToLower(strings.TrimSpace(name)) {
+		switch {
+		case char >= 'a' && char <= 'z', char >= '0' && char <= '9':
+			builder.WriteRune(char)
+			previousDash = false
+		case !previousDash:
+			builder.WriteByte('-')
+			previousDash = true
+		}
+	}
+	return strings.Trim(builder.String(), "-")
 }

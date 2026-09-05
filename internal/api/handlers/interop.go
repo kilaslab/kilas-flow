@@ -55,7 +55,8 @@ type ExportedWorkflowResource struct {
 type Interop struct {
 	workflows repository.WorkflowRepository
 	tenants   TenantResolver
-	// catalog is read during import so a connection endpoint resolves to a port
+	// catalog is read during import and export so a connection endpoint
+	// resolves to a port
 	// the target node actually declares. n8n names an endpoint by kind and
 	// index; only the registry knows what that means here.
 	catalog workflow.Catalog
@@ -179,7 +180,7 @@ func (handler *Interop) Export(ctx context.Context, input *exportWorkflowInput) 
 		return nil, huma.Error404NotFound("workflow not found")
 	}
 
-	result, err := n8n.Export(stored.LatestVersion.Document)
+	result, err := n8n.Export(stored.LatestVersion.Document, handler.catalog)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("workflow could not be exported")
 	}

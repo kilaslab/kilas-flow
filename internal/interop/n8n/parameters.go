@@ -681,3 +681,34 @@ func stickyToN8N(node workflow.Node) (map[string]any, []Lossy) {
 	}
 	return parameters, nil
 }
+
+// packToKilas carries a generated pack's parameters through unchanged.
+//
+// A pack node's parameter *names* are the ones the package it mirrors chose —
+// that is the whole point of generating from the same document — so there is
+// nothing to rename. What does change is the expression dialect: n8n marks an
+// expression with a leading `=` on a plain string, KilasFlow with an explicit
+// marker, and a template that omitted a parameter to rely on its default has
+// nothing here at all and picks the pack's own default up at run time.
+func packToKilas(node Node) (map[string]any, []Unsupported) {
+	if len(node.Parameters) == 0 {
+		return nil, nil
+	}
+	converted := make(map[string]any, len(node.Parameters))
+	for key, value := range node.Parameters {
+		converted[key] = fromN8NValue(value)
+	}
+	return converted, nil
+}
+
+// packToN8N carries them back out, restoring the `=` prefix.
+func packToN8N(node workflow.Node) (map[string]any, []Lossy) {
+	if len(node.Parameters) == 0 {
+		return nil, nil
+	}
+	converted := make(map[string]any, len(node.Parameters))
+	for key, value := range node.Parameters {
+		converted[key] = toN8NValue(value)
+	}
+	return converted, nil
+}

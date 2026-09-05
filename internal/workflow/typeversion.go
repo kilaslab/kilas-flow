@@ -113,6 +113,16 @@ func (version TypeVersion) String() string {
 	return strconv.FormatInt(whole, 10) + "." + text
 }
 
+// Float is the version as the wire format writes it.
+//
+// Exact for every version this type can hold: the scale is 1e6 and a float64
+// carries 53 bits of mantissa, so `4.2` and `202502` both come back as
+// themselves. It exists for the n8n adapter, whose document format types
+// `typeVersion` as a JSON number.
+func (version TypeVersion) Float() float64 {
+	return float64(version.scaled) / float64(versionScale)
+}
+
 // MarshalJSON writes a JSON number, not a string.
 //
 // The wire format is unchanged by this type existing: a document still says

@@ -38,6 +38,14 @@ type NodeDefinition struct {
 	RequiredFor func(parameters map[string]any, typeVersion TypeVersion) []string
 	ExecutorID  string
 	Validate    ConfigValidator
+	// WebhookPathParameter is the parameter key holding this trigger's route
+	// label, when it declares an inbound webhook.
+	//
+	// The compiler does not read it. It is here because the n8n adapter has to
+	// know that a node it is importing needs a label — n8n mints its own route
+	// and carries none — and asking the catalogue is what keeps that from
+	// becoming a list of trigger type names in the adapter.
+	WebhookPathParameter string
 	// LoopEntry marks a node a back edge may legally close onto.
 	//
 	// It is a property of the definition rather than a node type the compiler
