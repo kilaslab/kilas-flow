@@ -1010,20 +1010,27 @@ editor's forms without touching editor code.
 in `e2e/` at the root, not inside `web/`, because it tests the assembled product. Reuses
 `scripts/openapi-spec.mjs`'s build-boot-poll-teardown pattern, including its free-port
 reservation, which is what stops parallel workers colliding. Determinism comes from a local stub
-plus an `outbound.allowed_hosts` entry — **never** from `allow_private_networks: true`, which
-would run the suite with a security posture production does not have.
+plus an `outbound.allowed_private_endpoints` entry naming the stub's `host:port` — **never** from
+`allow_private_networks: true`, which would run the suite with a security posture production does
+not have. (`allowed_hosts`, which this entry used to name, is a pre-flight hostname gate and does
+not exempt anything from the private-address guard; `allowed_private_endpoints` was added by
+`FEAT-kwxxd0` for exactly this.)
 
 **V2-p11-2 · Run a local Ollama model as the AI runtime for tests** (`FEAT-kwxxd0`, deps
 `FEAT-mvegj5`). Almost no code: `internal/ai.NewOpenAICompatible` already takes an arbitrary
 base URL, `chatModelNode()` exposes `baseUrl` as "Any OpenAI-compatible endpoint", its model
 picker loads from `{baseUrl}/models` with `ItemsPath: "data"` and `ValueField: "id"` — which is
-exactly Ollama's shape — and the `httpBearerAuth` requirement is optional. **The obstacle is
-real and the guard is right**: `OutboundHTTP.AllowPrivateNetworks` defaults to `false` and
-`safehttp` rejects loopback at dial time, so a model at `localhost:11434` is refused before a
-request is made. The fix is one `allowed_hosts` entry, plus a test that a *different* loopback
-address is still refused. First check whether the allowlist is consulted before or after the
-private-address guard; if after, this becomes a small code ticket rather than a configuration
-one. The model is pinned to **`gemma4:12b-mlx`** by owner instruction (2026-09-05), at temperature
+exactly Ollama's shape. **The obstacle is real and the guard is right**:
+`OutboundHTTP.AllowPrivateNetworks` defaults to `false` and `safehttp` rejects loopback at dial
+time, so a model at `localhost:11434` is refused before a request is made. **Answered (2026-09-06,
+`FEAT-kwxxd0`): the allowlist is consulted neither before nor after — `CheckURL` reads
+`AllowedHosts` at pre-flight and never looks at an IP, and the dialer's address check never reads
+`AllowedHosts`, so this was a code ticket.** `safehttp.Policy.AllowedPrivateEndpoints` now names
+one `host:port` at a time that may resolve privately, configured as
+`outbound.allowed_private_endpoints`. Two other premises in this entry were also wrong: the
+`httpBearerAuth` requirement is *not* optional — `executeChatModel` refuses a node without a
+credential ID — so a local server needs a credential holding an empty token, which sends no
+Authorization header. The model is pinned to **`gemma4:12b-mlx`** by owner instruction (2026-09-05), at temperature
 zero. The `-mlx` suffix names an Apple MLX build, so the tag is Apple-Silicon-only and a
 `linux/amd64` runner cannot pull it — which reinforces rather than breaks the two decisions
 already made, that these suites run on demand and that a machine without the model skips

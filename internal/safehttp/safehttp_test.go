@@ -200,3 +200,196 @@ func TestRedirectToADisallowedSchemeIsRejected(t *testing.T) {
 		t.Fatal("a redirect escaped the host allowlist")
 	}
 }
+
+// endpointOf is the `host:port` a policy entry has to name to admit a server.
+func endpointOf(t *testing.T, rawURL string) string {
+	t.Helper()
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		t.Fatalf("parse %q: %v", rawURL, err)
+	}
+	return parsed.Host
+}
+
+// TestOneNamedPrivateEndpointIsReachedWhileEveryOtherOneStaysBlocked is the
+// capability. A deployment that runs a model server on loopback has to reach
+// it, and the only lever before this was AllowPrivateNetworks — which hands
+// every outbound request in the installation the whole internal network to
+// solve a problem with one address.
+func TestOneNamedPrivateEndpointIsReachedWhileEveryOtherOneStaysBlocked(t *testing.T) {
+	t.Parallel()
+
+	named := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer named.Close()
+
+	reached := false
+	neighbour := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reached = true
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer neighbour.Close()
+
+	policy := safehttp.DefaultPolicy()
+	if policy.AllowPrivateNetworks {
+		t.Fatal("the default policy allows private networks, which would make this test prove nothing")
+	}
+	policy.AllowedPrivateEndpoints = []string{endpointOf(t, named.URL)}
+	client := safehttp.NewClient(policy)
+
+	response, err := client.Get(named.URL)
+	if err != nil {
+		t.Fatalf("Get(named endpoint) = %v, want the request to go through", err)
+	}
+	_ = response.Body.Close()
+
+	// The neighbour is the same loopback host on a different port, which is
+	// why the port is part of the grant: an allowance for a model server must
+	// not also be an allowance for whatever else the machine is listening on.
+	if _, err := client.Get(neighbour.URL); !errors.Is(err, safehttp.ErrBlocked) {
+		t.Errorf("Get(unnamed endpoint) = %v, want ErrBlocked", err)
+	}
+	if reached {
+		t.Error("a refused request still reached the neighbouring server")
+	}
+}
+
+// TestAPrivateEndpointEntryThatIsNotAHostAndPortGrantsNothing pins the failure
+// mode. A misconfigured allowance has to narrow the policy, never widen it, and
+// the operator has to be told rather than left with a grant that silently does
+// nothing.
+func TestAPrivateEndpointEntryThatIsNotAHostAndPortGrantsNothing(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer server.Close()
+
+	parsed, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatalf("parse %q: %v", server.URL, err)
+	}
+	for _, entry := range []string{
+		"",
+		"   ",
+		// A host with no port would be a grant over every service on the box.
+		parsed.Hostname(),
+		// AllowedHosts honours this shape, which is exactly why an operator
+		// might reach for it here.
+		"*.test:" + parsed.Port(),
+		"*:" + parsed.Port(),
+		parsed.Hostname() + ":not-a-port",
+		parsed.Hostname() + ":0",
+		parsed.Hostname() + ":70000",
+		// A pasted URL rather than an endpoint.
+		server.URL,
+		"http://" + parsed.Host + "/v1",
+	} {
+		if err := safehttp.CheckPrivateEndpoint(entry); err == nil {
+			t.Errorf("CheckPrivateEndpoint(%q) = nil, want a refusal", entry)
+		}
+		policy := safehttp.DefaultPolicy()
+		policy.AllowedPrivateEndpoints = []string{entry}
+		if _, err := safehttp.NewClient(policy).Get(server.URL); !errors.Is(err, safehttp.ErrBlocked) {
+			t.Errorf("entry %q admitted %s: %v", entry, server.URL, err)
+		}
+	}
+
+	for _, entry := range []string{"127.0.0.1:11434", "[::1]:11434", "localhost:80", "ollama.internal:11434"} {
+		if err := safehttp.CheckPrivateEndpoint(entry); err != nil {
+			t.Errorf("CheckPrivateEndpoint(%q) = %v, want it accepted", entry, err)
+		}
+	}
+}
+
+// TestAPrivateEndpointAllowanceIsNotAlsoAHostAllowlistEntry keeps the two
+// guards independent in the direction that matters. Widening one of them by
+// writing in the other is how an allowlist stops meaning what it says.
+func TestAPrivateEndpointAllowanceIsNotAlsoAHostAllowlistEntry(t *testing.T) {
+	t.Parallel()
+
+	policy := safehttp.DefaultPolicy()
+	policy.AllowedHosts = []string{"api.test"}
+	policy.AllowedPrivateEndpoints = []string{"127.0.0.1:11434"}
+
+	target, err := url.Parse("http://127.0.0.1:11434/v1/models")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := policy.CheckURL(target); !errors.Is(err, safehttp.ErrBlocked) {
+		t.Errorf("CheckURL(allowed private endpoint) = %v, want the host allowlist to still refuse it", err)
+	}
+}
+
+// TestAnAllowedPrivateEndpointDoesNotCarryARedirectSomewhereElse closes the
+// obvious way to turn one grant into many: reach the endpoint you are allowed
+// to reach and have it point you at the one you are not.
+func TestAnAllowedPrivateEndpointDoesNotCarryARedirectSomewhereElse(t *testing.T) {
+	t.Parallel()
+
+	reached := false
+	internal := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reached = true
+		_, _ = w.Write([]byte("secrets"))
+	}))
+	defer internal.Close()
+
+	named := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, internal.URL, http.StatusFound)
+	}))
+	defer named.Close()
+
+	policy := safehttp.DefaultPolicy()
+	policy.AllowedPrivateEndpoints = []string{endpointOf(t, named.URL)}
+
+	if _, err := safehttp.NewClient(policy).Get(named.URL); !errors.Is(err, safehttp.ErrBlocked) {
+		t.Errorf("Get(redirecting endpoint) = %v, want ErrBlocked on the hop", err)
+	}
+	if reached {
+		t.Error("a redirect carried the allowance to an endpoint nobody named")
+	}
+}
+
+// TestCheckEndpointAddressExemptsOnlyTheEndpointItWasAskedAbout is the unit
+// underneath the client tests: the exemption is keyed on the host and port that
+// were dialled, so it cannot leak to a different one.
+func TestCheckEndpointAddressExemptsOnlyTheEndpointItWasAskedAbout(t *testing.T) {
+	t.Parallel()
+
+	policy := safehttp.DefaultPolicy()
+	policy.AllowedPrivateEndpoints = []string{"localhost:11434", "[::1]:11434"}
+
+	if err := policy.CheckEndpointAddress("localhost", "11434", net.ParseIP("127.0.0.1")); err != nil {
+		t.Errorf("CheckEndpointAddress(named endpoint) = %v, want it admitted", err)
+	}
+	// Spelt with brackets in the entry and without them at the dial, and still
+	// one grant rather than two near-misses.
+	if err := policy.CheckEndpointAddress("::1", "11434", net.ParseIP("::1")); err != nil {
+		t.Errorf("CheckEndpointAddress(IPv6 endpoint) = %v, want it admitted", err)
+	}
+	for _, refused := range []struct{ host, port, ip string }{
+		// The same host on another port: a database beside the model server.
+		{"localhost", "5432", "127.0.0.1"},
+		// The same port on a host the entry never named.
+		{"metadata.internal", "11434", "169.254.169.254"},
+		// The address the named host resolves to, written directly. The
+		// comparison is on the host as the URL wrote it, so this is a
+		// different endpoint and gets no exemption.
+		{"127.0.0.1", "11434", "127.0.0.1"},
+	} {
+		err := policy.CheckEndpointAddress(refused.host, refused.port, net.ParseIP(refused.ip))
+		if !errors.Is(err, safehttp.ErrBlocked) {
+			t.Errorf("CheckEndpointAddress(%s:%s -> %s) = %v, want ErrBlocked",
+				refused.host, refused.port, refused.ip, err)
+		}
+	}
+	if err := policy.CheckEndpointAddress("localhost", "11434", nil); !errors.Is(err, safehttp.ErrBlocked) {
+		t.Errorf("CheckEndpointAddress(unparsed address) = %v, want ErrBlocked even for a named endpoint", err)
+	}
+	// A public address needs no exemption and must not be refused for lacking one.
+	if err := policy.CheckEndpointAddress("api.test", "443", net.ParseIP("93.184.216.34")); err != nil {
+		t.Errorf("CheckEndpointAddress(public address) = %v, want allowed", err)
+	}
+}

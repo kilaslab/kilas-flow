@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -731,6 +732,65 @@ func TestAModelCallToAPrivateAddressIsRefused(t *testing.T) {
 	}
 	if received != nil {
 		t.Error("the refused request still reached the server")
+	}
+}
+
+// TestAModelCallReachesTheOneLoopbackEndpointTheDeploymentNamed is the other
+// half of the refusal above, and the reason safehttp grew an endpoint list at
+// all. A self-hosted install running a model server beside the instance has to
+// reach it, and the only lever before this was AllowPrivateNetworks — which
+// buys one address by handing every outbound request the whole internal
+// network, and leaves the suite unable to catch a regression in the guard it
+// had switched off.
+func TestAModelCallReachesTheOneLoopbackEndpointTheDeploymentNamed(t *testing.T) {
+	t.Parallel()
+
+	var received map[string]any
+	provider := answerOnce(&received, 0)
+	defer provider.Close()
+
+	address, err := url.Parse(provider.URL)
+	if err != nil {
+		t.Fatalf("parse %q: %v", provider.URL, err)
+	}
+
+	// The deployment's real posture, with one endpoint written down.
+	policy := safehttp.DefaultPolicy()
+	policy.AllowedPrivateEndpoints = []string{address.Host}
+
+	resolver := openAICredential()
+	descriptor := runProviderModel(t, nodes.OpenAIChatModelNodeType, nodes.OpenAIChatModelExecutorID,
+		nodes.OpenAICredentialType, map[string]any{
+			"model": modelLocator("gpt-test"), "baseUrl": provider.URL, "stream": false,
+		}, resolver)
+
+	executor := nodes.NewAgentExecutor(ai.NewLoopRuntime(), policy, nil)
+	output, err := runAgentWith(t, executor, descriptor, resolver)
+	if err != nil {
+		t.Fatalf("Execute() error = %v, want the named endpoint to be reachable", err)
+	}
+	if received == nil {
+		t.Fatal("the model server was never called")
+	}
+	if output[0][0].JSON["output"] != "42" {
+		t.Errorf("output = %#v, want the model's answer", output[0][0].JSON)
+	}
+
+	// The allowance is one endpoint, not a posture. A second loopback server on
+	// another port is the neighbouring service this must never have opened.
+	var neighbour map[string]any
+	other := answerOnce(&neighbour, 0)
+	defer other.Close()
+
+	elsewhere := runProviderModel(t, nodes.OpenAIChatModelNodeType, nodes.OpenAIChatModelExecutorID,
+		nodes.OpenAICredentialType, map[string]any{
+			"model": modelLocator("gpt-test"), "baseUrl": other.URL, "stream": false,
+		}, resolver)
+	if _, err := runAgentWith(t, executor, elsewhere, resolver); err == nil {
+		t.Fatal("a model node reached a loopback address nobody named")
+	}
+	if neighbour != nil {
+		t.Error("the refused request still reached the neighbouring server")
 	}
 }
 

@@ -104,6 +104,18 @@ func TestValidateRejectsBadConfig(t *testing.T) {
 		"port out of range": func(c *Config) { c.Server.Port = 0 },
 		"unknown driver":    func(c *Config) { c.Database.Driver = "mongodb" },
 		"empty dsn":         func(c *Config) { c.Database.DSN = "" },
+		// A private-endpoint entry that names no port, or names a whole
+		// network, or is a pasted URL, would be ignored by the guard. Ignored
+		// is safe but silent, and silence here reads as the guard being broken.
+		"private endpoint without a port": func(c *Config) {
+			c.Outbound.AllowedPrivateEndpoints = []string{"localhost"}
+		},
+		"private endpoint with a wildcard": func(c *Config) {
+			c.Outbound.AllowedPrivateEndpoints = []string{"*.internal:11434"}
+		},
+		"private endpoint pasted as a URL": func(c *Config) {
+			c.Outbound.AllowedPrivateEndpoints = []string{"http://localhost:11434/v1"}
+		},
 	}
 
 	for name, mutate := range cases {
@@ -197,5 +209,49 @@ func TestHistoryRetentionIsReachableFromYAMLAndTheEnvironment(t *testing.T) {
 	}
 	if cfg.History.MaxVersions != 25 {
 		t.Errorf("History.MaxVersions = %d, want the environment's 25", cfg.History.MaxVersions)
+	}
+}
+
+// TestAPrivateEndpointAllowanceIsEmptyByDefaultAndReachableFromConfiguration
+// keeps the exemption something an operator writes down. A deployment that was
+// never configured for one has none, and the one that wants one says so in a
+// file or an environment variable that an audit can read back.
+func TestAPrivateEndpointAllowanceIsEmptyByDefaultAndReachableFromConfiguration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "kilasflow.yaml")
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(cfg.Outbound.AllowedPrivateEndpoints) != 0 {
+		t.Errorf("AllowedPrivateEndpoints = %v, want none until one is configured", cfg.Outbound.AllowedPrivateEndpoints)
+	}
+	if cfg.Outbound.AllowPrivateNetworks {
+		t.Error("AllowPrivateNetworks defaults to true, which would make the endpoint list pointless")
+	}
+
+	contents := "outbound:\n  allowed_private_endpoints:\n    - 127.0.0.1:11434\n    - '[::1]:11434'\n"
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(cfg.Outbound.AllowedPrivateEndpoints) != 2 {
+		t.Fatalf("AllowedPrivateEndpoints from YAML = %v, want both entries", cfg.Outbound.AllowedPrivateEndpoints)
+	}
+
+	// The section is one word for the reason OutboundHTTP's own comment gives:
+	// envKeyToPath treats the first underscore as the section separator, so a
+	// leaf with underscores in it is still reachable but a section with one
+	// would not be.
+	t.Setenv("KILASFLOW_OUTBOUND_ALLOWED_PRIVATE_ENDPOINTS", "127.0.0.1:11434")
+	cfg, err = Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got := cfg.Outbound.AllowedPrivateEndpoints; len(got) != 1 || got[0] != "127.0.0.1:11434" {
+		t.Errorf("AllowedPrivateEndpoints = %v, want the environment's single entry", got)
 	}
 }

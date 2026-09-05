@@ -13,6 +13,8 @@ import (
 	"github.com/knadh/koanf/providers/file"
 	"github.com/knadh/koanf/providers/structs"
 	"github.com/knadh/koanf/v2"
+
+	"github.com/kilaslabs/kilas-flow/internal/safehttp"
 )
 
 // EnvPrefix is the prefix for environment overrides, e.g. KILASFLOW_SERVER_PORT.
@@ -133,11 +135,23 @@ type Auth struct {
 // and must not be able to reach the cloud metadata service or a neighbouring
 // internal service. A self-hosted operator opts out explicitly.
 type OutboundHTTP struct {
-	AllowPrivateNetworks bool          `koanf:"allow_private_networks"`
-	AllowedHosts         []string      `koanf:"allowed_hosts"`
-	MaxRedirects         int           `koanf:"max_redirects"`
-	MaxResponseBytes     int64         `koanf:"max_response_bytes"`
-	Timeout              time.Duration `koanf:"timeout"`
+	AllowPrivateNetworks bool     `koanf:"allow_private_networks"`
+	AllowedHosts         []string `koanf:"allowed_hosts"`
+	// AllowedPrivateEndpoints admits one `host:port` at a time through the
+	// private-address guard while leaving it on for everything else, which is
+	// what an install running a model server or a test stub on loopback needs
+	// instead of `allow_private_networks: true`. The two settings are not
+	// alternatives of the same size: this one names an endpoint, that one
+	// hands every outbound request the whole internal network.
+	//
+	// An entry that is not a host and a port is refused at startup rather than
+	// ignored, because an allowance that quietly grants nothing reads as the
+	// guard being broken. See safehttp.Policy.AllowedPrivateEndpoints for what
+	// the grant does and does not cover.
+	AllowedPrivateEndpoints []string      `koanf:"allowed_private_endpoints"`
+	MaxRedirects            int           `koanf:"max_redirects"`
+	MaxResponseBytes        int64         `koanf:"max_response_bytes"`
+	Timeout                 time.Duration `koanf:"timeout"`
 }
 
 // Webhook bounds one inbound trigger request.
@@ -396,6 +410,16 @@ func (c Config) Validate() error {
 	// every request with 401 and look like a broken deployment.
 	if c.Auth.Enabled && c.Auth.SigningKeyEnv == "" {
 		return fmt.Errorf("auth.signing_key_env is required when auth.enabled is true")
+	}
+
+	// The grammar is safehttp's rather than a second copy of it here. Two
+	// copies drift, and the way this one would drift is an operator being told
+	// their exemption is well formed by a checker that is not the one deciding
+	// whether to honour it.
+	for index, entry := range c.Outbound.AllowedPrivateEndpoints {
+		if err := safehttp.CheckPrivateEndpoint(entry); err != nil {
+			return fmt.Errorf("outbound.allowed_private_endpoints[%d]: %w", index, err)
+		}
 	}
 
 	return nil

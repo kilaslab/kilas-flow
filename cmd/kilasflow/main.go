@@ -528,6 +528,7 @@ func outboundPolicy(cfg config.OutboundHTTP) safehttp.Policy {
 	policy := safehttp.DefaultPolicy()
 	policy.AllowPrivateNetworks = cfg.AllowPrivateNetworks
 	policy.AllowedHosts = append([]string(nil), cfg.AllowedHosts...)
+	policy.AllowedPrivateEndpoints = append([]string(nil), cfg.AllowedPrivateEndpoints...)
 	if cfg.MaxRedirects > 0 {
 		policy.MaxRedirects = cfg.MaxRedirects
 	}

@@ -15,6 +15,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -31,6 +32,41 @@ type Policy struct {
 	// AllowedHosts, when non-empty, is the only set of hosts that may be
 	// contacted at all. Entries may be exact or `*.`-prefixed.
 	AllowedHosts []string
+	// AllowedPrivateEndpoints names the exact `host:port` endpoints that may
+	// resolve to a private address while the guard stays on for everything
+	// else. It exists for a service an operator deliberately runs beside the
+	// instance — a local model server, a stub a test suite talks to — where
+	// the only other lever, AllowPrivateNetworks, would open every internal
+	// address to every outbound request in the installation.
+	//
+	// An entry is one host and one port, matched exactly: `127.0.0.1:11434`,
+	// `[::1]:11434`, `ollama.internal:11434`. The port is part of the grant
+	// rather than optional, so an allowance for a model server is not also an
+	// allowance for the SSH daemon or the database on the same box. A URL that
+	// names no port is dialled on 80 or 443, so an entry has to say which.
+	// A `*.` prefix is not honoured here even though AllowedHosts honours one,
+	// because `*.internal:11434` is a licence to sweep a network — which is
+	// the thing this field exists to avoid — and an entry that cannot be
+	// parsed matches nothing, so a typo costs the allowance rather than
+	// widening it. The host is compared as the URL wrote it, never as it
+	// resolves, so an entry for `localhost:11434` does not admit
+	// `127.0.0.1:11434`: name the form the workflow actually uses.
+	//
+	// What it does not protect against, stated plainly rather than left to be
+	// discovered:
+	//
+	//   - It trusts DNS for an entry that names a hostname. Whoever answers
+	//     for `ollama.internal` chooses which private address the grant
+	//     reaches on that port. An entry naming an IP literal has no such
+	//     exposure, so prefer one.
+	//   - It says nothing about the service listening there. Whatever that
+	//     endpoint can be made to do with a request body a workflow controls
+	//     is reachable by any workflow that can address it.
+	//   - It grants nothing at pre-flight. CheckURL is a separate gate that
+	//     callers apply before a request is built, so a non-empty AllowedHosts
+	//     has to name the host as well, and a redirect away from the endpoint
+	//     is dialled — and refused — on its own address.
+	AllowedPrivateEndpoints []string
 	// MaxRedirects bounds redirect chains; each hop is re-checked.
 	MaxRedirects int
 	// MaxResponseBytes bounds how much of a response is read into memory.
@@ -93,6 +129,11 @@ func hostAllowed(host string, allowed []string) bool {
 }
 
 // CheckAddress reports whether one resolved IP may be contacted.
+//
+// It is told nothing about the endpoint the address was resolved for, so it
+// cannot honour AllowedPrivateEndpoints. The dialer calls CheckEndpointAddress
+// instead, which can; a caller holding only an address keeps using this and
+// gets the stricter answer.
 func (policy Policy) CheckAddress(ip net.IP) error {
 	if ip == nil {
 		return fmt.Errorf("%w: address could not be parsed", ErrBlocked)
@@ -104,6 +145,102 @@ func (policy Policy) CheckAddress(ip net.IP) error {
 		return fmt.Errorf("%w: %s address %s", ErrBlocked, reason, ip)
 	}
 	return nil
+}
+
+// CheckEndpointAddress reports whether one resolved IP may be contacted while
+// dialling a named endpoint.
+//
+// This is CheckAddress plus the single exemption AllowedPrivateEndpoints
+// describes. It lives beside the dialer because only the dialer knows both
+// halves — which endpoint was asked for, and what it resolved to — and the
+// exemption is worthless, or dangerous, without both.
+func (policy Policy) CheckEndpointAddress(host, port string, ip net.IP) error {
+	if ip == nil {
+		return fmt.Errorf("%w: address could not be parsed", ErrBlocked)
+	}
+	if policy.allowsPrivateEndpoint(host, port) {
+		return nil
+	}
+	return policy.CheckAddress(ip)
+}
+
+// allowsPrivateEndpoint reports whether this exact host and port were named.
+func (policy Policy) allowsPrivateEndpoint(host, port string) bool {
+	if len(policy.AllowedPrivateEndpoints) == 0 {
+		return false
+	}
+	dialedHost, dialedPort, err := parsePrivateEndpoint(net.JoinHostPort(host, port))
+	if err != nil {
+		return false
+	}
+	for _, entry := range policy.AllowedPrivateEndpoints {
+		entryHost, entryPort, err := parsePrivateEndpoint(entry)
+		if err != nil {
+			// An entry nobody can parse grants nothing. A misconfigured
+			// allowance has to narrow the policy, never widen it.
+			continue
+		}
+		if entryHost == dialedHost && entryPort == dialedPort {
+			return true
+		}
+	}
+	return false
+}
+
+// CheckPrivateEndpoint reports why an AllowedPrivateEndpoints entry cannot be
+// honoured.
+//
+// The matcher ignores an entry it cannot parse, which fails closed but does so
+// in silence — and an operator whose allowance silently grants nothing is an
+// operator on their way to turning the whole guard off out of frustration. A
+// configuration loader calls this to refuse the typo at startup instead.
+func CheckPrivateEndpoint(entry string) error {
+	_, _, err := parsePrivateEndpoint(entry)
+	return err
+}
+
+// parsePrivateEndpoint splits an entry into the form the matcher compares.
+//
+// Ports are compared as numbers and IP literals in their canonical text, so
+// `[0:0:0:0:0:0:0:1]:11434` and `[::1]:11434` are one grant rather than two
+// spellings of which only one happens to match what the dialer was handed.
+func parsePrivateEndpoint(entry string) (string, int, error) {
+	trimmed := strings.TrimSpace(entry)
+	if trimmed == "" {
+		return "", 0, errors.New("an empty entry names no endpoint")
+	}
+	host, portText, err := net.SplitHostPort(trimmed)
+	if err != nil {
+		return "", 0, fmt.Errorf("%q must name a host and a port, as in 127.0.0.1:11434", entry)
+	}
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	if host == "" {
+		return "", 0, fmt.Errorf("%q names a port but no host", entry)
+	}
+	if strings.Contains(host, "*") {
+		return "", 0, fmt.Errorf("%q uses a wildcard, and this list names one endpoint at a time", entry)
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil || port < 1 || port > 65535 {
+		return "", 0, fmt.Errorf("%q names port %q, which is not a port number", entry, portText)
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.String(), port, nil
+	}
+	// Anything that is not an IP literal has to look like a hostname. Without
+	// this, `http://127.0.0.1:11434` splits into the host `http://127.0.0.1`
+	// and a valid port, so an operator who pasted a URL would be told their
+	// entry is fine by a list that can never match it.
+	for _, character := range host {
+		switch {
+		case character >= 'a' && character <= 'z',
+			character >= '0' && character <= '9',
+			character == '-', character == '.', character == '_':
+		default:
+			return "", 0, fmt.Errorf("%q names host %q, which is not a hostname or an IP address", entry, host)
+		}
+	}
+	return host, port, nil
 }
 
 func blockedReason(ip net.IP) string {
@@ -170,7 +307,7 @@ func NewClient(policy Policy) *http.Client {
 			}
 			var lastErr error
 			for _, ip := range ips {
-				if err := policy.CheckAddress(ip); err != nil {
+				if err := policy.CheckEndpointAddress(host, port, ip); err != nil {
 					lastErr = err
 					continue
 				}
