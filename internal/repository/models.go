@@ -13,6 +13,7 @@ func Models() []any {
 	return []any{
 		&workflowModel{},
 		&workflowVersionModel{},
+		&workflowPublishEventModel{},
 		&executionModel{},
 		&executionNodeRunModel{},
 		&credentialModel{},
@@ -159,17 +160,53 @@ type workflowModel struct {
 func (workflowModel) TableName() string { return "workflows" }
 
 type workflowVersionModel struct {
-	ID            string        `gorm:"primaryKey;size:64"`
-	TenantID      string        `gorm:"not null;size:64;index:idx_workflow_versions_tenant_workflow,priority:1;uniqueIndex:uidx_workflow_versions_revision,priority:1"`
-	WorkflowID    string        `gorm:"not null;size:64;index:idx_workflow_versions_tenant_workflow,priority:2;uniqueIndex:uidx_workflow_versions_revision,priority:2"`
-	Revision      int           `gorm:"not null;uniqueIndex:uidx_workflow_versions_revision,priority:3"`
-	SchemaVersion int           `gorm:"not null"`
-	Definition    []byte        `gorm:"not null"`
-	CreatedAt     time.Time     `gorm:"not null"`
-	Workflow      workflowModel `gorm:"foreignKey:WorkflowID;references:ID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT"`
+	ID            string `gorm:"primaryKey;size:64"`
+	TenantID      string `gorm:"not null;size:64;index:idx_workflow_versions_tenant_workflow,priority:1;uniqueIndex:uidx_workflow_versions_revision,priority:1"`
+	WorkflowID    string `gorm:"not null;size:64;index:idx_workflow_versions_tenant_workflow,priority:2;uniqueIndex:uidx_workflow_versions_revision,priority:2"`
+	Revision      int    `gorm:"not null;uniqueIndex:uidx_workflow_versions_revision,priority:3"`
+	SchemaVersion int    `gorm:"not null"`
+	Definition    []byte `gorm:"not null"`
+	// Label is what a person called this revision, and CreatedBy is who wrote
+	// it. Both are nullable, and nullable is the whole point: the main API has
+	// no authentication yet, so every request resolves to tenant "default" and
+	// the author of most writes is genuinely unknowable. A NOT NULL column
+	// would force this code to invent an author, and an invented author in an
+	// audit trail is worse than an absent one.
+	Label     *string       `gorm:"size:255"`
+	CreatedBy *string       `gorm:"size:64"`
+	CreatedAt time.Time     `gorm:"not null"`
+	Workflow  workflowModel `gorm:"foreignKey:WorkflowID;references:ID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT"`
 }
 
 func (workflowVersionModel) TableName() string { return "workflow_versions" }
+
+// workflowPublishEventModel is one entry in a workflow's publish audit trail.
+//
+// It exists because workflows.active_version_id cannot answer the question by
+// itself: deactivation deliberately leaves that pointer where it was, so the
+// column says which version served last but never when it started or stopped.
+// These rows are what a publish period is reconstructed from.
+//
+// VersionID carries no foreign key on purpose. Retention prunes old versions,
+// and an audit row that vanished with the version it describes would destroy
+// exactly the evidence somebody came looking for; the identifier outliving the
+// row it names is the intended trade.
+type workflowPublishEventModel struct {
+	ID         uint   `gorm:"primaryKey;autoIncrement"`
+	TenantID   string `gorm:"not null;size:64;index:idx_workflow_publish_events_workflow,priority:1"`
+	WorkflowID string `gorm:"not null;size:64;index:idx_workflow_publish_events_workflow,priority:2"`
+	VersionID  string `gorm:"not null;size:64"`
+	// Action is published, unpublished or restored.
+	Action string `gorm:"not null;size:32"`
+	// Actor and Reason are empty rather than null when unknown: an audit row is
+	// always written, and a caller that supplied neither should still leave the
+	// trace that something happened.
+	Actor     string    `gorm:"not null;size:64;default:''"`
+	Reason    string    `gorm:"not null;size:255;default:''"`
+	CreatedAt time.Time `gorm:"not null;index:idx_workflow_publish_events_workflow,priority:3"`
+}
+
+func (workflowPublishEventModel) TableName() string { return "workflow_publish_events" }
 
 type executionModel struct {
 	ID                string `gorm:"primaryKey;size:64"`

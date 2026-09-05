@@ -139,6 +139,69 @@ type workflowVersionOutput struct {
 	Body WorkflowVersionResource
 }
 
+// WorkflowVersionSummaryResource is one row of a workflow's history listing. It
+// deliberately omits the document: a listing exists to choose a revision, not
+// to ship every graph the workflow has ever had.
+type WorkflowVersionSummaryResource struct {
+	ID            string    `json:"id"`
+	WorkflowID    string    `json:"workflowId"`
+	Revision      int       `json:"revision"`
+	SchemaVersion int       `json:"schemaVersion"`
+	Label         string    `json:"label,omitempty" doc:"What a person called this revision, when one was named"`
+	CreatedBy     string    `json:"createdBy,omitempty" doc:"Who saved this revision, where the author is known"`
+	CreatedAt     time.Time `json:"createdAt"`
+	Draft         bool      `json:"draft" doc:"True for the newest revision, the one an editor is working on"`
+	Published     bool      `json:"published" doc:"True for the revision production traffic runs. Stated by the server so a client never infers publication by comparing identifiers."`
+}
+
+// WorkflowVersionListResource is one page of workflow history, newest first.
+type WorkflowVersionListResource struct {
+	Items      []WorkflowVersionSummaryResource `json:"items"`
+	NextCursor string                           `json:"nextCursor,omitempty" doc:"Pass back as ?cursor= to read the next page"`
+}
+
+// WorkflowPublishEventResource is one entry of the publish audit trail.
+type WorkflowPublishEventResource struct {
+	WorkflowID string    `json:"workflowId"`
+	VersionID  string    `json:"versionId" doc:"For a restore, the revision that was restored from"`
+	Action     string    `json:"action" enum:"published,unpublished,restored"`
+	Actor      string    `json:"actor,omitempty" doc:"Who acted, where the actor is known"`
+	Reason     string    `json:"reason,omitempty"`
+	CreatedAt  time.Time `json:"createdAt"`
+}
+
+type listWorkflowVersionsInput struct {
+	ID     string `path:"id" minLength:"1" doc:"Workflow identifier"`
+	Limit  int    `query:"limit" minimum:"1" maximum:"100" doc:"Maximum revisions to return (default 25)"`
+	Cursor string `query:"cursor" doc:"Opaque cursor from a previous listing's nextCursor"`
+}
+
+type workflowVersionListOutput struct {
+	Body WorkflowVersionListResource
+}
+
+type workflowPublishEventListOutput struct {
+	Body []WorkflowPublishEventResource
+}
+
+// publishVersionInput carries the audit reason. The body is optional because a
+// publish is meaningful without an explanation, and requiring one would only
+// teach callers to send a placeholder.
+type publishVersionInput struct {
+	ID        string `path:"id" minLength:"1" doc:"Workflow identifier"`
+	VersionID string `path:"versionId" minLength:"1" doc:"Workflow revision identifier"`
+	Body      *struct {
+		Reason string `json:"reason,omitempty" maxLength:"255" doc:"Why this revision was published or restored, recorded in the audit trail"`
+	}
+}
+
+func (input publishVersionInput) reason() string {
+	if input.Body == nil {
+		return ""
+	}
+	return input.Body.Reason
+}
+
 type updateWorkflowInput struct {
 	ID   string `path:"id" minLength:"1" doc:"Workflow identifier"`
 	Body workflowDocumentInput
@@ -243,6 +306,22 @@ func (handler *Workflows) Register(api huma.API) {
 		Summary: "Get one workflow revision", Description: "Returns an immutable revision by ID, so an execution inspector can replay the exact graph that ran.", Tags: []string{"Workflows"},
 	}, handler.GetVersion)
 	huma.Register(api, huma.Operation{
+		OperationID: "list-workflow-versions", Method: http.MethodGet, Path: "/workflows/{id}/versions",
+		Summary: "List workflow revisions", Description: "Returns one page of a workflow's version history, newest first. Summaries carry no document.", Tags: []string{"Workflows"},
+	}, handler.ListVersions)
+	huma.Register(api, huma.Operation{
+		OperationID: "publish-workflow-version", Method: http.MethodPost, Path: "/workflows/{id}/versions/{versionId}/publish",
+		Summary: "Publish one workflow revision", Description: "Compiles the named revision and pins it as the version production traffic runs, which is how a bad save is rolled back.", Tags: []string{"Workflow lifecycle"},
+	}, handler.PublishVersion)
+	huma.Register(api, huma.Operation{
+		OperationID: "restore-workflow-version", Method: http.MethodPost, Path: "/workflows/{id}/versions/{versionId}/restore",
+		Summary: "Restore one workflow revision", Description: "Appends a new revision carrying an older snapshot's document. History is append-only: the restored-from revision is left unchanged.", Tags: []string{"Workflow lifecycle"},
+	}, handler.RestoreVersion)
+	huma.Register(api, huma.Operation{
+		OperationID: "list-workflow-publish-events", Method: http.MethodGet, Path: "/workflows/{id}/publish-events",
+		Summary: "List a workflow's publish history", Description: "Returns every publish, unpublish and restore recorded for a workflow, newest first.", Tags: []string{"Workflow lifecycle"},
+	}, handler.ListPublishEvents)
+	huma.Register(api, huma.Operation{
 		OperationID: "update-workflow", Method: http.MethodPut, Path: "/workflows/{id}",
 		Summary: "Save a workflow draft", Description: "Appends an immutable revision, including incomplete drafts.", Tags: []string{"Workflows"},
 	}, handler.Update)
@@ -322,6 +401,80 @@ func (handler *Workflows) GetVersion(ctx context.Context, input *workflowVersion
 		return nil, handler.problem(err)
 	}
 	return &workflowVersionOutput{Body: workflowVersionResource(version)}, nil
+}
+
+// ListVersions returns one page of a workflow's revision history.
+func (handler *Workflows) ListVersions(ctx context.Context, input *listWorkflowVersionsInput) (*workflowVersionListOutput, error) {
+	if err := handler.available(false); err != nil {
+		return nil, err
+	}
+	page, err := handler.workflows.ListVersions(ctx, handler.tenant(ctx), input.ID, repository.VersionFilter{
+		Limit: input.Limit, Cursor: input.Cursor,
+	})
+	// A cursor the client did not receive from this API is a bad request, not a
+	// server fault, so it must not be reported as a 500.
+	if errors.Is(err, repository.ErrInvalidCursor) {
+		return nil, huma.Error400BadRequest("workflow version cursor is invalid")
+	}
+	if err != nil {
+		return nil, handler.problem(err)
+	}
+	resource := WorkflowVersionListResource{
+		Items:      make([]WorkflowVersionSummaryResource, 0, len(page.Versions)),
+		NextCursor: page.NextCursor,
+	}
+	for _, summary := range page.Versions {
+		resource.Items = append(resource.Items, WorkflowVersionSummaryResource{
+			ID: summary.ID, WorkflowID: summary.WorkflowID, Revision: summary.Revision,
+			SchemaVersion: summary.SchemaVersion, Label: summary.Label, CreatedBy: summary.CreatedBy,
+			CreatedAt: summary.CreatedAt, Draft: summary.Draft, Published: summary.Published,
+		})
+	}
+	return &workflowVersionListOutput{Body: resource}, nil
+}
+
+// PublishVersion pins one named revision as the version production traffic
+// runs.
+func (handler *Workflows) PublishVersion(ctx context.Context, input *publishVersionInput) (*workflowOutput, error) {
+	if err := handler.available(true); err != nil {
+		return nil, err
+	}
+	stored, err := handler.workflows.PublishVersion(ctx, handler.tenant(ctx), input.ID, input.VersionID, handler.catalog, input.reason())
+	if err != nil {
+		return nil, handler.problem(err)
+	}
+	return &workflowOutput{Body: workflowResource(stored)}, nil
+}
+
+// RestoreVersion appends a new revision carrying an older snapshot's document.
+func (handler *Workflows) RestoreVersion(ctx context.Context, input *publishVersionInput) (*workflowOutput, error) {
+	if err := handler.available(false); err != nil {
+		return nil, err
+	}
+	stored, err := handler.workflows.RestoreVersion(ctx, handler.tenant(ctx), input.ID, input.VersionID, input.reason())
+	if err != nil {
+		return nil, handler.problem(err)
+	}
+	return &workflowOutput{Body: workflowResource(stored)}, nil
+}
+
+// ListPublishEvents returns a workflow's publish audit trail.
+func (handler *Workflows) ListPublishEvents(ctx context.Context, input *workflowPathInput) (*workflowPublishEventListOutput, error) {
+	if err := handler.available(false); err != nil {
+		return nil, err
+	}
+	events, err := handler.workflows.ListPublishEvents(ctx, handler.tenant(ctx), input.ID)
+	if err != nil {
+		return nil, handler.problem(err)
+	}
+	items := make([]WorkflowPublishEventResource, 0, len(events))
+	for _, event := range events {
+		items = append(items, WorkflowPublishEventResource{
+			WorkflowID: event.WorkflowID, VersionID: event.VersionID, Action: string(event.Action),
+			Actor: event.Actor, Reason: event.Reason, CreatedAt: event.CreatedAt,
+		})
+	}
+	return &workflowPublishEventListOutput{Body: items}, nil
 }
 
 // Update appends a new immutable draft revision for an existing workflow.

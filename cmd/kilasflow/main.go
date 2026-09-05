@@ -194,7 +194,11 @@ func run() error {
 	// transaction.
 	workflows := repository.NewWorkflowStore(db.DB).
 		WithWebhooks(webhook.Extract(nodeRegistry, nodes.WebhookPath)).
-		WithSchedules(scheduler.Extract(nodes.ScheduleType), scheduler.Next)
+		WithSchedules(scheduler.Extract(nodes.ScheduleType), scheduler.Next).
+		WithRetention(repository.RetentionPolicy{
+			MaxAge:      cfg.History.Retention,
+			MaxVersions: cfg.History.MaxVersions,
+		})
 
 	// The Execute Sub-workflow node's list mode. Registered here because this
 	// is the only place that has both the loader registry and the workflow
@@ -283,6 +287,8 @@ func run() error {
 	}
 	cronService.Start(ctx)
 
+	startHistorySweeper(ctx, cfg.History, workflows, log)
+
 	server := api.NewServer(api.Deps{
 		Config:       cfg,
 		Logger:       log,
@@ -314,6 +320,51 @@ func run() error {
 	})
 
 	return server.Run(ctx)
+}
+
+// historySweepInterval is how often the age bound on workflow history is
+// enforced. History is measured in days at the shortest, so sweeping hourly is
+// already far finer than any retention an operator would configure, and a
+// coarser sweep keeps a large installation from paying for a full scan often.
+const historySweepInterval = time.Hour
+
+// startHistorySweeper enforces the age bound on workflow version history.
+//
+// The count bound rides on SaveDraft's own transaction, but an age bound has to
+// fire for a workflow nobody is saving — which is exactly the workflow whose
+// history has gone stale — so it needs a clock of its own.
+//
+// If V2-p6-7 ever puts more than one process on the same database this needs
+// the advisory-lock treatment the scheduler already has; until then a duplicated
+// sweep is merely wasteful, because pruning is idempotent.
+func startHistorySweeper(ctx context.Context, cfg config.History, store *repository.GORMWorkflowStore, log *slog.Logger) {
+	// Nothing to enforce when history is unbounded, and starting a goroutine to
+	// discover that every hour would be pure cost.
+	if cfg.Retention <= 0 {
+		return
+	}
+	go func() {
+		ticker := time.NewTicker(historySweepInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				pruned, err := store.PruneAllVersions(ctx)
+				if err != nil {
+					// Logged rather than fatal: failing to prune costs disk,
+					// while stopping the server over it costs the customer their
+					// automation.
+					log.Error("pruning workflow history", "error", err)
+					continue
+				}
+				if pruned > 0 {
+					log.Info("pruned workflow history", "versions", pruned)
+				}
+			}
+		}
+	}()
 }
 
 // databaseGuard names the files a SQLite workflow credential must never open.
