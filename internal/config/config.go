@@ -24,6 +24,7 @@ type Config struct {
 	Database  Database     `koanf:"database"`
 	Security  Security     `koanf:"security"`
 	Outbound  OutboundHTTP `koanf:"outbound"`
+	Webhook   Webhook      `koanf:"webhook"`
 	Branding  Branding     `koanf:"branding"`
 	Execution Execution    `koanf:"execution"`
 	Log       Log          `koanf:"log"`
@@ -81,6 +82,12 @@ type OutboundHTTP struct {
 	Timeout              time.Duration `koanf:"timeout"`
 }
 
+// Webhook bounds one inbound trigger request.
+type Webhook struct {
+	MaxBodyBytes    int64         `koanf:"max_body_bytes"`
+	ResponseTimeout time.Duration `koanf:"response_timeout"`
+}
+
 // Branding drives white-label display options.
 type Branding struct {
 	Name      string `koanf:"name"`
@@ -126,6 +133,10 @@ func Default() Config {
 			MaxRedirects:         5,
 			MaxResponseBytes:     8 << 20,
 			Timeout:              30 * time.Second,
+		},
+		Webhook: Webhook{
+			MaxBodyBytes:    1 << 20,
+			ResponseTimeout: 30 * time.Second,
 		},
 		Branding: Branding{
 			Name:      "KilasFlow",

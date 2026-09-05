@@ -191,6 +191,9 @@ func (executor *HTTPExecutor) Execute(ctx context.Context, ir workflow.IRNode, i
 	return workflow.NodeOutput{results}, nil
 }
 
+// expressionContext assembles the approved roots for one item. It is shared by
+// every executor that resolves parameters, so a `{{ }}` in an HTTP URL and one
+// in a webhook response body see exactly the same data.
 func expressionContext(item workflow.Item, input workflow.NodeInput, request engine.Request, index int) expression.Context {
 	inputItems := make(map[string][]map[string]any, len(input))
 	for port, portItems := range input {

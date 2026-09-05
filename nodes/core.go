@@ -14,6 +14,9 @@ func RegisterAll(registry *node.Registry) error {
 		ifNode(),
 		mergeNode(),
 		httpRequestNode(),
+		webhookTrigger(),
+		respondToWebhookNode(),
+		scheduleTrigger(),
 	} {
 		if err := registry.Register(definition); err != nil {
 			return err

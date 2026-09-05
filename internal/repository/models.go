@@ -16,8 +16,49 @@ func Models() []any {
 		&executionModel{},
 		&executionNodeRunModel{},
 		&credentialModel{},
+		&webhookBindingModel{},
+		&scheduleModel{},
 	}
 }
+
+// webhookBindingModel routes one inbound path to an active workflow's trigger
+// node. Rows exist only while the workflow is active, so routing never has to
+// re-check activation.
+type webhookBindingModel struct {
+	ID                uint   `gorm:"primaryKey;autoIncrement"`
+	TenantID          string `gorm:"not null;size:64;index:idx_webhook_bindings_workflow,priority:1"`
+	WorkflowID        string `gorm:"not null;size:64;index:idx_webhook_bindings_workflow,priority:2"`
+	WorkflowVersionID string `gorm:"not null;size:64"`
+	NodeID            string `gorm:"not null;size:64"`
+	// The unique index spans method and path only: two active workflows must
+	// not be able to claim the same endpoint, whichever tenant owns them, or an
+	// inbound request would have no deterministic destination.
+	Method     string    `gorm:"not null;size:8;uniqueIndex:uidx_webhook_bindings_route,priority:1"`
+	Path       string    `gorm:"not null;size:255;uniqueIndex:uidx_webhook_bindings_route,priority:2"`
+	Parameters []byte    `gorm:"not null"`
+	CreatedAt  time.Time `gorm:"not null"`
+}
+
+func (webhookBindingModel) TableName() string { return "webhook_bindings" }
+
+// scheduleModel is one cron schedule for a workflow.
+type scheduleModel struct {
+	ID         string `gorm:"primaryKey;size:64"`
+	TenantID   string `gorm:"not null;size:64;index:idx_schedules_tenant_workflow,priority:1"`
+	WorkflowID string `gorm:"not null;size:64;index:idx_schedules_tenant_workflow,priority:2"`
+	NodeID     string `gorm:"not null;size:64"`
+	Cron       string `gorm:"not null;size:255"`
+	Active     bool   `gorm:"not null;default:false"`
+	LastRunAt  *time.Time
+	// NextRunAt is indexed because the scheduler's only hot query is "what is
+	// due now".
+	NextRunAt *time.Time    `gorm:"index:idx_schedules_next_run"`
+	CreatedAt time.Time     `gorm:"not null"`
+	UpdatedAt time.Time     `gorm:"not null"`
+	Workflow  workflowModel `gorm:"foreignKey:WorkflowID;references:ID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE"`
+}
+
+func (scheduleModel) TableName() string { return "schedules" }
 
 // credentialModel stores an encrypted credential payload. The plaintext never
 // exists as a column, so a database dump, a replica, or a support export

@@ -27,7 +27,10 @@ func TestRegistryListsBuiltinsInStableOrder(t *testing.T) {
 		"kilasflow.if",
 		"kilasflow.manual",
 		"kilasflow.merge",
+		"kilasflow.respondToWebhook",
+		"kilasflow.schedule",
 		"kilasflow.set",
+		"kilasflow.webhook",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("List() types = %#v, want %#v", got, want)

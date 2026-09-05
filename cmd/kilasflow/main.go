@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -23,6 +24,8 @@ import (
 	"github.com/kilaslabs/kilas-flow/internal/node"
 	"github.com/kilaslabs/kilas-flow/internal/repository"
 	"github.com/kilaslabs/kilas-flow/internal/safehttp"
+	"github.com/kilaslabs/kilas-flow/internal/scheduler"
+	"github.com/kilaslabs/kilas-flow/internal/webhook"
 	"github.com/kilaslabs/kilas-flow/nodes"
 )
 
@@ -102,6 +105,12 @@ func run() error {
 	}
 
 	executions := repository.NewExecutionStore(db.DB)
+	// Injecting the extractor keeps node-type knowledge out of persistence
+	// while still letting webhook bindings be synced inside the activation
+	// transaction.
+	workflows := repository.NewWorkflowStore(db.DB).
+		WithWebhooks(webhook.Extract(nodes.WebhookNodeType, nodes.WebhookPath))
+	schedules := repository.NewScheduleStore(db.DB)
 	eventBroker := events.NewBroker(events.BrokerOptions{})
 	runtime, err := engine.NewService(engine.ServiceDeps{
 		Executions:     executions,
@@ -120,13 +129,31 @@ func run() error {
 		return fmt.Errorf("start execution runtime: %w", err)
 	}
 
+	cronService, err := scheduler.New(scheduler.Options{
+		Schedules: schedules,
+		Queue: func(ctx context.Context, tenantID, workflowID, versionID string, payload json.RawMessage) error {
+			_, err := runtime.QueueScheduled(ctx, tenantID, workflowID, versionID, payload)
+			return err
+		},
+		Logger: log,
+	})
+	if err != nil {
+		return fmt.Errorf("configure scheduler: %w", err)
+	}
+	cronService.Start(ctx)
+
 	server := api.NewServer(api.Deps{
-		Config:              cfg,
-		Logger:              log,
-		DB:                  handlers.Pinger(db),
-		NodeRegistry:        nodeRegistry,
-		Workflows:           repository.NewWorkflowStore(db.DB),
-		Executions:          executions,
+		Config:       cfg,
+		Logger:       log,
+		DB:           handlers.Pinger(db),
+		NodeRegistry: nodeRegistry,
+		Workflows:    workflows,
+		Executions:   executions,
+		Schedules:    schedules,
+		Webhook: webhook.NewHandler(workflows, runtime, credentialStore, eventBroker, webhook.Limits{
+			MaxBodyBytes:    cfg.Webhook.MaxBodyBytes,
+			ResponseTimeout: cfg.Webhook.ResponseTimeout,
+		}),
 		Credentials:         credentialStore,
 		Events:              eventBroker,
 		ExecutionController: runtime,

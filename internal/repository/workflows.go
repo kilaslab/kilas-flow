@@ -45,6 +45,10 @@ type WorkflowRepository interface {
 // GORMWorkflowStore is the GORM implementation of WorkflowRepository.
 type GORMWorkflowStore struct {
 	db *gorm.DB
+	// webhooks extracts routable triggers from a document. It is injected so
+	// binding sync can happen inside the activation transaction without the
+	// repository knowing any node type.
+	webhooks WebhookExtractor
 }
 
 var _ WorkflowRepository = (*GORMWorkflowStore)(nil)
@@ -52,6 +56,14 @@ var _ WorkflowRepository = (*GORMWorkflowStore)(nil)
 // NewWorkflowStore constructs the GORM-backed workflow persistence boundary.
 func NewWorkflowStore(db *gorm.DB) *GORMWorkflowStore {
 	return &GORMWorkflowStore{db: db}
+}
+
+// WithWebhooks returns a store that keeps webhook bindings in step with
+// activation. Without an extractor the store still works; nothing becomes
+// routable, which is the correct behaviour for a build with no webhook nodes.
+func (store *GORMWorkflowStore) WithWebhooks(extract WebhookExtractor) *GORMWorkflowStore {
+	store.webhooks = extract
+	return store
 }
 
 // SaveDraft appends an immutable revision. A newly created document receives a
@@ -231,6 +243,13 @@ func (store *GORMWorkflowStore) Activate(ctx context.Context, tenant TenantScope
 			Updates(map[string]any{"active": true, "active_version_id": version.ID}).Error; err != nil {
 			return fmt.Errorf("activate workflow: %w", err)
 		}
+		if store.webhooks != nil {
+			// Same transaction as the activation itself: there is never a window
+			// where a workflow is active but unroutable, or the reverse.
+			if err := syncWebhookBindings(tx, tenant.ID, model.ID, version.ID, store.webhooks(storedVersion.Document)); err != nil {
+				return err
+			}
+		}
 		return nil
 	})
 	if err != nil {
@@ -249,8 +268,15 @@ func (store *GORMWorkflowStore) Deactivate(ctx context.Context, tenant TenantSco
 		return workflow.StoredWorkflow{}, err
 	}
 	if model.Active {
-		if err := store.db.WithContext(ctx).Model(&model).Update("active", false).Error; err != nil {
-			return workflow.StoredWorkflow{}, fmt.Errorf("deactivate workflow: %w", err)
+		if err := store.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			if err := tx.Model(&model).Update("active", false).Error; err != nil {
+				return fmt.Errorf("deactivate workflow: %w", err)
+			}
+			// Dropping the bindings with the same commit is what makes the
+			// endpoint stop answering the instant the workflow is inactive.
+			return removeWebhookBindings(tx, tenant.ID, workflowID)
+		}); err != nil {
+			return workflow.StoredWorkflow{}, err
 		}
 	}
 	return store.Get(ctx, tenant, workflowID)
@@ -266,10 +292,14 @@ func (store *GORMWorkflowStore) Delete(ctx context.Context, tenant TenantScope, 
 	if err != nil {
 		return err
 	}
-	if err := store.db.WithContext(ctx).Delete(&model).Error; err != nil {
-		return fmt.Errorf("delete workflow: %w", err)
-	}
-	return nil
+	return store.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Delete(&model).Error; err != nil {
+			return fmt.Errorf("delete workflow: %w", err)
+		}
+		// A soft-deleted workflow keeps its version and execution history, but
+		// it must stop answering immediately.
+		return removeWebhookBindings(tx, tenant.ID, workflowID)
+	})
 }
 
 func (store *GORMWorkflowStore) findWorkflow(ctx context.Context, tenant TenantScope, workflowID string) (workflowModel, error) {

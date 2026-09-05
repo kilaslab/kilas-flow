@@ -226,10 +226,16 @@ func knownPropertyKind(kind PropertyKind) bool {
 	}
 }
 
+// requiredParameters lists the parameters a document must actually carry.
+//
+// A property that declares a default is not among them: the default is the
+// server's answer for an absent value, so demanding the key as well would
+// reject a perfectly valid hand-authored or imported document over a field the
+// server already knows how to fill in.
 func requiredParameters(properties []PropertyDefinition) []string {
 	parameters := make([]string, 0, len(properties))
 	for _, property := range properties {
-		if property.Required {
+		if property.Required && property.Default == nil {
 			parameters = append(parameters, property.Key)
 		}
 	}

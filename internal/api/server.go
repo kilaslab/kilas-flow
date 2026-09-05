@@ -46,6 +46,11 @@ type Deps struct {
 	// Events is the live execution feed. A nil broker disables streaming
 	// without affecting durable execution.
 	Events *events.Broker
+	// Schedules is the cron surface. A nil store disables the endpoints.
+	Schedules repository.ScheduleRepository
+	// Webhook serves the reserved /webhook prefix. A nil handler keeps the
+	// prefix answering "not implemented" rather than falling through to the SPA.
+	Webhook http.Handler
 	// ExecutionController owns live worker wakeups and cancellation. It is
 	// separate from the repository so HTTP never reaches into ORM state.
 	ExecutionController handlers.ExecutionController

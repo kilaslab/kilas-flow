@@ -24,15 +24,20 @@ func registerRoutes(router *chi.Mux, api huma.API, deps Deps) {
 	handlers.NewWorkflows(deps.Workflows, deps.Executions, deps.NodeRegistry, deps.Tenants, deps.ExecutionController).Register(v1)
 	handlers.NewExecutions(deps.ExecutionController, deps.Executions, deps.Events, deps.Tenants).Register(v1)
 	handlers.NewCredentials(deps.Credentials, deps.Tenants).Register(v1)
+	handlers.NewSchedules(deps.Schedules, deps.Tenants).Register(v1)
 
 	// Self-hosted API reference. Huma's own docs endpoint is disabled in
 	// openAPIConfig because it loads Scalar from a CDN.
 	router.Handle(DocsPath, docsHandler("KilasFlow API"))
 
-	// Reserved for the webhook trigger. Answering explicitly beats letting
-	// these fall through to the SPA and handing an API client an HTML page.
-	router.Handle(WebhookPrefix, notImplemented("Webhook triggers arrive in a later milestone."))
-	router.Handle(WebhookPrefix+"/*", notImplemented("Webhook triggers arrive in a later milestone."))
+	// The webhook prefix is answered explicitly rather than falling through to
+	// the SPA, which would hand an API client an HTML page.
+	webhookHandler := deps.Webhook
+	if webhookHandler == nil {
+		webhookHandler = notImplemented("Webhook triggers are not configured on this instance.")
+	}
+	router.Handle(WebhookPrefix, webhookHandler)
+	router.Handle(WebhookPrefix+"/*", webhookHandler)
 
 	router.Handle("/*", web.Handler())
 }

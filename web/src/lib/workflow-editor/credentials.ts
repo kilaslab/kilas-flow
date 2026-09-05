@@ -6,7 +6,10 @@
  * an unsupported pairing is rejected at execution rather than trusted.
  */
 const BY_NODE_TYPE: Record<string, string[]> = {
-	'kilasflow.httpRequest': ['httpBasicAuth', 'httpHeaderAuth', 'httpBearerAuth']
+	'kilasflow.httpRequest': ['httpBasicAuth', 'httpHeaderAuth', 'httpBearerAuth'],
+	// A webhook uses a credential to authenticate callers, not to call out, so
+	// only the two modes the inbound boundary can verify are offered.
+	'kilasflow.webhook': ['httpBasicAuth', 'httpHeaderAuth']
 };
 
 export function credentialTypesFor(nodeType: string): string[] {

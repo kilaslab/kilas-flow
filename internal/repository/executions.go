@@ -22,6 +22,7 @@ import (
 type ExecutionRepository interface {
 	Create(context.Context, TenantScope, execution.Record) (execution.Record, error)
 	QueueManualLatest(context.Context, TenantScope, string, workflow.Catalog, json.RawMessage) (execution.Record, error)
+	QueueTriggered(context.Context, TenantScope, string, string, execution.Trigger, json.RawMessage) (execution.Record, error)
 	Get(context.Context, TenantScope, string) (execution.Record, error)
 	List(context.Context, TenantScope, ExecutionFilter) (ExecutionPage, error)
 	CreateNodeRun(context.Context, TenantScope, execution.NodeRun) (execution.NodeRun, error)
@@ -127,6 +128,54 @@ func (store *GORMExecutionStore) QueueManualLatest(ctx context.Context, tenant T
 			return fmt.Errorf("create execution: %w", err)
 		}
 		return nil
+	})
+	if err != nil {
+		return execution.Record{}, err
+	}
+	return executionFromModel(model), nil
+}
+
+// QueueTriggered persists a queued execution against one pinned revision.
+//
+// Webhooks and schedules run the *active* revision, not the latest draft: an
+// endpoint that silently started running unsaved work the moment someone typed
+// in the editor would be indefensible. The caller supplies the version its
+// binding or schedule was activated against.
+func (store *GORMExecutionStore) QueueTriggered(ctx context.Context, tenant TenantScope, workflowID, versionID string, trigger execution.Trigger, input json.RawMessage) (execution.Record, error) {
+	if err := tenant.validate(); err != nil {
+		return execution.Record{}, err
+	}
+	if workflowID == "" || versionID == "" {
+		return execution.Record{}, fmt.Errorf("workflow ID and version ID are required")
+	}
+	if trigger == "" {
+		return execution.Record{}, fmt.Errorf("execution trigger is required")
+	}
+	inputPayload, err := payload(input)
+	if err != nil {
+		return execution.Record{}, fmt.Errorf("execution input: %w", err)
+	}
+	executionID, err := workflow.NewID("exec")
+	if err != nil {
+		return execution.Record{}, err
+	}
+
+	model := executionModel{
+		ID: executionID, TenantID: tenant.ID, WorkflowID: workflowID, WorkflowVersionID: versionID,
+		Status: string(execution.StatusQueued), Trigger: string(trigger),
+		Input: inputPayload, Output: []byte("null"), Error: []byte("null"), StartedAt: time.Now().UTC(),
+	}
+	err = store.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Re-reading the workflow inside the transaction is what stops a
+		// deactivation racing a queued trigger into an execution nobody wanted.
+		var parent workflowModel
+		if err := tx.Where("tenant_id = ? AND id = ? AND active = ?", tenant.ID, workflowID, true).First(&parent).Error; err != nil {
+			return mapNotFound(err, "active workflow")
+		}
+		if parent.ActiveVersionID == nil || *parent.ActiveVersionID != versionID {
+			return fmt.Errorf("%w: workflow version is no longer active", ErrNotFound)
+		}
+		return tx.Create(&model).Error
 	})
 	if err != nil {
 		return execution.Record{}, err

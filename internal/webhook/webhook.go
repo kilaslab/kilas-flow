@@ -1,0 +1,428 @@
+package webhook
+
+import (
+	"context"
+	"crypto/subtle"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/kilaslabs/kilas-flow/internal/events"
+	"github.com/kilaslabs/kilas-flow/internal/execution"
+	"github.com/kilaslabs/kilas-flow/internal/repository"
+	"github.com/kilaslabs/kilas-flow/internal/workflow"
+)
+
+// Limits bound one inbound webhook request.
+type Limits struct {
+	// MaxBodyBytes caps the request body read into memory.
+	MaxBodyBytes int64
+	// ResponseTimeout bounds how long a request waits for a workflow that
+	// answers from its own graph.
+	ResponseTimeout time.Duration
+}
+
+// DefaultLimits are used when nothing is configured.
+func DefaultLimits() Limits {
+	return Limits{MaxBodyBytes: 1 << 20, ResponseTimeout: 30 * time.Second}
+}
+
+// Runner queues an execution for a resolved binding.
+type Runner interface {
+	QueueWebhook(ctx context.Context, binding repository.WebhookBinding, payload json.RawMessage) (execution.Record, error)
+	Get(ctx context.Context, tenant repository.TenantScope, executionID string) (execution.Record, error)
+}
+
+// Handler serves the inbound webhook surface.
+type Handler struct {
+	bindings    repository.WebhookRepository
+	runner      Runner
+	credentials repository.CredentialRepository
+	events      *events.Broker
+	limits      Limits
+}
+
+// NewHandler constructs the inbound webhook boundary.
+func NewHandler(bindings repository.WebhookRepository, runner Runner, creds repository.CredentialRepository, broker *events.Broker, limits Limits) *Handler {
+	if limits.MaxBodyBytes <= 0 {
+		limits.MaxBodyBytes = DefaultLimits().MaxBodyBytes
+	}
+	if limits.ResponseTimeout <= 0 {
+		limits.ResponseTimeout = DefaultLimits().ResponseTimeout
+	}
+	return &Handler{bindings: bindings, runner: runner, credentials: creds, events: broker, limits: limits}
+}
+
+// ServeHTTP routes one inbound request to its workflow.
+func (handler *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/webhook"), "/")
+	if path == "" {
+		problem(w, http.StatusNotFound, "No webhook path was given.")
+		return
+	}
+	if handler.bindings == nil || handler.runner == nil {
+		problem(w, http.StatusServiceUnavailable, "Webhook routing is not available.")
+		return
+	}
+
+	binding, err := handler.bindings.Resolve(r.Context(), strings.ToUpper(r.Method), path)
+	if err != nil {
+		// An inactive, deleted, or never-activated workflow has no binding, and
+		// a wrong method has none either. Answering both the same way keeps the
+		// endpoint from confirming which workflows exist.
+		problem(w, http.StatusNotFound, "No active workflow is bound to this webhook.")
+		return
+	}
+
+	if status, err := handler.authenticate(r, binding); err != nil {
+		if status == http.StatusUnauthorized {
+			w.Header().Set("WWW-Authenticate", `Basic realm="webhook"`)
+		}
+		problem(w, status, err.Error())
+		return
+	}
+
+	payload, err := handler.requestPayload(r)
+	if err != nil {
+		problem(w, http.StatusRequestEntityTooLarge, err.Error())
+		return
+	}
+
+	record, err := handler.runner.QueueWebhook(r.Context(), binding, payload)
+	if err != nil {
+		problem(w, http.StatusInternalServerError, "The workflow could not be queued.")
+		return
+	}
+
+	if mode := responseMode(binding); mode == modeImmediate {
+		writeJSON(w, immediateStatus(binding), map[string]any{
+			"executionId": record.ID,
+			"status":      string(record.Status),
+		})
+		return
+	}
+
+	finished, err := handler.await(r.Context(), binding, record.ID)
+	if err != nil {
+		problem(w, http.StatusGatewayTimeout, "The workflow did not finish before the response timeout.")
+		return
+	}
+	handler.respondFromExecution(w, binding, finished, responseMode(binding))
+}
+
+type mode int
+
+const (
+	modeImmediate mode = iota
+	modeLastNode
+	modeResponseNode
+)
+
+func responseMode(binding repository.WebhookBinding) mode {
+	switch value, _ := binding.Parameters["responseMode"].(string); value {
+	case "lastNode":
+		return modeLastNode
+	case "responseNode":
+		return modeResponseNode
+	default:
+		return modeImmediate
+	}
+}
+
+func immediateStatus(binding repository.WebhookBinding) int {
+	code, ok := binding.Parameters["responseCode"].(float64)
+	if !ok || code < 100 || code > 599 {
+		return http.StatusOK
+	}
+	return int(code)
+}
+
+// authenticate applies the binding's configured V1 auth mode.
+func (handler *Handler) authenticate(r *http.Request, binding repository.WebhookBinding) (int, error) {
+	authentication, _ := binding.Parameters["authentication"].(string)
+	switch authentication {
+	case "", "none":
+		return 0, nil
+	case "basicAuth", "headerAuth":
+	default:
+		return http.StatusInternalServerError, errors.New("The webhook authentication mode is not supported.")
+	}
+
+	credentialID := credentialReference(binding)
+	if credentialID == "" || handler.credentials == nil {
+		// A webhook configured to authenticate but unable to is closed, not
+		// open: failing open would silently publish an unprotected endpoint.
+		return http.StatusInternalServerError, errors.New("This webhook requires a credential that is not configured.")
+	}
+	record, fields, err := handler.credentials.Resolve(r.Context(), repository.TenantScope{ID: binding.TenantID}, credentialID)
+	if err != nil {
+		return http.StatusInternalServerError, errors.New("This webhook's credential could not be resolved.")
+	}
+
+	switch authentication {
+	case "basicAuth":
+		if record.Type != "httpBasicAuth" {
+			return http.StatusInternalServerError, errors.New("This webhook is bound to a credential of the wrong type.")
+		}
+		user, password, ok := r.BasicAuth()
+		if !ok || !equal(user, fields["user"]) || !equal(password, fields["password"]) {
+			return http.StatusUnauthorized, errors.New("Basic authentication failed.")
+		}
+	case "headerAuth":
+		if record.Type != "httpHeaderAuth" {
+			return http.StatusInternalServerError, errors.New("This webhook is bound to a credential of the wrong type.")
+		}
+		name := strings.TrimSpace(fields["name"])
+		if name == "" || !equal(r.Header.Get(name), fields["value"]) {
+			return http.StatusUnauthorized, errors.New("Header authentication failed.")
+		}
+	}
+	return 0, nil
+}
+
+func credentialReference(binding repository.WebhookBinding) string {
+	credentialsValue, ok := binding.Parameters["$credentials"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	for _, id := range credentialsValue {
+		if text, ok := id.(string); ok && text != "" {
+			return text
+		}
+	}
+	return ""
+}
+
+// equal compares in constant time so a wrong secret cannot be discovered by
+// timing how long the comparison took.
+func equal(got, want string) bool {
+	return subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1
+}
+
+// requestPayload builds the trigger item.
+//
+// Headers are redacted here, before the payload is ever handed to the engine,
+// so an inbound Authorization header never reaches an execution record.
+func (handler *Handler) requestPayload(r *http.Request) (json.RawMessage, error) {
+	body, err := io.ReadAll(io.LimitReader(r.Body, handler.limits.MaxBodyBytes+1))
+	if err != nil {
+		return nil, errors.New("The request body could not be read.")
+	}
+	if int64(len(body)) > handler.limits.MaxBodyBytes {
+		return nil, fmt.Errorf("The request body exceeds the %d byte limit.", handler.limits.MaxBodyBytes)
+	}
+
+	headers := make(map[string]any, len(r.Header))
+	for key, values := range r.Header {
+		if len(values) > 0 {
+			headers[key] = values[0]
+		}
+	}
+	query := make(map[string]any, len(r.URL.Query()))
+	for key, values := range r.URL.Query() {
+		if len(values) > 0 {
+			query[key] = values[0]
+		}
+	}
+
+	var decoded any
+	if len(body) > 0 && json.Valid(body) {
+		_ = json.Unmarshal(body, &decoded)
+	} else if len(body) > 0 {
+		decoded = string(body)
+	}
+
+	payload, err := json.Marshal(map[string]any{
+		"method":  r.Method,
+		"path":    strings.Trim(strings.TrimPrefix(r.URL.Path, "/webhook"), "/"),
+		"headers": headers,
+		"query":   query,
+		"body":    decoded,
+	})
+	if err != nil {
+		return nil, errors.New("The request could not be encoded.")
+	}
+	return execution.Redact(payload), nil
+}
+
+// await waits for the execution to reach a terminal state.
+//
+// It polls the durable record rather than trusting a live event, because the
+// record is what the response must reflect and it is correct even if the
+// broker dropped an event under backpressure.
+func (handler *Handler) await(ctx context.Context, binding repository.WebhookBinding, executionID string) (execution.Record, error) {
+	deadline := time.Now().Add(handler.limits.ResponseTimeout)
+	tenant := repository.TenantScope{ID: binding.TenantID}
+	for {
+		record, err := handler.runner.Get(ctx, tenant, executionID)
+		if err == nil && terminal(record.Status) {
+			return record, nil
+		}
+		if time.Now().After(deadline) {
+			return execution.Record{}, errors.New("timed out")
+		}
+		select {
+		case <-ctx.Done():
+			return execution.Record{}, ctx.Err()
+		case <-time.After(25 * time.Millisecond):
+		}
+	}
+}
+
+func terminal(status execution.Status) bool {
+	switch status {
+	case execution.StatusSucceeded, execution.StatusFailed, execution.StatusCancelled:
+		return true
+	default:
+		return false
+	}
+}
+
+// respondFromExecution turns a finished execution into the HTTP response.
+func (handler *Handler) respondFromExecution(w http.ResponseWriter, binding repository.WebhookBinding, record execution.Record, responseMode mode) {
+	if record.Status != execution.StatusSucceeded {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{
+			"executionId": record.ID,
+			"status":      string(record.Status),
+			"error":       json.RawMessage(record.Error),
+		})
+		return
+	}
+
+	outputs := map[string][][]workflow.Item{}
+	if len(record.Output) > 0 {
+		_ = json.Unmarshal(record.Output, &outputs)
+	}
+
+	if responseMode == modeResponseNode {
+		if response, found := findResponse(outputs); found {
+			writeResponse(w, response)
+			return
+		}
+		// The graph was configured to answer from a node but never reached one.
+		// Saying so beats returning a misleading 200 with the last node's data.
+		writeJSON(w, http.StatusInternalServerError, map[string]any{
+			"executionId": record.ID,
+			"error":       "The workflow finished without reaching a Respond to Webhook node.",
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"executionId": record.ID,
+		"status":      string(record.Status),
+		"data":        outputs,
+	})
+}
+
+// ResponseKey marks the item field a Respond to Webhook node writes.
+const ResponseKey = "$response"
+
+type nodeResponse struct {
+	statusCode int
+	headers    map[string]string
+	body       string
+}
+
+func findResponse(outputs map[string][][]workflow.Item) (nodeResponse, bool) {
+	for _, ports := range outputs {
+		for _, items := range ports {
+			for _, item := range items {
+				raw, ok := item.JSON[ResponseKey].(map[string]any)
+				if !ok {
+					continue
+				}
+				response := nodeResponse{statusCode: http.StatusOK, headers: map[string]string{}}
+				if code, ok := raw["statusCode"].(float64); ok && code >= 100 && code <= 599 {
+					response.statusCode = int(code)
+				}
+				if headers, ok := raw["headers"].(map[string]any); ok {
+					for key, value := range headers {
+						if text, ok := value.(string); ok {
+							response.headers[key] = text
+						}
+					}
+				}
+				response.body, _ = raw["body"].(string)
+				return response, true
+			}
+		}
+	}
+	return nodeResponse{}, false
+}
+
+func writeResponse(w http.ResponseWriter, response nodeResponse) {
+	for key, value := range response.headers {
+		w.Header().Set(key, value)
+	}
+	if w.Header().Get("Content-Type") == "" {
+		if json.Valid([]byte(response.body)) {
+			w.Header().Set("Content-Type", "application/json")
+		} else {
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		}
+	}
+	w.WriteHeader(response.statusCode)
+	_, _ = io.WriteString(w, response.body)
+}
+
+func writeJSON(w http.ResponseWriter, status int, body any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(body)
+}
+
+func problem(w http.ResponseWriter, status int, detail string) {
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"title":  http.StatusText(status),
+		"status": status,
+		"detail": detail,
+	})
+}
+
+// Extract returns the routable webhook triggers in a document.
+//
+// It lives here rather than in the repository so node-type knowledge stays out
+// of persistence, and is injected into the workflow store at composition.
+func Extract(nodeType string, normalizePath func(string) string) repository.WebhookExtractor {
+	return func(document workflow.Document) []repository.WebhookTrigger {
+		triggers := make([]repository.WebhookTrigger, 0, 1)
+		for _, node := range document.Nodes {
+			if node.Type != nodeType {
+				continue
+			}
+			path, _ := node.Parameters["path"].(string)
+			path = normalizePath(path)
+			if path == "" {
+				continue
+			}
+			method, _ := node.Parameters["httpMethod"].(string)
+			if method == "" {
+				method = http.MethodPost
+			}
+			parameters := make(map[string]any, len(node.Parameters)+1)
+			for key, value := range node.Parameters {
+				parameters[key] = value
+			}
+			if len(node.Credentials) > 0 {
+				// Carried under a reserved key so the HTTP boundary can
+				// authenticate without re-reading the workflow document.
+				references := make(map[string]any, len(node.Credentials))
+				for typeID, id := range node.Credentials {
+					references[typeID] = id
+				}
+				parameters["$credentials"] = references
+			}
+			triggers = append(triggers, repository.WebhookTrigger{
+				NodeID: node.ID, Method: strings.ToUpper(method), Path: path, Parameters: parameters,
+			})
+		}
+		return triggers
+	}
+}

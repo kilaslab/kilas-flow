@@ -44,6 +44,8 @@ export * from './propertyDefinition';
 export * from './propertyOption';
 export * from './readyOutputBody';
 export * from './runWorkflowInputBody';
+export * from './scheduleBody';
+export * from './scheduleResource';
 export * from './streamExecutionEvents200Item';
 export * from './streamExecutionEventsParams';
 export * from './visibilityCondition';

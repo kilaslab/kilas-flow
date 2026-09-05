@@ -2,6 +2,7 @@ package engine_test
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -55,6 +56,11 @@ func (store *idleExecutionStore) ClaimNext(_ context.Context, workerID string, _
 }
 
 func (*idleExecutionStore) Get(context.Context, repository.TenantScope, string) (execution.Record, error) {
+	return execution.Record{}, nil
+}
+
+// This test only exercises worker startup, so the trigger queue is a stub.
+func (*idleExecutionStore) QueueTriggered(context.Context, repository.TenantScope, string, string, execution.Trigger, json.RawMessage) (execution.Record, error) {
 	return execution.Record{}, nil
 }
 

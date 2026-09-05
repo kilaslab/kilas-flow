@@ -18,11 +18,14 @@ import (
 // call services on its own network.
 func RegisterExecutors(registry *engine.Registry, httpPolicy safehttp.Policy) error {
 	for id, executor := range map[string]engine.Executor{
-		"core.manual":  engine.ExecutorFunc(executeManual),
-		"core.set":     engine.ExecutorFunc(executeSet),
-		"core.if":      engine.ExecutorFunc(executeIF),
-		"core.merge":   engine.ExecutorFunc(executeMerge),
-		HTTPExecutorID: NewHTTPExecutor(httpPolicy),
+		"core.manual":      engine.ExecutorFunc(executeManual),
+		"core.set":         engine.ExecutorFunc(executeSet),
+		"core.if":          engine.ExecutorFunc(executeIF),
+		"core.merge":       engine.ExecutorFunc(executeMerge),
+		HTTPExecutorID:     NewHTTPExecutor(httpPolicy),
+		WebhookExecutorID:  engine.ExecutorFunc(executeWebhook),
+		ScheduleExecutorID: engine.ExecutorFunc(executeSchedule),
+		RespondExecutorID:  engine.ExecutorFunc(executeRespond),
 	} {
 		if err := registry.Register(id, executor); err != nil {
 			return err
