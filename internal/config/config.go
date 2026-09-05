@@ -28,6 +28,7 @@ type Config struct {
 	Embed      Embed        `koanf:"embed"`
 	Branding   Branding     `koanf:"branding"`
 	Execution  Execution    `koanf:"execution"`
+	History    History      `koanf:"history"`
 	SQL        SQLNodes     `koanf:"sql"`
 	Credential Credential   `koanf:"credential"`
 	Binary     Binary       `koanf:"binary"`
@@ -128,6 +129,27 @@ type Execution struct {
 	DefaultTimeout time.Duration `koanf:"default_timeout"`
 }
 
+// History bounds how much workflow version history an installation keeps.
+//
+// Both keys default to unbounded, which is what an existing deployment gets on
+// upgrade: an operator who has never configured retention must never discover
+// that installing a new build deleted a customer's history. Retention here is a
+// configuration knob rather than a licence tier — for a white-label deployment
+// it is the operator, not the vendor, who decides how much history a customer
+// keeps.
+//
+// The section name is one word for the same reason Outbound, SQL, Credential
+// and Binary are: envKeyToPath treats the first underscore as the section
+// separator, so a section called workflow_history could never be reached by
+// KILASFLOW_WORKFLOW_HISTORY_RETENTION.
+type History struct {
+	// Retention drops versions older than this. Zero keeps every age.
+	Retention time.Duration `koanf:"retention"`
+	// MaxVersions keeps only the newest N revisions of one workflow. Zero keeps
+	// every count.
+	MaxVersions int `koanf:"max_versions"`
+}
+
 // SQLNodes bounds what a workflow document may ask a database node for.
 //
 // This is not KilasFlow's own database — that is Database above. It bounds the
@@ -224,6 +246,12 @@ func Default() Config {
 		Execution: Execution{
 			MaxConcurrent:  10,
 			DefaultTimeout: 60 * time.Second,
+		},
+		History: History{
+			// Keep everything. Deleting a customer's history is not a default
+			// anyone should get by not reading the configuration reference.
+			Retention:   0,
+			MaxVersions: 0,
 		},
 		SQL: SQLNodes{
 			// Both sit well above the node defaults (10,000 rows, 30 seconds):

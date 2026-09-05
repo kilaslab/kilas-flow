@@ -48,6 +48,20 @@ execution:
   max_concurrent: 10
   default_timeout: 60s
 
+history:
+  # How much workflow version history to keep. Both keys default to "keep
+  # everything", so upgrading never deletes history somebody is relying on;
+  # set them only when unbounded growth is the bigger problem.
+  #
+  # A prune never removes the published version, the newest revision, or any
+  # version an execution or a webhook binding still points at, so shortening
+  # retention cannot break the replay of an execution you have kept.
+  #
+  # retention: 2160h   # drop versions older than 90 days; 0 keeps every age
+  # max_versions: 50   # keep the newest 50 revisions; 0 keeps every count
+  retention: 0
+  max_versions: 0
+
 binary:
   # Where item payloads (WhatsApp media, downloaded files) are written.
   # Empty disables binary storage: a node that needs it then fails with a

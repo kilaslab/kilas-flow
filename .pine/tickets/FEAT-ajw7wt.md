@@ -1,7 +1,7 @@
 ---
 id: FEAT-ajw7wt
 title: Store workflow version history and pin the published version
-status: todo
+status: done
 priority: medium
 labels:
     - versioning
@@ -11,7 +11,7 @@ deps:
 parent: EPIC-m42s3g
 phase: p7
 created: "2026-09-05T05:01:00Z"
-updated: "2026-09-05T05:01:00Z"
+updated: "2026-09-05T17:04:54Z"
 ---
 
 ## Scope
@@ -26,13 +26,13 @@ This ticket is the storage and API half: listing, publishing a named version, re
 
 ## Acceptance criteria
 
-- [ ] `GET /api/v1/workflows/{id}/versions` returns a tenant-scoped, newest-first page of version summaries — id, revision, created time, optional label, author where one is known — using the same opaque cursor pagination the executions listing already uses, and never carrying the full document.
-- [ ] Every summary states its role: draft (the latest revision), published (the pinned `active_version_id`), or neither, so a client never infers publication by comparing identifiers.
-- [ ] A version other than the latest can be published. Publishing compiles the chosen snapshot against the live catalogue first, refuses it with the same structured `WorkflowValidationIssue` payload activation returns today, and resyncs webhook bindings in the same transaction, so an active workflow never keeps serving paths belonging to a version it no longer runs.
-- [ ] Restoring an old version appends a new revision carrying that snapshot's document. History is append-only: the restored-from version stays in the list unchanged and no row is ever rewritten.
-- [ ] Every publish, unpublish and restore appends an audit row naming the workflow, the version, the actor the request context carries, the reason and the time, and a publish period — including the moment deactivation ended it — can be reconstructed from those rows alone.
-- [ ] Retention is configurable by age and by count, "keep everything" is available and is what an existing deployment gets on upgrade, and both keys are reachable through YAML and through a `KILASFLOW_*` environment override.
-- [ ] Pruning never removes the published version, the latest revision, or any version referenced by a surviving execution or webhook binding: after a prune runs, every retained execution still replays its exact graph through `GET /workflows/{id}/versions/{versionId}`.
+- [x] `GET /api/v1/workflows/{id}/versions` returns a tenant-scoped, newest-first page of version summaries — id, revision, created time, optional label, author where one is known — using the same opaque cursor pagination the executions listing already uses, and never carrying the full document.
+- [x] Every summary states its role: draft (the latest revision), published (the pinned `active_version_id`), or neither, so a client never infers publication by comparing identifiers.
+- [x] A version other than the latest can be published. Publishing compiles the chosen snapshot against the live catalogue first, refuses it with the same structured `WorkflowValidationIssue` payload activation returns today, and resyncs webhook bindings in the same transaction, so an active workflow never keeps serving paths belonging to a version it no longer runs.
+- [x] Restoring an old version appends a new revision carrying that snapshot's document. History is append-only: the restored-from version stays in the list unchanged and no row is ever rewritten.
+- [x] Every publish, unpublish and restore appends an audit row naming the workflow, the version, the actor the request context carries, the reason and the time, and a publish period — including the moment deactivation ended it — can be reconstructed from those rows alone.
+- [x] Retention is configurable by age and by count, "keep everything" is available and is what an existing deployment gets on upgrade, and both keys are reachable through YAML and through a `KILASFLOW_*` environment override.
+- [x] Pruning never removes the published version, the latest revision, or any version referenced by a surviving execution or webhook binding: after a prune runs, every retained execution still replays its exact graph through `GET /workflows/{id}/versions/{versionId}`.
 
 ## Implementation Plan
 
@@ -59,3 +59,105 @@ Where the prune runs is the one design decision left open. Recommendation: enfor
 - Current storage: `internal/repository/workflows.go` (`SaveDraft`, `Activate`, `Deactivate`, `GetVersion`, `GetVersionByID`), `internal/repository/models.go` (`workflowVersionModel`, `workflowModel.ActiveVersionID`, `executionModel.WorkflowVersion`), `internal/repository/executions.go` (`QueueTriggered`'s pin check), `internal/database/database.go` (`AutoMigrate`), `internal/config/config.go` (`envKeyToPath`).
 - n8n 2.34.0 reference checkout, read-only and outside this repository: `packages/frontend/editor-ui/src/features/workflows/workflowHistory/workflowHistory.store.ts` — `downloadVersion` shows a version carries only `nodes`, `connections` and `nodeGroups`, and `licensePruneTime`/`pruneTime` show retention is licence-gated there.
 - Local n8n UI reference: `design-refs/n8n-v2/INDEX.md` entry 15 — the version drawer: author and timestamp per version, a version count, a Publish Timeline tab, and n8n's own licence cap stated in-product ("limited to 1 day"). Captured from a local n8n 2.33.7 instance; gitignored, never vendored.
+
+## Work evidence
+
+Implemented as V2-p6-1 had already landed, so the schema change is a numbered
+migration pair rather than the `AutoMigrate` edit the plan assumed.
+
+### Stale premises found in the ticket
+
+- "`migrations/` holds nothing but `.gitkeep` and the schema is still created by
+  `db.AutoMigrate(models...)` in `internal/database/database.go`" — false as of
+  today. `AutoMigrate` is gone from `database.go`; `migrations/{sqlite,postgres}/`
+  carry `000001_baseline.*.sql`, embedded by the root `migrations` package and
+  applied by the runner in `internal/database/migrate.go`. The ticket anticipated
+  this ("if V2-p6-1 has landed ... a numbered migration instead"), which is the
+  path taken.
+- Everything else the ticket asserts about `internal/repository/workflows.go`,
+  `executions.go`, `models.go` and `internal/config/config.go` checked out
+  exactly, including `Activate`'s "Earlier snapshots can never be reactivated"
+  comment, `Deactivate` retaining `active_version_id`, the `executionModel`
+  `OnDelete:RESTRICT` constraint and `webhook_bindings.workflow_version_id`
+  having no foreign key at all.
+- The plan says run `pnpm generate:api` in `web/` and `pnpm generate:types` in
+  `sdk/`. **Not done — `web/` is fenced for this session.** Four new operations
+  (`list-workflow-versions`, `publish-workflow-version`,
+  `restore-workflow-version`, `list-workflow-publish-events`) are now in the
+  server's OpenAPI document, so the checked-in web and SDK clients are behind it
+  and must be regenerated by a session that owns those trees. No CI gate for the
+  drift check exists under `.github/` today, so nothing fails until then.
+
+### Design decisions worth recording
+
+- **Two role flags, not one enum.** The criterion asks for "draft, published, or
+  neither", but a version is routinely *both* — publishing the latest revision is
+  the common case — so a single enum would have to drop one of the two answers.
+  `VersionSummary` carries `Draft` and `Published` booleans, both stated by the
+  server, which still satisfies "a client never infers publication by comparing
+  identifiers".
+- **Actor comes from the request context**, via `repository.WithActor` /
+  `ActorFrom`, rather than a parameter on every method. Nothing populates it
+  today because the main API has no authentication; V2-p8-1 sets it once at the
+  request boundary instead of changing every signature at once.
+- **A restore's audit row names the source version**, not the revision the
+  restore appended: "restored version X" is the fact worth recording, and the
+  appended revision is the newest one at that instant anyway.
+- **`workflow_publish_events.version_id` carries no foreign key**, so an audit
+  row outlives a pruned version. An audit row that vanished with the version it
+  describes would destroy exactly the evidence somebody came looking for.
+- **Prune candidates are chosen in Go**, not in one DELETE with correlated
+  subqueries, because the four exclusions are the whole point of the function and
+  a reader has to be able to see each of them. Both pinned-version lookups are
+  scoped to the workflow, since an execution or binding can only point at a
+  version of the workflow it belongs to.
+
+### Migration
+
+`migrations/{sqlite,postgres}/000002_workflow_history.{up,down}.sql`. The DDL was
+captured from the statements GORM's `AutoMigrate` issues for the changed
+`repository.Models()` — the same way the baseline was — so
+`TestBaselineLeavesAutoMigrateNothingToDoOn{SQLite,Postgres}` sees zero drift on
+both dialects. Space-indented, per the trap recorded in `.pine/memory/persistence.md`.
+
+Three tests in `internal/database/migrate_test.go` needed updating because they
+assumed the baseline was the *only* migration, not because behaviour regressed:
+
+- the two adoption tests built their "legacy" fixture with
+  `AutoMigrate(repository.Models()...)`, which now builds tomorrow's schema, so
+  `000002` then failed against columns the fixture had already created. They now
+  build the fixture from the baseline SQL, and assert no baseline table was
+  CREATEd or DROPped rather than not touched at all — a pending migration
+  legitimately ALTERs one.
+- `TestADatabaseAheadOfTheBinaryRefusesToStart` hard-coded 1 as the newest known
+  version; it now reads it from the embedded set.
+- `TestRollingBack*` called `Rollback` once; they now unwind every migration.
+
+### Verification
+
+```
+go build ./...          # clean
+go vet ./...            # clean
+gofmt -l . | grep -v web/   # empty
+go test ./... -count=1   # all packages ok (SQLite)
+
+KILASFLOW_TEST_POSTGRES_DSN=... KILASFLOW_TEST_MYSQL_DSN=... KILASFLOW_TEST_MARIADB_DSN=...   go test ./... -count=1   # all packages ok (live PostgreSQL 16, MySQL 8, MariaDB 11)
+
+go test ./internal/repository/ ./internal/api/ ./internal/config/         ./internal/database/ ./internal/workflow/ -race -count=1   # all ok
+```
+
+`go test ./nodes/ -race` still fails only `TestTheGoCodeNodeRunsOncePerItemWhenAsked`
+(pre-existing BUG-9s3htg). No new race failures.
+
+### Tests proven to fail without the change
+
+Each mechanism was reverted in turn and the suite re-run:
+
+| Reverted | Failing test |
+| --- | --- |
+| execution exclusion in `protectedVersionIDs` | `TestPruningNeverRemovesAVersionASurvivingExecutionReplays` — `FOREIGN KEY constraint failed (1811)`, exactly the `OnDelete:RESTRICT` the ticket predicted |
+| webhook-binding exclusion | `TestPruningNeverRemovesAVersionAWebhookBindingPointsAt` — pruned *silently*, since that column has no FK |
+| `Published` role flag | `TestAVersionListingStatesWhichRevisionIsDraftAndWhichIsPublished`, `TestTheVersionsEndpointNamesTheDraftAndThePublishedRevision` |
+| `PublishVersion` generalisation (publish latest only) | 4 repository + 3 API tests, incl. `TestPublishingAnEarlierRevisionResyncsTheWebhookPathsItServes` (`bound paths = [second-path], want [first-path]`) and `TestPublishingAnUnknownVersionIsNotFound` (200 instead of 404) |
+| count bound in `SaveDraft` | `TestACountBoundKeepsOnlyTheNewestRevisions` — 6 kept, want 3 |
+| `unpublished` audit row in `Deactivate` | `TestEveryPublishUnpublishAndRestoreLeavesAnAuditRow`, `TestThePublishEventsEndpointReportsWhatHappenedToEachVersion` |

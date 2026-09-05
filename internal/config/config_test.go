@@ -149,3 +149,53 @@ func TestTheSQLCeilingIsReachableFromTheEnvironment(t *testing.T) {
 		t.Errorf("SQL.MaxStatementTimeout = %s, want the environment's 90s", cfg.SQL.MaxStatementTimeout)
 	}
 }
+
+// An operator who has never configured history must keep all of it. Anything
+// else means installing a new build silently deletes a customer's versions.
+func TestHistoryRetentionDefaultsToKeepingEverything(t *testing.T) {
+	cfg, err := Load(filepath.Join(t.TempDir(), "absent.yaml"))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.History.Retention != 0 {
+		t.Errorf("History.Retention = %s, want 0 meaning keep every age", cfg.History.Retention)
+	}
+	if cfg.History.MaxVersions != 0 {
+		t.Errorf("History.MaxVersions = %d, want 0 meaning keep every count", cfg.History.MaxVersions)
+	}
+}
+
+func TestHistoryRetentionIsReachableFromYAMLAndTheEnvironment(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "kilasflow.yaml")
+	if err := os.WriteFile(path, []byte("history:\n  retention: 24h\n  max_versions: 10\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.History.Retention != 24*time.Hour {
+		t.Errorf("History.Retention from YAML = %s, want 24h", cfg.History.Retention)
+	}
+	if cfg.History.MaxVersions != 10 {
+		t.Errorf("History.MaxVersions from YAML = %d, want 10", cfg.History.MaxVersions)
+	}
+
+	// The section is one word for exactly this reason: envKeyToPath treats the
+	// first underscore as the section separator, so a section named
+	// workflow_history could never be reached from the environment at all.
+	t.Setenv("KILASFLOW_HISTORY_RETENTION", "72h")
+	t.Setenv("KILASFLOW_HISTORY_MAX_VERSIONS", "25")
+
+	cfg, err = Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.History.Retention != 72*time.Hour {
+		t.Errorf("History.Retention = %s, want the environment's 72h", cfg.History.Retention)
+	}
+	if cfg.History.MaxVersions != 25 {
+		t.Errorf("History.MaxVersions = %d, want the environment's 25", cfg.History.MaxVersions)
+	}
+}

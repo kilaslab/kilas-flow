@@ -38,7 +38,13 @@ type WorkflowRepository interface {
 	Get(context.Context, TenantScope, string) (workflow.StoredWorkflow, error)
 	GetVersion(context.Context, TenantScope, string, int) (workflow.Version, error)
 	GetVersionByID(context.Context, TenantScope, string, string) (workflow.Version, error)
+	ListVersions(context.Context, TenantScope, string, VersionFilter) (VersionPage, error)
 	Activate(context.Context, TenantScope, string, workflow.Catalog) (workflow.StoredWorkflow, error)
+	// PublishVersion pins any snapshot, not only the newest. Activate is the
+	// special case of it that means "publish the latest revision".
+	PublishVersion(context.Context, TenantScope, string, string, workflow.Catalog, string) (workflow.StoredWorkflow, error)
+	RestoreVersion(context.Context, TenantScope, string, string, string) (workflow.StoredWorkflow, error)
+	ListPublishEvents(context.Context, TenantScope, string) ([]workflow.PublishEvent, error)
 	Deactivate(context.Context, TenantScope, string) (workflow.StoredWorkflow, error)
 	Delete(context.Context, TenantScope, string) error
 }
@@ -57,6 +63,9 @@ type GORMWorkflowStore struct {
 	// schedule-driven workflow activated cleanly and then never ran.
 	schedules ScheduleExtractor
 	next      func(string, time.Time) (time.Time, error)
+	// retention bounds how much history survives. The zero value keeps
+	// everything, which is what an installation that never configured this gets.
+	retention RetentionPolicy
 }
 
 var _ WorkflowRepository = (*GORMWorkflowStore)(nil)
@@ -83,6 +92,18 @@ func (store *GORMWorkflowStore) WithSchedules(extract ScheduleExtractor, next fu
 	}
 	store.schedules = extract
 	store.next = next
+	return store
+}
+
+// WithRetention bounds how much version history the store keeps.
+//
+// The count bound is enforced inside SaveDraft's own transaction because that
+// is the exact moment a new row appears; leaving it to a periodic sweep would
+// let a burst of saves outrun the bound and sit over it until the sweep came
+// round. The age bound cannot work that way — it has to fire for workflows
+// nobody is saving — so it is PruneAllVersions' job.
+func (store *GORMWorkflowStore) WithRetention(policy RetentionPolicy) *GORMWorkflowStore {
+	store.retention = policy
 	return store
 }
 
@@ -128,20 +149,9 @@ func (store *GORMWorkflowStore) SaveDraft(ctx context.Context, tenant TenantScop
 			return fmt.Errorf("find workflow: %w", err)
 		}
 
-		versionID, err := workflow.NewID("wfv")
+		version, err := appendVersion(tx, tenant, model, definition, document, nil, ActorFrom(ctx))
 		if err != nil {
 			return err
-		}
-		version := workflowVersionModel{
-			ID:            versionID,
-			TenantID:      tenant.ID,
-			WorkflowID:    model.ID,
-			Revision:      model.LatestRevision + 1,
-			SchemaVersion: document.SchemaVersion,
-			Definition:    definition,
-		}
-		if err := tx.Create(&version).Error; err != nil {
-			return fmt.Errorf("create workflow version: %w", err)
 		}
 
 		if err := tx.Model(&workflowModel{}).
@@ -150,7 +160,11 @@ func (store *GORMWorkflowStore) SaveDraft(ctx context.Context, tenant TenantScop
 			return fmt.Errorf("update workflow: %w", err)
 		}
 
-		return nil
+		// Enforcing the count bound here, in the transaction that created the
+		// row that broke it, is what keeps history from exceeding the operator's
+		// limit even briefly.
+		_, err = prunePolicy(tx, tenant, model.ID, RetentionPolicy{MaxVersions: store.retention.MaxVersions})
+		return err
 	})
 	if err != nil {
 		return workflow.StoredWorkflow{}, err
@@ -232,8 +246,30 @@ func (store *GORMWorkflowStore) GetVersionByID(ctx context.Context, tenant Tenan
 }
 
 // Activate compiles the latest saved revision and pins it only if the graph is
-// executable. Earlier snapshots can never be reactivated through this API.
+// executable.
+//
+// It is PublishVersion with the version left for the store to choose, so the
+// two cannot drift into disagreeing about what publishing means.
 func (store *GORMWorkflowStore) Activate(ctx context.Context, tenant TenantScope, workflowID string, catalog workflow.Catalog) (workflow.StoredWorkflow, error) {
+	return store.publish(ctx, tenant, workflowID, "", catalog, "")
+}
+
+// PublishVersion pins one named snapshot, which is how a bad save is rolled
+// back without rebuilding the canvas by hand.
+func (store *GORMWorkflowStore) PublishVersion(ctx context.Context, tenant TenantScope, workflowID, versionID string, catalog workflow.Catalog, reason string) (workflow.StoredWorkflow, error) {
+	if versionID == "" {
+		return workflow.StoredWorkflow{}, fmt.Errorf("workflow version ID is required")
+	}
+	return store.publish(ctx, tenant, workflowID, versionID, catalog, reason)
+}
+
+// publish compiles one snapshot and pins it, resyncing everything that routes
+// to it in the same commit.
+//
+// An empty versionID means the latest revision, resolved under the row lock
+// rather than by the caller, so a save landing between the lookup and the pin
+// cannot publish a revision nobody chose.
+func (store *GORMWorkflowStore) publish(ctx context.Context, tenant TenantScope, workflowID, versionID string, catalog workflow.Catalog, reason string) (workflow.StoredWorkflow, error) {
 	if err := tenant.validate(); err != nil {
 		return workflow.StoredWorkflow{}, err
 	}
@@ -247,9 +283,9 @@ func (store *GORMWorkflowStore) Activate(ctx context.Context, tenant TenantScope
 			First(&model).Error; err != nil {
 			return mapNotFound(err, "workflow")
 		}
-		var version workflowVersionModel
-		if err := tx.Where("tenant_id = ? AND workflow_id = ? AND revision = ?", tenant.ID, workflowID, model.LatestRevision).First(&version).Error; err != nil {
-			return mapNotFound(err, "workflow version")
+		version, err := lockedVersion(tx, tenant, model, versionID)
+		if err != nil {
+			return err
 		}
 		storedVersion, err := versionFromModel(version)
 		if err != nil {
@@ -265,7 +301,9 @@ func (store *GORMWorkflowStore) Activate(ctx context.Context, tenant TenantScope
 		}
 		if store.webhooks != nil {
 			// Same transaction as the activation itself: there is never a window
-			// where a workflow is active but unroutable, or the reverse.
+			// where a workflow is active but unroutable, or the reverse — and
+			// publishing an earlier version never leaves the workflow serving a
+			// path that belongs to the version it just stopped running.
 			if err := syncWebhookBindings(tx, tenant.ID, model.ID, version.ID, store.webhooks(storedVersion.Document)); err != nil {
 				return err
 			}
@@ -275,7 +313,7 @@ func (store *GORMWorkflowStore) Activate(ctx context.Context, tenant TenantScope
 				return err
 			}
 		}
-		return nil
+		return appendPublishEvent(tx, tenant, model.ID, version.ID, workflow.PublishActionPublished, ActorFrom(ctx), reason)
 	})
 	if err != nil {
 		return workflow.StoredWorkflow{}, err
@@ -283,7 +321,29 @@ func (store *GORMWorkflowStore) Activate(ctx context.Context, tenant TenantScope
 	return store.Get(ctx, tenant, workflowID)
 }
 
+// lockedVersion resolves the snapshot a publish is about, inside the caller's
+// transaction. An empty versionID means the workflow's latest revision.
+func lockedVersion(tx *gorm.DB, tenant TenantScope, model workflowModel, versionID string) (workflowVersionModel, error) {
+	var version workflowVersionModel
+	query := tx.Where("tenant_id = ? AND workflow_id = ?", tenant.ID, model.ID)
+	if versionID == "" {
+		query = query.Where("revision = ?", model.LatestRevision)
+	} else {
+		// Scoped by workflow as well as ID so a version can never be published
+		// through a workflow that does not own it.
+		query = query.Where("id = ?", versionID)
+	}
+	if err := query.First(&version).Error; err != nil {
+		return workflowVersionModel{}, mapNotFound(err, "workflow version")
+	}
+	return version, nil
+}
+
 // Deactivate is idempotent and retains the last active version for history.
+//
+// active_version_id stays populated, as it always has: the audit row is now
+// what says whether the workflow is live, and the retained pointer is what
+// keeps the last-published document findable.
 func (store *GORMWorkflowStore) Deactivate(ctx context.Context, tenant TenantScope, workflowID string) (workflow.StoredWorkflow, error) {
 	if err := tenant.validate(); err != nil {
 		return workflow.StoredWorkflow{}, err
@@ -302,17 +362,27 @@ func (store *GORMWorkflowStore) Deactivate(ctx context.Context, tenant TenantSco
 			if err := removeWebhookBindings(tx, tenant.ID, workflowID); err != nil {
 				return err
 			}
-			if store.schedules == nil {
-				return nil
+			if store.schedules != nil {
+				// The document, not an empty list: deactivation removes the
+				// rows this workflow's own triggers own and leaves any created
+				// through the schedules API, which activation never claimed
+				// either.
+				active, err := store.activeDocument(tx, tenant, workflowID)
+				if err != nil {
+					return err
+				}
+				if err := removeSchedules(tx, tenant.ID, workflowID, store.schedules(active)); err != nil {
+					return err
+				}
 			}
-			// The document, not an empty list: deactivation removes the rows
-			// this workflow's own triggers own and leaves any created through
-			// the schedules API, which activation never claimed either.
-			active, err := store.activeDocument(tx, tenant, workflowID)
-			if err != nil {
-				return err
+			// The version that stopped serving, not the latest: the audit row
+			// has to name what was actually live for a publish period to be
+			// reconstructible from these rows alone.
+			pinned := ""
+			if model.ActiveVersionID != nil {
+				pinned = *model.ActiveVersionID
 			}
-			return removeSchedules(tx, tenant.ID, workflowID, store.schedules(active))
+			return appendPublishEvent(tx, tenant, workflowID, pinned, workflow.PublishActionUnpublished, ActorFrom(ctx), "")
 		}); err != nil {
 			return workflow.StoredWorkflow{}, err
 		}
