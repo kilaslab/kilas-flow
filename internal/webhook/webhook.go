@@ -400,6 +400,11 @@ func (handler *Handler) respondFromExecution(w http.ResponseWriter, binding repo
 		return
 	}
 
+	if responseMode == modeLastNode {
+		handler.respondFromLastNode(w, binding, record)
+		return
+	}
+
 	outputs := map[string][][]workflow.Item{}
 	if len(record.Output) > 0 {
 		_ = json.Unmarshal(record.Output, &outputs)
@@ -424,6 +429,75 @@ func (handler *Handler) respondFromExecution(w http.ResponseWriter, binding repo
 		"status":      string(record.Status),
 		"data":        outputs,
 	})
+}
+
+// respondFromLastNode answers with the items of the last node that ran.
+//
+// n8n's lastNode returns the last node's data as the body. This used to write
+// KilasFlow's own envelope instead — {executionId, status, data} keyed by node
+// ID — so a workflow imported with responseMode "lastNode", which is a common
+// shape, activated, ran, returned 200, and handed the caller the wrong body
+// with nothing reporting it.
+//
+// "Last" is the highest sequence among the node runs that produced items, which
+// is exactly what the engine recorded in execution order. A skipped node and a
+// node that produced nothing are both passed over, so the answer is the last
+// node the caller would call the last node.
+func (handler *Handler) respondFromLastNode(w http.ResponseWriter, binding repository.WebhookBinding, record execution.Record) {
+	items := lastNodeItems(record.NodeRuns)
+	switch shape, _ := binding.Parameters["responseData"].(string); shape {
+	case "noData":
+		w.WriteHeader(http.StatusNoContent)
+		return
+	case "allEntries":
+		// Always an array, including for one item, which is what n8n's own
+		// description of this option promises.
+		payload := make([]map[string]any, 0, len(items))
+		for _, item := range items {
+			payload = append(payload, itemJSON(item))
+		}
+		writeJSON(w, http.StatusOK, payload)
+		return
+	default:
+		// n8n's default: the first entry's JSON, always an object.
+		if len(items) == 0 {
+			writeJSON(w, http.StatusOK, map[string]any{})
+			return
+		}
+		writeJSON(w, http.StatusOK, itemJSON(items[0]))
+	}
+}
+
+// lastNodeItems returns the items of the last node run that produced any.
+func lastNodeItems(runs []execution.NodeRun) []workflow.Item {
+	ordered := append([]execution.NodeRun(nil), runs...)
+	sort.SliceStable(ordered, func(left, right int) bool {
+		return ordered[left].Sequence > ordered[right].Sequence
+	})
+	for _, run := range ordered {
+		if run.Status != execution.StatusSucceeded || len(run.Output) == 0 {
+			continue
+		}
+		var ports [][]workflow.Item
+		if err := json.Unmarshal(run.Output, &ports); err != nil {
+			continue
+		}
+		items := make([]workflow.Item, 0, 4)
+		for _, port := range ports {
+			items = append(items, port...)
+		}
+		if len(items) > 0 {
+			return items
+		}
+	}
+	return nil
+}
+
+func itemJSON(item workflow.Item) map[string]any {
+	if item.JSON == nil {
+		return map[string]any{}
+	}
+	return item.JSON
 }
 
 // ResponseKey marks the item field a Respond to Webhook node writes.

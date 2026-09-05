@@ -25,6 +25,7 @@ import Sparkles from '@lucide/svelte/icons/sparkles';
 import Split from '@lucide/svelte/icons/split';
 import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
 import Webhook from '@lucide/svelte/icons/webhook';
+import Workflow from '@lucide/svelte/icons/workflow';
 import Wrench from '@lucide/svelte/icons/wrench';
 
 import type { Definition, Node as WorkflowNode, Port } from '$lib/api/generated/models';
@@ -90,6 +91,7 @@ const GLYPHS: Record<string, Component> = {
 	send: Send,
 	'sticky-note': StickyNote,
 	webhook: Webhook,
+	workflow: Workflow,
 	wrench: Wrench
 };
 

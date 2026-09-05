@@ -198,6 +198,7 @@ type ExecutionResource struct {
 	Status                  execution.Status           `json:"status"`
 	Trigger                 execution.Trigger          `json:"trigger"`
 	TriggerNodeID           string                     `json:"triggerNodeId,omitempty" doc:"The trigger node this run started from, when one workflow declares several"`
+	ParentExecutionID       string                     `json:"parentExecutionId,omitempty" doc:"The execution that called this one, for a sub-workflow run"`
 	Input                   json.RawMessage            `json:"input,omitempty"`
 	Output                  json.RawMessage            `json:"output,omitempty"`
 	Error                   json.RawMessage            `json:"error,omitempty"`
@@ -550,7 +551,8 @@ func executionSummaryResource(record execution.Record) ExecutionSummary {
 	summary := ExecutionSummary{
 		ID: record.ID, WorkflowID: record.WorkflowID, WorkflowVersionID: record.WorkflowVersionID,
 		Status: record.Status, Trigger: record.Trigger, TriggerNodeID: record.TriggerNodeID,
-		StartedAt: record.StartedAt, FinishedAt: record.FinishedAt,
+		ParentExecutionID: record.ParentExecutionID,
+		StartedAt:         record.StartedAt, FinishedAt: record.FinishedAt,
 	}
 	if record.FinishedAt != nil {
 		duration := record.FinishedAt.Sub(record.StartedAt).Milliseconds()
@@ -563,6 +565,7 @@ func executionResource(record execution.Record) ExecutionResource {
 	resource := ExecutionResource{
 		ID: record.ID, WorkflowID: record.WorkflowID, WorkflowVersionID: record.WorkflowVersionID,
 		Status: record.Status, Trigger: record.Trigger, TriggerNodeID: record.TriggerNodeID,
+		ParentExecutionID: record.ParentExecutionID,
 		// Redacting again on the way out keeps the guarantee even for records
 		// written before this boundary existed, or by a future in-memory path
 		// that never touched durable storage.

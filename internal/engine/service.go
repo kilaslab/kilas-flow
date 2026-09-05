@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -26,6 +28,9 @@ type ExecutionStore interface {
 	UpdateRuntime(context.Context, repository.TenantScope, execution.Record) (execution.Record, error)
 	CreateNodeRun(context.Context, repository.TenantScope, execution.NodeRun) (execution.NodeRun, error)
 	Cancel(context.Context, repository.TenantScope, string) (execution.Record, error)
+	// StartChild creates a sub-workflow execution that is already running and
+	// already claimed, and returns the document it is pinned to.
+	StartChild(context.Context, repository.TenantScope, repository.ChildExecution) (execution.Record, workflow.Document, error)
 }
 
 // CredentialStore resolves a stored credential for the tenant that owns the
@@ -53,24 +58,29 @@ type ServiceDeps struct {
 	Environment    map[string]string
 	WorkerID       string
 	DefaultTimeout time.Duration
+	// SubworkflowTriggerType is the node type a called workflow starts from.
+	// Empty leaves a sub-workflow call starting from every root, which is what
+	// a workflow written before the trigger existed still needs.
+	SubworkflowTriggerType string
 }
 
 // Service claims queued execution records and persists their deterministic
 // runtime results. It is deliberately transport-independent.
 type Service struct {
-	executions     ExecutionStore
-	binaries       binary.Store
-	catalog        workflow.Catalog
-	runner         *Runner
-	credentials    CredentialStore
-	events         *events.Broker
-	environment    map[string]string
-	workerID       string
-	defaultTimeout time.Duration
-	activeMu       sync.Mutex
-	active         map[string]context.CancelFunc
-	startOnce      sync.Once
-	wake           chan struct{}
+	executions             ExecutionStore
+	binaries               binary.Store
+	catalog                workflow.Catalog
+	runner                 *Runner
+	credentials            CredentialStore
+	events                 *events.Broker
+	environment            map[string]string
+	workerID               string
+	defaultTimeout         time.Duration
+	subworkflowTriggerType string
+	activeMu               sync.Mutex
+	active                 map[string]context.CancelFunc
+	startOnce              sync.Once
+	wake                   chan struct{}
 }
 
 func NewService(deps ServiceDeps) (*Service, error) {
@@ -85,17 +95,18 @@ func NewService(deps ServiceDeps) (*Service, error) {
 		environment[key] = value
 	}
 	return &Service{
-		executions:     deps.Executions,
-		binaries:       deps.Binaries,
-		catalog:        deps.Catalog,
-		runner:         deps.Runner,
-		credentials:    deps.Credentials,
-		events:         deps.Events,
-		environment:    environment,
-		workerID:       deps.WorkerID,
-		defaultTimeout: deps.DefaultTimeout,
-		active:         make(map[string]context.CancelFunc),
-		wake:           make(chan struct{}, 1),
+		executions:             deps.Executions,
+		binaries:               deps.Binaries,
+		catalog:                deps.Catalog,
+		runner:                 deps.Runner,
+		credentials:            deps.Credentials,
+		events:                 deps.Events,
+		environment:            environment,
+		workerID:               deps.WorkerID,
+		defaultTimeout:         deps.DefaultTimeout,
+		subworkflowTriggerType: deps.SubworkflowTriggerType,
+		active:                 make(map[string]context.CancelFunc),
+		wake:                   make(chan struct{}, 1),
 	}, nil
 }
 
@@ -322,6 +333,14 @@ func (service *Service) Wake() {
 }
 
 func (service *Service) run(ctx context.Context, record execution.Record, document workflow.Document) (Result, error) {
+	return service.runWithStack(ctx, record, document, []string{record.WorkflowID})
+}
+
+// runWithStack is run with the call chain that reached this execution.
+//
+// A top-level run's stack is just itself; a sub-workflow's carries every
+// workflow above it, which is what lets the next call refuse a cycle by name.
+func (service *Service) runWithStack(ctx context.Context, record execution.Record, document workflow.Document, stack []string) (Result, error) {
 	ir, err := workflow.Compile(document, service.catalog)
 	if err != nil {
 		return Result{}, err
@@ -336,7 +355,9 @@ func (service *Service) run(ctx context.Context, record execution.Record, docume
 		Execution: ExecutionContext{
 			ID: record.ID, Mode: string(record.Trigger),
 			TenantID: record.TenantID, WorkflowID: record.WorkflowID,
+			ParentID: record.ParentExecutionID, Stack: stack,
 		},
+		Workflows:   service,
 		Env:         service.environment,
 		Credentials: &tenantCredentials{store: service.credentials, tenant: repository.TenantScope{ID: record.TenantID}},
 		// Nested node progress joins the one standardized event channel rather
@@ -483,4 +504,212 @@ func attemptOf(run NodeRun) int {
 		return 1
 	}
 	return run.Attempt
+}
+
+// MaxWorkflowCallDepth bounds how deep a chain of sub-workflow calls may go.
+//
+// A limit beside the cycle check rather than instead of it. The stack refuses a
+// workflow that calls itself, directly or through others, but a chain of
+// distinct workflows a hundred deep is still a runaway — and every level of it
+// holds the caller's goroutine and its stack frame.
+const MaxWorkflowCallDepth = 16
+
+// InvokeWorkflow runs another workflow of the same tenant, inline.
+//
+// Inline, in the calling worker's goroutine, is the whole design. The obvious
+// alternative — write a queued child record and let the worker pool pick it up
+// while the parent blocks waiting for it — deadlocks the moment the call depth
+// reaches the pool size. That pool defaults to ten, so ten nested calls would
+// hang the entire installation with no error anywhere: every worker waiting on
+// a child no worker is left to run.
+//
+// The child still gets a durable execution record, with the parent's ID on it,
+// so the chain is visible in history and in the events stream. It is created
+// already running and already claimed, because a queued one would be visible to
+// ClaimNext and could be run a second time in parallel with this one.
+func (service *Service) InvokeWorkflow(ctx context.Context, parent ExecutionContext, call WorkflowCall) (WorkflowCallResult, error) {
+	if service == nil || service.executions == nil {
+		return WorkflowCallResult{}, fmt.Errorf("this runtime cannot run sub-workflows")
+	}
+	target := strings.TrimSpace(call.WorkflowID)
+	if target == "" {
+		return WorkflowCallResult{}, fmt.Errorf("a sub-workflow call needs a workflow to run")
+	}
+	if err := checkCallStack(parent.Stack, target); err != nil {
+		return WorkflowCallResult{}, err
+	}
+
+	tenant := repository.TenantScope{ID: parent.TenantID}
+	input, err := json.Marshal(map[string]any{"items": itemsJSON(call.Items)})
+	if err != nil {
+		return WorkflowCallResult{}, fmt.Errorf("encode sub-workflow input: %w", err)
+	}
+	record, document, err := service.executions.StartChild(ctx, tenant, repository.ChildExecution{
+		WorkflowID: target, ParentExecutionID: parent.ID,
+		Input: input, SelectTrigger: service.subworkflowTrigger,
+		LeaseOwner: service.workerID, LeaseUntil: time.Now().UTC().Add(service.defaultTimeout),
+	})
+	if err != nil {
+		return WorkflowCallResult{}, err
+	}
+	service.publish(events.Event{
+		TenantID: record.TenantID, ExecutionID: record.ID, WorkflowID: record.WorkflowID,
+		Type: events.ExecutionStarted, Status: execution.StatusRunning,
+	})
+
+	result, runErr := service.runWithStack(ctx, record, document, append(append([]string(nil), parent.Stack...), target))
+	if err := service.persistChild(ctx, tenant, record, result, runErr); err != nil {
+		return WorkflowCallResult{}, err
+	}
+	if runErr != nil {
+		// Named with the workflow, because "node X failed" inside a
+		// sub-workflow reads as a failure of the caller otherwise.
+		return WorkflowCallResult{ExecutionID: record.ID}, fmt.Errorf("sub-workflow %q failed: %w", target, runErr)
+	}
+	if !call.Wait {
+		return WorkflowCallResult{ExecutionID: record.ID}, nil
+	}
+	return WorkflowCallResult{ExecutionID: record.ID, Items: terminalItems(result.Output)}, nil
+}
+
+// checkCallStack refuses a cycle, and then a chain that is merely too long.
+func checkCallStack(stack []string, target string) error {
+	for index, workflowID := range stack {
+		if workflowID != target {
+			continue
+		}
+		// The cycle is printed as the path that reached it, so the author can
+		// see which call to remove rather than being told a number.
+		return fmt.Errorf("sub-workflow call would repeat workflow %q: %s → %s",
+			target, strings.Join(stack[index:], " → "), target)
+	}
+	if len(stack) >= MaxWorkflowCallDepth {
+		return fmt.Errorf("sub-workflow calls are nested %d deep, which is the limit; the chain is %s → %s",
+			len(stack), strings.Join(stack, " → "), target)
+	}
+	return nil
+}
+
+// persistChild writes the child's node runs and its terminal state.
+func (service *Service) persistChild(ctx context.Context, tenant repository.TenantScope, record execution.Record, result Result, runErr error) error {
+	for sequence, run := range result.NodeRuns {
+		input, err := json.Marshal(run.Input)
+		if err != nil {
+			return fmt.Errorf("marshal node %q input: %w", run.NodeID, err)
+		}
+		output, err := json.Marshal(run.Output)
+		if err != nil {
+			return fmt.Errorf("marshal node %q output: %w", run.NodeID, err)
+		}
+		status := execution.StatusSucceeded
+		if run.Skipped {
+			status = execution.StatusSkipped
+		}
+		var errorPayload json.RawMessage
+		if run.Error != nil {
+			status = execution.StatusFailed
+			errorPayload = structuredError(run.ErrorCode, run.Error)
+		}
+		now := time.Now().UTC()
+		if _, err := service.executions.CreateNodeRun(ctx, tenant, execution.NodeRun{
+			TenantID: record.TenantID, ExecutionID: record.ID, NodeID: run.NodeID,
+			Attempt: attemptOf(run), RunIndex: run.RunIndex, Sequence: sequence + 1,
+			Status: status, Input: input, Output: output, Error: errorPayload,
+			StartedAt: now, FinishedAt: &now, LeaseOwner: record.LeaseOwner,
+		}); err != nil {
+			return fmt.Errorf("persist sub-workflow node %q run: %w", run.NodeID, err)
+		}
+	}
+
+	finishedAt := time.Now().UTC()
+	record.FinishedAt = &finishedAt
+	if runErr != nil {
+		record.Status = execution.StatusFailed
+		record.Error = structuredError("execution.failed", runErr)
+		if errors.Is(runErr, context.Canceled) {
+			record.Status = execution.StatusCancelled
+			record.Error = structuredError("execution.cancelled", runErr)
+		}
+	} else {
+		output, err := json.Marshal(result.Output)
+		if err != nil {
+			return fmt.Errorf("marshal sub-workflow output: %w", err)
+		}
+		record.Status = execution.StatusSucceeded
+		record.Output = output
+		record.Error = json.RawMessage("null")
+	}
+	updated, err := service.executions.UpdateRuntime(ctx, tenant, record)
+	if err != nil {
+		return err
+	}
+	terminal := events.ExecutionCompleted
+	switch updated.Status {
+	case execution.StatusFailed:
+		terminal = events.ExecutionFailed
+	case execution.StatusCancelled:
+		terminal = events.ExecutionCancelled
+	}
+	service.publish(events.Event{
+		TenantID: record.TenantID, ExecutionID: record.ID, WorkflowID: record.WorkflowID,
+		Type: terminal, Status: updated.Status, Data: updated.Output,
+	})
+	return nil
+}
+
+// subworkflowTrigger names the node a called workflow starts from.
+//
+// A workflow may carry a webhook or a schedule beside its sub-workflow trigger,
+// and a call that started from every root would fire those too — a sub-workflow
+// invoked once would post to whatever its webhook branch posts to. Naming the
+// node is what confines the call to the branch that was meant for it.
+//
+// A workflow with no sub-workflow trigger returns "", which starts every root:
+// that is what makes any existing workflow callable without being edited first.
+func (service *Service) subworkflowTrigger(document workflow.Document) string {
+	if service.subworkflowTriggerType == "" {
+		return ""
+	}
+	for _, node := range document.Nodes {
+		if node.Type == service.subworkflowTriggerType {
+			return node.ID
+		}
+	}
+	return ""
+}
+
+// itemsJSON renders items for the child's trigger input.
+func itemsJSON(items []workflow.Item) []any {
+	rendered := make([]any, 0, len(items))
+	for _, item := range items {
+		json := item.JSON
+		if json == nil {
+			json = map[string]any{}
+		}
+		rendered = append(rendered, json)
+	}
+	return rendered
+}
+
+// terminalItems flattens a child's output into the items the caller receives.
+//
+// Every terminal node's first port, in the map's order — which is why the
+// Execute Workflow node's own documentation says a sub-workflow should end in
+// one branch. Making that a rule enforced here would refuse graphs that are
+// perfectly valid and simply return more than the caller expected.
+func terminalItems(output map[string]workflow.NodeOutput) []workflow.Item {
+	names := make([]string, 0, len(output))
+	for name := range output {
+		names = append(names, name)
+	}
+	// Sorted, so a sub-workflow with two terminal branches returns its items in
+	// the same order on every run rather than in Go's map order.
+	sort.Strings(names)
+	items := make([]workflow.Item, 0, 8)
+	for _, name := range names {
+		for _, port := range output[name] {
+			items = append(items, port...)
+		}
+	}
+	return items
 }

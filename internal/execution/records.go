@@ -30,6 +30,12 @@ const (
 	TriggerManual   Trigger = "manual"
 	TriggerWebhook  Trigger = "webhook"
 	TriggerSchedule Trigger = "schedule"
+	// TriggerSubworkflow is a run another workflow started.
+	//
+	// Its own value rather than reusing manual: a sub-workflow run has a parent
+	// and is not something a person asked for directly, and a history that
+	// labelled it "manual" would be telling the reader a lie about who ran it.
+	TriggerSubworkflow Trigger = "subworkflow"
 )
 
 // Record is a redaction-ready execution record pinned to one immutable
@@ -47,7 +53,13 @@ type Record struct {
 	// given run, so `trigger` alone — manual, webhook or schedule — no longer
 	// says which. It is empty for a run that starts from every root, which is
 	// what a manual run means.
-	TriggerNodeID           string          `json:"triggerNodeId,omitempty"`
+	TriggerNodeID string `json:"triggerNodeId,omitempty"`
+	// ParentExecutionID is the run that called this one, for a sub-workflow.
+	//
+	// Empty for every other kind. It is what makes a chain of calls readable
+	// in history: without it a sub-workflow execution is an orphan that appears
+	// beside its parent with nothing saying they belong together.
+	ParentExecutionID       string          `json:"parentExecutionId,omitempty"`
 	Input                   json.RawMessage `json:"input,omitempty"`
 	Output                  json.RawMessage `json:"output,omitempty"`
 	Error                   json.RawMessage `json:"error,omitempty"`

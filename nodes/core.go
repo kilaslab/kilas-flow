@@ -46,6 +46,8 @@ func RegisterAll(registry *node.Registry) error {
 		removeDuplicatesNode(),
 		dateTimeNode(),
 		waitNode(),
+		executeWorkflowNode(),
+		executeWorkflowTrigger(),
 	} {
 		if err := registry.Register(definition); err != nil {
 			return err

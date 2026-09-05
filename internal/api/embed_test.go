@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/kilaslabs/kilas-flow/internal/api"
 	"github.com/kilaslabs/kilas-flow/internal/embed"
+	"github.com/kilaslabs/kilas-flow/internal/execution"
 	"github.com/kilaslabs/kilas-flow/internal/repository"
 )
 
@@ -132,9 +134,17 @@ func TestEmbedSessionCreationRefusesInjectedBranding(t *testing.T) {
 // embedServer builds one server that has both real repositories and an issuer.
 func embedServer(t *testing.T) (http.Handler, *embed.Issuer, string) {
 	t.Helper()
-	issuer := embedIssuer(t)
-	handler, workflowID := newWorkflowAPIWithEmbed(t, issuer)
+	handler, issuer, workflowID, _ := embedServerWithExecutions(t)
 	return handler, issuer, workflowID
+}
+
+// embedServerWithExecutions also hands back the execution store, for the tests
+// that need to write a record the API has no endpoint to create.
+func embedServerWithExecutions(t *testing.T) (http.Handler, *embed.Issuer, string, *repository.GORMExecutionStore) {
+	t.Helper()
+	issuer := embedIssuer(t)
+	handler, workflowID, executions := newWorkflowAPIWithEmbed(t, issuer)
+	return handler, issuer, workflowID, executions
 }
 
 func TestEmbedTokenIsConfinedToItsWorkflow(t *testing.T) {
@@ -354,5 +364,52 @@ func TestAnEmbedSessionCannotStreamAnotherWorkflowsEvents(t *testing.T) {
 	// session does not own.
 	if strings.Contains(got.Body.String(), "event:") {
 		t.Fatalf("an embed session streamed another workflow's events: %s", got.Body)
+	}
+}
+
+func TestAnEmbedSessionCanReadTheSubWorkflowRunsItStarted(t *testing.T) {
+	handler, issuer, workflowID, executions := embedServerWithExecutions(t)
+	tenant := repository.TenantScope{ID: repository.DefaultTenantID}
+	ctx := context.Background()
+
+	// The parent is the session's own workflow; the child belongs to a
+	// different one, which the plain ownership check would hide — leaving an
+	// embedded editor showing a parent that succeeded with an invisible child
+	// and no way to see why it failed.
+	parent := requestJSON[executionRequestResource](t, handler, http.MethodPost,
+		"/api/v1/workflows/"+workflowID+"/run", nil, http.StatusAccepted)
+	callee := createWorkflow(t, handler, validManualWorkflow("Sub-workflow"))
+	child, err := executions.Create(ctx, tenant, execution.Record{
+		WorkflowID: callee.ID, WorkflowVersionID: callee.LatestVersion.ID,
+		Status: execution.StatusSucceeded, Trigger: execution.TriggerSubworkflow,
+		ParentExecutionID: parent.ID, StartedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	_, token, err := issuer.Issue(embed.Request{
+		TenantID: repository.DefaultTenantID, WorkflowID: workflowID,
+		Scopes: []embed.Scope{embed.ScopeRead}, Origin: hostOrigin,
+	})
+	if err != nil {
+		t.Fatalf("Issue() error = %v", err)
+	}
+	if got := embedRequest(t, handler, token, http.MethodGet, "/api/v1/executions/"+child.ID, nil); got.Code != http.StatusOK {
+		t.Fatalf("child execution status = %d, want 200 (body: %s)", got.Code, got.Body)
+	}
+
+	// The boundary still holds for a run of the same other workflow that this
+	// session did not start. Ancestry, not workflow identity, is what opened
+	// the door.
+	unrelated, err := executions.Create(ctx, tenant, execution.Record{
+		WorkflowID: callee.ID, WorkflowVersionID: callee.LatestVersion.ID,
+		Status: execution.StatusSucceeded, Trigger: execution.TriggerManual, StartedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if got := embedRequest(t, handler, token, http.MethodGet, "/api/v1/executions/"+unrelated.ID, nil); got.Code != http.StatusNotFound {
+		t.Errorf("unrelated execution status = %d, want 404 (body: %s)", got.Code, got.Body)
 	}
 }

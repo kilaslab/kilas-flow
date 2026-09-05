@@ -2418,3 +2418,143 @@ func TestAWaitThatNeedsDurableSuspensionIsBlockingRatherThanRewritten(t *testing
 		t.Errorf("resume = %#v, want the workflow's own answer kept rather than rewritten", wait.Parameters["resume"])
 	}
 }
+
+func TestTheCompositionFamilyImportsAndExports(t *testing.T) {
+	t.Parallel()
+
+	const fixture = `{
+	  "name": "Composed",
+	  "nodes": [
+	    {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}},
+	    {"id":"b","name":"Enrich each","type":"n8n-nodes-base.executeWorkflow","typeVersion":1.2,"position":[220,0],
+	     "parameters":{"workflowId":{"__rl":true,"mode":"list","value":"aBcD1234","cachedResultName":"Enrichment"},
+	                   "mode":"each","options":{"waitForSubWorkflow":false}}}
+	  ],
+	  "connections": {"Manual": {"main": [[{"node":"Enrich each","type":"main","index":0}]]}}
+	}`
+
+	result := importFixture(t, fixture)
+	call := nodeByName(result.Document, "Enrich each")
+	if call.Type != n8n.ExecuteWorkflowNodeType {
+		t.Fatalf("call node = %q, want it mapped rather than a placeholder", call.Type)
+	}
+	if call.Parameters["itemsPerCall"] != "eachItem" || call.Parameters["mode"] != "fireAndForget" {
+		t.Errorf("call parameters = %#v, want the per-item and fire-and-forget choices carried", call.Parameters)
+	}
+	// The imported ID is n8n's and will not resolve here, so the import says so
+	// once rather than letting the run discover it.
+	blocking := false
+	for _, issue := range result.Unsupported {
+		if issue.Severity == n8n.SeverityBlocking && strings.Contains(issue.Reason, "n8n workflow ID") {
+			blocking = true
+		}
+	}
+	if !blocking {
+		t.Errorf("unsupported = %#v, want the unresolvable workflow ID named", result.Unsupported)
+	}
+
+	exported, err := n8n.Export(result.Document, registry(t))
+	if err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+	for _, node := range exported.Document.Nodes {
+		if node.Name != "Enrich each" {
+			continue
+		}
+		if node.Type != "n8n-nodes-base.executeWorkflow" || node.Parameters["mode"] != "each" {
+			t.Errorf("exported call = %#v", node.Parameters)
+		}
+		locator, _ := node.Parameters["workflowId"].(map[string]any)
+		if locator["mode"] != "id" {
+			t.Errorf("exported locator = %#v, want an ID rather than a name from another instance", locator)
+		}
+	}
+}
+
+func TestASubWorkflowTriggerImportsAsARootThatCompiles(t *testing.T) {
+	t.Parallel()
+
+	const fixture = `{
+	  "name": "Callable",
+	  "nodes": [
+	    {"id":"a","name":"When Executed by Another Workflow","type":"n8n-nodes-base.executeWorkflowTrigger","typeVersion":1.1,"position":[0,0],
+	     "parameters":{"inputSource":"workflowInputs",
+	                   "workflowInputs":{"values":[{"name":"customerId","type":"string"}]}}},
+	    {"id":"b","name":"Set","type":"n8n-nodes-base.set","typeVersion":3.4,"position":[220,0],
+	     "parameters":{"assignments":{"assignments":[{"id":"1","name":"ok","value":"yes"}]}}}
+	  ],
+	  "connections": {"When Executed by Another Workflow": {"main": [[{"node":"Set","type":"main","index":0}]]}}
+	}`
+
+	result := importFixture(t, fixture)
+	trigger := nodeByName(result.Document, "When Executed by Another Workflow")
+	if trigger.Type != n8n.ExecuteWorkflowTriggerType {
+		t.Fatalf("trigger = %q, want it mapped", trigger.Type)
+	}
+	if trigger.Parameters["inputSource"] != "fields" {
+		t.Errorf("inputSource = %#v, want the declared field list kept", trigger.Parameters["inputSource"])
+	}
+	for _, issue := range result.Unsupported {
+		if issue.Severity == n8n.SeverityBlocking {
+			t.Errorf("a blocking issue for a workflow that is now fully mapped: %#v", issue)
+		}
+	}
+	// The compiler admits it as a root: a node with no inputs that produces
+	// items is a trigger, so nothing had to learn this type's name.
+	document := result.Document
+	document.ID = "wf_callable"
+	if _, err := workflow.Compile(document, registry(t)); err != nil {
+		t.Fatalf("Compile() error = %v, want a workflow that starts from its sub-workflow trigger", err)
+	}
+}
+
+func TestARespondNodeCarriesItsWholeRespondWithSet(t *testing.T) {
+	t.Parallel()
+
+	for name, testCase := range map[string]struct {
+		respondWith string
+		blocking    bool
+	}{
+		"text":              {respondWith: "text"},
+		"json":              {respondWith: "json"},
+		"allIncomingItems":  {respondWith: "allIncomingItems"},
+		"firstIncomingItem": {respondWith: "firstIncomingItem"},
+		"noData":            {respondWith: "noData"},
+		"redirect":          {respondWith: "redirect"},
+		// Refused rather than downgraded: a response silently turned from a
+		// file into a JSON body is a broken integration that returns 200.
+		"binary": {respondWith: "binary", blocking: true},
+		"jwt":    {respondWith: "jwt", blocking: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fixture := `{
+			  "name": "Responder",
+			  "nodes": [
+			    {"id":"a","name":"Webhook","type":"n8n-nodes-base.webhook","typeVersion":2,"position":[0,0],
+			     "parameters":{"path":"reply","httpMethod":"POST","responseMode":"responseNode"}},
+			    {"id":"b","name":"Respond","type":"n8n-nodes-base.respondToWebhook","typeVersion":1.1,"position":[220,0],
+			     "parameters":{"respondWith":"` + testCase.respondWith + `","redirectURL":"https://example.test",
+			                   "options":{"responseCode":201}}}
+			  ],
+			  "connections": {"Webhook": {"main": [[{"node":"Respond","type":"main","index":0}]]}}
+			}`
+			result := importFixture(t, fixture)
+			respond := nodeByName(result.Document, "Respond")
+			if respond.Parameters["respondWith"] != testCase.respondWith {
+				t.Errorf("respondWith = %#v, want %q carried", respond.Parameters["respondWith"], testCase.respondWith)
+			}
+			if code, _ := respond.Parameters["responseCode"].(float64); code != 201 {
+				t.Errorf("responseCode = %#v, want the one under options carried", respond.Parameters["responseCode"])
+			}
+			blocking := false
+			for _, issue := range result.Unsupported {
+				if issue.Severity == n8n.SeverityBlocking {
+					blocking = true
+				}
+			}
+			if blocking != testCase.blocking {
+				t.Errorf("blocking = %v, want %v (%#v)", blocking, testCase.blocking, result.Unsupported)
+			}
+		})
+	}
+}

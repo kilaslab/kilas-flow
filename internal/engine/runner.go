@@ -14,6 +14,33 @@ import (
 	"github.com/kilaslabs/kilas-flow/internal/workflow"
 )
 
+// WorkflowCall is one Execute Workflow node's request.
+type WorkflowCall struct {
+	// WorkflowID is the workflow to run. It is always resolved inside the
+	// calling execution's tenant, so an ID from another tenant does not exist.
+	WorkflowID string
+	// Items are what the sub-workflow's trigger emits.
+	Items []workflow.Item
+	// Wait is whether the caller needs the sub-workflow's output.
+	//
+	// Fire and forget still runs the child to completion — it simply does not
+	// hand the items back. It is not "start it in the background": a child runs
+	// inline in the caller's goroutine, and a detached one would need a worker
+	// slot the parent is already holding.
+	Wait bool
+}
+
+// WorkflowCallResult is what a sub-workflow handed back.
+type WorkflowCallResult struct {
+	ExecutionID string
+	Items       []workflow.Item
+}
+
+// WorkflowInvoker runs another workflow of the same tenant.
+type WorkflowInvoker interface {
+	InvokeWorkflow(ctx context.Context, parent ExecutionContext, call WorkflowCall) (WorkflowCallResult, error)
+}
+
 // ExecutionContext is the identity a node may read: the `$execution`
 // expression root exposes ID and Mode, while tenant and workflow are available
 // to executors that need to scope storage, such as agent memory.
@@ -22,6 +49,17 @@ type ExecutionContext struct {
 	Mode       string
 	TenantID   string
 	WorkflowID string
+	// ParentID is the execution that called this one, for a sub-workflow run.
+	ParentID string
+	// Stack is the workflow IDs already on the call chain, outermost first,
+	// including this one.
+	//
+	// A stack rather than a depth counter. A counter lets A→B→A→B run all the
+	// way to the limit and spend the whole budget before failing; the stack
+	// refuses the second A immediately and can name the cycle in the error,
+	// which is the difference between a message someone can act on and a
+	// message that says a number was exceeded.
+	Stack []string
 }
 
 // NodeEvent is a nested occurrence an executor publishes while it runs, such
@@ -83,6 +121,14 @@ type Request struct {
 	// the single place tenant scoping is enforced.
 	Binaries    BinaryStore
 	Credentials CredentialResolver
+	// Workflows runs another workflow of the same tenant.
+	//
+	// Threaded here beside the credential resolver and for the same reason: an
+	// executor must never reach into storage itself, so the runtime stays the
+	// single place tenant scoping and the call stack are enforced. Nil leaves
+	// an Execute Workflow node failing with a clear message rather than
+	// silently doing nothing.
+	Workflows WorkflowInvoker
 	// Events publishes nested progress from inside a node.
 	Events NodeEventSink
 	// NodeOutputs maps a completed node's display name to its first output
@@ -624,6 +670,7 @@ func cloneRequest(request Request) Request {
 		Binaries:      request.Binaries,
 		Credentials:   request.Credentials,
 		Events:        request.Events,
+		Workflows:     request.Workflows,
 		Env:           make(map[string]string, len(request.Env)),
 		NodeOutputs:   make(map[string]map[string]any, len(request.NodeOutputs)),
 		NodeItems:     make(map[string]expression.NodeItem, len(request.NodeItems)),

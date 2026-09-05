@@ -129,6 +129,7 @@ type ExecutionSummary struct {
 	Status            execution.Status  `json:"status"`
 	Trigger           execution.Trigger `json:"trigger"`
 	TriggerNodeID     string            `json:"triggerNodeId,omitempty" doc:"The trigger node this run started from, when one workflow declares several"`
+	ParentExecutionID string            `json:"parentExecutionId,omitempty" doc:"The execution that called this one, for a sub-workflow run"`
 	StartedAt         time.Time         `json:"startedAt"`
 	FinishedAt        *time.Time        `json:"finishedAt,omitempty"`
 	DurationMs        *int64            `json:"durationMs,omitempty" doc:"Wall-clock duration in milliseconds, once the execution has finished"`
@@ -311,14 +312,15 @@ func parseExecutionStatus(value string) (execution.Status, bool) {
 
 func parseExecutionTrigger(value string) (execution.Trigger, bool) {
 	switch trigger := execution.Trigger(value); trigger {
-	case execution.TriggerManual, execution.TriggerWebhook, execution.TriggerSchedule:
+	case execution.TriggerManual, execution.TriggerWebhook, execution.TriggerSchedule, execution.TriggerSubworkflow:
 		return trigger, true
 	default:
 		return "", false
 	}
 }
 
-// ownsExecution confines an embed session to its own workflow's executions.
+// ownsExecution confines an embed session to its own workflow's executions,
+// and to the sub-workflow runs that workflow started.
 //
 // Which workflow an execution belongs to is only knowable by loading it, so
 // this check cannot live in the routing middleware — it has to happen here,
@@ -326,17 +328,35 @@ func parseExecutionTrigger(value string) (execution.Trigger, bool) {
 // every execution in the tenant by guessing or enumerating IDs.
 //
 // A request with no embed session is the internal dashboard and is unaffected.
-func ownsExecution(ctx context.Context, workflowID string) error {
+//
+// A sub-workflow execution belongs to a *different* workflow, so the plain
+// comparison would hide it — leaving an embedded editor showing a parent that
+// succeeded with an invisible child, and no way to see why it failed. A child
+// whose ancestry reaches this session's own workflow is therefore readable:
+// the session started that chain, and a chain a user can start but not inspect
+// is worse than one they can read.
+func (handler *Executions) ownsExecution(ctx context.Context, record execution.Record) error {
 	session, embedded := middleware.EmbedSessionFrom(ctx)
 	if !embedded {
 		return nil
 	}
-	if session.WorkflowID != workflowID {
-		// 404 rather than 403: an embed session has no business learning that
-		// another workflow's execution exists.
-		return huma.Error404NotFound("execution not found")
+	if session.WorkflowID == record.WorkflowID {
+		return nil
 	}
-	return nil
+	// Only a sub-workflow run has anywhere else to look.
+	if record.ParentExecutionID != "" && handler.history != nil {
+		ancestors, err := handler.history.Ancestry(ctx, handler.tenants.Resolve(ctx), record.ID)
+		if err == nil {
+			for _, ancestor := range ancestors {
+				if ancestor.WorkflowID == session.WorkflowID {
+					return nil
+				}
+			}
+		}
+	}
+	// 404 rather than 403: an embed session has no business learning that
+	// another workflow's execution exists.
+	return huma.Error404NotFound("execution not found")
 }
 
 // Get returns a tenant-scoped execution record, including its persisted trace.
@@ -351,7 +371,7 @@ func (handler *Executions) Get(ctx context.Context, input *executionPathInput) (
 	if err != nil {
 		return nil, huma.Error500InternalServerError("execution lookup failed")
 	}
-	if err := ownsExecution(ctx, record.WorkflowID); err != nil {
+	if err := handler.ownsExecution(ctx, record); err != nil {
 		return nil, err
 	}
 	return &executionOutput{Body: executionResource(record)}, nil
@@ -370,7 +390,7 @@ func (handler *Executions) Cancel(ctx context.Context, input *executionPathInput
 	if err != nil {
 		return nil, huma.Error500InternalServerError("execution cancellation failed")
 	}
-	if err := ownsExecution(ctx, record.WorkflowID); err != nil {
+	if err := handler.ownsExecution(ctx, record); err != nil {
 		return nil, err
 	}
 	return &executionRequestOutput{Status: http.StatusAccepted, Body: executionRequestResource(record)}, nil

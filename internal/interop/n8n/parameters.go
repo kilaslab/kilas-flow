@@ -855,19 +855,51 @@ func webhookToN8N(node workflow.Node) (map[string]any, []ExportIssue) {
 }
 
 func respondToKilas(node Node) (map[string]any, []Unsupported) {
+	issues := make([]Unsupported, 0)
 	parameters := map[string]any{}
+	// n8n keeps the status code under options on this node and at the top level
+	// on some versions, so both are read.
+	options, _ := node.Parameters["options"].(map[string]any)
 	if code, ok := numberParameter(node.Parameters, "responseCode"); ok {
+		parameters["responseCode"] = code
+	} else if code, ok := numberParameter(options, "responseCode"); ok {
 		parameters["responseCode"] = code
 	}
 	if body, ok := node.Parameters["responseBody"]; ok {
 		parameters["responseBody"] = fromN8NValue(body)
 	}
-	if respondWith := stringParameter(node.Parameters, "respondWith"); respondWith != "" && respondWith != "text" && respondWith != "json" {
-		return parameters, []Unsupported{{
-			Reason: fmt.Sprintf("the n8n Respond to Webhook mode %q is outside the supported subset; only text and json bodies are imported", respondWith),
-		}}
+	if url, ok := node.Parameters["redirectURL"]; ok {
+		parameters["redirectURL"] = fromN8NValue(url)
 	}
-	return parameters, nil
+
+	switch respondWith := stringParameter(node.Parameters, "respondWith"); respondWith {
+	case "":
+		// n8n's own default.
+		parameters["respondWith"] = "text"
+	case "text", "json", "allIncomingItems", "firstIncomingItem", "noData", "redirect":
+		parameters["respondWith"] = respondWith
+	case "binary":
+		// Blocking rather than rewritten: a response silently downgraded from a
+		// file to a JSON body is a broken integration that returns 200.
+		issues = append(issues, Unsupported{
+			Severity: SeverityBlocking, Field: "respondWith",
+			Reason: "responding with a binary file needs the response streamed from the binary store, " +
+				"which this server does not do yet; respond with JSON carrying a link to the file instead",
+		})
+		parameters["respondWith"] = respondWith
+	case "jwt":
+		issues = append(issues, Unsupported{
+			Severity: SeverityBlocking, Field: "respondWith",
+			Reason: "responding with a signed JWT needs a signing credential type this server does not have; " +
+				"build the token in a Code node and respond with text",
+		})
+		parameters["respondWith"] = respondWith
+	default:
+		issues = append(issues, Unsupported{Field: "respondWith", Reason: fmt.Sprintf(
+			"the n8n Respond to Webhook mode %q has no equivalent; the node was imported as a text response", respondWith)})
+		parameters["respondWith"] = "text"
+	}
+	return parameters, issues
 }
 
 // respondToN8N writes the response mode the node actually holds.
@@ -877,10 +909,15 @@ func respondToKilas(node Node) (map[string]any, []Unsupported) {
 // configured to answer with JSON came back as text. Import already accepts both
 // text and json, so the inverse must distinguish them.
 func respondToN8N(node workflow.Node) (map[string]any, []ExportIssue) {
-	respondWith := "text"
-	if body, ok := node.Parameters["responseBody"]; ok {
-		if _, isText := body.(string); !isText {
-			respondWith = "json"
+	respondWith := stringParameter(node.Parameters, "respondWith")
+	if respondWith == "" {
+		// A node saved before respondWith existed says which it meant by the
+		// shape of its body: a string is text and anything else is JSON.
+		respondWith = "text"
+		if body, ok := node.Parameters["responseBody"]; ok {
+			if _, isText := body.(string); !isText {
+				respondWith = "json"
+			}
 		}
 	}
 	parameters := map[string]any{"respondWith": respondWith, "options": map[string]any{}}
@@ -889,6 +926,96 @@ func respondToN8N(node workflow.Node) (map[string]any, []ExportIssue) {
 	}
 	if body, ok := node.Parameters["responseBody"]; ok {
 		parameters["responseBody"] = toN8NValue(body)
+	}
+	if url, ok := node.Parameters["redirectURL"]; ok {
+		parameters["redirectURL"] = toN8NValue(url)
+	}
+	return parameters, nil
+}
+
+// --- Sub-workflows ----------------------------------------------------------
+
+func executeWorkflowToKilas(node Node) (map[string]any, []Unsupported) {
+	issues := make([]Unsupported, 0)
+	parameters := map[string]any{}
+
+	// n8n's workflowId is a resource locator: {value, mode, cachedResultName}.
+	// Only the value is portable — a name or a URL means nothing on a server
+	// that has never seen that n8n instance.
+	switch locator := node.Parameters["workflowId"].(type) {
+	case map[string]any:
+		parameters["workflowId"] = fromN8NValue(locator["value"])
+		if mode, _ := locator["mode"].(string); mode != "" && mode != "id" && mode != "list" {
+			issues = append(issues, Unsupported{Field: "workflowId", Reason: fmt.Sprintf(
+				"the workflow was selected by %q, which names it on the n8n instance it came from; "+
+					"set the KilasFlow workflow ID this should call", mode)})
+		}
+	case nil:
+	default:
+		parameters["workflowId"] = fromN8NValue(locator)
+	}
+	// The imported ID is n8n's, so it will not resolve here whatever mode it
+	// used. Said once, on every import, rather than discovered at run time.
+	issues = append(issues, Unsupported{
+		Severity: SeverityBlocking, Field: "workflowId",
+		Reason: "the sub-workflow is identified by its n8n workflow ID, which does not exist on this server; " +
+			"set this node's Workflow to the KilasFlow workflow that should run",
+	})
+
+	if mode := stringParameter(node.Parameters, "mode"); mode == "each" {
+		parameters["itemsPerCall"] = "eachItem"
+	} else {
+		parameters["itemsPerCall"] = "allItems"
+	}
+	options, _ := node.Parameters["options"].(map[string]any)
+	// n8n spells "do not wait" as waitForSubWorkflow: false.
+	if wait, present := options["waitForSubWorkflow"]; present && wait == false {
+		parameters["mode"] = "fireAndForget"
+	} else {
+		parameters["mode"] = "each"
+	}
+	return parameters, issues
+}
+
+func executeWorkflowToN8N(node workflow.Node) (map[string]any, []Lossy) {
+	parameters := map[string]any{
+		"workflowId": map[string]any{"__rl": true, "mode": "id", "value": stringParameter(node.Parameters, "workflowId")},
+		"options":    map[string]any{},
+	}
+	if stringParameter(node.Parameters, "itemsPerCall") == "eachItem" {
+		parameters["mode"] = "each"
+	}
+	if stringParameter(node.Parameters, "mode") == "fireAndForget" {
+		parameters["options"] = map[string]any{"waitForSubWorkflow": false}
+	}
+	return parameters, nil
+}
+
+func executeWorkflowTriggerToKilas(node Node) (map[string]any, []Unsupported) {
+	parameters := map[string]any{}
+	source := stringParameter(node.Parameters, "inputSource")
+	switch source {
+	case "workflowInputs", "fields":
+		parameters["inputSource"] = "fields"
+		if inputs, ok := node.Parameters["workflowInputs"].(map[string]any); ok {
+			parameters["workflowInputs"] = inputs
+		}
+	default:
+		// n8n's passthrough, and its jsonExample mode, both mean "take what the
+		// caller sends". The example itself is documentation for n8n's editor
+		// and has no run-time meaning to carry.
+		parameters["inputSource"] = "passthrough"
+	}
+	return parameters, nil
+}
+
+func executeWorkflowTriggerToN8N(node workflow.Node) (map[string]any, []Lossy) {
+	if stringParameter(node.Parameters, "inputSource") != "fields" {
+		return map[string]any{"inputSource": "passthrough"}, nil
+	}
+	parameters := map[string]any{"inputSource": "workflowInputs"}
+	if inputs, ok := node.Parameters["workflowInputs"].(map[string]any); ok {
+		parameters["workflowInputs"] = inputs
 	}
 	return parameters, nil
 }

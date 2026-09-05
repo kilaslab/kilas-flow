@@ -199,15 +199,18 @@ func run() error {
 		binaries = fileStore
 	}
 	runtime, err := engine.NewService(engine.ServiceDeps{
-		Executions:     executions,
-		Binaries:       binaries,
-		Events:         eventBroker,
-		Catalog:        nodeRegistry,
-		Runner:         engine.NewRunner(executorRegistry),
-		Credentials:    credentialStore,
-		Environment:    workflowEnvironment(),
-		WorkerID:       fmt.Sprintf("kilasflow-%d", os.Getpid()),
-		DefaultTimeout: cfg.Execution.DefaultTimeout,
+		Executions:  executions,
+		Binaries:    binaries,
+		Events:      eventBroker,
+		Catalog:     nodeRegistry,
+		Runner:      engine.NewRunner(executorRegistry),
+		Credentials: credentialStore,
+		Environment: workflowEnvironment(),
+		// Named so a called workflow starts from its sub-workflow trigger and
+		// not from a webhook or schedule it also happens to carry.
+		SubworkflowTriggerType: nodes.ExecuteWorkflowTriggerType,
+		WorkerID:               fmt.Sprintf("kilasflow-%d", os.Getpid()),
+		DefaultTimeout:         cfg.Execution.DefaultTimeout,
 	})
 	if err != nil {
 		return fmt.Errorf("configure execution runtime: %w", err)

@@ -72,6 +72,11 @@ func (*idleExecutionStore) CreateNodeRun(context.Context, repository.TenantScope
 	return execution.NodeRun{}, nil
 }
 
+// This test only exercises worker startup, so sub-workflow calls are a stub.
+func (*idleExecutionStore) StartChild(context.Context, repository.TenantScope, repository.ChildExecution) (execution.Record, workflow.Document, error) {
+	return execution.Record{}, workflow.Document{}, nil
+}
+
 func (*idleExecutionStore) Cancel(context.Context, repository.TenantScope, string) (execution.Record, error) {
 	return execution.Record{}, nil
 }

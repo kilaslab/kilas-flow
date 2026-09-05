@@ -870,3 +870,180 @@ func TestRawBytesNeverReachAStoredRecord(t *testing.T) {
 		t.Errorf("the record carries a rawBody field: %s", encoded)
 	}
 }
+
+// drainWhile runs the worker for as long as the request is in flight, since the
+// lastNode and responseNode modes both wait for the execution to finish.
+func drainWhile(t *testing.T, h harness, request func()) {
+	t.Helper()
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			worked, _ := h.runtime.RunOnce(context.Background())
+			if !worked {
+				time.Sleep(2 * time.Millisecond)
+			}
+		}
+	}()
+	request()
+	close(stop)
+	<-done
+}
+
+// decodeBody reads a response body as JSON, whichever shape it is.
+func decodeBody[T any](t *testing.T, recorder *httptest.ResponseRecorder) T {
+	t.Helper()
+	var decoded T
+	if err := json.Unmarshal(recorder.Body.Bytes(), &decoded); err != nil {
+		t.Fatalf("decode body %s: %v", recorder.Body, err)
+	}
+	return decoded
+}
+
+func TestWebhookLastNodeReturnsTheLastNodesItemsAsN8NDoes(t *testing.T) {
+	// This used to write KilasFlow's own envelope — {executionId, status, data}
+	// keyed by node ID — so a workflow imported with responseMode "lastNode",
+	// which is a common shape, activated, ran, returned 200 and handed the
+	// caller the wrong body with nothing anywhere reporting it.
+	for name, testCase := range map[string]struct {
+		responseData string
+		wantStatus   int
+		// wantArray is the shape, which is the part n8n's own option
+		// descriptions promise: allEntries is "always an array" and the
+		// default is "always a JSON object".
+		wantArray bool
+		wantEmpty bool
+	}{
+		"the default is the first entry as an object": {wantStatus: http.StatusOK},
+		"all entries is always an array":              {responseData: "allEntries", wantStatus: http.StatusOK, wantArray: true},
+		"no data is an empty 204":                     {responseData: "noData", wantStatus: http.StatusNoContent, wantEmpty: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t)
+			parameters := map[string]any{
+				"path": "last-" + strings.ReplaceAll(name, " ", "-"), "httpMethod": http.MethodPost,
+				"responseMode": "lastNode",
+			}
+			if testCase.responseData != "" {
+				parameters["responseData"] = testCase.responseData
+			}
+			active := h.activate(t, webhookDocument("Last node", parameters, workflow.Node{
+				ID: "set", Name: "Set", Type: "kilasflow.set", TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"assignments": map[string]any{"status": "ready"}},
+			}))
+
+			recorder := httptest.NewRecorder()
+			drainWhile(t, h, func() {
+				h.handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, h.url(t, active), strings.NewReader(`{}`)))
+			})
+
+			if recorder.Code != testCase.wantStatus {
+				t.Fatalf("status = %d, want %d (body: %s)", recorder.Code, testCase.wantStatus, recorder.Body)
+			}
+			// Whatever the shape, it is the node's own data and not an
+			// envelope: no executionId, no status, no data key.
+			if strings.Contains(recorder.Body.String(), "executionId") {
+				t.Fatalf("body = %s, want the last node's items rather than an envelope", recorder.Body)
+			}
+			switch {
+			case testCase.wantEmpty:
+				if got := strings.TrimSpace(recorder.Body.String()); got != "" {
+					t.Errorf("body = %q, want nothing", got)
+				}
+			case testCase.wantArray:
+				items := decodeBody[[]map[string]any](t, recorder)
+				if len(items) != 1 || items[0]["status"] != "ready" {
+					t.Errorf("body = %s, want an array holding the Set node's item", recorder.Body)
+				}
+			default:
+				item := decodeBody[map[string]any](t, recorder)
+				if item["status"] != "ready" {
+					t.Errorf("body = %s, want the Set node's item as an object", recorder.Body)
+				}
+			}
+		})
+	}
+}
+
+func TestRespondToWebhookCoversN8NsRespondWithSet(t *testing.T) {
+	for name, testCase := range map[string]struct {
+		parameters map[string]any
+		wantStatus int
+		wantArray  bool
+		wantObject bool
+		wantBody   string
+		wantHeader [2]string
+	}{
+		"all incoming items is the array": {
+			parameters: map[string]any{"respondWith": "allIncomingItems"},
+			wantStatus: http.StatusOK, wantArray: true,
+		},
+		"first incoming item is the object": {
+			parameters: map[string]any{"respondWith": "firstIncomingItem"},
+			wantStatus: http.StatusOK, wantObject: true,
+		},
+		"no data answers with nothing": {
+			parameters: map[string]any{"respondWith": "noData", "responseCode": float64(204)},
+			wantStatus: http.StatusNoContent, wantBody: "",
+		},
+		// A redirect with a 200 is not a redirect, so the code defaults to 302
+		// rather than leaving a browser on a blank page.
+		"redirect defaults to 302 and sets Location": {
+			parameters: map[string]any{"respondWith": "redirect", "redirectURL": "https://example.test/thanks"},
+			wantStatus: http.StatusFound, wantBody: "",
+			wantHeader: [2]string{"Location", "https://example.test/thanks"},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t)
+			respond := workflow.Node{
+				ID: "respond", Name: "Respond to Webhook", Type: nodes.RespondNodeType, TypeVersion: workflow.V(1),
+				Parameters: testCase.parameters,
+			}
+			active := h.activate(t, webhookDocument("Responder", map[string]any{
+				"path": "respond-" + strings.ReplaceAll(name, " ", "-"), "httpMethod": http.MethodPost,
+				"responseMode": "responseNode",
+			}, workflow.Node{
+				ID: "set", Name: "Set", Type: "kilasflow.set", TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"assignments": map[string]any{"status": "ready"}},
+			}, respond))
+
+			recorder := httptest.NewRecorder()
+			drainWhile(t, h, func() {
+				h.handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, h.url(t, active), strings.NewReader(`{}`)))
+			})
+
+			if recorder.Code != testCase.wantStatus {
+				t.Fatalf("status = %d, want %d (body: %s)", recorder.Code, testCase.wantStatus, recorder.Body)
+			}
+			switch {
+			case testCase.wantArray:
+				items := decodeBody[[]map[string]any](t, recorder)
+				if len(items) != 1 || items[0]["status"] != "ready" {
+					t.Errorf("body = %s, want an array holding the incoming item", recorder.Body)
+				}
+			case testCase.wantObject:
+				item := decodeBody[map[string]any](t, recorder)
+				if item["status"] != "ready" {
+					t.Errorf("body = %s, want the incoming item as an object", recorder.Body)
+				}
+			default:
+				if got := strings.TrimSpace(recorder.Body.String()); got != testCase.wantBody {
+					t.Errorf("body = %q, want %q", got, testCase.wantBody)
+				}
+			}
+			if testCase.wantHeader[0] != "" {
+				if got := recorder.Header().Get(testCase.wantHeader[0]); got != testCase.wantHeader[1] {
+					t.Errorf("%s = %q, want %q", testCase.wantHeader[0], got, testCase.wantHeader[1])
+				}
+			}
+		})
+	}
+}

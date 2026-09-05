@@ -318,7 +318,7 @@
       "imported": true,
       "activatable": false,
       "runnable": false,
-      "unsupported": 16,
+      "unsupported": 14,
       "reason": "node \"b71d79fa-2eae-4fb8-97f6-665c496c85f9\" requires a wahaApi credential"
     },
     {
@@ -388,7 +388,7 @@
       "imported": true,
       "activatable": false,
       "runnable": false,
-      "unsupported": 21,
+      "unsupported": 20,
       "reason": "node \"af16c0da-c302-4d8b-983c-3d69e12f7260\" requires a postgres credential"
     },
     {

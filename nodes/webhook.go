@@ -2,6 +2,7 @@ package nodes
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -40,6 +41,25 @@ const (
 	ResponseModeImmediate = "immediate"
 	ResponseModeLastNode  = "lastNode"
 	ResponseModeNode      = "responseNode"
+)
+
+// Response data shapes the body the lastNode mode returns, using n8n's names.
+const (
+	ResponseDataFirstEntryJSON = "firstEntryJson"
+	ResponseDataAllEntries     = "allEntries"
+	ResponseDataNone           = "noData"
+)
+
+// respondWith values a Respond to Webhook node may take, using n8n's names.
+const (
+	RespondWithText              = "text"
+	RespondWithJSON              = "json"
+	RespondWithAllIncomingItems  = "allIncomingItems"
+	RespondWithFirstIncomingItem = "firstIncomingItem"
+	RespondWithNoData            = "noData"
+	RespondWithRedirect          = "redirect"
+	RespondWithBinary            = "binary"
+	RespondWithJWT               = "jwt"
 )
 
 func webhookTrigger() node.Definition {
@@ -105,6 +125,16 @@ func webhookTrigger() node.Definition {
 				Key: "responseCode", Label: "Immediate response code", Kind: node.PropertyNumber, Default: 200,
 				VisibleWhen: []node.VisibilityCondition{{Key: "responseMode", Equals: ResponseModeImmediate}},
 			},
+			{
+				Key: "responseData", Label: "Response data", Kind: node.PropertyOptions, Default: ResponseDataFirstEntryJSON,
+				Options: []node.PropertyOption{
+					{Label: "First entry (JSON object)", Value: ResponseDataFirstEntryJSON},
+					{Label: "All entries (array)", Value: ResponseDataAllEntries},
+					{Label: "No data", Value: ResponseDataNone},
+				},
+				Description: "What the last node's items become in the response body.",
+				VisibleWhen: []node.VisibilityCondition{{Key: "responseMode", Equals: ResponseModeLastNode}},
+			},
 		},
 		SharedSettings: sharedSettings(),
 		ExecutorID:     WebhookExecutorID,
@@ -125,10 +155,34 @@ func respondToWebhookNode() node.Definition {
 		Inputs:      mainInput(),
 		Outputs:     mainOutput(),
 		Parameters: []node.PropertyDefinition{
+			{
+				Key: "respondWith", Label: "Respond with", Kind: node.PropertyOptions, Required: true, Default: RespondWithText,
+				Options: []node.PropertyOption{
+					{Label: "Text", Value: RespondWithText},
+					{Label: "JSON", Value: RespondWithJSON},
+					{Label: "All incoming items", Value: RespondWithAllIncomingItems},
+					{Label: "First incoming item", Value: RespondWithFirstIncomingItem},
+					{Label: "No data", Value: RespondWithNoData},
+					{Label: "Redirect", Value: RespondWithRedirect},
+				},
+			},
 			{Key: "responseCode", Label: "Status code", Kind: node.PropertyNumber, Required: true, Default: 200},
 			{
 				Key: "responseBody", Label: "Body", Kind: node.PropertyString,
 				Description: "JSON or text returned to the caller. Supports expressions.",
+				VisibleWhen: []node.VisibilityCondition{
+					{Key: "respondWith", Equals: RespondWithText},
+				},
+			},
+			{
+				Key: "responseBodyJSON", Label: "Body", Kind: node.PropertyJSON,
+				Description: "The JSON returned to the caller. Supports expressions.",
+				VisibleWhen: []node.VisibilityCondition{{Key: "respondWith", Equals: RespondWithJSON}},
+			},
+			{
+				Key: "redirectURL", Label: "Redirect to", Kind: node.PropertyString,
+				Description: "Where the caller is sent. The status code defaults to 302 unless you set one.",
+				VisibleWhen: []node.VisibilityCondition{{Key: "respondWith", Equals: RespondWithRedirect}},
 			},
 			{Key: "responseHeaders", Label: "Headers", Kind: node.PropertyKeyValue},
 		},
@@ -207,6 +261,22 @@ func validateWebhookConfiguration(node workflow.Node) error {
 }
 
 func validateRespondConfiguration(node workflow.Node) error {
+	switch with := textParameter(node.Parameters, "respondWith"); with {
+	case "", RespondWithText, RespondWithJSON, RespondWithAllIncomingItems,
+		RespondWithFirstIncomingItem, RespondWithNoData:
+	case RespondWithRedirect:
+		if statementText(node.Parameters, "redirectURL") == "" {
+			return fmt.Errorf("a redirect response needs a URL to redirect to")
+		}
+	case RespondWithBinary:
+		return fmt.Errorf("responding with a binary file needs the response streamed from the binary store, " +
+			"which this server does not do yet; respond with JSON carrying a link to the file instead")
+	case RespondWithJWT:
+		return fmt.Errorf("responding with a signed JWT needs a signing credential type this server does not " +
+			"have; build the token in a Code node and respond with text")
+	default:
+		return fmt.Errorf("respondWith %q is not supported", with)
+	}
 	// A status built from an expression is only knowable at run time; the
 	// executor re-checks the resolved value.
 	if expression.IsExpression(node.Parameters["responseCode"]) {
@@ -370,9 +440,15 @@ func executeRespond(ctx context.Context, ir workflow.IRNode, input workflow.Node
 		if err != nil {
 			return nil, fmt.Errorf("node %q: %w", ir.Name, err)
 		}
+		with := textValue(parameters["respondWith"], RespondWithText)
 		code := int(numberValue(parameters["responseCode"]))
 		if code == 0 {
 			code = http.StatusOK
+			if with == RespondWithRedirect {
+				// A redirect with a 200 is not a redirect. n8n defaults this
+				// one too rather than leaving a browser on a blank page.
+				code = http.StatusFound
+			}
 		}
 		if code < 100 || code > 599 {
 			return nil, fmt.Errorf("node %q: responseCode %d is not a valid HTTP status", ir.Name, code)
@@ -382,15 +458,77 @@ func executeRespond(ctx context.Context, ir workflow.IRNode, input workflow.Node
 			headers[key] = textValue(value, "")
 		}
 
+		body, err := respondBody(with, parameters, items, item)
+		if err != nil {
+			return nil, fmt.Errorf("node %q: %w", ir.Name, err)
+		}
+		if with == RespondWithRedirect {
+			headers["Location"] = textValue(parameters["redirectURL"], "")
+		}
+
 		copied := cloneItem(item)
 		copied.JSON[ResponseKey] = map[string]any{
 			"statusCode": float64(code),
 			"headers":    headers,
-			"body":       textValue(parameters["responseBody"], ""),
+			"body":       body,
 		}
 		out = append(out, copied)
 	}
 	return workflow.NodeOutput{out}, nil
+}
+
+// respondBody renders the response body for one respondWith choice.
+//
+// The whole item stream is available, not only the item being written, because
+// two of n8n's choices are about the stream rather than the item: "all incoming
+// items" is the array and "first incoming item" is the first of it regardless
+// of which item this iteration is on.
+func respondBody(with string, parameters map[string]any, items []workflow.Item, item workflow.Item) (string, error) {
+	switch with {
+	case "", RespondWithText:
+		return textValue(parameters["responseBody"], ""), nil
+	case RespondWithJSON:
+		// The JSON field first, falling back to the text one: a node saved
+		// before respondWith existed put its JSON in `responseBody`, and
+		// reading only the new key would empty every one of them.
+		if body := textValue(parameters["responseBodyJSON"], ""); body != "" {
+			return body, nil
+		}
+		return textValue(parameters["responseBody"], ""), nil
+	case RespondWithAllIncomingItems:
+		payload := make([]map[string]any, 0, len(items))
+		for _, incoming := range items {
+			payload = append(payload, jsonOf(incoming))
+		}
+		encoded, err := json.Marshal(payload)
+		if err != nil {
+			return "", fmt.Errorf("encode the incoming items: %w", err)
+		}
+		return string(encoded), nil
+	case RespondWithFirstIncomingItem:
+		first := item
+		if len(items) > 0 {
+			first = items[0]
+		}
+		encoded, err := json.Marshal(jsonOf(first))
+		if err != nil {
+			return "", fmt.Errorf("encode the first incoming item: %w", err)
+		}
+		return string(encoded), nil
+	case RespondWithNoData, RespondWithRedirect:
+		// A redirect's meaning is in its Location header; a body would be
+		// dead weight the caller never sees.
+		return "", nil
+	default:
+		return "", fmt.Errorf("respondWith %q is not supported", with)
+	}
+}
+
+func jsonOf(item workflow.Item) map[string]any {
+	if item.JSON == nil {
+		return map[string]any{}
+	}
+	return item.JSON
 }
 
 // ResponseKey marks the item field carrying a webhook response. The HTTP

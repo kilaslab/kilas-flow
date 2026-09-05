@@ -172,13 +172,17 @@ type workflowVersionModel struct {
 func (workflowVersionModel) TableName() string { return "workflow_versions" }
 
 type executionModel struct {
-	ID                      string    `gorm:"primaryKey;size:64"`
-	TenantID                string    `gorm:"not null;size:64;index:idx_executions_tenant_started,priority:1;index:idx_executions_tenant_workflow,priority:1"`
-	WorkflowID              string    `gorm:"not null;size:64;index:idx_executions_tenant_workflow,priority:2"`
-	WorkflowVersionID       string    `gorm:"not null;size:64;index"`
-	Status                  string    `gorm:"not null;size:32"`
-	Trigger                 string    `gorm:"not null;size:32"`
-	TriggerNodeID           string    `gorm:"size:64"`
+	ID                string `gorm:"primaryKey;size:64"`
+	TenantID          string `gorm:"not null;size:64;index:idx_executions_tenant_started,priority:1;index:idx_executions_tenant_workflow,priority:1"`
+	WorkflowID        string `gorm:"not null;size:64;index:idx_executions_tenant_workflow,priority:2"`
+	WorkflowVersionID string `gorm:"not null;size:64;index"`
+	Status            string `gorm:"not null;size:32"`
+	Trigger           string `gorm:"not null;size:32"`
+	TriggerNodeID     string `gorm:"size:64"`
+	// ParentExecutionID links a sub-workflow run to the run that called it.
+	// Indexed because "show me this execution's children" is the only question
+	// asked of it, and it is asked once per execution detail view.
+	ParentExecutionID       string    `gorm:"size:64;index;default:''"`
 	Input                   []byte    `gorm:"not null"`
 	Output                  []byte    `gorm:"not null"`
 	Error                   []byte    `gorm:"not null"`

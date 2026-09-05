@@ -26,6 +26,9 @@ type ExecutionRepository interface {
 	Get(context.Context, TenantScope, string) (execution.Record, error)
 	List(context.Context, TenantScope, ExecutionFilter) (ExecutionPage, error)
 	CreateNodeRun(context.Context, TenantScope, execution.NodeRun) (execution.NodeRun, error)
+	// Ancestry returns an execution's chain of parent executions, nearest
+	// first, for a sub-workflow run.
+	Ancestry(context.Context, TenantScope, string) ([]execution.Record, error)
 }
 
 // DefaultExecutionPageSize and MaxExecutionPageSize bound a history listing so
@@ -225,6 +228,8 @@ func (store *GORMExecutionStore) Create(ctx context.Context, tenant TenantScope,
 		WorkflowVersionID: record.WorkflowVersionID,
 		Status:            string(record.Status),
 		Trigger:           string(record.Trigger),
+		TriggerNodeID:     record.TriggerNodeID,
+		ParentExecutionID: record.ParentExecutionID,
 		Input:             input,
 		Output:            output,
 		Error:             errorPayload,
@@ -634,6 +639,133 @@ func triggerPayload(value json.RawMessage) (json.RawMessage, error) {
 	return execution.RedactTriggerHeaders(value), nil
 }
 
+// ChildExecution is a sub-workflow call, as durable storage needs it.
+type ChildExecution struct {
+	WorkflowID        string
+	ParentExecutionID string
+	// TriggerNodeID names the sub-workflow trigger the child starts from, so a
+	// child carrying a webhook beside its sub-workflow trigger does not also
+	// run the webhook.
+	TriggerNodeID string
+	Input         json.RawMessage
+	// SelectTrigger picks the trigger node from the document, once storage has
+	// resolved which version the child is pinned to.
+	//
+	// A function rather than a node type, so this package stays free of node
+	// knowledge — the same seam WebhookExtractor uses, and for the same reason.
+	SelectTrigger func(workflow.Document) string
+	// LeaseOwner and LeaseUntil are the caller's own. A child is created
+	// already claimed rather than queued: it runs inline in the parent's
+	// goroutine, so a worker picking it up would run it a second time.
+	LeaseOwner string
+	LeaseUntil time.Time
+}
+
+// StartChild creates an execution that is already running and already claimed.
+//
+// Deliberately not QueueTriggered plus an update. A queued record is visible to
+// ClaimNext the instant it commits, so a worker could claim the child between
+// the two statements and run it in parallel with the parent's own inline run —
+// the same workflow, twice, from one call.
+//
+// It returns the document as well, so the caller does not need a second read
+// that could see a different version than the one the record is pinned to.
+func (store *GORMExecutionStore) StartChild(ctx context.Context, tenant TenantScope, call ChildExecution) (execution.Record, workflow.Document, error) {
+	if err := tenant.validate(); err != nil {
+		return execution.Record{}, workflow.Document{}, err
+	}
+	if call.WorkflowID == "" || call.ParentExecutionID == "" || call.LeaseOwner == "" {
+		return execution.Record{}, workflow.Document{}, fmt.Errorf("a sub-workflow call needs a workflow, a parent execution and a lease owner")
+	}
+	inputPayload, err := triggerPayload(call.Input)
+	if err != nil {
+		return execution.Record{}, workflow.Document{}, fmt.Errorf("sub-workflow input: %w", err)
+	}
+	executionID, err := workflow.NewID("exec")
+	if err != nil {
+		return execution.Record{}, workflow.Document{}, err
+	}
+	leaseUntil := call.LeaseUntil.UTC()
+
+	model := executionModel{
+		ID: executionID, TenantID: tenant.ID, WorkflowID: call.WorkflowID,
+		Status: string(execution.StatusRunning), Trigger: string(execution.TriggerSubworkflow),
+		TriggerNodeID: call.TriggerNodeID, ParentExecutionID: call.ParentExecutionID,
+		Input: inputPayload, Output: []byte("null"), Error: []byte("null"),
+		StartedAt: time.Now().UTC(), LeaseOwner: call.LeaseOwner, LeaseExpiresAt: &leaseUntil,
+	}
+	var document workflow.Document
+	err = store.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// The tenant clause is the isolation boundary: a workflow ID from
+		// another tenant simply does not exist here, so a call naming one is
+		// refused as "not found" rather than reaching across.
+		var parent workflowModel
+		if err := tx.Where("tenant_id = ? AND id = ? AND active = ?", tenant.ID, call.WorkflowID, true).First(&parent).Error; err != nil {
+			return mapNotFound(err, "active workflow")
+		}
+		if parent.ActiveVersionID == nil {
+			return fmt.Errorf("%w: workflow has no active revision", ErrNotFound)
+		}
+		var versionModel workflowVersionModel
+		if err := tx.Where("tenant_id = ? AND workflow_id = ? AND id = ?", tenant.ID, call.WorkflowID, *parent.ActiveVersionID).
+			First(&versionModel).Error; err != nil {
+			return mapNotFound(err, "workflow version")
+		}
+		version, err := versionFromModel(versionModel)
+		if err != nil {
+			return err
+		}
+		document = version.Document
+		model.WorkflowVersionID = versionModel.ID
+		if call.SelectTrigger != nil {
+			model.TriggerNodeID = call.SelectTrigger(document)
+		}
+		return tx.Create(&model).Error
+	})
+	if err != nil {
+		return execution.Record{}, workflow.Document{}, err
+	}
+	return executionFromModel(model), document, nil
+}
+
+// Ancestry returns an execution's chain of parents, nearest first.
+//
+// Bounded, because the data is a linked list and a corrupted row could make it
+// a ring. The bound is generous relative to the call-depth limit the engine
+// enforces, so a legitimate chain is never truncated.
+func (store *GORMExecutionStore) Ancestry(ctx context.Context, tenant TenantScope, executionID string) ([]execution.Record, error) {
+	if err := tenant.validate(); err != nil {
+		return nil, err
+	}
+	chain := make([]execution.Record, 0, 4)
+	current := executionID
+	for depth := 0; depth < maximumAncestryDepth && current != ""; depth++ {
+		var model executionModel
+		if err := store.db.WithContext(ctx).Where("tenant_id = ? AND id = ?", tenant.ID, current).First(&model).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return chain, nil
+			}
+			return nil, fmt.Errorf("read execution ancestry: %w", err)
+		}
+		if model.ParentExecutionID == "" {
+			return chain, nil
+		}
+		var parent executionModel
+		if err := store.db.WithContext(ctx).Where("tenant_id = ? AND id = ?", tenant.ID, model.ParentExecutionID).First(&parent).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return chain, nil
+			}
+			return nil, fmt.Errorf("read execution ancestry: %w", err)
+		}
+		chain = append(chain, executionFromModel(parent))
+		current = parent.ID
+	}
+	return chain, nil
+}
+
+// maximumAncestryDepth bounds the walk above.
+const maximumAncestryDepth = 64
+
 func executionFromModel(model executionModel) execution.Record {
 	return execution.Record{
 		ID:                      model.ID,
@@ -643,6 +775,7 @@ func executionFromModel(model executionModel) execution.Record {
 		Status:                  execution.Status(model.Status),
 		Trigger:                 execution.Trigger(model.Trigger),
 		TriggerNodeID:           model.TriggerNodeID,
+		ParentExecutionID:       model.ParentExecutionID,
 		Input:                   append(json.RawMessage(nil), model.Input...),
 		Output:                  append(json.RawMessage(nil), model.Output...),
 		Error:                   append(json.RawMessage(nil), model.Error...),

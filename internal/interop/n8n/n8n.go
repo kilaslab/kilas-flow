@@ -261,6 +261,17 @@ var mappings = []mapping{
 		exportTypeVersion: 2, toKilas: removeDuplicatesToKilas, toN8N: removeDuplicatesToN8N,
 	},
 
+	// Workflow composition. Every corpus workflow that factored shared logic
+	// into a sub-workflow imported as the unsupported placeholder before.
+	{
+		n8nType: "n8n-nodes-base.executeWorkflow", kilasType: ExecuteWorkflowNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1.2, toKilas: executeWorkflowToKilas, toN8N: executeWorkflowToN8N,
+	},
+	{
+		n8nType: "n8n-nodes-base.executeWorkflowTrigger", kilasType: ExecuteWorkflowTriggerType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1.1, toKilas: executeWorkflowTriggerToKilas, toN8N: executeWorkflowTriggerToN8N,
+	},
+
 	// Time. Both were the unsupported placeholder before, so a single Wait or
 	// a single date calculation blocked a whole imported workflow.
 	{
@@ -358,6 +369,12 @@ const (
 const (
 	DateTimeNodeType = "kilasflow.dateTime"
 	WaitNodeType     = "kilasflow.wait"
+)
+
+// The workflow-composition family's node types.
+const (
+	ExecuteWorkflowNodeType    = "kilasflow.executeWorkflow"
+	ExecuteWorkflowTriggerType = "kilasflow.executeWorkflowTrigger"
 )
 
 const (

@@ -343,7 +343,7 @@ func newWorkflowAPI(t *testing.T) (http.Handler, *repository.GORMWorkflowStore, 
 // newWorkflowAPIWithEmbed builds one server that has the real repositories and
 // an embed issuer, so an embed test exercises the same handlers the dashboard
 // uses rather than a parallel stack.
-func newWorkflowAPIWithEmbed(t *testing.T, issuer *embed.Issuer) (http.Handler, string) {
+func newWorkflowAPIWithEmbed(t *testing.T, issuer *embed.Issuer) (http.Handler, string, *repository.GORMExecutionStore) {
 	t.Helper()
 	db, err := database.Open(context.Background(), config.Database{
 		Driver: "sqlite",
@@ -379,7 +379,7 @@ func newWorkflowAPIWithEmbed(t *testing.T, issuer *embed.Issuer) (http.Handler, 
 		EmbedIssuer:         issuer,
 	})
 	created := createWorkflow(t, handler, validManualWorkflow("Embeddable"))
-	return handler, created.ID
+	return handler, created.ID, executions
 }
 
 func newWorkflowAPIWithController(t *testing.T, controller handlers.ExecutionController) (http.Handler, *repository.GORMWorkflowStore, *repository.GORMExecutionStore) {

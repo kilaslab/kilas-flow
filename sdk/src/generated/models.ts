@@ -449,6 +449,8 @@ export interface ExecutionSummary {
   durationMs?: number;
   finishedAt?: string;
   id: string;
+  /** The execution that called this one, for a sub-workflow run */
+  parentExecutionId?: string;
   startedAt: string;
   status: string;
   trigger: string;
@@ -504,6 +506,8 @@ export interface ExecutionResource {
   /** @nullable */
   nodeRuns: ExecutionNodeRunResource[] | null;
   output?: unknown;
+  /** The execution that called this one, for a sub-workflow run */
+  parentExecutionId?: string;
   startedAt: string;
   status: string;
   trigger: string;
