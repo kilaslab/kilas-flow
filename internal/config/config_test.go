@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/kilaslabs/kilas-flow/internal/sqlnode"
 )
 
 func TestLoadDefaultsWhenNoFile(t *testing.T) {
@@ -112,5 +114,38 @@ func TestValidateRejectsBadConfig(t *testing.T) {
 				t.Error("Validate() = nil, want error")
 			}
 		})
+	}
+}
+
+func TestTheSQLCeilingDefaultsMatchTheNodePackage(t *testing.T) {
+	// Two packages state the same numbers: sqlnode so a Ceiling built from a
+	// zero value still bounds something, and here so an operator reading the
+	// configuration sees what they are. This is what keeps them one number.
+	ceiling := sqlnode.DefaultCeiling()
+	cfg := Default().SQL
+	if cfg.MaxRows != ceiling.MaxRows {
+		t.Errorf("SQL.MaxRows = %d, want sqlnode's %d", cfg.MaxRows, ceiling.MaxRows)
+	}
+	if cfg.MaxStatementTimeout != ceiling.MaxTimeout {
+		t.Errorf("SQL.MaxStatementTimeout = %s, want sqlnode's %s", cfg.MaxStatementTimeout, ceiling.MaxTimeout)
+	}
+}
+
+func TestTheSQLCeilingIsReachableFromTheEnvironment(t *testing.T) {
+	// The section is one word for exactly this reason: envKeyToPath treats the
+	// first underscore as the section separator, so a section named sql_nodes
+	// could never be overridden at all.
+	t.Setenv("KILASFLOW_SQL_MAX_ROWS", "250")
+	t.Setenv("KILASFLOW_SQL_MAX_STATEMENT_TIMEOUT", "90s")
+
+	cfg, err := Load(filepath.Join(t.TempDir(), "absent.yaml"))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.SQL.MaxRows != 250 {
+		t.Errorf("SQL.MaxRows = %d, want the environment's 250", cfg.SQL.MaxRows)
+	}
+	if cfg.SQL.MaxStatementTimeout != 90*time.Second {
+		t.Errorf("SQL.MaxStatementTimeout = %s, want the environment's 90s", cfg.SQL.MaxStatementTimeout)
 	}
 }

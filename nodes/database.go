@@ -73,14 +73,20 @@ func databaseNode(nodeType, executorID, displayName, credentialType string) node
 			},
 			{
 				Key: "statements", Label: "Statements", Kind: node.PropertyString,
-				Description: "JSON array of statements, run in order inside one transaction.",
+				Description: "JSON array of {sql, parameters, returning}, run in order inside one transaction. " +
+					"Set returning on a statement whose rows you want back, such as INSERT … RETURNING id.",
 				VisibleWhen: []node.VisibilityCondition{{Key: "operation", Equals: sqlOperationTransaction}},
 			},
 			{
 				Key: "parameters", Label: "Parameters", Kind: node.PropertyString,
-				Description: "JSON array bound to the statement's placeholders, in order. Supports expressions.",
+				Description: "JSON array bound to the statement's placeholders, in order. Supports expressions. " +
+					"A transaction binds parameters per statement instead, inside Statements.",
 			},
-			{Key: "timeoutSeconds", Label: "Statement timeout (seconds)", Kind: node.PropertyNumber, Default: 30},
+			{
+				Key: "statementTimeoutSeconds", Label: "Statement timeout (seconds)", Kind: node.PropertyNumber, Default: 30,
+				Description: "Bounds one statement. An execute over several input items runs them in one " +
+					"transaction, and this bounds each of them rather than the batch.",
+			},
 			{Key: "maxRows", Label: "Maximum rows", Kind: node.PropertyNumber, Default: 10000},
 		},
 		SharedSettings: sharedSettings(),
@@ -135,6 +141,19 @@ func validateDatabaseConfiguration(credentialType string) workflow.ConfigValidat
 			if statementText(n.Parameters, "statements") == "" {
 				return fmt.Errorf("a transaction needs statements")
 			}
+			// Refused rather than ignored. A transaction binds parameters per
+			// statement, so a list set here has no statement to belong to —
+			// and it was already being decoded, which meant a malformed one
+			// failed a transaction that would otherwise never have read it.
+			//
+			// The field cannot simply be hidden for this operation:
+			// VisibilityCondition is single-key equality AND-ed together, so
+			// "shown unless transaction" is not expressible, and forking it
+			// into queryParameters and executeParameters would rewrite every
+			// stored document for a cosmetic gain.
+			if parametersConfigured(n.Parameters["parameters"]) {
+				return fmt.Errorf("a transaction binds parameters per statement: put them in each statement's %q field inside Statements, not in the node's Parameters field", "parameters")
+			}
 		default:
 			return fmt.Errorf("operation %q is not supported", operation)
 		}
@@ -142,6 +161,26 @@ func validateDatabaseConfiguration(credentialType string) workflow.ConfigValidat
 		// required and the compiler enforces that for every node, so a second
 		// check would report the same thing twice with two different wordings.
 		return nil
+	}
+}
+
+// parametersConfigured reports whether the node-level parameters field carries
+// anything.
+//
+// It accepts every shape boundParameters does, and treats an expression marker
+// as configured: the editor stores this field as a string, but a document
+// posted to the API can hold a real JSON array, and an expression that resolves
+// to one is still parameters the transaction has nowhere to put.
+func parametersConfigured(value any) bool {
+	switch typed := value.(type) {
+	case nil:
+		return false
+	case string:
+		return strings.TrimSpace(typed) != ""
+	case []any:
+		return len(typed) > 0
+	default:
+		return true
 	}
 }
 
@@ -161,14 +200,16 @@ type DatabaseExecutor struct {
 	driver         sqlnode.Driver
 	credentialType string
 	guard          sqlnode.Guard
+	ceiling        sqlnode.Ceiling
 }
 
 // NewDatabaseExecutor builds one database executor.
 //
 // The guard carries KilasFlow's own database paths so a SQLite credential can
-// be refused before a connection is ever opened.
-func NewDatabaseExecutor(driver sqlnode.Driver, credentialType string, guard sqlnode.Guard) *DatabaseExecutor {
-	return &DatabaseExecutor{driver: driver, credentialType: credentialType, guard: guard}
+// be refused before a connection is ever opened. The ceiling bounds what the
+// document may ask for, which the document itself cannot raise.
+func NewDatabaseExecutor(driver sqlnode.Driver, credentialType string, guard sqlnode.Guard, ceiling sqlnode.Ceiling) *DatabaseExecutor {
+	return &DatabaseExecutor{driver: driver, credentialType: credentialType, guard: guard, ceiling: ceiling}
 }
 
 // Execute resolves the credential, opens a connection, and runs the configured
@@ -203,12 +244,29 @@ func (executor *DatabaseExecutor) Execute(ctx context.Context, ir workflow.IRNod
 	if len(items) == 0 {
 		items = []workflow.Item{{JSON: map[string]any{}}}
 	}
-	out := make([]workflow.Item, 0, len(items))
+	// Resolved up front, because whether the run can be batched is a question
+	// about every item's operation and cannot be answered one item at a time.
+	// Parameters are still resolved per item: an expression reading $json has
+	// to see the item it belongs to.
+	perItem := make([]map[string]any, 0, len(items))
 	for index, item := range items {
 		parameters, err := expression.Resolve(ir.Parameters, expressionContext(item, input, request, index))
 		if err != nil {
 			return nil, fmt.Errorf("node %q: %w", ir.Name, err)
 		}
+		perItem = append(perItem, parameters)
+	}
+
+	if everyItemExecutes(perItem) {
+		out, err := executor.runExecuteBatch(ctx, ir, connection, perItem)
+		if err != nil {
+			return nil, err
+		}
+		return workflow.NodeOutput{out}, nil
+	}
+
+	out := make([]workflow.Item, 0, len(items))
+	for _, parameters := range perItem {
 		produced, err := executor.runOne(ctx, ir, connection, parameters)
 		if err != nil {
 			return nil, err
@@ -218,11 +276,89 @@ func (executor *DatabaseExecutor) Execute(ctx context.Context, ir workflow.IRNod
 	return workflow.NodeOutput{out}, nil
 }
 
-func (executor *DatabaseExecutor) runOne(ctx context.Context, ir workflow.IRNode, connection *sqlnode.Connection, parameters map[string]any) ([]workflow.Item, error) {
-	limits := sqlnode.Limits{
-		Timeout: time.Duration(numberValue(parameters["timeoutSeconds"]) * float64(time.Second)),
-		MaxRows: int(numberValue(parameters["maxRows"])),
+// everyItemExecutes reports whether the whole run is one execute operation.
+//
+// The operation is a dropdown, so in practice it is the same for every item —
+// but it is resolved like any other parameter and an expression could vary it.
+// A mixed run falls back to the per-item loop rather than batching part of it:
+// a batch that covers some of the items is neither the old behaviour nor
+// atomic, and nothing in the output would say which items were in it.
+func everyItemExecutes(resolved []map[string]any) bool {
+	if len(resolved) == 0 {
+		return false
 	}
+	for _, parameters := range resolved {
+		if textValue(parameters["operation"], sqlOperationQuery) != sqlOperationExecute {
+			return false
+		}
+	}
+	return true
+}
+
+// runExecuteBatch runs an execute over every input item as one transaction.
+//
+// The output shape is unchanged — one `rowsAffected` item per input item, in
+// order — so a downstream node sees exactly the stream it saw before. What
+// changes is underneath: one prepared statement instead of one parse per item,
+// and all-or-nothing instead of a half-applied write nobody is told about.
+//
+// The limits come from the first item. A batch is one transaction and one
+// prepared statement, so it has one row bound and one deadline per statement;
+// a maximum that varied per item inside a shared transaction would be a
+// fiction. The first item is the honest choice because it is the one whose
+// values an author reading the node would expect to apply.
+func (executor *DatabaseExecutor) runExecuteBatch(ctx context.Context, ir workflow.IRNode, connection *sqlnode.Connection, resolved []map[string]any) ([]workflow.Item, error) {
+	limits, clamped := executor.limitsFor(resolved[0])
+
+	statements := make([]sqlnode.Statement, 0, len(resolved))
+	for index, parameters := range resolved {
+		bound, err := boundParameters(parameters["parameters"])
+		if err != nil {
+			return nil, fmt.Errorf("node %q: item %d: %w", ir.Name, index+1, err)
+		}
+		statements = append(statements, sqlnode.Statement{
+			SQL:        textValue(parameters["executeStatement"], ""),
+			Parameters: bound,
+		})
+	}
+
+	results, err := connection.ExecuteBatch(ctx, statements, limits)
+	if err != nil {
+		return nil, fmt.Errorf("node %q: %w", ir.Name, sanitize(err))
+	}
+	out := make([]workflow.Item, 0, len(results)+1)
+	for _, result := range results {
+		out = append(out, workflow.Item{JSON: map[string]any{"rowsAffected": float64(result.RowsAffected)}})
+	}
+	return appendClamped(out, clamped), nil
+}
+
+// limitsFor reads a run's limits from its parameters and clamps them.
+func (executor *DatabaseExecutor) limitsFor(parameters map[string]any) (sqlnode.Limits, map[string]any) {
+	return executor.ceiling.Apply(sqlnode.Limits{
+		Timeout: time.Duration(timeoutParameter(parameters, "statementTimeoutSeconds") * float64(time.Second)),
+		MaxRows: int(numberValue(parameters["maxRows"])),
+	})
+}
+
+// appendClamped marks an output that ran under a lowered limit.
+//
+// Marked rather than silent, for the same reason the query path appends
+// `$truncated`: a run that quietly read fewer rows than it was asked for is
+// indistinguishable from one that read everything.
+func appendClamped(items []workflow.Item, clamped map[string]any) []workflow.Item {
+	if len(clamped) == 0 {
+		return items
+	}
+	notice := map[string]any{"$clamped": true}
+	for key, value := range clamped {
+		notice[key] = value
+	}
+	return append(items, workflow.Item{JSON: notice})
+}
+
+func (executor *DatabaseExecutor) runOne(ctx context.Context, ir workflow.IRNode, connection *sqlnode.Connection, parameters map[string]any) ([]workflow.Item, error) {
+	limits, clamped := executor.limitsFor(parameters)
 	bound, err := boundParameters(parameters["parameters"])
 	if err != nil {
 		return nil, fmt.Errorf("node %q: %w", ir.Name, err)
@@ -243,14 +379,14 @@ func (executor *DatabaseExecutor) runOne(ctx context.Context, ir workflow.IRNode
 			// like a complete one.
 			items = append(items, workflow.Item{JSON: map[string]any{"$truncated": true, "maxRows": float64(limits.MaxRows)}})
 		}
-		return items, nil
+		return appendClamped(items, clamped), nil
 
 	case sqlOperationExecute:
 		result, err := connection.Execute(ctx, textValue(parameters["executeStatement"], ""), bound, limits)
 		if err != nil {
 			return nil, fmt.Errorf("node %q: %w", ir.Name, sanitize(err))
 		}
-		return []workflow.Item{{JSON: map[string]any{"rowsAffected": float64(result.RowsAffected)}}}, nil
+		return appendClamped([]workflow.Item{{JSON: map[string]any{"rowsAffected": float64(result.RowsAffected)}}}, clamped), nil
 
 	case sqlOperationTransaction:
 		statements, err := transactionStatements(parameters["statements"])
@@ -262,14 +398,26 @@ func (executor *DatabaseExecutor) runOne(ctx context.Context, ir workflow.IRNode
 			return nil, fmt.Errorf("node %q: %w", ir.Name, sanitize(err))
 		}
 		affected := int64(0)
+		items := make([]workflow.Item, 0, len(results)+1)
+		truncated := false
 		for _, result := range results {
 			affected += result.RowsAffected
+			// Rows come first and the summary last, so a statement declared as
+			// returning hands its rows to the next node in statement order.
+			for _, row := range result.Rows {
+				items = append(items, workflow.Item{JSON: row})
+			}
+			truncated = truncated || result.Truncated
 		}
-		return []workflow.Item{{JSON: map[string]any{
+		if truncated {
+			items = append(items, workflow.Item{JSON: map[string]any{"$truncated": true, "maxRows": float64(limits.MaxRows)}})
+		}
+		items = append(items, workflow.Item{JSON: map[string]any{
 			"rowsAffected": float64(affected),
 			"statements":   float64(len(results)),
 			"committed":    true,
-		}}}, nil
+		}})
+		return appendClamped(items, clamped), nil
 
 	default:
 		return nil, fmt.Errorf("node %q: operation %q is not supported", ir.Name, operation)
@@ -306,9 +454,13 @@ func transactionStatements(value any) ([]sqlnode.Statement, error) {
 	var decoded []struct {
 		SQL        string `json:"sql"`
 		Parameters []any  `json:"parameters"`
+		// Returning is declared per statement rather than inferred from the
+		// SQL, so `INSERT … RETURNING id` gives up its id and a plain INSERT
+		// still reports rows affected.
+		Returning bool `json:"returning"`
 	}
 	if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
-		return nil, fmt.Errorf("statements must be a JSON array of {sql, parameters}")
+		return nil, fmt.Errorf("statements must be a JSON array of {sql, parameters, returning}")
 	}
 	if len(decoded) == 0 {
 		return nil, fmt.Errorf("a transaction needs at least one statement")
@@ -318,7 +470,7 @@ func transactionStatements(value any) ([]sqlnode.Statement, error) {
 		if strings.TrimSpace(entry.SQL) == "" {
 			return nil, fmt.Errorf("every transaction statement needs sql")
 		}
-		statements = append(statements, sqlnode.Statement{SQL: entry.SQL, Parameters: entry.Parameters})
+		statements = append(statements, sqlnode.Statement{SQL: entry.SQL, Parameters: entry.Parameters, Returning: entry.Returning})
 	}
 	return statements, nil
 }

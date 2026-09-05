@@ -259,6 +259,27 @@ func mainOutput() []workflow.Port {
 	return []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}}
 }
 
+// legacyTimeoutKey is the parameter key the database, HTTP and Code nodes each
+// used for their own timeout before it was found to collide with the shared
+// setting of the same name.
+const legacyTimeoutKey = "timeoutSeconds"
+
+// timeoutParameter reads a node's own timeout parameter, falling back to the
+// key it used to be stored under.
+//
+// The rename is deliberately not a stored-document migration: rewriting every
+// saved workflow to correct a parameter name is a far larger and riskier change
+// than reading both keys here. The new key wins whenever it is present, so a
+// node the editor has saved since the rename means exactly what its form says —
+// which also means an old document keeps its configured timeout until the first
+// time someone saves that node, when the form's own value takes over.
+func timeoutParameter(parameters map[string]any, key string) float64 {
+	if value, found := parameters[key]; found && value != nil {
+		return numberValue(value)
+	}
+	return numberValue(parameters[legacyTimeoutKey])
+}
+
 func sharedSettings() []node.PropertyDefinition {
 	return []node.PropertyDefinition{
 		{Key: "continueOnFail", Label: "Continue on Fail", Kind: node.PropertyBoolean, Default: false},

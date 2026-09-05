@@ -96,7 +96,8 @@ func run() error {
 		return fmt.Errorf("configure agent memory: %w", err)
 	}
 	if err := nodes.RegisterExecutors(executorRegistry, outboundPolicy(cfg.Outbound), databaseGuard(cfg.Database),
-		ai.NewLoopRuntime(), agentMemory, runcode.NewToolchainCompiler()); err != nil {
+		ai.NewLoopRuntime(), agentMemory, runcode.NewToolchainCompiler(),
+		nodes.WithDatabaseCeiling(databaseCeiling(cfg.SQL))); err != nil {
 		return fmt.Errorf("register built-in executors: %w", err)
 	}
 	// Declarative node packs run on one interpreter rather than shipping Go.
@@ -292,6 +293,12 @@ func databaseGuard(cfg config.Database) sqlnode.Guard {
 		return sqlnode.Guard{}
 	}
 	return sqlnode.Guard{InternalPaths: []string{cfg.DSN}}
+}
+
+// databaseCeiling is the deployment's bound on what a SQL node's parameters
+// may ask for, which a workflow document cannot raise.
+func databaseCeiling(cfg config.SQLNodes) sqlnode.Ceiling {
+	return sqlnode.Ceiling{MaxRows: cfg.MaxRows, MaxTimeout: cfg.MaxStatementTimeout}
 }
 
 func outboundPolicy(cfg config.OutboundHTTP) safehttp.Policy {

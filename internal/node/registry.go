@@ -483,7 +483,38 @@ func validateDefinition(definition Definition) error {
 	if err := validateProperties(definition.Type, "parameter", definition.Parameters); err != nil {
 		return err
 	}
-	return validateProperties(definition.Type, "shared setting", definition.SharedSettings)
+	if err := validateProperties(definition.Type, "shared setting", definition.SharedSettings); err != nil {
+		return err
+	}
+	return validateGroupsDoNotCollide(definition)
+}
+
+// validateGroupsDoNotCollide refuses a key declared in both groups.
+//
+// validateProperties runs once per group with its own `seen` map, so a node
+// declaring `timeoutSeconds` as both a parameter and a shared setting passed
+// every check while showing the user two boxes with the same meaning, two
+// labels and two different defaults. The two values do not even meet at run
+// time — a parameter lands in node.Parameters and a setting in node.Settings,
+// so one bounded a statement and the other the whole node, and whichever the
+// author edited was the one that did nothing.
+//
+// Only the top level is compared. A collection's inner field named `value` and
+// an outer property named `value` live in different objects and never meet,
+// which is the same reason the per-group map is not shared across the
+// recursion.
+func validateGroupsDoNotCollide(definition Definition) error {
+	settings := make(map[string]struct{}, len(definition.SharedSettings))
+	for _, setting := range definition.SharedSettings {
+		settings[setting.Key] = struct{}{}
+	}
+	for _, parameter := range definition.Parameters {
+		if _, exists := settings[parameter.Key]; exists {
+			return fmt.Errorf("node definition %q declares %q as both a parameter and a shared setting; one of them has to be renamed",
+				definition.Type, parameter.Key)
+		}
+	}
+	return nil
 }
 
 func validatePorts(nodeType, direction string, ports []workflow.Port) error {

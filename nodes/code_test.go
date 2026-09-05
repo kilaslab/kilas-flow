@@ -61,7 +61,7 @@ func TestCodeNodeIsRegisteredWithAnEditorForm(t *testing.T) {
 	for _, parameter := range definition.Parameters {
 		keys[parameter.Key] = true
 	}
-	for _, required := range []string{"code", "timeoutSeconds", "memoryMB"} {
+	for _, required := range []string{"code", "scriptTimeoutSeconds", "memoryMB"} {
 		if !keys[required] {
 			t.Errorf("Code node is missing parameter %q", required)
 		}
@@ -177,8 +177,8 @@ func TestCodeNodeCannotRaiseTheDeploymentsLimits(t *testing.T) {
 
 	// The node asks for 60 seconds; the deployment allows 500ms.
 	_, err := executor.Execute(context.Background(), codeIR(t, map[string]any{
-		"code":           "for { _ = 1 }\n\treturn items, nil",
-		"timeoutSeconds": float64(60),
+		"code":                 "for { _ = 1 }\n\treturn items, nil",
+		"scriptTimeoutSeconds": float64(60),
 	}), workflow.NodeInput{}, engine.Request{})
 	if err == nil {
 		t.Fatal("an endless loop completed")

@@ -28,6 +28,7 @@ type Config struct {
 	Embed     Embed        `koanf:"embed"`
 	Branding  Branding     `koanf:"branding"`
 	Execution Execution    `koanf:"execution"`
+	SQL       SQLNodes     `koanf:"sql"`
 	Binary    Binary       `koanf:"binary"`
 	Log       Log          `koanf:"log"`
 }
@@ -126,6 +127,25 @@ type Execution struct {
 	DefaultTimeout time.Duration `koanf:"default_timeout"`
 }
 
+// SQLNodes bounds what a workflow document may ask a database node for.
+//
+// This is not KilasFlow's own database — that is Database above. It bounds the
+// SQL nodes, whose limits come from parameters a tenant authors and which may
+// be expressions over an incoming item: without a ceiling, `{{ $json.maxRows }}`
+// behind a webhook lets the caller choose how much of the customer's database
+// this server buffers into memory.
+//
+// The section name is one word for the same reason Outbound and Binary are:
+// envKeyToPath treats the first underscore as the section separator, so a
+// two-word section could never be set from the environment.
+type SQLNodes struct {
+	// MaxRows is the largest row buffer a node may ask for. Zero falls back to
+	// sqlnode's own ceiling rather than meaning unbounded.
+	MaxRows int `koanf:"max_rows"`
+	// MaxStatementTimeout is the longest a single statement may run.
+	MaxStatementTimeout time.Duration `koanf:"max_statement_timeout"`
+}
+
 // Binary configures where item payloads are stored.
 //
 // The section name is one word deliberately: the environment override maps the
@@ -188,6 +208,14 @@ func Default() Config {
 		Execution: Execution{
 			MaxConcurrent:  10,
 			DefaultTimeout: 60 * time.Second,
+		},
+		SQL: SQLNodes{
+			// Both sit well above the node defaults (10,000 rows, 30 seconds):
+			// the ceiling exists to stop a document asking for something
+			// absurd, not to second-guess an author who knows their own data.
+			// Kept equal to sqlnode.DefaultCeiling, which a test pins.
+			MaxRows:             50_000,
+			MaxStatementTimeout: 5 * time.Minute,
 		},
 		Binary: Binary{
 			// Empty root disables binary storage rather than defaulting to

@@ -23,7 +23,11 @@ import (
 // hosted install must refuse private targets, while a self-hosted one may
 // legitimately call services on its own network, and the guard carries the
 // install's own database paths so a SQLite credential can never open them.
-func RegisterExecutors(registry *engine.Registry, httpPolicy safehttp.Policy, databaseGuard sqlnode.Guard, agentRuntime ai.AgentRuntime, agentMemory ai.Memory, codeCompiler runcode.Compiler) error {
+func RegisterExecutors(registry *engine.Registry, httpPolicy safehttp.Policy, databaseGuard sqlnode.Guard, agentRuntime ai.AgentRuntime, agentMemory ai.Memory, codeCompiler runcode.Compiler, options ...ExecutorOption) error {
+	settings := executorSettings{databaseCeiling: sqlnode.DefaultCeiling()}
+	for _, option := range options {
+		option(&settings)
+	}
 	for id, executor := range map[string]engine.Executor{
 		"core.manual":              engine.ExecutorFunc(executeManual),
 		"core.set":                 engine.ExecutorFunc(executeSet),
@@ -33,9 +37,9 @@ func RegisterExecutors(registry *engine.Registry, httpPolicy safehttp.Policy, da
 		WebhookExecutorID:          engine.ExecutorFunc(executeWebhook),
 		ScheduleExecutorID:         engine.ExecutorFunc(executeSchedule),
 		RespondExecutorID:          engine.ExecutorFunc(executeRespond),
-		PostgresExecutorID:         NewDatabaseExecutor(sqlnode.DriverPostgres, "postgres", databaseGuard),
-		MySQLExecutorID:            NewDatabaseExecutor(sqlnode.DriverMySQL, "mysql", databaseGuard),
-		SQLiteExecutorID:           NewDatabaseExecutor(sqlnode.DriverSQLite, "sqlite", databaseGuard),
+		PostgresExecutorID:         NewDatabaseExecutor(sqlnode.DriverPostgres, "postgres", databaseGuard, settings.databaseCeiling),
+		MySQLExecutorID:            NewDatabaseExecutor(sqlnode.DriverMySQL, "mysql", databaseGuard, settings.databaseCeiling),
+		SQLiteExecutorID:           NewDatabaseExecutor(sqlnode.DriverSQLite, "sqlite", databaseGuard, settings.databaseCeiling),
 		ChatModelExecutorID:        engine.ExecutorFunc(executeChatModel),
 		MemoryExecutorID:           engine.ExecutorFunc(executeMemory),
 		HTTPToolExecutorID:         engine.ExecutorFunc(executeHTTPTool),
@@ -60,6 +64,27 @@ func RegisterExecutors(registry *engine.Registry, httpPolicy safehttp.Policy, da
 		}
 	}
 	return nil
+}
+
+// ExecutorOption carries a deployment decision only some executors need.
+//
+// Variadic rather than another positional parameter: the signature already
+// carries six, every caller in the repository and every host embedding this
+// package would have to be edited to pass a value most of them do not care
+// about, and the next such decision would repeat the argument.
+type ExecutorOption func(*executorSettings)
+
+type executorSettings struct {
+	databaseCeiling sqlnode.Ceiling
+}
+
+// WithDatabaseCeiling bounds what a workflow document may ask a database node
+// for. It sits beside the guard: both are things the deployment decides and a
+// document cannot override.
+func WithDatabaseCeiling(ceiling sqlnode.Ceiling) ExecutorOption {
+	return func(settings *executorSettings) {
+		settings.databaseCeiling = ceiling
+	}
 }
 
 func executeManual(ctx context.Context, _ workflow.IRNode, _ workflow.NodeInput, request engine.Request) (workflow.NodeOutput, error) {

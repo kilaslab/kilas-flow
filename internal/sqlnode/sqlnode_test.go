@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -309,4 +310,64 @@ func TestPostgresAndMySQLFailToConnectWithoutLeakingTheirPassword(t *testing.T) 
 			t.Errorf("%s connection error leaked the password: %v", driver, err)
 		}
 	}
+}
+
+func TestACeilingClampsWhatADocumentAsksForAndNamesIt(t *testing.T) {
+	t.Parallel()
+
+	ceiling := sqlnode.Ceiling{MaxRows: 100, MaxTimeout: 10 * time.Second}
+	for name, testCase := range map[string]struct {
+		limits  sqlnode.Limits
+		want    sqlnode.Limits
+		clamped map[string]any
+	}{
+		"under the ceiling is left alone": {
+			limits: sqlnode.Limits{MaxRows: 10, Timeout: time.Second},
+			want:   sqlnode.Limits{MaxRows: 10, Timeout: time.Second},
+		},
+		"an expression-sized row count is cut to the ceiling": {
+			limits:  sqlnode.Limits{MaxRows: 500_000_000, Timeout: time.Second},
+			want:    sqlnode.Limits{MaxRows: 100, Timeout: time.Second},
+			clamped: map[string]any{"maxRows": float64(100)},
+		},
+		"a long timeout is cut too": {
+			limits:  sqlnode.Limits{MaxRows: 10, Timeout: time.Hour},
+			want:    sqlnode.Limits{MaxRows: 10, Timeout: 10 * time.Second},
+			clamped: map[string]any{"timeoutSeconds": float64(10)},
+		},
+		"both at once are both reported": {
+			limits:  sqlnode.Limits{MaxRows: 1 << 30, Timeout: time.Hour},
+			want:    sqlnode.Limits{MaxRows: 100, Timeout: 10 * time.Second},
+			clamped: map[string]any{"maxRows": float64(100), "timeoutSeconds": float64(10)},
+		},
+		// Zero is "the node configured nothing", which the statement paths
+		// already turn into their own defaults. Clamping it would turn an
+		// unset limit into a ceiling-sized one.
+		"an unset limit is not raised to the ceiling": {
+			limits: sqlnode.Limits{},
+			want:   sqlnode.Limits{},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, clamped := ceiling.Apply(testCase.limits)
+			if got != testCase.want {
+				t.Errorf("limits = %#v, want %#v", got, testCase.want)
+			}
+			if !reflect.DeepEqual(clamped, testCase.clamped) {
+				t.Errorf("clamped = %#v, want %#v", clamped, testCase.clamped)
+			}
+		})
+	}
+
+	t.Run("a zero ceiling falls back rather than meaning unbounded", func(t *testing.T) {
+		// An unbounded row buffer is the defect the ceiling exists to stop, so
+		// there is deliberately no spelling for it.
+		got, clamped := sqlnode.Ceiling{}.Apply(sqlnode.Limits{MaxRows: 500_000_000, Timeout: 24 * time.Hour})
+		if got.MaxRows != sqlnode.DefaultCeiling().MaxRows || got.Timeout != sqlnode.DefaultCeiling().MaxTimeout {
+			t.Errorf("limits = %#v, want the default ceiling", got)
+		}
+		if len(clamped) != 2 {
+			t.Errorf("clamped = %#v, want both limits reported", clamped)
+		}
+	})
 }

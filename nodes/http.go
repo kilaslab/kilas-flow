@@ -100,7 +100,7 @@ func httpRequestNode() node.Definition {
 				Description: "Return 4xx and 5xx responses as items instead of failing the node.",
 			},
 			{
-				Key: "timeoutSeconds", Label: "Request timeout (seconds)", Kind: node.PropertyNumber, Default: 30,
+				Key: "requestTimeoutSeconds", Label: "Request timeout (seconds)", Kind: node.PropertyNumber, Default: 30,
 			},
 		},
 		SharedSettings: sharedSettings(),
@@ -242,7 +242,7 @@ func (executor *HTTPExecutor) sendOne(ctx context.Context, ir workflow.IRNode, p
 	}
 
 	timeout := executor.policy.Timeout
-	if seconds := numberValue(parameters["timeoutSeconds"]); seconds > 0 {
+	if seconds := timeoutParameter(parameters, "requestTimeoutSeconds"); seconds > 0 {
 		requested := time.Duration(seconds * float64(time.Second))
 		// The node may only tighten the deployment's ceiling, never raise it.
 		if executor.policy.Timeout <= 0 || requested < executor.policy.Timeout {

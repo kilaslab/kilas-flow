@@ -898,3 +898,58 @@ func TestAssignmentDefaultsAreDeepCopied(t *testing.T) {
 		t.Errorf("row value = %#v, want the registry unchanged", value)
 	}
 }
+
+func TestOneKeyCannotBeBothAParameterAndASharedSetting(t *testing.T) {
+	base := func(parameters, settings []node.PropertyDefinition) node.Definition {
+		return node.Definition{
+			Type: "test.collision", Version: workflow.V(1),
+			DisplayName: "Collision", Category: "Test", ExecutorID: "test.exec",
+			Group:          []node.NodeGroup{node.GroupTransform},
+			Outputs:        []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+			Parameters:     parameters,
+			SharedSettings: settings,
+		}
+	}
+
+	t.Run("the same key in both groups is refused", func(t *testing.T) {
+		// Each group used to be validated with its own seen map, so a node
+		// could ship two boxes called the same thing with different labels and
+		// different defaults — and the two never met at run time, because a
+		// parameter lands in node.Parameters and a setting in node.Settings.
+		err := node.NewRegistry().Register(base(
+			[]node.PropertyDefinition{{Key: "timeoutSeconds", Label: "Statement timeout", Kind: node.PropertyNumber, Default: 30}},
+			[]node.PropertyDefinition{{Key: "timeoutSeconds", Label: "Timeout", Kind: node.PropertyNumber, Default: 0}},
+		))
+		if err == nil {
+			t.Fatal("a key declared in both groups was accepted")
+		}
+		if !strings.Contains(err.Error(), "timeoutSeconds") {
+			t.Errorf("error = %v, want the colliding key named", err)
+		}
+	})
+
+	t.Run("only the top level is compared", func(t *testing.T) {
+		// A collection's inner field and a shared setting live in different
+		// objects and never meet, the same reason the per-group map is not
+		// shared across the recursion.
+		err := node.NewRegistry().Register(base(
+			[]node.PropertyDefinition{{
+				Key: "options", Label: "Options", Kind: node.PropertyCollection,
+				Fields: []node.PropertyDefinition{{Key: "timeoutSeconds", Label: "Timeout", Kind: node.PropertyNumber}},
+			}},
+			[]node.PropertyDefinition{{Key: "timeoutSeconds", Label: "Timeout", Kind: node.PropertyNumber}},
+		))
+		if err != nil {
+			t.Errorf("a nested field repeating a shared setting was refused: %v", err)
+		}
+	})
+
+	t.Run("every built-in passes", func(t *testing.T) {
+		// The check is only worth having if the catalogue it guards is clean,
+		// and it was not: the database, HTTP and Code nodes each declared their
+		// own timeoutSeconds beside the shared one.
+		if err := nodes.RegisterAll(node.NewRegistry()); err != nil {
+			t.Fatalf("RegisterAll() error = %v", err)
+		}
+	})
+}

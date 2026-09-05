@@ -37,7 +37,7 @@ func codeNode() node.Definition {
 				Description: "The body of func run(items []Item) ([]Item, error). " +
 					"The standard library is available; the filesystem, network, and environment are not.",
 			},
-			{Key: "timeoutSeconds", Label: "Time limit (seconds)", Kind: node.PropertyNumber, Default: 10},
+			{Key: "scriptTimeoutSeconds", Label: "Time limit (seconds)", Kind: node.PropertyNumber, Default: 10},
 			{Key: "memoryMB", Label: "Memory limit (MB)", Kind: node.PropertyNumber, Default: 16},
 		},
 		SharedSettings: sharedSettings(),
@@ -85,7 +85,7 @@ func (executor *CodeExecutor) Execute(ctx context.Context, ir workflow.IRNode, i
 	}
 
 	limits := executor.limits
-	if seconds := numberValue(ir.Parameters["timeoutSeconds"]); seconds > 0 {
+	if seconds := timeoutParameter(ir.Parameters, "scriptTimeoutSeconds"); seconds > 0 {
 		requested := time.Duration(seconds * float64(time.Second))
 		// A node may tighten the deployment's ceiling, never raise it.
 		if limits.Timeout <= 0 || requested < limits.Timeout {

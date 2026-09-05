@@ -50,6 +50,63 @@ func DefaultLimits() Limits {
 	return Limits{Timeout: 30 * time.Second, MaxRows: 10_000}
 }
 
+// Ceiling bounds what a workflow document is allowed to ask for.
+//
+// A node's limits come from its parameters, and a parameter may be an
+// expression over the incoming item — so `{{ $json.maxRows }}` behind a webhook
+// lets whoever calls that webhook choose how much of the customer's database
+// this server buffers into memory. Limits are what a workflow wants; the
+// ceiling is what the deployment allows, and a document cannot raise it.
+type Ceiling struct {
+	// MaxRows bounds MaxRows. Zero means DefaultCeiling's value; there is no
+	// spelling for "unbounded", because an unbounded row buffer is the defect.
+	MaxRows int
+	// MaxTimeout bounds Timeout, so a statement cannot hold a connection to
+	// the user's database open indefinitely.
+	MaxTimeout time.Duration
+}
+
+// DefaultCeiling is the bound applied when a deployment configures nothing.
+//
+// Both values sit well above the node defaults (10,000 rows, 30 seconds) on
+// purpose: the ceiling exists to stop a document asking for something absurd,
+// not to second-guess an author who knows their own data.
+func DefaultCeiling() Ceiling {
+	return Ceiling{MaxRows: 50_000, MaxTimeout: 5 * time.Minute}
+}
+
+// Apply clamps limits to the ceiling and reports what it clamped.
+//
+// It clamps rather than refusing. A workflow asking for more rows than the
+// deployment allows still wants the rows it can have, and failing the run
+// outright teaches the author nothing about where the boundary is. The
+// returned map is the clamped-to values, so the node can say on its output
+// that it did not read everything — silently returning fewer rows than were
+// asked for is how a partial read gets mistaken for a complete one.
+func (ceiling Ceiling) Apply(limits Limits) (Limits, map[string]any) {
+	fallback := DefaultCeiling()
+	if ceiling.MaxRows <= 0 {
+		ceiling.MaxRows = fallback.MaxRows
+	}
+	if ceiling.MaxTimeout <= 0 {
+		ceiling.MaxTimeout = fallback.MaxTimeout
+	}
+
+	var clamped map[string]any
+	if limits.MaxRows > ceiling.MaxRows {
+		limits.MaxRows = ceiling.MaxRows
+		clamped = map[string]any{"maxRows": float64(ceiling.MaxRows)}
+	}
+	if limits.Timeout > ceiling.MaxTimeout {
+		limits.Timeout = ceiling.MaxTimeout
+		if clamped == nil {
+			clamped = map[string]any{}
+		}
+		clamped["timeoutSeconds"] = ceiling.MaxTimeout.Seconds()
+	}
+	return limits, clamped
+}
+
 // Guard describes paths a SQLite credential must never be able to open.
 type Guard struct {
 	// InternalPaths are KilasFlow's own database files. A workflow that could
@@ -283,6 +340,16 @@ func (connection *Connection) Query(ctx context.Context, statement string, param
 	}
 	defer rows.Close()
 
+	return scanRows(rows, limits.MaxRows)
+}
+
+// scanRows reads a result set into item JSON, stopping at maxRows.
+//
+// Shared by Query and by a transaction statement declared as returning, so a
+// row coming back out of a transaction is normalized exactly like one coming
+// back out of a query — a driver value that became a string on one path and
+// base64 on the other would be a difference nobody could explain.
+func scanRows(rows *sql.Rows, maxRows int) (Result, error) {
 	columns, err := rows.Columns()
 	if err != nil {
 		return Result{}, fmt.Errorf("read columns: %w", err)
@@ -290,7 +357,7 @@ func (connection *Connection) Query(ctx context.Context, statement string, param
 
 	result := Result{Rows: make([]map[string]any, 0, 16)}
 	for rows.Next() {
-		if len(result.Rows) >= limits.MaxRows {
+		if len(result.Rows) >= maxRows {
 			result.Truncated = true
 			break
 		}
@@ -344,6 +411,95 @@ func (connection *Connection) Execute(ctx context.Context, statement string, par
 	return Result{RowsAffected: affected, Rows: []map[string]any{}}, nil
 }
 
+// ExecuteBatch runs one statement once per bound parameter set, atomically.
+//
+// A node used to run a statement per input item on its own, so a hundred-row
+// insert was a hundred parses and a hundred round trips — and, because Open
+// pins the pool to one connection, a hundred serial ones. Here the statement
+// is prepared once and every set goes through the prepared handle.
+//
+// The whole batch is one transaction. A bulk write that fails halfway used to
+// leave the first half applied and report only the error, which is the worst
+// of the three possible outcomes: nothing tells the author how far it got, and
+// re-running duplicates whatever did land.
+//
+// The timeout bounds each statement rather than the batch, which is what the
+// node's "statement timeout" says it does. The batch as a whole is bounded by
+// ctx — the node's own timeout setting and the execution's.
+//
+// Statements are prepared per distinct SQL text and reused while it stays the
+// same, which is one prepare for the ordinary case where every item runs the
+// same statement with different parameters. The text can differ per item only
+// because it may be built from an expression; when it does, the batch is still
+// one transaction.
+func (connection *Connection) ExecuteBatch(ctx context.Context, statements []Statement, limits Limits) ([]Result, error) {
+	if connection == nil || connection.db == nil {
+		return nil, fmt.Errorf("database connection is not open")
+	}
+	if len(statements) == 0 {
+		return nil, nil
+	}
+	for index, statement := range statements {
+		if strings.TrimSpace(statement.SQL) == "" {
+			return nil, fmt.Errorf("item %d: statement is required", index+1)
+		}
+	}
+	if limits.Timeout <= 0 {
+		limits.Timeout = DefaultLimits().Timeout
+	}
+
+	tx, err := connection.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin transaction: %w", err)
+	}
+
+	var (
+		prepared    *sql.Stmt
+		preparedSQL string
+	)
+	// Named so both the failure paths and the success path release it.
+	closePrepared := func() {
+		if prepared != nil {
+			_ = prepared.Close()
+			prepared = nil
+		}
+	}
+
+	results := make([]Result, 0, len(statements))
+	for index, statement := range statements {
+		if prepared == nil || statement.SQL != preparedSQL {
+			closePrepared()
+			stmt, err := tx.PrepareContext(ctx, statement.SQL)
+			if err != nil {
+				_ = tx.Rollback()
+				return nil, fmt.Errorf("prepare statement for item %d and the batch was rolled back: %w", index+1, err)
+			}
+			prepared, preparedSQL = stmt, statement.SQL
+		}
+
+		outcome, err := func() (sql.Result, error) {
+			statementCtx, cancel := context.WithTimeout(ctx, limits.Timeout)
+			defer cancel()
+			return prepared.ExecContext(statementCtx, statement.Parameters...)
+		}()
+		if err != nil {
+			closePrepared()
+			_ = tx.Rollback()
+			// The item number is the point of the message: "statement failed"
+			// over five hundred items says nothing about which row was wrong.
+			return nil, fmt.Errorf("item %d failed and the batch was rolled back: %w", index+1, err)
+		}
+		affected, _ := outcome.RowsAffected()
+		results = append(results, Result{RowsAffected: affected, Rows: []map[string]any{}})
+	}
+
+	closePrepared()
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit batch: %w", err)
+	}
+	return results, nil
+}
+
 // Transaction runs several statements atomically.
 //
 // The transaction is scoped to one node execution: it commits when every
@@ -363,8 +519,28 @@ func (connection *Connection) Transaction(ctx context.Context, statements []Stat
 	if err != nil {
 		return nil, fmt.Errorf("begin transaction: %w", err)
 	}
+	if limits.MaxRows <= 0 {
+		limits.MaxRows = DefaultLimits().MaxRows
+	}
+
 	results := make([]Result, 0, len(statements))
-	for _, statement := range statements {
+	for index, statement := range statements {
+		// Only a statement that declared itself returning goes through Query.
+		// Routing every statement that way looks correct and is not: a
+		// non-returning statement run through Query comes back as a result set
+		// with no columns and no reachable RowsAffected, so every transaction
+		// in the installation would quietly start reporting zero rows affected
+		// while still saying it committed. Nothing errors, and the first report
+		// is somebody reconciling counts weeks later.
+		if statement.Returning {
+			result, err := returningStatement(txCtx, tx, statement, limits.MaxRows)
+			if err != nil {
+				_ = tx.Rollback()
+				return nil, fmt.Errorf("statement %d failed and the transaction was rolled back: %w", index+1, err)
+			}
+			results = append(results, result)
+			continue
+		}
 		outcome, err := tx.ExecContext(txCtx, statement.SQL, statement.Parameters...)
 		if err != nil {
 			_ = tx.Rollback()
@@ -383,6 +559,39 @@ func (connection *Connection) Transaction(ctx context.Context, statements []Stat
 type Statement struct {
 	SQL        string
 	Parameters []any
+	// Returning marks a statement whose rows the caller wants back, so an
+	// `INSERT … RETURNING id` inside a transaction hands the generated id on
+	// instead of discarding it.
+	//
+	// It is declared, never sniffed from the SQL text. Looking for a leading
+	// SELECT or a trailing RETURNING is defeated by a comment, a CTE, or a
+	// `WITH … RETURNING`, and the right answer differs per driver — so the
+	// heuristic would be wrong on exactly the statements worth writing.
+	Returning bool
+}
+
+// returningStatement runs one declared-returning statement inside a transaction
+// and reads its rows.
+//
+// RowsAffected is set from the row count rather than left at zero: a driver
+// does not report it for a statement run through Query, and the summary a node
+// builds from these results has to keep adding up. It therefore counts the rows
+// that were read, which is the same thing unless MaxRows stopped the read — and
+// that case sets Truncated, so the partial count is never presented as a whole
+// one.
+func returningStatement(ctx context.Context, tx *sql.Tx, statement Statement, maxRows int) (Result, error) {
+	rows, err := tx.QueryContext(ctx, statement.SQL, statement.Parameters...)
+	if err != nil {
+		return Result{}, err
+	}
+	defer rows.Close()
+
+	result, err := scanRows(rows, maxRows)
+	if err != nil {
+		return Result{}, err
+	}
+	result.RowsAffected = int64(len(result.Rows))
+	return result, nil
 }
 
 // normalize converts driver values into JSON-safe item data.
