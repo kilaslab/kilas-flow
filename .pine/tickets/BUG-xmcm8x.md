@@ -1,10 +1,10 @@
 ---
 id: BUG-xmcm8x
 title: Export drops a mapped node's error handling and the workflow timezone
-status: doing
+status: done
 priority: high
 created: "2026-09-05T17:54:19Z"
-updated: "2026-09-05T19:10:56Z"
+updated: "2026-09-05T19:13:10Z"
 ---
 
 # Description
