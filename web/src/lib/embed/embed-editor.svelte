@@ -6,8 +6,8 @@
 	import { runWorkflow } from '$lib/api/generated/workflow-lifecycle/workflow-lifecycle';
 	import { createGetWorkflow, updateWorkflow } from '$lib/api/generated/workflows/workflows';
 	import type { CredentialResource, Definition, WorkflowDocumentInput, WorkflowResource } from '$lib/api/generated/models';
-	import WorkflowEditor from '$lib/components/workflow-editor/workflow-editor.svelte';
-	import { scopeAllows, type EmbedSession } from './session.svelte';
+	import WorkflowEditor, { type WorkflowHistoryHost } from '$lib/components/workflow-editor/workflow-editor.svelte';
+	import { SCOPE_PUBLISH, scopeAllows, type EmbedSession } from './session.svelte';
 	import { validationIssuesFromApiError, type CanvasValidationIssue } from '$lib/workflow-editor/validation';
 
 	// This component is mounted only after the host handshake has completed, so
@@ -17,6 +17,13 @@
 
 	const canWrite = $derived(scopeAllows(session, 'workflow:write'));
 	const canRun = $derived(scopeAllows(session, 'workflow:run'));
+	const canRead = $derived(scopeAllows(session, 'workflow:read'));
+	// Publishing an embedded workflow makes its webhook live for the whole
+	// deployment, so it needs a scope of its own that the server does not mint
+	// by default. Every session in existence today evaluates this to false, and
+	// the publish controls stay hidden — which is the intended default, not an
+	// oversight.
+	const canPublish = $derived(scopeAllows(session, SCOPE_PUBLISH));
 	const branding = $derived(session.branding);
 
 	const workflow = createGetWorkflow<WorkflowResource>(() => session.workflowId, () => ({
@@ -69,6 +76,36 @@
 			saving = false;
 		}
 	}
+
+	/**
+	 * The version panel's wiring, matching the dashboard's shape exactly.
+	 *
+	 * Browsing and diffing history is a read, restoring is a write, and
+	 * publishing needs the separate publish scope. The server's embed
+	 * middleware draws the same three lines; these flags only decide which
+	 * controls are worth showing, and are never what stops a request.
+	 */
+	const history = $derived<WorkflowHistoryHost | null>(
+		currentWorkflow && canRead
+			? {
+					workflowID: currentWorkflow.id,
+					latestVersionID: currentWorkflow.latestVersion.id,
+					canRestore: canWrite,
+					canPublish,
+					onRestored: (workflow) => {
+						currentWorkflow = workflow;
+						notifyHost('workflow-saved', { revision: workflow.latestVersion.revision });
+					},
+					onPublished: (workflow, version) => {
+						currentWorkflow = workflow;
+						notifyHost('workflow-published', { versionId: version.id, revision: version.revision });
+					},
+					onUnpublished: (workflow) => {
+						currentWorkflow = workflow;
+					}
+				}
+			: null
+	);
 
 	async function run() {
 		if (!currentWorkflow || !canRun) return;
@@ -140,6 +177,8 @@
 			{saveIssues}
 			{runError}
 			{runMessage}
+			{history}
+			active={currentWorkflow.active}
 			onSave={save}
 			onRun={run}
 		/>

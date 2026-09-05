@@ -1,7 +1,30 @@
+<script lang="ts" module>
+	import type { WorkflowResource, WorkflowVersionSummaryResource } from '$lib/api/generated/models';
+
+	/**
+	 * Everything the version panel needs, as one prop.
+	 *
+	 * Bundled rather than spread across eight props so the dashboard page and
+	 * the embed shell cannot mount the panel with different halves of it wired
+	 * up — the two hosts have drifted on error handling once already.
+	 */
+	export type WorkflowHistoryHost = {
+		workflowID: string;
+		/** The revision the canvas was loaded from. */
+		latestVersionID: string;
+		canRestore: boolean;
+		canPublish: boolean;
+		onRestored: (workflow: WorkflowResource) => void;
+		onPublished: (workflow: WorkflowResource, version: WorkflowVersionSummaryResource) => void;
+		onUnpublished: (workflow: WorkflowResource) => void;
+	};
+</script>
+
 <script lang="ts">
 	import { tick, type Snippet } from 'svelte';
 
 	import { Background, BackgroundVariant, Controls, SvelteFlow, type Connection as FlowConnection } from '@xyflow/svelte';
+	import History from '@lucide/svelte/icons/history';
 	import Play from '@lucide/svelte/icons/play';
 	import Plus from '@lucide/svelte/icons/plus';
 	import Power from '@lucide/svelte/icons/power';
@@ -36,6 +59,7 @@
 	import CanvasNode from './canvas-node.svelte';
 	import NodePicker from './node-picker.svelte';
 	import PropertiesPanel from './properties-panel.svelte';
+	import VersionPanel from './version-panel.svelte';
 
 	let {
 		header,
@@ -55,6 +79,7 @@
 		activating = false,
 		notices = [],
 		activationError = null,
+		history = null,
 		onSave,
 		onRun,
 		onActivate,
@@ -84,6 +109,8 @@
 		/** What the last activation could not do for the user, until dismissed. */
 		notices?: ActivationNoticeView[];
 		activationError?: string | null;
+		/** Supplied by a surface that can reach the version history. Null hides it. */
+		history?: WorkflowHistoryHost | null;
 		onSave: (input: WorkflowDocumentInput) => Promise<void>;
 		onRun: () => Promise<void>;
 		onActivate?: () => Promise<void>;
@@ -118,18 +145,45 @@
 	let wasPropertyPanelOpen = $state(false);
 	let canvasRegion = $state<HTMLDivElement>();
 	let inspectorRegion = $state<HTMLElement>();
+	let historyOpen = $state(false);
+	/**
+	 * The stored revision being previewed on the canvas, or null for the draft.
+	 *
+	 * The preview is drawn *beside* `draft` rather than into it. Loading a
+	 * version into the draft and putting it back afterwards would be the same
+	 * work with one extra failure — anything that went wrong mid-way, including
+	 * closing the panel, would leave the user's unsaved edits overwritten by a
+	 * version they were only looking at.
+	 */
+	let preview = $state<{ versionID: string; revision: number; document: Document } | null>(null);
+	/** Compile failures a publish was refused with, shown in the save-issue list. */
+	let historyIssues = $state<CanvasValidationIssue[]>([]);
+
+	const previewing = $derived(preview !== null);
+	/** What the canvas is showing: the previewed revision, or the draft. */
+	const displayed = $derived(preview?.document ?? draft);
+	// Previewing is read-only for the same reason `readOnly` is, and is folded
+	// into one flag so a new mutation cannot be added that honours one and not
+	// the other.
+	const locked = $derived(readOnly || previewing);
+	const issues = $derived([...saveIssues, ...historyIssues]);
 
 	const dirty = $derived(!workflowDocumentEquals(document, draft));
+	// What the toolbar's live region announces. A preview outranks the other
+	// three because it is the only one under which the controls do nothing.
+	const canvasStatus = $derived(
+		preview ? `Previewing revision ${preview.revision}` : readOnly ? 'Read only' : dirty ? 'Unsaved changes' : 'All changes saved'
+	);
 	// Activation appears only for a surface that supplied both halves of it. The
 	// embed supplies neither, because a host application decides when its own
 	// workflows go live and a button inside its iframe would take that decision
 	// away from it.
-	const canActivate = $derived(!readOnly && Boolean(onActivate) && Boolean(onDeactivate));
+	const canActivate = $derived(!locked && Boolean(onActivate) && Boolean(onDeactivate));
 	// A dirty canvas has to be saved first, because activation pins the latest
 	// *saved* revision: activating here would publish something other than what
 	// the user is looking at. Deactivating is never ambiguous that way.
 	const activationBlockedByDirty = $derived(!active && dirty);
-	const selectedNode = $derived((draft.nodes ?? []).find((node) => node.id === selectedNodeID) ?? null);
+	const selectedNode = $derived((displayed.nodes ?? []).find((node) => node.id === selectedNodeID) ?? null);
 	const selectedDefinition = $derived(
 		selectedNode ? definitions.find((definition) => definition.type === selectedNode.type && definition.version === selectedNode.typeVersion) ?? null : null
 	);
@@ -139,7 +193,7 @@
 	const showInspector = $derived(!narrow.current && Boolean(selectedNode && selectedDefinition));
 
 	setCanvasActions({
-		readOnly: () => readOnly,
+		readOnly: () => locked,
 		addFrom: (nodeID, port) => openPickerFrom(nodeID, port),
 		remove: (nodeID) => removeNode(nodeID)
 	});
@@ -156,7 +210,11 @@
 		// Save validation errors arrive after the local graph has been drawn. Rebuild
 		// only the Flow projection so compiler locations become visible without
 		// discarding the user's canonical draft or current selection.
-		const canvas = documentFromCanvas(draft, definitions, saveIssues);
+		//
+		// Entering and leaving a preview runs through here for the same reason:
+		// only the projection changes, and `draft` is never read back out of it,
+		// so returning to the draft restores exactly what the user had.
+		const canvas = documentFromCanvas(displayed, definitions, issues);
 		nodes = canvas.nodes.map((node) => ({ ...node, selected: node.id === selectedNodeID }));
 		edges = canvas.edges.map((edge) => ({ ...edge, selected: edge.id === selectedEdgeID }));
 	});
@@ -181,7 +239,7 @@
 
 	function replaceDraft(next: Document) {
 		draft = next;
-		const canvas = documentFromCanvas(next, definitions, saveIssues);
+		const canvas = documentFromCanvas(next, definitions, issues);
 		// Hydrating canvas data from the canonical draft must not discard the
 		// current inspector selection after each property keystroke.
 		nodes = canvas.nodes.map((node) => ({ ...node, selected: node.id === selectedNodeID }));
@@ -199,14 +257,14 @@
 	}
 
 	function openPickerFrom(nodeID: string, port: string) {
-		if (readOnly) return;
+		if (locked) return;
 		pendingSource = { nodeID, port };
 		triggersOnly = false;
 		pickerOpen = true;
 	}
 
 	function addNode(definition: Definition) {
-		if (readOnly) return;
+		if (locked) return;
 		const existing = draft.nodes ?? [];
 		const from = pendingSource;
 		const source = from ? existing.find((candidate) => candidate.id === from.nodeID) : undefined;
@@ -238,12 +296,12 @@
 	}
 
 	function syncCanvas() {
-		if (readOnly) return;
+		if (locked) return;
 		replaceDraft(documentFromFlow(draft, nodes, edges));
 	}
 
 	function onConnect(connection: FlowConnection) {
-		if (readOnly) return;
+		if (locked) return;
 		const next = connectionFromCanvas(connection, draft.nodes ?? [], definitions, draft.connections ?? []);
 		if (!next) return;
 		replaceDraft({ ...draft, connections: [...(draft.connections ?? []), next] });
@@ -256,7 +314,7 @@
 	}
 
 	function removeNode(nodeID: string) {
-		if (readOnly) return;
+		if (locked) return;
 		replaceDraft({
 			...draft,
 			nodes: (draft.nodes ?? []).filter((node) => node.id !== nodeID),
@@ -271,7 +329,7 @@
 
 	/** Only reachable for a connection: a node is deleted from its own toolbar. */
 	function removeSelectedConnection() {
-		if (readOnly || !selectedEdgeID) return;
+		if (locked || !selectedEdgeID) return;
 		const edgeID = selectedEdgeID;
 		selectedEdgeID = null;
 		replaceDraft({ ...draft, connections: (draft.connections ?? []).filter((connection) => connection.id !== edgeID) });
@@ -287,12 +345,12 @@
 	}
 
 	function updateProperty(scope: PropertyScope, key: string, value: unknown) {
-		if (readOnly || !selectedNode) return;
+		if (locked || !selectedNode) return;
 		replaceDraft(updateNodeProperty(draft, selectedNode.id, scope, key, value));
 	}
 
 	function updateCredential(typeID: string, credentialID: string) {
-		if (readOnly || !selectedNode) return;
+		if (locked || !selectedNode) return;
 		replaceDraft(updateNodeCredential(draft, selectedNode.id, typeID, credentialID));
 	}
 
@@ -327,7 +385,7 @@
 	}
 
 	async function save() {
-		if (readOnly || !dirty || saving) return;
+		if (locked || !dirty || saving) return;
 		await onSave(toWorkflowInput(draft));
 	}
 
@@ -353,19 +411,27 @@
 			{@render header()}
 			<span aria-hidden="true" class="mx-1 h-4 w-px shrink-0 bg-border"></span>
 		{/if}
-		{#if !readOnly}
+		{#if !locked}
 			<button type="button" class="inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md bg-primary px-2.5 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2" onclick={() => openPicker(false)}>
 				<Plus aria-hidden="true" class="size-3.5" />Add step
 			</button>
 		{/if}
-		{#if !readOnly && !hideSave}
+		{#if !locked && !hideSave}
 			<button type="button" class="inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-border px-2.5 text-xs font-medium transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-40" disabled={!dirty || saving} onclick={() => void save()}>
 				<Save aria-hidden="true" class="size-3.5" />{saving ? 'Saving…' : 'Save'}
 			</button>
 		{/if}
 		{#if !hideRun}
-			<button type="button" class="inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-border px-2.5 text-xs font-medium transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-40" disabled={dirty || running} aria-describedby={dirty ? 'save-first-hint' : undefined} onclick={() => void run()}>
+			<!-- Running is refused while a past revision is on screen: the run
+			     would execute the saved draft, not the graph being looked at,
+			     which is the one thing a preview must never be mistaken for. -->
+			<button type="button" class="inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-border px-2.5 text-xs font-medium transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-40" disabled={dirty || running || previewing} aria-describedby={dirty ? 'save-first-hint' : undefined} onclick={() => void run()}>
 				<Play aria-hidden="true" class="size-3.5" />{running ? 'Running…' : 'Run'}
+			</button>
+		{/if}
+		{#if history}
+			<button type="button" class="inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-border px-2.5 text-xs font-medium transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2" aria-haspopup="dialog" aria-expanded={historyOpen} onclick={() => (historyOpen = true)}>
+				<History aria-hidden="true" class="size-3.5" />History
 			</button>
 		{/if}
 		{#if canActivate}
@@ -374,7 +440,7 @@
 				{activating ? (active ? 'Deactivating…' : 'Activating…') : active ? 'Deactivate' : 'Activate'}
 			</button>
 		{/if}
-		{#if !readOnly && selectedEdgeID && !selectedNodeID}
+		{#if !locked && selectedEdgeID && !selectedNodeID}
 			<button type="button" class="inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 text-xs font-medium text-destructive transition-colors hover:bg-destructive/10 focus-visible:outline-2 focus-visible:outline-offset-2" onclick={removeSelectedConnection}>
 				<Trash2 aria-hidden="true" class="size-3.5" />Delete connection
 			</button>
@@ -388,9 +454,9 @@
 				<span class="whitespace-nowrap">{active ? 'Active' : 'Inactive'}</span>
 				<span aria-hidden="true" class="mx-0.5 h-3 w-px bg-border"></span>
 			{/if}
-			{#if dirty && !readOnly}<span aria-hidden="true" class="size-1.5 rounded-full bg-warning"></span>{/if}
-			<span class="hidden whitespace-nowrap sm:inline">{readOnly ? 'Read only' : dirty ? 'Unsaved changes' : 'All changes saved'}</span>
-			<span class="sr-only sm:hidden">{readOnly ? 'Read only' : dirty ? 'Unsaved changes' : 'All changes saved'}</span>
+			{#if dirty && !locked}<span aria-hidden="true" class="size-1.5 rounded-full bg-warning"></span>{/if}
+			<span class="hidden whitespace-nowrap sm:inline">{canvasStatus}</span>
+			<span class="sr-only sm:hidden">{canvasStatus}</span>
 		</span>
 		{#if dirty}<span id="save-first-hint" class="sr-only">Save your changes before running or activating this workflow.</span>{/if}
 	</header>
@@ -398,9 +464,13 @@
 	{#if saveError}
 		<p role="alert" class="shrink-0 border-b border-destructive/25 bg-destructive/5 px-3 py-1.5 text-xs text-destructive">Save failed: {saveError}</p>
 	{/if}
-	{#if saveIssues.length > 0}
+	<!-- A publish refused by the compiler produces the same structured problem a
+	     refused save does, so both are rendered by this one list. A second list
+	     beside it would be the same information with a different way to click
+	     through to the node at fault. -->
+	{#if issues.length > 0}
 		<ul aria-label="Workflow validation issues" class="shrink-0 divide-y divide-destructive/10 border-b border-destructive/20 bg-destructive/5">
-			{#each saveIssues as issue (`${issue.code ?? ''}-${issue.nodeID ?? issue.connectionID ?? issue.message}`)}
+			{#each issues as issue (`${issue.code ?? ''}-${issue.nodeID ?? issue.connectionID ?? issue.message}`)}
 				<li><button type="button" class="w-full px-3 py-1.5 text-left text-xs text-destructive underline decoration-destructive/30 underline-offset-2 hover:decoration-destructive" onclick={() => focusValidationIssue(issue)}>{issue.message}{#if issue.nodeID} (node){:else if issue.connectionID} (connection){/if}</button></li>
 			{/each}
 		</ul>
@@ -418,16 +488,29 @@
 	{/if}
 	<ActivationNotices {notices} onDismiss={(key) => onDismissNotice?.(key)} />
 
+	<!-- A preview looks exactly like the editor, so it has to say that it is one
+	     and offer the way back in the same breath. Without this strip the only
+	     signal is that every control quietly stopped working. -->
+	{#if preview}
+		<div role="status" class="flex shrink-0 items-center gap-2 border-b border-primary/25 bg-primary/5 px-3 py-1.5 text-xs">
+			<History aria-hidden="true" class="size-3.5 shrink-0 text-primary" />
+			<span class="min-w-0 flex-1 truncate">Previewing revision {preview.revision}. Your unsaved draft is untouched.</span>
+			<button type="button" class="shrink-0 rounded-md border border-border bg-background px-2 py-0.5 text-xs font-medium transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-1" onclick={() => (preview = null)}>
+				Back to draft
+			</button>
+		</div>
+	{/if}
+
 	<div class="relative flex min-h-0 flex-1 flex-col lg:grid" style={showInspector ? 'grid-template-columns: minmax(0,1fr) 20rem' : 'grid-template-columns: minmax(0,1fr)'}>
 		<!-- tabindex makes this a place focus can land after a node is deleted; -1
 		     keeps it out of the tab sequence. -->
 		<div bind:this={canvasRegion} tabindex="-1" class="relative min-h-0 flex-1 overflow-hidden outline-none" data-testid="workflow-canvas">
-			<SvelteFlow bind:nodes bind:edges {nodeTypes} fitView fitViewOptions={{ padding: 0.15, maxZoom: 1 }} minZoom={0.3} nodesDraggable={!readOnly} nodesConnectable={!readOnly} deleteKey={readOnly ? null : ['Backspace', 'Delete']} isValidConnection={(connection) => canConnect(connection, draft.nodes ?? [], definitions, draft.connections ?? [])} onconnect={onConnect} ondelete={onDelete} onnodedragstop={syncCanvas} onselectionchange={onSelectionChange} onpaneclick={() => onSelectionChange({ nodes: [], edges: [] })}>
+			<SvelteFlow bind:nodes bind:edges {nodeTypes} fitView fitViewOptions={{ padding: 0.15, maxZoom: 1 }} minZoom={0.3} nodesDraggable={!locked} nodesConnectable={!locked} deleteKey={locked ? null : ['Backspace', 'Delete']} isValidConnection={(connection) => canConnect(connection, draft.nodes ?? [], definitions, draft.connections ?? [])} onconnect={onConnect} ondelete={onDelete} onnodedragstop={syncCanvas} onselectionchange={onSelectionChange} onpaneclick={() => onSelectionChange({ nodes: [], edges: [] })}>
 				<Background variant={BackgroundVariant.Dots} gap={16} size={1} patternColor="var(--border)" />
 				<Controls showLock={false} />
 			</SvelteFlow>
 
-			{#if (draft.nodes?.length ?? 0) === 0 && !readOnly}
+			{#if (displayed.nodes?.length ?? 0) === 0 && !locked}
 				<div class="pointer-events-none absolute inset-0 grid place-items-center p-4">
 					<div class="pointer-events-auto text-center">
 						<button type="button" class="mx-auto grid h-22 w-22 place-items-center rounded-l-[2.75rem] rounded-r-xl border border-dashed border-border bg-card text-muted-foreground transition-colors hover:border-primary hover:text-primary focus-visible:outline-2 focus-visible:outline-offset-4" aria-label="Add first workflow step" onclick={() => openPicker(true)}>
@@ -442,17 +525,38 @@
 
 		{#if showInspector && selectedNode && selectedDefinition}
 			<aside bind:this={inspectorRegion} tabindex="-1" class="hidden min-h-0 border-l border-border outline-none lg:block">
-				<PropertiesPanel node={selectedNode} definition={selectedDefinition} {credentials} {readOnly} onChange={updateProperty} onCredentialChange={updateCredential} />
+				<PropertiesPanel node={selectedNode} definition={selectedDefinition} {credentials} readOnly={locked} onChange={updateProperty} onCredentialChange={updateCredential} />
 			</aside>
 		{/if}
 
 		{#if narrow.current && propertyPanelOpen && selectedNode && selectedDefinition}
 			<div bind:this={propertyDialog} class="absolute inset-x-2 bottom-2 z-30 max-h-[min(28rem,calc(100%-1rem))] overflow-hidden rounded-xl border border-border bg-card shadow-xl" role="dialog" aria-modal="true" aria-label={`${selectedNode.name} properties`} tabindex="-1" onkeydown={handlePropertyDialogKeydown}>
 				<div class="flex justify-end border-b border-border px-1.5 py-1"><button bind:this={propertyCloseButton} type="button" class="grid size-6 place-items-center rounded-md text-muted-foreground hover:bg-muted" aria-label="Close node properties" onclick={closePropertyPanel}><X aria-hidden="true" class="size-3.5" /></button></div>
-				<PropertiesPanel node={selectedNode} definition={selectedDefinition} {credentials} {readOnly} onChange={updateProperty} onCredentialChange={updateCredential} />
+				<PropertiesPanel node={selectedNode} definition={selectedDefinition} {credentials} readOnly={locked} onChange={updateProperty} onCredentialChange={updateCredential} />
 			</div>
 		{/if}
 	</div>
 
 	<NodePicker bind:open={pickerOpen} {definitions} {triggersOnly} connecting={Boolean(pendingSource)} onSelect={addNode} onDismiss={() => (pendingSource = null)} />
+
+	{#if history}
+		<!-- Mounted here rather than by each host so both surfaces get the same
+		     panel wired the same way, and so `dirty` — which only this component
+		     knows — reaches the restore guard without a round trip. -->
+		<VersionPanel
+			bind:open={historyOpen}
+			bind:preview
+			workflowID={history.workflowID}
+			{draft}
+			{dirty}
+			latestVersionID={history.latestVersionID}
+			{active}
+			canRestore={history.canRestore && !readOnly}
+			canPublish={history.canPublish}
+			onRestored={history.onRestored}
+			onPublished={history.onPublished}
+			onUnpublished={history.onUnpublished}
+			onIssues={(next) => (historyIssues = next)}
+		/>
+	{/if}
 </section>
