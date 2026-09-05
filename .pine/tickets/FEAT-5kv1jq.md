@@ -1,7 +1,7 @@
 ---
 id: FEAT-5kv1jq
 title: Shape webhook trigger payloads per node type and keep the raw body
-status: todo
+status: done
 priority: high
 labels:
     - engine
@@ -23,13 +23,13 @@ Second, no signature can ever be verified. Both WAHA's `X-Webhook-Hmac` (sha512 
 
 ## Acceptance criteria
 
-- [ ] The exact request bytes are captured at ingest and remain available to the trigger node that consumes them, byte-for-byte identical to what the client sent.
-- [ ] The item shape a webhook delivery produces is determined by the bound trigger node's type, not hardcoded in the HTTP handler.
-- [ ] The existing `kilasflow.webhook` trigger keeps producing `{method, path, headers, query, body}` so no already-activated workflow changes behaviour.
-- [ ] A trigger type can declare an n8n-compatible shape and receive `{body, headers, params, query}`, and a trigger type can declare that the parsed body *is* the item so `$json.event` resolves at top level.
-- [ ] A body that is not valid JSON — form-encoded, plain text, binary — reaches the trigger without being lost or corrupted, and its content type is available.
-- [ ] The raw bytes never enter a stored execution record or an API response unless the trigger's shape puts them there deliberately.
-- [ ] A trigger can verify an HMAC over the raw body before the execution is queued, and a failed verification is refused at the HTTP boundary rather than inside the workflow.
+- [x] The exact request bytes are captured at ingest and remain available to the trigger node that consumes them, byte-for-byte identical to what the client sent.
+- [x] The item shape a webhook delivery produces is determined by the bound trigger node's type, not hardcoded in the HTTP handler.
+- [x] The existing `kilasflow.webhook` trigger keeps producing `{method, path, headers, query, body}` so no already-activated workflow changes behaviour.
+- [x] A trigger type can declare an n8n-compatible shape and receive `{body, headers, params, query}`, and a trigger type can declare that the parsed body *is* the item so `$json.event` resolves at top level.
+- [x] A body that is not valid JSON — form-encoded, plain text, binary — reaches the trigger without being lost or corrupted, and its content type is available.
+- [x] The raw bytes never enter a stored execution record or an API response unless the trigger's shape puts them there deliberately.
+- [x] A trigger can verify an HMAC over the raw body before the execution is queued, and a failed verification is refused at the HTTP boundary rather than inside the workflow.
 
 ## Implementation Plan
 
@@ -51,3 +51,68 @@ The traps. `strings.Trim(strings.TrimPrefix(r.URL.Path, "/webhook"), "/")` (webh
 - `internal/repository/webhooks.go`, `internal/repository/models.go` — `WebhookBinding`, `WebhookTrigger`, `webhookBindingModel`.
 - Reference checkout: `/Users/izzadev/projects/mitrachat/n8n/packages/workflow/src/interfaces.ts` — `IWebhookFunctions` (`getBodyData`, `getHeaderData`, `getParamsData`, `getQueryData`).
 - Reference package: `/Users/izzadev/projects/mitrachat/mitrachat-orpc-input-fix/packages/n8n-nodes-mitrachat/nodes/MitraChatWebhookTrigger/MitraChatWebhookTrigger.node.ts` — raw-body HMAC verification and the top-level item shape it returns.
+
+## Outcome
+
+### Raw bytes
+
+Captured once at ingest and carried on a `Delivery` rather than on the item, as
+recommended. Putting them on the item would double every payload in the
+executions table, make redaction's job harder and expose the body twice in the
+API — so verification, which is the only thing that needs them, reaches them
+where they are, and nothing stores them.
+
+`TestRawBytesNeverReachAStoredRecord` proves both halves at once by sending a
+body with incidental whitespace: the value the workflow runs on is in the
+record, the exact bytes are not.
+
+### Shaping by trigger type
+
+`webhook.Registry` maps a trigger node type to a `TriggerKind`, populated at
+composition exactly like the executor registry, so the HTTP boundary holds no
+node-type knowledge of its own. Three named shapes rather than Go functions per
+node, because a generated node pack cannot ship Go code and must be able to
+*name* the shape it wants:
+
+- `envelope` — today's keys, unchanged, and the default for any unregistered
+  type including every binding written before node types were recorded.
+- `n8nCore` — `{body, headers, params, query}`, what n8n's own Webhook node
+  emits.
+- `bodyAsItem` — the parsed body at the top level, so a WAHA workflow's
+  `$json.event` resolves instead of being `undefined` at `$json.body.event`.
+
+`NodeType` was added to `WebhookTrigger` and the binding row, populated by the
+extractor. The next phase's registry-driven binding work needs that column
+anyway, so it is not throwaway.
+
+### params
+
+Emitted as a present, empty object. n8n's path parameters come from a route
+pattern, and a binding has no pattern behind it — a route is one opaque segment.
+Present-and-empty means an expression reading it gets an empty object rather
+than failing, and the reason is recorded where the shape is defined.
+
+### Non-JSON bodies
+
+A body that is not JSON is carried as a string rather than lost, form-encoded
+bodies are decoded into an object so a form POST reads like JSON, and the
+content type travels on the envelope so a workflow can tell what it received.
+
+### HMAC
+
+`webhook.HMACVerifier` signs over the raw bytes and runs at the HTTP boundary
+before the execution is queued, so a request that fails is answered with a 401
+and never becomes an execution at all.
+
+The test does not merely check a good signature passes — it also asserts that a
+re-marshalled body produces a *different* signature, which is the property that
+made this impossible before the bytes were carried and the reason n8n's own
+community trigger warns loudly when it has to fall back to re-serialising. A
+missing signature is refused rather than passed, because a verifier that accepts
+an absent signature verifies nothing.
+
+### One deliberate addition
+
+The envelope gained a `contentType` key. It is additive, so no existing
+expression changes meaning, and it is what makes "its content type is available"
+true for the five-key shape rather than only for the new ones.

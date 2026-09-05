@@ -24,6 +24,7 @@ type WebhookBinding struct {
 	WorkflowID        string
 	WorkflowVersionID string
 	NodeID            string
+	NodeType          string
 	Method            string
 	// Route is the opaque segment the public URL carries.
 	Route string
@@ -39,6 +40,7 @@ type WebhookBinding struct {
 // package stays free of node-type knowledge, so the caller supplies these.
 type WebhookTrigger struct {
 	NodeID     string
+	NodeType   string
 	Method     string
 	Path       string
 	Parameters map[string]any
@@ -88,7 +90,8 @@ func (store *GORMWorkflowStore) Resolve(ctx context.Context, method, route strin
 	}
 	binding := WebhookBinding{
 		TenantID: model.TenantID, WorkflowID: model.WorkflowID, WorkflowVersionID: model.WorkflowVersionID,
-		NodeID: model.NodeID, Method: model.Method, Route: model.Route, Path: model.Path, Parameters: parameters,
+		NodeID: model.NodeID, NodeType: model.NodeType, Method: model.Method,
+		Route: model.Route, Path: model.Path, Parameters: parameters,
 	}
 	if binding.Route == "" {
 		binding.Route = model.Path
@@ -120,7 +123,8 @@ func syncWebhookBindings(tx *gorm.DB, tenantID, workflowID, versionID string, tr
 			return err
 		}
 		binding := webhookBindingModel{
-			TenantID: tenantID, WorkflowID: workflowID, WorkflowVersionID: versionID, NodeID: trigger.NodeID,
+			TenantID: tenantID, WorkflowID: workflowID, WorkflowVersionID: versionID,
+			NodeID: trigger.NodeID, NodeType: trigger.NodeType,
 			Method: trigger.Method, Route: route, Path: trigger.Path, Parameters: parameters, CreatedAt: now,
 		}
 		if err := tx.Create(&binding).Error; err != nil {
@@ -212,7 +216,7 @@ func (store *GORMWorkflowStore) WebhookRoutes(ctx context.Context, tenant Tenant
 		}
 		bindings = append(bindings, WebhookBinding{
 			TenantID: model.TenantID, WorkflowID: model.WorkflowID, WorkflowVersionID: model.WorkflowVersionID,
-			NodeID: model.NodeID, Method: model.Method, Route: route, Path: model.Path,
+			NodeID: model.NodeID, NodeType: model.NodeType, Method: model.Method, Route: route, Path: model.Path,
 		})
 	}
 	return bindings, nil

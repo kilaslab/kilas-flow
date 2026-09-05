@@ -151,6 +151,14 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("configure execution runtime: %w", err)
 	}
+	// How each trigger type shapes an inbound delivery. KilasFlow's own webhook
+	// keeps the envelope it has always produced; a pack-supplied trigger names
+	// the shape it wants rather than shipping Go code to build one.
+	webhookTriggers := webhook.NewRegistry()
+	if err := webhookTriggers.Register(nodes.WebhookNodeType, webhook.TriggerKind{Shape: webhook.ShapeEnvelope}); err != nil {
+		return fmt.Errorf("register webhook triggers: %w", err)
+	}
+
 	if err := runtime.Start(ctx, cfg.Execution.MaxConcurrent); err != nil {
 		return fmt.Errorf("start execution runtime: %w", err)
 	}
@@ -179,7 +187,8 @@ func run() error {
 		Webhook: webhook.NewHandler(workflows, runtime, credentialStore, eventBroker, webhook.Limits{
 			MaxBodyBytes:    cfg.Webhook.MaxBodyBytes,
 			ResponseTimeout: cfg.Webhook.ResponseTimeout,
-		}),
+			DeliveryWindow:  repository.DefaultDeliveryWindow,
+		}).WithTriggers(webhookTriggers),
 		Credentials:         credentialStore,
 		Events:              eventBroker,
 		EmbedIssuer:         embedIssuer,

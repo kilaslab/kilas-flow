@@ -32,6 +32,11 @@ type webhookBindingModel struct {
 	WorkflowID        string `gorm:"not null;size:64;index:idx_webhook_bindings_workflow,priority:2"`
 	WorkflowVersionID string `gorm:"not null;size:64"`
 	NodeID            string `gorm:"not null;size:64"`
+	// NodeType is the trigger's registered type. The HTTP boundary needs it to
+	// decide what shape a delivery takes: an n8n-compatible trigger expects a
+	// different item to KilasFlow's own, and a third-party trigger expects the
+	// parsed body at the top level rather than nested under a key.
+	NodeType string `gorm:"not null;size:128;default:''"`
 	// Route is the opaque segment the URL actually carries, and it is what an
 	// inbound request resolves on. The unique index still spans the whole
 	// route globally, because an inbound webhook has no session and the route

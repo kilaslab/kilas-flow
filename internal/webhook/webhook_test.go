@@ -824,3 +824,49 @@ func TestADeliveryWithNoIdentifierIsNeverDeduped(t *testing.T) {
 		t.Errorf("three unidentified deliveries produced %d executions, want 3", len(executions))
 	}
 }
+
+// TestRawBytesNeverReachAStoredRecord keeps the capture from becoming a leak.
+//
+// The exact bytes are carried so a signature can be verified, and verification
+// is the only thing that needs them. Putting them on the item would double
+// every payload in the executions table, make redaction's job harder, and
+// expose the body twice in the API.
+func TestRawBytesNeverReachAStoredRecord(t *testing.T) {
+	h := newHarness(t)
+	active := h.activate(t, webhookDocument("Raw", map[string]any{
+		"path": "raw", "httpMethod": http.MethodPost, "responseMode": "immediate", "responseCode": float64(202),
+	}))
+
+	// Whitespace that only survives in the raw bytes: a decoded-and-remarshalled
+	// body loses it, so finding it in the record would prove the raw bytes were
+	// stored.
+	const body = `{"marker":"raw-only",   "spaced":true}`
+	recorder := httptest.NewRecorder()
+	h.handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, h.url(t, active), strings.NewReader(body)))
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("status = %d (body: %s)", recorder.Code, recorder.Body)
+	}
+
+	var accepted struct {
+		ExecutionID string `json:"executionId"`
+	}
+	_ = json.Unmarshal(recorder.Body.Bytes(), &accepted)
+	h.drain(t)
+	record, err := h.runtime.Get(context.Background(), h.tenant, accepted.ExecutionID)
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	encoded, _ := json.Marshal(record)
+
+	// The value is there, because the workflow runs on it.
+	if !strings.Contains(string(encoded), "raw-only") {
+		t.Errorf("the record lost the body the workflow runs on: %s", encoded)
+	}
+	// The bytes are not, because nothing put them there.
+	if strings.Contains(string(encoded), `"marker":"raw-only",   "spaced"`) {
+		t.Errorf("the raw request bytes were stored verbatim: %s", encoded)
+	}
+	if strings.Contains(string(encoded), "rawBody") {
+		t.Errorf("the record carries a rawBody field: %s", encoded)
+	}
+}

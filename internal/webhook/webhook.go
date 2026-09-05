@@ -43,7 +43,11 @@ type Runner interface {
 
 // Handler serves the inbound webhook surface.
 type Handler struct {
-	bindings    repository.WebhookRepository
+	bindings repository.WebhookRepository
+	// triggers says how each trigger node type shapes and verifies a delivery.
+	// Nil means every trigger gets the envelope shape, which is what they all
+	// got before this existed.
+	triggers    *Registry
 	runner      Runner
 	credentials repository.CredentialRepository
 	events      *events.Broker
@@ -51,6 +55,13 @@ type Handler struct {
 }
 
 // NewHandler constructs the inbound webhook boundary.
+// WithTriggers registers how each trigger node type shapes and verifies its
+// deliveries. Without it every trigger keeps the envelope shape.
+func (handler *Handler) WithTriggers(triggers *Registry) *Handler {
+	handler.triggers = triggers
+	return handler
+}
+
 func NewHandler(bindings repository.WebhookRepository, runner Runner, creds repository.CredentialRepository, broker *events.Broker, limits Limits) *Handler {
 	if limits.MaxBodyBytes <= 0 {
 		limits.MaxBodyBytes = DefaultLimits().MaxBodyBytes
@@ -90,9 +101,25 @@ func (handler *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	payload, err := handler.requestPayload(r, binding)
+	delivery, err := handler.readDelivery(r, binding)
 	if err != nil {
 		problem(w, http.StatusRequestEntityTooLarge, err.Error())
+		return
+	}
+
+	// The trigger's own type decides both the shape and whether the delivery is
+	// acceptable at all. A signature check belongs here rather than inside the
+	// workflow: a request that fails it should never become an execution.
+	kind := handler.triggers.Lookup(binding.NodeType)
+	if kind.Verify != nil {
+		if err := kind.Verify(delivery); err != nil {
+			problem(w, http.StatusUnauthorized, err.Error())
+			return
+		}
+	}
+	payload, err := json.Marshal(kind.Shape.Apply(delivery))
+	if err != nil {
+		problem(w, http.StatusBadRequest, "The request could not be encoded.")
 		return
 	}
 
@@ -230,13 +257,21 @@ func equal(got, want string) bool {
 //
 // Headers are redacted here, before the payload is ever handed to the engine,
 // so an inbound Authorization header never reaches an execution record.
-func (handler *Handler) requestPayload(r *http.Request, binding repository.WebhookBinding) (json.RawMessage, error) {
-	body, err := io.ReadAll(io.LimitReader(r.Body, handler.limits.MaxBodyBytes+1))
+// readDelivery captures everything the HTTP boundary knows about a request,
+// including the exact bytes the client sent.
+//
+// Those bytes used to be discarded the moment the body was decoded, and the
+// envelope was re-marshalled from the decoded form — so no signature could ever
+// be verified. WAHA's X-Webhook-Hmac is a sha512 over the raw body, and a
+// re-marshalled body does not hash to the same value, so HMAC verification was
+// not merely unimplemented but impossible.
+func (handler *Handler) readDelivery(r *http.Request, binding repository.WebhookBinding) (Delivery, error) {
+	raw, err := io.ReadAll(io.LimitReader(r.Body, handler.limits.MaxBodyBytes+1))
 	if err != nil {
-		return nil, errors.New("The request body could not be read.")
+		return Delivery{}, errors.New("The request body could not be read.")
 	}
-	if int64(len(body)) > handler.limits.MaxBodyBytes {
-		return nil, fmt.Errorf("The request body exceeds the %d byte limit.", handler.limits.MaxBodyBytes)
+	if int64(len(raw)) > handler.limits.MaxBodyBytes {
+		return Delivery{}, fmt.Errorf("The request body exceeds the %d byte limit.", handler.limits.MaxBodyBytes)
 	}
 
 	headers := make(map[string]any, len(r.Header))
@@ -250,6 +285,7 @@ func (handler *Handler) requestPayload(r *http.Request, binding repository.Webho
 	// redacting it would put "[redacted]" on the wire to WAHA rather than the
 	// session the envelope named.
 	headers = execution.RedactMap(headers)
+
 	query := make(map[string]any, len(r.URL.Query()))
 	for key, values := range r.URL.Query() {
 		if len(values) > 0 {
@@ -257,28 +293,11 @@ func (handler *Handler) requestPayload(r *http.Request, binding repository.Webho
 		}
 	}
 
-	var decoded any
-	if len(body) > 0 && json.Valid(body) {
-		_ = json.Unmarshal(body, &decoded)
-	} else if len(body) > 0 {
-		decoded = string(body)
-	}
-
-	payload, err := json.Marshal(map[string]any{
-		"method": r.Method,
-		// The author's path, not the opaque route the URL carries. A workflow
-		// reading $json.path wants the endpoint it configured — "orders" —
-		// and putting a minted route there would both break every such
-		// expression and leak the route into workflow data.
-		"path":    binding.Path,
-		"headers": headers,
-		"query":   query,
-		"body":    decoded,
-	})
-	if err != nil {
-		return nil, errors.New("The request could not be encoded.")
-	}
-	return payload, nil
+	contentType := r.Header.Get("Content-Type")
+	return Delivery{
+		Request: r, RawBody: raw, ContentType: contentType, Binding: binding,
+		Headers: headers, Query: query, Body: decodeBody(raw, contentType),
+	}, nil
 }
 
 // await waits for the execution to reach a terminal state.
@@ -481,7 +500,8 @@ func Extract(nodeType string, normalizePath func(string) string) repository.Webh
 				parameters["$credentials"] = references
 			}
 			triggers = append(triggers, repository.WebhookTrigger{
-				NodeID: node.ID, Method: strings.ToUpper(method), Path: path, Parameters: parameters,
+				NodeID: node.ID, NodeType: node.Type,
+				Method: strings.ToUpper(method), Path: path, Parameters: parameters,
 			})
 		}
 		return triggers
