@@ -1,5 +1,37 @@
 # gflow — Product Requirements Document (PRD)
 
+> **Status: historical. This is the V1 design source, not documentation of the
+> shipped system.**
+>
+> The product is called **KilasFlow**. `gflow` was its working name and appears
+> throughout this document, as do `GFLOW_*` environment variables and a
+> `bin/gflow` binary; the shipped equivalents are `kilasflow`, `KILASFLOW_*` and
+> `bin/kilasflow`. `gflow` is the only former name of this product. The bare
+> string `kflow` also occurs in the repository, in `.pine/roadmap.md`, but it is
+> not a name for anything — it is the planned prefix for the tables KilasFlow
+> creates inside a customer's own PostgreSQL database.
+>
+> V1 was built from this document and then diverged from it, as designs do.
+> Section 48's Dockerfile, to take one measured example, specifies Node 22, Go
+> 1.25 and `distroless/static-debian12`; the `Dockerfile` in this repository
+> uses Node 24.16, Go 1.27 and `distroless/static-debian12:nonroot`. Section 25
+> plans the AI loop on Microsoft Agent Framework for Go, which is not
+> implemented — `internal/ai/maf/` is a reserved package containing only a
+> `doc.go`, and the runtime in use is `ai.LoopRuntime`. Assume every concrete
+> detail here has drifted the same way. **Where this document and the code
+> disagree, the code is right.**
+>
+> It is kept because the reasoning is still worth reading, and because rewriting
+> 2,700 lines to change a product name would bury what actually changed in the
+> design under a mechanical diff. The filename keeps the old name for the same
+> reason: it labels the artifact with the era it belongs to, roughly twenty
+> ticket bodies under `.pine/` cite this path, and a name that looked current
+> would invite the mistake this header exists to prevent.
+>
+> For what the system does now, read [`README.md`](README.md), `/docs` on a
+> running instance, or the code. For what is being built next, read
+> `.pine/roadmap.md`.
+
 **Status:** Draft V1  
 **Project Type:** Open-source embeddable workflow automation engine  
 **Primary Backend:** Go  
