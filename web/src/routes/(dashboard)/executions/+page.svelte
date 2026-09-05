@@ -15,6 +15,7 @@
 		readPage,
 		type CursorPage
 	} from '$lib/dashboard/cursor-page';
+	import { failedBesideRows } from '$lib/dashboard/list-state';
 	import { RequestGuard } from '$lib/dashboard/request-guard';
 	import { formatDuration, formatTimestamp, statusLabel, statusTone } from '$lib/workflow-editor/execution';
 
@@ -40,6 +41,12 @@
 	const guard = new RequestGuard();
 
 	const workflowNames = $derived(new Map((workflows.data ?? []).map((workflow) => [workflow.id, workflow.name])));
+
+	// A failure with rows behind it came from "Load more" — load() empties the
+	// page before it records one, so a first-load failure never reaches here.
+	const pagingFailure = $derived(
+		failedBesideRows({ loading, failed: failure !== null, count: page.items.length })
+	);
 
 	$effect(() => {
 		// Re-read whenever a filter changes; the first run also loads the page.
@@ -74,6 +81,10 @@
 		// own answer and leave the page stuck on its skeleton.
 		const token = guard.current;
 		loadingMore = true;
+		// Clearing here rather than on success is what makes a second press of
+		// the button read as a retry: the notice goes away while the attempt
+		// it describes is running, and comes back only if this one fails too.
+		failure = null;
 		try {
 			const response = await listExecutions({
 				cursor: page.nextCursor,
@@ -84,6 +95,10 @@
 			if (!guard.holds(token)) return;
 			page = appendPage(page, response.data);
 		} catch (cause) {
+			// `page` is deliberately left alone: appendPage is the only thing
+			// that moves the cursor, and it only runs on success, so a retry
+			// asks for the page that failed rather than the one after it.
+			// Resetting the rows here would lose every page already loaded.
 			if (guard.holds(token)) failure = cause;
 		} finally {
 			loadingMore = false;
@@ -136,6 +151,7 @@
 			error={failure}
 			count={page.items.length}
 			onRetry={() => void load(status, workflowID)}
+			onRetryMore={() => void loadMore()}
 			emptyIcon={Activity}
 			emptyTitle="No executions yet"
 			emptyBody="Run a workflow from its editor and its history will appear here."
@@ -184,7 +200,13 @@
 					</Table.Body>
 				</Table.Root>
 			</div>
-			{#if canLoadMore(page)}
+			<!--
+				Hidden while the paging notice is up, because that notice
+				carries its own "Try again" for the same request — two buttons
+				a thumb's width apart doing the same thing is a worse answer
+				than one.
+			-->
+			{#if canLoadMore(page) && !pagingFailure}
 				<div class="mt-4 flex justify-center">
 					<Button variant="outline" onclick={() => void loadMore()} disabled={loadingMore}>{loadingMore ? 'Loading…' : 'Load more'}</Button>
 				</div>
