@@ -1,0 +1,17 @@
+{
+  "type": "pack.waha",
+  "version": 202409,
+  "displayName": "WAHA",
+  "description": "WhatsApp through a self-hosted WAHA instance.",
+  "category": "Messaging",
+  "icon": "builtin:message-circle",
+  "iconColor": "#25d366",
+  "subtitle": "{{ $parameter.operation }}: {{ $parameter.resource }}",
+  "documentationUrl": "https://waha.devlike.pro/docs/overview/quick-start/",
+  "baseUrl": "{{ $credentials.baseUrl }}",
+  "security": { "api_key": "wahaApi" },
+  "parameterDefaults": {
+    "session": { "mode": "expression", "value": "{{ $json.session }}" },
+    "chatId": { "mode": "expression", "value": "{{ $json.payload.from }}" }
+  }
+}

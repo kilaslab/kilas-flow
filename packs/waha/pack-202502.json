@@ -1,0 +1,3844 @@
+{
+  "type": "pack.waha",
+  "version": 202502,
+  "displayName": "WAHA",
+  "description": "WhatsApp through a self-hosted WAHA instance.",
+  "category": "Messaging",
+  "icon": "builtin:message-circle",
+  "iconColor": "#25d366",
+  "subtitle": "{{ $parameter.operation }}: {{ $parameter.resource }}",
+  "documentationUrl": "https://waha.devlike.pro/docs/overview/quick-start/",
+  "credentialType": "wahaApi",
+  "requestDefaults": {
+    "baseURL": "{{ $credentials.baseUrl }}"
+  },
+  "parameters": [
+    {
+      "key": "adminsOnly",
+      "label": "Admins Only",
+      "kind": "boolean",
+      "required": true,
+      "default": true,
+      "resources": [
+        "Groups"
+      ],
+      "operations": [
+        "Set Info Admin Only",
+        "Set Messages Admin Only"
+      ]
+    },
+    {
+      "key": "all",
+      "label": "All",
+      "description": "Include all environment variables",
+      "kind": "boolean",
+      "resources": [
+        "Observability",
+        "Sessions"
+      ],
+      "operations": [
+        "Environment",
+        "List"
+      ]
+    },
+    {
+      "key": "asNote",
+      "label": "As Note",
+      "description": "Send as video note (aka instant or round video).",
+      "kind": "boolean",
+      "resources": [
+        "Chatting"
+      ],
+      "operations": [
+        "Send Video"
+      ]
+    },
+    {
+      "key": "backgroundColor",
+      "label": "Background Color",
+      "kind": "string",
+      "required": true,
+      "default": "#38b42f",
+      "resources": [
+        "Status"
+      ],
+      "operations": [
+        "Send Text Status",
+        "Send Voice Status"
+      ]
+    },
+    {
+      "key": "body",
+      "label": "Body",
+      "kind": "string",
+      "required": true,
+      "resources": [
+        "Chatting"
+      ],
+      "operations": [
+        "Send Buttons"
+      ]
+    },
+    {
+      "key": "buttons",
+      "label": "Buttons",
+      "kind": "json",
+      "required": true,
+      "resources": [
+        "Chatting"
+      ],
+      "operations": [
+        "Send Buttons"
+      ]
+    },
+    {
+      "key": "caption",
+      "label": "Caption",
+      "kind": "string",
+      "resources": [
+        "Chatting",
+        "Status"
+      ],
+      "operations": [
+        "Send File",
+        "Send Image",
+        "Send Image Status",
+        "Send Video",
+        "Send Video Status"
+      ]
+    },
+    {
+      "key": "categories",
+      "label": "Categories",
+      "kind": "json",
+      "required": true,
+      "default": [],
+      "resources": [
+        "Channels"
+      ],
+      "operations": [
+        "Search By Text",
+        "Search By View"
+      ]
+    },
+    {
+      "key": "chatId",
+      "label": "Chat Id",
+      "description": "Chat ID",
+      "kind": "string",
+      "default": {
+        "mode": "expression",
+        "value": "{{ $json.payload.from }}"
+      },
+      "resources": [
+        "Chats",
+        "Chatting",
+        "Labels",
+        "Presence"
+      ],
+      "operations": [
+        "Archive Chat",
+        "Clear Messages",
+        "Delete Chat",
+        "Delete Message",
+        "Edit Message",
+        "Forward Message",
+        "Get Chat Labels",
+        "Get Chat Message",
+        "Get Chat Messages",
+        "Get Chat Picture",
+        "Get Messages",
+        "Get Presence",
+        "Pin Message",
+        "Put Chat Labels",
+        "Reply",
+        "Send Buttons",
+        "Send Contact Vcard",
+        "Send File",
+        "Send Image",
+        "Send Link Preview",
+        "Send Location",
+        "Send Poll",
+        "Send Seen",
+        "Send Text",
+        "Send Video",
+        "Send Voice",
+        "Set Presence",
+        "Set Star",
+        "Start Typing",
+        "Stop Typing",
+        "Subscribe",
+        "Unarchive Chat",
+        "Unpin Message",
+        "Unread Chat"
+      ]
+    },
+    {
+      "key": "code",
+      "label": "Code",
+      "description": "Group code (123) or url (https://chat.whatsapp.com/123)",
+      "kind": "string",
+      "required": true,
+      "resources": [
+        "Groups"
+      ],
+      "operations": [
+        "Join Group",
+        "Join Info Group"
+      ]
+    },
+    {
+      "key": "color",
+      "label": "Color",
+      "description": "Color number, not hex",
+      "kind": "number",
+      "resources": [
+        "Labels"
+      ],
+      "operations": [
+        "Create",
+        "Update"
+      ]
+    },
+    {
+      "key": "colorHex",
+      "label": "Color Hex",
+      "description": "Color in hex",
+      "kind": "string",
+      "resources": [
+        "Labels"
+      ],
+      "operations": [
+        "Create",
+        "Update"
+      ]
+    },
+    {
+      "key": "config",
+      "label": "Config",
+      "kind": "json",
+      "resources": [
+        "Sessions"
+      ],
+      "operations": [
+        "Create",
+        "DEPRACATED Start",
+        "Update"
+      ]
+    },
+    {
+      "key": "contactId",
+      "label": "Contact Id",
+      "kind": "string",
+      "required": true,
+      "resources": [
+        "Contacts"
+      ],
+      "operations": [
+        "Block",
+        "Get",
+        "Get About",
+        "Get Profile Picture",
+        "Unblock"
+      ]
+    },
+    {
+      "key": "contacts",
+      "label": "Contacts",
+      "description": "Contact list to send the status to.",
+      "kind": "json",
+      "resources": [
+        "Chatting",
+        "Status"
+      ],
+      "operations": [
+        "Delete Status",
+        "Send Contact Vcard",
+        "Send Image Status",
+        "Send Text Status",
+        "Send Video Status",
+        "Send Voice Status"
+      ]
+    },
+    {
+      "key": "countries",
+      "label": "Countries",
+      "kind": "json",
+      "required": true,
+      "default": [
+        "US"
+      ],
+      "resources": [
+        "Channels"
+      ],
+      "operations": [
+        "Search By View"
+      ]
+    },
+    {
+      "key": "description",
+      "label": "Description",
+      "kind": "string",
+      "resources": [
+        "Channels",
+        "Groups"
+      ],
+      "operations": [
+        "Create",
+        "Set Description"
+      ]
+    },
+    {
+      "key": "downloadMedia",
+      "label": "Download Media",
+      "description": "Download media for messages",
+      "kind": "boolean",
+      "resources": [
+        "Channels",
+        "Chats",
+        "Chatting"
+      ],
+      "operations": [
+        "Get Chat Message",
+        "Get Chat Messages",
+        "Get Messages",
+        "Preview Channel Messages"
+      ]
+    },
+    {
+      "key": "duration",
+      "label": "Duration",
+      "description": "Duration in seconds. 24 hours (86400), 7 days (604800), 30 days (2592000)",
+      "kind": "number",
+      "required": true,
+      "resources": [
+        "Chats"
+      ],
+      "operations": [
+        "Pin Message"
+      ]
+    },
+    {
+      "key": "file",
+      "label": "File",
+      "kind": "json",
+      "required": true,
+      "resources": [
+        "Chatting",
+        "Groups",
+        "Profile",
+        "Status"
+      ],
+      "operations": [
+        "Send File",
+        "Send Image",
+        "Send Image Status",
+        "Send Video",
+        "Send Video Status",
+        "Send Voice",
+        "Send Voice Status",
+        "Set Picture",
+        "Set Profile Picture"
+      ]
+    },
+    {
+      "key": "filter.fromMe",
+      "label": "Filter From Me",
+      "description": "From me filter (by default shows all messages)",
+      "kind": "boolean",
+      "resources": [
+        "Chats",
+        "Chatting"
+      ],
+      "operations": [
+        "Get Chat Messages",
+        "Get Messages"
+      ]
+    },
+    {
+      "key": "filter.timestamp.gte",
+      "label": "Filter Timestamp Gte",
+      "description": "Filter messages after this timestamp (inclusive)",
+      "kind": "number",
+      "resources": [
+        "Chats",
+        "Chatting"
+      ],
+      "operations": [
+        "Get Chat Messages",
+        "Get Messages"
+      ]
+    },
+    {
+      "key": "filter.timestamp.lte",
+      "label": "Filter Timestamp Lte",
+      "description": "Filter messages before this timestamp (inclusive)",
+      "kind": "number",
+      "resources": [
+        "Chats",
+        "Chatting"
+      ],
+      "operations": [
+        "Get Chat Messages",
+        "Get Messages"
+      ]
+    },
+    {
+      "key": "font",
+      "label": "Font",
+      "kind": "number",
+      "required": true,
+      "default": 0,
+      "resources": [
+        "Status"
+      ],
+      "operations": [
+        "Send Text Status"
+      ]
+    },
+    {
+      "key": "footer",
+      "label": "Footer",
+      "kind": "string",
+      "required": true,
+      "resources": [
+        "Chatting"
+      ],
+      "operations": [
+        "Send Buttons"
+      ]
+    },
+    {
+      "key": "force",
+      "label": "Force",
+      "description": "By default, it gracefully stops the server, but you can force it to terminate immediately.",
+      "kind": "boolean",
+      "default": false,
+      "resources": [
+        "Observability"
+      ],
+      "operations": [
+        "Stop"
+      ]
+    },
+    {
+      "key": "format",
+      "label": "Format",
+      "kind": "options",
+      "required": true,
+      "default": "image",
+      "options": [
+        {
+          "label": "Image",
+          "value": "image"
+        },
+        {
+          "label": "Raw",
+          "value": "raw"
+        }
+      ],
+      "resources": [
+        "Auth"
+      ],
+      "operations": [
+        "Get QR"
+      ]
+    },
+    {
+      "key": "header",
+      "label": "Header",
+      "kind": "string",
+      "required": true,
+      "resources": [
+        "Chatting"
+      ],
+      "operations": [
+        "Send Buttons"
+      ]
+    },
+    {
+      "key": "headerImage",
+      "label": "Header Image",
+      "kind": "json",
+      "resources": [
+        "Chatting"
+      ],
+      "operations": [
+        "Send Buttons"
+      ]
+    },
+    {
+      "key": "id",
+      "label": "Id",
+      "description": "WhatsApp Channel ID or invite code from invite link https://www.whatsapp.com/channel/11111",
+      "kind": "string",
+      "required": true,
+      "resources": [
+        "Channels",
+        "Groups",
+        "Status"
+      ],
+      "operations": [
+        "Add Participants",
+        "Delete",
+        "Delete Group",
+        "Delete Picture",
+        "Delete Status",
+        "Demote To Admin",
+        "Follow",
+        "Get",
+        "Get Chat Picture",
+        "Get Group",
+        "Get Info Admin Only",
+        "Get Invite Code",
+        "Get Messages Admin Only",
+        "Get Participants",
+        "Leave Group",
+        "Mute",
+        "Preview Channel Messages",
+        "Promote To Admin",
+        "Remove Participants",
+        "Revoke Invite Code",
+        "Set Description",
+        "Set Info Admin Only",
+        "Set Messages Admin Only",
+        "Set Picture",
+        "Set Subject",
+        "Unfollow",
+        "Unmute"
+      ]
+    },
+    {
+      "key": "labelId",
+      "label": "Label Id",
+      "kind": "string",
+      "required": true,
+      "resources": [
+        "Labels"
+      ],
+      "operations": [
+        "Delete",
+        "Get Chats By Label",
+        "Update"
+      ]
+    },
+    {
+      "key": "labels",
+      "label": "Labels",
+      "kind": "json",
+      "required": true,
+      "resources": [
+        "Labels"
+      ],
+      "operations": [
+        "Put Chat Labels"
+      ]
+    },
+    {
+      "key": "latitude",
+      "label": "Latitude",
+      "kind": "number",
+      "required": true,
+      "resources": [
+        "Chatting"
+      ],
+      "operations": [
+        "Send Location"
+      ]
+    },
+    {
+      "key": "limit",
+      "label": "Limit",
+      "kind": "number",
+      "resources": [
+        "Channels",
+        "Chats",
+        "Chatting",
+        "Contacts",
+        "Groups"
+      ],
+      "operations": [
+        "Get All",
+        "Get Chat Messages",
+        "Get Chats",
+        "Get Chats Overview",
+        "Get Groups",
+        "Get Messages",
+        "Preview Channel Messages",
+        "Search By Text",
+        "Search By View"
+      ]
+    },
+    {
+      "key": "linkPreview",
+      "label": "Link Preview",
+      "kind": "boolean",
+      "default": true,
+      "resources": [
+        "Chatting"
+      ],
+      "operations": [
+        "Reply",
+        "Send Text"
+      ]
+    },
+    {
+      "key": "logout",
+      "label": "Logout",
+      "description": "Stop and logout from the session.",
+      "kind": "boolean",
+      "default": false,
+      "resources": [
+        "Sessions"
+      ],
+      "operations": [
+        "DEPRECATED Stop"
+      ]
+    },
+    {
+      "key": "longitude",
+      "label": "Longitude",
+      "kind": "number",
+      "required": true,
+      "resources": [
+        "Chatting"
+      ],
+      "operations": [
+        "Send Location"
+      ]
+    },
+    {
+      "key": "messageId",
+      "label": "Message Id",
+      "description": "NOWEB engine only - it's important to mark ALL messages as seen",
+      "kind": "string",
+      "resources": [
+        "Chats",
+        "Chatting"
+      ],
+      "operations": [
+        "Delete Message",
+        "Edit Message",
+        "Forward Message",
+        "Get Chat Message",
+        "Pin Message",
+        "Send Seen",
+        "Set Reaction",
+        "Set Star",
+        "Unpin Message"
+      ]
+    },
+    {
+      "key": "method",
+      "label": "Method",
+      "description": "How would you like to receive the one time code for registration? |sms|voice. Leave empty for Web pairing.",
+      "kind": "string",
+      "resources": [
+        "Auth"
+      ],
+      "operations": [
+        "Request Code"
+      ]
+    },
+    {
+      "key": "name",
+      "label": "Name",
+      "description": "Session name (id)",
+      "kind": "string",
+      "resources": [
+        "Channels",
+        "Groups",
+        "Labels",
+        "Profile",
+        "Sessions"
+      ],
+      "operations": [
+        "Create",
+        "Create Group",
+        "DEPRACATED Start",
+        "DEPRECATED Logout",
+        "DEPRECATED Stop",
+        "Set Profile Name",
+        "Update"
+      ]
+    },
+    {
+      "key": "offset",
+      "label": "Offset",
+      "kind": "number",
+      "resources": [
+        "Chats",
+        "Chatting",
+        "Contacts",
+        "Groups"
+      ],
+      "operations": [
+        "Get All",
+        "Get Chat Messages",
+        "Get Chats",
+        "Get Chats Overview",
+        "Get Groups",
+        "Get Messages"
+      ]
+    },
+    {
+      "key": "participant",
+      "label": "Participant",
+      "description": "NOWEB engine only - the ID of the user that sent the  message (undefined for individual chats)",
+      "kind": "string",
+      "resources": [
+        "Chatting"
+      ],
+      "operations": [
+        "Send Seen"
+      ]
+    },
+    {
+      "key": "participants",
+      "label": "Participants",
+      "kind": "json",
+      "required": true,
+      "resources": [
+        "Groups"
+      ],
+      "operations": [
+        "Add Participants",
+        "Create Group",
+        "Demote To Admin",
+        "Promote To Admin",
+        "Remove Participants"
+      ]
+    },
+    {
+      "key": "phone",
+      "label": "Phone",
+      "description": "The phone number to check",
+      "kind": "string",
+      "required": true,
+      "resources": [
+        "Chatting",
+        "Contacts"
+      ],
+      "operations": [
+        "Check Exists",
+        "DEPRECATED Check Number Status",
+        "Send Text Get"
+      ]
+    },
+    {
+      "key": "phoneNumber",
+      "label": "Phone Number",
+      "description": "Mobile phone number in international format",
+      "kind": "string",
+      "required": true,
+      "resources": [
+        "Auth"
+      ],
+      "operations": [
+        "Request Code"
+      ]
+    },
+    {
+      "key": "picture",
+      "label": "Picture",
+      "kind": "json",
+      "resources": [
+        "Channels"
+      ],
+      "operations": [
+        "Create"
+      ]
+    },
+    {
+      "key": "poll",
+      "label": "Poll",
+      "kind": "json",
+      "required": true,
+      "resources": [
+        "Chatting"
+      ],
+      "operations": [
+        "Send Poll"
+      ]
+    },
+    {
+      "key": "presence",
+      "label": "Presence",
+      "kind": "options",
+      "required": true,
+      "options": [
+        {
+          "label": "Offline",
+          "value": "offline"
+        },
+        {
+          "label": "Online",
+          "value": "online"
+        },
+        {
+          "label": "Typing",
+          "value": "typing"
+        },
+        {
+          "label": "Recording",
+          "value": "recording"
+        },
+        {
+          "label": "Paused",
+          "value": "paused"
+        }
+      ],
+      "resources": [
+        "Presence"
+      ],
+      "operations": [
+        "Set Presence"
+      ]
+    },
+    {
+      "key": "reaction",
+      "label": "Reaction",
+      "description": "Emoji to react with. Send an empty string to remove the reaction",
+      "kind": "string",
+      "required": true,
+      "resources": [
+        "Chatting"
+      ],
+      "operations": [
+        "Set Reaction"
+      ]
+    },
+    {
+      "key": "refresh",
+      "label": "Refresh",
+      "description": "Refresh the picture from the server (24h cache by default). Do not refresh if not needed, you can get rate limit error",
+      "kind": "boolean",
+      "default": false,
+      "resources": [
+        "Chats",
+        "Contacts",
+        "Groups"
+      ],
+      "operations": [
+        "Get Chat Picture",
+        "Get Profile Picture"
+      ]
+    },
+    {
+      "key": "reply_to",
+      "label": "Reply To",
+      "description": "The ID of the message to reply to - false_11111111111@c.us_AAAAAAAAAAAAAAAAAAAA",
+      "kind": "string",
+      "resources": [
+        "Chatting"
+      ],
+      "operations": [
+        "Reply",
+        "Send File",
+        "Send Image",
+        "Send Location",
+        "Send Poll",
+        "Send Text",
+        "Send Video",
+        "Send Voice"
+      ]
+    },
+    {
+      "key": "role",
+      "label": "Role",
+      "kind": "options",
+      "options": [
+        {
+          "label": "OWNER",
+          "value": "OWNER"
+        },
+        {
+          "label": "ADMIN",
+          "value": "ADMIN"
+        },
+        {
+          "label": "SUBSCRIBER",
+          "value": "SUBSCRIBER"
+        }
+      ],
+      "resources": [
+        "Channels"
+      ],
+      "operations": [
+        "List"
+      ]
+    },
+    {
+      "key": "session",
+      "label": "Session",
+      "description": "Session name",
+      "kind": "string",
+      "default": {
+        "mode": "expression",
+        "value": "{{ $json.session }}"
+      },
+      "resources": [
+        "Auth",
+        "Channels",
+        "Chats",
+        "Chatting",
+        "Contacts",
+        "Groups",
+        "Labels",
+        "Presence",
+        "Profile",
+        "Screenshot",
+        "Sessions",
+        "Status"
+      ],
+      "operations": [
+        "Add Participants",
+        "Archive Chat",
+        "Block",
+        "Check Exists",
+        "Clear Messages",
+        "Create",
+        "Create Group",
+        "DEPRECATED Check Number Status",
+        "Delete",
+        "Delete Chat",
+        "Delete Group",
+        "Delete Message",
+        "Delete Picture",
+        "Delete Profile Picture",
+        "Delete Status",
+        "Demote To Admin",
+        "Edit Message",
+        "Follow",
+        "Forward Message",
+        "Get",
+        "Get About",
+        "Get All",
+        "Get Chat Labels",
+        "Get Chat Message",
+        "Get Chat Messages",
+        "Get Chat Picture",
+        "Get Chats",
+        "Get Chats By Label",
+        "Get Chats Overview",
+        "Get Group",
+        "Get Groups",
+        "Get Info Admin Only",
+        "Get Invite Code",
+        "Get Me",
+        "Get Messages",
+        "Get Messages Admin Only",
+        "Get My Profile",
+        "Get Participants",
+        "Get Presence",
+        "Get Presence All",
+        "Get Profile Picture",
+        "Get QR",
+        "Get Search Categories",
+        "Get Search Countries",
+        "Get Search Views",
+        "Join Group",
+        "Join Info Group",
+        "Leave Group",
+        "List",
+        "Logout",
+        "Mute",
+        "Pin Message",
+        "Preview Channel Messages",
+        "Promote To Admin",
+        "Put Chat Labels",
+        "Refresh Groups",
+        "Remove Participants",
+        "Reply",
+        "Request Code",
+        "Restart",
+        "Revoke Invite Code",
+        "Screenshot",
+        "Search By Text",
+        "Search By View",
+        "Send Buttons",
+        "Send Contact Vcard",
+        "Send File",
+        "Send Image",
+        "Send Image Status",
+        "Send Link Preview",
+        "Send Location",
+        "Send Poll",
+        "Send Seen",
+        "Send Text",
+        "Send Text Get",
+        "Send Text Status",
+        "Send Video",
+        "Send Video Status",
+        "Send Voice",
+        "Send Voice Status",
+        "Set Description",
+        "Set Info Admin Only",
+        "Set Messages Admin Only",
+        "Set Picture",
+        "Set Presence",
+        "Set Profile Name",
+        "Set Profile Picture",
+        "Set Profile Status",
+        "Set Reaction",
+        "Set Star",
+        "Set Subject",
+        "Start",
+        "Start Typing",
+        "Stop",
+        "Stop Typing",
+        "Subscribe",
+        "Unarchive Chat",
+        "Unblock",
+        "Unfollow",
+        "Unmute",
+        "Unpin Message",
+        "Unread Chat",
+        "Update"
+      ]
+    },
+    {
+      "key": "sortBy",
+      "label": "Sort By",
+      "description": "Sort by field",
+      "kind": "string",
+      "resources": [
+        "Chats",
+        "Contacts",
+        "Groups"
+      ],
+      "operations": [
+        "Get All",
+        "Get Chats",
+        "Get Groups"
+      ]
+    },
+    {
+      "key": "sortOrder",
+      "label": "Sort Order",
+      "description": "Sort order - <b>desc</b>ending (Z => A, New first) or <b>asc</b>ending (A => Z, Old first)",
+      "kind": "options",
+      "options": [
+        {
+          "label": "Desc",
+          "value": "desc"
+        },
+        {
+          "label": "Asc",
+          "value": "asc"
+        }
+      ],
+      "resources": [
+        "Chats",
+        "Contacts",
+        "Groups"
+      ],
+      "operations": [
+        "Get All",
+        "Get Chats",
+        "Get Groups"
+      ]
+    },
+    {
+      "key": "star",
+      "label": "Star",
+      "kind": "boolean",
+      "required": true,
+      "resources": [
+        "Chatting"
+      ],
+      "operations": [
+        "Set Star"
+      ]
+    },
+    {
+      "key": "start",
+      "label": "Start",
+      "description": "Start session after creation",
+      "kind": "boolean",
+      "default": true,
+      "resources": [
+        "Sessions"
+      ],
+      "operations": [
+        "Create"
+      ]
+    },
+    {
+      "key": "startCursor",
+      "label": "Start Cursor",
+      "kind": "string",
+      "required": true,
+      "default": "",
+      "resources": [
+        "Channels"
+      ],
+      "operations": [
+        "Search By Text",
+        "Search By View"
+      ]
+    },
+    {
+      "key": "status",
+      "label": "Status",
+      "kind": "string",
+      "required": true,
+      "resources": [
+        "Profile"
+      ],
+      "operations": [
+        "Set Profile Status"
+      ]
+    },
+    {
+      "key": "subject",
+      "label": "Subject",
+      "kind": "string",
+      "required": true,
+      "resources": [
+        "Groups"
+      ],
+      "operations": [
+        "Set Subject"
+      ]
+    },
+    {
+      "key": "text",
+      "label": "Text",
+      "kind": "string",
+      "required": true,
+      "resources": [
+        "Channels",
+        "Chats",
+        "Chatting",
+        "Status"
+      ],
+      "operations": [
+        "Edit Message",
+        "Reply",
+        "Search By Text",
+        "Send Text",
+        "Send Text Get",
+        "Send Text Status"
+      ]
+    },
+    {
+      "key": "title",
+      "label": "Title",
+      "kind": "string",
+      "required": true,
+      "resources": [
+        "Chatting"
+      ],
+      "operations": [
+        "Send Link Preview",
+        "Send Location"
+      ]
+    },
+    {
+      "key": "url",
+      "label": "Url",
+      "kind": "string",
+      "required": true,
+      "resources": [
+        "Chatting"
+      ],
+      "operations": [
+        "Send Link Preview"
+      ]
+    },
+    {
+      "key": "view",
+      "label": "View",
+      "kind": "string",
+      "required": true,
+      "default": "RECOMMENDED",
+      "resources": [
+        "Channels"
+      ],
+      "operations": [
+        "Search By View"
+      ]
+    }
+  ],
+  "resources": [
+    {
+      "name": "Auth",
+      "operations": [
+        {
+          "name": "Get QR",
+          "description": "Get QR code for pairing WhatsApp API.",
+          "method": "GET",
+          "url": "/api/{session}/auth/qr",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "format",
+              "type": "query",
+              "property": "format"
+            }
+          ]
+        },
+        {
+          "name": "Request Code",
+          "description": "Request authentication code.",
+          "method": "POST",
+          "url": "/api/{session}/auth/request-code",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "method",
+              "type": "body",
+              "property": "method"
+            },
+            {
+              "from": "phoneNumber",
+              "type": "body",
+              "property": "phoneNumber"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Channels",
+      "operations": [
+        {
+          "name": "Create",
+          "description": "Create a new channel.",
+          "method": "POST",
+          "url": "/api/{session}/channels",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "description",
+              "type": "body",
+              "property": "description"
+            },
+            {
+              "from": "name",
+              "type": "body",
+              "property": "name"
+            },
+            {
+              "from": "picture",
+              "type": "body",
+              "property": "picture"
+            }
+          ]
+        },
+        {
+          "name": "Delete",
+          "description": "Delete the channel.",
+          "method": "DELETE",
+          "url": "/api/{session}/channels/{id}",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "id",
+              "type": "path",
+              "property": "id"
+            }
+          ]
+        },
+        {
+          "name": "Follow",
+          "description": "Follow the channel.",
+          "method": "POST",
+          "url": "/api/{session}/channels/{id}/follow",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "id",
+              "type": "path",
+              "property": "id"
+            }
+          ]
+        },
+        {
+          "name": "Get",
+          "description": "Get the channel info",
+          "method": "GET",
+          "url": "/api/{session}/channels/{id}",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "id",
+              "type": "path",
+              "property": "id"
+            }
+          ]
+        },
+        {
+          "name": "Get Search Categories",
+          "description": "Get list of categories for channel search",
+          "method": "GET",
+          "url": "/api/{session}/channels/search/categories",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            }
+          ]
+        },
+        {
+          "name": "Get Search Countries",
+          "description": "Get list of countries for channel search",
+          "method": "GET",
+          "url": "/api/{session}/channels/search/countries",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            }
+          ]
+        },
+        {
+          "name": "Get Search Views",
+          "description": "Get list of views for channel search",
+          "method": "GET",
+          "url": "/api/{session}/channels/search/views",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            }
+          ]
+        },
+        {
+          "name": "List",
+          "description": "Get list of know channels",
+          "method": "GET",
+          "url": "/api/{session}/channels",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "role",
+              "type": "query",
+              "property": "role"
+            }
+          ]
+        },
+        {
+          "name": "Mute",
+          "description": "Mute the channel.",
+          "method": "POST",
+          "url": "/api/{session}/channels/{id}/mute",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "id",
+              "type": "path",
+              "property": "id"
+            }
+          ]
+        },
+        {
+          "name": "Preview Channel Messages",
+          "description": "Preview channel messages",
+          "method": "GET",
+          "url": "/api/{session}/channels/{id}/messages/preview",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "id",
+              "type": "path",
+              "property": "id"
+            },
+            {
+              "from": "downloadMedia",
+              "type": "query",
+              "property": "downloadMedia"
+            },
+            {
+              "from": "limit",
+              "type": "query",
+              "property": "limit"
+            }
+          ]
+        },
+        {
+          "name": "Search By Text",
+          "description": "Search for channels (by text)",
+          "method": "POST",
+          "url": "/api/{session}/channels/search/by-text",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "categories",
+              "type": "body",
+              "property": "categories"
+            },
+            {
+              "from": "limit",
+              "type": "body",
+              "property": "limit"
+            },
+            {
+              "from": "startCursor",
+              "type": "body",
+              "property": "startCursor"
+            },
+            {
+              "from": "text",
+              "type": "body",
+              "property": "text"
+            }
+          ]
+        },
+        {
+          "name": "Search By View",
+          "description": "Search for channels (by view)",
+          "method": "POST",
+          "url": "/api/{session}/channels/search/by-view",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "categories",
+              "type": "body",
+              "property": "categories"
+            },
+            {
+              "from": "countries",
+              "type": "body",
+              "property": "countries"
+            },
+            {
+              "from": "limit",
+              "type": "body",
+              "property": "limit"
+            },
+            {
+              "from": "startCursor",
+              "type": "body",
+              "property": "startCursor"
+            },
+            {
+              "from": "view",
+              "type": "body",
+              "property": "view"
+            }
+          ]
+        },
+        {
+          "name": "Unfollow",
+          "description": "Unfollow the channel.",
+          "method": "POST",
+          "url": "/api/{session}/channels/{id}/unfollow",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "id",
+              "type": "path",
+              "property": "id"
+            }
+          ]
+        },
+        {
+          "name": "Unmute",
+          "description": "Unmute the channel.",
+          "method": "POST",
+          "url": "/api/{session}/channels/{id}/unmute",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "id",
+              "type": "path",
+              "property": "id"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Chats",
+      "operations": [
+        {
+          "name": "Archive Chat",
+          "description": "Archive the chat",
+          "method": "POST",
+          "url": "/api/{session}/chats/{chatId}/archive",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "chatId",
+              "type": "path",
+              "property": "chatId"
+            }
+          ]
+        },
+        {
+          "name": "Clear Messages",
+          "description": "Clears all messages from the chat",
+          "method": "DELETE",
+          "url": "/api/{session}/chats/{chatId}/messages",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "chatId",
+              "type": "path",
+              "property": "chatId"
+            }
+          ]
+        },
+        {
+          "name": "Delete Chat",
+          "description": "Deletes the chat",
+          "method": "DELETE",
+          "url": "/api/{session}/chats/{chatId}",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "chatId",
+              "type": "path",
+              "property": "chatId"
+            }
+          ]
+        },
+        {
+          "name": "Delete Message",
+          "description": "Deletes a message from the chat",
+          "method": "DELETE",
+          "url": "/api/{session}/chats/{chatId}/messages/{messageId}",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "chatId",
+              "type": "path",
+              "property": "chatId"
+            },
+            {
+              "from": "messageId",
+              "type": "path",
+              "property": "messageId"
+            }
+          ]
+        },
+        {
+          "name": "Edit Message",
+          "description": "Edits a message in the chat",
+          "method": "PUT",
+          "url": "/api/{session}/chats/{chatId}/messages/{messageId}",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "chatId",
+              "type": "path",
+              "property": "chatId"
+            },
+            {
+              "from": "messageId",
+              "type": "path",
+              "property": "messageId"
+            },
+            {
+              "from": "text",
+              "type": "body",
+              "property": "text"
+            }
+          ]
+        },
+        {
+          "name": "Get Chat Message",
+          "description": "Gets message by id",
+          "method": "GET",
+          "url": "/api/{session}/chats/{chatId}/messages/{messageId}",
+          "sends": [
+            {
+              "from": "downloadMedia",
+              "type": "query",
+              "property": "downloadMedia"
+            },
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "chatId",
+              "type": "path",
+              "property": "chatId"
+            },
+            {
+              "from": "messageId",
+              "type": "path",
+              "property": "messageId"
+            }
+          ]
+        },
+        {
+          "name": "Get Chat Messages",
+          "description": "Gets messages in the chat",
+          "method": "GET",
+          "url": "/api/{session}/chats/{chatId}/messages",
+          "sends": [
+            {
+              "from": "downloadMedia",
+              "type": "query",
+              "property": "downloadMedia"
+            },
+            {
+              "from": "limit",
+              "type": "query",
+              "property": "limit"
+            },
+            {
+              "from": "offset",
+              "type": "query",
+              "property": "offset"
+            },
+            {
+              "from": "filter.timestamp.lte",
+              "type": "query",
+              "property": "filter.timestamp.lte"
+            },
+            {
+              "from": "filter.timestamp.gte",
+              "type": "query",
+              "property": "filter.timestamp.gte"
+            },
+            {
+              "from": "filter.fromMe",
+              "type": "query",
+              "property": "filter.fromMe"
+            },
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "chatId",
+              "type": "path",
+              "property": "chatId"
+            }
+          ]
+        },
+        {
+          "name": "Get Chat Picture",
+          "description": "Gets chat picture",
+          "method": "GET",
+          "url": "/api/{session}/chats/{chatId}/picture",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "chatId",
+              "type": "path",
+              "property": "chatId"
+            },
+            {
+              "from": "refresh",
+              "type": "query",
+              "property": "refresh"
+            }
+          ]
+        },
+        {
+          "name": "Get Chats",
+          "description": "Get chats",
+          "method": "GET",
+          "url": "/api/{session}/chats",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "sortBy",
+              "type": "query",
+              "property": "sortBy"
+            },
+            {
+              "from": "sortOrder",
+              "type": "query",
+              "property": "sortOrder"
+            },
+            {
+              "from": "limit",
+              "type": "query",
+              "property": "limit"
+            },
+            {
+              "from": "offset",
+              "type": "query",
+              "property": "offset"
+            }
+          ]
+        },
+        {
+          "name": "Get Chats Overview",
+          "description": "Get chats overview. Includes all necessary things to build UI \"your chats overview\" page - chat id, name, picture, last message. Sorting by last message timestamp",
+          "method": "GET",
+          "url": "/api/{session}/chats/overview",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "limit",
+              "type": "query",
+              "property": "limit"
+            },
+            {
+              "from": "offset",
+              "type": "query",
+              "property": "offset"
+            }
+          ]
+        },
+        {
+          "name": "Pin Message",
+          "description": "Pins a message in the chat",
+          "method": "POST",
+          "url": "/api/{session}/chats/{chatId}/messages/{messageId}/pin",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "chatId",
+              "type": "path",
+              "property": "chatId"
+            },
+            {
+              "from": "messageId",
+              "type": "path",
+              "property": "messageId"
+            },
+            {
+              "from": "duration",
+              "type": "body",
+              "property": "duration"
+            }
+          ]
+        },
+        {
+          "name": "Unarchive Chat",
+          "description": "Unarchive the chat",
+          "method": "POST",
+          "url": "/api/{session}/chats/{chatId}/unarchive",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "chatId",
+              "type": "path",
+              "property": "chatId"
+            }
+          ]
+        },
+        {
+          "name": "Unpin Message",
+          "description": "Unpins a message in the chat",
+          "method": "POST",
+          "url": "/api/{session}/chats/{chatId}/messages/{messageId}/unpin",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "chatId",
+              "type": "path",
+              "property": "chatId"
+            },
+            {
+              "from": "messageId",
+              "type": "path",
+              "property": "messageId"
+            }
+          ]
+        },
+        {
+          "name": "Unread Chat",
+          "description": "Unread the chat",
+          "method": "POST",
+          "url": "/api/{session}/chats/{chatId}/unread",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "chatId",
+              "type": "path",
+              "property": "chatId"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Chatting",
+      "operations": [
+        {
+          "name": "DEPRECATED Check Number Status",
+          "description": "Check number status",
+          "method": "GET",
+          "url": "/api/checkNumberStatus",
+          "sends": [
+            {
+              "from": "phone",
+              "type": "query",
+              "property": "phone"
+            },
+            {
+              "from": "session",
+              "type": "query",
+              "property": "session"
+            }
+          ]
+        },
+        {
+          "name": "Forward Message",
+          "method": "POST",
+          "url": "/api/forwardMessage",
+          "sends": [
+            {
+              "from": "chatId",
+              "type": "body",
+              "property": "chatId"
+            },
+            {
+              "from": "messageId",
+              "type": "body",
+              "property": "messageId"
+            },
+            {
+              "from": "session",
+              "type": "body",
+              "property": "session"
+            }
+          ]
+        },
+        {
+          "name": "Get Messages",
+          "description": "Get messages in a chat",
+          "method": "GET",
+          "url": "/api/messages",
+          "sends": [
+            {
+              "from": "downloadMedia",
+              "type": "query",
+              "property": "downloadMedia"
+            },
+            {
+              "from": "chatId",
+              "type": "query",
+              "property": "chatId"
+            },
+            {
+              "from": "session",
+              "type": "query",
+              "property": "session"
+            },
+            {
+              "from": "limit",
+              "type": "query",
+              "property": "limit"
+            },
+            {
+              "from": "offset",
+              "type": "query",
+              "property": "offset"
+            },
+            {
+              "from": "filter.timestamp.lte",
+              "type": "query",
+              "property": "filter.timestamp.lte"
+            },
+            {
+              "from": "filter.timestamp.gte",
+              "type": "query",
+              "property": "filter.timestamp.gte"
+            },
+            {
+              "from": "filter.fromMe",
+              "type": "query",
+              "property": "filter.fromMe"
+            }
+          ]
+        },
+        {
+          "name": "Reply",
+          "description": "DEPRECATED - you can set \"reply_to\" field when sending text, image, etc",
+          "method": "POST",
+          "url": "/api/reply",
+          "sends": [
+            {
+              "from": "chatId",
+              "type": "body",
+              "property": "chatId"
+            },
+            {
+              "from": "linkPreview",
+              "type": "body",
+              "property": "linkPreview"
+            },
+            {
+              "from": "reply_to",
+              "type": "body",
+              "property": "reply_to"
+            },
+            {
+              "from": "session",
+              "type": "body",
+              "property": "session"
+            },
+            {
+              "from": "text",
+              "type": "body",
+              "property": "text"
+            }
+          ]
+        },
+        {
+          "name": "Send Buttons",
+          "description": "Send buttons (interactive message)",
+          "method": "POST",
+          "url": "/api/sendButtons",
+          "sends": [
+            {
+              "from": "body",
+              "type": "body",
+              "property": "body"
+            },
+            {
+              "from": "buttons",
+              "type": "body",
+              "property": "buttons"
+            },
+            {
+              "from": "chatId",
+              "type": "body",
+              "property": "chatId"
+            },
+            {
+              "from": "footer",
+              "type": "body",
+              "property": "footer"
+            },
+            {
+              "from": "header",
+              "type": "body",
+              "property": "header"
+            },
+            {
+              "from": "headerImage",
+              "type": "body",
+              "property": "headerImage"
+            },
+            {
+              "from": "session",
+              "type": "body",
+              "property": "session"
+            }
+          ]
+        },
+        {
+          "name": "Send Contact Vcard",
+          "method": "POST",
+          "url": "/api/sendContactVcard",
+          "sends": [
+            {
+              "from": "chatId",
+              "type": "body",
+              "property": "chatId"
+            },
+            {
+              "from": "contacts",
+              "type": "body",
+              "property": "contacts"
+            },
+            {
+              "from": "session",
+              "type": "body",
+              "property": "session"
+            }
+          ]
+        },
+        {
+          "name": "Send File",
+          "description": "Send a file",
+          "method": "POST",
+          "url": "/api/sendFile",
+          "sends": [
+            {
+              "from": "caption",
+              "type": "body",
+              "property": "caption"
+            },
+            {
+              "from": "chatId",
+              "type": "body",
+              "property": "chatId"
+            },
+            {
+              "from": "file",
+              "type": "body",
+              "property": "file"
+            },
+            {
+              "from": "reply_to",
+              "type": "body",
+              "property": "reply_to"
+            },
+            {
+              "from": "session",
+              "type": "body",
+              "property": "session"
+            }
+          ]
+        },
+        {
+          "name": "Send Image",
+          "description": "Send an image",
+          "method": "POST",
+          "url": "/api/sendImage",
+          "sends": [
+            {
+              "from": "caption",
+              "type": "body",
+              "property": "caption"
+            },
+            {
+              "from": "chatId",
+              "type": "body",
+              "property": "chatId"
+            },
+            {
+              "from": "file",
+              "type": "body",
+              "property": "file"
+            },
+            {
+              "from": "reply_to",
+              "type": "body",
+              "property": "reply_to"
+            },
+            {
+              "from": "session",
+              "type": "body",
+              "property": "session"
+            }
+          ]
+        },
+        {
+          "name": "Send Link Preview",
+          "method": "POST",
+          "url": "/api/sendLinkPreview",
+          "sends": [
+            {
+              "from": "chatId",
+              "type": "body",
+              "property": "chatId"
+            },
+            {
+              "from": "session",
+              "type": "body",
+              "property": "session"
+            },
+            {
+              "from": "title",
+              "type": "body",
+              "property": "title"
+            },
+            {
+              "from": "url",
+              "type": "body",
+              "property": "url"
+            }
+          ]
+        },
+        {
+          "name": "Send Location",
+          "method": "POST",
+          "url": "/api/sendLocation",
+          "sends": [
+            {
+              "from": "chatId",
+              "type": "body",
+              "property": "chatId"
+            },
+            {
+              "from": "latitude",
+              "type": "body",
+              "property": "latitude"
+            },
+            {
+              "from": "longitude",
+              "type": "body",
+              "property": "longitude"
+            },
+            {
+              "from": "reply_to",
+              "type": "body",
+              "property": "reply_to"
+            },
+            {
+              "from": "session",
+              "type": "body",
+              "property": "session"
+            },
+            {
+              "from": "title",
+              "type": "body",
+              "property": "title"
+            }
+          ]
+        },
+        {
+          "name": "Send Poll",
+          "description": "Send a poll with options",
+          "method": "POST",
+          "url": "/api/sendPoll",
+          "sends": [
+            {
+              "from": "chatId",
+              "type": "body",
+              "property": "chatId"
+            },
+            {
+              "from": "poll",
+              "type": "body",
+              "property": "poll"
+            },
+            {
+              "from": "reply_to",
+              "type": "body",
+              "property": "reply_to"
+            },
+            {
+              "from": "session",
+              "type": "body",
+              "property": "session"
+            }
+          ]
+        },
+        {
+          "name": "Send Seen",
+          "method": "POST",
+          "url": "/api/sendSeen",
+          "sends": [
+            {
+              "from": "chatId",
+              "type": "body",
+              "property": "chatId"
+            },
+            {
+              "from": "messageId",
+              "type": "body",
+              "property": "messageId"
+            },
+            {
+              "from": "participant",
+              "type": "body",
+              "property": "participant"
+            },
+            {
+              "from": "session",
+              "type": "body",
+              "property": "session"
+            }
+          ]
+        },
+        {
+          "name": "Send Text",
+          "description": "Send a text message",
+          "method": "POST",
+          "url": "/api/sendText",
+          "sends": [
+            {
+              "from": "chatId",
+              "type": "body",
+              "property": "chatId"
+            },
+            {
+              "from": "linkPreview",
+              "type": "body",
+              "property": "linkPreview"
+            },
+            {
+              "from": "reply_to",
+              "type": "body",
+              "property": "reply_to"
+            },
+            {
+              "from": "session",
+              "type": "body",
+              "property": "session"
+            },
+            {
+              "from": "text",
+              "type": "body",
+              "property": "text"
+            }
+          ]
+        },
+        {
+          "name": "Send Text Get",
+          "description": "Send a text message",
+          "method": "GET",
+          "url": "/api/sendText",
+          "sends": [
+            {
+              "from": "phone",
+              "type": "query",
+              "property": "phone"
+            },
+            {
+              "from": "text",
+              "type": "query",
+              "property": "text"
+            },
+            {
+              "from": "session",
+              "type": "query",
+              "property": "session"
+            }
+          ]
+        },
+        {
+          "name": "Send Video",
+          "description": "Send a video",
+          "method": "POST",
+          "url": "/api/sendVideo",
+          "sends": [
+            {
+              "from": "asNote",
+              "type": "body",
+              "property": "asNote"
+            },
+            {
+              "from": "caption",
+              "type": "body",
+              "property": "caption"
+            },
+            {
+              "from": "chatId",
+              "type": "body",
+              "property": "chatId"
+            },
+            {
+              "from": "file",
+              "type": "body",
+              "property": "file"
+            },
+            {
+              "from": "reply_to",
+              "type": "body",
+              "property": "reply_to"
+            },
+            {
+              "from": "session",
+              "type": "body",
+              "property": "session"
+            }
+          ]
+        },
+        {
+          "name": "Send Voice",
+          "description": "Send an voice message",
+          "method": "POST",
+          "url": "/api/sendVoice",
+          "sends": [
+            {
+              "from": "chatId",
+              "type": "body",
+              "property": "chatId"
+            },
+            {
+              "from": "file",
+              "type": "body",
+              "property": "file"
+            },
+            {
+              "from": "reply_to",
+              "type": "body",
+              "property": "reply_to"
+            },
+            {
+              "from": "session",
+              "type": "body",
+              "property": "session"
+            }
+          ]
+        },
+        {
+          "name": "Set Reaction",
+          "description": "React to a message with an emoji",
+          "method": "PUT",
+          "url": "/api/reaction",
+          "sends": [
+            {
+              "from": "messageId",
+              "type": "body",
+              "property": "messageId"
+            },
+            {
+              "from": "reaction",
+              "type": "body",
+              "property": "reaction"
+            },
+            {
+              "from": "session",
+              "type": "body",
+              "property": "session"
+            }
+          ]
+        },
+        {
+          "name": "Set Star",
+          "description": "Star or unstar a message",
+          "method": "PUT",
+          "url": "/api/star",
+          "sends": [
+            {
+              "from": "chatId",
+              "type": "body",
+              "property": "chatId"
+            },
+            {
+              "from": "messageId",
+              "type": "body",
+              "property": "messageId"
+            },
+            {
+              "from": "session",
+              "type": "body",
+              "property": "session"
+            },
+            {
+              "from": "star",
+              "type": "body",
+              "property": "star"
+            }
+          ]
+        },
+        {
+          "name": "Start Typing",
+          "method": "POST",
+          "url": "/api/startTyping",
+          "sends": [
+            {
+              "from": "chatId",
+              "type": "body",
+              "property": "chatId"
+            },
+            {
+              "from": "session",
+              "type": "body",
+              "property": "session"
+            }
+          ]
+        },
+        {
+          "name": "Stop Typing",
+          "method": "POST",
+          "url": "/api/stopTyping",
+          "sends": [
+            {
+              "from": "chatId",
+              "type": "body",
+              "property": "chatId"
+            },
+            {
+              "from": "session",
+              "type": "body",
+              "property": "session"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Contacts",
+      "operations": [
+        {
+          "name": "Block",
+          "description": "Block contact",
+          "method": "POST",
+          "url": "/api/contacts/block",
+          "sends": [
+            {
+              "from": "contactId",
+              "type": "body",
+              "property": "contactId"
+            },
+            {
+              "from": "session",
+              "type": "body",
+              "property": "session"
+            }
+          ]
+        },
+        {
+          "name": "Check Exists",
+          "description": "Check phone number is registered in WhatsApp.",
+          "method": "GET",
+          "url": "/api/contacts/check-exists",
+          "sends": [
+            {
+              "from": "phone",
+              "type": "query",
+              "property": "phone"
+            },
+            {
+              "from": "session",
+              "type": "query",
+              "property": "session"
+            }
+          ]
+        },
+        {
+          "name": "Get",
+          "description": "Get contact basic info",
+          "method": "GET",
+          "url": "/api/contacts",
+          "sends": [
+            {
+              "from": "contactId",
+              "type": "query",
+              "property": "contactId"
+            },
+            {
+              "from": "session",
+              "type": "query",
+              "property": "session"
+            }
+          ]
+        },
+        {
+          "name": "Get About",
+          "description": "Gets the Contact's \"about\" info",
+          "method": "GET",
+          "url": "/api/contacts/about",
+          "sends": [
+            {
+              "from": "contactId",
+              "type": "query",
+              "property": "contactId"
+            },
+            {
+              "from": "session",
+              "type": "query",
+              "property": "session"
+            }
+          ]
+        },
+        {
+          "name": "Get All",
+          "description": "Get all contacts",
+          "method": "GET",
+          "url": "/api/contacts/all",
+          "sends": [
+            {
+              "from": "session",
+              "type": "query",
+              "property": "session"
+            },
+            {
+              "from": "sortBy",
+              "type": "query",
+              "property": "sortBy"
+            },
+            {
+              "from": "sortOrder",
+              "type": "query",
+              "property": "sortOrder"
+            },
+            {
+              "from": "limit",
+              "type": "query",
+              "property": "limit"
+            },
+            {
+              "from": "offset",
+              "type": "query",
+              "property": "offset"
+            }
+          ]
+        },
+        {
+          "name": "Get Profile Picture",
+          "description": "Get contact's profile picture URL",
+          "method": "GET",
+          "url": "/api/contacts/profile-picture",
+          "sends": [
+            {
+              "from": "contactId",
+              "type": "query",
+              "property": "contactId"
+            },
+            {
+              "from": "refresh",
+              "type": "query",
+              "property": "refresh"
+            },
+            {
+              "from": "session",
+              "type": "query",
+              "property": "session"
+            }
+          ]
+        },
+        {
+          "name": "Unblock",
+          "description": "Unblock contact",
+          "method": "POST",
+          "url": "/api/contacts/unblock",
+          "sends": [
+            {
+              "from": "contactId",
+              "type": "body",
+              "property": "contactId"
+            },
+            {
+              "from": "session",
+              "type": "body",
+              "property": "session"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Groups",
+      "operations": [
+        {
+          "name": "Add Participants",
+          "description": "Add participants",
+          "method": "POST",
+          "url": "/api/{session}/groups/{id}/participants/add",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "id",
+              "type": "path",
+              "property": "id"
+            },
+            {
+              "from": "participants",
+              "type": "body",
+              "property": "participants"
+            }
+          ]
+        },
+        {
+          "name": "Create Group",
+          "description": "Create a new group.",
+          "method": "POST",
+          "url": "/api/{session}/groups",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "name",
+              "type": "body",
+              "property": "name"
+            },
+            {
+              "from": "participants",
+              "type": "body",
+              "property": "participants"
+            }
+          ]
+        },
+        {
+          "name": "Delete Group",
+          "description": "Delete the group.",
+          "method": "DELETE",
+          "url": "/api/{session}/groups/{id}",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "id",
+              "type": "path",
+              "property": "id"
+            }
+          ]
+        },
+        {
+          "name": "Delete Picture",
+          "description": "Delete group picture",
+          "method": "DELETE",
+          "url": "/api/{session}/groups/{id}/picture",
+          "sends": [
+            {
+              "from": "id",
+              "type": "path",
+              "property": "id"
+            },
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            }
+          ]
+        },
+        {
+          "name": "Demote To Admin",
+          "description": "Demotes participants to regular users.",
+          "method": "POST",
+          "url": "/api/{session}/groups/{id}/admin/demote",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "id",
+              "type": "path",
+              "property": "id"
+            },
+            {
+              "from": "participants",
+              "type": "body",
+              "property": "participants"
+            }
+          ]
+        },
+        {
+          "name": "Get Chat Picture",
+          "description": "Get group picture",
+          "method": "GET",
+          "url": "/api/{session}/groups/{id}/picture",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "id",
+              "type": "path",
+              "property": "id"
+            },
+            {
+              "from": "refresh",
+              "type": "query",
+              "property": "refresh"
+            }
+          ]
+        },
+        {
+          "name": "Get Group",
+          "description": "Get the group.",
+          "method": "GET",
+          "url": "/api/{session}/groups/{id}",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "id",
+              "type": "path",
+              "property": "id"
+            }
+          ]
+        },
+        {
+          "name": "Get Groups",
+          "description": "Get all groups.",
+          "method": "GET",
+          "url": "/api/{session}/groups",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "sortBy",
+              "type": "query",
+              "property": "sortBy"
+            },
+            {
+              "from": "sortOrder",
+              "type": "query",
+              "property": "sortOrder"
+            },
+            {
+              "from": "limit",
+              "type": "query",
+              "property": "limit"
+            },
+            {
+              "from": "offset",
+              "type": "query",
+              "property": "offset"
+            }
+          ]
+        },
+        {
+          "name": "Get Info Admin Only",
+          "description": "Get the group's 'info admin only' settings.",
+          "method": "GET",
+          "url": "/api/{session}/groups/{id}/settings/security/info-admin-only",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "id",
+              "type": "path",
+              "property": "id"
+            }
+          ]
+        },
+        {
+          "name": "Get Invite Code",
+          "description": "Gets the invite code for the group.",
+          "method": "GET",
+          "url": "/api/{session}/groups/{id}/invite-code",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "id",
+              "type": "path",
+              "property": "id"
+            }
+          ]
+        },
+        {
+          "name": "Get Messages Admin Only",
+          "description": "Get settings - who can send messages",
+          "method": "GET",
+          "url": "/api/{session}/groups/{id}/settings/security/messages-admin-only",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "id",
+              "type": "path",
+              "property": "id"
+            }
+          ]
+        },
+        {
+          "name": "Get Participants",
+          "description": "Get participants",
+          "method": "GET",
+          "url": "/api/{session}/groups/{id}/participants",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "id",
+              "type": "path",
+              "property": "id"
+            }
+          ]
+        },
+        {
+          "name": "Join Group",
+          "description": "Join group via code",
+          "method": "POST",
+          "url": "/api/{session}/groups/join",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "code",
+              "type": "body",
+              "property": "code"
+            }
+          ]
+        },
+        {
+          "name": "Join Info Group",
+          "description": "Get info about the group before joining.",
+          "method": "GET",
+          "url": "/api/{session}/groups/join-info",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "code",
+              "type": "query",
+              "property": "code"
+            }
+          ]
+        },
+        {
+          "name": "Leave Group",
+          "description": "Leave the group.",
+          "method": "POST",
+          "url": "/api/{session}/groups/{id}/leave",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "id",
+              "type": "path",
+              "property": "id"
+            }
+          ]
+        },
+        {
+          "name": "Promote To Admin",
+          "description": "Promote participants to admin users.",
+          "method": "POST",
+          "url": "/api/{session}/groups/{id}/admin/promote",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "id",
+              "type": "path",
+              "property": "id"
+            },
+            {
+              "from": "participants",
+              "type": "body",
+              "property": "participants"
+            }
+          ]
+        },
+        {
+          "name": "Refresh Groups",
+          "description": "Refresh groups from the server.",
+          "method": "POST",
+          "url": "/api/{session}/groups/refresh",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            }
+          ]
+        },
+        {
+          "name": "Remove Participants",
+          "description": "Remove participants",
+          "method": "POST",
+          "url": "/api/{session}/groups/{id}/participants/remove",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "id",
+              "type": "path",
+              "property": "id"
+            },
+            {
+              "from": "participants",
+              "type": "body",
+              "property": "participants"
+            }
+          ]
+        },
+        {
+          "name": "Revoke Invite Code",
+          "description": "Invalidates the current group invite code and generates a new one.",
+          "method": "POST",
+          "url": "/api/{session}/groups/{id}/invite-code/revoke",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "id",
+              "type": "path",
+              "property": "id"
+            }
+          ]
+        },
+        {
+          "name": "Set Description",
+          "description": "Updates the group description.",
+          "method": "PUT",
+          "url": "/api/{session}/groups/{id}/description",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "id",
+              "type": "path",
+              "property": "id"
+            },
+            {
+              "from": "description",
+              "type": "body",
+              "property": "description"
+            }
+          ]
+        },
+        {
+          "name": "Set Info Admin Only",
+          "description": "Updates the group \"info admin only\" settings.",
+          "method": "PUT",
+          "url": "/api/{session}/groups/{id}/settings/security/info-admin-only",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "id",
+              "type": "path",
+              "property": "id"
+            },
+            {
+              "from": "adminsOnly",
+              "type": "body",
+              "property": "adminsOnly"
+            }
+          ]
+        },
+        {
+          "name": "Set Messages Admin Only",
+          "description": "Update settings - who can send messages",
+          "method": "PUT",
+          "url": "/api/{session}/groups/{id}/settings/security/messages-admin-only",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "id",
+              "type": "path",
+              "property": "id"
+            },
+            {
+              "from": "adminsOnly",
+              "type": "body",
+              "property": "adminsOnly"
+            }
+          ]
+        },
+        {
+          "name": "Set Picture",
+          "description": "Set group picture",
+          "method": "PUT",
+          "url": "/api/{session}/groups/{id}/picture",
+          "sends": [
+            {
+              "from": "id",
+              "type": "path",
+              "property": "id"
+            },
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "file",
+              "type": "body",
+              "property": "file"
+            }
+          ]
+        },
+        {
+          "name": "Set Subject",
+          "description": "Updates the group subject",
+          "method": "PUT",
+          "url": "/api/{session}/groups/{id}/subject",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "id",
+              "type": "path",
+              "property": "id"
+            },
+            {
+              "from": "subject",
+              "type": "body",
+              "property": "subject"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Labels",
+      "operations": [
+        {
+          "name": "Create",
+          "description": "Create a new label",
+          "method": "POST",
+          "url": "/api/{session}/labels",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "color",
+              "type": "body",
+              "property": "color"
+            },
+            {
+              "from": "colorHex",
+              "type": "body",
+              "property": "colorHex"
+            },
+            {
+              "from": "name",
+              "type": "body",
+              "property": "name"
+            }
+          ]
+        },
+        {
+          "name": "Delete",
+          "description": "Delete a label",
+          "method": "DELETE",
+          "url": "/api/{session}/labels/{labelId}",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "labelId",
+              "type": "path",
+              "property": "labelId"
+            }
+          ]
+        },
+        {
+          "name": "Get All",
+          "description": "Get all labels",
+          "method": "GET",
+          "url": "/api/{session}/labels",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            }
+          ]
+        },
+        {
+          "name": "Get Chat Labels",
+          "description": "Get labels for the chat",
+          "method": "GET",
+          "url": "/api/{session}/labels/chats/{chatId}",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "chatId",
+              "type": "path",
+              "property": "chatId"
+            }
+          ]
+        },
+        {
+          "name": "Get Chats By Label",
+          "description": "Get chats by label",
+          "method": "GET",
+          "url": "/api/{session}/labels/{labelId}/chats",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "labelId",
+              "type": "path",
+              "property": "labelId"
+            }
+          ]
+        },
+        {
+          "name": "Put Chat Labels",
+          "description": "Save labels for the chat",
+          "method": "PUT",
+          "url": "/api/{session}/labels/chats/{chatId}",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "chatId",
+              "type": "path",
+              "property": "chatId"
+            },
+            {
+              "from": "labels",
+              "type": "body",
+              "property": "labels"
+            }
+          ]
+        },
+        {
+          "name": "Update",
+          "description": "Update a label",
+          "method": "PUT",
+          "url": "/api/{session}/labels/{labelId}",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "labelId",
+              "type": "path",
+              "property": "labelId"
+            },
+            {
+              "from": "color",
+              "type": "body",
+              "property": "color"
+            },
+            {
+              "from": "colorHex",
+              "type": "body",
+              "property": "colorHex"
+            },
+            {
+              "from": "name",
+              "type": "body",
+              "property": "name"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Observability",
+      "operations": [
+        {
+          "name": "Check",
+          "description": "Check the health of the server",
+          "method": "GET",
+          "url": "/health"
+        },
+        {
+          "name": "Environment",
+          "description": "Get the server environment",
+          "method": "GET",
+          "url": "/api/server/environment",
+          "sends": [
+            {
+              "from": "all",
+              "type": "query",
+              "property": "all"
+            }
+          ]
+        },
+        {
+          "name": "Get",
+          "description": "Get the version of the server",
+          "method": "GET",
+          "url": "/api/server/version"
+        },
+        {
+          "name": "Heapsnapshot",
+          "description": "Return a heapsnapshot",
+          "method": "GET",
+          "url": "/api/server/debug/heapsnapshot"
+        },
+        {
+          "name": "Ping",
+          "description": "Ping the server",
+          "method": "GET",
+          "url": "/ping"
+        },
+        {
+          "name": "Status",
+          "description": "Get the server status",
+          "method": "GET",
+          "url": "/api/server/status"
+        },
+        {
+          "name": "Stop",
+          "description": "Stop (and restart) the server",
+          "method": "POST",
+          "url": "/api/server/stop",
+          "sends": [
+            {
+              "from": "force",
+              "type": "body",
+              "property": "force"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Presence",
+      "operations": [
+        {
+          "name": "Get Presence",
+          "description": "Get the presence for the chat id. If it hasn't been subscribed - it also subscribes to it.",
+          "method": "GET",
+          "url": "/api/{session}/presence/{chatId}",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "chatId",
+              "type": "path",
+              "property": "chatId"
+            }
+          ]
+        },
+        {
+          "name": "Get Presence All",
+          "description": "Get all subscribed presence information.",
+          "method": "GET",
+          "url": "/api/{session}/presence",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            }
+          ]
+        },
+        {
+          "name": "Set Presence",
+          "description": "Set session presence",
+          "method": "POST",
+          "url": "/api/{session}/presence",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "chatId",
+              "type": "body",
+              "property": "chatId"
+            },
+            {
+              "from": "presence",
+              "type": "body",
+              "property": "presence"
+            }
+          ]
+        },
+        {
+          "name": "Subscribe",
+          "description": "Subscribe to presence events for the chat.",
+          "method": "POST",
+          "url": "/api/{session}/presence/{chatId}/subscribe",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "chatId",
+              "type": "path",
+              "property": "chatId"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Profile",
+      "operations": [
+        {
+          "name": "Delete Profile Picture",
+          "description": "Delete profile picture",
+          "method": "DELETE",
+          "url": "/api/{session}/profile/picture",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            }
+          ]
+        },
+        {
+          "name": "Get My Profile",
+          "description": "Get my profile",
+          "method": "GET",
+          "url": "/api/{session}/profile",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            }
+          ]
+        },
+        {
+          "name": "Set Profile Name",
+          "description": "Set my profile name",
+          "method": "PUT",
+          "url": "/api/{session}/profile/name",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "name",
+              "type": "body",
+              "property": "name"
+            }
+          ]
+        },
+        {
+          "name": "Set Profile Picture",
+          "description": "Set profile picture",
+          "method": "PUT",
+          "url": "/api/{session}/profile/picture",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "file",
+              "type": "body",
+              "property": "file"
+            }
+          ]
+        },
+        {
+          "name": "Set Profile Status",
+          "description": "Set profile status (About)",
+          "method": "PUT",
+          "url": "/api/{session}/profile/status",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "status",
+              "type": "body",
+              "property": "status"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Screenshot",
+      "operations": [
+        {
+          "name": "Screenshot",
+          "method": "GET",
+          "url": "/api/screenshot",
+          "sends": [
+            {
+              "from": "session",
+              "type": "query",
+              "property": "session"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Sessions",
+      "operations": [
+        {
+          "name": "Create",
+          "description": "Create a session",
+          "method": "POST",
+          "url": "/api/sessions",
+          "sends": [
+            {
+              "from": "config",
+              "type": "body",
+              "property": "config"
+            },
+            {
+              "from": "name",
+              "type": "body",
+              "property": "name"
+            },
+            {
+              "from": "start",
+              "type": "body",
+              "property": "start"
+            }
+          ]
+        },
+        {
+          "name": "DEPRACATED Start",
+          "description": "Upsert and Start session",
+          "method": "POST",
+          "url": "/api/sessions/start",
+          "sends": [
+            {
+              "from": "config",
+              "type": "body",
+              "property": "config"
+            },
+            {
+              "from": "name",
+              "type": "body",
+              "property": "name"
+            }
+          ]
+        },
+        {
+          "name": "DEPRECATED Logout",
+          "description": "Logout and Delete session.",
+          "method": "POST",
+          "url": "/api/sessions/logout",
+          "sends": [
+            {
+              "from": "name",
+              "type": "body",
+              "property": "name"
+            }
+          ]
+        },
+        {
+          "name": "DEPRECATED Stop",
+          "description": "Stop (and Logout if asked) session",
+          "method": "POST",
+          "url": "/api/sessions/stop",
+          "sends": [
+            {
+              "from": "logout",
+              "type": "body",
+              "property": "logout"
+            },
+            {
+              "from": "name",
+              "type": "body",
+              "property": "name"
+            }
+          ]
+        },
+        {
+          "name": "Delete",
+          "description": "Delete the session",
+          "method": "DELETE",
+          "url": "/api/sessions/{session}",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            }
+          ]
+        },
+        {
+          "name": "Get",
+          "description": "Get session information",
+          "method": "GET",
+          "url": "/api/sessions/{session}",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            }
+          ]
+        },
+        {
+          "name": "Get Me",
+          "description": "Get information about the authenticated account",
+          "method": "GET",
+          "url": "/api/sessions/{session}/me",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            }
+          ]
+        },
+        {
+          "name": "List",
+          "description": "List all sessions",
+          "method": "GET",
+          "url": "/api/sessions",
+          "sends": [
+            {
+              "from": "all",
+              "type": "query",
+              "property": "all"
+            }
+          ]
+        },
+        {
+          "name": "Logout",
+          "description": "Logout from the session",
+          "method": "POST",
+          "url": "/api/sessions/{session}/logout",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            }
+          ]
+        },
+        {
+          "name": "Restart",
+          "description": "Restart the session",
+          "method": "POST",
+          "url": "/api/sessions/{session}/restart",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            }
+          ]
+        },
+        {
+          "name": "Start",
+          "description": "Start the session",
+          "method": "POST",
+          "url": "/api/sessions/{session}/start",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            }
+          ]
+        },
+        {
+          "name": "Stop",
+          "description": "Stop the session",
+          "method": "POST",
+          "url": "/api/sessions/{session}/stop",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            }
+          ]
+        },
+        {
+          "name": "Update",
+          "description": "Update a session",
+          "method": "PUT",
+          "url": "/api/sessions/{session}",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "config",
+              "type": "body",
+              "property": "config"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Status",
+      "operations": [
+        {
+          "name": "Delete Status",
+          "description": "DELETE sent status",
+          "method": "POST",
+          "url": "/api/{session}/status/delete",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "contacts",
+              "type": "body",
+              "property": "contacts"
+            },
+            {
+              "from": "id",
+              "type": "body",
+              "property": "id"
+            }
+          ]
+        },
+        {
+          "name": "Send Image Status",
+          "description": "Send image status",
+          "method": "POST",
+          "url": "/api/{session}/status/image",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "caption",
+              "type": "body",
+              "property": "caption"
+            },
+            {
+              "from": "contacts",
+              "type": "body",
+              "property": "contacts"
+            },
+            {
+              "from": "file",
+              "type": "body",
+              "property": "file"
+            }
+          ]
+        },
+        {
+          "name": "Send Text Status",
+          "description": "Send text status",
+          "method": "POST",
+          "url": "/api/{session}/status/text",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "backgroundColor",
+              "type": "body",
+              "property": "backgroundColor"
+            },
+            {
+              "from": "contacts",
+              "type": "body",
+              "property": "contacts"
+            },
+            {
+              "from": "font",
+              "type": "body",
+              "property": "font"
+            },
+            {
+              "from": "text",
+              "type": "body",
+              "property": "text"
+            }
+          ]
+        },
+        {
+          "name": "Send Video Status",
+          "description": "Send video status",
+          "method": "POST",
+          "url": "/api/{session}/status/video",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "caption",
+              "type": "body",
+              "property": "caption"
+            },
+            {
+              "from": "contacts",
+              "type": "body",
+              "property": "contacts"
+            },
+            {
+              "from": "file",
+              "type": "body",
+              "property": "file"
+            }
+          ]
+        },
+        {
+          "name": "Send Voice Status",
+          "description": "Send voice status",
+          "method": "POST",
+          "url": "/api/{session}/status/voice",
+          "sends": [
+            {
+              "from": "session",
+              "type": "path",
+              "property": "session"
+            },
+            {
+              "from": "backgroundColor",
+              "type": "body",
+              "property": "backgroundColor"
+            },
+            {
+              "from": "contacts",
+              "type": "body",
+              "property": "contacts"
+            },
+            {
+              "from": "file",
+              "type": "body",
+              "property": "file"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "generator": {
+    "tool": "nodepackgen",
+    "source": "third_party/waha/openapi-202502.json",
+    "sourceTitle": "WAHA - WhatsApp HTTP API",
+    "sourceVersion": "2025.2.5",
+    "sourceDigest": "ec332a8c6421047bd14c4b810b31b1cd31b499911072d4e1621ffaca65cc1248"
+  }
+}

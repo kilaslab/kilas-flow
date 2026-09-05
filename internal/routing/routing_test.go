@@ -709,3 +709,56 @@ func TestOperationLevelSendsSkipAParameterThatIsNotShown(t *testing.T) {
 		t.Fatalf("body = %#v, want the hidden parameter left out", body)
 	}
 }
+
+// A declared default may itself be an expression, and it never passes through
+// `expression.Resolve` — that only sees parameters the node actually carries.
+// Generated packs rely on this: a template that omits the parameter entirely
+// must still send the value the pack's default names.
+func TestADeclaredDefaultThatIsAnExpressionIsResolved(t *testing.T) {
+	t.Parallel()
+
+	var body map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+
+	registry := node.NewRegistry()
+	definition := packDefinition()
+	for index := range definition.Parameters {
+		if definition.Parameters[index].Key == "chatId" {
+			definition.Parameters[index].Default = map[string]any{"mode": "expression", "value": "{{ $json.from }}"}
+		}
+		if definition.Parameters[index].Key == "text" {
+			definition.Parameters[index].Default = map[string]any{"mode": "expression", "value": "{{ $json.missing }}"}
+		}
+	}
+	if err := registry.Register(definition); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	description := packRouting(server.URL)
+	routes := routing.NewRegistry()
+	if err := routes.Register(description); err != nil {
+		t.Fatalf("routing Register() error = %v", err)
+	}
+	executor := routing.NewExecutor(localPolicy(), routes, registry)
+
+	if _, err := executor.Execute(context.Background(), packNode(t, registry, map[string]any{
+		"resource": "message", "operation": "send",
+	}, nil), workflow.NodeInput{"main": {{JSON: map[string]any{"from": "9@c.us"}}}}, engine.Request{}); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if body["chatId"] != "9@c.us" {
+		t.Fatalf("chatId = %#v, want the default resolved from the item", body["chatId"])
+	}
+	// A default that resolves to nothing is an absent parameter, not a null
+	// one: sending `null` to a service that documents a default is worse than
+	// sending nothing.
+	message, _ := body["message"].(map[string]any)
+	if _, present := message["text"]; present {
+		t.Fatalf("body = %#v, want an unresolvable default left out entirely", body)
+	}
+}

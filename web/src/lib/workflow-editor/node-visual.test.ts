@@ -159,6 +159,17 @@ describe('nodeVisual', () => {
 		expect(visual.icon).not.toBe(FALLBACK_GLYPH);
 	});
 
+	it('ships the glyph the WAHA pack names, so it is not a grey box', () => {
+		// The pack asks for `builtin:message-circle`. A generated pack has no
+		// frontend entry of its own, so the only thing standing between it and
+		// the fallback glyph is that this build imports the one it names.
+		const [, d] = typed('pack.waha');
+		const visual = nodeVisual({ ...d, icon: { light: 'builtin:message-circle' }, iconColor: '#25d366' });
+		expect(visual.icon).not.toBe(FALLBACK_GLYPH);
+		expect(visual.iconURL).toBeNull();
+		expect(visual.accent).toBe('#25d366');
+	});
+
 	it('falls back visibly when it does not ship the named glyph', () => {
 		// Means "this editor is older than this node", which is a different
 		// thing from "this node looks like a box".

@@ -20,12 +20,14 @@ package nodepack
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
 
 	"github.com/kilaslabs/kilas-flow/internal/engine"
+	"github.com/kilaslabs/kilas-flow/internal/loadoptions"
 	"github.com/kilaslabs/kilas-flow/internal/node"
 	"github.com/kilaslabs/kilas-flow/internal/property"
 	"github.com/kilaslabs/kilas-flow/internal/routing"
@@ -222,6 +224,16 @@ func Load(pack *Pack) (node.Definition, *routing.Node, error) {
 		property.PropertyDefinition{
 			Key: OperationKey, Label: "Operation", Kind: property.KindOptions, Required: true,
 			Default: pack.Resources[0].Operations[0].Name, Options: operationOptions,
+			// The static list is every operation in the pack, because a
+			// definition holds one `operation` property where n8n holds one per
+			// resource. The loader narrows it to the chosen resource, so the
+			// picker shows the eight operations of Sessions rather than all
+			// hundred-odd — and `dependsOn` is what discards the previous
+			// resource's list when the user changes their mind.
+			LoadOptions: &property.OptionsLoader{
+				Source: property.LoaderInternal, Name: OperationsLoaderName(pack.Type, pack.Version),
+				DependsOn: []string{ResourceKey},
+			},
 		},
 	)
 	seenParameter := map[string]bool{}
@@ -286,6 +298,46 @@ type ExecutorSet interface {
 	Lookup(executorID string) (engine.Executor, bool)
 }
 
+// OperationsLoaderName is the internal options loader one pack registers.
+//
+// Keyed by node type and version because the loader answers with that pack's
+// operations and the loader scope carries no node identity: two packs sharing a
+// name would answer each other's questions.
+func OperationsLoaderName(nodeType string, version workflow.TypeVersion) string {
+	return "nodepack." + nodeType + "@" + version.String() + ".operations"
+}
+
+// OperationsLoader answers the operations of the resource the editor is on.
+//
+// An unknown or absent resource yields an empty list with a reason rather than
+// every operation in the pack: a picker that silently offers operations the
+// chosen resource does not have is how a user builds a node that fails at run
+// time with "no request is declared for this pair".
+func OperationsLoader(pack *Pack) loadoptions.InternalLoader {
+	byResource := make(map[string][]loadoptions.Option, len(pack.Resources))
+	for _, resource := range pack.Resources {
+		options := make([]loadoptions.Option, 0, len(resource.Operations))
+		for _, operation := range resource.Operations {
+			options = append(options, loadoptions.Option{Label: operation.Name, Value: operation.Name})
+		}
+		byResource[resource.Name] = options
+	}
+	return func(_ context.Context, scope loadoptions.Scope) (loadoptions.Result, error) {
+		resource := scope.Dependencies[ResourceKey]
+		if resource == "" {
+			return loadoptions.Result{Options: []loadoptions.Option{}, Reason: "Choose a resource first."}, nil
+		}
+		options, found := byResource[resource]
+		if !found {
+			return loadoptions.Result{
+				Options: []loadoptions.Option{},
+				Reason:  fmt.Sprintf("This node has no resource named %q.", resource),
+			}, nil
+		}
+		return loadoptions.Result{Options: options}, nil
+	}
+}
+
 // Register installs a pack's definition and its routing together, and refuses a
 // pack whose executor binding is not installed.
 //
@@ -293,7 +345,7 @@ type ExecutorSet interface {
 // routing description registers cleanly and fails on its first run; so does a
 // definition whose binding names an executor nobody installed. Both are startup
 // failures here instead.
-func Register(definitions *node.Registry, routes *routing.Registry, executors ExecutorSet, pack *Pack) error {
+func Register(definitions *node.Registry, routes *routing.Registry, executors ExecutorSet, options *loadoptions.Resolver, pack *Pack) error {
 	definition, description, err := Load(pack)
 	if err != nil {
 		return err
@@ -307,6 +359,11 @@ func Register(definitions *node.Registry, routes *routing.Registry, executors Ex
 	}
 	if err := routes.Register(description); err != nil {
 		return err
+	}
+	if options != nil {
+		if err := options.RegisterInternal(OperationsLoaderName(pack.Type, pack.Version), OperationsLoader(pack)); err != nil {
+			return err
+		}
 	}
 	return definitions.RegisterFrom(node.SourcePack, definition)
 }

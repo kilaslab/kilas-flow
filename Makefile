@@ -119,6 +119,16 @@ docker: ## Build the Docker image
 corpus: ## Fetch the n8n importer regression corpus (needs KILASFLOW_N8N_REFERENCE)
 	scripts/corpus-sync.sh
 
+.PHONY: node-packs
+node-packs: ## Regenerate the committed node packs from their vendored specs
+	@for version in 202409 202502; do \
+	  $(GO) run ./cmd/nodepackgen \
+	    -spec third_party/waha/openapi-$$version.json \
+	    -manifest packs/waha/manifest-$$version.json \
+	    -out packs/waha/pack-$$version.json \
+	    -report packs/waha/REPORT-$$version.md || exit 1; \
+	done
+
 .PHONY: corpus-baseline
 corpus-baseline: ## Rescore the corpus and rewrite BASELINE.md and baseline.json
 	$(GO) test ./internal/interop/n8n/corpus -update-baseline -count=1 -v

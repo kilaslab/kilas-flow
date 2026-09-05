@@ -93,6 +93,28 @@ func RegisterAll(registry *Registry) error {
 			Secrets: []string{"password"},
 		},
 		{
+			ID: "wahaApi", DisplayName: "WAHA",
+			Description: "A self-hosted WAHA instance: its base URL and its API key.",
+			Properties: []property.PropertyDefinition{
+				{
+					Key: "baseUrl", Label: "Base URL", Kind: property.KindString, Required: true,
+					Description: "Where the WAHA instance is, for example https://waha.example.com.",
+				},
+				{
+					Key: "apiKey", Label: "API key", Kind: property.KindString, Required: true,
+					TypeOptions: &property.TypeOptions{Password: true},
+				},
+			},
+			Secrets: []string{"apiKey"},
+			// The base URL is deliberately *not* secret. A declarative pack
+			// reads it as `{{ $credentials.baseUrl }}` to build every request,
+			// and `$credentials` exposes non-secret fields only — so marking it
+			// secret would leave the pack with no address to call.
+			Authenticate: &Authentication{
+				Placement: PlacementHeader, Name: "X-Api-Key", Value: "{{ apiKey }}",
+			},
+		},
+		{
 			ID: "sqlite", DisplayName: "SQLite file",
 			Description: "Opens a SQLite file on the server. The path must be given explicitly and cannot be KilasFlow's own database.",
 			Properties: []property.PropertyDefinition{

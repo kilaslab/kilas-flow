@@ -241,8 +241,8 @@ func TestKeyFromEnvironmentAcceptsBase64AndHex(t *testing.T) {
 //
 // A stored credential row is keyed by its type ID and its sealed payload by its
 // field keys. Changing either — even by tidying a name — makes an existing
-// credential unresolvable with no way to recover it, so the six IDs and every
-// field key are pinned here as literals rather than derived from the registry,
+// credential unresolvable with no way to recover it, so every ID and every
+// field key is pinned here as a literal rather than derived from the registry,
 // which would assert nothing.
 func TestEveryStoredCredentialTypeStillResolves(t *testing.T) {
 	t.Parallel()
@@ -254,6 +254,7 @@ func TestEveryStoredCredentialTypeStillResolves(t *testing.T) {
 		"postgres":       {"host", "port", "database", "user", "password", "sslMode"},
 		"mysql":          {"host", "port", "database", "user", "password", "tls"},
 		"sqlite":         {"path"},
+		"wahaApi":        {"baseUrl", "apiKey"},
 	}
 
 	registry := credentials.NewRegistry()
@@ -304,19 +305,20 @@ func TestAuthenticationIsDescribedNotSwitched(t *testing.T) {
 	if err := credentials.RegisterAll(registry); err != nil {
 		t.Fatalf("RegisterAll() error = %v", err)
 	}
-	// A brand-new type, registered here with no change to the package: WAHA's
-	// X-Api-Key is exactly this shape.
+	// A brand-new type, registered here with no change to the package. It is
+	// deliberately not one this server ships: the claim under test is that a
+	// type nobody wrote Go for still authenticates.
 	if err := registry.Register(credentials.Type{
-		ID: "wahaApi", DisplayName: "WAHA API",
+		ID: "exampleFixedHeaderApi", DisplayName: "Example fixed-header API",
 		Properties: []property.PropertyDefinition{
 			{Key: "baseUrl", Label: "Base URL", Kind: property.KindString, Required: true},
 			{Key: "apiKey", Label: "API key", Kind: property.KindString, Required: true,
 				TypeOptions: &property.TypeOptions{Password: true}},
 		},
 		Secrets:      []string{"apiKey"},
-		Authenticate: &credentials.Authentication{Placement: credentials.PlacementHeader, Name: "X-Api-Key", Value: "{{ apiKey }}"},
+		Authenticate: &credentials.Authentication{Placement: credentials.PlacementHeader, Name: "X-Example-Key", Value: "{{ apiKey }}"},
 	}); err != nil {
-		t.Fatalf("Register(wahaApi) error = %v", err)
+		t.Fatalf("Register(exampleFixedHeaderApi) error = %v", err)
 	}
 
 	for name, testCase := range map[string]struct {
@@ -350,6 +352,16 @@ func TestAuthenticationIsDescribedNotSwitched(t *testing.T) {
 			},
 		},
 		"a type added with no Go change": {
+			id: "exampleFixedHeaderApi", fields: map[string]string{"baseUrl": "https://api.test", "apiKey": "k-1"},
+			check: func(t *testing.T, request *http.Request) {
+				if got := request.Header.Get("X-Example-Key"); got != "k-1" {
+					t.Errorf("X-Example-Key = %q, want the key applied", got)
+				}
+			},
+		},
+		// The shipped WAHA type is the same shape with the header name pinned,
+		// which is what lets a generated pack authenticate with no Go at all.
+		"the shipped WAHA type": {
 			id: "wahaApi", fields: map[string]string{"baseUrl": "https://waha.test", "apiKey": "k-waha"},
 			check: func(t *testing.T, request *http.Request) {
 				if got := request.Header.Get("X-Api-Key"); got != "k-waha" {

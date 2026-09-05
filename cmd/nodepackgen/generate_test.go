@@ -241,7 +241,7 @@ func TestAGeneratedPackRegistersAndCannotChooseItsExecutor(t *testing.T) {
 		})); err != nil {
 		t.Fatalf("Register() error = %v", err)
 	}
-	if err := nodepack.Register(definitions, routes, executors, pack); err != nil {
+	if err := nodepack.Register(definitions, routes, executors, nil, pack); err != nil {
 		t.Fatalf("Register() error = %v", err)
 	}
 	definition, found := definitions.Get(pack.Type, pack.Version)
@@ -261,7 +261,7 @@ func TestAGeneratedPackRegistersAndCannotChooseItsExecutor(t *testing.T) {
 	// A pack whose binding is not installed is refused, which is what makes
 	// "the pack and its runtime arrive together" enforceable rather than a
 	// convention.
-	bare := nodepack.Register(node.NewRegistry(), routing.NewRegistry(), engine.NewRegistry(), pack)
+	bare := nodepack.Register(node.NewRegistry(), routing.NewRegistry(), engine.NewRegistry(), nil, pack)
 	if bare == nil || !strings.Contains(bare.Error(), "has not installed") {
 		t.Fatalf("Register() with no interpreter installed = %v, want a refusal", bare)
 	}
@@ -310,7 +310,7 @@ func TestAGeneratedPackActuallyMakesTheRequestItDescribes(t *testing.T) {
 	if err := executors.Register(routing.ExecutorID, routing.NewExecutor(policy, routes, definitions)); err != nil {
 		t.Fatalf("Register() error = %v", err)
 	}
-	if err := nodepack.Register(definitions, routes, executors, pack); err != nil {
+	if err := nodepack.Register(definitions, routes, executors, nil, pack); err != nil {
 		t.Fatalf("Register() error = %v", err)
 	}
 
@@ -357,7 +357,7 @@ func TestAnOperationFromAnotherResourceIsRefused(t *testing.T) {
 	if err := executors.Register(routing.ExecutorID, routing.NewExecutor(safehttp.DefaultPolicy(), routes, definitions)); err != nil {
 		t.Fatalf("Register() error = %v", err)
 	}
-	if err := nodepack.Register(definitions, routes, executors, pack); err != nil {
+	if err := nodepack.Register(definitions, routes, executors, nil, pack); err != nil {
 		t.Fatalf("Register() error = %v", err)
 	}
 

@@ -40,6 +40,16 @@ type manifest struct {
 	Security map[string]string `json:"security"`
 	// SkipDeprecated leaves deprecated operations out of the pack.
 	SkipDeprecated bool `json:"skipDeprecated,omitempty"`
+	// ParameterDefaults override a parameter's default by key, whatever the
+	// document said.
+	//
+	// This is not a convenience. The generator that produced the n8n package
+	// these workflows were authored against injects defaults that are nowhere
+	// in the OpenAPI document — WAHA's `session` and `chatId` are filled from
+	// the trigger item — and official templates omit both parameters entirely
+	// and rely on them. A pack that treated absent as empty would produce
+	// workflows that look correct, activate, and send nothing anywhere.
+	ParameterDefaults map[string]any `json:"parameterDefaults,omitempty"`
 }
 
 func (m manifest) validate() error {
@@ -108,6 +118,7 @@ func generate(doc *document, source string, raw []byte, m manifest) (*nodepack.P
 	}
 
 	builder := newBuilder(generated)
+	builder.defaults = m.ParameterDefaults
 	for _, entry := range listed {
 		builder.add(doc, entry, m)
 	}
@@ -175,6 +186,9 @@ type builder struct {
 	byResource map[string][]nodepack.Operation
 	merged     map[string]*mergedParameter
 	order      []string
+	// defaults are the manifest's overrides, applied after merging so a
+	// conflict between two operations' schema defaults cannot erase them.
+	defaults map[string]any
 }
 
 // mergedParameter is one node property being assembled from several operations.
@@ -399,6 +413,12 @@ func (b *builder) parameters() []nodepack.Parameter {
 		// visibility union cannot say "required here but not there", and a
 		// field demanded where it is not used makes the node unsavable.
 		parameter.Required = merged.required == merged.occurrences
+		if override, declared := b.defaults[key]; declared {
+			parameter.Default = override
+			// A parameter that always has a value is not one a user must fill.
+			parameter.Required = false
+			b.report.note("Parameter %q uses the manifest's default rather than the document's.", key)
+		}
 		parameter.Resources = sortedKeys(merged.resources)
 		parameter.Operations = sortedKeys(merged.operations)
 		built = append(built, parameter)

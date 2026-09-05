@@ -35,6 +35,7 @@ import (
 	"github.com/kilaslabs/kilas-flow/internal/sqlnode"
 	"github.com/kilaslabs/kilas-flow/internal/webhook"
 	"github.com/kilaslabs/kilas-flow/nodes"
+	"github.com/kilaslabs/kilas-flow/packs/waha"
 )
 
 // version is overridden at build time with -ldflags "-X main.version=...".
@@ -102,6 +103,17 @@ func run() error {
 	routes := routing.NewRegistry()
 	if err := nodes.RegisterRoutingExecutor(executorRegistry, outboundPolicy(cfg.Outbound), routes, nodeRegistry); err != nil {
 		return fmt.Errorf("register the declarative routing executor: %w", err)
+	}
+	// Edit-time option loading. It reaches a customer's service through the
+	// same egress policy an HTTP node uses, so a loader aimed at a disallowed
+	// host fails the same way — and a pack registers its own internal loaders
+	// into it, which is why it is built here rather than at the API.
+	optionLoader := loadoptions.NewResolver(safehttp.DefaultPolicy(), 30*time.Second)
+	// Generated node packs. The definitions, their routing and their option
+	// loaders are registered together: a pack whose runtime is missing fails
+	// here rather than on its first execution.
+	if err := waha.Register(nodeRegistry, routes, executorRegistry, optionLoader); err != nil {
+		return fmt.Errorf("register the WAHA node pack: %w", err)
 	}
 
 	// Credentials are optional at boot: an install with no key still runs
@@ -222,11 +234,8 @@ func run() error {
 			ResponseTimeout: cfg.Webhook.ResponseTimeout,
 			DeliveryWindow:  repository.DefaultDeliveryWindow,
 		}).WithTriggers(webhookTriggers),
-		Credentials: credentialStore,
-		// Edit-time option loading. It reaches a customer's service through the
-		// same egress policy an HTTP node uses, so a loader aimed at a
-		// disallowed host fails the same way.
-		OptionLoader: loadoptions.NewResolver(safehttp.DefaultPolicy(), 30*time.Second),
+		Credentials:  credentialStore,
+		OptionLoader: optionLoader,
 		CredentialResolverFor: func(tenant repository.TenantScope) loadoptions.CredentialResolver {
 			return credentialLookup{store: credentialStore, tenant: tenant}
 		},

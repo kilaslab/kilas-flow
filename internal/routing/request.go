@@ -53,9 +53,31 @@ func buildPlan(
 		if !property.VisibleProperty(declared, parameters, version) {
 			continue
 		}
-		if value, present := parameterValue(declared, parameters); present {
-			visible[declared.Key] = value
+		value, fromDefault, present := parameterValue(declared, parameters)
+		if !present {
+			continue
 		}
+		if fromDefault {
+			// A declared default may itself be an expression. The generator
+			// that produced the packages these workflows were authored against
+			// injects exactly that — WAHA's `session` and `chatId` are filled
+			// from the trigger item — and the value never passes through
+			// `expression.Resolve`, which only sees parameters the node
+			// actually carries. Resolving it here is what makes a template that
+			// omits the parameter entirely work at all.
+			resolved, err := resolveDefault(declared.Key, value, base)
+			if err != nil {
+				return plan{}, fmt.Errorf("default for %q: %w", declared.Key, err)
+			}
+			// A default that resolves to nothing is an absent parameter, not a
+			// null one: sending `null` to a service that documents a default is
+			// worse than sending nothing.
+			if resolved == nil {
+				continue
+			}
+			value = resolved
+		}
+		visible[declared.Key] = value
 	}
 
 	resourceKey, operationKey := description.Cascade.Keys()
@@ -277,14 +299,26 @@ func cloneAnyMap(source map[string]any) map[string]any {
 // against the value the editor shows, and the editor shows the default for a
 // property the user never touched. Skipping those would send a request missing
 // exactly the fields nobody had to think about.
-func parameterValue(declared node.PropertyDefinition, parameters map[string]any) (any, bool) {
-	if value, present := parameters[declared.Key]; present && value != nil {
-		return value, true
+func parameterValue(declared node.PropertyDefinition, parameters map[string]any) (value any, fromDefault, present bool) {
+	if stored, carried := parameters[declared.Key]; carried && stored != nil {
+		return stored, false, true
 	}
 	if declared.Default == nil {
-		return nil, false
+		return nil, false, false
 	}
-	return declared.Default, true
+	return declared.Default, true, true
+}
+
+// resolveDefault evaluates a declared default that is itself an expression.
+func resolveDefault(key string, value any, base expression.Context) (any, error) {
+	if !expression.IsExpression(value) {
+		return value, nil
+	}
+	resolved, err := expression.Resolve(map[string]any{key: value}, base)
+	if err != nil {
+		return nil, err
+	}
+	return resolved[key], nil
 }
 
 // selectedValues reads which options are selected, for options and multiOptions
