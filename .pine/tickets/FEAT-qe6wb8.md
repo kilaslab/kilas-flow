@@ -36,6 +36,7 @@ There is a live defect waiting for the `session` default in particular. `interna
 - [ ] A send-text operation runs against a stub WAHA server through `safehttp` and the credential store, and the recorded execution shows the request and the response without the API key.
 - [ ] Regenerating both packs from the unchanged spec produces no diff.
 - [ ] The WAHA node renders on the canvas with a credential picker and its own icon rather than the fallback grey box.
+- [ ] The `operation` picker narrows to the chosen resource, through an internal options loader with `DependsOn: ["resource"]` — a pack holds one `operation` property, so without it the picker lists every operation in the pack.
 
 ## Implementation Plan
 

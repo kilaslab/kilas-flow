@@ -258,7 +258,7 @@ func (executor *Executor) call(
 
 // target assembles baseURL and url into one absolute URL.
 func (request Request) target() (*url.URL, error) {
-	joined := strings.TrimSpace(request.URL)
+	joined := substitutePath(strings.TrimSpace(request.URL), request.Path)
 	if base := strings.TrimSpace(request.BaseURL); base != "" {
 		if joined == "" {
 			joined = base
@@ -284,6 +284,18 @@ func (request Request) target() (*url.URL, error) {
 		target.RawQuery = query.Encode()
 	}
 	return target, nil
+}
+
+// substitutePath fills `{name}` placeholders with escaped path segments.
+//
+// Escaping is the point. A chat id containing a slash, substituted raw, would
+// silently change which endpoint is called — and the value comes from a
+// workflow author or from item data, so it is not the pack's to trust.
+func substitutePath(target string, values map[string]any) string {
+	for name, value := range values {
+		target = strings.ReplaceAll(target, "{"+name+"}", url.PathEscape(stringOf(value)))
+	}
+	return target
 }
 
 // applyOffset writes the paging parameters into the request for one page.

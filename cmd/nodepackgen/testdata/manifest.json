@@ -1,0 +1,12 @@
+{
+  "type": "fixture.action",
+  "version": 1,
+  "displayName": "Fixture",
+  "description": "A generated fixture node.",
+  "category": "Fixture",
+  "icon": "builtin:globe",
+  "iconColor": "#25D366",
+  "subtitle": "{{ $parameter.operation }}: {{ $parameter.resource }}",
+  "baseUrl": "{{ $credentials.baseUrl }}",
+  "security": { "api_key": "httpHeaderAuth" }
+}

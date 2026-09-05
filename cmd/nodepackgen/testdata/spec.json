@@ -1,0 +1,98 @@
+{
+  "openapi": "3.1.0",
+  "info": { "title": "Fixture API", "version": "1.2.3" },
+  "servers": [{ "url": "https://api.fixture.test" }],
+  "components": {
+    "securitySchemes": {
+      "api_key": { "type": "apiKey", "in": "header", "name": "X-Api-Key" }
+    },
+    "schemas": {
+      "SendTextRequest": {
+        "type": "object",
+        "required": ["chatId", "text"],
+        "properties": {
+          "chatId": { "type": "string", "description": "Where to send it." },
+          "text": { "type": "string", "default": "Hi there!" },
+          "linkPreview": { "type": "boolean", "default": true },
+          "retries": { "type": "integer", "default": 3 },
+          "mentions": { "type": "array", "items": { "type": "string" } },
+          "meta": {
+            "type": "object",
+            "properties": { "campaign": { "type": "string" } }
+          },
+          "attachment": {
+            "oneOf": [
+              { "type": "string" },
+              { "type": "object", "properties": { "url": { "type": "string" } } }
+            ]
+          }
+        }
+      },
+      "UploadRequest": { "type": "object", "properties": { "file": { "type": "string" } } },
+      "EitherRequest": {
+        "oneOf": [
+          { "type": "object", "properties": { "a": { "type": "string" } } },
+          { "type": "object", "properties": { "b": { "type": "string" } } }
+        ]
+      }
+    }
+  },
+  "paths": {
+    "/api/sendText": {
+      "post": {
+        "operationId": "ChattingController_sendText",
+        "summary": "Send a text message",
+        "tags": ["📤 Chatting"],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SendTextRequest" } } }
+        }
+      }
+    },
+    "/api/chats/{chatId}/messages": {
+      "get": {
+        "operationId": "ChattingController_getMessages2",
+        "summary": "Read the last messages",
+        "tags": ["📤 Chatting"],
+        "parameters": [
+          { "name": "chatId", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 20 } },
+          { "name": "order", "in": "query", "schema": { "type": "string", "enum": ["asc", "desc"] } },
+          { "name": "X-Trace", "in": "header", "schema": { "type": "string" } }
+        ]
+      }
+    },
+    "/api/sessions": {
+      "get": { "operationId": "sessionsList", "summary": "List sessions", "tags": ["Sessions"] },
+      "post": {
+        "operationId": "SessionsController_create",
+        "summary": "Create a session",
+        "tags": ["Sessions"],
+        "parameters": [{ "name": "chatId", "in": "query", "schema": { "type": "integer" } }]
+      }
+    },
+    "/api/files": {
+      "post": {
+        "operationId": "FilesController_upload",
+        "summary": "Upload a file",
+        "tags": ["Files"],
+        "requestBody": {
+          "content": { "multipart/form-data": { "schema": { "$ref": "#/components/schemas/UploadRequest" } } }
+        }
+      }
+    },
+    "/api/either": {
+      "post": {
+        "operationId": "FilesController_either",
+        "summary": "Send one shape or the other",
+        "tags": ["Files"],
+        "requestBody": {
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EitherRequest" } } }
+        }
+      }
+    },
+    "/api/untagged": {
+      "get": { "operationId": "MiscController_untagged", "summary": "No tag" }
+    }
+  }
+}

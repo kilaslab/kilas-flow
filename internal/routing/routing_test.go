@@ -628,3 +628,84 @@ func TestAnEmptyResponseStillProducesAnItem(t *testing.T) {
 		t.Fatalf("output = %#v, want one empty item", output[0])
 	}
 }
+
+// A generated pack expresses placement on the operation, because a KilasFlow
+// definition holds one property per key and different operations put the same
+// parameter in different places.
+func TestOperationLevelSendsPlaceNamedParametersAndEscapePathSegments(t *testing.T) {
+	t.Parallel()
+
+	var path, query string
+	var body map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path, query = r.URL.EscapedPath(), r.URL.RawQuery
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+
+	description := packRouting(server.URL)
+	description.Properties = map[string]routing.Routing{}
+	description.Options["operation"]["send"] = routing.Routing{
+		Request: &routing.Request{Method: "POST", URL: "/api/{chatId}/messages"},
+		Sends: []routing.Send{
+			{From: "chatId", Type: "path", Property: "chatId"},
+			{From: "text", Type: "body", Property: "message.text"},
+			{From: "resource", Type: "query", Property: "resource"},
+		},
+	}
+
+	test := newHarness(t, localPolicy(), description)
+	if _, err := test.executor.Execute(context.Background(), packNode(t, test.registry, map[string]any{
+		// A slash in a path parameter must not be able to change the endpoint.
+		"resource": "message", "operation": "send", "chatId": "a/b", "text": "hi",
+	}, nil), workflow.NodeInput{}, engine.Request{}); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if path != "/api/a%2Fb/messages" {
+		t.Fatalf("path = %q, want the path parameter escaped to one segment", path)
+	}
+	if query != "resource=message" {
+		t.Fatalf("query = %q, want the query-placed parameter", query)
+	}
+	message, _ := body["message"].(map[string]any)
+	if message["text"] != "hi" {
+		t.Fatalf("body = %#v, want the body-placed parameter", body)
+	}
+}
+
+// A node keeps the parameters of every resource it has ever been set to. An
+// operation that names one of those by accident must not post it to an endpoint
+// that never asked for it.
+func TestOperationLevelSendsSkipAParameterThatIsNotShown(t *testing.T) {
+	t.Parallel()
+
+	var body map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+
+	description := packRouting(server.URL)
+	description.Properties = map[string]routing.Routing{}
+	description.Options["operation"]["list"] = routing.Routing{
+		Request: &routing.Request{Method: "POST", URL: "/api/chats"},
+		// chatId is only shown when resource is message.
+		Sends: []routing.Send{{From: "chatId", Type: "body", Property: "chatId"}},
+	}
+
+	test := newHarness(t, localPolicy(), description)
+	if _, err := test.executor.Execute(context.Background(), packNode(t, test.registry, map[string]any{
+		"resource": "chat", "operation": "list", "chatId": "left over",
+	}, nil), workflow.NodeInput{}, engine.Request{}); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if _, present := body["chatId"]; present {
+		t.Fatalf("body = %#v, want the hidden parameter left out", body)
+	}
+}

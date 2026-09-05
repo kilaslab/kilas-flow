@@ -1,0 +1,238 @@
+{
+  "type": "fixture.action",
+  "version": 1,
+  "displayName": "Fixture",
+  "description": "A generated fixture node.",
+  "category": "Fixture",
+  "icon": "builtin:globe",
+  "iconColor": "#25D366",
+  "subtitle": "{{ $parameter.operation }}: {{ $parameter.resource }}",
+  "credentialType": "httpHeaderAuth",
+  "requestDefaults": {
+    "baseURL": "{{ $credentials.baseUrl }}"
+  },
+  "parameters": [
+    {
+      "key": "attachment",
+      "label": "Attachment",
+      "kind": "json",
+      "resources": [
+        "Chatting"
+      ],
+      "operations": [
+        "Send Text"
+      ]
+    },
+    {
+      "key": "chatId",
+      "label": "Chat Id",
+      "description": "Where to send it.",
+      "kind": "string",
+      "resources": [
+        "Chatting",
+        "Sessions"
+      ],
+      "operations": [
+        "Create",
+        "Get Messages 2",
+        "Send Text"
+      ]
+    },
+    {
+      "key": "limit",
+      "label": "Limit",
+      "kind": "number",
+      "default": 20,
+      "resources": [
+        "Chatting"
+      ],
+      "operations": [
+        "Get Messages 2"
+      ]
+    },
+    {
+      "key": "linkPreview",
+      "label": "Link Preview",
+      "kind": "boolean",
+      "default": true,
+      "resources": [
+        "Chatting"
+      ],
+      "operations": [
+        "Send Text"
+      ]
+    },
+    {
+      "key": "mentions",
+      "label": "Mentions",
+      "kind": "json",
+      "resources": [
+        "Chatting"
+      ],
+      "operations": [
+        "Send Text"
+      ]
+    },
+    {
+      "key": "meta",
+      "label": "Meta",
+      "kind": "json",
+      "resources": [
+        "Chatting"
+      ],
+      "operations": [
+        "Send Text"
+      ]
+    },
+    {
+      "key": "order",
+      "label": "Order",
+      "kind": "options",
+      "options": [
+        {
+          "label": "Asc",
+          "value": "asc"
+        },
+        {
+          "label": "Desc",
+          "value": "desc"
+        }
+      ],
+      "resources": [
+        "Chatting"
+      ],
+      "operations": [
+        "Get Messages 2"
+      ]
+    },
+    {
+      "key": "retries",
+      "label": "Retries",
+      "kind": "number",
+      "default": 3,
+      "resources": [
+        "Chatting"
+      ],
+      "operations": [
+        "Send Text"
+      ]
+    },
+    {
+      "key": "text",
+      "label": "Text",
+      "kind": "string",
+      "required": true,
+      "default": "Hi there!",
+      "resources": [
+        "Chatting"
+      ],
+      "operations": [
+        "Send Text"
+      ]
+    }
+  ],
+  "resources": [
+    {
+      "name": "Chatting",
+      "operations": [
+        {
+          "name": "Get Messages 2",
+          "description": "Read the last messages",
+          "method": "GET",
+          "url": "/api/chats/{chatId}/messages",
+          "sends": [
+            {
+              "from": "chatId",
+              "type": "path",
+              "property": "chatId"
+            },
+            {
+              "from": "limit",
+              "type": "query",
+              "property": "limit"
+            },
+            {
+              "from": "order",
+              "type": "query",
+              "property": "order"
+            }
+          ]
+        },
+        {
+          "name": "Send Text",
+          "description": "Send a text message",
+          "method": "POST",
+          "url": "/api/sendText",
+          "sends": [
+            {
+              "from": "attachment",
+              "type": "body",
+              "property": "attachment"
+            },
+            {
+              "from": "chatId",
+              "type": "body",
+              "property": "chatId"
+            },
+            {
+              "from": "linkPreview",
+              "type": "body",
+              "property": "linkPreview"
+            },
+            {
+              "from": "mentions",
+              "type": "body",
+              "property": "mentions"
+            },
+            {
+              "from": "meta",
+              "type": "body",
+              "property": "meta"
+            },
+            {
+              "from": "retries",
+              "type": "body",
+              "property": "retries"
+            },
+            {
+              "from": "text",
+              "type": "body",
+              "property": "text"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Sessions",
+      "operations": [
+        {
+          "name": "Create",
+          "description": "Create a session",
+          "method": "POST",
+          "url": "/api/sessions",
+          "sends": [
+            {
+              "from": "chatId",
+              "type": "query",
+              "property": "chatId"
+            }
+          ]
+        },
+        {
+          "name": "Sessions List",
+          "description": "List sessions",
+          "method": "GET",
+          "url": "/api/sessions"
+        }
+      ]
+    }
+  ],
+  "generator": {
+    "tool": "nodepackgen",
+    "source": "testdata/spec.json",
+    "sourceTitle": "Fixture API",
+    "sourceVersion": "1.2.3",
+    "sourceDigest": "aeb79dce3e568d60daf5f56c67e9e1f1c687057a535edc266c632ec9b3748ca3"
+  }
+}

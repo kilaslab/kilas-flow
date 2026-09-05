@@ -31,18 +31,64 @@ type Node struct {
 	// `operation` property whose every option carries the request it makes is
 	// how one node becomes a hundred operations.
 	Options map[string]map[string]Routing `json:"options,omitempty"`
+	// Cascade is routing selected by two properties at once.
+	//
+	// It exists because the format's own shape cannot be expressed by Options
+	// alone: operation names repeat across resources — WAHA has four distinct
+	// `Get` operations — so an `operation` → routing map would collapse them
+	// onto whichever request happened to be written last. n8n avoids the
+	// collision by keeping one `operation` property per resource, each gated on
+	// the resource; a KilasFlow definition holds one property per key, so the
+	// disambiguation lives here instead.
+	Cascade *Cascade `json:"cascade,omitempty"`
+}
+
+// Cascade routes on a resource and an operation together.
+type Cascade struct {
+	// ResourceKey and OperationKey name the two properties. Empty means
+	// "resource" and "operation", which is what the format calls them.
+	ResourceKey  string `json:"resourceKey,omitempty"`
+	OperationKey string `json:"operationKey,omitempty"`
+	// Routes is keyed by resource value, then operation value.
+	Routes map[string]map[string]Routing `json:"routes"`
+}
+
+// Keys returns the two property names, filling in the format's defaults.
+func (cascade *Cascade) Keys() (resource, operation string) {
+	resource, operation = "resource", "operation"
+	if cascade == nil {
+		return resource, operation
+	}
+	if cascade.ResourceKey != "" {
+		resource = cascade.ResourceKey
+	}
+	if cascade.OperationKey != "" {
+		operation = cascade.OperationKey
+	}
+	return resource, operation
 }
 
 // Routing is what a property or an option contributes to the request.
 type Routing struct {
-	Request    *Request    `json:"request,omitempty"`
-	Send       *Send       `json:"send,omitempty"`
+	Request *Request `json:"request,omitempty"`
+	// Send places the property this routing is attached to. It is the format's
+	// own per-property form.
+	Send *Send `json:"send,omitempty"`
+	// Sends places named parameters, and is how a generated pack expresses
+	// placement that varies by operation.
+	//
+	// n8n keeps one property per operation and lets several share a name,
+	// disambiguated by displayOptions. A KilasFlow definition holds one
+	// property per key — the registry refuses duplicates, deliberately — so a
+	// generated pack cannot say "chatId goes in the body for Send Text and in
+	// the query for Get Messages" on the property. It says it on the operation.
+	Sends      []Send      `json:"sends,omitempty"`
 	Output     *Output     `json:"output,omitempty"`
 	Operations *Operations `json:"operations,omitempty"`
 }
 
 // Request is the request shape, in the shared vocabulary `requestDefaults` and
-// `routing.request` both speak. Every string may be an expression marker.
+// `routing.request` both speak. Every string may carry `{{ }}` templates.
 type Request struct {
 	Method string `json:"method,omitempty"`
 	// BaseURL is prefixed to URL. Only the defaults normally set it, but an
@@ -52,11 +98,21 @@ type Request struct {
 	Headers map[string]any `json:"headers,omitempty"`
 	Query   map[string]any `json:"qs,omitempty"`
 	Body    map[string]any `json:"body,omitempty"`
+	// Path fills `{name}` placeholders in URL, one whole path segment at a
+	// time and percent-escaped.
+	//
+	// A path parameter is deliberately not a template. A chat id containing a
+	// slash written as `{{ $parameter.chatId }}` would silently change which
+	// endpoint is called; substituted here it can only ever be one segment.
+	Path map[string]any `json:"path,omitempty"`
 }
 
 // Send places one property's value into the request.
 type Send struct {
-	// Type is where the value goes: "body" or "query".
+	// From names the parameter to read. Empty means the property this routing
+	// is attached to, which is the per-property form.
+	From string `json:"from,omitempty"`
+	// Type is where the value goes: "body", "query" or "path".
 	Type string `json:"type,omitempty"`
 	// Property is the destination path. Dot notation unless disabled, so
 	// `message.text` nests rather than making a key with a dot in it.
@@ -226,18 +282,45 @@ func (description *Node) validate() error {
 			}
 		}
 	}
+	if description.Cascade != nil {
+		for resource, operations := range description.Cascade.Routes {
+			for operation, routing := range operations {
+				if err := routing.validate(); err != nil {
+					return fmt.Errorf("resource %q operation %q: %w", resource, operation, err)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func (send Send) validate() error {
+	if len(send.PreSend) > 0 {
+		return fmt.Errorf("preSend hooks are JavaScript and are not supported; remove %s", strings.Join(send.PreSend, ", "))
+	}
+	switch send.Type {
+	case "", "body", "query", "path":
+	default:
+		return fmt.Errorf("send type %q is not supported; use body, query or path", send.Type)
+	}
+	if strings.TrimSpace(send.Property) == "" {
+		return fmt.Errorf("send needs a destination property")
+	}
 	return nil
 }
 
 func (routing Routing) validate() error {
 	if routing.Send != nil {
-		if len(routing.Send.PreSend) > 0 {
-			return fmt.Errorf("preSend hooks are JavaScript and are not supported; remove %s", strings.Join(routing.Send.PreSend, ", "))
+		if err := routing.Send.validate(); err != nil {
+			return err
 		}
-		switch routing.Send.Type {
-		case "", "body", "query":
-		default:
-			return fmt.Errorf("send type %q is not supported; use body or query", routing.Send.Type)
+	}
+	for _, send := range routing.Sends {
+		if err := send.validate(); err != nil {
+			return err
+		}
+		if strings.TrimSpace(send.From) == "" {
+			return fmt.Errorf("a sends entry needs the parameter it reads")
 		}
 	}
 	if routing.Output != nil {

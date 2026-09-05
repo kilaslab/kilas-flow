@@ -45,16 +45,41 @@ func buildPlan(
 	}
 	version := definition.Version.String()
 
+	// Two passes. The first settles which properties are in play, because an
+	// operation's `sends` reads parameters by name and must not be able to
+	// reach a value belonging to a resource the node is no longer set to.
+	visible := make(map[string]any, len(definition.Parameters))
 	for _, declared := range definition.Parameters {
 		if !property.VisibleProperty(declared, parameters, version) {
 			continue
 		}
-		value, present := parameterValue(declared, parameters)
+		if value, present := parameterValue(declared, parameters); present {
+			visible[declared.Key] = value
+		}
+	}
+
+	resourceKey, operationKey := description.Cascade.Keys()
+	for _, declared := range definition.Parameters {
+		value, present := visible[declared.Key]
 		if !present {
 			continue
 		}
+		// The cascade is applied where the operation is chosen, so a later
+		// property's routing still overrides it — the same ordering the
+		// per-option form has.
+		if description.Cascade != nil && declared.Key == operationKey {
+			resource := stringOf(visible[resourceKey])
+			operation := stringOf(value)
+			routed, found := description.Cascade.Routes[resource][operation]
+			if !found {
+				return plan{}, fmt.Errorf("no request is declared for resource %q operation %q", resource, operation)
+			}
+			if err := built.apply(routed, value, visible, base); err != nil {
+				return plan{}, fmt.Errorf("resource %q operation %q: %w", resource, operation, err)
+			}
+		}
 		if routing, found := description.Properties[declared.Key]; found {
-			if err := built.apply(routing, value, base); err != nil {
+			if err := built.apply(routing, value, visible, base); err != nil {
 				return plan{}, fmt.Errorf("property %q: %w", declared.Key, err)
 			}
 		}
@@ -67,7 +92,7 @@ func buildPlan(
 			if !found {
 				continue
 			}
-			if err := built.apply(routing, value, base); err != nil {
+			if err := built.apply(routing, value, visible, base); err != nil {
 				return plan{}, fmt.Errorf("property %q option %q: %w", declared.Key, selected, err)
 			}
 		}
@@ -76,7 +101,7 @@ func buildPlan(
 }
 
 // apply folds one routing object into the plan.
-func (built *plan) apply(routing Routing, value any, base expression.Context) error {
+func (built *plan) apply(routing Routing, value any, visible map[string]any, base expression.Context) error {
 	// `$value` is bound to the property this routing belongs to, so a request
 	// template and a send template written on the same property see the same
 	// value.
@@ -89,6 +114,19 @@ func (built *plan) apply(routing Routing, value any, base expression.Context) er
 	if routing.Send != nil {
 		if err := built.send(*routing.Send, value, evaluate); err != nil {
 			return err
+		}
+	}
+	for _, instruction := range routing.Sends {
+		// A parameter that is not currently shown is not sent. A node keeps
+		// the parameters of every resource it has ever been set to, and an
+		// operation that named one of those by accident would otherwise post
+		// it to an endpoint that never asked for it.
+		source, shown := visible[instruction.From]
+		if !shown {
+			continue
+		}
+		if err := built.send(instruction, source, templateEvaluator(withValue(base, source))); err != nil {
+			return fmt.Errorf("sends %q: %w", instruction.From, err)
 		}
 	}
 	if routing.Output != nil {
@@ -120,8 +158,11 @@ func (built *plan) send(instruction Send, value any, evaluate func(any) (any, er
 	}
 
 	destination := &built.request.Body
-	if instruction.Type == "query" {
+	switch instruction.Type {
+	case "query":
 		destination = &built.request.Query
+	case "path":
+		destination = &built.request.Path
 	}
 	if *destination == nil {
 		*destination = map[string]any{}
@@ -161,6 +202,7 @@ func (request *Request) merge(override Request, evaluate func(any) (any, error))
 		{&request.Headers, override.Headers},
 		{&request.Query, override.Query},
 		{&request.Body, override.Body},
+		{&request.Path, override.Path},
 	} {
 		if len(pair.from) == 0 {
 			continue
@@ -196,7 +238,7 @@ func (request *Request) resolveTemplates(evaluate func(any) (any, error)) error 
 		}
 		*field = stringOf(resolved)
 	}
-	for _, values := range []map[string]any{request.Headers, request.Query, request.Body} {
+	for _, values := range []map[string]any{request.Headers, request.Query, request.Body, request.Path} {
 		for key, value := range values {
 			resolved, err := evaluate(value)
 			if err != nil {
@@ -213,6 +255,7 @@ func cloneRequest(source Request) Request {
 	cloned.Headers = cloneAnyMap(source.Headers)
 	cloned.Query = cloneAnyMap(source.Query)
 	cloned.Body = cloneAnyMap(source.Body)
+	cloned.Path = cloneAnyMap(source.Path)
 	return cloned
 }
 
