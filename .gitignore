@@ -63,3 +63,6 @@ sdk/node_modules/
 .corpus/
 .corpus-cache/
 .corpus-private/
+
+# Agent worktrees are checkouts of this repository, not content of it.
+.claude/worktrees/

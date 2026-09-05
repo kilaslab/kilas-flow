@@ -1,7 +1,7 @@
 ---
 id: FEAT-xx6p22
 title: Move the V2 roadmap into the repository
-status: todo
+status: doing
 priority: medium
 labels:
     - datastore
@@ -10,7 +10,7 @@ labels:
 parent: EPIC-m42s3g
 phase: p9
 created: "2026-09-05T08:28:44Z"
-updated: "2026-09-05T08:28:44Z"
+updated: "2026-09-05T14:49:30Z"
 ---
 
 ## Scope

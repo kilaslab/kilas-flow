@@ -292,6 +292,16 @@ func (executor *PostgresV2Executor) Execute(ctx context.Context, ir workflow.IRN
 	return workflow.NodeOutput{appendClamped(out, clamped)}, nil
 }
 
+// BuildPostgresStatementForTest builds one statement from resolved parameters.
+//
+// Exported for tests only. What it exists for is the class of defect a round
+// trip cannot see: the importer and the exporter map the condition vocabulary
+// through inverse tables, so an inversion between them is symmetric and
+// invisible until something asserts the SQL that actually runs.
+func BuildPostgresStatementForTest(parameters map[string]any) (sqlnode.Statement, error) {
+	return buildPostgresStatement(parameters, workflow.Item{JSON: map[string]any{}})
+}
+
 // buildPostgresStatement turns one item's resolved parameters into SQL.
 func buildPostgresStatement(parameters map[string]any, item workflow.Item) (sqlnode.Statement, error) {
 	operation := textValue(parameters["operation"], PostgresOperationExecuteQuery)

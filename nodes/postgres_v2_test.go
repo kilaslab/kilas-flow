@@ -185,3 +185,46 @@ func mustVersion(t *testing.T, text string) workflow.TypeVersion {
 	}
 	return version
 }
+
+func TestAnImportedNullConditionBuildsTheNullTestItMeans(t *testing.T) {
+	t.Parallel()
+
+	// The assertion has to be on the emitted SQL. n8n spells this condition
+	// "IS NULL"; the importer maps it into the shared vocabulary and the
+	// builder maps it back out, and the exporter's map is the literal inverse
+	// of the importer's — so an inversion in the middle round-trips perfectly
+	// while a delete removes the exact complement of the rows it was meant to.
+	for name, testCase := range map[string]struct {
+		operator string
+		wantSQL  string
+		wrongSQL string
+	}{
+		"a row that must be null":     {operator: "notExists", wantSQL: "IS NULL", wrongSQL: "IS NOT NULL"},
+		"a row that must not be null": {operator: "exists", wantSQL: "IS NOT NULL", wrongSQL: "IS NULL"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			statement, err := nodes.BuildPostgresStatementForTest(map[string]any{
+				"operation": "select",
+				"table":     property.WriteLocator(property.Locator{Mode: "name", Value: "customers"}),
+				"where": []any{map[string]any{
+					"field": "deleted_at", "operator": testCase.operator,
+				}},
+			})
+			if err != nil {
+				t.Fatalf("build error = %v", err)
+			}
+			if !strings.Contains(statement.SQL, `"deleted_at" `+testCase.wantSQL) {
+				t.Errorf("SQL = %q, want %q", statement.SQL, testCase.wantSQL)
+			}
+			// Belt and braces: IS NULL is a prefix of IS NOT NULL nowhere, but
+			// the inverse test is what the earlier defect would have failed.
+			if testCase.wantSQL == "IS NULL" && strings.Contains(statement.SQL, testCase.wrongSQL) {
+				t.Errorf("SQL = %q, want no %q", statement.SQL, testCase.wrongSQL)
+			}
+			// A null test binds nothing.
+			if len(statement.Parameters) != 0 {
+				t.Errorf("parameters = %#v, want a null test to bind nothing", statement.Parameters)
+			}
+		})
+	}
+}

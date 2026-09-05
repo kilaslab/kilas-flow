@@ -2810,3 +2810,40 @@ func TestAnImportedWorkflowKeepsItsTimezone(t *testing.T) {
 		t.Errorf("unsupported = %#v, want the unknown zone named", typo.Unsupported)
 	}
 }
+
+func TestN8NsNullConditionsImportOntoTheRightSideOfTheVocabulary(t *testing.T) {
+	t.Parallel()
+
+	// `exists` means the value is present, which is what internal/conditions
+	// evaluates and what n8n's isNotEmpty already maps to. So IS NULL is
+	// notExists and IS NOT NULL is exists — and getting that backwards makes an
+	// imported delete remove the complement of the rows it was meant to.
+	for condition, want := range map[string]string{
+		"IS NULL":     "notExists",
+		"IS NOT NULL": "exists",
+	} {
+		t.Run(condition, func(t *testing.T) {
+			fixture := `{
+			  "name": "Nulls",
+			  "nodes": [
+			    {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}},
+			    {"id":"b","name":"Postgres","type":"n8n-nodes-base.postgres","typeVersion":2.5,"position":[220,0],
+			     "parameters":{"operation":"select",
+			                   "table":{"__rl":true,"mode":"list","value":"customers"},
+			                   "where":{"values":[{"column":"deleted_at","condition":"` + condition + `"}]}}}
+			  ],
+			  "connections": {"Manual": {"main": [[{"node":"Postgres","type":"main","index":0}]]}}
+			}`
+			result := importFixture(t, fixture)
+			postgres := nodeByName(result.Document, "Postgres")
+			rows, _ := postgres.Parameters["where"].([]any)
+			if len(rows) != 1 {
+				t.Fatalf("where = %#v, want the one condition", postgres.Parameters["where"])
+			}
+			row, _ := rows[0].(map[string]any)
+			if row["operator"] != want {
+				t.Errorf("%s imported as %#v, want %q", condition, row["operator"], want)
+			}
+		})
+	}
+}

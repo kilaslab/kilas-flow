@@ -1545,10 +1545,22 @@ func postgresWhereToKilas(where map[string]any) ([]any, []Unsupported) {
 }
 
 // postgresConditionOperators is n8n's WHERE vocabulary mapped onto this one.
+//
+// The null pair is the one worth reading twice. In this product's shared
+// condition vocabulary `exists` means the value is present — see
+// internal/conditions, and the isNotEmpty mapping above — so n8n's `IS NULL` is
+// `notExists` and its `IS NOT NULL` is `exists`. Written the other way round,
+// an imported `WHERE col IS NULL` builds `WHERE col IS NOT NULL` and a delete
+// removes the exact complement of the rows it was meant to.
+//
+// A round-trip test cannot catch that: n8nConditionName is the literal inverse
+// of this map, so an inversion here is undone symmetrically on the way out and
+// the exported workflow matches the imported one. The test that catches it
+// asserts the SQL the builder emits.
 var postgresConditionOperators = map[string]string{
 	"equal": "equals", "!=": "notEquals", "LIKE": "like", "ILIKE": "ilike",
 	">": "gt", ">=": "gte", "<": "lt", "<=": "lte",
-	"IS NULL": "exists", "IS NOT NULL": "notExists",
+	"IS NULL": "notExists", "IS NOT NULL": "exists",
 }
 
 func sqlToKilas(node Node) (map[string]any, []Unsupported) {
