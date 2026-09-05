@@ -91,8 +91,14 @@ func permits(session embed.Session, r *http.Request) (bool, string) {
 
 	switch {
 	case path == "/node-types" || strings.HasPrefix(path, "/node-types/"):
-		// The editor cannot render without the node catalogue, and it carries
-		// no tenant data.
+		// The editor cannot render without the node catalogue, and the
+		// catalogue itself carries no tenant data.
+		//
+		// The load-options endpoint under this prefix does, so it is not
+		// covered by that reasoning: it can reach a customer's service, and an
+		// internal loader reads this process's own state. The handler bounds it
+		// by the session's WorkflowID rather than only its tenant, because
+		// nothing here checks a workflow — see LoadOptions.
 		return session.Allows(embed.ScopeRead), "This embed session cannot read."
 
 	case path == "/credentials" && r.Method == http.MethodGet:

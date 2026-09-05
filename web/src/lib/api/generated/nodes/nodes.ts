@@ -6,12 +6,16 @@
  * OpenAPI spec version: 0.1.0-dev
  */
 import {
+  createMutation,
   createQuery
 } from '@tanstack/svelte-query';
 import type {
+  CreateMutationOptions,
+  CreateMutationResult,
   CreateQueryOptions,
   CreateQueryResult,
   DataTag,
+  MutationFunction,
   QueryClient,
   QueryFunction,
   QueryKey
@@ -20,11 +24,40 @@ import type {
 import type {
   Definition,
   ErrorModel,
-  ExpressionGrammar
+  ExpressionGrammar,
+  LoadOptionsInputBody,
+  LoadOptionsResource
 } from '../models';
 
 import { apiFetch } from '../../http';
 import type { ErrorType } from '../../http';
+
+// https://stackoverflow.com/questions/49579094/typescript-conditional-types-filter-out-readonly-properties-pick-only-requir/49579497#49579497
+type IfEquals<X, Y, A = X, B = never> = (<T>() => T extends X ? 1 : 2) extends <
+T,
+>() => T extends Y ? 1 : 2
+? A
+: B;
+
+type WritableKeys<T> = {
+[P in keyof T]-?: IfEquals<
+  { [Q in P]: T[P] },
+  { -readonly [Q in P]: T[P] },
+  P
+>;
+}[keyof T];
+
+type UnionToIntersection<U> =
+  (U extends any ? (k: U)=>void : never) extends ((k: infer I)=>void) ? I : never;
+type DistributeReadOnlyOverUnions<T> = T extends any ? NonReadonly<T> : never;
+
+type Writable<T> = Pick<T, WritableKeys<T>>;
+type NonReadonly<T> = [T] extends [UnionToIntersection<T>] ? {
+  [P in keyof Writable<T>]: T[P] extends object
+    ? NonReadonly<NonNullable<T[P]>>
+    : T[P];
+} : DistributeReadOnlyOverUnions<T>;
+
 
 export type HTTPStatusCode1xx = 100 | 101 | 102 | 103;
 export type HTTPStatusCode2xx = 200 | 201 | 202 | 203 | 204 | 205 | 206 | 207;
@@ -230,3 +263,103 @@ export function createListNodeTypes<TData = Awaited<ReturnType<typeof listNodeTy
 
 
 
+export type loadNodePropertyOptionsResponse200 = {
+  data: LoadOptionsResource
+  status: 200
+}
+
+export type loadNodePropertyOptionsResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type loadNodePropertyOptionsResponseSuccess = (loadNodePropertyOptionsResponse200) & {
+  headers: Headers;
+};
+export type loadNodePropertyOptionsResponseError = (loadNodePropertyOptionsResponseDefault) & {
+  headers: Headers;
+};
+
+export type loadNodePropertyOptionsResponse = (loadNodePropertyOptionsResponseSuccess | loadNodePropertyOptionsResponseError)
+
+export const getLoadNodePropertyOptionsUrl = (type: string,) => {
+
+
+
+
+  return `/api/v1/node-types/${type}/load-options`
+}
+
+/**
+ * Resolves the options for a property whose valid values live on the customer's own service. The loader is taken from the registered definition, never from the request.
+ * @summary Load a property's selectable values
+ */
+export const loadNodePropertyOptions = async (type: string,
+    loadOptionsInputBody: NonReadonly<LoadOptionsInputBody>, options?: Parameters<typeof apiFetch>[1]): Promise<loadNodePropertyOptionsResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Array.isArray(h)) return Object.fromEntries(h);
+    return h;
+  };
+return apiFetch<loadNodePropertyOptionsResponse>(getLoadNodePropertyOptionsUrl(type),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(loadOptionsInputBody)
+  }
+);}
+
+
+
+
+
+export const getLoadNodePropertyOptionsMutationKey = () => ['loadNodePropertyOptions'] as const;
+
+export const getLoadNodePropertyOptionsMutationOptions = <TError = ErrorType<ErrorModel>,
+    TContext = unknown>(options?: { mutation?:CreateMutationOptions<Awaited<ReturnType<typeof loadNodePropertyOptions>>, TError,LoadNodePropertyOptionsMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}
+): CreateMutationOptions<Awaited<ReturnType<typeof loadNodePropertyOptions>>, TError,LoadNodePropertyOptionsMutationVariables, TContext> => {
+
+const mutationKey = getLoadNodePropertyOptionsMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof loadNodePropertyOptions>>, LoadNodePropertyOptionsMutationVariables> = (props) => {
+          const {type,data} = props ?? {};
+
+          return  loadNodePropertyOptions(type,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type LoadNodePropertyOptionsMutationResult = NonNullable<Awaited<ReturnType<typeof loadNodePropertyOptions>>>
+    export type LoadNodePropertyOptionsMutationBody = NonReadonly<LoadOptionsInputBody>
+    export type LoadNodePropertyOptionsMutationError = ErrorType<ErrorModel>
+    export type LoadNodePropertyOptionsMutationVariables = {type: string;data: NonReadonly<LoadOptionsInputBody>}
+
+    /**
+ * @summary Load a property's selectable values
+ */
+export const createLoadNodePropertyOptions = <TError = ErrorType<ErrorModel>,
+    TContext = unknown>(options?: () => { mutation?:CreateMutationOptions<Awaited<ReturnType<typeof loadNodePropertyOptions>>, TError,LoadNodePropertyOptionsMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: () => QueryClient): CreateMutationResult<
+        Awaited<ReturnType<typeof loadNodePropertyOptions>>,
+        TError,
+        LoadNodePropertyOptionsMutationVariables,
+        TContext
+      > => {
+      return createMutation(() => ({ ...getLoadNodePropertyOptionsMutationOptions(options?.()) }), queryClient);
+    }

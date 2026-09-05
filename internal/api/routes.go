@@ -21,7 +21,8 @@ func registerRoutes(router *chi.Mux, api huma.API, deps Deps) {
 	v1 := huma.NewGroup(api, APIPrefix)
 
 	handlers.NewSystem(deps.Version, deps.DB).Register(v1)
-	handlers.NewNodeTypes(deps.NodeRegistry).Register(v1)
+	handlers.NewNodeTypes(deps.NodeRegistry).
+		WithOptionLoading(deps.Tenants, deps.OptionLoader, deps.CredentialResolverFor).Register(v1)
 	handlers.NewWorkflows(deps.Workflows, deps.Executions, deps.NodeRegistry, deps.Tenants, deps.ExecutionController).
 		WithTriggers(deps.TriggerCoordinator).Register(v1)
 	handlers.NewExecutions(deps.ExecutionController, deps.Executions, deps.Events, deps.Tenants).Register(v1)

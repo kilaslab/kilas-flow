@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/kilaslabs/kilas-flow/internal/ai"
 	"github.com/kilaslabs/kilas-flow/internal/api"
@@ -23,6 +24,7 @@ import (
 	"github.com/kilaslabs/kilas-flow/internal/embed"
 	"github.com/kilaslabs/kilas-flow/internal/engine"
 	"github.com/kilaslabs/kilas-flow/internal/events"
+	"github.com/kilaslabs/kilas-flow/internal/loadoptions"
 	"github.com/kilaslabs/kilas-flow/internal/node"
 	"github.com/kilaslabs/kilas-flow/internal/repository"
 	"github.com/kilaslabs/kilas-flow/internal/runcode"
@@ -200,6 +202,13 @@ func run() error {
 			DeliveryWindow:  repository.DefaultDeliveryWindow,
 		}).WithTriggers(webhookTriggers),
 		Credentials: credentialStore,
+		// Edit-time option loading. It reaches a customer's service through the
+		// same egress policy an HTTP node uses, so a loader aimed at a
+		// disallowed host fails the same way.
+		OptionLoader: loadoptions.NewResolver(safehttp.DefaultPolicy(), 30*time.Second),
+		CredentialResolverFor: func(tenant repository.TenantScope) loadoptions.CredentialResolver {
+			return credentialLookup{store: credentialStore, tenant: tenant}
+		},
 		TriggerCoordinator: webhook.NewCoordinator(
 			webhookLifecycles, workflows, safehttp.DefaultPolicy(),
 			func(tenantID string) engine.CredentialResolver {
@@ -289,4 +298,16 @@ func parseLevel(level string) slog.Level {
 	}
 
 	return parsed
+}
+
+// credentialLookup resolves a credential under one tenant, for edit-time option
+// loading. It is scoped at construction so a request naming another tenant's
+// credential resolves to nothing rather than to a secret.
+type credentialLookup struct {
+	store  *repository.GORMCredentialStore
+	tenant repository.TenantScope
+}
+
+func (lookup credentialLookup) Resolve(ctx context.Context, credentialID string) (credentials.Record, map[string]string, error) {
+	return lookup.store.Resolve(ctx, lookup.tenant, credentialID)
 }

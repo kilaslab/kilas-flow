@@ -148,6 +148,10 @@ type PropertyDefinition struct {
 	Groups []PropertyGroup `json:"groups,omitempty"`
 	// TypeOptions refines the control.
 	TypeOptions *TypeOptions `json:"typeOptions,omitempty"`
+	// LoadOptions fetches the selectable values at edit time, for a property
+	// whose valid values live on the customer's own service rather than being
+	// knowable when this binary was built.
+	LoadOptions *OptionsLoader `json:"loadOptions,omitempty"`
 	// VisibleWhen is the shorthand: every condition must match by equality.
 	VisibleWhen []VisibilityCondition `json:"visibleWhen,omitempty"`
 	// DisplayOptions is the full rule — show and hide groups, several accepted

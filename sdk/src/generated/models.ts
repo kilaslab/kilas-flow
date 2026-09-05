@@ -165,6 +165,20 @@ export interface PropertyGroup {
   label: string;
 }
 
+export interface OptionsLoader {
+  baseUrlParameter?: string;
+  credentialType?: string;
+  /** @nullable */
+  dependsOn?: string[] | null;
+  endpoint?: string;
+  itemsPath?: string;
+  labelTemplate?: string;
+  method?: string;
+  name?: string;
+  source: string;
+  valueField?: string;
+}
+
 export interface PropertyOption {
   label: string;
   value: string;
@@ -191,6 +205,7 @@ export interface PropertyDefinition {
   key: string;
   kind: string;
   label: string;
+  loadOptions?: OptionsLoader;
   /** @nullable */
   options?: PropertyOption[] | null;
   required: boolean;
@@ -595,6 +610,34 @@ export interface ImportedWorkflowResource {
   /** @nullable */
   webhooks: WebhookRouteResource[] | null;
   workflow: WorkflowResource;
+}
+
+export type LoadOptionsInputBodyParameters = {[key: string]: unknown};
+
+export interface LoadOptionsInputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  credentialId?: string;
+  parameters?: LoadOptionsInputBodyParameters;
+  /** The property whose options to load. */
+  property: string;
+  /** Node type version. Omit for the registered default. */
+  version?: string;
+  workflowId?: string;
+}
+
+export interface Option {
+  label: string;
+  value: string;
+}
+
+export interface LoadOptionsResource {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  options: Option[] | null;
+  /** Why the list is empty, when it is empty for a reason the user can act on. */
+  reason?: string;
 }
 
 export interface NodeCompletedEvent {
@@ -1674,6 +1717,64 @@ export const listNodeTypes = async ( options?: RequestInit): Promise<listNodeTyp
 
   const data: listNodeTypesResponse['data'] = body ? JSON.parse(body) : {}
   return { data, status: res.status, headers: res.headers } as listNodeTypesResponse
+}
+
+
+
+export type loadNodePropertyOptionsResponse200 = {
+  data: LoadOptionsResource
+  status: 200
+}
+
+export type loadNodePropertyOptionsResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type loadNodePropertyOptionsResponseSuccess = (loadNodePropertyOptionsResponse200) & {
+  headers: Headers;
+};
+export type loadNodePropertyOptionsResponseError = (loadNodePropertyOptionsResponseDefault) & {
+  headers: Headers;
+};
+
+export type loadNodePropertyOptionsResponse = (loadNodePropertyOptionsResponseSuccess | loadNodePropertyOptionsResponseError)
+
+export const getLoadNodePropertyOptionsUrl = (type: string,) => {
+
+
+
+
+  return `/api/v1/node-types/${type}/load-options`
+}
+
+/**
+ * Resolves the options for a property whose valid values live on the customer's own service. The loader is taken from the registered definition, never from the request.
+ * @summary Load a property's selectable values
+ */
+export const loadNodePropertyOptions = async (type: string,
+    loadOptionsInputBody: NonReadonly<LoadOptionsInputBody>, options?: RequestInit): Promise<loadNodePropertyOptionsResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Array.isArray(h)) return Object.fromEntries(h);
+    return h;
+  };
+const res = await fetch(getLoadNodePropertyOptionsUrl(type),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(loadOptionsInputBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: loadNodePropertyOptionsResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as loadNodePropertyOptionsResponse
 }
 
 

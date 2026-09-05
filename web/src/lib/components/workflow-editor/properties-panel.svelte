@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { loadNodePropertyOptions } from '$lib/api/generated/nodes/nodes';
 	import { propertyVisible } from '$lib/workflow-editor/visibility';
 	import type { CredentialResource, Definition, Node, PropertyDefinition } from '$lib/api/generated/models';
 	import type { PropertyScope } from '$lib/workflow-editor/document';
@@ -31,6 +32,24 @@
 	const activeTab = $derived(tab === 'parameters' && (definition.parameters?.length ?? 0) === 0 ? 'settings' : tab);
 	const properties = $derived(activeTab === 'parameters' ? definition.parameters ?? [] : definition.sharedSettings ?? []);
 	const values = $derived((activeTab === 'parameters' ? node.parameters : node.settings) ?? {});
+	/**
+	 * Fetches a property's selectable values from the server.
+	 *
+	 * The loader itself is never sent — the server takes it from the registered
+	 * definition, because everything in this request comes from a browser and
+	 * the server makes an outbound call shaped by it.
+	 */
+	async function loadOptions(property: PropertyDefinition) {
+		const response = await loadNodePropertyOptions(node.type, {
+			version: String(node.typeVersion ?? ''),
+			property: property.key,
+			parameters: node.parameters ?? {},
+			credentialId: Object.values(node.credentials ?? {})[0]
+		});
+		if (response.status !== 200) return { options: [], reason: 'These options could not be loaded.' };
+		return { options: response.data.options ?? [], reason: response.data.reason ?? '' };
+	}
+
 	// The rule lives in one module, ported from the Go evaluator and checked
 	// against the same fixture. The previous inline version was single-value,
 	// AND-only, show-only and used strict equality, so a condition on anything
@@ -83,7 +102,7 @@
 			<p class="text-xs leading-5 text-muted-foreground">This node has no {activeTab === 'parameters' ? 'parameters' : 'shared settings'} to configure.</p>
 		{:else}
 			{#each visibleProperties as property (property.key)}
-				<PropertyField {property} value={values[property.key]} onChange={(value) => onChange(activeTab, property.key, value)} />
+				<PropertyField {property} value={values[property.key]} onChange={(value) => onChange(activeTab, property.key, value)} loadOptions={activeTab === 'parameters' ? loadOptions : undefined} />
 			{/each}
 		{/if}
 	</div>

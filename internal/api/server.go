@@ -20,6 +20,7 @@ import (
 	"github.com/kilaslabs/kilas-flow/internal/config"
 	"github.com/kilaslabs/kilas-flow/internal/embed"
 	"github.com/kilaslabs/kilas-flow/internal/events"
+	"github.com/kilaslabs/kilas-flow/internal/loadoptions"
 	"github.com/kilaslabs/kilas-flow/internal/node"
 	"github.com/kilaslabs/kilas-flow/internal/repository"
 )
@@ -64,7 +65,14 @@ type Deps struct {
 	// activating and routing normally without telling any service where to
 	// deliver, which is what every trigger did before it existed.
 	TriggerCoordinator handlers.TriggerCoordinator
-	Version            string
+	// OptionLoader resolves a property's selectable values at edit time. Nil
+	// leaves the endpoint answering "unavailable" rather than half-working.
+	OptionLoader *loadoptions.Resolver
+	// CredentialResolverFor builds a tenant-scoped credential resolver for an
+	// option loader, so a request naming another tenant's credential resolves
+	// to nothing rather than to a secret.
+	CredentialResolverFor func(repository.TenantScope) loadoptions.CredentialResolver
+	Version               string
 }
 
 // Server owns the HTTP listener and the route tree.

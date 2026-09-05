@@ -410,6 +410,9 @@ func validateProperties(nodeType, group string, properties []PropertyDefinition)
 		}
 		seen[declared.Key] = struct{}{}
 
+		if err := propertypkg.ValidateLoader(declared.LoadOptions); err != nil {
+			return fmt.Errorf("node definition %q %s %q: %w", nodeType, group, declared.Key, err)
+		}
 		if err := propertypkg.ValidateVisibility(declared.DisplayOptions); err != nil {
 			return fmt.Errorf("node definition %q %s %q: %w", nodeType, group, declared.Key, err)
 		}
@@ -537,6 +540,11 @@ func cloneProperties(properties []PropertyDefinition) []PropertyDefinition {
 			cloned[index].VisibleWhen[visibilityIndex].Equals = cloneValue(cloned[index].VisibleWhen[visibilityIndex].Equals)
 		}
 		cloned[index].Fields = cloneProperties(declared.Fields)
+		if declared.LoadOptions != nil {
+			loader := *declared.LoadOptions
+			loader.DependsOn = append([]string(nil), declared.LoadOptions.DependsOn...)
+			cloned[index].LoadOptions = &loader
+		}
 		if declared.TypeOptions != nil {
 			options := *declared.TypeOptions
 			if declared.TypeOptions.MinValue != nil {

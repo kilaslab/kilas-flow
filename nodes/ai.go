@@ -11,6 +11,7 @@ import (
 	"github.com/kilaslabs/kilas-flow/internal/engine"
 	"github.com/kilaslabs/kilas-flow/internal/expression"
 	"github.com/kilaslabs/kilas-flow/internal/node"
+	"github.com/kilaslabs/kilas-flow/internal/property"
 	"github.com/kilaslabs/kilas-flow/internal/safehttp"
 	"github.com/kilaslabs/kilas-flow/internal/workflow"
 )
@@ -52,7 +53,24 @@ func chatModelNode() node.Definition {
 		Subtitle:    "{{ $parameter.model }}",
 		Outputs:     []workflow.Port{{Name: "model", Kind: workflow.ConnectionLanguageModel}},
 		Parameters: []node.PropertyDefinition{
-			{Key: "model", Label: "Model", Kind: node.PropertyString, Required: true, Default: "gpt-4o-mini"},
+			{
+				// Loaded from whatever endpoint the credential can reach,
+				// rather than typed. A free-text model name makes a typo
+				// indistinguishable from a valid model until the run fails.
+				Key: "model", Label: "Model", Kind: node.PropertyOptions, Required: true, Default: "gpt-4o-mini",
+				LoadOptions: &property.OptionsLoader{
+					Source: property.LoaderHTTP, Method: http.MethodGet,
+					BaseURLParameter: "baseUrl",
+					Endpoint:         "/models",
+					CredentialType:   "httpBearerAuth",
+					ItemsPath:        "data",
+					ValueField:       "id",
+					LabelTemplate:    "{{ id }}",
+					// Changing the base URL means a different catalogue, so the
+					// list is discarded rather than kept from the last one.
+					DependsOn: []string{"baseUrl"},
+				},
+			},
 			{
 				Key: "baseUrl", Label: "Base URL", Kind: node.PropertyString, Default: "https://api.openai.com/v1",
 				Description: "Any OpenAI-compatible endpoint.",

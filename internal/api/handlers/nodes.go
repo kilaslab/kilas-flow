@@ -6,13 +6,39 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"fmt"
+	"github.com/kilaslabs/kilas-flow/internal/api/middleware"
 	"github.com/kilaslabs/kilas-flow/internal/expression"
+	"github.com/kilaslabs/kilas-flow/internal/loadoptions"
 	"github.com/kilaslabs/kilas-flow/internal/node"
+	"github.com/kilaslabs/kilas-flow/internal/property"
+	"github.com/kilaslabs/kilas-flow/internal/repository"
+	"github.com/kilaslabs/kilas-flow/internal/workflow"
 )
 
 // NodeTypes exposes the server-owned node catalogue to API clients.
 type NodeTypes struct {
 	registry *node.Registry
+	tenants  TenantResolver
+	options  *loadoptions.Resolver
+	// credentials builds a tenant-scoped resolver, so a request naming another
+	// tenant's credential resolves to nothing rather than to a secret.
+	credentials func(repository.TenantScope) loadoptions.CredentialResolver
+}
+
+// WithOptionLoading enables the load-options endpoint.
+func (handler *NodeTypes) WithOptionLoading(
+	tenants TenantResolver,
+	resolver *loadoptions.Resolver,
+	credentials func(repository.TenantScope) loadoptions.CredentialResolver,
+) *NodeTypes {
+	if tenants == nil {
+		tenants = defaultTenantResolver{}
+	}
+	handler.tenants = tenants
+	handler.options = resolver
+	handler.credentials = credentials
+	return handler
 }
 
 // NodeTypesOutput is a stable, metadata-only node catalogue. Executor bindings
@@ -23,7 +49,7 @@ type NodeTypesOutput struct {
 
 // NewNodeTypes constructs the node catalogue handler.
 func NewNodeTypes(registry *node.Registry) *NodeTypes {
-	return &NodeTypes{registry: registry}
+	return &NodeTypes{registry: registry, tenants: defaultTenantResolver{}}
 }
 
 // ExpressionGrammarOutput is the expression surface the editor validates
@@ -60,6 +86,14 @@ func (handler *NodeTypes) Register(api huma.API) {
 		Tags:        []string{"Nodes"},
 	}, handler.Grammar)
 	huma.Register(api, huma.Operation{
+		OperationID: "load-node-property-options",
+		Method:      http.MethodPost,
+		Path:        "/node-types/{type}/load-options",
+		Summary:     "Load a property's selectable values",
+		Description: "Resolves the options for a property whose valid values live on the customer's own service. The loader is taken from the registered definition, never from the request.",
+		Tags:        []string{"Nodes"},
+	}, handler.LoadOptions)
+	huma.Register(api, huma.Operation{
 		OperationID: "list-node-types",
 		Method:      http.MethodGet,
 		Path:        "/node-types",
@@ -83,4 +117,121 @@ func (handler *NodeTypes) Grammar(context.Context, *struct{}) (*ExpressionGramma
 		Roots:     expression.Roots(),
 		Functions: expression.FunctionNames(),
 	}}, nil
+}
+
+// loadOptionsInput is a partially configured node straight from a browser.
+//
+// It is untrusted input in the strongest sense: the type, the property and
+// every parameter value are attacker-controlled, and the server then makes an
+// outbound request shaped by them. Three rules follow, and they are enforced
+// below rather than assumed — validate against the registry and take the loader
+// from the registered definition, never from the request; treat every parameter
+// value as data to be escaped; and resolve the credential by ID under the
+// caller's tenant.
+type loadOptionsInput struct {
+	Type string `path:"type"`
+	Body struct {
+		Version  string `json:"version,omitempty" doc:"Node type version. Omit for the registered default."`
+		Property string `json:"property" doc:"The property whose options to load."`
+		// Parameters is the node as currently configured in the editor.
+		Parameters map[string]any `json:"parameters,omitempty"`
+		// CredentialID names a credential in the caller's own tenant. Inline
+		// credential fields are never accepted.
+		CredentialID string `json:"credentialId,omitempty"`
+		// WorkflowID bounds an internal lookup for an embed session.
+		WorkflowID string `json:"workflowId,omitempty"`
+	}
+}
+
+// LoadOptionsResource is a resolved option list.
+type LoadOptionsResource struct {
+	Options []loadoptions.Option `json:"options"`
+	Reason  string               `json:"reason,omitempty" doc:"Why the list is empty, when it is empty for a reason the user can act on."`
+}
+
+type loadOptionsOutput struct {
+	CacheControl string `header:"Cache-Control"`
+	Body         LoadOptionsResource
+}
+
+// LoadOptions resolves a property's selectable values.
+func (handler *NodeTypes) LoadOptions(ctx context.Context, input *loadOptionsInput) (*loadOptionsOutput, error) {
+	if handler.registry == nil || handler.options == nil {
+		return nil, huma.Error503ServiceUnavailable("the node catalogue is unavailable")
+	}
+
+	version := workflow.TypeVersion{}
+	if input.Body.Version != "" {
+		parsed, err := workflow.ParseTypeVersion(input.Body.Version)
+		if err != nil {
+			return nil, huma.Error422UnprocessableEntity("the node type version is not a decimal number")
+		}
+		version = parsed
+	}
+	definition, found := handler.registry.Resolve(input.Type, version)
+	if !found {
+		return nil, huma.Error404NotFound("that node type is not registered")
+	}
+
+	// From the registered definition, never from the request.
+	var declared *node.PropertyDefinition
+	for index, candidate := range definition.Parameters {
+		if candidate.Key == input.Body.Property {
+			declared = &definition.Parameters[index]
+			break
+		}
+	}
+	if declared == nil {
+		return nil, huma.Error404NotFound("that node type has no such property")
+	}
+	if declared.LoadOptions == nil {
+		return nil, huma.Error422UnprocessableEntity("that property's options are fixed and do not need loading")
+	}
+
+	dependencies := make(map[string]string, len(declared.LoadOptions.DependsOn))
+	for _, key := range declared.LoadOptions.DependsOn {
+		value, present := input.Body.Parameters[key]
+		if !present || value == nil {
+			continue
+		}
+		// A dependency holding an expression cannot be resolved: there is no
+		// item to evaluate it against, because there is no execution. Refusing
+		// beats guessing — a guessed value produces a wrong list, and
+		// evaluating against an empty item produces a confidently wrong one.
+		if property.ExpressionMarker(value) {
+			return &loadOptionsOutput{
+				CacheControl: "no-store",
+				Body: LoadOptionsResource{
+					Options: []loadoptions.Option{},
+					Reason:  fmt.Sprintf("%s depends on an expression, which cannot be resolved while editing", input.Body.Property),
+				},
+			}, nil
+		}
+		dependencies[key] = fmt.Sprint(value)
+	}
+
+	tenant := handler.tenants.Resolve(ctx)
+	scope := loadoptions.Scope{TenantID: tenant.ID, Dependencies: dependencies}
+	// An embed session is bound to its own workflow, not merely its tenant. The
+	// embed middleware allows the whole /node-types/ subtree on read scope with
+	// no workflow check, so without this a session scoped to one workflow could
+	// enumerate everything an internal loader can see across the tenant.
+	if session, embedded := middleware.EmbedSessionFrom(ctx); embedded {
+		scope.WorkflowID = session.WorkflowID
+	} else {
+		scope.WorkflowID = input.Body.WorkflowID
+	}
+
+	result, err := handler.options.Load(ctx, *declared.LoadOptions, scope, input.Body.CredentialID, handler.credentials(tenant))
+	if err != nil {
+		return nil, huma.Error502BadGateway(err.Error())
+	}
+	if result.Options == nil {
+		result.Options = []loadoptions.Option{}
+	}
+	return &loadOptionsOutput{
+		// So the browser does not refetch on every focus.
+		CacheControl: "private, max-age=30",
+		Body:         LoadOptionsResource{Options: result.Options, Reason: result.Reason},
+	}, nil
 }

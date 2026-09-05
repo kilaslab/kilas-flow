@@ -7,7 +7,22 @@
 	import { expressionRoots, unknownExpressionRoot } from '$lib/workflow-editor/expression-grammar';
 	import { asExpression, asFixed, expressionTemplate, isExpression } from '$lib/workflow-editor/parameter';
 
-	let { property, value, onChange }: { property: PropertyDefinition; value: unknown; onChange: (value: unknown) => void } = $props();
+	let {
+		property,
+		value,
+		onChange,
+		loadOptions
+	}: {
+		property: PropertyDefinition;
+		value: unknown;
+		onChange: (value: unknown) => void;
+		/**
+		 * Fetches a property's selectable values. Supplied by the panel, which
+		 * knows the node this property belongs to; this component only knows
+		 * the property.
+		 */
+		loadOptions?: (property: PropertyDefinition) => Promise<{ options: { label: string; value: string }[]; reason: string }>;
+	} = $props();
 
 	// Only text-shaped controls can carry an expression: a checkbox or a select
 	// has no free-text surface for one, and silently accepting a marker there
@@ -31,6 +46,30 @@
 	]);
 
 	const typeOptions = $derived(property.typeOptions ?? {});
+
+	/**
+	 * Options for a property whose valid values live on the customer's own
+	 * service. A fixed list is used as-is; a loader is fetched, and until it
+	 * answers the current value is shown so the select never looks empty.
+	 */
+	let loadState = $state<{ options: { label: string; value: string }[]; reason: string }>({
+		options: [],
+		reason: ''
+	});
+	const selectableOptions = $derived(
+		property.loadOptions ? loadState.options : (property.options ?? [])
+	);
+
+	$effect(() => {
+		if (!property.loadOptions || !loadOptions) return;
+		let cancelled = false;
+		void loadOptions(property).then((result) => {
+			if (!cancelled) loadState = result;
+		});
+		return () => {
+			cancelled = true;
+		};
+	});
 	const selected = $derived(Array.isArray(value) ? (value as unknown[]).map(String) : []);
 
 	function toggleOption(option: string, on: boolean): void {
@@ -175,10 +214,15 @@
 		</div>
 	{:else if property.kind === 'options'}
 		<select id={`property-${property.key}`} value={stringValue} class="h-7 rounded-md border border-input bg-background px-1.5 text-xs" onchange={(event) => onChange(event.currentTarget.value)}>
-			{#each property.options ?? [] as option (option.value)}
+			{#each selectableOptions as option (option.value)}
 				<option value={option.value}>{option.label}</option>
 			{/each}
 		</select>
+		{#if loadState.reason}
+			<!-- An empty list the user can act on, rather than an empty dropdown
+			     that reads as "this service has nothing". -->
+			<p class="text-[0.6875rem] leading-4 text-muted-foreground">{loadState.reason}</p>
+		{/if}
 	{:else if property.kind === 'keyValue'}
 		<div class="grid gap-1.5 rounded-md border border-input p-1.5">
 			{#each Object.entries(objectValue) as [key, item] (key)}

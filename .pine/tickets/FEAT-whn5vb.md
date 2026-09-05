@@ -1,7 +1,7 @@
 ---
 id: FEAT-whn5vb
 title: Serve dynamic property options from the server
-status: todo
+status: done
 priority: high
 labels:
     - registry
@@ -25,14 +25,14 @@ The loader stays **declarative**. n8n's dominant form is `typeOptions.loadOption
 
 ## Acceptance criteria
 
-- [ ] A property may declare a declarative options loader; `/api/v1/node-types` returns it, and the panel fetches options instead of rendering an empty select.
-- [ ] `POST /api/v1/node-types/{type}/load-options` accepts a node type, version, the property key and the node's partially configured parameters, and returns a list of `{label, value}`.
-- [ ] The request body is validated against the registered definition before any URL is built: an unknown type, unknown property, or property with no loader is refused, and parameter values are never concatenated into a URL unescaped.
-- [ ] Every outbound request goes through `internal/safehttp` with the instance's configured policy and, where a credential is used, that credential's `AllowedDomains`; a loader aimed at a disallowed host fails with the same named error an HTTP node would produce.
-- [ ] Credentials are referenced by ID and resolved under the caller's tenant scope; the endpoint never accepts inline credential fields and never returns a secret in a label, value or error.
-- [ ] A parameter the loader depends on that holds an expression yields an empty list with a stated reason rather than a guessed or partial URL.
-- [ ] Results are cached per tenant, node type, credential and dependency values for a bounded TTL, so reopening a dropdown does not re-hit the customer's service.
-- [ ] An embed session may load options for its own workflow and cannot reach a credential outside its session's tenant.
+- [x] A property may declare a declarative options loader; `/api/v1/node-types` returns it, and the panel fetches options instead of rendering an empty select.
+- [x] `POST /api/v1/node-types/{type}/load-options` accepts a node type, version, the property key and the node's partially configured parameters, and returns a list of `{label, value}`.
+- [x] The request body is validated against the registered definition before any URL is built: an unknown type, unknown property, or property with no loader is refused, and parameter values are never concatenated into a URL unescaped.
+- [x] Every outbound request goes through `internal/safehttp` with the instance's configured policy and, where a credential is used, that credential's `AllowedDomains`; a loader aimed at a disallowed host fails with the same named error an HTTP node would produce.
+- [x] Credentials are referenced by ID and resolved under the caller's tenant scope; the endpoint never accepts inline credential fields and never returns a secret in a label, value or error.
+- [x] A parameter the loader depends on that holds an expression yields an empty list with a stated reason rather than a guessed or partial URL.
+- [x] Results are cached per tenant, node type, credential and dependency values for a bounded TTL, so reopening a dropdown does not re-hit the customer's service.
+- [x] An embed session may load options for its own workflow and cannot reach a credential outside its session's tenant.
 
 ## Implementation Plan
 
@@ -58,3 +58,86 @@ An amendment the p9 planning pass forced. This loader is an outbound HTTP reques
 - `internal/api/handlers/embed.go` — the embed session boundary the endpoint must respect.
 - n8n 2.34.0 reference (read-only, outside this repo): `packages/workflow/src/interfaces.ts` — `INodePropertyTypeOptions.loadOptions` / `loadOptionsMethod` / `loadOptionsDependsOn`, and `ILoadOptions`.
 - Local n8n UI reference: `design-refs/n8n-v2/INDEX.md` entry 05 — the Model dropdown is populated by loadOptions against the configured credential. Captured from a local n8n 2.33.7 instance; gitignored, never vendored.
+
+## Outcome
+
+### Declarative, not executable
+
+The loader is a request descriptor — n8n's `loadOptions.routing` form — never
+its `loadOptionsMethod` form, which names a JavaScript function on the node
+class. A loader that could execute would have to run somewhere, and nothing that
+runs arbitrary code keeps the egress policy or the credential scoping this one
+gets for free.
+
+The execution half lives in `internal/loadoptions` rather than the handler,
+because p3's declarative routing interpreter needs exactly the same shape and
+two copies would drift.
+
+### The trust boundary
+
+The body carries an unsaved, partially configured node straight from a browser,
+so the node type, the property and every parameter value are attacker-controlled
+and the server then makes an outbound request shaped by them. All three rules
+are enforced and tested:
+
+- The loader is taken from the **registered definition**, never from the request.
+- Every dependency value is **URL-escaped**, never concatenated. A `session`
+  value of `../../admin/secrets` stays one path segment.
+- The credential is resolved **by ID under the caller's tenant**, so naming
+  another tenant's credential yields an empty list with a reason and no secret.
+
+### A real gap the tests caught
+
+My first implementation built the request and let `safehttp`'s dialer refuse a
+disallowed host. That is not equivalent: the dial-time check runs *after* DNS,
+so an unresolvable host failed with a lookup error rather than the policy
+refusal, and a forbidden host that DNS answers would have been contacted before
+being refused. It now calls `policy.CheckURL` first, which is the same
+pre-flight gate the HTTP node uses.
+
+A second finding was mine, not the code's: the escaping test asserted on
+`r.URL.Path`, which is *decoded*, so it showed the dots even though the wire
+form was `..%2F..%2F`. It asserts on `EscapedPath` now.
+
+### Base URL versus dependency
+
+These need opposite treatment and the ticket did not distinguish them. A
+dependency is a value going into a path segment and is always escaped; a base
+URL *is* a URL, and escaping it turns `https://host/v1` into one unusable
+segment. `BaseURLParameter` is a separate field, validated as a URL rather than
+escaped, which lets "every dependency value is escaped" stay true with no
+exception to reason about.
+
+### Expressions
+
+A dependency holding an expression yields an empty list with a stated reason.
+There is no item to evaluate it against, because there is no execution — and
+guessing a value produces a wrong list while evaluating against an empty item
+produces a confidently wrong one.
+
+### Caching
+
+Keyed by tenant, workflow, source, endpoint, credential and every dependency
+value, with a 30-second TTL and `Cache-Control: private, max-age=30`. Tested
+three ways: repeated opens hit the service once, a changed dependency refetches,
+and a second tenant does not read the first's list.
+
+### The p9 amendment
+
+Honoured. `LoaderSource` is explicit, and an internal loader never constructs a
+request — so the SSRF criteria are scoped to the outbound kind rather than read
+as universal.
+
+More importantly, an internal loader is scoped by **WorkflowID**, not only
+tenant. `permits` allows the whole `/node-types/` subtree on read scope with no
+workflow check, so without this a session bound to one workflow could enumerate
+every datastore in the tenant and every table any credential in it can reach.
+The comment there claiming the subtree "carries no tenant data" was true of the
+catalogue and is not true of this endpoint; it now says so.
+
+### The concrete case
+
+`kilasflow.chatModel`'s `model` was free text defaulting to `gpt-4o-mini`, so a
+typo was indistinguishable from a valid model until the run failed. It now loads
+from whatever OpenAI-compatible endpoint the credential can reach, and depends
+on `baseUrl` so changing the endpoint discards the previous catalogue.

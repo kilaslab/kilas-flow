@@ -5,6 +5,7 @@
  * Embeddable workflow automation engine. Every operation available in the editor is available here: the canvas is a client of this API, not the owner of workflow state.
  * OpenAPI spec version: 0.1.0-dev
  */
+import type { OptionsLoader } from './optionsLoader';
 import type { PropertyGroup } from './propertyGroup';
 import type { PropertyOption } from './propertyOption';
 import type { TypeOptions } from './typeOptions';
@@ -22,6 +23,7 @@ export interface PropertyDefinition {
   key: string;
   kind: string;
   label: string;
+  loadOptions?: OptionsLoader;
   /** @nullable */
   options?: PropertyOption[] | null;
   required: boolean;
