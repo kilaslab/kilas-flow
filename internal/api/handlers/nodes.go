@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"net/http"
+	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 
@@ -27,6 +28,23 @@ type NodeTypes struct {
 	// availability reports which nodes this deployment cannot run, keyed by
 	// node type. Nil means everything registered can run.
 	availability func() map[string]string
+	// workflowCredentials lists the credential IDs one workflow's nodes
+	// reference. It bounds an embed session to the credentials its own workflow
+	// actually uses; see scopeFor.
+	workflowCredentials func(ctx context.Context, tenantID, workflowID string) ([]string, error)
+}
+
+// WithWorkflowCredentials bounds an embed session to the credentials its own
+// workflow references.
+//
+// Without it, a session confined to one workflow could name any credential in
+// the tenant and read the schema of every database that credential reaches —
+// the picker becomes an enumeration oracle for the whole tenant, and nothing
+// else on this path stops it: permits grants the entire /node-types/ subtree on
+// read scope without ever consulting a workflow.
+func (handler *NodeTypes) WithWorkflowCredentials(list func(ctx context.Context, tenantID, workflowID string) ([]string, error)) *NodeTypes {
+	handler.workflowCredentials = list
+	return handler
 }
 
 // WithOptionLoading enables the load-options endpoint.
@@ -323,7 +341,29 @@ func (handler *NodeTypes) scopeFor(ctx context.Context, input *loadOptionsInput,
 			session.WorkflowID, input.Body.WorkflowID))
 	}
 	scope.WorkflowID = session.WorkflowID
-	return scope, nil
+
+	// And the credential has to be one this workflow actually uses. A schema
+	// read is performed on behalf of whoever holds the editor, so "this session
+	// may read" and "this session may read *with that credential*" are two
+	// different permissions and only the second one bounds the blast radius.
+	if strings.TrimSpace(input.Body.CredentialID) == "" {
+		return scope, nil
+	}
+	if handler.workflowCredentials == nil {
+		return loadoptions.Scope{}, huma.Error403Forbidden(
+			"this server cannot tell which credentials this workflow uses, so an embedded editor may not name one")
+	}
+	referenced, err := handler.workflowCredentials(ctx, scope.TenantID, session.WorkflowID)
+	if err != nil {
+		return loadoptions.Scope{}, huma.Error403Forbidden("this embed session's workflow could not be read")
+	}
+	for _, candidate := range referenced {
+		if candidate == input.Body.CredentialID {
+			return scope, nil
+		}
+	}
+	return loadoptions.Scope{}, huma.Error403Forbidden(fmt.Sprintf(
+		"workflow %s does not use that credential, so this embed session may not read with it", session.WorkflowID))
 }
 
 // locatorDependency renders a dependency value for a loader's path.
@@ -386,7 +426,8 @@ func (handler *NodeTypes) LoadSchema(ctx context.Context, input *loadOptionsInpu
 	if err != nil {
 		return nil, err
 	}
-	schema, err := handler.options.LoadSchema(ctx, *declared.Mapper.Schema, scope)
+	schema, err := handler.options.LoadSchema(ctx, *declared.Mapper.Schema, scope,
+		input.Body.CredentialID, handler.credentials(handler.tenants.Resolve(ctx)))
 	if err != nil {
 		return nil, huma.Error502BadGateway(err.Error())
 	}

@@ -64,6 +64,21 @@ type Scope struct {
 	WorkflowID string
 	// Dependencies are the resolved values of the parameters the loader reads.
 	Dependencies map[string]string
+	// Credential is the credential the node names, already resolved under the
+	// caller's tenant.
+	//
+	// Resolved by the caller rather than looked up here, for the same reason
+	// the tenant is: this package must not reach the credential store, and the
+	// caller is the one that knows whose tenant the lookup happens under. Nil
+	// when the request named none, which a loader that needs one reports as a
+	// missing credential rather than as a failed connection.
+	Credential *ResolvedCredential
+}
+
+// ResolvedCredential is a decrypted credential handed to an internal loader.
+type ResolvedCredential struct {
+	Record credentials.Record
+	Fields map[string]string
 }
 
 // Resolver runs loaders.
@@ -97,6 +112,37 @@ func (resolver *Resolver) RegisterInternal(name string, loader InternalLoader) e
 	return nil
 }
 
+// withCredential resolves the credential an internal loader was given, if any.
+//
+// A loader that names no credential type wants none; one that does gets the
+// decrypted fields or a message saying which type is missing — never a
+// connection attempt with nothing to connect with, which fails as "could not
+// reach the database" and sends the user hunting for a network problem.
+func withCredential(ctx context.Context, scope Scope, loader property.OptionsLoader, credentialID string, resolve CredentialResolver) (Scope, error) {
+	if loader.CredentialType == "" {
+		return scope, nil
+	}
+	if strings.TrimSpace(credentialID) == "" {
+		return Scope{}, fmt.Errorf("this field needs a %s credential before it can be filled in", loader.CredentialType)
+	}
+	if resolve == nil {
+		return Scope{}, fmt.Errorf("credential storage is not configured")
+	}
+	record, fields, err := resolve.Resolve(ctx, credentialID)
+	if err != nil {
+		// Not-found rather than the store's own words: a credential in another
+		// tenant does not exist here, and saying anything more specific would
+		// confirm that it exists somewhere.
+		return Scope{}, fmt.Errorf("that credential was not found")
+	}
+	if record.Type != loader.CredentialType {
+		return Scope{}, fmt.Errorf("this field needs a %s credential, and %q is a %s credential",
+			loader.CredentialType, record.Name, record.Type)
+	}
+	scope.Credential = &ResolvedCredential{Record: record, Fields: fields}
+	return scope, nil
+}
+
 // Load resolves one property's options.
 //
 // The loader comes from the *registered definition*, never from the request:
@@ -124,7 +170,16 @@ func (resolver *Resolver) Load(
 		if !registered {
 			return Result{}, fmt.Errorf("this field's option source is not available on this server")
 		}
-		result, err = internal(ctx, scope)
+		scoped, err := withCredential(ctx, scope, loader, credentialID, resolve)
+		if err != nil {
+			return Result{}, err
+		}
+		result, err = internal(ctx, scoped)
+		if err != nil {
+			return Result{}, err
+		}
+		resolver.cache.put(key, result)
+		return result, nil
 	case property.LoaderHTTP:
 		result, err = resolver.loadHTTP(ctx, loader, scope, credentialID, resolve)
 	default:

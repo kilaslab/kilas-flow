@@ -1,14 +1,22 @@
 package api_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
+	"log/slog"
 	"net/http"
+	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/kilaslabs/kilas-flow/internal/api"
+	"github.com/kilaslabs/kilas-flow/internal/config"
+	"github.com/kilaslabs/kilas-flow/internal/credentials"
+	"github.com/kilaslabs/kilas-flow/internal/database"
 	"github.com/kilaslabs/kilas-flow/internal/embed"
 	"github.com/kilaslabs/kilas-flow/internal/loadoptions"
 	"github.com/kilaslabs/kilas-flow/internal/node"
@@ -266,4 +274,192 @@ func TestTheSchemaResponseCarriesEachColumnsTypeRequiredAndMatchEligibility(t *t
 	// answer from an empty one.
 	requestProblem(t, handler, http.MethodPost, "/api/v1/node-types/test.mapper/load-schema",
 		map[string]any{"property": "nope"}, http.StatusNotFound)
+}
+
+// credentialAwareLoaderAPI is a node whose picker needs a database credential,
+// with a workflow the embed session is scoped to.
+func credentialAwareLoaderAPI(t *testing.T, issuer *embed.Issuer) (http.Handler, *repository.GORMWorkflowStore, *repository.GORMCredentialStore) {
+	t.Helper()
+	db, err := database.Open(context.Background(), config.Database{
+		Driver: "sqlite", DSN: filepath.Join(t.TempDir(), "loaders.db"),
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatalf("database.Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := database.Migrate(db, repository.Models()...); err != nil {
+		t.Fatalf("database.Migrate() error = %v", err)
+	}
+	key := make([]byte, credentials.KeySize)
+	for index := range key {
+		key[index] = byte(index + 1)
+	}
+	cipher, err := credentials.NewCipher(key)
+	if err != nil {
+		t.Fatalf("NewCipher() error = %v", err)
+	}
+	credentialStore := repository.NewCredentialStore(db.DB, cipher)
+	workflowStore := repository.NewWorkflowStore(db.DB)
+
+	registry := node.NewRegistry()
+	if err := nodes.RegisterAll(registry); err != nil {
+		t.Fatalf("RegisterAll() error = %v", err)
+	}
+	if err := registry.Register(node.Definition{
+		Type: "test.picker", Version: workflow.V(1),
+		DisplayName: "Picker", Category: "Test", ExecutorID: "test.exec",
+		Group:   []node.NodeGroup{node.GroupTransform},
+		Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+		Parameters: []node.PropertyDefinition{{
+			Key: "table", Label: "Table", Kind: node.PropertyString,
+			LoadOptions: &node.OptionsLoader{
+				Source: property.LoaderInternal, Name: "test.tables", CredentialType: "postgres",
+			},
+		}},
+	}); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	resolver := loadoptions.NewResolver(safehttp.DefaultPolicy(), time.Minute)
+	if err := resolver.RegisterInternal("test.tables", func(_ context.Context, scope loadoptions.Scope) (loadoptions.Result, error) {
+		// Echoes the credential it was handed, so a test can see which one
+		// reached the loader rather than only whether the call succeeded.
+		return loadoptions.Result{Options: []loadoptions.Option{{Label: scope.Credential.Record.Name, Value: scope.Credential.Fields["host"]}}}, nil
+	}); err != nil {
+		t.Fatalf("RegisterInternal() error = %v", err)
+	}
+
+	handler := newTestServer(t, api.Deps{
+		DB: db, NodeRegistry: registry, OptionLoader: resolver, EmbedIssuer: issuer,
+		Workflows: workflowStore, Credentials: credentialStore,
+		CredentialResolverFor: func(tenant repository.TenantScope) loadoptions.CredentialResolver {
+			return credentialLookup{store: credentialStore, tenant: tenant}
+		},
+	})
+	return handler, workflowStore, credentialStore
+}
+
+// credentialLookup binds credential resolution to one tenant, the way the
+// composition root does.
+type credentialLookup struct {
+	store  *repository.GORMCredentialStore
+	tenant repository.TenantScope
+}
+
+func (lookup credentialLookup) Resolve(ctx context.Context, id string) (credentials.Record, map[string]string, error) {
+	return lookup.store.Resolve(ctx, lookup.tenant, id)
+}
+
+func TestALoaderResolvesItsCredentialInTheCallersTenant(t *testing.T) {
+	handler, _, store := credentialAwareLoaderAPI(t, nil)
+	ctx := context.Background()
+
+	mine, err := store.Create(ctx, repository.TenantScope{ID: repository.DefaultTenantID}, credentials.Record{
+		Name: "Mine", Type: "postgres",
+		Fields: map[string]string{"host": "mine.example", "database": "app", "user": "ada", "password": "x"},
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	// A credential owned by a second tenant, which exists and must not be
+	// reachable from the first.
+	theirs, err := store.Create(ctx, repository.TenantScope{ID: "tenant-b"}, credentials.Record{
+		Name: "Theirs", Type: "postgres",
+		Fields: map[string]string{"host": "theirs.example", "database": "app", "user": "ada", "password": "x"},
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	result := requestJSON[struct {
+		Options []struct{ Value string } `json:"options"`
+	}](t, handler, http.MethodPost, "/api/v1/node-types/test.picker/load-options",
+		map[string]any{"property": "table", "credentialId": mine.ID}, http.StatusOK)
+	if len(result.Options) != 1 || result.Options[0].Value != "mine.example" {
+		t.Fatalf("options = %#v, want the caller's own credential used", result.Options)
+	}
+
+	// Another tenant's credential does not exist here. The message says so and
+	// nothing more: anything more specific would confirm it exists somewhere.
+	recorder := httptest.NewRecorder()
+	body, _ := json.Marshal(map[string]any{"property": "table", "credentialId": theirs.ID})
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/node-types/test.picker/load-options", bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code == http.StatusOK {
+		t.Fatalf("another tenant's credential was used: %s", recorder.Body)
+	}
+	if strings.Contains(recorder.Body.String(), "theirs.example") {
+		t.Fatalf("the response disclosed the other tenant's credential: %s", recorder.Body)
+	}
+}
+
+func TestAnEmbedSessionMayOnlyLoadWithItsOwnWorkflowsCredentials(t *testing.T) {
+	issuer := embedIssuer(t)
+	handler, workflows, store := credentialAwareLoaderAPI(t, issuer)
+	ctx := context.Background()
+	tenant := repository.TenantScope{ID: repository.DefaultTenantID}
+
+	used, err := store.Create(ctx, tenant, credentials.Record{
+		Name: "Used", Type: "postgres",
+		Fields: map[string]string{"host": "used.example", "database": "app", "user": "ada", "password": "x"},
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	unused, err := store.Create(ctx, tenant, credentials.Record{
+		Name: "Unused", Type: "postgres",
+		Fields: map[string]string{"host": "unused.example", "database": "app", "user": "ada", "password": "x"},
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	// The session's workflow references exactly one of them.
+	stored, err := workflows.SaveDraft(ctx, tenant, workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion, Name: "Embedded",
+		Nodes: []workflow.Node{
+			{ID: "manual", Name: "Manual", Type: "kilasflow.manual", TypeVersion: workflow.V(1)},
+			{ID: "sql", Name: "SQL", Type: nodes.PostgresNodeType, TypeVersion: workflow.V(1),
+				Parameters:  map[string]any{"operation": "query", "statement": "SELECT 1"},
+				Credentials: map[string]string{"postgres": used.ID}},
+		},
+		Connections: []workflow.Connection{{
+			ID: "c1", Kind: workflow.ConnectionMain,
+			Source: workflow.Endpoint{NodeID: "manual", Port: "main"},
+			Target: workflow.Endpoint{NodeID: "sql", Port: "main"},
+		}},
+		Settings: map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("SaveDraft() error = %v", err)
+	}
+	_, token, err := issuer.Issue(embed.Request{
+		TenantID: repository.DefaultTenantID, WorkflowID: stored.ID,
+		Scopes: []embed.Scope{embed.ScopeRead}, Origin: hostOrigin,
+	})
+	if err != nil {
+		t.Fatalf("Issue() error = %v", err)
+	}
+
+	// Introspection is a read of a customer's database performed on behalf of
+	// whoever holds the editor. "This session may read" and "this session may
+	// read with that credential" are two different permissions, and only the
+	// second one bounds the blast radius.
+	allowed := embedRequest(t, handler, token, http.MethodPost, "/api/v1/node-types/test.picker/load-options",
+		map[string]any{"property": "table", "credentialId": used.ID})
+	if allowed.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", allowed.Code, allowed.Body)
+	}
+	if !strings.Contains(allowed.Body.String(), "used.example") {
+		t.Errorf("body = %s, want the workflow's own credential used", allowed.Body)
+	}
+
+	refused := embedRequest(t, handler, token, http.MethodPost, "/api/v1/node-types/test.picker/load-options",
+		map[string]any{"property": "table", "credentialId": unused.ID})
+	if refused.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 (body: %s)", refused.Code, refused.Body)
+	}
+	if strings.Contains(refused.Body.String(), "unused.example") {
+		t.Fatalf("the refusal disclosed the credential it refused: %s", refused.Body)
+	}
 }

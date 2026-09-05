@@ -50,7 +50,7 @@ func (resolver *Resolver) RegisterSchema(name string, loader SchemaLoader) error
 // opened and again when the table changes, and a stale one is far more
 // expensive than a repeated read: a mapping validated against a cached schema
 // would refuse a column that exists or accept one that no longer does.
-func (resolver *Resolver) LoadSchema(ctx context.Context, loader property.OptionsLoader, scope Scope) (property.MapperSchema, error) {
+func (resolver *Resolver) LoadSchema(ctx context.Context, loader property.OptionsLoader, scope Scope, credentialID string, resolve CredentialResolver) (property.MapperSchema, error) {
 	if loader.Source != property.LoaderInternal {
 		return property.MapperSchema{}, fmt.Errorf("this field's schema source is not supported")
 	}
@@ -60,5 +60,9 @@ func (resolver *Resolver) LoadSchema(ctx context.Context, loader property.Option
 	if !registered {
 		return property.MapperSchema{}, fmt.Errorf("this field's schema source is not available on this server")
 	}
-	return schema(ctx, scope)
+	scoped, err := withCredential(ctx, scope, loader, credentialID, resolve)
+	if err != nil {
+		return property.MapperSchema{}, err
+	}
+	return schema(ctx, scoped)
 }

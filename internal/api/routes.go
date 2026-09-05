@@ -1,12 +1,14 @@
 package api
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/go-chi/chi/v5"
 
 	"github.com/kilaslabs/kilas-flow/internal/api/handlers"
+	"github.com/kilaslabs/kilas-flow/internal/repository"
 	"github.com/kilaslabs/kilas-flow/internal/safehttp"
 	"github.com/kilaslabs/kilas-flow/internal/web"
 )
@@ -23,7 +25,8 @@ func registerRoutes(router *chi.Mux, api huma.API, deps Deps) {
 	handlers.NewSystem(deps.Version, deps.DB).Register(v1)
 	handlers.NewNodeTypes(deps.NodeRegistry).
 		WithOptionLoading(deps.Tenants, deps.OptionLoader, deps.CredentialResolverFor).
-		WithAvailability(deps.NodeAvailability).Register(v1)
+		WithAvailability(deps.NodeAvailability).
+		WithWorkflowCredentials(workflowCredentials(deps)).Register(v1)
 	handlers.NewWorkflows(deps.Workflows, deps.Executions, deps.NodeRegistry, deps.Tenants, deps.ExecutionController).
 		WithTriggers(deps.TriggerCoordinator).Register(v1)
 	handlers.NewExecutions(deps.ExecutionController, deps.Executions, deps.Events, deps.Tenants).Register(v1)
@@ -49,6 +52,30 @@ func registerRoutes(router *chi.Mux, api huma.API, deps Deps) {
 	router.Handle(WebhookPrefix+"/*", webhookHandler)
 
 	router.Handle("/*", web.Handler())
+}
+
+// workflowCredentials lists the credential IDs one workflow's nodes reference.
+//
+// Built here rather than injected, because the workflow repository is already a
+// dependency and a second seam for "read a workflow" would be one more thing to
+// keep pointed at the same store.
+func workflowCredentials(deps Deps) func(context.Context, string, string) ([]string, error) {
+	if deps.Workflows == nil {
+		return nil
+	}
+	return func(ctx context.Context, tenantID, workflowID string) ([]string, error) {
+		stored, err := deps.Workflows.Get(ctx, repository.TenantScope{ID: tenantID}, workflowID)
+		if err != nil {
+			return nil, err
+		}
+		referenced := make([]string, 0, 2)
+		for _, node := range stored.LatestVersion.Document.Nodes {
+			for _, id := range node.Credentials {
+				referenced = append(referenced, id)
+			}
+		}
+		return referenced, nil
+	}
 }
 
 // credentialTestPolicy is the egress policy a credential probe runs under.

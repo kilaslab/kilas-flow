@@ -116,6 +116,12 @@ func run() error {
 	// host fails the same way — and a pack registers its own internal loaders
 	// into it, which is why it is built here rather than at the API.
 	optionLoader := loadoptions.NewResolver(safehttp.DefaultPolicy(), 30*time.Second)
+	// Database introspection, under the same guard the executors receive: a
+	// SQLite credential naming KilasFlow's own database is refused at edit time
+	// exactly as it is at run time.
+	if err := loadoptions.RegisterSQL(optionLoader, databaseGuard(cfg.Database)); err != nil {
+		return fmt.Errorf("register the database option loaders: %w", err)
+	}
 	// Generated node packs. The definitions, their routing and their option
 	// loaders are registered together: a pack whose runtime is missing fails
 	// here rather than on its first execution.
