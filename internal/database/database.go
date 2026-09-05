@@ -58,8 +58,14 @@ func Open(ctx context.Context, cfg config.Database, log *slog.Logger) (*DB, erro
 		sqlDB.SetMaxOpenConns(1)
 		sqlDB.SetMaxIdleConns(1)
 	} else {
-		sqlDB.SetMaxOpenConns(cfg.MaxOpenConns)
-		sqlDB.SetMaxIdleConns(cfg.MaxIdleConns)
+		// Through PoolSize rather than straight from the struct, so a caller
+		// that built a config.Database by hand — every test in the tree does —
+		// gets a bounded pool instead of the unlimited one database/sql reads
+		// a zero as. config.Load has already filled these in from
+		// execution.max_concurrent for the server itself.
+		open, idle := cfg.PoolSize(0)
+		sqlDB.SetMaxOpenConns(open)
+		sqlDB.SetMaxIdleConns(idle)
 	}
 	sqlDB.SetConnMaxLifetime(time.Hour)
 

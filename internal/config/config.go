@@ -70,8 +70,58 @@ type Database struct {
 	Driver string `koanf:"driver"`
 	DSN    string `koanf:"dsn"`
 
+	// MaxOpenConns and MaxIdleConns size the connection pool. Zero on either
+	// means "work one out", which PoolSize does from the driver and the
+	// configured execution concurrency — see it for the sizes and for why they
+	// cannot be constants in Default().
 	MaxOpenConns int `koanf:"max_open_conns"`
 	MaxIdleConns int `koanf:"max_idle_conns"`
+}
+
+// Pool sizing bounds, used when the operator has set neither key.
+const (
+	// poolHeadroom is reserved for everything that is not an execution worker:
+	// the scheduler, the history sweeper, the execution pruner, the webhook
+	// receiver and every API request. Without it a burst of runs starves the
+	// endpoint the operator is watching those runs from.
+	poolHeadroom = 5
+	// minimumPoolSize keeps a single-worker install from serialising its whole
+	// API behind that one execution.
+	minimumPoolSize = 4
+	// maximumDerivedPoolSize stays well under PostgreSQL's stock
+	// max_connections of 100, which several KilasFlow processes and whatever
+	// else uses that server all draw on. A derived default that cannot connect
+	// is worse than one that is a little small, so a deployment that really
+	// wants more sets max_open_conns itself.
+	maximumDerivedPoolSize = 50
+)
+
+// PoolSize returns the open and idle connection counts for this database,
+// deriving whichever the operator left unset from maxConcurrent.
+//
+// SQLite derives to one because database.Open pins it there regardless: the
+// single-writer pin and the WAL pragma set are a pair, and a configuration
+// reporting fifteen while the pool holds one sends an operator hunting the
+// wrong thing. Everything else follows the worker count, because "PostgreSQL
+// unlocks concurrency" is only true if the workers have connections to run on.
+func (d Database) PoolSize(maxConcurrent int) (open, idle int) {
+	open, idle = d.MaxOpenConns, d.MaxIdleConns
+	if open <= 0 {
+		if d.Driver == "sqlite" {
+			open = 1
+		} else {
+			open = min(max(maxConcurrent+poolHeadroom, minimumPoolSize), maximumDerivedPoolSize)
+		}
+	}
+	if idle <= 0 {
+		// Idle matches open rather than sitting at some fraction of it. A pool
+		// whose idle bound is lower spends a sustained burst opening a
+		// connection, using it once and destroying it, which costs a TLS
+		// handshake and a backend fork per query at exactly the moment the
+		// server is busiest. ConnMaxLifetime still recycles them.
+		idle = open
+	}
+	return open, idle
 }
 
 // Security holds secret-material settings.
@@ -185,6 +235,15 @@ type Branding struct {
 type Execution struct {
 	MaxConcurrent  int           `koanf:"max_concurrent"`
 	DefaultTimeout time.Duration `koanf:"default_timeout"`
+	// Retention deletes an execution once it has been finished for longer than
+	// this, along with its node runs and its stored binary payloads.
+	//
+	// Zero keeps every execution, for the same reason History.Retention does:
+	// an operator who has never configured retention must not discover that
+	// installing a new build deleted the run history they were about to debug.
+	// Turning it on is how an installation stops growing without bound, which
+	// until this key existed it had no way to do at all.
+	Retention time.Duration `koanf:"retention"`
 }
 
 // History bounds how much workflow version history an installation keeps.
@@ -275,10 +334,17 @@ func Default() Config {
 			ShutdownTimeout:   15 * time.Second,
 		},
 		Database: Database{
-			Driver:       "sqlite",
-			DSN:          "./data/kilasflow.db",
-			MaxOpenConns: 1,
-			MaxIdleConns: 1,
+			Driver: "sqlite",
+			DSN:    "./data/kilasflow.db",
+			// Left at zero so PoolSize works them out after every layer has
+			// merged. A number here could not follow execution.max_concurrent,
+			// because koanf cannot tell a default of 1 apart from a file that
+			// says 1 — which is how a PostgreSQL install came to run ten
+			// execution workers, a scheduler, the webhook handler and every API
+			// request through a single connection while config.example.yaml
+			// advertised ten.
+			MaxOpenConns: 0,
+			MaxIdleConns: 0,
 		},
 		Security: Security{
 			EncryptionKeyEnv: "KILASFLOW_ENCRYPTION_KEY",
@@ -316,6 +382,8 @@ func Default() Config {
 		Execution: Execution{
 			MaxConcurrent:  10,
 			DefaultTimeout: 60 * time.Second,
+			// Keep every execution. See the field.
+			Retention: 0,
 		},
 		History: History{
 			// Keep everything. Deleting a customer's history is not a default
@@ -382,6 +450,11 @@ func Load(path string) (Config, error) {
 		return Config{}, fmt.Errorf("unmarshal config: %w", err)
 	}
 
+	// After the merge rather than before it, so an operator who raises only
+	// execution.max_concurrent sees the pool follow without also having to
+	// know that it exists.
+	cfg.Database.MaxOpenConns, cfg.Database.MaxIdleConns = cfg.Database.PoolSize(cfg.Execution.MaxConcurrent)
+
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
 	}
@@ -403,6 +476,19 @@ func (c Config) Validate() error {
 
 	if c.Database.DSN == "" {
 		return fmt.Errorf("database.dsn is required")
+	}
+
+	// A negative pool size means "unlimited" to database/sql, which is not
+	// something anyone asks for on purpose and is indistinguishable from a
+	// typo until the database refuses the connection nobody budgeted for.
+	if c.Database.MaxOpenConns < 0 || c.Database.MaxIdleConns < 0 {
+		return fmt.Errorf("database.max_open_conns and database.max_idle_conns must not be negative")
+	}
+
+	// A negative retention puts the prune cutoff in the future, and every
+	// execution ever recorded is older than the future.
+	if c.Execution.Retention < 0 {
+		return fmt.Errorf("execution.retention %s must not be negative", c.Execution.Retention)
 	}
 
 	// Caught here rather than at the first login, because an instance that

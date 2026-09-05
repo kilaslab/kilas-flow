@@ -275,6 +275,148 @@ func TestAFreshPostgresDatabaseGetsTheWholeBaselineSchema(t *testing.T) {
 	assertBaselineSchema(t, db)
 }
 
+// queueIndexes are what 000004 adds, and what the execution table's two
+// whole-table scans need.
+//
+// They are created by a migration rather than a struct tag: after the move off
+// AutoMigrate the migration is what the schema is, and an index declared only
+// in a tag would exist on a developer's machine and on nobody's server.
+var queueIndexes = []string{
+	"idx_executions_status_started",
+	"idx_executions_finished_at",
+}
+
+func assertQueueIndexes(t *testing.T, db *DB) {
+	t.Helper()
+	for _, index := range queueIndexes {
+		if !db.Migrator().HasIndex("executions", index) {
+			t.Errorf("migrating did not create the %q index, so the claim and the prune both scan the table", index)
+		}
+	}
+}
+
+func TestAFreshSQLiteDatabaseGetsTheExecutionQueueIndexes(t *testing.T) {
+	db := freshSQLite(t)
+
+	if err := Migrate(db, discardLogger()); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	assertQueueIndexes(t, db)
+}
+
+func TestAFreshPostgresDatabaseGetsTheExecutionQueueIndexes(t *testing.T) {
+	db := openPostgres(t)
+
+	if err := Migrate(db, discardLogger()); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	assertQueueIndexes(t, db)
+}
+
+// The claim query's PostgreSQL plan reads the queue index instead of the table.
+//
+// An index that exists and an index the planner chooses are different claims,
+// and only the second one makes the queue cheap. Against 5,001 rows this plan
+// is a bitmap scan of idx_executions_status_started; drop that index and the
+// same query at the same size is a sequential scan, which is what every idle
+// worker was running ten times a second. Measured separately against 500,003
+// rows, the difference was 23.583 ms and 18,188 buffers against 0.123 ms and 13.
+//
+// The statement is spelled the way GORM emits it, trailing primary-key sort
+// included: First appends an ORDER BY on the primary key to whatever Order the
+// caller set, and a plan proved for a statement the server never receives
+// proves nothing.
+func TestThePostgresClaimPlanUsesTheQueueIndexRatherThanASequentialScan(t *testing.T) {
+	db := openPostgres(t)
+	if err := Migrate(db, discardLogger()); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	seedPostgresExecutionHistory(t, db, 5000)
+
+	const claim = `SELECT * FROM "executions" ` +
+		`WHERE status = 'queued' OR ((status = 'running' OR status = 'cancelling') ` +
+		`AND lease_expires_at IS NOT NULL AND lease_expires_at <= now()) ` +
+		`ORDER BY started_at ASC, id ASC, "executions"."id" LIMIT 1`
+
+	var lines []string
+	if err := db.Raw("EXPLAIN " + claim).Scan(&lines).Error; err != nil {
+		t.Fatalf("EXPLAIN the claim query: %v", err)
+	}
+	plan := strings.Join(lines, "\n")
+
+	if !strings.Contains(plan, "idx_executions_status_started") {
+		t.Errorf("the claim plan does not use idx_executions_status_started:\n%s", plan)
+	}
+	if strings.Contains(plan, "Seq Scan on executions") {
+		t.Errorf("the claim plan still scans the executions table:\n%s", plan)
+	}
+}
+
+// Retention's candidate query reads the finished_at index rather than sorting
+// the whole history to find its oldest batch.
+func TestThePostgresPrunePlanUsesTheFinishedAtIndex(t *testing.T) {
+	db := openPostgres(t)
+	if err := Migrate(db, discardLogger()); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	seedPostgresExecutionHistory(t, db, 5000)
+
+	const prune = `SELECT id, tenant_id FROM "executions" ` +
+		`WHERE finished_at IS NOT NULL AND finished_at < now() ` +
+		`AND status NOT IN ('queued','running','cancelling') ` +
+		`ORDER BY finished_at ASC, id ASC LIMIT 200`
+
+	var lines []string
+	if err := db.Raw("EXPLAIN " + prune).Scan(&lines).Error; err != nil {
+		t.Fatalf("EXPLAIN the prune query: %v", err)
+	}
+	plan := strings.Join(lines, "\n")
+
+	if !strings.Contains(plan, "idx_executions_finished_at") {
+		t.Errorf("the prune plan does not use idx_executions_finished_at:\n%s", plan)
+	}
+	if strings.Contains(plan, "Seq Scan on executions") {
+		t.Errorf("the prune plan still scans the executions table:\n%s", plan)
+	}
+}
+
+// seedPostgresExecutionHistory writes the finished history a plan is judged
+// against, plus one queued row for the claim to find.
+//
+// The size is chosen so the planner's own arithmetic decides: below it a
+// sequential scan of a small table is genuinely cheaper and the assertion would
+// hold for the wrong reason. ANALYZE is the point of the exercise — a plan read
+// from stale statistics is a guess.
+func seedPostgresExecutionHistory(t *testing.T, db *DB, finished int) {
+	t.Helper()
+	statements := []string{
+		`INSERT INTO workflows (id, tenant_id, name, active, latest_revision, active_version_id, created_at, updated_at)
+     VALUES ('plan_wf', 'plan-tenant', 'Plan', false, 1, '', now(), now())`,
+		`INSERT INTO workflow_versions (id, tenant_id, workflow_id, revision, schema_version, definition, created_at)
+     VALUES ('plan_ver', 'plan-tenant', 'plan_wf', 1, 1, '\x7b7d'::bytea, now())`,
+		fmt.Sprintf(`INSERT INTO executions (id, tenant_id, workflow_id, workflow_version_id, status, trigger,
+       trigger_node_id, parent_execution_id, input, output, error, started_at, finished_at,
+       lease_owner, lease_expires_at, cancellation_requested_at)
+     SELECT 'plan_exec_' || n, 'plan-tenant', 'plan_wf', 'plan_ver', 'succeeded', 'manual', 'manual', '',
+       '\x7b7d'::bytea, '\x7b7d'::bytea, '\x7b7d'::bytea,
+       now() - (n || ' seconds')::interval, now() - (n || ' seconds')::interval, '', NULL, NULL
+     FROM generate_series(1, %d) AS n`, finished),
+		`INSERT INTO executions (id, tenant_id, workflow_id, workflow_version_id, status, trigger,
+       trigger_node_id, parent_execution_id, input, output, error, started_at, finished_at,
+       lease_owner, lease_expires_at, cancellation_requested_at)
+     VALUES ('plan_queued', 'plan-tenant', 'plan_wf', 'plan_ver', 'queued', 'manual', 'manual', '',
+       '\x7b7d'::bytea, '\x7b7d'::bytea, '\x7b7d'::bytea, now(), NULL, '', NULL, NULL)`,
+		`ANALYZE executions`,
+	}
+	for _, statement := range statements {
+		if err := db.Exec(statement).Error; err != nil {
+			t.Fatalf("seed the execution history: %v", err)
+		}
+	}
+}
+
 // The baseline has to reproduce what AutoMigrate used to build, identifier for
 // identifier. AutoMigrate is additive and idempotent, so if the two agree it
 // issues no DDL at all — and if a model gains a field the baseline does not

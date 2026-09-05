@@ -83,11 +83,25 @@ fi
 $compose up -d postgres
 wait_for_postgres
 
+# Migrations, the adoption path, and the query plans the executions table
+# depends on: an index the planner declines to use is not an index.
 docker run --rm --network "${project}_default" \
 	-v "$repo_dir:/src:ro" -w /src \
 	-e 'KILASFLOW_TEST_POSTGRES_DSN=postgres://kilasflow:kilasflow@postgres:5432/kilasflow?sslmode=disable' \
 	golang:1.27-alpine \
 	go test ./internal/database -run 'Postgres' -count=1
+
+# The repository's driver-parity cases, retention among them. They are here and
+# not only in `go test ./...` because they are the ones whose SQL PostgreSQL and
+# SQLite can disagree about — a CASE of untyped placeholders that SQLite accepts
+# and PostgreSQL refuses to assign into a bytea column once shipped, and left
+# every execution on this tier running for ever. Run after the block above, so a
+# schema failure is reported as a schema failure.
+docker run --rm --network "${project}_default" \
+	-v "$repo_dir:/src:ro" -w /src \
+	-e 'KILASFLOW_TEST_POSTGRES_DSN=postgres://kilasflow:kilasflow@postgres:5432/kilasflow?sslmode=disable' \
+	golang:1.27-alpine \
+	go test ./internal/repository -run 'Driver|Retention' -count=1
 
 docker run -d --name "$app_container" --network "${project}_default" -p 127.0.0.1::8080 \
 	-e KILASFLOW_DATABASE_DRIVER=postgres \

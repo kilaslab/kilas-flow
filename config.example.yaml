@@ -22,10 +22,19 @@ database:
   driver: sqlite
   dsn: ./data/kilasflow.db
 
-  # Ignored for sqlite, which is pinned to a single connection to avoid
-  # SQLITE_BUSY under concurrent workflow execution.
-  max_open_conns: 10
-  max_idle_conns: 5
+  # The connection pool. Both are worked out from the driver and from
+  # execution.max_concurrent when they are not set here, so raising the worker
+  # count raises the pool with it — a PostgreSQL install used to run ten
+  # workers, a scheduler, the webhook handler and every API request through the
+  # single connection this file claimed was ten.
+  #
+  # sqlite derives to one whatever is written here: it tolerates a single
+  # writer, and the pin and the WAL pragma set are a pair. postgres derives to
+  # max_concurrent plus headroom for the scheduler, the sweepers, the webhook
+  # receiver and the API. Set either key to take it over.
+  #
+  # max_open_conns: 15
+  # max_idle_conns: 15
 
   # PostgreSQL example:
   # driver: postgres
@@ -123,6 +132,17 @@ branding:
 execution:
   max_concurrent: 10
   default_timeout: 60s
+
+  # How long a finished execution is kept. It defaults to keeping everything,
+  # so upgrading never deletes the run somebody was about to debug; set it when
+  # unbounded growth is the bigger problem, because every run stores its input,
+  # its output and its error, and every node attempt stores three more.
+  #
+  # A prune removes the execution, its node runs and its stored binary
+  # payloads, and never touches a run that is queued, running or being
+  # cancelled — a run that started three weeks ago and is still going stays.
+  #
+  # retention: 720h
 
 history:
   # How much workflow version history to keep. Both keys default to "keep

@@ -116,6 +116,14 @@ func TestValidateRejectsBadConfig(t *testing.T) {
 		"private endpoint pasted as a URL": func(c *Config) {
 			c.Outbound.AllowedPrivateEndpoints = []string{"http://localhost:11434/v1"}
 		},
+		// database/sql reads a negative open bound as "unlimited", which is
+		// indistinguishable from a typo until the server refuses the
+		// connections nobody budgeted for.
+		"negative open connections": func(c *Config) { c.Database.MaxOpenConns = -1 },
+		"negative idle connections": func(c *Config) { c.Database.MaxIdleConns = -1 },
+		// A negative retention puts the prune cutoff in the future, and every
+		// execution ever recorded is older than the future.
+		"negative execution retention": func(c *Config) { c.Execution.Retention = -time.Hour },
 	}
 
 	for name, mutate := range cases {
@@ -209,6 +217,164 @@ func TestHistoryRetentionIsReachableFromYAMLAndTheEnvironment(t *testing.T) {
 	}
 	if cfg.History.MaxVersions != 25 {
 		t.Errorf("History.MaxVersions = %d, want the environment's 25", cfg.History.MaxVersions)
+	}
+}
+
+// A PostgreSQL install with no configuration file at all must be able to run
+// the concurrency it was configured for.
+//
+// The pool defaulted to a flat 1 for every driver while execution.max_concurrent
+// defaulted to 10, so ten execution workers, a scheduler, the webhook handler
+// and every API request queued behind one connection — and every claim that
+// "PostgreSQL unlocks concurrency" was a no-op.
+func TestThePostgresPoolCoversTheDefaultWorkerCount(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "kilasflow.yaml")
+	body := "database:\n  driver: postgres\n  dsn: postgres://localhost/kilasflow\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Database.MaxOpenConns <= cfg.Execution.MaxConcurrent {
+		t.Errorf("Database.MaxOpenConns = %d with %d workers: the workers queue on the pool",
+			cfg.Database.MaxOpenConns, cfg.Execution.MaxConcurrent)
+	}
+	if cfg.Database.MaxIdleConns != cfg.Database.MaxOpenConns {
+		t.Errorf("Database.MaxIdleConns = %d, want it to match the open bound of %d",
+			cfg.Database.MaxIdleConns, cfg.Database.MaxOpenConns)
+	}
+}
+
+// Raising only the worker count raises the pool with it.
+//
+// This is why the pool is worked out after the layers merge rather than in
+// Default(): koanf cannot tell a default apart from a file that repeats it, so
+// a number baked into Default() could never follow max_concurrent.
+func TestThePoolFollowsExecutionConcurrency(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "kilasflow.yaml")
+	body := "database:\n  driver: postgres\n  dsn: postgres://localhost/kilasflow\nexecution:\n  max_concurrent: 32\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Database.MaxOpenConns <= 32 {
+		t.Errorf("Database.MaxOpenConns = %d, want more than the 32 workers it has to serve",
+			cfg.Database.MaxOpenConns)
+	}
+}
+
+// An explicit pool size wins over the derived one, in both directions.
+func TestAnExplicitPoolSizeIsNotOverridden(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "kilasflow.yaml")
+	body := "database:\n  driver: postgres\n  dsn: postgres://localhost/kilasflow\n" +
+		"  max_open_conns: 3\n  max_idle_conns: 2\nexecution:\n  max_concurrent: 50\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Database.MaxOpenConns != 3 {
+		t.Errorf("Database.MaxOpenConns = %d, want the configured 3", cfg.Database.MaxOpenConns)
+	}
+	if cfg.Database.MaxIdleConns != 2 {
+		t.Errorf("Database.MaxIdleConns = %d, want the configured 2", cfg.Database.MaxIdleConns)
+	}
+}
+
+// SQLite stays on one connection whatever the worker count is.
+//
+// It tolerates a single writer, and the pin and the WAL pragma set are a pair.
+// A configuration reporting fifteen while database.Open holds one would send an
+// operator hunting the wrong thing.
+func TestTheSQLitePoolStaysPinnedToOneConnection(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "kilasflow.yaml")
+	if err := os.WriteFile(path, []byte("execution:\n  max_concurrent: 64\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Database.Driver != "sqlite" {
+		t.Fatalf("Database.Driver = %q, want the sqlite default", cfg.Database.Driver)
+	}
+	if cfg.Database.MaxOpenConns != 1 || cfg.Database.MaxIdleConns != 1 {
+		t.Errorf("sqlite pool = (%d, %d), want (1, 1)", cfg.Database.MaxOpenConns, cfg.Database.MaxIdleConns)
+	}
+}
+
+// The example an operator copies and the defaults they get without it describe
+// the same pool.
+//
+// The file advertised max_open_conns: 10 and max_idle_conns: 5 while Default()
+// set 1 and 1. The documented value is the one people believe, so the two
+// disagreeing is worse than either being wrong on its own.
+func TestTheExampleConfigAndTheDefaultsAgreeOnThePool(t *testing.T) {
+	example, err := Load(filepath.Join("..", "..", "config.example.yaml"))
+	if err != nil {
+		t.Fatalf("Load(config.example.yaml) error = %v", err)
+	}
+	defaults, err := Load(filepath.Join(t.TempDir(), "absent.yaml"))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if example.Database.Driver != defaults.Database.Driver {
+		t.Fatalf("the example names driver %q and the defaults %q, so their pools are not comparable",
+			example.Database.Driver, defaults.Database.Driver)
+	}
+	if example.Database.MaxOpenConns != defaults.Database.MaxOpenConns {
+		t.Errorf("config.example.yaml advertises max_open_conns %d and the default is %d",
+			example.Database.MaxOpenConns, defaults.Database.MaxOpenConns)
+	}
+	if example.Database.MaxIdleConns != defaults.Database.MaxIdleConns {
+		t.Errorf("config.example.yaml advertises max_idle_conns %d and the default is %d",
+			example.Database.MaxIdleConns, defaults.Database.MaxIdleConns)
+	}
+}
+
+// An operator who has never configured execution retention keeps every run.
+func TestExecutionRetentionDefaultsToKeepingEverything(t *testing.T) {
+	cfg, err := Load(filepath.Join(t.TempDir(), "absent.yaml"))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Execution.Retention != 0 {
+		t.Errorf("Execution.Retention = %s, want 0 meaning keep every execution", cfg.Execution.Retention)
+	}
+}
+
+func TestExecutionRetentionIsReachableFromYAMLAndTheEnvironment(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "kilasflow.yaml")
+	if err := os.WriteFile(path, []byte("execution:\n  retention: 24h\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Execution.Retention != 24*time.Hour {
+		t.Errorf("Execution.Retention from YAML = %s, want 24h", cfg.Execution.Retention)
+	}
+
+	t.Setenv("KILASFLOW_EXECUTION_RETENTION", "72h")
+	cfg, err = Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Execution.Retention != 72*time.Hour {
+		t.Errorf("Execution.Retention = %s, want the environment's 72h", cfg.Execution.Retention)
 	}
 }
 
