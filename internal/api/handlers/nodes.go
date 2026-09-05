@@ -168,6 +168,10 @@ type loadOptionsInput struct {
 	Body struct {
 		Version  string `json:"version,omitempty" doc:"Node type version. Omit for the registered default."`
 		Property string `json:"property" doc:"The property whose options to load."`
+		// Mode names which of a resource locator's modes is asking. A locator
+		// carries a loader per mode rather than one for the property, because
+		// "from list" searches and "by ID" does not.
+		Mode string `json:"mode,omitempty" doc:"For a resource locator, the mode whose list to load."`
 		// Parameters is the node as currently configured in the editor.
 		Parameters map[string]any `json:"parameters,omitempty"`
 		// CredentialID names a credential in the caller's own tenant. Inline
@@ -219,12 +223,28 @@ func (handler *NodeTypes) LoadOptions(ctx context.Context, input *loadOptionsInp
 	if declared == nil {
 		return nil, huma.Error404NotFound("that node type has no such property")
 	}
-	if declared.LoadOptions == nil {
+	loader := declared.LoadOptions
+	if declared.Kind == node.PropertyResourceLocator {
+		// From the declared mode, never from the request: the request says
+		// *which* mode is asking, and the server decides what that mode may
+		// load.
+		loader = nil
+		for _, mode := range declared.Modes {
+			if mode.Name == input.Body.Mode {
+				loader = mode.LoadOptions
+				break
+			}
+		}
+		if loader == nil {
+			return nil, huma.Error422UnprocessableEntity("that resource locator has no list for the mode you asked for")
+		}
+	}
+	if loader == nil {
 		return nil, huma.Error422UnprocessableEntity("that property's options are fixed and do not need loading")
 	}
 
-	dependencies := make(map[string]string, len(declared.LoadOptions.DependsOn))
-	for _, key := range declared.LoadOptions.DependsOn {
+	dependencies := make(map[string]string, len(loader.DependsOn))
+	for _, key := range loader.DependsOn {
 		value, present := input.Body.Parameters[key]
 		if !present || value == nil {
 			continue
@@ -242,7 +262,7 @@ func (handler *NodeTypes) LoadOptions(ctx context.Context, input *loadOptionsInp
 				},
 			}, nil
 		}
-		dependencies[key] = fmt.Sprint(value)
+		dependencies[key] = locatorDependency(value)
 	}
 
 	tenant := handler.tenants.Resolve(ctx)
@@ -252,12 +272,21 @@ func (handler *NodeTypes) LoadOptions(ctx context.Context, input *loadOptionsInp
 	// no workflow check, so without this a session scoped to one workflow could
 	// enumerate everything an internal loader can see across the tenant.
 	if session, embedded := middleware.EmbedSessionFrom(ctx); embedded {
+		// Refused rather than silently narrowed. A request naming another
+		// workflow is either a mistake or a probe, and answering it with this
+		// session's own list would tell the caller nothing about which one it
+		// got — which is the reading that turns a bug into a slow leak.
+		if input.Body.WorkflowID != "" && input.Body.WorkflowID != session.WorkflowID {
+			return nil, huma.Error403Forbidden(fmt.Sprintf(
+				"this embed session is scoped to workflow %s and cannot load options for %s",
+				session.WorkflowID, input.Body.WorkflowID))
+		}
 		scope.WorkflowID = session.WorkflowID
 	} else {
 		scope.WorkflowID = input.Body.WorkflowID
 	}
 
-	result, err := handler.options.Load(ctx, *declared.LoadOptions, scope, input.Body.CredentialID, handler.credentials(tenant))
+	result, err := handler.options.Load(ctx, *loader, scope, input.Body.CredentialID, handler.credentials(tenant))
 	if err != nil {
 		return nil, huma.Error502BadGateway(err.Error())
 	}
@@ -269,6 +298,19 @@ func (handler *NodeTypes) LoadOptions(ctx context.Context, input *loadOptionsInp
 		CacheControl: "private, max-age=30",
 		Body:         LoadOptionsResource{Options: result.Options, Reason: result.Reason},
 	}, nil
+}
+
+// locatorDependency renders a dependency value for a loader's path.
+//
+// A resource locator is a dependency as often as it is a target — a Table
+// locator depends on the Schema one — and the stored form is an object. Sending
+// it through fmt.Sprint would put `map[__rl:true mode:list value:public]` into
+// the endpoint path, which is a lookup that quietly returns nothing.
+func locatorDependency(value any) string {
+	if locator, ok := property.ReadLocator(value); ok {
+		return fmt.Sprint(locator.Value)
+	}
+	return fmt.Sprint(value)
 }
 
 // nodeIconInput identifies the artwork to serve.

@@ -254,6 +254,17 @@ export interface OptionsLoader {
   valueField?: string;
 }
 
+export interface PropertyMode {
+  hint?: string;
+  kind: string;
+  label: string;
+  loadOptions?: OptionsLoader;
+  name: string;
+  pattern?: string;
+  patternHint?: string;
+  placeholder?: string;
+}
+
 export interface PropertyOption {
   label: string;
   value: string;
@@ -283,6 +294,8 @@ export interface PropertyDefinition {
   kind: string;
   label: string;
   loadOptions?: OptionsLoader;
+  /** @nullable */
+  modes?: PropertyMode[] | null;
   /** @nullable */
   options?: PropertyOption[] | null;
   required: boolean;
@@ -654,6 +667,8 @@ export interface LoadOptionsInputBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   credentialId?: string;
+  /** For a resource locator, the mode whose list to load. */
+  mode?: string;
   parameters?: LoadOptionsInputBodyParameters;
   /** The property whose options to load. */
   property: string;

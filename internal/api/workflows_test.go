@@ -1020,3 +1020,70 @@ func TestImportReportsTheWebhookAddressToPasteIntoTheSender(t *testing.T) {
 		t.Error("a second import of the same template was given the same address")
 	}
 }
+
+func TestAResourceLocatorSurvivesSaveReloadAndExport(t *testing.T) {
+	handler, _, _ := newWorkflowAPI(t)
+
+	// Every declared mode, because the whole point of storing the mode is that
+	// it comes back — a locator that lost it would render as the first mode
+	// with someone else's value in it.
+	for _, mode := range []string{"list", "id"} {
+		t.Run(mode, func(t *testing.T) {
+			locator := map[string]any{
+				"__rl": true, "mode": mode, "value": "wf_target", "cachedResultName": "Enrichment",
+			}
+			created := createWorkflow(t, handler, workflow.Document{
+				SchemaVersion: workflow.CurrentSchemaVersion, Name: "Caller " + mode,
+				Nodes: []workflow.Node{
+					{ID: "manual", Name: "Manual", Type: "kilasflow.manual", TypeVersion: workflow.V(1)},
+					{ID: "call", Name: "Call", Type: nodes.ExecuteWorkflowNodeType, TypeVersion: workflow.V(1),
+						Parameters: map[string]any{"workflowId": locator}},
+				},
+				Connections: []workflow.Connection{{
+					ID: "c1", Kind: workflow.ConnectionMain,
+					Source: workflow.Endpoint{NodeID: "manual", Port: "main"},
+					Target: workflow.Endpoint{NodeID: "call", Port: "main"},
+				}},
+				Settings: map[string]any{},
+			})
+
+			reloaded := requestJSON[workflowResource](t, handler, http.MethodGet,
+				"/api/v1/workflows/"+created.ID, nil, http.StatusOK)
+			var stored map[string]any
+			for _, candidate := range reloaded.LatestVersion.Document.Nodes {
+				if candidate.ID == "call" {
+					stored, _ = candidate.Parameters["workflowId"].(map[string]any)
+				}
+			}
+			if stored == nil {
+				t.Fatalf("the locator did not survive the round trip: %#v", reloaded.LatestVersion.Document.Nodes)
+			}
+			for key, want := range map[string]any{"__rl": true, "mode": mode, "value": "wf_target", "cachedResultName": "Enrichment"} {
+				if stored[key] != want {
+					t.Errorf("%s = %#v, want %#v", key, stored[key], want)
+				}
+			}
+
+			exported := requestJSON[exportedWorkflowResource](t, handler, http.MethodGet,
+				"/api/v1/workflows/"+created.ID+"/export?format=n8n", nil, http.StatusOK)
+			var document struct {
+				Nodes []struct {
+					Name       string         `json:"name"`
+					Parameters map[string]any `json:"parameters"`
+				} `json:"nodes"`
+			}
+			if err := json.Unmarshal(exported.Workflow, &document); err != nil {
+				t.Fatalf("decode export: %v", err)
+			}
+			for _, candidate := range document.Nodes {
+				if candidate.Name != "Call" {
+					continue
+				}
+				out, _ := candidate.Parameters["workflowId"].(map[string]any)
+				if out["__rl"] != true || out["mode"] != mode || out["value"] != "wf_target" {
+					t.Errorf("exported locator = %#v, want the mode and value carried", out)
+				}
+			}
+		})
+	}
+}

@@ -8,6 +8,7 @@ import (
 	"github.com/kilaslabs/kilas-flow/internal/engine"
 	"github.com/kilaslabs/kilas-flow/internal/expression"
 	"github.com/kilaslabs/kilas-flow/internal/node"
+	"github.com/kilaslabs/kilas-flow/internal/property"
 	"github.com/kilaslabs/kilas-flow/internal/workflow"
 )
 
@@ -19,6 +20,14 @@ const (
 	ExecuteWorkflowExecutorID        = "core.executeWorkflow"
 	ExecuteWorkflowTriggerExecutorID = "core.executeWorkflowTrigger"
 )
+
+// WorkflowListLoader names the internal loader that lists a tenant's workflows.
+//
+// Named here rather than in the composition root so the node and the
+// registration cannot drift: a loader nobody registered fails at edit time with
+// "this field's option source is not available", which reads as a server
+// problem rather than a missing wire.
+const WorkflowListLoader = "workflows.list"
 
 // Execute Workflow modes.
 const (
@@ -42,10 +51,25 @@ func executeWorkflowNode() node.Definition {
 		Outputs:     mainOutput(),
 		Parameters: []node.PropertyDefinition{
 			{
-				Key: "workflowId", Label: "Workflow", Kind: node.PropertyString, Required: true,
-				Description: "The ID of the workflow to run. It must belong to this tenant and be active: " +
-					"a run is pinned to an immutable revision, and the active one is the only revision " +
-					"this server treats as the one that runs. Supports expressions.",
+				Key: "workflowId", Label: "Workflow", Kind: node.PropertyResourceLocator, Required: true,
+				Description: "The workflow to run. It must belong to this tenant and be active: a run is " +
+					"pinned to an immutable revision, and the active one is the only revision this " +
+					"server treats as the one that runs.",
+				Modes: []node.PropertyMode{
+					{
+						Name: "list", Label: "From list", Kind: node.PropertyOptions,
+						Placeholder: "Choose…",
+						// Internal, not HTTP: the list comes from this process's
+						// own storage, so there is no request to govern and no
+						// credential to sign with.
+						LoadOptions: &node.OptionsLoader{Source: property.LoaderInternal, Name: WorkflowListLoader},
+					},
+					{
+						Name: "id", Label: "By ID", Kind: node.PropertyString,
+						Placeholder: "wf_…",
+						Hint:        "The KilasFlow workflow ID. Supports expressions.",
+					},
+				},
 			},
 			{
 				Key: "mode", Label: "Mode", Kind: node.PropertyOptions, Default: subworkflowWaitForCompletion,
@@ -123,7 +147,7 @@ func executeWorkflowTrigger() node.Definition {
 }
 
 func validateExecuteWorkflowConfiguration(n workflow.Node) error {
-	if statementText(n.Parameters, "workflowId") == "" {
+	if !property.LocatorIsSet(n.Parameters["workflowId"]) {
 		return fmt.Errorf("a sub-workflow call needs the workflow to run")
 	}
 	switch mode := textParameter(n.Parameters, "mode"); mode {
@@ -203,7 +227,10 @@ func executeExecuteWorkflow(ctx context.Context, ir workflow.IRNode, input workf
 }
 
 func callSubworkflow(ctx context.Context, ir workflow.IRNode, request engine.Request, parameters map[string]any, items []workflow.Item, wait bool) ([]workflow.Item, error) {
-	target := strings.TrimSpace(textValue(parameters["workflowId"], ""))
+	// The locator's own value, never the object: the executor wants the
+	// workflow ID, and a mode is how the user found it rather than part of it.
+	locator, _ := property.ReadLocator(parameters["workflowId"])
+	target := strings.TrimSpace(textValue(locator.Value, ""))
 	if target == "" {
 		return nil, fmt.Errorf("node %q: a sub-workflow call needs the workflow to run", ir.Name)
 	}

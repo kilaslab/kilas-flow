@@ -11,6 +11,8 @@ export interface LoadOptionsInputBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   credentialId?: string;
+  /** For a resource locator, the mode whose list to load. */
+  mode?: string;
   parameters?: LoadOptionsInputBodyParameters;
   /** The property whose options to load. */
   property: string;

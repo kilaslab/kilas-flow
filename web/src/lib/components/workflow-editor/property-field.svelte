@@ -1,4 +1,6 @@
 <script lang="ts">
+	import ChevronDown from '@lucide/svelte/icons/chevron-down';
+	import ChevronUp from '@lucide/svelte/icons/chevron-up';
 	import Plus from '@lucide/svelte/icons/plus';
 	import X from '@lucide/svelte/icons/x';
 
@@ -16,6 +18,17 @@
 		type AssignmentType
 	} from '$lib/workflow-editor/assignments';
 	import { expressionRoots, unknownExpressionRoot } from '$lib/workflow-editor/expression-grammar';
+	import {
+		VALUELESS_OPERATORS,
+		moveCondition,
+		newCondition,
+		readConditions,
+		removeCondition,
+		updateCondition,
+		type Condition,
+		type ConditionOperator
+	} from '$lib/workflow-editor/conditions';
+	import { currentMode, readLocator, switchMode, writeLocator } from '$lib/workflow-editor/resource-locator';
 	import {
 		groupEntries,
 		newGroupEntry,
@@ -39,7 +52,7 @@
 		 * knows the node this property belongs to; this component only knows
 		 * the property.
 		 */
-		loadOptions?: (property: PropertyDefinition) => Promise<{ options: { label: string; value: string }[]; reason: string }>;
+		loadOptions?: (property: PropertyDefinition, mode?: string) => Promise<{ options: { label: string; value: string }[]; reason: string }>;
 	} = $props();
 
 	// Only text-shaped controls can carry an expression: a checkbox or a select
@@ -60,7 +73,7 @@
 	const RENDERED = new Set([
 		'string', 'number', 'boolean', 'options', 'multiOptions',
 		'collection', 'fixedCollection', 'notice', 'json', 'dateTime',
-		'keyValue', 'conditions', 'assignmentCollection'
+		'keyValue', 'conditions', 'assignmentCollection', 'resourceLocator'
 	]);
 
 	const typeOptions = $derived(property.typeOptions ?? {});
@@ -96,14 +109,22 @@
 		options: [],
 		reason: ''
 	});
-	const selectableOptions = $derived(
-		property.loadOptions ? loadState.options : (property.options ?? [])
-	);
+	/** The locator this property currently holds, and the mode it names. */
+	const locator = $derived(readLocator(property, value));
+	const locatorMode = $derived(currentMode(property, locator));
+
+	// A locator's loader lives on the mode it is currently in, so the list is
+	// fetched — and discarded — when the mode changes, not only when the
+	// property does.
+	const activeLoader = $derived(locatorMode?.loadOptions ?? property.loadOptions);
+	const selectableOptions = $derived(activeLoader ? loadState.options : (property.options ?? []));
 
 	$effect(() => {
-		if (!property.loadOptions || !loadOptions) return;
+		const loader = activeLoader;
+		const mode = property.kind === 'resourceLocator' ? locator.mode : undefined;
+		if (!loader || !loadOptions) return;
 		let cancelled = false;
-		void loadOptions(property).then((result) => {
+		void loadOptions(property, mode).then((result) => {
 			if (!cancelled) loadState = result;
 		});
 		return () => {
@@ -122,7 +143,6 @@
 	const template = $derived(expressionTemplate(value));
 	const stringValue = $derived(typeof value === 'string' ? value : value === undefined || value === null ? '' : String(value));
 	const objectValue = $derived(isObject(value) ? value : {});
-	const conditions = $derived(Array.isArray(value) ? value : []);
 	// Rows, never a string. The whole list is handed back on every edit, so
 	// nothing in this component can turn an assignment collection into text.
 	const assignments = $derived(readAssignments(value));
@@ -171,18 +191,15 @@
 		onChange({ ...objectValue, '': '' });
 	}
 
-	function updateCondition(patch: Record<string, unknown>) {
-		const current = isObject(conditions[0]) ? conditions[0] : { field: '', operator: 'equals', value: '' };
-		const next = { ...current, ...patch };
-		if (next.operator === 'exists' || next.operator === 'notExists') delete next.value;
-		onChange([next]);
+	const conditionRows = $derived(readConditions(value));
+
+	function writeConditions(rows: Condition[]) {
+		onChange(rows);
 	}
 
-	function conditionValue(key: string): string {
-		const condition = conditions[0];
-		if (!isObject(condition)) return key === 'operator' ? 'equals' : '';
-		if (key === 'value') return displayValue(condition.value);
-		return typeof condition[key] === 'string' ? condition[key] : key === 'operator' ? 'equals' : '';
+	/** The label of a chosen option, cached so the picker reads back. */
+	function selectedLabel(chosen: string): string {
+		return selectableOptions.find((option) => option.value === chosen)?.label ?? '';
 	}
 
 	function toggleExpression() {
@@ -364,18 +381,76 @@
 				<Plus aria-hidden="true" class="size-3" />Add field
 			</button>
 		</div>
+	{:else if property.kind === 'resourceLocator'}
+		<!-- A narrow mode select beside the mode's own control, which is the
+		     shape n8n uses: the mode is a property of the value, so it sits with
+		     it rather than above it as a separate field. -->
+		<div class="grid gap-1">
+			<div class="flex items-start gap-1">
+				<select aria-label={`${property.label} mode`} value={locator.mode} class="h-7 w-28 shrink-0 rounded-md border border-input bg-background px-1.5 text-[0.6875rem]" onchange={(event) => onChange(writeLocator(switchMode(property, locator, event.currentTarget.value)))}>
+					{#each property.modes ?? [] as mode (mode.name)}
+						<option value={mode.name}>{mode.label}</option>
+					{/each}
+					{#if !locatorMode}
+						<option value={locator.mode}>{locator.mode || 'unknown'}</option>
+					{/if}
+				</select>
+				{#if !locatorMode}
+					<!-- A mode this build does not know. Read-only and named,
+					     rather than an empty control that reads as "this field
+					     has no value". -->
+					<p class="min-w-0 flex-1 rounded-md border border-dashed border-destructive/40 px-2 py-1.5 text-[0.6875rem] leading-4 text-destructive">
+						This editor does not know the mode “{locator.mode}”. Its value is {displayValue(locator.value) || 'empty'} and cannot be edited here.
+					</p>
+				{:else if locatorMode.kind === 'options'}
+					<select id={`property-${property.key}`} value={displayValue(locator.value)} class="h-7 min-w-0 flex-1 rounded-md border border-input bg-background px-1.5 text-xs" onchange={(event) => onChange(writeLocator({ ...locator, value: event.currentTarget.value, cachedResultName: selectedLabel(event.currentTarget.value) }))}>
+						<option value="">{locatorMode.placeholder || 'Choose…'}</option>
+						{#each selectableOptions as option (option.value)}
+							<option value={option.value}>{option.label}</option>
+						{/each}
+					</select>
+				{:else}
+					<input id={`property-${property.key}`} value={displayValue(locator.value)} placeholder={locatorMode.placeholder ?? ''} class="h-7 min-w-0 flex-1 rounded-md border border-input bg-background px-2 text-xs" oninput={(event) => onChange(writeLocator({ ...locator, value: event.currentTarget.value }))} />
+				{/if}
+			</div>
+			{#if locatorMode?.hint}
+				<p class="text-[0.6875rem] leading-4 text-muted-foreground">{locatorMode.hint}</p>
+			{/if}
+			{#if loadState.reason && locatorMode?.kind === 'options'}
+				<p class="text-[0.6875rem] leading-4 text-muted-foreground">{loadState.reason}</p>
+			{/if}
+		</div>
 	{:else if property.kind === 'conditions'}
 		<div class="grid gap-1.5 rounded-md border border-input p-1.5">
-			<input id={`property-${property.key}`} aria-label={`${property.label} field`} value={conditionValue('field')} placeholder="customer.tier" class="h-7 rounded border border-input bg-background px-1.5 font-mono text-[0.6875rem]" oninput={(event) => updateCondition({ field: event.currentTarget.value })} />
-			<select aria-label={`${property.label} operator`} value={conditionValue('operator')} class="h-7 rounded border border-input bg-background px-1.5 text-[0.6875rem]" onchange={(event) => updateCondition({ operator: event.currentTarget.value })}>
-				<option value="equals">equals</option>
-				<option value="notEquals">does not equal</option>
-				<option value="exists">exists</option>
-				<option value="notExists">does not exist</option>
-			</select>
-			{#if !['exists', 'notExists'].includes(conditionValue('operator'))}
-				<input aria-label={`${property.label} value`} value={conditionValue('value')} class="h-7 rounded border border-input bg-background px-1.5 text-[0.6875rem]" oninput={(event) => updateCondition({ value: parseValue(event.currentTarget.value) })} />
-			{/if}
+			{#each conditionRows as row, index (index)}
+				<div class="grid gap-1 rounded border border-border/70 p-1.5">
+					<div class="flex items-center gap-1">
+						<input aria-label={`${property.label} field ${index + 1}`} value={row.field} placeholder="customer.tier" class="h-7 min-w-0 flex-1 rounded border border-input bg-background px-1.5 font-mono text-[0.6875rem]" oninput={(event) => writeConditions(updateCondition(conditionRows, index, { field: event.currentTarget.value }))} />
+						<!-- Order is meaningful: the rules read top to bottom. -->
+						<button type="button" aria-label={`Move condition ${index + 1} up`} disabled={index === 0} class="grid size-7 place-items-center rounded text-muted-foreground transition-colors hover:bg-muted disabled:opacity-40" onclick={() => writeConditions(moveCondition(conditionRows, index, -1))}>
+							<ChevronUp aria-hidden="true" class="size-3.5" />
+						</button>
+						<button type="button" aria-label={`Move condition ${index + 1} down`} disabled={index === conditionRows.length - 1} class="grid size-7 place-items-center rounded text-muted-foreground transition-colors hover:bg-muted disabled:opacity-40" onclick={() => writeConditions(moveCondition(conditionRows, index, 1))}>
+							<ChevronDown aria-hidden="true" class="size-3.5" />
+						</button>
+						<button type="button" aria-label={`Remove condition ${index + 1}`} class="grid size-7 place-items-center rounded text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive" onclick={() => writeConditions(removeCondition(conditionRows, index))}>
+							<X aria-hidden="true" class="size-3.5" />
+						</button>
+					</div>
+					<select aria-label={`${property.label} operator ${index + 1}`} value={row.operator} class="h-7 rounded border border-input bg-background px-1.5 text-[0.6875rem]" onchange={(event) => writeConditions(updateCondition(conditionRows, index, { operator: event.currentTarget.value as ConditionOperator }))}>
+						<option value="equals">equals</option>
+						<option value="notEquals">does not equal</option>
+						<option value="exists">exists</option>
+						<option value="notExists">does not exist</option>
+					</select>
+					{#if !VALUELESS_OPERATORS.includes(row.operator)}
+						<input aria-label={`${property.label} value ${index + 1}`} value={displayValue(row.value)} class="h-7 rounded border border-input bg-background px-1.5 text-[0.6875rem]" oninput={(event) => writeConditions(updateCondition(conditionRows, index, { value: parseValue(event.currentTarget.value) }))} />
+					{/if}
+				</div>
+			{/each}
+			<button type="button" class="inline-flex h-6 items-center gap-1 justify-self-start rounded border border-border px-1.5 text-[0.6875rem] transition-colors hover:bg-muted" onclick={() => writeConditions([...conditionRows, newCondition()])}>
+				<Plus aria-hidden="true" class="size-3" />Add condition
+			</button>
 		</div>
 	{:else if RENDERED.has(property.kind) && (typeOptions.rows ?? 0) > 1}
 		<!-- Multi-line is a different element, not an attribute: rows has no

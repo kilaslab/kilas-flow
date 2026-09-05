@@ -69,6 +69,7 @@ export * from './port';
 export * from './position';
 export * from './propertyDefinition';
 export * from './propertyGroup';
+export * from './propertyMode';
 export * from './propertyOption';
 export * from './readyOutputBody';
 export * from './runWorkflowInputBody';

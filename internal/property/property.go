@@ -54,7 +54,155 @@ const (
 	// assignment's control is decided row by row by a sibling field, which a
 	// generic group cannot express without the panel special-casing it anyway.
 	KindAssignmentCollection Kind = "assignmentCollection"
+	// KindResourceLocator picks one resource three ways — from a searched
+	// list, by name, or by ID — and stores which way was used alongside the
+	// value.
+	//
+	// The stored value is a self-describing object carrying an `__rl` sentinel,
+	// exactly as n8n does, rather than a bare string with a sibling `…Mode`
+	// parameter. A locator is imported and exported far more often than it is
+	// authored, and the sibling form loses the pairing the moment a visibility
+	// rule hides one half of it — which is precisely the form n8n used before
+	// resource locators existed, and adopting it would mean writing a lossy
+	// converter for every node that takes one.
+	KindResourceLocator Kind = "resourceLocator"
 )
+
+// LocatorSentinel marks a stored resource locator value.
+//
+// The name is n8n's, so a document round-trips through this server unchanged.
+const LocatorSentinel = "__rl"
+
+// PropertyMode is one way a resource locator may name its resource.
+type PropertyMode struct {
+	// Name is the stored mode, and is what an importer matches on.
+	Name  string `json:"name"`
+	Label string `json:"label"`
+	// Kind is the control this mode renders: a string field for a typed name
+	// or ID, or an options select for a searched list.
+	Kind Kind `json:"kind"`
+	// LoadOptions supplies a list mode's values.
+	LoadOptions *OptionsLoader `json:"loadOptions,omitempty"`
+	Placeholder string         `json:"placeholder,omitempty"`
+	Hint        string         `json:"hint,omitempty"`
+	// Pattern validates a typed value, and PatternHint says what it wants.
+	Pattern     string `json:"pattern,omitempty"`
+	PatternHint string `json:"patternHint,omitempty"`
+}
+
+// ExpressionModeName is the one mode name a locator may never use.
+//
+// A locator's stored value has `mode` and `value` keys, and so does the
+// expression marker. A mode literally named "expression" would make the two
+// indistinguishable: Resolve would replace the whole locator with the evaluated
+// string, the executor would receive a bare string where it expects an object,
+// and nothing would report anything — the node would simply read an empty table
+// name. An expression goes *inside* the locator's value slot, where the
+// existing recursion resolves it in place and the sentinel survives.
+const ExpressionModeName = "expression"
+
+// ValidateModes refuses a resource locator this server cannot render.
+func ValidateModes(kind Kind, modes []PropertyMode) error {
+	if kind != KindResourceLocator {
+		if len(modes) > 0 {
+			return fmt.Errorf("only a resourceLocator may declare modes")
+		}
+		return nil
+	}
+	if len(modes) == 0 {
+		return fmt.Errorf("a resourceLocator needs at least one mode")
+	}
+	seen := make(map[string]struct{}, len(modes))
+	for _, mode := range modes {
+		if strings.TrimSpace(mode.Name) == "" || strings.TrimSpace(mode.Label) == "" {
+			return fmt.Errorf("every resourceLocator mode needs a name and a label")
+		}
+		if mode.Name == ExpressionModeName {
+			return fmt.Errorf("a resourceLocator mode may not be named %q; it would be indistinguishable "+
+				"from the expression marker, which shares the mode and value keys", ExpressionModeName)
+		}
+		if _, exists := seen[mode.Name]; exists {
+			return fmt.Errorf("resourceLocator mode %q is declared twice", mode.Name)
+		}
+		seen[mode.Name] = struct{}{}
+		switch mode.Kind {
+		case KindString:
+		case KindOptions:
+			if mode.LoadOptions == nil {
+				return fmt.Errorf("resourceLocator mode %q offers a list and declares no loader", mode.Name)
+			}
+		default:
+			return fmt.Errorf("resourceLocator mode %q must render as a string or an options list", mode.Name)
+		}
+		if err := ValidateLoader(mode.LoadOptions); err != nil {
+			return fmt.Errorf("resourceLocator mode %q: %w", mode.Name, err)
+		}
+	}
+	return nil
+}
+
+// Locator is a stored resource locator, decoded.
+type Locator struct {
+	Mode string
+	// Value is the resource itself, still unresolved: it may hold an
+	// expression marker, which the caller resolves like any other parameter.
+	Value any
+	// CachedResultName is what the user last saw in the picker. It is display
+	// only and never used to resolve anything, because a name cached on one
+	// server has no authority on another.
+	CachedResultName string
+}
+
+// ReadLocator decodes a stored resource locator.
+//
+// A bare string is accepted as a locator whose mode is unknown, because that is
+// what a document written before this kind existed carries, and refusing it
+// would break every such node on load rather than at the point it matters.
+func ReadLocator(value any) (Locator, bool) {
+	switch typed := value.(type) {
+	case string:
+		return Locator{Value: typed}, typed != ""
+	case map[string]any:
+		if sentinel, _ := typed[LocatorSentinel].(bool); !sentinel {
+			return Locator{}, false
+		}
+		mode, _ := typed["mode"].(string)
+		name, _ := typed["cachedResultName"].(string)
+		return Locator{Mode: mode, Value: typed["value"], CachedResultName: name}, true
+	default:
+		return Locator{}, false
+	}
+}
+
+// LocatorIsSet reports whether a locator names anything yet.
+//
+// One function, because "not chosen yet" arrives in four shapes — absent, an
+// empty string, a locator with an empty value, and something that is not a
+// locator at all — and a validator that checked only one of them would pass a
+// node that cannot run.
+func LocatorIsSet(value any) bool {
+	locator, ok := ReadLocator(value)
+	if !ok {
+		return false
+	}
+	switch inner := locator.Value.(type) {
+	case nil:
+		return false
+	case string:
+		return strings.TrimSpace(inner) != ""
+	default:
+		return true
+	}
+}
+
+// WriteLocator renders a locator back into its stored shape.
+func WriteLocator(locator Locator) map[string]any {
+	stored := map[string]any{LocatorSentinel: true, "mode": locator.Mode, "value": locator.Value}
+	if locator.CachedResultName != "" {
+		stored["cachedResultName"] = locator.CachedResultName
+	}
+	return stored
+}
 
 // Assignment is one row of an assignment collection.
 //
@@ -133,7 +281,7 @@ func KnownKinds() []Kind {
 		KindString, KindNumber, KindBoolean,
 		KindOptions, KindMultiOptions,
 		KindCollection, KindFixedCollection,
-		KindNotice, KindJSON, KindDateTime,
+		KindNotice, KindJSON, KindDateTime, KindResourceLocator,
 		KindKeyValue, KindConditions, KindAssignmentCollection,
 	}
 }
@@ -271,6 +419,13 @@ type PropertyDefinition struct {
 	// VisibleWhen rather than combining with it, so a property has exactly one
 	// rule and there is never a question of which wins.
 	DisplayOptions Visibility `json:"displayOptions,omitempty"`
+	// Modes are a resourceLocator's ways of naming its resource.
+	//
+	// Its own typed field rather than being overloaded onto Options, for the
+	// reason every nested carrier here has one: a field whose meaning depends
+	// on the sibling kind produces a JSON schema the generated TypeScript
+	// cannot express as anything better than `unknown`.
+	Modes []PropertyMode `json:"modes,omitempty"`
 	// Assignments is the default rows of an `assignmentCollection`.
 	//
 	// Its own field rather than overloaded onto Options, for the reason every

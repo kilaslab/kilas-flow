@@ -8,6 +8,7 @@
 import type { Assignment } from './assignment';
 import type { OptionsLoader } from './optionsLoader';
 import type { PropertyGroup } from './propertyGroup';
+import type { PropertyMode } from './propertyMode';
 import type { PropertyOption } from './propertyOption';
 import type { TypeOptions } from './typeOptions';
 import type { Visibility } from './visibility';
@@ -27,6 +28,8 @@ export interface PropertyDefinition {
   kind: string;
   label: string;
   loadOptions?: OptionsLoader;
+  /** @nullable */
+  modes?: PropertyMode[] | null;
   /** @nullable */
   options?: PropertyOption[] | null;
   required: boolean;

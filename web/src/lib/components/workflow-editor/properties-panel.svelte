@@ -40,10 +40,13 @@
 	 * definition, because everything in this request comes from a browser and
 	 * the server makes an outbound call shaped by it.
 	 */
-	async function loadOptions(property: PropertyDefinition) {
+	async function loadOptions(property: PropertyDefinition, mode?: string) {
 		const response = await loadNodePropertyOptions(node.type, {
 			version: String(node.typeVersion ?? ''),
 			property: property.key,
+			// A resource locator carries a loader per mode rather than one for
+			// the property, because "from list" searches and "by ID" does not.
+			mode,
 			parameters: node.parameters ?? {},
 			credentialId: Object.values(node.credentials ?? {})[0]
 		});

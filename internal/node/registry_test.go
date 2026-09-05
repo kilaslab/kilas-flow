@@ -608,7 +608,7 @@ func TestKnownPropertyKindsIsExactlyTheDocumentedSet(t *testing.T) {
 		"string", "number", "boolean",
 		"options", "multiOptions",
 		"collection", "fixedCollection",
-		"notice", "json", "dateTime",
+		"notice", "json", "dateTime", "resourceLocator",
 		"keyValue", "conditions", "assignmentCollection",
 	}
 	got := make([]string, 0, len(node.KnownPropertyKinds()))
@@ -625,7 +625,9 @@ func TestKnownPropertyKindsIsExactlyTheDocumentedSet(t *testing.T) {
 	}
 	// `select` is gone rather than kept as a synonym: two names for one control
 	// would mean every generated pack has to remember which this server speaks.
-	for _, gone := range []string{"select", "resourceLocator", "filter"} {
+	// `filter` is still deferred; `resourceLocator` was added by FEAT-45tfmh
+	// and now appears in the list above.
+	for _, gone := range []string{"select", "filter"} {
 		for _, kind := range got {
 			if kind == gone {
 				t.Errorf("%q is still an accepted kind", gone)
@@ -952,4 +954,97 @@ func TestOneKeyCannotBeBothAParameterAndASharedSetting(t *testing.T) {
 			t.Fatalf("RegisterAll() error = %v", err)
 		}
 	})
+}
+
+func TestAResourceLocatorMustDeclareModesItCanRender(t *testing.T) {
+	base := func(parameter node.PropertyDefinition) node.Definition {
+		return node.Definition{
+			Type: "test.locator", Version: workflow.V(1),
+			DisplayName: "Locator", Category: "Test", ExecutorID: "test.exec",
+			Group:      []node.NodeGroup{node.GroupTransform},
+			Outputs:    []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+			Parameters: []node.PropertyDefinition{parameter},
+		}
+	}
+	locator := func(modes ...node.PropertyMode) node.PropertyDefinition {
+		return node.PropertyDefinition{
+			Key: "table", Label: "Table", Kind: node.PropertyResourceLocator, Modes: modes,
+		}
+	}
+
+	for name, testCase := range map[string]struct {
+		parameter node.PropertyDefinition
+		wantIn    string
+	}{
+		"no modes at all": {
+			parameter: locator(), wantIn: "at least one mode",
+		},
+		"a mode with no name": {
+			parameter: locator(node.PropertyMode{Label: "By ID", Kind: node.PropertyString}),
+			wantIn:    "needs a name and a label",
+		},
+		// The trap. A locator's value has `mode` and `value` keys, and so does
+		// the expression marker: a mode literally named "expression" would make
+		// Resolve replace the whole locator with the evaluated string, and the
+		// node would read an empty table name with nothing reporting anything.
+		"a mode named expression": {
+			parameter: locator(node.PropertyMode{Name: "expression", Label: "Expression", Kind: node.PropertyString}),
+			wantIn:    "indistinguishable",
+		},
+		"the same mode twice": {
+			parameter: locator(
+				node.PropertyMode{Name: "id", Label: "By ID", Kind: node.PropertyString},
+				node.PropertyMode{Name: "id", Label: "Also by ID", Kind: node.PropertyString},
+			),
+			wantIn: "declared twice",
+		},
+		"a list mode with no loader": {
+			parameter: locator(node.PropertyMode{Name: "list", Label: "From list", Kind: node.PropertyOptions}),
+			wantIn:    "declares no loader",
+		},
+		"a mode that renders as something else": {
+			parameter: locator(node.PropertyMode{Name: "when", Label: "When", Kind: node.PropertyDateTime}),
+			wantIn:    "string or an options list",
+		},
+		"modes on a property that is not a locator": {
+			parameter: node.PropertyDefinition{
+				Key: "name", Label: "Name", Kind: node.PropertyString,
+				Modes: []node.PropertyMode{{Name: "id", Label: "By ID", Kind: node.PropertyString}},
+			},
+			wantIn: "only a resourceLocator",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := node.NewRegistry().Register(base(testCase.parameter))
+			if err == nil {
+				t.Fatalf("Register() accepted %#v", testCase.parameter)
+			}
+			if !strings.Contains(err.Error(), testCase.wantIn) {
+				t.Errorf("error = %v, want it to mention %q", err, testCase.wantIn)
+			}
+		})
+	}
+
+	// The shape that works, and its modes survive the registry's deep copy.
+	definition := base(locator(
+		node.PropertyMode{
+			Name: "list", Label: "From list", Kind: node.PropertyOptions,
+			LoadOptions: &node.OptionsLoader{Source: "internal", Name: "test.tables", DependsOn: []string{"schema"}},
+		},
+		node.PropertyMode{Name: "id", Label: "By ID", Kind: node.PropertyString},
+	))
+	registry := node.NewRegistry()
+	if err := registry.Register(definition); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	stored, _ := registry.Get("test.locator", workflow.V(1))
+	stored.Parameters[0].Modes[0].LoadOptions.Name = "hijacked"
+	stored.Parameters[0].Modes[0].LoadOptions.DependsOn[0] = "hijacked"
+	again, _ := registry.Get("test.locator", workflow.V(1))
+	if again.Parameters[0].Modes[0].LoadOptions.Name != "test.tables" {
+		t.Error("a caller mutating a mode it was handed reached into the registry")
+	}
+	if again.Parameters[0].Modes[0].LoadOptions.DependsOn[0] != "schema" {
+		t.Error("a mode's DependsOn is shared with the registry rather than copied")
+	}
 }

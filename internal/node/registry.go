@@ -567,6 +567,9 @@ func validateProperties(nodeType, group string, properties []PropertyDefinition)
 		if err := propertypkg.ValidateAssignments(declared.Assignments); err != nil {
 			return fmt.Errorf("node definition %q %s %q: %w", nodeType, group, declared.Key, err)
 		}
+		if err := propertypkg.ValidateModes(declared.Kind, declared.Modes); err != nil {
+			return fmt.Errorf("node definition %q %s %q: %w", nodeType, group, declared.Key, err)
+		}
 		if err := validateProperties(nodeType, group+"."+declared.Key, declared.Fields); err != nil {
 			return err
 		}
@@ -685,6 +688,15 @@ func cloneDefinition(definition Definition) Definition {
 // A nested field that skips this aliases the registry's own storage at depth,
 // which is the same bug as before but harder to see: a caller mutating an inner
 // collection field would change what every other caller reads.
+func cloneLoader(loader *propertypkg.OptionsLoader) *propertypkg.OptionsLoader {
+	if loader == nil {
+		return nil
+	}
+	copied := *loader
+	copied.DependsOn = append([]string(nil), loader.DependsOn...)
+	return &copied
+}
+
 func cloneProperties(properties []PropertyDefinition) []PropertyDefinition {
 	cloned := make([]PropertyDefinition, len(properties))
 	for index, declared := range properties {
@@ -708,9 +720,18 @@ func cloneProperties(properties []PropertyDefinition) []PropertyDefinition {
 			cloned[index].Assignments = assignments
 		}
 		if declared.LoadOptions != nil {
-			loader := *declared.LoadOptions
-			loader.DependsOn = append([]string(nil), declared.LoadOptions.DependsOn...)
-			cloned[index].LoadOptions = &loader
+			cloned[index].LoadOptions = cloneLoader(declared.LoadOptions)
+		}
+		// A locator's modes carry loaders of their own, so the same deep copy
+		// applies: a caller mutating a mode it was handed would otherwise reach
+		// into the registry's own storage.
+		if declared.Modes != nil {
+			modes := make([]propertypkg.PropertyMode, len(declared.Modes))
+			for modeIndex, mode := range declared.Modes {
+				mode.LoadOptions = cloneLoader(mode.LoadOptions)
+				modes[modeIndex] = mode
+			}
+			cloned[index].Modes = modes
 		}
 		if declared.TypeOptions != nil {
 			options := *declared.TypeOptions
@@ -817,6 +838,10 @@ type (
 	Assignment = propertypkg.Assignment
 	// AssignmentType is the declared type of an assignment's value.
 	AssignmentType = propertypkg.AssignmentType
+	// PropertyMode is one way a resourceLocator may name its resource.
+	PropertyMode = propertypkg.PropertyMode
+	// OptionsLoader declares where a property's selectable values come from.
+	OptionsLoader = propertypkg.OptionsLoader
 )
 
 const (
@@ -833,6 +858,7 @@ const (
 	PropertyKeyValue        = propertypkg.KindKeyValue
 	PropertyConditions      = propertypkg.KindConditions
 	PropertyAssignments     = propertypkg.KindAssignmentCollection
+	PropertyResourceLocator = propertypkg.KindResourceLocator
 )
 
 // KnownPropertyKinds is the closed set, in a stable order.

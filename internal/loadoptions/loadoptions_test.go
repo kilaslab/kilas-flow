@@ -13,6 +13,7 @@ import (
 	"github.com/kilaslabs/kilas-flow/internal/credentials"
 	"github.com/kilaslabs/kilas-flow/internal/loadoptions"
 	"github.com/kilaslabs/kilas-flow/internal/property"
+	"github.com/kilaslabs/kilas-flow/internal/repository"
 	"github.com/kilaslabs/kilas-flow/internal/safehttp"
 )
 
@@ -350,5 +351,103 @@ func TestAMissingBaseURLAsksRatherThanGuessing(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "service address") {
 		t.Errorf("error = %v, want it to say what is missing", err)
+	}
+}
+
+func TestAnInternalLoaderNeverConstructsAnOutboundRequest(t *testing.T) {
+	t.Parallel()
+
+	// The distinction is load-bearing rather than cosmetic. An outbound loader
+	// is governed by the egress policy and the credential's allowed domains; an
+	// internal one constructs no request at all, so those defences have nothing
+	// to say about it — and this test is what makes "constructs no request"
+	// true rather than intended.
+	reached := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reached = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
+
+	policy := safehttp.DefaultPolicy()
+	policy.AllowPrivateNetworks = true
+	resolver := loadoptions.NewResolver(policy, time.Minute)
+	if err := resolver.RegisterInternal("test.internal", func(context.Context, loadoptions.Scope) (loadoptions.Result, error) {
+		return loadoptions.Result{Options: []loadoptions.Option{{Label: "public", Value: "public"}}}, nil
+	}); err != nil {
+		t.Fatalf("RegisterInternal() error = %v", err)
+	}
+
+	result, err := resolver.Load(context.Background(), property.OptionsLoader{
+		Source: property.LoaderInternal, Name: "test.internal",
+		// Deliberately also carrying an endpoint. A loader that fell back to
+		// the HTTP path when it did not recognise the source would reach it,
+		// and the whole point is that the source decides, not the fields.
+		Endpoint: server.URL, ValueField: "id",
+	}, loadoptions.Scope{TenantID: "tenant-a"}, "", nil)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(result.Options) != 1 || result.Options[0].Value != "public" {
+		t.Errorf("options = %#v, want the internal loader's own list", result.Options)
+	}
+	if reached {
+		t.Fatal("an internal loader made an outbound request")
+	}
+}
+
+func TestTheWorkflowLoaderIsBoundToAnEmbedSessionsOwnWorkflow(t *testing.T) {
+	t.Parallel()
+
+	listed := []loadoptions.WorkflowOption{
+		{ID: "wf_1", Name: "Enrichment", Active: true},
+		{ID: "wf_2", Name: "Draft", Active: false},
+		{ID: "wf_3", Name: "Someone else's", Active: true},
+	}
+	loader := loadoptions.Workflows(func(_ context.Context, tenant repository.TenantScope) ([]loadoptions.WorkflowOption, error) {
+		if tenant.ID != "tenant-a" {
+			t.Errorf("the loader was called for tenant %q", tenant.ID)
+		}
+		return listed, nil
+	})
+
+	// An unrestricted caller — the internal dashboard — sees the tenant's
+	// workflows, with the inactive ones labelled rather than hidden: a picker
+	// that hid them would leave the author hunting for a workflow they know
+	// exists.
+	all, err := loader(context.Background(), loadoptions.Scope{TenantID: "tenant-a"})
+	if err != nil {
+		t.Fatalf("loader error = %v", err)
+	}
+	if len(all.Options) != 3 {
+		t.Fatalf("options = %#v, want every workflow in the tenant", all.Options)
+	}
+	if all.Options[1].Label != "Draft (inactive)" {
+		t.Errorf("label = %q, want the inactive one said so", all.Options[1].Label)
+	}
+
+	// An embed session sees exactly its own. Nothing else stands between a
+	// browser and every workflow in the installation on this path: an internal
+	// loader has no egress policy to hide behind.
+	bounded, err := loader(context.Background(), loadoptions.Scope{TenantID: "tenant-a", WorkflowID: "wf_1"})
+	if err != nil {
+		t.Fatalf("loader error = %v", err)
+	}
+	if len(bounded.Options) != 1 || bounded.Options[0].Value != "wf_1" {
+		t.Fatalf("options = %#v, want only the session's own workflow", bounded.Options)
+	}
+
+	// And a session whose workflow is not in the list gets a reason rather than
+	// a silently empty picker.
+	empty, err := loader(context.Background(), loadoptions.Scope{TenantID: "tenant-a", WorkflowID: "wf_missing"})
+	if err != nil {
+		t.Fatalf("loader error = %v", err)
+	}
+	if len(empty.Options) != 0 || empty.Reason == "" {
+		t.Errorf("result = %#v, want an empty list with a reason", empty)
+	}
+
+	if _, err := loader(context.Background(), loadoptions.Scope{}); err == nil {
+		t.Error("the loader answered with no tenant")
 	}
 }

@@ -940,20 +940,31 @@ func executeWorkflowToKilas(node Node) (map[string]any, []Unsupported) {
 	issues := make([]Unsupported, 0)
 	parameters := map[string]any{}
 
-	// n8n's workflowId is a resource locator: {value, mode, cachedResultName}.
-	// Only the value is portable — a name or a URL means nothing on a server
-	// that has never seen that n8n instance.
+	// n8n's workflowId is a resource locator, and so is this node's, so the
+	// shape carries across rather than being flattened to a string. Only the
+	// value is portable — a cached name or a URL means nothing on a server that
+	// has never seen that n8n instance, so neither is kept.
+	//
+	// It always arrives in By ID mode, whatever mode it left n8n in. A list
+	// selection there holds an ID from *that* instance, and this server's list
+	// will never contain it — so a locator imported in list mode would render
+	// as an empty picker with an invisible value behind it, which reads as "no
+	// workflow chosen" rather than "the wrong workflow is chosen".
 	switch locator := node.Parameters["workflowId"].(type) {
 	case map[string]any:
-		parameters["workflowId"] = fromN8NValue(locator["value"])
 		if mode, _ := locator["mode"].(string); mode != "" && mode != "id" && mode != "list" {
 			issues = append(issues, Unsupported{Field: "workflowId", Reason: fmt.Sprintf(
 				"the workflow was selected by %q, which names it on the n8n instance it came from; "+
-					"set the KilasFlow workflow ID this should call", mode)})
+					"set the KilasFlow workflow this should call", mode)})
 		}
+		parameters["workflowId"] = property.WriteLocator(property.Locator{
+			Mode: "id", Value: fromN8NValue(locator["value"]),
+		})
 	case nil:
 	default:
-		parameters["workflowId"] = fromN8NValue(locator)
+		parameters["workflowId"] = property.WriteLocator(property.Locator{
+			Mode: "id", Value: fromN8NValue(locator),
+		})
 	}
 	// The imported ID is n8n's, so it will not resolve here whatever mode it
 	// used. Said once, on every import, rather than discovered at run time.
@@ -979,9 +990,14 @@ func executeWorkflowToKilas(node Node) (map[string]any, []Unsupported) {
 }
 
 func executeWorkflowToN8N(node workflow.Node) (map[string]any, []Lossy) {
+	locator, _ := property.ReadLocator(node.Parameters["workflowId"])
 	parameters := map[string]any{
-		"workflowId": map[string]any{"__rl": true, "mode": "id", "value": stringParameter(node.Parameters, "workflowId")},
-		"options":    map[string]any{},
+		"workflowId": map[string]any{
+			property.LocatorSentinel: true,
+			"mode":                   defaultString(locator.Mode, "id"),
+			"value":                  toN8NValue(locator.Value),
+		},
+		"options": map[string]any{},
 	}
 	if stringParameter(node.Parameters, "itemsPerCall") == "eachItem" {
 		parameters["mode"] = "each"

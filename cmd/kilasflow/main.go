@@ -189,6 +189,26 @@ func run() error {
 	workflows := repository.NewWorkflowStore(db.DB).
 		WithWebhooks(webhook.Extract(nodeRegistry, nodes.WebhookPath)).
 		WithSchedules(scheduler.Extract(nodes.ScheduleType), scheduler.Next)
+
+	// The Execute Sub-workflow node's list mode. Registered here because this
+	// is the only place that has both the loader registry and the workflow
+	// store; the node names the loader and never reaches storage itself.
+	if err := optionLoader.RegisterInternal(nodes.WorkflowListLoader, loadoptions.Workflows(
+		func(ctx context.Context, tenant repository.TenantScope) ([]loadoptions.WorkflowOption, error) {
+			stored, err := workflows.List(ctx, tenant)
+			if err != nil {
+				return nil, err
+			}
+			listed := make([]loadoptions.WorkflowOption, 0, len(stored))
+			for _, candidate := range stored {
+				listed = append(listed, loadoptions.WorkflowOption{
+					ID: candidate.ID, Name: candidate.Name, Active: candidate.Active,
+				})
+			}
+			return listed, nil
+		})); err != nil {
+		return fmt.Errorf("register the workflow option loader: %w", err)
+	}
 	schedules := repository.NewScheduleStore(db.DB)
 	eventBroker := events.NewBroker(events.BrokerOptions{})
 	// Binary payloads live on a filesystem root, never in the database. An
