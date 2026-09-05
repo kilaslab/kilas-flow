@@ -40,7 +40,7 @@ func TestMigrateCreatesWorkflowAndExecutionTables(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	if err := database.Migrate(db, repository.Models()...); err != nil {
+	if err := database.Migrate(db, slog.New(slog.NewTextHandler(io.Discard, nil))); err != nil {
 		t.Fatalf("Migrate() error = %v", err)
 	}
 
@@ -108,7 +108,7 @@ func TestExecutionStorePinsWorkflowVersionAndPersistsNodeRuns(t *testing.T) {
 		t.Fatalf("Open() error = %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	if err := database.Migrate(db, repository.Models()...); err != nil {
+	if err := database.Migrate(db, slog.New(slog.NewTextHandler(io.Discard, nil))); err != nil {
 		t.Fatalf("Migrate() error = %v", err)
 	}
 
@@ -179,7 +179,7 @@ func TestExecutionStoreReclaimsAnExpiredWorkerLease(t *testing.T) {
 		t.Fatalf("Open() error = %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	if err := database.Migrate(db, repository.Models()...); err != nil {
+	if err := database.Migrate(db, slog.New(slog.NewTextHandler(io.Discard, nil))); err != nil {
 		t.Fatalf("Migrate() error = %v", err)
 	}
 	tenant := repository.TenantScope{ID: "tenant-a"}
@@ -255,7 +255,7 @@ func TestWorkflowStoreCreatesImmutableTenantScopedVersions(t *testing.T) {
 		t.Fatalf("Open() error = %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	if err := database.Migrate(db, repository.Models()...); err != nil {
+	if err := database.Migrate(db, slog.New(slog.NewTextHandler(io.Discard, nil))); err != nil {
 		t.Fatalf("Migrate() error = %v", err)
 	}
 
@@ -344,7 +344,7 @@ func TestWorkflowStoreActivatesOnlyLatestExecutableRevision(t *testing.T) {
 		t.Fatalf("Open() error = %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	if err := database.Migrate(db, repository.Models()...); err != nil {
+	if err := database.Migrate(db, slog.New(slog.NewTextHandler(io.Discard, nil))); err != nil {
 		t.Fatalf("Migrate() error = %v", err)
 	}
 
@@ -583,7 +583,7 @@ func newExecutionFixture(t *testing.T) (*database.DB, repository.TenantScope, wo
 		t.Fatalf("Open() error = %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	if err := database.Migrate(db, repository.Models()...); err != nil {
+	if err := database.Migrate(db, slog.New(slog.NewTextHandler(io.Discard, nil))); err != nil {
 		t.Fatalf("Migrate() error = %v", err)
 	}
 

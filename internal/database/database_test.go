@@ -4,13 +4,11 @@ import (
 	"context"
 	"io"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/kilaslabs/kilas-flow/internal/config"
-	"github.com/kilaslabs/kilas-flow/internal/repository"
 )
 
 func discardLogger() *slog.Logger {
@@ -88,76 +86,5 @@ func TestUnsupportedDriver(t *testing.T) {
 	}
 }
 
-type migrationProbe struct {
-	ID   string `gorm:"primaryKey"`
-	Name string
-}
-
-func TestMigrateCreatesExplicitModels(t *testing.T) {
-	db, err := Open(context.Background(), config.Database{
-		Driver: "sqlite",
-		DSN:    filepath.Join(t.TempDir(), "kilasflow.db"),
-	}, discardLogger())
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-
-	if err := Migrate(db, &migrationProbe{}); err != nil {
-		t.Fatalf("Migrate: %v", err)
-	}
-	if !db.Migrator().HasTable(&migrationProbe{}) {
-		t.Fatal("migration probe table was not created")
-	}
-}
-
-func TestMigrateWithoutModelsIsANoOp(t *testing.T) {
-	db, err := Open(context.Background(), config.Database{
-		Driver: "sqlite",
-		DSN:    filepath.Join(t.TempDir(), "kilasflow.db"),
-	}, discardLogger())
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-
-	if err := Migrate(db); err != nil {
-		t.Fatalf("Migrate without models: %v", err)
-	}
-	if db.Migrator().HasTable(&migrationProbe{}) {
-		t.Fatal("migration without models must not create a table")
-	}
-}
-
-func TestMigratePostgres(t *testing.T) {
-	dsn := os.Getenv("KILASFLOW_TEST_POSTGRES_DSN")
-	if dsn == "" {
-		t.Skip("set KILASFLOW_TEST_POSTGRES_DSN to run PostgreSQL migration integration coverage")
-	}
-
-	db, err := Open(context.Background(), config.Database{
-		Driver: "postgres",
-		DSN:    dsn,
-	}, discardLogger())
-	if err != nil {
-		t.Fatalf("Open PostgreSQL: %v", err)
-	}
-	models := repository.Models()
-	t.Cleanup(func() {
-		_ = db.Migrator().DropTable(models[3], models[2], models[1], models[0])
-		_ = db.Migrator().DropTable(&migrationProbe{})
-		_ = db.Close()
-	})
-
-	if err := Migrate(db, append([]any{&migrationProbe{}}, models...)...); err != nil {
-		t.Fatalf("Migrate PostgreSQL: %v", err)
-	}
-	if !db.Migrator().HasTable(&migrationProbe{}) {
-		t.Fatal("migration probe table was not created in PostgreSQL")
-	}
-	for _, table := range []string{"workflows", "workflow_versions", "executions", "execution_node_runs"} {
-		if !db.Migrator().HasTable(table) {
-			t.Errorf("PostgreSQL migration did not create %q", table)
-		}
-	}
-}
+// Migration coverage lives in migrate_test.go; the schema is no longer built
+// from the models this package is handed.

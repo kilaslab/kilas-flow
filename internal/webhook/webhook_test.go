@@ -61,7 +61,7 @@ func newHarness(t *testing.T) harness {
 		t.Fatalf("Open() error = %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	if err := database.Migrate(db, repository.Models()...); err != nil {
+	if err := database.Migrate(db, slog.New(slog.NewTextHandler(io.Discard, nil))); err != nil {
 		t.Fatalf("Migrate() error = %v", err)
 	}
 

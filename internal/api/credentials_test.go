@@ -42,7 +42,7 @@ func credentialAPI(t *testing.T, deps api.Deps) (http.Handler, *repository.GORMC
 		t.Fatalf("database.Open() error = %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	if err := database.Migrate(db, repository.Models()...); err != nil {
+	if err := database.Migrate(db, slog.New(slog.NewTextHandler(io.Discard, nil))); err != nil {
 		t.Fatalf("database.Migrate() error = %v", err)
 	}
 	key := make([]byte, credentials.KeySize)
