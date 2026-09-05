@@ -798,3 +798,308 @@ func TestAStreamedRunReportsTheProvidersOwnTokenUsage(t *testing.T) {
 		t.Errorf("usage = %#v, want the provider's own figures rather than zero", usage)
 	}
 }
+
+// TestTwoChatModelsOnOneAgentDoNotCompile is the coin flip this ticket exists
+// to remove. Both models are registered nodes, both edges name a port that
+// exists with the matching kind, and topological order runs both before the
+// agent — so nothing except the slot's own cap can refuse this graph. Without
+// the cap it activates and the model that actually runs is whichever descriptor
+// the agent meets first, which is item order rather than anything the author
+// chose.
+func TestTwoChatModelsOnOneAgentDoNotCompile(t *testing.T) {
+	t.Parallel()
+
+	document := aiDocument([]workflow.Node{{
+		ID: "model-2", Name: "Second Chat Model", Type: nodes.ChatModelNodeType, TypeVersion: workflow.V(1),
+		Parameters:  map[string]any{"model": "gpt-other"},
+		Credentials: map[string]string{"httpBearerAuth": "cred-key"},
+	}}, []workflow.Connection{{
+		ID: "c-model-2", Kind: workflow.ConnectionLanguageModel,
+		Source: workflow.Endpoint{NodeID: "model-2", Port: "model"},
+		Target: workflow.Endpoint{NodeID: "agent", Port: "model"},
+	}})
+
+	_, err := workflow.Compile(document, aiRegistry(t))
+	if err == nil {
+		t.Fatal("two chat models on one agent compiled; the model that runs would be decided by item order")
+	}
+	var issues *workflow.ValidationErrors
+	if !errors.As(err, &issues) {
+		t.Fatalf("Compile() error = %v, want validation errors", err)
+	}
+	if !hasValidationCode(issues.Issues, workflow.ErrorPortFull) {
+		t.Fatalf("issues = %#v, want %q", issues.Issues, workflow.ErrorPortFull)
+	}
+	// The diagnostic has to name the node, the slot and the count, or the
+	// author is told only that something is wrong somewhere.
+	for _, want := range []string{"Chat Model", "agent", "2"} {
+		if !strings.Contains(portFullMessage(issues.Issues), want) {
+			t.Errorf("message = %q, want it to name %q", portFullMessage(issues.Issues), want)
+		}
+	}
+}
+
+// TestASecondMemoryOnOneAgentDoesNotCompile covers the other capped slot. A
+// memory is chosen for a run the same way a model is, so two of them is the
+// same silent conflict.
+func TestASecondMemoryOnOneAgentDoesNotCompile(t *testing.T) {
+	t.Parallel()
+
+	memory := func(id string) workflow.Node {
+		return workflow.Node{
+			ID: id, Name: "Memory " + id, Type: nodes.MemoryNodeType, TypeVersion: workflow.V(1),
+			Parameters: map[string]any{"sessionId": "chat-1"},
+		}
+	}
+	edge := func(id, source string) workflow.Connection {
+		return workflow.Connection{
+			ID: id, Kind: workflow.ConnectionMemory,
+			Source: workflow.Endpoint{NodeID: source, Port: "memory"},
+			Target: workflow.Endpoint{NodeID: "agent", Port: "memory"},
+		}
+	}
+
+	// One memory is the shape the agent is designed for and must still compile.
+	if _, err := workflow.Compile(
+		aiDocument([]workflow.Node{memory("mem-1")}, []workflow.Connection{edge("c-mem-1", "mem-1")}),
+		aiRegistry(t),
+	); err != nil {
+		t.Fatalf("Compile() with one memory error = %v, want it accepted", err)
+	}
+
+	_, err := workflow.Compile(
+		aiDocument(
+			[]workflow.Node{memory("mem-1"), memory("mem-2")},
+			[]workflow.Connection{edge("c-mem-1", "mem-1"), edge("c-mem-2", "mem-2")},
+		),
+		aiRegistry(t),
+	)
+	if err == nil {
+		t.Fatal("two memories on one agent compiled")
+	}
+	var issues *workflow.ValidationErrors
+	if !errors.As(err, &issues) || !hasValidationCode(issues.Issues, workflow.ErrorPortFull) {
+		t.Fatalf("Compile() error = %v, want %q", err, workflow.ErrorPortFull)
+	}
+}
+
+// TestAnAgentWithNoChatModelDoesNotCompile pins the required half of the slot
+// rules. An agent with no model cannot do anything at all, so saying so at
+// compile time beats activating and failing on the first item.
+func TestAnAgentWithNoChatModelDoesNotCompile(t *testing.T) {
+	t.Parallel()
+
+	document := aiDocument(nil, nil)
+	// Drop the model edge, keeping the model node itself: an author who
+	// detaches a model leaves the node on the canvas.
+	document.Connections = document.Connections[:1]
+
+	_, err := workflow.Compile(document, aiRegistry(t))
+	if err == nil {
+		t.Fatal("an agent with no chat model compiled")
+	}
+	var issues *workflow.ValidationErrors
+	if !errors.As(err, &issues) {
+		t.Fatalf("Compile() error = %v, want validation errors", err)
+	}
+	if !hasValidationCode(issues.Issues, workflow.ErrorPortRequired) {
+		t.Fatalf("issues = %#v, want %q", issues.Issues, workflow.ErrorPortRequired)
+	}
+	// The empty slot must be named, not merely counted.
+	var named bool
+	for _, issue := range issues.Issues {
+		if issue.Code == workflow.ErrorPortRequired && strings.Contains(issue.Message, "Chat Model") {
+			named = true
+		}
+	}
+	if !named {
+		t.Errorf("issues = %#v, want the empty slot named", issues.Issues)
+	}
+}
+
+// TestAnAgentWithNoMemoryAndNoToolsStillCompiles is the boundary the cap rules
+// must not cross. Only the model slot is required; a memory and a tool are
+// things an agent may have, so requiring them would refuse the simplest useful
+// agent there is.
+func TestAnAgentWithNoMemoryAndNoToolsStillCompiles(t *testing.T) {
+	t.Parallel()
+
+	if _, err := workflow.Compile(aiDocument(nil, nil), aiRegistry(t)); err != nil {
+		t.Fatalf("Compile() error = %v, want an agent with only a model accepted", err)
+	}
+}
+
+func hasValidationCode(issues []workflow.ValidationError, wanted workflow.ErrorCode) bool {
+	for _, issue := range issues {
+		if issue.Code == wanted {
+			return true
+		}
+	}
+	return false
+}
+
+func portFullMessage(issues []workflow.ValidationError) string {
+	for _, issue := range issues {
+		if issue.Code == workflow.ErrorPortFull {
+			return issue.Message
+		}
+	}
+	return ""
+}
+
+// TestASecondModelDescriptorIsRefusedRatherThanSilentlyPicked is the guard
+// behind the compiler's cap. The cap is what should stop this graph, but a
+// document that reached the runner without being compiled — or a cap that
+// stopped being enforced — would otherwise land here, where returning the first
+// descriptor runs a model the author never chose and reports success.
+func TestASecondModelDescriptorIsRefusedRatherThanSilentlyPicked(t *testing.T) {
+	t.Parallel()
+
+	executor := nodes.NewAgentExecutor(ai.NewLoopRuntime(), localPolicy(), nil)
+	definition, _ := aiRegistry(t).Lookup(nodes.AgentNodeType, workflow.V(1))
+	ir := workflow.IRNode{
+		ID: "agent", Name: "AI Agent", Type: nodes.AgentNodeType, TypeVersion: workflow.V(1),
+		Parameters: map[string]any{"prompt": "hi"}, Definition: definition,
+	}
+	descriptor := func(name string) workflow.Item {
+		return workflow.Item{JSON: map[string]any{"$ai": map[string]any{
+			"kind": "model", "model": name, "baseUrl": "https://api.test/v1", "credentialId": "cred-key",
+		}}}
+	}
+
+	_, err := executor.Execute(context.Background(), ir, workflow.NodeInput{
+		"main":  {{JSON: map[string]any{}}},
+		"model": {descriptor("gpt-first"), descriptor("gpt-second")},
+	}, engine.Request{})
+	if err == nil {
+		t.Fatal("two model descriptors were accepted; one of them ran and nothing said which")
+	}
+	// The message names the slot, because "model" is what the author has to go
+	// and disconnect.
+	if !strings.Contains(err.Error(), "model port") {
+		t.Errorf("Execute() error = %v, want the model slot named", err)
+	}
+}
+
+// aiClusterDocument is an agent with one chat model and one tool per name, with
+// the tool edges declared in the order given. Declaration order is a parameter
+// precisely because it is the thing that must not decide what the agent sees.
+func aiClusterDocument(providerURL string, toolNames, edgeOrder []string) workflow.Document {
+	document := workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_cluster",
+		Name:          "Cluster",
+		Nodes: []workflow.Node{
+			{ID: "trigger", Name: "Manual Trigger", Type: "kilasflow.manual", TypeVersion: workflow.V(1)},
+			{
+				ID: "model", Name: "Chat Model", Type: nodes.ChatModelNodeType, TypeVersion: workflow.V(1),
+				Parameters: map[string]any{
+					"model": "gpt-test", "baseUrl": providerURL,
+					// Explicitly off: the streaming path answers in chunks and
+					// this test reads one recorded request body.
+					"stream": false,
+				},
+				Credentials: map[string]string{"httpBearerAuth": "cred-key"},
+			},
+			{
+				ID: "agent", Name: "AI Agent", Type: nodes.AgentNodeType, TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"prompt": "Say hello"},
+			},
+		},
+		Connections: []workflow.Connection{
+			{ID: "c-main", Kind: workflow.ConnectionMain, Source: workflow.Endpoint{NodeID: "trigger", Port: "main"}, Target: workflow.Endpoint{NodeID: "agent", Port: "main"}},
+			{ID: "c-model", Kind: workflow.ConnectionLanguageModel, Source: workflow.Endpoint{NodeID: "model", Port: "model"}, Target: workflow.Endpoint{NodeID: "agent", Port: "model"}},
+		},
+		Settings: map[string]any{},
+	}
+	for _, name := range toolNames {
+		document.Nodes = append(document.Nodes, workflow.Node{
+			ID: "tool-" + name, Name: "Tool " + name, Type: nodes.HTTPToolNodeType, TypeVersion: workflow.V(1),
+			Parameters: map[string]any{
+				"toolName": name, "toolDescription": "does " + name,
+				"method": "GET", "url": "https://api.test/" + name,
+			},
+		})
+	}
+	for _, name := range edgeOrder {
+		document.Connections = append(document.Connections, workflow.Connection{
+			ID: "c-tool-" + name, Kind: workflow.ConnectionTool,
+			Source: workflow.Endpoint{NodeID: "tool-" + name, Port: "tool"},
+			Target: workflow.Endpoint{NodeID: "agent", Port: "tools"},
+		})
+	}
+	return document
+}
+
+// runCluster compiles and runs one agent cluster, returning the tool names the
+// model was offered, in the order it was offered them.
+func runCluster(t *testing.T, document workflow.Document, providerBody *map[string]any) []string {
+	t.Helper()
+
+	ir, err := workflow.Compile(document, aiRegistry(t))
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+	executors := engine.NewRegistry()
+	if err := nodes.RegisterExecutors(executors, localPolicy(), sqlGuard(), ai.NewLoopRuntime(), nil, nil); err != nil {
+		t.Fatalf("RegisterExecutors() error = %v", err)
+	}
+	resolver := &stubCredentials{credential: engine.Credential{
+		ID: "cred-key", Name: "Provider", Type: "httpBearerAuth",
+		Fields: map[string]string{"token": "sk-live-secret"},
+	}}
+	if _, err := engine.NewRunner(executors).Run(context.Background(), ir, engine.Request{
+		Input:       workflow.Item{JSON: map[string]any{}},
+		Credentials: resolver,
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	offered, _ := (*providerBody)["tools"].([]any)
+	names := make([]string, 0, len(offered))
+	for _, entry := range offered {
+		tool, _ := entry.(map[string]any)
+		function, _ := tool["function"].(map[string]any)
+		name, _ := function["name"].(string)
+		names = append(names, name)
+	}
+	return names
+}
+
+// TestEveryAttachedToolReachesTheAgentInAStableOrder is the uncapped half of the
+// slot rules. A tool slot takes as many connections as an author likes, so the
+// guarantee it owes is not a bound but determinism: every attached tool arrives,
+// none twice, and in an order fixed by the graph rather than by the order the
+// edges happen to sit in the document. The edges here are declared scrambled for
+// that reason — a run whose tool order tracked declaration order would let a
+// cosmetic reordering of the saved JSON change which tool a model reaches for
+// first.
+func TestEveryAttachedToolReachesTheAgentInAStableOrder(t *testing.T) {
+	t.Parallel()
+
+	var body map[string]any
+	provider := answerOnce(&body, 0)
+	defer provider.Close()
+
+	tools := []string{"alpha", "bravo", "charlie"}
+	scrambled := runCluster(t, aiClusterDocument(provider.URL, tools, []string{"charlie", "alpha", "bravo"}), &body)
+
+	if len(scrambled) != len(tools) {
+		t.Fatalf("the model was offered %d tools (%v), want %d", len(scrambled), scrambled, len(tools))
+	}
+	for index, want := range tools {
+		if scrambled[index] != want {
+			t.Fatalf("tool order = %v, want %v", scrambled, tools)
+		}
+	}
+
+	// The same cluster with the edges written in a different order must offer
+	// the same list. This is the assertion that would fail if delivery order
+	// ever became document order.
+	reversed := runCluster(t, aiClusterDocument(provider.URL, tools, []string{"bravo", "charlie", "alpha"}), &body)
+	for index, want := range scrambled {
+		if reversed[index] != want {
+			t.Fatalf("reordering the edges changed the tool order: %v then %v", scrambled, reversed)
+		}
+	}
+}

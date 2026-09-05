@@ -1,7 +1,7 @@
 ---
 id: FEAT-ybm2pd
 title: Adopt the cluster-node model for AI sub-nodes
-status: todo
+status: done
 priority: high
 labels:
     - ai
@@ -12,7 +12,7 @@ deps:
 parent: EPIC-m42s3g
 phase: p5
 created: "2026-09-05T05:00:07Z"
-updated: "2026-09-05T05:00:07Z"
+updated: "2026-09-06T00:00:00Z"
 ---
 
 ## Scope
@@ -27,13 +27,13 @@ There is a direction trap that will bite anyone reasoning from the picture rathe
 
 ## Acceptance criteria
 
-- [ ] Every AI node registered by `nodes/ai.go` declares its slots through p2-8's port descriptors, with explicit cardinality: one connection each for `ai_languageModel`, `ai_memory` and `ai_outputParser`, uncapped for `ai_tool`.
-- [ ] The compiler refuses a graph that exceeds a slot's cap, naming the node, the port and the count, instead of compiling and choosing one at run time.
-- [ ] A slot declared required and left empty fails compilation with a message naming the slot; an optional empty slot still compiles, so an agent with no memory and no tools stays valid.
-- [ ] The editor refuses the second connection into a capped slot while it is being dragged, so the conflict is visible before the draft is saved.
-- [ ] Descriptor delivery is deterministic: with N tools attached, the agent receives exactly N tool descriptors in a stable, tested order.
-- [ ] An n8n cluster imported with the sub-node as the connection source produces the same graph as one built natively, and an export puts the sub-node back on the source side.
-- [ ] A test proves that two chat models on one agent is a compile error, not a run-time coin flip.
+- [x] Every AI node registered by `nodes/ai.go` declares its slots through p2-8's port descriptors, with explicit cardinality: one connection each for `ai_languageModel`, `ai_memory` and `ai_outputParser`, uncapped for `ai_tool`.
+- [x] The compiler refuses a graph that exceeds a slot's cap, naming the node, the port and the count, instead of compiling and choosing one at run time.
+- [x] A slot declared required and left empty fails compilation with a message naming the slot; an optional empty slot still compiles, so an agent with no memory and no tools stays valid.
+- [ ] The editor refuses the second connection into a capped slot while it is being dragged, so the conflict is visible before the draft is saved. **Not done — `web/` was held by another session throughout; see Work evidence.**
+- [x] Descriptor delivery is deterministic: with N tools attached, the agent receives exactly N tool descriptors in a stable, tested order.
+- [x] An n8n cluster imported with the sub-node as the connection source produces the same graph as one built natively, and an export puts the sub-node back on the source side.
+- [x] A test proves that two chat models on one agent is a compile error, not a run-time coin flip.
 
 ## Implementation Plan
 
@@ -54,3 +54,50 @@ One design decision remains open. Sub-nodes could stay ordinary scheduled nodes 
 - `/Users/izzadev/projects/mitrachat/n8n/packages/workflow/src/interfaces.ts` — `NodeConnectionTypes` (13 values) and `INodeInputConfiguration`.
 - `internal/workflow/document.go` (`ConnectionKind`, `knownConnectionKind`), `internal/workflow/compiler.go` (`Port`, `validateExecutableTopology`), `nodes/ai.go`, `web/src/lib/workflow-editor/ports.ts`.
 - Local n8n UI reference: `design-refs/n8n-v2/INDEX.md` entry 02 — a real cluster node: one agent with Chat Model*, Memory and Tool slots and four sub-nodes attached. Captured from a local n8n 2.33.7 instance; gitignored, never vendored.
+
+## Work evidence
+
+Most of this ticket had already landed. The scope section describes a compiler with no cardinality enforcement at all — that premise is stale, and what was actually missing was the interop half.
+
+### What was already there, verified against the files rather than the ticket
+
+- `workflow.Port` (`internal/workflow/compiler.go`) already carries `Required`, `MaxConnections` and `AllowedNodeTypes`, all with JSON tags. The ticket's warning about untagged capitalised keys and a `pnpm generate:api` regeneration no longer applies; no exported type changed in this ticket, so there is no OpenAPI drift.
+- `validatePortCardinality` already enforces both the cap and the required flag, with `ErrorPortFull` and `ErrorPortRequired` as separate codes. It runs beside `validateExecutableTopology` rather than inside it, so the `if port.Kind != ConnectionMain { continue }` line the plan asked to delete is now correct where it stands — required-ness is decided by the port descriptor one function over.
+- `agentNode()` already declares `model` (required, max 1), `memory` (max 1) and `tools` (uncapped).
+- The runner already sorts a node's incoming edges by port, source node, output index and edge ID before assembling `NodeInput`, so descriptor delivery was already deterministic — it was simply untested.
+- Import and export already put the sub-node on the source side of a typed edge, tested by `TestImportKeepsAIConnections` and `TestAIConnectionsRoundTrip`.
+
+### What was actually missing, and was built here
+
+- **The interop AI type table (AC6).** `internal/interop/n8n` had no LangChain entry at all, so every AI node imported as `kilasflow.unsupported`: the wiring was right, the canvas looked right, and the workflow could never be activated because a placeholder deliberately fails compilation. Five mappings added — `agent`, `lmChatOpenAi`, `lmChatOpenRouter`, `memoryBufferWindow`, `toolHttpRequest` — with translators in both directions in `parameters.go`.
+- **`descriptorFrom` tightened to `soleDescriptor`** in `nodes/ai.go`. It returned the first match, which made the model that actually runs a function of item order on any path that reached the runner without passing the cap check. It now refuses and names the slot.
+- **Tests for the rules that were enforced but unpinned** — two chat models, a second memory, a missing required model, an agent with neither memory nor tools, and end-to-end tool ordering.
+
+### Translation decisions worth knowing
+
+- n8n splits the agent prompt into `promptType` and `text`, and keeps the system message and iteration bound inside an `options` collection. A field left at its default is never stored, so n8n's defaults are materialised on import — otherwise a required `prompt` or `sessionId` arrives empty and the import cannot compile.
+- The OpenAI node stores its model as a resource locator from typeVersion 1.2 and the OpenRouter node stores a bare string at every published version, so export writes each provider its own shape.
+- n8n's HTTP Request Tool has no tool-name parameter: the name a model calls is derived from the node's canvas name. The importer derives it the same way, so a system prompt that already named the tool still names the same tool.
+- Output parser, fallback model, guardrails prompts and `{placeholder}` tool URLs are reported as blocking rather than dropped quietly, because each one changes how the agent answers.
+
+### Not done
+
+- **AC4, the editor check, is not in this change.** `web/` was held by another session for the whole of this ticket. `canConnect` in `web/src/lib/workflow-editor/ports.ts` still compares only port kinds, so a second edge into a capped slot can be drawn and is refused on save rather than during the drag. The server is the authority either way; this is a UX gap, not a correctness one.
+- **No `ai_outputParser` slot was added to the agent.** `ConnectionOutputParser` exists in `ConnectionKinds()`, but no registered node emits it, so the slot would be permanently unfillable — a dead port on every agent. It belongs with the output parser node itself.
+
+### Commands
+
+- `go build ./...` — clean.
+- `go vet ./...` — clean.
+- `gofmt -l .` outside `web/` — empty.
+- `go test ./... -count=1` — all packages pass.
+- `go test ./nodes/ -race -count=1` — one failure, `TestTheGoCodeNodeRunsOncePerItemWhenAsked`, which is the pre-existing BUG-9s3htg wasm compile ceiling. No new race failures.
+
+### Failing-first proof
+
+- `soleDescriptor` reverted to returning the first match: `TestASecondModelDescriptorIsRefusedRatherThanSilentlyPicked` fails — the agent runs on the first of two models and reports a credential error rather than naming the conflicting slot.
+- The five mapping entries neutralised: `TestAnImportedAgentClusterCompilesInsteadOfArrivingAsPlaceholders`, `TestAnImportedClusterIsTheSameGraphAsOneBuiltNatively`, `TestAnImportedClusterArrivesConfigured`, `TestTheTwoChatModelProvidersKeepTheirOwnModelShape` and `TestTheClusterMappingMatchesWhatTheReferenceWasRecordedAsSaying` all fail, reporting every AI node as `kilasflow.unsupported`.
+
+### Licence boundary
+
+Reference facts were transcribed into `internal/interop/n8n/testdata/n8n_cluster_nodes.json` with the source files, the n8n version (2.34.0) and the read date, in the shape `nodes/testdata/n8n_chat_model_options.json` established. Nothing in the repository reads the reference checkout, and no n8n package was added to any manifest.
