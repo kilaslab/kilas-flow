@@ -217,13 +217,15 @@ func TestUnderIndependentlyAnItemThatNeverResolvesIsStillJustThatItem(t *testing
 
 			// The first item's JSON has no `bound` object to reach into, so
 			// its expression does not resolve. The second item's does.
+			// The expression is in the bound values, not in the SQL: SQL text
+			// built from an expression is refused outright, and rightly —
+			// this test only needs an expression that fails to resolve for one
+			// item, and a bound value is the legitimate place to have one.
 			ir := v2Node(t, live.nodeType, live.credential, map[string]any{
-				"operation": "executeQuery",
-				"query": map[string]any{
-					"mode":  "expression",
-					"value": `SELECT '{{ $json.bound.inner }}'` + castTo(live.dialect) + ` AS answer`,
-				},
-				"options": map[string]any{"queryBatching": "independently"},
+				"operation":       "executeQuery",
+				"query":           "SELECT " + bindOne(live.dialect) + castTo(live.dialect) + " AS answer",
+				"queryParameters": map[string]any{"mode": "expression", "value": `["{{ $json.bound.inner }}"]`},
+				"options":         map[string]any{"queryBatching": "independently"},
 			})
 			output, err := executor.Execute(context.Background(), ir, workflow.NodeInput{"main": {
 				{JSON: map[string]any{"bound": "not an object"}},

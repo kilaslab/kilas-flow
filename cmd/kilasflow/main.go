@@ -95,12 +95,19 @@ func run() error {
 	// The Go toolchain is not in the distroless image, so this is absent on a
 	// default install. That is reported through the node catalogue rather than
 	// discovered when a workflow runs — see internal/runcode/doc.go.
+	// Built once, before anything that needs it, so a DSN the guard cannot
+	// resolve stops the boot rather than reaching three call sites that would
+	// each have to decide what to do about it.
+	sqlGuard, err := databaseGuard(cfg.Database)
+	if err != nil {
+		return err
+	}
 	codeCompiler := runcode.NewToolchainCompiler()
 	agentMemory, err := ai.NewBufferMemory(ai.Retention{}, nil)
 	if err != nil {
 		return fmt.Errorf("configure agent memory: %w", err)
 	}
-	if err := nodes.RegisterExecutors(executorRegistry, outboundPolicy(cfg.Outbound), databaseGuard(cfg.Database),
+	if err := nodes.RegisterExecutors(executorRegistry, outboundPolicy(cfg.Outbound), sqlGuard,
 		ai.NewLoopRuntime(), agentMemory, codeCompiler,
 		nodes.WithDatabaseCeiling(databaseCeiling(cfg.SQL))); err != nil {
 		return fmt.Errorf("register built-in executors: %w", err)
@@ -120,7 +127,7 @@ func run() error {
 	// Database introspection, under the same guard the executors receive: a
 	// SQLite credential naming KilasFlow's own database is refused at edit time
 	// exactly as it is at run time.
-	if err := loadoptions.RegisterSQL(optionLoader, databaseGuard(cfg.Database)); err != nil {
+	if err := loadoptions.RegisterSQL(optionLoader, sqlGuard); err != nil {
 		return fmt.Errorf("register the database option loaders: %w", err)
 	}
 	// Generated node packs. The definitions, their routing and their option
@@ -349,7 +356,7 @@ func run() error {
 		ExecutionController: runtime,
 		NodeAvailability:    nodeAvailability(codeCompiler),
 		HTTPPolicy:          outboundPolicy(cfg.Outbound),
-		DatabaseGuard:       databaseGuard(cfg.Database),
+		DatabaseGuard:       sqlGuard,
 		Version:             version,
 	})
 
@@ -467,11 +474,29 @@ func bootstrapIdentity(ctx context.Context, cfg config.Auth, store *repository.G
 // A workflow that could open KilasFlow's own database would be able to read
 // every credential, workflow, and execution in the installation, so the path
 // is passed explicitly rather than inferred inside the node.
-func databaseGuard(cfg config.Database) sqlnode.Guard {
+func databaseGuard(cfg config.Database) (sqlnode.Guard, error) {
 	if cfg.Driver != "sqlite" || cfg.DSN == "" {
-		return sqlnode.Guard{}
+		return sqlnode.Guard{}, nil
 	}
-	return sqlnode.Guard{InternalPaths: []string{cfg.DSN}}
+	// Resolved through the same function that opens the file, so the guarded
+	// path and the opened path can never be derived differently. They were:
+	// the DSN went in raw, and `file:./data/kilasflow.db` resolved to a path
+	// no credential could ever match, which turned the guard into a silent
+	// no-op protecting nothing.
+	path, err := database.SQLitePath(cfg.DSN)
+	if err != nil {
+		// Fatal rather than an empty guard. A guard that cannot resolve its
+		// own path still returns "allowed" for every credential, and nothing
+		// anywhere would say so — the install would look protected and not be.
+		// Refusing to boot is the only failure mode an operator can see.
+		return sqlnode.Guard{}, fmt.Errorf("the database guard could not resolve the configured DSN, "+
+			"so a workflow credential naming KilasFlow's own database could not be refused: %w", err)
+	}
+	if path == "" {
+		// An in-memory database has no file for a credential to reach.
+		return sqlnode.Guard{}, nil
+	}
+	return sqlnode.Guard{InternalPaths: []string{path}}, nil
 }
 
 // nodeAvailability reports the nodes this deployment cannot run.

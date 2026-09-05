@@ -171,6 +171,14 @@ func validateMySQLV2Configuration(n workflow.Node) error {
 			"change the operation to %q and move the SQL into Query", PostgresOperationExecuteQuery)
 	}
 
+	// The same rule the version 1 node enforces, on this version's own key.
+	// The operation set landed after the rule was written, so it inherited the
+	// hole rather than the control: this executor also resolves the whole
+	// parameter map per item and hands `query` to the driver as statement
+	// text, and it is the version a new node gets by default.
+	if err := refuseStatementExpression(n.Parameters, "query"); err != nil {
+		return err
+	}
 	switch operation {
 	case PostgresOperationExecuteQuery:
 		if statementText(n.Parameters, "query") == "" {

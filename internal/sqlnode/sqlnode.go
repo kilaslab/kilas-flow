@@ -19,6 +19,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kilaslabs/kilas-flow/internal/sqlguard"
+
 	// Registered for their database/sql driver names only.
 	_ "github.com/glebarez/go-sqlite"
 	_ "github.com/go-sql-driver/mysql"
@@ -149,6 +151,9 @@ type Result struct {
 type Connection struct {
 	db     *sql.DB
 	driver Driver
+	// dialect is the statement guard's grammar for this server, with the
+	// backslash question already asked rather than guessed at.
+	dialect sqlguard.Dialect
 }
 
 // Close releases the connection. Every Open must be paired with one, which is
@@ -182,7 +187,61 @@ func Open(ctx context.Context, driver Driver, fields map[string]string, guard Gu
 		_ = db.Close()
 		return nil, fmt.Errorf("connect to %s database: %w", driver, err)
 	}
-	return &Connection{db: db, driver: driver}, nil
+	connection := &Connection{db: db, driver: driver, dialect: guardDialect(driver)}
+	connection.dialect = resolveBackslashRule(ctx, db, driver, connection.dialect)
+	return connection, nil
+}
+
+// guardDialect is the lexical grammar of the server a driver speaks.
+//
+// Chosen from the driver rather than passed in, so a caller cannot reach the
+// database through a grammar more permissive than the server it is actually
+// talking to.
+func guardDialect(driver Driver) sqlguard.Dialect {
+	switch driver {
+	case DriverPostgres:
+		return sqlguard.Postgres
+	case DriverMySQL:
+		return sqlguard.MySQL
+	default:
+		return sqlguard.SQLite
+	}
+}
+
+// resolveBackslashRule asks the server whether a backslash escapes inside a
+// string literal.
+//
+// Asked once, at connect, because the answer is a server setting and the guard
+// otherwise has to hold every statement to both readings — which refuses
+// `SELECT 'O\'Brien'`, valid under the default configuration of every MySQL
+// and MariaDB, along with every other escaped apostrophe somebody types.
+//
+// A server that will not answer keeps the ambiguity rather than gaining a
+// guess: the returned dialect is unchanged, both readings still apply, and the
+// guard stays strict. Failing closed here costs a refused apostrophe; failing
+// open would cost the whole two-reading defence.
+func resolveBackslashRule(ctx context.Context, db *sql.DB, driver Driver, dialect sqlguard.Dialect) sqlguard.Dialect {
+	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	switch driver {
+	case DriverMySQL:
+		var mode string
+		if err := db.QueryRowContext(probeCtx, "SELECT @@sql_mode").Scan(&mode); err != nil {
+			return dialect
+		}
+		// NO_BACKSLASH_ESCAPES makes a backslash an ordinary character.
+		return dialect.WithKnownBackslashEscapes(!strings.Contains(strings.ToUpper(mode), "NO_BACKSLASH_ESCAPES"))
+	case DriverPostgres:
+		var conforming string
+		if err := db.QueryRowContext(probeCtx, "SHOW standard_conforming_strings").Scan(&conforming); err != nil {
+			return dialect
+		}
+		// Standard-conforming strings mean a backslash is literal, which has
+		// been the default since 9.1; the escaping reading is the legacy one.
+		return dialect.WithKnownBackslashEscapes(!strings.EqualFold(strings.TrimSpace(conforming), "on"))
+	}
+	return dialect
 }
 
 // dataSource turns credential fields into a driver name and DSN.
@@ -191,7 +250,11 @@ func dataSource(driver Driver, fields map[string]string, guard Guard) (string, s
 	case DriverPostgres:
 		return "pgx", postgresDSN(fields), nil
 	case DriverMySQL:
-		return "mysql", mysqlDSN(fields), nil
+		dsn, err := mysqlDSN(fields)
+		if err != nil {
+			return "", "", err
+		}
+		return "mysql", dsn, nil
 	case DriverSQLite:
 		path, err := sqlitePath(fields, guard)
 		if err != nil {
@@ -224,14 +287,42 @@ func postgresDSN(fields map[string]string) string {
 	return target.String()
 }
 
-func mysqlDSN(fields map[string]string) string {
+// mysqlDSN builds the driver's connection string from credential fields.
+//
+// The database name is checked rather than interpolated, and this is not
+// cosmetic. go-sql-driver splits its DSN at the first `?` after the last `/`,
+// so a database named `app?multiStatements=true&` put that option into the
+// connection — verified against the pinned driver — and multi-statement is
+// exactly what the statement guard exists to prevent. The same trick reaches
+// `sql_mode`, which decides whether a backslash escapes inside a string
+// literal, and therefore what a statement even means.
+//
+// Refused rather than escaped: the driver's DSN grammar has no escape for
+// these bytes, so there is nothing to escape them to. A real database name has
+// none of them.
+func mysqlDSN(fields map[string]string) (string, error) {
+	database := strings.TrimSpace(fields["database"])
+	if strings.ContainsAny(database, "?&/@:") {
+		return "", fmt.Errorf("%w: a MySQL database name must not contain any of ? & / @ :", ErrForbiddenTarget)
+	}
+	user := fields["user"]
+	if strings.ContainsAny(user, "@/:") {
+		// The same split, one field earlier: the driver takes the last `@`
+		// before the address, so a user carrying one moves the host.
+		return "", fmt.Errorf("%w: a MySQL user name must not contain any of @ / :", ErrForbiddenTarget)
+	}
+	if host := strings.TrimSpace(fields["host"]); strings.ContainsAny(host, "()?&/@") {
+		// The address sits inside tcp( … ), so a closing parenthesis ends it
+		// early and everything after is read as the driver's own grammar.
+		return "", fmt.Errorf("%w: a MySQL host must not contain any of ( ) ? & / @", ErrForbiddenTarget)
+	}
 	parameters := "?parseTime=true"
 	if tls := strings.TrimSpace(fields["tls"]); tls != "" {
 		parameters += "&tls=" + url.QueryEscape(tls)
 	}
 	return fmt.Sprintf("%s:%s@tcp(%s)/%s%s",
-		fields["user"], fields["password"], hostPort(fields, "3306"),
-		strings.TrimSpace(fields["database"]), parameters)
+		user, fields["password"], hostPort(fields, "3306"),
+		database, parameters), nil
 }
 
 func hostPort(fields map[string]string, fallbackPort string) string {
@@ -344,6 +435,13 @@ func (connection *Connection) Query(ctx context.Context, statement string, param
 	if strings.TrimSpace(statement) == "" {
 		return Result{}, fmt.Errorf("statement is required")
 	}
+	// Checked here rather than only in the node, because this is the last
+	// place before the driver and every path — query, execute, batch,
+	// transaction — has to be closed for any of them to mean anything. A
+	// second statement smuggled past a node-level check would still run.
+	if err := sqlguard.Check(connection.dialect, statement); err != nil {
+		return Result{}, err
+	}
 	if limits.Timeout <= 0 {
 		limits.Timeout = DefaultLimits().Timeout
 	}
@@ -434,6 +532,9 @@ func (connection *Connection) Execute(ctx context.Context, statement string, par
 	if strings.TrimSpace(statement) == "" {
 		return Result{}, fmt.Errorf("statement is required")
 	}
+	if err := sqlguard.Check(connection.dialect, statement); err != nil {
+		return Result{}, err
+	}
 	if limits.Timeout <= 0 {
 		limits.Timeout = DefaultLimits().Timeout
 	}
@@ -484,6 +585,14 @@ func (connection *Connection) ExecuteBatch(ctx context.Context, statements []Sta
 	for index, statement := range statements {
 		if strings.TrimSpace(statement.SQL) == "" {
 			return nil, fmt.Errorf("item %d: statement is required", index+1)
+		}
+		// A prepared handle is not a single-statement guard. Verified against
+		// the pinned SQLite driver: PrepareContext on a two-statement string
+		// succeeds, executing it runs both, and an ATTACH done that way stays
+		// on the connection afterwards. So this path needs the same check as
+		// the unprepared one.
+		if err := sqlguard.Check(connection.dialect, statement.SQL); err != nil {
+			return nil, fmt.Errorf("item %d: %w", index+1, err)
 		}
 	}
 	if limits.Timeout <= 0 {
@@ -556,6 +665,14 @@ func (connection *Connection) Transaction(ctx context.Context, statements []Stat
 	if limits.Timeout <= 0 {
 		limits.Timeout = DefaultLimits().Timeout
 	}
+	// Checked before BEGIN rather than per statement inside it, so a refusal
+	// does not leave a transaction open that has to be rolled back to say no.
+	for index, statement := range statements {
+		if err := sqlguard.Check(connection.dialect, statement.SQL); err != nil {
+			return nil, fmt.Errorf("statement %d: %w", index+1, err)
+		}
+	}
+
 	txCtx, cancel := context.WithTimeout(ctx, limits.Timeout)
 	defer cancel()
 

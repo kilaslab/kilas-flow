@@ -128,6 +128,13 @@ func validateDatabaseConfiguration(credentialType string) workflow.ConfigValidat
 		if operation == "" {
 			operation = sqlOperationQuery
 		}
+		// Every statement key, whatever the operation: the check must not
+		// depend on which operation is selected, or switching the operation
+		// after saving would leave a marker behind that nothing had refused.
+		if err := refuseStatementExpression(n.Parameters,
+			"statement", "executeStatement", "statements"); err != nil {
+			return err
+		}
 		switch operation {
 		case sqlOperationQuery:
 			if statementText(n.Parameters, "statement") == "" {
@@ -195,6 +202,37 @@ func statementText(parameters map[string]any, key string) string {
 	return strings.TrimSpace(value)
 }
 
+// refuseStatementExpression refuses SQL text built from an expression.
+//
+// The rule the panel already stated — "never build SQL from an expression" —
+// made enforceable. It was advice only, and advice is not a control here: the
+// executor resolves every parameter including this one and hands the result to
+// the driver as statement text, so `{{ $json.body.name }}` inside a statement
+// is injection from an inbound webhook body, needing no rights over the
+// workflow at all. Verified end to end before this was written: a body of
+// `nobody' OR '1'='1` returned every row of a table instead of none.
+//
+// Refused rather than escaped. There is no correct escape for arbitrary
+// statement text, and attempting one would look like protection while being
+// none. Values still take expressions — that is what the Parameters field is
+// for, and it binds them.
+//
+// Checked here rather than at run time because this runs at save: a workflow
+// that would inject is refused before it can be activated, not while it is
+// serving traffic.
+func refuseStatementExpression(parameters map[string]any, keys ...string) error {
+	for _, key := range keys {
+		if expression.IsExpression(parameters[key]) {
+			return fmt.Errorf("%q is built from an expression, and SQL text cannot be: "+
+				"an expression here is resolved into the statement before it runs, so a value "+
+				"arriving from a webhook or an earlier node would become SQL. Put the fixed SQL "+
+				"here with placeholders, and put the values in the parameters field, which binds "+
+				"them", key)
+		}
+	}
+	return nil
+}
+
 // DatabaseExecutor runs SQL against a user-configured database.
 type DatabaseExecutor struct {
 	driver         sqlnode.Driver
@@ -239,6 +277,16 @@ func (executor *DatabaseExecutor) Execute(ctx context.Context, ir workflow.IRNod
 	// Closed on every path, including a failed statement, so a node error never
 	// leaks a connection.
 	defer connection.Close()
+
+	// The backstop for the compile-time refusal. Validate runs at save, and a
+	// document can reach an executor without passing through it — an import,
+	// a direct repository write, a workflow saved before this rule existed. So
+	// the rule is enforced again here, against the *unresolved* parameters,
+	// which is the only place the marker is still visible.
+	if err := refuseStatementExpression(ir.Parameters,
+		"statement", "executeStatement", "statements"); err != nil {
+		return nil, fmt.Errorf("node %q: %w", ir.Name, err)
+	}
 
 	items := input["main"]
 	if len(items) == 0 {

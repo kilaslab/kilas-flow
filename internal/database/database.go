@@ -115,6 +115,46 @@ func dialectorFor(cfg config.Database) (gorm.Dialector, error) {
 	}
 }
 
+// SQLitePath is the file a SQLite DSN names, resolved to an absolute path.
+//
+// Exported because two places have to agree about it and must never derive it
+// separately: sqliteDSN opens this file, and the node guard refuses workflow
+// credentials that point at it. When the guard's spelling and the opened
+// spelling were derived independently, a DSN of `file:./data/kilasflow.db`
+// gave the guard a path that filepath.Abs turned into `<cwd>/file:/data/…`,
+// which matched nothing — and a credential naming the real file opened with no
+// error at all. No ATTACH was needed; a plain SELECT read every credential in
+// the installation.
+//
+// An error here means the DSN is a spelling this function does not understand.
+// The caller must treat that as fatal rather than as an empty guard: a guard
+// that cannot resolve its own path protects nothing, and the failure is
+// invisible.
+func SQLitePath(dsn string) (string, error) {
+	raw := strings.TrimSpace(dsn)
+	if raw == "" {
+		return "", fmt.Errorf("the database DSN is empty")
+	}
+	raw = strings.TrimPrefix(raw, "file:")
+	// A URI form carries its options after a ?; the file is what precedes it.
+	if cut := strings.IndexByte(raw, '?'); cut >= 0 {
+		raw = raw[:cut]
+	}
+	if raw == "" {
+		return "", fmt.Errorf("the database DSN names no file")
+	}
+	if strings.EqualFold(raw, ":memory:") || strings.HasPrefix(raw, ":") {
+		// An in-memory database is not a file, so there is nothing on disk for
+		// a credential to reach and nothing to guard.
+		return "", nil
+	}
+	resolved, err := filepath.Abs(raw)
+	if err != nil {
+		return "", fmt.Errorf("the database DSN %q could not be resolved to a path: %w", dsn, err)
+	}
+	return resolved, nil
+}
+
 // sqliteDSN creates the parent directory and applies kilasflow's required pragmas.
 //
 // glebarez/sqlite is a pure-Go driver, so the binary builds with CGO_ENABLED=0

@@ -435,39 +435,115 @@ func TestABulkExecuteIsOneAtomicBatchAndKeepsItsPerItemOutput(t *testing.T) {
 	}
 }
 
-func TestABatchWhoseStatementVariesPerItemStillRunsAsOneTransaction(t *testing.T) {
+func TestABatchOfOneStatementRunsAsOneTransaction(t *testing.T) {
 	t.Parallel()
 
 	path := filepath.Join(t.TempDir(), "workflow.db")
 	resolver := sqliteCredential(path)
 	executor := nodes.NewDatabaseExecutor(sqlnode.DriverSQLite, "sqlite", sqlnode.Guard{}, sqlnode.DefaultCeiling())
 	createTable(t, executor, resolver, `CREATE TABLE animals (name TEXT)`)
-	createTable(t, executor, resolver, `CREATE TABLE minerals (name TEXT)`)
 
-	// The statement itself is an expression, so the prepared handle has to be
-	// rebuilt when the text changes rather than reused against the wrong table.
+	// This test used to vary the statement text per item through an
+	// expression, which is now refused — see the test below. What it exists to
+	// prove is the batching: one prepared handle, one transaction, one output
+	// item per input item. The values vary per item, which is what values are
+	// for; the statement does not, which is what makes it safe.
 	ir := databaseNode(t, nodes.SQLiteNodeType, "sqlite", "cred-db", map[string]any{
 		"operation":        "execute",
-		"executeStatement": map[string]any{"mode": "expression", "value": `INSERT INTO {{ $json.table }} (name) VALUES (?)`},
+		"executeStatement": `INSERT INTO animals (name) VALUES (?)`,
 		"parameters":       map[string]any{"mode": "expression", "value": `["{{ $json.name }}"]`},
 	})
 	output, err := executor.Execute(context.Background(), ir, workflow.NodeInput{"main": {
-		{JSON: map[string]any{"table": "animals", "name": "ada"}},
-		{JSON: map[string]any{"table": "minerals", "name": "quartz"}},
-		{JSON: map[string]any{"table": "animals", "name": "grace"}},
+		{JSON: map[string]any{"name": "ada"}},
+		{JSON: map[string]any{"name": "quartz"}},
+		{JSON: map[string]any{"name": "grace"}},
 	}}, engine.Request{Credentials: resolver})
 	if err != nil {
-		t.Fatalf("mixed-statement batch error = %v", err)
+		t.Fatalf("batch error = %v", err)
 	}
 	if len(output[0]) != 3 {
 		t.Fatalf("batch produced %d items, want one per input item", len(output[0]))
 	}
-	if total := countRows(t, executor, resolver, "animals"); total != 2 {
-		t.Errorf("animals = %d, want 2", total)
+	if total := countRows(t, executor, resolver, "animals"); total != 3 {
+		t.Errorf("animals = %d, want 3", total)
 	}
-	if total := countRows(t, executor, resolver, "minerals"); total != 1 {
-		t.Errorf("minerals = %d, want 1", total)
+}
+
+// SQL text may not be built from an expression, and the rule is enforced at
+// save and again before anything runs.
+//
+// The panel has always said so. Until this was written it was advice: the
+// executor resolved every parameter including the statement and handed the
+// result to the driver as text, so a value arriving from a webhook body became
+// SQL. The exploit was run before the fix — a body of `nobody' OR '1'='1`
+// returned every row of a table instead of none — on both the version 1 node
+// and the version 2 operation set.
+func TestSQLBuiltFromAnExpressionIsRefusedAtSaveAndAtRun(t *testing.T) {
+	t.Parallel()
+
+	registry := node.NewRegistry()
+	if err := nodes.RegisterAll(registry); err != nil {
+		t.Fatalf("RegisterAll() error = %v", err)
 	}
+
+	marker := map[string]any{"mode": "expression", "value": `SELECT * FROM t WHERE name = '{{ $json.body.name }}'`}
+
+	t.Run("refused when the workflow is saved", func(t *testing.T) {
+		for _, row := range []struct {
+			nodeType string
+			version  workflow.TypeVersion
+			key      string
+			extra    map[string]any
+		}{
+			{nodes.SQLiteNodeType, workflow.V(1), "statement", map[string]any{"operation": "query"}},
+			{nodes.SQLiteNodeType, workflow.V(1), "executeStatement", map[string]any{"operation": "execute"}},
+			{nodes.SQLiteNodeType, workflow.V(1), "statements", map[string]any{"operation": "transaction"}},
+			{nodes.PostgresNodeType, nodes.PostgresV2Version, "query", map[string]any{"operation": "executeQuery"}},
+			{nodes.MySQLNodeType, nodes.MySQLV2Version, "query", map[string]any{"operation": "executeQuery"}},
+		} {
+			t.Run(row.nodeType+"/"+row.key, func(t *testing.T) {
+				definition, found := registry.Get(row.nodeType, row.version)
+				if !found {
+					t.Fatalf("%s version %s is not registered", row.nodeType, row.version)
+				}
+				parameters := map[string]any{}
+				for key, value := range row.extra {
+					parameters[key] = value
+				}
+				parameters[row.key] = marker
+				err := definition.Validate(workflow.Node{Parameters: parameters})
+				if err == nil {
+					t.Fatalf("a statement built from an expression was accepted on %q", row.key)
+				}
+				if !strings.Contains(err.Error(), row.key) {
+					t.Errorf("error = %v, want it to name the parameter %q", err, row.key)
+				}
+			})
+		}
+	})
+
+	t.Run("refused again before anything runs", func(t *testing.T) {
+		// Validate runs at save, and a document can reach an executor without
+		// passing through it. The executor is where the injection would
+		// actually happen, so it refuses too.
+		path := filepath.Join(t.TempDir(), "workflow.db")
+		resolver := sqliteCredential(path)
+		executor := nodes.NewDatabaseExecutor(sqlnode.DriverSQLite, "sqlite", sqlnode.Guard{}, sqlnode.DefaultCeiling())
+		createTable(t, executor, resolver, `CREATE TABLE t (name TEXT)`)
+
+		ir := databaseNode(t, nodes.SQLiteNodeType, "sqlite", "cred-db", map[string]any{
+			"operation": "query", "statement": marker,
+		})
+		_, err := executor.Execute(context.Background(), ir, workflow.NodeInput{"main": {
+			{JSON: map[string]any{"body": map[string]any{"name": "nobody' OR '1'='1"}}},
+		}}, engine.Request{Credentials: resolver})
+		if err == nil {
+			t.Fatal("the executor ran a statement built from an expression")
+		}
+		if !strings.Contains(err.Error(), "statement") {
+			t.Errorf("error = %v, want it to name the parameter", err)
+		}
+	})
 }
 
 func TestATransactionStatementDeclaredReturningHandsItsRowsOn(t *testing.T) {
