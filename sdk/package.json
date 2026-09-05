@@ -1,0 +1,39 @@
+{
+  "name": "@kilasflow/sdk",
+  "version": "0.1.0",
+  "description": "Host integration SDK for KilasFlow: workflow management, embedded editor sessions, and execution events.",
+  "license": "MIT",
+  "type": "module",
+  "packageManager": "pnpm@10.15.0",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./server": {
+      "types": "./dist/server.d.ts",
+      "import": "./dist/server.js"
+    },
+    "./browser": {
+      "types": "./dist/browser.d.ts",
+      "import": "./dist/browser.js"
+    }
+  },
+  "scripts": {
+    "generate:types": "node scripts/generate-types.mjs",
+    "generate:types:check": "node scripts/check-types.mjs",
+    "build": "tsc -p tsconfig.build.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "jsdom": "^30.0.1",
+    "orval": "^8.27.0",
+    "typescript": "5.9.3",
+    "vitest": "^4.1.11"
+  }
+}

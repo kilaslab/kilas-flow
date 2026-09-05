@@ -48,3 +48,8 @@ internal/web/dist/*
 # property panels. Not committed: they are third-party product UI, only useful
 # while designing, and would bloat the repo.
 design-refs/
+
+# SDK build output and generated spec scratch
+sdk/dist/
+sdk/.tmp/
+sdk/node_modules/
