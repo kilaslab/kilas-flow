@@ -48,7 +48,10 @@ var ErrNotCompiled = errors.New("code has not been compiled yet")
 // Limits bound one execution.
 type Limits struct {
 	// Timeout bounds wall-clock execution, which is also the CPU bound: a
-	// module spinning in a loop is stopped by the same deadline.
+	// module spinning in a loop is stopped by the same deadline. It covers the
+	// user's program alone — building the artifact and translating it to
+	// machine code are the host's work and are bounded elsewhere — so the same
+	// number means the same thing on a laptop and on a small CI runner.
 	Timeout time.Duration
 	// MemoryPages bounds linear memory in 64KiB WebAssembly pages.
 	MemoryPages uint32
@@ -133,6 +136,42 @@ func (cache *MemoryCache) Stats() (hits, misses int) {
 	cache.mu.RLock()
 	defer cache.mu.RUnlock()
 	return cache.hits, cache.misses
+}
+
+// ModuleCache holds the machine code wazero translates an artifact into.
+//
+// The artifact Cache above stores the WebAssembly a Go build produced; this
+// stores what wazero then turns that WebAssembly into. They are separate costs:
+// a wasip1 module carrying the Go runtime is a few megabytes, and translating
+// one takes the better part of a second on a warm laptop. Without this cache
+// that translation happened on every single sandbox call, so a Code node in
+// per-item mode paid for it once per item — contradicting the promise the node
+// makes in its own editor, that per-item mode costs one build either way.
+//
+// wazero shares translated code between runtimes that are given the same cache,
+// so each artifact is translated once per process while every execution still
+// gets its own runtime, instantiated and closed on its own.
+type ModuleCache struct {
+	compilation wazero.CompilationCache
+}
+
+// NewModuleCache creates a cache meant to be shared by every execution in a
+// process and to live as long as it, exactly like the artifact cache beside it.
+//
+// It is safe for concurrent use. Two executions translating the same artifact
+// at the same moment may both do the work — wazero holds its lock for the
+// lookup and the store, not the translation — which costs duplicated effort
+// once and never a wrong answer.
+func NewModuleCache() *ModuleCache {
+	return &ModuleCache{compilation: wazero.NewCompilationCache()}
+}
+
+// Close releases every translation the cache is holding.
+func (cache *ModuleCache) Close(ctx context.Context) error {
+	if cache == nil || cache.compilation == nil {
+		return nil
+	}
+	return cache.compilation.Close(ctx)
 }
 
 // ToolchainCompiler builds with the local Go toolchain.
@@ -350,11 +389,17 @@ type Result struct {
 type Runner struct {
 	compiler Compiler
 	cache    Cache
+	modules  *ModuleCache
 	limits   Limits
 }
 
 // NewRunner builds the Code node's execution path.
-func NewRunner(compiler Compiler, cache Cache, limits Limits) *Runner {
+//
+// A nil modules cache is allowed and means every execution translates the
+// artifact again into a runtime that is closed after it: correct, and what a
+// caller that runs an artifact once wants, since a shared cache has to outlive
+// the runner to be worth anything.
+func NewRunner(compiler Compiler, cache Cache, modules *ModuleCache, limits Limits) *Runner {
 	if cache == nil {
 		cache = NewMemoryCache()
 	}
@@ -367,7 +412,7 @@ func NewRunner(compiler Compiler, cache Cache, limits Limits) *Runner {
 	if limits.MaxOutputBytes <= 0 {
 		limits.MaxOutputBytes = DefaultLimits().MaxOutputBytes
 	}
-	return &Runner{compiler: compiler, cache: cache, limits: limits}
+	return &Runner{compiler: compiler, cache: cache, modules: modules, limits: limits}
 }
 
 // Artifact returns the compiled module for source, compiling it only when the
@@ -412,6 +457,10 @@ func (runner *Runner) Run(ctx context.Context, source string, items []Item) (Res
 // functions. There is therefore no capability through which user code could
 // reach the filesystem, the network, another process, or KilasFlow's own
 // database.
+//
+// Every execution gets its own runtime, closed when it returns, so one module
+// instance can never observe or outlive another. Only the translated machine
+// code is shared, through the module cache, and that is immutable.
 func (runner *Runner) Execute(ctx context.Context, artifact Artifact, items []Item) (Result, error) {
 	if len(artifact.Module) == 0 {
 		return Result{}, ErrNotCompiled
@@ -427,18 +476,43 @@ func (runner *Runner) Execute(ctx context.Context, artifact Artifact, items []It
 		return Result{}, fmt.Errorf("encode items: %w", err)
 	}
 
-	runCtx, cancel := context.WithTimeout(ctx, runner.limits.Timeout)
-	defer cancel()
-
 	config := wazero.NewRuntimeConfig().
 		WithCloseOnContextDone(true).
 		WithMemoryLimitPages(runner.limits.MemoryPages)
-	runtime := wazero.NewRuntimeWithConfig(runCtx, config)
+	if runner.modules != nil {
+		config = config.WithCompilationCache(runner.modules.compilation)
+	}
+
+	// Preparing the sandbox and translating the module run under the caller's
+	// context, not the user's time limit, because they are KilasFlow's work and
+	// not the user's program running. Charging them to the limit meant a Code
+	// node whose body returns immediately could still be told it "exceeded its
+	// 10s time limit" — every host where translating a multi-megabyte wasip1
+	// module is slow spent the user's whole budget before reaching their first
+	// instruction, and under the race detector one translation alone takes
+	// longer than the product's default limit. The caller's context still bounds
+	// this, so a translation that never finished could not hang a workflow.
+	runtime := wazero.NewRuntimeWithConfig(ctx, config)
 	defer runtime.Close(context.Background())
 
-	if _, err := wasi_snapshot_preview1.Instantiate(runCtx, runtime); err != nil {
+	if _, err := wasi_snapshot_preview1.Instantiate(ctx, runtime); err != nil {
 		return Result{}, fmt.Errorf("prepare sandbox: %w", err)
 	}
+
+	compiled, err := runtime.CompileModule(ctx, artifact.Module)
+	if err != nil {
+		if ctx.Err() != nil {
+			return Result{}, ctx.Err()
+		}
+		// Reaching here means a stored artifact is not a module this runtime can
+		// load, which is a build or a cache that has gone wrong rather than
+		// anything the user wrote.
+		return Result{}, &ExecutionError{Detail: sanitizeRuntimeError(err)}
+	}
+	// compiled is deliberately not closed: closing it deletes the translation
+	// from the shared cache, which is the one thing the cache exists to keep.
+	// Closing the runtime releases this execution's instance either way, and
+	// when there is no shared cache that also releases the translation with it.
 
 	stdout := &limitedWriter{limit: runner.limits.MaxOutputBytes}
 	stderr := &limitedWriter{limit: 64 << 10}
@@ -452,7 +526,11 @@ func (runner *Runner) Execute(ctx context.Context, artifact Artifact, items []It
 		WithSysNanotime().
 		WithSysWalltime()
 
-	_, err = runtime.InstantiateWithConfig(runCtx, artifact.Module, moduleConfig)
+	// The limit starts here, where the user's program does.
+	runCtx, cancel := context.WithTimeout(ctx, runner.limits.Timeout)
+	defer cancel()
+
+	_, err = runtime.InstantiateModule(runCtx, compiled, moduleConfig)
 	result := Result{Stderr: strings.TrimSpace(stderr.String())}
 
 	if err != nil {

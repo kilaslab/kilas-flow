@@ -39,3 +39,36 @@ does not buy more cheaply.
 The rule that follows: a user must never discover at run time that their
 deployment cannot compile.
 - 2026-09-05: Code node compatibility: imported JS/Python Code nodes are refused as kilasflow.foreignCode, never translated; the Go toolchain lives behind runcode.Compiler and availability is reported through the node catalogue.
+
+# The Code node's time limit covers the user's program only
+
+**Established in BUG-9s3htg.** There are three separate costs in running a Code
+node, and each is bounded by a different thing. Do not merge them again.
+
+1. **The Go toolchain build** — source to a 4.8 MB wasip1 module. Cached by
+   source hash in `runcode.Cache`, bounded by `ToolchainCompiler.Timeout` (90s).
+2. **wazero's translation** of that module to machine code. Roughly 0.8s warm,
+   and **12s under `-race`**, because wazero's compiler is host-side Go and the
+   race detector instruments all of it. Cached per process in
+   `runcode.ModuleCache`, bounded by the caller's context.
+3. **The user's program running.** This, and only this, is what
+   `Limits.Timeout` / the node's `scriptTimeoutSeconds` bounds.
+
+Charging (2) to the user's limit is what made a body of `return items, nil`
+report "code exceeded its 10s time limit" under `-race`. If a Code node ever
+reports a limit for work that plainly does not take that long, look at what has
+crept back inside `context.WithTimeout` in `Runner.Execute` before looking at
+the number.
+
+Two consequences worth keeping:
+
+- **Do not raise a limit or widen a test's limit to make this class of failure
+  go away.** The tests deliberately run under `runcode.DefaultLimits()` so the
+  suite proves the shipped default works. A test-only limit is how this went
+  unnoticed until CI existed.
+- **Translations are shared between executions; sandbox ceilings are not.**
+  wazero keys its engine cache on the module binary and decodes memory limits
+  per runtime, so two nodes with the same source and different `memoryMB` are
+  correctly isolated. `TestASharedTranslationDoesNotCarryAMemoryLimitWithIt`
+  pins that. Never close a `CompiledModule` that came from a shared cache —
+  closing it evicts the translation the cache exists to hold.

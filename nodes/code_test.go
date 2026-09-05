@@ -29,14 +29,6 @@ func codeIR(t *testing.T, parameters map[string]any) workflow.IRNode {
 	}
 }
 
-// generousLimits give WASM execution room under the race detector, which slows
-// it well past the product's 10s default.
-func generousLimits() runcode.Limits {
-	limits := runcode.DefaultLimits()
-	limits.Timeout = 120 * time.Second
-	return limits
-}
-
 func toolchainOrSkip(t *testing.T) runcode.Compiler {
 	t.Helper()
 	compiler := runcode.NewToolchainCompiler()
@@ -92,7 +84,7 @@ func TestCodeNodeValidatesSourceAtSaveTimeWithoutCompiling(t *testing.T) {
 
 func TestCodeNodeTransformsTheWholeBatch(t *testing.T) {
 	compiler := toolchainOrSkip(t)
-	executor := nodes.NewCodeExecutor(compiler, runcode.NewMemoryCache(), generousLimits())
+	executor := nodes.NewCodeExecutor(compiler, runcode.NewMemoryCache(), runcode.DefaultLimits())
 
 	// Seeing the whole batch is what lets a Code node filter or aggregate,
 	// which is most of why someone reaches for one.
@@ -122,7 +114,7 @@ func TestCodeNodeTransformsTheWholeBatch(t *testing.T) {
 
 func TestCodeNodeReportsAUserErrorStructurally(t *testing.T) {
 	compiler := toolchainOrSkip(t)
-	executor := nodes.NewCodeExecutor(compiler, runcode.NewMemoryCache(), generousLimits())
+	executor := nodes.NewCodeExecutor(compiler, runcode.NewMemoryCache(), runcode.DefaultLimits())
 
 	_, err := executor.Execute(context.Background(), codeIR(t, map[string]any{
 		"code": `return nil, errors.New("record 7 is missing a customer")`,
@@ -153,7 +145,7 @@ func TestCodeNodeWithoutACompilerSaysSoPlainly(t *testing.T) {
 
 func TestCodeNodeStatusReportsCompilationWithoutRunningTheWorkflow(t *testing.T) {
 	compiler := toolchainOrSkip(t)
-	executor := nodes.NewCodeExecutor(compiler, runcode.NewMemoryCache(), generousLimits())
+	executor := nodes.NewCodeExecutor(compiler, runcode.NewMemoryCache(), runcode.DefaultLimits())
 
 	good := executor.Status(context.Background(), "return items, nil")
 	if !good.Compiled || good.Error != "" || good.Hash == "" || good.CompiledAt == "" {
@@ -172,7 +164,7 @@ func TestCodeNodeStatusReportsCompilationWithoutRunningTheWorkflow(t *testing.T)
 func TestCodeNodeCannotRaiseTheDeploymentsLimits(t *testing.T) {
 	compiler := toolchainOrSkip(t)
 	ceiling := runcode.DefaultLimits()
-	ceiling.Timeout = 500 * 1000 * 1000 // 500ms
+	ceiling.Timeout = 500 * time.Millisecond
 	executor := nodes.NewCodeExecutor(compiler, runcode.NewMemoryCache(), ceiling)
 
 	// The node asks for 60 seconds; the deployment allows 500ms.
@@ -194,7 +186,7 @@ func TestCodeNodeCannotRaiseTheDeploymentsLimits(t *testing.T) {
 // through a Code node, with no error and no diagnostic.
 func TestCodeNodeCarriesBinaryReferencesThrough(t *testing.T) {
 	compiler := toolchainOrSkip(t)
-	executor := nodes.NewCodeExecutor(compiler, runcode.NewMemoryCache(), generousLimits())
+	executor := nodes.NewCodeExecutor(compiler, runcode.NewMemoryCache(), runcode.DefaultLimits())
 
 	attachment := workflow.BinaryRef{ID: "bin-1", FileName: "photo.jpg", MediaType: "image/jpeg", Size: 2048}
 	output, err := executor.Execute(context.Background(), codeIR(t, map[string]any{
@@ -227,7 +219,7 @@ func TestCodeNodeCarriesBinaryReferencesThrough(t *testing.T) {
 // is, and inventing one would attach the wrong file to the wrong item.
 func TestCodeNodeDoesNotInventBinaryForItemsItDidNotReceive(t *testing.T) {
 	compiler := toolchainOrSkip(t)
-	executor := nodes.NewCodeExecutor(compiler, runcode.NewMemoryCache(), generousLimits())
+	executor := nodes.NewCodeExecutor(compiler, runcode.NewMemoryCache(), runcode.DefaultLimits())
 
 	output, err := executor.Execute(context.Background(), codeIR(t, map[string]any{
 		"code": `return []Item{items[0], {JSON: map[string]any{"extra": true}}}, nil`,
@@ -251,6 +243,11 @@ func TestCodeNodeDoesNotInventBinaryForItemsItDidNotReceive(t *testing.T) {
 func TestTheGoCodeNodeRunsOncePerItemWhenAsked(t *testing.T) {
 	t.Parallel()
 
+	// Deliberately the product's own default limit, and the same executor for
+	// both modes, because that is what makes this a check on the shipped
+	// configuration: four sandbox calls over one artifact have to fit inside
+	// the 10 seconds a real deployment gives them. They did not when every call
+	// re-translated the module and was charged for it.
 	executor := nodes.NewCodeExecutor(runcode.NewToolchainCompiler(), runcode.NewMemoryCache(), runcode.DefaultLimits())
 	if status := executor.Status(context.Background(), "return items, nil"); !status.Available {
 		t.Skip("this machine has no Go toolchain, so Code nodes cannot be compiled")
