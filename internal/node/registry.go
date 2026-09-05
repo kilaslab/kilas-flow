@@ -6,130 +6,9 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/kilaslabs/kilas-flow/internal/property"
 	"github.com/kilaslabs/kilas-flow/internal/workflow"
 )
-
-// PropertyKind identifies a generic control the editor can render without a
-// node-specific form implementation.
-type PropertyKind string
-
-const (
-	PropertyString  PropertyKind = "string"
-	PropertyNumber  PropertyKind = "number"
-	PropertyBoolean PropertyKind = "boolean"
-	// PropertyOptions is a single-choice select.
-	//
-	// It is spelled `options` rather than `select` because that is what n8n
-	// calls it, and two names for one control would mean every generated pack
-	// has to remember which one this server speaks. The rename is done now
-	// because its blast radius is still entirely inside this repository; after
-	// a pack ships it becomes a compatibility break for somebody else's node.
-	PropertyOptions PropertyKind = "options"
-	// PropertyMultiOptions is a multi-choice select.
-	PropertyMultiOptions PropertyKind = "multiOptions"
-	// PropertyCollection is an optional group of fields the user adds one at a
-	// time.
-	PropertyCollection PropertyKind = "collection"
-	// PropertyFixedCollection is a repeatable named group.
-	PropertyFixedCollection PropertyKind = "fixedCollection"
-	// PropertyNotice is read-only guidance shown in the panel. It holds no
-	// value: see the note on TypeOptions and requiredParameters.
-	PropertyNotice PropertyKind = "notice"
-	// PropertyJSON is a raw JSON editor.
-	PropertyJSON PropertyKind = "json"
-	// PropertyDateTime is a date and time picker.
-	PropertyDateTime   PropertyKind = "dateTime"
-	PropertyKeyValue   PropertyKind = "keyValue"
-	PropertyConditions PropertyKind = "conditions"
-)
-
-// KnownPropertyKinds is the closed set, in a stable order.
-func KnownPropertyKinds() []PropertyKind {
-	return []PropertyKind{
-		PropertyString, PropertyNumber, PropertyBoolean,
-		PropertyOptions, PropertyMultiOptions,
-		PropertyCollection, PropertyFixedCollection,
-		PropertyNotice, PropertyJSON, PropertyDateTime,
-		PropertyKeyValue, PropertyConditions,
-	}
-}
-
-// TypeOptions refines how a control behaves without multiplying kinds.
-//
-// Unknown keys are rejected at registration rather than passed through: a bag
-// that accepts anything is a bag whose contents nothing can rely on, and a
-// generated pack emitting a key this server ignores would produce a control
-// that silently does not behave as its author intended.
-type TypeOptions struct {
-	// Password masks the field.
-	Password bool `json:"password,omitempty"`
-	// Rows makes a string field multi-line. Zero is single-line.
-	Rows int `json:"rows,omitempty"`
-	// MinValue and MaxValue bound a number.
-	MinValue *float64 `json:"minValue,omitempty"`
-	MaxValue *float64 `json:"maxValue,omitempty"`
-	// NumberPrecision is how many decimal places a number keeps.
-	NumberPrecision *int `json:"numberPrecision,omitempty"`
-	// MultipleValues makes the property a list.
-	//
-	// This one semantic has to be carried across exactly, because getting it
-	// wrong silently corrupts every imported node: under MultipleValues the
-	// property's Default describes **one element**, not the collection. A
-	// property with MultipleValues and `default: {}` defaults to an empty list
-	// whose elements look like `{}` — it does not default to `{}`.
-	MultipleValues bool `json:"multipleValues,omitempty"`
-	// MultipleValueButtonText labels the add button.
-	MultipleValueButtonText string `json:"multipleValueButtonText,omitempty"`
-}
-
-// PropertyOption is one selectable value for a PropertySelect control.
-type PropertyOption struct {
-	Label string `json:"label"`
-	Value string `json:"value"`
-}
-
-// VisibilityCondition lets a dynamic property form hide a field until one
-// other field has the specified value.
-type VisibilityCondition struct {
-	Key    string `json:"key"`
-	Equals any    `json:"equals"`
-}
-
-// PropertyDefinition describes one node parameter or shared setting.
-type PropertyDefinition struct {
-	Key         string       `json:"key"`
-	Label       string       `json:"label"`
-	Description string       `json:"description,omitempty"`
-	Kind        PropertyKind `json:"kind"`
-	Required    bool         `json:"required"`
-	// Default is the value a fresh node starts with.
-	//
-	// Under TypeOptions.MultipleValues it describes **one element** of the
-	// list, not the list itself.
-	Default any `json:"default,omitempty"`
-	// Options are the selectable values of an options or multiOptions control.
-	//
-	// Deliberately *only* that. n8n overloads the same field to carry nested
-	// properties for a collection and named groups for a fixedCollection, which
-	// makes its meaning depend on the sibling kind and produces a JSON schema
-	// the generated TypeScript cannot express usefully. The nested carriers
-	// below are typed separately for that reason.
-	Options []PropertyOption `json:"options,omitempty"`
-	// Fields are the nested properties of a `collection`.
-	Fields []PropertyDefinition `json:"fields,omitempty"`
-	// Groups are the named property groups of a `fixedCollection`.
-	Groups []PropertyGroup `json:"groups,omitempty"`
-	// TypeOptions refines the control.
-	TypeOptions *TypeOptions          `json:"typeOptions,omitempty"`
-	VisibleWhen []VisibilityCondition `json:"visibleWhen,omitempty"`
-}
-
-// PropertyGroup is one named group inside a fixedCollection.
-type PropertyGroup struct {
-	Key    string               `json:"key"`
-	Label  string               `json:"label"`
-	Fields []PropertyDefinition `json:"fields"`
-}
 
 // Definition is the complete server-owned description of a supported node.
 // ExecutorID is intentionally an opaque server-only binding and is omitted
@@ -185,6 +64,13 @@ type Definition struct {
 	// on a canvas, saved and activated, and would simply never receive a
 	// request. No error, just an active workflow that is unreachable.
 	Webhook *WebhookDeclaration `json:"webhook,omitempty"`
+	// Credentials are the credential types this node can use.
+	//
+	// Named by string rather than by a typed reference, which is what n8n does
+	// too: it keeps the node catalogue from having to know the credential
+	// catalogue exists, and it is what would otherwise invert the dependency
+	// the moment a credential type wanted to reference a node.
+	Credentials []CredentialRequirement `json:"credentials,omitempty"`
 	// LifecycleID binds this node's activate and deactivate hooks, by the same
 	// opaque server-owned identifier pattern as ExecutorID: a trigger that
 	// declares a hook nobody registered fails at startup rather than at
@@ -211,6 +97,18 @@ type WebhookDeclaration struct {
 	// StaticPath binds a node with no path parameter at all, which is what a
 	// trigger whose route is entirely minted needs.
 	StaticPath string `json:"staticPath,omitempty"`
+}
+
+// CredentialRequirement is one credential type a node can use.
+type CredentialRequirement struct {
+	// Type is the credential type ID.
+	Type string `json:"type"`
+	// Required marks a credential the node cannot run without.
+	Required bool `json:"required,omitempty"`
+	// VisibleWhen shows this requirement only for some parameter values, so a
+	// node offering several auth modes asks for the credential the chosen mode
+	// actually needs.
+	VisibleWhen []property.VisibilityCondition `json:"visibleWhen,omitempty"`
 }
 
 // NodeGroup is a behavioural classification. The set is closed: a definition
@@ -527,15 +425,6 @@ func validateProperties(nodeType, group string, properties []PropertyDefinition)
 	return nil
 }
 
-func knownPropertyKind(kind PropertyKind) bool {
-	for _, known := range KnownPropertyKinds() {
-		if kind == known {
-			return true
-		}
-	}
-	return false
-}
-
 // requiredParameters lists the parameters a document must actually carry.
 //
 // A property that declares a default is not among them: the default is the
@@ -582,6 +471,11 @@ func cloneDefinition(definition Definition) Definition {
 	definition.Parameters = cloneProperties(definition.Parameters)
 	definition.SharedSettings = cloneProperties(definition.SharedSettings)
 	definition.Group = append([]NodeGroup(nil), definition.Group...)
+	definition.Credentials = append([]CredentialRequirement(nil), definition.Credentials...)
+	for index := range definition.Credentials {
+		definition.Credentials[index].VisibleWhen =
+			append([]property.VisibilityCondition(nil), definition.Credentials[index].VisibleWhen...)
+	}
 	if definition.Icon != nil {
 		icon := *definition.Icon
 		definition.Icon = &icon
@@ -707,3 +601,36 @@ func validateSubtitle(nodeType, subtitle string) error {
 		rest = remainder[end+2:]
 	}
 }
+
+// The property language lives in its own leaf package so a credential type can
+// describe its fields with it too, without either catalogue depending on the
+// other. These aliases keep every existing call site — and every generated
+// client field name — exactly as it was.
+type (
+	PropertyKind        = property.Kind
+	PropertyOption      = property.PropertyOption
+	PropertyDefinition  = property.PropertyDefinition
+	PropertyGroup       = property.PropertyGroup
+	TypeOptions         = property.TypeOptions
+	VisibilityCondition = property.VisibilityCondition
+)
+
+const (
+	PropertyString          = property.KindString
+	PropertyNumber          = property.KindNumber
+	PropertyBoolean         = property.KindBoolean
+	PropertyOptions         = property.KindOptions
+	PropertyMultiOptions    = property.KindMultiOptions
+	PropertyCollection      = property.KindCollection
+	PropertyFixedCollection = property.KindFixedCollection
+	PropertyNotice          = property.KindNotice
+	PropertyJSON            = property.KindJSON
+	PropertyDateTime        = property.KindDateTime
+	PropertyKeyValue        = property.KindKeyValue
+	PropertyConditions      = property.KindConditions
+)
+
+// KnownPropertyKinds is the closed set, in a stable order.
+func KnownPropertyKinds() []PropertyKind { return property.KnownKinds() }
+
+func knownPropertyKind(kind PropertyKind) bool { return property.Known(kind) }

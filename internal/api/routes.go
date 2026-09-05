@@ -7,6 +7,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/kilaslabs/kilas-flow/internal/api/handlers"
+	"github.com/kilaslabs/kilas-flow/internal/safehttp"
 	"github.com/kilaslabs/kilas-flow/internal/web"
 )
 
@@ -24,7 +25,8 @@ func registerRoutes(router *chi.Mux, api huma.API, deps Deps) {
 	handlers.NewWorkflows(deps.Workflows, deps.Executions, deps.NodeRegistry, deps.Tenants, deps.ExecutionController).
 		WithTriggers(deps.TriggerCoordinator).Register(v1)
 	handlers.NewExecutions(deps.ExecutionController, deps.Executions, deps.Events, deps.Tenants).Register(v1)
-	handlers.NewCredentials(deps.Credentials, deps.Tenants).Register(v1)
+	handlers.NewCredentials(deps.Credentials, deps.Tenants).
+		WithHTTPPolicy(safehttp.DefaultPolicy()).Register(v1)
 	handlers.NewSchedules(deps.Schedules, deps.Tenants).Register(v1)
 	handlers.NewEmbedSessions(deps.EmbedIssuer, deps.Workflows, deps.Tenants).Register(v1)
 	handlers.NewInterop(deps.Workflows, deps.NodeRegistry, deps.Tenants).Register(v1)

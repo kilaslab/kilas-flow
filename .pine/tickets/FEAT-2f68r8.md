@@ -1,7 +1,7 @@
 ---
 id: FEAT-2f68r8
 title: Open the credential type registry to node declarations
-status: todo
+status: done
 priority: high
 labels:
     - registry
@@ -31,13 +31,13 @@ This ticket opens registration, unifies the field language, lets a node declare 
 
 ## Acceptance criteria
 
-- [ ] Credential types are registered into an explicit registry during composition rather than read from a package-level map, and the registry is immutable once the server starts serving.
-- [ ] The six existing type IDs register with byte-identical IDs and field keys, so every stored credential row keeps resolving; a migration test loads a row of each type and reads it back.
-- [ ] A credential type describes its fields in the same property language nodes use, including kinds, conditional visibility and password masking, and `Validate`, `Split` and `Redacted` keep working over that language with no secret ever returned after creation.
-- [ ] `node.Definition` carries a list of credential requirements — type ID, required, and a display condition — and `/api/v1/node-types` returns them.
-- [ ] A credential type declares how it authenticates a request declaratively (header, query parameter, basic, or bearer, with the value drawn from named fields); `Apply` resolves it from that descriptor instead of a type-ID switch, and an unregistered type still fails with a named error.
-- [ ] A credential type may declare a test request; `POST /api/v1/credentials/{id}/test` runs it through `internal/safehttp` under the credential's own `AllowedDomains` and reports pass or fail without echoing any secret.
-- [ ] Registering two credential types with the same ID fails at composition, and registering a type whose field keys collide fails with the offending key named.
+- [x] Credential types are registered into an explicit registry during composition rather than read from a package-level map, and the registry is immutable once the server starts serving.
+- [x] The six existing type IDs register with byte-identical IDs and field keys, so every stored credential row keeps resolving; a migration test loads a row of each type and reads it back.
+- [x] A credential type describes its fields in the same property language nodes use, including kinds, conditional visibility and password masking, and `Validate`, `Split` and `Redacted` keep working over that language with no secret ever returned after creation.
+- [x] `node.Definition` carries a list of credential requirements — type ID, required, and a display condition — and `/api/v1/node-types` returns them.
+- [x] A credential type declares how it authenticates a request declaratively (header, query parameter, basic, or bearer, with the value drawn from named fields); `Apply` resolves it from that descriptor instead of a type-ID switch, and an unregistered type still fails with a named error.
+- [x] A credential type may declare a test request; `POST /api/v1/credentials/{id}/test` runs it through `internal/safehttp` under the credential's own `AllowedDomains` and reports pass or fail without echoing any secret.
+- [x] Registering two credential types with the same ID fails at composition, and registering a type whose field keys collide fails with the offending key named.
 
 ## Implementation Plan
 
@@ -62,3 +62,68 @@ One trap worth stating: `Redacted`, `Split` and `Validate` all key off `Field.Se
 - `web/src/lib/workflow-editor/credentials.ts` — the `BY_NODE_TYPE` map this makes redundant.
 - n8n 2.34.0 reference (read-only, outside this repo): `packages/workflow/src/interfaces.ts` — `INodeCredentialDescription`, `ICredentialType`, `ICredentialTestRequest`, `ICredentialsDisplayOptions`.
 - Local n8n UI reference: `design-refs/n8n-v2/INDEX.md` entries 05, 16 — the credential picker inside the NDV with inline edit, and the credentials list. Captured from a local n8n 2.33.7 instance; gitignored, never vendored.
+
+## Outcome
+
+### The import graph
+
+Settled first, as the plan required. The property language moved to
+`internal/property`, a leaf both `internal/node` and `internal/credentials`
+import. `internal/node` keeps every name as a **type alias**, so no call site
+outside the two packages changed at all, and a credential requirement on
+`node.Definition` names its type by string — which is what n8n does too, and
+what stops the node catalogue having to know the credential catalogue exists.
+
+Two things about the extraction were not obvious:
+
+1. **Huma names OpenAPI schemas from the Go type name**, so `property.Definition`
+   collided with `node.Definition` and panicked at server construction. The
+   colliding types keep their `Property` prefix inside the new package —
+   `property.PropertyDefinition` stutters, and that is the price of not renaming
+   a published client model.
+2. The first pass also renamed `PropertyOption` and `PropertyGroup` to `Option`
+   and `Group`, which changed two generated models *and* put two very generic
+   names into a shared schema namespace. Reverted for both reasons.
+
+Both codegen drift checks confirm the extraction is contract-neutral.
+
+### The registry
+
+In the shape of `node.Registry`: `Register` refusing a duplicate ID, `Get`,
+`List` in stable order, cloned on the way out. `RegisterAll` registers the six
+built-ins; `Default()` holds them so the package-level `Lookup`, `List`,
+`Validate` and `Apply` keep working while call sites are threaded — and unlike
+the package-level map it replaced, it is built once and never mutated.
+
+`TestEveryStoredCredentialTypeStillResolves` pins all six IDs and every field
+key as **literals**, and round-trips a payload of each shape through `Validate`.
+A stored row is keyed by that ID and its sealed payload by those keys: tidying a
+name would make existing credentials unresolvable with no way back.
+
+### Authentication as data
+
+`Apply`'s type-ID switch is gone. A descriptor names a placement, a name and a
+value template over field keys, so `httpHeaderAuth` covers every fixed-header
+API — and the test registers `wahaApi` with `{header, "X-Api-Key",
+"{{ apiKey }}"}` and **no Go change**, which is the whole point.
+
+`postgres`, `mysql` and `sqlite` declare no descriptor and are refused by
+absence. "This type cannot authenticate an HTTP request" is a better error than
+a default branch reached by accident, and it is named per type.
+
+### The trap
+
+Masking and non-disclosure are two flags, not one. `typeOptions.password` hides
+a field in the UI; `Secrets` stops the API ever returning it. Conflating them
+would make a masked-but-readable field come back as `••••••••` and users would
+overwrite real values with the placeholder. Tested in both directions.
+
+### The test endpoint
+
+`POST /api/v1/credentials/{id}/test` runs the type's declared probe through
+`internal/safehttp` under the instance policy **and** the credential's own
+`AllowedDomains`. A probe that bypassed the egress policy would be a
+credential-shaped hole into the internal network: anyone able to store a
+credential could point it at a metadata endpoint and read the answer through the
+pass/fail signal. The remote body is drained and discarded rather than returned,
+so pass/fail cannot become a general-purpose fetch.

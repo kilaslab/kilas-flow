@@ -3,7 +3,9 @@ package credentials_test
 import (
 	"bytes"
 	"errors"
+	"github.com/kilaslabs/kilas-flow/internal/property"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -232,5 +234,232 @@ func TestKeyFromEnvironmentAcceptsBase64AndHex(t *testing.T) {
 
 	if _, err := credentials.KeyFromEnvironment("KF_TEST_KEY_ABSENT"); !errors.Is(err, credentials.ErrNoKey) {
 		t.Errorf("missing key error = %v, want ErrNoKey", err)
+	}
+}
+
+// TestEveryStoredCredentialTypeStillResolves is the migration guarantee.
+//
+// A stored credential row is keyed by its type ID and its sealed payload by its
+// field keys. Changing either — even by tidying a name — makes an existing
+// credential unresolvable with no way to recover it, so the six IDs and every
+// field key are pinned here as literals rather than derived from the registry,
+// which would assert nothing.
+func TestEveryStoredCredentialTypeStillResolves(t *testing.T) {
+	t.Parallel()
+
+	want := map[string][]string{
+		"httpBasicAuth":  {"user", "password"},
+		"httpHeaderAuth": {"name", "value"},
+		"httpBearerAuth": {"token"},
+		"postgres":       {"host", "port", "database", "user", "password", "sslMode"},
+		"mysql":          {"host", "port", "database", "user", "password", "tls"},
+		"sqlite":         {"path"},
+	}
+
+	registry := credentials.NewRegistry()
+	if err := credentials.RegisterAll(registry); err != nil {
+		t.Fatalf("RegisterAll() error = %v", err)
+	}
+	if got := len(registry.List()); got != len(want) {
+		t.Errorf("registry holds %d types, want %d", got, len(want))
+	}
+
+	for id, keys := range want {
+		credentialType, found := registry.Get(id)
+		if !found {
+			t.Errorf("credential type %q is no longer registered; every stored row of that type is unresolvable", id)
+			continue
+		}
+		got := make([]string, 0, len(credentialType.Properties))
+		for _, field := range credentialType.Properties {
+			got = append(got, field.Key)
+		}
+		if len(got) != len(keys) {
+			t.Errorf("%s field keys = %v, want %v", id, got, keys)
+			continue
+		}
+		for index, key := range keys {
+			if got[index] != key {
+				t.Errorf("%s field %d = %q, want %q", id, index, got[index], key)
+			}
+		}
+		// And a stored payload of that shape round-trips through the same
+		// validation it was written under.
+		payload := map[string]string{}
+		for _, key := range keys {
+			payload[key] = "value-" + key
+		}
+		if err := credentials.Validate(id, payload); err != nil {
+			t.Errorf("a stored %s payload no longer validates: %v", id, err)
+		}
+	}
+}
+
+// TestAuthenticationIsDescribedNotSwitched is the point of the descriptor: a
+// new credential type needs no Go change.
+func TestAuthenticationIsDescribedNotSwitched(t *testing.T) {
+	t.Parallel()
+
+	registry := credentials.NewRegistry()
+	if err := credentials.RegisterAll(registry); err != nil {
+		t.Fatalf("RegisterAll() error = %v", err)
+	}
+	// A brand-new type, registered here with no change to the package: WAHA's
+	// X-Api-Key is exactly this shape.
+	if err := registry.Register(credentials.Type{
+		ID: "wahaApi", DisplayName: "WAHA API",
+		Properties: []property.PropertyDefinition{
+			{Key: "baseUrl", Label: "Base URL", Kind: property.KindString, Required: true},
+			{Key: "apiKey", Label: "API key", Kind: property.KindString, Required: true,
+				TypeOptions: &property.TypeOptions{Password: true}},
+		},
+		Secrets:      []string{"apiKey"},
+		Authenticate: &credentials.Authentication{Placement: credentials.PlacementHeader, Name: "X-Api-Key", Value: "{{ apiKey }}"},
+	}); err != nil {
+		t.Fatalf("Register(wahaApi) error = %v", err)
+	}
+
+	for name, testCase := range map[string]struct {
+		id     string
+		fields map[string]string
+		check  func(*testing.T, *http.Request)
+	}{
+		"basic": {
+			id: "httpBasicAuth", fields: map[string]string{"user": "ada", "password": "secret"},
+			check: func(t *testing.T, request *http.Request) {
+				user, password, ok := request.BasicAuth()
+				if !ok || user != "ada" || password != "secret" {
+					t.Errorf("basic auth = %q/%q (ok %t)", user, password, ok)
+				}
+			},
+		},
+		"bearer": {
+			id: "httpBearerAuth", fields: map[string]string{"token": "t-123"},
+			check: func(t *testing.T, request *http.Request) {
+				if got := request.Header.Get("Authorization"); got != "Bearer t-123" {
+					t.Errorf("Authorization = %q", got)
+				}
+			},
+		},
+		"named header": {
+			id: "httpHeaderAuth", fields: map[string]string{"name": "X-Api-Key", "value": "k-1"},
+			check: func(t *testing.T, request *http.Request) {
+				if got := request.Header.Get("X-Api-Key"); got != "k-1" {
+					t.Errorf("X-Api-Key = %q", got)
+				}
+			},
+		},
+		"a type added with no Go change": {
+			id: "wahaApi", fields: map[string]string{"baseUrl": "https://waha.test", "apiKey": "k-waha"},
+			check: func(t *testing.T, request *http.Request) {
+				if got := request.Header.Get("X-Api-Key"); got != "k-waha" {
+					t.Errorf("X-Api-Key = %q, want the WAHA key", got)
+				}
+			},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			credentialType, _ := registry.Get(testCase.id)
+			request := httptest.NewRequest(http.MethodGet, "https://example.test/x", nil)
+			if err := credentials.ApplyAuthentication(request, credentialType, testCase.fields); err != nil {
+				t.Fatalf("ApplyAuthentication() error = %v", err)
+			}
+			testCase.check(t, request)
+		})
+	}
+}
+
+// TestADatabaseCredentialRefusesToSignAnHTTPRequest covers refusal by absence.
+// Saying "this type cannot authenticate an HTTP request" is a better error than
+// a default branch reached by accident.
+func TestADatabaseCredentialRefusesToSignAnHTTPRequest(t *testing.T) {
+	t.Parallel()
+
+	for _, id := range []string{"postgres", "mysql", "sqlite"} {
+		credentialType, _ := credentials.Default().Get(id)
+		request := httptest.NewRequest(http.MethodGet, "https://example.test/x", nil)
+		err := credentials.ApplyAuthentication(request, credentialType, map[string]string{"password": "p"})
+		if err == nil {
+			t.Errorf("%s signed an HTTP request", id)
+			continue
+		}
+		if !strings.Contains(err.Error(), id) {
+			t.Errorf("%s error = %v, want it to name the type", id, err)
+		}
+	}
+}
+
+// TestRegistryRefusesDuplicatesAndUnknownSecrets keeps the registry honest.
+func TestRegistryRefusesDuplicatesAndUnknownSecrets(t *testing.T) {
+	t.Parallel()
+
+	registry := credentials.NewRegistry()
+	base := credentials.Type{
+		ID: "test.type", DisplayName: "Test",
+		Properties: []property.PropertyDefinition{
+			{Key: "token", Label: "Token", Kind: property.KindString},
+		},
+	}
+	if err := registry.Register(base); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	if err := registry.Register(base); err == nil {
+		t.Error("a duplicate credential type ID was accepted")
+	}
+
+	colliding := credentials.Type{
+		ID: "test.collide", DisplayName: "Collide",
+		Properties: []property.PropertyDefinition{
+			{Key: "token", Label: "Token", Kind: property.KindString},
+			{Key: "token", Label: "Token again", Kind: property.KindString},
+		},
+	}
+	err := registry.Register(colliding)
+	if err == nil {
+		t.Error("colliding field keys were accepted")
+	} else if !strings.Contains(err.Error(), "token") {
+		t.Errorf("error = %v, want the offending key named", err)
+	}
+
+	if err := registry.Register(credentials.Type{
+		ID: "test.badsecret", DisplayName: "Bad secret",
+		Properties: []property.PropertyDefinition{{Key: "a", Label: "A", Kind: property.KindString}},
+		Secrets:    []string{"nonexistent"},
+	}); err == nil {
+		t.Error("a secret naming an unknown field was accepted")
+	}
+}
+
+// TestMaskingAndNonDisclosureAreSeparateFlags is the trap the ticket names.
+//
+// A field masked in the UI is not the same as a field the API never returns.
+// Conflating them would make a masked-but-readable field come back as the
+// placeholder, and users would overwrite real values with it.
+func TestMaskingAndNonDisclosureAreSeparateFlags(t *testing.T) {
+	t.Parallel()
+
+	credentialType := credentials.Type{
+		ID: "test.flags", DisplayName: "Flags",
+		Properties: []property.PropertyDefinition{
+			// Masked in the UI but readable back.
+			{Key: "pin", Label: "PIN", Kind: property.KindString,
+				TypeOptions: &property.TypeOptions{Password: true}},
+			// Masked and never returned.
+			{Key: "token", Label: "Token", Kind: property.KindString,
+				TypeOptions: &property.TypeOptions{Password: true}},
+		},
+		Secrets: []string{"token"},
+	}
+
+	fields := credentialType.Fields()
+	byKey := map[string]bool{}
+	for _, field := range fields {
+		byKey[field.Key] = field.Secret
+	}
+	if byKey["pin"] {
+		t.Error("a password-masked field was marked non-disclosable; its real value must still be readable")
+	}
+	if !byKey["token"] {
+		t.Error("a declared secret was not marked non-disclosable")
 	}
 }

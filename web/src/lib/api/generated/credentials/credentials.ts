@@ -25,7 +25,8 @@ import type {
   CredentialBody,
   CredentialResource,
   CredentialTypeResource,
-  ErrorModel
+  ErrorModel,
+  TestCredentialResource
 } from '../models';
 
 import { apiFetch } from '../../http';
@@ -649,4 +650,97 @@ export const createUpdateCredential = <TError = ErrorType<ErrorModel>,
         TContext
       > => {
       return createMutation(() => ({ ...getUpdateCredentialMutationOptions(options?.()) }), queryClient);
+    }
+    export type testCredentialResponse200 = {
+  data: TestCredentialResource
+  status: 200
+}
+
+export type testCredentialResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type testCredentialResponseSuccess = (testCredentialResponse200) & {
+  headers: Headers;
+};
+export type testCredentialResponseError = (testCredentialResponseDefault) & {
+  headers: Headers;
+};
+
+export type testCredentialResponse = (testCredentialResponseSuccess | testCredentialResponseError)
+
+export const getTestCredentialUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/credentials/${id}/test`
+}
+
+/**
+ * Runs the credential type's declared probe and reports pass or fail. No secret and no remote response body is returned.
+ * @summary Test a credential
+ */
+export const testCredential = async (id: string, options?: Parameters<typeof apiFetch>[1]): Promise<testCredentialResponse> => {
+
+  return apiFetch<testCredentialResponse>(getTestCredentialUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getTestCredentialMutationKey = () => ['testCredential'] as const;
+
+export const getTestCredentialMutationOptions = <TError = ErrorType<ErrorModel>,
+    TContext = unknown>(options?: { mutation?:CreateMutationOptions<Awaited<ReturnType<typeof testCredential>>, TError,TestCredentialMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}
+): CreateMutationOptions<Awaited<ReturnType<typeof testCredential>>, TError,TestCredentialMutationVariables, TContext> => {
+
+const mutationKey = getTestCredentialMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof testCredential>>, TestCredentialMutationVariables> = (props) => {
+          const {id} = props ?? {};
+
+          return  testCredential(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type TestCredentialMutationResult = NonNullable<Awaited<ReturnType<typeof testCredential>>>
+
+    export type TestCredentialMutationError = ErrorType<ErrorModel>
+    export type TestCredentialMutationVariables = {id: string}
+
+    /**
+ * @summary Test a credential
+ */
+export const createTestCredential = <TError = ErrorType<ErrorModel>,
+    TContext = unknown>(options?: () => { mutation?:CreateMutationOptions<Awaited<ReturnType<typeof testCredential>>, TError,TestCredentialMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: () => QueryClient): CreateMutationResult<
+        Awaited<ReturnType<typeof testCredential>>,
+        TError,
+        TestCredentialMutationVariables,
+        TContext
+      > => {
+      return createMutation(() => ({ ...getTestCredentialMutationOptions(options?.()) }), queryClient);
     }

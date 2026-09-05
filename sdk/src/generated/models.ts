@@ -76,6 +76,18 @@ export interface CredentialBody {
   type?: string;
 }
 
+export interface VisibilityCondition {
+  equals: unknown;
+  key: string;
+}
+
+export interface CredentialRequirement {
+  required?: boolean;
+  type: string;
+  /** @nullable */
+  visibleWhen?: VisibilityCondition[] | null;
+}
+
 export type CredentialResourceFields = {[key: string]: string};
 
 export interface CredentialResource {
@@ -154,11 +166,6 @@ export interface TypeOptions {
   rows?: number;
 }
 
-export interface VisibilityCondition {
-  equals: unknown;
-  key: string;
-}
-
 export interface PropertyDefinition {
   default?: unknown;
   description?: string;
@@ -188,6 +195,8 @@ export interface WebhookDeclaration {
 export interface Definition {
   category: string;
   codex?: NodeCodex;
+  /** @nullable */
+  credentials?: CredentialRequirement[] | null;
   description?: string;
   displayName: string;
   documentationUrl?: string;
@@ -686,6 +695,13 @@ export interface ScheduleResource {
   workflowId: string;
 }
 
+export interface TestCredentialResource {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  detail?: string;
+  ok: boolean;
+}
+
 export type WorkflowDocumentInputSettings = {[key: string]: unknown};
 
 export interface WorkflowDocumentInput {
@@ -1162,6 +1178,57 @@ const res = await fetch(getUpdateCredentialUrl(id),
 
   const data: updateCredentialResponse['data'] = body ? JSON.parse(body) : {}
   return { data, status: res.status, headers: res.headers } as updateCredentialResponse
+}
+
+
+
+export type testCredentialResponse200 = {
+  data: TestCredentialResource
+  status: 200
+}
+
+export type testCredentialResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type testCredentialResponseSuccess = (testCredentialResponse200) & {
+  headers: Headers;
+};
+export type testCredentialResponseError = (testCredentialResponseDefault) & {
+  headers: Headers;
+};
+
+export type testCredentialResponse = (testCredentialResponseSuccess | testCredentialResponseError)
+
+export const getTestCredentialUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/credentials/${id}/test`
+}
+
+/**
+ * Runs the credential type's declared probe and reports pass or fail. No secret and no remote response body is returned.
+ * @summary Test a credential
+ */
+export const testCredential = async (id: string, options?: RequestInit): Promise<testCredentialResponse> => {
+
+  const res = await fetch(getTestCredentialUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: testCredentialResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as testCredentialResponse
 }
 
 

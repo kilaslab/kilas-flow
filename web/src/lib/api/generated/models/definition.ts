@@ -5,6 +5,7 @@
  * Embeddable workflow automation engine. Every operation available in the editor is available here: the canvas is a client of this API, not the owner of workflow state.
  * OpenAPI spec version: 0.1.0-dev
  */
+import type { CredentialRequirement } from './credentialRequirement';
 import type { NodeCodex } from './nodeCodex';
 import type { NodeIcon } from './nodeIcon';
 import type { Port } from './port';
@@ -14,6 +15,8 @@ import type { WebhookDeclaration } from './webhookDeclaration';
 export interface Definition {
   category: string;
   codex?: NodeCodex;
+  /** @nullable */
+  credentials?: CredentialRequirement[] | null;
   description?: string;
   displayName: string;
   documentationUrl?: string;

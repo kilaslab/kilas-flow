@@ -10,6 +10,7 @@ import (
 
 	"github.com/kilaslabs/kilas-flow/internal/credentials"
 	"github.com/kilaslabs/kilas-flow/internal/repository"
+	"github.com/kilaslabs/kilas-flow/internal/safehttp"
 )
 
 // CredentialTypeResource describes one credential type so the editor can
@@ -40,6 +41,16 @@ type CredentialResource struct {
 type Credentials struct {
 	store   repository.CredentialRepository
 	tenants TenantResolver
+	// policy is the instance egress policy a credential test runs under. A
+	// probe that bypassed it would be a credential-shaped hole into the
+	// internal network.
+	policy safehttp.Policy
+}
+
+// WithHTTPPolicy sets the egress policy credential tests run under.
+func (handler *Credentials) WithHTTPPolicy(policy safehttp.Policy) *Credentials {
+	handler.policy = policy
+	return handler
 }
 
 // NewCredentials constructs the credential handler.
@@ -114,6 +125,12 @@ func (handler *Credentials) Register(api huma.API) {
 		OperationID: "update-credential", Method: http.MethodPut, Path: "/credentials/{id}",
 		Summary: "Update a credential", Description: "Replaces name, scope, and any field sent with a new value.", Tags: []string{"Credentials"},
 	}, handler.Update)
+	huma.Register(api, huma.Operation{
+		OperationID: "test-credential", Method: http.MethodPost, Path: "/credentials/{id}/test",
+		Summary:     "Test a credential",
+		Description: "Runs the credential type's declared probe and reports pass or fail. No secret and no remote response body is returned.",
+		Tags:        []string{"Credentials"},
+	}, handler.Test)
 	huma.Register(api, huma.Operation{
 		OperationID: "delete-credential", Method: http.MethodDelete, Path: "/credentials/{id}", DefaultStatus: http.StatusNoContent,
 		Summary: "Delete a credential", Description: "Permanently removes a stored credential.", Tags: []string{"Credentials"},
@@ -225,4 +242,60 @@ func credentialResource(record credentials.Record) CredentialResource {
 		AllowedDomains: domains,
 		CreatedAt:      record.CreatedAt, UpdatedAt: record.UpdatedAt,
 	}
+}
+
+// testCredentialInput identifies the credential to probe.
+type testCredentialInput struct {
+	ID string `path:"id"`
+}
+
+// TestCredentialResource reports whether a credential actually works.
+//
+// It carries no secret and no remote body: a probe that echoed the response
+// would be a way to read whatever the credential can reach.
+type TestCredentialResource struct {
+	OK bool `json:"ok"`
+	// Detail explains a failure in terms the user can act on.
+	Detail string `json:"detail,omitempty"`
+}
+
+type testCredentialOutput struct {
+	Body TestCredentialResource
+}
+
+// Test runs the credential type's declared probe.
+//
+// It goes through internal/safehttp under the credential's own AllowedDomains,
+// exactly as an HTTP node would. A probe that bypassed the egress policy would
+// be a credential-shaped hole straight into the internal network: anyone able
+// to store a credential could point its probe at a metadata endpoint and read
+// the result through the pass/fail signal.
+func (handler *Credentials) Test(ctx context.Context, input *testCredentialInput) (*testCredentialOutput, error) {
+	if handler.store == nil {
+		return nil, huma.Error503ServiceUnavailable("credential storage unavailable")
+	}
+	tenant := handler.tenants.Resolve(ctx)
+	record, fields, err := handler.store.Resolve(ctx, tenant, input.ID)
+	if err != nil {
+		return nil, handler.problem(err)
+	}
+
+	credentialType, known := credentials.Default().Get(record.Type)
+	if !known {
+		return &testCredentialOutput{Body: TestCredentialResource{
+			Detail: "this credential's type is not registered on this server",
+		}}, nil
+	}
+	if credentialType.Test == nil {
+		return &testCredentialOutput{Body: TestCredentialResource{
+			Detail: "this credential type has no test defined",
+		}}, nil
+	}
+
+	detail, err := credentials.RunTest(ctx, credentialType, record, fields, handler.policy)
+	if err != nil {
+		// The message is the probe's own diagnosis, never the remote body.
+		return &testCredentialOutput{Body: TestCredentialResource{Detail: err.Error()}}, nil
+	}
+	return &testCredentialOutput{Body: TestCredentialResource{OK: true, Detail: detail}}, nil
 }

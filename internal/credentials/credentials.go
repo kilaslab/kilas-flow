@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"sort"
 	"strings"
 	"time"
 )
@@ -94,76 +93,22 @@ type Definition struct {
 	Fields      []Field `json:"fields"`
 }
 
-var definitions = map[string]Definition{
-	"httpBasicAuth": {
-		ID: "httpBasicAuth", DisplayName: "HTTP Basic Auth",
-		Description: "Sends an RFC 7617 Authorization header.",
-		Fields: []Field{
-			{Key: "user", Label: "User", Required: true},
-			{Key: "password", Label: "Password", Required: true, Secret: true},
-		},
-	},
-	"httpHeaderAuth": {
-		ID: "httpHeaderAuth", DisplayName: "HTTP Header Auth",
-		Description: "Sends a fixed header, for example an API key.",
-		Fields: []Field{
-			{Key: "name", Label: "Header name", Required: true},
-			{Key: "value", Label: "Header value", Required: true, Secret: true},
-		},
-	},
-	"httpBearerAuth": {
-		ID: "httpBearerAuth", DisplayName: "HTTP Bearer Auth",
-		Description: "Sends an Authorization: Bearer header.",
-		Fields: []Field{
-			{Key: "token", Label: "Token", Required: true, Secret: true},
-		},
-	},
-	"postgres": {
-		ID: "postgres", DisplayName: "PostgreSQL",
-		Description: "Connects to a PostgreSQL database you own.",
-		Fields: []Field{
-			{Key: "host", Label: "Host", Required: true},
-			{Key: "port", Label: "Port", Description: "Defaults to 5432."},
-			{Key: "database", Label: "Database", Required: true},
-			{Key: "user", Label: "User", Required: true},
-			{Key: "password", Label: "Password", Required: true, Secret: true},
-			{Key: "sslMode", Label: "SSL mode", Description: "disable, require, verify-ca, or verify-full. Defaults to require."},
-		},
-	},
-	"mysql": {
-		ID: "mysql", DisplayName: "MySQL",
-		Description: "Connects to a MySQL or MariaDB database you own.",
-		Fields: []Field{
-			{Key: "host", Label: "Host", Required: true},
-			{Key: "port", Label: "Port", Description: "Defaults to 3306."},
-			{Key: "database", Label: "Database", Required: true},
-			{Key: "user", Label: "User", Required: true},
-			{Key: "password", Label: "Password", Required: true, Secret: true},
-			{Key: "tls", Label: "TLS", Description: "true, skip-verify, preferred, or a registered config name."},
-		},
-	},
-	"sqlite": {
-		ID: "sqlite", DisplayName: "SQLite file",
-		Description: "Opens a SQLite file on the server. The path must be given explicitly and cannot be KilasFlow's own database.",
-		Fields: []Field{
-			{Key: "path", Label: "File path", Required: true, Description: "Absolute path to the database file."},
-		},
-	},
-}
-
 // Lookup returns one credential type definition.
 func Lookup(id string) (Definition, bool) {
-	definition, found := definitions[id]
-	return definition, found
+	credentialType, found := Default().Get(id)
+	if !found {
+		return Definition{}, false
+	}
+	return credentialType.Definition(), true
 }
 
 // List returns every credential type in stable order.
 func List() []Definition {
-	list := make([]Definition, 0, len(definitions))
-	for _, definition := range definitions {
-		list = append(list, definition)
+	types := Default().List()
+	list := make([]Definition, 0, len(types))
+	for _, credentialType := range types {
+		list = append(list, credentialType.Definition())
 	}
-	sort.Slice(list, func(left, right int) bool { return list[left].ID < list[right].ID })
 	return list
 }
 
@@ -248,21 +193,11 @@ func Split(typeID string, fields map[string]string) (secret, public map[string]s
 
 // Apply attaches this credential's authentication to an outbound request.
 func Apply(request *http.Request, typeID string, fields map[string]string) error {
-	switch typeID {
-	case "httpBasicAuth":
-		request.SetBasicAuth(fields["user"], fields["password"])
-	case "httpBearerAuth":
-		request.Header.Set("Authorization", "Bearer "+fields["token"])
-	case "httpHeaderAuth":
-		name := strings.TrimSpace(fields["name"])
-		if name == "" {
-			return fmt.Errorf("credential header name is empty")
-		}
-		request.Header.Set(name, fields["value"])
-	default:
-		return fmt.Errorf("credential type %q cannot authenticate an HTTP request", typeID)
+	credentialType, found := Default().Get(typeID)
+	if !found {
+		return fmt.Errorf("credential type %q is not supported", typeID)
 	}
-	return nil
+	return ApplyAuthentication(request, credentialType, fields)
 }
 
 // Cipher seals credential payloads with AES-256-GCM.
