@@ -34,6 +34,7 @@ func RegisterAll(registry *node.Registry) error {
 		codeNode(),
 		stickyNoteNode(),
 		loopNode(),
+		telegramTrigger(),
 	} {
 		if err := registry.Register(definition); err != nil {
 			return err

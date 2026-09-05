@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strings"
@@ -53,6 +54,17 @@ type Handler struct {
 	credentials repository.CredentialRepository
 	events      *events.Broker
 	limits      Limits
+	logger      *slog.Logger
+}
+
+// WithLogger replaces the handler's logger. A filtered delivery is the only
+// thing this writes: it is the difference between "the workflow ignored my
+// message" and "the endpoint is broken", and a user has no other way to tell.
+func (handler *Handler) WithLogger(logger *slog.Logger) *Handler {
+	if logger != nil {
+		handler.logger = logger
+	}
+	return handler
 }
 
 // NewHandler constructs the inbound webhook boundary.
@@ -70,7 +82,10 @@ func NewHandler(bindings repository.WebhookRepository, runner Runner, creds repo
 	if limits.ResponseTimeout <= 0 {
 		limits.ResponseTimeout = DefaultLimits().ResponseTimeout
 	}
-	return &Handler{bindings: bindings, runner: runner, credentials: creds, events: broker, limits: limits}
+	return &Handler{
+		bindings: bindings, runner: runner, credentials: creds,
+		events: broker, limits: limits, logger: slog.Default(),
+	}
 }
 
 // ServeHTTP routes one inbound request to its workflow.
@@ -115,6 +130,17 @@ func (handler *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if kind.Verify != nil {
 		if err := kind.Verify(delivery); err != nil {
 			problem(w, http.StatusUnauthorized, err.Error())
+			return
+		}
+	}
+	// Filtering is not verification, and the answer is different on purpose:
+	// an update the trigger was restricted away from was received correctly and
+	// deliberately not acted on, so the sender is told 200 and stops retrying.
+	if kind.Accept != nil {
+		if accepted, reason := kind.Accept(delivery); !accepted {
+			handler.logger.Info("a delivery was filtered out by its trigger",
+				"route", binding.Route, "workflow", binding.WorkflowID, "node", binding.NodeID, "reason", reason)
+			writeJSON(w, http.StatusOK, map[string]any{"filtered": true, "reason": reason})
 			return
 		}
 	}
@@ -235,6 +261,30 @@ func (handler *Handler) authenticate(r *http.Request, binding repository.Webhook
 	return 0, nil
 }
 
+// credentialFields resolves the credential of one type the binding names.
+//
+// The type is checked rather than trusted: a binding whose reference points at
+// a credential of another type is a misconfiguration, and using it anyway would
+// hand a bot token to something expecting an API key.
+func (handler *Handler) credentialFields(ctx context.Context, binding repository.WebhookBinding, credentialType string) (map[string]string, error) {
+	if handler.credentials == nil {
+		return nil, errors.New("credentials are not configured on this server")
+	}
+	references, _ := binding.Parameters["$credentials"].(map[string]any)
+	id, _ := references[credentialType].(string)
+	if strings.TrimSpace(id) == "" {
+		return nil, fmt.Errorf("this trigger has no %s credential attached", credentialType)
+	}
+	record, fields, err := handler.credentials.Resolve(ctx, repository.TenantScope{ID: binding.TenantID}, id)
+	if err != nil {
+		return nil, fmt.Errorf("this trigger's %s credential could not be resolved", credentialType)
+	}
+	if record.Type != credentialType {
+		return nil, fmt.Errorf("this trigger is bound to a %s credential, not %s", record.Type, credentialType)
+	}
+	return fields, nil
+}
+
 func credentialReference(binding repository.WebhookBinding) string {
 	credentialsValue, ok := binding.Parameters["$credentials"].(map[string]any)
 	if !ok {
@@ -298,6 +348,11 @@ func (handler *Handler) readDelivery(r *http.Request, binding repository.Webhook
 	return Delivery{
 		Request: r, RawBody: raw, ContentType: contentType, Binding: binding,
 		Headers: headers, Query: query, Body: decodeBody(raw, contentType),
+		// A closure rather than the record: a delivery that never verifies
+		// never decrypts anything.
+		Credential: func(credentialType string) (map[string]string, error) {
+			return handler.credentialFields(r.Context(), binding, credentialType)
+		},
 	}, nil
 }
 
@@ -584,3 +639,10 @@ func (handler *Handler) answerDuplicate(w http.ResponseWriter, r *http.Request, 
 		"duplicate":   true,
 	})
 }
+
+// QueueRunner exposes the queueing half of the handler.
+//
+// Telegram's polling mode has no HTTP request to arrive on and still has to
+// queue an execution against a binding, so it needs the same seam the inbound
+// boundary uses rather than a second path into the runtime.
+func (handler *Handler) QueueRunner() Runner { return handler.runner }

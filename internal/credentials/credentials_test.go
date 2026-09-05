@@ -255,6 +255,7 @@ func TestEveryStoredCredentialTypeStillResolves(t *testing.T) {
 		"mysql":          {"host", "port", "database", "user", "password", "tls"},
 		"sqlite":         {"path"},
 		"wahaApi":        {"baseUrl", "apiKey"},
+		"telegramApi":    {"accessToken", "baseUrl"},
 	}
 
 	registry := credentials.NewRegistry()

@@ -93,6 +93,26 @@ func RegisterAll(registry *Registry) error {
 			Secrets: []string{"password"},
 		},
 		{
+			ID: "telegramApi", DisplayName: "Telegram",
+			Description: "A Telegram bot token from BotFather.",
+			Properties: []property.PropertyDefinition{
+				{
+					Key: "accessToken", Label: "Access token", Kind: property.KindString, Required: true,
+					TypeOptions: &property.TypeOptions{Password: true},
+					Description: "The token BotFather gave you, in the form 123456:ABC-DEF…",
+				},
+				{
+					Key: "baseUrl", Label: "Base URL", Kind: property.KindString,
+					Description: "Where the Bot API lives. Leave empty for https://api.telegram.org; set it only when you run Telegram's own local Bot API server.",
+				},
+			},
+			Secrets: []string{"accessToken"},
+			// No Authenticate descriptor on purpose. The Bot API puts the token
+			// in the *path* — https://api.telegram.org/bot<token>/method — so
+			// there is no header or query parameter to place, and declaring one
+			// would describe an authentication that does not happen.
+		},
+		{
 			ID: "wahaApi", DisplayName: "WAHA",
 			Description: "A self-hosted WAHA instance: its base URL and its API key.",
 			Properties: []property.PropertyDefinition{

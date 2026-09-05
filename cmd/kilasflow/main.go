@@ -120,7 +120,7 @@ func run() error {
 	// keeps the envelope it has always produced; a pack-supplied trigger names
 	// the shape it wants rather than shipping Go code to build one.
 	webhookTriggers := webhook.NewRegistry()
-	if err := webhookTriggers.Register(nodes.WebhookNodeType, webhook.TriggerKind{Shape: webhook.ShapeEnvelope}); err != nil {
+	if err := nodes.RegisterTriggerKinds(webhookTriggers); err != nil {
 		return fmt.Errorf("register webhook triggers: %w", err)
 	}
 
@@ -206,9 +206,24 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("configure execution runtime: %w", err)
 	}
-	// Every trigger's hook binding is verified now that the packs have
-	// registered theirs, so a node declaring a hook nobody registered fails
-	// here rather than silently never registering at its first activation.
+	webhookHandler := webhook.NewHandler(workflows, runtime, credentialStore, eventBroker, webhook.Limits{
+		MaxBodyBytes:    cfg.Webhook.MaxBodyBytes,
+		ResponseTimeout: cfg.Webhook.ResponseTimeout,
+		DeliveryWindow:  repository.DefaultDeliveryWindow,
+	}).WithTriggers(webhookTriggers).WithLogger(log)
+
+	// Telegram's development delivery mode. The supervisor's context is the
+	// server's, not an activation request's: a poller cancelled when its HTTP
+	// request finished would stop the moment it started.
+	telegramPollers := nodes.NewTelegramPollers(ctx, outboundPolicy(cfg.Outbound), webhookHandler.QueueRunner())
+	nodes.SetTelegramFileClient(nodes.NewTelegramFileClient(outboundPolicy(cfg.Outbound)))
+	if err := nodes.RegisterLifecycles(webhookLifecycles, telegramPollers); err != nil {
+		return fmt.Errorf("register webhook lifecycles: %w", err)
+	}
+	// Every trigger's hook binding is verified now that the packs and the
+	// built-ins have registered theirs, so a node declaring a hook nobody
+	// registered fails here rather than silently never registering at its
+	// first activation.
 	if err := webhook.VerifyLifecycleBindings(nodeRegistry.LifecycleIDs(), webhookLifecycles); err != nil {
 		return fmt.Errorf("verify webhook lifecycles: %w", err)
 	}
@@ -238,11 +253,7 @@ func run() error {
 		Workflows:    workflows,
 		Executions:   executions,
 		Schedules:    schedules,
-		Webhook: webhook.NewHandler(workflows, runtime, credentialStore, eventBroker, webhook.Limits{
-			MaxBodyBytes:    cfg.Webhook.MaxBodyBytes,
-			ResponseTimeout: cfg.Webhook.ResponseTimeout,
-			DeliveryWindow:  repository.DefaultDeliveryWindow,
-		}).WithTriggers(webhookTriggers),
+		Webhook:      webhookHandler,
 		Credentials:  credentialStore,
 		OptionLoader: optionLoader,
 		CredentialResolverFor: func(tenant repository.TenantScope) loadoptions.CredentialResolver {

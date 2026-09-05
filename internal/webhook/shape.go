@@ -31,6 +31,21 @@ type Delivery struct {
 	Query   map[string]any
 	// Body is the decoded body: a map or slice for JSON, a string otherwise.
 	Body any
+	// Credential resolves the credential the binding names, by type.
+	//
+	// A verifier needs it: Telegram's per-delivery secret is derived from the
+	// bot token, so checking a delivery means reading the same credential the
+	// registration used. It is a closure rather than the record itself so a
+	// delivery that never verifies never decrypts anything.
+	Credential func(credentialType string) (map[string]string, error)
+}
+
+// Fields resolves the named credential, or an empty map.
+func (delivery Delivery) Fields(credentialType string) (map[string]string, error) {
+	if delivery.Credential == nil {
+		return nil, fmt.Errorf("credentials are not available at this endpoint")
+	}
+	return delivery.Credential(credentialType)
 }
 
 // Shape turns one delivery into the item a trigger's workflow sees.
@@ -102,7 +117,21 @@ type TriggerKind struct {
 	// Verify is optional. When set it runs before the execution is queued and
 	// its error is the client's answer.
 	Verify Verifier
+	// Accept is optional and is *not* verification. It answers whether this
+	// delivery is one the node asked for — a Telegram update from a chat the
+	// trigger is restricted away from, say.
+	//
+	// The distinction is the answer given. A failed signature is 401 and means
+	// "you should not be sending this"; a filtered update is 200 and means "I
+	// received it and chose not to act", which is what the sender should be
+	// told so it stops retrying. Collapsing the two would either invite
+	// Telegram to retry a message the user filtered out, or teach an attacker
+	// which chat ids a workflow watches.
+	Accept Filter
 }
+
+// Filter reports whether a delivery is one the trigger asked for, and why not.
+type Filter func(Delivery) (bool, string)
 
 // Registry maps a trigger node type to how its deliveries are shaped and
 // checked.

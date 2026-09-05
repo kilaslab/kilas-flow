@@ -118,8 +118,11 @@ func TestRegistrationOrderIsDeterministic(t *testing.T) {
 func TestEveryDeclaredLifecycleIsBound(t *testing.T) {
 	catalogue, _ := composition(t)
 	lifecycles := webhook.NewLifecycleRegistry()
-	// Nothing ships one yet; the assertion is that the two agree, whatever
-	// either holds.
+	// The same function composition calls, so this asserts that the catalogue
+	// and the hooks agree rather than that a test agrees with itself.
+	if err := nodes.RegisterLifecycles(lifecycles, nil); err != nil {
+		t.Fatalf("RegisterLifecycles() error = %v", err)
+	}
 	if err := webhook.VerifyLifecycleBindings(catalogue.LifecycleIDs(), lifecycles); err != nil {
 		t.Errorf("a node declares a webhook lifecycle that composition does not register: %v", err)
 	}

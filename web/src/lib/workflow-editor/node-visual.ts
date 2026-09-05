@@ -5,6 +5,7 @@ import Bot from '@lucide/svelte/icons/bot';
 import Box from '@lucide/svelte/icons/box';
 import CircleHelp from '@lucide/svelte/icons/circle-help';
 import Repeat from '@lucide/svelte/icons/repeat';
+import Send from '@lucide/svelte/icons/send';
 import StickyNote from '@lucide/svelte/icons/sticky-note';
 import Clock from '@lucide/svelte/icons/clock';
 import Code from '@lucide/svelte/icons/code';
@@ -76,6 +77,7 @@ const GLYPHS: Record<string, Component> = {
 	pencil: PencilLine,
 	reply: CornerDownLeft,
 	repeat: Repeat,
+	send: Send,
 	'sticky-note': StickyNote,
 	webhook: Webhook,
 	wrench: Wrench

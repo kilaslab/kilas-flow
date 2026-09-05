@@ -159,6 +159,39 @@ works air-gapped, and an embedding customer's traffic never reaches a third
 party. `TestDocsUIHasNoExternalDependencies` guards the page; the CSP guards
 the runtime. Cost: about 3.6 MB of the binary.
 
+### Receiving Telegram updates on a laptop
+
+The Telegram trigger has a **Delivery** parameter with two values, and which one
+you want depends on whether the machine has a public HTTPS address.
+
+**Webhook** is the default and the only one for production. Activating the
+workflow calls `setWebhook` with the workflow's own URL — built from
+`server.public_url`, so that has to be the address Telegram can reach — plus the
+updates you selected and a secret derived from the bot token and the route.
+Telegram returns that secret in `X-Telegram-Bot-Api-Secret-Token` on every
+delivery and the endpoint refuses anything that does not match, so a leaked URL
+is not enough to inject updates. Telegram accepts only HTTPS; activation says so
+by name rather than passing along the Bot API's own error.
+
+To use it from a laptop, put a tunnel in front:
+
+```sh
+cloudflared tunnel --url http://localhost:8080   # or: ngrok http 8080
+KILASFLOW_SERVER_PUBLIC_URL=https://<the-tunnel-host> make run
+```
+
+**Polling** needs no public address at all. The server calls `getUpdates` in a
+long poll for as long as the workflow is active, and everything downstream of
+the update is identical — same item shape, same restriction filters, same
+downloads. Two things to know: it runs in **one process**, so it is wrong for a
+deployment running several workers, and Telegram refuses `getUpdates` while a
+webhook is registered — so activating a polling trigger deletes the webhook
+first, and re-activating a webhook trigger puts it back.
+
+Either way the bot token is a `telegramApi` credential. Its Base URL field is
+normally empty; set it only if you run [Telegram's own local Bot API
+server](https://core.telegram.org/bots/api#using-a-local-bot-api-server).
+
 ## Roadmap
 
 | Milestone | Scope |
