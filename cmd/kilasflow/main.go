@@ -120,10 +120,15 @@ func run() error {
 		return fmt.Errorf("register the declarative routing executor: %w", err)
 	}
 	// Edit-time option loading. It reaches a customer's service through the
-	// same egress policy an HTTP node uses, so a loader aimed at a disallowed
-	// host fails the same way — and a pack registers its own internal loaders
+	// same egress policy an HTTP node uses — the operator's, not the library
+	// default, which is what this line said and did not do: a loader ignored
+	// allowed_hosts entirely, so a deployment that restricted egress found the
+	// restriction applied at run time and not while editing. It also ignored
+	// allow_private_networks, so the reverse held too and a deployment that
+	// permitted them found its loaders blocked. A loader aimed at a disallowed
+	// host now fails the same way — and a pack registers its own internal loaders
 	// into it, which is why it is built here rather than at the API.
-	optionLoader := loadoptions.NewResolver(safehttp.DefaultPolicy(), 30*time.Second)
+	optionLoader := loadoptions.NewResolver(outboundPolicy(cfg.Outbound), 30*time.Second)
 	// Database introspection, under the same guard the executors receive: a
 	// SQLite credential naming KilasFlow's own database is refused at edit time
 	// exactly as it is at run time.

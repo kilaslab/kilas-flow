@@ -58,9 +58,11 @@ applies to the report too.
 - `internal/routing/doc.go` and `nodepack.Register` — both claim a routing
   description is checked at registration. The invariant is said to be
   structural rather than asserted.
-- `cmd/kilasflow/main.go:115` — claims option loading reaches a service through
+- ~~`cmd/kilasflow/main.go` — claims option loading reaches a service through
   "the same egress policy an HTTP node uses", on the line above a
-  `safehttp.DefaultPolicy()` call.
+  `safehttp.DefaultPolicy()` call.~~ **Checked, and it was the code that was
+  wrong.** Fixed: the loader now takes `outboundPolicy(cfg.Outbound)`. See the
+  evidence.
 - Repository tenancy: something claims every repository operation takes a
   `TenantScope` and that forgetting one does not compile. `ClaimNext`,
   `ClaimDue`, the webhook `Resolve`, `ClaimDelivery`, `PruneAllVersions` and
@@ -123,3 +125,25 @@ package-level one is for.
 Stopped here because the session was scheduled to end, not because the
 remaining seven were judged accurate. Whoever picks this up should read the
 function before the comment, which is the whole lesson of the ticket.
+
+### The third one checked, and it was a behavioural defect
+
+`cmd/kilasflow/main.go` said edit-time option loading reached a customer's
+service "through the same egress policy an HTTP node uses". An HTTP node was
+handed `outboundPolicy(cfg.Outbound)`; the loader was handed
+`safehttp.DefaultPolicy()`. Those differ in everything an operator configures —
+`allowed_hosts`, `allow_private_networks`, `max_redirects`, `max_response_bytes`
+and `timeout`.
+
+It is wrong in both directions. A deployment that restricted egress to an
+allowlist found the restriction applied when a workflow ran and **not** while
+somebody edited one, so an option loader could reach a host the operator had
+excluded. A deployment that permitted private networks found its loaders
+blocked instead.
+
+This is the case the ticket's implementation plan anticipated: "some of these
+describe the behaviour somebody *intended*, and the right fix may be the code."
+Here it was. The comment now says what the line does and what it used to fail
+to do.
+
+Six candidates remain unchecked.
