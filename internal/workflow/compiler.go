@@ -275,7 +275,18 @@ func Compile(document Document, catalog Catalog) (IR, error) {
 // run by the native graph engine. A runnable graph has one trigger-like root
 // (a registered node with no declared inputs), every non-root node receives
 // data on each declared input port, and every node is reachable from that
-// root. The registry currently exposes Manual Trigger as the only such root.
+// root: a node with no inputs that begins item flow.
+// producesItems reports whether a node emits on the item channel, which is
+// what separates a trigger from a configuration provider.
+func producesItems(ports []Port) bool {
+	for _, port := range ports {
+		if port.Kind == ConnectionMain {
+			return true
+		}
+	}
+	return false
+}
+
 func validateExecutableTopology(ir IR, issues *ValidationErrors) {
 	incoming := make(map[string]map[string]int, len(ir.Nodes))
 	adjacent := make(map[string][]string, len(ir.Nodes))
@@ -290,16 +301,29 @@ func validateExecutableTopology(ir IR, issues *ValidationErrors) {
 	roots := make([]IRNode, 0, 1)
 	for index, node := range ir.Nodes {
 		if len(node.Definition.Inputs) == 0 {
-			roots = append(roots, node)
 			if len(incoming[node.ID]) > 0 {
 				issues.add(ValidationError{
 					Code: ErrorInvalidTopology, Path: fmt.Sprintf("/nodes/%d", index), NodeID: node.ID,
 					Message: "workflow trigger must not have incoming connections",
 				})
 			}
+			// A node with no inputs is a trigger only if it starts item flow.
+			// A chat model, a memory, or a tool also has no inputs, but it
+			// supplies configuration to the node it attaches to rather than
+			// beginning a run — counting one as a trigger would make every
+			// agent graph look like it had several roots.
+			if producesItems(node.Definition.Outputs) {
+				roots = append(roots, node)
+			}
 			continue
 		}
 		for _, port := range node.Definition.Inputs {
+			// Only the item channel is required. A typed attachment port such as
+			// ai_memory or ai_tool is optional by nature: an agent with no
+			// memory and no tools is a perfectly valid agent.
+			if port.Kind != ConnectionMain {
+				continue
+			}
 			if incoming[node.ID][port.Name] == 0 {
 				issues.add(ValidationError{
 					Code: ErrorInvalidTopology, Path: fmt.Sprintf("/nodes/%d", index), NodeID: node.ID,
@@ -328,6 +352,31 @@ func validateExecutableTopology(ir IR, issues *ValidationErrors) {
 			}
 			reachable[targetID] = struct{}{}
 			queue = append(queue, targetID)
+		}
+	}
+	// An attachment provider is reached through the node it configures, not
+	// from the trigger: a chat model is downstream of nothing, yet it is
+	// plainly part of the graph. Walking attachment edges backwards from
+	// reachable nodes is what makes an agent's model, memory, and tools count
+	// as connected. Repeating until nothing changes covers a provider that
+	// attaches to another provider.
+	for {
+		grew := false
+		for _, edge := range ir.Edges {
+			if edge.Kind == ConnectionMain {
+				continue
+			}
+			if _, targetReached := reachable[edge.Target.NodeID]; !targetReached {
+				continue
+			}
+			if _, sourceReached := reachable[edge.Source.NodeID]; sourceReached {
+				continue
+			}
+			reachable[edge.Source.NodeID] = struct{}{}
+			grew = true
+		}
+		if !grew {
+			break
 		}
 	}
 	for index, node := range ir.Nodes {

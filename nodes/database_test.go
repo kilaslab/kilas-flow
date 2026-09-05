@@ -306,3 +306,18 @@ func mustJSON(t *testing.T, value any) string {
 	}
 	return string(encoded)
 }
+
+// sqlGuard is the empty guard used by tests that do not exercise the
+// internal-database protection.
+func sqlGuard() sqlnode.Guard { return sqlnode.Guard{} }
+
+// runExecutor looks up a registered executor and runs it, so a test exercises
+// the same binding the engine would.
+func runExecutor(t *testing.T, registry *engine.Registry, executorID string, ir workflow.IRNode, input workflow.NodeInput, request engine.Request) (workflow.NodeOutput, error) {
+	t.Helper()
+	executor, found := registry.Lookup(executorID)
+	if !found {
+		t.Fatalf("executor %q is not registered", executorID)
+	}
+	return executor.Execute(context.Background(), ir, input, request)
+}

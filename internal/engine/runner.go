@@ -12,11 +12,38 @@ import (
 	"github.com/kilaslabs/kilas-flow/internal/workflow"
 )
 
-// ExecutionContext is the identity a node parameter may read through the
-// `$execution` expression root.
+// ExecutionContext is the identity a node may read: the `$execution`
+// expression root exposes ID and Mode, while tenant and workflow are available
+// to executors that need to scope storage, such as agent memory.
 type ExecutionContext struct {
-	ID   string
-	Mode string
+	ID         string
+	Mode       string
+	TenantID   string
+	WorkflowID string
+}
+
+// NodeEvent is a nested occurrence an executor publishes while it runs, such
+// as an agent's model turn or tool call.
+//
+// It exists so a long-running node can report progress through the one
+// standardized execution event channel instead of inventing its own.
+type NodeEvent struct {
+	NodeID string
+	Name   string
+	Detail json.RawMessage
+}
+
+// NodeEventSink receives nested node events. It must never block the run: an
+// implementation that cannot keep up drops rather than stalls, because event
+// delivery is never allowed to gate execution.
+type NodeEventSink func(NodeEvent)
+
+// Emit is nil-safe so an executor need not guard every publish.
+func (sink NodeEventSink) Emit(event NodeEvent) {
+	if sink == nil {
+		return
+	}
+	sink(event)
 }
 
 // CredentialResolver hands an executor the decrypted fields of a credential
@@ -48,6 +75,8 @@ type Request struct {
 	// what enters it; nothing reads os.Environ during execution.
 	Env         map[string]string
 	Credentials CredentialResolver
+	// Events publishes nested progress from inside a node.
+	Events NodeEventSink
 	// NodeOutputs maps a completed node's display name to its first output
 	// item, backing the `$node` expression root. The runner fills it as the
 	// graph progresses, so a node only ever sees nodes that ran before it.
@@ -88,7 +117,10 @@ func (registry *Registry) Register(id string, executor Executor) error {
 	return nil
 }
 
-func (registry *Registry) lookup(id string) (Executor, bool) {
+// Lookup returns a registered executor. It is exported so a test can run the
+// exact binding the engine would, rather than constructing an executor a
+// different way and asserting on something the engine never uses.
+func (registry *Registry) Lookup(id string) (Executor, bool) {
 	if registry == nil {
 		return nil, false
 	}
@@ -183,7 +215,7 @@ func (runner *Runner) Run(ctx context.Context, ir workflow.IR, request Request) 
 		if err != nil {
 			return Result{}, fmt.Errorf("build node %q input: %w", nodeID, err)
 		}
-		executor, found := runner.executors.lookup(node.Definition.ExecutorID)
+		executor, found := runner.executors.Lookup(node.Definition.ExecutorID)
 		if !found {
 			return Result{}, fmt.Errorf("node %q executor %q is not registered", nodeID, node.Definition.ExecutorID)
 		}
@@ -300,6 +332,7 @@ func cloneRequest(request Request) Request {
 		Input:       cloneItem(request.Input),
 		Execution:   request.Execution,
 		Credentials: request.Credentials,
+		Events:      request.Events,
 		Env:         make(map[string]string, len(request.Env)),
 		NodeOutputs: make(map[string]map[string]any, len(request.NodeOutputs)),
 	}

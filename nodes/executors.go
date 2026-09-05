@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/kilaslabs/kilas-flow/internal/ai"
 	"github.com/kilaslabs/kilas-flow/internal/engine"
 	"github.com/kilaslabs/kilas-flow/internal/safehttp"
 	"github.com/kilaslabs/kilas-flow/internal/sqlnode"
@@ -18,19 +19,23 @@ import (
 // hosted install must refuse private targets, while a self-hosted one may
 // legitimately call services on its own network, and the guard carries the
 // install's own database paths so a SQLite credential can never open them.
-func RegisterExecutors(registry *engine.Registry, httpPolicy safehttp.Policy, databaseGuard sqlnode.Guard) error {
+func RegisterExecutors(registry *engine.Registry, httpPolicy safehttp.Policy, databaseGuard sqlnode.Guard, agentRuntime ai.AgentRuntime, agentMemory ai.Memory) error {
 	for id, executor := range map[string]engine.Executor{
-		"core.manual":      engine.ExecutorFunc(executeManual),
-		"core.set":         engine.ExecutorFunc(executeSet),
-		"core.if":          engine.ExecutorFunc(executeIF),
-		"core.merge":       engine.ExecutorFunc(executeMerge),
-		HTTPExecutorID:     NewHTTPExecutor(httpPolicy),
-		WebhookExecutorID:  engine.ExecutorFunc(executeWebhook),
-		ScheduleExecutorID: engine.ExecutorFunc(executeSchedule),
-		RespondExecutorID:  engine.ExecutorFunc(executeRespond),
-		PostgresExecutorID: NewDatabaseExecutor(sqlnode.DriverPostgres, "postgres", databaseGuard),
-		MySQLExecutorID:    NewDatabaseExecutor(sqlnode.DriverMySQL, "mysql", databaseGuard),
-		SQLiteExecutorID:   NewDatabaseExecutor(sqlnode.DriverSQLite, "sqlite", databaseGuard),
+		"core.manual":       engine.ExecutorFunc(executeManual),
+		"core.set":          engine.ExecutorFunc(executeSet),
+		"core.if":           engine.ExecutorFunc(executeIF),
+		"core.merge":        engine.ExecutorFunc(executeMerge),
+		HTTPExecutorID:      NewHTTPExecutor(httpPolicy),
+		WebhookExecutorID:   engine.ExecutorFunc(executeWebhook),
+		ScheduleExecutorID:  engine.ExecutorFunc(executeSchedule),
+		RespondExecutorID:   engine.ExecutorFunc(executeRespond),
+		PostgresExecutorID:  NewDatabaseExecutor(sqlnode.DriverPostgres, "postgres", databaseGuard),
+		MySQLExecutorID:     NewDatabaseExecutor(sqlnode.DriverMySQL, "mysql", databaseGuard),
+		SQLiteExecutorID:    NewDatabaseExecutor(sqlnode.DriverSQLite, "sqlite", databaseGuard),
+		ChatModelExecutorID: engine.ExecutorFunc(executeChatModel),
+		MemoryExecutorID:    engine.ExecutorFunc(executeMemory),
+		HTTPToolExecutorID:  engine.ExecutorFunc(executeHTTPTool),
+		AgentExecutorID:     NewAgentExecutor(agentRuntime, httpPolicy, agentMemory),
 	} {
 		if err := registry.Register(id, executor); err != nil {
 			return err

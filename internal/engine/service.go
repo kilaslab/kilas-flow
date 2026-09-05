@@ -300,10 +300,23 @@ func (service *Service) run(ctx context.Context, record execution.Record, docume
 		return Result{}, err
 	}
 	return service.runner.Run(ctx, ir, Request{
-		Input:       item,
-		Execution:   ExecutionContext{ID: record.ID, Mode: string(record.Trigger)},
+		Input: item,
+		Execution: ExecutionContext{
+			ID: record.ID, Mode: string(record.Trigger),
+			TenantID: record.TenantID, WorkflowID: record.WorkflowID,
+		},
 		Env:         service.environment,
 		Credentials: &tenantCredentials{store: service.credentials, tenant: repository.TenantScope{ID: record.TenantID}},
+		// Nested node progress joins the one standardized event channel rather
+		// than a parallel one. It is published as it happens, before the node's
+		// own run is durable, which is exactly why these events carry no state
+		// a consumer is allowed to treat as authoritative.
+		Events: func(event NodeEvent) {
+			service.publish(events.Event{
+				TenantID: record.TenantID, ExecutionID: record.ID, WorkflowID: record.WorkflowID,
+				NodeID: event.NodeID, Type: events.Type(event.Name), Data: event.Detail,
+			})
+		},
 	})
 }
 

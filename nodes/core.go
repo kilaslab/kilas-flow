@@ -20,6 +20,10 @@ func RegisterAll(registry *node.Registry) error {
 		postgresNode(),
 		mysqlNode(),
 		sqliteNode(),
+		chatModelNode(),
+		memoryNode(),
+		httpToolNode(),
+		agentNode(),
 	} {
 		if err := registry.Register(definition); err != nil {
 			return err

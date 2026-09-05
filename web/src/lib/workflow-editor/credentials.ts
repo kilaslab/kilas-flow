@@ -14,7 +14,11 @@ const BY_NODE_TYPE: Record<string, string[]> = {
 	// no shared or fallback connection to fall back to.
 	'kilasflow.postgres': ['postgres'],
 	'kilasflow.mysql': ['mysql'],
-	'kilasflow.sqlite': ['sqlite']
+	'kilasflow.sqlite': ['sqlite'],
+	// The chat model authenticates with a bearer token, so it reuses the same
+	// credential type an HTTP Request would rather than inventing one.
+	'kilasflow.chatModel': ['httpBearerAuth'],
+	'kilasflow.httpTool': ['httpBasicAuth', 'httpHeaderAuth', 'httpBearerAuth']
 };
 
 export function credentialTypesFor(nodeType: string): string[] {

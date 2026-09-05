@@ -14,6 +14,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/kilaslabs/kilas-flow/internal/ai"
 	"github.com/kilaslabs/kilas-flow/internal/api"
 	"github.com/kilaslabs/kilas-flow/internal/api/handlers"
 	"github.com/kilaslabs/kilas-flow/internal/config"
@@ -81,7 +82,12 @@ func run() error {
 		return fmt.Errorf("register built-in nodes: %w", err)
 	}
 	executorRegistry := engine.NewRegistry()
-	if err := nodes.RegisterExecutors(executorRegistry, outboundPolicy(cfg.Outbound), databaseGuard(cfg.Database)); err != nil {
+	agentMemory, err := ai.NewBufferMemory(ai.Retention{}, nil)
+	if err != nil {
+		return fmt.Errorf("configure agent memory: %w", err)
+	}
+	if err := nodes.RegisterExecutors(executorRegistry, outboundPolicy(cfg.Outbound), databaseGuard(cfg.Database),
+		ai.NewLoopRuntime(), agentMemory); err != nil {
 		return fmt.Errorf("register built-in executors: %w", err)
 	}
 

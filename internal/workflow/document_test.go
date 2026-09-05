@@ -540,7 +540,12 @@ func TestCompileCopiesCanonicalDataIntoIndependentIR(t *testing.T) {
 	}
 
 	ir, err := workflow.Compile(document, catalog{
-		"kilasflow.set": {Type: "kilasflow.set", Version: 1},
+		// A single-node graph still needs an item-producing root; this test is
+		// about IR data independence, not topology.
+		"kilasflow.set": {
+			Type: "kilasflow.set", Version: 1,
+			Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+		},
 	})
 	if err != nil {
 		t.Fatalf("Compile() error = %v", err)

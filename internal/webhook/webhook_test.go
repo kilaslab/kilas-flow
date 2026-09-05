@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kilaslabs/kilas-flow/internal/ai"
 	"github.com/kilaslabs/kilas-flow/internal/config"
 	"github.com/kilaslabs/kilas-flow/internal/credentials"
 	"github.com/kilaslabs/kilas-flow/internal/database"
@@ -71,7 +72,7 @@ func newHarness(t *testing.T) harness {
 	executors := engine.NewRegistry()
 	policy := safehttp.DefaultPolicy()
 	policy.AllowPrivateNetworks = true
-	if err := nodes.RegisterExecutors(executors, policy, sqlnode.Guard{}); err != nil {
+	if err := nodes.RegisterExecutors(executors, policy, sqlnode.Guard{}, ai.NewLoopRuntime(), nil); err != nil {
 		t.Fatalf("RegisterExecutors() error = %v", err)
 	}
 
