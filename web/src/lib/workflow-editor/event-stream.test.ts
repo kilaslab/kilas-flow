@@ -8,7 +8,7 @@ function event(overrides: Partial<ExecutionEvent> & { type: string }): Execution
 }
 
 function run(nodeId: string, status: string): ExecutionNodeRunResource {
-	return { nodeId, attempt: 1, sequence: 1, status, startedAt: '2026-09-05T01:00:00Z' };
+	return { nodeId, attempt: 1, runIndex: 0, sequence: 1, status, startedAt: '2026-09-05T01:00:00Z' };
 }
 
 describe('isTerminal', () => {

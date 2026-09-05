@@ -173,6 +173,7 @@ type executionRequestOutput struct {
 type ExecutionNodeRunResource struct {
 	NodeID     string           `json:"nodeId"`
 	Attempt    int              `json:"attempt"`
+	RunIndex   int              `json:"runIndex" doc:"The Nth time this node ran in the execution, counting from zero. Distinct from attempt, which counts retries of one run."`
 	Sequence   int              `json:"sequence"`
 	Status     execution.Status `json:"status"`
 	Input      json.RawMessage  `json:"input,omitempty"`
@@ -490,7 +491,7 @@ func executionResource(record execution.Record) ExecutionResource {
 	}
 	for _, nodeRun := range record.NodeRuns {
 		resource.NodeRuns = append(resource.NodeRuns, ExecutionNodeRunResource{
-			NodeID: nodeRun.NodeID, Attempt: nodeRun.Attempt, Sequence: nodeRun.Sequence,
+			NodeID: nodeRun.NodeID, Attempt: nodeRun.Attempt, RunIndex: nodeRun.RunIndex, Sequence: nodeRun.Sequence,
 			Status: nodeRun.Status, Input: execution.Redact(nodeRun.Input),
 			Output: execution.Redact(nodeRun.Output), Error: execution.Redact(nodeRun.Error),
 			StartedAt: nodeRun.StartedAt, FinishedAt: nodeRun.FinishedAt,

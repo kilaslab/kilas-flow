@@ -184,19 +184,25 @@ type executionModel struct {
 func (executionModel) TableName() string { return "executions" }
 
 type executionNodeRunModel struct {
-	ID          string    `gorm:"primaryKey;size:64"`
-	TenantID    string    `gorm:"not null;size:64;index:idx_node_runs_tenant_execution,priority:1"`
-	ExecutionID string    `gorm:"not null;size:64;index:idx_node_runs_tenant_execution,priority:2;uniqueIndex:uidx_node_runs_attempt,priority:1;uniqueIndex:uidx_node_runs_sequence,priority:1"`
-	NodeID      string    `gorm:"not null;size:64;uniqueIndex:uidx_node_runs_attempt,priority:2"`
-	Attempt     int       `gorm:"not null;uniqueIndex:uidx_node_runs_attempt,priority:3"`
-	Sequence    int       `gorm:"not null;uniqueIndex:uidx_node_runs_sequence,priority:2"`
-	Status      string    `gorm:"not null;size:32"`
-	Input       []byte    `gorm:"not null"`
-	Output      []byte    `gorm:"not null"`
-	Error       []byte    `gorm:"not null"`
-	StartedAt   time.Time `gorm:"not null"`
-	FinishedAt  *time.Time
-	Execution   executionModel `gorm:"foreignKey:ExecutionID;references:ID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT"`
+	ID          string `gorm:"primaryKey;size:64"`
+	TenantID    string `gorm:"not null;size:64;index:idx_node_runs_tenant_execution,priority:1"`
+	ExecutionID string `gorm:"not null;size:64;index:idx_node_runs_tenant_execution,priority:2;uniqueIndex:uidx_node_runs_attempt,priority:1;uniqueIndex:uidx_node_runs_sequence,priority:1"`
+	NodeID      string `gorm:"not null;size:64;uniqueIndex:uidx_node_runs_attempt,priority:2"`
+	// RunIndex is the Nth time this node ran in this execution. It widens the
+	// attempt index rather than overloading Attempt: attempt means "retry N of
+	// the same run" and run index means "the Nth run", and conflating them
+	// makes a retry inside a loop unrepresentable. Additive and defaulted, so
+	// an existing database still opens.
+	RunIndex   int       `gorm:"not null;default:0;uniqueIndex:uidx_node_runs_attempt,priority:4"`
+	Attempt    int       `gorm:"not null;uniqueIndex:uidx_node_runs_attempt,priority:3"`
+	Sequence   int       `gorm:"not null;uniqueIndex:uidx_node_runs_sequence,priority:2"`
+	Status     string    `gorm:"not null;size:32"`
+	Input      []byte    `gorm:"not null"`
+	Output     []byte    `gorm:"not null"`
+	Error      []byte    `gorm:"not null"`
+	StartedAt  time.Time `gorm:"not null"`
+	FinishedAt *time.Time
+	Execution  executionModel `gorm:"foreignKey:ExecutionID;references:ID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT"`
 }
 
 func (executionNodeRunModel) TableName() string { return "execution_node_runs" }

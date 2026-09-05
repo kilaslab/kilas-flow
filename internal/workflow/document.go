@@ -75,10 +75,40 @@ type BinaryRef struct {
 	Size      int64  `json:"size,omitempty"`
 }
 
+// PairedItem names the input item an output item descends from.
+//
+// n8n expresses this as `{item, input?}` pointing at an incoming item index.
+// KilasFlow needs slightly more because its ports are named rather than
+// positional, and because a node can run several times in one execution — so
+// the origin is a node, a port, a run and an item.
+//
+// It is a single origin rather than n8n's list of candidates. One origin plus an
+// explicit "lineage lost" marker is easier to reason about and is enough for
+// every expression in the import corpus; a list would make every consumer
+// handle an ambiguity that only aggregating nodes can produce.
+type PairedItem struct {
+	SourceNodeID string `json:"sourceNodeId"`
+	SourcePort   string `json:"sourcePort,omitempty"`
+	// RunIndex identifies which run of the source node this came from. A node
+	// inside a loop or a fan-out produces several distinct runs.
+	RunIndex int `json:"runIndex"`
+	// ItemIndex is the position of the originating item in that run's port.
+	ItemIndex int `json:"itemIndex"`
+	// Lost marks an item whose lineage genuinely cannot be established — after
+	// a merge of unrelated streams, or a node that changed the item count.
+	// Recording that explicitly is what lets a lookup fail with a reason
+	// instead of quietly returning the first item, which is correct only when
+	// every node processed exactly one item and silently wrong otherwise.
+	Lost bool `json:"lost,omitempty"`
+}
+
 // Item is the unit a node receives and emits.
 type Item struct {
 	JSON   map[string]any       `json:"json"`
 	Binary map[string]BinaryRef `json:"binary,omitempty"`
+	// Paired is where this item came from. Optional, and omitted when absent,
+	// so every already-persisted item decodes unchanged.
+	Paired *PairedItem `json:"pairedItem,omitempty"`
 }
 
 // NodeInput contains incoming items grouped by the destination port.

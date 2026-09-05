@@ -6,6 +6,9 @@ import { edgeItemCounts, executionDurationMs, formatDuration, latestNodeRuns, no
 function nodeRun(overrides: Partial<ExecutionNodeRunResource> & { nodeId: string }): ExecutionNodeRunResource {
 	return {
 		attempt: 1,
+		// The Nth time the node ran, distinct from attempt, which counts
+		// retries of one run.
+		runIndex: 0,
 		sequence: 1,
 		status: 'succeeded',
 		startedAt: '2026-09-05T01:00:00Z',

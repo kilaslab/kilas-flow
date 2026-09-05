@@ -100,11 +100,30 @@ func TestServiceRunOncePersistsCompletedManualSetExecution(t *testing.T) {
 	if persisted.NodeRuns[1].FinishedAt == nil || persisted.FinishedAt.Before(*persisted.NodeRuns[1].FinishedAt) {
 		t.Errorf("execution finishedAt = %v, want it at or after final node finishedAt %v", persisted.FinishedAt, persisted.NodeRuns[1].FinishedAt)
 	}
-	if got, want := persisted.NodeRuns[1].Input, json.RawMessage(`{"main":[{"json":{"customer":"Ada"}}]}`); string(got) != string(want) {
-		t.Errorf("set input = %s, want %s", got, want)
+	// Asserted by content rather than by exact bytes: items now carry
+	// provenance, and pinning the serialization would make every future field
+	// on an item a failing test in an unrelated package.
+	var setInput map[string][]workflow.Item
+	if err := json.Unmarshal(persisted.NodeRuns[1].Input, &setInput); err != nil {
+		t.Fatalf("decode set input: %v (%s)", err, persisted.NodeRuns[1].Input)
 	}
-	if got, want := persisted.NodeRuns[1].Output, json.RawMessage(`[[{"json":{"customer":"Ada","status":"ready"}}]]`); string(got) != string(want) {
-		t.Errorf("set output = %s, want %s", got, want)
+	if len(setInput["main"]) != 1 || setInput["main"][0].JSON["customer"] != "Ada" {
+		t.Errorf("set input = %s, want the trigger's item", persisted.NodeRuns[1].Input)
+	}
+	var setOutput [][]workflow.Item
+	if err := json.Unmarshal(persisted.NodeRuns[1].Output, &setOutput); err != nil {
+		t.Fatalf("decode set output: %v (%s)", err, persisted.NodeRuns[1].Output)
+	}
+	if len(setOutput) != 1 || len(setOutput[0]) != 1 {
+		t.Fatalf("set output = %s, want one item on one port", persisted.NodeRuns[1].Output)
+	}
+	if setOutput[0][0].JSON["status"] != "ready" || setOutput[0][0].JSON["customer"] != "Ada" {
+		t.Errorf("set output = %s, want the assignment applied to the trigger's item", persisted.NodeRuns[1].Output)
+	}
+	// Provenance survives the round trip through durable storage, which is what
+	// makes a lookup from a later node possible at all.
+	if paired := setOutput[0][0].Paired; paired == nil || paired.SourceNodeID != "manual" {
+		t.Errorf("set output provenance = %#v, want it to name the trigger it descends from", setOutput[0][0].Paired)
 	}
 
 	// A process may die after it has durably written part of a trace but before

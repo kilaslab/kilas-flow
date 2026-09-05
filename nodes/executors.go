@@ -82,16 +82,25 @@ func executeIF(ctx context.Context, node workflow.IRNode, input workflow.NodeInp
 	if err != nil {
 		return nil, err
 	}
+	// IF filters, so an output item's position no longer matches its input's.
+	// The runner only infers provenance when the counts match, and here they do
+	// not — so each item keeps the origin it arrived with, which is the true
+	// answer and is what makes a reach-back from either branch land on the
+	// right item.
 	trueItems, falseItems := []workflow.Item{}, []workflow.Item{}
-	for _, item := range input["main"] {
+	for index, item := range input["main"] {
 		matched, err := condition.matches(item.JSON)
 		if err != nil {
 			return nil, err
 		}
+		routed := cloneItem(item)
+		if routed.Paired == nil {
+			routed.Paired = &workflow.PairedItem{SourceNodeID: node.ID, SourcePort: "main", ItemIndex: index}
+		}
 		if matched {
-			trueItems = append(trueItems, cloneItem(item))
+			trueItems = append(trueItems, routed)
 		} else {
-			falseItems = append(falseItems, cloneItem(item))
+			falseItems = append(falseItems, routed)
 		}
 	}
 	return workflow.NodeOutput{trueItems, falseItems}, nil
@@ -104,6 +113,11 @@ func executeMerge(ctx context.Context, node workflow.IRNode, input workflow.Node
 	if mode, _ := node.Parameters["mode"].(string); mode != "append" {
 		return nil, fmt.Errorf("Merge mode must be append")
 	}
+	// Merge concatenates two unrelated streams, so an output item's position
+	// says nothing about where it came from. Each side keeps the provenance it
+	// arrived with rather than being renumbered — an item that came through
+	// input2 still descends from whatever produced it, and flattening that
+	// would make a later lookup confidently wrong instead of honestly unable.
 	items := append(cloneItems(input["input1"]), cloneItems(input["input2"])...)
 	return workflow.NodeOutput{items}, nil
 }
@@ -194,6 +208,9 @@ func (condition condition) matches(value map[string]any) (bool, error) {
 	}
 }
 
+// cloneItem is the twin of the runner's, and carries provenance for the same
+// reason: an executor that maps items one to one loses the correspondence the
+// moment it appends to a fresh slice unless the clone brings it along.
 func cloneItem(item workflow.Item) workflow.Item {
 	cloned := workflow.Item{JSON: cloneMap(item.JSON)}
 	if item.Binary != nil {
@@ -201,6 +218,10 @@ func cloneItem(item workflow.Item) workflow.Item {
 		for key, value := range item.Binary {
 			cloned.Binary[key] = value
 		}
+	}
+	if item.Paired != nil {
+		paired := *item.Paired
+		cloned.Paired = &paired
 	}
 	return cloned
 }

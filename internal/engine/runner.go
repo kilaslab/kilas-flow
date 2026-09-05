@@ -150,6 +150,11 @@ type NodeRun struct {
 	// unique index on (execution, node, attempt) since V1, and the service
 	// hardcoded 1 into it.
 	Attempt int
+	// RunIndex is the Nth time this node ran in this execution, counting from
+	// zero. It is deliberately separate from Attempt: attempt means "this is
+	// retry N of the same run", run index means "this is the Nth time the node
+	// ran", and conflating them makes a retry inside a loop unrepresentable.
+	RunIndex int
 	// Skipped marks a node the runner did not invoke because no incoming item
 	// channel delivered anything — the untaken arm of a branch.
 	//
@@ -228,6 +233,11 @@ func (runner *Runner) Run(ctx context.Context, ir workflow.IR, request Request) 
 		})
 	}
 
+	// Outputs are kept per run index rather than one per node: a node inside a
+	// loop or a fan-out produces several distinct runs, and an expression that
+	// reaches back to it has to be able to name which one. The last run is what
+	// scheduling reads, so a single-run graph behaves exactly as before.
+	runs := make(map[string][]workflow.NodeOutput, len(nodes))
 	completed := make(map[string]workflow.NodeOutput, len(nodes))
 	// `$node["Name"]` reads the first item a completed node produced. Building
 	// it here keeps the lookup ordered by actual execution, so a node can never
@@ -273,6 +283,7 @@ func (runner *Runner) Run(ctx context.Context, ir workflow.IR, request Request) 
 				skipped[index] = []workflow.Item{}
 			}
 			completed[nodeID] = skipped
+			runs[nodeID] = append(runs[nodeID], cloneOutput(skipped))
 			// Deliberately not registered in NodeOutputs: `$node["Name"]` must
 			// keep reporting "not set" rather than an empty object, which would
 			// read as a successful lookup of a node that never ran.
@@ -361,6 +372,7 @@ func (runner *Runner) Run(ctx context.Context, ir workflow.IR, request Request) 
 				Error: lastErr, Attempt: usedAttempt, ErrorCode: lastCode,
 			})
 			completed[nodeID] = cloneOutput(output)
+			runs[nodeID] = append(runs[nodeID], cloneOutput(output))
 			if first, ok := firstItem(output); ok {
 				request.NodeOutputs[node.Name] = first
 			}
@@ -374,11 +386,20 @@ func (runner *Runner) Run(ctx context.Context, ir workflow.IR, request Request) 
 			return Result{}, fmt.Errorf("node %q returned %d output streams, want %d", nodeID, got, want)
 		}
 		output = cloneOutput(output)
+		// Provenance the executor did not set is inferred by position, but only
+		// when that inference is actually sound: exactly one incoming item port
+		// and a matching item count. An executor that reorders or filters must
+		// set its own, which is why IF and Merge do.
+		stampProvenance(node, incoming[nodeID], input, output, len(runs[nodeID]))
 		completed[nodeID] = output
+		runs[nodeID] = append(runs[nodeID], cloneOutput(output))
 		if first, ok := firstItem(output); ok {
 			request.NodeOutputs[node.Name] = first
 		}
-		result.NodeRuns = append(result.NodeRuns, NodeRun{NodeID: nodeID, Input: cloneInput(input), Output: output, Attempt: usedAttempt})
+		result.NodeRuns = append(result.NodeRuns, NodeRun{
+			NodeID: nodeID, Input: cloneInput(input), Output: output,
+			Attempt: usedAttempt, RunIndex: len(runs[nodeID]) - 1,
+		})
 		if outgoing[nodeID] == 0 {
 			result.Output[nodeID] = cloneOutput(output)
 		}
@@ -571,6 +592,10 @@ func cloneItems(items []workflow.Item) []workflow.Item {
 	return cloned
 }
 
+// cloneItem is the choke point every item passes through, which is why
+// provenance is copied here rather than at each call site: missing it here is
+// the kind of failure that stays invisible until one specific graph shape hits
+// it.
 func cloneItem(item workflow.Item) workflow.Item {
 	cloned := workflow.Item{JSON: cloneMap(item.JSON)}
 	if item.Binary != nil {
@@ -578,6 +603,10 @@ func cloneItem(item workflow.Item) workflow.Item {
 		for key, value := range item.Binary {
 			cloned.Binary[key] = value
 		}
+	}
+	if item.Paired != nil {
+		paired := *item.Paired
+		cloned.Paired = &paired
 	}
 	return cloned
 }
@@ -776,4 +805,62 @@ func errorOutput(node workflow.IRNode, input workflow.NodeInput, cause error) wo
 		output[0] = items
 	}
 	return output
+}
+
+// stampProvenance fills in the lineage an executor did not set.
+//
+// Inference by position is a convenience, never the contract. It applies only
+// when a node has exactly one incoming item port and produced exactly as many
+// items as it consumed, which is the shape every one-to-one node has — Set,
+// HTTP, a database query, a model call. A node that reorders, filters or
+// aggregates must set its own provenance, because guessing there would produce
+// a confident answer that happens to be wrong, which is the worst failure mode
+// an imported workflow can have.
+func stampProvenance(node workflow.IRNode, edges []workflow.IREdge, input workflow.NodeInput, output workflow.NodeOutput, runIndex int) {
+	var itemPorts int
+	var source workflow.IREdge
+	for _, edge := range edges {
+		if edge.Kind != workflow.ConnectionMain {
+			continue
+		}
+		itemPorts++
+		source = edge
+	}
+
+	for portIndex := range output {
+		for itemIndex := range output[portIndex] {
+			if output[portIndex][itemIndex].Paired != nil {
+				continue // The executor knew better.
+			}
+			// A trigger has no input to descend from, so its items originate
+			// here rather than having lost anything.
+			if itemPorts == 0 {
+				output[portIndex][itemIndex].Paired = &workflow.PairedItem{
+					SourceNodeID: node.ID, RunIndex: runIndex, ItemIndex: itemIndex,
+				}
+				continue
+			}
+			incomingItems := input[source.Target.Port]
+			if itemPorts != 1 || len(incomingItems) != len(output[portIndex]) {
+				// Several inputs, or a changed item count: the correspondence
+				// is genuinely unknown and saying so is the honest answer.
+				output[portIndex][itemIndex].Paired = &workflow.PairedItem{
+					SourceNodeID: node.ID, RunIndex: runIndex, ItemIndex: itemIndex, Lost: true,
+				}
+				continue
+			}
+			// One in, one out, same count: the item at position N descends from
+			// the item at position N, and it inherits the origin that item
+			// already carried rather than pointing at this node.
+			if origin := incomingItems[itemIndex].Paired; origin != nil && !origin.Lost {
+				inherited := *origin
+				output[portIndex][itemIndex].Paired = &inherited
+				continue
+			}
+			output[portIndex][itemIndex].Paired = &workflow.PairedItem{
+				SourceNodeID: source.Source.NodeID, SourcePort: source.Source.Port,
+				RunIndex: runIndex, ItemIndex: itemIndex,
+			}
+		}
+	}
 }

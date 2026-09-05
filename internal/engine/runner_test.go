@@ -807,3 +807,212 @@ func TestRetryAndContinueOnFailComposeSoTheBudgetIsSpentFirst(t *testing.T) {
 		t.Errorf("the downstream node ran %d times, want 1", afterCalls)
 	}
 }
+
+// TestLineageSurvivesAOneToOneChain is the property the ticket exists for.
+//
+// About a third of the expressions in the import corpus reach sideways with
+// $('Node').item. The closest KilasFlow could offer was "the first item of a
+// node", which is correct only when every node processed exactly one item and
+// silently wrong otherwise — the worst failure mode an imported workflow can
+// have.
+func TestLineageSurvivesAOneToOneChain(t *testing.T) {
+	catalog := node.NewRegistry()
+	if err := catalog.Register(node.Definition{
+		Type: "test.source", Version: workflow.V(1), DisplayName: "Source", Category: "Test",
+		Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}}, ExecutorID: "test.source",
+	}); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	if err := nodes.RegisterAll(catalog); err != nil {
+		t.Fatalf("RegisterAll() error = %v", err)
+	}
+
+	ir, err := workflow.Compile(workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_lineage",
+		Name:          "A to Set to B",
+		Nodes: []workflow.Node{
+			{ID: "a", Name: "A", Type: "test.source", TypeVersion: workflow.V(1)},
+			{ID: "set", Name: "Set", Type: "kilasflow.set", TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"assignments": map[string]any{"seen": "yes"}}},
+			{ID: "b", Name: "B", Type: "kilasflow.set", TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"assignments": map[string]any{"stage": "b"}}},
+		},
+		Connections: []workflow.Connection{
+			{ID: "c1", Kind: workflow.ConnectionMain,
+				Source: workflow.Endpoint{NodeID: "a", Port: "main"},
+				Target: workflow.Endpoint{NodeID: "set", Port: "main"}},
+			{ID: "c2", Kind: workflow.ConnectionMain,
+				Source: workflow.Endpoint{NodeID: "set", Port: "main"},
+				Target: workflow.Endpoint{NodeID: "b", Port: "main"}},
+		},
+		Settings: map[string]any{},
+	}, catalog)
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+
+	executors := engine.NewRegistry()
+	if err := executors.Register("test.source", engine.ExecutorFunc(
+		func(context.Context, workflow.IRNode, workflow.NodeInput, engine.Request) (workflow.NodeOutput, error) {
+			return workflow.NodeOutput{{
+				{JSON: map[string]any{"n": 1}},
+				{JSON: map[string]any{"n": 2}},
+				{JSON: map[string]any{"n": 3}},
+			}}, nil
+		})); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	if err := nodes.RegisterExecutors(executors, safehttp.DefaultPolicy(), sqlnode.Guard{}, ai.NewLoopRuntime(), nil, nil); err != nil {
+		t.Fatalf("RegisterExecutors() error = %v", err)
+	}
+
+	result, err := engine.NewRunner(executors).Run(context.Background(), ir, engine.Request{
+		Input: workflow.Item{JSON: map[string]any{}},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	var bRun engine.NodeRun
+	for _, run := range result.NodeRuns {
+		if run.NodeID == "b" {
+			bRun = run
+		}
+	}
+	if len(bRun.Output) != 1 || len(bRun.Output[0]) != 3 {
+		t.Fatalf("B produced %#v, want three items", bRun.Output)
+	}
+
+	// Item 2 of B must reach back to item 2 of A, not item 1.
+	second := bRun.Output[0][1]
+	if second.Paired == nil {
+		t.Fatal("item 2 of B carries no provenance")
+	}
+	if second.Paired.Lost {
+		t.Errorf("item 2 of B lost its lineage across a one-to-one chain: %#v", second.Paired)
+	}
+	if second.Paired.SourceNodeID != "a" {
+		t.Errorf("item 2 of B descends from %q, want %q", second.Paired.SourceNodeID, "a")
+	}
+	if second.Paired.ItemIndex != 1 {
+		t.Errorf("item 2 of B descends from item index %d, want 1 — resolving to the first item is the silent wrongness this exists to stop", second.Paired.ItemIndex)
+	}
+
+	// And every item's lineage is its own, not a shared first.
+	for index, item := range bRun.Output[0] {
+		if item.Paired.ItemIndex != index {
+			t.Errorf("item %d of B descends from item %d", index, item.Paired.ItemIndex)
+		}
+	}
+}
+
+// TestLineageIsReportedLostRatherThanGuessed covers the other half. When the
+// correspondence genuinely cannot be established, saying so is what lets a
+// later lookup fail with a reason instead of returning a confident wrong
+// answer.
+func TestLineageIsReportedLostRatherThanGuessed(t *testing.T) {
+	catalog := node.NewRegistry()
+	if err := catalog.Register(node.Definition{
+		Type: "test.fanout", Version: workflow.V(1), DisplayName: "Fan out", Category: "Test",
+		Inputs:     []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+		Outputs:    []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+		ExecutorID: "test.fanout",
+	}); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	if err := nodes.RegisterAll(catalog); err != nil {
+		t.Fatalf("RegisterAll() error = %v", err)
+	}
+
+	ir, err := workflow.Compile(workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_lost",
+		Name:          "Changed item count",
+		Nodes: []workflow.Node{
+			{ID: "manual", Name: "Manual", Type: "kilasflow.manual", TypeVersion: workflow.V(1)},
+			{ID: "fan", Name: "Fan", Type: "test.fanout", TypeVersion: workflow.V(1)},
+		},
+		Connections: []workflow.Connection{{
+			ID: "c1", Kind: workflow.ConnectionMain,
+			Source: workflow.Endpoint{NodeID: "manual", Port: "main"},
+			Target: workflow.Endpoint{NodeID: "fan", Port: "main"},
+		}},
+		Settings: map[string]any{},
+	}, catalog)
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+
+	executors := engine.NewRegistry()
+	// One item in, three out: the correspondence is genuinely unknown.
+	if err := executors.Register("test.fanout", engine.ExecutorFunc(
+		func(context.Context, workflow.IRNode, workflow.NodeInput, engine.Request) (workflow.NodeOutput, error) {
+			return workflow.NodeOutput{{
+				{JSON: map[string]any{"part": 1}},
+				{JSON: map[string]any{"part": 2}},
+				{JSON: map[string]any{"part": 3}},
+			}}, nil
+		})); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	if err := nodes.RegisterExecutors(executors, safehttp.DefaultPolicy(), sqlnode.Guard{}, ai.NewLoopRuntime(), nil, nil); err != nil {
+		t.Fatalf("RegisterExecutors() error = %v", err)
+	}
+
+	result, err := engine.NewRunner(executors).Run(context.Background(), ir, engine.Request{
+		Input: workflow.Item{JSON: map[string]any{"one": true}},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	for _, run := range result.NodeRuns {
+		if run.NodeID != "fan" {
+			continue
+		}
+		for index, item := range run.Output[0] {
+			if item.Paired == nil || !item.Paired.Lost {
+				t.Errorf("item %d claims a lineage it cannot have: %#v", index, item.Paired)
+			}
+		}
+	}
+}
+
+// TestRunIndexIsRecordedPerRun proves the second dimension exists, and that it
+// is not Attempt. A node inside a loop or a fan-out produces several distinct
+// runs, and conflating the two would make a retry inside a loop
+// unrepresentable.
+func TestRunIndexIsRecordedPerRun(t *testing.T) {
+	failures, calls, afterCalls := 1, 0, 0
+	ir := retryIR(t, map[string]any{
+		"retryOnFail": true, "maxTries": float64(3), "waitBetweenTries": float64(0),
+	})
+
+	result, err := engine.NewRunner(retryExecutors(t, &failures, &calls, &afterCalls)).
+		Run(context.Background(), ir, engine.Request{Input: workflow.Item{JSON: map[string]any{}}})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	// One retry: two attempts, both of the same run.
+	var attempts []int
+	var runIndexes []int
+	for _, run := range result.NodeRuns {
+		if run.NodeID != "flaky" {
+			continue
+		}
+		attempts = append(attempts, run.Attempt)
+		runIndexes = append(runIndexes, run.RunIndex)
+	}
+	if len(attempts) != 2 {
+		t.Fatalf("recorded %d rows for the retried node, want 2", len(attempts))
+	}
+	if attempts[0] != 1 || attempts[1] != 2 {
+		t.Errorf("attempts = %v, want 1 then 2", attempts)
+	}
+	for index, runIndex := range runIndexes {
+		if runIndex != 0 {
+			t.Errorf("row %d has run index %d; a retry is the same run, not a second one", index, runIndex)
+		}
+	}
+}

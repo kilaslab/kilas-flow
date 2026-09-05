@@ -334,6 +334,8 @@ export interface ExecutionNodeRunResource {
   input?: unknown;
   nodeId: string;
   output?: unknown;
+  /** The Nth time this node ran in the execution, counting from zero. Distinct from attempt, which counts retries of one run. */
+  runIndex: number;
   sequence: number;
   startedAt: string;
   status: string;

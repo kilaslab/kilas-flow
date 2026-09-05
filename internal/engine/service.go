@@ -165,7 +165,7 @@ func (service *Service) runOnce(ctx context.Context, workerID string) (bool, err
 		}
 		now := time.Now().UTC()
 		if _, err := service.executions.CreateNodeRun(ctx, tenant, execution.NodeRun{
-			TenantID: record.TenantID, ExecutionID: record.ID, NodeID: run.NodeID, Attempt: attemptOf(run), Sequence: sequence + 1,
+			TenantID: record.TenantID, ExecutionID: record.ID, NodeID: run.NodeID, Attempt: attemptOf(run), RunIndex: run.RunIndex, Sequence: sequence + 1,
 			Status: status, Input: input, Output: output, Error: errorPayload, StartedAt: now, FinishedAt: &now, LeaseOwner: record.LeaseOwner,
 		}); err != nil {
 			return true, fmt.Errorf("persist node %q run: %w", run.NodeID, err)

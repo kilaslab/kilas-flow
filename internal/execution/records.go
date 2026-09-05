@@ -63,18 +63,21 @@ type Record struct {
 // NodeRun is one attempt to execute a node inside an execution. The sequence
 // keeps logs deterministic even when later scheduling becomes concurrent.
 type NodeRun struct {
-	ID          string          `json:"id"`
-	TenantID    string          `json:"tenantId"`
-	ExecutionID string          `json:"executionId"`
-	NodeID      string          `json:"nodeId"`
-	Attempt     int             `json:"attempt"`
-	Sequence    int             `json:"sequence"`
-	Status      Status          `json:"status"`
-	Input       json.RawMessage `json:"input,omitempty"`
-	Output      json.RawMessage `json:"output,omitempty"`
-	Error       json.RawMessage `json:"error,omitempty"`
-	StartedAt   time.Time       `json:"startedAt"`
-	FinishedAt  *time.Time      `json:"finishedAt,omitempty"`
+	ID          string `json:"id"`
+	TenantID    string `json:"tenantId"`
+	ExecutionID string `json:"executionId"`
+	NodeID      string `json:"nodeId"`
+	Attempt     int    `json:"attempt"`
+	// RunIndex is the Nth time this node ran in the execution, distinct from
+	// Attempt, which counts retries of one run.
+	RunIndex   int             `json:"runIndex"`
+	Sequence   int             `json:"sequence"`
+	Status     Status          `json:"status"`
+	Input      json.RawMessage `json:"input,omitempty"`
+	Output     json.RawMessage `json:"output,omitempty"`
+	Error      json.RawMessage `json:"error,omitempty"`
+	StartedAt  time.Time       `json:"startedAt"`
+	FinishedAt *time.Time      `json:"finishedAt,omitempty"`
 	// LeaseOwner fences trace writes to the worker claim that produced them.
 	LeaseOwner string `json:"-"`
 }
