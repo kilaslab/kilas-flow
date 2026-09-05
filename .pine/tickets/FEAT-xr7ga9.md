@@ -45,11 +45,13 @@ One redaction interaction is worth testing explicitly rather than trusting. `int
 - [ ] Connecting a sub-node to the wrong port kind, or leaving an agent without a language model, is refused at save with a message naming the problem.
 - [ ] A tool that fails, and a model that returns a malformed tool call, each leave the execution in a defined state with a diagnostic rather than a hang or a partial record.
 - [ ] The complete trigger-to-agent-to-reply path runs end to end, matching the epic's first acceptance proof, with no Node.js process involved.
-- [ ] The suite skips with a clear message when the local model is unavailable, and never silently passes by falling back to a stub.
+- [ ] The suite runs against `gemma4:12b-mlx` and skips with a clear message when that model is unavailable, never silently passing by falling back to a stub.
 
 ## Implementation Plan
 
 Depend on V2-p11-2 for the runtime and on the p5 tickets for the nodes; do not begin before the cluster-node model lands, because the wiring is the thing under test and it does not exist yet.
+
+The model is `gemma4:12b-mlx`, pinned by V2-p11-2 on the owner's instruction. Confirm that ticket's tool-calling check passed before starting: this entire suite is a tool-calling suite, and a model that chats fluently without emitting OpenAI-format tool calls makes every assertion below unwritable.
 
 Design every assertion to survive a model that is not deterministic in its wording. Temperature zero and a pinned model tag get consistency of behaviour, not of text. Assert that a tool ran, that an argument parsed, that an execution completed, that two sessions differ. Never assert a sentence. The single biggest risk to this suite is that it is written with text assertions, fails on the first model update, and gets disabled.
 
@@ -74,3 +76,4 @@ One thing to state plainly in the suite's own documentation: a green run proves 
 - `internal/execution/redact.go` — the sensitive-key list including `session` and `sessionid`.
 - `internal/api/handlers/executions.go` — the SSE events the streaming assertions read.
 - `.pine/tickets/EPIC-m42s3g.md` — the Telegram-agent-reply proof this suite makes executable.
+- Owner instruction, 2026-09-05: `gemma4:12b-mlx` is the model for the end-to-end Playwright suites.

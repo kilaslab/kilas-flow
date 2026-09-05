@@ -20,6 +20,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/kilaslabs/kilas-flow/internal/workflow"
 )
@@ -226,8 +227,13 @@ var mappings = []mapping{
 		exportTypeVersion: 1.2, toKilas: scheduleToKilas, toN8N: scheduleToN8N,
 	},
 	{
-		n8nType: "n8n-nodes-base.postgres", kilasType: "kilasflow.postgres", kilasVersion: workflow.V(1),
-		exportTypeVersion: 2.4, toKilas: sqlToKilas, toN8N: sqlToN8N,
+		// Version 2, which is where the operation set lives. Every Postgres
+		// node n8n exports carries a typeVersion of 2.4 or higher, and the
+		// registry resolves the highest version at or below what a document
+		// asks for — so an imported node lands here and its operation carries
+		// across as itself rather than being flattened to an empty query.
+		n8nType: "n8n-nodes-base.postgres", kilasType: "kilasflow.postgres", kilasVersion: workflow.V(2),
+		exportTypeVersion: 2.4, toKilas: postgresToKilas, toN8N: postgresToN8N,
 	},
 	{
 		n8nType: "n8n-nodes-base.mySql", kilasType: "kilasflow.mysql", kilasVersion: workflow.V(1),
@@ -583,6 +589,8 @@ func Import(payload []byte, catalog workflow.Catalog) (ImportResult, error) {
 	}
 	connections, connectionIssues := importConnections(source.Connections, idByName, typeByID, versionByID, parametersByID, catalog)
 	unsupported = append(unsupported, connectionIssues...)
+	settings, settingIssues := importSettings(source.Settings)
+	unsupported = append(unsupported, settingIssues...)
 	unsupported = append(unsupported, documentIssues(source)...)
 
 	return ImportResult{
@@ -591,7 +599,7 @@ func Import(payload []byte, catalog workflow.Catalog) (ImportResult, error) {
 			Name:          name,
 			Nodes:         nodes,
 			Connections:   connections,
-			Settings:      map[string]any{},
+			Settings:      settings,
 		},
 		Unsupported: withDefaultSeverity(unsupported),
 	}, nil
@@ -634,6 +642,43 @@ func withDefaultExportSeverity(issues []ExportIssue) []ExportIssue {
 // `pinData` is dropped rather than parked under a reserved key. Carrying data
 // nothing reads would create a second silent-drop problem one release later,
 // and the diagnostic is what the user actually needs.
+// importSettings carries the workflow settings this product understands.
+//
+// Only the timezone, for now, and it matters: a scheduled workflow whose zone
+// was dropped runs at the wrong hour every day, and nothing anywhere says why.
+// It was reported as uncarried until the Schedule Trigger learned to read it,
+// and the diagnostic outlived the gap it described.
+func importSettings(source map[string]any) (map[string]any, []ImportIssue) {
+	settings := map[string]any{}
+	issues := make([]ImportIssue, 0)
+	zone, _ := source["timezone"].(string)
+	if strings.TrimSpace(zone) == "" {
+		return settings, issues
+	}
+	if _, err := time.LoadLocation(strings.TrimSpace(zone)); err != nil {
+		// Named rather than carried. A zone this server cannot resolve would
+		// fall back to UTC at run time with nothing reporting it, which is the
+		// same silent wrong hour by a different route.
+		return settings, append(issues, ImportIssue{
+			Severity: SeverityLossy, Field: "settings.timezone",
+			Reason: fmt.Sprintf("the workflow's timezone %q is not a zone this server knows, so it was not "+
+				"carried and schedules will run in UTC", zone),
+		})
+	}
+	settings["timezone"] = strings.TrimSpace(zone)
+	return settings, issues
+}
+
+// hasUncarriedSettings reports settings beyond the ones importSettings keeps.
+func hasUncarriedSettings(source map[string]any) bool {
+	for key := range source {
+		if key != "timezone" {
+			return true
+		}
+	}
+	return false
+}
+
 func documentIssues(source Document) []ImportIssue {
 	var issues []ImportIssue
 	for _, element := range []struct {
@@ -641,8 +686,8 @@ func documentIssues(source Document) []ImportIssue {
 		present bool
 		reason  string
 	}{
-		{"settings", len(source.Settings) > 0,
-			"n8n workflow settings — error workflow, timezone, execution order and the rest — have no KilasFlow equivalent yet and were not carried"},
+		{"settings", hasUncarriedSettings(source.Settings),
+			"n8n workflow settings other than the timezone — error workflow, execution order and the rest — have no KilasFlow equivalent yet and were not carried"},
 		{"pinData", len(source.PinData) > 0,
 			"pinned test data is an n8n editor feature with no KilasFlow equivalent; it was not carried, so the nodes that had it pinned will run for real"},
 		{"meta", len(source.Meta) > 0,

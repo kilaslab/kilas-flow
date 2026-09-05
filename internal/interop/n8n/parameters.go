@@ -1431,6 +1431,126 @@ func codeLanguageName(language string) string {
 
 // --- SQL --------------------------------------------------------------------
 
+// postgresToKilas maps n8n's whole PostgreSQL operation set.
+//
+// Every operation but executeQuery used to return `{"operation": "query"}` with
+// no statement at all, so an imported insert arrived as an empty query — a node
+// that activated, ran, and did nothing. The six values are n8n's own, and this
+// node's are the same six, so the operation carries across as itself.
+func postgresToKilas(node Node) (map[string]any, []Unsupported) {
+	issues := make([]Unsupported, 0)
+	operation := defaultString(stringParameter(node.Parameters, "operation"), "executeQuery")
+	parameters := map[string]any{"operation": operation}
+
+	switch operation {
+	case "executeQuery":
+		parameters["query"] = fromN8NValue(node.Parameters["query"])
+	case "deleteTable", "insert", "upsert", "select", "update":
+		parameters["schema"] = locatorFromN8N(node.Parameters["schema"], "public")
+		parameters["table"] = locatorFromN8N(node.Parameters["table"], "")
+		if command := stringParameter(node.Parameters, "deleteCommand"); command != "" {
+			parameters["deleteCommand"] = command
+		}
+		if columns, ok := node.Parameters["columns"].(map[string]any); ok {
+			// The mapper's stored shape is n8n's, so it carries across whole —
+			// including the schema copy, which is what makes the export of an
+			// imported node lossless.
+			parameters["columns"] = columns
+		}
+		if where, ok := node.Parameters["where"].(map[string]any); ok {
+			converted, whereIssues := postgresWhereToKilas(where)
+			parameters["where"] = converted
+			issues = append(issues, whereIssues...)
+		}
+		if combine := stringParameter(node.Parameters, "combineConditions"); combine != "" {
+			parameters["combineConditions"] = strings.ToUpper(combine)
+		}
+		if returnAll, present := node.Parameters["returnAll"]; present {
+			parameters["returnAll"] = returnAll
+		}
+		if limit, ok := numberParameter(node.Parameters, "limit"); ok {
+			parameters["limit"] = limit
+		}
+	default:
+		issues = append(issues, Unsupported{Field: "operation", Reason: fmt.Sprintf(
+			"the n8n PostgreSQL operation %q has no equivalent; the node was imported as an execute query", operation)})
+		parameters["operation"] = "executeQuery"
+	}
+
+	if options, ok := node.Parameters["options"].(map[string]any); ok {
+		if values, ok := options["queryReplacement"]; ok {
+			// n8n passes replacements as a comma-joined string; this binds a
+			// JSON array, so the shape is named rather than mangled.
+			issues = append(issues, Unsupported{Field: "options.queryReplacement", Reason: fmt.Sprintf(
+				"n8n query replacements (%v) were not imported; set Query Parameters to a JSON array to bind them", values)})
+		}
+	}
+	issues = append(issues, Unsupported{
+		Reason: "database credentials are not imported; attach a KilasFlow credential before running this node",
+	})
+	return parameters, issues
+}
+
+// locatorFromN8N carries a resource locator across, or builds one from a bare
+// string — which is the shape older n8n versions stored.
+func locatorFromN8N(value any, fallback string) map[string]any {
+	switch typed := value.(type) {
+	case map[string]any:
+		mode, _ := typed["mode"].(string)
+		if mode != "name" && mode != "list" {
+			mode = "name"
+		}
+		return property.WriteLocator(property.Locator{Mode: mode, Value: fromN8NValue(typed["value"])})
+	case nil:
+		if fallback == "" {
+			return nil
+		}
+		return property.WriteLocator(property.Locator{Mode: "name", Value: fallback})
+	default:
+		return property.WriteLocator(property.Locator{Mode: "name", Value: fromN8NValue(typed)})
+	}
+}
+
+// postgresWhereToKilas maps n8n's WHERE builder rows onto the condition rows
+// this node's control writes.
+func postgresWhereToKilas(where map[string]any) ([]any, []Unsupported) {
+	issues := make([]Unsupported, 0)
+	entries, _ := where["values"].([]any)
+	rows := make([]any, 0, len(entries))
+	for _, entry := range entries {
+		row, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		// An absent condition is n8n's own default, which is equality. Only a
+		// condition that is present and unrecognised is worth a diagnostic:
+		// reporting the default as lossy fills the list with rows where nothing
+		// was lost, and a diagnostic list nobody reads is the same as none.
+		condition := stringParameter(row, "condition")
+		operator, mapped := postgresConditionOperators[condition]
+		if !mapped {
+			if condition != "" {
+				issues = append(issues, Unsupported{Field: "where", Reason: fmt.Sprintf(
+					"the n8n condition %q has no equivalent; that row was imported as an equality", condition)})
+			}
+			operator = "equals"
+		}
+		rows = append(rows, map[string]any{
+			"field":    fromN8NValue(row["column"]),
+			"operator": operator,
+			"value":    fromN8NValue(row["value"]),
+		})
+	}
+	return rows, issues
+}
+
+// postgresConditionOperators is n8n's WHERE vocabulary mapped onto this one.
+var postgresConditionOperators = map[string]string{
+	"equal": "equals", "!=": "notEquals", "LIKE": "like", "ILIKE": "ilike",
+	">": "gt", ">=": "gte", "<": "lt", "<=": "lte",
+	"IS NULL": "exists", "IS NOT NULL": "notExists",
+}
+
 func sqlToKilas(node Node) (map[string]any, []Unsupported) {
 	issues := make([]Unsupported, 0)
 	operation := stringParameter(node.Parameters, "operation")
@@ -1458,6 +1578,61 @@ func sqlToKilas(node Node) (map[string]any, []Unsupported) {
 		Reason: "database credentials are not imported; attach a KilasFlow credential before running this node",
 	})
 	return parameters, issues
+}
+
+// postgresToN8N writes the operation set back out.
+//
+// The values are the same on both sides, so this is a copy rather than a
+// translation — which is what makes an imported node round-trip unchanged.
+func postgresToN8N(node workflow.Node) (map[string]any, []Lossy) {
+	operation := defaultString(stringParameter(node.Parameters, "operation"), "executeQuery")
+	parameters := map[string]any{"operation": operation, "options": map[string]any{}}
+	if operation == "executeQuery" {
+		parameters["query"] = toN8NValue(node.Parameters["query"])
+		return parameters, nil
+	}
+	for _, key := range []string{"schema", "table"} {
+		locator, ok := property.ReadLocator(node.Parameters[key])
+		if !ok {
+			continue
+		}
+		parameters[key] = map[string]any{
+			property.LocatorSentinel: true,
+			"mode":                   defaultString(locator.Mode, "name"),
+			"value":                  toN8NValue(locator.Value),
+		}
+	}
+	for _, key := range []string{"columns", "deleteCommand", "returnAll", "limit", "combineConditions"} {
+		if value, present := node.Parameters[key]; present {
+			parameters[key] = value
+		}
+	}
+	if rows, ok := node.Parameters["where"].([]any); ok {
+		values := make([]any, 0, len(rows))
+		for _, entry := range rows {
+			row, ok := entry.(map[string]any)
+			if !ok {
+				continue
+			}
+			values = append(values, map[string]any{
+				"column":    toN8NValue(row["field"]),
+				"condition": n8nConditionName(stringParameter(row, "operator")),
+				"value":     toN8NValue(row["value"]),
+			})
+		}
+		parameters["where"] = map[string]any{"values": values}
+	}
+	return parameters, nil
+}
+
+// n8nConditionName is the inverse of postgresConditionOperators.
+func n8nConditionName(operator string) string {
+	for name, mapped := range postgresConditionOperators {
+		if mapped == operator {
+			return name
+		}
+	}
+	return "equal"
 }
 
 func sqlToN8N(node workflow.Node) (map[string]any, []Lossy) {

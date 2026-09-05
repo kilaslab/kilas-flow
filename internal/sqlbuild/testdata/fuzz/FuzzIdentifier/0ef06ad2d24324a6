@@ -1,0 +1,2 @@
+go test fuzz v1
+string("00\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\"0\"\"0\xfe0\xfcƱ\xf9ү\x9d\"")

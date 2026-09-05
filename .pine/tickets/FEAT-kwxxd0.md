@@ -27,7 +27,13 @@ So no adapter, no new node and no new client are needed. What is needed is a sma
 
 That distinction is the load-bearing part of this ticket. `allow_private_networks: true` in a test configuration would make the AI suites pass while running the product with a security posture that does not match production, and would mean the suite could never catch a regression in the guard. An `allowed_hosts` entry for the model endpoint keeps the guard on and admits one address.
 
-A 9B-class model is the right size: large enough to follow a tool-calling instruction reliably enough for a test to assert on structure, small enough to run on a developer laptop.
+**The model is pinned to `gemma4:12b-mlx`**, by the owner's instruction, pulled with `ollama pull gemma4:12b-mlx`. Two consequences follow from that exact tag and both need recording rather than discovering.
+
+The `-mlx` suffix names an Apple MLX build, so the tag is Apple-Silicon-only. A `linux/amd64` CI runner cannot pull it. That is not an obstacle to this ticket — it reinforces two decisions already made, that these suites run on demand rather than on every pull request and that a machine without the model skips cleanly — but it does mean the suite must not assume the model is reachable anywhere the rest of CI runs. Name a portable fallback tag for any non-macOS runner, or state plainly that the AI suites are macOS-only and let the skip path carry the rest.
+
+And a 12B model at typical quantisation wants meaningfully more memory than the 9B class originally sketched here — enough that a laptop running it alongside a KilasFlow instance, a browser and a database is the real constraint on how many of these tests run in parallel. Bound the AI suites' concurrency explicitly rather than inheriting the harness default.
+
+One thing to verify before building anything on top: that this model reliably emits OpenAI-format tool calls. The entire agent suite in V2-p11-6 depends on it, and a model that chats well but does not call tools would make that ticket unbuildable as written. Check it first, with a single hand-run request, and record the answer here.
 
 ## Acceptance criteria
 
@@ -35,9 +41,9 @@ A 9B-class model is the right size: large enough to follow a tool-calling instru
 - [ ] The model picker populates from the local server's `/v1/models`, proving the dynamic-options loader works against it rather than only against OpenAI.
 - [ ] The endpoint is reached through an explicit `outbound.allowed_hosts` entry; `allow_private_networks` remains `false` in every configuration the suite uses.
 - [ ] A test proves the guard still refuses a *different* loopback address, so the allowance is one host and not a hole.
-- [ ] The model and its version are pinned, and a run against a different model is a visible configuration change rather than a silent behavioural difference.
+- [ ] The model is pinned to `gemma4:12b-mlx` in the suite's configuration, its tool-calling behaviour is verified and recorded before the suite is built on it, and a run against any other model is a visible configuration change rather than a silent behavioural difference.
 - [ ] Tests assert on structure — that a tool was called, that a reply was produced, that an execution completed — never on the exact wording of generated text.
-- [ ] A developer without Ollama installed gets a skipped suite with a message naming what to install, not a failure.
+- [ ] A machine without Ollama, or without the pinned model, gets a skipped suite naming the exact `ollama pull` command, not a failure — including a runner whose architecture cannot serve an `-mlx` build at all.
 - [ ] The setup is documented well enough that a second machine reproduces it, including the model pull and roughly what it costs in disk and memory.
 
 ## Implementation Plan
@@ -48,7 +54,7 @@ The one code question worth settling is whether the SSRF allowance should be exp
 
 For determinism, set temperature to zero and pin the model tag. That gets consistency of behaviour, not of text, which is why the assertions must be structural. A test asserting that a model replied with a particular sentence will fail on a model update and teach the team to distrust the suite.
 
-Two operational notes worth writing down for whoever runs this. The first request after a model load is much slower than subsequent ones, so a suite with a per-test timeout tuned to warm performance will fail on the first test only — warm the model in the fixture. And a 9B model at typical quantisation needs several gigabytes of memory; a CI runner that cannot hold it is a reason to keep these suites on demand rather than on every pull request, which is a decision to record here rather than discover when the pipeline runs out of memory.
+Two operational notes worth writing down for whoever runs this. The first request after a model load is much slower than subsequent ones, so a suite with a per-test timeout tuned to warm performance will fail on the first test only — warm `gemma4:12b-mlx` in the fixture before the first assertion. And a 12B model needs several gigabytes of resident memory; a runner that cannot hold it is the reason these suites stay on demand rather than on every pull request, and the reason their parallelism is bounded separately from the rest of the harness.
 
 State plainly what this does and does not prove. It proves the wiring: that the node, the credential, the loader, the agent loop, the tool invocation and the execution record all work against a real OpenAI-compatible server. It does not prove behaviour against the models a customer will actually use, and no local suite can. Say so, so nobody reads a green suite as a quality claim about agent output.
 
@@ -62,3 +68,4 @@ State plainly what this does and does not prove. It proves the wiring: that the 
 - `internal/property/loader.go` — `LoaderHTTP` and `DependsOn`, which make the model picker re-query when the base URL changes.
 - `.pine/roadmap.md` — "Open items for the owner", the OpenRouter key this ticket makes optional for testing.
 - `.pine/tickets/FEAT-mvegj5.md` — V2-p5-1, the chat model nodes this exercises.
+- Owner instruction, 2026-09-05: the end-to-end Playwright suites use `gemma4:12b-mlx`, pulled locally with `ollama pull gemma4:12b-mlx`.

@@ -842,6 +842,11 @@ type (
 	PropertyGroup       = propertypkg.PropertyGroup
 	TypeOptions         = propertypkg.TypeOptions
 	VisibilityCondition = propertypkg.VisibilityCondition
+	// Visibility is the full display rule — show and hide groups, several
+	// accepted values per key.
+	Visibility = propertypkg.Visibility
+	// Condition is one clause of a Visibility rule.
+	Condition = propertypkg.Condition
 	// Assignment is one row of an assignmentCollection.
 	Assignment = propertypkg.Assignment
 	// AssignmentType is the declared type of an assignment's value.

@@ -1023,9 +1023,14 @@ real and the guard is right**: `OutboundHTTP.AllowPrivateNetworks` defaults to `
 request is made. The fix is one `allowed_hosts` entry, plus a test that a *different* loopback
 address is still refused. First check whether the allowlist is consulted before or after the
 private-address guard; if after, this becomes a small code ticket rather than a configuration
-one. A 9B model at temperature zero, pinned by tag. Assertions are structural, never on
-generated text — that is what makes the difference between a suite that survives a model update
-and one that gets disabled.
+one. The model is pinned to **`gemma4:12b-mlx`** by owner instruction (2026-09-05), at temperature
+zero. The `-mlx` suffix names an Apple MLX build, so the tag is Apple-Silicon-only and a
+`linux/amd64` runner cannot pull it — which reinforces rather than breaks the two decisions
+already made, that these suites run on demand and that a machine without the model skips
+cleanly; name a portable fallback tag or state the AI suites are macOS-only. Verify the model
+emits OpenAI-format tool calls **before** building V2-p11-6 on it, since that whole suite is a
+tool-calling suite. Assertions are structural, never on generated text — that is what makes the
+difference between a suite that survives a model update and one that gets disabled.
 
 **V2-p11-3 · Cover every registered node type end to end** (`FEAT-5z37xh`, deps p11-1). Build
 the coverage report first: read `/api/v1/node-types`, diff against what the suite touched, fail

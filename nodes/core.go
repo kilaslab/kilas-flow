@@ -25,6 +25,9 @@ func RegisterAll(registry *node.Registry) error {
 		respondToWebhookNode(),
 		scheduleTrigger(),
 		postgresNode(),
+		// Version 2 registers beside version 1, never over it: a workflow
+		// authored against query/execute/transaction keeps running unchanged.
+		postgresV2Node(),
 		mysqlNode(),
 		sqliteNode(),
 		chatModelNode(),

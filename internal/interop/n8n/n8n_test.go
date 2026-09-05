@@ -295,11 +295,14 @@ func TestImportSQL(t *testing.T) {
 	}
 
 	postgres := nodeByName(result.Document, "Postgres")
-	if postgres.Type != "kilasflow.postgres" || postgres.Parameters["operation"] != "query" {
-		t.Fatalf("postgres node = %#v, want a mapped query node", postgres)
+	// n8n's own operation value, carried across as itself. It used to be
+	// flattened to "query" whatever it was, so an imported insert arrived as an
+	// empty query.
+	if postgres.Type != "kilasflow.postgres" || postgres.Parameters["operation"] != "executeQuery" {
+		t.Fatalf("postgres node = %#v, want a mapped execute query", postgres)
 	}
-	if !strings.Contains(postgres.Parameters["statement"].(string), "FROM customers") {
-		t.Errorf("statement = %#v, want the SQL carried", postgres.Parameters["statement"])
+	if !strings.Contains(postgres.Parameters["query"].(string), "FROM customers") {
+		t.Errorf("query = %#v, want the SQL carried", postgres.Parameters["query"])
 	}
 	if !hasReason(result.Unsupported, "credential") {
 		t.Errorf("unsupported = %#v, want the database credential named", result.Unsupported)
@@ -2646,5 +2649,164 @@ func TestEveryJavaScriptEscapeHatchRefusesInTheSameWords(t *testing.T) {
 	}
 	if refusals != 2 {
 		t.Fatalf("unsupported = %#v, want both escape hatches refused in the same words", result.Unsupported)
+	}
+}
+
+func TestEveryPostgresOperationImportsOntoItsOwnShape(t *testing.T) {
+	t.Parallel()
+
+	// Every operation but executeQuery used to return {"operation":"query"}
+	// with no statement at all, so an imported insert arrived as an empty query
+	// — a node that activated, ran, and did nothing.
+	for _, operation := range []string{"deleteTable", "executeQuery", "insert", "upsert", "select", "update"} {
+		t.Run(operation, func(t *testing.T) {
+			fixture := `{
+			  "name": "Postgres ` + operation + `",
+			  "nodes": [
+			    {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}},
+			    {"id":"b","name":"Postgres","type":"n8n-nodes-base.postgres","typeVersion":2.5,"position":[220,0],
+			     "parameters":{"operation":"` + operation + `",
+			                   "query":"SELECT 1",
+			                   "schema":{"__rl":true,"mode":"list","value":"public"},
+			                   "table":{"__rl":true,"mode":"list","value":"customers"},
+			                   "where":{"values":[{"column":"tier","condition":"equal","value":"gold"}]},
+			                   "columns":{"mappingMode":"defineBelow","value":{"email":"ada@example.test"},
+			                              "matchingColumns":["id"],
+			                              "schema":[{"id":"email","displayName":"email","type":"string"}]}}}
+			  ],
+			  "connections": {"Manual": {"main": [[{"node":"Postgres","type":"main","index":0}]]}}
+			}`
+			result := importFixture(t, fixture)
+			postgres := nodeByName(result.Document, "Postgres")
+
+			// The operation value carries across as itself.
+			if postgres.Parameters["operation"] != operation {
+				t.Fatalf("operation = %#v, want %q", postgres.Parameters["operation"], operation)
+			}
+			if operation == "executeQuery" {
+				if postgres.Parameters["query"] != "SELECT 1" {
+					t.Errorf("query = %#v, want the SQL carried", postgres.Parameters["query"])
+				}
+				return
+			}
+			// A table locator, not a flattened string: the shape is the same on
+			// both sides so it carries rather than being translated.
+			table, ok := postgres.Parameters["table"].(map[string]any)
+			if !ok || table["value"] != "customers" {
+				t.Fatalf("table = %#v, want the locator carried", postgres.Parameters["table"])
+			}
+			if table["__rl"] != true {
+				t.Errorf("table = %#v, want the locator sentinel", table)
+			}
+			switch operation {
+			case "insert", "upsert", "update":
+				columns, ok := postgres.Parameters["columns"].(map[string]any)
+				if !ok || columns["mappingMode"] != "defineBelow" {
+					t.Errorf("columns = %#v, want the mapper carried whole", postgres.Parameters["columns"])
+				}
+			case "select", "deleteTable":
+				rows, ok := postgres.Parameters["where"].([]any)
+				if !ok || len(rows) != 1 {
+					t.Fatalf("where = %#v, want the one condition carried", postgres.Parameters["where"])
+				}
+				row, _ := rows[0].(map[string]any)
+				if row["field"] != "tier" || row["operator"] != "equals" {
+					t.Errorf("condition = %#v, want the column and operator mapped", row)
+				}
+			}
+		})
+	}
+}
+
+func TestAnImportedPostgresNodeRoundTripsToN8N(t *testing.T) {
+	t.Parallel()
+
+	const fixture = `{
+	  "name": "Round trip",
+	  "nodes": [
+	    {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}},
+	    {"id":"b","name":"Postgres","type":"n8n-nodes-base.postgres","typeVersion":2.5,"position":[220,0],
+	     "parameters":{"operation":"select",
+	                   "schema":{"__rl":true,"mode":"list","value":"public"},
+	                   "table":{"__rl":true,"mode":"list","value":"customers"},
+	                   "where":{"values":[{"column":"tier","condition":"equal","value":"gold"}]},
+	                   "returnAll":true}}
+	  ],
+	  "connections": {"Manual": {"main": [[{"node":"Postgres","type":"main","index":0}]]}}
+	}`
+
+	result := importFixture(t, fixture)
+	exported, err := n8n.Export(result.Document, registry(t))
+	if err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+	for _, node := range exported.Document.Nodes {
+		if node.Name != "Postgres" {
+			continue
+		}
+		if node.Type != "n8n-nodes-base.postgres" || node.Parameters["operation"] != "select" {
+			t.Fatalf("exported = %#v, want the operation carried back", node.Parameters)
+		}
+		table, _ := node.Parameters["table"].(map[string]any)
+		if table["value"] != "customers" || table["__rl"] != true {
+			t.Errorf("exported table = %#v, want the locator", node.Parameters["table"])
+		}
+		where, _ := node.Parameters["where"].(map[string]any)
+		values, _ := where["values"].([]any)
+		if len(values) != 1 {
+			t.Fatalf("exported where = %#v, want the condition carried back", node.Parameters["where"])
+		}
+		row, _ := values[0].(map[string]any)
+		// n8n's own vocabulary on the way out, this node's on the way in.
+		if row["column"] != "tier" || row["condition"] != "equal" {
+			t.Errorf("exported condition = %#v, want n8n's spelling", row)
+		}
+		if node.Parameters["returnAll"] != true {
+			t.Errorf("exported returnAll = %#v, want it carried", node.Parameters["returnAll"])
+		}
+	}
+}
+
+func TestAnImportedWorkflowKeepsItsTimezone(t *testing.T) {
+	t.Parallel()
+
+	// A scheduled workflow whose zone was dropped runs at the wrong hour every
+	// day, with nothing anywhere saying why. It was reported as uncarried until
+	// the Schedule Trigger learned to read it, and the diagnostic outlived the
+	// gap it described.
+	const fixture = `{
+	  "name": "Jakarta nightly",
+	  "settings": {"timezone": "Asia/Jakarta", "executionOrder": "v1"},
+	  "nodes": [
+	    {"id":"a","name":"Schedule","type":"n8n-nodes-base.scheduleTrigger","typeVersion":1.2,"position":[0,0],
+	     "parameters":{"rule":{"interval":[{"field":"days","triggerAtHour":9}]}}}
+	  ],
+	  "connections": {}
+	}`
+	result := importFixture(t, fixture)
+	if result.Document.Settings["timezone"] != "Asia/Jakarta" {
+		t.Fatalf("settings = %#v, want the timezone carried", result.Document.Settings)
+	}
+	// The other settings still are not carried, and still say so.
+	if !hasReason(result.Unsupported, "execution order") {
+		t.Errorf("unsupported = %#v, want the uncarried settings still named", result.Unsupported)
+	}
+
+	// A zone this server cannot resolve is named rather than carried: falling
+	// back to UTC silently is the same wrong hour by another route.
+	const bad = `{
+	  "name": "Typo",
+	  "settings": {"timezone": "Asia/Jakata"},
+	  "nodes": [
+	    {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}}
+	  ],
+	  "connections": {}
+	}`
+	typo := importFixture(t, bad)
+	if _, present := typo.Document.Settings["timezone"]; present {
+		t.Errorf("settings = %#v, want an unresolvable zone left out", typo.Document.Settings)
+	}
+	if !hasReason(typo.Unsupported, "not a zone this server knows") {
+		t.Errorf("unsupported = %#v, want the unknown zone named", typo.Unsupported)
 	}
 }
