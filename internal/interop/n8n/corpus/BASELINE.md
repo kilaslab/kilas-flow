@@ -26,6 +26,7 @@ nor blocked actually failed to execute.
 | imported | 39 | 100% |
 | activatable | 13 | 33% |
 | runnable | 3 | 8% |
+| _(blocked only by a Code node)_ | 0 | 0% |
 | _(blocked by the offline policy)_ | 10 | 26% |
 
 ## Per fixture

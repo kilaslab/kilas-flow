@@ -18,6 +18,12 @@ const CodeExecutorID = "core.code"
 // CodeNodeType is the Go Code node.
 const CodeNodeType = "kilasflow.code"
 
+// Code node modes, using n8n's names so an import needs no translation.
+const (
+	CodeModeAllItems = "runOnceForAllItems"
+	CodeModeEachItem = "runOnceForEachItem"
+)
+
 func codeNode() node.Definition {
 	return node.Definition{
 		Type:        CodeNodeType,
@@ -37,6 +43,15 @@ func codeNode() node.Definition {
 				Description: "The body of func run(items []Item) ([]Item, error). " +
 					"The standard library is available; the filesystem, network, and environment are not.",
 			},
+			{
+				Key: "mode", Label: "Mode", Kind: node.PropertyOptions, Default: CodeModeAllItems,
+				Options: []node.PropertyOption{
+					{Label: "Run once for all items", Value: CodeModeAllItems},
+					{Label: "Run once for each item", Value: CodeModeEachItem},
+				},
+				Description: "Running once for each item calls the same compiled artifact per item, so it " +
+					"costs one build either way — only the number of sandbox calls changes.",
+			},
 			{Key: "scriptTimeoutSeconds", Label: "Time limit (seconds)", Kind: node.PropertyNumber, Default: 10},
 			{Key: "memoryMB", Label: "Memory limit (MB)", Kind: node.PropertyNumber, Default: 16},
 		},
@@ -54,6 +69,11 @@ func validateCodeConfiguration(n workflow.Node) error {
 	source, _ := n.Parameters["code"].(string)
 	if source == "" {
 		return fmt.Errorf("code is required")
+	}
+	switch mode := textParameter(n.Parameters, "mode"); mode {
+	case "", CodeModeAllItems, CodeModeEachItem:
+	default:
+		return fmt.Errorf("mode %q is not supported", mode)
 	}
 	return runcode.ValidateSource(source)
 }
@@ -99,17 +119,51 @@ func (executor *CodeExecutor) Execute(ctx context.Context, ir workflow.IRNode, i
 		}
 	}
 
-	// Binary references are carried past the sandbox rather than through it.
-	// User code sees and edits JSON; a payload it never receives is one it
-	// cannot corrupt, and dropping the reference on the way out was silently
-	// losing an attachment the next node needed.
 	incoming := input["main"]
+	runner := runcode.NewRunner(executor.compiler, executor.cache, limits)
+
+	if textParameter(ir.Parameters, "mode") == CodeModeEachItem {
+		// One call per item, against the same compiled artifact: the cache is
+		// keyed by source hash, so this multiplies sandbox calls and not
+		// builds. Each call sees a batch of one, which is what makes the same
+		// body work in either mode.
+		out := make([]workflow.Item, 0, len(incoming))
+		for index, item := range incoming {
+			produced, err := executor.call(ctx, ir, runner, source, []workflow.Item{item})
+			if err != nil {
+				return nil, err
+			}
+			for _, result := range produced {
+				// Every item this call produced inherits the one item it was
+				// given, because that is the only source it can have come from.
+				out = append(out, withBinaryFrom(result, incoming, index))
+			}
+		}
+		return workflow.NodeOutput{out}, nil
+	}
+
+	produced, err := executor.call(ctx, ir, runner, source, incoming)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]workflow.Item, 0, len(produced))
+	for index, item := range produced {
+		out = append(out, withBinaryFrom(item, incoming, index))
+	}
+	return workflow.NodeOutput{out}, nil
+}
+
+// call runs one batch through the sandbox.
+//
+// Binary references are carried past the sandbox rather than through it. User
+// code sees and edits JSON; a payload it never receives is one it cannot
+// corrupt, and dropping the reference on the way out was silently losing an
+// attachment the next node needed.
+func (executor *CodeExecutor) call(ctx context.Context, ir workflow.IRNode, runner *runcode.Runner, source string, incoming []workflow.Item) ([]workflow.Item, error) {
 	items := make([]runcode.Item, 0, len(incoming))
 	for _, item := range incoming {
 		items = append(items, runcode.Item{JSON: item.JSON})
 	}
-
-	runner := runcode.NewRunner(executor.compiler, executor.cache, limits)
 	result, err := runner.Run(ctx, source, items)
 	if err != nil {
 		// A compiler that is not installed is a deployment problem, not the
@@ -119,26 +173,31 @@ func (executor *CodeExecutor) Execute(ctx context.Context, ir workflow.IRNode, i
 		}
 		return nil, fmt.Errorf("node %q: %w", ir.Name, err)
 	}
-
 	out := make([]workflow.Item, 0, len(result.Items))
-	for index, item := range result.Items {
+	for _, item := range result.Items {
 		json := item.JSON
 		if json == nil {
 			json = map[string]any{}
 		}
-		converted := workflow.Item{JSON: json}
-		// Positional, because that is the only correspondence there is: code
-		// that returns as many items as it received is the ordinary case, and
-		// code that reshapes the batch has no attachment to inherit.
-		if index < len(incoming) && len(incoming[index].Binary) > 0 {
-			converted.Binary = make(map[string]workflow.BinaryRef, len(incoming[index].Binary))
-			for key, reference := range incoming[index].Binary {
-				converted.Binary[key] = reference
-			}
-		}
-		out = append(out, converted)
+		out = append(out, workflow.Item{JSON: json})
 	}
-	return workflow.NodeOutput{out}, nil
+	return out, nil
+}
+
+// withBinaryFrom re-attaches the binary the sandbox never saw.
+//
+// Positional, because that is the only correspondence there is: code that
+// returns as many items as it received is the ordinary case, and code that
+// reshapes the batch has no attachment to inherit.
+func withBinaryFrom(item workflow.Item, incoming []workflow.Item, index int) workflow.Item {
+	if index >= len(incoming) || len(incoming[index].Binary) == 0 {
+		return item
+	}
+	item.Binary = make(map[string]workflow.BinaryRef, len(incoming[index].Binary))
+	for key, reference := range incoming[index].Binary {
+		item.Binary[key] = reference
+	}
+	return item
 }
 
 // CompilationStatus reports whether one piece of source has a usable artifact.

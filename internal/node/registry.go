@@ -58,6 +58,17 @@ type Definition struct {
 	Subtitle string `json:"subtitle,omitempty"`
 	// DocumentationURL points at this node's reference page.
 	DocumentationURL string `json:"documentationUrl,omitempty"`
+	// Unavailable explains why this deployment cannot run this node, or is
+	// empty when it can.
+	//
+	// Presentation, not policy: the node still refuses at run time, and this is
+	// how the editor learns to say so first. A user must not discover after a
+	// workflow is saved and activated that the deployment was never able to run
+	// one of its nodes.
+	//
+	// It is never set by a definition — the catalogue is static and this is a
+	// property of the running deployment — so the API stamps it on the way out.
+	Unavailable string `json:"unavailable,omitempty"`
 	// Codex carries the picker's own metadata, kept in a block of its own so
 	// panel arrangement can change without disturbing the node's identity.
 	Codex *NodeCodex `json:"codex,omitempty"`

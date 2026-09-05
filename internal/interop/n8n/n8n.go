@@ -261,6 +261,13 @@ var mappings = []mapping{
 		exportTypeVersion: 2, toKilas: removeDuplicatesToKilas, toN8N: removeDuplicatesToN8N,
 	},
 
+	// Code. Refused rather than translated, but refused as a first-class node:
+	// see codeToKilas for why translating is the worse of the two.
+	{
+		n8nType: "n8n-nodes-base.code", kilasType: ForeignCodeNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 2, toKilas: codeToKilas, toN8N: codeToN8N,
+	},
+
 	// Workflow composition. Every corpus workflow that factored shared logic
 	// into a sub-workflow imported as the unsupported placeholder before.
 	{
@@ -370,6 +377,9 @@ const (
 	DateTimeNodeType = "kilasflow.dateTime"
 	WaitNodeType     = "kilasflow.wait"
 )
+
+// ForeignCodeNodeType holds an imported Code node this runtime cannot run.
+const ForeignCodeNodeType = "kilasflow.foreignCode"
 
 // The workflow-composition family's node types.
 const (

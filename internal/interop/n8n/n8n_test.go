@@ -2558,3 +2558,93 @@ func TestARespondNodeCarriesItsWholeRespondWithSet(t *testing.T) {
 		})
 	}
 }
+
+func TestAnImportedCodeNodeIsAFirstClassRefusalRatherThanThePlaceholder(t *testing.T) {
+	t.Parallel()
+
+	const fixture = `{
+	  "name": "Scripted",
+	  "nodes": [
+	    {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}},
+	    {"id":"b","name":"Filter in JS","type":"n8n-nodes-base.code","typeVersion":2,"position":[220,0],
+	     "parameters":{"mode":"runOnceForAllItems","jsCode":"return items.filter(i => i.json.ok);"}}
+	  ],
+	  "connections": {"Manual": {"main": [[{"node":"Filter in JS","type":"main","index":0}]]}}
+	}`
+
+	result := importFixture(t, fixture)
+	code := nodeByName(result.Document, "Filter in JS")
+	// Not the generic unsupported placeholder: an unsupported node type is
+	// something this product has not built, and a Code node is something it
+	// deliberately has not. The two need different answers.
+	if code.Type != n8n.ForeignCodeNodeType {
+		t.Fatalf("code node = %q, want the dedicated placeholder", code.Type)
+	}
+	if code.Parameters["jsCode"] != "return items.filter(i => i.json.ok);" {
+		t.Errorf("jsCode = %#v, want the original source kept", code.Parameters["jsCode"])
+	}
+	if code.Parameters["mode"] != "runOnceForAllItems" || code.Parameters["language"] != "javaScript" {
+		t.Errorf("parameters = %#v, want the mode and language kept", code.Parameters)
+	}
+
+	// One blocking issue, naming the node and the replacement.
+	named := false
+	for _, issue := range result.Unsupported {
+		if issue.Severity != n8n.SeverityBlocking {
+			continue
+		}
+		if issue.NodeName == "Filter in JS" && strings.Contains(issue.Reason, "Filter node") {
+			named = true
+		}
+	}
+	if !named {
+		t.Errorf("unsupported = %#v, want the Code node named with its replacement", result.Unsupported)
+	}
+
+	// A round trip must not cost a user their source.
+	exported, err := n8n.Export(result.Document, registry(t))
+	if err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+	for _, node := range exported.Document.Nodes {
+		if node.Name != "Filter in JS" {
+			continue
+		}
+		if node.Type != "n8n-nodes-base.code" {
+			t.Errorf("exported type = %q, want the n8n Code node", node.Type)
+		}
+		if node.Parameters["jsCode"] != "return items.filter(i => i.json.ok);" {
+			t.Errorf("exported jsCode = %#v, want the source returned unchanged", node.Parameters["jsCode"])
+		}
+	}
+}
+
+func TestEveryJavaScriptEscapeHatchRefusesInTheSameWords(t *testing.T) {
+	t.Parallel()
+
+	// One mechanism, one wording, one severity. Three wordings for one
+	// situation is how a user concludes the three are different problems.
+	const fixture = `{
+	  "name": "Two hatches",
+	  "nodes": [
+	    {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}},
+	    {"id":"b","name":"Code","type":"n8n-nodes-base.code","typeVersion":2,"position":[220,0],
+	     "parameters":{"jsCode":"return items;"}},
+	    {"id":"c","name":"Sort","type":"n8n-nodes-base.sort","typeVersion":1,"position":[440,0],
+	     "parameters":{"type":"code","code":"return a.json.n - b.json.n;"}}
+	  ],
+	  "connections": {"Manual": {"main": [[{"node":"Code","type":"main","index":0}]]}},
+	  "pinData": {}
+	}`
+
+	result := importFixture(t, fixture)
+	refusals := 0
+	for _, issue := range result.Unsupported {
+		if issue.Severity == n8n.SeverityBlocking && strings.Contains(issue.Reason, "which this server does not run") {
+			refusals++
+		}
+	}
+	if refusals != 2 {
+		t.Fatalf("unsupported = %#v, want both escape hatches refused in the same words", result.Unsupported)
+	}
+}

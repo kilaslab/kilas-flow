@@ -91,12 +91,16 @@ func run() error {
 		return fmt.Errorf("register built-in nodes: %w", err)
 	}
 	executorRegistry := engine.NewRegistry()
+	// The Go toolchain is not in the distroless image, so this is absent on a
+	// default install. That is reported through the node catalogue rather than
+	// discovered when a workflow runs — see internal/runcode/doc.go.
+	codeCompiler := runcode.NewToolchainCompiler()
 	agentMemory, err := ai.NewBufferMemory(ai.Retention{}, nil)
 	if err != nil {
 		return fmt.Errorf("configure agent memory: %w", err)
 	}
 	if err := nodes.RegisterExecutors(executorRegistry, outboundPolicy(cfg.Outbound), databaseGuard(cfg.Database),
-		ai.NewLoopRuntime(), agentMemory, runcode.NewToolchainCompiler(),
+		ai.NewLoopRuntime(), agentMemory, codeCompiler,
 		nodes.WithDatabaseCeiling(databaseCeiling(cfg.SQL))); err != nil {
 		return fmt.Errorf("register built-in executors: %w", err)
 	}
@@ -277,6 +281,7 @@ func run() error {
 		Events:              eventBroker,
 		EmbedIssuer:         embedIssuer,
 		ExecutionController: runtime,
+		NodeAvailability:    nodeAvailability(codeCompiler),
 		HTTPPolicy:          outboundPolicy(cfg.Outbound),
 		DatabaseGuard:       databaseGuard(cfg.Database),
 		Version:             version,
@@ -299,6 +304,24 @@ func databaseGuard(cfg config.Database) sqlnode.Guard {
 		return sqlnode.Guard{}
 	}
 	return sqlnode.Guard{InternalPaths: []string{cfg.DSN}}
+}
+
+// nodeAvailability reports the nodes this deployment cannot run.
+//
+// Only the Code node, for now, and only because compiling Go needs a toolchain
+// the distroless image does not carry. Evaluated per request rather than once
+// at startup, so a compiler that becomes reachable is picked up without a
+// restart — and, more importantly, so one that goes away is too.
+func nodeAvailability(compiler runcode.Compiler) func() map[string]string {
+	return func() map[string]string {
+		if compiler != nil && compiler.Available() {
+			return nil
+		}
+		return map[string]string{
+			nodes.CodeNodeType: "This deployment has no Go compiler, so Code nodes cannot be built. " +
+				"Use the native nodes instead, or run an image that carries the Go toolchain.",
+		}
+	}
 }
 
 // databaseCeiling is the deployment's bound on what a SQL node's parameters

@@ -79,6 +79,10 @@ type Deps struct {
 	// using it reach the same set of hosts. A zero value falls back to
 	// safehttp.DefaultPolicy.
 	HTTPPolicy safehttp.Policy
+	// NodeAvailability reports which nodes this deployment cannot run, keyed by
+	// node type, so the editor can say so before a workflow is saved rather
+	// than after it runs. Nil means everything registered can run.
+	NodeAvailability func() map[string]string
 	// DatabaseGuard is the same guard the database executors receive, so a
 	// SQLite credential naming KilasFlow's own database is refused by the test
 	// endpoint too rather than only at run time.

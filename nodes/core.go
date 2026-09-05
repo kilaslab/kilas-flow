@@ -48,6 +48,7 @@ func RegisterAll(registry *node.Registry) error {
 		waitNode(),
 		executeWorkflowNode(),
 		executeWorkflowTrigger(),
+		foreignCodeNode(),
 	} {
 		if err := registry.Register(definition); err != nil {
 			return err

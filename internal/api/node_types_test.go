@@ -39,3 +39,42 @@ func TestNodeTypesServesTheRegisteredCatalogue(t *testing.T) {
 		t.Errorf("executor binding leaked in API response = %q", definitions[0].ExecutorID)
 	}
 }
+
+func TestTheNodeCatalogueSaysWhatThisDeploymentCannotRun(t *testing.T) {
+	registry := node.NewRegistry()
+	if err := nodes.RegisterAll(registry); err != nil {
+		t.Fatalf("RegisterAll() error = %v", err)
+	}
+	// A user must never discover at run time that their deployment cannot
+	// compile: the editor learns it from the catalogue, before the workflow is
+	// saved rather than after it runs.
+	handler := newTestServer(t, api.Deps{
+		DB: stubPinger{}, NodeRegistry: registry,
+		NodeAvailability: func() map[string]string {
+			return map[string]string{nodes.CodeNodeType: "This deployment has no Go compiler."}
+		},
+	})
+
+	definitions := requestJSON[[]struct {
+		Type        string `json:"type"`
+		Unavailable string `json:"unavailable"`
+	}](t, handler, http.MethodGet, "/api/v1/node-types", nil, http.StatusOK)
+
+	seen := false
+	for _, definition := range definitions {
+		switch definition.Type {
+		case nodes.CodeNodeType:
+			seen = true
+			if definition.Unavailable == "" {
+				t.Errorf("the Code node reports no reason it cannot run")
+			}
+		default:
+			if definition.Unavailable != "" {
+				t.Errorf("%s was marked unavailable: %q", definition.Type, definition.Unavailable)
+			}
+		}
+	}
+	if !seen {
+		t.Fatal("the Code node is not in the catalogue")
+	}
+}

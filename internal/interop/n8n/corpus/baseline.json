@@ -7,6 +7,7 @@
   },
   "total": 39,
   "blocked": 10,
+  "codeOnly": 0,
   "nodeTypeInventory": {
     "@devlikeapro/n8n-nodes-chatwoot.chatWoot": 5,
     "@devlikeapro/n8n-nodes-waha.WAHA": 23,
@@ -428,7 +429,7 @@
       "imported": true,
       "activatable": false,
       "runnable": false,
-      "unsupported": 35,
+      "unsupported": 37,
       "reason": "node \"259a1703-699b-4673-948c-cf21b7684667\" requires a wahaApi credential"
     }
   ]

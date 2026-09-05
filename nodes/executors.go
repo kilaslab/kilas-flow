@@ -61,6 +61,7 @@ func RegisterExecutors(registry *engine.Registry, httpPolicy safehttp.Policy, da
 		WaitExecutorID:                   engine.ExecutorFunc(executeWait),
 		ExecuteWorkflowExecutorID:        engine.ExecutorFunc(executeExecuteWorkflow),
 		ExecuteWorkflowTriggerExecutorID: engine.ExecutorFunc(executeExecuteWorkflowTrigger),
+		ForeignCodeExecutorID:            engine.ExecutorFunc(executeForeignCode),
 		UnsupportedExecutorID:            engine.ExecutorFunc(executeUnsupported),
 	} {
 		if err := registry.Register(id, executor); err != nil {

@@ -78,7 +78,15 @@ type score struct {
 	// Blocked marks a run that the offline policy stopped — an outbound HTTP
 	// or database call the corpus deliberately refuses — rather than an engine
 	// failure. It is a property of the measurement, not of the workflow.
-	Blocked     bool   `json:"blocked,omitempty"`
+	Blocked bool `json:"blocked,omitempty"`
+	// CodeOnly marks a workflow whose only blocking issue is a Code node.
+	//
+	// Worth separating because it is a different kind of gap. Every other
+	// blocker is something this product has not built; a Code node is something
+	// it deliberately has not built, and the fix is the user replacing it with
+	// native nodes rather than this repository shipping anything. Counting the
+	// two together makes the roadmap look further from done than it is.
+	CodeOnly    bool   `json:"codeOnly,omitempty"`
 	Unsupported int    `json:"unsupported"`
 	Reason      string `json:"reason,omitempty"`
 }
@@ -91,7 +99,10 @@ type baseline struct {
 	Total   int            `json:"total"`
 	// Blocked counts fixtures that compiled and began running but were stopped
 	// by the offline policy. See the note on score.Blocked.
-	Blocked   int            `json:"blocked"`
+	Blocked int `json:"blocked"`
+	// CodeOnly counts fixtures that would activate if their Code nodes were
+	// replaced. See the note on score.CodeOnly for why it is counted apart.
+	CodeOnly  int            `json:"codeOnly"`
 	NodeTypes map[string]int `json:"nodeTypeInventory"`
 	Scores    []score        `json:"scores"`
 }
@@ -174,6 +185,7 @@ func scoreFixture(t *testing.T, fixture corpus.Fixture, catalog workflow.Catalog
 	result.Imported = true
 	result.Nodes = len(imported.Document.Nodes)
 	result.Unsupported = len(imported.Unsupported)
+	result.CodeOnly = blockedOnlyByCode(imported.Unsupported)
 
 	document := imported.Document
 	document.ID = "wf_corpus"
@@ -193,6 +205,26 @@ func scoreFixture(t *testing.T, fixture corpus.Fixture, catalog workflow.Catalog
 	}
 	result.Runnable = true
 	return result
+}
+
+// blockedOnlyByCode reports a workflow whose every blocking issue is a Code
+// node, and which has at least one.
+//
+// Lossy and dropped issues are ignored on purpose: they do not stop a workflow
+// activating, so they have no bearing on what is blocking it.
+func blockedOnlyByCode(issues []n8n.ImportIssue) bool {
+	blocking := 0
+	code := 0
+	for _, issue := range issues {
+		if issue.Severity != n8n.SeverityBlocking {
+			continue
+		}
+		blocking++
+		if strings.Contains(issue.Reason, "which this server does not run") {
+			code++
+		}
+	}
+	return blocking > 0 && blocking == code
 }
 
 // nodeTypeInventory counts raw n8n node types across the corpus. It is what p3
@@ -232,6 +264,7 @@ func TestCorpusScoreboard(t *testing.T) {
 	scores := make([]score, 0, len(fixtures))
 	tiers := map[string]int{tierImported: 0, tierActivatable: 0, tierRunnable: 0}
 	blocked := 0
+	codeOnly := 0
 	var public []corpus.Fixture
 	for _, fixture := range fixtures {
 		// The private overlay is scored but never recorded: its rows would put
@@ -255,6 +288,9 @@ func TestCorpusScoreboard(t *testing.T) {
 		if current.Blocked {
 			blocked++
 		}
+		if current.CodeOnly && !current.Activatable {
+			codeOnly++
+		}
 		scores = append(scores, current)
 	}
 	sort.SliceStable(scores, func(i, j int) bool {
@@ -273,6 +309,7 @@ func TestCorpusScoreboard(t *testing.T) {
 		Tiers:     tiers,
 		Total:     len(scores),
 		Blocked:   blocked,
+		CodeOnly:  codeOnly,
 		NodeTypes: nodeTypeInventory(public),
 		Scores:    scores,
 	}
@@ -371,6 +408,8 @@ func renderMarkdown(measured baseline) string {
 		}
 		fmt.Fprintf(&out, "| %s | %d | %.0f%% |\n", tier, count, percent)
 	}
+	fmt.Fprintf(&out, "| _(blocked only by a Code node)_ | %d | %.0f%% |\n",
+		measured.CodeOnly, percentOf(measured.CodeOnly, measured.Total))
 	fmt.Fprintf(&out, "| _(blocked by the offline policy)_ | %d | %.0f%% |\n",
 		measured.Blocked, percentOf(measured.Blocked, measured.Total))
 

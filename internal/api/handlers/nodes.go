@@ -24,6 +24,9 @@ type NodeTypes struct {
 	// credentials builds a tenant-scoped resolver, so a request naming another
 	// tenant's credential resolves to nothing rather than to a secret.
 	credentials func(repository.TenantScope) loadoptions.CredentialResolver
+	// availability reports which nodes this deployment cannot run, keyed by
+	// node type. Nil means everything registered can run.
+	availability func() map[string]string
 }
 
 // WithOptionLoading enables the load-options endpoint.
@@ -116,7 +119,31 @@ func (handler *NodeTypes) List(context.Context, *struct{}) (*NodeTypesOutput, er
 	if handler.registry == nil {
 		return nil, huma.Error503ServiceUnavailable("node catalogue unavailable")
 	}
-	return &NodeTypesOutput{Body: handler.registry.List()}, nil
+	definitions := handler.registry.List()
+	if handler.availability == nil {
+		return &NodeTypesOutput{Body: definitions}, nil
+	}
+	// Stamped here rather than stored on the definition: the catalogue is
+	// static and assembled once at startup, while whether a node can run is a
+	// property of this deployment right now.
+	unavailable := handler.availability()
+	for index := range definitions {
+		if reason, blocked := unavailable[definitions[index].Type]; blocked {
+			definitions[index].Unavailable = reason
+		}
+	}
+	return &NodeTypesOutput{Body: definitions}, nil
+}
+
+// WithAvailability reports which nodes this deployment cannot run.
+//
+// A function rather than a map, because the answer can change while the process
+// is up — a compiler sidecar that comes back, a credential store that is
+// configured after boot — and a snapshot taken at composition would go stale
+// in exactly the direction that misleads.
+func (handler *NodeTypes) WithAvailability(report func() map[string]string) *NodeTypes {
+	handler.availability = report
+	return handler
 }
 
 // Grammar returns the expression surface the server actually accepts.

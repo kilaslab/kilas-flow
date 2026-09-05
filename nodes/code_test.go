@@ -247,3 +247,63 @@ func TestCodeNodeDoesNotInventBinaryForItemsItDidNotReceive(t *testing.T) {
 		t.Fatalf("second item Binary = %#v, want none", output[0][1].Binary)
 	}
 }
+
+func TestTheGoCodeNodeRunsOncePerItemWhenAsked(t *testing.T) {
+	t.Parallel()
+
+	executor := nodes.NewCodeExecutor(runcode.NewToolchainCompiler(), runcode.NewMemoryCache(), runcode.DefaultLimits())
+	if status := executor.Status(context.Background(), "return items, nil"); !status.Available {
+		t.Skip("this machine has no Go toolchain, so Code nodes cannot be compiled")
+	}
+
+	// The body reports how many items it was given. Once for all items sees
+	// three; once per item sees one, three times.
+	const source = `
+	out := make([]Item, 0, len(items))
+	for _, item := range items {
+		copied := map[string]any{}
+		for key, value := range item.JSON {
+			copied[key] = value
+		}
+		copied["batch"] = float64(len(items))
+		out = append(out, Item{JSON: copied})
+	}
+	return out, nil`
+
+	incoming := workflow.NodeInput{"main": {
+		{JSON: map[string]any{"id": float64(1)}, Binary: map[string]workflow.BinaryRef{"data": {ID: "k1"}}},
+		{JSON: map[string]any{"id": float64(2)}},
+		{JSON: map[string]any{"id": float64(3)}},
+	}}
+
+	for mode, wantBatch := range map[string]float64{
+		"runOnceForAllItems": 3,
+		"runOnceForEachItem": 1,
+	} {
+		t.Run(mode, func(t *testing.T) {
+			output, err := executor.Execute(context.Background(), codeIR(t, map[string]any{
+				"code": source, "mode": mode,
+			}), incoming, engine.Request{})
+			if err != nil {
+				t.Fatalf("Execute() error = %v", err)
+			}
+			if len(output[0]) != 3 {
+				t.Fatalf("output = %d items, want 3", len(output[0]))
+			}
+			for index, item := range output[0] {
+				if item.JSON["batch"] != wantBatch {
+					t.Errorf("item %d batch = %#v, want %v", index, item.JSON["batch"], wantBatch)
+				}
+			}
+			// The binary reference is carried past the sandbox, not through it:
+			// user code never sees a payload it could corrupt, and dropping the
+			// reference used to lose an attachment the next node needed.
+			if got := output[0][0].Binary["data"].ID; got != "k1" {
+				t.Errorf("binary = %#v, want the incoming reference kept", output[0][0].Binary)
+			}
+			if len(output[0][1].Binary) != 0 {
+				t.Errorf("item 1 gained a binary it never had: %#v", output[0][1].Binary)
+			}
+		})
+	}
+}

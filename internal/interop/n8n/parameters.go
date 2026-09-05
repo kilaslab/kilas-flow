@@ -10,6 +10,7 @@ import (
 	"github.com/kilaslabs/kilas-flow/internal/property"
 	"github.com/kilaslabs/kilas-flow/internal/scheduler"
 	"github.com/kilaslabs/kilas-flow/internal/workflow"
+	"github.com/kilaslabs/kilas-flow/nodes"
 )
 
 // n8n marks an expression by prefixing the string with `=`, and uses the same
@@ -1332,6 +1333,86 @@ func waitToN8N(node workflow.Node) (map[string]any, []Lossy) {
 	return parameters, nil
 }
 
+// --- Code -------------------------------------------------------------------
+
+// unsupportedScript is the one refusal every JavaScript escape hatch produces.
+//
+// One function, so a Code node, a Sort comparator and whatever comes next all
+// say the same thing in the same words and carry the same severity. Three
+// wordings for one situation is how a user concludes the three are different
+// problems.
+//
+// Blocking, always. A script this server cannot run is not a detail that was
+// lost in translation; it is work the workflow was relying on that will not
+// happen, and a workflow that activates without it produces plausible output
+// with a hole in it.
+func unsupportedScript(field, language, alternative string) Unsupported {
+	return Unsupported{
+		Severity: SeverityBlocking, Field: field,
+		Reason: fmt.Sprintf("this node's code is written in %s, which this server does not run. %s",
+			language, alternative),
+	}
+}
+
+// codeToKilas keeps an imported Code node's source rather than discarding it.
+//
+// The alternative — translating JavaScript to Go — is a compiler project with
+// no correct stopping point, and the failure mode is the worst one available:
+// a body that translates into Go which compiles and computes something else.
+// So the node is refused, and refused *well*: the source is kept and visible,
+// the language is kept, and the diagnostic names the native node that most
+// likely replaces it.
+func codeToKilas(node Node) (map[string]any, []Unsupported) {
+	language := stringParameter(node.Parameters, "language")
+	if language == "" {
+		language = "javaScript"
+	}
+	source := stringParameter(node.Parameters, "jsCode")
+	if source == "" {
+		source = stringParameter(node.Parameters, "pythonCode")
+	}
+	suggestion := nodes.SuggestReplacement(source)
+
+	parameters := map[string]any{
+		"language":    language,
+		"mode":        defaultString(stringParameter(node.Parameters, "mode"), "runOnceForAllItems"),
+		"replacement": suggestion,
+	}
+	if value, present := node.Parameters["jsCode"]; present {
+		parameters["jsCode"] = fromN8NValue(value)
+	}
+	if value, present := node.Parameters["pythonCode"]; present {
+		parameters["pythonCode"] = fromN8NValue(value)
+	}
+	return parameters, []Unsupported{unsupportedScript("jsCode", codeLanguageName(language), suggestion)}
+}
+
+func codeToN8N(node workflow.Node) (map[string]any, []Lossy) {
+	parameters := map[string]any{
+		"language": defaultString(stringParameter(node.Parameters, "language"), "javaScript"),
+		"mode":     defaultString(stringParameter(node.Parameters, "mode"), "runOnceForAllItems"),
+	}
+	// The source goes back exactly as it arrived, which is the point of having
+	// kept it: a round trip through this server must not cost a user their code.
+	for _, key := range []string{"jsCode", "pythonCode"} {
+		if value, present := node.Parameters[key]; present {
+			parameters[key] = toN8NValue(value)
+		}
+	}
+	return parameters, nil
+}
+
+func codeLanguageName(language string) string {
+	switch strings.ToLower(strings.TrimSpace(language)) {
+	case "python", "pythonNative", "pythonnative":
+		return "Python"
+	case "javascript", "":
+		return "JavaScript"
+	default:
+		return language
+	}
+}
+
 // --- SQL --------------------------------------------------------------------
 
 func sqlToKilas(node Node) (map[string]any, []Unsupported) {
@@ -1631,15 +1712,14 @@ func splitOutToN8N(node workflow.Node) (map[string]any, []Lossy) {
 //
 // n8n's third mode is a JS comparator, which this product has no runtime for.
 // Approximating it would sort by something the author did not write, so it is
-// named instead — and the Code decision stays in the one ticket that owns it.
+// named instead — through unsupportedScript, which is the one refusal every
+// JavaScript escape hatch in this importer produces.
 func sortToKilas(node Node) (map[string]any, []Unsupported) {
 	issues := make([]Unsupported, 0)
 	mode := defaultString(stringParameter(node.Parameters, "type"), "simple")
 	if mode == "code" {
-		return map[string]any{"type": "simple"}, append(issues, Unsupported{
-			Severity: SeverityBlocking, Field: "type",
-			Reason: "this Sort used a JavaScript comparator, which KilasFlow does not run; set the fields to sort by before running the workflow",
-		})
+		return map[string]any{"type": "simple"}, append(issues, unsupportedScript("type", "JavaScript",
+			"Set the fields to sort by on this node before running the workflow."))
 	}
 
 	converted := map[string]any{"type": mode}
