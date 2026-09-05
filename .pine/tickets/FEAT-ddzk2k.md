@@ -2,7 +2,7 @@
 id: FEAT-ddzk2k
 title: Authenticate the main API and resolve real tenants
 status: todo
-priority: low
+priority: high
 labels:
     - platform
     - longtail
