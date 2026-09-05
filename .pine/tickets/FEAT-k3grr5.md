@@ -47,7 +47,7 @@ Only the empty-item fallbacks belong to the executors; do not add per-executor "
 
 ## References
 
-- Plan: `/Users/izzadev/.claude/plans/distributed-worker-nats-crispy-finch.md`, section "p1 — Engine correctness and import fidelity", entry V2-p1-1.
+- Roadmap plan, p1 section, entry V2-p1-1: `.pine/roadmap.md`.
 - `internal/engine/runner.go` — `dependenciesComplete`, `nodeInput`, `firstItem`, the scheduling loop in `Run`.
 - `nodes/http.go`, `nodes/ai.go`, `nodes/database.go`, `nodes/webhook.go` — the four empty-item substitutions.
 - `internal/webhook/webhook.go` — `findResponse`, `respondFromExecution`.

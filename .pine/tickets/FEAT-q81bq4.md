@@ -108,7 +108,8 @@ DateTime and Wait go in a new `nodes/datetime.go` and `nodes/wait.go`. DateTime 
 
 ## References
 
-- Plan: `~/.claude/plans/distributed-worker-nats-crispy-finch.md`, section p4 (time and control); p1-10 expression engine v2; p6-1 versioned migrations; p8-4 human approval / Wait with durable resume.
+- Roadmap plan, p4 section: `.pine/roadmap.md`.
+- `.pine/roadmap.md` — the p4 "time and control" family; entry V2-p1-10 (expression engine v2); entry V2-p6-1 (versioned migrations); entry V2-p8-4 (human approval / Wait with durable resume).
 - PRD `gflow-prd-v1.md` §24 Native V1 Nodes, §33 Expressions, §35 Workflow Execution Model.
 - Verified in this repository: `nodes/webhook.go` (`scheduleTrigger`, `executeSchedule`, `validateScheduleConfiguration`), `internal/scheduler/scheduler.go` (`parser`, `Next`, `Validate`, `Tick`), `internal/repository/models.go` (`scheduleModel`), `internal/repository/schedules.go` (`Schedule`, `ClaimDue`), `internal/repository/workflows.go` (`Activate` calls `syncWebhookBindings` and nothing else), `internal/api/handlers/schedules.go`, `internal/interop/n8n/parameters.go` (`scheduleToKilas`, `scheduleToN8N`), `internal/expression/expression.go` (root allowlist).
 - n8n 2.34.0 reference checkout (read-only, outside this repo): `/Users/izzadev/projects/mitrachat/n8n/packages/nodes-base/nodes/Schedule/ScheduleTrigger.node.ts` (`version: [1, 1.1, 1.2, 1.3]`, the emitted item's field names) and `.../Schedule/GenericFunctions.ts` (`withIntervalDefaults` defaults, `validateInterval` ranges).

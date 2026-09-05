@@ -51,7 +51,7 @@ One consequence to record now that V2-p9-1 puts customer business data behind th
 
 ## References
 
-- Roadmap plan, p6 section, entry V2-p6-5: `/Users/izzadev/.claude/plans/distributed-worker-nats-crispy-finch.md`.
+- Roadmap plan, p6 section, entry V2-p6-5: `.pine/roadmap.md`.
 - `cmd/kilasflow/main.go` — `databaseGuard`, which returns an empty guard for every non-SQLite driver, and `outboundPolicy` next to it as the shape to mirror.
 - `internal/sqlnode/sqlnode.go` — `Guard`, `Open`, `dataSource`, `postgresDSN`, `mysqlDSN`, `sqlitePath`, `canonical`, `ErrForbiddenTarget`.
 - `nodes/database.go` — `PostgresNodeType` (`kilasflow.postgres`), `MySQLNodeType`, `SQLiteNodeType` and `NewDatabaseExecutor`, which passes the guard through.

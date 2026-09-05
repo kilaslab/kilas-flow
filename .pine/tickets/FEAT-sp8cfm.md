@@ -88,7 +88,7 @@ The trap is testing against invented fixtures. Every claim in this ticket is abo
 
 ## References
 
-- Roadmap plan, p3 section, entry V2-p3-5: `/Users/izzadev/.claude/plans/distributed-worker-nats-crispy-finch.md`.
+- Roadmap plan, p3 section, entry V2-p3-5: `.pine/roadmap.md`.
 - `internal/interop/n8n/n8n.go` — the `mapping` struct, the `mappings` table, `byN8NType` / `byKilasType`, `Import`'s unsupported branch and its `converted.TypeVersion = entry.kilasVersion`, `outputPortName` / `outputPortsFor` / `inputPortName` / `inputPortsFor`, and `Node.Credentials`, decoded but unused on import.
 - `.pine/tickets/FEAT-chxkvq.md` — the V1 interop ticket that set the advertised-subset rule and the unsupported-placeholder contract this extends.
 

@@ -45,7 +45,7 @@ Note for whoever picks this up: `validateDefinition` already refuses an empty `E
 
 ## References
 
-- Plan: `/Users/izzadev/.claude/plans/distributed-worker-nats-crispy-finch.md`, section "p2 — Node metadata foundation", entry V2-p2-7.
+- Roadmap plan, p2 section, entry V2-p2-7: `.pine/roadmap.md`.
 - `internal/node/registry.go` — `Registry`, `definitionKey`, `Register`, `validateDefinition`, `cloneDefinition`.
 - `internal/engine/runner.go` — `Registry`, `Register`, `Lookup` and its doc comment about testing the exact binding.
 - `nodes/core.go` — `RegisterAll` and the seventeen built-in definitions.

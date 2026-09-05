@@ -52,7 +52,8 @@ Last, a forward-looking decision: p3-1 brings a declarative routing interpreter,
 
 ## References
 
-- Plan: `/Users/izzadev/.claude/plans/distributed-worker-nats-crispy-finch.md`, section "p2 — Node metadata foundation", entry V2-p2-9; and p3-6 for the Telegram trigger that consumes it.
+- Roadmap plan, p2 section, entry V2-p2-9: `.pine/roadmap.md`.
+- `.pine/roadmap.md` — entry V2-p3-6, the Telegram trigger that consumes it.
 - `internal/webhook/webhook.go` — `Extract` and its single-node-type filter.
 - `cmd/kilasflow/main.go` — `WithWebhooks(webhook.Extract(nodes.WebhookNodeType, nodes.WebhookPath))`.
 - `nodes/webhook.go` — `WebhookNodeType`, `RespondNodeType`, the response-mode constants.

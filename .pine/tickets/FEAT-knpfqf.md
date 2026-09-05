@@ -50,7 +50,7 @@ One trap to watch. `execution.Redact` catches values whose *key* looks sensitive
 
 ## References
 
-- Plan: `~/.claude/plans/distributed-worker-nats-crispy-finch.md`, section p8, V2-p8-6.
+- Roadmap plan, p8 section, entry V2-p8-6: `.pine/roadmap.md`.
 - PRD: `gflow-prd-v1.md` §34 Credentials ("Master key must come from environment or external secret manager"), §57 Security Requirements, §64 ("secrets manager integrations").
 - Code: `internal/config/config.go` (`Security.EncryptionKeyEnv`, the one-word section rule on `OutboundHTTP`), `cmd/kilasflow/main.go` (the `KeyFromEnvironment` switch and its "credential storage is disabled" branch, `workflowEnvironment`), `internal/credentials/credentials.go` (`KeyFromEnvironment`, `Cipher`, the closed `definitions` map), `internal/repository/credentials.go` (`GORMCredentialStore.Resolve`), `internal/repository/models.go` (`credentialModel`), `internal/expression/expression.go` (`rootValue` and the supported roots), `internal/execution/redact.go`, `internal/safehttp/safehttp.go`.
 - Local n8n UI reference: `design-refs/n8n-v2/INDEX.md` entry 17 — External Secrets sits beside SSO and LDAP in the settings sidebar. Captured from a local n8n 2.33.7 instance; gitignored, never vendored.

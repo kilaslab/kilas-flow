@@ -49,7 +49,7 @@ Do not touch `Version`; widening it to a float is p1-11's job and doing it here 
 
 ## References
 
-- Plan: `/Users/izzadev/.claude/plans/distributed-worker-nats-crispy-finch.md`, section "p2 — Node metadata foundation", entry V2-p2-1.
+- Roadmap plan, p2 section, entry V2-p2-1: `.pine/roadmap.md`.
 - `internal/node/registry.go` — `Definition`, `validateDefinition`, `cloneDefinition`.
 - `internal/api/handlers/nodes.go` — `NodeTypesOutput` serializes `node.Definition` directly.
 - `web/src/lib/components/workflow-editor/node-picker.svelte` — the `definition.category !== 'Triggers'` filter.

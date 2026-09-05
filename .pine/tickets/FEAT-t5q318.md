@@ -47,7 +47,7 @@ Finally, move `portIndex[node.ID] = outputIndexesFor(node.Type)` above the unsup
 
 ## References
 
-- Plan: `/Users/izzadev/.claude/plans/distributed-worker-nats-crispy-finch.md`, entry V2-p1-9.
+- Roadmap plan, p1 section, entry V2-p1-9: `.pine/roadmap.md`.
 - `nodes/unsupported.go` — the placeholder definition, its ports, and `validateUnsupportedConfiguration`.
 - `internal/interop/n8n/n8n.go` — the capsule construction in `Import`, the unsupported branch of `Export`, `portIndex`, `outputPortName`, `outputPortsFor`, `outputIndexesFor`.
 - `internal/workflow/compiler.go` — `validateExecutableTopology`, `producesItems`, the port and kind checks in `Compile`.

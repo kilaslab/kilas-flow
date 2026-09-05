@@ -54,7 +54,7 @@ Where the prune runs is the one design decision left open. Recommendation: enfor
 
 ## References
 
-- Roadmap plan: `/Users/izzadev/.claude/plans/distributed-worker-nats-crispy-finch.md`, section "p7 — Workflow history", entry V2-p7-1.
+- Roadmap plan, p7 section, entry V2-p7-1: `.pine/roadmap.md`.
 - PRD `gflow-prd-v1.md`: §4.1 lists workflow versioning among the V1 goals; §64 defers Git-based versioning, which is the decision this DB-stored history implements the alternative to.
 - Current storage: `internal/repository/workflows.go` (`SaveDraft`, `Activate`, `Deactivate`, `GetVersion`, `GetVersionByID`), `internal/repository/models.go` (`workflowVersionModel`, `workflowModel.ActiveVersionID`, `executionModel.WorkflowVersion`), `internal/repository/executions.go` (`QueueTriggered`'s pin check), `internal/database/database.go` (`AutoMigrate`), `internal/config/config.go` (`envKeyToPath`).
 - n8n 2.34.0 reference checkout, read-only and outside this repository: `packages/frontend/editor-ui/src/features/workflows/workflowHistory/workflowHistory.store.ts` — `downloadVersion` shows a version carries only `nodes`, `connections` and `nodeGroups`, and `licensePruneTime`/`pruneTime` show retention is licence-gated there.

@@ -1122,10 +1122,11 @@ saying phase numbers express dependency depth rather than a serial queue, and th
 proof added to `## Acceptance scenario`.
 
 **One housekeeping ticket, V2-p9-0**, which should be written first: move this roadmap into the
-repository and repoint all 62 first-reference bullets. It is currently at
-`~/.claude/plans/distributed-worker-nats-crispy-finch.md` — outside the repo, outside version
-control, and rewritten by any plan-mode session. It was in fact overwritten during this
-planning session and had to be reconstructed by hand.
+repository and repoint all 62 first-reference bullets. While this plan was written it lived
+under `~/.claude/plans/` — outside the repo, outside version control, and rewritten by any
+plan-mode session. It was in fact overwritten during this planning session and had to be
+reconstructed by hand. `FEAT-xx6p22` carried out the move; the roadmap of record is now this
+file, `.pine/roadmap.md`.
 
 ## Verification
 

@@ -96,7 +96,8 @@ Finally, keep p8-5's three prerequisites in view but out of scope: a new wazero 
 
 ## References
 
-- Plan: `~/.claude/plans/distributed-worker-nats-crispy-finch.md`, section p4 (code) and the locked decision "JS sidecar: deferred to the long tail"; p8-2 JS sidecar for programmatic community nodes; p8-5 native community module SDK and its three prerequisites; p3-8 binary data storage.
+- Roadmap plan, p4 section: `.pine/roadmap.md`.
+- `.pine/roadmap.md` — the p4 "code" family and the locked decision "JS sidecar: deferred to the long tail"; entry V2-p8-2 (JS sidecar for programmatic community nodes); entry V2-p8-5 (native community module SDK and its three prerequisites); entry V2-p3-8 (binary data storage).
 - PRD `gflow-prd-v1.md` §30 Go Code Node, §31 Go Code Security, §32 Go Code V1 Restrictions.
 - Verified in this repository: `nodes/code.go` (`codeNode`, `CodeExecutor.Execute`, `CodeExecutor.Status`, `CompilationStatus`), `internal/runcode/doc.go` (the open toolchain question, verbatim), `internal/runcode/runcode.go` (`ErrCompilerUnavailable`, `ToolchainCompiler`, the `GOOS=wasip1 GOARCH=wasm` build), `internal/interop/n8n/n8n.go` (`mappings` has no `code` entry), `nodes/unsupported.go` (`validateUnsupportedConfiguration` always fails), `internal/api/handlers/nodes.go`.
 - n8n 2.34.0 reference checkout (read-only, outside this repo): the type string `n8n-nodes-base.code` is confirmed present, shipping from `packages/nodes-base/nodes/Code/`.

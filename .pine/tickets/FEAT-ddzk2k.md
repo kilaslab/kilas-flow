@@ -55,7 +55,7 @@ The two layers must compose rather than stack. `EmbedAuth` deliberately lets a t
 
 ## References
 
-- Plan: `~/.claude/plans/distributed-worker-nats-crispy-finch.md`, section p8, V2-p8-1.
+- Roadmap plan, p8 section, entry V2-p8-1: `.pine/roadmap.md`.
 - PRD: `gflow-prd-v1.md` §56 Multi-Tenancy, §57 Security Requirements, §39 Embed Authentication, §64 (RBAC and enterprise SSO deferred).
 - Code: `internal/api/handlers/workflows.go` (`TenantResolver`, `defaultTenantResolver`), `internal/repository/workflows.go` (`DefaultTenantID`), `internal/api/server.go` (`Deps.Tenants`, the global `EmbedAuth` mount), `internal/api/routes.go`, `internal/api/middleware/embed.go`, `internal/api/handlers/embed.go`, `cmd/kilasflow/main.go`, `internal/config/config.go` (the one-word section rule), `sdk/src/http.ts`, `sdk/src/browser.ts`, `web/src/lib/api/http.ts`, `web/src/lib/workflow-editor/event-stream.svelte.ts`.
 - Local n8n UI reference: `design-refs/n8n-v2/INDEX.md` entry 17 — the settings sidebar showing Users, Roles, SSO and LDAP as the surface this ticket is the precondition for. Captured from a local n8n 2.33.7 instance; gitignored, never vendored.

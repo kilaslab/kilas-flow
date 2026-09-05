@@ -53,6 +53,7 @@ Two traps beyond those. SQLite cannot host this: one writer, no `LISTEN/NOTIFY`,
 
 ## References
 
-- Plan: `~/.claude/plans/distributed-worker-nats-crispy-finch.md`, section p8, V2-p8-7, and section p6, V2-p6-3 and V2-p6-4 (connection pool default, `FOR UPDATE SKIP LOCKED`, `LISTEN/NOTIFY`, the ~8000-byte NOTIFY payload cap, prefix-keyed advisory locks).
+- Roadmap plan, p8 section, entry V2-p8-7: `.pine/roadmap.md`.
+- `.pine/roadmap.md` — p6 entries V2-p6-3 and V2-p6-4 (connection pool default, `FOR UPDATE SKIP LOCKED`, `LISTEN/NOTIFY`, the ~8000-byte NOTIFY payload cap, prefix-keyed advisory locks).
 - PRD: `gflow-prd-v1.md` §4 ("distributed workflow execution", "Kubernetes-native worker scaling" out of scope for V1), §35 Workflow Execution Model, §64 ("whether distributed workers use NATS, Redis Streams, or PostgreSQL").
 - Code: `internal/engine/service.go` (`Start`, `worker`, `Wake`, `runOnce`, `Cancel`, `active`), `cmd/kilasflow/main.go` (`WorkerID`, `runtime.Start`, `cronService.Start`), `internal/repository/executions.go` (`ClaimNext`, the `lease_owner` fencing in `UpdateRuntime` and `CreateNodeRun`), `internal/events/events.go` (in-process `Broker`), `internal/scheduler/scheduler.go` (the "runs due schedules in a single process" note and the transactional `ClaimDue`), `internal/webhook/webhook.go` (`await`), `internal/config/config.go` (`Database.MaxOpenConns` default 1, `Execution.MaxConcurrent` default 10).

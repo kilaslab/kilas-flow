@@ -96,7 +96,8 @@ The trap is the embed boundary. `ownsExecution` in `internal/api/handlers/execut
 
 ## References
 
-- Plan: `~/.claude/plans/distributed-worker-nats-crispy-finch.md`, section p4 (workflow composition); p1-1 branch pruning and Respond determinism; p1-3 multiple trigger roots; p1-12 import diagnostics and the `responseMode` export enum.
+- Roadmap plan, p4 section: `.pine/roadmap.md`.
+- `.pine/roadmap.md` — the p4 "workflow composition" family; entry V2-p1-1 (branch pruning and Respond determinism); entry V2-p1-3 (multiple trigger roots); entry V2-p1-12 (import diagnostics and the `responseMode` export enum).
 - PRD `gflow-prd-v1.md` §35 Workflow Execution Model, §36 API, §24 Native V1 Nodes.
 - Verified in this repository: `internal/engine/runner.go` (`Request`, `Runner.Run`), `internal/engine/service.go` (`run`, `QueueWebhook`, `QueueScheduled`, `tenantCredentials`), `internal/execution/records.go` (`Trigger` values), `internal/workflow/compiler.go` (`len(roots) != 1`), `internal/webhook/webhook.go` (`respondFromExecution`, `findResponse`), `nodes/webhook.go` (`respondToWebhookNode`, response-mode constants), `internal/interop/n8n/parameters.go` (`respondToKilas`, `webhookToN8N`), `internal/api/handlers/executions.go` (`ownsExecution`), `internal/config/config.go` (`MaxConcurrent` default 10).
 - n8n 2.34.0 reference checkout (read-only, outside this repo): the type strings `n8n-nodes-base.executeWorkflow` and `n8n-nodes-base.executeWorkflowTrigger` are confirmed present, shipping from `packages/nodes-base/nodes/ExecuteWorkflow/`.

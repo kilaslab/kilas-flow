@@ -44,7 +44,8 @@ Export is the mirror: `Export` skips every non-`main` connection with a diagnost
 
 ## References
 
-- Plan: `/Users/izzadev/.claude/plans/distributed-worker-nats-crispy-finch.md`, entry V2-p1-13, and the p5 AI parity section that consumes the result.
+- Roadmap plan, p1 section, entry V2-p1-13: `.pine/roadmap.md`.
+- `.pine/roadmap.md` — the p5 AI parity section, which consumes the result.
 - `internal/interop/n8n/n8n.go` — `importConnections` and its stale comment, `outputPortName`, `inputPortName`, `outputPortsFor`, `inputPortsFor`, the export connection loop.
 - `internal/workflow/document.go` — `ConnectionKind` and its four values.
 - `nodes/ai.go` — `chatModelNode`, `memoryNode`, `httpToolNode`, `agentNode` and their declared ports.

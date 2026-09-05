@@ -47,7 +47,7 @@ Two things this ticket must state plainly rather than leave implied. A prefix is
 
 ## References
 
-- Roadmap plan, p6 section, entry V2-p6-2: `/Users/izzadev/.claude/plans/distributed-worker-nats-crispy-finch.md`.
+- Roadmap plan, p6 section, entry V2-p6-2: `.pine/roadmap.md`.
 - `internal/repository/models.go` — the seven `TableName() string` methods and the thirteen literal index names.
 - `internal/database/database.go` — `gorm.Open` with no `NamingStrategy`.
 - `gorm.io/gorm@v1.31.2/schema/schema.go`, `ParseWithSpecialTableName` — `Tabler` is tested before `TablerWithNamer`.

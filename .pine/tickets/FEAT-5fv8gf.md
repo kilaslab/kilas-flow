@@ -48,7 +48,7 @@ One decision to settle rather than leave open: whether retention is global or pe
 
 ## References
 
-- Roadmap plan, p6 section, entry V2-p6-3: `/Users/izzadev/.claude/plans/distributed-worker-nats-crispy-finch.md`.
+- Roadmap plan, p6 section, entry V2-p6-3: `.pine/roadmap.md`.
 - `internal/config/config.go` — `Default()`, `Database.MaxOpenConns`/`MaxIdleConns`, `Execution.MaxConcurrent`.
 - `config.example.yaml` — the `database` and `execution` sections.
 - `internal/database/database.go` — the SQLite pin and the pass-through for every other driver.

@@ -68,7 +68,7 @@ The second trap is quieter: a declarative node runs once per item, so an operati
 
 ## References
 
-- Roadmap plan, p3 section, entry V2-p3-1: `/Users/izzadev/.claude/plans/distributed-worker-nats-crispy-finch.md`.
+- Roadmap plan, p3 section, entry V2-p3-1: `.pine/roadmap.md`.
 - n8n 2.34.0 reference checkout, `packages/workflow/src/Interfaces.ts`: `INodePropertyRouting`, `INodeRequestSend`, `INodeRequestOutput`, `PostReceiveAction` and its `IPostReceiveRootProperty` / `IPostReceiveSetKeyValue` / `IPostReceiveLimit` variants, `IN8nRequestOperations` with `IN8nRequestOperationPaginationOffset`, and `requestDefaults` on the node description.
 - `nodes/http.go` — the hand-written executor this generalises, and `authenticate` at line 299 for the credential and host-scope path.
 - `internal/safehttp/safehttp.go` — `Policy`, `NewClient`, `CheckURL`, `CheckAddress`, `ReadBody`.

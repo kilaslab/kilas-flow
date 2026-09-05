@@ -49,6 +49,7 @@ One decision. A LangChain node with no native equivalent — a vector store, a d
 
 ## References
 
-- Plan `~/.claude/plans/distributed-worker-nats-crispy-finch.md`, p5 entry V2-p5-8; p1 entries V2-p1-13 (AI edges), V2-p1-11 (float typeVersion), V2-p1-9 (unsupported capsule); p0 entries V2-p0-1 and V2-p0-2.
+- Roadmap plan, p5 section, entry V2-p5-8: `.pine/roadmap.md`.
+- `.pine/roadmap.md` — p1 entries V2-p1-13 (AI edges), V2-p1-11 (float typeVersion) and V2-p1-9 (unsupported capsule); p0 entries V2-p0-1 and V2-p0-2.
 - `internal/interop/n8n/n8n.go` (`SupportedMappings`, `mappings`, `byN8NType`, `importConnections`, the unsupported placeholder), `internal/workflow/document.go`.
 - V1 interop ticket FEAT-chxkvq for the advertised-subset conventions this extends.

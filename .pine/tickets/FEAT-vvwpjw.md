@@ -91,7 +91,8 @@ The trap that will bite whoever picks this up is in `Runner.Run`: `if got, want 
 
 ## References
 
-- Plan: `~/.claude/plans/distributed-worker-nats-crispy-finch.md`, section p4 (flow control) and the p1 tickets it depends on — p1-1 branch pruning and p1-4 bounded loops.
+- Roadmap plan, p4 section: `.pine/roadmap.md`.
+- `.pine/roadmap.md` — the p4 "flow control" family and the p1 entries it depends on: V2-p1-1 (branch pruning) and V2-p1-4 (bounded loops).
 - PRD `gflow-prd-v1.md` §21 Connection Types, §23 Node Registry, §24 Native V1 Nodes.
 - Verified in this repository: `nodes/core.go` (`ifNode`, `mergeNode`), `nodes/executors.go` (`executeIF`, `executeMerge`, `ifCondition`, `condition.matches`), `internal/engine/runner.go` (`Runner.Run` output-arity check), `internal/workflow/compiler.go` (`hasCycle`), `internal/interop/n8n/n8n.go` (`mappings`), `internal/interop/n8n/parameters.go` (`mergeToKilas`), `nodes/unsupported.go`.
 - n8n 2.34.0 reference checkout (read-only, outside this repo): `/Users/izzadev/projects/mitrachat/n8n/packages/nodes-base/nodes/If/V2/`, `.../nodes/If/test/v2/`. The type strings `n8n-nodes-base.switch`, `.merge` and `.noOp` are confirmed present in that checkout; confirm `.filter`, `.splitInBatches` and `.limit` against the widened checkout from p0-1 before writing the mapping table.

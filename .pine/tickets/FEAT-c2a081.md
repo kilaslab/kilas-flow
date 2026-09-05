@@ -48,7 +48,7 @@ The tool selector wants `multiOptions` from p2-2 and a dynamic list from p2-4's 
 
 ## References
 
-- Plan: `~/.claude/plans/distributed-worker-nats-crispy-finch.md`, section p8, V2-p8-3.
+- Roadmap plan, p8 section, entry V2-p8-3: `.pine/roadmap.md`.
 - PRD: `gflow-prd-v1.md` §64 ("MCP Client node surfaced directly on canvas").
 - Model Context Protocol Go SDK (`/modelcontextprotocol/go-sdk`, v1.x): `mcp.StreamableClientTransport{Endpoint, HTTPClient, ReconnectOptions}`, `client.Connect(ctx, transport, nil)`, `(*ClientSession).CallTool`; the SDK's own proxy example documents that the transport has no headers field and that custom headers are injected through the `HTTPClient`'s `RoundTripper`.
 - Code: `nodes/ai.go` (`HTTPToolNodeType`, `executeHTTPTool`, the `$ai` `descriptorKey`, `AgentExecutor.Execute`, `httpToolFrom`, `descriptorsFrom`), `internal/ai/ai.go` (`Tool`, `ToolDefinition`), `internal/safehttp/safehttp.go` (`NewClient`, `Policy`), `internal/credentials/credentials.go` (the closed `definitions` map), `internal/workflow/document.go` (`ConnectionTool`).

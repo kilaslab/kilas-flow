@@ -50,5 +50,6 @@ One decision remains if it is adopted: whether MAF replaces `LoopRuntime` or sit
 
 ## References
 
-- Plan `~/.claude/plans/distributed-worker-nats-crispy-finch.md`, p5 entry V2-p5-9, and the epic's decision table row on AI nodes.
+- Roadmap plan, p5 section, entry V2-p5-9: `.pine/roadmap.md`.
+- `.pine/tickets/EPIC-m42s3g.md` — the decision-table row on AI nodes.
 - `internal/ai/maf/doc.go`, `internal/ai/ai.go` (`AgentRuntime`, `AgentRequest`, `AgentResult`, `EventSink`), `internal/ai/agent.go` (`LoopRuntime`), `nodes/ai.go` (`NewAgentExecutor`), `cmd/kilasflow/main.go`, `internal/safehttp/safehttp.go`, `go.mod`.

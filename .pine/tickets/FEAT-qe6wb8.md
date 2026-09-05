@@ -74,7 +74,7 @@ The trap is the version pair. The two specs are not additive — operations move
 
 ## References
 
-- Roadmap plan, p3 section, entry V2-p3-3: `/Users/izzadev/.claude/plans/distributed-worker-nats-crispy-finch.md`.
+- Roadmap plan, p3 section, entry V2-p3-3: `.pine/roadmap.md`.
 - `github.com/devlikeapro/n8n-nodes-waha` (MIT), cloned outside this repository — `openapi.json` for both `202409` and `202502`.
 - `internal/credentials/credentials.go` — the closed `definitions` map, `Field`, `Definition`, `Apply`'s switch, and `Record.AllowsHost`.
 - `internal/execution/redact.go` — `session`, `sessionid` and `sessiontoken` on the sensitive-key list.

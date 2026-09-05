@@ -57,7 +57,7 @@ One choice to make explicitly: whether a short wait suspends at all. n8n does no
 
 ## References
 
-- Plan: `~/.claude/plans/distributed-worker-nats-crispy-finch.md`, section p8, V2-p8-4.
+- Roadmap plan, p8 section, entry V2-p8-4: `.pine/roadmap.md`.
 - PRD: `gflow-prd-v1.md` §4 ("human approval orchestration beyond basic extension points" out of scope for V1), §64 ("human approval node"), §35 Workflow Execution Model.
 - n8n documentation (`/n8n-io/n8n-docs`, `docs/integrations/builtin/core-nodes/n8n-nodes-base.wait.md`): resume on After Time Interval, At Specified Time, On Webhook Call, On Form Submitted; execution data offloaded to the database above ~65 seconds; the Limit Wait Time option. Approval response shape from `n8n-nodes-base.slack/approvals.md`: `{data: {approved, respondedAt, …}}`.
 - Code: `internal/execution/records.go` (`Status`), `internal/engine/runner.go` (`Runner.Run`, `completed`), `internal/engine/service.go` (`runOnce`, lease window, node-run persistence loop), `internal/repository/executions.go` (`ClaimNext`, `payload`), `internal/execution/redact.go`, `internal/repository/models.go` (`uidx_webhook_bindings_route`), `internal/webhook/webhook.go` (`await`), `internal/expression/expression.go` (`rootValue`, `$execution`).

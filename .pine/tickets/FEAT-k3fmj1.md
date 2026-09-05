@@ -46,7 +46,8 @@ Finally the importer: replace `kilasVersion: 1` with the real target version per
 
 ## References
 
-- Plan: `/Users/izzadev/.claude/plans/distributed-worker-nats-crispy-finch.md`, entry V2-p1-11, and V2-p3-3 for the WAHA YYYYMM versions that depend on it.
+- Roadmap plan, p1 section, entry V2-p1-11: `.pine/roadmap.md`.
+- `.pine/roadmap.md` — entry V2-p3-3, the WAHA YYYYMM versions that depend on it.
 - `internal/node/registry.go` — `Definition.Version`, `definitionKey`, `Register`, `Get`, `List`, `Lookup`, `validateDefinition`.
 - `internal/workflow/compiler.go` — `Catalog`, `TypeCatalog`, `NodeDefinition`, the version lookup and `ErrorUnknownVersion`.
 - `internal/workflow/document.go`, `schemas/workflow-v1.schema.json` — the persisted contract.

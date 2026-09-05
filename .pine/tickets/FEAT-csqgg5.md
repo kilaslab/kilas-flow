@@ -46,7 +46,8 @@ One decision is open: the report format. Options are a Markdown table committed 
 
 ## References
 
-- Plan: `~/.claude/plans/distributed-worker-nats-crispy-finch.md`, section "p0 — Reference and guardrails", entry V2-p0-2; and "p1", which measures every ticket against this corpus.
+- Roadmap plan, p0 section, entry V2-p0-2: `.pine/roadmap.md`.
+- `.pine/roadmap.md` — the p1 section, which measures every ticket against this corpus.
 - `github.com/devlikeapro/waha-n8n-templates` at `1bd5536eef88f81692daaaba74d3bf6d621fb94f` — 13 n8n workflow documents, no licence file, `license: null` via the GitHub API.
 - Reference checkout fixtures: `/Users/izzadev/projects/mitrachat/n8n/packages/nodes-base/nodes/{HttpRequest,Set,If}/test/**` (25 workflow documents), package licence `LicenseRef-n8n-sustainable-use`.
 - Existing importer surface: `internal/interop/n8n/n8n.go` (`Import`, `Export`, `SupportedMappings`), `internal/interop/n8n/n8n_test.go` (`registry`, `TestImportedWorkflowCompiles`), `internal/workflow/compiler.go` (`Compile`), `nodes/core.go` (`RegisterAll`), `nodes/executors.go` (`RegisterExecutors`).

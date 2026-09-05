@@ -49,7 +49,7 @@ Scheduler election is optional in this ticket and worth stating either way. Toda
 
 ## References
 
-- Roadmap plan, p6 section, entry V2-p6-4: `/Users/izzadev/.claude/plans/distributed-worker-nats-crispy-finch.md`.
+- Roadmap plan, p6 section, entry V2-p6-4: `.pine/roadmap.md`.
 - `internal/repository/executions.go` — `ClaimNext`, the select-then-conditional-update claim.
 - `internal/repository/schedules.go` — `ClaimDue` and its `clause.Locking{Strength: "UPDATE"}`.
 - `internal/engine/service.go` — the worker loop, the capacity-1 `wake` channel, and `Wake()`.

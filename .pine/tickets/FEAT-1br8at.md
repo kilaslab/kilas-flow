@@ -48,7 +48,7 @@ Order the work: change `redact.go` and its tests first so the rules are provable
 
 ## References
 
-- Plan: `/Users/izzadev/.claude/plans/distributed-worker-nats-crispy-finch.md`, entry V2-p1-6.
+- Roadmap plan, p1 section, entry V2-p1-6: `.pine/roadmap.md`.
 - `internal/execution/redact.go` — `sensitiveKeys`, `credentialSchemes`, `looksLikeCredential`, `isSensitiveKey`.
 - `internal/webhook/webhook.go` — `requestPayload` and its `execution.Redact` call.
 - `internal/repository/executions.go` — the `payload` helper that redacts on every write.

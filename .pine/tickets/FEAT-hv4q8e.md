@@ -47,7 +47,7 @@ Migration matters. Existing bindings were activated on their imported paths; cha
 
 ## References
 
-- Plan: `/Users/izzadev/.claude/plans/distributed-worker-nats-crispy-finch.md`, entry V2-p1-8.
+- Roadmap plan, p1 section, entry V2-p1-8: `.pine/roadmap.md`.
 - `internal/repository/models.go` — `webhookBindingModel`, `uidx_webhook_bindings_route`.
 - `internal/repository/webhooks.go` — `Resolve`, `syncWebhookBindings`, `removeWebhookBindings`.
 - `internal/webhook/webhook.go` — `ServeHTTP`, `Extract`.

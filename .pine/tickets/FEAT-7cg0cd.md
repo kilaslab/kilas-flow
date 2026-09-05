@@ -52,7 +52,8 @@ The unresolved design choice worth stating: whether outbound HTTP from a communi
 
 ## References
 
-- Plan: `~/.claude/plans/distributed-worker-nats-crispy-finch.md`, section p8, V2-p8-2, and the "What research changed about the original idea" section for the 0.46% figure and the licence boundary.
+- Roadmap plan, p8 section, entry V2-p8-2: `.pine/roadmap.md`.
+- `.pine/roadmap.md` — the "What research changed about the original idea" section, for the 0.46% figure and the licence boundary.
 - PRD: `gflow-prd-v1.md` §4 (arbitrary n8n npm community nodes and the full JavaScript Code Node are out of scope for V1), §64 ("n8n npm compatibility runner", "plugin SDK design").
 - Reference checkout (read-only, never vendored): `/Users/izzadev/projects/mitrachat/n8n/pnpm-lock.yaml` (`isolated-vm@6.1.2` under `packages/@n8n/expression-runtime`, `packages/cli`, `packages/nodes-base`), `/Users/izzadev/projects/mitrachat/n8n/packages/workflow/package.json` (`LicenseRef-n8n-sustainable-use`, `@n8n/expression-runtime` dependency).
 - Owner's community package (read-only): `/Users/izzadev/projects/mitrachat/mitrachat-orpc-input-fix/packages/n8n-nodes-mitrachat/package.json` — the `n8n` manifest key and the `n8n-workflow` peer dependency this loader must satisfy.

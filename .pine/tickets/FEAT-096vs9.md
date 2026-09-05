@@ -48,6 +48,7 @@ Second trap: the auto-scoping suffix is part of the stored key, so turning it on
 
 ## References
 
-- Plan `~/.claude/plans/distributed-worker-nats-crispy-finch.md`, p5 entry V2-p5-5, p1 entry V2-p1-6 (redaction), p6 entry V2-p6-6 for the durable tier.
+- Roadmap plan, p5 section, entry V2-p5-5: `.pine/roadmap.md`.
+- `.pine/roadmap.md` — p1 entry V2-p1-6 (redaction) and p6 entry V2-p6-6 for the durable tier.
 - `nodes/ai.go` (`memoryNode`, `executeMemory`, `AgentExecutor.Execute`), `internal/ai/memory.go` (`Retention`, `BufferMemory`, `prune`, `Forget`), `internal/ai/ai.go` (`SessionKey`, `Memory`), `cmd/kilasflow/main.go`, `internal/execution/redact.go`.
 - Local n8n UI reference: `design-refs/n8n-v2/INDEX.md` entry 06 — the Simple Memory parameters. Captured from a local n8n 2.33.7 instance; gitignored, never vendored.

@@ -50,7 +50,7 @@ An amendment the p9 planning pass forced. This loader is an outbound HTTP reques
 
 ## References
 
-- Plan: `/Users/izzadev/.claude/plans/distributed-worker-nats-crispy-finch.md`, section "p2 — Node metadata foundation", entry V2-p2-4.
+- Roadmap plan, p2 section, entry V2-p2-4: `.pine/roadmap.md`.
 - `internal/api/handlers/nodes.go`, `internal/api/routes.go` — where the operation is added.
 - `internal/safehttp/safehttp.go` — `Policy`, `NewClient`.
 - `internal/credentials/credentials.go` — `Record.AllowsHost`, `Apply`.
