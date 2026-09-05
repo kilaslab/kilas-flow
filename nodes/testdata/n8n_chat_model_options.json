@@ -1,0 +1,38 @@
+{
+  "_source": "n8n 2.34.0, packages/@n8n/nodes-langchain/nodes/llms/LMChatOpenAi/LmChatOpenAi.node.ts and .../LmChatOpenRouter/LmChatOpenRouter.node.ts, plus credentials/OpenRouterApi.credentials.ts",
+  "_why": "A transcription rather than a read. The reference checkout is read-only specification material and internal/guardrails forbids any build input — a test included — from reading a path under it, so the anti-drift check compares the declared nodes against this committed record of what the reference said. Facts about the interchange format: node names, credential type names, option names, defaults and base URLs. No n8n code.",
+  "_read": "2026-09-05",
+  "nodes": [
+    {
+      "n8nName": "lmChatOpenAi",
+      "displayName": "OpenAI Chat Model",
+      "credentialType": "openAiApi",
+      "modelDefault": "gpt-5-mini",
+      "baseUrl": "https://api.openai.com/v1",
+      "timeoutDefault": 60000
+    },
+    {
+      "n8nName": "lmChatOpenRouter",
+      "displayName": "OpenRouter Chat Model",
+      "credentialType": "openRouterApi",
+      "modelDefault": "openai/gpt-4.1-mini",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "timeoutDefault": 360000
+    }
+  ],
+  "_optionsNote": "Both nodes carry these in a collection named `options`. Every member is optional: n8n stores only what the user adds, so an option never added is absent rather than defaulted. `timeout` is in milliseconds and differs per node — see `timeoutDefault` above.",
+  "options": [
+    {"name": "frequencyPenalty", "type": "number", "default": 0, "minValue": -2, "maxValue": 2},
+    {"name": "maxTokens", "type": "number", "default": -1},
+    {"name": "maxRetries", "type": "number", "default": 2},
+    {"name": "presencePenalty", "type": "number", "default": 0, "minValue": -2, "maxValue": 2},
+    {"name": "temperature", "type": "number", "default": 0.7, "minValue": 0, "maxValue": 2},
+    {"name": "topP", "type": "number", "default": 1, "minValue": 0, "maxValue": 1}
+  ],
+  "_unadopted": {
+    "responseFormat": "n8n sends `response_format: {type}` as a model kwarg. This server has no JSON-mode plumbing through ai.ModelRequest yet, and declaring an option that is collected and never sent would be worse than not offering it.",
+    "baseURL": "an option on n8n's OpenAI node for versions below 1.1 only, hidden at 1.1 and above. This server carries the address as a top-level `baseUrl` parameter instead, because the model list loader reads parameters and cannot see a collection member or a credential field.",
+    "reasoningEffort": "gated on a model-name regex and only meaningful for o-series and gpt-5 models; p5-4 does not need it.",
+    "responsesApiEnabled": "n8n 1.3+ switches to OpenAI's Responses API. That is a different wire protocol, not an option on this one."
+  }
+}

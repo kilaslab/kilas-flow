@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/kilaslabs/kilas-flow/internal/ai"
 	"github.com/kilaslabs/kilas-flow/internal/conditions"
@@ -43,9 +44,11 @@ func RegisterExecutors(registry *engine.Registry, httpPolicy safehttp.Policy, da
 		MySQLV2ExecutorID:                NewMySQLV2Executor(databaseGuard, settings.databaseCeiling),
 		SQLiteExecutorID:                 NewDatabaseExecutor(sqlnode.DriverSQLite, "sqlite", databaseGuard, settings.databaseCeiling),
 		ChatModelExecutorID:              engine.ExecutorFunc(executeChatModel),
+		OpenAIChatModelExecutorID:        executeProviderChatModel(openAIChatModelProvider()),
+		OpenRouterChatModelExecutorID:    executeProviderChatModel(openRouterChatModelProvider()),
 		MemoryExecutorID:                 engine.ExecutorFunc(executeMemory),
 		HTTPToolExecutorID:               engine.ExecutorFunc(executeHTTPTool),
-		AgentExecutorID:                  NewAgentExecutor(agentRuntime, httpPolicy, agentMemory),
+		AgentExecutorID:                  NewAgentExecutor(agentRuntime, httpPolicy, agentMemory, WithModelTimeoutCeiling(settings.modelTimeoutCeiling)),
 		CodeExecutorID:                   NewCodeExecutor(codeCompiler, runcode.NewMemoryCache(), runcode.DefaultLimits()),
 		LoopExecutorID:                   engine.ExecutorFunc(executeLoop),
 		StickyNoteExecutorID:             engine.ExecutorFunc(executeStickyNote),
@@ -83,6 +86,9 @@ type ExecutorOption func(*executorSettings)
 
 type executorSettings struct {
 	databaseCeiling sqlnode.Ceiling
+	// modelTimeoutCeiling is the longest any one chat model node may wait.
+	// Zero leaves DefaultModelTimeoutCeiling in force.
+	modelTimeoutCeiling time.Duration
 }
 
 // WithDatabaseCeiling bounds what a workflow document may ask a database node
@@ -91,6 +97,18 @@ type executorSettings struct {
 func WithDatabaseCeiling(ceiling sqlnode.Ceiling) ExecutorOption {
 	return func(settings *executorSettings) {
 		settings.databaseCeiling = ceiling
+	}
+}
+
+// WithModelTimeout bounds how long any one chat model node may wait.
+//
+// The outbound policy's own timeout is the wrong bound for a model: it is
+// thirty seconds by default, which a long completion routinely outruns, and
+// outrunning it reports a network failure for a model that was still thinking.
+// A deployment sets this to say how far a node may go beyond it.
+func WithModelTimeout(ceiling time.Duration) ExecutorOption {
+	return func(settings *executorSettings) {
+		settings.modelTimeoutCeiling = ceiling
 	}
 }
 
