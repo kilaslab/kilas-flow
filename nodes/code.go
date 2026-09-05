@@ -82,7 +82,12 @@ func validateCodeConfiguration(n workflow.Node) error {
 type CodeExecutor struct {
 	compiler runcode.Compiler
 	cache    runcode.Cache
-	limits   runcode.Limits
+	// modules outlives the per-call runners below, which is the whole point of
+	// it: one executor serves every Code node in the process, so translated
+	// machine code survives from one node execution to the next instead of
+	// being thrown away and rebuilt each time.
+	modules *runcode.ModuleCache
+	limits  runcode.Limits
 }
 
 // NewCodeExecutor builds the Code node's executor.
@@ -90,7 +95,7 @@ func NewCodeExecutor(compiler runcode.Compiler, cache runcode.Cache, limits runc
 	if cache == nil {
 		cache = runcode.NewMemoryCache()
 	}
-	return &CodeExecutor{compiler: compiler, cache: cache, limits: limits}
+	return &CodeExecutor{compiler: compiler, cache: cache, modules: runcode.NewModuleCache(), limits: limits}
 }
 
 // Execute runs the node's code once over all incoming items.
@@ -120,13 +125,13 @@ func (executor *CodeExecutor) Execute(ctx context.Context, ir workflow.IRNode, i
 	}
 
 	incoming := input["main"]
-	runner := runcode.NewRunner(executor.compiler, executor.cache, limits)
+	runner := runcode.NewRunner(executor.compiler, executor.cache, executor.modules, limits)
 
 	if textParameter(ir.Parameters, "mode") == CodeModeEachItem {
-		// One call per item, against the same compiled artifact: the cache is
-		// keyed by source hash, so this multiplies sandbox calls and not
-		// builds. Each call sees a batch of one, which is what makes the same
-		// body work in either mode.
+		// One call per item, against the same compiled artifact: the caches are
+		// keyed by source hash and by module, so this multiplies sandbox calls
+		// and neither builds nor translations. Each call sees a batch of one,
+		// which is what makes the same body work in either mode.
 		out := make([]workflow.Item, 0, len(incoming))
 		for index, item := range incoming {
 			produced, err := executor.call(ctx, ir, runner, source, []workflow.Item{item})
@@ -232,7 +237,7 @@ func (executor *CodeExecutor) Status(ctx context.Context, source string) Compila
 		return status
 	}
 
-	runner := runcode.NewRunner(executor.compiler, executor.cache, executor.limits)
+	runner := runcode.NewRunner(executor.compiler, executor.cache, executor.modules, executor.limits)
 	artifact, err := runner.Artifact(ctx, source)
 	if err != nil {
 		status.Error = err.Error()
