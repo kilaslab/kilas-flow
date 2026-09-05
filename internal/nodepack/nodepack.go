@@ -394,10 +394,18 @@ func OperationsLoader(pack *Pack) loadoptions.InternalLoader {
 // Register installs a pack's definition and its routing together, and refuses a
 // pack whose executor binding is not installed.
 //
-// Together is the point. A definition bound to the routing executor with no
-// routing description registers cleanly and fails on its first run; so does a
-// definition whose binding names an executor nobody installed. Both are startup
-// failures here instead.
+// Together is the point, and the two halves are guaranteed differently.
+//
+// A definition bound to an executor nobody installed is refused here, by the
+// lookup below — that one needs a check, because a pack can name any binding.
+//
+// A definition bound to the routing interpreter with no routing description
+// cannot arise at all: Load builds the two from one manifest and returns them
+// together, and the branch that returns no description is the trigger branch,
+// which sets TriggerExecutorID instead. So the pairing is structural rather
+// than asserted. Saying this precisely matters — an earlier version of this
+// comment described it as a startup check, a reader trusted that, and the
+// check they went looking for was not there to find.
 func Register(definitions *node.Registry, routes *routing.Registry, executors ExecutorSet, options *loadoptions.Resolver, pack *Pack) error {
 	definition, description, err := Load(pack)
 	if err != nil {

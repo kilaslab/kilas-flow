@@ -55,9 +55,9 @@ applies to the report too.
 
 ## Candidates
 
-- `internal/routing/doc.go` and `nodepack.Register` — both claim a routing
-  description is checked at registration. The invariant is said to be
-  structural rather than asserted.
+- ~~`internal/routing/doc.go` and `nodepack.Register` — both claim a routing
+  description is checked at registration.~~ **Checked. The invariant is
+  structural, and the comment now says so.** See the evidence.
 - ~~`cmd/kilasflow/main.go` — claims option loading reaches a service through
   "the same egress policy an HTTP node uses", on the line above a
   `safehttp.DefaultPolicy()` call.~~ **Checked, and it was the code that was
@@ -147,3 +147,28 @@ Here it was. The comment now says what the line does and what it used to fail
 to do.
 
 Six candidates remain unchecked.
+
+### The fourth one checked, and it caught me doing the thing the ticket warns about
+
+`nodepack.Register`'s comment said a definition bound to the routing executor
+with no routing description "registers cleanly and fails on its first run" and
+is "a startup failure here instead". I read that, found no such check, and
+added one.
+
+Then I read `Load`, which is what I should have done first. That combination
+cannot arise: `Load` builds the definition and the routing description from one
+manifest and returns them together, and the only branch that returns no
+description is the trigger branch — which sets `TriggerExecutorID`, not the
+routing one. So my check was unreachable, and the test I wrote for it had to
+construct a state the loader cannot produce.
+
+Reverted. The comment now says the pairing is structural rather than asserted,
+and says which half *is* checked — an executor nobody installed, which does
+need one because a pack can name any binding.
+
+This is the ticket's own instruction — read the function before the comment —
+applied to me, one file after I wrote it down. Worth recording rather than
+quietly fixing, because the failure is not carelessness; it is that a confident
+comment is genuinely persuasive.
+
+Five candidates remain unchecked.
