@@ -1,0 +1,31 @@
+<script lang="ts">
+	import type { Definition } from '$lib/api/generated/models';
+	import { nodeVisual } from '$lib/workflow-editor/node-visual';
+
+	/**
+	 * A node's icon at whatever size the surface needs. The canvas, the picker,
+	 * and the inspector all render this, so a node looks the same everywhere it
+	 * appears and the mapping lives in exactly one place.
+	 */
+	let {
+		definition,
+		size = 'md',
+		muted = false
+	}: {
+		definition: Definition;
+		size?: 'sm' | 'md' | 'lg';
+		muted?: boolean;
+	} = $props();
+
+	const visual = $derived(nodeVisual(definition));
+	const box = { sm: 'size-6 rounded-md', md: 'size-7 rounded-lg', lg: 'size-9 rounded-xl' };
+	const glyph = { sm: 'size-3.5', md: 'size-4', lg: 'size-[1.125rem]' };
+</script>
+
+<span
+	aria-hidden="true"
+	class="grid shrink-0 place-items-center border {box[size]}"
+	style={`--accent: ${visual.accent}; border-color: color-mix(in oklch, var(--accent) 28%, transparent); background: color-mix(in oklch, var(--accent) ${muted ? 8 : 14}%, transparent)`}
+>
+	<visual.icon class={glyph[size]} style="color: var(--accent)" />
+</span>

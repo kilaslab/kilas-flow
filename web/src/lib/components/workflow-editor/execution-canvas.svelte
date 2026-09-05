@@ -68,17 +68,19 @@
 		bind:edges
 		{nodeTypes}
 		fitView
+		fitViewOptions={{ padding: 0.25, maxZoom: 1 }}
+		minZoom={0.3}
 		nodesDraggable={false}
 		nodesConnectable={false}
 		elementsSelectable
 		deleteKey={null}
 		onselectionchange={onSelectionChange}
 	>
-		<Background variant={BackgroundVariant.Dots} gap={20} size={1} patternColor="var(--border)" />
+		<Background variant={BackgroundVariant.Dots} gap={16} size={1} patternColor="var(--border)" />
 		<Controls showLock={false} />
 	</SvelteFlow>
 
-	<p class="pointer-events-none absolute left-3 top-3 z-10 rounded-full border border-border bg-card/90 px-2.5 py-1 text-xs font-medium text-muted-foreground backdrop-blur">
+	<p class="pointer-events-none absolute left-2 top-2 z-10 rounded-md border border-border bg-card/90 px-1.5 py-0.5 text-[0.625rem] font-medium text-muted-foreground backdrop-blur">
 		Read-only replay
 	</p>
 </div>

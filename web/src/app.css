@@ -5,10 +5,29 @@
 
 /* Dark is the default theme, so `dark:` utilities apply everywhere except
    inside a subtree that has explicitly opted into light. */
-@custom-variant dark (&:not(:where([data-theme='light'], [data-theme='light'] *, .light, .light *)));
+@custom-variant dark (&:not(:where([data-theme='light'], [data-theme='light'] *, .theme-light, .theme-light *)));
+
+/* Density scale. The editor is a working surface, not a landing page: every
+   control height below is deliberate and shared, so a new panel inherits the
+   canvas's density instead of inventing its own.
+
+     app header  2.75rem   editor toolbar 2.25rem   list row 2.75rem
+     form control 1.875rem sidebar        13rem     page pad 1.25rem
+
+   Canvas geometry lives with it because edge routing depends on it: a step
+   tile is 5.5rem square, an attachment node is a 3.75rem circle. */
 
 @theme {
 	--font-sans: 'Geist Variable', sans-serif;
+	--font-mono: ui-monospace, 'SF Mono', 'Geist Mono', Menlo, Consolas, monospace;
+
+	/* Node accents by registry category. Colour here is information: on a dense
+	   canvas the hue tells you what a node *is* before you read its name. */
+	--color-node-trigger: var(--node-trigger);
+	--color-node-core: var(--node-core);
+	--color-node-ai: var(--node-ai);
+	--color-node-data: var(--node-data);
+	--color-node-imported: var(--node-imported);
 	--color-background: var(--background);
 	--color-foreground: var(--foreground);
 	--color-card: var(--card);
@@ -65,10 +84,15 @@
 /* KilasFlow: jade actions on quiet graphite surfaces.
    Dark-first: the bare :root palette is the dark theme, so a
    document with no explicit choice renders dark regardless of the OS mode.
-   Light is an opt-in, selected by [data-theme='light'] or the .light class. */
+   Light is an opt-in, selected by [data-theme='light'] or the .theme-light class.
+
+   The class hooks are namespaced. Bare `.light` and `.dark` are common enough in
+   third-party components to collide: Svelte Flow stamps its colour mode onto the
+   canvas container as exactly those names, which silently repainted the whole
+   editor in the light palette while every computed style still read as dark. */
 :root,
 :root[data-theme='dark'],
-.dark {
+.theme-dark {
 	color-scheme: dark;
 	--background: oklch(0.17 0.016 170);
 	--foreground: oklch(0.95 0.012 170);
@@ -107,10 +131,15 @@
 	--sidebar-accent-foreground: oklch(0.95 0.012 170);
 	--sidebar-border: oklch(1 0.005 170 / 13%);
 	--sidebar-ring: oklch(0.74 0.13 170);
+	--node-trigger: oklch(0.8 0.15 78);
+	--node-core: oklch(0.78 0.125 170);
+	--node-ai: oklch(0.74 0.15 305);
+	--node-data: oklch(0.74 0.12 240);
+	--node-imported: oklch(0.7 0.17 27);
 }
 
 :root[data-theme='light'],
-.light {
+.theme-light {
 	color-scheme: light;
 	--background: oklch(0.985 0.006 170);
 	--foreground: oklch(0.215 0.018 170);
@@ -148,6 +177,11 @@
 	--sidebar-accent-foreground: oklch(0.255 0.04 170);
 	--sidebar-border: oklch(0.89 0.014 170);
 	--sidebar-ring: oklch(0.44 0.105 170);
+	--node-trigger: oklch(0.62 0.14 78);
+	--node-core: oklch(0.5 0.11 170);
+	--node-ai: oklch(0.53 0.16 305);
+	--node-data: oklch(0.52 0.13 240);
+	--node-imported: oklch(0.55 0.19 27);
 }
 
 /* Svelte Flow ships light-only defaults for its chrome. Bind them to the
@@ -172,6 +206,101 @@
 	--xy-minimap-background-color: var(--card);
 	--xy-selection-background-color: oklch(from var(--primary) l c h / 12%);
 	--xy-selection-border: 1px dashed var(--primary);
+	--xy-node-border-radius: 0;
+}
+
+/* The canvas draws its own ports, so Svelte Flow's default 6px dot is reset to
+   nothing and rebuilt per connection kind: a circle for `main`, a diamond for
+   the `ai_*` attachment kinds. Shape carries the kind, so a wrong connection is
+   visibly wrong before the validator refuses it. */
+.svelte-flow__handle {
+	width: auto;
+	height: auto;
+	min-width: 0;
+	min-height: 0;
+	border: 0;
+	background: transparent;
+	border-radius: 0;
+	transform: none;
+}
+
+.svelte-flow__handle::before {
+	content: '';
+	position: absolute;
+	inset: -0.375rem;
+}
+
+.kf-port {
+	display: block;
+	width: 0.5rem;
+	height: 0.5rem;
+	border: 1.5px solid var(--accent, var(--primary));
+	background: var(--card);
+	border-radius: 9999px;
+	transition:
+		background-color 120ms ease,
+		transform 120ms ease;
+}
+
+.kf-port-attachment {
+	border-radius: 1px;
+	rotate: 45deg;
+}
+
+.svelte-flow__handle.connectingfrom .kf-port,
+.svelte-flow__handle.connectingto .kf-port,
+.svelte-flow__handle:hover .kf-port {
+	background: var(--accent, var(--primary));
+	scale: 1.25;
+}
+
+.svelte-flow__handle-left {
+	left: -0.25rem;
+}
+.svelte-flow__handle-right {
+	right: -0.25rem;
+}
+.svelte-flow__handle-top {
+	top: -0.25rem;
+}
+.svelte-flow__handle-bottom {
+	bottom: -0.25rem;
+}
+
+/* An attachment edge is drawn as a dashed line because it carries configuration
+   rather than items: nothing flows along it during a run. */
+.svelte-flow__edge.kf-edge-attachment .svelte-flow__edge-path {
+	stroke-dasharray: 4 4;
+	stroke-width: 1.5;
+}
+
+.svelte-flow__edge-path {
+	stroke-width: 1.5;
+}
+
+.svelte-flow__edge.selected .svelte-flow__edge-path {
+	stroke-width: 2;
+}
+
+.svelte-flow__controls-button {
+	width: 1.5rem;
+	height: 1.5rem;
+	border-bottom-width: 1px;
+}
+
+.svelte-flow__controls-button svg {
+	width: 0.625rem;
+	height: 0.625rem;
+}
+
+.svelte-flow__edge-textbkg {
+	fill: var(--card);
+}
+
+.svelte-flow__edge-text {
+	font-size: 0.625rem;
+	font-family: var(--font-mono);
+	fill: var(--muted-foreground);
 }
 
 @layer base {

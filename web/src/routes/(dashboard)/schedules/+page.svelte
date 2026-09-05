@@ -92,10 +92,10 @@
 </svelte:head>
 
 <section class="mx-auto w-full max-w-4xl">
-	<div class="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
+	<div class="flex items-center justify-between gap-4">
 		<div class="max-w-xl">
-			<h1 class="text-balance text-2xl font-semibold tracking-tight sm:text-3xl">Schedules</h1>
-			<p class="mt-2 text-pretty text-sm leading-6 text-muted-foreground">
+			<h1 class="text-base font-semibold tracking-tight">Schedules</h1>
+			<p class="text-xs text-muted-foreground">
 				Run an active workflow on a cron expression. Times are evaluated in UTC.
 			</p>
 		</div>
@@ -105,7 +105,7 @@
 		</Button>
 	</div>
 
-	<div class="mt-8">
+	<div class="mt-4">
 		{#if schedules.isPending}
 			<div aria-live="polite" class="grid gap-3">
 				<p class="text-sm text-muted-foreground">Loading schedules…</p>
@@ -114,9 +114,9 @@
 				{/each}
 			</div>
 		{:else if schedules.isError}
-			<div class="max-w-xl rounded-xl border border-destructive/25 bg-destructive/5 p-5">
+			<div class="max-w-xl rounded-lg border border-destructive/25 bg-destructive/5 p-3">
 				<h2 class="font-medium">Schedules could not be loaded</h2>
-				<p class="mt-1 text-sm leading-6 text-muted-foreground">{message(schedules.error)}</p>
+				<p class="mt-0.5 text-xs leading-5 text-muted-foreground">{message(schedules.error)}</p>
 				<Button class="mt-4" variant="outline" onclick={() => void schedules.refetch()}>
 					<RefreshCw aria-hidden="true" />
 					Try again
@@ -125,15 +125,15 @@
 		{:else if schedules.data.length === 0}
 			<div class="grid min-h-56 place-items-center rounded-2xl border border-dashed border-border bg-card px-6 py-12 text-center">
 				<div class="max-w-sm">
-					<div aria-hidden="true" class="mx-auto grid size-11 place-items-center rounded-xl bg-accent text-accent-foreground"><CalendarClock class="size-5" /></div>
-					<h2 class="mt-5 text-lg font-semibold tracking-tight">No schedules yet</h2>
-					<p class="mt-2 text-sm leading-6 text-muted-foreground">Add one to run an activated workflow on a recurring cadence.</p>
+					<div aria-hidden="true" class="mx-auto grid size-8 place-items-center rounded-lg bg-accent text-accent-foreground"><CalendarClock class="size-5" /></div>
+					<h2 class="mt-3 text-sm font-semibold tracking-tight">No schedules yet</h2>
+					<p class="mt-1 text-xs leading-5 text-muted-foreground">Add one to run an activated workflow on a recurring cadence.</p>
 				</div>
 			</div>
 		{:else}
-			<ul aria-label="Schedules" class="divide-y divide-border overflow-hidden rounded-xl border border-border bg-card">
+			<ul aria-label="Schedules" class="divide-y divide-border overflow-hidden rounded-lg border border-border">
 				{#each schedules.data as schedule (schedule.id)}
-					<li class="flex items-center gap-4 px-4 py-3 sm:px-5">
+					<li class="flex h-11 items-center gap-3 px-3">
 						<div class="min-w-0 flex-1">
 							<p class="truncate text-sm font-medium">{workflowNames.get(schedule.workflowId) ?? schedule.workflowId}</p>
 							<p class="mt-1 text-xs text-muted-foreground">
@@ -166,7 +166,7 @@
 			<form class="grid gap-4" onsubmit={(event) => { event.preventDefault(); void save(); }}>
 				<div class="grid gap-2">
 					<label for="schedule-workflow" class="text-sm font-medium">Workflow</label>
-					<select id="schedule-workflow" bind:value={workflowID} disabled={Boolean(editing)} class="h-10 rounded-lg border border-input bg-background px-3 text-sm disabled:opacity-60">
+					<select id="schedule-workflow" bind:value={workflowID} disabled={Boolean(editing)} class="h-7 rounded-md border border-input bg-background px-2 text-xs disabled:opacity-60">
 						{#each workflows.data ?? [] as workflow (workflow.id)}
 							<option value={workflow.id}>{workflow.name}{workflow.active ? '' : ' (not activated)'}</option>
 						{/each}
@@ -177,7 +177,7 @@
 					<Input id="schedule-cron" bind:value={cron} spellcheck={false} class="font-mono" />
 					<p class="text-xs leading-5 text-muted-foreground">Five fields, UTC. For example <code class="font-mono">0 9 * * 1-5</code> is weekdays at 09:00.</p>
 				</div>
-				<label class="flex min-h-10 items-center gap-2 rounded-lg border border-input px-3 text-sm">
+				<label class="flex h-7 items-center gap-2 rounded-md border border-input px-2 text-xs">
 					<input type="checkbox" bind:checked={active} />
 					<span>Active</span>
 				</label>

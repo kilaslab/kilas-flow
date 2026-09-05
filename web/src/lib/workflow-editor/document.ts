@@ -1,4 +1,4 @@
-import type { Edge as FlowEdge, Node as FlowNode } from '@xyflow/svelte';
+import { MarkerType, type Edge as FlowEdge, type Node as FlowNode } from '@xyflow/svelte';
 
 import type { Connection, Definition, Document, Node as WorkflowNode, WorkflowDocumentInput } from '$lib/api/generated/models';
 import type { CanvasValidationIssue } from './validation';
@@ -15,7 +15,7 @@ export type EditorNodeData = {
 };
 
 export type EditorFlowNode = FlowNode<EditorNodeData, 'workflow'>;
-export type EditorFlowEdge = FlowEdge<{ connection: Connection; validationMessage?: string }, 'smoothstep'> & {
+export type EditorFlowEdge = FlowEdge<{ connection: Connection; validationMessage?: string }, 'smoothstep' | 'bezier'> & {
 	data: { connection: Connection; validationMessage?: string };
 };
 
@@ -44,8 +44,24 @@ export function createWorkflowNode(
 	};
 }
 
+// Spacing is a function of the tile, not a round number: a node is 88px wide
+// under a 160px name, so 220px across clears the widest label and 190px down
+// clears the label plus a port row. Wider than that and a compact canvas would
+// gain nothing over the card it replaced.
+const COLUMN = 220;
+const ROW = 190;
+
 export function nextNodePosition(index: number): { x: number; y: number } {
-	return { x: 80 + (index % 3) * 360, y: 80 + Math.floor(index / 3) * 260 };
+	return { x: 60 + (index % 4) * COLUMN, y: 60 + Math.floor(index / 4) * ROW };
+}
+
+/**
+ * Where a step added from an output port belongs: one column to the right of
+ * the node it continues, stacked downward when that port already feeds others
+ * so a branch fans out instead of overlapping.
+ */
+export function positionAfter(source: { x: number; y: number }, taken: number): { x: number; y: number } {
+	return { x: source.x + COLUMN, y: source.y + taken * 150 };
 }
 
 export function documentFromCanvas(document: Document, definitions: Definition[], validationIssues: CanvasValidationIssue[] = []): CanvasDocument {
@@ -65,9 +81,15 @@ export function documentFromCanvas(document: Document, definitions: Definition[]
 	});
 	const edges = (document.connections ?? []).map<EditorFlowEdge>((connection) => {
 		const validationMessage = edgeIssues.get(connection.id);
+		// An attachment carries configuration, not items. It is drawn as a dashed
+		// curve from below rather than a stepped line with an arrow, so the two
+		// connection kinds cannot be mistaken for each other at a glance.
+		const attachment = connection.kind !== 'main';
 		return {
 			id: connection.id,
-			type: 'smoothstep',
+			type: attachment ? 'bezier' : 'smoothstep',
+			class: attachment ? 'kf-edge-attachment' : undefined,
+			...(attachment ? {} : { markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: 'var(--xy-edge-stroke)' } }),
 			source: connection.source.nodeId,
 			sourceHandle: connection.source.port,
 			target: connection.target.nodeId,

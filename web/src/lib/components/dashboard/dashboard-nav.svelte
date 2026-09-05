@@ -21,21 +21,21 @@
 	}
 </script>
 
-<nav aria-label="Workspace navigation" class="grid gap-1">
+<nav aria-label="Workspace navigation" class="grid gap-0.5">
 	{#each items as item (item.href)}
 		{@const current = active(item.href)}
 		<a
 			href={item.href}
 			aria-current={current ? 'page' : undefined}
 			onclick={onNavigate}
-			class="group flex min-h-10 items-center gap-3 rounded-lg px-3 text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+			class="group flex h-8 items-center gap-2.5 rounded-md px-2 text-[0.8125rem] font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
 			class:bg-sidebar-accent={current}
 			class:text-sidebar-accent-foreground={current}
 			class:text-muted-foreground={!current}
 			class:hover:bg-sidebar-accent={!current}
 			class:hover:text-sidebar-accent-foreground={!current}
 		>
-			<item.icon aria-hidden="true" class="size-4" />
+			<item.icon aria-hidden="true" class="size-3.5" />
 			{item.label}
 		</a>
 	{/each}

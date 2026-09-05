@@ -111,10 +111,10 @@
 </svelte:head>
 
 <section class="mx-auto w-full max-w-4xl">
-	<div class="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
+	<div class="flex items-center justify-between gap-4">
 		<div class="max-w-xl">
-			<h1 class="text-balance text-2xl font-semibold tracking-tight sm:text-3xl">Credentials</h1>
-			<p class="mt-2 text-pretty text-sm leading-6 text-muted-foreground">
+			<h1 class="text-base font-semibold tracking-tight">Credentials</h1>
+			<p class="text-xs text-muted-foreground">
 				Secrets are encrypted before storage and never returned once saved. Scope a credential to the hosts it may be sent to.
 			</p>
 		</div>
@@ -124,7 +124,7 @@
 		</Button>
 	</div>
 
-	<div class="mt-8">
+	<div class="mt-4">
 		{#if credentials.isPending}
 			<div aria-live="polite" class="grid gap-3">
 				<p class="text-sm text-muted-foreground">Loading credentials…</p>
@@ -133,9 +133,9 @@
 				{/each}
 			</div>
 		{:else if credentials.isError}
-			<div class="max-w-xl rounded-xl border border-destructive/25 bg-destructive/5 p-5">
+			<div class="max-w-xl rounded-lg border border-destructive/25 bg-destructive/5 p-3">
 				<h2 class="font-medium">Credentials could not be loaded</h2>
-				<p class="mt-1 text-sm leading-6 text-muted-foreground">{message(credentials.error)}</p>
+				<p class="mt-0.5 text-xs leading-5 text-muted-foreground">{message(credentials.error)}</p>
 				<Button class="mt-4" variant="outline" onclick={() => void credentials.refetch()}>
 					<RefreshCw aria-hidden="true" />
 					Try again
@@ -144,15 +144,15 @@
 		{:else if credentials.data.length === 0}
 			<div class="grid min-h-56 place-items-center rounded-2xl border border-dashed border-border bg-card px-6 py-12 text-center">
 				<div class="max-w-sm">
-					<div aria-hidden="true" class="mx-auto grid size-11 place-items-center rounded-xl bg-accent text-accent-foreground"><KeyRound class="size-5" /></div>
-					<h2 class="mt-5 text-lg font-semibold tracking-tight">No credentials yet</h2>
-					<p class="mt-2 text-sm leading-6 text-muted-foreground">Add one to authenticate HTTP Request nodes without putting a secret in a workflow.</p>
+					<div aria-hidden="true" class="mx-auto grid size-8 place-items-center rounded-lg bg-accent text-accent-foreground"><KeyRound class="size-5" /></div>
+					<h2 class="mt-3 text-sm font-semibold tracking-tight">No credentials yet</h2>
+					<p class="mt-1 text-xs leading-5 text-muted-foreground">Add one to authenticate HTTP Request nodes without putting a secret in a workflow.</p>
 				</div>
 			</div>
 		{:else}
-			<ul aria-label="Credentials" class="divide-y divide-border overflow-hidden rounded-xl border border-border bg-card">
+			<ul aria-label="Credentials" class="divide-y divide-border overflow-hidden rounded-lg border border-border">
 				{#each credentials.data as credential (credential.id)}
-					<li class="flex items-center gap-4 px-4 py-3 sm:px-5">
+					<li class="flex h-11 items-center gap-3 px-3">
 						<div class="min-w-0 flex-1">
 							<p class="truncate text-sm font-medium">{credential.name}</p>
 							<p class="mt-1 text-xs text-muted-foreground">
@@ -185,7 +185,7 @@
 				</div>
 				<div class="grid gap-2">
 					<label for="credential-type" class="text-sm font-medium">Type</label>
-					<select id="credential-type" bind:value={typeID} disabled={Boolean(editing)} class="h-10 rounded-lg border border-input bg-background px-3 text-sm disabled:opacity-60">
+					<select id="credential-type" bind:value={typeID} disabled={Boolean(editing)} class="h-7 rounded-md border border-input bg-background px-2 text-xs disabled:opacity-60">
 						{#each types.data ?? [] as candidate (candidate.id)}
 							<option value={candidate.id}>{candidate.displayName}</option>
 						{/each}

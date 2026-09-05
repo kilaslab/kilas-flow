@@ -113,26 +113,27 @@
 	<title>{workflow.data?.name ?? 'Workflow'} · KilasFlow</title>
 </svelte:head>
 
-<section class="flex h-full min-h-0 flex-col">
-	<div class="flex h-14 shrink-0 items-center gap-3 border-b border-border px-3 sm:px-4">
-		<Button href="/app/workflows" variant="ghost" size="sm"><ArrowLeft aria-hidden="true" />All workflows</Button>
-		<span class="h-4 w-px bg-border" aria-hidden="true"></span>
-		<p class="min-w-0 truncate text-sm text-muted-foreground">{currentWorkflow?.name ?? 'Loading workflow…'}</p>
-	</div>
+{#snippet breadcrumb()}
+	<a href="/app/workflows" class="grid size-7 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" aria-label="All workflows">
+		<ArrowLeft aria-hidden="true" class="size-3.5" />
+	</a>
+	<p class="min-w-0 max-w-24 truncate text-[0.8125rem] font-medium sm:max-w-56">{currentWorkflow?.name ?? 'Loading…'}</p>
+{/snippet}
 
+<section class="flex h-full min-h-0 flex-col">
 	{#if workflow.isPending || nodeTypes.isPending}
 		<div aria-live="polite" class="grid flex-1 place-items-center text-sm text-muted-foreground">Loading workflow editor…</div>
 	{:else if workflow.isError || nodeTypes.isError}
 		<div class="grid flex-1 place-items-center p-6">
-			<div class="max-w-lg rounded-xl border border-destructive/25 bg-destructive/5 p-5">
+			<div class="max-w-lg rounded-lg border border-destructive/25 bg-destructive/5 p-3">
 				<h1 class="font-semibold">Workflow editor could not be loaded</h1>
-				<p class="mt-1 text-sm leading-6 text-muted-foreground">{message(workflow.isError ? workflow.error : nodeTypes.error)}</p>
+				<p class="mt-0.5 text-xs leading-5 text-muted-foreground">{message(workflow.isError ? workflow.error : nodeTypes.error)}</p>
 				<Button class="mt-4" variant="outline" onclick={() => { void workflow.refetch(); void nodeTypes.refetch(); }}>Try again</Button>
 			</div>
 		</div>
 	{:else if currentWorkflow}
 		{#key currentWorkflow.latestVersion.id}
-			<WorkflowEditor document={currentWorkflow.latestVersion.document} definitions={nodeTypes.data} credentials={credentials.data ?? []} {saving} {running} {saveError} {saveIssues} {runError} {runMessage} onSave={save} onRun={run} />
+			<WorkflowEditor header={breadcrumb} document={currentWorkflow.latestVersion.document} definitions={nodeTypes.data} credentials={credentials.data ?? []} {saving} {running} {saveError} {saveIssues} {runError} {runMessage} onSave={save} onRun={run} />
 		{/key}
 	{/if}
 </section>

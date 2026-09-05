@@ -1,19 +1,27 @@
 <script lang="ts">
 	import { tick } from 'svelte';
 	import Search from '@lucide/svelte/icons/search';
+	import X from '@lucide/svelte/icons/x';
 
 	import type { Definition } from '$lib/api/generated/models';
+
+	import NodeIcon from './node-icon.svelte';
 
 	let {
 		definitions,
 		open = $bindable(false),
 		triggersOnly = false,
-		onSelect
+		connecting = false,
+		onSelect,
+		onDismiss
 	}: {
 		definitions: Definition[];
 		open?: boolean;
 		triggersOnly?: boolean;
+		/** Opened from an output port, so only nodes that can follow one are offered. */
+		connecting?: boolean;
 		onSelect: (definition: Definition) => void;
+		onDismiss?: () => void;
 	} = $props();
 
 	let query = $state('');
@@ -25,8 +33,11 @@
 	const available = $derived(
 		definitions.filter((definition) => {
 			if (triggersOnly && definition.category !== 'Triggers') return false;
+			// A step is being added after an existing one, so anything without a
+			// main input could never receive its items.
+			if (connecting && !(definition.inputs ?? []).some((port) => port.Kind === 'main')) return false;
 			if (!normalizedQuery) return true;
-			return `${definition.displayName} ${definition.description ?? ''} ${definition.category}`.toLocaleLowerCase().includes(normalizedQuery);
+			return `${definition.displayName} ${definition.description ?? ''} ${definition.category} ${definition.type}`.toLocaleLowerCase().includes(normalizedQuery);
 		})
 	);
 	const categories = $derived([...new Set(available.map((definition) => definition.category))].sort());
@@ -42,12 +53,15 @@
 	function close() {
 		open = false;
 		query = '';
+		onDismiss?.();
 		void tick().then(() => returnFocus?.focus());
 	}
 
 	function choose(definition: Definition) {
 		onSelect(definition);
-		close();
+		open = false;
+		query = '';
+		void tick().then(() => returnFocus?.focus());
 	}
 
 	function handleKeydown(event: KeyboardEvent) {
@@ -72,40 +86,46 @@
 </script>
 
 {#if open}
-	<div class="absolute inset-0 z-40 grid place-items-center bg-background/50 p-4 backdrop-blur-sm" role="presentation">
-		<div bind:this={dialogElement} class="flex max-h-[min(42rem,calc(100dvh-2rem))] w-full max-w-xl flex-col overflow-hidden rounded-2xl border border-border bg-popover shadow-xl" role="dialog" aria-modal="true" aria-labelledby="node-picker-title" tabindex="-1" onkeydown={handleKeydown}>
-			<div class="border-b border-border p-4">
-				<div class="flex items-start gap-3">
-					<div class="min-w-0 flex-1">
-						<h2 id="node-picker-title" class="text-base font-semibold">{triggersOnly ? 'Choose a trigger' : 'Add a step'}</h2>
-						<p class="mt-1 text-sm text-muted-foreground">The available nodes come from this workspace’s server registry.</p>
-					</div>
-					<button type="button" class="rounded-md px-2 py-1 text-sm text-muted-foreground hover:bg-muted focus-visible:outline-2" onclick={close}>Close</button>
-				</div>
-				<label class="relative mt-4 block">
-					<Search aria-hidden="true" class="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-					<span class="sr-only">Search registered node types</span>
-					<input bind:this={searchInput} bind:value={query} class="h-10 w-full rounded-lg border border-input bg-background pl-9 pr-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring" placeholder="Search nodes" />
-				</label>
+	<div class="absolute inset-0 z-40 grid place-items-center bg-background/60 p-4 backdrop-blur-sm" role="presentation">
+		<div bind:this={dialogElement} class="flex max-h-[min(30rem,calc(100dvh-2rem))] w-full max-w-md flex-col overflow-hidden rounded-xl border border-border bg-popover shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="node-picker-title" tabindex="-1" onkeydown={handleKeydown}>
+			<div class="flex items-center gap-2 border-b border-border px-2.5 py-2">
+				<Search aria-hidden="true" class="size-4 shrink-0 text-muted-foreground" />
+				<label class="sr-only" for="node-picker-search">Search registered node types</label>
+				<input id="node-picker-search" bind:this={searchInput} bind:value={query} class="h-6 min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground" placeholder={triggersOnly ? 'Search triggers' : 'Search nodes'} />
+				<h2 id="node-picker-title" class="sr-only">{triggersOnly ? 'Choose a trigger' : connecting ? 'Add a connected step' : 'Add a step'}</h2>
+				<button type="button" class="grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-1" aria-label="Close node picker" onclick={close}>
+					<X aria-hidden="true" class="size-3.5" />
+				</button>
 			</div>
 
-			<div class="min-h-0 overflow-y-auto p-2">
+			<div class="min-h-0 flex-1 overflow-y-auto p-1">
 				{#if available.length === 0}
-					<p class="px-3 py-8 text-center text-sm text-muted-foreground">No registered nodes match “{query}”.</p>
+					<p class="px-3 py-10 text-center text-xs text-muted-foreground">
+						{#if normalizedQuery}No registered node matches “{query}”.{:else}No node here can follow that port.{/if}
+					</p>
 				{:else}
-					{#each categories as category}
-						<section aria-labelledby={`node-category-${category}`} class="py-2">
-							<h3 id={`node-category-${category}`} class="px-3 pb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{category}</h3>
+					{#each categories as category (category)}
+						<section aria-labelledby={`node-category-${category}`}>
+							<h3 id={`node-category-${category}`} class="px-2.5 pb-1 pt-2.5 text-[0.625rem] font-semibold uppercase tracking-wider text-muted-foreground">{category}</h3>
 							{#each available.filter((definition) => definition.category === category) as definition (`${definition.type}@${definition.version}`)}
-								<button type="button" class="block w-full rounded-xl px-3 py-3 text-left hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring" onclick={() => choose(definition)}>
-									<span class="block text-sm font-medium">{definition.displayName}</span>
-									<span class="mt-1 block text-xs leading-5 text-muted-foreground">{definition.description || definition.type}</span>
+								<button type="button" class="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-accent focus-visible:bg-accent focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring" onclick={() => choose(definition)}>
+									<NodeIcon {definition} size="sm" />
+									<span class="min-w-0 flex-1">
+										<span class="block truncate text-[0.8125rem] font-medium leading-tight">{definition.displayName}</span>
+										{#if definition.description}
+											<span class="mt-0.5 block truncate text-[0.6875rem] leading-tight text-muted-foreground">{definition.description}</span>
+										{/if}
+									</span>
 								</button>
 							{/each}
 						</section>
 					{/each}
 				{/if}
 			</div>
+
+			<p class="shrink-0 border-t border-border px-2.5 py-1.5 text-[0.625rem] text-muted-foreground">
+				{available.length} of {definitions.length} nodes · from this workspace’s server registry
+			</p>
 		</div>
 	</div>
 {/if}

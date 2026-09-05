@@ -68,9 +68,9 @@ describe('workflow editor document helpers', () => {
 	});
 
 	it('spaces new canvas nodes so their handles remain reachable at the default fit zoom', () => {
-		expect(nextNodePosition(0)).toEqual({ x: 80, y: 80 });
-		expect(nextNodePosition(1)).toEqual({ x: 440, y: 80 });
-		expect(nextNodePosition(3)).toEqual({ x: 80, y: 340 });
+		expect(nextNodePosition(0)).toEqual({ x: 60, y: 60 });
+		expect(nextNodePosition(1)).toEqual({ x: 280, y: 60 });
+		expect(nextNodePosition(4)).toEqual({ x: 60, y: 250 });
 	});
 
 	it('round-trips the stored graph without leaking workflow identity into a save input', () => {

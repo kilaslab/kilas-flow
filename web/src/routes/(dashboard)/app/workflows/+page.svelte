@@ -67,7 +67,7 @@
 
 	function formatUpdatedAt(value: string): string {
 		const date = new Date(value);
-		return Number.isNaN(date.getTime()) ? 'Recently updated' : `Updated ${date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`;
+		return Number.isNaN(date.getTime()) ? '—' : date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 	}
 </script>
 
@@ -75,16 +75,18 @@
 	<title>Workflows · KilasFlow</title>
 </svelte:head>
 
-<section class="mx-auto w-full max-w-6xl">
-	<div class="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
-		<div class="max-w-xl">
-			<h1 class="text-balance text-2xl font-semibold tracking-tight sm:text-3xl">Workflows</h1>
-			<p class="mt-2 text-pretty text-sm leading-6 text-muted-foreground">Create and maintain the automation flows your product exposes.</p>
+<section class="mx-auto w-full max-w-5xl">
+	<div class="flex items-center justify-between gap-4">
+		<div class="min-w-0">
+			<h1 class="text-base font-semibold tracking-tight">Workflows</h1>
+			<p class="text-xs text-muted-foreground">
+				{#if !workflows.isPending && !workflows.isError}{workflows.data.length} in this workspace{:else}Automation flows your product exposes{/if}
+			</p>
 		</div>
 		<Dialog.Root bind:open={createOpen} onOpenChange={(open) => !open && resetCreateDialog()}>
 			<Dialog.Trigger>
 				{#snippet child({ props })}
-					<Button {...props} class="w-full sm:w-auto">
+					<Button {...props} size="sm">
 						<FilePlus2 aria-hidden="true" />
 						New workflow
 					</Button>
@@ -112,48 +114,47 @@
 		</Dialog.Root>
 	</div>
 
-	<div class="mt-8">
+	<div class="mt-4">
 		{#if workflows.isPending}
-			<div aria-live="polite" class="grid gap-3">
-				<p class="text-sm text-muted-foreground">Loading workflows…</p>
-				{#each Array(3) as _}
-					<div class="h-20 animate-pulse rounded-xl bg-muted" aria-hidden="true"></div>
+			<div aria-live="polite" class="overflow-hidden rounded-lg border border-border">
+				<p class="sr-only">Loading workflows…</p>
+				{#each Array(4) as _}
+					<div class="h-11 animate-pulse border-b border-border bg-muted/50 last:border-0" aria-hidden="true"></div>
 				{/each}
 			</div>
 		{:else if workflows.isError}
-			<div class="max-w-xl rounded-xl border border-destructive/25 bg-destructive/5 p-5">
-				<h2 class="font-medium">Workflows could not be loaded</h2>
-				<p class="mt-1 text-sm leading-6 text-muted-foreground">{message(workflows.error)}</p>
-				<Button class="mt-4" variant="outline" onclick={() => void workflows.refetch()}>
+			<div class="max-w-lg rounded-lg border border-destructive/25 bg-destructive/5 p-3">
+				<h2 class="text-sm font-medium">Workflows could not be loaded</h2>
+				<p class="mt-0.5 text-xs leading-5 text-muted-foreground">{message(workflows.error)}</p>
+				<Button class="mt-2.5" size="sm" variant="outline" onclick={() => void workflows.refetch()}>
 					<RefreshCw aria-hidden="true" />
 					Try again
 				</Button>
 			</div>
 		{:else if workflows.data.length === 0}
-			<div class="grid min-h-72 place-items-center rounded-2xl border border-dashed border-border bg-card px-6 py-12 text-center">
-				<div class="max-w-sm">
-					<div aria-hidden="true" class="mx-auto grid size-11 place-items-center rounded-xl bg-accent text-accent-foreground"><FilePlus2 class="size-5" /></div>
-					<h2 class="mt-5 text-lg font-semibold tracking-tight">Build your first flow</h2>
-					<p class="mt-2 text-sm leading-6 text-muted-foreground">A workflow starts as a private draft, then grows into the automation your product needs.</p>
-					<Button class="mt-5" onclick={() => (createOpen = true)}>
+			<div class="grid min-h-56 place-items-center rounded-lg border border-dashed border-border px-6 py-10 text-center">
+				<div class="max-w-xs">
+					<div aria-hidden="true" class="mx-auto grid size-8 place-items-center rounded-lg bg-accent text-accent-foreground"><FilePlus2 class="size-4" /></div>
+					<h2 class="mt-3 text-sm font-semibold tracking-tight">Build your first flow</h2>
+					<p class="mt-1 text-xs leading-5 text-muted-foreground">A workflow starts as a private draft, then grows into the automation your product needs.</p>
+					<Button class="mt-3" size="sm" onclick={() => (createOpen = true)}>
 						<FilePlus2 aria-hidden="true" />
 						New workflow
 					</Button>
 				</div>
 			</div>
 		{:else}
-			<div class="overflow-hidden rounded-xl border border-border bg-card">
+			<div class="overflow-hidden rounded-lg border border-border">
 				<ul aria-label="Workflows" class="divide-y divide-border">
 					{#each workflows.data as workflow (workflow.id)}
 						<li>
-							<a href={`/app/workflows/${workflow.id}`} class="group flex min-h-20 items-center gap-4 px-4 py-3 transition-colors hover:bg-muted/60 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring sm:px-5">
-								<div class="grid size-9 shrink-0 place-items-center rounded-lg bg-accent text-xs font-semibold text-accent-foreground">{workflow.name.slice(0, 1).toUpperCase()}</div>
-								<div class="min-w-0 flex-1">
-									<p class="truncate text-sm font-medium">{workflow.name}</p>
-									<p class="mt-1 text-xs text-muted-foreground">{formatUpdatedAt(workflow.updatedAt)} · Revision {workflow.latestRevision}</p>
-								</div>
-								<span class="hidden rounded-full bg-muted px-2 py-1 text-xs font-medium text-muted-foreground sm:inline">{workflow.active ? 'Active' : 'Draft'}</span>
-								<MoreHorizontal aria-hidden="true" class="size-4 text-muted-foreground" />
+							<a href={`/app/workflows/${workflow.id}`} class="group flex h-11 items-center gap-3 px-3 transition-colors hover:bg-muted/50 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring">
+								<span aria-hidden="true" class="size-1.5 shrink-0 rounded-full {workflow.active ? 'bg-success' : 'bg-muted-foreground/40'}"></span>
+								<span class="min-w-0 flex-1 truncate text-[0.8125rem] font-medium">{workflow.name}</span>
+								<span class="hidden shrink-0 text-[0.6875rem] text-muted-foreground sm:inline">{workflow.active ? 'Active' : 'Draft'}</span>
+								<span class="hidden shrink-0 font-mono text-[0.6875rem] text-muted-foreground md:inline">r{workflow.latestRevision}</span>
+								<span class="hidden shrink-0 text-[0.6875rem] text-muted-foreground lg:inline">{formatUpdatedAt(workflow.updatedAt)}</span>
+								<MoreHorizontal aria-hidden="true" class="size-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
 							</a>
 						</li>
 					{/each}

@@ -95,7 +95,7 @@
 	<title>{execution.data?.id ?? 'Execution'} · KilasFlow</title>
 </svelte:head>
 
-<section class="mx-auto flex w-full max-w-7xl flex-col gap-6">
+<section class="mx-auto flex w-full max-w-7xl flex-col gap-3">
 	<div>
 		<Button href="/executions" variant="ghost" size="sm"><ArrowLeft aria-hidden="true" />All executions</Button>
 	</div>
@@ -103,16 +103,16 @@
 	{#if execution.isPending}
 		<p aria-live="polite" class="text-sm text-muted-foreground">Loading execution…</p>
 	{:else if execution.isError}
-		<div class="max-w-xl rounded-xl border border-destructive/25 bg-destructive/5 p-5">
+		<div class="max-w-xl rounded-lg border border-destructive/25 bg-destructive/5 p-3">
 			<h1 class="font-medium">Execution could not be loaded</h1>
-			<p class="mt-1 text-sm leading-6 text-muted-foreground">{message(execution.error)}</p>
+			<p class="mt-0.5 text-xs leading-5 text-muted-foreground">{message(execution.error)}</p>
 			<Button class="mt-4" variant="outline" onclick={() => void execution.refetch()}>Try again</Button>
 		</div>
 	{:else if execution.data}
-		<div class="flex flex-wrap items-start justify-between gap-4">
+		<div class="flex flex-wrap items-start justify-between gap-3">
 			<div class="min-w-0">
 				<div class="flex items-center gap-2">
-					<h1 class="text-xl font-semibold tracking-tight sm:text-2xl">Execution</h1>
+					<h1 class="text-base font-semibold tracking-tight">Execution</h1>
 					<span class={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${statusTone(status)}`}>{statusLabel(status)}</span>
 					{#if live.connected}
 						<span class="inline-flex items-center gap-1.5 text-xs text-muted-foreground" aria-live="polite">
@@ -123,7 +123,7 @@
 				</div>
 				<p class="mt-1 font-mono text-xs text-muted-foreground">{execution.data.id}</p>
 			</div>
-			<dl class="grid grid-cols-2 gap-x-8 gap-y-2 text-sm sm:grid-cols-3">
+			<dl class="grid grid-cols-3 gap-x-6 gap-y-1 text-[0.8125rem]">
 				<div>
 					<dt class="text-xs text-muted-foreground">Started</dt>
 					<dd class="mt-0.5">{formatTimestamp(execution.data.startedAt)}</dd>
@@ -146,8 +146,8 @@
 			</div>
 		{/if}
 
-		<div class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_24rem]">
-			<div class="h-[26rem] overflow-hidden rounded-xl border border-border bg-card lg:h-[32rem]">
+		<div class="grid gap-3 lg:grid-cols-[minmax(0,1fr)_22rem]">
+			<div class="h-[26rem] overflow-hidden rounded-lg border border-border lg:h-[calc(100dvh-13rem)] lg:min-h-[26rem]">
 				{#if version.isPending}
 					<p aria-live="polite" class="grid h-full place-items-center text-sm text-muted-foreground">Loading the graph this execution ran…</p>
 				{:else if version.isError || nodeTypes.isError}
@@ -162,7 +162,7 @@
 				{/if}
 			</div>
 
-			<aside aria-label="Node data" class="min-h-0 overflow-hidden rounded-xl border border-border bg-card">
+			<aside aria-label="Node data" class="min-h-0 overflow-hidden rounded-lg border border-border">
 				{#if !selectedNodeID}
 					<p class="grid h-full place-items-center p-6 text-center text-sm leading-6 text-muted-foreground">Select a node on the canvas to inspect the data it received and produced.</p>
 				{:else}

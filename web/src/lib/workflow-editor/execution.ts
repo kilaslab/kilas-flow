@@ -115,3 +115,25 @@ export function statusLabel(status: string): string {
 	if (status === 'skipped') return 'Not reached';
 	return status.charAt(0).toUpperCase() + status.slice(1);
 }
+
+/**
+ * The status as a colour the canvas can paint a node's border with.
+ *
+ * `statusTone` returns utility classes for badges; a node tile needs the raw
+ * value because it composes the colour into a ring with `color-mix`.
+ */
+export function statusAccent(status: string): string {
+	switch (status) {
+		case 'succeeded':
+			return 'var(--success)';
+		case 'failed':
+			return 'var(--destructive)';
+		case 'cancelled':
+		case 'cancelling':
+			return 'var(--warning)';
+		case 'running':
+			return 'var(--primary)';
+		default:
+			return 'var(--muted-foreground)';
+	}
+}
