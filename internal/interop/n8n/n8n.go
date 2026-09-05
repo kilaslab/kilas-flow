@@ -353,6 +353,9 @@ func Import(payload []byte, catalog workflow.Catalog) (ImportResult, error) {
 		// capsule and returns it on export, so reporting these there would say
 		// something was lost when it was preserved.
 		unsupported = append(unsupported, nodeIssues(name, id, node)...)
+		if settings := errorHandlingSettings(node); len(settings) > 0 {
+			converted.Settings = settings
+		}
 
 		converted.Type = entry.kilasType
 		// n8n's own typeVersion is preserved rather than replaced with the
@@ -1020,22 +1023,59 @@ func nodeIssues(name, id string, node Node) []ImportIssue {
 		add("disabled", "n8n's disabled flag has no KilasFlow equivalent, so this node will run")
 	}
 
+	// continueOnFail, retryOnFail, maxTries and waitBetweenTries are carried
+	// onto the canonical settings by errorHandlingSettings, so they are not
+	// reported here. These three have no equivalent yet.
 	for _, field := range []struct {
 		name    string
 		present bool
+		reason  string
 	}{
-		{"continueOnFail", node.ContinueOnFail},
-		{"retryOnFail", node.RetryOnFail},
-		{"maxTries", node.MaxTries != 0},
-		{"waitBetweenTries", node.WaitBetweenTries != 0},
-		{"alwaysOutputData", node.AlwaysOutputData},
-		{"executeOnce", node.ExecuteOnce},
-		{"onError", strings.TrimSpace(node.OnError) != ""},
+		{"alwaysOutputData", node.AlwaysOutputData,
+			"n8n emits an empty item when a node produces nothing; KilasFlow has no equivalent setting, so a node that produces nothing produces nothing"},
+		{"executeOnce", node.ExecuteOnce,
+			"n8n can run a node once for the whole batch rather than once per item; KilasFlow has no equivalent, so the node runs as it normally would"},
+		{"onError", strings.TrimSpace(node.OnError) != "",
+			"n8n's onError modes — stop, continue, and continue on a separate error output — have no KilasFlow equivalent beyond continueOnFail, which was carried"},
 	} {
 		if !field.present {
 			continue
 		}
-		add(field.name, "the KilasFlow runner does not honour n8n's error-handling settings yet, so this one was not carried and the node will use the default behaviour")
+		add(field.name, field.reason)
 	}
 	return issues
+}
+
+// errorHandlingSettings carries n8n's error handling onto the canonical
+// settings the runner now honours.
+//
+// Mapping these before the runner read them would have turned a silent drop
+// into a documented lie, which is why the importer deliberately did not read
+// them until this point.
+func errorHandlingSettings(node Node) map[string]any {
+	settings := map[string]any{}
+	if node.ContinueOnFail {
+		settings["continueOnFail"] = true
+	}
+	if node.RetryOnFail {
+		settings["retryOnFail"] = true
+	}
+	if node.MaxTries > 0 {
+		// Clamped rather than refused: an n8n workflow with a higher retry
+		// budget should still import, and the cap is what stops one typo
+		// becoming thousands of calls.
+		tries := node.MaxTries
+		if tries > workflow.MaxRetryAttempts {
+			tries = workflow.MaxRetryAttempts
+		}
+		settings["maxTries"] = tries
+	}
+	if node.WaitBetweenTries > 0 {
+		wait := node.WaitBetweenTries
+		if wait > workflow.MaxRetryWaitMilliseconds {
+			wait = workflow.MaxRetryWaitMilliseconds
+		}
+		settings["waitBetweenTries"] = wait
+	}
+	return settings
 }

@@ -956,3 +956,77 @@ func TestCompileStillRejectsAGraphWithNoTrigger(t *testing.T) {
 		t.Errorf("issues = %#v, want the missing trigger root named", validationErrors.Issues)
 	}
 }
+
+// TestCompileRejectsAnOutOfRangeRetryBudget puts settings validation where the
+// editor sees it.
+//
+// Settings are static, unlike parameters that may hold expressions, so there is
+// no reason to discover a bad one part-way through a run. The cap is what stops
+// a typo turning one failing node into thousands of calls against an upstream
+// that is already failing.
+func TestCompileRejectsAnOutOfRangeRetryBudget(t *testing.T) {
+	catalogue := catalog{
+		"kilasflow.manual": {
+			Type: "kilasflow.manual", Version: workflow.V(1),
+			Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+		},
+	}
+
+	for name, settings := range map[string]map[string]any{
+		"too many attempts": {"retryOnFail": true, "maxTries": float64(9999)},
+		"zero attempts":     {"retryOnFail": true, "maxTries": float64(0)},
+		"non-numeric":       {"retryOnFail": true, "maxTries": "three"},
+		"negative wait":     {"retryOnFail": true, "waitBetweenTries": float64(-1)},
+		"absurd wait":       {"retryOnFail": true, "waitBetweenTries": float64(60 * 60 * 1000)},
+		"negative timeout":  {"timeoutSeconds": float64(-5)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := workflow.Compile(workflow.Document{
+				SchemaVersion: workflow.CurrentSchemaVersion,
+				ID:            "wf_019",
+				Name:          "Bad settings",
+				Nodes: []workflow.Node{{
+					ID: "manual", Name: "Manual", Type: "kilasflow.manual",
+					TypeVersion: workflow.V(1), Settings: settings,
+				}},
+				Connections: []workflow.Connection{},
+				Settings:    map[string]any{},
+			}, catalogue)
+
+			var validationErrors *workflow.ValidationErrors
+			if !errors.As(err, &validationErrors) {
+				t.Fatalf("Compile() error = %v, want ValidationErrors", err)
+			}
+			if !containsValidationCode(validationErrors.Issues, workflow.ErrorInvalidConfig) {
+				t.Errorf("issues = %#v, want %q", validationErrors.Issues, workflow.ErrorInvalidConfig)
+			}
+		})
+	}
+}
+
+// TestCompileAcceptsAValidRetryBudget keeps the bound from being so tight that
+// an ordinary configuration is refused.
+func TestCompileAcceptsAValidRetryBudget(t *testing.T) {
+	_, err := workflow.Compile(workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_019",
+		Name:          "Sensible settings",
+		Nodes: []workflow.Node{{
+			ID: "manual", Name: "Manual", Type: "kilasflow.manual", TypeVersion: workflow.V(1),
+			Settings: map[string]any{
+				"continueOnFail": true, "retryOnFail": true,
+				"maxTries": float64(3), "waitBetweenTries": float64(1000), "timeoutSeconds": float64(30),
+			},
+		}},
+		Connections: []workflow.Connection{},
+		Settings:    map[string]any{},
+	}, catalog{
+		"kilasflow.manual": {
+			Type: "kilasflow.manual", Version: workflow.V(1),
+			Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("an ordinary retry configuration must compile: %v", err)
+	}
+}

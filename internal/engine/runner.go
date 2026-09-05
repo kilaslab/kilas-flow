@@ -145,6 +145,11 @@ type NodeRun struct {
 	Input  workflow.NodeInput
 	Output workflow.NodeOutput
 	Error  error
+	// Attempt is 1 for a first try and increments per retry. Every attempt is
+	// its own row: the persistence layer has carried an Attempt column with a
+	// unique index on (execution, node, attempt) since V1, and the service
+	// hardcoded 1 into it.
+	Attempt int
 	// Skipped marks a node the runner did not invoke because no incoming item
 	// channel delivered anything — the untaken arm of a branch.
 	//
@@ -284,23 +289,87 @@ func (runner *Runner) Run(ctx context.Context, ir workflow.IR, request Request) 
 		if !found {
 			return Result{}, fmt.Errorf("node %q executor %q is not registered", nodeID, node.Definition.ExecutorID)
 		}
-		nodeCtx, cancel, timeout, err := nodeContext(ctx, node)
-		if err != nil {
-			result.NodeRuns = append(result.NodeRuns, NodeRun{NodeID: nodeID, Input: cloneInput(input), Error: err, ErrorCode: "config.invalid"})
-			return result, err
-		}
-		output, err := executor.Execute(nodeCtx, node, cloneInput(input), cloneRequest(request))
-		cancel()
-		if err != nil {
-			code := "node.failed"
-			if timeout > 0 && errors.Is(nodeCtx.Err(), context.DeadlineExceeded) {
-				code = "node.timeout"
-			} else if timeout == 0 && errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				code = "execution.timeout"
+
+		// The attempt loop. The per-node context is rebuilt each time round,
+		// because its cancel must fire per attempt rather than once for all of
+		// them — a shared deadline would make the second attempt inherit the
+		// first one's remaining time.
+		policy := retryPolicy(node.Settings)
+		var (
+			output      workflow.NodeOutput
+			lastErr     error
+			lastCode    string
+			usedAttempt int
+		)
+		for attempt := 1; attempt <= policy.attempts; attempt++ {
+			usedAttempt = attempt
+			nodeCtx, cancel, timeout, err := nodeContext(ctx, node)
+			if err != nil {
+				result.NodeRuns = append(result.NodeRuns, NodeRun{
+					NodeID: nodeID, Input: cloneInput(input), Error: err, Attempt: attempt, ErrorCode: "config.invalid",
+				})
+				return result, err
 			}
-			result.NodeRuns = append(result.NodeRuns, NodeRun{NodeID: nodeID, Input: cloneInput(input), Error: err, ErrorCode: code})
-			return result, fmt.Errorf("execute node %q: %w", nodeID, err)
+			output, err = executor.Execute(nodeCtx, node, cloneInput(input), cloneRequest(request))
+			cancel()
+			if err == nil {
+				// Earlier attempts were already recorded as they failed; this
+				// one is recorded below with its successful output.
+				lastErr, lastCode = nil, ""
+				break
+			}
+			lastErr = err
+			lastCode = "node.failed"
+			if timeout > 0 && errors.Is(nodeCtx.Err(), context.DeadlineExceeded) {
+				lastCode = "node.timeout"
+			} else if timeout == 0 && errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				lastCode = "execution.timeout"
+			}
+			// A failed attempt is a row of its own, so a reader can see that a
+			// node succeeded on its third try rather than only that it
+			// succeeded.
+			if attempt < policy.attempts {
+				result.NodeRuns = append(result.NodeRuns, NodeRun{
+					NodeID: nodeID, Input: cloneInput(input), Error: err, Attempt: attempt, ErrorCode: lastCode,
+				})
+				if !sleepBetweenAttempts(ctx, policy.wait) {
+					// The execution was cancelled while waiting; stop here
+					// rather than burning the remaining attempts.
+					result.NodeRuns = append(result.NodeRuns, NodeRun{
+						NodeID: nodeID, Input: cloneInput(input), Error: ctx.Err(), Attempt: attempt + 1, ErrorCode: "execution.cancelled",
+					})
+					return result, fmt.Errorf("execute node %q: %w", nodeID, ctx.Err())
+				}
+				continue
+			}
 		}
+
+		if lastErr != nil {
+			if !policy.continueOnFail {
+				result.NodeRuns = append(result.NodeRuns, NodeRun{
+					NodeID: nodeID, Input: cloneInput(input), Error: lastErr, Attempt: usedAttempt, ErrorCode: lastCode,
+				})
+				return result, fmt.Errorf("execute node %q: %w", nodeID, lastErr)
+			}
+			// Tolerated: the node emits error items rather than aborting, and
+			// the run carries on. The items are *not* the input passed through
+			// — a downstream node has to be able to tell a tolerated failure
+			// from a success.
+			output = errorOutput(node, input, lastErr)
+			result.NodeRuns = append(result.NodeRuns, NodeRun{
+				NodeID: nodeID, Input: cloneInput(input), Output: cloneOutput(output),
+				Error: lastErr, Attempt: usedAttempt, ErrorCode: lastCode,
+			})
+			completed[nodeID] = cloneOutput(output)
+			if first, ok := firstItem(output); ok {
+				request.NodeOutputs[node.Name] = first
+			}
+			if outgoing[nodeID] == 0 {
+				result.Output[nodeID] = cloneOutput(output)
+			}
+			continue
+		}
+
 		if got, want := len(output), len(node.Definition.Outputs); got != want {
 			return Result{}, fmt.Errorf("node %q returned %d output streams, want %d", nodeID, got, want)
 		}
@@ -309,7 +378,7 @@ func (runner *Runner) Run(ctx context.Context, ir workflow.IR, request Request) 
 		if first, ok := firstItem(output); ok {
 			request.NodeOutputs[node.Name] = first
 		}
-		result.NodeRuns = append(result.NodeRuns, NodeRun{NodeID: nodeID, Input: cloneInput(input), Output: output})
+		result.NodeRuns = append(result.NodeRuns, NodeRun{NodeID: nodeID, Input: cloneInput(input), Output: output, Attempt: usedAttempt})
 		if outgoing[nodeID] == 0 {
 			result.Output[nodeID] = cloneOutput(output)
 		}
@@ -345,24 +414,52 @@ func nodeContext(parent context.Context, node workflow.IRNode) (context.Context,
 	return ctx, cancel, timeout, nil
 }
 
-func timeoutSeconds(value any) (float64, error) {
-	var seconds float64
+// settingNumber coerces a node setting to a number.
+//
+// Settings arrive from JSON, so an integer is a float64 and a json.Number is
+// possible depending on how the document was decoded. One helper rather than a
+// switch per setting: three copies of this had already started to appear.
+func settingNumber(value any) (float64, bool) {
 	switch typed := value.(type) {
 	case float64:
-		seconds = typed
+		return typed, true
 	case float32:
-		seconds = float64(typed)
+		return float64(typed), true
 	case int:
-		seconds = float64(typed)
+		return float64(typed), true
 	case int64:
-		seconds = float64(typed)
+		return float64(typed), true
 	case json.Number:
 		parsed, err := typed.Float64()
 		if err != nil {
-			return 0, fmt.Errorf("timeoutSeconds must be numeric")
+			return 0, false
 		}
-		seconds = parsed
+		return parsed, true
 	default:
+		return 0, false
+	}
+}
+
+// settingBool coerces a node setting to a boolean, tolerating the string forms
+// a hand-written document or an import can produce.
+func settingBool(settings map[string]any, key string) bool {
+	value, found := settings[key]
+	if !found || value == nil {
+		return false
+	}
+	switch typed := value.(type) {
+	case bool:
+		return typed
+	case string:
+		return typed == "true"
+	default:
+		return false
+	}
+}
+
+func timeoutSeconds(value any) (float64, error) {
+	seconds, ok := settingNumber(value)
+	if !ok {
 		return 0, fmt.Errorf("timeoutSeconds must be numeric")
 	}
 	if seconds < 0 {
@@ -580,4 +677,103 @@ func activeNodes(ir workflow.IR, triggerNodeID string) (map[string]struct{}, err
 		}
 	}
 	return active, nil
+}
+
+// retry is how a node handles its own failure.
+type retry struct {
+	// attempts is the total number of tries, so 1 means no retry at all.
+	attempts int
+	// wait is the delay between attempts.
+	wait time.Duration
+	// continueOnFail tolerates a final failure instead of aborting the run.
+	continueOnFail bool
+}
+
+// defaultRetryWait is used when retryOnFail is on and no delay was given.
+//
+// It is non-zero deliberately: without it, ticking Retry on Fail against a
+// rate-limited API sends every attempt inside a millisecond, turning one
+// failing request into a burst against an upstream that is already struggling.
+const defaultRetryWait = time.Second
+
+// retryPolicy reads the three settings every node declares.
+//
+// The compiler has already refused an out-of-range value, so this clamps rather
+// than errors: a document that reached the runner has valid settings, and a
+// second error path here would only be reachable if that stopped being true.
+func retryPolicy(settings map[string]any) retry {
+	policy := retry{attempts: 1, wait: 0, continueOnFail: settingBool(settings, "continueOnFail")}
+	if !settingBool(settings, "retryOnFail") {
+		return policy
+	}
+	policy.attempts = 3
+	if value, found := settings["maxTries"]; found && value != nil {
+		if tries, ok := settingNumber(value); ok && tries >= 1 {
+			policy.attempts = int(tries)
+			if policy.attempts > workflow.MaxRetryAttempts {
+				policy.attempts = workflow.MaxRetryAttempts
+			}
+		}
+	}
+	policy.wait = defaultRetryWait
+	if value, found := settings["waitBetweenTries"]; found && value != nil {
+		if milliseconds, ok := settingNumber(value); ok && milliseconds >= 0 {
+			if milliseconds > workflow.MaxRetryWaitMilliseconds {
+				milliseconds = workflow.MaxRetryWaitMilliseconds
+			}
+			policy.wait = time.Duration(milliseconds) * time.Millisecond
+		}
+	}
+	return policy
+}
+
+// sleepBetweenAttempts waits, and reports false when the execution was
+// cancelled instead — a retry loop must not outlive the run it belongs to.
+func sleepBetweenAttempts(ctx context.Context, wait time.Duration) bool {
+	if wait <= 0 {
+		return ctx.Err() == nil
+	}
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+// ErrorItemKey is the field a tolerated failure writes on each item it emits.
+const ErrorItemKey = "$error"
+
+// errorOutput is what a node emits when its failure was tolerated.
+//
+// One error item per input item, so downstream item counts and paired-item
+// lineage survive a tolerated failure; a single item when the node had no input
+// to pair against. The input is deliberately not passed through unchanged —
+// a downstream node has to be able to tell a tolerated failure from a success,
+// and identical items would make that impossible.
+func errorOutput(node workflow.IRNode, input workflow.NodeInput, cause error) workflow.NodeOutput {
+	descriptor := map[string]any{
+		"message": cause.Error(),
+		"node":    node.Name,
+	}
+	var items []workflow.Item
+	for _, port := range input {
+		for range port {
+			items = append(items, workflow.Item{JSON: map[string]any{ErrorItemKey: cloneMap(descriptor)}})
+		}
+	}
+	if len(items) == 0 {
+		items = []workflow.Item{{JSON: map[string]any{ErrorItemKey: cloneMap(descriptor)}}}
+	}
+
+	output := make(workflow.NodeOutput, len(node.Definition.Outputs))
+	for index := range output {
+		output[index] = []workflow.Item{}
+	}
+	if len(output) > 0 {
+		output[0] = items
+	}
+	return output
 }

@@ -2,6 +2,7 @@ package engine_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -568,5 +569,241 @@ func TestATriggerAndAnAgentAreNeverPruned(t *testing.T) {
 		if run.Skipped {
 			t.Errorf("node %q was pruned; a sub-node and an agent must always run", run.NodeID)
 		}
+	}
+}
+
+// flakyExecutor fails a set number of times, then succeeds. It records every
+// call so a test can prove the attempt count directly.
+type flakyExecutor struct {
+	failures *int
+	calls    *int
+}
+
+func (executor flakyExecutor) Execute(context.Context, workflow.IRNode, workflow.NodeInput, engine.Request) (workflow.NodeOutput, error) {
+	*executor.calls++
+	if *executor.failures > 0 {
+		*executor.failures--
+		return nil, errors.New("upstream returned 500")
+	}
+	return workflow.NodeOutput{{{JSON: map[string]any{"ok": true}}}}, nil
+}
+
+// retryIR is a manual trigger feeding one node bound to a test executor, with
+// whatever settings the case needs.
+func retryIR(t *testing.T, settings map[string]any) workflow.IR {
+	t.Helper()
+	catalog := node.NewRegistry()
+	if err := catalog.Register(node.Definition{
+		Type: "test.trigger", Version: workflow.V(1), DisplayName: "Trigger", Category: "Test",
+		Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}}, ExecutorID: "test.trigger",
+	}); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	if err := catalog.Register(node.Definition{
+		Type: "test.flaky", Version: workflow.V(1), DisplayName: "Flaky", Category: "Test",
+		Inputs:     []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+		Outputs:    []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+		ExecutorID: "test.flaky",
+	}); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	if err := catalog.Register(node.Definition{
+		Type: "test.after", Version: workflow.V(1), DisplayName: "After", Category: "Test",
+		Inputs:     []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+		Outputs:    []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+		ExecutorID: "test.after",
+	}); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+
+	ir, err := workflow.Compile(workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_retry",
+		Name:          "Retrying",
+		Nodes: []workflow.Node{
+			{ID: "trigger", Name: "Trigger", Type: "test.trigger", TypeVersion: workflow.V(1)},
+			{ID: "flaky", Name: "Flaky", Type: "test.flaky", TypeVersion: workflow.V(1), Settings: settings},
+			{ID: "after", Name: "After", Type: "test.after", TypeVersion: workflow.V(1)},
+		},
+		Connections: []workflow.Connection{
+			{ID: "c1", Kind: workflow.ConnectionMain,
+				Source: workflow.Endpoint{NodeID: "trigger", Port: "main"},
+				Target: workflow.Endpoint{NodeID: "flaky", Port: "main"}},
+			{ID: "c2", Kind: workflow.ConnectionMain,
+				Source: workflow.Endpoint{NodeID: "flaky", Port: "main"},
+				Target: workflow.Endpoint{NodeID: "after", Port: "main"}},
+		},
+		Settings: map[string]any{},
+	}, catalog)
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+	return ir
+}
+
+func retryExecutors(t *testing.T, failures, calls, afterCalls *int) *engine.Registry {
+	t.Helper()
+	registry := engine.NewRegistry()
+	for id, executor := range map[string]engine.Executor{
+		"test.trigger": engine.ExecutorFunc(func(context.Context, workflow.IRNode, workflow.NodeInput, engine.Request) (workflow.NodeOutput, error) {
+			return workflow.NodeOutput{{{JSON: map[string]any{"seed": 1}}, {JSON: map[string]any{"seed": 2}}}}, nil
+		}),
+		"test.flaky": flakyExecutor{failures: failures, calls: calls},
+		"test.after": engine.ExecutorFunc(func(_ context.Context, _ workflow.IRNode, input workflow.NodeInput, _ engine.Request) (workflow.NodeOutput, error) {
+			*afterCalls++
+			return workflow.NodeOutput{input["main"]}, nil
+		}),
+	} {
+		if err := registry.Register(id, executor); err != nil {
+			t.Fatalf("Register(%s) error = %v", id, err)
+		}
+	}
+	return registry
+}
+
+// TestRetryOnFailAttemptsUpToMaxTriesAndStopsOnSuccess is the setting that
+// visibly existed and did nothing: retryOnFail with maxTries 3 produced exactly
+// one attempt.
+func TestRetryOnFailAttemptsUpToMaxTriesAndStopsOnSuccess(t *testing.T) {
+	failures, calls, afterCalls := 2, 0, 0
+	ir := retryIR(t, map[string]any{
+		"retryOnFail": true, "maxTries": float64(3), "waitBetweenTries": float64(0),
+	})
+
+	result, err := engine.NewRunner(retryExecutors(t, &failures, &calls, &afterCalls)).
+		Run(context.Background(), ir, engine.Request{Input: workflow.Item{JSON: map[string]any{}}})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if calls != 3 {
+		t.Errorf("executor was called %d times, want 3 — two failures then a success", calls)
+	}
+
+	// Every attempt is its own row, in attempt order.
+	var attempts []int
+	for _, run := range result.NodeRuns {
+		if run.NodeID == "flaky" {
+			attempts = append(attempts, run.Attempt)
+		}
+	}
+	if len(attempts) != 3 {
+		t.Fatalf("recorded %d attempts, want 3: %#v", len(attempts), attempts)
+	}
+	for index, attempt := range attempts {
+		if attempt != index+1 {
+			t.Errorf("attempt %d recorded as %d, want %d", index, attempt, index+1)
+		}
+	}
+	// It stopped on the first success rather than using its whole budget.
+	if last := result.NodeRuns[len(result.NodeRuns)-1]; last.Error != nil {
+		t.Errorf("the run ended with an error: %v", last.Error)
+	}
+}
+
+// TestRetryStopsEarlyOnSuccess proves the budget is a ceiling, not a schedule.
+func TestRetryStopsEarlyOnSuccess(t *testing.T) {
+	failures, calls, afterCalls := 0, 0, 0
+	ir := retryIR(t, map[string]any{
+		"retryOnFail": true, "maxTries": float64(8), "waitBetweenTries": float64(0),
+	})
+
+	if _, err := engine.NewRunner(retryExecutors(t, &failures, &calls, &afterCalls)).
+		Run(context.Background(), ir, engine.Request{Input: workflow.Item{JSON: map[string]any{}}}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if calls != 1 {
+		t.Errorf("executor was called %d times, want 1 — it succeeded first time", calls)
+	}
+}
+
+// TestExhaustedRetriesWithoutContinueOnFailStillFailTheExecution keeps the
+// existing behaviour where nothing asked for it to change.
+func TestExhaustedRetriesWithoutContinueOnFailStillFailTheExecution(t *testing.T) {
+	failures, calls, afterCalls := 99, 0, 0
+	ir := retryIR(t, map[string]any{
+		"retryOnFail": true, "maxTries": float64(3), "waitBetweenTries": float64(0),
+	})
+
+	_, err := engine.NewRunner(retryExecutors(t, &failures, &calls, &afterCalls)).
+		Run(context.Background(), ir, engine.Request{Input: workflow.Item{JSON: map[string]any{}}})
+	if err == nil {
+		t.Fatal("Run() succeeded after every attempt failed")
+	}
+	if !strings.Contains(err.Error(), "upstream returned 500") {
+		t.Errorf("error = %v, want the error from the last attempt", err)
+	}
+	if calls != 3 {
+		t.Errorf("executor was called %d times, want the full budget of 3", calls)
+	}
+	if afterCalls != 0 {
+		t.Errorf("the downstream node ran %d times after an unrecovered failure", afterCalls)
+	}
+}
+
+// TestContinueOnFailKeepsTheRunGoingWithErrorItems is the setting a user ticks
+// and expects to work. An HTTP node's first 500 used to abort the whole
+// execution regardless.
+func TestContinueOnFailKeepsTheRunGoingWithErrorItems(t *testing.T) {
+	failures, calls, afterCalls := 99, 0, 0
+	ir := retryIR(t, map[string]any{"continueOnFail": true})
+
+	result, err := engine.NewRunner(retryExecutors(t, &failures, &calls, &afterCalls)).
+		Run(context.Background(), ir, engine.Request{Input: workflow.Item{JSON: map[string]any{}}})
+	if err != nil {
+		t.Fatalf("Run() error = %v, want the failure tolerated", err)
+	}
+	if afterCalls != 1 {
+		t.Errorf("the downstream node ran %d times, want 1 — the run must continue", afterCalls)
+	}
+
+	var flaky engine.NodeRun
+	for _, run := range result.NodeRuns {
+		if run.NodeID == "flaky" {
+			flaky = run
+		}
+	}
+	if flaky.Error == nil {
+		t.Error("the tolerated failure was not recorded as an error on its own run")
+	}
+
+	// One error item per input item, so downstream item counts survive: the
+	// trigger emitted two items, so the tolerated failure emits two.
+	items := flaky.Output[0]
+	if len(items) != 2 {
+		t.Fatalf("emitted %d error items, want one per input item (2)", len(items))
+	}
+	for index, item := range items {
+		descriptor, ok := item.JSON[engine.ErrorItemKey].(map[string]any)
+		if !ok {
+			t.Fatalf("item %d = %#v, want an %s descriptor", index, item.JSON, engine.ErrorItemKey)
+		}
+		if descriptor["message"] != "upstream returned 500" {
+			t.Errorf("item %d message = %#v, want the cause", index, descriptor["message"])
+		}
+		// Not the input passed through: a downstream node has to be able to
+		// tell a tolerated failure from a success.
+		if _, leaked := item.JSON["seed"]; leaked {
+			t.Errorf("item %d carried the input through unchanged: %#v", index, item.JSON)
+		}
+	}
+}
+
+// TestRetryAndContinueOnFailComposeSoTheBudgetIsSpentFirst pins the interaction
+// between the two settings, which is the case a user actually configures.
+func TestRetryAndContinueOnFailComposeSoTheBudgetIsSpentFirst(t *testing.T) {
+	failures, calls, afterCalls := 99, 0, 0
+	ir := retryIR(t, map[string]any{
+		"retryOnFail": true, "maxTries": float64(3), "waitBetweenTries": float64(0), "continueOnFail": true,
+	})
+
+	if _, err := engine.NewRunner(retryExecutors(t, &failures, &calls, &afterCalls)).
+		Run(context.Background(), ir, engine.Request{Input: workflow.Item{JSON: map[string]any{}}}); err != nil {
+		t.Fatalf("Run() error = %v, want the exhausted failure tolerated", err)
+	}
+	if calls != 3 {
+		t.Errorf("executor was called %d times, want the full budget before tolerating", calls)
+	}
+	if afterCalls != 1 {
+		t.Errorf("the downstream node ran %d times, want 1", afterCalls)
 	}
 }

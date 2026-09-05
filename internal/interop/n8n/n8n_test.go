@@ -1398,8 +1398,10 @@ func TestImportReportsEveryDroppedElement(t *testing.T) {
 		"settings", "pinData", "meta", "staticData",
 		// Node level.
 		"notes", "webhookId", "disabled",
-		// The error-handling set.
-		"continueOnFail", "retryOnFail", "maxTries", "waitBetweenTries",
+		// The error-handling fields that still have no equivalent. The other
+		// four — continueOnFail, retryOnFail, maxTries and waitBetweenTries —
+		// are now carried onto the canonical settings, which is asserted by
+		// TestImportCarriesTheErrorHandlingSettingsTheRunnerHonours.
 		"alwaysOutputData", "executeOnce", "onError",
 	} {
 		issue, found := reported[field]
@@ -1418,7 +1420,7 @@ func TestImportReportsEveryDroppedElement(t *testing.T) {
 	}
 
 	// A node-level diagnostic names its node; a workflow-level one does not.
-	for _, field := range []string{"notes", "retryOnFail"} {
+	for _, field := range []string{"notes", "onError"} {
 		if reported[field].NodeName != "Edit" {
 			t.Errorf("%q did not name the node it came from: %#v", field, reported[field])
 		}
@@ -1500,5 +1502,73 @@ func TestAnUnsupportedNodeDoesNotReportItsFieldsAsDropped(t *testing.T) {
 		if issue.NodeName == "Odd" && (issue.Field == "notes" || issue.Field == "retryOnFail") {
 			t.Errorf("reported %q as dropped for an unsupported node, but the capsule preserves it: %#v", issue.Field, issue)
 		}
+	}
+}
+
+// TestImportCarriesTheErrorHandlingSettingsTheRunnerHonours is the other half
+// of the reporting contract.
+//
+// The importer deliberately did not read these fields until the runner honoured
+// them, because mapping them onto settings nothing read would have turned a
+// silent drop into a documented lie. Now that it does, they are carried and
+// their "dropped" diagnostics are gone — which is exactly how a later ticket
+// retires a diagnostic.
+func TestImportCarriesTheErrorHandlingSettingsTheRunnerHonours(t *testing.T) {
+	t.Parallel()
+
+	result := importFixture(t, annotatedFixture)
+	edit := nodeByName(result.Document, "Edit")
+
+	for key, want := range map[string]any{
+		"continueOnFail":   true,
+		"retryOnFail":      true,
+		"maxTries":         float64(5),
+		"waitBetweenTries": float64(2500),
+	} {
+		if got := edit.Settings[key]; got != want {
+			t.Errorf("settings[%q] = %#v, want %#v", key, got, want)
+		}
+	}
+
+	// And they are no longer reported as dropped.
+	for _, issue := range result.Unsupported {
+		switch issue.Field {
+		case "continueOnFail", "retryOnFail", "maxTries", "waitBetweenTries":
+			t.Errorf("%q is carried now, but still reported as dropped: %#v", issue.Field, issue)
+		}
+	}
+}
+
+// TestImportClampsAnOutOfRangeRetryBudget keeps an n8n workflow importable
+// while still refusing to let one typo become thousands of calls.
+func TestImportClampsAnOutOfRangeRetryBudget(t *testing.T) {
+	t.Parallel()
+
+	const fixture = `{
+	  "name": "Huge retry budget",
+	  "nodes": [
+	    {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}},
+	    {"id":"b","name":"Edit","type":"n8n-nodes-base.set","typeVersion":3.4,"position":[220,0],
+	     "parameters":{"mode":"manual","assignments":{"assignments":[{"id":"1","name":"a","value":"b","type":"string"}]}},
+	     "retryOnFail":true,"maxTries":9999,"waitBetweenTries":9999999}
+	  ],
+	  "connections": {"Manual": {"main": [[{"node":"Edit","type":"main","index":0}]]}}
+	}`
+
+	result := importFixture(t, fixture)
+	edit := nodeByName(result.Document, "Edit")
+	if got := edit.Settings["maxTries"]; got != float64(workflow.MaxRetryAttempts) {
+		t.Errorf("maxTries = %#v, want it clamped to %d", got, workflow.MaxRetryAttempts)
+	}
+	if got := edit.Settings["waitBetweenTries"]; got != float64(workflow.MaxRetryWaitMilliseconds) {
+		t.Errorf("waitBetweenTries = %#v, want it clamped to %d", got, workflow.MaxRetryWaitMilliseconds)
+	}
+
+	// And the clamped document must still compile, or the clamp achieved
+	// nothing.
+	document := result.Document
+	document.ID = "wf_clamped"
+	if _, err := workflow.Compile(document, registry(t)); err != nil {
+		t.Fatalf("a clamped retry budget must still compile: %v", err)
 	}
 }

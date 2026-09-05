@@ -165,7 +165,7 @@ func (service *Service) runOnce(ctx context.Context, workerID string) (bool, err
 		}
 		now := time.Now().UTC()
 		if _, err := service.executions.CreateNodeRun(ctx, tenant, execution.NodeRun{
-			TenantID: record.TenantID, ExecutionID: record.ID, NodeID: run.NodeID, Attempt: 1, Sequence: sequence + 1,
+			TenantID: record.TenantID, ExecutionID: record.ID, NodeID: run.NodeID, Attempt: attemptOf(run), Sequence: sequence + 1,
 			Status: status, Input: input, Output: output, Error: errorPayload, StartedAt: now, FinishedAt: &now, LeaseOwner: record.LeaseOwner,
 		}); err != nil {
 			return true, fmt.Errorf("persist node %q run: %w", run.NodeID, err)
@@ -430,4 +430,18 @@ func structuredError(code string, err error) json.RawMessage {
 		return json.RawMessage(`{"code":"execution.failed","message":"execution failed"}`)
 	}
 	return payload
+}
+
+// attemptOf is the attempt number a node run belongs to.
+//
+// The persistence layer has carried an Attempt column with a unique index on
+// (execution, node, attempt) since V1 and the service wrote 1 into every row,
+// so a retried node would have collided with itself the moment retries existed.
+// A run recorded before attempts were tracked reports 0; treating that as the
+// first attempt keeps those rows valid.
+func attemptOf(run NodeRun) int {
+	if run.Attempt < 1 {
+		return 1
+	}
+	return run.Attempt
 }

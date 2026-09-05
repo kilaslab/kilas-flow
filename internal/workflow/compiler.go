@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 )
@@ -200,6 +201,14 @@ func Compile(document Document, catalog Catalog) (IR, error) {
 					Message: fmt.Sprintf("node %q configuration is invalid: %v", node.ID, err),
 				})
 			}
+		}
+		// Shared settings are static, so checking them here gives the editor an
+		// error before activation rather than a failure part-way through a run.
+		for _, err := range validateSharedSettings(node.Settings) {
+			issues.add(ValidationError{
+				Code: ErrorInvalidConfig, Path: fmt.Sprintf("/nodes/%d/settings", index), NodeID: node.ID,
+				Message: fmt.Sprintf("node %q setting is invalid: %v", node.ID, err),
+			})
 		}
 	}
 
@@ -520,4 +529,70 @@ func outputPort(definition NodeDefinition, name string) (Port, int, bool) {
 		}
 	}
 	return Port{}, 0, false
+}
+
+// MaxRetryAttempts bounds `maxTries`.
+//
+// The cap exists so a typo cannot turn one failing node into thousands of calls
+// against an upstream that is already failing. Eight is well past any retry
+// budget that is still a retry rather than a queue.
+const MaxRetryAttempts = 8
+
+// MaxRetryWaitMilliseconds bounds `waitBetweenTries`, so a node cannot hold an
+// execution slot open for the better part of an hour between attempts.
+const MaxRetryWaitMilliseconds = 300_000
+
+// validateSharedSettings checks the settings every node declares.
+//
+// These are static values, unlike parameters that may hold expressions, so
+// there is no reason to discover a bad one at run time. A non-numeric,
+// negative or absurd `maxTries` is refused before the workflow can be
+// activated.
+func validateSharedSettings(settings map[string]any) []error {
+	var problems []error
+	for _, rule := range []struct {
+		key      string
+		min, max float64
+	}{
+		{"timeoutSeconds", 0, 86_400},
+		{"maxTries", 1, MaxRetryAttempts},
+		{"waitBetweenTries", 0, MaxRetryWaitMilliseconds},
+	} {
+		value, present := settings[rule.key]
+		if !present || value == nil {
+			continue
+		}
+		number, ok := settingNumber(value)
+		if !ok {
+			problems = append(problems, fmt.Errorf("%s must be a number", rule.key))
+			continue
+		}
+		if number < rule.min || number > rule.max {
+			problems = append(problems, fmt.Errorf("%s must be between %g and %g, got %g", rule.key, rule.min, rule.max, number))
+		}
+	}
+	return problems
+}
+
+// settingNumber coerces a node setting to a number. Settings arrive from JSON,
+// so an integer is a float64 and a json.Number is possible.
+func settingNumber(value any) (float64, bool) {
+	switch typed := value.(type) {
+	case float64:
+		return typed, true
+	case float32:
+		return float64(typed), true
+	case int:
+		return float64(typed), true
+	case int64:
+		return float64(typed), true
+	case json.Number:
+		parsed, err := typed.Float64()
+		if err != nil {
+			return 0, false
+		}
+		return parsed, true
+	default:
+		return 0, false
+	}
 }

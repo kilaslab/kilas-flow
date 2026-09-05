@@ -134,5 +134,13 @@ func sharedSettings() []node.PropertyDefinition {
 			Key: "maxTries", Label: "Maximum Attempts", Kind: node.PropertyNumber, Default: 3,
 			VisibleWhen: []node.VisibilityCondition{{Key: "retryOnFail", Equals: true}},
 		},
+		{
+			// Non-zero by default on purpose. Without a delay, the first user
+			// who ticks Retry on Fail against a rate-limited API sends every
+			// attempt inside a millisecond, which turns one failing request
+			// into a burst against an upstream that is already struggling.
+			Key: "waitBetweenTries", Label: "Wait Between Attempts (ms)", Kind: node.PropertyNumber, Default: 1000,
+			VisibleWhen: []node.VisibilityCondition{{Key: "retryOnFail", Equals: true}},
+		},
 	}
 }
