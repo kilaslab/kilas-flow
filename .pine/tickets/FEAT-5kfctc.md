@@ -1,7 +1,7 @@
 ---
 id: FEAT-5kfctc
 title: Raise n8n import and export fidelity for the database nodes
-status: testing
+status: done
 priority: high
 labels:
     - nodes
@@ -14,7 +14,7 @@ deps:
 parent: EPIC-m42s3g
 phase: p4
 created: "2026-09-05T08:28:30Z"
-updated: "2026-09-05T16:02:40Z"
+updated: "2026-09-05T16:03:24Z"
 ---
 
 ## Scope
