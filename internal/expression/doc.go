@@ -71,9 +71,18 @@
 //
 // # Lineage
 //
-// `$('Name').item` reads the paired-item lineage the runner tracks. When the
-// correspondence genuinely cannot be established — after a node that changed
-// the item count, or one that merged unrelated streams — it fails with the
-// reason. It never falls back to the first item: that answer is correct only
-// when every node processed exactly one item, and confidently wrong otherwise.
+// `$('Name').item` reads the item a named node produced, and it is narrower
+// than it sounds: it requires that node to have produced exactly one item, and
+// otherwise fails with the count and the alternatives —
+//
+//	node "Many" produced 3 items; use .all(), .first() or .last() to choose one
+//
+// It does not walk the current item's chain back through the graph. Following a
+// lineage is what the name suggests and what a reader of an earlier version of
+// this comment was told, so it is worth saying plainly: choosing among several
+// items by their correspondence to the current one is not yet possible.
+//
+// What it does do is refuse rather than guess. It never falls back to the first
+// item — that answer is correct only when every node processed exactly one
+// item, and confidently wrong otherwise.
 package expression

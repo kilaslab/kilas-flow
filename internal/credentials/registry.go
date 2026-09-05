@@ -100,10 +100,16 @@ type Type struct {
 
 // Registry holds the credential types this installation supports.
 //
-// It is assembled at composition and read-only afterwards, in the shape of the
-// node registry, rather than a package-level map: a map cannot be extended by a
-// node pack, and a pack that needs `wahaApi` or `telegramApi` cannot edit this
-// package.
+// A value rather than a package-level map, in the shape of the node registry,
+// because a map cannot be extended by a node pack and a pack that needs
+// `wahaApi` or `telegramApi` cannot edit this package.
+//
+// There is a package-level `defaultRegistry` below all the same, built once
+// from the built-in types. It exists for callers that have no registry of their
+// own to thread through; a deployment that registers pack credentials builds
+// its own and passes it. An earlier version of this comment claimed the
+// package-level form had been avoided, which was not true of the file it sat
+// in.
 type Registry struct {
 	types map[string]Type
 }
