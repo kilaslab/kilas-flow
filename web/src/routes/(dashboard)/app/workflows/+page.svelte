@@ -1,15 +1,17 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import FilePlus2 from '@lucide/svelte/icons/file-plus-2';
-	import MoreHorizontal from '@lucide/svelte/icons/more-horizontal';
 
 	import { message } from '$lib/api/http';
+	import { activateWorkflow, deactivateWorkflow } from '$lib/api/generated/workflow-lifecycle/workflow-lifecycle';
 	import { createListWorkflows, createWorkflow } from '$lib/api/generated/workflows/workflows';
 	import type { WorkflowDocumentInput, WorkflowSummary } from '$lib/api/generated/models';
 	import ListStates from '$lib/components/dashboard/list-states.svelte';
+	import ActivationNotices from '$lib/components/workflow-editor/activation-notices.svelte';
 	import { Button } from '$lib/components/ui/button';
 	import * as Dialog from '$lib/components/ui/dialog';
 	import { Input } from '$lib/components/ui/input';
+	import { activationFailure, activationNotices, dismissNotice, type ActivationNoticeView } from '$lib/workflow-editor/activation';
 
 	const workflows = createListWorkflows<WorkflowSummary[]>(() => ({
 		query: {
@@ -24,6 +26,12 @@
 	let name = $state('');
 	let createError = $state<string | null>(null);
 	let creating = $state(false);
+	let togglingID = $state<string | null>(null);
+	let notices = $state<ActivationNoticeView[]>([]);
+	// Names the workflow the notices below belong to. On a list, "the trigger
+	// node" is not enough to find the thing that needs configuring.
+	let noticesFor = $state<string | null>(null);
+	let activationError = $state<string | null>(null);
 
 	// Read once here rather than through the query object in the markup: the
 	// rows are used inside a snippet, where the `!isPending && !isError`
@@ -62,6 +70,37 @@
 			createError = message(error);
 		} finally {
 			creating = false;
+		}
+	}
+
+	async function toggleActivation(workflow: WorkflowSummary) {
+		if (togglingID) return;
+		togglingID = workflow.id;
+		activationError = null;
+		// The previous workflow's notices are about a workflow the user has
+		// stopped looking at; carrying them under a new heading would attribute
+		// them to the wrong trigger.
+		notices = [];
+		noticesFor = null;
+		try {
+			if (workflow.active) {
+				const response = await deactivateWorkflow(workflow.id);
+				if (response.status !== 200) throw new Error('Unexpected workflow-deactivate response');
+			} else {
+				const response = await activateWorkflow(workflow.id);
+				if (response.status !== 200) throw new Error('Unexpected workflow-activate response');
+				notices = activationNotices(response.data.notices, response.data.latestVersion.document.nodes);
+				noticesFor = response.data.name;
+			}
+		} catch (error) {
+			activationError = `${workflow.name} — ${activationFailure(error)}`;
+		} finally {
+			togglingID = null;
+			// The row's dot is the only thing on this page that says whether a
+			// workflow is live, so it is re-read from the server either way: a
+			// failed activation the server rolled back must not leave the row
+			// claiming otherwise.
+			await workflows.refetch();
 		}
 	}
 
@@ -114,6 +153,16 @@
 		</Dialog.Root>
 	</div>
 
+	{#if activationError}
+		<p role="alert" class="mt-4 rounded-lg border border-destructive/25 bg-destructive/5 px-3 py-1.5 text-xs text-destructive">Activation failed: {activationError}</p>
+	{/if}
+	<ActivationNotices
+		{notices}
+		heading={noticesFor ? `${noticesFor} is active, with something still to do` : undefined}
+		class="mt-4 overflow-hidden rounded-lg border border-warning/30"
+		onDismiss={(key) => (notices = dismissNotice(notices, key))}
+	/>
+
 	<div class="mt-4">
 		<ListStates
 			label="Workflows"
@@ -136,8 +185,11 @@
 			<div class="overflow-hidden rounded-lg border border-border">
 				<ul aria-label="Workflows" class="divide-y divide-border">
 					{#each rows as workflow (workflow.id)}
-						<li>
-							<a href={`/app/workflows/${workflow.id}`} class="group flex h-11 items-center gap-3 px-3 transition-colors hover:bg-muted/50 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring">
+						<!-- The activation control is a sibling of the link, not a child
+						     of it: a button nested inside an anchor is invalid markup and
+						     the row navigates before the click ever reaches it. -->
+						<li class="flex items-center transition-colors hover:bg-muted/50">
+							<a href={`/app/workflows/${workflow.id}`} class="flex h-11 min-w-0 flex-1 items-center gap-3 px-3 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring">
 								<span aria-hidden="true" class="size-1.5 shrink-0 rounded-full {workflow.active ? 'bg-success' : 'bg-muted-foreground/40'}"></span>
 								<span class="min-w-0 flex-1 truncate text-[0.8125rem] font-medium">{workflow.name}</span>
 								<span class="hidden shrink-0 text-[0.6875rem] text-muted-foreground sm:inline">{workflow.active ? 'Active' : 'Draft'}</span>
@@ -149,8 +201,20 @@
 								<span class="hidden shrink-0 text-[0.6875rem] text-muted-foreground lg:inline">
 									<span class="sr-only">Updated </span>{formatUpdatedAt(workflow.updatedAt)}
 								</span>
-								<MoreHorizontal aria-hidden="true" class="size-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
 							</a>
+							<button
+								type="button"
+								class="mr-2 inline-flex h-7 shrink-0 items-center whitespace-nowrap rounded-md border border-border px-2 text-[0.6875rem] font-medium transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring disabled:cursor-not-allowed disabled:opacity-40"
+								disabled={togglingID !== null}
+								onclick={() => void toggleActivation(workflow)}
+							>
+								{#if togglingID === workflow.id}
+									{workflow.active ? 'Deactivating…' : 'Activating…'}
+								{:else}
+									{workflow.active ? 'Deactivate' : 'Activate'}
+								{/if}
+								<span class="sr-only"> {workflow.name}</span>
+							</button>
 						</li>
 					{/each}
 				</ul>

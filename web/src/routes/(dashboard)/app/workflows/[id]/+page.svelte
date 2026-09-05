@@ -8,9 +8,10 @@
 	import { createListCredentials } from '$lib/api/generated/credentials/credentials';
 	import { createGetExpressionGrammar, createListNodeTypes } from '$lib/api/generated/nodes/nodes';
 	import { getExecution } from '$lib/api/generated/executions/executions';
-	import { runWorkflow } from '$lib/api/generated/workflow-lifecycle/workflow-lifecycle';
+	import { activateWorkflow, deactivateWorkflow, runWorkflow } from '$lib/api/generated/workflow-lifecycle/workflow-lifecycle';
 	import { createGetWorkflow, updateWorkflow } from '$lib/api/generated/workflows/workflows';
 	import type { CredentialResource, Definition, ExpressionGrammar, WorkflowDocumentInput, WorkflowResource } from '$lib/api/generated/models';
+	import { activationFailure, activationNotices, dismissNotice, type ActivationNoticeView } from '$lib/workflow-editor/activation';
 	import { setExpressionGrammar } from '$lib/workflow-editor/expression-grammar';
 	import WorkflowEditor from '$lib/components/workflow-editor/workflow-editor.svelte';
 	import { Button } from '$lib/components/ui/button';
@@ -60,6 +61,9 @@
 	let saveIssues = $state<CanvasValidationIssue[]>([]);
 	let runError = $state<string | null>(null);
 	let runMessage = $state<string | null>(null);
+	let activating = $state(false);
+	let notices = $state<ActivationNoticeView[]>([]);
+	let activationError = $state<string | null>(null);
 	let pollingRun = 0;
 
 	$effect(() => {
@@ -84,6 +88,49 @@
 			saveIssues = validationIssuesFromApiError(error);
 		} finally {
 			saving = false;
+		}
+	}
+
+	async function activate() {
+		if (!currentWorkflow) return;
+		activating = true;
+		activationError = null;
+		// A fresh activation answer replaces the last one whole. A notice the
+		// user dismissed last time is not a thing they have already done — the
+		// server has just said it is still outstanding.
+		notices = [];
+		try {
+			const response = await activateWorkflow(currentWorkflow.id);
+			if (response.status !== 200) throw new Error('Unexpected workflow-activate response');
+			currentWorkflow = response.data;
+			notices = activationNotices(response.data.notices, response.data.latestVersion.document.nodes);
+		} catch (error) {
+			activationError = activationFailure(error);
+			// Only the server knows whether the rollback landed — a 502 rolls the
+			// workflow back, a 500 may have left it active with a trigger that
+			// registered nothing. Guessing either way reproduces the exact
+			// mismatch the notices exist to prevent, so ask.
+			await workflow.refetch();
+		} finally {
+			activating = false;
+		}
+	}
+
+	async function deactivate() {
+		if (!currentWorkflow) return;
+		activating = true;
+		activationError = null;
+		try {
+			const response = await deactivateWorkflow(currentWorkflow.id);
+			if (response.status !== 200) throw new Error('Unexpected workflow-deactivate response');
+			currentWorkflow = response.data;
+			// Nothing is outstanding once the triggers are unregistered.
+			notices = [];
+		} catch (error) {
+			activationError = activationFailure(error);
+			await workflow.refetch();
+		} finally {
+			activating = false;
 		}
 	}
 
@@ -141,7 +188,7 @@
 		</div>
 	{:else if currentWorkflow}
 		{#key currentWorkflow.latestVersion.id}
-			<WorkflowEditor header={breadcrumb} document={currentWorkflow.latestVersion.document} definitions={nodeTypes.data} credentials={credentials.data ?? []} {saving} {running} {saveError} {saveIssues} {runError} {runMessage} onSave={save} onRun={run} />
+			<WorkflowEditor header={breadcrumb} document={currentWorkflow.latestVersion.document} definitions={nodeTypes.data} credentials={credentials.data ?? []} {saving} {running} {saveError} {saveIssues} {runError} {runMessage} active={currentWorkflow.active} {activating} {notices} {activationError} onSave={save} onRun={run} onActivate={activate} onDeactivate={deactivate} onDismissNotice={(key) => (notices = dismissNotice(notices, key))} />
 		{/key}
 	{/if}
 </section>
