@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 )
 
 // Catalog supplies node metadata to the compiler. The later node registry
@@ -36,8 +37,16 @@ type NodeDefinition struct {
 	// otherwise be unactivatable in every other configuration. The shape
 	// follows Validate, which is a callback for the same reason.
 	RequiredFor func(parameters map[string]any, typeVersion TypeVersion) []string
-	ExecutorID  string
-	Validate    ConfigValidator
+	// RequiredCredentials are the credential types the node cannot run without.
+	//
+	// It is checked here rather than in each node's Validate because a
+	// generated pack has no Validate and cannot have one — that is the point of
+	// a pack being data. Without this, a node whose whole request is built from
+	// a credential compiles, activates, and fails at its first outbound call
+	// with an error about a URL rather than about a missing credential.
+	RequiredCredentials []string
+	ExecutorID          string
+	Validate            ConfigValidator
 	// WebhookPathParameter is the parameter key holding this trigger's route
 	// label, when it declares an inbound webhook.
 	//
@@ -246,6 +255,15 @@ func Compile(document Document, catalog Catalog) (IR, error) {
 				issues.add(ValidationError{
 					Code: ErrorRequiredConfig, Path: fmt.Sprintf("/nodes/%d/parameters/%s", index, required), NodeID: node.ID,
 					Message: fmt.Sprintf("node %q requires parameter %q", node.ID, required),
+				})
+			}
+		}
+		for _, credentialType := range definition.RequiredCredentials {
+			if attached, _ := node.Credentials[credentialType]; strings.TrimSpace(attached) == "" {
+				issues.add(ValidationError{
+					Code: ErrorRequiredConfig, Path: fmt.Sprintf("/nodes/%d/credentials/%s", index, credentialType),
+					NodeID:  node.ID,
+					Message: fmt.Sprintf("node %q requires a %s credential", node.ID, credentialType),
 				})
 			}
 		}

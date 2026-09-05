@@ -1,7 +1,6 @@
 package nodes
 
 import (
-	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -10,7 +9,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/kilaslabs/kilas-flow/internal/engine"
 	"github.com/kilaslabs/kilas-flow/internal/node"
 	"github.com/kilaslabs/kilas-flow/internal/webhook"
 	"github.com/kilaslabs/kilas-flow/internal/workflow"
@@ -392,16 +390,4 @@ func TelegramTriggerKind() webhook.TriggerKind {
 		Verify: TelegramVerifier,
 		Accept: TelegramFilter,
 	}
-}
-
-// executeTelegramTrigger emits the update, with any downloaded file attached.
-func executeTelegramTrigger(ctx context.Context, ir workflow.IRNode, _ workflow.NodeInput, request engine.Request) (workflow.NodeOutput, error) {
-	item := request.Input
-	if item.JSON == nil {
-		item.JSON = map[string]any{}
-	}
-	if err := telegramDownload(ctx, ir, &item, request); err != nil {
-		return nil, err
-	}
-	return workflow.NodeOutput{{item}}, nil
 }

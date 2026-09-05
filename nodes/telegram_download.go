@@ -31,16 +31,36 @@ func NewTelegramFileClient(policy safehttp.Policy) *TelegramFileClient {
 	return &TelegramFileClient{policy: policy, client: safehttp.NewClient(policy)}
 }
 
-// telegramDownloader is the process-wide client the trigger executor uses. It
-// is set at composition, beside every other deployment decision.
-var telegramDownloader *TelegramFileClient
+// TelegramTriggerExecutor emits the update, with any downloaded file attached.
+//
+// The file client is a field rather than a package-level variable: an executor
+// is registered once per composition, two of them can legitimately exist in one
+// process (a test, an embedded host), and a global would make the second one
+// silently reconfigure the first.
+type TelegramTriggerExecutor struct {
+	files *TelegramFileClient
+}
 
-// SetTelegramFileClient installs the client the Telegram trigger downloads
-// through. Without it the node still runs; it simply cannot download.
-func SetTelegramFileClient(client *TelegramFileClient) { telegramDownloader = client }
+// NewTelegramTriggerExecutor builds it. A nil client leaves downloads
+// unavailable and says so rather than pretending.
+func NewTelegramTriggerExecutor(files *TelegramFileClient) *TelegramTriggerExecutor {
+	return &TelegramTriggerExecutor{files: files}
+}
 
-// telegramDownload attaches the update's photo or file, when asked to.
-func telegramDownload(ctx context.Context, ir workflow.IRNode, item *workflow.Item, request engine.Request) error {
+// Execute emits the update on the node's one output.
+func (executor *TelegramTriggerExecutor) Execute(ctx context.Context, ir workflow.IRNode, _ workflow.NodeInput, request engine.Request) (workflow.NodeOutput, error) {
+	item := request.Input
+	if item.JSON == nil {
+		item.JSON = map[string]any{}
+	}
+	if err := executor.download(ctx, ir, &item, request); err != nil {
+		return nil, err
+	}
+	return workflow.NodeOutput{{item}}, nil
+}
+
+// download attaches the update's photo or file, when asked to.
+func (executor *TelegramTriggerExecutor) download(ctx context.Context, ir workflow.IRNode, item *workflow.Item, request engine.Request) error {
 	additional, _ := ir.Parameters["additionalFields"].(map[string]any)
 	if wanted, _ := additional["download"].(bool); !wanted {
 		return nil
@@ -55,7 +75,7 @@ func telegramDownload(ctx context.Context, ir workflow.IRNode, item *workflow.It
 	if request.Binaries == nil {
 		return fmt.Errorf("node %q: binary storage is not configured on this server", ir.Name)
 	}
-	if telegramDownloader == nil {
+	if executor.files == nil {
 		return fmt.Errorf("node %q: this deployment cannot download Telegram files", ir.Name)
 	}
 	resolved, _, _, err := request.ResolveNodeCredential(ctx, ir)
@@ -67,7 +87,7 @@ func telegramDownload(ctx context.Context, ir workflow.IRNode, item *workflow.It
 		return fmt.Errorf("node %q: this trigger needs a Telegram credential to download files", ir.Name)
 	}
 
-	contents, remoteName, err := telegramDownloader.Fetch(ctx, TelegramBaseURL(resolved.Fields["baseUrl"]), token, fileID)
+	contents, remoteName, err := executor.files.Fetch(ctx, TelegramBaseURL(resolved.Fields["baseUrl"]), token, fileID)
 	if err != nil {
 		return fmt.Errorf("node %q: %w", ir.Name, err)
 	}

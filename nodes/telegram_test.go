@@ -305,9 +305,6 @@ func TestDownloadingAFileAttachesAReferenceAndHonoursImageSize(t *testing.T) {
 	})
 	// The node only ever calls api.telegram.org, so the test server is reached
 	// by rewriting that host rather than by configuring a different one.
-	nodes.SetTelegramFileClient(nodes.NewTelegramFileClient(policy))
-	t.Cleanup(func() { nodes.SetTelegramFileClient(nil) })
-
 	store, err := binary.NewFileStore(t.TempDir(), 1<<20)
 	if err != nil {
 		t.Fatalf("NewFileStore() error = %v", err)
@@ -380,9 +377,6 @@ func TestAnImageSizeTelegramDidNotSendFallsBack(t *testing.T) {
 		}
 		_, _ = w.Write([]byte("x"))
 	})
-	nodes.SetTelegramFileClient(nodes.NewTelegramFileClient(policy))
-	t.Cleanup(func() { nodes.SetTelegramFileClient(nil) })
-
 	store, _ := binary.NewFileStore(t.TempDir(), 1<<20)
 	executors := engine.NewRegistry()
 	if err := nodes.RegisterExecutors(executors, policy, sqlGuard(), nil, nil, nil); err != nil {

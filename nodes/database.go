@@ -138,13 +138,9 @@ func validateDatabaseConfiguration(credentialType string) workflow.ConfigValidat
 		default:
 			return fmt.Errorf("operation %q is not supported", operation)
 		}
-
-		// A database node without a credential has nothing to connect to, and
-		// there is deliberately no fallback connection it could use instead.
-		id, found := n.Credentials[credentialType]
-		if !found || strings.TrimSpace(id) == "" {
-			return fmt.Errorf("a %s credential is required", credentialType)
-		}
+		// The credential is not checked here. The definition declares it
+		// required and the compiler enforces that for every node, so a second
+		// check would report the same thing twice with two different wordings.
 		return nil
 	}
 }

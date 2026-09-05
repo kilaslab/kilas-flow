@@ -80,22 +80,43 @@ func TestDatabaseNodeRequiresACredential(t *testing.T) {
 	if err := nodes.RegisterAll(registry); err != nil {
 		t.Fatalf("RegisterAll() error = %v", err)
 	}
-	definition, _ := registry.Lookup(nodes.SQLiteNodeType, workflow.V(1))
 
 	// There is deliberately no fallback connection, so a node without a
-	// credential has nothing it could legally reach.
-	err := definition.Validate(workflow.Node{Parameters: map[string]any{
-		"operation": "query", "statement": "SELECT 1",
-	}})
-	if err == nil || !strings.Contains(err.Error(), "credential is required") {
-		t.Fatalf("Validate() = %v, want a credential requirement", err)
+	// credential has nothing it could legally reach. The requirement is
+	// declared on the definition and enforced by the compiler, so it is the
+	// compiler that has to be asked — a second check inside Validate would
+	// report the same thing twice in two different wordings.
+	document := func(credentials map[string]string) workflow.Document {
+		return workflow.Document{
+			SchemaVersion: workflow.CurrentSchemaVersion,
+			ID:            "wf_db", Name: "Query",
+			Nodes: []workflow.Node{
+				{ID: "manual", Name: "Manual", Type: "kilasflow.manual", TypeVersion: workflow.V(1)},
+				{
+					ID: "sql", Name: "SQL", Type: nodes.SQLiteNodeType, TypeVersion: workflow.V(1),
+					Parameters:  map[string]any{"operation": "query", "statement": "SELECT 1"},
+					Credentials: credentials,
+				},
+			},
+			Connections: []workflow.Connection{{
+				ID: "c1", Kind: workflow.ConnectionMain,
+				Source: workflow.Endpoint{NodeID: "manual", Port: "main"},
+				Target: workflow.Endpoint{NodeID: "sql", Port: "main"},
+			}},
+			Settings: map[string]any{},
+		}
 	}
 
-	if err := definition.Validate(workflow.Node{
-		Parameters:  map[string]any{"operation": "query", "statement": "SELECT 1"},
-		Credentials: map[string]string{"sqlite": "cred-1"},
-	}); err != nil {
-		t.Errorf("Validate() with a credential = %v, want accepted", err)
+	_, err := workflow.Compile(document(nil), registry)
+	if err == nil || !strings.Contains(err.Error(), "requires a sqlite credential") {
+		t.Fatalf("Compile() = %v, want a credential requirement", err)
+	}
+	if _, err := workflow.Compile(document(map[string]string{"sqlite": "cred-1"}), registry); err != nil {
+		t.Errorf("Compile() with a credential = %v, want accepted", err)
+	}
+	// An attached-but-empty reference is not attached.
+	if _, err := workflow.Compile(document(map[string]string{"sqlite": "  "}), registry); err == nil {
+		t.Error("Compile() accepted an empty credential reference")
 	}
 }
 

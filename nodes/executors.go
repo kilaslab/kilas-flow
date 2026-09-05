@@ -42,7 +42,7 @@ func RegisterExecutors(registry *engine.Registry, httpPolicy safehttp.Policy, da
 		CodeExecutorID:            NewCodeExecutor(codeCompiler, runcode.NewMemoryCache(), runcode.DefaultLimits()),
 		LoopExecutorID:            engine.ExecutorFunc(executeLoop),
 		StickyNoteExecutorID:      engine.ExecutorFunc(executeStickyNote),
-		TelegramTriggerExecutorID: engine.ExecutorFunc(executeTelegramTrigger),
+		TelegramTriggerExecutorID: NewTelegramTriggerExecutor(NewTelegramFileClient(httpPolicy)),
 		UnsupportedExecutorID:     engine.ExecutorFunc(executeUnsupported),
 	} {
 		if err := registry.Register(id, executor); err != nil {

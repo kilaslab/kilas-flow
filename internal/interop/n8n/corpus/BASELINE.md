@@ -24,9 +24,9 @@ nor blocked actually failed to execute.
 | Tier | Count | of 39 |
 | --- | ---: | ---: |
 | imported | 39 | 100% |
-| activatable | 13 | 33% |
+| activatable | 12 | 31% |
 | runnable | 3 | 8% |
-| _(blocked by the offline policy)_ | 10 | 26% |
+| _(blocked by the offline policy)_ | 9 | 23% |
 
 ## Per fixture
 
@@ -58,18 +58,18 @@ nor blocked actually failed to execute.
 | `nodes-base/Set/test/Set.workflow` | nodes-base | 7 | yes | no | no | node "a7e51ac7-734a-4652-bb02-d9f0a4d8410b" configuration is invalid: this node was imported from n8n-nodes-testing.testData, which KilasFlow does not suppor… |
 | `nodes-base/Set/test/Set.workflow.null_values` | nodes-base | 6 | yes | yes | yes | — |
 | `nodes-base/Set/test/Set.workflow.number` | nodes-base | 6 | yes | yes | yes | — |
-| `waha-templates/chatting-template/template` | waha-templates | 12 | yes | no | no | node "ef2ac114-79f3-4a68-b8d2-ccf057b14aa3" configuration is invalid: this node was imported from n8n-nodes-base.switch, which KilasFlow does not support. Re… |
-| `waha-templates/chatwoot/WhatsApp___ChatWoot__ChatWoot____WAHA_Messages` | waha-templates | 22 | yes | no | no | node "1027b08d-e1e5-4dc2-a9cd-ee6a1474ea28" configuration is invalid: IF conditions must contain exactly one condition |
-| `waha-templates/chatwoot/WhatsApp___ChatWoot__Database_Migrations` | waha-templates | 3 | yes | no | no | node "80eb9337-a260-41cb-8a71-56eca71c0a8c" configuration is invalid: a postgres credential is required |
+| `waha-templates/chatting-template/template` | waha-templates | 12 | yes | no | no | node "a0062c52-b6fe-48a1-8347-8ff082964d81" requires a wahaApi credential |
+| `waha-templates/chatwoot/WhatsApp___ChatWoot__ChatWoot____WAHA_Messages` | waha-templates | 22 | yes | no | no | node "b71d79fa-2eae-4fb8-97f6-665c496c85f9" requires a wahaApi credential |
+| `waha-templates/chatwoot/WhatsApp___ChatWoot__Database_Migrations` | waha-templates | 3 | yes | no | no | node "80eb9337-a260-41cb-8a71-56eca71c0a8c" requires a postgres credential |
 | `waha-templates/chatwoot/WhatsApp___ChatWoot__WAHA____ChatWoot_Messages` | waha-templates | 23 | yes | no | no | node "ab41bbd3-7366-402f-bec0-d179785ba607" configuration is invalid: this node was imported from n8n-nodes-base.switch, which KilasFlow does not support. Re… |
-| `waha-templates/chatwoot/WhatsApp___ChatWoot__WAHA____ChatWoot_Sync_Contacts` | waha-templates | 13 | yes | no | no | node "ef92745d-8f1a-46bd-b9b3-ec9abf712f41" configuration is invalid: a query needs a statement |
-| `waha-templates/fetch-image-rotate-and-send-it-back/template` | waha-templates | 10 | yes | no | no | node "6d9f620e-cd68-49a6-9194-d76871f10b8f" configuration is invalid: this node was imported from n8n-nodes-base.editImage, which KilasFlow does not support.… |
-| `waha-templates/forward-all-text-messages-to-email/template` | waha-templates | 4 | yes | no | no | node "2c29e16d-0902-4729-a37c-2bd59dd6bcd3" configuration is invalid: this node was imported from n8n-nodes-base.emailSend, which KilasFlow does not support.… |
-| `waha-templates/restart-server-at-midnight/template` | waha-templates | 2 | yes | yes | blocked | execute node "9002e037-ea7a-4a5d-86ca-f7466cbd2842": node "Restart WAHA": request target is not allowed: scheme "" is not supported |
-| `waha-templates/send-bulk-messages/template` | waha-templates | 18 | yes | no | no | node "af16c0da-c302-4d8b-983c-3d69e12f7260" configuration is invalid: a postgres credential is required |
-| `waha-templates/send-custom-http-request-to-waha/template` | waha-templates | 8 | yes | no | no | node "61abde5f-ea26-4d3c-b91c-d3c31699c8c5" configuration is invalid: this node was imported from n8n-nodes-base.switch, which KilasFlow does not support. Re… |
+| `waha-templates/chatwoot/WhatsApp___ChatWoot__WAHA____ChatWoot_Sync_Contacts` | waha-templates | 13 | yes | no | no | node "db26d1bc-cce8-40c7-b1b7-95e38dc70ae6" requires a wahaApi credential |
+| `waha-templates/fetch-image-rotate-and-send-it-back/template` | waha-templates | 10 | yes | no | no | node "490960e8-c5de-463b-b3d4-06b52e083666" requires a wahaApi credential |
+| `waha-templates/forward-all-text-messages-to-email/template` | waha-templates | 4 | yes | no | no | node "21a4aa35-88d3-4fc5-8f5a-ad6bef3a8310" requires a wahaApi credential |
+| `waha-templates/restart-server-at-midnight/template` | waha-templates | 2 | yes | no | no | node "9002e037-ea7a-4a5d-86ca-f7466cbd2842" requires a wahaApi credential |
+| `waha-templates/send-bulk-messages/template` | waha-templates | 18 | yes | no | no | node "af16c0da-c302-4d8b-983c-3d69e12f7260" requires a postgres credential |
+| `waha-templates/send-custom-http-request-to-waha/template` | waha-templates | 8 | yes | no | no | node "052ad79c-4c69-41fe-baf5-b6e609f663ca" requires a wahaApi credential |
 | `waha-templates/send-qr-code-to-email/template` | waha-templates | 9 | yes | no | no | node "05513103-49fc-4324-80ea-5e86b61f3272" configuration is invalid: this node was imported from n8n-nodes-base.convertToFile, which KilasFlow does not supp… |
-| `waha-templates/waha-trigger-explanation/template` | waha-templates | 6 | yes | no | no | node "317255c6-880e-465e-90d4-f4f7268a1e53" configuration is invalid: this node was imported from n8n-nodes-base.switch, which KilasFlow does not support. Re… |
+| `waha-templates/waha-trigger-explanation/template` | waha-templates | 6 | yes | no | no | node "d965e045-faab-44d2-982c-dd9be8c58c06" requires a wahaApi credential |
 | `waha-templates/whatsapp-typebot/template` | waha-templates | 42 | yes | no | no | node "6adb377a-249c-421d-9259-47a477fa91e8" configuration is invalid: this node was imported from n8n-nodes-base.wait, which KilasFlow does not support. Repl… |
 
 ## Node type inventory

@@ -399,10 +399,25 @@ func (registry *Registry) Lookup(nodeType string, version workflow.TypeVersion) 
 		RequiredFor: func(parameters map[string]any, typeVersion workflow.TypeVersion) []string {
 			return visibleRequiredParameters(definition.Parameters, parameters, typeVersion.String())
 		},
+		RequiredCredentials:  requiredCredentials(definition),
 		ExecutorID:           definition.ExecutorID,
 		Validate:             definition.Validate,
 		WebhookPathParameter: webhookPathParameter(definition),
 	}, true
+}
+
+// requiredCredentials lists the credential types a node cannot run without.
+func requiredCredentials(definition Definition) []string {
+	required := make([]string, 0, len(definition.Credentials))
+	for _, declared := range definition.Credentials {
+		if declared.Required {
+			required = append(required, declared.Type)
+		}
+	}
+	if len(required) == 0 {
+		return nil
+	}
+	return required
 }
 
 func webhookPathParameter(definition Definition) string {

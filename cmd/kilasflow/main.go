@@ -220,7 +220,6 @@ func run() error {
 	// server's, not an activation request's: a poller cancelled when its HTTP
 	// request finished would stop the moment it started.
 	telegramPollers := nodes.NewTelegramPollers(ctx, outboundPolicy(cfg.Outbound), webhookHandler.QueueRunner())
-	nodes.SetTelegramFileClient(nodes.NewTelegramFileClient(outboundPolicy(cfg.Outbound)))
 	if err := nodes.RegisterLifecycles(webhookLifecycles, telegramPollers); err != nil {
 		return fmt.Errorf("register webhook lifecycles: %w", err)
 	}

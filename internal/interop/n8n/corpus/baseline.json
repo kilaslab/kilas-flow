@@ -1,12 +1,12 @@
 {
   "comment": "Baseline for the n8n importer regression corpus. Tiers: imported = n8n.Import returned no error; activatable = workflow.Compile returned no error; runnable = the workflow ran to completion with HTTP, SQL and model calls stubbed. Regenerate with go test ./internal/interop/n8n/corpus -update-baseline, and say in the commit which workflows moved and why.",
   "tiers": {
-    "activatable": 13,
+    "activatable": 12,
     "imported": 39,
     "runnable": 3
   },
   "total": 39,
-  "blocked": 10,
+  "blocked": 9,
   "nodeTypeInventory": {
     "@devlikeapro/n8n-nodes-chatwoot.chatWoot": 5,
     "@devlikeapro/n8n-nodes-waha.WAHA": 23,
@@ -308,7 +308,7 @@
       "activatable": false,
       "runnable": false,
       "unsupported": 9,
-      "reason": "node \"ef2ac114-79f3-4a68-b8d2-ccf057b14aa3\" configuration is invalid: this node was imported from n8n-nodes-base.switch, which KilasFlow does not support. Re…"
+      "reason": "node \"a0062c52-b6fe-48a1-8347-8ff082964d81\" requires a wahaApi credential"
     },
     {
       "name": "waha-templates/chatwoot/WhatsApp___ChatWoot__ChatWoot____WAHA_Messages",
@@ -318,7 +318,7 @@
       "activatable": false,
       "runnable": false,
       "unsupported": 22,
-      "reason": "node \"1027b08d-e1e5-4dc2-a9cd-ee6a1474ea28\" configuration is invalid: IF conditions must contain exactly one condition"
+      "reason": "node \"b71d79fa-2eae-4fb8-97f6-665c496c85f9\" requires a wahaApi credential"
     },
     {
       "name": "waha-templates/chatwoot/WhatsApp___ChatWoot__Database_Migrations",
@@ -328,7 +328,7 @@
       "activatable": false,
       "runnable": false,
       "unsupported": 4,
-      "reason": "node \"80eb9337-a260-41cb-8a71-56eca71c0a8c\" configuration is invalid: a postgres credential is required"
+      "reason": "node \"80eb9337-a260-41cb-8a71-56eca71c0a8c\" requires a postgres credential"
     },
     {
       "name": "waha-templates/chatwoot/WhatsApp___ChatWoot__WAHA____ChatWoot_Messages",
@@ -348,7 +348,7 @@
       "activatable": false,
       "runnable": false,
       "unsupported": 13,
-      "reason": "node \"ef92745d-8f1a-46bd-b9b3-ec9abf712f41\" configuration is invalid: a query needs a statement"
+      "reason": "node \"db26d1bc-cce8-40c7-b1b7-95e38dc70ae6\" requires a wahaApi credential"
     },
     {
       "name": "waha-templates/fetch-image-rotate-and-send-it-back/template",
@@ -358,7 +358,7 @@
       "activatable": false,
       "runnable": false,
       "unsupported": 13,
-      "reason": "node \"6d9f620e-cd68-49a6-9194-d76871f10b8f\" configuration is invalid: this node was imported from n8n-nodes-base.editImage, which KilasFlow does not support.…"
+      "reason": "node \"490960e8-c5de-463b-b3d4-06b52e083666\" requires a wahaApi credential"
     },
     {
       "name": "waha-templates/forward-all-text-messages-to-email/template",
@@ -368,18 +368,17 @@
       "activatable": false,
       "runnable": false,
       "unsupported": 5,
-      "reason": "node \"2c29e16d-0902-4729-a37c-2bd59dd6bcd3\" configuration is invalid: this node was imported from n8n-nodes-base.emailSend, which KilasFlow does not support.…"
+      "reason": "node \"21a4aa35-88d3-4fc5-8f5a-ad6bef3a8310\" requires a wahaApi credential"
     },
     {
       "name": "waha-templates/restart-server-at-midnight/template",
       "source": "waha-templates",
       "nodes": 2,
       "imported": true,
-      "activatable": true,
+      "activatable": false,
       "runnable": false,
-      "blocked": true,
       "unsupported": 4,
-      "reason": "execute node \"9002e037-ea7a-4a5d-86ca-f7466cbd2842\": node \"Restart WAHA\": request target is not allowed: scheme \"\" is not supported"
+      "reason": "node \"9002e037-ea7a-4a5d-86ca-f7466cbd2842\" requires a wahaApi credential"
     },
     {
       "name": "waha-templates/send-bulk-messages/template",
@@ -389,7 +388,7 @@
       "activatable": false,
       "runnable": false,
       "unsupported": 22,
-      "reason": "node \"af16c0da-c302-4d8b-983c-3d69e12f7260\" configuration is invalid: a postgres credential is required"
+      "reason": "node \"af16c0da-c302-4d8b-983c-3d69e12f7260\" requires a postgres credential"
     },
     {
       "name": "waha-templates/send-custom-http-request-to-waha/template",
@@ -399,7 +398,7 @@
       "activatable": false,
       "runnable": false,
       "unsupported": 9,
-      "reason": "node \"61abde5f-ea26-4d3c-b91c-d3c31699c8c5\" configuration is invalid: this node was imported from n8n-nodes-base.switch, which KilasFlow does not support. Re…"
+      "reason": "node \"052ad79c-4c69-41fe-baf5-b6e609f663ca\" requires a wahaApi credential"
     },
     {
       "name": "waha-templates/send-qr-code-to-email/template",
@@ -419,7 +418,7 @@
       "activatable": false,
       "runnable": false,
       "unsupported": 8,
-      "reason": "node \"317255c6-880e-465e-90d4-f4f7268a1e53\" configuration is invalid: this node was imported from n8n-nodes-base.switch, which KilasFlow does not support. Re…"
+      "reason": "node \"d965e045-faab-44d2-982c-dd9be8c58c06\" requires a wahaApi credential"
     },
     {
       "name": "waha-templates/whatsapp-typebot/template",

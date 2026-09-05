@@ -810,7 +810,10 @@ func TestOnlyTheBranchWiredToTheDeliveredEventRuns(t *testing.T) {
 		ID:            "wf_waha", Name: "Reply to messages",
 		Nodes: []workflow.Node{
 			{ID: "trigger", Name: "WAHA Trigger", Type: waha.TriggerNodeType, TypeVersion: latest.Version,
-				Parameters: map[string]any{"path": "waha", "session": "default"}},
+				Parameters: map[string]any{"path": "waha", "session": "default"},
+				// The pack declares the credential required, and the compiler
+				// now enforces that.
+				Credentials: map[string]string{waha.CredentialType: "cred-1"}},
 			{ID: "on-message", Name: "On message", Type: "kilasflow.set", TypeVersion: workflow.V(1),
 				Parameters: map[string]any{"assignments": map[string]any{"branch": "message"}}},
 			{ID: "on-ack", Name: "On ack", Type: "kilasflow.set", TypeVersion: workflow.V(1),
