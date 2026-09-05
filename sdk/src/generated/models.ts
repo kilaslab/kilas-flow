@@ -463,6 +463,13 @@ export interface ImportWorkflowInputBody {
   workflow: unknown;
 }
 
+export interface WebhookRouteResource {
+  method: string;
+  nodeId: string;
+  path: string;
+  url: string;
+}
+
 export interface WorkflowVersionResource {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -491,6 +498,8 @@ export interface ImportedWorkflowResource {
   readonly $schema?: string;
   /** @nullable */
   unsupported: ImportIssue[] | null;
+  /** @nullable */
+  webhooks: WebhookRouteResource[] | null;
   workflow: WorkflowResource;
 }
 

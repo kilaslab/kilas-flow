@@ -20,14 +20,32 @@ import (
 // that refused the whole file over a single unsupported node.
 type ImportedWorkflowResource struct {
 	Workflow    WorkflowResource  `json:"workflow"`
-	Unsupported []n8n.Unsupported `json:"unsupported"`
+	Unsupported []n8n.ImportIssue `json:"unsupported"`
+	// Webhooks are the public addresses this workflow's triggers will answer
+	// on once it is activated. Without them the caller has an imported
+	// workflow and no way to learn where to send anything, which is the same
+	// failure as not importing it.
+	Webhooks []WebhookRouteResource `json:"webhooks"`
+}
+
+// WebhookRouteResource is one trigger's public address.
+type WebhookRouteResource struct {
+	NodeID string `json:"nodeId"`
+	Method string `json:"method"`
+	// Path is what the source workflow called this endpoint, kept as a label
+	// so the author can recognise it.
+	Path string `json:"path"`
+	// URL is the address to configure in the sending system. It carries an
+	// opaque route rather than the path, so two tenants importing the same
+	// template do not collide and neither address is guessable.
+	URL string `json:"url"`
 }
 
 // ExportedWorkflowResource is n8n-compatible JSON plus what it could not carry.
 type ExportedWorkflowResource struct {
-	Format   string          `json:"format"`
-	Workflow json.RawMessage `json:"workflow"`
-	Lossy    []n8n.Lossy     `json:"lossy"`
+	Format   string            `json:"format"`
+	Workflow json.RawMessage   `json:"workflow"`
+	Lossy    []n8n.ExportIssue `json:"lossy"`
 	// SupportedMappings is the advertised node subset, so a caller can see
 	// exactly what interoperability is claimed rather than inferring it.
 	SupportedMappings []string `json:"supportedMappings"`
@@ -122,11 +140,28 @@ func (handler *Interop) Import(ctx context.Context, input *importWorkflowInput) 
 
 	unsupported := result.Unsupported
 	if unsupported == nil {
-		unsupported = []n8n.Unsupported{}
+		unsupported = []n8n.ImportIssue{}
 	}
+
+	webhooks := []WebhookRouteResource{}
+	if router, ok := handler.workflows.(repository.WebhookRouteMinter); ok {
+		routes, err := router.EnsureWebhookRoutes(ctx, handler.tenants.Resolve(ctx), stored.ID, stored.LatestVersion.Document)
+		if err != nil {
+			return nil, huma.Error500InternalServerError("could not determine the imported webhook addresses", err)
+		}
+		for _, route := range routes {
+			webhooks = append(webhooks, WebhookRouteResource{
+				NodeID: route.NodeID, Method: route.Method, Path: route.Path,
+				URL: "/webhook/" + route.Route,
+			})
+		}
+	}
+
 	return &importWorkflowOutput{
 		Status: http.StatusCreated, Location: "/api/v1/workflows/" + stored.ID,
-		Body: ImportedWorkflowResource{Workflow: workflowResource(stored), Unsupported: unsupported},
+		Body: ImportedWorkflowResource{
+			Workflow: workflowResource(stored), Unsupported: unsupported, Webhooks: webhooks,
+		},
 	}, nil
 }
 

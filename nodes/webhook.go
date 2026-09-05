@@ -52,7 +52,11 @@ func webhookTrigger() node.Definition {
 		Parameters: []node.PropertyDefinition{
 			{
 				Key: "path", Label: "Path", Kind: node.PropertyString, Required: true,
-				Description: "Path segment appended to /webhook/. Must be unique across active workflows.",
+				Description: "A label for this endpoint. The public URL uses an opaque route minted on activation, so two workflows may share a label as long as they are in different tenants.",
+			},
+			{
+				Key: "deliveryIdHeader", Label: "Delivery ID Header", Kind: node.PropertyString,
+				Description: "Header carrying the sender's own identifier for a delivery, such as X-Webhook-Request-Id. When set, a repeated delivery with the same identifier is answered without running the workflow again. Leave empty to run every request.",
 			},
 			{
 				Key: "httpMethod", Label: "HTTP method", Kind: node.PropertySelect, Required: true, Default: "POST",

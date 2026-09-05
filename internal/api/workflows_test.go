@@ -24,6 +24,7 @@ import (
 	"github.com/kilaslabs/kilas-flow/internal/execution"
 	"github.com/kilaslabs/kilas-flow/internal/node"
 	"github.com/kilaslabs/kilas-flow/internal/repository"
+	"github.com/kilaslabs/kilas-flow/internal/webhook"
 	"github.com/kilaslabs/kilas-flow/internal/workflow"
 	"github.com/kilaslabs/kilas-flow/nodes"
 )
@@ -370,7 +371,7 @@ func newWorkflowAPIWithEmbed(t *testing.T, issuer *embed.Issuer) (http.Handler, 
 	handler := newTestServer(t, api.Deps{
 		DB:                  db,
 		NodeRegistry:        registry,
-		Workflows:           repository.NewWorkflowStore(db.DB),
+		Workflows:           repository.NewWorkflowStore(db.DB).WithWebhooks(webhook.Extract(nodes.WebhookNodeType, nodes.WebhookPath)),
 		Executions:          executions,
 		Credentials:         repository.NewCredentialStore(db.DB, nil),
 		ExecutionController: runtime,
@@ -398,7 +399,10 @@ func newWorkflowAPIWithController(t *testing.T, controller handlers.ExecutionCon
 	if err := nodes.RegisterAll(registry); err != nil {
 		t.Fatalf("RegisterAll() error = %v", err)
 	}
-	workflows := repository.NewWorkflowStore(db.DB)
+	// The same webhook extractor production wires, so an API test exercises
+	// binding and route minting rather than silently skipping both.
+	workflows := repository.NewWorkflowStore(db.DB).
+		WithWebhooks(webhook.Extract(nodes.WebhookNodeType, nodes.WebhookPath))
 	executions := repository.NewExecutionStore(db.DB)
 	return newTestServer(t, api.Deps{
 		DB:                  db,
@@ -834,10 +838,18 @@ func newCredentialAPI(t *testing.T) (http.Handler, *repository.GORMCredentialSto
 type importedWorkflowResource struct {
 	Workflow    workflowResource `json:"workflow"`
 	Unsupported []struct {
+		Severity string `json:"severity"`
 		NodeName string `json:"nodeName"`
+		Field    string `json:"field"`
 		Type     string `json:"type"`
 		Reason   string `json:"reason"`
 	} `json:"unsupported"`
+	Webhooks []struct {
+		NodeID string `json:"nodeId"`
+		Method string `json:"method"`
+		Path   string `json:"path"`
+		URL    string `json:"url"`
+	} `json:"webhooks"`
 }
 
 type exportedWorkflowResource struct {
@@ -952,4 +964,59 @@ func TestWorkflowAPIExportsN8NJSON(t *testing.T) {
 
 	requestProblem(t, handler, http.MethodGet, "/api/v1/workflows/"+imported.Workflow.ID+"/export?format=zapier", nil, http.StatusUnprocessableEntity)
 	requestProblem(t, handler, http.MethodGet, "/api/v1/workflows/wf_missing/export", nil, http.StatusNotFound)
+}
+
+// n8nWebhookTemplate is shaped like an imported template: a hardcoded webhook
+// path, exactly as every n8n template on the internet ships.
+const n8nWebhookTemplate = `{
+  "name": "WAHA chatting",
+  "nodes": [
+    {"id":"a","name":"WAHA Webhook","type":"n8n-nodes-base.webhook","typeVersion":2,"position":[0,0],
+     "parameters":{"path":"waha-webhook","httpMethod":"POST","responseMode":"onReceived"}}
+  ],
+  "connections": {}
+}`
+
+// TestImportReportsTheWebhookAddressToPasteIntoTheSender is what makes an
+// imported webhook workflow usable.
+//
+// The public route is opaque and minted rather than taken from the template's
+// path, so the caller cannot construct the URL themselves — and without it in
+// the response they have an imported workflow and no way to learn where to send
+// anything, which is the same failure as not importing it.
+func TestImportReportsTheWebhookAddressToPasteIntoTheSender(t *testing.T) {
+	handler, _, _ := newWorkflowAPI(t)
+
+	imported := requestJSON[importedWorkflowResource](t, handler, http.MethodPost, "/api/v1/workflows/import",
+		map[string]any{"format": "n8n", "workflow": json.RawMessage(n8nWebhookTemplate)}, http.StatusCreated)
+
+	if len(imported.Webhooks) != 1 {
+		t.Fatalf("webhooks = %#v, want one address for the template's trigger", imported.Webhooks)
+	}
+	route := imported.Webhooks[0]
+	if route.Method != http.MethodPost {
+		t.Errorf("method = %q, want POST", route.Method)
+	}
+	// The label is what the template called it, so the author recognises it.
+	if route.Path != "waha-webhook" {
+		t.Errorf("path label = %q, want the template's own path", route.Path)
+	}
+	// The address is not the label: an opaque route is what makes two tenants
+	// importing the same template not collide.
+	if !strings.HasPrefix(route.URL, "/webhook/") {
+		t.Fatalf("url = %q, want a /webhook/ address", route.URL)
+	}
+	if strings.HasSuffix(route.URL, "/waha-webhook") {
+		t.Errorf("url = %q, want an opaque route rather than the template's path", route.URL)
+	}
+
+	// Activating must not change the address that was already reported.
+	requestJSON[workflowResource](t, handler, http.MethodPost,
+		"/api/v1/workflows/"+imported.Workflow.ID+"/activate", nil, http.StatusOK)
+
+	again := requestJSON[importedWorkflowResource](t, handler, http.MethodPost, "/api/v1/workflows/import",
+		map[string]any{"format": "n8n", "workflow": json.RawMessage(n8nWebhookTemplate)}, http.StatusCreated)
+	if again.Webhooks[0].URL == route.URL {
+		t.Error("a second import of the same template was given the same address")
+	}
 }

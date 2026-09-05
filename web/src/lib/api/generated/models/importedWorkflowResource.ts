@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0-dev
  */
 import type { ImportIssue } from './importIssue';
+import type { WebhookRouteResource } from './webhookRouteResource';
 import type { WorkflowResource } from './workflowResource';
 
 export interface ImportedWorkflowResource {
@@ -13,5 +14,7 @@ export interface ImportedWorkflowResource {
   readonly $schema?: string;
   /** @nullable */
   unsupported: ImportIssue[] | null;
+  /** @nullable */
+  webhooks: WebhookRouteResource[] | null;
   workflow: WorkflowResource;
 }

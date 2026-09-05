@@ -146,14 +146,31 @@ func (h harness) activate(t *testing.T, document workflow.Document) workflow.Sto
 	return active
 }
 
+// url is the public address of a workflow's first webhook trigger.
+//
+// The route is opaque and minted at activation, so a test can no longer build
+// the URL from the path it configured — which is the whole point: two tenants
+// importing the same template get different addresses for the same path.
+func (h harness) url(t *testing.T, stored workflow.StoredWorkflow) string {
+	t.Helper()
+	routes, err := h.workflows.WebhookRoutes(context.Background(), h.tenant, stored.ID)
+	if err != nil {
+		t.Fatalf("WebhookRoutes() error = %v", err)
+	}
+	if len(routes) == 0 {
+		t.Fatalf("workflow %s has no webhook route", stored.ID)
+	}
+	return "/webhook/" + routes[0].Route
+}
+
 func TestWebhookAnswersImmediatelyAndQueuesANormalExecution(t *testing.T) {
 	h := newHarness(t)
-	h.activate(t, webhookDocument("Immediate", map[string]any{
+	active := h.activate(t, webhookDocument("Immediate", map[string]any{
 		"path": "orders", "httpMethod": http.MethodPost, "responseMode": "immediate", "responseCode": float64(202),
 	}))
 
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/webhook/orders", strings.NewReader(`{"id":7}`))
+	request := httptest.NewRequest(http.MethodPost, h.url(t, active), strings.NewReader(`{"id":7}`))
 	h.handler.ServeHTTP(recorder, request)
 
 	if recorder.Code != http.StatusAccepted {
@@ -183,7 +200,7 @@ func TestWebhookAnswersImmediatelyAndQueuesANormalExecution(t *testing.T) {
 
 func TestWebhookRespondsFromARespondToWebhookNode(t *testing.T) {
 	h := newHarness(t)
-	h.activate(t, webhookDocument("Responder", map[string]any{
+	active := h.activate(t, webhookDocument("Responder", map[string]any{
 		"path": "reply", "httpMethod": http.MethodPost, "responseMode": "responseNode",
 	}, workflow.Node{
 		ID: "respond", Name: "Respond to Webhook", Type: nodes.RespondNodeType, TypeVersion: workflow.V(1),
@@ -208,7 +225,7 @@ func TestWebhookRespondsFromARespondToWebhookNode(t *testing.T) {
 	}()
 
 	recorder := httptest.NewRecorder()
-	h.handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/webhook/reply", strings.NewReader(`{}`)))
+	h.handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, h.url(t, active), strings.NewReader(`{}`)))
 	<-done
 
 	if recorder.Code != http.StatusCreated {
@@ -228,7 +245,7 @@ func TestWebhookRespondsFromARespondToWebhookNode(t *testing.T) {
 func TestWebhookReportsWhenNoResponseNodeWasReached(t *testing.T) {
 	h := newHarness(t)
 	// Configured to answer from a node, but the graph has none.
-	h.activate(t, webhookDocument("No responder", map[string]any{
+	active := h.activate(t, webhookDocument("No responder", map[string]any{
 		"path": "silent", "httpMethod": http.MethodPost, "responseMode": "responseNode",
 	}))
 
@@ -242,7 +259,7 @@ func TestWebhookReportsWhenNoResponseNodeWasReached(t *testing.T) {
 	}()
 
 	recorder := httptest.NewRecorder()
-	h.handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/webhook/silent", strings.NewReader(`{}`)))
+	h.handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, h.url(t, active), strings.NewReader(`{}`)))
 
 	if recorder.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500 (body: %s)", recorder.Code, recorder.Body)
@@ -254,14 +271,14 @@ func TestWebhookReportsWhenNoResponseNodeWasReached(t *testing.T) {
 
 func TestWebhookTimesOutRatherThanHangingForever(t *testing.T) {
 	h := newHarness(t)
-	h.activate(t, webhookDocument("Slow", map[string]any{
+	active := h.activate(t, webhookDocument("Slow", map[string]any{
 		"path": "slow", "httpMethod": http.MethodPost, "responseMode": "lastNode",
 	}))
 
 	// No worker drains the queue, so the run never finishes.
 	recorder := httptest.NewRecorder()
 	start := time.Now()
-	h.handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/webhook/slow", strings.NewReader(`{}`)))
+	h.handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, h.url(t, active), strings.NewReader(`{}`)))
 
 	if recorder.Code != http.StatusGatewayTimeout {
 		t.Fatalf("status = %d, want 504 (body: %s)", recorder.Code, recorder.Body)
@@ -277,10 +294,17 @@ func TestWebhookRefusesUnknownInactiveAndWrongMethodRequests(t *testing.T) {
 		"path": "bound", "httpMethod": http.MethodPost, "responseMode": "immediate",
 	}))
 
+	// Captured before deactivating, because the route is only listed while the
+	// workflow is active — and this URL has to keep being addressable after it
+	// stops answering.
+	url := h.url(t, active)
+
 	for name, request := range map[string]*http.Request{
-		"unknown path": httptest.NewRequest(http.MethodPost, "/webhook/nothing-here", nil),
-		"wrong method": httptest.NewRequest(http.MethodGet, "/webhook/bound", nil),
-		"empty path":   httptest.NewRequest(http.MethodPost, "/webhook/", nil),
+		// A well-formed route that was never minted, so it cannot be confused
+		// with a malformed one.
+		"unknown route": httptest.NewRequest(http.MethodPost, "/webhook/0123456789abcdef0123456789abcdef", nil),
+		"wrong method":  httptest.NewRequest(http.MethodGet, url, nil),
+		"empty path":    httptest.NewRequest(http.MethodPost, "/webhook/", nil),
 	} {
 		recorder := httptest.NewRecorder()
 		h.handler.ServeHTTP(recorder, request)
@@ -294,7 +318,7 @@ func TestWebhookRefusesUnknownInactiveAndWrongMethodRequests(t *testing.T) {
 		t.Fatalf("Deactivate() error = %v", err)
 	}
 	recorder := httptest.NewRecorder()
-	h.handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/webhook/bound", nil))
+	h.handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, url, nil))
 	if recorder.Code != http.StatusNotFound {
 		t.Errorf("deactivated status = %d, want 404", recorder.Code)
 	}
@@ -313,10 +337,10 @@ func TestWebhookEnforcesBasicAuthentication(t *testing.T) {
 		"path": "secure", "httpMethod": http.MethodPost, "responseMode": "immediate", "authentication": "basicAuth",
 	})
 	document.Nodes[0].Credentials = map[string]string{"httpBasicAuth": credential.ID}
-	h.activate(t, document)
+	active := h.activate(t, document)
 
 	anonymous := httptest.NewRecorder()
-	h.handler.ServeHTTP(anonymous, httptest.NewRequest(http.MethodPost, "/webhook/secure", strings.NewReader(`{}`)))
+	h.handler.ServeHTTP(anonymous, httptest.NewRequest(http.MethodPost, h.url(t, active), strings.NewReader(`{}`)))
 	if anonymous.Code != http.StatusUnauthorized {
 		t.Fatalf("anonymous status = %d, want 401 (body: %s)", anonymous.Code, anonymous.Body)
 	}
@@ -325,7 +349,7 @@ func TestWebhookEnforcesBasicAuthentication(t *testing.T) {
 	}
 
 	wrong := httptest.NewRecorder()
-	badRequest := httptest.NewRequest(http.MethodPost, "/webhook/secure", strings.NewReader(`{}`))
+	badRequest := httptest.NewRequest(http.MethodPost, h.url(t, active), strings.NewReader(`{}`))
 	badRequest.SetBasicAuth("ada", "wrong")
 	h.handler.ServeHTTP(wrong, badRequest)
 	if wrong.Code != http.StatusUnauthorized {
@@ -333,7 +357,7 @@ func TestWebhookEnforcesBasicAuthentication(t *testing.T) {
 	}
 
 	authorized := httptest.NewRecorder()
-	goodRequest := httptest.NewRequest(http.MethodPost, "/webhook/secure", strings.NewReader(`{}`))
+	goodRequest := httptest.NewRequest(http.MethodPost, h.url(t, active), strings.NewReader(`{}`))
 	goodRequest.SetBasicAuth("ada", "hunter2")
 	h.handler.ServeHTTP(authorized, goodRequest)
 	if authorized.Code != http.StatusOK {
@@ -344,12 +368,12 @@ func TestWebhookEnforcesBasicAuthentication(t *testing.T) {
 func TestWebhookConfiguredToAuthenticateFailsClosedWithoutACredential(t *testing.T) {
 	h := newHarness(t)
 	// Authentication requested, but no credential bound.
-	h.activate(t, webhookDocument("Misconfigured", map[string]any{
+	active := h.activate(t, webhookDocument("Misconfigured", map[string]any{
 		"path": "half-secured", "httpMethod": http.MethodPost, "responseMode": "immediate", "authentication": "headerAuth",
 	}))
 
 	recorder := httptest.NewRecorder()
-	h.handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/webhook/half-secured", strings.NewReader(`{}`)))
+	h.handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, h.url(t, active), strings.NewReader(`{}`)))
 
 	// Failing open would silently publish an unprotected endpoint.
 	if recorder.Code == http.StatusOK {
@@ -369,11 +393,11 @@ func TestWebhookConfiguredToAuthenticateFailsClosedWithoutACredential(t *testing
 // place of what actually arrived.
 func TestWebhookRedactsInboundHeadersButKeepsTheBody(t *testing.T) {
 	h := newHarness(t)
-	h.activate(t, webhookDocument("Redacting", map[string]any{
+	active := h.activate(t, webhookDocument("Redacting", map[string]any{
 		"path": "redact", "httpMethod": http.MethodPost, "responseMode": "immediate",
 	}))
 
-	request := httptest.NewRequest(http.MethodPost, "/webhook/redact", strings.NewReader(`{"note":"body-value"}`))
+	request := httptest.NewRequest(http.MethodPost, h.url(t, active), strings.NewReader(`{"note":"body-value"}`))
 	request.Header.Set("Authorization", "Bearer inbound-secret")
 	request.Header.Set("Cookie", "sid=inbound-cookie")
 	recorder := httptest.NewRecorder()
@@ -412,12 +436,12 @@ func TestWebhookRedactsInboundHeadersButKeepsTheBody(t *testing.T) {
 // message that happened to start with the word.
 func TestWebhookDeliversSessionAndSchemePrefixedTextVerbatim(t *testing.T) {
 	h := newHarness(t)
-	h.activate(t, webhookDocument("WAHA-shaped", map[string]any{
+	active := h.activate(t, webhookDocument("WAHA-shaped", map[string]any{
 		"path": "waha", "httpMethod": http.MethodPost, "responseMode": "immediate",
 	}))
 
 	const envelope = `{"session":"default","payload":{"sessionId":"6281234567890@c.us","body":"basic plan pricing?"}}`
-	request := httptest.NewRequest(http.MethodPost, "/webhook/waha", strings.NewReader(envelope))
+	request := httptest.NewRequest(http.MethodPost, h.url(t, active), strings.NewReader(envelope))
 	recorder := httptest.NewRecorder()
 	h.handler.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusOK {
@@ -460,13 +484,13 @@ func TestWebhookDeliversSessionAndSchemePrefixedTextVerbatim(t *testing.T) {
 
 func TestWebhookEnforcesTheBodyLimit(t *testing.T) {
 	h := newHarness(t)
-	h.activate(t, webhookDocument("Bounded", map[string]any{
+	active := h.activate(t, webhookDocument("Bounded", map[string]any{
 		"path": "bounded", "httpMethod": http.MethodPost, "responseMode": "immediate",
 	}))
 
 	recorder := httptest.NewRecorder()
 	oversized := strings.NewReader(`{"data":"` + strings.Repeat("a", 1000) + `"}`)
-	h.handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/webhook/bounded", oversized))
+	h.handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, h.url(t, active), oversized))
 
 	if recorder.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status = %d, want 413 (body: %s)", recorder.Code, recorder.Body)
@@ -494,12 +518,12 @@ func TestActivationRefusesTwoWorkflowsClaimingTheSameEndpoint(t *testing.T) {
 
 func TestWebhookPayloadCarriesTheRequestShape(t *testing.T) {
 	h := newHarness(t)
-	h.activate(t, webhookDocument("Shape", map[string]any{
+	active := h.activate(t, webhookDocument("Shape", map[string]any{
 		"path": "shape", "httpMethod": http.MethodPost, "responseMode": "immediate",
 	}))
 
 	recorder := httptest.NewRecorder()
-	h.handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/webhook/shape?tier=gold", strings.NewReader(`{"id":9}`)))
+	h.handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, h.url(t, active)+"?tier=gold", strings.NewReader(`{"id":9}`)))
 	var body struct {
 		ExecutionID string `json:"executionId"`
 	}
@@ -564,7 +588,7 @@ func TestBranchedWebhookAnswersFromTheBranchThatRan(t *testing.T) {
 		},
 		Settings: map[string]any{},
 	}
-	h.activate(t, document)
+	active := h.activate(t, document)
 
 	// The handler waits for the run, so a worker has to be draining alongside.
 	stop := make(chan struct{})
@@ -589,7 +613,7 @@ func TestBranchedWebhookAnswersFromTheBranchThatRan(t *testing.T) {
 	for attempt := range 6 {
 		recorder := httptest.NewRecorder()
 		h.handler.ServeHTTP(recorder, httptest.NewRequest(
-			http.MethodPost, "/webhook/branched", strings.NewReader(`{"tier":"vip"}`)))
+			http.MethodPost, h.url(t, active), strings.NewReader(`{"tier":"vip"}`)))
 		if recorder.Code != http.StatusOK {
 			t.Fatalf("attempt %d: status = %d, want the VIP branch's 200 (body: %s)", attempt, recorder.Code, recorder.Body)
 		}
@@ -602,12 +626,201 @@ func TestBranchedWebhookAnswersFromTheBranchThatRan(t *testing.T) {
 	for attempt := range 6 {
 		recorder := httptest.NewRecorder()
 		h.handler.ServeHTTP(recorder, httptest.NewRequest(
-			http.MethodPost, "/webhook/branched", strings.NewReader(`{"tier":"standard"}`)))
+			http.MethodPost, h.url(t, active), strings.NewReader(`{"tier":"standard"}`)))
 		if recorder.Code != http.StatusAccepted {
 			t.Fatalf("attempt %d: status = %d, want the standard branch's 202 (body: %s)", attempt, recorder.Code, recorder.Body)
 		}
 		if body := recorder.Body.String(); body != "standard-branch" {
 			t.Fatalf("attempt %d: body = %q, want the standard branch", attempt, body)
 		}
+	}
+}
+
+// TestTwoTenantsCanActivateTheSameTemplatePath is the business goal. An n8n
+// template ships a hardcoded webhook path, so importing the official WAHA
+// chatting template for a second client produced a second workflow with the
+// same path — and one unique index made activation impossible. Replicating a
+// client automation across customers is the reason V2 exists.
+func TestTwoTenantsCanActivateTheSameTemplatePath(t *testing.T) {
+	h := newHarness(t)
+	other := repository.TenantScope{ID: "tenant-b"}
+
+	document := webhookDocument("Imported template", map[string]any{
+		"path": "waha-webhook", "httpMethod": http.MethodPost, "responseMode": "immediate", "responseCode": float64(202),
+	})
+
+	first := h.activate(t, document)
+
+	// The same document, the same path, a different tenant.
+	secondDraft, err := h.workflows.SaveDraft(context.Background(), other, document)
+	if err != nil {
+		t.Fatalf("SaveDraft(tenant-b) error = %v", err)
+	}
+	second, err := h.workflows.Activate(context.Background(), other, secondDraft.ID, h.registry)
+	if err != nil {
+		t.Fatalf("the same template must activate for a second tenant: %v", err)
+	}
+
+	firstRoutes, err := h.workflows.WebhookRoutes(context.Background(), h.tenant, first.ID)
+	if err != nil {
+		t.Fatalf("WebhookRoutes(first) error = %v", err)
+	}
+	secondRoutes, err := h.workflows.WebhookRoutes(context.Background(), other, second.ID)
+	if err != nil {
+		t.Fatalf("WebhookRoutes(second) error = %v", err)
+	}
+	if firstRoutes[0].Route == secondRoutes[0].Route {
+		t.Fatal("both tenants were given the same route; deliveries would be ambiguous")
+	}
+	// Both keep the author's label, which is what the editor shows.
+	for _, routes := range [][]repository.WebhookBinding{firstRoutes, secondRoutes} {
+		if routes[0].Path != "waha-webhook" {
+			t.Errorf("path label = %q, want the template's own path", routes[0].Path)
+		}
+	}
+
+	// And each receives only its own deliveries.
+	for name, testCase := range map[string]struct {
+		url    string
+		tenant repository.TenantScope
+		want   string
+	}{
+		"first tenant":  {"/webhook/" + firstRoutes[0].Route, h.tenant, first.ID},
+		"second tenant": {"/webhook/" + secondRoutes[0].Route, other, second.ID},
+	} {
+		recorder := httptest.NewRecorder()
+		h.handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, testCase.url, strings.NewReader(`{}`)))
+		if recorder.Code != http.StatusAccepted {
+			t.Fatalf("%s: status = %d (body: %s)", name, recorder.Code, recorder.Body)
+		}
+		var body struct {
+			ExecutionID string `json:"executionId"`
+		}
+		_ = json.Unmarshal(recorder.Body.Bytes(), &body)
+		record, err := h.runtime.Get(context.Background(), testCase.tenant, body.ExecutionID)
+		if err != nil {
+			t.Fatalf("%s: Get() error = %v", name, err)
+		}
+		if record.WorkflowID != testCase.want {
+			t.Errorf("%s: delivery ran workflow %s, want %s", name, record.WorkflowID, testCase.want)
+		}
+	}
+}
+
+// TestReactivationKeepsTheSameRoute is what makes an opaque route usable. A
+// route minted per activation would change the public URL every time a workflow
+// was deactivated and reactivated, breaking every sender already configured
+// against it.
+func TestReactivationKeepsTheSameRoute(t *testing.T) {
+	h := newHarness(t)
+	active := h.activate(t, webhookDocument("Stable", map[string]any{
+		"path": "stable", "httpMethod": http.MethodPost, "responseMode": "immediate",
+	}))
+	before := h.url(t, active)
+
+	if _, err := h.workflows.Deactivate(context.Background(), h.tenant, active.ID); err != nil {
+		t.Fatalf("Deactivate() error = %v", err)
+	}
+	if _, err := h.workflows.Activate(context.Background(), h.tenant, active.ID, h.registry); err != nil {
+		t.Fatalf("Activate() error = %v", err)
+	}
+	if after := h.url(t, active); after != before {
+		t.Errorf("route changed across reactivation: %q then %q", before, after)
+	}
+}
+
+// TestRepeatedDeliveryRunsTheWorkflowOnce is the second half of this ticket.
+//
+// WAHA retries a failed delivery fifteen times at two-second intervals and
+// identifies each logical delivery with a header. KilasFlow queued an execution
+// per HTTP request, so a slow workflow that eventually succeeded could send
+// fifteen WhatsApp replies.
+func TestRepeatedDeliveryRunsTheWorkflowOnce(t *testing.T) {
+	h := newHarness(t)
+	active := h.activate(t, webhookDocument("Deduped", map[string]any{
+		"path": "waha", "httpMethod": http.MethodPost, "responseMode": "immediate",
+		"responseCode": float64(202), "deliveryIdHeader": "X-Webhook-Request-Id",
+	}))
+	url := h.url(t, active)
+
+	executions := map[string]bool{}
+	for attempt := range 5 {
+		request := httptest.NewRequest(http.MethodPost, url, strings.NewReader(`{"event":"message"}`))
+		request.Header.Set("X-Webhook-Request-Id", "delivery-1")
+		recorder := httptest.NewRecorder()
+		h.handler.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusAccepted && recorder.Code != http.StatusOK {
+			t.Fatalf("attempt %d: status = %d (body: %s)", attempt, recorder.Code, recorder.Body)
+		}
+		var body struct {
+			ExecutionID string `json:"executionId"`
+			Duplicate   bool   `json:"duplicate"`
+		}
+		_ = json.Unmarshal(recorder.Body.Bytes(), &body)
+		if attempt > 0 && !body.Duplicate {
+			t.Errorf("attempt %d was not reported as a duplicate", attempt)
+		}
+		if body.ExecutionID != "" {
+			executions[body.ExecutionID] = true
+		}
+	}
+
+	if len(executions) != 1 {
+		t.Errorf("five retries produced %d executions, want 1: %v", len(executions), executions)
+	}
+}
+
+// TestDistinctDeliveriesAreNeverCollapsed keeps the dedupe from going too far.
+// Two genuinely different deliveries must each run.
+func TestDistinctDeliveriesAreNeverCollapsed(t *testing.T) {
+	h := newHarness(t)
+	active := h.activate(t, webhookDocument("Distinct", map[string]any{
+		"path": "waha", "httpMethod": http.MethodPost, "responseMode": "immediate",
+		"responseCode": float64(202), "deliveryIdHeader": "X-Webhook-Request-Id",
+	}))
+	url := h.url(t, active)
+
+	executions := map[string]bool{}
+	for _, id := range []string{"delivery-1", "delivery-2", "delivery-3"} {
+		request := httptest.NewRequest(http.MethodPost, url, strings.NewReader(`{"event":"message"}`))
+		request.Header.Set("X-Webhook-Request-Id", id)
+		recorder := httptest.NewRecorder()
+		h.handler.ServeHTTP(recorder, request)
+		var body struct {
+			ExecutionID string `json:"executionId"`
+		}
+		_ = json.Unmarshal(recorder.Body.Bytes(), &body)
+		executions[body.ExecutionID] = true
+	}
+	if len(executions) != 3 {
+		t.Errorf("three distinct deliveries produced %d executions, want 3", len(executions))
+	}
+}
+
+// TestADeliveryWithNoIdentifierIsNeverDeduped covers the sender that does not
+// send the header, and the identical message a user genuinely sends twice.
+func TestADeliveryWithNoIdentifierIsNeverDeduped(t *testing.T) {
+	h := newHarness(t)
+	active := h.activate(t, webhookDocument("No identifier", map[string]any{
+		"path": "waha", "httpMethod": http.MethodPost, "responseMode": "immediate",
+		"responseCode": float64(202), "deliveryIdHeader": "X-Webhook-Request-Id",
+	}))
+	url := h.url(t, active)
+
+	executions := map[string]bool{}
+	for range 3 {
+		// Byte-identical requests, no identifier header. Deduping on a body
+		// hash would collapse these, and two identical messages sent twice by
+		// a user are not a duplicate delivery.
+		recorder := httptest.NewRecorder()
+		h.handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, url, strings.NewReader(`{"text":"hi"}`)))
+		var body struct {
+			ExecutionID string `json:"executionId"`
+		}
+		_ = json.Unmarshal(recorder.Body.Bytes(), &body)
+		executions[body.ExecutionID] = true
+	}
+	if len(executions) != 3 {
+		t.Errorf("three unidentified deliveries produced %d executions, want 3", len(executions))
 	}
 }

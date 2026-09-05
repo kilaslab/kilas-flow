@@ -17,6 +17,8 @@ func Models() []any {
 		&executionNodeRunModel{},
 		&credentialModel{},
 		&webhookBindingModel{},
+		&webhookRouteModel{},
+		&webhookDeliveryModel{},
 		&scheduleModel{},
 	}
 }
@@ -26,18 +28,63 @@ func Models() []any {
 // re-check activation.
 type webhookBindingModel struct {
 	ID                uint   `gorm:"primaryKey;autoIncrement"`
-	TenantID          string `gorm:"not null;size:64;index:idx_webhook_bindings_workflow,priority:1"`
+	TenantID          string `gorm:"not null;size:64;index:idx_webhook_bindings_workflow,priority:1;uniqueIndex:uidx_webhook_bindings_label,priority:1"`
 	WorkflowID        string `gorm:"not null;size:64;index:idx_webhook_bindings_workflow,priority:2"`
 	WorkflowVersionID string `gorm:"not null;size:64"`
 	NodeID            string `gorm:"not null;size:64"`
-	// The unique index spans method and path only: two active workflows must
-	// not be able to claim the same endpoint, whichever tenant owns them, or an
-	// inbound request would have no deterministic destination.
-	Method     string    `gorm:"not null;size:8;uniqueIndex:uidx_webhook_bindings_route,priority:1"`
-	Path       string    `gorm:"not null;size:255;uniqueIndex:uidx_webhook_bindings_route,priority:2"`
+	// Route is the opaque segment the URL actually carries, and it is what an
+	// inbound request resolves on. The unique index still spans the whole
+	// route globally, because an inbound webhook has no session and the route
+	// is the only thing identifying it — two rows matching one request would
+	// be a cross-tenant routing bug far worse than a refused activation.
+	Method string `gorm:"not null;size:8;uniqueIndex:uidx_webhook_bindings_route,priority:1"`
+	Route  string `gorm:"not null;size:64;uniqueIndex:uidx_webhook_bindings_route,priority:2"`
+	// Path is what the workflow's author called this endpoint. It is a display
+	// label now rather than the route, so two tenants importing the same n8n
+	// template both keep the template's path and neither collides. The
+	// per-tenant unique index preserves the old rule where it still makes
+	// sense: one tenant still cannot claim the same endpoint twice.
+	Path       string    `gorm:"not null;size:255;uniqueIndex:uidx_webhook_bindings_label,priority:2"`
 	Parameters []byte    `gorm:"not null"`
 	CreatedAt  time.Time `gorm:"not null"`
 }
+
+// webhookRouteModel is the minted route for one workflow's trigger node.
+//
+// It outlives the binding on purpose. Bindings exist only while a workflow is
+// active, so if the route were minted with the binding, deactivating and
+// reactivating a workflow would change its public URL — which is the same
+// failure as not having a URL at all for anyone who has already configured a
+// sender.
+type webhookRouteModel struct {
+	ID         uint   `gorm:"primaryKey;autoIncrement"`
+	TenantID   string `gorm:"not null;size:64;uniqueIndex:uidx_webhook_routes_node,priority:1"`
+	WorkflowID string `gorm:"not null;size:64;uniqueIndex:uidx_webhook_routes_node,priority:2"`
+	NodeID     string `gorm:"not null;size:64;uniqueIndex:uidx_webhook_routes_node,priority:3"`
+	Route      string `gorm:"not null;size:64;uniqueIndex"`
+	CreatedAt  time.Time
+}
+
+func (webhookRouteModel) TableName() string { return "webhook_routes" }
+
+// webhookDeliveryModel records one logical delivery so a retry does not run the
+// workflow twice.
+//
+// WAHA retries a failed delivery fifteen times at two-second intervals and
+// identifies each logical delivery with a header, so a slow workflow that
+// eventually succeeds could send fifteen WhatsApp replies.
+type webhookDeliveryModel struct {
+	ID    uint   `gorm:"primaryKey;autoIncrement"`
+	Route string `gorm:"not null;size:64;uniqueIndex:uidx_webhook_deliveries,priority:1"`
+	// DeliveryID is the sender's own identifier for this delivery, scoped by
+	// route so two senders cannot collide.
+	DeliveryID  string    `gorm:"not null;size:128;uniqueIndex:uidx_webhook_deliveries,priority:2"`
+	ExecutionID string    `gorm:"not null;size:64"`
+	ExpiresAt   time.Time `gorm:"not null;index"`
+	CreatedAt   time.Time `gorm:"not null"`
+}
+
+func (webhookDeliveryModel) TableName() string { return "webhook_deliveries" }
 
 func (webhookBindingModel) TableName() string { return "webhook_bindings" }
 

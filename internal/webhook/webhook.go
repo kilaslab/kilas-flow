@@ -25,11 +25,14 @@ type Limits struct {
 	// ResponseTimeout bounds how long a request waits for a workflow that
 	// answers from its own graph.
 	ResponseTimeout time.Duration
+	// DeliveryWindow is how long a delivery identifier is remembered, so a
+	// sender's retry sequence resolves to one execution.
+	DeliveryWindow time.Duration
 }
 
 // DefaultLimits are used when nothing is configured.
 func DefaultLimits() Limits {
-	return Limits{MaxBodyBytes: 1 << 20, ResponseTimeout: 30 * time.Second}
+	return Limits{MaxBodyBytes: 1 << 20, ResponseTimeout: 30 * time.Second, DeliveryWindow: repository.DefaultDeliveryWindow}
 }
 
 // Runner queues an execution for a resolved binding.
@@ -87,13 +90,32 @@ func (handler *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	payload, err := handler.requestPayload(r)
+	payload, err := handler.requestPayload(r, binding)
 	if err != nil {
 		problem(w, http.StatusRequestEntityTooLarge, err.Error())
 		return
 	}
 
+	// A retried delivery must not run the workflow twice. WAHA retries fifteen
+	// times at two-second intervals, so a slow workflow that eventually
+	// succeeds could otherwise send fifteen WhatsApp replies.
+	deliveryID := deliveryIdentifier(r, binding)
+	if deliveryID != "" {
+		owner, claimed, err := handler.bindings.ClaimDelivery(r.Context(), binding.Route, deliveryID, "", handler.limits.DeliveryWindow)
+		if err == nil && !claimed {
+			handler.answerDuplicate(w, r, binding, owner)
+			return
+		}
+	}
+
 	record, err := handler.runner.QueueWebhook(r.Context(), binding, payload)
+	if err == nil && deliveryID != "" {
+		// The claim was taken before the execution existed, so that two
+		// concurrent retries could not both pass it. Now that there is an
+		// execution to point at, record it — a later duplicate can then be
+		// answered with the original's outcome rather than a bare accept.
+		_ = handler.bindings.RecordDeliveryExecution(r.Context(), binding.Route, deliveryID, record.ID)
+	}
 	if err != nil {
 		problem(w, http.StatusInternalServerError, "The workflow could not be queued.")
 		return
@@ -208,7 +230,7 @@ func equal(got, want string) bool {
 //
 // Headers are redacted here, before the payload is ever handed to the engine,
 // so an inbound Authorization header never reaches an execution record.
-func (handler *Handler) requestPayload(r *http.Request) (json.RawMessage, error) {
+func (handler *Handler) requestPayload(r *http.Request, binding repository.WebhookBinding) (json.RawMessage, error) {
 	body, err := io.ReadAll(io.LimitReader(r.Body, handler.limits.MaxBodyBytes+1))
 	if err != nil {
 		return nil, errors.New("The request body could not be read.")
@@ -243,8 +265,12 @@ func (handler *Handler) requestPayload(r *http.Request) (json.RawMessage, error)
 	}
 
 	payload, err := json.Marshal(map[string]any{
-		"method":  r.Method,
-		"path":    strings.Trim(strings.TrimPrefix(r.URL.Path, "/webhook"), "/"),
+		"method": r.Method,
+		// The author's path, not the opaque route the URL carries. A workflow
+		// reading $json.path wants the endpoint it configured — "orders" —
+		// and putting a minted route there would both break every such
+		// expression and leak the route into workflow data.
+		"path":    binding.Path,
 		"headers": headers,
 		"query":   query,
 		"body":    decoded,
@@ -460,4 +486,46 @@ func Extract(nodeType string, normalizePath func(string) string) repository.Webh
 		}
 		return triggers
 	}
+}
+
+// deliveryIdentifier reads the sender's own identifier for this delivery.
+//
+// The header is named by the trigger, because every sender uses a different
+// one — WAHA sends X-Webhook-Request-Id, Telegram and others their own. When
+// the trigger names none, or the sender omits it, the request is never deduped:
+// the only content-based alternative would be hashing the body, and two
+// genuinely identical messages sent twice by a user are not a duplicate
+// delivery.
+func deliveryIdentifier(r *http.Request, binding repository.WebhookBinding) string {
+	header, _ := binding.Parameters["deliveryIdHeader"].(string)
+	header = strings.TrimSpace(header)
+	if header == "" {
+		return ""
+	}
+	return strings.TrimSpace(r.Header.Get(header))
+}
+
+// answerDuplicate replies to a repeated delivery without running the workflow
+// again.
+//
+// When the original execution is known and finished, its outcome is mirrored,
+// so a retrying sender sees the same answer it would have seen had its first
+// attempt not timed out. When it is still running — or the winner had not yet
+// recorded it — the honest answer is that the delivery was accepted, because it
+// was.
+func (handler *Handler) answerDuplicate(w http.ResponseWriter, r *http.Request, binding repository.WebhookBinding, executionID string) {
+	if executionID != "" && handler.runner != nil {
+		if record, err := handler.runner.Get(r.Context(), repository.TenantScope{ID: binding.TenantID}, executionID); err == nil {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"executionId": record.ID,
+				"status":      string(record.Status),
+				"duplicate":   true,
+			})
+			return
+		}
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"executionId": executionID,
+		"duplicate":   true,
+	})
 }
