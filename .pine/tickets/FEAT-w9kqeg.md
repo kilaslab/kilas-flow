@@ -1,7 +1,7 @@
 ---
 id: FEAT-w9kqeg
 title: Widen the n8n reference checkout and vendor the WAHA OpenAPI spec
-status: todo
+status: done
 priority: high
 labels:
     - reference
@@ -24,14 +24,14 @@ Separately, this ticket vendors the WAHA OpenAPI documents. `github.com/devlikea
 
 ## Acceptance criteria
 
-- [ ] `packages/@n8n/nodes-langchain`, `packages/core/src/nodes-loader`, `packages/cli/src/modules/community-packages`, `packages/@n8n/node-cli` and `packages/@n8n/eslint-plugin-community-nodes` are all materialised on disk, each verified by opening a named file inside it (for example `packages/core/src/nodes-loader/directory-loader.ts`).
-- [ ] The two dead `ParameterInput*.vue` patterns are removed, and every remaining entry in `git sparse-checkout list` resolves to at least one file on disk.
-- [ ] `packages/frontend/editor-ui/src/components` is not added; the NDV parameter components are reached at `packages/frontend/editor-ui/src/features/ndv/parameters/components/`.
-- [ ] No path containing `.ee` exists in the working tree after widening, and `packages/@n8n/ai-workflow-builder.ee` is absent.
-- [ ] The widening happened in place: `git -C …/n8n log -1` still reports the grafted commit `40dfa42`, and `git config remote.origin.partialclonefilter` still reports `blob:none`.
-- [ ] `devlikeapro/n8n-nodes-waha` is cloned outside `/Users/izzadev/projects/k-flow`, and both `openapi.json` documents are committed into this repository together with the upstream MIT licence text and a provenance note naming the repo, the commit and the package version they came from.
-- [ ] The only files this ticket adds to `/Users/izzadev/projects/k-flow` are the two WAHA specs, their licence and provenance note, and this ticket — `git status` proves no n8n-licensed byte entered the repository.
-- [ ] The reference-checkout location, its read-only status and the rule that it is never a build input are written into `.pine/memory/` where an agent will find them, not left in a chat transcript.
+- [x] `packages/@n8n/nodes-langchain`, `packages/core/src/nodes-loader`, `packages/cli/src/modules/community-packages`, `packages/@n8n/node-cli` and `packages/@n8n/eslint-plugin-community-nodes` are all materialised on disk, each verified by opening a named file inside it (for example `packages/core/src/nodes-loader/directory-loader.ts`).
+- [x] The two dead `ParameterInput*.vue` patterns are removed, and every remaining entry in `git sparse-checkout list` resolves to at least one file on disk.
+- [x] `packages/frontend/editor-ui/src/components` is not added; the NDV parameter components are reached at `packages/frontend/editor-ui/src/features/ndv/parameters/components/`.
+- [x] No path containing `.ee` exists in the working tree after widening, and `packages/@n8n/ai-workflow-builder.ee` is absent.
+- [x] The widening happened in place: `git -C …/n8n log -1` still reports the grafted commit `40dfa42`, and `git config remote.origin.partialclonefilter` still reports `blob:none`.
+- [x] `devlikeapro/n8n-nodes-waha` is cloned outside `/Users/izzadev/projects/k-flow`, and both `openapi.json` documents are committed into this repository together with the upstream MIT licence text and a provenance note naming the repo, the commit and the package version they came from.
+- [x] The only files this ticket adds to `/Users/izzadev/projects/k-flow` are the two WAHA specs, their licence and provenance note, and this ticket — `git status` proves no n8n-licensed byte entered the repository.
+- [x] The reference-checkout location, its read-only status and the rule that it is never a build input are written into `.pine/memory/` where an agent will find them, not left in a chat transcript.
 
 ## Implementation Plan
 
@@ -51,3 +51,46 @@ Do not vendor `waha.svg` in this ticket even though it is under the same MIT lic
 - Reference checkout: `/Users/izzadev/projects/mitrachat/n8n` at `40dfa42ced26ba6fe01e511ec685f01ea77c0a83` (n8n 2.34.0), `LICENSE.md` and `LICENSE_EE.md`.
 - `https://github.com/devlikeapro/n8n-nodes-waha` — `package.json` (`@devlikeapro/n8n-nodes-waha` 2025.2.9, MIT), `LICENSE.md`, `nodes/WAHA/v202409/openapi.json`, `nodes/WAHA/v202502/openapi.json`.
 - Git sparse-checkout cone-mode semantics: `git help sparse-checkout`, "CONE PATTERN SET".
+
+## Outcome
+
+Widened in place: 13 cone patterns, 911 → 2102 materialised files at
+`40dfa42` (n8n 2.34.0), `remote.origin.partialclonefilter` still `blob:none`.
+
+All five targets landed and were probed by a named file inside each:
+`packages/@n8n/nodes-langchain` (889), `packages/@n8n/node-cli` (164),
+`packages/@n8n/eslint-plugin-community-nodes` (144),
+`packages/cli/src/modules/community-packages` (25),
+`packages/core/src/nodes-loader` (18, probed at `directory-loader.ts`).
+
+**Three** dead patterns were removed, not two. The ticket named
+`ParameterInput.vue` and `ParameterInputList.vue`; widening exposed a third,
+`packages/frontend/editor-ui/src/app/components/canvas`, which resolves to zero
+files in the tree at 2.34.0. It got the same treatment for the same reason: the
+canvas lives at `packages/frontend/editor-ui/src/features/workflows/canvas` and
+is already materialised by the existing `features/workflows` pattern, so the fix
+is deletion, not a replacement pattern. Every one of the 13 surviving patterns
+now resolves to at least one file on disk.
+
+`packages/frontend/editor-ui/src/components` was not added — the NDV parameter
+components are reached at `features/ndv/parameters/components/`, confirmed
+present. No path containing `.ee` exists in the working tree and
+`packages/@n8n/ai-workflow-builder.ee` is absent.
+
+WAHA was cloned to `/Users/izzadev/projects/mitrachat/n8n-nodes-waha` at
+`b06e8f57ce8da91ed684841d14a3532f6d134712` (`@devlikeapro/n8n-nodes-waha`
+2025.2.9, MIT). Both OpenAPI documents are vendored byte-for-byte under
+`third_party/waha/` with the upstream MIT text as `LICENSE` beside them and a
+`PROVENANCE.md` recording repo, commit, version, upstream paths and per-file
+SHA-256. The two files differ in indentation upstream (202409 spaces, 202502
+tabs); that is preserved, since normalising it would break the digests and the
+generated operation names. 202409 declares 98 operations, 202502 declares 124 —
+the latter matching the operation count the epic attributes to the published
+pack.
+
+The only files this ticket adds to the repository are the two specs, their
+licence, the provenance note and memory updates. No n8n-licensed byte entered
+the tree.
+
+Reference-checkout rules, the cone-mode trap and the vendoring rule were written
+to `.pine/memory/n8n-reference.md` via `pine learn`.
