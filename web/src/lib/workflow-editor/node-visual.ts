@@ -4,6 +4,7 @@ import ArrowDownUp from '@lucide/svelte/icons/arrow-down-up';
 import Archive from '@lucide/svelte/icons/archive';
 import Bot from '@lucide/svelte/icons/bot';
 import Box from '@lucide/svelte/icons/box';
+import CalendarClock from '@lucide/svelte/icons/calendar-clock';
 import CircleHelp from '@lucide/svelte/icons/circle-help';
 import Repeat from '@lucide/svelte/icons/repeat';
 import Scissors from '@lucide/svelte/icons/scissors';
@@ -18,6 +19,7 @@ import Globe from '@lucide/svelte/icons/globe';
 import Merge from '@lucide/svelte/icons/merge';
 import MessageCircle from '@lucide/svelte/icons/message-circle';
 import MousePointerClick from '@lucide/svelte/icons/mouse-pointer-click';
+import Pause from '@lucide/svelte/icons/pause';
 import PencilLine from '@lucide/svelte/icons/pencil-line';
 import Sparkles from '@lucide/svelte/icons/sparkles';
 import Split from '@lucide/svelte/icons/split';
@@ -67,6 +69,7 @@ const GLYPHS: Record<string, Component> = {
 	'arrow-down-up': ArrowDownUp,
 	bot: Bot,
 	box: Box,
+	'calendar-clock': CalendarClock,
 	brain: Sparkles,
 	clock: Clock,
 	code: Code,
@@ -79,6 +82,7 @@ const GLYPHS: Record<string, Component> = {
 	'message-circle': MessageCircle,
 	'memory-stick': Archive,
 	'mouse-pointer-click': MousePointerClick,
+	pause: Pause,
 	pencil: PencilLine,
 	reply: CornerDownLeft,
 	repeat: Repeat,

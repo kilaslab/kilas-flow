@@ -9,6 +9,7 @@ import (
 	"github.com/kilaslabs/kilas-flow/internal/engine"
 	"github.com/kilaslabs/kilas-flow/internal/expression"
 	"github.com/kilaslabs/kilas-flow/internal/node"
+	"github.com/kilaslabs/kilas-flow/internal/scheduler"
 	"github.com/kilaslabs/kilas-flow/internal/workflow"
 )
 
@@ -147,12 +148,23 @@ func scheduleTrigger() node.Definition {
 		Group:       []node.NodeGroup{node.GroupTrigger, node.GroupSchedule},
 		Icon:        &node.NodeIcon{Light: "builtin:clock"},
 		IconColor:   "#8b5cf6",
-		Subtitle:    "{{ $parameter.cron }}",
 		Outputs:     mainOutput(),
 		Parameters: []node.PropertyDefinition{
 			{
-				Key: "cron", Label: "Cron expression", Kind: node.PropertyString, Required: true, Default: "0 * * * *",
-				Description: "Standard five-field cron, evaluated in UTC.",
+				Key: "rule", Label: "Trigger Rules", Kind: node.PropertyFixedCollection,
+				TypeOptions: &node.TypeOptions{MultipleValues: true, MultipleValueButtonText: "Add interval"},
+				Description: "When this workflow runs. Several intervals may be added: \"every weekday at 09:00\" " +
+					"and \"the 1st of the month at 06:00\" are two rules on one trigger, not two triggers. " +
+					"Times are read in the workflow's timezone setting, which defaults to UTC.",
+				Groups: []node.PropertyGroup{{
+					Key: "interval", Label: "Trigger Interval",
+					Fields: scheduleIntervalFields(),
+				}},
+			},
+			{
+				Key: "cron", Label: "Cron expression (legacy)", Kind: node.PropertyString,
+				Description: "Kept for workflows saved before Trigger Rules existed. It is used only when no " +
+					"rule is set; add a Custom (Cron) interval instead.",
 			},
 		},
 		SharedSettings: sharedSettings(),
@@ -210,9 +222,102 @@ func validateRespondConfiguration(node workflow.Node) error {
 	return nil
 }
 
-func validateScheduleConfiguration(node workflow.Node) error {
-	if strings.TrimSpace(textParameter(node.Parameters, "cron")) == "" {
-		return fmt.Errorf("cron is required")
+// scheduleIntervalFields is n8n's interval form, field for field.
+//
+// Each unit's own "every N" field is shown only for that unit, and the
+// trigger-at fields are shared across the units that use them, which is how
+// n8n's own form behaves — so an imported node's stored parameters land in
+// controls with the same names and the user sees what they saw there.
+func scheduleIntervalFields() []node.PropertyDefinition {
+	shownFor := func(fields ...string) []node.VisibilityCondition {
+		conditions := make([]node.VisibilityCondition, 0, len(fields))
+		for _, field := range fields {
+			conditions = append(conditions, node.VisibilityCondition{Key: "field", Equals: field})
+		}
+		return conditions
+	}
+	return []node.PropertyDefinition{
+		{
+			Key: "field", Label: "Trigger Interval", Kind: node.PropertyOptions, Default: scheduler.FieldDays,
+			Options: []node.PropertyOption{
+				{Label: "Seconds", Value: scheduler.FieldSeconds},
+				{Label: "Minutes", Value: scheduler.FieldMinutes},
+				{Label: "Hours", Value: scheduler.FieldHours},
+				{Label: "Days", Value: scheduler.FieldDays},
+				{Label: "Weeks", Value: scheduler.FieldWeeks},
+				{Label: "Months", Value: scheduler.FieldMonths},
+				{Label: "Custom (Cron)", Value: scheduler.FieldCronExpression},
+			},
+		},
+		{
+			Key: "secondsInterval", Label: "Seconds Between Triggers", Kind: node.PropertyNumber, Default: 30,
+			Description: "This server looks for due schedules every " + scheduler.TickResolution.String() +
+				", so an interval shorter than that fires once per check rather than more often.",
+			VisibleWhen: shownFor(scheduler.FieldSeconds),
+		},
+		{
+			Key: "minutesInterval", Label: "Minutes Between Triggers", Kind: node.PropertyNumber, Default: 5,
+			VisibleWhen: shownFor(scheduler.FieldMinutes),
+		},
+		{
+			Key: "hoursInterval", Label: "Hours Between Triggers", Kind: node.PropertyNumber, Default: 1,
+			VisibleWhen: shownFor(scheduler.FieldHours),
+		},
+		{
+			Key: "daysInterval", Label: "Days Between Triggers", Kind: node.PropertyNumber, Default: 1,
+			VisibleWhen: shownFor(scheduler.FieldDays),
+		},
+		{
+			Key: "weeksInterval", Label: "Weeks Between Triggers", Kind: node.PropertyNumber, Default: 1,
+			VisibleWhen: shownFor(scheduler.FieldWeeks),
+		},
+		{
+			Key: "monthsInterval", Label: "Months Between Triggers", Kind: node.PropertyNumber, Default: 1,
+			VisibleWhen: shownFor(scheduler.FieldMonths),
+		},
+		{
+			Key: "triggerAtDayOfMonth", Label: "Trigger at Day of Month", Kind: node.PropertyNumber, Default: 1,
+			Description: "1 to 31. A month without that day is skipped rather than moved.",
+			VisibleWhen: shownFor(scheduler.FieldMonths),
+		},
+		{
+			Key: "triggerAtDay", Label: "Trigger on Weekdays", Kind: node.PropertyMultiOptions, Default: []any{float64(0)},
+			Options: []node.PropertyOption{
+				{Label: "Sunday", Value: "0"}, {Label: "Monday", Value: "1"}, {Label: "Tuesday", Value: "2"},
+				{Label: "Wednesday", Value: "3"}, {Label: "Thursday", Value: "4"}, {Label: "Friday", Value: "5"},
+				{Label: "Saturday", Value: "6"},
+			},
+			VisibleWhen: shownFor(scheduler.FieldWeeks),
+		},
+		{
+			Key: "triggerAtHour", Label: "Trigger at Hour", Kind: node.PropertyNumber, Default: 0,
+			Description: "0 to 23, in the workflow's timezone.",
+			VisibleWhen: shownFor(scheduler.FieldDays, scheduler.FieldWeeks, scheduler.FieldMonths),
+		},
+		{
+			Key: "triggerAtMinute", Label: "Trigger at Minute", Kind: node.PropertyNumber, Default: 0,
+			Description: "0 to 59.",
+			VisibleWhen: shownFor(scheduler.FieldHours, scheduler.FieldDays, scheduler.FieldWeeks, scheduler.FieldMonths),
+		},
+		{
+			Key: "expression", Label: "Expression", Kind: node.PropertyString, Default: "0 * * * *",
+			Description: "Five-field cron, or six with a leading seconds field.",
+			VisibleWhen: shownFor(scheduler.FieldCronExpression),
+		},
+	}
+}
+
+func validateScheduleConfiguration(n workflow.Node) error {
+	intervals := scheduler.NodeIntervals(n.Parameters)
+	if len(intervals) == 0 {
+		return fmt.Errorf("a schedule needs at least one trigger rule")
+	}
+	for index, interval := range intervals {
+		if err := interval.Validate(); err != nil {
+			// Numbered from one and named by unit, because a rule with four
+			// intervals gives "interval 3" nothing to match against otherwise.
+			return fmt.Errorf("trigger rule %d (%s): %w", index+1, interval.Field, err)
+		}
 	}
 	return nil
 }

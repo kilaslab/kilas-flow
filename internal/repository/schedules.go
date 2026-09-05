@@ -18,13 +18,39 @@ type Schedule struct {
 	TenantID   string
 	WorkflowID string
 	NodeID     string
-	Cron       string
-	Active     bool
-	LastRunAt  *time.Time
-	NextRunAt  *time.Time
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	// IntervalIndex names which of the trigger node's intervals this row is.
+	IntervalIndex int
+	Cron          string
+	// Timezone is the IANA zone the cron is read in. Empty means UTC.
+	Timezone  string
+	Active    bool
+	LastRunAt *time.Time
+	NextRunAt *time.Time
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
+
+// ScheduleTrigger is one interval of one Schedule Trigger node, as an
+// activation needs to store it.
+//
+// One of these per interval rather than one per node: a rule holding "every
+// weekday at 09:00 and again at 17:00" is two rows, which keeps ClaimDue's
+// transactional claim exactly as it was — one row, one NextRunAt, one advance.
+type ScheduleTrigger struct {
+	NodeID        string
+	IntervalIndex int
+	Cron          string
+	// Timezone is the IANA zone the cron is read in. Empty means UTC.
+	Timezone string
+}
+
+// ScheduleExtractor pulls the schedule triggers out of a document.
+//
+// Injected for the same reason WebhookExtractor is: the repository stays free
+// of node-type knowledge, while the rows still land inside the activation
+// transaction, so there is never a moment where a workflow is active and its
+// schedule does not exist.
+type ScheduleExtractor func(workflow.Document) []ScheduleTrigger
 
 // DueSchedule pairs a due schedule with the workflow revision it must run.
 type DueSchedule struct {
@@ -70,8 +96,9 @@ func (store *GORMScheduleStore) Create(ctx context.Context, tenant TenantScope, 
 	now := time.Now().UTC()
 	model := scheduleModel{
 		ID: id, TenantID: tenant.ID, WorkflowID: schedule.WorkflowID, NodeID: schedule.NodeID,
-		Cron: strings.TrimSpace(schedule.Cron), Active: schedule.Active,
-		NextRunAt: schedule.NextRunAt, CreatedAt: now, UpdatedAt: now,
+		IntervalIndex: schedule.IntervalIndex,
+		Cron:          strings.TrimSpace(schedule.Cron), Timezone: strings.TrimSpace(schedule.Timezone),
+		Active: schedule.Active, NextRunAt: schedule.NextRunAt, CreatedAt: now, UpdatedAt: now,
 	}
 	if err := store.db.WithContext(ctx).Create(&model).Error; err != nil {
 		return Schedule{}, fmt.Errorf("create schedule: %w", err)
@@ -91,6 +118,7 @@ func (store *GORMScheduleStore) Update(ctx context.Context, tenant TenantScope, 
 	if strings.TrimSpace(schedule.Cron) != "" {
 		model.Cron = strings.TrimSpace(schedule.Cron)
 	}
+	model.Timezone = strings.TrimSpace(schedule.Timezone)
 	model.Active = schedule.Active
 	model.NextRunAt = schedule.NextRunAt
 	model.UpdatedAt = time.Now().UTC()
@@ -131,6 +159,14 @@ func (store *GORMScheduleStore) Delete(ctx context.Context, tenant TenantScope, 
 	return nil
 }
 
+// maximumCatchUpSteps bounds how far ClaimDue will skip forward over
+// occurrences that are already past.
+//
+// A bound rather than a loop to completion: a one-second schedule and a week of
+// downtime is six hundred thousand steps, and a scheduler tick that takes a
+// minute to compute is worse than one that catches up over a few ticks.
+const maximumCatchUpSteps = 512
+
 // ClaimDue advances every due schedule and returns what to run.
 //
 // The read, the due check, and the advance all happen inside one transaction
@@ -163,9 +199,28 @@ func (store *GORMScheduleStore) ClaimDue(ctx context.Context, now time.Time, nex
 				continue
 			}
 			dueAt := *model.NextRunAt
-			following, err := next(model.Cron, dueAt)
+			// The zone is applied here rather than stored in the expression,
+			// so `0 9 * * *` still reads back as the user wrote it while
+			// meaning nine in the morning where they are.
+			spec := model.Cron
+			if model.Timezone != "" {
+				spec = "TZ=" + model.Timezone + " " + spec
+			}
+			following, err := next(spec, dueAt)
 			if err != nil {
 				return fmt.Errorf("schedule %q cron: %w", model.ID, err)
+			}
+			// Skip past anything already in the past. A schedule finer than
+			// the scheduler's tick, or one whose process was down for a day,
+			// would otherwise accumulate a backlog and spend hours firing
+			// stale occurrences — which is never what "every five minutes"
+			// meant. One run now, then the ordinary cadence.
+			for guard := 0; guard < maximumCatchUpSteps && !following.After(now); guard++ {
+				skipped, err := next(spec, following)
+				if err != nil {
+					return fmt.Errorf("schedule %q cron: %w", model.ID, err)
+				}
+				following = skipped
 			}
 			if err := tx.Model(&scheduleModel{}).Where("id = ?", model.ID).
 				Updates(map[string]any{"last_run_at": dueAt, "next_run_at": following, "updated_at": now}).Error; err != nil {
@@ -187,10 +242,75 @@ func (store *GORMScheduleStore) ClaimDue(ctx context.Context, now time.Time, nex
 	return claimed, nil
 }
 
+// syncSchedules makes a workflow's schedule rows match its document.
+//
+// Rows are replaced rather than reconciled in place. A schedule's identity is
+// its node and interval index, and both can move when a rule is edited — an
+// interval deleted from the middle renumbers everything after it — so matching
+// old rows to new ones would be guesswork. What is deliberately preserved is
+// nothing: a re-activated schedule starts from its next occurrence, which is
+// the same answer a user gets from any cron daemon after a restart.
+//
+// A schedule created by hand through the API for a node this document does not
+// declare is left alone, because it was never this document's to own.
+func syncSchedules(tx *gorm.DB, tenantID, workflowID string, triggers []ScheduleTrigger, next func(string, time.Time) (time.Time, error)) error {
+	if err := removeSchedules(tx, tenantID, workflowID, triggers); err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	for _, trigger := range triggers {
+		if strings.TrimSpace(trigger.Cron) == "" {
+			continue
+		}
+		spec := trigger.Cron
+		if trigger.Timezone != "" {
+			spec = "TZ=" + trigger.Timezone + " " + spec
+		}
+		firstRun, err := next(spec, now)
+		if err != nil {
+			return fmt.Errorf("schedule for node %q: %w", trigger.NodeID, err)
+		}
+		id, err := workflow.NewID("sched")
+		if err != nil {
+			return err
+		}
+		row := scheduleModel{
+			ID: id, TenantID: tenantID, WorkflowID: workflowID, NodeID: trigger.NodeID,
+			IntervalIndex: trigger.IntervalIndex, Cron: trigger.Cron, Timezone: trigger.Timezone,
+			Active: true, NextRunAt: &firstRun, CreatedAt: now, UpdatedAt: now,
+		}
+		if err := tx.Create(&row).Error; err != nil {
+			return fmt.Errorf("create schedule for node %q: %w", trigger.NodeID, err)
+		}
+	}
+	return nil
+}
+
+// removeSchedules drops the rows this document owns.
+//
+// "Owns" means a row whose node is one of the document's schedule triggers, or
+// — when the document has none — every row for the workflow. A row for some
+// other node came from the schedules API and is not activation's to delete.
+func removeSchedules(tx *gorm.DB, tenantID, workflowID string, triggers []ScheduleTrigger) error {
+	query := tx.Where("tenant_id = ? AND workflow_id = ?", tenantID, workflowID)
+	if len(triggers) > 0 {
+		nodeIDs := make([]string, 0, len(triggers))
+		for _, trigger := range triggers {
+			nodeIDs = append(nodeIDs, trigger.NodeID)
+		}
+		query = query.Where("node_id IN ?", nodeIDs)
+	}
+	if err := query.Delete(&scheduleModel{}).Error; err != nil {
+		return fmt.Errorf("clear schedules: %w", err)
+	}
+	return nil
+}
+
 func scheduleFromModel(model scheduleModel) Schedule {
 	return Schedule{
 		ID: model.ID, TenantID: model.TenantID, WorkflowID: model.WorkflowID, NodeID: model.NodeID,
-		Cron: model.Cron, Active: model.Active, LastRunAt: model.LastRunAt, NextRunAt: model.NextRunAt,
+		IntervalIndex: model.IntervalIndex, Cron: model.Cron, Timezone: model.Timezone,
+		Active: model.Active, LastRunAt: model.LastRunAt, NextRunAt: model.NextRunAt,
 		CreatedAt: model.CreatedAt, UpdatedAt: model.UpdatedAt,
 	}
 }

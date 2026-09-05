@@ -70,7 +70,7 @@ nor blocked actually failed to execute.
 | `waha-templates/send-custom-http-request-to-waha/template` | waha-templates | 8 | yes | no | no | node "052ad79c-4c69-41fe-baf5-b6e609f663ca" requires a wahaApi credential |
 | `waha-templates/send-qr-code-to-email/template` | waha-templates | 9 | yes | no | no | node "05513103-49fc-4324-80ea-5e86b61f3272" configuration is invalid: this node was imported from n8n-nodes-base.convertToFile, which KilasFlow does not supp… |
 | `waha-templates/waha-trigger-explanation/template` | waha-templates | 6 | yes | no | no | node "d965e045-faab-44d2-982c-dd9be8c58c06" requires a wahaApi credential |
-| `waha-templates/whatsapp-typebot/template` | waha-templates | 42 | yes | no | no | node "6adb377a-249c-421d-9259-47a477fa91e8" configuration is invalid: this node was imported from n8n-nodes-base.wait, which KilasFlow does not support. Repl… |
+| `waha-templates/whatsapp-typebot/template` | waha-templates | 42 | yes | no | no | node "259a1703-699b-4673-948c-cf21b7684667" requires a wahaApi credential |
 
 ## Node type inventory
 

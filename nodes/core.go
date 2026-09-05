@@ -44,6 +44,8 @@ func RegisterAll(registry *node.Registry) error {
 		sortNode(),
 		summarizeNode(),
 		removeDuplicatesNode(),
+		dateTimeNode(),
+		waitNode(),
 	} {
 		if err := registry.Register(definition); err != nil {
 			return err

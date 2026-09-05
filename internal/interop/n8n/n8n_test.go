@@ -283,8 +283,15 @@ func TestImportSQL(t *testing.T) {
 	result := importFixture(t, sqlFixture)
 
 	schedule := nodeByName(result.Document, "Schedule Trigger")
-	if schedule.Parameters["cron"] != "0 9 * * 1-5" {
-		t.Errorf("cron = %#v, want the n8n cron expression carried", schedule.Parameters["cron"])
+	// The rule shape is identical on both sides, so a cron interval is carried
+	// as the interval it is rather than flattened into a single string.
+	rule, _ := schedule.Parameters["rule"].(map[string]any)
+	intervals, _ := rule["interval"].([]any)
+	if len(intervals) != 1 {
+		t.Fatalf("rule = %#v, want the one interval carried", schedule.Parameters["rule"])
+	}
+	if first, _ := intervals[0].(map[string]any); first["expression"] != "0 9 * * 1-5" {
+		t.Errorf("interval = %#v, want the n8n cron expression carried", intervals[0])
 	}
 
 	postgres := nodeByName(result.Document, "Postgres")
@@ -1503,7 +1510,7 @@ func TestSeverityDistinguishesBlockingFromDropped(t *testing.T) {
 	    {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}},
 	    {"id":"b","name":"Odd","type":"n8n-nodes-base.someUnmappedThing","typeVersion":1,"position":[220,0],"parameters":{}},
 	    {"id":"c","name":"Cron","type":"n8n-nodes-base.scheduleTrigger","typeVersion":1.2,"position":[440,0],
-	     "parameters":{"rule":{"interval":[{"field":"seconds","secondsInterval":30}]}}}
+	     "parameters":{"rule":{"interval":[{"field":"weeks","weeksInterval":2,"triggerAtDay":[1],"triggerAtHour":9}]}}}
 	  ],
 	  "connections": {"Manual": {"main": [[{"node":"Odd","type":"main","index":0}]]}}
 	}`
@@ -1523,8 +1530,12 @@ func TestSeverityDistinguishesBlockingFromDropped(t *testing.T) {
 	if counts[n8n.SeverityDropped] == 0 {
 		t.Errorf("no dropped issue for pinData: %#v", result.Unsupported)
 	}
+	// Every fortnight has no cron equivalent, so it is imported as every week
+	// and the difference is stated. An interval cron *can* express — every 30
+	// seconds, every Monday — is carried exactly and says nothing, which is why
+	// this fixture uses the one that cannot be.
 	if counts[n8n.SeverityLossy] == 0 {
-		t.Errorf("no lossy issue for the schedule interval that had to be reshaped: %#v", result.Unsupported)
+		t.Errorf("no lossy issue for the schedule interval with no cron equivalent: %#v", result.Unsupported)
 	}
 
 	// The blocking one is the node that cannot run, and it names the node.
@@ -2292,5 +2303,118 @@ func TestRemoveDuplicatesAcrossExecutionsIsNamedOnImport(t *testing.T) {
 	// cannot run at all.
 	if got := nodeByName(result.Document, "Dedupe").Parameters["operation"]; got != "removeDuplicateInputItems" {
 		t.Errorf("operation = %#v, want the local form", got)
+	}
+}
+
+func TestTheTimeFamilyImportsAndExports(t *testing.T) {
+	t.Parallel()
+
+	const fixture = `{
+	  "name": "Time family",
+	  "nodes": [
+	    {"id":"a","name":"Every weekday and evening","type":"n8n-nodes-base.scheduleTrigger","typeVersion":1.2,"position":[0,0],
+	     "parameters":{"rule":{"interval":[
+	       {"field":"days","daysInterval":1,"triggerAtHour":9,"triggerAtMinute":0},
+	       {"field":"cronExpression","expression":"0 17 * * 1-5"}]}}},
+	    {"id":"b","name":"Thirty days ago","type":"n8n-nodes-base.dateTime","typeVersion":2,"position":[220,0],
+	     "parameters":{"operation":"subtractFromDate","magnitude":"={{ $json.created }}","duration":30,
+	                   "timeUnit":"days","outputFieldName":"since","options":{"timezone":"Asia/Jakarta"}}},
+	    {"id":"c","name":"Breathe","type":"n8n-nodes-base.wait","typeVersion":1.1,"position":[440,0],
+	     "parameters":{"resume":"timeInterval","amount":5,"unit":"minutes"}}
+	  ],
+	  "connections": {"Every weekday and evening": {"main": [[{"node":"Thirty days ago","type":"main","index":0}]]},
+	                  "Thirty days ago": {"main": [[{"node":"Breathe","type":"main","index":0}]]}}
+	}`
+
+	result := importFixture(t, fixture)
+	for _, issue := range result.Unsupported {
+		if issue.Severity == n8n.SeverityBlocking {
+			t.Errorf("a blocking issue for a family that is now mapped: %#v", issue)
+		}
+	}
+
+	// Both intervals survive. The old importer returned on the first one
+	// carrying a cron expression, so this workflow would have arrived running
+	// only in the evening.
+	schedule := nodeByName(result.Document, "Every weekday and evening")
+	rule, _ := schedule.Parameters["rule"].(map[string]any)
+	intervals, _ := rule["interval"].([]any)
+	if len(intervals) != 2 {
+		t.Fatalf("intervals = %#v, want both carried", rule["interval"])
+	}
+
+	date := nodeByName(result.Document, "Thirty days ago")
+	if date.Type != n8n.DateTimeNodeType {
+		t.Fatalf("date node = %q, want it mapped rather than a placeholder", date.Type)
+	}
+	if date.Parameters["operation"] != "subtractFromDate" || date.Parameters["outputField"] != "since" {
+		t.Errorf("date parameters = %#v, want the operation and output field carried", date.Parameters)
+	}
+	if date.Parameters["unit"] != "days" || date.Parameters["timezone"] != "Asia/Jakarta" {
+		t.Errorf("date parameters = %#v, want the unit and zone carried", date.Parameters)
+	}
+
+	wait := nodeByName(result.Document, "Breathe")
+	if wait.Type != n8n.WaitNodeType || wait.Parameters["unit"] != "minutes" {
+		t.Errorf("wait node = %#v, want a mapped five-minute wait", wait)
+	}
+
+	// And back out again.
+	exported, err := n8n.Export(result.Document, registry(t))
+	if err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+	for _, node := range exported.Document.Nodes {
+		switch node.Name {
+		case "Every weekday and evening":
+			if node.Type != "n8n-nodes-base.scheduleTrigger" {
+				t.Errorf("exported schedule type = %q", node.Type)
+			}
+			exportedRule, _ := node.Parameters["rule"].(map[string]any)
+			if entries, _ := exportedRule["interval"].([]any); len(entries) != 2 {
+				t.Errorf("exported intervals = %#v, want both", exportedRule["interval"])
+			}
+		case "Thirty days ago":
+			if node.Type != "n8n-nodes-base.dateTime" || node.Parameters["timeUnit"] != "days" {
+				t.Errorf("exported date node = %#v", node.Parameters)
+			}
+		case "Breathe":
+			if node.Type != "n8n-nodes-base.wait" || node.Parameters["unit"] != "minutes" {
+				t.Errorf("exported wait node = %#v", node.Parameters)
+			}
+		}
+	}
+}
+
+func TestAWaitThatNeedsDurableSuspensionIsBlockingRatherThanRewritten(t *testing.T) {
+	t.Parallel()
+
+	const fixture = `{
+	  "name": "Approval",
+	  "nodes": [
+	    {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}},
+	    {"id":"b","name":"Wait for approval","type":"n8n-nodes-base.wait","typeVersion":1.1,"position":[220,0],
+	     "parameters":{"resume":"webhook"}}
+	  ],
+	  "connections": {"Manual": {"main": [[{"node":"Wait for approval","type":"main","index":0}]]}}
+	}`
+
+	result := importFixture(t, fixture)
+
+	// Rewriting it to a time interval would produce a workflow that activates,
+	// runs, and quietly does the wrong thing. Blocking says what is missing and
+	// what to do instead.
+	blocking := false
+	for _, issue := range result.Unsupported {
+		if issue.Severity == n8n.SeverityBlocking && strings.Contains(issue.Reason, "Webhook trigger") {
+			blocking = true
+		}
+	}
+	if !blocking {
+		t.Fatalf("unsupported = %#v, want a blocking issue naming the alternative", result.Unsupported)
+	}
+	wait := nodeByName(result.Document, "Wait for approval")
+	if wait.Parameters["resume"] != "webhook" {
+		t.Errorf("resume = %#v, want the workflow's own answer kept rather than rewritten", wait.Parameters["resume"])
 	}
 }

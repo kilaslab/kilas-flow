@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 )
 
 // Catalog supplies node metadata to the compiler. The later node registry
@@ -203,6 +204,13 @@ func Compile(document Document, catalog Catalog) (IR, error) {
 	}
 
 	issues := &ValidationErrors{}
+	if err := validateDocumentTimezone(document.Settings); err != nil {
+		issues.add(ValidationError{
+			Code:    ErrorInvalidConfig,
+			Path:    "/settings/timezone",
+			Message: err.Error(),
+		})
+	}
 	if len(document.Nodes) == 0 {
 		issues.add(ValidationError{
 			Code:    ErrorInvalidTopology,
@@ -718,6 +726,33 @@ const MaxLoopIterations = 10_000
 // MaxRetryWaitMilliseconds bounds `waitBetweenTries`, so a node cannot hold an
 // execution slot open for the better part of an hour between attempts.
 const MaxRetryWaitMilliseconds = 300_000
+
+// validateDocumentTimezone checks the zone a workflow's schedules are read in.
+//
+// Refused at compile time rather than discovered when a schedule fires, because
+// a bad zone name is silent otherwise: the trigger would fall back to UTC and
+// run at the wrong hour every day, which is the kind of wrongness people
+// attribute to anything but a typo in a settings field.
+func validateDocumentTimezone(settings map[string]any) error {
+	value, present := settings["timezone"]
+	if !present || value == nil {
+		return nil
+	}
+	name, ok := value.(string)
+	if !ok {
+		return fmt.Errorf("timezone must be an IANA zone name such as UTC or Asia/Jakarta")
+	}
+	if strings.TrimSpace(name) == "" {
+		return nil
+	}
+	if strings.EqualFold(strings.TrimSpace(name), "Local") {
+		return fmt.Errorf("timezone %q depends on where this server runs; name a zone such as UTC or Asia/Jakarta", name)
+	}
+	if _, err := time.LoadLocation(strings.TrimSpace(name)); err != nil {
+		return fmt.Errorf("timezone %q is not a known IANA zone name", name)
+	}
+	return nil
+}
 
 // validateSharedSettings checks the settings every node declares.
 //

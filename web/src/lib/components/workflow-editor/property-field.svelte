@@ -3,6 +3,8 @@
 	import X from '@lucide/svelte/icons/x';
 
 	import type { PropertyDefinition } from '$lib/api/generated/models';
+	// Self-import rather than <svelte:self>, which Svelte 5 deprecates.
+	import PropertyField from './property-field.svelte';
 	import { renameKeyValue } from '$lib/workflow-editor/key-value';
 	import {
 		ASSIGNMENT_TYPES,
@@ -14,6 +16,13 @@
 		type AssignmentType
 	} from '$lib/workflow-editor/assignments';
 	import { expressionRoots, unknownExpressionRoot } from '$lib/workflow-editor/expression-grammar';
+	import {
+		groupEntries,
+		newGroupEntry,
+		repeatedGroup,
+		visibleGroupFields,
+		writeGroupEntries
+	} from '$lib/workflow-editor/fixed-collection';
 	import { asExpression, asFixed, expressionTemplate, isExpression } from '$lib/workflow-editor/parameter';
 
 	let {
@@ -55,6 +64,28 @@
 	]);
 
 	const typeOptions = $derived(property.typeOptions ?? {});
+
+	/** The one group of a repeatable fixedCollection, when the property is one. */
+	const group = $derived(repeatedGroup(property));
+	const entries = $derived(group ? groupEntries(group, value) : []);
+
+	function commitEntries(next: Record<string, unknown>[]): void {
+		if (!group) return;
+		onChange(writeGroupEntries(group, value, next));
+	}
+
+	function addGroupEntry(): void {
+		if (!group) return;
+		commitEntries([...entries, newGroupEntry(group)]);
+	}
+
+	function removeGroupEntry(index: number): void {
+		commitEntries(entries.filter((_, position) => position !== index));
+	}
+
+	function updateGroupEntry(index: number, key: string, next: unknown): void {
+		commitEntries(entries.map((entry, position) => (position === index ? { ...entry, [key]: next } : entry)));
+	}
 
 	/**
 	 * Options for a property whose valid values live on the customer's own
@@ -242,10 +273,40 @@
 				</label>
 			{/each}
 		</div>
+	{:else if property.kind === 'fixedCollection' && group}
+		<!-- A repeatable named group — a Schedule Trigger's rules, an HTTP
+		     node's query pairs. Rendered as real controls rather than a JSON
+		     textarea, because the whole point of the shape is that the user
+		     does not have to know what it serialises to. -->
+		<div class="grid gap-1.5 rounded-md border border-input p-1.5">
+			{#each entries as entry, index (index)}
+				<div class="grid gap-1 rounded border border-border/70 p-1.5">
+					<div class="flex items-center justify-between">
+						<span class="text-[0.6875rem] font-medium text-muted-foreground">{group.label} {index + 1}</span>
+						<button type="button" aria-label={`Remove ${group.label} ${index + 1}`} class="grid size-6 place-items-center rounded text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive" onclick={() => removeGroupEntry(index)}>
+							<X aria-hidden="true" class="size-3.5" />
+						</button>
+					</div>
+					{#each visibleGroupFields(group, entry) as field (field.key)}
+						<!-- Self-recursion: a nested field is just another
+						     property, so it gets the same control the top level
+						     would give it, including its own nesting. -->
+						<PropertyField
+							property={field}
+							value={entry[field.key] ?? field.default}
+							onChange={(next: unknown) => updateGroupEntry(index, field.key, next)}
+							{loadOptions}
+						/>
+					{/each}
+				</div>
+			{/each}
+			<button type="button" class="inline-flex h-6 items-center gap-1 justify-self-start rounded border border-border px-1.5 text-[0.6875rem] transition-colors hover:bg-muted" onclick={addGroupEntry}>
+				<Plus aria-hidden="true" class="size-3" />{typeOptions.multipleValueButtonText || `Add ${group.label}`}
+			</button>
+		</div>
 	{:else if property.kind === 'collection' || property.kind === 'fixedCollection'}
-		<!-- Nested groups are rendered by the panel that owns them; this field
-		     shows what is configured without pretending to edit a shape it does
-		     not yet have an editor for. -->
+		<!-- Everything else nested: shown as what is configured without
+		     pretending to edit a shape there is no control for yet. -->
 		<div class="grid gap-1 rounded-md border border-dashed border-input p-1.5 text-[0.6875rem] text-muted-foreground">
 			<span>{(property.fields ?? []).length || (property.groups ?? []).length} nested field(s)</span>
 			<textarea aria-label={`${property.label} value`} value={stringValue} spellcheck="false" rows={3} class="rounded border border-input bg-background px-1.5 py-1 font-mono text-[0.6875rem]" oninput={(event) => onChange(event.currentTarget.value)}></textarea>

@@ -490,3 +490,68 @@ func TestRoutingRootsAreNotAdvertisedToTheEditor(t *testing.T) {
 		}
 	}
 }
+
+func TestABracketKeyMayBeSingleQuoted(t *testing.T) {
+	t.Parallel()
+
+	// The keys that need bracket access at all are the ones with spaces and
+	// dashes in them — a Schedule Trigger emits `Day of week`, an API sends
+	// `content-type` — and an author writes those in single quotes, as
+	// JavaScript does. strconv.Unquote reads '…' as a Go rune literal, so it
+	// accepted 'a' and refused 'Day of week', which made every one of those
+	// expressions fail with a message about quoting.
+	for name, testCase := range map[string]struct {
+		body string
+		json map[string]any
+		want any
+	}{
+		"a key with spaces": {
+			body: "{{ $json['Day of week'] }}",
+			json: map[string]any{"Day of week": "Saturday"},
+			want: "Saturday",
+		},
+		"a key with a dash": {
+			body: "{{ $json['content-type'] }}",
+			json: map[string]any{"content-type": "application/json"},
+			want: "application/json",
+		},
+		"double quotes still work": {
+			body: `{{ $json["Day of week"] }}`,
+			json: map[string]any{"Day of week": "Saturday"},
+			want: "Saturday",
+		},
+		"a single character is a key, not a rune": {
+			body: "{{ $json['a'] }}",
+			json: map[string]any{"a": float64(1)},
+			want: float64(1),
+		},
+		"an escaped quote inside": {
+			body: `{{ $json['it\'s'] }}`,
+			json: map[string]any{"it's": "yes"},
+			want: "yes",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			resolved, err := expression.Resolve(
+				map[string]any{"x": map[string]any{"mode": "expression", "value": testCase.body}},
+				expression.Context{JSON: testCase.json})
+			if err != nil {
+				t.Fatalf("Resolve(%q) error = %v", testCase.body, err)
+			}
+			if resolved["x"] != testCase.want {
+				t.Errorf("Resolve(%q) = %#v, want %#v", testCase.body, resolved["x"], testCase.want)
+			}
+		})
+	}
+
+	// An index is still an index, and something that is neither is still an
+	// error rather than a key spelled oddly.
+	for _, body := range []string{"{{ $json[oops] }}", "{{ $json['a'b'] }}"} {
+		_, err := expression.Resolve(
+			map[string]any{"x": map[string]any{"mode": "expression", "value": body}},
+			expression.Context{JSON: map[string]any{}})
+		if err == nil {
+			t.Errorf("Resolve(%q) accepted an index that is neither a number nor a quoted key", body)
+		}
+	}
+}

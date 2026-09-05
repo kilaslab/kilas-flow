@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -49,6 +50,13 @@ type GORMWorkflowStore struct {
 	// binding sync can happen inside the activation transaction without the
 	// repository knowing any node type.
 	webhooks WebhookExtractor
+	// schedules extracts schedule triggers from a document, and next computes
+	// a cron's first run. Together they are why activating a workflow with a
+	// Schedule Trigger makes it fire: before them a schedule row existed only
+	// if somebody called the schedules API by hand, so an imported
+	// schedule-driven workflow activated cleanly and then never ran.
+	schedules ScheduleExtractor
+	next      func(string, time.Time) (time.Time, error)
 }
 
 var _ WorkflowRepository = (*GORMWorkflowStore)(nil)
@@ -63,6 +71,18 @@ func NewWorkflowStore(db *gorm.DB) *GORMWorkflowStore {
 // routable, which is the correct behaviour for a build with no webhook nodes.
 func (store *GORMWorkflowStore) WithWebhooks(extract WebhookExtractor) *GORMWorkflowStore {
 	store.webhooks = extract
+	return store
+}
+
+// WithSchedules returns a store that keeps schedule rows in step with
+// activation. Both arguments are required together: an extractor with no way to
+// compute a first run could only write rows that never become due.
+func (store *GORMWorkflowStore) WithSchedules(extract ScheduleExtractor, next func(string, time.Time) (time.Time, error)) *GORMWorkflowStore {
+	if extract == nil || next == nil {
+		return store
+	}
+	store.schedules = extract
+	store.next = next
 	return store
 }
 
@@ -250,6 +270,11 @@ func (store *GORMWorkflowStore) Activate(ctx context.Context, tenant TenantScope
 				return err
 			}
 		}
+		if store.schedules != nil {
+			if err := syncSchedules(tx, tenant.ID, model.ID, store.schedules(storedVersion.Document), store.next); err != nil {
+				return err
+			}
+		}
 		return nil
 	})
 	if err != nil {
@@ -274,7 +299,20 @@ func (store *GORMWorkflowStore) Deactivate(ctx context.Context, tenant TenantSco
 			}
 			// Dropping the bindings with the same commit is what makes the
 			// endpoint stop answering the instant the workflow is inactive.
-			return removeWebhookBindings(tx, tenant.ID, workflowID)
+			if err := removeWebhookBindings(tx, tenant.ID, workflowID); err != nil {
+				return err
+			}
+			if store.schedules == nil {
+				return nil
+			}
+			// The document, not an empty list: deactivation removes the rows
+			// this workflow's own triggers own and leaves any created through
+			// the schedules API, which activation never claimed either.
+			active, err := store.activeDocument(tx, tenant, workflowID)
+			if err != nil {
+				return err
+			}
+			return removeSchedules(tx, tenant.ID, workflowID, store.schedules(active))
 		}); err != nil {
 			return workflow.StoredWorkflow{}, err
 		}
@@ -345,6 +383,32 @@ func (tenant TenantScope) validate() error {
 		return fmt.Errorf("tenant scope is required")
 	}
 	return nil
+}
+
+// activeDocument loads the document a workflow is currently active on.
+//
+// Deactivation needs it to know which schedule rows this workflow's own
+// triggers own, as against rows somebody created through the schedules API for
+// a node the document does not declare. A workflow with no active version
+// returns an empty document, which owns nothing — and so removes nothing.
+func (store *GORMWorkflowStore) activeDocument(tx *gorm.DB, tenant TenantScope, workflowID string) (workflow.Document, error) {
+	var model workflowModel
+	if err := tx.Where("tenant_id = ? AND id = ?", tenant.ID, workflowID).First(&model).Error; err != nil {
+		return workflow.Document{}, mapNotFound(err, "workflow")
+	}
+	if model.ActiveVersionID == nil {
+		return workflow.Document{}, nil
+	}
+	var versionModel workflowVersionModel
+	if err := tx.Where("tenant_id = ? AND workflow_id = ? AND id = ?", tenant.ID, workflowID, *model.ActiveVersionID).
+		First(&versionModel).Error; err != nil {
+		return workflow.Document{}, mapNotFound(err, "workflow version")
+	}
+	version, err := versionFromModel(versionModel)
+	if err != nil {
+		return workflow.Document{}, err
+	}
+	return version.Document, nil
 }
 
 func versionFromModel(model workflowVersionModel) (workflow.Version, error) {

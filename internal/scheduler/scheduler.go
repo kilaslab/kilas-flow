@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/robfig/cron/v3"
@@ -12,12 +13,28 @@ import (
 	"github.com/kilaslabs/kilas-flow/internal/repository"
 )
 
-// Parser accepts standard five-field cron in UTC.
+// parser accepts standard five-field cron, with an optional leading seconds
+// field and an optional TZ= prefix.
 //
-// Seconds and descriptors are deliberately not enabled: a schedule that can
-// fire every second is a foot-gun in a single-instance deployment, and the
-// five-field form is what users already know from crontab.
-var parser = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
+// Seconds are optional rather than required so every schedule written before
+// this still parses unchanged. They are allowed at all because the trigger's
+// seconds interval is a real n8n option, and mapping "every 30 seconds" to a
+// minute would be a silent lie about when the workflow runs. What bounds it in
+// practice is the tick: see TickResolution.
+//
+// Descriptors (@hourly and friends) stay off. They are a second vocabulary for
+// things the five fields already say, and one of them — @reboot — has no
+// meaning at all for a stored schedule.
+var parser = cron.NewParser(cron.SecondOptional | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
+
+// TickResolution is how often due schedules are looked for by default.
+//
+// A schedule finer than this cannot fire more often than this. Rather than
+// letting such a schedule build a backlog it can never work through, ClaimDue's
+// next-run calculation skips past occurrences already in the past: an every-5
+// -seconds trigger on a 15-second tick fires once per tick at the current time,
+// not three stale times.
+const TickResolution = 15 * time.Second
 
 // Clock lets tests advance time deterministically instead of sleeping.
 type Clock interface {
@@ -80,12 +97,110 @@ func New(options Options) (*Service, error) {
 }
 
 // Next returns the next fire time strictly after `after` for a cron expression.
+//
+// The expression may carry a `TZ=Area/City ` prefix, which is how a schedule
+// carries its zone without this function needing a second argument — and how
+// `0 9 * * *` means nine in the morning where the user is rather than nine UTC.
+//
+// A schedule pinned to a particular hour fires once per occurrence of that
+// wall-clock time, including the night the clocks go back. Without the guard
+// below it would fire twice that night: 01:30 happens twice, both are after the
+// previous run, and both match the expression. A schedule that is *not* pinned
+// to an hour — every five minutes, every thirty seconds — is left alone,
+// because there the repeated hour is simply an extra hour of running and
+// skipping an occurrence would be the bug.
 func Next(expression string, after time.Time) (time.Time, error) {
 	schedule, err := parser.Parse(expression)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("invalid cron expression: %w", err)
 	}
-	return schedule.Next(after.UTC()).UTC(), nil
+	candidate := schedule.Next(after)
+	if !pinnedToAnHour(expression) {
+		return candidate.UTC(), nil
+	}
+	// The comparison has to happen in the schedule's own zone. Both instants
+	// are UTC by the time they reach here, and in UTC the repeated hour is two
+	// perfectly ordinary times an hour apart — the collision only exists on a
+	// clock in the zone the schedule was written for.
+	zone := zoneOf(expression)
+	// At most a handful: the repeat is one DST shift wide, so one skip always
+	// suffices. The bound is there so a pathological expression cannot spin.
+	for attempt := 0; attempt < 4 && sameWallClock(after, candidate, zone); attempt++ {
+		candidate = schedule.Next(candidate)
+	}
+	return candidate.UTC(), nil
+}
+
+// sameWallClock reports two instants that read identically on a clock in the
+// schedule's own zone. That is exactly the repeated hour and nothing else.
+func sameWallClock(left, right time.Time, zone *time.Location) bool {
+	if left.IsZero() || right.IsZero() {
+		return false
+	}
+	const wallClock = "2006-01-02 15:04:05"
+	return left.In(zone).Format(wallClock) == right.In(zone).Format(wallClock)
+}
+
+// zoneOf reads the zone a spec's TZ= prefix names, defaulting to UTC.
+func zoneOf(expression string) *time.Location {
+	trimmed := strings.TrimSpace(expression)
+	for _, prefix := range []string{"CRON_TZ=", "TZ="} {
+		if !strings.HasPrefix(trimmed, prefix) {
+			continue
+		}
+		rest := trimmed[len(prefix):]
+		name := rest
+		if space := strings.IndexAny(rest, " \t"); space >= 0 {
+			name = rest[:space]
+		}
+		if location, err := time.LoadLocation(name); err == nil {
+			return location
+		}
+		return time.UTC
+	}
+	return time.UTC
+}
+
+// pinnedToAnHour reports an expression naming particular hours rather than
+// running through them.
+func pinnedToAnHour(expression string) bool {
+	fields := strings.Fields(stripZonePrefix(expression))
+	hour := ""
+	switch len(fields) {
+	case 5:
+		hour = fields[1]
+	case 6:
+		hour = fields[2]
+	default:
+		return false
+	}
+	return hour != "*" && !strings.HasPrefix(hour, "*/")
+}
+
+// stripZonePrefix removes the TZ= or CRON_TZ= prefix robfig understands, so the
+// remaining fields can be counted.
+func stripZonePrefix(expression string) string {
+	trimmed := strings.TrimSpace(expression)
+	for _, prefix := range []string{"TZ=", "CRON_TZ="} {
+		if !strings.HasPrefix(trimmed, prefix) {
+			continue
+		}
+		if space := strings.IndexAny(trimmed, " \t"); space >= 0 {
+			return strings.TrimSpace(trimmed[space+1:])
+		}
+		return ""
+	}
+	return trimmed
+}
+
+// InZone renders a cron expression with an explicit zone, which is the form
+// stored schedules are evaluated in.
+func InZone(expression, zone string) string {
+	zone = strings.TrimSpace(zone)
+	if zone == "" || zone == "UTC" {
+		return expression
+	}
+	return "TZ=" + zone + " " + expression
 }
 
 // Validate reports whether a cron expression is usable.
@@ -112,10 +227,14 @@ func (service *Service) Tick(ctx context.Context) (int, error) {
 			service.logger.Warn("scheduled workflow has no active revision", "schedule", item.Schedule.ID)
 			continue
 		}
-		payload, err := json.Marshal(map[string]any{
-			"scheduledAt": item.Schedule.LastRunAt,
-			"scheduleId":  item.Schedule.ID,
-		})
+		// Built here rather than in the executor because this is where the
+		// due time and the schedule's zone are both known. The executor sees
+		// only the item, and a zone it had to guess would be the server's.
+		dueAt := service.clock.Now()
+		if item.Schedule.LastRunAt != nil {
+			dueAt = *item.Schedule.LastRunAt
+		}
+		payload, err := json.Marshal(TriggerItem(item.Schedule.ID, dueAt, item.Schedule.Timezone))
 		if err != nil {
 			return queued, fmt.Errorf("encode schedule payload: %w", err)
 		}

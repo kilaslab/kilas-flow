@@ -99,9 +99,19 @@ type scheduleModel struct {
 	TenantID   string `gorm:"not null;size:64;index:idx_schedules_tenant_workflow,priority:1"`
 	WorkflowID string `gorm:"not null;size:64;index:idx_schedules_tenant_workflow,priority:2"`
 	NodeID     string `gorm:"not null;size:64"`
-	Cron       string `gorm:"not null;size:255"`
-	Active     bool   `gorm:"not null;default:false"`
-	LastRunAt  *time.Time
+	// IntervalIndex distinguishes the rows of one trigger node. A Schedule
+	// Trigger's rule may hold several intervals — "every weekday at 09:00, and
+	// again at 17:00" is two — and one row per interval keeps ClaimDue's
+	// transactional claim untouched: it still advances exactly one NextRunAt
+	// per row and never has to reason about which of a set is earliest.
+	IntervalIndex int    `gorm:"not null;default:0"`
+	Cron          string `gorm:"not null;size:255"`
+	// Timezone is the IANA zone the cron expression is read in. Empty means
+	// UTC. It is stored beside the expression rather than folded into it as a
+	// TZ= prefix so the user's own cron reads back as they wrote it.
+	Timezone  string `gorm:"not null;size:64;default:''"`
+	Active    bool   `gorm:"not null;default:false"`
+	LastRunAt *time.Time
 	// NextRunAt is indexed because the scheduler's only hot query is "what is
 	// due now".
 	NextRunAt *time.Time    `gorm:"index:idx_schedules_next_run"`

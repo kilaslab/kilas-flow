@@ -57,6 +57,8 @@ func RegisterExecutors(registry *engine.Registry, httpPolicy safehttp.Policy, da
 		SortExecutorID:             engine.ExecutorFunc(executeSort),
 		SummarizeExecutorID:        engine.ExecutorFunc(executeSummarize),
 		RemoveDuplicatesExecutorID: engine.ExecutorFunc(executeRemoveDuplicates),
+		DateTimeExecutorID:         engine.ExecutorFunc(executeDateTime),
+		WaitExecutorID:             engine.ExecutorFunc(executeWait),
 		UnsupportedExecutorID:      engine.ExecutorFunc(executeUnsupported),
 	} {
 		if err := registry.Register(id, executor); err != nil {

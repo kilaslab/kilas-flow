@@ -261,6 +261,17 @@ var mappings = []mapping{
 		exportTypeVersion: 2, toKilas: removeDuplicatesToKilas, toN8N: removeDuplicatesToN8N,
 	},
 
+	// Time. Both were the unsupported placeholder before, so a single Wait or
+	// a single date calculation blocked a whole imported workflow.
+	{
+		n8nType: "n8n-nodes-base.dateTime", kilasType: DateTimeNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 2, toKilas: dateTimeToKilas, toN8N: dateTimeToN8N,
+	},
+	{
+		n8nType: "n8n-nodes-base.wait", kilasType: WaitNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1.1, toKilas: waitToKilas, toN8N: waitToN8N,
+	},
+
 	// Flow control. Every one of these used to become the unsupported
 	// placeholder, so a single Switch made an entire imported workflow
 	// unactivatable.
@@ -341,6 +352,12 @@ const (
 	SortNodeType             = "kilasflow.sort"
 	SummarizeNodeType        = "kilasflow.summarize"
 	RemoveDuplicatesNodeType = "kilasflow.removeDuplicates"
+)
+
+// The time family's node types.
+const (
+	DateTimeNodeType = "kilasflow.dateTime"
+	WaitNodeType     = "kilasflow.wait"
 )
 
 const (

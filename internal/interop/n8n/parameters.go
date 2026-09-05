@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/kilaslabs/kilas-flow/internal/property"
+	"github.com/kilaslabs/kilas-flow/internal/scheduler"
 	"github.com/kilaslabs/kilas-flow/internal/workflow"
 )
 
@@ -894,34 +895,314 @@ func respondToN8N(node workflow.Node) (map[string]any, []ExportIssue) {
 
 // --- Schedule ---------------------------------------------------------------
 
+// scheduleToKilas carries a Schedule Trigger's whole rule across.
+//
+// The rule shape is identical on both sides, so the import is a copy rather
+// than a translation — which is the point of having adopted n8n's shape for the
+// node rather than inventing one. What the import still owes the user is a
+// statement of every place the two schedulers disagree, and that is what the
+// diagnostics below are.
+//
+// Before this, the importer returned on the first interval carrying a cron
+// expression and silently dropped every other one, so a rule saying "09:00 and
+// 17:00" arrived as one of the two, and a rule built entirely in n8n's visual
+// builder arrived as hourly.
 func scheduleToKilas(node Node) (map[string]any, []Unsupported) {
 	rule, _ := node.Parameters["rule"].(map[string]any)
-	intervals, _ := rule["interval"].([]any)
-	for _, interval := range intervals {
-		fields, ok := interval.(map[string]any)
-		if !ok {
+	entries, _ := rule["interval"].([]any)
+	intervals := scheduler.ReadRule(rule)
+	if len(intervals) == 0 {
+		// A trigger with no rule at all is n8n's default, which is every day.
+		return map[string]any{"rule": map[string]any{"interval": []any{
+			map[string]any{"field": scheduler.FieldDays, "daysInterval": float64(1),
+				"triggerAtHour": float64(0), "triggerAtMinute": float64(0)},
+		}}}, nil
+	}
+
+	issues := make([]Unsupported, 0)
+	kept := make([]any, 0, len(intervals))
+	for index, interval := range intervals {
+		if err := interval.Validate(); err != nil {
+			issues = append(issues, Unsupported{
+				Field:  "rule.interval",
+				Reason: fmt.Sprintf("trigger rule %d (%s) is out of range and was dropped: %v", index+1, interval.Field, err),
+			})
 			continue
 		}
-		if expression, ok := fields["expression"].(string); ok && strings.TrimSpace(expression) != "" {
-			return map[string]any{"cron": strings.TrimSpace(expression)}, nil
+		if note := interval.Anchoring(); note != "" {
+			// Named rather than absorbed: the schedule still runs at the right
+			// time on the right kind of day, and only which of them is chosen
+			// differs. That is a difference the author can accept once they
+			// are told about it, and cannot if they are not.
+			issues = append(issues, Unsupported{
+				Field:  "rule.interval",
+				Reason: fmt.Sprintf("trigger rule %d: %s", index+1, note),
+			})
+		}
+		if index < len(entries) {
+			if fields, ok := entries[index].(map[string]any); ok {
+				kept = append(kept, fields)
+				continue
+			}
+		}
+		kept = append(kept, intervalToMap(interval))
+	}
+	if len(kept) == 0 {
+		return map[string]any{"rule": map[string]any{"interval": []any{}}}, issues
+	}
+	return map[string]any{"rule": map[string]any{"interval": kept}}, issues
+}
+
+// intervalToMap renders a decoded interval back into the stored shape, for the
+// case where the incoming entry was not a map this importer could keep.
+func intervalToMap(interval scheduler.Interval) map[string]any {
+	fields := map[string]any{"field": interval.Field}
+	for key, value := range map[string]int{
+		"secondsInterval": interval.SecondsInterval, "minutesInterval": interval.MinutesInterval,
+		"hoursInterval": interval.HoursInterval, "daysInterval": interval.DaysInterval,
+		"weeksInterval": interval.WeeksInterval, "monthsInterval": interval.MonthsInterval,
+	} {
+		if value > 0 {
+			fields[key] = float64(value)
 		}
 	}
-	// n8n's visual interval builder has no single cron equivalent, so an
-	// hourly default is written and named rather than guessed at silently.
-	return map[string]any{"cron": "0 * * * *"}, []Unsupported{{
-		Reason: "this Schedule Trigger used n8n's interval builder rather than a cron expression; it was imported as hourly (0 * * * *). Set the cron expression you need.",
-	}}
+	switch interval.Field {
+	case scheduler.FieldCronExpression:
+		fields["expression"] = interval.Expression
+	case scheduler.FieldMonths:
+		fields["triggerAtDayOfMonth"] = float64(interval.TriggerAtDayOfMonth)
+	case scheduler.FieldWeeks:
+		days := make([]any, 0, len(interval.TriggerAtDay))
+		for _, day := range interval.TriggerAtDay {
+			days = append(days, float64(day))
+		}
+		fields["triggerAtDay"] = days
+	}
+	if interval.Field != scheduler.FieldCronExpression {
+		fields["triggerAtHour"] = float64(interval.TriggerAtHour)
+		fields["triggerAtMinute"] = float64(interval.TriggerAtMinute)
+	}
+	return fields
 }
 
 func scheduleToN8N(node workflow.Node) (map[string]any, []Lossy) {
+	if rule, ok := node.Parameters["rule"].(map[string]any); ok {
+		if entries, ok := rule["interval"].([]any); ok && len(entries) > 0 {
+			return map[string]any{"rule": map[string]any{"interval": entries}}, nil
+		}
+	}
+	// A node saved before Trigger Rules carries one cron string. Exporting it
+	// as a custom interval is exact: that is what a custom interval is.
 	return map[string]any{
 		"rule": map[string]any{
 			"interval": []any{map[string]any{
-				"field":      "cronExpression",
+				"field":      scheduler.FieldCronExpression,
 				"expression": defaultString(stringParameter(node.Parameters, "cron"), "0 * * * *"),
 			}},
 		},
 	}, nil
+}
+
+// --- Date & Time and Wait ---------------------------------------------------
+//
+// The vendored reference checkout carries only four node sources — HttpRequest,
+// If, Schedule and Set — so these two are mapped from n8n's published parameter
+// surface rather than from its code. That is stated here because it changes how
+// the mapping is written: every key it does not recognise produces a named
+// diagnostic instead of being assumed away, so a workflow that used something
+// this pair got wrong says so on import rather than running differently.
+
+// dateTimeToKilas maps n8n's Date & Time node, which has two quite different
+// generations under one type.
+//
+// v1 has an `action` of format-or-calculate; v2 replaced it with the operation
+// set this node implements. They are told apart structurally — by which key is
+// present — rather than by typeVersion, because a hand-written or
+// partially-migrated document can carry either.
+func dateTimeToKilas(node Node) (map[string]any, []Unsupported) {
+	issues := make([]Unsupported, 0)
+	parameters := map[string]any{}
+	options, _ := node.Parameters["options"].(map[string]any)
+
+	if action, isV1 := node.Parameters["action"].(string); isV1 {
+		switch action {
+		case "", "format":
+			parameters["operation"] = "formatDate"
+			parameters["date"] = fromN8NValue(node.Parameters["value"])
+			parameters["format"] = luxonFormat(stringParameter(node.Parameters, "toFormat"))
+		case "calculate":
+			parameters["operation"] = "addToDate"
+			parameters["date"] = fromN8NValue(node.Parameters["value"])
+			parameters["duration"] = node.Parameters["duration"]
+			parameters["unit"] = defaultString(stringParameter(node.Parameters, "timeUnit"), "days")
+			if stringParameter(node.Parameters, "operation") == "subtract" {
+				parameters["operation"] = "subtractFromDate"
+			}
+		default:
+			issues = append(issues, Unsupported{Field: "action", Reason: fmt.Sprintf(
+				"the n8n Date & Time action %q has no equivalent; the node was imported as a format operation", action)})
+			parameters["operation"] = "formatDate"
+			parameters["date"] = fromN8NValue(node.Parameters["value"])
+		}
+		if from := stringParameter(node.Parameters, "fromFormat"); from != "" {
+			issues = append(issues, Unsupported{Field: "fromFormat", Reason: fmt.Sprintf(
+				"the input format %q was not carried; this node reads ISO 8601, Unix timestamps and the "+
+					"common human forms without being told which one to expect", from)})
+		}
+		return withDateOutputField(parameters, options, node), issues
+	}
+
+	operation := defaultString(stringParameter(node.Parameters, "operation"), "getCurrentDate")
+	switch operation {
+	case "getCurrentDate", "addToDate", "subtractFromDate", "formatDate", "roundDate", "extractDate", "getTimeBetweenDates":
+		parameters["operation"] = operation
+	default:
+		issues = append(issues, Unsupported{Field: "operation", Reason: fmt.Sprintf(
+			"the n8n Date & Time operation %q has no equivalent; the node was imported as \"get current date\"", operation)})
+		parameters["operation"] = "getCurrentDate"
+	}
+
+	// `magnitude` is v2's name for the date being worked on; `date` is what
+	// extractDate calls the same thing, and `startDate` what the comparison
+	// does. One field here, three names there.
+	for _, key := range []string{"magnitude", "date", "startDate"} {
+		if value, present := node.Parameters[key]; present && value != nil {
+			parameters["date"] = fromN8NValue(value)
+			break
+		}
+	}
+	if value, present := node.Parameters["endDate"]; present {
+		parameters["endDate"] = fromN8NValue(value)
+	}
+	if value, present := node.Parameters["duration"]; present {
+		parameters["duration"] = value
+	}
+	if unit := defaultString(stringParameter(node.Parameters, "timeUnit"), stringParameter(node.Parameters, "units")); unit != "" {
+		parameters["unit"] = unit
+	}
+	if part := stringParameter(node.Parameters, "part"); part != "" {
+		parameters["part"] = part
+	}
+	if mode := stringParameter(node.Parameters, "mode"); mode != "" {
+		parameters["roundMode"] = mode
+	}
+	if to := stringParameter(node.Parameters, "to"); to != "" {
+		parameters["roundTo"] = to
+	}
+	if layout := defaultString(stringParameter(node.Parameters, "customFormat"), stringParameter(node.Parameters, "format")); layout != "" {
+		parameters["format"] = luxonFormat(layout)
+	}
+	if zone := stringParameter(options, "timezone"); zone != "" {
+		parameters["timezone"] = zone
+	}
+	if include, present := options["includeInputFields"]; present && include == false {
+		// This node always keeps the incoming item and adds a field, which is
+		// n8n's own default. Replacing the item is the setting it does not have.
+		issues = append(issues, Unsupported{Field: "options.includeInputFields", Reason: "this node always keeps " +
+			"the incoming item's fields and adds the result beside them; use a Set node afterwards to keep only the date"})
+	}
+	return withDateOutputField(parameters, options, node), issues
+}
+
+// withDateOutputField carries n8n's output field name, under either of the two
+// spellings it has used.
+func withDateOutputField(parameters map[string]any, options map[string]any, node Node) map[string]any {
+	name := defaultString(stringParameter(node.Parameters, "outputFieldName"), stringParameter(options, "outputFieldName"))
+	parameters["outputField"] = defaultString(name, "date")
+	return parameters
+}
+
+// luxonFormat carries a format string across unchanged.
+//
+// It is a named function rather than a bare assignment because the tokens are
+// the one place these two products are already speaking the same language, and
+// a future need to translate should have somewhere obvious to go rather than
+// being scattered over the call sites.
+func luxonFormat(layout string) string {
+	return layout
+}
+
+func dateTimeToN8N(node workflow.Node) (map[string]any, []Lossy) {
+	parameters := map[string]any{
+		"operation":       defaultString(stringParameter(node.Parameters, "operation"), "getCurrentDate"),
+		"outputFieldName": defaultString(stringParameter(node.Parameters, "outputField"), "date"),
+	}
+	if value, present := node.Parameters["date"]; present {
+		parameters["magnitude"] = toN8NValue(value)
+	}
+	if value, present := node.Parameters["endDate"]; present {
+		parameters["endDate"] = toN8NValue(value)
+	}
+	if value, present := node.Parameters["duration"]; present {
+		parameters["duration"] = value
+	}
+	if unit := stringParameter(node.Parameters, "unit"); unit != "" {
+		parameters["timeUnit"] = unit
+	}
+	if part := stringParameter(node.Parameters, "part"); part != "" {
+		parameters["part"] = part
+	}
+	if mode := stringParameter(node.Parameters, "roundMode"); mode != "" {
+		parameters["mode"] = mode
+	}
+	if to := stringParameter(node.Parameters, "roundTo"); to != "" {
+		parameters["to"] = to
+	}
+	if layout := stringParameter(node.Parameters, "format"); layout != "" {
+		parameters["customFormat"] = layout
+	}
+	if zone := stringParameter(node.Parameters, "timezone"); zone != "" {
+		parameters["options"] = map[string]any{"timezone": zone}
+	}
+	return parameters, nil
+}
+
+// waitToKilas maps n8n's Wait node, refusing the two durable resume modes.
+func waitToKilas(node Node) (map[string]any, []Unsupported) {
+	issues := make([]Unsupported, 0)
+	resume := defaultString(stringParameter(node.Parameters, "resume"), "timeInterval")
+	parameters := map[string]any{"resume": resume}
+
+	switch resume {
+	case "timeInterval":
+		parameters["amount"] = node.Parameters["amount"]
+		parameters["unit"] = defaultString(stringParameter(node.Parameters, "unit"), "hours")
+	case "specificTime":
+		parameters["dateTime"] = fromN8NValue(node.Parameters["dateTime"])
+	case "webhook", "form":
+		// Imported as the shape it is rather than silently rewritten, so the
+		// editor shows what the workflow actually said and the validator
+		// refuses to activate it with a message that names what is missing.
+		// Rewriting it to a time interval would produce a workflow that
+		// activates, runs, and does the wrong thing.
+		issues = append(issues, Unsupported{
+			Severity: SeverityBlocking, Field: "resume",
+			Reason: fmt.Sprintf("resuming on %q needs the execution to be suspended to storage and woken again "+
+				"later, which this server does not do yet; split the workflow at this point and start the "+
+				"second half from a Webhook trigger", resume),
+		})
+	default:
+		issues = append(issues, Unsupported{Field: "resume", Reason: fmt.Sprintf(
+			"the n8n Wait resume mode %q has no equivalent; the node was imported as a time interval", resume)})
+		parameters["resume"] = "timeInterval"
+	}
+	return parameters, issues
+}
+
+func waitToN8N(node workflow.Node) (map[string]any, []Lossy) {
+	parameters := map[string]any{
+		"resume": defaultString(stringParameter(node.Parameters, "resume"), "timeInterval"),
+	}
+	if value, present := node.Parameters["amount"]; present {
+		parameters["amount"] = value
+	}
+	if unit := stringParameter(node.Parameters, "unit"); unit != "" {
+		parameters["unit"] = unit
+	}
+	if value, present := node.Parameters["dateTime"]; present {
+		parameters["dateTime"] = toN8NValue(value)
+	}
+	return parameters, nil
 }
 
 // --- SQL --------------------------------------------------------------------

@@ -183,7 +183,8 @@ func run() error {
 	// while still letting webhook bindings be synced inside the activation
 	// transaction.
 	workflows := repository.NewWorkflowStore(db.DB).
-		WithWebhooks(webhook.Extract(nodeRegistry, nodes.WebhookPath))
+		WithWebhooks(webhook.Extract(nodeRegistry, nodes.WebhookPath)).
+		WithSchedules(scheduler.Extract(nodes.ScheduleType), scheduler.Next)
 	schedules := repository.NewScheduleStore(db.DB)
 	eventBroker := events.NewBroker(events.BrokerOptions{})
 	// Binary payloads live on a filesystem root, never in the database. An

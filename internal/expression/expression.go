@@ -354,6 +354,24 @@ func parse(body string) (string, []accessor, error) {
 }
 
 // parseAccessors reads the field, index and call chain after a root.
+// singleQuoted reads a JavaScript-style '…' string, of any length.
+//
+// strconv.Unquote reads '…' as a Go rune literal, so it accepts 'a' and refuses
+// 'Day of week'. JavaScript makes no such distinction, and the keys that need
+// bracket access at all — a Schedule Trigger's `Day of week`, a header with a
+// dash — are exactly the ones an author writes in single quotes.
+func singleQuoted(text string) (string, bool) {
+	if len(text) < 2 || text[0] != '\'' || text[len(text)-1] != '\'' {
+		return "", false
+	}
+	inner := text[1 : len(text)-1]
+	// An unescaped quote inside means this was never one string.
+	if strings.Contains(strings.ReplaceAll(inner, "\\'", ""), "'") {
+		return "", false
+	}
+	return strings.ReplaceAll(inner, "\\'", "'"), true
+}
+
 func parseAccessors(body string, position int) ([]accessor, error) {
 	accessors := make([]accessor, 0, 4)
 	for position < len(body) {
@@ -395,6 +413,10 @@ func parseAccessors(body string, position int) ([]accessor, error) {
 			}
 			inner := strings.TrimSpace(body[position : position+end])
 			position += end + 1
+			if quoted, ok := singleQuoted(inner); ok {
+				accessors = append(accessors, accessor{name: quoted, byKey: true})
+				continue
+			}
 			if quoted, err := strconv.Unquote(inner); err == nil {
 				accessors = append(accessors, accessor{name: quoted, byKey: true})
 				continue
