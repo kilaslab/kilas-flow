@@ -1,7 +1,7 @@
 ---
 id: FEAT-19f1ny
 title: Create dashboard shell and workflow-list experience
-status: todo
+status: done
 priority: high
 labels:
     - ui
@@ -14,7 +14,7 @@ deps:
 parent: EPIC-c7gbdp
 phase: p1
 created: "2026-08-29T15:40:24Z"
-updated: "2026-08-29T15:40:24Z"
+updated: "2026-08-30T14:38:53Z"
 ---
 
 ## Scope
@@ -43,3 +43,36 @@ Introduce the internal-app shell before detailed canvas work: navigation, contex
 - `pine`, `find-docs`.
 - `impeccable`, `web-design-guidelines`, `mobile-responsive-audit`, `playwright-cli` — use when their specific UI/audit/browser-test trigger applies.
 - `verification-before-completion`.
+
+## Work Evidence
+
+Closed by `pine close --evidence` on 2026-08-30.
+
+- Base: _(none — ticket predates git history or creation time unknown; showing uncommitted changes only)_
+- Commits (1):
+  - `6a9f56bb` — chore: initialize governance and Pine tracking
+- Files changed (base → working tree):
+
+```
+ .pine/tickets/FEAT-19f1ny.md              |   4 +-
+ .pine/tickets/FEAT-3mady6.md              |  34 ++++++-
+ cmd/kilasflow/main.go                     |  34 +++++--
+ internal/api/handlers/workflows.go        |  71 ++++++++++++-
+ internal/api/routes.go                    |   3 +-
+ internal/api/server.go                    |   7 +-
+ internal/api/workflows_test.go            |  74 +++++++++++++-
+ internal/execution/records.go             |  36 +++----
+ internal/node/registry.go                 |  23 +++--
+ internal/node/registry_test.go            |  23 ++---
+ internal/repository/executions.go         | 159 +++++++++++++++++++++++++++---
+ internal/repository/models.go             |  29 +++---
+ internal/repository/models_test.go        |  48 +++++++++
+ internal/workflow/compiler.go             | 101 +++++++++++++++++--
+ internal/workflow/document_test.go        |  72 ++++++++++++++
+ nodes/core.go                             |   4 +
+ web/src/lib/api/generated/models/index.ts |   2 +
+17 files changed, 634 insertions(+), 90 deletions(-)
+```
+
+- New untracked implementation files at close: `web/src/lib/components/dashboard/dashboard-nav.svelte`, the `(dashboard)` route group, and the bare `web/src/routes/embed/[id]/+page.svelte` boundary.
+- Verified with `cd web && pnpm generate:api:check && pnpm check && pnpm test && pnpm build`, `make smoke-dev`, and Playwright CLI smoke coverage for create → redirect, isolated embed routing, dialog focus, navigation labels, and 375×667 plus 393×852 layouts.
