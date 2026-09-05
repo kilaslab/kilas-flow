@@ -1,11 +1,55 @@
 <script lang="ts">
 	import { page } from '$app/state';
+
+	import { setEmbedToken } from '$lib/api/http';
+	import EmbedEditor from '$lib/embed/embed-editor.svelte';
+	import { embedSession } from '$lib/embed/session.svelte';
+
+	const workflowID = $derived(page.params.id ?? '');
+	const embed = embedSession(() => workflowID);
+	const branding = $derived(embed.session?.branding ?? {});
+
+	$effect(() => {
+		// Every API request carries the token once the handshake completes, and
+		// stops carrying it when the frame is torn down.
+		setEmbedToken(embed.session?.token ?? null);
+		return () => setEmbedToken(null);
+	});
 </script>
 
 <svelte:head>
-	<title>Embedded workflow · KilasFlow</title>
+	<title>{branding.name ? `${branding.name} workflow` : 'Embedded workflow'}</title>
+	<!-- An embedded editor must never be indexed or linked out of its host. -->
+	<meta name="robots" content="noindex, nofollow" />
 </svelte:head>
 
-<main data-embed-shell class="min-h-dvh bg-background p-4 sm:p-6">
-	<p class="text-sm text-muted-foreground">Embed session for {page.params.id}</p>
+<!--
+	The embed shell is deliberately bare: no sidebar, no workspace header, no
+	navigation to any other page. It shares the canvas with the dashboard but
+	none of its chrome, so a host page cannot accidentally expose the internal
+	product surface.
+-->
+<main
+	data-embed-shell
+	class="flex h-dvh min-h-0 flex-col bg-background"
+	style={branding.accent ? `--primary: ${branding.accent}; --ring: ${branding.accent};` : undefined}
+>
+	{#if embed.waiting}
+		<div aria-live="polite" class="grid flex-1 place-items-center text-sm text-muted-foreground">
+			Waiting for the host application…
+		</div>
+	{:else if embed.error || !embed.session}
+		<div class="grid flex-1 place-items-center p-6">
+			<div role="alert" class="max-w-md rounded-xl border border-destructive/25 bg-destructive/5 p-5 text-center">
+				<h1 class="font-semibold">This editor could not be opened</h1>
+				<p class="mt-1 text-sm leading-6 text-muted-foreground">{embed.error ?? 'No embed session was provided.'}</p>
+			</div>
+		</div>
+	{:else}
+		<!--
+			Mounted only once the session exists, so every query inside is created
+			with the token already attached.
+		-->
+		<EmbedEditor session={embed.session} />
+	{/if}
 </main>

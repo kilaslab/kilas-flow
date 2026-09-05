@@ -25,6 +25,7 @@ func registerRoutes(router *chi.Mux, api huma.API, deps Deps) {
 	handlers.NewExecutions(deps.ExecutionController, deps.Executions, deps.Events, deps.Tenants).Register(v1)
 	handlers.NewCredentials(deps.Credentials, deps.Tenants).Register(v1)
 	handlers.NewSchedules(deps.Schedules, deps.Tenants).Register(v1)
+	handlers.NewEmbedSessions(deps.EmbedIssuer, deps.Workflows, deps.Tenants).Register(v1)
 
 	// Self-hosted API reference. Huma's own docs endpoint is disabled in
 	// openAPIConfig because it loads Scalar from a CDN.

@@ -20,6 +20,7 @@ import (
 	"github.com/kilaslabs/kilas-flow/internal/config"
 	"github.com/kilaslabs/kilas-flow/internal/credentials"
 	"github.com/kilaslabs/kilas-flow/internal/database"
+	"github.com/kilaslabs/kilas-flow/internal/embed"
 	"github.com/kilaslabs/kilas-flow/internal/engine"
 	"github.com/kilaslabs/kilas-flow/internal/events"
 	"github.com/kilaslabs/kilas-flow/internal/node"
@@ -112,6 +113,23 @@ func run() error {
 		credentialStore = repository.NewCredentialStore(db.DB, cipher)
 	}
 
+	// Embedding is opt-in: with no signing key the endpoints report that
+	// clearly and the middleware refuses every token, rather than the editor
+	// silently being frameable.
+	var embedIssuer *embed.Issuer
+	if embedKey, err := credentials.KeyFromEnvironment(cfg.Embed.SigningKeyEnv); err == nil {
+		issuer, issuerErr := embed.NewIssuer(embedKey, cfg.Embed.AllowedOrigins, nil)
+		if issuerErr != nil {
+			return fmt.Errorf("configure embed sessions: %w", issuerErr)
+		}
+		embedIssuer = issuer
+	} else if !errors.Is(err, credentials.ErrNoKey) {
+		return fmt.Errorf("embed signing key: %w", err)
+	} else {
+		log.Warn("embed signing key is not set; embedded editor sessions are disabled",
+			"variable", cfg.Embed.SigningKeyEnv)
+	}
+
 	executions := repository.NewExecutionStore(db.DB)
 	// Injecting the extractor keeps node-type knowledge out of persistence
 	// while still letting webhook bindings be synced inside the activation
@@ -164,6 +182,7 @@ func run() error {
 		}),
 		Credentials:         credentialStore,
 		Events:              eventBroker,
+		EmbedIssuer:         embedIssuer,
 		ExecutionController: runtime,
 		Version:             version,
 	})

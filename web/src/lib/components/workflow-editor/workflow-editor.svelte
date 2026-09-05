@@ -36,6 +36,9 @@
 		document,
 		definitions,
 		credentials = [],
+		readOnly = false,
+		hideRun = false,
+		hideSave = false,
 		saving = false,
 		running = false,
 		saveError = null,
@@ -48,6 +51,12 @@
 		document: Document;
 		definitions: Definition[];
 		credentials?: CredentialResource[];
+		// A read-only editor still renders and still inspects; it simply cannot
+		// change anything. The server enforces the same boundary, so hiding a
+		// control is never the thing that stops an edit.
+		readOnly?: boolean;
+		hideRun?: boolean;
+		hideSave?: boolean;
 		saving?: boolean;
 		running?: boolean;
 		saveError?: string | null;
@@ -123,6 +132,7 @@
 	}
 
 	function addNode(definition: Definition) {
+		if (readOnly) return;
 		const count = draft.nodes?.length ?? 0;
 		const node = createWorkflowNode(definition, nextNodePosition(count));
 		selectedNodeID = node.id;
@@ -132,10 +142,12 @@
 	}
 
 	function syncCanvas() {
+		if (readOnly) return;
 		replaceDraft(documentFromFlow(draft, nodes, edges));
 	}
 
 	function onConnect(connection: FlowConnection) {
+		if (readOnly) return;
 		const next = connectionFromCanvas(connection, draft.nodes ?? [], definitions, draft.connections ?? []);
 		if (!next) return;
 		replaceDraft({ ...draft, connections: [...(draft.connections ?? []), next] });
@@ -148,6 +160,7 @@
 	}
 
 	function removeSelected() {
+		if (readOnly) return;
 		if (selectedNodeID) {
 			const nodeID = selectedNodeID;
 			replaceDraft({
@@ -171,12 +184,12 @@
 	}
 
 	function updateProperty(scope: PropertyScope, key: string, value: unknown) {
-		if (!selectedNode) return;
+		if (readOnly || !selectedNode) return;
 		replaceDraft(updateNodeProperty(draft, selectedNode.id, scope, key, value));
 	}
 
 	function updateCredential(typeID: string, credentialID: string) {
-		if (!selectedNode) return;
+		if (readOnly || !selectedNode) return;
 		replaceDraft(updateNodeCredential(draft, selectedNode.id, typeID, credentialID));
 	}
 
@@ -211,33 +224,39 @@
 	}
 
 	async function save() {
-		if (!dirty || saving) return;
+		if (readOnly || !dirty || saving) return;
 		await onSave(toWorkflowInput(draft));
 	}
 
 	async function run() {
-		if (dirty || running) return;
+		if (hideRun || dirty || running) return;
 		await onRun();
 	}
 </script>
 
 <section class="relative flex h-full min-h-0 flex-col bg-background" aria-label="Workflow editor">
 	<header class="flex flex-wrap items-center gap-2 border-b border-border bg-card px-3 py-2 sm:px-4">
-		<button type="button" class="inline-flex h-9 items-center gap-2 rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2" onclick={() => openPicker(false)}>
-			<Plus aria-hidden="true" class="size-4" />Add step
-		</button>
-		<button type="button" class="inline-flex h-9 items-center gap-2 rounded-lg border border-border px-3 text-sm font-medium hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2" disabled={!dirty || saving} onclick={() => void save()}>
-			<Save aria-hidden="true" class="size-4" />{saving ? 'Saving…' : 'Save'}
-		</button>
-		<button type="button" class="inline-flex h-9 items-center gap-2 rounded-lg border border-border px-3 text-sm font-medium hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-50" disabled={dirty || running} aria-describedby={dirty ? 'save-before-run' : undefined} onclick={() => void run()}>
-			<Play aria-hidden="true" class="size-4" />{running ? 'Running…' : 'Run'}
-		</button>
-		{#if selectedNodeID || selectedEdgeID}
+		{#if !readOnly}
+			<button type="button" class="inline-flex h-9 items-center gap-2 rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2" onclick={() => openPicker(false)}>
+				<Plus aria-hidden="true" class="size-4" />Add step
+			</button>
+		{/if}
+		{#if !readOnly && !hideSave}
+			<button type="button" class="inline-flex h-9 items-center gap-2 rounded-lg border border-border px-3 text-sm font-medium hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2" disabled={!dirty || saving} onclick={() => void save()}>
+				<Save aria-hidden="true" class="size-4" />{saving ? 'Saving…' : 'Save'}
+			</button>
+		{/if}
+		{#if !hideRun}
+			<button type="button" class="inline-flex h-9 items-center gap-2 rounded-lg border border-border px-3 text-sm font-medium hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-50" disabled={dirty || running} aria-describedby={dirty ? 'save-before-run' : undefined} onclick={() => void run()}>
+				<Play aria-hidden="true" class="size-4" />{running ? 'Running…' : 'Run'}
+			</button>
+		{/if}
+		{#if !readOnly && (selectedNodeID || selectedEdgeID)}
 			<button type="button" class="ml-auto inline-flex h-9 items-center gap-2 rounded-lg px-3 text-sm font-medium text-destructive hover:bg-destructive/10 focus-visible:outline-2 focus-visible:outline-offset-2" onclick={removeSelected}>
 				<Trash2 aria-hidden="true" class="size-4" />Remove selected
 			</button>
 		{/if}
-		<span class="basis-full text-xs text-muted-foreground sm:ml-auto sm:basis-auto">{dirty ? 'Unsaved changes' : 'All changes saved'}</span>
+		<span class="basis-full text-xs text-muted-foreground sm:ml-auto sm:basis-auto">{readOnly ? 'Read only' : dirty ? 'Unsaved changes' : 'All changes saved'}</span>
 		{#if dirty}<span id="save-before-run" class="sr-only">Save changes before running this workflow.</span>{/if}
 	</header>
 
@@ -259,12 +278,12 @@
 
 	<div class="relative flex min-h-0 flex-1 flex-col lg:grid lg:grid-cols-[minmax(0,1fr)_22rem]">
 		<div class="relative min-h-0 flex-1 overflow-hidden" data-testid="workflow-canvas">
-			<SvelteFlow bind:nodes bind:edges {nodeTypes} fitView deleteKey={['Backspace', 'Delete']} isValidConnection={(connection) => canConnect(connection, draft.nodes ?? [], definitions, draft.connections ?? [])} onconnect={onConnect} ondelete={onDelete} onnodedragstop={syncCanvas} onselectionchange={onSelectionChange} onpaneclick={() => onSelectionChange({ nodes: [], edges: [] })}>
+			<SvelteFlow bind:nodes bind:edges {nodeTypes} fitView nodesDraggable={!readOnly} nodesConnectable={!readOnly} deleteKey={readOnly ? null : ['Backspace', 'Delete']} isValidConnection={(connection) => canConnect(connection, draft.nodes ?? [], definitions, draft.connections ?? [])} onconnect={onConnect} ondelete={onDelete} onnodedragstop={syncCanvas} onselectionchange={onSelectionChange} onpaneclick={() => onSelectionChange({ nodes: [], edges: [] })}>
 				<Background variant={BackgroundVariant.Dots} gap={20} size={1} patternColor="var(--border)" />
 				<Controls showLock={false} />
 			</SvelteFlow>
 
-			{#if (draft.nodes?.length ?? 0) === 0}
+			{#if (draft.nodes?.length ?? 0) === 0 && !readOnly}
 				<div class="pointer-events-none absolute inset-0 grid place-items-center p-6">
 					<div class="pointer-events-auto max-w-xs text-center">
 						<button type="button" class="mx-auto grid size-16 place-items-center rounded-2xl border-2 border-dashed border-border bg-card text-muted-foreground hover:border-primary hover:text-primary focus-visible:outline-2 focus-visible:outline-offset-4" aria-label="Add first workflow step" onclick={() => openPicker(true)}><Plus aria-hidden="true" class="size-7" /></button>
@@ -278,7 +297,7 @@
 		{#if !narrow.current}
 			<aside class="hidden min-h-0 border-l border-border lg:block">
 				{#if selectedNode && selectedDefinition}
-					<PropertiesPanel node={selectedNode} definition={selectedDefinition} {credentials} onChange={updateProperty} onCredentialChange={updateCredential} />
+					<PropertiesPanel node={selectedNode} definition={selectedDefinition} {credentials} {readOnly} onChange={updateProperty} onCredentialChange={updateCredential} />
 				{:else}
 					<div class="grid h-full place-items-center p-6 text-center text-sm leading-6 text-muted-foreground">Select a node to edit its registry-defined parameters and shared settings.</div>
 				{/if}
@@ -288,7 +307,7 @@
 		{#if narrow.current && propertyPanelOpen && selectedNode && selectedDefinition}
 			<div bind:this={propertyDialog} class="absolute inset-x-3 bottom-3 z-30 max-h-[min(32rem,calc(100%-1.5rem))] overflow-hidden rounded-xl border border-border bg-card shadow-xl" role="dialog" aria-modal="true" aria-label={`${selectedNode.name} properties`} tabindex="-1" onkeydown={handlePropertyDialogKeydown}>
 				<div class="flex justify-end border-b border-border px-2 py-1"><button bind:this={propertyCloseButton} type="button" class="rounded-md p-2 text-muted-foreground hover:bg-muted" aria-label="Close node properties" onclick={closePropertyPanel}><PanelLeftClose aria-hidden="true" class="size-4" /></button></div>
-				<PropertiesPanel node={selectedNode} definition={selectedDefinition} {credentials} onChange={updateProperty} onCredentialChange={updateCredential} />
+				<PropertiesPanel node={selectedNode} definition={selectedDefinition} {credentials} {readOnly} onChange={updateProperty} onCredentialChange={updateCredential} />
 			</div>
 		{/if}
 	</div>

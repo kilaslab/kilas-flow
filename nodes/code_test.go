@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/kilaslabs/kilas-flow/internal/engine"
 	"github.com/kilaslabs/kilas-flow/internal/node"
@@ -26,6 +27,14 @@ func codeIR(t *testing.T, parameters map[string]any) workflow.IRNode {
 		ID: "code-1", Name: "Code", Type: nodes.CodeNodeType, TypeVersion: 1,
 		Parameters: parameters, Definition: definition,
 	}
+}
+
+// generousLimits give WASM execution room under the race detector, which slows
+// it well past the product's 10s default.
+func generousLimits() runcode.Limits {
+	limits := runcode.DefaultLimits()
+	limits.Timeout = 120 * time.Second
+	return limits
 }
 
 func toolchainOrSkip(t *testing.T) runcode.Compiler {
@@ -83,7 +92,7 @@ func TestCodeNodeValidatesSourceAtSaveTimeWithoutCompiling(t *testing.T) {
 
 func TestCodeNodeTransformsTheWholeBatch(t *testing.T) {
 	compiler := toolchainOrSkip(t)
-	executor := nodes.NewCodeExecutor(compiler, runcode.NewMemoryCache(), runcode.DefaultLimits())
+	executor := nodes.NewCodeExecutor(compiler, runcode.NewMemoryCache(), generousLimits())
 
 	// Seeing the whole batch is what lets a Code node filter or aggregate,
 	// which is most of why someone reaches for one.
@@ -113,7 +122,7 @@ func TestCodeNodeTransformsTheWholeBatch(t *testing.T) {
 
 func TestCodeNodeReportsAUserErrorStructurally(t *testing.T) {
 	compiler := toolchainOrSkip(t)
-	executor := nodes.NewCodeExecutor(compiler, runcode.NewMemoryCache(), runcode.DefaultLimits())
+	executor := nodes.NewCodeExecutor(compiler, runcode.NewMemoryCache(), generousLimits())
 
 	_, err := executor.Execute(context.Background(), codeIR(t, map[string]any{
 		"code": `return nil, errors.New("record 7 is missing a customer")`,
@@ -144,7 +153,7 @@ func TestCodeNodeWithoutACompilerSaysSoPlainly(t *testing.T) {
 
 func TestCodeNodeStatusReportsCompilationWithoutRunningTheWorkflow(t *testing.T) {
 	compiler := toolchainOrSkip(t)
-	executor := nodes.NewCodeExecutor(compiler, runcode.NewMemoryCache(), runcode.DefaultLimits())
+	executor := nodes.NewCodeExecutor(compiler, runcode.NewMemoryCache(), generousLimits())
 
 	good := executor.Status(context.Background(), "return items, nil")
 	if !good.Compiled || good.Error != "" || good.Hash == "" || good.CompiledAt == "" {

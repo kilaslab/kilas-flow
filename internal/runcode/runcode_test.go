@@ -11,6 +11,15 @@ import (
 	"github.com/kilaslabs/kilas-flow/internal/runcode"
 )
 
+// generousLimits give WASM execution room to finish under the race detector,
+// which slows it well past the product's 10s default. Tests that assert a
+// limit *fires* set their own, deliberately small, bound.
+func generousLimits() runcode.Limits {
+	limits := runcode.DefaultLimits()
+	limits.Timeout = 120 * time.Second
+	return limits
+}
+
 // The real toolchain is used where it is available. CI images without it still
 // exercise every cache, limit, and sandbox path through prebuilt artifacts and
 // the fake compiler below.
@@ -84,7 +93,7 @@ func TestValidateSourceRejectsWhatCannotBeAFunctionBody(t *testing.T) {
 
 func TestCodeRunsAndReturnsTransformedItems(t *testing.T) {
 	compiler := requireToolchain(t)
-	runner := runcode.NewRunner(compiler, runcode.NewMemoryCache(), runcode.DefaultLimits())
+	runner := runcode.NewRunner(compiler, runcode.NewMemoryCache(), generousLimits())
 
 	result, err := runner.Run(context.Background(), `
 	out := make([]Item, 0, len(items))
@@ -108,7 +117,7 @@ func TestCodeRunsAndReturnsTransformedItems(t *testing.T) {
 func TestCompilationHappensOncePerSourceAndIsInvalidatedByAChange(t *testing.T) {
 	inner := requireToolchain(t)
 	compiler := &countingCompiler{inner: inner}
-	runner := runcode.NewRunner(compiler, runcode.NewMemoryCache(), runcode.DefaultLimits())
+	runner := runcode.NewRunner(compiler, runcode.NewMemoryCache(), generousLimits())
 	input := []runcode.Item{{JSON: map[string]any{}}}
 
 	for range 3 {
@@ -132,7 +141,7 @@ func TestCompilationHappensOncePerSourceAndIsInvalidatedByAChange(t *testing.T) 
 func TestArtifactCacheReportsHitsAndMisses(t *testing.T) {
 	inner := requireToolchain(t)
 	cache := runcode.NewMemoryCache()
-	runner := runcode.NewRunner(&countingCompiler{inner: inner}, cache, runcode.DefaultLimits())
+	runner := runcode.NewRunner(&countingCompiler{inner: inner}, cache, generousLimits())
 
 	if _, err := runner.Artifact(context.Background(), "return items, nil"); err != nil {
 		t.Fatalf("Artifact() error = %v", err)
@@ -148,7 +157,7 @@ func TestArtifactCacheReportsHitsAndMisses(t *testing.T) {
 
 func TestCompilationFailureIsReportedWithoutServerPaths(t *testing.T) {
 	compiler := requireToolchain(t)
-	runner := runcode.NewRunner(compiler, runcode.NewMemoryCache(), runcode.DefaultLimits())
+	runner := runcode.NewRunner(compiler, runcode.NewMemoryCache(), generousLimits())
 
 	_, err := runner.Run(context.Background(), "this is not go; return items, nil", nil)
 	if err == nil {
@@ -190,7 +199,7 @@ func TestAnArtifactFromAnOlderContractIsNotRun(t *testing.T) {
 
 func TestUserCodeCannotReachTheFilesystem(t *testing.T) {
 	compiler := requireToolchain(t)
-	runner := runcode.NewRunner(compiler, runcode.NewMemoryCache(), runcode.DefaultLimits())
+	runner := runcode.NewRunner(compiler, runcode.NewMemoryCache(), generousLimits())
 
 	// No directory is preopened, so even the module's own working directory is
 	// unreachable. The read must fail inside the sandbox.
@@ -215,7 +224,7 @@ func TestUserCodeCannotReachTheFilesystem(t *testing.T) {
 
 func TestUserCodeCannotReachTheNetwork(t *testing.T) {
 	compiler := requireToolchain(t)
-	runner := runcode.NewRunner(compiler, runcode.NewMemoryCache(), runcode.DefaultLimits())
+	runner := runcode.NewRunner(compiler, runcode.NewMemoryCache(), generousLimits())
 
 	result, err := runner.Run(context.Background(), `
 	if _, err := net.Dial("tcp", "example.com:80"); err != nil {
@@ -237,7 +246,7 @@ func TestUserCodeCannotReachTheNetwork(t *testing.T) {
 func TestUserCodeSeesNoEnvironment(t *testing.T) {
 	compiler := requireToolchain(t)
 	t.Setenv("KILASFLOW_ENCRYPTION_KEY", "super-secret-master-key")
-	runner := runcode.NewRunner(compiler, runcode.NewMemoryCache(), runcode.DefaultLimits())
+	runner := runcode.NewRunner(compiler, runcode.NewMemoryCache(), generousLimits())
 
 	result, err := runner.Run(context.Background(), `
 	return []Item{{JSON: map[string]any{"env": os.Getenv("KILASFLOW_ENCRYPTION_KEY")}}}, nil
@@ -257,31 +266,49 @@ func TestUserCodeSeesNoEnvironment(t *testing.T) {
 
 func TestExecutionStopsAtItsTimeLimit(t *testing.T) {
 	compiler := requireToolchain(t)
+	source := `
+	for {
+		_ = 1
+	}
+	return items, nil
+`
+	// Compiled first so the measurement below covers execution alone. Timing
+	// Run() would include the build, which is unbounded by this limit and slow
+	// enough under the race detector to swamp what the test is asserting.
+	artifact, err := runcode.NewRunner(compiler, runcode.NewMemoryCache(), generousLimits()).
+		Artifact(context.Background(), source)
+	if err != nil {
+		t.Fatalf("Artifact() error = %v", err)
+	}
+
 	limits := runcode.DefaultLimits()
 	limits.Timeout = 500 * time.Millisecond
 	runner := runcode.NewRunner(compiler, runcode.NewMemoryCache(), limits)
 
 	start := time.Now()
-	_, err := runner.Run(context.Background(), `
-	for {
-		_ = 1
-	}
-	return items, nil
-`, nil)
+	_, err = runner.Execute(context.Background(), artifact, nil)
+	elapsed := time.Since(start)
+
 	if err == nil {
 		t.Fatal("an endless loop completed")
 	}
 	if !strings.Contains(err.Error(), "time limit") {
 		t.Errorf("error = %v, want the time limit reported", err)
 	}
-	if elapsed := time.Since(start); elapsed > 10*time.Second {
-		t.Errorf("the run took %s, want it bounded by the limit", elapsed)
+	// The guarantee under test is that an endless loop *is* stopped, and the
+	// error above proves the limit is what stopped it. The wall-clock bound is
+	// deliberately loose: wazero interrupts between instructions, and under the
+	// race detector each check is slow enough that a tight bound would be
+	// measuring the detector rather than the product. Without a bound at all,
+	// a regression that never stopped would hang the suite instead of failing.
+	if elapsed > time.Minute {
+		t.Errorf("execution took %s, want the limit to stop it", elapsed)
 	}
 }
 
 func TestExecutionStopsWhenCancelled(t *testing.T) {
 	compiler := requireToolchain(t)
-	runner := runcode.NewRunner(compiler, runcode.NewMemoryCache(), runcode.DefaultLimits())
+	runner := runcode.NewRunner(compiler, runcode.NewMemoryCache(), generousLimits())
 
 	// Compile first so the cancellation is observed by the run, not the build.
 	artifact, err := runner.Artifact(context.Background(), `
@@ -306,9 +333,8 @@ func TestExecutionStopsWhenCancelled(t *testing.T) {
 
 func TestMemoryPressureIsDeniedRatherThanExhaustingTheHost(t *testing.T) {
 	compiler := requireToolchain(t)
-	limits := runcode.DefaultLimits()
+	limits := generousLimits()
 	limits.MemoryPages = 32 // 2 MiB
-	limits.Timeout = 5 * time.Second
 	runner := runcode.NewRunner(compiler, runcode.NewMemoryCache(), limits)
 
 	_, err := runner.Run(context.Background(), `
@@ -326,7 +352,7 @@ func TestMemoryPressureIsDeniedRatherThanExhaustingTheHost(t *testing.T) {
 
 func TestUserCodeErrorIsReportedStructurally(t *testing.T) {
 	compiler := requireToolchain(t)
-	runner := runcode.NewRunner(compiler, runcode.NewMemoryCache(), runcode.DefaultLimits())
+	runner := runcode.NewRunner(compiler, runcode.NewMemoryCache(), generousLimits())
 
 	_, err := runner.Run(context.Background(), `
 	return nil, errors.New("the customer record was rejected")
@@ -348,7 +374,7 @@ func TestUserCodeErrorIsReportedStructurally(t *testing.T) {
 
 func TestOutputIsBounded(t *testing.T) {
 	compiler := requireToolchain(t)
-	limits := runcode.DefaultLimits()
+	limits := generousLimits()
 	limits.MaxOutputBytes = 512
 	runner := runcode.NewRunner(compiler, runcode.NewMemoryCache(), limits)
 

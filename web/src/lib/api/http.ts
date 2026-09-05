@@ -37,6 +37,23 @@ export interface ApiFetchOptions extends Omit<RequestInit, 'body'> {
 	body?: unknown;
 }
 
+let embedToken: string | null = null;
+
+/**
+ * Sets the embed token attached to every subsequent API request.
+ *
+ * The embedded editor calls this once the host's postMessage handshake has
+ * completed; the internal dashboard never calls it, so its requests are
+ * unaffected.
+ */
+export function setEmbedToken(token: string | null): void {
+	embedToken = token;
+}
+
+function currentEmbedToken(): string | null {
+	return embedToken;
+}
+
 /**
  * Performs a same-origin API request and returns Orval's standard response
  * envelope. Generated operation types therefore retain status and headers,
@@ -49,6 +66,13 @@ export async function apiFetch<T>(url: string, options: ApiFetchOptions = {}): P
 	const jsonBody = body !== undefined && !isBodyInit(body);
 	const requestHeaders = new Headers(headers);
 	requestHeaders.set('Accept', requestHeaders.get('Accept') ?? 'application/json');
+	// An embedded editor has no session cookie, so its token rides on every
+	// request. Attaching it here rather than at each call site means a
+	// generated client cannot accidentally omit it.
+	const embedToken = currentEmbedToken();
+	if (embedToken && !requestHeaders.has('X-KilasFlow-Embed')) {
+		requestHeaders.set('X-KilasFlow-Embed', embedToken);
+	}
 
 	if (jsonBody && !requestHeaders.has('Content-Type')) {
 		requestHeaders.set('Content-Type', 'application/json');

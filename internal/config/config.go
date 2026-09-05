@@ -25,6 +25,7 @@ type Config struct {
 	Security  Security     `koanf:"security"`
 	Outbound  OutboundHTTP `koanf:"outbound"`
 	Webhook   Webhook      `koanf:"webhook"`
+	Embed     Embed        `koanf:"embed"`
 	Branding  Branding     `koanf:"branding"`
 	Execution Execution    `koanf:"execution"`
 	Log       Log          `koanf:"log"`
@@ -88,6 +89,19 @@ type Webhook struct {
 	ResponseTimeout time.Duration `koanf:"response_timeout"`
 }
 
+// Embed configures the iframe editor surface.
+//
+// The allowlist is empty by default, which means embedding is off: an operator
+// opts in per origin rather than discovering their editor is frameable
+// anywhere.
+type Embed struct {
+	// SigningKeyEnv names the environment variable holding the token signing
+	// key. Like the credential key, it never comes from the config file.
+	SigningKeyEnv  string        `koanf:"signing_key_env"`
+	AllowedOrigins []string      `koanf:"allowed_origins"`
+	SessionTTL     time.Duration `koanf:"session_ttl"`
+}
+
 // Branding drives white-label display options.
 type Branding struct {
 	Name      string `koanf:"name"`
@@ -137,6 +151,10 @@ func Default() Config {
 		Webhook: Webhook{
 			MaxBodyBytes:    1 << 20,
 			ResponseTimeout: 30 * time.Second,
+		},
+		Embed: Embed{
+			SigningKeyEnv: "KILASFLOW_EMBED_SIGNING_KEY",
+			SessionTTL:    15 * time.Minute,
 		},
 		Branding: Branding{
 			Name:      "KilasFlow",

@@ -18,6 +18,7 @@ import (
 	"github.com/kilaslabs/kilas-flow/internal/api/handlers"
 	"github.com/kilaslabs/kilas-flow/internal/api/middleware"
 	"github.com/kilaslabs/kilas-flow/internal/config"
+	"github.com/kilaslabs/kilas-flow/internal/embed"
 	"github.com/kilaslabs/kilas-flow/internal/events"
 	"github.com/kilaslabs/kilas-flow/internal/node"
 	"github.com/kilaslabs/kilas-flow/internal/repository"
@@ -51,6 +52,9 @@ type Deps struct {
 	// Webhook serves the reserved /webhook prefix. A nil handler keeps the
 	// prefix answering "not implemented" rather than falling through to the SPA.
 	Webhook http.Handler
+	// EmbedIssuer mints and verifies iframe sessions. A nil issuer disables
+	// embedding rather than defaulting it open.
+	EmbedIssuer *embed.Issuer
 	// ExecutionController owns live worker wakeups and cancellation. It is
 	// separate from the repository so HTTP never reaches into ORM state.
 	ExecutionController handlers.ExecutionController
@@ -73,6 +77,10 @@ func NewServer(deps Deps) *Server {
 	router.Use(middleware.RequestID)
 	router.Use(middleware.Recover(deps.Logger))
 	router.Use(middleware.Logger(deps.Logger))
+	// Mounted for every request, but inert unless a request carries an embed
+	// token: the internal dashboard is unaffected, and an embedded editor is
+	// confined to its own workflow and scopes.
+	router.Use(middleware.EmbedAuth(deps.EmbedIssuer))
 
 	api := humachi.New(router, openAPIConfig(deps))
 

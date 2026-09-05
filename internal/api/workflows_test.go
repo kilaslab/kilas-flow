@@ -18,6 +18,7 @@ import (
 	"github.com/kilaslabs/kilas-flow/internal/config"
 	"github.com/kilaslabs/kilas-flow/internal/credentials"
 	"github.com/kilaslabs/kilas-flow/internal/database"
+	"github.com/kilaslabs/kilas-flow/internal/embed"
 	"github.com/kilaslabs/kilas-flow/internal/execution"
 	"github.com/kilaslabs/kilas-flow/internal/node"
 	"github.com/kilaslabs/kilas-flow/internal/repository"
@@ -334,6 +335,39 @@ func TestWorkflowAPIOpenAPIDocumentsLifecycleResponseStatuses(t *testing.T) {
 
 func newWorkflowAPI(t *testing.T) (http.Handler, *repository.GORMWorkflowStore, *repository.GORMExecutionStore) {
 	return newWorkflowAPIWithController(t, nil)
+}
+
+// newWorkflowAPIWithEmbed builds one server that has the real repositories and
+// an embed issuer, so an embed test exercises the same handlers the dashboard
+// uses rather than a parallel stack.
+func newWorkflowAPIWithEmbed(t *testing.T, issuer *embed.Issuer) (http.Handler, string) {
+	t.Helper()
+	db, err := database.Open(context.Background(), config.Database{
+		Driver: "sqlite",
+		DSN:    filepath.Join(t.TempDir(), "embed.db"),
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatalf("database.Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := database.Migrate(db, repository.Models()...); err != nil {
+		t.Fatalf("database.Migrate() error = %v", err)
+	}
+	registry := node.NewRegistry()
+	if err := nodes.RegisterAll(registry); err != nil {
+		t.Fatalf("RegisterAll() error = %v", err)
+	}
+	executions := repository.NewExecutionStore(db.DB)
+	handler := newTestServer(t, api.Deps{
+		DB:           db,
+		NodeRegistry: registry,
+		Workflows:    repository.NewWorkflowStore(db.DB),
+		Executions:   executions,
+		Credentials:  repository.NewCredentialStore(db.DB, nil),
+		EmbedIssuer:  issuer,
+	})
+	created := createWorkflow(t, handler, validManualWorkflow("Embeddable"))
+	return handler, created.ID
 }
 
 func newWorkflowAPIWithController(t *testing.T, controller handlers.ExecutionController) (http.Handler, *repository.GORMWorkflowStore, *repository.GORMExecutionStore) {

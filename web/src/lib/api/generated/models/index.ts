@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0-dev
  */
 
+export * from './branding';
 export * from './connection';
 export * from './credentialBody';
 export * from './credentialBodyFields';
@@ -15,6 +16,8 @@ export * from './credentialTypeResource';
 export * from './definition';
 export * from './document';
 export * from './documentSettings';
+export * from './embedSessionBody';
+export * from './embedSessionResource';
 export * from './endpoint';
 export * from './errorDetail';
 export * from './errorModel';
