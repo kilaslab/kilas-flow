@@ -49,6 +49,10 @@ type Pack struct {
 	CredentialType string `json:"credentialType,omitempty"`
 	// RequestDefaults are shared by every operation.
 	RequestDefaults routing.Request `json:"requestDefaults"`
+	// Trigger, when set, makes this a webhook trigger node rather than an
+	// action node: it declares one output per event instead of a resource and
+	// operation cascade, and carries no resources at all.
+	Trigger *Trigger `json:"trigger,omitempty"`
 	// Parameters are the node's own properties, one per key.
 	//
 	// One per key because the node registry refuses duplicates, deliberately.
@@ -56,7 +60,7 @@ type Pack struct {
 	// a parameter used by several operations is a single property that says
 	// which resources and operations show it.
 	Parameters []Parameter `json:"parameters"`
-	Resources  []Resource  `json:"resources"`
+	Resources  []Resource  `json:"resources,omitempty"`
 	// Generator records where this file came from, so a reviewer can tell a
 	// regeneration from a hand edit.
 	Generator Provenance `json:"generator"`
@@ -142,8 +146,11 @@ func Load(pack *Pack) (node.Definition, *routing.Node, error) {
 	if strings.TrimSpace(pack.Type) == "" || strings.TrimSpace(pack.DisplayName) == "" {
 		return node.Definition{}, nil, fmt.Errorf("a node pack needs a type and a display name")
 	}
-	if len(pack.Resources) == 0 {
-		return node.Definition{}, nil, fmt.Errorf("node pack %q declares no resources", pack.Type)
+	if pack.Trigger == nil && len(pack.Resources) == 0 {
+		return node.Definition{}, nil, fmt.Errorf("node pack %q declares neither resources nor a trigger", pack.Type)
+	}
+	if pack.Trigger != nil && len(pack.Resources) > 0 {
+		return node.Definition{}, nil, fmt.Errorf("node pack %q is both a trigger and an action node", pack.Type)
 	}
 
 	definition := node.Definition{
@@ -164,6 +171,10 @@ func Load(pack *Pack) (node.Definition, *routing.Node, error) {
 	}
 	if pack.CredentialType != "" {
 		definition.Credentials = []node.CredentialRequirement{{Type: pack.CredentialType, Required: true}}
+	}
+
+	if pack.Trigger != nil {
+		return loadTrigger(pack, definition)
 	}
 
 	description := &routing.Node{
@@ -254,12 +265,54 @@ func Load(pack *Pack) (node.Definition, *routing.Node, error) {
 	return definition, description, nil
 }
 
+// loadTrigger finishes a trigger pack's definition.
+//
+// A trigger has no input, one output per event, and its executor is the fan-out
+// rather than the routing interpreter. It carries no routing description at
+// all: a trigger makes no outbound request.
+func loadTrigger(pack *Pack, definition node.Definition) (node.Definition, *routing.Node, error) {
+	trigger := pack.Trigger
+	if err := trigger.validate(); err != nil {
+		return node.Definition{}, nil, fmt.Errorf("node pack %q: %w", pack.Type, err)
+	}
+	definition.Group = []node.NodeGroup{node.GroupTrigger}
+	definition.Inputs = nil
+	definition.Outputs = trigger.Ports()
+	definition.Webhook = trigger.Webhook
+	definition.ExecutorID = TriggerExecutorID
+	if trigger.Lifecycle != nil {
+		definition.LifecycleID = trigger.Lifecycle.ID
+	}
+
+	seen := map[string]bool{}
+	for _, parameter := range pack.Parameters {
+		declared, err := parameter.definition()
+		if err != nil {
+			return node.Definition{}, nil, fmt.Errorf("node pack %q parameter %q: %w", pack.Type, parameter.Key, err)
+		}
+		if seen[parameter.Key] {
+			return node.Definition{}, nil, fmt.Errorf("node pack %q declares parameter %q twice", pack.Type, parameter.Key)
+		}
+		seen[parameter.Key] = true
+		definition.Parameters = append(definition.Parameters, declared)
+	}
+	if trigger.Webhook.PathParameter != "" && !seen[trigger.Webhook.PathParameter] {
+		return node.Definition{}, nil, fmt.Errorf(
+			"node pack %q binds its route to parameter %q, which it does not declare",
+			pack.Type, trigger.Webhook.PathParameter)
+	}
+	return definition, nil, nil
+}
+
 func (parameter Parameter) definition() (property.PropertyDefinition, error) {
 	if strings.TrimSpace(parameter.Key) == "" {
 		return property.PropertyDefinition{}, fmt.Errorf("a parameter needs a key")
 	}
 	if parameter.Key == ResourceKey || parameter.Key == OperationKey {
 		return property.PropertyDefinition{}, fmt.Errorf("%q is reserved for the pack's own cascade", parameter.Key)
+	}
+	if parameter.Kind == "" {
+		return property.PropertyDefinition{}, fmt.Errorf("a parameter needs a kind")
 	}
 	declared := property.PropertyDefinition{
 		Key: parameter.Key, Label: parameter.Label, Description: parameter.Description,
@@ -357,10 +410,12 @@ func Register(definitions *node.Registry, routes *routing.Registry, executors Ex
 		return fmt.Errorf("node pack %q is bound to executor %q, which this server has not installed",
 			pack.Type, definition.ExecutorID)
 	}
-	if err := routes.Register(description); err != nil {
-		return err
+	if description != nil {
+		if err := routes.Register(description); err != nil {
+			return err
+		}
 	}
-	if options != nil {
+	if options != nil && pack.Trigger == nil {
 		if err := options.RegisterInternal(OperationsLoaderName(pack.Type, pack.Version), OperationsLoader(pack)); err != nil {
 			return err
 		}

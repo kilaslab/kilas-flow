@@ -1,8 +1,11 @@
 package waha_test
 
 import (
+	"bytes"
 	"context"
+	"crypto/hmac"
 	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/hex"
 	"encoding/json"
 	"io"
@@ -13,16 +16,23 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kilaslabs/kilas-flow/internal/ai"
+	"github.com/kilaslabs/kilas-flow/internal/binary"
 	"github.com/kilaslabs/kilas-flow/internal/credentials"
 	"github.com/kilaslabs/kilas-flow/internal/engine"
 	"github.com/kilaslabs/kilas-flow/internal/execution"
 	"github.com/kilaslabs/kilas-flow/internal/interop/n8n/corpus"
 	"github.com/kilaslabs/kilas-flow/internal/loadoptions"
 	"github.com/kilaslabs/kilas-flow/internal/node"
+	"github.com/kilaslabs/kilas-flow/internal/nodepack"
 	"github.com/kilaslabs/kilas-flow/internal/property"
+	"github.com/kilaslabs/kilas-flow/internal/repository"
 	"github.com/kilaslabs/kilas-flow/internal/routing"
 	"github.com/kilaslabs/kilas-flow/internal/safehttp"
+	"github.com/kilaslabs/kilas-flow/internal/sqlnode"
+	"github.com/kilaslabs/kilas-flow/internal/webhook"
 	"github.com/kilaslabs/kilas-flow/internal/workflow"
+	"github.com/kilaslabs/kilas-flow/nodes"
 	"github.com/kilaslabs/kilas-flow/packs/waha"
 )
 
@@ -31,6 +41,39 @@ type registered struct {
 	routes      *routing.Registry
 	executors   *engine.Registry
 	options     *loadoptions.Resolver
+	triggers    *nodepack.TriggerRegistry
+	deliveries  *webhook.Registry
+	lifecycles  *webhook.LifecycleRegistry
+}
+
+// actionPacks are the WAHA action node's versions; triggerPacks are the
+// trigger's. Both node types ship from the same directory.
+func actionPacks(t *testing.T) []*nodepack.Pack {
+	t.Helper()
+	return packsOfType(t, waha.NodeType)
+}
+
+func triggerPacks(t *testing.T) []*nodepack.Pack {
+	t.Helper()
+	return packsOfType(t, waha.TriggerNodeType)
+}
+
+func packsOfType(t *testing.T, nodeType string) []*nodepack.Pack {
+	t.Helper()
+	all, err := waha.Packs()
+	if err != nil {
+		t.Fatalf("Packs() error = %v", err)
+	}
+	matching := make([]*nodepack.Pack, 0, 2)
+	for _, pack := range all {
+		if pack.Type == nodeType {
+			matching = append(matching, pack)
+		}
+	}
+	if len(matching) == 0 {
+		t.Fatalf("no %s pack", nodeType)
+	}
+	return matching
 }
 
 func install(t *testing.T, policy safehttp.Policy) registered {
@@ -42,7 +85,17 @@ func install(t *testing.T, policy safehttp.Policy) registered {
 	if err := set.executors.Register(routing.ExecutorID, routing.NewExecutor(policy, set.routes, set.definitions)); err != nil {
 		t.Fatalf("Register(routing) error = %v", err)
 	}
-	if err := waha.Register(set.definitions, set.routes, set.executors, set.options); err != nil {
+	set.triggers = nodepack.NewTriggerRegistry()
+	set.deliveries = webhook.NewRegistry()
+	set.lifecycles = webhook.NewLifecycleRegistry()
+	if err := set.executors.Register(nodepack.TriggerExecutorID, nodepack.NewTriggerExecutor(set.triggers, policy)); err != nil {
+		t.Fatalf("Register(trigger) error = %v", err)
+	}
+	if err := waha.Register(waha.Deps{
+		Definitions: set.definitions, Routes: set.routes, Triggers: set.triggers,
+		Deliveries: set.deliveries, Lifecycles: set.lifecycles,
+		Executors: set.executors, Options: set.options,
+	}); err != nil {
 		t.Fatalf("waha.Register() error = %v", err)
 	}
 	return set
@@ -59,11 +112,11 @@ func TestBothVersionsRegisterWithTheOperationCountOfTheirOwnSpec(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Packs() error = %v", err)
 	}
-	if len(packs) != 2 {
-		t.Fatalf("Packs() = %d packs, want both published versions", len(packs))
+	if len(packs) != 4 {
+		t.Fatalf("Packs() = %d packs, want an action node and a trigger at both published versions", len(packs))
 	}
 
-	for _, pack := range packs {
+	for _, pack := range actionPacks(t) {
 		version := pack.Version.String()
 		if pack.Type != waha.NodeType {
 			t.Fatalf("pack v%s type = %q, want %q", version, pack.Type, waha.NodeType)
@@ -135,12 +188,8 @@ func TestEveryResourceAndOperationInTheRealTemplatesExists(t *testing.T) {
 		t.Skipf("no WAHA templates in the corpus; materialise it with %s", corpus.SyncCommand)
 	}
 
-	packs, err := waha.Packs()
-	if err != nil {
-		t.Fatalf("Packs() error = %v", err)
-	}
 	available := map[string]map[string]bool{}
-	for _, pack := range packs {
+	for _, pack := range actionPacks(t) {
 		for _, resource := range pack.Resources {
 			if available[resource.Name] == nil {
 				available[resource.Name] = map[string]bool{}
@@ -192,15 +241,11 @@ func TestEveryResourceAndOperationInTheRealTemplatesExists(t *testing.T) {
 func TestTheInjectedDefaultsSurviveGeneration(t *testing.T) {
 	t.Parallel()
 
-	packs, err := waha.Packs()
-	if err != nil {
-		t.Fatalf("Packs() error = %v", err)
-	}
 	want := map[string]string{
 		"session": "{{ $json.session }}",
 		"chatId":  "{{ $json.payload.from }}",
 	}
-	for _, pack := range packs {
+	for _, pack := range actionPacks(t) {
 		found := map[string]bool{}
 		for _, parameter := range pack.Parameters {
 			expected, tracked := want[parameter.Key]
@@ -378,10 +423,7 @@ func TestTheOperationPickerNarrowsToTheChosenResource(t *testing.T) {
 	t.Parallel()
 
 	set := install(t, safehttp.DefaultPolicy())
-	packs, err := waha.Packs()
-	if err != nil {
-		t.Fatalf("Packs() error = %v", err)
-	}
+	packs := actionPacks(t)
 	latest := packs[len(packs)-1]
 	loader := operationLoader(t, set.definitions, latest.Version)
 
@@ -446,10 +488,7 @@ func operationLoader(t *testing.T, definitions *node.Registry, version workflow.
 // sendText runs the pack's Chatting → Send Text operation against a stub.
 func sendText(t *testing.T, set registered, baseURL string, domains []string, item map[string]any) (workflow.NodeOutput, error) {
 	t.Helper()
-	packs, err := waha.Packs()
-	if err != nil {
-		t.Fatalf("Packs() error = %v", err)
-	}
+	packs := actionPacks(t)
 	latest := packs[len(packs)-1]
 	definition, found := set.definitions.Lookup(waha.NodeType, latest.Version)
 	if !found {
@@ -518,11 +557,7 @@ func TestTheAPIKeyIsSecretAndTheBaseURLIsNot(t *testing.T) {
 func TestEachPackRecordsTheDigestOfTheSpecItCameFrom(t *testing.T) {
 	t.Parallel()
 
-	packs, err := waha.Packs()
-	if err != nil {
-		t.Fatalf("Packs() error = %v", err)
-	}
-	for _, pack := range packs {
+	for _, pack := range actionPacks(t) {
 		version := pack.Version.String()
 		raw, err := os.ReadFile(filepath.Join("..", "..", "third_party", "waha", "openapi-"+version+".json"))
 		if err != nil {
@@ -536,5 +571,560 @@ func TestEachPackRecordsTheDigestOfTheSpecItCameFrom(t *testing.T) {
 		if !strings.Contains(pack.Generator.Source, "openapi-"+version) {
 			t.Fatalf("v%s names source %q", version, pack.Generator.Source)
 		}
+	}
+}
+
+// A connection in an imported workflow is an output *index*, so the order of
+// the ports is the contract. It comes from the document and is never sorted.
+func TestTheTriggerPortOrderIsTheDocumentsEventOrder(t *testing.T) {
+	t.Parallel()
+
+	set := install(t, safehttp.DefaultPolicy())
+	for _, pack := range triggerPacks(t) {
+		version := pack.Version.String()
+		definition, found := set.definitions.Get(waha.TriggerNodeType, pack.Version)
+		if !found {
+			t.Fatalf("trigger v%s did not register", version)
+		}
+		if len(definition.Inputs) != 0 {
+			t.Fatalf("trigger v%s has %d inputs, want none", version, len(definition.Inputs))
+		}
+		// One per event, plus the catch-all.
+		if len(definition.Outputs) != len(pack.Trigger.Events)+1 {
+			t.Fatalf("trigger v%s has %d outputs for %d events", version, len(definition.Outputs), len(pack.Trigger.Events))
+		}
+		for index, event := range pack.Trigger.Events {
+			if definition.Outputs[index].Name != event {
+				t.Fatalf("trigger v%s output %d = %q, want %q", version, index, definition.Outputs[index].Name, event)
+			}
+		}
+		if last := definition.Outputs[len(definition.Outputs)-1].Name; last != pack.Trigger.CatchAll {
+			t.Fatalf("trigger v%s last output = %q, want the catch-all", version, last)
+		}
+		t.Logf("trigger v%s: %d events + catch-all", version, len(pack.Trigger.Events))
+	}
+
+	// The two orderings diverge, which is exactly why the table is a property
+	// of the version rather than of the node.
+	packs := triggerPacks(t)
+	older, newer := packs[0].Trigger.Events, packs[1].Trigger.Events
+	diverged := false
+	for index := range older {
+		if index < len(newer) && older[index] != newer[index] {
+			diverged = true
+			t.Logf("orders diverge at index %d: %q then %q", index, older[index], newer[index])
+			break
+		}
+	}
+	if !diverged {
+		t.Fatal("the two versions' event orders are identical; one of them was not generated from its own document")
+	}
+}
+
+func triggerNode(t *testing.T, set registered, version workflow.TypeVersion, parameters map[string]any) workflow.IRNode {
+	t.Helper()
+	definition, found := set.definitions.Lookup(waha.TriggerNodeType, version)
+	if !found {
+		t.Fatal("the trigger did not register")
+	}
+	return workflow.IRNode{
+		ID: "waha-trigger", Name: "WAHA Trigger", Type: waha.TriggerNodeType, TypeVersion: version,
+		Parameters: parameters, Credentials: map[string]string{waha.CredentialType: "cred-1"},
+		Definition: definition,
+	}
+}
+
+// One delivery, one branch. Every other port is empty, which is what makes the
+// runner prune the twenty-five branches that were not taken.
+func TestADeliveryReachesOnlyItsOwnEventsPort(t *testing.T) {
+	t.Parallel()
+
+	set := install(t, safehttp.DefaultPolicy())
+	packs := triggerPacks(t)
+	latest := packs[len(packs)-1]
+	executor, _ := set.executors.Lookup(nodepack.TriggerExecutorID)
+
+	for _, event := range []string{"message", "message.ack", "session.status"} {
+		output, err := executor.Execute(context.Background(),
+			triggerNode(t, set, latest.Version, map[string]any{"path": "waha"}),
+			workflow.NodeInput{},
+			engine.Request{Input: workflow.Item{JSON: map[string]any{"event": event, "session": "default"}}})
+		if err != nil {
+			t.Fatalf("Execute() error = %v", err)
+		}
+		want := latest.Trigger.PortIndex(event)
+		for index, items := range output {
+			if index == want {
+				if len(items) != 1 || items[0].JSON["event"] != event {
+					t.Fatalf("%s: port %d carried %#v, want the delivery", event, index, items)
+				}
+				continue
+			}
+			if len(items) != 0 {
+				t.Fatalf("%s: port %d carried %d items, want none — every other branch must be pruned", event, index, len(items))
+			}
+		}
+	}
+}
+
+// An event this build has never heard of is a new event in a newer service.
+// Dropping it silently is how a workflow stops working after somebody else's
+// upgrade.
+func TestAnUnknownEventGoesToTheCatchAllRatherThanNowhere(t *testing.T) {
+	t.Parallel()
+
+	set := install(t, safehttp.DefaultPolicy())
+	packs := triggerPacks(t)
+	latest := packs[len(packs)-1]
+	executor, _ := set.executors.Lookup(nodepack.TriggerExecutorID)
+
+	output, err := executor.Execute(context.Background(),
+		triggerNode(t, set, latest.Version, map[string]any{"path": "waha"}),
+		workflow.NodeInput{},
+		engine.Request{Input: workflow.Item{JSON: map[string]any{"event": "invented.in.2027"}}})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	catchAll := len(output) - 1
+	if len(output[catchAll]) != 1 {
+		t.Fatalf("the catch-all carried %d items, want the unrecognised delivery", len(output[catchAll]))
+	}
+	for index := range output[:catchAll] {
+		if len(output[index]) != 0 {
+			t.Fatalf("port %d also carried items", index)
+		}
+	}
+}
+
+// WAHA templates read `$json.event`, `$json.session` and `$json.payload` at the
+// top level, not `$json.body.event`.
+func TestTheDeliveryIsShapedAsTheEnvelopeTemplatesRead(t *testing.T) {
+	t.Parallel()
+
+	set := install(t, safehttp.DefaultPolicy())
+	kind := set.deliveries.Lookup(waha.TriggerNodeType)
+	if kind.Shape != webhook.ShapeBodyAsItem {
+		t.Fatalf("shape = %q, want the body at the top level", kind.Shape)
+	}
+
+	body := map[string]any{"event": "message", "session": "default", "payload": map[string]any{"from": "1@c.us"}}
+	item := kind.Shape.Apply(webhook.Delivery{Body: body})
+	for key, want := range map[string]any{"event": "message", "session": "default"} {
+		if item[key] != want {
+			t.Fatalf("item[%q] = %#v, want %#v at the top level", key, item[key], want)
+		}
+	}
+	if _, wrapped := item["body"]; wrapped {
+		t.Fatalf("item = %#v, want no wrapper path", item)
+	}
+}
+
+// A signature is the only thing between a leaked URL and injected WhatsApp
+// events — but a node with no secret configured must still receive, or every
+// imported workflow would break on arrival.
+func TestTheSignatureIsCheckedOnlyWhenASecretIsConfigured(t *testing.T) {
+	t.Parallel()
+
+	set := install(t, safehttp.DefaultPolicy())
+	kind := set.deliveries.Lookup(waha.TriggerNodeType)
+	if kind.Verify == nil {
+		t.Fatal("the trigger installs no verifier")
+	}
+
+	body := []byte(`{"event":"message"}`)
+	mac := hmac.New(sha512.New, []byte("s3cret"))
+	mac.Write(body)
+	signature := hex.EncodeToString(mac.Sum(nil))
+
+	delivery := func(secret, header string) webhook.Delivery {
+		request := httptest.NewRequest(http.MethodPost, "/webhook/abc", nil)
+		if header != "" {
+			request.Header.Set("X-Webhook-Hmac", header)
+		}
+		parameters := map[string]any{}
+		if secret != "" {
+			parameters["hmacSecret"] = secret
+		}
+		return webhook.Delivery{
+			Request: request, RawBody: body,
+			Binding: repository.WebhookBinding{Parameters: parameters},
+		}
+	}
+
+	if err := kind.Verify(delivery("", "")); err != nil {
+		t.Fatalf("an unconfigured node refused a delivery: %v", err)
+	}
+	if err := kind.Verify(delivery("s3cret", signature)); err != nil {
+		t.Fatalf("a correctly signed delivery was refused: %v", err)
+	}
+	if err := kind.Verify(delivery("s3cret", "")); err == nil {
+		t.Fatal("a configured node accepted an unsigned delivery")
+	}
+	if err := kind.Verify(delivery("s3cret", strings.Repeat("0", len(signature)))); err == nil {
+		t.Fatal("a configured node accepted a wrong signature")
+	}
+}
+
+// WAHA retries, and a retried delivery must not run the workflow twice.
+func TestTheTriggerDeclaresTheHeaderWAHARetriesWith(t *testing.T) {
+	t.Parallel()
+
+	set := install(t, safehttp.DefaultPolicy())
+	for _, pack := range triggerPacks(t) {
+		definition, _ := set.definitions.Get(waha.TriggerNodeType, pack.Version)
+		found := false
+		for _, parameter := range definition.Parameters {
+			if parameter.Key != "deliveryIdHeader" {
+				continue
+			}
+			found = true
+			if parameter.Default != "X-Webhook-Request-Id" {
+				t.Fatalf("deliveryIdHeader default = %#v, want WAHA's own retry identifier", parameter.Default)
+			}
+		}
+		if !found {
+			t.Fatalf("trigger v%s declares no deliveryIdHeader, so a retry runs the workflow again", pack.Version)
+		}
+	}
+}
+
+// The executor emitting on one port is only half of it. A node cannot stop a
+// downstream node from running, so this wires two events to two branches,
+// delivers one, and asserts the other branch produced no node run at all.
+func TestOnlyTheBranchWiredToTheDeliveredEventRuns(t *testing.T) {
+	t.Parallel()
+
+	set := install(t, safehttp.DefaultPolicy())
+	if err := nodes.RegisterAll(set.definitions); err != nil {
+		t.Fatalf("RegisterAll() error = %v", err)
+	}
+	if err := nodes.RegisterExecutors(set.executors, safehttp.DefaultPolicy(), sqlnode.Guard{}, ai.NewLoopRuntime(), nil, nil); err != nil {
+		t.Fatalf("RegisterExecutors() error = %v", err)
+	}
+	packs := triggerPacks(t)
+	latest := packs[len(packs)-1]
+
+	ir, err := workflow.Compile(workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_waha", Name: "Reply to messages",
+		Nodes: []workflow.Node{
+			{ID: "trigger", Name: "WAHA Trigger", Type: waha.TriggerNodeType, TypeVersion: latest.Version,
+				Parameters: map[string]any{"path": "waha", "session": "default"}},
+			{ID: "on-message", Name: "On message", Type: "kilasflow.set", TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"assignments": map[string]any{"branch": "message"}}},
+			{ID: "on-ack", Name: "On ack", Type: "kilasflow.set", TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"assignments": map[string]any{"branch": "ack"}}},
+		},
+		Connections: []workflow.Connection{
+			{ID: "c1", Kind: workflow.ConnectionMain,
+				Source: workflow.Endpoint{NodeID: "trigger", Port: "message"},
+				Target: workflow.Endpoint{NodeID: "on-message", Port: "main"}},
+			{ID: "c2", Kind: workflow.ConnectionMain,
+				Source: workflow.Endpoint{NodeID: "trigger", Port: "message.ack"},
+				Target: workflow.Endpoint{NodeID: "on-ack", Port: "main"}},
+		},
+		Settings: map[string]any{},
+	}, set.definitions)
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+
+	result, err := engine.NewRunner(set.executors).Run(context.Background(), ir, engine.Request{
+		TriggerNodeID: "trigger",
+		Input:         workflow.Item{JSON: map[string]any{"event": "message", "session": "default"}},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	// A pruned branch is recorded as skipped rather than omitted — the
+	// inspector has to be able to tell "did not run" from "never reached" —
+	// so the assertion is about which of them actually executed.
+	executed := map[string]bool{}
+	skipped := map[string]bool{}
+	for _, run := range result.NodeRuns {
+		if run.Skipped {
+			skipped[run.NodeID] = true
+			continue
+		}
+		executed[run.NodeID] = true
+	}
+	if !executed["on-message"] {
+		t.Fatalf("the message branch did not run; executed = %v, skipped = %v", executed, skipped)
+	}
+	if executed["on-ack"] {
+		t.Fatal("the ack branch ran on a message delivery; twenty-five other branches would too")
+	}
+	if !skipped["on-ack"] {
+		t.Fatalf("the ack branch was neither run nor recorded as skipped: %v", skipped)
+	}
+	if output := result.NodeRuns[0].Output; len(output) != len(latest.Trigger.Events)+1 {
+		t.Fatalf("the trigger produced %d ports, want one per event plus the catch-all", len(output))
+	}
+}
+
+// A webhook that links to media is a webhook whose payload expires. Downloading
+// it once, at the trigger, is what makes the media part of the run.
+func TestAMediaBearingDeliveryAttachesAReferenceRatherThanBytes(t *testing.T) {
+	t.Parallel()
+
+	payload := []byte{0xff, 0xd8, 0xff, 0xe0, 'J', 'F', 'I', 'F'}
+	var apiKey string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		apiKey = r.Header.Get("X-Api-Key")
+		w.Header().Set("Content-Type", "image/jpeg")
+		_, _ = w.Write(payload)
+	}))
+	defer server.Close()
+
+	policy := safehttp.DefaultPolicy()
+	policy.AllowPrivateNetworks = true
+	set := install(t, policy)
+	packs := triggerPacks(t)
+	latest := packs[len(packs)-1]
+	executor, _ := set.executors.Lookup(nodepack.TriggerExecutorID)
+
+	store, err := binary.NewFileStore(t.TempDir(), 1<<20)
+	if err != nil {
+		t.Fatalf("NewFileStore() error = %v", err)
+	}
+	scoped := binary.For(store, "tenant-a", "exec-1")
+
+	delivery := map[string]any{
+		"event": "message", "session": "default",
+		"payload": map[string]any{
+			"from": "1@c.us",
+			"media": map[string]any{
+				"url": server.URL + "/api/files/photo.jpg", "mimetype": "image/jpeg", "filename": "photo.jpg",
+			},
+		},
+	}
+	request := engine.Request{
+		Input:       workflow.Item{JSON: delivery},
+		Binaries:    scoped,
+		Credentials: stubCredential{baseURL: server.URL},
+	}
+
+	// Off by default: a busy session downloads a lot.
+	output, err := executor.Execute(context.Background(),
+		triggerNode(t, set, latest.Version, map[string]any{"path": "waha"}), workflow.NodeInput{}, request)
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if output[latest.Trigger.PortIndex("message")][0].Binary != nil {
+		t.Fatal("media was downloaded without being asked for")
+	}
+
+	output, err = executor.Execute(context.Background(),
+		triggerNode(t, set, latest.Version, map[string]any{"path": "waha", "downloadMedia": true}),
+		workflow.NodeInput{}, request)
+	if err != nil {
+		t.Fatalf("Execute() with downloadMedia error = %v", err)
+	}
+	item := output[latest.Trigger.PortIndex("message")][0]
+	reference, attached := item.Binary["data"]
+	if !attached {
+		t.Fatalf("Binary = %#v, want the media attached", item.Binary)
+	}
+	if reference.FileName != "photo.jpg" || reference.MediaType != "image/jpeg" {
+		t.Fatalf("reference = %#v, want the name and type from the delivery", reference)
+	}
+	if reference.Size != int64(len(payload)) {
+		t.Fatalf("Size = %d, want %d", reference.Size, len(payload))
+	}
+	if apiKey != "k-waha" {
+		t.Fatalf("X-Api-Key = %q, want the credential applied to the media fetch", apiKey)
+	}
+
+	// The reference, never the bytes.
+	encoded, _ := json.Marshal(item.JSON)
+	if bytes.Contains(encoded, payload) {
+		t.Fatalf("the item carries the payload: %s", encoded)
+	}
+	body, _, err := scoped.Get(reference.ID)
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	defer body.Close()
+	stored, _ := io.ReadAll(body)
+	if !bytes.Equal(stored, payload) {
+		t.Fatalf("stored = %#v, want the downloaded bytes", stored)
+	}
+}
+
+// A webhook URL that names an internal address would turn this trigger into an
+// SSRF gadget, and the URL comes from whoever is delivering.
+func TestMediaFromAnInternalAddressIsRefused(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("secret"))
+	}))
+	defer server.Close()
+
+	// The default policy refuses private networks; the test server is loopback.
+	set := install(t, safehttp.DefaultPolicy())
+	packs := triggerPacks(t)
+	latest := packs[len(packs)-1]
+	executor, _ := set.executors.Lookup(nodepack.TriggerExecutorID)
+
+	store, err := binary.NewFileStore(t.TempDir(), 1<<20)
+	if err != nil {
+		t.Fatalf("NewFileStore() error = %v", err)
+	}
+	_, err = executor.Execute(context.Background(),
+		triggerNode(t, set, latest.Version, map[string]any{"path": "waha", "downloadMedia": true}),
+		workflow.NodeInput{}, engine.Request{
+			Input: workflow.Item{JSON: map[string]any{
+				"event":   "message",
+				"payload": map[string]any{"media": map[string]any{"url": server.URL + "/secret"}},
+			}},
+			Binaries:    binary.For(store, "tenant-a", "exec-1"),
+			Credentials: stubCredential{baseURL: server.URL},
+		})
+	if err == nil || !strings.Contains(err.Error(), "request target is not allowed") {
+		t.Fatalf("Execute() error = %v, want the egress policy's refusal", err)
+	}
+}
+
+// stubRoutes is the binding reader the coordinator walks.
+type stubRoutes struct{ bindings []repository.WebhookBinding }
+
+func (stub stubRoutes) WebhookRoutes(context.Context, repository.TenantScope, string) ([]repository.WebhookBinding, error) {
+	return stub.bindings, nil
+}
+
+func coordinator(t *testing.T, set registered, binding repository.WebhookBinding, credential engine.CredentialResolver) *webhook.Coordinator {
+	t.Helper()
+	policy := safehttp.DefaultPolicy()
+	policy.AllowPrivateNetworks = true
+	return webhook.NewCoordinator(set.lifecycles, stubRoutes{bindings: []repository.WebhookBinding{binding}},
+		policy, func(string) engine.CredentialResolver { return credential },
+		"https://flows.example.test", nil)
+}
+
+// An imported workflow with auto-registration off is active and receives
+// nothing until somebody pastes the URL into WAHA. An activation that only said
+// "active" would leave that looking exactly like a workflow that is listening.
+func TestActivationSaysWhatItDidNotDo(t *testing.T) {
+	t.Parallel()
+
+	set := install(t, safehttp.DefaultPolicy())
+	packs := triggerPacks(t)
+	latest := packs[len(packs)-1]
+
+	binding := repository.WebhookBinding{
+		NodeID: "trigger", NodeType: waha.TriggerNodeType, Route: "abc123",
+		Parameters: map[string]any{"session": "default", "autoRegister": false},
+	}
+	declared := map[string]string{waha.TriggerNodeType: latest.Trigger.Lifecycle.ID}
+
+	notices, err := coordinator(t, set, binding, nil).Activated(context.Background(), "tenant-a", "wf_1", declared)
+	if err != nil {
+		t.Fatalf("Activated() error = %v", err)
+	}
+	if len(notices) != 1 {
+		t.Fatalf("notices = %#v, want one naming the URL to paste", notices)
+	}
+	if !strings.Contains(notices[0].Message, "https://flows.example.test/webhook/abc123") {
+		t.Fatalf("notice = %q, want the exact URL", notices[0].Message)
+	}
+	if notices[0].NodeID != "trigger" {
+		t.Fatalf("notice node = %q, want the trigger it is about", notices[0].NodeID)
+	}
+}
+
+// Auto-registration is opt-in because it writes to a customer's own WAHA
+// instance, and importing a workflow should not do that silently.
+func TestAutoRegistrationIsOffByDefaultAndInstallsTheURLWhenTurnedOn(t *testing.T) {
+	t.Parallel()
+
+	type call struct {
+		method, path, apiKey, body string
+	}
+	var calls []call
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		calls = append(calls, call{r.Method, r.URL.Path, r.Header.Get("X-Api-Key"), string(raw)})
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"name":"default"}`))
+	}))
+	defer server.Close()
+
+	set := install(t, safehttp.DefaultPolicy())
+	packs := triggerPacks(t)
+	latest := packs[len(packs)-1]
+	declared := map[string]string{waha.TriggerNodeType: latest.Trigger.Lifecycle.ID}
+	credential := stubCredential{baseURL: server.URL}
+
+	off := repository.WebhookBinding{
+		NodeID: "trigger", NodeType: waha.TriggerNodeType, Route: "abc123",
+		Parameters: map[string]any{"session": "default", "autoRegister": false,
+			"$credentials": map[string]any{waha.CredentialType: "cred-1"}},
+	}
+	if _, err := coordinator(t, set, off, credential).Activated(context.Background(), "tenant-a", "wf_1", declared); err != nil {
+		t.Fatalf("Activated() error = %v", err)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("activation called WAHA %d times with auto-registration off: %#v", len(calls), calls)
+	}
+
+	on := off
+	on.Parameters = map[string]any{"session": "sales", "autoRegister": true,
+		"$credentials": map[string]any{waha.CredentialType: "cred-1"}}
+	notices, err := coordinator(t, set, on, credential).Activated(context.Background(), "tenant-a", "wf_1", declared)
+	if err != nil {
+		t.Fatalf("Activated() error = %v", err)
+	}
+	if len(notices) != 0 {
+		t.Fatalf("notices = %#v, want none when the URL was installed", notices)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("activation made %d calls, want one: %#v", len(calls), calls)
+	}
+	if calls[0].method != http.MethodPut || calls[0].path != "/api/sessions/sales" {
+		t.Fatalf("call = %s %s, want the session the node names", calls[0].method, calls[0].path)
+	}
+	if calls[0].apiKey != "k-waha" {
+		t.Fatalf("X-Api-Key = %q, want the credential applied", calls[0].apiKey)
+	}
+	if !strings.Contains(calls[0].body, "https://flows.example.test/webhook/abc123") {
+		t.Fatalf("body = %q, want this workflow's own URL installed", calls[0].body)
+	}
+}
+
+// The binding comes from the definition the pack registered, not from a node
+// type named at the composition root — which is what lets a pack ship a trigger
+// at all.
+func TestTheTriggerBindsItsRouteThroughRegistryDrivenExtraction(t *testing.T) {
+	t.Parallel()
+
+	set := install(t, safehttp.DefaultPolicy())
+	packs := triggerPacks(t)
+	latest := packs[len(packs)-1]
+
+	extract := webhook.Extract(set.definitions, func(path string) string { return strings.TrimSpace(path) })
+	triggers := extract(workflow.Document{
+		Nodes: []workflow.Node{{
+			ID: "trigger", Name: "WAHA Trigger", Type: waha.TriggerNodeType, TypeVersion: latest.Version,
+			Parameters:  map[string]any{"path": "sales-inbox", "session": "sales", "deliveryIdHeader": "X-Webhook-Request-Id"},
+			Credentials: map[string]string{waha.CredentialType: "cred-1"},
+		}},
+	})
+	if len(triggers) != 1 {
+		t.Fatalf("extracted %d bindings, want one", len(triggers))
+	}
+	bound := triggers[0]
+	if bound.Path != "sales-inbox" || bound.Method != http.MethodPost {
+		t.Fatalf("binding = %s %s, want the node's own path and WAHA's method", bound.Method, bound.Path)
+	}
+	// The retry header travels with the binding, so the HTTP boundary can
+	// deduplicate without re-reading the workflow document.
+	if bound.Parameters["deliveryIdHeader"] != "X-Webhook-Request-Id" {
+		t.Fatalf("binding parameters = %#v, want the retry header carried", bound.Parameters)
+	}
+	references, _ := bound.Parameters["$credentials"].(map[string]any)
+	if references[waha.CredentialType] != "cred-1" {
+		t.Fatalf("binding credentials = %#v, want the WAHA credential reference", bound.Parameters["$credentials"])
 	}
 }

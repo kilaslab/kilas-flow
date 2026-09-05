@@ -50,6 +50,26 @@ type manifest struct {
 	// and rely on them. A pack that treated absent as empty would produce
 	// workflows that look correct, activate, and send nothing anywhere.
 	ParameterDefaults map[string]any `json:"parameterDefaults,omitempty"`
+	// Trigger, when present, produces a second pack: a webhook trigger node
+	// whose one output per event is generated from the same document, in the
+	// order that document lists them.
+	//
+	// Same document, same run, one more artifact — because the order of those
+	// outputs is what an imported workflow's connections index into, and a
+	// table generated separately is a table that will drift.
+	Trigger *triggerManifest `json:"trigger,omitempty"`
+}
+
+// triggerManifest is the trigger half: every decision the document cannot make,
+// plus where in the document the event list lives.
+type triggerManifest struct {
+	nodepack.Pack
+	// EventsFrom names the component schema and property whose enum is the
+	// event list.
+	EventsFrom struct {
+		Schema   string `json:"schema"`
+		Property string `json:"property"`
+	} `json:"eventsFrom"`
 }
 
 func (m manifest) validate() error {
@@ -63,6 +83,53 @@ func (m manifest) validate() error {
 		return fmt.Errorf("the manifest needs a category")
 	}
 	return nil
+}
+
+// generateTrigger fills the manifest's trigger pack with the document's own
+// event list.
+func generateTrigger(doc *document, m manifest, generated *report) (*nodepack.Pack, error) {
+	declared := m.Trigger
+	schema, present := doc.Components.Schemas[declared.EventsFrom.Schema]
+	if !present {
+		return nil, fmt.Errorf("the document has no schema %q to read the event list from", declared.EventsFrom.Schema)
+	}
+	resolved, err := doc.resolve(schema)
+	if err != nil {
+		return nil, fmt.Errorf("schema %q: %w", declared.EventsFrom.Schema, err)
+	}
+	field, present := resolved.Properties[declared.EventsFrom.Property]
+	if !present {
+		return nil, fmt.Errorf("schema %q has no property %q", declared.EventsFrom.Schema, declared.EventsFrom.Property)
+	}
+	if len(field.Enum) == 0 {
+		return nil, fmt.Errorf("%s.%s is not an enum, so it names no events",
+			declared.EventsFrom.Schema, declared.EventsFrom.Property)
+	}
+
+	events := make([]string, 0, len(field.Enum))
+	for _, entry := range field.Enum {
+		name, ok := entry.(string)
+		if !ok {
+			return nil, fmt.Errorf("%s.%s contains a non-string event %v",
+				declared.EventsFrom.Schema, declared.EventsFrom.Property, entry)
+		}
+		events = append(events, name)
+	}
+
+	pack := declared.Pack
+	trigger := *pack.Trigger
+	// Never sorted. The order is the document's, and it is the contract: a
+	// connection in an imported workflow is an output index.
+	trigger.Events = events
+	pack.Trigger = &trigger
+	pack.Generator = nodepack.Provenance{
+		Tool: "nodepackgen", Source: generated.Source,
+		SourceTitle: doc.Info.Title, SourceVersion: doc.Info.Version,
+		SourceDigest: generated.SourceDigest,
+	}
+	generated.note("Trigger %s declares %d events from %s.%s, plus the %q catch-all.",
+		pack.Type, len(events), declared.EventsFrom.Schema, declared.EventsFrom.Property, trigger.CatchAll)
+	return &pack, nil
 }
 
 // report collects everything the generator could not express.

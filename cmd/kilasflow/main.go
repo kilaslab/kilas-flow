@@ -27,6 +27,7 @@ import (
 	"github.com/kilaslabs/kilas-flow/internal/events"
 	"github.com/kilaslabs/kilas-flow/internal/loadoptions"
 	"github.com/kilaslabs/kilas-flow/internal/node"
+	"github.com/kilaslabs/kilas-flow/internal/nodepack"
 	"github.com/kilaslabs/kilas-flow/internal/repository"
 	"github.com/kilaslabs/kilas-flow/internal/routing"
 	"github.com/kilaslabs/kilas-flow/internal/runcode"
@@ -112,7 +113,26 @@ func run() error {
 	// Generated node packs. The definitions, their routing and their option
 	// loaders are registered together: a pack whose runtime is missing fails
 	// here rather than on its first execution.
-	if err := waha.Register(nodeRegistry, routes, executorRegistry, optionLoader); err != nil {
+	// Webhook lifecycle hooks: how a trigger registers itself with the service
+	// that will deliver to it.
+	webhookLifecycles := webhook.NewLifecycleRegistry()
+	// How each trigger type shapes an inbound delivery. KilasFlow's own webhook
+	// keeps the envelope it has always produced; a pack-supplied trigger names
+	// the shape it wants rather than shipping Go code to build one.
+	webhookTriggers := webhook.NewRegistry()
+	if err := webhookTriggers.Register(nodes.WebhookNodeType, webhook.TriggerKind{Shape: webhook.ShapeEnvelope}); err != nil {
+		return fmt.Errorf("register webhook triggers: %w", err)
+	}
+
+	packTriggers := nodepack.NewTriggerRegistry()
+	if err := executorRegistry.Register(nodepack.TriggerExecutorID, nodepack.NewTriggerExecutor(packTriggers, outboundPolicy(cfg.Outbound))); err != nil {
+		return fmt.Errorf("register the pack trigger executor: %w", err)
+	}
+	if err := waha.Register(waha.Deps{
+		Definitions: nodeRegistry, Routes: routes, Triggers: packTriggers,
+		Deliveries: webhookTriggers, Lifecycles: webhookLifecycles,
+		Executors: executorRegistry, Options: optionLoader,
+	}); err != nil {
 		return fmt.Errorf("register the WAHA node pack: %w", err)
 	}
 
@@ -186,22 +206,11 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("configure execution runtime: %w", err)
 	}
-	// Webhook lifecycle hooks: how a trigger registers itself with the service
-	// that will deliver to it. Nothing declares one yet — the Telegram and WAHA
-	// triggers in p3 are the first — but the binding is verified at startup, so
-	// a node declaring a hook nobody registered fails here rather than
-	// silently never registering at its first activation.
-	webhookLifecycles := webhook.NewLifecycleRegistry()
+	// Every trigger's hook binding is verified now that the packs have
+	// registered theirs, so a node declaring a hook nobody registered fails
+	// here rather than silently never registering at its first activation.
 	if err := webhook.VerifyLifecycleBindings(nodeRegistry.LifecycleIDs(), webhookLifecycles); err != nil {
 		return fmt.Errorf("verify webhook lifecycles: %w", err)
-	}
-
-	// How each trigger type shapes an inbound delivery. KilasFlow's own webhook
-	// keeps the envelope it has always produced; a pack-supplied trigger names
-	// the shape it wants rather than shipping Go code to build one.
-	webhookTriggers := webhook.NewRegistry()
-	if err := webhookTriggers.Register(nodes.WebhookNodeType, webhook.TriggerKind{Shape: webhook.ShapeEnvelope}); err != nil {
-		return fmt.Errorf("register webhook triggers: %w", err)
 	}
 
 	if err := runtime.Start(ctx, cfg.Execution.MaxConcurrent); err != nil {

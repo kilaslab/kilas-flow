@@ -9,9 +9,116 @@
   "subtitle": "{{ $parameter.operation }}: {{ $parameter.resource }}",
   "documentationUrl": "https://waha.devlike.pro/docs/overview/quick-start/",
   "baseUrl": "{{ $credentials.baseUrl }}",
-  "security": { "api_key": "wahaApi" },
+  "security": {
+    "api_key": "wahaApi"
+  },
   "parameterDefaults": {
-    "session": { "mode": "expression", "value": "{{ $json.session }}" },
-    "chatId": { "mode": "expression", "value": "{{ $json.payload.from }}" }
+    "session": {
+      "mode": "expression",
+      "value": "{{ $json.session }}"
+    },
+    "chatId": {
+      "mode": "expression",
+      "value": "{{ $json.payload.from }}"
+    }
+  },
+  "trigger": {
+    "eventsFrom": {
+      "schema": "WAHAWebhookMessage",
+      "property": "event"
+    },
+    "type": "pack.wahaTrigger",
+    "version": 202502,
+    "displayName": "WAHA Trigger",
+    "description": "Starts a workflow when a WAHA session delivers an event.",
+    "category": "Triggers",
+    "icon": "builtin:message-circle",
+    "iconColor": "#25d366",
+    "subtitle": "{{ $parameter.session }}",
+    "documentationUrl": "https://waha.devlike.pro/docs/how-to/webhooks/",
+    "credentialType": "wahaApi",
+    "trigger": {
+      "events": [],
+      "catchAll": "other",
+      "eventPath": "event",
+      "shape": "bodyAsItem",
+      "webhook": {
+        "name": "default",
+        "pathParameter": "path",
+        "method": "POST"
+      },
+      "hmac": {
+        "header": "X-Webhook-Hmac",
+        "algorithm": "sha512",
+        "secretParameter": "hmacSecret"
+      },
+      "notice": "WAHA is not configured to deliver here yet. Add {{ url }} to this session's webhook configuration, or turn on \"Register this URL with WAHA\" and activate again.",
+      "lifecycle": {
+        "id": "waha.session.webhook",
+        "enabledParameter": "autoRegister",
+        "set": {
+          "method": "PUT",
+          "url": "{{ .baseUrl }}/api/sessions/{{ .Parameter.session }}",
+          "credentialType": "wahaApi",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"config\":{\"webhooks\":[{\"url\":\"{{ .PublicURL }}\",\"events\":[\"*\"]}]}}"
+        }
+      },
+      "media": {
+        "enabledParameter": "downloadMedia",
+        "urlPath": "payload.media.url",
+        "mimeTypePath": "payload.media.mimetype",
+        "fileNamePath": "payload.media.filename",
+        "property": "data"
+      }
+    },
+    "parameters": [
+      {
+        "key": "path",
+        "label": "Path",
+        "kind": "string",
+        "required": true,
+        "description": "A label for this endpoint. The public URL uses an opaque route minted on activation."
+      },
+      {
+        "key": "session",
+        "label": "Session",
+        "kind": "string",
+        "default": "default",
+        "description": "The WAHA session this trigger belongs to. Used when registering the webhook."
+      },
+      {
+        "key": "hmacSecret",
+        "label": "Webhook HMAC secret",
+        "kind": "string",
+        "typeOptions": {
+          "password": true
+        },
+        "description": "When set, every delivery must carry a matching X-Webhook-Hmac header (SHA-512 over the raw body) or it is refused before an execution exists."
+      },
+      {
+        "key": "autoRegister",
+        "label": "Register this URL with WAHA",
+        "kind": "boolean",
+        "default": false,
+        "description": "Install this workflow's webhook URL into the WAHA session on activation and remove it on deactivation. Off by default: activation would otherwise write to your WAHA instance as a side effect."
+      },
+      {
+        "key": "deliveryIdHeader",
+        "label": "Delivery ID header",
+        "kind": "string",
+        "default": "X-Webhook-Request-Id",
+        "description": "Header carrying WAHA's own identifier for a delivery. A repeated delivery with the same identifier is answered without running the workflow again, since WAHA retries."
+      },
+      {
+        "key": "downloadMedia",
+        "label": "Download media",
+        "kind": "boolean",
+        "default": false,
+        "description": "Fetch the media a delivery links to and attach it to the item, instead of leaving a URL that expires behind WAHA's own auth. Off by default: a busy session downloads a lot."
+      }
+    ]
   }
 }

@@ -1,0 +1,124 @@
+{
+  "type": "pack.wahaTrigger",
+  "version": 202409,
+  "displayName": "WAHA Trigger",
+  "description": "Starts a workflow when a WAHA session delivers an event.",
+  "category": "Triggers",
+  "icon": "builtin:message-circle",
+  "iconColor": "#25d366",
+  "subtitle": "{{ $parameter.session }}",
+  "documentationUrl": "https://waha.devlike.pro/docs/how-to/webhooks/",
+  "credentialType": "wahaApi",
+  "requestDefaults": {},
+  "trigger": {
+    "events": [
+      "session.status",
+      "message",
+      "message.reaction",
+      "message.any",
+      "message.ack",
+      "message.revoked",
+      "state.change",
+      "group.join",
+      "group.leave",
+      "presence.update",
+      "poll.vote",
+      "poll.vote.failed",
+      "chat.archive",
+      "call.received",
+      "call.accepted",
+      "call.rejected",
+      "label.upsert",
+      "label.deleted",
+      "label.chat.added",
+      "label.chat.deleted"
+    ],
+    "catchAll": "other",
+    "eventPath": "event",
+    "shape": "bodyAsItem",
+    "webhook": {
+      "name": "default",
+      "pathParameter": "path",
+      "method": "POST"
+    },
+    "hmac": {
+      "header": "X-Webhook-Hmac",
+      "algorithm": "sha512",
+      "secretParameter": "hmacSecret"
+    },
+    "lifecycle": {
+      "id": "waha.session.webhook",
+      "enabledParameter": "autoRegister",
+      "set": {
+        "method": "PUT",
+        "url": "{{ .baseUrl }}/api/sessions/{{ .Parameter.session }}",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"config\":{\"webhooks\":[{\"url\":\"{{ .PublicURL }}\",\"events\":[\"*\"]}]}}",
+        "credentialType": "wahaApi"
+      }
+    },
+    "media": {
+      "enabledParameter": "downloadMedia",
+      "urlPath": "payload.media.url",
+      "mimeTypePath": "payload.media.mimetype",
+      "fileNamePath": "payload.media.filename",
+      "property": "data"
+    },
+    "notice": "WAHA is not configured to deliver here yet. Add {{ url }} to this session's webhook configuration, or turn on \"Register this URL with WAHA\" and activate again."
+  },
+  "parameters": [
+    {
+      "key": "path",
+      "label": "Path",
+      "description": "A label for this endpoint. The public URL uses an opaque route minted on activation.",
+      "kind": "string",
+      "required": true
+    },
+    {
+      "key": "session",
+      "label": "Session",
+      "description": "The WAHA session this trigger belongs to. Used when registering the webhook.",
+      "kind": "string",
+      "default": "default"
+    },
+    {
+      "key": "hmacSecret",
+      "label": "Webhook HMAC secret",
+      "description": "When set, every delivery must carry a matching X-Webhook-Hmac header (SHA-512 over the raw body) or it is refused before an execution exists.",
+      "kind": "string",
+      "typeOptions": {
+        "password": true
+      }
+    },
+    {
+      "key": "autoRegister",
+      "label": "Register this URL with WAHA",
+      "description": "Install this workflow's webhook URL into the WAHA session on activation and remove it on deactivation. Off by default: activation would otherwise write to your WAHA instance as a side effect.",
+      "kind": "boolean",
+      "default": false
+    },
+    {
+      "key": "deliveryIdHeader",
+      "label": "Delivery ID header",
+      "description": "Header carrying WAHA's own identifier for a delivery. A repeated delivery with the same identifier is answered without running the workflow again, since WAHA retries.",
+      "kind": "string",
+      "default": "X-Webhook-Request-Id"
+    },
+    {
+      "key": "downloadMedia",
+      "label": "Download media",
+      "description": "Fetch the media a delivery links to and attach it to the item, instead of leaving a URL that expires behind WAHA's own auth. Off by default: a busy session downloads a lot.",
+      "kind": "boolean",
+      "default": false
+    }
+  ],
+  "generator": {
+    "tool": "nodepackgen",
+    "source": "third_party/waha/openapi-202409.json",
+    "sourceTitle": "WAHA - WhatsApp HTTP API",
+    "sourceVersion": "2024.9.2",
+    "sourceDigest": "ec931063faf1b209bb9111dee620c570a9f474d9c5520e98c2ede5241e3a2cd9"
+  }
+}

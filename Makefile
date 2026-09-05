@@ -126,6 +126,7 @@ node-packs: ## Regenerate the committed node packs from their vendored specs
 	    -spec third_party/waha/openapi-$$version.json \
 	    -manifest packs/waha/manifest-$$version.json \
 	    -out packs/waha/pack-$$version.json \
+	    -trigger-out packs/waha/pack-trigger-$$version.json \
 	    -report packs/waha/REPORT-$$version.md || exit 1; \
 	done
 

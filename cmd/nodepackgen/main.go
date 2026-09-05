@@ -35,6 +35,7 @@ func run() error {
 	specPath := flag.String("spec", "", "path to the OpenAPI 3 document")
 	manifestPath := flag.String("manifest", "", "path to the pack manifest")
 	outPath := flag.String("out", "", "path to write the pack JSON to")
+	triggerOutPath := flag.String("trigger-out", "", "path to write the trigger pack JSON to, when the manifest declares one")
 	reportPath := flag.String("report", "", "path to write the generation report to")
 	flag.Parse()
 
@@ -71,6 +72,25 @@ func run() error {
 	}
 	if err := os.WriteFile(*outPath, encoded, 0o644); err != nil {
 		return fmt.Errorf("write pack: %w", err)
+	}
+
+	// The trigger comes out of the same run as the action pack, from the same
+	// document, so the two can never be generated against different versions.
+	if loaded.Trigger != nil {
+		if *triggerOutPath == "" {
+			return fmt.Errorf("the manifest declares a trigger but -trigger-out was not given")
+		}
+		trigger, err := generateTrigger(&doc, loaded, generated)
+		if err != nil {
+			return err
+		}
+		encodedTrigger, err := encodePack(trigger)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(*triggerOutPath, encodedTrigger, 0o644); err != nil {
+			return fmt.Errorf("write trigger pack: %w", err)
+		}
 	}
 	if *reportPath != "" {
 		if err := os.WriteFile(*reportPath, []byte(renderReport(generated)), 0o644); err != nil {

@@ -6,8 +6,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
+	"strconv"
 	"strings"
 
+	"github.com/kilaslabs/kilas-flow/internal/credentials"
+	"github.com/kilaslabs/kilas-flow/internal/engine"
 	"github.com/kilaslabs/kilas-flow/internal/safehttp"
 )
 
@@ -90,18 +94,33 @@ func (lifecycle RequestLifecycle) Delete(ctx context.Context, lifecycleContext L
 }
 
 func (lifecycle RequestLifecycle) send(ctx context.Context, descriptor *RequestDescriptor, lifecycleContext LifecycleContext) ([]byte, error) {
+	var credential engine.Credential
 	fields := map[string]string{"PublicURL": lifecycleContext.PublicURL, "Route": lifecycleContext.Binding.Route}
+	// The node's own parameters, namespaced so they cannot shadow a credential
+	// field or the route. A trigger that registers itself needs them — WAHA's
+	// registration call names the session the node is configured for.
+	for key, value := range lifecycleContext.Binding.Parameters {
+		switch typed := value.(type) {
+		case string:
+			fields["Parameter."+key] = typed
+		case bool:
+			fields["Parameter."+key] = strconv.FormatBool(typed)
+		case float64:
+			fields["Parameter."+key] = strconv.FormatFloat(typed, 'f', -1, 64)
+		}
+	}
 	if descriptor.CredentialType != "" && lifecycleContext.Credentials != nil {
 		reference, _ := lifecycleContext.Binding.Parameters["$credentials"].(map[string]any)
 		id, _ := reference[descriptor.CredentialType].(string)
 		if id == "" {
 			return nil, fmt.Errorf("this trigger needs a %s credential to register itself", descriptor.CredentialType)
 		}
-		credential, err := lifecycleContext.Credentials.ResolveCredential(ctx, id)
+		resolved, err := lifecycleContext.Credentials.ResolveCredential(ctx, id)
 		if err != nil {
 			return nil, fmt.Errorf("resolve %s credential: %w", descriptor.CredentialType, err)
 		}
-		for key, value := range credential.Fields {
+		credential = resolved
+		for key, value := range resolved.Fields {
 			fields[key] = value
 		}
 	}
@@ -126,6 +145,23 @@ func (lifecycle RequestLifecycle) send(ctx context.Context, descriptor *RequestD
 		request.Header.Set("Content-Type", "application/json")
 	}
 
+	// The credential's own authentication is applied on top of the templates.
+	//
+	// Both forms are needed and neither replaces the other. Telegram's
+	// setWebhook wants the token *in the URL*, which only a template can do;
+	// WAHA's wants an X-Api-Key header, which the credential type already knows
+	// how to place — and a descriptor that had to name the header itself would
+	// be a second place to get it wrong, with the secret written into a
+	// template. A type that declares no authentication is templated only, which
+	// is not an error.
+	if credential.Type != "" {
+		if credentialType, known := credentials.Default().Get(credential.Type); known && credentialType.Authenticate != nil {
+			if err := credentials.ApplyAuthentication(request, credentialType, credential.Fields); err != nil {
+				return nil, fmt.Errorf("apply %s credential: %w", credential.Type, err)
+			}
+		}
+	}
+
 	response, err := safehttp.NewClient(lifecycleContext.HTTP).Do(request)
 	if err != nil {
 		return nil, err
@@ -143,16 +179,29 @@ func (lifecycle RequestLifecycle) send(ctx context.Context, descriptor *RequestD
 	return payload, nil
 }
 
+// reference matches a `{{ .Field }}` placeholder, with or without the spaces.
+var reference = regexp.MustCompile(`\{\{\s*\.([A-Za-z0-9_.]+)\s*\}\}`)
+
 // substitute replaces {{ .Field }} references.
 //
 // Deliberately not the expression evaluator: a descriptor is configuration
 // written by a pack author, not a user expression, and giving it the full
 // grammar would let a pack read run-time data at activation time.
+//
+// One pass, so a substituted value is never rescanned. Replacing key by key
+// would expand a placeholder that happened to appear *inside* a credential —
+// which is to say, a bot token containing the right seven characters could pull
+// another field of the same credential into the request.
 func substitute(template string, fields map[string]string) string {
-	result := template
-	for key, value := range fields {
-		result = strings.ReplaceAll(result, "{{ ."+key+" }}", value)
-		result = strings.ReplaceAll(result, "{{."+key+"}}", value)
-	}
-	return result
+	return reference.ReplaceAllStringFunc(template, func(match string) string {
+		key := reference.FindStringSubmatch(match)[1]
+		value, present := fields[key]
+		if !present {
+			// An unresolved placeholder stays as it is rather than becoming an
+			// empty string: a URL with a visible `{{ .session }}` in it is a
+			// mistake somebody can see.
+			return match
+		}
+		return value
+	})
 }

@@ -12,6 +12,7 @@ import (
 	"github.com/kilaslabs/kilas-flow/internal/execution"
 	"github.com/kilaslabs/kilas-flow/internal/node"
 	"github.com/kilaslabs/kilas-flow/internal/repository"
+	"github.com/kilaslabs/kilas-flow/internal/webhook"
 	"github.com/kilaslabs/kilas-flow/internal/workflow"
 )
 
@@ -353,7 +354,7 @@ func (handler *Workflows) Delete(ctx context.Context, input *workflowPathInput) 
 }
 
 // Activate validates and pins the latest saved revision.
-func (handler *Workflows) Activate(ctx context.Context, input *workflowPathInput) (*workflowOutput, error) {
+func (handler *Workflows) Activate(ctx context.Context, input *workflowPathInput) (*activationOutput, error) {
 	if err := handler.available(true); err != nil {
 		return nil, err
 	}
@@ -368,8 +369,10 @@ func (handler *Workflows) Activate(ctx context.Context, input *workflowPathInput
 	// and it cannot be rolled back — un-calling setWebhook is another network
 	// call. The brief window where the workflow is active but the service has
 	// not been told is harmless: an unregistered webhook delivers nothing.
+	var notices []webhook.Notice
 	if handler.triggers != nil {
-		if err := handler.triggers.Activated(ctx, tenant.ID, stored.ID, handler.lifecycleIDs()); err != nil {
+		activationNotices, err := handler.triggers.Activated(ctx, tenant.ID, stored.ID, handler.lifecycleIDs())
+		if err != nil {
 			// Half-registered is worse than inactive, because the user believes
 			// the workflow is listening.
 			if _, deactivateErr := handler.workflows.Deactivate(ctx, tenant, stored.ID); deactivateErr != nil {
@@ -378,8 +381,42 @@ func (handler *Workflows) Activate(ctx context.Context, input *workflowPathInput
 			}
 			return nil, huma.Error502BadGateway(err.Error())
 		}
+		notices = activationNotices
 	}
-	return &workflowOutput{Body: workflowResource(stored)}, nil
+	// The workflow is active either way. A notice is a thing the user now has
+	// to do — paste a URL into someone else's console — and an activation that
+	// only said "active" would leave a trigger that receives nothing looking
+	// exactly like one that is listening.
+	return &activationOutput{Body: activationResource(stored, notices)}, nil
+}
+
+// ActivationResource is a workflow plus anything activation could not do for
+// the user.
+type ActivationResource struct {
+	WorkflowResource
+	// Notices are empty for a workflow whose triggers need nothing.
+	Notices []ActivationNotice `json:"notices"`
+}
+
+// ActivationNotice names one trigger and what it needs.
+type ActivationNotice struct {
+	NodeID   string `json:"nodeId"`
+	NodeType string `json:"nodeType"`
+	Message  string `json:"message"`
+}
+
+type activationOutput struct {
+	Body ActivationResource
+}
+
+func activationResource(stored workflow.StoredWorkflow, notices []webhook.Notice) ActivationResource {
+	resource := ActivationResource{WorkflowResource: workflowResource(stored), Notices: []ActivationNotice{}}
+	for _, notice := range notices {
+		resource.Notices = append(resource.Notices, ActivationNotice{
+			NodeID: notice.NodeID, NodeType: notice.NodeType, Message: notice.Message,
+		})
+	}
+	return resource
 }
 
 // Deactivate is idempotent and retains the previously pinned active revision.
@@ -551,7 +588,7 @@ func executionResource(record execution.Record) ExecutionResource {
 // Declared here rather than taking *webhook.Coordinator so the handler package
 // does not depend on the webhook package, and so a test can supply one.
 type TriggerCoordinator interface {
-	Activated(ctx context.Context, tenantID, workflowID string, declared map[string]string) error
+	Activated(ctx context.Context, tenantID, workflowID string, declared map[string]string) ([]webhook.Notice, error)
 	Deactivated(ctx context.Context, tenantID, workflowID string, declared map[string]string)
 }
 

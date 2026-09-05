@@ -75,7 +75,7 @@ func TestActivationRegistersEachDeclaringTrigger(t *testing.T) {
 	}
 	declared := map[string]string{"kilasflow.telegramTrigger": "test.lifecycle"}
 
-	if err := coordinator(t, hook, bindings).Activated(context.Background(), "tenant-a", "wf_1", declared); err != nil {
+	if _, err := coordinator(t, hook, bindings).Activated(context.Background(), "tenant-a", "wf_1", declared); err != nil {
 		t.Fatalf("Activated() error = %v", err)
 	}
 	if hook.creates != 1 {
@@ -96,7 +96,7 @@ func TestActivatingAnAlreadyActiveWorkflowRechecks(t *testing.T) {
 
 	runner := coordinator(t, hook, bindings)
 	for range 3 {
-		if err := runner.Activated(context.Background(), "tenant-a", "wf_1", declared); err != nil {
+		if _, err := runner.Activated(context.Background(), "tenant-a", "wf_1", declared); err != nil {
 			t.Fatalf("Activated() error = %v", err)
 		}
 	}
@@ -115,7 +115,7 @@ func TestARegistrationFailureIsNamedAndFatal(t *testing.T) {
 	bindings := []repository.WebhookBinding{{NodeID: "telegram", NodeType: "trigger.type", Route: "abc"}}
 	declared := map[string]string{"trigger.type": "test.lifecycle"}
 
-	err := coordinator(t, hook, bindings).Activated(context.Background(), "tenant-a", "wf_1", declared)
+	_, err := coordinator(t, hook, bindings).Activated(context.Background(), "tenant-a", "wf_1", declared)
 	if err == nil {
 		t.Fatal("a failed registration was not reported")
 	}

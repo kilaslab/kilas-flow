@@ -6,6 +6,8 @@
  * OpenAPI spec version: 0.1.0-dev
  */
 
+export * from './activationNotice';
+export * from './activationResource';
 export * from './branding';
 export * from './condition';
 export * from './connection';

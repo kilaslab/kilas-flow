@@ -32,19 +32,26 @@ import (
 	"github.com/kilaslabs/kilas-flow/internal/node"
 	"github.com/kilaslabs/kilas-flow/internal/nodepack"
 	"github.com/kilaslabs/kilas-flow/internal/routing"
+	"github.com/kilaslabs/kilas-flow/internal/webhook"
 )
 
 //go:embed pack-*.json
 var packs embed.FS
 
-// NodeType is the one node type this pack registers, at two versions.
+// NodeType is the action node this pack registers, at two versions.
 const NodeType = "pack.waha"
+
+// TriggerNodeType is the webhook trigger, also at two versions.
+const TriggerNodeType = "pack.wahaTrigger"
 
 // CredentialType is what every request the pack makes authenticates with.
 const CredentialType = "wahaApi"
 
 // Files are the generated packs, in the order they are registered.
-var Files = []string{"pack-202409.json", "pack-202502.json"}
+var Files = []string{
+	"pack-202409.json", "pack-202502.json",
+	"pack-trigger-202409.json", "pack-trigger-202502.json",
+}
 
 // Packs decodes the embedded pack files.
 func Packs() ([]*nodepack.Pack, error) {
@@ -63,15 +70,37 @@ func Packs() ([]*nodepack.Pack, error) {
 	return decoded, nil
 }
 
-// Register installs both versions.
-func Register(definitions *node.Registry, routes *routing.Registry, executors nodepack.ExecutorSet, options *loadoptions.Resolver) error {
+// Deps is everything a pack registers into.
+//
+// Grouped rather than passed as six parameters because the point is that they
+// arrive together: a definition without its routing, its event table, its
+// delivery shape or its lifecycle hook is a node that registers cleanly and
+// fails later.
+type Deps struct {
+	Definitions *node.Registry
+	Routes      *routing.Registry
+	Triggers    *nodepack.TriggerRegistry
+	Deliveries  *webhook.Registry
+	Lifecycles  *webhook.LifecycleRegistry
+	Executors   nodepack.ExecutorSet
+	Options     *loadoptions.Resolver
+}
+
+// Register installs every version of both node types.
+func Register(deps Deps) error {
 	decoded, err := Packs()
 	if err != nil {
 		return err
 	}
 	for _, pack := range decoded {
-		if err := nodepack.Register(definitions, routes, executors, options, pack); err != nil {
-			return fmt.Errorf("register WAHA pack v%s: %w", pack.Version, err)
+		if err := nodepack.Register(deps.Definitions, deps.Routes, deps.Executors, deps.Options, pack); err != nil {
+			return fmt.Errorf("register WAHA pack %s v%s: %w", pack.Type, pack.Version, err)
+		}
+		if pack.Trigger == nil {
+			continue
+		}
+		if err := nodepack.RegisterTrigger(deps.Triggers, deps.Deliveries, deps.Lifecycles, pack); err != nil {
+			return fmt.Errorf("register WAHA trigger v%s: %w", pack.Version, err)
 		}
 	}
 	return nil

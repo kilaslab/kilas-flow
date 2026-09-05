@@ -16,6 +16,7 @@ import type {
 } from '@tanstack/svelte-query';
 
 import type {
+  ActivationResource,
   ErrorModel,
   ExecutionRequestResource,
   RunWorkflowInputBody,
@@ -65,7 +66,7 @@ type SecondParameter<T extends (...args: never) => unknown> = Parameters<T>[1];
 
 
 export type activateWorkflowResponse200 = {
-  data: WorkflowResource
+  data: ActivationResource
   status: 200
 }
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strings"
 
 	"github.com/kilaslabs/kilas-flow/internal/engine"
 	"github.com/kilaslabs/kilas-flow/internal/repository"
@@ -138,30 +139,40 @@ func NewCoordinator(hooks *LifecycleRegistry, routes repository.WebhookRouteRead
 // A failure is returned to the caller naming the trigger, and the caller
 // deactivates: leaving a workflow active whose triggers half-registered is
 // worse than leaving it inactive, because the user believes it is listening.
-func (coordinator *Coordinator) Activated(ctx context.Context, tenantID, workflowID string, declared map[string]string) error {
+func (coordinator *Coordinator) Activated(ctx context.Context, tenantID, workflowID string, declared map[string]string) ([]Notice, error) {
 	if coordinator == nil || coordinator.hooks == nil || coordinator.routes == nil {
-		return nil
+		return nil, nil
 	}
 	bindings, err := coordinator.routes.WebhookRoutes(ctx, repository.TenantScope{ID: tenantID}, workflowID)
 	if err != nil {
-		return fmt.Errorf("read webhook routes: %w", err)
+		return nil, fmt.Errorf("read webhook routes: %w", err)
 	}
+	notices := make([]Notice, 0, 1)
 	for _, binding := range bindings {
 		hook, lifecycle := coordinator.hookFor(binding, declared)
 		if hook == nil {
 			continue
 		}
 		context := coordinator.contextFor(tenantID, workflowID, binding)
+		// Collected before registration is attempted, because the notice is
+		// about the case where registration is deliberately not attempted.
+		if source, tells := hook.(NoticeSource); tells {
+			if message := source.ActivationNotice(context); message != "" {
+				notices = append(notices, Notice{
+					NodeID: binding.NodeID, NodeType: binding.NodeType, Message: message,
+				})
+			}
+		}
 		// CheckExists is what makes activating an already-active workflow a
 		// re-check rather than a re-registration.
 		if exists, err := hook.CheckExists(ctx, context); err == nil && exists {
 			continue
 		}
 		if err := hook.Create(ctx, context); err != nil {
-			return fmt.Errorf("trigger %q could not register with its service (%s): %w", binding.NodeID, lifecycle, err)
+			return nil, fmt.Errorf("trigger %q could not register with its service (%s): %w", binding.NodeID, lifecycle, err)
 		}
 	}
-	return nil
+	return notices, nil
 }
 
 // Deactivated unregisters every declaring trigger.
@@ -216,4 +227,78 @@ func (coordinator *Coordinator) contextFor(tenantID, workflowID string, binding 
 		Credentials: resolver,
 		Logger:      coordinator.logger,
 	}
+}
+
+// Notice is something activation could not do and the user now has to.
+//
+// It exists because the failure it prevents is silent: a trigger whose service
+// was never told where to deliver looks exactly like one that is listening. An
+// error would be wrong — the workflow *is* active and the user may well paste
+// the URL in by hand, which is how the n8n node works — so this is neither an
+// error nor a log line, it is part of the activation answer.
+type Notice struct {
+	NodeID   string `json:"nodeId"`
+	NodeType string `json:"nodeType"`
+	Message  string `json:"message"`
+}
+
+// NoticeSource is a lifecycle that can say what it did not do.
+type NoticeSource interface {
+	ActivationNotice(LifecycleContext) string
+}
+
+// GatedLifecycle runs an inner lifecycle only when the node turned it on.
+//
+// Off by default is the whole point: registering a webhook writes to a
+// customer's own instance, and importing a workflow and pressing Activate is
+// not a thing that should quietly reconfigure somebody's WhatsApp gateway.
+type GatedLifecycle struct {
+	// EnabledParameter names the boolean parameter that turns it on.
+	EnabledParameter string
+	Lifecycle        TriggerLifecycle
+	// Notice is shown when it is off, with `{{ url }}` replaced by the route.
+	Notice string
+}
+
+var _ TriggerLifecycle = GatedLifecycle{}
+var _ NoticeSource = GatedLifecycle{}
+
+func (gated GatedLifecycle) enabled(lifecycleContext LifecycleContext) bool {
+	if gated.EnabledParameter == "" {
+		return true
+	}
+	on, _ := lifecycleContext.Binding.Parameters[gated.EnabledParameter].(bool)
+	return on
+}
+
+// CheckExists reports "already registered" when the hook is off, which is what
+// stops Create from running.
+func (gated GatedLifecycle) CheckExists(ctx context.Context, lifecycleContext LifecycleContext) (bool, error) {
+	if !gated.enabled(lifecycleContext) {
+		return true, nil
+	}
+	return gated.Lifecycle.CheckExists(ctx, lifecycleContext)
+}
+
+func (gated GatedLifecycle) Create(ctx context.Context, lifecycleContext LifecycleContext) error {
+	if !gated.enabled(lifecycleContext) {
+		return nil
+	}
+	return gated.Lifecycle.Create(ctx, lifecycleContext)
+}
+
+func (gated GatedLifecycle) Delete(ctx context.Context, lifecycleContext LifecycleContext) error {
+	if !gated.enabled(lifecycleContext) {
+		return nil
+	}
+	return gated.Lifecycle.Delete(ctx, lifecycleContext)
+}
+
+// ActivationNotice names the URL the user has to paste, when nothing pasted it
+// for them.
+func (gated GatedLifecycle) ActivationNotice(lifecycleContext LifecycleContext) string {
+	if gated.Notice == "" || gated.enabled(lifecycleContext) {
+		return ""
+	}
+	return strings.ReplaceAll(gated.Notice, "{{ url }}", lifecycleContext.PublicURL)
 }
