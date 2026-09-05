@@ -26,11 +26,14 @@ func TestNodeTypesServesTheRegisteredCatalogue(t *testing.T) {
 	if err := json.NewDecoder(recorder.Body).Decode(&definitions); err != nil {
 		t.Fatalf("decode node catalogue = %v", err)
 	}
-	if got, want := len(definitions), 8; got != want {
-		t.Fatalf("node catalogue length = %d, want %d", got, want)
+	if len(definitions) == 0 {
+		t.Fatal("node catalogue is empty")
 	}
-	if got, want := definitions[0].Type, "kilasflow.httpRequest"; got != want {
-		t.Errorf("first catalogue type = %q, want %q", got, want)
+	// The API must serve the registry's stable order, whatever is registered.
+	for index := 1; index < len(definitions); index++ {
+		if definitions[index-1].Type > definitions[index].Type {
+			t.Fatalf("catalogue is not in stable order at %d: %q then %q", index, definitions[index-1].Type, definitions[index].Type)
+		}
 	}
 	if definitions[0].ExecutorID != "" {
 		t.Errorf("executor binding leaked in API response = %q", definitions[0].ExecutorID)

@@ -118,6 +118,37 @@ var definitions = map[string]Definition{
 			{Key: "token", Label: "Token", Required: true, Secret: true},
 		},
 	},
+	"postgres": {
+		ID: "postgres", DisplayName: "PostgreSQL",
+		Description: "Connects to a PostgreSQL database you own.",
+		Fields: []Field{
+			{Key: "host", Label: "Host", Required: true},
+			{Key: "port", Label: "Port", Description: "Defaults to 5432."},
+			{Key: "database", Label: "Database", Required: true},
+			{Key: "user", Label: "User", Required: true},
+			{Key: "password", Label: "Password", Required: true, Secret: true},
+			{Key: "sslMode", Label: "SSL mode", Description: "disable, require, verify-ca, or verify-full. Defaults to require."},
+		},
+	},
+	"mysql": {
+		ID: "mysql", DisplayName: "MySQL",
+		Description: "Connects to a MySQL or MariaDB database you own.",
+		Fields: []Field{
+			{Key: "host", Label: "Host", Required: true},
+			{Key: "port", Label: "Port", Description: "Defaults to 3306."},
+			{Key: "database", Label: "Database", Required: true},
+			{Key: "user", Label: "User", Required: true},
+			{Key: "password", Label: "Password", Required: true, Secret: true},
+			{Key: "tls", Label: "TLS", Description: "true, skip-verify, preferred, or a registered config name."},
+		},
+	},
+	"sqlite": {
+		ID: "sqlite", DisplayName: "SQLite file",
+		Description: "Opens a SQLite file on the server. The path must be given explicitly and cannot be KilasFlow's own database.",
+		Fields: []Field{
+			{Key: "path", Label: "File path", Required: true, Description: "Absolute path to the database file."},
+		},
+	},
 }
 
 // Lookup returns one credential type definition.

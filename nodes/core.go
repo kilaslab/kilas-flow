@@ -17,6 +17,9 @@ func RegisterAll(registry *node.Registry) error {
 		webhookTrigger(),
 		respondToWebhookNode(),
 		scheduleTrigger(),
+		postgresNode(),
+		mysqlNode(),
+		sqliteNode(),
 	} {
 		if err := registry.Register(definition); err != nil {
 			return err

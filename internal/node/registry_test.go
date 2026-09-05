@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"sort"
 	"testing"
 
 	"github.com/kilaslabs/kilas-flow/internal/node"
@@ -18,22 +19,33 @@ func TestRegistryListsBuiltinsInStableOrder(t *testing.T) {
 	}
 
 	definitions := registry.List()
+	if len(definitions) == 0 {
+		t.Fatal("List() returned nothing after registering the built-ins")
+	}
 	got := make([]string, 0, len(definitions))
 	for _, definition := range definitions {
 		got = append(got, definition.Type)
 	}
-	want := []string{
-		"kilasflow.httpRequest",
-		"kilasflow.if",
-		"kilasflow.manual",
-		"kilasflow.merge",
-		"kilasflow.respondToWebhook",
-		"kilasflow.schedule",
-		"kilasflow.set",
-		"kilasflow.webhook",
+
+	// The property that matters is the ordering contract, not the current
+	// membership: asserting a literal list would force an unrelated edit into
+	// every commit that adds a node.
+	sorted := append([]string(nil), got...)
+	sort.Strings(sorted)
+	if !reflect.DeepEqual(got, sorted) {
+		t.Fatalf("List() types = %#v, want them sorted", got)
 	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("List() types = %#v, want %#v", got, want)
+	seen := make(map[string]bool, len(got))
+	for _, nodeType := range got {
+		if seen[nodeType] {
+			t.Errorf("List() returned %q twice", nodeType)
+		}
+		seen[nodeType] = true
+	}
+	for _, expected := range []string{"kilasflow.manual", "kilasflow.set"} {
+		if !seen[expected] {
+			t.Errorf("List() is missing the core node %q", expected)
+		}
 	}
 
 	first, err := json.Marshal(definitions)

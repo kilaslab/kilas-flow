@@ -25,6 +25,7 @@ import (
 	"github.com/kilaslabs/kilas-flow/internal/repository"
 	"github.com/kilaslabs/kilas-flow/internal/safehttp"
 	"github.com/kilaslabs/kilas-flow/internal/scheduler"
+	"github.com/kilaslabs/kilas-flow/internal/sqlnode"
 	"github.com/kilaslabs/kilas-flow/internal/webhook"
 	"github.com/kilaslabs/kilas-flow/nodes"
 )
@@ -80,7 +81,7 @@ func run() error {
 		return fmt.Errorf("register built-in nodes: %w", err)
 	}
 	executorRegistry := engine.NewRegistry()
-	if err := nodes.RegisterExecutors(executorRegistry, outboundPolicy(cfg.Outbound)); err != nil {
+	if err := nodes.RegisterExecutors(executorRegistry, outboundPolicy(cfg.Outbound), databaseGuard(cfg.Database)); err != nil {
 		return fmt.Errorf("register built-in executors: %w", err)
 	}
 
@@ -165,6 +166,18 @@ func run() error {
 
 func migrate(db *database.DB) error {
 	return database.Migrate(db, repository.Models()...)
+}
+
+// databaseGuard names the files a SQLite workflow credential must never open.
+//
+// A workflow that could open KilasFlow's own database would be able to read
+// every credential, workflow, and execution in the installation, so the path
+// is passed explicitly rather than inferred inside the node.
+func databaseGuard(cfg config.Database) sqlnode.Guard {
+	if cfg.Driver != "sqlite" || cfg.DSN == "" {
+		return sqlnode.Guard{}
+	}
+	return sqlnode.Guard{InternalPaths: []string{cfg.DSN}}
 }
 
 func outboundPolicy(cfg config.OutboundHTTP) safehttp.Policy {

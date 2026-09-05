@@ -19,6 +19,7 @@ import (
 	"github.com/kilaslabs/kilas-flow/internal/node"
 	"github.com/kilaslabs/kilas-flow/internal/repository"
 	"github.com/kilaslabs/kilas-flow/internal/safehttp"
+	"github.com/kilaslabs/kilas-flow/internal/sqlnode"
 	"github.com/kilaslabs/kilas-flow/internal/webhook"
 	"github.com/kilaslabs/kilas-flow/internal/workflow"
 	"github.com/kilaslabs/kilas-flow/nodes"
@@ -70,7 +71,7 @@ func newHarness(t *testing.T) harness {
 	executors := engine.NewRegistry()
 	policy := safehttp.DefaultPolicy()
 	policy.AllowPrivateNetworks = true
-	if err := nodes.RegisterExecutors(executors, policy); err != nil {
+	if err := nodes.RegisterExecutors(executors, policy, sqlnode.Guard{}); err != nil {
 		t.Fatalf("RegisterExecutors() error = %v", err)
 	}
 

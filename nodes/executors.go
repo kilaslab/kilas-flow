@@ -8,15 +8,17 @@ import (
 
 	"github.com/kilaslabs/kilas-flow/internal/engine"
 	"github.com/kilaslabs/kilas-flow/internal/safehttp"
+	"github.com/kilaslabs/kilas-flow/internal/sqlnode"
 	"github.com/kilaslabs/kilas-flow/internal/workflow"
 )
 
 // RegisterExecutors installs native implementations for the core definitions.
 //
-// The HTTP policy is passed in because it is a deployment decision: a hosted
-// install must refuse private targets, while a self-hosted one may legitimately
-// call services on its own network.
-func RegisterExecutors(registry *engine.Registry, httpPolicy safehttp.Policy) error {
+// The HTTP policy and the database guard are both deployment decisions: a
+// hosted install must refuse private targets, while a self-hosted one may
+// legitimately call services on its own network, and the guard carries the
+// install's own database paths so a SQLite credential can never open them.
+func RegisterExecutors(registry *engine.Registry, httpPolicy safehttp.Policy, databaseGuard sqlnode.Guard) error {
 	for id, executor := range map[string]engine.Executor{
 		"core.manual":      engine.ExecutorFunc(executeManual),
 		"core.set":         engine.ExecutorFunc(executeSet),
@@ -26,6 +28,9 @@ func RegisterExecutors(registry *engine.Registry, httpPolicy safehttp.Policy) er
 		WebhookExecutorID:  engine.ExecutorFunc(executeWebhook),
 		ScheduleExecutorID: engine.ExecutorFunc(executeSchedule),
 		RespondExecutorID:  engine.ExecutorFunc(executeRespond),
+		PostgresExecutorID: NewDatabaseExecutor(sqlnode.DriverPostgres, "postgres", databaseGuard),
+		MySQLExecutorID:    NewDatabaseExecutor(sqlnode.DriverMySQL, "mysql", databaseGuard),
+		SQLiteExecutorID:   NewDatabaseExecutor(sqlnode.DriverSQLite, "sqlite", databaseGuard),
 	} {
 		if err := registry.Register(id, executor); err != nil {
 			return err
