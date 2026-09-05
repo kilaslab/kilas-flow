@@ -245,7 +245,15 @@ function clone<T>(value: T): T {
 	return JSON.parse(JSON.stringify(value)) as T;
 }
 
-function stableJSON(value: unknown): string {
+/**
+ * Serializes a value with object keys in sorted order.
+ *
+ * Exported so the history diff compares node parameters against the same
+ * notion of equality the dirty check uses. Two copies of this would drift, and
+ * a diff that disagreed with the "unsaved changes" indicator about whether
+ * anything changed is worse than no diff at all.
+ */
+export function stableJSON(value: unknown): string {
 	if (Array.isArray(value)) return `[${value.map(stableJSON).join(',')}]`;
 	if (value !== null && typeof value === 'object') {
 		const object = value as Record<string, unknown>;

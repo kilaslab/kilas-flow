@@ -13,7 +13,7 @@
 	import type { CredentialResource, Definition, ExpressionGrammar, WorkflowDocumentInput, WorkflowResource } from '$lib/api/generated/models';
 	import { activationFailure, activationNotices, dismissNotice, type ActivationNoticeView } from '$lib/workflow-editor/activation';
 	import { setExpressionGrammar } from '$lib/workflow-editor/expression-grammar';
-	import WorkflowEditor from '$lib/components/workflow-editor/workflow-editor.svelte';
+	import WorkflowEditor, { type WorkflowHistoryHost } from '$lib/components/workflow-editor/workflow-editor.svelte';
 	import { Button } from '$lib/components/ui/button';
 	import { validationIssuesFromApiError, type CanvasValidationIssue } from '$lib/workflow-editor/validation';
 
@@ -134,6 +134,53 @@
 		}
 	}
 
+	/**
+	 * What the version panel needs, rebuilt whenever the workflow changes.
+	 *
+	 * The dashboard is the owner's own surface, so it can restore and publish
+	 * without further ceremony — the embed shell is the one that has to check
+	 * a scope first.
+	 */
+	const history = $derived<WorkflowHistoryHost | null>(
+		currentWorkflow
+			? {
+					workflowID: currentWorkflow.id,
+					latestVersionID: currentWorkflow.latestVersion.id,
+					canRestore: true,
+					canPublish: true,
+					onRestored: applyRestore,
+					onPublished: applyPublish,
+					onUnpublished: applyPublish
+				}
+			: null
+	);
+
+	/**
+	 * Takes the workflow a restore returned.
+	 *
+	 * Assigning it moves `latestVersion.id`, which is the editor's remount key,
+	 * so the canvas is rebuilt from the appended revision. That is the intended
+	 * effect here and only here: the panel refuses to restore while the canvas
+	 * is dirty, so there is nothing left to discard.
+	 */
+	function applyRestore(workflow: WorkflowResource) {
+		currentWorkflow = workflow;
+		activationError = null;
+		notices = [];
+	}
+
+	/**
+	 * Takes the workflow a publish or unpublish returned.
+	 *
+	 * Publishing an older revision must not disturb the canvas. It cannot change
+	 * `latestVersion`, so reassigning `currentWorkflow` leaves the remount key
+	 * where it was and the editor keeps its state — including any unsaved edits.
+	 */
+	function applyPublish(workflow: WorkflowResource) {
+		currentWorkflow = workflow;
+		activationError = null;
+	}
+
 	async function run() {
 		if (!currentWorkflow) return;
 		running = true;
@@ -188,7 +235,7 @@
 		</div>
 	{:else if currentWorkflow}
 		{#key currentWorkflow.latestVersion.id}
-			<WorkflowEditor header={breadcrumb} document={currentWorkflow.latestVersion.document} definitions={nodeTypes.data} credentials={credentials.data ?? []} {saving} {running} {saveError} {saveIssues} {runError} {runMessage} active={currentWorkflow.active} {activating} {notices} {activationError} onSave={save} onRun={run} onActivate={activate} onDeactivate={deactivate} onDismissNotice={(key) => (notices = dismissNotice(notices, key))} />
+			<WorkflowEditor header={breadcrumb} document={currentWorkflow.latestVersion.document} definitions={nodeTypes.data} credentials={credentials.data ?? []} {saving} {running} {saveError} {saveIssues} {runError} {runMessage} active={currentWorkflow.active} {activating} {notices} {activationError} {history} onSave={save} onRun={run} onActivate={activate} onDeactivate={deactivate} onDismissNotice={(key) => (notices = dismissNotice(notices, key))} />
 		{/key}
 	{/if}
 </section>
