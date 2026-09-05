@@ -124,7 +124,9 @@ func Select(dialect Dialect, target Target, columns []string, where []Comparison
 //
 // It returns rows, because the generated key is the one thing the caller cannot
 // know and usually needs.
-func Insert(dialect Dialect, target Target, values map[string]any) (sqlnode.Statement, error) {
+// skipConflict passes over a row a unique constraint rejects, rather than
+// failing the statement.
+func Insert(dialect Dialect, target Target, values map[string]any, skipConflict bool) (sqlnode.Statement, error) {
 	name, err := target.Qualified(dialect)
 	if err != nil {
 		return sqlnode.Statement{}, err
@@ -145,6 +147,9 @@ func Insert(dialect Dialect, target Target, values map[string]any) (sqlnode.Stat
 	}
 	statement := "INSERT INTO " + name + " (" + strings.Join(quoted, ", ") +
 		") VALUES (" + strings.Join(placeholders, ", ") + ")" + dialect.returningAll
+	if skipConflict {
+		statement = dialect.skipConflict(statement)
+	}
 	return sqlnode.Statement{SQL: statement, Parameters: bound, Returning: dialect.Returns()}, nil
 }
 
@@ -226,14 +231,22 @@ const (
 // The three modes are separate values rather than one with an optional WHERE,
 // because "empty this table" and "remove some rows from it" are different
 // intentions and a missing WHERE must never quietly become the first.
-func Delete(dialect Dialect, target Target, mode string, where []Comparison, combine string) (sqlnode.Statement, error) {
+//
+// cascade applies to the drop mode alone, and only where the dialect has the
+// clause; a dialect that does not omits it rather than emitting a keyword it
+// would ignore.
+func Delete(dialect Dialect, target Target, mode string, where []Comparison, combine string, cascade bool) (sqlnode.Statement, error) {
 	name, err := target.Qualified(dialect)
 	if err != nil {
 		return sqlnode.Statement{}, err
 	}
 	switch mode {
 	case DeleteDrop:
-		return sqlnode.Statement{SQL: "DROP TABLE IF EXISTS " + name}, nil
+		statement := "DROP TABLE IF EXISTS " + name
+		if cascade {
+			statement += dialect.dropCascade
+		}
+		return sqlnode.Statement{SQL: statement}, nil
 	case DeleteTruncate:
 		return sqlnode.Statement{SQL: "TRUNCATE TABLE " + name}, nil
 	case "", DeleteRows:

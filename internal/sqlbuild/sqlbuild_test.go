@@ -114,7 +114,7 @@ func TestEachOperationBuildsTheStatementItPromises(t *testing.T) {
 			})
 
 			t.Run("insert", func(t *testing.T) {
-				statement, err := sqlbuild.Insert(dialect, customers, values)
+				statement, err := sqlbuild.Insert(dialect, customers, values, false)
 				golden(t, dialect, "insert", statement, err)
 			})
 
@@ -136,18 +136,32 @@ func TestEachOperationBuildsTheStatementItPromises(t *testing.T) {
 			t.Run("delete rows", func(t *testing.T) {
 				statement, err := sqlbuild.Delete(dialect, customers, sqlbuild.DeleteRows, []sqlbuild.Comparison{
 					{Column: "tier", Operator: "equals", Value: "bronze"},
-				}, "AND")
+				}, "AND", false)
 				golden(t, dialect, "delete_rows", statement, err)
 			})
 
 			t.Run("truncate", func(t *testing.T) {
-				statement, err := sqlbuild.Delete(dialect, customers, sqlbuild.DeleteTruncate, nil, "")
+				statement, err := sqlbuild.Delete(dialect, customers, sqlbuild.DeleteTruncate, nil, "", false)
 				golden(t, dialect, "delete_truncate", statement, err)
 			})
 
 			t.Run("drop", func(t *testing.T) {
-				statement, err := sqlbuild.Delete(dialect, customers, sqlbuild.DeleteDrop, nil, "")
+				statement, err := sqlbuild.Delete(dialect, customers, sqlbuild.DeleteDrop, nil, "", false)
 				golden(t, dialect, "delete_drop", statement, err)
+			})
+
+			t.Run("drop cascading", func(t *testing.T) {
+				// The MySQL golden is deliberately the same statement as the
+				// plain drop. MySQL parses CASCADE and documents that it does
+				// nothing, so emitting it would put a promise in the SQL that
+				// the server does not keep.
+				statement, err := sqlbuild.Delete(dialect, customers, sqlbuild.DeleteDrop, nil, "", true)
+				golden(t, dialect, "delete_drop_cascade", statement, err)
+			})
+
+			t.Run("insert skipping conflicts", func(t *testing.T) {
+				statement, err := sqlbuild.Insert(dialect, customers, values, true)
+				golden(t, dialect, "insert_skip_conflict", statement, err)
 			})
 		})
 	}
@@ -171,7 +185,7 @@ func TestTheMySQLDialectNeverWritesAPostgresShape(t *testing.T) {
 	}
 	writes := []sqlnode.Statement{}
 	for _, build := range []func() (sqlnode.Statement, error){
-		func() (sqlnode.Statement, error) { return sqlbuild.Insert(sqlbuild.MySQL, customers, values) },
+		func() (sqlnode.Statement, error) { return sqlbuild.Insert(sqlbuild.MySQL, customers, values, false) },
 		func() (sqlnode.Statement, error) {
 			return sqlbuild.Update(sqlbuild.MySQL, customers, values, []string{"id"})
 		},
@@ -222,7 +236,7 @@ func TestABuilderRefusesWhatWouldBeWorseThanFailing(t *testing.T) {
 	// A delete with no condition is a truncate, and a user who meant that has a
 	// mode for it — while a user who forgot a condition has just emptied a
 	// table.
-	if _, err := sqlbuild.Delete(sqlbuild.Postgres, customers, sqlbuild.DeleteRows, nil, "AND"); err == nil {
+	if _, err := sqlbuild.Delete(sqlbuild.Postgres, customers, sqlbuild.DeleteRows, nil, "AND", false); err == nil {
 		t.Error("a delete with no condition was built")
 	}
 	if _, err := sqlbuild.Update(sqlbuild.Postgres, customers, values, nil); err == nil {
@@ -236,7 +250,7 @@ func TestABuilderRefusesWhatWouldBeWorseThanFailing(t *testing.T) {
 	if _, err := sqlbuild.Update(sqlbuild.Postgres, customers, map[string]any{"id": float64(7)}, []string{"id"}); err == nil {
 		t.Error("an update with nothing to set was built")
 	}
-	if _, err := sqlbuild.Insert(sqlbuild.Postgres, customers, map[string]any{}); err == nil {
+	if _, err := sqlbuild.Insert(sqlbuild.Postgres, customers, map[string]any{}, false); err == nil {
 		t.Error("an insert with no columns was built")
 	}
 	if _, err := sqlbuild.Select(sqlbuild.Postgres, sqlbuild.Target{}, nil, nil, "", nil, 0); err == nil {
@@ -578,13 +592,13 @@ func TestMySQLIdentifiersAndUpsertsAgainstALiveServer(t *testing.T) {
 			ddl(`DROP TABLE IF EXISTS kilas_auto`)
 			ddl(`CREATE TABLE kilas_auto (id INT AUTO_INCREMENT PRIMARY KEY, tier VARCHAR(32))`)
 			t.Cleanup(func() { ddl(`DROP TABLE IF EXISTS kilas_auto`) })
-			auto, _ := sqlbuild.Insert(sqlbuild.MySQL, sqlbuild.Target{Table: "kilas_auto"}, map[string]any{"tier": "gold"})
+			auto, _ := sqlbuild.Insert(sqlbuild.MySQL, sqlbuild.Target{Table: "kilas_auto"}, map[string]any{"tier": "gold"}, false)
 			if got := run(auto).LastInsertID; got == 0 {
 				t.Error("an auto-increment insert reported no generated key")
 			}
 			// Immediately afterwards, into a table that generates none. A
 			// SELECT LAST_INSERT_ID() here would report the previous id.
-			plain, _ := sqlbuild.Insert(sqlbuild.MySQL, target, map[string]any{"id": 99, "tier": "bronze"})
+			plain, _ := sqlbuild.Insert(sqlbuild.MySQL, target, map[string]any{"id": 99, "tier": "bronze"}, false)
 			if got := run(plain).LastInsertID; got != 0 {
 				t.Errorf("insert id = %d, want 0 rather than the previous statement's key", got)
 			}

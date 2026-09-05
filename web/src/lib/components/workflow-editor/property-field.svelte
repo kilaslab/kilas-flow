@@ -44,17 +44,35 @@
 		visibleGroupFields,
 		writeGroupEntries
 	} from '$lib/workflow-editor/fixed-collection';
+	import {
+		addOption,
+		addableOptions,
+		collectionValue,
+		removeOption,
+		setOption,
+		setOptions,
+		strandedOptions,
+		unreadable
+	} from '$lib/workflow-editor/collection';
 	import { asExpression, asFixed, expressionTemplate, isExpression } from '$lib/workflow-editor/parameter';
 
 	let {
 		property,
 		value,
+		siblings = {},
 		onChange,
 		loadOptions,
 		loadSchema
 	}: {
 		property: PropertyDefinition;
 		value: unknown;
+		/**
+		 * The node's other parameters, for the visibility rules of a nested
+		 * field. An option shown only for one operation depends on `operation`,
+		 * which is this property's sibling rather than its own member — so the
+		 * component cannot answer the question from what it holds.
+		 */
+		siblings?: Record<string, unknown>;
 		onChange: (value: unknown) => void;
 		/**
 		 * Fetches a property's selectable values. Supplied by the panel, which
@@ -183,6 +201,13 @@
 	const expressionMode = $derived(isExpression(value));
 	const template = $derived(expressionTemplate(value));
 	const stringValue = $derived(typeof value === 'string' ? value : value === undefined || value === null ? '' : String(value));
+
+	// The three views of an options collection: what is set, what can still be
+	// added, and what is set but no longer applies.
+	const chosenOptions = $derived(property.kind === 'collection' ? setOptions(property, value, siblings) : []);
+	const addable = $derived(property.kind === 'collection' ? addableOptions(property, value, siblings) : []);
+	const strandedKeys = $derived(property.kind === 'collection' ? strandedOptions(property, value, siblings) : []);
+	const unreadableCollection = $derived(property.kind === 'collection' ? unreadable(value) : null);
 	const objectValue = $derived(isObject(value) ? value : {});
 	// Rows, never a string. The whole list is handed back on every edit, so
 	// nothing in this component can turn an assignment collection into text.
@@ -362,9 +387,77 @@
 				<Plus aria-hidden="true" class="size-3" />{typeOptions.multipleValueButtonText || `Add ${group.label}`}
 			</button>
 		</div>
-	{:else if property.kind === 'collection' || property.kind === 'fixedCollection'}
-		<!-- Everything else nested: shown as what is configured without
-		     pretending to edit a shape there is no control for yet. -->
+	{:else if property.kind === 'collection'}
+		<!-- Added one at a time, the way n8n presents the same control. A flat
+		     panel of every option would read as a form to fill in, when what
+		     the document means is "the ones named here, and the server's own
+		     default for everything else". -->
+		<div class="grid gap-1.5">
+			{#if unreadableCollection}
+				<!-- Named rather than silently replaced: this is a node
+				     somebody configured, and showing it as empty would look
+				     like the settings had been lost — which, on the next save,
+				     they would have been. -->
+				<div class="grid gap-1 rounded-md border border-destructive/40 bg-destructive/5 p-1.5">
+					<p class="text-[0.6875rem] leading-4 text-destructive">These options were stored as text and cannot be read back as settings. Add them again, or clear the field.</p>
+					<code class="overflow-x-auto rounded border border-input bg-background px-1.5 py-1 font-mono text-[0.625rem] text-muted-foreground">{unreadableCollection}</code>
+					<button type="button" class="inline-flex h-6 items-center gap-1 justify-self-start rounded border border-border px-1.5 text-[0.6875rem] transition-colors hover:bg-muted" onclick={() => onChange({})}>
+						<X aria-hidden="true" class="size-3" />Clear
+					</button>
+				</div>
+			{/if}
+			{#each chosenOptions as field (field.key)}
+				<div class="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-1 rounded-md border border-input p-1.5">
+					<PropertyField
+						property={field}
+						value={collectionValue(value)[field.key]}
+						siblings={{ ...siblings, ...collectionValue(value) }}
+						onChange={(next: unknown) => onChange(setOption(value, field.key, next))}
+						{loadOptions}
+					/>
+					<button type="button" aria-label={`Remove ${field.label}`} class="grid size-7 place-items-center rounded text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive" onclick={() => onChange(removeOption(value, field.key))}>
+						<X aria-hidden="true" class="size-3.5" />
+					</button>
+				</div>
+			{/each}
+			{#each strandedKeys as key (key)}
+				<!-- Kept in the document, because switching the operation back
+				     must find it, and named here because a node behaving in a
+				     way nothing on screen explains is worse than a crowded
+				     panel. -->
+				<div class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-1 rounded-md border border-dashed border-input px-1.5 py-1">
+					<span class="text-[0.6875rem] leading-4 text-muted-foreground">
+						<code class="font-mono">{key}</code> is set but does not apply to this operation.
+					</span>
+					<button type="button" aria-label={`Remove ${key}`} class="grid size-6 place-items-center rounded text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive" onclick={() => onChange(removeOption(value, key))}>
+						<X aria-hidden="true" class="size-3" />
+					</button>
+				</div>
+			{/each}
+			{#if addable.length > 0}
+				<select
+					aria-label={`Add ${property.label}`}
+					value=""
+					class="h-7 justify-self-start rounded-md border border-input bg-background px-1.5 text-xs"
+					onchange={(event) => {
+						const field = addable.find((candidate) => candidate.key === event.currentTarget.value);
+						if (field) onChange(addOption(value, field));
+						event.currentTarget.value = '';
+					}}
+				>
+					<option value="">+ Add option</option>
+					{#each addable as field (field.key)}
+						<option value={field.key}>{field.label}</option>
+					{/each}
+				</select>
+			{:else if chosenOptions.length === 0 && strandedKeys.length === 0}
+				<p class="text-[0.6875rem] leading-4 text-muted-foreground">No options apply to this operation.</p>
+			{/if}
+		</div>
+	{:else if property.kind === 'fixedCollection'}
+		<!-- The multi-group fixed collection, which has no control yet: shown
+		     as what is configured without pretending to edit a shape there is
+		     no control for. -->
 		<div class="grid gap-1 rounded-md border border-dashed border-input p-1.5 text-[0.6875rem] text-muted-foreground">
 			<span>{(property.fields ?? []).length || (property.groups ?? []).length} nested field(s)</span>
 			<textarea aria-label={`${property.label} value`} value={stringValue} spellcheck="false" rows={3} class="rounded border border-input bg-background px-1.5 py-1 font-mono text-[0.6875rem]" oninput={(event) => onChange(event.currentTarget.value)}></textarea>

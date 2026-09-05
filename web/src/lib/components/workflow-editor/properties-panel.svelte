@@ -127,7 +127,7 @@
 			<p class="text-xs leading-5 text-muted-foreground">This node has no {activeTab === 'parameters' ? 'parameters' : 'shared settings'} to configure.</p>
 		{:else}
 			{#each visibleProperties as property (property.key)}
-				<PropertyField {property} value={values[property.key]} onChange={(value) => onChange(activeTab, property.key, value)} loadOptions={activeTab === 'parameters' ? loadOptions : undefined} loadSchema={activeTab === 'parameters' ? loadSchema : undefined} />
+				<PropertyField {property} value={values[property.key]} siblings={values} onChange={(value) => onChange(activeTab, property.key, value)} loadOptions={activeTab === 'parameters' ? loadOptions : undefined} loadSchema={activeTab === 'parameters' ? loadSchema : undefined} />
 			{/each}
 		{/if}
 	</div>

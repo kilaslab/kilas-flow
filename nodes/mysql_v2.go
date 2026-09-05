@@ -147,6 +147,7 @@ func mysqlV2Node() node.Definition {
 				Kind: node.PropertyNumber, Default: 30,
 			},
 			{Key: "maxRows", Label: "Maximum rows", Kind: node.PropertyNumber, Default: 10000},
+			mysqlOptionsCollection(),
 		},
 		SharedSettings: sharedSettings(),
 		ExecutorID:     MySQLV2ExecutorID,
@@ -182,5 +183,8 @@ func validateMySQLV2Configuration(n workflow.Node) error {
 	default:
 		return fmt.Errorf("operation %q is not supported", operation)
 	}
-	return nil
+	// Checked at save rather than at run: an option the server cannot honour
+	// is a document defect, and finding it when the workflow next fires means
+	// finding it in production.
+	return validateSQLOptions(n.Parameters["options"])
 }

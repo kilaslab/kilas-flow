@@ -1,0 +1,17 @@
+{
+  "_source": "n8n 2.34.0, packages/nodes-base/nodes/Postgres/v2/actions/common.descriptions.ts",
+  "_why": "A transcription rather than a read. The reference checkout is read-only specification material and internal/guardrails forbids any build input — a test included — from reading a path under it, so the anti-drift check compares the declared collection against this committed record of what the reference said. Facts about the interchange format: option names, defaults and visibility. No n8n code.",
+  "_read": "2026-09-05",
+  "options": [
+    {"name": "cascade", "type": "boolean", "default": false, "showForOperations": ["deleteTable"]},
+    {"name": "connectionTimeout", "type": "number", "default": 30, "showForOperations": []},
+    {"name": "delayClosingIdleConnection", "type": "number", "default": 0, "showForOperations": []},
+    {"name": "queryBatching", "type": "options", "default": "single", "values": ["single", "independently", "transaction"], "showForOperations": []},
+    {"name": "queryReplacement", "type": "string", "default": "", "showForOperations": ["executeQuery"]},
+    {"name": "treatQueryParametersInSingleQuotesAsText", "type": "boolean", "default": false, "showForOperations": ["executeQuery"]},
+    {"name": "outputColumns", "type": "multiOptions", "default": [], "showForOperations": ["select", "insert", "update", "upsert"]},
+    {"name": "largeNumbersOutput", "type": "options", "default": "text", "values": ["numbers", "text"], "showForOperations": []},
+    {"name": "skipOnConflict", "type": "boolean", "default": false, "showForOperations": ["insert"]},
+    {"name": "replaceEmptyStrings", "type": "boolean", "default": false, "showForOperations": ["insert", "update", "upsert", "executeQuery"]}
+  ]
+}

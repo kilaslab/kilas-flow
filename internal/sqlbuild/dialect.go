@@ -45,7 +45,22 @@ type Dialect struct {
 	// returningAll is appended to a write that hands its row back, or empty
 	// where the dialect has no such clause.
 	returningAll string
+	// dropCascade is appended to a DROP TABLE that should take everything
+	// depending on the table with it, or empty where the dialect cannot.
+	dropCascade string
+	// skipConflict rewrites an insert into one that passes over a row a unique
+	// constraint would reject. It takes the whole statement rather than
+	// returning a suffix because the two dialects spell it in different
+	// places: PostgreSQL adds a clause at the end, MySQL a keyword after
+	// INSERT.
+	skipConflict func(statement string) string
 }
+
+// DropsCascade reports whether dropping a table can take its dependants too.
+//
+// Asked so a node can decline to offer the choice rather than accept it and
+// quietly not honour it.
+func (dialect Dialect) DropsCascade() bool { return dialect.dropCascade != "" }
 
 // Name identifies the dialect, and names its golden directory.
 func (dialect Dialect) Name() string { return dialect.name }
@@ -89,6 +104,15 @@ var Postgres = Dialect{
 		return tail + " DO UPDATE SET " + strings.Join(updates, ", ")
 	},
 	returningAll: " RETURNING *",
+	dropCascade:  " CASCADE",
+	skipConflict: func(statement string) string {
+		// Before RETURNING, which must stay last. A skipped row returns no
+		// row at all, which is how the caller learns it was skipped.
+		if returning := strings.Index(statement, " RETURNING "); returning >= 0 {
+			return statement[:returning] + " ON CONFLICT DO NOTHING" + statement[returning:]
+		}
+		return statement + " ON CONFLICT DO NOTHING"
+	},
 }
 
 // MySQL is the same statements in MySQL's and MariaDB's spelling.
@@ -123,6 +147,18 @@ var MySQL = Dialect{
 	// id instead. See sqlnode.Result.LastInsertID for why that is the honest
 	// answer rather than SELECT LAST_INSERT_ID().
 	returningAll: "",
+	// MySQL parses RESTRICT and CASCADE on DROP TABLE and documents that they
+	// do nothing. Emitting CASCADE would read as a promise the server does not
+	// keep, so the dialect has none and the node does not offer the choice.
+	dropCascade: "",
+	skipConflict: func(statement string) string {
+		// INSERT IGNORE also downgrades several unrelated errors to warnings —
+		// a truncated value, a bad date. That is MySQL's own breadth and not
+		// something this can narrow: the alternative spelling, ON DUPLICATE
+		// KEY UPDATE col = col, is a write rather than a skip and would touch
+		// the row's timestamps.
+		return strings.Replace(statement, "INSERT INTO ", "INSERT IGNORE INTO ", 1)
+	},
 }
 
 // MaxIdentifierBytes is PostgreSQL's own limit.

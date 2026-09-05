@@ -163,6 +163,7 @@ func postgresV2Node() node.Definition {
 				Kind: node.PropertyNumber, Default: 30,
 			},
 			{Key: "maxRows", Label: "Maximum rows", Kind: node.PropertyNumber, Default: 10000},
+			postgresOptionsCollection(),
 		},
 		SharedSettings: sharedSettings(),
 		ExecutorID:     PostgresV2ExecutorID,
@@ -209,7 +210,10 @@ func validatePostgresV2Configuration(n workflow.Node) error {
 	default:
 		return fmt.Errorf("operation %q is not supported", operation)
 	}
-	return nil
+	// Checked at save rather than at run: an option the server cannot honour
+	// is a document defect, and finding it when the workflow next fires means
+	// finding it in production.
+	return validateSQLOptions(n.Parameters["options"])
 }
 
 // SQLOperationExecutor runs the operation set against one dialect.
@@ -271,58 +275,172 @@ func (executor *SQLOperationExecutor) Execute(ctx context.Context, ir workflow.I
 	if len(items) == 0 {
 		items = []workflow.Item{{JSON: map[string]any{}}}
 	}
-	statements := make([]sqlnode.Statement, 0, len(items))
-	var limits sqlnode.Limits
-	var clamped map[string]any
+	// One entry per input item, carrying either the statement or the reason
+	// the item never produced one. Kept alongside rather than returned on
+	// sight, because whether a failure to build stops the run is exactly what
+	// the batching mode decides.
+	type built struct {
+		statement sqlnode.Statement
+		err       error
+	}
+	statements := make([]built, 0, len(items))
+	limits, clamped := executor.ceiling.Apply(sqlnode.Limits{
+		Timeout: time.Duration(timeoutParameter(ir.Parameters, "statementTimeoutSeconds") * float64(time.Second)),
+		MaxRows: int(numberValue(ir.Parameters["maxRows"])),
+	})
+	// Read before the loop, from the *unresolved* parameters, and applied to
+	// the whole run. Batching is a question about the run — whether these
+	// statements share a transaction — so an expression answering it
+	// differently per item would be asking for half a transaction, and n8n
+	// marks the option noDataExpression for the same reason. Reading it here
+	// rather than from the first resolved item also means an item whose own
+	// expressions fail is still handled the way the mode says, instead of the
+	// mode being unknowable exactly when it is needed.
+	//
+	// The whole collection is read here rather than only the mode, so that the
+	// run-level settings — the connect timeout, the row shaping — have their
+	// declared values even when the first item is the one that does not
+	// resolve. Under independently that is a case the mode exists to survive,
+	// and a zero connect timeout would end the run at the connection instead.
+	// The first item's own resolved values replace these when it does resolve.
+	batching := readSQLOptions(ir.Parameters["options"])
+	mode := batching.QueryBatching
 	for index, item := range items {
 		parameters, err := expression.Resolve(ir.Parameters, expressionContext(item, input, request, index))
 		if err != nil {
-			return nil, fmt.Errorf("node %q: %w", ir.Name, err)
+			if mode != BatchingIndependently {
+				return nil, fmt.Errorf("node %q: %w", ir.Name, err)
+			}
+			// An item whose expressions do not resolve never produces a
+			// statement, and under this mode that is still that item's failure
+			// rather than the run's.
+			statements = append(statements, built{err: err})
+			continue
 		}
+		options := readSQLOptions(parameters["options"])
 		if index == 0 {
+			batching = options
 			limits, clamped = executor.ceiling.Apply(sqlnode.Limits{
 				Timeout: time.Duration(timeoutParameter(parameters, "statementTimeoutSeconds") * float64(time.Second)),
 				MaxRows: int(numberValue(parameters["maxRows"])),
 			})
 		}
-		statement, err := buildSQLStatement(executor.dialect, parameters, item)
-		if err != nil {
+		statement, err := buildSQLStatement(executor.dialect, parameters, item, options)
+		if err != nil && mode != BatchingIndependently {
 			return nil, fmt.Errorf("node %q: item %d: %w", ir.Name, index+1, err)
 		}
-		statements = append(statements, statement)
+		statements = append(statements, built{statement: statement, err: err})
 	}
 
-	connection, err := sqlnode.Open(ctx, executor.driver, resolved.Fields, executor.guard)
+	// Bounded separately from the statement timeout, and deliberately: Open
+	// pings, so this is a real deadline on reaching the server, and a database
+	// that answers slowly is a different problem from one that does not answer
+	// at all. The cancel is called before the statements run rather than
+	// deferred to the end of Execute — a connect deadline that stayed live
+	// would cancel the queries too.
+	connectCtx, cancelConnect := context.WithTimeout(ctx, time.Duration(batching.ConnectionTimeout*float64(time.Second)))
+	connection, err := sqlnode.Open(connectCtx, executor.driver, resolved.Fields, executor.guard)
+	cancelConnect()
 	if err != nil {
 		return nil, fmt.Errorf("node %q: %s connection failed: %w", ir.Name, executor.driver, sqlnode.Sanitize(err))
 	}
 	defer connection.Close()
 
-	results, err := connection.Transaction(ctx, statements, limits)
-	if err != nil {
-		return nil, fmt.Errorf("node %q: %w", ir.Name, sqlnode.Sanitize(err))
+	out := make([]workflow.Item, 0, len(statements))
+	failed := func(index int, cause error) workflow.Item {
+		// The failure takes the failing item's place, so the output still
+		// lines up one-to-one with the input and a downstream node can tell
+		// which item did not go through.
+		return workflow.Item{JSON: map[string]any{
+			engine.ErrorItemKey: map[string]any{
+				"message": sqlnode.Sanitize(cause).Error(),
+				"node":    ir.Name,
+				"item":    float64(index + 1),
+			},
+		}}
 	}
-	out := make([]workflow.Item, 0, len(results))
-	for _, result := range results {
-		for _, row := range result.Rows {
-			out = append(out, workflow.Item{JSON: row})
+	switch mode {
+	case BatchingTransaction:
+		sending := make([]sqlnode.Statement, 0, len(statements))
+		for _, entry := range statements {
+			sending = append(sending, entry.statement)
 		}
-		if len(result.Rows) > 0 {
-			continue
+		results, err := connection.Transaction(ctx, sending, limits)
+		if err != nil {
+			return nil, fmt.Errorf("node %q: %w", ir.Name, sqlnode.Sanitize(err))
 		}
-		summary := map[string]any{"rowsAffected": float64(result.RowsAffected)}
-		// MySQL has no RETURNING, so an insert's generated key comes back on
-		// the driver's own OK packet for that statement rather than from the
-		// row. Reported only when the driver reported one: a real
-		// auto-increment is never zero, and SELECT LAST_INSERT_ID() would give
-		// the *previous* statement's id for a table without one — plausible,
-		// wrong, and silent.
-		if result.LastInsertID != 0 {
-			summary["insertId"] = float64(result.LastInsertID)
+		for _, result := range results {
+			out = appendResultItems(out, result, batching)
 		}
-		out = append(out, workflow.Item{JSON: summary})
+
+	case BatchingIndependently:
+		// Deliberately never returns an error: continuing past a failure is
+		// the whole of what this mode was asked for. It is an item-level
+		// answer, and the node's own Continue on fail setting answers a
+		// different question — what happens once the node as a whole has
+		// failed, which under this mode it does not.
+		for index, entry := range statements {
+			if entry.err != nil {
+				// An item whose parameters would not build never reaches the
+				// database, and is still that item's failure rather than the
+				// run's.
+				out = append(out, failed(index, entry.err))
+				continue
+			}
+			result, err := runStatement(ctx, connection, entry.statement, limits)
+			if err != nil {
+				out = append(out, failed(index, err))
+				continue
+			}
+			out = appendResultItems(out, result, batching)
+		}
+
+	default:
+		for index, entry := range statements {
+			result, err := runStatement(ctx, connection, entry.statement, limits)
+			if err != nil {
+				// No rollback, and none promised: this mode has no transaction,
+				// so the statements that already ran have already committed.
+				// Saying so is the point of naming the item that stopped it.
+				return nil, fmt.Errorf("node %q: item %d: %w", ir.Name, index+1, sqlnode.Sanitize(err))
+			}
+			out = appendResultItems(out, result, batching)
+		}
 	}
 	return workflow.NodeOutput{appendClamped(out, clamped)}, nil
+}
+
+// runStatement runs one statement on its own, outside any transaction.
+//
+// The routing is the declared Returning flag rather than a look at the SQL, for
+// the reason Connection.Transaction gives: a non-returning statement sent
+// through Query comes back as an empty result set whose rows-affected nobody
+// can reach, and every write in the installation would quietly report zero.
+func runStatement(ctx context.Context, connection *sqlnode.Connection, statement sqlnode.Statement, limits sqlnode.Limits) (sqlnode.Result, error) {
+	if statement.Returning {
+		return connection.Query(ctx, statement.SQL, statement.Parameters, limits)
+	}
+	return connection.Execute(ctx, statement.SQL, statement.Parameters, limits)
+}
+
+// appendResultItems turns one statement's outcome into items.
+func appendResultItems(out []workflow.Item, result sqlnode.Result, options sqlOptions) []workflow.Item {
+	for _, row := range result.Rows {
+		out = append(out, workflow.Item{JSON: shapeRow(row, result.ColumnTypes, options)})
+	}
+	if len(result.Rows) > 0 {
+		return out
+	}
+	summary := map[string]any{"rowsAffected": float64(result.RowsAffected)}
+	// MySQL has no RETURNING, so an insert's generated key comes back on the
+	// driver's own OK packet for that statement rather than from the row.
+	// Reported only when the driver reported one: a real auto-increment is
+	// never zero, and SELECT LAST_INSERT_ID() would give the *previous*
+	// statement's id for a table without one — plausible, wrong, and silent.
+	if result.LastInsertID != 0 {
+		summary["insertId"] = float64(result.LastInsertID)
+	}
+	return append(out, workflow.Item{JSON: summary})
 }
 
 // BuildSQLStatementForTest builds one statement from resolved parameters.
@@ -332,16 +450,24 @@ func (executor *SQLOperationExecutor) Execute(ctx context.Context, ir workflow.I
 // through inverse tables, so an inversion between them is symmetric and
 // invisible until something asserts the SQL that actually runs.
 func BuildSQLStatementForTest(dialect sqlbuild.Dialect, parameters map[string]any) (sqlnode.Statement, error) {
-	return buildSQLStatement(dialect, parameters, workflow.Item{JSON: map[string]any{}})
+	return buildSQLStatement(dialect, parameters, workflow.Item{JSON: map[string]any{}},
+		readSQLOptions(parameters["options"]))
 }
 
 // buildSQLStatement turns one item's resolved parameters into SQL.
-func buildSQLStatement(dialect sqlbuild.Dialect, parameters map[string]any, item workflow.Item) (sqlnode.Statement, error) {
+func buildSQLStatement(dialect sqlbuild.Dialect, parameters map[string]any, item workflow.Item, options sqlOptions) (sqlnode.Statement, error) {
 	operation := textValue(parameters["operation"], PostgresOperationExecuteQuery)
 	if operation == PostgresOperationExecuteQuery {
 		bound, err := boundParameters(parameters["queryParameters"])
 		if err != nil {
 			return sqlnode.Statement{}, err
+		}
+		if options.ReplaceEmptyStrings {
+			for index, value := range bound {
+				if text, isText := value.(string); isText && text == "" {
+					bound[index] = nil
+				}
+			}
 		}
 		query := textValue(parameters["query"], "")
 		if strings.TrimSpace(query) == "" {
@@ -370,7 +496,7 @@ func buildSQLStatement(dialect sqlbuild.Dialect, parameters map[string]any, item
 		if err != nil {
 			return sqlnode.Statement{}, err
 		}
-		return sqlbuild.Select(dialect, target, nil, where, combine, nil, limit)
+		return sqlbuild.Select(dialect, target, options.OutputColumns, where, combine, nil, limit)
 
 	case PostgresOperationDeleteTable:
 		mode := textValue(parameters["deleteCommand"], sqlbuild.DeleteRows)
@@ -378,7 +504,7 @@ func buildSQLStatement(dialect sqlbuild.Dialect, parameters map[string]any, item
 		if err != nil {
 			return sqlnode.Statement{}, err
 		}
-		return sqlbuild.Delete(dialect, target, mode, where, combine)
+		return sqlbuild.Delete(dialect, target, mode, where, combine, options.Cascade)
 
 	case PostgresOperationInsert, PostgresOperationUpdate, PostgresOperationUpsert:
 		mapping, ok := property.ReadMapping(parameters["columns"])
@@ -394,9 +520,19 @@ func buildSQLStatement(dialect sqlbuild.Dialect, parameters map[string]any, item
 		if len(values) == 0 {
 			return sqlnode.Statement{}, fmt.Errorf("%s has no columns to write", operation)
 		}
+		if options.ReplaceEmptyStrings {
+			// After the mapping rather than inside it: the mapping decides
+			// which columns are written, and this decides what an empty one
+			// means. A column left out entirely is still left out.
+			for column, value := range values {
+				if text, isText := value.(string); isText && text == "" {
+					values[column] = nil
+				}
+			}
+		}
 		switch operation {
 		case PostgresOperationInsert:
-			return sqlbuild.Insert(dialect, target, values)
+			return sqlbuild.Insert(dialect, target, values, options.SkipOnConflict)
 		case PostgresOperationUpdate:
 			return sqlbuild.Update(dialect, target, values, mapping.MatchingColumns)
 		default:

@@ -135,6 +135,14 @@ type Result struct {
 	LastInsertID int64
 	// Truncated reports that MaxRows stopped the read.
 	Truncated bool
+	// ColumnTypes is each returned column's database type name, keyed by the
+	// same name the row map uses.
+	//
+	// Carried because the scanned value alone cannot answer what the column
+	// was: a PostgreSQL numeric and a text column both arrive as a Go string,
+	// and only one of them is a number whose digits a caller may want to keep.
+	// Empty where the driver does not report a type name.
+	ColumnTypes map[string]string
 }
 
 // Connection is an open external database handle.
@@ -367,7 +375,7 @@ func scanRows(rows *sql.Rows, maxRows int) (Result, error) {
 		return Result{}, fmt.Errorf("read columns: %w", err)
 	}
 
-	result := Result{Rows: make([]map[string]any, 0, 16)}
+	result := Result{Rows: make([]map[string]any, 0, 16), ColumnTypes: columnTypeNames(rows, columns)}
 	for rows.Next() {
 		if len(result.Rows) >= maxRows {
 			result.Truncated = true
@@ -391,6 +399,28 @@ func scanRows(rows *sql.Rows, maxRows int) (Result, error) {
 		return Result{}, fmt.Errorf("read rows: %w", err)
 	}
 	return result, nil
+}
+
+// columnTypeNames reads each column's database type name, where there is one.
+//
+// A driver may report nothing at all, and database/sql documents the name as
+// best-effort — so an absent entry means "unknown", never "not a number", and
+// every caller has to have an answer for the unknown case.
+func columnTypeNames(rows *sql.Rows, columns []string) map[string]string {
+	types, err := rows.ColumnTypes()
+	if err != nil || len(types) != len(columns) {
+		return nil
+	}
+	names := make(map[string]string, len(columns))
+	for index, column := range columns {
+		if name := types[index].DatabaseTypeName(); name != "" {
+			names[column] = strings.ToUpper(name)
+		}
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	return names
 }
 
 // Execute runs a statement that returns no rows.
