@@ -36,7 +36,7 @@ This matters because the options collection is where an n8n user's intent actual
 - [x] `largeNumbersOutput` visibly changes the item payload for a bigint and a numeric column on both settings, proven by an item-level assertion rather than by reading the option back.
 - [x] `replaceEmptyStrings` writes a JSON null where an empty string was and leaves a non-empty string untouched, proven by an item-level test on both settings.
 - [x] Every key the collection declares is either applied by the executor or refused with a named diagnostic, proven by a test that enumerates the declared keys and fails on one nothing reads.
-- [~] The Postgres-specific runs are executed by hand through `make smoke-postgres` and recorded in the ticket's work evidence, because this repository has no CI to run them.
+- [x] The Postgres-specific runs are executed by hand through `make smoke-postgres` and recorded in the ticket's work evidence, because this repository has no CI to run them.
 
 ## Implementation Plan
 
@@ -179,9 +179,18 @@ dialect grew `dropCascade` and `skipConflict`, which is the proof those two
 additions are inert unless asked for. Two new goldens per dialect record what
 they emit when asked.
 
-**AC 8 is not met.** `make smoke-postgres` failed with `no space left on
-device` inside the Docker VM — 19 GB of reclaimable images and 6.9 GB of build
-cache — and the prune that would fix it was declined, so it was not run. The
-live-gated coverage above is against a real PostgreSQL 16 and is the stronger
-evidence for what this ticket changed; the smoke target proves the shipped
-image, which this ticket does not touch. Re-run after `docker builder prune`.
+**AC 8 met, on the second attempt.** The first `make smoke-postgres` failed
+with `no space left on device` inside the Docker VM — 19 GB of reclaimable
+images and 6.9 GB of build cache. After the operator pruned, it was re-run and
+passed:
+
+```
+make smoke-postgres
+  … image built, Compose PostgreSQL service healthy …
+  ok  github.com/kilaslabs/kilas-flow/internal/database  0.469s
+  smoke-postgres: passed
+```
+
+It proves the shipped image against a real PostgreSQL, which is not the same
+question as the options collection; the live-gated coverage above is the
+evidence for what this ticket actually changed.
