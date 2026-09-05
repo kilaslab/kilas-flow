@@ -217,6 +217,11 @@ func (runner *Runner) Run(ctx context.Context, ir workflow.IR, request Request) 
 		incoming[edge.Target.NodeID] = append(incoming[edge.Target.NodeID], edge)
 		outgoing[edge.Source.NodeID]++
 	}
+
+	// A loop's back edge is the one thing in the graph that points backwards,
+	// and it has to be excluded from ordinary scheduling: a loop node whose
+	// body has not run yet would otherwise be waiting on its own output.
+	loops := findLoops(ir, nodes)
 	for nodeID := range incoming {
 		sort.Slice(incoming[nodeID], func(left, right int) bool {
 			a, b := incoming[nodeID][left], incoming[nodeID][right]
@@ -249,7 +254,10 @@ func (runner *Runner) Run(ctx context.Context, ir workflow.IR, request Request) 
 	for len(completed) < len(nodes) {
 		ready := make([]string, 0, len(nodes)-len(completed))
 		for nodeID := range nodes {
-			if _, done := completed[nodeID]; done || !dependenciesComplete(incoming[nodeID], completed) {
+			if _, done := completed[nodeID]; done || !dependenciesComplete(schedulingEdges(incoming[nodeID], loops), completed) {
+				continue
+			}
+			if awaitingLoop(incoming[nodeID], loops) {
 				continue
 			}
 			ready = append(ready, nodeID)
@@ -260,7 +268,7 @@ func (runner *Runner) Run(ctx context.Context, ir workflow.IR, request Request) 
 		sort.Strings(ready)
 		nodeID := ready[0]
 		node := nodes[nodeID]
-		input, err := nodeInput(incoming[nodeID], completed)
+		input, err := nodeInput(iterationEdges(nodeID, incoming[nodeID], loops), completed)
 		if err != nil {
 			return Result{}, fmt.Errorf("build node %q input: %w", nodeID, err)
 		}
@@ -400,6 +408,12 @@ func (runner *Runner) Run(ctx context.Context, ir workflow.IR, request Request) 
 			NodeID: nodeID, Input: cloneInput(input), Output: output,
 			Attempt: usedAttempt, RunIndex: len(runs[nodeID]) - 1,
 		})
+		// A loop that still has work reopens its body so the next batch can run,
+		// and reopens its entry when that body comes back round. Every
+		// iteration keeps its own trace rows, because each run advanced the
+		// node's run index above.
+		reopenLoops(nodeID, node, output, loops, completed)
+		closeIteration(nodeID, incoming, loops, completed)
 		if outgoing[nodeID] == 0 {
 			result.Output[nodeID] = cloneOutput(output)
 		}
@@ -863,4 +877,192 @@ func stampProvenance(node workflow.IRNode, edges []workflow.IREdge, input workfl
 			}
 		}
 	}
+}
+
+// loopGraph is what the runner needs to know about one bounded loop.
+type loopGraph struct {
+	// entryID is the loop node itself.
+	entryID string
+	// backEdges are the edges pointing from the body back into the entry.
+	backEdges map[string]bool
+	// body is every node between the entry's `loop` output and the back edge.
+	body map[string]bool
+	// started marks a loop that has dispatched at least one batch, so its
+	// entry now reads from the back edge rather than from upstream.
+	started bool
+	// finished marks a loop that has emitted on `done`. Until it has, the
+	// nodes below `done` must not be scheduled: they would be handed an empty
+	// stream mid-loop, be pruned as an untaken branch, and never run again
+	// once the final batch actually produced something.
+	finished bool
+}
+
+// findLoops locates every bounded loop in a compiled graph.
+//
+// A loop is a node whose definition declares LoopEntry together with the edges
+// that close back onto it and the nodes between. The compiler has already
+// refused any other cycle, so anything found here is a loop somebody declared.
+func findLoops(ir workflow.IR, active map[string]workflow.IRNode) map[string]*loopGraph {
+	loops := map[string]*loopGraph{}
+	for _, node := range ir.Nodes {
+		if !node.Definition.LoopEntry {
+			continue
+		}
+		if _, live := active[node.ID]; !live {
+			continue
+		}
+		loops[node.ID] = &loopGraph{
+			entryID: node.ID, backEdges: map[string]bool{}, body: map[string]bool{},
+		}
+	}
+	if len(loops) == 0 {
+		return loops
+	}
+
+	// The body of a loop is whatever its `loop` output reaches before coming
+	// back. Walking forward from the entry and stopping at the entry is enough:
+	// the compiler guarantees no other cycle exists to wander into.
+	forward := map[string][]workflow.IREdge{}
+	for _, edge := range ir.Edges {
+		forward[edge.Source.NodeID] = append(forward[edge.Source.NodeID], edge)
+	}
+	for entryID, loop := range loops {
+		queue := []string{entryID}
+		seen := map[string]bool{entryID: true}
+		for len(queue) > 0 {
+			current := queue[0]
+			queue = queue[1:]
+			for _, edge := range forward[current] {
+				if edge.Kind != workflow.ConnectionMain {
+					continue
+				}
+				if edge.Target.NodeID == entryID {
+					loop.backEdges[edge.ID] = true
+					continue
+				}
+				if seen[edge.Target.NodeID] {
+					continue
+				}
+				seen[edge.Target.NodeID] = true
+				loop.body[edge.Target.NodeID] = true
+				queue = append(queue, edge.Target.NodeID)
+			}
+		}
+	}
+	return loops
+}
+
+// schedulingEdges hides a loop's back edge until the loop has actually started.
+//
+// Without this a loop node waits forever on its own body, which has not run
+// because the loop node has not dispatched a batch.
+func schedulingEdges(edges []workflow.IREdge, loops map[string]*loopGraph) []workflow.IREdge {
+	if len(loops) == 0 {
+		return edges
+	}
+	filtered := make([]workflow.IREdge, 0, len(edges))
+	for _, edge := range edges {
+		if loop, found := loops[edge.Target.NodeID]; found && loop.backEdges[edge.ID] && !loop.started {
+			continue
+		}
+		filtered = append(filtered, edge)
+	}
+	return filtered
+}
+
+// iterationEdges decides what a loop node reads on re-entry.
+//
+// On the first dispatch it takes its work from upstream. On every later one it
+// reads only the back edge, because the upstream items are still sitting in the
+// completed map and feeding them in again would restart the loop with every
+// iteration.
+func iterationEdges(nodeID string, edges []workflow.IREdge, loops map[string]*loopGraph) []workflow.IREdge {
+	loop, found := loops[nodeID]
+	if !found {
+		return edges
+	}
+	filtered := make([]workflow.IREdge, 0, len(edges))
+	for _, edge := range edges {
+		// Exactly one side of the loop feeds any given dispatch: upstream on
+		// the first, the body on every one after. Taking both would restart the
+		// loop on every iteration, and taking the back edge before the body has
+		// run would read an output that does not exist.
+		if loop.backEdges[edge.ID] == loop.started {
+			filtered = append(filtered, edge)
+		}
+	}
+	return filtered
+}
+
+// reopenLoops clears the completion state of a loop's body once a batch has
+// been dispatched, so the next iteration can run.
+//
+// It is driven by the loop node's own output rather than by a counter the
+// runner keeps: the node says whether it has more work by emitting on `loop`,
+// which keeps the iteration state where it belongs and out of the scheduler.
+func reopenLoops(nodeID string, node workflow.IRNode, output workflow.NodeOutput, loops map[string]*loopGraph, completed map[string]workflow.NodeOutput) {
+	loop, found := loops[nodeID]
+	if !found {
+		return
+	}
+	dispatched := false
+	for index, port := range node.Definition.Outputs {
+		if port.Name == "loop" && index < len(output) && len(output[index]) > 0 {
+			dispatched = true
+		}
+	}
+	if !dispatched {
+		// The loop is finished. Its body keeps whatever state it ended with,
+		// and the nodes below `done` become schedulable and run once.
+		loop.finished = true
+		return
+	}
+	loop.started = true
+	// Only the body is reopened, and only the body. Reopening the entry here
+	// too would deadlock: the entry would then be waiting on a back edge whose
+	// source has just been reopened and cannot run until the entry does.
+	//
+	// The entry is reopened instead when the back edge's source completes,
+	// which is the moment the next batch actually has somewhere to come from.
+	for bodyID := range loop.body {
+		delete(completed, bodyID)
+	}
+}
+
+// closeIteration reopens a loop's entry once its body has come back round.
+//
+// This is the other half of reopenLoops, and the order matters: the body is
+// reopened when a batch is dispatched, and the entry when the body returns.
+// Doing both at once leaves neither able to run.
+func closeIteration(nodeID string, edges map[string][]workflow.IREdge, loops map[string]*loopGraph, completed map[string]workflow.NodeOutput) {
+	for _, loop := range loops {
+		if !loop.started {
+			continue
+		}
+		for _, edge := range edges[loop.entryID] {
+			if loop.backEdges[edge.ID] && edge.Source.NodeID == nodeID {
+				delete(completed, loop.entryID)
+			}
+		}
+	}
+}
+
+// awaitingLoop reports a node fed by a loop's `done` port while that loop is
+// still iterating.
+//
+// Such a node must not be scheduled yet. Its input is empty until the final
+// batch, so scheduling it mid-loop would prune it as an untaken branch — and
+// once pruned it is complete, so it would never run when `done` finally carried
+// the accumulated items.
+func awaitingLoop(edges []workflow.IREdge, loops map[string]*loopGraph) bool {
+	for _, edge := range edges {
+		loop, found := loops[edge.Source.NodeID]
+		if !found || !loop.started || loop.finished {
+			continue
+		}
+		if edge.Source.Port == "done" {
+			return true
+		}
+	}
+	return false
 }

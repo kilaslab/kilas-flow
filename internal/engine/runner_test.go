@@ -1016,3 +1016,273 @@ func TestRunIndexIsRecordedPerRun(t *testing.T) {
 		}
 	}
 }
+
+// loopIR wires a loop node with a one-node body that feeds back into it, which
+// is n8n's Split In Batches shape: the loop output runs the body and the body's
+// last node returns to the loop node so the next batch is dispatched.
+func loopIR(t *testing.T, parameters map[string]any) (workflow.IR, *node.Registry) {
+	t.Helper()
+	catalog := node.NewRegistry()
+	if err := nodes.RegisterAll(catalog); err != nil {
+		t.Fatalf("RegisterAll() error = %v", err)
+	}
+	ir, err := workflow.Compile(workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_loop",
+		Name:          "Batched",
+		Nodes: []workflow.Node{
+			{ID: "manual", Name: "Manual", Type: "kilasflow.manual", TypeVersion: workflow.V(1)},
+			{ID: "loop", Name: "Loop", Type: nodes.LoopNodeType, TypeVersion: workflow.V(1), Parameters: parameters},
+			{ID: "body", Name: "Body", Type: "kilasflow.set", TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"assignments": map[string]any{"touched": "yes"}}},
+			{ID: "after", Name: "After", Type: "kilasflow.set", TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"assignments": map[string]any{"stage": "after"}}},
+		},
+		Connections: []workflow.Connection{
+			{ID: "c1", Kind: workflow.ConnectionMain,
+				Source: workflow.Endpoint{NodeID: "manual", Port: "main"},
+				Target: workflow.Endpoint{NodeID: "loop", Port: "main"}},
+			{ID: "c2", Kind: workflow.ConnectionMain,
+				Source: workflow.Endpoint{NodeID: "loop", Port: "loop"},
+				Target: workflow.Endpoint{NodeID: "body", Port: "main"}},
+			// The back edge, legal only because the loop node declares itself
+			// a loop entry.
+			{ID: "c3", Kind: workflow.ConnectionMain,
+				Source: workflow.Endpoint{NodeID: "body", Port: "main"},
+				Target: workflow.Endpoint{NodeID: "loop", Port: "main"}},
+			{ID: "c4", Kind: workflow.ConnectionMain,
+				Source: workflow.Endpoint{NodeID: "loop", Port: "done"},
+				Target: workflow.Endpoint{NodeID: "after", Port: "main"}},
+		},
+		Settings: map[string]any{},
+	}, catalog)
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+	return ir, catalog
+}
+
+// TestLoopDispatchesOneBatchPerIteration is the pattern that was unrepresentable.
+//
+// n8n's Split In Batches is a cycle by construction, and refusing every cycle
+// made every workflow built on it impossible to import.
+func TestLoopDispatchesOneBatchPerIteration(t *testing.T) {
+	ir, _ := loopIR(t, map[string]any{"batchSize": float64(2), "maxIterations": float64(10)})
+
+	// Five items at two per batch: three iterations.
+	result, err := engine.NewRunner(executorRegistry(t)).Run(context.Background(), ir, engine.Request{
+		Input: workflow.Item{JSON: map[string]any{"n": 1}},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	bodyRuns := 0
+	loopRuns := 0
+	afterRuns := 0
+	for _, run := range result.NodeRuns {
+		switch run.NodeID {
+		case "body":
+			if !run.Skipped {
+				bodyRuns++
+			}
+		case "loop":
+			loopRuns++
+		case "after":
+			if !run.Skipped {
+				afterRuns++
+			}
+		}
+	}
+	// One item in, batch size two: one iteration, then a final call that emits
+	// on done.
+	if bodyRuns != 1 {
+		t.Errorf("body ran %d times, want 1", bodyRuns)
+	}
+	if loopRuns < 2 {
+		t.Errorf("loop ran %d times, want at least a dispatch and a finish", loopRuns)
+	}
+	// The nodes downstream of `done` run exactly once, however many iterations
+	// the loop took.
+	if afterRuns != 1 {
+		t.Errorf("the node after the loop ran %d times, want exactly 1", afterRuns)
+	}
+
+	// Each iteration left its own row, distinguishable by run index.
+	seen := map[int]bool{}
+	for _, run := range result.NodeRuns {
+		if run.NodeID == "loop" {
+			if seen[run.RunIndex] {
+				t.Errorf("two loop rows share run index %d", run.RunIndex)
+			}
+			seen[run.RunIndex] = true
+		}
+	}
+}
+
+// TestLoopCollectsEveryBatchOntoDone proves the accumulated items leave on
+// `done` rather than only the last batch.
+func TestLoopCollectsEveryBatchOntoDone(t *testing.T) {
+	catalog := node.NewRegistry()
+	if err := catalog.Register(node.Definition{
+		Type: "test.five", Version: workflow.V(1), DisplayName: "Five", Category: "Test",
+		Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}}, ExecutorID: "test.five",
+	}); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	if err := nodes.RegisterAll(catalog); err != nil {
+		t.Fatalf("RegisterAll() error = %v", err)
+	}
+
+	ir, err := workflow.Compile(workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_collect",
+		Name:          "Collecting",
+		Nodes: []workflow.Node{
+			{ID: "src", Name: "Source", Type: "test.five", TypeVersion: workflow.V(1)},
+			{ID: "loop", Name: "Loop", Type: nodes.LoopNodeType, TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"batchSize": float64(2), "maxIterations": float64(10)}},
+			{ID: "body", Name: "Body", Type: "kilasflow.set", TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"assignments": map[string]any{"touched": "yes"}}},
+		},
+		Connections: []workflow.Connection{
+			{ID: "c1", Kind: workflow.ConnectionMain,
+				Source: workflow.Endpoint{NodeID: "src", Port: "main"},
+				Target: workflow.Endpoint{NodeID: "loop", Port: "main"}},
+			{ID: "c2", Kind: workflow.ConnectionMain,
+				Source: workflow.Endpoint{NodeID: "loop", Port: "loop"},
+				Target: workflow.Endpoint{NodeID: "body", Port: "main"}},
+			{ID: "c3", Kind: workflow.ConnectionMain,
+				Source: workflow.Endpoint{NodeID: "body", Port: "main"},
+				Target: workflow.Endpoint{NodeID: "loop", Port: "main"}},
+		},
+		Settings: map[string]any{},
+	}, catalog)
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+
+	executors := engine.NewRegistry()
+	if err := executors.Register("test.five", engine.ExecutorFunc(
+		func(context.Context, workflow.IRNode, workflow.NodeInput, engine.Request) (workflow.NodeOutput, error) {
+			items := make([]workflow.Item, 0, 5)
+			for index := range 5 {
+				items = append(items, workflow.Item{JSON: map[string]any{"n": float64(index)}})
+			}
+			return workflow.NodeOutput{items}, nil
+		})); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	if err := nodes.RegisterExecutors(executors, safehttp.DefaultPolicy(), sqlnode.Guard{}, ai.NewLoopRuntime(), nil, nil); err != nil {
+		t.Fatalf("RegisterExecutors() error = %v", err)
+	}
+
+	result, err := engine.NewRunner(executors).Run(context.Background(), ir, engine.Request{
+		Input: workflow.Item{JSON: map[string]any{}},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	// Five items at two per batch is three iterations, and every item the body
+	// returned must be on `done`.
+	var last engine.NodeRun
+	for _, run := range result.NodeRuns {
+		if run.NodeID == "loop" {
+			last = run
+		}
+	}
+	done := last.Output[0]
+	if len(done) != 5 {
+		t.Fatalf("done carried %d items, want all 5 accumulated across batches", len(done))
+	}
+	for index, item := range done {
+		if item.JSON["touched"] != "yes" {
+			t.Errorf("item %d on done did not pass through the body: %#v", index, item.JSON)
+		}
+		// The loop's own bookkeeping must never reach a downstream node.
+		if _, leaked := item.JSON[nodes.LoopStateKey]; leaked {
+			t.Errorf("item %d carries the loop's internal state: %#v", index, item.JSON)
+		}
+	}
+}
+
+// TestLoopFailsRatherThanTruncatingAtItsBound is why the bound fails instead of
+// emitting `done`. A truncated loop that reported success would hand downstream
+// nodes a partial result they cannot tell from a complete one.
+func TestLoopFailsRatherThanTruncatingAtItsBound(t *testing.T) {
+	catalog := node.NewRegistry()
+	if err := catalog.Register(node.Definition{
+		Type: "test.many", Version: workflow.V(1), DisplayName: "Many", Category: "Test",
+		Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}}, ExecutorID: "test.many",
+	}); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	if err := nodes.RegisterAll(catalog); err != nil {
+		t.Fatalf("RegisterAll() error = %v", err)
+	}
+
+	ir, err := workflow.Compile(workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_bounded",
+		Name:          "Bounded",
+		Nodes: []workflow.Node{
+			{ID: "src", Name: "Source", Type: "test.many", TypeVersion: workflow.V(1)},
+			{ID: "loop", Name: "Loop", Type: nodes.LoopNodeType, TypeVersion: workflow.V(1),
+				// Twenty items, one at a time, but only three iterations allowed.
+				Parameters: map[string]any{"batchSize": float64(1), "maxIterations": float64(3)}},
+			{ID: "body", Name: "Body", Type: "kilasflow.set", TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"assignments": map[string]any{"touched": "yes"}}},
+		},
+		Connections: []workflow.Connection{
+			{ID: "c1", Kind: workflow.ConnectionMain,
+				Source: workflow.Endpoint{NodeID: "src", Port: "main"},
+				Target: workflow.Endpoint{NodeID: "loop", Port: "main"}},
+			{ID: "c2", Kind: workflow.ConnectionMain,
+				Source: workflow.Endpoint{NodeID: "loop", Port: "loop"},
+				Target: workflow.Endpoint{NodeID: "body", Port: "main"}},
+			{ID: "c3", Kind: workflow.ConnectionMain,
+				Source: workflow.Endpoint{NodeID: "body", Port: "main"},
+				Target: workflow.Endpoint{NodeID: "loop", Port: "main"}},
+		},
+		Settings: map[string]any{},
+	}, catalog)
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+
+	executors := engine.NewRegistry()
+	if err := executors.Register("test.many", engine.ExecutorFunc(
+		func(context.Context, workflow.IRNode, workflow.NodeInput, engine.Request) (workflow.NodeOutput, error) {
+			items := make([]workflow.Item, 0, 20)
+			for index := range 20 {
+				items = append(items, workflow.Item{JSON: map[string]any{"n": float64(index)}})
+			}
+			return workflow.NodeOutput{items}, nil
+		})); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	if err := nodes.RegisterExecutors(executors, safehttp.DefaultPolicy(), sqlnode.Guard{}, ai.NewLoopRuntime(), nil, nil); err != nil {
+		t.Fatalf("RegisterExecutors() error = %v", err)
+	}
+
+	result, err := engine.NewRunner(executors).Run(context.Background(), ir, engine.Request{
+		Input: workflow.Item{JSON: map[string]any{}},
+	})
+	if err == nil {
+		t.Fatal("a loop past its bound must fail the execution, not silently emit done")
+	}
+	if !strings.Contains(err.Error(), "Loop") || !strings.Contains(err.Error(), "3") {
+		t.Errorf("error = %v, want it to name the loop node and the bound", err)
+	}
+	// The iterations that did succeed are recorded rather than discarded.
+	bodyRuns := 0
+	for _, run := range result.NodeRuns {
+		if run.NodeID == "body" && !run.Skipped && run.Error == nil {
+			bodyRuns++
+		}
+	}
+	if bodyRuns != 3 {
+		t.Errorf("recorded %d successful body runs, want the 3 that completed before the bound", bodyRuns)
+	}
+}

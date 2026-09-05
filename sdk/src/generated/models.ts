@@ -141,6 +141,7 @@ export interface Definition {
   displayName: string;
   /** @nullable */
   inputs: Port[] | null;
+  loopEntry?: boolean;
   /** @nullable */
   outputs: Port[] | null;
   /** @nullable */

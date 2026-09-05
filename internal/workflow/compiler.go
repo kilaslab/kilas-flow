@@ -28,6 +28,13 @@ type NodeDefinition struct {
 	RequiredParameters []string
 	ExecutorID         string
 	Validate           ConfigValidator
+	// LoopEntry marks a node a back edge may legally close onto.
+	//
+	// It is a property of the definition rather than a node type the compiler
+	// knows by name, so a pack-supplied loop node gets the same treatment
+	// without the compiler learning a string. A general cycle stays rejected:
+	// only an edge whose target is one of these is allowed to point backwards.
+	LoopEntry bool
 }
 
 // ConfigValidator validates a node's server-owned configuration during
@@ -262,11 +269,11 @@ func Compile(document Document, catalog Catalog) (IR, error) {
 	}
 
 	if len(issues.Issues) == 0 {
-		if hasCycle(ir.Edges) {
+		if hasIllegalCycle(ir.Edges, definitions) {
 			issues.add(ValidationError{
 				Code:    ErrorInvalidTopology,
 				Path:    "/connections",
-				Message: "workflow graph must not contain a cycle",
+				Message: "workflow graph must not contain a cycle, except a back edge closing onto a loop node",
 			})
 		}
 		validateExecutableTopology(ir, issues)
@@ -427,7 +434,73 @@ func validateExecutableTopology(ir IR, issues *ValidationErrors) {
 	}
 }
 
-func hasCycle(edges []IREdge) bool {
+// hasIllegalCycle reports a cycle that is not a declared loop.
+//
+// n8n's Split In Batches pattern is a cycle by construction: the loop node's
+// body wires back into its input so the next batch is dispatched, and refusing
+// every cycle made every workflow built on it unrepresentable. What is wanted is
+// not general cycles — it is a *designated* loop node with a finite, knowable
+// iteration bound, so an arbitrary back edge between two ordinary nodes stays
+// rejected exactly as it was.
+//
+// The loop's closing edges are identified first and removed, then the remainder
+// is checked for any cycle at all. Deciding edge by edge during one DFS looked
+// simpler and was wrong: which edge of a cycle appears to be the back edge
+// depends on where the traversal happens to start, so a graph could be accepted
+// or rejected according to Go's map iteration order.
+func hasIllegalCycle(edges []IREdge, definitions map[string]NodeDefinition) bool {
+	closing := loopClosingEdges(edges, definitions)
+	remaining := make([]IREdge, 0, len(edges))
+	for _, edge := range edges {
+		if !closing[edge.ID] {
+			remaining = append(remaining, edge)
+		}
+	}
+	return hasAnyCycle(remaining)
+}
+
+// loopClosingEdges finds the edges that close a declared loop: an edge whose
+// target is a loop entry and whose source that entry can reach.
+func loopClosingEdges(edges []IREdge, definitions map[string]NodeDefinition) map[string]bool {
+	forward := make(map[string][]string, len(edges))
+	for _, edge := range edges {
+		forward[edge.Source.NodeID] = append(forward[edge.Source.NodeID], edge.Target.NodeID)
+	}
+
+	closing := map[string]bool{}
+	for _, edge := range edges {
+		if !definitions[edge.Target.NodeID].LoopEntry {
+			continue
+		}
+		if reaches(forward, edge.Target.NodeID, edge.Source.NodeID) {
+			closing[edge.ID] = true
+		}
+	}
+	return closing
+}
+
+// reaches reports whether `to` is reachable from `from`.
+func reaches(forward map[string][]string, from, to string) bool {
+	seen := map[string]bool{from: true}
+	queue := []string{from}
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		for _, next := range forward[current] {
+			if next == to {
+				return true
+			}
+			if seen[next] {
+				continue
+			}
+			seen[next] = true
+			queue = append(queue, next)
+		}
+	}
+	return false
+}
+
+func hasAnyCycle(edges []IREdge) bool {
 	adjacent := make(map[string][]string)
 	for _, edge := range edges {
 		adjacent[edge.Source.NodeID] = append(adjacent[edge.Source.NodeID], edge.Target.NodeID)
@@ -468,6 +541,7 @@ func cloneNodeDefinition(definition NodeDefinition) NodeDefinition {
 	return NodeDefinition{
 		Type:               definition.Type,
 		Version:            definition.Version,
+		LoopEntry:          definition.LoopEntry,
 		Inputs:             append([]Port(nil), definition.Inputs...),
 		Outputs:            append([]Port(nil), definition.Outputs...),
 		RequiredParameters: append([]string(nil), definition.RequiredParameters...),
@@ -537,6 +611,13 @@ func outputPort(definition NodeDefinition, name string) (Port, int, bool) {
 // against an upstream that is already failing. Eight is well past any retry
 // budget that is still a retry rather than a queue.
 const MaxRetryAttempts = 8
+
+// MaxLoopIterations is the instance-wide ceiling on a loop's iteration count.
+//
+// A per-node maximum is what a workflow author sets; this is what stops a
+// mistaken or malicious workflow in a shared install from spinning regardless
+// of what it asked for.
+const MaxLoopIterations = 10_000
 
 // MaxRetryWaitMilliseconds bounds `waitBetweenTries`, so a node cannot hold an
 // execution slot open for the better part of an hour between attempts.

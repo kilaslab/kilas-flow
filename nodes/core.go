@@ -26,6 +26,7 @@ func RegisterAll(registry *node.Registry) error {
 		agentNode(),
 		codeNode(),
 		stickyNoteNode(),
+		loopNode(),
 	} {
 		if err := registry.Register(definition); err != nil {
 			return err

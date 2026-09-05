@@ -50,8 +50,11 @@ type PropertyDefinition struct {
 // ExecutorID is intentionally an opaque server-only binding and is omitted
 // from API responses.
 type Definition struct {
-	Type           string                   `json:"type"`
-	Version        workflow.TypeVersion     `json:"version"`
+	Type    string               `json:"type"`
+	Version workflow.TypeVersion `json:"version"`
+	// LoopEntry marks a node a back edge may close onto, so the compiler can
+	// accept a bounded loop without learning a node type by name.
+	LoopEntry      bool                     `json:"loopEntry,omitempty"`
 	DisplayName    string                   `json:"displayName"`
 	Description    string                   `json:"description,omitempty"`
 	Category       string                   `json:"category"`
@@ -179,6 +182,7 @@ func (registry *Registry) Lookup(nodeType string, version workflow.TypeVersion) 
 	return workflow.NodeDefinition{
 		Type:               definition.Type,
 		Version:            definition.Version,
+		LoopEntry:          definition.LoopEntry,
 		Inputs:             append([]workflow.Port(nil), definition.Inputs...),
 		Outputs:            append([]workflow.Port(nil), definition.Outputs...),
 		RequiredParameters: requiredParameters(definition.Parameters),

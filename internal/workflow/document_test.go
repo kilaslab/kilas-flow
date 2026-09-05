@@ -1030,3 +1030,97 @@ func TestCompileAcceptsAValidRetryBudget(t *testing.T) {
 		t.Fatalf("an ordinary retry configuration must compile: %v", err)
 	}
 }
+
+// TestCompileAcceptsABackEdgeOntoALoopButNothingElse is the narrow widening
+// this allows.
+//
+// n8n's Split In Batches is a cycle by construction, so refusing every cycle
+// made every workflow built on it unrepresentable. What is allowed is a
+// *designated* loop with a finite bound — an arbitrary back edge between two
+// ordinary nodes stays rejected exactly as it was.
+func TestCompileAcceptsABackEdgeOntoALoopButNothingElse(t *testing.T) {
+	catalogue := catalog{
+		"kilasflow.manual": {
+			Type: "kilasflow.manual", Version: workflow.V(1),
+			Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+		},
+		"kilasflow.loop": {
+			Type: "kilasflow.loop", Version: workflow.V(1), LoopEntry: true,
+			Inputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+			Outputs: []workflow.Port{
+				{Name: "done", Kind: workflow.ConnectionMain},
+				{Name: "loop", Kind: workflow.ConnectionMain},
+			},
+		},
+		"kilasflow.step": {
+			Type: "kilasflow.step", Version: workflow.V(1),
+			Inputs:  []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+			Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+		},
+	}
+
+	t.Run("a back edge onto a loop is accepted", func(t *testing.T) {
+		_, err := workflow.Compile(workflow.Document{
+			SchemaVersion: workflow.CurrentSchemaVersion,
+			ID:            "wf_019", Name: "Batched",
+			Nodes: []workflow.Node{
+				{ID: "manual", Name: "Manual", Type: "kilasflow.manual", TypeVersion: workflow.V(1)},
+				{ID: "loop", Name: "Loop", Type: "kilasflow.loop", TypeVersion: workflow.V(1)},
+				{ID: "body", Name: "Body", Type: "kilasflow.step", TypeVersion: workflow.V(1)},
+			},
+			Connections: []workflow.Connection{
+				{ID: "c1", Kind: workflow.ConnectionMain,
+					Source: workflow.Endpoint{NodeID: "manual", Port: "main"},
+					Target: workflow.Endpoint{NodeID: "loop", Port: "main"}},
+				{ID: "c2", Kind: workflow.ConnectionMain,
+					Source: workflow.Endpoint{NodeID: "loop", Port: "loop"},
+					Target: workflow.Endpoint{NodeID: "body", Port: "main"}},
+				{ID: "c3", Kind: workflow.ConnectionMain,
+					Source: workflow.Endpoint{NodeID: "body", Port: "main"},
+					Target: workflow.Endpoint{NodeID: "loop", Port: "main"}},
+			},
+			Settings: map[string]any{},
+		}, catalogue)
+		if err != nil {
+			t.Fatalf("a loop's back edge must compile: %v", err)
+		}
+	})
+
+	t.Run("a cycle between ordinary nodes is still rejected", func(t *testing.T) {
+		_, err := workflow.Compile(workflow.Document{
+			SchemaVersion: workflow.CurrentSchemaVersion,
+			ID:            "wf_019", Name: "Plain cycle",
+			Nodes: []workflow.Node{
+				{ID: "manual", Name: "Manual", Type: "kilasflow.manual", TypeVersion: workflow.V(1)},
+				{ID: "a", Name: "A", Type: "kilasflow.step", TypeVersion: workflow.V(1)},
+				{ID: "b", Name: "B", Type: "kilasflow.step", TypeVersion: workflow.V(1)},
+			},
+			Connections: []workflow.Connection{
+				{ID: "c1", Kind: workflow.ConnectionMain,
+					Source: workflow.Endpoint{NodeID: "manual", Port: "main"},
+					Target: workflow.Endpoint{NodeID: "a", Port: "main"}},
+				{ID: "c2", Kind: workflow.ConnectionMain,
+					Source: workflow.Endpoint{NodeID: "a", Port: "main"},
+					Target: workflow.Endpoint{NodeID: "b", Port: "main"}},
+				{ID: "c3", Kind: workflow.ConnectionMain,
+					Source: workflow.Endpoint{NodeID: "b", Port: "main"},
+					Target: workflow.Endpoint{NodeID: "a", Port: "main"}},
+			},
+			Settings: map[string]any{},
+		}, catalogue)
+
+		var validationErrors *workflow.ValidationErrors
+		if !errors.As(err, &validationErrors) {
+			t.Fatalf("Compile() error = %v, want ValidationErrors", err)
+		}
+		var said bool
+		for _, issue := range validationErrors.Issues {
+			if strings.Contains(issue.Message, "cycle") {
+				said = true
+			}
+		}
+		if !said {
+			t.Errorf("issues = %#v, want the cycle named", validationErrors.Issues)
+		}
+	})
+}
