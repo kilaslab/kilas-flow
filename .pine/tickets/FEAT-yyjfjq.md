@@ -1,7 +1,7 @@
 ---
 id: FEAT-yyjfjq
 title: Record the n8n licence boundary as project memory
-status: todo
+status: done
 priority: high
 labels:
     - reference
@@ -26,14 +26,14 @@ Today the place this belongs is empty. `.pine/memory/` has no files, `.pine/lear
 
 ## Acceptance criteria
 
-- [ ] `.pine/memory/licensing.md` exists, written through `pine learn --to memory/licensing.md` rather than by hand, and `pine learn show memory/licensing.md` renders it.
-- [ ] It states the three prohibitions in a form an agent can apply without further reading: no n8n source in this repository, no n8n package in any manifest, no n8n bytes in any shipped artifact — and no contact with n8n.
-- [ ] It names the licences by their declared identifiers (`LicenseRef-n8n-sustainable-use`, the `.ee` Enterprise carve-out) and the n8n version they were read at, so a future reader can tell whether the facts are stale.
-- [ ] It separates format facts, which may be reimplemented, from code, which may not, with at least two concrete examples of each.
-- [ ] It records the two third-party exceptions: `@devlikeapro/n8n-nodes-waha` is MIT and its OpenAPI documents are vendored with the notice; `devlikeapro/waha-n8n-templates` is unlicensed and is never committed.
-- [ ] It states that KilasFlow's own `LICENSE` stays Apache-2.0, and names the reference-checkout paths as read-only material that is never a build input.
-- [ ] A repeatable check proves the boundary holds and fails if it stops holding, rather than depending on anyone remembering the rule.
-- [ ] The rule reaches an agent that starts a session with `pine context` — verified against real output, with a one-line pointer added to `.pine/MEMORY.md` if topic files turn out not to be inlined there.
+- [x] `.pine/memory/licensing.md` exists, written through `pine learn --to memory/licensing.md` rather than by hand, and `pine learn show memory/licensing.md` renders it.
+- [x] It states the three prohibitions in a form an agent can apply without further reading: no n8n source in this repository, no n8n package in any manifest, no n8n bytes in any shipped artifact — and no contact with n8n.
+- [x] It names the licences by their declared identifiers (`LicenseRef-n8n-sustainable-use`, the `.ee` Enterprise carve-out) and the n8n version they were read at, so a future reader can tell whether the facts are stale.
+- [x] It separates format facts, which may be reimplemented, from code, which may not, with at least two concrete examples of each.
+- [x] It records the two third-party exceptions: `@devlikeapro/n8n-nodes-waha` is MIT and its OpenAPI documents are vendored with the notice; `devlikeapro/waha-n8n-templates` is unlicensed and is never committed.
+- [x] It states that KilasFlow's own `LICENSE` stays Apache-2.0, and names the reference-checkout paths as read-only material that is never a build input.
+- [x] A repeatable check proves the boundary holds and fails if it stops holding, rather than depending on anyone remembering the rule.
+- [x] The rule reaches an agent that starts a session with `pine context` — verified against real output, with a one-line pointer added to `.pine/MEMORY.md` if topic files turn out not to be inlined there.
 
 ## Implementation Plan
 
@@ -52,3 +52,72 @@ One decision remains: whether the memory entry also names the clean-room questio
 - `github.com/devlikeapro/n8n-nodes-waha` — MIT, version 2025.2.9. `github.com/devlikeapro/waha-n8n-templates` — no licence file, `license: null`.
 - This repository: root `LICENSE` (Apache-2.0), `.gitignore` (the `design-refs/` exclusion and its comment), `.pine/MEMORY.md`, `AGENTS.md` learnings rules.
 - Sibling tickets: the reference-checkout and vendoring ticket in this phase, and the deferred JS sidecar ticket in p8.
+
+## Outcome
+
+`.pine/memory/licensing.md` was written through `pine learn --to
+memory/licensing.md` in five entries and renders under `pine learn show
+memory/licensing.md`. It leads with the three prohibitions plus the
+no-contact rule, then the licence identifiers and the version they were read
+at, then the format-versus-code distinction, then the two third-party
+exceptions, then the Apache-2.0 position and the single sentence pointing at
+FEAT-7cg0cd as the only place the sidecar question is reopened.
+
+Every licence fact was re-verified against the reference checkout rather than
+copied from the ticket: all seven packages (`workflow`, `core`, `nodes-base`,
+`cli`, `@n8n/nodes-langchain`, `@n8n/node-cli`,
+`@n8n/eslint-plugin-community-nodes`) declare
+`LicenseRef-n8n-sustainable-use`, and the `.ee` carve-out is at LICENSE.md
+lines 6-9.
+
+The check is `internal/guardrails`, six tests inside the ordinary `go test
+./...`:
+
+- `TestNoN8NDependencyInGoModule` — no n8n module in `go.mod`.
+- `TestNoN8NDependencyInNodeManifests` — no n8n package in any tracked
+  `package.json`, discovered rather than listed so a manifest added later is
+  covered automatically.
+- `TestReferenceCheckoutIsNeverABuildInput` — no tracked build input reaches
+  outside the repository for bytes.
+- `TestVendoredThirdPartyCarriesItsLicence` — every `third_party/<dir>` keeps
+  a `LICENSE` and `PROVENANCE.md` beside its bytes.
+- `TestForbiddenModuleRequiresDetectsN8N` and
+  `TestForbiddenDependencyMatchesNamesNotProse` — proof the matcher fires.
+
+The trap the ticket named was avoided: the check matches **dependency names**,
+never file contents. Seventy-nine tracked files legitimately contain "n8n"
+because interoperating with a format means naming it, and
+`TestForbiddenDependencyMatchesNamesNotProse` pins that — `connection8nine`
+contains the substring `n8n` and must not match.
+
+Three things the ticket did not anticipate:
+
+1. **The content scan needed to be scoped to tracked files.** A filesystem
+   walk flagged `web/static/vendor/scalar.js`, an untracked 3.7 MB vendor
+   bundle whose `/home/user/...` strings are documentation examples. The
+   boundary is about what enters the repository, so discovery is `git
+   ls-files`; the test skips with an explanatory message outside a git work
+   tree.
+2. **The checker tripped its own check**, because it has to name the patterns
+   it hunts for. The markers are stored as fragments joined at run time and
+   `internal/guardrails/` is exempt from the content scan, which is documented
+   in the file rather than left to be rediscovered.
+3. **The go.mod check cannot be proved by editing go.mod.** An unresolvable
+   `require` stops the module loading, so `go test` never reaches the
+   assertion and the check appears to pass — the probe was silently useless.
+   The parse is therefore a pure function over the file's bytes with a fixture
+   test beside it.
+
+All four checks were then demonstrated failing on a real violation — an
+`n8n-workflow` dependency staged into `sdk/package.json`, a tracked Go file
+naming the reference checkout, and a `third_party/probe/` with no notice — and
+passing again once reverted.
+
+The reference-checkout rule is stated portably rather than as one machine's
+path: an absolute path into any home directory is a build-input violation on
+any machine, which catches the licence case and is worth enforcing regardless.
+
+`pine context` was checked against real output and **does** inline
+`memory/licensing.md` in full, so the conditional pointer in the acceptance
+criteria was not required; a one-line pointer was added to `.pine/MEMORY.md`
+anyway for anyone reading that file on its own.
