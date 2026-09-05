@@ -138,6 +138,22 @@ func (registry *Registry) Register(id string, executor Executor) error {
 // Lookup returns a registered executor. It is exported so a test can run the
 // exact binding the engine would, rather than constructing an executor a
 // different way and asserting on something the engine never uses.
+// Registered lists every bound executor ID, in a stable order.
+//
+// It exists so a test can assert the reverse of the binding invariant: an
+// executor nobody points at is dead code left behind by a rename.
+func (registry *Registry) Registered() []string {
+	if registry == nil {
+		return nil
+	}
+	ids := make([]string, 0, len(registry.executors))
+	for id := range registry.executors {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
 func (registry *Registry) Lookup(id string) (Executor, bool) {
 	if registry == nil {
 		return nil, false

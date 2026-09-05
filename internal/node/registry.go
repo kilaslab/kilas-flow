@@ -71,6 +71,14 @@ type Definition struct {
 	// catalogue exists, and it is what would otherwise invert the dependency
 	// the moment a credential type wanted to reference a node.
 	Credentials []CredentialRequirement `json:"credentials,omitempty"`
+	// Source says where this definition came from.
+	//
+	// It is set by the registration path, never read from the definition: a
+	// pack that could declare itself built-in would inherit the built-in
+	// namespace and win every precedence contest, so the tag has to be a
+	// property of *how* something was registered rather than of what it
+	// claims.
+	Source Source `json:"source"`
 	// LifecycleID binds this node's activate and deactivate hooks, by the same
 	// opaque server-owned identifier pattern as ExecutorID: a trigger that
 	// declares a hook nobody registered fails at startup rather than at
@@ -98,6 +106,24 @@ type WebhookDeclaration struct {
 	// trigger whose route is entirely minted needs.
 	StaticPath string `json:"staticPath,omitempty"`
 }
+
+// Source says where a registry entry came from.
+type Source string
+
+const (
+	// SourceBuiltin is a node compiled into this binary.
+	SourceBuiltin Source = "builtin"
+	// SourcePack is a node from a generated or installed node pack.
+	SourcePack Source = "pack"
+	// SourceSidecar is a node whose implementation runs outside this process.
+	SourceSidecar Source = "sidecar"
+)
+
+// BuiltinPrefix is the namespace only built-in registration may claim.
+//
+// A pack registering into it could shadow — or be mistaken for — a node this
+// project ships, which is a supply-chain problem rather than a naming one.
+const BuiltinPrefix = "kilasflow."
 
 // CredentialRequirement is one credential type a node can use.
 type CredentialRequirement struct {
@@ -198,16 +224,51 @@ func NewRegistry() *Registry {
 // Register adds one immutable node definition. A type/version pair can never
 // be replaced at runtime, which keeps compiled graphs and client metadata
 // deterministic for the life of a process.
+// Register adds a built-in definition.
+//
+// Built-ins register first and always win a collision, which is what makes the
+// catalogue independent of load order — a catalogue that depended on it would
+// change when a directory listing did.
 func (registry *Registry) Register(definition Definition) error {
+	return registry.register(definition, SourceBuiltin)
+}
+
+// RegisterFrom adds a definition from a pack or a sidecar.
+//
+// A separate entry point rather than a field on the definition: the source is a
+// property of how something was registered, and a pack able to declare itself
+// built-in would claim the built-in namespace and win every precedence contest.
+func (registry *Registry) RegisterFrom(source Source, definition Definition) error {
+	switch source {
+	case SourcePack, SourceSidecar:
+	case SourceBuiltin:
+		return fmt.Errorf("only built-in registration may claim source %q", SourceBuiltin)
+	default:
+		return fmt.Errorf("node source %q is not supported", source)
+	}
+	return registry.register(definition, source)
+}
+
+func (registry *Registry) register(definition Definition, source Source) error {
 	if registry == nil {
 		return fmt.Errorf("node registry is required")
+	}
+	// Set here, never read from the definition.
+	definition.Source = source
+
+	if source != SourceBuiltin && strings.HasPrefix(definition.Type, BuiltinPrefix) {
+		return fmt.Errorf("node type %q claims the reserved %q namespace, which only built-in nodes may use", definition.Type, BuiltinPrefix)
 	}
 	if err := validateDefinition(definition); err != nil {
 		return err
 	}
 	key := definitionKey{nodeType: definition.Type, version: definition.Version}
-	if _, exists := registry.definitions[key]; exists {
-		return fmt.Errorf("node type %q version %d is already registered", definition.Type, definition.Version)
+	if existing, exists := registry.definitions[key]; exists {
+		// Refused rather than silently replaced, and naming both sources: a
+		// pack quietly shadowing a built-in is a supply-chain problem, and
+		// "last wins" would make the catalogue depend on load order.
+		return fmt.Errorf("node type %q version %s is already registered by a %s node; the %s registration was refused",
+			definition.Type, definition.Version, existing.Source, source)
 	}
 	registry.definitions[key] = cloneDefinition(definition)
 	return nil

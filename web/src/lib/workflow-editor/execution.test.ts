@@ -59,6 +59,7 @@ describe('edgeItemCounts', () => {
 			displayName: 'IF',
 			category: 'Core',
 			group: ['transform'],
+			source: 'builtin',
 			description: '',
 			inputs: [{ name: 'main', kind: 'main' }],
 			outputs: [
@@ -74,6 +75,7 @@ describe('edgeItemCounts', () => {
 			displayName: 'Set',
 			category: 'Core',
 			group: ['transform'],
+			source: 'builtin',
 			description: '',
 			inputs: [{ name: 'main', kind: 'main' }],
 			outputs: [{ name: 'main', kind: 'main' }],

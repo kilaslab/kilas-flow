@@ -1,7 +1,7 @@
 ---
 id: FEAT-adzn0a
 title: Tag registry entries by source and prove executor bindings
-status: todo
+status: done
 priority: high
 labels:
     - registry
@@ -25,13 +25,13 @@ The second half of this ticket closes a hole that is live today. A `node.Definit
 
 ## Acceptance criteria
 
-- [ ] `node.Definition` carries a source tag of `builtin`, `pack` or `sidecar`, set by the registration path rather than by the definition's author, and returned by `/api/v1/node-types`.
-- [ ] Namespacing is enforced at registration: only built-in registration may claim the `kilasflow.` prefix, and a pack registering into it fails with the offending type named.
-- [ ] Conflict precedence is explicit and tested: a built-in always wins over a pack for the same type and version, the loser is refused rather than silently dropped, and the refusal names both sources.
-- [ ] A test builds both registries exactly as `cmd/kilasflow/main.go` does and asserts that every registered definition's `ExecutorID` resolves through `engine.Registry.Lookup`.
-- [ ] The same test asserts the reverse for built-ins: every registered executor ID is referenced by at least one definition, so a renamed node cannot leave dead executor code behind.
-- [ ] Registration order is deterministic and documented — built-ins first, then packs in a stable order — so two runs of the same binary produce the same catalogue.
-- [ ] `web/pnpm generate:api:check` and `sdk/pnpm generate:types:check` pass against regenerated clients carrying the new field.
+- [x] `node.Definition` carries a source tag of `builtin`, `pack` or `sidecar`, set by the registration path rather than by the definition's author, and returned by `/api/v1/node-types`.
+- [x] Namespacing is enforced at registration: only built-in registration may claim the `kilasflow.` prefix, and a pack registering into it fails with the offending type named.
+- [x] Conflict precedence is explicit and tested: a built-in always wins over a pack for the same type and version, the loser is refused rather than silently dropped, and the refusal names both sources.
+- [x] A test builds both registries exactly as `cmd/kilasflow/main.go` does and asserts that every registered definition's `ExecutorID` resolves through `engine.Registry.Lookup`.
+- [x] The same test asserts the reverse for built-ins: every registered executor ID is referenced by at least one definition, so a renamed node cannot leave dead executor code behind.
+- [x] Registration order is deterministic and documented — built-ins first, then packs in a stable order — so two runs of the same binary produce the same catalogue.
+- [x] `web/pnpm generate:api:check` and `sdk/pnpm generate:types:check` pass against regenerated clients carrying the new field.
 
 ## Implementation Plan
 
@@ -52,3 +52,61 @@ Note for whoever picks this up: `validateDefinition` already refuses an empty `E
 - `nodes/executors.go` — `RegisterExecutors` and the executor ID map.
 - `cmd/kilasflow/main.go` — the only place both registries are built together today.
 - `nodes/ai_test.go` — the existing stub dependencies the new test can reuse.
+
+## Outcome
+
+### The binding test first
+
+Landed before anything else, as the plan instructed, so the rest was refactoring
+under a net rather than over one. It builds both registries exactly as
+`cmd/kilasflow/main.go` does — a test assembling a different catalogue would
+prove something about the test rather than about what the server runs.
+
+It fixes a defect that already existed: a definition naming an executor nobody
+registered failed at **run** time, on the first item to reach that node, in
+whatever workflow a customer happened to be running. Nothing checked it.
+
+A third binding turned out to need the same treatment and was not in the
+acceptance criteria: `LifecycleID`, added by FEAT-91as16. A trigger declaring a
+hook nobody registered activates and silently never registers with its remote
+service, which is worse than failing because the workflow looks live.
+`TestEveryDeclaredLifecycleIsBound` covers it.
+
+### The reverse direction
+
+Asserted for built-ins only, as recommended. An executor nobody points at is
+dead code left by a rename — but a pack may expose one executor under several
+definitions and a sidecar may register a generic executor before its definitions
+arrive, so the invariant genuinely does not hold there. Weakening it to a
+warning nobody reads would be worse than scoping it to where it is true.
+
+### The source tag
+
+Set by the **registration path**, never read from the definition, and a test
+registers a definition that lies about its own source to prove the claim is
+ignored. A pack able to declare itself built-in would inherit the built-in
+namespace and win every precedence contest, so the tag has to be a property of
+how something was registered rather than of what it claims.
+
+`Register` stays the built-in path; `RegisterFrom` is the pack and sidecar path
+and refuses `builtin` outright.
+
+### Namespace and precedence
+
+Only built-in registration may claim `kilasflow.`. A pack shadowing — or being
+mistaken for — a node this project ships is a supply-chain problem rather than a
+naming one, and the refusal names the offending type.
+
+Collisions are **refused**, never resolved last-wins, and the error names both
+sources. Last-wins would make the catalogue depend on load order, so it would
+change when a directory listing did. Two cases are tested: a pack cannot
+displace a built-in (and the built-in is checked to be untouched afterwards),
+and two non-built-in sources colliding are refused with both named.
+
+### Determinism
+
+`RegisterAll`'s order is the literal order of its list, documented on the
+function, and `TestRegistrationOrderIsDeterministic` snapshots the catalogue six
+times and compares. A catalogue that depended on map iteration would change
+between runs for no visible reason, and a diff of the node-types response would
+be noise rather than signal.

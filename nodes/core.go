@@ -7,6 +7,13 @@ import (
 )
 
 // RegisterAll installs the built-ins supported by the first graph slice.
+// RegisterAll registers every node compiled into this binary.
+//
+// Order is deterministic and matters: built-ins register first and always win a
+// collision, so a pack loaded afterwards can never displace one. Within this
+// function the order is the literal order below, so two runs of the same binary
+// produce the same catalogue — a catalogue that depended on map iteration or a
+// directory listing would change between runs for no reason anyone could see.
 func RegisterAll(registry *node.Registry) error {
 	for _, definition := range []node.Definition{
 		manualTrigger(),

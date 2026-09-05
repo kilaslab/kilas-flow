@@ -33,6 +33,7 @@ export interface Definition {
   parameters: PropertyDefinition[] | null;
   /** @nullable */
   sharedSettings: PropertyDefinition[] | null;
+  source: string;
   subtitle?: string;
   type: string;
   /** Node type version. A decimal such as 1, 4.2, or a YYYYMM value such as 202502. Omit it to use the registered default. */

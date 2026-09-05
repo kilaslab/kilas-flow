@@ -19,6 +19,7 @@ function definition(inputs: Port[] | null, outputs: Port[] | null, category = 'C
 		displayName: 'Example',
 		category,
 		group: ['transform'],
+		source: 'builtin',
 		inputs,
 		outputs,
 		parameters: [],

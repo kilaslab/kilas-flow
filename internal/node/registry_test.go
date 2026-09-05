@@ -5,6 +5,7 @@ import (
 	"errors"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/kilaslabs/kilas-flow/internal/node"
@@ -610,6 +611,136 @@ func TestKnownPropertyKindsIsExactlyTheDocumentedSet(t *testing.T) {
 			if kind == gone {
 				t.Errorf("%q is still an accepted kind", gone)
 			}
+		}
+	}
+}
+
+// TestSourceIsSetByTheRegistrationPathNotTheDefinition is what makes the tag
+// trustworthy. A pack able to declare itself built-in would claim the built-in
+// namespace and win every precedence contest.
+func TestSourceIsSetByTheRegistrationPathNotTheDefinition(t *testing.T) {
+	registry := node.NewRegistry()
+
+	// A definition that lies about where it came from.
+	if err := registry.RegisterFrom(node.SourcePack, node.Definition{
+		Type: "pack.honest", Version: workflow.V(1),
+		DisplayName: "Honest", Category: "Test", ExecutorID: "pack.exec",
+		Group:  []node.NodeGroup{node.GroupTransform},
+		Source: node.SourceBuiltin,
+	}); err != nil {
+		t.Fatalf("RegisterFrom() error = %v", err)
+	}
+	stored, found := registry.Get("pack.honest", workflow.V(1))
+	if !found {
+		t.Fatal("the definition was not registered")
+	}
+	if stored.Source != node.SourcePack {
+		t.Errorf("source = %q, want %q — the claim in the definition must be ignored", stored.Source, node.SourcePack)
+	}
+
+	// And a pack cannot register *as* a built-in through the pack entry point.
+	if err := registry.RegisterFrom(node.SourceBuiltin, node.Definition{
+		Type: "pack.other", Version: workflow.V(1),
+		DisplayName: "Other", Category: "Test", ExecutorID: "pack.exec",
+		Group: []node.NodeGroup{node.GroupTransform},
+	}); err == nil {
+		t.Error("a pack registered itself as built-in")
+	}
+}
+
+// TestThePackNamespaceIsEnforced keeps a pack from shadowing — or being
+// mistaken for — a node this project ships, which is a supply-chain problem
+// rather than a naming one.
+func TestThePackNamespaceIsEnforced(t *testing.T) {
+	registry := node.NewRegistry()
+	err := registry.RegisterFrom(node.SourcePack, node.Definition{
+		Type: "kilasflow.set", Version: workflow.V(2),
+		DisplayName: "Impostor", Category: "Test", ExecutorID: "pack.exec",
+		Group: []node.NodeGroup{node.GroupTransform},
+	})
+	if err == nil {
+		t.Fatal("a pack claimed the built-in namespace")
+	}
+	if !strings.Contains(err.Error(), "kilasflow.set") {
+		t.Errorf("error = %v, want the offending type named", err)
+	}
+
+	// The same type outside the namespace is fine.
+	if err := registry.RegisterFrom(node.SourcePack, node.Definition{
+		Type: "waha.set", Version: workflow.V(2),
+		DisplayName: "Fine", Category: "Test", ExecutorID: "pack.exec",
+		Group: []node.NodeGroup{node.GroupTransform},
+	}); err != nil {
+		t.Errorf("a pack in its own namespace was refused: %v", err)
+	}
+}
+
+// TestABuiltinAlwaysWinsAndTheLoserIsNamed pins precedence.
+//
+// "Last wins" would make the catalogue depend on load order, so it changes when
+// a directory listing does. Refusing keeps it deterministic, and naming both
+// sources is what tells whoever hits it which two things collided.
+func TestABuiltinAlwaysWinsAndTheLoserIsNamed(t *testing.T) {
+	builtin := node.Definition{
+		Type: "kilasflow.thing", Version: workflow.V(1),
+		DisplayName: "Built in", Category: "Test", ExecutorID: "core.exec",
+		Group: []node.NodeGroup{node.GroupTransform},
+	}
+	pack := node.Definition{
+		Type: "vendor.thing", Version: workflow.V(1),
+		DisplayName: "From a pack", Category: "Test", ExecutorID: "pack.exec",
+		Group: []node.NodeGroup{node.GroupTransform},
+	}
+
+	t.Run("a pack cannot displace a built-in", func(t *testing.T) {
+		registry := node.NewRegistry()
+		if err := registry.Register(builtin); err != nil {
+			t.Fatalf("Register() error = %v", err)
+		}
+		// Renamed into the pack's own namespace so the namespace rule is not
+		// what refuses it — precedence is.
+		impostor := pack
+		impostor.Type = builtin.Type
+		err := registry.RegisterFrom(node.SourcePack, impostor)
+		if err == nil {
+			t.Fatal("a pack displaced a built-in")
+		}
+		// The built-in is untouched.
+		stored, _ := registry.Get(builtin.Type, workflow.V(1))
+		if stored.DisplayName != "Built in" {
+			t.Errorf("the built-in was replaced: %#v", stored)
+		}
+	})
+
+	t.Run("two packs colliding are refused, naming both", func(t *testing.T) {
+		registry := node.NewRegistry()
+		if err := registry.RegisterFrom(node.SourcePack, pack); err != nil {
+			t.Fatalf("RegisterFrom() error = %v", err)
+		}
+		err := registry.RegisterFrom(node.SourceSidecar, pack)
+		if err == nil {
+			t.Fatal("a second registration of the same type and version was accepted")
+		}
+		for _, want := range []string{string(node.SourcePack), string(node.SourceSidecar), pack.Type} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error = %v, want it to name %q", err, want)
+			}
+		}
+	})
+}
+
+// TestEveryBuiltinIsTaggedAsSuch covers the whole shipped catalogue.
+func TestEveryBuiltinIsTaggedAsSuch(t *testing.T) {
+	registry := node.NewRegistry()
+	if err := nodes.RegisterAll(registry); err != nil {
+		t.Fatalf("RegisterAll() error = %v", err)
+	}
+	for _, definition := range registry.List() {
+		if definition.Source != node.SourceBuiltin {
+			t.Errorf("%s is tagged %q, want %q", definition.Type, definition.Source, node.SourceBuiltin)
+		}
+		if !strings.HasPrefix(definition.Type, node.BuiltinPrefix) {
+			t.Errorf("%s is a built-in outside the %q namespace", definition.Type, node.BuiltinPrefix)
 		}
 	}
 }
