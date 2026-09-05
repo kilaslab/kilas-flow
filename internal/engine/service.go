@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 	"sync"
@@ -62,6 +63,11 @@ type ServiceDeps struct {
 	// Empty leaves a sub-workflow call starting from every root, which is what
 	// a workflow written before the trigger existed still needs.
 	SubworkflowTriggerType string
+	// Logger receives the failures a worker cannot act on but nobody should
+	// have to guess at. Optional: an unset logger falls back to the default
+	// rather than becoming a nil dereference, because a service that refused
+	// to start over a missing logger would be worse than a quiet one.
+	Logger *slog.Logger
 }
 
 // Service claims queued execution records and persists their deterministic
@@ -81,6 +87,7 @@ type Service struct {
 	active                 map[string]context.CancelFunc
 	startOnce              sync.Once
 	wake                   chan struct{}
+	log                    *slog.Logger
 }
 
 func NewService(deps ServiceDeps) (*Service, error) {
@@ -94,7 +101,12 @@ func NewService(deps ServiceDeps) (*Service, error) {
 	for key, value := range deps.Environment {
 		environment[key] = value
 	}
+	logger := deps.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &Service{
+		log:                    logger,
 		executions:             deps.Executions,
 		binaries:               deps.Binaries,
 		catalog:                deps.Catalog,
@@ -290,9 +302,21 @@ func (service *Service) Start(ctx context.Context, maxConcurrent int) error {
 
 func (service *Service) worker(ctx context.Context, workerID string) {
 	for {
-		worked, _ := service.runOnce(ctx, workerID)
+		worked, err := service.runOnce(ctx, workerID)
 		if ctx.Err() != nil {
 			return
+		}
+		// Logged rather than discarded. This error was assigned to _, and the
+		// silence is what let a PostgreSQL type mismatch repeat every
+		// customer's workflow once a minute without a line anywhere at any
+		// severity: the write of the terminal status was rejected, the lease
+		// expired, the row was reclaimed, and the whole thing ran again.
+		//
+		// Not fatal, and not a reason to stop the worker: a failure to record
+		// one execution's outcome must not stop the others from running. The
+		// point is only that it stops being invisible.
+		if err != nil {
+			service.log.Error("worker iteration failed", "worker", workerID, "error", err)
 		}
 		if worked {
 			continue

@@ -458,20 +458,65 @@ func (store *GORMExecutionStore) UpdateRuntime(ctx context.Context, tenant Tenan
 		return execution.Record{}, fmt.Errorf("execution error: %w", err)
 	}
 	cancellationError := []byte(`{"code":"execution.cancelled","message":"execution cancellation was accepted before completion"}`)
-	result := store.db.WithContext(ctx).Model(&executionModel{}).
-		Where("tenant_id = ? AND id = ? AND lease_owner = ? AND status IN (?, ?)", tenant.ID, record.ID, record.LeaseOwner, string(execution.StatusRunning), string(execution.StatusCancelling)).
-		Updates(map[string]any{
-			"status":           gorm.Expr("CASE WHEN status = ? THEN ? ELSE ? END", string(execution.StatusCancelling), string(execution.StatusCancelled), string(record.Status)),
-			"output":           gorm.Expr("CASE WHEN status = ? THEN ? ELSE ? END", string(execution.StatusCancelling), []byte("null"), output),
-			"error":            gorm.Expr("CASE WHEN status = ? THEN ? ELSE ? END", string(execution.StatusCancelling), cancellationError, errorPayload),
-			"finished_at":      record.FinishedAt,
-			"lease_owner":      "",
-			"lease_expires_at": nil,
-		})
-	if result.Error != nil {
-		return execution.Record{}, fmt.Errorf("update execution runtime state: %w", result.Error)
+
+	// Two updates rather than one carrying a CASE, and the reason is a defect
+	// this shape caused rather than a preference. The CASE branches were all
+	// untyped placeholders, which PostgreSQL types as `text`; assigning that
+	// into the `bytea` output and error columns is refused during parse
+	// analysis, so the *whole* UPDATE was rejected and status, finished_at and
+	// the lease columns were never written either. SQLite's type affinity
+	// accepted the identical statement, so the tier people run in production
+	// was the only one that broke: every execution stayed `running`, its lease
+	// expired, and the workflow ran again, once a minute, for ever.
+	//
+	// Written as two statements because each placeholder then lands directly
+	// in the column it belongs to and the driver types it from that column.
+	// Exactly one of them matches — an execution's status is either cancelling
+	// or running, never both — and they run inside one transaction so the row
+	// cannot change status between them.
+	var affected int64
+	err = store.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		cancelled := tx.Model(&executionModel{}).
+			Where("tenant_id = ? AND id = ? AND lease_owner = ? AND status = ?",
+				tenant.ID, record.ID, record.LeaseOwner, string(execution.StatusCancelling)).
+			Updates(map[string]any{
+				"status":           string(execution.StatusCancelled),
+				"output":           []byte("null"),
+				"error":            cancellationError,
+				"finished_at":      record.FinishedAt,
+				"lease_owner":      "",
+				"lease_expires_at": nil,
+			})
+		if cancelled.Error != nil {
+			return cancelled.Error
+		}
+		affected = cancelled.RowsAffected
+		if affected > 0 {
+			// The cancellation won the race; the reported outcome is discarded
+			// deliberately, which is what the CASE was expressing.
+			return nil
+		}
+		finished := tx.Model(&executionModel{}).
+			Where("tenant_id = ? AND id = ? AND lease_owner = ? AND status = ?",
+				tenant.ID, record.ID, record.LeaseOwner, string(execution.StatusRunning)).
+			Updates(map[string]any{
+				"status":           string(record.Status),
+				"output":           output,
+				"error":            errorPayload,
+				"finished_at":      record.FinishedAt,
+				"lease_owner":      "",
+				"lease_expires_at": nil,
+			})
+		if finished.Error != nil {
+			return finished.Error
+		}
+		affected = finished.RowsAffected
+		return nil
+	})
+	if err != nil {
+		return execution.Record{}, fmt.Errorf("update execution runtime state: %w", err)
 	}
-	if result.RowsAffected == 0 {
+	if affected == 0 {
 		return execution.Record{}, ErrNotFound
 	}
 	return store.Get(ctx, tenant, record.ID)

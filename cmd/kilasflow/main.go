@@ -271,6 +271,7 @@ func run() error {
 		binaries = fileStore
 	}
 	runtime, err := engine.NewService(engine.ServiceDeps{
+		Logger:      log,
 		Executions:  executions,
 		Binaries:    binaries,
 		Events:      eventBroker,

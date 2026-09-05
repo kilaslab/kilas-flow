@@ -1,13 +1,13 @@
 ---
 id: BUG-br7ggc
 title: PostgreSQL executions never reach a terminal status
-status: todo
+status: testing
 priority: critical
 labels:
     - platform
     - postgres
 created: "2026-09-05T18:01:28Z"
-updated: "2026-09-05T18:01:28Z"
+updated: "2026-09-05T19:09:32Z"
 ---
 
 # Description
@@ -92,15 +92,15 @@ still inside the first lease; after 60 seconds the workflow silently runs again.
 
 # Acceptance Criteria
 
-- [ ] An execution run against PostgreSQL reaches `succeeded` with `finishedAt`
+- [x] An execution run against PostgreSQL reaches `succeeded` with `finishedAt`
       and `output` written, matching the SQLite path.
-- [ ] The cancellation branch the `CASE` expressions exist to serve still works
+- [x] The cancellation branch the `CASE` expressions exist to serve still works
       on both drivers — a cancelling execution still lands on `cancelled` with a
       null output and the cancellation error.
-- [ ] A driver error inside the worker loop is logged rather than assigned to
+- [x] A driver error inside the worker loop is logged rather than assigned to
       `_`. A failure that repeats a customer's workflow once a minute must not
       be invisible.
-- [ ] A repository test covers `UpdateRuntime` against PostgreSQL. There is
+- [x] A repository test covers `UpdateRuntime` against PostgreSQL. There is
       currently no repository test on that driver at all: every
       `GORMExecutionStore` test in `internal/repository/models_test.go` opens
       SQLite, and the only PostgreSQL-aware test file,
@@ -119,3 +119,71 @@ still inside the first lease; after 60 seconds the workflow silently runs again.
 - `internal/repository/models.go:229-231` — `Input`/`Output`/`Error` as plain `[]byte`.
 
 Introduced whole in `a51e8dc` ("feat(engine): add deterministic graph execution runtime").
+
+## Work evidence
+
+Every claim in the report was confirmed against a live PostgreSQL 16 before
+anything was changed, and the diagnosis was exactly right.
+
+### The fix
+
+The `CASE` is gone, replaced by two updates inside one transaction — one for a
+cancelling execution, one for a running one. Exactly one matches, because a row
+is in one status or the other, and the transaction stops it changing between
+them. That is dialect-neutral: each placeholder lands directly in the column it
+belongs to, so the driver types it from that column instead of PostgreSQL
+typing a `CASE` of untyped placeholders as `text` and refusing to assign it
+into `bytea`.
+
+Rejected: casting the branches. `CAST(? AS bytea)` fixes PostgreSQL and breaks
+SQLite, which has no such type, and putting dialect-specific SQL in the
+repository would mean the two tiers stop being the same code — which is the
+condition that produced this defect in the first place.
+
+### The silence
+
+`Service` had no logger at all. It has one now, defaulting to `slog.Default()`
+rather than refusing to start, and `cmd/kilasflow` passes the real one. The
+worker's `worked, _ := service.runOnce(…)` is now `worked, err :=` with the
+error logged. It is deliberately not fatal — one execution failing to record
+its outcome must not stop the others — but a driver error that repeats a
+customer's workflow once a minute cannot be invisible.
+
+### The test that would have caught it
+
+There was no repository test against PostgreSQL at all: every
+`GORMExecutionStore` test opened SQLite, and the only PostgreSQL-aware file
+covered migrations. `internal/repository/postgres_execution_test.go` adds an
+`eachDriver` helper that runs a case against SQLite and, when
+`KILASFLOW_TEST_POSTGRES_DSN` is set, against a live server — because a test
+that only ever sees one driver cannot see a difference between two.
+
+Two cases: an execution reaches a terminal status with `finishedAt`, `output`
+and a released lease; and a cancelling execution still lands on `cancelled`
+even when the worker reports success, which is the race the `CASE` existed to
+win and which the replacement must not lose.
+
+**Proven to catch the defect.** With the `CASE` restored, the PostgreSQL half
+fails with the exact reported error:
+
+```
+--- FAIL: TestAnExecutionReachesATerminalStatusOnEveryDriver/postgres
+    UpdateRuntime() error = update execution runtime state:
+    ERROR: column "error" is of type bytea but expression is of type text (SQLSTATE 42804)
+```
+
+and the SQLite half passes either way — which is the whole reason this shipped.
+
+### Runs
+
+```
+go test ./internal/repository/ -run "TestAnExecutionReaches|TestACancelling" -count=1 -v
+  sqlite    PASS      postgres  PASS   (both cases, both drivers)
+go test ./... -count=1     green, with live PostgreSQL 16, MySQL 8 and MariaDB 11
+go vet ./... ; gofmt -l .  clean
+```
+
+The suggestion to extend `make smoke-postgres` to prove a workflow *completes*
+rather than only that the server answers health is not done here, and is worth
+its own ticket: it is a change to the smoke script's shape rather than to this
+defect, and the repository test now covers the same ground closer to the code.
