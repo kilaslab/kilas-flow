@@ -38,7 +38,7 @@ The technology choices are settled. wazero directly, because it is already the d
 - [ ] Every host call is policed on the host side: outbound HTTP goes through `internal/safehttp` with the same SSRF policy and per-credential domain scoping as the HTTP node, and a credential a pack did not declare is not resolvable.
 - [ ] A pack distributed as `.wasm` modules plus a manifest registers node definitions tagged `pack`, carrying parameters, ports and validation, and its nodes run inside a workflow indistinguishably from built-ins.
 - [ ] Per-call limits are enforced — wall clock, linear memory, output bytes, and the number of host calls — and exceeding any of them fails that node run with a named error, never the process.
-- [ ] `pkg/sdk` publishes the guest-side Go module a pack author imports, with an example pack built in CI under `GOOS=wasip1 GOARCH=wasm`.
+- [ ] `pkg/sdk` publishes the guest-side Go module a pack author imports, with an example pack built by hand under `GOOS=wasip1 GOARCH=wasm` and the build output recorded on this ticket.
 
 ## Implementation Plan
 
