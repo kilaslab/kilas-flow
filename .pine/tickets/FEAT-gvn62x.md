@@ -1,7 +1,7 @@
 ---
 id: FEAT-gvn62x
 title: Replace AutoMigrate with versioned migrations
-status: todo
+status: done
 priority: medium
 labels:
     - persistence
@@ -12,7 +12,7 @@ deps:
 parent: EPIC-m42s3g
 phase: p6
 created: "2026-09-05T05:00:36Z"
-updated: "2026-09-05T05:00:36Z"
+updated: "2026-09-05T16:28:49Z"
 ---
 
 ## Scope
@@ -55,3 +55,143 @@ Finally, `Migrate(db *DB, models ...any)` loses its reason to take models. Keep 
 - `cmd/kilasflow/main.go` — the `migrate` helper.
 - `internal/repository/models.go` — `Models()` and the seven model structs.
 - `gorm.io/gorm@v1.31.2/schema/naming.go` — `NamingStrategy.IndexName` and `RelationshipFKName`, the source of the generated identifiers.
+
+## Work evidence
+
+### What changed
+
+`database.Migrate` no longer reflects over Go structs. The schema now comes from
+`migrations/sqlite/` and `migrations/postgres/`, embedded by the new root
+`migrations` package and applied by a runner in `internal/database/migrate.go`.
+
+- `internal/database/migrate.go` — new. Loads `<version>_<name>.<direction>.sql`
+  per dialect, records applied versions in `schema_migrations`, adopts an
+  AutoMigrate-created install by stamping rather than running, refuses to start
+  against a database newer than the binary, and exposes `Rollback` so the down
+  files are executed rather than merely shipped.
+- `migrations/embed.go`, `migrations/{sqlite,postgres}/000001_baseline.{up,down}.sql`
+  — new. `migrations/.gitkeep` removed.
+- `internal/database/database.go` — `Migrate(db, models ...any)` and the repo's
+  only `AutoMigrate` call are gone.
+- `cmd/kilasflow/main.go` — the `migrate` helper is gone; `run()` calls
+  `database.Migrate(db, log)` directly, so migrations are logged.
+- 24 call sites in `internal/{api,engine,repository,scheduler,webhook}` tests
+  updated to the new signature; `scripts/smoke-postgres.sh` now runs
+  `-run 'Postgres'` (it named `TestMigratePostgres`, which no longer exists).
+
+### The baseline was generated, not written
+
+A throwaway recorder (a `gormlogger.Interface` that captures every statement)
+ran `AutoMigrate(repository.Models()...)` against a fresh SQLite file and a
+fresh PostgreSQL, and its `CREATE`/`ALTER` output is the baseline verbatim. The
+tool was deleted afterwards. This is what keeps the generated identifiers — the
+`idx_*` index names and `fk_*` constraint names no model spells out — exactly as
+they are on every existing install.
+
+### Verification
+
+`go build ./...`, `go vet ./...` and `gofmt -l .` (excluding `web/`) are clean.
+
+Full suite, with live PostgreSQL 16, MySQL 8 and MariaDB 11 on 55433/55434/55435
+(`.pine/memory/live-databases.md`): every package `ok`, including
+`internal/database 9.315s` and `nodes 14.826s`.
+
+`internal/database` alone, PostgreSQL gate on — 26 tests, all pass, 6 of them
+against the live server:
+
+    TestAFreshSQLiteDatabaseGetsTheWholeBaselineSchema
+    TestAFreshPostgresDatabaseGetsTheWholeBaselineSchema
+    TestBaselineLeavesAutoMigrateNothingToDoOnSQLite
+    TestBaselineLeavesAutoMigrateNothingToDoOnPostgres
+    TestAnAutoMigratedInstallIsStampedRatherThanRebuilt
+    TestAnAutoMigratedPostgresInstallIsStampedRatherThanRebuilt
+    TestMigratingTwiceChangesNothingTheSecondTime
+    TestConcurrentStartsApplyTheBaselineExactlyOnce
+    TestConcurrentPostgresStartsApplyTheBaselineExactlyOnce
+    TestADatabaseAheadOfTheBinaryRefusesToStart
+    TestRollingBackTheBaselineLeavesNoKilasFlowTables
+    TestRollingBackThePostgresBaselineLeavesNoKilasFlowTables
+    TestMigratingAfterARollbackRebuildsTheSchema
+    TestAFailedMigrationRecordsNothing
+    TestEveryMigrationShipsBothDirectionsForBothDialects
+    TestTheBaselineCreatesTheSameTablesInBothDialects
+    TestMigrationFilesIndentWithSpacesRatherThanTabs
+    (+ parseMigrationName, splitStatements and dialect cases)
+
+### The tests were proven to fail without the change
+
+Each break was applied, observed and reverted.
+
+- Delete `timezone` from the SQLite baseline (the "a model gained a field with no
+  migration" case): `TestBaselineLeavesAutoMigrateNothingToDoOnSQLite` fails with
+  ``AutoMigrate wanted to run: ALTER TABLE `schedules` ADD `timezone` text NOT NULL DEFAULT ""``.
+- Rename `idx_webhook_routes_route` to `uidx_webhook_routes_route` (the generated
+  identifier trap): the drift test fails, and
+  `TestAFreshSQLiteDatabaseGetsTheWholeBaselineSchema` reports
+  `the baseline did not create the "idx_webhook_routes_route" index`.
+- Disable `adoptExistingSchema`: both stamping tests fail with
+  ``table `workflows` already exists`` / `relation "workflows" already exists
+  (SQLSTATE 42P07)` — exactly the CREATE-TABLE-over-live-data failure this ticket
+  warned about.
+
+### Two real bugs the live databases found
+
+- PostgreSQL's `CREATE TABLE IF NOT EXISTS` is **not** safe against a concurrent
+  `CREATE` of the same name. With four starters,
+  `TestConcurrentPostgresStartsApplyTheBaselineExactlyOnce` failed three of four
+  with `duplicate key value violates unique constraint
+  "pg_type_typname_nsp_index" (SQLSTATE 23505)`. `ensureVersionTable` now
+  re-checks `HasTable` after a failure. SQLite never reproduces this.
+- Indenting the migration SQL with tabs makes every table rebuild itself on
+  every boot: glebarez/sqlite's DDL parser counts a tab as a quote character, so
+  a tab-indented `CREATE TABLE` reads back as having no columns. Files use
+  spaces, and `TestMigrationFilesIndentWithSpacesRatherThanTabs` pins it.
+
+### Distroless and CGO_ENABLED=0
+
+`make smoke-sqlite` and `make smoke-postgres` could not run here: neither builds
+without `web/node_modules`, which this worktree does not have, and `web/` was out
+of scope. The equivalent was proven directly instead.
+
+`make build` (which is `CGO_ENABLED=0`) then booting against a fresh SQLite file
+logs `applied migration version=1 name=baseline`, answers `/api/v1/health` and
+`/api/v1/ready`, and leaves 9 tables, 24 indexes and `schema_migrations` holding
+`1|baseline`. A restart against the same file applies nothing.
+
+A `CGO_ENABLED=0 GOOS=linux` binary in `gcr.io/distroless/static-debian12:nonroot`
+— the image the Dockerfile ships — migrates and serves on both drivers:
+
+    {"msg":"database connected","driver":"sqlite"}
+    {"msg":"applied migration","version":1,"name":"baseline"}
+    {"msg":"database connected","driver":"postgres"}
+    {"msg":"applied migration","version":1,"name":"baseline"}
+
+and PostgreSQL afterwards holds the nine tables plus `schema_migrations` with
+`1 | baseline`.
+
+### Stale in this ticket
+
+- **"the seven models `repository.Models()` returns"** and **"the same
+  seven-table schema"** — it returns **nine**: `workflows`, `workflow_versions`,
+  `executions`, `execution_node_runs`, `credentials`, `webhook_bindings`,
+  `webhook_routes`, `webhook_deliveries`, `schedules`. The References section
+  repeats "the seven model structs". The baseline covers all nine.
+- **The recommendation to use goose is not viable.** `go get
+  github.com/pressly/goose/v3@v3.27.3` forces `modernc.org/sqlite` v1.23.1 →
+  v1.54.0 and `modernc.org/libc` v1.22.5 → v1.74.3 underneath
+  `glebarez/go-sqlite v1.21.2`, and `go build ./...` then fails outright
+  (`missing go.sum entry for module providing package
+  github.com/ncruces/go-strftime`). The plan's premise — that goose "never
+  selects a driver of its own" so the build keeps `glebarez/go-sqlite` — is
+  wrong: goose depends on `modernc.org/sqlite` directly, which is the engine
+  glebarez wraps. The runner is hand-rolled, as the plan's own fallback allowed.
+- **The list of generated identifiers is incomplete in a load-bearing way.** It
+  names five `idx_*` indexes but not `idx_webhook_routes_route`, the bare
+  `uniqueIndex` on `webhook_routes.Route` — which GORM names with the `idx_`
+  prefix *despite being unique*, unlike every other unique index in the schema
+  (`uidx_*`, which are named explicitly in the model tags). Following the
+  ticket's own reasoning would have produced `uidx_webhook_routes_route` and
+  broken the rename in the next ticket. It is called out in both baseline files.
+- The `.gitkeep`-only `migrations/` directory, the single `AutoMigrate` call in
+  `internal/database/database.go`, and the `migrate` helper in
+  `cmd/kilasflow/main.go` (lines 319-321) were all accurate.

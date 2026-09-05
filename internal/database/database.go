@@ -98,23 +98,6 @@ func (db *DB) Close() error {
 	return sqlDB.Close()
 }
 
-// Migrate applies the supplied application models to the internal database.
-//
-// P0 deliberately has no domain models to register yet. Keeping the models
-// explicit makes the startup boundary ready for P1 without coupling database
-// connection setup to workflow persistence types.
-func Migrate(db *DB, models ...any) error {
-	if len(models) == 0 {
-		return nil
-	}
-
-	if err := db.AutoMigrate(models...); err != nil {
-		return fmt.Errorf("auto-migrate database: %w", err)
-	}
-
-	return nil
-}
-
 func dialectorFor(cfg config.Database) (gorm.Dialector, error) {
 	switch cfg.Driver {
 	case "sqlite":

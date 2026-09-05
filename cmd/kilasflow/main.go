@@ -83,7 +83,7 @@ func run() error {
 			log.Error("closing database", "error", err)
 		}
 	}()
-	if err := migrate(db); err != nil {
+	if err := database.Migrate(db, log); err != nil {
 		return err
 	}
 	nodeRegistry := node.NewRegistry()
@@ -314,10 +314,6 @@ func run() error {
 	})
 
 	return server.Run(ctx)
-}
-
-func migrate(db *database.DB) error {
-	return database.Migrate(db, repository.Models()...)
 }
 
 // databaseGuard names the files a SQLite workflow credential must never open.

@@ -68,7 +68,7 @@ docker run --rm --network "${project}_default" \
 	-v "$repo_dir:/src:ro" -w /src \
 	-e 'KILASFLOW_TEST_POSTGRES_DSN=postgres://kilasflow:kilasflow@postgres:5432/kilasflow?sslmode=disable' \
 	golang:1.27-alpine \
-	go test ./internal/database -run '^TestMigratePostgres$$' -count=1
+	go test ./internal/database -run 'Postgres' -count=1
 
 docker run -d --name "$app_container" --network "${project}_default" -p 127.0.0.1::8080 \
 	-e KILASFLOW_DATABASE_DRIVER=postgres \
