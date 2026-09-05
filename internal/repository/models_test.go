@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -390,4 +391,212 @@ func TestWorkflowStoreActivatesOnlyLatestExecutableRevision(t *testing.T) {
 	if stored.Active || stored.ActiveVersion != nil {
 		t.Fatalf("invalid latest revision activated workflow = %#v", stored)
 	}
+}
+
+func TestExecutionStoreRedactsCredentialsBeforeStorage(t *testing.T) {
+	db, tenant, stored := newExecutionFixture(t)
+	store := repository.NewExecutionStore(db.DB)
+
+	created, err := store.Create(context.Background(), tenant, execution.Record{
+		WorkflowID:        stored.ID,
+		WorkflowVersionID: stored.LatestVersion.ID,
+		Status:            execution.StatusQueued,
+		Trigger:           execution.TriggerWebhook,
+		Input:             json.RawMessage(`{"headers":{"Authorization":"Basic c3VwZXItc2VjcmV0","Accept":"application/json"}}`),
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	// The stored column, not just the returned record, must be clean: a later
+	// reader, a database dump, and a support export all bypass the API mapper.
+	var raw string
+	if err := db.Raw("SELECT input FROM executions WHERE id = ?", created.ID).Scan(&raw).Error; err != nil {
+		t.Fatalf("read stored input: %v", err)
+	}
+	if strings.Contains(raw, "c3VwZXItc2VjcmV0") {
+		t.Fatalf("stored execution input still contains the Basic credential: %s", raw)
+	}
+	if !strings.Contains(raw, "application/json") {
+		t.Fatalf("redaction dropped a safe header from storage: %s", raw)
+	}
+
+	claimed, _, found, err := store.ClaimNext(context.Background(), "redaction-worker", time.Now().Add(time.Second))
+	if err != nil || !found {
+		t.Fatalf("ClaimNext() = (%v, %v), want claimed", found, err)
+	}
+	if _, err := store.CreateNodeRun(context.Background(), tenant, execution.NodeRun{
+		ExecutionID: created.ID,
+		NodeID:      "http",
+		Attempt:     1,
+		Sequence:    1,
+		Status:      execution.StatusSucceeded,
+		Input:       json.RawMessage(`{"main":[{"json":{"token":"sk-live-4242"}}]}`),
+		Output:      json.RawMessage(`[[{"json":{"setCookie":"sid=abc"}}]]`),
+		LeaseOwner:  claimed.LeaseOwner,
+	}); err != nil {
+		t.Fatalf("CreateNodeRun() error = %v", err)
+	}
+
+	var runInput, runOutput string
+	if err := db.Raw("SELECT input, output FROM execution_node_runs WHERE execution_id = ?", created.ID).Row().Scan(&runInput, &runOutput); err != nil {
+		t.Fatalf("read stored node run: %v", err)
+	}
+	if strings.Contains(runInput, "sk-live-4242") {
+		t.Fatalf("stored node-run input still contains the token: %s", runInput)
+	}
+	if strings.Contains(runOutput, "sid=abc") {
+		t.Fatalf("stored node-run output still contains the cookie: %s", runOutput)
+	}
+}
+
+func TestExecutionStoreListsNewestFirstWithFiltersAndCursor(t *testing.T) {
+	db, tenant, stored := newExecutionFixture(t)
+	store := repository.NewExecutionStore(db.DB)
+
+	base := time.Now().UTC().Add(-time.Hour)
+	triggers := []execution.Trigger{execution.TriggerManual, execution.TriggerWebhook, execution.TriggerManual, execution.TriggerSchedule}
+	statuses := []execution.Status{execution.StatusSucceeded, execution.StatusFailed, execution.StatusSucceeded, execution.StatusQueued}
+	created := make([]string, 0, len(triggers))
+	for index := range triggers {
+		record, err := store.Create(context.Background(), tenant, execution.Record{
+			WorkflowID:        stored.ID,
+			WorkflowVersionID: stored.LatestVersion.ID,
+			Status:            statuses[index],
+			Trigger:           triggers[index],
+			StartedAt:         base.Add(time.Duration(index) * time.Minute),
+		})
+		if err != nil {
+			t.Fatalf("Create() error = %v", err)
+		}
+		created = append(created, record.ID)
+	}
+
+	page, err := store.List(context.Background(), tenant, repository.ExecutionFilter{Limit: 2})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(page.Records) != 2 {
+		t.Fatalf("first page size = %d, want 2", len(page.Records))
+	}
+	if page.Records[0].ID != created[3] || page.Records[1].ID != created[2] {
+		t.Fatalf("first page = %v, want newest first %v", []string{page.Records[0].ID, page.Records[1].ID}, []string{created[3], created[2]})
+	}
+	if page.NextCursor == "" {
+		t.Fatal("expected a next cursor while more executions remain")
+	}
+	// A summary listing must not drag every node-run trace into memory.
+	if len(page.Records[0].NodeRuns) != 0 {
+		t.Errorf("list returned %d node runs, want a summary without a trace", len(page.Records[0].NodeRuns))
+	}
+
+	second, err := store.List(context.Background(), tenant, repository.ExecutionFilter{Limit: 2, Cursor: page.NextCursor})
+	if err != nil {
+		t.Fatalf("List() second page error = %v", err)
+	}
+	if len(second.Records) != 2 || second.Records[0].ID != created[1] || second.Records[1].ID != created[0] {
+		t.Fatalf("second page = %#v, want the two oldest executions", second.Records)
+	}
+	if second.NextCursor != "" {
+		t.Errorf("next cursor = %q, want empty on the final page", second.NextCursor)
+	}
+
+	filtered, err := store.List(context.Background(), tenant, repository.ExecutionFilter{
+		Statuses: []execution.Status{execution.StatusSucceeded},
+		Trigger:  execution.TriggerManual,
+	})
+	if err != nil {
+		t.Fatalf("List() filtered error = %v", err)
+	}
+	if len(filtered.Records) != 2 {
+		t.Fatalf("filtered records = %d, want 2", len(filtered.Records))
+	}
+	for _, record := range filtered.Records {
+		if record.Status != execution.StatusSucceeded || record.Trigger != execution.TriggerManual {
+			t.Errorf("filter leaked %s/%s", record.Status, record.Trigger)
+		}
+	}
+
+	other, err := store.List(context.Background(), repository.TenantScope{ID: "tenant-other"}, repository.ExecutionFilter{})
+	if err != nil {
+		t.Fatalf("List() other tenant error = %v", err)
+	}
+	if len(other.Records) != 0 {
+		t.Fatalf("another tenant saw %d executions", len(other.Records))
+	}
+
+	if _, err := store.List(context.Background(), tenant, repository.ExecutionFilter{Cursor: "not-a-cursor"}); err == nil {
+		t.Error("expected a malformed cursor to be rejected")
+	}
+}
+
+func TestExecutionStoreFiltersListByWorkflow(t *testing.T) {
+	db, tenant, stored := newExecutionFixture(t)
+	workflowStore := repository.NewWorkflowStore(db.DB)
+	otherWorkflow, err := workflowStore.SaveDraft(context.Background(), tenant, workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		Name:          "Other workflow",
+		Nodes:         []workflow.Node{},
+		Connections:   []workflow.Connection{},
+		Settings:      map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("SaveDraft() error = %v", err)
+	}
+
+	store := repository.NewExecutionStore(db.DB)
+	for _, source := range []struct {
+		workflowID string
+		versionID  string
+	}{
+		{stored.ID, stored.LatestVersion.ID},
+		{otherWorkflow.ID, otherWorkflow.LatestVersion.ID},
+	} {
+		if _, err := store.Create(context.Background(), tenant, execution.Record{
+			WorkflowID:        source.workflowID,
+			WorkflowVersionID: source.versionID,
+			Status:            execution.StatusSucceeded,
+			Trigger:           execution.TriggerManual,
+		}); err != nil {
+			t.Fatalf("Create() error = %v", err)
+		}
+	}
+
+	page, err := store.List(context.Background(), tenant, repository.ExecutionFilter{WorkflowID: stored.ID})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(page.Records) != 1 || page.Records[0].WorkflowID != stored.ID {
+		t.Fatalf("workflow filter returned %#v", page.Records)
+	}
+}
+
+// newExecutionFixture builds a migrated SQLite database with one saved
+// workflow revision that executions can legally reference.
+func newExecutionFixture(t *testing.T) (*database.DB, repository.TenantScope, workflow.StoredWorkflow) {
+	t.Helper()
+	db, err := database.Open(context.Background(), config.Database{
+		Driver: "sqlite",
+		DSN:    filepath.Join(t.TempDir(), "kilasflow.db"),
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := database.Migrate(db, repository.Models()...); err != nil {
+		t.Fatalf("Migrate() error = %v", err)
+	}
+
+	tenant := repository.TenantScope{ID: "tenant-a"}
+	stored, err := repository.NewWorkflowStore(db.DB).SaveDraft(context.Background(), tenant, workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		Name:          "Execution source",
+		Nodes:         []workflow.Node{},
+		Connections:   []workflow.Connection{},
+		Settings:      map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("SaveDraft() error = %v", err)
+	}
+	return db, tenant, stored
 }

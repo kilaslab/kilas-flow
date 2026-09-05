@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 
@@ -19,9 +20,14 @@ type ExecutionController interface {
 	Cancel(context.Context, repository.TenantScope, string) (execution.Record, error)
 }
 
-// Executions provides user-requested lifecycle controls for durable runs.
+// Executions provides user-requested lifecycle controls for durable runs and
+// the read-only execution history.
+//
+// Reads of persisted history go through the repository; only get and cancel
+// need the live worker, because they observe or interrupt in-flight work.
 type Executions struct {
 	controller ExecutionController
+	history    repository.ExecutionRepository
 	tenants    TenantResolver
 }
 
@@ -29,16 +35,53 @@ type executionPathInput struct {
 	ID string `path:"id" minLength:"1" doc:"Execution identifier"`
 }
 
-// NewExecutions constructs the execution control handler.
-func NewExecutions(controller ExecutionController, tenants TenantResolver) *Executions {
+type listExecutionsInput struct {
+	WorkflowID string   `query:"workflowId" doc:"Only list executions of this workflow"`
+	Status     []string `query:"status" doc:"Only list executions in these statuses"`
+	Trigger    string   `query:"trigger" doc:"Only list executions started by this trigger"`
+	Limit      int      `query:"limit" minimum:"1" maximum:"100" doc:"Maximum executions to return (default 25)"`
+	Cursor     string   `query:"cursor" doc:"Opaque cursor from a previous listing's nextCursor"`
+}
+
+type executionListOutput struct {
+	Body ExecutionListResource
+}
+
+// ExecutionSummary is the compact history row. It deliberately omits input,
+// output, error, and the node-run trace: a list must not ship payloads the
+// user has not asked to inspect.
+type ExecutionSummary struct {
+	ID                string            `json:"id"`
+	WorkflowID        string            `json:"workflowId"`
+	WorkflowVersionID string            `json:"workflowVersionId"`
+	Status            execution.Status  `json:"status"`
+	Trigger           execution.Trigger `json:"trigger"`
+	StartedAt         time.Time         `json:"startedAt"`
+	FinishedAt        *time.Time        `json:"finishedAt,omitempty"`
+	DurationMs        *int64            `json:"durationMs,omitempty" doc:"Wall-clock duration in milliseconds, once the execution has finished"`
+}
+
+// ExecutionListResource is one page of execution history, newest first.
+type ExecutionListResource struct {
+	Items      []ExecutionSummary `json:"items"`
+	NextCursor string             `json:"nextCursor,omitempty" doc:"Pass back as ?cursor= to read the next page"`
+}
+
+// NewExecutions constructs the execution control and history handler.
+func NewExecutions(controller ExecutionController, history repository.ExecutionRepository, tenants TenantResolver) *Executions {
 	if tenants == nil {
 		tenants = defaultTenantResolver{}
 	}
-	return &Executions{controller: controller, tenants: tenants}
+	return &Executions{controller: controller, history: history, tenants: tenants}
 }
 
-// Register wires execution controls that need the live runtime service.
+// Register wires execution history reads and the controls that need the live
+// runtime service.
 func (handler *Executions) Register(api huma.API) {
+	huma.Register(api, huma.Operation{
+		OperationID: "list-executions", Method: http.MethodGet, Path: "/executions",
+		Summary: "List workflow executions", Description: "Returns one page of execution history, newest first.", Tags: []string{"Executions"},
+	}, handler.List)
 	huma.Register(api, huma.Operation{
 		OperationID: "get-execution", Method: http.MethodGet, Path: "/executions/{id}",
 		Summary: "Get a workflow execution", Description: "Returns durable execution state and its ordered node-run trace.", Tags: []string{"Executions"},
@@ -47,6 +90,63 @@ func (handler *Executions) Register(api huma.API) {
 		OperationID: "cancel-execution", Method: http.MethodPost, Path: "/executions/{id}/cancel", DefaultStatus: http.StatusAccepted,
 		Summary: "Cancel a workflow execution", Description: "Requests cancellation of queued or running work.", Tags: []string{"Executions"},
 	}, handler.Cancel)
+}
+
+// List returns one page of tenant-scoped execution history.
+func (handler *Executions) List(ctx context.Context, input *listExecutionsInput) (*executionListOutput, error) {
+	if handler.history == nil {
+		return nil, huma.Error503ServiceUnavailable("execution history unavailable")
+	}
+	filter := repository.ExecutionFilter{WorkflowID: input.WorkflowID, Limit: input.Limit, Cursor: input.Cursor}
+	for _, status := range input.Status {
+		parsed, ok := parseExecutionStatus(status)
+		if !ok {
+			return nil, huma.Error422UnprocessableEntity("unsupported execution status " + status)
+		}
+		filter.Statuses = append(filter.Statuses, parsed)
+	}
+	if input.Trigger != "" {
+		trigger, ok := parseExecutionTrigger(input.Trigger)
+		if !ok {
+			return nil, huma.Error422UnprocessableEntity("unsupported execution trigger " + input.Trigger)
+		}
+		filter.Trigger = trigger
+	}
+
+	page, err := handler.history.List(ctx, handler.tenants.Resolve(ctx), filter)
+	// A cursor the client did not receive from this API is a bad request, not a
+	// server fault, so it must not be reported as a 500.
+	if errors.Is(err, repository.ErrInvalidCursor) {
+		return nil, huma.Error400BadRequest("execution cursor is invalid")
+	}
+	if err != nil {
+		return nil, huma.Error500InternalServerError("execution listing failed")
+	}
+
+	resource := ExecutionListResource{Items: make([]ExecutionSummary, 0, len(page.Records)), NextCursor: page.NextCursor}
+	for _, record := range page.Records {
+		resource.Items = append(resource.Items, executionSummaryResource(record))
+	}
+	return &executionListOutput{Body: resource}, nil
+}
+
+func parseExecutionStatus(value string) (execution.Status, bool) {
+	switch status := execution.Status(value); status {
+	case execution.StatusQueued, execution.StatusRunning, execution.StatusCancelling,
+		execution.StatusSucceeded, execution.StatusFailed, execution.StatusCancelled:
+		return status, true
+	default:
+		return "", false
+	}
+}
+
+func parseExecutionTrigger(value string) (execution.Trigger, bool) {
+	switch trigger := execution.Trigger(value); trigger {
+	case execution.TriggerManual, execution.TriggerWebhook, execution.TriggerSchedule:
+		return trigger, true
+	default:
+		return "", false
+	}
 }
 
 // Get returns a tenant-scoped execution record, including its persisted trace.

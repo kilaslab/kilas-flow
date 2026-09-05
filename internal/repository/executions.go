@@ -2,9 +2,11 @@ package repository
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -21,7 +23,34 @@ type ExecutionRepository interface {
 	Create(context.Context, TenantScope, execution.Record) (execution.Record, error)
 	QueueManualLatest(context.Context, TenantScope, string, workflow.Catalog, json.RawMessage) (execution.Record, error)
 	Get(context.Context, TenantScope, string) (execution.Record, error)
+	List(context.Context, TenantScope, ExecutionFilter) (ExecutionPage, error)
 	CreateNodeRun(context.Context, TenantScope, execution.NodeRun) (execution.NodeRun, error)
+}
+
+// DefaultExecutionPageSize and MaxExecutionPageSize bound a history listing so
+// a client cannot ask for an unbounded scan of a long-lived workspace.
+const (
+	DefaultExecutionPageSize = 25
+	MaxExecutionPageSize     = 100
+)
+
+// ExecutionFilter narrows an execution history listing. The zero value lists
+// the newest executions across every workflow in the tenant.
+type ExecutionFilter struct {
+	WorkflowID string
+	Statuses   []execution.Status
+	Trigger    execution.Trigger
+	Limit      int
+	// Cursor continues a previous listing. It is opaque to callers; only List
+	// may construct one.
+	Cursor string
+}
+
+// ExecutionPage is one page of execution summaries. Records carry no node-run
+// trace: a history list must not load every payload it will never show.
+type ExecutionPage struct {
+	Records    []execution.Record
+	NextCursor string
 }
 
 // GORMExecutionStore is the GORM implementation of ExecutionRepository.
@@ -194,6 +223,84 @@ func (store *GORMExecutionStore) Get(ctx context.Context, tenant TenantScope, ex
 		record.NodeRuns = append(record.NodeRuns, nodeRunFromModel(nodeModel))
 	}
 	return record, nil
+}
+
+// List returns one page of execution summaries, newest first.
+//
+// Pagination is keyset rather than offset based: the cursor pins the last
+// (started_at, id) pair seen, so an execution created while a user pages
+// through history cannot shift rows onto a page they already read.
+func (store *GORMExecutionStore) List(ctx context.Context, tenant TenantScope, filter ExecutionFilter) (ExecutionPage, error) {
+	if err := tenant.validate(); err != nil {
+		return ExecutionPage{}, err
+	}
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = DefaultExecutionPageSize
+	}
+	if limit > MaxExecutionPageSize {
+		limit = MaxExecutionPageSize
+	}
+
+	query := store.db.WithContext(ctx).Model(&executionModel{}).Where("tenant_id = ?", tenant.ID)
+	if filter.WorkflowID != "" {
+		query = query.Where("workflow_id = ?", filter.WorkflowID)
+	}
+	if len(filter.Statuses) > 0 {
+		statuses := make([]string, 0, len(filter.Statuses))
+		for _, status := range filter.Statuses {
+			statuses = append(statuses, string(status))
+		}
+		query = query.Where("status IN ?", statuses)
+	}
+	if filter.Trigger != "" {
+		query = query.Where("trigger = ?", string(filter.Trigger))
+	}
+	if filter.Cursor != "" {
+		startedAt, id, err := decodeExecutionCursor(filter.Cursor)
+		if err != nil {
+			return ExecutionPage{}, err
+		}
+		query = query.Where("(started_at < ?) OR (started_at = ? AND id < ?)", startedAt, startedAt, id)
+	}
+
+	// Read one extra row to learn whether another page exists without a
+	// second COUNT query over the same predicate.
+	var models []executionModel
+	if err := query.Order("started_at DESC, id DESC").Limit(limit + 1).Find(&models).Error; err != nil {
+		return ExecutionPage{}, fmt.Errorf("list executions: %w", err)
+	}
+
+	page := ExecutionPage{Records: make([]execution.Record, 0, limit)}
+	if len(models) > limit {
+		last := models[limit-1]
+		page.NextCursor = encodeExecutionCursor(last.StartedAt, last.ID)
+		models = models[:limit]
+	}
+	for _, model := range models {
+		page.Records = append(page.Records, executionFromModel(model))
+	}
+	return page, nil
+}
+
+func encodeExecutionCursor(startedAt time.Time, id string) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(startedAt.UTC().Format(time.RFC3339Nano) + "\x00" + id))
+}
+
+func decodeExecutionCursor(cursor string) (time.Time, string, error) {
+	decoded, err := base64.RawURLEncoding.DecodeString(cursor)
+	if err != nil {
+		return time.Time{}, "", fmt.Errorf("%w: execution cursor is malformed", ErrInvalidCursor)
+	}
+	timestamp, id, found := strings.Cut(string(decoded), "\x00")
+	if !found || id == "" {
+		return time.Time{}, "", fmt.Errorf("%w: execution cursor is malformed", ErrInvalidCursor)
+	}
+	startedAt, err := time.Parse(time.RFC3339Nano, timestamp)
+	if err != nil {
+		return time.Time{}, "", fmt.Errorf("%w: execution cursor is malformed", ErrInvalidCursor)
+	}
+	return startedAt.UTC(), id, nil
 }
 
 // ClaimNext atomically assigns the oldest queued execution to one local
@@ -434,6 +541,10 @@ func validateNodeRun(nodeRun execution.NodeRun) error {
 	return nil
 }
 
+// payload normalizes a durable JSON column and strips credential material on
+// the way in. Redacting here rather than at each call site means every write
+// path — manual queue, create, runtime update, node-run trace — is covered by
+// construction, so a new caller cannot forget it.
 func payload(value json.RawMessage) ([]byte, error) {
 	if len(value) == 0 {
 		return []byte("null"), nil
@@ -441,7 +552,7 @@ func payload(value json.RawMessage) ([]byte, error) {
 	if !json.Valid(value) {
 		return nil, fmt.Errorf("must be valid JSON")
 	}
-	return append([]byte(nil), value...), nil
+	return append([]byte(nil), execution.Redact(value)...), nil
 }
 
 func executionFromModel(model executionModel) execution.Record {

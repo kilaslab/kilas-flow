@@ -18,7 +18,7 @@
 </script>
 
 <svelte:head>
-	<meta name="theme-color" content="#f7fbfa" />
+	<meta name="theme-color" content="#111a18" />
 </svelte:head>
 
 <div data-dashboard-shell class="min-h-dvh bg-background lg:grid lg:grid-cols-[15.5rem_minmax(0,1fr)]">

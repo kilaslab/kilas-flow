@@ -23,8 +23,10 @@ import type {
 
 import type {
   ErrorModel,
+  ExecutionListResource,
   ExecutionRequestResource,
-  ExecutionResource
+  ExecutionResource,
+  ListExecutionsParams
 } from '../models';
 
 import { apiFetch } from '../../http';
@@ -39,6 +41,109 @@ export type HTTPStatusCodes = HTTPStatusCode1xx | HTTPStatusCode2xx | HTTPStatus
 
 
 type SecondParameter<T extends (...args: never) => unknown> = Parameters<T>[1];
+
+
+
+export type listExecutionsResponse200 = {
+  data: ExecutionListResource
+  status: 200
+}
+
+export type listExecutionsResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type listExecutionsResponseSuccess = (listExecutionsResponse200) & {
+  headers: Headers;
+};
+export type listExecutionsResponseError = (listExecutionsResponseDefault) & {
+  headers: Headers;
+};
+
+export type listExecutionsResponse = (listExecutionsResponseSuccess | listExecutionsResponseError)
+
+export const getListExecutionsUrl = (params?: ListExecutionsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/executions?${stringifiedParams}` : `/api/v1/executions`
+}
+
+/**
+ * Returns one page of execution history, newest first.
+ * @summary List workflow executions
+ */
+export const listExecutions = async (params?: ListExecutionsParams, options?: Parameters<typeof apiFetch>[1]): Promise<listExecutionsResponse> => {
+
+  return apiFetch<listExecutionsResponse>(getListExecutionsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListExecutionsQueryKey = (params?: ListExecutionsParams,) => {
+    return [
+    `/api/v1/executions`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getListExecutionsQueryOptions = <TData = Awaited<ReturnType<typeof listExecutions>>, TError = ErrorType<ErrorModel>>(params?: ListExecutionsParams, options?: { query?:Partial<CreateQueryOptions<Awaited<ReturnType<typeof listExecutions>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListExecutionsQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listExecutions>>> = ({ signal }) => listExecutions(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as CreateQueryOptions<Awaited<ReturnType<typeof listExecutions>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListExecutionsQueryResult = NonNullable<Awaited<ReturnType<typeof listExecutions>>>
+export type ListExecutionsQueryError = ErrorType<ErrorModel>
+
+
+/**
+ * @summary List workflow executions
+ */
+
+export function createListExecutions<TData = Awaited<ReturnType<typeof listExecutions>>, TError = ErrorType<ErrorModel>>(
+ params?: () =>  ListExecutionsParams, options?: () => { query?:Partial<CreateQueryOptions<Awaited<ReturnType<typeof listExecutions>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: () => QueryClient
+ ): CreateQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+
+
+  const query = createQuery(() => getListExecutionsQueryOptions(params?.(),options?.()), queryClient) as CreateQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return query
+}
+
+
+
 
 
 

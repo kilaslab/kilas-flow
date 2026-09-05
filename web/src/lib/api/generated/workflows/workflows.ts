@@ -25,7 +25,8 @@ import type {
   ErrorModel,
   WorkflowDocumentInput,
   WorkflowResource,
-  WorkflowSummary
+  WorkflowSummary,
+  WorkflowVersionResource
 } from '../models';
 
 import { apiFetch } from '../../http';
@@ -554,3 +555,105 @@ export const createUpdateWorkflow = <TError = ErrorType<ErrorModel>,
       > => {
       return createMutation(() => ({ ...getUpdateWorkflowMutationOptions(options?.()) }), queryClient);
     }
+    export type getWorkflowVersionResponse200 = {
+  data: WorkflowVersionResource
+  status: 200
+}
+
+export type getWorkflowVersionResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type getWorkflowVersionResponseSuccess = (getWorkflowVersionResponse200) & {
+  headers: Headers;
+};
+export type getWorkflowVersionResponseError = (getWorkflowVersionResponseDefault) & {
+  headers: Headers;
+};
+
+export type getWorkflowVersionResponse = (getWorkflowVersionResponseSuccess | getWorkflowVersionResponseError)
+
+export const getGetWorkflowVersionUrl = (id: string,
+    versionId: string,) => {
+
+
+
+
+  return `/api/v1/workflows/${id}/versions/${versionId}`
+}
+
+/**
+ * Returns an immutable revision by ID, so an execution inspector can replay the exact graph that ran.
+ * @summary Get one workflow revision
+ */
+export const getWorkflowVersion = async (id: string,
+    versionId: string, options?: Parameters<typeof apiFetch>[1]): Promise<getWorkflowVersionResponse> => {
+
+  return apiFetch<getWorkflowVersionResponse>(getGetWorkflowVersionUrl(id,versionId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetWorkflowVersionQueryKey = (id: string,
+    versionId: string,) => {
+    return [
+    `/api/v1/workflows/${id}/versions/${versionId}`
+    ] as const;
+    }
+
+
+export const getGetWorkflowVersionQueryOptions = <TData = Awaited<ReturnType<typeof getWorkflowVersion>>, TError = ErrorType<ErrorModel>>(id: string,
+    versionId: string, options?: { query?:Partial<CreateQueryOptions<Awaited<ReturnType<typeof getWorkflowVersion>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetWorkflowVersionQueryKey(id,versionId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getWorkflowVersion>>> = ({ signal }) => getWorkflowVersion(id,versionId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined && versionId !== null && versionId !== undefined, ...queryOptions} as CreateQueryOptions<Awaited<ReturnType<typeof getWorkflowVersion>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetWorkflowVersionQueryResult = NonNullable<Awaited<ReturnType<typeof getWorkflowVersion>>>
+export type GetWorkflowVersionQueryError = ErrorType<ErrorModel>
+
+
+/**
+ * @summary Get one workflow revision
+ */
+
+export function createGetWorkflowVersion<TData = Awaited<ReturnType<typeof getWorkflowVersion>>, TError = ErrorType<ErrorModel>>(
+ id: () =>  string,
+    versionId: () =>  string, options?: () => { query?:Partial<CreateQueryOptions<Awaited<ReturnType<typeof getWorkflowVersion>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: () => QueryClient
+ ): CreateQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+
+
+  const query = createQuery(() => getGetWorkflowVersionQueryOptions(id(),
+    versionId(),options?.()), queryClient) as CreateQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return query
+}
+
+
+
+
+
+

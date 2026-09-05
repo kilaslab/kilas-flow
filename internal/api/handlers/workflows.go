@@ -124,6 +124,15 @@ type workflowPathInput struct {
 	ID string `path:"id" minLength:"1" doc:"Workflow identifier"`
 }
 
+type workflowVersionPathInput struct {
+	ID        string `path:"id" minLength:"1" doc:"Workflow identifier"`
+	VersionID string `path:"versionId" minLength:"1" doc:"Workflow revision identifier"`
+}
+
+type workflowVersionOutput struct {
+	Body WorkflowVersionResource
+}
+
 type updateWorkflowInput struct {
 	ID   string `path:"id" minLength:"1" doc:"Workflow identifier"`
 	Body workflowDocumentInput
@@ -221,6 +230,10 @@ func (handler *Workflows) Register(api huma.API) {
 		Summary: "Get a workflow", Description: "Returns the current canonical document and lifecycle metadata.", Tags: []string{"Workflows"},
 	}, handler.Get)
 	huma.Register(api, huma.Operation{
+		OperationID: "get-workflow-version", Method: http.MethodGet, Path: "/workflows/{id}/versions/{versionId}",
+		Summary: "Get one workflow revision", Description: "Returns an immutable revision by ID, so an execution inspector can replay the exact graph that ran.", Tags: []string{"Workflows"},
+	}, handler.GetVersion)
+	huma.Register(api, huma.Operation{
 		OperationID: "update-workflow", Method: http.MethodPut, Path: "/workflows/{id}",
 		Summary: "Save a workflow draft", Description: "Appends an immutable revision, including incomplete drafts.", Tags: []string{"Workflows"},
 	}, handler.Update)
@@ -288,6 +301,18 @@ func (handler *Workflows) Get(ctx context.Context, input *workflowPathInput) (*w
 		return nil, handler.problem(err)
 	}
 	return &workflowOutput{Body: workflowResource(stored)}, nil
+}
+
+// GetVersion returns one immutable revision by ID.
+func (handler *Workflows) GetVersion(ctx context.Context, input *workflowVersionPathInput) (*workflowVersionOutput, error) {
+	if err := handler.available(false); err != nil {
+		return nil, err
+	}
+	version, err := handler.workflows.GetVersionByID(ctx, handler.tenant(ctx), input.ID, input.VersionID)
+	if err != nil {
+		return nil, handler.problem(err)
+	}
+	return &workflowVersionOutput{Body: workflowVersionResource(version)}, nil
 }
 
 // Update appends a new immutable draft revision for an existing workflow.
@@ -430,22 +455,42 @@ func workflowVersionResource(version workflow.Version) WorkflowVersionResource {
 func executionRequestResource(record execution.Record) ExecutionRequestResource {
 	return ExecutionRequestResource{
 		ID: record.ID, WorkflowID: record.WorkflowID, WorkflowVersionID: record.WorkflowVersionID,
-		Status: record.Status, Trigger: record.Trigger, Input: record.Input, CreatedAt: record.StartedAt,
+		Status: record.Status, Trigger: record.Trigger, Input: execution.Redact(record.Input), CreatedAt: record.StartedAt,
 	}
+}
+
+// executionSummaryResource is the compact history row. Duration is computed
+// here rather than stored so it stays consistent with the timestamps a client
+// can already see.
+func executionSummaryResource(record execution.Record) ExecutionSummary {
+	summary := ExecutionSummary{
+		ID: record.ID, WorkflowID: record.WorkflowID, WorkflowVersionID: record.WorkflowVersionID,
+		Status: record.Status, Trigger: record.Trigger, StartedAt: record.StartedAt, FinishedAt: record.FinishedAt,
+	}
+	if record.FinishedAt != nil {
+		duration := record.FinishedAt.Sub(record.StartedAt).Milliseconds()
+		summary.DurationMs = &duration
+	}
+	return summary
 }
 
 func executionResource(record execution.Record) ExecutionResource {
 	resource := ExecutionResource{
 		ID: record.ID, WorkflowID: record.WorkflowID, WorkflowVersionID: record.WorkflowVersionID,
-		Status: record.Status, Trigger: record.Trigger, Input: record.Input, Output: record.Output,
-		Error: record.Error, StartedAt: record.StartedAt, FinishedAt: record.FinishedAt,
+		Status: record.Status, Trigger: record.Trigger,
+		// Redacting again on the way out keeps the guarantee even for records
+		// written before this boundary existed, or by a future in-memory path
+		// that never touched durable storage.
+		Input: execution.Redact(record.Input), Output: execution.Redact(record.Output),
+		Error: execution.Redact(record.Error), StartedAt: record.StartedAt, FinishedAt: record.FinishedAt,
 		CancellationRequestedAt: record.CancellationRequestedAt,
 		NodeRuns:                make([]ExecutionNodeRunResource, 0, len(record.NodeRuns)),
 	}
 	for _, nodeRun := range record.NodeRuns {
 		resource.NodeRuns = append(resource.NodeRuns, ExecutionNodeRunResource{
 			NodeID: nodeRun.NodeID, Attempt: nodeRun.Attempt, Sequence: nodeRun.Sequence,
-			Status: nodeRun.Status, Input: nodeRun.Input, Output: nodeRun.Output, Error: nodeRun.Error,
+			Status: nodeRun.Status, Input: execution.Redact(nodeRun.Input),
+			Output: execution.Redact(nodeRun.Output), Error: execution.Redact(nodeRun.Error),
 			StartedAt: nodeRun.StartedAt, FinishedAt: nodeRun.FinishedAt,
 		})
 	}

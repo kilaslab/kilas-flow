@@ -1,0 +1,139 @@
+import { describe, expect, it } from 'vitest';
+
+import type { Connection, Definition, ExecutionNodeRunResource, Node } from '$lib/api/generated/models';
+import { edgeItemCounts, executionDurationMs, formatDuration, latestNodeRuns, nodeRunStatus } from './execution';
+
+function nodeRun(overrides: Partial<ExecutionNodeRunResource> & { nodeId: string }): ExecutionNodeRunResource {
+	return {
+		attempt: 1,
+		sequence: 1,
+		status: 'succeeded',
+		startedAt: '2026-09-05T01:00:00Z',
+		...overrides
+	};
+}
+
+describe('latestNodeRuns', () => {
+	it('keeps the final attempt for each node', () => {
+		const runs = latestNodeRuns([
+			nodeRun({ nodeId: 'a', attempt: 1, sequence: 1, status: 'failed' }),
+			nodeRun({ nodeId: 'a', attempt: 2, sequence: 2, status: 'succeeded' }),
+			nodeRun({ nodeId: 'b', attempt: 1, sequence: 3 })
+		]);
+
+		expect(runs.get('a')?.attempt).toBe(2);
+		expect(runs.get('a')?.status).toBe('succeeded');
+		expect(runs.get('b')?.attempt).toBe(1);
+	});
+
+	it('tolerates a missing trace', () => {
+		expect(latestNodeRuns(null).size).toBe(0);
+		expect(latestNodeRuns(undefined).size).toBe(0);
+	});
+});
+
+describe('nodeRunStatus', () => {
+	const runs = latestNodeRuns([
+		nodeRun({ nodeId: 'ran', status: 'succeeded' }),
+		nodeRun({ nodeId: 'broke', status: 'failed' })
+	]);
+
+	it('reports the recorded status of a node that ran', () => {
+		expect(nodeRunStatus('ran', runs)).toBe('succeeded');
+		expect(nodeRunStatus('broke', runs)).toBe('failed');
+	});
+
+	it('distinguishes a node that never ran from one that failed', () => {
+		expect(nodeRunStatus('never-reached', runs)).toBe('skipped');
+	});
+});
+
+describe('edgeItemCounts', () => {
+	const definitions: Definition[] = [
+		{
+			type: 'kilasflow.if',
+			version: 1,
+			displayName: 'IF',
+			category: 'Core',
+			description: '',
+			inputs: [{ Name: 'main', Kind: 'main' }],
+			outputs: [
+				{ Name: 'true', Kind: 'main' },
+				{ Name: 'false', Kind: 'main' }
+			],
+			parameters: [],
+			sharedSettings: []
+		},
+		{
+			type: 'kilasflow.set',
+			version: 1,
+			displayName: 'Set',
+			category: 'Core',
+			description: '',
+			inputs: [{ Name: 'main', Kind: 'main' }],
+			outputs: [{ Name: 'main', Kind: 'main' }],
+			parameters: [],
+			sharedSettings: []
+		}
+	];
+	const nodes: Node[] = [
+		{ id: 'if', name: 'IF', type: 'kilasflow.if', typeVersion: 1, position: { x: 0, y: 0 } },
+		{ id: 'yes', name: 'Yes', type: 'kilasflow.set', typeVersion: 1, position: { x: 0, y: 0 } },
+		{ id: 'no', name: 'No', type: 'kilasflow.set', typeVersion: 1, position: { x: 0, y: 0 } }
+	];
+	const connections: Connection[] = [
+		{ id: 'c-true', kind: 'main', source: { nodeId: 'if', port: 'true' }, target: { nodeId: 'yes', port: 'main' } },
+		{ id: 'c-false', kind: 'main', source: { nodeId: 'if', port: 'false' }, target: { nodeId: 'no', port: 'main' } }
+	];
+
+	it('counts the items each branch actually carried', () => {
+		const runs = latestNodeRuns([
+			nodeRun({ nodeId: 'if', output: [[{ json: { a: 1 } }, { json: { a: 2 } }], [{ json: { a: 3 } }]] })
+		]);
+
+		const counts = edgeItemCounts(connections, nodes, definitions, runs);
+
+		expect(counts.get('c-true')).toBe(2);
+		expect(counts.get('c-false')).toBe(1);
+	});
+
+	it('omits a count when the source node produced no recorded output', () => {
+		const counts = edgeItemCounts(connections, nodes, definitions, latestNodeRuns([]));
+
+		expect(counts.has('c-true')).toBe(false);
+	});
+
+	it('reports an empty branch as zero rather than unknown', () => {
+		const runs = latestNodeRuns([nodeRun({ nodeId: 'if', output: [[], [{ json: {} }]] })]);
+
+		const counts = edgeItemCounts(connections, nodes, definitions, runs);
+
+		expect(counts.get('c-true')).toBe(0);
+		expect(counts.get('c-false')).toBe(1);
+	});
+});
+
+describe('formatDuration', () => {
+	it('scales the unit to the magnitude', () => {
+		expect(formatDuration(0)).toBe('0 ms');
+		expect(formatDuration(820)).toBe('820 ms');
+		expect(formatDuration(1500)).toBe('1.5 s');
+		expect(formatDuration(63_000)).toBe('1 m 3 s');
+	});
+
+	it('has nothing to show for an unfinished run', () => {
+		expect(formatDuration(null)).toBe('—');
+	});
+});
+
+describe('executionDurationMs', () => {
+	it('measures from start to finish', () => {
+		expect(
+			executionDurationMs({ startedAt: '2026-09-05T01:00:00.000Z', finishedAt: '2026-09-05T01:00:02.500Z' })
+		).toBe(2500);
+	});
+
+	it('returns null while a run is still in flight', () => {
+		expect(executionDurationMs({ startedAt: '2026-09-05T01:00:00.000Z' })).toBeNull();
+	});
+});

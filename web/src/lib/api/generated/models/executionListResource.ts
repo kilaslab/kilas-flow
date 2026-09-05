@@ -5,15 +5,13 @@
  * Embeddable workflow automation engine. Every operation available in the editor is available here: the canvas is a client of this API, not the owner of workflow state.
  * OpenAPI spec version: 0.1.0-dev
  */
-import type { Document } from './document';
+import type { ExecutionSummary } from './executionSummary';
 
-export interface WorkflowVersionResource {
+export interface ExecutionListResource {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  createdAt: string;
-  document: Document;
-  id: string;
-  revision: number;
-  schemaVersion: number;
-  workflowId: string;
+  /** @nullable */
+  items: ExecutionSummary[] | null;
+  /** Pass back as ?cursor= to read the next page */
+  nextCursor?: string;
 }

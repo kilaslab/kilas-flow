@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/kilaslabs/kilas-flow/internal/api"
 	"github.com/kilaslabs/kilas-flow/internal/api/handlers"
@@ -475,4 +476,162 @@ func requestValidationProblem(t *testing.T, handler http.Handler, method, path s
 		t.Fatalf("validation problem errors = %#v, want at least one issue", problem)
 	}
 	return problem
+}
+
+type executionSummary struct {
+	ID                string `json:"id"`
+	WorkflowID        string `json:"workflowId"`
+	WorkflowVersionID string `json:"workflowVersionId"`
+	Status            string `json:"status"`
+	Trigger           string `json:"trigger"`
+	StartedAt         string `json:"startedAt"`
+	FinishedAt        string `json:"finishedAt"`
+	DurationMs        *int64 `json:"durationMs"`
+}
+
+type executionListResource struct {
+	Items      []executionSummary `json:"items"`
+	NextCursor string             `json:"nextCursor"`
+}
+
+func TestExecutionAPIListsHistoryNewestFirstWithFiltersAndPaging(t *testing.T) {
+	handler, _, executions := newWorkflowAPI(t)
+	created := createWorkflow(t, handler, validManualWorkflow("History"))
+	other := createWorkflow(t, handler, validManualWorkflow("Other history"))
+
+	tenant := repository.TenantScope{ID: repository.DefaultTenantID}
+	base := time.Now().UTC().Add(-time.Hour)
+	queued := make([]string, 0, 3)
+	for index, status := range []execution.Status{execution.StatusSucceeded, execution.StatusFailed, execution.StatusSucceeded} {
+		record, err := executions.Create(context.Background(), tenant, execution.Record{
+			WorkflowID:        created.ID,
+			WorkflowVersionID: created.LatestVersion.ID,
+			Status:            status,
+			Trigger:           execution.TriggerManual,
+			StartedAt:         base.Add(time.Duration(index) * time.Minute),
+		})
+		if err != nil {
+			t.Fatalf("Create() error = %v", err)
+		}
+		queued = append(queued, record.ID)
+	}
+	if _, err := executions.Create(context.Background(), tenant, execution.Record{
+		WorkflowID:        other.ID,
+		WorkflowVersionID: other.LatestVersion.ID,
+		Status:            execution.StatusQueued,
+		Trigger:           execution.TriggerSchedule,
+		StartedAt:         base.Add(10 * time.Minute),
+	}); err != nil {
+		t.Fatalf("Create() other workflow error = %v", err)
+	}
+
+	page := requestJSON[executionListResource](t, handler, http.MethodGet, "/api/v1/executions?limit=2", nil, http.StatusOK)
+	if len(page.Items) != 2 {
+		t.Fatalf("page items = %d, want 2", len(page.Items))
+	}
+	if page.Items[0].Trigger != string(execution.TriggerSchedule) {
+		t.Errorf("first item trigger = %q, want the newest execution", page.Items[0].Trigger)
+	}
+	if page.NextCursor == "" {
+		t.Fatal("expected a next cursor while more history remains")
+	}
+
+	next := requestJSON[executionListResource](t, handler, http.MethodGet, "/api/v1/executions?limit=2&cursor="+page.NextCursor, nil, http.StatusOK)
+	if len(next.Items) != 2 || next.Items[0].ID != queued[1] || next.Items[1].ID != queued[0] {
+		t.Fatalf("second page = %#v, want the two oldest executions", next.Items)
+	}
+
+	byWorkflow := requestJSON[executionListResource](t, handler, http.MethodGet, "/api/v1/executions?workflowId="+created.ID+"&status=succeeded", nil, http.StatusOK)
+	if len(byWorkflow.Items) != 2 {
+		t.Fatalf("filtered items = %d, want 2", len(byWorkflow.Items))
+	}
+	for _, item := range byWorkflow.Items {
+		if item.WorkflowID != created.ID || item.Status != string(execution.StatusSucceeded) {
+			t.Errorf("filter leaked %#v", item)
+		}
+	}
+
+	requestProblem(t, handler, http.MethodGet, "/api/v1/executions?cursor=not-a-real-cursor", nil, http.StatusBadRequest)
+	requestProblem(t, handler, http.MethodGet, "/api/v1/executions?status=not-a-status", nil, http.StatusUnprocessableEntity)
+}
+
+func TestExecutionAPIReportsDurationForFinishedRuns(t *testing.T) {
+	handler, _, executions := newWorkflowAPI(t)
+	created := createWorkflow(t, handler, validManualWorkflow("Duration"))
+
+	startedAt := time.Now().UTC().Add(-time.Minute)
+	finishedAt := startedAt.Add(1500 * time.Millisecond)
+	if _, err := executions.Create(context.Background(), repository.TenantScope{ID: repository.DefaultTenantID}, execution.Record{
+		WorkflowID:        created.ID,
+		WorkflowVersionID: created.LatestVersion.ID,
+		Status:            execution.StatusSucceeded,
+		Trigger:           execution.TriggerManual,
+		StartedAt:         startedAt,
+		FinishedAt:        &finishedAt,
+	}); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	page := requestJSON[executionListResource](t, handler, http.MethodGet, "/api/v1/executions", nil, http.StatusOK)
+	if len(page.Items) != 1 {
+		t.Fatalf("items = %d, want 1", len(page.Items))
+	}
+	if page.Items[0].DurationMs == nil || *page.Items[0].DurationMs != 1500 {
+		t.Errorf("durationMs = %v, want 1500", page.Items[0].DurationMs)
+	}
+}
+
+func TestExecutionAPIRedactsCredentialsInResponses(t *testing.T) {
+	finished := time.Now().UTC()
+	controller := &recordingExecutionController{record: execution.Record{
+		ID: "exec-secret", WorkflowID: "wf-1", WorkflowVersionID: "wfv-1",
+		Status: execution.StatusSucceeded, Trigger: execution.TriggerWebhook,
+		Input:      json.RawMessage(`{"headers":{"Authorization":"Bearer super-secret-token"}}`),
+		Output:     json.RawMessage(`{"cookie":"sid=leaky"}`),
+		FinishedAt: &finished,
+		NodeRuns: []execution.NodeRun{{
+			NodeID: "http", Attempt: 1, Sequence: 1, Status: execution.StatusSucceeded,
+			Input: json.RawMessage(`{"apiKey":"sk-live-99"}`),
+		}},
+	}}
+	handler := newTestServer(t, api.Deps{DB: stubPinger{}, ExecutionController: controller})
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/executions/exec-secret", nil)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", recorder.Code, recorder.Body)
+	}
+	body := recorder.Body.String()
+	for _, secret := range []string{"super-secret-token", "sid=leaky", "sk-live-99"} {
+		if strings.Contains(body, secret) {
+			t.Errorf("execution response leaked %q: %s", secret, body)
+		}
+	}
+}
+
+func TestWorkflowAPIReturnsThePinnedRevisionAnExecutionRan(t *testing.T) {
+	handler, _, _ := newWorkflowAPI(t)
+	created := createWorkflow(t, handler, validManualWorkflow("Pinned"))
+	pinnedVersionID := created.LatestVersion.ID
+
+	updated := requestJSON[workflowResource](t, handler, http.MethodPut, "/api/v1/workflows/"+created.ID, workflowDraft(validManualWorkflow("Renamed")), http.StatusOK)
+	if updated.LatestVersion.ID == pinnedVersionID {
+		t.Fatal("expected the update to create a new revision")
+	}
+
+	// An execution inspector replays the revision that actually ran, so reading
+	// a superseded version by ID must keep working after later saves.
+	version := requestJSON[workflowVersionResource](t, handler, http.MethodGet,
+		"/api/v1/workflows/"+created.ID+"/versions/"+pinnedVersionID, nil, http.StatusOK)
+	if version.ID != pinnedVersionID || version.Revision != 1 || version.Document.Name != "Pinned" {
+		t.Fatalf("pinned version = %#v, want revision 1 named Pinned", version)
+	}
+
+	requestProblem(t, handler, http.MethodGet, "/api/v1/workflows/"+created.ID+"/versions/wfv_missing", nil, http.StatusNotFound)
+
+	// A version ID belonging to a different workflow must not be readable
+	// through this workflow's path.
+	other := createWorkflow(t, handler, validManualWorkflow("Other"))
+	requestProblem(t, handler, http.MethodGet, "/api/v1/workflows/"+created.ID+"/versions/"+other.LatestVersion.ID, nil, http.StatusNotFound)
 }

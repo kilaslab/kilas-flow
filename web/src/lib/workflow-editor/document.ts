@@ -9,6 +9,9 @@ export type EditorNodeData = {
 	definition: Definition;
 	workflowNode: WorkflowNode;
 	validationMessage?: string;
+	// Set only by the read-only execution replay, which annotates the same
+	// projection with each node's recorded outcome.
+	runStatus?: string;
 };
 
 export type EditorFlowNode = FlowNode<EditorNodeData, 'workflow'>;

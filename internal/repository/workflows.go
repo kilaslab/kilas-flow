@@ -25,6 +25,10 @@ type TenantScope struct {
 // ErrNotFound is returned without exposing an ORM or cross-tenant distinction.
 var ErrNotFound = errors.New("repository record not found")
 
+// ErrInvalidCursor reports a pagination cursor the caller did not receive from
+// a previous listing. Callers translate it into a 400, never a 500.
+var ErrInvalidCursor = errors.New("repository cursor is invalid")
+
 // WorkflowRepository is the persistence seam used by lifecycle services and
 // later API handlers. The execution engine never imports GORM.
 type WorkflowRepository interface {
@@ -32,6 +36,7 @@ type WorkflowRepository interface {
 	List(context.Context, TenantScope) ([]workflow.StoredWorkflow, error)
 	Get(context.Context, TenantScope, string) (workflow.StoredWorkflow, error)
 	GetVersion(context.Context, TenantScope, string, int) (workflow.Version, error)
+	GetVersionByID(context.Context, TenantScope, string, string) (workflow.Version, error)
 	Activate(context.Context, TenantScope, string, workflow.Catalog) (workflow.StoredWorkflow, error)
 	Deactivate(context.Context, TenantScope, string) (workflow.StoredWorkflow, error)
 	Delete(context.Context, TenantScope, string) error
@@ -164,6 +169,29 @@ func (store *GORMWorkflowStore) GetVersion(ctx context.Context, tenant TenantSco
 	var model workflowVersionModel
 	err := store.db.WithContext(ctx).
 		Where("tenant_id = ? AND workflow_id = ? AND revision = ?", tenant.ID, workflowID, revision).
+		First(&model).Error
+	if err != nil {
+		return workflow.Version{}, mapNotFound(err, "workflow version")
+	}
+	return versionFromModel(model)
+}
+
+// GetVersionByID reads one immutable revision by its own identifier.
+//
+// Execution records pin a version ID rather than a revision number, and an
+// inspector must replay the graph that actually ran even after later saves
+// have superseded it. The workflow ID stays in the signature so a version can
+// never be read through a workflow that does not own it.
+func (store *GORMWorkflowStore) GetVersionByID(ctx context.Context, tenant TenantScope, workflowID, versionID string) (workflow.Version, error) {
+	if err := tenant.validate(); err != nil {
+		return workflow.Version{}, err
+	}
+	if workflowID == "" || versionID == "" {
+		return workflow.Version{}, fmt.Errorf("workflow ID and version ID are required")
+	}
+	var model workflowVersionModel
+	err := store.db.WithContext(ctx).
+		Where("tenant_id = ? AND workflow_id = ? AND id = ?", tenant.ID, workflowID, versionID).
 		First(&model).Error
 	if err != nil {
 		return workflow.Version{}, mapNotFound(err, "workflow version")
