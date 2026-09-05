@@ -1,0 +1,253 @@
+name: CI
+
+# Every check a change must pass, in one file.
+#
+#   lint            go vet, gofmt, svelte-check, and the web vitest suite
+#   test            go test ./... -race, against real PostgreSQL, MySQL and MariaDB
+#   drift           the committed API client and SDK types still match the binary
+#   sdk             the host SDK typechecks, tests and compiles
+#   smoke           the binary, the Vite proxy and the distroless image all serve
+#   smoke-postgres  the image against a Compose PostgreSQL (not on pull requests)
+#
+# Every job runs Make targets rather than its own copy of the commands, so a
+# laptop and a runner check the same thing and cannot drift apart. Add a check
+# to the Makefile first and call it here second.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A force-push mid-review makes the superseded run's verdict worthless, so cancel
+# it. Pushes to main are not cancelled: the default branch keeps every result.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Nothing here publishes, comments or tags. Read-only is all it needs, and the
+# p10 tickets that do publish should widen this per job rather than at the top.
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # go.mod carries the toolchain version already; setup-go reads it so CI
+      # cannot end up on a different Go than the module declares.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - uses: ./.github/actions/js-toolchain
+
+      # `make lint` finishes with svelte-check and vitest in web/, so this job
+      # needs the frontend dependencies despite reading like a Go-only check.
+      - name: Install web dependencies
+        working-directory: web
+        run: pnpm install --frozen-lockfile
+
+      - run: make lint
+
+  test:
+    name: Go tests
+    runs-on: ubuntu-latest
+
+    # internal/database, internal/sqlbuild, internal/loadoptions and
+    # nodes/database_test.go all gate their integration coverage behind a DSN and
+    # t.Skip without one. A skip is indistinguishable from a pass in a summarised
+    # run, so leaving these unset would have CI reporting green over the only
+    # tests that touch a real engine. Three containers cost about a minute of
+    # startup that overlaps checkout; that is cheap next to the coverage.
+    #
+    # MariaDB is a third service rather than an alias for MySQL because the two
+    # differ on exactly the two decisions the SQL builder makes for them: MariaDB
+    # has INSERT … RETURNING and lacks MySQL 8.0.19's row-alias upsert, so a
+    # change exercised against only one of them can be wrong on the other and
+    # still pass. Credentials mirror .pine/memory/live-databases.md so a failure
+    # here reproduces by hand with the commands already written down there.
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: kilas
+          POSTGRES_PASSWORD: hunter2
+          POSTGRES_DB: kilasflow
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U kilas -d kilasflow"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ROOT_PASSWORD: hunter2
+          MYSQL_DATABASE: kilasflow
+          MYSQL_USER: kilas
+          MYSQL_PASSWORD: hunter2
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -ukilas -phunter2"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 30
+      mariadb:
+        image: mariadb:11
+        env:
+          MARIADB_ROOT_PASSWORD: hunter2
+          MARIADB_DATABASE: kilasflow
+          MARIADB_USER: kilas
+          MARIADB_PASSWORD: hunter2
+        # 3307 on the host because the MySQL service already holds 3306 there.
+        ports:
+          - 3307:3306
+        options: >-
+          --health-cmd "mariadb-admin ping -h 127.0.0.1 -ukilas -phunter2"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 30
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      # CGO stays enabled here. A devbox shell exports CGO_ENABLED=0 for the
+      # distroless build, and copying that setting into this job would break
+      # `-race`, which needs cgo.
+      - name: Go tests
+        env:
+          KILASFLOW_TEST_POSTGRES_DSN: postgres://kilas:hunter2@127.0.0.1:5432/kilasflow?sslmode=disable
+          KILASFLOW_TEST_MYSQL_DSN: mysql://kilas:hunter2@127.0.0.1:3306/kilasflow
+          KILASFLOW_TEST_MARIADB_DSN: mysql://kilas:hunter2@127.0.0.1:3307/kilasflow
+        run: make test
+
+      # This step exists to say out loud that the corpus baseline is NOT
+      # verified here, rather than letting a skip pass for a check.
+      #
+      # BASELINE.md scores 39 fixtures. Two are committed; the rest are
+      # third-party n8n and WAHA workflows that .gitignore deliberately keeps out
+      # of the repository, because they are LicenseRef-n8n-sustainable-use or
+      # carry no licence at all. Materialising them needs a local n8n reference
+      # checkout, which .pine/memory/licensing.md forbids as a build input of any
+      # kind. So CI scores the committed control fixtures — which must reach
+      # every tier — and prints TestCorpusScoreboard's skip line naming the sync
+      # command. Regenerating and comparing the baseline stays a
+      # `make corpus-baseline` run by hand, recorded on the ticket that moves the
+      # numbers. Do not "fix" this by fetching the corpus in CI.
+      - name: n8n corpus (control fixtures only; baseline not verifiable in CI)
+        run: make corpus-check
+
+  drift:
+    name: Generated client drift
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - uses: ./.github/actions/js-toolchain
+
+      - name: Install web dependencies
+        working-directory: web
+        run: pnpm install --frozen-lockfile
+
+      - name: Install SDK dependencies
+        working-directory: sdk
+        run: pnpm install --frozen-lockfile
+
+      # Both detectors build a KilasFlow binary and read its OpenAPI document,
+      # which is why this job needs Go and Node together. No binary is taken from
+      # another job on purpose: the detectors are only worth anything because the
+      # spec comes from a server built and booted right here, and consuming a
+      # shared artifact would reintroduce the checked-in copy they exist to
+      # eliminate. Each prints its own "…is stale" message on failure, naming the
+      # generate command to run.
+      - name: Web API client
+        run: make generate-api-check
+
+      - name: SDK types
+        run: make generate-types-check
+
+  sdk:
+    name: Host SDK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: ./.github/actions/js-toolchain
+
+      - name: Install SDK dependencies
+        working-directory: sdk
+        run: pnpm install --frozen-lockfile
+
+      # No Go here: these three targets never touch the binary. The SDK check
+      # that does — generate-types-check — lives in the drift job with the Go
+      # toolchain it needs.
+      - run: make sdk-check
+      - run: make sdk-test
+      - run: make sdk-build
+
+  smoke:
+    name: Smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - uses: ./.github/actions/js-toolchain
+
+      # smoke-sqlite runs `make build-all`, which builds the real SPA, and
+      # smoke-dev starts the Vite dev server. Both need the frontend installed.
+      - name: Install web dependencies
+        working-directory: web
+        run: pnpm install --frozen-lockfile
+
+      # Boots a real binary against a fresh SQLite database and asserts
+      # /api/v1/health, /api/openapi.json and the SPA history fallback.
+      - run: make smoke-sqlite
+
+      # Proves the Vite proxy, which no unit test can reach: a broken proxy
+      # config breaks every contributor's `make dev` and nothing else catches it.
+      - run: make smoke-dev
+
+      # Last because it builds the image from scratch. Proves the distroless,
+      # non-root image serves and can write to a bind mount.
+      - run: make smoke-docker
+
+  smoke-postgres:
+    name: Smoke (PostgreSQL)
+    runs-on: ubuntu-latest
+
+    # Deliberately not on pull requests. It builds the image, brings up
+    # postgres:17-alpine under Compose, runs TestMigratePostgres against it in a
+    # second container and tears down with `down -v` — by a wide margin the
+    # slowest check here. A check that makes every review wait is a check
+    # somebody eventually disables, so it runs on the default branch and on
+    # demand. The migration path it covers is not left to this job alone: the
+    # test job runs the same PostgreSQL coverage against a service container on
+    # every pull request.
+    if: github.event_name != 'pull_request'
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - run: make smoke-postgres

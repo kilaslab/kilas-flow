@@ -1,6 +1,7 @@
 APP_NAME    := kilasflow
 GO          := go
 WEB_DIR     := web
+SDK_DIR     := sdk
 DIST_DIR    := internal/web/dist
 BIN_DIR     := bin
 VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "0.1.0-dev")
@@ -99,6 +100,53 @@ test: dist-placeholder ## Run Go tests
 web-test: ## Run the frontend test suite
 	cd $(WEB_DIR) && pnpm test
 
+.PHONY: sdk-check
+sdk-check: ## Typecheck the host SDK
+	cd $(SDK_DIR) && pnpm check
+
+.PHONY: sdk-test
+sdk-test: ## Run the host SDK test suite
+	cd $(SDK_DIR) && pnpm test
+
+# The SDK ships compiled `dist/`, so a type error that only `tsc -p
+# tsconfig.build.json` reaches would otherwise surface at publish time.
+.PHONY: sdk-build
+sdk-build: ## Build the host SDK into sdk/dist
+	cd $(SDK_DIR) && pnpm build
+
+# orval loads web/tsconfig.json, which extends the generated
+# .svelte-kit/tsconfig.json. That file is gitignored, so on a fresh clone — and
+# on every CI runner — the API generators die with "File
+# './.svelte-kit/tsconfig.json' not found" before they ever reach the spec.
+# `pnpm check` happens to sync as a side effect, which is why this only bites
+# when the generators run on their own.
+.PHONY: web-sync
+web-sync:
+	cd $(WEB_DIR) && pnpm exec svelte-kit sync
+
+# Both generators boot a real binary via scripts/openapi-spec.mjs and read its
+# OpenAPI document, which is why they depend on the placeholder: without a file
+# under DIST_DIR the `go build` inside the script fails on the embed directive,
+# and the failure reads as a Go problem rather than a missing SPA.
+#
+# Make cannot express the `generate:api` spelling the package scripts use — a
+# colon is Make's rule separator — so the targets are hyphenated.
+.PHONY: generate-api
+generate-api: dist-placeholder web-sync ## Regenerate the web API client from a freshly built binary
+	cd $(WEB_DIR) && pnpm generate:api
+
+.PHONY: generate-api-check
+generate-api-check: dist-placeholder web-sync ## Fail if the committed web API client is stale
+	cd $(WEB_DIR) && pnpm generate:api:check
+
+.PHONY: generate-types
+generate-types: dist-placeholder ## Regenerate the SDK types from a freshly built binary
+	cd $(SDK_DIR) && pnpm generate:types
+
+.PHONY: generate-types-check
+generate-types-check: dist-placeholder ## Fail if the committed SDK types are stale
+	cd $(SDK_DIR) && pnpm generate:types:check
+
 .PHONY: test-cover
 test-cover: dist-placeholder ## Run Go tests with a coverage report
 	$(GO) test ./... -coverprofile=coverage.out
@@ -138,6 +186,14 @@ node-packs: ## Regenerate the committed node packs from their vendored specs
 .PHONY: corpus-baseline
 corpus-baseline: ## Rescore the corpus and rewrite BASELINE.md and baseline.json
 	$(GO) test ./internal/interop/n8n/corpus -update-baseline -count=1 -v
+
+# TestCorpusScoreboard skips when .corpus/ has not been materialised, and a skip
+# reads as a pass in a summarised test run. `-v` is the whole point of this
+# target: it prints either the comparison against baseline.json or the skip
+# line naming the sync command, so the state of the corpus is never inferred.
+.PHONY: corpus-check
+corpus-check: dist-placeholder ## Verify BASELINE.md, or say the corpus is not materialised
+	$(GO) test ./internal/interop/n8n/corpus -count=1 -v
 
 .PHONY: smoke-sqlite
 smoke-sqlite: ## Prove the embedded binary against a fresh SQLite database
