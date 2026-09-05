@@ -51,6 +51,7 @@ The outbound policy for model endpoints and for self-hosted Ollama is a decision
 
 ## References
 
-- Plan `~/.claude/plans/distributed-worker-nats-crispy-finch.md`, p5 entry V2-p5-4, and p2 entries V2-p2-4 (load options) and V2-p2-6 (credential registry).
+- Roadmap plan, p5 section, entry V2-p5-4: `.pine/roadmap.md`.
+- `.pine/roadmap.md` — p2 entries V2-p2-4 (load options) and V2-p2-6 (credential registry).
 - `internal/ai/openai.go` (`chatRequest`, `Stream`, `post`), `nodes/ai.go` (`chatModelNode`, `executeChatModel`, `AgentExecutor.Execute`), `internal/safehttp/safehttp.go` (`Policy.Timeout`, `NewClient`), `nodes/http.go` (`timeoutSeconds`), `internal/credentials/credentials.go`.
 - Local n8n UI reference: `design-refs/n8n-v2/INDEX.md` entry 05 — the OpenRouter Chat Model NDV: credential, notice, model dropdown, options collection. Captured from a local n8n 2.33.7 instance; gitignored, never vendored.

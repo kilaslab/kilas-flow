@@ -44,7 +44,8 @@ Do not attempt n8n's full Split In Batches parameter surface here. This ticket d
 
 ## References
 
-- Plan: `/Users/izzadev/.claude/plans/distributed-worker-nats-crispy-finch.md`, entry V2-p1-4, and the p4 flow-control paragraph that owns node parity.
+- Roadmap plan, p1 section, entry V2-p1-4: `.pine/roadmap.md`.
+- `.pine/roadmap.md` — the p4 flow-control paragraph, which owns node parity.
 - `internal/workflow/compiler.go` — `hasCycle`, the cycle rejection in `Compile`, `cloneNodeDefinition`.
 - `internal/engine/runner.go` — the scheduling loop, `completed`, `nodeInput`.
 - `internal/engine/service.go`, `internal/repository/models.go` — node-run persistence and `uidx_node_runs_attempt`.

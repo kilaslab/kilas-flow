@@ -45,7 +45,8 @@ The traps. `strings.Trim(strings.TrimPrefix(r.URL.Path, "/webhook"), "/")` (webh
 
 ## References
 
-- Plan: `/Users/izzadev/.claude/plans/distributed-worker-nats-crispy-finch.md`, entry V2-p1-7, and V2-p3-4 for the WAHA HMAC this unblocks.
+- Roadmap plan, p1 section, entry V2-p1-7: `.pine/roadmap.md`.
+- `.pine/roadmap.md` — entry V2-p3-4, the WAHA HMAC this unblocks.
 - `internal/webhook/webhook.go` — `requestPayload`, `ServeHTTP`, `Extract`.
 - `nodes/webhook.go` — `executeWebhook`, the webhook trigger definition.
 - `internal/repository/webhooks.go`, `internal/repository/models.go` — `WebhookBinding`, `WebhookTrigger`, `webhookBindingModel`.

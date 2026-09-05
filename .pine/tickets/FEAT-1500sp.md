@@ -50,7 +50,7 @@ Finish with the SDK: add `{ type: 'workflow-published'; workflowId: string; vers
 
 ## References
 
-- Roadmap plan: `/Users/izzadev/.claude/plans/distributed-worker-nats-crispy-finch.md`, section "p7 — Workflow history", entry V2-p7-2.
+- Roadmap plan, p7 section, entry V2-p7-2: `.pine/roadmap.md`.
 - Editor hosts: `web/src/routes/(dashboard)/app/workflows/[id]/+page.svelte` (the `{#key latestVersion.id}` remount), `web/src/lib/embed/embed-editor.svelte` (`notifyHost`, `workflow-saved`), `web/src/lib/components/workflow-editor/workflow-editor.svelte` (`readOnly`, `saveIssues`), `web/src/lib/components/workflow-editor/execution-canvas.svelte` and `web/src/routes/(dashboard)/executions/[id]/+page.svelte` (the existing precedent for rendering a historical version).
 - Embed boundary: `internal/embed/embed.go` (`Scope`, `Allows`, `normalizeScopes`), `internal/api/middleware/embed.go` (`permits`), `internal/api/handlers/embed.go`, `sdk/src/server.ts` (`EmbedScope`), `sdk/src/browser.ts` (`EditorEvent`).
 - Dead event type: `internal/events/events.go` (`WorkflowSaved`) against the single `Publish` call site in `internal/engine/service.go`.

@@ -51,7 +51,7 @@ Migrating the five existing `VisibleWhen` uses — `nodes/webhook.go`, `nodes/da
 
 ## References
 
-- Plan: `/Users/izzadev/.claude/plans/distributed-worker-nats-crispy-finch.md`, section "p2 — Node metadata foundation", entry V2-p2-3.
+- Roadmap plan, p2 section, entry V2-p2-3: `.pine/roadmap.md`.
 - `internal/node/registry.go` — `VisibilityCondition`, `requiredParameters`.
 - `internal/workflow/compiler.go` — `NodeDefinition.RequiredParameters`, `ConfigValidator`.
 - `web/src/lib/components/workflow-editor/properties-panel.svelte` — `isVisible`.

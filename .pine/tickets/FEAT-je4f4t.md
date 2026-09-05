@@ -50,7 +50,8 @@ One decision. The synthesised tool variant can be a separate node type in the ca
 
 ## References
 
-- Plan `~/.claude/plans/distributed-worker-nats-crispy-finch.md`, p5 entry V2-p5-6, p1 entry V2-p1-10 (expression engine v2), p2 entry V2-p2-7.
+- Roadmap plan, p5 section, entry V2-p5-6: `.pine/roadmap.md`.
+- `.pine/roadmap.md` — p1 entry V2-p1-10 (expression engine v2) and p2 entry V2-p2-7.
 - `/Users/izzadev/projects/mitrachat/n8n/packages/workflow/src/from-ai-parse-utils.ts` (`extractFromAICalls`, `FromAIArgument`), `constants.ts` (`FROM_AI_AUTO_GENERATED_MARKER`), `interfaces.ts` (`usableAsTool`, `UsableAsToolDescription`).
 - `nodes/ai.go` (`httpToolNode`, `executeHTTPTool`, `httpToolFrom`, `httpRequestTool`), `internal/expression/expression.go`, `internal/node/registry.go`, `internal/api/handlers/nodes.go`.
 - Local n8n UI reference: `design-refs/n8n-v2/INDEX.md` entries 07, 10 — an HTTP Request Tool attached to an agent, and how a tool-capable node is re-listed under Other Tools. Captured from a local n8n 2.33.7 instance; gitignored, never vendored.

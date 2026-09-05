@@ -48,7 +48,7 @@ One thing this ticket does not do: it does not model cluster-node semantics, slo
 
 ## References
 
-- Plan: `/Users/izzadev/.claude/plans/distributed-worker-nats-crispy-finch.md`, section "p2 — Node metadata foundation", entry V2-p2-8.
+- Roadmap plan, p2 section, entry V2-p2-8: `.pine/roadmap.md`.
 - `internal/workflow/compiler.go` — `Port`, `NodeDefinition`, `IREdge`, the per-edge port checks and `ErrorCode` values.
 - `internal/workflow/document.go` — `ConnectionKind`, its four constants, `knownConnectionKind`.
 - `internal/node/registry.go` — the duplicated `knownConnectionKind` and `validatePorts`.

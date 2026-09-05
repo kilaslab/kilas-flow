@@ -49,7 +49,7 @@ Keep `nodeShape` exactly as it is. It already derives the silhouette from the de
 
 ## References
 
-- Plan: `/Users/izzadev/.claude/plans/distributed-worker-nats-crispy-finch.md`, section "p2 — Node metadata foundation", entry V2-p2-5.
+- Roadmap plan, p2 section, entry V2-p2-5: `.pine/roadmap.md`.
 - `web/src/lib/workflow-editor/node-visual.ts` — `ICONS`, `ACCENTS`, `nodeSubtitle`, `nodeVisual`, `nodeShape`.
 - `web/src/lib/workflow-editor/credentials.ts` — `BY_NODE_TYPE`, `credentialTypesFor`.
 - `web/src/lib/components/workflow-editor/properties-panel.svelte` — the credential-picker guard that hides the block entirely.

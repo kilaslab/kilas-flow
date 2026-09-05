@@ -46,6 +46,7 @@ One decision to settle. When the model answers in plain text without calling the
 
 ## References
 
-- Plan `~/.claude/plans/distributed-worker-nats-crispy-finch.md`, p5 entry V2-p5-7, and p2 entry V2-p2-8 for the `ai_outputParser` connection kind.
+- Roadmap plan, p5 section, entry V2-p5-7: `.pine/roadmap.md`.
+- `.pine/roadmap.md` — p2 entry V2-p2-8, the `ai_outputParser` connection kind.
 - `internal/workflow/document.go` (`ConnectionKind`, `knownConnectionKind`), `internal/ai/ai.go` (`ToolDefinition`, `AgentRequest`), `internal/ai/agent.go` (`LoopRuntime.Run`), `nodes/ai.go`, `nodes/executors.go`.
 - Local n8n UI reference: `design-refs/n8n-v2/INDEX.md` entry 03 — the "Require Specific Output Format" toggle that reveals the output parser slot. Captured from a local n8n 2.33.7 instance; gitignored, never vendored.

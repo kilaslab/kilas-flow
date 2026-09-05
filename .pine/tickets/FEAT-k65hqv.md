@@ -52,7 +52,7 @@ Import mapping for `@n8n/n8n-nodes-langchain` vector store and embeddings nodes 
 
 ## References
 
-- Roadmap plan, p6 section, entry V2-p6-6: `/Users/izzadev/.claude/plans/distributed-worker-nats-crispy-finch.md`.
+- Roadmap plan, p6 section, entry V2-p6-6: `.pine/roadmap.md`.
 - pgvector documentation, `indexes.md` and `README.md` (via Context7 `/pgvector/pgvector`): HNSW and IVFFlat syntax, the `m`/`ef_construction`/`lists` parameters, the operator classes `vector_l2_ops`/`vector_ip_ops`/`vector_cosine_ops`/`vector_l1_ops`, and the indexable limits — `vector` to 2,000 dimensions, `halfvec` to 4,000.
 - `internal/ai/openai.go` — `NewOpenAICompatible` and its injected `*http.Client`, the pattern an embeddings adapter must follow.
 - `internal/ai/ai.go` — the package boundary comment that keeps provider code inside adapters.

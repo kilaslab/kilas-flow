@@ -52,7 +52,7 @@ Finally, serve the allowlist. Add roots and functions to the node-types payload 
 
 ## References
 
-- Plan: `/Users/izzadev/.claude/plans/distributed-worker-nats-crispy-finch.md`, entry V2-p1-10.
+- Roadmap plan, p1 section, entry V2-p1-10: `.pine/roadmap.md`.
 - `internal/expression/expression.go` — `parse`, `lookup`, `rootValue`, `Evaluate`, `stringify`, `IsExpression`.
 - `internal/expression/doc.go` — the stale package documentation.
 - `internal/engine/runner.go` — `firstItem` and `NodeOutputs`, which define what `$node` can see.

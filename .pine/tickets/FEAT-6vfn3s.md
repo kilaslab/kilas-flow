@@ -77,7 +77,7 @@ The trap is `chat_id`. Telegram accepts a numeric chat id, a `@channelusername` 
 
 ## References
 
-- Roadmap plan, p3 section, entry V2-p3-7: `/Users/izzadev/.claude/plans/distributed-worker-nats-crispy-finch.md`.
+- Roadmap plan, p3 section, entry V2-p3-7: `.pine/roadmap.md`.
 - Telegram Bot API, https://core.telegram.org/bots/api — the method surface, `getFile` and its file path, and multipart upload of attachments.
 - `internal/interop/n8n/n8n.go` — the `mappings` table, `byN8NType`, `SupportedMappings()`.
 - `internal/node/registry.go` — `PropertyDefinition` and `VisibilityCondition`, whose single-key equality form is the limit this node runs into.

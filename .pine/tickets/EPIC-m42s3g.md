@@ -73,7 +73,7 @@ All four must run with no Node.js process anywhere. p11 makes this scenario exec
 
 ## References
 
-- Plan: `~/.claude/plans/distributed-worker-nats-crispy-finch.md`.
+- Roadmap plan: `.pine/roadmap.md`.
 - PRD: `gflow-prd-v1.md` §§19–24, 42, 54, 56–58, 64.
 - V1 epic: EPIC-c7gbdp.
 - Licence boundary: `.pine/memory/licensing.md` (written by the p0 guardrails ticket).

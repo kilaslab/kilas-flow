@@ -71,7 +71,7 @@ The trap is the notice. An activation notice that only appears in an API respons
 
 ## References
 
-- Roadmap plan, p3 section, entry V2-p3-4: `/Users/izzadev/.claude/plans/distributed-worker-nats-crispy-finch.md`.
+- Roadmap plan, p3 section, entry V2-p3-4: `.pine/roadmap.md`.
 - `internal/engine/runner.go` — `dependenciesComplete` and `nodeInput`; `NodeOutput` is indexed by the definition's declared output-port order.
 - `internal/webhook/webhook.go` — `requestPayload`'s fixed `{method, path, headers, query, body}` envelope, and `Extract`, which filters on one node type supplied at composition (`cmd/kilasflow/main.go:138`).
 - `nodes/webhook.go` — `webhookTrigger`, `executeWebhook` and `WebhookPath` as the shape a new trigger follows.

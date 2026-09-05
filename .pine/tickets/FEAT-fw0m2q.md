@@ -46,7 +46,7 @@ The trap is the execution record's `Trigger` field: it holds `manual | webhook |
 
 ## References
 
-- Plan: `/Users/izzadev/.claude/plans/distributed-worker-nats-crispy-finch.md`, entry V2-p1-3.
+- Roadmap plan, p1 section, entry V2-p1-3: `.pine/roadmap.md`.
 - `internal/workflow/compiler.go` — `validateExecutableTopology`, `producesItems`, the reachability walk.
 - `internal/engine/runner.go` — `Request`, `Run`.
 - `internal/engine/service.go` — `run`, `inputItem`.

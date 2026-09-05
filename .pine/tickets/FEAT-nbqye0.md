@@ -47,7 +47,7 @@ The trap is that this is an OpenAPI change: `ImportedWorkflowResource` and `Expo
 
 ## References
 
-- Plan: `/Users/izzadev/.claude/plans/distributed-worker-nats-crispy-finch.md`, entry V2-p1-12.
+- Roadmap plan, p1 section, entry V2-p1-12: `.pine/roadmap.md`.
 - `internal/interop/n8n/n8n.go` — `Document`, `Node`, `Unsupported`, `Lossy`, `Import`, the disabled-node diagnostic that shows the pattern.
 - `internal/interop/n8n/parameters.go` — `webhookToKilas`, `webhookToN8N`, `respondToN8N`, `defaultString`.
 - `nodes/webhook.go` — `ResponseModeImmediate` and the webhook node's `responseMode` options.

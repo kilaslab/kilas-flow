@@ -44,7 +44,7 @@ One decision to make. `systemPrompt` can stay as a permanent alias for `systemMe
 
 ## References
 
-- Plan `~/.claude/plans/distributed-worker-nats-crispy-finch.md`, p5 entry V2-p5-2.
+- Roadmap plan, p5 section, entry V2-p5-2: `.pine/roadmap.md`.
 - `nodes/ai.go` (`agentNode`, `executeHTTPTool`, `AgentExecutor.Execute`), `internal/ai/agent.go` (`LoopRuntime.Run`), `internal/ai/ai.go` (`AgentRequest`, `AgentResult`, `DefaultMaxIterations`).
 - Parameter names to be confirmed against `packages/@n8n/nodes-langchain` in the reference checkout once p0-1 has widened it — that package is not in the checkout today.
 - Local n8n UI reference: `design-refs/n8n-v2/INDEX.md` entry 03 — the Agent NDV parameter set this ticket matches. Captured from a local n8n 2.33.7 instance; gitignored, never vendored.

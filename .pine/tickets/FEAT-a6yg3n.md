@@ -49,7 +49,7 @@ Finally the importer. Add the n8n error-handling fields to `n8n.Node` and map `c
 
 ## References
 
-- Plan: `/Users/izzadev/.claude/plans/distributed-worker-nats-crispy-finch.md`, entry V2-p1-5.
+- Roadmap plan, p1 section, entry V2-p1-5: `.pine/roadmap.md`.
 - `nodes/core.go` — `sharedSettings`, the four declared settings.
 - `internal/engine/runner.go` — `Run`, `nodeContext`, `timeoutSeconds`, the error return path.
 - `internal/engine/service.go` — the node-run persistence loop and its hardcoded `Attempt: 1`.

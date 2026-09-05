@@ -63,7 +63,7 @@ The second trap is redaction. `internal/execution/redact.go` runs on every execu
 
 ## References
 
-- Roadmap plan, p3 section, entry V2-p3-8: `/Users/izzadev/.claude/plans/distributed-worker-nats-crispy-finch.md`.
+- Roadmap plan, p3 section, entry V2-p3-8: `.pine/roadmap.md`.
 - `internal/workflow/document.go` — `BinaryRef` and `Item`, with the comment declaring payload storage out of scope.
 - `nodes/code.go` — `runcode.Item{JSON: item.JSON}` on the way in and `workflow.Item{JSON: json}` on the way out, the two points where binary is dropped.
 - `nodes/executors.go` and `internal/engine/runner.go` — the two `cloneItem` implementations that copy `Item.Binary`.

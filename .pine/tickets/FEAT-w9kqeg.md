@@ -47,7 +47,7 @@ Do not vendor `waha.svg` in this ticket even though it is under the same MIT lic
 
 ## References
 
-- Plan: `~/.claude/plans/distributed-worker-nats-crispy-finch.md`, section "p0 — Reference and guardrails", entry V2-p0-1.
+- Roadmap plan, p0 section, entry V2-p0-1: `.pine/roadmap.md`.
 - Reference checkout: `/Users/izzadev/projects/mitrachat/n8n` at `40dfa42ced26ba6fe01e511ec685f01ea77c0a83` (n8n 2.34.0), `LICENSE.md` and `LICENSE_EE.md`.
 - `https://github.com/devlikeapro/n8n-nodes-waha` — `package.json` (`@devlikeapro/n8n-nodes-waha` 2025.2.9, MIT), `LICENSE.md`, `nodes/WAHA/v202409/openapi.json`, `nodes/WAHA/v202502/openapi.json`.
 - Git sparse-checkout cone-mode semantics: `git help sparse-checkout`, "CONE PATTERN SET".

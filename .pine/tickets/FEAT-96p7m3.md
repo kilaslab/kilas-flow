@@ -48,5 +48,6 @@ One decision. The "take from field" prompt mode could be deferred to keep the fi
 
 ## References
 
-- Plan `~/.claude/plans/distributed-worker-nats-crispy-finch.md`, p5 entry V2-p5-3, and p2 entry V2-p2-2 for `fixedCollection`.
+- Roadmap plan, p5 section, entry V2-p5-3: `.pine/roadmap.md`.
+- `.pine/roadmap.md` — p2 entry V2-p2-2, the `fixedCollection` property kind.
 - `nodes/ai.go`, `nodes/executors.go` (`RegisterExecutors`), `internal/node/registry.go` (`PropertyKind`), `internal/ai/ai.go` (`ChatModel`), `web/src/lib/workflow-editor/node-visual.ts`.

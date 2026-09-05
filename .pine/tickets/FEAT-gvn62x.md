@@ -49,7 +49,7 @@ Finally, `Migrate(db *DB, models ...any)` loses its reason to take models. Keep 
 
 ## References
 
-- Roadmap plan, p6 section, entry V2-p6-1: `/Users/izzadev/.claude/plans/distributed-worker-nats-crispy-finch.md`.
+- Roadmap plan, p6 section, entry V2-p6-1: `.pine/roadmap.md`.
 - PRD §54 Migration Strategy, `gflow-prd-v1.md`, which already names `migrations/000001_initial.up.sql` and requires both SQLite and PostgreSQL.
 - `internal/database/database.go` — `Migrate`, the only `AutoMigrate` call.
 - `cmd/kilasflow/main.go` — the `migrate` helper.

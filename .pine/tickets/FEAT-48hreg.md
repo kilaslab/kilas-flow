@@ -60,7 +60,7 @@ Two traps. First, `SourceHash` folds `RuntimeVersion` into the artifact identity
 
 ## References
 
-- Plan: `~/.claude/plans/distributed-worker-nats-crispy-finch.md`, section p8, V2-p8-5.
+- Roadmap plan, p8 section, entry V2-p8-5: `.pine/roadmap.md`.
 - PRD: `gflow-prd-v1.md` §64 ("plugin SDK design", "arbitrary third-party Go nodes"), §§30–32 Go Code Node, Go Code Security, Go Code V1 Restrictions, §57 Security Requirements.
 - Code: `internal/runcode/runcode.go` (`ToolchainCompiler.Available`, `ErrCompilerUnavailable`, `MemoryCache`, `Cache`, `SourceHash`, `RuntimeVersion`, `Runner.Execute` and its per-call `wazero.NewRuntimeWithConfig`, `DefaultLimits`), `internal/runcode/doc.go` (the stale open question), `cmd/kilasflow/main.go` (`runcode.NewToolchainCompiler()`), `Dockerfile` (`CGO_ENABLED=0`, `gcr.io/distroless/static-debian12:nonroot`), `internal/node/registry.go` (`Register`, immutability), `internal/safehttp/safehttp.go`, `pkg/sdk/` (empty placeholder), `go.mod` (`github.com/tetratelabs/wazero v1.9.0`).
 - `.pine/tickets/FEAT-czbzs6.md` — V2-p10-15, the external pack loader this ticket's WASM packs reuse rather than duplicate.

@@ -53,7 +53,7 @@ One trap worth stating: `Redacted`, `Split` and `Validate` all key off `Field.Se
 
 ## References
 
-- Plan: `/Users/izzadev/.claude/plans/distributed-worker-nats-crispy-finch.md`, section "p2 — Node metadata foundation", entry V2-p2-6.
+- Roadmap plan, p2 section, entry V2-p2-6: `.pine/roadmap.md`.
 - `internal/credentials/credentials.go` — the `definitions` map, `Field`, `Definition`, `Lookup`, `List`, `Validate`, `Redacted`, `Split`, `Apply`.
 - `internal/node/registry.go` — the registry shape to mirror, and where credential requirements land on `Definition`.
 - `internal/api/handlers/credentials.go` — `list-credential-types` and the CRUD operations; where the test operation is added.

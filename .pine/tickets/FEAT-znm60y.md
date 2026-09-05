@@ -68,7 +68,7 @@ The trap is the security scheme. An OpenAPI document describes how to authentica
 
 ## References
 
-- Roadmap plan, p3 section, entry V2-p3-2: `/Users/izzadev/.claude/plans/distributed-worker-nats-crispy-finch.md`.
+- Roadmap plan, p3 section, entry V2-p3-2: `.pine/roadmap.md`.
 - n8n 2.34.0 reference checkout, `packages/workflow/src/Interfaces.ts` — the routing and property metadata shapes a pack must fill in.
 - `internal/node/registry.go` — `Definition`, `PropertyDefinition`, `PropertyKind` and `Register`'s immutability rule.
 - `nodes/core.go` `RegisterAll` — the hand-written registration this generator's output has to join.

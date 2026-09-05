@@ -42,7 +42,7 @@ Do not wire `$('Node')` syntax here. This ticket delivers the lineage; the expre
 
 ## References
 
-- Plan: `/Users/izzadev/.claude/plans/distributed-worker-nats-crispy-finch.md`, entry V2-p1-2.
+- Roadmap plan, p1 section, entry V2-p1-2: `.pine/roadmap.md`.
 - `internal/engine/runner.go` — `firstItem`, `NodeOutputs`, `cloneItem`, the `completed` map.
 - `internal/workflow/document.go` — `Item`, `NodeInput`, `NodeOutput`.
 - `nodes/executors.go` — `executeSet`, `executeIF`, `executeMerge`, `cloneItem`.

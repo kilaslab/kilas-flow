@@ -49,7 +49,7 @@ Leave `resourceLocator`, `resourceMapper`, `filter` and `assignmentCollection` o
 
 ## References
 
-- Plan: `/Users/izzadev/.claude/plans/distributed-worker-nats-crispy-finch.md`, section "p2 — Node metadata foundation", entry V2-p2-2.
+- Roadmap plan, p2 section, entry V2-p2-2: `.pine/roadmap.md`.
 - `internal/node/registry.go` — `PropertyKind`, `PropertyDefinition`, `validateProperties`, `cloneProperties`, `requiredParameters`.
 - `web/src/lib/components/workflow-editor/property-field.svelte` — the kind chain and the `expressionCapable` guard.
 - `nodes/webhook.go`, `nodes/database.go`, `nodes/http.go`, `nodes/core.go` — every current `PropertySelect` use.

@@ -70,7 +70,7 @@ One thing cannot be confirmed from the reference checkout as it currently stands
 
 ## References
 
-- Roadmap plan, p3 section, entry V2-p3-6: `/Users/izzadev/.claude/plans/distributed-worker-nats-crispy-finch.md`.
+- Roadmap plan, p3 section, entry V2-p3-6: `.pine/roadmap.md`.
 - Telegram Bot API, https://core.telegram.org/bots/api — `setWebhook` (`url`, `allowed_updates`, `drop_pending_updates`, `secret_token` of 1–256 characters from `A-Z a-z 0-9 _ -`), the `X-Telegram-Bot-Api-Secret-Token` header, `deleteWebhook`, `getUpdates`, and the note that `chat_member`, `message_reaction` and `message_reaction_count` are not delivered by default.
 - `internal/webhook/webhook.go` — `Extract` and its single hardcoded node type, wired at `cmd/kilasflow/main.go:138`; `requestPayload`'s fixed item envelope.
 - `nodes/webhook.go` — `webhookTrigger`, the authentication modes, and `WebhookPath`.
