@@ -24,9 +24,9 @@ nor blocked actually failed to execute.
 | Tier | Count | of 39 |
 | --- | ---: | ---: |
 | imported | 39 | 100% |
-| activatable | 12 | 31% |
+| activatable | 13 | 33% |
 | runnable | 3 | 8% |
-| _(blocked by the offline policy)_ | 9 | 23% |
+| _(blocked by the offline policy)_ | 10 | 26% |
 
 ## Per fixture
 
@@ -38,22 +38,22 @@ nor blocked actually failed to execute.
 | `nodes-base/HttpRequest/test/encodingQuoted/encodingQuoted.test` | nodes-base | 3 | yes | yes | blocked | execute node "cc2f185d-df6a-4fa3-b7f4-29f0dbad0f9b": node "HTTP Request (v4)": request target is not allowed: host "dummy.domain" is not in the allowed list |
 | `nodes-base/HttpRequest/test/node/workflow.delete` | nodes-base | 2 | yes | yes | blocked | execute node "312e64ca-00bf-40e6-b21d-1f73930ef98c": node "HTTP Request": request target is not allowed: host "dummyjson.com" is not in the allowed list |
 | `nodes-base/HttpRequest/test/node/workflow.get` | nodes-base | 5 | yes | yes | blocked | execute node "38ec1a50-7f0e-4749-822d-f26370b00694": node "HTTP Request empty header": request target is not allowed: host "dummyjson.com" is not in the allo… |
-| `nodes-base/HttpRequest/test/node/workflow.pagination` | nodes-base | 37 | yes | no | no | node "08f83213-2e7e-487b-90af-f0acba0c5fc7" configuration is invalid: this node was imported from n8n-nodes-base.noOp, which KilasFlow does not support. Repl… |
+| `nodes-base/HttpRequest/test/node/workflow.pagination` | nodes-base | 37 | yes | yes | blocked | execute node "0e9bbc1b-902a-40ad-be73-709ce4917422": node "POST JSON": request target is not allowed: host "dummyjson.com" is not in the allowed list |
 | `nodes-base/HttpRequest/test/node/workflow.patch` | nodes-base | 2 | yes | yes | blocked | execute node "312e64ca-00bf-40e6-b21d-1f73930ef98c": node "HTTP Request": request target is not allowed: host "dummyjson.com" is not in the allowed list |
 | `nodes-base/HttpRequest/test/node/workflow.post` | nodes-base | 3 | yes | yes | blocked | execute node "07670093-862f-403f-96a5-ddf7fdb0d225": node "HTTP Request": request target is not allowed: host "dummyjson.com" is not in the allowed list |
 | `nodes-base/HttpRequest/test/node/workflow.put` | nodes-base | 2 | yes | yes | blocked | execute node "07670093-862f-403f-96a5-ddf7fdb0d225": node "HTTP Request": request target is not allowed: host "dummyjson.com" is not in the allowed list |
-| `nodes-base/HttpRequest/test/node/workflow.use_error_output` | nodes-base | 7 | yes | no | no | node "09b63a84-789d-4a31-b546-849ba47ed689" configuration is invalid: this node was imported from n8n-nodes-base.noOp, which KilasFlow does not support. Repl… |
+| `nodes-base/HttpRequest/test/node/workflow.use_error_output` | nodes-base | 7 | yes | no | no | workflow node "baa75f00-e0dd-40b2-b718-1e8311549a05" is disconnected from the trigger |
 | `nodes-base/HttpRequest/test/node/workflow.userAgent` | nodes-base | 3 | yes | yes | blocked | execute node "1aa13a8d-6e32-4a5e-9b3c-3a4d5e6f7a01": node "HTTP Request default UA": request target is not allowed: host "ua.example.com" is not in the allow… |
 | `nodes-base/If/test/v1/IF.boolean` | nodes-base | 11 | yes | no | no | node "2aa0a57b-b25a-4293-b7bf-fc240d4d21f4" configuration is invalid: this node was imported from n8n-nodes-testing.testData, which KilasFlow does not suppor… |
 | `nodes-base/If/test/v1/IF.date-time` | nodes-base | 8 | yes | no | no | node "c5d906bc-909a-45d9-a990-9ea6279cc807" configuration is invalid: this node was imported from n8n-nodes-testing.testData, which KilasFlow does not suppor… |
 | `nodes-base/If/test/v1/IF.number` | nodes-base | 22 | yes | no | no | node "77e63f88-e5fc-4662-af2e-6947a4768cf3" configuration is invalid: this node was imported from n8n-nodes-testing.testData, which KilasFlow does not suppor… |
 | `nodes-base/If/test/v1/IF.string` | nodes-base | 36 | yes | no | no | node "a35687af-99c1-43b2-aa43-955fcd87ff81" configuration is invalid: this node was imported from n8n-nodes-testing.testData, which KilasFlow does not suppor… |
-| `nodes-base/If/test/v2/IfV2.boolean` | nodes-base | 5 | yes | no | no | node "3184fda2-b1d0-400a-a882-5844bbe99ae3" configuration is invalid: this node was imported from n8n-nodes-base.noOp, which KilasFlow does not support. Repl… |
+| `nodes-base/If/test/v2/IfV2.boolean` | nodes-base | 5 | yes | no | no | node "85de5f5c-0a4c-4da1-805b-9e056089bcd5" configuration is invalid: this node was imported from n8n-nodes-testing.testData, which KilasFlow does not suppor… |
 | `nodes-base/If/test/v2/IfV2.date-time` | nodes-base | 5 | yes | no | no | node "60697c7f-3948-4790-97ba-8aba03d02ac2" configuration is invalid: this node was imported from n8n-nodes-testing.testData, which KilasFlow does not suppor… |
 | `nodes-base/If/test/v2/IfV2.number` | nodes-base | 5 | yes | no | no | node "60697c7f-3948-4790-97ba-8aba03d02ac2" configuration is invalid: this node was imported from n8n-nodes-testing.testData, which KilasFlow does not suppor… |
 | `nodes-base/If/test/v2/IfV2.other` | nodes-base | 5 | yes | no | no | node "60697c7f-3948-4790-97ba-8aba03d02ac2" configuration is invalid: this node was imported from n8n-nodes-testing.testData, which KilasFlow does not suppor… |
-| `nodes-base/If/test/v2/IfV2.string` | nodes-base | 5 | yes | no | no | node "48399b31-219a-42fa-bb5b-380dbb4a2e7d" configuration is invalid: IF conditions must contain exactly one condition |
-| `nodes-base/Set/test/Set.v3.workflow` | nodes-base | 21 | yes | no | no | node "7c79bfc1-02ca-43b8-b75f-0c2afcc80187" configuration is invalid: this node was imported from n8n-nodes-base.noOp, which KilasFlow does not support. Repl… |
+| `nodes-base/If/test/v2/IfV2.string` | nodes-base | 5 | yes | no | no | node "674c5688-ac03-49a7-83fb-62460a10cc10" configuration is invalid: this node was imported from n8n-nodes-testing.testData, which KilasFlow does not suppor… |
+| `nodes-base/Set/test/Set.v3.workflow` | nodes-base | 21 | yes | no | no | node "70c10657-5d81-46c5-b931-966024d7ce45" configuration is invalid: this node was imported from n8n-nodes-testing.testData, which KilasFlow does not suppor… |
 | `nodes-base/Set/test/Set.v3_3.workflow` | nodes-base | 21 | yes | no | no | node "8afc51b7-f9ed-417a-a58b-2fe251ba4b93" configuration is invalid: this node was imported from n8n-nodes-testing.testData, which KilasFlow does not suppor… |
 | `nodes-base/Set/test/Set.workflow` | nodes-base | 7 | yes | no | no | node "a7e51ac7-734a-4652-bb02-d9f0a4d8410b" configuration is invalid: this node was imported from n8n-nodes-testing.testData, which KilasFlow does not suppor… |
 | `nodes-base/Set/test/Set.workflow.null_values` | nodes-base | 6 | yes | yes | yes | — |
@@ -61,7 +61,7 @@ nor blocked actually failed to execute.
 | `waha-templates/chatting-template/template` | waha-templates | 12 | yes | no | no | node "a0062c52-b6fe-48a1-8347-8ff082964d81" requires a wahaApi credential |
 | `waha-templates/chatwoot/WhatsApp___ChatWoot__ChatWoot____WAHA_Messages` | waha-templates | 22 | yes | no | no | node "b71d79fa-2eae-4fb8-97f6-665c496c85f9" requires a wahaApi credential |
 | `waha-templates/chatwoot/WhatsApp___ChatWoot__Database_Migrations` | waha-templates | 3 | yes | no | no | node "80eb9337-a260-41cb-8a71-56eca71c0a8c" requires a postgres credential |
-| `waha-templates/chatwoot/WhatsApp___ChatWoot__WAHA____ChatWoot_Messages` | waha-templates | 23 | yes | no | no | node "ab41bbd3-7366-402f-bec0-d179785ba607" configuration is invalid: this node was imported from n8n-nodes-base.switch, which KilasFlow does not support. Re… |
+| `waha-templates/chatwoot/WhatsApp___ChatWoot__WAHA____ChatWoot_Messages` | waha-templates | 23 | yes | no | no | node "48043a43-2edd-4c4e-9640-03be184a5af0" requires a postgres credential |
 | `waha-templates/chatwoot/WhatsApp___ChatWoot__WAHA____ChatWoot_Sync_Contacts` | waha-templates | 13 | yes | no | no | node "db26d1bc-cce8-40c7-b1b7-95e38dc70ae6" requires a wahaApi credential |
 | `waha-templates/fetch-image-rotate-and-send-it-back/template` | waha-templates | 10 | yes | no | no | node "490960e8-c5de-463b-b3d4-06b52e083666" requires a wahaApi credential |
 | `waha-templates/forward-all-text-messages-to-email/template` | waha-templates | 4 | yes | no | no | node "21a4aa35-88d3-4fc5-8f5a-ad6bef3a8310" requires a wahaApi credential |

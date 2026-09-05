@@ -37,6 +37,15 @@ type NodeDefinition struct {
 	// otherwise be unactivatable in every other configuration. The shape
 	// follows Validate, which is a callback for the same reason.
 	RequiredFor func(parameters map[string]any, typeVersion TypeVersion) []string
+	// PortsFor computes a node's ports from its own configuration.
+	//
+	// Some nodes' ports are not a property of the type. A Switch has one output
+	// per rule the user wrote, and a Merge has as many inputs as it was told to
+	// take — declaring a fixed maximum instead would show dead ports on the
+	// canvas and refuse to import a workflow with one rule more than the
+	// maximum. When set, the result replaces Inputs and Outputs for *this*
+	// node, before any connection is resolved against them.
+	PortsFor func(parameters map[string]any, typeVersion TypeVersion) (inputs, outputs []Port)
 	// RequiredCredentials are the credential types the node cannot run without.
 	//
 	// It is checked here rather than in each node's Validate because a
@@ -231,6 +240,13 @@ func Compile(document Document, catalog Catalog) (IR, error) {
 				Message: message,
 			})
 			continue
+		}
+		// A node whose ports depend on its own parameters is resolved here,
+		// once, before anything reads them: the connection check, the runner's
+		// output arity and the editor all have to see the same list.
+		if definition.PortsFor != nil {
+			inputs, outputs := definition.PortsFor(node.Parameters, node.TypeVersion)
+			definition.Inputs, definition.Outputs = inputs, outputs
 		}
 		definitions[node.ID] = definition
 		nodes[node.ID] = node
@@ -616,15 +632,17 @@ func hasAnyCycle(edges []IREdge) bool {
 
 func cloneNodeDefinition(definition NodeDefinition) NodeDefinition {
 	return NodeDefinition{
-		Type:               definition.Type,
-		Version:            definition.Version,
-		LoopEntry:          definition.LoopEntry,
-		Inputs:             append([]Port(nil), definition.Inputs...),
-		Outputs:            append([]Port(nil), definition.Outputs...),
-		RequiredParameters: append([]string(nil), definition.RequiredParameters...),
-		RequiredFor:        definition.RequiredFor,
-		ExecutorID:         definition.ExecutorID,
-		Validate:           definition.Validate,
+		Type:                definition.Type,
+		Version:             definition.Version,
+		LoopEntry:           definition.LoopEntry,
+		Inputs:              append([]Port(nil), definition.Inputs...),
+		Outputs:             append([]Port(nil), definition.Outputs...),
+		RequiredParameters:  append([]string(nil), definition.RequiredParameters...),
+		RequiredFor:         definition.RequiredFor,
+		PortsFor:            definition.PortsFor,
+		RequiredCredentials: append([]string(nil), definition.RequiredCredentials...),
+		ExecutorID:          definition.ExecutorID,
+		Validate:            definition.Validate,
 	}
 }
 

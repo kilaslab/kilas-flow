@@ -84,6 +84,17 @@ type Definition struct {
 	// property of *how* something was registered rather than of what it
 	// claims.
 	Source Source `json:"source"`
+	// PortsFor computes this node's ports from its own parameters.
+	//
+	// A Switch has one output per rule the user wrote and a Merge has as many
+	// inputs as it was told to take, so their ports are not a property of the
+	// type. It is a callback for the same reason Validate is: the answer
+	// depends on the node, not on the definition.
+	//
+	// The static Inputs and Outputs stay, and are what the editor shows for an
+	// unconfigured node and what the catalogue advertises — a picker cannot ask
+	// a node that does not exist yet how many ports it will have.
+	PortsFor func(parameters map[string]any, version workflow.TypeVersion) (inputs, outputs []workflow.Port) `json:"-"`
 	// LifecycleID binds this node's activate and deactivate hooks, by the same
 	// opaque server-owned identifier pattern as ExecutorID: a trigger that
 	// declares a hook nobody registered fails at startup rather than at
@@ -399,6 +410,7 @@ func (registry *Registry) Lookup(nodeType string, version workflow.TypeVersion) 
 		RequiredFor: func(parameters map[string]any, typeVersion workflow.TypeVersion) []string {
 			return visibleRequiredParameters(definition.Parameters, parameters, typeVersion.String())
 		},
+		PortsFor:             definition.PortsFor,
 		RequiredCredentials:  requiredCredentials(definition),
 		ExecutorID:           definition.ExecutorID,
 		Validate:             definition.Validate,

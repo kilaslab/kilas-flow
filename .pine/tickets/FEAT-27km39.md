@@ -34,8 +34,7 @@ There is also nothing that tells an operator how to run this thing responsibly: 
 ## Acceptance criteria
 
 - [ ] The configuration reference is generated from `internal/config/config.go`, so a new field appears in the documentation without anyone remembering to add it, and a section can never again be absent.
-- [ ] The generated reference is checked in the V2-p10-1 pipeline, and a struct change with no regenerated reference fails the run.
-- [ ] Every key documents its type, its default, its environment-variable name and whether it is required, including all ten sections.
+- [ ] Every key documents its type, its default, its environment-variable name and whether it is required, including all ten sections, and the generated reference is checked in the V2-p10-1 pipeline so a struct change with no regenerated reference fails the run.
 - [ ] `config.example.yaml` is either generated from the same source or removed in favour of the reference, so the repository never again holds two disagreeing descriptions of the same struct.
 - [ ] The single-word section rule imposed by `envKeyToPath` is documented where somebody adding a section will see it.
 - [ ] The boot behaviour for a missing encryption key and a missing embed signing key is documented, including exactly what capability is silently lost in each case.

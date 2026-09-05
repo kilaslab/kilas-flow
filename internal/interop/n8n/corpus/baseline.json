@@ -1,12 +1,12 @@
 {
   "comment": "Baseline for the n8n importer regression corpus. Tiers: imported = n8n.Import returned no error; activatable = workflow.Compile returned no error; runnable = the workflow ran to completion with HTTP, SQL and model calls stubbed. Regenerate with go test ./internal/interop/n8n/corpus -update-baseline, and say in the commit which workflows moved and why.",
   "tiers": {
-    "activatable": 12,
+    "activatable": 13,
     "imported": 39,
     "runnable": 3
   },
   "total": 39,
-  "blocked": 9,
+  "blocked": 10,
   "nodeTypeInventory": {
     "@devlikeapro/n8n-nodes-chatwoot.chatWoot": 5,
     "@devlikeapro/n8n-nodes-waha.WAHA": 23,
@@ -103,10 +103,11 @@
       "source": "nodes-base",
       "nodes": 37,
       "imported": true,
-      "activatable": false,
+      "activatable": true,
       "runnable": false,
-      "unsupported": 8,
-      "reason": "node \"08f83213-2e7e-487b-90af-f0acba0c5fc7\" configuration is invalid: this node was imported from n8n-nodes-base.noOp, which KilasFlow does not support. Repl…"
+      "blocked": true,
+      "unsupported": 6,
+      "reason": "execute node \"0e9bbc1b-902a-40ad-be73-709ce4917422\": node \"POST JSON\": request target is not allowed: host \"dummyjson.com\" is not in the allowed list"
     },
     {
       "name": "nodes-base/HttpRequest/test/node/workflow.patch",
@@ -148,8 +149,8 @@
       "imported": true,
       "activatable": false,
       "runnable": false,
-      "unsupported": 11,
-      "reason": "node \"09b63a84-789d-4a31-b546-849ba47ed689\" configuration is invalid: this node was imported from n8n-nodes-base.noOp, which KilasFlow does not support. Repl…"
+      "unsupported": 7,
+      "reason": "workflow node \"baa75f00-e0dd-40b2-b718-1e8311549a05\" is disconnected from the trigger"
     },
     {
       "name": "nodes-base/HttpRequest/test/node/workflow.userAgent",
@@ -169,7 +170,7 @@
       "imported": true,
       "activatable": false,
       "runnable": false,
-      "unsupported": 13,
+      "unsupported": 3,
       "reason": "node \"2aa0a57b-b25a-4293-b7bf-fc240d4d21f4\" configuration is invalid: this node was imported from n8n-nodes-testing.testData, which KilasFlow does not suppor…"
     },
     {
@@ -179,7 +180,7 @@
       "imported": true,
       "activatable": false,
       "runnable": false,
-      "unsupported": 9,
+      "unsupported": 3,
       "reason": "node \"c5d906bc-909a-45d9-a990-9ea6279cc807\" configuration is invalid: this node was imported from n8n-nodes-testing.testData, which KilasFlow does not suppor…"
     },
     {
@@ -189,7 +190,7 @@
       "imported": true,
       "activatable": false,
       "runnable": false,
-      "unsupported": 19,
+      "unsupported": 3,
       "reason": "node \"77e63f88-e5fc-4662-af2e-6947a4768cf3\" configuration is invalid: this node was imported from n8n-nodes-testing.testData, which KilasFlow does not suppor…"
     },
     {
@@ -199,7 +200,7 @@
       "imported": true,
       "activatable": false,
       "runnable": false,
-      "unsupported": 34,
+      "unsupported": 3,
       "reason": "node \"a35687af-99c1-43b2-aa43-955fcd87ff81\" configuration is invalid: this node was imported from n8n-nodes-testing.testData, which KilasFlow does not suppor…"
     },
     {
@@ -209,8 +210,8 @@
       "imported": true,
       "activatable": false,
       "runnable": false,
-      "unsupported": 7,
-      "reason": "node \"3184fda2-b1d0-400a-a882-5844bbe99ae3\" configuration is invalid: this node was imported from n8n-nodes-base.noOp, which KilasFlow does not support. Repl…"
+      "unsupported": 4,
+      "reason": "node \"85de5f5c-0a4c-4da1-805b-9e056089bcd5\" configuration is invalid: this node was imported from n8n-nodes-testing.testData, which KilasFlow does not suppor…"
     },
     {
       "name": "nodes-base/If/test/v2/IfV2.date-time",
@@ -219,7 +220,7 @@
       "imported": true,
       "activatable": false,
       "runnable": false,
-      "unsupported": 7,
+      "unsupported": 4,
       "reason": "node \"60697c7f-3948-4790-97ba-8aba03d02ac2\" configuration is invalid: this node was imported from n8n-nodes-testing.testData, which KilasFlow does not suppor…"
     },
     {
@@ -229,7 +230,7 @@
       "imported": true,
       "activatable": false,
       "runnable": false,
-      "unsupported": 7,
+      "unsupported": 4,
       "reason": "node \"60697c7f-3948-4790-97ba-8aba03d02ac2\" configuration is invalid: this node was imported from n8n-nodes-testing.testData, which KilasFlow does not suppor…"
     },
     {
@@ -239,7 +240,7 @@
       "imported": true,
       "activatable": false,
       "runnable": false,
-      "unsupported": 8,
+      "unsupported": 4,
       "reason": "node \"60697c7f-3948-4790-97ba-8aba03d02ac2\" configuration is invalid: this node was imported from n8n-nodes-testing.testData, which KilasFlow does not suppor…"
     },
     {
@@ -249,8 +250,8 @@
       "imported": true,
       "activatable": false,
       "runnable": false,
-      "unsupported": 8,
-      "reason": "node \"48399b31-219a-42fa-bb5b-380dbb4a2e7d\" configuration is invalid: IF conditions must contain exactly one condition"
+      "unsupported": 4,
+      "reason": "node \"674c5688-ac03-49a7-83fb-62460a10cc10\" configuration is invalid: this node was imported from n8n-nodes-testing.testData, which KilasFlow does not suppor…"
     },
     {
       "name": "nodes-base/Set/test/Set.v3.workflow",
@@ -259,8 +260,8 @@
       "imported": true,
       "activatable": false,
       "runnable": false,
-      "unsupported": 19,
-      "reason": "node \"7c79bfc1-02ca-43b8-b75f-0c2afcc80187\" configuration is invalid: this node was imported from n8n-nodes-base.noOp, which KilasFlow does not support. Repl…"
+      "unsupported": 17,
+      "reason": "node \"70c10657-5d81-46c5-b931-966024d7ce45\" configuration is invalid: this node was imported from n8n-nodes-testing.testData, which KilasFlow does not suppor…"
     },
     {
       "name": "nodes-base/Set/test/Set.v3_3.workflow",
@@ -269,7 +270,7 @@
       "imported": true,
       "activatable": false,
       "runnable": false,
-      "unsupported": 6,
+      "unsupported": 4,
       "reason": "node \"8afc51b7-f9ed-417a-a58b-2fe251ba4b93\" configuration is invalid: this node was imported from n8n-nodes-testing.testData, which KilasFlow does not suppor…"
     },
     {
@@ -307,7 +308,7 @@
       "imported": true,
       "activatable": false,
       "runnable": false,
-      "unsupported": 9,
+      "unsupported": 5,
       "reason": "node \"a0062c52-b6fe-48a1-8347-8ff082964d81\" requires a wahaApi credential"
     },
     {
@@ -317,7 +318,7 @@
       "imported": true,
       "activatable": false,
       "runnable": false,
-      "unsupported": 22,
+      "unsupported": 18,
       "reason": "node \"b71d79fa-2eae-4fb8-97f6-665c496c85f9\" requires a wahaApi credential"
     },
     {
@@ -337,8 +338,8 @@
       "imported": true,
       "activatable": false,
       "runnable": false,
-      "unsupported": 27,
-      "reason": "node \"ab41bbd3-7366-402f-bec0-d179785ba607\" configuration is invalid: this node was imported from n8n-nodes-base.switch, which KilasFlow does not support. Re…"
+      "unsupported": 23,
+      "reason": "node \"48043a43-2edd-4c4e-9640-03be184a5af0\" requires a postgres credential"
     },
     {
       "name": "waha-templates/chatwoot/WhatsApp___ChatWoot__WAHA____ChatWoot_Sync_Contacts",
@@ -347,7 +348,7 @@
       "imported": true,
       "activatable": false,
       "runnable": false,
-      "unsupported": 13,
+      "unsupported": 10,
       "reason": "node \"db26d1bc-cce8-40c7-b1b7-95e38dc70ae6\" requires a wahaApi credential"
     },
     {
@@ -357,7 +358,7 @@
       "imported": true,
       "activatable": false,
       "runnable": false,
-      "unsupported": 13,
+      "unsupported": 11,
       "reason": "node \"490960e8-c5de-463b-b3d4-06b52e083666\" requires a wahaApi credential"
     },
     {
@@ -397,7 +398,7 @@
       "imported": true,
       "activatable": false,
       "runnable": false,
-      "unsupported": 9,
+      "unsupported": 8,
       "reason": "node \"052ad79c-4c69-41fe-baf5-b6e609f663ca\" requires a wahaApi credential"
     },
     {
@@ -407,7 +408,7 @@
       "imported": true,
       "activatable": false,
       "runnable": false,
-      "unsupported": 8,
+      "unsupported": 7,
       "reason": "node \"05513103-49fc-4324-80ea-5e86b61f3272\" configuration is invalid: this node was imported from n8n-nodes-base.convertToFile, which KilasFlow does not supp…"
     },
     {
@@ -417,7 +418,7 @@
       "imported": true,
       "activatable": false,
       "runnable": false,
-      "unsupported": 8,
+      "unsupported": 7,
       "reason": "node \"d965e045-faab-44d2-982c-dd9be8c58c06\" requires a wahaApi credential"
     },
     {
@@ -427,7 +428,7 @@
       "imported": true,
       "activatable": false,
       "runnable": false,
-      "unsupported": 43,
+      "unsupported": 37,
       "reason": "node \"6adb377a-249c-421d-9259-47a477fa91e8\" configuration is invalid: this node was imported from n8n-nodes-base.wait, which KilasFlow does not support. Repl…"
     }
   ]

@@ -229,9 +229,21 @@ func TestImportBranchingMapsOutputIndexesToNamedPorts(t *testing.T) {
 		t.Errorf("standard branch port = %q, want false", byTarget["d"])
 	}
 
-	condition := nodeByName(result.Document, "If").Parameters["conditions"].([]any)[0].(map[string]any)
-	if condition["field"] != "tier" || condition["operator"] != "equals" || condition["value"] != "gold" {
-		t.Fatalf("condition = %#v, want the field path extracted from the n8n left value", condition)
+	// The condition travels as n8n wrote it: the left value stays an
+	// expression, the operator keeps its type, and nothing is reduced to a
+	// field path the evaluator would have to guess at.
+	filter := nodeByName(result.Document, "If").Parameters["conditions"].(map[string]any)
+	condition := filter["conditions"].([]any)[0].(map[string]any)
+	left, _ := condition["leftValue"].(map[string]any)
+	if left["mode"] != "expression" || left["value"] != "{{ $json.tier }}" {
+		t.Fatalf("left value = %#v, want the expression carried", condition["leftValue"])
+	}
+	operator, _ := condition["operator"].(map[string]any)
+	if operator["type"] != "string" || operator["operation"] != "equals" {
+		t.Fatalf("operator = %#v, want the type and operation carried", condition["operator"])
+	}
+	if condition["rightValue"] != "gold" {
+		t.Fatalf("right value = %#v, want it carried", condition["rightValue"])
 	}
 }
 
@@ -387,7 +399,10 @@ func TestImportReportsAConnectionToAMissingNode(t *testing.T) {
 	}
 }
 
-func TestImportReportsAnUnsupportedIFOperator(t *testing.T) {
+// A regex condition used to be reported as unsupported and dropped. It is
+// carried now, because the evaluator implements it — Go's RE2 makes a pattern
+// from a document safe to run in a way a backtracking engine does not.
+func TestImportCarriesARegexCondition(t *testing.T) {
 	t.Parallel()
 
 	result, err := n8n.Import([]byte(`{
@@ -401,8 +416,14 @@ func TestImportReportsAnUnsupportedIFOperator(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Import() error = %v", err)
 	}
-	if !hasReason(result.Unsupported, "regex") {
-		t.Fatalf("unsupported = %#v, want the exact operator named", result.Unsupported)
+	if hasReason(result.Unsupported, "regex") {
+		t.Fatalf("unsupported = %#v, want a regex condition carried rather than dropped", result.Unsupported)
+	}
+	filter := nodeByName(result.Document, "If").Parameters["conditions"].(map[string]any)
+	condition := filter["conditions"].([]any)[0].(map[string]any)
+	operator, _ := condition["operator"].(map[string]any)
+	if operator["operation"] != "regex" {
+		t.Fatalf("operator = %#v, want the regex operation carried", condition["operator"])
 	}
 }
 
@@ -650,11 +671,17 @@ const stickyFixture = `{
 
 // switchFixture is an unmapped node wired on three separate outputs. Its
 // branches must stay distinguishable through an import and an export.
+// switchFixture is a three-output node KilasFlow does *not* support, used to
+// exercise the placeholder's arity handling.
+//
+// It was a Switch until Switch became a real node. The type matters only in
+// that nothing maps it: what is under test is that a three-output placeholder
+// keeps its three branches distinct, not anything about routing.
 const switchFixture = `{
   "name": "Three ways",
   "nodes": [
     {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}},
-    {"id":"b","name":"Route","type":"n8n-nodes-base.switch","typeVersion":3,"position":[220,0],"parameters":{"rules":{}}},
+    {"id":"b","name":"Route","type":"n8n-nodes-base.compareDatasets","typeVersion":2,"position":[220,0],"parameters":{"rules":{}}},
     {"id":"c","name":"First","type":"n8n-nodes-base.set","typeVersion":3.4,"position":[440,-120],"parameters":{}},
     {"id":"d","name":"Second","type":"n8n-nodes-base.set","typeVersion":3.4,"position":[440,0],"parameters":{}},
     {"id":"e","name":"Third","type":"n8n-nodes-base.set","typeVersion":3.4,"position":[440,120],"parameters":{}}
@@ -877,7 +904,7 @@ func TestPlaceholderStillRefusesToCompile(t *testing.T) {
 	if err == nil {
 		t.Fatal("a workflow containing an unsupported placeholder must not compile")
 	}
-	if !strings.Contains(err.Error(), "n8n-nodes-base.switch") {
+	if !strings.Contains(err.Error(), "n8n-nodes-base.compareDatasets") {
 		t.Errorf("compile error = %v, want it to name the original n8n type", err)
 	}
 }
@@ -2013,5 +2040,147 @@ func TestASetNodeSavedWithTheOldFlatShapeStillRoundTrips(t *testing.T) {
 	}
 	if strings.Join(names, ",") != "count,status" {
 		t.Fatalf("names = %v, want the only stable order a map can give", names)
+	}
+}
+
+// Every one of these used to become the unsupported placeholder, so a single
+// Switch made an entire imported workflow unactivatable.
+func TestTheFlowControlFamilyImportsAndExports(t *testing.T) {
+	t.Parallel()
+
+	for sourceType, want := range map[string]string{
+		"n8n-nodes-base.switch":         n8n.SwitchNodeType,
+		"n8n-nodes-base.filter":         n8n.FilterNodeType,
+		"n8n-nodes-base.limit":          n8n.LimitNodeType,
+		"n8n-nodes-base.noOp":           n8n.NoOpNodeType,
+		"n8n-nodes-base.splitInBatches": n8n.LoopNodeType,
+	} {
+		advertised := strings.Join(n8n.SupportedMappings(), "\n")
+		if !strings.Contains(advertised, sourceType+" ↔ "+want) {
+			t.Errorf("SupportedMappings() does not advertise %s ↔ %s", sourceType, want)
+		}
+	}
+
+	const fixture = `{
+	  "name": "Flow",
+	  "nodes": [
+	    {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}},
+	    {"id":"b","name":"Route","type":"n8n-nodes-base.switch","typeVersion":3.2,"position":[220,0],
+	     "parameters":{"mode":"rules","rules":{"values":[
+	       {"conditions":{"combinator":"and","options":{"caseSensitive":true},"conditions":[
+	         {"leftValue":"={{ $json.tier }}","rightValue":"gold","operator":{"type":"string","operation":"equals"}}]},
+	        "outputKey":"VIP","renameOutput":true},
+	       {"conditions":{"combinator":"and","options":{"caseSensitive":true},"conditions":[
+	         {"leftValue":"={{ $json.tier }}","rightValue":"silver","operator":{"type":"string","operation":"equals"}}]}}
+	     ]},"options":{"fallbackOutput":"extra"}}},
+	    {"id":"c","name":"Nothing","type":"n8n-nodes-base.noOp","typeVersion":1,"position":[440,-120],"parameters":{}},
+	    {"id":"d","name":"Few","type":"n8n-nodes-base.limit","typeVersion":1,"position":[440,0],
+	     "parameters":{"maxItems":5,"keep":"lastItems"}},
+	    {"id":"e","name":"Rest","type":"n8n-nodes-base.filter","typeVersion":2.2,"position":[440,120],
+	     "parameters":{"conditions":{"combinator":"or","options":{"caseSensitive":false},"conditions":[
+	       {"leftValue":"={{ $json.n }}","rightValue":3,"operator":{"type":"number","operation":"gt"}}]}}}
+	  ],
+	  "connections": {
+	    "Manual": {"main": [[{"node":"Route","type":"main","index":0}]]},
+	    "Route": {"main": [
+	      [{"node":"Nothing","type":"main","index":0}],
+	      [{"node":"Few","type":"main","index":0}],
+	      [{"node":"Rest","type":"main","index":0}]
+	    ]}
+	  }
+	}`
+
+	result := importFixture(t, fixture)
+	for name, want := range map[string]string{
+		"Route": n8n.SwitchNodeType, "Nothing": n8n.NoOpNodeType,
+		"Few": n8n.LimitNodeType, "Rest": n8n.FilterNodeType,
+	} {
+		if got := nodeByName(result.Document, name).Type; got != want {
+			t.Errorf("%s imported as %q, want %q", name, got, want)
+		}
+	}
+
+	// The three branches keep their own ports. n8n identifies an output
+	// positionally and a rule that moved would move every wire below it, so the
+	// port name is the index and the label is what carries the rename.
+	ports := map[string]string{}
+	for _, connection := range result.Document.Connections {
+		if connection.Source.NodeID == "b" {
+			ports[connection.Target.NodeID] = connection.Source.Port
+		}
+	}
+	if ports["c"] != "0" || ports["d"] != "1" || ports["e"] != "2" {
+		t.Fatalf("switch branches = %#v, want three distinct ports including the fallback", ports)
+	}
+
+	// Compiling proves the ports the rules produced are the ports the
+	// connections were resolved against.
+	document := result.Document
+	document.ID = "wf_flow"
+	if _, err := workflow.Compile(document, registry(t)); err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+
+	// And out again, onto the same slots.
+	exported, err := n8n.Export(result.Document, registry(t))
+	if err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+	slots := exported.Document.Connections["Route"]["main"]
+	if len(slots) != 3 {
+		t.Fatalf("exported %d output slots, want three", len(slots))
+	}
+	for index, wanted := range []string{"Nothing", "Few", "Rest"} {
+		if len(slots[index]) != 1 || slots[index][0].Node != wanted {
+			t.Fatalf("slot %d = %#v, want %q", index, slots[index], wanted)
+		}
+	}
+	var routed n8n.Node
+	for _, exportedNode := range exported.Document.Nodes {
+		if exportedNode.Name == "Route" {
+			routed = exportedNode
+		}
+	}
+	if routed.Type != "n8n-nodes-base.switch" {
+		t.Fatalf("exported type = %q", routed.Type)
+	}
+	rules, _ := routed.Parameters["rules"].(map[string]any)
+	values, _ := rules["values"].([]any)
+	if len(values) != 2 {
+		t.Fatalf("exported %d rules, want both", len(values))
+	}
+	first, _ := values[0].(map[string]any)
+	if first["outputKey"] != "VIP" {
+		t.Errorf("exported first rule = %#v, want the renamed output carried", first)
+	}
+}
+
+// n8n's Merge used to have every mode rewritten to `append`, with an issue
+// whose own words were "changes what this node does".
+func TestMergeModesSurviveImport(t *testing.T) {
+	t.Parallel()
+
+	const fixture = `{
+	  "name": "Join",
+	  "nodes": [{"id":"a","name":"Join","type":"n8n-nodes-base.merge","typeVersion":3,"position":[0,0],
+	    "parameters":{"mode":"combine","combineBy":"combineByFields","numberInputs":3,
+	      "mergeByFields":{"values":[{"field1":"id","field2":"id"}]},"joinMode":"keepEverything"}}],
+	  "connections": {}
+	}`
+
+	result := importFixture(t, fixture)
+	merged := nodeByName(result.Document, "Join")
+	for key, want := range map[string]any{
+		"mode": "combine", "combineBy": "combineByFields",
+		"numberInputs": float64(3), "fieldsToMatch": "id", "joinMode": "keepEverything",
+	} {
+		if merged.Parameters[key] != want {
+			t.Errorf("%s = %#v, want %#v", key, merged.Parameters[key], want)
+		}
+	}
+	for _, issue := range result.Unsupported {
+		if strings.Contains(issue.Reason, "only appends") {
+			t.Error("the importer still claims Merge only appends")
+		}
 	}
 }

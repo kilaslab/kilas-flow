@@ -238,6 +238,30 @@ var mappings = []mapping{
 		exportTypeVersion: 1, toKilas: stickyToKilas, toN8N: stickyToN8N,
 	},
 
+	// Flow control. Every one of these used to become the unsupported
+	// placeholder, so a single Switch made an entire imported workflow
+	// unactivatable.
+	{
+		n8nType: "n8n-nodes-base.switch", kilasType: SwitchNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 3.2, toKilas: switchToKilas, toN8N: switchToN8N,
+	},
+	{
+		n8nType: "n8n-nodes-base.filter", kilasType: FilterNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 2.2, toKilas: filterNodeToKilas, toN8N: filterNodeToN8N,
+	},
+	{
+		n8nType: "n8n-nodes-base.limit", kilasType: LimitNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1, toKilas: limitToKilas, toN8N: limitToN8N,
+	},
+	{
+		n8nType: "n8n-nodes-base.noOp", kilasType: NoOpNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1,
+	},
+	{
+		n8nType: "n8n-nodes-base.splitInBatches", kilasType: LoopNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 3, toKilas: splitInBatchesToKilas, toN8N: splitInBatchesToN8N,
+	},
+
 	// Telegram. The action node is a pack; the trigger is a built-in, because
 	// its registration, its file downloads and its polling mode are behaviour
 	// rather than data.
@@ -286,6 +310,16 @@ var mappings = []mapping{
 
 // The WAHA pack's node types, named here so the mapping table and the pack
 // cannot disagree about them without a compile error somewhere.
+// The flow-control family's node types, named here so the mapping table and
+// the node package cannot disagree about them without a compile error.
+const (
+	SwitchNodeType = "kilasflow.switch"
+	FilterNodeType = "kilasflow.filter"
+	LimitNodeType  = "kilasflow.limit"
+	NoOpNodeType   = "kilasflow.noOp"
+	LoopNodeType   = "kilasflow.loop"
+)
+
 const (
 	WAHANodeType        = "pack.waha"
 	WAHATriggerNodeType = "pack.wahaTrigger"
@@ -466,11 +500,13 @@ func Import(payload []byte, catalog workflow.Catalog) (ImportResult, error) {
 
 	typeByID := make(map[string]string, len(nodes))
 	versionByID := make(map[string]workflow.TypeVersion, len(nodes))
+	parametersByID := make(map[string]map[string]any, len(nodes))
 	for _, converted := range nodes {
 		typeByID[converted.ID] = converted.Type
 		versionByID[converted.ID] = converted.TypeVersion
+		parametersByID[converted.ID] = converted.Parameters
 	}
-	connections, connectionIssues := importConnections(source.Connections, idByName, typeByID, versionByID, catalog)
+	connections, connectionIssues := importConnections(source.Connections, idByName, typeByID, versionByID, parametersByID, catalog)
 	unsupported = append(unsupported, connectionIssues...)
 	unsupported = append(unsupported, documentIssues(source)...)
 
@@ -557,7 +593,7 @@ func documentIssues(source Document) []ImportIssue {
 // model emits ai_languageModel, an agent receives it. KilasFlow declares the
 // same shape, so the loop is already directionally correct for every kind; what
 // it needed was the kind itself and ports that exist on both endpoints.
-func importConnections(source Connections, idByName, typeByID map[string]string, versionByID map[string]workflow.TypeVersion, catalog workflow.Catalog) ([]workflow.Connection, []Unsupported) {
+func importConnections(source Connections, idByName, typeByID map[string]string, versionByID map[string]workflow.TypeVersion, parametersByID map[string]map[string]any, catalog workflow.Catalog) ([]workflow.Connection, []Unsupported) {
 	connections := make([]workflow.Connection, 0)
 	issues := make([]Unsupported, 0)
 
@@ -615,8 +651,8 @@ func importConnections(source Connections, idByName, typeByID map[string]string,
 						continue
 					}
 
-					sourcePort, sourceOK := resolvePort(catalog, typeByID[sourceID], versionByID[sourceID], kind, outputIndex, portOutput)
-					targetPort, targetOK := resolvePort(catalog, typeByID[targetID], versionByID[targetID], kind, target.Index, portInput)
+					sourcePort, sourceOK := resolvePort(catalog, typeByID[sourceID], versionByID[sourceID], parametersByID[sourceID], kind, outputIndex, portOutput)
+					targetPort, targetOK := resolvePort(catalog, typeByID[targetID], versionByID[targetID], parametersByID[targetID], kind, target.Index, portInput)
 					if !sourceOK || !targetOK {
 						// Held back rather than dropped silently: recording an
 						// edge onto a port that does not exist would fail
@@ -669,7 +705,7 @@ const (
 // existing pair of helpers came to need a comment explaining that one is the
 // inverse of the other. Going through the catalogue is also what keeps this
 // working when generated node packs arrive with ports nobody hardcoded.
-func resolvePort(catalog workflow.Catalog, nodeType string, version workflow.TypeVersion, kind workflow.ConnectionKind, index int, direction portDirection) (string, bool) {
+func resolvePort(catalog workflow.Catalog, nodeType string, version workflow.TypeVersion, parameters map[string]any, kind workflow.ConnectionKind, index int, direction portDirection) (string, bool) {
 	if catalog == nil {
 		// No catalogue: fall back to the positional names, which is what the
 		// adapter did before it could ask. Only the item channel is nameable
@@ -685,6 +721,15 @@ func resolvePort(catalog workflow.Catalog, nodeType string, version workflow.Typ
 	definition, found := catalog.Lookup(nodeType, version)
 	if !found {
 		return "", false
+	}
+	// A node whose ports depend on its own configuration is asked, exactly as
+	// the compiler asks it. A Switch's static list is the one port a picker
+	// shows for an unconfigured node; the rules decide the real count, and
+	// resolving against the static list would collapse every branch onto the
+	// first wire.
+	if definition.PortsFor != nil {
+		inputs, outputs := definition.PortsFor(parameters, version)
+		definition.Inputs, definition.Outputs = inputs, outputs
 	}
 	declared := definition.Outputs
 	if direction == portInput {
@@ -848,7 +893,7 @@ func Export(document workflow.Document, catalog workflow.Catalog) (ExportResult,
 			})
 		}
 		result.Document.Nodes = append(result.Document.Nodes, exported)
-		portIndex[node.ID] = outputIndexesFor(catalog, node.Type, node.TypeVersion)
+		portIndex[node.ID] = outputIndexesFor(catalog, node.Type, node.TypeVersion, node.Parameters)
 	}
 
 	exported := map[string]bool{}
@@ -922,10 +967,13 @@ func exportVersion(entry mapping, node workflow.Node) float64 {
 // outputIndexesFor maps a canonical node's named output ports onto n8n's
 // positional ones. It is the inverse of outputPortsFor, so a round trip lands
 // on the same branch it started from.
-func outputIndexesFor(catalog workflow.Catalog, nodeType string, version workflow.TypeVersion) map[string]int {
+func outputIndexesFor(catalog workflow.Catalog, nodeType string, version workflow.TypeVersion, parameters map[string]any) map[string]int {
 	indexes := map[string]int{}
 	if catalog != nil {
 		if definition, found := catalog.Lookup(nodeType, version); found {
+			if definition.PortsFor != nil {
+				_, definition.Outputs = definition.PortsFor(parameters, version)
+			}
 			position := 0
 			for _, port := range definition.Outputs {
 				// Only the item channel is positional; a typed AI channel

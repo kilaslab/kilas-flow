@@ -41,8 +41,15 @@ func TestMergePreservesEachSidesProvenance(t *testing.T) {
 		},
 	}
 
+	// A compiled node always carries its definition, and Merge's inputs are
+	// now computed from `numberInputs` rather than being a fixed pair — so the
+	// ports are what the executor reads its streams from.
 	output, err := executor.Execute(context.Background(), workflow.IRNode{
 		ID: "merge", Name: "Merge", Parameters: map[string]any{"mode": "append"},
+		Definition: workflow.NodeDefinition{Inputs: []workflow.Port{
+			{Name: "input1", Kind: workflow.ConnectionMain},
+			{Name: "input2", Kind: workflow.ConnectionMain},
+		}},
 	}, input, engine.Request{})
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)

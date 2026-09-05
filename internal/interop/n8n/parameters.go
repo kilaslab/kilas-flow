@@ -248,135 +248,416 @@ var ifOperators = map[string]string{
 // leftValuePattern pulls a field path out of n8n's `={{ $json.field }}` form.
 var leftValuePattern = regexp.MustCompile(`\{\{\s*\$json\.([A-Za-z0-9_.]+)\s*\}\}`)
 
-func ifToKilas(node Node) (map[string]any, []Unsupported) {
+// filterToKilas translates n8n's filter parameter into the shared shape.
+//
+// The shape is carried rather than reduced. KilasFlow's IF used to accept one
+// condition over four operators, so the importer picked the first and reported
+// the rest as lost — which meant an "A and B" workflow imported as "A" and ran
+// happily on half its own logic. One evaluator with n8n's own shape makes the
+// translation a rename rather than a decision.
+func filterToKilas(value any) (map[string]any, []Unsupported) {
 	issues := make([]Unsupported, 0)
-
-	conditions, ok := node.Parameters["conditions"].(map[string]any)
+	declared, ok := value.(map[string]any)
 	if !ok {
-		return map[string]any{}, append(issues, Unsupported{
-			Reason: "this IF node has no readable conditions; set one before running the workflow",
-		})
+		return nil, append(issues, Unsupported{Reason: "this node has no readable conditions; set one before running the workflow"})
 	}
 
-	entries, _ := conditions["conditions"].([]any)
+	entries, _ := declared["conditions"].([]any)
 	if len(entries) == 0 {
-		// n8n v1 grouped conditions by value type instead.
+		// n8n v1 grouped conditions by value type instead of listing them.
 		for _, group := range []string{"string", "number", "boolean", "dateTime"} {
-			if list, ok := conditions[group].([]any); ok {
-				entries = append(entries, list...)
+			list, grouped := declared[group].([]any)
+			if !grouped {
+				continue
+			}
+			for _, entry := range list {
+				row, _ := entry.(map[string]any)
+				if row == nil {
+					continue
+				}
+				entries = append(entries, legacyCondition(row, group))
 			}
 		}
 	}
 	if len(entries) == 0 {
-		return map[string]any{}, append(issues, Unsupported{
-			Reason: "this IF node has no readable conditions; set one before running the workflow",
+		return nil, append(issues, Unsupported{Reason: "this node has no readable conditions; set one before running the workflow"})
+	}
+
+	converted := make([]any, 0, len(entries))
+	for index, entry := range entries {
+		row, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		operator, ok := row["operator"].(map[string]any)
+		if !ok {
+			issues = append(issues, Unsupported{
+				Field:  fmt.Sprintf("conditions[%d].operator", index),
+				Reason: "this condition names no operator type and was left out",
+			})
+			continue
+		}
+		left := row["leftValue"]
+		if left == nil {
+			left = row["value1"]
+		}
+		right := row["rightValue"]
+		if right == nil {
+			right = row["value2"]
+		}
+		converted = append(converted, map[string]any{
+			"id":        row["id"],
+			"leftValue": fromN8NValue(left),
+			"operator": map[string]any{
+				"type":        operator["type"],
+				"operation":   operator["operation"],
+				"singleValue": operator["singleValue"] == true,
+			},
+			"rightValue": fromN8NValue(right),
 		})
 	}
-	if len(entries) > 1 {
-		// Importing only the first would silently change what the workflow
-		// does, so the extras are named.
-		issues = append(issues, Unsupported{
-			Reason: fmt.Sprintf("KilasFlow's IF supports one condition; this node had %d, and only the first was imported. Add the rest with additional IF nodes.", len(entries)),
+	if len(converted) == 0 {
+		return nil, append(issues, Unsupported{Reason: "none of this node's conditions could be read"})
+	}
+
+	filter := map[string]any{"conditions": converted}
+	if combinator, ok := declared["combinator"].(string); ok && combinator != "" {
+		filter["combinator"] = combinator
+	}
+	// n8n's own default is case-sensitive; carrying the options rather than
+	// assuming keeps a case-insensitive filter case-insensitive.
+	options := map[string]any{"caseSensitive": true}
+	if declaredOptions, ok := declared["options"].(map[string]any); ok {
+		if sensitive, present := declaredOptions["caseSensitive"].(bool); present {
+			options["caseSensitive"] = sensitive
+		}
+		if validation, present := declaredOptions["typeValidation"].(string); present && validation != "" {
+			options["typeValidation"] = validation
+		}
+	}
+	filter["options"] = options
+	return filter, issues
+}
+
+// legacyCondition rewrites n8n v1's type-grouped condition as a v2 one.
+//
+// v1 had no operator object: the *group* was the type and `operation` sat
+// beside the values. Reading it here means the evaluator sees one shape.
+func legacyCondition(row map[string]any, group string) map[string]any {
+	operation, _ := row["operation"].(string)
+	if operation == "" {
+		operation = "equals"
+	}
+	return map[string]any{
+		"leftValue":  row["value1"],
+		"rightValue": row["value2"],
+		"operator":   map[string]any{"type": group, "operation": operation},
+	}
+}
+
+// filterToN8N writes the shared shape back out.
+func filterToN8N(value any) map[string]any {
+	declared, ok := value.(map[string]any)
+	if !ok {
+		return map[string]any{"conditions": []any{}}
+	}
+	entries, _ := declared["conditions"].([]any)
+	converted := make([]any, 0, len(entries))
+	for _, entry := range entries {
+		row, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		converted = append(converted, map[string]any{
+			"id":         row["id"],
+			"leftValue":  toN8NValue(row["leftValue"]),
+			"operator":   row["operator"],
+			"rightValue": toN8NValue(row["rightValue"]),
 		})
 	}
-
-	first, _ := entries[0].(map[string]any)
-	field, operator, value, err := ifConditionFrom(first)
-	if err != nil {
-		return map[string]any{}, append(issues, Unsupported{Reason: err.Error()})
+	written := map[string]any{"conditions": converted}
+	if combinator, ok := declared["combinator"].(string); ok && combinator != "" {
+		written["combinator"] = combinator
 	}
-
-	condition := map[string]any{"field": field, "operator": operator}
-	if operator == "equals" || operator == "notEquals" {
-		condition["value"] = value
+	if options, ok := declared["options"].(map[string]any); ok {
+		written["options"] = options
 	}
-	return map[string]any{"conditions": []any{condition}}, issues
+	return written
 }
 
-func ifConditionFrom(entry map[string]any) (field, operator string, value any, err error) {
-	if entry == nil {
-		return "", "", nil, fmt.Errorf("this IF node's condition could not be read")
+func ifToKilas(node Node) (map[string]any, []Unsupported) {
+	filter, issues := filterToKilas(node.Parameters["conditions"])
+	if filter == nil {
+		return map[string]any{}, issues
 	}
-
-	left, _ := entry["leftValue"].(string)
-	if left == "" {
-		left, _ = entry["value1"].(string)
-	}
-	field = fieldPathFrom(left)
-	if field == "" {
-		return "", "", nil, fmt.Errorf("this IF node compares %q, which is not a plain $json field path that KilasFlow can evaluate", left)
-	}
-
-	rawOperator := ""
-	if object, ok := entry["operator"].(map[string]any); ok {
-		rawOperator, _ = object["operation"].(string)
-	}
-	if rawOperator == "" {
-		rawOperator, _ = entry["operation"].(string)
-	}
-	mapped, supported := ifOperators[rawOperator]
-	if !supported {
-		return "", "", nil, fmt.Errorf("KilasFlow's IF does not support the n8n operator %q; supported operators are equals, notEquals, exists, and notExists", rawOperator)
-	}
-
-	value = entry["rightValue"]
-	if value == nil {
-		value = entry["value2"]
-	}
-	return field, mapped, fromN8NValue(value), nil
-}
-
-// fieldPathFrom accepts `={{ $json.a.b }}`, `{{ $json.a }}`, or a bare path.
-func fieldPathFrom(left string) string {
-	left = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(left), "="))
-	if match := leftValuePattern.FindStringSubmatch(left); len(match) == 2 {
-		return match[1]
-	}
-	if left == "" || strings.ContainsAny(left, "{}$ ") {
-		return ""
-	}
-	return left
+	return map[string]any{"conditions": filter}, issues
 }
 
 func ifToN8N(node workflow.Node) (map[string]any, []Lossy) {
-	conditions, _ := node.Parameters["conditions"].([]any)
-	if len(conditions) == 0 {
-		return map[string]any{}, []Lossy{{Field: "conditions", Reason: "the IF node had no condition to export"}}
-	}
-	condition, _ := conditions[0].(map[string]any)
-	field, _ := condition["field"].(string)
-	operator, _ := condition["operator"].(string)
+	written, lossy := conditionsToN8N(node, "the IF node")
+	return map[string]any{"conditions": written, "options": map[string]any{}}, lossy
+}
 
-	entry := map[string]any{
-		"id":         node.ID + "-0",
-		"leftValue":  "={{ $json." + field + " }}",
-		"rightValue": toN8NValue(condition["value"]),
-		"operator":   map[string]any{"type": "string", "operation": operator},
-	}
-	return map[string]any{
-		"conditions": map[string]any{
+// conditionsToN8N writes a node's conditions parameter back out in either of
+// the shapes it may be stored in.
+//
+// The flat shape is what IF stored when it accepted exactly one condition, and
+// a workflow saved then still has to export. Its `field` is a path rather than
+// a resolved value, so it becomes the expression n8n would have written.
+func conditionsToN8N(node workflow.Node, described string) (map[string]any, []Lossy) {
+	switch typed := node.Parameters["conditions"].(type) {
+	case map[string]any:
+		written := filterToN8N(typed)
+		written["options"] = mergeOptions(written["options"], map[string]any{"caseSensitive": true, "version": 2})
+		return written, nil
+	case []any:
+		if len(typed) == 0 {
+			return map[string]any{}, []Lossy{{Field: "conditions", Reason: described + " had no condition to export"}}
+		}
+		entries := make([]any, 0, len(typed))
+		for index, entry := range typed {
+			condition, _ := entry.(map[string]any)
+			field, _ := condition["field"].(string)
+			operation, _ := condition["operator"].(string)
+			entries = append(entries, map[string]any{
+				"id":         fmt.Sprintf("%s-%d", node.ID, index),
+				"leftValue":  "={{ $json." + field + " }}",
+				"rightValue": toN8NValue(condition["value"]),
+				"operator":   map[string]any{"type": "string", "operation": operation},
+			})
+		}
+		return map[string]any{
 			"options":    map[string]any{"caseSensitive": true, "version": 2},
-			"conditions": []any{entry},
+			"conditions": entries,
 			"combinator": "and",
-		},
-		"options": map[string]any{},
-	}, nil
+		}, nil
+	default:
+		return map[string]any{}, []Lossy{{Field: "conditions", Reason: described + " had no condition to export"}}
+	}
+}
+
+func mergeOptions(existing any, defaults map[string]any) map[string]any {
+	options, _ := existing.(map[string]any)
+	if options == nil {
+		options = map[string]any{}
+	}
+	for key, value := range defaults {
+		if _, present := options[key]; !present {
+			options[key] = value
+		}
+	}
+	return options
 }
 
 // --- Merge ------------------------------------------------------------------
 
+// mergeToKilas carries n8n's Merge configuration through.
+//
+// It used to rewrite every mode to `append` and report an issue whose own words
+// were "changes what this node does" — accurate, and useless to somebody who
+// imported a `combine`-mode Merge. Every mode now has an implementation, so the
+// values travel as themselves.
 func mergeToKilas(node Node) (map[string]any, []Unsupported) {
-	mode := stringParameter(node.Parameters, "mode")
-	if mode != "" && mode != "append" {
-		return map[string]any{"mode": "append"}, []Unsupported{{
-			Reason: fmt.Sprintf("KilasFlow's Merge only appends; the n8n mode %q was replaced with append, which changes what this node does", mode),
-		}}
+	issues := make([]Unsupported, 0)
+	converted := map[string]any{"mode": defaultString(stringParameter(node.Parameters, "mode"), "append")}
+
+	if combineBy := stringParameter(node.Parameters, "combineBy"); combineBy != "" {
+		converted["combineBy"] = combineBy
 	}
-	return map[string]any{"mode": "append"}, nil
+	if count, ok := numberParameter(node.Parameters, "numberInputs"); ok {
+		converted["numberInputs"] = count
+	}
+	if branch, ok := numberParameter(node.Parameters, "chooseBranch"); ok {
+		converted["chooseBranch"] = branch
+	}
+	if joinMode := stringParameter(node.Parameters, "joinMode"); joinMode != "" {
+		converted["joinMode"] = joinMode
+	}
+
+	// n8n's fields-to-match is a fixed collection of `{field1, field2}` pairs.
+	// KilasFlow matches on one name across every input, which is the same thing
+	// whenever the fields are named alike — and a pair naming two *different*
+	// fields is reported rather than silently matched on the first.
+	if fields, ok := node.Parameters["fieldsToMatchString"].(string); ok && strings.TrimSpace(fields) != "" {
+		converted["fieldsToMatch"] = fields
+	} else if collection, ok := node.Parameters["mergeByFields"].(map[string]any); ok {
+		names := make([]string, 0, 2)
+		values, _ := collection["values"].([]any)
+		for _, entry := range values {
+			pair, _ := entry.(map[string]any)
+			first, _ := pair["field1"].(string)
+			second, _ := pair["field2"].(string)
+			if first == "" {
+				continue
+			}
+			names = append(names, first)
+			if second != "" && second != first {
+				issues = append(issues, Unsupported{
+					Field:  "mergeByFields",
+					Reason: fmt.Sprintf("this Merge matched %q against %q; KilasFlow matches one field name across every input, so %q was used", first, second, first),
+				})
+			}
+		}
+		if len(names) > 0 {
+			converted["fieldsToMatch"] = strings.Join(names, ",")
+		}
+	}
+	return converted, issues
 }
 
-func mergeToN8N(workflow.Node) (map[string]any, []Lossy) {
-	return map[string]any{"mode": "append", "options": map[string]any{}}, nil
+func mergeToN8N(node workflow.Node) (map[string]any, []Lossy) {
+	written := map[string]any{
+		"mode":    defaultString(stringParameter(node.Parameters, "mode"), "append"),
+		"options": map[string]any{},
+	}
+	for _, key := range []string{"combineBy", "numberInputs", "chooseBranch", "joinMode"} {
+		if value, present := node.Parameters[key]; present {
+			written[key] = value
+		}
+	}
+	if fields := stringParameter(node.Parameters, "fieldsToMatch"); fields != "" {
+		values := make([]any, 0, 2)
+		for _, name := range strings.Split(fields, ",") {
+			if trimmed := strings.TrimSpace(name); trimmed != "" {
+				values = append(values, map[string]any{"field1": trimmed, "field2": trimmed})
+			}
+		}
+		written["mergeByFields"] = map[string]any{"values": values}
+	}
+	return written, nil
+}
+
+// --- Flow control -----------------------------------------------------------
+
+func filterNodeToKilas(node Node) (map[string]any, []Unsupported) {
+	filter, issues := filterToKilas(node.Parameters["conditions"])
+	if filter == nil {
+		return map[string]any{}, issues
+	}
+	return map[string]any{"conditions": filter}, issues
+}
+
+func filterNodeToN8N(node workflow.Node) (map[string]any, []Lossy) {
+	written, lossy := conditionsToN8N(node, "the Filter node")
+	return map[string]any{"conditions": written, "options": map[string]any{}}, lossy
+}
+
+// switchToKilas carries n8n's rules, in order.
+//
+// The order is the contract: a Switch's outputs are positional, and a rule that
+// moved would move every wire below it.
+func switchToKilas(node Node) (map[string]any, []Unsupported) {
+	issues := make([]Unsupported, 0)
+	if mode := stringParameter(node.Parameters, "mode"); mode != "" && mode != "rules" {
+		// n8n's `expression` mode routes by evaluating an output index, which
+		// has no rules to import at all.
+		return map[string]any{}, append(issues, Unsupported{
+			Field:  "mode",
+			Reason: fmt.Sprintf("this Switch routes by %q rather than by rules, which KilasFlow does not support; rebuild it with routing rules", mode),
+		})
+	}
+
+	rules, _ := node.Parameters["rules"].(map[string]any)
+	values, _ := rules["values"].([]any)
+	converted := make([]any, 0, len(values))
+	for index, entry := range values {
+		rule, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		filter, ruleIssues := filterToKilas(rule["conditions"])
+		for _, issue := range ruleIssues {
+			issue.Field = fmt.Sprintf("rules[%d].%s", index, issue.Field)
+			issues = append(issues, issue)
+		}
+		if filter == nil {
+			continue
+		}
+		built := map[string]any{"conditions": filter}
+		if name, _ := rule["outputKey"].(string); name != "" {
+			built["outputKey"] = name
+		} else if name, _ := rule["renameOutput"].(string); name != "" {
+			built["outputKey"] = name
+		}
+		converted = append(converted, built)
+	}
+	if len(converted) == 0 {
+		return map[string]any{}, append(issues, Unsupported{
+			Reason: "this Switch has no readable rules; add one before running the workflow",
+		})
+	}
+
+	built := map[string]any{"rules": converted}
+	if options, ok := node.Parameters["options"].(map[string]any); ok {
+		if options["fallbackOutput"] != nil {
+			// n8n writes "none", "extra", or an output index. An index names a
+			// rule's own output, which KilasFlow reaches by wiring rather than
+			// by a fallback, so only the two named forms carry.
+			if fallback, _ := options["fallbackOutput"].(string); fallback == "extra" {
+				built["fallbackOutput"] = "extra"
+			} else if fallback != "none" && fallback != "" {
+				issues = append(issues, Unsupported{
+					Field:  "options.fallbackOutput",
+					Reason: fmt.Sprintf("this Switch sent unmatched items to output %v; wire that rule's own output instead", options["fallbackOutput"]),
+				})
+			}
+		}
+		if all, _ := options["allMatchingOutputs"].(bool); all {
+			built["allMatchingOutputs"] = true
+		}
+	}
+	return built, issues
+}
+
+func switchToN8N(node workflow.Node) (map[string]any, []Lossy) {
+	rules, _ := node.Parameters["rules"].([]any)
+	values := make([]any, 0, len(rules))
+	for _, entry := range rules {
+		rule, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		written := map[string]any{"conditions": filterToN8N(rule["conditions"])}
+		if name, _ := rule["outputKey"].(string); name != "" {
+			written["outputKey"] = name
+			written["renameOutput"] = true
+		}
+		values = append(values, written)
+	}
+
+	options := map[string]any{}
+	if node.Parameters["fallbackOutput"] == "extra" {
+		options["fallbackOutput"] = "extra"
+	}
+	if node.Parameters["allMatchingOutputs"] == true {
+		options["allMatchingOutputs"] = true
+	}
+	return map[string]any{
+		"mode":    "rules",
+		"rules":   map[string]any{"values": values},
+		"options": options,
+	}, nil
+}
+
+func limitToKilas(node Node) (map[string]any, []Unsupported) {
+	converted := map[string]any{}
+	if maximum, ok := numberParameter(node.Parameters, "maxItems"); ok {
+		converted["maxItems"] = maximum
+	}
+	if keep := stringParameter(node.Parameters, "keep"); keep != "" {
+		converted["keep"] = keep
+	}
+	return converted, nil
+}
+
+func limitToN8N(node workflow.Node) (map[string]any, []Lossy) {
+	written := map[string]any{}
+	for _, key := range []string{"maxItems", "keep"} {
+		if value, present := node.Parameters[key]; present {
+			written[key] = value
+		}
+	}
+	return written, nil
 }
 
 // --- HTTP Request -----------------------------------------------------------
@@ -813,4 +1094,41 @@ func telegramTriggerToKilas(node Node) (map[string]any, []Unsupported) {
 		}
 	}
 	return converted, issues
+}
+
+// splitInBatchesToKilas maps n8n's Loop Over Items onto the bounded loop.
+func splitInBatchesToKilas(node Node) (map[string]any, []Unsupported) {
+	issues := make([]Unsupported, 0)
+	converted := map[string]any{}
+	if size, ok := numberParameter(node.Parameters, "batchSize"); ok {
+		converted["batchSize"] = size
+	}
+	if options, ok := node.Parameters["options"].(map[string]any); ok {
+		if reset, present := options["reset"]; present && reset != false {
+			// n8n's `reset` restarts the loop mid-run from an expression.
+			// KilasFlow's loop runs its batches once and stops, which is the
+			// bounded shape the compiler allows a cycle for at all.
+			issues = append(issues, Unsupported{
+				Field:  "options.reset",
+				Reason: "n8n's loop reset restarts a running loop; KilasFlow's loop runs its batches once, so this was not carried",
+			})
+		}
+	}
+	return converted, issues
+}
+
+func splitInBatchesToN8N(node workflow.Node) (map[string]any, []Lossy) {
+	written := map[string]any{"options": map[string]any{}}
+	if size, present := node.Parameters["batchSize"]; present {
+		written["batchSize"] = size
+	}
+	// maxIterations is KilasFlow's own bound and has no n8n equivalent; n8n
+	// loops until the items run out.
+	if _, present := node.Parameters["maxIterations"]; present {
+		return written, []Lossy{{
+			Field:  "maxIterations",
+			Reason: "KilasFlow's iteration bound has no n8n equivalent; the exported loop runs until its items are exhausted",
+		}}
+	}
+	return written, nil
 }

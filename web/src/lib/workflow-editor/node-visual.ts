@@ -5,12 +5,14 @@ import Bot from '@lucide/svelte/icons/bot';
 import Box from '@lucide/svelte/icons/box';
 import CircleHelp from '@lucide/svelte/icons/circle-help';
 import Repeat from '@lucide/svelte/icons/repeat';
+import Scissors from '@lucide/svelte/icons/scissors';
 import Send from '@lucide/svelte/icons/send';
 import StickyNote from '@lucide/svelte/icons/sticky-note';
 import Clock from '@lucide/svelte/icons/clock';
 import Code from '@lucide/svelte/icons/code';
 import CornerDownLeft from '@lucide/svelte/icons/corner-down-left';
 import Database from '@lucide/svelte/icons/database';
+import Filter from '@lucide/svelte/icons/filter';
 import Globe from '@lucide/svelte/icons/globe';
 import Merge from '@lucide/svelte/icons/merge';
 import MessageCircle from '@lucide/svelte/icons/message-circle';
@@ -69,6 +71,7 @@ const GLYPHS: Record<string, Component> = {
 	'circle-help': CircleHelp,
 	database: Database,
 	'git-branch': Split,
+	filter: Filter,
 	'git-merge': Merge,
 	globe: Globe,
 	'message-circle': MessageCircle,
@@ -77,6 +80,7 @@ const GLYPHS: Record<string, Component> = {
 	pencil: PencilLine,
 	reply: CornerDownLeft,
 	repeat: Repeat,
+	scissors: Scissors,
 	send: Send,
 	'sticky-note': StickyNote,
 	webhook: Webhook,

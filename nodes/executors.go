@@ -2,11 +2,12 @@ package nodes
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
-	"reflect"
 	"strings"
 
 	"github.com/kilaslabs/kilas-flow/internal/ai"
+	"github.com/kilaslabs/kilas-flow/internal/conditions"
 	"github.com/kilaslabs/kilas-flow/internal/engine"
 	"github.com/kilaslabs/kilas-flow/internal/expression"
 	"github.com/kilaslabs/kilas-flow/internal/property"
@@ -43,6 +44,10 @@ func RegisterExecutors(registry *engine.Registry, httpPolicy safehttp.Policy, da
 		LoopExecutorID:            engine.ExecutorFunc(executeLoop),
 		StickyNoteExecutorID:      engine.ExecutorFunc(executeStickyNote),
 		TelegramTriggerExecutorID: NewTelegramTriggerExecutor(NewTelegramFileClient(httpPolicy)),
+		SwitchExecutorID:          engine.ExecutorFunc(executeSwitch),
+		FilterExecutorID:          engine.ExecutorFunc(executeFilter),
+		LimitExecutorID:           engine.ExecutorFunc(executeLimit),
+		NoOpExecutorID:            engine.ExecutorFunc(executeNoOp),
 		UnsupportedExecutorID:     engine.ExecutorFunc(executeUnsupported),
 	} {
 		if err := registry.Register(id, executor); err != nil {
@@ -109,7 +114,7 @@ func executeIF(ctx context.Context, node workflow.IRNode, input workflow.NodeInp
 	}
 	// Validated once, before any item, so a malformed condition is one error
 	// rather than one per row.
-	if _, err := ifCondition(node.Parameters["conditions"]); err != nil {
+	if _, err := readFilter(node.Parameters["conditions"], workflow.Item{}); err != nil {
 		return nil, err
 	}
 	// IF filters, so an output item's position no longer matches its input's.
@@ -123,13 +128,13 @@ func executeIF(ctx context.Context, node workflow.IRNode, input workflow.NodeInp
 		if err != nil {
 			return nil, fmt.Errorf("node %q: %w", node.Name, err)
 		}
-		condition, err := ifCondition(resolved["conditions"])
+		filter, err := readFilter(resolved["conditions"], item)
 		if err != nil {
 			return nil, err
 		}
-		matched, err := condition.matches(item.JSON)
+		matched, err := conditions.Evaluate(filter)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("node %q: %w", node.Name, err)
 		}
 		routed := cloneItem(item)
 		if routed.Paired == nil {
@@ -144,26 +149,217 @@ func executeIF(ctx context.Context, node workflow.IRNode, input workflow.NodeInp
 	return workflow.NodeOutput{trueItems, falseItems}, nil
 }
 
-// executeMerge concatenates two streams.
+// executeMerge combines the streams it was given.
 //
-// It deliberately does not resolve expressions: its only parameter is a mode
-// chosen from a fixed list, and an expression there would name a mode that
-// depends on the data, which is not a thing this node offers. Adding a resolve
-// call it does not need would be a call nobody could explain.
-func executeMerge(ctx context.Context, node workflow.IRNode, input workflow.NodeInput, _ engine.Request) (workflow.NodeOutput, error) {
+// It deliberately does not resolve expressions: its parameters are a mode, a
+// count and a field list, and an expression there would name a mode that
+// depends on the data, which is not something this node offers.
+func executeMerge(ctx context.Context, ir workflow.IRNode, input workflow.NodeInput, _ engine.Request) (workflow.NodeOutput, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if mode, _ := node.Parameters["mode"].(string); mode != "append" {
-		return nil, fmt.Errorf("Merge mode must be append")
+	streams := mergeStreams(ir, input)
+	mode := textOf(ir.Parameters["mode"])
+	if mode == MergeCombine {
+		// n8n's `combine` names a family; `combineBy` says which one.
+		mode = textOf(ir.Parameters["combineBy"])
+		if mode == "" {
+			mode = MergeByFields
+		}
 	}
-	// Merge concatenates two unrelated streams, so an output item's position
-	// says nothing about where it came from. Each side keeps the provenance it
-	// arrived with rather than being renumbered — an item that came through
-	// input2 still descends from whatever produced it, and flattening that
-	// would make a later lookup confidently wrong instead of honestly unable.
-	items := append(cloneItems(input["input1"]), cloneItems(input["input2"])...)
-	return workflow.NodeOutput{items}, nil
+
+	switch mode {
+	case "", MergeAppend:
+		// Concatenation says nothing about where an item came from, so each
+		// side keeps the provenance it arrived with rather than being
+		// renumbered — flattening that would make a later lookup confidently
+		// wrong instead of honestly unable.
+		combined := []workflow.Item{}
+		for _, stream := range streams {
+			combined = append(combined, stream...)
+		}
+		return workflow.NodeOutput{combined}, nil
+
+	case MergeChooseBranch:
+		branch := 1
+		if declared, ok := numericParameter(ir.Parameters, "chooseBranch"); ok {
+			branch = int(declared)
+		}
+		if branch < 1 || branch > len(streams) {
+			return nil, fmt.Errorf("node %q: branch %d is outside this node's %d inputs", ir.Name, branch, len(streams))
+		}
+		return workflow.NodeOutput{streams[branch-1]}, nil
+
+	case MergeByPosition:
+		return workflow.NodeOutput{mergeByPosition(streams)}, nil
+
+	case MergeCombineAll:
+		return workflow.NodeOutput{mergeCombineAll(streams)}, nil
+
+	case MergeByFields:
+		fields := splitFieldList(textOf(ir.Parameters["fieldsToMatch"]))
+		if len(fields) == 0 {
+			return nil, fmt.Errorf("node %q: combining by fields needs at least one field to match on", ir.Name)
+		}
+		return workflow.NodeOutput{mergeByFields(streams, fields, textOf(ir.Parameters["joinMode"]))}, nil
+
+	default:
+		return nil, fmt.Errorf("node %q: merge mode %q is not supported", ir.Name, mode)
+	}
+}
+
+// mergeByPosition pairs the nth item of every stream.
+//
+// The result is as long as the *shortest* stream: pairing position 3 of one
+// stream with nothing would produce an item that claims a correspondence
+// nobody established.
+func mergeByPosition(streams [][]workflow.Item) []workflow.Item {
+	shortest := -1
+	for _, stream := range streams {
+		if shortest < 0 || len(stream) < shortest {
+			shortest = len(stream)
+		}
+	}
+	if shortest <= 0 {
+		return []workflow.Item{}
+	}
+	combined := make([]workflow.Item, 0, shortest)
+	for index := 0; index < shortest; index++ {
+		row := make([]workflow.Item, 0, len(streams))
+		for _, stream := range streams {
+			row = append(row, stream[index])
+		}
+		combined = append(combined, mergeItems(row))
+	}
+	return combined
+}
+
+// mergeCombineAll is the cross join: every item of each stream with every item
+// of the next.
+func mergeCombineAll(streams [][]workflow.Item) []workflow.Item {
+	combined := []workflow.Item{}
+	for index, stream := range streams {
+		if index == 0 {
+			combined = append(combined, stream...)
+			continue
+		}
+		crossed := make([]workflow.Item, 0, len(combined)*len(stream))
+		for _, left := range combined {
+			for _, right := range stream {
+				crossed = append(crossed, mergeItems([]workflow.Item{left, right}))
+			}
+		}
+		combined = crossed
+	}
+	return combined
+}
+
+// mergeByFields joins streams on equal values of the named fields.
+//
+// The join is left to right: input 1 against input 2, then that result against
+// input 3. That is what n8n does and it is what makes a three-way join mean
+// something rather than depending on which pair happened to be compared first.
+func mergeByFields(streams [][]workflow.Item, fields []string, joinMode string) []workflow.Item {
+	if len(streams) == 0 {
+		return []workflow.Item{}
+	}
+	combined := streams[0]
+	for _, right := range streams[1:] {
+		combined = joinOnFields(combined, right, fields, joinMode)
+	}
+	return combined
+}
+
+func joinOnFields(left, right []workflow.Item, fields []string, joinMode string) []workflow.Item {
+	index := make(map[string][]workflow.Item, len(right))
+	for _, item := range right {
+		key, ok := matchKey(item, fields)
+		if !ok {
+			continue
+		}
+		index[key] = append(index[key], item)
+	}
+
+	combined := []workflow.Item{}
+	matchedRight := map[string]bool{}
+	for _, item := range left {
+		key, ok := matchKey(item, fields)
+		partners := index[key]
+		if !ok || len(partners) == 0 {
+			// keepEverything and enrichInput1 both keep an unmatched left item;
+			// keepMatches drops it, which is what a join means.
+			if joinMode == "keepEverything" || joinMode == "enrichInput1" {
+				combined = append(combined, item)
+			}
+			continue
+		}
+		matchedRight[key] = true
+		for _, partner := range partners {
+			combined = append(combined, mergeItems([]workflow.Item{item, partner}))
+		}
+	}
+	if joinMode == "keepEverything" {
+		// Unmatched right-hand items come last, in their own order, so the
+		// result is stable rather than depending on map iteration.
+		for _, item := range right {
+			if key, ok := matchKey(item, fields); !ok || !matchedRight[key] {
+				combined = append(combined, item)
+			}
+		}
+	}
+	return combined
+}
+
+// matchKey renders the values of the join fields. An item missing one of them
+// cannot match: a missing field is not a value that happens to be equal to
+// another missing field.
+func matchKey(item workflow.Item, fields []string) (string, bool) {
+	parts := make([]string, 0, len(fields))
+	for _, field := range fields {
+		value := itemPath(item.JSON, field)
+		if value == nil {
+			return "", false
+		}
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			return "", false
+		}
+		parts = append(parts, string(encoded))
+	}
+	return strings.Join(parts, "\x00"), true
+}
+
+// mergeItems folds several items into one.
+//
+// Later fields win, which is what "combine" means everywhere else in this
+// product. Binary attachments are carried the same way, so an item that had a
+// photo keeps it through a join.
+func mergeItems(items []workflow.Item) workflow.Item {
+	merged := workflow.Item{JSON: map[string]any{}}
+	for _, item := range items {
+		for key, value := range item.JSON {
+			merged.JSON[key] = cloneValue(value)
+		}
+		for key, reference := range item.Binary {
+			if merged.Binary == nil {
+				merged.Binary = map[string]workflow.BinaryRef{}
+			}
+			merged.Binary[key] = reference
+		}
+	}
+	// The correspondence between a combined item and any one of its sources is
+	// genuinely unknown, and saying so is better than pointing at the first.
+	return merged
+}
+
+func splitFieldList(value string) []string {
+	fields := make([]string, 0, 2)
+	for _, entry := range strings.Split(value, ",") {
+		if trimmed := strings.TrimSpace(entry); trimmed != "" {
+			fields = append(fields, trimmed)
+		}
+	}
+	return fields
 }
 
 func validateSetConfiguration(node workflow.Node) error {
@@ -184,76 +380,12 @@ func validateSetConfiguration(node workflow.Node) error {
 }
 
 func validateIFConfiguration(node workflow.Node) error {
-	_, err := ifCondition(node.Parameters["conditions"])
+	_, err := readFilter(node.Parameters["conditions"], workflow.Item{})
 	return err
 }
 
 func validateMergeConfiguration(node workflow.Node) error {
-	if mode, _ := node.Parameters["mode"].(string); mode != "append" {
-		return fmt.Errorf("mode must be append")
-	}
-	return nil
-}
-
-type condition struct {
-	field    string
-	operator string
-	value    any
-}
-
-func ifCondition(value any) (condition, error) {
-	conditions, ok := value.([]any)
-	if !ok || len(conditions) != 1 {
-		return condition{}, fmt.Errorf("IF conditions must contain exactly one condition")
-	}
-	raw, ok := conditions[0].(map[string]any)
-	if !ok {
-		return condition{}, fmt.Errorf("IF condition must be an object")
-	}
-	field, fieldOK := raw["field"].(string)
-	operator, operatorOK := raw["operator"].(string)
-	if !fieldOK || field == "" || !operatorOK {
-		return condition{}, fmt.Errorf("IF condition requires field and operator")
-	}
-	switch operator {
-	case "equals", "notEquals":
-		if _, found := raw["value"]; !found {
-			return condition{}, fmt.Errorf("IF condition %q requires value", operator)
-		}
-	case "exists", "notExists":
-	default:
-		return condition{}, fmt.Errorf("IF condition operator %q is unsupported", operator)
-	}
-	return condition{field: field, operator: operator, value: raw["value"]}, nil
-}
-
-func (condition condition) matches(value map[string]any) (bool, error) {
-	current := any(value)
-	found := true
-	for _, segment := range strings.Split(condition.field, ".") {
-		object, ok := current.(map[string]any)
-		if !ok {
-			found = false
-			break
-		}
-		current, ok = object[segment]
-		if !ok {
-			found = false
-			break
-		}
-	}
-	switch condition.operator {
-	case "exists":
-		return found, nil
-	case "notExists":
-		return !found, nil
-	case "equals":
-		return found && reflect.DeepEqual(current, condition.value), nil
-	case "notEquals":
-		return !found || !reflect.DeepEqual(current, condition.value), nil
-	default:
-		return false, fmt.Errorf("IF condition operator %q is unsupported", condition.operator)
-	}
+	return validateMergeMode(node)
 }
 
 // cloneItem is the twin of the runner's, and carries provenance for the same

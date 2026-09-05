@@ -35,6 +35,10 @@ func RegisterAll(registry *node.Registry) error {
 		stickyNoteNode(),
 		loopNode(),
 		telegramTrigger(),
+		switchNode(),
+		filterNode(),
+		limitNode(),
+		noOpNode(),
 	} {
 		if err := registry.Register(definition); err != nil {
 			return err
@@ -124,20 +128,55 @@ func mergeNode() node.Definition {
 		Subtitle:    "{{ $parameter.mode }}",
 		Version:     workflow.V(1),
 		DisplayName: "Merge",
-		Description: "Combines item streams from two main inputs.",
+		Description: "Combines several item streams.",
 		Category:    "Core",
+		// Two is what an unconfigured Merge shows. The real count comes from
+		// `numberInputs` through PortsFor, because a fixed pair cannot import a
+		// workflow that merged three streams.
 		Inputs: []workflow.Port{
-			{Name: "input1", Kind: workflow.ConnectionMain},
-			{Name: "input2", Kind: workflow.ConnectionMain},
+			{Name: "input1", DisplayName: "Input 1", Kind: workflow.ConnectionMain},
+			{Name: "input2", DisplayName: "Input 2", Kind: workflow.ConnectionMain},
 		},
 		Outputs: mainOutput(),
-		Parameters: []node.PropertyDefinition{{
-			Key: "mode", Label: "Mode", Kind: node.PropertyOptions, Required: true, Default: "append",
-			Options: []node.PropertyOption{{Label: "Append", Value: "append"}},
-		}},
+		Parameters: []node.PropertyDefinition{
+			{
+				Key: "mode", Label: "Mode", Kind: node.PropertyOptions, Required: true, Default: MergeAppend,
+				Options: []node.PropertyOption{
+					{Label: "Append", Value: MergeAppend},
+					{Label: "Combine by Matching Fields", Value: MergeByFields},
+					{Label: "Combine by Position", Value: MergeByPosition},
+					{Label: "Combine All (cross join)", Value: MergeCombineAll},
+					{Label: "Choose Branch", Value: MergeChooseBranch},
+				},
+			},
+			{
+				Key: "numberInputs", Label: "Number of Inputs", Kind: node.PropertyNumber, Default: 2,
+				Description: "How many streams this node takes. Changing it changes the node's input ports.",
+			},
+			{
+				Key: "fieldsToMatch", Label: "Fields to Match", Kind: node.PropertyString,
+				Description: "Comma-separated field names that must be equal for two items to combine.",
+				VisibleWhen: []node.VisibilityCondition{{Key: "mode", Equals: MergeByFields}},
+			},
+			{
+				Key: "joinMode", Label: "Output Type", Kind: node.PropertyOptions, Default: "keepMatches",
+				Options: []node.PropertyOption{
+					{Label: "Keep Matches", Value: "keepMatches"},
+					{Label: "Keep Everything", Value: "keepEverything"},
+					{Label: "Enrich Input 1", Value: "enrichInput1"},
+				},
+				VisibleWhen: []node.VisibilityCondition{{Key: "mode", Equals: MergeByFields}},
+			},
+			{
+				Key: "chooseBranch", Label: "Branch to Keep", Kind: node.PropertyNumber, Default: 1,
+				Description: "Which input's items to pass on, counting from 1.",
+				VisibleWhen: []node.VisibilityCondition{{Key: "mode", Equals: MergeChooseBranch}},
+			},
+		},
 		SharedSettings: sharedSettings(),
 		ExecutorID:     "core.merge",
 		Validate:       validateMergeConfiguration,
+		PortsFor:       mergePorts,
 	}
 }
 

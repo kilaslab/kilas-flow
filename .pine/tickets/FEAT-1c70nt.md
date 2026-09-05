@@ -29,6 +29,8 @@ The SDK asymmetry is the fourth. `web/orval.config.ts` generates a full svelte-q
 
 The posture is what makes this the last ticket rather than an optional one. A host that cannot reach its own customers' rows with the token it already holds will reach for the privileged API key in the browser instead — the exact failure the SDK's two entry points exist to make impossible, per `sdk/src/index.ts`.
 
+**Amendment for p10.** This ticket keeps the embed vocabulary: `DatastoreID` beside `WorkflowID`, the `permits` entry, the `datastore:read` and `datastore:write` scopes, the scope-implication rule, and the browser entry point's behaviour when handed a datastore-only session. Three things it previously implied are now owned elsewhere and must not be scoped twice. The **complete** management surface on `KilasFlowClient` — all three resource groups, the typed filter builder, the cursor iterator and the required-filter rule on row delete — belongs to V2-p10-7 (`FEAT-nc6z9r`), which depends on this ticket and completes what its fifth acceptance criterion starts. **Publishing** `@kilasflow/sdk` belongs to V2-p10-8 (`FEAT-3taswf`). And the **technical documentation** this ticket's title implies belongs to the documentation site: V2-p10-13 (`FEAT-frvez8`) for the host integration guide, V2-p10-10 (`FEAT-za118x`) for the generated API reference. What stays here is the datastore methods needed to prove the embed path works.
+
 ## Acceptance criteria
 
 - [ ] A session carrying a datastore scope and no workflow is minted and verified end to end, proven by unit tests in `internal/embed` covering `Issue`, `sign` and `Verify`.
@@ -66,3 +68,6 @@ Documentation closes the ticket rather than opening it: a scope table in `sdk/RE
 - `sdk/src/browser.ts` — `mountWorkflowEditor` at line 62 and `workflowIdFrom` at 137-140.
 - `sdk/scripts/check-types.mjs` — the drift check behind `pnpm generate:types:check`, which is run by hand.
 - `sdk/README.md` and `README.md` — the two documentation surfaces this ticket must leave accurate.
+- `.pine/tickets/FEAT-nc6z9r.md` — V2-p10-7, which owns the complete Datastore management surface on the SDK and depends on this ticket.
+- `.pine/tickets/FEAT-3taswf.md` — V2-p10-8, which owns publishing the package.
+- `.pine/tickets/FEAT-frvez8.md`, `.pine/tickets/FEAT-za118x.md` — V2-p10-13 and V2-p10-10, which own the documentation.

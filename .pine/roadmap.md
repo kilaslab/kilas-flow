@@ -826,6 +826,258 @@ a check "runs in CI"; several existing tickets already assert this untruthfully.
 
 ---
 
+---
+
+## p10 — Distribution, SDK and documentation
+
+Every phase up to here makes the product better. None of them makes it consumable by anyone
+who is not sitting in this repository, and that is what p10 closes. The gaps were verified
+by inspection on 2026-09-05 rather than assumed:
+
+- **Nothing is published.** No `.github`, no CI of any kind, and `git tag -l` is empty — so
+  `git describe --tags --always --dirty` resolves to a commit hash with `-dirty` appended,
+  and that value reaches `main.version`, the `-version` flag and the OpenAPI `info.version`
+  every generated client is built from. The `Dockerfile` builds a good three-stage distroless
+  image with no platform handling at all, and `make docker` tags it with no registry
+  namespace and never pushes.
+- **The SDK exists and cannot be installed.** `sdk/` is `@kilasflow/sdk` 0.1.0 with a real
+  design — `Transport`, RFC 9457 errors, an iframe embed handshake, an SSE subscriber, 2724
+  lines of orval-generated types — but `dist/` is gitignored, the root `Makefile` has no SDK
+  target, nothing publishes it, and `KilasFlowClient` exposes **16 of the API's 33
+  operations**. Its manifest also declares MIT against the repository's Apache-2.0.
+- **There is no documentation site.** No `docs/`, no generator config. The documentation of
+  record is a `README.md` whose opening blockquote reads "Status: scaffolding", whose
+  endpoint table lists six of 33 routes and calls `POST /webhook/:id` "currently 501", plus
+  a 42 KB PRD written under the project's former name throughout. `config.example.yaml`
+  documents **seven** sections while `internal/config/config.go` defines **ten** — the three
+  missing ones being `outbound`, `webhook` and `embed`, two of which are the security
+  boundary. (The plan said six and nine; the counts were re-checked at write time.)
+- **A community node cannot be installed.** The pack format is fully data-driven and
+  `nodepack.Decode`/`Load`/`Register` are exported and take bytes — and the only install path
+  is a Go file with `//go:embed` plus a rebuild.
+- **n8n import works and no user can reach it.** `POST /api/v1/workflows/import` and the
+  export route are wired and tested, the orval client for both is generated into
+  `web/src/lib/api/generated/interop/`, and no route, page, dialog or button calls either.
+
+**20 tickets**, all `parent: EPIC-m42s3g`, `phase: p10`.
+
+**Release engineering** — `release`, `platform`, high.
+
+**V2-p10-1 · Build the CI pipeline the repository already assumes** (`FEAT-7tgasa`, no deps).
+Lint, race tests, the `web/` vitest suite the Makefile never invokes, both drift detectors
+that exist and run nowhere, and the smoke suites. `FEAT-xx6p22` owns rewording the eight
+bodies that claim a check "runs in CI"; this ticket is what earns the claim back, for exactly
+the checks CI runs.
+
+**V2-p10-2 · Publish multi-architecture container images** (`FEAT-53fht8`, deps p10-1).
+buildx amd64 and arm64 — cheap, because the build is already `CGO_ENABLED=0` onto distroless
+static, so it is `TARGETARCH` into `GOARCH` and the SPA stage pinned to `$BUILDPLATFORM`.
+`ghcr.io/kilaslabs/kilasflow`, OCI labels, SBOM, provenance, and the **first git tag**.
+
+**V2-p10-3 · Ship a five-minute Compose quickstart** (`FEAT-m94hhx`, deps p10-2). A
+`compose.yaml` that pulls rather than builds, an `.env.example` generating both keys, the
+PostgreSQL profile wired with `depends_on: service_healthy`, and the stale "Required once
+credentials land (Milestone 2)" comment removed.
+
+**Public contract and the TypeScript SDK** — `sdk`, `api`, `platform`, high.
+
+**V2-p10-4 · Declare the public API contract and its stability rules** (`FEAT-bscygc`, deps
+p10-1). There is no checked-in spec to drift, which is the hard half already solved; the easy
+half — what `/api/v1` promises — is absent. Turns `SDK_VERSION`/`API_VERSION` from a doc
+comment into policy, makes both drift detectors gates, and resolves the licence discrepancy.
+Declares instability deliberately where p2 is about to change `node.Definition` and add JSON
+tags to `workflow.Port`.
+
+**V2-p10-5 · Complete the `KilasFlowClient` operation surface** (`FEAT-yx0qt6`, deps p10-4).
+Credentials CRUD and **test**, schedules CRUD, the node catalogue, load-options, the
+expression grammar, import/export, health. Plus a coverage test that reads the OpenAPI
+document and fails on an operation no method covers — the gap is invisible today because
+`check-types.mjs` sees a drifted *model* and not a missing *operation*.
+
+**V2-p10-6 · Make the SDK usable as a multi-tenant host credential** (`FEAT-jq84xk`, deps
+`FEAT-ddzk2k`, p10-5). Deliberately narrow: `FEAT-ddzk2k` already names the one-line `apiKey`
+field. What is unowned is per-tenant client construction (a factory, so a shared mutable
+client is unrepresentable), rotation semantics, and **the client half of the stream-ticket
+handshake** — `FEAT-ddzk2k` requires the existing `EventSource` clients keep working and
+describes only the server side.
+
+**V2-p10-7 · Add the Datastore management surface to the SDK** (`FEAT-nc6z9r`, deps
+`FEAT-xeq6st`, `FEAT-1c70nt`, p10-5). Depends on V2-p9-15 rather than racing it — see the
+amendment. Typed filter builder over a closed operator set, a cursor iterator shared with
+executions, and a signature that makes a filterless row delete unrepresentable.
+
+**V2-p10-8 · Publish `@kilasflow/sdk` to npm** (`FEAT-3taswf`, deps p10-5, p10-2). Provenance,
+CHANGELOG, the missing manifest fields, a check that `SDK_VERSION` and the manifest agree, and
+`examples/host-page` repointed at a published image. Stay on `0.x` until the contract is
+stable — claiming `1.0.0` before `FEAT-ddzk2k` would promise an authentication story that does
+not exist.
+
+**Documentation** — `docs`, high.
+
+**V2-p10-9 · Stand up the documentation site on Astro Starlight** (`FEAT-nxxbs5`, deps p10-1).
+The vessel, not the contents, so it does not block seven tickets. Two repository-specific
+constraints: it must stay out of `internal/web/dist` and the `go:embed` build, and it must be
+dark-first, because `web/src/app.css` puts the dark palette on bare `:root` and Starlight's
+default is the opposite.
+
+**V2-p10-10 · Generate the API reference into the documentation site** (`FEAT-za118x`, deps
+p10-9, p10-4). `starlight-openapi` fed by `scripts/openapi-spec.mjs`. Recommended answer to
+the canonical question: the binary's air-gapped `/docs` is authoritative for the instance you
+are talking to, the site for the current release. Hand-written pages for the two things
+OpenAPI cannot express — the SSE event vocabulary and the webhook surface.
+
+**V2-p10-11 · Write the architecture and concepts documentation** (`FEAT-5mvech`, deps p10-9).
+Sourced from the package doc comments, which are the best prose in the repository and reachable
+only by opening files. A page per concept, not per package. Where p1 or p2 is about to change
+something, say what is true now and link the ticket.
+
+**V2-p10-12 · Write the operator guide and generate the configuration reference**
+(`FEAT-27km39`, deps p10-9, p10-3). **Generate** the reference from `internal/config/config.go`,
+because the example file has already drifted by three whole sections and hand-maintenance is
+what caused it. Carries the `envKeyToPath` single-word trap, the warn-and-continue behaviour
+for absent keys, and `FEAT-a94c8y`'s statement that a table prefix is not an isolation boundary.
+
+**V2-p10-13 · Write the multi-tenant embedding guide and a reference host app** (`FEAT-frvez8`,
+deps p10-8, p10-11). Extends `sdk/examples/host-page` to **two tenants**. Presents the
+host-tenant mapping as a decision with real costs, not a snippet, and shows the authorization
+check that `EmbedSessions.Create` cannot make for the host.
+
+**V2-p10-14 · Correct the documentation of record** (`FEAT-sfy1tq`, no deps). The status
+blockquote, the 501 claim, the six-of-33 endpoint table, and the milestone annotations that
+read as status. Recommends marking `gflow-prd-v1.md` historical rather than rewriting 2,739
+lines to change a product name. Protects the Telegram tunnel section and the `go:embed all:`
+explanation, both load-bearing.
+
+**Community nodes and n8n migration** — `packs`, `interop`, `docs`, medium.
+
+**V2-p10-15 · Load node packs from outside the binary** (`FEAT-czbzs6`, deps p10-4). The
+missing seam, and what makes every guide below true. Two constraints are already settled by
+the code and are not to be loosened: loading happens at composition because the registry is
+read-only once serving, and `Load` hardcodes the executor because a pack that could choose its
+binding could claim any executor the server has. Fail startup loudly; hot reload and remote
+installation both stay out.
+
+**V2-p10-16 · Ship a pack authoring toolchain** (`FEAT-cwz4ac`, deps p10-15). `pack init |
+validate | build | report`. The binary has no subcommands today, only `-config` and `-version`,
+and a bare invocation must keep starting the server or the Dockerfile entrypoint and every
+smoke script break. Validation runs the **real** registration path against a throwaway
+registry, so the tool and the server cannot disagree.
+
+**V2-p10-17 · Write the community node authoring guide** (`FEAT-de8d4c`, deps p10-16, p10-9).
+States early what the routing interpreter refuses — `preSend` and function-form `postReceive`,
+refused at registration rather than ignored — so an author does not design around them. A
+failure section carrying the real refusal messages. Says plainly when a declarative pack is the
+wrong tool, and points at `FEAT-48hreg`.
+
+**V2-p10-18 · Convert declarative n8n community nodes into packs** (`FEAT-ed6wdy`, deps
+p10-16). The one genuinely contestable ticket in the phase. **The licence position is recorded
+in `.pine/memory/licensing.md` before implementation**, following `FEAT-7cg0cd`'s precedent: a
+node's declarative `description` is close to the format side of the memory's format-versus-code
+test, but it arrives inside a compiled package that peer-depends on `n8n-workflow`. Refuses a
+node with a real `execute()` rather than emitting a partial pack. Namespaced types, matching the
+WAHA precedent, because `RegisterFrom` refuses the `kilasflow.` prefix for external sources.
+
+**V2-p10-19 · Write the n8n migration guide** (`FEAT-zmfsjd`, deps p10-9). The mapping table
+generated from `SupportedMappings()`. Publishes the corpus baseline as a dated, tier-defined
+fidelity statement rather than a marketing number — and may publish aggregate scores only, never
+fixture contents, since the WAHA templates carry no licence and are deliberately gitignored.
+
+**V2-p10-20 · Put n8n import and export in the editor** (`FEAT-0556ck`, deps p10-19). The
+generated interop client sits in `web/` and nothing calls it, so the product's headline
+capability is reachable only by `curl`. A diagnostics report screen, not a toast: three
+severities, the minted webhook URLs copyable, and the unsupported capsule identifiable on the
+canvas. Absent from the embed surface, matching `permits()`.
+
+---
+
+## p11 — End-to-end acceptance
+
+Requested by the owner after p10 and gated on p9: prove the whole thing works, in a browser,
+from importing a community template through running an AI agent to installing a community node,
+with every node covered.
+
+The gap is precise. Go tests cover the engine, the compiler, the importer and the handlers. The
+four smoke scripts prove the server answers and that the SPA fallback returns `<!doctype html>`
+— that the page is served, not that it works. `web/` has `vitest` and no browser test framework;
+there is no `e2e` directory. Between "the server answers" and "a person can build a workflow and
+watch it run" there is nothing, and that is where the product's value sits: `node.Definition` is
+serialized directly as the `/api/v1/node-types` payload, so a p2 metadata change reshapes the
+editor's forms without touching editor code.
+
+**8 tickets**, all `parent: EPIC-m42s3g`, `phase: p11`, `e2e`+`testing`, high.
+
+**V2-p11-1 · Stand up the browser end-to-end harness** (`FEAT-cx3hq1`, deps p10-1). Playwright
+in `e2e/` at the root, not inside `web/`, because it tests the assembled product. Reuses
+`scripts/openapi-spec.mjs`'s build-boot-poll-teardown pattern, including its free-port
+reservation, which is what stops parallel workers colliding. Determinism comes from a local stub
+plus an `outbound.allowed_hosts` entry — **never** from `allow_private_networks: true`, which
+would run the suite with a security posture production does not have.
+
+**V2-p11-2 · Run a local Ollama model as the AI runtime for tests** (`FEAT-kwxxd0`, deps
+`FEAT-mvegj5`). Almost no code: `internal/ai.NewOpenAICompatible` already takes an arbitrary
+base URL, `chatModelNode()` exposes `baseUrl` as "Any OpenAI-compatible endpoint", its model
+picker loads from `{baseUrl}/models` with `ItemsPath: "data"` and `ValueField: "id"` — which is
+exactly Ollama's shape — and the `httpBearerAuth` requirement is optional. **The obstacle is
+real and the guard is right**: `OutboundHTTP.AllowPrivateNetworks` defaults to `false` and
+`safehttp` rejects loopback at dial time, so a model at `localhost:11434` is refused before a
+request is made. The fix is one `allowed_hosts` entry, plus a test that a *different* loopback
+address is still refused. First check whether the allowlist is consulted before or after the
+private-address guard; if after, this becomes a small code ticket rather than a configuration
+one. A 9B model at temperature zero, pinned by tag. Assertions are structural, never on
+generated text — that is what makes the difference between a suite that survives a model update
+and one that gets disabled.
+
+**V2-p11-3 · Cover every registered node type end to end** (`FEAT-5z37xh`, deps p11-1). Build
+the coverage report first: read `/api/v1/node-types`, diff against what the suite touched, fail
+on the difference. Written first it is a ratchet that catches every node a later phase adds;
+written afterwards it documents a moment. `nodes/bindings_test.go` already exists because
+forgetting an executor compiles and passes every test — the metadata equivalent has no test at
+all, and a node with a perfect executor and malformed property metadata is unconfigurable by a
+human. Table-driven for the generic path, hand-written for the triggers, the agent cluster, the
+database family and the unsupported capsule.
+
+**V2-p11-4 · Prove the n8n community template migration end to end** (`FEAT-gg85se`, deps p11-1,
+p10-20). The epic's second proof made executable. The corpus stops at "imports and would
+compile"; this crosses into renders, rebinds credentials, re-points webhooks, activates, receives
+a delivery and replies — including the same template imported twice for two tenants, which is the
+actual business goal. Fixtures come through `scripts/corpus-sync.sh`'s gitignored digest-pinned
+mechanism and are never committed. The two-tenant case is marked pending rather than written
+vacuously if it lands before `FEAT-ddzk2k`.
+
+**V2-p11-5 · Prove community node pack installation end to end** (`FEAT-ykyfbd`, deps p11-1,
+p10-16, p10-18). Four p10 tickets build an ecosystem and nothing proves the sequence from an
+author's file to a running workflow. A purpose-built fixture pack for the feature matrix, one
+real converted node for the fidelity claim. The negative cases matter as much: a pack claiming
+the `kilasflow.` namespace, a bad checksum and a malformed manifest must each stop startup, which
+is what makes the loader's fail-loud decision durable.
+
+**V2-p11-6 · Prove the AI agent path end to end against a local model** (`FEAT-xr7ga9`, deps
+p11-1, p11-2, `FEAT-cgm1y3`, `FEAT-je4f4t`). A stub cannot produce a malformed tool call, an
+unexpected argument shape or a second call when one was anticipated — which are the behaviours
+worth testing. Covers cluster wiring, a real tool loop, memory across turns, streaming, and the
+trigger-to-agent-to-reply shape. The memory-isolation case must go through the **webhook** path,
+because that is where redaction runs and where the `sessionId` collapse V2-p1-6 fixes would
+occur. Error paths may use the stub; the loop may not.
+
+**V2-p11-7 · Prove the Datastore path end to end on both drivers** (`FEAT-cpdp8y`, deps p11-1,
+`FEAT-3xqky1`, `FEAT-agj52c`, p10-7). p9's correctness properties are all between components. Runs
+on SQLite **and** PostgreSQL, because the identifier-truncation defect class only exists on one of
+them — and asserts against `information_schema`, not against the application's belief, since the
+whole defect is the application believing an index exists that PostgreSQL declined to create.
+Isolation cases written first. The column-injection case drives a hostile name from a webhook body,
+which is reachable without workflow-edit rights.
+
+**V2-p11-8 · Run the epic acceptance scenario as an executable suite** (`FEAT-5fhj6p`, deps
+p11-3…p11-7, p10-8). The four epic proofs against real third parties and published artefacts: a
+real bot token, a real WAHA server, PostgreSQL, and `npm install` into a scratch project outside
+this repository. Asserts mechanically that no Node.js process runs. On demand and on a schedule,
+never a merge gate — a failure here is as often somebody's outage as a regression, and the report
+must distinguish the two. Telegram needs a public HTTPS URL, so it uses the tunnel workflow the
+README already documents; the `getUpdates` polling mode is **not** a substitute, because the proof
+is the webhook path.
+
+---
+
 ## What executing this plan creates
 
 The p0–p8 sections above are already tracked as 62 tickets under `EPIC-m42s3g` and are
