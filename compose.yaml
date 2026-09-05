@@ -1,0 +1,103 @@
+# KilasFlow, running.
+#
+#   cp .env.example .env     # and read it: one line matters, the rest are optional
+#   docker compose up -d
+#   open http://localhost:8080/app/workflows
+#
+# This file only pulls and runs. It never builds, because a reader whose goal is
+# to see the product should not be made to compile it first — a source build
+# needs a Node toolchain and a Go toolchain inside Docker and takes minutes,
+# every one of which is spent before anything is visible.
+#
+# The two jobs this file deliberately does not do live next door, because a
+# single file with profiles nobody enables is how the previous version of this
+# ended up describing a PostgreSQL tier that nothing could reach:
+#
+#   compose.build.yaml      builds the image from this checkout instead of pulling
+#   compose.postgres.yaml   swaps SQLite for a PostgreSQL service
+#
+# Both are overlays. Add them with a second -f and their changes merge onto this
+# file; use neither and you get the default stack.
+#
+# The filename is `compose.yaml` rather than `docker-compose.yml` because Compose
+# v2 prefers it, and because the old name now belongs to a file that no longer
+# exists — nothing here builds from source any more.
+
+name: kilasflow
+
+services:
+  kilasflow:
+    # No KilasFlow release has been published yet: the release workflow exists,
+    # but no version tag has ever been pushed, so `ghcr.io/kilaslabs/kilasflow`
+    # holds nothing. The default below therefore names a *local* image, and the
+    # command that produces it is:
+    #
+    #   docker compose -f compose.yaml -f compose.build.yaml up -d
+    #
+    # `Error response from daemon: pull access denied for kilasflow` means you
+    # ran this file on its own without having built that image — add the overlay.
+    #
+    # Once a release exists, set KILASFLOW_IMAGE in .env to the exact version —
+    # `ghcr.io/kilaslabs/kilasflow:v1.2.3`, never `:latest` and never `:v1.2`.
+    # Both of those move underneath a running deployment, which turns "my stack
+    # changed overnight" into a question nobody can answer from the compose file.
+    # scripts/docker-tags.sh is where that vocabulary is defined.
+    image: ${KILASFLOW_IMAGE:-kilasflow:local}
+
+    # The container port is fixed by the image (Dockerfile sets
+    # KILASFLOW_SERVER_PORT=8080); only the host side is worth moving, and it is
+    # worth moving because 8080 is the single most contended port on a developer
+    # machine.
+    ports:
+      - "${KILASFLOW_HOST_PORT:-8080}:8080"
+
+    # A named volume rather than a bind mount, and not only for tidiness. The
+    # image runs as `nonroot` (uid 65532) and cannot write into a host directory
+    # owned by whoever ran `docker compose`, so a bind mount fails on first boot
+    # with a permission error that says nothing about ownership.
+    # scripts/smoke-docker.sh works around exactly this with `chmod 777` on its
+    # throwaway directory, which is fine for a test and wrong for real data. If
+    # you want a bind mount for easier backups, `chown 65532:65532` the directory
+    # first. Otherwise `docker compose cp` and `docker run --rm -v
+    # kilasflow_kilasflow-data:/data …` reach the volume without any of that.
+    volumes:
+      - kilasflow-data:/app/data
+
+    # One file configures both sides. Compose already reads `.env` from this
+    # directory for the ${...} substitutions above; `env_file` hands the same
+    # file to the process inside the container.
+    #
+    # Passing the file wholesale, rather than restating each variable here as
+    # `FOO: ${FOO:-}`, is deliberate. That form sets the variable to the empty
+    # string when the reader has not set it, and empty is not the same as absent:
+    # an absent KILASFLOW_DATABASE_DRIVER falls back to sqlite, while an empty one
+    # fails validation at boot with `database.driver "" must be sqlite or
+    # postgres`. A commented-out line in .env should mean "I did not set this".
+    #
+    # required: false so that `docker compose up` still works before anyone has
+    # copied the example — it starts with no encryption key and says so, which is
+    # a better first experience than a Compose error about a missing file.
+    env_file:
+      - path: .env
+        required: false
+
+    # There is no healthcheck here, and that is a limitation rather than an
+    # oversight worth hiding. The runtime image is distroless: no shell, no curl,
+    # no wget, and the binary itself has no probe subcommand — `-config` and
+    # `-version` are its only flags. Every healthcheck expressible against this
+    # image would either fail always (a missing binary) or pass immediately (the
+    # binary exists), and the second is worse than none, because a `depends_on:
+    # service_healthy` pointing at it would report a server ready before it had
+    # opened its listener.
+    #
+    # Readiness is checked from outside instead, which is what the quickstart
+    # does and what scripts/smoke-docker.sh has always done:
+    #
+    #   curl -fsS http://localhost:8080/api/v1/ready
+    #
+    # `/api/v1/ready` reports the database too, so it is the honest one to wait
+    # on; `/api/v1/health` answers as soon as the process is up.
+    restart: unless-stopped
+
+volumes:
+  kilasflow-data:
