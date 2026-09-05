@@ -24,6 +24,7 @@ func RegisterAll(registry *node.Registry) error {
 		memoryNode(),
 		httpToolNode(),
 		agentNode(),
+		codeNode(),
 	} {
 		if err := registry.Register(definition); err != nil {
 			return err

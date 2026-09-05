@@ -8,6 +8,7 @@ import (
 
 	"github.com/kilaslabs/kilas-flow/internal/ai"
 	"github.com/kilaslabs/kilas-flow/internal/engine"
+	"github.com/kilaslabs/kilas-flow/internal/runcode"
 	"github.com/kilaslabs/kilas-flow/internal/safehttp"
 	"github.com/kilaslabs/kilas-flow/internal/sqlnode"
 	"github.com/kilaslabs/kilas-flow/internal/workflow"
@@ -19,7 +20,7 @@ import (
 // hosted install must refuse private targets, while a self-hosted one may
 // legitimately call services on its own network, and the guard carries the
 // install's own database paths so a SQLite credential can never open them.
-func RegisterExecutors(registry *engine.Registry, httpPolicy safehttp.Policy, databaseGuard sqlnode.Guard, agentRuntime ai.AgentRuntime, agentMemory ai.Memory) error {
+func RegisterExecutors(registry *engine.Registry, httpPolicy safehttp.Policy, databaseGuard sqlnode.Guard, agentRuntime ai.AgentRuntime, agentMemory ai.Memory, codeCompiler runcode.Compiler) error {
 	for id, executor := range map[string]engine.Executor{
 		"core.manual":       engine.ExecutorFunc(executeManual),
 		"core.set":          engine.ExecutorFunc(executeSet),
@@ -36,6 +37,7 @@ func RegisterExecutors(registry *engine.Registry, httpPolicy safehttp.Policy, da
 		MemoryExecutorID:    engine.ExecutorFunc(executeMemory),
 		HTTPToolExecutorID:  engine.ExecutorFunc(executeHTTPTool),
 		AgentExecutorID:     NewAgentExecutor(agentRuntime, httpPolicy, agentMemory),
+		CodeExecutorID:      NewCodeExecutor(codeCompiler, runcode.NewMemoryCache(), runcode.DefaultLimits()),
 	} {
 		if err := registry.Register(id, executor); err != nil {
 			return err

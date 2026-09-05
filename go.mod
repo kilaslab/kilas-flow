@@ -16,6 +16,7 @@ require (
 	github.com/knadh/koanf/providers/structs v1.0.1
 	github.com/knadh/koanf/v2 v2.3.6
 	github.com/robfig/cron/v3 v3.0.1
+	github.com/tetratelabs/wazero v1.9.0
 	gorm.io/driver/postgres v1.6.2
 	gorm.io/gorm v1.31.2
 )

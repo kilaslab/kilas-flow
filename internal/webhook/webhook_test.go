@@ -72,7 +72,7 @@ func newHarness(t *testing.T) harness {
 	executors := engine.NewRegistry()
 	policy := safehttp.DefaultPolicy()
 	policy.AllowPrivateNetworks = true
-	if err := nodes.RegisterExecutors(executors, policy, sqlnode.Guard{}, ai.NewLoopRuntime(), nil); err != nil {
+	if err := nodes.RegisterExecutors(executors, policy, sqlnode.Guard{}, ai.NewLoopRuntime(), nil, nil); err != nil {
 		t.Fatalf("RegisterExecutors() error = %v", err)
 	}
 

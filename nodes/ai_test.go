@@ -162,7 +162,7 @@ func TestChatModelDescriptorCarriesNoAPIKey(t *testing.T) {
 	}
 
 	executors := engine.NewRegistry()
-	if err := nodes.RegisterExecutors(executors, localPolicy(), sqlGuard(), ai.NewLoopRuntime(), nil); err != nil {
+	if err := nodes.RegisterExecutors(executors, localPolicy(), sqlGuard(), ai.NewLoopRuntime(), nil, nil); err != nil {
 		t.Fatalf("RegisterExecutors() error = %v", err)
 	}
 	output, err := runExecutor(t, executors, nodes.ChatModelExecutorID, ir, workflow.NodeInput{}, engine.Request{Credentials: resolver})

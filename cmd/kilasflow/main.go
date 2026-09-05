@@ -24,6 +24,7 @@ import (
 	"github.com/kilaslabs/kilas-flow/internal/events"
 	"github.com/kilaslabs/kilas-flow/internal/node"
 	"github.com/kilaslabs/kilas-flow/internal/repository"
+	"github.com/kilaslabs/kilas-flow/internal/runcode"
 	"github.com/kilaslabs/kilas-flow/internal/safehttp"
 	"github.com/kilaslabs/kilas-flow/internal/scheduler"
 	"github.com/kilaslabs/kilas-flow/internal/sqlnode"
@@ -87,7 +88,7 @@ func run() error {
 		return fmt.Errorf("configure agent memory: %w", err)
 	}
 	if err := nodes.RegisterExecutors(executorRegistry, outboundPolicy(cfg.Outbound), databaseGuard(cfg.Database),
-		ai.NewLoopRuntime(), agentMemory); err != nil {
+		ai.NewLoopRuntime(), agentMemory, runcode.NewToolchainCompiler()); err != nil {
 		return fmt.Errorf("register built-in executors: %w", err)
 	}
 

@@ -63,7 +63,7 @@ func TestServiceRunOncePersistsCompletedManualSetExecution(t *testing.T) {
 		t.Fatalf("QueueManualLatest() error = %v", err)
 	}
 	executors := engine.NewRegistry()
-	if err := nodes.RegisterExecutors(executors, safehttp.DefaultPolicy(), sqlnode.Guard{}, ai.NewLoopRuntime(), nil); err != nil {
+	if err := nodes.RegisterExecutors(executors, safehttp.DefaultPolicy(), sqlnode.Guard{}, ai.NewLoopRuntime(), nil, nil); err != nil {
 		t.Fatalf("RegisterExecutors() error = %v", err)
 	}
 	service, err := engine.NewService(engine.ServiceDeps{
@@ -189,7 +189,7 @@ func TestServicePersistsFailedNodeRunWhenItsConfiguredTimeoutExpires(t *testing.
 		t.Fatalf("QueueManualLatest() error = %v", err)
 	}
 	executors := engine.NewRegistry()
-	if err := nodes.RegisterExecutors(executors, safehttp.DefaultPolicy(), sqlnode.Guard{}, ai.NewLoopRuntime(), nil); err != nil {
+	if err := nodes.RegisterExecutors(executors, safehttp.DefaultPolicy(), sqlnode.Guard{}, ai.NewLoopRuntime(), nil, nil); err != nil {
 		t.Fatalf("RegisterExecutors() error = %v", err)
 	}
 	if err := executors.Register("test.slow", engine.ExecutorFunc(func(ctx context.Context, _ workflow.IRNode, _ workflow.NodeInput, _ engine.Request) (workflow.NodeOutput, error) {
@@ -256,7 +256,7 @@ func TestServiceCancelsQueuedExecutionBeforeAWorkerClaimsIt(t *testing.T) {
 		t.Fatalf("QueueManualLatest() error = %v", err)
 	}
 	executors := engine.NewRegistry()
-	if err := nodes.RegisterExecutors(executors, safehttp.DefaultPolicy(), sqlnode.Guard{}, ai.NewLoopRuntime(), nil); err != nil {
+	if err := nodes.RegisterExecutors(executors, safehttp.DefaultPolicy(), sqlnode.Guard{}, ai.NewLoopRuntime(), nil, nil); err != nil {
 		t.Fatalf("RegisterExecutors() error = %v", err)
 	}
 	service, err := engine.NewService(engine.ServiceDeps{Executions: executionStore, Catalog: catalog, Runner: engine.NewRunner(executors), WorkerID: "test-worker", DefaultTimeout: time.Second})
@@ -352,7 +352,7 @@ func TestServiceCancelsAnActiveExecutionAndPersistsCancelledNodeRun(t *testing.T
 		t.Fatalf("QueueManualLatest() error = %v", err)
 	}
 	executors := engine.NewRegistry()
-	if err := nodes.RegisterExecutors(executors, safehttp.DefaultPolicy(), sqlnode.Guard{}, ai.NewLoopRuntime(), nil); err != nil {
+	if err := nodes.RegisterExecutors(executors, safehttp.DefaultPolicy(), sqlnode.Guard{}, ai.NewLoopRuntime(), nil, nil); err != nil {
 		t.Fatalf("RegisterExecutors() error = %v", err)
 	}
 	if err := executors.Register("test.block", engine.ExecutorFunc(func(ctx context.Context, _ workflow.IRNode, _ workflow.NodeInput, _ engine.Request) (workflow.NodeOutput, error) {
