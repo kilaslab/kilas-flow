@@ -138,6 +138,42 @@ func RegisterAll(registry *Registry) error {
 			},
 		},
 		{
+			ID: "openAiApi", DisplayName: "OpenAI",
+			Description: "An OpenAI API key.",
+			Properties: []property.PropertyDefinition{
+				{
+					Key: "apiKey", Label: "API key", Kind: property.KindString, Required: true,
+					TypeOptions: &property.TypeOptions{Password: true},
+					Description: "A key from platform.openai.com, in the form sk-…",
+				},
+			},
+			Secrets: []string{"apiKey"},
+			// The field key is n8n's `apiKey`, not the generic `token`, because
+			// a node declares which credential *type* it accepts and an
+			// imported workflow names `openAiApi` — so the two have to be the
+			// same type, and a stored payload of one must read as the other.
+			Authenticate: &Authentication{Placement: PlacementBearer, Value: "{{ apiKey }}"},
+			Test:         &TestRequest{URL: "https://api.openai.com/v1/models"},
+		},
+		{
+			ID: "openRouterApi", DisplayName: "OpenRouter",
+			Description: "An OpenRouter API key.",
+			Properties: []property.PropertyDefinition{
+				{
+					Key: "apiKey", Label: "API key", Kind: property.KindString, Required: true,
+					TypeOptions: &property.TypeOptions{Password: true},
+					Description: "A key from openrouter.ai, in the form sk-or-…",
+				},
+			},
+			Secrets:      []string{"apiKey"},
+			Authenticate: &Authentication{Placement: PlacementBearer, Value: "{{ apiKey }}"},
+			// n8n probes /key here rather than /models: OpenRouter serves its
+			// model catalogue unauthenticated, so /models answers 200 for a key
+			// that is expired or revoked and the test would pass on a
+			// credential that cannot complete anything.
+			Test: &TestRequest{URL: "https://openrouter.ai/api/v1/key"},
+		},
+		{
 			ID: "sqlite", DisplayName: "SQLite file",
 			Description: "Opens a SQLite file on the server. The path must be given explicitly and cannot be KilasFlow's own database.",
 			Properties: []property.PropertyDefinition{

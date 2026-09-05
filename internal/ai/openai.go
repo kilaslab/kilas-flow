@@ -164,7 +164,19 @@ func (model *OpenAICompatible) send(ctx context.Context, request ModelRequest, s
 func (model *OpenAICompatible) post(ctx context.Context, request ModelRequest, stream bool) (*http.Response, error) {
 	payload := chatRequest{
 		Model: request.Model, Stream: stream,
-		Temperature: request.Temperature, MaxTokens: request.MaxTokens,
+		Temperature: request.Temperature, TopP: request.TopP,
+		FrequencyPenalty: request.FrequencyPenalty, PresencePenalty: request.PresencePenalty,
+		MaxTokens: request.MaxTokens,
+	}
+	if stream {
+		// A provider reports token usage on a streamed run only when asked to.
+		// Without this the final chunk carries no `usage` object, every
+		// streamed completion accounts for zero tokens, and every cost figure
+		// built on that number is wrong — while streaming is on by default.
+		//
+		// Sent only when streaming: several OpenAI-compatible endpoints reject
+		// `stream_options` outright on a non-streamed request.
+		payload.StreamOptions = &streamOptions{IncludeUsage: true}
 	}
 	for _, message := range request.Messages {
 		payload.Messages = append(payload.Messages, wireMessageFrom(message))
@@ -186,23 +198,60 @@ func (model *OpenAICompatible) post(ctx context.Context, request ModelRequest, s
 	if err != nil {
 		return nil, fmt.Errorf("encode model request: %w", err)
 	}
-	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodPost, model.baseURL+"/chat/completions", bytes.NewReader(encoded))
-	if err != nil {
-		return nil, fmt.Errorf("build model request: %w", err)
-	}
-	httpRequest.Header.Set("Content-Type", "application/json")
-	if model.apiKey != "" {
-		httpRequest.Header.Set("Authorization", "Bearer "+model.apiKey)
-	}
-	if stream {
-		httpRequest.Header.Set("Accept", "text/event-stream")
-	}
 
-	response, err := model.client.Do(httpRequest)
-	if err != nil {
-		return nil, fmt.Errorf("call model: %w", err)
+	// Retrying happens here rather than around Complete or Stream because this
+	// is the last point at which nothing has been consumed yet: a stream that
+	// has already emitted chunks to the caller cannot be replayed, and a
+	// retry loop one level up would duplicate half an answer.
+	attempts := request.MaxRetries + 1
+	if attempts < 1 {
+		attempts = 1
 	}
-	return response, nil
+	var lastErr error
+	for attempt := 0; attempt < attempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			if lastErr != nil {
+				return nil, lastErr
+			}
+			return nil, err
+		}
+		httpRequest, err := http.NewRequestWithContext(ctx, http.MethodPost, model.baseURL+"/chat/completions", bytes.NewReader(encoded))
+		if err != nil {
+			return nil, fmt.Errorf("build model request: %w", err)
+		}
+		httpRequest.Header.Set("Content-Type", "application/json")
+		if model.apiKey != "" {
+			httpRequest.Header.Set("Authorization", "Bearer "+model.apiKey)
+		}
+		if stream {
+			httpRequest.Header.Set("Accept", "text/event-stream")
+		}
+
+		response, err := model.client.Do(httpRequest)
+		if err != nil {
+			lastErr = fmt.Errorf("call model: %w", err)
+			continue
+		}
+		if attempt+1 < attempts && retryableStatus(response.StatusCode) {
+			// The body is drained and closed rather than abandoned so the
+			// connection returns to the pool instead of being torn down on
+			// every retry.
+			lastErr = model.statusError(response)
+			response.Body.Close()
+			continue
+		}
+		return response, nil
+	}
+	return nil, lastErr
+}
+
+// retryableStatus reports a refusal worth sending again.
+//
+// Rate limiting and a server-side fault are transient by definition; a 400 or a
+// 401 is the request itself being wrong, and re-sending it only spends the
+// user's quota to receive the same answer.
+func retryableStatus(status int) bool {
+	return status == http.StatusTooManyRequests || status >= 500
 }
 
 // statusError reports a provider failure without echoing the request, which
@@ -221,12 +270,21 @@ func (model *OpenAICompatible) statusError(response *http.Response) error {
 }
 
 type chatRequest struct {
-	Model       string        `json:"model"`
-	Messages    []wireMessage `json:"messages"`
-	Tools       []wireTool    `json:"tools,omitempty"`
-	Temperature *float64      `json:"temperature,omitempty"`
-	MaxTokens   int           `json:"max_tokens,omitempty"`
-	Stream      bool          `json:"stream,omitempty"`
+	Model            string         `json:"model"`
+	Messages         []wireMessage  `json:"messages"`
+	Tools            []wireTool     `json:"tools,omitempty"`
+	Temperature      *float64       `json:"temperature,omitempty"`
+	TopP             *float64       `json:"top_p,omitempty"`
+	FrequencyPenalty *float64       `json:"frequency_penalty,omitempty"`
+	PresencePenalty  *float64       `json:"presence_penalty,omitempty"`
+	MaxTokens        int            `json:"max_tokens,omitempty"`
+	Stream           bool           `json:"stream,omitempty"`
+	StreamOptions    *streamOptions `json:"stream_options,omitempty"`
+}
+
+// streamOptions asks the provider for the accounting it otherwise withholds.
+type streamOptions struct {
+	IncludeUsage bool `json:"include_usage"`
 }
 
 type wireMessage struct {

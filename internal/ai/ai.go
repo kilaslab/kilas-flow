@@ -67,12 +67,26 @@ func (usage *Usage) Add(other Usage) {
 }
 
 // ModelRequest is one completion request.
+//
+// Every sampling knob is a pointer because absent and zero are different
+// instructions. `temperature: 0` is what a user asks for when they want
+// deterministic extraction, and a value type would make that indistinguishable
+// from "the user never touched this field" — at which point the provider
+// silently applies its own default instead.
 type ModelRequest struct {
-	Model       string
-	Messages    []Message
-	Tools       []ToolDefinition
-	Temperature *float64
-	MaxTokens   int
+	Model            string
+	Messages         []Message
+	Tools            []ToolDefinition
+	Temperature      *float64
+	TopP             *float64
+	FrequencyPenalty *float64
+	PresencePenalty  *float64
+	// MaxTokens stays a value type: it has no meaningful zero to preserve, and
+	// a provider that receives `max_tokens: 0` refuses the call outright.
+	MaxTokens int
+	// MaxRetries bounds how many times a refused or unreachable request is
+	// re-sent. Zero means one attempt and no retry.
+	MaxRetries int
 }
 
 // ModelResponse is one completion.
@@ -189,8 +203,14 @@ type AgentRequest struct {
 	// MaxIterations bounds the tool loop. A model that keeps asking for tools
 	// would otherwise run until the execution timeout.
 	MaxIterations int
-	Temperature   *float64
-	MaxTokens     int
+	// The sampling knobs are pointers for the reason ModelRequest's are: a
+	// value the user never set must not be sent at all.
+	Temperature      *float64
+	TopP             *float64
+	FrequencyPenalty *float64
+	PresencePenalty  *float64
+	MaxTokens        int
+	MaxRetries       int
 	// Stream requests incremental content where the model supports it.
 	Stream bool
 }

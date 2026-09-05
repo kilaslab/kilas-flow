@@ -32,6 +32,11 @@ func RegisterAll(registry *node.Registry) error {
 		mysqlV2Node(),
 		sqliteNode(),
 		chatModelNode(),
+		// One node type per provider, registered beside the generic one rather
+		// than over it: an imported n8n workflow names a provider type, and a
+		// saved workflow on the generic type keeps running unchanged.
+		openAIChatModelNode(),
+		openRouterChatModelNode(),
 		memoryNode(),
 		httpToolNode(),
 		agentNode(),

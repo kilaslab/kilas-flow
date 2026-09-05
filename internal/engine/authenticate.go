@@ -26,14 +26,23 @@ func (request Request) Authenticate(ctx context.Context, ir workflow.IRNode, htt
 	if err != nil || !found {
 		return err
 	}
-	scope := credentials.Record{AllowedDomains: resolved.AllowedDomains}
-	if !scope.AllowsHost(httpRequest.URL.Host) {
+	if !resolved.AllowsHost(httpRequest.URL.Host) {
 		return fmt.Errorf("node %q: credential %q is not allowed for host %q", ir.Name, resolved.Name, httpRequest.URL.Hostname())
 	}
 	if err := credentials.Apply(httpRequest, resolved.Type, resolved.Fields); err != nil {
 		return fmt.Errorf("node %q: %w", ir.Name, err)
 	}
 	return nil
+}
+
+// AllowsHost reports whether this credential may be sent to a host.
+//
+// Exported so a caller that authenticates something other than an
+// *http.Request — a chat model, which signs its own call inside the provider
+// adapter — checks the domain scope through the same rule Authenticate uses
+// instead of reimplementing the wildcard matching a second time.
+func (credential Credential) AllowsHost(host string) bool {
+	return credentials.Record{AllowedDomains: credential.AllowedDomains}.AllowsHost(host)
 }
 
 // ResolveNodeCredential resolves the one credential a node names and checks it
