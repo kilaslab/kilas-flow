@@ -3,12 +3,13 @@
 	import RefreshCw from '@lucide/svelte/icons/refresh-cw';
 
 	import { message } from '$lib/api/http';
-	import { listState } from '$lib/dashboard/list-state';
+	import { failedBesideRows, listState } from '$lib/dashboard/list-state';
 	import { Button } from '$lib/components/ui/button';
 
 	/**
-	 * The loading, failed and empty states of a dashboard list, and the frame
-	 * the loaded rows sit in.
+	 * The loading, failed and empty states of a dashboard list, the frame the
+	 * loaded rows sit in, and the notice that reports a failure which arrived
+	 * after those rows did.
 	 *
 	 * It owns the three states rather than the whole page. The page heading
 	 * carries a different action on every list — a dialog trigger here, a
@@ -32,6 +33,7 @@
 		count,
 		rows = 3,
 		onRetry,
+		onRetryMore,
 		// Capitalised locally so the markup can render it as a component; the
 		// prop keeps the lower-case name every other prop here uses.
 		emptyIcon: EmptyIcon,
@@ -59,6 +61,16 @@
 		 */
 		rows?: number;
 		onRetry: () => void;
+		/**
+		 * Retries the request behind the notice that sits beside loaded rows,
+		 * where that is not the same request as `onRetry`. Executions is the
+		 * one list where it differs: `onRetry` reloads from the top, which
+		 * would throw away every page after the first to recover the one that
+		 * failed. Left unset, the notice retries with `onRetry`, which is
+		 * right for the lists whose only request is the one that fetches
+		 * everything.
+		 */
+		onRetryMore?: () => void;
 		emptyIcon: Component;
 		emptyTitle: string;
 		emptyBody: string;
@@ -68,6 +80,7 @@
 	} = $props();
 
 	const state = $derived(listState({ loading, failed, count }));
+	const besideRows = $derived(failedBesideRows({ loading, failed, count }));
 </script>
 
 {#if state === 'loading'}
@@ -104,4 +117,20 @@
 	</div>
 {:else}
 	{@render children()}
+	{#if besideRows}
+		<!--
+			After the rows rather than above them, because that is where the
+			rows it failed to fetch would have gone. It is a line and a button
+			rather than the error card above: the card is what a user reads
+			when there is nothing else on screen, and at this size it would
+			outweigh the list it is a footnote to.
+		-->
+		<div role="alert" class="mt-4 flex flex-wrap items-center justify-center gap-x-3 gap-y-2">
+			<p class="text-xs text-destructive">{label} may be incomplete. {message(error)}</p>
+			<Button size="sm" variant="outline" onclick={onRetryMore ?? onRetry}>
+				<RefreshCw aria-hidden="true" />
+				Try again
+			</Button>
+		</div>
+	{/if}
 {/if}
