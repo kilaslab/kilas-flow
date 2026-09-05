@@ -26,7 +26,8 @@ import type {
   CredentialResource,
   CredentialTypeResource,
   ErrorModel,
-  TestCredentialResource
+  TestCredentialResource,
+  TestPayloadBody
 } from '../models';
 
 import { apiFetch } from '../../http';
@@ -167,7 +168,107 @@ export function createListCredentialTypes<TData = Awaited<ReturnType<typeof list
 
 
 
-export type listCredentialsResponse200 = {
+export type testCredentialPayloadResponse200 = {
+  data: TestCredentialResource
+  status: 200
+}
+
+export type testCredentialPayloadResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type testCredentialPayloadResponseSuccess = (testCredentialPayloadResponse200) & {
+  headers: Headers;
+};
+export type testCredentialPayloadResponseError = (testCredentialPayloadResponseDefault) & {
+  headers: Headers;
+};
+
+export type testCredentialPayloadResponse = (testCredentialPayloadResponseSuccess | testCredentialPayloadResponseError)
+
+export const getTestCredentialPayloadUrl = (type: string,) => {
+
+
+
+
+  return `/api/v1/credential-types/${type}/test`
+}
+
+/**
+ * Runs a credential type's probe against a payload that has not been saved. Send credentialId alongside the redaction placeholder to test an edit against stored secrets.
+ * @summary Test an unsaved credential
+ */
+export const testCredentialPayload = async (type: string,
+    testPayloadBody: NonReadonly<TestPayloadBody>, options?: Parameters<typeof apiFetch>[1]): Promise<testCredentialPayloadResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Array.isArray(h)) return Object.fromEntries(h);
+    return h;
+  };
+return apiFetch<testCredentialPayloadResponse>(getTestCredentialPayloadUrl(type),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(testPayloadBody)
+  }
+);}
+
+
+
+
+
+export const getTestCredentialPayloadMutationKey = () => ['testCredentialPayload'] as const;
+
+export const getTestCredentialPayloadMutationOptions = <TError = ErrorType<ErrorModel>,
+    TContext = unknown>(options?: { mutation?:CreateMutationOptions<Awaited<ReturnType<typeof testCredentialPayload>>, TError,TestCredentialPayloadMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}
+): CreateMutationOptions<Awaited<ReturnType<typeof testCredentialPayload>>, TError,TestCredentialPayloadMutationVariables, TContext> => {
+
+const mutationKey = getTestCredentialPayloadMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof testCredentialPayload>>, TestCredentialPayloadMutationVariables> = (props) => {
+          const {type,data} = props ?? {};
+
+          return  testCredentialPayload(type,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type TestCredentialPayloadMutationResult = NonNullable<Awaited<ReturnType<typeof testCredentialPayload>>>
+    export type TestCredentialPayloadMutationBody = NonReadonly<TestPayloadBody>
+    export type TestCredentialPayloadMutationError = ErrorType<ErrorModel>
+    export type TestCredentialPayloadMutationVariables = {type: string;data: NonReadonly<TestPayloadBody>}
+
+    /**
+ * @summary Test an unsaved credential
+ */
+export const createTestCredentialPayload = <TError = ErrorType<ErrorModel>,
+    TContext = unknown>(options?: () => { mutation?:CreateMutationOptions<Awaited<ReturnType<typeof testCredentialPayload>>, TError,TestCredentialPayloadMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: () => QueryClient): CreateMutationResult<
+        Awaited<ReturnType<typeof testCredentialPayload>>,
+        TError,
+        TestCredentialPayloadMutationVariables,
+        TContext
+      > => {
+      return createMutation(() => ({ ...getTestCredentialPayloadMutationOptions(options?.()) }), queryClient);
+    }
+    export type listCredentialsResponse200 = {
   data: CredentialResource[] | null
   status: 200
 }

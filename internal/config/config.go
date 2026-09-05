@@ -20,17 +20,18 @@ const EnvPrefix = "KILASFLOW_"
 
 // Config is the root configuration document.
 type Config struct {
-	Server    Server       `koanf:"server"`
-	Database  Database     `koanf:"database"`
-	Security  Security     `koanf:"security"`
-	Outbound  OutboundHTTP `koanf:"outbound"`
-	Webhook   Webhook      `koanf:"webhook"`
-	Embed     Embed        `koanf:"embed"`
-	Branding  Branding     `koanf:"branding"`
-	Execution Execution    `koanf:"execution"`
-	SQL       SQLNodes     `koanf:"sql"`
-	Binary    Binary       `koanf:"binary"`
-	Log       Log          `koanf:"log"`
+	Server     Server       `koanf:"server"`
+	Database   Database     `koanf:"database"`
+	Security   Security     `koanf:"security"`
+	Outbound   OutboundHTTP `koanf:"outbound"`
+	Webhook    Webhook      `koanf:"webhook"`
+	Embed      Embed        `koanf:"embed"`
+	Branding   Branding     `koanf:"branding"`
+	Execution  Execution    `koanf:"execution"`
+	SQL        SQLNodes     `koanf:"sql"`
+	Credential Credential   `koanf:"credential"`
+	Binary     Binary       `koanf:"binary"`
+	Log        Log          `koanf:"log"`
 }
 
 // Server holds HTTP listener settings.
@@ -146,6 +147,21 @@ type SQLNodes struct {
 	MaxStatementTimeout time.Duration `koanf:"max_statement_timeout"`
 }
 
+// Credential bounds the credential test endpoint.
+//
+// The endpoint opens an outbound connection to wherever a stored credential
+// points, so it is a probe anyone who can reach the API can aim. Its own
+// deadline, rather than the server's, is what stops a target that accepts a
+// connection and then never answers from holding a request — and a worker —
+// open for the whole of the server's much longer window.
+//
+// The section name is one word for the same reason Outbound, SQL and Binary
+// are: envKeyToPath treats the first underscore as the section separator.
+type Credential struct {
+	// TestTimeout bounds one credential test end to end.
+	TestTimeout time.Duration `koanf:"test_timeout"`
+}
+
 // Binary configures where item payloads are stored.
 //
 // The section name is one word deliberately: the environment override maps the
@@ -216,6 +232,12 @@ func Default() Config {
 			// Kept equal to sqlnode.DefaultCeiling, which a test pins.
 			MaxRows:             50_000,
 			MaxStatementTimeout: 5 * time.Minute,
+		},
+		Credential: Credential{
+			// Short on purpose. A person is watching this one: a probe that
+			// takes half a minute to say "unreachable" has already been given
+			// up on.
+			TestTimeout: 10 * time.Second,
 		},
 		Binary: Binary{
 			// Empty root disables binary storage rather than defaulting to

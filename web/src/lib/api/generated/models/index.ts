@@ -77,6 +77,8 @@ export * from './scheduleResource';
 export * from './streamExecutionEvents200Item';
 export * from './streamExecutionEventsParams';
 export * from './testCredentialResource';
+export * from './testPayloadBody';
+export * from './testPayloadBodyFields';
 export * from './typeOptions';
 export * from './visibility';
 export * from './visibilityCondition';

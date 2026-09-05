@@ -609,3 +609,95 @@ func normalize(value any) any {
 		return typed
 	}
 }
+
+// Sanitize strips credential material a driver may have embedded in its error.
+//
+// PostgreSQL and MySQL both echo the DSN on a connection failure, and that DSN
+// carries the password the credential store just decrypted. It lives here
+// rather than in the node package because the credential test endpoint reports
+// the same driver errors to a browser: a second copy would guarantee the next
+// tuning landed in one of them only.
+func Sanitize(err error) error {
+	if err == nil {
+		return nil
+	}
+	message := err.Error()
+	for _, scheme := range []string{"postgres://", "postgresql://", "mysql://"} {
+		message = redactURLCredentials(message, scheme)
+	}
+	// MySQL DSNs are user:password@tcp(...), which carries no scheme.
+	if at := strings.Index(message, "@tcp("); at >= 0 {
+		if start := strings.LastIndexAny(message[:at], " \t\"'"); start >= 0 {
+			message = message[:start+1] + "[redacted]" + message[at:]
+		} else {
+			message = "[redacted]" + message[at:]
+		}
+	}
+	return fmt.Errorf("%s", message)
+}
+
+// redactURLCredentials replaces the userinfo of every URL of one scheme.
+//
+// It walks forward, never rescanning what it has already redacted. Rewriting
+// the message in place and looping from the start does not terminate: the
+// replacement contains no space and is followed by the same `@`, so the next
+// pass matches it again and produces the identical string forever. That was a
+// latent hang for as long as this lived in the node package — no driver there
+// ever echoed a URL-form DSN — and it stops being latent the moment an API
+// endpoint reports a driver's message to a browser.
+func redactURLCredentials(message, scheme string) string {
+	var redacted strings.Builder
+	for {
+		start := strings.Index(message, scheme)
+		if start < 0 {
+			redacted.WriteString(message)
+			return redacted.String()
+		}
+		rest := message[start+len(scheme):]
+		at := strings.Index(rest, "@")
+		// No `@`, or whitespace before it: this is the scheme appearing in
+		// prose rather than a DSN, and eating the rest of the sentence would
+		// destroy the diagnosis it belongs to.
+		if at < 0 || strings.IndexAny(rest[:at], " \t") >= 0 {
+			redacted.WriteString(message)
+			return redacted.String()
+		}
+		redacted.WriteString(message[:start+len(scheme)])
+		redacted.WriteString("[redacted]")
+		message = rest[at:]
+	}
+}
+
+// credentialDrivers maps a credential type to the driver it opens.
+//
+// It lives here rather than in the node package so the API can test a database
+// credential without importing nodes, which would drag the AI runtime, the code
+// compiler and the HTTP policy in behind it.
+var credentialDrivers = map[string]Driver{
+	"postgres": DriverPostgres,
+	"mysql":    DriverMySQL,
+	"sqlite":   DriverSQLite,
+}
+
+// DriverForCredential reports which driver a credential type opens, if any.
+//
+// A type with no driver is not a database credential, which is a different
+// answer from one whose connection failed.
+func DriverForCredential(credentialType string) (Driver, bool) {
+	driver, found := credentialDrivers[strings.TrimSpace(credentialType)]
+	return driver, found
+}
+
+// Test opens a connection from credential fields and closes it again.
+//
+// This is the whole of a connection test: Open builds the DSN, applies the
+// SQLite guard and pings, so a credential that gets this far is one a workflow
+// could actually use. Nothing is read and no statement is run — a probe that
+// could run SQL would be a query endpoint wearing a different name.
+func Test(ctx context.Context, driver Driver, fields map[string]string, guard Guard) error {
+	connection, err := Open(ctx, driver, fields, guard)
+	if err != nil {
+		return Sanitize(err)
+	}
+	return Sanitize(connection.Close())
+}

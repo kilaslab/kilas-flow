@@ -789,6 +789,28 @@ export interface TestCredentialResource {
   readonly $schema?: string;
   detail?: string;
   ok: boolean;
+  /** @nullable */
+  resolvedFromStorage?: string[] | null;
+  untestable?: boolean;
+}
+
+/**
+ * Field values to test. Send the redaction placeholder to use a stored secret.
+ */
+export type TestPayloadBodyFields = {[key: string]: string};
+
+export interface TestPayloadBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+     * Hosts this credential may be sent to. Empty means unrestricted.
+     * @nullable
+     */
+  allowedDomains?: string[] | null;
+  /** Stored credential the redaction placeholder resolves against */
+  credentialId?: string;
+  /** Field values to test. Send the redaction placeholder to use a stored secret. */
+  fields: TestPayloadBodyFields;
 }
 
 export type WorkflowDocumentInputSettings = {[key: string]: unknown};
@@ -1018,6 +1040,64 @@ export const listCredentialTypes = async ( options?: RequestInit): Promise<listC
 
   const data: listCredentialTypesResponse['data'] = body ? JSON.parse(body) : {}
   return { data, status: res.status, headers: res.headers } as listCredentialTypesResponse
+}
+
+
+
+export type testCredentialPayloadResponse200 = {
+  data: TestCredentialResource
+  status: 200
+}
+
+export type testCredentialPayloadResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type testCredentialPayloadResponseSuccess = (testCredentialPayloadResponse200) & {
+  headers: Headers;
+};
+export type testCredentialPayloadResponseError = (testCredentialPayloadResponseDefault) & {
+  headers: Headers;
+};
+
+export type testCredentialPayloadResponse = (testCredentialPayloadResponseSuccess | testCredentialPayloadResponseError)
+
+export const getTestCredentialPayloadUrl = (type: string,) => {
+
+
+
+
+  return `/api/v1/credential-types/${type}/test`
+}
+
+/**
+ * Runs a credential type's probe against a payload that has not been saved. Send credentialId alongside the redaction placeholder to test an edit against stored secrets.
+ * @summary Test an unsaved credential
+ */
+export const testCredentialPayload = async (type: string,
+    testPayloadBody: NonReadonly<TestPayloadBody>, options?: RequestInit): Promise<testCredentialPayloadResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Array.isArray(h)) return Object.fromEntries(h);
+    return h;
+  };
+const res = await fetch(getTestCredentialPayloadUrl(type),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(testPayloadBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: testCredentialPayloadResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as testCredentialPayloadResponse
 }
 
 

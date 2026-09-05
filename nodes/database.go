@@ -234,7 +234,7 @@ func (executor *DatabaseExecutor) Execute(ctx context.Context, ir workflow.IRNod
 	if err != nil {
 		// The error deliberately does not echo the DSN, which would carry the
 		// password the credential store just decrypted.
-		return nil, fmt.Errorf("node %q: %s connection failed: %w", ir.Name, executor.driver, sanitize(err))
+		return nil, fmt.Errorf("node %q: %s connection failed: %w", ir.Name, executor.driver, sqlnode.Sanitize(err))
 	}
 	// Closed on every path, including a failed statement, so a node error never
 	// leaks a connection.
@@ -324,7 +324,7 @@ func (executor *DatabaseExecutor) runExecuteBatch(ctx context.Context, ir workfl
 
 	results, err := connection.ExecuteBatch(ctx, statements, limits)
 	if err != nil {
-		return nil, fmt.Errorf("node %q: %w", ir.Name, sanitize(err))
+		return nil, fmt.Errorf("node %q: %w", ir.Name, sqlnode.Sanitize(err))
 	}
 	out := make([]workflow.Item, 0, len(results)+1)
 	for _, result := range results {
@@ -368,7 +368,7 @@ func (executor *DatabaseExecutor) runOne(ctx context.Context, ir workflow.IRNode
 	case sqlOperationQuery:
 		result, err := connection.Query(ctx, textValue(parameters["statement"], ""), bound, limits)
 		if err != nil {
-			return nil, fmt.Errorf("node %q: %w", ir.Name, sanitize(err))
+			return nil, fmt.Errorf("node %q: %w", ir.Name, sqlnode.Sanitize(err))
 		}
 		items := make([]workflow.Item, 0, len(result.Rows))
 		for _, row := range result.Rows {
@@ -384,7 +384,7 @@ func (executor *DatabaseExecutor) runOne(ctx context.Context, ir workflow.IRNode
 	case sqlOperationExecute:
 		result, err := connection.Execute(ctx, textValue(parameters["executeStatement"], ""), bound, limits)
 		if err != nil {
-			return nil, fmt.Errorf("node %q: %w", ir.Name, sanitize(err))
+			return nil, fmt.Errorf("node %q: %w", ir.Name, sqlnode.Sanitize(err))
 		}
 		return appendClamped([]workflow.Item{{JSON: map[string]any{"rowsAffected": float64(result.RowsAffected)}}}, clamped), nil
 
@@ -395,7 +395,7 @@ func (executor *DatabaseExecutor) runOne(ctx context.Context, ir workflow.IRNode
 		}
 		results, err := connection.Transaction(ctx, statements, limits)
 		if err != nil {
-			return nil, fmt.Errorf("node %q: %w", ir.Name, sanitize(err))
+			return nil, fmt.Errorf("node %q: %w", ir.Name, sqlnode.Sanitize(err))
 		}
 		affected := int64(0)
 		items := make([]workflow.Item, 0, len(results)+1)
@@ -473,45 +473,4 @@ func transactionStatements(value any) ([]sqlnode.Statement, error) {
 		statements = append(statements, sqlnode.Statement{SQL: entry.SQL, Parameters: entry.Parameters, Returning: entry.Returning})
 	}
 	return statements, nil
-}
-
-// sanitize strips credential material a driver may have embedded in its error.
-//
-// Postgres and MySQL both echo the DSN on a connection failure, and that DSN
-// carries the password the credential store just decrypted.
-func sanitize(err error) error {
-	if err == nil {
-		return nil
-	}
-	message := err.Error()
-	for _, scheme := range []string{"postgres://", "postgresql://", "mysql://"} {
-		message = redactURLCredentials(message, scheme)
-	}
-	// MySQL DSNs are user:password@tcp(...), which carries no scheme.
-	if at := strings.Index(message, "@tcp("); at >= 0 {
-		if start := strings.LastIndexAny(message[:at], " \t\"'"); start >= 0 {
-			message = message[:start+1] + "[redacted]" + message[at:]
-		} else {
-			message = "[redacted]" + message[at:]
-		}
-	}
-	return fmt.Errorf("%s", message)
-}
-
-func redactURLCredentials(message, scheme string) string {
-	for {
-		start := strings.Index(message, scheme)
-		if start < 0 {
-			return message
-		}
-		rest := message[start+len(scheme):]
-		at := strings.Index(rest, "@")
-		if at < 0 {
-			return message
-		}
-		if space := strings.IndexAny(rest[:at], " \t"); space >= 0 {
-			return message
-		}
-		message = message[:start+len(scheme)] + "[redacted]" + rest[at:]
-	}
 }

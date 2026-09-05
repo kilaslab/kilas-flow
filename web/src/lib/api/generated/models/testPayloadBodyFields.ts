@@ -6,12 +6,7 @@
  * OpenAPI spec version: 0.1.0-dev
  */
 
-export interface TestCredentialResource {
-  /** A URL to the JSON Schema for this object. */
-  readonly $schema?: string;
-  detail?: string;
-  ok: boolean;
-  /** @nullable */
-  resolvedFromStorage?: string[] | null;
-  untestable?: boolean;
-}
+/**
+ * Field values to test. Send the redaction placeholder to use a stored secret.
+ */
+export type TestPayloadBodyFields = {[key: string]: string};

@@ -27,7 +27,9 @@ func registerRoutes(router *chi.Mux, api huma.API, deps Deps) {
 		WithTriggers(deps.TriggerCoordinator).Register(v1)
 	handlers.NewExecutions(deps.ExecutionController, deps.Executions, deps.Events, deps.Tenants).Register(v1)
 	handlers.NewCredentials(deps.Credentials, deps.Tenants).
-		WithHTTPPolicy(safehttp.DefaultPolicy()).Register(v1)
+		WithHTTPPolicy(credentialTestPolicy(deps)).
+		WithDatabaseGuard(deps.DatabaseGuard).
+		WithTestTimeout(deps.Config.Credential.TestTimeout).Register(v1)
 	handlers.NewSchedules(deps.Schedules, deps.Tenants).Register(v1)
 	handlers.NewEmbedSessions(deps.EmbedIssuer, deps.Workflows, deps.Tenants).Register(v1)
 	handlers.NewInterop(deps.Workflows, deps.NodeRegistry, deps.Tenants).Register(v1)
@@ -46,6 +48,20 @@ func registerRoutes(router *chi.Mux, api huma.API, deps Deps) {
 	router.Handle(WebhookPrefix+"/*", webhookHandler)
 
 	router.Handle("/*", web.Handler())
+}
+
+// credentialTestPolicy is the egress policy a credential probe runs under.
+//
+// It is the instance's own policy, not a fresh default: a probe held to
+// different rules than the HTTP node would either refuse a target the workflow
+// can legitimately reach, or reach one the deployment has ruled out. A zero
+// policy means the composition root passed none, and the conservative default
+// is the only safe reading of that.
+func credentialTestPolicy(deps Deps) safehttp.Policy {
+	if deps.HTTPPolicy.Timeout == 0 && deps.HTTPPolicy.MaxResponseBytes == 0 {
+		return safehttp.DefaultPolicy()
+	}
+	return deps.HTTPPolicy
 }
 
 // notImplemented answers a reserved route with a problem document rather than

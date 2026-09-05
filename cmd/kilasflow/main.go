@@ -273,6 +273,8 @@ func run() error {
 		Events:              eventBroker,
 		EmbedIssuer:         embedIssuer,
 		ExecutionController: runtime,
+		HTTPPolicy:          outboundPolicy(cfg.Outbound),
+		DatabaseGuard:       databaseGuard(cfg.Database),
 		Version:             version,
 	})
 

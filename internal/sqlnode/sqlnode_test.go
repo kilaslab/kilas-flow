@@ -371,3 +371,48 @@ func TestACeilingClampsWhatADocumentAsksForAndNamesIt(t *testing.T) {
 		}
 	})
 }
+
+func TestSanitizeRemovesEveryDSNFormADriverEchoes(t *testing.T) {
+	t.Parallel()
+
+	for name, testCase := range map[string]struct{ in, want string }{
+		"postgres url": {
+			in:   `failed to connect to postgres://ada:hunter2@db.internal:5432/app: refused`,
+			want: `failed to connect to postgres://[redacted]@db.internal:5432/app: refused`,
+		},
+		"postgresql url": {
+			in:   `dial postgresql://ada:hunter2@db.internal:5432/app`,
+			want: `dial postgresql://[redacted]@db.internal:5432/app`,
+		},
+		// MySQL's DSN carries no scheme at all, which is the form a second
+		// copy of this function in another package would have missed.
+		"schemeless mysql": {
+			in:   `dial ada:hunter2@tcp(db.internal:3306)/app: refused`,
+			want: `dial [redacted]@tcp(db.internal:3306)/app: refused`,
+		},
+		"nothing to redact": {
+			in:   `relation "customers" does not exist`,
+			want: `relation "customers" does not exist`,
+		},
+		// A bare "postgres://" in prose is not a DSN, and eating the rest of
+		// the sentence would destroy the diagnosis it was part of.
+		"a scheme with no credentials": {
+			in:   `set sslmode on postgres:// urls and retry`,
+			want: `set sslmode on postgres:// urls and retry`,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := sqlnode.Sanitize(errors.New(testCase.in))
+			if got.Error() != testCase.want {
+				t.Errorf("Sanitize(%q) = %q, want %q", testCase.in, got, testCase.want)
+			}
+			if strings.Contains(got.Error(), "hunter2") {
+				t.Errorf("Sanitize left the password in %q", got)
+			}
+		})
+	}
+
+	if sqlnode.Sanitize(nil) != nil {
+		t.Error("Sanitize(nil) invented an error")
+	}
+}

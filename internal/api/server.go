@@ -23,6 +23,8 @@ import (
 	"github.com/kilaslabs/kilas-flow/internal/loadoptions"
 	"github.com/kilaslabs/kilas-flow/internal/node"
 	"github.com/kilaslabs/kilas-flow/internal/repository"
+	"github.com/kilaslabs/kilas-flow/internal/safehttp"
+	"github.com/kilaslabs/kilas-flow/internal/sqlnode"
 )
 
 // Path prefixes for the single-origin layout. Keeping them in one place makes
@@ -72,7 +74,16 @@ type Deps struct {
 	// option loader, so a request naming another tenant's credential resolves
 	// to nothing rather than to a secret.
 	CredentialResolverFor func(repository.TenantScope) loadoptions.CredentialResolver
-	Version               string
+	// HTTPPolicy is the instance egress policy. A credential probe runs under
+	// it rather than under a policy of its own, so testing a credential and
+	// using it reach the same set of hosts. A zero value falls back to
+	// safehttp.DefaultPolicy.
+	HTTPPolicy safehttp.Policy
+	// DatabaseGuard is the same guard the database executors receive, so a
+	// SQLite credential naming KilasFlow's own database is refused by the test
+	// endpoint too rather than only at run time.
+	DatabaseGuard sqlnode.Guard
+	Version       string
 }
 
 // Server owns the HTTP listener and the route tree.
