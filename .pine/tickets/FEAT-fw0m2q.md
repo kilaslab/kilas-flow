@@ -1,7 +1,7 @@
 ---
 id: FEAT-fw0m2q
 title: Allow a workflow to carry multiple trigger roots
-status: todo
+status: done
 priority: high
 labels:
     - engine
@@ -23,12 +23,12 @@ The rule was not arbitrary. `engine.Request` carries exactly one `Input` item (i
 
 ## Acceptance criteria
 
-- [ ] A document containing a webhook trigger and a schedule trigger compiles, saves and activates without a topology error.
-- [ ] Every node must still be reachable from at least one trigger root; a node reachable from none is still rejected as disconnected, with the same error code.
-- [ ] A document with no trigger root at all is still rejected.
-- [ ] An execution started by one trigger runs that trigger and the nodes downstream of it; the other trigger's executor is not invoked and its exclusive downstream nodes do not run.
-- [ ] A node downstream of both triggers runs once per execution, receiving items only from the root that started the run.
-- [ ] The execution trace names the trigger node the run started from, and the API exposes it.
+- [x] A document containing a webhook trigger and a schedule trigger compiles, saves and activates without a topology error.
+- [x] Every node must still be reachable from at least one trigger root; a node reachable from none is still rejected as disconnected, with the same error code.
+- [x] A document with no trigger root at all is still rejected.
+- [x] An execution started by one trigger runs that trigger and the nodes downstream of it; the other trigger's executor is not invoked and its exclusive downstream nodes do not run.
+- [x] A node downstream of both triggers runs once per execution, receiving items only from the root that started the run.
+- [x] The execution trace names the trigger node the run started from, and the API exposes it.
 
 ## Implementation Plan
 
@@ -51,3 +51,67 @@ The trap is the execution record's `Trigger` field: it holds `manual | webhook |
 - `internal/engine/runner.go` — `Request`, `Run`.
 - `internal/engine/service.go` — `run`, `inputItem`.
 - `internal/repository/webhooks.go`, `internal/repository/models.go` — `WebhookBinding.NodeID`, `scheduleModel.NodeID`.
+
+## Outcome
+
+Both halves landed together, as the plan required. Relaxing the compiler alone
+would have produced documents that save and activate and then execute the wrong
+thing: every root seeded with the same trigger item, so a schedule firing on a
+webhook delivery.
+
+### Compiler
+
+`len(roots) != 1` became `len(roots) == 0`, and reachability is seeded from
+every root rather than `roots[0]`. The attachment-provider back-walk needed no
+change. Both bounds still hold and are tested: a graph with no root is refused
+by name, and a node reachable from no root is still `disconnected from the
+trigger` with the same error code and the node named.
+
+### Runner
+
+`Request.TriggerNodeID` names the root a run starts from; empty means every
+root, which is what a manual run means and what keeps a single-root graph
+behaving exactly as before.
+
+`activeNodes` walks forward over the item channel from that node, then walks
+attachment edges **backwards** from whatever was reached — a chat model is
+upstream of the agent it configures rather than downstream of a trigger, so a
+forward-only walk would exclude every provider from every triggered run.
+
+The inactive part of the graph is not skipped node by node; it is **absent**.
+Both the node set and the edge set are filtered before scheduling, which matters
+for the shared-node case: a node fed by both triggers would otherwise wait
+forever on the trigger that did not fire and the run would fail with "no
+schedulable node". `TestRunStartsFromTheNamedTriggerOnly` asserts the shared node
+runs once and receives only the firing trigger's item.
+
+A named trigger that is not in the workflow is refused rather than falling back
+to running everything, which would look like success.
+
+### Plumbing
+
+`execution.Record` and `executionModel` gained `TriggerNodeID`, threaded from
+`repository.WebhookBinding.NodeID` and `Schedule.NodeID` through
+`QueueTriggered`, and read back in `Service.run`. `scheduler.QueueFunc` gained
+the parameter, and `TestScheduleQueuesItsOwnTriggerNode` asserts the scheduler
+passes the node that fired rather than an empty string.
+
+The API exposes it on both `ExecutionSummary` and `ExecutionResource` as
+`triggerNodeId`; both clients were regenerated and the drift checks pass.
+
+### The open decision
+
+Taken as recommended: a manual run with nothing named runs **every** root. It is
+what a manual run means today, it keeps the API unchanged for the single-root
+case, and refusing would break the "manual trigger beside a webhook" shape this
+ticket exists to support.
+
+### Corpus effect
+
+None, and that is expected rather than disappointing. Three of the 38 corpus
+fixtures declare more than one trigger — `waha-trigger-explanation` (webhook +
+wahaTrigger), `whatsapp-typebot` (manualTrigger + wahaTrigger) and
+`send-bulk-messages` (manualTrigger + webhook) — and all three still fail
+earlier, on WAHA nodes that have no mapping yet. The epic's "52 of 100" figure
+is for the n8n.io template set, not this corpus. The rule is gone; what those
+three are now waiting on is p3.

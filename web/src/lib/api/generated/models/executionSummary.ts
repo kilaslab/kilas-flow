@@ -14,6 +14,8 @@ export interface ExecutionSummary {
   startedAt: string;
   status: string;
   trigger: string;
+  /** The trigger node this run started from, when one workflow declares several */
+  triggerNodeId?: string;
   workflowId: string;
   workflowVersionId: string;
 }

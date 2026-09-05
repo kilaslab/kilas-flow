@@ -60,7 +60,7 @@ func (*idleExecutionStore) Get(context.Context, repository.TenantScope, string) 
 }
 
 // This test only exercises worker startup, so the trigger queue is a stub.
-func (*idleExecutionStore) QueueTriggered(context.Context, repository.TenantScope, string, string, execution.Trigger, json.RawMessage) (execution.Record, error) {
+func (*idleExecutionStore) QueueTriggered(context.Context, repository.TenantScope, string, string, execution.Trigger, string, json.RawMessage) (execution.Record, error) {
 	return execution.Record{}, nil
 }
 

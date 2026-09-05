@@ -22,7 +22,7 @@ import (
 type ExecutionRepository interface {
 	Create(context.Context, TenantScope, execution.Record) (execution.Record, error)
 	QueueManualLatest(context.Context, TenantScope, string, workflow.Catalog, json.RawMessage) (execution.Record, error)
-	QueueTriggered(context.Context, TenantScope, string, string, execution.Trigger, json.RawMessage) (execution.Record, error)
+	QueueTriggered(context.Context, TenantScope, string, string, execution.Trigger, string, json.RawMessage) (execution.Record, error)
 	Get(context.Context, TenantScope, string) (execution.Record, error)
 	List(context.Context, TenantScope, ExecutionFilter) (ExecutionPage, error)
 	CreateNodeRun(context.Context, TenantScope, execution.NodeRun) (execution.NodeRun, error)
@@ -141,7 +141,7 @@ func (store *GORMExecutionStore) QueueManualLatest(ctx context.Context, tenant T
 // endpoint that silently started running unsaved work the moment someone typed
 // in the editor would be indefensible. The caller supplies the version its
 // binding or schedule was activated against.
-func (store *GORMExecutionStore) QueueTriggered(ctx context.Context, tenant TenantScope, workflowID, versionID string, trigger execution.Trigger, input json.RawMessage) (execution.Record, error) {
+func (store *GORMExecutionStore) QueueTriggered(ctx context.Context, tenant TenantScope, workflowID, versionID string, trigger execution.Trigger, triggerNodeID string, input json.RawMessage) (execution.Record, error) {
 	if err := tenant.validate(); err != nil {
 		return execution.Record{}, err
 	}
@@ -162,7 +162,7 @@ func (store *GORMExecutionStore) QueueTriggered(ctx context.Context, tenant Tena
 
 	model := executionModel{
 		ID: executionID, TenantID: tenant.ID, WorkflowID: workflowID, WorkflowVersionID: versionID,
-		Status: string(execution.StatusQueued), Trigger: string(trigger),
+		Status: string(execution.StatusQueued), Trigger: string(trigger), TriggerNodeID: triggerNodeID,
 		Input: inputPayload, Output: []byte("null"), Error: []byte("null"), StartedAt: time.Now().UTC(),
 	}
 	err = store.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -612,6 +612,7 @@ func executionFromModel(model executionModel) execution.Record {
 		WorkflowVersionID:       model.WorkflowVersionID,
 		Status:                  execution.Status(model.Status),
 		Trigger:                 execution.Trigger(model.Trigger),
+		TriggerNodeID:           model.TriggerNodeID,
 		Input:                   append(json.RawMessage(nil), model.Input...),
 		Output:                  append(json.RawMessage(nil), model.Output...),
 		Error:                   append(json.RawMessage(nil), model.Error...),

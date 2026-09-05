@@ -116,6 +116,7 @@ type executionModel struct {
 	WorkflowVersionID       string    `gorm:"not null;size:64;index"`
 	Status                  string    `gorm:"not null;size:32"`
 	Trigger                 string    `gorm:"not null;size:32"`
+	TriggerNodeID           string    `gorm:"size:64"`
 	Input                   []byte    `gorm:"not null"`
 	Output                  []byte    `gorm:"not null"`
 	Error                   []byte    `gorm:"not null"`

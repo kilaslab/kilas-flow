@@ -157,8 +157,8 @@ func run() error {
 
 	cronService, err := scheduler.New(scheduler.Options{
 		Schedules: schedules,
-		Queue: func(ctx context.Context, tenantID, workflowID, versionID string, payload json.RawMessage) error {
-			_, err := runtime.QueueScheduled(ctx, tenantID, workflowID, versionID, payload)
+		Queue: func(ctx context.Context, tenantID, workflowID, versionID, triggerNodeID string, payload json.RawMessage) error {
+			_, err := runtime.QueueScheduled(ctx, tenantID, workflowID, versionID, triggerNodeID, payload)
 			return err
 		},
 		Logger: log,

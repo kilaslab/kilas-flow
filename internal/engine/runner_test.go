@@ -2,6 +2,7 @@ package engine_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/kilaslabs/kilas-flow/internal/ai"
@@ -170,4 +171,175 @@ func nodeRun(t *testing.T, result engine.Result, nodeID string) engine.NodeRun {
 	}
 	t.Fatalf("node run %q was not recorded", nodeID)
 	return engine.NodeRun{}
+}
+
+// multiTriggerIR is a webhook and a schedule that both feed one shared node,
+// each with a step of its own downstream. It is the shape this ticket exists
+// for: live traffic on one trigger, a nightly catch-up on the other.
+func multiTriggerIR(t *testing.T) workflow.IR {
+	t.Helper()
+	catalog := node.NewRegistry()
+	if err := nodes.RegisterAll(catalog); err != nil {
+		t.Fatalf("RegisterAll() error = %v", err)
+	}
+	ir, err := workflow.Compile(workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_multi",
+		Name:          "Webhook and schedule",
+		Nodes: []workflow.Node{
+			{ID: "hook", Name: "Webhook", Type: "kilasflow.webhook", TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"path": "orders", "httpMethod": "POST"}},
+			{ID: "cron", Name: "Schedule", Type: "kilasflow.schedule", TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"cron": "0 3 * * *"}},
+			{ID: "hook-only", Name: "Hook only", Type: "kilasflow.set", TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"assignments": map[string]any{"via": "webhook"}}},
+			{ID: "cron-only", Name: "Cron only", Type: "kilasflow.set", TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"assignments": map[string]any{"via": "schedule"}}},
+			{ID: "shared", Name: "Shared", Type: "kilasflow.set", TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"assignments": map[string]any{"seen": "yes"}}},
+		},
+		Connections: []workflow.Connection{
+			{ID: "e1", Kind: workflow.ConnectionMain,
+				Source: workflow.Endpoint{NodeID: "hook", Port: "main"},
+				Target: workflow.Endpoint{NodeID: "hook-only", Port: "main"}},
+			{ID: "e2", Kind: workflow.ConnectionMain,
+				Source: workflow.Endpoint{NodeID: "cron", Port: "main"},
+				Target: workflow.Endpoint{NodeID: "cron-only", Port: "main"}},
+			{ID: "e3", Kind: workflow.ConnectionMain,
+				Source: workflow.Endpoint{NodeID: "hook", Port: "main"},
+				Target: workflow.Endpoint{NodeID: "shared", Port: "main"}},
+			{ID: "e4", Kind: workflow.ConnectionMain,
+				Source: workflow.Endpoint{NodeID: "cron", Port: "main"},
+				Target: workflow.Endpoint{NodeID: "shared", Port: "main"}},
+		},
+		Settings: map[string]any{},
+	}, catalog)
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+	return ir
+}
+
+func executorRegistry(t *testing.T) *engine.Registry {
+	t.Helper()
+	executors := engine.NewRegistry()
+	if err := nodes.RegisterExecutors(executors, safehttp.DefaultPolicy(), sqlnode.Guard{}, ai.NewLoopRuntime(), nil, nil); err != nil {
+		t.Fatalf("RegisterExecutors() error = %v", err)
+	}
+	return executors
+}
+
+// TestRunStartsFromTheNamedTriggerOnly is the property that had to land with
+// the compiler change. Allowing several roots without deciding what happens at
+// run time would produce documents that save and activate and then execute the
+// wrong thing — every root seeded with the same item, so a schedule trigger
+// firing on a webhook delivery.
+func TestRunStartsFromTheNamedTriggerOnly(t *testing.T) {
+	ir := multiTriggerIR(t)
+
+	result, err := engine.NewRunner(executorRegistry(t)).Run(context.Background(), ir, engine.Request{
+		Input:         workflow.Item{JSON: map[string]any{"order": "A-1"}},
+		TriggerNodeID: "hook",
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	ran := map[string]int{}
+	for _, run := range result.NodeRuns {
+		ran[run.NodeID]++
+	}
+	for _, want := range []string{"hook", "hook-only", "shared"} {
+		if ran[want] != 1 {
+			t.Errorf("node %q ran %d times, want once", want, ran[want])
+		}
+	}
+	// The other trigger's executor is not invoked and its exclusive downstream
+	// node does not run.
+	for _, unwanted := range []string{"cron", "cron-only"} {
+		if ran[unwanted] != 0 {
+			t.Errorf("node %q ran %d times on a webhook execution, want never", unwanted, ran[unwanted])
+		}
+	}
+
+	// The shared node ran once, fed only by the trigger that fired.
+	for _, run := range result.NodeRuns {
+		if run.NodeID != "shared" {
+			continue
+		}
+		items := run.Input["main"]
+		if len(items) != 1 {
+			t.Fatalf("shared node received %d items, want 1 from the firing trigger alone", len(items))
+		}
+		if items[0].JSON["order"] != "A-1" {
+			t.Errorf("shared node input = %#v, want the webhook's item", items[0].JSON)
+		}
+	}
+}
+
+// TestRunFromTheOtherTriggerIsTheMirrorImage proves the selection is real
+// rather than an ordering accident.
+func TestRunFromTheOtherTriggerIsTheMirrorImage(t *testing.T) {
+	ir := multiTriggerIR(t)
+
+	result, err := engine.NewRunner(executorRegistry(t)).Run(context.Background(), ir, engine.Request{
+		Input:         workflow.Item{JSON: map[string]any{"nightly": true}},
+		TriggerNodeID: "cron",
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	ran := map[string]int{}
+	for _, run := range result.NodeRuns {
+		ran[run.NodeID]++
+	}
+	for _, want := range []string{"cron", "cron-only", "shared"} {
+		if ran[want] != 1 {
+			t.Errorf("node %q ran %d times, want once", want, ran[want])
+		}
+	}
+	for _, unwanted := range []string{"hook", "hook-only"} {
+		if ran[unwanted] != 0 {
+			t.Errorf("node %q ran %d times on a schedule execution, want never", unwanted, ran[unwanted])
+		}
+	}
+}
+
+// TestRunWithNoNamedTriggerRunsEveryRoot is what a manual run means, and what
+// keeps a single-root graph behaving exactly as it did before.
+func TestRunWithNoNamedTriggerRunsEveryRoot(t *testing.T) {
+	ir := multiTriggerIR(t)
+
+	result, err := engine.NewRunner(executorRegistry(t)).Run(context.Background(), ir, engine.Request{
+		Input: workflow.Item{JSON: map[string]any{"manual": true}},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	ran := map[string]int{}
+	for _, run := range result.NodeRuns {
+		ran[run.NodeID]++
+	}
+	for _, want := range []string{"hook", "cron", "hook-only", "cron-only", "shared"} {
+		if ran[want] != 1 {
+			t.Errorf("node %q ran %d times on a manual run, want once", want, ran[want])
+		}
+	}
+}
+
+// TestRunRejectsATriggerThatIsNotInTheWorkflow refuses to silently run
+// everything when the named node is wrong, which would look like success.
+func TestRunRejectsATriggerThatIsNotInTheWorkflow(t *testing.T) {
+	ir := multiTriggerIR(t)
+
+	_, err := engine.NewRunner(executorRegistry(t)).Run(context.Background(), ir, engine.Request{
+		Input:         workflow.Item{JSON: map[string]any{}},
+		TriggerNodeID: "no-such-node",
+	})
+	if err == nil {
+		t.Fatal("Run() accepted a trigger node that is not in the workflow")
+	}
+	if !strings.Contains(err.Error(), "no-such-node") {
+		t.Errorf("error = %v, want it to name the missing trigger", err)
+	}
 }

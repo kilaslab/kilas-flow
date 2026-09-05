@@ -20,7 +20,7 @@ import (
 // these repository-shaped operations.
 type ExecutionStore interface {
 	ClaimNext(context.Context, string, time.Time) (execution.Record, workflow.Document, bool, error)
-	QueueTriggered(context.Context, repository.TenantScope, string, string, execution.Trigger, json.RawMessage) (execution.Record, error)
+	QueueTriggered(context.Context, repository.TenantScope, string, string, execution.Trigger, string, json.RawMessage) (execution.Record, error)
 	Get(context.Context, repository.TenantScope, string) (execution.Record, error)
 	UpdateRuntime(context.Context, repository.TenantScope, execution.Record) (execution.Record, error)
 	CreateNodeRun(context.Context, repository.TenantScope, execution.NodeRun) (execution.NodeRun, error)
@@ -300,7 +300,8 @@ func (service *Service) run(ctx context.Context, record execution.Record, docume
 		return Result{}, err
 	}
 	return service.runner.Run(ctx, ir, Request{
-		Input: item,
+		Input:         item,
+		TriggerNodeID: record.TriggerNodeID,
 		Execution: ExecutionContext{
 			ID: record.ID, Mode: string(record.Trigger),
 			TenantID: record.TenantID, WorkflowID: record.WorkflowID,
@@ -348,9 +349,12 @@ func (resolver *tenantCredentials) ResolveCredential(ctx context.Context, creden
 // The trigger surface goes through the same durable queue as a manual run, so
 // a webhook cannot bypass lifecycle, validation, or execution-record rules.
 func (service *Service) QueueWebhook(ctx context.Context, binding repository.WebhookBinding, payload json.RawMessage) (execution.Record, error) {
+	// The binding already names the node that owns this path, so the run starts
+	// from that webhook alone — a workflow with a nightly schedule beside it
+	// must not fire the schedule on a delivery.
 	record, err := service.executions.QueueTriggered(ctx,
 		repository.TenantScope{ID: binding.TenantID}, binding.WorkflowID, binding.WorkflowVersionID,
-		execution.TriggerWebhook, payload)
+		execution.TriggerWebhook, binding.NodeID, payload)
 	if err != nil {
 		return execution.Record{}, err
 	}
@@ -359,10 +363,10 @@ func (service *Service) QueueWebhook(ctx context.Context, binding repository.Web
 }
 
 // QueueScheduled persists a queued execution for a due schedule.
-func (service *Service) QueueScheduled(ctx context.Context, tenantID, workflowID, versionID string, payload json.RawMessage) (execution.Record, error) {
+func (service *Service) QueueScheduled(ctx context.Context, tenantID, workflowID, versionID, triggerNodeID string, payload json.RawMessage) (execution.Record, error) {
 	record, err := service.executions.QueueTriggered(ctx,
 		repository.TenantScope{ID: tenantID}, workflowID, versionID,
-		execution.TriggerSchedule, payload)
+		execution.TriggerSchedule, triggerNodeID, payload)
 	if err != nil {
 		return execution.Record{}, err
 	}

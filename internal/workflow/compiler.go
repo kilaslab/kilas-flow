@@ -340,16 +340,30 @@ func validateExecutableTopology(ir IR, issues *ValidationErrors) {
 		}
 	}
 
-	if len(roots) != 1 {
+	// One trigger was never a property of workflows, only of the runtime that
+	// executed them. Real n8n workflows routinely carry several — a webhook for
+	// live traffic beside a schedule for a nightly catch-up, or a manual
+	// trigger left in so the author can test by hand — and over half the import
+	// corpus failed this rule before its node types were even considered.
+	//
+	// What must still hold is that there is somewhere to start and that nothing
+	// is stranded, so a graph with no root is still refused and every node must
+	// still be reachable from *some* root. Which root a given execution starts
+	// from is the runner's business, not the compiler's.
+	if len(roots) == 0 {
 		issues.add(ValidationError{
 			Code: ErrorInvalidTopology, Path: "/nodes",
-			Message: "workflow graph must contain exactly one trigger root",
+			Message: "workflow graph must contain at least one trigger root",
 		})
 		return
 	}
 
-	reachable := map[string]struct{}{roots[0].ID: {}}
-	queue := []string{roots[0].ID}
+	reachable := make(map[string]struct{}, len(ir.Nodes))
+	queue := make([]string, 0, len(roots))
+	for _, root := range roots {
+		reachable[root.ID] = struct{}{}
+		queue = append(queue, root.ID)
+	}
 	for len(queue) > 0 {
 		nodeID := queue[0]
 		queue = queue[1:]

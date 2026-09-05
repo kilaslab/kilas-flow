@@ -826,3 +826,133 @@ func TestCompileStillRefusesAVersionOlderThanAnythingRegistered(t *testing.T) {
 		t.Errorf("message = %q, want it to name the requested version", validationErrors.Issues[0].Message)
 	}
 }
+
+// TestCompileAcceptsSeveralTriggerRoots is the rule this ticket removes. A
+// webhook for live traffic beside a schedule for a nightly catch-up is the
+// standard shape, and over half the import corpus failed on it before node
+// types were even considered.
+func TestCompileAcceptsSeveralTriggerRoots(t *testing.T) {
+	triggers := catalog{
+		"kilasflow.webhook": {
+			Type: "kilasflow.webhook", Version: workflow.V(1),
+			Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+		},
+		"kilasflow.schedule": {
+			Type: "kilasflow.schedule", Version: workflow.V(1),
+			Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+		},
+		"kilasflow.set": {
+			Type: "kilasflow.set", Version: workflow.V(1),
+			Inputs:  []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+			Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+		},
+	}
+
+	document := workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_019",
+		Name:          "Two triggers",
+		Nodes: []workflow.Node{
+			{ID: "hook", Name: "Webhook", Type: "kilasflow.webhook", TypeVersion: workflow.V(1)},
+			{ID: "cron", Name: "Schedule", Type: "kilasflow.schedule", TypeVersion: workflow.V(1)},
+			{ID: "shared", Name: "Shared", Type: "kilasflow.set", TypeVersion: workflow.V(1)},
+		},
+		Connections: []workflow.Connection{
+			{ID: "hook-shared", Kind: workflow.ConnectionMain,
+				Source: workflow.Endpoint{NodeID: "hook", Port: "main"},
+				Target: workflow.Endpoint{NodeID: "shared", Port: "main"}},
+			{ID: "cron-shared", Kind: workflow.ConnectionMain,
+				Source: workflow.Endpoint{NodeID: "cron", Port: "main"},
+				Target: workflow.Endpoint{NodeID: "shared", Port: "main"}},
+		},
+		Settings: map[string]any{},
+	}
+
+	if _, err := workflow.Compile(document, triggers); err != nil {
+		t.Fatalf("a workflow with a webhook and a schedule must compile: %v", err)
+	}
+}
+
+// TestCompileStillRejectsANodeReachableFromNoTrigger proves the relaxation did
+// not become "anything goes": reachability is now from *any* root, not none.
+func TestCompileStillRejectsANodeReachableFromNoTrigger(t *testing.T) {
+	catalogue := catalog{
+		"kilasflow.webhook": {
+			Type: "kilasflow.webhook", Version: workflow.V(1),
+			Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+		},
+		"kilasflow.schedule": {
+			Type: "kilasflow.schedule", Version: workflow.V(1),
+			Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+		},
+		"kilasflow.set": {
+			Type: "kilasflow.set", Version: workflow.V(1),
+			Inputs:  []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+			Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+		},
+	}
+
+	_, err := workflow.Compile(workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_019",
+		Name:          "Stranded node",
+		Nodes: []workflow.Node{
+			{ID: "hook", Name: "Webhook", Type: "kilasflow.webhook", TypeVersion: workflow.V(1)},
+			{ID: "cron", Name: "Schedule", Type: "kilasflow.schedule", TypeVersion: workflow.V(1)},
+			{ID: "stranded", Name: "Stranded", Type: "kilasflow.set", TypeVersion: workflow.V(1)},
+		},
+		Connections: []workflow.Connection{},
+		Settings:    map[string]any{},
+	}, catalogue)
+
+	var validationErrors *workflow.ValidationErrors
+	if !errors.As(err, &validationErrors) {
+		t.Fatalf("Compile() error = %v, want ValidationErrors", err)
+	}
+	if !containsValidationCode(validationErrors.Issues, workflow.ErrorInvalidTopology) {
+		t.Errorf("issues = %#v, want %q", validationErrors.Issues, workflow.ErrorInvalidTopology)
+	}
+	var named bool
+	for _, issue := range validationErrors.Issues {
+		if issue.NodeID == "stranded" && strings.Contains(issue.Message, "disconnected") {
+			named = true
+		}
+	}
+	if !named {
+		t.Errorf("issues = %#v, want the stranded node named as disconnected", validationErrors.Issues)
+	}
+}
+
+// TestCompileStillRejectsAGraphWithNoTrigger keeps the other bound.
+func TestCompileStillRejectsAGraphWithNoTrigger(t *testing.T) {
+	_, err := workflow.Compile(workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_019",
+		Name:          "No trigger",
+		Nodes: []workflow.Node{
+			{ID: "set", Name: "Set", Type: "kilasflow.set", TypeVersion: workflow.V(1)},
+		},
+		Connections: []workflow.Connection{},
+		Settings:    map[string]any{},
+	}, catalog{
+		"kilasflow.set": {
+			Type: "kilasflow.set", Version: workflow.V(1),
+			Inputs:  []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+			Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+		},
+	})
+
+	var validationErrors *workflow.ValidationErrors
+	if !errors.As(err, &validationErrors) {
+		t.Fatalf("Compile() error = %v, want ValidationErrors", err)
+	}
+	var said bool
+	for _, issue := range validationErrors.Issues {
+		if strings.Contains(issue.Message, "at least one trigger root") {
+			said = true
+		}
+	}
+	if !said {
+		t.Errorf("issues = %#v, want the missing trigger root named", validationErrors.Issues)
+	}
+}

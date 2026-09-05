@@ -81,6 +81,16 @@ type Request struct {
 	// item, backing the `$node` expression root. The runner fills it as the
 	// graph progresses, so a node only ever sees nodes that ran before it.
 	NodeOutputs map[string]map[string]any
+	// TriggerNodeID names the trigger this execution starts from.
+	//
+	// A workflow may declare several — a webhook beside a nightly schedule is
+	// the standard shape — and only one of them fires on any given run. Without
+	// this, every root's executor would run seeded with the same item, so a
+	// schedule trigger would fire on a webhook delivery.
+	//
+	// Empty means every root, which is what a manual run of a workflow means
+	// and what preserves today's behaviour for a single-root graph.
+	TriggerNodeID string
 }
 
 // Executor runs one registered node using its compiled configuration.
@@ -163,13 +173,29 @@ func (runner *Runner) Run(ctx context.Context, ir workflow.IR, request Request) 
 	if len(ir.Nodes) == 0 {
 		return Result{}, fmt.Errorf("compiled workflow graph is empty")
 	}
-	nodes := make(map[string]workflow.IRNode, len(ir.Nodes))
-	for _, node := range ir.Nodes {
-		nodes[node.ID] = node
+	// Only the part of the graph belonging to this run's trigger executes. The
+	// rest is not skipped node by node — it is absent, so a node fed by both
+	// triggers waits only on the one that fired rather than deadlocking on the
+	// one that did not.
+	active, err := activeNodes(ir, request.TriggerNodeID)
+	if err != nil {
+		return Result{}, err
 	}
-	incoming := make(map[string][]workflow.IREdge, len(ir.Nodes))
-	outgoing := make(map[string]int, len(ir.Nodes))
+	nodes := make(map[string]workflow.IRNode, len(active))
+	for _, node := range ir.Nodes {
+		if _, live := active[node.ID]; live {
+			nodes[node.ID] = node
+		}
+	}
+	incoming := make(map[string][]workflow.IREdge, len(nodes))
+	outgoing := make(map[string]int, len(nodes))
 	for _, edge := range ir.Edges {
+		if _, sourceLive := active[edge.Source.NodeID]; !sourceLive {
+			continue
+		}
+		if _, targetLive := active[edge.Target.NodeID]; !targetLive {
+			continue
+		}
 		incoming[edge.Target.NodeID] = append(incoming[edge.Target.NodeID], edge)
 		outgoing[edge.Source.NodeID]++
 	}
@@ -189,16 +215,16 @@ func (runner *Runner) Run(ctx context.Context, ir workflow.IR, request Request) 
 		})
 	}
 
-	completed := make(map[string]workflow.NodeOutput, len(ir.Nodes))
+	completed := make(map[string]workflow.NodeOutput, len(nodes))
 	// `$node["Name"]` reads the first item a completed node produced. Building
 	// it here keeps the lookup ordered by actual execution, so a node can never
 	// observe one that has not run yet.
 	if request.NodeOutputs == nil {
-		request.NodeOutputs = make(map[string]map[string]any, len(ir.Nodes))
+		request.NodeOutputs = make(map[string]map[string]any, len(nodes))
 	}
-	result := Result{NodeRuns: make([]NodeRun, 0, len(ir.Nodes)), Output: make(map[string]workflow.NodeOutput)}
-	for len(completed) < len(ir.Nodes) {
-		ready := make([]string, 0, len(ir.Nodes)-len(completed))
+	result := Result{NodeRuns: make([]NodeRun, 0, len(nodes)), Output: make(map[string]workflow.NodeOutput)}
+	for len(completed) < len(nodes) {
+		ready := make([]string, 0, len(nodes)-len(completed))
 		for nodeID := range nodes {
 			if _, done := completed[nodeID]; done || !dependenciesComplete(incoming[nodeID], completed) {
 				continue
@@ -404,4 +430,75 @@ func cloneValue(value any) any {
 	default:
 		return value
 	}
+}
+
+// activeNodes is the part of a compiled graph that one execution runs.
+//
+// A workflow may declare several trigger roots and only one of them fires on
+// any given run, so starting from a named trigger means walking forward over
+// the item channel from that node alone. Attachment providers — a chat model, a
+// memory, a tool — are then walked *backwards* from whatever was reached, since
+// they are upstream of the node they configure rather than downstream of a
+// trigger, and would otherwise be excluded from every run.
+//
+// An empty trigger runs everything, which is what a manual run of a workflow
+// means and what keeps a single-root graph behaving exactly as before.
+func activeNodes(ir workflow.IR, triggerNodeID string) (map[string]struct{}, error) {
+	active := make(map[string]struct{}, len(ir.Nodes))
+	if triggerNodeID == "" {
+		for _, node := range ir.Nodes {
+			active[node.ID] = struct{}{}
+		}
+		return active, nil
+	}
+
+	var known bool
+	for _, node := range ir.Nodes {
+		if node.ID == triggerNodeID {
+			known = true
+		}
+	}
+	if !known {
+		return nil, fmt.Errorf("execution names trigger node %q, which is not in this workflow", triggerNodeID)
+	}
+
+	active[triggerNodeID] = struct{}{}
+	queue := []string{triggerNodeID}
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		for _, edge := range ir.Edges {
+			if edge.Kind != workflow.ConnectionMain || edge.Source.NodeID != current {
+				continue
+			}
+			if _, seen := active[edge.Target.NodeID]; seen {
+				continue
+			}
+			active[edge.Target.NodeID] = struct{}{}
+			queue = append(queue, edge.Target.NodeID)
+		}
+	}
+
+	// Repeat until nothing changes, so a provider attached to another provider
+	// is reached too.
+	for {
+		grew := false
+		for _, edge := range ir.Edges {
+			if edge.Kind == workflow.ConnectionMain {
+				continue
+			}
+			if _, targetLive := active[edge.Target.NodeID]; !targetLive {
+				continue
+			}
+			if _, sourceLive := active[edge.Source.NodeID]; sourceLive {
+				continue
+			}
+			active[edge.Source.NodeID] = struct{}{}
+			grew = true
+		}
+		if !grew {
+			break
+		}
+	}
+	return active, nil
 }

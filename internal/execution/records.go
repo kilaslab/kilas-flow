@@ -30,12 +30,19 @@ const (
 // Record is a redaction-ready execution record pinned to one immutable
 // workflow revision. Input, output, and error must already be safe to persist.
 type Record struct {
-	ID                      string          `json:"id"`
-	TenantID                string          `json:"tenantId"`
-	WorkflowID              string          `json:"workflowId"`
-	WorkflowVersionID       string          `json:"workflowVersionId"`
-	Status                  Status          `json:"status"`
-	Trigger                 Trigger         `json:"trigger"`
+	ID                string  `json:"id"`
+	TenantID          string  `json:"tenantId"`
+	WorkflowID        string  `json:"workflowId"`
+	WorkflowVersionID string  `json:"workflowVersionId"`
+	Status            Status  `json:"status"`
+	Trigger           Trigger `json:"trigger"`
+	// TriggerNodeID names the trigger node this run started from.
+	//
+	// A workflow may declare several trigger roots and only one fires on a
+	// given run, so `trigger` alone — manual, webhook or schedule — no longer
+	// says which. It is empty for a run that starts from every root, which is
+	// what a manual run means.
+	TriggerNodeID           string          `json:"triggerNodeId,omitempty"`
 	Input                   json.RawMessage `json:"input,omitempty"`
 	Output                  json.RawMessage `json:"output,omitempty"`
 	Error                   json.RawMessage `json:"error,omitempty"`

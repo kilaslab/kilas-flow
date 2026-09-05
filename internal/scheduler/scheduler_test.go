@@ -42,6 +42,9 @@ type queuedRun struct {
 	tenantID   string
 	workflowID string
 	versionID  string
+	// triggerNodeID says which schedule trigger fired. A workflow may declare
+	// several triggers and only this one is running.
+	triggerNodeID string
 }
 
 func TestNextComputesTheFollowingFireTimeInUTC(t *testing.T) {
@@ -223,8 +226,8 @@ func newService(t *testing.T, store repository.ScheduleRepository, clock schedul
 		Schedules: store,
 		Clock:     clock,
 		Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Queue: func(_ context.Context, tenantID, workflowID, versionID string, _ json.RawMessage) error {
-			*runs = append(*runs, queuedRun{tenantID: tenantID, workflowID: workflowID, versionID: versionID})
+		Queue: func(_ context.Context, tenantID, workflowID, versionID, triggerNodeID string, _ json.RawMessage) error {
+			*runs = append(*runs, queuedRun{tenantID: tenantID, workflowID: workflowID, versionID: versionID, triggerNodeID: triggerNodeID})
 			return nil
 		},
 	})
@@ -288,5 +291,37 @@ func newScheduleFixture(t *testing.T) fixture {
 		workflows: workflows,
 		tenant:    tenant,
 		workflow:  active,
+	}
+}
+
+// TestScheduleQueuesItsOwnTriggerNode proves the scheduler names the node that
+// fired. Without it a workflow carrying a webhook beside a nightly schedule
+// would run the webhook too on every due tick.
+func TestScheduleQueuesItsOwnTriggerNode(t *testing.T) {
+	setup := newScheduleFixture(t)
+	store, tenant, active := setup.schedules, setup.tenant, setup.workflow
+
+	start := time.Date(2026, 9, 5, 10, 0, 0, 0, time.UTC)
+	clock := &fixedClock{now: start}
+	next, _ := scheduler.Next("0 * * * *", start)
+	created, err := store.Create(context.Background(), tenant, repository.Schedule{
+		WorkflowID: active.ID, NodeID: "nightly-cron", Cron: "0 * * * *", Active: true, NextRunAt: &next,
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	var runs []queuedRun
+	service := newService(t, store, clock, &runs)
+	clock.Advance(time.Hour)
+	if queued, err := service.Tick(context.Background()); err != nil || queued != 1 {
+		t.Fatalf("Tick() = (%d, %v), want (1, nil)", queued, err)
+	}
+
+	if len(runs) != 1 {
+		t.Fatalf("queued %d runs, want 1", len(runs))
+	}
+	if runs[0].triggerNodeID != created.NodeID {
+		t.Errorf("triggerNodeID = %q, want %q — the run must start from the schedule that fired", runs[0].triggerNodeID, created.NodeID)
 	}
 }

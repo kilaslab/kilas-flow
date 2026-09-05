@@ -42,7 +42,11 @@ type Service struct {
 }
 
 // QueueFunc starts one scheduled execution.
-type QueueFunc func(ctx context.Context, tenantID, workflowID, versionID string, payload json.RawMessage) error
+//
+// triggerNodeID names the schedule trigger node the run starts from. A workflow
+// may declare several triggers and only this one is firing, so a webhook beside
+// it must not also run.
+type QueueFunc func(ctx context.Context, tenantID, workflowID, versionID, triggerNodeID string, payload json.RawMessage) error
 
 // Options configures the scheduler.
 type Options struct {
@@ -115,7 +119,7 @@ func (service *Service) Tick(ctx context.Context) (int, error) {
 		if err != nil {
 			return queued, fmt.Errorf("encode schedule payload: %w", err)
 		}
-		if err := service.queue(ctx, item.Schedule.TenantID, item.Schedule.WorkflowID, item.WorkflowVersionID, payload); err != nil {
+		if err := service.queue(ctx, item.Schedule.TenantID, item.Schedule.WorkflowID, item.WorkflowVersionID, item.Schedule.NodeID, payload); err != nil {
 			// The due time was already advanced, so a queue failure loses this
 			// occurrence rather than firing it repeatedly. Logging keeps that
 			// visible instead of silent.

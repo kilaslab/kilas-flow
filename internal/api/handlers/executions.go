@@ -128,6 +128,7 @@ type ExecutionSummary struct {
 	WorkflowVersionID string            `json:"workflowVersionId"`
 	Status            execution.Status  `json:"status"`
 	Trigger           execution.Trigger `json:"trigger"`
+	TriggerNodeID     string            `json:"triggerNodeId,omitempty" doc:"The trigger node this run started from, when one workflow declares several"`
 	StartedAt         time.Time         `json:"startedAt"`
 	FinishedAt        *time.Time        `json:"finishedAt,omitempty"`
 	DurationMs        *int64            `json:"durationMs,omitempty" doc:"Wall-clock duration in milliseconds, once the execution has finished"`
