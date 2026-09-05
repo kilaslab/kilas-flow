@@ -44,7 +44,7 @@ func RegisterAll(registry *node.Registry) error {
 func manualTrigger() node.Definition {
 	return node.Definition{
 		Type:           "kilasflow.manual",
-		Version:        1,
+		Version:        workflow.V(1),
 		DisplayName:    "Manual Trigger",
 		Description:    "Starts a workflow from the editor or API.",
 		Category:       "Triggers",
@@ -57,7 +57,7 @@ func manualTrigger() node.Definition {
 func setNode() node.Definition {
 	return node.Definition{
 		Type:        "kilasflow.set",
-		Version:     1,
+		Version:     workflow.V(1),
 		DisplayName: "Set",
 		Description: "Adds or replaces fields on every incoming item.",
 		Category:    "Core",
@@ -76,7 +76,7 @@ func setNode() node.Definition {
 func ifNode() node.Definition {
 	return node.Definition{
 		Type:        "kilasflow.if",
-		Version:     1,
+		Version:     workflow.V(1),
 		DisplayName: "IF",
 		Description: "Routes items to the true or false branch.",
 		Category:    "Core",
@@ -98,7 +98,7 @@ func ifNode() node.Definition {
 func mergeNode() node.Definition {
 	return node.Definition{
 		Type:        "kilasflow.merge",
-		Version:     1,
+		Version:     workflow.V(1),
 		DisplayName: "Merge",
 		Description: "Combines item streams from two main inputs.",
 		Category:    "Core",

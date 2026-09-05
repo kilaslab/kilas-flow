@@ -41,14 +41,14 @@ func TestRegistryListsBuiltinsInStableOrder(t *testing.T) {
 	// a type at the same version.
 	type key struct {
 		nodeType string
-		version  int
+		version  workflow.TypeVersion
 	}
 	seenKey := make(map[key]bool, len(definitions))
 	seen := make(map[string]bool, len(got))
 	for _, definition := range definitions {
 		current := key{definition.Type, definition.Version}
 		if seenKey[current] {
-			t.Errorf("List() returned %q version %d twice", definition.Type, definition.Version)
+			t.Errorf("List() returned %q version %s twice", definition.Type, definition.Version)
 		}
 		seenKey[current] = true
 		seen[definition.Type] = true
@@ -78,7 +78,7 @@ func TestRegistryExposesCorePortAndPropertyMetadata(t *testing.T) {
 		t.Fatalf("RegisterAll() error = %v", err)
 	}
 
-	manual, found := registry.Get("kilasflow.manual", 1)
+	manual, found := registry.Get("kilasflow.manual", workflow.V(1))
 	if !found {
 		t.Fatal("manual trigger was not registered")
 	}
@@ -89,7 +89,7 @@ func TestRegistryExposesCorePortAndPropertyMetadata(t *testing.T) {
 		t.Error("manual trigger executor binding is empty")
 	}
 
-	set, found := registry.Get("kilasflow.set", 1)
+	set, found := registry.Get("kilasflow.set", workflow.V(1))
 	if !found {
 		t.Fatal("set node was not registered")
 	}
@@ -103,7 +103,7 @@ func TestRegistryExposesCorePortAndPropertyMetadata(t *testing.T) {
 		t.Error("set shared settings are empty")
 	}
 
-	ifNode, found := registry.Get("kilasflow.if", 1)
+	ifNode, found := registry.Get("kilasflow.if", workflow.V(1))
 	if !found {
 		t.Fatal("if node was not registered")
 	}
@@ -114,7 +114,7 @@ func TestRegistryExposesCorePortAndPropertyMetadata(t *testing.T) {
 		t.Errorf("if parameters = %#v, want required conditions control", ifNode.Parameters)
 	}
 
-	merge, found := registry.Get("kilasflow.merge", 1)
+	merge, found := registry.Get("kilasflow.merge", workflow.V(1))
 	if !found {
 		t.Fatal("merge node was not registered")
 	}
@@ -127,7 +127,7 @@ func TestRegistryRejectsDuplicateDefinitionsAndDefendsCopies(t *testing.T) {
 	registry := node.NewRegistry()
 	definition := node.Definition{
 		Type:        "kilasflow.test",
-		Version:     1,
+		Version:     workflow.V(1),
 		DisplayName: "Test",
 		Category:    "Core",
 		Outputs:     []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
@@ -142,7 +142,7 @@ func TestRegistryRejectsDuplicateDefinitionsAndDefendsCopies(t *testing.T) {
 
 	listed := registry.List()
 	listed[0].Outputs[0].Name = "changed"
-	loaded, found := registry.Get("kilasflow.test", 1)
+	loaded, found := registry.Get("kilasflow.test", workflow.V(1))
 	if !found {
 		t.Fatal("registered definition disappeared")
 	}
@@ -164,24 +164,24 @@ func TestRegistryValidatesEverySupportedConnectionKind(t *testing.T) {
 		outputs = append(outputs, workflow.Port{Name: "out-" + string(kind), Kind: kind})
 	}
 	if err := registry.Register(node.Definition{
-		Type: "kilasflow.source", Version: 1, DisplayName: "Source", Category: "Test", ExecutorID: "source",
+		Type: "kilasflow.source", Version: workflow.V(1), DisplayName: "Source", Category: "Test", ExecutorID: "source",
 		Outputs: outputs,
 	}); err != nil {
 		t.Fatalf("register source = %v", err)
 	}
-	nodes := []workflow.Node{{ID: "source", Name: "source", Type: "kilasflow.source", TypeVersion: 1}}
+	nodes := []workflow.Node{{ID: "source", Name: "source", Type: "kilasflow.source", TypeVersion: workflow.V(1)}}
 	connections := make([]workflow.Connection, 0, len(kinds))
 	for _, kind := range kinds {
 		targetType := "kilasflow.target." + string(kind)
 		if err := registry.Register(node.Definition{
-			Type: targetType, Version: 1, DisplayName: targetType, Category: "Test", ExecutorID: targetType,
+			Type: targetType, Version: workflow.V(1), DisplayName: targetType, Category: "Test", ExecutorID: targetType,
 			Inputs: []workflow.Port{{Name: "in", Kind: kind}},
 		}); err != nil {
 			t.Fatalf("register target %q = %v", kind, err)
 		}
 		targetID := "target-" + string(kind)
 		nodes = append(nodes,
-			workflow.Node{ID: targetID, Name: targetID, Type: targetType, TypeVersion: 1},
+			workflow.Node{ID: targetID, Name: targetID, Type: targetType, TypeVersion: workflow.V(1)},
 		)
 		connections = append(connections, workflow.Connection{
 			ID: "edge-" + string(kind), Kind: kind,
@@ -232,4 +232,89 @@ func containsCode(issues []workflow.ValidationError, want workflow.ErrorCode) bo
 		}
 	}
 	return false
+}
+
+// TestRegistryResolvesDownwardNeverUpward pins the version dispatch rule.
+//
+// The direction is the whole point. Resolving upward would silently run a
+// workflow written for version 2 against version 3's parameter shape, which is
+// a behaviour change disguised as a lookup. Resolving downward can only give a
+// workflow the shape it was written for or an older one.
+func TestRegistryResolvesDownwardNeverUpward(t *testing.T) {
+	registry := node.NewRegistry()
+	for _, version := range []string{"1", "2", "3.4"} {
+		if err := registry.Register(node.Definition{
+			Type: "test.versioned", Version: workflow.MustTypeVersion(version),
+			DisplayName: "Versioned", Category: "Test", ExecutorID: "test.exec",
+		}); err != nil {
+			t.Fatalf("Register(%s) error = %v", version, err)
+		}
+	}
+
+	for _, testCase := range []struct {
+		requested string
+		want      string
+		found     bool
+		why       string
+	}{
+		{"3.4", "3.4", true, "an exact match resolves to itself"},
+		{"2", "2", true, "an exact match resolves to itself"},
+		{"3", "2", true, "3 is not registered, so the highest below it wins"},
+		{"4.2", "3.4", true, "a newer workflow runs against the newest shape available"},
+		{"202502", "3.4", true, "a YYYYMM request still resolves downward"},
+		{"1", "1", true, "the oldest registered version is reachable"},
+	} {
+		got, found := registry.Resolve("test.versioned", workflow.MustTypeVersion(testCase.requested))
+		if found != testCase.found {
+			t.Errorf("Resolve(%s) found = %t, want %t", testCase.requested, found, testCase.found)
+			continue
+		}
+		if got.Version.String() != testCase.want {
+			t.Errorf("Resolve(%s) = %s, want %s (%s)", testCase.requested, got.Version, testCase.want, testCase.why)
+		}
+	}
+
+	// Nothing is asked for: the newest registered version is current.
+	current, found := registry.Resolve("test.versioned", workflow.TypeVersion{})
+	if !found || current.Version.String() != "3.4" {
+		t.Errorf("Resolve(unset) = %s (found %t), want the newest registered version", current.Version, found)
+	}
+
+	// Every registered version is newer than the request: say so rather than
+	// guess. This installation cannot run this workflow.
+	if _, found := registry.Resolve("test.versioned", workflow.MustTypeVersion("0.5")); found {
+		t.Error("Resolve(0.5) found a definition; every registered version is newer, so it must fail")
+	}
+}
+
+// TestRegistryHoldsTwoVersionsOfOneTypeAtOnce is the premise of the node-pack
+// work: Set v2 and Set v3.4 take different parameters, and a document must be
+// able to select between them.
+func TestRegistryHoldsTwoVersionsOfOneTypeAtOnce(t *testing.T) {
+	registry := node.NewRegistry()
+	for _, version := range []string{"202409", "202502"} {
+		if err := registry.Register(node.Definition{
+			Type: "waha.action", Version: workflow.MustTypeVersion(version),
+			DisplayName: "WAHA", Category: "Test", ExecutorID: "waha.exec",
+			Parameters: []node.PropertyDefinition{
+				{Key: version, Label: "Shape " + version, Kind: node.PropertyString},
+			},
+		}); err != nil {
+			t.Fatalf("Register(%s) error = %v", version, err)
+		}
+	}
+
+	for _, version := range []string{"202409", "202502"} {
+		definition, found := registry.Get("waha.action", workflow.MustTypeVersion(version))
+		if !found {
+			t.Fatalf("Get(waha.action, %s) not found", version)
+		}
+		if definition.Version.String() != version {
+			t.Errorf("Get(%s) = %s", version, definition.Version)
+		}
+		// A YYYYMM version must select its own parameter shape, not the other's.
+		if len(definition.Parameters) != 1 || definition.Parameters[0].Key != version {
+			t.Errorf("version %s resolved to the wrong parameter shape: %#v", version, definition.Parameters)
+		}
+	}
 }

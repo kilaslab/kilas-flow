@@ -17,9 +17,9 @@ import (
 
 type catalog map[string]workflow.NodeDefinition
 
-func (c catalog) Lookup(nodeType string, version int) (workflow.NodeDefinition, bool) {
+func (c catalog) Lookup(nodeType string, version workflow.TypeVersion) (workflow.NodeDefinition, bool) {
 	definition, ok := c[nodeType]
-	return definition, ok && definition.Version == version
+	return definition, ok && definition.Version.Compare(version) == 0
 }
 
 func TestDecodeDocumentRejectsUnknownStructuralFields(t *testing.T) {
@@ -147,8 +147,8 @@ func TestCompileRejectsCycleWithStructuredTopologyError(t *testing.T) {
 		ID:            "wf_019",
 		Name:          "Cyclic draft",
 		Nodes: []workflow.Node{
-			{ID: "first", Name: "First", Type: "kilasflow.set", TypeVersion: 1},
-			{ID: "second", Name: "Second", Type: "kilasflow.set", TypeVersion: 1},
+			{ID: "first", Name: "First", Type: "kilasflow.set", TypeVersion: workflow.V(1)},
+			{ID: "second", Name: "Second", Type: "kilasflow.set", TypeVersion: workflow.V(1)},
 		},
 		Connections: []workflow.Connection{
 			{
@@ -167,7 +167,7 @@ func TestCompileRejectsCycleWithStructuredTopologyError(t *testing.T) {
 
 	_, err := workflow.Compile(document, catalog{
 		"kilasflow.set": {
-			Type: "kilasflow.set", Version: 1,
+			Type: "kilasflow.set", Version: workflow.V(1),
 			Inputs:  []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
 			Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
 		},
@@ -185,20 +185,25 @@ func TestCompileRejectsCycleWithStructuredTopologyError(t *testing.T) {
 	t.Fatalf("validation issues = %#v, want %q", validationErrors.Issues, workflow.ErrorInvalidTopology)
 }
 
+// TestCompileDistinguishesUnknownNodeVersion exercises the compiler's error
+// branching against a catalog that refuses the version outright. Whether a
+// given catalog refuses is the catalog's policy, not the compiler's — the real
+// registry resolves downward, which
+// TestCompileResolvesAVersionTheRegistryDoesNotHave covers.
 func TestCompileDistinguishesUnknownNodeVersion(t *testing.T) {
 	document := workflow.Document{
 		SchemaVersion: workflow.CurrentSchemaVersion,
 		ID:            "wf_019",
 		Name:          "Older node version",
 		Nodes: []workflow.Node{{
-			ID: "set", Name: "Set", Type: "kilasflow.set", TypeVersion: 2,
+			ID: "set", Name: "Set", Type: "kilasflow.set", TypeVersion: workflow.V(2),
 		}},
 		Connections: []workflow.Connection{},
 		Settings:    map[string]any{},
 	}
 
 	_, err := workflow.Compile(document, catalog{
-		"kilasflow.set": {Type: "kilasflow.set", Version: 1},
+		"kilasflow.set": {Type: "kilasflow.set", Version: workflow.V(1)},
 	})
 
 	var validationErrors *workflow.ValidationErrors
@@ -235,9 +240,9 @@ func TestCompileRejectsNodeDisconnectedFromTheManualTrigger(t *testing.T) {
 		ID:            "wf_019",
 		Name:          "Disconnected node",
 		Nodes: []workflow.Node{
-			{ID: "manual", Name: "Manual Trigger", Type: "kilasflow.manual", TypeVersion: 1},
-			{ID: "set", Name: "Set", Type: "kilasflow.set", TypeVersion: 1, Parameters: map[string]any{"assignments": map[string]any{"status": "ready"}}},
-			{ID: "orphan", Name: "Orphan", Type: "kilasflow.set", TypeVersion: 1, Parameters: map[string]any{"assignments": map[string]any{"status": "orphan"}}},
+			{ID: "manual", Name: "Manual Trigger", Type: "kilasflow.manual", TypeVersion: workflow.V(1)},
+			{ID: "set", Name: "Set", Type: "kilasflow.set", TypeVersion: workflow.V(1), Parameters: map[string]any{"assignments": map[string]any{"status": "ready"}}},
+			{ID: "orphan", Name: "Orphan", Type: "kilasflow.set", TypeVersion: workflow.V(1), Parameters: map[string]any{"assignments": map[string]any{"status": "orphan"}}},
 		},
 		Connections: []workflow.Connection{{
 			ID: "manual-set", Kind: workflow.ConnectionMain,
@@ -249,11 +254,11 @@ func TestCompileRejectsNodeDisconnectedFromTheManualTrigger(t *testing.T) {
 
 	_, err := workflow.Compile(document, catalog{
 		"kilasflow.manual": {
-			Type: "kilasflow.manual", Version: 1,
+			Type: "kilasflow.manual", Version: workflow.V(1),
 			Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
 		},
 		"kilasflow.set": {
-			Type: "kilasflow.set", Version: 1,
+			Type: "kilasflow.set", Version: workflow.V(1),
 			Inputs:             []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
 			Outputs:            []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
 			RequiredParameters: []string{"assignments"},
@@ -275,7 +280,7 @@ func TestCompileRejectsMissingRequiredConfiguration(t *testing.T) {
 		ID:            "wf_019",
 		Name:          "Incomplete draft",
 		Nodes: []workflow.Node{{
-			ID: "set", Name: "Set", Type: "kilasflow.set", TypeVersion: 1,
+			ID: "set", Name: "Set", Type: "kilasflow.set", TypeVersion: workflow.V(1),
 		}},
 		Connections: []workflow.Connection{},
 		Settings:    map[string]any{},
@@ -283,7 +288,7 @@ func TestCompileRejectsMissingRequiredConfiguration(t *testing.T) {
 
 	_, err := workflow.Compile(document, catalog{
 		"kilasflow.set": {
-			Type: "kilasflow.set", Version: 1,
+			Type: "kilasflow.set", Version: workflow.V(1),
 			RequiredParameters: []string{"assignments"},
 		},
 	})
@@ -307,8 +312,8 @@ func TestCompileRejectsMalformedCoreIFConfiguration(t *testing.T) {
 		ID:            "wf_022",
 		Name:          "Malformed IF",
 		Nodes: []workflow.Node{
-			{ID: "manual", Name: "Manual Trigger", Type: "kilasflow.manual", TypeVersion: 1},
-			{ID: "if", Name: "IF", Type: "kilasflow.if", TypeVersion: 1, Parameters: map[string]any{"conditions": []any{"not-a-condition"}}},
+			{ID: "manual", Name: "Manual Trigger", Type: "kilasflow.manual", TypeVersion: workflow.V(1)},
+			{ID: "if", Name: "IF", Type: "kilasflow.if", TypeVersion: workflow.V(1), Parameters: map[string]any{"conditions": []any{"not-a-condition"}}},
 		},
 		Connections: []workflow.Connection{{
 			ID: "manual-if", Kind: workflow.ConnectionMain,
@@ -333,8 +338,8 @@ func TestCompileReturnsStructuredConnectionErrors(t *testing.T) {
 		ID:            "wf_019",
 		Name:          "Invalid connections",
 		Nodes: []workflow.Node{
-			{ID: "source", Name: "Source", Type: "kilasflow.set", TypeVersion: 1},
-			{ID: "target", Name: "Target", Type: "kilasflow.set", TypeVersion: 1},
+			{ID: "source", Name: "Source", Type: "kilasflow.set", TypeVersion: workflow.V(1)},
+			{ID: "target", Name: "Target", Type: "kilasflow.set", TypeVersion: workflow.V(1)},
 		},
 		Connections: []workflow.Connection{
 			{
@@ -353,7 +358,7 @@ func TestCompileReturnsStructuredConnectionErrors(t *testing.T) {
 
 	_, err := workflow.Compile(document, catalog{
 		"kilasflow.set": {
-			Type: "kilasflow.set", Version: 1,
+			Type: "kilasflow.set", Version: workflow.V(1),
 			Inputs:  []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
 			Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
 		},
@@ -381,8 +386,8 @@ func TestCompileRejectsDuplicateConnections(t *testing.T) {
 		ID:            "wf_019",
 		Name:          "Duplicate connection",
 		Nodes: []workflow.Node{
-			{ID: "source", Name: "Source", Type: "kilasflow.set", TypeVersion: 1},
-			{ID: "target", Name: "Target", Type: "kilasflow.set", TypeVersion: 1},
+			{ID: "source", Name: "Source", Type: "kilasflow.set", TypeVersion: workflow.V(1)},
+			{ID: "target", Name: "Target", Type: "kilasflow.set", TypeVersion: workflow.V(1)},
 		},
 		Connections: []workflow.Connection{
 			{ID: "first", Kind: connection.Kind, Source: connection.Source, Target: connection.Target},
@@ -393,7 +398,7 @@ func TestCompileRejectsDuplicateConnections(t *testing.T) {
 
 	_, err := workflow.Compile(document, catalog{
 		"kilasflow.set": {
-			Type: "kilasflow.set", Version: 1,
+			Type: "kilasflow.set", Version: workflow.V(1),
 			Inputs:  []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
 			Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
 		},
@@ -414,7 +419,7 @@ func TestCompileRejectsUnknownNodeType(t *testing.T) {
 		ID:            "wf_019",
 		Name:          "Unknown node",
 		Nodes: []workflow.Node{{
-			ID: "unknown", Name: "Unknown", Type: "kilasflow.unknown", TypeVersion: 1,
+			ID: "unknown", Name: "Unknown", Type: "kilasflow.unknown", TypeVersion: workflow.V(1),
 		}},
 		Connections: []workflow.Connection{},
 		Settings:    map[string]any{},
@@ -448,14 +453,14 @@ func TestCompileBuildsIRForLabeledIFOutputs(t *testing.T) {
 				ID:          "manual",
 				Name:        "Manual Trigger",
 				Type:        "kilasflow.manualTrigger",
-				TypeVersion: 1,
+				TypeVersion: workflow.V(1),
 				Position:    workflow.Position{X: 0, Y: 0},
 			},
 			{
 				ID:          "if",
 				Name:        "IF",
 				Type:        "kilasflow.if",
-				TypeVersion: 1,
+				TypeVersion: workflow.V(1),
 				Position:    workflow.Position{X: 240, Y: 0},
 				Parameters:  map[string]any{"conditions": []any{"customer"}},
 			},
@@ -463,7 +468,7 @@ func TestCompileBuildsIRForLabeledIFOutputs(t *testing.T) {
 				ID:          "false-set",
 				Name:        "False branch",
 				Type:        "kilasflow.set",
-				TypeVersion: 1,
+				TypeVersion: workflow.V(1),
 				Position:    workflow.Position{X: 480, Y: 120},
 			},
 		},
@@ -488,17 +493,17 @@ func TestCompileBuildsIRForLabeledIFOutputs(t *testing.T) {
 
 	ir, err := workflow.Compile(document, catalog{
 		"kilasflow.manualTrigger": {
-			Type: "kilasflow.manualTrigger", Version: 1,
+			Type: "kilasflow.manualTrigger", Version: workflow.V(1),
 			Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
 		},
 		"kilasflow.if": {
-			Type: "kilasflow.if", Version: 1,
+			Type: "kilasflow.if", Version: workflow.V(1),
 			Inputs:             []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
 			Outputs:            []workflow.Port{{Name: "true", Kind: workflow.ConnectionMain}, {Name: "false", Kind: workflow.ConnectionMain}},
 			RequiredParameters: []string{"conditions"},
 		},
 		"kilasflow.set": {
-			Type: "kilasflow.set", Version: 1,
+			Type: "kilasflow.set", Version: workflow.V(1),
 			Inputs:  []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
 			Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
 		},
@@ -527,7 +532,7 @@ func TestCompileCopiesCanonicalDataIntoIndependentIR(t *testing.T) {
 			ID:          "set",
 			Name:        "Set",
 			Type:        "kilasflow.set",
-			TypeVersion: 1,
+			TypeVersion: workflow.V(1),
 			Position:    workflow.Position{},
 			Parameters: map[string]any{
 				"nested": map[string]any{"value": "before"},
@@ -543,7 +548,7 @@ func TestCompileCopiesCanonicalDataIntoIndependentIR(t *testing.T) {
 		// A single-node graph still needs an item-producing root; this test is
 		// about IR data independence, not topology.
 		"kilasflow.set": {
-			Type: "kilasflow.set", Version: 1,
+			Type: "kilasflow.set", Version: workflow.V(1),
 			Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
 		},
 	})
@@ -584,9 +589,9 @@ func TestCompileAcceptsAnAnnotationConnectedToNothing(t *testing.T) {
 		ID:            "wf_019",
 		Name:          "Annotated",
 		Nodes: []workflow.Node{
-			{ID: "manual", Name: "Manual Trigger", Type: "kilasflow.manual", TypeVersion: 1},
-			{ID: "set", Name: "Set", Type: "kilasflow.set", TypeVersion: 1, Parameters: map[string]any{"assignments": map[string]any{"status": "ready"}}},
-			{ID: "note", Name: "Sticky Note", Type: "kilasflow.stickyNote", TypeVersion: 1},
+			{ID: "manual", Name: "Manual Trigger", Type: "kilasflow.manual", TypeVersion: workflow.V(1)},
+			{ID: "set", Name: "Set", Type: "kilasflow.set", TypeVersion: workflow.V(1), Parameters: map[string]any{"assignments": map[string]any{"status": "ready"}}},
+			{ID: "note", Name: "Sticky Note", Type: "kilasflow.stickyNote", TypeVersion: workflow.V(1)},
 		},
 		Connections: []workflow.Connection{{
 			ID: "manual-set", Kind: workflow.ConnectionMain,
@@ -598,17 +603,17 @@ func TestCompileAcceptsAnAnnotationConnectedToNothing(t *testing.T) {
 
 	ir, err := workflow.Compile(document, catalog{
 		"kilasflow.manual": {
-			Type: "kilasflow.manual", Version: 1,
+			Type: "kilasflow.manual", Version: workflow.V(1),
 			Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
 		},
 		"kilasflow.set": {
-			Type: "kilasflow.set", Version: 1,
+			Type: "kilasflow.set", Version: workflow.V(1),
 			Inputs:             []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
 			Outputs:            []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
 			RequiredParameters: []string{"assignments"},
 		},
 		// No ports at all, in either direction.
-		"kilasflow.stickyNote": {Type: "kilasflow.stickyNote", Version: 1},
+		"kilasflow.stickyNote": {Type: "kilasflow.stickyNote", Version: workflow.V(1)},
 	})
 	if err != nil {
 		t.Fatalf("a workflow with an unconnected annotation must compile: %v", err)
@@ -634,11 +639,11 @@ func TestCompileRejectsAWorkflowThatIsOnlyAnAnnotation(t *testing.T) {
 		SchemaVersion: workflow.CurrentSchemaVersion,
 		ID:            "wf_019",
 		Name:          "Only a note",
-		Nodes:         []workflow.Node{{ID: "note", Name: "Sticky Note", Type: "kilasflow.stickyNote", TypeVersion: 1}},
+		Nodes:         []workflow.Node{{ID: "note", Name: "Sticky Note", Type: "kilasflow.stickyNote", TypeVersion: workflow.V(1)}},
 		Connections:   []workflow.Connection{},
 		Settings:      map[string]any{},
 	}, catalog{
-		"kilasflow.stickyNote": {Type: "kilasflow.stickyNote", Version: 1},
+		"kilasflow.stickyNote": {Type: "kilasflow.stickyNote", Version: workflow.V(1)},
 	})
 
 	var validationErrors *workflow.ValidationErrors
@@ -647,5 +652,177 @@ func TestCompileRejectsAWorkflowThatIsOnlyAnAnnotation(t *testing.T) {
 	}
 	if !containsValidationCode(validationErrors.Issues, workflow.ErrorInvalidTopology) {
 		t.Errorf("validation issues = %#v, want %q", validationErrors.Issues, workflow.ErrorInvalidTopology)
+	}
+}
+
+// TestDocumentSavedBeforeFractionalVersionsStillLoads is the compatibility
+// property. Every workflow persisted before typeVersion became a decimal wrote
+// it as a plain integer, and those documents must load, compile and re-encode
+// unchanged — the wire format did not change, only the Go type behind it.
+func TestDocumentSavedBeforeFractionalVersionsStillLoads(t *testing.T) {
+	const persisted = `{
+        "schemaVersion": 1,
+        "id": "wf_019",
+        "name": "Saved before the change",
+        "nodes": [
+            {"id":"manual","name":"Manual Trigger","type":"kilasflow.manual","typeVersion":1,"position":{"x":0,"y":0}},
+            {"id":"set","name":"Set","type":"kilasflow.set","typeVersion":1,"position":{"x":260,"y":0},
+             "parameters":{"assignments":{"status":"ready"}}}
+        ],
+        "connections": [
+            {"id":"manual-set","kind":"main",
+             "source":{"nodeId":"manual","port":"main"},
+             "target":{"nodeId":"set","port":"main"}}
+        ],
+        "settings": {}
+    }`
+
+	document, err := workflow.DecodeDocument(bytes.NewBufferString(persisted))
+	if err != nil {
+		t.Fatalf("DecodeDocument() error = %v", err)
+	}
+	if got := document.Nodes[0].TypeVersion.String(); got != "1" {
+		t.Errorf("typeVersion = %s, want 1", got)
+	}
+
+	// It re-encodes as the same JSON number it arrived as, so a host that
+	// round-trips a document through KilasFlow does not see it change.
+	encoded, err := json.Marshal(document.Nodes[0])
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	if !bytes.Contains(encoded, []byte(`"typeVersion":1`)) {
+		t.Errorf("re-encoded node = %s, want typeVersion as the bare number 1", encoded)
+	}
+
+	if _, err := workflow.Compile(document, catalog{
+		"kilasflow.manual": {
+			Type: "kilasflow.manual", Version: workflow.V(1),
+			Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+		},
+		"kilasflow.set": {
+			Type: "kilasflow.set", Version: workflow.V(1),
+			Inputs:             []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+			Outputs:            []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+			RequiredParameters: []string{"assignments"},
+		},
+	}); err != nil {
+		t.Fatalf("a document saved before the change must still compile: %v", err)
+	}
+}
+
+// TestDocumentAcceptsAFractionalAndAYYYYMMVersion proves the persisted contract
+// carries both forms the ecosystem actually uses.
+func TestDocumentAcceptsAFractionalAndAYYYYMMVersion(t *testing.T) {
+	const persisted = `{
+        "schemaVersion": 1,
+        "id": "wf_019",
+        "name": "Mixed versions",
+        "nodes": [
+            {"id":"a","name":"A","type":"kilasflow.manual","typeVersion":4.2,"position":{"x":0,"y":0}},
+            {"id":"b","name":"B","type":"kilasflow.waha","typeVersion":202502,"position":{"x":260,"y":0}}
+        ],
+        "connections": [],
+        "settings": {}
+    }`
+
+	document, err := workflow.DecodeDocument(bytes.NewBufferString(persisted))
+	if err != nil {
+		t.Fatalf("DecodeDocument() error = %v", err)
+	}
+	for index, want := range []string{"4.2", "202502"} {
+		if got := document.Nodes[index].TypeVersion.String(); got != want {
+			t.Errorf("node %d typeVersion = %s, want %s", index, got, want)
+		}
+	}
+	encoded, err := json.Marshal(document)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	for _, want := range []string{`"typeVersion":4.2`, `"typeVersion":202502`} {
+		if !bytes.Contains(encoded, []byte(want)) {
+			t.Errorf("re-encoded document is missing %s: %s", want, encoded)
+		}
+	}
+}
+
+// TestCompileResolvesAVersionTheRegistryDoesNotHave is the production path: an
+// imported workflow carries n8n's own typeVersion, which KilasFlow has almost
+// never registered, and it must still compile against the newest shape
+// available rather than being rejected.
+func TestCompileResolvesAVersionTheRegistryDoesNotHave(t *testing.T) {
+	catalogue := node.NewRegistry()
+	if err := nodes.RegisterAll(catalogue); err != nil {
+		t.Fatalf("RegisterAll() error = %v", err)
+	}
+
+	document := workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_019",
+		Name:          "Imported versions",
+		Nodes: []workflow.Node{
+			{ID: "manual", Name: "Manual Trigger", Type: "kilasflow.manual", TypeVersion: workflow.V(1)},
+			// n8n's Set is on 3.4 and KilasFlow registers only version 1.
+			{
+				ID: "set", Name: "Set", Type: "kilasflow.set", TypeVersion: workflow.MustTypeVersion("3.4"),
+				Parameters: map[string]any{"assignments": map[string]any{"status": "ready"}},
+			},
+		},
+		Connections: []workflow.Connection{{
+			ID: "manual-set", Kind: workflow.ConnectionMain,
+			Source: workflow.Endpoint{NodeID: "manual", Port: "main"},
+			Target: workflow.Endpoint{NodeID: "set", Port: "main"},
+		}},
+		Settings: map[string]any{},
+	}
+
+	ir, err := workflow.Compile(document, catalogue)
+	if err != nil {
+		t.Fatalf("a document asking for an unregistered newer version must resolve downward: %v", err)
+	}
+	// The IR records the version that actually ran, not the one requested, so a
+	// reader of an execution can tell which parameter shape was used.
+	for _, current := range ir.Nodes {
+		if current.ID != "set" {
+			continue
+		}
+		if got := current.TypeVersion.String(); got != "1" {
+			t.Errorf("compiled typeVersion = %s, want the resolved 1 rather than the requested 3.4", got)
+		}
+	}
+}
+
+// TestCompileStillRefusesAVersionOlderThanAnythingRegistered is the other half.
+// Resolving downward must not become "resolve to anything": when every
+// registered version is newer than the request, this installation cannot run
+// that workflow and says so.
+func TestCompileStillRefusesAVersionOlderThanAnythingRegistered(t *testing.T) {
+	catalogue := node.NewRegistry()
+	if err := catalogue.Register(node.Definition{
+		Type: "test.newonly", Version: workflow.V(5),
+		DisplayName: "New only", Category: "Test", ExecutorID: "test.exec",
+		Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+	}); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+
+	_, err := workflow.Compile(workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_019",
+		Name:          "Too old",
+		Nodes:         []workflow.Node{{ID: "a", Name: "A", Type: "test.newonly", TypeVersion: workflow.V(2)}},
+		Connections:   []workflow.Connection{},
+		Settings:      map[string]any{},
+	}, catalogue)
+
+	var validationErrors *workflow.ValidationErrors
+	if !errors.As(err, &validationErrors) {
+		t.Fatalf("Compile() error = %v, want ValidationErrors", err)
+	}
+	if got, want := validationErrors.Issues[0].Code, workflow.ErrorUnknownVersion; got != want {
+		t.Errorf("validation code = %q, want %q — the type exists, the version does not", got, want)
+	}
+	if !strings.Contains(validationErrors.Issues[0].Message, "2") {
+		t.Errorf("message = %q, want it to name the requested version", validationErrors.Issues[0].Message)
 	}
 }

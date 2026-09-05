@@ -42,7 +42,7 @@ const descriptorKey = "$ai"
 func chatModelNode() node.Definition {
 	return node.Definition{
 		Type:        ChatModelNodeType,
-		Version:     1,
+		Version:     workflow.V(1),
 		DisplayName: "OpenAI Chat Model",
 		Description: "Supplies an OpenAI-compatible chat model to an AI Agent.",
 		Category:    "AI",
@@ -66,7 +66,7 @@ func chatModelNode() node.Definition {
 func memoryNode() node.Definition {
 	return node.Definition{
 		Type:        MemoryNodeType,
-		Version:     1,
+		Version:     workflow.V(1),
 		DisplayName: "Simple Memory",
 		Description: "Keeps a bounded window of conversation history for an AI Agent.",
 		Category:    "AI",
@@ -113,7 +113,7 @@ func httpToolNode() node.Definition {
 func agentNode() node.Definition {
 	return node.Definition{
 		Type:        AgentNodeType,
-		Version:     1,
+		Version:     workflow.V(1),
 		DisplayName: "AI Agent",
 		Description: "Runs a model with optional memory and tools until it answers.",
 		Category:    "AI",
@@ -424,10 +424,10 @@ func (executor *AgentExecutor) httpToolFrom(ir workflow.IRNode, descriptor map[s
 		description: textValue(descriptor["description"], ""),
 		node: workflow.IRNode{
 			ID: ir.ID + ":" + name, Name: textValue(descriptor["nodeName"], name),
-			Type: HTTPToolNodeType, TypeVersion: 1,
+			Type: HTTPToolNodeType, TypeVersion: workflow.V(1),
 			Parameters: parameters, Credentials: credentials,
 			Definition: workflow.NodeDefinition{
-				Type: HTTPToolNodeType, Version: 1,
+				Type: HTTPToolNodeType, Version: workflow.V(1),
 				Outputs: mainOutput(), ExecutorID: HTTPExecutorID,
 			},
 		},

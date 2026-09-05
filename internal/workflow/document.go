@@ -39,7 +39,7 @@ type Node struct {
 	ID          string            `json:"id"`
 	Name        string            `json:"name"`
 	Type        string            `json:"type"`
-	TypeVersion int               `json:"typeVersion"`
+	TypeVersion TypeVersion       `json:"typeVersion"`
 	Position    Position          `json:"position"`
 	Parameters  map[string]any    `json:"parameters,omitempty"`
 	Credentials map[string]string `json:"credentials,omitempty"`
@@ -264,9 +264,10 @@ func ValidateDraft(document Document) error {
 		if node.Type == "" {
 			return fmt.Errorf("workflow node %q type is required", node.ID)
 		}
-		if node.TypeVersion < 1 {
-			return fmt.Errorf("workflow node %q typeVersion must be positive", node.ID)
-		}
+		// An unset typeVersion is a valid draft: it means "whichever version of
+		// this node type the registry says is current", and the compiler
+		// resolves it. A negative or malformed one never reaches here, because
+		// TypeVersion refuses to decode from one.
 		for credentialName, credentialID := range node.Credentials {
 			if credentialID == "" {
 				return fmt.Errorf("workflow node %q credential %q reference is required", node.ID, credentialName)

@@ -148,6 +148,7 @@ export interface Definition {
   /** @nullable */
   sharedSettings: PropertyDefinition[] | null;
   type: string;
+  /** Node type version. A decimal such as 1, 4.2, or a YYYYMM value such as 202502. Omit it to use the registered default. */
   version: number;
 }
 
@@ -172,6 +173,7 @@ export interface Node {
   position: Position;
   settings?: NodeSettings;
   type: string;
+  /** Node type version. A decimal such as 1, 4.2, or a YYYYMM value such as 202502. Omit it to use the registered default. */
   typeVersion: number;
 }
 
@@ -424,6 +426,7 @@ export interface Unsupported {
   nodeName: string;
   reason: string;
   type: string;
+  /** Node type version. A decimal such as 1, 4.2, or a YYYYMM value such as 202502. Omit it to use the registered default. */
   typeVersion?: number;
 }
 

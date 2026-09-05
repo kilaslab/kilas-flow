@@ -44,7 +44,7 @@ const (
 func webhookTrigger() node.Definition {
 	return node.Definition{
 		Type:        WebhookNodeType,
-		Version:     1,
+		Version:     workflow.V(1),
 		DisplayName: "Webhook",
 		Description: "Starts a workflow from an inbound HTTP request.",
 		Category:    "Triggers",
@@ -92,7 +92,7 @@ func webhookTrigger() node.Definition {
 func respondToWebhookNode() node.Definition {
 	return node.Definition{
 		Type:        RespondNodeType,
-		Version:     1,
+		Version:     workflow.V(1),
 		DisplayName: "Respond to Webhook",
 		Description: "Produces the HTTP response returned to the webhook caller.",
 		Category:    "Core",
@@ -115,7 +115,7 @@ func respondToWebhookNode() node.Definition {
 func scheduleTrigger() node.Definition {
 	return node.Definition{
 		Type:        ScheduleType,
-		Version:     1,
+		Version:     workflow.V(1),
 		DisplayName: "Schedule",
 		Description: "Starts a workflow on a cron schedule.",
 		Category:    "Triggers",

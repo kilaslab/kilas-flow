@@ -40,8 +40,8 @@ func TestServiceRunOncePersistsCompletedManualSetExecution(t *testing.T) {
 		ID:            "wf_023",
 		Name:          "Persisted manual set",
 		Nodes: []workflow.Node{
-			{ID: "manual", Name: "Manual Trigger", Type: "kilasflow.manual", TypeVersion: 1},
-			{ID: "set", Name: "Set", Type: "kilasflow.set", TypeVersion: 1, Parameters: map[string]any{"assignments": map[string]any{"status": "ready"}}},
+			{ID: "manual", Name: "Manual Trigger", Type: "kilasflow.manual", TypeVersion: workflow.V(1)},
+			{ID: "set", Name: "Set", Type: "kilasflow.set", TypeVersion: workflow.V(1), Parameters: map[string]any{"assignments": map[string]any{"status": "ready"}}},
 		},
 		Connections: []workflow.Connection{{
 			ID: "manual-set", Kind: workflow.ConnectionMain,
@@ -157,7 +157,7 @@ func TestServicePersistsFailedNodeRunWhenItsConfiguredTimeoutExpires(t *testing.
 		t.Fatalf("RegisterAll() error = %v", err)
 	}
 	if err := catalog.Register(node.Definition{
-		Type: "kilasflow.test.slow", Version: 1, DisplayName: "Slow", Category: "Test",
+		Type: "kilasflow.test.slow", Version: workflow.V(1), DisplayName: "Slow", Category: "Test",
 		Inputs:  []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
 		Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}}, ExecutorID: "test.slow",
 	}); err != nil {
@@ -170,8 +170,8 @@ func TestServicePersistsFailedNodeRunWhenItsConfiguredTimeoutExpires(t *testing.
 		ID:            "wf_024",
 		Name:          "Slow workflow",
 		Nodes: []workflow.Node{
-			{ID: "manual", Name: "Manual Trigger", Type: "kilasflow.manual", TypeVersion: 1},
-			{ID: "slow", Name: "Slow", Type: "kilasflow.test.slow", TypeVersion: 1, Settings: map[string]any{"timeoutSeconds": 0.01}},
+			{ID: "manual", Name: "Manual Trigger", Type: "kilasflow.manual", TypeVersion: workflow.V(1)},
+			{ID: "slow", Name: "Slow", Type: "kilasflow.test.slow", TypeVersion: workflow.V(1), Settings: map[string]any{"timeoutSeconds": 0.01}},
 		},
 		Connections: []workflow.Connection{{
 			ID: "manual-slow", Kind: workflow.ConnectionMain,
@@ -243,7 +243,7 @@ func TestServiceCancelsQueuedExecutionBeforeAWorkerClaimsIt(t *testing.T) {
 		SchemaVersion: workflow.CurrentSchemaVersion,
 		ID:            "wf_025",
 		Name:          "Cancellable workflow",
-		Nodes:         []workflow.Node{{ID: "manual", Name: "Manual Trigger", Type: "kilasflow.manual", TypeVersion: 1}},
+		Nodes:         []workflow.Node{{ID: "manual", Name: "Manual Trigger", Type: "kilasflow.manual", TypeVersion: workflow.V(1)}},
 		Connections:   []workflow.Connection{},
 		Settings:      map[string]any{},
 	})
@@ -325,7 +325,7 @@ func TestServiceCancelsAnActiveExecutionAndPersistsCancelledNodeRun(t *testing.T
 		t.Fatalf("RegisterAll() error = %v", err)
 	}
 	if err := catalog.Register(node.Definition{
-		Type: "kilasflow.test.block", Version: 1, DisplayName: "Block", Category: "Test",
+		Type: "kilasflow.test.block", Version: workflow.V(1), DisplayName: "Block", Category: "Test",
 		Inputs:  []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
 		Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}}, ExecutorID: "test.block",
 	}); err != nil {
@@ -337,8 +337,8 @@ func TestServiceCancelsAnActiveExecutionAndPersistsCancelledNodeRun(t *testing.T
 		ID:            "wf_026",
 		Name:          "Active cancellation",
 		Nodes: []workflow.Node{
-			{ID: "manual", Name: "Manual Trigger", Type: "kilasflow.manual", TypeVersion: 1},
-			{ID: "block", Name: "Block", Type: "kilasflow.test.block", TypeVersion: 1},
+			{ID: "manual", Name: "Manual Trigger", Type: "kilasflow.manual", TypeVersion: workflow.V(1)},
+			{ID: "block", Name: "Block", Type: "kilasflow.test.block", TypeVersion: workflow.V(1)},
 		},
 		Connections: []workflow.Connection{{ID: "manual-block", Kind: workflow.ConnectionMain, Source: workflow.Endpoint{NodeID: "manual", Port: "main"}, Target: workflow.Endpoint{NodeID: "block", Port: "main"}}},
 		Settings:    map[string]any{},

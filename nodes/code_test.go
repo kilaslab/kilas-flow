@@ -19,12 +19,12 @@ func codeIR(t *testing.T, parameters map[string]any) workflow.IRNode {
 	if err := nodes.RegisterAll(registry); err != nil {
 		t.Fatalf("RegisterAll() error = %v", err)
 	}
-	definition, found := registry.Lookup(nodes.CodeNodeType, 1)
+	definition, found := registry.Lookup(nodes.CodeNodeType, workflow.V(1))
 	if !found {
 		t.Fatal("the Code node is not registered")
 	}
 	return workflow.IRNode{
-		ID: "code-1", Name: "Code", Type: nodes.CodeNodeType, TypeVersion: 1,
+		ID: "code-1", Name: "Code", Type: nodes.CodeNodeType, TypeVersion: workflow.V(1),
 		Parameters: parameters, Definition: definition,
 	}
 }
@@ -53,7 +53,7 @@ func TestCodeNodeIsRegisteredWithAnEditorForm(t *testing.T) {
 	if err := nodes.RegisterAll(registry); err != nil {
 		t.Fatalf("RegisterAll() error = %v", err)
 	}
-	definition, found := registry.Get(nodes.CodeNodeType, 1)
+	definition, found := registry.Get(nodes.CodeNodeType, workflow.V(1))
 	if !found {
 		t.Fatal("the Code node is not registered")
 	}
@@ -75,7 +75,7 @@ func TestCodeNodeValidatesSourceAtSaveTimeWithoutCompiling(t *testing.T) {
 	if err := nodes.RegisterAll(registry); err != nil {
 		t.Fatalf("RegisterAll() error = %v", err)
 	}
-	definition, _ := registry.Lookup(nodes.CodeNodeType, 1)
+	definition, _ := registry.Lookup(nodes.CodeNodeType, workflow.V(1))
 
 	// A save must not block on a build, and the compiler may not even be
 	// present, so validation is a shape check only.

@@ -269,7 +269,7 @@ func newScheduleFixture(t *testing.T) fixture {
 		SchemaVersion: workflow.CurrentSchemaVersion,
 		Name:          "Scheduled",
 		Nodes: []workflow.Node{{
-			ID: "n1", Name: "Schedule", Type: nodes.ScheduleType, TypeVersion: 1,
+			ID: "n1", Name: "Schedule", Type: nodes.ScheduleType, TypeVersion: workflow.V(1),
 			Position: workflow.Position{}, Parameters: map[string]any{"cron": "0 * * * *"},
 		}},
 		Connections: []workflow.Connection{},

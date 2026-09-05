@@ -39,9 +39,9 @@ func httpNode(parameters map[string]any) workflow.IRNode {
 	if err := nodes.RegisterAll(registry); err != nil {
 		panic(err)
 	}
-	definition, _ := registry.Lookup("kilasflow.httpRequest", 1)
+	definition, _ := registry.Lookup("kilasflow.httpRequest", workflow.V(1))
 	return workflow.IRNode{
-		ID: "http-1", Name: "Call API", Type: "kilasflow.httpRequest", TypeVersion: 1,
+		ID: "http-1", Name: "Call API", Type: "kilasflow.httpRequest", TypeVersion: workflow.V(1),
 		Parameters: parameters, Definition: definition,
 	}
 }
@@ -250,7 +250,7 @@ func TestHTTPRequestCompilerValidationRejectsBadFixedConfiguration(t *testing.T)
 	if err := nodes.RegisterAll(registry); err != nil {
 		t.Fatalf("RegisterAll() error = %v", err)
 	}
-	definition, found := registry.Lookup("kilasflow.httpRequest", 1)
+	definition, found := registry.Lookup("kilasflow.httpRequest", workflow.V(1))
 	if !found {
 		t.Fatal("HTTP Request is not registered")
 	}

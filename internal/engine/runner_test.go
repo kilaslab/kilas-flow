@@ -23,8 +23,8 @@ func TestRunnerExecutesManualSetAndRecordsItemFlow(t *testing.T) {
 		ID:            "wf_019",
 		Name:          "Manual customer status",
 		Nodes: []workflow.Node{
-			{ID: "manual", Name: "Manual Trigger", Type: "kilasflow.manual", TypeVersion: 1},
-			{ID: "set", Name: "Set", Type: "kilasflow.set", TypeVersion: 1, Parameters: map[string]any{"assignments": map[string]any{"status": "ready"}}},
+			{ID: "manual", Name: "Manual Trigger", Type: "kilasflow.manual", TypeVersion: workflow.V(1)},
+			{ID: "set", Name: "Set", Type: "kilasflow.set", TypeVersion: workflow.V(1), Parameters: map[string]any{"assignments": map[string]any{"status": "ready"}}},
 		},
 		Connections: []workflow.Connection{{
 			ID: "manual-set", Kind: workflow.ConnectionMain,
@@ -75,10 +75,10 @@ func TestRunnerRoutesEachItemToTheMatchingIFOutput(t *testing.T) {
 		ID:            "wf_020",
 		Name:          "Route VIP customers",
 		Nodes: []workflow.Node{
-			{ID: "manual", Name: "Manual Trigger", Type: "kilasflow.manual", TypeVersion: 1},
-			{ID: "if", Name: "IF", Type: "kilasflow.if", TypeVersion: 1, Parameters: map[string]any{"conditions": []any{map[string]any{"field": "customer.tier", "operator": "equals", "value": "vip"}}}},
-			{ID: "true-set", Name: "VIP Set", Type: "kilasflow.set", TypeVersion: 1, Parameters: map[string]any{"assignments": map[string]any{"route": "vip"}}},
-			{ID: "false-set", Name: "Default Set", Type: "kilasflow.set", TypeVersion: 1, Parameters: map[string]any{"assignments": map[string]any{"route": "default"}}},
+			{ID: "manual", Name: "Manual Trigger", Type: "kilasflow.manual", TypeVersion: workflow.V(1)},
+			{ID: "if", Name: "IF", Type: "kilasflow.if", TypeVersion: workflow.V(1), Parameters: map[string]any{"conditions": []any{map[string]any{"field": "customer.tier", "operator": "equals", "value": "vip"}}}},
+			{ID: "true-set", Name: "VIP Set", Type: "kilasflow.set", TypeVersion: workflow.V(1), Parameters: map[string]any{"assignments": map[string]any{"route": "vip"}}},
+			{ID: "false-set", Name: "Default Set", Type: "kilasflow.set", TypeVersion: workflow.V(1), Parameters: map[string]any{"assignments": map[string]any{"route": "default"}}},
 		},
 		Connections: []workflow.Connection{
 			{ID: "manual-if", Kind: workflow.ConnectionMain, Source: workflow.Endpoint{NodeID: "manual", Port: "main"}, Target: workflow.Endpoint{NodeID: "if", Port: "main"}},
@@ -124,10 +124,10 @@ func TestRunnerMergesFanInByDeclaredInputPortOrder(t *testing.T) {
 		ID:            "wf_021",
 		Name:          "Merge sources",
 		Nodes: []workflow.Node{
-			{ID: "manual", Name: "Manual Trigger", Type: "kilasflow.manual", TypeVersion: 1},
-			{ID: "left", Name: "Left", Type: "kilasflow.set", TypeVersion: 1, Parameters: map[string]any{"assignments": map[string]any{"source": "left"}}},
-			{ID: "right", Name: "Right", Type: "kilasflow.set", TypeVersion: 1, Parameters: map[string]any{"assignments": map[string]any{"source": "right"}}},
-			{ID: "merge", Name: "Merge", Type: "kilasflow.merge", TypeVersion: 1, Parameters: map[string]any{"mode": "append"}},
+			{ID: "manual", Name: "Manual Trigger", Type: "kilasflow.manual", TypeVersion: workflow.V(1)},
+			{ID: "left", Name: "Left", Type: "kilasflow.set", TypeVersion: workflow.V(1), Parameters: map[string]any{"assignments": map[string]any{"source": "left"}}},
+			{ID: "right", Name: "Right", Type: "kilasflow.set", TypeVersion: workflow.V(1), Parameters: map[string]any{"assignments": map[string]any{"source": "right"}}},
+			{ID: "merge", Name: "Merge", Type: "kilasflow.merge", TypeVersion: workflow.V(1), Parameters: map[string]any{"mode": "append"}},
 		},
 		Connections: []workflow.Connection{
 			{ID: "manual-left", Kind: workflow.ConnectionMain, Source: workflow.Endpoint{NodeID: "manual", Port: "main"}, Target: workflow.Endpoint{NodeID: "left", Port: "main"}},

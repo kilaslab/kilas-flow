@@ -46,7 +46,7 @@
         "id": { "type": "string", "minLength": 1 },
         "name": { "type": "string", "minLength": 1 },
         "type": { "type": "string", "minLength": 1 },
-        "typeVersion": { "type": "integer", "minimum": 1 },
+        "typeVersion": { "type": "number", "exclusiveMinimum": 0 },
         "position": { "$ref": "#/$defs/position" },
         "parameters": { "type": "object" },
         "credentials": {

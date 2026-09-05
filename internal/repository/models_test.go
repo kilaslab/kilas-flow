@@ -20,9 +20,9 @@ import (
 
 type activationCatalog map[string]workflow.NodeDefinition
 
-func (c activationCatalog) Lookup(nodeType string, version int) (workflow.NodeDefinition, bool) {
+func (c activationCatalog) Lookup(nodeType string, version workflow.TypeVersion) (workflow.NodeDefinition, bool) {
 	definition, found := c[nodeType]
-	return definition, found && definition.Version == version
+	return definition, found && definition.Version.Compare(version) == 0
 }
 
 func (c activationCatalog) HasType(nodeType string) bool {
@@ -189,7 +189,7 @@ func TestExecutionStoreReclaimsAnExpiredWorkerLease(t *testing.T) {
 		ID:            "wf_027",
 		Name:          "Lease recovery",
 		Nodes: []workflow.Node{{
-			ID: "manual", Name: "Manual Trigger", Type: "kilasflow.manual", TypeVersion: 1,
+			ID: "manual", Name: "Manual Trigger", Type: "kilasflow.manual", TypeVersion: workflow.V(1),
 		}},
 		Connections: []workflow.Connection{},
 		Settings:    map[string]any{},
@@ -199,7 +199,7 @@ func TestExecutionStoreReclaimsAnExpiredWorkerLease(t *testing.T) {
 	}
 	store := repository.NewExecutionStore(db.DB)
 	queued, err := store.QueueManualLatest(context.Background(), tenant, stored.ID, activationCatalog{
-		"kilasflow.manual": {Type: "kilasflow.manual", Version: 1, Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}}},
+		"kilasflow.manual": {Type: "kilasflow.manual", Version: workflow.V(1), Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}}},
 	}, nil)
 	if err != nil {
 		t.Fatalf("QueueManualLatest() error = %v", err)
@@ -269,7 +269,7 @@ func TestWorkflowStoreCreatesImmutableTenantScopedVersions(t *testing.T) {
 			ID:          "manual",
 			Name:        "Manual Trigger",
 			Type:        "kilasflow.manual",
-			TypeVersion: 1,
+			TypeVersion: workflow.V(1),
 			Position:    workflow.Position{},
 		}},
 		Connections: []workflow.Connection{},
@@ -308,7 +308,7 @@ func TestWorkflowStoreCreatesImmutableTenantScopedVersions(t *testing.T) {
 
 	activated, err := store.Activate(context.Background(), tenantA, draft.ID, activationCatalog{
 		"kilasflow.manual": {
-			Type: "kilasflow.manual", Version: 1,
+			Type: "kilasflow.manual", Version: workflow.V(1),
 			Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
 		},
 	})
@@ -358,7 +358,7 @@ func TestWorkflowStoreActivatesOnlyLatestExecutableRevision(t *testing.T) {
 			ID:          "manual",
 			Name:        "Manual Trigger",
 			Type:        "kilasflow.manual",
-			TypeVersion: 1,
+			TypeVersion: workflow.V(1),
 			Position:    workflow.Position{},
 		}},
 		Connections: []workflow.Connection{},
@@ -375,7 +375,7 @@ func TestWorkflowStoreActivatesOnlyLatestExecutableRevision(t *testing.T) {
 
 	_, err = store.Activate(context.Background(), tenant, draft.ID, activationCatalog{
 		"kilasflow.manual": {
-			Type: "kilasflow.manual", Version: 1,
+			Type: "kilasflow.manual", Version: workflow.V(1),
 			Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
 		},
 	})

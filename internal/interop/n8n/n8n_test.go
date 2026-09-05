@@ -475,10 +475,10 @@ func TestExportNamesWhatItCannotCarry(t *testing.T) {
 		SchemaVersion: workflow.CurrentSchemaVersion,
 		Name:          "Native only",
 		Nodes: []workflow.Node{
-			{ID: "a", Name: "Manual", Type: "kilasflow.manual", TypeVersion: 1},
+			{ID: "a", Name: "Manual", Type: "kilasflow.manual", TypeVersion: workflow.V(1)},
 			// A Code node has no n8n-Go equivalent in the advertised subset.
-			{ID: "b", Name: "Code", Type: "kilasflow.code", TypeVersion: 1, Parameters: map[string]any{"code": "return items, nil"}},
-			{ID: "c", Name: "Query", Type: "kilasflow.sqlite", TypeVersion: 1,
+			{ID: "b", Name: "Code", Type: "kilasflow.code", TypeVersion: workflow.V(1), Parameters: map[string]any{"code": "return items, nil"}},
+			{ID: "c", Name: "Query", Type: "kilasflow.sqlite", TypeVersion: workflow.V(1),
 				Parameters:  map[string]any{"operation": "query", "statement": "SELECT 1"},
 				Credentials: map[string]string{"sqlite": "cred-1"}},
 		},
@@ -722,8 +722,8 @@ func TestPlaceholderKeepsItsBranchesDistinct(t *testing.T) {
 		t.Fatalf("Route type = %q, want the placeholder", placeholder.Type)
 	}
 	// Three used outputs need a placeholder that declares at least three.
-	if placeholder.TypeVersion < 3 {
-		t.Errorf("placeholder arity = %d, want at least 3 for a three-output node", placeholder.TypeVersion)
+	if placeholder.TypeVersion.Compare(workflow.V(3)) < 0 {
+		t.Errorf("placeholder arity = %s, want at least 3 for a three-output node", placeholder.TypeVersion)
 	}
 
 	// Import must record the three branches as distinct ports.
@@ -854,7 +854,7 @@ func TestPlaceholderArityFamilyMatchesTheNodePack(t *testing.T) {
 
 	catalogue := registry(t)
 	for _, arity := range nodes.UnsupportedArities {
-		definition, found := catalogue.Get(nodes.UnsupportedNodeType, arity)
+		definition, found := catalogue.Get(nodes.UnsupportedNodeType, workflow.V(arity))
 		if !found {
 			t.Fatalf("no placeholder registered at arity %d", arity)
 		}
@@ -890,9 +890,9 @@ func TestExportReadsTheLegacyStringCapsule(t *testing.T) {
 		ID:            "wf_legacy",
 		Name:          "Legacy import",
 		Nodes: []workflow.Node{
-			{ID: "a", Name: "Manual", Type: "kilasflow.manual", TypeVersion: 1},
+			{ID: "a", Name: "Manual", Type: "kilasflow.manual", TypeVersion: workflow.V(1)},
 			{
-				ID: "b", Name: "Send Email", Type: n8n.UnsupportedNodeType, TypeVersion: 1,
+				ID: "b", Name: "Send Email", Type: n8n.UnsupportedNodeType, TypeVersion: workflow.V(1),
 				Parameters: map[string]any{
 					"originalType":        "n8n-nodes-base.emailSend",
 					"originalTypeVersion": 2.1,
@@ -926,4 +926,105 @@ func TestExportReadsTheLegacyStringCapsule(t *testing.T) {
 		return
 	}
 	t.Fatal("the placeholder was not exported at all")
+}
+
+// TestImportPreservesTheSourceTypeVersion is the correctness the ticket exists
+// for. Every imported node used to collapse to version 1 regardless of what n8n
+// said, so a node written against Set 3.4 was configured against whatever
+// version 1 happened to be.
+func TestImportPreservesTheSourceTypeVersion(t *testing.T) {
+	t.Parallel()
+
+	const fixture = `{
+	  "name": "Versions",
+	  "nodes": [
+	    {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}},
+	    {"id":"b","name":"Edit","type":"n8n-nodes-base.set","typeVersion":3.4,"position":[220,0],
+	     "parameters":{"mode":"manual","assignments":{"assignments":[{"id":"1","name":"a","value":"b","type":"string"}]}}},
+	    {"id":"c","name":"Call","type":"n8n-nodes-base.httpRequest","typeVersion":4.2,"position":[440,0],
+	     "parameters":{"url":"https://example.test/x","method":"GET"}}
+	  ],
+	  "connections": {
+	    "Manual": {"main": [[{"node":"Edit","type":"main","index":0}]]},
+	    "Edit": {"main": [[{"node":"Call","type":"main","index":0}]]}
+	  }
+	}`
+
+	result := importFixture(t, fixture)
+	for name, want := range map[string]string{"Edit": "3.4", "Call": "4.2"} {
+		node := nodeByName(result.Document, name)
+		if got := node.TypeVersion.String(); got != want {
+			t.Errorf("%s typeVersion = %s, want %s", name, got, want)
+		}
+	}
+
+	// And the preserved version must still compile: only version 1 of each type
+	// is registered today, so the registry has to resolve downward rather than
+	// reject a version it does not have.
+	document := result.Document
+	document.ID = "wf_versions"
+	if _, err := workflow.Compile(document, registry(t)); err != nil {
+		t.Fatalf("a document carrying n8n's own typeVersion must compile: %v", err)
+	}
+}
+
+// TestUnsupportedDiagnosticReportsTheExactVersion pins the truncation the
+// ticket names: a node on version 4.2 was reported as version 4, which is a
+// different node with a different parameter shape.
+func TestUnsupportedDiagnosticReportsTheExactVersion(t *testing.T) {
+	t.Parallel()
+
+	const fixture = `{
+	  "name": "Fractional unsupported",
+	  "nodes": [
+	    {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}},
+	    {"id":"b","name":"Odd","type":"n8n-nodes-base.someUnmappedThing","typeVersion":4.2,"position":[220,0],"parameters":{}}
+	  ],
+	  "connections": {"Manual": {"main": [[{"node":"Odd","type":"main","index":0}]]}}
+	}`
+
+	result := importFixture(t, fixture)
+	var reported workflow.TypeVersion
+	for _, issue := range result.Unsupported {
+		if issue.Type == "n8n-nodes-base.someUnmappedThing" {
+			reported = issue.TypeVersion
+		}
+	}
+	if got := reported.String(); got != "4.2" {
+		t.Errorf("reported typeVersion = %s, want 4.2 — truncating to 4 names a different node", got)
+	}
+}
+
+// TestImportHandlesAYYYYMMTypeVersion is WAHA's shape. 202502 fits in an int
+// but not in a scheme where version 1 is the only version there is.
+func TestImportHandlesAYYYYMMTypeVersion(t *testing.T) {
+	t.Parallel()
+
+	const fixture = `{
+	  "name": "WAHA-shaped",
+	  "nodes": [
+	    {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}},
+	    {"id":"b","name":"WAHA","type":"@devlikeapro/n8n-nodes-waha.WAHA","typeVersion":202502,"position":[220,0],"parameters":{}}
+	  ],
+	  "connections": {"Manual": {"main": [[{"node":"WAHA","type":"main","index":0}]]}}
+	}`
+
+	result := importFixture(t, fixture)
+	var reported workflow.TypeVersion
+	for _, issue := range result.Unsupported {
+		if issue.Type == "@devlikeapro/n8n-nodes-waha.WAHA" {
+			reported = issue.TypeVersion
+		}
+	}
+	if got := reported.String(); got != "202502" {
+		t.Errorf("reported typeVersion = %s, want 202502", got)
+	}
+	placeholder := nodeByName(result.Document, "WAHA")
+	original, ok := placeholder.Parameters["original"].(map[string]any)
+	if !ok {
+		t.Fatalf("capsule = %#v, want an object", placeholder.Parameters["original"])
+	}
+	if version, _ := original["typeVersion"].(float64); version != 202502 {
+		t.Errorf("capsule typeVersion = %#v, want 202502 preserved for the export", original["typeVersion"])
+	}
 }

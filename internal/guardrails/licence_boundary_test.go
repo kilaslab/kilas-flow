@@ -39,9 +39,14 @@ import (
 var foreignPathMarkers = []struct{ prefix, suffix, why string }{
 	{"/Us", "ers/", "an absolute path into a home directory is machine-specific"},
 	{"/ho", "me/", "an absolute path into a home directory is machine-specific"},
-	{"mitra", "chat/n8n", "the n8n reference checkout is read-only specification material, never a build input"},
-	{"n8n-nod", "es-waha", "the WAHA clone is read-only; its specs are vendored under third_party/waha instead"},
+	{"mitra", "chat/n8n", "the reference checkouts are read-only specification material, never a build input"},
 }
+
+// The WAHA clone deliberately has no marker of its own. Its package name,
+// @devlikeapro/n8n-nodes-waha, is a node *type* string that appears in real
+// workflow JSON and therefore in fixtures and tests — it is format fact that
+// must be nameable. A path to the clone is still caught, because reaching it
+// from a build input requires an absolute path and those are matched above.
 
 // buildInputGlobs are the file kinds that can pull bytes in at build or test
 // time. Prose may name the reference checkout; these may not read it.

@@ -21,7 +21,7 @@ const CodeNodeType = "kilasflow.code"
 func codeNode() node.Definition {
 	return node.Definition{
 		Type:        CodeNodeType,
-		Version:     1,
+		Version:     workflow.V(1),
 		DisplayName: "Code",
 		Description: "Runs restricted Go in an isolated WebAssembly sandbox.",
 		Category:    "Core",

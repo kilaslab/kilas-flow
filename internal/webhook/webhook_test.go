@@ -112,7 +112,7 @@ func webhookDocument(name string, triggerParameters map[string]any, extra ...wor
 		SchemaVersion: workflow.CurrentSchemaVersion,
 		Name:          name,
 		Nodes: append([]workflow.Node{{
-			ID: "trigger", Name: "Webhook", Type: nodes.WebhookNodeType, TypeVersion: 1,
+			ID: "trigger", Name: "Webhook", Type: nodes.WebhookNodeType, TypeVersion: workflow.V(1),
 			Parameters: triggerParameters,
 		}}, extra...),
 		Connections: []workflow.Connection{},
@@ -186,7 +186,7 @@ func TestWebhookRespondsFromARespondToWebhookNode(t *testing.T) {
 	h.activate(t, webhookDocument("Responder", map[string]any{
 		"path": "reply", "httpMethod": http.MethodPost, "responseMode": "responseNode",
 	}, workflow.Node{
-		ID: "respond", Name: "Respond to Webhook", Type: nodes.RespondNodeType, TypeVersion: 1,
+		ID: "respond", Name: "Respond to Webhook", Type: nodes.RespondNodeType, TypeVersion: workflow.V(1),
 		Parameters: map[string]any{
 			"responseCode":    float64(201),
 			"responseBody":    `{"ok":true}`,

@@ -26,7 +26,7 @@ const StickyNoteNodeType = "kilasflow.stickyNote"
 func stickyNoteNode() node.Definition {
 	return node.Definition{
 		Type:        StickyNoteNodeType,
-		Version:     1,
+		Version:     workflow.V(1),
 		DisplayName: "Sticky Note",
 		Description: "A note on the canvas. It never runs and never affects a workflow's result.",
 		Category:    "Annotation",

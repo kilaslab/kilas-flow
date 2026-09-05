@@ -28,7 +28,7 @@ func TestAgentPortsAcceptOnlyTheirOwnConnectionKind(t *testing.T) {
 	t.Parallel()
 
 	registry := aiRegistry(t)
-	agent, found := registry.Get(nodes.AgentNodeType, 1)
+	agent, found := registry.Get(nodes.AgentNodeType, workflow.V(1))
 	if !found {
 		t.Fatal("the AI Agent node is not registered")
 	}
@@ -53,7 +53,7 @@ func TestAgentPortsAcceptOnlyTheirOwnConnectionKind(t *testing.T) {
 		nodes.MemoryNodeType:    workflow.ConnectionMemory,
 		nodes.HTTPToolNodeType:  workflow.ConnectionTool,
 	} {
-		definition, found := registry.Get(nodeType, 1)
+		definition, found := registry.Get(nodeType, workflow.V(1))
 		if !found {
 			t.Fatalf("%s is not registered", nodeType)
 		}
@@ -70,14 +70,14 @@ func aiDocument(extraNodes []workflow.Node, extraConnections []workflow.Connecti
 		ID:            "wf_agent",
 		Name:          "Agent",
 		Nodes: append([]workflow.Node{
-			{ID: "trigger", Name: "Manual Trigger", Type: "kilasflow.manual", TypeVersion: 1},
+			{ID: "trigger", Name: "Manual Trigger", Type: "kilasflow.manual", TypeVersion: workflow.V(1)},
 			{
-				ID: "model", Name: "Chat Model", Type: nodes.ChatModelNodeType, TypeVersion: 1,
+				ID: "model", Name: "Chat Model", Type: nodes.ChatModelNodeType, TypeVersion: workflow.V(1),
 				Parameters:  map[string]any{"model": "gpt-test"},
 				Credentials: map[string]string{"httpBearerAuth": "cred-key"},
 			},
 			{
-				ID: "agent", Name: "AI Agent", Type: nodes.AgentNodeType, TypeVersion: 1,
+				ID: "agent", Name: "AI Agent", Type: nodes.AgentNodeType, TypeVersion: workflow.V(1),
 				Parameters: map[string]any{"prompt": "Say hello"},
 			},
 		}, extraNodes...),
@@ -119,7 +119,7 @@ func TestCompilerRejectsAToolWiredIntoTheModelPort(t *testing.T) {
 	t.Parallel()
 
 	document := aiDocument([]workflow.Node{{
-		ID: "tool", Name: "Weather", Type: nodes.HTTPToolNodeType, TypeVersion: 1,
+		ID: "tool", Name: "Weather", Type: nodes.HTTPToolNodeType, TypeVersion: workflow.V(1),
 		Parameters: map[string]any{
 			"toolName": "get_weather", "toolDescription": "Weather by city",
 			"method": "GET", "url": "https://api.test/weather",
@@ -138,7 +138,7 @@ func TestCompilerRejectsAToolWiredIntoTheModelPort(t *testing.T) {
 func TestChatModelRequiresACredentialRatherThanAnAmbientKey(t *testing.T) {
 	t.Parallel()
 
-	definition, _ := aiRegistry(t).Lookup(nodes.ChatModelNodeType, 1)
+	definition, _ := aiRegistry(t).Lookup(nodes.ChatModelNodeType, workflow.V(1))
 	err := definition.Validate(workflow.Node{Parameters: map[string]any{"model": "gpt-test"}})
 	if err == nil || !strings.Contains(err.Error(), "credential") {
 		t.Fatalf("Validate() = %v, want a credential requirement", err)
@@ -153,9 +153,9 @@ func TestChatModelDescriptorCarriesNoAPIKey(t *testing.T) {
 		Fields: map[string]string{"token": "sk-live-secret"},
 	}}
 	registry := aiRegistry(t)
-	definition, _ := registry.Lookup(nodes.ChatModelNodeType, 1)
+	definition, _ := registry.Lookup(nodes.ChatModelNodeType, workflow.V(1))
 	ir := workflow.IRNode{
-		ID: "model", Name: "Chat Model", Type: nodes.ChatModelNodeType, TypeVersion: 1,
+		ID: "model", Name: "Chat Model", Type: nodes.ChatModelNodeType, TypeVersion: workflow.V(1),
 		Parameters:  map[string]any{"model": "gpt-test", "baseUrl": "https://api.test/v1"},
 		Credentials: map[string]string{"httpBearerAuth": "cred-key"},
 		Definition:  definition,
@@ -215,9 +215,9 @@ func TestAgentRunsWithAToolThatReusesTheHTTPRequestImplementation(t *testing.T) 
 
 	executor := nodes.NewAgentExecutor(ai.NewLoopRuntime(), localPolicy(), nil)
 	registry := aiRegistry(t)
-	definition, _ := registry.Lookup(nodes.AgentNodeType, 1)
+	definition, _ := registry.Lookup(nodes.AgentNodeType, workflow.V(1))
 	ir := workflow.IRNode{
-		ID: "agent", Name: "AI Agent", Type: nodes.AgentNodeType, TypeVersion: 1,
+		ID: "agent", Name: "AI Agent", Type: nodes.AgentNodeType, TypeVersion: workflow.V(1),
 		Parameters: map[string]any{"prompt": "What is the weather?"},
 		Definition: definition,
 	}
@@ -269,9 +269,9 @@ func TestAgentRequiresAConnectedModel(t *testing.T) {
 
 	executor := nodes.NewAgentExecutor(ai.NewLoopRuntime(), localPolicy(), nil)
 	registry := aiRegistry(t)
-	definition, _ := registry.Lookup(nodes.AgentNodeType, 1)
+	definition, _ := registry.Lookup(nodes.AgentNodeType, workflow.V(1))
 	ir := workflow.IRNode{
-		ID: "agent", Name: "AI Agent", Type: nodes.AgentNodeType, TypeVersion: 1,
+		ID: "agent", Name: "AI Agent", Type: nodes.AgentNodeType, TypeVersion: workflow.V(1),
 		Parameters: map[string]any{"prompt": "hi"}, Definition: definition,
 	}
 
@@ -284,7 +284,7 @@ func TestAgentRequiresAConnectedModel(t *testing.T) {
 func TestHTTPToolNameIsValidated(t *testing.T) {
 	t.Parallel()
 
-	definition, _ := aiRegistry(t).Lookup(nodes.HTTPToolNodeType, 1)
+	definition, _ := aiRegistry(t).Lookup(nodes.HTTPToolNodeType, workflow.V(1))
 	base := map[string]any{"method": "GET", "url": "https://api.test/x", "toolDescription": "does a thing"}
 
 	for name, toolName := range map[string]string{

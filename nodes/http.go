@@ -26,7 +26,7 @@ const HTTPExecutorID = "core.httpRequest"
 func httpRequestNode() node.Definition {
 	return node.Definition{
 		Type:        "kilasflow.httpRequest",
-		Version:     1,
+		Version:     workflow.V(1),
 		DisplayName: "HTTP Request",
 		Description: "Calls an external HTTP API and returns its response as items.",
 		Category:    "Core",

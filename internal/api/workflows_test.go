@@ -432,7 +432,7 @@ func validManualWorkflow(name string) workflow.Document {
 			ID:          "manual",
 			Name:        "Manual Trigger",
 			Type:        "kilasflow.manual",
-			TypeVersion: 1,
+			TypeVersion: workflow.V(1),
 			Position:    workflow.Position{},
 		}},
 		Connections: []workflow.Connection{},

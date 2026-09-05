@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/kilaslabs/kilas-flow/internal/workflow"
@@ -93,9 +94,13 @@ type Unsupported struct {
 	NodeID   string `json:"nodeId,omitempty"`
 	// Type and TypeVersion are the original n8n identity, preserved so the
 	// message can name exactly what was not supported.
-	Type        string `json:"type"`
-	TypeVersion int    `json:"typeVersion,omitempty"`
-	Reason      string `json:"reason"`
+	Type string `json:"type"`
+	// TypeVersion is the source version exactly as n8n wrote it. It was an int
+	// and truncated through a cast, so a node on version 4.2 was reported as
+	// version 4 — which is a different node with a different parameter shape,
+	// and the diagnostic pointed at the wrong one.
+	TypeVersion workflow.TypeVersion `json:"typeVersion,omitempty"`
+	Reason      string               `json:"reason"`
 }
 
 // Lossy reports one thing an export could not represent.
@@ -279,7 +284,7 @@ func Import(payload []byte) (ImportResult, error) {
 			// its notes or its retry policy would defeat exactly that.
 			arity := arityByName[name]
 			converted.Type = UnsupportedNodeType
-			converted.TypeVersion = unsupportedArityFor(arity.inputs, arity.outputs)
+			converted.TypeVersion = workflow.V(unsupportedArityFor(arity.inputs, arity.outputs))
 			converted.Parameters = map[string]any{
 				"originalType":        node.Type,
 				"originalTypeVersion": node.TypeVersion,
@@ -287,14 +292,22 @@ func Import(payload []byte) (ImportResult, error) {
 			}
 			nodes = append(nodes, converted)
 			unsupported = append(unsupported, Unsupported{
-				NodeName: name, NodeID: id, Type: node.Type, TypeVersion: int(node.TypeVersion),
+				NodeName: name, NodeID: id, Type: node.Type, TypeVersion: sourceTypeVersion(node.TypeVersion),
 				Reason: fmt.Sprintf("KilasFlow has no equivalent of the n8n node %q. It was imported as an unsupported placeholder: the workflow can be edited, but it cannot run until this node is replaced.", node.Type),
 			})
 			continue
 		}
 
 		converted.Type = entry.kilasType
-		converted.TypeVersion = entry.kilasVersion
+		// n8n's own typeVersion is preserved rather than replaced with the
+		// mapping's target. KilasFlow's node versions mirror n8n's, so keeping
+		// the source version means an imported node lands on the right
+		// parameter shape the moment that shape is registered — and until then
+		// the registry resolves down to the highest version it does have.
+		converted.TypeVersion = workflow.V(entry.kilasVersion)
+		if sourceVersion := sourceTypeVersion(node.TypeVersion); !sourceVersion.IsZero() {
+			converted.TypeVersion = sourceVersion
+		}
 		if entry.toKilas != nil {
 			parameters, issues := entry.toKilas(node)
 			converted.Parameters = parameters
@@ -715,8 +728,8 @@ func restoreCapsule(stored any) Node {
 // placeholderOutputIndexes maps a placeholder's port names back to n8n output
 // slots. Its arity is its type version, which is how the family is registered.
 func placeholderOutputIndexes(node workflow.Node) map[string]int {
-	arity := node.TypeVersion
-	if arity < 1 {
+	arity, err := strconv.Atoi(node.TypeVersion.String())
+	if err != nil || arity < 1 {
 		arity = 1
 	}
 	indexes := make(map[string]int, arity)
@@ -724,4 +737,28 @@ func placeholderOutputIndexes(node workflow.Node) map[string]int {
 		indexes[outputPortName(UnsupportedNodeType, index)] = index
 	}
 	return indexes
+}
+
+// formatN8NVersion renders an n8n typeVersion as the decimal text
+// workflow.ParseTypeVersion reads.
+//
+// n8n's typeVersion arrives as a JSON number and is held as a float64, which is
+// the one place a float is unavoidable. Formatting it with %g rather than
+// reading the float directly keeps 4.2 from becoming 4.199999999999999 on the
+// way into a fixed-point version.
+func formatN8NVersion(version float64) string {
+	if version <= 0 {
+		return ""
+	}
+	return strconv.FormatFloat(version, 'g', -1, 64)
+}
+
+// sourceTypeVersion reads an n8n typeVersion into KilasFlow's fixed-point form,
+// yielding the unset version when n8n gave nothing usable.
+func sourceTypeVersion(version float64) workflow.TypeVersion {
+	parsed, err := workflow.ParseTypeVersion(formatN8NVersion(version))
+	if err != nil {
+		return workflow.TypeVersion{}
+	}
+	return parsed
 }

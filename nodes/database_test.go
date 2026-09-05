@@ -21,12 +21,12 @@ func databaseNode(t *testing.T, nodeType, credentialType, credentialID string, p
 	if err := nodes.RegisterAll(registry); err != nil {
 		t.Fatalf("RegisterAll() error = %v", err)
 	}
-	definition, found := registry.Lookup(nodeType, 1)
+	definition, found := registry.Lookup(nodeType, workflow.V(1))
 	if !found {
 		t.Fatalf("node type %q is not registered", nodeType)
 	}
 	return workflow.IRNode{
-		ID: "db-1", Name: "Database", Type: nodeType, TypeVersion: 1,
+		ID: "db-1", Name: "Database", Type: nodeType, TypeVersion: workflow.V(1),
 		Parameters: parameters, Credentials: map[string]string{credentialType: credentialID},
 		Definition: definition,
 	}
@@ -51,7 +51,7 @@ func TestDatabaseNodesAreRegisteredWithMetadataDrivenConfiguration(t *testing.T)
 		nodes.MySQLNodeType:    "mysql",
 		nodes.SQLiteNodeType:   "sqlite",
 	} {
-		definition, found := registry.Get(nodeType, 1)
+		definition, found := registry.Get(nodeType, workflow.V(1))
 		if !found {
 			t.Fatalf("%s is not registered", nodeType)
 		}
@@ -80,7 +80,7 @@ func TestDatabaseNodeRequiresACredential(t *testing.T) {
 	if err := nodes.RegisterAll(registry); err != nil {
 		t.Fatalf("RegisterAll() error = %v", err)
 	}
-	definition, _ := registry.Lookup(nodes.SQLiteNodeType, 1)
+	definition, _ := registry.Lookup(nodes.SQLiteNodeType, workflow.V(1))
 
 	// There is deliberately no fallback connection, so a node without a
 	// credential has nothing it could legally reach.

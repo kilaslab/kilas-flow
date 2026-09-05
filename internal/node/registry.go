@@ -51,7 +51,7 @@ type PropertyDefinition struct {
 // from API responses.
 type Definition struct {
 	Type           string                   `json:"type"`
-	Version        int                      `json:"version"`
+	Version        workflow.TypeVersion     `json:"version"`
 	DisplayName    string                   `json:"displayName"`
 	Description    string                   `json:"description,omitempty"`
 	Category       string                   `json:"category"`
@@ -71,7 +71,7 @@ type Registry struct {
 
 type definitionKey struct {
 	nodeType string
-	version  int
+	version  workflow.TypeVersion
 }
 
 var _ workflow.TypeCatalog = (*Registry)(nil)
@@ -101,12 +101,55 @@ func (registry *Registry) Register(definition Definition) error {
 }
 
 // Get returns presentation and editor metadata for one exact node version.
-func (registry *Registry) Get(nodeType string, version int) (Definition, bool) {
+func (registry *Registry) Get(nodeType string, version workflow.TypeVersion) (Definition, bool) {
 	if registry == nil {
 		return Definition{}, false
 	}
 	definition, found := registry.definitions[definitionKey{nodeType: nodeType, version: version}]
 	return cloneDefinition(definition), found
+}
+
+// Resolve picks the definition a document's requested version should run
+// against.
+//
+// The rule is: the highest registered version that is less than or equal to the
+// one asked for; and when nothing is asked for, the highest registered version
+// there is. It fails when every registered version is higher than the request.
+//
+// That is how n8n treats an older workflow against a newer node, and the
+// direction matters. Resolving upward would silently run a workflow written for
+// version 2 against version 3's parameter shape, which is a behaviour change
+// disguised as a lookup. Resolving downward can only ever give a workflow the
+// shape it was written for or an older one, and failing outright when even the
+// oldest registered version is newer says plainly that this installation cannot
+// run this workflow rather than guessing.
+//
+// It is also what lets an import preserve n8n's own typeVersion. A node
+// imported as Set 3.4 keeps that version in the document even while only
+// version 1 is registered, so it resolves to 1 today and lands on the right
+// shape the moment a 3.4 is registered — without rewriting the document.
+func (registry *Registry) Resolve(nodeType string, version workflow.TypeVersion) (Definition, bool) {
+	if registry == nil {
+		return Definition{}, false
+	}
+	var best Definition
+	var chosen bool
+	for key, candidate := range registry.definitions {
+		if key.nodeType != nodeType {
+			continue
+		}
+		if !version.IsZero() && key.version.Compare(version) > 0 {
+			continue
+		}
+		if chosen && best.Version.Compare(key.version) >= 0 {
+			continue
+		}
+		best, chosen = candidate, true
+	}
+	if !chosen {
+		return Definition{}, false
+	}
+	return cloneDefinition(best), true
 }
 
 // List returns every definition in stable type/version order.
@@ -122,14 +165,14 @@ func (registry *Registry) List() []Definition {
 		if definitions[left].Type != definitions[right].Type {
 			return definitions[left].Type < definitions[right].Type
 		}
-		return definitions[left].Version < definitions[right].Version
+		return definitions[left].Version.Compare(definitions[right].Version) < 0
 	})
 	return definitions
 }
 
 // Lookup implements workflow.Catalog for graph compilation.
-func (registry *Registry) Lookup(nodeType string, version int) (workflow.NodeDefinition, bool) {
-	definition, found := registry.Get(nodeType, version)
+func (registry *Registry) Lookup(nodeType string, version workflow.TypeVersion) (workflow.NodeDefinition, bool) {
+	definition, found := registry.Resolve(nodeType, version)
 	if !found {
 		return workflow.NodeDefinition{}, false
 	}
@@ -159,7 +202,7 @@ func (registry *Registry) HasType(nodeType string) bool {
 }
 
 func validateDefinition(definition Definition) error {
-	if definition.Type == "" || definition.Version < 1 {
+	if definition.Type == "" || definition.Version.IsZero() {
 		return fmt.Errorf("node definition type and positive version are required")
 	}
 	if definition.DisplayName == "" || definition.Category == "" {

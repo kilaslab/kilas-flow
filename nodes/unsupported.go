@@ -96,7 +96,7 @@ func unsupportedInputPortName(index int) string {
 func unsupportedNode(arity int) node.Definition {
 	return node.Definition{
 		Type:        UnsupportedNodeType,
-		Version:     arity,
+		Version:     workflow.V(arity),
 		DisplayName: "Unsupported node",
 		Description: "An imported node KilasFlow has no equivalent for. Replace it before running this workflow.",
 		Category:    "Imported",

@@ -42,7 +42,7 @@ func TestServiceStartLaunchesConfiguredLocalWorkers(t *testing.T) {
 
 type idleCatalog struct{}
 
-func (idleCatalog) Lookup(string, int) (workflow.NodeDefinition, bool) {
+func (idleCatalog) Lookup(string, workflow.TypeVersion) (workflow.NodeDefinition, bool) {
 	return workflow.NodeDefinition{}, false
 }
 

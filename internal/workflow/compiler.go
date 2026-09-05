@@ -8,7 +8,7 @@ import (
 // Catalog supplies node metadata to the compiler. The later node registry
 // implements this interface; workflow itself never depends on that package.
 type Catalog interface {
-	Lookup(nodeType string, version int) (NodeDefinition, bool)
+	Lookup(nodeType string, version TypeVersion) (NodeDefinition, bool)
 }
 
 // TypeCatalog is an optional extension that lets a registry report an unknown
@@ -21,7 +21,7 @@ type TypeCatalog interface {
 // NodeDefinition is the compiler-facing portion of registered node metadata.
 type NodeDefinition struct {
 	Type               string
-	Version            int
+	Version            TypeVersion
 	Inputs             []Port
 	Outputs            []Port
 	RequiredParameters []string
@@ -55,7 +55,7 @@ type IRNode struct {
 	ID          string
 	Name        string
 	Type        string
-	TypeVersion int
+	TypeVersion TypeVersion
 	Position    Position
 	Parameters  map[string]any
 	Credentials map[string]string
@@ -161,10 +161,10 @@ func Compile(document Document, catalog Catalog) (IR, error) {
 		definition, found := catalog.Lookup(node.Type, node.TypeVersion)
 		if !found {
 			code := ErrorUnknownNode
-			message := fmt.Sprintf("node type %q version %d is not registered", node.Type, node.TypeVersion)
+			message := fmt.Sprintf("node type %q version %s is not registered", node.Type, node.TypeVersion)
 			if typedCatalog, known := catalog.(TypeCatalog); known && typedCatalog.HasType(node.Type) {
 				code = ErrorUnknownVersion
-				message = fmt.Sprintf("node type %q does not support version %d", node.Type, node.TypeVersion)
+				message = fmt.Sprintf("node type %q does not support version %s", node.Type, node.TypeVersion)
 			}
 			issues.add(ValidationError{
 				Code: code, Path: fmt.Sprintf("/nodes/%d/type", index), NodeID: node.ID,
@@ -178,7 +178,7 @@ func Compile(document Document, catalog Catalog) (IR, error) {
 			ID:          node.ID,
 			Name:        node.Name,
 			Type:        node.Type,
-			TypeVersion: node.TypeVersion,
+			TypeVersion: definition.Version,
 			Position:    node.Position,
 			Parameters:  cloneAnyMap(node.Parameters),
 			Credentials: cloneStringMap(node.Credentials),

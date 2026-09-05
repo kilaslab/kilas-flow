@@ -38,7 +38,7 @@ const (
 func databaseNode(nodeType, executorID, displayName, credentialType string) node.Definition {
 	return node.Definition{
 		Type:        nodeType,
-		Version:     1,
+		Version:     workflow.V(1),
 		DisplayName: displayName,
 		Description: "Runs SQL against a " + displayName + " database you configure with a credential.",
 		Category:    "Database",
