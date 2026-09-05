@@ -1,7 +1,7 @@
 ---
 id: FEAT-1br8at
 title: Stop redaction from destroying live execution data
-status: todo
+status: done
 priority: high
 labels:
     - engine
@@ -25,12 +25,12 @@ The purpose the function serves is real: `FEAT-pn3dtq` proved that a credential 
 
 ## Acceptance criteria
 
-- [ ] A workflow triggered by a webhook whose body contains `session`, `sessionId` and a message beginning `basic ` receives all three values verbatim in `$json`.
-- [ ] Credential material applied by a node is still never readable in a stored execution record, a node-run record, a live event, or an API response — proven by the existing HTTP-credential end-to-end case.
-- [ ] Redaction is content-agnostic where the key is not sensitive: an ordinary string is never rewritten because of the words it starts with.
-- [ ] AI memory keyed on a session identifier keeps distinct buckets for distinct sessions.
-- [ ] The redaction rules are covered by a table-driven test that names, for each key and each pattern, whether it is redacted and why.
-- [ ] Existing execution records written before this change still read back without error.
+- [x] A workflow triggered by a webhook whose body contains `session`, `sessionId` and a message beginning `basic ` receives all three values verbatim in `$json`.
+- [x] Credential material applied by a node is still never readable in a stored execution record, a node-run record, a live event, or an API response — proven by the existing HTTP-credential end-to-end case.
+- [x] Redaction is content-agnostic where the key is not sensitive: an ordinary string is never rewritten because of the words it starts with.
+- [x] AI memory keyed on a session identifier keeps distinct buckets for distinct sessions.
+- [x] The redaction rules are covered by a table-driven test that names, for each key and each pattern, whether it is redacted and why.
+- [x] Existing execution records written before this change still read back without error.
 
 ## Implementation Plan
 
@@ -54,3 +54,75 @@ Order the work: change `redact.go` and its tests first so the rules are provable
 - `internal/repository/executions.go` — the `payload` helper that redacts on every write.
 - `internal/engine/service.go` — `run` and `inputItem`, which rehydrate the trigger item from the stored record.
 - `.pine/tickets/FEAT-pn3dtq.md` — the credential non-disclosure guarantee that must survive.
+
+## Outcome
+
+The recommended position was taken: **split the boundary and shrink the rule
+set**. Redaction exists to catch credentials the runtime resolved and handed to
+a node; a trigger payload has never contained a KilasFlow credential, and the
+runner rehydrates the trigger item straight back out of the stored record — so
+redacting it protected nothing and put `[redacted]` on the wire in place of the
+data that arrived.
+
+### What changed
+
+`session` and `sessionid` are off the key list, with the reason recorded beside
+the entry that remains: `sessiontoken` really is a credential, the other two name
+a WhatsApp session and a conversation. `otp` and `pin` are off for the same
+reason — neither is ever a KilasFlow credential, and a WhatsApp message carrying
+a one-time code is exactly this product's traffic.
+
+`looksLikeCredential` is gone entirely. It could not be made safe: any auth
+scheme string is also ordinary prose, and a function looking only at a string
+cannot tell a header value from a chat message. It destroyed "basic plan
+pricing?", "bearer of this letter" and "digest of the meeting". The pair form it
+was meant to cover — `{"name": "Authorization", "value": "Bearer …"}` — is now
+matched **as a pair**, which is what the plan suggested and what actually
+distinguishes the two cases.
+
+The write boundary is split. `payload` still redacts node inputs, node outputs
+and errors, because that is where resolved credentials genuinely appear.
+`triggerPayload` handles execution input.
+
+### One thing the ticket did not anticipate
+
+The plan put trigger-header redaction only in the webhook handler. Doing that
+alone removes the repository as the last line of defence: any trigger source
+added later would leak headers by simply forgetting, and
+`TestExecutionStoreRedactsCredentialsBeforeStorage` caught exactly that
+regression.
+
+So `triggerPayload` redacts the `headers` sub-object and nothing else — body,
+query, method and path are stored as they arrived. The webhook handler still
+redacts at ingest, so headers never reach storage in the clear even briefly, and
+the repository re-checks. `RedactTriggerHeaders` is the narrow function that
+does it.
+
+### Verification
+
+- `TestWebhookDeliversSessionAndSchemePrefixedTextVerbatim` runs a WAHA-shaped
+  envelope through the real handler and asserts `session`, `sessionId` and a
+  message beginning "basic " all reach the stored input verbatim.
+- `TestWebhookRedactsInboundHeadersButKeepsTheBody` splits the old bundled test
+  so each half states its own reason.
+- `TestRedactionRules` is table-driven across eleven cases, each naming whether
+  it is redacted and why — both directions, because over-redacting is as much a
+  defect here as under-redacting.
+- `TestMemoryKeepsDistinctBucketsForDistinctSessions` pins the cross-tenant half:
+  with `sessionId` redacted, every conversation shared one bucket.
+- The `FEAT-pn3dtq` guarantee was re-verified end to end and holds —
+  `TestExecutionAPIRedactsCredentialsInResponses`,
+  `TestCredentialAPINeverDisclosesASecretAfterItIsStored`,
+  `TestExecutionStoreRedactsCredentialsBeforeStorage` and the six node-level
+  credential tests all pass.
+- `internal/events/events.go` was not touched. The live stream is a read
+  boundary and redacting there is correct.
+
+### Residual, stated plainly
+
+A webhook body containing a key literally named `token` is now stored as it
+arrived, where before it was destroyed. That is the deliberate consequence of
+treating the trigger payload as tenant data: the workflow cannot run on data
+that was redacted before it got there. It is the caller's own body, readable
+only by the tenant that owns the workflow, and it never contains a KilasFlow
+credential.

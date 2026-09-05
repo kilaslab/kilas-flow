@@ -470,3 +470,50 @@ func contains(kinds []ai.EventKind, want ai.EventKind) bool {
 	}
 	return false
 }
+
+// TestMemoryKeepsDistinctBucketsForDistinctSessions is the second half of the
+// redaction fix.
+//
+// `sessionId` was on the sensitive-key list, so every conversation reached the
+// memory node as the same literal "[redacted]" and collapsed into one shared
+// bucket. In a multi-tenant product that is one user reading another's chat
+// history, not merely a lost feature — so the separation is asserted here as
+// well as at the boundary that used to destroy it.
+func TestMemoryKeepsDistinctBucketsForDistinctSessions(t *testing.T) {
+	memory, err := ai.NewBufferMemory(ai.Retention{}, nil)
+	if err != nil {
+		t.Fatalf("NewBufferMemory() error = %v", err)
+	}
+	ctx := context.Background()
+
+	alice := ai.SessionKey{TenantID: "t", WorkflowID: "w", SessionID: "6281111111111@c.us"}
+	bob := ai.SessionKey{TenantID: "t", WorkflowID: "w", SessionID: "6282222222222@c.us"}
+
+	if err := memory.Append(ctx, alice, []ai.Message{{Role: ai.RoleUser, Content: "alice's question"}}); err != nil {
+		t.Fatalf("Append(alice) error = %v", err)
+	}
+	if err := memory.Append(ctx, bob, []ai.Message{{Role: ai.RoleUser, Content: "bob's question"}}); err != nil {
+		t.Fatalf("Append(bob) error = %v", err)
+	}
+
+	aliceHistory, err := memory.Load(ctx, alice)
+	if err != nil {
+		t.Fatalf("Load(alice) error = %v", err)
+	}
+	if len(aliceHistory) != 1 || aliceHistory[0].Content != "alice's question" {
+		t.Fatalf("alice's history = %#v, want only her own message", aliceHistory)
+	}
+
+	// The redaction bug made both sessions the same key, so this is the exact
+	// assertion that would have failed.
+	if ai.SessionKey(alice) == ai.SessionKey(bob) {
+		t.Fatal("two chat identities collapsed onto one session key")
+	}
+	bobHistory, err := memory.Load(ctx, bob)
+	if err != nil {
+		t.Fatalf("Load(bob) error = %v", err)
+	}
+	if len(bobHistory) != 1 || bobHistory[0].Content != "bob's question" {
+		t.Errorf("bob's history = %#v, want only his own message", bobHistory)
+	}
+}

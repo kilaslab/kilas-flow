@@ -360,13 +360,20 @@ func TestWebhookConfiguredToAuthenticateFailsClosedWithoutACredential(t *testing
 	}
 }
 
-func TestWebhookRedactsInboundCredentialsBeforePersistence(t *testing.T) {
+// TestWebhookRedactsInboundHeadersButKeepsTheBody pins the split this boundary
+// now makes.
+//
+// A caller's Authorization or Cookie header is a credential and is never stored.
+// The body is the caller's own data and the running workflow reads it straight
+// back out of the record, so redacting it would put "[redacted]" on the wire in
+// place of what actually arrived.
+func TestWebhookRedactsInboundHeadersButKeepsTheBody(t *testing.T) {
 	h := newHarness(t)
 	h.activate(t, webhookDocument("Redacting", map[string]any{
 		"path": "redact", "httpMethod": http.MethodPost, "responseMode": "immediate",
 	}))
 
-	request := httptest.NewRequest(http.MethodPost, "/webhook/redact", strings.NewReader(`{"token":"body-secret"}`))
+	request := httptest.NewRequest(http.MethodPost, "/webhook/redact", strings.NewReader(`{"note":"body-value"}`))
 	request.Header.Set("Authorization", "Bearer inbound-secret")
 	request.Header.Set("Cookie", "sid=inbound-cookie")
 	recorder := httptest.NewRecorder()
@@ -385,10 +392,69 @@ func TestWebhookRedactsInboundCredentialsBeforePersistence(t *testing.T) {
 		t.Fatalf("Get() error = %v", err)
 	}
 	encoded, _ := json.Marshal(record)
-	for _, secret := range []string{"inbound-secret", "inbound-cookie", "body-secret"} {
+	for _, secret := range []string{"inbound-secret", "inbound-cookie"} {
 		if strings.Contains(string(encoded), secret) {
-			t.Errorf("the execution record retained %q: %s", secret, encoded)
+			t.Errorf("the execution record retained the header credential %q: %s", secret, encoded)
 		}
+	}
+	if !strings.Contains(string(encoded), "body-value") {
+		t.Errorf("the execution record lost the request body, which the workflow runs on: %s", encoded)
+	}
+}
+
+// TestWebhookDeliversSessionAndSchemePrefixedTextVerbatim is the correctness
+// this ticket exists for.
+//
+// `session` and `sessionId` were on the sensitive-key list, so a WAHA envelope
+// arrived with its session replaced and every action node sent the literal
+// "[redacted]" to the API, while n8n-style AI memory collapsed every
+// conversation into one bucket. A value-prefix match on "basic " destroyed any
+// message that happened to start with the word.
+func TestWebhookDeliversSessionAndSchemePrefixedTextVerbatim(t *testing.T) {
+	h := newHarness(t)
+	h.activate(t, webhookDocument("WAHA-shaped", map[string]any{
+		"path": "waha", "httpMethod": http.MethodPost, "responseMode": "immediate",
+	}))
+
+	const envelope = `{"session":"default","payload":{"sessionId":"6281234567890@c.us","body":"basic plan pricing?"}}`
+	request := httptest.NewRequest(http.MethodPost, "/webhook/waha", strings.NewReader(envelope))
+	recorder := httptest.NewRecorder()
+	h.handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d (body: %s)", recorder.Code, recorder.Body)
+	}
+
+	var body struct {
+		ExecutionID string `json:"executionId"`
+	}
+	_ = json.Unmarshal(recorder.Body.Bytes(), &body)
+	h.drain(t)
+	record, err := h.runtime.Get(context.Background(), h.tenant, body.ExecutionID)
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+
+	// What the workflow actually ran on, not merely what was stored.
+	var stored struct {
+		Body struct {
+			Session string `json:"session"`
+			Payload struct {
+				SessionID string `json:"sessionId"`
+				Body      string `json:"body"`
+			} `json:"payload"`
+		} `json:"body"`
+	}
+	if err := json.Unmarshal(record.Input, &stored); err != nil {
+		t.Fatalf("decoding stored input: %v (%s)", err, record.Input)
+	}
+	if stored.Body.Session != "default" {
+		t.Errorf("session = %q, want %q — a redacted session is sent to the WAHA API verbatim", stored.Body.Session, "default")
+	}
+	if stored.Body.Payload.SessionID != "6281234567890@c.us" {
+		t.Errorf("sessionId = %q, want the chat identity — redacting it collapses every conversation into one memory bucket", stored.Body.Payload.SessionID)
+	}
+	if stored.Body.Payload.Body != "basic plan pricing?" {
+		t.Errorf("message = %q, want it verbatim — an ordinary sentence must not be destroyed for its first word", stored.Body.Payload.Body)
 	}
 }
 

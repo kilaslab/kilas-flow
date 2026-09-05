@@ -222,6 +222,11 @@ func (handler *Handler) requestPayload(r *http.Request) (json.RawMessage, error)
 			headers[key] = values[0]
 		}
 	}
+	// Only the headers are redacted. The body is the caller's own data and the
+	// running workflow reads it straight back out of the stored record, so
+	// redacting it would put "[redacted]" on the wire to WAHA rather than the
+	// session the envelope named.
+	headers = execution.RedactMap(headers)
 	query := make(map[string]any, len(r.URL.Query()))
 	for key, values := range r.URL.Query() {
 		if len(values) > 0 {
@@ -246,7 +251,7 @@ func (handler *Handler) requestPayload(r *http.Request) (json.RawMessage, error)
 	if err != nil {
 		return nil, errors.New("The request could not be encoded.")
 	}
-	return execution.Redact(payload), nil
+	return payload, nil
 }
 
 // await waits for the execution to reach a terminal state.

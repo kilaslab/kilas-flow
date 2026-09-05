@@ -38,20 +38,33 @@ var sensitiveKeys = map[string]struct{}{
 	"secretkey":          {},
 	"credential":         {},
 	"credentials":        {},
-	"session":            {},
-	"sessionid":          {},
-	"sessiontoken":       {},
-	"signature":          {},
-	"xhubsignature":      {},
-	"xhubsignature256":   {},
-	"otp":                {},
-	"pin":                {},
+	// `session` and `sessionid` are deliberately absent. They name a WhatsApp
+	// session in every WAHA envelope and an AI conversation in every n8n-style
+	// memory node; redacting them sent the literal "[redacted]" to the WAHA API
+	// and collapsed every conversation into one shared bucket, which is a
+	// cross-tenant leak rather than a bug. `sessiontoken` stays, because that
+	// one really is a credential.
+	"sessiontoken":     {},
+	"signature":        {},
+	"xhubsignature":    {},
+	"xhubsignature256": {},
+	// `otp` and `pin` are deliberately absent too. Neither is ever a KilasFlow
+	// credential — they arrive as the user's own words, and a WhatsApp message
+	// carrying a one-time code is exactly the traffic this product handles.
 }
 
-// credentialSchemes catch header material that arrives under an innocent key,
-// such as the `value` half of a `{"name":"authorization","value":"Bearer …"}`
-// pair. Matching the scheme prefix keeps ordinary prose out of the net.
-var credentialSchemes = []string{"basic ", "bearer ", "digest ", "negotiate ", "ntlm ", "hawk ", "aws4-hmac-sha256 "}
+// headerPairKeys are the two halves of the `{"name": …, "value": …}` shape that
+// HTTP node configuration uses for headers. When the name is a sensitive header,
+// the value beside it is the credential, and matching the *pair* is how that is
+// caught without inspecting content.
+//
+// This replaces a prefix match on the value itself, which could not be made
+// safe: any auth scheme string is also ordinary prose. "basic " destroyed a
+// WhatsApp message reading "basic plan pricing?", and "bearer " and "digest "
+// did the same to "bearer of this letter" and "digest of the meeting". A
+// function looking only at a string has no way to tell a header value from a
+// chat message, so it stopped looking.
+var headerPairKeys = struct{ name, value string }{name: "name", value: "value"}
 
 // Redact removes credential material from a payload before it is persisted or
 // serialized. It preserves JSON shape — keys, arrays, and safe scalars survive
@@ -82,8 +95,16 @@ func redactValue(value any) any {
 	switch typed := value.(type) {
 	case map[string]any:
 		redacted := make(map[string]any, len(typed))
+		// A `{"name": "Authorization", "value": "Bearer …"}` pair hides the
+		// credential under an innocent key, so the pair is matched rather than
+		// the value's content.
+		pairIsSensitive := headerPairIsSensitive(typed)
 		for key, nested := range typed {
 			if isSensitiveKey(key) {
+				redacted[key] = RedactedValue
+				continue
+			}
+			if pairIsSensitive && normalizeKey(key) == headerPairKeys.value {
 				redacted[key] = RedactedValue
 				continue
 			}
@@ -96,14 +117,25 @@ func redactValue(value any) any {
 			redacted[index] = redactValue(nested)
 		}
 		return redacted
-	case string:
-		if looksLikeCredential(typed) {
-			return RedactedValue
-		}
-		return typed
 	default:
+		// Scalars are returned as they are. Redaction is decided by the key a
+		// value sits under, never by what the value says.
 		return value
 	}
+}
+
+// headerPairIsSensitive reports an object whose `name` names a sensitive header,
+// so that the `value` beside it is the credential.
+func headerPairIsSensitive(object map[string]any) bool {
+	for key, value := range object {
+		if normalizeKey(key) != headerPairKeys.name {
+			continue
+		}
+		if name, ok := value.(string); ok && isSensitiveKey(name) {
+			return true
+		}
+	}
+	return false
 }
 
 func isSensitiveKey(key string) bool {
@@ -133,12 +165,48 @@ func normalizeKey(key string) string {
 	return strings.ToLower(builder.String())
 }
 
-func looksLikeCredential(value string) bool {
-	lowered := strings.ToLower(value)
-	for _, scheme := range credentialSchemes {
-		if strings.HasPrefix(lowered, scheme) {
-			return true
-		}
+// RedactMap redacts one object without going through JSON.
+//
+// It exists for the trigger boundary. An inbound webhook body has never
+// contained a KilasFlow credential — it is the caller's own data, and the
+// running workflow reads it straight back out of the stored record — so
+// redacting the whole payload protected nothing and destroyed everything. The
+// header map is the one part that genuinely carries caller credentials, so it
+// is redacted on its own and the body, query, method and path are stored as
+// they arrived.
+func RedactMap(object map[string]any) map[string]any {
+	redacted, _ := redactValue(object).(map[string]any)
+	return redacted
+}
+
+// triggerHeadersKey is the part of a trigger payload that carries a caller's
+// own credentials.
+const triggerHeadersKey = "headers"
+
+// RedactTriggerHeaders redacts the `headers` object of a trigger payload and
+// leaves everything else exactly as it arrived.
+//
+// A trigger payload is tenant data: the workflow runs on it, reading it back
+// out of the stored record, so redacting the body would put "[redacted]" on the
+// wire in place of the WAHA session the caller sent. The headers are the one
+// part that can hold a credential, and they are never read as workflow data.
+func RedactTriggerHeaders(payload json.RawMessage) json.RawMessage {
+	if len(payload) == 0 || !json.Valid(payload) {
+		return payload
 	}
-	return false
+	var decoded map[string]any
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		// Not an object, so it carries no header map to redact.
+		return payload
+	}
+	headers, present := decoded[triggerHeadersKey].(map[string]any)
+	if !present {
+		return payload
+	}
+	decoded[triggerHeadersKey] = RedactMap(headers)
+	encoded, err := json.Marshal(decoded)
+	if err != nil {
+		return payload
+	}
+	return encoded
 }

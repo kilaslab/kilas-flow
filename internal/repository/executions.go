@@ -80,7 +80,7 @@ func (store *GORMExecutionStore) QueueManualLatest(ctx context.Context, tenant T
 	if catalog == nil {
 		return execution.Record{}, fmt.Errorf("workflow catalog is required for manual run")
 	}
-	inputPayload, err := payload(input)
+	inputPayload, err := triggerPayload(input)
 	if err != nil {
 		return execution.Record{}, fmt.Errorf("execution input: %w", err)
 	}
@@ -151,7 +151,7 @@ func (store *GORMExecutionStore) QueueTriggered(ctx context.Context, tenant Tena
 	if trigger == "" {
 		return execution.Record{}, fmt.Errorf("execution trigger is required")
 	}
-	inputPayload, err := payload(input)
+	inputPayload, err := triggerPayload(input)
 	if err != nil {
 		return execution.Record{}, fmt.Errorf("execution input: %w", err)
 	}
@@ -203,7 +203,9 @@ func (store *GORMExecutionStore) Create(ctx context.Context, tenant TenantScope,
 		record.StartedAt = time.Now().UTC()
 	}
 
-	input, err := payload(record.Input)
+	// The execution's own input is the trigger payload; its output and error
+	// are produced by nodes and can hold resolved credentials.
+	input, err := triggerPayload(record.Input)
 	if err != nil {
 		return execution.Record{}, fmt.Errorf("execution input: %w", err)
 	}
@@ -594,14 +596,41 @@ func validateNodeRun(nodeRun execution.NodeRun) error {
 // the way in. Redacting here rather than at each call site means every write
 // path — manual queue, create, runtime update, node-run trace — is covered by
 // construction, so a new caller cannot forget it.
+// payload validates and redacts a value on its way into durable storage.
+//
+// This is where credentials the runtime resolved actually appear — a node's
+// input holds the header the HTTP node was handed, a node's output holds what
+// came back — so redaction belongs here and the guarantee that a credential is
+// never readable in a stored record depends on it.
 func payload(value json.RawMessage) ([]byte, error) {
+	encoded, err := triggerPayload(value)
+	if err != nil {
+		return nil, err
+	}
+	return append([]byte(nil), execution.Redact(encoded)...), nil
+}
+
+// triggerPayload validates a trigger input and redacts only its headers.
+//
+// A trigger input is the caller's own data, not something the runtime resolved,
+// and the runner rehydrates the trigger item straight back out of the stored
+// record — so redacting the whole thing does not protect a credential, it puts
+// "[redacted]" on the wire in place of the session the caller sent. The body,
+// query, method and path are therefore stored exactly as they arrived.
+//
+// The header map is the exception, because it is the one part of an inbound
+// request that genuinely carries a caller's credential. The webhook handler
+// already redacts it at ingest; doing it here as well keeps the repository the
+// last line of defence, so a trigger source added later cannot leak headers by
+// forgetting.
+func triggerPayload(value json.RawMessage) (json.RawMessage, error) {
 	if len(value) == 0 {
-		return []byte("null"), nil
+		return json.RawMessage("null"), nil
 	}
 	if !json.Valid(value) {
 		return nil, fmt.Errorf("must be valid JSON")
 	}
-	return append([]byte(nil), execution.Redact(value)...), nil
+	return execution.RedactTriggerHeaders(value), nil
 }
 
 func executionFromModel(model executionModel) execution.Record {
