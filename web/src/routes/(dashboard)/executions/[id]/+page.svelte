@@ -9,6 +9,7 @@
 	import type { Definition, ExecutionResource, WorkflowVersionResource } from '$lib/api/generated/models';
 	import { Button } from '$lib/components/ui/button';
 	import ExecutionCanvas from '$lib/components/workflow-editor/execution-canvas.svelte';
+	import { applyEvents, executionEvents, latestExecutionStatus } from '$lib/workflow-editor/event-stream.svelte';
 	import {
 		executionDurationMs,
 		formatDuration,
@@ -52,12 +53,28 @@
 
 	let selectedNodeID = $state<string | null>(null);
 
+	// The live feed advances what the fetched trace already showed. It never
+	// replaces it: a refresh and a live update converge on the same picture.
+	const live = executionEvents(() => page.params.id ?? '');
+
 	const runs = $derived(latestNodeRuns(execution.data?.nodeRuns));
+	const nodeStatuses = $derived(applyEvents(runs, live.events));
+	const liveStatus = $derived(latestExecutionStatus(live.events));
+	const status = $derived(liveStatus ?? execution.data?.status ?? 'queued');
 	const selectedRun = $derived(selectedNodeID ? (runs.get(selectedNodeID) ?? null) : null);
 	const selectedNode = $derived(
 		selectedNodeID ? ((version.data?.document.nodes ?? []).find((node) => node.id === selectedNodeID) ?? null) : null
 	);
 	const duration = $derived(execution.data ? executionDurationMs(execution.data) : null);
+	const selectedStatus = $derived(
+		(selectedNodeID ? nodeStatuses.get(selectedNodeID) : undefined) ?? selectedRun?.status ?? 'skipped'
+	);
+
+	$effect(() => {
+		// Live events carry status, not payloads. Once the run ends, re-read the
+		// durable trace so the inspector shows what was actually persisted.
+		if (live.finished) void execution.refetch();
+	});
 
 	function message(error: unknown): string {
 		if (error instanceof ApiError) return `${error.status} — ${error.message}`;
@@ -96,7 +113,13 @@
 			<div class="min-w-0">
 				<div class="flex items-center gap-2">
 					<h1 class="text-xl font-semibold tracking-tight sm:text-2xl">Execution</h1>
-					<span class={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${statusTone(execution.data.status)}`}>{statusLabel(execution.data.status)}</span>
+					<span class={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${statusTone(status)}`}>{statusLabel(status)}</span>
+					{#if live.connected}
+						<span class="inline-flex items-center gap-1.5 text-xs text-muted-foreground" aria-live="polite">
+							<span aria-hidden="true" class="size-1.5 animate-pulse rounded-full bg-primary"></span>
+							Live
+						</span>
+					{/if}
 				</div>
 				<p class="mt-1 font-mono text-xs text-muted-foreground">{execution.data.id}</p>
 			</div>
@@ -135,7 +158,7 @@
 						</div>
 					</div>
 				{:else if version.data && nodeTypes.data}
-					<ExecutionCanvas document={version.data.document} definitions={nodeTypes.data} {runs} bind:selectedNodeID />
+					<ExecutionCanvas document={version.data.document} definitions={nodeTypes.data} {runs} statuses={nodeStatuses} bind:selectedNodeID />
 				{/if}
 			</div>
 
@@ -148,7 +171,7 @@
 							<p class="text-xs font-medium text-muted-foreground">Node</p>
 							<h2 class="mt-0.5 truncate text-base font-semibold">{selectedNode?.name ?? selectedNodeID}</h2>
 							<p class="mt-2">
-								<span class={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${statusTone(selectedRun?.status ?? 'skipped')}`}>{statusLabel(selectedRun?.status ?? 'skipped')}</span>
+								<span class={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${statusTone(selectedStatus)}`}>{statusLabel(selectedStatus)}</span>
 								{#if selectedRun && selectedRun.attempt > 1}
 									<span class="ml-2 text-xs text-muted-foreground">Attempt {selectedRun.attempt}</span>
 								{/if}

@@ -13,11 +13,15 @@
 		document,
 		definitions,
 		runs,
+		statuses,
 		selectedNodeID = $bindable(null)
 	}: {
 		document: Document;
 		definitions: Definition[];
 		runs: Map<string, ExecutionNodeRunResource>;
+		// Node statuses folded from the durable trace plus any live events, so
+		// the canvas has one source rather than two that can disagree.
+		statuses?: Map<string, string>;
 		selectedNodeID?: string | null;
 	} = $props();
 
@@ -38,7 +42,7 @@
 			connectable: false,
 			deletable: false,
 			selected: node.id === selectedNodeID,
-			data: { ...node.data, runStatus: nodeRunStatus(node.id, runs) }
+			data: { ...node.data, runStatus: statuses?.get(node.id) ?? nodeRunStatus(node.id, runs) }
 		}));
 		edges = projection.edges.map((edge) => {
 			const count = counts.get(edge.id);

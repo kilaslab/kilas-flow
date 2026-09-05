@@ -19,6 +19,7 @@ import (
 	"github.com/kilaslabs/kilas-flow/internal/credentials"
 	"github.com/kilaslabs/kilas-flow/internal/database"
 	"github.com/kilaslabs/kilas-flow/internal/engine"
+	"github.com/kilaslabs/kilas-flow/internal/events"
 	"github.com/kilaslabs/kilas-flow/internal/node"
 	"github.com/kilaslabs/kilas-flow/internal/repository"
 	"github.com/kilaslabs/kilas-flow/internal/safehttp"
@@ -101,8 +102,10 @@ func run() error {
 	}
 
 	executions := repository.NewExecutionStore(db.DB)
+	eventBroker := events.NewBroker(events.BrokerOptions{})
 	runtime, err := engine.NewService(engine.ServiceDeps{
 		Executions:     executions,
+		Events:         eventBroker,
 		Catalog:        nodeRegistry,
 		Runner:         engine.NewRunner(executorRegistry),
 		Credentials:    credentialStore,
@@ -125,6 +128,7 @@ func run() error {
 		Workflows:           repository.NewWorkflowStore(db.DB),
 		Executions:          executions,
 		Credentials:         credentialStore,
+		Events:              eventBroker,
 		ExecutionController: runtime,
 		Version:             version,
 	})

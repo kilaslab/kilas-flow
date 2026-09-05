@@ -26,7 +26,9 @@ import type {
   ExecutionListResource,
   ExecutionRequestResource,
   ExecutionResource,
-  ListExecutionsParams
+  ListExecutionsParams,
+  StreamExecutionEvents200Item,
+  StreamExecutionEventsParams
 } from '../models';
 
 import { apiFetch } from '../../http';
@@ -336,3 +338,112 @@ export const createCancelExecution = <TError = ErrorType<ErrorModel>,
       > => {
       return createMutation(() => ({ ...getCancelExecutionMutationOptions(options?.()) }), queryClient);
     }
+    export type streamExecutionEventsResponse200 = {
+  data: StreamExecutionEvents200Item[]
+  status: 200
+}
+
+export type streamExecutionEventsResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type streamExecutionEventsResponseSuccess = (streamExecutionEventsResponse200) & {
+  headers: Headers;
+};
+export type streamExecutionEventsResponseError = (streamExecutionEventsResponseDefault) & {
+  headers: Headers;
+};
+
+export type streamExecutionEventsResponse = (streamExecutionEventsResponseSuccess | streamExecutionEventsResponseError)
+
+export const getStreamExecutionEventsUrl = (id: string,
+    params?: StreamExecutionEventsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/executions/${id}/events?${stringifiedParams}` : `/api/v1/executions/${id}/events`
+}
+
+/**
+ * Live standardized event feed for one execution. Replays retained events after Last-Event-ID, then streams until the execution reaches a terminal state.
+ * @summary Stream execution events
+ */
+export const streamExecutionEvents = async (id: string,
+    params?: StreamExecutionEventsParams, options?: Parameters<typeof apiFetch>[1]): Promise<streamExecutionEventsResponse> => {
+
+  return apiFetch<streamExecutionEventsResponse>(getStreamExecutionEventsUrl(id,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getStreamExecutionEventsQueryKey = (id: string,
+    params?: StreamExecutionEventsParams,) => {
+    return [
+    `/api/v1/executions/${id}/events`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getStreamExecutionEventsQueryOptions = <TData = Awaited<ReturnType<typeof streamExecutionEvents>>, TError = ErrorType<ErrorModel>>(id: string,
+    params?: StreamExecutionEventsParams, options?: { query?:Partial<CreateQueryOptions<Awaited<ReturnType<typeof streamExecutionEvents>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getStreamExecutionEventsQueryKey(id,params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof streamExecutionEvents>>> = ({ signal }) => streamExecutionEvents(id,params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as CreateQueryOptions<Awaited<ReturnType<typeof streamExecutionEvents>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type StreamExecutionEventsQueryResult = NonNullable<Awaited<ReturnType<typeof streamExecutionEvents>>>
+export type StreamExecutionEventsQueryError = ErrorType<ErrorModel>
+
+
+/**
+ * @summary Stream execution events
+ */
+
+export function createStreamExecutionEvents<TData = Awaited<ReturnType<typeof streamExecutionEvents>>, TError = ErrorType<ErrorModel>>(
+ id: () =>  string,
+    params?: () =>  StreamExecutionEventsParams, options?: () => { query?:Partial<CreateQueryOptions<Awaited<ReturnType<typeof streamExecutionEvents>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: () => QueryClient
+ ): CreateQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+
+
+  const query = createQuery(() => getStreamExecutionEventsQueryOptions(id(),
+    params?.(),options?.()), queryClient) as CreateQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return query
+}
+
+
+
+
+
+

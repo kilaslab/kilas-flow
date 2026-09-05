@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/kilaslabs/kilas-flow/internal/credentials"
+	"github.com/kilaslabs/kilas-flow/internal/events"
 	"github.com/kilaslabs/kilas-flow/internal/execution"
 	"github.com/kilaslabs/kilas-flow/internal/repository"
 	"github.com/kilaslabs/kilas-flow/internal/workflow"
@@ -37,6 +38,10 @@ type ServiceDeps struct {
 	Catalog     workflow.Catalog
 	Runner      *Runner
 	Credentials CredentialStore
+	// Events receives standardized execution events. It is optional: delivery
+	// must never be a prerequisite for durable persistence or for a run to
+	// succeed, so a nil broker simply publishes nothing.
+	Events *events.Broker
 	// Environment is the allowlisted `$env` map. The service never reads the
 	// process environment itself, so what a workflow can see is decided once,
 	// at composition.
@@ -52,6 +57,7 @@ type Service struct {
 	catalog        workflow.Catalog
 	runner         *Runner
 	credentials    CredentialStore
+	events         *events.Broker
 	environment    map[string]string
 	workerID       string
 	defaultTimeout time.Duration
@@ -77,6 +83,7 @@ func NewService(deps ServiceDeps) (*Service, error) {
 		catalog:        deps.Catalog,
 		runner:         deps.Runner,
 		credentials:    deps.Credentials,
+		events:         deps.Events,
 		environment:    environment,
 		workerID:       deps.WorkerID,
 		defaultTimeout: deps.DefaultTimeout,
@@ -115,6 +122,10 @@ func (service *Service) runOnce(ctx context.Context, workerID string) (bool, err
 		}
 		return true, nil
 	}
+	service.publish(events.Event{
+		TenantID: record.TenantID, ExecutionID: record.ID, WorkflowID: record.WorkflowID,
+		Type: events.ExecutionStarted, Status: execution.StatusRunning,
+	})
 	runCtx, cancel := context.WithTimeout(ctx, service.defaultTimeout)
 	service.activeMu.Lock()
 	service.active[record.ID] = cancel
@@ -152,6 +163,17 @@ func (service *Service) runOnce(ctx context.Context, workerID string) (bool, err
 		}); err != nil {
 			return true, fmt.Errorf("persist node %q run: %w", run.NodeID, err)
 		}
+		// Published only after the node run is durable, so a subscriber can
+		// never observe a state the record does not already carry.
+		eventType := events.NodeCompleted
+		if status != execution.StatusSucceeded {
+			eventType = events.NodeFailed
+		}
+		service.publish(events.Event{
+			TenantID: record.TenantID, ExecutionID: record.ID, WorkflowID: record.WorkflowID,
+			NodeID: run.NodeID, Type: eventType, Status: status, Sequence: sequence + 1,
+			Data: output,
+		})
 	}
 	finishedAt := time.Now().UTC()
 	if runErr != nil {
@@ -170,10 +192,18 @@ func (service *Service) runOnce(ctx context.Context, workerID string) (bool, err
 		record.Status = status
 		record.Error = structuredError(code, runErr)
 		record.FinishedAt = &finishedAt
-		_, updateErr := service.executions.UpdateRuntime(ctx, tenant, record)
+		updated, updateErr := service.executions.UpdateRuntime(ctx, tenant, record)
 		if updateErr != nil {
 			return true, updateErr
 		}
+		terminal := events.ExecutionFailed
+		if updated.Status == execution.StatusCancelled {
+			terminal = events.ExecutionCancelled
+		}
+		service.publish(events.Event{
+			TenantID: record.TenantID, ExecutionID: record.ID, WorkflowID: record.WorkflowID,
+			Type: terminal, Status: updated.Status, Data: updated.Error,
+		})
 		return true, nil
 	}
 	output, err := json.Marshal(result.Output)
@@ -184,9 +214,18 @@ func (service *Service) runOnce(ctx context.Context, workerID string) (bool, err
 	record.Output = output
 	record.Error = json.RawMessage("null")
 	record.FinishedAt = &finishedAt
-	if _, err := service.executions.UpdateRuntime(ctx, tenant, record); err != nil {
+	updated, err := service.executions.UpdateRuntime(ctx, tenant, record)
+	if err != nil {
 		return true, err
 	}
+	terminal := events.ExecutionCompleted
+	if updated.Status == execution.StatusCancelled {
+		terminal = events.ExecutionCancelled
+	}
+	service.publish(events.Event{
+		TenantID: record.TenantID, ExecutionID: record.ID, WorkflowID: record.WorkflowID,
+		Type: terminal, Status: updated.Status, Data: updated.Output,
+	})
 	return true, nil
 }
 
@@ -222,6 +261,24 @@ func (service *Service) worker(ctx context.Context, workerID string) {
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
+}
+
+// publish delivers a standardized event when a broker is configured.
+//
+// It is deliberately fire and forget: the caller has already persisted the
+// state the event describes, so a dropped event costs a live update, never
+// correctness.
+func (service *Service) publish(event events.Event) {
+	if service.events == nil {
+		return
+	}
+	service.events.Publish(event)
+}
+
+// Events exposes the broker so the API can open live feeds without reaching
+// through the service for unrelated state.
+func (service *Service) Events() *events.Broker {
+	return service.events
 }
 
 // Wake asks idle workers to poll immediately after an API queues work.
@@ -285,6 +342,14 @@ func (service *Service) Cancel(ctx context.Context, tenant repository.TenantScop
 		if cancel != nil {
 			cancel()
 		}
+	}
+	if record.Status == execution.StatusCancelled {
+		// Queued work is cancelled without ever being claimed, so no worker
+		// will publish a terminal event for it.
+		service.publish(events.Event{
+			TenantID: record.TenantID, ExecutionID: record.ID, WorkflowID: record.WorkflowID,
+			Type: events.ExecutionCancelled, Status: record.Status,
+		})
 	}
 	return record, nil
 }

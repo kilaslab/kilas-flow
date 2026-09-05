@@ -2,12 +2,17 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
+	"github.com/danielgtaylor/huma/v2/sse"
 
+	"github.com/kilaslabs/kilas-flow/internal/events"
 	"github.com/kilaslabs/kilas-flow/internal/execution"
 	"github.com/kilaslabs/kilas-flow/internal/repository"
 )
@@ -20,6 +25,71 @@ type ExecutionController interface {
 	Cancel(context.Context, repository.TenantScope, string) (execution.Record, error)
 }
 
+// ExecutionEvent is one standardized event as it appears on the live feed.
+type ExecutionEvent struct {
+	ID          uint64          `json:"id" doc:"Monotonic per execution; send back as Last-Event-ID to resume"`
+	Type        string          `json:"type"`
+	ExecutionID string          `json:"executionId"`
+	WorkflowID  string          `json:"workflowId,omitempty"`
+	NodeID      string          `json:"nodeId,omitempty"`
+	Status      string          `json:"status,omitempty"`
+	Sequence    int             `json:"sequence,omitempty"`
+	At          time.Time       `json:"at"`
+	Data        json.RawMessage `json:"data,omitempty" doc:"Redacted, type-specific detail"`
+}
+
+// One Go type per event name.
+//
+// huma's SSE registration keys the `event:` field by the data's Go type, so
+// distinct names need distinct types even though every event shares a shape.
+// The payoff is an OpenAPI document that names each event explicitly instead
+// of collapsing them into one opaque message.
+type (
+	ExecutionStartedEvent   ExecutionEvent
+	ExecutionCompletedEvent ExecutionEvent
+	ExecutionFailedEvent    ExecutionEvent
+	ExecutionCancelledEvent ExecutionEvent
+	NodeStartedEvent        ExecutionEvent
+	NodeOutputEvent         ExecutionEvent
+	NodeCompletedEvent      ExecutionEvent
+	NodeFailedEvent         ExecutionEvent
+	WorkflowSavedEvent      ExecutionEvent
+)
+
+// typedEvent converts one event into the Go type bound to its name.
+func typedEvent(event ExecutionEvent, eventType events.Type) any {
+	switch eventType {
+	case events.ExecutionStarted:
+		return ExecutionStartedEvent(event)
+	case events.ExecutionCompleted:
+		return ExecutionCompletedEvent(event)
+	case events.ExecutionFailed:
+		return ExecutionFailedEvent(event)
+	case events.ExecutionCancelled:
+		return ExecutionCancelledEvent(event)
+	case events.NodeStarted:
+		return NodeStartedEvent(event)
+	case events.NodeOutput:
+		return NodeOutputEvent(event)
+	case events.NodeCompleted:
+		return NodeCompletedEvent(event)
+	case events.NodeFailed:
+		return NodeFailedEvent(event)
+	case events.WorkflowSaved:
+		return WorkflowSavedEvent(event)
+	default:
+		return event
+	}
+}
+
+type executionEventsInput struct {
+	ID string `path:"id" minLength:"1" doc:"Execution identifier"`
+	// LastEventID follows the SSE standard: a browser resends it automatically
+	// on reconnect, so a dropped connection resumes instead of restarting.
+	LastEventID string `header:"Last-Event-ID" doc:"Resume after this event ID"`
+	From        uint64 `query:"from" doc:"Resume after this event ID when a header cannot be set"`
+}
+
 // Executions provides user-requested lifecycle controls for durable runs and
 // the read-only execution history.
 //
@@ -28,6 +98,7 @@ type ExecutionController interface {
 type Executions struct {
 	controller ExecutionController
 	history    repository.ExecutionRepository
+	events     *events.Broker
 	tenants    TenantResolver
 }
 
@@ -68,11 +139,11 @@ type ExecutionListResource struct {
 }
 
 // NewExecutions constructs the execution control and history handler.
-func NewExecutions(controller ExecutionController, history repository.ExecutionRepository, tenants TenantResolver) *Executions {
+func NewExecutions(controller ExecutionController, history repository.ExecutionRepository, broker *events.Broker, tenants TenantResolver) *Executions {
 	if tenants == nil {
 		tenants = defaultTenantResolver{}
 	}
-	return &Executions{controller: controller, history: history, tenants: tenants}
+	return &Executions{controller: controller, history: history, events: broker, tenants: tenants}
 }
 
 // Register wires execution history reads and the controls that need the live
@@ -90,6 +161,89 @@ func (handler *Executions) Register(api huma.API) {
 		OperationID: "cancel-execution", Method: http.MethodPost, Path: "/executions/{id}/cancel", DefaultStatus: http.StatusAccepted,
 		Summary: "Cancel a workflow execution", Description: "Requests cancellation of queued or running work.", Tags: []string{"Executions"},
 	}, handler.Cancel)
+
+	sse.Register(api, huma.Operation{
+		OperationID: "stream-execution-events", Method: http.MethodGet, Path: "/executions/{id}/events",
+		Summary: "Stream execution events",
+		Description: "Live standardized event feed for one execution. Replays retained events after Last-Event-ID, " +
+			"then streams until the execution reaches a terminal state.",
+		Tags: []string{"Executions"},
+	}, map[string]any{
+		string(events.ExecutionStarted):   ExecutionStartedEvent{},
+		string(events.ExecutionCompleted): ExecutionCompletedEvent{},
+		string(events.ExecutionFailed):    ExecutionFailedEvent{},
+		string(events.ExecutionCancelled): ExecutionCancelledEvent{},
+		string(events.NodeStarted):        NodeStartedEvent{},
+		string(events.NodeOutput):         NodeOutputEvent{},
+		string(events.NodeCompleted):      NodeCompletedEvent{},
+		string(events.NodeFailed):         NodeFailedEvent{},
+		string(events.WorkflowSaved):      WorkflowSavedEvent{},
+	}, handler.StreamEvents)
+}
+
+// StreamEvents serves the live feed for one execution.
+//
+// The subscription is opened before the durable record is read, so an event
+// published between the two is queued rather than missed.
+func (handler *Executions) StreamEvents(ctx context.Context, input *executionEventsInput, send sse.Sender) {
+	if handler.events == nil {
+		_ = send.Comment("execution events are unavailable")
+		return
+	}
+	tenant := handler.tenants.Resolve(ctx)
+	subscription := handler.events.Subscribe(tenant.ID, input.ID, resumeFrom(input))
+	defer subscription.Close()
+
+	// A comment immediately after connect flushes headers, so a client knows
+	// the stream is open even before the first event.
+	_ = send(sse.Message{Retry: 2000, Comment: "connected"})
+
+	heartbeat := time.NewTicker(20 * time.Second)
+	defer heartbeat.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-heartbeat.C:
+			// Proxies drop an idle connection; a comment keeps it open without
+			// being visible to the client as an event.
+			if err := send.Comment("heartbeat"); err != nil {
+				return
+			}
+		case event, open := <-subscription.Events():
+			if !open {
+				return
+			}
+			if err := send(sse.Message{ID: int(event.ID), Data: typedEvent(executionEventResource(event), event.Type)}); err != nil {
+				return
+			}
+			if event.Type.Terminal() {
+				// Closing on a terminal event is what stops a browser from
+				// reconnecting forever to a run that already finished.
+				return
+			}
+		}
+	}
+}
+
+// resumeFrom prefers the standard SSE header and falls back to a query
+// parameter for clients that cannot set request headers.
+func resumeFrom(input *executionEventsInput) uint64 {
+	if input.LastEventID != "" {
+		if parsed, err := strconv.ParseUint(strings.TrimSpace(input.LastEventID), 10, 64); err == nil {
+			return parsed
+		}
+	}
+	return input.From
+}
+
+func executionEventResource(event events.Event) ExecutionEvent {
+	return ExecutionEvent{
+		ID: event.ID, Type: string(event.Type), ExecutionID: event.ExecutionID,
+		WorkflowID: event.WorkflowID, NodeID: event.NodeID, Status: string(event.Status),
+		Sequence: event.Sequence, At: event.At, Data: event.Data,
+	}
 }
 
 // List returns one page of tenant-scoped execution history.

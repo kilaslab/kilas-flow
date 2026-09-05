@@ -18,6 +18,7 @@ import (
 	"github.com/kilaslabs/kilas-flow/internal/api/handlers"
 	"github.com/kilaslabs/kilas-flow/internal/api/middleware"
 	"github.com/kilaslabs/kilas-flow/internal/config"
+	"github.com/kilaslabs/kilas-flow/internal/events"
 	"github.com/kilaslabs/kilas-flow/internal/node"
 	"github.com/kilaslabs/kilas-flow/internal/repository"
 )
@@ -42,6 +43,9 @@ type Deps struct {
 	Workflows    repository.WorkflowRepository
 	Executions   repository.ExecutionRepository
 	Credentials  repository.CredentialRepository
+	// Events is the live execution feed. A nil broker disables streaming
+	// without affecting durable execution.
+	Events *events.Broker
 	// ExecutionController owns live worker wakeups and cancellation. It is
 	// separate from the repository so HTTP never reaches into ORM state.
 	ExecutionController handlers.ExecutionController
