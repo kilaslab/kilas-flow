@@ -16,14 +16,33 @@ project="kilasflowsmoke$(date +%s)$$"
 app_container="${project}-app"
 image=${KILASFLOW_SMOKE_IMAGE:-kilasflow:latest}
 
+# Named explicitly rather than relying on Compose picking up whatever file is in
+# the working directory. The PostgreSQL service moved out of the old
+# docker-compose.yml and into an overlay that only exists when it is asked for,
+# so both files have to be listed or `postgres` is not a service at all. Naming
+# them also keeps this script honest about which stack it is proving: the one the
+# quickstart documents, not a development file that has drifted from it.
+compose="docker compose -p $project -f compose.yaml -f compose.postgres.yaml"
+
+# The overlay reads these three from the environment, falling back to a
+# developer's .env. Both DSNs further down spell the same credentials out, so
+# pin them here: without this, somebody who set a real password in .env would get
+# a PostgreSQL container using it and a smoke run still connecting with the
+# default, and the failure would look like a broken database rather than a
+# mismatch. The shell environment beats .env for Compose interpolation.
+KILASFLOW_POSTGRES_USER=kilasflow
+KILASFLOW_POSTGRES_PASSWORD=kilasflow
+KILASFLOW_POSTGRES_DB=kilasflow
+export KILASFLOW_POSTGRES_USER KILASFLOW_POSTGRES_PASSWORD KILASFLOW_POSTGRES_DB
+
 cleanup() {
 	docker rm -f "$app_container" >/dev/null 2>&1 || true
-	docker compose -p "$project" down -v --remove-orphans >/dev/null 2>&1 || true
+	$compose down -v --remove-orphans >/dev/null 2>&1 || true
 }
 trap cleanup EXIT INT TERM
 
 wait_for_postgres() {
-	container=$(docker compose -p "$project" ps -q postgres)
+	container=$($compose ps -q postgres)
 	attempt=0
 	while [ "$attempt" -lt 50 ]; do
 		if [ "$(docker inspect -f '{{.State.Health.Status}}' "$container" 2>/dev/null || true)" = healthy ]; then
@@ -34,7 +53,7 @@ wait_for_postgres() {
 	done
 
 	echo "smoke-postgres: PostgreSQL did not become healthy" >&2
-	docker compose -p "$project" logs postgres >&2 || true
+	$compose logs postgres >&2 || true
 	return 1
 }
 
@@ -61,7 +80,7 @@ docker info >/dev/null
 if [ "${KILASFLOW_SMOKE_SKIP_BUILD:-0}" != 1 ]; then
 	make docker
 fi
-docker compose -p "$project" --profile postgres up -d postgres
+$compose up -d postgres
 wait_for_postgres
 
 docker run --rm --network "${project}_default" \

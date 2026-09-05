@@ -1,0 +1,35 @@
+# Build the image from this checkout instead of pulling it.
+#
+#   docker compose -f compose.yaml -f compose.build.yaml up -d --build
+#
+# Two audiences need this. Someone working on KilasFlow wants their edits in the
+# container, and — until the first `vX.Y.Z` tag is pushed and the release
+# workflow publishes an image — everyone else needs it too, because there is
+# nothing in the registry to pull yet.
+#
+# It is an overlay rather than a `build:` key inside compose.yaml on purpose. A
+# compose file that carries both `image:` and `build:` builds whenever the named
+# image is missing locally, which means the fast path silently becomes the slow
+# one on any machine that has not built before — and the slow path here is a Node
+# dependency install, a SvelteKit build and a Go compile, none of which a reader
+# who only wanted to look at the editor asked for.
+#
+# The build itself needs no toolchain on the host: every stage runs inside
+# Docker. It needs network access for the base images and for pnpm and Go module
+# downloads, and it is not fast. Expect several minutes on a cold cache and tens
+# of seconds on a warm one.
+
+services:
+  kilasflow:
+    # Named apart from anything the release pipeline publishes, and apart from
+    # `kilasflow:latest` that `make docker` produces, so it is always obvious
+    # which of the three a running container came from.
+    image: kilasflow:local
+    build:
+      context: .
+      args:
+        # The Dockerfile's own default is 0.0.0.0-dev. This says something more
+        # specific and equally unmistakable: a container reporting `local` at
+        # /api/v1/health or under `-version` was built from somebody's working
+        # tree, and no release will ever carry that string.
+        VERSION: local

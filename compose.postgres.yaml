@@ -1,0 +1,73 @@
+# Run KilasFlow against PostgreSQL instead of the built-in SQLite database.
+#
+#   docker compose -f compose.yaml -f compose.postgres.yaml up -d
+#
+# One command, and nothing to uncomment. That last part is the whole reason this
+# is a separate file: the previous version of the PostgreSQL tier lived behind a
+# `profiles: ["postgres"]` key with the connection string written out in a
+# comment for the reader to paste back in by hand. Editing YAML from a comment is
+# the most error-prone instruction a quickstart can give, and it left the tier
+# with no working path through the compose file at all — the only place the
+# wiring actually existed was scripts/smoke-postgres.sh.
+#
+# Switching an installation that already has SQLite data does not move the data.
+# There is no migration between the two backends; the schema is created fresh
+# from migrations/postgres and the stack comes up empty. Decide before the first
+# run, or export what you care about first.
+#
+# The database port is deliberately not published to the host. Nothing outside
+# this stack needs it, and a PostgreSQL instance listening on 0.0.0.0:5432 with
+# the password below is a considerably worse default than a slightly less
+# convenient one. Reach it with `docker compose exec postgres psql -U kilasflow`.
+
+services:
+  kilasflow:
+    environment:
+      # Set here rather than in .env because these two belong to this overlay:
+      # they are only ever correct when the postgres service below is running,
+      # and a stale KILASFLOW_DATABASE_DSN left in .env would follow the default
+      # stack around and break it. `postgres` resolves on the Compose network.
+      #
+      # `environment` wins over `env_file`, so these hold even if .env names them.
+      KILASFLOW_DATABASE_DRIVER: postgres
+      KILASFLOW_DATABASE_DSN: postgres://${KILASFLOW_POSTGRES_USER:-kilasflow}:${KILASFLOW_POSTGRES_PASSWORD:-kilasflow}@postgres:5432/${KILASFLOW_POSTGRES_DB:-kilasflow}?sslmode=disable
+
+    # The missing half of the old file. The healthcheck already existed; nothing
+    # ever waited on it, so the application and the database raced on every
+    # start. KilasFlow applies its migrations at boot and exits if it cannot
+    # reach the database, so losing that race is not a retry — it is a container
+    # that dies and gets restarted until PostgreSQL happens to be ready.
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    # Pinned to a major version. PostgreSQL does not read a data directory
+    # written by a newer major, so a floating tag would eventually produce a
+    # stack that will not start and cannot be rolled back without a dump.
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${KILASFLOW_POSTGRES_USER:-kilasflow}
+      POSTGRES_PASSWORD: ${KILASFLOW_POSTGRES_PASSWORD:-kilasflow}
+      POSTGRES_DB: ${KILASFLOW_POSTGRES_DB:-kilasflow}
+    volumes:
+      - kilasflow-postgres:/var/lib/postgresql/data
+    healthcheck:
+      # Named user and database rather than bare `pg_isready`, which answers for
+      # the server as a whole and reports ready during the initialisation pass
+      # that creates them — the exact window this dependency exists to cover.
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${KILASFLOW_POSTGRES_USER:-kilasflow} -d ${KILASFLOW_POSTGRES_DB:-kilasflow}",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      # First-boot initialisation is slower than a restart, and without this the
+      # retry budget is spent before the database has finished creating itself.
+      start_period: 30s
+    restart: unless-stopped
+
+volumes:
+  kilasflow-postgres:

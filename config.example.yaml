@@ -36,7 +36,83 @@ security:
   # encrypt stored credentials. The key itself is never written to this file.
   #
   #   export KILASFLOW_ENCRYPTION_KEY="$(openssl rand -base64 32)"
+  #
+  # Absent, the server still starts and still runs workflows — it warns at boot
+  # and disables credential storage, so that somebody who only wants to look at
+  # the editor is not forced to generate a secret first. Set it before storing
+  # anything: there is no re-encryption pass, so changing the key later makes
+  # every credential already stored undecryptable.
   encryption_key_env: KILASFLOW_ENCRYPTION_KEY
+
+auth:
+  # Off by default, and deliberately so. Turning identity on for an installation
+  # that has no accounts locks its operator out of a server they were reaching a
+  # moment ago, because the API keys and users that would let them back in do not
+  # exist yet. With it off, anyone who can reach the port owns the installation,
+  # and the server says exactly that at every boot until you change it.
+  #
+  # Enable it together with the bootstrap keys below, on the same start, or you
+  # will have turned on a lock before cutting a key.
+  enabled: false
+
+  # Names the environment variable holding the session and stream-ticket signing
+  # key. Like the credential key, it never comes from this file:
+  #
+  #   export KILASFLOW_AUTH_SIGNING_KEY="$(openssl rand -base64 32)"
+  #
+  # Deliberately a different variable from the embed key below. One key signing
+  # both would mean a forged value of either kind could be presented as the other
+  # the moment either payload grew a field the other's parser also accepts.
+  #
+  # Starting with enabled: true and no key here is refused rather than accepted,
+  # because a server that answers every request with 401 looks like a broken
+  # deployment rather than a misconfigured one.
+  signing_key_env: KILASFLOW_AUTH_SIGNING_KEY
+
+  # How long a dashboard login lasts. Sessions are stateless, so this is also the
+  # longest a stolen session cookie keeps working — there is no server-side
+  # revocation to cut it short.
+  session_ttl: 12h
+
+  # Drops the Secure attribute and the __Host- cookie prefix. Only for an
+  # operator serving plain HTTP on a trusted network — including http://localhost,
+  # where browsers otherwise refuse a __Host- cookie and the login silently fails
+  # to stick. It makes the session cookie readable by a network attacker and
+  # plantable by a sibling host, which is what the prefix exists to prevent.
+  # cookie_insecure: false
+
+  # The tenant a fresh installation creates. It matches the tenant rows created
+  # before authentication existed are already under, so an upgraded install and a
+  # new one bootstrap into the same place and existing data stays reachable.
+  bootstrap_tenant: default
+
+  # The first account, created once and only on an installation that has none: a
+  # deployment that already has users is never handed another owner because an
+  # environment variable outlived the first boot. The password comes from the
+  # environment, never from here.
+  #
+  #   export KILASFLOW_BOOTSTRAP_PASSWORD='…'
+  #
+  # bootstrap_email: you@example.com
+  bootstrap_password_env: KILASFLOW_BOOTSTRAP_PASSWORD
+
+embed:
+  # Names the environment variable holding the key that signs embedded editor
+  # session tokens:
+  #
+  #   export KILASFLOW_EMBED_SIGNING_KEY="$(openssl rand -base64 32)"
+  #
+  # Absent, embedding is off: the session endpoints report themselves
+  # unconfigured and the middleware refuses every token, with a warning at boot.
+  signing_key_env: KILASFLOW_EMBED_SIGNING_KEY
+
+  # Empty means embedding is off even with a key set. An operator opts in per
+  # origin rather than discovering their editor is frameable anywhere.
+  # allowed_origins:
+  #   - https://app.example.com
+  allowed_origins: []
+
+  session_ttl: 15m
 
 branding:
   name: KilasFlow

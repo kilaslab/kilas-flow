@@ -16,28 +16,65 @@ compatibility; `.pine/roadmap.md` is where that is planned and tracked.
 
 ## Quick start
 
+Docker is the only toolchain you need — no Go, no Node, no pnpm.
+
+```bash
+cp .env.example .env
+printf 'KILASFLOW_ENCRYPTION_KEY=%s\n' "$(openssl rand -base64 32)" >> .env
+
+# No release has been published yet, so build the image once:
+docker compose -f compose.yaml -f compose.build.yaml up -d --build
+
+curl -fsS http://localhost:8080/api/v1/ready
+```
+
+Measured from an empty state on an Apple Silicon laptop, that is 36 seconds to a
+workflow you have run — around a minute if nothing is cached, plus whatever your
+connection takes to pull the three base images the first time.
+
+Then open **<http://localhost:8080/app/workflows>**.
+
+The build overlay is temporary. The multi-architecture image pipeline and the
+release workflow are both in the tree, but no version tag has ever been pushed,
+so there is nothing in `ghcr.io/kilaslabs/kilasflow` to pull yet. Once there is,
+set `KILASFLOW_IMAGE` in `.env` to the exact `vX.Y.Z` tag and the whole thing
+becomes `docker compose up -d` against a pulled image, which is seconds rather
+than minutes.
+
+PostgreSQL instead of the default SQLite is one command and nothing to
+uncomment — but decide before your first run, because there is no migration
+between the two backends and the stack comes up empty:
+
+```bash
+docker compose -f compose.yaml -f compose.postgres.yaml up -d
+```
+
+`.env.example` is the reference for what a running stack reads, including the
+three keys that each silently disable a capability while they are unset, and the
+four variables that turn authentication on together. Authentication is off by
+default: with it off, anyone who can reach the port owns the installation, and
+the server says so in its log at every start. The full walkthrough, including
+what to expect on the first boot and how to upgrade, is
+[docs/src/content/docs/start/install.md](docs/src/content/docs/start/install.md).
+
+Working on KilasFlow itself rather than running it?
+
 ```bash
 make setup          # go modules, Air, pnpm packages
 make dev            # Go on :8080, Vite on :5173
 ```
 
+Open **<http://localhost:5173>** — the Vite port, not the Go one. The page there
+calls the backend's liveness and readiness endpoints through the Vite proxy and
+shows what came back, so a broken proxy or a stopped backend is visible
+immediately rather than as an empty editor.
+
 `make setup` installs Air into the Go tool bin directory. `make dev` resolves
-that directory itself, so it does not require adding `GOBIN` or `GOPATH/bin`
-to your shell `PATH`. Set `AIR=/path/to/air make dev` only to override it.
-
-Open **<http://localhost:5173>**. The page there calls the backend's liveness
-and readiness endpoints through the Vite proxy and shows what came back, so a
-broken proxy or a stopped backend is visible immediately rather than as an
-empty editor. The editor itself is at `/app/workflows`.
-
-Production build — one binary containing the API and the editor:
-
-```bash
-make build-all
-./bin/kilasflow
-```
-
-Everything is then served from <http://localhost:8080>.
+that directory itself, so it does not require adding `GOBIN` or `GOPATH/bin` to
+your shell `PATH`. Set `AIR=/path/to/air make dev` only to override it. For a
+single binary containing the API and the editor, `make build-all` then
+`./bin/kilasflow`, served from <http://localhost:8080>. See
+[Development](#development) for the rest.
 
 ## Endpoints
 
