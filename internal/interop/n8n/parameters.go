@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/kilaslabs/kilas-flow/internal/property"
 	"github.com/kilaslabs/kilas-flow/internal/workflow"
 )
 
@@ -77,13 +78,19 @@ func numberParameter(parameters map[string]any, key string) (float64, bool) {
 // n8n v3 nests them under `assignments.assignments` as typed entries; older
 // versions used `values.string` and friends. Both are read, because an
 // exported workflow in the wild may be either.
+// setToKilas reads n8n's Set node in either of the shapes it has had.
+//
+// Both are *ordered lists with a declared type per row*, and both are carried
+// through as one. The importer used to collapse them into a `map[name]value`,
+// which lost the order the author typed and the type of every entry — so a
+// boolean returned to n8n as a string and the fields came back alphabetical.
 func setToKilas(node Node) (map[string]any, []Unsupported) {
-	assignments := map[string]any{}
+	entries := make([]any, 0, 4)
 	issues := make([]Unsupported, 0)
 
 	if wrapper, ok := node.Parameters["assignments"].(map[string]any); ok {
-		if entries, ok := wrapper["assignments"].([]any); ok {
-			for _, entry := range entries {
+		if rows, ok := wrapper["assignments"].([]any); ok {
+			for index, entry := range rows {
 				fields, ok := entry.(map[string]any)
 				if !ok {
 					continue
@@ -92,18 +99,22 @@ func setToKilas(node Node) (map[string]any, []Unsupported) {
 				if strings.TrimSpace(name) == "" {
 					continue
 				}
-				assignments[name] = fromN8NValue(fields["value"])
+				identifier, _ := fields["id"].(string)
+				entries = append(entries, assignmentEntry(node, index, identifier, name,
+					assignmentTypeOf(fields["type"]), fromN8NValue(fields["value"])))
 			}
 		}
 	}
 
+	// Set v2's pre-assignment control: a fixed collection whose type lives in
+	// the *key* — `stringValue`, `numberValue` — rather than in a type field.
 	if values, ok := node.Parameters["values"].(map[string]any); ok {
-		for kind, entries := range values {
-			list, ok := entries.([]any)
+		for _, kind := range sortedKeys(values) {
+			list, ok := values[kind].([]any)
 			if !ok {
 				continue
 			}
-			for _, entry := range list {
+			for index, entry := range list {
 				fields, ok := entry.(map[string]any)
 				if !ok {
 					continue
@@ -112,8 +123,9 @@ func setToKilas(node Node) (map[string]any, []Unsupported) {
 				if strings.TrimSpace(name) == "" {
 					continue
 				}
-				assignments[name] = fromN8NValue(fields["value"])
-				_ = kind
+				identifier, _ := fields["id"].(string)
+				entries = append(entries, assignmentEntry(node, len(entries)+index, identifier, name,
+					assignmentTypeOf(kind), fromN8NValue(fields["value"])))
 			}
 		}
 	}
@@ -124,24 +136,91 @@ func setToKilas(node Node) (map[string]any, []Unsupported) {
 			Reason: "n8n's \"keep only set fields\" option has no KilasFlow equivalent; the imported Set adds its fields to every incoming item instead of replacing them",
 		})
 	}
-	if len(assignments) == 0 {
+	if len(entries) == 0 {
 		issues = append(issues, Unsupported{
 			Reason: "this Set node has no readable assignments; add at least one field before running the workflow",
 		})
 	}
-	return map[string]any{"assignments": assignments}, issues
+	return map[string]any{"assignments": map[string]any{"assignments": entries}}, issues
 }
 
+// assignmentEntry builds one row.
+//
+// n8n's own row id is carried when it has one, so a workflow that goes back is
+// the same document rather than a new one. Only a row that never had an id gets
+// a minted one.
+func assignmentEntry(node Node, index int, identifier, name, declared string, value any) map[string]any {
+	if strings.TrimSpace(identifier) == "" {
+		base := node.ID
+		if base == "" {
+			base = node.Name
+		}
+		identifier = fmt.Sprintf("%s-%d", base, index)
+	}
+	return map[string]any{"id": identifier, "name": name, "type": declared, "value": value}
+}
+
+// assignmentTypeOf reads n8n's declared type in either of the two spellings.
+//
+// Set v3 writes the bare name — `string`, `number` — while v2 named its value
+// *field* `stringValue`, `numberValue` and so on. Both mean the same thing, and
+// a type outside the five KilasFlow has a control for degrades to a string
+// rather than being carried into a document nothing can render.
+func assignmentTypeOf(declared any) string {
+	name, _ := declared.(string)
+	name = strings.TrimSuffix(strings.TrimSpace(name), "Value")
+	switch property.AssignmentType(name) {
+	case property.AssignmentString, property.AssignmentNumber, property.AssignmentBoolean,
+		property.AssignmentArray, property.AssignmentObject:
+		return name
+	default:
+		return string(property.AssignmentString)
+	}
+}
+
+// setToN8N writes the rows back in the order and with the types they carry.
 func setToN8N(node workflow.Node) (map[string]any, []Lossy) {
-	assignments, _ := node.Parameters["assignments"].(map[string]any)
-	entries := make([]any, 0, len(assignments))
-	names := sortedKeys(assignments)
-	for index, name := range names {
+	wrapper, _ := node.Parameters["assignments"].(map[string]any)
+	rows, ordered := wrapper["assignments"].([]any)
+	if !ordered {
+		// A document saved before assignments had order or types. Its order is
+		// a map's, so it is written alphabetically — the only stable answer —
+		// and every row goes back as a string, which is what it was stored as.
+		names := sortedKeys(wrapper)
+		entries := make([]any, 0, len(names))
+		for index, name := range names {
+			entries = append(entries, map[string]any{
+				"id":    fmt.Sprintf("%s-%d", node.ID, index),
+				"name":  name,
+				"type":  string(property.AssignmentString),
+				"value": toN8NValue(wrapper[name]),
+			})
+		}
+		return map[string]any{
+			"assignments": map[string]any{"assignments": entries},
+			"options":     map[string]any{},
+		}, nil
+	}
+
+	entries := make([]any, 0, len(rows))
+	for index, row := range rows {
+		fields, ok := row.(map[string]any)
+		if !ok {
+			continue
+		}
+		identifier, _ := fields["id"].(string)
+		if identifier == "" {
+			identifier = fmt.Sprintf("%s-%d", node.ID, index)
+		}
+		declared, _ := fields["type"].(string)
+		if declared == "" {
+			declared = string(property.AssignmentString)
+		}
 		entries = append(entries, map[string]any{
-			"id":    fmt.Sprintf("%s-%d", node.ID, index),
-			"name":  name,
-			"type":  "string",
-			"value": toN8NValue(assignments[name]),
+			"id":    identifier,
+			"name":  fields["name"],
+			"type":  declared,
+			"value": toN8NValue(fields["value"]),
 		})
 	}
 	return map[string]any{

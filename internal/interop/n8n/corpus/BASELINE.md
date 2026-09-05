@@ -24,8 +24,8 @@ nor blocked actually failed to execute.
 | Tier | Count | of 39 |
 | --- | ---: | ---: |
 | imported | 39 | 100% |
-| activatable | 12 | 31% |
-| runnable | 2 | 5% |
+| activatable | 13 | 33% |
+| runnable | 3 | 8% |
 | _(blocked by the offline policy)_ | 10 | 26% |
 
 ## Per fixture
@@ -38,7 +38,7 @@ nor blocked actually failed to execute.
 | `nodes-base/HttpRequest/test/encodingQuoted/encodingQuoted.test` | nodes-base | 3 | yes | yes | blocked | execute node "cc2f185d-df6a-4fa3-b7f4-29f0dbad0f9b": node "HTTP Request (v4)": request target is not allowed: host "dummy.domain" is not in the allowed list |
 | `nodes-base/HttpRequest/test/node/workflow.delete` | nodes-base | 2 | yes | yes | blocked | execute node "312e64ca-00bf-40e6-b21d-1f73930ef98c": node "HTTP Request": request target is not allowed: host "dummyjson.com" is not in the allowed list |
 | `nodes-base/HttpRequest/test/node/workflow.get` | nodes-base | 5 | yes | yes | blocked | execute node "38ec1a50-7f0e-4749-822d-f26370b00694": node "HTTP Request empty header": request target is not allowed: host "dummyjson.com" is not in the allo… |
-| `nodes-base/HttpRequest/test/node/workflow.pagination` | nodes-base | 37 | yes | no | no | node "53bfa924-95cd-40da-bd31-d4ed3669fedc" configuration is invalid: assignments must be a non-empty object |
+| `nodes-base/HttpRequest/test/node/workflow.pagination` | nodes-base | 37 | yes | no | no | node "08f83213-2e7e-487b-90af-f0acba0c5fc7" configuration is invalid: this node was imported from n8n-nodes-base.noOp, which KilasFlow does not support. Repl… |
 | `nodes-base/HttpRequest/test/node/workflow.patch` | nodes-base | 2 | yes | yes | blocked | execute node "312e64ca-00bf-40e6-b21d-1f73930ef98c": node "HTTP Request": request target is not allowed: host "dummyjson.com" is not in the allowed list |
 | `nodes-base/HttpRequest/test/node/workflow.post` | nodes-base | 3 | yes | yes | blocked | execute node "07670093-862f-403f-96a5-ddf7fdb0d225": node "HTTP Request": request target is not allowed: host "dummyjson.com" is not in the allowed list |
 | `nodes-base/HttpRequest/test/node/workflow.put` | nodes-base | 2 | yes | yes | blocked | execute node "07670093-862f-403f-96a5-ddf7fdb0d225": node "HTTP Request": request target is not allowed: host "dummyjson.com" is not in the allowed list |
@@ -53,15 +53,15 @@ nor blocked actually failed to execute.
 | `nodes-base/If/test/v2/IfV2.number` | nodes-base | 5 | yes | no | no | node "60697c7f-3948-4790-97ba-8aba03d02ac2" configuration is invalid: this node was imported from n8n-nodes-testing.testData, which KilasFlow does not suppor… |
 | `nodes-base/If/test/v2/IfV2.other` | nodes-base | 5 | yes | no | no | node "60697c7f-3948-4790-97ba-8aba03d02ac2" configuration is invalid: this node was imported from n8n-nodes-testing.testData, which KilasFlow does not suppor… |
 | `nodes-base/If/test/v2/IfV2.string` | nodes-base | 5 | yes | no | no | node "48399b31-219a-42fa-bb5b-380dbb4a2e7d" configuration is invalid: IF conditions must contain exactly one condition |
-| `nodes-base/Set/test/Set.v3.workflow` | nodes-base | 21 | yes | no | no | node "d425fb32-2bbc-445d-8fec-0e1288adf6d8" configuration is invalid: assignments must be a non-empty object |
+| `nodes-base/Set/test/Set.v3.workflow` | nodes-base | 21 | yes | no | no | node "7c79bfc1-02ca-43b8-b75f-0c2afcc80187" configuration is invalid: this node was imported from n8n-nodes-base.noOp, which KilasFlow does not support. Repl… |
 | `nodes-base/Set/test/Set.v3_3.workflow` | nodes-base | 21 | yes | no | no | node "8afc51b7-f9ed-417a-a58b-2fe251ba4b93" configuration is invalid: this node was imported from n8n-nodes-testing.testData, which KilasFlow does not suppor… |
 | `nodes-base/Set/test/Set.workflow` | nodes-base | 7 | yes | no | no | node "a7e51ac7-734a-4652-bb02-d9f0a4d8410b" configuration is invalid: this node was imported from n8n-nodes-testing.testData, which KilasFlow does not suppor… |
-| `nodes-base/Set/test/Set.workflow.null_values` | nodes-base | 6 | yes | no | no | node "78f2ad0d-e129-448b-ae78-5bfdba587186" configuration is invalid: assignments must be a non-empty object |
+| `nodes-base/Set/test/Set.workflow.null_values` | nodes-base | 6 | yes | yes | yes | — |
 | `nodes-base/Set/test/Set.workflow.number` | nodes-base | 6 | yes | yes | yes | — |
 | `waha-templates/chatting-template/template` | waha-templates | 12 | yes | no | no | node "ef2ac114-79f3-4a68-b8d2-ccf057b14aa3" configuration is invalid: this node was imported from n8n-nodes-base.switch, which KilasFlow does not support. Re… |
 | `waha-templates/chatwoot/WhatsApp___ChatWoot__ChatWoot____WAHA_Messages` | waha-templates | 22 | yes | no | no | node "1027b08d-e1e5-4dc2-a9cd-ee6a1474ea28" configuration is invalid: IF conditions must contain exactly one condition |
 | `waha-templates/chatwoot/WhatsApp___ChatWoot__Database_Migrations` | waha-templates | 3 | yes | no | no | node "80eb9337-a260-41cb-8a71-56eca71c0a8c" configuration is invalid: a postgres credential is required |
-| `waha-templates/chatwoot/WhatsApp___ChatWoot__WAHA____ChatWoot_Messages` | waha-templates | 23 | yes | no | no | node "8a04022f-e9fa-47a3-947c-44bbeac991b7" configuration is invalid: assignments must be a non-empty object |
+| `waha-templates/chatwoot/WhatsApp___ChatWoot__WAHA____ChatWoot_Messages` | waha-templates | 23 | yes | no | no | node "ab41bbd3-7366-402f-bec0-d179785ba607" configuration is invalid: this node was imported from n8n-nodes-base.switch, which KilasFlow does not support. Re… |
 | `waha-templates/chatwoot/WhatsApp___ChatWoot__WAHA____ChatWoot_Sync_Contacts` | waha-templates | 13 | yes | no | no | node "ef92745d-8f1a-46bd-b9b3-ec9abf712f41" configuration is invalid: a query needs a statement |
 | `waha-templates/fetch-image-rotate-and-send-it-back/template` | waha-templates | 10 | yes | no | no | node "6d9f620e-cd68-49a6-9194-d76871f10b8f" configuration is invalid: this node was imported from n8n-nodes-base.editImage, which KilasFlow does not support.… |
 | `waha-templates/forward-all-text-messages-to-email/template` | waha-templates | 4 | yes | no | no | node "2c29e16d-0902-4729-a37c-2bd59dd6bcd3" configuration is invalid: this node was imported from n8n-nodes-base.emailSend, which KilasFlow does not support.… |
@@ -69,7 +69,7 @@ nor blocked actually failed to execute.
 | `waha-templates/send-bulk-messages/template` | waha-templates | 18 | yes | no | no | node "af16c0da-c302-4d8b-983c-3d69e12f7260" configuration is invalid: a postgres credential is required |
 | `waha-templates/send-custom-http-request-to-waha/template` | waha-templates | 8 | yes | no | no | node "61abde5f-ea26-4d3c-b91c-d3c31699c8c5" configuration is invalid: this node was imported from n8n-nodes-base.switch, which KilasFlow does not support. Re… |
 | `waha-templates/send-qr-code-to-email/template` | waha-templates | 9 | yes | no | no | node "05513103-49fc-4324-80ea-5e86b61f3272" configuration is invalid: this node was imported from n8n-nodes-base.convertToFile, which KilasFlow does not supp… |
-| `waha-templates/waha-trigger-explanation/template` | waha-templates | 6 | yes | no | no | node "298ae97b-fa1b-48ba-886b-9216217afce6" configuration is invalid: assignments must be a non-empty object |
+| `waha-templates/waha-trigger-explanation/template` | waha-templates | 6 | yes | no | no | node "317255c6-880e-465e-90d4-f4f7268a1e53" configuration is invalid: this node was imported from n8n-nodes-base.switch, which KilasFlow does not support. Re… |
 | `waha-templates/whatsapp-typebot/template` | waha-templates | 42 | yes | no | no | node "6adb377a-249c-421d-9259-47a477fa91e8" configuration is invalid: this node was imported from n8n-nodes-base.wait, which KilasFlow does not support. Repl… |
 
 ## Node type inventory

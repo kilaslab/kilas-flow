@@ -9,6 +9,7 @@ import (
 	"github.com/kilaslabs/kilas-flow/internal/ai"
 	"github.com/kilaslabs/kilas-flow/internal/engine"
 	"github.com/kilaslabs/kilas-flow/internal/expression"
+	"github.com/kilaslabs/kilas-flow/internal/property"
 	"github.com/kilaslabs/kilas-flow/internal/runcode"
 	"github.com/kilaslabs/kilas-flow/internal/safehttp"
 	"github.com/kilaslabs/kilas-flow/internal/sqlnode"
@@ -68,8 +69,8 @@ func executeSet(ctx context.Context, node workflow.IRNode, input workflow.NodeIn
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if declared, ok := node.Parameters["assignments"].(map[string]any); !ok || len(declared) == 0 {
-		return nil, fmt.Errorf("Set assignments must be a non-empty object")
+	if _, err := readAssignments(node.Parameters["assignments"]); err != nil {
+		return nil, fmt.Errorf("Set %w", err)
 	}
 	items := make([]workflow.Item, 0, len(input["main"]))
 	for index, item := range input["main"] {
@@ -77,10 +78,19 @@ func executeSet(ctx context.Context, node workflow.IRNode, input workflow.NodeIn
 		if err != nil {
 			return nil, fmt.Errorf("node %q: %w", node.Name, err)
 		}
-		assignments, _ := resolved["assignments"].(map[string]any)
+		rows, err := readAssignments(resolved["assignments"])
+		if err != nil {
+			return nil, fmt.Errorf("node %q: %w", node.Name, err)
+		}
 		copy := cloneItem(item)
-		for key, value := range assignments {
-			copy.JSON[key] = cloneValue(value)
+		// In order, so two rows writing the same field settle the way the user
+		// arranged them rather than the way a map iterated.
+		for _, row := range rows {
+			value, err := row.coerce()
+			if err != nil {
+				return nil, fmt.Errorf("node %q: %w", node.Name, err)
+			}
+			copy.JSON[row.Name] = cloneValue(value)
 		}
 		items = append(items, copy)
 	}
@@ -157,13 +167,17 @@ func executeMerge(ctx context.Context, node workflow.IRNode, input workflow.Node
 }
 
 func validateSetConfiguration(node workflow.Node) error {
-	assignments, ok := node.Parameters["assignments"].(map[string]any)
-	if !ok || len(assignments) == 0 {
-		return fmt.Errorf("assignments must be a non-empty object")
+	rows, err := readAssignments(node.Parameters["assignments"])
+	if err != nil {
+		return err
 	}
-	for key := range assignments {
-		if strings.TrimSpace(key) == "" {
+	for _, row := range rows {
+		if strings.TrimSpace(row.Name) == "" {
 			return fmt.Errorf("assignment keys must not be empty")
+		}
+		if row.Type != "" && !property.KnownAssignmentType(row.Type) {
+			return fmt.Errorf("assignment %q declares type %q, which is not one of %v",
+				row.Name, row.Type, property.AssignmentTypes())
 		}
 	}
 	return nil

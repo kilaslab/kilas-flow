@@ -97,8 +97,8 @@ func TestRegistryExposesCorePortAndPropertyMetadata(t *testing.T) {
 	if !hasPort(set.Inputs, "main", workflow.ConnectionMain) || !hasPort(set.Outputs, "main", workflow.ConnectionMain) {
 		t.Errorf("set ports = %#v -> %#v, want main input/output", set.Inputs, set.Outputs)
 	}
-	if !hasRequiredProperty(set.Parameters, "assignments", node.PropertyKeyValue) {
-		t.Errorf("set parameters = %#v, want required assignments key-value control", set.Parameters)
+	if !hasRequiredProperty(set.Parameters, "assignments", node.PropertyAssignments) {
+		t.Errorf("set parameters = %#v, want the required ordered assignment control", set.Parameters)
 	}
 	if len(set.SharedSettings) == 0 {
 		t.Error("set shared settings are empty")
@@ -590,7 +590,7 @@ func TestKnownPropertyKindsIsExactlyTheDocumentedSet(t *testing.T) {
 		"options", "multiOptions",
 		"collection", "fixedCollection",
 		"notice", "json", "dateTime",
-		"keyValue", "conditions",
+		"keyValue", "conditions", "assignmentCollection",
 	}
 	got := make([]string, 0, len(node.KnownPropertyKinds()))
 	for _, kind := range node.KnownPropertyKinds() {
@@ -802,5 +802,80 @@ func TestIconVariantsFallBackToLight(t *testing.T) {
 
 	if (node.Definition{}).IconFor("light") != nil {
 		t.Error("a node shipping no artwork returned some")
+	}
+}
+
+// An assignment collection carries typed ordered rows in its own field, and a
+// malformed row is refused where it is declared rather than becoming a surprise
+// at run time.
+func TestAssignmentCollectionRowsAreValidatedAtRegistration(t *testing.T) {
+	t.Parallel()
+
+	definition := func(assignments []node.Assignment) node.Definition {
+		return node.Definition{
+			Type: "pack.assigner", Version: workflow.V(1), DisplayName: "Assigner", Category: "Test",
+			Group:   []node.NodeGroup{node.GroupTransform},
+			Inputs:  []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+			Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+			Parameters: []node.PropertyDefinition{{
+				Key: "fields", Label: "Fields", Kind: node.PropertyAssignments, Assignments: assignments,
+			}},
+			ExecutorID: "test.assigner",
+		}
+	}
+
+	registry := node.NewRegistry()
+	if err := registry.Register(definition([]node.Assignment{
+		{ID: "r1", Name: "count", Type: "number", Value: float64(1)},
+		{ID: "r2", Name: "label", Type: "string", Value: "x"},
+	})); err != nil {
+		t.Fatalf("Register() with valid rows error = %v", err)
+	}
+
+	for name, rows := range map[string][]node.Assignment{
+		"an unnamed row":                        {{ID: "r1", Name: "  ", Type: "string"}},
+		"a type this product has no editor for": {{ID: "r1", Name: "when", Type: "dateTime"}},
+		"a type that is not a type at all":      {{ID: "r1", Name: "x", Type: "banana"}},
+		"no type at all":                        {{ID: "r1", Name: "x"}},
+	} {
+		if err := node.NewRegistry().Register(definition(rows)); err == nil {
+			t.Errorf("Register() accepted %s", name)
+		}
+	}
+}
+
+// The registry hands out copies. An assignment's value can be a map, and a
+// caller mutating one it was handed would reach into the registry's own
+// storage.
+func TestAssignmentDefaultsAreDeepCopied(t *testing.T) {
+	t.Parallel()
+
+	registry := node.NewRegistry()
+	if err := registry.Register(node.Definition{
+		Type: "pack.assigner", Version: workflow.V(1), DisplayName: "Assigner", Category: "Test",
+		Group:   []node.NodeGroup{node.GroupTransform},
+		Inputs:  []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+		Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+		Parameters: []node.PropertyDefinition{{
+			Key: "fields", Label: "Fields", Kind: node.PropertyAssignments,
+			Assignments: []node.Assignment{{ID: "r1", Name: "meta", Type: "object", Value: map[string]any{"k": "v"}}},
+		}},
+		ExecutorID: "test.assigner",
+	}); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+
+	handed, _ := registry.Get("pack.assigner", workflow.V(1))
+	handed.Parameters[0].Assignments[0].Name = "vandalised"
+	nested, _ := handed.Parameters[0].Assignments[0].Value.(map[string]any)
+	nested["k"] = "vandalised"
+
+	again, _ := registry.Get("pack.assigner", workflow.V(1))
+	if again.Parameters[0].Assignments[0].Name != "meta" {
+		t.Errorf("row name = %q, want the registry unchanged", again.Parameters[0].Assignments[0].Name)
+	}
+	value, _ := again.Parameters[0].Assignments[0].Value.(map[string]any)
+	if value["k"] != "v" {
+		t.Errorf("row value = %#v, want the registry unchanged", value)
 	}
 }

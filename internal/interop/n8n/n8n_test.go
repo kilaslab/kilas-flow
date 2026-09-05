@@ -174,15 +174,15 @@ func TestImportLinearWorkflow(t *testing.T) {
 	}
 
 	set := nodeByName(result.Document, "Edit Fields")
-	assignments, _ := set.Parameters["assignments"].(map[string]any)
-	if assignments["status"] != "ready" {
-		t.Errorf("fixed assignment = %#v, want the plain string", assignments["status"])
+	rows := assignmentRows(t, set)
+	if rows["status"]["value"] != "ready" {
+		t.Errorf("fixed assignment = %#v, want the plain string", rows["status"]["value"])
 	}
 	// n8n's `=` prefix becomes KilasFlow's explicit expression marker; carrying
 	// the prefix would leave the value looking like a literal.
-	expression, ok := assignments["customer"].(map[string]any)
+	expression, ok := rows["customer"]["value"].(map[string]any)
 	if !ok || expression["mode"] != "expression" || expression["value"] != "{{ $json.name }}" {
-		t.Errorf("expression assignment = %#v, want an explicit expression marker", assignments["customer"])
+		t.Errorf("expression assignment = %#v, want an explicit expression marker", rows["customer"]["value"])
 	}
 
 	// Position is preserved so the imported canvas looks like the original.
@@ -1901,5 +1901,117 @@ func TestATriggerParameterKilasFlowDoesNotCarryIsNamed(t *testing.T) {
 	additional, _ := imported.Parameters["additionalFields"].(map[string]any)
 	if additional["download"] != true {
 		t.Errorf("additionalFields = %#v, want the supported fields kept", additional)
+	}
+}
+
+// assignmentRows reads an imported Set node's ordered rows by name.
+func assignmentRows(t *testing.T, node workflow.Node) map[string]map[string]any {
+	t.Helper()
+	wrapper, _ := node.Parameters["assignments"].(map[string]any)
+	list, ok := wrapper["assignments"].([]any)
+	if !ok {
+		t.Fatalf("assignments = %#v, want the ordered list", node.Parameters["assignments"])
+	}
+	rows := make(map[string]map[string]any, len(list))
+	for _, entry := range list {
+		fields, _ := entry.(map[string]any)
+		name, _ := fields["name"].(string)
+		rows[name] = fields
+	}
+	return rows
+}
+
+// Order and type are what a map cannot hold, and they are what the round trip
+// has to give back.
+//
+// The importer used to collapse assignments to `map[name]value`: two rows
+// writing the same field became one, the order the author typed was lost the
+// first time the document was saved, and the exporter hardcoded `"string"` so a
+// boolean came home as text.
+func TestSetAssignmentsKeepTheirOrderAndTypeThroughARoundTrip(t *testing.T) {
+	t.Parallel()
+
+	const fixture = `{
+	  "name": "Typed",
+	  "nodes": [{"id":"a","name":"Edit Fields","type":"n8n-nodes-base.set","typeVersion":3.4,"position":[0,0],
+	    "parameters":{"assignments":{"assignments":[
+	      {"id":"r1","name":"zebra","type":"string","value":"last alphabetically, first in order"},
+	      {"id":"r2","name":"count","type":"number","value":7},
+	      {"id":"r3","name":"active","type":"boolean","value":true},
+	      {"id":"r4","name":"tags","type":"array","value":["a","b"]},
+	      {"id":"r5","name":"meta","type":"object","value":{"k":"v"}},
+	      {"id":"r6","name":"zebra","type":"string","value":"the later row wins"}
+	    ]}}}],
+	  "connections": {}
+	}`
+
+	imported := importFixture(t, fixture)
+	exported, err := n8n.Export(imported.Document, registry(t))
+	if err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+	wrapper, _ := exported.Document.Nodes[0].Parameters["assignments"].(map[string]any)
+	rows, _ := wrapper["assignments"].([]any)
+	if len(rows) != 6 {
+		t.Fatalf("exported %d rows, want all six — including both writes of the same field", len(rows))
+	}
+
+	type row struct{ name, declared string }
+	got := make([]row, 0, len(rows))
+	for _, entry := range rows {
+		fields, _ := entry.(map[string]any)
+		name, _ := fields["name"].(string)
+		declared, _ := fields["type"].(string)
+		got = append(got, row{name, declared})
+	}
+	want := []row{
+		{"zebra", "string"}, {"count", "number"}, {"active", "boolean"},
+		{"tags", "array"}, {"meta", "object"}, {"zebra", "string"},
+	}
+	for index, expected := range want {
+		if got[index] != expected {
+			t.Errorf("row %d = %+v, want %+v", index, got[index], expected)
+		}
+	}
+	// The ids n8n minted come back as themselves, so a re-import in n8n is the
+	// same document rather than a new one.
+	first, _ := rows[0].(map[string]any)
+	if first["id"] != "r1" {
+		t.Errorf("first row id = %#v, want n8n's own", first["id"])
+	}
+}
+
+// A document saved before assignments had order or types still imports, still
+// exports and still means the same thing.
+func TestASetNodeSavedWithTheOldFlatShapeStillRoundTrips(t *testing.T) {
+	t.Parallel()
+
+	legacy := workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_legacy", Name: "Legacy",
+		Nodes: []workflow.Node{{
+			ID: "set", Name: "Set", Type: "kilasflow.set", TypeVersion: workflow.V(1),
+			Parameters: map[string]any{"assignments": map[string]any{"status": "ready", "count": float64(2)}},
+		}},
+		Settings: map[string]any{},
+	}
+	exported, err := n8n.Export(legacy, registry(t))
+	if err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+	wrapper, _ := exported.Document.Nodes[0].Parameters["assignments"].(map[string]any)
+	rows, _ := wrapper["assignments"].([]any)
+	if len(rows) != 2 {
+		t.Fatalf("exported %d rows from the flat shape, want two", len(rows))
+	}
+	// Alphabetical, which is the only stable order a map can offer.
+	names := make([]string, 0, 2)
+	for _, entry := range rows {
+		fields, _ := entry.(map[string]any)
+		name, _ := fields["name"].(string)
+		names = append(names, name)
+	}
+	if strings.Join(names, ",") != "count,status" {
+		t.Fatalf("names = %v, want the only stable order a map can give", names)
 	}
 }

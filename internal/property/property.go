@@ -8,6 +8,11 @@
 // without the node catalogue having to know the credential catalogue exists.
 package property
 
+import (
+	"fmt"
+	"strings"
+)
+
 // Kind identifies a generic control the editor can render without a
 // node-specific form implementation.
 type Kind string
@@ -40,7 +45,87 @@ const (
 	KindDateTime   Kind = "dateTime"
 	KindKeyValue   Kind = "keyValue"
 	KindConditions Kind = "conditions"
+	// KindAssignmentCollection is an ordered list of `{name, type, value}`
+	// rows whose value editor is chosen by each row's own type.
+	//
+	// It is its own kind rather than a preset over a fixed collection, which it
+	// resembles from a distance. The difference is where it counts: a fixed
+	// collection is a repeatable group of *declared* properties, while an
+	// assignment's control is decided row by row by a sibling field, which a
+	// generic group cannot express without the panel special-casing it anyway.
+	KindAssignmentCollection Kind = "assignmentCollection"
 )
+
+// Assignment is one row of an assignment collection.
+//
+// The shape is n8n's — `{id, name, type, value}` — because an imported Set node
+// carries exactly this and a round trip has to give it back unchanged, order
+// included. A Go map cannot: it has no order, and two rows writing the same
+// field are indistinguishable from one.
+type Assignment struct {
+	// ID is n8n's own row identity. It is carried rather than regenerated so a
+	// round trip is byte-identical; an empty one is filled in on import.
+	ID   string `json:"id,omitempty"`
+	Name string `json:"name"`
+	// Type decides the value editor and how the value is read at run time.
+	Type AssignmentType `json:"type"`
+	// Value is the row's value, which may be an expression marker.
+	Value any `json:"value,omitempty"`
+}
+
+// AssignmentType is the declared type of one assignment's value.
+type AssignmentType string
+
+// The types an assignment may declare.
+//
+// These five are what n8n's Set node's own type picker offers, verbatim from
+// the reference checkout's `Set/v2/manual.mode.ts` — its pre-assignment
+// `fields` control lists String, Number, Boolean, Array and Object, and the
+// assignment collection replaced that control without widening it. n8n's
+// `FieldType` union is wider (dateTime, url, jwt and more), but those belong to
+// other controls; accepting them here would be accepting a type this product
+// has no editor for.
+const (
+	AssignmentString  AssignmentType = "string"
+	AssignmentNumber  AssignmentType = "number"
+	AssignmentBoolean AssignmentType = "boolean"
+	AssignmentArray   AssignmentType = "array"
+	AssignmentObject  AssignmentType = "object"
+)
+
+// AssignmentTypes is the closed set, in a stable order.
+func AssignmentTypes() []AssignmentType {
+	return []AssignmentType{
+		AssignmentString, AssignmentNumber, AssignmentBoolean, AssignmentArray, AssignmentObject,
+	}
+}
+
+// KnownAssignmentType reports whether a type may be declared.
+func KnownAssignmentType(declared AssignmentType) bool {
+	for _, known := range AssignmentTypes() {
+		if declared == known {
+			return true
+		}
+	}
+	return false
+}
+
+// ValidateAssignments refuses a malformed row.
+//
+// An unnamed row writes nothing and an unknown type has no editor, so both are
+// refused where they are declared rather than becoming a surprise at run time.
+func ValidateAssignments(assignments []Assignment) error {
+	for index, assignment := range assignments {
+		if strings.TrimSpace(assignment.Name) == "" {
+			return fmt.Errorf("assignment %d has no name, so it would write nothing", index)
+		}
+		if !KnownAssignmentType(assignment.Type) {
+			return fmt.Errorf("assignment %q declares type %q, which is not one of %v",
+				assignment.Name, assignment.Type, AssignmentTypes())
+		}
+	}
+	return nil
+}
 
 // KnownKinds is the closed set, in a stable order.
 func KnownKinds() []Kind {
@@ -49,7 +134,7 @@ func KnownKinds() []Kind {
 		KindOptions, KindMultiOptions,
 		KindCollection, KindFixedCollection,
 		KindNotice, KindJSON, KindDateTime,
-		KindKeyValue, KindConditions,
+		KindKeyValue, KindConditions, KindAssignmentCollection,
 	}
 }
 
@@ -159,6 +244,13 @@ type PropertyDefinition struct {
 	// VisibleWhen rather than combining with it, so a property has exactly one
 	// rule and there is never a question of which wins.
 	DisplayOptions Visibility `json:"displayOptions,omitempty"`
+	// Assignments is the default rows of an `assignmentCollection`.
+	//
+	// Its own field rather than overloaded onto Options, for the reason every
+	// other nested carrier here has one: a field whose meaning depends on the
+	// sibling kind produces a JSON schema the generated TypeScript cannot
+	// express as anything better than `unknown`.
+	Assignments []Assignment `json:"assignments,omitempty"`
 }
 
 // PropertyGroup is one named group inside a fixedCollection.

@@ -495,6 +495,9 @@ func validateProperties(nodeType, group string, properties []PropertyDefinition)
 		if err := propertypkg.ValidateVisibility(declared.DisplayOptions); err != nil {
 			return fmt.Errorf("node definition %q %s %q: %w", nodeType, group, declared.Key, err)
 		}
+		if err := propertypkg.ValidateAssignments(declared.Assignments); err != nil {
+			return fmt.Errorf("node definition %q %s %q: %w", nodeType, group, declared.Key, err)
+		}
 		if err := validateProperties(nodeType, group+"."+declared.Key, declared.Fields); err != nil {
 			return err
 		}
@@ -621,6 +624,17 @@ func cloneProperties(properties []PropertyDefinition) []PropertyDefinition {
 			cloned[index].VisibleWhen[visibilityIndex].Equals = cloneValue(cloned[index].VisibleWhen[visibilityIndex].Equals)
 		}
 		cloned[index].Fields = cloneProperties(declared.Fields)
+		// Deep, not a slice copy: an assignment's Value can be a map, and a
+		// caller mutating one it was handed would reach into the registry's own
+		// storage.
+		if declared.Assignments != nil {
+			assignments := make([]propertypkg.Assignment, len(declared.Assignments))
+			for assignmentIndex, assignment := range declared.Assignments {
+				assignment.Value = cloneValue(assignment.Value)
+				assignments[assignmentIndex] = assignment
+			}
+			cloned[index].Assignments = assignments
+		}
 		if declared.LoadOptions != nil {
 			loader := *declared.LoadOptions
 			loader.DependsOn = append([]string(nil), declared.LoadOptions.DependsOn...)
@@ -727,6 +741,10 @@ type (
 	PropertyGroup       = propertypkg.PropertyGroup
 	TypeOptions         = propertypkg.TypeOptions
 	VisibilityCondition = propertypkg.VisibilityCondition
+	// Assignment is one row of an assignmentCollection.
+	Assignment = propertypkg.Assignment
+	// AssignmentType is the declared type of an assignment's value.
+	AssignmentType = propertypkg.AssignmentType
 )
 
 const (
@@ -742,6 +760,7 @@ const (
 	PropertyDateTime        = propertypkg.KindDateTime
 	PropertyKeyValue        = propertypkg.KindKeyValue
 	PropertyConditions      = propertypkg.KindConditions
+	PropertyAssignments     = propertypkg.KindAssignmentCollection
 )
 
 // KnownPropertyKinds is the closed set, in a stable order.

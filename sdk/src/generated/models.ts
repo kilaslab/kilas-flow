@@ -32,6 +32,92 @@ type NonReadonly<T> = [T] extends [UnionToIntersection<T>] ? {
     : T[P];
 } : DistributeReadOnlyOverUnions<T>;
 
+export interface ActivationNotice {
+  message: string;
+  nodeId: string;
+  nodeType: string;
+}
+
+export interface Endpoint {
+  nodeId: string;
+  port: string;
+}
+
+export interface Connection {
+  id: string;
+  kind: string;
+  source: Endpoint;
+  target: Endpoint;
+}
+
+export interface Position {
+  x: number;
+  y: number;
+}
+
+export type NodeCredentials = {[key: string]: string};
+
+export type NodeParameters = {[key: string]: unknown};
+
+export type NodeSettings = {[key: string]: unknown};
+
+export interface Node {
+  credentials?: NodeCredentials;
+  id: string;
+  name: string;
+  parameters?: NodeParameters;
+  position: Position;
+  settings?: NodeSettings;
+  type: string;
+  /** Node type version. A decimal such as 1, 4.2, or a YYYYMM value such as 202502. Omit it to use the registered default. */
+  typeVersion: number;
+}
+
+export type DocumentSettings = {[key: string]: unknown};
+
+export interface Document {
+  /** @nullable */
+  connections: Connection[] | null;
+  id: string;
+  name: string;
+  /** @nullable */
+  nodes: Node[] | null;
+  schemaVersion: number;
+  settings: DocumentSettings;
+}
+
+export interface WorkflowVersionResource {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  createdAt: string;
+  document: Document;
+  id: string;
+  revision: number;
+  schemaVersion: number;
+  workflowId: string;
+}
+
+export interface ActivationResource {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  active: boolean;
+  activeVersion?: WorkflowVersionResource;
+  createdAt: string;
+  id: string;
+  latestVersion: WorkflowVersionResource;
+  name: string;
+  /** @nullable */
+  notices: ActivationNotice[] | null;
+  updatedAt: string;
+}
+
+export interface Assignment {
+  id?: string;
+  name: string;
+  type: string;
+  value?: unknown;
+}
+
 export interface Branding {
   accent?: string;
   hideRun?: boolean;
@@ -45,18 +131,6 @@ export interface Condition {
   operator?: string;
   /** @nullable */
   values?: unknown[] | null;
-}
-
-export interface Endpoint {
-  nodeId: string;
-  port: string;
-}
-
-export interface Connection {
-  id: string;
-  kind: string;
-  source: Endpoint;
-  target: Endpoint;
 }
 
 /**
@@ -111,6 +185,7 @@ export interface CredentialResource {
 }
 
 export interface Field {
+  default?: string;
   description?: string;
   key: string;
   label: string;
@@ -195,6 +270,8 @@ export interface TypeOptions {
 }
 
 export interface PropertyDefinition {
+  /** @nullable */
+  assignments?: Assignment[] | null;
   default?: unknown;
   description?: string;
   displayOptions?: Visibility;
@@ -249,42 +326,6 @@ export interface Definition {
   /** Node type version. A decimal such as 1, 4.2, or a YYYYMM value such as 202502. Omit it to use the registered default. */
   version: number;
   webhook?: WebhookDeclaration;
-}
-
-export type DocumentSettings = {[key: string]: unknown};
-
-export interface Position {
-  x: number;
-  y: number;
-}
-
-export type NodeCredentials = {[key: string]: string};
-
-export type NodeParameters = {[key: string]: unknown};
-
-export type NodeSettings = {[key: string]: unknown};
-
-export interface Node {
-  credentials?: NodeCredentials;
-  id: string;
-  name: string;
-  parameters?: NodeParameters;
-  position: Position;
-  settings?: NodeSettings;
-  type: string;
-  /** Node type version. A decimal such as 1, 4.2, or a YYYYMM value such as 202502. Omit it to use the registered default. */
-  typeVersion: number;
-}
-
-export interface Document {
-  /** @nullable */
-  connections: Connection[] | null;
-  id: string;
-  name: string;
-  /** @nullable */
-  nodes: Node[] | null;
-  schemaVersion: number;
-  settings: DocumentSettings;
 }
 
 export interface EmbedSessionBody {
@@ -578,17 +619,6 @@ export interface WebhookRouteResource {
   nodeId: string;
   path: string;
   url: string;
-}
-
-export interface WorkflowVersionResource {
-  /** A URL to the JSON Schema for this object. */
-  readonly $schema?: string;
-  createdAt: string;
-  document: Document;
-  id: string;
-  revision: number;
-  schemaVersion: number;
-  workflowId: string;
 }
 
 export interface WorkflowResource {
@@ -2453,7 +2483,7 @@ const res = await fetch(getUpdateWorkflowUrl(id),
 
 
 export type activateWorkflowResponse200 = {
-  data: WorkflowResource
+  data: ActivationResource
   status: 200
 }
 

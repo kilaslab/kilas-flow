@@ -2,6 +2,7 @@ package nodes_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/kilaslabs/kilas-flow/internal/ai"
@@ -213,5 +214,116 @@ func TestIFReportsAMalformedConditionOnceBeforeAnyItem(t *testing.T) {
 	}, workflow.NodeInput{"main": {{JSON: map[string]any{}}}}, engine.Request{})
 	if err == nil {
 		t.Fatal("an empty condition list was accepted")
+	}
+}
+
+// A Set node saved before assignments had order or types still loads, still
+// validates and still produces the same items.
+//
+// The old shape is a plain `{name: value}` map. Refusing it would break every
+// workflow saved before this change, and silently rewriting it would rewrite
+// documents nobody asked to touch.
+func TestSetStillRunsTheOldFlatAssignmentShape(t *testing.T) {
+	t.Parallel()
+
+	executors := engine.NewRegistry()
+	if err := nodes.RegisterExecutors(executors, safehttp.DefaultPolicy(), sqlGuard(), nil, nil, nil); err != nil {
+		t.Fatalf("RegisterExecutors() error = %v", err)
+	}
+	executor, _ := executors.Lookup("core.set")
+
+	output, err := executor.Execute(context.Background(), workflow.IRNode{
+		ID: "set", Name: "Set", Type: "kilasflow.set", TypeVersion: workflow.V(1),
+		Parameters: map[string]any{"assignments": map[string]any{
+			"status": "ready",
+			"count":  float64(2),
+			"note":   map[string]any{"mode": "expression", "value": "for {{ $json.name }}"},
+		}},
+	}, workflow.NodeInput{"main": {{JSON: map[string]any{"name": "Ada"}}}}, engine.Request{})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	item := output[0][0].JSON
+	// No declared type: the value goes through as it is, which is what the old
+	// executor did.
+	if item["status"] != "ready" || item["count"] != float64(2) {
+		t.Fatalf("item = %#v, want the values unchanged", item)
+	}
+	if item["note"] != "for Ada" {
+		t.Fatalf("note = %#v, want the expression resolved", item["note"])
+	}
+}
+
+// The ordered shape is what makes a declared type mean something, and what lets
+// two rows write the same field.
+func TestSetAppliesOrderedRowsInOrderWithTheirDeclaredTypes(t *testing.T) {
+	t.Parallel()
+
+	executors := engine.NewRegistry()
+	if err := nodes.RegisterExecutors(executors, safehttp.DefaultPolicy(), sqlGuard(), nil, nil, nil); err != nil {
+		t.Fatalf("RegisterExecutors() error = %v", err)
+	}
+	executor, _ := executors.Lookup("core.set")
+
+	output, err := executor.Execute(context.Background(), workflow.IRNode{
+		ID: "set", Name: "Set", Type: "kilasflow.set", TypeVersion: workflow.V(1),
+		Parameters: map[string]any{"assignments": map[string]any{"assignments": []any{
+			map[string]any{"id": "r1", "name": "winner", "type": "string", "value": "first"},
+			// A number arriving as text — which is what an expression over a
+			// string field produces — becomes a number because the row says so.
+			map[string]any{"id": "r2", "name": "count", "type": "number",
+				"value": map[string]any{"mode": "expression", "value": "{{ $json.total }}"}},
+			map[string]any{"id": "r3", "name": "active", "type": "boolean", "value": "true"},
+			map[string]any{"id": "r4", "name": "tags", "type": "array", "value": `["a","b"]`},
+			map[string]any{"id": "r5", "name": "meta", "type": "object", "value": `{"k":"v"}`},
+			map[string]any{"id": "r6", "name": "winner", "type": "string", "value": "second"},
+		}}},
+	}, workflow.NodeInput{"main": {{JSON: map[string]any{"total": "42"}}}}, engine.Request{})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	item := output[0][0].JSON
+	// The later row wins, which a map could not express at all.
+	if item["winner"] != "second" {
+		t.Fatalf("winner = %#v, want the later row's value", item["winner"])
+	}
+	if item["count"] != float64(42) {
+		t.Fatalf("count = %#v, want a number rather than the text it arrived as", item["count"])
+	}
+	if item["active"] != true {
+		t.Fatalf("active = %#v, want a boolean", item["active"])
+	}
+	tags, _ := item["tags"].([]any)
+	if len(tags) != 2 || tags[0] != "a" {
+		t.Fatalf("tags = %#v, want a decoded array", item["tags"])
+	}
+	meta, _ := item["meta"].(map[string]any)
+	if meta["k"] != "v" {
+		t.Fatalf("meta = %#v, want a decoded object", item["meta"])
+	}
+}
+
+// A value that cannot be read as its declared type is named, not coerced into
+// something plausible.
+func TestSetRefusesAValueThatIsNotItsDeclaredType(t *testing.T) {
+	t.Parallel()
+
+	executors := engine.NewRegistry()
+	if err := nodes.RegisterExecutors(executors, safehttp.DefaultPolicy(), sqlGuard(), nil, nil, nil); err != nil {
+		t.Fatalf("RegisterExecutors() error = %v", err)
+	}
+	executor, _ := executors.Lookup("core.set")
+
+	_, err := executor.Execute(context.Background(), workflow.IRNode{
+		ID: "set", Name: "Set", Type: "kilasflow.set", TypeVersion: workflow.V(1),
+		Parameters: map[string]any{"assignments": map[string]any{"assignments": []any{
+			map[string]any{"id": "r1", "name": "count", "type": "number", "value": "not a number"},
+		}}},
+	}, workflow.NodeInput{"main": {{JSON: map[string]any{}}}}, engine.Request{})
+	if err == nil {
+		t.Fatal("a value that is not its declared type was accepted")
+	}
+	if !strings.Contains(err.Error(), "count") || !strings.Contains(err.Error(), "number") {
+		t.Errorf("error = %q, want it to name the row and the type", err)
 	}
 }

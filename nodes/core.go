@@ -80,8 +80,9 @@ func setNode() node.Definition {
 		Inputs:      mainInput(),
 		Outputs:     mainOutput(),
 		Parameters: []node.PropertyDefinition{{
-			Key: "assignments", Label: "Assignments", Kind: node.PropertyKeyValue, Required: true,
-			Description: "Field/value pairs to add to every item.",
+			Key: "assignments", Label: "Fields to Set", Kind: node.PropertyAssignments, Required: true,
+			Description: "The fields to add to every item, in order, each with its own type. " +
+				"A field set twice takes the value of the later row.",
 		}},
 		SharedSettings: sharedSettings(),
 		ExecutorID:     "core.set",

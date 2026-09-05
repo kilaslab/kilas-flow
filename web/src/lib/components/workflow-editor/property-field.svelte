@@ -4,6 +4,15 @@
 
 	import type { PropertyDefinition } from '$lib/api/generated/models';
 	import { renameKeyValue } from '$lib/workflow-editor/key-value';
+	import {
+		ASSIGNMENT_TYPES,
+		defaultForType,
+		newAssignmentID,
+		readAssignments,
+		writeAssignments,
+		type Assignment,
+		type AssignmentType
+	} from '$lib/workflow-editor/assignments';
 	import { expressionRoots, unknownExpressionRoot } from '$lib/workflow-editor/expression-grammar';
 	import { asExpression, asFixed, expressionTemplate, isExpression } from '$lib/workflow-editor/parameter';
 
@@ -42,7 +51,7 @@
 	const RENDERED = new Set([
 		'string', 'number', 'boolean', 'options', 'multiOptions',
 		'collection', 'fixedCollection', 'notice', 'json', 'dateTime',
-		'keyValue', 'conditions'
+		'keyValue', 'conditions', 'assignmentCollection'
 	]);
 
 	const typeOptions = $derived(property.typeOptions ?? {});
@@ -83,6 +92,35 @@
 	const stringValue = $derived(typeof value === 'string' ? value : value === undefined || value === null ? '' : String(value));
 	const objectValue = $derived(isObject(value) ? value : {});
 	const conditions = $derived(Array.isArray(value) ? value : []);
+	// Rows, never a string. The whole list is handed back on every edit, so
+	// nothing in this component can turn an assignment collection into text.
+	const assignments = $derived(readAssignments(value));
+
+	function updateAssignment(index: number, patch: Partial<Assignment>) {
+		const next = assignments.map((row, position) => (position === index ? { ...row, ...patch } : row));
+		onChange(writeAssignments(next));
+	}
+
+	function retypeAssignment(index: number, type: AssignmentType) {
+		const current = assignments[index];
+		updateAssignment(index, { type, value: defaultForType(type, current?.value) });
+	}
+
+	function removeAssignment(index: number) {
+		onChange(writeAssignments(assignments.filter((_, position) => position !== index)));
+	}
+
+	function addAssignment() {
+		onChange(writeAssignments([...assignments, { id: newAssignmentID(assignments), name: '', type: 'string', value: '' }]));
+	}
+
+	/** What a row's value editor shows. Structured values are edited as JSON. */
+	function assignmentText(row: Assignment): string {
+		if (row.type === 'array' || row.type === 'object') {
+			return typeof row.value === 'string' ? row.value : JSON.stringify(row.value ?? (row.type === 'array' ? [] : {}));
+		}
+		return displayValue(row.value);
+	}
 
 	function renameKey(previousKey: string, nextKey: string) {
 		onChange(renameKeyValue(objectValue, previousKey, nextKey));
@@ -235,6 +273,33 @@
 				</div>
 			{/each}
 			<button type="button" class="inline-flex h-6 items-center gap-1 justify-self-start rounded border border-border px-1.5 text-[0.6875rem] transition-colors hover:bg-muted" onclick={addKeyValue}>
+				<Plus aria-hidden="true" class="size-3" />Add field
+			</button>
+		</div>
+	{:else if property.kind === 'assignmentCollection'}
+		<div class="grid gap-1.5 rounded-md border border-input p-1.5">
+			{#each assignments as row, index (row.id)}
+				<div class="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1.2fr)_auto] gap-1">
+					<input aria-label={`${property.label} field name`} value={row.name} placeholder="fieldName" class="h-7 min-w-0 rounded border border-input bg-background px-1.5 font-mono text-[0.6875rem]" oninput={(event) => updateAssignment(index, { name: event.currentTarget.value })} />
+					<select aria-label={`${property.label} field type`} value={row.type} class="h-7 rounded border border-input bg-background px-1 text-[0.6875rem]" onchange={(event) => retypeAssignment(index, event.currentTarget.value as AssignmentType)}>
+						{#each ASSIGNMENT_TYPES as type (type)}
+							<option value={type}>{type}</option>
+						{/each}
+					</select>
+					{#if row.type === 'boolean'}
+						<select aria-label={`${property.label} field value`} value={row.value === true ? 'true' : 'false'} class="h-7 rounded border border-input bg-background px-1 text-[0.6875rem]" onchange={(event) => updateAssignment(index, { value: event.currentTarget.value === 'true' })}>
+							<option value="true">true</option>
+							<option value="false">false</option>
+						</select>
+					{:else}
+						<input aria-label={`${property.label} field value`} value={assignmentText(row)} class="h-7 min-w-0 rounded border border-input bg-background px-1.5 text-[0.6875rem]" oninput={(event) => updateAssignment(index, { value: row.type === 'number' ? Number(event.currentTarget.value) : event.currentTarget.value })} />
+					{/if}
+					<button type="button" aria-label={`Remove ${row.name || 'field'}`} class="grid size-7 place-items-center rounded text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive" onclick={() => removeAssignment(index)}>
+						<X aria-hidden="true" class="size-3.5" />
+					</button>
+				</div>
+			{/each}
+			<button type="button" class="inline-flex h-6 items-center gap-1 justify-self-start rounded border border-border px-1.5 text-[0.6875rem] transition-colors hover:bg-muted" onclick={addAssignment}>
 				<Plus aria-hidden="true" class="size-3" />Add field
 			</button>
 		</div>

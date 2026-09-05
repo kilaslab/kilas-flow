@@ -1,9 +1,9 @@
 {
   "comment": "Baseline for the n8n importer regression corpus. Tiers: imported = n8n.Import returned no error; activatable = workflow.Compile returned no error; runnable = the workflow ran to completion with HTTP, SQL and model calls stubbed. Regenerate with go test ./internal/interop/n8n/corpus -update-baseline, and say in the commit which workflows moved and why.",
   "tiers": {
-    "activatable": 12,
+    "activatable": 13,
     "imported": 39,
-    "runnable": 2
+    "runnable": 3
   },
   "total": 39,
   "blocked": 10,
@@ -106,7 +106,7 @@
       "activatable": false,
       "runnable": false,
       "unsupported": 8,
-      "reason": "node \"53bfa924-95cd-40da-bd31-d4ed3669fedc\" configuration is invalid: assignments must be a non-empty object"
+      "reason": "node \"08f83213-2e7e-487b-90af-f0acba0c5fc7\" configuration is invalid: this node was imported from n8n-nodes-base.noOp, which KilasFlow does not support. Repl…"
     },
     {
       "name": "nodes-base/HttpRequest/test/node/workflow.patch",
@@ -260,7 +260,7 @@
       "activatable": false,
       "runnable": false,
       "unsupported": 19,
-      "reason": "node \"d425fb32-2bbc-445d-8fec-0e1288adf6d8\" configuration is invalid: assignments must be a non-empty object"
+      "reason": "node \"7c79bfc1-02ca-43b8-b75f-0c2afcc80187\" configuration is invalid: this node was imported from n8n-nodes-base.noOp, which KilasFlow does not support. Repl…"
     },
     {
       "name": "nodes-base/Set/test/Set.v3_3.workflow",
@@ -287,10 +287,9 @@
       "source": "nodes-base",
       "nodes": 6,
       "imported": true,
-      "activatable": false,
-      "runnable": false,
-      "unsupported": 8,
-      "reason": "node \"78f2ad0d-e129-448b-ae78-5bfdba587186\" configuration is invalid: assignments must be a non-empty object"
+      "activatable": true,
+      "runnable": true,
+      "unsupported": 8
     },
     {
       "name": "nodes-base/Set/test/Set.workflow.number",
@@ -339,7 +338,7 @@
       "activatable": false,
       "runnable": false,
       "unsupported": 27,
-      "reason": "node \"8a04022f-e9fa-47a3-947c-44bbeac991b7\" configuration is invalid: assignments must be a non-empty object"
+      "reason": "node \"ab41bbd3-7366-402f-bec0-d179785ba607\" configuration is invalid: this node was imported from n8n-nodes-base.switch, which KilasFlow does not support. Re…"
     },
     {
       "name": "waha-templates/chatwoot/WhatsApp___ChatWoot__WAHA____ChatWoot_Sync_Contacts",
@@ -420,7 +419,7 @@
       "activatable": false,
       "runnable": false,
       "unsupported": 8,
-      "reason": "node \"298ae97b-fa1b-48ba-886b-9216217afce6\" configuration is invalid: assignments must be a non-empty object"
+      "reason": "node \"317255c6-880e-465e-90d4-f4f7268a1e53\" configuration is invalid: this node was imported from n8n-nodes-base.switch, which KilasFlow does not support. Re…"
     },
     {
       "name": "waha-templates/whatsapp-typebot/template",

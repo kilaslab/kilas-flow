@@ -8,6 +8,7 @@
 
 export * from './activationNotice';
 export * from './activationResource';
+export * from './assignment';
 export * from './branding';
 export * from './condition';
 export * from './connection';
