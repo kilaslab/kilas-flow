@@ -112,7 +112,7 @@ export function nodeShape(definition: Definition): NodeShape {
 }
 
 export function isAttachment(port: Port): boolean {
-	return port.Kind !== 'main';
+	return port.kind !== 'main';
 }
 
 export function mainPorts(ports: Port[] | null | undefined): Port[] {

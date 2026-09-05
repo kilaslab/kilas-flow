@@ -60,10 +60,10 @@ describe('edgeItemCounts', () => {
 			category: 'Core',
 			group: ['transform'],
 			description: '',
-			inputs: [{ Name: 'main', Kind: 'main' }],
+			inputs: [{ name: 'main', kind: 'main' }],
 			outputs: [
-				{ Name: 'true', Kind: 'main' },
-				{ Name: 'false', Kind: 'main' }
+				{ name: 'true', kind: 'main' },
+				{ name: 'false', kind: 'main' }
 			],
 			parameters: [],
 			sharedSettings: []
@@ -75,8 +75,8 @@ describe('edgeItemCounts', () => {
 			category: 'Core',
 			group: ['transform'],
 			description: '',
-			inputs: [{ Name: 'main', Kind: 'main' }],
-			outputs: [{ Name: 'main', Kind: 'main' }],
+			inputs: [{ name: 'main', kind: 'main' }],
+			outputs: [{ name: 'main', kind: 'main' }],
 			parameters: [],
 			sharedSettings: []
 		}

@@ -4,7 +4,7 @@ import type { Definition, Node, Port } from '$lib/api/generated/models';
 
 import { TILE, attachmentPorts, mainPorts, nodeShape, nodeSubtitle, nodeVisual, portOffset } from './node-visual';
 
-const MAIN: Port = { Name: 'main', Kind: 'main' };
+const MAIN: Port = { name: 'main', kind: 'main' };
 
 /**
  * Definitions are described by their port shape rather than copied from the
@@ -39,16 +39,16 @@ describe('nodeShape', () => {
 		// kilasflow.httpTool: no inputs at all, one ai_tool output. This is the
 		// case that forces outputs to be checked before "has no inputs" — if the
 		// order is ever swapped, a tool silently renders as a trigger.
-		expect(nodeShape(definition(null, [{ Name: 'tool', Kind: 'ai_tool' }], 'AI'))).toBe('attachment');
+		expect(nodeShape(definition(null, [{ name: 'tool', kind: 'ai_tool' }], 'AI'))).toBe('attachment');
 		// kilasflow.chatModel and kilasflow.memoryBuffer, which use [] not null.
-		expect(nodeShape(definition([], [{ Name: 'model', Kind: 'ai_languageModel' }], 'AI'))).toBe('attachment');
-		expect(nodeShape(definition([], [{ Name: 'memory', Kind: 'ai_memory' }], 'AI'))).toBe('attachment');
+		expect(nodeShape(definition([], [{ name: 'model', kind: 'ai_languageModel' }], 'AI'))).toBe('attachment');
+		expect(nodeShape(definition([], [{ name: 'memory', kind: 'ai_memory' }], 'AI'))).toBe('attachment');
 	});
 
 	it('reads a node that consumes attachments as a hub', () => {
 		// kilasflow.agent: a main input plus three attachment inputs.
 		const agent = definition(
-			[MAIN, { Name: 'model', Kind: 'ai_languageModel' }, { Name: 'memory', Kind: 'ai_memory' }, { Name: 'tools', Kind: 'ai_tool' }],
+			[MAIN, { name: 'model', kind: 'ai_languageModel' }, { name: 'memory', kind: 'ai_memory' }, { name: 'tools', kind: 'ai_tool' }],
 			[MAIN],
 			'AI'
 		);
@@ -62,10 +62,10 @@ describe('nodeShape', () => {
 
 	it('does not promote a branching node to a hub just because it has several outputs', () => {
 		// kilasflow.if: two main outputs is still an ordinary step.
-		const branch = definition([MAIN], [{ Name: 'true', Kind: 'main' }, { Name: 'false', Kind: 'main' }]);
+		const branch = definition([MAIN], [{ name: 'true', kind: 'main' }, { name: 'false', kind: 'main' }]);
 		expect(nodeShape(branch)).toBe('step');
 		// kilasflow.merge: two main inputs, likewise.
-		expect(nodeShape(definition([{ Name: 'input1', Kind: 'main' }, { Name: 'input2', Kind: 'main' }], [MAIN]))).toBe('step');
+		expect(nodeShape(definition([{ name: 'input1', kind: 'main' }, { name: 'input2', kind: 'main' }], [MAIN]))).toBe('step');
 	});
 
 	it('gives a node type the frontend has never heard of the right silhouette anyway', () => {
@@ -81,9 +81,9 @@ describe('nodeShape', () => {
 
 describe('port partitioning', () => {
 	it('splits main ports from attachment ports and tolerates a null list', () => {
-		const ports = [MAIN, { Name: 'model', Kind: 'ai_languageModel' }, { Name: 'tools', Kind: 'ai_tool' }];
+		const ports = [MAIN, { name: 'model', kind: 'ai_languageModel' }, { name: 'tools', kind: 'ai_tool' }];
 		expect(mainPorts(ports)).toEqual([MAIN]);
-		expect(attachmentPorts(ports).map((port) => port.Name)).toEqual(['model', 'tools']);
+		expect(attachmentPorts(ports).map((port) => port.name)).toEqual(['model', 'tools']);
 		expect(mainPorts(null)).toEqual([]);
 		expect(attachmentPorts(undefined)).toEqual([]);
 	});
@@ -170,8 +170,8 @@ describe('shared geometry', () => {
 		// An agent exposed as a tool to another agent. Nothing in the registry
 		// does this yet; the promise is that it would arrive drawn correctly.
 		const both = definition(
-			[MAIN, { Name: 'model', Kind: 'ai_languageModel' }],
-			[{ Name: 'tool', Kind: 'ai_tool' }],
+			[MAIN, { name: 'model', kind: 'ai_languageModel' }],
+			[{ name: 'tool', kind: 'ai_tool' }],
 			'AI'
 		);
 		// A circle has no edge to hang attachment ports from; a hub does.

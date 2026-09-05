@@ -396,7 +396,7 @@ func validateDefinition(definition Definition) error {
 func validatePorts(nodeType, direction string, ports []workflow.Port) error {
 	seen := make(map[string]struct{}, len(ports))
 	for _, port := range ports {
-		if port.Name == "" || !knownConnectionKind(port.Kind) {
+		if port.Name == "" || !workflow.KnownConnectionKind(port.Kind) {
 			return fmt.Errorf("node definition %q has invalid %s port", nodeType, direction)
 		}
 		if _, exists := seen[port.Name]; exists {
@@ -419,15 +419,6 @@ func validateProperties(nodeType, group string, properties []PropertyDefinition)
 		seen[property.Key] = struct{}{}
 	}
 	return nil
-}
-
-func knownConnectionKind(kind workflow.ConnectionKind) bool {
-	switch kind {
-	case workflow.ConnectionMain, workflow.ConnectionLanguageModel, workflow.ConnectionMemory, workflow.ConnectionTool:
-		return true
-	default:
-		return false
-	}
 }
 
 func knownPropertyKind(kind PropertyKind) bool {

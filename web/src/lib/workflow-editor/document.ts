@@ -232,7 +232,7 @@ function portsFromConnections(nodeID: string, connections: Connection[], endpoin
 		const point = connection[endpoint];
 		if (point.nodeId === nodeID) ports.set(point.port, connection.kind);
 	}
-	return [...ports.entries()].map(([Name, Kind]) => ({ Name, Kind }));
+	return [...ports.entries()].map(([name, kind]) => ({ name, kind }));
 }
 
 function createID(): string {

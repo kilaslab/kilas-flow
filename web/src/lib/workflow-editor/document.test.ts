@@ -19,7 +19,7 @@ const manual: Definition = {
 	category: 'Triggers',
 	group: ['transform'],
 	inputs: [],
-	outputs: [{ Name: 'main', Kind: 'main' }],
+	outputs: [{ name: 'main', kind: 'main' }],
 	parameters: [],
 	sharedSettings: [{ key: 'continueOnFail', label: 'Continue on fail', kind: 'boolean', required: false, default: false }]
 };
@@ -30,8 +30,8 @@ const set: Definition = {
 	displayName: 'Set',
 	category: 'Core',
 	group: ['transform'],
-	inputs: [{ Name: 'main', Kind: 'main' }],
-	outputs: [{ Name: 'main', Kind: 'main' }],
+	inputs: [{ name: 'main', kind: 'main' }],
+	outputs: [{ name: 'main', kind: 'main' }],
 	parameters: [{ key: 'assignments', label: 'Assignments', kind: 'keyValue', required: true }],
 	sharedSettings: []
 };

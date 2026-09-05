@@ -43,8 +43,26 @@ type ConfigValidator func(Node) error
 
 // Port is a typed input or output exposed by a node definition.
 type Port struct {
-	Name string
-	Kind ConnectionKind
+	// Name is the port's stable identifier, used in a connection endpoint.
+	Name string `json:"name"`
+	// Kind is the channel this port speaks.
+	Kind ConnectionKind `json:"kind"`
+	// DisplayName is what the editor labels the port with. Empty falls back to
+	// Name, so a port that needs no separate label declares none.
+	DisplayName string `json:"displayName,omitempty"`
+	// Required marks a port that must be connected for the workflow to run. An
+	// agent with no language model cannot do anything, and saying so at compile
+	// time beats failing on the first item.
+	Required bool `json:"required,omitempty"`
+	// MaxConnections bounds how many edges a port accepts. Zero means
+	// unbounded, which is what a tool slot needs; one is what a language model
+	// slot needs, and without it the compiler would accept three models on one
+	// agent.
+	MaxConnections int `json:"maxConnections,omitempty"`
+	// AllowedNodeTypes, when non-empty, restricts which node types may connect
+	// here. Enforced at compile time rather than only in the editor, so an
+	// imported document cannot bypass it.
+	AllowedNodeTypes []string `json:"allowedNodeTypes,omitempty"`
 }
 
 // IR is the internal, validated graph passed to the execution engine. Runtime
@@ -90,8 +108,15 @@ const (
 	ErrorUnknownVersion   ErrorCode = "node.unknown_version"
 	ErrorUnknownPort      ErrorCode = "port.unknown"
 	ErrorIncompatiblePort ErrorCode = "port.incompatible"
-	ErrorRequiredConfig   ErrorCode = "config.required"
-	ErrorInvalidConfig    ErrorCode = "config.invalid"
+	// Named separately from ErrorUnknownPort on purpose: "this port is full",
+	// "this port must be connected" and "this port does not exist" are
+	// different problems for a user to fix, and one code for all three tells
+	// them nothing.
+	ErrorPortFull       ErrorCode = "port.full"
+	ErrorPortRequired   ErrorCode = "port.required"
+	ErrorPortNotAllowed ErrorCode = "port.node_not_allowed"
+	ErrorRequiredConfig ErrorCode = "config.required"
+	ErrorInvalidConfig  ErrorCode = "config.invalid"
 )
 
 // ValidationError identifies one invalid executable concern without leaking
@@ -246,6 +271,16 @@ func Compile(document Document, catalog Catalog) (IR, error) {
 			})
 			continue
 		}
+		// A port may name which node types it accepts. Checking it here rather
+		// than only in the editor is what stops an imported document from
+		// bypassing the rule.
+		if !portAcceptsNodeType(targetPort, sourceNode.Type) {
+			issues.add(ValidationError{
+				Code: ErrorPortNotAllowed, Path: fmt.Sprintf("/connections/%d", index), ConnectionID: connection.ID,
+				Message: fmt.Sprintf("port %q does not accept a connection from node type %q", targetPort.Name, sourceNode.Type),
+			})
+			continue
+		}
 		key := edgeKey{
 			kind:       connection.Kind,
 			sourceNode: connection.Source.NodeID,
@@ -277,6 +312,7 @@ func Compile(document Document, catalog Catalog) (IR, error) {
 			})
 		}
 		validateExecutableTopology(ir, issues)
+		validatePortCardinality(ir, issues)
 	}
 
 	if len(issues.Issues) > 0 {
@@ -676,4 +712,60 @@ func settingNumber(value any) (float64, bool) {
 	default:
 		return 0, false
 	}
+}
+
+func portAcceptsNodeType(port Port, nodeType string) bool {
+	if len(port.AllowedNodeTypes) == 0 {
+		return true
+	}
+	for _, allowed := range port.AllowedNodeTypes {
+		if allowed == nodeType {
+			return true
+		}
+	}
+	return false
+}
+
+// validatePortCardinality enforces the connection limits and requirements a
+// port declares.
+//
+// Without it the AI Agent's slots are unenforceable: the compiler would accept
+// three language models on one agent, and an agent with none — which cannot do
+// anything — would compile and fail on the first item instead.
+func validatePortCardinality(ir IR, issues *ValidationErrors) {
+	incoming := make(map[string]map[string]int, len(ir.Nodes))
+	for _, edge := range ir.Edges {
+		if incoming[edge.Target.NodeID] == nil {
+			incoming[edge.Target.NodeID] = map[string]int{}
+		}
+		incoming[edge.Target.NodeID][edge.Target.Port]++
+	}
+
+	for index, node := range ir.Nodes {
+		for _, port := range node.Definition.Inputs {
+			count := incoming[node.ID][port.Name]
+			if port.Required && count == 0 {
+				issues.add(ValidationError{
+					Code: ErrorPortRequired, Path: fmt.Sprintf("/nodes/%d", index), NodeID: node.ID,
+					Message: fmt.Sprintf("node %q requires a connection on port %q", node.ID, portLabel(port)),
+				})
+			}
+			if port.MaxConnections > 0 && count > port.MaxConnections {
+				issues.add(ValidationError{
+					Code: ErrorPortFull, Path: fmt.Sprintf("/nodes/%d", index), NodeID: node.ID,
+					Message: fmt.Sprintf("port %q on node %q accepts at most %d connection(s), got %d",
+						portLabel(port), node.ID, port.MaxConnections, count),
+				})
+			}
+		}
+	}
+}
+
+// portLabel is what a user is shown: the display name where one is declared,
+// the port's own name otherwise.
+func portLabel(port Port) string {
+	if port.DisplayName != "" {
+		return port.DisplayName
+	}
+	return port.Name
 }

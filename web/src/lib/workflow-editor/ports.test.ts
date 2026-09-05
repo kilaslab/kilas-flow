@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import type { Definition, Node } from '$lib/api/generated/models';
+import type { Connection, Definition, Node } from '$lib/api/generated/models';
 
-import { canConnect, connectionFromCanvas } from './ports';
+import { canConnect, connectionFromCanvas, portLabel } from './ports';
 
 const manual: Definition = {
 	type: 'kilasflow.manual',
@@ -11,7 +11,7 @@ const manual: Definition = {
 	category: 'Triggers',
 	group: ['transform'],
 	inputs: [],
-	outputs: [{ Name: 'main', Kind: 'main' }],
+	outputs: [{ name: 'main', kind: 'main' }],
 	parameters: [],
 	sharedSettings: []
 };
@@ -22,8 +22,8 @@ const set: Definition = {
 	displayName: 'Set',
 	category: 'Core',
 	group: ['transform'],
-	inputs: [{ Name: 'main', Kind: 'main' }],
-	outputs: [{ Name: 'main', Kind: 'main' }],
+	inputs: [{ name: 'main', kind: 'main' }],
+	outputs: [{ name: 'main', kind: 'main' }],
 	parameters: [],
 	sharedSettings: []
 };
@@ -34,7 +34,7 @@ const toolConsumer: Definition = {
 	displayName: 'Agent',
 	category: 'AI',
 	group: ['transform'],
-	inputs: [{ Name: 'tool', Kind: 'ai_tool' }],
+	inputs: [{ name: 'tool', kind: 'ai_tool' }],
 	outputs: [],
 	parameters: [],
 	sharedSettings: []
@@ -72,5 +72,83 @@ describe('registry-driven canvas connections', () => {
 		expect(canConnect({ source: 'set-1', sourceHandle: 'main', target: 'manual-1', targetHandle: 'main' }, nodes, [manual, set, toolConsumer], [])).toBe(false);
 		expect(canConnect(valid, nodes, [manual, set, toolConsumer], saved)).toBe(false);
 		expect(canConnect({ source: 'set-1', sourceHandle: 'main', target: 'set-1', targetHandle: 'main' }, nodes, [manual, set, toolConsumer], [])).toBe(false);
+	});
+});
+
+describe('canConnect port limits', () => {
+	/**
+	 * A port may bound how many edges it accepts — one language model, one
+	 * memory, many tools. The compiler enforces this too; refusing here is what
+	 * stops the editor offering a connection the server rejects on save.
+	 */
+	const agentDefinitions: Definition[] = [
+		{
+			type: 'test.model',
+			version: 1,
+			displayName: 'Model',
+			category: 'AI',
+			group: ['transform'],
+			inputs: [],
+			outputs: [{ name: 'model', kind: 'ai_languageModel' }],
+			parameters: [],
+			sharedSettings: []
+		},
+		{
+			type: 'test.agent',
+			version: 1,
+			displayName: 'Agent',
+			category: 'AI',
+			group: ['transform'],
+			inputs: [
+				{ name: 'model', displayName: 'Chat Model', kind: 'ai_languageModel', maxConnections: 1 },
+				{ name: 'tools', displayName: 'Tools', kind: 'ai_tool' }
+			],
+			outputs: [{ name: 'main', kind: 'main' }],
+			parameters: [],
+			sharedSettings: []
+		}
+	];
+
+	const agentNodes: Node[] = [
+		{ id: 'm1', name: 'M1', type: 'test.model', typeVersion: 1, position: { x: 0, y: 0 } },
+		{ id: 'm2', name: 'M2', type: 'test.model', typeVersion: 1, position: { x: 0, y: 80 } },
+		{ id: 'agent', name: 'Agent', type: 'test.agent', typeVersion: 1, position: { x: 200, y: 0 } }
+	];
+
+	it('accepts the first connection to a single-slot port', () => {
+		expect(
+			canConnect(
+				{ source: 'm1', sourceHandle: 'model', target: 'agent', targetHandle: 'model' },
+				agentNodes,
+				agentDefinitions,
+				[]
+			)
+		).toBe(true);
+	});
+
+	it('refuses a second connection to a single-slot port', () => {
+		const existing: Connection[] = [
+			{
+				id: 'c1',
+				kind: 'ai_languageModel',
+				source: { nodeId: 'm1', port: 'model' },
+				target: { nodeId: 'agent', port: 'model' }
+			}
+		];
+		expect(
+			canConnect(
+				{ source: 'm2', sourceHandle: 'model', target: 'agent', targetHandle: 'model' },
+				agentNodes,
+				agentDefinitions,
+				existing
+			)
+		).toBe(false);
+	});
+});
+
+describe('portLabel', () => {
+	it('prefers the display name and falls back to the port name', () => {
+		expect(portLabel({ name: 'model', kind: 'ai_languageModel', displayName: 'Chat Model' })).toBe('Chat Model');
+		expect(portLabel({ name: 'main', kind: 'main' })).toBe('main');
 	});
 });

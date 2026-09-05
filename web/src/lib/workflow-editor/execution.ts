@@ -59,7 +59,7 @@ export function edgeItemCounts(
 		const source = nodeByID.get(connection.source.nodeId);
 		if (!source) continue;
 		const definition = definitions.find((candidate) => candidate.type === source.type && candidate.version === source.typeVersion);
-		const portIndex = (definition?.outputs ?? []).findIndex((port) => port.Name === connection.source.port);
+		const portIndex = (definition?.outputs ?? []).findIndex((port) => port.name === connection.source.port);
 		if (portIndex < 0) continue;
 
 		const output = runs.get(connection.source.nodeId)?.output;

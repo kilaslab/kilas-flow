@@ -189,11 +189,11 @@
 		const nextNodes = [...existing, node];
 		let connections = draft.connections ?? [];
 		if (from) {
-			const target = (definition.inputs ?? []).find((port) => port.Kind === 'main');
+			const target = (definition.inputs ?? []).find((port) => port.kind === 'main');
 			// Built through the same validator a dragged connection uses, so a step
 			// added from a port can never produce an edge the canvas would refuse.
 			const connection = target
-				? connectionFromCanvas({ source: from.nodeID, sourceHandle: from.port, target: node.id, targetHandle: target.Name }, nextNodes, definitions, connections)
+				? connectionFromCanvas({ source: from.nodeID, sourceHandle: from.port, target: node.id, targetHandle: target.name }, nextNodes, definitions, connections)
 				: null;
 			if (connection) connections = [...connections, connection];
 		}

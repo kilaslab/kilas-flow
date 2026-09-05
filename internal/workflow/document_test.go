@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -1124,4 +1125,189 @@ func TestCompileAcceptsABackEdgeOntoALoopButNothingElse(t *testing.T) {
 			t.Errorf("issues = %#v, want the cycle named", validationErrors.Issues)
 		}
 	})
+}
+
+// TestConnectionKindsMatchN8NByteForByte pins the exact spelling of all
+// thirteen.
+//
+// These strings appear verbatim in imported workflow JSON, so the casing is
+// load-bearing: it is lowerCamel after the ai_ prefix, and a normalising or
+// snake-casing transform anywhere in the import path silently drops every edge
+// on that channel. A literal list is the point here — deriving it from the
+// constants would assert nothing.
+func TestConnectionKindsMatchN8NByteForByte(t *testing.T) {
+	want := []string{
+		"main",
+		"ai_agent", "ai_chain", "ai_document", "ai_embedding",
+		"ai_languageModel", "ai_memory", "ai_outputParser",
+		"ai_retriever", "ai_reranker", "ai_textSplitter",
+		"ai_tool", "ai_vectorStore",
+	}
+
+	got := make([]string, 0, len(workflow.ConnectionKinds()))
+	for _, kind := range workflow.ConnectionKinds() {
+		got = append(got, string(kind))
+	}
+	if len(got) != len(want) {
+		t.Fatalf("ConnectionKinds() has %d values, want n8n's %d: %v", len(got), len(want), got)
+	}
+	for index, expected := range want {
+		if got[index] != expected {
+			t.Errorf("kind %d = %q, want %q", index, got[index], expected)
+		}
+		if !workflow.KnownConnectionKind(workflow.ConnectionKind(expected)) {
+			t.Errorf("%q is not accepted by KnownConnectionKind", expected)
+		}
+	}
+
+	// A snake-cased or lower-cased spelling must be refused, because accepting
+	// one would let a normalising transform pass unnoticed.
+	for _, wrong := range []string{"ai_language_model", "ai_languagemodel", "AI_LanguageModel", "ai_vectorstore"} {
+		if workflow.KnownConnectionKind(workflow.ConnectionKind(wrong)) {
+			t.Errorf("%q was accepted; the casing is load-bearing", wrong)
+		}
+	}
+}
+
+// TestCompileEnforcesPortCardinality is what makes the AI Agent's slots real.
+// Before, the compiler would accept three language models on one agent.
+func TestCompileEnforcesPortCardinality(t *testing.T) {
+	catalogue := catalog{
+		"kilasflow.manual": {
+			Type: "kilasflow.manual", Version: workflow.V(1),
+			Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+		},
+		"test.model": {
+			Type: "test.model", Version: workflow.V(1),
+			Outputs: []workflow.Port{{Name: "model", Kind: workflow.ConnectionLanguageModel}},
+		},
+		"test.agent": {
+			Type: "test.agent", Version: workflow.V(1),
+			Inputs: []workflow.Port{
+				{Name: "main", Kind: workflow.ConnectionMain},
+				{Name: "model", DisplayName: "Chat Model", Kind: workflow.ConnectionLanguageModel,
+					Required: true, MaxConnections: 1},
+			},
+			Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+		},
+	}
+
+	build := func(models int) workflow.Document {
+		document := workflow.Document{
+			SchemaVersion: workflow.CurrentSchemaVersion,
+			ID:            "wf_019", Name: "Agent",
+			Nodes: []workflow.Node{
+				{ID: "manual", Name: "Manual", Type: "kilasflow.manual", TypeVersion: workflow.V(1)},
+				{ID: "agent", Name: "Agent", Type: "test.agent", TypeVersion: workflow.V(1)},
+			},
+			Connections: []workflow.Connection{{
+				ID: "c0", Kind: workflow.ConnectionMain,
+				Source: workflow.Endpoint{NodeID: "manual", Port: "main"},
+				Target: workflow.Endpoint{NodeID: "agent", Port: "main"},
+			}},
+			Settings: map[string]any{},
+		}
+		for index := range models {
+			id := fmt.Sprintf("model%d", index)
+			document.Nodes = append(document.Nodes, workflow.Node{
+				ID: id, Name: id, Type: "test.model", TypeVersion: workflow.V(1),
+			})
+			document.Connections = append(document.Connections, workflow.Connection{
+				ID: "cm" + id, Kind: workflow.ConnectionLanguageModel,
+				Source: workflow.Endpoint{NodeID: id, Port: "model"},
+				Target: workflow.Endpoint{NodeID: "agent", Port: "model"},
+			})
+		}
+		return document
+	}
+
+	t.Run("one model compiles", func(t *testing.T) {
+		if _, err := workflow.Compile(build(1), catalogue); err != nil {
+			t.Fatalf("an agent with exactly one model must compile: %v", err)
+		}
+	})
+
+	t.Run("three models are refused", func(t *testing.T) {
+		_, err := workflow.Compile(build(3), catalogue)
+		var validationErrors *workflow.ValidationErrors
+		if !errors.As(err, &validationErrors) {
+			t.Fatalf("Compile() error = %v, want ValidationErrors", err)
+		}
+		if !containsValidationCode(validationErrors.Issues, workflow.ErrorPortFull) {
+			t.Errorf("issues = %#v, want %q", validationErrors.Issues, workflow.ErrorPortFull)
+		}
+		// The message names the port by its display name, which is what the
+		// user sees in the editor.
+		var named bool
+		for _, issue := range validationErrors.Issues {
+			if strings.Contains(issue.Message, "Chat Model") {
+				named = true
+			}
+		}
+		if !named {
+			t.Errorf("issues = %#v, want the port named by its display name", validationErrors.Issues)
+		}
+	})
+
+	t.Run("no model is refused", func(t *testing.T) {
+		_, err := workflow.Compile(build(0), catalogue)
+		var validationErrors *workflow.ValidationErrors
+		if !errors.As(err, &validationErrors) {
+			t.Fatalf("Compile() error = %v, want ValidationErrors", err)
+		}
+		if !containsValidationCode(validationErrors.Issues, workflow.ErrorPortRequired) {
+			t.Errorf("issues = %#v, want %q — an agent with no model cannot do anything",
+				validationErrors.Issues, workflow.ErrorPortRequired)
+		}
+	})
+}
+
+// TestCompileEnforcesAPortsNodeTypeFilter proves the filter is a compile-time
+// rule, so an imported document cannot bypass what the editor would refuse.
+func TestCompileEnforcesAPortsNodeTypeFilter(t *testing.T) {
+	catalogue := catalog{
+		"kilasflow.manual": {
+			Type: "kilasflow.manual", Version: workflow.V(1),
+			Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+		},
+		"test.wrongTool": {
+			Type: "test.wrongTool", Version: workflow.V(1),
+			Outputs: []workflow.Port{{Name: "tool", Kind: workflow.ConnectionTool}},
+		},
+		"test.picky": {
+			Type: "test.picky", Version: workflow.V(1),
+			Inputs: []workflow.Port{
+				{Name: "main", Kind: workflow.ConnectionMain},
+				{Name: "tools", Kind: workflow.ConnectionTool, AllowedNodeTypes: []string{"test.rightTool"}},
+			},
+			Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+		},
+	}
+
+	_, err := workflow.Compile(workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_019", Name: "Filtered",
+		Nodes: []workflow.Node{
+			{ID: "manual", Name: "Manual", Type: "kilasflow.manual", TypeVersion: workflow.V(1)},
+			{ID: "picky", Name: "Picky", Type: "test.picky", TypeVersion: workflow.V(1)},
+			{ID: "tool", Name: "Tool", Type: "test.wrongTool", TypeVersion: workflow.V(1)},
+		},
+		Connections: []workflow.Connection{
+			{ID: "c1", Kind: workflow.ConnectionMain,
+				Source: workflow.Endpoint{NodeID: "manual", Port: "main"},
+				Target: workflow.Endpoint{NodeID: "picky", Port: "main"}},
+			{ID: "c2", Kind: workflow.ConnectionTool,
+				Source: workflow.Endpoint{NodeID: "tool", Port: "tool"},
+				Target: workflow.Endpoint{NodeID: "picky", Port: "tools"}},
+		},
+		Settings: map[string]any{},
+	}, catalogue)
+
+	var validationErrors *workflow.ValidationErrors
+	if !errors.As(err, &validationErrors) {
+		t.Fatalf("Compile() error = %v, want ValidationErrors", err)
+	}
+	if !containsValidationCode(validationErrors.Issues, workflow.ErrorPortNotAllowed) {
+		t.Errorf("issues = %#v, want %q", validationErrors.Issues, workflow.ErrorPortNotAllowed)
+	}
 }

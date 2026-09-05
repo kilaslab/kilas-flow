@@ -129,9 +129,20 @@ func agentNode() node.Definition {
 		IconColor:   "#a855f7",
 		Inputs: []workflow.Port{
 			{Name: "main", Kind: workflow.ConnectionMain},
-			{Name: "model", Kind: workflow.ConnectionLanguageModel},
-			{Name: "memory", Kind: workflow.ConnectionMemory},
-			{Name: "tools", Kind: workflow.ConnectionTool},
+			// One model, one memory, many tools. These bounds were
+			// unenforceable while a port was only a name and a kind: the
+			// compiler would accept three language models on one agent, and an
+			// agent with none would compile and fail on the first item.
+			{
+				Name: "model", DisplayName: "Chat Model", Kind: workflow.ConnectionLanguageModel,
+				Required: true, MaxConnections: 1,
+			},
+			{
+				Name: "memory", DisplayName: "Memory", Kind: workflow.ConnectionMemory,
+				MaxConnections: 1,
+			},
+			// Unbounded on purpose: an agent may hold as many tools as it likes.
+			{Name: "tools", DisplayName: "Tools", Kind: workflow.ConnectionTool},
 		},
 		Outputs: mainOutput(),
 		Parameters: []node.PropertyDefinition{

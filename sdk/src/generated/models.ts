@@ -123,8 +123,13 @@ export interface NodeIcon {
 }
 
 export interface Port {
-  Kind: string;
-  Name: string;
+  /** @nullable */
+  allowedNodeTypes?: string[] | null;
+  displayName?: string;
+  kind: string;
+  maxConnections?: number;
+  name: string;
+  required?: boolean;
 }
 
 export interface PropertyOption {

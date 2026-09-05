@@ -39,7 +39,7 @@
 			if (triggersOnly && !(definition.group ?? []).includes('trigger')) return false;
 			// A step is being added after an existing one, so anything without a
 			// main input could never receive its items.
-			if (connecting && !(definition.inputs ?? []).some((port) => port.Kind === 'main')) return false;
+			if (connecting && !(definition.inputs ?? []).some((port) => port.kind === 'main')) return false;
 			if (!normalizedQuery) return true;
 			return `${definition.displayName} ${definition.description ?? ''} ${definition.category} ${definition.type}`.toLocaleLowerCase().includes(normalizedQuery);
 		})

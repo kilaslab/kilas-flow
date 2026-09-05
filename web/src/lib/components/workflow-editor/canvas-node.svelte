@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { portLabel } from '$lib/workflow-editor/ports';
 	import { Handle, NodeToolbar, Position, useNodeConnections, type NodeProps } from '@xyflow/svelte';
 	import Plus from '@lucide/svelte/icons/plus';
 	import Trash2 from '@lucide/svelte/icons/trash-2';
@@ -97,29 +98,29 @@
 		{/if}
 	</div>
 
-	{#each mainInputs as port, index (port.Name)}
+	{#each mainInputs as port, index (port.name)}
 		<Handle
 			type="target"
-			id={port.Name}
+			id={port.name}
 			position={Position.Left}
 			style={`top: ${portOffset(index, mainInputs.length)}`}
-			aria-label={`${node.name} input ${port.Name}`}
+			aria-label={`${node.name} input ${portLabel(port)}`}
 		>
 			<span class="kf-port"></span>
 		</Handle>
 	{/each}
 
-	{#each mainOutputs as port, index (port.Name)}
+	{#each mainOutputs as port, index (port.name)}
 		{@const top = portOffset(index, mainOutputs.length)}
-		<Handle type="source" id={port.Name} position={Position.Right} style={`top: ${top}`} aria-label={`${node.name} output ${port.Name}`}>
+		<Handle type="source" id={port.name} position={Position.Right} style={`top: ${top}`} aria-label={`${node.name} output ${portLabel(port)}`}>
 			<span class="kf-port"></span>
 		</Handle>
 		{#if showOutputLabels}
 			<span class="pointer-events-none absolute left-full ml-2.5 -translate-y-1/2 font-mono text-[0.625rem] text-muted-foreground" style={`top: ${top}`}>
-				{port.Name}
+				{portLabel(port)}
 			</span>
 		{/if}
-		{#if editable && !connectedPorts.has(port.Name)}
+		{#if editable && !connectedPorts.has(port.name)}
 			<!-- The shortest path to the next step: one click adds it already wired
 			     to this port, which is why the toolbar has no add button. -->
 			<button
@@ -127,37 +128,37 @@
 				data-add-step={node.id}
 				class="nodrag absolute -translate-y-1/2 grid size-6 place-items-center rounded-md border border-dashed border-border bg-card text-muted-foreground transition-colors hover:border-[var(--node-accent)] hover:text-[var(--node-accent)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
 				style={`top: ${top}; left: calc(100% + ${showOutputLabels ? '3.25rem' : '1.5rem'})`}
-				aria-label={`Add a step after ${node.name}${showOutputLabels ? ` on ${port.Name}` : ''}`}
-				onclick={() => actions?.addFrom(node.id, port.Name)}
+				aria-label={`Add a step after ${node.name}${showOutputLabels ? ` on ${portLabel(port)}` : ''}`}
+				onclick={() => actions?.addFrom(node.id, port.name)}
 			>
 				<Plus aria-hidden="true" class="size-3" />
 			</button>
 		{/if}
 	{/each}
 
-	{#each attachmentInputs as port, index (port.Name)}
+	{#each attachmentInputs as port, index (port.name)}
 		{@const left = portOffset(index, attachmentInputs.length)}
 		<Handle
 			type="target"
-			id={port.Name}
+			id={port.name}
 			position={Position.Bottom}
 			style={`left: ${left}`}
-			aria-label={`${node.name} ${port.Name} attachment`}
+			aria-label={`${node.name} ${portLabel(port)} attachment`}
 		>
 			<span class="kf-port kf-port-attachment"></span>
 		</Handle>
 		<span class="pointer-events-none absolute top-full -translate-x-1/2 pt-2 font-mono text-[0.625rem] text-muted-foreground" style={`left: ${left}`}>
-			{port.Name}
+			{portLabel(port)}
 		</span>
 	{/each}
 
-	{#each attachmentOutputs as port, index (port.Name)}
+	{#each attachmentOutputs as port, index (port.name)}
 		<Handle
 			type="source"
-			id={port.Name}
+			id={port.name}
 			position={Position.Top}
 			style={`left: ${portOffset(index, attachmentOutputs.length)}`}
-			aria-label={`${node.name} provides ${port.Name}`}
+			aria-label={`${node.name} provides ${portLabel(port)}`}
 		>
 			<span class="kf-port kf-port-attachment"></span>
 		</Handle>

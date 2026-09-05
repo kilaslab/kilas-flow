@@ -16,12 +16,38 @@ const CurrentSchemaVersion = 1
 // ConnectionKind identifies the data contract carried by a graph edge.
 type ConnectionKind string
 
+// The thirteen channels n8n models, spelled exactly as n8n spells them.
+//
+// These strings appear verbatim in imported workflow JSON, so the casing is
+// load-bearing: it is lowerCamel after the `ai_` prefix — `ai_languageModel`,
+// never `ai_language_model` — and a normalising transform anywhere in the
+// import path silently drops every edge on that channel.
 const (
 	ConnectionMain          ConnectionKind = "main"
+	ConnectionAgent         ConnectionKind = "ai_agent"
+	ConnectionChain         ConnectionKind = "ai_chain"
+	ConnectionDocument      ConnectionKind = "ai_document"
+	ConnectionEmbedding     ConnectionKind = "ai_embedding"
 	ConnectionLanguageModel ConnectionKind = "ai_languageModel"
 	ConnectionMemory        ConnectionKind = "ai_memory"
+	ConnectionOutputParser  ConnectionKind = "ai_outputParser"
+	ConnectionRetriever     ConnectionKind = "ai_retriever"
+	ConnectionReranker      ConnectionKind = "ai_reranker"
+	ConnectionTextSplitter  ConnectionKind = "ai_textSplitter"
 	ConnectionTool          ConnectionKind = "ai_tool"
+	ConnectionVectorStore   ConnectionKind = "ai_vectorStore"
 )
+
+// ConnectionKinds is every channel, in a stable order.
+func ConnectionKinds() []ConnectionKind {
+	return []ConnectionKind{
+		ConnectionMain,
+		ConnectionAgent, ConnectionChain, ConnectionDocument, ConnectionEmbedding,
+		ConnectionLanguageModel, ConnectionMemory, ConnectionOutputParser,
+		ConnectionRetriever, ConnectionReranker, ConnectionTextSplitter,
+		ConnectionTool, ConnectionVectorStore,
+	}
+}
 
 // Document is KilasFlow's canonical, persisted workflow definition. Imported
 // workflow formats must be converted to this shape before compilation.
@@ -338,13 +364,19 @@ func ValidateDraftWithServerID(document Document) error {
 // connection-kind strings are exactly these values, so importing an edge is an
 // identity check against this list rather than a translation table that could
 // drift from it.
+//
+// This is the single authority. The same check used to exist twice with
+// identical bodies — here and in the node registry — and widening one without
+// the other produces the worst possible failure: a document that validates
+// against a definition that cannot register, or the reverse, with no error
+// naming the mismatch.
 func KnownConnectionKind(kind ConnectionKind) bool {
-	switch kind {
-	case ConnectionMain, ConnectionLanguageModel, ConnectionMemory, ConnectionTool:
-		return true
-	default:
-		return false
+	for _, known := range ConnectionKinds() {
+		if kind == known {
+			return true
+		}
 	}
+	return false
 }
 
 func knownConnectionKind(kind ConnectionKind) bool { return KnownConnectionKind(kind) }

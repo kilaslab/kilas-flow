@@ -85,32 +85,32 @@
 		{/if}
 	</div>
 
-	{#each mainInputs as port, index (port.Name)}
-		<Handle type="target" id={port.Name} position={Position.Left} isConnectable={false} style={`top: ${portOffset(index, mainInputs.length)}`} aria-label={`${node.name} input ${port.Name}`}>
+	{#each mainInputs as port, index (port.name)}
+		<Handle type="target" id={port.name} position={Position.Left} isConnectable={false} style={`top: ${portOffset(index, mainInputs.length)}`} aria-label={`${node.name} input ${port.name}`}>
 			<span class="kf-port"></span>
 		</Handle>
 	{/each}
 
-	{#each mainOutputs as port, index (port.Name)}
+	{#each mainOutputs as port, index (port.name)}
 		{@const top = portOffset(index, mainOutputs.length)}
-		<Handle type="source" id={port.Name} position={Position.Right} isConnectable={false} style={`top: ${top}`} aria-label={`${node.name} output ${port.Name}`}>
+		<Handle type="source" id={port.name} position={Position.Right} isConnectable={false} style={`top: ${top}`} aria-label={`${node.name} output ${port.name}`}>
 			<span class="kf-port"></span>
 		</Handle>
 		{#if showOutputLabels}
-			<span class="pointer-events-none absolute left-full ml-2.5 -translate-y-1/2 font-mono text-[0.625rem] text-muted-foreground" style={`top: ${top}`}>{port.Name}</span>
+			<span class="pointer-events-none absolute left-full ml-2.5 -translate-y-1/2 font-mono text-[0.625rem] text-muted-foreground" style={`top: ${top}`}>{port.name}</span>
 		{/if}
 	{/each}
 
-	{#each attachmentInputs as port, index (port.Name)}
+	{#each attachmentInputs as port, index (port.name)}
 		{@const left = portOffset(index, attachmentInputs.length)}
-		<Handle type="target" id={port.Name} position={Position.Bottom} isConnectable={false} style={`left: ${left}`} aria-label={`${node.name} ${port.Name} attachment`}>
+		<Handle type="target" id={port.name} position={Position.Bottom} isConnectable={false} style={`left: ${left}`} aria-label={`${node.name} ${port.name} attachment`}>
 			<span class="kf-port kf-port-attachment"></span>
 		</Handle>
-		<span class="pointer-events-none absolute top-full -translate-x-1/2 pt-2 font-mono text-[0.625rem] text-muted-foreground" style={`left: ${left}`}>{port.Name}</span>
+		<span class="pointer-events-none absolute top-full -translate-x-1/2 pt-2 font-mono text-[0.625rem] text-muted-foreground" style={`left: ${left}`}>{port.name}</span>
 	{/each}
 
-	{#each attachmentOutputs as port, index (port.Name)}
-		<Handle type="source" id={port.Name} position={Position.Top} isConnectable={false} style={`left: ${portOffset(index, attachmentOutputs.length)}`} aria-label={`${node.name} provides ${port.Name}`}>
+	{#each attachmentOutputs as port, index (port.name)}
+		<Handle type="source" id={port.name} position={Position.Top} isConnectable={false} style={`left: ${portOffset(index, attachmentOutputs.length)}`} aria-label={`${node.name} provides ${port.name}`}>
 			<span class="kf-port kf-port-attachment"></span>
 		</Handle>
 	{/each}

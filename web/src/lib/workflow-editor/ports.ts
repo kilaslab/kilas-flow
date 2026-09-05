@@ -18,16 +18,40 @@ export function canConnect(
 
 	const source = lookupPort(connection.source, connection.sourceHandle, 'outputs', nodes, definitions);
 	const target = lookupPort(connection.target, connection.targetHandle, 'inputs', nodes, definitions);
-	if (!source || !target || source.Kind !== target.Kind) return false;
+	if (!source || !target || source.kind !== target.kind) return false;
 
-	return !existing.some(
+	const duplicate = existing.some(
 		(edge) =>
-			edge.kind === source.Kind &&
+			edge.kind === source.kind &&
 			edge.source.nodeId === connection.source &&
 			edge.source.port === connection.sourceHandle &&
 			edge.target.nodeId === connection.target &&
 			edge.target.port === connection.targetHandle
 	);
+	if (duplicate) return false;
+
+	// A port may bound how many edges it accepts — one language model, one
+	// memory, many tools. The compiler enforces this too; refusing here is what
+	// stops the editor offering a connection the server will reject on save.
+	if (target.maxConnections && target.maxConnections > 0) {
+		const attached = existing.filter(
+			(edge) => edge.target.nodeId === connection.target && edge.target.port === connection.targetHandle
+		).length;
+		if (attached >= target.maxConnections) return false;
+	}
+
+	// And it may name which node types it accepts.
+	if (target.allowedNodeTypes && target.allowedNodeTypes.length > 0) {
+		const sourceNode = nodes.find((node) => node.id === connection.source);
+		if (!sourceNode || !target.allowedNodeTypes.includes(sourceNode.type)) return false;
+	}
+
+	return true;
+}
+
+/** What the editor labels a port with: its display name, else its own name. */
+export function portLabel(port: Port): string {
+	return port.displayName || port.name;
 }
 
 export function connectionFromCanvas(
@@ -44,7 +68,7 @@ export function connectionFromCanvas(
 
 	return {
 		id: newConnectionID(),
-		kind: source.Kind,
+		kind: source.kind,
 		source: { nodeId: connection.source!, port: connection.sourceHandle! },
 		target: { nodeId: connection.target!, port: connection.targetHandle! }
 	};
@@ -60,7 +84,7 @@ function lookupPort(
 	const node = nodes.find((candidate) => candidate.id === nodeID);
 	if (!node) return undefined;
 	const definition = definitions.find((candidate) => candidate.type === node.type && candidate.version === node.typeVersion);
-	return definition?.[direction]?.find((port) => port.Name === portName);
+	return definition?.[direction]?.find((port) => port.name === portName);
 }
 
 function createID(): string {

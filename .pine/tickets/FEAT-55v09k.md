@@ -1,7 +1,7 @@
 ---
 id: FEAT-55v09k
 title: Describe ports fully and widen the connection kinds
-status: todo
+status: done
 priority: high
 labels:
     - registry
@@ -28,13 +28,13 @@ And there is a client-visible trap. `workflow.Port` has **no JSON tags**, so it 
 
 ## Acceptance criteria
 
-- [ ] `workflow.Port` carries `displayName`, `required`, `maxConnections` and a node-type filter alongside name and kind, and gains lower-camel JSON tags in the same change as the SPA and both generated clients.
-- [ ] `ConnectionKind` covers all thirteen n8n values with byte-identical strings, and a test asserts the exact spelling of each so a casing regression fails loudly.
-- [ ] The two `knownConnectionKind` implementations are collapsed into one authority that both the document validator and the registry validator call.
-- [ ] The compiler enforces `maxConnections` and `required`: a graph exceeding a port's connection limit, or leaving a required port unconnected, fails compilation with the port named.
-- [ ] A port's node-type filter is enforced at compile time, not only in the editor, so an imported document cannot bypass it.
-- [ ] The editor refuses a connection that would exceed `maxConnections` and labels ports by `displayName` where one is declared, falling back to the port name.
-- [ ] `web/pnpm generate:api:check`, `sdk/pnpm generate:types:check`, `pnpm check` and the existing `ports.test.ts` and `node-visual.test.ts` all pass against the retagged model.
+- [x] `workflow.Port` carries `displayName`, `required`, `maxConnections` and a node-type filter alongside name and kind, and gains lower-camel JSON tags in the same change as the SPA and both generated clients.
+- [x] `ConnectionKind` covers all thirteen n8n values with byte-identical strings, and a test asserts the exact spelling of each so a casing regression fails loudly.
+- [x] The two `knownConnectionKind` implementations are collapsed into one authority that both the document validator and the registry validator call.
+- [x] The compiler enforces `maxConnections` and `required`: a graph exceeding a port's connection limit, or leaving a required port unconnected, fails compilation with the port named.
+- [x] A port's node-type filter is enforced at compile time, not only in the editor, so an imported document cannot bypass it.
+- [x] The editor refuses a connection that would exceed `maxConnections` and labels ports by `displayName` where one is declared, falling back to the port name.
+- [x] `web/pnpm generate:api:check`, `sdk/pnpm generate:types:check`, `pnpm check` and the existing `ports.test.ts` and `node-visual.test.ts` all pass against the retagged model.
 
 ## Implementation Plan
 
@@ -56,3 +56,69 @@ One thing this ticket does not do: it does not model cluster-node semantics, slo
 - `web/src/lib/workflow-editor/ports.ts`, `web/src/lib/workflow-editor/node-visual.ts` — every SPA reader of `port.Kind`.
 - n8n 2.34.0 reference (read-only, outside this repo): `packages/workflow/src/interfaces.ts` — `NodeConnectionTypes`, `INodeInputConfiguration`, `INodeOutputConfiguration`, `INodeFilter`, `ExpressionString`.
 - Local n8n UI reference: `design-refs/n8n-v2/INDEX.md` entry 02 — diamond sub-node handles rendered below the node, dashed arrowless edges, and the red asterisk marking a required slot — port metadata this phase adds. Captured from a local n8n 2.33.7 instance; gitignored, never vendored.
+
+## Outcome
+
+### The kinds
+
+All thirteen, read verbatim from `NodeConnectionTypes` in the 2.34.0 reference.
+`TestConnectionKindsMatchN8NByteForByte` asserts each spelling against a literal
+list — deriving it from the constants would assert nothing — and additionally
+refuses `ai_language_model`, `ai_languagemodel`, `AI_LanguageModel` and
+`ai_vectorstore`, so a normalising transform anywhere in the import path fails
+loudly instead of silently dropping every edge on that channel.
+
+### The duplicated allowlist
+
+Collapsed. `knownConnectionKind` existed twice with identical bodies — in the
+document validator and the registry validator — and the registry's copy is
+deleted; it now calls `workflow.KnownConnectionKind`. Widening one without the
+other would have produced a document that validates against a definition that
+cannot register, with no error naming the mismatch.
+
+### The port
+
+`DisplayName`, `Required`, `MaxConnections` and `AllowedNodeTypes` alongside name
+and kind, all enforced **at compile time** rather than only in the editor, so an
+imported document cannot bypass what the editor would refuse.
+
+Three new error codes rather than reusing `ErrorUnknownPort`: "this port is
+full", "this port must be connected" and "this port does not exist" are
+different problems for a user to fix, and one code for all three tells them
+nothing.
+
+The AI Agent now declares what it always meant: one model (required), one
+memory, unbounded tools. `TestCompileEnforcesPortCardinality` covers all three
+cases and checks the message names the port by its **display name**, which is
+what the user sees on the canvas.
+
+### The retag
+
+`workflow.Port` had no JSON tags, so it serialized with capital keys and the SPA
+read `port.Kind`. Adding tags is a breaking change for every client of
+`/api/v1/node-types`, and it was done as one pass across the Go struct, both
+generated clients and eleven SPA files. No compatibility shim reading both
+spellings: one here would outlive its reason and hide the next casing bug.
+
+### A bug I introduced and caught
+
+Labelling ports by display name, I replaced the canvas `Handle` id with
+`portLabel(port)`. The handle id is the port's **identity**, used to build a
+connection endpoint — using the label there would break connection creation for
+any port that declares one, which is exactly the agent's slots. Only the visible
+text and the accessible name use the label.
+
+### The open decision
+
+Computed ports are **not** adopted, as recommended. n8n allows
+`inputs: ExpressionString`; a port here will carry the same condition set the
+property-visibility ticket defines, evaluated against the node's own parameters.
+A conditional port stays data, the compiler can evaluate it with no expression
+engine, and there is no path by which a definition becomes executable text. That
+condition field is not added yet — it belongs with FEAT-pd3p6x, which defines the
+shape — so this ticket delivers the descriptor and the enforcement it needs.
+
+### Held to scope
+
+Cluster-node semantics, slot rules and the direction inversion in n8n's AI
+connection JSON are p5's work, built on the kinds and descriptors this delivers.
