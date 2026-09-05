@@ -32,6 +32,9 @@ internal/web/dist/*
 !internal/web/dist/.gitkeep
 !internal/web/dist/index.html
 
+# Playwright MCP scratch output (snapshots, console logs, screenshots)
+.playwright-mcp/
+
 # Editors / OS
 .DS_Store
 .idea/

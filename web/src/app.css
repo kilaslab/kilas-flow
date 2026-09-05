@@ -3,8 +3,9 @@
 @import 'shadcn-svelte/tailwind.css';
 @import '@fontsource-variable/geist';
 
-/* Future embed sessions may set either selector. Without one, the OS mode wins. */
-@custom-variant dark (&:where(.dark, .dark *, [data-theme='dark'], [data-theme='dark'] *));
+/* Dark is the default theme, so `dark:` utilities apply everywhere except
+   inside a subtree that has explicitly opted into light. */
+@custom-variant dark (&:not(:where([data-theme='light'], [data-theme='light'] *, .light, .light *)));
 
 @theme {
 	--font-sans: 'Geist Variable', sans-serif;
@@ -61,91 +62,11 @@
 	--radius-4xl: calc(var(--radius) * 2.6);
 }
 
-/* KilasFlow default: jade actions on quiet graphite surfaces. */
+/* KilasFlow: jade actions on quiet graphite surfaces.
+   Dark-first: the bare :root palette is the dark theme, so a
+   document with no explicit choice renders dark regardless of the OS mode.
+   Light is an opt-in, selected by [data-theme='light'] or the .light class. */
 :root,
-:root[data-theme='light'] {
-	color-scheme: light;
-	--background: oklch(0.985 0.006 170);
-	--foreground: oklch(0.215 0.018 170);
-	--card: oklch(1 0.003 170);
-	--card-foreground: oklch(0.215 0.018 170);
-	--popover: oklch(1 0.003 170);
-	--popover-foreground: oklch(0.215 0.018 170);
-	--primary: oklch(0.44 0.105 170);
-	--primary-foreground: oklch(0.985 0.003 170);
-	--secondary: oklch(0.942 0.018 170);
-	--secondary-foreground: oklch(0.255 0.025 170);
-	--muted: oklch(0.958 0.012 170);
-	--muted-foreground: oklch(0.48 0.024 170);
-	--accent: oklch(0.914 0.038 170);
-	--accent-foreground: oklch(0.255 0.04 170);
-	--destructive: oklch(0.53 0.19 27);
-	--destructive-foreground: oklch(0.985 0.003 170);
-	--success: oklch(0.44 0.105 170);
-	--success-foreground: oklch(0.985 0.003 170);
-	--warning: oklch(0.7 0.145 80);
-	--warning-foreground: oklch(0.25 0.04 80);
-	--border: oklch(0.89 0.014 170);
-	--input: oklch(0.89 0.014 170);
-	--ring: oklch(0.44 0.105 170);
-	--chart-1: oklch(0.52 0.12 170);
-	--chart-2: oklch(0.58 0.11 225);
-	--chart-3: oklch(0.68 0.145 80);
-	--chart-4: oklch(0.57 0.15 35);
-	--chart-5: oklch(0.47 0.09 140);
-	--radius: 0.625rem;
-	--sidebar: oklch(0.968 0.01 170);
-	--sidebar-foreground: oklch(0.215 0.018 170);
-	--sidebar-primary: oklch(0.44 0.105 170);
-	--sidebar-primary-foreground: oklch(0.985 0.003 170);
-	--sidebar-accent: oklch(0.914 0.038 170);
-	--sidebar-accent-foreground: oklch(0.255 0.04 170);
-	--sidebar-border: oklch(0.89 0.014 170);
-	--sidebar-ring: oklch(0.44 0.105 170);
-}
-
-@media (prefers-color-scheme: dark) {
-	:root:not([data-theme]):not(.light) {
-		color-scheme: dark;
-		--background: oklch(0.17 0.016 170);
-		--foreground: oklch(0.95 0.012 170);
-		--card: oklch(0.215 0.02 170);
-		--card-foreground: oklch(0.95 0.012 170);
-		--popover: oklch(0.215 0.02 170);
-		--popover-foreground: oklch(0.95 0.012 170);
-		--primary: oklch(0.74 0.13 170);
-		--primary-foreground: oklch(0.2 0.025 170);
-		--secondary: oklch(0.285 0.026 170);
-		--secondary-foreground: oklch(0.95 0.012 170);
-		--muted: oklch(0.285 0.02 170);
-		--muted-foreground: oklch(0.74 0.02 170);
-		--accent: oklch(0.31 0.055 170);
-		--accent-foreground: oklch(0.95 0.012 170);
-		--destructive: oklch(0.66 0.18 27);
-		--destructive-foreground: oklch(0.985 0.003 170);
-		--success: oklch(0.74 0.13 170);
-		--success-foreground: oklch(0.2 0.025 170);
-		--warning: oklch(0.78 0.145 80);
-		--warning-foreground: oklch(0.25 0.04 80);
-		--border: oklch(1 0.005 170 / 13%);
-		--input: oklch(1 0.005 170 / 17%);
-		--ring: oklch(0.74 0.13 170);
-		--chart-1: oklch(0.74 0.13 170);
-		--chart-2: oklch(0.72 0.11 225);
-		--chart-3: oklch(0.78 0.145 80);
-		--chart-4: oklch(0.7 0.15 35);
-		--chart-5: oklch(0.7 0.1 140);
-		--sidebar: oklch(0.195 0.018 170);
-		--sidebar-foreground: oklch(0.95 0.012 170);
-		--sidebar-primary: oklch(0.74 0.13 170);
-		--sidebar-primary-foreground: oklch(0.2 0.025 170);
-		--sidebar-accent: oklch(0.31 0.055 170);
-		--sidebar-accent-foreground: oklch(0.95 0.012 170);
-		--sidebar-border: oklch(1 0.005 170 / 13%);
-		--sidebar-ring: oklch(0.74 0.13 170);
-	}
-}
-
 :root[data-theme='dark'],
 .dark {
 	color-scheme: dark;
@@ -177,6 +98,7 @@
 	--chart-3: oklch(0.78 0.145 80);
 	--chart-4: oklch(0.7 0.15 35);
 	--chart-5: oklch(0.7 0.1 140);
+	--radius: 0.625rem;
 	--sidebar: oklch(0.195 0.018 170);
 	--sidebar-foreground: oklch(0.95 0.012 170);
 	--sidebar-primary: oklch(0.74 0.13 170);
@@ -185,6 +107,71 @@
 	--sidebar-accent-foreground: oklch(0.95 0.012 170);
 	--sidebar-border: oklch(1 0.005 170 / 13%);
 	--sidebar-ring: oklch(0.74 0.13 170);
+}
+
+:root[data-theme='light'],
+.light {
+	color-scheme: light;
+	--background: oklch(0.985 0.006 170);
+	--foreground: oklch(0.215 0.018 170);
+	--card: oklch(1 0.003 170);
+	--card-foreground: oklch(0.215 0.018 170);
+	--popover: oklch(1 0.003 170);
+	--popover-foreground: oklch(0.215 0.018 170);
+	--primary: oklch(0.44 0.105 170);
+	--primary-foreground: oklch(0.985 0.003 170);
+	--secondary: oklch(0.942 0.018 170);
+	--secondary-foreground: oklch(0.255 0.025 170);
+	--muted: oklch(0.958 0.012 170);
+	--muted-foreground: oklch(0.48 0.024 170);
+	--accent: oklch(0.914 0.038 170);
+	--accent-foreground: oklch(0.255 0.04 170);
+	--destructive: oklch(0.53 0.19 27);
+	--destructive-foreground: oklch(0.985 0.003 170);
+	--success: oklch(0.44 0.105 170);
+	--success-foreground: oklch(0.985 0.003 170);
+	--warning: oklch(0.7 0.145 80);
+	--warning-foreground: oklch(0.25 0.04 80);
+	--border: oklch(0.89 0.014 170);
+	--input: oklch(0.89 0.014 170);
+	--ring: oklch(0.44 0.105 170);
+	--chart-1: oklch(0.52 0.12 170);
+	--chart-2: oklch(0.58 0.11 225);
+	--chart-3: oklch(0.68 0.145 80);
+	--chart-4: oklch(0.57 0.15 35);
+	--chart-5: oklch(0.47 0.09 140);
+	--sidebar: oklch(0.968 0.01 170);
+	--sidebar-foreground: oklch(0.215 0.018 170);
+	--sidebar-primary: oklch(0.44 0.105 170);
+	--sidebar-primary-foreground: oklch(0.985 0.003 170);
+	--sidebar-accent: oklch(0.914 0.038 170);
+	--sidebar-accent-foreground: oklch(0.255 0.04 170);
+	--sidebar-border: oklch(0.89 0.014 170);
+	--sidebar-ring: oklch(0.44 0.105 170);
+}
+
+/* Svelte Flow ships light-only defaults for its chrome. Bind them to the
+   KilasFlow palette so the canvas follows the active theme instead of staying
+   white in the dark-first default. */
+.svelte-flow {
+	--xy-background-color: var(--background);
+	--xy-edge-stroke: var(--muted-foreground);
+	--xy-edge-stroke-selected: var(--primary);
+	--xy-connectionline-stroke: var(--primary);
+	--xy-handle-background-color: var(--card);
+	--xy-handle-border-color: var(--primary);
+	--xy-attribution-background-color: transparent;
+	--xy-controls-button-background-color: var(--card);
+	--xy-controls-button-background-color-hover: var(--muted);
+	--xy-controls-button-color: var(--card-foreground);
+	--xy-controls-button-color-hover: var(--foreground);
+	--xy-controls-button-border-color: var(--border);
+	--xy-controls-box-shadow: 0 1px 2px oklch(0 0 0 / 25%);
+	--xy-edge-label-background-color: var(--card);
+	--xy-edge-label-color: var(--card-foreground);
+	--xy-minimap-background-color: var(--card);
+	--xy-selection-background-color: oklch(from var(--primary) l c h / 12%);
+	--xy-selection-border: 1px dashed var(--primary);
 }
 
 @layer base {
