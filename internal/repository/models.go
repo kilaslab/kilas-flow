@@ -11,6 +11,12 @@ import (
 // engine contract.
 func Models() []any {
 	return []any{
+		// Tenants come first because users and API keys reference the table by
+		// foreign key, and a migrator that creates children first has nothing
+		// to point them at.
+		&tenantModel{},
+		&userModel{},
+		&apiKeyModel{},
 		&workflowModel{},
 		&workflowVersionModel{},
 		&workflowPublishEventModel{},
@@ -257,3 +263,72 @@ type executionNodeRunModel struct {
 }
 
 func (executionNodeRunModel) TableName() string { return "execution_node_runs" }
+
+// tenantModel is one customer of this deployment.
+//
+// It exists so that the tenant ID on every other table refers to something
+// real. Before it, `tenant_id` was a string nobody had ever written a row for,
+// which made "which tenants exist" unanswerable and made a typo in a tenant ID
+// indistinguishable from a tenant that simply has no data yet.
+type tenantModel struct {
+	ID        string    `gorm:"primaryKey;size:64"`
+	Name      string    `gorm:"not null;size:255"`
+	CreatedAt time.Time `gorm:"not null"`
+	UpdatedAt time.Time `gorm:"not null"`
+}
+
+func (tenantModel) TableName() string { return "tenants" }
+
+// userModel is a person who signs in to the dashboard.
+//
+// Email is unique across the deployment rather than per tenant, because login
+// presents an email and a password and nothing else: a per-tenant unique index
+// would let one address resolve to several accounts and leave the server
+// guessing which password to check.
+type userModel struct {
+	ID       string `gorm:"primaryKey;size:64"`
+	TenantID string `gorm:"not null;size:64;index:idx_users_tenant"`
+	Email    string `gorm:"not null;size:255;uniqueIndex:uidx_users_email"`
+	// PasswordHash is PBKDF2 over a per-user salt, never the password. The
+	// column is wider than today's encoding needs so raising the work factor
+	// later is not a schema change.
+	PasswordHash string    `gorm:"not null;size:255"`
+	Name         string    `gorm:"not null;size:255;default:''"`
+	CreatedAt    time.Time `gorm:"not null"`
+	UpdatedAt    time.Time `gorm:"not null"`
+	// DisabledAt locks an account out without deleting it, so the workflows and
+	// executions it created keep an author.
+	DisabledAt *time.Time
+	Tenant     tenantModel `gorm:"foreignKey:TenantID;references:ID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT"`
+}
+
+func (userModel) TableName() string { return "users" }
+
+// apiKeyModel is a machine caller's tenant-scoped credential.
+//
+// The secret itself is never stored. Prefix is a public handle the verifier
+// looks the row up by, and SecretHash is SHA-256 of the rest, so a database
+// dump — or a replica, or a support export — discloses nothing usable.
+//
+// A key belongs to a tenant rather than to a user on purpose: a host's
+// integration must not stop working because the person who created its key
+// left the company.
+type apiKeyModel struct {
+	ID       string `gorm:"primaryKey;size:64"`
+	TenantID string `gorm:"not null;size:64;index:idx_api_keys_tenant"`
+	Prefix   string `gorm:"not null;size:32;uniqueIndex:uidx_api_keys_prefix"`
+	// SecretHash is hex-encoded SHA-256, which is always 64 characters.
+	SecretHash string    `gorm:"not null;size:64"`
+	Label      string    `gorm:"not null;size:255;default:''"`
+	CreatedAt  time.Time `gorm:"not null"`
+	// LastUsedAt answers "is anything still using this key" before someone
+	// revokes it. It is written at most once a minute per key rather than on
+	// every request, so authenticating does not turn every read into a write.
+	LastUsedAt *time.Time
+	// RevokedAt disables a key without deleting the row, so an audit of what
+	// that key did still has something to name.
+	RevokedAt *time.Time
+	Tenant    tenantModel `gorm:"foreignKey:TenantID;references:ID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT"`
+}
+
+func (apiKeyModel) TableName() string { return "api_keys" }

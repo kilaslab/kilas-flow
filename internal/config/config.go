@@ -23,6 +23,7 @@ type Config struct {
 	Server     Server       `koanf:"server"`
 	Database   Database     `koanf:"database"`
 	Security   Security     `koanf:"security"`
+	Auth       Auth         `koanf:"auth"`
 	Outbound   OutboundHTTP `koanf:"outbound"`
 	Webhook    Webhook      `koanf:"webhook"`
 	Embed      Embed        `koanf:"embed"`
@@ -77,6 +78,49 @@ type Security struct {
 	// master key used to encrypt stored credentials. The key itself is never
 	// read from the config file.
 	EncryptionKeyEnv string `koanf:"encryption_key_env"`
+}
+
+// Auth turns identity on and describes how the first account is created.
+//
+// The koanf section is a single word for the same reason Outbound is:
+// envKeyToPath treats the first underscore as the section separator, so a
+// section named `auth_session` could never be reached by an environment
+// override.
+type Auth struct {
+	// Enabled gates the whole surface. It defaults to false because turning
+	// authentication on for an existing installation locks its operator out of
+	// a server they were reaching a moment ago — the API keys and accounts that
+	// would let them back in do not exist yet. An operator opts in once they
+	// have bootstrapped a user, and the server says so loudly at boot until
+	// they do.
+	Enabled bool `koanf:"enabled"`
+	// SigningKeyEnv names the environment variable holding the session and
+	// stream-ticket signing key. Like the credential and embed keys, it never
+	// comes from the config file.
+	//
+	// It is deliberately a different variable from the embed key. One key
+	// signing both would mean a forged value of either kind could be presented
+	// as the other the moment either payload grew a field the other's parser
+	// also accepts.
+	SigningKeyEnv string `koanf:"signing_key_env"`
+	// SessionTTL is how long a dashboard login lasts. Sessions are stateless,
+	// so this is also the longest a stolen session cookie keeps working: there
+	// is no server-side revocation to cut it short.
+	SessionTTL time.Duration `koanf:"session_ttl"`
+	// CookieInsecure drops the Secure attribute and the __Host- cookie prefix.
+	//
+	// Only for an operator serving plain HTTP on a trusted network. It makes
+	// the session cookie readable by a network attacker and plantable by a
+	// sibling host, which is exactly what the prefix exists to prevent.
+	CookieInsecure bool `koanf:"cookie_insecure"`
+	// BootstrapTenant is the tenant a fresh installation creates.
+	BootstrapTenant string `koanf:"bootstrap_tenant"`
+	// BootstrapEmail and BootstrapPasswordEnv create the first account, and
+	// only ever on an installation that has none: a deployment that already has
+	// users is never handed another owner by an environment variable somebody
+	// forgot to remove.
+	BootstrapEmail       string `koanf:"bootstrap_email"`
+	BootstrapPasswordEnv string `koanf:"bootstrap_password_env"`
 }
 
 // OutboundHTTP bounds requests workflow nodes make to the outside world.
@@ -225,6 +269,18 @@ func Default() Config {
 		Security: Security{
 			EncryptionKeyEnv: "KILASFLOW_ENCRYPTION_KEY",
 		},
+		Auth: Auth{
+			Enabled:       false,
+			SigningKeyEnv: "KILASFLOW_AUTH_SIGNING_KEY",
+			SessionTTL:    12 * time.Hour,
+			// Spelled out rather than imported from the repository package,
+			// which would point configuration at persistence. It matches
+			// repository.DefaultTenantID so that a fresh install and an
+			// upgraded one bootstrap into the same tenant, and the rows an
+			// upgraded install already has stay reachable.
+			BootstrapTenant:      "default",
+			BootstrapPasswordEnv: "KILASFLOW_BOOTSTRAP_PASSWORD",
+		},
 		Outbound: OutboundHTTP{
 			AllowPrivateNetworks: false,
 			MaxRedirects:         5,
@@ -333,6 +389,13 @@ func (c Config) Validate() error {
 
 	if c.Database.DSN == "" {
 		return fmt.Errorf("database.dsn is required")
+	}
+
+	// Caught here rather than at the first login, because an instance that
+	// starts with authentication "on" and no key to sign with would answer
+	// every request with 401 and look like a broken deployment.
+	if c.Auth.Enabled && c.Auth.SigningKeyEnv == "" {
+		return fmt.Errorf("auth.signing_key_env is required when auth.enabled is true")
 	}
 
 	return nil
