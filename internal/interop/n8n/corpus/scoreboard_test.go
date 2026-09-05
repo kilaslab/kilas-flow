@@ -26,6 +26,7 @@ import (
 	"github.com/kilaslabs/kilas-flow/internal/webhook"
 	"github.com/kilaslabs/kilas-flow/internal/workflow"
 	"github.com/kilaslabs/kilas-flow/nodes"
+	"github.com/kilaslabs/kilas-flow/packs/telegram"
 	"github.com/kilaslabs/kilas-flow/packs/waha"
 )
 
@@ -131,6 +132,9 @@ func corpusRuntime(t *testing.T) (*node.Registry, *engine.Registry) {
 		if err := executors.Register(id, executor); err != nil {
 			t.Fatalf("Register(%s) error = %v", id, err)
 		}
+	}
+	if err := telegram.Register(catalog, routes, executors, loadoptions.NewResolver(offline, 0)); err != nil {
+		t.Fatalf("telegram.Register() error = %v", err)
 	}
 	if err := waha.Register(waha.Deps{
 		Definitions: catalog, Routes: routes, Triggers: triggers,

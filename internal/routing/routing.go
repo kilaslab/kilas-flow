@@ -112,7 +112,14 @@ type Send struct {
 	// From names the parameter to read. Empty means the property this routing
 	// is attached to, which is the per-property form.
 	From string `json:"from,omitempty"`
-	// Type is where the value goes: "body", "query" or "path".
+	// Type is where the value goes: "body", "query", "path" or "binary".
+	//
+	// "binary" reads the parameter as the *name of a binary property on the
+	// item* and sends that attachment as a file part, which turns the whole
+	// request into multipart. It is a placement rather than a request-level
+	// flag because whether an upload happens depends on which parameter is
+	// visible: a Telegram photo is either an uploaded file or a file_id, and
+	// the same operation does both.
 	Type string `json:"type,omitempty"`
 	// Property is the destination path. Dot notation unless disabled, so
 	// `message.text` nests rather than making a key with a dot in it.
@@ -146,6 +153,14 @@ const (
 	PostReceiveRootProperty = "rootProperty"
 	PostReceiveSetKeyValue  = "setKeyValue"
 	PostReceiveLimit        = "limit"
+	// PostReceiveBinaryData downloads a URL built from the response and
+	// attaches it to the item as a binary reference.
+	//
+	// It exists because the shape it serves is common and two-step: an API
+	// answers with a path or a link, and the bytes are behind a second call
+	// that needs the same credential. Telegram's getFile is exactly that, and
+	// leaving it to the caller would mean every such node grew its own Go.
+	PostReceiveBinaryData = "binaryData"
 )
 
 // Operations carries request-level behaviour that is not one request.
@@ -299,9 +314,9 @@ func (send Send) validate() error {
 		return fmt.Errorf("preSend hooks are JavaScript and are not supported; remove %s", strings.Join(send.PreSend, ", "))
 	}
 	switch send.Type {
-	case "", "body", "query", "path":
+	case "", "body", "query", "path", "binary":
 	default:
-		return fmt.Errorf("send type %q is not supported; use body, query or path", send.Type)
+		return fmt.Errorf("send type %q is not supported; use body, query, path or binary", send.Type)
 	}
 	if strings.TrimSpace(send.Property) == "" {
 		return fmt.Errorf("send needs a destination property")
@@ -327,9 +342,13 @@ func (routing Routing) validate() error {
 		for _, action := range routing.Output.PostReceive {
 			switch action.Type {
 			case PostReceiveRootProperty, PostReceiveSetKeyValue, PostReceiveLimit:
+			case PostReceiveBinaryData:
+				if template, _ := action.Properties["url"].(string); strings.TrimSpace(template) == "" {
+					return fmt.Errorf("postReceive %s needs a url template", PostReceiveBinaryData)
+				}
 			default:
-				return fmt.Errorf("postReceive action %q is not supported; use %s, %s or %s",
-					action.Type, PostReceiveRootProperty, PostReceiveSetKeyValue, PostReceiveLimit)
+				return fmt.Errorf("postReceive action %q is not supported; use %s, %s, %s or %s",
+					action.Type, PostReceiveRootProperty, PostReceiveSetKeyValue, PostReceiveLimit, PostReceiveBinaryData)
 			}
 		}
 	}

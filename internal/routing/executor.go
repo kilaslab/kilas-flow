@@ -5,8 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
+	"path"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -114,7 +118,7 @@ func (executor *Executor) runOne(
 	routingContext.Parameters = parameters
 	routingContext.Credentials = public
 
-	built, err := buildPlan(definition, description, parameters, routingContext)
+	built, err := buildPlan(definition, description, parameters, item, routingContext)
 	if err != nil {
 		return nil, fmt.Errorf("node %q: %w", ir.Name, err)
 	}
@@ -131,7 +135,7 @@ func (executor *Executor) runOne(
 			applyOffset(&attempt, built.pagination.Properties, offset, pageSize)
 		}
 
-		decoded, err := executor.call(ctx, ir, attempt, request, parameters)
+		decoded, err := executor.call(ctx, ir, attempt, built.files, request, parameters)
 		if err != nil {
 			return nil, err
 		}
@@ -139,6 +143,9 @@ func (executor *Executor) runOne(
 		pageItems, err := postProcess(decoded, built.postReceive, routingContext)
 		if err != nil {
 			return nil, fmt.Errorf("node %q: %w", ir.Name, err)
+		}
+		if err := executor.attachDownloads(ctx, ir, built.postReceive, pageItems, request, routingContext); err != nil {
+			return nil, err
 		}
 		for _, produced := range pageItems {
 			// One request can turn one input item into a whole page, so the
@@ -179,6 +186,7 @@ func (executor *Executor) call(
 	ctx context.Context,
 	ir workflow.IRNode,
 	attempt Request,
+	files map[string]workflow.BinaryRef,
 	request engine.Request,
 	parameters map[string]any,
 ) (any, error) {
@@ -195,11 +203,22 @@ func (executor *Executor) call(
 	}
 
 	var body []byte
-	if len(attempt.Body) > 0 {
+	contentType := ""
+	switch {
+	case len(files) > 0:
+		// An upload turns the whole request into multipart: the scalar fields
+		// travel beside the file rather than as a JSON body, because that is
+		// the only shape an API accepting a file part understands.
+		body, contentType, err = multipartBody(attempt.Body, files, request)
+		if err != nil {
+			return nil, fmt.Errorf("node %q: %w", ir.Name, err)
+		}
+	case len(attempt.Body) > 0:
 		body, err = json.Marshal(attempt.Body)
 		if err != nil {
 			return nil, fmt.Errorf("node %q: encode request body: %w", ir.Name, err)
 		}
+		contentType = "application/json"
 	}
 	method := strings.ToUpper(attempt.Method)
 	if method == "" {
@@ -219,8 +238,8 @@ func (executor *Executor) call(
 	if err != nil {
 		return nil, fmt.Errorf("node %q: %w", ir.Name, err)
 	}
-	if body != nil {
-		httpRequest.Header.Set("Content-Type", "application/json")
+	if contentType != "" {
+		httpRequest.Header.Set("Content-Type", contentType)
 	}
 	for key, value := range attempt.Headers {
 		httpRequest.Header.Set(key, stringOf(value))
@@ -241,9 +260,14 @@ func (executor *Executor) call(
 	}
 	if response.StatusCode >= 400 {
 		// The error names what a user can change: which node, which operation,
-		// and what the server said.
-		return nil, fmt.Errorf("node %q: %s %s returned %d%s",
-			ir.Name, method, target.Redacted(), response.StatusCode, operationSuffix(parameters))
+		// what the server said, and — when the service explains itself — its
+		// own words, which are usually the only actionable part.
+		//
+		// The URL is deliberately not repeated: a path-placed credential puts
+		// the token in it, and Redacted() hides userinfo, not a path segment.
+		return nil, fmt.Errorf("node %q: %s %s returned %d%s%s",
+			ir.Name, method, target.Path, response.StatusCode,
+			operationSuffix(parameters), serviceDescription(contents))
 	}
 	if truncated {
 		return nil, fmt.Errorf("node %q: response exceeds the configured size limit", ir.Name)
@@ -332,6 +356,25 @@ func operationSuffix(parameters map[string]any) string {
 	return " (" + strings.Join(named, ", ") + ")"
 }
 
+// serviceDescription pulls the service's own explanation out of an error body.
+//
+// Telegram answers `{"ok":false,"description":"Bad Request: chat not found"}`,
+// and that sentence is the only part of the failure a user can act on. The
+// keys are the ones the services in this product actually use; anything else
+// contributes nothing rather than a guess.
+func serviceDescription(contents []byte) string {
+	var body map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(contents), &body); err != nil {
+		return ""
+	}
+	for _, key := range []string{"description", "error_description", "message", "error"} {
+		if text, ok := body[key].(string); ok && strings.TrimSpace(text) != "" {
+			return ": " + strings.TrimSpace(text)
+		}
+	}
+	return ""
+}
+
 func decodeResponse(contents []byte) (any, error) {
 	trimmed := bytes.TrimSpace(contents)
 	if len(trimmed) == 0 {
@@ -368,4 +411,161 @@ func stringOf(value any) string {
 		}
 		return string(encoded)
 	}
+}
+
+// multipartBody encodes scalar fields alongside the item's attachments.
+//
+// The payload is read from the binary store here rather than being carried on
+// the item, which is the whole point of the store: a fifty-megabyte video is
+// streamed into one request and never enters an execution record.
+func multipartBody(fields map[string]any, files map[string]workflow.BinaryRef, request engine.Request) ([]byte, string, error) {
+	if request.Binaries == nil {
+		return nil, "", fmt.Errorf("binary storage is not configured on this server")
+	}
+	buffer := &bytes.Buffer{}
+	writer := multipart.NewWriter(buffer)
+
+	// Sorted, so the same request encodes the same way twice — a body that
+	// differs run to run is a body nobody can diff in a bug report.
+	for _, key := range sortedKeys(fields) {
+		if err := writer.WriteField(key, stringOf(fields[key])); err != nil {
+			return nil, "", err
+		}
+	}
+	for _, key := range sortedFileKeys(files) {
+		reference := files[key]
+		payload, _, err := request.Binaries.Get(reference.ID)
+		if err != nil {
+			return nil, "", fmt.Errorf("read the attachment for %q: %w", key, err)
+		}
+		name := reference.FileName
+		if name == "" {
+			name = key
+		}
+		part, err := writer.CreateFormFile(key, name)
+		if err != nil {
+			payload.Close()
+			return nil, "", err
+		}
+		_, copyErr := io.Copy(part, payload)
+		payload.Close()
+		if copyErr != nil {
+			return nil, "", fmt.Errorf("read the attachment for %q: %w", key, copyErr)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		return nil, "", err
+	}
+	return buffer.Bytes(), writer.FormDataContentType(), nil
+}
+
+// attachDownloads runs the binaryData post-receive action over produced items.
+//
+// It happens after the response is shaped rather than inside postProcess,
+// because it makes a *second network call* — through the same policy and the
+// same credential — and postProcess is otherwise pure.
+func (executor *Executor) attachDownloads(
+	ctx context.Context,
+	ir workflow.IRNode,
+	actions []PostReceive,
+	items []workflow.Item,
+	request engine.Request,
+	base expression.Context,
+) error {
+	for _, action := range actions {
+		if action.Type != PostReceiveBinaryData {
+			continue
+		}
+		template, _ := action.Properties["url"].(string)
+		property, _ := action.Properties["property"].(string)
+		if property == "" {
+			property = "data"
+		}
+		for index := range items {
+			// `$json` is the item being downloaded for, so a template reads the
+			// path the API just returned.
+			itemContext := base
+			itemContext.JSON = items[index].JSON
+			resolved, err := expression.Evaluate(template, itemContext)
+			if err != nil {
+				return fmt.Errorf("node %q: postReceive %s url: %w", ir.Name, PostReceiveBinaryData, err)
+			}
+			link := stringOf(resolved)
+			if strings.TrimSpace(link) == "" {
+				continue
+			}
+			if err := executor.download(ctx, ir, link, property, &items[index], request); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (executor *Executor) download(
+	ctx context.Context,
+	ir workflow.IRNode,
+	link, property string,
+	item *workflow.Item,
+	request engine.Request,
+) error {
+	if request.Binaries == nil {
+		return fmt.Errorf("node %q: binary storage is not configured on this server", ir.Name)
+	}
+	target, err := url.Parse(link)
+	if err != nil {
+		return fmt.Errorf("node %q: the download URL is unusable: %w", ir.Name, err)
+	}
+	if err := executor.policy.CheckURL(target); err != nil {
+		return fmt.Errorf("node %q: %w", ir.Name, err)
+	}
+	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
+	if err != nil {
+		return fmt.Errorf("node %q: %w", ir.Name, err)
+	}
+	if err := request.Authenticate(ctx, ir, httpRequest); err != nil {
+		return err
+	}
+	response, err := executor.client.Do(httpRequest)
+	if err != nil {
+		return fmt.Errorf("node %q: download: %w", ir.Name, err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode >= 400 {
+		return fmt.Errorf("node %q: downloading %s answered %d", ir.Name, target.Redacted(), response.StatusCode)
+	}
+	contents, truncated, err := executor.policy.ReadBody(response.Body)
+	if err != nil {
+		return fmt.Errorf("node %q: download: %w", ir.Name, err)
+	}
+	if truncated {
+		return fmt.Errorf("node %q: the download exceeds the configured size limit", ir.Name)
+	}
+	reference, err := request.Binaries.Put(path.Base(target.Path), response.Header.Get("Content-Type"), bytes.NewReader(contents))
+	if err != nil {
+		return fmt.Errorf("node %q: store the download: %w", ir.Name, err)
+	}
+	if item.Binary == nil {
+		item.Binary = map[string]workflow.BinaryRef{}
+	}
+	item.Binary[property] = reference
+	return nil
+}
+
+func sortedKeys(values map[string]any) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func sortedFileKeys(values map[string]workflow.BinaryRef) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }

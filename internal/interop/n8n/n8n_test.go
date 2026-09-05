@@ -17,6 +17,7 @@ import (
 	"github.com/kilaslabs/kilas-flow/internal/webhook"
 	"github.com/kilaslabs/kilas-flow/internal/workflow"
 	"github.com/kilaslabs/kilas-flow/nodes"
+	"github.com/kilaslabs/kilas-flow/packs/telegram"
 	"github.com/kilaslabs/kilas-flow/packs/waha"
 )
 
@@ -43,6 +44,9 @@ func registry(t *testing.T) *node.Registry {
 		if err := executors.Register(id, executor); err != nil {
 			t.Fatalf("Register(%s) error = %v", id, err)
 		}
+	}
+	if err := telegram.Register(catalogue, routes, executors, loadoptions.NewResolver(safehttp.DefaultPolicy(), 0)); err != nil {
+		t.Fatalf("telegram.Register() error = %v", err)
 	}
 	if err := waha.Register(waha.Deps{
 		Definitions: catalogue, Routes: routes, Triggers: triggers,
@@ -1799,5 +1803,103 @@ func TestAnUnknownVersionIsReportedRatherThanSilentlyResolved(t *testing.T) {
 	}
 	if !strings.Contains(reported, "209912") {
 		t.Errorf("report = %q, want it to name the version", reported)
+	}
+}
+
+// Both Telegram types import onto native nodes, and the advertised subset says
+// so — an interoperability claim that is not written down is not a claim.
+func TestBothTelegramTypesImportOntoNativeNodes(t *testing.T) {
+	t.Parallel()
+
+	for sourceType, want := range map[string]string{
+		"n8n-nodes-base.telegram":        n8n.TelegramNodeType,
+		"n8n-nodes-base.telegramTrigger": n8n.TelegramTriggerNodeType,
+	} {
+		fixture := fmt.Sprintf(`{"name":"T","nodes":[{"id":"a","name":"T","type":%q,"typeVersion":1.2,"position":[0,0],"parameters":{"resource":"message","operation":"sendMessage","chatId":"=%s","text":"hi"}}],"connections":{}}`,
+			sourceType, "{{ $json.message.chat.id }}")
+		imported := nodeByName(importFixture(t, fixture).Document, "T")
+		if imported.Type != want {
+			t.Errorf("%s imported as %q, want %q", sourceType, imported.Type, want)
+		}
+		// n8n marks an expression with a leading `=`; KilasFlow with an
+		// explicit marker. A chat id read from the trigger item is the single
+		// most common parameter in a real Telegram workflow.
+		marker, _ := imported.Parameters["chatId"].(map[string]any)
+		if marker["mode"] != "expression" || marker["value"] != "{{ $json.message.chat.id }}" {
+			t.Errorf("%s chatId = %#v, want the expression translated", sourceType, imported.Parameters["chatId"])
+		}
+		if imported.Parameters["operation"] != "sendMessage" {
+			t.Errorf("%s operation = %#v, want it carried unchanged", sourceType, imported.Parameters["operation"])
+		}
+	}
+
+	advertised := strings.Join(n8n.SupportedMappings(), "\n")
+	for _, pair := range []string{
+		"n8n-nodes-base.telegram ↔ pack.telegram",
+		"n8n-nodes-base.telegramTrigger ↔ kilasflow.telegramTrigger",
+	} {
+		if !strings.Contains(advertised, pair) {
+			t.Errorf("SupportedMappings() does not advertise %q", pair)
+		}
+	}
+}
+
+// Export puts the original type strings back, so a workflow that came from n8n
+// can go home.
+func TestExportReproducesTheTelegramTypeStrings(t *testing.T) {
+	t.Parallel()
+
+	const fixture = `{"name":"T","nodes":[
+	  {"id":"a","name":"Trigger","type":"n8n-nodes-base.telegramTrigger","typeVersion":1.2,"position":[0,0],"parameters":{}},
+	  {"id":"b","name":"Reply","type":"n8n-nodes-base.telegram","typeVersion":1.2,"position":[220,0],"parameters":{"resource":"message","operation":"sendMessage"}}
+	],"connections":{"Trigger":{"main":[[{"node":"Reply","type":"main","index":0}]]}}}`
+
+	imported := importFixture(t, fixture)
+	exported, err := n8n.Export(imported.Document, registry(t))
+	if err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+	types := map[string]string{}
+	for _, node := range exported.Document.Nodes {
+		types[node.Name] = node.Type
+	}
+	if types["Trigger"] != "n8n-nodes-base.telegramTrigger" || types["Reply"] != "n8n-nodes-base.telegram" {
+		t.Fatalf("exported types = %#v, want the originals", types)
+	}
+	// And the wire survives, which needs the trigger's single main output to
+	// map back onto slot zero.
+	slots := exported.Document.Connections["Trigger"]["main"]
+	if len(slots) != 1 || len(slots[0]) != 1 || slots[0][0].Node != "Reply" {
+		t.Fatalf("connections = %#v, want the wire preserved", exported.Document.Connections)
+	}
+}
+
+// A parameter n8n supports that KilasFlow does not carry is named rather than
+// dropped: a workflow that looks identical and behaves differently is the worst
+// outcome an importer has.
+func TestATriggerParameterKilasFlowDoesNotCarryIsNamed(t *testing.T) {
+	t.Parallel()
+
+	const fixture = `{"name":"T","nodes":[{"id":"a","name":"T","type":"n8n-nodes-base.telegramTrigger","typeVersion":1.2,"position":[0,0],
+	  "parameters":{"updates":["message"],"additionalFields":{"restrictToChatIds":"42","download":true}}}],"connections":{}}`
+
+	result := importFixture(t, fixture)
+	var reported string
+	for _, issue := range result.Unsupported {
+		if strings.Contains(issue.Field, "restrictToChatIds") {
+			reported = issue.Reason
+		}
+	}
+	if reported == "" {
+		t.Fatal("a parameter KilasFlow reads under a different key was dropped in silence")
+	}
+	if !strings.Contains(reported, "chatIds") {
+		t.Errorf("report = %q, want it to name where KilasFlow reads it", reported)
+	}
+	// What *is* carried stays carried.
+	imported := nodeByName(result.Document, "T")
+	additional, _ := imported.Parameters["additionalFields"].(map[string]any)
+	if additional["download"] != true {
+		t.Errorf("additionalFields = %#v, want the supported fields kept", additional)
 	}
 }

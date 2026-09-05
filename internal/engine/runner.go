@@ -608,21 +608,37 @@ func nodeInput(edges []workflow.IREdge, completed map[string]workflow.NodeOutput
 	return input, nil
 }
 
+// cloneRequest is what each executor is handed.
+//
+// Every field an expression can read has to be here. `NodeItems`, `Workflow`
+// and `TriggerNodeID` were not, which meant `$('Name')` — the form every
+// imported n8n workflow uses to read an earlier node — resolved to "that node
+// has not produced output in this run" no matter what had run. The evaluator
+// was right and the data never reached it.
 func cloneRequest(request Request) Request {
 	cloned := Request{
-		Input:       cloneItem(request.Input),
-		Execution:   request.Execution,
-		Binaries:    request.Binaries,
-		Credentials: request.Credentials,
-		Events:      request.Events,
-		Env:         make(map[string]string, len(request.Env)),
-		NodeOutputs: make(map[string]map[string]any, len(request.NodeOutputs)),
+		Input:         cloneItem(request.Input),
+		Execution:     request.Execution,
+		TriggerNodeID: request.TriggerNodeID,
+		Workflow:      request.Workflow,
+		Binaries:      request.Binaries,
+		Credentials:   request.Credentials,
+		Events:        request.Events,
+		Env:           make(map[string]string, len(request.Env)),
+		NodeOutputs:   make(map[string]map[string]any, len(request.NodeOutputs)),
+		NodeItems:     make(map[string]expression.NodeItem, len(request.NodeItems)),
 	}
 	for key, value := range request.Env {
 		cloned.Env[key] = value
 	}
 	for name, item := range request.NodeOutputs {
 		cloned.NodeOutputs[name] = cloneMap(item)
+	}
+	// A shallow copy of the map: the runner replaces whole entries as the graph
+	// progresses rather than mutating one in place, so an executor holding this
+	// map cannot see a half-written node.
+	for name, item := range request.NodeItems {
+		cloned.NodeItems[name] = item
 	}
 	return cloned
 }

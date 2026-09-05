@@ -9,6 +9,7 @@ import (
 
 	"github.com/kilaslabs/kilas-flow/internal/ai"
 	"github.com/kilaslabs/kilas-flow/internal/engine"
+	"github.com/kilaslabs/kilas-flow/internal/expression"
 	"github.com/kilaslabs/kilas-flow/internal/node"
 	"github.com/kilaslabs/kilas-flow/internal/safehttp"
 	"github.com/kilaslabs/kilas-flow/internal/sqlnode"
@@ -1291,5 +1292,91 @@ func TestLoopFailsRatherThanTruncatingAtItsBound(t *testing.T) {
 	}
 	if bodyRuns != 3 {
 		t.Errorf("recorded %d successful body runs, want the 3 that completed before the bound", bodyRuns)
+	}
+}
+
+// TestDollarNodeByNameReachesTheExecutor is the regression for a defect that
+// made `$('Name')` — the form every imported n8n workflow uses to read an
+// earlier node — resolve to "that node has not produced output in this run" no
+// matter what had run.
+//
+// The runner filled `NodeItems` correctly and then handed each executor a clone
+// that did not carry it. The evaluator was right and the data never reached it,
+// which is why the expression package's own tests passed throughout.
+func TestDollarNodeByNameReachesTheExecutor(t *testing.T) {
+	t.Parallel()
+
+	catalog := node.NewRegistry()
+	if err := nodes.RegisterAll(catalog); err != nil {
+		t.Fatalf("RegisterAll() error = %v", err)
+	}
+	ir, err := workflow.Compile(workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_dollar_node", Name: "Read an earlier node",
+		Nodes: []workflow.Node{
+			{ID: "manual", Name: "Manual Trigger", Type: "kilasflow.manual", TypeVersion: workflow.V(1)},
+			{ID: "first", Name: "First", Type: "kilasflow.set", TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"assignments": map[string]any{"colour": "green"}}},
+			{ID: "second", Name: "Second", Type: "kilasflow.httpRequest", TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"method": "GET", "url": "https://reader.invalid/x"}},
+		},
+		Connections: []workflow.Connection{
+			{ID: "c1", Kind: workflow.ConnectionMain, Source: workflow.Endpoint{NodeID: "manual", Port: "main"}, Target: workflow.Endpoint{NodeID: "first", Port: "main"}},
+			{ID: "c2", Kind: workflow.ConnectionMain, Source: workflow.Endpoint{NodeID: "first", Port: "main"}, Target: workflow.Endpoint{NodeID: "second", Port: "main"}},
+		},
+		Settings: map[string]any{},
+	}, catalog)
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+
+	// A purpose-built executor in place of the HTTP node, so the assertion is
+	// about what reaches an executor rather than about any node's own
+	// behaviour.
+	var seen map[string]any
+	executors := engine.NewRegistry()
+	if err := nodes.RegisterExecutors(executors, safehttp.DefaultPolicy(), sqlnode.Guard{}, ai.NewLoopRuntime(), nil, nil); err != nil {
+		t.Fatalf("RegisterExecutors() error = %v", err)
+	}
+	reader := engine.NewRegistry()
+	for _, id := range executors.Registered() {
+		installed, _ := executors.Lookup(id)
+		if id == "core.httpRequest" {
+			installed = engine.ExecutorFunc(func(_ context.Context, node workflow.IRNode, input workflow.NodeInput, request engine.Request) (workflow.NodeOutput, error) {
+				resolved, err := expression.Resolve(map[string]any{
+					"fromEarlier":  map[string]any{"mode": "expression", "value": "{{ $('First').item.json.colour }}"},
+					"fromTrigger":  map[string]any{"mode": "expression", "value": "{{ $('Manual Trigger').item.json.customer }}"},
+					"workflowName": map[string]any{"mode": "expression", "value": "{{ $workflow.name }}"},
+					"trigger":      map[string]any{"mode": "expression", "value": "{{ $execution.mode }}"},
+				}, request.ExpressionContext(input["main"][0], input, 0))
+				if err != nil {
+					return nil, err
+				}
+				seen = resolved
+				return workflow.NodeOutput{{{JSON: resolved}}}, nil
+			})
+		}
+		if err := reader.Register(id, installed); err != nil {
+			t.Fatalf("Register(%s) error = %v", id, err)
+		}
+	}
+
+	if _, err := engine.NewRunner(reader).Run(context.Background(), ir, engine.Request{
+		Input:     workflow.Item{JSON: map[string]any{"customer": "Ada"}},
+		Workflow:  expression.WorkflowContext{ID: "wf_dollar_node", Name: "Read an earlier node"},
+		Execution: engine.ExecutionContext{ID: "exec-1", Mode: "manual"},
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	for key, want := range map[string]any{
+		"fromEarlier":  "green",
+		"fromTrigger":  "Ada",
+		"workflowName": "Read an earlier node",
+		"trigger":      "manual",
+	} {
+		if seen[key] != want {
+			t.Errorf("%s = %#v, want %#v", key, seen[key], want)
+		}
 	}
 }

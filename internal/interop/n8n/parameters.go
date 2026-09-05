@@ -712,3 +712,26 @@ func packToN8N(node workflow.Node) (map[string]any, []Lossy) {
 	}
 	return converted, nil
 }
+
+// telegramTriggerToKilas carries the trigger's parameters and names the ones
+// KilasFlow does not have.
+//
+// n8n's Telegram trigger stores its Additional Fields under the same key this
+// one does, so the shape carries straight through. What does not carry is
+// reported rather than dropped: a parameter that silently disappears leaves a
+// workflow that looks identical to the one it came from and behaves differently.
+func telegramTriggerToKilas(node Node) (map[string]any, []Unsupported) {
+	converted, _ := packToKilas(node)
+	var issues []Unsupported
+
+	additional, _ := node.Parameters["additionalFields"].(map[string]any)
+	for key, reason := range map[string]string{
+		"restrictToChatIds": "KilasFlow names this Restrict to Chat IDs and reads it from `additionalFields.chatIds`",
+		"restrictToUserIds": "KilasFlow names this Restrict to User IDs and reads it from `additionalFields.userIds`",
+	} {
+		if _, present := additional[key]; present {
+			issues = append(issues, Unsupported{Field: "additionalFields." + key, Reason: reason})
+		}
+	}
+	return converted, issues
+}

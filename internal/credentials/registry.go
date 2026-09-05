@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -24,7 +25,23 @@ const (
 	PlacementBasic Placement = "basicAuth"
 	// PlacementBearer sends an Authorization bearer token.
 	PlacementBearer Placement = "bearer"
+	// PlacementPath substitutes credential fields into the request's path.
+	//
+	// Telegram's Bot API puts the token in the path — /bot<token>/sendMessage
+	// — which no header or query placement can express. A node writes the
+	// marker `{credential.accessToken}` and the substitution happens *here*,
+	// inside the package that already holds the secret: the alternative was
+	// exposing the token to the expression evaluator through `$credentials`,
+	// which carries non-secret fields only and is meant to keep carrying only
+	// those.
+	//
+	// It is also not the same as declaring no authentication, which still means
+	// "this credential cannot sign an HTTP request" and is still refused.
+	PlacementPath Placement = "path"
 )
+
+// credentialPathMarker is what a node writes where a credential field goes.
+var credentialPathMarker = regexp.MustCompile(`\{credential\.([A-Za-z0-9_]+)\}`)
 
 // Authentication describes how a credential authenticates a request, as data.
 //
@@ -171,6 +188,16 @@ func ApplyAuthentication(request *http.Request, credentialType Type, fields map[
 		return fmt.Errorf("credential type %q cannot authenticate an HTTP request", credentialType.ID)
 	}
 	switch descriptor.Placement {
+	case PlacementPath:
+		substituted := credentialPathMarker.ReplaceAllStringFunc(request.URL.Path, func(match string) string {
+			return fields[credentialPathMarker.FindStringSubmatch(match)[1]]
+		})
+		if substituted == request.URL.Path {
+			return fmt.Errorf("credential type %q expects a {credential.…} marker in the request path", credentialType.ID)
+		}
+		// RawPath is cleared so the URL re-encodes from the substituted Path;
+		// leaving it would send the marker.
+		request.URL.Path, request.URL.RawPath = substituted, ""
 	case PlacementBasic:
 		request.SetBasicAuth(fields[descriptor.User], fields[descriptor.Password])
 	case PlacementBearer:
@@ -225,9 +252,10 @@ func (credentialType Type) Fields() []Field {
 	fields := make([]Field, 0, len(credentialType.Properties))
 	for _, declared := range credentialType.Properties {
 		_, withheld := secret[declared.Key]
+		fallback, _ := declared.Default.(string)
 		fields = append(fields, Field{
 			Key: declared.Key, Label: declared.Label, Description: declared.Description,
-			Required: declared.Required, Secret: withheld,
+			Required: declared.Required, Default: fallback, Secret: withheld,
 		})
 	}
 	return fields

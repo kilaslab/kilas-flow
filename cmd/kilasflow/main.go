@@ -36,6 +36,7 @@ import (
 	"github.com/kilaslabs/kilas-flow/internal/sqlnode"
 	"github.com/kilaslabs/kilas-flow/internal/webhook"
 	"github.com/kilaslabs/kilas-flow/nodes"
+	"github.com/kilaslabs/kilas-flow/packs/telegram"
 	"github.com/kilaslabs/kilas-flow/packs/waha"
 )
 
@@ -127,6 +128,9 @@ func run() error {
 	packTriggers := nodepack.NewTriggerRegistry()
 	if err := executorRegistry.Register(nodepack.TriggerExecutorID, nodepack.NewTriggerExecutor(packTriggers, outboundPolicy(cfg.Outbound))); err != nil {
 		return fmt.Errorf("register the pack trigger executor: %w", err)
+	}
+	if err := telegram.Register(nodeRegistry, routes, executorRegistry, optionLoader); err != nil {
+		return fmt.Errorf("register the Telegram node pack: %w", err)
 	}
 	if err := waha.Register(waha.Deps{
 		Definitions: nodeRegistry, Routes: routes, Triggers: packTriggers,

@@ -81,6 +81,13 @@ type Field struct {
 	Label       string `json:"label"`
 	Description string `json:"description,omitempty"`
 	Required    bool   `json:"required"`
+	// Default is what a fresh credential starts with.
+	//
+	// It matters for a field that is required *and* almost always the same
+	// value — a Bot API base URL, say. Without it, "required" means every user
+	// types the same string, and a required field with no suggestion is how a
+	// credential form gets abandoned.
+	Default string `json:"default,omitempty"`
 	// Secret fields are never returned by the API after they are stored.
 	Secret bool `json:"secret"`
 }

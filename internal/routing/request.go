@@ -7,6 +7,7 @@ import (
 	"github.com/kilaslabs/kilas-flow/internal/expression"
 	"github.com/kilaslabs/kilas-flow/internal/node"
 	"github.com/kilaslabs/kilas-flow/internal/property"
+	"github.com/kilaslabs/kilas-flow/internal/workflow"
 )
 
 // plan is everything one node's properties add up to: the request to make, what
@@ -16,6 +17,11 @@ type plan struct {
 	postReceive []PostReceive
 	maxResults  int
 	pagination  *Pagination
+	// files are the item's attachments this request uploads, keyed by the
+	// multipart field name. A non-empty map is what makes the request
+	// multipart; there is no separate flag, because a flag could be set on a
+	// request that ends up sending no file.
+	files map[string]workflow.BinaryRef
 }
 
 // buildPlan walks the node's properties in declaration order and folds each
@@ -34,6 +40,7 @@ func buildPlan(
 	definition node.Definition,
 	description *Node,
 	parameters map[string]any,
+	item workflow.Item,
 	base expression.Context,
 ) (plan, error) {
 	built := plan{request: cloneRequest(description.Defaults)}
@@ -96,12 +103,12 @@ func buildPlan(
 			if !found {
 				return plan{}, fmt.Errorf("no request is declared for resource %q operation %q", resource, operation)
 			}
-			if err := built.apply(routed, value, visible, base); err != nil {
+			if err := built.apply(routed, value, visible, item, base); err != nil {
 				return plan{}, fmt.Errorf("resource %q operation %q: %w", resource, operation, err)
 			}
 		}
 		if routing, found := description.Properties[declared.Key]; found {
-			if err := built.apply(routing, value, visible, base); err != nil {
+			if err := built.apply(routing, value, visible, item, base); err != nil {
 				return plan{}, fmt.Errorf("property %q: %w", declared.Key, err)
 			}
 		}
@@ -114,7 +121,7 @@ func buildPlan(
 			if !found {
 				continue
 			}
-			if err := built.apply(routing, value, visible, base); err != nil {
+			if err := built.apply(routing, value, visible, item, base); err != nil {
 				return plan{}, fmt.Errorf("property %q option %q: %w", declared.Key, selected, err)
 			}
 		}
@@ -123,7 +130,7 @@ func buildPlan(
 }
 
 // apply folds one routing object into the plan.
-func (built *plan) apply(routing Routing, value any, visible map[string]any, base expression.Context) error {
+func (built *plan) apply(routing Routing, value any, visible map[string]any, item workflow.Item, base expression.Context) error {
 	// `$value` is bound to the property this routing belongs to, so a request
 	// template and a send template written on the same property see the same
 	// value.
@@ -134,7 +141,7 @@ func (built *plan) apply(routing Routing, value any, visible map[string]any, bas
 		}
 	}
 	if routing.Send != nil {
-		if err := built.send(*routing.Send, value, evaluate); err != nil {
+		if err := built.send(*routing.Send, value, item, evaluate); err != nil {
 			return err
 		}
 	}
@@ -147,7 +154,7 @@ func (built *plan) apply(routing Routing, value any, visible map[string]any, bas
 		if !shown {
 			continue
 		}
-		if err := built.send(instruction, source, templateEvaluator(withValue(base, source))); err != nil {
+		if err := built.send(instruction, source, item, templateEvaluator(withValue(base, source))); err != nil {
 			return fmt.Errorf("sends %q: %w", instruction.From, err)
 		}
 	}
@@ -164,9 +171,22 @@ func (built *plan) apply(routing Routing, value any, visible map[string]any, bas
 }
 
 // send places one property's value into the body or the query string.
-func (built *plan) send(instruction Send, value any, evaluate func(any) (any, error)) error {
+func (built *plan) send(instruction Send, value any, item workflow.Item, evaluate func(any) (any, error)) error {
 	if strings.TrimSpace(instruction.Property) == "" {
 		return fmt.Errorf("send needs a destination property")
+	}
+	if instruction.Type == "binary" {
+		// The parameter names a binary property on the item, not a value.
+		name, _ := value.(string)
+		reference, attached := item.Binary[strings.TrimSpace(name)]
+		if !attached {
+			return fmt.Errorf("the item has no binary property %q to upload", name)
+		}
+		if built.files == nil {
+			built.files = map[string]workflow.BinaryRef{}
+		}
+		built.files[instruction.Property] = reference
+		return nil
 	}
 	sent := value
 	if instruction.Value != "" {

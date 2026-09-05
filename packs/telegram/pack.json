@@ -1,0 +1,1119 @@
+{
+  "type": "pack.telegram",
+  "version": 1,
+  "displayName": "Telegram",
+  "description": "Send messages, media and chat actions through a Telegram bot.",
+  "category": "Messaging",
+  "icon": "builtin:send",
+  "iconColor": "#2aabee",
+  "subtitle": "{{ $parameter.operation }}: {{ $parameter.resource }}",
+  "documentationUrl": "https://core.telegram.org/bots/api",
+  "credentialType": "telegramApi",
+  "requestDefaults": {
+    "baseURL": "{{ $credentials.baseUrl }}"
+  },
+  "parameters": [
+    {
+      "key": "chatId",
+      "label": "Chat ID",
+      "kind": "string",
+      "resources": [
+        "chat",
+        "message"
+      ],
+      "operations": [
+        "administrators",
+        "deleteMessage",
+        "editMessageText",
+        "get",
+        "leave",
+        "member",
+        "pinChatMessage",
+        "sendAnimation",
+        "sendAudio",
+        "sendChatAction",
+        "sendDocument",
+        "sendLocation",
+        "sendMediaGroup",
+        "sendMessage",
+        "sendPhoto",
+        "sendSticker",
+        "sendVideo",
+        "setDescription",
+        "setTitle",
+        "unpinChatMessage"
+      ],
+      "description": "A numeric chat id or an @channelusername. Sent as written: coercing it to a number breaks every channel username, and Telegram accepts both forms.",
+      "required": true
+    },
+    {
+      "key": "text",
+      "label": "Text",
+      "kind": "string",
+      "resources": [
+        "callback",
+        "message"
+      ],
+      "operations": [
+        "answerQuery",
+        "editMessageText",
+        "sendMessage"
+      ],
+      "description": "The message text.",
+      "typeOptions": {
+        "rows": 4
+      }
+    },
+    {
+      "key": "file",
+      "label": "File",
+      "kind": "string",
+      "resources": [
+        "message"
+      ],
+      "operations": [
+        "sendAnimation",
+        "sendAudio",
+        "sendDocument",
+        "sendPhoto",
+        "sendSticker",
+        "sendVideo"
+      ],
+      "description": "A file_id Telegram already holds, or a public URL. Leave empty and name a binary property to upload the item's own attachment instead."
+    },
+    {
+      "key": "binaryPropertyName",
+      "label": "Binary Property",
+      "kind": "string",
+      "resources": [
+        "message"
+      ],
+      "operations": [
+        "sendAnimation",
+        "sendAudio",
+        "sendDocument",
+        "sendMediaGroup",
+        "sendPhoto",
+        "sendSticker",
+        "sendVideo"
+      ],
+      "description": "The item's binary property to upload. Leave empty to send the File field instead."
+    },
+    {
+      "key": "caption",
+      "label": "Caption",
+      "kind": "string",
+      "resources": [
+        "message"
+      ],
+      "operations": [
+        "sendAnimation",
+        "sendAudio",
+        "sendDocument",
+        "sendPhoto",
+        "sendSticker",
+        "sendVideo"
+      ],
+      "description": "Text shown under the attachment."
+    },
+    {
+      "key": "parseMode",
+      "label": "Parse Mode",
+      "kind": "options",
+      "resources": [
+        "message"
+      ],
+      "operations": [
+        "editMessageText",
+        "sendAnimation",
+        "sendAudio",
+        "sendDocument",
+        "sendMessage",
+        "sendPhoto",
+        "sendSticker",
+        "sendVideo"
+      ],
+      "description": "How Telegram reads the markup in the text.",
+      "default": "",
+      "options": [
+        {
+          "label": "None",
+          "value": ""
+        },
+        {
+          "label": "Markdown",
+          "value": "Markdown"
+        },
+        {
+          "label": "MarkdownV2",
+          "value": "MarkdownV2"
+        },
+        {
+          "label": "HTML",
+          "value": "HTML"
+        }
+      ]
+    },
+    {
+      "key": "replyMarkup",
+      "label": "Reply Markup",
+      "kind": "json",
+      "resources": [
+        "message"
+      ],
+      "operations": [
+        "editMessageText",
+        "sendAnimation",
+        "sendAudio",
+        "sendDocument",
+        "sendMessage",
+        "sendPhoto",
+        "sendSticker",
+        "sendVideo"
+      ],
+      "description": "An inline keyboard or reply keyboard, as the Bot API's JSON."
+    },
+    {
+      "key": "replyToMessageId",
+      "label": "Reply To Message ID",
+      "kind": "number",
+      "resources": [
+        "message"
+      ],
+      "operations": [
+        "sendAnimation",
+        "sendAudio",
+        "sendDocument",
+        "sendLocation",
+        "sendMediaGroup",
+        "sendMessage",
+        "sendPhoto",
+        "sendSticker",
+        "sendVideo"
+      ],
+      "description": "Answer a specific message."
+    },
+    {
+      "key": "disableNotification",
+      "label": "Disable Notification",
+      "kind": "boolean",
+      "resources": [
+        "message"
+      ],
+      "operations": [
+        "pinChatMessage",
+        "sendAnimation",
+        "sendAudio",
+        "sendDocument",
+        "sendLocation",
+        "sendMediaGroup",
+        "sendMessage",
+        "sendPhoto",
+        "sendSticker",
+        "sendVideo"
+      ],
+      "description": "Deliver silently."
+    },
+    {
+      "key": "media",
+      "label": "Media",
+      "kind": "json",
+      "resources": [
+        "message"
+      ],
+      "operations": [
+        "sendMediaGroup"
+      ],
+      "description": "The Bot API's media array for an album."
+    },
+    {
+      "key": "latitude",
+      "label": "Latitude",
+      "kind": "number",
+      "resources": [
+        "message"
+      ],
+      "operations": [
+        "sendLocation"
+      ],
+      "description": "Latitude of the point."
+    },
+    {
+      "key": "longitude",
+      "label": "Longitude",
+      "kind": "number",
+      "resources": [
+        "message"
+      ],
+      "operations": [
+        "sendLocation"
+      ],
+      "description": "Longitude of the point."
+    },
+    {
+      "key": "action",
+      "label": "Action",
+      "kind": "options",
+      "resources": [
+        "message"
+      ],
+      "operations": [
+        "sendChatAction"
+      ],
+      "description": "The status to show.",
+      "default": "typing",
+      "options": [
+        {
+          "label": "Typing",
+          "value": "typing"
+        },
+        {
+          "label": "Upload Photo",
+          "value": "upload_photo"
+        },
+        {
+          "label": "Record Video",
+          "value": "record_video"
+        },
+        {
+          "label": "Upload Video",
+          "value": "upload_video"
+        },
+        {
+          "label": "Record Voice",
+          "value": "record_voice"
+        },
+        {
+          "label": "Upload Voice",
+          "value": "upload_voice"
+        },
+        {
+          "label": "Upload Document",
+          "value": "upload_document"
+        },
+        {
+          "label": "Choose Sticker",
+          "value": "choose_sticker"
+        },
+        {
+          "label": "Find Location",
+          "value": "find_location"
+        },
+        {
+          "label": "Record Video Note",
+          "value": "record_video_note"
+        },
+        {
+          "label": "Upload Video Note",
+          "value": "upload_video_note"
+        }
+      ]
+    },
+    {
+      "key": "messageId",
+      "label": "Message ID",
+      "kind": "number",
+      "resources": [
+        "message"
+      ],
+      "operations": [
+        "deleteMessage",
+        "editMessageText",
+        "pinChatMessage",
+        "unpinChatMessage"
+      ],
+      "description": "Which message to act on."
+    },
+    {
+      "key": "inlineMessageId",
+      "label": "Inline Message ID",
+      "kind": "string",
+      "resources": [
+        "message"
+      ],
+      "operations": [
+        "editMessageText"
+      ],
+      "description": "The inline message to edit, instead of a chat message."
+    },
+    {
+      "key": "userId",
+      "label": "User ID",
+      "kind": "number",
+      "resources": [
+        "chat"
+      ],
+      "operations": [
+        "member"
+      ],
+      "description": "Which user to read."
+    },
+    {
+      "key": "title",
+      "label": "Title",
+      "kind": "string",
+      "resources": [
+        "chat"
+      ],
+      "operations": [
+        "setTitle"
+      ],
+      "description": "The chat's new title."
+    },
+    {
+      "key": "description",
+      "label": "Description",
+      "kind": "string",
+      "resources": [
+        "chat"
+      ],
+      "operations": [
+        "setDescription"
+      ],
+      "description": "The chat's new description."
+    },
+    {
+      "key": "queryId",
+      "label": "Query ID",
+      "kind": "string",
+      "resources": [
+        "callback"
+      ],
+      "operations": [
+        "answerInlineQuery",
+        "answerQuery"
+      ],
+      "description": "The callback or inline query to answer."
+    },
+    {
+      "key": "results",
+      "label": "Results",
+      "kind": "json",
+      "resources": [
+        "callback"
+      ],
+      "operations": [
+        "answerInlineQuery"
+      ],
+      "description": "The inline query results, as the Bot API's JSON array."
+    },
+    {
+      "key": "fileId",
+      "label": "File ID",
+      "kind": "string",
+      "resources": [
+        "file"
+      ],
+      "operations": [
+        "get"
+      ],
+      "description": "The file to resolve and download."
+    }
+  ],
+  "resources": [
+    {
+      "name": "message",
+      "description": "Message",
+      "operations": [
+        {
+          "name": "sendMessage",
+          "description": "Send a text message to a chat.",
+          "method": "POST",
+          "url": "/bot{credential.accessToken}/sendMessage",
+          "sends": [
+            {
+              "from": "chatId",
+              "type": "body",
+              "property": "chat_id"
+            },
+            {
+              "from": "text",
+              "type": "body",
+              "property": "text"
+            },
+            {
+              "from": "replyMarkup",
+              "type": "body",
+              "property": "reply_markup"
+            },
+            {
+              "from": "parseMode",
+              "type": "body",
+              "property": "parse_mode"
+            },
+            {
+              "from": "replyToMessageId",
+              "type": "body",
+              "property": "reply_to_message_id"
+            },
+            {
+              "from": "disableNotification",
+              "type": "body",
+              "property": "disable_notification"
+            }
+          ]
+        },
+        {
+          "name": "sendPhoto",
+          "description": "Send a photo. Either upload the item's attachment or give a file_id or URL.",
+          "method": "POST",
+          "url": "/bot{credential.accessToken}/sendPhoto",
+          "sends": [
+            {
+              "from": "chatId",
+              "type": "body",
+              "property": "chat_id"
+            },
+            {
+              "from": "file",
+              "type": "body",
+              "property": "photo"
+            },
+            {
+              "from": "binaryPropertyName",
+              "type": "binary",
+              "property": "photo"
+            },
+            {
+              "from": "caption",
+              "type": "body",
+              "property": "caption"
+            },
+            {
+              "from": "parseMode",
+              "type": "body",
+              "property": "parse_mode"
+            },
+            {
+              "from": "replyMarkup",
+              "type": "body",
+              "property": "reply_markup"
+            },
+            {
+              "from": "replyToMessageId",
+              "type": "body",
+              "property": "reply_to_message_id"
+            },
+            {
+              "from": "disableNotification",
+              "type": "body",
+              "property": "disable_notification"
+            }
+          ]
+        },
+        {
+          "name": "sendDocument",
+          "description": "Send a document. Either upload the item's attachment or give a file_id or URL.",
+          "method": "POST",
+          "url": "/bot{credential.accessToken}/sendDocument",
+          "sends": [
+            {
+              "from": "chatId",
+              "type": "body",
+              "property": "chat_id"
+            },
+            {
+              "from": "file",
+              "type": "body",
+              "property": "document"
+            },
+            {
+              "from": "binaryPropertyName",
+              "type": "binary",
+              "property": "document"
+            },
+            {
+              "from": "caption",
+              "type": "body",
+              "property": "caption"
+            },
+            {
+              "from": "parseMode",
+              "type": "body",
+              "property": "parse_mode"
+            },
+            {
+              "from": "replyMarkup",
+              "type": "body",
+              "property": "reply_markup"
+            },
+            {
+              "from": "replyToMessageId",
+              "type": "body",
+              "property": "reply_to_message_id"
+            },
+            {
+              "from": "disableNotification",
+              "type": "body",
+              "property": "disable_notification"
+            }
+          ]
+        },
+        {
+          "name": "sendAnimation",
+          "description": "Send a animation. Either upload the item's attachment or give a file_id or URL.",
+          "method": "POST",
+          "url": "/bot{credential.accessToken}/sendAnimation",
+          "sends": [
+            {
+              "from": "chatId",
+              "type": "body",
+              "property": "chat_id"
+            },
+            {
+              "from": "file",
+              "type": "body",
+              "property": "animation"
+            },
+            {
+              "from": "binaryPropertyName",
+              "type": "binary",
+              "property": "animation"
+            },
+            {
+              "from": "caption",
+              "type": "body",
+              "property": "caption"
+            },
+            {
+              "from": "parseMode",
+              "type": "body",
+              "property": "parse_mode"
+            },
+            {
+              "from": "replyMarkup",
+              "type": "body",
+              "property": "reply_markup"
+            },
+            {
+              "from": "replyToMessageId",
+              "type": "body",
+              "property": "reply_to_message_id"
+            },
+            {
+              "from": "disableNotification",
+              "type": "body",
+              "property": "disable_notification"
+            }
+          ]
+        },
+        {
+          "name": "sendAudio",
+          "description": "Send a audio. Either upload the item's attachment or give a file_id or URL.",
+          "method": "POST",
+          "url": "/bot{credential.accessToken}/sendAudio",
+          "sends": [
+            {
+              "from": "chatId",
+              "type": "body",
+              "property": "chat_id"
+            },
+            {
+              "from": "file",
+              "type": "body",
+              "property": "audio"
+            },
+            {
+              "from": "binaryPropertyName",
+              "type": "binary",
+              "property": "audio"
+            },
+            {
+              "from": "caption",
+              "type": "body",
+              "property": "caption"
+            },
+            {
+              "from": "parseMode",
+              "type": "body",
+              "property": "parse_mode"
+            },
+            {
+              "from": "replyMarkup",
+              "type": "body",
+              "property": "reply_markup"
+            },
+            {
+              "from": "replyToMessageId",
+              "type": "body",
+              "property": "reply_to_message_id"
+            },
+            {
+              "from": "disableNotification",
+              "type": "body",
+              "property": "disable_notification"
+            }
+          ]
+        },
+        {
+          "name": "sendVideo",
+          "description": "Send a video. Either upload the item's attachment or give a file_id or URL.",
+          "method": "POST",
+          "url": "/bot{credential.accessToken}/sendVideo",
+          "sends": [
+            {
+              "from": "chatId",
+              "type": "body",
+              "property": "chat_id"
+            },
+            {
+              "from": "file",
+              "type": "body",
+              "property": "video"
+            },
+            {
+              "from": "binaryPropertyName",
+              "type": "binary",
+              "property": "video"
+            },
+            {
+              "from": "caption",
+              "type": "body",
+              "property": "caption"
+            },
+            {
+              "from": "parseMode",
+              "type": "body",
+              "property": "parse_mode"
+            },
+            {
+              "from": "replyMarkup",
+              "type": "body",
+              "property": "reply_markup"
+            },
+            {
+              "from": "replyToMessageId",
+              "type": "body",
+              "property": "reply_to_message_id"
+            },
+            {
+              "from": "disableNotification",
+              "type": "body",
+              "property": "disable_notification"
+            }
+          ]
+        },
+        {
+          "name": "sendSticker",
+          "description": "Send a sticker. Either upload the item's attachment or give a file_id or URL.",
+          "method": "POST",
+          "url": "/bot{credential.accessToken}/sendSticker",
+          "sends": [
+            {
+              "from": "chatId",
+              "type": "body",
+              "property": "chat_id"
+            },
+            {
+              "from": "file",
+              "type": "body",
+              "property": "sticker"
+            },
+            {
+              "from": "binaryPropertyName",
+              "type": "binary",
+              "property": "sticker"
+            },
+            {
+              "from": "caption",
+              "type": "body",
+              "property": "caption"
+            },
+            {
+              "from": "parseMode",
+              "type": "body",
+              "property": "parse_mode"
+            },
+            {
+              "from": "replyMarkup",
+              "type": "body",
+              "property": "reply_markup"
+            },
+            {
+              "from": "replyToMessageId",
+              "type": "body",
+              "property": "reply_to_message_id"
+            },
+            {
+              "from": "disableNotification",
+              "type": "body",
+              "property": "disable_notification"
+            }
+          ]
+        },
+        {
+          "name": "sendMediaGroup",
+          "description": "Send a group of photos or videos as an album.",
+          "method": "POST",
+          "url": "/bot{credential.accessToken}/sendMediaGroup",
+          "sends": [
+            {
+              "from": "chatId",
+              "type": "body",
+              "property": "chat_id"
+            },
+            {
+              "from": "media",
+              "type": "body",
+              "property": "media"
+            },
+            {
+              "from": "binaryPropertyName",
+              "type": "binary",
+              "property": "attachment"
+            },
+            {
+              "from": "replyToMessageId",
+              "type": "body",
+              "property": "reply_to_message_id"
+            },
+            {
+              "from": "disableNotification",
+              "type": "body",
+              "property": "disable_notification"
+            }
+          ]
+        },
+        {
+          "name": "sendLocation",
+          "description": "Send a point on the map.",
+          "method": "POST",
+          "url": "/bot{credential.accessToken}/sendLocation",
+          "sends": [
+            {
+              "from": "chatId",
+              "type": "body",
+              "property": "chat_id"
+            },
+            {
+              "from": "latitude",
+              "type": "body",
+              "property": "latitude"
+            },
+            {
+              "from": "longitude",
+              "type": "body",
+              "property": "longitude"
+            },
+            {
+              "from": "replyToMessageId",
+              "type": "body",
+              "property": "reply_to_message_id"
+            },
+            {
+              "from": "disableNotification",
+              "type": "body",
+              "property": "disable_notification"
+            }
+          ]
+        },
+        {
+          "name": "sendChatAction",
+          "description": "Show a status such as typing. A bot that thinks in silence reads as broken.",
+          "method": "POST",
+          "url": "/bot{credential.accessToken}/sendChatAction",
+          "sends": [
+            {
+              "from": "chatId",
+              "type": "body",
+              "property": "chat_id"
+            },
+            {
+              "from": "action",
+              "type": "body",
+              "property": "action"
+            }
+          ]
+        },
+        {
+          "name": "editMessageText",
+          "description": "Replace the text of a message the bot sent.",
+          "method": "POST",
+          "url": "/bot{credential.accessToken}/editMessageText",
+          "sends": [
+            {
+              "from": "chatId",
+              "type": "body",
+              "property": "chat_id"
+            },
+            {
+              "from": "messageId",
+              "type": "body",
+              "property": "message_id"
+            },
+            {
+              "from": "inlineMessageId",
+              "type": "body",
+              "property": "inline_message_id"
+            },
+            {
+              "from": "text",
+              "type": "body",
+              "property": "text"
+            },
+            {
+              "from": "parseMode",
+              "type": "body",
+              "property": "parse_mode"
+            },
+            {
+              "from": "replyMarkup",
+              "type": "body",
+              "property": "reply_markup"
+            }
+          ]
+        },
+        {
+          "name": "deleteMessage",
+          "description": "Delete a message.",
+          "method": "POST",
+          "url": "/bot{credential.accessToken}/deleteMessage",
+          "sends": [
+            {
+              "from": "chatId",
+              "type": "body",
+              "property": "chat_id"
+            },
+            {
+              "from": "messageId",
+              "type": "body",
+              "property": "message_id"
+            }
+          ]
+        },
+        {
+          "name": "pinChatMessage",
+          "description": "Pin a message in a chat.",
+          "method": "POST",
+          "url": "/bot{credential.accessToken}/pinChatMessage",
+          "sends": [
+            {
+              "from": "chatId",
+              "type": "body",
+              "property": "chat_id"
+            },
+            {
+              "from": "messageId",
+              "type": "body",
+              "property": "message_id"
+            },
+            {
+              "from": "disableNotification",
+              "type": "body",
+              "property": "disable_notification"
+            }
+          ]
+        },
+        {
+          "name": "unpinChatMessage",
+          "description": "Unpin a message in a chat.",
+          "method": "POST",
+          "url": "/bot{credential.accessToken}/unpinChatMessage",
+          "sends": [
+            {
+              "from": "chatId",
+              "type": "body",
+              "property": "chat_id"
+            },
+            {
+              "from": "messageId",
+              "type": "body",
+              "property": "message_id"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "chat",
+      "description": "Chat",
+      "operations": [
+        {
+          "name": "get",
+          "description": "Read a chat's details.",
+          "method": "POST",
+          "url": "/bot{credential.accessToken}/getChat",
+          "sends": [
+            {
+              "from": "chatId",
+              "type": "body",
+              "property": "chat_id"
+            }
+          ]
+        },
+        {
+          "name": "administrators",
+          "description": "List a chat's administrators.",
+          "method": "POST",
+          "url": "/bot{credential.accessToken}/getChatAdministrators",
+          "sends": [
+            {
+              "from": "chatId",
+              "type": "body",
+              "property": "chat_id"
+            }
+          ],
+          "output": {
+            "postReceive": [
+              {
+                "type": "rootProperty",
+                "properties": {
+                  "property": "result"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "member",
+          "description": "Read one member of a chat.",
+          "method": "POST",
+          "url": "/bot{credential.accessToken}/getChatMember",
+          "sends": [
+            {
+              "from": "chatId",
+              "type": "body",
+              "property": "chat_id"
+            },
+            {
+              "from": "userId",
+              "type": "body",
+              "property": "user_id"
+            }
+          ]
+        },
+        {
+          "name": "leave",
+          "description": "Leave a chat.",
+          "method": "POST",
+          "url": "/bot{credential.accessToken}/leaveChat",
+          "sends": [
+            {
+              "from": "chatId",
+              "type": "body",
+              "property": "chat_id"
+            }
+          ]
+        },
+        {
+          "name": "setTitle",
+          "description": "Rename a chat.",
+          "method": "POST",
+          "url": "/bot{credential.accessToken}/setChatTitle",
+          "sends": [
+            {
+              "from": "chatId",
+              "type": "body",
+              "property": "chat_id"
+            },
+            {
+              "from": "title",
+              "type": "body",
+              "property": "title"
+            }
+          ]
+        },
+        {
+          "name": "setDescription",
+          "description": "Set a chat's description.",
+          "method": "POST",
+          "url": "/bot{credential.accessToken}/setChatDescription",
+          "sends": [
+            {
+              "from": "chatId",
+              "type": "body",
+              "property": "chat_id"
+            },
+            {
+              "from": "description",
+              "type": "body",
+              "property": "description"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "callback",
+      "description": "Callback",
+      "operations": [
+        {
+          "name": "answerQuery",
+          "description": "Answer a callback query from an inline keyboard.",
+          "method": "POST",
+          "url": "/bot{credential.accessToken}/answerCallbackQuery",
+          "sends": [
+            {
+              "from": "queryId",
+              "type": "body",
+              "property": "callback_query_id"
+            },
+            {
+              "from": "text",
+              "type": "body",
+              "property": "text"
+            }
+          ]
+        },
+        {
+          "name": "answerInlineQuery",
+          "description": "Answer an inline query.",
+          "method": "POST",
+          "url": "/bot{credential.accessToken}/answerInlineQuery",
+          "sends": [
+            {
+              "from": "queryId",
+              "type": "body",
+              "property": "inline_query_id"
+            },
+            {
+              "from": "results",
+              "type": "body",
+              "property": "results"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "file",
+      "description": "File",
+      "operations": [
+        {
+          "name": "get",
+          "description": "Resolve a file and download it into the binary store.",
+          "method": "POST",
+          "url": "/bot{credential.accessToken}/getFile",
+          "sends": [
+            {
+              "from": "fileId",
+              "type": "body",
+              "property": "file_id"
+            }
+          ],
+          "output": {
+            "postReceive": [
+              {
+                "type": "rootProperty",
+                "properties": {
+                  "property": "result"
+                }
+              },
+              {
+                "type": "binaryData",
+                "properties": {
+                  "url": "{{ $credentials.baseUrl }}/file/bot{credential.accessToken}/{{ $json.file_path }}",
+                  "property": "data"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "generator": {
+    "tool": "hand-written",
+    "source": "https://core.telegram.org/bots/api"
+  }
+}

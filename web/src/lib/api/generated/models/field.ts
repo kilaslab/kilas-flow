@@ -7,6 +7,7 @@
  */
 
 export interface Field {
+  default?: string;
   description?: string;
   key: string;
   label: string;

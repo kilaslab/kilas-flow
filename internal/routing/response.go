@@ -74,6 +74,11 @@ func applyPostReceive(current any, action PostReceive, base expression.Context) 
 		}
 		return list, nil
 
+	case PostReceiveBinaryData:
+		// Handled after the items exist, because it makes a second network
+		// call and this function is otherwise pure.
+		return current, nil
+
 	default:
 		// Unreachable: Registry.Register refuses an unknown action. Kept so
 		// that adding a constant without adding a case fails here rather than

@@ -238,6 +238,18 @@ var mappings = []mapping{
 		exportTypeVersion: 1, toKilas: stickyToKilas, toN8N: stickyToN8N,
 	},
 
+	// Telegram. The action node is a pack; the trigger is a built-in, because
+	// its registration, its file downloads and its polling mode are behaviour
+	// rather than data.
+	{
+		n8nType: "n8n-nodes-base.telegram", kilasType: TelegramNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1.2, toKilas: packToKilas, toN8N: packToN8N,
+	},
+	{
+		n8nType: "n8n-nodes-base.telegramTrigger", kilasType: TelegramTriggerNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1.2, toKilas: telegramTriggerToKilas, toN8N: packToN8N,
+	},
+
 	// WAHA. Four entries for two nodes: the published package is scoped and an
 	// older one was not, and a workflow authored against either has to find the
 	// same node.
@@ -277,6 +289,9 @@ var mappings = []mapping{
 const (
 	WAHANodeType        = "pack.waha"
 	WAHATriggerNodeType = "pack.wahaTrigger"
+	// TelegramNodeType is the pack; TelegramTriggerNodeType is a built-in.
+	TelegramNodeType        = "pack.telegram"
+	TelegramTriggerNodeType = "kilasflow.telegramTrigger"
 )
 
 func byN8NType(nodeType string) (mapping, bool) {
