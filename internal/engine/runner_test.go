@@ -594,13 +594,15 @@ func retryIR(t *testing.T, settings map[string]any) workflow.IR {
 	t.Helper()
 	catalog := node.NewRegistry()
 	if err := catalog.Register(node.Definition{
-		Type: "test.trigger", Version: workflow.V(1), DisplayName: "Trigger", Category: "Test",
+		Group: []node.NodeGroup{node.GroupTransform},
+		Type:  "test.trigger", Version: workflow.V(1), DisplayName: "Trigger", Category: "Test",
 		Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}}, ExecutorID: "test.trigger",
 	}); err != nil {
 		t.Fatalf("Register() error = %v", err)
 	}
 	if err := catalog.Register(node.Definition{
-		Type: "test.flaky", Version: workflow.V(1), DisplayName: "Flaky", Category: "Test",
+		Group: []node.NodeGroup{node.GroupTransform},
+		Type:  "test.flaky", Version: workflow.V(1), DisplayName: "Flaky", Category: "Test",
 		Inputs:     []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
 		Outputs:    []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
 		ExecutorID: "test.flaky",
@@ -608,7 +610,8 @@ func retryIR(t *testing.T, settings map[string]any) workflow.IR {
 		t.Fatalf("Register() error = %v", err)
 	}
 	if err := catalog.Register(node.Definition{
-		Type: "test.after", Version: workflow.V(1), DisplayName: "After", Category: "Test",
+		Group: []node.NodeGroup{node.GroupTransform},
+		Type:  "test.after", Version: workflow.V(1), DisplayName: "After", Category: "Test",
 		Inputs:     []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
 		Outputs:    []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
 		ExecutorID: "test.after",
@@ -818,7 +821,8 @@ func TestRetryAndContinueOnFailComposeSoTheBudgetIsSpentFirst(t *testing.T) {
 func TestLineageSurvivesAOneToOneChain(t *testing.T) {
 	catalog := node.NewRegistry()
 	if err := catalog.Register(node.Definition{
-		Type: "test.source", Version: workflow.V(1), DisplayName: "Source", Category: "Test",
+		Group: []node.NodeGroup{node.GroupTransform},
+		Type:  "test.source", Version: workflow.V(1), DisplayName: "Source", Category: "Test",
 		Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}}, ExecutorID: "test.source",
 	}); err != nil {
 		t.Fatalf("Register() error = %v", err)
@@ -914,7 +918,8 @@ func TestLineageSurvivesAOneToOneChain(t *testing.T) {
 func TestLineageIsReportedLostRatherThanGuessed(t *testing.T) {
 	catalog := node.NewRegistry()
 	if err := catalog.Register(node.Definition{
-		Type: "test.fanout", Version: workflow.V(1), DisplayName: "Fan out", Category: "Test",
+		Group: []node.NodeGroup{node.GroupTransform},
+		Type:  "test.fanout", Version: workflow.V(1), DisplayName: "Fan out", Category: "Test",
 		Inputs:     []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
 		Outputs:    []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
 		ExecutorID: "test.fanout",
@@ -1125,7 +1130,8 @@ func TestLoopDispatchesOneBatchPerIteration(t *testing.T) {
 func TestLoopCollectsEveryBatchOntoDone(t *testing.T) {
 	catalog := node.NewRegistry()
 	if err := catalog.Register(node.Definition{
-		Type: "test.five", Version: workflow.V(1), DisplayName: "Five", Category: "Test",
+		Group: []node.NodeGroup{node.GroupTransform},
+		Type:  "test.five", Version: workflow.V(1), DisplayName: "Five", Category: "Test",
 		Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}}, ExecutorID: "test.five",
 	}); err != nil {
 		t.Fatalf("Register() error = %v", err)
@@ -1213,7 +1219,8 @@ func TestLoopCollectsEveryBatchOntoDone(t *testing.T) {
 func TestLoopFailsRatherThanTruncatingAtItsBound(t *testing.T) {
 	catalog := node.NewRegistry()
 	if err := catalog.Register(node.Definition{
-		Type: "test.many", Version: workflow.V(1), DisplayName: "Many", Category: "Test",
+		Group: []node.NodeGroup{node.GroupTransform},
+		Type:  "test.many", Version: workflow.V(1), DisplayName: "Many", Category: "Test",
 		Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}}, ExecutorID: "test.many",
 	}); err != nil {
 		t.Fatalf("Register() error = %v", err)

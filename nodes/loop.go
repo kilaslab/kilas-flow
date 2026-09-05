@@ -40,6 +40,9 @@ func loopNode() node.Definition {
 		DisplayName: "Loop Over Items",
 		Description: "Splits incoming items into batches and runs the connected body once per batch.",
 		Category:    "Flow",
+		Group:       []node.NodeGroup{node.GroupTransform},
+		Icon:        &node.NodeIcon{Light: "builtin:repeat"},
+		IconColor:   "#f59e0b",
 		LoopEntry:   true,
 		Inputs:      mainInput(),
 		Outputs: []workflow.Port{

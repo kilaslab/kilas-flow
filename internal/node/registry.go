@@ -4,6 +4,7 @@ package node
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/kilaslabs/kilas-flow/internal/workflow"
 )
@@ -64,6 +65,99 @@ type Definition struct {
 	SharedSettings []PropertyDefinition     `json:"sharedSettings"`
 	ExecutorID     string                   `json:"-"`
 	Validate       workflow.ConfigValidator `json:"-"`
+
+	// --- Presentation ------------------------------------------------------
+	//
+	// Everything visual used to live in the SPA, hardcoded against KilasFlow's
+	// own node types, so a node the server added arrived on the canvas as a
+	// grey box with no subtitle. That is fine for a closed list written in this
+	// repository and stops being fine the moment a generated pack brings a
+	// hundred operations nobody will hand-write frontend entries for.
+
+	// Group is behavioural and multi-valued: what a node *does*, as against
+	// where it is filed. It is deliberately separate from Category, which is a
+	// panel-grouping label — the picker used to decide whether a node could
+	// start a workflow by comparing that display string, which is behaviour
+	// inferred from a caption.
+	Group []NodeGroup `json:"group"`
+	// Icon names the glyph in each theme. See NodeIcon for the two forms.
+	Icon *NodeIcon `json:"icon,omitempty"`
+	// IconColor is the accent the canvas draws the node with.
+	IconColor string `json:"iconColor,omitempty"`
+	// Subtitle is a `{{ $parameter.key }}` template the editor renders beneath
+	// the node's name, so a configured node says what it will do. See
+	// SubtitleRoot for why the dialect is restricted.
+	Subtitle string `json:"subtitle,omitempty"`
+	// DocumentationURL points at this node's reference page.
+	DocumentationURL string `json:"documentationUrl,omitempty"`
+	// Codex carries the picker's own metadata, kept in a block of its own so
+	// panel arrangement can change without disturbing the node's identity.
+	Codex *NodeCodex `json:"codex,omitempty"`
+}
+
+// NodeGroup is a behavioural classification. The set is closed: a definition
+// declaring anything else is refused at registration, so a typo cannot quietly
+// produce a node the picker files nowhere.
+type NodeGroup string
+
+const (
+	// GroupTrigger starts a workflow.
+	GroupTrigger NodeGroup = "trigger"
+	// GroupInput brings data in.
+	GroupInput NodeGroup = "input"
+	// GroupOutput sends data out.
+	GroupOutput NodeGroup = "output"
+	// GroupTransform reshapes data without leaving the instance.
+	GroupTransform NodeGroup = "transform"
+	// GroupSchedule runs on a timer.
+	GroupSchedule NodeGroup = "schedule"
+	// GroupOrganization annotates the canvas and never executes.
+	GroupOrganization NodeGroup = "organization"
+)
+
+// KnownGroups is the closed set, in a stable order for documentation.
+func KnownGroups() []NodeGroup {
+	return []NodeGroup{
+		GroupTrigger, GroupInput, GroupOutput,
+		GroupTransform, GroupSchedule, GroupOrganization,
+	}
+}
+
+// BuiltinIconPrefix marks an icon the client already ships.
+//
+// Icons take two forms, discriminated by prefix. `builtin:<name>` names a glyph
+// the SPA already imports, which keeps first-party nodes shipping no new bytes;
+// anything else is a path the server answers with the node's own artwork, which
+// is what a generated pack needs to bring its own. Choosing only one form would
+// either force an asset pipeline for glyphs that already exist as components,
+// or leave a generated pack with no way to ship artwork at all.
+const BuiltinIconPrefix = "builtin:"
+
+// NodeIcon names a node's glyph per theme. Both variants are optional; a node
+// that sets only Light uses it in both.
+type NodeIcon struct {
+	Light string `json:"light,omitempty"`
+	Dark  string `json:"dark,omitempty"`
+}
+
+// SubtitleRoot is the only root a subtitle template may use.
+//
+// A subtitle is rendered by the editor against parameters that have not been
+// saved, so the server cannot evaluate it and it cannot read run-time data. It
+// is a template over the node's own parameters and nothing else — restricting
+// it here is what stops it becoming a second expression dialect with its own
+// grammar and its own surprises.
+const SubtitleRoot = "$parameter"
+
+// NodeCodex is the picker's metadata: how a node is filed and found.
+type NodeCodex struct {
+	// Categories are the top-level sections a node appears under.
+	Categories []string `json:"categories,omitempty"`
+	// Subcategories group within a category, keyed by category name.
+	Subcategories map[string][]string `json:"subcategories,omitempty"`
+	// Aliases are extra search terms, so a node is found by the name its users
+	// call it rather than only the one it is registered under.
+	Aliases []string `json:"aliases,omitempty"`
 }
 
 // Registry is the single process-local catalogue of node definitions. It is
@@ -212,6 +306,17 @@ func validateDefinition(definition Definition) error {
 	if definition.DisplayName == "" || definition.Category == "" {
 		return fmt.Errorf("node definition %q requires display name and category", definition.Type)
 	}
+	if len(definition.Group) == 0 {
+		return fmt.Errorf("node definition %q must declare at least one group", definition.Type)
+	}
+	for _, group := range definition.Group {
+		if !knownGroup(group) {
+			return fmt.Errorf("node definition %q declares unknown group %q", definition.Type, group)
+		}
+	}
+	if err := validateSubtitle(definition.Type, definition.Subtitle); err != nil {
+		return err
+	}
 	if definition.ExecutorID == "" {
 		return fmt.Errorf("node definition %q requires executor binding", definition.Type)
 	}
@@ -289,11 +394,34 @@ func requiredParameters(properties []PropertyDefinition) []string {
 	return parameters
 }
 
+// cloneDefinition deep-copies everything a caller could mutate.
+//
+// The registry hands out copies, so a new slice or map that skips this
+// reintroduces aliasing between every caller and the registry's own storage —
+// silently, and only visible once something mutates what it was given.
 func cloneDefinition(definition Definition) Definition {
 	definition.Inputs = append([]workflow.Port(nil), definition.Inputs...)
 	definition.Outputs = append([]workflow.Port(nil), definition.Outputs...)
 	definition.Parameters = cloneProperties(definition.Parameters)
 	definition.SharedSettings = cloneProperties(definition.SharedSettings)
+	definition.Group = append([]NodeGroup(nil), definition.Group...)
+	if definition.Icon != nil {
+		icon := *definition.Icon
+		definition.Icon = &icon
+	}
+	if definition.Codex != nil {
+		codex := NodeCodex{
+			Categories: append([]string(nil), definition.Codex.Categories...),
+			Aliases:    append([]string(nil), definition.Codex.Aliases...),
+		}
+		if definition.Codex.Subcategories != nil {
+			codex.Subcategories = make(map[string][]string, len(definition.Codex.Subcategories))
+			for key, values := range definition.Codex.Subcategories {
+				codex.Subcategories[key] = append([]string(nil), values...)
+			}
+		}
+		definition.Codex = &codex
+	}
 	return definition
 }
 
@@ -327,5 +455,47 @@ func cloneValue(value any) any {
 		return cloned
 	default:
 		return value
+	}
+}
+
+func knownGroup(group NodeGroup) bool {
+	for _, known := range KnownGroups() {
+		if group == known {
+			return true
+		}
+	}
+	return false
+}
+
+// validateSubtitle refuses a template that reads anything but the node's own
+// parameters.
+//
+// The editor renders a subtitle against parameters the user has not saved, so
+// it cannot reach run-time data even in principle. Enforcing that here means a
+// definition cannot ship a subtitle the editor will silently fail to render,
+// and keeps the dialect from growing into a second expression language.
+func validateSubtitle(nodeType, subtitle string) error {
+	if strings.TrimSpace(subtitle) == "" {
+		return nil
+	}
+	rest := subtitle
+	for {
+		start := strings.Index(rest, "{{")
+		if start < 0 {
+			return nil
+		}
+		remainder := rest[start+2:]
+		end := strings.Index(remainder, "}}")
+		if end < 0 {
+			return fmt.Errorf("node definition %q has a subtitle with an unclosed {{", nodeType)
+		}
+		body := strings.TrimSpace(remainder[:end])
+		if !strings.HasPrefix(body, SubtitleRoot+".") {
+			return fmt.Errorf("node definition %q subtitle may only read %s.<key>, got %q", nodeType, SubtitleRoot, body)
+		}
+		if strings.TrimSpace(strings.TrimPrefix(body, SubtitleRoot+".")) == "" {
+			return fmt.Errorf("node definition %q subtitle names no parameter", nodeType)
+		}
+		rest = remainder[end+2:]
 	}
 }

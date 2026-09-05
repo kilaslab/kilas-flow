@@ -126,6 +126,7 @@ func TestRegistryExposesCorePortAndPropertyMetadata(t *testing.T) {
 func TestRegistryRejectsDuplicateDefinitionsAndDefendsCopies(t *testing.T) {
 	registry := node.NewRegistry()
 	definition := node.Definition{
+		Group:       []node.NodeGroup{node.GroupTransform},
 		Type:        "kilasflow.test",
 		Version:     workflow.V(1),
 		DisplayName: "Test",
@@ -164,7 +165,8 @@ func TestRegistryValidatesEverySupportedConnectionKind(t *testing.T) {
 		outputs = append(outputs, workflow.Port{Name: "out-" + string(kind), Kind: kind})
 	}
 	if err := registry.Register(node.Definition{
-		Type: "kilasflow.source", Version: workflow.V(1), DisplayName: "Source", Category: "Test", ExecutorID: "source",
+		Group: []node.NodeGroup{node.GroupTransform},
+		Type:  "kilasflow.source", Version: workflow.V(1), DisplayName: "Source", Category: "Test", ExecutorID: "source",
 		Outputs: outputs,
 	}); err != nil {
 		t.Fatalf("register source = %v", err)
@@ -174,7 +176,8 @@ func TestRegistryValidatesEverySupportedConnectionKind(t *testing.T) {
 	for _, kind := range kinds {
 		targetType := "kilasflow.target." + string(kind)
 		if err := registry.Register(node.Definition{
-			Type: targetType, Version: workflow.V(1), DisplayName: targetType, Category: "Test", ExecutorID: targetType,
+			Group: []node.NodeGroup{node.GroupTransform},
+			Type:  targetType, Version: workflow.V(1), DisplayName: targetType, Category: "Test", ExecutorID: targetType,
 			Inputs: []workflow.Port{{Name: "in", Kind: kind}},
 		}); err != nil {
 			t.Fatalf("register target %q = %v", kind, err)
@@ -244,7 +247,8 @@ func TestRegistryResolvesDownwardNeverUpward(t *testing.T) {
 	registry := node.NewRegistry()
 	for _, version := range []string{"1", "2", "3.4"} {
 		if err := registry.Register(node.Definition{
-			Type: "test.versioned", Version: workflow.MustTypeVersion(version),
+			Group: []node.NodeGroup{node.GroupTransform},
+			Type:  "test.versioned", Version: workflow.MustTypeVersion(version),
 			DisplayName: "Versioned", Category: "Test", ExecutorID: "test.exec",
 		}); err != nil {
 			t.Fatalf("Register(%s) error = %v", version, err)
@@ -294,7 +298,8 @@ func TestRegistryHoldsTwoVersionsOfOneTypeAtOnce(t *testing.T) {
 	registry := node.NewRegistry()
 	for _, version := range []string{"202409", "202502"} {
 		if err := registry.Register(node.Definition{
-			Type: "waha.action", Version: workflow.MustTypeVersion(version),
+			Group: []node.NodeGroup{node.GroupTransform},
+			Type:  "waha.action", Version: workflow.MustTypeVersion(version),
 			DisplayName: "WAHA", Category: "Test", ExecutorID: "waha.exec",
 			Parameters: []node.PropertyDefinition{
 				{Key: version, Label: "Shape " + version, Kind: node.PropertyString},
@@ -316,5 +321,90 @@ func TestRegistryHoldsTwoVersionsOfOneTypeAtOnce(t *testing.T) {
 		if len(definition.Parameters) != 1 || definition.Parameters[0].Key != version {
 			t.Errorf("version %s resolved to the wrong parameter shape: %#v", version, definition.Parameters)
 		}
+	}
+}
+
+// TestRegistryDeepCopiesPresentationFields is why cloneDefinition exists.
+//
+// The registry hands out copies, so a new slice or map that skips the clone
+// silently aliases the registry's own storage — visible only once a caller
+// mutates what it was given, which is exactly the sort of bug that surfaces in
+// production and not in a test.
+func TestRegistryDeepCopiesPresentationFields(t *testing.T) {
+	registry := node.NewRegistry()
+	definition := node.Definition{
+		Type: "test.presented", Version: workflow.V(1),
+		DisplayName: "Presented", Category: "Test", ExecutorID: "test.exec",
+		Group:     []node.NodeGroup{node.GroupTransform},
+		Icon:      &node.NodeIcon{Light: "builtin:box", Dark: "builtin:box-dark"},
+		IconColor: "#000000",
+		Codex: &node.NodeCodex{
+			Categories:    []string{"Test"},
+			Subcategories: map[string][]string{"Test": {"Sub"}},
+			Aliases:       []string{"presented"},
+		},
+	}
+	if err := registry.Register(definition); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+
+	first, found := registry.Get("test.presented", workflow.V(1))
+	if !found {
+		t.Fatal("the definition was not registered")
+	}
+	// Mutate every reference type the caller was handed.
+	first.Group[0] = node.GroupTrigger
+	first.Icon.Light = "tampered"
+	first.Codex.Categories[0] = "tampered"
+	first.Codex.Aliases[0] = "tampered"
+	first.Codex.Subcategories["Test"][0] = "tampered"
+
+	second, _ := registry.Get("test.presented", workflow.V(1))
+	if second.Group[0] != node.GroupTransform {
+		t.Error("group was aliased with the registry's storage")
+	}
+	if second.Icon.Light != "builtin:box" {
+		t.Error("icon was aliased with the registry's storage")
+	}
+	if second.Codex.Categories[0] != "Test" {
+		t.Error("codex categories were aliased with the registry's storage")
+	}
+	if second.Codex.Aliases[0] != "presented" {
+		t.Error("codex aliases were aliased with the registry's storage")
+	}
+	if second.Codex.Subcategories["Test"][0] != "Sub" {
+		t.Error("codex subcategories were aliased with the registry's storage")
+	}
+}
+
+// TestRegistryRefusesAnUnknownGroupOrABadSubtitle keeps both closed sets shut.
+func TestRegistryRefusesAnUnknownGroupOrABadSubtitle(t *testing.T) {
+	base := func() node.Definition {
+		return node.Definition{
+			Type: "test.bad", Version: workflow.V(1),
+			DisplayName: "Bad", Category: "Test", ExecutorID: "test.exec",
+			Group: []node.NodeGroup{node.GroupTransform},
+		}
+	}
+
+	for name, mutate := range map[string]func(*node.Definition){
+		"no group":          func(d *node.Definition) { d.Group = nil },
+		"unknown group":     func(d *node.Definition) { d.Group = []node.NodeGroup{"database"} },
+		"foreign root":      func(d *node.Definition) { d.Subtitle = "{{ $json.name }}" },
+		"unclosed template": func(d *node.Definition) { d.Subtitle = "{{ $parameter.name" },
+		"empty parameter":   func(d *node.Definition) { d.Subtitle = "{{ $parameter. }}" },
+	} {
+		definition := base()
+		mutate(&definition)
+		if err := node.NewRegistry().Register(definition); err == nil {
+			t.Errorf("%s: Register() accepted an invalid definition", name)
+		}
+	}
+
+	// And the valid subtitle form registers.
+	definition := base()
+	definition.Subtitle = "{{ $parameter.method }} {{ $parameter.path }}"
+	if err := node.NewRegistry().Register(definition); err != nil {
+		t.Errorf("a valid subtitle was refused: %v", err)
 	}
 }

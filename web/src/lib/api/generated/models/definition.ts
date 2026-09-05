@@ -5,13 +5,21 @@
  * Embeddable workflow automation engine. Every operation available in the editor is available here: the canvas is a client of this API, not the owner of workflow state.
  * OpenAPI spec version: 0.1.0-dev
  */
+import type { NodeCodex } from './nodeCodex';
+import type { NodeIcon } from './nodeIcon';
 import type { Port } from './port';
 import type { PropertyDefinition } from './propertyDefinition';
 
 export interface Definition {
   category: string;
+  codex?: NodeCodex;
   description?: string;
   displayName: string;
+  documentationUrl?: string;
+  /** @nullable */
+  group: string[] | null;
+  icon?: NodeIcon;
+  iconColor?: string;
   /** @nullable */
   inputs: Port[] | null;
   loopEntry?: boolean;
@@ -21,6 +29,7 @@ export interface Definition {
   parameters: PropertyDefinition[] | null;
   /** @nullable */
   sharedSettings: PropertyDefinition[] | null;
+  subtitle?: string;
   type: string;
   /** Node type version. A decimal such as 1, 4.2, or a YYYYMM value such as 202502. Omit it to use the registered default. */
   version: number;

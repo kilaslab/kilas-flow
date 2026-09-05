@@ -46,6 +46,10 @@ func chatModelNode() node.Definition {
 		DisplayName: "OpenAI Chat Model",
 		Description: "Supplies an OpenAI-compatible chat model to an AI Agent.",
 		Category:    "AI",
+		Group:       []node.NodeGroup{node.GroupTransform},
+		Icon:        &node.NodeIcon{Light: "builtin:brain"},
+		IconColor:   "#a855f7",
+		Subtitle:    "{{ $parameter.model }}",
 		Outputs:     []workflow.Port{{Name: "model", Kind: workflow.ConnectionLanguageModel}},
 		Parameters: []node.PropertyDefinition{
 			{Key: "model", Label: "Model", Kind: node.PropertyString, Required: true, Default: "gpt-4o-mini"},
@@ -70,6 +74,9 @@ func memoryNode() node.Definition {
 		DisplayName: "Simple Memory",
 		Description: "Keeps a bounded window of conversation history for an AI Agent.",
 		Category:    "AI",
+		Group:       []node.NodeGroup{node.GroupTransform},
+		Icon:        &node.NodeIcon{Light: "builtin:memory-stick"},
+		IconColor:   "#a855f7",
 		Outputs:     []workflow.Port{{Name: "memory", Kind: workflow.ConnectionMemory}},
 		Parameters: []node.PropertyDefinition{
 			{
@@ -117,6 +124,9 @@ func agentNode() node.Definition {
 		DisplayName: "AI Agent",
 		Description: "Runs a model with optional memory and tools until it answers.",
 		Category:    "AI",
+		Group:       []node.NodeGroup{node.GroupTransform},
+		Icon:        &node.NodeIcon{Light: "builtin:bot"},
+		IconColor:   "#a855f7",
 		Inputs: []workflow.Port{
 			{Name: "main", Kind: workflow.ConnectionMain},
 			{Name: "model", Kind: workflow.ConnectionLanguageModel},

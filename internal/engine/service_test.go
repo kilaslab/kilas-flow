@@ -176,7 +176,8 @@ func TestServicePersistsFailedNodeRunWhenItsConfiguredTimeoutExpires(t *testing.
 		t.Fatalf("RegisterAll() error = %v", err)
 	}
 	if err := catalog.Register(node.Definition{
-		Type: "kilasflow.test.slow", Version: workflow.V(1), DisplayName: "Slow", Category: "Test",
+		Group: []node.NodeGroup{node.GroupTransform},
+		Type:  "kilasflow.test.slow", Version: workflow.V(1), DisplayName: "Slow", Category: "Test",
 		Inputs:  []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
 		Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}}, ExecutorID: "test.slow",
 	}); err != nil {
@@ -344,7 +345,8 @@ func TestServiceCancelsAnActiveExecutionAndPersistsCancelledNodeRun(t *testing.T
 		t.Fatalf("RegisterAll() error = %v", err)
 	}
 	if err := catalog.Register(node.Definition{
-		Type: "kilasflow.test.block", Version: workflow.V(1), DisplayName: "Block", Category: "Test",
+		Group: []node.NodeGroup{node.GroupTransform},
+		Type:  "kilasflow.test.block", Version: workflow.V(1), DisplayName: "Block", Category: "Test",
 		Inputs:  []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
 		Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}}, ExecutorID: "test.block",
 	}); err != nil {

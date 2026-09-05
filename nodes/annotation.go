@@ -30,6 +30,9 @@ func stickyNoteNode() node.Definition {
 		DisplayName: "Sticky Note",
 		Description: "A note on the canvas. It never runs and never affects a workflow's result.",
 		Category:    "Annotation",
+		Group:       []node.NodeGroup{node.GroupOrganization},
+		Icon:        &node.NodeIcon{Light: "builtin:sticky-note"},
+		IconColor:   "#eab308",
 		Inputs:      []workflow.Port{},
 		Outputs:     []workflow.Port{},
 		Parameters: []node.PropertyDefinition{

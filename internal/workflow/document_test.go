@@ -799,7 +799,8 @@ func TestCompileResolvesAVersionTheRegistryDoesNotHave(t *testing.T) {
 func TestCompileStillRefusesAVersionOlderThanAnythingRegistered(t *testing.T) {
 	catalogue := node.NewRegistry()
 	if err := catalogue.Register(node.Definition{
-		Type: "test.newonly", Version: workflow.V(5),
+		Group: []node.NodeGroup{node.GroupTransform},
+		Type:  "test.newonly", Version: workflow.V(5),
 		DisplayName: "New only", Category: "Test", ExecutorID: "test.exec",
 		Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
 	}); err != nil {

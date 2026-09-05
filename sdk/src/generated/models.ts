@@ -107,6 +107,21 @@ export interface CredentialTypeResource {
   id: string;
 }
 
+export type NodeCodexSubcategories = {[key: string]: string[] | null};
+
+export interface NodeCodex {
+  /** @nullable */
+  aliases?: string[] | null;
+  /** @nullable */
+  categories?: string[] | null;
+  subcategories?: NodeCodexSubcategories;
+}
+
+export interface NodeIcon {
+  dark?: string;
+  light?: string;
+}
+
 export interface Port {
   Kind: string;
   Name: string;
@@ -137,8 +152,14 @@ export interface PropertyDefinition {
 
 export interface Definition {
   category: string;
+  codex?: NodeCodex;
   description?: string;
   displayName: string;
+  documentationUrl?: string;
+  /** @nullable */
+  group: string[] | null;
+  icon?: NodeIcon;
+  iconColor?: string;
   /** @nullable */
   inputs: Port[] | null;
   loopEntry?: boolean;
@@ -148,6 +169,7 @@ export interface Definition {
   parameters: PropertyDefinition[] | null;
   /** @nullable */
   sharedSettings: PropertyDefinition[] | null;
+  subtitle?: string;
   type: string;
   /** Node type version. A decimal such as 1, 4.2, or a YYYYMM value such as 202502. Omit it to use the registered default. */
   version: number;

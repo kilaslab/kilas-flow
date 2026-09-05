@@ -1,7 +1,7 @@
 ---
 id: FEAT-qcm5ec
 title: Add presentation metadata to the node definition
-status: todo
+status: done
 priority: high
 labels:
     - registry
@@ -27,13 +27,13 @@ The trap is the API contract. `internal/api/handlers/nodes.go` returns `NodeType
 
 ## Acceptance criteria
 
-- [ ] `node.Definition` carries `Icon` (light and dark variants), `IconColor`, `Group`, `Subtitle`, `DocumentationURL` and a codex block with categories, subcategories and aliases, all serialized in `/api/v1/node-types`.
-- [ ] `Group` is a behavioural, multi-value field independent of `Category`; `validateDefinition` rejects a definition that declares no group and rejects any group value outside the documented set.
-- [ ] Every built-in definition in `nodes/*.go` declares a group, an icon and an accent; the node picker's trigger filter reads the group, not the category string.
-- [ ] `cloneDefinition` deep-copies every new slice and map field, proven by a test that mutates a returned definition and re-reads it from the registry unchanged.
-- [ ] `web/pnpm generate:api:check` and `sdk/pnpm generate:types:check` both pass against the regenerated clients, and the generated `Definition` model carries the new fields.
-- [ ] A definition may omit every presentation field and still register; the API then returns the field absent rather than an empty string, so a client can tell "unset" from "set to nothing".
-- [ ] The subtitle template dialect is documented on the field and covered by a test that renders one against a node's stored parameters.
+- [x] `node.Definition` carries `Icon` (light and dark variants), `IconColor`, `Group`, `Subtitle`, `DocumentationURL` and a codex block with categories, subcategories and aliases, all serialized in `/api/v1/node-types`.
+- [x] `Group` is a behavioural, multi-value field independent of `Category`; `validateDefinition` rejects a definition that declares no group and rejects any group value outside the documented set.
+- [x] Every built-in definition in `nodes/*.go` declares a group, an icon and an accent; the node picker's trigger filter reads the group, not the category string.
+- [x] `cloneDefinition` deep-copies every new slice and map field, proven by a test that mutates a returned definition and re-reads it from the registry unchanged.
+- [x] `web/pnpm generate:api:check` and `sdk/pnpm generate:types:check` both pass against the regenerated clients, and the generated `Definition` model carries the new fields.
+- [x] A definition may omit every presentation field and still register; the API then returns the field absent rather than an empty string, so a client can tell "unset" from "set to nothing".
+- [x] The subtitle template dialect is documented on the field and covered by a test that renders one against a node's stored parameters.
 
 ## Implementation Plan
 
@@ -57,3 +57,61 @@ Do not touch `Version`; widening it to a float is p1-11's job and doing it here 
 - `web/package.json` / `sdk/package.json` — `generate:api`, `generate:api:check`, `generate:types`, `generate:types:check`.
 - n8n 2.34.0 reference (read-only, outside this repo): `packages/workflow/src/interfaces.ts` — `INodeTypeBaseDescription` (icon, iconColor, iconUrl, group, documentationUrl, subtitle, codex), `NodeGroupType`, `CodexData`.
 - Local n8n UI reference: `design-refs/n8n-v2/INDEX.md` entries 02, 04, 09, 10, 12 — the node creator root categories with their description lines, the derived Triggers/Actions counts, and the same node appearing under a second subcategory when used as a tool. Captured from a local n8n 2.33.7 instance; gitignored, never vendored.
+
+## Outcome
+
+### The split that mattered most
+
+`Group` is behavioural and multi-valued; `Category` stays a panel caption. The
+picker decided whether a node could start a workflow by comparing
+`definition.category !== 'Triggers'` — behaviour inferred from a display string,
+so a node filed anywhere else could never be a trigger however it behaved. It
+reads the group now.
+
+The set is closed and enforced at registration, so a typo cannot quietly produce
+a node the picker files nowhere.
+`TestTriggerGroupIsBehaviouralNotACategoryLabel` asserts both directions: the
+three real triggers are in the group, and a transform is not — however it is
+captioned.
+
+One correction while filling the definitions in: the schedule trigger is
+`{trigger, schedule}`, not `schedule` alone. It is genuinely both, and the
+multi-value field exists precisely so it does not have to choose.
+
+### Icons
+
+Both forms, discriminated by prefix, as recommended. `builtin:<name>` names a
+glyph the SPA already imports, so seventeen first-party nodes ship no new bytes;
+anything else is a path the server answers with a pack's own artwork. Choosing
+one form only would either force an asset pipeline for glyphs that already exist
+as components, or leave a generated pack unable to ship artwork at all.
+
+### Subtitle
+
+A `{{ $parameter.key }}` template and nothing else, refused at registration if
+it names any other root. The editor renders it against parameters the user has
+not saved, so it cannot reach run-time data even in principle — enforcing that
+here stops a definition shipping a subtitle the editor will silently fail to
+render, and stops the dialect growing into a second expression language.
+
+### Deep copy
+
+`cloneDefinition` copies the group slice, the icon pointer and the whole codex
+block including its nested map. `TestRegistryDeepCopiesPresentationFields`
+mutates every reference type a caller is handed and re-reads from the registry —
+aliasing here would be invisible until something mutated what it was given.
+
+### The API contract
+
+`node.Definition` *is* the `/api/v1/node-types` response schema, so every field
+added is an OpenAPI change. Both clients were regenerated and both drift checks
+pass.
+
+Nine frontend fixtures needed the new required field, which is the contract
+change being visible rather than a problem: `group` is required, so a client
+constructing a `Definition` must say what the node does.
+
+### Held to scope
+
+The icon route is not built and the frontend's hardcoded visual maps are not
+deleted — that is the ticket that follows. `Version` was not touched.

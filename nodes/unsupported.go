@@ -119,6 +119,10 @@ func unsupportedNode(arity int) node.Definition {
 		DisplayName: "Unsupported node",
 		Description: "An imported node KilasFlow has no equivalent for. Replace it before running this workflow.",
 		Category:    "Imported",
+		Group:       []node.NodeGroup{node.GroupTransform},
+		Icon:        &node.NodeIcon{Light: "builtin:circle-help"},
+		IconColor:   "#94a3b8",
+		Subtitle:    "{{ $parameter.originalType }}",
 		Inputs:      UnsupportedInputPorts(arity),
 		Outputs:     UnsupportedOutputPorts(arity),
 		Parameters: []node.PropertyDefinition{

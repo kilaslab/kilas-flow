@@ -45,6 +45,9 @@ func RegisterAll(registry *node.Registry) error {
 func manualTrigger() node.Definition {
 	return node.Definition{
 		Type:           "kilasflow.manual",
+		Group:          []node.NodeGroup{node.GroupTrigger},
+		Icon:           &node.NodeIcon{Light: "builtin:mouse-pointer-click"},
+		IconColor:      "#6366f1",
 		Version:        workflow.V(1),
 		DisplayName:    "Manual Trigger",
 		Description:    "Starts a workflow from the editor or API.",
@@ -58,6 +61,10 @@ func manualTrigger() node.Definition {
 func setNode() node.Definition {
 	return node.Definition{
 		Type:        "kilasflow.set",
+		Group:       []node.NodeGroup{node.GroupTransform},
+		Icon:        &node.NodeIcon{Light: "builtin:pencil"},
+		IconColor:   "#0ea5e9",
+		Subtitle:    "{{ $parameter.mode }}",
 		Version:     workflow.V(1),
 		DisplayName: "Set",
 		Description: "Adds or replaces fields on every incoming item.",
@@ -77,6 +84,9 @@ func setNode() node.Definition {
 func ifNode() node.Definition {
 	return node.Definition{
 		Type:        "kilasflow.if",
+		Group:       []node.NodeGroup{node.GroupTransform},
+		Icon:        &node.NodeIcon{Light: "builtin:git-branch"},
+		IconColor:   "#f59e0b",
 		Version:     workflow.V(1),
 		DisplayName: "IF",
 		Description: "Routes items to the true or false branch.",
@@ -99,6 +109,10 @@ func ifNode() node.Definition {
 func mergeNode() node.Definition {
 	return node.Definition{
 		Type:        "kilasflow.merge",
+		Group:       []node.NodeGroup{node.GroupTransform},
+		Icon:        &node.NodeIcon{Light: "builtin:git-merge"},
+		IconColor:   "#f59e0b",
+		Subtitle:    "{{ $parameter.mode }}",
 		Version:     workflow.V(1),
 		DisplayName: "Merge",
 		Description: "Combines item streams from two main inputs.",

@@ -32,7 +32,11 @@
 	const normalizedQuery = $derived(query.trim().toLocaleLowerCase());
 	const available = $derived(
 		definitions.filter((definition) => {
-			if (triggersOnly && definition.category !== 'Triggers') return false;
+			// Behaviour comes from the group, not the category caption. Deciding
+			// whether a node can start a workflow by comparing a display string
+			// meant a node filed anywhere else could never be a trigger, however
+			// it behaved.
+			if (triggersOnly && !(definition.group ?? []).includes('trigger')) return false;
 			// A step is being added after an existing one, so anything without a
 			// main input could never receive its items.
 			if (connecting && !(definition.inputs ?? []).some((port) => port.Kind === 'main')) return false;

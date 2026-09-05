@@ -30,6 +30,10 @@ func httpRequestNode() node.Definition {
 		DisplayName: "HTTP Request",
 		Description: "Calls an external HTTP API and returns its response as items.",
 		Category:    "Core",
+		Group:       []node.NodeGroup{node.GroupOutput},
+		Icon:        &node.NodeIcon{Light: "builtin:globe"},
+		IconColor:   "#10b981",
+		Subtitle:    "{{ $parameter.method }}",
 		Inputs:      mainInput(),
 		Outputs:     mainOutput(),
 		Parameters: []node.PropertyDefinition{

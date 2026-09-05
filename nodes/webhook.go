@@ -48,6 +48,10 @@ func webhookTrigger() node.Definition {
 		DisplayName: "Webhook",
 		Description: "Starts a workflow from an inbound HTTP request.",
 		Category:    "Triggers",
+		Group:       []node.NodeGroup{node.GroupTrigger},
+		Icon:        &node.NodeIcon{Light: "builtin:webhook"},
+		IconColor:   "#8b5cf6",
+		Subtitle:    "{{ $parameter.httpMethod }} {{ $parameter.path }}",
 		Outputs:     mainOutput(),
 		Parameters: []node.PropertyDefinition{
 			{
@@ -100,6 +104,9 @@ func respondToWebhookNode() node.Definition {
 		DisplayName: "Respond to Webhook",
 		Description: "Produces the HTTP response returned to the webhook caller.",
 		Category:    "Core",
+		Group:       []node.NodeGroup{node.GroupOutput},
+		Icon:        &node.NodeIcon{Light: "builtin:reply"},
+		IconColor:   "#8b5cf6",
 		Inputs:      mainInput(),
 		Outputs:     mainOutput(),
 		Parameters: []node.PropertyDefinition{
@@ -123,6 +130,10 @@ func scheduleTrigger() node.Definition {
 		DisplayName: "Schedule",
 		Description: "Starts a workflow on a cron schedule.",
 		Category:    "Triggers",
+		Group:       []node.NodeGroup{node.GroupTrigger, node.GroupSchedule},
+		Icon:        &node.NodeIcon{Light: "builtin:clock"},
+		IconColor:   "#8b5cf6",
+		Subtitle:    "{{ $parameter.cron }}",
 		Outputs:     mainOutput(),
 		Parameters: []node.PropertyDefinition{
 			{

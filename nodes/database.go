@@ -42,6 +42,10 @@ func databaseNode(nodeType, executorID, displayName, credentialType string) node
 		DisplayName: displayName,
 		Description: "Runs SQL against a " + displayName + " database you configure with a credential.",
 		Category:    "Database",
+		Group:       []node.NodeGroup{node.GroupInput},
+		Icon:        &node.NodeIcon{Light: "builtin:database"},
+		IconColor:   "#0284c7",
+		Subtitle:    "{{ $parameter.operation }}",
 		Inputs:      mainInput(),
 		Outputs:     mainOutput(),
 		Parameters: []node.PropertyDefinition{

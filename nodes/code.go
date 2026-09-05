@@ -25,6 +25,9 @@ func codeNode() node.Definition {
 		DisplayName: "Code",
 		Description: "Runs restricted Go in an isolated WebAssembly sandbox.",
 		Category:    "Core",
+		Group:       []node.NodeGroup{node.GroupTransform},
+		Icon:        &node.NodeIcon{Light: "builtin:code"},
+		IconColor:   "#64748b",
 		Inputs:      mainInput(),
 		Outputs:     mainOutput(),
 		Parameters: []node.PropertyDefinition{

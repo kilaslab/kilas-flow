@@ -217,6 +217,7 @@ function unavailableDefinition(node: WorkflowNode, connections: Connection[]): D
 		version: node.typeVersion,
 		displayName: node.name,
 		category: 'Unavailable',
+		group: ['transform'],
 		description: 'This stored node version is not available in the current registry. Its configuration will be preserved.',
 		inputs: portsFromConnections(node.id, connections, 'target'),
 		outputs: portsFromConnections(node.id, connections, 'source'),
