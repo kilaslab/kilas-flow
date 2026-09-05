@@ -1,11 +1,10 @@
 <script lang="ts">
-	import '@xyflow/svelte/dist/style.css';
 
 	import { Background, BackgroundVariant, Controls, SvelteFlow } from '@xyflow/svelte';
 
 	import type { Definition, Document, ExecutionNodeRunResource } from '$lib/api/generated/models';
 	import { documentFromCanvas, type EditorFlowEdge, type EditorFlowNode } from '$lib/workflow-editor/document';
-	import { edgeItemCounts, nodeRunStatus } from '$lib/workflow-editor/execution';
+	import { edgeItemCounts, nodeRunStatus, statusLabel } from '$lib/workflow-editor/execution';
 
 	import ExecutionCanvasNode from './execution-canvas-node.svelte';
 
@@ -36,14 +35,20 @@
 	let edges = $state.raw<EditorFlowEdge[]>([]);
 
 	$effect(() => {
-		nodes = projection.nodes.map((node) => ({
-			...node,
-			draggable: false,
-			connectable: false,
-			deletable: false,
-			selected: node.id === selectedNodeID,
-			data: { ...node.data, runStatus: statuses?.get(node.id) ?? nodeRunStatus(node.id, runs) }
-		}));
+		nodes = projection.nodes.map((node) => {
+			const runStatus = statuses?.get(node.id) ?? nodeRunStatus(node.id, runs);
+			return {
+				...node,
+				draggable: false,
+				connectable: false,
+				deletable: false,
+				selected: node.id === selectedNodeID,
+				// Status is the reason this view exists, so it goes in the name the
+				// node announces rather than only in a badge and a `title`.
+				ariaLabel: `${node.ariaLabel}: ${statusLabel(runStatus)}`,
+				data: { ...node.data, runStatus }
+			};
+		});
 		edges = projection.edges.map((edge) => {
 			const count = counts.get(edge.id);
 			return {

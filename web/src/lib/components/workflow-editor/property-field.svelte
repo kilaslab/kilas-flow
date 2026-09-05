@@ -93,7 +93,7 @@
 	<div class="flex items-baseline justify-between gap-2">
 		<label class="text-xs font-medium leading-tight" for={`property-${property.key}`}>{property.label}{#if property.required}<span aria-hidden="true" class="text-destructive"> *</span>{/if}</label>
 		{#if expressionCapable}
-			<button type="button" role="switch" aria-checked={expressionMode} class="shrink-0 rounded border border-border px-1 py-px font-mono text-[0.625rem] leading-4 text-muted-foreground transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-1 aria-checked:border-primary/40 aria-checked:bg-primary/10 aria-checked:text-primary" onclick={toggleExpression}>
+			<button type="button" role="switch" aria-checked={expressionMode} aria-label={`${property.label}: expression mode`} class="shrink-0 rounded border border-border px-1 py-0.5 font-mono text-[0.625rem] leading-4 text-muted-foreground transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring aria-checked:border-primary/40 aria-checked:bg-primary/10 aria-checked:text-primary" onclick={toggleExpression}>
 				{expressionMode ? 'expr' : 'fixed'}
 			</button>
 		{/if}

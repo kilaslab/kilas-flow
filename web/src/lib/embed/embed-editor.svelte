@@ -108,12 +108,12 @@
 </script>
 
 {#if branding.name || branding.logoUrl}
-	<div class="flex h-11 shrink-0 items-center gap-2.5 border-b border-border px-4">
+	<div class="flex h-10 shrink-0 items-center gap-2 border-b border-border px-2">
 		{#if branding.logoUrl}
 			<img src={branding.logoUrl} alt="" class="h-5 w-auto" />
 		{/if}
 		{#if branding.name}
-			<span class="truncate text-sm font-semibold tracking-tight">{branding.name}</span>
+			<span class="truncate text-[0.8125rem] font-semibold tracking-tight">{branding.name}</span>
 		{/if}
 		{#if !canWrite}
 			<span class="ml-auto rounded-full border border-border bg-muted px-2 py-0.5 text-xs text-muted-foreground">Read only</span>

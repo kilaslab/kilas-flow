@@ -152,8 +152,14 @@
 								<span aria-hidden="true" class="size-1.5 shrink-0 rounded-full {workflow.active ? 'bg-success' : 'bg-muted-foreground/40'}"></span>
 								<span class="min-w-0 flex-1 truncate text-[0.8125rem] font-medium">{workflow.name}</span>
 								<span class="hidden shrink-0 text-[0.6875rem] text-muted-foreground sm:inline">{workflow.active ? 'Active' : 'Draft'}</span>
-								<span class="hidden shrink-0 font-mono text-[0.6875rem] text-muted-foreground md:inline">r{workflow.latestRevision}</span>
-								<span class="hidden shrink-0 text-[0.6875rem] text-muted-foreground lg:inline">{formatUpdatedAt(workflow.updatedAt)}</span>
+								<!-- The dot is the only cue below `sm`, and colour alone is not a cue. -->
+								<span class="sr-only sm:hidden">{workflow.active ? 'Active' : 'Draft'}</span>
+								<span class="hidden shrink-0 font-mono text-[0.6875rem] text-muted-foreground md:inline">
+									<span class="sr-only">Revision </span>r{workflow.latestRevision}
+								</span>
+								<span class="hidden shrink-0 text-[0.6875rem] text-muted-foreground lg:inline">
+									<span class="sr-only">Updated </span>{formatUpdatedAt(workflow.updatedAt)}
+								</span>
 								<MoreHorizontal aria-hidden="true" class="size-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
 							</a>
 						</li>

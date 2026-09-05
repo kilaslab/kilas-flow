@@ -5,6 +5,7 @@ import type { Definition, Document } from '$lib/api/generated/models';
 import {
 	createWorkflowNode,
 	nextNodePosition,
+	positionAfter,
 	documentFromCanvas,
 	toWorkflowInput,
 	updateNodeProperty,
@@ -71,6 +72,52 @@ describe('workflow editor document helpers', () => {
 		expect(nextNodePosition(0)).toEqual({ x: 60, y: 60 });
 		expect(nextNodePosition(1)).toEqual({ x: 280, y: 60 });
 		expect(nextNodePosition(4)).toEqual({ x: 60, y: 250 });
+	});
+
+	it('never drops a step from a port on top of one already added from a sibling port', () => {
+		// The regression this exists for: the button that adds a step only appears
+		// while its port is unconnected, so counting that port's connections to
+		// fan a branch out always counted zero, and an IF's second branch landed
+		// exactly on its first.
+		const source = { x: 60, y: 60 };
+		const first = positionAfter(source, []);
+		expect(first).toEqual({ x: 280, y: 60 });
+
+		const second = positionAfter(source, [first]);
+		expect(second.x).toBe(280);
+		expect(second.y).toBeGreaterThan(first.y + 140);
+
+		const third = positionAfter(source, [first, second]);
+		expect([first, second].some((taken) => taken.x === third.x && taken.y === third.y)).toBe(false);
+	});
+
+	it('steps past a node the user had already dragged into the destination', () => {
+		const dragged = { x: 280, y: 60 };
+		expect(positionAfter({ x: 60, y: 60 }, [dragged]).y).toBeGreaterThan(dragged.y);
+		// A node in the next column over is not in the way.
+		expect(positionAfter({ x: 60, y: 60 }, [{ x: 500, y: 60 }])).toEqual({ x: 280, y: 60 });
+	});
+
+	it('draws an attachment connection as a distinct kind of edge, and keeps it out of the saved document', () => {
+		const original = savedDocument();
+		original.nodes?.push({ id: 'model-1', name: 'GPT', type: 'kilasflow.chatModel', typeVersion: 1, position: { x: 292, y: 200 } });
+		original.connections?.push({
+			id: 'edge-2',
+			kind: 'ai_languageModel',
+			source: { nodeId: 'model-1', port: 'model' },
+			target: { nodeId: 'set-1', port: 'model' }
+		});
+
+		const canvas = documentFromCanvas(original, [manual, set]);
+		const attachment = canvas.edges[1];
+
+		expect(attachment.type).toBe('default');
+		expect(attachment.class).toBe('kf-edge-attachment');
+		// An attachment carries configuration, not items, so it gets no arrowhead.
+		expect(attachment.markerEnd).toBeUndefined();
+		expect(canvas.edges[0].markerEnd).toBeDefined();
+		// Canvas-only styling must not reach the canonical document.
+		expect(canvas.toDocument(original)).toEqual(original);
 	});
 
 	it('round-trips the stored graph without leaking workflow identity into a save input', () => {

@@ -58,10 +58,14 @@
 	}
 
 	function choose(definition: Definition) {
-		onSelect(definition);
 		open = false;
 		query = '';
-		void tick().then(() => returnFocus?.focus());
+		// Deliberately not `onDismiss`: that is the parent's "nothing was chosen"
+		// path and it discards the port this picker was opened from, which
+		// `onSelect` still needs. The parent also owns focus from here, because
+		// the control that opened the picker is usually destroyed by the step it
+		// adds — restoring focus to it would silently drop focus on the body.
+		onSelect(definition);
 	}
 
 	function handleKeydown(event: KeyboardEvent) {
@@ -87,7 +91,11 @@
 
 {#if open}
 	<div class="absolute inset-0 z-40 grid place-items-center bg-background/60 p-4 backdrop-blur-sm" role="presentation">
-		<div bind:this={dialogElement} class="flex max-h-[min(30rem,calc(100dvh-2rem))] w-full max-w-md flex-col overflow-hidden rounded-xl border border-border bg-popover shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="node-picker-title" tabindex="-1" onkeydown={handleKeydown}>
+		<!-- Clicking away is how a picker is expected to close. Hidden from
+		     assistive technology because Escape and the close button already
+		     serve that path. -->
+		<button type="button" tabindex="-1" aria-hidden="true" class="absolute inset-0 cursor-default" onclick={close}></button>
+		<div bind:this={dialogElement} class="relative flex max-h-[min(30rem,calc(100dvh-2rem))] w-full max-w-md flex-col overflow-hidden rounded-xl border border-border bg-popover shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="node-picker-title" tabindex="-1" onkeydown={handleKeydown}>
 			<div class="flex items-center gap-2 border-b border-border px-2.5 py-2">
 				<Search aria-hidden="true" class="size-4 shrink-0 text-muted-foreground" />
 				<label class="sr-only" for="node-picker-search">Search registered node types</label>

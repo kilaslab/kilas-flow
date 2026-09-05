@@ -15,7 +15,7 @@ export type EditorNodeData = {
 };
 
 export type EditorFlowNode = FlowNode<EditorNodeData, 'workflow'>;
-export type EditorFlowEdge = FlowEdge<{ connection: Connection; validationMessage?: string }, 'smoothstep' | 'bezier'> & {
+export type EditorFlowEdge = FlowEdge<{ connection: Connection; validationMessage?: string }, 'smoothstep' | 'default'> & {
 	data: { connection: Connection; validationMessage?: string };
 };
 
@@ -56,12 +56,23 @@ export function nextNodePosition(index: number): { x: number; y: number } {
 }
 
 /**
- * Where a step added from an output port belongs: one column to the right of
- * the node it continues, stacked downward when that port already feeds others
- * so a branch fans out instead of overlapping.
+ * Where a step added from an output port belongs: one column to the right of the
+ * node it continues, pushed down a row at a time until it lands somewhere empty.
+ *
+ * Counting the port's existing connections would not work — the button that
+ * adds the step only exists while the port has none — so the second branch of
+ * an IF would land exactly on the first. Testing the destination against every
+ * node also covers a node the user dragged there earlier.
  */
-export function positionAfter(source: { x: number; y: number }, taken: number): { x: number; y: number } {
-	return { x: source.x + COLUMN, y: source.y + taken * 150 };
+export function positionAfter(source: { x: number; y: number }, occupied: { x: number; y: number }[]): { x: number; y: number } {
+	const candidate = { x: source.x + COLUMN, y: source.y };
+	// A tile is 88px under a 160px label, so anything closer than this overlaps
+	// something the reader needs. Both bounds stay under the grid pitch, so a
+	// node in the neighbouring column or row never counts as a collision.
+	while (occupied.some((node) => Math.abs(node.x - candidate.x) < 160 && Math.abs(node.y - candidate.y) < 150)) {
+		candidate.y += ROW;
+	}
+	return candidate;
 }
 
 export function documentFromCanvas(document: Document, definitions: Definition[], validationIssues: CanvasValidationIssue[] = []): CanvasDocument {
@@ -76,7 +87,7 @@ export function documentFromCanvas(document: Document, definitions: Definition[]
 			type: 'workflow',
 			position: { ...workflowNode.position },
 			data: { definition, workflowNode: clone(workflowNode), validationMessage: nodeIssues.get(workflowNode.id) },
-			ariaLabel: workflowNode.name
+			ariaLabel: nodeIssues.has(workflowNode.id) ? `${workflowNode.name}: ${nodeIssues.get(workflowNode.id)}` : workflowNode.name
 		};
 	});
 	const edges = (document.connections ?? []).map<EditorFlowEdge>((connection) => {
@@ -87,7 +98,7 @@ export function documentFromCanvas(document: Document, definitions: Definition[]
 		const attachment = connection.kind !== 'main';
 		return {
 			id: connection.id,
-			type: attachment ? 'bezier' : 'smoothstep',
+			type: attachment ? 'default' : 'smoothstep',
 			class: attachment ? 'kf-edge-attachment' : undefined,
 			...(attachment ? {} : { markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: 'var(--xy-edge-stroke)' } }),
 			source: connection.source.nodeId,

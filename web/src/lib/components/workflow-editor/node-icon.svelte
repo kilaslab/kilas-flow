@@ -10,11 +10,14 @@
 	let {
 		definition,
 		size = 'md',
-		muted = false
+		muted = false,
+		label
 	}: {
 		definition: Definition;
 		size?: 'sm' | 'md' | 'lg';
 		muted?: boolean;
+		/** Give the icon an accessible name where it is the only cue for something. */
+		label?: string;
 	} = $props();
 
 	const visual = $derived(nodeVisual(definition));
@@ -23,9 +26,11 @@
 </script>
 
 <span
-	aria-hidden="true"
+	role={label ? 'img' : undefined}
+	aria-label={label}
+	aria-hidden={label ? undefined : 'true'}
 	class="grid shrink-0 place-items-center border {box[size]}"
-	style={`--accent: ${visual.accent}; border-color: color-mix(in oklch, var(--accent) 28%, transparent); background: color-mix(in oklch, var(--accent) ${muted ? 8 : 14}%, transparent)`}
+	style={`--node-accent: ${visual.accent}; border-color: color-mix(in oklch, var(--node-accent) 28%, transparent); background: color-mix(in oklch, var(--node-accent) ${muted ? 8 : 14}%, transparent)`}
 >
-	<visual.icon class={glyph[size]} style="color: var(--accent)" />
+	<visual.icon class={glyph[size]} style="color: var(--node-accent)" />
 </span>

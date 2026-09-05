@@ -39,7 +39,7 @@
 
 <section aria-label={`${node.name} properties`} class="flex h-full min-h-0 flex-col bg-card">
 	<div class="flex shrink-0 items-center gap-2 border-b border-border px-2.5 py-2">
-		<NodeIcon {definition} size="md" />
+		<NodeIcon {definition} size="md" label={`${definition.category} node`} />
 		<div class="min-w-0 flex-1">
 			<h2 class="truncate text-[0.8125rem] font-semibold leading-tight">{node.name}</h2>
 			<p class="truncate font-mono text-[0.625rem] leading-tight text-muted-foreground">{definition.type}</p>
@@ -47,11 +47,11 @@
 	</div>
 
 	<div class="flex shrink-0 gap-3 border-b border-border px-2.5" role="tablist" aria-label="Node configuration">
-		<button type="button" role="tab" aria-selected={activeTab === 'parameters'} class="-mb-px border-b-2 border-transparent py-1.5 text-xs text-muted-foreground transition-colors aria-selected:border-primary aria-selected:font-medium aria-selected:text-foreground" onclick={() => (tab = 'parameters')}>Parameters</button>
-		<button type="button" role="tab" aria-selected={activeTab === 'settings'} class="-mb-px border-b-2 border-transparent py-1.5 text-xs text-muted-foreground transition-colors aria-selected:border-primary aria-selected:font-medium aria-selected:text-foreground" onclick={() => (tab = 'settings')}>Settings</button>
+		<button type="button" role="tab" id="node-tab-parameters" aria-controls="node-tabpanel" aria-selected={activeTab === 'parameters'} class="-mb-px border-b-2 border-transparent py-1.5 text-xs text-muted-foreground transition-colors aria-selected:border-primary aria-selected:font-medium aria-selected:text-foreground" onclick={() => (tab = 'parameters')}>Parameters</button>
+		<button type="button" role="tab" id="node-tab-settings" aria-controls="node-tabpanel" aria-selected={activeTab === 'settings'} class="-mb-px border-b-2 border-transparent py-1.5 text-xs text-muted-foreground transition-colors aria-selected:border-primary aria-selected:font-medium aria-selected:text-foreground" onclick={() => (tab = 'settings')}>Settings</button>
 	</div>
 
-	<div class="min-h-0 flex-1 space-y-3 overflow-y-auto p-2.5" class:pointer-events-none={readOnly} class:opacity-70={readOnly} role="tabpanel">
+	<div class="min-h-0 flex-1 space-y-3 overflow-y-auto p-2.5" class:pointer-events-none={readOnly} class:opacity-70={readOnly} role="tabpanel" id="node-tabpanel" aria-labelledby={`node-tab-${activeTab}`}>
 		{#if activeTab === 'parameters' && credentialTypes.length > 0 && onCredentialChange}
 			<div class="grid gap-1.5 rounded-lg border border-border bg-background/40 p-2">
 				<p class="text-[0.6875rem] font-medium uppercase tracking-wider text-muted-foreground">Credential</p>

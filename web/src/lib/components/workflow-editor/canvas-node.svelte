@@ -5,7 +5,7 @@
 
 	import type { EditorFlowNode } from '$lib/workflow-editor/document';
 	import { getCanvasActions } from '$lib/workflow-editor/canvas-actions';
-	import { attachmentPorts, mainPorts, nodeSubtitle, nodeVisual } from '$lib/workflow-editor/node-visual';
+	import { TILE, attachmentPorts, glyphClass, mainPorts, nodeSubtitle, nodeVisual, portOffset } from '$lib/workflow-editor/node-visual';
 
 	let { data, selected }: NodeProps<EditorFlowNode> = $props();
 
@@ -28,26 +28,23 @@
 	// Only a branching node needs its outputs named on the canvas. A single
 	// `main` port is the obvious one, and labelling it would be noise.
 	const showOutputLabels = $derived(mainOutputs.length > 1);
-	const editable = $derived(Boolean(actions) && !actions!.readOnly());
+	const editable = $derived(actions ? !actions.readOnly() : false);
 
-	const TILE = {
-		trigger: 'h-22 w-22 rounded-l-[2.75rem] rounded-r-xl',
-		step: 'h-22 w-22 rounded-xl',
-		hub: 'h-18 min-w-44 gap-2.5 rounded-2xl px-4',
-		attachment: 'size-15 rounded-full'
-	} as const;
-
-	function offset(index: number, count: number): string {
-		return `${((index + 1) / (count + 1)) * 100}%`;
-	}
+	// The accent's hue held exactly, at a muted lightness and chroma. Mixing
+	// toward another colour interpolates hue in a polar space and pulls every
+	// accent toward whatever it was mixed with — against `--border` that turned
+	// amber and red green and violet and azure cyan, and it carried the accent
+	// at ~68% rather than the stated share, because `--border` has an alpha.
+	const border = $derived(
+		invalid
+			? 'var(--destructive)'
+			: selected
+				? 'var(--node-accent)'
+				: 'oklch(from var(--node-accent) 0.42 0.045 h)'
+	);
 </script>
 
-<div
-	class="relative"
-	style={`--accent: ${visual.accent}`}
-	aria-invalid={invalid}
-	aria-describedby={invalid ? `node-validation-${node.id}` : undefined}
->
+<div class="relative" style={`--node-accent: ${visual.accent}`}>
 	{#if editable}
 		<NodeToolbar position={Position.Top} offset={8}>
 			<div class="nodrag flex items-center gap-0.5 rounded-lg border border-border bg-popover p-0.5 shadow-md">
@@ -67,22 +64,21 @@
 	     below is positioned outside it so edges meet the icon, not the text. -->
 	<div
 		class="flex items-center justify-center border bg-card transition-[border-color,box-shadow] {TILE[visual.shape]}"
-		style={`border-color: ${
-			invalid ? 'var(--destructive)' : selected ? 'var(--accent)' : 'color-mix(in oklch, var(--accent) 22%, var(--border))'
-		}; box-shadow: ${selected ? '0 0 0 2px color-mix(in oklch, var(--accent) 35%, transparent)' : '0 1px 2px oklch(0 0 0 / 30%)'}`}
+		style={`border-color: ${border}; box-shadow: ${
+			selected ? '0 0 0 2px color-mix(in oklch, var(--node-accent) 35%, transparent)' : '0 1px 2px oklch(0 0 0 / 30%)'
+		}`}
 	>
-		<visual.icon
-			class={visual.shape === 'attachment' ? 'size-5' : visual.shape === 'hub' ? 'size-5' : 'size-7'}
-			style="color: var(--accent)"
-			aria-hidden="true"
-		/>
+		<visual.icon class={glyphClass(visual.shape)} style="color: var(--node-accent)" aria-hidden="true" />
 		{#if visual.shape === 'hub'}
 			<span class="truncate text-[0.8125rem] font-semibold leading-tight">{node.name}</span>
 		{/if}
 	</div>
 
 	{#if invalid}
+		<!-- The message itself reaches assistive technology through the node's
+		     accessible name, which Svelte Flow owns; this is the visible cue. -->
 		<span
+			aria-hidden="true"
 			class="absolute -bottom-1 -right-1 grid size-4 place-items-center rounded-full border-2 border-background bg-destructive text-[0.5rem] font-bold text-destructive-foreground"
 			title={data.validationMessage}
 		>
@@ -101,16 +97,12 @@
 		{/if}
 	</div>
 
-	{#if invalid}
-		<span id={`node-validation-${node.id}`} class="sr-only">{data.validationMessage}</span>
-	{/if}
-
 	{#each mainInputs as port, index (port.Name)}
 		<Handle
 			type="target"
 			id={port.Name}
 			position={Position.Left}
-			style={`top: ${offset(index, mainInputs.length)}`}
+			style={`top: ${portOffset(index, mainInputs.length)}`}
 			aria-label={`${node.name} input ${port.Name}`}
 		>
 			<span class="kf-port"></span>
@@ -118,7 +110,7 @@
 	{/each}
 
 	{#each mainOutputs as port, index (port.Name)}
-		{@const top = offset(index, mainOutputs.length)}
+		{@const top = portOffset(index, mainOutputs.length)}
 		<Handle type="source" id={port.Name} position={Position.Right} style={`top: ${top}`} aria-label={`${node.name} output ${port.Name}`}>
 			<span class="kf-port"></span>
 		</Handle>
@@ -132,7 +124,8 @@
 			     to this port, which is why the toolbar has no add button. -->
 			<button
 				type="button"
-				class="nodrag absolute -translate-y-1/2 grid size-5 place-items-center rounded-md border border-dashed border-border bg-card text-muted-foreground transition-colors hover:border-[var(--accent)] hover:text-[var(--accent)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+				data-add-step={node.id}
+				class="nodrag absolute -translate-y-1/2 grid size-6 place-items-center rounded-md border border-dashed border-border bg-card text-muted-foreground transition-colors hover:border-[var(--node-accent)] hover:text-[var(--node-accent)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
 				style={`top: ${top}; left: calc(100% + ${showOutputLabels ? '3.25rem' : '1.5rem'})`}
 				aria-label={`Add a step after ${node.name}${showOutputLabels ? ` on ${port.Name}` : ''}`}
 				onclick={() => actions?.addFrom(node.id, port.Name)}
@@ -143,7 +136,7 @@
 	{/each}
 
 	{#each attachmentInputs as port, index (port.Name)}
-		{@const left = offset(index, attachmentInputs.length)}
+		{@const left = portOffset(index, attachmentInputs.length)}
 		<Handle
 			type="target"
 			id={port.Name}
@@ -163,7 +156,7 @@
 			type="source"
 			id={port.Name}
 			position={Position.Top}
-			style={`left: ${offset(index, attachmentOutputs.length)}`}
+			style={`left: ${portOffset(index, attachmentOutputs.length)}`}
 			aria-label={`${node.name} provides ${port.Name}`}
 		>
 			<span class="kf-port kf-port-attachment"></span>

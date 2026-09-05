@@ -4,7 +4,7 @@ title: Revamp the editor UI to a compact, density-first canvas
 status: done
 priority: medium
 created: "2026-09-05T03:21:41Z"
-updated: "2026-09-05T03:45:00Z"
+updated: "2026-09-05T04:20:00Z"
 ---
 
 # Description
@@ -41,22 +41,25 @@ Every shape is derived in `node-visual.ts` from the ports the registry already
 declares, never from a list of known type names — so a node type added on the
 server arrives with the right silhouette and no frontend change. Order matters
 in that derivation: a tool has no inputs at all and would otherwise read as a
-trigger, so what a node *provides* is settled before what it consumes.
+trigger, so what a node provides is settled before "has no inputs" — but what it
+*consumes* is settled first of all, because a node that both takes and provides
+attachments needs the width a hub has and a circle does not.
 
 ## Connection kind carries meaning
 
 `main` ports are circles on the left and right; `ai_*` attachment ports are
 diamonds on the bottom (consumer) and top (provider). Attachment edges are
-dashed bezier curves without an arrowhead, because they carry configuration and
-nothing flows along them during a run. Main edges are stepped with an arrow.
+dashed curves without an arrowhead, because they carry configuration and nothing
+flows along them during a run. Main edges are stepped with an arrow.
 
 ## Colour is information
 
 Five accents by registry category — Triggers amber, Core jade, AI violet,
 Database azure, Imported red. On a dense canvas the hue says what a node *is*
-before the name is readable. Borders stay near-neutral (22% accent mixed into
-the border colour); only the icon takes the full accent, so a busy graph does
-not turn into a colour chart.
+before the name is readable. A border takes the accent's hue at a muted
+lightness and chroma; only the icon takes it at full strength, so a busy graph
+does not turn into a colour chart. The hue is held exactly rather than mixed
+toward another colour — see the Review for why mixing was wrong.
 
 ## One line of text worth reading
 
@@ -121,14 +124,20 @@ the breadcrumb yields width before the actions do.
   produce an edge the canvas would refuse. The picker filters to nodes with a
   main input while connecting — verified live as "11 of 17 nodes", correctly
   excluding the three triggers and three AI sub-nodes.
-- Verified live against a running binary at 1440px and 390px, in both themes: a
-  nine-node graph covering all four silhouettes and all three attachment kinds;
-  add-from-port producing 10 nodes / 9 edges from 9 / 8; the replay showing per
-  node status rings, check badges, and edge item counts including `0 items` on
-  the untaken branch; the toolbar measured at exactly 40px on a phone.
-- `go test ./...`, `go vet ./...`, `pnpm test` (53), `pnpm check` (1264 files, 0
-  errors), `pnpm generate:api:check` (no drift), `pnpm build`, SDK `check` and
-  `test` (23).
+- Verified live against a running binary at 1440px and 390px: a nine-node graph
+  covering all four silhouettes and all three attachment kinds; add-from-port
+  producing 10 nodes / 9 edges from 9 / 8; the replay showing per node status
+  rings, check badges, and edge item counts including `0 items` on the untaken
+  branch; the toolbar measured at exactly 40px on a phone. The light palette was
+  exercised by setting `data-theme` by hand — nothing in the app sets it yet, so
+  that is a smoke test of the tokens, not of a reachable product state.
+- After review, re-verified against the production build: handle geometry (8px,
+  border 0, transparent, library centring intact), border hue per category
+  (78°/170°/240° preserved), two branches from one node landing 190px apart, and
+  focus resting on the inspector after an add and the canvas after a delete.
+- `go test ./...`, `go vet ./...`, `pnpm test` (75), `pnpm check` (1267 files, 0
+  errors, 0 warnings), `pnpm generate:api:check` (no drift), `pnpm build`, SDK
+  `check` and `test` (23).
 
 # Related Files
 
@@ -136,3 +145,96 @@ the breadcrumb yields width before the actions do.
 - `web/src/lib/workflow-editor/canvas-actions.ts`
 - `web/src/lib/components/workflow-editor/{canvas-node,execution-canvas-node,node-icon,node-picker,properties-panel,property-field,workflow-editor}.svelte`
 - `web/src/app.css`
+
+# Review
+
+Five reviewers ran in parallel over `a049b60..b80890e`, scoped so their contexts
+did not overlap: node logic, editor state, CSS/theme, accessibility, and
+cross-boundary integration. Every finding below was independently verified
+before being acted on.
+
+## Defects that had shipped
+
+**The Svelte Flow port reset never applied.** `app.css` and the library declare
+`.svelte-flow__handle` at the same specificity, unlayered, so source order
+decides — and the library's sheet was imported from two *components*, which put
+it in the lazily-appended route chunk while `app.css` sat in the layout chunk.
+The library therefore always won. Every port shipped as its default 6px
+jade-bordered circle with the intended 8px port drawn on top, and edges
+terminated ~2px off the visible dot. The same defect silently killed the
+controls-button sizing and the main-edge stroke width. The comment claiming the
+default dot "is reset to nothing" was false.
+
+The import now lives in `app.css` above the overrides, so the order is a
+property of one file rather than of chunking. The reset itself was also wrong:
+it cleared `transform`, which is what the library uses to centre a handle on its
+edge. Only paint is overridden now; position stays with the library. Verified in
+a browser against the production build — handle computes to 8px, border 0,
+transparent, with centring intact.
+
+**Two branches from one node landed on the same pixel.** `positionAfter` fanned
+a branch out by counting the connections already leaving that *port* — but the
+`+` button only exists while a port has none, so the count was structurally
+always zero. An IF's second branch landed exactly on its first. The comment
+asserted it prevented precisely that. It now walks the destination down a row at
+a time until it clears every existing node, which also covers a node the user
+had dragged there. Pinned by a test.
+
+**Every add and delete stranded keyboard focus on `<body>`** (WCAG 2.4.3, Level
+A). The `+` stub restores focus to itself, but a successful add connects the
+port and destroys that button; deleting unmounts the toolbar and the inspector
+holding focus; the delete-connection button removes itself. All three now name a
+survivor — the inspector after an add, the canvas region after a delete.
+
+## Corrections
+
+- Node borders mixed the accent into `--border`, which carries its own alpha and
+  hue: the accent landed at ~68% rather than the stated 22%, and every hue was
+  dragged toward the border's — amber and red came out green, violet and azure
+  cyan. Now `oklch(from var(--node-accent) 0.42 0.045 h)`, which holds hue
+  exactly. Verified: 78°→78°, 170°→170°, 240°→240°.
+- Focus rings inherited `outline-ring/50`, which measures 2.3–3.0:1 against every
+  surface in both palettes, under the 3:1 SC 1.4.11 requires. Base is now full
+  opacity, which fixes the eight new call sites and the pre-existing ones.
+- Light-mode `--warning` measured 2.36:1 as badge text; darkened.
+- `failed`, `cancelled` and `cancelling` shared one glyph, leaving hue as the
+  only difference. Distinct glyphs now.
+- The expression switch was named for its state (`aria-checked` said off while
+  the name said "fixed"); it now has a stable name.
+- Run status and node validation messages were absent from the accessible name
+  that Svelte Flow actually exposes. Both are folded into `ariaLabel`, matching
+  what edges already did.
+- Active/Draft was colour-only below `sm`; category was hue-only in the
+  inspector. Both have text equivalents.
+- `prefers-reduced-motion` was honoured nowhere, including a badge that spins for
+  the length of an execution.
+- Tile geometry was duplicated across the editor and replay nodes and had already
+  drifted; it lives in `node-visual.ts` now, so "the replay keeps the editor's
+  geometry" holds by construction.
+- `.svelte-flow__edge-textbkg`/`-text` targeted SVG classes that v1.6 does not
+  render; retargeted to `.svelte-flow__edge-label`.
+- `bezier` is not a registered edge type and rendered only through an
+  undocumented fallback; now `default`.
+- The documented density scale was wrong in two of six values on the day it was
+  written. Corrected.
+- `--accent` on node roots shadowed the theme token of the same name for the
+  whole subtree — the same class of collision as `.light`. Renamed
+  `--node-accent`.
+- Node placement fanned out by a magic `150` two lines below `ROW = 190`.
+- The embed branding bar was the one surface the density sweep missed.
+
+## Tests added
+
+`node-visual.test.ts` (19 cases) pins the shape derivation — including the
+ordering that makes a tool an attachment rather than a trigger — and
+`nodeSubtitle` against expression values, malformed URLs, arrays where objects
+are expected, and missing parameters. `document.test.ts` gains the branch
+collision case and an attachment-edge round trip. 53 → 75 tests.
+
+## Not fixed, carried forward
+
+The projection rebuild discards node measurements and handle bounds on every
+selection change, forcing a full re-measure. Real and well-evidenced, but both
+the `$effect` and `replaceDraft`'s eager rebuild predate this work, and
+`replaceDraft`'s comment says it exists to fix a selection-loss bug. Reworking
+that during a review pass risks regressing something deliberate.

@@ -38,7 +38,7 @@ export type NodeShape = 'trigger' | 'step' | 'hub' | 'attachment';
 
 export type NodeVisual = {
 	icon: Component;
-	/** A CSS custom property reference, applied as `--accent` on the node root. */
+	/** A CSS custom property reference, applied as `--node-accent` on the node root. */
 	accent: string;
 	shape: NodeShape;
 };
@@ -71,6 +71,24 @@ const ACCENTS: Record<string, string> = {
 	Imported: 'var(--node-imported)'
 };
 
+/** Tile geometry per silhouette, shared by the editor and the replay canvas. */
+export const TILE: Record<NodeShape, string> = {
+	trigger: 'h-22 w-22 rounded-l-[2.75rem] rounded-r-xl',
+	step: 'h-22 w-22 rounded-xl',
+	hub: 'h-18 min-w-44 max-w-72 gap-2.5 rounded-2xl px-4',
+	attachment: 'size-15 rounded-full'
+};
+
+/** Glyph size per silhouette. A hub and an attachment carry a smaller icon. */
+export function glyphClass(shape: NodeShape): string {
+	return shape === 'trigger' || shape === 'step' ? 'size-7' : 'size-5';
+}
+
+/** Even spacing for `count` ports along one edge of a tile, as a percentage. */
+export function portOffset(index: number, count: number): string {
+	return `${((index + 1) / (count + 1)) * 100}%`;
+}
+
 export function nodeVisual(definition: Definition): NodeVisual {
 	return {
 		icon: ICONS[definition.type] ?? Box,
@@ -84,9 +102,11 @@ export function nodeShape(definition: Definition): NodeShape {
 	const outputs = definition.outputs ?? [];
 
 	// Order matters. A tool has no inputs at all and would otherwise read as a
-	// trigger, so what a node *provides* is settled before what it consumes.
-	if (outputs.some(isAttachment)) return 'attachment';
+	// trigger, so what a node *provides* is settled before what it consumes —
+	// except when it does both, which needs the width a hub has and an
+	// attachment does not.
 	if (inputs.some(isAttachment)) return 'hub';
+	if (outputs.some(isAttachment)) return 'attachment';
 	if (inputs.length === 0) return 'trigger';
 	return 'step';
 }

@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { tick, type Snippet } from 'svelte';
-	import '@xyflow/svelte/dist/style.css';
 
 	import { Background, BackgroundVariant, Controls, SvelteFlow, type Connection as FlowConnection } from '@xyflow/svelte';
 	import Play from '@lucide/svelte/icons/play';
@@ -97,6 +96,8 @@
 	let propertyCloseButton = $state<HTMLButtonElement>();
 	let propertyReturnFocus = $state<HTMLElement | null>(null);
 	let wasPropertyPanelOpen = $state(false);
+	let canvasRegion = $state<HTMLDivElement>();
+	let inspectorRegion = $state<HTMLElement>();
 
 	const dirty = $derived(!workflowDocumentEquals(document, draft));
 	const selectedNode = $derived((draft.nodes ?? []).find((node) => node.id === selectedNodeID) ?? null);
@@ -131,6 +132,24 @@
 		edges = canvas.edges.map((edge) => ({ ...edge, selected: edge.id === selectedEdgeID }));
 	});
 
+	/**
+	 * Puts focus somewhere that still exists after a mutation.
+	 *
+	 * Adding and deleting both destroy the control that started them — the `+`
+	 * stub disappears once its port is connected, and a delete unmounts the
+	 * toolbar and the inspector. Restoring focus to a detached element silently
+	 * drops the caret on `<body>`, so every mutation names a survivor instead.
+	 */
+	function restoreFocus(preferred?: HTMLElement | null) {
+		void tick().then(() => {
+			if (preferred?.isConnected) {
+				preferred.focus();
+				return;
+			}
+			canvasRegion?.focus();
+		});
+	}
+
 	function replaceDraft(next: Document) {
 		draft = next;
 		const canvas = documentFromCanvas(next, definitions, saveIssues);
@@ -162,10 +181,10 @@
 		const existing = draft.nodes ?? [];
 		const from = pendingSource;
 		const source = from ? existing.find((candidate) => candidate.id === from.nodeID) : undefined;
-		// A branch fans downward: each step already leaving this port pushes the
-		// next one a row further so two of them never land on top of each other.
-		const taken = from ? (draft.connections ?? []).filter((edge) => edge.source.nodeId === from.nodeID && edge.source.port === from.port).length : 0;
-		const node = createWorkflowNode(definition, source ? positionAfter(source.position, taken) : nextNodePosition(existing.length));
+		const node = createWorkflowNode(
+			definition,
+			source ? positionAfter(source.position, existing.map((candidate) => candidate.position)) : nextNodePosition(existing.length)
+		);
 
 		const nextNodes = [...existing, node];
 		let connections = draft.connections ?? [];
@@ -184,6 +203,9 @@
 		selectedEdgeID = null;
 		replaceDraft({ ...draft, nodes: nextNodes, connections });
 		propertyPanelOpen = true;
+		// The inspector for the new node is the natural next stop, and on a wide
+		// screen nothing else moves focus there.
+		restoreFocus(inspectorRegion);
 	}
 
 	function syncCanvas() {
@@ -215,18 +237,16 @@
 			selectedNodeID = null;
 			propertyPanelOpen = false;
 		}
+		restoreFocus();
 	}
 
-	function removeSelected() {
-		if (readOnly) return;
-		if (selectedNodeID) {
-			removeNode(selectedNodeID);
-		} else if (selectedEdgeID) {
-			replaceDraft({ ...draft, connections: (draft.connections ?? []).filter((connection) => connection.id !== selectedEdgeID) });
-		}
-		selectedNodeID = null;
+	/** Only reachable for a connection: a node is deleted from its own toolbar. */
+	function removeSelectedConnection() {
+		if (readOnly || !selectedEdgeID) return;
+		const edgeID = selectedEdgeID;
 		selectedEdgeID = null;
-		propertyPanelOpen = false;
+		replaceDraft({ ...draft, connections: (draft.connections ?? []).filter((connection) => connection.id !== edgeID) });
+		restoreFocus();
 	}
 
 	function onDelete() {
@@ -234,6 +254,7 @@
 		selectedNodeID = null;
 		selectedEdgeID = null;
 		propertyPanelOpen = false;
+		restoreFocus();
 	}
 
 	function updateProperty(scope: PropertyScope, key: string, value: unknown) {
@@ -291,7 +312,7 @@
 	<header class="flex h-10 shrink-0 items-center gap-1.5 overflow-x-auto border-b border-border bg-card px-2">
 		{#if header}
 			{@render header()}
-			<span aria-hidden="true" class="mx-1 h-4 w-px bg-border"></span>
+			<span aria-hidden="true" class="mx-1 h-4 w-px shrink-0 bg-border"></span>
 		{/if}
 		{#if !readOnly}
 			<button type="button" class="inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md bg-primary px-2.5 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2" onclick={() => openPicker(false)}>
@@ -309,7 +330,7 @@
 			</button>
 		{/if}
 		{#if !readOnly && selectedEdgeID && !selectedNodeID}
-			<button type="button" class="inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 text-xs font-medium text-destructive transition-colors hover:bg-destructive/10 focus-visible:outline-2 focus-visible:outline-offset-2" onclick={removeSelected}>
+			<button type="button" class="inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 text-xs font-medium text-destructive transition-colors hover:bg-destructive/10 focus-visible:outline-2 focus-visible:outline-offset-2" onclick={removeSelectedConnection}>
 				<Trash2 aria-hidden="true" class="size-3.5" />Delete connection
 			</button>
 		{/if}
@@ -338,7 +359,9 @@
 	{/if}
 
 	<div class="relative flex min-h-0 flex-1 flex-col lg:grid" style={showInspector ? 'grid-template-columns: minmax(0,1fr) 20rem' : 'grid-template-columns: minmax(0,1fr)'}>
-		<div class="relative min-h-0 flex-1 overflow-hidden" data-testid="workflow-canvas">
+		<!-- tabindex makes this a place focus can land after a node is deleted; -1
+		     keeps it out of the tab sequence. -->
+		<div bind:this={canvasRegion} tabindex="-1" class="relative min-h-0 flex-1 overflow-hidden outline-none" data-testid="workflow-canvas">
 			<SvelteFlow bind:nodes bind:edges {nodeTypes} fitView fitViewOptions={{ padding: 0.15, maxZoom: 1 }} minZoom={0.3} nodesDraggable={!readOnly} nodesConnectable={!readOnly} deleteKey={readOnly ? null : ['Backspace', 'Delete']} isValidConnection={(connection) => canConnect(connection, draft.nodes ?? [], definitions, draft.connections ?? [])} onconnect={onConnect} ondelete={onDelete} onnodedragstop={syncCanvas} onselectionchange={onSelectionChange} onpaneclick={() => onSelectionChange({ nodes: [], edges: [] })}>
 				<Background variant={BackgroundVariant.Dots} gap={16} size={1} patternColor="var(--border)" />
 				<Controls showLock={false} />
@@ -358,7 +381,7 @@
 		</div>
 
 		{#if showInspector && selectedNode && selectedDefinition}
-			<aside class="hidden min-h-0 border-l border-border lg:block">
+			<aside bind:this={inspectorRegion} tabindex="-1" class="hidden min-h-0 border-l border-border outline-none lg:block">
 				<PropertiesPanel node={selectedNode} definition={selectedDefinition} {credentials} {readOnly} onChange={updateProperty} onCredentialChange={updateCredential} />
 			</aside>
 		{/if}
