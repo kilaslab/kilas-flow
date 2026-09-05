@@ -1,7 +1,7 @@
 ---
 id: FEAT-nbqye0
 title: Report every field the n8n importer drops
-status: todo
+status: done
 priority: high
 labels:
     - engine
@@ -25,13 +25,13 @@ Finally, the diagnostic channel itself is too narrow. `Unsupported` (n8n.go:67-7
 
 ## Acceptance criteria
 
-- [ ] Importing a workflow that carries `settings`, `pinData`, `meta` or `staticData` produces one diagnostic per dropped element, naming it.
-- [ ] Importing a node that carries `notes`, `webhookId`, or any of n8n's error-handling fields produces a diagnostic naming the node and the field.
-- [ ] A diagnostic distinguishes severity — a node that cannot run, versus a field that was carried lossily, versus one that was dropped harmlessly — and names the field where there is one.
-- [ ] An exported webhook never carries `responseMode: "immediate"`; the KilasFlow immediate mode maps to n8n's `onReceived`, and the reverse mapping is its exact inverse.
-- [ ] A round-trip fixture asserts that the exported document validates against n8n's documented enums for every value the exporter writes.
-- [ ] The import API response carries the widened diagnostics and the generated clients are regenerated from it.
-- [ ] Nothing the importer chooses not to carry can reach the canonical document without a corresponding diagnostic, proven by a fixture that feeds a maximally annotated n8n workflow through import and asserts the diagnostic count.
+- [x] Importing a workflow that carries `settings`, `pinData`, `meta` or `staticData` produces one diagnostic per dropped element, naming it.
+- [x] Importing a node that carries `notes`, `webhookId`, or any of n8n's error-handling fields produces a diagnostic naming the node and the field.
+- [x] A diagnostic distinguishes severity — a node that cannot run, versus a field that was carried lossily, versus one that was dropped harmlessly — and names the field where there is one.
+- [x] An exported webhook never carries `responseMode: "immediate"`; the KilasFlow immediate mode maps to n8n's `onReceived`, and the reverse mapping is its exact inverse.
+- [x] A round-trip fixture asserts that the exported document validates against n8n's documented enums for every value the exporter writes.
+- [x] The import API response carries the widened diagnostics and the generated clients are regenerated from it.
+- [x] Nothing the importer chooses not to carry can reach the canonical document without a corresponding diagnostic, proven by a fixture that feeds a maximally annotated n8n workflow through import and asserts the diagnostic count.
 
 ## Implementation Plan
 
@@ -53,3 +53,77 @@ The trap is that this is an OpenAPI change: `ImportedWorkflowResource` and `Expo
 - `nodes/webhook.go` — `ResponseModeImmediate` and the webhook node's `responseMode` options.
 - `internal/api/handlers/interop.go` — `Import`, `Export`, `ImportedWorkflowResource`, `ExportedWorkflowResource`.
 - `.pine/tickets/FEAT-chxkvq.md` — the "named, not dropped quietly" contract this ticket completes.
+
+## Outcome
+
+### The diagnostic type
+
+`Unsupported` became `ImportIssue` and `Lossy` became `ExportIssue`, with
+`Severity` and `Field` on both. The rename was free exactly as the ticket
+predicted — nothing outside the generated client referenced either name — and
+it was worth doing: a `notes` field is not "unsupported", it is simply not
+carried, and the old name would have made every new diagnostic read wrongly.
+The old names survive as type aliases so the thirty-odd converter signatures in
+the mapping table did not all have to change in the same commit.
+
+Severity is a closed three-value set. Rather than restate it at each of the ~30
+converter sites, `withDefaultSeverity` fills in `lossy` — which is what a
+converter issue always is, since the node still imported — and the two
+severities that are *not* lossy are set explicitly where raised: `blocking` for
+a node type with no equivalent, `dropped` for a field nothing reads.
+
+### What is now reported
+
+Workflow level: `settings`, `pinData`, `meta` and `staticData`. The last was not
+even a field on the struct, so it was dropped before anything could report it.
+
+Node level: `notes` (parsed since V1 and never used), `webhookId`, `disabled`,
+and all seven error-handling fields.
+
+The error-handling set is `dropped`, not `lossy`, and that distinction is the
+point: the runner does not honour `continueOnFail` or `retryOnFail` yet, so
+calling them lossy would imply a retry policy was applied in some reduced form
+when it was ignored entirely. When FEAT-a6yg3n lands, they become carried and
+these diagnostics disappear — which is the signal that ticket wants.
+
+`pinData` is dropped with a diagnostic rather than parked under a reserved key,
+as recommended: carrying data nothing reads would create a second silent-drop
+problem one release later.
+
+### One thing the ticket did not anticipate
+
+Node-level reporting had to run **only for mapped nodes**. An unsupported node
+keeps the whole source node in its capsule and hands it back on export, so
+reporting its `notes` as dropped would claim something was lost that was
+preserved. `TestAnUnsupportedNodeDoesNotReportItsFieldsAsDropped` pins it.
+
+### The export enum bug
+
+`webhookToN8N` passed KilasFlow's `responseMode` straight through, so a
+round-tripped webhook carried `immediate` — not one of n8n's
+`onReceived`/`lastNode`/`responseNode`. `defaultString` hid it, because it only
+substitutes when the value is empty and "immediate" is not empty. It now
+translates explicitly and `TestWebhookResponseModeRoundTripsExactly` checks all
+three values survive a round trip unchanged.
+
+The sweep for other invented values found one more: `respondToN8N` wrote
+`respondWith: "text"` unconditionally, so a node configured to answer with JSON
+came back as text. It is now derived from the body. `sqlToN8N`'s `executeQuery`
+turned out to be legitimately derived — it is n8n's only raw-statement
+operation, and a KilasFlow operation that does not map already reports lossy.
+
+`TestExportWritesOnlyValidN8NEnumValues` checks every value the exporter writes
+against n8n's documented enums, which is the assertion the webhook bug escaped.
+
+### API
+
+`ImportIssue` and `ExportIssue` are published with `severity` as a real OpenAPI
+enum, so the generated clients get a union type rather than a bare string. Both
+were regenerated; the drift checks pass.
+
+### Also fixed
+
+The licence guardrail hard-failed on a tracked file deleted but not yet staged,
+which is exactly what a rename looks like mid-edit. It now skips a tracked path
+that is gone from the working tree instead of turning an ordinary state into a
+confusing licence error.

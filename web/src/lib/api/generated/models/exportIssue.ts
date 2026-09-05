@@ -5,9 +5,12 @@
  * Embeddable workflow automation engine. Every operation available in the editor is available here: the canvas is a client of this API, not the owner of workflow state.
  * OpenAPI spec version: 0.1.0-dev
  */
+import type { ExportIssueSeverity } from './exportIssueSeverity';
 
-export interface Lossy {
+export interface ExportIssue {
   field?: string;
   nodeName?: string;
   reason: string;
+  /** blocking stops the workflow running; lossy was carried differently; dropped was not carried at all */
+  severity: ExportIssueSeverity;
 }

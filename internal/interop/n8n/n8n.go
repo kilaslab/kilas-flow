@@ -46,6 +46,9 @@ type Document struct {
 	Settings    map[string]any `json:"settings,omitempty"`
 	PinData     map[string]any `json:"pinData,omitempty"`
 	Meta        map[string]any `json:"meta,omitempty"`
+	// StaticData is n8n's per-workflow persisted scratch space. It was not even
+	// a field, so it was dropped before anything could report it.
+	StaticData map[string]any `json:"staticData,omitempty"`
 }
 
 // Node is one n8n node.
@@ -88,13 +91,40 @@ type Target struct {
 }
 
 // Unsupported reports one element the adapter refused to map.
-type Unsupported struct {
+// IssueSeverity says what an import or export diagnostic actually costs the
+// user, which is the difference between "fix this before activating" and "we
+// noticed and moved on".
+type IssueSeverity string
+
+const (
+	// SeverityBlocking means the workflow cannot run as imported.
+	SeverityBlocking IssueSeverity = "blocking"
+	// SeverityLossy means the element was carried, but differently.
+	SeverityLossy IssueSeverity = "lossy"
+	// SeverityDropped means the element was not carried at all. It is not
+	// lossy: nothing about it survived, and saying otherwise would imply a
+	// setting was applied when it was ignored.
+	SeverityDropped IssueSeverity = "dropped"
+)
+
+// ImportIssue is one thing the importer could not carry faithfully.
+//
+// It was called Unsupported when it only ever described a node type with no
+// equivalent. It now also reports fields that were dropped or carried
+// differently, so the name would have been actively misleading — a `notes`
+// field is not "unsupported", it is simply not carried.
+type ImportIssue struct {
+	// Severity says whether this stops the workflow running.
+	Severity IssueSeverity `json:"severity" enum:"blocking,lossy,dropped" doc:"blocking stops the workflow running; lossy was carried differently; dropped was not carried at all"`
 	// NodeName is the n8n node's name, which is what a user sees in n8n.
-	NodeName string `json:"nodeName"`
+	NodeName string `json:"nodeName,omitempty"`
 	NodeID   string `json:"nodeId,omitempty"`
+	// Field names the specific element, where there is one — `pinData`,
+	// `retryOnFail`. Empty when the issue is about the node as a whole.
+	Field string `json:"field,omitempty"`
 	// Type and TypeVersion are the original n8n identity, preserved so the
 	// message can name exactly what was not supported.
-	Type string `json:"type"`
+	Type string `json:"type,omitempty"`
 	// TypeVersion is the source version exactly as n8n wrote it. It was an int
 	// and truncated through a cast, so a node on version 4.2 was reported as
 	// version 4 — which is a different node with a different parameter shape,
@@ -103,12 +133,24 @@ type Unsupported struct {
 	Reason      string               `json:"reason"`
 }
 
-// Lossy reports one thing an export could not represent.
-type Lossy struct {
-	NodeName string `json:"nodeName,omitempty"`
-	Field    string `json:"field,omitempty"`
-	Reason   string `json:"reason"`
+// Unsupported is the previous name for ImportIssue.
+//
+// Kept as an alias so the mapping table's converter signatures, which are
+// written once per node type, did not all have to change in the same commit
+// that widened the type.
+type Unsupported = ImportIssue
+
+// ExportIssue is one thing the exporter could not carry faithfully. It mirrors
+// ImportIssue so the two directions read the same way.
+type ExportIssue struct {
+	Severity IssueSeverity `json:"severity" enum:"blocking,lossy,dropped" doc:"blocking stops the workflow running; lossy was carried differently; dropped was not carried at all"`
+	NodeName string        `json:"nodeName,omitempty"`
+	Field    string        `json:"field,omitempty"`
+	Reason   string        `json:"reason"`
 }
+
+// Lossy is the previous name for ExportIssue.
+type Lossy = ExportIssue
 
 // mapping is one entry in the advertised node subset.
 type mapping struct {
@@ -298,12 +340,19 @@ func Import(payload []byte, catalog workflow.Catalog) (ImportResult, error) {
 				"original":            capsule(node),
 			}
 			nodes = append(nodes, converted)
-			unsupported = append(unsupported, Unsupported{
+			unsupported = append(unsupported, ImportIssue{
+				Severity: SeverityBlocking,
 				NodeName: name, NodeID: id, Type: node.Type, TypeVersion: sourceTypeVersion(node.TypeVersion),
 				Reason: fmt.Sprintf("KilasFlow has no equivalent of the n8n node %q. It was imported as an unsupported placeholder: the workflow can be edited, but it cannot run until this node is replaced.", node.Type),
 			})
 			continue
 		}
+
+		// Node-level elements the mapping does not carry. This runs only for a
+		// *mapped* node: an unsupported one keeps the whole source node in its
+		// capsule and returns it on export, so reporting these there would say
+		// something was lost when it was preserved.
+		unsupported = append(unsupported, nodeIssues(name, id, node)...)
 
 		converted.Type = entry.kilasType
 		// n8n's own typeVersion is preserved rather than replaced with the
@@ -341,6 +390,7 @@ func Import(payload []byte, catalog workflow.Catalog) (ImportResult, error) {
 	}
 	connections, connectionIssues := importConnections(source.Connections, idByName, typeByID, versionByID, catalog)
 	unsupported = append(unsupported, connectionIssues...)
+	unsupported = append(unsupported, documentIssues(source)...)
 
 	return ImportResult{
 		Document: workflow.Document{
@@ -350,12 +400,73 @@ func Import(payload []byte, catalog workflow.Catalog) (ImportResult, error) {
 			Connections:   connections,
 			Settings:      map[string]any{},
 		},
-		Unsupported: unsupported,
+		Unsupported: withDefaultSeverity(unsupported),
 	}, nil
 }
 
-// importConnections maps n8n's name-keyed, index-positional edges onto
-// canonical ID-keyed, named-port ones.
+// withDefaultSeverity fills in the severity of issues raised by the per-node
+// parameter converters.
+//
+// Those describe a parameter that could not be carried faithfully while the
+// node itself still imported, which is exactly `lossy`. Defaulting here rather
+// than restating it at each of the thirty-odd converter sites keeps the meaning
+// in one place; the two severities that are *not* lossy — a node type with no
+// equivalent is blocking, a field nothing reads is dropped — are set explicitly
+// where they are raised.
+func withDefaultSeverity(issues []ImportIssue) []ImportIssue {
+	for index := range issues {
+		if issues[index].Severity == "" {
+			issues[index].Severity = SeverityLossy
+		}
+	}
+	return issues
+}
+
+func withDefaultExportSeverity(issues []ExportIssue) []ExportIssue {
+	for index := range issues {
+		if issues[index].Severity == "" {
+			issues[index].Severity = SeverityLossy
+		}
+	}
+	return issues
+}
+
+// documentIssues reports the workflow-level elements KilasFlow does not carry.
+//
+// FEAT-chxkvq shipped on the principle that an unsupported element is named
+// rather than silently applied. The node-level mapping honoured it; these did
+// not — `settings`, `pinData` and `meta` were read into the struct and then
+// discarded without a word, and `staticData` was not even a field.
+//
+// `pinData` is dropped rather than parked under a reserved key. Carrying data
+// nothing reads would create a second silent-drop problem one release later,
+// and the diagnostic is what the user actually needs.
+func documentIssues(source Document) []ImportIssue {
+	var issues []ImportIssue
+	for _, element := range []struct {
+		field   string
+		present bool
+		reason  string
+	}{
+		{"settings", len(source.Settings) > 0,
+			"n8n workflow settings — error workflow, timezone, execution order and the rest — have no KilasFlow equivalent yet and were not carried"},
+		{"pinData", len(source.PinData) > 0,
+			"pinned test data is an n8n editor feature with no KilasFlow equivalent; it was not carried, so the nodes that had it pinned will run for real"},
+		{"meta", len(source.Meta) > 0,
+			"n8n instance metadata describes where the workflow came from and has no meaning here; it was not carried"},
+		{"staticData", len(source.StaticData) > 0,
+			"n8n's per-workflow static data is scratch space its nodes persist between runs; KilasFlow has no equivalent and it was not carried"},
+	} {
+		if !element.present {
+			continue
+		}
+		issues = append(issues, ImportIssue{
+			Severity: SeverityDropped, Field: element.field, Reason: element.reason,
+		})
+	}
+	return issues
+}
+
 // importConnections converts n8n's name-keyed connection map into canonical
 // edges.
 //
@@ -700,6 +811,7 @@ func Export(document workflow.Document) (ExportResult, error) {
 		result.Document.Connections[sourceName][channel] = slots
 	}
 
+	result.Lossy = withDefaultExportSeverity(result.Lossy)
 	return result, nil
 }
 
@@ -877,4 +989,53 @@ func sourceTypeVersion(version float64) workflow.TypeVersion {
 		return workflow.TypeVersion{}
 	}
 	return parsed
+}
+
+// nodeIssues reports the per-node elements a mapped node loses on import.
+//
+// The error-handling set is `dropped`, not `lossy`, and the distinction is the
+// point: the runner does not honour continueOnFail or retryOnFail yet, so
+// calling them lossy would imply a retry policy was applied in some reduced
+// form when it was ignored entirely. When the runner learns them, these become
+// carried and the diagnostics go away — which is exactly the signal a later
+// ticket wants.
+func nodeIssues(name, id string, node Node) []ImportIssue {
+	var issues []ImportIssue
+	add := func(field, reason string) {
+		issues = append(issues, ImportIssue{
+			Severity: SeverityDropped,
+			NodeName: name, NodeID: id, Field: field,
+			Type: node.Type, TypeVersion: sourceTypeVersion(node.TypeVersion),
+			Reason: reason,
+		})
+	}
+
+	if strings.TrimSpace(node.Notes) != "" {
+		add("notes", "the node's note was parsed but has no KilasFlow equivalent and was not carried")
+	}
+	if strings.TrimSpace(node.WebhookID) != "" {
+		add("webhookId", "n8n's per-node webhook identity is meaningless in this installation; KilasFlow assigns its own webhook binding on activation")
+	}
+	if node.Disabled {
+		add("disabled", "n8n's disabled flag has no KilasFlow equivalent, so this node will run")
+	}
+
+	for _, field := range []struct {
+		name    string
+		present bool
+	}{
+		{"continueOnFail", node.ContinueOnFail},
+		{"retryOnFail", node.RetryOnFail},
+		{"maxTries", node.MaxTries != 0},
+		{"waitBetweenTries", node.WaitBetweenTries != 0},
+		{"alwaysOutputData", node.AlwaysOutputData},
+		{"executeOnce", node.ExecuteOnce},
+		{"onError", strings.TrimSpace(node.OnError) != ""},
+	} {
+		if !field.present {
+			continue
+		}
+		add(field.name, "the KilasFlow runner does not honour n8n's error-handling settings yet, so this one was not carried and the node will use the default behaviour")
+	}
+	return issues
 }

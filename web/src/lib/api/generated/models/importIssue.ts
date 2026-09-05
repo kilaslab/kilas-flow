@@ -5,12 +5,16 @@
  * Embeddable workflow automation engine. Every operation available in the editor is available here: the canvas is a client of this API, not the owner of workflow state.
  * OpenAPI spec version: 0.1.0-dev
  */
+import type { ImportIssueSeverity } from './importIssueSeverity';
 
-export interface Unsupported {
+export interface ImportIssue {
+  field?: string;
   nodeId?: string;
-  nodeName: string;
+  nodeName?: string;
   reason: string;
-  type: string;
+  /** blocking stops the workflow running; lossy was carried differently; dropped was not carried at all */
+  severity: ImportIssueSeverity;
+  type?: string;
   /** Node type version. A decimal such as 1, 4.2, or a YYYYMM value such as 202502. Omit it to use the registered default. */
   typeVersion?: number;
 }

@@ -280,6 +280,9 @@ func TestNoN8NDependencyInNodeManifests(t *testing.T) {
 		if filepath.Base(rel) != "package.json" {
 			continue
 		}
+		if _, err := os.Stat(filepath.Join(root, rel)); os.IsNotExist(err) {
+			continue // Deleted but not yet staged; see the note above.
+		}
 		seen++
 		for _, name := range dependencyNames(t, filepath.Join(root, rel)) {
 			if forbiddenDependency(name) {
@@ -306,6 +309,13 @@ func TestReferenceCheckoutIsNeverABuildInput(t *testing.T) {
 			continue
 		}
 		raw, err := os.ReadFile(filepath.Join(root, rel))
+		if os.IsNotExist(err) {
+			// Tracked but gone from the working tree: a rename or deletion
+			// that has not been staged yet. There are no bytes to check, and
+			// failing here would turn an ordinary mid-edit state into a
+			// confusing licence error.
+			continue
+		}
 		if err != nil {
 			t.Errorf("reading %s: %v", rel, err)
 			continue

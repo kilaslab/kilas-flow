@@ -468,11 +468,27 @@ func webhookToKilas(node Node) (map[string]any, []Unsupported) {
 	return parameters, issues
 }
 
-func webhookToN8N(node workflow.Node) (map[string]any, []Lossy) {
+// webhookToN8N is the exact inverse of webhookToKilas.
+//
+// The response mode has to be translated rather than passed through. n8n's
+// enum is onReceived / lastNode / responseNode; KilasFlow calls the first of
+// those `immediate`, and writing that word into an exported workflow produced a
+// document n8n rejects. `defaultString` hid it, because it only substitutes
+// when the value is empty and `immediate` is not empty.
+func webhookToN8N(node workflow.Node) (map[string]any, []ExportIssue) {
+	responseMode := "onReceived"
+	switch stringParameter(node.Parameters, "responseMode") {
+	case "responseNode":
+		responseMode = "responseNode"
+	case "lastNode":
+		responseMode = "lastNode"
+	case "immediate", "":
+		responseMode = "onReceived"
+	}
 	return map[string]any{
 		"path":         stringParameter(node.Parameters, "path"),
 		"httpMethod":   defaultString(stringParameter(node.Parameters, "httpMethod"), "POST"),
-		"responseMode": defaultString(stringParameter(node.Parameters, "responseMode"), "onReceived"),
+		"responseMode": responseMode,
 		"options":      map[string]any{},
 	}, nil
 }
@@ -493,8 +509,20 @@ func respondToKilas(node Node) (map[string]any, []Unsupported) {
 	return parameters, nil
 }
 
-func respondToN8N(node workflow.Node) (map[string]any, []Lossy) {
-	parameters := map[string]any{"respondWith": "text", "options": map[string]any{}}
+// respondToN8N writes the response mode the node actually holds.
+//
+// It used to write `respondWith: "text"` unconditionally, which is a value
+// invented by the exporter rather than derived from the document: a node
+// configured to answer with JSON came back as text. Import already accepts both
+// text and json, so the inverse must distinguish them.
+func respondToN8N(node workflow.Node) (map[string]any, []ExportIssue) {
+	respondWith := "text"
+	if body, ok := node.Parameters["responseBody"]; ok {
+		if _, isText := body.(string); !isText {
+			respondWith = "json"
+		}
+	}
+	parameters := map[string]any{"respondWith": respondWith, "options": map[string]any{}}
 	if code, ok := numberParameter(node.Parameters, "responseCode"); ok {
 		parameters["options"] = map[string]any{"responseCode": code}
 	}

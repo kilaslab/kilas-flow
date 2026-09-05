@@ -2,6 +2,7 @@ package n8n_test
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 
@@ -1240,6 +1241,264 @@ func TestUnknownConnectionKindNamesBothEndpoints(t *testing.T) {
 	for _, want := range []string{"Vector Store", "Manual", "ai_vectorStore"} {
 		if !strings.Contains(reason, want) {
 			t.Errorf("reason = %q, want it to name %q", reason, want)
+		}
+	}
+}
+
+// n8n's documented enums for every value the exporter writes. A round trip that
+// produces a document n8n rejects is worse than one that loses a field, because
+// nothing reports it until someone tries the import on the other side.
+var n8nEnums = map[string]map[string][]string{
+	"n8n-nodes-base.webhook": {
+		"responseMode": {"onReceived", "lastNode", "responseNode"},
+		"httpMethod":   {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"},
+	},
+	"n8n-nodes-base.respondToWebhook": {
+		"respondWith": {"text", "json", "binary", "redirect", "noData"},
+	},
+	"n8n-nodes-base.set": {
+		"mode": {"manual", "raw"},
+	},
+	"n8n-nodes-base.merge": {
+		"mode": {"append", "combine", "chooseBranch"},
+	},
+	"n8n-nodes-base.postgres": {
+		"operation": {"executeQuery", "insert", "update", "upsert", "deleteTable", "select"},
+	},
+	"n8n-nodes-base.mySql": {
+		"operation": {"executeQuery", "insert", "update", "upsert", "deleteTable", "select"},
+	},
+}
+
+// TestExportWritesOnlyValidN8NEnumValues is the assertion the webhook bug
+// escaped.
+//
+// KilasFlow calls n8n's `onReceived` mode `immediate`, and the exporter passed
+// the KilasFlow word straight through — `defaultString` only substitutes when
+// the value is empty, and "immediate" is not empty. The result was a document
+// n8n refuses to import.
+func TestExportWritesOnlyValidN8NEnumValues(t *testing.T) {
+	t.Parallel()
+
+	document := workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_enums",
+		Name:          "Every exported enum",
+		Nodes: []workflow.Node{
+			{ID: "hook", Name: "Webhook", Type: "kilasflow.webhook", TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"path": "enums", "httpMethod": "POST", "responseMode": "immediate"}},
+			{ID: "reply", Name: "Respond", Type: "kilasflow.respondToWebhook", TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"responseCode": float64(200), "responseBody": "ok"}},
+		},
+		Connections: []workflow.Connection{{
+			ID: "c1", Kind: workflow.ConnectionMain,
+			Source: workflow.Endpoint{NodeID: "hook", Port: "main"},
+			Target: workflow.Endpoint{NodeID: "reply", Port: "main"},
+		}},
+		Settings: map[string]any{},
+	}
+
+	exported, err := n8n.Export(document)
+	if err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+	for _, node := range exported.Document.Nodes {
+		enums, known := n8nEnums[node.Type]
+		if !known {
+			continue
+		}
+		for field, allowed := range enums {
+			value, present := node.Parameters[field].(string)
+			if !present {
+				continue
+			}
+			if !slices.Contains(allowed, value) {
+				t.Errorf("node %q exported %s=%q, which is not one of n8n's %v", node.Name, field, value, allowed)
+			}
+		}
+	}
+}
+
+// TestWebhookResponseModeRoundTripsExactly pins the inverse property directly:
+// whatever n8n wrote must come back out unchanged.
+func TestWebhookResponseModeRoundTripsExactly(t *testing.T) {
+	t.Parallel()
+
+	for _, mode := range []string{"onReceived", "lastNode", "responseNode"} {
+		fixture := `{
+		  "name": "Mode ` + mode + `",
+		  "nodes": [
+		    {"id":"a","name":"Webhook","type":"n8n-nodes-base.webhook","typeVersion":2,"position":[0,0],
+		     "parameters":{"path":"p","httpMethod":"POST","responseMode":"` + mode + `"}}
+		  ],
+		  "connections": {}
+		}`
+		imported := importFixture(t, fixture)
+		exported, err := n8n.Export(imported.Document)
+		if err != nil {
+			t.Fatalf("Export(%s) error = %v", mode, err)
+		}
+		if len(exported.Document.Nodes) == 0 {
+			t.Fatalf("mode %s: the webhook was not exported", mode)
+		}
+		if got := exported.Document.Nodes[0].Parameters["responseMode"]; got != mode {
+			t.Errorf("responseMode round-tripped %q as %#v", mode, got)
+		}
+	}
+}
+
+// annotatedFixture carries every workflow-level and node-level element the
+// importer does not keep. It exists to prove the negative: nothing gets into
+// the canonical document, or fails to, without a diagnostic saying so.
+const annotatedFixture = `{
+  "name": "Maximally annotated",
+  "settings": {"executionOrder":"v1","timezone":"Asia/Jakarta","errorWorkflow":"wf_other"},
+  "pinData": {"Edit": [{"json":{"pinned":true}}]},
+  "meta": {"instanceId":"abc123","templateId":"42"},
+  "staticData": {"lastRunToken":"xyz"},
+  "nodes": [
+    {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}},
+    {"id":"b","name":"Edit","type":"n8n-nodes-base.set","typeVersion":3.4,"position":[220,0],
+     "parameters":{"mode":"manual","assignments":{"assignments":[{"id":"1","name":"a","value":"b","type":"string"}]}},
+     "notes":"runs out of hours",
+     "webhookId":"3f2a1b0c-dead-4bee-9f00-0d15ea5eb00b",
+     "disabled":true,
+     "continueOnFail":true,
+     "retryOnFail":true,
+     "maxTries":5,
+     "waitBetweenTries":2500,
+     "alwaysOutputData":true,
+     "executeOnce":true,
+     "onError":"continueErrorOutput"}
+  ],
+  "connections": {"Manual": {"main": [[{"node":"Edit","type":"main","index":0}]]}}
+}`
+
+// TestImportReportsEveryDroppedElement is the property this ticket exists for.
+//
+// FEAT-chxkvq shipped on the principle that an unsupported element is named
+// rather than silently applied. The node-level *mapping* honoured that; the
+// document and node metadata did not — settings, pinData and meta were read
+// into the struct and discarded without a word, staticData was not even a
+// field, and notes was parsed and never used.
+func TestImportReportsEveryDroppedElement(t *testing.T) {
+	t.Parallel()
+
+	result := importFixture(t, annotatedFixture)
+
+	reported := map[string]n8n.ImportIssue{}
+	for _, issue := range result.Unsupported {
+		if issue.Field != "" {
+			reported[issue.Field] = issue
+		}
+	}
+
+	for _, field := range []string{
+		// Workflow level.
+		"settings", "pinData", "meta", "staticData",
+		// Node level.
+		"notes", "webhookId", "disabled",
+		// The error-handling set.
+		"continueOnFail", "retryOnFail", "maxTries", "waitBetweenTries",
+		"alwaysOutputData", "executeOnce", "onError",
+	} {
+		issue, found := reported[field]
+		if !found {
+			t.Errorf("%q was dropped without a diagnostic", field)
+			continue
+		}
+		// Dropped, not lossy: nothing about it survived, and calling it lossy
+		// would imply the setting was applied in some reduced form.
+		if issue.Severity != n8n.SeverityDropped {
+			t.Errorf("%q reported severity %q, want %q", field, issue.Severity, n8n.SeverityDropped)
+		}
+		if issue.Reason == "" {
+			t.Errorf("%q was reported with no reason", field)
+		}
+	}
+
+	// A node-level diagnostic names its node; a workflow-level one does not.
+	for _, field := range []string{"notes", "retryOnFail"} {
+		if reported[field].NodeName != "Edit" {
+			t.Errorf("%q did not name the node it came from: %#v", field, reported[field])
+		}
+	}
+	for _, field := range []string{"settings", "pinData"} {
+		if reported[field].NodeName != "" {
+			t.Errorf("%q named a node, but it is a workflow-level element: %#v", field, reported[field])
+		}
+	}
+}
+
+// TestSeverityDistinguishesBlockingFromDropped pins the three-way distinction.
+// A user needs to know what stops the workflow running, as against what was
+// merely noted.
+func TestSeverityDistinguishesBlockingFromDropped(t *testing.T) {
+	t.Parallel()
+
+	const fixture = `{
+	  "name": "Mixed severities",
+	  "pinData": {"x":[]},
+	  "nodes": [
+	    {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}},
+	    {"id":"b","name":"Odd","type":"n8n-nodes-base.someUnmappedThing","typeVersion":1,"position":[220,0],"parameters":{}},
+	    {"id":"c","name":"Cron","type":"n8n-nodes-base.scheduleTrigger","typeVersion":1.2,"position":[440,0],
+	     "parameters":{"rule":{"interval":[{"field":"seconds","secondsInterval":30}]}}}
+	  ],
+	  "connections": {"Manual": {"main": [[{"node":"Odd","type":"main","index":0}]]}}
+	}`
+
+	result := importFixture(t, fixture)
+
+	counts := map[n8n.IssueSeverity]int{}
+	for _, issue := range result.Unsupported {
+		counts[issue.Severity]++
+		if issue.Severity == "" {
+			t.Errorf("issue reported with no severity: %#v", issue)
+		}
+	}
+	if counts[n8n.SeverityBlocking] == 0 {
+		t.Errorf("no blocking issue for a node type with no equivalent: %#v", result.Unsupported)
+	}
+	if counts[n8n.SeverityDropped] == 0 {
+		t.Errorf("no dropped issue for pinData: %#v", result.Unsupported)
+	}
+	if counts[n8n.SeverityLossy] == 0 {
+		t.Errorf("no lossy issue for the schedule interval that had to be reshaped: %#v", result.Unsupported)
+	}
+
+	// The blocking one is the node that cannot run, and it names the node.
+	for _, issue := range result.Unsupported {
+		if issue.Severity != n8n.SeverityBlocking {
+			continue
+		}
+		if issue.NodeName != "Odd" || issue.Type != "n8n-nodes-base.someUnmappedThing" {
+			t.Errorf("blocking issue = %#v, want it to name the unmapped node", issue)
+		}
+	}
+}
+
+// TestAnUnsupportedNodeDoesNotReportItsFieldsAsDropped keeps the reporting
+// honest in the other direction. An unsupported node keeps the whole source
+// node in its capsule and hands it back on export, so claiming its notes were
+// dropped would say something was lost that was preserved.
+func TestAnUnsupportedNodeDoesNotReportItsFieldsAsDropped(t *testing.T) {
+	t.Parallel()
+
+	const fixture = `{
+	  "name": "Unsupported with metadata",
+	  "nodes": [
+	    {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}},
+	    {"id":"b","name":"Odd","type":"n8n-nodes-base.someUnmappedThing","typeVersion":1,"position":[220,0],
+	     "parameters":{},"notes":"kept in the capsule","retryOnFail":true}
+	  ],
+	  "connections": {"Manual": {"main": [[{"node":"Odd","type":"main","index":0}]]}}
+	}`
+
+	result := importFixture(t, fixture)
+	for _, issue := range result.Unsupported {
+		if issue.NodeName == "Odd" && (issue.Field == "notes" || issue.Field == "retryOnFail") {
+			t.Errorf("reported %q as dropped for an unsupported node, but the capsule preserves it: %#v", issue.Field, issue)
 		}
 	}
 }

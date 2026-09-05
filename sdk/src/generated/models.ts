@@ -388,10 +388,24 @@ export interface ExecutionStartedEvent {
   workflowId?: string;
 }
 
-export interface Lossy {
+/**
+ * blocking stops the workflow running; lossy was carried differently; dropped was not carried at all
+ */
+export type ExportIssueSeverity = typeof ExportIssueSeverity[keyof typeof ExportIssueSeverity];
+
+
+export const ExportIssueSeverity = {
+  blocking: 'blocking',
+  lossy: 'lossy',
+  dropped: 'dropped',
+} as const;
+
+export interface ExportIssue {
   field?: string;
   nodeName?: string;
   reason: string;
+  /** blocking stops the workflow running; lossy was carried differently; dropped was not carried at all */
+  severity: ExportIssueSeverity;
 }
 
 export interface ExportedWorkflowResource {
@@ -399,7 +413,7 @@ export interface ExportedWorkflowResource {
   readonly $schema?: string;
   format: string;
   /** @nullable */
-  lossy: Lossy[] | null;
+  lossy: ExportIssue[] | null;
   /** @nullable */
   supportedMappings: string[] | null;
   workflow: unknown;
@@ -414,6 +428,30 @@ export interface HealthOutputBody {
   version: string;
 }
 
+/**
+ * blocking stops the workflow running; lossy was carried differently; dropped was not carried at all
+ */
+export type ImportIssueSeverity = typeof ImportIssueSeverity[keyof typeof ImportIssueSeverity];
+
+
+export const ImportIssueSeverity = {
+  blocking: 'blocking',
+  lossy: 'lossy',
+  dropped: 'dropped',
+} as const;
+
+export interface ImportIssue {
+  field?: string;
+  nodeId?: string;
+  nodeName?: string;
+  reason: string;
+  /** blocking stops the workflow running; lossy was carried differently; dropped was not carried at all */
+  severity: ImportIssueSeverity;
+  type?: string;
+  /** Node type version. A decimal such as 1, 4.2, or a YYYYMM value such as 202502. Omit it to use the registered default. */
+  typeVersion?: number;
+}
+
 export interface ImportWorkflowInputBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -423,15 +461,6 @@ export interface ImportWorkflowInputBody {
   name?: string;
   /** An n8n workflow JSON document */
   workflow: unknown;
-}
-
-export interface Unsupported {
-  nodeId?: string;
-  nodeName: string;
-  reason: string;
-  type: string;
-  /** Node type version. A decimal such as 1, 4.2, or a YYYYMM value such as 202502. Omit it to use the registered default. */
-  typeVersion?: number;
 }
 
 export interface WorkflowVersionResource {
@@ -461,7 +490,7 @@ export interface ImportedWorkflowResource {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   /** @nullable */
-  unsupported: Unsupported[] | null;
+  unsupported: ImportIssue[] | null;
   workflow: WorkflowResource;
 }
 
