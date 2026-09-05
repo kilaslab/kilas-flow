@@ -1,7 +1,7 @@
 ---
 id: FEAT-g6wrxm
 title: Add the database node options collection and query batching
-status: testing
+status: done
 priority: high
 labels:
     - nodes
@@ -12,7 +12,7 @@ deps:
 parent: EPIC-m42s3g
 phase: p4
 created: "2026-09-05T08:28:30Z"
-updated: "2026-09-05T15:35:45Z"
+updated: "2026-09-05T15:46:57Z"
 ---
 
 ## Scope
