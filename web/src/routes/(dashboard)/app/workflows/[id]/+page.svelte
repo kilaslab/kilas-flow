@@ -4,7 +4,7 @@
 	import { page } from '$app/state';
 	import ArrowLeft from '@lucide/svelte/icons/arrow-left';
 
-	import { ApiError } from '$lib/api/http';
+	import { message } from '$lib/api/http';
 	import { createListCredentials } from '$lib/api/generated/credentials/credentials';
 	import { createGetExpressionGrammar, createListNodeTypes } from '$lib/api/generated/nodes/nodes';
 	import { getExecution } from '$lib/api/generated/executions/executions';
@@ -69,11 +69,6 @@
 	onDestroy(() => {
 		pollingRun += 1;
 	});
-
-	function message(error: unknown): string {
-		if (error instanceof ApiError) return error.message;
-		return error instanceof Error ? error.message : 'The request could not be completed.';
-	}
 
 	async function save(document: WorkflowDocumentInput) {
 		if (!currentWorkflow) return;

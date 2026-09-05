@@ -121,3 +121,26 @@ async function readProblem(response: Response): Promise<ProblemDetail | undefine
 		return undefined;
 	}
 }
+
+/**
+ * The one sentence a failed request is allowed to show a user.
+ *
+ * It lives beside ApiError because every caller already imports ApiError to
+ * recognise one, and because seven page-local copies had produced two
+ * spellings of the same failure: a 404 read as "Not found" in the workflow
+ * editor and "404 — Not found" on the list that links to it. Whether the
+ * status is shown is a product decision, and a product decision cannot be
+ * held in seven places.
+ *
+ * It shows the status. A bare "Not found" leaves the user with nothing to put
+ * in a bug report, and the number is the one part of an API failure stable
+ * enough to search for.
+ *
+ * The fallback sentence covers a rejection that is not an Error at all — a
+ * thrown string, a rejected promise carrying a response object. Rendering
+ * String(error) there is how "[object Object]" reaches a user.
+ */
+export function message(error: unknown): string {
+	if (error instanceof ApiError) return `${error.status} — ${error.message}`;
+	return error instanceof Error ? error.message : 'The request could not be completed.';
+}

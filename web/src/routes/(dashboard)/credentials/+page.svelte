@@ -1,9 +1,8 @@
 <script lang="ts">
 	import KeyRound from '@lucide/svelte/icons/key-round';
-	import RefreshCw from '@lucide/svelte/icons/refresh-cw';
 	import Trash2 from '@lucide/svelte/icons/trash-2';
 
-	import { ApiError } from '$lib/api/http';
+	import { message } from '$lib/api/http';
 	import {
 		createCredential,
 		createListCredentialTypes,
@@ -12,6 +11,7 @@
 		updateCredential
 	} from '$lib/api/generated/credentials/credentials';
 	import type { CredentialResource, CredentialTypeResource } from '$lib/api/generated/models';
+	import ListStates from '$lib/components/dashboard/list-states.svelte';
 	import { Button } from '$lib/components/ui/button';
 	import * as Dialog from '$lib/components/ui/dialog';
 	import { Input } from '$lib/components/ui/input';
@@ -43,11 +43,10 @@
 	let formError = $state<string | null>(null);
 
 	const definition = $derived((types.data ?? []).find((candidate) => candidate.id === typeID) ?? null);
-
-	function message(error: unknown): string {
-		if (error instanceof ApiError) return `${error.status} — ${error.message}`;
-		return error instanceof Error ? error.message : 'The request could not be completed.';
-	}
+	// Read once here rather than through the query object in the markup: the
+	// rows are used inside a snippet, where the `!isPending && !isError`
+	// narrowing that made `.data` non-optional no longer reaches.
+	const rows = $derived(credentials.data ?? []);
 
 	function openCreate() {
 		editing = null;
@@ -125,33 +124,20 @@
 	</div>
 
 	<div class="mt-4">
-		{#if credentials.isPending}
-			<div aria-live="polite" class="grid gap-3">
-				<p class="text-sm text-muted-foreground">Loading credentials…</p>
-				{#each Array(2) as _}
-					<div class="h-16 animate-pulse rounded-xl bg-muted" aria-hidden="true"></div>
-				{/each}
-			</div>
-		{:else if credentials.isError}
-			<div class="max-w-xl rounded-lg border border-destructive/25 bg-destructive/5 p-3">
-				<h2 class="font-medium">Credentials could not be loaded</h2>
-				<p class="mt-0.5 text-xs leading-5 text-muted-foreground">{message(credentials.error)}</p>
-				<Button class="mt-4" variant="outline" onclick={() => void credentials.refetch()}>
-					<RefreshCw aria-hidden="true" />
-					Try again
-				</Button>
-			</div>
-		{:else if credentials.data.length === 0}
-			<div class="grid min-h-56 place-items-center rounded-2xl border border-dashed border-border bg-card px-6 py-12 text-center">
-				<div class="max-w-sm">
-					<div aria-hidden="true" class="mx-auto grid size-8 place-items-center rounded-lg bg-accent text-accent-foreground"><KeyRound class="size-5" /></div>
-					<h2 class="mt-3 text-sm font-semibold tracking-tight">No credentials yet</h2>
-					<p class="mt-1 text-xs leading-5 text-muted-foreground">Add one to authenticate HTTP Request nodes without putting a secret in a workflow.</p>
-				</div>
-			</div>
-		{:else}
+		<ListStates
+			label="Credentials"
+			loading={credentials.isPending}
+			failed={credentials.isError}
+			error={credentials.error}
+			count={rows.length}
+			rows={2}
+			onRetry={() => void credentials.refetch()}
+			emptyIcon={KeyRound}
+			emptyTitle="No credentials yet"
+			emptyBody="Add one to authenticate HTTP Request nodes without putting a secret in a workflow."
+		>
 			<ul aria-label="Credentials" class="divide-y divide-border overflow-hidden rounded-lg border border-border">
-				{#each credentials.data as credential (credential.id)}
+				{#each rows as credential (credential.id)}
 					<li class="flex h-11 items-center gap-3 px-3">
 						<div class="min-w-0 flex-1">
 							<p class="truncate text-sm font-medium">{credential.name}</p>
@@ -167,7 +153,7 @@
 					</li>
 				{/each}
 			</ul>
-		{/if}
+		</ListStates>
 	</div>
 
 	<Dialog.Root bind:open={editorOpen}>

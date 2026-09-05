@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { ApiError } from '$lib/api/http';
+	import { message } from '$lib/api/http';
 	import { createListCredentials } from '$lib/api/generated/credentials/credentials';
 	import { createListNodeTypes } from '$lib/api/generated/nodes/nodes';
 	import { getExecution } from '$lib/api/generated/executions/executions';
@@ -46,11 +46,6 @@
 	$effect(() => {
 		if (workflow.data) currentWorkflow = workflow.data;
 	});
-
-	function message(error: unknown): string {
-		if (error instanceof ApiError) return error.message;
-		return error instanceof Error ? error.message : 'The request could not be completed.';
-	}
 
 	/** Tells the host what happened, always to its exact origin, never '*'. */
 	function notifyHost(type: string, detail: Record<string, unknown> = {}) {

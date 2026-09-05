@@ -3,7 +3,7 @@
 	import ArrowLeft from '@lucide/svelte/icons/arrow-left';
 	import Paperclip from '@lucide/svelte/icons/paperclip';
 
-	import { ApiError } from '$lib/api/http';
+	import { message } from '$lib/api/http';
 	import { createGetExecution } from '$lib/api/generated/executions/executions';
 	import { createListNodeTypes } from '$lib/api/generated/nodes/nodes';
 	import { createGetWorkflowVersion } from '$lib/api/generated/workflows/workflows';
@@ -82,11 +82,6 @@
 		// durable trace so the inspector shows what was actually persisted.
 		if (live.finished) void execution.refetch();
 	});
-
-	function message(error: unknown): string {
-		if (error instanceof ApiError) return `${error.status} — ${error.message}`;
-		return error instanceof Error ? error.message : 'The request could not be completed.';
-	}
 
 	function asJSON(value: unknown): string {
 		if (value === undefined || value === null) return 'null';
