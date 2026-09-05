@@ -7,6 +7,7 @@
  */
 
 export * from './branding';
+export * from './condition';
 export * from './connection';
 export * from './credentialBody';
 export * from './credentialBodyFields';
@@ -67,6 +68,7 @@ export * from './streamExecutionEvents200Item';
 export * from './streamExecutionEventsParams';
 export * from './testCredentialResource';
 export * from './typeOptions';
+export * from './visibility';
 export * from './visibilityCondition';
 export * from './webhookDeclaration';
 export * from './webhookRouteResource';

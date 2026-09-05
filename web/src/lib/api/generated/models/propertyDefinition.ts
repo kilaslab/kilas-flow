@@ -8,11 +8,13 @@
 import type { PropertyGroup } from './propertyGroup';
 import type { PropertyOption } from './propertyOption';
 import type { TypeOptions } from './typeOptions';
+import type { Visibility } from './visibility';
 import type { VisibilityCondition } from './visibilityCondition';
 
 export interface PropertyDefinition {
   default?: unknown;
   description?: string;
+  displayOptions?: Visibility;
   /** @nullable */
   fields?: PropertyDefinition[] | null;
   /** @nullable */

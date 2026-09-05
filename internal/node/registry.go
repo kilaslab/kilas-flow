@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/kilaslabs/kilas-flow/internal/property"
+	propertypkg "github.com/kilaslabs/kilas-flow/internal/property"
 	"github.com/kilaslabs/kilas-flow/internal/workflow"
 )
 
@@ -108,7 +108,7 @@ type CredentialRequirement struct {
 	// VisibleWhen shows this requirement only for some parameter values, so a
 	// node offering several auth modes asks for the credential the chosen mode
 	// actually needs.
-	VisibleWhen []property.VisibilityCondition `json:"visibleWhen,omitempty"`
+	VisibleWhen []propertypkg.VisibilityCondition `json:"visibleWhen,omitempty"`
 }
 
 // NodeGroup is a behavioural classification. The set is closed: a definition
@@ -323,8 +323,13 @@ func (registry *Registry) Lookup(nodeType string, version workflow.TypeVersion) 
 		Inputs:             append([]workflow.Port(nil), definition.Inputs...),
 		Outputs:            append([]workflow.Port(nil), definition.Outputs...),
 		RequiredParameters: requiredParameters(definition.Parameters),
-		ExecutorID:         definition.ExecutorID,
-		Validate:           definition.Validate,
+		// The compiler asks this per node, so a parameter hidden by that node's
+		// own configuration is not demanded of it.
+		RequiredFor: func(parameters map[string]any, typeVersion workflow.TypeVersion) []string {
+			return visibleRequiredParameters(definition.Parameters, parameters, typeVersion.String())
+		},
+		ExecutorID: definition.ExecutorID,
+		Validate:   definition.Validate,
 	}, true
 }
 
@@ -396,28 +401,31 @@ func validatePorts(nodeType, direction string, ports []workflow.Port) error {
 // also named `value`, because they live in different objects and never meet.
 func validateProperties(nodeType, group string, properties []PropertyDefinition) error {
 	seen := make(map[string]struct{}, len(properties))
-	for _, property := range properties {
-		if property.Key == "" || property.Label == "" || !knownPropertyKind(property.Kind) {
+	for _, declared := range properties {
+		if declared.Key == "" || declared.Label == "" || !knownPropertyKind(declared.Kind) {
 			return fmt.Errorf("node definition %q has invalid %s metadata", nodeType, group)
 		}
-		if _, exists := seen[property.Key]; exists {
-			return fmt.Errorf("node definition %q has duplicate %s %q", nodeType, group, property.Key)
+		if _, exists := seen[declared.Key]; exists {
+			return fmt.Errorf("node definition %q has duplicate %s %q", nodeType, group, declared.Key)
 		}
-		seen[property.Key] = struct{}{}
+		seen[declared.Key] = struct{}{}
 
-		if err := validateProperties(nodeType, group+"."+property.Key, property.Fields); err != nil {
+		if err := propertypkg.ValidateVisibility(declared.DisplayOptions); err != nil {
+			return fmt.Errorf("node definition %q %s %q: %w", nodeType, group, declared.Key, err)
+		}
+		if err := validateProperties(nodeType, group+"."+declared.Key, declared.Fields); err != nil {
 			return err
 		}
-		groupKeys := make(map[string]struct{}, len(property.Groups))
-		for _, nested := range property.Groups {
+		groupKeys := make(map[string]struct{}, len(declared.Groups))
+		for _, nested := range declared.Groups {
 			if nested.Key == "" || nested.Label == "" {
-				return fmt.Errorf("node definition %q %s %q has an unnamed group", nodeType, group, property.Key)
+				return fmt.Errorf("node definition %q %s %q has an unnamed group", nodeType, group, declared.Key)
 			}
 			if _, exists := groupKeys[nested.Key]; exists {
-				return fmt.Errorf("node definition %q %s %q has duplicate group %q", nodeType, group, property.Key, nested.Key)
+				return fmt.Errorf("node definition %q %s %q has duplicate group %q", nodeType, group, declared.Key, nested.Key)
 			}
 			groupKeys[nested.Key] = struct{}{}
-			if err := validateProperties(nodeType, group+"."+property.Key+"."+nested.Key, nested.Fields); err != nil {
+			if err := validateProperties(nodeType, group+"."+declared.Key+"."+nested.Key, nested.Fields); err != nil {
 				return err
 			}
 		}
@@ -444,20 +452,37 @@ func validateProperties(nodeType, group string, properties []PropertyDefinition)
 // nothing about whether the list has any elements. A required list with an
 // element default is still unsatisfied until the user adds one.
 func requiredParameters(properties []PropertyDefinition) []string {
-	parameters := make([]string, 0, len(properties))
-	for _, property := range properties {
-		if property.Kind == PropertyNotice {
+	return visibleRequiredParameters(properties, nil, "")
+}
+
+// visibleRequiredParameters lists the properties a node must have *given its
+// configuration*.
+//
+// A hidden property is not required. A node shaped like a real n8n node — where
+// chatId is required only when resource is message — would otherwise be
+// unactivatable in every other configuration, which is what blocks every
+// declarative node pack.
+//
+// Passing nil parameters evaluates visibility against an empty configuration,
+// which is what the static list means: what a fresh node requires.
+func visibleRequiredParameters(properties []PropertyDefinition, parameters map[string]any, typeVersion string) []string {
+	required := make([]string, 0, len(properties))
+	for _, declared := range properties {
+		if declared.Kind == PropertyNotice {
 			continue
 		}
-		if !property.Required {
+		if !declared.Required {
 			continue
 		}
-		repeated := property.TypeOptions != nil && property.TypeOptions.MultipleValues
-		if property.Default == nil || repeated {
-			parameters = append(parameters, property.Key)
+		if !propertypkg.VisibleProperty(declared, parameters, typeVersion) {
+			continue
+		}
+		repeated := declared.TypeOptions != nil && declared.TypeOptions.MultipleValues
+		if declared.Default == nil || repeated {
+			required = append(required, declared.Key)
 		}
 	}
-	return parameters
+	return required
 }
 
 // cloneDefinition deep-copies everything a caller could mutate.
@@ -474,7 +499,7 @@ func cloneDefinition(definition Definition) Definition {
 	definition.Credentials = append([]CredentialRequirement(nil), definition.Credentials...)
 	for index := range definition.Credentials {
 		definition.Credentials[index].VisibleWhen =
-			append([]property.VisibilityCondition(nil), definition.Credentials[index].VisibleWhen...)
+			append([]propertypkg.VisibilityCondition(nil), definition.Credentials[index].VisibleWhen...)
 	}
 	if definition.Icon != nil {
 		icon := *definition.Icon
@@ -503,34 +528,34 @@ func cloneDefinition(definition Definition) Definition {
 // collection field would change what every other caller reads.
 func cloneProperties(properties []PropertyDefinition) []PropertyDefinition {
 	cloned := make([]PropertyDefinition, len(properties))
-	for index, property := range properties {
-		cloned[index] = property
-		cloned[index].Default = cloneValue(property.Default)
-		cloned[index].Options = append([]PropertyOption(nil), property.Options...)
-		cloned[index].VisibleWhen = append([]VisibilityCondition(nil), property.VisibleWhen...)
+	for index, declared := range properties {
+		cloned[index] = declared
+		cloned[index].Default = cloneValue(declared.Default)
+		cloned[index].Options = append([]PropertyOption(nil), declared.Options...)
+		cloned[index].VisibleWhen = append([]VisibilityCondition(nil), declared.VisibleWhen...)
 		for visibilityIndex := range cloned[index].VisibleWhen {
 			cloned[index].VisibleWhen[visibilityIndex].Equals = cloneValue(cloned[index].VisibleWhen[visibilityIndex].Equals)
 		}
-		cloned[index].Fields = cloneProperties(property.Fields)
-		if property.TypeOptions != nil {
-			options := *property.TypeOptions
-			if property.TypeOptions.MinValue != nil {
-				value := *property.TypeOptions.MinValue
+		cloned[index].Fields = cloneProperties(declared.Fields)
+		if declared.TypeOptions != nil {
+			options := *declared.TypeOptions
+			if declared.TypeOptions.MinValue != nil {
+				value := *declared.TypeOptions.MinValue
 				options.MinValue = &value
 			}
-			if property.TypeOptions.MaxValue != nil {
-				value := *property.TypeOptions.MaxValue
+			if declared.TypeOptions.MaxValue != nil {
+				value := *declared.TypeOptions.MaxValue
 				options.MaxValue = &value
 			}
-			if property.TypeOptions.NumberPrecision != nil {
-				value := *property.TypeOptions.NumberPrecision
+			if declared.TypeOptions.NumberPrecision != nil {
+				value := *declared.TypeOptions.NumberPrecision
 				options.NumberPrecision = &value
 			}
 			cloned[index].TypeOptions = &options
 		}
-		if property.Groups != nil {
-			groups := make([]PropertyGroup, len(property.Groups))
-			for groupIndex, group := range property.Groups {
+		if declared.Groups != nil {
+			groups := make([]PropertyGroup, len(declared.Groups))
+			for groupIndex, group := range declared.Groups {
 				groups[groupIndex] = PropertyGroup{
 					Key: group.Key, Label: group.Label, Fields: cloneProperties(group.Fields),
 				}
@@ -607,30 +632,30 @@ func validateSubtitle(nodeType, subtitle string) error {
 // other. These aliases keep every existing call site — and every generated
 // client field name — exactly as it was.
 type (
-	PropertyKind        = property.Kind
-	PropertyOption      = property.PropertyOption
-	PropertyDefinition  = property.PropertyDefinition
-	PropertyGroup       = property.PropertyGroup
-	TypeOptions         = property.TypeOptions
-	VisibilityCondition = property.VisibilityCondition
+	PropertyKind        = propertypkg.Kind
+	PropertyOption      = propertypkg.PropertyOption
+	PropertyDefinition  = propertypkg.PropertyDefinition
+	PropertyGroup       = propertypkg.PropertyGroup
+	TypeOptions         = propertypkg.TypeOptions
+	VisibilityCondition = propertypkg.VisibilityCondition
 )
 
 const (
-	PropertyString          = property.KindString
-	PropertyNumber          = property.KindNumber
-	PropertyBoolean         = property.KindBoolean
-	PropertyOptions         = property.KindOptions
-	PropertyMultiOptions    = property.KindMultiOptions
-	PropertyCollection      = property.KindCollection
-	PropertyFixedCollection = property.KindFixedCollection
-	PropertyNotice          = property.KindNotice
-	PropertyJSON            = property.KindJSON
-	PropertyDateTime        = property.KindDateTime
-	PropertyKeyValue        = property.KindKeyValue
-	PropertyConditions      = property.KindConditions
+	PropertyString          = propertypkg.KindString
+	PropertyNumber          = propertypkg.KindNumber
+	PropertyBoolean         = propertypkg.KindBoolean
+	PropertyOptions         = propertypkg.KindOptions
+	PropertyMultiOptions    = propertypkg.KindMultiOptions
+	PropertyCollection      = propertypkg.KindCollection
+	PropertyFixedCollection = propertypkg.KindFixedCollection
+	PropertyNotice          = propertypkg.KindNotice
+	PropertyJSON            = propertypkg.KindJSON
+	PropertyDateTime        = propertypkg.KindDateTime
+	PropertyKeyValue        = propertypkg.KindKeyValue
+	PropertyConditions      = propertypkg.KindConditions
 )
 
 // KnownPropertyKinds is the closed set, in a stable order.
-func KnownPropertyKinds() []PropertyKind { return property.KnownKinds() }
+func KnownPropertyKinds() []PropertyKind { return propertypkg.KnownKinds() }
 
-func knownPropertyKind(kind PropertyKind) bool { return property.Known(kind) }
+func knownPropertyKind(kind PropertyKind) bool { return propertypkg.Known(kind) }

@@ -40,6 +40,13 @@ export interface Branding {
   name?: string;
 }
 
+export interface Condition {
+  key: string;
+  operator?: string;
+  /** @nullable */
+  values?: unknown[] | null;
+}
+
 export interface Endpoint {
   nodeId: string;
   port: string;
@@ -144,6 +151,13 @@ export interface Port {
   required?: boolean;
 }
 
+export interface Visibility {
+  /** @nullable */
+  hide?: Condition[] | null;
+  /** @nullable */
+  show?: Condition[] | null;
+}
+
 export interface PropertyGroup {
   /** @nullable */
   fields: PropertyDefinition[] | null;
@@ -169,6 +183,7 @@ export interface TypeOptions {
 export interface PropertyDefinition {
   default?: unknown;
   description?: string;
+  displayOptions?: Visibility;
   /** @nullable */
   fields?: PropertyDefinition[] | null;
   /** @nullable */

@@ -94,6 +94,34 @@ type VisibilityCondition struct {
 	Equals any    `json:"equals"`
 }
 
+// visibilityOf reads a property's rule, translating the old single-value form.
+//
+// The old shape was single-value, AND-only, show-only and compared with strict
+// JavaScript equality, so it could not express "one of these", could not hide,
+// could not gate on version, and never matched a non-primitive at all. It is
+// kept as a shorthand because it is genuinely the common case, and it means the
+// existing definitions did not all have to be rewritten to say the same thing
+// at greater length.
+func visibilityOf(definition PropertyDefinition) Visibility {
+	if !definition.DisplayOptions.IsEmpty() {
+		return definition.DisplayOptions
+	}
+	if len(definition.VisibleWhen) == 0 {
+		return Visibility{}
+	}
+	show := make([]Condition, 0, len(definition.VisibleWhen))
+	for _, condition := range definition.VisibleWhen {
+		show = append(show, Condition{Key: condition.Key, Values: []any{condition.Equals}})
+	}
+	return Visibility{Show: show}
+}
+
+// VisibleProperty reports whether one property is shown for a node's stored
+// parameters.
+func VisibleProperty(definition PropertyDefinition, parameters map[string]any, typeVersion string) bool {
+	return Visible(visibilityOf(definition), parameters, typeVersion)
+}
+
 // PropertyDefinition describes one node parameter or shared setting.
 type PropertyDefinition struct {
 	Key         string `json:"key"`
@@ -119,8 +147,14 @@ type PropertyDefinition struct {
 	// Groups are the named property groups of a `fixedCollection`.
 	Groups []PropertyGroup `json:"groups,omitempty"`
 	// TypeOptions refines the control.
-	TypeOptions *TypeOptions          `json:"typeOptions,omitempty"`
+	TypeOptions *TypeOptions `json:"typeOptions,omitempty"`
+	// VisibleWhen is the shorthand: every condition must match by equality.
 	VisibleWhen []VisibilityCondition `json:"visibleWhen,omitempty"`
+	// DisplayOptions is the full rule — show and hide groups, several accepted
+	// values per key, and operators beyond equality. When set it replaces
+	// VisibleWhen rather than combining with it, so a property has exactly one
+	// rule and there is never a question of which wins.
+	DisplayOptions Visibility `json:"displayOptions,omitempty"`
 }
 
 // PropertyGroup is one named group inside a fixedCollection.

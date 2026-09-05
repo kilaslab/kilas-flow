@@ -21,13 +21,23 @@ type TypeCatalog interface {
 
 // NodeDefinition is the compiler-facing portion of registered node metadata.
 type NodeDefinition struct {
-	Type               string
-	Version            TypeVersion
-	Inputs             []Port
-	Outputs            []Port
+	Type    string
+	Version TypeVersion
+	Inputs  []Port
+	Outputs []Port
+	// RequiredParameters is the static list, kept for a catalogue that does not
+	// supply the callback below.
 	RequiredParameters []string
-	ExecutorID         string
-	Validate           ConfigValidator
+	// RequiredFor computes which parameters a *particular* node must have.
+	//
+	// Required-ness stopped being a static property of the definition the
+	// moment visibility became conditional: a node shaped like a real n8n node
+	// — where chatId is required only when resource is message — would
+	// otherwise be unactivatable in every other configuration. The shape
+	// follows Validate, which is a callback for the same reason.
+	RequiredFor func(parameters map[string]any, typeVersion TypeVersion) []string
+	ExecutorID  string
+	Validate    ConfigValidator
 	// LoopEntry marks a node a back edge may legally close onto.
 	//
 	// It is a property of the definition rather than a node type the compiler
@@ -218,7 +228,12 @@ func Compile(document Document, catalog Catalog) (IR, error) {
 			Settings:    cloneAnyMap(node.Settings),
 			Definition:  cloneNodeDefinition(definition),
 		})
-		for _, required := range definition.RequiredParameters {
+		required := definition.RequiredParameters
+		if definition.RequiredFor != nil {
+			// Only the parameters this node's configuration actually shows.
+			required = definition.RequiredFor(node.Parameters, node.TypeVersion)
+		}
+		for _, required := range required {
 			if node.Parameters == nil || node.Parameters[required] == nil {
 				issues.add(ValidationError{
 					Code: ErrorRequiredConfig, Path: fmt.Sprintf("/nodes/%d/parameters/%s", index, required), NodeID: node.ID,
@@ -581,6 +596,7 @@ func cloneNodeDefinition(definition NodeDefinition) NodeDefinition {
 		Inputs:             append([]Port(nil), definition.Inputs...),
 		Outputs:            append([]Port(nil), definition.Outputs...),
 		RequiredParameters: append([]string(nil), definition.RequiredParameters...),
+		RequiredFor:        definition.RequiredFor,
 		ExecutorID:         definition.ExecutorID,
 		Validate:           definition.Validate,
 	}

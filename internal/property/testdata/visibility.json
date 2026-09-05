@@ -1,0 +1,163 @@
+{
+  "comment": "Shared visibility fixture. Both the Go evaluator and the editor's TypeScript read this file, because two implementations of one rule drift — that is not a risk, it is a certainty — and this is the only thing that keeps the panel and the compiler agreeing about whether a workflow can be saved. Every case names the n8n behaviour it pins.",
+  "cases": [
+    {
+      "name": "no rule is always shown",
+      "visibility": {},
+      "parameters": {},
+      "visible": true
+    },
+    {
+      "name": "show requires every listed key to match",
+      "visibility": { "show": [
+        { "key": "resource", "values": ["message"] },
+        { "key": "operation", "values": ["send"] }
+      ]},
+      "parameters": { "resource": "message", "operation": "send" },
+      "visible": true
+    },
+    {
+      "name": "show fails when one key does not match",
+      "visibility": { "show": [
+        { "key": "resource", "values": ["message"] },
+        { "key": "operation", "values": ["send"] }
+      ]},
+      "parameters": { "resource": "message", "operation": "delete" },
+      "visible": false
+    },
+    {
+      "name": "values within one key are OR'd",
+      "visibility": { "show": [
+        { "key": "operation", "values": ["send", "sendPhoto", "sendDocument"] }
+      ]},
+      "parameters": { "operation": "sendPhoto" },
+      "visible": true
+    },
+    {
+      "name": "an absent controlling value fails a show",
+      "visibility": { "show": [{ "key": "resource", "values": ["message"] }] },
+      "parameters": {},
+      "visible": false
+    },
+    {
+      "name": "hide hides when any listed key matches",
+      "visibility": { "hide": [{ "key": "authentication", "values": ["none"] }] },
+      "parameters": { "authentication": "none" },
+      "visible": false
+    },
+    {
+      "name": "an absent value never hides",
+      "visibility": { "hide": [{ "key": "authentication", "values": ["none"] }] },
+      "parameters": {},
+      "visible": true
+    },
+    {
+      "name": "a null value never hides",
+      "visibility": { "hide": [{ "key": "authentication", "values": ["none"] }] },
+      "parameters": { "authentication": null },
+      "visible": true
+    },
+    {
+      "name": "show and hide compose, hide wins",
+      "visibility": {
+        "show": [{ "key": "resource", "values": ["message"] }],
+        "hide": [{ "key": "mode", "values": ["raw"] }]
+      },
+      "parameters": { "resource": "message", "mode": "raw" },
+      "visible": false
+    },
+    {
+      "name": "an expression in the controlling value always shows",
+      "visibility": { "show": [{ "key": "resource", "values": ["message"] }] },
+      "parameters": { "resource": { "mode": "expression", "value": "{{ $json.kind }}" } },
+      "visible": true
+    },
+    {
+      "name": "an expression does not rescue a hide",
+      "visibility": { "hide": [{ "key": "mode", "values": ["raw"] }] },
+      "parameters": { "mode": { "mode": "expression", "value": "{{ $json.mode }}" } },
+      "visible": true
+    },
+    {
+      "name": "a number matches its string form",
+      "visibility": { "show": [{ "key": "port", "values": ["443"] }] },
+      "parameters": { "port": 443 },
+      "visible": true
+    },
+    {
+      "name": "an object is compared by value, not identity",
+      "visibility": { "show": [{ "key": "shape", "values": [{ "a": 1 }] }] },
+      "parameters": { "shape": { "a": 1 } },
+      "visible": true
+    },
+    {
+      "name": "not excludes every listed value",
+      "visibility": { "show": [{ "key": "mode", "operator": "not", "values": ["raw", "binary"] }] },
+      "parameters": { "mode": "json" },
+      "visible": true
+    },
+    {
+      "name": "not fails when the value is listed",
+      "visibility": { "show": [{ "key": "mode", "operator": "not", "values": ["raw", "binary"] }] },
+      "parameters": { "mode": "raw" },
+      "visible": false
+    },
+    {
+      "name": "gte compares numerically",
+      "visibility": { "show": [{ "key": "retries", "operator": "gte", "values": [3] }] },
+      "parameters": { "retries": 5 },
+      "visible": true
+    },
+    {
+      "name": "between is inclusive",
+      "visibility": { "show": [{ "key": "retries", "operator": "between", "values": [2, 5] }] },
+      "parameters": { "retries": 5 },
+      "visible": true
+    },
+    {
+      "name": "startsWith matches a prefix",
+      "visibility": { "show": [{ "key": "url", "operator": "startsWith", "values": ["https://"] }] },
+      "parameters": { "url": "https://example.test/x" },
+      "visible": true
+    },
+    {
+      "name": "includes searches a list",
+      "visibility": { "show": [{ "key": "events", "operator": "includes", "values": ["message"] }] },
+      "parameters": { "events": ["message", "ack"] },
+      "visible": true
+    },
+    {
+      "name": "exists needs only a value",
+      "visibility": { "show": [{ "key": "sessionId", "operator": "exists" }] },
+      "parameters": { "sessionId": "default" },
+      "visible": true
+    },
+    {
+      "name": "exists fails on an absent key",
+      "visibility": { "show": [{ "key": "sessionId", "operator": "exists" }] },
+      "parameters": {},
+      "visible": false
+    },
+    {
+      "name": "version gates a parameter",
+      "visibility": { "show": [{ "key": "@version", "values": ["2"] }] },
+      "parameters": {},
+      "typeVersion": "2",
+      "visible": true
+    },
+    {
+      "name": "version excludes an older node",
+      "visibility": { "show": [{ "key": "@version", "operator": "gte", "values": [2] }] },
+      "parameters": {},
+      "typeVersion": "1",
+      "visible": false
+    },
+    {
+      "name": "a hidden parent does not suppress its child",
+      "comment": "The child is evaluated against the parent's stored value regardless of whether the parent is itself shown. n8n behaves the same way, and a cascade would hide parameters an imported workflow legitimately sets.",
+      "visibility": { "show": [{ "key": "resource", "values": ["message"] }] },
+      "parameters": { "resource": "message", "hiddenParent": "anything" },
+      "visible": true
+    }
+  ]
+}

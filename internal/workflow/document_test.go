@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/kilaslabs/kilas-flow/internal/node"
+	"github.com/kilaslabs/kilas-flow/internal/property"
 	"github.com/kilaslabs/kilas-flow/internal/workflow"
 	"github.com/kilaslabs/kilas-flow/nodes"
 )
@@ -1310,4 +1311,80 @@ func TestCompileEnforcesAPortsNodeTypeFilter(t *testing.T) {
 	if !containsValidationCode(validationErrors.Issues, workflow.ErrorPortNotAllowed) {
 		t.Errorf("issues = %#v, want %q", validationErrors.Issues, workflow.ErrorPortNotAllowed)
 	}
+}
+
+// TestCompileDoesNotRequireAHiddenParameter is the defect that blocks every
+// declarative node pack.
+//
+// Visibility used to exist only on the client, so the compiler demanded every
+// required parameter regardless of whether the node's configuration showed it.
+// A node shaped like a real n8n node — where chatId is required only when
+// resource is message — was therefore unactivatable in every other
+// configuration.
+func TestCompileDoesNotRequireAHiddenParameter(t *testing.T) {
+	catalogue := node.NewRegistry()
+	if err := catalogue.Register(node.Definition{
+		Type: "test.telegram", Version: workflow.V(1),
+		DisplayName: "Telegram", Category: "Test", ExecutorID: "test.exec",
+		Group:   []node.NodeGroup{node.GroupTrigger},
+		Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+		Parameters: []node.PropertyDefinition{
+			{Key: "resource", Label: "Resource", Kind: node.PropertyOptions, Required: true},
+			{
+				Key: "chatId", Label: "Chat ID", Kind: node.PropertyString, Required: true,
+				DisplayOptions: property.Visibility{
+					Show: []property.Condition{{Key: "resource", Values: []any{"message"}}},
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+
+	build := func(parameters map[string]any) workflow.Document {
+		return workflow.Document{
+			SchemaVersion: workflow.CurrentSchemaVersion,
+			ID:            "wf_019", Name: "Telegram",
+			Nodes: []workflow.Node{{
+				ID: "tg", Name: "Telegram", Type: "test.telegram",
+				TypeVersion: workflow.V(1), Parameters: parameters,
+			}},
+			Connections: []workflow.Connection{},
+			Settings:    map[string]any{},
+		}
+	}
+
+	t.Run("a configuration that hides the field activates", func(t *testing.T) {
+		if _, err := workflow.Compile(build(map[string]any{"resource": "chat"}), catalogue); err != nil {
+			t.Fatalf("a node whose configuration hides chatId must compile: %v", err)
+		}
+	})
+
+	t.Run("a configuration that shows it still demands it", func(t *testing.T) {
+		_, err := workflow.Compile(build(map[string]any{"resource": "message"}), catalogue)
+		var validationErrors *workflow.ValidationErrors
+		if !errors.As(err, &validationErrors) {
+			t.Fatalf("Compile() error = %v, want ValidationErrors", err)
+		}
+		var named bool
+		for _, issue := range validationErrors.Issues {
+			if strings.Contains(issue.Message, "chatId") {
+				named = true
+			}
+		}
+		if !named {
+			t.Errorf("issues = %#v, want chatId demanded when it is shown", validationErrors.Issues)
+		}
+	})
+
+	t.Run("an expression in the controlling value demands it", func(t *testing.T) {
+		// Nothing can know at compile time what the expression resolves to, and
+		// the show rule shows the field — so the field is required.
+		_, err := workflow.Compile(build(map[string]any{
+			"resource": map[string]any{"mode": "expression", "value": "{{ $json.kind }}"},
+		}), catalogue)
+		if err == nil {
+			t.Error("an expression-controlled field was treated as hidden")
+		}
+	})
 }

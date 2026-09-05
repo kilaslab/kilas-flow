@@ -1,7 +1,7 @@
 ---
 id: FEAT-pd3p6x
 title: Bring conditional property visibility to n8n parity
-status: todo
+status: done
 priority: high
 labels:
     - registry
@@ -29,13 +29,13 @@ The plan settles one question that would otherwise be argued during review: **a 
 
 ## Acceptance criteria
 
-- [ ] The visibility model supports `show` and `hide` groups, multiple keys per group, multiple accepted values per key, and comparison operators beyond equality, replacing `VisibilityCondition{Key, Equals}`.
-- [ ] `show` requires every listed key to match with values OR'd within a key; `hide` hides when any listed key matches and never hides on an absent value.
-- [ ] A controlling parameter holding a KilasFlow expression marker forces the dependent property to be shown, in the `show` path only, proven by a test.
-- [ ] Visibility is evaluated in Go and the compiler treats a hidden required parameter as not required, so a node configured into a branch that hides a required field activates successfully.
-- [ ] Visibility gates on type version, so one definition can present different parameters per version.
-- [ ] Go and TypeScript evaluate the same shared fixture file and agree on every case, including value coercion between a JSON number and its string form.
-- [ ] The settled rule that a hidden parent does not suppress its children is documented on the type and covered by a test.
+- [x] The visibility model supports `show` and `hide` groups, multiple keys per group, multiple accepted values per key, and comparison operators beyond equality, replacing `VisibilityCondition{Key, Equals}`.
+- [x] `show` requires every listed key to match with values OR'd within a key; `hide` hides when any listed key matches and never hides on an absent value.
+- [x] A controlling parameter holding a KilasFlow expression marker forces the dependent property to be shown, in the `show` path only, proven by a test.
+- [x] Visibility is evaluated in Go and the compiler treats a hidden required parameter as not required, so a node configured into a branch that hides a required field activates successfully.
+- [x] Visibility gates on type version, so one definition can present different parameters per version.
+- [x] Go and TypeScript evaluate the same shared fixture file and agree on every case, including value coercion between a JSON number and its string form.
+- [x] The settled rule that a hidden parent does not suppress its children is documented on the type and covered by a test.
 
 ## Implementation Plan
 
@@ -58,3 +58,72 @@ Migrating the five existing `VisibleWhen` uses — `nodes/webhook.go`, `nodes/da
 - `nodes/webhook.go`, `nodes/database.go`, `nodes/http.go`, `nodes/core.go` — the existing `VisibleWhen` uses.
 - n8n 2.34.0 reference (read-only, outside this repo): `packages/workflow/src/node-helpers.ts` — `displayParameter` and `checkConditions`; `packages/workflow/src/interfaces.ts` — `IDisplayOptions` and `DisplayCondition`.
 - Local n8n UI reference: `design-refs/n8n-v2/INDEX.md` entry 13 — the resource→operation cascade driving which fields appear below it. Captured from a local n8n 2.33.7 instance; gitignored, never vendored.
+
+## Outcome
+
+### n8n's semantics, copied exactly
+
+`show` requires **every** listed key to match with values OR'd within a key;
+`hide` hides when **any** key matches and never hides on an absent or null
+value. Both are n8n's, and a near-miss here shows the wrong fields on every
+imported node.
+
+The escape hatch is implemented and lives in the `show` branch only, as it does
+in n8n: a controlling parameter holding an expression forces the dependent
+property to be shown, because nothing can know at edit time what it will
+evaluate to, and hiding a field the user may need is worse than showing one they
+may not. The marker differs — KilasFlow's object rather than a leading `=` — the
+rule does not. The fixture pins both halves, including that an expression does
+**not** rescue a `hide`.
+
+All twelve operators are implemented. `@version` is supported; `@feature` and
+`@tool` are **refused by name** at registration rather than accepted and
+ignored, which would present the wrong fields silently.
+
+### The larger defect
+
+Visibility existed only on the client, so the compiler demanded every required
+parameter regardless of configuration. A node shaped like a real n8n node —
+where `chatId` is required only when `resource` is `message` — was unactivatable
+in every other configuration, which blocks every declarative node pack.
+
+`NodeDefinition.RequiredFor` is a callback, following `Validate`, which is a
+callback for exactly the same reason: required-ness stopped being a static
+property of the definition the moment visibility became conditional. Three cases
+are tested — hidden compiles, shown demands, and an expression-controlled field
+demands, because the show rule shows it.
+
+### Anti-drift
+
+One fixture, `internal/property/testdata/visibility.json`, read by **both** the
+Go table test and a vitest case that imports the same file. 24 cases, agreeing
+in both languages. Two implementations of one rule drift — that is not a risk,
+it is a certainty — and this is the only thing keeping the panel and the
+compiler agreeing about whether a workflow can be saved.
+
+### Value comparison
+
+Documented and explicit. Numbers compare as `float64`, a JSON number equals its
+string form (otherwise a select whose options are strings could never gate on a
+numeric parameter), and everything else compares **by value**. That last is
+precisely what the old `===` got wrong: it never matched an object or an array,
+so a condition on anything but a primitive was silently always false.
+
+### The settled rule
+
+A hidden parent does not suppress its children. Every property is evaluated
+independently against the stored parameters — documented on `Visible` and
+covered by a fixture case. n8n behaves the same way, and a cascade would hide
+parameters an imported workflow legitimately sets.
+
+### Migration
+
+`VisibleWhen` is kept as a shorthand rather than removed, so the existing
+definitions did not have to be rewritten to say the same thing at greater
+length. `DisplayOptions` replaces it when set rather than combining, so a
+property has exactly one rule and there is never a question of which wins.
+
+One thing caught while wiring it: a bulk rename of the `property` package
+qualifier also hit loop variables named `property`, producing
+`propertypkg.TypeOptions` where a value was meant. The loop variables are
+renamed to `declared` so the two can never read alike again.

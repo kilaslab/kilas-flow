@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { propertyVisible } from '$lib/workflow-editor/visibility';
 	import type { CredentialResource, Definition, Node, PropertyDefinition } from '$lib/api/generated/models';
 	import type { PropertyScope } from '$lib/workflow-editor/document';
 	import { credentialTypesFor } from '$lib/workflow-editor/credentials';
@@ -30,11 +31,13 @@
 	const activeTab = $derived(tab === 'parameters' && (definition.parameters?.length ?? 0) === 0 ? 'settings' : tab);
 	const properties = $derived(activeTab === 'parameters' ? definition.parameters ?? [] : definition.sharedSettings ?? []);
 	const values = $derived((activeTab === 'parameters' ? node.parameters : node.settings) ?? {});
-	const visibleProperties = $derived(properties.filter((property) => isVisible(property, values)));
-
-	function isVisible(property: PropertyDefinition, current: Record<string, unknown>): boolean {
-		return (property.visibleWhen ?? []).every((condition) => current[condition.key] === condition.equals);
-	}
+	// The rule lives in one module, ported from the Go evaluator and checked
+	// against the same fixture. The previous inline version was single-value,
+	// AND-only, show-only and used strict equality, so a condition on anything
+	// but a primitive was silently always false.
+	const visibleProperties = $derived(
+		properties.filter((property) => propertyVisible(property, values, String(node.typeVersion ?? '')))
+	);
 </script>
 
 <section aria-label={`${node.name} properties`} class="flex h-full min-h-0 flex-col bg-card">
