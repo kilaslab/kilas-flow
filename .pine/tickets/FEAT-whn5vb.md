@@ -46,6 +46,8 @@ Caching needs a decision. Recommend a small in-process TTL cache keyed by `(tena
 
 `dependsOn` is what tells the panel to refetch: when a listed parameter changes, the cached list for that property is discarded. Without it a user changes `resource` and keeps the previous resource's operations.
 
+An amendment the p9 planning pass forced. This loader is an outbound HTTP request descriptor, and every acceptance criterion above defends that: SSRF policy, `AllowedDomains`, credential resolution. Two later consumers are not outbound calls at all — a Datastore list and an `information_schema` table list are internal lookups inside this process — so the loader needs an explicitly declared internal source kind that never constructs a request, and the SSRF criteria must be scoped to the outbound kind rather than read as universal. The second half matters more: `permits` in `internal/api/middleware/embed.go` allows the whole `/node-types/` subtree on read scope with no workflow check, so an internal loader would let a session scoped to one workflow enumerate every datastore in the tenant and every schema, table and column reachable by any credential in it. Bound an embed session's returned option values by its `WorkflowID`, not merely by its tenant.
+
 ## References
 
 - Plan: `/Users/izzadev/.claude/plans/distributed-worker-nats-crispy-finch.md`, section "p2 — Node metadata foundation", entry V2-p2-4.

@@ -34,7 +34,7 @@ The one thing to do better than n8n is the schema. pgvector's ANN indexes accept
 - [ ] Inserting a vector whose dimension does not match its collection fails with a diagnostic naming both numbers.
 - [ ] On SQLite, or on a PostgreSQL where the `vector` extension is absent, both nodes fail configuration validation with a message saying what to install.
 - [ ] Similarity search over a populated collection uses the ANN index, with the query plan captured as evidence.
-- [ ] The tables carry the configured table prefix and are created by a migration, not at run time.
+- [ ] The tables carry the configured table prefix and are created by a migration, not at run time — a rule that holds here and everywhere except the one carve-out the epic's decisions table records, where V2-p9-1 creates a physical table per datastore at run time.
 
 ## Implementation Plan
 

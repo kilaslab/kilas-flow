@@ -141,10 +141,18 @@ func (registry *Registry) Lookup(id string) (Executor, bool) {
 // NodeRun is the deterministic in-memory result of one node invocation.
 // Durable storage is injected later at the service boundary.
 type NodeRun struct {
-	NodeID    string
-	Input     workflow.NodeInput
-	Output    workflow.NodeOutput
-	Error     error
+	NodeID string
+	Input  workflow.NodeInput
+	Output workflow.NodeOutput
+	Error  error
+	// Skipped marks a node the runner did not invoke because no incoming item
+	// channel delivered anything — the untaken arm of a branch.
+	//
+	// It is recorded rather than omitted. A node that simply vanished from the
+	// trace would make an execution look as though the branch never existed,
+	// and the difference between "did not run" and "ran and produced nothing"
+	// is exactly what someone reading a branch needs to see.
+	Skipped   bool
 	ErrorCode string
 }
 
@@ -241,6 +249,37 @@ func (runner *Runner) Run(ctx context.Context, ir workflow.IR, request Request) 
 		if err != nil {
 			return Result{}, fmt.Errorf("build node %q input: %w", nodeID, err)
 		}
+
+		// A node whose item channel delivered nothing is not run at all.
+		//
+		// Scheduling used to ask only whether every upstream node had
+		// *completed*, so the untaken arm of an IF still fired one HTTP
+		// request, one model call, one SQL statement and one webhook response —
+		// because every executor reads an empty `main` port as "run once
+		// against an empty $json". That is a cost and security problem as much
+		// as a correctness one.
+		//
+		// Skipping is expressed as an all-empty output written straight into
+		// `completed`, so the cascade downstream falls out of this same rule
+		// instead of needing a second traversal.
+		if !isLive(node, incoming[nodeID], completed) {
+			skipped := make(workflow.NodeOutput, len(node.Definition.Outputs))
+			for index := range skipped {
+				skipped[index] = []workflow.Item{}
+			}
+			completed[nodeID] = skipped
+			// Deliberately not registered in NodeOutputs: `$node["Name"]` must
+			// keep reporting "not set" rather than an empty object, which would
+			// read as a successful lookup of a node that never ran.
+			result.NodeRuns = append(result.NodeRuns, NodeRun{
+				NodeID: nodeID, Input: cloneInput(input), Output: skipped, Skipped: true,
+			})
+			if outgoing[nodeID] == 0 {
+				result.Output[nodeID] = cloneOutput(skipped)
+			}
+			continue
+		}
+
 		executor, found := runner.executors.Lookup(node.Definition.ExecutorID)
 		if !found {
 			return Result{}, fmt.Errorf("node %q executor %q is not registered", nodeID, node.Definition.ExecutorID)
@@ -332,6 +371,9 @@ func timeoutSeconds(value any) (float64, error) {
 	return seconds, nil
 }
 
+// dependenciesComplete reports that every upstream node has reached a terminal
+// state — run or skipped. It decides *when* a node may be considered, not
+// whether it runs.
 func dependenciesComplete(edges []workflow.IREdge, completed map[string]workflow.NodeOutput) bool {
 	for _, edge := range edges {
 		if _, found := completed[edge.Source.NodeID]; !found {
@@ -339,6 +381,43 @@ func dependenciesComplete(edges []workflow.IREdge, completed map[string]workflow
 		}
 	}
 	return true
+}
+
+// isLive reports whether a node should actually be invoked.
+//
+// A node with no declared `main` input is a trigger or a sub-node and always
+// runs. Otherwise it runs only when some incoming item edge delivered at least
+// one item on the port it was wired to.
+//
+// Typed attachment edges never gate this. A chat model, a memory and a tool
+// supply configuration rather than items, and an agent with no memory is a
+// perfectly valid agent — gating on them would skip every agent in the product.
+func isLive(node workflow.IRNode, edges []workflow.IREdge, completed map[string]workflow.NodeOutput) bool {
+	var wantsItems bool
+	for _, port := range node.Definition.Inputs {
+		if port.Kind == workflow.ConnectionMain {
+			wantsItems = true
+			break
+		}
+	}
+	if !wantsItems {
+		return true
+	}
+	var itemEdges int
+	for _, edge := range edges {
+		if edge.Kind != workflow.ConnectionMain {
+			continue
+		}
+		itemEdges++
+		output := completed[edge.Source.NodeID]
+		if edge.SourceOutputIndex >= 0 && edge.SourceOutputIndex < len(output) && len(output[edge.SourceOutputIndex]) > 0 {
+			return true
+		}
+	}
+	// A node that declares a main input but has none connected is not pruned:
+	// the compiler already refuses that graph, and the executors' empty-item
+	// substitution stays reachable for a node genuinely wired to nothing.
+	return itemEdges == 0
 }
 
 func nodeInput(edges []workflow.IREdge, completed map[string]workflow.NodeOutput) (workflow.NodeInput, error) {

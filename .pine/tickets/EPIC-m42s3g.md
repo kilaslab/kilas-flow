@@ -28,6 +28,8 @@ Make a customer's existing n8n workflows import into KilasFlow and actually run,
 | Workflow versioning | DB-stored workflow history, not Git source control. |
 | PostgreSQL | Optional. It unlocks extra features and can share a customer database under a `kflow_` table prefix. |
 | AI nodes | Native Go, mapped on import. Microsoft Agent Framework stays an optional adapter behind `ai.AgentRuntime`, admitted only by spike. |
+| Datastore storage | One physical table per datastore, created by runtime DDL under the `kflow_` prefix, alongside a catalogue — matching n8n. Byte quotas are deliberately not a requirement; row, column and datastore counts are. This is the one sanctioned exception to the rule that the internal schema is created by migration. |
+| Database node scope | Full n8n operation parity — Delete, Execute Query, Insert, Insert or Update, Select, Update — not raw SQL only. |
 
 ## Why the roadmap is ordered this way
 
@@ -40,7 +42,9 @@ Research across the KilasFlow source, a local n8n 2.34.0 reference checkout, the
 
 ## Phase order
 
-p0 reference and guardrails → p1 engine correctness and import fidelity → p2 node metadata foundation → p3 declarative node packs, WAHA and Telegram → p4 n8n-core node parity → p5 AI parity in native Go → p6 PostgreSQL capability tier → p7 workflow history → p8 platform and long tail.
+p0 reference and guardrails → p1 engine correctness and import fidelity → p2 node metadata foundation → p3 declarative node packs, WAHA and Telegram → p4 n8n-core node parity → p5 AI parity in native Go → p6 PostgreSQL capability tier → p7 workflow history → p8 platform and long tail → p9 Datastore.
+
+A phase number expresses dependency depth, not a serial queue. `pine ready` is driven purely by `deps`, so a later-numbered ticket becomes workable the moment the specific tickets it names are done — p9 does not wait for all of p8, and the p4 database family does not wait for p3.
 
 ## Acceptance scenario
 
@@ -49,7 +53,9 @@ Two proofs, in this order.
 1. **Telegram, after p3.** A Telegram Trigger that registers its own webhook, an AI Agent, and a Send Message reply — a working bot without any WhatsApp infrastructure.
 2. **WAHA, the real target.** The official WAHA chatting template imports, opens in the editor with correct icons and parameter panels, activates, receives a real webhook and replies — with the same template imported twice for two different tenants, both active at once.
 
-Both must run with no Node.js process anywhere.
+3. **Datastore, the storage proof.** A datastore created through the API, its columns edited in the editor, rows written and read by a workflow node, the same workflow imported from an n8n export that used a Data Table, and a second tenant proven unable to read the first one's rows.
+
+All three must run with no Node.js process anywhere.
 
 ## Delivery rules carried over from V1
 

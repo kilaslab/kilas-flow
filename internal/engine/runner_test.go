@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/kilaslabs/kilas-flow/internal/ai"
 	"github.com/kilaslabs/kilas-flow/internal/engine"
@@ -341,5 +342,231 @@ func TestRunRejectsATriggerThatIsNotInTheWorkflow(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "no-such-node") {
 		t.Errorf("error = %v, want it to name the missing trigger", err)
+	}
+}
+
+// TestUntakenBranchNeverInvokesItsExecutors is the bug this ticket exists for.
+//
+// Scheduling used to ask only whether upstream nodes had *completed*, and every
+// executor reads an empty main port as "run once against an empty $json". So an
+// IF whose false arm matched nothing still fired one HTTP request, one SQL
+// statement and one webhook response down the arm nobody took — a cost and
+// security problem as much as a correctness one.
+//
+// The proof is that the run succeeds. Every node on the untaken arm is a real
+// executor configured so that invoking it *fails*: the HTTP policy allows no
+// host, and the SQL node is given a credential that does not resolve. If either
+// were reached, Run would return an error rather than a result.
+func TestUntakenBranchNeverInvokesItsExecutors(t *testing.T) {
+	catalog := node.NewRegistry()
+	if err := nodes.RegisterAll(catalog); err != nil {
+		t.Fatalf("RegisterAll() error = %v", err)
+	}
+
+	ir, err := workflow.Compile(workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_branch",
+		Name:          "Branch with side effects",
+		Nodes: []workflow.Node{
+			{ID: "manual", Name: "Manual", Type: "kilasflow.manual", TypeVersion: workflow.V(1)},
+			{ID: "if", Name: "IF", Type: "kilasflow.if", TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"conditions": []any{map[string]any{
+					"field": "tier", "operator": "equals", "value": "vip",
+				}}}},
+			{ID: "taken", Name: "Taken", Type: "kilasflow.set", TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"assignments": map[string]any{"arm": "false"}}},
+			// The untaken arm, carrying the node types that cost money or reach
+			// a third party.
+			{ID: "http", Name: "HTTP", Type: "kilasflow.httpRequest", TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"url": "https://example.test/never", "method": "GET"}},
+			{ID: "respond", Name: "Respond", Type: "kilasflow.respondToWebhook", TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"responseCode": float64(200), "responseBody": "never"}},
+		},
+		Connections: []workflow.Connection{
+			{ID: "c1", Kind: workflow.ConnectionMain,
+				Source: workflow.Endpoint{NodeID: "manual", Port: "main"},
+				Target: workflow.Endpoint{NodeID: "if", Port: "main"}},
+			// tier is not vip, so the false arm is the one taken.
+			{ID: "c2", Kind: workflow.ConnectionMain,
+				Source: workflow.Endpoint{NodeID: "if", Port: "false"},
+				Target: workflow.Endpoint{NodeID: "taken", Port: "main"}},
+			{ID: "c3", Kind: workflow.ConnectionMain,
+				Source: workflow.Endpoint{NodeID: "if", Port: "true"},
+				Target: workflow.Endpoint{NodeID: "http", Port: "main"}},
+			{ID: "c4", Kind: workflow.ConnectionMain,
+				Source: workflow.Endpoint{NodeID: "http", Port: "main"},
+				Target: workflow.Endpoint{NodeID: "respond", Port: "main"}},
+		},
+		Settings: map[string]any{},
+	}, catalog)
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+
+	// No host is allowed, so any HTTP call at all fails the execution.
+	executors := engine.NewRegistry()
+	offline := safehttp.Policy{AllowedHosts: []string{"pruned.invalid"}, Timeout: time.Second}
+	if err := nodes.RegisterExecutors(executors, offline, sqlnode.Guard{}, ai.NewLoopRuntime(), nil, nil); err != nil {
+		t.Fatalf("RegisterExecutors() error = %v", err)
+	}
+
+	result, err := engine.NewRunner(executors).Run(context.Background(), ir, engine.Request{
+		Input: workflow.Item{JSON: map[string]any{"tier": "standard"}},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v — a node on the untaken arm was invoked", err)
+	}
+
+	byNode := map[string]engine.NodeRun{}
+	for _, run := range result.NodeRuns {
+		byNode[run.NodeID] = run
+	}
+
+	// The taken arm ran.
+	if run, present := byNode["taken"]; !present || run.Skipped {
+		t.Errorf("the taken arm did not run: %#v", run)
+	}
+	// The untaken arm is recorded, and recorded as skipped — not absent, which
+	// would make the branch look as though it never existed, and not succeeded,
+	// which would make it look as though it ran and produced nothing.
+	for _, nodeID := range []string{"http", "respond"} {
+		run, present := byNode[nodeID]
+		if !present {
+			t.Errorf("node %q vanished from the trace instead of being recorded as skipped", nodeID)
+			continue
+		}
+		if !run.Skipped {
+			t.Errorf("node %q was not marked skipped", nodeID)
+		}
+		if run.Error != nil {
+			t.Errorf("node %q recorded an error: %v", nodeID, run.Error)
+		}
+	}
+}
+
+// TestSkippingCascadesThroughTheWholeArm proves a skipped node yields empty
+// streams on every output port, so the same rule prunes everything below it
+// without a second traversal.
+func TestSkippingCascadesThroughTheWholeArm(t *testing.T) {
+	catalog := node.NewRegistry()
+	if err := nodes.RegisterAll(catalog); err != nil {
+		t.Fatalf("RegisterAll() error = %v", err)
+	}
+
+	document := workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_cascade",
+		Name:          "Long untaken arm",
+		Nodes: []workflow.Node{
+			{ID: "manual", Name: "Manual", Type: "kilasflow.manual", TypeVersion: workflow.V(1)},
+			{ID: "if", Name: "IF", Type: "kilasflow.if", TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"conditions": []any{map[string]any{
+					"field": "tier", "operator": "equals", "value": "vip",
+				}}}},
+			{ID: "taken", Name: "Taken", Type: "kilasflow.set", TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"assignments": map[string]any{"arm": "false"}}},
+			{ID: "a", Name: "A", Type: "kilasflow.set", TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"assignments": map[string]any{"step": "a"}}},
+			{ID: "b", Name: "B", Type: "kilasflow.set", TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"assignments": map[string]any{"step": "b"}}},
+			{ID: "c", Name: "C", Type: "kilasflow.set", TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"assignments": map[string]any{"step": "c"}}},
+		},
+		Connections: []workflow.Connection{
+			{ID: "c1", Kind: workflow.ConnectionMain,
+				Source: workflow.Endpoint{NodeID: "manual", Port: "main"},
+				Target: workflow.Endpoint{NodeID: "if", Port: "main"}},
+			{ID: "c2", Kind: workflow.ConnectionMain,
+				Source: workflow.Endpoint{NodeID: "if", Port: "false"},
+				Target: workflow.Endpoint{NodeID: "taken", Port: "main"}},
+			{ID: "c3", Kind: workflow.ConnectionMain,
+				Source: workflow.Endpoint{NodeID: "if", Port: "true"},
+				Target: workflow.Endpoint{NodeID: "a", Port: "main"}},
+			{ID: "c4", Kind: workflow.ConnectionMain,
+				Source: workflow.Endpoint{NodeID: "a", Port: "main"},
+				Target: workflow.Endpoint{NodeID: "b", Port: "main"}},
+			{ID: "c5", Kind: workflow.ConnectionMain,
+				Source: workflow.Endpoint{NodeID: "b", Port: "main"},
+				Target: workflow.Endpoint{NodeID: "c", Port: "main"}},
+		},
+		Settings: map[string]any{},
+	}
+	ir, err := workflow.Compile(document, catalog)
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+
+	result, err := engine.NewRunner(executorRegistry(t)).Run(context.Background(), ir, engine.Request{
+		Input: workflow.Item{JSON: map[string]any{"tier": "standard"}},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	byNode := map[string]engine.NodeRun{}
+	for _, run := range result.NodeRuns {
+		byNode[run.NodeID] = run
+	}
+	for _, nodeID := range []string{"a", "b", "c"} {
+		run, present := byNode[nodeID]
+		if !present || !run.Skipped {
+			t.Errorf("node %q was not skipped; the cascade stopped short: %#v", nodeID, run)
+		}
+		for index, port := range run.Output {
+			if len(port) != 0 {
+				t.Errorf("skipped node %q emitted %d items on port %d, want none", nodeID, len(port), index)
+			}
+		}
+	}
+	if run := byNode["taken"]; run.Skipped {
+		t.Error("the taken arm was pruned")
+	}
+}
+
+// TestATriggerAndAnAgentAreNeverPruned keeps the rule from going too far. A node
+// with no declared main input runs unconditionally, and typed attachment edges
+// must never gate scheduling — an agent with no memory is a valid agent, and
+// gating on those would skip every agent in the product.
+func TestATriggerAndAnAgentAreNeverPruned(t *testing.T) {
+	catalog := node.NewRegistry()
+	if err := nodes.RegisterAll(catalog); err != nil {
+		t.Fatalf("RegisterAll() error = %v", err)
+	}
+
+	ir, err := workflow.Compile(workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_agent",
+		Name:          "Agent with a model",
+		Nodes: []workflow.Node{
+			{ID: "manual", Name: "Manual", Type: "kilasflow.manual", TypeVersion: workflow.V(1)},
+			{ID: "model", Name: "Model", Type: "kilasflow.chatModel", TypeVersion: workflow.V(1),
+				Parameters:  map[string]any{"provider": "openai", "model": "gpt-4o-mini"},
+				Credentials: map[string]string{"httpBearerAuth": "cred_x"}},
+			{ID: "agent", Name: "Agent", Type: "kilasflow.agent", TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"prompt": "hello"}},
+		},
+		Connections: []workflow.Connection{
+			{ID: "c1", Kind: workflow.ConnectionMain,
+				Source: workflow.Endpoint{NodeID: "manual", Port: "main"},
+				Target: workflow.Endpoint{NodeID: "agent", Port: "main"}},
+			{ID: "c2", Kind: workflow.ConnectionLanguageModel,
+				Source: workflow.Endpoint{NodeID: "model", Port: "model"},
+				Target: workflow.Endpoint{NodeID: "agent", Port: "model"}},
+		},
+		Settings: map[string]any{},
+	}, catalog)
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+
+	result, _ := engine.NewRunner(executorRegistry(t)).Run(context.Background(), ir, engine.Request{
+		Input: workflow.Item{JSON: map[string]any{"ask": "hello"}},
+	})
+	for _, run := range result.NodeRuns {
+		// The model has no main input at all, and the agent's only item edge
+		// carries the trigger's item — neither may be pruned.
+		if run.Skipped {
+			t.Errorf("node %q was pruned; a sub-node and an agent must always run", run.NodeID)
+		}
 	}
 }

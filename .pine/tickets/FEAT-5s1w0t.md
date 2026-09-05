@@ -45,7 +45,7 @@ Then `web/src/lib/components/workflow-editor/property-field.svelte`, which today
 
 `notice` needs one non-obvious rule: it holds no value. It must never appear in `requiredParameters`, must never be written into a node's stored parameters, and the panel must not send an `onChange` for it. A `notice` that round-trips into the document will fail validation on the next save.
 
-Leave `resourceLocator`, `resourceMapper`, `filter` and `assignmentCollection` out. They are large, they carry runtime behaviour rather than shape, and nothing before p4 needs them.
+Leave `resourceLocator`, `resourceMapper`, `filter` and `assignmentCollection` out. They are large, they carry runtime behaviour rather than shape, and nothing before p4 needs them. Name their owners here rather than deferring them to nobody, which is what this paragraph did until the p9 planning pass found them scheduled in no ticket at all: `resourceLocator` is V2-p2-10, `resourceMapper` is V2-p2-11, `assignmentCollection` is V2-p4-13, and the repeatable condition group that `filter` stands for is folded into V2-p2-10 because the database WHERE builder and the Datastore row filter are the same control.
 
 ## References
 

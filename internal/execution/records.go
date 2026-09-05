@@ -14,8 +14,13 @@ const (
 	StatusRunning    Status = "running"
 	StatusCancelling Status = "cancelling"
 	StatusSucceeded  Status = "succeeded"
-	StatusFailed     Status = "failed"
-	StatusCancelled  Status = "cancelled"
+	// StatusSkipped is a node the runner never invoked because no incoming item
+	// channel delivered anything — the untaken arm of a branch. It is neither a
+	// success nor a failure, and recording it as either would misread a pruned
+	// branch as one that ran.
+	StatusSkipped   Status = "skipped"
+	StatusFailed    Status = "failed"
+	StatusCancelled Status = "cancelled"
 )
 
 // Trigger identifies how a workflow execution was requested.

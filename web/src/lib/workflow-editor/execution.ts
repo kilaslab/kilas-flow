@@ -1,9 +1,14 @@
 import type { Connection, Definition, ExecutionNodeRunResource, Node } from '$lib/api/generated/models';
 
 /**
- * `skipped` is not a server status. It names the difference between a node the
- * engine never reached and one that ran and failed — the inspector must not
- * show those the same way.
+ * `skipped` names a node that did not run, as against one that ran and failed —
+ * the inspector must not show those the same way.
+ *
+ * It arrives from two places and both mean the same thing to a reader. The
+ * server sends it for a node the runner pruned because no incoming item channel
+ * delivered anything, which is the untaken arm of a branch. The client falls
+ * back to it for a node with no run record at all, which is a node the
+ * execution never got as far as.
  */
 export type NodeRunStatus = string | 'skipped';
 

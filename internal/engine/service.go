@@ -146,6 +146,12 @@ func (service *Service) runOnce(ctx context.Context, workerID string) (bool, err
 			return true, fmt.Errorf("marshal node %q output: %w", run.NodeID, err)
 		}
 		status := execution.StatusSucceeded
+		if run.Skipped {
+			// A pruned branch is neither a success nor a failure. Recording it
+			// as succeeded would make an untaken arm look like one that ran and
+			// happened to produce nothing.
+			status = execution.StatusSkipped
+		}
 		var errorPayload json.RawMessage
 		if run.Error != nil {
 			status = execution.StatusFailed
@@ -167,7 +173,11 @@ func (service *Service) runOnce(ctx context.Context, workerID string) (bool, err
 		// Published only after the node run is durable, so a subscriber can
 		// never observe a state the record does not already carry.
 		eventType := events.NodeCompleted
-		if status != execution.StatusSucceeded {
+		// A skipped node reached a terminal state without failing. Publishing
+		// node.failed for it would light a pruned branch up as an error on the
+		// live canvas; the node-run record carries the skipped status, which is
+		// what a reader needs to tell the two apart.
+		if status != execution.StatusSucceeded && status != execution.StatusSkipped {
 			eventType = events.NodeFailed
 		}
 		service.publish(events.Event{

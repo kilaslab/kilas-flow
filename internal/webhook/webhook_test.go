@@ -523,3 +523,91 @@ func TestWebhookPayloadCarriesTheRequestShape(t *testing.T) {
 		t.Fatalf("trigger input = %#v, want the request shape", input)
 	}
 }
+
+// TestBranchedWebhookAnswersFromTheBranchThatRan is the second defect on this
+// path.
+//
+// With a Respond to Webhook node on each arm of an IF, both used to run, both
+// wrote a response, and which one answered the caller was decided by Go's
+// randomised map iteration order. Pruning removes the ambiguity for this case —
+// only the taken arm runs now — and the lookup walks execution order rather
+// than a map, so a graph that legitimately produces two responses still answers
+// with a defined one.
+func TestBranchedWebhookAnswersFromTheBranchThatRan(t *testing.T) {
+	h := newHarness(t)
+
+	document := workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		Name:          "Branched response",
+		Nodes: []workflow.Node{
+			{ID: "trigger", Name: "Webhook", Type: nodes.WebhookNodeType, TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"path": "branched", "httpMethod": http.MethodPost, "responseMode": "responseNode"}},
+			{ID: "if", Name: "IF", Type: "kilasflow.if", TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"conditions": []any{map[string]any{
+					"field": "body.tier", "operator": "equals", "value": "vip",
+				}}}},
+			{ID: "vip", Name: "VIP reply", Type: "kilasflow.respondToWebhook", TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"responseCode": float64(200), "responseBody": "vip-branch"}},
+			{ID: "standard", Name: "Standard reply", Type: "kilasflow.respondToWebhook", TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"responseCode": float64(202), "responseBody": "standard-branch"}},
+		},
+		Connections: []workflow.Connection{
+			{ID: "c1", Kind: workflow.ConnectionMain,
+				Source: workflow.Endpoint{NodeID: "trigger", Port: "main"},
+				Target: workflow.Endpoint{NodeID: "if", Port: "main"}},
+			{ID: "c2", Kind: workflow.ConnectionMain,
+				Source: workflow.Endpoint{NodeID: "if", Port: "true"},
+				Target: workflow.Endpoint{NodeID: "vip", Port: "main"}},
+			{ID: "c3", Kind: workflow.ConnectionMain,
+				Source: workflow.Endpoint{NodeID: "if", Port: "false"},
+				Target: workflow.Endpoint{NodeID: "standard", Port: "main"}},
+		},
+		Settings: map[string]any{},
+	}
+	h.activate(t, document)
+
+	// The handler waits for the run, so a worker has to be draining alongside.
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			if worked, _ := h.runtime.RunOnce(context.Background()); !worked {
+				time.Sleep(2 * time.Millisecond)
+			}
+		}
+	}()
+	defer func() { close(stop); <-done }()
+
+	// Repeated executions of the same input must return the same response;
+	// under map iteration this was a coin flip on every request.
+	for attempt := range 6 {
+		recorder := httptest.NewRecorder()
+		h.handler.ServeHTTP(recorder, httptest.NewRequest(
+			http.MethodPost, "/webhook/branched", strings.NewReader(`{"tier":"vip"}`)))
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("attempt %d: status = %d, want the VIP branch's 200 (body: %s)", attempt, recorder.Code, recorder.Body)
+		}
+		if body := recorder.Body.String(); body != "vip-branch" {
+			t.Fatalf("attempt %d: body = %q, want the branch that ran", attempt, body)
+		}
+	}
+
+	// And the other way, so the answer follows the data rather than the order.
+	for attempt := range 6 {
+		recorder := httptest.NewRecorder()
+		h.handler.ServeHTTP(recorder, httptest.NewRequest(
+			http.MethodPost, "/webhook/branched", strings.NewReader(`{"tier":"standard"}`)))
+		if recorder.Code != http.StatusAccepted {
+			t.Fatalf("attempt %d: status = %d, want the standard branch's 202 (body: %s)", attempt, recorder.Code, recorder.Body)
+		}
+		if body := recorder.Body.String(); body != "standard-branch" {
+			t.Fatalf("attempt %d: body = %q, want the standard branch", attempt, body)
+		}
+	}
+}

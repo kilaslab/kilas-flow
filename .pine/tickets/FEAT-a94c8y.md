@@ -47,6 +47,8 @@ Deployment documentation is part of this ticket, not a follow-up. A guard inside
 
 One decision to settle rather than leave silent: whether an operator may deliberately opt a credential back in to the internal database, since reporting against one's own execution history is a real want. Recommend no. The guard stays unconditional, and an operator who wants that builds a read-only role — or points at a replica — and creates an ordinary credential for it. An opt-out flag would be the first thing anyone copies out of a forum post.
 
+One consequence to record now that V2-p9-1 puts customer business data behind this guard. Datastore tables live in the internal database under the same prefix, so the guard's reach grows from credentials, workflows and executions to an unbounded set of runtime-created tables holding a tenant's own rows. The user-visible rule that follows is worth stating in the Datastore documentation rather than leaving it to surface as an error message: a workflow SQL node can never read a datastore, and the Datastore node is the only path to one. That also raises the stakes on the `file:`-prefixed DSN defect and the empty guard on non-SQLite drivers, both of which V2-p6-7 closes.
+
 ## References
 
 - Roadmap plan, p6 section, entry V2-p6-5: `/Users/izzadev/.claude/plans/distributed-worker-nats-crispy-finch.md`.

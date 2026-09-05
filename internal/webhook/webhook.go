@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -304,7 +305,7 @@ func (handler *Handler) respondFromExecution(w http.ResponseWriter, binding repo
 	}
 
 	if responseMode == modeResponseNode {
-		if response, found := findResponse(outputs); found {
+		if response, found := findResponse(record.NodeRuns); found {
 			writeResponse(w, response)
 			return
 		}
@@ -333,31 +334,60 @@ type nodeResponse struct {
 	body       string
 }
 
-func findResponse(outputs map[string][][]workflow.Item) (nodeResponse, bool) {
-	for _, ports := range outputs {
+// findResponse returns the response a Respond to Webhook node produced.
+//
+// It walks the node runs in execution order rather than iterating the output
+// map, because Go randomises map iteration: with a Respond node on each arm of
+// an IF, which one answered the caller was decided by a coin flip. Pruning
+// removes that for the common case — only the taken arm runs now — but a graph
+// can still legitimately produce two responses, and the caller is better served
+// by a defined answer than by a different one on each request.
+//
+// The first in execution order wins. A skipped node produced no response at
+// all, so it is passed over without needing a special case.
+func findResponse(runs []execution.NodeRun) (nodeResponse, bool) {
+	ordered := append([]execution.NodeRun(nil), runs...)
+	sort.SliceStable(ordered, func(left, right int) bool {
+		return ordered[left].Sequence < ordered[right].Sequence
+	})
+	for _, run := range ordered {
+		if len(run.Output) == 0 {
+			continue
+		}
+		var ports [][]workflow.Item
+		if err := json.Unmarshal(run.Output, &ports); err != nil {
+			continue
+		}
 		for _, items := range ports {
 			for _, item := range items {
-				raw, ok := item.JSON[ResponseKey].(map[string]any)
-				if !ok {
-					continue
+				response, ok := responseFromItem(item)
+				if ok {
+					return response, true
 				}
-				response := nodeResponse{statusCode: http.StatusOK, headers: map[string]string{}}
-				if code, ok := raw["statusCode"].(float64); ok && code >= 100 && code <= 599 {
-					response.statusCode = int(code)
-				}
-				if headers, ok := raw["headers"].(map[string]any); ok {
-					for key, value := range headers {
-						if text, ok := value.(string); ok {
-							response.headers[key] = text
-						}
-					}
-				}
-				response.body, _ = raw["body"].(string)
-				return response, true
 			}
 		}
 	}
 	return nodeResponse{}, false
+}
+
+func responseFromItem(item workflow.Item) (nodeResponse, bool) {
+	raw, ok := item.JSON[ResponseKey].(map[string]any)
+	if !ok {
+		return nodeResponse{}, false
+	}
+	response := nodeResponse{statusCode: http.StatusOK, headers: map[string]string{}}
+	if code, ok := raw["statusCode"].(float64); ok && code >= 100 && code <= 599 {
+		response.statusCode = int(code)
+	}
+	if headers, ok := raw["headers"].(map[string]any); ok {
+		for key, value := range headers {
+			if text, ok := value.(string); ok {
+				response.headers[key] = text
+			}
+		}
+	}
+	response.body, _ = raw["body"].(string)
+	return response, true
 }
 
 func writeResponse(w http.ResponseWriter, response nodeResponse) {
