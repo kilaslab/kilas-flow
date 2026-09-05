@@ -1,0 +1,67 @@
+---
+id: EPIC-m42s3g
+title: KilasFlow V2 — n8n-first workflow compatibility
+status: todo
+priority: high
+labels:
+    - roadmap
+    - v2
+    - n8n
+    - interop
+phase: p0
+created: "2026-09-05T04:52:29Z"
+updated: "2026-09-05T04:52:29Z"
+---
+
+## Objective
+
+Make a customer's existing n8n workflows import into KilasFlow and actually run, so client automations — above all ones built on WAHA (WhatsApp HTTP API) — can be replicated on this platform. V1 proved the engine, the editor and the embed boundary. V2 makes them compatible with the ecosystem the customers are coming from.
+
+## Decisions that shape every child ticket
+
+| Decision | Answer |
+| --- | --- |
+| JS sidecar for community nodes | Deferred to p8. WAHA goes native through an OpenAPI-to-node generator. |
+| First phase | Engine correctness and import fidelity, before node metadata. |
+| Licence posture | Native-first. No n8n bytes in this repo or in any artifact. No dependency on any n8n npm package. |
+| `n8n-nodes-base` coverage | Top-30 by real usage data, not exhaustive parity. |
+| Workflow versioning | DB-stored workflow history, not Git source control. |
+| PostgreSQL | Optional. It unlocks extra features and can share a customer database under a `kflow_` table prefix. |
+| AI nodes | Native Go, mapped on import. Microsoft Agent Framework stays an optional adapter behind `ai.AgentRuntime`, admitted only by spike. |
+
+## Why the roadmap is ordered this way
+
+Research across the KilasFlow source, a local n8n 2.34.0 reference checkout, the owner's own published `n8n-nodes-mitrachat` package and official documentation overturned four assumptions the obvious plan would have rested on.
+
+- **WAHA needs no JavaScript.** `@devlikeapro/n8n-nodes-waha`'s action node has no `execute()` at all. It is 124 OpenAPI-derived operations of declarative `routing` metadata generated from WAHA's own MIT `openapi.json`, so a Go routing interpreter plus a generated node pack replicates the whole package with the single binary intact.
+- **A JS sidecar would run 0.46% of what n8n users run.** Across the 100 most-viewed n8n.io templates (2,377 node instances): 1,894 `n8n-nodes-base`, 472 `@n8n/n8n-nodes-langchain`, 11 third-party `n8n-nodes-*`.
+- **The licence boundary is real.** `n8n-workflow`, `n8n-core`, `n8n-nodes-base` and the LangChain pack are all Sustainable Use License. This repository is Apache-2.0 and the product is white-label, multi-tenant and embedded — the configuration n8n's licensing FAQ names as not allowed. Even MIT-licensed WAHA imports `VersionedNodeType` and `NodeConnectionType` from `n8n-workflow` as runtime values, so executing the npm package would drag SUL code in.
+- **The engine, not the node catalogue, is the bottleneck.** The compiler rejects cycles and demands exactly one trigger root, which fails 52 of those 100 templates before node types matter, and 511 of 1,617 expressions use `$('Node').item`, which needs pairedItem lineage the runner does not track.
+
+## Phase order
+
+p0 reference and guardrails → p1 engine correctness and import fidelity → p2 node metadata foundation → p3 declarative node packs, WAHA and Telegram → p4 n8n-core node parity → p5 AI parity in native Go → p6 PostgreSQL capability tier → p7 workflow history → p8 platform and long tail.
+
+## Acceptance scenario
+
+Two proofs, in this order.
+
+1. **Telegram, after p3.** A Telegram Trigger that registers its own webhook, an AI Agent, and a Send Message reply — a working bot without any WhatsApp infrastructure.
+2. **WAHA, the real target.** The official WAHA chatting template imports, opens in the editor with correct icons and parameter panels, activates, receives a real webhook and replies — with the same template imported twice for two different tenants, both active at once.
+
+Both must run with no Node.js process anywhere.
+
+## Delivery rules carried over from V1
+
+- API first. The editor never owns authoritative workflow state.
+- A draft may be incomplete; the compiler stays the single validation authority for activation and execution.
+- Workflow JSON carries credential references only, never plaintext secrets.
+- Persist execution evidence from the first runnable slice of every phase.
+- One commit per ticket, carrying its own code, tests and evidence. Close with `pine close <ID> --evidence`.
+
+## References
+
+- Plan: `~/.claude/plans/distributed-worker-nats-crispy-finch.md`.
+- PRD: `gflow-prd-v1.md` §§19–24, 42, 54, 56–58, 64.
+- V1 epic: EPIC-c7gbdp.
+- Licence boundary: `.pine/memory/licensing.md` (written by the p0 guardrails ticket).
