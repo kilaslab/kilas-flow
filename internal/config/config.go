@@ -38,6 +38,15 @@ type Server struct {
 
 	ReadHeaderTimeout time.Duration `koanf:"read_header_timeout"`
 	ShutdownTimeout   time.Duration `koanf:"shutdown_timeout"`
+
+	// PublicURL is how this instance is reachable from the internet, without a
+	// trailing slash. A webhook lifecycle hook has to tell a remote service
+	// where to deliver, and the listen address is not that: an instance behind
+	// a proxy or a tunnel binds one address and is reached at another.
+	//
+	// Empty disables self-registration rather than guessing, because a bot
+	// registered against a wrong address receives nothing and reports success.
+	PublicURL string `koanf:"public_url"`
 }
 
 // Addr returns the host:port the server binds to.

@@ -49,10 +49,18 @@ func webhookTrigger() node.Definition {
 		Description: "Starts a workflow from an inbound HTTP request.",
 		Category:    "Triggers",
 		Group:       []node.NodeGroup{node.GroupTrigger},
-		Icon:        &node.NodeIcon{Light: "builtin:webhook"},
-		IconColor:   "#8b5cf6",
-		Subtitle:    "{{ $parameter.httpMethod }} {{ $parameter.path }}",
-		Outputs:     mainOutput(),
+		// The binding declaration lives with the node rather than at
+		// composition, so the extractor never needs to know this type's name.
+		Webhook: &node.WebhookDeclaration{
+			Name:            "default",
+			PathParameter:   "path",
+			MethodParameter: "httpMethod",
+			Method:          http.MethodPost,
+		},
+		Icon:      &node.NodeIcon{Light: "builtin:webhook"},
+		IconColor: "#8b5cf6",
+		Subtitle:  "{{ $parameter.httpMethod }} {{ $parameter.path }}",
+		Outputs:   mainOutput(),
 		Parameters: []node.PropertyDefinition{
 			{
 				Key: "path", Label: "Path", Kind: node.PropertyString, Required: true,

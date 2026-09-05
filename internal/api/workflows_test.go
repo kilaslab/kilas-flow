@@ -371,7 +371,7 @@ func newWorkflowAPIWithEmbed(t *testing.T, issuer *embed.Issuer) (http.Handler, 
 	handler := newTestServer(t, api.Deps{
 		DB:                  db,
 		NodeRegistry:        registry,
-		Workflows:           repository.NewWorkflowStore(db.DB).WithWebhooks(webhook.Extract(nodes.WebhookNodeType, nodes.WebhookPath)),
+		Workflows:           repository.NewWorkflowStore(db.DB).WithWebhooks(webhook.Extract(registry, nodes.WebhookPath)),
 		Executions:          executions,
 		Credentials:         repository.NewCredentialStore(db.DB, nil),
 		ExecutionController: runtime,
@@ -402,7 +402,7 @@ func newWorkflowAPIWithController(t *testing.T, controller handlers.ExecutionCon
 	// The same webhook extractor production wires, so an API test exercises
 	// binding and route minting rather than silently skipping both.
 	workflows := repository.NewWorkflowStore(db.DB).
-		WithWebhooks(webhook.Extract(nodes.WebhookNodeType, nodes.WebhookPath))
+		WithWebhooks(webhook.Extract(registry, nodes.WebhookPath))
 	executions := repository.NewExecutionStore(db.DB)
 	return newTestServer(t, api.Deps{
 		DB:                  db,

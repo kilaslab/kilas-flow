@@ -9,6 +9,13 @@ server:
   port: 8080
   read_header_timeout: 10s
   shutdown_timeout: 15s
+  # How this instance is reachable from the internet, without a trailing slash.
+  # A trigger that registers itself with a remote service — a Telegram bot, a
+  # WAHA session — has to say where to deliver, and the listen address is not
+  # that when the instance sits behind a proxy or a tunnel. Leave empty to
+  # disable self-registration rather than guess: a bot registered against the
+  # wrong address receives nothing and reports success.
+  # public_url: "https://flows.example.com"
 
 database:
   # sqlite (default, zero infrastructure) or postgres

@@ -14,6 +14,7 @@ import (
 
 	"github.com/kilaslabs/kilas-flow/internal/events"
 	"github.com/kilaslabs/kilas-flow/internal/execution"
+	"github.com/kilaslabs/kilas-flow/internal/node"
 	"github.com/kilaslabs/kilas-flow/internal/repository"
 	"github.com/kilaslabs/kilas-flow/internal/workflow"
 )
@@ -470,22 +471,46 @@ func problem(w http.ResponseWriter, status int, detail string) {
 //
 // It lives here rather than in the repository so node-type knowledge stays out
 // of persistence, and is injected into the workflow store at composition.
-func Extract(nodeType string, normalizePath func(string) string) repository.WebhookExtractor {
+// Extract reads a document's webhook triggers from the node catalogue.
+//
+// No node type name appears here or at composition. Any registered definition
+// that declares a webhook produces a binding, which is what lets a generated
+// pack ship a trigger that actually receives requests — before this, exactly
+// one type could bind an inbound path and it was named in main().
+func Extract(catalog Catalog, normalizePath func(string) string) repository.WebhookExtractor {
 	return func(document workflow.Document) []repository.WebhookTrigger {
 		triggers := make([]repository.WebhookTrigger, 0, 1)
 		for _, node := range document.Nodes {
-			if node.Type != nodeType {
+			definition, found := catalog.Resolve(node.Type, node.TypeVersion)
+			if !found || definition.Webhook == nil {
 				continue
 			}
-			path, _ := node.Parameters["path"].(string)
+			declaration := definition.Webhook
+
+			// The parameter *key* is named by the definition, so a trigger
+			// whose path lives under `chatPath` binds just as one using `path`
+			// does.
+			path := declaration.StaticPath
+			if declaration.PathParameter != "" {
+				if configured, ok := node.Parameters[declaration.PathParameter].(string); ok {
+					path = configured
+				}
+			}
 			path = normalizePath(path)
 			if path == "" {
 				continue
 			}
-			method, _ := node.Parameters["httpMethod"].(string)
+
+			method := declaration.Method
+			if declaration.MethodParameter != "" {
+				if configured, ok := node.Parameters[declaration.MethodParameter].(string); ok && configured != "" {
+					method = configured
+				}
+			}
 			if method == "" {
 				method = http.MethodPost
 			}
+
 			parameters := make(map[string]any, len(node.Parameters)+1)
 			for key, value := range node.Parameters {
 				parameters[key] = value
@@ -506,6 +531,16 @@ func Extract(nodeType string, normalizePath func(string) string) repository.Webh
 		}
 		return triggers
 	}
+}
+
+// Catalog is the slice of the node registry extraction needs. Declaring it here
+// rather than taking *node.Registry keeps this package testable without one and
+// says exactly what it reads.
+type Catalog interface {
+	// Resolve rather than Get, so a document carrying n8n's own typeVersion
+	// finds the definition the compiler will run it against rather than
+	// failing to bind because no exact match is registered.
+	Resolve(nodeType string, version workflow.TypeVersion) (node.Definition, bool)
 }
 
 // deliveryIdentifier reads the sender's own identifier for this delivery.

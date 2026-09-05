@@ -59,7 +59,12 @@ type Deps struct {
 	// separate from the repository so HTTP never reaches into ORM state.
 	ExecutionController handlers.ExecutionController
 	Tenants             handlers.TenantResolver
-	Version             string
+	// TriggerCoordinator registers a workflow's webhook triggers with the
+	// remote services they depend on, around activation. Nil leaves a workflow
+	// activating and routing normally without telling any service where to
+	// deliver, which is what every trigger did before it existed.
+	TriggerCoordinator handlers.TriggerCoordinator
+	Version            string
 }
 
 // Server owns the HTTP listener and the route tree.

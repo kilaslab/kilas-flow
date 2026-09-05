@@ -64,6 +64,7 @@ export * from './scheduleResource';
 export * from './streamExecutionEvents200Item';
 export * from './streamExecutionEventsParams';
 export * from './visibilityCondition';
+export * from './webhookDeclaration';
 export * from './webhookRouteResource';
 export * from './workflowDocumentInput';
 export * from './workflowDocumentInputSettings';

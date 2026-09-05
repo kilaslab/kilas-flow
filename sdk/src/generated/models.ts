@@ -150,6 +150,14 @@ export interface PropertyDefinition {
   visibleWhen?: VisibilityCondition[] | null;
 }
 
+export interface WebhookDeclaration {
+  method?: string;
+  methodParameter?: string;
+  name: string;
+  pathParameter?: string;
+  staticPath?: string;
+}
+
 export interface Definition {
   category: string;
   codex?: NodeCodex;
@@ -173,6 +181,7 @@ export interface Definition {
   type: string;
   /** Node type version. A decimal such as 1, 4.2, or a YYYYMM value such as 202502. Omit it to use the registered default. */
   version: number;
+  webhook?: WebhookDeclaration;
 }
 
 export type DocumentSettings = {[key: string]: unknown};

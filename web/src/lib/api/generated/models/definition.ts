@@ -9,6 +9,7 @@ import type { NodeCodex } from './nodeCodex';
 import type { NodeIcon } from './nodeIcon';
 import type { Port } from './port';
 import type { PropertyDefinition } from './propertyDefinition';
+import type { WebhookDeclaration } from './webhookDeclaration';
 
 export interface Definition {
   category: string;
@@ -33,4 +34,5 @@ export interface Definition {
   type: string;
   /** Node type version. A decimal such as 1, 4.2, or a YYYYMM value such as 202502. Omit it to use the registered default. */
   version: number;
+  webhook?: WebhookDeclaration;
 }

@@ -93,6 +93,40 @@ type Definition struct {
 	// Codex carries the picker's own metadata, kept in a block of its own so
 	// panel arrangement can change without disturbing the node's identity.
 	Codex *NodeCodex `json:"codex,omitempty"`
+
+	// Webhook declares that this node type binds an inbound HTTP path.
+	//
+	// Exactly one node type could do this before, and it was named at
+	// composition — so a Telegram or WAHA trigger could be registered, placed
+	// on a canvas, saved and activated, and would simply never receive a
+	// request. No error, just an active workflow that is unreachable.
+	Webhook *WebhookDeclaration `json:"webhook,omitempty"`
+	// LifecycleID binds this node's activate and deactivate hooks, by the same
+	// opaque server-owned identifier pattern as ExecutorID: a trigger that
+	// declares a hook nobody registered fails at startup rather than at
+	// activation.
+	LifecycleID string `json:"-"`
+}
+
+// WebhookDeclaration is how a node type says it answers an inbound request.
+//
+// Modelled on n8n's IWebhookDescription. The path and method are read from
+// parameter *keys the definition names*, rather than from literal keys the
+// extractor knows, so a trigger whose path lives under `chatPath` still binds.
+type WebhookDeclaration struct {
+	// Name identifies this webhook when a node declares more than one.
+	Name string `json:"name"`
+	// PathParameter is the parameter key holding the path.
+	PathParameter string `json:"pathParameter,omitempty"`
+	// MethodParameter is the parameter key holding the HTTP method, when the
+	// node lets a user choose one.
+	MethodParameter string `json:"methodParameter,omitempty"`
+	// Method is the fixed method for a trigger that does not offer a choice —
+	// a Telegram bot always receives POST.
+	Method string `json:"method,omitempty"`
+	// StaticPath binds a node with no path parameter at all, which is what a
+	// trigger whose route is entirely minted needs.
+	StaticPath string `json:"staticPath,omitempty"`
 }
 
 // NodeGroup is a behavioural classification. The set is closed: a definition
@@ -204,6 +238,33 @@ func (registry *Registry) Get(nodeType string, version workflow.TypeVersion) (De
 	}
 	definition, found := registry.definitions[definitionKey{nodeType: nodeType, version: version}]
 	return cloneDefinition(definition), found
+}
+
+// LifecycleIDs lists every webhook lifecycle a registered node declares, so
+// composition can prove each one is bound before the server starts.
+//
+// Discovering a missing binding at the first activation would mean a workflow
+// that saves, activates, and silently never registers with its remote service —
+// which is the exact failure this ticket exists to remove, reintroduced one
+// level up.
+func (registry *Registry) LifecycleIDs() []string {
+	if registry == nil {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	ids := make([]string, 0)
+	for _, definition := range registry.definitions {
+		if definition.LifecycleID == "" {
+			continue
+		}
+		if _, already := seen[definition.LifecycleID]; already {
+			continue
+		}
+		seen[definition.LifecycleID] = struct{}{}
+		ids = append(ids, definition.LifecycleID)
+	}
+	sort.Strings(ids)
+	return ids
 }
 
 // Resolve picks the definition a document's requested version should run

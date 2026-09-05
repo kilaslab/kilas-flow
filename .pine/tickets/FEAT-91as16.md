@@ -1,7 +1,7 @@
 ---
 id: FEAT-91as16
 title: Make webhook bindings registry-driven with trigger lifecycle hooks
-status: todo
+status: done
 priority: high
 labels:
     - registry
@@ -28,13 +28,13 @@ Per-tenant path uniqueness and delivery deduplication are a separate ticket in p
 
 ## Acceptance criteria
 
-- [ ] Any registered node type may declare a webhook binding in its definition; extraction reads the catalogue and no node type name appears in `internal/webhook` or in the composition call.
-- [ ] The path and method are resolved from parameter keys the definition names, so a trigger whose path parameter is not called `path` still binds.
-- [ ] A node may declare activate and deactivate lifecycle hooks; activating a workflow runs them for every such trigger and deactivating runs the teardown.
-- [ ] Lifecycle hooks run outside the activation database transaction, and a hook that fails leaves the workflow inactive with its bindings removed and a named error returned to the caller.
-- [ ] Hooks are idempotent: activating an already-active workflow re-checks rather than re-registers, and a teardown failure is reported without blocking deactivation.
-- [ ] A lifecycle hook reaches the network only through `internal/safehttp` and resolves credentials through the same tenant-scoped resolver an executor uses; it can never read a credential outside the workflow's tenant.
-- [ ] Existing `kilasflow.webhook` behaviour is unchanged end to end, proven by the existing webhook tests passing without modification to their assertions.
+- [x] Any registered node type may declare a webhook binding in its definition; extraction reads the catalogue and no node type name appears in `internal/webhook` or in the composition call.
+- [x] The path and method are resolved from parameter keys the definition names, so a trigger whose path parameter is not called `path` still binds.
+- [x] A node may declare activate and deactivate lifecycle hooks; activating a workflow runs them for every such trigger and deactivating runs the teardown.
+- [x] Lifecycle hooks run outside the activation database transaction, and a hook that fails leaves the workflow inactive with its bindings removed and a named error returned to the caller.
+- [x] Hooks are idempotent: activating an already-active workflow re-checks rather than re-registers, and a teardown failure is reported without blocking deactivation.
+- [x] A lifecycle hook reaches the network only through `internal/safehttp` and resolves credentials through the same tenant-scoped resolver an executor uses; it can never read a credential outside the workflow's tenant.
+- [x] Existing `kilasflow.webhook` behaviour is unchanged end to end, proven by the existing webhook tests passing without modification to their assertions.
 
 ## Implementation Plan
 
@@ -62,3 +62,80 @@ Last, a forward-looking decision: p3-1 brings a declarative routing interpreter,
 - `internal/engine/runner.go` — `Executor` and `Registry`, the binding pattern to mirror.
 - n8n 2.34.0 reference (read-only, outside this repo): `packages/workflow/src/interfaces.ts` — `webhookMethods`, `WebhookSetupMethodNames`, `IWebhookDescription`, `INodeTypeDescription.webhooks`.
 - Local n8n UI reference: `design-refs/n8n-v2/INDEX.md` entry 11 — the collapsible Webhook URLs block a self-registering trigger exposes. Captured from a local n8n 2.33.7 instance; gitignored, never vendored.
+
+## Outcome
+
+### Extraction
+
+`repository.WebhookExtractor` is unchanged — the injection seam was already
+right and is what keeps node-type knowledge out of persistence. Only the
+implementation moved: it closes over the node registry and reads a
+`WebhookDeclaration` off each definition. No node type name appears in
+`internal/webhook` or in the composition call any more, and the webhook node
+declares its own binding where that knowledge belongs.
+
+The path and method come from **parameter keys the definition names**, so a
+trigger whose path lives under `chatPath` binds exactly as one using `path`
+does — asserted directly, together with a fixed method for a trigger that offers
+no choice.
+
+It uses `Resolve` rather than `Get`, so a document carrying n8n's own
+`typeVersion` finds the definition the compiler will run it against instead of
+failing to bind because no exact version is registered.
+
+### Lifecycle
+
+Three methods, not two. `Activate` may be called on an already-active workflow,
+and `CheckExists` is what makes that a re-check rather than a re-registration —
+pinned by activating three times and asserting `Create` never runs.
+
+Hooks run in the handler, **after** the commit, as recommended. A remote call
+cannot join the activation transaction: it blocks for seconds against somebody
+else's API while holding a row lock, and it cannot be rolled back — un-calling
+`setWebhook` is another network call. The brief window where a workflow is active
+but the service has not been told is harmless, because an unregistered webhook
+delivers nothing.
+
+The two directions are deliberately asymmetric. A registration failure
+deactivates and returns an error naming the trigger and the remote failure, because
+half-registered is worse than inactive — the user believes it is listening. A
+teardown failure is logged and never blocks: a user deactivating must not be
+held up by somebody else's service being down, and a stale registration delivers
+to a route that no longer resolves, which is a 404 rather than a leak.
+
+One ordering detail the ticket did not mention: unregistration runs **before**
+the bindings are dropped, because the hook needs the route to tell the service
+which registration to remove.
+
+### The declarative form
+
+`RequestLifecycle` implements `TriggerLifecycle` from `RequestDescriptor` data
+alone, so it is *an implementation of* the interface rather than a special case
+beside it — a generated pack can register a webhook with no hand-written Go. The
+Go form stays for what a descriptor cannot express, such as Telegram's
+`secret_token` verification on every delivery.
+
+Its templating is deliberately **not** the expression evaluator: a descriptor is
+configuration written by a pack author, and giving it the full grammar would let
+a pack read run-time data at activation. A failing remote response is reported by
+status code without echoing the body, which can carry the token just sent to it.
+
+### Startup binding
+
+`Registry.LifecycleIDs` plus `VerifyLifecycleBindings` fail at composition when a
+node declares a hook nobody registered. Discovering that at the first activation
+would be this ticket's own bug reintroduced one level up: a workflow that saves,
+activates, and silently never registers.
+
+### One thing that had to be added
+
+There was no public URL in configuration, and a lifecycle hook cannot work
+without one — the listen address is not it when the instance is behind a proxy
+or a tunnel. `Server.PublicURL` is new and empty by default, which disables
+self-registration rather than guessing: a bot registered against the wrong
+address receives nothing and reports success.
+
+### Unchanged
+
+Every existing webhook test passes without a single assertion modified, which is
+the acceptance criterion for `kilasflow.webhook` behaving exactly as before.

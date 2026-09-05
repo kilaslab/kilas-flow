@@ -334,6 +334,15 @@ func (service *Service) run(ctx context.Context, record execution.Record, docume
 // tenantCredentials binds credential resolution to the tenant that owns the
 // running execution, so a workflow can never name a credential from another
 // tenant even if it guesses the ID.
+// NewTenantCredentials builds a resolver confined to one tenant.
+//
+// Exported so a webhook lifecycle hook resolves secrets through exactly the
+// same tenant-scoped path an executor does, rather than a parallel one that
+// could quietly miss the scoping.
+func NewTenantCredentials(store CredentialStore, tenant repository.TenantScope) CredentialResolver {
+	return &tenantCredentials{store: store, tenant: tenant}
+}
+
 type tenantCredentials struct {
 	store  CredentialStore
 	tenant repository.TenantScope

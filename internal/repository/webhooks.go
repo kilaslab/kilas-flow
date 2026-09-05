@@ -327,6 +327,13 @@ func (store *GORMWorkflowStore) EnsureWebhookRoutes(ctx context.Context, tenant 
 	return bindings, nil
 }
 
+// WebhookRouteReader lists a workflow's public routes. It is the slice of the
+// store a lifecycle hook needs, so the coordinator does not take the whole
+// workflow repository to read three fields.
+type WebhookRouteReader interface {
+	WebhookRoutes(ctx context.Context, tenant TenantScope, workflowID string) ([]WebhookBinding, error)
+}
+
 // WebhookRouteMinter is the optional half of the workflow repository that can
 // mint public routes ahead of activation. It is separate from
 // WorkflowRepository so a store assembled without a webhook extractor is still

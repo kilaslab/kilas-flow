@@ -135,7 +135,7 @@ func run() error {
 	// while still letting webhook bindings be synced inside the activation
 	// transaction.
 	workflows := repository.NewWorkflowStore(db.DB).
-		WithWebhooks(webhook.Extract(nodes.WebhookNodeType, nodes.WebhookPath))
+		WithWebhooks(webhook.Extract(nodeRegistry, nodes.WebhookPath))
 	schedules := repository.NewScheduleStore(db.DB)
 	eventBroker := events.NewBroker(events.BrokerOptions{})
 	runtime, err := engine.NewService(engine.ServiceDeps{
@@ -151,6 +151,16 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("configure execution runtime: %w", err)
 	}
+	// Webhook lifecycle hooks: how a trigger registers itself with the service
+	// that will deliver to it. Nothing declares one yet — the Telegram and WAHA
+	// triggers in p3 are the first — but the binding is verified at startup, so
+	// a node declaring a hook nobody registered fails here rather than
+	// silently never registering at its first activation.
+	webhookLifecycles := webhook.NewLifecycleRegistry()
+	if err := webhook.VerifyLifecycleBindings(nodeRegistry.LifecycleIDs(), webhookLifecycles); err != nil {
+		return fmt.Errorf("verify webhook lifecycles: %w", err)
+	}
+
 	// How each trigger type shapes an inbound delivery. KilasFlow's own webhook
 	// keeps the envelope it has always produced; a pack-supplied trigger names
 	// the shape it wants rather than shipping Go code to build one.
@@ -189,7 +199,14 @@ func run() error {
 			ResponseTimeout: cfg.Webhook.ResponseTimeout,
 			DeliveryWindow:  repository.DefaultDeliveryWindow,
 		}).WithTriggers(webhookTriggers),
-		Credentials:         credentialStore,
+		Credentials: credentialStore,
+		TriggerCoordinator: webhook.NewCoordinator(
+			webhookLifecycles, workflows, safehttp.DefaultPolicy(),
+			func(tenantID string) engine.CredentialResolver {
+				return engine.NewTenantCredentials(credentialStore, repository.TenantScope{ID: tenantID})
+			},
+			cfg.Server.PublicURL, log,
+		),
 		Events:              eventBroker,
 		EmbedIssuer:         embedIssuer,
 		ExecutionController: runtime,

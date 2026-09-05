@@ -10,6 +10,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/kilaslabs/kilas-flow/internal/execution"
+	"github.com/kilaslabs/kilas-flow/internal/node"
 	"github.com/kilaslabs/kilas-flow/internal/repository"
 	"github.com/kilaslabs/kilas-flow/internal/workflow"
 )
@@ -31,8 +32,12 @@ type Workflows struct {
 	workflows  repository.WorkflowRepository
 	executions repository.ExecutionRepository
 	catalog    workflow.Catalog
-	tenants    TenantResolver
-	waker      ExecutionWaker
+	// triggers runs webhook registration around activation. Optional: without
+	// it a workflow still activates and routes, it simply never tells a remote
+	// service where to deliver.
+	triggers TriggerCoordinator
+	tenants  TenantResolver
+	waker    ExecutionWaker
 }
 
 // ExecutionWaker lets the lifecycle API notify idle runtime workers after it
@@ -352,9 +357,27 @@ func (handler *Workflows) Activate(ctx context.Context, input *workflowPathInput
 	if err := handler.available(true); err != nil {
 		return nil, err
 	}
-	stored, err := handler.workflows.Activate(ctx, handler.tenant(ctx), input.ID, handler.catalog)
+	tenant := handler.tenant(ctx)
+	stored, err := handler.workflows.Activate(ctx, tenant, input.ID, handler.catalog)
 	if err != nil {
 		return nil, handler.problem(err)
+	}
+
+	// Lifecycle hooks run after the commit, never inside it. A remote call can
+	// block for seconds against somebody else's API while holding a row lock,
+	// and it cannot be rolled back — un-calling setWebhook is another network
+	// call. The brief window where the workflow is active but the service has
+	// not been told is harmless: an unregistered webhook delivers nothing.
+	if handler.triggers != nil {
+		if err := handler.triggers.Activated(ctx, tenant.ID, stored.ID, handler.lifecycleIDs()); err != nil {
+			// Half-registered is worse than inactive, because the user believes
+			// the workflow is listening.
+			if _, deactivateErr := handler.workflows.Deactivate(ctx, tenant, stored.ID); deactivateErr != nil {
+				return nil, huma.Error500InternalServerError(
+					"a trigger could not register and the workflow could not be rolled back", err)
+			}
+			return nil, huma.Error502BadGateway(err.Error())
+		}
 	}
 	return &workflowOutput{Body: workflowResource(stored)}, nil
 }
@@ -364,11 +387,33 @@ func (handler *Workflows) Deactivate(ctx context.Context, input *workflowPathInp
 	if err := handler.available(false); err != nil {
 		return nil, err
 	}
-	stored, err := handler.workflows.Deactivate(ctx, handler.tenant(ctx), input.ID)
+	tenant := handler.tenant(ctx)
+	// Unregistering runs *before* the bindings are dropped, because the hook
+	// needs the route to tell the service which registration to remove.
+	if handler.triggers != nil {
+		handler.triggers.Deactivated(ctx, tenant.ID, input.ID, handler.lifecycleIDs())
+	}
+	stored, err := handler.workflows.Deactivate(ctx, tenant, input.ID)
 	if err != nil {
 		return nil, handler.problem(err)
 	}
 	return &workflowOutput{Body: workflowResource(stored)}, nil
+}
+
+// lifecycleIDs maps a trigger node type to the lifecycle hook it declares, read
+// from the catalogue so no node type name appears here.
+func (handler *Workflows) lifecycleIDs() map[string]string {
+	declared := map[string]string{}
+	lister, ok := handler.catalog.(interface{ List() []node.Definition })
+	if !ok {
+		return declared
+	}
+	for _, definition := range lister.List() {
+		if definition.LifecycleID != "" {
+			declared[definition.Type] = definition.LifecycleID
+		}
+	}
+	return declared
 }
 
 // Run validates the latest draft and records a queued manual request. The
@@ -498,4 +543,20 @@ func executionResource(record execution.Record) ExecutionResource {
 		})
 	}
 	return resource
+}
+
+// TriggerCoordinator registers and unregisters a workflow's triggers with the
+// remote services they depend on.
+//
+// Declared here rather than taking *webhook.Coordinator so the handler package
+// does not depend on the webhook package, and so a test can supply one.
+type TriggerCoordinator interface {
+	Activated(ctx context.Context, tenantID, workflowID string, declared map[string]string) error
+	Deactivated(ctx context.Context, tenantID, workflowID string, declared map[string]string)
+}
+
+// WithTriggers attaches the lifecycle coordinator.
+func (handler *Workflows) WithTriggers(coordinator TriggerCoordinator) *Workflows {
+	handler.triggers = coordinator
+	return handler
 }

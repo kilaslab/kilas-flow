@@ -86,7 +86,7 @@ func newHarness(t *testing.T) harness {
 	}
 
 	workflows := repository.NewWorkflowStore(db.DB).
-		WithWebhooks(webhook.Extract(nodes.WebhookNodeType, nodes.WebhookPath))
+		WithWebhooks(webhook.Extract(registry, nodes.WebhookPath))
 	credentialStore := repository.NewCredentialStore(db.DB, cipher)
 	executions := repository.NewExecutionStore(db.DB)
 	runtime, err := engine.NewService(engine.ServiceDeps{
