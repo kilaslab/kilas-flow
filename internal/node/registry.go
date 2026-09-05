@@ -579,6 +579,9 @@ func requiredParameters(properties []PropertyDefinition) []string {
 // which is what the static list means: what a fresh node requires.
 func visibleRequiredParameters(properties []PropertyDefinition, parameters map[string]any, typeVersion string) []string {
 	required := make([]string, 0, len(properties))
+	// A rule reading a sibling the node never stored has to see that sibling's
+	// declared default, or a field the user is looking at counts as hidden.
+	parameters = propertypkg.WithDefaults(properties, parameters)
 	for _, declared := range properties {
 		if declared.Kind == PropertyNotice {
 			continue

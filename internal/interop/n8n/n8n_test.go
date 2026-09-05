@@ -2184,3 +2184,113 @@ func TestMergeModesSurviveImport(t *testing.T) {
 		}
 	}
 }
+
+// Every data-shaping node used to import as the unsupported placeholder, so a
+// single Sort blocked activation of the whole workflow.
+func TestTheDataShapingFamilyImportsAndExports(t *testing.T) {
+	t.Parallel()
+
+	advertised := strings.Join(n8n.SupportedMappings(), "\n")
+	for sourceType, want := range map[string]string{
+		"n8n-nodes-base.aggregate":        n8n.AggregateNodeType,
+		"n8n-nodes-base.splitOut":         n8n.SplitOutNodeType,
+		"n8n-nodes-base.sort":             n8n.SortNodeType,
+		"n8n-nodes-base.summarize":        n8n.SummarizeNodeType,
+		"n8n-nodes-base.removeDuplicates": n8n.RemoveDuplicatesNodeType,
+	} {
+		if !strings.Contains(advertised, sourceType+" ↔ "+want) {
+			t.Errorf("SupportedMappings() does not advertise %s ↔ %s", sourceType, want)
+		}
+	}
+
+	const fixture = `{
+	  "name": "Shape",
+	  "nodes": [
+	    {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}},
+	    {"id":"b","name":"Split","type":"n8n-nodes-base.splitOut","typeVersion":1,"position":[220,0],
+	     "parameters":{"fieldToSplitOut":"lines","include":"allOtherFields","options":{"destinationFieldName":"line"}}},
+	    {"id":"c","name":"Order","type":"n8n-nodes-base.sort","typeVersion":1,"position":[440,0],
+	     "parameters":{"type":"simple","sortFieldsUI":{"sortField":[
+	       {"fieldName":"total","order":"descending"},{"fieldName":"sku","order":"ascending"}]}}},
+	    {"id":"d","name":"Gather","type":"n8n-nodes-base.aggregate","typeVersion":1,"position":[660,0],
+	     "parameters":{"aggregate":"aggregateIndividualFields",
+	       "fieldsToAggregate":{"values":[{"fieldToAggregate":"sku"},{"fieldToAggregate":"total"}]}}}
+	  ],
+	  "connections": {
+	    "Manual": {"main": [[{"node":"Split","type":"main","index":0}]]},
+	    "Split": {"main": [[{"node":"Order","type":"main","index":0}]]},
+	    "Order": {"main": [[{"node":"Gather","type":"main","index":0}]]}
+	  }
+	}`
+
+	result := importFixture(t, fixture)
+	for name, want := range map[string]string{
+		"Split": n8n.SplitOutNodeType, "Order": n8n.SortNodeType, "Gather": n8n.AggregateNodeType,
+	} {
+		if got := nodeByName(result.Document, name).Type; got != want {
+			t.Errorf("%s imported as %q, want %q", name, got, want)
+		}
+	}
+	// n8n's fixed collections become the comma-separated lists this product's
+	// controls use, with the descending suffix carried.
+	if got := nodeByName(result.Document, "Order").Parameters["sortFieldsUI"]; got != "total:desc,sku" {
+		t.Errorf("sort keys = %#v, want the fields and their directions", got)
+	}
+	if got := nodeByName(result.Document, "Gather").Parameters["fieldsToAggregate"]; got != "sku,total" {
+		t.Errorf("aggregate fields = %#v, want both", got)
+	}
+	if got := nodeByName(result.Document, "Split").Parameters["destinationFieldName"]; got != "line" {
+		t.Errorf("destination = %#v, want the option lifted out", got)
+	}
+
+	document := result.Document
+	document.ID = "wf_shape"
+	if _, err := workflow.Compile(document, registry(t)); err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+
+	exported, err := n8n.Export(result.Document, registry(t))
+	if err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+	for _, exportedNode := range exported.Document.Nodes {
+		if exportedNode.Name != "Order" {
+			continue
+		}
+		wrapper, _ := exportedNode.Parameters["sortFieldsUI"].(map[string]any)
+		fields, _ := wrapper["sortField"].([]any)
+		if len(fields) != 2 {
+			t.Fatalf("exported %d sort fields, want both", len(fields))
+		}
+		first, _ := fields[0].(map[string]any)
+		if first["fieldName"] != "total" || first["order"] != "descending" {
+			t.Fatalf("exported first sort field = %#v, want the direction back", first)
+		}
+	}
+}
+
+// n8n's third Sort mode is a JavaScript comparator. Approximating it would sort
+// by something the author did not write, so it is named instead.
+func TestAJavaScriptSortComparatorIsRefusedRatherThanApproximated(t *testing.T) {
+	t.Parallel()
+
+	result := importFixture(t, `{"name":"S","nodes":[{"id":"a","name":"Order","type":"n8n-nodes-base.sort","typeVersion":1,"position":[0,0],"parameters":{"type":"code","code":"return 0"}}],"connections":{}}`)
+	if !hasReason(result.Unsupported, "JavaScript") {
+		t.Fatalf("unsupported = %#v, want the comparator named", result.Unsupported)
+	}
+}
+
+// Removing items seen in previous executions needs durable per-workflow state.
+func TestRemoveDuplicatesAcrossExecutionsIsNamedOnImport(t *testing.T) {
+	t.Parallel()
+
+	result := importFixture(t, `{"name":"D","nodes":[{"id":"a","name":"Dedupe","type":"n8n-nodes-base.removeDuplicates","typeVersion":2,"position":[0,0],"parameters":{"operation":"removeItemsSeenInPreviousExecutions"}}],"connections":{}}`)
+	if !hasReason(result.Unsupported, "previous executions") {
+		t.Fatalf("unsupported = %#v, want the missing capability named", result.Unsupported)
+	}
+	// And it imports as the local operation rather than as something that
+	// cannot run at all.
+	if got := nodeByName(result.Document, "Dedupe").Parameters["operation"]; got != "removeDuplicateInputItems" {
+		t.Errorf("operation = %#v, want the local form", got)
+	}
+}

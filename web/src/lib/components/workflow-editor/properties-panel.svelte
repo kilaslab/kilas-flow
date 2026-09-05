@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { loadNodePropertyOptions } from '$lib/api/generated/nodes/nodes';
-	import { propertyVisible } from '$lib/workflow-editor/visibility';
+	import { propertyVisible, withDefaults } from '$lib/workflow-editor/visibility';
 	import type { CredentialResource, Definition, Node, PropertyDefinition } from '$lib/api/generated/models';
 	import type { PropertyScope } from '$lib/workflow-editor/document';
 	import { credentialTypesFor, requiresCredential } from '$lib/workflow-editor/credentials';
@@ -56,7 +56,9 @@
 	// AND-only, show-only and used strict equality, so a condition on anything
 	// but a primitive was silently always false.
 	const visibleProperties = $derived(
-		properties.filter((property) => propertyVisible(property, values, String(node.typeVersion ?? '')))
+		properties.filter((property) =>
+			propertyVisible(property, withDefaults(properties, values), String(node.typeVersion ?? ''))
+		)
 	);
 </script>
 

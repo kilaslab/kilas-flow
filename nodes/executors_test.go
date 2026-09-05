@@ -334,3 +334,147 @@ func TestSetRefusesAValueThatIsNotItsDeclaredType(t *testing.T) {
 		t.Errorf("error = %q, want it to name the row and the type", err)
 	}
 }
+
+// The Set node's whole surface: modes, include, duplication, dot notation and
+// binary.
+func TestSetHonoursItsWholeParameterSurface(t *testing.T) {
+	t.Parallel()
+
+	executors := engine.NewRegistry()
+	if err := nodes.RegisterExecutors(executors, safehttp.DefaultPolicy(), sqlGuard(), nil, nil, nil); err != nil {
+		t.Fatalf("RegisterExecutors() error = %v", err)
+	}
+	executor, _ := executors.Lookup("core.set")
+	incoming := workflow.NodeInput{"main": {{
+		JSON:   map[string]any{"keep": "yes", "drop": "no", "other": "maybe"},
+		Binary: map[string]workflow.BinaryRef{"data": {ID: "bin-1", FileName: "a.png"}},
+	}}}
+
+	run := func(t *testing.T, parameters map[string]any) workflow.NodeOutput {
+		t.Helper()
+		output, err := executor.Execute(context.Background(), workflow.IRNode{
+			ID: "set", Name: "Set", Type: "kilasflow.set", TypeVersion: workflow.V(1),
+			Parameters: parameters,
+		}, incoming, engine.Request{})
+		if err != nil {
+			t.Fatalf("Execute() error = %v", err)
+		}
+		return output
+	}
+	rows := func(entries ...map[string]any) map[string]any {
+		list := make([]any, 0, len(entries))
+		for _, entry := range entries {
+			list = append(list, entry)
+		}
+		return map[string]any{"assignments": list}
+	}
+
+	t.Run("dot notation nests by default", func(t *testing.T) {
+		// n8n's default is on, and defaulting it off would make every imported
+		// Set with a dotted name subtly wrong until an HTTP node sent the wrong
+		// body.
+		item := run(t, map[string]any{"assignments": rows(
+			map[string]any{"name": "user.email", "type": "string", "value": "ada@example.test"},
+		)})[0][0].JSON
+		user, _ := item["user"].(map[string]any)
+		if user["email"] != "ada@example.test" {
+			t.Fatalf("item = %#v, want a nested object", item)
+		}
+	})
+
+	t.Run("dot notation can be turned off", func(t *testing.T) {
+		item := run(t, map[string]any{
+			"options": map[string]any{"dotNotation": false},
+			"assignments": rows(
+				map[string]any{"name": "user.email", "type": "string", "value": "ada@example.test"},
+			),
+		})[0][0].JSON
+		if item["user.email"] != "ada@example.test" {
+			t.Fatalf("item = %#v, want a literal dotted key", item)
+		}
+	})
+
+	t.Run("include none keeps only what was set", func(t *testing.T) {
+		item := run(t, map[string]any{
+			"include":     "none",
+			"assignments": rows(map[string]any{"name": "set", "type": "string", "value": "x"}),
+		})[0][0].JSON
+		if len(item) != 1 || item["set"] != "x" {
+			t.Fatalf("item = %#v, want only the assignment", item)
+		}
+	})
+
+	t.Run("include selected keeps the named fields", func(t *testing.T) {
+		item := run(t, map[string]any{
+			"include": "selected", "includeFields": "keep",
+			"assignments": rows(map[string]any{"name": "set", "type": "string", "value": "x"}),
+		})[0][0].JSON
+		if item["keep"] != "yes" || item["drop"] != nil {
+			t.Fatalf("item = %#v, want only the selected field carried", item)
+		}
+	})
+
+	t.Run("include except drops the named fields", func(t *testing.T) {
+		item := run(t, map[string]any{
+			"include": "except", "excludeFields": "drop",
+			"assignments": rows(map[string]any{"name": "set", "type": "string", "value": "x"}),
+		})[0][0].JSON
+		if item["keep"] != "yes" || item["drop"] != nil {
+			t.Fatalf("item = %#v, want the excluded field gone", item)
+		}
+	})
+
+	t.Run("JSON mode replaces the item", func(t *testing.T) {
+		item := run(t, map[string]any{
+			"mode": "raw", "include": "none",
+			"jsonOutput": `{"whole":"thing","n":1}`,
+		})[0][0].JSON
+		if item["whole"] != "thing" || item["n"] != float64(1) {
+			t.Fatalf("item = %#v, want the JSON body", item)
+		}
+		if _, carried := item["keep"]; carried {
+			t.Fatalf("item = %#v, want none of the input's fields", item)
+		}
+	})
+
+	t.Run("duplication multiplies the stream", func(t *testing.T) {
+		output := run(t, map[string]any{
+			"duplicateItem": true, "duplicateCount": float64(3),
+			"assignments": rows(map[string]any{"name": "set", "type": "string", "value": "x"}),
+		})
+		if len(output[0]) != 3 {
+			t.Fatalf("produced %d items, want three copies", len(output[0]))
+		}
+	})
+
+	t.Run("binary follows the item and can be stripped", func(t *testing.T) {
+		parameters := map[string]any{"assignments": rows(
+			map[string]any{"name": "set", "type": "string", "value": "x"},
+		)}
+		if reference := run(t, parameters)[0][0].Binary["data"]; reference.ID != "bin-1" {
+			t.Fatalf("binary = %#v, want the attachment carried by default", reference)
+		}
+		parameters["options"] = map[string]any{"stripBinary": true}
+		if binary := run(t, parameters)[0][0].Binary; len(binary) != 0 {
+			t.Fatalf("binary = %#v, want it stripped", binary)
+		}
+	})
+
+	t.Run("a conversion error can be ignored", func(t *testing.T) {
+		parameters := map[string]any{"assignments": rows(
+			map[string]any{"name": "count", "type": "number", "value": "not a number"},
+		)}
+		if _, err := executor.Execute(context.Background(), workflow.IRNode{
+			ID: "set", Name: "Set", Parameters: parameters,
+		}, incoming, engine.Request{}); err == nil {
+			t.Fatal("a bad conversion was accepted without being asked")
+		}
+		parameters["options"] = map[string]any{"ignoreConversionErrors": true}
+		item := run(t, parameters)[0][0].JSON
+		// Asked to ignore: the value goes through as it arrived, which is the
+		// only other honest answer.
+		if item["count"] != "not a number" {
+			t.Fatalf("count = %#v, want the value kept as it arrived", item["count"])
+		}
+	})
+}

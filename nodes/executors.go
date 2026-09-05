@@ -25,30 +25,35 @@ import (
 // install's own database paths so a SQLite credential can never open them.
 func RegisterExecutors(registry *engine.Registry, httpPolicy safehttp.Policy, databaseGuard sqlnode.Guard, agentRuntime ai.AgentRuntime, agentMemory ai.Memory, codeCompiler runcode.Compiler) error {
 	for id, executor := range map[string]engine.Executor{
-		"core.manual":             engine.ExecutorFunc(executeManual),
-		"core.set":                engine.ExecutorFunc(executeSet),
-		"core.if":                 engine.ExecutorFunc(executeIF),
-		"core.merge":              engine.ExecutorFunc(executeMerge),
-		HTTPExecutorID:            NewHTTPExecutor(httpPolicy),
-		WebhookExecutorID:         engine.ExecutorFunc(executeWebhook),
-		ScheduleExecutorID:        engine.ExecutorFunc(executeSchedule),
-		RespondExecutorID:         engine.ExecutorFunc(executeRespond),
-		PostgresExecutorID:        NewDatabaseExecutor(sqlnode.DriverPostgres, "postgres", databaseGuard),
-		MySQLExecutorID:           NewDatabaseExecutor(sqlnode.DriverMySQL, "mysql", databaseGuard),
-		SQLiteExecutorID:          NewDatabaseExecutor(sqlnode.DriverSQLite, "sqlite", databaseGuard),
-		ChatModelExecutorID:       engine.ExecutorFunc(executeChatModel),
-		MemoryExecutorID:          engine.ExecutorFunc(executeMemory),
-		HTTPToolExecutorID:        engine.ExecutorFunc(executeHTTPTool),
-		AgentExecutorID:           NewAgentExecutor(agentRuntime, httpPolicy, agentMemory),
-		CodeExecutorID:            NewCodeExecutor(codeCompiler, runcode.NewMemoryCache(), runcode.DefaultLimits()),
-		LoopExecutorID:            engine.ExecutorFunc(executeLoop),
-		StickyNoteExecutorID:      engine.ExecutorFunc(executeStickyNote),
-		TelegramTriggerExecutorID: NewTelegramTriggerExecutor(NewTelegramFileClient(httpPolicy)),
-		SwitchExecutorID:          engine.ExecutorFunc(executeSwitch),
-		FilterExecutorID:          engine.ExecutorFunc(executeFilter),
-		LimitExecutorID:           engine.ExecutorFunc(executeLimit),
-		NoOpExecutorID:            engine.ExecutorFunc(executeNoOp),
-		UnsupportedExecutorID:     engine.ExecutorFunc(executeUnsupported),
+		"core.manual":              engine.ExecutorFunc(executeManual),
+		"core.set":                 engine.ExecutorFunc(executeSet),
+		"core.if":                  engine.ExecutorFunc(executeIF),
+		"core.merge":               engine.ExecutorFunc(executeMerge),
+		HTTPExecutorID:             NewHTTPExecutor(httpPolicy),
+		WebhookExecutorID:          engine.ExecutorFunc(executeWebhook),
+		ScheduleExecutorID:         engine.ExecutorFunc(executeSchedule),
+		RespondExecutorID:          engine.ExecutorFunc(executeRespond),
+		PostgresExecutorID:         NewDatabaseExecutor(sqlnode.DriverPostgres, "postgres", databaseGuard),
+		MySQLExecutorID:            NewDatabaseExecutor(sqlnode.DriverMySQL, "mysql", databaseGuard),
+		SQLiteExecutorID:           NewDatabaseExecutor(sqlnode.DriverSQLite, "sqlite", databaseGuard),
+		ChatModelExecutorID:        engine.ExecutorFunc(executeChatModel),
+		MemoryExecutorID:           engine.ExecutorFunc(executeMemory),
+		HTTPToolExecutorID:         engine.ExecutorFunc(executeHTTPTool),
+		AgentExecutorID:            NewAgentExecutor(agentRuntime, httpPolicy, agentMemory),
+		CodeExecutorID:             NewCodeExecutor(codeCompiler, runcode.NewMemoryCache(), runcode.DefaultLimits()),
+		LoopExecutorID:             engine.ExecutorFunc(executeLoop),
+		StickyNoteExecutorID:       engine.ExecutorFunc(executeStickyNote),
+		TelegramTriggerExecutorID:  NewTelegramTriggerExecutor(NewTelegramFileClient(httpPolicy)),
+		SwitchExecutorID:           engine.ExecutorFunc(executeSwitch),
+		FilterExecutorID:           engine.ExecutorFunc(executeFilter),
+		LimitExecutorID:            engine.ExecutorFunc(executeLimit),
+		NoOpExecutorID:             engine.ExecutorFunc(executeNoOp),
+		AggregateExecutorID:        engine.ExecutorFunc(executeAggregate),
+		SplitOutExecutorID:         engine.ExecutorFunc(executeSplitOut),
+		SortExecutorID:             engine.ExecutorFunc(executeSort),
+		SummarizeExecutorID:        engine.ExecutorFunc(executeSummarize),
+		RemoveDuplicatesExecutorID: engine.ExecutorFunc(executeRemoveDuplicates),
+		UnsupportedExecutorID:      engine.ExecutorFunc(executeUnsupported),
 	} {
 		if err := registry.Register(id, executor); err != nil {
 			return err
@@ -64,7 +69,7 @@ func executeManual(ctx context.Context, _ workflow.IRNode, _ workflow.NodeInput,
 	return workflow.NodeOutput{{request.Input}}, nil
 }
 
-// executeSet writes assignments onto every incoming item.
+// executeSet builds each output item from the incoming one.
 //
 // Parameters are resolved *per item*, not once for the node. That is the whole
 // difference between a Set node and a constant: an assignment reading
@@ -74,32 +79,172 @@ func executeSet(ctx context.Context, node workflow.IRNode, input workflow.NodeIn
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if _, err := readAssignments(node.Parameters["assignments"]); err != nil {
+	if err := validateSetConfiguration(workflow.Node{Parameters: node.Parameters}); err != nil {
 		return nil, fmt.Errorf("Set %w", err)
 	}
+
 	items := make([]workflow.Item, 0, len(input["main"]))
 	for index, item := range input["main"] {
 		resolved, err := expression.Resolve(node.Parameters, expressionContext(item, input, request, index))
 		if err != nil {
 			return nil, fmt.Errorf("node %q: %w", node.Name, err)
 		}
-		rows, err := readAssignments(resolved["assignments"])
+		built, err := setItem(node, resolved, item)
 		if err != nil {
 			return nil, fmt.Errorf("node %q: %w", node.Name, err)
 		}
-		copy := cloneItem(item)
+		// Duplicating multiplies everything downstream, which is why it is off
+		// by default and named on the parameter.
+		copies := 1
+		if resolved["duplicateItem"] == true {
+			if count, ok := numericParameter(resolved, "duplicateCount"); ok && count > 1 {
+				copies = int(count)
+			}
+		}
+		for copy := 0; copy < copies; copy++ {
+			items = append(items, cloneItem(built))
+		}
+	}
+	return workflow.NodeOutput{items}, nil
+}
+
+// setItem builds one output item.
+func setItem(node workflow.IRNode, resolved map[string]any, item workflow.Item) (workflow.Item, error) {
+	options, _ := resolved["options"].(map[string]any)
+	dotted := true
+	if declared, present := options["dotNotation"].(bool); present {
+		dotted = declared
+	}
+
+	built := workflow.Item{JSON: map[string]any{}, Paired: item.Paired}
+	if textOf(resolved["mode"]) == "raw" {
+		// Raw mode replaces the item outright: the JSON *is* the output, and
+		// the include choice is about the fields it did not mention.
+		body, err := rawSetBody(resolved["jsonOutput"])
+		if err != nil {
+			return workflow.Item{}, err
+		}
+		for key, value := range includedFields(resolved, item) {
+			built.JSON[key] = cloneValue(value)
+		}
+		for key, value := range body {
+			built.JSON[key] = cloneValue(value)
+		}
+	} else {
+		for key, value := range includedFields(resolved, item) {
+			built.JSON[key] = cloneValue(value)
+		}
+		rows, err := readAssignments(resolved["assignments"])
+		if err != nil {
+			return workflow.Item{}, err
+		}
+		ignoreErrors, _ := options["ignoreConversionErrors"].(bool)
 		// In order, so two rows writing the same field settle the way the user
 		// arranged them rather than the way a map iterated.
 		for _, row := range rows {
 			value, err := row.coerce()
 			if err != nil {
-				return nil, fmt.Errorf("node %q: %w", node.Name, err)
+				if !ignoreErrors {
+					return workflow.Item{}, err
+				}
+				// Asked to ignore: the value goes through as it arrived, which
+				// is the only other honest answer.
+				value = row.Value
 			}
-			copy.JSON[row.Name] = cloneValue(value)
+			writeField(built.JSON, row.Name, cloneValue(value), dotted)
 		}
-		items = append(items, copy)
 	}
-	return workflow.NodeOutput{items}, nil
+
+	// Attachments follow the item unless told otherwise. n8n has both an
+	// include and a strip flag and strip wins, which is what a user who set
+	// both meant.
+	includeBinary := true
+	if declared, present := options["includeBinary"].(bool); present {
+		includeBinary = declared
+	}
+	if strip, _ := options["stripBinary"].(bool); strip {
+		includeBinary = false
+	}
+	if includeBinary && len(item.Binary) > 0 {
+		built.Binary = make(map[string]workflow.BinaryRef, len(item.Binary))
+		for key, reference := range item.Binary {
+			built.Binary[key] = reference
+		}
+	}
+	return built, nil
+}
+
+// includedFields is the part of the incoming item that survives.
+func includedFields(resolved map[string]any, item workflow.Item) map[string]any {
+	switch textOf(resolved["include"]) {
+	case "none":
+		return map[string]any{}
+	case "selected":
+		wanted := splitFieldList(textOf(resolved["includeFields"]))
+		kept := make(map[string]any, len(wanted))
+		for _, name := range wanted {
+			if value, present := item.JSON[name]; present {
+				kept[name] = value
+			}
+		}
+		return kept
+	case "except":
+		dropped := map[string]bool{}
+		for _, name := range splitFieldList(textOf(resolved["excludeFields"])) {
+			dropped[name] = true
+		}
+		kept := make(map[string]any, len(item.JSON))
+		for key, value := range item.JSON {
+			if !dropped[key] {
+				kept[key] = value
+			}
+		}
+		return kept
+	default:
+		return item.JSON
+	}
+}
+
+// rawSetBody reads the JSON mode's whole-object body.
+func rawSetBody(value any) (map[string]any, error) {
+	switch typed := value.(type) {
+	case map[string]any:
+		return typed, nil
+	case string:
+		var decoded map[string]any
+		if err := json.Unmarshal([]byte(strings.TrimSpace(typed)), &decoded); err != nil {
+			return nil, fmt.Errorf("the JSON body is not a valid object: %w", err)
+		}
+		return decoded, nil
+	case nil:
+		return nil, fmt.Errorf("JSON mode needs a body")
+	default:
+		return nil, fmt.Errorf("the JSON body must be an object")
+	}
+}
+
+// writeField writes one field, nesting on dots when asked to.
+//
+// n8n's dot notation defaults to on, so an assignment named `user.email` writes
+// a nested object. Defaulting it off would make every imported Set with a
+// dotted name subtly wrong in a way nobody notices until an HTTP node sends the
+// wrong body.
+func writeField(target map[string]any, name string, value any, dotted bool) {
+	if !dotted || !strings.Contains(name, ".") {
+		target[name] = value
+		return
+	}
+	segments := strings.Split(name, ".")
+	current := target
+	for _, segment := range segments[:len(segments)-1] {
+		next, ok := current[segment].(map[string]any)
+		if !ok {
+			next = map[string]any{}
+			current[segment] = next
+		}
+		current = next
+	}
+	current[segments[len(segments)-1]] = value
 }
 
 // executeIF routes each item by its condition.
@@ -363,6 +508,24 @@ func splitFieldList(value string) []string {
 }
 
 func validateSetConfiguration(node workflow.Node) error {
+	switch mode := textOf(node.Parameters["mode"]); mode {
+	case "", "manual":
+	case "raw":
+		// The body may be an expression, which is a marker rather than an
+		// object until it is resolved — so only its absence is a save-time
+		// error.
+		if node.Parameters["jsonOutput"] == nil {
+			return fmt.Errorf("JSON mode needs a body")
+		}
+		return nil
+	default:
+		return fmt.Errorf("mode %q is not supported", mode)
+	}
+	switch include := textOf(node.Parameters["include"]); include {
+	case "", "all", "none", "selected", "except":
+	default:
+		return fmt.Errorf("include %q is not supported", include)
+	}
 	rows, err := readAssignments(node.Parameters["assignments"])
 	if err != nil {
 		return err

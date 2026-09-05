@@ -1132,3 +1132,239 @@ func splitInBatchesToN8N(node workflow.Node) (map[string]any, []Lossy) {
 	}
 	return written, nil
 }
+
+// --- Data shaping -------------------------------------------------------------
+
+// namedList reads n8n's `{values: [...]}` fixed collection into names.
+func namedList(value any, key string) []string {
+	wrapper, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	entries, _ := wrapper["values"].([]any)
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		row, _ := entry.(map[string]any)
+		if name, _ := row[key].(string); strings.TrimSpace(name) != "" {
+			names = append(names, strings.TrimSpace(name))
+		}
+	}
+	return names
+}
+
+func aggregateToKilas(node Node) (map[string]any, []Unsupported) {
+	converted := map[string]any{
+		"aggregate": defaultString(stringParameter(node.Parameters, "aggregate"), "aggregateIndividualFields"),
+	}
+	if fields := namedList(node.Parameters["fieldsToAggregate"], "fieldToAggregate"); len(fields) > 0 {
+		converted["fieldsToAggregate"] = strings.Join(fields, ",")
+	}
+	if options, ok := node.Parameters["options"].(map[string]any); ok {
+		if name, _ := options["destinationFieldName"].(string); name != "" {
+			converted["destinationFieldName"] = name
+		}
+	}
+	if name := stringParameter(node.Parameters, "destinationFieldName"); name != "" {
+		converted["destinationFieldName"] = name
+	}
+	return converted, nil
+}
+
+func aggregateToN8N(node workflow.Node) (map[string]any, []Lossy) {
+	written := map[string]any{
+		"aggregate": defaultString(stringParameter(node.Parameters, "aggregate"), "aggregateIndividualFields"),
+		"options":   map[string]any{},
+	}
+	values := make([]any, 0, 2)
+	for _, field := range strings.Split(stringParameter(node.Parameters, "fieldsToAggregate"), ",") {
+		if trimmed := strings.TrimSpace(field); trimmed != "" {
+			values = append(values, map[string]any{"fieldToAggregate": trimmed})
+		}
+	}
+	written["fieldsToAggregate"] = map[string]any{"values": values}
+	if name := stringParameter(node.Parameters, "destinationFieldName"); name != "" {
+		written["destinationFieldName"] = name
+	}
+	return written, nil
+}
+
+func splitOutToKilas(node Node) (map[string]any, []Unsupported) {
+	converted := map[string]any{
+		"fieldToSplitOut": stringParameter(node.Parameters, "fieldToSplitOut"),
+		"include":         defaultString(stringParameter(node.Parameters, "include"), "noOtherFields"),
+	}
+	if fields := stringParameter(node.Parameters, "fieldsToInclude"); fields != "" {
+		converted["fieldsToInclude"] = fields
+	}
+	if options, ok := node.Parameters["options"].(map[string]any); ok {
+		if name, _ := options["destinationFieldName"].(string); name != "" {
+			converted["destinationFieldName"] = name
+		}
+	}
+	return converted, nil
+}
+
+func splitOutToN8N(node workflow.Node) (map[string]any, []Lossy) {
+	written := map[string]any{
+		"fieldToSplitOut": stringParameter(node.Parameters, "fieldToSplitOut"),
+		"include":         defaultString(stringParameter(node.Parameters, "include"), "noOtherFields"),
+		"options":         map[string]any{},
+	}
+	if fields := stringParameter(node.Parameters, "fieldsToInclude"); fields != "" {
+		written["fieldsToInclude"] = fields
+	}
+	if name := stringParameter(node.Parameters, "destinationFieldName"); name != "" {
+		written["options"] = map[string]any{"destinationFieldName": name}
+	}
+	return written, nil
+}
+
+// sortToKilas carries a field sort and refuses a JavaScript comparator.
+//
+// n8n's third mode is a JS comparator, which this product has no runtime for.
+// Approximating it would sort by something the author did not write, so it is
+// named instead — and the Code decision stays in the one ticket that owns it.
+func sortToKilas(node Node) (map[string]any, []Unsupported) {
+	issues := make([]Unsupported, 0)
+	mode := defaultString(stringParameter(node.Parameters, "type"), "simple")
+	if mode == "code" {
+		return map[string]any{"type": "simple"}, append(issues, Unsupported{
+			Severity: SeverityBlocking, Field: "type",
+			Reason: "this Sort used a JavaScript comparator, which KilasFlow does not run; set the fields to sort by before running the workflow",
+		})
+	}
+
+	converted := map[string]any{"type": mode}
+	keys := make([]string, 0, 2)
+	wrapper, _ := node.Parameters["sortFieldsUI"].(map[string]any)
+	entries, _ := wrapper["sortField"].([]any)
+	for _, entry := range entries {
+		row, _ := entry.(map[string]any)
+		name, _ := row["fieldName"].(string)
+		if strings.TrimSpace(name) == "" {
+			continue
+		}
+		if order, _ := row["order"].(string); order == "descending" {
+			name += ":desc"
+		}
+		keys = append(keys, name)
+	}
+	if len(keys) > 0 {
+		converted["sortFieldsUI"] = strings.Join(keys, ",")
+	}
+	return converted, issues
+}
+
+func sortToN8N(node workflow.Node) (map[string]any, []Lossy) {
+	written := map[string]any{
+		"type":    defaultString(stringParameter(node.Parameters, "type"), "simple"),
+		"options": map[string]any{},
+	}
+	entries := make([]any, 0, 2)
+	for _, key := range strings.Split(stringParameter(node.Parameters, "sortFieldsUI"), ",") {
+		trimmed := strings.TrimSpace(key)
+		if trimmed == "" {
+			continue
+		}
+		name, order := trimmed, "ascending"
+		if field, suffix, found := strings.Cut(trimmed, ":"); found {
+			name = strings.TrimSpace(field)
+			if strings.EqualFold(strings.TrimSpace(suffix), "desc") {
+				order = "descending"
+			}
+		}
+		entries = append(entries, map[string]any{"fieldName": name, "order": order})
+	}
+	written["sortFieldsUI"] = map[string]any{"sortField": entries}
+	return written, nil
+}
+
+func summarizeToKilas(node Node) (map[string]any, []Unsupported) {
+	converted := map[string]any{}
+	if wrapper, ok := node.Parameters["fieldsToSummarize"].(map[string]any); ok {
+		entries, _ := wrapper["values"].([]any)
+		columns := make([]any, 0, len(entries))
+		for _, entry := range entries {
+			row, _ := entry.(map[string]any)
+			if row == nil {
+				continue
+			}
+			field, _ := row["field"].(string)
+			if field == "" {
+				continue
+			}
+			columns = append(columns, map[string]any{
+				"aggregation": defaultString(stringText(row["aggregation"]), "count"),
+				"field":       field,
+			})
+		}
+		converted["fieldsToSummarize"] = columns
+	}
+	if fields := namedList(node.Parameters["fieldsToSplitBy"], "fieldName"); len(fields) > 0 {
+		converted["fieldsToSplitBy"] = strings.Join(fields, ",")
+	} else if fields := stringParameter(node.Parameters, "fieldsToSplitBy"); fields != "" {
+		converted["fieldsToSplitBy"] = fields
+	}
+	return converted, nil
+}
+
+func summarizeToN8N(node workflow.Node) (map[string]any, []Lossy) {
+	columns, _ := node.Parameters["fieldsToSummarize"].([]any)
+	values := make([]any, 0, len(columns))
+	for _, entry := range columns {
+		row, _ := entry.(map[string]any)
+		if row == nil {
+			continue
+		}
+		values = append(values, map[string]any{"aggregation": row["aggregation"], "field": row["field"]})
+	}
+	written := map[string]any{
+		"fieldsToSummarize": map[string]any{"values": values},
+		"options":           map[string]any{},
+	}
+	if fields := stringParameter(node.Parameters, "fieldsToSplitBy"); fields != "" {
+		written["fieldsToSplitBy"] = fields
+	}
+	return written, nil
+}
+
+// removeDuplicatesToKilas carries the local operation and names the durable one.
+func removeDuplicatesToKilas(node Node) (map[string]any, []Unsupported) {
+	issues := make([]Unsupported, 0)
+	operation := defaultString(stringParameter(node.Parameters, "operation"), "removeDuplicateInputItems")
+	if operation != "removeDuplicateInputItems" {
+		return map[string]any{"operation": "removeDuplicateInputItems"}, append(issues, Unsupported{
+			Severity: SeverityBlocking, Field: "operation",
+			Reason: "this node removed items seen in previous executions, which needs durable per-workflow state KilasFlow does not have yet; it was imported as removing duplicates within one run",
+		})
+	}
+
+	converted := map[string]any{"operation": operation}
+	if compare := stringParameter(node.Parameters, "compare"); compare != "" {
+		converted["compare"] = compare
+	}
+	for _, key := range []string{"fieldsToExclude", "fieldsToCompare"} {
+		if fields := stringParameter(node.Parameters, key); fields != "" {
+			converted[key] = fields
+		}
+	}
+	return converted, issues
+}
+
+func removeDuplicatesToN8N(node workflow.Node) (map[string]any, []Lossy) {
+	written := map[string]any{
+		"operation": defaultString(stringParameter(node.Parameters, "operation"), "removeDuplicateInputItems"),
+		"options":   map[string]any{},
+	}
+	for _, key := range []string{"compare", "fieldsToExclude", "fieldsToCompare"} {
+		if value := stringParameter(node.Parameters, key); value != "" {
+			written[key] = value
+		}
+	}
+	return written, nil
+}
+
+func stringText(value any) string {
+	text, _ := value.(string)
+	return text
+}

@@ -318,7 +318,7 @@
       "imported": true,
       "activatable": false,
       "runnable": false,
-      "unsupported": 18,
+      "unsupported": 16,
       "reason": "node \"b71d79fa-2eae-4fb8-97f6-665c496c85f9\" requires a wahaApi credential"
     },
     {
@@ -388,7 +388,7 @@
       "imported": true,
       "activatable": false,
       "runnable": false,
-      "unsupported": 22,
+      "unsupported": 21,
       "reason": "node \"af16c0da-c302-4d8b-983c-3d69e12f7260\" requires a postgres credential"
     },
     {
@@ -428,7 +428,7 @@
       "imported": true,
       "activatable": false,
       "runnable": false,
-      "unsupported": 37,
+      "unsupported": 35,
       "reason": "node \"6adb377a-249c-421d-9259-47a477fa91e8\" configuration is invalid: this node was imported from n8n-nodes-base.wait, which KilasFlow does not support. Repl…"
     }
   ]

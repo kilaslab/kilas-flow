@@ -39,6 +39,11 @@ func RegisterAll(registry *node.Registry) error {
 		filterNode(),
 		limitNode(),
 		noOpNode(),
+		aggregateNode(),
+		splitOutNode(),
+		sortNode(),
+		summarizeNode(),
+		removeDuplicatesNode(),
 	} {
 		if err := registry.Register(definition); err != nil {
 			return err
@@ -83,11 +88,77 @@ func setNode() node.Definition {
 		Category:    "Core",
 		Inputs:      mainInput(),
 		Outputs:     mainOutput(),
-		Parameters: []node.PropertyDefinition{{
-			Key: "assignments", Label: "Fields to Set", Kind: node.PropertyAssignments, Required: true,
-			Description: "The fields to add to every item, in order, each with its own type. " +
-				"A field set twice takes the value of the later row.",
-		}},
+		Parameters: []node.PropertyDefinition{
+			{
+				Key: "mode", Label: "Mode", Kind: node.PropertyOptions, Default: "manual",
+				Options: []node.PropertyOption{
+					{Label: "Manual Mapping", Value: "manual"},
+					{Label: "JSON", Value: "raw"},
+				},
+				Description: "Set fields one at a time, or replace the whole item with a JSON object.",
+			},
+			{
+				Key: "assignments", Label: "Fields to Set", Kind: node.PropertyAssignments, Required: true,
+				Description: "The fields to add to every item, in order, each with its own type. " +
+					"A field set twice takes the value of the later row.",
+				VisibleWhen: []node.VisibilityCondition{{Key: "mode", Equals: "manual"}},
+			},
+			{
+				Key: "jsonOutput", Label: "JSON", Kind: node.PropertyJSON, Required: true,
+				Description: "The whole output item, as a JSON object. Supports expressions.",
+				TypeOptions: &node.TypeOptions{Rows: 6},
+				VisibleWhen: []node.VisibilityCondition{{Key: "mode", Equals: "raw"}},
+			},
+			{
+				Key: "include", Label: "Input Fields to Include", Kind: node.PropertyOptions, Default: "all",
+				Options: []node.PropertyOption{
+					{Label: "All Input Fields", Value: "all"},
+					{Label: "No Input Fields", Value: "none"},
+					{Label: "Selected Input Fields", Value: "selected"},
+					{Label: "All Input Fields Except", Value: "except"},
+				},
+				Description: "Which of the incoming item's own fields survive into the output.",
+			},
+			{
+				Key: "includeFields", Label: "Fields to Include", Kind: node.PropertyString,
+				Description: "Comma-separated field names to keep from the incoming item.",
+				VisibleWhen: []node.VisibilityCondition{{Key: "include", Equals: "selected"}},
+			},
+			{
+				Key: "excludeFields", Label: "Fields to Exclude", Kind: node.PropertyString,
+				Description: "Comma-separated field names to drop from the incoming item.",
+				VisibleWhen: []node.VisibilityCondition{{Key: "include", Equals: "except"}},
+			},
+			{
+				Key: "duplicateItem", Label: "Duplicate Item", Kind: node.PropertyBoolean, Default: false,
+				Description: "Emit each incoming item several times. Useful for testing; it multiplies everything downstream.",
+			},
+			{
+				Key: "duplicateCount", Label: "Duplicate Count", Kind: node.PropertyNumber, Default: 1,
+				VisibleWhen: []node.VisibilityCondition{{Key: "duplicateItem", Equals: true}},
+			},
+			{
+				Key: "options", Label: "Options", Kind: node.PropertyCollection,
+				Fields: []node.PropertyDefinition{
+					{
+						Key: "dotNotation", Label: "Support Dot Notation", Kind: node.PropertyBoolean, Default: true,
+						Description: "On, a field named `a.b` writes `{\"a\": {\"b\": …}}`. Off, it writes a field whose name contains a dot.",
+					},
+					{
+						Key: "ignoreConversionErrors", Label: "Ignore Type Conversion Errors", Kind: node.PropertyBoolean, Default: false,
+						Description: "Keep a value that does not match its declared type instead of failing the node.",
+					},
+					{
+						Key: "includeBinary", Label: "Include Binary File", Kind: node.PropertyBoolean, Default: true,
+						Description: "Carry the incoming item's attachments through.",
+					},
+					{
+						Key: "stripBinary", Label: "Strip Binary File", Kind: node.PropertyBoolean, Default: false,
+						Description: "Drop the incoming item's attachments.",
+					},
+				},
+			},
+		},
 		SharedSettings: sharedSettings(),
 		ExecutorID:     "core.set",
 		Validate:       validateSetConfiguration,

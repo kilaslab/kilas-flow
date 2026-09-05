@@ -238,6 +238,29 @@ var mappings = []mapping{
 		exportTypeVersion: 1, toKilas: stickyToKilas, toN8N: stickyToN8N,
 	},
 
+	// Data shaping. Aggregate and Split Out are inverses; the rest are the
+	// transforms the corpus actually reaches for.
+	{
+		n8nType: "n8n-nodes-base.aggregate", kilasType: AggregateNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1, toKilas: aggregateToKilas, toN8N: aggregateToN8N,
+	},
+	{
+		n8nType: "n8n-nodes-base.splitOut", kilasType: SplitOutNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1, toKilas: splitOutToKilas, toN8N: splitOutToN8N,
+	},
+	{
+		n8nType: "n8n-nodes-base.sort", kilasType: SortNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1, toKilas: sortToKilas, toN8N: sortToN8N,
+	},
+	{
+		n8nType: "n8n-nodes-base.summarize", kilasType: SummarizeNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1.1, toKilas: summarizeToKilas, toN8N: summarizeToN8N,
+	},
+	{
+		n8nType: "n8n-nodes-base.removeDuplicates", kilasType: RemoveDuplicatesNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 2, toKilas: removeDuplicatesToKilas, toN8N: removeDuplicatesToN8N,
+	},
+
 	// Flow control. Every one of these used to become the unsupported
 	// placeholder, so a single Switch made an entire imported workflow
 	// unactivatable.
@@ -312,6 +335,14 @@ var mappings = []mapping{
 // cannot disagree about them without a compile error somewhere.
 // The flow-control family's node types, named here so the mapping table and
 // the node package cannot disagree about them without a compile error.
+const (
+	AggregateNodeType        = "kilasflow.aggregate"
+	SplitOutNodeType         = "kilasflow.splitOut"
+	SortNodeType             = "kilasflow.sort"
+	SummarizeNodeType        = "kilasflow.summarize"
+	RemoveDuplicatesNodeType = "kilasflow.removeDuplicates"
+)
+
 const (
 	SwitchNodeType = "kilasflow.switch"
 	FilterNodeType = "kilasflow.filter"

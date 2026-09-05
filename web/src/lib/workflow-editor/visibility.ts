@@ -42,6 +42,26 @@ export function visible(
 	return true;
 }
 
+/**
+ * Fills in the parameters a node never stored.
+ *
+ * A property the user never touched has its declared default, and every
+ * visibility rule has to be evaluated against that. Without it, a rule reading
+ * `mode` on a node whose `mode` was never written sees nothing and hides a
+ * field the user is looking at.
+ */
+export function withDefaults(
+	properties: PropertyDefinition[],
+	parameters: Record<string, unknown>
+): Record<string, unknown> {
+	const filled: Record<string, unknown> = { ...parameters };
+	for (const property of properties) {
+		if (property.default === undefined || property.default === null) continue;
+		if (!(property.key in filled)) filled[property.key] = property.default;
+	}
+	return filled;
+}
+
 /** Whether one property is shown, honouring the visibleWhen shorthand. */
 export function propertyVisible(
 	property: PropertyDefinition,

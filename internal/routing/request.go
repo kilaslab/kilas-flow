@@ -56,8 +56,12 @@ func buildPlan(
 	// operation's `sends` reads parameters by name and must not be able to
 	// reach a value belonging to a resource the node is no longer set to.
 	visible := make(map[string]any, len(definition.Parameters))
+	// Visibility is evaluated against the declared defaults filled in, because
+	// a rule reading a sibling the node never stored would otherwise hide a
+	// field the user can see.
+	shown := property.WithDefaults(definition.Parameters, parameters)
 	for _, declared := range definition.Parameters {
-		if !property.VisibleProperty(declared, parameters, version) {
+		if !property.VisibleProperty(declared, shown, version) {
 			continue
 		}
 		value, fromDefault, present := parameterValue(declared, parameters)

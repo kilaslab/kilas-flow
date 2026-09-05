@@ -207,6 +207,33 @@ func VisibleProperty(definition PropertyDefinition, parameters map[string]any, t
 	return Visible(visibilityOf(definition), parameters, typeVersion)
 }
 
+// WithDefaults fills in the parameters a node never stored.
+//
+// A property the user never touched has its declared default, and every
+// visibility rule has to be evaluated against that. Without it, a rule reading
+// `mode` on a node whose `mode` was never written sees nothing and hides a
+// field the user is looking at — which is how a Set node saved before it had a
+// mode ends up with no visible fields at all.
+//
+// It is a separate function rather than folded into VisibleProperty because
+// only a caller holding the whole property list can supply the defaults, and
+// pretending otherwise would put a lie in the signature.
+func WithDefaults(properties []PropertyDefinition, parameters map[string]any) map[string]any {
+	filled := make(map[string]any, len(parameters)+len(properties))
+	for key, value := range parameters {
+		filled[key] = value
+	}
+	for _, declared := range properties {
+		if declared.Default == nil {
+			continue
+		}
+		if _, present := filled[declared.Key]; !present {
+			filled[declared.Key] = declared.Default
+		}
+	}
+	return filled
+}
+
 // PropertyDefinition describes one node parameter or shared setting.
 type PropertyDefinition struct {
 	Key         string `json:"key"`

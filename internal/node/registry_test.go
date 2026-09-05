@@ -100,6 +100,25 @@ func TestRegistryExposesCorePortAndPropertyMetadata(t *testing.T) {
 	if !hasRequiredProperty(set.Parameters, "assignments", node.PropertyAssignments) {
 		t.Errorf("set parameters = %#v, want the required ordered assignment control", set.Parameters)
 	}
+	// Required *within its mode*: a Set in JSON mode has no assignments and a
+	// Set in manual mode has no JSON body, so the requirement follows
+	// visibility rather than being static.
+	compilerView, _ := registry.Lookup("kilasflow.set", workflow.V(1))
+	manualRequired := compilerView.RequiredFor(map[string]any{"mode": "manual"}, workflow.V(1))
+	if len(manualRequired) != 1 || manualRequired[0] != "assignments" {
+		t.Errorf("manual mode requires %v, want just the assignments", manualRequired)
+	}
+	rawRequired := compilerView.RequiredFor(map[string]any{"mode": "raw"}, workflow.V(1))
+	if len(rawRequired) != 1 || rawRequired[0] != "jsonOutput" {
+		t.Errorf("JSON mode requires %v, want just the body", rawRequired)
+	}
+	// A node that never stored a mode is in the default one, which is what the
+	// declared default says — a rule that could not see it would hide the only
+	// field the user has.
+	unset := compilerView.RequiredFor(map[string]any{}, workflow.V(1))
+	if len(unset) != 1 || unset[0] != "assignments" {
+		t.Errorf("with no mode stored, requires %v, want the manual-mode field", unset)
+	}
 	if len(set.SharedSettings) == 0 {
 		t.Error("set shared settings are empty")
 	}

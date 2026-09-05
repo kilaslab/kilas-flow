@@ -1,5 +1,6 @@
 import type { Component } from 'svelte';
 
+import ArrowDownUp from '@lucide/svelte/icons/arrow-down-up';
 import Archive from '@lucide/svelte/icons/archive';
 import Bot from '@lucide/svelte/icons/bot';
 import Box from '@lucide/svelte/icons/box';
@@ -63,6 +64,7 @@ export type NodeVisual = {
  */
 const GLYPHS: Record<string, Component> = {
 	archive: Archive,
+	'arrow-down-up': ArrowDownUp,
 	bot: Bot,
 	box: Box,
 	brain: Sparkles,
