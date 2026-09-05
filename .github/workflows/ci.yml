@@ -8,6 +8,7 @@ name: CI
 #   sdk             the host SDK typechecks, tests and compiles
 #   smoke           the binary, the Vite proxy and the distroless image all serve
 #   smoke-postgres  the image against a Compose PostgreSQL (not on pull requests)
+#   image           the image still cross-builds for every published architecture
 #
 # Every job runs Make targets rather than its own copy of the commands, so a
 # laptop and a runner check the same thing and cannot drift apart. Add a check
@@ -27,6 +28,8 @@ concurrency:
 
 # Nothing here publishes, comments or tags. Read-only is all it needs, and the
 # p10 tickets that do publish should widen this per job rather than at the top.
+# Publishing the image lives in release.yml, which does exactly that; the image
+# job below builds and pushes nothing, so it stays inside this default.
 permissions:
   contents: read
 
@@ -251,3 +254,25 @@ jobs:
           go-version-file: go.mod
 
       - run: make smoke-postgres
+
+  image:
+    name: Image (cross-build)
+    runs-on: ubuntu-latest
+
+    # The smoke job already builds the image, but only for the runner's amd64.
+    # Without this job the linux/arm64 half of every published manifest list is
+    # first built while cutting a release, which is the worst moment to learn that
+    # a Dockerfile change broke cross-compilation. Cheap to run because nothing is
+    # emulated: the Go stage is pinned to the build platform and cross-compiles,
+    # and the runtime stage executes nothing at all.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The runner's default docker driver cannot produce a manifest list, so a
+      # multi-platform build needs a container builder even when, as here, the
+      # result is discarded rather than exported.
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
+      # The same target release.yml builds from, minus the push. A break here is a
+      # break in the release path.
+      - run: make docker-multiarch
