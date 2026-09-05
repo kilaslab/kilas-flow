@@ -6,20 +6,28 @@
  * OpenAPI spec version: 0.1.0-dev
  */
 import {
-  createMutation
+  createMutation,
+  createQuery
 } from '@tanstack/svelte-query';
 import type {
   CreateMutationOptions,
   CreateMutationResult,
+  CreateQueryOptions,
+  CreateQueryResult,
+  DataTag,
   MutationFunction,
-  QueryClient
+  QueryClient,
+  QueryFunction,
+  QueryKey
 } from '@tanstack/svelte-query';
 
 import type {
   ActivationResource,
   ErrorModel,
   ExecutionRequestResource,
+  PublishVersionInputBody,
   RunWorkflowInputBody,
+  WorkflowPublishEventResource,
   WorkflowResource
 } from '../models';
 
@@ -251,7 +259,103 @@ export const createDeactivateWorkflow = <TError = ErrorType<ErrorModel>,
       > => {
       return createMutation(() => ({ ...getDeactivateWorkflowMutationOptions(options?.()) }), queryClient);
     }
-    export type runWorkflowResponse202 = {
+    export type listWorkflowPublishEventsResponse200 = {
+  data: WorkflowPublishEventResource[] | null
+  status: 200
+}
+
+export type listWorkflowPublishEventsResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type listWorkflowPublishEventsResponseSuccess = (listWorkflowPublishEventsResponse200) & {
+  headers: Headers;
+};
+export type listWorkflowPublishEventsResponseError = (listWorkflowPublishEventsResponseDefault) & {
+  headers: Headers;
+};
+
+export type listWorkflowPublishEventsResponse = (listWorkflowPublishEventsResponseSuccess | listWorkflowPublishEventsResponseError)
+
+export const getListWorkflowPublishEventsUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/workflows/${id}/publish-events`
+}
+
+/**
+ * Returns every publish, unpublish and restore recorded for a workflow, newest first.
+ * @summary List a workflow's publish history
+ */
+export const listWorkflowPublishEvents = async (id: string, options?: Parameters<typeof apiFetch>[1]): Promise<listWorkflowPublishEventsResponse> => {
+
+  return apiFetch<listWorkflowPublishEventsResponse>(getListWorkflowPublishEventsUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListWorkflowPublishEventsQueryKey = (id: string,) => {
+    return [
+    `/api/v1/workflows/${id}/publish-events`
+    ] as const;
+    }
+
+
+export const getListWorkflowPublishEventsQueryOptions = <TData = Awaited<ReturnType<typeof listWorkflowPublishEvents>>, TError = ErrorType<ErrorModel>>(id: string, options?: { query?:Partial<CreateQueryOptions<Awaited<ReturnType<typeof listWorkflowPublishEvents>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListWorkflowPublishEventsQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listWorkflowPublishEvents>>> = ({ signal }) => listWorkflowPublishEvents(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as CreateQueryOptions<Awaited<ReturnType<typeof listWorkflowPublishEvents>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListWorkflowPublishEventsQueryResult = NonNullable<Awaited<ReturnType<typeof listWorkflowPublishEvents>>>
+export type ListWorkflowPublishEventsQueryError = ErrorType<ErrorModel>
+
+
+/**
+ * @summary List a workflow's publish history
+ */
+
+export function createListWorkflowPublishEvents<TData = Awaited<ReturnType<typeof listWorkflowPublishEvents>>, TError = ErrorType<ErrorModel>>(
+ id: () =>  string, options?: () => { query?:Partial<CreateQueryOptions<Awaited<ReturnType<typeof listWorkflowPublishEvents>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: () => QueryClient
+ ): CreateQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+
+
+  const query = createQuery(() => getListWorkflowPublishEventsQueryOptions(id(),options?.()), queryClient) as CreateQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return query
+}
+
+
+
+
+
+
+export type runWorkflowResponse202 = {
   data: ExecutionRequestResource
   status: 202
 }
@@ -350,4 +454,208 @@ export const createRunWorkflow = <TError = ErrorType<ErrorModel>,
         TContext
       > => {
       return createMutation(() => ({ ...getRunWorkflowMutationOptions(options?.()) }), queryClient);
+    }
+    export type publishWorkflowVersionResponse200 = {
+  data: WorkflowResource
+  status: 200
+}
+
+export type publishWorkflowVersionResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type publishWorkflowVersionResponseSuccess = (publishWorkflowVersionResponse200) & {
+  headers: Headers;
+};
+export type publishWorkflowVersionResponseError = (publishWorkflowVersionResponseDefault) & {
+  headers: Headers;
+};
+
+export type publishWorkflowVersionResponse = (publishWorkflowVersionResponseSuccess | publishWorkflowVersionResponseError)
+
+export const getPublishWorkflowVersionUrl = (id: string,
+    versionId: string,) => {
+
+
+
+
+  return `/api/v1/workflows/${id}/versions/${versionId}/publish`
+}
+
+/**
+ * Compiles the named revision and pins it as the version production traffic runs, which is how a bad save is rolled back.
+ * @summary Publish one workflow revision
+ */
+export const publishWorkflowVersion = async (id: string,
+    versionId: string,
+    publishVersionInputBody?: NonReadonly<PublishVersionInputBody>, options?: Parameters<typeof apiFetch>[1]): Promise<publishWorkflowVersionResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Array.isArray(h)) return Object.fromEntries(h);
+    return h;
+  };
+return apiFetch<publishWorkflowVersionResponse>(getPublishWorkflowVersionUrl(id,versionId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(publishVersionInputBody)
+  }
+);}
+
+
+
+
+
+export const getPublishWorkflowVersionMutationKey = () => ['publishWorkflowVersion'] as const;
+
+export const getPublishWorkflowVersionMutationOptions = <TError = ErrorType<ErrorModel>,
+    TContext = unknown>(options?: { mutation?:CreateMutationOptions<Awaited<ReturnType<typeof publishWorkflowVersion>>, TError,PublishWorkflowVersionMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}
+): CreateMutationOptions<Awaited<ReturnType<typeof publishWorkflowVersion>>, TError,PublishWorkflowVersionMutationVariables, TContext> => {
+
+const mutationKey = getPublishWorkflowVersionMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof publishWorkflowVersion>>, PublishWorkflowVersionMutationVariables> = (props) => {
+          const {id,versionId,data} = props ?? {};
+
+          return  publishWorkflowVersion(id,versionId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PublishWorkflowVersionMutationResult = NonNullable<Awaited<ReturnType<typeof publishWorkflowVersion>>>
+    export type PublishWorkflowVersionMutationBody = NonReadonly<PublishVersionInputBody> | undefined
+    export type PublishWorkflowVersionMutationError = ErrorType<ErrorModel>
+    export type PublishWorkflowVersionMutationVariables = {id: string;versionId: string;data?: NonReadonly<PublishVersionInputBody>}
+
+    /**
+ * @summary Publish one workflow revision
+ */
+export const createPublishWorkflowVersion = <TError = ErrorType<ErrorModel>,
+    TContext = unknown>(options?: () => { mutation?:CreateMutationOptions<Awaited<ReturnType<typeof publishWorkflowVersion>>, TError,PublishWorkflowVersionMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: () => QueryClient): CreateMutationResult<
+        Awaited<ReturnType<typeof publishWorkflowVersion>>,
+        TError,
+        PublishWorkflowVersionMutationVariables,
+        TContext
+      > => {
+      return createMutation(() => ({ ...getPublishWorkflowVersionMutationOptions(options?.()) }), queryClient);
+    }
+    export type restoreWorkflowVersionResponse200 = {
+  data: WorkflowResource
+  status: 200
+}
+
+export type restoreWorkflowVersionResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type restoreWorkflowVersionResponseSuccess = (restoreWorkflowVersionResponse200) & {
+  headers: Headers;
+};
+export type restoreWorkflowVersionResponseError = (restoreWorkflowVersionResponseDefault) & {
+  headers: Headers;
+};
+
+export type restoreWorkflowVersionResponse = (restoreWorkflowVersionResponseSuccess | restoreWorkflowVersionResponseError)
+
+export const getRestoreWorkflowVersionUrl = (id: string,
+    versionId: string,) => {
+
+
+
+
+  return `/api/v1/workflows/${id}/versions/${versionId}/restore`
+}
+
+/**
+ * Appends a new revision carrying an older snapshot's document. History is append-only: the restored-from revision is left unchanged.
+ * @summary Restore one workflow revision
+ */
+export const restoreWorkflowVersion = async (id: string,
+    versionId: string,
+    publishVersionInputBody?: NonReadonly<PublishVersionInputBody>, options?: Parameters<typeof apiFetch>[1]): Promise<restoreWorkflowVersionResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Array.isArray(h)) return Object.fromEntries(h);
+    return h;
+  };
+return apiFetch<restoreWorkflowVersionResponse>(getRestoreWorkflowVersionUrl(id,versionId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(publishVersionInputBody)
+  }
+);}
+
+
+
+
+
+export const getRestoreWorkflowVersionMutationKey = () => ['restoreWorkflowVersion'] as const;
+
+export const getRestoreWorkflowVersionMutationOptions = <TError = ErrorType<ErrorModel>,
+    TContext = unknown>(options?: { mutation?:CreateMutationOptions<Awaited<ReturnType<typeof restoreWorkflowVersion>>, TError,RestoreWorkflowVersionMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}
+): CreateMutationOptions<Awaited<ReturnType<typeof restoreWorkflowVersion>>, TError,RestoreWorkflowVersionMutationVariables, TContext> => {
+
+const mutationKey = getRestoreWorkflowVersionMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof restoreWorkflowVersion>>, RestoreWorkflowVersionMutationVariables> = (props) => {
+          const {id,versionId,data} = props ?? {};
+
+          return  restoreWorkflowVersion(id,versionId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RestoreWorkflowVersionMutationResult = NonNullable<Awaited<ReturnType<typeof restoreWorkflowVersion>>>
+    export type RestoreWorkflowVersionMutationBody = NonReadonly<PublishVersionInputBody> | undefined
+    export type RestoreWorkflowVersionMutationError = ErrorType<ErrorModel>
+    export type RestoreWorkflowVersionMutationVariables = {id: string;versionId: string;data?: NonReadonly<PublishVersionInputBody>}
+
+    /**
+ * @summary Restore one workflow revision
+ */
+export const createRestoreWorkflowVersion = <TError = ErrorType<ErrorModel>,
+    TContext = unknown>(options?: () => { mutation?:CreateMutationOptions<Awaited<ReturnType<typeof restoreWorkflowVersion>>, TError,RestoreWorkflowVersionMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: () => QueryClient): CreateMutationResult<
+        Awaited<ReturnType<typeof restoreWorkflowVersion>>,
+        TError,
+        RestoreWorkflowVersionMutationVariables,
+        TContext
+      > => {
+      return createMutation(() => ({ ...getRestoreWorkflowVersionMutationOptions(options?.()) }), queryClient);
     }

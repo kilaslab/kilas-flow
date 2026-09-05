@@ -23,9 +23,11 @@ import type {
 
 import type {
   ErrorModel,
+  ListWorkflowVersionsParams,
   WorkflowDocumentInput,
   WorkflowResource,
   WorkflowSummary,
+  WorkflowVersionListResource,
   WorkflowVersionResource
 } from '../models';
 
@@ -555,7 +557,116 @@ export const createUpdateWorkflow = <TError = ErrorType<ErrorModel>,
       > => {
       return createMutation(() => ({ ...getUpdateWorkflowMutationOptions(options?.()) }), queryClient);
     }
-    export type getWorkflowVersionResponse200 = {
+    export type listWorkflowVersionsResponse200 = {
+  data: WorkflowVersionListResource
+  status: 200
+}
+
+export type listWorkflowVersionsResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type listWorkflowVersionsResponseSuccess = (listWorkflowVersionsResponse200) & {
+  headers: Headers;
+};
+export type listWorkflowVersionsResponseError = (listWorkflowVersionsResponseDefault) & {
+  headers: Headers;
+};
+
+export type listWorkflowVersionsResponse = (listWorkflowVersionsResponseSuccess | listWorkflowVersionsResponseError)
+
+export const getListWorkflowVersionsUrl = (id: string,
+    params?: ListWorkflowVersionsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/workflows/${id}/versions?${stringifiedParams}` : `/api/v1/workflows/${id}/versions`
+}
+
+/**
+ * Returns one page of a workflow's version history, newest first. Summaries carry no document.
+ * @summary List workflow revisions
+ */
+export const listWorkflowVersions = async (id: string,
+    params?: ListWorkflowVersionsParams, options?: Parameters<typeof apiFetch>[1]): Promise<listWorkflowVersionsResponse> => {
+
+  return apiFetch<listWorkflowVersionsResponse>(getListWorkflowVersionsUrl(id,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListWorkflowVersionsQueryKey = (id: string,
+    params?: ListWorkflowVersionsParams,) => {
+    return [
+    `/api/v1/workflows/${id}/versions`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getListWorkflowVersionsQueryOptions = <TData = Awaited<ReturnType<typeof listWorkflowVersions>>, TError = ErrorType<ErrorModel>>(id: string,
+    params?: ListWorkflowVersionsParams, options?: { query?:Partial<CreateQueryOptions<Awaited<ReturnType<typeof listWorkflowVersions>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListWorkflowVersionsQueryKey(id,params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listWorkflowVersions>>> = ({ signal }) => listWorkflowVersions(id,params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as CreateQueryOptions<Awaited<ReturnType<typeof listWorkflowVersions>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListWorkflowVersionsQueryResult = NonNullable<Awaited<ReturnType<typeof listWorkflowVersions>>>
+export type ListWorkflowVersionsQueryError = ErrorType<ErrorModel>
+
+
+/**
+ * @summary List workflow revisions
+ */
+
+export function createListWorkflowVersions<TData = Awaited<ReturnType<typeof listWorkflowVersions>>, TError = ErrorType<ErrorModel>>(
+ id: () =>  string,
+    params?: () =>  ListWorkflowVersionsParams, options?: () => { query?:Partial<CreateQueryOptions<Awaited<ReturnType<typeof listWorkflowVersions>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: () => QueryClient
+ ): CreateQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+
+
+  const query = createQuery(() => getListWorkflowVersionsQueryOptions(id(),
+    params?.(),options?.()), queryClient) as CreateQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return query
+}
+
+
+
+
+
+
+export type getWorkflowVersionResponse200 = {
   data: WorkflowVersionResource
   status: 200
 }

@@ -789,6 +789,16 @@ export interface NodeStartedEvent {
   workflowId?: string;
 }
 
+export interface PublishVersionInputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+     * Why this revision was published or restored, recorded in the audit trail
+     * @maxLength 255
+     */
+  reason?: string;
+}
+
 export interface ReadyOutputBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -877,6 +887,26 @@ export interface WorkflowDocumentInput {
   settings: WorkflowDocumentInputSettings;
 }
 
+export type WorkflowPublishEventResourceAction = typeof WorkflowPublishEventResourceAction[keyof typeof WorkflowPublishEventResourceAction];
+
+
+export const WorkflowPublishEventResourceAction = {
+  published: 'published',
+  unpublished: 'unpublished',
+  restored: 'restored',
+} as const;
+
+export interface WorkflowPublishEventResource {
+  action: WorkflowPublishEventResourceAction;
+  /** Who acted, where the actor is known */
+  actor?: string;
+  createdAt: string;
+  reason?: string;
+  /** For a restore, the revision that was restored from */
+  versionId: string;
+  workflowId: string;
+}
+
 export interface WorkflowSavedEvent {
   at: string;
   /** Redacted, type-specific detail */
@@ -900,6 +930,31 @@ export interface WorkflowSummary {
   latestRevision: number;
   name: string;
   updatedAt: string;
+}
+
+export interface WorkflowVersionSummaryResource {
+  createdAt: string;
+  /** Who saved this revision, where the author is known */
+  createdBy?: string;
+  /** True for the newest revision, the one an editor is working on */
+  draft: boolean;
+  id: string;
+  /** What a person called this revision, when one was named */
+  label?: string;
+  /** True for the revision production traffic runs. Stated by the server so a client never infers publication by comparing identifiers. */
+  published: boolean;
+  revision: number;
+  schemaVersion: number;
+  workflowId: string;
+}
+
+export interface WorkflowVersionListResource {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  items: WorkflowVersionSummaryResource[] | null;
+  /** Pass back as ?cursor= to read the next page */
+  nextCursor?: string;
 }
 
 export type ListExecutionsParams = {
@@ -1034,6 +1089,19 @@ export type ExportWorkflowParams = {
  * Only "n8n" is supported
  */
 format?: string;
+};
+
+export type ListWorkflowVersionsParams = {
+/**
+ * Maximum revisions to return (default 25)
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
+/**
+ * Opaque cursor from a previous listing's nextCursor
+ */
+cursor?: string;
 };
 
 export type HTTPStatusCode1xx = 100 | 101 | 102 | 103;
@@ -2832,6 +2900,57 @@ export const exportWorkflow = async (id: string,
 
 
 
+export type listWorkflowPublishEventsResponse200 = {
+  data: WorkflowPublishEventResource[] | null
+  status: 200
+}
+
+export type listWorkflowPublishEventsResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type listWorkflowPublishEventsResponseSuccess = (listWorkflowPublishEventsResponse200) & {
+  headers: Headers;
+};
+export type listWorkflowPublishEventsResponseError = (listWorkflowPublishEventsResponseDefault) & {
+  headers: Headers;
+};
+
+export type listWorkflowPublishEventsResponse = (listWorkflowPublishEventsResponseSuccess | listWorkflowPublishEventsResponseError)
+
+export const getListWorkflowPublishEventsUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/workflows/${id}/publish-events`
+}
+
+/**
+ * Returns every publish, unpublish and restore recorded for a workflow, newest first.
+ * @summary List a workflow's publish history
+ */
+export const listWorkflowPublishEvents = async (id: string, options?: RequestInit): Promise<listWorkflowPublishEventsResponse> => {
+
+  const res = await fetch(getListWorkflowPublishEventsUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: listWorkflowPublishEventsResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as listWorkflowPublishEventsResponse
+}
+
+
+
 export type runWorkflowResponse202 = {
   data: ExecutionRequestResource
   status: 202
@@ -2890,6 +3009,66 @@ const res = await fetch(getRunWorkflowUrl(id),
 
 
 
+export type listWorkflowVersionsResponse200 = {
+  data: WorkflowVersionListResource
+  status: 200
+}
+
+export type listWorkflowVersionsResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type listWorkflowVersionsResponseSuccess = (listWorkflowVersionsResponse200) & {
+  headers: Headers;
+};
+export type listWorkflowVersionsResponseError = (listWorkflowVersionsResponseDefault) & {
+  headers: Headers;
+};
+
+export type listWorkflowVersionsResponse = (listWorkflowVersionsResponseSuccess | listWorkflowVersionsResponseError)
+
+export const getListWorkflowVersionsUrl = (id: string,
+    params?: ListWorkflowVersionsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/workflows/${id}/versions?${stringifiedParams}` : `/api/v1/workflows/${id}/versions`
+}
+
+/**
+ * Returns one page of a workflow's version history, newest first. Summaries carry no document.
+ * @summary List workflow revisions
+ */
+export const listWorkflowVersions = async (id: string,
+    params?: ListWorkflowVersionsParams, options?: RequestInit): Promise<listWorkflowVersionsResponse> => {
+
+  const res = await fetch(getListWorkflowVersionsUrl(id,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: listWorkflowVersionsResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as listWorkflowVersionsResponse
+}
+
+
+
 export type getWorkflowVersionResponse200 = {
   data: WorkflowVersionResource
   status: 200
@@ -2939,4 +3118,124 @@ export const getWorkflowVersion = async (id: string,
 
   const data: getWorkflowVersionResponse['data'] = body ? JSON.parse(body) : {}
   return { data, status: res.status, headers: res.headers } as getWorkflowVersionResponse
+}
+
+
+
+export type publishWorkflowVersionResponse200 = {
+  data: WorkflowResource
+  status: 200
+}
+
+export type publishWorkflowVersionResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type publishWorkflowVersionResponseSuccess = (publishWorkflowVersionResponse200) & {
+  headers: Headers;
+};
+export type publishWorkflowVersionResponseError = (publishWorkflowVersionResponseDefault) & {
+  headers: Headers;
+};
+
+export type publishWorkflowVersionResponse = (publishWorkflowVersionResponseSuccess | publishWorkflowVersionResponseError)
+
+export const getPublishWorkflowVersionUrl = (id: string,
+    versionId: string,) => {
+
+
+
+
+  return `/api/v1/workflows/${id}/versions/${versionId}/publish`
+}
+
+/**
+ * Compiles the named revision and pins it as the version production traffic runs, which is how a bad save is rolled back.
+ * @summary Publish one workflow revision
+ */
+export const publishWorkflowVersion = async (id: string,
+    versionId: string,
+    publishVersionInputBody?: NonReadonly<PublishVersionInputBody>, options?: RequestInit): Promise<publishWorkflowVersionResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Array.isArray(h)) return Object.fromEntries(h);
+    return h;
+  };
+const res = await fetch(getPublishWorkflowVersionUrl(id,versionId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(publishVersionInputBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: publishWorkflowVersionResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as publishWorkflowVersionResponse
+}
+
+
+
+export type restoreWorkflowVersionResponse200 = {
+  data: WorkflowResource
+  status: 200
+}
+
+export type restoreWorkflowVersionResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type restoreWorkflowVersionResponseSuccess = (restoreWorkflowVersionResponse200) & {
+  headers: Headers;
+};
+export type restoreWorkflowVersionResponseError = (restoreWorkflowVersionResponseDefault) & {
+  headers: Headers;
+};
+
+export type restoreWorkflowVersionResponse = (restoreWorkflowVersionResponseSuccess | restoreWorkflowVersionResponseError)
+
+export const getRestoreWorkflowVersionUrl = (id: string,
+    versionId: string,) => {
+
+
+
+
+  return `/api/v1/workflows/${id}/versions/${versionId}/restore`
+}
+
+/**
+ * Appends a new revision carrying an older snapshot's document. History is append-only: the restored-from revision is left unchanged.
+ * @summary Restore one workflow revision
+ */
+export const restoreWorkflowVersion = async (id: string,
+    versionId: string,
+    publishVersionInputBody?: NonReadonly<PublishVersionInputBody>, options?: RequestInit): Promise<restoreWorkflowVersionResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Array.isArray(h)) return Object.fromEntries(h);
+    return h;
+  };
+const res = await fetch(getRestoreWorkflowVersionUrl(id,versionId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(publishVersionInputBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: restoreWorkflowVersionResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as restoreWorkflowVersionResponse
 }
