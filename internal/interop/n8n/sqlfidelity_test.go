@@ -384,3 +384,59 @@ func contains(values []float64, want float64) bool {
 	}
 	return false
 }
+
+// A node's error handling survives the journey back out.
+//
+// One hop from n8n's JSON to the exported JSON, not a round trip. An
+// export-import-export idempotence check passes when both exports are equally
+// wrong, and that is exactly what this defect was — the fields were absent
+// from both, so the two agreed perfectly while losing the setting.
+//
+// The asymmetry that made it worth finding: a node with no n8n equivalent
+// round-tripped faithfully, because its capsule kept everything, while a node
+// this server supports came back having silently lost its retry policy.
+func TestErrorHandlingSurvivesTheJourneyBackToN8N(t *testing.T) {
+	t.Parallel()
+
+	const fixture = `{
+	  "name": "Retries",
+	  "settings": {"timezone": "Asia/Jakarta"},
+	  "nodes": [
+	    {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}},
+	    {"id":"b","name":"Fetch","type":"n8n-nodes-base.httpRequest","typeVersion":4.2,"position":[220,0],
+	     "parameters":{"url":"https://example.test"},
+	     "continueOnFail":true,"retryOnFail":true,"maxTries":3,"waitBetweenTries":250}
+	  ],
+	  "connections": {"Manual": {"main": [[{"node":"Fetch","type":"main","index":0}]]}}
+	}`
+
+	exported := exportFixture(t, importFixture(t, fixture).Document)
+
+	var fetch n8n.Node
+	for _, node := range exported.Nodes {
+		if node.Name == "Fetch" {
+			fetch = node
+		}
+	}
+	if fetch.Name == "" {
+		t.Fatal("the export has no node named Fetch")
+	}
+	if !fetch.ContinueOnFail {
+		t.Error("continueOnFail was lost, so the node fails the whole run on its first error")
+	}
+	if !fetch.RetryOnFail {
+		t.Error("retryOnFail was lost")
+	}
+	if fetch.MaxTries != 3 {
+		t.Errorf("maxTries = %v, want 3", fetch.MaxTries)
+	}
+	if fetch.WaitBetweenTries != 250 {
+		t.Errorf("waitBetweenTries = %v, want 250", fetch.WaitBetweenTries)
+	}
+
+	// And the workflow's timezone, which import carries because a schedule
+	// without it runs at the wrong hour every day.
+	if zone, _ := exported.Settings["timezone"].(string); zone != "Asia/Jakarta" {
+		t.Errorf("settings.timezone = %#v, want the zone the workflow arrived with", exported.Settings["timezone"])
+	}
+}

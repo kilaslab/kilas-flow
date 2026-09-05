@@ -1,10 +1,10 @@
 ---
 id: BUG-xmcm8x
 title: Export drops a mapped node's error handling and the workflow timezone
-status: todo
+status: doing
 priority: high
 created: "2026-09-05T17:54:19Z"
-updated: "2026-09-05T17:54:19Z"
+updated: "2026-09-05T19:10:56Z"
 ---
 
 # Description
@@ -57,17 +57,18 @@ undiagnosed.
 
 ## Acceptance criteria
 
-- [ ] A node carrying `continueOnFail`, `retryOnFail`, `maxTries` and
+- [x] A node carrying `continueOnFail`, `retryOnFail`, `maxTries` and
       `waitBetweenTries` exports with all four, proven by a fixture that
       imports an n8n workflow and asserts the exported JSON field by field.
-- [ ] `notes` and `disabled` survive the same round trip, since they are lost
-      by the same line and for the same reason.
-- [ ] A workflow whose settings name a timezone exports with that timezone,
+- [~] `notes` and `disabled` survive the same round trip, since they are lost
+      by the same line and for the same reason. **Wrong as written — see the
+      evidence.** They are never imported, so there is nothing to export.
+- [x] A workflow whose settings name a timezone exports with that timezone,
       proven by a fixture.
-- [ ] Anything the exporter still cannot carry is named in `Lossy` rather than
+- [x] Anything the exporter still cannot carry is named in `Lossy` rather than
       dropped silently — the existing severity vocabulary already distinguishes
       "carried differently" from "not carried at all".
-- [ ] `TestExportingASQLWorkflowTwiceIsIdempotent` still passes, and an
+- [x] `TestExportingASQLWorkflowTwiceIsIdempotent` still passes, and an
       equivalent idempotence assertion covers the settings block.
 
 ## Implementation Plan
@@ -96,3 +97,56 @@ JSON that still carries it.
   is where a "named rather than dropped" assertion belongs.
 - FEAT-zmfsjd's work evidence, which recorded both defects while verifying the
   migration guide against the code.
+
+## Work evidence
+
+Both defects were confirmed by reading the code before anything changed, and
+both are fixed at one site each rather than per node type.
+
+`applyErrorHandling` writes the four error settings back onto every mapped
+node, and it sits directly beside `errorHandlingSettings`, which reads them in.
+The pairing is the point: the two functions share four key names, and a rename
+in one that missed the other would lose a retry policy silently — which is the
+defect being closed. `exportSettings` writes the workflow timezone, and only
+the timezone: keys this server invented are not written back, because a
+document carrying settings the receiving system does not understand is how two
+formats start to diverge.
+
+### One acceptance criterion was wrong, and I wrote it
+
+The ticket asks that `notes` and `disabled` survive the round trip "since they
+are lost by the same line and for the same reason". They are not. The importer
+deliberately does not carry either — `nodeSettingIssues` reports both as
+dropped, with reasons: n8n's note has no KilasFlow equivalent, and n8n's
+disabled flag has none, "so this node will run". Nothing arrives, so nothing
+can leave. Exporting them would mean inventing values the canonical document
+does not hold.
+
+That is a real gap, but it is a *feature* — carrying a disabled flag means
+honouring it in the runner — and it belongs to whoever adds the setting, not
+here. Marked as not applicable rather than silently dropped from the list.
+
+### The test shape matters
+
+`TestErrorHandlingSurvivesTheJourneyBackToN8N` goes one hop, from n8n's JSON to
+the exported JSON. An export-import-export idempotence check cannot see this
+class of defect: it passes when both exports are equally wrong, and both were —
+the fields were absent from each, so the two agreed perfectly while losing the
+setting.
+
+Proven to catch it. With both changes reverted, all five assertions fail:
+
+```
+continueOnFail was lost, so the node fails the whole run on its first error
+retryOnFail was lost
+maxTries = 0, want 3
+waitBetweenTries = 0, want 250
+settings.timezone = <nil>, want the zone the workflow arrived with
+```
+
+### Runs
+
+```
+go test ./... -count=1     green, with live PostgreSQL 16, MySQL 8 and MariaDB 11
+go vet ./... ; gofmt -l .  clean
+```

@@ -1001,7 +1001,7 @@ func Export(document workflow.Document, catalog workflow.Catalog) (ExportResult,
 			Name:        document.Name,
 			Nodes:       make([]Node, 0, len(document.Nodes)),
 			Connections: Connections{},
-			Settings:    map[string]any{},
+			Settings:    exportSettings(document.Settings),
 		},
 		Lossy: make([]Lossy, 0),
 	}
@@ -1079,6 +1079,14 @@ func Export(document workflow.Document, catalog workflow.Catalog) (ExportResult,
 			ID: node.ID, Name: node.Name, Type: entry.n8nType, TypeVersion: exportVersion(entry, node),
 			Position: []float64{node.Position.X, node.Position.Y},
 		}
+		// The error handling goes back out with it. It used to be left behind,
+		// and the asymmetry was the sharp part: a node with no n8n equivalent
+		// round-tripped faithfully because its capsule kept everything, while
+		// a node this server *supports* came back having quietly lost its
+		// retry policy. A workflow whose HTTP node retried three times and
+		// continued on failure returned to n8n as one that fails the whole run
+		// on the first error.
+		applyErrorHandling(&exported, node.Settings)
 		if entry.toN8N != nil {
 			parameters, issues := entry.toN8N(node)
 			exported.Parameters = parameters
@@ -1463,6 +1471,66 @@ func errorHandlingSettings(node Node) map[string]any {
 		settings["waitBetweenTries"] = wait
 	}
 	return settings
+}
+
+// exportSettings writes the workflow settings n8n understands.
+//
+// Only the timezone, which is the one the importer deliberately carries — a
+// scheduled workflow whose zone is dropped runs at the wrong hour, every day,
+// and nothing about the file says why. Export initialised this map empty and
+// never filled it, so the zone survived the journey in and was thrown away on
+// the journey out.
+//
+// Keys this server invented are not written back: n8n would ignore them, and a
+// document carrying settings the receiving system does not understand is how
+// two formats start diverging.
+func exportSettings(settings map[string]any) map[string]any {
+	exported := map[string]any{}
+	if zone, _ := settings["timezone"].(string); strings.TrimSpace(zone) != "" {
+		exported["timezone"] = zone
+	}
+	return exported
+}
+
+// applyErrorHandling writes the canonical error settings back onto an n8n node.
+//
+// The exact inverse of errorHandlingSettings, and deliberately next to it: the
+// two read and write the same four keys, and a rename in one that missed the
+// other would lose a retry policy silently — which is the defect this pair
+// exists to close.
+func applyErrorHandling(exported *Node, settings map[string]any) {
+	if settings == nil {
+		return
+	}
+	if flag, _ := settings["continueOnFail"].(bool); flag {
+		exported.ContinueOnFail = true
+	}
+	if flag, _ := settings["retryOnFail"].(bool); flag {
+		exported.RetryOnFail = true
+	}
+	if tries := numberSetting(settings["maxTries"]); tries > 0 {
+		exported.MaxTries = tries
+	}
+	if wait := numberSetting(settings["waitBetweenTries"]); wait > 0 {
+		exported.WaitBetweenTries = wait
+	}
+}
+
+// numberSetting reads a stored number whatever shape JSON left it in.
+//
+// A document that has been through storage carries float64; one built in
+// memory may carry an int. Reading only one of them would work in a test and
+// lose the value in production, which is the wrong way round.
+func numberSetting(value any) float64 {
+	switch typed := value.(type) {
+	case float64:
+		return typed
+	case int:
+		return float64(typed)
+	case int64:
+		return float64(typed)
+	}
+	return 0
 }
 
 // versionIssue reports a source typeVersion the catalogue does not register.
