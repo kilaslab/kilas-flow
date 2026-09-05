@@ -1,13 +1,13 @@
 ---
 id: BUG-br7ggc
 title: PostgreSQL executions never reach a terminal status
-status: testing
+status: done
 priority: critical
 labels:
     - platform
     - postgres
 created: "2026-09-05T18:01:28Z"
-updated: "2026-09-05T19:09:32Z"
+updated: "2026-09-05T19:09:38Z"
 ---
 
 # Description
