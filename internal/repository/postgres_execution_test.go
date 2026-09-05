@@ -59,11 +59,21 @@ func eachDriver(t *testing.T, run func(t *testing.T, db *database.DB)) {
 		// The server is shared between runs, so the rows this test writes are
 		// removed rather than the tables dropped — another test may be using
 		// them.
+		//
+		// By tenant rather than by identifier prefix, and naming the table an
+		// execution's node runs are actually in. The first spelling of this
+		// deleted from `node_runs`, which is not a table, and matched
+		// executions on `id LIKE 'drv_%'`, which no execution has — a queued
+		// run is given a generated `exec_` ID. Both errors are discarded, so
+		// every row every run wrote stayed behind, the workflow delete then
+		// failed on the executions foreign key, and the leftovers were
+		// invisible until a test tried to count what was in the table.
 		t.Cleanup(func() {
-			db.Exec(`DELETE FROM node_runs WHERE execution_id LIKE 'drv_%'`)
-			db.Exec(`DELETE FROM executions WHERE id LIKE 'drv_%'`)
-			db.Exec(`DELETE FROM workflow_versions WHERE workflow_id LIKE 'drv_%'`)
-			db.Exec(`DELETE FROM workflows WHERE id LIKE 'drv_%'`)
+			db.Exec(`DELETE FROM execution_node_runs WHERE tenant_id LIKE 'drv-%'`)
+			db.Exec(`DELETE FROM executions WHERE tenant_id LIKE 'drv-%'`)
+			db.Exec(`DELETE FROM workflow_publish_events WHERE tenant_id LIKE 'drv-%'`)
+			db.Exec(`DELETE FROM workflow_versions WHERE tenant_id LIKE 'drv-%'`)
+			db.Exec(`DELETE FROM workflows WHERE tenant_id LIKE 'drv-%'`)
 		})
 		run(t, db)
 	})

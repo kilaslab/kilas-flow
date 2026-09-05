@@ -327,6 +327,7 @@ func run() error {
 	cronService.Start(ctx)
 
 	startHistorySweeper(ctx, cfg.History, workflows, log)
+	startExecutionPruner(ctx, cfg.Execution, executions, runtime.DiscardBinaries, log)
 
 	server := api.NewServer(api.Deps{
 		Config:       cfg,
@@ -403,6 +404,60 @@ func startHistorySweeper(ctx context.Context, cfg config.History, store *reposit
 				}
 				if pruned > 0 {
 					log.Info("pruned workflow history", "versions", pruned)
+				}
+			}
+		}
+	}()
+}
+
+// executionSweepInterval is how often expired executions are looked for.
+//
+// More often than the history sweep because an execution is written per run
+// rather than per edit, so this is the table that actually grows; still slow
+// enough that an installation with retention off pays nothing and one with it
+// on pays a bounded index scan four times an hour.
+const executionSweepInterval = 15 * time.Minute
+
+// startExecutionPruner enforces the age bound on execution history.
+//
+// Nothing deleted an execution before this existed: every run stored its input,
+// its output and its error, and every node attempt stored three more payloads,
+// and a busy tenant's database grew without bound with no knob anywhere to stop
+// it.
+//
+// Several KilasFlow processes may sweep the same database at once. That is safe
+// rather than coordinated: the prune re-states its age and status predicates in
+// the DELETE, so a batch another process already took removes nothing and the
+// loser simply stops early.
+func startExecutionPruner(
+	ctx context.Context,
+	cfg config.Execution,
+	store *repository.GORMExecutionStore,
+	discard func(tenantID, executionID string) error,
+	log *slog.Logger,
+) {
+	// Retention off is the default, and a goroutine that wakes every quarter of
+	// an hour to discover that would be pure cost.
+	if cfg.Retention <= 0 {
+		return
+	}
+	go func() {
+		ticker := time.NewTicker(executionSweepInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				pruned, err := store.PruneExpired(ctx, repository.ExecutionRetention{MaxAge: cfg.Retention}, discard)
+				if err != nil {
+					// Logged rather than fatal, for the same reason the history
+					// sweep is: failing to prune costs disk, while stopping the
+					// server over it costs the customer their automation.
+					log.Error("pruning execution history", "error", err)
+				}
+				if pruned > 0 {
+					log.Info("pruned execution history", "executions", pruned)
 				}
 			}
 		}

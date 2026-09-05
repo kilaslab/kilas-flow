@@ -86,5 +86,47 @@ func TestUnsupportedDriver(t *testing.T) {
 	}
 }
 
+// The pool the configuration describes is the pool the handle actually gets.
+//
+// SQLite is pinned to one whatever it was told, because the single-writer pin
+// and the WAL pragma set are a pair and unpinning one without the other brings
+// SQLITE_BUSY straight back.
+func TestTheSQLiteHandleHoldsExactlyOneConnection(t *testing.T) {
+	cfg := config.Database{
+		Driver: "sqlite", DSN: filepath.Join(t.TempDir(), "kilasflow.db"),
+		MaxOpenConns: 25, MaxIdleConns: 25,
+	}
+
+	db, err := Open(context.Background(), cfg, discardLogger())
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	sqlDB, err := db.DB.DB()
+	if err != nil {
+		t.Fatalf("access the underlying sql.DB: %v", err)
+	}
+	if got := sqlDB.Stats().MaxOpenConnections; got != 1 {
+		t.Errorf("MaxOpenConnections = %d, want the SQLite pin of 1", got)
+	}
+}
+
+// A pool nobody sized is bounded rather than unlimited.
+//
+// database/sql reads SetMaxOpenConns(0) as "no limit", so passing an unset
+// config.Database straight through — which every caller that builds one by hand
+// does — used to leave a PostgreSQL handle willing to open as many backends as
+// the server would accept.
+func TestAnUnsizedPoolIsBoundedRatherThanUnlimited(t *testing.T) {
+	open, idle := config.Database{Driver: "postgres"}.PoolSize(0)
+	if open <= 0 {
+		t.Errorf("PoolSize() open = %d, which database/sql reads as unlimited", open)
+	}
+	if idle <= 0 {
+		t.Errorf("PoolSize() idle = %d, which keeps no connection at all", idle)
+	}
+}
+
 // Migration coverage lives in migrate_test.go; the schema is no longer built
 // from the models this package is handed.
