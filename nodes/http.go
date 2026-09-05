@@ -207,6 +207,8 @@ func expressionContext(item workflow.Item, input workflow.NodeInput, request eng
 		JSON:      item.JSON,
 		Input:     inputItems,
 		Nodes:     request.NodeOutputs,
+		NodeItems: request.NodeItems,
+		Workflow:  request.Workflow,
 		Env:       request.Env,
 		Execution: expression.ExecutionContext{ID: request.Execution.ID, Mode: request.Execution.Mode},
 		ItemIndex: index,

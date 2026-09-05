@@ -4,6 +4,7 @@
 
 	import type { PropertyDefinition } from '$lib/api/generated/models';
 	import { renameKeyValue } from '$lib/workflow-editor/key-value';
+	import { expressionRoots, unknownExpressionRoot } from '$lib/workflow-editor/expression-grammar';
 	import { asExpression, asFixed, expressionTemplate, isExpression } from '$lib/workflow-editor/parameter';
 
 	let { property, value, onChange }: { property: PropertyDefinition; value: unknown; onChange: (value: unknown) => void } = $props();
@@ -64,10 +65,16 @@
 		const closes = (text.match(/\}\}/g) ?? []).length;
 		if (opens === 0) return 'No {{ }} expression yet — this will be sent as literal text.';
 		if (opens !== closes) return 'Unbalanced {{ }} — the server will reject this expression.';
-		const roots = [...text.matchAll(/\{\{\s*([^\s.[}]+)/g)].map((match) => match[1]);
-		const allowed = new Set(['$json', '$input', '$node', '$env', '$execution', '$itemIndex']);
-		const unknown = roots.find((root) => !allowed.has(root));
-		if (unknown) return `${unknown} is not an available root. Use $json, $input, $node, $env, $execution, or $itemIndex.`;
+		// The allowlist comes from the server. Keeping a copy here meant every
+		// root added in Go was rejected in the editor until this file was
+		// remembered.
+		const unknown = unknownExpressionRoot(text);
+		if (unknown) {
+			const roots = expressionRoots();
+			return roots.length > 0
+				? `${unknown} is not an available root. Use ${roots.join(', ')}.`
+				: `${unknown} is not an available root.`;
+		}
 		return null;
 	}
 

@@ -1,7 +1,7 @@
 ---
 id: FEAT-v8k1tc
 title: Extend the expression engine to n8n's evaluation semantics
-status: todo
+status: done
 priority: high
 labels:
     - engine
@@ -29,14 +29,14 @@ The two dialects stay explicit and separate. n8n marks an expression with a lead
 
 ## Acceptance criteria
 
-- [ ] A missing path resolves to an undefined value rather than failing the execution; a template containing only that expression yields null and a template mixing it with text yields the text with an empty substitution.
-- [ ] A genuine error — an unsupported root, a malformed expression, an index into a non-list — still fails loudly and names the path.
-- [ ] `$('Node')` resolves a node by name and exposes `.item` (the paired item), `.first()`, `.last()` and `.all()`, and `$node["X"].json.y` resolves through a `json` wrapper.
-- [ ] `$now` and `$today` are available and produce values that format and compare correctly.
-- [ ] A closed allowlist of functions is callable on values; anything not on the list is a parse error, and no call can reach the host, the filesystem, the network, or another tenant's data.
-- [ ] `$workflow` and `$execution` expose identity, and `$fromAI` resolves inside an AI tool parameter and is a clear error anywhere else.
-- [ ] The editor's root and function allowlist comes from the server rather than a hardcoded list, so a root added in Go needs no client change.
-- [ ] `internal/expression/doc.go` documents the grammar that actually exists, with examples that evaluate.
+- [x] A missing path resolves to an undefined value rather than failing the execution; a template containing only that expression yields null and a template mixing it with text yields the text with an empty substitution.
+- [x] A genuine error — an unsupported root, a malformed expression, an index into a non-list — still fails loudly and names the path.
+- [x] `$('Node')` resolves a node by name and exposes `.item` (the paired item), `.first()`, `.last()` and `.all()`, and `$node["X"].json.y` resolves through a `json` wrapper.
+- [x] `$now` and `$today` are available and produce values that format and compare correctly.
+- [x] A closed allowlist of functions is callable on values; anything not on the list is a parse error, and no call can reach the host, the filesystem, the network, or another tenant's data.
+- [x] `$workflow` and `$execution` expose identity, and `$fromAI` resolves inside an AI tool parameter and is a clear error anywhere else.
+- [x] The editor's root and function allowlist comes from the server rather than a hardcoded list, so a root added in Go needs no client change.
+- [x] `internal/expression/doc.go` documents the grammar that actually exists, with examples that evaluate.
 
 ## Implementation Plan
 
@@ -60,3 +60,73 @@ Finally, serve the allowlist. Add roots and functions to the node-types payload 
 - `web/src/lib/components/workflow-editor/property-field.svelte` — the duplicated client-side root allowlist.
 - `.pine/tickets/FEAT-pn3dtq.md` — the no-arbitrary-code guarantee this ticket must not weaken.
 - Local n8n UI reference: `design-refs/n8n-v2/INDEX.md` entry 14 — the Fixed/Expression toggle, the `fx` gutter marker and the live Result preview. Captured from a local n8n 2.33.7 instance; gitignored, never vendored.
+
+## Outcome
+
+The safety property is unchanged and proven by the same test:
+`TestEvaluateRejectsAnythingThatIsNotDataAccess` passes without modification.
+The grammar is still not a language — a root, field reads, index reads, and
+calls from a closed allowlist. `require('fs')` is not blocked by a denylist; it
+cannot be written, because a body that does not begin with a supported root
+never parses.
+
+### Soft undefined
+
+An explicit sentinel, not Go's `nil`, exactly as the plan required: `nil` is a
+legitimate JSON null, and conflating the two would make "absent" and "present
+and null" indistinguishable. A lone expression that resolved to nothing yields
+null; mixed with text it substitutes nothing.
+
+Every structural error stays hard, and a new test pins the four kinds:
+unsupported root, index into a non-list, field on a non-object, unknown
+function.
+
+### Node access
+
+`$node["X"].json.y` now resolves, and so does the bare `$node["X"].y` that
+KilasFlow's own docs advertised. The wrapper carries `json` alongside the bare
+fields, so neither form breaks. `$('Name')` is a new root form taking a quoted
+argument — kept a special case in the root parser rather than opening the
+grammar to general calls — with `.item`, `.first()`, `.last()` and `.all()`.
+
+`.item` reads the paired-item lineage from FEAT-9knk67 and **refuses to fall
+back to the first item**, failing with the reason instead. Naming a node that
+never ran is an error rather than undefined: it cannot be what the author meant.
+
+### Functions
+
+A closed registry resolved at **parse** time, so an unknown name fails when the
+workflow is saved rather than on the first item that reaches it. Arity is
+checked there too. Arguments are literals only; accepting a nested expression
+would make this a general call expression, which is the one thing it must not
+become.
+
+### Dates, identity, `$fromAI`
+
+`$now` and `$today` produce a distinct date type rather than a string, so a date
+function can refuse a receiver that is not a date. They stringify as RFC 3339,
+which both formats readably and compares correctly. The clock is fixed per
+evaluation, so two expressions in one parameter tree cannot disagree about the
+time — and a test can pin it.
+
+`$fromAI` resolves to a descriptor an agent consumes and is an error anywhere
+else, so an author cannot put it in an HTTP URL and get something meaningless.
+
+### The duplicated allowlist
+
+`GET /api/v1/expression-grammar` serves the roots and functions, and the editor
+reads it. The hardcoded list in `property-field.svelte` is gone.
+
+One deliberate choice: while the grammar has not loaded, the editor validates
+**nothing** rather than falling back to a local list. Guessing with a stale copy
+is precisely what this replaces, and the server refuses anything invalid
+regardless.
+
+`TestRootsAndFunctionsAreServedNotDuplicated` evaluates every advertised root,
+so the list cannot advertise something the server refuses.
+
+### doc.go
+
+Rewritten in the same change, as instructed. It documented
+`{{ $node["Get User"].json.id }}` as an example of a form that had never
+worked — that example now evaluates, and is covered by a test.

@@ -34,6 +34,7 @@ export * from './exportedWorkflowResource';
 export * from './exportIssue';
 export * from './exportIssueSeverity';
 export * from './exportWorkflowParams';
+export * from './expressionGrammar';
 export * from './field';
 export * from './healthOutputBody';
 export * from './importedWorkflowResource';

@@ -6,11 +6,12 @@
 
 	import { ApiError } from '$lib/api/http';
 	import { createListCredentials } from '$lib/api/generated/credentials/credentials';
-	import { createListNodeTypes } from '$lib/api/generated/nodes/nodes';
+	import { createGetExpressionGrammar, createListNodeTypes } from '$lib/api/generated/nodes/nodes';
 	import { getExecution } from '$lib/api/generated/executions/executions';
 	import { runWorkflow } from '$lib/api/generated/workflow-lifecycle/workflow-lifecycle';
 	import { createGetWorkflow, updateWorkflow } from '$lib/api/generated/workflows/workflows';
-	import type { CredentialResource, Definition, WorkflowDocumentInput, WorkflowResource } from '$lib/api/generated/models';
+	import type { CredentialResource, Definition, ExpressionGrammar, WorkflowDocumentInput, WorkflowResource } from '$lib/api/generated/models';
+	import { setExpressionGrammar } from '$lib/workflow-editor/expression-grammar';
 	import WorkflowEditor from '$lib/components/workflow-editor/workflow-editor.svelte';
 	import { Button } from '$lib/components/ui/button';
 	import { validationIssuesFromApiError, type CanvasValidationIssue } from '$lib/workflow-editor/validation';
@@ -31,6 +32,18 @@
 			}
 		}
 	}));
+
+	// The expression grammar is served rather than duplicated in the editor, so
+	// a root added in Go needs no client change. A failure here is not fatal:
+	// the hint simply stops validating roots rather than validating against a
+	// stale local list, which is what it used to do.
+	const grammar = createGetExpressionGrammar<ExpressionGrammar | undefined>(() => ({
+		query: {
+			staleTime: Infinity,
+			select: (response) => (response.status === 200 ? response.data : undefined)
+		}
+	}));
+	$effect(() => setExpressionGrammar(grammar.data));
 
 	// Credential storage is optional, so a failure here must not block the
 	// editor: the picker simply offers nothing to select.

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // ExecutionContext is the `$execution` root: identity a parameter may read
@@ -26,8 +27,20 @@ type Context struct {
 	// enters this map; the evaluator never reads os.Environ itself.
 	Env       map[string]string
 	Execution ExecutionContext
+	// NodeItems is every completed node's output with its `json` wrapper,
+	// backing `$('Name')` and `$node["Name"].json.…`.
+	NodeItems map[string]NodeItem
+	// Workflow is the `$workflow` root.
+	Workflow WorkflowContext
 	// ItemIndex is the current item's position, `$itemIndex`.
 	ItemIndex int
+	// Now fixes the clock for `$now` and `$today`, so one evaluation of a
+	// parameter tree sees a single instant and a test can pin it.
+	Now time.Time
+	// AllowFromAI permits `$fromAI`, which is only meaningful in a parameter an
+	// AI agent fills. Anywhere else it is a clear error rather than a value,
+	// or an author will use it in an HTTP URL and get something meaningless.
+	AllowFromAI bool
 }
 
 const (
@@ -109,7 +122,16 @@ func Evaluate(template string, ctx Context) (any, error) {
 		return nil, err
 	}
 	if len(segments) == 1 && segments[0].isExpression {
-		return lookup(segments[0].text, ctx)
+		value, err := lookup(segments[0].text, ctx)
+		if err != nil {
+			return nil, err
+		}
+		if IsUndefined(value) {
+			// A lone expression that resolved to nothing is null, which is what
+			// a JSON parameter can actually carry.
+			return nil, nil
+		}
+		return value, nil
 	}
 
 	var builder strings.Builder
@@ -167,6 +189,10 @@ type accessor struct {
 	name  string
 	index int
 	byKey bool
+	// call marks an accessor that is a function call rather than a field read.
+	// The name is resolved against the closed allowlist at parse time.
+	call bool
+	args []argument
 }
 
 // lookup parses and evaluates one expression body. The grammar is a root
@@ -184,6 +210,26 @@ func lookup(body string, ctx Context) (any, error) {
 	}
 	path := root
 	for _, step := range accessors {
+		// Reading through an absent value yields absent rather than erroring,
+		// which is what makes `$json.a.b.c` safe when `a` is optional.
+		if IsUndefined(current) {
+			return Undefined, nil
+		}
+		// `.item` on a node whose lineage is unknown fails here rather than
+		// earlier, so a workflow that never reads it is unaffected.
+		if failure, unavailable := current.(lineageError); unavailable {
+			return nil, fmt.Errorf("%s: %s", path, failure.reason)
+		}
+		if step.call {
+			entry := functions[step.name]
+			value, err := entry.apply(current, step.args)
+			if err != nil {
+				return nil, fmt.Errorf("%s.%s(): %w", path, step.name, err)
+			}
+			path += "." + step.name + "()"
+			current = value
+			continue
+		}
 		if step.byKey {
 			path += "." + step.name
 			object, ok := current.(map[string]any)
@@ -192,7 +238,11 @@ func lookup(body string, ctx Context) (any, error) {
 			}
 			current, ok = object[step.name]
 			if !ok {
-				return nil, fmt.Errorf("%s is not set", path)
+				// Absent, not invalid. Every *structural* error below stays a
+				// hard failure — the shape of the expression was wrong — but a
+				// field that simply is not there on this item is the ordinary
+				// case an optional field produces.
+				return Undefined, nil
 			}
 			continue
 		}
@@ -206,9 +256,19 @@ func lookup(body string, ctx Context) (any, error) {
 		}
 		current = list[step.index]
 	}
+	if failure, unavailable := current.(lineageError); unavailable {
+		return nil, fmt.Errorf("%s: %s", path, failure.reason)
+	}
 	return current, nil
 }
 
+// parse reads one expression body into a root and a chain of accessors.
+//
+// The grammar is deliberately not general. A root, then field reads, index
+// reads and calls from a closed allowlist — no operators, no bare identifiers,
+// no arbitrary calls. `require('fs')` is not rejected by a denylist: it cannot
+// be written at all, because a body that does not begin with a supported root
+// never parses.
 func parse(body string) (string, []accessor, error) {
 	body = strings.TrimSpace(body)
 	if body == "" {
@@ -218,12 +278,54 @@ func parse(body string) (string, []accessor, error) {
 		return "", nil, fmt.Errorf("expression must start with a supported root such as $json")
 	}
 
+	var root string
 	position := 1
+
+	// `$('Node')` and `$fromAI('name')` take a quoted argument in the root
+	// itself. It stays a special case in the root parser rather than opening
+	// the grammar to general calls, which is the property that keeps an
+	// expression unable to do anything but read data.
+	if position < len(body) && body[position] == '(' {
+		name, next, err := readCallArguments(body, position)
+		if err != nil {
+			return "", nil, err
+		}
+		if len(name) != 1 || name[0].isNumber {
+			return "", nil, fmt.Errorf("$(…) takes one quoted node name")
+		}
+		accessors, err := parseAccessors(body, next)
+		return nodeRootPrefix + name[0].text, accessors, err
+	}
 	for position < len(body) && isNameByte(body[position]) {
 		position++
 	}
-	root := body[:position]
+	root = body[:position]
 
+	if root == fromAIRoot {
+		if position >= len(body) || body[position] != '(' {
+			return "", nil, fmt.Errorf("$fromAI needs a quoted parameter name")
+		}
+		args, next, err := readCallArguments(body, position)
+		if err != nil {
+			return "", nil, err
+		}
+		if len(args) == 0 || args[0].isNumber {
+			return "", nil, fmt.Errorf("$fromAI needs a quoted parameter name")
+		}
+		encoded := fromAIRoot + "(" + args[0].text
+		if len(args) > 1 {
+			encoded += "\x00" + args[1].text
+		}
+		accessors, err := parseAccessors(body, next)
+		return encoded, accessors, err
+	}
+
+	accessors, err := parseAccessors(body, position)
+	return root, accessors, err
+}
+
+// parseAccessors reads the field, index and call chain after a root.
+func parseAccessors(body string, position int) ([]accessor, error) {
 	accessors := make([]accessor, 0, 4)
 	for position < len(body) {
 		switch body[position] {
@@ -234,14 +336,33 @@ func parse(body string) (string, []accessor, error) {
 				position++
 			}
 			if start == position {
-				return "", nil, fmt.Errorf("expression has an empty field name")
+				return nil, fmt.Errorf("expression has an empty field name")
 			}
-			accessors = append(accessors, accessor{name: body[start:position], byKey: true})
+			name := body[start:position]
+			if position < len(body) && body[position] == '(' {
+				entry, known := functions[name]
+				if !known {
+					// Resolved here rather than at run time, so a workflow
+					// naming a function that does not exist fails at save.
+					return nil, fmt.Errorf("expression calls %s(), which is not an allowed function", name)
+				}
+				args, next, err := readCallArguments(body, position)
+				if err != nil {
+					return nil, err
+				}
+				if len(args) != entry.arity {
+					return nil, fmt.Errorf("%s() takes %d argument(s), got %d", name, entry.arity, len(args))
+				}
+				accessors = append(accessors, accessor{name: name, call: true, args: args})
+				position = next
+				continue
+			}
+			accessors = append(accessors, accessor{name: name, byKey: true})
 		case '[':
 			position++
 			end := strings.IndexByte(body[position:], ']')
 			if end < 0 {
-				return "", nil, fmt.Errorf("expression has an unclosed [")
+				return nil, fmt.Errorf("expression has an unclosed [")
 			}
 			inner := strings.TrimSpace(body[position : position+end])
 			position += end + 1
@@ -251,14 +372,91 @@ func parse(body string) (string, []accessor, error) {
 			}
 			index, err := strconv.Atoi(inner)
 			if err != nil {
-				return "", nil, fmt.Errorf("expression index must be a number or a quoted key")
+				return nil, fmt.Errorf("expression index must be a number or a quoted key")
 			}
 			accessors = append(accessors, accessor{index: index})
 		default:
-			return "", nil, fmt.Errorf("expression contains unsupported syntax at %q", body[position:])
+			return nil, fmt.Errorf("expression contains unsupported syntax at %q", body[position:])
 		}
 	}
-	return root, accessors, nil
+	return accessors, nil
+}
+
+// readCallArguments reads a parenthesised list of *literals*.
+//
+// Only string and number literals are accepted. Allowing a nested expression
+// would make this a general call expression, and the whole safety property of
+// this grammar is that it is not one.
+func readCallArguments(body string, open int) ([]argument, int, error) {
+	depth := 0
+	end := -1
+	for index := open; index < len(body); index++ {
+		switch body[index] {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				end = index
+			}
+		}
+		if end >= 0 {
+			break
+		}
+	}
+	if end < 0 {
+		return nil, 0, fmt.Errorf("expression has an unclosed (")
+	}
+	inner := strings.TrimSpace(body[open+1 : end])
+	if inner == "" {
+		return nil, end + 1, nil
+	}
+
+	var args []argument
+	for _, raw := range splitArguments(inner) {
+		raw = strings.TrimSpace(raw)
+		if unquoted, err := strconv.Unquote(raw); err == nil {
+			args = append(args, argument{text: unquoted})
+			continue
+		}
+		if len(raw) >= 2 && raw[0] == '\'' && raw[len(raw)-1] == '\'' {
+			args = append(args, argument{text: raw[1 : len(raw)-1]})
+			continue
+		}
+		if number, err := strconv.ParseFloat(raw, 64); err == nil {
+			args = append(args, argument{number: number, isNumber: true})
+			continue
+		}
+		return nil, 0, fmt.Errorf("expression argument %q must be a quoted string or a number", raw)
+	}
+	return args, end + 1, nil
+}
+
+// splitArguments splits on commas that are not inside a quoted string.
+func splitArguments(inner string) []string {
+	var parts []string
+	var current strings.Builder
+	var quote byte
+	for index := 0; index < len(inner); index++ {
+		char := inner[index]
+		switch {
+		case quote != 0:
+			current.WriteByte(char)
+			if char == quote && (index == 0 || inner[index-1] != '\\') {
+				quote = 0
+			}
+		case char == '\'' || char == '"':
+			quote = char
+			current.WriteByte(char)
+		case char == ',':
+			parts = append(parts, current.String())
+			current.Reset()
+		default:
+			current.WriteByte(char)
+		}
+	}
+	parts = append(parts, current.String())
+	return parts
 }
 
 func isNameByte(char byte) bool {
@@ -283,8 +481,27 @@ func rootValue(root string, ctx Context) (any, error) {
 		}
 		return input, nil
 	case "$node":
-		nodes := make(map[string]any, len(ctx.Nodes))
+		// Both forms resolve. `$node["X"].json.y` is what every imported n8n
+		// workflow is written as and never worked; `$node["X"].y` is what
+		// KilasFlow's own docs wrongly advertised and what existing workflows
+		// may use. The wrapper carries `json` alongside the bare fields, so
+		// neither breaks — a field genuinely named `json` on an item is the one
+		// ambiguity, and the wrapper wins because that is the n8n meaning.
+		nodes := make(map[string]any, len(ctx.NodeItems))
+		for name, item := range ctx.NodeItems {
+			merged := make(map[string]any, len(item.JSON)+3)
+			for key, value := range item.JSON {
+				merged[key] = value
+			}
+			for key, value := range nodeItemValue(item) {
+				merged[key] = value
+			}
+			nodes[name] = merged
+		}
 		for name, item := range ctx.Nodes {
+			if _, already := nodes[name]; already {
+				continue
+			}
 			nodes[name] = anyMap(item)
 		}
 		return nodes, nil
@@ -296,11 +513,46 @@ func rootValue(root string, ctx Context) (any, error) {
 		return env, nil
 	case "$execution":
 		return map[string]any{"id": ctx.Execution.ID, "mode": ctx.Execution.Mode}, nil
+	case "$workflow":
+		return map[string]any{"id": ctx.Workflow.ID, "name": ctx.Workflow.Name, "active": ctx.Workflow.Active}, nil
 	case "$itemIndex":
 		return float64(ctx.ItemIndex), nil
+	case "$now":
+		return dateValue{at: ctx.clock()}, nil
+	case "$today":
+		return dateValue{at: startOfDay(ctx.clock())}, nil
 	default:
+		if strings.HasPrefix(root, nodeRootPrefix) {
+			return nodeRootValue(root, ctx)
+		}
+		if strings.HasPrefix(root, fromAIRoot+"(") {
+			return fromAIValue(root, ctx)
+		}
 		return nil, fmt.Errorf("expression root %q is not supported", root)
 	}
+}
+
+// clock is the instant `$now` and `$today` read. One instant per evaluation, so
+// two expressions in the same parameter tree cannot disagree about the time.
+func (ctx Context) clock() time.Time {
+	if ctx.Now.IsZero() {
+		return time.Now().UTC()
+	}
+	return ctx.Now
+}
+
+// fromAIValue resolves the marker an AI agent fills in.
+func fromAIValue(root string, ctx Context) (any, error) {
+	if !ctx.AllowFromAI {
+		return nil, fmt.Errorf("$fromAI is only available in a parameter an AI agent fills; it has no value here")
+	}
+	encoded := strings.TrimPrefix(root, fromAIRoot+"(")
+	parts := strings.SplitN(encoded, "\x00", 2)
+	request := FromAIRequest{Name: parts[0]}
+	if len(parts) > 1 {
+		request.Description = parts[1]
+	}
+	return request, nil
 }
 
 func anyMap(source map[string]any) map[string]any {
@@ -314,6 +566,12 @@ func stringify(value any) string {
 	switch typed := value.(type) {
 	case nil:
 		return ""
+	case undefinedValue:
+		// An absent field substitutes as nothing, so mixing it into text yields
+		// the text rather than the word "undefined".
+		return ""
+	case dateValue:
+		return typed.String()
 	case string:
 		return typed
 	case bool:

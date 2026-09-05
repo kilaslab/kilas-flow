@@ -9,6 +9,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/kilaslabs/kilas-flow/internal/expression"
 	"github.com/kilaslabs/kilas-flow/internal/workflow"
 )
 
@@ -81,6 +82,13 @@ type Request struct {
 	// item, backing the `$node` expression root. The runner fills it as the
 	// graph progresses, so a node only ever sees nodes that ran before it.
 	NodeOutputs map[string]map[string]any
+	// NodeItems is the same nodes with their `json` wrapper and their whole
+	// item list, backing `$('Name')` and `$node["Name"].json.…`. It is filled
+	// alongside NodeOutputs rather than replacing it, so an expression written
+	// either way resolves.
+	NodeItems map[string]expression.NodeItem
+	// Workflow identifies the workflow, backing `$workflow`.
+	Workflow expression.WorkflowContext
 	// TriggerNodeID names the trigger this execution starts from.
 	//
 	// A workflow may declare several — a webhook beside a nightly schedule is
@@ -250,6 +258,9 @@ func (runner *Runner) Run(ctx context.Context, ir workflow.IR, request Request) 
 	if request.NodeOutputs == nil {
 		request.NodeOutputs = make(map[string]map[string]any, len(nodes))
 	}
+	if request.NodeItems == nil {
+		request.NodeItems = make(map[string]expression.NodeItem, len(nodes))
+	}
 	result := Result{NodeRuns: make([]NodeRun, 0, len(nodes)), Output: make(map[string]workflow.NodeOutput)}
 	for len(completed) < len(nodes) {
 		ready := make([]string, 0, len(nodes)-len(completed))
@@ -404,6 +415,7 @@ func (runner *Runner) Run(ctx context.Context, ir workflow.IR, request Request) 
 		if first, ok := firstItem(output); ok {
 			request.NodeOutputs[node.Name] = first
 		}
+		request.NodeItems[node.Name] = nodeItemFor(node, output, input)
 		result.NodeRuns = append(result.NodeRuns, NodeRun{
 			NodeID: nodeID, Input: cloneInput(input), Output: output,
 			Attempt: usedAttempt, RunIndex: len(runs[nodeID]) - 1,
@@ -1065,4 +1077,52 @@ func awaitingLoop(edges []workflow.IREdge, loops map[string]*loopGraph) bool {
 		}
 	}
 	return false
+}
+
+// nodeItemFor exposes one completed node to expressions.
+//
+// `.item` reads the paired-item lineage the runner tracks. When lineage cannot
+// be established the reason is carried rather than a fallback: returning the
+// first item when the correspondence is unknown is correct only if every node
+// processed exactly one item, and confidently wrong otherwise — which is the
+// failure mode this whole area exists to remove.
+func nodeItemFor(node workflow.IRNode, output workflow.NodeOutput, input workflow.NodeInput) expression.NodeItem {
+	item := expression.NodeItem{}
+	for _, port := range output {
+		for _, entry := range port {
+			item.Items = append(item.Items, entry.JSON)
+		}
+	}
+	if len(item.Items) > 0 {
+		item.JSON = item.Items[0]
+	}
+
+	// The paired item is the one on *this* node that the item currently being
+	// processed descends from. Establishing it needs provenance on the output,
+	// and a single unambiguous origin.
+	for _, port := range output {
+		for _, entry := range port {
+			if entry.Paired == nil {
+				item.LineageReason = "this node did not record where its items came from"
+				return item
+			}
+			if entry.Paired.Lost {
+				item.LineageReason = fmt.Sprintf("node %q changed the item correspondence, so there is no single item to pair with", node.Name)
+				return item
+			}
+		}
+	}
+	if len(item.Items) == 1 {
+		item.Paired = item.Items[0]
+		return item
+	}
+	if len(item.Items) == 0 {
+		item.LineageReason = fmt.Sprintf("node %q produced no items", node.Name)
+		return item
+	}
+	// Several items and no current-item context to choose between them. The
+	// executor that evaluates an expression per item supplies that; until it
+	// does, saying so beats guessing.
+	item.LineageReason = fmt.Sprintf("node %q produced %d items; use .all(), .first() or .last() to choose one", node.Name, len(item.Items))
+	return item
 }

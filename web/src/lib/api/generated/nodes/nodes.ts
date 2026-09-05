@@ -19,7 +19,8 @@ import type {
 
 import type {
   Definition,
-  ErrorModel
+  ErrorModel,
+  ExpressionGrammar
 } from '../models';
 
 import { apiFetch } from '../../http';
@@ -34,6 +35,102 @@ export type HTTPStatusCodes = HTTPStatusCode1xx | HTTPStatusCode2xx | HTTPStatus
 
 
 type SecondParameter<T extends (...args: never) => unknown> = Parameters<T>[1];
+
+
+
+export type getExpressionGrammarResponse200 = {
+  data: ExpressionGrammar
+  status: 200
+}
+
+export type getExpressionGrammarResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type getExpressionGrammarResponseSuccess = (getExpressionGrammarResponse200) & {
+  headers: Headers;
+};
+export type getExpressionGrammarResponseError = (getExpressionGrammarResponseDefault) & {
+  headers: Headers;
+};
+
+export type getExpressionGrammarResponse = (getExpressionGrammarResponseSuccess | getExpressionGrammarResponseError)
+
+export const getGetExpressionGrammarUrl = () => {
+
+
+
+
+  return `/api/v1/expression-grammar`
+}
+
+/**
+ * Returns the roots and functions an expression may use, so the editor validates against the server rather than a copy that drifts from it.
+ * @summary Describe the expression grammar
+ */
+export const getExpressionGrammar = async ( options?: Parameters<typeof apiFetch>[1]): Promise<getExpressionGrammarResponse> => {
+
+  return apiFetch<getExpressionGrammarResponse>(getGetExpressionGrammarUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetExpressionGrammarQueryKey = () => {
+    return [
+    `/api/v1/expression-grammar`
+    ] as const;
+    }
+
+
+export const getGetExpressionGrammarQueryOptions = <TData = Awaited<ReturnType<typeof getExpressionGrammar>>, TError = ErrorType<ErrorModel>>( options?: { query?:Partial<CreateQueryOptions<Awaited<ReturnType<typeof getExpressionGrammar>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetExpressionGrammarQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getExpressionGrammar>>> = ({ signal }) => getExpressionGrammar({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as CreateQueryOptions<Awaited<ReturnType<typeof getExpressionGrammar>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetExpressionGrammarQueryResult = NonNullable<Awaited<ReturnType<typeof getExpressionGrammar>>>
+export type GetExpressionGrammarQueryError = ErrorType<ErrorModel>
+
+
+/**
+ * @summary Describe the expression grammar
+ */
+
+export function createGetExpressionGrammar<TData = Awaited<ReturnType<typeof getExpressionGrammar>>, TError = ErrorType<ErrorModel>>(
+  options?: () => { query?:Partial<CreateQueryOptions<Awaited<ReturnType<typeof getExpressionGrammar>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: () => QueryClient
+ ): CreateQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+
+
+  const query = createQuery(() => getGetExpressionGrammarQueryOptions(options?.()), queryClient) as CreateQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return query
+}
+
+
+
 
 
 

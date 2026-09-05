@@ -422,6 +422,15 @@ export interface ExportedWorkflowResource {
   workflow: unknown;
 }
 
+export interface ExpressionGrammar {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  functions: string[] | null;
+  /** @nullable */
+  roots: string[] | null;
+}
+
 export interface HealthOutputBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -1372,6 +1381,57 @@ export const streamExecutionEvents = async (id: string,
 
   const data: streamExecutionEventsResponse['data'] = body ? (contentType.includes('json') ? JSON.parse(body) : body) : {}
   return { data, status: res.status, headers: res.headers } as streamExecutionEventsResponse
+}
+
+
+
+export type getExpressionGrammarResponse200 = {
+  data: ExpressionGrammar
+  status: 200
+}
+
+export type getExpressionGrammarResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type getExpressionGrammarResponseSuccess = (getExpressionGrammarResponse200) & {
+  headers: Headers;
+};
+export type getExpressionGrammarResponseError = (getExpressionGrammarResponseDefault) & {
+  headers: Headers;
+};
+
+export type getExpressionGrammarResponse = (getExpressionGrammarResponseSuccess | getExpressionGrammarResponseError)
+
+export const getGetExpressionGrammarUrl = () => {
+
+
+
+
+  return `/api/v1/expression-grammar`
+}
+
+/**
+ * Returns the roots and functions an expression may use, so the editor validates against the server rather than a copy that drifts from it.
+ * @summary Describe the expression grammar
+ */
+export const getExpressionGrammar = async ( options?: RequestInit): Promise<getExpressionGrammarResponse> => {
+
+  const res = await fetch(getGetExpressionGrammarUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: getExpressionGrammarResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as getExpressionGrammarResponse
 }
 
 
