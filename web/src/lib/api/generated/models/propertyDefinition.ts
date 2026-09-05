@@ -5,18 +5,25 @@
  * Embeddable workflow automation engine. Every operation available in the editor is available here: the canvas is a client of this API, not the owner of workflow state.
  * OpenAPI spec version: 0.1.0-dev
  */
+import type { PropertyGroup } from './propertyGroup';
 import type { PropertyOption } from './propertyOption';
+import type { TypeOptions } from './typeOptions';
 import type { VisibilityCondition } from './visibilityCondition';
 
 export interface PropertyDefinition {
   default?: unknown;
   description?: string;
+  /** @nullable */
+  fields?: PropertyDefinition[] | null;
+  /** @nullable */
+  groups?: PropertyGroup[] | null;
   key: string;
   kind: string;
   label: string;
   /** @nullable */
   options?: PropertyOption[] | null;
   required: boolean;
+  typeOptions?: TypeOptions;
   /** @nullable */
   visibleWhen?: VisibilityCondition[] | null;
 }

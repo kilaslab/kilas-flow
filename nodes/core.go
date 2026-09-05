@@ -123,7 +123,7 @@ func mergeNode() node.Definition {
 		},
 		Outputs: mainOutput(),
 		Parameters: []node.PropertyDefinition{{
-			Key: "mode", Label: "Mode", Kind: node.PropertySelect, Required: true, Default: "append",
+			Key: "mode", Label: "Mode", Kind: node.PropertyOptions, Required: true, Default: "append",
 			Options: []node.PropertyOption{{Label: "Append", Value: "append"}},
 		}},
 		SharedSettings: sharedSettings(),

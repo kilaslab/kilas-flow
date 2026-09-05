@@ -408,3 +408,208 @@ func TestRegistryRefusesAnUnknownGroupOrABadSubtitle(t *testing.T) {
 		t.Errorf("a valid subtitle was refused: %v", err)
 	}
 }
+
+// TestRequiredParametersUnderstandsAPerElementDefault is the semantic that
+// silently corrupts an imported node when it is wrong.
+//
+// Under multipleValues, n8n's default describes **one element**, not the
+// collection. A default normally satisfies a requirement — the node has a
+// usable value without the user typing one — but an element default says
+// nothing about whether the list has any elements, so a required list is still
+// unsatisfied until one is added.
+func TestRequiredParametersUnderstandsAPerElementDefault(t *testing.T) {
+	registry := node.NewRegistry()
+	if err := registry.Register(node.Definition{
+		Type: "test.repeated", Version: workflow.V(1),
+		DisplayName: "Repeated", Category: "Test", ExecutorID: "test.exec",
+		Group:   []node.NodeGroup{node.GroupTransform},
+		Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+		Parameters: []node.PropertyDefinition{
+			// A plain default satisfies a requirement.
+			{Key: "mode", Label: "Mode", Kind: node.PropertyOptions, Required: true, Default: "append"},
+			// A per-element default does not.
+			{
+				Key: "headers", Label: "Headers", Kind: node.PropertyCollection, Required: true,
+				Default:     map[string]any{},
+				TypeOptions: &node.TypeOptions{MultipleValues: true, MultipleValueButtonText: "Add header"},
+				Fields: []node.PropertyDefinition{
+					{Key: "name", Label: "Name", Kind: node.PropertyString},
+					{Key: "value", Label: "Value", Kind: node.PropertyString},
+				},
+			},
+			// A notice holds no value and can never be required.
+			{Key: "hint", Label: "Hint", Kind: node.PropertyNotice, Required: true},
+		},
+	}); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+
+	definition, found := registry.Lookup("test.repeated", workflow.V(1))
+	if !found {
+		t.Fatal("the definition was not registered")
+	}
+	required := map[string]bool{}
+	for _, key := range definition.RequiredParameters {
+		required[key] = true
+	}
+
+	if required["mode"] {
+		t.Error("a property with a plain default was reported as unsatisfied")
+	}
+	if !required["headers"] {
+		t.Error("a required list with a per-element default was treated as satisfied; the element default says nothing about whether the list has elements")
+	}
+	if required["hint"] {
+		t.Error("a notice was reported as required; it holds no value and must never be stored")
+	}
+}
+
+// TestValidatePropertiesRecursesAndScopesKeysPerLevel covers the nesting rule
+// the flat validator could not express.
+func TestValidatePropertiesRecursesAndScopesKeysPerLevel(t *testing.T) {
+	base := func(parameters []node.PropertyDefinition) node.Definition {
+		return node.Definition{
+			Type: "test.nested", Version: workflow.V(1),
+			DisplayName: "Nested", Category: "Test", ExecutorID: "test.exec",
+			Group:      []node.NodeGroup{node.GroupTransform},
+			Outputs:    []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+			Parameters: parameters,
+		}
+	}
+
+	t.Run("an inner key may repeat an outer one", func(t *testing.T) {
+		// They live in different objects and never meet, so a shared seen map
+		// across the recursion would refuse a perfectly ordinary shape.
+		err := node.NewRegistry().Register(base([]node.PropertyDefinition{
+			{Key: "value", Label: "Value", Kind: node.PropertyString},
+			{
+				Key: "options", Label: "Options", Kind: node.PropertyCollection,
+				Fields: []node.PropertyDefinition{
+					{Key: "value", Label: "Value", Kind: node.PropertyString},
+				},
+			},
+		}))
+		if err != nil {
+			t.Errorf("an inner key repeating an outer one was refused: %v", err)
+		}
+	})
+
+	t.Run("a duplicate within one level is refused", func(t *testing.T) {
+		err := node.NewRegistry().Register(base([]node.PropertyDefinition{
+			{
+				Key: "options", Label: "Options", Kind: node.PropertyCollection,
+				Fields: []node.PropertyDefinition{
+					{Key: "value", Label: "Value", Kind: node.PropertyString},
+					{Key: "value", Label: "Value again", Kind: node.PropertyString},
+				},
+			},
+		}))
+		if err == nil {
+			t.Error("a duplicate key inside a collection was accepted")
+		}
+	})
+
+	t.Run("an invalid kind at depth is refused", func(t *testing.T) {
+		err := node.NewRegistry().Register(base([]node.PropertyDefinition{
+			{
+				Key: "groups", Label: "Groups", Kind: node.PropertyFixedCollection,
+				Groups: []node.PropertyGroup{{
+					Key: "header", Label: "Header",
+					Fields: []node.PropertyDefinition{
+						{Key: "name", Label: "Name", Kind: "resourceLocator"},
+					},
+				}},
+			},
+		}))
+		if err == nil {
+			t.Error("an unknown kind nested two levels down was accepted")
+		}
+	})
+
+	t.Run("an unnamed group is refused", func(t *testing.T) {
+		err := node.NewRegistry().Register(base([]node.PropertyDefinition{
+			{
+				Key: "groups", Label: "Groups", Kind: node.PropertyFixedCollection,
+				Groups: []node.PropertyGroup{{Key: "", Label: ""}},
+			},
+		}))
+		if err == nil {
+			t.Error("a fixedCollection group with no key was accepted")
+		}
+	})
+}
+
+// TestRegistryDeepCopiesNestedProperties is the aliasing bug one level deeper
+// than the last one: a caller mutating an inner collection field would change
+// what every other caller reads.
+func TestRegistryDeepCopiesNestedProperties(t *testing.T) {
+	registry := node.NewRegistry()
+	precision := 2
+	if err := registry.Register(node.Definition{
+		Type: "test.deep", Version: workflow.V(1),
+		DisplayName: "Deep", Category: "Test", ExecutorID: "test.exec",
+		Group:   []node.NodeGroup{node.GroupTransform},
+		Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+		Parameters: []node.PropertyDefinition{{
+			Key: "outer", Label: "Outer", Kind: node.PropertyFixedCollection,
+			TypeOptions: &node.TypeOptions{NumberPrecision: &precision, MultipleValues: true},
+			Fields: []node.PropertyDefinition{
+				{Key: "inner", Label: "Inner", Kind: node.PropertyString},
+			},
+			Groups: []node.PropertyGroup{{
+				Key: "group", Label: "Group",
+				Fields: []node.PropertyDefinition{{Key: "deep", Label: "Deep", Kind: node.PropertyString}},
+			}},
+		}},
+	}); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+
+	first, _ := registry.Get("test.deep", workflow.V(1))
+	first.Parameters[0].Fields[0].Label = "tampered"
+	first.Parameters[0].Groups[0].Fields[0].Label = "tampered"
+	*first.Parameters[0].TypeOptions.NumberPrecision = 9
+
+	second, _ := registry.Get("test.deep", workflow.V(1))
+	if second.Parameters[0].Fields[0].Label != "Inner" {
+		t.Error("a nested collection field was aliased with the registry's storage")
+	}
+	if second.Parameters[0].Groups[0].Fields[0].Label != "Deep" {
+		t.Error("a nested group field was aliased with the registry's storage")
+	}
+	if *second.Parameters[0].TypeOptions.NumberPrecision != 2 {
+		t.Error("a type-options pointer was aliased with the registry's storage")
+	}
+}
+
+// TestKnownPropertyKindsIsExactlyTheDocumentedSet keeps the allowlist closed.
+func TestKnownPropertyKindsIsExactlyTheDocumentedSet(t *testing.T) {
+	want := []string{
+		"string", "number", "boolean",
+		"options", "multiOptions",
+		"collection", "fixedCollection",
+		"notice", "json", "dateTime",
+		"keyValue", "conditions",
+	}
+	got := make([]string, 0, len(node.KnownPropertyKinds()))
+	for _, kind := range node.KnownPropertyKinds() {
+		got = append(got, string(kind))
+	}
+	if len(got) != len(want) {
+		t.Fatalf("KnownPropertyKinds() = %v, want %v", got, want)
+	}
+	for index, expected := range want {
+		if got[index] != expected {
+			t.Errorf("kind %d = %q, want %q", index, got[index], expected)
+		}
+	}
+	// `select` is gone rather than kept as a synonym: two names for one control
+	// would mean every generated pack has to remember which this server speaks.
+	for _, gone := range []string{"select", "resourceLocator", "filter"} {
+		for _, kind := range got {
+			if kind == gone {
+				t.Errorf("%q is still an accepted kind", gone)
+			}
+		}
+	}
+}

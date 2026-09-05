@@ -14,13 +14,73 @@ import (
 type PropertyKind string
 
 const (
-	PropertyString     PropertyKind = "string"
-	PropertyNumber     PropertyKind = "number"
-	PropertyBoolean    PropertyKind = "boolean"
-	PropertySelect     PropertyKind = "select"
+	PropertyString  PropertyKind = "string"
+	PropertyNumber  PropertyKind = "number"
+	PropertyBoolean PropertyKind = "boolean"
+	// PropertyOptions is a single-choice select.
+	//
+	// It is spelled `options` rather than `select` because that is what n8n
+	// calls it, and two names for one control would mean every generated pack
+	// has to remember which one this server speaks. The rename is done now
+	// because its blast radius is still entirely inside this repository; after
+	// a pack ships it becomes a compatibility break for somebody else's node.
+	PropertyOptions PropertyKind = "options"
+	// PropertyMultiOptions is a multi-choice select.
+	PropertyMultiOptions PropertyKind = "multiOptions"
+	// PropertyCollection is an optional group of fields the user adds one at a
+	// time.
+	PropertyCollection PropertyKind = "collection"
+	// PropertyFixedCollection is a repeatable named group.
+	PropertyFixedCollection PropertyKind = "fixedCollection"
+	// PropertyNotice is read-only guidance shown in the panel. It holds no
+	// value: see the note on TypeOptions and requiredParameters.
+	PropertyNotice PropertyKind = "notice"
+	// PropertyJSON is a raw JSON editor.
+	PropertyJSON PropertyKind = "json"
+	// PropertyDateTime is a date and time picker.
+	PropertyDateTime   PropertyKind = "dateTime"
 	PropertyKeyValue   PropertyKind = "keyValue"
 	PropertyConditions PropertyKind = "conditions"
 )
+
+// KnownPropertyKinds is the closed set, in a stable order.
+func KnownPropertyKinds() []PropertyKind {
+	return []PropertyKind{
+		PropertyString, PropertyNumber, PropertyBoolean,
+		PropertyOptions, PropertyMultiOptions,
+		PropertyCollection, PropertyFixedCollection,
+		PropertyNotice, PropertyJSON, PropertyDateTime,
+		PropertyKeyValue, PropertyConditions,
+	}
+}
+
+// TypeOptions refines how a control behaves without multiplying kinds.
+//
+// Unknown keys are rejected at registration rather than passed through: a bag
+// that accepts anything is a bag whose contents nothing can rely on, and a
+// generated pack emitting a key this server ignores would produce a control
+// that silently does not behave as its author intended.
+type TypeOptions struct {
+	// Password masks the field.
+	Password bool `json:"password,omitempty"`
+	// Rows makes a string field multi-line. Zero is single-line.
+	Rows int `json:"rows,omitempty"`
+	// MinValue and MaxValue bound a number.
+	MinValue *float64 `json:"minValue,omitempty"`
+	MaxValue *float64 `json:"maxValue,omitempty"`
+	// NumberPrecision is how many decimal places a number keeps.
+	NumberPrecision *int `json:"numberPrecision,omitempty"`
+	// MultipleValues makes the property a list.
+	//
+	// This one semantic has to be carried across exactly, because getting it
+	// wrong silently corrupts every imported node: under MultipleValues the
+	// property's Default describes **one element**, not the collection. A
+	// property with MultipleValues and `default: {}` defaults to an empty list
+	// whose elements look like `{}` — it does not default to `{}`.
+	MultipleValues bool `json:"multipleValues,omitempty"`
+	// MultipleValueButtonText labels the add button.
+	MultipleValueButtonText string `json:"multipleValueButtonText,omitempty"`
+}
 
 // PropertyOption is one selectable value for a PropertySelect control.
 type PropertyOption struct {
@@ -37,14 +97,38 @@ type VisibilityCondition struct {
 
 // PropertyDefinition describes one node parameter or shared setting.
 type PropertyDefinition struct {
-	Key         string                `json:"key"`
-	Label       string                `json:"label"`
-	Description string                `json:"description,omitempty"`
-	Kind        PropertyKind          `json:"kind"`
-	Required    bool                  `json:"required"`
-	Default     any                   `json:"default,omitempty"`
-	Options     []PropertyOption      `json:"options,omitempty"`
+	Key         string       `json:"key"`
+	Label       string       `json:"label"`
+	Description string       `json:"description,omitempty"`
+	Kind        PropertyKind `json:"kind"`
+	Required    bool         `json:"required"`
+	// Default is the value a fresh node starts with.
+	//
+	// Under TypeOptions.MultipleValues it describes **one element** of the
+	// list, not the list itself.
+	Default any `json:"default,omitempty"`
+	// Options are the selectable values of an options or multiOptions control.
+	//
+	// Deliberately *only* that. n8n overloads the same field to carry nested
+	// properties for a collection and named groups for a fixedCollection, which
+	// makes its meaning depend on the sibling kind and produces a JSON schema
+	// the generated TypeScript cannot express usefully. The nested carriers
+	// below are typed separately for that reason.
+	Options []PropertyOption `json:"options,omitempty"`
+	// Fields are the nested properties of a `collection`.
+	Fields []PropertyDefinition `json:"fields,omitempty"`
+	// Groups are the named property groups of a `fixedCollection`.
+	Groups []PropertyGroup `json:"groups,omitempty"`
+	// TypeOptions refines the control.
+	TypeOptions *TypeOptions          `json:"typeOptions,omitempty"`
 	VisibleWhen []VisibilityCondition `json:"visibleWhen,omitempty"`
+}
+
+// PropertyGroup is one named group inside a fixedCollection.
+type PropertyGroup struct {
+	Key    string               `json:"key"`
+	Label  string               `json:"label"`
+	Fields []PropertyDefinition `json:"fields"`
 }
 
 // Definition is the complete server-owned description of a supported node.
@@ -407,6 +491,11 @@ func validatePorts(nodeType, direction string, ports []workflow.Port) error {
 	return nil
 }
 
+// validateProperties checks one level and recurses into nested carriers.
+//
+// The `seen` map is per level, not shared across the recursion: a collection
+// whose inner field is named `value` must not collide with an outer property
+// also named `value`, because they live in different objects and never meet.
 func validateProperties(nodeType, group string, properties []PropertyDefinition) error {
 	seen := make(map[string]struct{}, len(properties))
 	for _, property := range properties {
@@ -417,17 +506,34 @@ func validateProperties(nodeType, group string, properties []PropertyDefinition)
 			return fmt.Errorf("node definition %q has duplicate %s %q", nodeType, group, property.Key)
 		}
 		seen[property.Key] = struct{}{}
+
+		if err := validateProperties(nodeType, group+"."+property.Key, property.Fields); err != nil {
+			return err
+		}
+		groupKeys := make(map[string]struct{}, len(property.Groups))
+		for _, nested := range property.Groups {
+			if nested.Key == "" || nested.Label == "" {
+				return fmt.Errorf("node definition %q %s %q has an unnamed group", nodeType, group, property.Key)
+			}
+			if _, exists := groupKeys[nested.Key]; exists {
+				return fmt.Errorf("node definition %q %s %q has duplicate group %q", nodeType, group, property.Key, nested.Key)
+			}
+			groupKeys[nested.Key] = struct{}{}
+			if err := validateProperties(nodeType, group+"."+property.Key+"."+nested.Key, nested.Fields); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
 
 func knownPropertyKind(kind PropertyKind) bool {
-	switch kind {
-	case PropertyString, PropertyNumber, PropertyBoolean, PropertySelect, PropertyKeyValue, PropertyConditions:
-		return true
-	default:
-		return false
+	for _, known := range KnownPropertyKinds() {
+		if kind == known {
+			return true
+		}
 	}
+	return false
 }
 
 // requiredParameters lists the parameters a document must actually carry.
@@ -436,10 +542,29 @@ func knownPropertyKind(kind PropertyKind) bool {
 // server's answer for an absent value, so demanding the key as well would
 // reject a perfectly valid hand-authored or imported document over a field the
 // server already knows how to fill in.
+// requiredParameters lists the properties a node cannot run without.
+//
+// A default normally satisfies a requirement — the node has a usable value
+// without the user typing one. Two kinds break that reasoning:
+//
+// A `notice` holds no value at all. It must never be required, never written
+// into a node's stored parameters, and never round-trip into the document,
+// where it would fail validation on the next save.
+//
+// And under MultipleValues the default describes one *element*, so it says
+// nothing about whether the list has any elements. A required list with an
+// element default is still unsatisfied until the user adds one.
 func requiredParameters(properties []PropertyDefinition) []string {
 	parameters := make([]string, 0, len(properties))
 	for _, property := range properties {
-		if property.Required && property.Default == nil {
+		if property.Kind == PropertyNotice {
+			continue
+		}
+		if !property.Required {
+			continue
+		}
+		repeated := property.TypeOptions != nil && property.TypeOptions.MultipleValues
+		if property.Default == nil || repeated {
 			parameters = append(parameters, property.Key)
 		}
 	}
@@ -477,6 +602,11 @@ func cloneDefinition(definition Definition) Definition {
 	return definition
 }
 
+// cloneProperties deep-copies a property tree, nested carriers included.
+//
+// A nested field that skips this aliases the registry's own storage at depth,
+// which is the same bug as before but harder to see: a caller mutating an inner
+// collection field would change what every other caller reads.
 func cloneProperties(properties []PropertyDefinition) []PropertyDefinition {
 	cloned := make([]PropertyDefinition, len(properties))
 	for index, property := range properties {
@@ -486,6 +616,32 @@ func cloneProperties(properties []PropertyDefinition) []PropertyDefinition {
 		cloned[index].VisibleWhen = append([]VisibilityCondition(nil), property.VisibleWhen...)
 		for visibilityIndex := range cloned[index].VisibleWhen {
 			cloned[index].VisibleWhen[visibilityIndex].Equals = cloneValue(cloned[index].VisibleWhen[visibilityIndex].Equals)
+		}
+		cloned[index].Fields = cloneProperties(property.Fields)
+		if property.TypeOptions != nil {
+			options := *property.TypeOptions
+			if property.TypeOptions.MinValue != nil {
+				value := *property.TypeOptions.MinValue
+				options.MinValue = &value
+			}
+			if property.TypeOptions.MaxValue != nil {
+				value := *property.TypeOptions.MaxValue
+				options.MaxValue = &value
+			}
+			if property.TypeOptions.NumberPrecision != nil {
+				value := *property.TypeOptions.NumberPrecision
+				options.NumberPrecision = &value
+			}
+			cloned[index].TypeOptions = &options
+		}
+		if property.Groups != nil {
+			groups := make([]PropertyGroup, len(property.Groups))
+			for groupIndex, group := range property.Groups {
+				groups[groupIndex] = PropertyGroup{
+					Key: group.Key, Label: group.Label, Fields: cloneProperties(group.Fields),
+				}
+			}
+			cloned[index].Groups = groups
 		}
 	}
 	return cloned

@@ -132,9 +132,26 @@ export interface Port {
   required?: boolean;
 }
 
+export interface PropertyGroup {
+  /** @nullable */
+  fields: PropertyDefinition[] | null;
+  key: string;
+  label: string;
+}
+
 export interface PropertyOption {
   label: string;
   value: string;
+}
+
+export interface TypeOptions {
+  maxValue?: number;
+  minValue?: number;
+  multipleValueButtonText?: string;
+  multipleValues?: boolean;
+  numberPrecision?: number;
+  password?: boolean;
+  rows?: number;
 }
 
 export interface VisibilityCondition {
@@ -145,12 +162,17 @@ export interface VisibilityCondition {
 export interface PropertyDefinition {
   default?: unknown;
   description?: string;
+  /** @nullable */
+  fields?: PropertyDefinition[] | null;
+  /** @nullable */
+  groups?: PropertyGroup[] | null;
   key: string;
   kind: string;
   label: string;
   /** @nullable */
   options?: PropertyOption[] | null;
   required: boolean;
+  typeOptions?: TypeOptions;
   /** @nullable */
   visibleWhen?: VisibilityCondition[] | null;
 }

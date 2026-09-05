@@ -38,7 +38,7 @@ func httpRequestNode() node.Definition {
 		Outputs:     mainOutput(),
 		Parameters: []node.PropertyDefinition{
 			{
-				Key: "method", Label: "Method", Kind: node.PropertySelect, Required: true, Default: "GET",
+				Key: "method", Label: "Method", Kind: node.PropertyOptions, Required: true, Default: "GET",
 				Options: []node.PropertyOption{
 					{Label: "GET", Value: "GET"}, {Label: "POST", Value: "POST"}, {Label: "PUT", Value: "PUT"},
 					{Label: "PATCH", Value: "PATCH"}, {Label: "DELETE", Value: "DELETE"}, {Label: "HEAD", Value: "HEAD"},
@@ -60,7 +60,7 @@ func httpRequestNode() node.Definition {
 			},
 			{Key: "sendBody", Label: "Send body", Kind: node.PropertyBoolean, Default: false},
 			{
-				Key: "bodyType", Label: "Body type", Kind: node.PropertySelect, Default: "json",
+				Key: "bodyType", Label: "Body type", Kind: node.PropertyOptions, Default: "json",
 				Options: []node.PropertyOption{
 					{Label: "JSON", Value: "json"},
 					{Label: "Form URL-encoded", Value: "form"},
@@ -74,7 +74,7 @@ func httpRequestNode() node.Definition {
 				VisibleWhen: []node.VisibilityCondition{{Key: "sendBody", Equals: true}},
 			},
 			{
-				Key: "responseFormat", Label: "Response format", Kind: node.PropertySelect, Default: "autodetect",
+				Key: "responseFormat", Label: "Response format", Kind: node.PropertyOptions, Default: "autodetect",
 				Options: []node.PropertyOption{
 					{Label: "Autodetect", Value: "autodetect"},
 					{Label: "JSON", Value: "json"},

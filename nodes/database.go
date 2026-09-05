@@ -50,7 +50,7 @@ func databaseNode(nodeType, executorID, displayName, credentialType string) node
 		Outputs:     mainOutput(),
 		Parameters: []node.PropertyDefinition{
 			{
-				Key: "operation", Label: "Operation", Kind: node.PropertySelect, Required: true, Default: sqlOperationQuery,
+				Key: "operation", Label: "Operation", Kind: node.PropertyOptions, Required: true, Default: sqlOperationQuery,
 				Options: []node.PropertyOption{
 					{Label: "Query (returns rows)", Value: sqlOperationQuery},
 					{Label: "Execute (returns rows affected)", Value: sqlOperationExecute},

@@ -1,7 +1,7 @@
 ---
 id: FEAT-5s1w0t
 title: Extend the node property model to the kinds real nodes need
-status: todo
+status: done
 priority: high
 labels:
     - registry
@@ -27,13 +27,13 @@ One semantic must be carried across exactly, because getting it wrong silently c
 
 ## Acceptance criteria
 
-- [ ] `PropertyKind` gains `options`, `multiOptions`, `collection`, `fixedCollection`, `notice`, `json` and `dateTime`, and `knownPropertyKind` accepts exactly the documented set and nothing else.
-- [ ] `PropertyDefinition` carries a `TypeOptions` bag supporting at least `password`, `rows`, `minValue`, `maxValue`, `numberPrecision`, `multipleValues` and `multipleValueButtonText`, with unknown keys rejected at registration rather than passed through.
-- [ ] `collection` and `fixedCollection` carry nested `PropertyDefinition`s in their own typed fields — never overloaded onto `Options` — and `validateProperties` recurses into them, rejecting a duplicate key or an invalid kind at any depth.
-- [ ] `cloneProperties` deep-copies nested definitions and type options; a test mutates a returned definition at depth and re-reads it from the registry unchanged.
-- [ ] A property with `multipleValues: true` is treated as required-and-unsatisfied by `requiredParameters` even when it declares a default, and the field's documentation states that the default describes one element.
-- [ ] `web/src/lib/components/workflow-editor/property-field.svelte` renders every new kind, and a kind it does not recognise degrades to a read-only JSON view with a named warning instead of rendering nothing.
-- [ ] `web/pnpm generate:api:check` and `sdk/pnpm generate:types:check` pass against regenerated clients.
+- [x] `PropertyKind` gains `options`, `multiOptions`, `collection`, `fixedCollection`, `notice`, `json` and `dateTime`, and `knownPropertyKind` accepts exactly the documented set and nothing else.
+- [x] `PropertyDefinition` carries a `TypeOptions` bag supporting at least `password`, `rows`, `minValue`, `maxValue`, `numberPrecision`, `multipleValues` and `multipleValueButtonText`, with unknown keys rejected at registration rather than passed through.
+- [x] `collection` and `fixedCollection` carry nested `PropertyDefinition`s in their own typed fields — never overloaded onto `Options` — and `validateProperties` recurses into them, rejecting a duplicate key or an invalid kind at any depth.
+- [x] `cloneProperties` deep-copies nested definitions and type options; a test mutates a returned definition at depth and re-reads it from the registry unchanged.
+- [x] A property with `multipleValues: true` is treated as required-and-unsatisfied by `requiredParameters` even when it declares a default, and the field's documentation states that the default describes one element.
+- [x] `web/src/lib/components/workflow-editor/property-field.svelte` renders every new kind, and a kind it does not recognise degrades to a read-only JSON view with a named warning instead of rendering nothing.
+- [x] `web/pnpm generate:api:check` and `sdk/pnpm generate:types:check` pass against regenerated clients.
 
 ## Implementation Plan
 
@@ -55,3 +55,70 @@ Leave `resourceLocator`, `resourceMapper`, `filter` and `assignmentCollection` o
 - `nodes/webhook.go`, `nodes/database.go`, `nodes/http.go`, `nodes/core.go` — every current `PropertySelect` use.
 - n8n 2.34.0 reference (read-only, outside this repo): `packages/workflow/src/interfaces.ts` — `NodePropertyTypes`, `INodePropertyTypeOptions`, `INodePropertyOptions`, `INodePropertyCollection`.
 - Local n8n UI reference: `design-refs/n8n-v2/INDEX.md` entries 05, 11, 13 — the property kinds this phase must add, in use: `notice` blocks, multi-select chips, `Options`/`Additional Fields` collections with "+ Add Field". Captured from a local n8n 2.33.7 instance; gitignored, never vendored.
+
+## Outcome
+
+### The kinds
+
+`options`, `multiOptions`, `collection`, `fixedCollection`, `notice`, `json` and
+`dateTime`, with `knownPropertyKind` reading one closed list.
+`TestKnownPropertyKindsIsExactlyTheDocumentedSet` pins the set and additionally
+asserts `select`, `resourceLocator` and `filter` are **not** accepted.
+
+### The select rename
+
+Done outright, as recommended, not kept as a synonym. Two names for one control
+would mean every generated pack has to remember which one this server speaks.
+The blast radius was exactly the five call sites the ticket predicted plus one
+panel branch and the generated clients — all still inside this repository, which
+is why it had to be now: after p3 ships a pack it becomes a compatibility break
+for somebody else's node.
+
+### Nested carriers, not an overload
+
+`Fields` for a `collection` and `Groups` for a `fixedCollection`, typed
+separately. n8n overloads `options` to hold selectable values, nested properties
+*and* named groups at once, which makes the field's meaning depend on the
+sibling `kind` and produces a JSON schema the generated TypeScript cannot
+express usefully. Keeping them apart is what makes the generated client
+readable.
+
+`validateProperties` recurses, with a `seen` map **per level**. A collection
+whose inner field is named `value` must not collide with an outer `value` —
+they live in different objects and never meet — and a shared map would refuse a
+perfectly ordinary shape. Both directions are tested, along with an invalid kind
+two levels down.
+
+### The semantic that silently corrupts
+
+Under `multipleValues` the default describes **one element**, not the
+collection. `requiredParameters` treated any non-nil default as satisfying a
+requirement, which is wrong here: an element default says nothing about whether
+the list has any elements. A required list with an element default is now
+correctly unsatisfied.
+
+`notice` is excluded from `requiredParameters` entirely, and the panel sends no
+`onChange` for it. A notice that round-tripped into the document would fail
+validation on the next save.
+
+### The panel
+
+Every new kind renders. Expression capability was decided deliberately rather
+than inherited: `json` and `dateTime` join `string` and `number`, and nothing
+else — a checkbox, a select and a nested collection have no free-text surface to
+show a template in, which is the conclusion n8n reaches through
+`noDataExpression`.
+
+An unrecognised kind degrades to a **named** read-only JSON view rather than
+rendering nothing. Rendering nothing reads as "this node has no such setting"
+when the truth is "this editor is older than this node".
+
+One thing caught in review: multi-line is a different element, not an attribute.
+`rows` has no meaning on an `input`, so a `typeOptions.rows` above one renders a
+`textarea`.
+
+### Deferred, with owners named
+
+`resourceLocator` (p2-10), `resourceMapper` (p2-11), `assignmentCollection`
+(p4-13) and the repeatable condition group folded into p2-10. They carry runtime
+behaviour rather than shape and nothing before p4 needs them.

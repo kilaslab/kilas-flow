@@ -12,7 +12,33 @@
 	// Only text-shaped controls can carry an expression: a checkbox or a select
 	// has no free-text surface for one, and silently accepting a marker there
 	// would produce a value the control could not display.
-	const expressionCapable = $derived(property.kind === 'string' || property.kind === 'number');
+	// Which kinds may hold an expression. A checkbox, a select and a nested
+	// collection have no free-text surface to show a template in, so offering
+	// the toggle there would produce a control the user cannot read back. n8n
+	// reaches the same conclusion through noDataExpression.
+	const expressionCapable = $derived(
+		property.kind === 'string' ||
+			property.kind === 'number' ||
+			property.kind === 'json' ||
+			property.kind === 'dateTime'
+	);
+
+	/** Every kind this panel knows how to render. */
+	const RENDERED = new Set([
+		'string', 'number', 'boolean', 'options', 'multiOptions',
+		'collection', 'fixedCollection', 'notice', 'json', 'dateTime',
+		'keyValue', 'conditions'
+	]);
+
+	const typeOptions = $derived(property.typeOptions ?? {});
+	const selected = $derived(Array.isArray(value) ? (value as unknown[]).map(String) : []);
+
+	function toggleOption(option: string, on: boolean): void {
+		const next = new Set(selected);
+		if (on) next.add(option);
+		else next.delete(option);
+		onChange([...next]);
+	}
 	const expressionMode = $derived(isExpression(value));
 	const template = $derived(expressionTemplate(value));
 	const stringValue = $derived(typeof value === 'string' ? value : value === undefined || value === null ? '' : String(value));
@@ -119,7 +145,35 @@
 		</label>
 	{:else if property.kind === 'number'}
 		<input id={`property-${property.key}`} type="number" value={stringValue} class="h-7 rounded-md border border-input bg-background px-2 text-xs" oninput={(event) => onChange(event.currentTarget.value === '' ? undefined : Number(event.currentTarget.value))} />
-	{:else if property.kind === 'select'}
+	{:else if property.kind === 'notice'}
+		<!-- A notice holds no value: it is never stored, never required, and
+		     never sends an onChange. One that round-tripped into the document
+		     would fail validation on the next save. -->
+		<p class="rounded-md border border-border bg-muted/40 px-2 py-1.5 text-[0.6875rem] leading-4 text-muted-foreground">
+			{property.description || property.label}
+		</p>
+	{:else if property.kind === 'dateTime'}
+		<input id={`property-${property.key}`} type="datetime-local" value={stringValue} class="h-7 rounded-md border border-input bg-background px-2 text-xs" oninput={(event) => onChange(event.currentTarget.value)} />
+	{:else if property.kind === 'json'}
+		<textarea id={`property-${property.key}`} value={stringValue} spellcheck="false" rows={typeOptions.rows || 4} class="rounded-md border border-input bg-background px-2 py-1.5 font-mono text-[0.6875rem]" oninput={(event) => onChange(event.currentTarget.value)}></textarea>
+	{:else if property.kind === 'multiOptions'}
+		<div class="grid gap-1 rounded-md border border-input p-1.5">
+			{#each property.options ?? [] as option (option.value)}
+				<label class="flex items-center gap-2 text-[0.6875rem]">
+					<input type="checkbox" class="size-3.5" checked={selected.includes(option.value)} onchange={(event) => toggleOption(option.value, event.currentTarget.checked)} />
+					<span>{option.label}</span>
+				</label>
+			{/each}
+		</div>
+	{:else if property.kind === 'collection' || property.kind === 'fixedCollection'}
+		<!-- Nested groups are rendered by the panel that owns them; this field
+		     shows what is configured without pretending to edit a shape it does
+		     not yet have an editor for. -->
+		<div class="grid gap-1 rounded-md border border-dashed border-input p-1.5 text-[0.6875rem] text-muted-foreground">
+			<span>{(property.fields ?? []).length || (property.groups ?? []).length} nested field(s)</span>
+			<textarea aria-label={`${property.label} value`} value={stringValue} spellcheck="false" rows={3} class="rounded border border-input bg-background px-1.5 py-1 font-mono text-[0.6875rem]" oninput={(event) => onChange(event.currentTarget.value)}></textarea>
+		</div>
+	{:else if property.kind === 'options'}
 		<select id={`property-${property.key}`} value={stringValue} class="h-7 rounded-md border border-input bg-background px-1.5 text-xs" onchange={(event) => onChange(event.currentTarget.value)}>
 			{#each property.options ?? [] as option (option.value)}
 				<option value={option.value}>{option.label}</option>
@@ -153,7 +207,22 @@
 				<input aria-label={`${property.label} value`} value={conditionValue('value')} class="h-7 rounded border border-input bg-background px-1.5 text-[0.6875rem]" oninput={(event) => updateCondition({ value: parseValue(event.currentTarget.value) })} />
 			{/if}
 		</div>
+	{:else if RENDERED.has(property.kind) && (typeOptions.rows ?? 0) > 1}
+		<!-- Multi-line is a different element, not an attribute: rows has no
+		     meaning on an input. -->
+		<textarea id={`property-${property.key}`} value={stringValue} rows={typeOptions.rows} class="rounded-md border border-input bg-background px-2 py-1.5 text-xs" oninput={(event) => onChange(event.currentTarget.value)}></textarea>
+	{:else if RENDERED.has(property.kind)}
+		<input id={`property-${property.key}`} value={stringValue} type={typeOptions.password ? 'password' : 'text'} class="h-7 rounded-md border border-input bg-background px-2 text-xs" oninput={(event) => onChange(event.currentTarget.value)} />
 	{:else}
-		<input id={`property-${property.key}`} value={stringValue} class="h-7 rounded-md border border-input bg-background px-2 text-xs" oninput={(event) => onChange(event.currentTarget.value)} />
+		<!-- A kind this build does not know. Degrading to a named read-only JSON
+		     view is what stops a newer pack's field rendering as nothing at all,
+		     which reads as "this node has no such setting" rather than "this
+		     editor is older than this node". -->
+		<div class="grid gap-1 rounded-md border border-dashed border-destructive/40 p-1.5">
+			<p class="text-[0.6875rem] leading-4 text-destructive">
+				This editor does not know the field type “{property.kind}”. Its value is shown as JSON and cannot be edited here.
+			</p>
+			<pre class="overflow-x-auto rounded bg-muted/40 px-1.5 py-1 font-mono text-[0.6875rem]">{stringValue}</pre>
+		</div>
 	{/if}
 </div>

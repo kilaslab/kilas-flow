@@ -71,7 +71,7 @@ func webhookTrigger() node.Definition {
 				Description: "Header carrying the sender's own identifier for a delivery, such as X-Webhook-Request-Id. When set, a repeated delivery with the same identifier is answered without running the workflow again. Leave empty to run every request.",
 			},
 			{
-				Key: "httpMethod", Label: "HTTP method", Kind: node.PropertySelect, Required: true, Default: "POST",
+				Key: "httpMethod", Label: "HTTP method", Kind: node.PropertyOptions, Required: true, Default: "POST",
 				Options: []node.PropertyOption{
 					{Label: "GET", Value: http.MethodGet}, {Label: "POST", Value: http.MethodPost},
 					{Label: "PUT", Value: http.MethodPut}, {Label: "PATCH", Value: http.MethodPatch},
@@ -79,7 +79,7 @@ func webhookTrigger() node.Definition {
 				},
 			},
 			{
-				Key: "authentication", Label: "Authentication", Kind: node.PropertySelect, Required: true, Default: WebhookAuthNone,
+				Key: "authentication", Label: "Authentication", Kind: node.PropertyOptions, Required: true, Default: WebhookAuthNone,
 				Options: []node.PropertyOption{
 					{Label: "None", Value: WebhookAuthNone},
 					{Label: "Basic auth", Value: WebhookAuthBasic},
@@ -87,7 +87,7 @@ func webhookTrigger() node.Definition {
 				},
 			},
 			{
-				Key: "responseMode", Label: "Respond", Kind: node.PropertySelect, Required: true, Default: ResponseModeImmediate,
+				Key: "responseMode", Label: "Respond", Kind: node.PropertyOptions, Required: true, Default: ResponseModeImmediate,
 				Options: []node.PropertyOption{
 					{Label: "Immediately", Value: ResponseModeImmediate},
 					{Label: "When the last node finishes", Value: ResponseModeLastNode},
