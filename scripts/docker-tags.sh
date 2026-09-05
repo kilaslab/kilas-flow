@@ -20,16 +20,24 @@
 # would hand an untested build to everyone who asked for the stable series, which
 # is the whole reason those two tags are separated from the exact one.
 #
-# Usage: scripts/docker-tags.sh <image> <version>
+# The image and version arrive in the environment, not as arguments, and that is
+# deliberate. A git tag may legally contain a single quote, so interpolating one
+# into a Make recipe would let a tag close the quoting and run a command inside
+# the release pipeline. Make writes a target-specific export straight into the
+# child's environment, where no shell parses it. Arguments are still accepted so
+# a human can run this by hand to see what a version would publish.
+#
+# Usage: KILASFLOW_IMAGE=… KILASFLOW_VERSION=… scripts/docker-tags.sh
+#    or: scripts/docker-tags.sh <image> <version>
 set -eu
 
 usage() {
-	echo "usage: docker-tags.sh <image> <version>" >&2
+	echo "usage: docker-tags.sh <image> <version>, or set KILASFLOW_IMAGE and KILASFLOW_VERSION" >&2
 	exit 2
 }
 
-image=${1:-}
-version=${2:-}
+image=${1:-${KILASFLOW_IMAGE:-}}
+version=${2:-${KILASFLOW_VERSION:-}}
 [ -n "$image" ] || usage
 [ -n "$version" ] || usage
 

