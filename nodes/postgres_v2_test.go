@@ -6,6 +6,7 @@ import (
 
 	"github.com/kilaslabs/kilas-flow/internal/node"
 	"github.com/kilaslabs/kilas-flow/internal/property"
+	"github.com/kilaslabs/kilas-flow/internal/sqlbuild"
 	"github.com/kilaslabs/kilas-flow/internal/workflow"
 	"github.com/kilaslabs/kilas-flow/nodes"
 )
@@ -203,7 +204,7 @@ func TestAnImportedNullConditionBuildsTheNullTestItMeans(t *testing.T) {
 		"a row that must not be null": {operator: "exists", wantSQL: "IS NOT NULL", wrongSQL: "IS NULL"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			statement, err := nodes.BuildPostgresStatementForTest(map[string]any{
+			statement, err := nodes.BuildSQLStatementForTest(sqlbuild.Postgres, map[string]any{
 				"operation": "select",
 				"table":     property.WriteLocator(property.Locator{Mode: "name", Value: "customers"}),
 				"where": []any{map[string]any{

@@ -236,8 +236,11 @@ var mappings = []mapping{
 		exportTypeVersion: 2.4, toKilas: postgresToKilas, toN8N: postgresToN8N,
 	},
 	{
-		n8nType: "n8n-nodes-base.mySql", kilasType: "kilasflow.mysql", kilasVersion: workflow.V(1),
-		exportTypeVersion: 2.4, toKilas: sqlToKilas, toN8N: sqlToN8N,
+		// Version 2, for the same reason PostgreSQL is: every MySQL node n8n
+		// exports carries a typeVersion of 2 or higher and would otherwise land
+		// on v1 with v2's parameters.
+		n8nType: "n8n-nodes-base.mySql", kilasType: "kilasflow.mysql", kilasVersion: workflow.V(2),
+		exportTypeVersion: 2.4, toKilas: mysqlToKilas, toN8N: mysqlToN8N,
 	},
 	{
 		n8nType: "n8n-nodes-base.stickyNote", kilasType: StickyNoteNodeType, kilasVersion: workflow.V(1),

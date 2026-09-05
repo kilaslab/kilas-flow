@@ -121,6 +121,18 @@ type Result struct {
 	Rows []map[string]any
 	// RowsAffected is set for a statement that returns no rows.
 	RowsAffected int64
+	// LastInsertID is the key the database generated for this statement, or
+	// zero when it generated none.
+	//
+	// Read from the driver's own answer for *that statement*, never from
+	// SELECT LAST_INSERT_ID(): that function is connection-scoped and keeps its
+	// previous value when a statement generates no key, so a batch inserting
+	// into a table without an auto-increment column would report the previous
+	// item's id. Plausible, wrong, and silent.
+	//
+	// PostgreSQL's driver reports none — it has RETURNING instead — so this is
+	// zero there and the row itself carries the key.
+	LastInsertID int64
 	// Truncated reports that MaxRows stopped the read.
 	Truncated bool
 }
@@ -408,7 +420,7 @@ func (connection *Connection) Execute(ctx context.Context, statement string, par
 		// statement still ran.
 		affected = 0
 	}
-	return Result{RowsAffected: affected, Rows: []map[string]any{}}, nil
+	return Result{RowsAffected: affected, LastInsertID: lastInsertID(outcome), Rows: []map[string]any{}}, nil
 }
 
 // ExecuteBatch runs one statement once per bound parameter set, atomically.
@@ -490,7 +502,9 @@ func (connection *Connection) ExecuteBatch(ctx context.Context, statements []Sta
 			return nil, fmt.Errorf("item %d failed and the batch was rolled back: %w", index+1, err)
 		}
 		affected, _ := outcome.RowsAffected()
-		results = append(results, Result{RowsAffected: affected, Rows: []map[string]any{}})
+		results = append(results, Result{
+			RowsAffected: affected, LastInsertID: lastInsertID(outcome), Rows: []map[string]any{},
+		})
 	}
 
 	closePrepared()
@@ -547,7 +561,9 @@ func (connection *Connection) Transaction(ctx context.Context, statements []Stat
 			return nil, fmt.Errorf("statement failed and the transaction was rolled back: %w", err)
 		}
 		affected, _ := outcome.RowsAffected()
-		results = append(results, Result{RowsAffected: affected, Rows: []map[string]any{}})
+		results = append(results, Result{
+			RowsAffected: affected, LastInsertID: lastInsertID(outcome), Rows: []map[string]any{},
+		})
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("commit transaction: %w", err)
@@ -592,6 +608,22 @@ func returningStatement(ctx context.Context, tx *sql.Tx, statement Statement, ma
 	}
 	result.RowsAffected = int64(len(result.Rows))
 	return result, nil
+}
+
+// lastInsertID reads a generated key, tolerating a driver that has none.
+//
+// pgx's stdlib driver returns "not supported by this driver" rather than a
+// value, and that is not a failure of the statement — so the error is dropped
+// and zero stands for "the driver reported none".
+func lastInsertID(outcome sql.Result) int64 {
+	if outcome == nil {
+		return 0
+	}
+	id, err := outcome.LastInsertId()
+	if err != nil {
+		return 0
+	}
+	return id
 }
 
 // normalize converts driver values into JSON-safe item data.

@@ -29,6 +29,7 @@ func RegisterAll(registry *node.Registry) error {
 		// authored against query/execute/transaction keeps running unchanged.
 		postgresV2Node(),
 		mysqlNode(),
+		mysqlV2Node(),
 		sqliteNode(),
 		chatModelNode(),
 		memoryNode(),

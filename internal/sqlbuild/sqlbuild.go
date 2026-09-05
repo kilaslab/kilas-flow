@@ -22,52 +22,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/jackc/pgx/v5"
-
 	"github.com/kilaslabs/kilas-flow/internal/sqlnode"
 )
-
-// MaxIdentifierBytes is PostgreSQL's own limit.
-//
-// The server truncates a longer name silently, so two columns whose first
-// sixty-three bytes match would collide into one — a statement that runs and
-// writes the wrong column. Refused here rather than discovered there.
-const MaxIdentifierBytes = 63
-
-// Identifier quotes one or more identifier parts into a qualified name.
-//
-// It wraps pgx's Sanitize rather than calling it directly. Sanitize *strips* a
-// NUL byte instead of refusing one, which turns a name the caller wrote into a
-// different name it never wrote, and it says nothing about the length limit.
-// Both are refusals here.
-func Identifier(parts ...string) (string, error) {
-	if len(parts) == 0 {
-		return "", fmt.Errorf("an identifier needs at least one part")
-	}
-	quoted := make(pgx.Identifier, 0, len(parts))
-	for _, part := range parts {
-		if err := checkIdentifier(part); err != nil {
-			return "", err
-		}
-		quoted = append(quoted, part)
-	}
-	return quoted.Sanitize(), nil
-}
-
-func checkIdentifier(part string) error {
-	if strings.TrimSpace(part) == "" {
-		return fmt.Errorf("an identifier part cannot be empty")
-	}
-	if strings.ContainsRune(part, 0) {
-		// pgx strips it, which would silently rename the thing being addressed.
-		return fmt.Errorf("an identifier cannot contain a NUL byte")
-	}
-	if len(part) > MaxIdentifierBytes {
-		return fmt.Errorf("the identifier %q is %d bytes, and PostgreSQL truncates anything over %d — "+
-			"two names that long can silently become one", part, len(part), MaxIdentifierBytes)
-	}
-	return nil
-}
 
 // Target is the table an operation acts on.
 type Target struct {
@@ -75,15 +31,19 @@ type Target struct {
 	Table  string
 }
 
-// Qualified renders the target as a quoted, qualified name.
-func (target Target) Qualified() (string, error) {
+// Qualified renders the target as a quoted name, in this dialect's shape.
+//
+// MySQL never qualifies: `a`.`b` there names *database* a's table b, so a
+// qualified target would silently address the wrong database on every statement
+// the node builds.
+func (target Target) Qualified(dialect Dialect) (string, error) {
 	if strings.TrimSpace(target.Table) == "" {
 		return "", fmt.Errorf("an operation needs a table")
 	}
-	if strings.TrimSpace(target.Schema) == "" {
-		return Identifier(target.Table)
+	if !dialect.qualifies || strings.TrimSpace(target.Schema) == "" {
+		return dialect.Identifier(target.Table)
 	}
-	return Identifier(target.Schema, target.Table)
+	return dialect.Identifier(target.Schema, target.Table)
 }
 
 // Comparison is one WHERE clause term.
@@ -103,11 +63,6 @@ func KnownOperators() []string {
 	return []string{"equals", "notEquals", "gt", "gte", "lt", "lte", "like", "ilike", "isNull", "isNotNull"}
 }
 
-var comparisonSQL = map[string]string{
-	"equals": "=", "notEquals": "<>", "gt": ">", "gte": ">=", "lt": "<", "lte": "<=",
-	"like": "LIKE", "ilike": "ILIKE",
-}
-
 // Order is one ORDER BY term.
 type Order struct {
 	Column string
@@ -120,14 +75,14 @@ type Order struct {
 //
 // Combine is "AND" or "OR", defaulting to AND: a WHERE with several terms and
 // no stated combinator almost always means all of them.
-func Select(target Target, columns []string, where []Comparison, combine string, order []Order, limit int) (sqlnode.Statement, error) {
-	name, err := target.Qualified()
+func Select(dialect Dialect, target Target, columns []string, where []Comparison, combine string, order []Order, limit int) (sqlnode.Statement, error) {
+	name, err := target.Qualified(dialect)
 	if err != nil {
 		return sqlnode.Statement{}, err
 	}
 	projection := "*"
 	if len(columns) > 0 {
-		quoted, err := quoteAll(columns)
+		quoted, err := quoteAll(dialect, columns)
 		if err != nil {
 			return sqlnode.Statement{}, err
 		}
@@ -135,7 +90,7 @@ func Select(target Target, columns []string, where []Comparison, combine string,
 	}
 
 	statement := "SELECT " + projection + " FROM " + name
-	clause, values, err := whereClause(where, combine, 1)
+	clause, values, err := whereClause(dialect, where, combine, 1)
 	if err != nil {
 		return sqlnode.Statement{}, err
 	}
@@ -144,7 +99,7 @@ func Select(target Target, columns []string, where []Comparison, combine string,
 	if len(order) > 0 {
 		terms := make([]string, 0, len(order))
 		for _, term := range order {
-			column, err := Identifier(term.Column)
+			column, err := dialect.Identifier(term.Column)
 			if err != nil {
 				return sqlnode.Statement{}, err
 			}
@@ -169,8 +124,8 @@ func Select(target Target, columns []string, where []Comparison, combine string,
 //
 // It returns rows, because the generated key is the one thing the caller cannot
 // know and usually needs.
-func Insert(target Target, values map[string]any) (sqlnode.Statement, error) {
-	name, err := target.Qualified()
+func Insert(dialect Dialect, target Target, values map[string]any) (sqlnode.Statement, error) {
+	name, err := target.Qualified(dialect)
 	if err != nil {
 		return sqlnode.Statement{}, err
 	}
@@ -178,45 +133,45 @@ func Insert(target Target, values map[string]any) (sqlnode.Statement, error) {
 	if len(columns) == 0 {
 		return sqlnode.Statement{}, fmt.Errorf("an insert needs at least one column")
 	}
-	quoted, err := quoteAll(columns)
+	quoted, err := quoteAll(dialect, columns)
 	if err != nil {
 		return sqlnode.Statement{}, err
 	}
 	placeholders := make([]string, 0, len(columns))
 	bound := make([]any, 0, len(columns))
 	for index, column := range columns {
-		placeholders = append(placeholders, "$"+strconv.Itoa(index+1))
+		placeholders = append(placeholders, dialect.placeholder(index+1))
 		bound = append(bound, values[column])
 	}
 	statement := "INSERT INTO " + name + " (" + strings.Join(quoted, ", ") +
-		") VALUES (" + strings.Join(placeholders, ", ") + ") RETURNING *"
-	return sqlnode.Statement{SQL: statement, Parameters: bound, Returning: true}, nil
+		") VALUES (" + strings.Join(placeholders, ", ") + ")" + dialect.returningAll
+	return sqlnode.Statement{SQL: statement, Parameters: bound, Returning: dialect.Returns()}, nil
 }
 
 // Update builds a write to existing rows.
-func Update(target Target, values map[string]any, matching []string) (sqlnode.Statement, error) {
-	name, err := target.Qualified()
+func Update(dialect Dialect, target Target, values map[string]any, matching []string) (sqlnode.Statement, error) {
+	name, err := target.Qualified(dialect)
 	if err != nil {
 		return sqlnode.Statement{}, err
 	}
 	if len(matching) == 0 {
 		return sqlnode.Statement{}, fmt.Errorf("an update needs at least one column to match on")
 	}
-	assignments, bound, err := assignmentList(values, matching, 1)
+	assignments, bound, err := assignmentList(dialect, values, matching, 1)
 	if err != nil {
 		return sqlnode.Statement{}, err
 	}
-	where, whereValues, err := matchClause(values, matching, len(bound)+1)
+	where, whereValues, err := matchClause(dialect, values, matching, len(bound)+1)
 	if err != nil {
 		return sqlnode.Statement{}, err
 	}
-	statement := "UPDATE " + name + " SET " + strings.Join(assignments, ", ") + where + " RETURNING *"
-	return sqlnode.Statement{SQL: statement, Parameters: append(bound, whereValues...), Returning: true}, nil
+	statement := "UPDATE " + name + " SET " + strings.Join(assignments, ", ") + where + dialect.returningAll
+	return sqlnode.Statement{SQL: statement, Parameters: append(bound, whereValues...), Returning: dialect.Returns()}, nil
 }
 
 // Upsert builds an insert that updates on conflict.
-func Upsert(target Target, values map[string]any, matching []string) (sqlnode.Statement, error) {
-	name, err := target.Qualified()
+func Upsert(dialect Dialect, target Target, values map[string]any, matching []string) (sqlnode.Statement, error) {
+	name, err := target.Qualified(dialect)
 	if err != nil {
 		return sqlnode.Statement{}, err
 	}
@@ -227,18 +182,18 @@ func Upsert(target Target, values map[string]any, matching []string) (sqlnode.St
 	if len(columns) == 0 {
 		return sqlnode.Statement{}, fmt.Errorf("an upsert needs at least one column")
 	}
-	quoted, err := quoteAll(columns)
+	quoted, err := quoteAll(dialect, columns)
 	if err != nil {
 		return sqlnode.Statement{}, err
 	}
-	conflict, err := quoteAll(matching)
+	conflict, err := quoteAll(dialect, matching)
 	if err != nil {
 		return sqlnode.Statement{}, err
 	}
 	placeholders := make([]string, 0, len(columns))
 	bound := make([]any, 0, len(columns))
 	for index, column := range columns {
-		placeholders = append(placeholders, "$"+strconv.Itoa(index+1))
+		placeholders = append(placeholders, dialect.placeholder(index+1))
 		bound = append(bound, values[column])
 	}
 	// EXCLUDED is PostgreSQL's own name for the row that would have been
@@ -248,20 +203,12 @@ func Upsert(target Target, values map[string]any, matching []string) (sqlnode.St
 		if contains(matching, column) {
 			continue
 		}
-		updates = append(updates, quoted[index]+" = EXCLUDED."+quoted[index])
+		updates = append(updates, dialect.excluded(quoted[index]))
 	}
 	statement := "INSERT INTO " + name + " (" + strings.Join(quoted, ", ") +
-		") VALUES (" + strings.Join(placeholders, ", ") +
-		") ON CONFLICT (" + strings.Join(conflict, ", ") + ")"
-	if len(updates) == 0 {
-		// Every column is a matching column, so there is nothing to update.
-		// DO NOTHING is the honest statement; DO UPDATE SET with an empty list
-		// is a syntax error.
-		statement += " DO NOTHING RETURNING *"
-	} else {
-		statement += " DO UPDATE SET " + strings.Join(updates, ", ") + " RETURNING *"
-	}
-	return sqlnode.Statement{SQL: statement, Parameters: bound, Returning: true}, nil
+		") VALUES (" + strings.Join(placeholders, ", ") + ")" +
+		dialect.upsertTail(quoted, conflict, updates) + dialect.returningAll
+	return sqlnode.Statement{SQL: statement, Parameters: bound, Returning: dialect.Returns()}, nil
 }
 
 // Delete modes.
@@ -279,8 +226,8 @@ const (
 // The three modes are separate values rather than one with an optional WHERE,
 // because "empty this table" and "remove some rows from it" are different
 // intentions and a missing WHERE must never quietly become the first.
-func Delete(target Target, mode string, where []Comparison, combine string) (sqlnode.Statement, error) {
-	name, err := target.Qualified()
+func Delete(dialect Dialect, target Target, mode string, where []Comparison, combine string) (sqlnode.Statement, error) {
+	name, err := target.Qualified(dialect)
 	if err != nil {
 		return sqlnode.Statement{}, err
 	}
@@ -297,7 +244,7 @@ func Delete(target Target, mode string, where []Comparison, combine string) (sql
 			return sqlnode.Statement{}, fmt.Errorf(
 				"deleting rows needs at least one condition; use the truncate mode to empty the whole table")
 		}
-		clause, values, err := whereClause(where, combine, 1)
+		clause, values, err := whereClause(dialect, where, combine, 1)
 		if err != nil {
 			return sqlnode.Statement{}, err
 		}
@@ -308,7 +255,7 @@ func Delete(target Target, mode string, where []Comparison, combine string) (sql
 }
 
 // whereClause renders a WHERE, starting placeholders at `from`.
-func whereClause(where []Comparison, combine string, from int) (string, []any, error) {
+func whereClause(dialect Dialect, where []Comparison, combine string, from int) (string, []any, error) {
 	if len(where) == 0 {
 		return "", nil, nil
 	}
@@ -320,7 +267,7 @@ func whereClause(where []Comparison, combine string, from int) (string, []any, e
 	values := make([]any, 0, len(where))
 	position := from
 	for _, comparison := range where {
-		column, err := Identifier(comparison.Column)
+		column, err := dialect.Identifier(comparison.Column)
 		if err != nil {
 			return "", nil, err
 		}
@@ -332,11 +279,11 @@ func whereClause(where []Comparison, combine string, from int) (string, []any, e
 			terms = append(terms, column+" IS NOT NULL")
 			continue
 		}
-		symbol, known := comparisonSQL[comparison.Operator]
+		term, known := dialect.comparison(column, comparison.Operator, dialect.placeholder(position))
 		if !known {
-			return "", nil, fmt.Errorf("the comparison %q is not supported", comparison.Operator)
+			return "", nil, fmt.Errorf("the comparison %q has no %s equivalent", comparison.Operator, dialect.name)
 		}
-		terms = append(terms, column+" "+symbol+" $"+strconv.Itoa(position))
+		terms = append(terms, term)
 		values = append(values, comparison.Value)
 		position++
 	}
@@ -344,7 +291,7 @@ func whereClause(where []Comparison, combine string, from int) (string, []any, e
 }
 
 // assignmentList renders a SET list, skipping the matching columns.
-func assignmentList(values map[string]any, matching []string, from int) ([]string, []any, error) {
+func assignmentList(dialect Dialect, values map[string]any, matching []string, from int) ([]string, []any, error) {
 	assignments := make([]string, 0, len(values))
 	bound := make([]any, 0, len(values))
 	position := from
@@ -355,11 +302,11 @@ func assignmentList(values map[string]any, matching []string, from int) ([]strin
 			// worst.
 			continue
 		}
-		quoted, err := Identifier(column)
+		quoted, err := dialect.Identifier(column)
 		if err != nil {
 			return nil, nil, err
 		}
-		assignments = append(assignments, quoted+" = $"+strconv.Itoa(position))
+		assignments = append(assignments, quoted+" = "+dialect.placeholder(position))
 		bound = append(bound, values[column])
 		position++
 	}
@@ -370,7 +317,7 @@ func assignmentList(values map[string]any, matching []string, from int) ([]strin
 }
 
 // matchClause renders the WHERE that identifies the rows to change.
-func matchClause(values map[string]any, matching []string, from int) (string, []any, error) {
+func matchClause(dialect Dialect, values map[string]any, matching []string, from int) (string, []any, error) {
 	terms := make([]Comparison, 0, len(matching))
 	for _, column := range matching {
 		value, present := values[column]
@@ -379,13 +326,13 @@ func matchClause(values map[string]any, matching []string, from int) (string, []
 		}
 		terms = append(terms, Comparison{Column: column, Operator: "equals", Value: value})
 	}
-	return whereClause(terms, "and", from)
+	return whereClause(dialect, terms, "and", from)
 }
 
-func quoteAll(names []string) ([]string, error) {
+func quoteAll(dialect Dialect, names []string) ([]string, error) {
 	quoted := make([]string, 0, len(names))
 	for _, name := range names {
-		part, err := Identifier(name)
+		part, err := dialect.Identifier(name)
 		if err != nil {
 			return nil, err
 		}

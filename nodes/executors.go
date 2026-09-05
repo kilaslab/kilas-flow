@@ -40,6 +40,7 @@ func RegisterExecutors(registry *engine.Registry, httpPolicy safehttp.Policy, da
 		PostgresExecutorID:               NewDatabaseExecutor(sqlnode.DriverPostgres, "postgres", databaseGuard, settings.databaseCeiling),
 		PostgresV2ExecutorID:             NewPostgresV2Executor(databaseGuard, settings.databaseCeiling),
 		MySQLExecutorID:                  NewDatabaseExecutor(sqlnode.DriverMySQL, "mysql", databaseGuard, settings.databaseCeiling),
+		MySQLV2ExecutorID:                NewMySQLV2Executor(databaseGuard, settings.databaseCeiling),
 		SQLiteExecutorID:                 NewDatabaseExecutor(sqlnode.DriverSQLite, "sqlite", databaseGuard, settings.databaseCeiling),
 		ChatModelExecutorID:              engine.ExecutorFunc(executeChatModel),
 		MemoryExecutorID:                 engine.ExecutorFunc(executeMemory),

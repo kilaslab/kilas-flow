@@ -212,15 +212,36 @@ func validatePostgresV2Configuration(n workflow.Node) error {
 	return nil
 }
 
-// PostgresV2Executor runs the operation set.
-type PostgresV2Executor struct {
-	guard   sqlnode.Guard
-	ceiling sqlnode.Ceiling
+// SQLOperationExecutor runs the operation set against one dialect.
+//
+// One executor for both databases rather than two: the operations, the item
+// loop, the credential check and the output shape are identical, and only the
+// SQL differs — which is exactly what the dialect carries. Two copies would
+// have the second one drift on the parts that are not about SQL at all.
+type SQLOperationExecutor struct {
+	driver         sqlnode.Driver
+	credentialType string
+	dialect        sqlbuild.Dialect
+	guard          sqlnode.Guard
+	ceiling        sqlnode.Ceiling
 }
 
-// NewPostgresV2Executor builds the operation set's executor.
-func NewPostgresV2Executor(guard sqlnode.Guard, ceiling sqlnode.Ceiling) *PostgresV2Executor {
-	return &PostgresV2Executor{guard: guard, ceiling: ceiling}
+// NewSQLOperationExecutor builds the operation set's executor for one dialect.
+func NewSQLOperationExecutor(driver sqlnode.Driver, credentialType string, dialect sqlbuild.Dialect, guard sqlnode.Guard, ceiling sqlnode.Ceiling) *SQLOperationExecutor {
+	return &SQLOperationExecutor{
+		driver: driver, credentialType: credentialType, dialect: dialect,
+		guard: guard, ceiling: ceiling,
+	}
+}
+
+// NewPostgresV2Executor builds the PostgreSQL operation set's executor.
+func NewPostgresV2Executor(guard sqlnode.Guard, ceiling sqlnode.Ceiling) *SQLOperationExecutor {
+	return NewSQLOperationExecutor(sqlnode.DriverPostgres, "postgres", sqlbuild.Postgres, guard, ceiling)
+}
+
+// NewMySQLV2Executor builds the MySQL operation set's executor.
+func NewMySQLV2Executor(guard sqlnode.Guard, ceiling sqlnode.Ceiling) *SQLOperationExecutor {
+	return NewSQLOperationExecutor(sqlnode.DriverMySQL, "mysql", sqlbuild.MySQL, guard, ceiling)
 }
 
 // Execute builds each item's statement and runs them as one batch.
@@ -229,10 +250,10 @@ func NewPostgresV2Executor(guard sqlnode.Guard, ceiling sqlnode.Ceiling) *Postgr
 // one statement per item on its own connection is the serial round trip the
 // batching work already unwound, and an operation set makes it N times worse
 // because now the statement itself is being constructed too.
-func (executor *PostgresV2Executor) Execute(ctx context.Context, ir workflow.IRNode, input workflow.NodeInput, request engine.Request) (workflow.NodeOutput, error) {
-	credentialID := strings.TrimSpace(ir.Credentials["postgres"])
+func (executor *SQLOperationExecutor) Execute(ctx context.Context, ir workflow.IRNode, input workflow.NodeInput, request engine.Request) (workflow.NodeOutput, error) {
+	credentialID := strings.TrimSpace(ir.Credentials[executor.credentialType])
 	if credentialID == "" {
-		return nil, fmt.Errorf("node %q: a postgres credential is required", ir.Name)
+		return nil, fmt.Errorf("node %q: a %s credential is required", ir.Name, executor.credentialType)
 	}
 	if request.Credentials == nil {
 		return nil, fmt.Errorf("node %q: credentials are not available in this runtime", ir.Name)
@@ -241,8 +262,9 @@ func (executor *PostgresV2Executor) Execute(ctx context.Context, ir workflow.IRN
 	if err != nil {
 		return nil, fmt.Errorf("node %q: %w", ir.Name, err)
 	}
-	if resolved.Type != "postgres" {
-		return nil, fmt.Errorf("node %q: credential %q is a %s credential, not postgres", ir.Name, resolved.Name, resolved.Type)
+	if resolved.Type != executor.credentialType {
+		return nil, fmt.Errorf("node %q: credential %q is a %s credential, not %s",
+			ir.Name, resolved.Name, resolved.Type, executor.credentialType)
 	}
 
 	items := input["main"]
@@ -263,16 +285,16 @@ func (executor *PostgresV2Executor) Execute(ctx context.Context, ir workflow.IRN
 				MaxRows: int(numberValue(parameters["maxRows"])),
 			})
 		}
-		statement, err := buildPostgresStatement(parameters, item)
+		statement, err := buildSQLStatement(executor.dialect, parameters, item)
 		if err != nil {
 			return nil, fmt.Errorf("node %q: item %d: %w", ir.Name, index+1, err)
 		}
 		statements = append(statements, statement)
 	}
 
-	connection, err := sqlnode.Open(ctx, sqlnode.DriverPostgres, resolved.Fields, executor.guard)
+	connection, err := sqlnode.Open(ctx, executor.driver, resolved.Fields, executor.guard)
 	if err != nil {
-		return nil, fmt.Errorf("node %q: postgres connection failed: %w", ir.Name, sqlnode.Sanitize(err))
+		return nil, fmt.Errorf("node %q: %s connection failed: %w", ir.Name, executor.driver, sqlnode.Sanitize(err))
 	}
 	defer connection.Close()
 
@@ -285,25 +307,36 @@ func (executor *PostgresV2Executor) Execute(ctx context.Context, ir workflow.IRN
 		for _, row := range result.Rows {
 			out = append(out, workflow.Item{JSON: row})
 		}
-		if len(result.Rows) == 0 {
-			out = append(out, workflow.Item{JSON: map[string]any{"rowsAffected": float64(result.RowsAffected)}})
+		if len(result.Rows) > 0 {
+			continue
 		}
+		summary := map[string]any{"rowsAffected": float64(result.RowsAffected)}
+		// MySQL has no RETURNING, so an insert's generated key comes back on
+		// the driver's own OK packet for that statement rather than from the
+		// row. Reported only when the driver reported one: a real
+		// auto-increment is never zero, and SELECT LAST_INSERT_ID() would give
+		// the *previous* statement's id for a table without one — plausible,
+		// wrong, and silent.
+		if result.LastInsertID != 0 {
+			summary["insertId"] = float64(result.LastInsertID)
+		}
+		out = append(out, workflow.Item{JSON: summary})
 	}
 	return workflow.NodeOutput{appendClamped(out, clamped)}, nil
 }
 
-// BuildPostgresStatementForTest builds one statement from resolved parameters.
+// BuildSQLStatementForTest builds one statement from resolved parameters.
 //
 // Exported for tests only. What it exists for is the class of defect a round
 // trip cannot see: the importer and the exporter map the condition vocabulary
 // through inverse tables, so an inversion between them is symmetric and
 // invisible until something asserts the SQL that actually runs.
-func BuildPostgresStatementForTest(parameters map[string]any) (sqlnode.Statement, error) {
-	return buildPostgresStatement(parameters, workflow.Item{JSON: map[string]any{}})
+func BuildSQLStatementForTest(dialect sqlbuild.Dialect, parameters map[string]any) (sqlnode.Statement, error) {
+	return buildSQLStatement(dialect, parameters, workflow.Item{JSON: map[string]any{}})
 }
 
-// buildPostgresStatement turns one item's resolved parameters into SQL.
-func buildPostgresStatement(parameters map[string]any, item workflow.Item) (sqlnode.Statement, error) {
+// buildSQLStatement turns one item's resolved parameters into SQL.
+func buildSQLStatement(dialect sqlbuild.Dialect, parameters map[string]any, item workflow.Item) (sqlnode.Statement, error) {
 	operation := textValue(parameters["operation"], PostgresOperationExecuteQuery)
 	if operation == PostgresOperationExecuteQuery {
 		bound, err := boundParameters(parameters["queryParameters"])
@@ -337,7 +370,7 @@ func buildPostgresStatement(parameters map[string]any, item workflow.Item) (sqln
 		if err != nil {
 			return sqlnode.Statement{}, err
 		}
-		return sqlbuild.Select(target, nil, where, combine, nil, limit)
+		return sqlbuild.Select(dialect, target, nil, where, combine, nil, limit)
 
 	case PostgresOperationDeleteTable:
 		mode := textValue(parameters["deleteCommand"], sqlbuild.DeleteRows)
@@ -345,7 +378,7 @@ func buildPostgresStatement(parameters map[string]any, item workflow.Item) (sqln
 		if err != nil {
 			return sqlnode.Statement{}, err
 		}
-		return sqlbuild.Delete(target, mode, where, combine)
+		return sqlbuild.Delete(dialect, target, mode, where, combine)
 
 	case PostgresOperationInsert, PostgresOperationUpdate, PostgresOperationUpsert:
 		mapping, ok := property.ReadMapping(parameters["columns"])
@@ -363,11 +396,11 @@ func buildPostgresStatement(parameters map[string]any, item workflow.Item) (sqln
 		}
 		switch operation {
 		case PostgresOperationInsert:
-			return sqlbuild.Insert(target, values)
+			return sqlbuild.Insert(dialect, target, values)
 		case PostgresOperationUpdate:
-			return sqlbuild.Update(target, values, mapping.MatchingColumns)
+			return sqlbuild.Update(dialect, target, values, mapping.MatchingColumns)
 		default:
-			return sqlbuild.Upsert(target, values, mapping.MatchingColumns)
+			return sqlbuild.Upsert(dialect, target, values, mapping.MatchingColumns)
 		}
 
 	default:

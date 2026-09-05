@@ -2847,3 +2847,59 @@ func TestN8NsNullConditionsImportOntoTheRightSideOfTheVocabulary(t *testing.T) {
 		})
 	}
 }
+
+func TestEveryMySQLOperationImportsOntoItsOwnShapeWithoutASchema(t *testing.T) {
+	t.Parallel()
+
+	for _, operation := range []string{"deleteTable", "executeQuery", "insert", "upsert", "select", "update"} {
+		t.Run(operation, func(t *testing.T) {
+			fixture := `{
+			  "name": "MySQL ` + operation + `",
+			  "nodes": [
+			    {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}},
+			    {"id":"b","name":"MySQL","type":"n8n-nodes-base.mySql","typeVersion":2.4,"position":[220,0],
+			     "parameters":{"operation":"` + operation + `",
+			                   "query":"SELECT 1",
+			                   "table":{"__rl":true,"mode":"list","value":"customers"},
+			                   "where":{"values":[{"column":"tier","condition":"equal","value":"gold"}]}}}
+			  ],
+			  "connections": {"Manual": {"main": [[{"node":"MySQL","type":"main","index":0}]]}}
+			}`
+			result := importFixture(t, fixture)
+			mysql := nodeByName(result.Document, "MySQL")
+
+			// The operation used to be flattened to "query" with the SQL
+			// dropped entirely — an insert arrived as an empty query.
+			if mysql.Parameters["operation"] != operation {
+				t.Fatalf("operation = %#v, want %q", mysql.Parameters["operation"], operation)
+			}
+			// Never a schema. MySQL has none separate from a database, and
+			// PostgreSQL's default of "public" would address a database
+			// literally called public.
+			if _, present := mysql.Parameters["schema"]; present {
+				t.Errorf("parameters = %#v, want no schema on a MySQL node", mysql.Parameters)
+			}
+			if operation != "executeQuery" {
+				table, ok := mysql.Parameters["table"].(map[string]any)
+				if !ok || table["value"] != "customers" {
+					t.Errorf("table = %#v, want the locator carried", mysql.Parameters["table"])
+				}
+			}
+		})
+	}
+
+	// A node that names no operation gets n8n's MySQL default, which is insert
+	// where its PostgreSQL node's is executeQuery.
+	const bare = `{
+	  "name": "Bare",
+	  "nodes": [
+	    {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}},
+	    {"id":"b","name":"MySQL","type":"n8n-nodes-base.mySql","typeVersion":2.4,"position":[220,0],
+	     "parameters":{"table":{"__rl":true,"mode":"list","value":"customers"}}}
+	  ],
+	  "connections": {"Manual": {"main": [[{"node":"MySQL","type":"main","index":0}]]}}
+	}`
+	if got := nodeByName(importFixture(t, bare).Document, "MySQL").Parameters["operation"]; got != "insert" {
+		t.Errorf("default operation = %#v, want n8n's insert", got)
+	}
+}

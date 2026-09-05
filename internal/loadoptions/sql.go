@@ -55,6 +55,29 @@ func RegisterSQL(resolver *Resolver, guard sqlnode.Guard) error {
 	return resolver.RegisterSchema(SQLMappingColumnsLoader, sqlMappingColumns(guard))
 }
 
+// schemaFor decides which schema a loader is asking about.
+//
+// A MySQL node declares no schema field, because MySQL has none separate from
+// databases — so the credential's own database is the schema, and asking the
+// user to choose it again would be asking them to repeat the credential. A
+// PostgreSQL node does declare one, and until it is chosen there is nothing to
+// list.
+//
+// The error is a reason rather than a failure: "choose a schema first" is a
+// state the form is in, not a fault.
+func schemaFor(scope Scope) (string, error) {
+	if schema := strings.TrimSpace(scope.Dependencies[SQLSchemaDependency]); schema != "" {
+		return schema, nil
+	}
+	if scope.Credential != nil && scope.Credential.Record.Type == "mysql" {
+		if database := strings.TrimSpace(scope.Credential.Fields["database"]); database != "" {
+			return database, nil
+		}
+		return "", fmt.Errorf("this credential names no database, so there are no tables to list")
+	}
+	return "", fmt.Errorf("choose a schema first")
+}
+
 // openFor builds a connection from the credential the caller resolved.
 func openFor(ctx context.Context, scope Scope, guard sqlnode.Guard) (*sqlnode.Connection, error) {
 	if scope.Credential == nil {
@@ -95,9 +118,9 @@ func sqlSchemas(guard sqlnode.Guard) InternalLoader {
 
 func sqlTables(guard sqlnode.Guard) InternalLoader {
 	return func(ctx context.Context, scope Scope) (Result, error) {
-		schema := scope.Dependencies[SQLSchemaDependency]
-		if strings.TrimSpace(schema) == "" {
-			return Result{Options: []Option{}, Reason: "choose a schema first"}, nil
+		schema, err := schemaFor(scope)
+		if err != nil {
+			return Result{Options: []Option{}, Reason: err.Error()}, nil
 		}
 		connection, err := openFor(ctx, scope, guard)
 		if err != nil {
@@ -128,10 +151,13 @@ func sqlTables(guard sqlnode.Guard) InternalLoader {
 // row.
 func sqlColumns(guard sqlnode.Guard, matchingOnly bool) InternalLoader {
 	return func(ctx context.Context, scope Scope) (Result, error) {
-		schema := scope.Dependencies[SQLSchemaDependency]
+		schema, err := schemaFor(scope)
+		if err != nil {
+			return Result{Options: []Option{}, Reason: err.Error()}, nil
+		}
 		table := scope.Dependencies[SQLTableDependency]
-		if strings.TrimSpace(schema) == "" || strings.TrimSpace(table) == "" {
-			return Result{Options: []Option{}, Reason: "choose a schema and a table first"}, nil
+		if strings.TrimSpace(table) == "" {
+			return Result{Options: []Option{}, Reason: "choose a table first"}, nil
 		}
 		connection, err := openFor(ctx, scope, guard)
 		if err != nil {
@@ -162,10 +188,13 @@ func sqlColumns(guard sqlnode.Guard, matchingOnly bool) InternalLoader {
 // sqlMappingColumns is the schema behind a resource mapper.
 func sqlMappingColumns(guard sqlnode.Guard) SchemaLoader {
 	return func(ctx context.Context, scope Scope) (property.MapperSchema, error) {
-		schema := scope.Dependencies[SQLSchemaDependency]
+		schema, err := schemaFor(scope)
+		if err != nil {
+			return property.MapperSchema{Reason: err.Error()}, nil
+		}
 		table := scope.Dependencies[SQLTableDependency]
-		if strings.TrimSpace(schema) == "" || strings.TrimSpace(table) == "" {
-			return property.MapperSchema{Reason: "choose a schema and a table first"}, nil
+		if strings.TrimSpace(table) == "" {
+			return property.MapperSchema{Reason: "choose a table first"}, nil
 		}
 		connection, err := openFor(ctx, scope, guard)
 		if err != nil {

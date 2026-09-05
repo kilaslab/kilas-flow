@@ -1437,6 +1437,33 @@ func codeLanguageName(language string) string {
 // no statement at all, so an imported insert arrived as an empty query — a node
 // that activated, ran, and did nothing. The six values are n8n's own, and this
 // node's are the same six, so the operation carries across as itself.
+// mysqlToKilas maps n8n's MySQL node, which has the same six operations and no
+// schema.
+//
+// A thin wrapper rather than a copy: the two nodes differ in the schema field
+// and the default operation, and copying two hundred lines to express that is
+// how the second copy stops matching the first.
+func mysqlToKilas(node Node) (map[string]any, []Unsupported) {
+	parameters, issues := postgresToKilas(node)
+	// MySQL has no schema separate from a database, so "public" — which the
+	// PostgreSQL default supplies — would address a database literally called
+	// public if it were carried across.
+	delete(parameters, "schema")
+	if parameters["operation"] == "executeQuery" && node.Parameters["operation"] == nil {
+		// n8n's MySQL node defaults to insert where its PostgreSQL node
+		// defaults to executeQuery, so a node that names no operation gets the
+		// one n8n would have given it.
+		parameters["operation"] = "insert"
+	}
+	return parameters, issues
+}
+
+func mysqlToN8N(node workflow.Node) (map[string]any, []Lossy) {
+	parameters, lossy := postgresToN8N(node)
+	delete(parameters, "schema")
+	return parameters, lossy
+}
+
 func postgresToKilas(node Node) (map[string]any, []Unsupported) {
 	issues := make([]Unsupported, 0)
 	operation := defaultString(stringParameter(node.Parameters, "operation"), "executeQuery")
@@ -1563,35 +1590,6 @@ var postgresConditionOperators = map[string]string{
 	"IS NULL": "notExists", "IS NOT NULL": "exists",
 }
 
-func sqlToKilas(node Node) (map[string]any, []Unsupported) {
-	issues := make([]Unsupported, 0)
-	operation := stringParameter(node.Parameters, "operation")
-	if operation != "" && operation != "executeQuery" {
-		return map[string]any{"operation": "query"}, append(issues, Unsupported{
-			Reason: fmt.Sprintf("KilasFlow's database nodes run SQL directly; the n8n operation %q has no equivalent and the node was imported as an empty query", operation),
-		})
-	}
-
-	statement := node.Parameters["query"]
-	parameters := map[string]any{
-		"operation": "query",
-		"statement": fromN8NValue(statement),
-	}
-	if options, ok := node.Parameters["options"].(map[string]any); ok {
-		if values, ok := options["queryReplacement"]; ok {
-			// n8n passes replacements as a comma-joined string; KilasFlow binds
-			// a JSON array, so the shape is named rather than mangled.
-			issues = append(issues, Unsupported{
-				Reason: fmt.Sprintf("n8n query replacements (%v) were not imported; set the Parameters field to a JSON array to bind them", values),
-			})
-		}
-	}
-	issues = append(issues, Unsupported{
-		Reason: "database credentials are not imported; attach a KilasFlow credential before running this node",
-	})
-	return parameters, issues
-}
-
 // postgresToN8N writes the operation set back out.
 //
 // The values are the same on both sides, so this is a copy rather than a
@@ -1645,33 +1643,6 @@ func n8nConditionName(operator string) string {
 		}
 	}
 	return "equal"
-}
-
-func sqlToN8N(node workflow.Node) (map[string]any, []Lossy) {
-	lossy := make([]Lossy, 0)
-	operation := stringParameter(node.Parameters, "operation")
-	statement := node.Parameters["statement"]
-	switch operation {
-	case "", "query":
-	case "execute":
-		statement = node.Parameters["executeStatement"]
-	default:
-		lossy = append(lossy, Lossy{
-			Field:  "operation",
-			Reason: fmt.Sprintf("the KilasFlow operation %q has no n8n equivalent; the export uses executeQuery", operation),
-		})
-	}
-	if _, bound := node.Parameters["parameters"]; bound {
-		lossy = append(lossy, Lossy{
-			Field:  "parameters",
-			Reason: "bound query parameters were not exported; n8n expresses them as query replacements",
-		})
-	}
-	return map[string]any{
-		"operation": "executeQuery",
-		"query":     toN8NValue(statement),
-		"options":   map[string]any{},
-	}, lossy
 }
 
 // --- helpers ----------------------------------------------------------------
