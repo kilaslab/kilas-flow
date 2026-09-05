@@ -41,6 +41,35 @@ type Context struct {
 	// AI agent fills. Anywhere else it is a clear error rather than a value,
 	// or an author will use it in an HTTP URL and get something meaningless.
 	AllowFromAI bool
+
+	// --- Declarative routing ------------------------------------------------
+	//
+	// Two roots that exist for one caller: the interpreter in
+	// `internal/routing`, which resolves a node pack's request templates. They
+	// are deliberately absent from Roots(), so the editor never offers them and
+	// no user-authored expression is written against them.
+	//
+	// The alternative was a second, private evaluator for routing templates.
+	// That would have been a second attack surface over tenant-authored data
+	// and would have drifted from this one within a release; two extra roots on
+	// the single evaluator keep the property that a parameter can never become
+	// code.
+
+	// Parameters is the node's own already-resolved parameters, `$parameter`.
+	Parameters map[string]any
+	// Value is the property being sent, `$value`. It is what a `routing.send`
+	// template rewrites — `{{ $value.trim() }}` — and is meaningless outside
+	// one, which is why it is gated with the other two.
+	Value any
+	// Credentials is the **non-secret** half of the node's credential,
+	// `$credentials` — a base URL, never a token. The filtering happens at the
+	// caller, from the credential type's own field descriptors, so a type this
+	// evaluator has never heard of exposes nothing rather than everything.
+	Credentials map[string]string
+	// AllowRouting permits the two roots above. Without it they are an error
+	// naming where they are valid, rather than resolving to an empty map and
+	// letting a template silently produce a URL with a hole in it.
+	AllowRouting bool
 }
 
 const (
@@ -517,6 +546,27 @@ func rootValue(root string, ctx Context) (any, error) {
 		return map[string]any{"id": ctx.Workflow.ID, "name": ctx.Workflow.Name, "active": ctx.Workflow.Active}, nil
 	case "$itemIndex":
 		return float64(ctx.ItemIndex), nil
+	case "$parameter":
+		if !ctx.AllowRouting {
+			return nil, fmt.Errorf("expression root %q is only available in a node pack's routing templates", root)
+		}
+		return anyMap(ctx.Parameters), nil
+	case "$value":
+		if !ctx.AllowRouting {
+			return nil, fmt.Errorf("expression root %q is only available in a node pack's routing templates", root)
+		}
+		return ctx.Value, nil
+	case "$credentials":
+		if !ctx.AllowRouting {
+			return nil, fmt.Errorf("expression root %q is only available in a node pack's routing templates", root)
+		}
+		// Only what the caller put here, which is only what the credential type
+		// declared non-secret.
+		fields := make(map[string]any, len(ctx.Credentials))
+		for key, value := range ctx.Credentials {
+			fields[key] = value
+		}
+		return fields, nil
 	case "$now":
 		return dateValue{at: ctx.clock()}, nil
 	case "$today":

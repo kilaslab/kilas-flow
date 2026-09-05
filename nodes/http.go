@@ -13,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kilaslabs/kilas-flow/internal/credentials"
 	"github.com/kilaslabs/kilas-flow/internal/engine"
 	"github.com/kilaslabs/kilas-flow/internal/expression"
 	"github.com/kilaslabs/kilas-flow/internal/node"
@@ -210,28 +209,10 @@ func (executor *HTTPExecutor) Execute(ctx context.Context, ir workflow.IRNode, i
 	return workflow.NodeOutput{results}, nil
 }
 
-// expressionContext assembles the approved roots for one item. It is shared by
-// every executor that resolves parameters, so a `{{ }}` in an HTTP URL and one
-// in a webhook response body see exactly the same data.
+// expressionContext is the runtime's shared context builder, kept as a local
+// name because every executor in this package calls it.
 func expressionContext(item workflow.Item, input workflow.NodeInput, request engine.Request, index int) expression.Context {
-	inputItems := make(map[string][]map[string]any, len(input))
-	for port, portItems := range input {
-		converted := make([]map[string]any, len(portItems))
-		for position, portItem := range portItems {
-			converted[position] = portItem.JSON
-		}
-		inputItems[port] = converted
-	}
-	return expression.Context{
-		JSON:      item.JSON,
-		Input:     inputItems,
-		Nodes:     request.NodeOutputs,
-		NodeItems: request.NodeItems,
-		Workflow:  request.Workflow,
-		Env:       request.Env,
-		Execution: expression.ExecutionContext{ID: request.Execution.ID, Mode: request.Execution.Mode},
-		ItemIndex: index,
-	}
+	return request.ExpressionContext(item, input, index)
 }
 
 func (executor *HTTPExecutor) sendOne(ctx context.Context, ir workflow.IRNode, parameters map[string]any, request engine.Request) (workflow.Item, error) {
@@ -287,7 +268,7 @@ func (executor *HTTPExecutor) sendOne(ctx context.Context, ir workflow.IRNode, p
 			httpRequest.Header.Set(key, textValue(value, ""))
 		}
 	}
-	if err := executor.authenticate(requestCtx, ir, httpRequest, request); err != nil {
+	if err := request.Authenticate(requestCtx, ir, httpRequest); err != nil {
 		return workflow.Item{}, err
 	}
 
@@ -427,43 +408,6 @@ func plainFileName(candidate string) string {
 		return ""
 	}
 	return name
-}
-
-// authenticate resolves and applies the node's credential.
-//
-// Ownership, type, and domain scope are all checked before the secret touches
-// the request, so a workflow cannot point a credential at an arbitrary host.
-func (executor *HTTPExecutor) authenticate(ctx context.Context, ir workflow.IRNode, httpRequest *http.Request, request engine.Request) error {
-	credentialID := ""
-	credentialType := ""
-	for typeID, id := range ir.Credentials {
-		if strings.TrimSpace(id) == "" {
-			continue
-		}
-		credentialType, credentialID = typeID, id
-		break
-	}
-	if credentialID == "" {
-		return nil
-	}
-	if request.Credentials == nil {
-		return fmt.Errorf("node %q: credentials are not available in this runtime", ir.Name)
-	}
-	resolved, err := request.Credentials.ResolveCredential(ctx, credentialID)
-	if err != nil {
-		return fmt.Errorf("node %q: %w", ir.Name, err)
-	}
-	if credentialType != "" && resolved.Type != credentialType {
-		return fmt.Errorf("node %q: credential %q is a %s credential, not %s", ir.Name, resolved.Name, resolved.Type, credentialType)
-	}
-	scope := credentials.Record{AllowedDomains: resolved.AllowedDomains}
-	if !scope.AllowsHost(httpRequest.URL.Host) {
-		return fmt.Errorf("node %q: credential %q is not allowed for host %q", ir.Name, resolved.Name, httpRequest.URL.Hostname())
-	}
-	if err := credentials.Apply(httpRequest, resolved.Type, resolved.Fields); err != nil {
-		return fmt.Errorf("node %q: %w", ir.Name, err)
-	}
-	return nil
 }
 
 func requestBody(parameters map[string]any) (io.Reader, string, error) {

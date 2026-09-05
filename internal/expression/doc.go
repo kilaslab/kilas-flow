@@ -32,6 +32,18 @@
 //	$now, $today              the current instant and the start of today
 //	$fromAI('name')           a parameter an AI agent fills in
 //
+// # Routing roots
+//
+// Three more roots exist for one caller, the declarative interpreter in
+// `internal/routing`, and are refused everywhere else: `$parameter` reads the
+// node's own resolved parameters, `$value` is the property a `routing.send`
+// template is rewriting, and `$credentials` carries the **non-secret** fields of
+// the node's credential — a base URL, never a token. They are absent from
+// Roots(), so the editor never offers them and no user-authored expression is
+// written against them. They exist here rather than in a second evaluator
+// because a second evaluator over tenant-authored data is a second attack
+// surface that would drift from this one within a release.
+//
 // # Absent values
 //
 // A path that does not exist resolves to undefined rather than failing. An

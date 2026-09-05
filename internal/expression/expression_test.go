@@ -432,3 +432,61 @@ func TestRootsAndFunctionsAreServedNotDuplicated(t *testing.T) {
 		}
 	}
 }
+
+// The three routing roots exist for one caller and are refused everywhere else.
+// A user-authored expression must not be able to read a credential, even the
+// non-secret half of one, and must not be able to reach around the item
+// contract into the node's own configuration.
+func TestRoutingRootsAreRefusedOutsideARoutingTemplate(t *testing.T) {
+	t.Parallel()
+
+	ordinary := expression.Context{JSON: map[string]any{"a": float64(1)}}
+	for _, template := range []string{"{{ $parameter.chatId }}", "{{ $credentials.name }}", "{{ $value }}"} {
+		_, err := expression.Evaluate(template, ordinary)
+		if err == nil {
+			t.Fatalf("Evaluate(%q) succeeded, want it refused outside a routing template", template)
+		}
+		if !strings.Contains(err.Error(), "routing templates") {
+			t.Fatalf("Evaluate(%q) error = %v, want it to name where the root is valid", template, err)
+		}
+	}
+}
+
+func TestRoutingRootsResolveWhenTheInterpreterSuppliesThem(t *testing.T) {
+	t.Parallel()
+
+	ctx := expression.Context{
+		AllowRouting: true,
+		Parameters:   map[string]any{"chatId": "42"},
+		Credentials:  map[string]string{"name": "X-Api-Key"},
+		Value:        " hello ",
+	}
+	for template, want := range map[string]any{
+		"{{ $parameter.chatId }}":   "42",
+		"{{ $credentials.name }}":   "X-Api-Key",
+		"{{ $value.trim() }}":       "hello",
+		"{{ $credentials.absent }}": nil,
+	} {
+		got, err := expression.Evaluate(template, ctx)
+		if err != nil {
+			t.Fatalf("Evaluate(%q) error = %v", template, err)
+		}
+		if got != want {
+			t.Fatalf("Evaluate(%q) = %#v, want %#v", template, got, want)
+		}
+	}
+}
+
+// The editor is served the root allowlist so it does not keep a copy that
+// drifts. The routing roots are deliberately absent from it: nothing a user can
+// write should be offered a root that only a generated pack may use.
+func TestRoutingRootsAreNotAdvertisedToTheEditor(t *testing.T) {
+	t.Parallel()
+
+	for _, root := range expression.Roots() {
+		switch root {
+		case "$parameter", "$credentials", "$value":
+			t.Fatalf("Roots() advertises %q, which only a node pack may use", root)
+		}
+	}
+}

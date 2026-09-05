@@ -28,6 +28,7 @@ import (
 	"github.com/kilaslabs/kilas-flow/internal/loadoptions"
 	"github.com/kilaslabs/kilas-flow/internal/node"
 	"github.com/kilaslabs/kilas-flow/internal/repository"
+	"github.com/kilaslabs/kilas-flow/internal/routing"
 	"github.com/kilaslabs/kilas-flow/internal/runcode"
 	"github.com/kilaslabs/kilas-flow/internal/safehttp"
 	"github.com/kilaslabs/kilas-flow/internal/scheduler"
@@ -94,6 +95,13 @@ func run() error {
 	if err := nodes.RegisterExecutors(executorRegistry, outboundPolicy(cfg.Outbound), databaseGuard(cfg.Database),
 		ai.NewLoopRuntime(), agentMemory, runcode.NewToolchainCompiler()); err != nil {
 		return fmt.Errorf("register built-in executors: %w", err)
+	}
+	// Declarative node packs run on one interpreter rather than shipping Go.
+	// The registry is empty until a pack registers into it; the executor is
+	// installed regardless so a pack does not also have to install a runtime.
+	routes := routing.NewRegistry()
+	if err := nodes.RegisterRoutingExecutor(executorRegistry, outboundPolicy(cfg.Outbound), routes, nodeRegistry); err != nil {
+		return fmt.Errorf("register the declarative routing executor: %w", err)
 	}
 
 	// Credentials are optional at boot: an install with no key still runs
