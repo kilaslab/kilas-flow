@@ -1,0 +1,59 @@
+---
+// Overrides @astrojs/starlight/components/ThemeProvider.astro.
+//
+// The stock provider resolves an unset preference from the operating system:
+//
+//     const theme = storedTheme ||
+//       (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+//
+// KilasFlow itself does not work that way. `web/src/app.css` puts the dark
+// palette on the bare `:root` selector, so the product renders dark whatever the
+// OS says, and light exists only for a host that opts a subtree into it with
+// `[data-theme='light']`. Following the OS here would hand every reader on a
+// light desktop a light documentation site sitting beside a dark product, which
+// reads as two products rather than one.
+//
+// So the fallback below is the constant `'dark'` instead. Light is still one
+// click away in the picker; it is an answer the reader gives rather than one
+// their desktop gives on their behalf.
+//
+// The paired override in ThemeSelect.astro drops the stock "Auto" option, which
+// matters for more than tidiness: the stock select stores the empty string for
+// Auto, making it indistinguishable from "never chose anything", and it
+// re-applies the OS preference on hydration. Left in place it would repaint the
+// page light a moment after this script had painted it dark. Two options and no
+// ambiguous stored value keeps both halves honest.
+import { Icon } from '@astrojs/starlight/components';
+---
+
+{/* Inlined, like the component it replaces, so the theme is set before paint. */}
+<script is:inline>
+	window.StarlightThemeProvider = (() => {
+		const storedTheme =
+			typeof localStorage !== 'undefined' && localStorage.getItem('starlight-theme');
+		const theme = storedTheme === 'light' ? 'light' : 'dark';
+		document.documentElement.dataset.theme = theme;
+		return {
+			updatePickers(theme = storedTheme || 'dark') {
+				document.querySelectorAll('starlight-theme-select').forEach((picker) => {
+					const select = picker.querySelector('select');
+					if (select) select.value = theme;
+					/** @type {HTMLTemplateElement | null} */
+					const tmpl = document.querySelector(`#theme-icons`);
+					const newIcon = tmpl && tmpl.content.querySelector('.' + theme);
+					if (newIcon) {
+						const oldIcon = picker.querySelector('svg.label-icon');
+						if (oldIcon) {
+							oldIcon.replaceChildren(...newIcon.cloneNode(true).childNodes);
+						}
+					}
+				});
+			},
+		};
+	})();
+</script>
+
+<template id="theme-icons">
+	<Icon name="sun" class="light" />
+	<Icon name="moon" class="dark" />
+</template>

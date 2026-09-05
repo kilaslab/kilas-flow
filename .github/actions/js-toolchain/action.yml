@@ -35,8 +35,10 @@ runs:
       with:
         package_json_file: web/package.json
 
-    # web/ and sdk/ are separate installs with separate lockfiles — there is no
-    # pnpm workspace at the root — so both lockfiles feed the cache key.
+    # web/, sdk/ and docs/ are separate installs with separate lockfiles — there
+    # is no pnpm workspace at the root — so all three lockfiles feed the cache
+    # key. A lockfile left out here would not break a build, but it would let a
+    # dependency change in that project restore a store that predates it.
     - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
       with:
         node-version: ${{ steps.node-version.outputs.version }}
@@ -44,3 +46,4 @@ runs:
         cache-dependency-path: |
           web/pnpm-lock.yaml
           sdk/pnpm-lock.yaml
+          docs/pnpm-lock.yaml

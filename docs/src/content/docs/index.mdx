@@ -1,0 +1,59 @@
+---
+title: KilasFlow
+description: An embeddable open-source workflow engine for APIs, AI agents, and SaaS products.
+template: splash
+hero:
+  tagline: A workflow engine that ships as one Go binary and embeds into your product.
+  actions:
+    # Only external links belong here. A hero action is read from frontmatter
+    # rather than from the page body, so it is not part of the rendered tree that
+    # plugins/base-links.mjs rewrites — an internal link here would be correct in
+    # development and a 404 on a subpath deployment, and the link validator
+    # cannot see it either. Internal navigation goes in the body, below.
+    - text: Source on GitHub
+      link: https://github.com/kilaslabs/k-flow
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+KilasFlow runs workflows: a graph of nodes, triggered by an HTTP request, a cron
+schedule, another workflow or a person pressing a button, executing against a
+durable queue that survives a restart. It is written in Go, ships as a single
+binary with the editor embedded in it, and defaults to SQLite so that running it
+takes no infrastructure at all.
+
+**Start with [what KilasFlow is](/start/what-kilasflow-is/)**, which covers what
+works today and — just as usefully — what does not.
+
+<CardGrid>
+	<Card title="One binary" icon="rocket">
+		The API and the editor are served from the same process and the same
+		origin. `make build-all` produces it; there is nothing else to deploy.
+	</Card>
+	<Card title="API first" icon="setting">
+		Thirty-five operations under `/api/v1`, with an OpenAPI 3.1 document
+		generated from the same Go types that serve the requests, so the
+		specification cannot drift from the implementation.
+	</Card>
+	<Card title="Built to embed" icon="puzzle">
+		The editor mounts in an iframe in a host application, scoped to one
+		workflow by a signed, short-lived session token.
+	</Card>
+	<Card title="Reads n8n workflows" icon="random">
+		The workflow document is a reimplementation of n8n's interchange format in
+		Go, with an importer and an exporter. No n8n code is used.
+	</Card>
+</CardGrid>
+
+## This site is new and mostly empty
+
+The structure here is committed ahead of the writing, so that the pages arriving
+over the next few changes slot into a settled navigation instead of rearranging
+it. Most sections currently hold a stub that says what will go there and where
+the same information lives today — usually the repository's `README.md` or a Go
+package's doc comment, which are accurate and simply not addressable by a URL.
+
+Where a page has not been written, it says so. Nothing on this site describes a
+feature that does not exist.

@@ -9,6 +9,8 @@ name: CI
 #   smoke           the binary, the Vite proxy and the distroless image all serve
 #   smoke-postgres  the image against a Compose PostgreSQL (not on pull requests)
 #   image           the image still cross-builds for every published architecture
+#   docs            the documentation site builds and its internal links resolve
+#   docs-publish    that site to GitHub Pages (main only, and opt-in — see below)
 #
 # Every job runs Make targets rather than its own copy of the commands, so a
 # laptop and a runner check the same thing and cannot drift apart. Add a check
@@ -276,3 +278,102 @@ jobs:
       # The same target release.yml builds from, minus the push. A break here is a
       # break in the release path.
       - run: make docker-multiarch
+
+  docs:
+    name: Documentation site
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # No Go. docs/ is a third pnpm project alongside web/ and sdk/ and never
+      # touches the binary — nothing it produces is copied into
+      # internal/web/dist or reached by a go:embed directive.
+      - uses: ./.github/actions/js-toolchain
+
+      - name: Install documentation dependencies
+        working-directory: docs
+        run: pnpm install --frozen-lockfile
+
+      # `make docs-build` runs the Astro build, which is also where internal
+      # links are validated — the validator does not run under `astro dev`. So a
+      # page renamed without updating the links into it fails here, in the same
+      # way a syntax error would, rather than reaching a reader as a 404.
+      # Built with no DOCS_BASE, which is how a contributor builds it locally.
+      - run: make docs-build
+
+  docs-publish:
+    name: Publish documentation
+    needs: docs
+    runs-on: ubuntu-latest
+
+    # Opt-in, and deliberately so. Publishing needs GitHub Pages switched on for
+    # the repository with its source set to GitHub Actions, and that is a
+    # settings change no workflow can make for itself: configure-pages can
+    # enable Pages, but only when handed a token with administration rights,
+    # which GITHUB_TOKEN is not. Running unconditionally would therefore leave
+    # the default branch permanently red on a step nobody could fix from a
+    # commit, and a red main is worse than an unpublished site — it trains
+    # everyone to ignore the pipeline.
+    #
+    # To turn publishing on, once:
+    #   1. Settings → Pages → Source: GitHub Actions.
+    #   2. Settings → Secrets and variables → Actions → Variables:
+    #      DOCS_PUBLISH = true
+    #
+    # Until step 2 this job is skipped, which reads as "not switched on" rather
+    # than as a failure.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.DOCS_PUBLISH == 'true'
+
+    # Widened here rather than at the top of the file, so that the six jobs which
+    # only read stay read-only. This is the only job that writes anything.
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+
+    # One deployment at a time, and never cancelled halfway: interrupting a
+    # deploy can leave the site partially replaced.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: ./.github/actions/js-toolchain
+
+      - name: Install documentation dependencies
+        working-directory: docs
+        run: pnpm install --frozen-lockfile
+
+      # Where the deployment URL comes from. A project Pages site is served from
+      # /<repo>/, and this reports that path for the repository actually being
+      # published rather than having it written into astro.config.mjs, where it
+      # would be a guess — the git remote says `k-flow` while go.mod and the
+      # README say `kilas-flow`, and picking the wrong one produces a site whose
+      # every stylesheet 404s.
+      - name: Resolve the Pages URL
+        id: pages
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+
+      # A second build, not a wasted one. The docs job above builds at the root,
+      # the way a contributor does; this builds at the subpath the site is
+      # actually served from. The link validator runs in both, and the two are
+      # genuinely different checks — a link that resolves at the root can still
+      # be broken under a base.
+      - name: Build the site for its published URL
+        env:
+          DOCS_SITE: ${{ steps.pages.outputs.origin }}
+          DOCS_BASE: ${{ steps.pages.outputs.base_path }}
+        run: make docs-build
+
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: docs/dist
+
+      - uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+        id: deploy

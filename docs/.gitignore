@@ -1,0 +1,6 @@
+# Astro build output and its type-generation cache. The root .gitignore already
+# covers node_modules/ for every project in the repository; these two are
+# specific to this one, so they live here rather than adding docs-only lines to
+# a file the whole repository reads.
+dist/
+.astro/
