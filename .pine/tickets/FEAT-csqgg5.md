@@ -1,7 +1,7 @@
 ---
 id: FEAT-csqgg5
 title: Assemble the n8n importer regression corpus
-status: todo
+status: done
 priority: high
 labels:
     - reference
@@ -24,13 +24,13 @@ The measured baseline matters as much as the mechanism. Across those 13 WAHA tem
 
 ## Acceptance criteria
 
-- [ ] A Go package exposes the whole corpus by name and source to any test in the repository, so engine and compiler tests can score fixtures without reaching into another package's `testdata` by relative path.
-- [ ] All 13 WAHA template workflows and all 25 `nodes-base` fixtures are reachable through one documented sync step that materialises them into a gitignored directory, pinned by upstream commit and verified per file by digest; no n8n-licensed or unlicensed third-party JSON is committed to this repository.
-- [ ] `go test ./...` passes on a clean clone with no corpus materialised — corpus-dependent tests skip with a message naming the exact command that fetches it.
-- [ ] A scoreboard test scores every fixture as imported / activatable / runnable and writes a committed report, so a later ticket's diff shows precisely which workflows it moved and which it did not.
-- [ ] The report records the baseline measured on the day this lands, including per-fixture failure reasons, and the corpus node-type inventory that p3 and p4 will pick their targets from.
-- [ ] The owner's own exported client workflows can be dropped into a private gitignored overlay directory and scored alongside the public corpus with no code change, and neither the report nor any test output ever prints fixture payload content.
-- [ ] Re-running the sync against the same pinned commit reproduces byte-identical fixtures, and a changed upstream file fails loudly instead of silently shifting the baseline.
+- [x] A Go package exposes the whole corpus by name and source to any test in the repository, so engine and compiler tests can score fixtures without reaching into another package's `testdata` by relative path.
+- [x] All 13 WAHA template workflows and all 25 `nodes-base` fixtures are reachable through one documented sync step that materialises them into a gitignored directory, pinned by upstream commit and verified per file by digest; no n8n-licensed or unlicensed third-party JSON is committed to this repository.
+- [x] `go test ./...` passes on a clean clone with no corpus materialised — corpus-dependent tests skip with a message naming the exact command that fetches it.
+- [x] A scoreboard test scores every fixture as imported / activatable / runnable and writes a committed report, so a later ticket's diff shows precisely which workflows it moved and which it did not.
+- [x] The report records the baseline measured on the day this lands, including per-fixture failure reasons, and the corpus node-type inventory that p3 and p4 will pick their targets from.
+- [x] The owner's own exported client workflows can be dropped into a private gitignored overlay directory and scored alongside the public corpus with no code change, and neither the report nor any test output ever prints fixture payload content.
+- [x] Re-running the sync against the same pinned commit reproduces byte-identical fixtures, and a changed upstream file fails loudly instead of silently shifting the baseline.
 
 ## Implementation Plan
 
@@ -51,3 +51,95 @@ One decision is open: the report format. Options are a Markdown table committed 
 - Reference checkout fixtures: `/Users/izzadev/projects/mitrachat/n8n/packages/nodes-base/nodes/{HttpRequest,Set,If}/test/**` (25 workflow documents), package licence `LicenseRef-n8n-sustainable-use`.
 - Existing importer surface: `internal/interop/n8n/n8n.go` (`Import`, `Export`, `SupportedMappings`), `internal/interop/n8n/n8n_test.go` (`registry`, `TestImportedWorkflowCompiles`), `internal/workflow/compiler.go` (`Compile`), `nodes/core.go` (`RegisterAll`), `nodes/executors.go` (`RegisterExecutors`).
 - V1 precedent for the compiler as the single validation authority: `FEAT-chxkvq`.
+
+## Outcome
+
+### The baseline
+
+39 fixtures scored: **39 imported (100%), 10 activatable (26%), 1 runnable (3%)**.
+
+| Source | Fixtures | Imported | Activatable | Runnable | Blocked |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `waha-templates` | 13 | 13 | **0** | 0 | 0 |
+| `nodes-base` | 25 | 25 | 9 | 0 | 9 |
+| `kilasflow` (control) | 1 | 1 | 1 | 1 | 0 |
+
+Zero of the thirteen real WAHA templates can be activated, which is the honest
+opening score the ticket predicted and the number the whole epic is measured
+against. The only runnable fixture is KilasFlow's own control.
+
+Two failure modes dominate the WAHA set and both are already-filed p1 work:
+`connection must reference declared source and target ports` (9 of 13), which
+is what an unsupported node with no ports does to every edge touching it, and
+`configuration is invalid: this node was imported from …` (3 of 13), the
+always-failing `kilasflow.unsupported` validator. Neither was repaired here — a
+green scoreboard on the day this landed would have meant the corpus was wrong.
+
+The counts the ticket predicted were confirmed exactly: 13 WAHA workflow
+documents and 25 `nodes-base` fixtures. The two Typebot exports are excluded
+structurally, by testing for `nodes` plus `connections`, rather than by name,
+so a renamed file cannot quietly enter the count.
+
+### What was built
+
+`internal/interop/n8n/corpus` is a real package, not a `testdata` directory, so
+engine and compiler tests import it by one path instead of reaching across
+packages with `../../`. Authored fixtures come from `go:embed`; third-party
+fixtures are read at run time from `KILASFLOW_CORPUS_DIR` (default `.corpus`)
+and `KILASFLOW_CORPUS_PRIVATE_DIR` (default `.corpus-private`), both gitignored
+before any fixture was ever written to disk.
+
+`scripts/corpus-sync.sh` plus `make corpus` and `make corpus-baseline`. The
+sync fetches `waha-n8n-templates` at the pinned `1bd5536` and copies the
+`nodes-base` fixtures out of the reference checkout, then verifies every file
+against the committed `MANIFEST.json` digests. Exit codes were checked: 0 clean,
+1 on digest drift, 2 on a missing prerequisite.
+
+The scoreboard scores with the real machinery — `n8n.Import`, then
+`workflow.Compile` against a catalogue from `nodes.RegisterAll`, then
+`engine.NewRunner` with executors from `nodes.RegisterExecutors` — never a
+reimplementation. It writes both `baseline.json` (the machine-checked golden)
+and `BASELINE.md` (the table a person reads in a diff), and fails on any
+unexplained movement, naming the fixture and the exact transition.
+
+### Three things the ticket did not anticipate
+
+1. **The sync script may not hard-code the reference checkout.** Doing so would
+   have put a machine path into a `.sh` file, which the licence guardrail from
+   FEAT-yyjfjq correctly rejects as making foreign source a build input. The
+   script requires `KILASFLOW_N8N_REFERENCE` instead, with no default — which
+   also makes it portable to any machine, and it verifies the checkout is at
+   the pinned commit before reading a byte.
+
+2. **Tier three needed a fourth state.** Stubbing outbound calls by refusing
+   them means a workflow whose graph executes perfectly still fails "runnable"
+   if any node would have called out. All 9 activatable `nodes-base` fixtures
+   are in exactly that position. Collapsing that into "not runnable" would have
+   made the tier measure "has no HTTP node" rather than "executes", so a
+   `blocked` state is recorded separately, classified on the wrapped
+   `safehttp.ErrBlocked` and `sqlnode.ErrForbiddenTarget` sentinels rather than
+   on error text. Only a fixture that is neither runnable nor blocked actually
+   failed to execute.
+
+3. **A scoreboard of all-failures cannot validate itself.** If everything fails,
+   nothing in the numbers distinguishes "importing real n8n workflows is hard"
+   from "the instrument is broken". One authored control fixture is committed
+   and `TestControlFixturesPass` requires it to reach every tier, so an
+   instrument failure shows up as a failing test rather than as a plausible
+   zero.
+
+### Privacy
+
+The private overlay is scored alongside the public corpus with no code change
+and contributes **nothing** to any committed file: no row, no name, no reason,
+only aggregate booleans in the test log.
+`TestPrivateOverlayIsScoredButNeverReported` proves both halves by dropping a
+named workflow into the overlay and asserting the rendered report does not
+contain its name.
+
+### Clean clone
+
+`go test ./...` passes with nothing materialised. `TestCorpusScoreboard` and
+`TestManifestPinsEveryFetchedFixture` skip with the exact fetch command in the
+message; the control and loader tests still run, because the authored fixtures
+are embedded.

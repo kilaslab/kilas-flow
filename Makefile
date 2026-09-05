@@ -115,6 +115,14 @@ tidy: ## Tidy go.mod
 docker: ## Build the Docker image
 	docker build -t $(APP_NAME):$(VERSION) -t $(APP_NAME):latest .
 
+.PHONY: corpus
+corpus: ## Fetch the n8n importer regression corpus (needs KILASFLOW_N8N_REFERENCE)
+	scripts/corpus-sync.sh
+
+.PHONY: corpus-baseline
+corpus-baseline: ## Rescore the corpus and rewrite BASELINE.md and baseline.json
+	$(GO) test ./internal/interop/n8n/corpus -update-baseline -count=1 -v
+
 .PHONY: smoke-sqlite
 smoke-sqlite: ## Prove the embedded binary against a fresh SQLite database
 	sh scripts/smoke-sqlite.sh

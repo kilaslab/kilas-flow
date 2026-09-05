@@ -1,0 +1,436 @@
+{
+  "comment": "Baseline for the n8n importer regression corpus. Tiers: imported = n8n.Import returned no error; activatable = workflow.Compile returned no error; runnable = the workflow ran to completion with HTTP, SQL and model calls stubbed. Regenerate with go test ./internal/interop/n8n/corpus -update-baseline, and say in the commit which workflows moved and why.",
+  "tiers": {
+    "activatable": 10,
+    "imported": 39,
+    "runnable": 1
+  },
+  "total": 39,
+  "blocked": 9,
+  "nodeTypeInventory": {
+    "@devlikeapro/n8n-nodes-chatwoot.chatWoot": 5,
+    "@devlikeapro/n8n-nodes-waha.WAHA": 23,
+    "@devlikeapro/n8n-nodes-waha.wahaTrigger": 7,
+    "n8n-nodes-base.code": 3,
+    "n8n-nodes-base.convertToFile": 1,
+    "n8n-nodes-base.editImage": 1,
+    "n8n-nodes-base.emailSend": 3,
+    "n8n-nodes-base.extractFromFile": 1,
+    "n8n-nodes-base.httpRequest": 51,
+    "n8n-nodes-base.if": 44,
+    "n8n-nodes-base.manualTrigger": 30,
+    "n8n-nodes-base.noOp": 70,
+    "n8n-nodes-base.postgres": 16,
+    "n8n-nodes-base.respondToWebhook": 3,
+    "n8n-nodes-base.scheduleTrigger": 1,
+    "n8n-nodes-base.set": 60,
+    "n8n-nodes-base.splitInBatches": 3,
+    "n8n-nodes-base.splitOut": 5,
+    "n8n-nodes-base.stickyNote": 52,
+    "n8n-nodes-base.stopAndError": 1,
+    "n8n-nodes-base.switch": 10,
+    "n8n-nodes-base.wait": 4,
+    "n8n-nodes-base.webhook": 4,
+    "n8n-nodes-testing.testData": 14
+  },
+  "scores": [
+    {
+      "name": "kilasflow/control-manual-set",
+      "source": "kilasflow",
+      "nodes": 2,
+      "imported": true,
+      "activatable": true,
+      "runnable": true,
+      "unsupported": 0
+    },
+    {
+      "name": "nodes-base/HttpRequest/test/binaryData/binaryData.test",
+      "source": "nodes-base",
+      "nodes": 8,
+      "imported": true,
+      "activatable": true,
+      "runnable": false,
+      "blocked": true,
+      "unsupported": 0,
+      "reason": "execute node \"665fef5c-6380-4bc0-be2a-430446b140ca\": node \"HTTP Request (v4)2\": request target is not allowed: host \"dummy.domain\" is not in the allowed list"
+    },
+    {
+      "name": "nodes-base/HttpRequest/test/encoding/encoding.test",
+      "source": "nodes-base",
+      "nodes": 3,
+      "imported": true,
+      "activatable": true,
+      "runnable": false,
+      "blocked": true,
+      "unsupported": 0,
+      "reason": "execute node \"cc2f185d-df6a-4fa3-b7f4-29f0dbad0f9b\": node \"HTTP Request (v4)\": request target is not allowed: host \"dummy.domain\" is not in the allowed list"
+    },
+    {
+      "name": "nodes-base/HttpRequest/test/encodingQuoted/encodingQuoted.test",
+      "source": "nodes-base",
+      "nodes": 3,
+      "imported": true,
+      "activatable": true,
+      "runnable": false,
+      "blocked": true,
+      "unsupported": 0,
+      "reason": "execute node \"cc2f185d-df6a-4fa3-b7f4-29f0dbad0f9b\": node \"HTTP Request (v4)\": request target is not allowed: host \"dummy.domain\" is not in the allowed list"
+    },
+    {
+      "name": "nodes-base/HttpRequest/test/node/workflow.delete",
+      "source": "nodes-base",
+      "nodes": 2,
+      "imported": true,
+      "activatable": true,
+      "runnable": false,
+      "blocked": true,
+      "unsupported": 0,
+      "reason": "execute node \"312e64ca-00bf-40e6-b21d-1f73930ef98c\": node \"HTTP Request\": request target is not allowed: host \"dummyjson.com\" is not in the allowed list"
+    },
+    {
+      "name": "nodes-base/HttpRequest/test/node/workflow.get",
+      "source": "nodes-base",
+      "nodes": 5,
+      "imported": true,
+      "activatable": true,
+      "runnable": false,
+      "blocked": true,
+      "unsupported": 0,
+      "reason": "execute node \"38ec1a50-7f0e-4749-822d-f26370b00694\": node \"HTTP Request empty header\": request target is not allowed: host \"dummyjson.com\" is not in the allo…"
+    },
+    {
+      "name": "nodes-base/HttpRequest/test/node/workflow.pagination",
+      "source": "nodes-base",
+      "nodes": 37,
+      "imported": true,
+      "activatable": false,
+      "runnable": false,
+      "unsupported": 14,
+      "reason": "node \"61d8b266-f399-4a3b-882d-90db2764833b\" configuration is invalid: this node was imported from n8n-nodes-base.stickyNote, which KilasFlow does not support…"
+    },
+    {
+      "name": "nodes-base/HttpRequest/test/node/workflow.patch",
+      "source": "nodes-base",
+      "nodes": 2,
+      "imported": true,
+      "activatable": true,
+      "runnable": false,
+      "blocked": true,
+      "unsupported": 0,
+      "reason": "execute node \"312e64ca-00bf-40e6-b21d-1f73930ef98c\": node \"HTTP Request\": request target is not allowed: host \"dummyjson.com\" is not in the allowed list"
+    },
+    {
+      "name": "nodes-base/HttpRequest/test/node/workflow.post",
+      "source": "nodes-base",
+      "nodes": 3,
+      "imported": true,
+      "activatable": true,
+      "runnable": false,
+      "blocked": true,
+      "unsupported": 0,
+      "reason": "execute node \"07670093-862f-403f-96a5-ddf7fdb0d225\": node \"HTTP Request\": request target is not allowed: host \"dummyjson.com\" is not in the allowed list"
+    },
+    {
+      "name": "nodes-base/HttpRequest/test/node/workflow.put",
+      "source": "nodes-base",
+      "nodes": 2,
+      "imported": true,
+      "activatable": true,
+      "runnable": false,
+      "blocked": true,
+      "unsupported": 0,
+      "reason": "execute node \"07670093-862f-403f-96a5-ddf7fdb0d225\": node \"HTTP Request\": request target is not allowed: host \"dummyjson.com\" is not in the allowed list"
+    },
+    {
+      "name": "nodes-base/HttpRequest/test/node/workflow.use_error_output",
+      "source": "nodes-base",
+      "nodes": 7,
+      "imported": true,
+      "activatable": false,
+      "runnable": false,
+      "unsupported": 4,
+      "reason": "connection must reference declared source and target ports"
+    },
+    {
+      "name": "nodes-base/HttpRequest/test/node/workflow.userAgent",
+      "source": "nodes-base",
+      "nodes": 3,
+      "imported": true,
+      "activatable": true,
+      "runnable": false,
+      "blocked": true,
+      "unsupported": 0,
+      "reason": "execute node \"1aa13a8d-6e32-4a5e-9b3c-3a4d5e6f7a01\": node \"HTTP Request default UA\": request target is not allowed: host \"ua.example.com\" is not in the allow…"
+    },
+    {
+      "name": "nodes-base/If/test/v1/IF.boolean",
+      "source": "nodes-base",
+      "nodes": 11,
+      "imported": true,
+      "activatable": false,
+      "runnable": false,
+      "unsupported": 11,
+      "reason": "node \"2aa0a57b-b25a-4293-b7bf-fc240d4d21f4\" configuration is invalid: this node was imported from n8n-nodes-testing.testData, which KilasFlow does not suppor…"
+    },
+    {
+      "name": "nodes-base/If/test/v1/IF.date-time",
+      "source": "nodes-base",
+      "nodes": 8,
+      "imported": true,
+      "activatable": false,
+      "runnable": false,
+      "unsupported": 7,
+      "reason": "node \"c5d906bc-909a-45d9-a990-9ea6279cc807\" configuration is invalid: this node was imported from n8n-nodes-testing.testData, which KilasFlow does not suppor…"
+    },
+    {
+      "name": "nodes-base/If/test/v1/IF.number",
+      "source": "nodes-base",
+      "nodes": 22,
+      "imported": true,
+      "activatable": false,
+      "runnable": false,
+      "unsupported": 17,
+      "reason": "node \"77e63f88-e5fc-4662-af2e-6947a4768cf3\" configuration is invalid: this node was imported from n8n-nodes-testing.testData, which KilasFlow does not suppor…"
+    },
+    {
+      "name": "nodes-base/If/test/v1/IF.string",
+      "source": "nodes-base",
+      "nodes": 36,
+      "imported": true,
+      "activatable": false,
+      "runnable": false,
+      "unsupported": 32,
+      "reason": "node \"a35687af-99c1-43b2-aa43-955fcd87ff81\" configuration is invalid: this node was imported from n8n-nodes-testing.testData, which KilasFlow does not suppor…"
+    },
+    {
+      "name": "nodes-base/If/test/v2/IfV2.boolean",
+      "source": "nodes-base",
+      "nodes": 5,
+      "imported": true,
+      "activatable": false,
+      "runnable": false,
+      "unsupported": 4,
+      "reason": "node \"3184fda2-b1d0-400a-a882-5844bbe99ae3\" configuration is invalid: this node was imported from n8n-nodes-base.noOp, which KilasFlow does not support. Repl…"
+    },
+    {
+      "name": "nodes-base/If/test/v2/IfV2.date-time",
+      "source": "nodes-base",
+      "nodes": 5,
+      "imported": true,
+      "activatable": false,
+      "runnable": false,
+      "unsupported": 4,
+      "reason": "node \"60697c7f-3948-4790-97ba-8aba03d02ac2\" configuration is invalid: this node was imported from n8n-nodes-testing.testData, which KilasFlow does not suppor…"
+    },
+    {
+      "name": "nodes-base/If/test/v2/IfV2.number",
+      "source": "nodes-base",
+      "nodes": 5,
+      "imported": true,
+      "activatable": false,
+      "runnable": false,
+      "unsupported": 4,
+      "reason": "node \"60697c7f-3948-4790-97ba-8aba03d02ac2\" configuration is invalid: this node was imported from n8n-nodes-testing.testData, which KilasFlow does not suppor…"
+    },
+    {
+      "name": "nodes-base/If/test/v2/IfV2.other",
+      "source": "nodes-base",
+      "nodes": 5,
+      "imported": true,
+      "activatable": false,
+      "runnable": false,
+      "unsupported": 5,
+      "reason": "node \"60697c7f-3948-4790-97ba-8aba03d02ac2\" configuration is invalid: this node was imported from n8n-nodes-testing.testData, which KilasFlow does not suppor…"
+    },
+    {
+      "name": "nodes-base/If/test/v2/IfV2.string",
+      "source": "nodes-base",
+      "nodes": 5,
+      "imported": true,
+      "activatable": false,
+      "runnable": false,
+      "unsupported": 5,
+      "reason": "node \"48399b31-219a-42fa-bb5b-380dbb4a2e7d\" configuration is invalid: IF conditions must contain exactly one condition"
+    },
+    {
+      "name": "nodes-base/Set/test/Set.v3.workflow",
+      "source": "nodes-base",
+      "nodes": 21,
+      "imported": true,
+      "activatable": false,
+      "runnable": false,
+      "unsupported": 20,
+      "reason": "node \"d425fb32-2bbc-445d-8fec-0e1288adf6d8\" configuration is invalid: assignments must be a non-empty object"
+    },
+    {
+      "name": "nodes-base/Set/test/Set.v3_3.workflow",
+      "source": "nodes-base",
+      "nodes": 21,
+      "imported": true,
+      "activatable": false,
+      "runnable": false,
+      "unsupported": 7,
+      "reason": "node \"8afc51b7-f9ed-417a-a58b-2fe251ba4b93\" configuration is invalid: this node was imported from n8n-nodes-testing.testData, which KilasFlow does not suppor…"
+    },
+    {
+      "name": "nodes-base/Set/test/Set.workflow",
+      "source": "nodes-base",
+      "nodes": 7,
+      "imported": true,
+      "activatable": false,
+      "runnable": false,
+      "unsupported": 1,
+      "reason": "node \"a7e51ac7-734a-4652-bb02-d9f0a4d8410b\" configuration is invalid: this node was imported from n8n-nodes-testing.testData, which KilasFlow does not suppor…"
+    },
+    {
+      "name": "nodes-base/Set/test/Set.workflow.null_values",
+      "source": "nodes-base",
+      "nodes": 6,
+      "imported": true,
+      "activatable": false,
+      "runnable": false,
+      "unsupported": 5,
+      "reason": "node \"78f2ad0d-e129-448b-ae78-5bfdba587186\" configuration is invalid: assignments must be a non-empty object"
+    },
+    {
+      "name": "nodes-base/Set/test/Set.workflow.number",
+      "source": "nodes-base",
+      "nodes": 6,
+      "imported": true,
+      "activatable": false,
+      "runnable": false,
+      "unsupported": 2,
+      "reason": "node \"12610911-6841-486e-924a-af66cececdca\" configuration is invalid: this node was imported from n8n-nodes-base.stickyNote, which KilasFlow does not support…"
+    },
+    {
+      "name": "waha-templates/chatting-template/template",
+      "source": "waha-templates",
+      "nodes": 12,
+      "imported": true,
+      "activatable": false,
+      "runnable": false,
+      "unsupported": 12,
+      "reason": "connection must reference declared source and target ports"
+    },
+    {
+      "name": "waha-templates/chatwoot/WhatsApp___ChatWoot__ChatWoot____WAHA_Messages",
+      "source": "waha-templates",
+      "nodes": 22,
+      "imported": true,
+      "activatable": false,
+      "runnable": false,
+      "unsupported": 18,
+      "reason": "connection must reference declared source and target ports"
+    },
+    {
+      "name": "waha-templates/chatwoot/WhatsApp___ChatWoot__Database_Migrations",
+      "source": "waha-templates",
+      "nodes": 3,
+      "imported": true,
+      "activatable": false,
+      "runnable": false,
+      "unsupported": 2,
+      "reason": "node \"22749eeb-ebf0-4813-b452-8303f0b17609\" configuration is invalid: this node was imported from n8n-nodes-base.stickyNote, which KilasFlow does not support…"
+    },
+    {
+      "name": "waha-templates/chatwoot/WhatsApp___ChatWoot__WAHA____ChatWoot_Messages",
+      "source": "waha-templates",
+      "nodes": 23,
+      "imported": true,
+      "activatable": false,
+      "runnable": false,
+      "unsupported": 20,
+      "reason": "connection must reference declared source and target ports"
+    },
+    {
+      "name": "waha-templates/chatwoot/WhatsApp___ChatWoot__WAHA____ChatWoot_Sync_Contacts",
+      "source": "waha-templates",
+      "nodes": 13,
+      "imported": true,
+      "activatable": false,
+      "runnable": false,
+      "unsupported": 10,
+      "reason": "connection must reference declared source and target ports"
+    },
+    {
+      "name": "waha-templates/fetch-image-rotate-and-send-it-back/template",
+      "source": "waha-templates",
+      "nodes": 10,
+      "imported": true,
+      "activatable": false,
+      "runnable": false,
+      "unsupported": 10,
+      "reason": "connection must reference declared source and target ports"
+    },
+    {
+      "name": "waha-templates/forward-all-text-messages-to-email/template",
+      "source": "waha-templates",
+      "nodes": 4,
+      "imported": true,
+      "activatable": false,
+      "runnable": false,
+      "unsupported": 4,
+      "reason": "connection must reference declared source and target ports"
+    },
+    {
+      "name": "waha-templates/restart-server-at-midnight/template",
+      "source": "waha-templates",
+      "nodes": 2,
+      "imported": true,
+      "activatable": false,
+      "runnable": false,
+      "unsupported": 2,
+      "reason": "node \"9002e037-ea7a-4a5d-86ca-f7466cbd2842\" configuration is invalid: this node was imported from @devlikeapro/n8n-nodes-waha.WAHA, which KilasFlow does not …"
+    },
+    {
+      "name": "waha-templates/send-bulk-messages/template",
+      "source": "waha-templates",
+      "nodes": 18,
+      "imported": true,
+      "activatable": false,
+      "runnable": false,
+      "unsupported": 15,
+      "reason": "connection must reference declared source and target ports"
+    },
+    {
+      "name": "waha-templates/send-custom-http-request-to-waha/template",
+      "source": "waha-templates",
+      "nodes": 8,
+      "imported": true,
+      "activatable": false,
+      "runnable": false,
+      "unsupported": 8,
+      "reason": "connection must reference declared source and target ports"
+    },
+    {
+      "name": "waha-templates/send-qr-code-to-email/template",
+      "source": "waha-templates",
+      "nodes": 9,
+      "imported": true,
+      "activatable": false,
+      "runnable": false,
+      "unsupported": 7,
+      "reason": "node \"05513103-49fc-4324-80ea-5e86b61f3272\" configuration is invalid: this node was imported from n8n-nodes-base.convertToFile, which KilasFlow does not supp…"
+    },
+    {
+      "name": "waha-templates/waha-trigger-explanation/template",
+      "source": "waha-templates",
+      "nodes": 6,
+      "imported": true,
+      "activatable": false,
+      "runnable": false,
+      "unsupported": 5,
+      "reason": "node \"298ae97b-fa1b-48ba-886b-9216217afce6\" configuration is invalid: assignments must be a non-empty object"
+    },
+    {
+      "name": "waha-templates/whatsapp-typebot/template",
+      "source": "waha-templates",
+      "nodes": 42,
+      "imported": true,
+      "activatable": false,
+      "runnable": false,
+      "unsupported": 36,
+      "reason": "connection must reference declared source and target ports"
+    }
+  ]
+}

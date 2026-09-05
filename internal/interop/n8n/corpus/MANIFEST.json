@@ -1,0 +1,169 @@
+{
+  "comment": "Pins for the n8n importer regression corpus. The fixtures themselves are third-party and are never committed: n8n's are LicenseRef-n8n-sustainable-use and the WAHA templates repository carries no licence at all. Only these digests are. Regenerate with scripts/corpus-sync.sh --update, and explain the baseline shift when you do.",
+  "sources": {
+    "waha-templates": {
+      "repository": "https://github.com/devlikeapro/waha-n8n-templates",
+      "commit": "1bd5536eef88f81692daaaba74d3bf6d621fb94f",
+      "licence": "none declared (GitHub reports license: null) \u2014 never committed"
+    },
+    "nodes-base": {
+      "origin": "the read-only n8n reference checkout, via KILASFLOW_N8N_REFERENCE",
+      "commit": "40dfa42ced26ba6fe01e511ec685f01ea77c0a83",
+      "licence": "LicenseRef-n8n-sustainable-use \u2014 never committed"
+    }
+  },
+  "fixtures": [
+    {
+      "path": "nodes-base/HttpRequest/test/binaryData/binaryData.test.json",
+      "sha256": "15e0ec262d060fe5107fac5ea8ed38ec97f3fcf711fe4c8767123b1f87dd96fb"
+    },
+    {
+      "path": "nodes-base/HttpRequest/test/encoding/encoding.test.json",
+      "sha256": "5a218373b53e5cc2f8df026be4f18887d03d3a81426812070cf1dce24033cb79"
+    },
+    {
+      "path": "nodes-base/HttpRequest/test/encodingQuoted/encodingQuoted.test.json",
+      "sha256": "2afc6f054fbffce8e28af2b745eaeeba4309f524b3bf0e2a39eddfddd38617b9"
+    },
+    {
+      "path": "nodes-base/HttpRequest/test/node/workflow.delete.json",
+      "sha256": "e88489989ab832be9751ac902cc737caeb77d2acaaeab220c825be267c178c70"
+    },
+    {
+      "path": "nodes-base/HttpRequest/test/node/workflow.get.json",
+      "sha256": "200a280602b60975b6d9d6578910597e9aa4b8ac120a0b281c3fb5e11bda0316"
+    },
+    {
+      "path": "nodes-base/HttpRequest/test/node/workflow.pagination.json",
+      "sha256": "848d9c2103fd0cad5ce186269b2a17e3c588df6435b51d1f8f8cce52e91c3b1b"
+    },
+    {
+      "path": "nodes-base/HttpRequest/test/node/workflow.patch.json",
+      "sha256": "123f400cbc999d1519ed8f982cccbd9ae5533c7e27830edd06fcba38905e1ff4"
+    },
+    {
+      "path": "nodes-base/HttpRequest/test/node/workflow.post.json",
+      "sha256": "35cf3751537ec0da3539bae0983734f6f6cf39486e452f92841d1bf30738564e"
+    },
+    {
+      "path": "nodes-base/HttpRequest/test/node/workflow.put.json",
+      "sha256": "cfda0d63bfeec471ff78759a2f7bb74cbd5dd517688cd8d4a4a6da0ec4075430"
+    },
+    {
+      "path": "nodes-base/HttpRequest/test/node/workflow.use_error_output.json",
+      "sha256": "e51de2117aa892e69e18f1609e43c5bae4159969bb756cee75c7630af9a10a03"
+    },
+    {
+      "path": "nodes-base/HttpRequest/test/node/workflow.userAgent.json",
+      "sha256": "f1c7988363e5d5daf408b8e484ecd0cbb9a60289a0daa5fcb71c4a2a9e3f88c8"
+    },
+    {
+      "path": "nodes-base/If/test/v1/IF.boolean.json",
+      "sha256": "a5eb5a5ba4b40794a00a31cad4f8ddfec65fd5e15d9ce983b920ec2b671a11bf"
+    },
+    {
+      "path": "nodes-base/If/test/v1/IF.date-time.json",
+      "sha256": "6611e3d7340e351d74caa1616e8c4ecd1938457cc5d00e6caade4bf20266c0af"
+    },
+    {
+      "path": "nodes-base/If/test/v1/IF.number.json",
+      "sha256": "057f0862b21911473b180424a7ae31de0059e1de12c055248453f86065251ab5"
+    },
+    {
+      "path": "nodes-base/If/test/v1/IF.string.json",
+      "sha256": "4b0fbfc02056726a34d70794ce5a1c6c18e3226c962f77cb9357359dc112a078"
+    },
+    {
+      "path": "nodes-base/If/test/v2/IfV2.boolean.json",
+      "sha256": "c9ba81ad6fbf3a2a16b87fab1a64cc3693fb0ea651637bfec8d4905b9c2f8203"
+    },
+    {
+      "path": "nodes-base/If/test/v2/IfV2.date-time.json",
+      "sha256": "9126b7bdfc5cc56f8168388e6a1cfabaabf566e6ba3122005c5e9deb40ec2895"
+    },
+    {
+      "path": "nodes-base/If/test/v2/IfV2.number.json",
+      "sha256": "04a2a8c4600ce93cca7b96767046629ec0c0c4d74f5f216f7fb248e0f6f1fa60"
+    },
+    {
+      "path": "nodes-base/If/test/v2/IfV2.other.json",
+      "sha256": "fbd3682d195702a3c1cd0dfdc8066a2db0dc5bc941e14d82801eb4a9db867e70"
+    },
+    {
+      "path": "nodes-base/If/test/v2/IfV2.string.json",
+      "sha256": "664ebebd8d63949be62113babaf7cc52df76e2ec7488297a9e1c5a58098c8100"
+    },
+    {
+      "path": "nodes-base/Set/test/Set.v3.workflow.json",
+      "sha256": "544db66de08a96ac626e9c3de21e17e058c4d661ad24ab9dc1244155ee69128a"
+    },
+    {
+      "path": "nodes-base/Set/test/Set.v3_3.workflow.json",
+      "sha256": "fbb7d2fd17363b64642caa6a5fa02b90664a0bc9c2c2e95eeda98dd9461807d1"
+    },
+    {
+      "path": "nodes-base/Set/test/Set.workflow.json",
+      "sha256": "2b1e351af57180704f9b34a52b42a08cbc86c232f66f5da7a1f563a3eb5496ae"
+    },
+    {
+      "path": "nodes-base/Set/test/Set.workflow.null_values.json",
+      "sha256": "38b5fcb77539ef0fd1a49a265706f7988963f737ffe6e8c03b3becea055c6aee"
+    },
+    {
+      "path": "nodes-base/Set/test/Set.workflow.number.json",
+      "sha256": "92c749ea6c7232590498fc785cd76fd91c941b593ef6a6cffb7e700612ca8507"
+    },
+    {
+      "path": "waha-templates/chatting-template/template.json",
+      "sha256": "bb1208620dd73f7a17f05e843c4b485629c8550ba1be05bea1cc5fa60f5cae60"
+    },
+    {
+      "path": "waha-templates/chatwoot/WhatsApp___ChatWoot__ChatWoot____WAHA_Messages.json",
+      "sha256": "015b4ce2436a9e01beced68f90ac3e0710396d808fb73e2c39655145a8507ae3"
+    },
+    {
+      "path": "waha-templates/chatwoot/WhatsApp___ChatWoot__Database_Migrations.json",
+      "sha256": "f1469d21147af342b9e7adcc9e9dbeaa63279277aef91633b766bd7b1f2fb740"
+    },
+    {
+      "path": "waha-templates/chatwoot/WhatsApp___ChatWoot__WAHA____ChatWoot_Messages.json",
+      "sha256": "526facc2ddd33b60a182d50d48ac8fbd7ccb941a392593a1de8f2d73a355af5a"
+    },
+    {
+      "path": "waha-templates/chatwoot/WhatsApp___ChatWoot__WAHA____ChatWoot_Sync_Contacts.json",
+      "sha256": "52ebe162fa094c13724f51d914ca431c3650f4ef872fca197f21aa8d3bfbc94e"
+    },
+    {
+      "path": "waha-templates/fetch-image-rotate-and-send-it-back/template.json",
+      "sha256": "4bc481e50c11cbb08f4b85b0feeba65c35648ff0de0da53a5635706da911f253"
+    },
+    {
+      "path": "waha-templates/forward-all-text-messages-to-email/template.json",
+      "sha256": "39f547e37f4fa8ba7c24217eac83befd1ecd04dd21509dbf5a8bbdb35b59bc17"
+    },
+    {
+      "path": "waha-templates/restart-server-at-midnight/template.json",
+      "sha256": "86b9550cc78952e35c4342b6f7568937c3bb4b28d3b9c9772afc3a177a18fdb3"
+    },
+    {
+      "path": "waha-templates/send-bulk-messages/template.json",
+      "sha256": "ff699f06c213539d698810c4bdd6f8c9426fa398ad4aa18731c865075594e0c7"
+    },
+    {
+      "path": "waha-templates/send-custom-http-request-to-waha/template.json",
+      "sha256": "7c3482ec4ed5b1d6331c19db195e939b69d9926e9ef2c358ee0a48ed99ff96c8"
+    },
+    {
+      "path": "waha-templates/send-qr-code-to-email/template.json",
+      "sha256": "213eff6e1285b0344262f41f6fc9cc8b9ff14bf88438b16d27e09910aa9997f0"
+    },
+    {
+      "path": "waha-templates/waha-trigger-explanation/template.json",
+      "sha256": "c639057f4cab1a8c2bb479828403a8722500d4c61c8dab481c1644860903e5d4"
+    },
+    {
+      "path": "waha-templates/whatsapp-typebot/template.json",
+      "sha256": "e1f48788cee60aaf93059e8c0b18756a032bee1ca7fcf71d329e57c56835f404"
+    }
+  ]
+}

@@ -1,0 +1,40 @@
+{
+  "name": "Control: manual trigger into Set",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "6d3f0a2e-1c4b-4f8a-9d2e-0b7c5a1e3f40",
+      "name": "When clicking 'Execute workflow'",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1b2c3d4-0000-4000-8000-000000000001",
+              "name": "greeting",
+              "value": "hello",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "9e8d7c6b-5a4f-4321-b0c9-8d7e6f5a4b31",
+      "name": "Edit Fields",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [220, 0]
+    }
+  ],
+  "connections": {
+    "When clicking 'Execute workflow'": {
+      "main": [[{ "node": "Edit Fields", "type": "main", "index": 0 }]]
+    }
+  },
+  "pinData": {}
+}

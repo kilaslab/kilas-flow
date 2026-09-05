@@ -53,3 +53,13 @@ design-refs/
 sdk/dist/
 sdk/.tmp/
 sdk/node_modules/
+
+# Regression corpus: third-party n8n and WAHA workflow fixtures, fetched by
+# scripts/corpus-sync.sh and never committed. n8n's fixtures are
+# LicenseRef-n8n-sustainable-use and the WAHA templates repository carries no
+# licence at all. .corpus-private/ is the overlay for the owner's own exported
+# client workflows, which contain live phone numbers, hostnames and credential
+# names. See .pine/memory/licensing.md.
+.corpus/
+.corpus-cache/
+.corpus-private/
