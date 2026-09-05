@@ -830,3 +830,126 @@ func newCredentialAPI(t *testing.T) (http.Handler, *repository.GORMCredentialSto
 	store := repository.NewCredentialStore(db.DB, cipher)
 	return newTestServer(t, api.Deps{DB: db, Credentials: store}), store
 }
+
+type importedWorkflowResource struct {
+	Workflow    workflowResource `json:"workflow"`
+	Unsupported []struct {
+		NodeName string `json:"nodeName"`
+		Type     string `json:"type"`
+		Reason   string `json:"reason"`
+	} `json:"unsupported"`
+}
+
+type exportedWorkflowResource struct {
+	Format   string          `json:"format"`
+	Workflow json.RawMessage `json:"workflow"`
+	Lossy    []struct {
+		NodeName string `json:"nodeName"`
+		Reason   string `json:"reason"`
+	} `json:"lossy"`
+	SupportedMappings []string `json:"supportedMappings"`
+}
+
+const n8nLinear = `{
+  "name": "Imported linear",
+  "nodes": [
+    {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0]},
+    {"id":"b","name":"Set","type":"n8n-nodes-base.set","typeVersion":3.4,"position":[220,0],
+     "parameters":{"assignments":{"assignments":[{"id":"1","name":"status","value":"ready"}]}}}
+  ],
+  "connections": {"Manual": {"main": [[{"node":"Set","type":"main","index":0}]]}}
+}`
+
+const n8nUnsupported = `{
+  "name": "Imported with gap",
+  "nodes": [
+    {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0]},
+    {"id":"b","name":"Send Email","type":"n8n-nodes-base.emailSend","typeVersion":2.1,"position":[220,0]}
+  ],
+  "connections": {"Manual": {"main": [[{"node":"Send Email","type":"main","index":0}]]}}
+}`
+
+func TestWorkflowAPIImportsAnN8NWorkflowAsAnOrdinaryDraft(t *testing.T) {
+	handler, _, _ := newWorkflowAPI(t)
+
+	imported := requestJSON[importedWorkflowResource](t, handler, http.MethodPost, "/api/v1/workflows/import",
+		map[string]any{"format": "n8n", "workflow": json.RawMessage(n8nLinear)}, http.StatusCreated)
+
+	if imported.Workflow.ID == "" || imported.Workflow.LatestVersion.Revision != 1 {
+		t.Fatalf("imported = %#v, want a saved first revision", imported.Workflow)
+	}
+	if len(imported.Unsupported) != 0 {
+		t.Errorf("unsupported = %#v, want none", imported.Unsupported)
+	}
+	// It went through the ordinary draft path, so it reads back like any other
+	// workflow and can be activated.
+	requestJSON[workflowResource](t, handler, http.MethodGet, "/api/v1/workflows/"+imported.Workflow.ID, nil, http.StatusOK)
+	requestJSON[workflowResource](t, handler, http.MethodPost, "/api/v1/workflows/"+imported.Workflow.ID+"/activate", nil, http.StatusOK)
+}
+
+func TestWorkflowAPIImportsAnUnsupportedNodeWithoutMakingItRunnable(t *testing.T) {
+	handler, _, _ := newWorkflowAPI(t)
+
+	imported := requestJSON[importedWorkflowResource](t, handler, http.MethodPost, "/api/v1/workflows/import",
+		map[string]any{"workflow": json.RawMessage(n8nUnsupported)}, http.StatusCreated)
+
+	if len(imported.Unsupported) == 0 {
+		t.Fatal("an unsupported node was imported without being reported")
+	}
+	if imported.Unsupported[0].Type != "n8n-nodes-base.emailSend" {
+		t.Errorf("unsupported = %#v, want the exact n8n type named", imported.Unsupported[0])
+	}
+
+	// Saved and readable, so the user can see and replace the node...
+	got := requestJSON[workflowResource](t, handler, http.MethodGet, "/api/v1/workflows/"+imported.Workflow.ID, nil, http.StatusOK)
+	if len(got.LatestVersion.Document.Nodes) != 2 {
+		t.Fatalf("nodes = %d, want the unsupported node kept visible", len(got.LatestVersion.Document.Nodes))
+	}
+	// ...but it can never be activated or run.
+	requestProblem(t, handler, http.MethodPost, "/api/v1/workflows/"+imported.Workflow.ID+"/activate", nil, http.StatusUnprocessableEntity)
+	requestProblem(t, handler, http.MethodPost, "/api/v1/workflows/"+imported.Workflow.ID+"/run", nil, http.StatusUnprocessableEntity)
+}
+
+func TestWorkflowAPIRejectsMalformedImportInput(t *testing.T) {
+	handler, _, _ := newWorkflowAPI(t)
+
+	requestProblem(t, handler, http.MethodPost, "/api/v1/workflows/import",
+		map[string]any{"workflow": json.RawMessage(`{"name":"x","nodes":[]}`)}, http.StatusUnprocessableEntity)
+	requestProblem(t, handler, http.MethodPost, "/api/v1/workflows/import",
+		map[string]any{"format": "zapier", "workflow": json.RawMessage(n8nLinear)}, http.StatusUnprocessableEntity)
+}
+
+func TestWorkflowAPIExportsN8NJSON(t *testing.T) {
+	handler, _, _ := newWorkflowAPI(t)
+	imported := requestJSON[importedWorkflowResource](t, handler, http.MethodPost, "/api/v1/workflows/import",
+		map[string]any{"workflow": json.RawMessage(n8nLinear)}, http.StatusCreated)
+
+	exported := requestJSON[exportedWorkflowResource](t, handler, http.MethodGet,
+		"/api/v1/workflows/"+imported.Workflow.ID+"/export", nil, http.StatusOK)
+
+	if exported.Format != "n8n" || len(exported.SupportedMappings) == 0 {
+		t.Fatalf("export = %#v, want the format and advertised mappings", exported)
+	}
+	var document struct {
+		Name  string `json:"name"`
+		Nodes []struct {
+			Name string `json:"name"`
+			Type string `json:"type"`
+		} `json:"nodes"`
+		Connections map[string]map[string][][]struct {
+			Node string `json:"node"`
+		} `json:"connections"`
+	}
+	if err := json.Unmarshal(exported.Workflow, &document); err != nil {
+		t.Fatalf("decode exported workflow = %v", err)
+	}
+	if len(document.Nodes) != 2 || document.Nodes[0].Type != "n8n-nodes-base.manualTrigger" {
+		t.Fatalf("exported nodes = %#v, want n8n node types", document.Nodes)
+	}
+	if document.Connections["Manual"]["main"][0][0].Node != "Set" {
+		t.Fatalf("exported connections = %#v, want name-keyed edges", document.Connections)
+	}
+
+	requestProblem(t, handler, http.MethodGet, "/api/v1/workflows/"+imported.Workflow.ID+"/export?format=zapier", nil, http.StatusUnprocessableEntity)
+	requestProblem(t, handler, http.MethodGet, "/api/v1/workflows/wf_missing/export", nil, http.StatusNotFound)
+}

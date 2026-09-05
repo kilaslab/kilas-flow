@@ -382,6 +382,23 @@ export interface ExecutionStartedEvent {
   workflowId?: string;
 }
 
+export interface Lossy {
+  field?: string;
+  nodeName?: string;
+  reason: string;
+}
+
+export interface ExportedWorkflowResource {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  format: string;
+  /** @nullable */
+  lossy: Lossy[] | null;
+  /** @nullable */
+  supportedMappings: string[] | null;
+  workflow: unknown;
+}
+
 export interface HealthOutputBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -389,6 +406,56 @@ export interface HealthOutputBody {
   status: string;
   /** KilasFlow version */
   version: string;
+}
+
+export interface ImportWorkflowInputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** Only "n8n" is supported */
+  format?: string;
+  /** Overrides the imported workflow's name */
+  name?: string;
+  /** An n8n workflow JSON document */
+  workflow: unknown;
+}
+
+export interface Unsupported {
+  nodeId?: string;
+  nodeName: string;
+  reason: string;
+  type: string;
+  typeVersion?: number;
+}
+
+export interface WorkflowVersionResource {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  createdAt: string;
+  document: Document;
+  id: string;
+  revision: number;
+  schemaVersion: number;
+  workflowId: string;
+}
+
+export interface WorkflowResource {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  active: boolean;
+  activeVersion?: WorkflowVersionResource;
+  createdAt: string;
+  id: string;
+  latestVersion: WorkflowVersionResource;
+  name: string;
+  updatedAt: string;
+}
+
+export interface ImportedWorkflowResource {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  unsupported: Unsupported[] | null;
+  workflow: WorkflowResource;
 }
 
 export interface NodeCompletedEvent {
@@ -516,29 +583,6 @@ export interface WorkflowDocumentInput {
   nodes: Node[] | null;
   schemaVersion: number;
   settings: WorkflowDocumentInputSettings;
-}
-
-export interface WorkflowVersionResource {
-  /** A URL to the JSON Schema for this object. */
-  readonly $schema?: string;
-  createdAt: string;
-  document: Document;
-  id: string;
-  revision: number;
-  schemaVersion: number;
-  workflowId: string;
-}
-
-export interface WorkflowResource {
-  /** A URL to the JSON Schema for this object. */
-  readonly $schema?: string;
-  active: boolean;
-  activeVersion?: WorkflowVersionResource;
-  createdAt: string;
-  id: string;
-  latestVersion: WorkflowVersionResource;
-  name: string;
-  updatedAt: string;
 }
 
 export interface WorkflowSavedEvent {
@@ -672,6 +716,13 @@ export type StreamExecutionEvents200Item = {
   id?: number;
   /** The retry time in milliseconds. */
   retry?: number;
+};
+
+export type ExportWorkflowParams = {
+/**
+ * Only "n8n" is supported
+ */
+format?: string;
 };
 
 export type HTTPStatusCode1xx = 100 | 101 | 102 | 103;
@@ -1755,6 +1806,63 @@ const res = await fetch(getCreateWorkflowUrl(),
 
 
 
+export type importWorkflowResponse201 = {
+  data: ImportedWorkflowResource
+  status: 201
+}
+
+export type importWorkflowResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 201>
+}
+
+export type importWorkflowResponseSuccess = (importWorkflowResponse201) & {
+  headers: Headers;
+};
+export type importWorkflowResponseError = (importWorkflowResponseDefault) & {
+  headers: Headers;
+};
+
+export type importWorkflowResponse = (importWorkflowResponseSuccess | importWorkflowResponseError)
+
+export const getImportWorkflowUrl = () => {
+
+
+
+
+  return `/api/v1/workflows/import`
+}
+
+/**
+ * Translates n8n workflow JSON into a KilasFlow draft. Unsupported nodes are imported as visible placeholders that block activation rather than being dropped or silently remapped.
+ * @summary Import an n8n workflow
+ */
+export const importWorkflow = async (importWorkflowInputBody: NonReadonly<ImportWorkflowInputBody>, options?: RequestInit): Promise<importWorkflowResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Array.isArray(h)) return Object.fromEntries(h);
+    return h;
+  };
+const res = await fetch(getImportWorkflowUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(importWorkflowInputBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: importWorkflowResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as importWorkflowResponse
+}
+
+
+
 export type deleteWorkflowResponse204 = {
   data: void
   status: 204
@@ -2013,6 +2121,66 @@ export const deactivateWorkflow = async (id: string, options?: RequestInit): Pro
 
   const data: deactivateWorkflowResponse['data'] = body ? JSON.parse(body) : {}
   return { data, status: res.status, headers: res.headers } as deactivateWorkflowResponse
+}
+
+
+
+export type exportWorkflowResponse200 = {
+  data: ExportedWorkflowResource
+  status: 200
+}
+
+export type exportWorkflowResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type exportWorkflowResponseSuccess = (exportWorkflowResponse200) & {
+  headers: Headers;
+};
+export type exportWorkflowResponseError = (exportWorkflowResponseDefault) & {
+  headers: Headers;
+};
+
+export type exportWorkflowResponse = (exportWorkflowResponseSuccess | exportWorkflowResponseError)
+
+export const getExportWorkflowUrl = (id: string,
+    params?: ExportWorkflowParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/workflows/${id}/export?${stringifiedParams}` : `/api/v1/workflows/${id}/export`
+}
+
+/**
+ * Converts the latest revision into n8n-compatible JSON and reports what could not be carried.
+ * @summary Export a workflow as n8n JSON
+ */
+export const exportWorkflow = async (id: string,
+    params?: ExportWorkflowParams, options?: RequestInit): Promise<exportWorkflowResponse> => {
+
+  const res = await fetch(getExportWorkflowUrl(id,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: exportWorkflowResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as exportWorkflowResponse
 }
 
 

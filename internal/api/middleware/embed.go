@@ -100,6 +100,11 @@ func permits(session embed.Session, r *http.Request) (bool, string) {
 		// Values are never returned by this endpoint.
 		return session.Allows(embed.ScopeRead), "This embed session cannot read."
 
+	case path == "/workflows/import":
+		// Importing creates a *new* workflow, which is outside any session's
+		// single-workflow authority.
+		return false, "An embed session cannot import workflows."
+
 	case strings.HasPrefix(path, "/workflows/"):
 		rest := strings.TrimPrefix(path, "/workflows/")
 		workflowID, action, _ := strings.Cut(rest, "/")

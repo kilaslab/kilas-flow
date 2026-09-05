@@ -25,6 +25,7 @@ func RegisterAll(registry *node.Registry) error {
 		httpToolNode(),
 		agentNode(),
 		codeNode(),
+		unsupportedNode(),
 	} {
 		if err := registry.Register(definition); err != nil {
 			return err
