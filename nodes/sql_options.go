@@ -379,6 +379,23 @@ func renderLargeNumber(value any, rendering string) any {
 	}
 }
 
+// DeclaredSQLOptions names every option the database nodes accept.
+//
+// Exported for the n8n importer, which has to filter an incoming collection to
+// this set: validateSQLOptions refuses a node carrying a key this server does
+// not know, so passing a newer n8n's option straight through would turn an
+// import into a workflow that cannot be saved. The importer reports what it
+// dropped instead.
+func DeclaredSQLOptions() []string {
+	fields := sqlOptionsCollection(sqlbuild.Postgres).Fields
+	names := make([]string, 0, len(fields))
+	for _, field := range fields {
+		names = append(names, field.Key)
+	}
+	sort.Strings(names)
+	return names
+}
+
 // UnappliedSQLOptionsForTest is the refusal list, for the enumeration test.
 func UnappliedSQLOptionsForTest() map[string]string { return unappliedSQLOptions() }
 
@@ -437,4 +454,116 @@ func probeValueFor(field node.PropertyDefinition) any {
 		}
 	}
 	return nil
+}
+
+// sqlRestartSequencesProperty is n8n's own top-level truncate modifier.
+//
+// Top-level rather than inside the options collection because that is where
+// n8n puts it, and the shape of a stored document is the contract. Declared
+// only where the dialect offers a choice: MySQL's TRUNCATE always resets
+// AUTO_INCREMENT, so a switch there would be a control with one position.
+func sqlRestartSequencesProperty(dialect sqlbuild.Dialect) (node.PropertyDefinition, bool) {
+	if !dialect.ChoosesSequenceRestart() {
+		return node.PropertyDefinition{}, false
+	}
+	return node.PropertyDefinition{
+		Key: "restartSequences", Label: "Restart sequences", Kind: node.PropertyBoolean, Default: false,
+		Description: "Reset the table's identity columns to where they started, so the next inserted row " +
+			"takes the first number again rather than carrying on from the highest one used.",
+		DisplayOptions: node.Visibility{Show: []node.Condition{
+			{Key: "operation", Values: []any{PostgresOperationDeleteTable}},
+			{Key: "deleteCommand", Values: []any{sqlbuild.DeleteTruncate}},
+		}},
+	}, true
+}
+
+// mustProperty unwraps a property a dialect is known to declare.
+//
+// Used only where the caller has already committed to the dialect, so a false
+// here is a programming error rather than a configuration one.
+func mustProperty(property node.PropertyDefinition, declared bool) node.PropertyDefinition {
+	if !declared {
+		panic("the dialect does not declare this property")
+	}
+	return property
+}
+
+// shownForOperations is the visibility shorthand both database nodes use.
+func shownForOperations(operations ...string) []node.VisibilityCondition {
+	conditions := make([]node.VisibilityCondition, 0, len(operations))
+	for _, operation := range operations {
+		conditions = append(conditions, node.VisibilityCondition{Key: "operation", Equals: operation})
+	}
+	return conditions
+}
+
+// sqlSortCollection is the ORDER BY builder, in n8n's stored shape.
+//
+// A fixed collection named `sort` holding a `values` group of `column` and
+// `direction`, because that is what n8n stores and the point of this node is
+// that an imported workflow keeps working. The direction values are n8n's
+// "ASC" and "DESC" verbatim.
+func sqlSortCollection() node.PropertyDefinition {
+	return node.PropertyDefinition{
+		Key: "sort", Label: "Sort", Kind: node.PropertyFixedCollection,
+		TypeOptions: &node.TypeOptions{MultipleValues: true, MultipleValueButtonText: "Add sort rule"},
+		Description: "The order rows come back in. Several rules may be added, and they apply in the " +
+			"order they are listed — without one, the database is free to return the rows in any " +
+			"order at all, which is what makes an unsorted Limit return an arbitrary subset.",
+		VisibleWhen: shownForOperations(PostgresOperationSelect),
+		Groups: []node.PropertyGroup{{
+			Key: "values", Label: "Sort Rule",
+			Fields: []node.PropertyDefinition{
+				{Key: "column", Label: "Column", Kind: node.PropertyOptions,
+					Description: "Choose from the list, or name one with an expression."},
+				{Key: "direction", Label: "Direction", Kind: node.PropertyOptions, Default: SortAscending,
+					Options: []node.PropertyOption{
+						{Label: "Ascending", Value: SortAscending},
+						{Label: "Descending", Value: SortDescending},
+					}},
+			},
+		}},
+	}
+}
+
+// Sort directions, using n8n's value strings.
+const (
+	SortAscending  = "ASC"
+	SortDescending = "DESC"
+)
+
+// readSQLSort reads the sort collection into the builder's own shape.
+//
+// A rule with no column is dropped rather than refused: n8n's fixed collection
+// adds an empty row the moment the button is pressed, so an unfinished rule is
+// the ordinary state of a form somebody is still filling in, and failing the
+// node for it would make the control unusable.
+func readSQLSort(value any) []sqlbuild.Order {
+	stored, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	rows, ok := stored["values"].([]any)
+	if !ok {
+		return nil
+	}
+	order := make([]sqlbuild.Order, 0, len(rows))
+	for _, entry := range rows {
+		row, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		column := strings.TrimSpace(textValue(row["column"], ""))
+		if column == "" {
+			continue
+		}
+		order = append(order, sqlbuild.Order{
+			Column:     column,
+			Descending: strings.EqualFold(textValue(row["direction"], SortAscending), SortDescending),
+		})
+	}
+	if len(order) == 0 {
+		return nil
+	}
+	return order
 }

@@ -4,11 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/kilaslabs/kilas-flow/internal/property"
 	"github.com/kilaslabs/kilas-flow/internal/scheduler"
+	"github.com/kilaslabs/kilas-flow/internal/sqlbuild"
 	"github.com/kilaslabs/kilas-flow/internal/workflow"
 	"github.com/kilaslabs/kilas-flow/nodes"
 )
@@ -1475,8 +1477,18 @@ func postgresToKilas(node Node) (map[string]any, []Unsupported) {
 	case "deleteTable", "insert", "upsert", "select", "update":
 		parameters["schema"] = locatorFromN8N(node.Parameters["schema"], "public")
 		parameters["table"] = locatorFromN8N(node.Parameters["table"], "")
-		if command := stringParameter(node.Parameters, "deleteCommand"); command != "" {
-			parameters["deleteCommand"] = command
+		if operation == "deleteTable" {
+			// Written whether or not n8n stored it, and this is the whole
+			// point. n8n's own default is "truncate" and this node's is
+			// "delete"; a node whose author never opened the dropdown carries
+			// no key at all, so letting the absence cross the boundary means
+			// each side reads its own default and an "empty this table"
+			// becomes a row delete. Never let a default cross.
+			parameters["deleteCommand"] = defaultString(
+				stringParameter(node.Parameters, "deleteCommand"), sqlbuild.DeleteTruncate)
+			if restart, present := node.Parameters["restartSequences"]; present {
+				parameters["restartSequences"] = restart
+			}
 		}
 		if columns, ok := node.Parameters["columns"].(map[string]any); ok {
 			// The mapper's stored shape is n8n's, so it carries across whole —
@@ -1492,6 +1504,13 @@ func postgresToKilas(node Node) (map[string]any, []Unsupported) {
 		if combine := stringParameter(node.Parameters, "combineConditions"); combine != "" {
 			parameters["combineConditions"] = strings.ToUpper(combine)
 		}
+		if sorting, ok := node.Parameters["sort"].(map[string]any); ok {
+			// The stored shape is n8n's, so it carries across whole. Dropping
+			// it was silent and changed the answer: an imported
+			// "ORDER BY created_at DESC LIMIT 50" became an arbitrary fifty
+			// rows, which looks like data rather than like a defect.
+			parameters["sort"] = sorting
+		}
 		if returnAll, present := node.Parameters["returnAll"]; present {
 			parameters["returnAll"] = returnAll
 		}
@@ -1505,17 +1524,102 @@ func postgresToKilas(node Node) (map[string]any, []Unsupported) {
 	}
 
 	if options, ok := node.Parameters["options"].(map[string]any); ok {
-		if values, ok := options["queryReplacement"]; ok {
-			// n8n passes replacements as a comma-joined string; this binds a
-			// JSON array, so the shape is named rather than mangled.
-			issues = append(issues, Unsupported{Field: "options.queryReplacement", Reason: fmt.Sprintf(
-				"n8n query replacements (%v) were not imported; set Query Parameters to a JSON array to bind them", values)})
+		carried, bound, optionIssues := sqlOptionsToKilas(options)
+		if len(carried) > 0 {
+			parameters["options"] = carried
+		}
+		if bound != nil {
+			// Translated rather than kept in both places. n8n binds from
+			// options.queryReplacement and this node binds from
+			// queryParameters, so a stored copy of the first would go stale
+			// the moment somebody edited the second — and the export derives
+			// it back, so nothing is lost by moving it.
+			parameters["queryParameters"] = bound
+		}
+		issues = append(issues, optionIssues...)
+	}
+	return parameters, issues
+}
+
+// sqlOptionsToKilas carries the options collection across.
+//
+// Filtered to the set the node declares rather than passed through: the node's
+// own validator refuses a key this server does not know, so passing a newer
+// n8n's option straight through would turn an import into a workflow that
+// cannot be saved. What is dropped is named.
+func sqlOptionsToKilas(options map[string]any) (map[string]any, any, []Unsupported) {
+	declared := map[string]bool{}
+	for _, key := range nodes.DeclaredSQLOptions() {
+		declared[key] = true
+	}
+
+	issues := make([]Unsupported, 0)
+	carried := make(map[string]any, len(options))
+	unknown := make([]string, 0)
+	for key, value := range options {
+		switch {
+		case key == "queryReplacement":
+			// Handled below, and deliberately not carried: keeping it here as
+			// well would leave two copies of one thing to disagree.
+		case declared[key]:
+			carried[key] = value
+		default:
+			unknown = append(unknown, key)
 		}
 	}
-	issues = append(issues, Unsupported{
-		Reason: "database credentials are not imported; attach a KilasFlow credential before running this node",
-	})
-	return parameters, issues
+	if len(unknown) > 0 {
+		sort.Strings(unknown)
+		issues = append(issues, Unsupported{Field: "options", Severity: SeverityDropped, Reason: fmt.Sprintf(
+			"these n8n options have no equivalent and were dropped: %s", strings.Join(unknown, ", "))})
+	}
+
+	bound, replacementIssues := queryReplacementToKilas(options["queryReplacement"])
+	issues = append(issues, replacementIssues...)
+	return carried, bound, issues
+}
+
+// queryReplacementToKilas turns n8n's replacement list into bound values.
+//
+// n8n stores them as one comma-separated string and splits on the comma at run
+// time, which means a value containing a comma is two values over there and
+// there is nothing in the stored document that could say otherwise. So a split
+// that changes the count is reported rather than guessed at: binding the wrong
+// number of values would run a different query, silently.
+func queryReplacementToKilas(value any) (any, []Unsupported) {
+	switch typed := value.(type) {
+	case nil:
+		return nil, nil
+	case []any:
+		// Already a list, which newer n8n versions accept. Nothing to split.
+		return typed, nil
+	case string:
+		if strings.TrimSpace(typed) == "" {
+			return nil, nil
+		}
+		// Split, filter, then trim — n8n's own stringToArray, in that order.
+		// The order is observable: it drops an empty entry from "a,,b" but
+		// keeps a whitespace-only one from "a, ,b", which trims to the empty
+		// string and binds as one. Reproduced rather than tidied, because the
+		// point is to bind what n8n would have bound.
+		parts := strings.Split(typed, ",")
+		bound := make([]any, 0, len(parts))
+		for _, part := range parts {
+			if part == "" {
+				continue
+			}
+			bound = append(bound, strings.TrimSpace(part))
+		}
+		if len(bound) == 0 {
+			return nil, nil
+		}
+		return bound, []Unsupported{{Field: "options.queryReplacement", Severity: SeverityLossy, Reason: fmt.Sprintf(
+			"n8n's query replacements were split on the comma into %d bound values, which is what n8n "+
+				"itself does with them — its format has no escape, so a value containing a comma was "+
+				"already two values there and is two here", len(bound))}}
+	default:
+		return nil, []Unsupported{{Field: "options.queryReplacement", Severity: SeverityDropped, Reason: fmt.Sprintf(
+			"n8n query replacements of type %T were not imported; set Query Parameters to a JSON array", value)}}
+	}
 }
 
 // locatorFromN8N carries a resource locator across, or builds one from a bare
@@ -1596,10 +1700,11 @@ var postgresConditionOperators = map[string]string{
 // translation — which is what makes an imported node round-trip unchanged.
 func postgresToN8N(node workflow.Node) (map[string]any, []Lossy) {
 	operation := defaultString(stringParameter(node.Parameters, "operation"), "executeQuery")
-	parameters := map[string]any{"operation": operation, "options": map[string]any{}}
+	options, lossy := sqlOptionsToN8N(node.Parameters)
+	parameters := map[string]any{"operation": operation, "options": options}
 	if operation == "executeQuery" {
 		parameters["query"] = toN8NValue(node.Parameters["query"])
-		return parameters, nil
+		return parameters, lossy
 	}
 	for _, key := range []string{"schema", "table"} {
 		locator, ok := property.ReadLocator(node.Parameters[key])
@@ -1612,10 +1717,18 @@ func postgresToN8N(node workflow.Node) (map[string]any, []Lossy) {
 			"value":                  toN8NValue(locator.Value),
 		}
 	}
-	for _, key := range []string{"columns", "deleteCommand", "returnAll", "limit", "combineConditions"} {
+	for _, key := range []string{"columns", "returnAll", "limit", "combineConditions", "sort", "restartSequences"} {
 		if value, present := node.Parameters[key]; present {
 			parameters[key] = value
 		}
+	}
+	if operation == "deleteTable" {
+		// Always written, for the reason the importer always writes it: the
+		// two systems default this key differently, so an absent key means
+		// "empty the whole table" over there and "delete matching rows" here.
+		// Exporting the absence would hand n8n a TRUNCATE nobody asked for.
+		parameters["deleteCommand"] = defaultString(
+			stringParameter(node.Parameters, "deleteCommand"), sqlbuild.DeleteRows)
 	}
 	if rows, ok := node.Parameters["where"].([]any); ok {
 		values := make([]any, 0, len(rows))
@@ -1632,7 +1745,72 @@ func postgresToN8N(node workflow.Node) (map[string]any, []Lossy) {
 		}
 		parameters["where"] = map[string]any{"values": values}
 	}
-	return parameters, nil
+	return parameters, lossy
+}
+
+// sqlOptionsToN8N writes the options collection back.
+//
+// The stored collection carries across whole, and queryReplacement is derived
+// from the bound Query Parameters rather than stored alongside them. Derived,
+// because n8n binds from the option and this node binds from the field: a
+// stored copy would go stale the moment somebody edited the field here, and
+// n8n would then run the query with the older values without saying so.
+func sqlOptionsToN8N(parameters map[string]any) (map[string]any, []Lossy) {
+	options := map[string]any{}
+	if stored, ok := parameters["options"].(map[string]any); ok {
+		for key, value := range stored {
+			options[key] = value
+		}
+	}
+	replacement, lossy := queryReplacementToN8N(parameters["queryParameters"])
+	if replacement != "" {
+		options["queryReplacement"] = replacement
+	}
+	return options, lossy
+}
+
+// queryReplacementToN8N joins bound values the way n8n stores them.
+//
+// A value containing a comma cannot survive this, because n8n's own format has
+// no way to escape one — it splits on every comma at run time. Such a value is
+// left out rather than joined into a string that would silently become two
+// values on arrival; the export names it as lossy.
+func queryReplacementToN8N(value any) (string, []Lossy) {
+	var bound []any
+	switch typed := value.(type) {
+	case []any:
+		bound = typed
+	case string:
+		// The editor stores this field as the JSON text somebody typed, so a
+		// string here is the ordinary case rather than the exception.
+		if strings.TrimSpace(typed) == "" {
+			return "", nil
+		}
+		if err := json.Unmarshal([]byte(typed), &bound); err != nil {
+			return "", []Lossy{{Field: "queryParameters", Severity: SeverityDropped, Reason: "the query " +
+				"parameters are not a JSON array, so they could not be written as n8n query replacements"}}
+		}
+	default:
+		return "", nil
+	}
+	parts := make([]string, 0, len(bound))
+	for _, entry := range bound {
+		text := fmt.Sprintf("%v", entry)
+		if strings.Contains(text, ",") {
+			// n8n splits its replacement string on every comma and has no
+			// escape, so a value containing one would arrive as two. Left out
+			// entirely rather than joined into something that would run a
+			// different query without saying so.
+			return "", []Lossy{{Field: "queryParameters", Severity: SeverityDropped, Reason: "a bound value " +
+				"contains a comma, which n8n's query replacements cannot carry — they are split on every " +
+				"comma and have no escape — so the replacements were left out and the query will run unbound"}}
+		}
+		parts = append(parts, text)
+	}
+	if len(parts) == 0 {
+		return "", nil
+	}
+	return strings.Join(parts, ","), nil
 }
 
 // n8nConditionName is the inverse of postgresConditionOperators.

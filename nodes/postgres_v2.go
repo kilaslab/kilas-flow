@@ -163,6 +163,8 @@ func postgresV2Node() node.Definition {
 				Kind: node.PropertyNumber, Default: 30,
 			},
 			{Key: "maxRows", Label: "Maximum rows", Kind: node.PropertyNumber, Default: 10000},
+			sqlSortCollection(),
+			mustProperty(sqlRestartSequencesProperty(sqlbuild.Postgres)),
 			postgresOptionsCollection(),
 		},
 		SharedSettings: sharedSettings(),
@@ -496,7 +498,8 @@ func buildSQLStatement(dialect sqlbuild.Dialect, parameters map[string]any, item
 		if err != nil {
 			return sqlnode.Statement{}, err
 		}
-		return sqlbuild.Select(dialect, target, options.OutputColumns, where, combine, nil, limit)
+		return sqlbuild.Select(dialect, target, options.OutputColumns, where, combine,
+			readSQLSort(parameters["sort"]), limit)
 
 	case PostgresOperationDeleteTable:
 		mode := textValue(parameters["deleteCommand"], sqlbuild.DeleteRows)
@@ -504,7 +507,10 @@ func buildSQLStatement(dialect sqlbuild.Dialect, parameters map[string]any, item
 		if err != nil {
 			return sqlnode.Statement{}, err
 		}
-		return sqlbuild.Delete(dialect, target, mode, where, combine, options.Cascade)
+		return sqlbuild.Delete(dialect, target, mode, where, combine, sqlbuild.Removal{
+			Cascade:          options.Cascade,
+			RestartSequences: truthy(parameters["restartSequences"]),
+		})
 
 	case PostgresOperationInsert, PostgresOperationUpdate, PostgresOperationUpsert:
 		mapping, ok := property.ReadMapping(parameters["columns"])

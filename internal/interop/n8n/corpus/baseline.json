@@ -329,7 +329,7 @@
       "imported": true,
       "activatable": false,
       "runnable": false,
-      "unsupported": 4,
+      "unsupported": 3,
       "reason": "node \"80eb9337-a260-41cb-8a71-56eca71c0a8c\" requires a postgres credential"
     },
     {
@@ -339,7 +339,7 @@
       "imported": true,
       "activatable": false,
       "runnable": false,
-      "unsupported": 23,
+      "unsupported": 21,
       "reason": "node \"48043a43-2edd-4c4e-9640-03be184a5af0\" requires a postgres credential"
     },
     {
@@ -349,7 +349,7 @@
       "imported": true,
       "activatable": false,
       "runnable": false,
-      "unsupported": 10,
+      "unsupported": 8,
       "reason": "node \"db26d1bc-cce8-40c7-b1b7-95e38dc70ae6\" requires a wahaApi credential"
     },
     {
@@ -389,7 +389,7 @@
       "imported": true,
       "activatable": false,
       "runnable": false,
-      "unsupported": 20,
+      "unsupported": 16,
       "reason": "node \"af16c0da-c302-4d8b-983c-3d69e12f7260\" requires a postgres credential"
     },
     {
@@ -429,7 +429,7 @@
       "imported": true,
       "activatable": false,
       "runnable": false,
-      "unsupported": 37,
+      "unsupported": 30,
       "reason": "node \"259a1703-699b-4673-948c-cf21b7684667\" requires a wahaApi credential"
     }
   ]

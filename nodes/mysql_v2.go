@@ -147,6 +147,7 @@ func mysqlV2Node() node.Definition {
 				Kind: node.PropertyNumber, Default: 30,
 			},
 			{Key: "maxRows", Label: "Maximum rows", Kind: node.PropertyNumber, Default: 10000},
+			sqlSortCollection(),
 			mysqlOptionsCollection(),
 		},
 		SharedSettings: sharedSettings(),

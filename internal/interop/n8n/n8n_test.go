@@ -562,35 +562,91 @@ func TestExportNamesWhatItCannotCarry(t *testing.T) {
 	if !hasLossyReason(exported.Lossy, "kilasflow.code") {
 		t.Errorf("lossy = %#v, want the Code node named", exported.Lossy)
 	}
-	// SQLite has no first-class n8n node, and a connection to an omitted node
-	// must be dropped with it rather than left dangling.
+	// SQLite has no first-class n8n node either.
 	if !hasLossyReason(exported.Lossy, "kilasflow.sqlite") {
 		t.Errorf("lossy = %#v, want the SQLite node named", exported.Lossy)
 	}
-	if !hasLossyReason(exported.Lossy, "connection") {
-		t.Errorf("lossy = %#v, want the orphaned connection named", exported.Lossy)
+	// Named and kept, not named and dropped. This test used to assert the
+	// omission, and the omission was the defect: every edge touching an
+	// omitted node went with it, so this three-node workflow came out as one
+	// node and n8n showed a workflow that looked complete and did almost
+	// nothing. Emitted under its own type, n8n does not recognise it and
+	// refuses to run — which is the same information, where the user is.
+	if len(exported.Document.Nodes) != len(document.Nodes) {
+		t.Fatalf("exported %d nodes, want all %d", len(exported.Document.Nodes), len(document.Nodes))
 	}
+	byName := map[string]n8n.Node{}
 	for _, exportedNode := range exported.Document.Nodes {
-		if exportedNode.Name == "Code" || exportedNode.Name == "Query" {
-			t.Errorf("an unsupported node was exported anyway: %#v", exportedNode)
-		}
+		byName[exportedNode.Name] = exportedNode
+	}
+	if byName["Code"].Type != "kilasflow.code" {
+		t.Errorf("Code exported as %q, want its own type so n8n can say it does not know it", byName["Code"].Type)
+	}
+	if byName["Query"].Type != "kilasflow.sqlite" {
+		t.Errorf("Query exported as %q, want its own type", byName["Query"].Type)
+	}
+	// And the edge survives, which is the whole point of keeping the node.
+	targets, ok := exported.Document.Connections["Manual"]
+	if !ok || len(targets["main"]) == 0 || len(targets["main"][0]) == 0 {
+		t.Fatalf("connections = %#v, want the edge into the unsupported node kept", exported.Document.Connections)
+	}
+	if targets["main"][0][0].Node != "Code" {
+		t.Errorf("the edge goes to %q, want Code", targets["main"][0][0].Node)
+	}
+	if hasLossyReason(exported.Lossy, "orphan") {
+		t.Errorf("lossy = %#v, want no orphaned-connection report now that nothing is omitted", exported.Lossy)
 	}
 }
 
 func TestSupportedMappingsAreAdvertisedExplicitly(t *testing.T) {
 	t.Parallel()
 
-	mappings := n8n.SupportedMappings()
-	if len(mappings) < 8 {
-		t.Fatalf("mappings = %#v, want the advertised subset", mappings)
+	// The exact list, not a length and a handful of substrings. This is the
+	// interoperability claim the product makes; a test that only checked six
+	// of the pairs would let a seventh be removed, or a new one be added and
+	// then quietly stop working, without anything going red.
+	want := []string{
+		"@devlikeapro/n8n-nodes-waha.WAHA ↔ pack.waha",
+		"@devlikeapro/n8n-nodes-waha.wahaTrigger ↔ pack.wahaTrigger",
+		"n8n-nodes-base.aggregate ↔ kilasflow.aggregate",
+		"n8n-nodes-base.code ↔ kilasflow.foreignCode",
+		"n8n-nodes-base.dateTime ↔ kilasflow.dateTime",
+		"n8n-nodes-base.executeWorkflow ↔ kilasflow.executeWorkflow",
+		"n8n-nodes-base.executeWorkflowTrigger ↔ kilasflow.executeWorkflowTrigger",
+		"n8n-nodes-base.filter ↔ kilasflow.filter",
+		"n8n-nodes-base.httpRequest ↔ kilasflow.httpRequest",
+		"n8n-nodes-base.if ↔ kilasflow.if",
+		"n8n-nodes-base.limit ↔ kilasflow.limit",
+		"n8n-nodes-base.manualTrigger ↔ kilasflow.manual",
+		"n8n-nodes-base.merge ↔ kilasflow.merge",
+		"n8n-nodes-base.mySql ↔ kilasflow.mysql",
+		"n8n-nodes-base.noOp ↔ kilasflow.noOp",
+		"n8n-nodes-base.postgres ↔ kilasflow.postgres",
+		"n8n-nodes-base.removeDuplicates ↔ kilasflow.removeDuplicates",
+		"n8n-nodes-base.respondToWebhook ↔ kilasflow.respondToWebhook",
+		"n8n-nodes-base.scheduleTrigger ↔ kilasflow.schedule",
+		"n8n-nodes-base.set ↔ kilasflow.set",
+		"n8n-nodes-base.sort ↔ kilasflow.sort",
+		"n8n-nodes-base.splitInBatches ↔ kilasflow.loop",
+		"n8n-nodes-base.splitOut ↔ kilasflow.splitOut",
+		"n8n-nodes-base.stickyNote ↔ kilasflow.stickyNote",
+		"n8n-nodes-base.summarize ↔ kilasflow.summarize",
+		"n8n-nodes-base.switch ↔ kilasflow.switch",
+		"n8n-nodes-base.telegram ↔ pack.telegram",
+		"n8n-nodes-base.telegramTrigger ↔ kilasflow.telegramTrigger",
+		"n8n-nodes-base.wait ↔ kilasflow.wait",
+		"n8n-nodes-base.webhook ↔ kilasflow.webhook",
+		"n8n-nodes-waha.WAHA ↔ pack.waha",
+		"n8n-nodes-waha.wahaTrigger ↔ pack.wahaTrigger",
 	}
-	joined := strings.Join(mappings, "\n")
-	for _, expected := range []string{
-		"n8n-nodes-base.manualTrigger", "n8n-nodes-base.set", "n8n-nodes-base.if",
-		"n8n-nodes-base.httpRequest", "n8n-nodes-base.webhook", "n8n-nodes-base.postgres",
-	} {
-		if !strings.Contains(joined, expected) {
-			t.Errorf("mappings do not advertise %q", expected)
+	got := n8n.SupportedMappings()
+	if len(got) != len(want) {
+		t.Fatalf("mappings advertise %d pairs, want %d:\ngot  %s\nwant %s",
+			len(got), len(want), strings.Join(got, "\n     "), strings.Join(want, "\n     "))
+	}
+	for index := range want {
+		if got[index] != want[index] {
+			t.Errorf("mapping %d = %q, want %q", index, got[index], want[index])
 		}
 	}
 }

@@ -48,6 +48,10 @@ type Dialect struct {
 	// dropCascade is appended to a DROP TABLE that should take everything
 	// depending on the table with it, or empty where the dialect cannot.
 	dropCascade string
+	// truncateRestart is appended to a TRUNCATE that should also reset the
+	// table's identity columns, or empty where the dialect resets them either
+	// way and has no keyword to say so.
+	truncateRestart string
 	// skipConflict rewrites an insert into one that passes over a row a unique
 	// constraint would reject. It takes the whole statement rather than
 	// returning a suffix because the two dialects spell it in different
@@ -61,6 +65,13 @@ type Dialect struct {
 // Asked so a node can decline to offer the choice rather than accept it and
 // quietly not honour it.
 func (dialect Dialect) DropsCascade() bool { return dialect.dropCascade != "" }
+
+// ChoosesSequenceRestart reports whether truncating can be told what to do with
+// identity columns.
+//
+// False means the dialect has no choice to offer, not that it does not restart
+// them — MySQL always does.
+func (dialect Dialect) ChoosesSequenceRestart() bool { return dialect.truncateRestart != "" }
 
 // Name identifies the dialect, and names its golden directory.
 func (dialect Dialect) Name() string { return dialect.name }
@@ -105,6 +116,9 @@ var Postgres = Dialect{
 	},
 	returningAll: " RETURNING *",
 	dropCascade:  " CASCADE",
+	// PostgreSQL keeps sequences where they are unless told otherwise, which
+	// is why the option exists at all.
+	truncateRestart: " RESTART IDENTITY",
 	skipConflict: func(statement string) string {
 		// Before RETURNING, which must stay last. A skipped row returns no
 		// row at all, which is how the caller learns it was skipped.
@@ -151,6 +165,11 @@ var MySQL = Dialect{
 	// do nothing. Emitting CASCADE would read as a promise the server does not
 	// keep, so the dialect has none and the node does not offer the choice.
 	dropCascade: "",
+	// MySQL's TRUNCATE always resets AUTO_INCREMENT and has no keyword for
+	// asking. The option is therefore always in effect here rather than
+	// unavailable, which is the opposite of the CASCADE case above and worth
+	// not confusing with it.
+	truncateRestart: "",
 	skipConflict: func(statement string) string {
 		// INSERT IGNORE also downgrades several unrelated errors to warnings —
 		// a truncated value, a bad date. That is MySQL's own breadth and not

@@ -136,17 +136,17 @@ func TestEachOperationBuildsTheStatementItPromises(t *testing.T) {
 			t.Run("delete rows", func(t *testing.T) {
 				statement, err := sqlbuild.Delete(dialect, customers, sqlbuild.DeleteRows, []sqlbuild.Comparison{
 					{Column: "tier", Operator: "equals", Value: "bronze"},
-				}, "AND", false)
+				}, "AND", sqlbuild.Removal{})
 				golden(t, dialect, "delete_rows", statement, err)
 			})
 
 			t.Run("truncate", func(t *testing.T) {
-				statement, err := sqlbuild.Delete(dialect, customers, sqlbuild.DeleteTruncate, nil, "", false)
+				statement, err := sqlbuild.Delete(dialect, customers, sqlbuild.DeleteTruncate, nil, "", sqlbuild.Removal{})
 				golden(t, dialect, "delete_truncate", statement, err)
 			})
 
 			t.Run("drop", func(t *testing.T) {
-				statement, err := sqlbuild.Delete(dialect, customers, sqlbuild.DeleteDrop, nil, "", false)
+				statement, err := sqlbuild.Delete(dialect, customers, sqlbuild.DeleteDrop, nil, "", sqlbuild.Removal{})
 				golden(t, dialect, "delete_drop", statement, err)
 			})
 
@@ -155,8 +155,27 @@ func TestEachOperationBuildsTheStatementItPromises(t *testing.T) {
 				// plain drop. MySQL parses CASCADE and documents that it does
 				// nothing, so emitting it would put a promise in the SQL that
 				// the server does not keep.
-				statement, err := sqlbuild.Delete(dialect, customers, sqlbuild.DeleteDrop, nil, "", true)
+				statement, err := sqlbuild.Delete(dialect, customers, sqlbuild.DeleteDrop, nil, "",
+					sqlbuild.Removal{Cascade: true})
 				golden(t, dialect, "delete_drop_cascade", statement, err)
+			})
+
+			t.Run("truncate restarting sequences", func(t *testing.T) {
+				// The MySQL golden is the same statement as the plain
+				// truncate, and for the opposite reason to the cascade case:
+				// MySQL always resets AUTO_INCREMENT and has no keyword for
+				// asking, so the option is in effect there rather than absent.
+				statement, err := sqlbuild.Delete(dialect, customers, sqlbuild.DeleteTruncate, nil, "",
+					sqlbuild.Removal{RestartSequences: true})
+				golden(t, dialect, "delete_truncate_restart", statement, err)
+			})
+
+			t.Run("select in order", func(t *testing.T) {
+				statement, err := sqlbuild.Select(dialect, customers, nil, nil, "", []sqlbuild.Order{
+					{Column: "tier"},
+					{Column: "id", Descending: true},
+				}, 0)
+				golden(t, dialect, "select_ordered", statement, err)
 			})
 
 			t.Run("insert skipping conflicts", func(t *testing.T) {
@@ -236,7 +255,7 @@ func TestABuilderRefusesWhatWouldBeWorseThanFailing(t *testing.T) {
 	// A delete with no condition is a truncate, and a user who meant that has a
 	// mode for it — while a user who forgot a condition has just emptied a
 	// table.
-	if _, err := sqlbuild.Delete(sqlbuild.Postgres, customers, sqlbuild.DeleteRows, nil, "AND", false); err == nil {
+	if _, err := sqlbuild.Delete(sqlbuild.Postgres, customers, sqlbuild.DeleteRows, nil, "AND", sqlbuild.Removal{}); err == nil {
 		t.Error("a delete with no condition was built")
 	}
 	if _, err := sqlbuild.Update(sqlbuild.Postgres, customers, values, nil); err == nil {

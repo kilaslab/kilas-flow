@@ -166,6 +166,20 @@ type mapping struct {
 	toN8N func(node workflow.Node) (map[string]any, []Lossy)
 	// exportTypeVersion is the n8n typeVersion written on export.
 	exportTypeVersion float64
+	// publishedVersions are the n8n typeVersions the mapped node actually has,
+	// transcribed from n8n's own registration.
+	//
+	// It exists so an imported node can go back out at the version it was
+	// authored at instead of being rewritten to one number. n8n's own
+	// getNodeType is an exact map lookup with no resolve-down — see
+	// packages/workflow/src/versioned-node-type.ts — so a typeVersion it does
+	// not publish makes it throw NodeVersionNotFoundError when the file is
+	// opened. A version outside this list therefore falls back to
+	// exportTypeVersion rather than being written through.
+	//
+	// Empty means "do not carry the node's own version", which is the right
+	// answer for a mapping whose two sides number their versions differently.
+	publishedVersions []float64
 	// sharedVersion marks a mapping whose two sides use the same version
 	// numbers, so export writes the node's own version rather than a fixed one.
 	//
@@ -233,14 +247,29 @@ var mappings = []mapping{
 		// asks for — so an imported node lands here and its operation carries
 		// across as itself rather than being flattened to an empty query.
 		n8nType: "n8n-nodes-base.postgres", kilasType: "kilasflow.postgres", kilasVersion: workflow.V(2),
-		exportTypeVersion: 2.4, toKilas: postgresToKilas, toN8N: postgresToN8N,
+		// 2.7 rather than a lower pin, because 2.7 is the version whose
+		// behaviour matches this server's. Below it n8n hands DATE and
+		// date-array columns back as JS Date objects where this server returns
+		// RFC3339 strings, and below 2.5 it binds query replacements through
+		// its own unvalidated legacy path.
+		exportTypeVersion: 2.7,
+		// Transcribed from Postgres.node.ts at 2.34.0, which registers exactly
+		// these. The reference checkout is never a build input, so this is a
+		// literal and the test below is what keeps it honest.
+		publishedVersions: []float64{1, 2, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7},
+		toKilas:           postgresToKilas, toN8N: postgresToN8N,
 	},
 	{
 		// Version 2, for the same reason PostgreSQL is: every MySQL node n8n
 		// exports carries a typeVersion of 2 or higher and would otherwise land
 		// on v1 with v2's parameters.
 		n8nType: "n8n-nodes-base.mySql", kilasType: "kilasflow.mysql", kilasVersion: workflow.V(2),
-		exportTypeVersion: 2.4, toKilas: mysqlToKilas, toN8N: mysqlToN8N,
+		// 2.5 is the highest MySql.node.ts registers, and the one above whose
+		// gate n8n validates that every $n placeholder a query names actually
+		// has a bound value.
+		exportTypeVersion: 2.5,
+		publishedVersions: []float64{1, 2, 2.1, 2.2, 2.3, 2.4, 2.5},
+		toKilas:           mysqlToKilas, toN8N: mysqlToN8N,
 	},
 	{
 		n8nType: "n8n-nodes-base.stickyNote", kilasType: StickyNoteNodeType, kilasVersion: workflow.V(1),
@@ -987,10 +1016,31 @@ func Export(document workflow.Document, catalog workflow.Catalog) (ExportResult,
 
 		entry, supported := byKilasType(node.Type)
 		if !supported {
+			// Emitted under its own type rather than omitted. n8n does not
+			// know this type and will show it as unrecognised and refuse to
+			// run the workflow, which is the honest outcome: the graph keeps
+			// its shape and its edges, and the one node that cannot work says
+			// so where it is.
+			//
+			// Omitting it was worse in a way nobody would notice. Every edge
+			// touching the node went with it, so a linear workflow came out as
+			// two disconnected halves and an n8n user would see a workflow
+			// that looked complete and ran only the first part.
+			result.Document.Nodes = append(result.Document.Nodes, Node{
+				ID: node.ID, Name: node.Name, Type: node.Type,
+				TypeVersion: node.TypeVersion.Float(),
+				Position:    []float64{node.Position.X, node.Position.Y},
+				Parameters:  node.Parameters,
+			})
 			result.Lossy = append(result.Lossy, Lossy{
 				NodeName: node.Name,
-				Reason:   fmt.Sprintf("n8n has no equivalent of the KilasFlow node %q, so it was omitted from the export", node.Type),
+				Reason: fmt.Sprintf("n8n has no equivalent of the KilasFlow node %q; it was exported under its "+
+					"own type so the workflow keeps its shape, and n8n will not recognise it — replace it "+
+					"there before running the workflow", node.Type),
 			})
+			// Its own ports, so a multi-output node keeps its branches rather
+			// than sending every outgoing edge to n8n output 0.
+			portIndex[node.ID] = outputIndexesFor(catalog, node.Type, node.TypeVersion, node.Parameters)
 			continue
 		}
 
@@ -1078,13 +1128,30 @@ func Export(document workflow.Document, catalog workflow.Catalog) (ExportResult,
 // at the versions the package it mirrors publishes, and exporting both as one
 // number would send a workflow back claiming a version it was not authored at.
 func exportVersion(entry mapping, node workflow.Node) float64 {
-	if !entry.sharedVersion {
-		return entry.exportTypeVersion
-	}
 	if node.TypeVersion.IsZero() {
 		return entry.exportTypeVersion
 	}
-	return node.TypeVersion.Float()
+	if entry.sharedVersion {
+		return node.TypeVersion.Float()
+	}
+	// A node sitting at exactly the version this server registers was authored
+	// here, and gets the pin — the version whose n8n behaviour matches what
+	// this server does. Anything else came in from n8n carrying its own
+	// number, which is preserved: a node imported at 2.7 and exported at the
+	// pin would go back with different DATE handling than it arrived with, a
+	// silent behaviour change with nothing in the diff to show for it.
+	if node.TypeVersion == entry.kilasVersion {
+		return entry.exportTypeVersion
+	}
+	// Only if n8n actually publishes it. n8n's getNodeType is an exact map
+	// lookup with no resolve-down, so a version it does not have makes it
+	// refuse to open the file rather than fall back.
+	for _, published := range entry.publishedVersions {
+		if published == node.TypeVersion.Float() {
+			return published
+		}
+	}
+	return entry.exportTypeVersion
 }
 
 // outputIndexesFor maps a canonical node's named output ports onto n8n's

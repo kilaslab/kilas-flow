@@ -216,6 +216,18 @@ func Upsert(dialect Dialect, target Target, values map[string]any, matching []st
 	return sqlnode.Statement{SQL: statement, Parameters: bound, Returning: dialect.Returns()}, nil
 }
 
+// Removal carries the modifiers that belong to one delete mode each.
+//
+// A value rather than two more parameters, because each member is meaningful
+// for exactly one mode and a reader at the call site should be able to see
+// which is which without counting positions.
+type Removal struct {
+	// Cascade takes a dropped table's dependent objects with it.
+	Cascade bool
+	// RestartSequences resets a truncated table's identity columns.
+	RestartSequences bool
+}
+
 // Delete modes.
 const (
 	// DeleteRows removes the rows a WHERE clause selects.
@@ -232,10 +244,10 @@ const (
 // because "empty this table" and "remove some rows from it" are different
 // intentions and a missing WHERE must never quietly become the first.
 //
-// cascade applies to the drop mode alone, and only where the dialect has the
-// clause; a dialect that does not omits it rather than emitting a keyword it
-// would ignore.
-func Delete(dialect Dialect, target Target, mode string, where []Comparison, combine string, cascade bool) (sqlnode.Statement, error) {
+// The modifiers in removal each apply to one mode, and only where the dialect
+// has the clause; a dialect that does not omits it rather than emitting a
+// keyword it would ignore.
+func Delete(dialect Dialect, target Target, mode string, where []Comparison, combine string, removal Removal) (sqlnode.Statement, error) {
 	name, err := target.Qualified(dialect)
 	if err != nil {
 		return sqlnode.Statement{}, err
@@ -243,12 +255,16 @@ func Delete(dialect Dialect, target Target, mode string, where []Comparison, com
 	switch mode {
 	case DeleteDrop:
 		statement := "DROP TABLE IF EXISTS " + name
-		if cascade {
+		if removal.Cascade {
 			statement += dialect.dropCascade
 		}
 		return sqlnode.Statement{SQL: statement}, nil
 	case DeleteTruncate:
-		return sqlnode.Statement{SQL: "TRUNCATE TABLE " + name}, nil
+		statement := "TRUNCATE TABLE " + name
+		if removal.RestartSequences {
+			statement += dialect.truncateRestart
+		}
+		return sqlnode.Statement{SQL: statement}, nil
 	case "", DeleteRows:
 		if len(where) == 0 {
 			// Refused rather than run. A delete with no condition is a
