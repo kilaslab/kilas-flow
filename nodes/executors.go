@@ -38,6 +38,7 @@ func RegisterExecutors(registry *engine.Registry, httpPolicy safehttp.Policy, da
 		HTTPToolExecutorID:    engine.ExecutorFunc(executeHTTPTool),
 		AgentExecutorID:       NewAgentExecutor(agentRuntime, httpPolicy, agentMemory),
 		CodeExecutorID:        NewCodeExecutor(codeCompiler, runcode.NewMemoryCache(), runcode.DefaultLimits()),
+		StickyNoteExecutorID:  engine.ExecutorFunc(executeStickyNote),
 		UnsupportedExecutorID: engine.ExecutorFunc(executeUnsupported),
 	} {
 		if err := registry.Register(id, executor); err != nil {

@@ -15,28 +15,103 @@ const UnsupportedExecutorID = "core.unsupported"
 // UnsupportedNodeType is what an unmappable imported node becomes.
 const UnsupportedNodeType = "kilasflow.unsupported"
 
+// UnsupportedArities are the port counts the placeholder is registered at.
+//
+// The registry is keyed by {type, version} and immutable for the life of the
+// process, so one definition cannot have a variable port count. An imported
+// node's arity is only known from the edges the source workflow drew, and a
+// placeholder whose declared ports do not cover those edges is rejected for an
+// unknown port before its own always-fails validator is ever reached — which
+// reads as a confusing topology error rather than as "this node is
+// unsupported". Registering a small family and choosing the smallest member
+// that covers the observed arity keeps the honest error and needs no new
+// compiler capability.
+//
+// The version number *is* the port count, which is why these are not
+// contiguous: a placeholder at version 4 has four inputs and four outputs. Eight
+// covers every multi-output node in the corpus with room to spare; beyond that
+// the import falls back to the largest member and reports the truncation.
+var UnsupportedArities = []int{1, 2, 4, 8}
+
+// UnsupportedArityFor is the smallest registered arity that covers a node with
+// the given number of input and output slots.
+func UnsupportedArityFor(inputs, outputs int) int {
+	needed := inputs
+	if outputs > needed {
+		needed = outputs
+	}
+	for _, arity := range UnsupportedArities {
+		if arity >= needed {
+			return arity
+		}
+	}
+	return UnsupportedArities[len(UnsupportedArities)-1]
+}
+
+// UnsupportedOutputPorts names a placeholder's output ports at one arity.
+//
+// The names match what the n8n adapter derives from an output index, so the
+// mapping from an n8n output slot to a KilasFlow port is its own inverse. The
+// first is "main" rather than "output0" because every single-output node in the
+// system calls its one output that, and a placeholder should not be the
+// exception.
+func UnsupportedOutputPorts(arity int) []workflow.Port {
+	ports := make([]workflow.Port, 0, arity)
+	for index := 0; index < arity; index++ {
+		ports = append(ports, workflow.Port{Name: unsupportedOutputPortName(index), Kind: workflow.ConnectionMain})
+	}
+	return ports
+}
+
+// UnsupportedInputPorts names a placeholder's input ports at one arity.
+func UnsupportedInputPorts(arity int) []workflow.Port {
+	ports := make([]workflow.Port, 0, arity)
+	for index := 0; index < arity; index++ {
+		ports = append(ports, workflow.Port{Name: unsupportedInputPortName(index), Kind: workflow.ConnectionMain})
+	}
+	return ports
+}
+
+func unsupportedOutputPortName(index int) string {
+	if index == 0 {
+		return "main"
+	}
+	return fmt.Sprintf("output%d", index)
+}
+
+func unsupportedInputPortName(index int) string {
+	if index == 0 {
+		return "main"
+	}
+	return fmt.Sprintf("input%d", index+1)
+}
+
 // unsupportedNode keeps an imported node visible without letting it run.
 //
 // It exists so an import never has to choose between dropping a node the user
 // can no longer see and silently mapping it onto a different node that would
-// do something else. The placeholder preserves the original identity and
-// parameters, renders on the canvas, and fails compilation — so a workflow
-// containing one can be opened and edited but never activated or run.
-func unsupportedNode() node.Definition {
+// do something else. The placeholder preserves the original identity and the
+// whole original node, renders on the canvas, and fails compilation — so a
+// workflow containing one can be opened and edited but never activated or run.
+func unsupportedNode(arity int) node.Definition {
 	return node.Definition{
 		Type:        UnsupportedNodeType,
-		Version:     1,
+		Version:     arity,
 		DisplayName: "Unsupported node",
 		Description: "An imported node KilasFlow has no equivalent for. Replace it before running this workflow.",
 		Category:    "Imported",
-		Inputs:      mainInput(),
-		Outputs:     mainOutput(),
+		Inputs:      UnsupportedInputPorts(arity),
+		Outputs:     UnsupportedOutputPorts(arity),
 		Parameters: []node.PropertyDefinition{
 			{Key: "originalType", Label: "Original node type", Kind: node.PropertyString, Required: true},
 			{Key: "originalTypeVersion", Label: "Original type version", Kind: node.PropertyNumber},
 			{
-				Key: "original", Label: "Original definition", Kind: node.PropertyString,
-				Description: "The imported node's original JSON, kept so nothing is lost.",
+				// The capsule is a nested object, and the property model has
+				// no object kind yet; keyValue is the closest that exists and
+				// the value is not checked against the declared kind. Widening
+				// the model belongs to the node-metadata phase, not here.
+				Key: "original", Label: "Original definition", Kind: node.PropertyKeyValue,
+				Description: "The imported node exactly as n8n wrote it, kept so an export returns it whole.",
 			},
 		},
 		SharedSettings: sharedSettings(),

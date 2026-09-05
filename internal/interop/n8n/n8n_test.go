@@ -264,8 +264,18 @@ func TestImportKeepsAnUnsupportedNodeVisibleAndUnrunnable(t *testing.T) {
 	if placeholder.Parameters["originalType"] != "n8n-nodes-base.emailSend" {
 		t.Errorf("originalType = %#v, want the n8n type preserved", placeholder.Parameters["originalType"])
 	}
-	if raw, ok := placeholder.Parameters["original"].(string); !ok || !strings.Contains(raw, "ops@example.test") {
-		t.Errorf("original = %#v, want the whole node preserved", placeholder.Parameters["original"])
+	// The capsule is a structured object, not JSON escaped inside JSON, and it
+	// holds the whole source node rather than a summary of it.
+	original, ok := placeholder.Parameters["original"].(map[string]any)
+	if !ok {
+		t.Fatalf("original = %#v, want a structured object", placeholder.Parameters["original"])
+	}
+	parameters, ok := original["parameters"].(map[string]any)
+	if !ok || parameters["toEmail"] != "ops@example.test" {
+		t.Errorf("original parameters = %#v, want the source parameters preserved", original["parameters"])
+	}
+	if original["type"] != "n8n-nodes-base.emailSend" {
+		t.Errorf("original type = %#v, want the source type preserved", original["type"])
 	}
 
 	// Actionable: the message names the exact unsupported element.
@@ -567,4 +577,353 @@ func sortStrings(values []string) {
 			values[j], values[j-1] = values[j-1], values[j]
 		}
 	}
+}
+
+// TestMirroredNodeTypesMatchTheNodePack pins the constants the adapter mirrors
+// from the node pack. They are duplicated rather than imported so the adapter
+// does not depend on the pack, and a silent drift between them would send
+// imports to a node type nothing registers.
+func TestMirroredNodeTypesMatchTheNodePack(t *testing.T) {
+	t.Parallel()
+
+	for name, pair := range map[string][2]string{
+		"unsupported": {n8n.UnsupportedNodeType, nodes.UnsupportedNodeType},
+		"sticky note": {n8n.StickyNoteNodeType, nodes.StickyNoteNodeType},
+	} {
+		if pair[0] != pair[1] {
+			t.Errorf("%s node type: adapter has %q, node pack has %q", name, pair[0], pair[1])
+		}
+	}
+}
+
+// stickyFixture is a workflow whose only unmapped node is an annotation. Before
+// the sticky note existed this could not be activated at all: the placeholder
+// declared main ports it never used, so it tripped the missing-input and
+// disconnected-from-trigger checks as well as its own always-fails validator.
+const stickyFixture = `{
+  "name": "Annotated",
+  "nodes": [
+    {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}},
+    {"id":"b","name":"Edit","type":"n8n-nodes-base.set","typeVersion":3.4,"position":[220,0],
+     "parameters":{"mode":"manual","assignments":{"assignments":[{"id":"1","name":"stage","value":"done","type":"string"}]}}},
+    {"id":"c","name":"Sticky Note","type":"n8n-nodes-base.stickyNote","typeVersion":1,"position":[0,-160],
+     "parameters":{"content":"## Why this exists","height":300,"width":420,"color":6}}
+  ],
+  "connections": {"Manual": {"main": [[{"node":"Edit","type":"main","index":0}]]}}
+}`
+
+// switchFixture is an unmapped node wired on three separate outputs. Its
+// branches must stay distinguishable through an import and an export.
+const switchFixture = `{
+  "name": "Three ways",
+  "nodes": [
+    {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}},
+    {"id":"b","name":"Route","type":"n8n-nodes-base.switch","typeVersion":3,"position":[220,0],"parameters":{"rules":{}}},
+    {"id":"c","name":"First","type":"n8n-nodes-base.set","typeVersion":3.4,"position":[440,-120],"parameters":{}},
+    {"id":"d","name":"Second","type":"n8n-nodes-base.set","typeVersion":3.4,"position":[440,0],"parameters":{}},
+    {"id":"e","name":"Third","type":"n8n-nodes-base.set","typeVersion":3.4,"position":[440,120],"parameters":{}}
+  ],
+  "connections": {
+    "Manual": {"main": [[{"node":"Route","type":"main","index":0}]]},
+    "Route": {"main": [
+      [{"node":"First","type":"main","index":0}],
+      [{"node":"Second","type":"main","index":0}],
+      [{"node":"Third","type":"main","index":0}]
+    ]}
+  }
+}`
+
+// capsuleFixture carries every field the placeholder must preserve.
+const capsuleFixture = `{
+  "name": "Full node",
+  "nodes": [
+    {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}},
+    {"id":"b","name":"Send Email","type":"n8n-nodes-base.emailSend","typeVersion":2.1,"position":[220,0],
+     "parameters":{"toEmail":"ops@example.test"},
+     "credentials":{"smtp":{"id":"7","name":"Company SMTP"}},
+     "disabled":true,
+     "notes":"Only fires out of hours",
+     "webhookId":"3f2a1b0c-dead-4bee-9f00-0d15ea5eb00b",
+     "continueOnFail":true,
+     "retryOnFail":true,
+     "maxTries":5,
+     "waitBetweenTries":2500,
+     "alwaysOutputData":true,
+     "executeOnce":true,
+     "onError":"continueErrorOutput"}
+  ],
+  "connections": {"Manual": {"main": [[{"node":"Send Email","type":"main","index":0}]]}}
+}`
+
+// TestStickyNoteImportsAndActivates is the property that unblocks every real
+// imported workflow: Sticky Note is the most deployed node in n8n, and while it
+// became an always-failing placeholder no annotated workflow could be activated.
+func TestStickyNoteImportsAndActivates(t *testing.T) {
+	t.Parallel()
+
+	result := importFixture(t, stickyFixture)
+	note := nodeByName(result.Document, "Sticky Note")
+	if note.Type != n8n.StickyNoteNodeType {
+		t.Fatalf("sticky note type = %q, want %q", note.Type, n8n.StickyNoteNodeType)
+	}
+	if note.Parameters["content"] != "## Why this exists" {
+		t.Errorf("content = %#v, want the annotation preserved", note.Parameters["content"])
+	}
+	for key, want := range map[string]float64{"height": 300, "width": 420, "color": 6} {
+		if got, _ := note.Parameters[key].(float64); got != want {
+			t.Errorf("%s = %#v, want %v", key, note.Parameters[key], want)
+		}
+	}
+	// An annotation is not an unsupported element; reporting it as one would
+	// train users to ignore the list.
+	if hasReason(result.Unsupported, "stickyNote") {
+		t.Errorf("unsupported = %#v, want the sticky note not reported as unsupported", result.Unsupported)
+	}
+
+	document := result.Document
+	document.ID = "wf_sticky"
+	if _, err := workflow.Compile(document, registry(t)); err != nil {
+		t.Fatalf("an annotated workflow must compile: %v", err)
+	}
+}
+
+// TestStickyNoteRoundTrips proves the annotation survives an export, so a
+// workflow edited here and taken back to n8n keeps its documentation.
+func TestStickyNoteRoundTrips(t *testing.T) {
+	t.Parallel()
+
+	imported := importFixture(t, stickyFixture)
+	exported, err := n8n.Export(imported.Document)
+	if err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+	var note n8n.Node
+	for _, candidate := range exported.Document.Nodes {
+		if candidate.Name == "Sticky Note" {
+			note = candidate
+		}
+	}
+	if note.Type != "n8n-nodes-base.stickyNote" {
+		t.Fatalf("exported type = %q, want the n8n sticky note", note.Type)
+	}
+	if note.Parameters["content"] != "## Why this exists" {
+		t.Errorf("exported content = %#v, want the annotation preserved", note.Parameters["content"])
+	}
+}
+
+// TestPlaceholderKeepsItsBranchesDistinct is the export bug the ticket names: a
+// three-output node whose every branch was silently rewired onto n8n output 0.
+func TestPlaceholderKeepsItsBranchesDistinct(t *testing.T) {
+	t.Parallel()
+
+	imported := importFixture(t, switchFixture)
+	placeholder := nodeByName(imported.Document, "Route")
+	if placeholder.Type != n8n.UnsupportedNodeType {
+		t.Fatalf("Route type = %q, want the placeholder", placeholder.Type)
+	}
+	// Three used outputs need a placeholder that declares at least three.
+	if placeholder.TypeVersion < 3 {
+		t.Errorf("placeholder arity = %d, want at least 3 for a three-output node", placeholder.TypeVersion)
+	}
+
+	// Import must record the three branches as distinct ports.
+	ports := map[string]string{}
+	for _, connection := range imported.Document.Connections {
+		if connection.Source.NodeID == placeholder.ID {
+			ports[connection.Target.NodeID] = connection.Source.Port
+		}
+	}
+	if len(ports) != 3 {
+		t.Fatalf("placeholder outgoing ports = %#v, want three", ports)
+	}
+	distinct := map[string]bool{}
+	for _, port := range ports {
+		distinct[port] = true
+	}
+	if len(distinct) != 3 {
+		t.Errorf("placeholder ports = %#v, want three distinct ports", ports)
+	}
+
+	// And export must put them back on three different n8n output slots.
+	exported, err := n8n.Export(imported.Document)
+	if err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+	slots := exported.Document.Connections["Route"]["main"]
+	if len(slots) != 3 {
+		t.Fatalf("exported output slots = %d, want 3", len(slots))
+	}
+	for index, targets := range slots {
+		if len(targets) != 1 {
+			t.Errorf("output slot %d has %d targets, want exactly 1", index, len(targets))
+		}
+	}
+	seen := map[string]bool{}
+	for _, targets := range slots {
+		for _, target := range targets {
+			seen[target.Node] = true
+		}
+	}
+	for _, want := range []string{"First", "Second", "Third"} {
+		if !seen[want] {
+			t.Errorf("exported connections lost the branch to %q", want)
+		}
+	}
+}
+
+// TestPlaceholderCapsuleRoundTripsEveryField is the lossless half of the
+// ticket: a node imported as unsupported and exported back must return whole.
+func TestPlaceholderCapsuleRoundTripsEveryField(t *testing.T) {
+	t.Parallel()
+
+	imported := importFixture(t, capsuleFixture)
+	exported, err := n8n.Export(imported.Document)
+	if err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+	var returned n8n.Node
+	for _, candidate := range exported.Document.Nodes {
+		if candidate.Name == "Send Email" {
+			returned = candidate
+		}
+	}
+	if returned.Type != "n8n-nodes-base.emailSend" {
+		t.Fatalf("exported type = %q, want the original n8n type", returned.Type)
+	}
+	if returned.TypeVersion != 2.1 {
+		t.Errorf("exported typeVersion = %v, want 2.1", returned.TypeVersion)
+	}
+	if returned.Parameters["toEmail"] != "ops@example.test" {
+		t.Errorf("exported parameters = %#v, want them preserved", returned.Parameters)
+	}
+	if len(returned.Credentials) == 0 {
+		t.Error("exported credentials were lost; a placeholder must return its bindings")
+	}
+	if !returned.Disabled {
+		t.Error("exported disabled flag was lost")
+	}
+	if returned.Notes != "Only fires out of hours" {
+		t.Errorf("exported notes = %q, want them preserved", returned.Notes)
+	}
+	if returned.WebhookID != "3f2a1b0c-dead-4bee-9f00-0d15ea5eb00b" {
+		t.Errorf("exported webhookId = %q, want it preserved", returned.WebhookID)
+	}
+	for name, check := range map[string]bool{
+		"continueOnFail":   returned.ContinueOnFail,
+		"retryOnFail":      returned.RetryOnFail,
+		"alwaysOutputData": returned.AlwaysOutputData,
+		"executeOnce":      returned.ExecuteOnce,
+	} {
+		if !check {
+			t.Errorf("exported %s was lost", name)
+		}
+	}
+	if returned.MaxTries != 5 {
+		t.Errorf("exported maxTries = %v, want 5", returned.MaxTries)
+	}
+	if returned.WaitBetweenTries != 2500 {
+		t.Errorf("exported waitBetweenTries = %v, want 2500", returned.WaitBetweenTries)
+	}
+	if returned.OnError != "continueErrorOutput" {
+		t.Errorf("exported onError = %q, want it preserved", returned.OnError)
+	}
+}
+
+// TestPlaceholderStillRefusesToCompile guards the contract this ticket extends
+// without weakening: the placeholder is still unrunnable and still says why.
+func TestPlaceholderStillRefusesToCompile(t *testing.T) {
+	t.Parallel()
+
+	imported := importFixture(t, switchFixture)
+	document := imported.Document
+	document.ID = "wf_switch"
+	_, err := workflow.Compile(document, registry(t))
+	if err == nil {
+		t.Fatal("a workflow containing an unsupported placeholder must not compile")
+	}
+	if !strings.Contains(err.Error(), "n8n-nodes-base.switch") {
+		t.Errorf("compile error = %v, want it to name the original n8n type", err)
+	}
+}
+
+// TestPlaceholderArityFamilyMatchesTheNodePack pins the arity family the
+// adapter mirrors. If the node pack registered a different set, imports would
+// select a version nothing has registered.
+func TestPlaceholderArityFamilyMatchesTheNodePack(t *testing.T) {
+	t.Parallel()
+
+	catalogue := registry(t)
+	for _, arity := range nodes.UnsupportedArities {
+		definition, found := catalogue.Get(nodes.UnsupportedNodeType, arity)
+		if !found {
+			t.Fatalf("no placeholder registered at arity %d", arity)
+		}
+		if len(definition.Outputs) != arity || len(definition.Inputs) != arity {
+			t.Errorf("placeholder arity %d has %d inputs and %d outputs", arity, len(definition.Inputs), len(definition.Outputs))
+		}
+		// The port names the adapter derives from an index must be the ones
+		// the definition declares, or the compiler rejects the edge.
+		for index, port := range definition.Outputs {
+			if got := n8n.OutputPortNameForTest(nodes.UnsupportedNodeType, index); got != port.Name {
+				t.Errorf("arity %d output %d: adapter says %q, definition says %q", arity, index, got, port.Name)
+			}
+		}
+		for index, port := range definition.Inputs {
+			if got := n8n.InputPortNameForTest(nodes.UnsupportedNodeType, index); got != port.Name {
+				t.Errorf("arity %d input %d: adapter says %q, definition says %q", arity, index, got, port.Name)
+			}
+		}
+	}
+}
+
+// TestExportReadsTheLegacyStringCapsule proves workflows imported before the
+// capsule became structured still export whole.
+//
+// They are already persisted with `original` as a JSON string, and reading only
+// the new shape would silently return them stripped of their parameters — a
+// regression nobody would notice until a customer re-exported an old import.
+func TestExportReadsTheLegacyStringCapsule(t *testing.T) {
+	t.Parallel()
+
+	document := workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_legacy",
+		Name:          "Legacy import",
+		Nodes: []workflow.Node{
+			{ID: "a", Name: "Manual", Type: "kilasflow.manual", TypeVersion: 1},
+			{
+				ID: "b", Name: "Send Email", Type: n8n.UnsupportedNodeType, TypeVersion: 1,
+				Parameters: map[string]any{
+					"originalType":        "n8n-nodes-base.emailSend",
+					"originalTypeVersion": 2.1,
+					// Exactly the shape the previous importer wrote.
+					"original": `{"type":"n8n-nodes-base.emailSend","typeVersion":2.1,"parameters":{"toEmail":"ops@example.test"}}`,
+				},
+			},
+		},
+		Connections: []workflow.Connection{{
+			ID: "a-b", Kind: workflow.ConnectionMain,
+			Source: workflow.Endpoint{NodeID: "a", Port: "main"},
+			Target: workflow.Endpoint{NodeID: "b", Port: "main"},
+		}},
+		Settings: map[string]any{},
+	}
+
+	exported, err := n8n.Export(document)
+	if err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+	for _, node := range exported.Document.Nodes {
+		if node.Name != "Send Email" {
+			continue
+		}
+		if node.Type != "n8n-nodes-base.emailSend" {
+			t.Errorf("exported type = %q, want the original n8n type", node.Type)
+		}
+		if node.Parameters["toEmail"] != "ops@example.test" {
+			t.Errorf("exported parameters = %#v, want the legacy capsule read", node.Parameters)
+		}
+		return
+	}
+	t.Fatal("the placeholder was not exported at all")
 }

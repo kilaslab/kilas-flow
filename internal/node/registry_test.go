@@ -35,12 +35,23 @@ func TestRegistryListsBuiltinsInStableOrder(t *testing.T) {
 	if !reflect.DeepEqual(got, sorted) {
 		t.Fatalf("List() types = %#v, want them sorted", got)
 	}
+	// The registry is keyed by {type, version} and List sorts by both, so one
+	// type may legitimately appear at several versions — the import
+	// placeholder is registered once per port arity. What must never repeat is
+	// a type at the same version.
+	type key struct {
+		nodeType string
+		version  int
+	}
+	seenKey := make(map[key]bool, len(definitions))
 	seen := make(map[string]bool, len(got))
-	for _, nodeType := range got {
-		if seen[nodeType] {
-			t.Errorf("List() returned %q twice", nodeType)
+	for _, definition := range definitions {
+		current := key{definition.Type, definition.Version}
+		if seenKey[current] {
+			t.Errorf("List() returned %q version %d twice", definition.Type, definition.Version)
 		}
-		seen[nodeType] = true
+		seenKey[current] = true
+		seen[definition.Type] = true
 	}
 	for _, expected := range []string{"kilasflow.manual", "kilasflow.set"} {
 		if !seen[expected] {

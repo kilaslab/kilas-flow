@@ -278,6 +278,13 @@ func Compile(document Document, catalog Catalog) (IR, error) {
 // root: a node with no inputs that begins item flow.
 // producesItems reports whether a node emits on the item channel, which is
 // what separates a trigger from a configuration provider.
+// isAnnotation reports a node that declares no ports in either direction. Such
+// a node cannot be connected to anything, so it neither begins a run nor
+// belongs to one; it is drawn on the canvas and otherwise ignored.
+func isAnnotation(definition NodeDefinition) bool {
+	return len(definition.Inputs) == 0 && len(definition.Outputs) == 0
+}
+
 func producesItems(ports []Port) bool {
 	for _, port := range ports {
 		if port.Kind == ConnectionMain {
@@ -380,6 +387,14 @@ func validateExecutableTopology(ir IR, issues *ValidationErrors) {
 		}
 	}
 	for index, node := range ir.Nodes {
+		// A node with no ports at all takes part in no connection, so it can
+		// never be reached and is not an orphan. An annotation is the case
+		// that matters: a sticky note is documentation drawn on the canvas,
+		// and requiring it to be wired to the trigger would make every
+		// annotated workflow permanently unactivatable.
+		if isAnnotation(node.Definition) {
+			continue
+		}
 		if _, found := reachable[node.ID]; !found {
 			issues.add(ValidationError{
 				Code: ErrorInvalidTopology, Path: fmt.Sprintf("/nodes/%d", index), NodeID: node.ID,

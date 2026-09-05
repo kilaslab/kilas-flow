@@ -27,6 +27,13 @@ import (
 // becomes. It is registered in the node catalogue so the editor can render it.
 const UnsupportedNodeType = "kilasflow.unsupported"
 
+// StickyNoteNodeType is the canvas annotation an n8n sticky note becomes.
+//
+// Mirrored from nodes.StickyNoteNodeType rather than imported, for the same
+// reason UnsupportedNodeType is: the adapter must not depend on the node pack.
+// TestMirroredNodeTypesMatchTheNodePack keeps the two in step.
+const StickyNoteNodeType = "kilasflow.stickyNote"
+
 // Document is the subset of n8n workflow JSON this adapter reads and writes.
 //
 // Fields outside it are ignored on import and never invented on export; the
@@ -51,6 +58,21 @@ type Node struct {
 	Credentials map[string]any `json:"credentials,omitempty"`
 	Disabled    bool           `json:"disabled,omitempty"`
 	Notes       string         `json:"notes,omitempty"`
+	// WebhookID is n8n's per-node webhook identity. A node imported as a
+	// placeholder must carry it back out, or the exported workflow claims a
+	// different endpoint than the one it came from.
+	WebhookID string `json:"webhookId,omitempty"`
+	// The error-handling set. KilasFlow does not honour these yet — that is a
+	// separate ticket — but the placeholder must not lose them, because a node
+	// that round-trips without its retry policy silently changes behaviour in
+	// the instance it returns to.
+	ContinueOnFail   bool    `json:"continueOnFail,omitempty"`
+	RetryOnFail      bool    `json:"retryOnFail,omitempty"`
+	MaxTries         float64 `json:"maxTries,omitempty"`
+	WaitBetweenTries float64 `json:"waitBetweenTries,omitempty"`
+	AlwaysOutputData bool    `json:"alwaysOutputData,omitempty"`
+	ExecuteOnce      bool    `json:"executeOnce,omitempty"`
+	OnError          string  `json:"onError,omitempty"`
 }
 
 // Connections is n8n's shape: source node *name* → connection kind → one slot
@@ -155,6 +177,10 @@ var mappings = []mapping{
 		n8nType: "n8n-nodes-base.mySql", kilasType: "kilasflow.mysql", kilasVersion: 1,
 		exportTypeVersion: 2.4, toKilas: sqlToKilas, toN8N: sqlToN8N,
 	},
+	{
+		n8nType: "n8n-nodes-base.stickyNote", kilasType: StickyNoteNodeType, kilasVersion: 1,
+		exportTypeVersion: 1, toKilas: stickyToKilas, toN8N: stickyToN8N,
+	},
 }
 
 func byN8NType(nodeType string) (mapping, bool) {
@@ -205,6 +231,14 @@ func Import(payload []byte) (ImportResult, error) {
 		name = "Imported workflow"
 	}
 
+	// A placeholder's declared ports must cover the edges the source workflow
+	// drew, so the arity has to be known before the node is converted — which
+	// means reading the connections first. Getting this wrong is not a subtle
+	// failure: the compiler rejects the edge for an unknown port before the
+	// placeholder's own validator runs, so the user is told their topology is
+	// broken rather than that a node is unsupported.
+	arityByName := observedArity(source.Connections)
+
 	unsupported := make([]Unsupported, 0)
 	nodes := make([]workflow.Node, 0, len(source.Nodes))
 	// n8n connections are keyed by node *name*; KilasFlow's are keyed by ID.
@@ -238,15 +272,18 @@ func Import(payload []byte) (ImportResult, error) {
 		if !supported {
 			// Preserved rather than dropped: the node stays visible with its
 			// original identity, and the placeholder refuses to compile.
-			original, _ := json.Marshal(map[string]any{
-				"type": node.Type, "typeVersion": node.TypeVersion, "parameters": node.Parameters,
-			})
+			//
+			// The capsule is the whole source node, not a summary of it. A
+			// placeholder exists so a node "came from n8n and belongs there",
+			// and a round trip that returned it stripped of its credentials,
+			// its notes or its retry policy would defeat exactly that.
+			arity := arityByName[name]
 			converted.Type = UnsupportedNodeType
-			converted.TypeVersion = 1
+			converted.TypeVersion = unsupportedArityFor(arity.inputs, arity.outputs)
 			converted.Parameters = map[string]any{
 				"originalType":        node.Type,
 				"originalTypeVersion": node.TypeVersion,
-				"original":            string(original),
+				"original":            capsule(node),
 			}
 			nodes = append(nodes, converted)
 			unsupported = append(unsupported, Unsupported{
@@ -431,25 +468,31 @@ func Export(document workflow.Document) (ExportResult, error) {
 		if node.Type == UnsupportedNodeType {
 			// Round-tripping the placeholder back to its original n8n identity
 			// is the honest thing: the node came from n8n and belongs there.
+			// Everything the capsule kept is handed back, not just the
+			// parameters — a node that returns without its credentials, its
+			// notes or its retry policy is a node that quietly changed.
 			originalType, _ := node.Parameters["originalType"].(string)
 			originalVersion, _ := node.Parameters["originalTypeVersion"].(float64)
-			exported := Node{
-				ID: node.ID, Name: node.Name, Type: originalType, TypeVersion: originalVersion,
-				Position: []float64{node.Position.X, node.Position.Y},
+			exported := restoreCapsule(node.Parameters["original"])
+			exported.ID = node.ID
+			exported.Name = node.Name
+			exported.Position = []float64{node.Position.X, node.Position.Y}
+			if exported.Type == "" {
+				exported.Type = originalType
 			}
-			if raw, ok := node.Parameters["original"].(string); ok {
-				var original struct {
-					Parameters map[string]any `json:"parameters"`
-				}
-				if err := json.Unmarshal([]byte(raw), &original); err == nil {
-					exported.Parameters = original.Parameters
-				}
+			if exported.TypeVersion == 0 {
+				exported.TypeVersion = originalVersion
 			}
 			result.Document.Nodes = append(result.Document.Nodes, exported)
 			result.Lossy = append(result.Lossy, Lossy{
 				NodeName: node.Name,
-				Reason:   fmt.Sprintf("this node was imported from n8n as unsupported; it was exported back as %q with its original parameters", originalType),
+				Reason:   fmt.Sprintf("this node was imported from n8n as unsupported; it was exported back as %q with everything the import preserved", originalType),
 			})
+			// The placeholder's own ports, so a multi-output node keeps its
+			// branches. Falling through without this sent every outgoing edge
+			// to n8n output 0, silently rewiring a Switch so that all its
+			// branches left the first slot.
+			portIndex[node.ID] = placeholderOutputIndexes(node)
 			continue
 		}
 
@@ -549,4 +592,136 @@ func inputIndexFor(nodeType, port string) int {
 		}
 	}
 	return 0
+}
+
+// nodeArity is how many input and output slots a workflow's connections
+// actually use on one node.
+type nodeArity struct {
+	inputs  int
+	outputs int
+}
+
+// observedArity counts the slots each node is wired on.
+//
+// n8n identifies a slot positionally, so the only evidence of how many a node
+// has is the highest index some edge uses. A node wired on outputs 0 and 2 has
+// at least three, even though nothing touches output 1.
+func observedArity(connections Connections) map[string]nodeArity {
+	arity := make(map[string]nodeArity, len(connections))
+	widen := func(name string, inputs, outputs int) {
+		current := arity[name]
+		if inputs > current.inputs {
+			current.inputs = inputs
+		}
+		if outputs > current.outputs {
+			current.outputs = outputs
+		}
+		arity[name] = current
+	}
+	for sourceName, kinds := range connections {
+		for _, slots := range kinds {
+			for outputIndex, targets := range slots {
+				if len(targets) > 0 {
+					widen(sourceName, 0, outputIndex+1)
+				}
+				for _, target := range targets {
+					widen(target.Node, target.Index+1, 0)
+				}
+			}
+		}
+	}
+	return arity
+}
+
+// unsupportedArities mirrors nodes.UnsupportedArities. The adapter must not
+// depend on the node pack, so the family is duplicated and pinned by
+// TestPlaceholderArityFamilyMatchesTheNodePack.
+var unsupportedArities = []int{1, 2, 4, 8}
+
+// unsupportedArityFor is the smallest registered placeholder arity covering a
+// node wired on this many slots. A node beyond the largest member is clamped;
+// import reports the truncation rather than emitting an edge the compiler will
+// reject.
+func unsupportedArityFor(inputs, outputs int) int {
+	needed := inputs
+	if outputs > needed {
+		needed = outputs
+	}
+	if needed < 1 {
+		needed = 1
+	}
+	for _, arity := range unsupportedArities {
+		if arity >= needed {
+			return arity
+		}
+	}
+	return unsupportedArities[len(unsupportedArities)-1]
+}
+
+// capsule is the whole source node as a structured value.
+//
+// It is stored as an object rather than a marshalled string: the previous shape
+// escaped JSON inside JSON, which made the value unreadable in the editor and
+// bought nothing. Round-tripping through the node's own JSON tags keeps the
+// field names identical to what n8n wrote, so an export can hand them straight
+// back.
+func capsule(node Node) map[string]any {
+	encoded, err := json.Marshal(node)
+	if err != nil {
+		// Node holds only JSON-native types, so this cannot fail; falling back
+		// to identity alone still preserves more than dropping the node.
+		return map[string]any{"type": node.Type, "typeVersion": node.TypeVersion}
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		return map[string]any{"type": node.Type, "typeVersion": node.TypeVersion}
+	}
+	return decoded
+}
+
+// restoreCapsule turns a stored capsule back into the node n8n wrote.
+//
+// It round-trips through the same JSON tags the capsule was built from, so a
+// field added to Node is carried in both directions without a second list to
+// keep in step. An unreadable capsule yields a zero Node and the caller falls
+// back to the identity parameters, which is why those are still stored
+// separately.
+func restoreCapsule(stored any) Node {
+	if stored == nil {
+		return Node{}
+	}
+	// Workflows imported before the capsule became structured hold it as a
+	// JSON *string*. Reading both shapes costs one type switch and is the
+	// difference between those workflows exporting whole and exporting
+	// stripped of their parameters.
+	if text, ok := stored.(string); ok {
+		var node Node
+		if err := json.Unmarshal([]byte(text), &node); err != nil {
+			return Node{}
+		}
+		return node
+	}
+	encoded, err := json.Marshal(stored)
+	if err != nil {
+		return Node{}
+	}
+	var node Node
+	if err := json.Unmarshal(encoded, &node); err != nil {
+		return Node{}
+	}
+	return node
+}
+
+// placeholderOutputIndexes maps a placeholder's port names back to n8n output
+// slots. Its arity is its type version, which is how the family is registered.
+func placeholderOutputIndexes(node workflow.Node) map[string]int {
+	arity := node.TypeVersion
+	if arity < 1 {
+		arity = 1
+	}
+	indexes := make(map[string]int, arity)
+	for index := 0; index < arity; index++ {
+		indexes[outputPortName(UnsupportedNodeType, index)] = index
+	}
+	return indexes
 }

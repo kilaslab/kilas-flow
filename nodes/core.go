@@ -25,9 +25,16 @@ func RegisterAll(registry *node.Registry) error {
 		httpToolNode(),
 		agentNode(),
 		codeNode(),
-		unsupportedNode(),
+		stickyNoteNode(),
 	} {
 		if err := registry.Register(definition); err != nil {
+			return err
+		}
+	}
+	// The import placeholder is registered once per port arity; see
+	// UnsupportedArities for why one definition cannot cover them all.
+	for _, arity := range UnsupportedArities {
+		if err := registry.Register(unsupportedNode(arity)); err != nil {
 			return err
 		}
 	}

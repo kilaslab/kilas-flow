@@ -569,3 +569,83 @@ func TestCompileCopiesCanonicalDataIntoIndependentIR(t *testing.T) {
 		t.Errorf("IR workflow setting = %d, want %d", got, want)
 	}
 }
+
+// TestCompileAcceptsAnAnnotationConnectedToNothing pins the rule a canvas
+// annotation depends on: a node declaring no ports in either direction cannot
+// be connected to anything, so it is neither a trigger root nor an orphan.
+//
+// It sits directly against TestCompileRejectsNodeDisconnectedFromTheManualTrigger:
+// a node with ports that is not wired up is still an error. Without the
+// exemption every annotated workflow would be permanently unactivatable, and
+// almost every real n8n workflow is annotated.
+func TestCompileAcceptsAnAnnotationConnectedToNothing(t *testing.T) {
+	document := workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_019",
+		Name:          "Annotated",
+		Nodes: []workflow.Node{
+			{ID: "manual", Name: "Manual Trigger", Type: "kilasflow.manual", TypeVersion: 1},
+			{ID: "set", Name: "Set", Type: "kilasflow.set", TypeVersion: 1, Parameters: map[string]any{"assignments": map[string]any{"status": "ready"}}},
+			{ID: "note", Name: "Sticky Note", Type: "kilasflow.stickyNote", TypeVersion: 1},
+		},
+		Connections: []workflow.Connection{{
+			ID: "manual-set", Kind: workflow.ConnectionMain,
+			Source: workflow.Endpoint{NodeID: "manual", Port: "main"},
+			Target: workflow.Endpoint{NodeID: "set", Port: "main"},
+		}},
+		Settings: map[string]any{},
+	}
+
+	ir, err := workflow.Compile(document, catalog{
+		"kilasflow.manual": {
+			Type: "kilasflow.manual", Version: 1,
+			Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+		},
+		"kilasflow.set": {
+			Type: "kilasflow.set", Version: 1,
+			Inputs:             []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+			Outputs:            []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+			RequiredParameters: []string{"assignments"},
+		},
+		// No ports at all, in either direction.
+		"kilasflow.stickyNote": {Type: "kilasflow.stickyNote", Version: 1},
+	})
+	if err != nil {
+		t.Fatalf("a workflow with an unconnected annotation must compile: %v", err)
+	}
+	// Exempt from the topology rules, not dropped: the editor would lose it on
+	// every save if compilation removed it.
+	var kept bool
+	for _, node := range ir.Nodes {
+		if node.ID == "note" {
+			kept = true
+		}
+	}
+	if !kept {
+		t.Error("the annotation was dropped from the compiled graph")
+	}
+}
+
+// TestCompileRejectsAWorkflowThatIsOnlyAnAnnotation proves the exemption does
+// not go too far. An annotation supplies no items, so a document containing
+// nothing else has no trigger, and saying so is the honest answer.
+func TestCompileRejectsAWorkflowThatIsOnlyAnAnnotation(t *testing.T) {
+	_, err := workflow.Compile(workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_019",
+		Name:          "Only a note",
+		Nodes:         []workflow.Node{{ID: "note", Name: "Sticky Note", Type: "kilasflow.stickyNote", TypeVersion: 1}},
+		Connections:   []workflow.Connection{},
+		Settings:      map[string]any{},
+	}, catalog{
+		"kilasflow.stickyNote": {Type: "kilasflow.stickyNote", Version: 1},
+	})
+
+	var validationErrors *workflow.ValidationErrors
+	if !errors.As(err, &validationErrors) {
+		t.Fatalf("Compile() error = %v, want ValidationErrors", err)
+	}
+	if !containsValidationCode(validationErrors.Issues, workflow.ErrorInvalidTopology) {
+		t.Errorf("validation issues = %#v, want %q", validationErrors.Issues, workflow.ErrorInvalidTopology)
+	}
+}

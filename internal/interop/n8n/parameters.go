@@ -619,3 +619,37 @@ func sortStrings(values []string) {
 		}
 	}
 }
+
+// stickyToKilas carries an annotation across unchanged.
+//
+// Every field is geometry or presentation, so there is nothing to translate and
+// nothing that can be unsupported: a note that arrives with a colour KilasFlow
+// draws differently is still the same note. Absent fields are left absent so
+// the node definition's defaults apply, rather than being pinned to n8n's.
+func stickyToKilas(node Node) (map[string]any, []Unsupported) {
+	parameters := map[string]any{}
+	if content := stringParameter(node.Parameters, "content"); content != "" {
+		parameters["content"] = content
+	}
+	for _, key := range []string{"width", "height", "color"} {
+		if value, ok := numberParameter(node.Parameters, key); ok {
+			parameters[key] = value
+		}
+	}
+	return parameters, nil
+}
+
+// stickyToN8N is the exact inverse, so an annotation round-trips byte for byte
+// in the fields n8n reads.
+func stickyToN8N(node workflow.Node) (map[string]any, []Lossy) {
+	parameters := map[string]any{}
+	if content := stringParameter(node.Parameters, "content"); content != "" {
+		parameters["content"] = content
+	}
+	for _, key := range []string{"width", "height", "color"} {
+		if value, ok := numberParameter(node.Parameters, key); ok {
+			parameters[key] = value
+		}
+	}
+	return parameters, nil
+}
