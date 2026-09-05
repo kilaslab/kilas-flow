@@ -42,7 +42,18 @@ wait_for_ready() {
 }
 
 docker info >/dev/null
-if [ "${KILASFLOW_SMOKE_SKIP_BUILD:-0}" != 1 ]; then
+
+# Three ways to get the image under test, in precedence order.
+#
+# KILASFLOW_SMOKE_PULL fetches it from a registry. That is the only mode that can
+# prove a published multi-architecture image: pulling one tag has to resolve
+# through the manifest list to something this machine can actually run, and a
+# locally built single-architecture image demonstrates nothing about that.
+# --pull=always is not enough on its own here, because the run below would then be
+# the first thing to notice a missing tag, and it reports that far less clearly.
+if [ "${KILASFLOW_SMOKE_PULL:-0}" = 1 ]; then
+	docker pull "$image" >/dev/null
+elif [ "${KILASFLOW_SMOKE_SKIP_BUILD:-0}" != 1 ]; then
 	make docker
 fi
 mkdir "$data_dir"

@@ -1,7 +1,11 @@
 # syntax=docker/dockerfile:1
 
 # ---- Stage 1: build the SPA -------------------------------------------------
-FROM node:24.16-alpine AS web
+# Pinned to the build platform so a two-architecture build runs this stage once
+# on the native runner rather than a second time under emulation. Its output is
+# JavaScript and has no architecture of its own, so both published images embed
+# byte-identical frontend assets from this single execution.
+FROM --platform=$BUILDPLATFORM node:24.16-alpine AS web
 
 WORKDIR /src/web
 
@@ -19,7 +23,12 @@ RUN pnpm build
 
 
 # ---- Stage 2: build the Go binary -------------------------------------------
-FROM golang:1.27-alpine AS build
+# Also pinned to the build platform. The compiler runs natively and cross-compiles
+# through GOARCH below, so producing the arm64 image never emulates the Go
+# toolchain — minutes of QEMU per release avoided for nothing given up, because
+# CGO is off and the build has no architecture-dependent inputs. Emulating this
+# stage instead would be the obvious alternative and is strictly worse.
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS build
 
 WORKDIR /src
 
@@ -33,8 +42,21 @@ COPY . .
 RUN rm -rf internal/web/dist
 COPY --from=web /src/web/build ./internal/web/dist
 
-ARG VERSION=0.1.0
-RUN CGO_ENABLED=0 go build \
+# BuildKit supplies TARGETOS and TARGETARCH for whichever platform is being
+# produced, but predefined arguments are stage-scoped and have to be re-declared
+# in the stage that reads them. Both are empty when this file is built by
+# something that does not set them, and an empty GOOS or GOARCH means "the
+# toolchain default" — which is the single-architecture behaviour this stage had
+# before, so nothing regresses.
+ARG TARGETOS
+ARG TARGETARCH
+
+# The default is deliberately not a plausible release number. An image built with
+# no --build-arg VERSION is a development build and must say so, rather than claim
+# a version somebody could look up in the release notes; the previous default of
+# 0.1.0 was indistinguishable from a real one.
+ARG VERSION=0.0.0-dev
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
     -trimpath \
     -ldflags="-s -w -X main.version=${VERSION}" \
     -o /out/kilasflow \
@@ -50,12 +72,36 @@ RUN mkdir -p /out/data
 # ---- Stage 3: runtime -------------------------------------------------------
 # Distroless works because kilasflow builds with CGO disabled end to end, including
 # SQLite (glebarez/sqlite is pure Go).
+#
+# This stage carries no RUN, which is what lets a multi-architecture build skip
+# QEMU entirely: nothing is ever executed for the target architecture, only copied
+# into place. Adding a RUN here would silently make every release depend on an
+# emulator — prefer doing the work in the build stage above.
 FROM gcr.io/distroless/static-debian12:nonroot
 
 WORKDIR /app
 
 COPY --from=build /out/kilasflow /app/kilasflow
 COPY --from=build --chown=nonroot:nonroot /out/data /app/data
+
+# Provenance a consumer can read off a running container, so tracing one back to
+# the commit it was built from needs nobody's help. REVISION and SOURCE are
+# arguments rather than derived here because .dockerignore excludes .git, so the
+# build context has no repository to interrogate — whoever builds must say. The
+# defaults name an unknown revision instead of guessing a plausible one.
+#
+# Below the COPY lines rather than above them: REVISION changes on every commit,
+# and declaring it earlier would invalidate the binary layer for a metadata-only
+# difference.
+ARG VERSION=0.0.0-dev
+ARG REVISION=unknown
+ARG SOURCE=https://github.com/kilaslabs/k-flow
+LABEL org.opencontainers.image.title="KilasFlow" \
+      org.opencontainers.image.description="Workflow automation server with an embedded SPA" \
+      org.opencontainers.image.source="${SOURCE}" \
+      org.opencontainers.image.revision="${REVISION}" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.licenses="Apache-2.0"
 
 # SQLite database and any user data.
 VOLUME ["/app/data"]

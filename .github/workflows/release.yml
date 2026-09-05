@@ -1,0 +1,92 @@
+name: Release
+
+# Publishing the container image for a version tag.
+#
+# Push a tag and this runs; nothing else publishes anything, and pushing a tag is
+# the only way to publish. The tag is the input: `make docker-release` is handed
+# `VERSION=<the tag>`, scripts/docker-tags.sh turns it into the three published
+# tags, and the Dockerfile stamps it into main.version — which is also what the
+# `-version` flag prints and what the OpenAPI document reports as info.version.
+#
+# The tag vocabulary, and which one to pin, is documented at the top of
+# scripts/docker-tags.sh. Short version: pin the exact `vX.Y.Z` tag in production,
+# because the other two move underneath you.
+#
+# Like ci.yml, every job here calls a Make target rather than its own copy of the
+# commands, so that a release can be reproduced from a laptop. The one thing that
+# cannot be reproduced by hand is the signature — keyless cosign needs an OIDC
+# token that only a workflow run has — and that is why signing is its own target.
+
+on:
+  push:
+    tags: ["v*"]
+
+# Wider than ci.yml's read-only default, per job rather than at the top, exactly
+# as ci.yml's header asks the p10 publishing tickets to do.
+permissions:
+  contents: read
+
+jobs:
+  image:
+    name: Publish image
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      # Push to GitHub Container Registry under the kilaslabs namespace. GHCR was
+      # chosen over Docker Hub because the repository and this runner are already
+      # on GitHub, so it needs no credential beyond the token below.
+      packages: write
+      # Keyless cosign signing exchanges this token for a short-lived certificate.
+      # Without it the signing step cannot work at all.
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # A container builder rather than the runner's default docker driver: only
+      # the former can emit a manifest list, which is the entire point of this
+      # workflow. No QEMU is set up alongside it on purpose — the Dockerfile
+      # cross-compiles and never executes anything for the target architecture, so
+      # an emulator would be dead weight. If a RUN ever appears in the runtime
+      # stage, this is where the resulting failure will surface.
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # github.ref_name is the tag, and passing it explicitly rather than letting
+      # the Makefile call `git describe` removes the one way a release could be
+      # stamped with a hash: describe on a shallow or tag-less checkout silently
+      # falls back to a commit hash, and this must fail loudly instead.
+      #
+      # It reaches the shell through env rather than through `${{ }}` interpolated
+      # into the run line, because a git tag may legally contain shell
+      # metacharacters and the interpolated form would execute them. Whoever can
+      # push a tag here can already do worse, but a step holding packages:write and
+      # id-token:write is not the place to rely on that.
+      - name: Build and push
+        env:
+          RELEASE_VERSION: ${{ github.ref_name }}
+        run: make docker-release VERSION="$RELEASE_VERSION"
+
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      # Nothing verifies these signatures yet. They are produced now because
+      # signing from the first release is cheap, whereas starting to sign after
+      # consumers already trust unsigned images means asking every one of them to
+      # change what they check.
+      - name: Sign
+        run: make docker-sign
+
+      # The published artifact, proved by pulling it rather than by trusting the
+      # build that just ran. This is the only step that exercises the manifest
+      # list: the runner is amd64, so it proves that half resolves and runs. The
+      # arm64 half is not proved here — see the ticket.
+      - name: Smoke the published image
+        env:
+          RELEASE_VERSION: ${{ github.ref_name }}
+        run: make smoke-docker-published VERSION="$RELEASE_VERSION"

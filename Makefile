@@ -8,6 +8,26 @@ VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo 
 LDFLAGS     := -s -w -X main.version=$(VERSION)
 GO_BIN      := $(shell $(GO) env GOBIN 2>/dev/null)
 
+# Published image coordinates. IMAGE is the product name rather than the
+# repository name (k-flow) because it is what a consumer types in a `docker pull`;
+# it stays overridable so a fork can publish into its own namespace without
+# editing this file.
+IMAGE          ?= ghcr.io/kilaslabs/kilasflow
+PLATFORMS      ?= linux/amd64,linux/arm64
+REVISION       ?= $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
+SOURCE_URL     ?= https://github.com/kilaslabs/k-flow
+
+# Where `docker buildx --push` writes the digest of what it published. Under .tmp
+# because `make clean` already removes it and .gitignore already covers it.
+IMAGE_METADATA ?= .tmp/image-metadata.json
+
+# One list shared by every image target. A locally built image and a published one
+# come from the same Dockerfile and the same arguments, which is what makes
+# reproducing a published image from a commit possible at all.
+IMAGE_ARGS  := --build-arg VERSION=$(VERSION) \
+               --build-arg REVISION=$(REVISION) \
+               --build-arg SOURCE=$(SOURCE_URL)
+
 ifeq ($(strip $(GO_BIN)),)
 GO_BIN      := $(shell $(GO) env GOPATH 2>/dev/null)/bin
 endif
@@ -165,8 +185,45 @@ tidy: ## Tidy go.mod
 	$(GO) mod tidy
 
 .PHONY: docker
-docker: ## Build the Docker image
-	docker build -t $(APP_NAME):$(VERSION) -t $(APP_NAME):latest .
+docker: ## Build the Docker image for this machine's architecture
+	docker build $(IMAGE_ARGS) -t $(APP_NAME):$(VERSION) -t $(APP_NAME):latest .
+
+# Cross-builds both published architectures and throws the result away. This is
+# what a pull request runs: without it the arm64 path is first exercised while
+# cutting a release, which is the worst possible moment to discover it broken.
+# cacheonly rather than --load because a manifest list cannot be loaded into a
+# local daemon, and rather than --push because a pull request must not publish.
+.PHONY: docker-multiarch
+docker-multiarch: ## Cross-build the image for every published architecture, publishing nothing
+	docker buildx build --platform $(PLATFORMS) $(IMAGE_ARGS) --output type=cacheonly .
+
+# The one command that publishes. VERSION must be a release tag: scripts/docker-tags.sh
+# rejects anything else, so a `git describe` hash can never reach the registry as
+# `latest`. SBOM and provenance are attached at the start because attestations are
+# awkward to add once consumers have started trusting unattested images.
+.PHONY: docker-release
+docker-release: ## Build and push the multi-architecture image (VERSION must be a vX.Y.Z tag)
+	@mkdir -p $(dir $(IMAGE_METADATA))
+	docker buildx build \
+		--platform $(PLATFORMS) \
+		$(IMAGE_ARGS) \
+		$$(sh scripts/docker-tags.sh '$(IMAGE)' '$(VERSION)') \
+		--sbom=true \
+		--provenance=mode=max \
+		--metadata-file $(IMAGE_METADATA) \
+		--push \
+		.
+
+# Separate from docker-release because signing needs an OIDC token that only a
+# CI run has — folding it into the build would make the release target impossible
+# to run by hand. Signs the digest rather than a tag: a tag can move between the
+# push and the signature, and then the signature covers something else.
+.PHONY: docker-sign
+docker-sign: ## Sign the image docker-release just pushed (needs cosign and an OIDC token)
+	@test -f $(IMAGE_METADATA) || { \
+		echo "$(IMAGE_METADATA) is missing; run make docker-release first" >&2; exit 1; }
+	cosign sign --yes \
+		$(IMAGE)@$$(sed -n 's/.*"containerimage.digest"[^"]*"\([^"]*\)".*/\1/p' $(IMAGE_METADATA))
 
 .PHONY: corpus
 corpus: ## Fetch the n8n importer regression corpus (needs KILASFLOW_N8N_REFERENCE)
@@ -206,6 +263,15 @@ smoke-dev: ## Prove the Vite development proxy against a temporary Go server
 .PHONY: smoke-docker
 smoke-docker: ## Prove the non-root Docker image against a persisted SQLite bind mount
 	sh scripts/smoke-docker.sh
+
+# The same assertions against what was actually published. A locally built image
+# cannot prove the part that only exists in a registry: that pulling one tag on
+# this machine resolves through the manifest list to an image this architecture
+# can run. Run on a release runner after the push, and by hand on an arm64 laptop
+# to prove the other half of the list.
+.PHONY: smoke-docker-published
+smoke-docker-published: ## Prove the published image by pulling it (VERSION must be a published tag)
+	KILASFLOW_SMOKE_IMAGE='$(IMAGE):$(VERSION)' KILASFLOW_SMOKE_PULL=1 sh scripts/smoke-docker.sh
 
 .PHONY: smoke-postgres
 smoke-postgres: ## Prove the Docker image against the temporary Compose PostgreSQL service
