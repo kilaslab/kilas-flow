@@ -1,0 +1,76 @@
+{
+  "_source": "n8n 2.34.0 (monorepo package.json version; @n8n/n8n-nodes-langchain 2.34.0), packages/@n8n/nodes-langchain/nodes/agents/Agent/Agent.node.ts and V3/AgentV3.node.ts, .../agents/ToolsAgent/options.ts and prompt.ts, .../nodes/llms/LMChatOpenAi/LmChatOpenAi.node.ts, .../nodes/llms/LmChatOpenRouter/LmChatOpenRouter.node.ts, .../nodes/memory/MemoryBufferWindow/MemoryBufferWindow.node.ts and .../nodes/memory/descriptions.ts, .../nodes/tools/ToolHttpRequest/ToolHttpRequest.node.ts",
+  "_why": "A transcription rather than a read. The reference checkout is read-only specification material and internal/guardrails forbids any build input — a test included — from reading a path under it, so the cluster mapping is checked against this committed record of what the reference said. Facts about the interchange format only: node type names, the typeVersions each node publishes, parameter keys and the option value strings a stored workflow contains. No n8n code.",
+  "_read": "2026-09-06",
+  "_typePrefix": "@n8n/n8n-nodes-langchain.",
+  "nodes": [
+    {
+      "n8nName": "agent",
+      "displayName": "AI Agent",
+      "publishedVersions": [1, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2, 2.1, 2.2, 2.3, 3, 3.1],
+      "defaultVersion": 3.1,
+      "_promptNote": "The user turn is split in two. `promptType` chooses the source and `text` carries it. At version 3.1 `promptType` has exactly two values; below it a third, `guardrails`, appears.",
+      "promptTypeDefault": "auto",
+      "promptTypeValues": ["auto", "define", "guardrails"],
+      "textDefaultForAuto": "={{ $json.chatInput }}",
+      "textDefaultForGuardrails": "={{ $json.guardrailsInput }}",
+      "textDefaultForDefine": "",
+      "_optionsNote": "System message and iteration bound live inside the top-level `options` collection, not at the top level.",
+      "options": [
+        {"name": "systemMessage", "type": "string", "default": "You are a helpful assistant"},
+        {"name": "maxIterations", "type": "number", "default": 10},
+        {"name": "returnIntermediateSteps", "type": "boolean", "default": false},
+        {"name": "passthroughBinaryImages", "type": "boolean", "default": true},
+        {"name": "passthroughBinaryPdfs", "type": "boolean", "default": false},
+        {"name": "enableStreaming", "type": "boolean", "default": true}
+      ],
+      "otherTopLevelKeys": [
+        {"name": "hasOutputParser", "type": "boolean", "default": false},
+        {"name": "needsFallback", "type": "boolean", "default": false}
+      ]
+    },
+    {
+      "n8nName": "lmChatOpenAi",
+      "displayName": "OpenAI Chat Model",
+      "publishedVersions": [1, 1.1, 1.2, 1.3],
+      "credentialType": "openAiApi",
+      "_modelNote": "`model` is a resourceLocator from typeVersion 1.2 upwards and a plain options string at 1.1 and below. Both shapes appear in stored workflows, so an importer has to read either.",
+      "modelIsResourceLocatorFrom": 1.2,
+      "modelLocatorDefault": {"mode": "list", "value": "gpt-5-mini"},
+      "modelStringDefault": "gpt-5-mini",
+      "baseURLOption": "options.baseURL, default https://api.openai.com/v1, hidden from typeVersion 1.1 upwards"
+    },
+    {
+      "n8nName": "lmChatOpenRouter",
+      "displayName": "OpenRouter Chat Model",
+      "publishedVersions": [1],
+      "credentialType": "openRouterApi",
+      "_modelNote": "`model` is a plain options string at every published version — never a resource locator, unlike the OpenAI node.",
+      "modelStringDefault": "openai/gpt-4.1-mini"
+    },
+    {
+      "n8nName": "memoryBufferWindow",
+      "displayName": "Simple Memory",
+      "publishedVersions": [1, 1.1, 1.2, 1.3, 1.4],
+      "_sessionNote": "Version 1 stored a static `sessionKey` defaulting to chat_history. Version 1.1 changed that default to the sessionId expression. From 1.2 a `sessionIdType` selector chooses between the two, and `sessionKey` carries whichever applies.",
+      "sessionIdTypeFrom": 1.2,
+      "sessionIdTypeDefault": "fromInput",
+      "sessionIdTypeValues": ["fromInput", "customKey"],
+      "sessionKeyDefaultV1": "chat_history",
+      "sessionKeyDefaultFromInput": "={{ $json.sessionId }}",
+      "sessionKeyDefaultCustomKey": "",
+      "contextWindowLengthDefault": 5
+    },
+    {
+      "n8nName": "toolHttpRequest",
+      "displayName": "HTTP Request Tool",
+      "publishedVersions": [1, 1.1],
+      "_nameNote": "This node has no tool-name parameter at all. n8n derives the name the model calls from the node's own canvas name, so an importer that invents a name breaks any system prompt that referred to the tool by the name n8n would have given it.",
+      "toolDescriptionDefault": "",
+      "methodDefault": "GET",
+      "methodValues": ["DELETE", "GET", "PATCH", "POST", "PUT"],
+      "urlDefault": "",
+      "_placeholderNote": "The URL may contain {placeholder} segments the model fills in, declared in a `placeholderDefinitions` fixedCollection. That is a different mechanism from an expression over $json and is not carried."
+    }
+  ]
+}

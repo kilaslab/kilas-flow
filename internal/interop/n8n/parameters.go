@@ -2208,3 +2208,347 @@ func stringText(value any) string {
 	text, _ := value.(string)
 	return text
 }
+
+// --- The LangChain cluster --------------------------------------------------
+//
+// n8n models an AI agent as a cluster: a root node with sub-nodes attached on
+// typed channels. The direction is worth naming, because the picture and the
+// JSON disagree. In a stored n8n workflow the *sub-node* is the source key of
+// the connection and the root agent is the target — the chat model connects to
+// the agent, not the other way round — which is the same direction
+// workflow.Connection uses. So these are type and parameter mappings only, with
+// no rewiring; a translator written from the drawing rather than from the JSON
+// would reverse them and produce a graph that compiles and never delivers a
+// descriptor to the agent at all.
+//
+// Every parameter name, option value string and default below is n8n's own,
+// transcribed into testdata/n8n_cluster_nodes.json with the file it was read
+// from and the date. The reference checkout is never a build input.
+
+// agentToKilas maps n8n's Tools Agent onto this server's AI Agent.
+func agentToKilas(node Node) (map[string]any, []Unsupported) {
+	issues := make([]Unsupported, 0)
+	parameters := map[string]any{}
+
+	// n8n splits the user turn in two: `promptType` names where it comes from
+	// and `text` carries it. `text` holds the value in every mode — under
+	// "auto" it holds the chatInput expression n8n defaults it to — so the
+	// prompt is `text` whenever there is one.
+	if text := node.Parameters["text"]; text != nil && text != "" {
+		parameters["prompt"] = fromN8NValue(text)
+	} else {
+		// A field left at its default is not stored, so n8n's default has to be
+		// materialised here. An empty prompt is a required parameter this
+		// server refuses to compile, which would turn "the author never touched
+		// this field" into an import that cannot be activated.
+		parameters["prompt"] = expressionValue("{{ $json.chatInput }}")
+	}
+	if promptType := stringParameter(node.Parameters, "promptType"); promptType == "guardrails" {
+		issues = append(issues, Unsupported{
+			Severity: SeverityBlocking, Field: "promptType",
+			Reason: "this agent took its prompt from a connected Guardrails node, which this server has no equivalent for. " +
+				"The expression was carried across so the prompt is visible, but it will not resolve until the prompt is rewritten.",
+		})
+	}
+
+	options, _ := node.Parameters["options"].(map[string]any)
+	if system := options["systemMessage"]; system != nil && system != "" {
+		parameters["systemPrompt"] = fromN8NValue(system)
+	}
+	if iterations, ok := numberParameter(options, "maxIterations"); ok {
+		parameters["maxIterations"] = iterations
+	}
+
+	// Both of these are sub-node slots this server does not have. Reported
+	// rather than ignored: an agent that silently stops parsing its output, or
+	// silently loses its fallback model, still answers — it just answers
+	// differently from the workflow that was imported.
+	if parser, _ := node.Parameters["hasOutputParser"].(bool); parser {
+		issues = append(issues, Unsupported{
+			Severity: SeverityBlocking, Field: "hasOutputParser",
+			Reason: "this agent parsed its answer through a connected output parser sub-node, which this server does not have yet. " +
+				"The agent was imported without it and returns the model's text unparsed.",
+		})
+	}
+	if fallback, _ := node.Parameters["needsFallback"].(bool); fallback {
+		issues = append(issues, Unsupported{
+			Severity: SeverityBlocking, Field: "needsFallback",
+			Reason: "this agent had a fallback chat model for when the first one fails, and this server's agent takes exactly one model. " +
+				"Only the primary model was carried.",
+		})
+	}
+	return parameters, issues
+}
+
+// agentToN8N writes the agent back.
+func agentToN8N(node workflow.Node) (map[string]any, []Lossy) {
+	lossy := make([]Lossy, 0)
+	options := map[string]any{}
+	if system := node.Parameters["systemPrompt"]; system != nil && system != "" {
+		options["systemMessage"] = toN8NValue(system)
+	}
+	if iterations, ok := numberParameter(node.Parameters, "maxIterations"); ok {
+		options["maxIterations"] = iterations
+	}
+	return map[string]any{
+		// "define" rather than "auto": the prompt is written on this node, and
+		// telling n8n to take it from a connected chat trigger instead would
+		// discard the text being exported.
+		"promptType": "define",
+		"text":       toN8NValue(node.Parameters["prompt"]),
+		"options":    options,
+	}, lossy
+}
+
+// n8nChatModelOptionKeys are the sampling and transport options both servers
+// carry under the same names. They are n8n's names on this side too — see the
+// option key constants in nodes/ai.go — so the collection maps across as a
+// whole rather than key by key.
+var n8nChatModelOptionKeys = []string{
+	"frequencyPenalty", "maxTokens", "maxRetries",
+	"presencePenalty", "temperature", "timeout", "topP",
+}
+
+func openAIModelToKilas(node Node) (map[string]any, []Unsupported) {
+	return chatModelToKilas(node, "gpt-5-mini")
+}
+
+func openRouterModelToKilas(node Node) (map[string]any, []Unsupported) {
+	return chatModelToKilas(node, "openai/gpt-4.1-mini")
+}
+
+func chatModelToKilas(node Node, defaultModel string) (map[string]any, []Unsupported) {
+	issues := make([]Unsupported, 0)
+	parameters := map[string]any{"model": modelLocator(node.Parameters["model"], defaultModel)}
+
+	options, _ := node.Parameters["options"].(map[string]any)
+	carried := map[string]any{}
+	for _, key := range n8nChatModelOptionKeys {
+		if value, ok := numberParameter(options, key); ok {
+			carried[key] = value
+		}
+	}
+	if len(carried) > 0 {
+		parameters["options"] = carried
+	}
+	// n8n carried the address inside the options collection on its OpenAI node
+	// below typeVersion 1.1. Here it is top level, because the model-list loader
+	// reads parameters and cannot see a collection member.
+	if base := stringParameter(options, "baseURL"); base != "" {
+		parameters["baseUrl"] = base
+	}
+	if format := stringParameter(options, "responseFormat"); format != "" && format != "text" {
+		issues = append(issues, Unsupported{
+			Severity: SeverityDropped, Field: "options.responseFormat",
+			Reason: fmt.Sprintf(
+				"this model was asked for %s output. This server has no JSON-mode plumbing through its model request yet, "+
+					"so the option was dropped and the model answers in text; ask for the format in the prompt instead.", format),
+		})
+	}
+	return parameters, issues
+}
+
+// modelLocator normalises n8n's two model shapes into the resource locator this
+// server stores.
+//
+// n8n's OpenAI node writes a locator from typeVersion 1.2 upwards and a bare
+// string below it, and its OpenRouter node writes a bare string at every
+// published version, so both shapes appear in real documents and both have to
+// be read.
+func modelLocator(value any, fallback string) map[string]any {
+	switch typed := value.(type) {
+	case map[string]any:
+		mode, _ := typed["mode"].(string)
+		if mode == "" {
+			mode = "id"
+		}
+		if name, _ := typed["value"].(string); name != "" {
+			return map[string]any{property.LocatorSentinel: true, "mode": mode, "value": name}
+		}
+	case string:
+		if typed != "" {
+			// "id" rather than "list": a name read out of a document is a name
+			// somebody typed, and claiming it was chosen from a catalogue this
+			// server has not fetched would show a selection it cannot verify.
+			return map[string]any{property.LocatorSentinel: true, "mode": "id", "value": typed}
+		}
+	}
+	return map[string]any{property.LocatorSentinel: true, "mode": "list", "value": fallback}
+}
+
+// locatorName reads a model name back out of whichever shape it is stored in.
+func locatorName(value any) string {
+	switch typed := value.(type) {
+	case map[string]any:
+		name, _ := typed["value"].(string)
+		return name
+	case string:
+		return typed
+	}
+	return ""
+}
+
+func openAIModelToN8N(node workflow.Node) (map[string]any, []Lossy) {
+	return chatModelToN8N(node, true, "https://api.openai.com/v1")
+}
+
+func openRouterModelToN8N(node workflow.Node) (map[string]any, []Lossy) {
+	return chatModelToN8N(node, false, "https://openrouter.ai/api/v1")
+}
+
+func chatModelToN8N(node workflow.Node, asLocator bool, defaultBaseURL string) (map[string]any, []Lossy) {
+	lossy := make([]Lossy, 0)
+	name := locatorName(node.Parameters["model"])
+	parameters := map[string]any{}
+	if asLocator {
+		mode := "id"
+		if stored, ok := node.Parameters["model"].(map[string]any); ok {
+			if declared, _ := stored["mode"].(string); declared != "" {
+				mode = declared
+			}
+		}
+		parameters["model"] = map[string]any{property.LocatorSentinel: true, "mode": mode, "value": name}
+	} else {
+		// n8n's OpenRouter node stores a bare string at every published
+		// version, so writing a locator here would produce a document its own
+		// editor could not read.
+		parameters["model"] = name
+	}
+
+	options := map[string]any{}
+	if stored, ok := node.Parameters["options"].(map[string]any); ok {
+		for _, key := range n8nChatModelOptionKeys {
+			if value, ok := numberParameter(stored, key); ok {
+				options[key] = value
+			}
+		}
+	}
+	parameters["options"] = options
+
+	// n8n hides the base URL on these nodes at the versions exported here, so a
+	// deployment pointed at a gateway goes back out pointed at the vendor.
+	// Named rather than dropped quietly: the exported workflow would otherwise
+	// send its traffic somewhere the author did not choose.
+	if base := stringParameter(node.Parameters, "baseUrl"); base != "" && base != defaultBaseURL {
+		lossy = append(lossy, Lossy{
+			Severity: SeverityLossy, Field: "baseUrl",
+			Reason: fmt.Sprintf(
+				"this model called %s. n8n's chat model nodes have no visible base URL at the exported version, "+
+					"so the export addresses %s instead.", base, defaultBaseURL),
+		})
+	}
+	return parameters, lossy
+}
+
+// memoryToKilas maps n8n's window memory onto this server's Simple Memory.
+func memoryToKilas(node Node) (map[string]any, []Unsupported) {
+	issues := make([]Unsupported, 0)
+	parameters := map[string]any{}
+
+	sessionKey := node.Parameters["sessionKey"]
+	if stringParameter(node.Parameters, "sessionIdType") == "customKey" {
+		parameters["sessionId"] = fromN8NValue(sessionKey)
+	} else if sessionKey == nil || sessionKey == "" {
+		// "fromInput", and every n8n version below 1.2, which had no selector
+		// at all. The default is materialised for the same reason the agent's
+		// prompt is: sessionId is required here, and a field the author never
+		// edited was never stored.
+		parameters["sessionId"] = expressionValue("{{ $json.sessionId }}")
+	} else {
+		parameters["sessionId"] = fromN8NValue(sessionKey)
+	}
+
+	if length, ok := numberParameter(node.Parameters, "contextWindowLength"); ok {
+		parameters["maxMessages"] = length
+	}
+	return parameters, issues
+}
+
+func memoryToN8N(node workflow.Node) (map[string]any, []Lossy) {
+	lossy := make([]Lossy, 0)
+	parameters := map[string]any{
+		// "customKey" rather than "fromInput": the session is written on this
+		// node, and fromInput would have n8n read it from a connected chat
+		// trigger's payload instead — silently loading a different conversation.
+		"sessionIdType": "customKey",
+		"sessionKey":    toN8NValue(node.Parameters["sessionId"]),
+	}
+	if length, ok := numberParameter(node.Parameters, "maxMessages"); ok {
+		parameters["contextWindowLength"] = length
+	}
+	return parameters, lossy
+}
+
+// httpToolToKilas maps n8n's HTTP Request Tool onto this server's, reusing the
+// HTTP Request translation the two nodes share.
+func httpToolToKilas(node Node) (map[string]any, []Unsupported) {
+	parameters, issues := httpToKilas(node)
+
+	// n8n has no tool-name parameter at all: the name a model calls is derived
+	// from the node's own canvas name. Deriving it the same way is what keeps an
+	// imported system prompt that named the tool still naming the same tool.
+	parameters["toolName"] = toolNameFrom(node.Name)
+
+	description := node.Parameters["toolDescription"]
+	if description == nil || description == "" {
+		// Required here, and a model given no description cannot know when to
+		// call the tool. Filling the gap visibly beats failing compilation with
+		// nothing for the author to look at.
+		parameters["toolDescription"] = "Calls " + node.Name + "."
+	} else {
+		parameters["toolDescription"] = fromN8NValue(description)
+	}
+
+	// n8n lets the model fill {placeholder} segments of the URL, declared in a
+	// placeholderDefinitions collection. This server's tool takes its arguments
+	// as an expression over the model's JSON instead, so a placeholder URL would
+	// be requested literally.
+	if placeholders, ok := node.Parameters["placeholderDefinitions"].(map[string]any); ok && len(placeholders) > 0 {
+		issues = append(issues, Unsupported{
+			Severity: SeverityBlocking, Field: "placeholderDefinitions",
+			Reason: "this tool let the model fill {placeholder} segments of its request. " +
+				"This server's tool reads the model's arguments through an expression such as {{ $json.city }}, " +
+				"so rewrite the URL that way before activating.",
+		})
+	}
+	return parameters, issues
+}
+
+func httpToolToN8N(node workflow.Node) (map[string]any, []Lossy) {
+	parameters, lossy := httpToN8N(node)
+	// n8n's tool node has no options collection of its own.
+	delete(parameters, "options")
+	parameters["toolDescription"] = toN8NValue(node.Parameters["toolDescription"])
+
+	// The name the model calls is the node's canvas name in n8n and a parameter
+	// here, so a tool renamed away from its node name cannot be expressed.
+	if name := stringParameter(node.Parameters, "toolName"); name != "" && name != toolNameFrom(node.Name) {
+		lossy = append(lossy, Lossy{
+			Severity: SeverityLossy, Field: "toolName",
+			Reason: fmt.Sprintf(
+				"the model called this tool %q. n8n derives a tool's name from the node's own name, "+
+					"so after export it is called %q; rename the node to keep the old name.", name, toolNameFrom(node.Name)),
+		})
+	}
+	return parameters, lossy
+}
+
+// toolNameFrom derives the name a model calls from a node's canvas name, the
+// way n8n does. The node's own validator accepts letters, digits and
+// underscores, so anything else becomes an underscore.
+func toolNameFrom(name string) string {
+	var built strings.Builder
+	for _, letter := range name {
+		switch {
+		case letter >= 'a' && letter <= 'z', letter >= 'A' && letter <= 'Z',
+			letter >= '0' && letter <= '9', letter == '_':
+			built.WriteRune(letter)
+		default:
+			built.WriteRune('_')
+		}
+	}
+	if built.Len() == 0 {
+		return "http_request"
+	}
+	return built.String()
+}

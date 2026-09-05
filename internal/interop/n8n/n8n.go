@@ -396,6 +396,37 @@ var mappings = []mapping{
 		kilasVersion: workflow.V(202502), sharedVersion: true,
 		toKilas: packToKilas, toN8N: packToN8N, importOnly: true,
 	},
+	// The LangChain cluster. These are the AI node types, which until now had no
+	// entry at all and so arrived as the unsupported placeholder — an imported
+	// agent was a graph that could be looked at and never activated.
+	//
+	// The connection direction needs no translation. n8n keys a connection by
+	// its source node, and for a typed channel the source is the sub-node and
+	// the target is the root agent, which is the direction workflow.Connection
+	// already uses. See the cluster translators in parameters.go.
+	{
+		n8nType: "@n8n/n8n-nodes-langchain.agent", kilasType: "kilasflow.agent", kilasVersion: workflow.V(1),
+		exportTypeVersion: 3.1, toKilas: agentToKilas, toN8N: agentToN8N,
+	},
+	{
+		n8nType: "@n8n/n8n-nodes-langchain.lmChatOpenAi", kilasType: "kilasflow.lmChatOpenAi", kilasVersion: workflow.V(1),
+		// 1.2 rather than the published 1.3: 1.3 switches to OpenAI's Responses
+		// API, which is a different wire protocol, and 1.2 is the highest
+		// version whose model locator is the shape written here.
+		exportTypeVersion: 1.2, toKilas: openAIModelToKilas, toN8N: openAIModelToN8N,
+	},
+	{
+		n8nType: "@n8n/n8n-nodes-langchain.lmChatOpenRouter", kilasType: "kilasflow.lmChatOpenRouter", kilasVersion: workflow.V(1),
+		exportTypeVersion: 1, toKilas: openRouterModelToKilas, toN8N: openRouterModelToN8N,
+	},
+	{
+		n8nType: "@n8n/n8n-nodes-langchain.memoryBufferWindow", kilasType: "kilasflow.memoryBuffer", kilasVersion: workflow.V(1),
+		exportTypeVersion: 1.3, toKilas: memoryToKilas, toN8N: memoryToN8N,
+	},
+	{
+		n8nType: "@n8n/n8n-nodes-langchain.toolHttpRequest", kilasType: "kilasflow.httpTool", kilasVersion: workflow.V(1),
+		exportTypeVersion: 1.1, toKilas: httpToolToKilas, toN8N: httpToolToN8N,
+	},
 }
 
 // The WAHA pack's node types, named here so the mapping table and the pack

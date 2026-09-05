@@ -783,11 +783,20 @@ func (executor *AgentExecutor) modelTimeout(descriptor map[string]any) (time.Dur
 
 // Execute runs the agent once per incoming item.
 func (executor *AgentExecutor) Execute(ctx context.Context, ir workflow.IRNode, input workflow.NodeInput, request engine.Request) (workflow.NodeOutput, error) {
-	modelDescriptor, found := descriptorFrom(input["model"])
+	modelDescriptor, found, err := soleDescriptor(input["model"], "model")
+	if err != nil {
+		return nil, fmt.Errorf("node %q: %w", ir.Name, err)
+	}
 	if !found {
 		return nil, fmt.Errorf("node %q: connect an OpenAI Chat Model to the model port", ir.Name)
 	}
-	memoryDescriptor, hasMemory := descriptorFrom(input["memory"])
+	memoryDescriptor, hasMemory, err := soleDescriptor(input["memory"], "memory")
+	if err != nil {
+		return nil, fmt.Errorf("node %q: %w", ir.Name, err)
+	}
+	// Uncapped on purpose, and order-stable: the runner sorts a node's incoming
+	// edges before it assembles input, so N tools arrive as N descriptors in the
+	// same order on every run.
 	toolDescriptors := descriptorsFrom(input["tools"])
 
 	credentialID, _ := modelDescriptor["credentialId"].(string)
@@ -1023,13 +1032,26 @@ func positiveInt(value float64) int {
 	return int(value)
 }
 
-func descriptorFrom(items []workflow.Item) (map[string]any, bool) {
-	for _, item := range items {
-		if descriptor, ok := item.JSON[descriptorKey].(map[string]any); ok {
-			return descriptor, true
-		}
+// soleDescriptor returns the single descriptor a capped slot may carry.
+//
+// The compiler caps `model` and `memory` at one connection each, so two
+// descriptors on one of them means a graph reached the runner without passing
+// validatePortCardinality — an import that skipped compilation, or a cap that
+// stopped being enforced. Returning the first match, as this once did, makes
+// the model that actually runs a function of item order: the wrong model runs,
+// the run succeeds, and nothing anywhere says so. Refusing names the slot
+// instead.
+func soleDescriptor(items []workflow.Item, slot string) (map[string]any, bool, error) {
+	descriptors := descriptorsFrom(items)
+	switch len(descriptors) {
+	case 0:
+		return nil, false, nil
+	case 1:
+		return descriptors[0], true, nil
+	default:
+		return nil, false, fmt.Errorf(
+			"the %s port carries %d connections but accepts one; disconnect all but one", slot, len(descriptors))
 	}
-	return nil, false
 }
 
 func descriptorsFrom(items []workflow.Item) []map[string]any {

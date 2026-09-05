@@ -3,6 +3,9 @@ package n8n_test
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -608,6 +611,11 @@ func TestSupportedMappingsAreAdvertisedExplicitly(t *testing.T) {
 	want := []string{
 		"@devlikeapro/n8n-nodes-waha.WAHA ↔ pack.waha",
 		"@devlikeapro/n8n-nodes-waha.wahaTrigger ↔ pack.wahaTrigger",
+		"@n8n/n8n-nodes-langchain.agent ↔ kilasflow.agent",
+		"@n8n/n8n-nodes-langchain.lmChatOpenAi ↔ kilasflow.lmChatOpenAi",
+		"@n8n/n8n-nodes-langchain.lmChatOpenRouter ↔ kilasflow.lmChatOpenRouter",
+		"@n8n/n8n-nodes-langchain.memoryBufferWindow ↔ kilasflow.memoryBuffer",
+		"@n8n/n8n-nodes-langchain.toolHttpRequest ↔ kilasflow.httpTool",
 		"n8n-nodes-base.aggregate ↔ kilasflow.aggregate",
 		"n8n-nodes-base.code ↔ kilasflow.foreignCode",
 		"n8n-nodes-base.dateTime ↔ kilasflow.dateTime",
@@ -2957,5 +2965,358 @@ func TestEveryMySQLOperationImportsOntoItsOwnShapeWithoutASchema(t *testing.T) {
 	}`
 	if got := nodeByName(importFixture(t, bare).Document, "MySQL").Parameters["operation"]; got != "insert" {
 		t.Errorf("default operation = %#v, want n8n's insert", got)
+	}
+}
+
+// clusterFixture is the same agent cluster as langchainFixture, with the
+// parameters a real exported n8n workflow carries. langchainFixture proves the
+// wiring survives; this one proves the nodes arrive configured, which is what
+// separates a graph that can be looked at from one that can be activated.
+const clusterFixture = `{
+  "name": "Support agent",
+  "nodes": [
+    {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}},
+    {"id":"b","name":"AI Agent","type":"@n8n/n8n-nodes-langchain.agent","typeVersion":3.1,"position":[220,0],"parameters":{
+      "promptType":"define","text":"=Answer this: {{ $json.question }}",
+      "options":{"systemMessage":"You are a support agent.","maxIterations":12}
+    }},
+    {"id":"c","name":"OpenAI Chat Model","type":"@n8n/n8n-nodes-langchain.lmChatOpenAi","typeVersion":1.2,"position":[160,200],"parameters":{
+      "model":{"__rl":true,"mode":"list","value":"gpt-4.1-mini"},
+      "options":{"temperature":0.2,"maxTokens":2048}
+    }},
+    {"id":"d","name":"Window Memory","type":"@n8n/n8n-nodes-langchain.memoryBufferWindow","typeVersion":1.3,"position":[280,200],"parameters":{
+      "sessionIdType":"customKey","sessionKey":"=chat-{{ $json.chatId }}","contextWindowLength":25
+    }},
+    {"id":"e","name":"Get Weather","type":"@n8n/n8n-nodes-langchain.toolHttpRequest","typeVersion":1.1,"position":[400,200],"parameters":{
+      "toolDescription":"Weather by city","method":"GET","url":"https://api.test/weather"
+    }}
+  ],
+  "connections": {
+    "Manual": {"main": [[{"node":"AI Agent","type":"main","index":0}]]},
+    "OpenAI Chat Model": {"ai_languageModel": [[{"node":"AI Agent","type":"ai_languageModel","index":0}]]},
+    "Window Memory": {"ai_memory": [[{"node":"AI Agent","type":"ai_memory","index":0}]]},
+    "Get Weather": {"ai_tool": [[{"node":"AI Agent","type":"ai_tool","index":0}]]}
+  }
+}`
+
+// TestAnImportedAgentClusterCompilesInsteadOfArrivingAsPlaceholders is the gap
+// this ticket closed. The AI node types had no mapping entry at all, so every
+// one of them imported as the unsupported placeholder: the wiring was right,
+// the picture looked right, and the workflow could never be activated because a
+// placeholder deliberately fails compilation.
+func TestAnImportedAgentClusterCompilesInsteadOfArrivingAsPlaceholders(t *testing.T) {
+	t.Parallel()
+
+	result := importFixture(t, clusterFixture)
+
+	for name, wanted := range map[string]string{
+		"AI Agent":          "kilasflow.agent",
+		"OpenAI Chat Model": "kilasflow.lmChatOpenAi",
+		"Window Memory":     "kilasflow.memoryBuffer",
+		"Get Weather":       "kilasflow.httpTool",
+	} {
+		if got := nodeByName(result.Document, name).Type; got != wanted {
+			t.Errorf("%s imported as %q, want %q", name, got, wanted)
+		}
+	}
+
+	document := result.Document
+	// An import carries no workflow identity; the store assigns one on save.
+	document.ID = "wf_imported"
+	// It also deliberately carries no credential: an n8n credential id names a
+	// row in the instance it came from, so the model arrives visibly unbound
+	// and the user attaches a local one. Doing that here is exactly what a user
+	// does before activating, and it is the last step between an imported
+	// cluster and a running one.
+	for index, imported := range document.Nodes {
+		if imported.Type == "kilasflow.lmChatOpenAi" {
+			document.Nodes[index].Credentials = map[string]string{"openAiApi": "cred-local"}
+		}
+	}
+
+	if _, err := workflow.Compile(document, registry(t)); err != nil {
+		t.Fatalf("Compile() error = %v, want an imported cluster to activate", err)
+	}
+}
+
+// TestAnImportedClusterIsTheSameGraphAsOneBuiltNatively is the direction trap
+// stated as an assertion. n8n keys a connection by its source node, and for a
+// typed channel the source is the sub-node and the target is the root agent —
+// the opposite of how the canvas reads, where the agent appears to own its
+// model. An importer written from the picture would reverse every typed edge
+// and produce a graph that still compiles, because both endpoints exist, and
+// never delivers a descriptor at run time.
+func TestAnImportedClusterIsTheSameGraphAsOneBuiltNatively(t *testing.T) {
+	t.Parallel()
+
+	imported := importFixture(t, clusterFixture).Document
+
+	type edge struct {
+		sourceType string
+		targetType string
+		targetPort string
+		kind       workflow.ConnectionKind
+	}
+	typeByID := map[string]string{}
+	for _, node := range imported.Nodes {
+		typeByID[node.ID] = node.Type
+	}
+	got := map[edge]int{}
+	for _, connection := range imported.Connections {
+		got[edge{
+			typeByID[connection.Source.NodeID], typeByID[connection.Target.NodeID],
+			connection.Target.Port, connection.Kind,
+		}]++
+	}
+
+	// Each sub-node is the source and the agent is the target, on the agent's
+	// own named slot.
+	want := []edge{
+		{"kilasflow.manual", "kilasflow.agent", "main", workflow.ConnectionMain},
+		{"kilasflow.lmChatOpenAi", "kilasflow.agent", "model", workflow.ConnectionLanguageModel},
+		{"kilasflow.memoryBuffer", "kilasflow.agent", "memory", workflow.ConnectionMemory},
+		{"kilasflow.httpTool", "kilasflow.agent", "tools", workflow.ConnectionTool},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("imported %d distinct edges, want %d: %#v", len(got), len(want), got)
+	}
+	for _, expected := range want {
+		if got[expected] != 1 {
+			t.Errorf("edge %s -%s-> %s.%s appeared %d times, want once",
+				expected.sourceType, expected.kind, expected.targetType, expected.targetPort, got[expected])
+		}
+	}
+}
+
+// TestAnImportedClusterArrivesConfigured checks the parameters rather than the
+// wiring. A cluster whose nodes all arrive empty compiles no better than a
+// placeholder: the agent's prompt, the model's name and the memory's session are
+// all required, and each of them lives under a different key on n8n's side.
+func TestAnImportedClusterArrivesConfigured(t *testing.T) {
+	t.Parallel()
+
+	document := importFixture(t, clusterFixture).Document
+
+	agent := nodeByName(document, "AI Agent")
+	// n8n's `text` is the prompt, and its `=` prefix is an expression marker
+	// that has to become this server's explicit one.
+	prompt, _ := agent.Parameters["prompt"].(map[string]any)
+	if prompt["mode"] != "expression" || prompt["value"] != "Answer this: {{ $json.question }}" {
+		t.Errorf("agent prompt = %#v, want the n8n expression translated", agent.Parameters["prompt"])
+	}
+	// The system message and the iteration bound live inside n8n's `options`
+	// collection, not at the top level where this server keeps them.
+	if agent.Parameters["systemPrompt"] != "You are a support agent." {
+		t.Errorf("agent systemPrompt = %#v, want it read out of n8n's options collection", agent.Parameters["systemPrompt"])
+	}
+	if agent.Parameters["maxIterations"] != float64(12) {
+		t.Errorf("agent maxIterations = %#v, want 12", agent.Parameters["maxIterations"])
+	}
+
+	model := nodeByName(document, "OpenAI Chat Model")
+	locator, _ := model.Parameters["model"].(map[string]any)
+	if locator["value"] != "gpt-4.1-mini" {
+		t.Errorf("model = %#v, want the locator's model name carried", model.Parameters["model"])
+	}
+	options, _ := model.Parameters["options"].(map[string]any)
+	if options["temperature"] != 0.2 || options["maxTokens"] != float64(2048) {
+		t.Errorf("model options = %#v, want temperature and maxTokens carried", options)
+	}
+
+	memory := nodeByName(document, "Window Memory")
+	session, _ := memory.Parameters["sessionId"].(map[string]any)
+	if session["value"] != "chat-{{ $json.chatId }}" {
+		t.Errorf("memory sessionId = %#v, want n8n's sessionKey", memory.Parameters["sessionId"])
+	}
+	if memory.Parameters["maxMessages"] != float64(25) {
+		t.Errorf("memory maxMessages = %#v, want n8n's contextWindowLength", memory.Parameters["maxMessages"])
+	}
+
+	tool := nodeByName(document, "Get Weather")
+	// n8n has no tool-name parameter: the name a model calls is derived from the
+	// node's canvas name, so inventing one here would break any system prompt
+	// that already named the tool.
+	if tool.Parameters["toolName"] != "Get_Weather" {
+		t.Errorf("tool name = %#v, want it derived from the node name the way n8n does", tool.Parameters["toolName"])
+	}
+	if tool.Parameters["url"] != "https://api.test/weather" {
+		t.Errorf("tool url = %#v, want the request carried", tool.Parameters["url"])
+	}
+}
+
+// TestAnExportedClusterPutsTheSubNodeBackOnTheSourceSide is the other half of
+// the direction rule. Export has to key each typed edge by the sub-node, or the
+// file opens in n8n with an agent attached to nothing.
+func TestAnExportedClusterPutsTheSubNodeBackOnTheSourceSide(t *testing.T) {
+	t.Parallel()
+
+	imported := importFixture(t, clusterFixture)
+	exported, err := n8n.Export(imported.Document, registry(t))
+	if err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+
+	for _, expected := range []struct{ source, channel, target string }{
+		{"OpenAI Chat Model", "ai_languageModel", "AI Agent"},
+		{"Window Memory", "ai_memory", "AI Agent"},
+		{"Get Weather", "ai_tool", "AI Agent"},
+	} {
+		var found bool
+		for _, targets := range exported.Document.Connections[expected.source][expected.channel] {
+			for _, target := range targets {
+				if target.Node == expected.target && target.Type == expected.channel {
+					found = true
+				}
+			}
+		}
+		if !found {
+			t.Errorf("%s -%s-> %s is not keyed by the sub-node after export: %#v",
+				expected.source, expected.channel, expected.target, exported.Document.Connections)
+		}
+	}
+	// The agent must not have grown outgoing typed channels of its own, which
+	// is what a reversed export would produce.
+	for channel := range exported.Document.Connections["AI Agent"] {
+		if channel != "main" {
+			t.Errorf("the agent exported an outgoing %q channel; the sub-node owns that edge", channel)
+		}
+	}
+
+	// The node types have to go back out as n8n's own, or the file names types
+	// n8n cannot resolve.
+	byName := map[string]string{}
+	for _, node := range exported.Document.Nodes {
+		byName[node.Name] = node.Type
+	}
+	for name, wanted := range map[string]string{
+		"AI Agent":          "@n8n/n8n-nodes-langchain.agent",
+		"OpenAI Chat Model": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+		"Window Memory":     "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+		"Get Weather":       "@n8n/n8n-nodes-langchain.toolHttpRequest",
+	} {
+		if byName[name] != wanted {
+			t.Errorf("%s exported as %q, want %q", name, byName[name], wanted)
+		}
+	}
+}
+
+// TestAnAgentClusterSurvivesTheRoundTripUnchanged is the property the two
+// directions owe each other. Import then export then import again has to land
+// on the same configuration, or a workflow degrades a little every time it
+// crosses the boundary.
+func TestAnAgentClusterSurvivesTheRoundTripUnchanged(t *testing.T) {
+	t.Parallel()
+
+	first := importFixture(t, clusterFixture).Document
+	exported, err := n8n.Export(first, registry(t))
+	if err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+	encoded, err := json.Marshal(exported.Document)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	second := importFixture(t, string(encoded)).Document
+
+	for _, name := range []string{"AI Agent", "OpenAI Chat Model", "Window Memory", "Get Weather"} {
+		before, after := nodeByName(first, name), nodeByName(second, name)
+		if before.Type != after.Type {
+			t.Errorf("%s changed type across the round trip: %q then %q", name, before.Type, after.Type)
+		}
+		for _, key := range []string{"prompt", "systemPrompt", "maxIterations", "model", "sessionId", "maxMessages", "toolName", "url"} {
+			if _, present := before.Parameters[key]; !present {
+				continue
+			}
+			if !reflect.DeepEqual(before.Parameters[key], after.Parameters[key]) {
+				t.Errorf("%s.%s = %#v after the round trip, want %#v", name, key, after.Parameters[key], before.Parameters[key])
+			}
+		}
+	}
+}
+
+// TestTheTwoChatModelProvidersKeepTheirOwnModelShape is the difference that
+// makes one shared translator wrong. n8n's OpenAI node stores its model as a
+// resource locator from typeVersion 1.2, and its OpenRouter node stores a bare
+// string at every version it publishes — so an export that wrote one shape for
+// both would produce a file n8n's own editor could not read.
+func TestTheTwoChatModelProvidersKeepTheirOwnModelShape(t *testing.T) {
+	t.Parallel()
+
+	fixture := `{
+	  "name": "Two providers",
+	  "nodes": [
+	    {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}},
+	    {"id":"c","name":"OpenAI","type":"@n8n/n8n-nodes-langchain.lmChatOpenAi","typeVersion":1.2,"position":[0,200],"parameters":{
+	      "model":{"__rl":true,"mode":"id","value":"gpt-4.1"}}},
+	    {"id":"d","name":"Router","type":"@n8n/n8n-nodes-langchain.lmChatOpenRouter","typeVersion":1,"position":[0,300],"parameters":{
+	      "model":"anthropic/claude-3.5-sonnet"}}
+	  ],
+	  "connections": {}
+	}`
+
+	document := importFixture(t, fixture).Document
+	// Both arrive as this server's resource locator, whichever shape they came
+	// in as, because that is the one shape its own node declares.
+	for name, wanted := range map[string]string{"OpenAI": "gpt-4.1", "Router": "anthropic/claude-3.5-sonnet"} {
+		locator, _ := nodeByName(document, name).Parameters["model"].(map[string]any)
+		if locator["value"] != wanted {
+			t.Errorf("%s model = %#v, want %q", name, nodeByName(document, name).Parameters["model"], wanted)
+		}
+	}
+
+	exported, err := n8n.Export(document, registry(t))
+	if err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+	byName := map[string]n8n.Node{}
+	for _, node := range exported.Document.Nodes {
+		byName[node.Name] = node
+	}
+	if locator, ok := byName["OpenAI"].Parameters["model"].(map[string]any); !ok || locator["value"] != "gpt-4.1" {
+		t.Errorf("OpenAI model exported as %#v, want a resource locator", byName["OpenAI"].Parameters["model"])
+	}
+	if name, ok := byName["Router"].Parameters["model"].(string); !ok || name != "anthropic/claude-3.5-sonnet" {
+		t.Errorf("OpenRouter model exported as %#v, want a bare string", byName["Router"].Parameters["model"])
+	}
+}
+
+// TestTheClusterMappingMatchesWhatTheReferenceWasRecordedAsSaying is the
+// anti-drift check. The n8n type strings and the versions written on an export
+// are interchange facts, and this compares the mapping table against the
+// committed transcription rather than against the reference checkout, which no
+// build input may read.
+func TestTheClusterMappingMatchesWhatTheReferenceWasRecordedAsSaying(t *testing.T) {
+	t.Parallel()
+
+	raw, err := os.ReadFile(filepath.Join("testdata", "n8n_cluster_nodes.json"))
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	var recorded struct {
+		TypePrefix string `json:"_typePrefix"`
+		Nodes      []struct {
+			N8NName           string    `json:"n8nName"`
+			PublishedVersions []float64 `json:"publishedVersions"`
+		} `json:"nodes"`
+	}
+	if err := json.Unmarshal(raw, &recorded); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if len(recorded.Nodes) == 0 || recorded.TypePrefix == "" {
+		t.Fatal("the transcription is empty; it is the only record of what the reference said")
+	}
+
+	advertised := map[string]bool{}
+	for _, pair := range n8n.SupportedMappings() {
+		advertised[strings.SplitN(pair, " ", 2)[0]] = true
+	}
+	for _, entry := range recorded.Nodes {
+		nodeType := recorded.TypePrefix + entry.N8NName
+		if !advertised[nodeType] {
+			t.Errorf("the reference records %s, which the mapping table does not advertise", nodeType)
+		}
+		if len(entry.PublishedVersions) == 0 {
+			t.Errorf("%s has no recorded published versions, so an export cannot know what n8n accepts", nodeType)
+		}
 	}
 }
