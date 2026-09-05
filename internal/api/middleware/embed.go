@@ -121,7 +121,22 @@ func permits(session embed.Session, r *http.Request) (bool, string) {
 			return session.Allows(embed.ScopeWrite), "This embed session is read-only."
 		}
 
-	case strings.HasPrefix(path, "/executions"):
+	case path == "/executions":
+		// A listing must be narrowed to this session's own workflow. Without
+		// this, an embedded editor could page through every execution in the
+		// tenant, including workflows it was never granted.
+		if !session.Allows(embed.ScopeRead) {
+			return false, "This embed session cannot read executions."
+		}
+		if r.URL.Query().Get("workflowId") != session.WorkflowID {
+			return false, "An embed session must list executions of its own workflow."
+		}
+		return true, ""
+
+	case strings.HasPrefix(path, "/executions/"):
+		// Which workflow a single execution belongs to is only knowable by
+		// loading it, so the ownership check lives in the handler. This gate
+		// covers the scope; handlers.RequireEmbedWorkflow covers the identity.
 		return session.Allows(embed.ScopeRead), "This embed session cannot read executions."
 
 	default:

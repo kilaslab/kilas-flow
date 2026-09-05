@@ -11,6 +11,7 @@ import (
 
 	"github.com/kilaslabs/kilas-flow/internal/api"
 	"github.com/kilaslabs/kilas-flow/internal/embed"
+	"github.com/kilaslabs/kilas-flow/internal/repository"
 )
 
 const hostOrigin = "https://host.example"
@@ -291,5 +292,67 @@ func TestAnEmbedSessionCanReadTheNodeCatalogueAndItsExecutions(t *testing.T) {
 		"name": "sneaky", "type": "httpBearerAuth", "fields": map[string]string{"token": "x"},
 	}); got.Code != http.StatusForbidden {
 		t.Errorf("credential create status = %d, want 403", got.Code)
+	}
+}
+
+func TestAnEmbedSessionCannotReachAnotherWorkflowsExecutions(t *testing.T) {
+	handler, issuer, workflowID := embedServer(t)
+
+	// A second workflow with its own execution, owned by the same tenant. The
+	// embed session below is scoped to the first one only.
+	other := createWorkflow(t, handler, validManualWorkflow("Not embedded"))
+	otherExecution := requestJSON[executionRequestResource](t, handler, http.MethodPost,
+		"/api/v1/workflows/"+other.ID+"/run", nil, http.StatusAccepted)
+
+	_, token, err := issuer.Issue(embed.Request{
+		TenantID: repository.DefaultTenantID, WorkflowID: workflowID,
+		Scopes: []embed.Scope{embed.ScopeRead}, Origin: hostOrigin,
+	})
+	if err != nil {
+		t.Fatalf("Issue() error = %v", err)
+	}
+
+	// Reading another workflow's execution by ID must not be possible: the
+	// record carries that run's full input, output, and node trace.
+	if got := embedRequest(t, handler, token, http.MethodGet, "/api/v1/executions/"+otherExecution.ID, nil); got.Code != http.StatusNotFound {
+		t.Errorf("other execution status = %d, want 404 (body: %s)", got.Code, got.Body)
+	}
+	// Cancelling one is worse still.
+	if got := embedRequest(t, handler, token, http.MethodPost, "/api/v1/executions/"+otherExecution.ID+"/cancel", nil); got.Code == http.StatusAccepted {
+		t.Errorf("an embed session cancelled another workflow's execution: %s", got.Body)
+	}
+	// An unfiltered listing would page through the whole tenant's history.
+	if got := embedRequest(t, handler, token, http.MethodGet, "/api/v1/executions", nil); got.Code != http.StatusForbidden {
+		t.Errorf("unfiltered list status = %d, want 403", got.Code)
+	}
+	if got := embedRequest(t, handler, token, http.MethodGet, "/api/v1/executions?workflowId="+other.ID, nil); got.Code != http.StatusForbidden {
+		t.Errorf("other workflow list status = %d, want 403", got.Code)
+	}
+	// Its own workflow's history stays readable.
+	if got := embedRequest(t, handler, token, http.MethodGet, "/api/v1/executions?workflowId="+workflowID, nil); got.Code != http.StatusOK {
+		t.Errorf("own list status = %d, want 200 (body: %s)", got.Code, got.Body)
+	}
+}
+
+func TestAnEmbedSessionCannotStreamAnotherWorkflowsEvents(t *testing.T) {
+	handler, issuer, workflowID := embedServer(t)
+
+	other := createWorkflow(t, handler, validManualWorkflow("Not embedded"))
+	otherExecution := requestJSON[executionRequestResource](t, handler, http.MethodPost,
+		"/api/v1/workflows/"+other.ID+"/run", nil, http.StatusAccepted)
+
+	_, token, err := issuer.Issue(embed.Request{
+		TenantID: repository.DefaultTenantID, WorkflowID: workflowID,
+		Scopes: []embed.Scope{embed.ScopeRead}, Origin: hostOrigin,
+	})
+	if err != nil {
+		t.Fatalf("Issue() error = %v", err)
+	}
+
+	got := embedRequest(t, handler, token, http.MethodGet, "/api/v1/executions/"+otherExecution.ID+"/events", nil)
+	// The stream opens (SSE always does) but must carry no event for a run the
+	// session does not own.
+	if strings.Contains(got.Body.String(), "event:") {
+		t.Fatalf("an embed session streamed another workflow's events: %s", got.Body)
 	}
 }

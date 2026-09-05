@@ -19,6 +19,8 @@ import (
 	"github.com/kilaslabs/kilas-flow/internal/credentials"
 	"github.com/kilaslabs/kilas-flow/internal/database"
 	"github.com/kilaslabs/kilas-flow/internal/embed"
+	"github.com/kilaslabs/kilas-flow/internal/engine"
+	"github.com/kilaslabs/kilas-flow/internal/events"
 	"github.com/kilaslabs/kilas-flow/internal/execution"
 	"github.com/kilaslabs/kilas-flow/internal/node"
 	"github.com/kilaslabs/kilas-flow/internal/repository"
@@ -358,13 +360,22 @@ func newWorkflowAPIWithEmbed(t *testing.T, issuer *embed.Issuer) (http.Handler, 
 		t.Fatalf("RegisterAll() error = %v", err)
 	}
 	executions := repository.NewExecutionStore(db.DB)
+	runtime, err := engine.NewService(engine.ServiceDeps{
+		Executions: executions, Catalog: registry, Runner: engine.NewRunner(engine.NewRegistry()),
+		Events: events.NewBroker(events.BrokerOptions{}), WorkerID: "embed-test", DefaultTimeout: time.Second,
+	})
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
 	handler := newTestServer(t, api.Deps{
-		DB:           db,
-		NodeRegistry: registry,
-		Workflows:    repository.NewWorkflowStore(db.DB),
-		Executions:   executions,
-		Credentials:  repository.NewCredentialStore(db.DB, nil),
-		EmbedIssuer:  issuer,
+		DB:                  db,
+		NodeRegistry:        registry,
+		Workflows:           repository.NewWorkflowStore(db.DB),
+		Executions:          executions,
+		Credentials:         repository.NewCredentialStore(db.DB, nil),
+		ExecutionController: runtime,
+		Events:              events.NewBroker(events.BrokerOptions{}),
+		EmbedIssuer:         issuer,
 	})
 	created := createWorkflow(t, handler, validManualWorkflow("Embeddable"))
 	return handler, created.ID

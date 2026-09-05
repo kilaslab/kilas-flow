@@ -12,6 +12,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/sse"
 
+	"github.com/kilaslabs/kilas-flow/internal/api/middleware"
 	"github.com/kilaslabs/kilas-flow/internal/events"
 	"github.com/kilaslabs/kilas-flow/internal/execution"
 	"github.com/kilaslabs/kilas-flow/internal/repository"
@@ -191,6 +192,19 @@ func (handler *Executions) StreamEvents(ctx context.Context, input *executionEve
 		return
 	}
 	tenant := handler.tenants.Resolve(ctx)
+	// An embed session may only watch its own workflow's runs. The execution is
+	// loaded first so its owner is known before any event is streamed.
+	if session, embedded := middleware.EmbedSessionFrom(ctx); embedded {
+		if handler.controller == nil {
+			_ = send.Comment("execution events are unavailable")
+			return
+		}
+		record, err := handler.controller.Get(ctx, tenant, input.ID)
+		if err != nil || record.WorkflowID != session.WorkflowID {
+			_ = send.Comment("execution not found")
+			return
+		}
+	}
 	subscription := handler.events.Subscribe(tenant.ID, input.ID, resumeFrom(input))
 	defer subscription.Close()
 
@@ -303,6 +317,27 @@ func parseExecutionTrigger(value string) (execution.Trigger, bool) {
 	}
 }
 
+// ownsExecution confines an embed session to its own workflow's executions.
+//
+// Which workflow an execution belongs to is only knowable by loading it, so
+// this check cannot live in the routing middleware — it has to happen here,
+// against the record. Without it, a session scoped to one workflow could read
+// every execution in the tenant by guessing or enumerating IDs.
+//
+// A request with no embed session is the internal dashboard and is unaffected.
+func ownsExecution(ctx context.Context, workflowID string) error {
+	session, embedded := middleware.EmbedSessionFrom(ctx)
+	if !embedded {
+		return nil
+	}
+	if session.WorkflowID != workflowID {
+		// 404 rather than 403: an embed session has no business learning that
+		// another workflow's execution exists.
+		return huma.Error404NotFound("execution not found")
+	}
+	return nil
+}
+
 // Get returns a tenant-scoped execution record, including its persisted trace.
 func (handler *Executions) Get(ctx context.Context, input *executionPathInput) (*executionOutput, error) {
 	if handler.controller == nil {
@@ -314,6 +349,9 @@ func (handler *Executions) Get(ctx context.Context, input *executionPathInput) (
 	}
 	if err != nil {
 		return nil, huma.Error500InternalServerError("execution lookup failed")
+	}
+	if err := ownsExecution(ctx, record.WorkflowID); err != nil {
+		return nil, err
 	}
 	return &executionOutput{Body: executionResource(record)}, nil
 }
@@ -330,6 +368,9 @@ func (handler *Executions) Cancel(ctx context.Context, input *executionPathInput
 	}
 	if err != nil {
 		return nil, huma.Error500InternalServerError("execution cancellation failed")
+	}
+	if err := ownsExecution(ctx, record.WorkflowID); err != nil {
+		return nil, err
 	}
 	return &executionRequestOutput{Status: http.StatusAccepted, Body: executionRequestResource(record)}, nil
 }
