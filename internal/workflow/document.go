@@ -302,7 +302,13 @@ func ValidateDraftWithServerID(document Document) error {
 	return ValidateDraft(document)
 }
 
-func knownConnectionKind(kind ConnectionKind) bool {
+// KnownConnectionKind reports whether KilasFlow models this channel.
+//
+// It is exported because the n8n adapter needs the same closed set: n8n's
+// connection-kind strings are exactly these values, so importing an edge is an
+// identity check against this list rather than a translation table that could
+// drift from it.
+func KnownConnectionKind(kind ConnectionKind) bool {
 	switch kind {
 	case ConnectionMain, ConnectionLanguageModel, ConnectionMemory, ConnectionTool:
 		return true
@@ -310,3 +316,5 @@ func knownConnectionKind(kind ConnectionKind) bool {
 		return false
 	}
 }
+
+func knownConnectionKind(kind ConnectionKind) bool { return KnownConnectionKind(kind) }

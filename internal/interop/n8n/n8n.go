@@ -218,7 +218,14 @@ type ImportResult struct {
 // through the normal repository path, and the existing compiler is what
 // decides whether it can be activated or run. That keeps one validation
 // authority rather than a second, weaker one inside the adapter.
-func Import(payload []byte) (ImportResult, error) {
+//
+// The catalogue is read, never validated against. n8n identifies a connection
+// endpoint by kind and index; KilasFlow identifies it by port name, and the
+// only authority on what ports a node type declares is the registry. Asking it
+// is what lets a typed AI edge land on the right port without a second
+// hardcoded table to drift from the definitions. A nil catalogue falls back to
+// the positional names, which can only resolve the item channel.
+func Import(payload []byte, catalog workflow.Catalog) (ImportResult, error) {
 	if len(payload) == 0 {
 		return ImportResult{}, fmt.Errorf("no workflow JSON was supplied")
 	}
@@ -327,10 +334,12 @@ func Import(payload []byte) (ImportResult, error) {
 	}
 
 	typeByID := make(map[string]string, len(nodes))
+	versionByID := make(map[string]workflow.TypeVersion, len(nodes))
 	for _, converted := range nodes {
 		typeByID[converted.ID] = converted.Type
+		versionByID[converted.ID] = converted.TypeVersion
 	}
-	connections, connectionIssues := importConnections(source.Connections, idByName, typeByID)
+	connections, connectionIssues := importConnections(source.Connections, idByName, typeByID, versionByID, catalog)
 	unsupported = append(unsupported, connectionIssues...)
 
 	return ImportResult{
@@ -347,7 +356,15 @@ func Import(payload []byte) (ImportResult, error) {
 
 // importConnections maps n8n's name-keyed, index-positional edges onto
 // canonical ID-keyed, named-port ones.
-func importConnections(source Connections, idByName, typeByID map[string]string) ([]workflow.Connection, []Unsupported) {
+// importConnections converts n8n's name-keyed connection map into canonical
+// edges.
+//
+// n8n keys connections by the *source* node's name, and for a typed AI channel
+// the source is the sub-node and the target is the node it configures — a chat
+// model emits ai_languageModel, an agent receives it. KilasFlow declares the
+// same shape, so the loop is already directionally correct for every kind; what
+// it needed was the kind itself and ports that exist on both endpoints.
+func importConnections(source Connections, idByName, typeByID map[string]string, versionByID map[string]workflow.TypeVersion, catalog workflow.Catalog) ([]workflow.Connection, []Unsupported) {
 	connections := make([]workflow.Connection, 0)
 	issues := make([]Unsupported, 0)
 
@@ -374,17 +391,27 @@ func importConnections(source Connections, idByName, typeByID map[string]string)
 		}
 		sort.Strings(kindNames)
 
-		for _, kind := range kindNames {
-			if kind != "main" {
-				// n8n's ai_* channels exist but their node family is outside the
-				// advertised subset, so importing the edge would connect nothing.
-				issues = append(issues, Unsupported{
-					NodeName: sourceName,
-					Reason:   fmt.Sprintf("connection kind %q is outside the supported subset and was dropped", kind),
-				})
+		for _, kindName := range kindNames {
+			// n8n's connection-kind strings are exactly KilasFlow's
+			// ConnectionKind values, so this is an identity check against a
+			// closed set rather than a translation. The casing matters:
+			// ai_languageModel is camel-cased after the underscore, and nothing
+			// in this adapter may normalise a kind or type string.
+			kind := workflow.ConnectionKind(kindName)
+			if !workflow.KnownConnectionKind(kind) {
+				for _, targets := range kinds[kindName] {
+					for _, target := range targets {
+						issues = append(issues, Unsupported{
+							NodeName: sourceName,
+							Reason: fmt.Sprintf("the connection from %q to %q on channel %q has no equivalent in KilasFlow and was dropped",
+								sourceName, target.Node, kindName),
+						})
+					}
+				}
 				continue
 			}
-			for outputIndex, targets := range kinds[kind] {
+
+			for outputIndex, targets := range kinds[kindName] {
 				for _, target := range targets {
 					targetID, found := idByName[target.Node]
 					if !found {
@@ -394,18 +421,99 @@ func importConnections(source Connections, idByName, typeByID map[string]string)
 						})
 						continue
 					}
+
+					sourcePort, sourceOK := resolvePort(catalog, typeByID[sourceID], versionByID[sourceID], kind, outputIndex, portOutput)
+					targetPort, targetOK := resolvePort(catalog, typeByID[targetID], versionByID[targetID], kind, target.Index, portInput)
+					if !sourceOK || !targetOK {
+						// Held back rather than dropped silently: recording an
+						// edge onto a port that does not exist would fail
+						// compilation with an unknown-port error, which reads
+						// as a broken graph rather than as a missing node type.
+						missing := sourceName
+						if !targetOK {
+							missing = target.Node
+						}
+						issues = append(issues, Unsupported{
+							NodeName: sourceName,
+							Reason: fmt.Sprintf("the %q connection from %q to %q was held back because %q declares no %s port for it",
+								kindName, sourceName, target.Node, missing, kindName),
+						})
+						continue
+					}
+
 					counter++
 					connections = append(connections, workflow.Connection{
 						ID:     fmt.Sprintf("n8n-c%d", counter),
-						Kind:   workflow.ConnectionMain,
-						Source: workflow.Endpoint{NodeID: sourceID, Port: outputPortName(typeByID[sourceID], outputIndex)},
-						Target: workflow.Endpoint{NodeID: targetID, Port: inputPortName(typeByID[targetID], target.Index)},
+						Kind:   kind,
+						Source: workflow.Endpoint{NodeID: sourceID, Port: sourcePort},
+						Target: workflow.Endpoint{NodeID: targetID, Port: targetPort},
 					})
 				}
 			}
 		}
 	}
 	return connections, issues
+}
+
+// portDirection selects which side of a definition resolvePort reads.
+type portDirection int
+
+const (
+	portOutput portDirection = iota
+	portInput
+)
+
+// resolvePort finds the canonical port an n8n endpoint refers to.
+//
+// n8n identifies an endpoint by kind and index. For the item channel the index
+// is positional and meaningful — IF's second output is its false branch. For a
+// typed AI channel it is not: a node has exactly one port per AI kind, and n8n
+// itself always writes index 0, so the first declared port of that kind is the
+// answer.
+//
+// It asks the registry rather than a table. The adapter already has to know
+// canonical port names to be correct, and a second hardcoded table is how the
+// existing pair of helpers came to need a comment explaining that one is the
+// inverse of the other. Going through the catalogue is also what keeps this
+// working when generated node packs arrive with ports nobody hardcoded.
+func resolvePort(catalog workflow.Catalog, nodeType string, version workflow.TypeVersion, kind workflow.ConnectionKind, index int, direction portDirection) (string, bool) {
+	if catalog == nil {
+		// No catalogue: fall back to the positional names, which is what the
+		// adapter did before it could ask. Only the item channel is nameable
+		// this way.
+		if kind != workflow.ConnectionMain {
+			return "", false
+		}
+		if direction == portOutput {
+			return outputPortName(nodeType, index), true
+		}
+		return inputPortName(nodeType, index), true
+	}
+	definition, found := catalog.Lookup(nodeType, version)
+	if !found {
+		return "", false
+	}
+	declared := definition.Outputs
+	if direction == portInput {
+		declared = definition.Inputs
+	}
+	matching := make([]workflow.Port, 0, len(declared))
+	for _, port := range declared {
+		if port.Kind == kind {
+			matching = append(matching, port)
+		}
+	}
+	if len(matching) == 0 {
+		return "", false
+	}
+	if kind != workflow.ConnectionMain {
+		// One port per AI kind; n8n always writes index 0.
+		return matching[0].Name, true
+	}
+	if index < 0 || index >= len(matching) {
+		return "", false
+	}
+	return matching[index].Name, true
 }
 
 // outputPortName maps an n8n output index onto a canonical port name.
@@ -557,31 +665,39 @@ func Export(document workflow.Document) (ExportResult, error) {
 			})
 			continue
 		}
-		if connection.Kind != workflow.ConnectionMain {
+		if !workflow.KnownConnectionKind(connection.Kind) {
 			result.Lossy = append(result.Lossy, Lossy{
 				NodeName: sourceName,
-				Reason:   fmt.Sprintf("connection kind %q has no n8n equivalent in the supported subset and was dropped", connection.Kind),
+				Reason: fmt.Sprintf("the connection from %q to %q on channel %q has no n8n equivalent and was dropped",
+					sourceName, targetName, connection.Kind),
 			})
 			continue
 		}
 
+		channel := string(connection.Kind)
+		// A typed AI channel carries exactly one port per kind and n8n always
+		// writes slot zero, so only the item channel is positional.
 		index := 0
-		if indexes, known := portIndex[connection.Source.NodeID]; known {
-			if position, found := indexes[connection.Source.Port]; found {
-				index = position
+		targetIndex := 0
+		if connection.Kind == workflow.ConnectionMain {
+			if indexes, known := portIndex[connection.Source.NodeID]; known {
+				if position, found := indexes[connection.Source.Port]; found {
+					index = position
+				}
 			}
+			targetIndex = inputIndexFor(typeByID[connection.Target.NodeID], connection.Target.Port)
 		}
 		if result.Document.Connections[sourceName] == nil {
 			result.Document.Connections[sourceName] = map[string][][]Target{}
 		}
-		slots := result.Document.Connections[sourceName]["main"]
+		slots := result.Document.Connections[sourceName][channel]
 		for len(slots) <= index {
 			slots = append(slots, []Target{})
 		}
 		slots[index] = append(slots[index], Target{
-			Node: targetName, Type: "main", Index: inputIndexFor(typeByID[connection.Target.NodeID], connection.Target.Port),
+			Node: targetName, Type: channel, Index: targetIndex,
 		})
-		result.Document.Connections[sourceName]["main"] = slots
+		result.Document.Connections[sourceName][channel] = slots
 	}
 
 	return result, nil

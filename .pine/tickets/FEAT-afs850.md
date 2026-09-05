@@ -1,7 +1,7 @@
 ---
 id: FEAT-afs850
 title: Import AI connections instead of dropping them
-status: todo
+status: done
 priority: high
 labels:
     - engine
@@ -25,12 +25,12 @@ Port naming is where it will break. `outputPortName` and `inputPortName` (n8n.go
 
 ## Acceptance criteria
 
-- [ ] An n8n workflow whose connections include `ai_languageModel`, `ai_memory` and `ai_tool` imports with those edges present in the canonical document, carrying the matching `ConnectionKind`.
-- [ ] Each imported AI edge names ports that exist on both endpoints with the same kind, so the document compiles as far as its node types allow.
-- [ ] A connection kind KilasFlow does not model is still dropped, and its diagnostic names the source node, the target node and the kind — not just the kind.
-- [ ] Exporting a canonical document with AI edges writes them back under the correct n8n connection key with the sub-node as the source, and a round-trip preserves them.
-- [ ] The stale comment claiming the AI node family is unsupported is gone, and no diagnostic still says so.
-- [ ] A fixture covering a LangChain agent with a model, a memory and two tools asserts the exact edge set on import and on round trip.
+- [x] An n8n workflow whose connections include `ai_languageModel`, `ai_memory` and `ai_tool` imports with those edges present in the canonical document, carrying the matching `ConnectionKind`.
+- [x] Each imported AI edge names ports that exist on both endpoints with the same kind, so the document compiles as far as its node types allow.
+- [x] A connection kind KilasFlow does not model is still dropped, and its diagnostic names the source node, the target node and the kind — not just the kind.
+- [x] Exporting a canonical document with AI edges writes them back under the correct n8n connection key with the sub-node as the source, and a round-trip preserves them.
+- [x] The stale comment claiming the AI node family is unsupported is gone, and no diagnostic still says so.
+- [x] A fixture covering a LangChain agent with a model, a memory and two tools asserts the exact edge set on import and on round trip.
 
 ## Implementation Plan
 
@@ -49,3 +49,65 @@ Export is the mirror: `Export` skips every non-`main` connection with a diagnost
 - `internal/workflow/document.go` — `ConnectionKind` and its four values.
 - `nodes/ai.go` — `chatModelNode`, `memoryNode`, `httpToolNode`, `agentNode` and their declared ports.
 - `internal/workflow/compiler.go` — the port and kind checks that reject a mismatched edge.
+
+## Outcome
+
+The kind mapping is an identity check against `workflow.KnownConnectionKind`,
+now exported for exactly this: n8n's connection-kind strings *are* KilasFlow's
+`ConnectionKind` values, so a translation table would only be something to drift
+from the definitions. Casing is preserved throughout — nothing in the adapter
+normalises a kind or type string.
+
+The directions did agree, as the ticket predicted, so the generic loop needed
+the kind and correct ports rather than any rewiring.
+
+### The architectural decision
+
+The catalogue is passed into `Import`, as the plan recommended over a second
+hardcoded table. `resolvePort` asks the registry for the first declared port of
+the requested kind: n8n identifies an AI endpoint by kind and index, a KilasFlow
+node has exactly one port per AI kind, and n8n always writes index 0, so that
+resolves unambiguously. The item channel stays positional, because there the
+index is meaningful — IF's second output is its false branch.
+
+`Import` gained one parameter and `NewInterop` one dependency, both threaded
+from `deps.NodeRegistry` exactly as `NewWorkflows` already does. A nil catalogue
+falls back to the positional names, which can only resolve the item channel;
+that keeps the function usable without a registry rather than panicking.
+
+### The trap
+
+The ticket flags that an AI edge onto an unsupported placeholder would fail with
+`ErrorUnknownPort` — worse than today's silent drop, because the workflow could
+not even be saved and inspected. FEAT-t5q318 had already landed the placeholder
+port work, so the preferred path was available: every placeholder now declares
+one port of each AI kind in **both** directions, alongside its `main` arity.
+
+Both directions matter because a placeholder stands in for either half of an AI
+edge — the agent that consumes a model, or the model that supplies one. It costs
+nothing: the compiler requires only incoming `main` connections and treats a
+typed attachment port as optional by nature.
+
+The fallback path is implemented too, and is what happens when a port genuinely
+does not exist: the edge is *held back* with a diagnostic naming which endpoint
+lacks the port, rather than dropped silently or recorded onto a port that would
+fail compilation.
+
+### Diagnostics
+
+A kind KilasFlow does not model — `ai_vectorStore`, say — is still dropped, and
+the message now names the source node, the target node and the channel. Saying
+only that a kind was dropped left a user no way to find which two nodes stopped
+being joined.
+
+### Export
+
+AI edges are written back under their own channel key with the sub-node as the
+source and `Type` set to the kind rather than a hardcoded `"main"`. A typed
+channel is not positional, so it always takes slot zero and target index zero;
+only the item channel consults `portIndex` and `inputIndexFor`.
+
+`TestImportKeepsAIConnections` asserts the exact five-edge set for an agent with
+a model, a memory and two tools, and additionally verifies every edge names
+ports that exist on both endpoints with the matching kind — the property that
+decides whether the document compiles at all.

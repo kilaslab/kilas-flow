@@ -9,6 +9,7 @@ import (
 
 	"github.com/kilaslabs/kilas-flow/internal/interop/n8n"
 	"github.com/kilaslabs/kilas-flow/internal/repository"
+	"github.com/kilaslabs/kilas-flow/internal/workflow"
 )
 
 // ImportedWorkflowResource is the saved draft plus everything the adapter
@@ -36,14 +37,18 @@ type ExportedWorkflowResource struct {
 type Interop struct {
 	workflows repository.WorkflowRepository
 	tenants   TenantResolver
+	// catalog is read during import so a connection endpoint resolves to a port
+	// the target node actually declares. n8n names an endpoint by kind and
+	// index; only the registry knows what that means here.
+	catalog workflow.Catalog
 }
 
 // NewInterop constructs the interop handler.
-func NewInterop(workflows repository.WorkflowRepository, tenants TenantResolver) *Interop {
+func NewInterop(workflows repository.WorkflowRepository, catalog workflow.Catalog, tenants TenantResolver) *Interop {
 	if tenants == nil {
 		tenants = defaultTenantResolver{}
 	}
-	return &Interop{workflows: workflows, tenants: tenants}
+	return &Interop{workflows: workflows, catalog: catalog, tenants: tenants}
 }
 
 type importWorkflowInput struct {
@@ -98,7 +103,7 @@ func (handler *Interop) Import(ctx context.Context, input *importWorkflowInput) 
 		return nil, huma.Error422UnprocessableEntity("only the n8n import format is supported")
 	}
 
-	result, err := n8n.Import(input.Body.Workflow)
+	result, err := n8n.Import(input.Body.Workflow, handler.catalog)
 	if err != nil {
 		// A malformed file is the caller's problem and its message names the
 		// exact reason, so it is passed through rather than flattened.

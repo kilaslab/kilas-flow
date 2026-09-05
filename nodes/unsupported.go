@@ -48,6 +48,25 @@ func UnsupportedArityFor(inputs, outputs int) int {
 	return UnsupportedArities[len(UnsupportedArities)-1]
 }
 
+// unsupportedAIPorts are the typed attachment ports every placeholder declares,
+// in both directions, regardless of arity.
+//
+// An imported LangChain node has no mapping yet, so it becomes a placeholder —
+// and the ai_languageModel, ai_memory and ai_tool edges around it have to land
+// somewhere or the document will not compile at all, which is a worse outcome
+// than losing the edges. Declaring them costs nothing: the compiler requires
+// only incoming `main` connections, and treats a typed attachment port as
+// optional by nature. Both directions are declared because a placeholder may
+// stand in for either half of an AI edge — the agent that consumes a model, or
+// the model that supplies one.
+func unsupportedAIPorts(prefix string) []workflow.Port {
+	return []workflow.Port{
+		{Name: prefix + "Model", Kind: workflow.ConnectionLanguageModel},
+		{Name: prefix + "Memory", Kind: workflow.ConnectionMemory},
+		{Name: prefix + "Tool", Kind: workflow.ConnectionTool},
+	}
+}
+
 // UnsupportedOutputPorts names a placeholder's output ports at one arity.
 //
 // The names match what the n8n adapter derives from an output index, so the
@@ -56,20 +75,20 @@ func UnsupportedArityFor(inputs, outputs int) int {
 // system calls its one output that, and a placeholder should not be the
 // exception.
 func UnsupportedOutputPorts(arity int) []workflow.Port {
-	ports := make([]workflow.Port, 0, arity)
+	ports := make([]workflow.Port, 0, arity+3)
 	for index := 0; index < arity; index++ {
 		ports = append(ports, workflow.Port{Name: unsupportedOutputPortName(index), Kind: workflow.ConnectionMain})
 	}
-	return ports
+	return append(ports, unsupportedAIPorts("out")...)
 }
 
 // UnsupportedInputPorts names a placeholder's input ports at one arity.
 func UnsupportedInputPorts(arity int) []workflow.Port {
-	ports := make([]workflow.Port, 0, arity)
+	ports := make([]workflow.Port, 0, arity+3)
 	for index := 0; index < arity; index++ {
 		ports = append(ports, workflow.Port{Name: unsupportedInputPortName(index), Kind: workflow.ConnectionMain})
 	}
-	return ports
+	return append(ports, unsupportedAIPorts("in")...)
 }
 
 func unsupportedOutputPortName(index int) string {

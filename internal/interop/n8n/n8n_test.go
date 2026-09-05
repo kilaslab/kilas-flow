@@ -24,7 +24,7 @@ func registry(t *testing.T) *node.Registry {
 
 func importFixture(t *testing.T, fixture string) n8n.ImportResult {
 	t.Helper()
-	result, err := n8n.Import([]byte(fixture))
+	result, err := n8n.Import([]byte(fixture), registry(t))
 	if err != nil {
 		t.Fatalf("Import() error = %v", err)
 	}
@@ -308,7 +308,7 @@ func TestImportRejectsMalformedInput(t *testing.T) {
 		"no nodes":    `{"name":"x","nodes":[],"connections":{}}`,
 		"nodes wrong": `{"name":"x","nodes":"lots","connections":{}}`,
 	} {
-		if _, err := n8n.Import([]byte(payload)); err == nil {
+		if _, err := n8n.Import([]byte(payload), registry(t)); err == nil {
 			t.Errorf("%s input was accepted", name)
 		}
 	}
@@ -326,7 +326,7 @@ func TestImportRefusesDuplicateNodeNames(t *testing.T) {
 	    {"id":"b","name":"Same","type":"n8n-nodes-base.set","typeVersion":3.4}
 	  ],
 	  "connections": {}
-	}`))
+	}`), registry(t))
 	if err == nil || !strings.Contains(err.Error(), "named") {
 		t.Fatalf("Import() = %v, want a duplicate-name rejection", err)
 	}
@@ -339,7 +339,7 @@ func TestImportReportsAConnectionToAMissingNode(t *testing.T) {
 	  "name": "Dangling",
 	  "nodes": [{"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1}],
 	  "connections": {"Manual": {"main": [[{"node":"Gone","type":"main","index":0}]]}}
-	}`))
+	}`), registry(t))
 	if err != nil {
 		t.Fatalf("Import() error = %v", err)
 	}
@@ -361,7 +361,7 @@ func TestImportReportsAnUnsupportedIFOperator(t *testing.T) {
 	      {"leftValue":"={{ $json.email }}","rightValue":".*@example",
 	       "operator":{"type":"string","operation":"regex"}}]}}}],
 	  "connections": {}
-	}`))
+	}`), registry(t))
 	if err != nil {
 		t.Fatalf("Import() error = %v", err)
 	}
@@ -418,7 +418,7 @@ func TestRoundTripPreservesSupportedGraphSemantics(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: marshal = %v", name, err)
 		}
-		second, err := n8n.Import(encoded)
+		second, err := n8n.Import(encoded, registry(t))
 		if err != nil {
 			t.Fatalf("%s: re-import error = %v", name, err)
 		}
@@ -858,19 +858,36 @@ func TestPlaceholderArityFamilyMatchesTheNodePack(t *testing.T) {
 		if !found {
 			t.Fatalf("no placeholder registered at arity %d", arity)
 		}
-		if len(definition.Outputs) != arity || len(definition.Inputs) != arity {
-			t.Errorf("placeholder arity %d has %d inputs and %d outputs", arity, len(definition.Inputs), len(definition.Outputs))
+		// Only the item channel is positional. The typed attachment ports are
+		// declared alongside it so an imported AI edge has somewhere to land,
+		// and n8n identifies those by kind rather than by index.
+		mainOutputs := portsOfKind(definition.Outputs, workflow.ConnectionMain)
+		mainInputs := portsOfKind(definition.Inputs, workflow.ConnectionMain)
+		if len(mainOutputs) != arity || len(mainInputs) != arity {
+			t.Errorf("placeholder arity %d has %d main inputs and %d main outputs", arity, len(mainInputs), len(mainOutputs))
 		}
 		// The port names the adapter derives from an index must be the ones
 		// the definition declares, or the compiler rejects the edge.
-		for index, port := range definition.Outputs {
+		for index, port := range mainOutputs {
 			if got := n8n.OutputPortNameForTest(nodes.UnsupportedNodeType, index); got != port.Name {
 				t.Errorf("arity %d output %d: adapter says %q, definition says %q", arity, index, got, port.Name)
 			}
 		}
-		for index, port := range definition.Inputs {
+		for index, port := range mainInputs {
 			if got := n8n.InputPortNameForTest(nodes.UnsupportedNodeType, index); got != port.Name {
 				t.Errorf("arity %d input %d: adapter says %q, definition says %q", arity, index, got, port.Name)
+			}
+		}
+		// Every AI kind must be reachable in both directions, or an imported
+		// LangChain edge has nowhere to attach.
+		for _, kind := range []workflow.ConnectionKind{
+			workflow.ConnectionLanguageModel, workflow.ConnectionMemory, workflow.ConnectionTool,
+		} {
+			if len(portsOfKind(definition.Inputs, kind)) == 0 {
+				t.Errorf("arity %d declares no %s input", arity, kind)
+			}
+			if len(portsOfKind(definition.Outputs, kind)) == 0 {
+				t.Errorf("arity %d declares no %s output", arity, kind)
 			}
 		}
 	}
@@ -1026,5 +1043,203 @@ func TestImportHandlesAYYYYMMTypeVersion(t *testing.T) {
 	}
 	if version, _ := original["typeVersion"].(float64); version != 202502 {
 		t.Errorf("capsule typeVersion = %#v, want 202502 preserved for the export", original["typeVersion"])
+	}
+}
+
+// portsOfKind filters a declared port list to one connection kind.
+func portsOfKind(ports []workflow.Port, kind workflow.ConnectionKind) []workflow.Port {
+	var matched []workflow.Port
+	for _, port := range ports {
+		if port.Kind == kind {
+			matched = append(matched, port)
+		}
+	}
+	return matched
+}
+
+// langchainFixture is an n8n AI workflow: an agent with a chat model, a memory
+// and two tools. Every one of those four edges is a typed channel, and every
+// one of them used to be dropped — so an imported agent arrived wired to
+// nothing and the AI parity work would have had nothing to test against.
+//
+// Note the casing: n8n writes ai_languageModel camel-cased after the
+// underscore, and nothing in this adapter may normalise it.
+const langchainFixture = `{
+  "name": "Agent with tools",
+  "nodes": [
+    {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}},
+    {"id":"b","name":"AI Agent","type":"@n8n/n8n-nodes-langchain.agent","typeVersion":1.7,"position":[220,0],"parameters":{}},
+    {"id":"c","name":"Chat Model","type":"@n8n/n8n-nodes-langchain.lmChatOpenAi","typeVersion":1,"position":[160,200],"parameters":{}},
+    {"id":"d","name":"Window Memory","type":"@n8n/n8n-nodes-langchain.memoryBufferWindow","typeVersion":1.3,"position":[280,200],"parameters":{}},
+    {"id":"e","name":"Weather","type":"@n8n/n8n-nodes-langchain.toolHttpRequest","typeVersion":1.1,"position":[400,200],"parameters":{}},
+    {"id":"f","name":"Search","type":"@n8n/n8n-nodes-langchain.toolHttpRequest","typeVersion":1.1,"position":[520,200],"parameters":{}}
+  ],
+  "connections": {
+    "Manual": {"main": [[{"node":"AI Agent","type":"main","index":0}]]},
+    "Chat Model": {"ai_languageModel": [[{"node":"AI Agent","type":"ai_languageModel","index":0}]]},
+    "Window Memory": {"ai_memory": [[{"node":"AI Agent","type":"ai_memory","index":0}]]},
+    "Weather": {"ai_tool": [[{"node":"AI Agent","type":"ai_tool","index":0}]]},
+    "Search": {"ai_tool": [[{"node":"AI Agent","type":"ai_tool","index":0}]]}
+  }
+}`
+
+// TestImportKeepsAIConnections asserts the exact edge set a LangChain workflow
+// must arrive with. n8n keys connections by the source node, and for a typed
+// channel the source is the sub-node and the target is the agent — the same
+// direction KilasFlow declares, which is why this is a kind mapping rather than
+// a rewiring.
+func TestImportKeepsAIConnections(t *testing.T) {
+	t.Parallel()
+
+	result := importFixture(t, langchainFixture)
+
+	type edge struct {
+		source string
+		target string
+		kind   workflow.ConnectionKind
+	}
+	nameByID := map[string]string{}
+	for _, node := range result.Document.Nodes {
+		nameByID[node.ID] = node.Name
+	}
+	got := map[edge]int{}
+	for _, connection := range result.Document.Connections {
+		got[edge{nameByID[connection.Source.NodeID], nameByID[connection.Target.NodeID], connection.Kind}]++
+	}
+
+	want := []edge{
+		{"Manual", "AI Agent", workflow.ConnectionMain},
+		{"Chat Model", "AI Agent", workflow.ConnectionLanguageModel},
+		{"Window Memory", "AI Agent", workflow.ConnectionMemory},
+		{"Weather", "AI Agent", workflow.ConnectionTool},
+		{"Search", "AI Agent", workflow.ConnectionTool},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("imported %d distinct edges, want %d: %#v", len(got), len(want), got)
+	}
+	for _, expected := range want {
+		if got[expected] != 1 {
+			t.Errorf("edge %s -%s-> %s appeared %d times, want once", expected.source, expected.kind, expected.target, got[expected])
+		}
+	}
+
+	// Every edge must name ports that exist on both endpoints with the matching
+	// kind, or the compiler rejects it before the placeholder's own diagnostic
+	// is reached.
+	catalogue := registry(t)
+	for _, connection := range result.Document.Connections {
+		for _, endpoint := range []struct {
+			nodeID string
+			port   string
+			inputs bool
+		}{
+			{connection.Source.NodeID, connection.Source.Port, false},
+			{connection.Target.NodeID, connection.Target.Port, true},
+		} {
+			var version workflow.TypeVersion
+			var nodeType string
+			for _, node := range result.Document.Nodes {
+				if node.ID == endpoint.nodeID {
+					nodeType, version = node.Type, node.TypeVersion
+				}
+			}
+			definition, found := catalogue.Lookup(nodeType, version)
+			if !found {
+				t.Fatalf("node type %q version %s is not registered", nodeType, version)
+			}
+			declared := definition.Outputs
+			if endpoint.inputs {
+				declared = definition.Inputs
+			}
+			var matched bool
+			for _, port := range declared {
+				if port.Name == endpoint.port && port.Kind == connection.Kind {
+					matched = true
+				}
+			}
+			if !matched {
+				t.Errorf("port %q on %s does not exist with kind %s", endpoint.port, nodeType, connection.Kind)
+			}
+		}
+	}
+}
+
+// TestAIConnectionsRoundTrip proves an imported AI graph goes back to n8n with
+// its wiring intact, under the right channel key and with the sub-node as the
+// source.
+func TestAIConnectionsRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	imported := importFixture(t, langchainFixture)
+	exported, err := n8n.Export(imported.Document)
+	if err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+
+	for _, expected := range []struct {
+		source  string
+		channel string
+		target  string
+	}{
+		{"Chat Model", "ai_languageModel", "AI Agent"},
+		{"Window Memory", "ai_memory", "AI Agent"},
+		{"Weather", "ai_tool", "AI Agent"},
+		{"Search", "ai_tool", "AI Agent"},
+	} {
+		slots := exported.Document.Connections[expected.source][expected.channel]
+		if len(slots) == 0 {
+			t.Errorf("%s has no %s connections after export", expected.source, expected.channel)
+			continue
+		}
+		var found bool
+		for _, targets := range slots {
+			for _, target := range targets {
+				if target.Node == expected.target && target.Type == expected.channel {
+					found = true
+				}
+			}
+		}
+		if !found {
+			t.Errorf("%s -%s-> %s did not survive the round trip", expected.source, expected.channel, expected.target)
+		}
+	}
+
+	// And the item channel is untouched by the change.
+	if len(exported.Document.Connections["Manual"]["main"]) == 0 {
+		t.Error("the main connection was lost")
+	}
+}
+
+// TestUnknownConnectionKindNamesBothEndpoints pins the diagnostic. Saying only
+// that a kind was dropped leaves a user with no way to find which two nodes
+// stopped being joined.
+func TestUnknownConnectionKindNamesBothEndpoints(t *testing.T) {
+	t.Parallel()
+
+	const fixture = `{
+	  "name": "Unknown channel",
+	  "nodes": [
+	    {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}},
+	    {"id":"b","name":"Vector Store","type":"@n8n/n8n-nodes-langchain.vectorStoreInMemory","typeVersion":1,"position":[220,0],"parameters":{}}
+	  ],
+	  "connections": {
+	    "Vector Store": {"ai_vectorStore": [[{"node":"Manual","type":"ai_vectorStore","index":0}]]}
+	  }
+	}`
+
+	result := importFixture(t, fixture)
+	var reason string
+	for _, issue := range result.Unsupported {
+		if strings.Contains(issue.Reason, "ai_vectorStore") {
+			reason = issue.Reason
+		}
+	}
+	if reason == "" {
+		t.Fatalf("unsupported = %#v, want the dropped channel reported", result.Unsupported)
+	}
+	for _, want := range []string{"Vector Store", "Manual", "ai_vectorStore"} {
+		if !strings.Contains(reason, want) {
+			t.Errorf("reason = %q, want it to name %q", reason, want)
+		}
 	}
 }

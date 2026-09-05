@@ -134,7 +134,7 @@ func scoreFixture(t *testing.T, fixture corpus.Fixture, catalog workflow.Catalog
 	t.Helper()
 	result := score{Name: fixture.Name, Source: string(fixture.Source)}
 
-	imported, err := n8n.Import(fixture.Payload)
+	imported, err := n8n.Import(fixture.Payload, catalog)
 	if err != nil {
 		// A refusal is often correct — duplicate node names, for one — so the
 		// reason is recorded, not just the boolean. At corpus scale a bare
