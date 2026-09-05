@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kilaslabs/kilas-flow/internal/credentials"
 	"github.com/kilaslabs/kilas-flow/internal/execution"
 	"github.com/kilaslabs/kilas-flow/internal/repository"
 	"github.com/kilaslabs/kilas-flow/internal/workflow"
@@ -24,11 +25,22 @@ type ExecutionStore interface {
 	Cancel(context.Context, repository.TenantScope, string) (execution.Record, error)
 }
 
+// CredentialStore resolves a stored credential for the tenant that owns the
+// running execution.
+type CredentialStore interface {
+	Resolve(context.Context, repository.TenantScope, string) (credentials.Record, map[string]string, error)
+}
+
 // ServiceDeps configures one local durable execution worker.
 type ServiceDeps struct {
-	Executions     ExecutionStore
-	Catalog        workflow.Catalog
-	Runner         *Runner
+	Executions  ExecutionStore
+	Catalog     workflow.Catalog
+	Runner      *Runner
+	Credentials CredentialStore
+	// Environment is the allowlisted `$env` map. The service never reads the
+	// process environment itself, so what a workflow can see is decided once,
+	// at composition.
+	Environment    map[string]string
 	WorkerID       string
 	DefaultTimeout time.Duration
 }
@@ -39,6 +51,8 @@ type Service struct {
 	executions     ExecutionStore
 	catalog        workflow.Catalog
 	runner         *Runner
+	credentials    CredentialStore
+	environment    map[string]string
 	workerID       string
 	defaultTimeout time.Duration
 	activeMu       sync.Mutex
@@ -54,10 +68,16 @@ func NewService(deps ServiceDeps) (*Service, error) {
 	if deps.DefaultTimeout <= 0 {
 		return nil, fmt.Errorf("engine default timeout must be positive")
 	}
+	environment := make(map[string]string, len(deps.Environment))
+	for key, value := range deps.Environment {
+		environment[key] = value
+	}
 	return &Service{
 		executions:     deps.Executions,
 		catalog:        deps.Catalog,
 		runner:         deps.Runner,
+		credentials:    deps.Credentials,
+		environment:    environment,
 		workerID:       deps.WorkerID,
 		defaultTimeout: deps.DefaultTimeout,
 		active:         make(map[string]context.CancelFunc),
@@ -99,7 +119,7 @@ func (service *Service) runOnce(ctx context.Context, workerID string) (bool, err
 	service.activeMu.Lock()
 	service.active[record.ID] = cancel
 	service.activeMu.Unlock()
-	result, runErr := service.run(runCtx, document, record.Input)
+	result, runErr := service.run(runCtx, record, document)
 	service.activeMu.Lock()
 	delete(service.active, record.ID)
 	service.activeMu.Unlock()
@@ -212,16 +232,43 @@ func (service *Service) Wake() {
 	}
 }
 
-func (service *Service) run(ctx context.Context, document workflow.Document, payload json.RawMessage) (Result, error) {
+func (service *Service) run(ctx context.Context, record execution.Record, document workflow.Document) (Result, error) {
 	ir, err := workflow.Compile(document, service.catalog)
 	if err != nil {
 		return Result{}, err
 	}
-	item, err := inputItem(payload)
+	item, err := inputItem(record.Input)
 	if err != nil {
 		return Result{}, err
 	}
-	return service.runner.Run(ctx, ir, Request{Input: item})
+	return service.runner.Run(ctx, ir, Request{
+		Input:       item,
+		Execution:   ExecutionContext{ID: record.ID, Mode: string(record.Trigger)},
+		Env:         service.environment,
+		Credentials: &tenantCredentials{store: service.credentials, tenant: repository.TenantScope{ID: record.TenantID}},
+	})
+}
+
+// tenantCredentials binds credential resolution to the tenant that owns the
+// running execution, so a workflow can never name a credential from another
+// tenant even if it guesses the ID.
+type tenantCredentials struct {
+	store  CredentialStore
+	tenant repository.TenantScope
+}
+
+func (resolver *tenantCredentials) ResolveCredential(ctx context.Context, credentialID string) (Credential, error) {
+	if resolver == nil || resolver.store == nil {
+		return Credential{}, fmt.Errorf("credential storage is not configured")
+	}
+	record, fields, err := resolver.store.Resolve(ctx, resolver.tenant, credentialID)
+	if err != nil {
+		return Credential{}, fmt.Errorf("resolve credential: %w", err)
+	}
+	return Credential{
+		ID: record.ID, Name: record.Name, Type: record.Type,
+		Fields: fields, AllowedDomains: record.AllowedDomains,
+	}, nil
 }
 
 // Cancel requests durable cancellation and interrupts the matching in-process

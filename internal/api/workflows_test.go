@@ -16,6 +16,7 @@ import (
 	"github.com/kilaslabs/kilas-flow/internal/api"
 	"github.com/kilaslabs/kilas-flow/internal/api/handlers"
 	"github.com/kilaslabs/kilas-flow/internal/config"
+	"github.com/kilaslabs/kilas-flow/internal/credentials"
 	"github.com/kilaslabs/kilas-flow/internal/database"
 	"github.com/kilaslabs/kilas-flow/internal/execution"
 	"github.com/kilaslabs/kilas-flow/internal/node"
@@ -634,4 +635,153 @@ func TestWorkflowAPIReturnsThePinnedRevisionAnExecutionRan(t *testing.T) {
 	// through this workflow's path.
 	other := createWorkflow(t, handler, validManualWorkflow("Other"))
 	requestProblem(t, handler, http.MethodGet, "/api/v1/workflows/"+created.ID+"/versions/"+other.LatestVersion.ID, nil, http.StatusNotFound)
+}
+
+type credentialResource struct {
+	ID             string            `json:"id"`
+	Name           string            `json:"name"`
+	Type           string            `json:"type"`
+	Fields         map[string]string `json:"fields"`
+	AllowedDomains []string          `json:"allowedDomains"`
+}
+
+type credentialTypeResource struct {
+	ID     string `json:"id"`
+	Fields []struct {
+		Key    string `json:"key"`
+		Secret bool   `json:"secret"`
+	} `json:"fields"`
+}
+
+func TestCredentialAPINeverDisclosesASecretAfterItIsStored(t *testing.T) {
+	handler, credentialStore := newCredentialAPI(t)
+
+	created := requestJSON[credentialResource](t, handler, http.MethodPost, "/api/v1/credentials", map[string]any{
+		"name":           "Partner API",
+		"type":           "httpBasicAuth",
+		"fields":         map[string]string{"user": "ada", "password": "hunter2"},
+		"allowedDomains": []string{"api.partner.test"},
+	}, http.StatusCreated)
+
+	if created.Fields["user"] != "ada" {
+		t.Errorf("non-secret field = %q, want it returned", created.Fields["user"])
+	}
+	if strings.Contains(created.Fields["password"], "hunter2") {
+		t.Fatalf("create response disclosed the secret: %#v", created.Fields)
+	}
+
+	// Neither list nor get may disclose it either, on any later request.
+	listed := requestJSON[[]credentialResource](t, handler, http.MethodGet, "/api/v1/credentials", nil, http.StatusOK)
+	fetched := requestJSON[credentialResource](t, handler, http.MethodGet, "/api/v1/credentials/"+created.ID, nil, http.StatusOK)
+	for _, body := range []any{listed, fetched} {
+		encoded, _ := json.Marshal(body)
+		if strings.Contains(string(encoded), "hunter2") {
+			t.Errorf("credential read disclosed the secret: %s", encoded)
+		}
+	}
+
+	// The stored payload itself must be ciphertext, not JSON with the password.
+	record, fields, err := credentialStore.Resolve(context.Background(), repository.TenantScope{ID: repository.DefaultTenantID}, created.ID)
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	if fields["password"] != "hunter2" || record.Name != "Partner API" {
+		t.Fatalf("Resolve() = (%#v, %#v), want the original payload", record, fields)
+	}
+}
+
+func TestCredentialAPIKeepsAStoredSecretWhenOnlyTheNameChanges(t *testing.T) {
+	handler, credentialStore := newCredentialAPI(t)
+	created := requestJSON[credentialResource](t, handler, http.MethodPost, "/api/v1/credentials", map[string]any{
+		"name": "Original", "type": "httpBearerAuth", "fields": map[string]string{"token": "keep-me"},
+	}, http.StatusCreated)
+
+	// The client only ever saw the placeholder, so sending it back must not
+	// blank the stored token.
+	requestJSON[credentialResource](t, handler, http.MethodPut, "/api/v1/credentials/"+created.ID, map[string]any{
+		"name": "Renamed", "fields": map[string]string{"token": created.Fields["token"]},
+	}, http.StatusOK)
+
+	_, fields, err := credentialStore.Resolve(context.Background(), repository.TenantScope{ID: repository.DefaultTenantID}, created.ID)
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	if fields["token"] != "keep-me" {
+		t.Errorf("stored token = %q, want it preserved", fields["token"])
+	}
+}
+
+func TestCredentialAPIRejectsInvalidPayloadsAndExposesTypeMetadata(t *testing.T) {
+	handler, _ := newCredentialAPI(t)
+
+	requestProblem(t, handler, http.MethodPost, "/api/v1/credentials", map[string]any{
+		"name": "Missing password", "type": "httpBasicAuth", "fields": map[string]string{"user": "ada"},
+	}, http.StatusUnprocessableEntity)
+	requestProblem(t, handler, http.MethodPost, "/api/v1/credentials", map[string]any{
+		"name": "Unknown type", "type": "nope", "fields": map[string]string{},
+	}, http.StatusUnprocessableEntity)
+	requestProblem(t, handler, http.MethodGet, "/api/v1/credentials/cred_missing", nil, http.StatusNotFound)
+
+	types := requestJSON[[]credentialTypeResource](t, handler, http.MethodGet, "/api/v1/credential-types", nil, http.StatusOK)
+	if len(types) == 0 {
+		t.Fatal("credential types are not exposed")
+	}
+	for _, definition := range types {
+		if len(definition.Fields) == 0 {
+			t.Errorf("credential type %q has no field metadata", definition.ID)
+		}
+	}
+}
+
+func TestNodeCatalogueIncludesHTTPRequest(t *testing.T) {
+	handler, _, _ := newWorkflowAPI(t)
+
+	definitions := requestJSON[[]struct {
+		Type       string `json:"type"`
+		Parameters []struct {
+			Key string `json:"key"`
+		} `json:"parameters"`
+	}](t, handler, http.MethodGet, "/api/v1/node-types", nil, http.StatusOK)
+
+	for _, definition := range definitions {
+		if definition.Type != "kilasflow.httpRequest" {
+			continue
+		}
+		keys := map[string]bool{}
+		for _, parameter := range definition.Parameters {
+			keys[parameter.Key] = true
+		}
+		for _, required := range []string{"method", "url", "headers", "body", "responseFormat"} {
+			if !keys[required] {
+				t.Errorf("HTTP Request metadata is missing parameter %q", required)
+			}
+		}
+		return
+	}
+	t.Fatal("HTTP Request is not in the node catalogue")
+}
+
+func newCredentialAPI(t *testing.T) (http.Handler, *repository.GORMCredentialStore) {
+	t.Helper()
+	db, err := database.Open(context.Background(), config.Database{
+		Driver: "sqlite",
+		DSN:    filepath.Join(t.TempDir(), "credentials.db"),
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatalf("database.Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := database.Migrate(db, repository.Models()...); err != nil {
+		t.Fatalf("database.Migrate() error = %v", err)
+	}
+	key := make([]byte, credentials.KeySize)
+	for index := range key {
+		key[index] = byte(index + 1)
+	}
+	cipher, err := credentials.NewCipher(key)
+	if err != nil {
+		t.Fatalf("NewCipher() error = %v", err)
+	}
+	store := repository.NewCredentialStore(db.DB, cipher)
+	return newTestServer(t, api.Deps{DB: db, Credentials: store}), store
 }

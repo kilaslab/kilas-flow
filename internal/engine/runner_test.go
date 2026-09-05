@@ -6,6 +6,7 @@ import (
 
 	"github.com/kilaslabs/kilas-flow/internal/engine"
 	"github.com/kilaslabs/kilas-flow/internal/node"
+	"github.com/kilaslabs/kilas-flow/internal/safehttp"
 	"github.com/kilaslabs/kilas-flow/internal/workflow"
 	"github.com/kilaslabs/kilas-flow/nodes"
 )
@@ -35,7 +36,7 @@ func TestRunnerExecutesManualSetAndRecordsItemFlow(t *testing.T) {
 	}
 
 	executors := engine.NewRegistry()
-	if err := nodes.RegisterExecutors(executors); err != nil {
+	if err := nodes.RegisterExecutors(executors, safehttp.DefaultPolicy()); err != nil {
 		t.Fatalf("RegisterExecutors() error = %v", err)
 	}
 
@@ -88,7 +89,7 @@ func TestRunnerRoutesEachItemToTheMatchingIFOutput(t *testing.T) {
 		t.Fatalf("Compile() error = %v", err)
 	}
 	executors := engine.NewRegistry()
-	if err := nodes.RegisterExecutors(executors); err != nil {
+	if err := nodes.RegisterExecutors(executors, safehttp.DefaultPolicy()); err != nil {
 		t.Fatalf("RegisterExecutors() error = %v", err)
 	}
 
@@ -138,7 +139,7 @@ func TestRunnerMergesFanInByDeclaredInputPortOrder(t *testing.T) {
 		t.Fatalf("Compile() error = %v", err)
 	}
 	executors := engine.NewRegistry()
-	if err := nodes.RegisterExecutors(executors); err != nil {
+	if err := nodes.RegisterExecutors(executors, safehttp.DefaultPolicy()); err != nil {
 		t.Fatalf("RegisterExecutors() error = %v", err)
 	}
 

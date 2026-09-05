@@ -1,10 +1,28 @@
 <script lang="ts">
-	import type { Definition, Node, PropertyDefinition } from '$lib/api/generated/models';
+	import type { CredentialResource, Definition, Node, PropertyDefinition } from '$lib/api/generated/models';
 	import type { PropertyScope } from '$lib/workflow-editor/document';
+	import { credentialTypesFor } from '$lib/workflow-editor/credentials';
 
 	import PropertyField from './property-field.svelte';
 
-	let { node, definition, onChange }: { node: Node; definition: Definition; onChange: (scope: PropertyScope, key: string, value: unknown) => void } = $props();
+	let {
+		node,
+		definition,
+		credentials = [],
+		onChange,
+		onCredentialChange
+	}: {
+		node: Node;
+		definition: Definition;
+		credentials?: CredentialResource[];
+		onChange: (scope: PropertyScope, key: string, value: unknown) => void;
+		onCredentialChange?: (typeID: string, credentialID: string) => void;
+	} = $props();
+
+	// Which credential types this node can authenticate with is derived from the
+	// node type, so the panel stays generic and gains new types for free.
+	const credentialTypes = $derived(credentialTypesFor(definition.type));
+	const selectedCredential = $derived((typeID: string) => node.credentials?.[typeID] ?? '');
 	let tab = $state<PropertyScope>('parameters');
 	const activeTab = $derived(tab === 'parameters' && (definition.parameters?.length ?? 0) === 0 ? 'settings' : tab);
 	const properties = $derived(activeTab === 'parameters' ? definition.parameters ?? [] : definition.sharedSettings ?? []);
@@ -26,6 +44,30 @@
 		<button type="button" role="tab" aria-selected={activeTab === 'settings'} class:font-semibold={activeTab === 'settings'} class="border-b-2 border-transparent px-3 py-2 text-sm aria-selected:border-primary" onclick={() => (tab = 'settings')}>Settings</button>
 	</div>
 	<div class="min-h-0 flex-1 space-y-5 overflow-y-auto p-4" role="tabpanel">
+		{#if activeTab === 'parameters' && credentialTypes.length > 0 && onCredentialChange}
+			<div class="grid gap-2 rounded-lg border border-border p-3">
+				<p class="text-sm font-medium">Credential</p>
+				<p class="-mt-1 text-xs leading-5 text-muted-foreground">Secrets stay in credential storage. The workflow records only the reference.</p>
+				{#each credentialTypes as typeID (typeID)}
+					{@const matching = credentials.filter((candidate) => candidate.type === typeID)}
+					<label class="text-xs font-medium text-muted-foreground" for={`credential-${typeID}`}>{typeID}</label>
+					<select
+						id={`credential-${typeID}`}
+						value={selectedCredential(typeID)}
+						class="h-9 rounded-md border border-input bg-background px-2 text-sm"
+						onchange={(event) => onCredentialChange?.(typeID, event.currentTarget.value)}
+					>
+						<option value="">None</option>
+						{#each matching as candidate (candidate.id)}
+							<option value={candidate.id}>{candidate.name}</option>
+						{/each}
+					</select>
+					{#if matching.length === 0}
+						<p class="text-xs leading-5 text-muted-foreground">No {typeID} credential yet — add one under Credentials.</p>
+					{/if}
+				{/each}
+			</div>
+		{/if}
 		{#if visibleProperties.length === 0}
 			<p class="text-sm leading-6 text-muted-foreground">This node has no {activeTab === 'parameters' ? 'parameters' : 'shared settings'} to configure.</p>
 		{:else}

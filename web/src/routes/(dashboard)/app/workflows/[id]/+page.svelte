@@ -5,11 +5,12 @@
 	import ArrowLeft from '@lucide/svelte/icons/arrow-left';
 
 	import { ApiError } from '$lib/api/http';
+	import { createListCredentials } from '$lib/api/generated/credentials/credentials';
 	import { createListNodeTypes } from '$lib/api/generated/nodes/nodes';
 	import { getExecution } from '$lib/api/generated/executions/executions';
 	import { runWorkflow } from '$lib/api/generated/workflow-lifecycle/workflow-lifecycle';
 	import { createGetWorkflow, updateWorkflow } from '$lib/api/generated/workflows/workflows';
-	import type { Definition, WorkflowDocumentInput, WorkflowResource } from '$lib/api/generated/models';
+	import type { CredentialResource, Definition, WorkflowDocumentInput, WorkflowResource } from '$lib/api/generated/models';
 	import WorkflowEditor from '$lib/components/workflow-editor/workflow-editor.svelte';
 	import { Button } from '$lib/components/ui/button';
 	import { validationIssuesFromApiError, type CanvasValidationIssue } from '$lib/workflow-editor/validation';
@@ -28,6 +29,14 @@
 				if (response.status !== 200) throw new Error('Unexpected node catalogue response');
 				return response.data ?? [];
 			}
+		}
+	}));
+
+	// Credential storage is optional, so a failure here must not block the
+	// editor: the picker simply offers nothing to select.
+	const credentials = createListCredentials<CredentialResource[]>(() => ({
+		query: {
+			select: (response) => (response.status === 200 ? (response.data ?? []) : [])
 		}
 	}));
 
@@ -123,7 +132,7 @@
 		</div>
 	{:else if currentWorkflow}
 		{#key currentWorkflow.latestVersion.id}
-			<WorkflowEditor document={currentWorkflow.latestVersion.document} definitions={nodeTypes.data} {saving} {running} {saveError} {saveIssues} {runError} {runMessage} onSave={save} onRun={run} />
+			<WorkflowEditor document={currentWorkflow.latestVersion.document} definitions={nodeTypes.data} credentials={credentials.data ?? []} {saving} {running} {saveError} {saveIssues} {runError} {runMessage} onSave={save} onRun={run} />
 		{/key}
 	{/if}
 </section>

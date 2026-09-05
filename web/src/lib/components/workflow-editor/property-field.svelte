@@ -1,9 +1,16 @@
 <script lang="ts">
 	import type { PropertyDefinition } from '$lib/api/generated/models';
 	import { renameKeyValue } from '$lib/workflow-editor/key-value';
+	import { asExpression, asFixed, expressionTemplate, isExpression } from '$lib/workflow-editor/parameter';
 
 	let { property, value, onChange }: { property: PropertyDefinition; value: unknown; onChange: (value: unknown) => void } = $props();
 
+	// Only text-shaped controls can carry an expression: a checkbox or a select
+	// has no free-text surface for one, and silently accepting a marker there
+	// would produce a value the control could not display.
+	const expressionCapable = $derived(property.kind === 'string' || property.kind === 'number');
+	const expressionMode = $derived(isExpression(value));
+	const template = $derived(expressionTemplate(value));
 	const stringValue = $derived(typeof value === 'string' ? value : value === undefined || value === null ? '' : String(value));
 	const objectValue = $derived(isObject(value) ? value : {});
 	const conditions = $derived(Array.isArray(value) ? value : []);
@@ -40,6 +47,27 @@
 		return typeof condition[key] === 'string' ? condition[key] : key === 'operator' ? 'equals' : '';
 	}
 
+	function toggleExpression() {
+		onChange(expressionMode ? asFixed(value) : asExpression(value));
+	}
+
+	/**
+	 * Best-effort preview of what an expression references. The authoritative
+	 * evaluation happens on the server, so this reports shape problems only and
+	 * never claims a value.
+	 */
+	function expressionHint(text: string): string | null {
+		const opens = (text.match(/\{\{/g) ?? []).length;
+		const closes = (text.match(/\}\}/g) ?? []).length;
+		if (opens === 0) return 'No {{ }} expression yet — this will be sent as literal text.';
+		if (opens !== closes) return 'Unbalanced {{ }} — the server will reject this expression.';
+		const roots = [...text.matchAll(/\{\{\s*([^\s.[}]+)/g)].map((match) => match[1]);
+		const allowed = new Set(['$json', '$input', '$node', '$env', '$execution', '$itemIndex']);
+		const unknown = roots.find((root) => !allowed.has(root));
+		if (unknown) return `${unknown} is not an available root. Use $json, $input, $node, $env, $execution, or $itemIndex.`;
+		return null;
+	}
+
 	function isObject(candidate: unknown): candidate is Record<string, unknown> {
 		return candidate !== null && typeof candidate === 'object' && !Array.isArray(candidate);
 	}
@@ -59,10 +87,24 @@
 </script>
 
 <div class="grid gap-2">
-	<label class="text-sm font-medium" for={`property-${property.key}`}>{property.label}{#if property.required}<span aria-hidden="true" class="text-destructive"> *</span>{/if}</label>
+	<div class="flex items-baseline justify-between gap-2">
+		<label class="text-sm font-medium" for={`property-${property.key}`}>{property.label}{#if property.required}<span aria-hidden="true" class="text-destructive"> *</span>{/if}</label>
+		{#if expressionCapable}
+			<button type="button" role="switch" aria-checked={expressionMode} class="rounded border border-border px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 aria-checked:border-primary/40 aria-checked:bg-primary/10 aria-checked:text-primary" onclick={toggleExpression}>
+				{expressionMode ? 'Expression' : 'Fixed'}
+			</button>
+		{/if}
+	</div>
 	{#if property.description}<p class="-mt-1 text-xs leading-5 text-muted-foreground">{property.description}</p>{/if}
 
-	{#if property.kind === 'boolean'}
+	{#if expressionMode}
+		<div class="grid gap-1.5">
+			<input id={`property-${property.key}`} value={template} spellcheck="false" class="h-10 rounded-lg border border-primary/40 bg-primary/5 px-3 font-mono text-sm" aria-describedby={`property-${property.key}-hint`} oninput={(event) => onChange({ mode: 'expression', value: event.currentTarget.value })} />
+			<p id={`property-${property.key}-hint`} class="text-xs leading-5 {expressionHint(template) ? 'text-destructive' : 'text-muted-foreground'}">
+				{expressionHint(template) ?? 'Resolved per item on the server, for example {{ $json.id }}.'}
+			</p>
+		</div>
+	{:else if property.kind === 'boolean'}
 		<label class="flex min-h-10 items-center gap-2 rounded-lg border border-input px-3 text-sm">
 			<input id={`property-${property.key}`} type="checkbox" checked={Boolean(value)} onchange={(event) => onChange(event.currentTarget.checked)} />
 			<span>{Boolean(value) ? 'Enabled' : 'Disabled'}</span>

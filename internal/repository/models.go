@@ -15,8 +15,31 @@ func Models() []any {
 		&workflowVersionModel{},
 		&executionModel{},
 		&executionNodeRunModel{},
+		&credentialModel{},
 	}
 }
+
+// credentialModel stores an encrypted credential payload. The plaintext never
+// exists as a column, so a database dump, a replica, or a support export
+// cannot disclose a secret without the master key.
+type credentialModel struct {
+	ID       string `gorm:"primaryKey;size:64"`
+	TenantID string `gorm:"not null;size:64;index:idx_credentials_tenant_name,priority:1"`
+	Name     string `gorm:"not null;size:255;index:idx_credentials_tenant_name,priority:2"`
+	Type     string `gorm:"not null;size:64"`
+	// Payload is the AES-256-GCM sealed map of the type's secret fields.
+	Payload []byte `gorm:"not null"`
+	// PublicFields holds the type's non-secret values as plain JSON. Keeping
+	// them out of the sealed payload lets a listing show a username or header
+	// name without the master key ever being used to satisfy a read.
+	PublicFields []byte `gorm:"not null"`
+	// AllowedDomains is a JSON array scoping where the credential may be sent.
+	AllowedDomains []byte    `gorm:"not null"`
+	CreatedAt      time.Time `gorm:"not null"`
+	UpdatedAt      time.Time `gorm:"not null"`
+}
+
+func (credentialModel) TableName() string { return "credentials" }
 
 type workflowModel struct {
 	ID              string         `gorm:"primaryKey;size:64"`

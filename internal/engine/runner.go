@@ -12,9 +12,46 @@ import (
 	"github.com/kilaslabs/kilas-flow/internal/workflow"
 )
 
-// Request is runtime input supplied by the trigger that starts a graph.
+// ExecutionContext is the identity a node parameter may read through the
+// `$execution` expression root.
+type ExecutionContext struct {
+	ID   string
+	Mode string
+}
+
+// CredentialResolver hands an executor the decrypted fields of a credential
+// the node references.
+//
+// Executors never reach into storage themselves: keeping resolution behind
+// this interface is what lets the runtime enforce tenant ownership, type, and
+// domain scope in one place before a secret is ever handed out.
+type CredentialResolver interface {
+	ResolveCredential(ctx context.Context, credentialID string) (Credential, error)
+}
+
+// Credential is one resolved secret plus the scope that governs its use.
+type Credential struct {
+	ID             string
+	Name           string
+	Type           string
+	Fields         map[string]string
+	AllowedDomains []string
+}
+
+// Request is runtime input supplied by the trigger that starts a graph, plus
+// the ambient context an executor needs to resolve expressions and
+// authenticate.
 type Request struct {
-	Input workflow.Item
+	Input     workflow.Item
+	Execution ExecutionContext
+	// Env is the allowlisted environment exposed as `$env`. The runtime decides
+	// what enters it; nothing reads os.Environ during execution.
+	Env         map[string]string
+	Credentials CredentialResolver
+	// NodeOutputs maps a completed node's display name to its first output
+	// item, backing the `$node` expression root. The runner fills it as the
+	// graph progresses, so a node only ever sees nodes that ran before it.
+	NodeOutputs map[string]map[string]any
 }
 
 // Executor runs one registered node using its compiled configuration.
@@ -121,6 +158,12 @@ func (runner *Runner) Run(ctx context.Context, ir workflow.IR, request Request) 
 	}
 
 	completed := make(map[string]workflow.NodeOutput, len(ir.Nodes))
+	// `$node["Name"]` reads the first item a completed node produced. Building
+	// it here keeps the lookup ordered by actual execution, so a node can never
+	// observe one that has not run yet.
+	if request.NodeOutputs == nil {
+		request.NodeOutputs = make(map[string]map[string]any, len(ir.Nodes))
+	}
 	result := Result{NodeRuns: make([]NodeRun, 0, len(ir.Nodes)), Output: make(map[string]workflow.NodeOutput)}
 	for len(completed) < len(ir.Nodes) {
 		ready := make([]string, 0, len(ir.Nodes)-len(completed))
@@ -166,12 +209,26 @@ func (runner *Runner) Run(ctx context.Context, ir workflow.IR, request Request) 
 		}
 		output = cloneOutput(output)
 		completed[nodeID] = output
+		if first, ok := firstItem(output); ok {
+			request.NodeOutputs[node.Name] = first
+		}
 		result.NodeRuns = append(result.NodeRuns, NodeRun{NodeID: nodeID, Input: cloneInput(input), Output: output})
 		if outgoing[nodeID] == 0 {
 			result.Output[nodeID] = cloneOutput(output)
 		}
 	}
 	return result, nil
+}
+
+// firstItem returns the first item of a node's first non-empty output port,
+// which is what `$node["Name"]` exposes.
+func firstItem(output workflow.NodeOutput) (map[string]any, bool) {
+	for _, items := range output {
+		if len(items) > 0 {
+			return cloneMap(items[0].JSON), true
+		}
+	}
+	return nil, false
 }
 
 func nodeContext(parent context.Context, node workflow.IRNode) (context.Context, context.CancelFunc, time.Duration, error) {
@@ -238,7 +295,22 @@ func nodeInput(edges []workflow.IREdge, completed map[string]workflow.NodeOutput
 	return input, nil
 }
 
-func cloneRequest(request Request) Request { return Request{Input: cloneItem(request.Input)} }
+func cloneRequest(request Request) Request {
+	cloned := Request{
+		Input:       cloneItem(request.Input),
+		Execution:   request.Execution,
+		Credentials: request.Credentials,
+		Env:         make(map[string]string, len(request.Env)),
+		NodeOutputs: make(map[string]map[string]any, len(request.NodeOutputs)),
+	}
+	for key, value := range request.Env {
+		cloned.Env[key] = value
+	}
+	for name, item := range request.NodeOutputs {
+		cloned.NodeOutputs[name] = cloneMap(item)
+	}
+	return cloned
+}
 
 func cloneInput(input workflow.NodeInput) workflow.NodeInput {
 	cloned := make(workflow.NodeInput, len(input))

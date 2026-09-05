@@ -41,6 +41,7 @@ type Deps struct {
 	NodeRegistry *node.Registry
 	Workflows    repository.WorkflowRepository
 	Executions   repository.ExecutionRepository
+	Credentials  repository.CredentialRepository
 	// ExecutionController owns live worker wakeups and cancellation. It is
 	// separate from the repository so HTTP never reaches into ORM state.
 	ExecutionController handlers.ExecutionController

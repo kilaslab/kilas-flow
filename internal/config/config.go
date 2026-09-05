@@ -20,12 +20,13 @@ const EnvPrefix = "KILASFLOW_"
 
 // Config is the root configuration document.
 type Config struct {
-	Server    Server    `koanf:"server"`
-	Database  Database  `koanf:"database"`
-	Security  Security  `koanf:"security"`
-	Branding  Branding  `koanf:"branding"`
-	Execution Execution `koanf:"execution"`
-	Log       Log       `koanf:"log"`
+	Server    Server       `koanf:"server"`
+	Database  Database     `koanf:"database"`
+	Security  Security     `koanf:"security"`
+	Outbound  OutboundHTTP `koanf:"outbound"`
+	Branding  Branding     `koanf:"branding"`
+	Execution Execution    `koanf:"execution"`
+	Log       Log          `koanf:"log"`
 }
 
 // Server holds HTTP listener settings.
@@ -61,6 +62,23 @@ type Security struct {
 	// master key used to encrypt stored credentials. The key itself is never
 	// read from the config file.
 	EncryptionKeyEnv string `koanf:"encryption_key_env"`
+}
+
+// OutboundHTTP bounds requests workflow nodes make to the outside world.
+//
+// The koanf section is a single word because envKeyToPath treats the first
+// underscore as the section separator: a section named `outbound_http` could
+// never be reached by an environment override.
+//
+// The defaults assume a hosted install where a workflow URL is tenant-authored
+// and must not be able to reach the cloud metadata service or a neighbouring
+// internal service. A self-hosted operator opts out explicitly.
+type OutboundHTTP struct {
+	AllowPrivateNetworks bool          `koanf:"allow_private_networks"`
+	AllowedHosts         []string      `koanf:"allowed_hosts"`
+	MaxRedirects         int           `koanf:"max_redirects"`
+	MaxResponseBytes     int64         `koanf:"max_response_bytes"`
+	Timeout              time.Duration `koanf:"timeout"`
 }
 
 // Branding drives white-label display options.
@@ -102,6 +120,12 @@ func Default() Config {
 		},
 		Security: Security{
 			EncryptionKeyEnv: "KILASFLOW_ENCRYPTION_KEY",
+		},
+		Outbound: OutboundHTTP{
+			AllowPrivateNetworks: false,
+			MaxRedirects:         5,
+			MaxResponseBytes:     8 << 20,
+			Timeout:              30 * time.Second,
 		},
 		Branding: Branding{
 			Name:      "KilasFlow",

@@ -26,10 +26,10 @@ func TestNodeTypesServesTheRegisteredCatalogue(t *testing.T) {
 	if err := json.NewDecoder(recorder.Body).Decode(&definitions); err != nil {
 		t.Fatalf("decode node catalogue = %v", err)
 	}
-	if got, want := len(definitions), 4; got != want {
+	if got, want := len(definitions), 5; got != want {
 		t.Fatalf("node catalogue length = %d, want %d", got, want)
 	}
-	if got, want := definitions[0].Type, "kilasflow.if"; got != want {
+	if got, want := definitions[0].Type, "kilasflow.httpRequest"; got != want {
 		t.Errorf("first catalogue type = %q, want %q", got, want)
 	}
 	if definitions[0].ExecutorID != "" {

@@ -4,20 +4,24 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/kilaslabs/kilas-flow/internal/api"
 	"github.com/kilaslabs/kilas-flow/internal/api/handlers"
 	"github.com/kilaslabs/kilas-flow/internal/config"
+	"github.com/kilaslabs/kilas-flow/internal/credentials"
 	"github.com/kilaslabs/kilas-flow/internal/database"
 	"github.com/kilaslabs/kilas-flow/internal/engine"
 	"github.com/kilaslabs/kilas-flow/internal/node"
 	"github.com/kilaslabs/kilas-flow/internal/repository"
+	"github.com/kilaslabs/kilas-flow/internal/safehttp"
 	"github.com/kilaslabs/kilas-flow/nodes"
 )
 
@@ -72,14 +76,37 @@ func run() error {
 		return fmt.Errorf("register built-in nodes: %w", err)
 	}
 	executorRegistry := engine.NewRegistry()
-	if err := nodes.RegisterExecutors(executorRegistry); err != nil {
+	if err := nodes.RegisterExecutors(executorRegistry, outboundPolicy(cfg.Outbound)); err != nil {
 		return fmt.Errorf("register built-in executors: %w", err)
 	}
+
+	// Credentials are optional at boot: an install with no key still runs
+	// workflows, and only credential operations report that it is unconfigured.
+	// Failing startup instead would make the key mandatory for every user.
+	var credentialStore *repository.GORMCredentialStore
+	key, keyErr := credentials.KeyFromEnvironment(cfg.Security.EncryptionKeyEnv)
+	switch {
+	case errors.Is(keyErr, credentials.ErrNoKey):
+		log.Warn("credential encryption key is not set; credential storage is disabled",
+			"variable", cfg.Security.EncryptionKeyEnv)
+		credentialStore = repository.NewCredentialStore(db.DB, nil)
+	case keyErr != nil:
+		return fmt.Errorf("credential encryption key: %w", keyErr)
+	default:
+		cipher, err := credentials.NewCipher(key)
+		if err != nil {
+			return err
+		}
+		credentialStore = repository.NewCredentialStore(db.DB, cipher)
+	}
+
 	executions := repository.NewExecutionStore(db.DB)
 	runtime, err := engine.NewService(engine.ServiceDeps{
 		Executions:     executions,
 		Catalog:        nodeRegistry,
 		Runner:         engine.NewRunner(executorRegistry),
+		Credentials:    credentialStore,
+		Environment:    workflowEnvironment(),
 		WorkerID:       fmt.Sprintf("kilasflow-%d", os.Getpid()),
 		DefaultTimeout: cfg.Execution.DefaultTimeout,
 	})
@@ -97,6 +124,7 @@ func run() error {
 		NodeRegistry:        nodeRegistry,
 		Workflows:           repository.NewWorkflowStore(db.DB),
 		Executions:          executions,
+		Credentials:         credentialStore,
 		ExecutionController: runtime,
 		Version:             version,
 	})
@@ -106,6 +134,42 @@ func run() error {
 
 func migrate(db *database.DB) error {
 	return database.Migrate(db, repository.Models()...)
+}
+
+func outboundPolicy(cfg config.OutboundHTTP) safehttp.Policy {
+	policy := safehttp.DefaultPolicy()
+	policy.AllowPrivateNetworks = cfg.AllowPrivateNetworks
+	policy.AllowedHosts = append([]string(nil), cfg.AllowedHosts...)
+	if cfg.MaxRedirects > 0 {
+		policy.MaxRedirects = cfg.MaxRedirects
+	}
+	if cfg.MaxResponseBytes > 0 {
+		policy.MaxResponseBytes = cfg.MaxResponseBytes
+	}
+	if cfg.Timeout > 0 {
+		policy.Timeout = cfg.Timeout
+	}
+	return policy
+}
+
+// workflowEnvironment is the allowlist behind the `$env` expression root.
+//
+// Only variables under KILASFLOW_WORKFLOW_ENV_ are exposed, so a workflow can
+// never read the database DSN or the credential master key out of the process
+// environment.
+func workflowEnvironment() map[string]string {
+	const prefix = "KILASFLOW_WORKFLOW_ENV_"
+	exposed := map[string]string{}
+	for _, entry := range os.Environ() {
+		name, value, found := strings.Cut(entry, "=")
+		if !found {
+			continue
+		}
+		if key, ok := strings.CutPrefix(name, prefix); ok && key != "" {
+			exposed[key] = value
+		}
+	}
+	return exposed
 }
 
 // newLogger builds the structured logger described by the configuration.

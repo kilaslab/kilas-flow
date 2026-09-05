@@ -15,6 +15,7 @@ import (
 	"github.com/kilaslabs/kilas-flow/internal/execution"
 	"github.com/kilaslabs/kilas-flow/internal/node"
 	"github.com/kilaslabs/kilas-flow/internal/repository"
+	"github.com/kilaslabs/kilas-flow/internal/safehttp"
 	"github.com/kilaslabs/kilas-flow/internal/workflow"
 	"github.com/kilaslabs/kilas-flow/nodes"
 )
@@ -60,7 +61,7 @@ func TestServiceRunOncePersistsCompletedManualSetExecution(t *testing.T) {
 		t.Fatalf("QueueManualLatest() error = %v", err)
 	}
 	executors := engine.NewRegistry()
-	if err := nodes.RegisterExecutors(executors); err != nil {
+	if err := nodes.RegisterExecutors(executors, safehttp.DefaultPolicy()); err != nil {
 		t.Fatalf("RegisterExecutors() error = %v", err)
 	}
 	service, err := engine.NewService(engine.ServiceDeps{
@@ -186,7 +187,7 @@ func TestServicePersistsFailedNodeRunWhenItsConfiguredTimeoutExpires(t *testing.
 		t.Fatalf("QueueManualLatest() error = %v", err)
 	}
 	executors := engine.NewRegistry()
-	if err := nodes.RegisterExecutors(executors); err != nil {
+	if err := nodes.RegisterExecutors(executors, safehttp.DefaultPolicy()); err != nil {
 		t.Fatalf("RegisterExecutors() error = %v", err)
 	}
 	if err := executors.Register("test.slow", engine.ExecutorFunc(func(ctx context.Context, _ workflow.IRNode, _ workflow.NodeInput, _ engine.Request) (workflow.NodeOutput, error) {
@@ -253,7 +254,7 @@ func TestServiceCancelsQueuedExecutionBeforeAWorkerClaimsIt(t *testing.T) {
 		t.Fatalf("QueueManualLatest() error = %v", err)
 	}
 	executors := engine.NewRegistry()
-	if err := nodes.RegisterExecutors(executors); err != nil {
+	if err := nodes.RegisterExecutors(executors, safehttp.DefaultPolicy()); err != nil {
 		t.Fatalf("RegisterExecutors() error = %v", err)
 	}
 	service, err := engine.NewService(engine.ServiceDeps{Executions: executionStore, Catalog: catalog, Runner: engine.NewRunner(executors), WorkerID: "test-worker", DefaultTimeout: time.Second})
@@ -349,7 +350,7 @@ func TestServiceCancelsAnActiveExecutionAndPersistsCancelledNodeRun(t *testing.T
 		t.Fatalf("QueueManualLatest() error = %v", err)
 	}
 	executors := engine.NewRegistry()
-	if err := nodes.RegisterExecutors(executors); err != nil {
+	if err := nodes.RegisterExecutors(executors, safehttp.DefaultPolicy()); err != nil {
 		t.Fatalf("RegisterExecutors() error = %v", err)
 	}
 	if err := executors.Register("test.block", engine.ExecutorFunc(func(ctx context.Context, _ workflow.IRNode, _ workflow.NodeInput, _ engine.Request) (workflow.NodeOutput, error) {

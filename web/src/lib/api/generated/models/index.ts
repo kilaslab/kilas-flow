@@ -7,6 +7,11 @@
  */
 
 export * from './connection';
+export * from './credentialBody';
+export * from './credentialBodyFields';
+export * from './credentialResource';
+export * from './credentialResourceFields';
+export * from './credentialTypeResource';
 export * from './definition';
 export * from './document';
 export * from './documentSettings';
@@ -18,6 +23,7 @@ export * from './executionNodeRunResource';
 export * from './executionRequestResource';
 export * from './executionResource';
 export * from './executionSummary';
+export * from './field';
 export * from './healthOutputBody';
 export * from './listExecutionsParams';
 export * from './node';

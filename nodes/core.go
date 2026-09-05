@@ -13,6 +13,7 @@ func RegisterAll(registry *node.Registry) error {
 		setNode(),
 		ifNode(),
 		mergeNode(),
+		httpRequestNode(),
 	} {
 		if err := registry.Register(definition); err != nil {
 			return err

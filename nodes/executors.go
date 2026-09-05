@@ -7,16 +7,22 @@ import (
 	"strings"
 
 	"github.com/kilaslabs/kilas-flow/internal/engine"
+	"github.com/kilaslabs/kilas-flow/internal/safehttp"
 	"github.com/kilaslabs/kilas-flow/internal/workflow"
 )
 
 // RegisterExecutors installs native implementations for the core definitions.
-func RegisterExecutors(registry *engine.Registry) error {
+//
+// The HTTP policy is passed in because it is a deployment decision: a hosted
+// install must refuse private targets, while a self-hosted one may legitimately
+// call services on its own network.
+func RegisterExecutors(registry *engine.Registry, httpPolicy safehttp.Policy) error {
 	for id, executor := range map[string]engine.Executor{
-		"core.manual": engine.ExecutorFunc(executeManual),
-		"core.set":    engine.ExecutorFunc(executeSet),
-		"core.if":     engine.ExecutorFunc(executeIF),
-		"core.merge":  engine.ExecutorFunc(executeMerge),
+		"core.manual":  engine.ExecutorFunc(executeManual),
+		"core.set":     engine.ExecutorFunc(executeSet),
+		"core.if":      engine.ExecutorFunc(executeIF),
+		"core.merge":   engine.ExecutorFunc(executeMerge),
+		HTTPExecutorID: NewHTTPExecutor(httpPolicy),
 	} {
 		if err := registry.Register(id, executor); err != nil {
 			return err

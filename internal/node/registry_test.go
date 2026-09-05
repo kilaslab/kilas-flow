@@ -23,6 +23,7 @@ func TestRegistryListsBuiltinsInStableOrder(t *testing.T) {
 		got = append(got, definition.Type)
 	}
 	want := []string{
+		"kilasflow.httpRequest",
 		"kilasflow.if",
 		"kilasflow.manual",
 		"kilasflow.merge",

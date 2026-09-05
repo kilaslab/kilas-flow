@@ -9,7 +9,7 @@
 	import Save from '@lucide/svelte/icons/save';
 	import Trash2 from '@lucide/svelte/icons/trash-2';
 
-	import type { Definition, Document, WorkflowDocumentInput } from '$lib/api/generated/models';
+	import type { CredentialResource, Definition, Document, WorkflowDocumentInput } from '$lib/api/generated/models';
 	import {
 		cloneWorkflowDocument,
 		createWorkflowNode,
@@ -17,6 +17,7 @@
 		documentFromFlow,
 		nextNodePosition,
 		toWorkflowInput,
+		updateNodeCredential,
 		updateNodeProperty,
 		workflowDocumentEquals,
 		type EditorFlowEdge,
@@ -34,6 +35,7 @@
 	let {
 		document,
 		definitions,
+		credentials = [],
 		saving = false,
 		running = false,
 		saveError = null,
@@ -45,6 +47,7 @@
 	}: {
 		document: Document;
 		definitions: Definition[];
+		credentials?: CredentialResource[];
 		saving?: boolean;
 		running?: boolean;
 		saveError?: string | null;
@@ -172,6 +175,11 @@
 		replaceDraft(updateNodeProperty(draft, selectedNode.id, scope, key, value));
 	}
 
+	function updateCredential(typeID: string, credentialID: string) {
+		if (!selectedNode) return;
+		replaceDraft(updateNodeCredential(draft, selectedNode.id, typeID, credentialID));
+	}
+
 	function focusValidationIssue(issue: CanvasValidationIssue) {
 		selectedNodeID = issue.nodeID ?? null;
 		selectedEdgeID = issue.connectionID ?? null;
@@ -270,7 +278,7 @@
 		{#if !narrow.current}
 			<aside class="hidden min-h-0 border-l border-border lg:block">
 				{#if selectedNode && selectedDefinition}
-					<PropertiesPanel node={selectedNode} definition={selectedDefinition} onChange={updateProperty} />
+					<PropertiesPanel node={selectedNode} definition={selectedDefinition} {credentials} onChange={updateProperty} onCredentialChange={updateCredential} />
 				{:else}
 					<div class="grid h-full place-items-center p-6 text-center text-sm leading-6 text-muted-foreground">Select a node to edit its registry-defined parameters and shared settings.</div>
 				{/if}
@@ -280,7 +288,7 @@
 		{#if narrow.current && propertyPanelOpen && selectedNode && selectedDefinition}
 			<div bind:this={propertyDialog} class="absolute inset-x-3 bottom-3 z-30 max-h-[min(32rem,calc(100%-1.5rem))] overflow-hidden rounded-xl border border-border bg-card shadow-xl" role="dialog" aria-modal="true" aria-label={`${selectedNode.name} properties`} tabindex="-1" onkeydown={handlePropertyDialogKeydown}>
 				<div class="flex justify-end border-b border-border px-2 py-1"><button bind:this={propertyCloseButton} type="button" class="rounded-md p-2 text-muted-foreground hover:bg-muted" aria-label="Close node properties" onclick={closePropertyPanel}><PanelLeftClose aria-hidden="true" class="size-4" /></button></div>
-				<PropertiesPanel node={selectedNode} definition={selectedDefinition} onChange={updateProperty} />
+				<PropertiesPanel node={selectedNode} definition={selectedDefinition} {credentials} onChange={updateProperty} onCredentialChange={updateCredential} />
 			</div>
 		{/if}
 	</div>

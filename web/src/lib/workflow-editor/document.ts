@@ -129,6 +129,35 @@ export function updateNodeProperty(
 	};
 }
 
+/**
+ * Sets or clears one credential reference on a node.
+ *
+ * The document records only the credential ID; the secret itself never enters
+ * workflow JSON, so an export or an n8n-style copy carries no credential
+ * material.
+ */
+export function updateNodeCredential(document: Document, nodeID: string, typeID: string, credentialID: string): Document {
+	return {
+		...clone(document),
+		nodes: (document.nodes ?? []).map((node) => {
+			if (node.id !== nodeID) return clone(node);
+			const credentials = { ...(clone(node.credentials ?? {}) as Record<string, string>) };
+			if (credentialID) {
+				credentials[typeID] = credentialID;
+			} else {
+				delete credentials[typeID];
+			}
+			const next = clone(node);
+			if (Object.keys(credentials).length > 0) {
+				next.credentials = credentials;
+			} else {
+				delete next.credentials;
+			}
+			return next;
+		})
+	};
+}
+
 export function workflowDocumentEquals(left: Document, right: Document): boolean {
 	return stableJSON(left) === stableJSON(right);
 }
