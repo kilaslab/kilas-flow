@@ -8,6 +8,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/kilaslabs/kilas-flow/internal/api/handlers"
+	"github.com/kilaslabs/kilas-flow/internal/auth"
 	"github.com/kilaslabs/kilas-flow/internal/repository"
 	"github.com/kilaslabs/kilas-flow/internal/safehttp"
 	"github.com/kilaslabs/kilas-flow/internal/web"
@@ -23,6 +24,9 @@ func registerRoutes(router *chi.Mux, api huma.API, deps Deps) {
 	v1 := huma.NewGroup(api, APIPrefix)
 
 	handlers.NewSystem(deps.Version, deps.DB).Register(v1)
+	secureCookie := !deps.Config.Auth.CookieInsecure
+	handlers.NewAuth(deps.AuthStore, deps.AuthIssuer, deps.Executions, deps.Tenants).
+		WithCookie(auth.CookieName(secureCookie), secureCookie).Register(v1)
 	handlers.NewNodeTypes(deps.NodeRegistry).
 		WithOptionLoading(deps.Tenants, deps.OptionLoader, deps.CredentialResolverFor).
 		WithAvailability(deps.NodeAvailability).

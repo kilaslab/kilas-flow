@@ -32,6 +32,19 @@ type NonReadonly<T> = [T] extends [UnionToIntersection<T>] ? {
     : T[P];
 } : DistributeReadOnlyOverUnions<T>;
 
+export interface APIKeyResource {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  createdAt: string;
+  id: string;
+  label: string;
+  /** Accurate to about a minute */
+  lastUsedAt?: string;
+  /** Public handle, enough to recognise a key in a log */
+  prefix: string;
+  revokedAt?: string;
+}
+
 export interface ActivationNotice {
   message: string;
   nodeId: string;
@@ -131,6 +144,37 @@ export interface Condition {
   operator?: string;
   /** @nullable */
   values?: unknown[] | null;
+}
+
+export interface CreateAPIKeyInputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+     * How this key will be recognised later
+     * @maxLength 255
+     */
+  label: string;
+}
+
+export interface CreateStreamTicketInputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+     * Execution whose events will be streamed
+     * @minLength 1
+     */
+  executionId: string;
+}
+
+export interface CreatedAPIKeyResource {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  createdAt: string;
+  id: string;
+  label: string;
+  prefix: string;
+  /** The full key. Shown once and never again. */
+  token: string;
 }
 
 /**
@@ -669,6 +713,13 @@ export interface ImportedWorkflowResource {
   workflow: WorkflowResource;
 }
 
+export interface ListAPIKeysOutputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  items: APIKeyResource[] | null;
+}
+
 export type LoadOptionsInputBodyParameters = {[key: string]: unknown};
 
 export interface LoadOptionsInputBody {
@@ -719,6 +770,23 @@ export interface LoadSchemaResource {
   fields: MapperColumn[] | null;
   /** Why the list is empty, when it is empty for a reason the user can act on. */
   reason?: string;
+}
+
+export interface LoginInputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+     * Account email address
+     * @minLength 3
+     * @maxLength 255
+     */
+  email: string;
+  /**
+     * Account password
+     * @minLength 1
+     * @maxLength 1024
+     */
+  password: string;
 }
 
 export interface NodeCompletedEvent {
@@ -789,6 +857,23 @@ export interface NodeStartedEvent {
   workflowId?: string;
 }
 
+export interface PrincipalResource {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  email?: string;
+  /** Set for a machine caller */
+  keyId?: string;
+  /** api_key or session */
+  kind: string;
+  /** The key's name, for a machine caller */
+  label?: string;
+  name?: string;
+  /** Tenant every request from this caller is scoped to */
+  tenantId: string;
+  /** Set for a signed-in person */
+  userId?: string;
+}
+
 export interface ReadyOutputBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -832,6 +917,15 @@ export interface ScheduleResource {
   nodeId?: string;
   updatedAt: string;
   workflowId: string;
+}
+
+export interface StreamTicketResource {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  executionId: string;
+  expiresAt: string;
+  /** Spend as the ticket query parameter on the events endpoint */
+  ticket: string;
 }
 
 export interface TestCredentialResource {
@@ -1042,6 +1136,324 @@ export type HTTPStatusCode3xx = 300 | 301 | 302 | 303 | 304 | 305 | 307 | 308;
 export type HTTPStatusCode4xx = 400 | 401 | 402 | 403 | 404 | 405 | 406 | 407 | 408 | 409 | 410 | 411 | 412 | 413 | 414 | 415 | 416 | 417 | 418 | 419 | 420 | 421 | 422 | 423 | 424 | 426 | 428 | 429 | 431 | 451;
 export type HTTPStatusCode5xx = 500 | 501 | 502 | 503 | 504 | 505 | 507 | 511;
 export type HTTPStatusCodes = HTTPStatusCode1xx | HTTPStatusCode2xx | HTTPStatusCode3xx | HTTPStatusCode4xx | HTTPStatusCode5xx;
+
+export type listApiKeysResponse200 = {
+  data: ListAPIKeysOutputBody
+  status: 200
+}
+
+export type listApiKeysResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type listApiKeysResponseSuccess = (listApiKeysResponse200) & {
+  headers: Headers;
+};
+export type listApiKeysResponseError = (listApiKeysResponseDefault) & {
+  headers: Headers;
+};
+
+export type listApiKeysResponse = (listApiKeysResponseSuccess | listApiKeysResponseError)
+
+export const getListApiKeysUrl = () => {
+
+
+
+
+  return `/api/v1/api-keys`
+}
+
+/**
+ * Lists this tenant's keys. No secret is ever included.
+ * @summary List API keys
+ */
+export const listApiKeys = async ( options?: RequestInit): Promise<listApiKeysResponse> => {
+
+  const res = await fetch(getListApiKeysUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: listApiKeysResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as listApiKeysResponse
+}
+
+
+
+export type createApiKeyResponse201 = {
+  data: CreatedAPIKeyResource
+  status: 201
+}
+
+export type createApiKeyResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 201>
+}
+
+export type createApiKeyResponseSuccess = (createApiKeyResponse201) & {
+  headers: Headers;
+};
+export type createApiKeyResponseError = (createApiKeyResponseDefault) & {
+  headers: Headers;
+};
+
+export type createApiKeyResponse = (createApiKeyResponseSuccess | createApiKeyResponseError)
+
+export const getCreateApiKeyUrl = () => {
+
+
+
+
+  return `/api/v1/api-keys`
+}
+
+/**
+ * Mints a key scoped to the calling tenant and returns it in full exactly once. The server keeps only a hash and cannot show it again.
+ * @summary Create an API key
+ */
+export const createApiKey = async (createAPIKeyInputBody: NonReadonly<CreateAPIKeyInputBody>, options?: RequestInit): Promise<createApiKeyResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Array.isArray(h)) return Object.fromEntries(h);
+    return h;
+  };
+const res = await fetch(getCreateApiKeyUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(createAPIKeyInputBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: createApiKeyResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as createApiKeyResponse
+}
+
+
+
+export type revokeApiKeyResponse200 = {
+  data: APIKeyResource
+  status: 200
+}
+
+export type revokeApiKeyResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type revokeApiKeyResponseSuccess = (revokeApiKeyResponse200) & {
+  headers: Headers;
+};
+export type revokeApiKeyResponseError = (revokeApiKeyResponseDefault) & {
+  headers: Headers;
+};
+
+export type revokeApiKeyResponse = (revokeApiKeyResponseSuccess | revokeApiKeyResponseError)
+
+export const getRevokeApiKeyUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/api-keys/${id}`
+}
+
+/**
+ * Stops a key authenticating, immediately and permanently. The row is kept so an audit still has something to name.
+ * @summary Revoke an API key
+ */
+export const revokeApiKey = async (id: string, options?: RequestInit): Promise<revokeApiKeyResponse> => {
+
+  const res = await fetch(getRevokeApiKeyUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: revokeApiKeyResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as revokeApiKeyResponse
+}
+
+
+
+export type loginResponse200 = {
+  data: PrincipalResource
+  status: 200
+}
+
+export type loginResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type loginResponseSuccess = (loginResponse200) & {
+  headers: Headers;
+};
+export type loginResponseError = (loginResponseDefault) & {
+  headers: Headers;
+};
+
+export type loginResponse = (loginResponseSuccess | loginResponseError)
+
+export const getLoginUrl = () => {
+
+
+
+
+  return `/api/v1/auth/login`
+}
+
+/**
+ * Exchanges an email and password for a session cookie. The cookie is HttpOnly, so the browser can never read it back.
+ * @summary Sign in
+ */
+export const login = async (loginInputBody: NonReadonly<LoginInputBody>, options?: RequestInit): Promise<loginResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Array.isArray(h)) return Object.fromEntries(h);
+    return h;
+  };
+const res = await fetch(getLoginUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(loginInputBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: loginResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as loginResponse
+}
+
+
+
+export type logoutResponse204 = {
+  data: void
+  status: 204
+}
+
+export type logoutResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 204>
+}
+
+export type logoutResponseSuccess = (logoutResponse204) & {
+  headers: Headers;
+};
+export type logoutResponseError = (logoutResponseDefault) & {
+  headers: Headers;
+};
+
+export type logoutResponse = (logoutResponseSuccess | logoutResponseError)
+
+export const getLogoutUrl = () => {
+
+
+
+
+  return `/api/v1/auth/logout`
+}
+
+/**
+ * Clears the session cookie in this browser. The session token itself is stateless and stays valid until it expires, so a copy taken beforehand is not revoked.
+ * @summary Sign out
+ */
+export const logout = async ( options?: RequestInit): Promise<logoutResponse> => {
+
+  const res = await fetch(getLogoutUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: logoutResponse['data'] = body ? JSON.parse(body) : undefined
+  return { data, status: res.status, headers: res.headers } as logoutResponse
+}
+
+
+
+export type getMeResponse200 = {
+  data: PrincipalResource
+  status: 200
+}
+
+export type getMeResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type getMeResponseSuccess = (getMeResponse200) & {
+  headers: Headers;
+};
+export type getMeResponseError = (getMeResponseDefault) & {
+  headers: Headers;
+};
+
+export type getMeResponse = (getMeResponseSuccess | getMeResponseError)
+
+export const getGetMeUrl = () => {
+
+
+
+
+  return `/api/v1/auth/me`
+}
+
+/**
+ * Reports the tenant and identity this request authenticated as.
+ * @summary Describe the current caller
+ */
+export const getMe = async ( options?: RequestInit): Promise<getMeResponse> => {
+
+  const res = await fetch(getGetMeUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: getMeResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as getMeResponse
+}
+
+
 
 export type listCredentialTypesResponse200 = {
   data: CredentialTypeResource[] | null
@@ -2341,6 +2753,63 @@ const res = await fetch(getUpdateScheduleUrl(id),
 
   const data: updateScheduleResponse['data'] = body ? JSON.parse(body) : {}
   return { data, status: res.status, headers: res.headers } as updateScheduleResponse
+}
+
+
+
+export type createStreamTicketResponse201 = {
+  data: StreamTicketResource
+  status: 201
+}
+
+export type createStreamTicketResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 201>
+}
+
+export type createStreamTicketResponseSuccess = (createStreamTicketResponse201) & {
+  headers: Headers;
+};
+export type createStreamTicketResponseError = (createStreamTicketResponseDefault) & {
+  headers: Headers;
+};
+
+export type createStreamTicketResponse = (createStreamTicketResponseSuccess | createStreamTicketResponseError)
+
+export const getCreateStreamTicketUrl = () => {
+
+
+
+
+  return `/api/v1/stream-tickets`
+}
+
+/**
+ * EventSource cannot send an Authorization header, so a caller exchanges its credential for a single-use ticket and spends it on the events endpoint. Tickets live for seconds and name one execution.
+ * @summary Mint an execution stream ticket
+ */
+export const createStreamTicket = async (createStreamTicketInputBody: NonReadonly<CreateStreamTicketInputBody>, options?: RequestInit): Promise<createStreamTicketResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Array.isArray(h)) return Object.fromEntries(h);
+    return h;
+  };
+const res = await fetch(getCreateStreamTicketUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(createStreamTicketInputBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: createStreamTicketResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as createStreamTicketResponse
 }
 
 

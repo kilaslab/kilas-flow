@@ -18,6 +18,7 @@ import (
 	"github.com/kilaslabs/kilas-flow/internal/ai"
 	"github.com/kilaslabs/kilas-flow/internal/api"
 	"github.com/kilaslabs/kilas-flow/internal/api/handlers"
+	"github.com/kilaslabs/kilas-flow/internal/auth"
 	"github.com/kilaslabs/kilas-flow/internal/binary"
 	"github.com/kilaslabs/kilas-flow/internal/config"
 	"github.com/kilaslabs/kilas-flow/internal/credentials"
@@ -188,6 +189,36 @@ func run() error {
 			"variable", cfg.Embed.SigningKeyEnv)
 	}
 
+	// Identity is opt-in like embedding, and for a sharper reason: turning it on
+	// against an installation with no accounts and no keys would answer every
+	// request with 401, so a missing signing key refuses to start rather than
+	// producing a server nobody can reach.
+	authStore := repository.NewAuthStore(db.DB)
+	var authIssuer *auth.Issuer
+	signingKey, signingErr := credentials.KeyFromEnvironment(cfg.Auth.SigningKeyEnv)
+	switch {
+	case signingErr == nil:
+		issuer, issuerErr := auth.NewIssuer(signingKey, cfg.Auth.SessionTTL, nil)
+		if issuerErr != nil {
+			return fmt.Errorf("configure authentication: %w", issuerErr)
+		}
+		authIssuer = issuer
+	case !errors.Is(signingErr, credentials.ErrNoKey):
+		return fmt.Errorf("auth signing key: %w", signingErr)
+	case cfg.Auth.Enabled:
+		return fmt.Errorf(
+			"auth.enabled is set but %s holds no signing key: every request would be refused",
+			cfg.Auth.SigningKeyEnv)
+	}
+
+	if err := bootstrapIdentity(ctx, cfg.Auth, authStore, log); err != nil {
+		return err
+	}
+	if !cfg.Auth.Enabled {
+		log.Warn("the API is unauthenticated: anyone who can reach this port owns the installation",
+			"enable_with", "KILASFLOW_AUTH_ENABLED=true")
+	}
+
 	executions := repository.NewExecutionStore(db.DB)
 	// Injecting the extractor keeps node-type knowledge out of persistence
 	// while still letting webhook bindings be synced inside the activation
@@ -306,6 +337,9 @@ func run() error {
 		),
 		Events:              eventBroker,
 		EmbedIssuer:         embedIssuer,
+		Tenants:             handlers.NewPrincipalTenants(fallbackTenant(cfg.Auth)),
+		AuthStore:           authStore,
+		AuthIssuer:          authIssuer,
 		ExecutionController: runtime,
 		NodeAvailability:    nodeAvailability(codeCompiler),
 		HTTPPolicy:          outboundPolicy(cfg.Outbound),
@@ -314,6 +348,67 @@ func run() error {
 	})
 
 	return server.Run(ctx)
+}
+
+// fallbackTenant is the tenant a request with no principal resolves to.
+//
+// With authentication on it is empty, so a request that somehow reached a
+// handler without one scopes to a tenant owning nothing rather than to the
+// tenant owning everything. With it off, every caller is by definition the
+// operator of a standalone install, and the default tenant is what all their
+// existing data is already under.
+func fallbackTenant(cfg config.Auth) string {
+	if cfg.Enabled {
+		return ""
+	}
+	return repository.DefaultTenantID
+}
+
+// bootstrapIdentity gives an installation its first tenant and, once, an owner.
+//
+// The tenant is ensured on every boot because the rest of the system writes
+// rows against it whether or not authentication is on, and a foreign key needs
+// it to exist. The account is created only when there are no accounts at all: a
+// deployment that already has users must not gain another owner because an
+// environment variable outlived the first boot.
+func bootstrapIdentity(ctx context.Context, cfg config.Auth, store *repository.GORMAuthStore, log *slog.Logger) error {
+	tenantID := cfg.BootstrapTenant
+	if tenantID == "" {
+		tenantID = repository.DefaultTenantID
+	}
+	if _, err := store.EnsureTenant(ctx, tenantID, tenantID); err != nil {
+		return fmt.Errorf("bootstrap the first tenant: %w", err)
+	}
+
+	email := strings.TrimSpace(cfg.BootstrapEmail)
+	if email == "" {
+		return nil
+	}
+	existing, err := store.CountUsers(ctx)
+	if err != nil {
+		return fmt.Errorf("bootstrap the first account: %w", err)
+	}
+	if existing > 0 {
+		return nil
+	}
+
+	password := os.Getenv(cfg.BootstrapPasswordEnv)
+	if password == "" {
+		log.Warn("auth.bootstrap_email is set but the password variable is empty; no account was created",
+			"variable", cfg.BootstrapPasswordEnv)
+		return nil
+	}
+	hash, err := auth.HashPassword(password)
+	if err != nil {
+		return fmt.Errorf("bootstrap the first account: %w", err)
+	}
+	user, err := store.CreateUser(ctx, repository.TenantScope{ID: tenantID}, email, "", hash)
+	if err != nil {
+		return fmt.Errorf("bootstrap the first account: %w", err)
+	}
+	log.Info("created the first account", "email", user.Email, "tenant", tenantID)
+
+	return nil
 }
 
 // databaseGuard names the files a SQLite workflow credential must never open.

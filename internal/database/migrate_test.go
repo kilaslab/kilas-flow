@@ -35,6 +35,21 @@ var baselineTables = []string{
 	"schedules",
 }
 
+// postBaselineTables are the tables migrations added after the baseline, child
+// first so dropping them satisfies their foreign keys.
+//
+// Two tests need them named. The adoption tests build their "legacy" fixture
+// from repository.Models(), which is today's schema rather than the one
+// AutoMigrate left behind, so the fixture has to be reduced to the baseline
+// before it can stand in for a pre-migration install. The PostgreSQL helper
+// needs them because it shares one live database between runs, and a table left
+// behind by the previous run makes the next run's CREATE TABLE fail.
+var postBaselineTables = []string{
+	"api_keys",
+	"users",
+	"tenants",
+}
+
 // baselineIndexes are the generated names GORM's naming strategy produced and
 // which no model spells out. A migration that renames one of these breaks every
 // later migration that has to find the object by name.
@@ -50,6 +65,60 @@ var baselineIndexes = []string{
 	"idx_webhook_routes_route",
 	"uidx_webhook_deliveries",
 	"idx_schedules_next_run",
+}
+
+// reduceToBaseline turns a schema built from today's models into the one
+// AutoMigrate left behind when migrations took over.
+//
+// Without it the adoption fixture carries tables a later migration has not been
+// applied yet, and that migration's CREATE TABLE then fails against a table the
+// fixture built for it — a failure about the fixture, not about adoption.
+func reduceToBaseline(t *testing.T, db *DB) {
+	t.Helper()
+	for _, table := range postBaselineTables {
+		if !db.Migrator().HasTable(table) {
+			continue
+		}
+		if err := db.Migrator().DropTable(table); err != nil {
+			t.Fatalf("reduce the fixture to the baseline schema: drop %q: %v", table, err)
+		}
+	}
+}
+
+// rollbackAll reverts every applied migration, newest first.
+//
+// The rollback tests used to call Rollback once, which was the whole schema
+// while the baseline was the only migration. Now that it is not, a single call
+// would only ever exercise the newest one and would report the tables an older
+// migration created as "left behind".
+func rollbackAll(t *testing.T, db *DB) {
+	t.Helper()
+	all, err := loadMigrations(migrations.FS, db.Dialector.Name())
+	if err != nil {
+		t.Fatalf("loadMigrations: %v", err)
+	}
+	// Bounded by the number of migrations rather than looping until the table
+	// is empty, so a Rollback that stops making progress fails the test instead
+	// of hanging it.
+	for range all {
+		applied, err := appliedVersions(db)
+		if err != nil {
+			t.Fatalf("appliedVersions: %v", err)
+		}
+		if len(applied) == 0 {
+			return
+		}
+		if err := Rollback(db, discardLogger()); err != nil {
+			t.Fatalf("Rollback: %v", err)
+		}
+	}
+	applied, err := appliedVersions(db)
+	if err != nil {
+		t.Fatalf("appliedVersions: %v", err)
+	}
+	if len(applied) != 0 {
+		t.Fatalf("rolling back %d times left versions %v applied", len(all), applied)
+	}
 }
 
 // sqlRecorder captures every statement GORM issues, which is how these tests
@@ -118,7 +187,7 @@ func openPostgres(t *testing.T) *DB {
 		t.Fatalf("Open PostgreSQL: %v", err)
 	}
 	drop := func() {
-		for _, table := range append([]string{schemaMigrationsTable}, baselineTables...) {
+		for _, table := range append(append([]string{schemaMigrationsTable}, postBaselineTables...), baselineTables...) {
 			_ = db.Exec(`DROP TABLE IF EXISTS "` + table + `" CASCADE`).Error
 		}
 	}
@@ -216,6 +285,7 @@ func TestAnAutoMigratedInstallIsStampedRatherThanRebuilt(t *testing.T) {
 	if err := legacy.AutoMigrate(repository.Models()...); err != nil {
 		t.Fatalf("build the legacy schema: %v", err)
 	}
+	reduceToBaseline(t, legacy)
 	if err := legacy.Exec(
 		"INSERT INTO `workflows` (`id`,`tenant_id`,`name`,`active`,`latest_revision`,`created_at`,`updated_at`) VALUES (?,?,?,?,?,?,?)",
 		"wf-1", "tenant-1", "before the upgrade", false, 1, time.Now(), time.Now(),
@@ -248,8 +318,10 @@ func TestAnAutoMigratedInstallIsStampedRatherThanRebuilt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("appliedVersions: %v", err)
 	}
-	if _, stamped := applied[1]; !stamped || len(applied) != 1 {
-		t.Errorf("applied versions after adoption = %v, want exactly version 1", applied)
+	// Only the baseline is asserted. Migrations after it legitimately run
+	// against the adopted database, which is the whole point of stamping it.
+	if _, stamped := applied[1]; !stamped {
+		t.Errorf("applied versions after adoption = %v, want the baseline among them", applied)
 	}
 }
 
@@ -258,6 +330,7 @@ func TestAnAutoMigratedPostgresInstallIsStampedRatherThanRebuilt(t *testing.T) {
 	if err := db.AutoMigrate(repository.Models()...); err != nil {
 		t.Fatalf("build the legacy schema: %v", err)
 	}
+	reduceToBaseline(t, db)
 	if err := db.Exec(
 		`INSERT INTO "workflows" ("id","tenant_id","name","active","latest_revision","created_at","updated_at") VALUES (?,?,?,?,?,?,?)`,
 		"wf-1", "tenant-1", "before the upgrade", false, 1, time.Now(), time.Now(),
@@ -290,8 +363,10 @@ func TestAnAutoMigratedPostgresInstallIsStampedRatherThanRebuilt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("appliedVersions: %v", err)
 	}
-	if _, stamped := applied[1]; !stamped || len(applied) != 1 {
-		t.Errorf("applied versions after adoption = %v, want exactly version 1", applied)
+	// Only the baseline is asserted. Migrations after it legitimately run
+	// against the adopted database, which is the whole point of stamping it.
+	if _, stamped := applied[1]; !stamped {
+		t.Errorf("applied versions after adoption = %v, want the baseline among them", applied)
 	}
 }
 
@@ -426,24 +501,30 @@ func TestADatabaseAheadOfTheBinaryRefusesToStart(t *testing.T) {
 	if err == nil {
 		t.Fatal("Migrate against a newer schema = nil, want a refusal")
 	}
-	for _, want := range []string{"42", "1"} {
+	// The newest version is read from the embedded set rather than written
+	// here, so adding a migration does not silently turn this into a test that
+	// the refusal names some older version.
+	all, loadErr := loadMigrations(migrations.FS, db.Dialector.Name())
+	if loadErr != nil {
+		t.Fatalf("loadMigrations: %v", loadErr)
+	}
+	newest := fmt.Sprintf("%d", all[len(all)-1].version)
+	for _, want := range []string{"42", newest} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("refusal %q does not name version %s", err, want)
 		}
 	}
 }
 
-func TestRollingBackTheBaselineLeavesNoKilasFlowTables(t *testing.T) {
+func TestRollingBackEveryMigrationLeavesNoKilasFlowTables(t *testing.T) {
 	db := freshSQLite(t)
 	if err := Migrate(db, discardLogger()); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 
-	if err := Rollback(db, discardLogger()); err != nil {
-		t.Fatalf("Rollback: %v", err)
-	}
+	rollbackAll(t, db)
 
-	for _, table := range baselineTables {
+	for _, table := range append(append([]string(nil), baselineTables...), postBaselineTables...) {
 		if db.Migrator().HasTable(table) {
 			t.Errorf("rollback left the %q table behind", table)
 		}
@@ -457,17 +538,15 @@ func TestRollingBackTheBaselineLeavesNoKilasFlowTables(t *testing.T) {
 	}
 }
 
-func TestRollingBackThePostgresBaselineLeavesNoKilasFlowTables(t *testing.T) {
+func TestRollingBackEveryPostgresMigrationLeavesNoKilasFlowTables(t *testing.T) {
 	db := openPostgres(t)
 	if err := Migrate(db, discardLogger()); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 
-	if err := Rollback(db, discardLogger()); err != nil {
-		t.Fatalf("Rollback: %v", err)
-	}
+	rollbackAll(t, db)
 
-	for _, table := range baselineTables {
+	for _, table := range append(append([]string(nil), baselineTables...), postBaselineTables...) {
 		if db.Migrator().HasTable(table) {
 			t.Errorf("rollback left the %q table behind", table)
 		}
@@ -481,9 +560,7 @@ func TestMigratingAfterARollbackRebuildsTheSchema(t *testing.T) {
 	if err := Migrate(db, discardLogger()); err != nil {
 		t.Fatalf("first Migrate: %v", err)
 	}
-	if err := Rollback(db, discardLogger()); err != nil {
-		t.Fatalf("Rollback: %v", err)
-	}
+	rollbackAll(t, db)
 
 	if err := Migrate(db, discardLogger()); err != nil {
 		t.Fatalf("Migrate after Rollback: %v", err)

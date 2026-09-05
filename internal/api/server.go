@@ -17,6 +17,7 @@ import (
 
 	"github.com/kilaslabs/kilas-flow/internal/api/handlers"
 	"github.com/kilaslabs/kilas-flow/internal/api/middleware"
+	"github.com/kilaslabs/kilas-flow/internal/auth"
 	"github.com/kilaslabs/kilas-flow/internal/config"
 	"github.com/kilaslabs/kilas-flow/internal/embed"
 	"github.com/kilaslabs/kilas-flow/internal/events"
@@ -62,6 +63,15 @@ type Deps struct {
 	// separate from the repository so HTTP never reaches into ORM state.
 	ExecutionController handlers.ExecutionController
 	Tenants             handlers.TenantResolver
+	// AuthStore is the identity boundary: tenants, accounts and API keys. Nil
+	// leaves the identity endpoints reporting that authentication is not
+	// configured, and — with Config.Auth.Enabled set — leaves every API key
+	// refused rather than admitted.
+	AuthStore repository.AuthRepository
+	// AuthIssuer signs browser sessions and stream tickets. Nil disables both
+	// for the same reason: an instance that cannot verify a session must not
+	// mint one.
+	AuthIssuer *auth.Issuer
 	// TriggerCoordinator registers a workflow's webhook triggers with the
 	// remote services they depend on, around activation. Nil leaves a workflow
 	// activating and routing normally without telling any service where to
@@ -105,6 +115,21 @@ func NewServer(deps Deps) *Server {
 	router.Use(middleware.RequestID)
 	router.Use(middleware.Recover(deps.Logger))
 	router.Use(middleware.Logger(deps.Logger))
+	// Ahead of EmbedAuth, and composing with it rather than stacking on top:
+	// a request carrying an embed token is passed straight through to the embed
+	// layer, so it is confined to one workflow instead of also having to
+	// present a key that would only widen it.
+	//
+	// Scoped to the API prefix, because this same mux carries the public
+	// webhook surface and the SPA's own static assets, and neither can present
+	// a credential.
+	router.Use(middleware.Authenticate(middleware.AuthOptions{
+		Enabled:    deps.Config.Auth.Enabled,
+		Keys:       deps.AuthStore,
+		Sessions:   deps.AuthIssuer,
+		CookieName: auth.CookieName(!deps.Config.Auth.CookieInsecure),
+		APIPrefix:  APIPrefix,
+	}))
 	// Mounted for every request, but inert unless a request carries an embed
 	// token: the internal dashboard is unaffected, and an embedded editor is
 	// confined to its own workflow and scopes.

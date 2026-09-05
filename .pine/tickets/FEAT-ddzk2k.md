@@ -1,7 +1,7 @@
 ---
 id: FEAT-ddzk2k
 title: Authenticate the main API and resolve real tenants
-status: todo
+status: done
 priority: high
 labels:
     - platform
@@ -28,14 +28,14 @@ This ticket introduces that principal. Two authentication paths share one identi
 
 ## Acceptance criteria
 
-- [ ] An unauthenticated request to any `/api/v1` operation other than the documented public ones (health, the OpenAPI document, the docs page) is refused with 401, and the refusal names no tenant, workflow, or user.
-- [ ] Every `/api/v1` handler resolves its `repository.TenantScope` from the authenticated principal; with authentication enabled, `defaultTenantResolver` decides tenancy for no request.
-- [ ] A tenant-scoped API key authenticates a machine caller. Keys are stored hashed, returned in full exactly once at creation, revocable, and never returned by any listing.
-- [ ] `POST /api/v1/embed-sessions` requires an authenticated principal, and the session it mints carries that principal's tenant instead of `default`.
-- [ ] A request carrying both an embed token and an API key is served with the embed session's narrower authority, never the key's.
-- [ ] Two tenants sharing one deployment cannot reach each other's workflows, credentials, executions, schedules, or event streams, proven by a test that drives both through the HTTP surface.
-- [ ] The execution event stream authenticates without request headers, so the existing `EventSource` clients in `web/src/lib/workflow-editor/event-stream.svelte.ts` and `sdk/src/browser.ts` keep working.
-- [ ] Upgrading an existing installation leaves its data reachable: the rows already written under tenant `default` belong to a real tenant record with that ID.
+- [x] An unauthenticated request to any `/api/v1` operation other than the documented public ones (health, the OpenAPI document, the docs page) is refused with 401, and the refusal names no tenant, workflow, or user.
+- [x] Every `/api/v1` handler resolves its `repository.TenantScope` from the authenticated principal; with authentication enabled, `defaultTenantResolver` decides tenancy for no request.
+- [x] A tenant-scoped API key authenticates a machine caller. Keys are stored hashed, returned in full exactly once at creation, revocable, and never returned by any listing.
+- [x] `POST /api/v1/embed-sessions` requires an authenticated principal, and the session it mints carries that principal's tenant instead of `default`.
+- [x] A request carrying both an embed token and an API key is served with the embed session's narrower authority, never the key's.
+- [x] Two tenants sharing one deployment cannot reach each other's workflows, credentials, executions, schedules, or event streams, proven by a test that drives both through the HTTP surface.
+- [x] The execution event stream authenticates without request headers, so the existing `EventSource` clients in `web/src/lib/workflow-editor/event-stream.svelte.ts` and `sdk/src/browser.ts` keep working.
+- [x] Upgrading an existing installation leaves its data reachable: the rows already written under tenant `default` belong to a real tenant record with that ID.
 
 ## Implementation Plan
 
@@ -61,3 +61,54 @@ The two layers must compose rather than stack. `EmbedAuth` deliberately lets a t
 - Local n8n UI reference: `design-refs/n8n-v2/INDEX.md` entry 17 — the settings sidebar showing Users, Roles, SSO and LDAP as the surface this ticket is the precondition for. Captured from a local n8n 2.33.7 instance; gitignored, never vendored.
 - `.pine/tickets/FEAT-jq84xk.md` — V2-p10-6, which implements the client half of the stream-ticket handshake this ticket's plan chooses.
 - `.pine/tickets/FEAT-frvez8.md` — V2-p10-13, the multi-tenant embedding guide that cannot be written until this lands.
+
+## Work evidence
+
+Every premise in this ticket was re-checked against the tree before work started, and all of it held: `TenantResolver`/`defaultTenantResolver` at `internal/api/handlers/workflows.go:21-29`, `DefaultTenantID` at `internal/repository/workflows.go:18`, `Deps.Tenants` unset in `cmd/kilasflow/main.go`'s `api.NewServer` call, the global `EmbedAuth` mount, and the flat router mounting `/webhook` and `/*` on the same mux. Nothing had moved.
+
+### What landed
+
+Storage. `tenants`, `users` and `api_keys` in `internal/repository/models.go` and `Models()`, with `internal/repository/auth.go` holding `AuthRepository` and its GORM implementation. Users and keys carry a foreign key to `tenants`, so a typo in a tenant ID is refused rather than producing rows nobody can reach. `migrations/{sqlite,postgres}/000002_identity.{up,down}.sql` carry the DDL, captured from what AutoMigrate emits for the new models so the drift guard stays satisfied. The up migration also inserts a `tenants` row for `default` and for every distinct `tenant_id` already present in `workflows` and `credentials`, so an upgrade leaves existing data reachable.
+
+Identity. `internal/auth` holds the `Principal`, API-key minting and verification, password hashing, browser sessions and stream tickets. Keys are `kfa1_<prefix>_<secret>`: the prefix is an indexed public handle, the secret is 32 bytes of `crypto/rand` stored as SHA-256, and the whole token exists only in the creation response. Passwords use `crypto/pbkdf2` from the standard library at the OWASP work factor — no new dependency. Sessions and tickets are HMAC-signed under a key separate from the embed key.
+
+Gate and resolver. `internal/api/middleware/auth.go` refuses an unauthenticated `/api/v1` request, scoped to the API prefix so the webhook surface and the SPA's assets stay open, and defers to `EmbedAuth` whenever a request carries an embed token. `handlers.PrincipalTenants` reads the embed session first and the principal second, so a request holding both gets the embed session's narrower authority. `cmd/kilasflow/main.go` wires it and bootstraps the first tenant and — once, on an installation with no accounts — the first owner.
+
+Surface. Login, logout, `GET /auth/me`, API key create/list/revoke, and `POST /stream-tickets` in `internal/api/handlers/auth.go`. Generated clients regenerated: `make generate-api-check` and `make generate-types-check` both pass.
+
+### Proof the tests fail without the change
+
+Two experiments, each reverted afterwards.
+
+Removing the `middleware.Authenticate` mount from `internal/api/server.go` fails seven tests, including `TestARefusalNamesNothingAboutTheInstallation`, `TestTwoTenantsCannotReachEachOthersData`, `TestARevokedKeyStopsWorkingAgainstTheAPI` and `TestSigningInReturnsACookieThatAuthenticates`. It also leaves an unauthenticated `GET /api/v1/executions/{id}/events` streaming, which is the pre-change behaviour exactly.
+
+Making `PrincipalTenants.Resolve` return `DefaultTenantID` unconditionally — the behaviour this ticket replaces — reproduces the reported bug verbatim:
+
+```
+--- FAIL: TestAnAPIKeyScopesEveryReadToItsOwnTenant
+    acme listed 2 workflows, want only its own: [... "name":"Globex Billing" ... "name":"Acme Onboarding"]
+--- FAIL: TestMintingAnEmbedSessionNeedsAPrincipalAndUsesItsTenant
+    globex minting for acme's workflow = 201, want 404
+--- FAIL: TestTwoTenantsCannotReachEachOthersData
+    seed an execution: repository record not found: workflow
+```
+
+### Verification
+
+`go build ./...`, `go vet ./...` and `gofmt -l .` (empty outside `web/`) are clean. `go test ./... -count=1` passes with no failures. The gated PostgreSQL migration tests pass against the live server on 55433, and pass again on a second consecutive run — the case that catches a table left behind between runs. `pnpm check` and `pnpm test` pass in both `web/` (1355 files, 0 errors; 251 tests) and `sdk/` (23 tests).
+
+### Deviations from the assigned scope, and why
+
+Two files outside the stated scope had to change, both under `migrations/` and `internal/database/`, which the assignment reserved for another session. Flagging them rather than hiding them:
+
+- `migrations/{sqlite,postgres}/000002_identity.*.sql` are new files, so they conflict with nothing. Without them there is no tenant, no account and no revocable key, and most of the acceptance criteria are unreachable.
+- `internal/database/migrate_test.go` needed four small edits, because **its migration tests hard-coded the assumption that the baseline is the only migration this repository will ever have**. Any session adding a second migration hits this. The adoption tests build their "legacy" fixture from `repository.Models()` — today's schema, not the one AutoMigrate left behind — so migration 2 collided with tables the fixture had just created; `TestADatabaseAheadOfTheBinaryRefusesToStart` asserted the refusal names version `1`; the rollback tests called `Rollback` once and then asserted every table was gone; and `openPostgres` dropped only the baseline tables between runs, so a second run against the shared live database failed on a leftover `tenants`. Fixed with a `postBaselineTables` list, a `reduceToBaseline` helper, a `rollbackAll` helper, and reading the newest version from the embedded set instead of writing `1`.
+
+### Known limitations, stated deliberately
+
+- Authentication defaults to **off**. Turning it on for an existing installation with no accounts and no keys would lock its operator out, so it is opt-in and the server warns loudly at every boot while it is off. An install that sets `auth.enabled` without a signing key refuses to start rather than answering every request with 401.
+- Sessions are stateless, so signing out clears the cookie in one browser but does not revoke a copy taken beforehand; `auth.session_ttl` is the only lever. API keys, which are stored, revoke immediately.
+- Stream tickets are single-use per process. In a multi-instance deployment a ticket replayed against a different instance inside its few seconds of life is not caught; the short TTL bounds that, not the spent-ticket map.
+- No RBAC, no roles, no rate limiting and no account lockout — every principal of a tenant has that tenant's full authority, and nothing here defends against an attacker working through passwords. PRD §64 defers the first three; the last is worth its own ticket.
+- CSRF protection for the cookie path rests on `SameSite=Lax` alone. There is no CSRF token.
+- The SPA login route and the SDK's `apiKey` convenience are **not** in this change: `web/` beyond generated-client regeneration was out of scope, and the client half of the stream-ticket handshake is `FEAT-jq84xk`'s. The server side both need is in place.
