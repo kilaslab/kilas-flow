@@ -195,3 +195,75 @@ func TestAnEmbedSessionCannotLoadOptionsForAnotherWorkflow(t *testing.T) {
 		}
 	}
 }
+
+// mapperNode is a node whose one parameter is a resource mapper over an
+// internal schema source.
+func mapperNode() node.Definition {
+	return node.Definition{
+		Type: "test.mapper", Version: workflow.V(1),
+		DisplayName: "Mapper", Category: "Test", ExecutorID: "test.exec",
+		Group:   []node.NodeGroup{node.GroupTransform},
+		Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+		Parameters: []node.PropertyDefinition{{
+			Key: "columns", Label: "Columns", Kind: node.PropertyResourceMapper,
+			Mapper: &node.ResourceMapperDeclaration{
+				Schema:          &node.OptionsLoader{Source: property.LoaderInternal, Name: "test.columns"},
+				SupportsAutoMap: true,
+			},
+		}},
+	}
+}
+
+func TestTheSchemaResponseCarriesEachColumnsTypeRequiredAndMatchEligibility(t *testing.T) {
+	registry := node.NewRegistry()
+	if err := registry.Register(mapperNode()); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	resolver := loadoptions.NewResolver(safehttp.DefaultPolicy(), time.Minute)
+	if err := resolver.RegisterSchema("test.columns", func(context.Context, loadoptions.Scope) (property.MapperSchema, error) {
+		return property.MapperSchema{Fields: []property.MapperField{
+			{ID: "id", DisplayName: "id", Type: "number", CanBeUsedToMatch: true, DefaultMatch: true, ReadOnly: true},
+			{ID: "email", DisplayName: "email", Type: "string", Required: true, CanBeUsedToMatch: true},
+			// A type this build has no control for. It has to survive the
+			// response so the editor can render it as text and say so; dropping
+			// it would read as "this table has no such column".
+			{ID: "geo", DisplayName: "geo", Type: "geography"},
+		}}, nil
+	}); err != nil {
+		t.Fatalf("RegisterSchema() error = %v", err)
+	}
+	handler := newTestServer(t, api.Deps{
+		DB: stubPinger{}, NodeRegistry: registry, OptionLoader: resolver,
+		CredentialResolverFor: func(repository.TenantScope) loadoptions.CredentialResolver { return nil },
+	})
+
+	result := requestJSON[struct {
+		Fields []struct {
+			ID               string `json:"id"`
+			Type             string `json:"type"`
+			Required         bool   `json:"required"`
+			CanBeUsedToMatch bool   `json:"canBeUsedToMatch"`
+			DefaultMatch     bool   `json:"defaultMatch"`
+			ReadOnly         bool   `json:"readOnly"`
+		} `json:"fields"`
+	}](t, handler, http.MethodPost, "/api/v1/node-types/test.mapper/load-schema",
+		map[string]any{"property": "columns"}, http.StatusOK)
+
+	if len(result.Fields) != 3 {
+		t.Fatalf("fields = %#v, want every column including the one with an unknown type", result.Fields)
+	}
+	if !result.Fields[0].ReadOnly || !result.Fields[0].DefaultMatch || result.Fields[0].Type != "number" {
+		t.Errorf("id = %#v, want its type, read-only and default-match flags", result.Fields[0])
+	}
+	if !result.Fields[1].Required || !result.Fields[1].CanBeUsedToMatch {
+		t.Errorf("email = %#v, want its required and match flags", result.Fields[1])
+	}
+	if result.Fields[2].Type != "geography" {
+		t.Errorf("geo = %#v, want the unrecognised type carried rather than blanked", result.Fields[2])
+	}
+
+	// A property that is not a mapper has no column list, which is a different
+	// answer from an empty one.
+	requestProblem(t, handler, http.MethodPost, "/api/v1/node-types/test.mapper/load-schema",
+		map[string]any{"property": "nope"}, http.StatusNotFound)
+}

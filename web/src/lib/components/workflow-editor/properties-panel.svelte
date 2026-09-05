@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { loadNodePropertyOptions } from '$lib/api/generated/nodes/nodes';
+	import { loadNodePropertyOptions, loadNodePropertySchema } from '$lib/api/generated/nodes/nodes';
 	import { propertyVisible, withDefaults } from '$lib/workflow-editor/visibility';
 	import type { CredentialResource, Definition, Node, PropertyDefinition } from '$lib/api/generated/models';
 	import type { PropertyScope } from '$lib/workflow-editor/document';
@@ -52,6 +52,18 @@
 		});
 		if (response.status !== 200) return { options: [], reason: 'These options could not be loaded.' };
 		return { options: response.data.options ?? [], reason: response.data.reason ?? '' };
+	}
+
+	/** A resource mapper's columns. Its own call, for the reason above. */
+	async function loadSchema(property: PropertyDefinition) {
+		const response = await loadNodePropertySchema(node.type, {
+			version: String(node.typeVersion ?? ''),
+			property: property.key,
+			parameters: node.parameters ?? {},
+			credentialId: Object.values(node.credentials ?? {})[0]
+		});
+		if (response.status !== 200) return { fields: [], reason: 'These columns could not be loaded.' };
+		return { fields: response.data.fields ?? [], reason: response.data.reason ?? '' };
 	}
 
 	// The rule lives in one module, ported from the Go evaluator and checked
@@ -115,7 +127,7 @@
 			<p class="text-xs leading-5 text-muted-foreground">This node has no {activeTab === 'parameters' ? 'parameters' : 'shared settings'} to configure.</p>
 		{:else}
 			{#each visibleProperties as property (property.key)}
-				<PropertyField {property} value={values[property.key]} onChange={(value) => onChange(activeTab, property.key, value)} loadOptions={activeTab === 'parameters' ? loadOptions : undefined} />
+				<PropertyField {property} value={values[property.key]} onChange={(value) => onChange(activeTab, property.key, value)} loadOptions={activeTab === 'parameters' ? loadOptions : undefined} loadSchema={activeTab === 'parameters' ? loadSchema : undefined} />
 			{/each}
 		{/if}
 	</div>

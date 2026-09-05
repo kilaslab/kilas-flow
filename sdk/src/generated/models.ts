@@ -254,6 +254,13 @@ export interface OptionsLoader {
   valueField?: string;
 }
 
+export interface ResourceMapperDeclaration {
+  matchingColumnsRequired?: boolean;
+  schema: OptionsLoader;
+  supportsAutoMap?: boolean;
+  valuesLabel?: string;
+}
+
 export interface PropertyMode {
   hint?: string;
   kind: string;
@@ -294,6 +301,7 @@ export interface PropertyDefinition {
   kind: string;
   label: string;
   loadOptions?: OptionsLoader;
+  mapper?: ResourceMapperDeclaration;
   /** @nullable */
   modes?: PropertyMode[] | null;
   /** @nullable */
@@ -687,6 +695,28 @@ export interface LoadOptionsResource {
   readonly $schema?: string;
   /** @nullable */
   options: Option[] | null;
+  /** Why the list is empty, when it is empty for a reason the user can act on. */
+  reason?: string;
+}
+
+export interface MapperColumn {
+  canBeUsedToMatch?: boolean;
+  defaultMatch?: boolean;
+  displayName: string;
+  id: string;
+  /** @nullable */
+  options?: PropertyOption[] | null;
+  readOnly?: boolean;
+  required?: boolean;
+  /** string, number, boolean, dateTime, object or array. An unrecognised type renders as text with a warning rather than disappearing from the form. */
+  type?: string;
+}
+
+export interface LoadSchemaResource {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  fields: MapperColumn[] | null;
   /** Why the list is empty, when it is empty for a reason the user can act on. */
   reason?: string;
 }
@@ -1985,6 +2015,64 @@ const res = await fetch(getLoadNodePropertyOptionsUrl(type),
 
   const data: loadNodePropertyOptionsResponse['data'] = body ? JSON.parse(body) : {}
   return { data, status: res.status, headers: res.headers } as loadNodePropertyOptionsResponse
+}
+
+
+
+export type loadNodePropertySchemaResponse200 = {
+  data: LoadSchemaResource
+  status: 200
+}
+
+export type loadNodePropertySchemaResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type loadNodePropertySchemaResponseSuccess = (loadNodePropertySchemaResponse200) & {
+  headers: Headers;
+};
+export type loadNodePropertySchemaResponseError = (loadNodePropertySchemaResponseDefault) & {
+  headers: Headers;
+};
+
+export type loadNodePropertySchemaResponse = (loadNodePropertySchemaResponseSuccess | loadNodePropertySchemaResponseError)
+
+export const getLoadNodePropertySchemaUrl = (type: string,) => {
+
+
+
+
+  return `/api/v1/node-types/${type}/load-schema`
+}
+
+/**
+ * Resolves the column list a resource mapper maps onto, with each column's type, required flag and match eligibility. A sibling of load-options rather than a widening of it: an option is {label, value} and a column is not.
+ * @summary Load a resource mapper's columns
+ */
+export const loadNodePropertySchema = async (type: string,
+    loadOptionsInputBody: NonReadonly<LoadOptionsInputBody>, options?: RequestInit): Promise<loadNodePropertySchemaResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Array.isArray(h)) return Object.fromEntries(h);
+    return h;
+  };
+const res = await fetch(getLoadNodePropertySchemaUrl(type),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(loadOptionsInputBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: loadNodePropertySchemaResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as loadNodePropertySchemaResponse
 }
 
 

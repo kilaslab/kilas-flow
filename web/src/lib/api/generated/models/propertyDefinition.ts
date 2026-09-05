@@ -10,6 +10,7 @@ import type { OptionsLoader } from './optionsLoader';
 import type { PropertyGroup } from './propertyGroup';
 import type { PropertyMode } from './propertyMode';
 import type { PropertyOption } from './propertyOption';
+import type { ResourceMapperDeclaration } from './resourceMapperDeclaration';
 import type { TypeOptions } from './typeOptions';
 import type { Visibility } from './visibility';
 import type { VisibilityCondition } from './visibilityCondition';
@@ -28,6 +29,7 @@ export interface PropertyDefinition {
   kind: string;
   label: string;
   loadOptions?: OptionsLoader;
+  mapper?: ResourceMapperDeclaration;
   /** @nullable */
   modes?: PropertyMode[] | null;
   /** @nullable */

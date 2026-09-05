@@ -27,7 +27,8 @@ import type {
   ExpressionGrammar,
   GetNodeIconParams,
   LoadOptionsInputBody,
-  LoadOptionsResource
+  LoadOptionsResource,
+  LoadSchemaResource
 } from '../models';
 
 import { apiFetch } from '../../http';
@@ -472,4 +473,104 @@ export const createLoadNodePropertyOptions = <TError = ErrorType<ErrorModel>,
         TContext
       > => {
       return createMutation(() => ({ ...getLoadNodePropertyOptionsMutationOptions(options?.()) }), queryClient);
+    }
+    export type loadNodePropertySchemaResponse200 = {
+  data: LoadSchemaResource
+  status: 200
+}
+
+export type loadNodePropertySchemaResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type loadNodePropertySchemaResponseSuccess = (loadNodePropertySchemaResponse200) & {
+  headers: Headers;
+};
+export type loadNodePropertySchemaResponseError = (loadNodePropertySchemaResponseDefault) & {
+  headers: Headers;
+};
+
+export type loadNodePropertySchemaResponse = (loadNodePropertySchemaResponseSuccess | loadNodePropertySchemaResponseError)
+
+export const getLoadNodePropertySchemaUrl = (type: string,) => {
+
+
+
+
+  return `/api/v1/node-types/${type}/load-schema`
+}
+
+/**
+ * Resolves the column list a resource mapper maps onto, with each column's type, required flag and match eligibility. A sibling of load-options rather than a widening of it: an option is {label, value} and a column is not.
+ * @summary Load a resource mapper's columns
+ */
+export const loadNodePropertySchema = async (type: string,
+    loadOptionsInputBody: NonReadonly<LoadOptionsInputBody>, options?: Parameters<typeof apiFetch>[1]): Promise<loadNodePropertySchemaResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Array.isArray(h)) return Object.fromEntries(h);
+    return h;
+  };
+return apiFetch<loadNodePropertySchemaResponse>(getLoadNodePropertySchemaUrl(type),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(loadOptionsInputBody)
+  }
+);}
+
+
+
+
+
+export const getLoadNodePropertySchemaMutationKey = () => ['loadNodePropertySchema'] as const;
+
+export const getLoadNodePropertySchemaMutationOptions = <TError = ErrorType<ErrorModel>,
+    TContext = unknown>(options?: { mutation?:CreateMutationOptions<Awaited<ReturnType<typeof loadNodePropertySchema>>, TError,LoadNodePropertySchemaMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}
+): CreateMutationOptions<Awaited<ReturnType<typeof loadNodePropertySchema>>, TError,LoadNodePropertySchemaMutationVariables, TContext> => {
+
+const mutationKey = getLoadNodePropertySchemaMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof loadNodePropertySchema>>, LoadNodePropertySchemaMutationVariables> = (props) => {
+          const {type,data} = props ?? {};
+
+          return  loadNodePropertySchema(type,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type LoadNodePropertySchemaMutationResult = NonNullable<Awaited<ReturnType<typeof loadNodePropertySchema>>>
+    export type LoadNodePropertySchemaMutationBody = NonReadonly<LoadOptionsInputBody>
+    export type LoadNodePropertySchemaMutationError = ErrorType<ErrorModel>
+    export type LoadNodePropertySchemaMutationVariables = {type: string;data: NonReadonly<LoadOptionsInputBody>}
+
+    /**
+ * @summary Load a resource mapper's columns
+ */
+export const createLoadNodePropertySchema = <TError = ErrorType<ErrorModel>,
+    TContext = unknown>(options?: () => { mutation?:CreateMutationOptions<Awaited<ReturnType<typeof loadNodePropertySchema>>, TError,LoadNodePropertySchemaMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: () => QueryClient): CreateMutationResult<
+        Awaited<ReturnType<typeof loadNodePropertySchema>>,
+        TError,
+        LoadNodePropertySchemaMutationVariables,
+        TContext
+      > => {
+      return createMutation(() => ({ ...getLoadNodePropertySchemaMutationOptions(options?.()) }), queryClient);
     }

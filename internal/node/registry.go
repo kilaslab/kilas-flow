@@ -570,6 +570,9 @@ func validateProperties(nodeType, group string, properties []PropertyDefinition)
 		if err := propertypkg.ValidateModes(declared.Kind, declared.Modes); err != nil {
 			return fmt.Errorf("node definition %q %s %q: %w", nodeType, group, declared.Key, err)
 		}
+		if err := propertypkg.ValidateMapper(declared.Kind, declared.Mapper); err != nil {
+			return fmt.Errorf("node definition %q %s %q: %w", nodeType, group, declared.Key, err)
+		}
 		if err := validateProperties(nodeType, group+"."+declared.Key, declared.Fields); err != nil {
 			return err
 		}
@@ -725,6 +728,11 @@ func cloneProperties(properties []PropertyDefinition) []PropertyDefinition {
 		// A locator's modes carry loaders of their own, so the same deep copy
 		// applies: a caller mutating a mode it was handed would otherwise reach
 		// into the registry's own storage.
+		if declared.Mapper != nil {
+			mapper := *declared.Mapper
+			mapper.Schema = cloneLoader(declared.Mapper.Schema)
+			cloned[index].Mapper = &mapper
+		}
 		if declared.Modes != nil {
 			modes := make([]propertypkg.PropertyMode, len(declared.Modes))
 			for modeIndex, mode := range declared.Modes {
@@ -842,6 +850,10 @@ type (
 	PropertyMode = propertypkg.PropertyMode
 	// OptionsLoader declares where a property's selectable values come from.
 	OptionsLoader = propertypkg.OptionsLoader
+	// ResourceMapperDeclaration describes a resourceMapper's schema source.
+	ResourceMapperDeclaration = propertypkg.ResourceMapperDeclaration
+	// MapperField is one column a resourceMapper may write.
+	MapperField = propertypkg.MapperField
 )
 
 const (
@@ -859,6 +871,7 @@ const (
 	PropertyConditions      = propertypkg.KindConditions
 	PropertyAssignments     = propertypkg.KindAssignmentCollection
 	PropertyResourceLocator = propertypkg.KindResourceLocator
+	PropertyResourceMapper  = propertypkg.KindResourceMapper
 )
 
 // KnownPropertyKinds is the closed set, in a stable order.

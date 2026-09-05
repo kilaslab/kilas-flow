@@ -71,6 +71,10 @@ type Resolver struct {
 	policy    safehttp.Policy
 	internals map[string]InternalLoader
 	cache     *cache
+	// schemas answer a resource mapper's columns. Separate from internals
+	// because a column list is a different shape from an option list — see
+	// SchemaLoader for why it is not the same seam widened.
+	schemas schemaRegistry
 }
 
 // NewResolver builds a resolver with a bounded result cache.

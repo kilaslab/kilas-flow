@@ -4,7 +4,7 @@
 	import Plus from '@lucide/svelte/icons/plus';
 	import X from '@lucide/svelte/icons/x';
 
-	import type { PropertyDefinition } from '$lib/api/generated/models';
+	import type { MapperColumn, PropertyDefinition } from '$lib/api/generated/models';
 	// Self-import rather than <svelte:self>, which Svelte 5 deprecates.
 	import PropertyField from './property-field.svelte';
 	import { renameKeyValue } from '$lib/workflow-editor/key-value';
@@ -30,6 +30,14 @@
 	} from '$lib/workflow-editor/conditions';
 	import { currentMode, readLocator, switchMode, writeLocator } from '$lib/workflow-editor/resource-locator';
 	import {
+		columnControl,
+		knownColumnType,
+		matchableColumns,
+		readMapping,
+		writableColumns,
+		writeMapping
+	} from '$lib/workflow-editor/resource-mapper';
+	import {
 		groupEntries,
 		newGroupEntry,
 		repeatedGroup,
@@ -42,7 +50,8 @@
 		property,
 		value,
 		onChange,
-		loadOptions
+		loadOptions,
+		loadSchema
 	}: {
 		property: PropertyDefinition;
 		value: unknown;
@@ -53,6 +62,10 @@
 		 * the property.
 		 */
 		loadOptions?: (property: PropertyDefinition, mode?: string) => Promise<{ options: { label: string; value: string }[]; reason: string }>;
+		/** Fetches a resource mapper's columns. Its own seam, because a column
+		 * carries a type, a required flag and match eligibility, none of which
+		 * fit in an option's {label, value}. */
+		loadSchema?: (property: PropertyDefinition) => Promise<{ fields: MapperColumn[]; reason: string }>;
 	} = $props();
 
 	// Only text-shaped controls can carry an expression: a checkbox or a select
@@ -73,7 +86,7 @@
 	const RENDERED = new Set([
 		'string', 'number', 'boolean', 'options', 'multiOptions',
 		'collection', 'fixedCollection', 'notice', 'json', 'dateTime',
-		'keyValue', 'conditions', 'assignmentCollection', 'resourceLocator'
+		'keyValue', 'conditions', 'assignmentCollection', 'resourceLocator', 'resourceMapper'
 	]);
 
 	const typeOptions = $derived(property.typeOptions ?? {});
@@ -109,6 +122,34 @@
 		options: [],
 		reason: ''
 	});
+	/** A resource mapper's columns, and the mapping over them. */
+	let schemaState = $state<{ fields: MapperColumn[]; reason: string }>({ fields: [], reason: '' });
+	const mapping = $derived(readMapping(property, value));
+	// The live columns when they have loaded, the stored copy until then, so
+	// the form is not empty on the first render of a saved node.
+	const schemaColumns = $derived(schemaState.fields.length > 0 ? schemaState.fields : (mapping.schema ?? []));
+
+	$effect(() => {
+		if (property.kind !== 'resourceMapper' || !loadSchema) return;
+		let cancelled = false;
+		void loadSchema(property).then((result) => {
+			if (!cancelled) schemaState = result;
+		});
+		return () => {
+			cancelled = true;
+		};
+	});
+
+	function setColumn(id: string, next: unknown) {
+		onChange(writeMapping({ ...mapping, value: { ...mapping.value, [id]: next } }, schemaColumns));
+	}
+
+	function toggleMatch(id: string, on: boolean): string[] {
+		// More than one matching column is allowed: a composite key is a key.
+		const without = mapping.matchingColumns.filter((column) => column !== id);
+		return on ? [...without, id] : without;
+	}
+
 	/** The locator this property currently holds, and the mode it names. */
 	const locator = $derived(readLocator(property, value));
 	const locatorMode = $derived(currentMode(property, locator));
@@ -418,6 +459,75 @@
 			{/if}
 			{#if loadState.reason && locatorMode?.kind === 'options'}
 				<p class="text-[0.6875rem] leading-4 text-muted-foreground">{loadState.reason}</p>
+			{/if}
+		</div>
+	{:else if property.kind === 'resourceMapper'}
+		<div class="grid gap-1.5 rounded-md border border-input p-1.5">
+			{#if property.mapper?.supportsAutoMap}
+				<label class="grid gap-1 text-[0.6875rem]">
+					<span class="text-muted-foreground">Mapping Column Mode</span>
+					<select aria-label={`${property.label} mapping mode`} value={mapping.mappingMode} class="h-7 rounded border border-input bg-background px-1.5 text-[0.6875rem]" onchange={(event) => onChange(writeMapping({ ...mapping, mappingMode: event.currentTarget.value }, schemaColumns))}>
+						<option value="defineBelow">Map Each Column Manually</option>
+						<option value="autoMapInputData">Map Automatically</option>
+					</select>
+				</label>
+			{/if}
+			{#if matchableColumns(schemaColumns).length > 0}
+				<div class="grid gap-1 text-[0.6875rem]">
+					<span class="text-muted-foreground">Columns to match on</span>
+					<div class="grid gap-1 rounded border border-input p-1.5">
+						{#each matchableColumns(schemaColumns) as column (column.id)}
+							<label class="flex items-center gap-2">
+								<input type="checkbox" class="size-3.5" checked={mapping.matchingColumns.includes(column.id)} onchange={(event) => onChange(writeMapping({ ...mapping, matchingColumns: toggleMatch(column.id, event.currentTarget.checked) }, schemaColumns))} />
+								<span>{column.displayName}{column.required ? ' *' : ''}</span>
+							</label>
+						{/each}
+					</div>
+				</div>
+			{/if}
+			{#if mapping.mappingMode === 'autoMapInputData'}
+				<!-- A read-only summary of what will be sent, rather than a form
+				     nobody fills in. The write is the intersection of the item's
+				     keys and these columns, so an absent column is omitted and
+				     never sent as an explicit null. -->
+				<p class="rounded border border-dashed border-input px-2 py-1.5 text-[0.6875rem] leading-4 text-muted-foreground">
+					{#if schemaColumns.length === 0}
+						{schemaState.reason || 'The columns have not loaded yet.'}
+					{:else}
+						Incoming fields are matched to these columns by name: {writableColumns(schemaColumns, mapping).map((column) => column.displayName).join(', ') || 'none'}. A field with no matching column is not sent.
+					{/if}
+				</p>
+			{:else if schemaColumns.length === 0}
+				<p class="rounded border border-dashed border-input px-2 py-1.5 text-[0.6875rem] leading-4 text-muted-foreground">
+					{schemaState.reason || 'The columns have not loaded yet.'}
+				</p>
+			{:else}
+				{#each writableColumns(schemaColumns, mapping) as column (column.id)}
+					<label class="grid gap-1 text-[0.6875rem]">
+						<span class="text-muted-foreground">{column.displayName}{column.required ? ' *' : ''}</span>
+						{#if columnControl(column.type) === 'boolean'}
+							<select aria-label={column.displayName} value={String(mapping.value[column.id] ?? 'false')} class="h-7 rounded border border-input bg-background px-1.5 text-[0.6875rem]" onchange={(event) => setColumn(column.id, event.currentTarget.value === 'true')}>
+								<option value="true">true</option>
+								<option value="false">false</option>
+							</select>
+						{:else if column.options && column.options.length > 0}
+							<select aria-label={column.displayName} value={displayValue(mapping.value[column.id])} class="h-7 rounded border border-input bg-background px-1.5 text-[0.6875rem]" onchange={(event) => setColumn(column.id, event.currentTarget.value)}>
+								<option value="">Choose…</option>
+								{#each column.options as option (option.value)}
+									<option value={option.value}>{option.label}</option>
+								{/each}
+							</select>
+						{:else}
+							<input aria-label={column.displayName} type={columnControl(column.type) === 'number' ? 'number' : 'text'} value={displayValue(mapping.value[column.id])} class="h-7 rounded border border-input bg-background px-1.5 text-[0.6875rem]" oninput={(event) => setColumn(column.id, columnControl(column.type) === 'number' ? Number(event.currentTarget.value) : event.currentTarget.value)} />
+						{/if}
+						{#if !knownColumnType(column.type)}
+							<!-- Named rather than dropped: a column missing from
+							     the form reads as "this table has no such
+							     column", which is a worse lie. -->
+							<span class="text-destructive">This editor does not know the column type “{column.type}”, so it is edited as text.</span>
+						{/if}
+					</label>
+				{/each}
 			{/if}
 		</div>
 	{:else if property.kind === 'conditions'}

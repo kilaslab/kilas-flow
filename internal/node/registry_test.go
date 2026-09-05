@@ -608,7 +608,7 @@ func TestKnownPropertyKindsIsExactlyTheDocumentedSet(t *testing.T) {
 		"string", "number", "boolean",
 		"options", "multiOptions",
 		"collection", "fixedCollection",
-		"notice", "json", "dateTime", "resourceLocator",
+		"notice", "json", "dateTime", "resourceLocator", "resourceMapper",
 		"keyValue", "conditions", "assignmentCollection",
 	}
 	got := make([]string, 0, len(node.KnownPropertyKinds()))
@@ -1046,5 +1046,79 @@ func TestAResourceLocatorMustDeclareModesItCanRender(t *testing.T) {
 	}
 	if again.Parameters[0].Modes[0].LoadOptions.DependsOn[0] != "schema" {
 		t.Error("a mode's DependsOn is shared with the registry rather than copied")
+	}
+}
+
+func TestAResourceMapperNeedsASchemaSourceItCanReach(t *testing.T) {
+	base := func(parameter node.PropertyDefinition) node.Definition {
+		return node.Definition{
+			Type: "test.mapper", Version: workflow.V(1),
+			DisplayName: "Mapper", Category: "Test", ExecutorID: "test.exec",
+			Group:      []node.NodeGroup{node.GroupTransform},
+			Outputs:    []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+			Parameters: []node.PropertyDefinition{parameter},
+		}
+	}
+	mapper := func(declaration *node.ResourceMapperDeclaration) node.PropertyDefinition {
+		return node.PropertyDefinition{
+			Key: "columns", Label: "Columns", Kind: node.PropertyResourceMapper, Mapper: declaration,
+		}
+	}
+
+	for name, testCase := range map[string]struct {
+		parameter node.PropertyDefinition
+		wantIn    string
+	}{
+		// Without a typed column list the control can only render an untyped
+		// bag, which is what it exists to replace.
+		"no mapper at all": {
+			parameter: mapper(nil), wantIn: "needs a schema source",
+		},
+		"a mapper with no schema": {
+			parameter: mapper(&node.ResourceMapperDeclaration{}), wantIn: "needs a schema source",
+		},
+		"a schema fetched over HTTP": {
+			parameter: mapper(&node.ResourceMapperDeclaration{
+				Schema: &node.OptionsLoader{Source: "http", Endpoint: "https://example.test", ValueField: "id"},
+			}),
+			wantIn: "must be internal",
+		},
+		"an internal schema with no name": {
+			parameter: mapper(&node.ResourceMapperDeclaration{Schema: &node.OptionsLoader{Source: "internal"}}),
+			wantIn:    "needs a name",
+		},
+		"a mapper on a property that is not one": {
+			parameter: node.PropertyDefinition{
+				Key: "name", Label: "Name", Kind: node.PropertyString,
+				Mapper: &node.ResourceMapperDeclaration{Schema: &node.OptionsLoader{Source: "internal", Name: "x"}},
+			},
+			wantIn: "only a resourceMapper",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := node.NewRegistry().Register(base(testCase.parameter))
+			if err == nil {
+				t.Fatalf("Register() accepted %#v", testCase.parameter)
+			}
+			if !strings.Contains(err.Error(), testCase.wantIn) {
+				t.Errorf("error = %v, want it to mention %q", err, testCase.wantIn)
+			}
+		})
+	}
+
+	// The shape that works, and its schema source survives the deep copy.
+	registry := node.NewRegistry()
+	if err := registry.Register(base(mapper(&node.ResourceMapperDeclaration{
+		Schema:                  &node.OptionsLoader{Source: "internal", Name: "sql.columns", DependsOn: []string{"table"}},
+		SupportsAutoMap:         true,
+		MatchingColumnsRequired: true,
+	}))); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	stored, _ := registry.Get("test.mapper", workflow.V(1))
+	stored.Parameters[0].Mapper.Schema.Name = "hijacked"
+	again, _ := registry.Get("test.mapper", workflow.V(1))
+	if again.Parameters[0].Mapper.Schema.Name != "sql.columns" {
+		t.Error("a caller mutating a mapper it was handed reached into the registry")
 	}
 }

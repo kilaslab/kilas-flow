@@ -105,6 +105,14 @@ func (handler *NodeTypes) Register(api huma.API) {
 		Tags:        []string{"Nodes"},
 	}, handler.LoadOptions)
 	huma.Register(api, huma.Operation{
+		OperationID: "load-node-property-schema",
+		Method:      http.MethodPost,
+		Path:        "/node-types/{type}/load-schema",
+		Summary:     "Load a resource mapper's columns",
+		Description: "Resolves the column list a resource mapper maps onto, with each column's type, required flag and match eligibility. A sibling of load-options rather than a widening of it: an option is {label, value} and a column is not.",
+		Tags:        []string{"Nodes"},
+	}, handler.LoadSchema)
+	huma.Register(api, huma.Operation{
 		OperationID: "list-node-types",
 		Method:      http.MethodGet,
 		Path:        "/node-types",
@@ -199,30 +207,11 @@ func (handler *NodeTypes) LoadOptions(ctx context.Context, input *loadOptionsInp
 		return nil, huma.Error503ServiceUnavailable("the node catalogue is unavailable")
 	}
 
-	version := workflow.TypeVersion{}
-	if input.Body.Version != "" {
-		parsed, err := workflow.ParseTypeVersion(input.Body.Version)
-		if err != nil {
-			return nil, huma.Error422UnprocessableEntity("the node type version is not a decimal number")
-		}
-		version = parsed
-	}
-	definition, found := handler.registry.Resolve(input.Type, version)
-	if !found {
-		return nil, huma.Error404NotFound("that node type is not registered")
+	declared, err := handler.declaredProperty(input)
+	if err != nil {
+		return nil, err
 	}
 
-	// From the registered definition, never from the request.
-	var declared *node.PropertyDefinition
-	for index, candidate := range definition.Parameters {
-		if candidate.Key == input.Body.Property {
-			declared = &definition.Parameters[index]
-			break
-		}
-	}
-	if declared == nil {
-		return nil, huma.Error404NotFound("that node type has no such property")
-	}
 	loader := declared.LoadOptions
 	if declared.Kind == node.PropertyResourceLocator {
 		// From the declared mode, never from the request: the request says
@@ -243,17 +232,12 @@ func (handler *NodeTypes) LoadOptions(ctx context.Context, input *loadOptionsInp
 		return nil, huma.Error422UnprocessableEntity("that property's options are fixed and do not need loading")
 	}
 
-	dependencies := make(map[string]string, len(loader.DependsOn))
 	for _, key := range loader.DependsOn {
-		value, present := input.Body.Parameters[key]
-		if !present || value == nil {
-			continue
-		}
 		// A dependency holding an expression cannot be resolved: there is no
 		// item to evaluate it against, because there is no execution. Refusing
 		// beats guessing — a guessed value produces a wrong list, and
 		// evaluating against an empty item produces a confidently wrong one.
-		if property.ExpressionMarker(value) {
+		if property.ExpressionMarker(input.Body.Parameters[key]) {
 			return &loadOptionsOutput{
 				CacheControl: "no-store",
 				Body: LoadOptionsResource{
@@ -262,29 +246,12 @@ func (handler *NodeTypes) LoadOptions(ctx context.Context, input *loadOptionsInp
 				},
 			}, nil
 		}
-		dependencies[key] = locatorDependency(value)
 	}
-
+	scope, err := handler.scopeFor(ctx, input, loader.DependsOn)
+	if err != nil {
+		return nil, err
+	}
 	tenant := handler.tenants.Resolve(ctx)
-	scope := loadoptions.Scope{TenantID: tenant.ID, Dependencies: dependencies}
-	// An embed session is bound to its own workflow, not merely its tenant. The
-	// embed middleware allows the whole /node-types/ subtree on read scope with
-	// no workflow check, so without this a session scoped to one workflow could
-	// enumerate everything an internal loader can see across the tenant.
-	if session, embedded := middleware.EmbedSessionFrom(ctx); embedded {
-		// Refused rather than silently narrowed. A request naming another
-		// workflow is either a mistake or a probe, and answering it with this
-		// session's own list would tell the caller nothing about which one it
-		// got — which is the reading that turns a bug into a slow leak.
-		if input.Body.WorkflowID != "" && input.Body.WorkflowID != session.WorkflowID {
-			return nil, huma.Error403Forbidden(fmt.Sprintf(
-				"this embed session is scoped to workflow %s and cannot load options for %s",
-				session.WorkflowID, input.Body.WorkflowID))
-		}
-		scope.WorkflowID = session.WorkflowID
-	} else {
-		scope.WorkflowID = input.Body.WorkflowID
-	}
 
 	result, err := handler.options.Load(ctx, *loader, scope, input.Body.CredentialID, handler.credentials(tenant))
 	if err != nil {
@@ -300,6 +267,65 @@ func (handler *NodeTypes) LoadOptions(ctx context.Context, input *loadOptionsInp
 	}, nil
 }
 
+// declaredProperty resolves the property a request names, from the registered
+// definition and never from the request.
+func (handler *NodeTypes) declaredProperty(input *loadOptionsInput) (*node.PropertyDefinition, error) {
+	version := workflow.TypeVersion{}
+	if input.Body.Version != "" {
+		parsed, err := workflow.ParseTypeVersion(input.Body.Version)
+		if err != nil {
+			return nil, huma.Error422UnprocessableEntity("the node type version is not a decimal number")
+		}
+		version = parsed
+	}
+	definition, found := handler.registry.Resolve(input.Type, version)
+	if !found {
+		return nil, huma.Error404NotFound("that node type is not registered")
+	}
+	for index, candidate := range definition.Parameters {
+		if candidate.Key == input.Body.Property {
+			return &definition.Parameters[index], nil
+		}
+	}
+	return nil, huma.Error404NotFound("that node type has no such property")
+}
+
+// scopeFor builds the tenancy and dependency scope both loaders run under.
+//
+// One function for both endpoints, deliberately. An internal loader constructs
+// no request, so nothing the egress policy defends applies to it, and the embed
+// middleware allows the whole /node-types/ subtree on read scope without ever
+// reading a body — this is the only check between an embedded editor and
+// everything a loader can see across the tenant. Two copies of it is how two
+// gates drift apart.
+func (handler *NodeTypes) scopeFor(ctx context.Context, input *loadOptionsInput, dependsOn []string) (loadoptions.Scope, error) {
+	dependencies := make(map[string]string, len(dependsOn))
+	for _, key := range dependsOn {
+		value, present := input.Body.Parameters[key]
+		if !present || value == nil || property.ExpressionMarker(value) {
+			continue
+		}
+		dependencies[key] = locatorDependency(value)
+	}
+	scope := loadoptions.Scope{TenantID: handler.tenants.Resolve(ctx).ID, Dependencies: dependencies}
+	session, embedded := middleware.EmbedSessionFrom(ctx)
+	if !embedded {
+		scope.WorkflowID = input.Body.WorkflowID
+		return scope, nil
+	}
+	// Refused rather than silently narrowed. A request naming another workflow
+	// is either a mistake or a probe, and answering it with this session's own
+	// list would tell the caller nothing about which one it got — which is the
+	// reading that turns a bug into a slow leak.
+	if input.Body.WorkflowID != "" && input.Body.WorkflowID != session.WorkflowID {
+		return loadoptions.Scope{}, huma.Error403Forbidden(fmt.Sprintf(
+			"this embed session is scoped to workflow %s and cannot load options for %s",
+			session.WorkflowID, input.Body.WorkflowID))
+	}
+	scope.WorkflowID = session.WorkflowID
+	return scope, nil
+}
+
 // locatorDependency renders a dependency value for a loader's path.
 //
 // A resource locator is a dependency as often as it is a target — a Table
@@ -311,6 +337,74 @@ func locatorDependency(value any) string {
 		return fmt.Sprint(locator.Value)
 	}
 	return fmt.Sprint(value)
+}
+
+// MapperColumn is one column a resource mapper may write.
+type MapperColumn struct {
+	ID          string `json:"id"`
+	DisplayName string `json:"displayName"`
+	Type        string `json:"type,omitempty" doc:"string, number, boolean, dateTime, object or array. An unrecognised type renders as text with a warning rather than disappearing from the form."`
+	Required    bool   `json:"required,omitempty"`
+	// CanBeUsedToMatch marks a column that identifies a row.
+	CanBeUsedToMatch bool `json:"canBeUsedToMatch,omitempty"`
+	DefaultMatch     bool `json:"defaultMatch,omitempty"`
+	// ReadOnly marks a column the database fills in. It may be matched on and
+	// never written.
+	ReadOnly bool                      `json:"readOnly,omitempty"`
+	Options  []property.PropertyOption `json:"options,omitempty"`
+}
+
+// LoadSchemaResource is a resolved column list.
+type LoadSchemaResource struct {
+	Fields []MapperColumn `json:"fields"`
+	Reason string         `json:"reason,omitempty" doc:"Why the list is empty, when it is empty for a reason the user can act on."`
+}
+
+type loadSchemaOutput struct {
+	CacheControl string `header:"Cache-Control"`
+	Body         LoadSchemaResource
+}
+
+// LoadSchema resolves a resource mapper's columns.
+//
+// It reuses load-options' request body, registry validation and embed bound
+// deliberately: two endpoints that answer for the same node with two gates is
+// how two gates drift apart.
+func (handler *NodeTypes) LoadSchema(ctx context.Context, input *loadOptionsInput) (*loadSchemaOutput, error) {
+	if handler.registry == nil || handler.options == nil {
+		return nil, huma.Error503ServiceUnavailable("the node catalogue is unavailable")
+	}
+	declared, err := handler.declaredProperty(input)
+	if err != nil {
+		return nil, err
+	}
+	if declared.Kind != node.PropertyResourceMapper || declared.Mapper == nil || declared.Mapper.Schema == nil {
+		return nil, huma.Error422UnprocessableEntity("that property is not a resource mapper and has no column list")
+	}
+
+	scope, err := handler.scopeFor(ctx, input, declared.Mapper.Schema.DependsOn)
+	if err != nil {
+		return nil, err
+	}
+	schema, err := handler.options.LoadSchema(ctx, *declared.Mapper.Schema, scope)
+	if err != nil {
+		return nil, huma.Error502BadGateway(err.Error())
+	}
+	fields := make([]MapperColumn, 0, len(schema.Fields))
+	for _, field := range schema.Fields {
+		fields = append(fields, MapperColumn{
+			ID: field.ID, DisplayName: field.DisplayName, Type: field.Type,
+			Required: field.Required, CanBeUsedToMatch: field.CanBeUsedToMatch,
+			DefaultMatch: field.DefaultMatch, ReadOnly: field.ReadOnly, Options: field.Options,
+		})
+	}
+	return &loadSchemaOutput{
+		// Uncached, unlike an option list: a mapping validated against a stale
+		// column set would refuse a column that exists or accept one that no
+		// longer does.
+		CacheControl: "no-store",
+		Body:         LoadSchemaResource{Fields: fields, Reason: schema.Reason},
+	}, nil
 }
 
 // nodeIconInput identifies the artwork to serve.

@@ -1087,3 +1087,64 @@ func TestAResourceLocatorSurvivesSaveReloadAndExport(t *testing.T) {
 		})
 	}
 }
+
+func TestAResourceMapperSurvivesSaveAndReload(t *testing.T) {
+	handler, _, _ := newWorkflowAPI(t)
+
+	// The Set node's assignments are the nearest stored shape a registered node
+	// carries; what matters here is that the document layer keeps an arbitrary
+	// mapper value byte for byte, since no shipped node declares one yet — the
+	// database nodes get theirs in p4-9.
+	mapper := map[string]any{
+		"mappingMode":     "defineBelow",
+		"value":           map[string]any{"email": "ada@example.test", "tier": "gold"},
+		"matchingColumns": []any{"id"},
+		"schema": []any{
+			map[string]any{"id": "id", "displayName": "id", "type": "number", "canBeUsedToMatch": true, "readOnly": true},
+			map[string]any{"id": "email", "displayName": "email", "type": "string", "required": true},
+		},
+	}
+	created := createWorkflow(t, handler, workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion, Name: "Mapped",
+		Nodes: []workflow.Node{
+			{ID: "manual", Name: "Manual", Type: "kilasflow.manual", TypeVersion: workflow.V(1)},
+			{ID: "set", Name: "Set", Type: "kilasflow.set", TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"assignments": map[string]any{"columns": mapper}}},
+		},
+		Connections: []workflow.Connection{{
+			ID: "c1", Kind: workflow.ConnectionMain,
+			Source: workflow.Endpoint{NodeID: "manual", Port: "main"},
+			Target: workflow.Endpoint{NodeID: "set", Port: "main"},
+		}},
+		Settings: map[string]any{},
+	})
+
+	reloaded := requestJSON[workflowResource](t, handler, http.MethodGet,
+		"/api/v1/workflows/"+created.ID, nil, http.StatusOK)
+	for _, candidate := range reloaded.LatestVersion.Document.Nodes {
+		if candidate.ID != "set" {
+			continue
+		}
+		assignments, _ := candidate.Parameters["assignments"].(map[string]any)
+		stored, _ := assignments["columns"].(map[string]any)
+		if stored == nil {
+			t.Fatalf("the mapper did not survive the round trip: %#v", candidate.Parameters)
+		}
+		if stored["mappingMode"] != "defineBelow" {
+			t.Errorf("mappingMode = %#v, want it kept", stored["mappingMode"])
+		}
+		values, _ := stored["value"].(map[string]any)
+		if values["email"] != "ada@example.test" || values["tier"] != "gold" {
+			t.Errorf("values = %#v, want both columns kept", values)
+		}
+		matching, _ := stored["matchingColumns"].([]any)
+		if len(matching) != 1 || matching[0] != "id" {
+			t.Errorf("matchingColumns = %#v, want the match kept", stored["matchingColumns"])
+		}
+		// The schema copy is display data the executor never trusts, but
+		// dropping it would make an export lossy.
+		if fields, _ := stored["schema"].([]any); len(fields) != 2 {
+			t.Errorf("schema = %#v, want the persisted copy kept", stored["schema"])
+		}
+	}
+}

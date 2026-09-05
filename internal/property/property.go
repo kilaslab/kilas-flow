@@ -66,6 +66,9 @@ const (
 	// resource locators existed, and adopting it would mean writing a lossy
 	// converter for every node that takes one.
 	KindResourceLocator Kind = "resourceLocator"
+	// KindResourceMapper types the columns inside whatever a locator picked.
+	// See mapper.go for what it replaces and why an untyped bag is not enough.
+	KindResourceMapper Kind = "resourceMapper"
 )
 
 // LocatorSentinel marks a stored resource locator value.
@@ -281,7 +284,7 @@ func KnownKinds() []Kind {
 		KindString, KindNumber, KindBoolean,
 		KindOptions, KindMultiOptions,
 		KindCollection, KindFixedCollection,
-		KindNotice, KindJSON, KindDateTime, KindResourceLocator,
+		KindNotice, KindJSON, KindDateTime, KindResourceLocator, KindResourceMapper,
 		KindKeyValue, KindConditions, KindAssignmentCollection,
 	}
 }
@@ -426,6 +429,8 @@ type PropertyDefinition struct {
 	// on the sibling kind produces a JSON schema the generated TypeScript
 	// cannot express as anything better than `unknown`.
 	Modes []PropertyMode `json:"modes,omitempty"`
+	// Mapper describes a resourceMapper's schema source and its modes.
+	Mapper *ResourceMapperDeclaration `json:"mapper,omitempty"`
 	// Assignments is the default rows of an `assignmentCollection`.
 	//
 	// Its own field rather than overloaded onto Options, for the reason every
