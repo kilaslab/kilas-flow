@@ -25,6 +25,7 @@ import type {
   Definition,
   ErrorModel,
   ExpressionGrammar,
+  GetNodeIconParams,
   LoadOptionsInputBody,
   LoadOptionsResource
 } from '../models';
@@ -254,6 +255,115 @@ export function createListNodeTypes<TData = Awaited<ReturnType<typeof listNodeTy
 
 
   const query = createQuery(() => getListNodeTypesQueryOptions(options?.()), queryClient) as CreateQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return query
+}
+
+
+
+
+
+
+export type getNodeIconResponse200 = {
+  data: string
+  status: 200
+}
+
+export type getNodeIconResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type getNodeIconResponseSuccess = (getNodeIconResponse200) & {
+  headers: Headers;
+};
+export type getNodeIconResponseError = (getNodeIconResponseDefault) & {
+  headers: Headers;
+};
+
+export type getNodeIconResponse = (getNodeIconResponseSuccess | getNodeIconResponseError)
+
+export const getGetNodeIconUrl = (type: string,
+    params?: GetNodeIconParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/node-types/${type}/icon?${stringifiedParams}` : `/api/v1/node-types/${type}/icon`
+}
+
+/**
+ * Returns the artwork a node ships. Only a registered node type that declares a served icon answers; everything else is 404.
+ * @summary Serve a node's icon
+ */
+export const getNodeIcon = async (type: string,
+    params?: GetNodeIconParams, options?: Parameters<typeof apiFetch>[1]): Promise<getNodeIconResponse> => {
+
+  return apiFetch<getNodeIconResponse>(getGetNodeIconUrl(type,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetNodeIconQueryKey = (type: string,
+    params?: GetNodeIconParams,) => {
+    return [
+    `/api/v1/node-types/${type}/icon`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetNodeIconQueryOptions = <TData = Awaited<ReturnType<typeof getNodeIcon>>, TError = ErrorType<ErrorModel>>(type: string,
+    params?: GetNodeIconParams, options?: { query?:Partial<CreateQueryOptions<Awaited<ReturnType<typeof getNodeIcon>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetNodeIconQueryKey(type,params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getNodeIcon>>> = ({ signal }) => getNodeIcon(type,params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: type !== null && type !== undefined, ...queryOptions} as CreateQueryOptions<Awaited<ReturnType<typeof getNodeIcon>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetNodeIconQueryResult = NonNullable<Awaited<ReturnType<typeof getNodeIcon>>>
+export type GetNodeIconQueryError = ErrorType<ErrorModel>
+
+
+/**
+ * @summary Serve a node's icon
+ */
+
+export function createGetNodeIcon<TData = Awaited<ReturnType<typeof getNodeIcon>>, TError = ErrorType<ErrorModel>>(
+ type: () =>  string,
+    params?: () =>  GetNodeIconParams, options?: () => { query?:Partial<CreateQueryOptions<Awaited<ReturnType<typeof getNodeIcon>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: () => QueryClient
+ ): CreateQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+
+
+  const query = createQuery(() => getGetNodeIconQueryOptions(type(),
+    params?.(),options?.()), queryClient) as CreateQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 
   return query
 }

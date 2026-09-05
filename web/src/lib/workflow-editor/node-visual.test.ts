@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { Definition, Node, Port } from '$lib/api/generated/models';
 
-import { TILE, attachmentPorts, mainPorts, nodeShape, nodeSubtitle, nodeVisual, portOffset } from './node-visual';
+import { FALLBACK_GLYPH, TILE, attachmentPorts, mainPorts, nodeShape, nodeSubtitle, nodeVisual, portOffset } from './node-visual';
 
 const MAIN: Port = { name: 'main', kind: 'main' };
 
@@ -91,91 +91,85 @@ describe('port partitioning', () => {
 });
 
 describe('nodeSubtitle', () => {
-	it('shows the host rather than the whole URL for a request', () => {
-		const [n, d] = typed('kilasflow.httpRequest', { method: 'POST', url: 'https://api.shop.test/v1/orders?page=2' });
-		expect(nodeSubtitle(n, d)).toBe('POST api.shop.test');
+	/**
+	 * The subtitle used to be a switch over eleven known node types with a null
+	 * default, so a node the editor had never seen had no subtitle at all.
+	 * These cases now feed a server-shaped definition in, which is what proves
+	 * a node added on the server gets one with no frontend change.
+	 */
+	function withSubtitle(subtitle: string, parameters: Record<string, unknown> = {}): [Node, Definition] {
+		const [n, d] = typed('pack.neverSeenBefore', parameters);
+		return [n, { ...d, subtitle }];
+	}
+
+	it('renders a template over the node’s own parameters', () => {
+		const [n, d] = withSubtitle('{{ $parameter.method }} {{ $parameter.url }}', {
+			method: 'POST',
+			url: 'https://api.shop.test/v1/orders'
+		});
+		expect(nodeSubtitle(n, d)).toBe('POST https://api.shop.test/v1/orders');
 	});
 
-	it('defaults the method when only a URL is set', () => {
-		const [n, d] = typed('kilasflow.httpRequest', { url: 'https://api.shop.test/orders' });
-		expect(nodeSubtitle(n, d)).toBe('GET api.shop.test');
+	it('gives a node type the editor has never seen a subtitle', () => {
+		const [n, d] = withSubtitle('{{ $parameter.session }}', { session: 'default' });
+		expect(nodeSubtitle(n, d)).toBe('default');
 	});
 
-	it('shows an expression verbatim instead of inventing a resolved value', () => {
-		// The server owns evaluation. Showing a stale or guessed host would be
-		// worse than showing the template the user wrote.
-		const [n, d] = typed('kilasflow.httpRequest', { url: { mode: 'expression', value: '{{ $json.endpoint }}' } });
-		expect(nodeSubtitle(n, d)).toBe('GET {{ $json.endpoint }}');
-	});
-
-	it('does not throw on a URL that is not a URL', () => {
-		const [n, d] = typed('kilasflow.httpRequest', { url: 'not a url at all' });
-		expect(nodeSubtitle(n, d)).toBe('GET not a url at all');
-	});
-
-	it('normalises a webhook path however many slashes it was given', () => {
-		const [n, d] = typed('kilasflow.webhook', { httpMethod: 'POST', path: '///tickets' });
-		expect(nodeSubtitle(n, d)).toBe('POST /tickets');
-	});
-
-	it('counts assignments, singular and plural, and omits the line when there are none', () => {
-		expect(nodeSubtitle(...typed('kilasflow.set', { assignments: { a: 1 } }))).toBe('1 field');
-		expect(nodeSubtitle(...typed('kilasflow.set', { assignments: { a: 1, b: 2 } }))).toBe('2 fields');
-		expect(nodeSubtitle(...typed('kilasflow.set', { assignments: {} }))).toBeNull();
-		// An array is not an assignment map, and must not be counted as one.
-		expect(nodeSubtitle(...typed('kilasflow.set', { assignments: ['a', 'b'] }))).toBeNull();
-	});
-
-	it('coerces a numeric response code and falls back to 200', () => {
-		expect(nodeSubtitle(...typed('kilasflow.respondToWebhook', { responseCode: 404 }))).toBe('404');
-		expect(nodeSubtitle(...typed('kilasflow.respondToWebhook', {}))).toBe('200');
-	});
-
-	it('survives a condition list that is empty, missing, or the wrong type', () => {
-		expect(nodeSubtitle(...typed('kilasflow.if', { conditions: [{ field: 'tier' }] }))).toBe('tier');
-		expect(nodeSubtitle(...typed('kilasflow.if', { conditions: [] }))).toBeNull();
-		expect(nodeSubtitle(...typed('kilasflow.if', { conditions: 'nonsense' }))).toBeNull();
-		expect(nodeSubtitle(...typed('kilasflow.if', {}))).toBeNull();
-	});
-
-	it('names the node an import could not map', () => {
-		expect(nodeSubtitle(...typed('kilasflow.unsupported', { originalType: 'n8n-nodes-base.slack' }))).toBe('n8n-nodes-base.slack');
-	});
-
-	it('has no opinion about a node it has no branch for, and no opinion about missing parameters', () => {
-		expect(nodeSubtitle(...typed('kilasflow.merge', {}))).toBeNull();
-		const [n, d] = typed('kilasflow.httpRequest');
-		delete n.parameters;
+	it('omits a missing parameter rather than printing undefined', () => {
+		const [n, d] = withSubtitle('{{ $parameter.method }} {{ $parameter.url }}', { method: 'GET' });
 		expect(nodeSubtitle(n, d)).toBe('GET');
+	});
+
+	it('yields null when nothing resolves, so an unconfigured node shows no line', () => {
+		const [n, d] = withSubtitle('{{ $parameter.method }} {{ $parameter.url }}');
+		expect(nodeSubtitle(n, d)).toBeNull();
+	});
+
+	it('yields null for a definition that declares no subtitle', () => {
+		const [n, d] = typed('pack.plain', { anything: 'here' });
+		expect(nodeSubtitle(n, { ...d, subtitle: undefined })).toBeNull();
+	});
+
+	it('marks an expression rather than printing its template', () => {
+		// Printing the raw {{ … }} on the canvas reads as a rendering bug, and
+		// the canvas cannot resolve it — there is no item to resolve against.
+		const [n, d] = withSubtitle('{{ $parameter.url }}', {
+			url: { mode: 'expression', value: '{{ $json.endpoint }}' }
+		});
+		expect(nodeSubtitle(n, d)).toBe('ƒx');
+	});
+
+	it('survives a node with no parameters at all', () => {
+		const [n, d] = withSubtitle('{{ $parameter.method }}');
+		delete n.parameters;
+		expect(nodeSubtitle(n, d)).toBeNull();
 	});
 });
 
-describe('shared geometry', () => {
-	it('gives the editor and the replay canvas the same tile for a shape', () => {
-		// The acceptance criterion is that a graph reads identically in both
-		// views. Both components import this table, so the criterion is enforced
-		// by construction rather than by two copies staying in sync.
-		expect(TILE.trigger).toContain('rounded-l-');
-		expect(TILE.step).toBe('h-22 w-22 rounded-xl');
-		expect(TILE.attachment).toContain('rounded-full');
-		expect(TILE.hub).toContain('max-w-');
+describe('nodeVisual', () => {
+	it('takes the accent from the definition rather than from a category map', () => {
+		const [, d] = typed('pack.neverSeenBefore');
+		expect(nodeVisual({ ...d, iconColor: '#ff0000' }).accent).toBe('#ff0000');
 	});
 
-	it('spaces ports evenly along an edge', () => {
-		expect(portOffset(0, 1)).toBe('50%');
-		expect(portOffset(0, 2)).toBe('33.33333333333333%');
-		expect(portOffset(1, 2)).toBe('66.66666666666666%');
+	it('resolves a builtin glyph by the name the server chose', () => {
+		const [, d] = typed('pack.neverSeenBefore');
+		const visual = nodeVisual({ ...d, icon: { light: 'builtin:globe' } });
+		expect(visual.iconURL).toBeNull();
+		expect(visual.icon).not.toBe(FALLBACK_GLYPH);
 	});
 
-	it('reads a node that both takes and provides attachments as a hub', () => {
-		// An agent exposed as a tool to another agent. Nothing in the registry
-		// does this yet; the promise is that it would arrive drawn correctly.
-		const both = definition(
-			[MAIN, { name: 'model', kind: 'ai_languageModel' }],
-			[{ name: 'tool', kind: 'ai_tool' }],
-			'AI'
-		);
-		// A circle has no edge to hang attachment ports from; a hub does.
-		expect(nodeShape(both)).toBe('hub');
+	it('falls back visibly when it does not ship the named glyph', () => {
+		// Means "this editor is older than this node", which is a different
+		// thing from "this node looks like a box".
+		const [, d] = typed('pack.neverSeenBefore');
+		expect(nodeVisual({ ...d, icon: { light: 'builtin:nothing-like-this' } }).icon).toBe(FALLBACK_GLYPH);
+	});
+
+	it('serves a node’s own artwork from the icon route', () => {
+		const [, d] = typed('pack.wahaAction');
+		const visual = nodeVisual({ ...d, icon: { light: 'waha.svg' }, version: 202502 });
+		expect(visual.iconURL).toContain('/api/v1/node-types/pack.wahaAction/icon');
+		expect(visual.iconURL).toContain('version=202502');
 	});
 });

@@ -86,6 +86,14 @@ func (handler *NodeTypes) Register(api huma.API) {
 		Tags:        []string{"Nodes"},
 	}, handler.Grammar)
 	huma.Register(api, huma.Operation{
+		OperationID: "get-node-icon",
+		Method:      http.MethodGet,
+		Path:        "/node-types/{type}/icon",
+		Summary:     "Serve a node's icon",
+		Description: "Returns the artwork a node ships. Only a registered node type that declares a served icon answers; everything else is 404.",
+		Tags:        []string{"Nodes"},
+	}, handler.Icon)
+	huma.Register(api, huma.Operation{
 		OperationID: "load-node-property-options",
 		Method:      http.MethodPost,
 		Path:        "/node-types/{type}/load-options",
@@ -233,5 +241,66 @@ func (handler *NodeTypes) LoadOptions(ctx context.Context, input *loadOptionsInp
 		// So the browser does not refetch on every focus.
 		CacheControl: "private, max-age=30",
 		Body:         LoadOptionsResource{Options: result.Options, Reason: result.Reason},
+	}, nil
+}
+
+// nodeIconInput identifies the artwork to serve.
+type nodeIconInput struct {
+	Type    string `path:"type"`
+	Version string `query:"version" doc:"Node type version. Omit for the registered default."`
+	Theme   string `query:"theme" enum:"light,dark" doc:"Which variant to serve. A node shipping one variant serves it for both."`
+}
+
+// nodeIconOutput carries the bytes and the headers that keep them inert.
+type nodeIconOutput struct {
+	ContentType  string `header:"Content-Type"`
+	NoSniff      string `header:"X-Content-Type-Options"`
+	CSP          string `header:"Content-Security-Policy"`
+	CacheControl string `header:"Cache-Control"`
+	Body         []byte
+}
+
+// Icon serves a node's own artwork.
+//
+// SVG is an active document format — it can carry script, event handlers and
+// external references — and this editor is embedded in customer pages, so a
+// stored XSS here is a cross-tenant problem rather than a cosmetic one. Three
+// layers defend it and all three are wanted: the bytes are checked when a node
+// registers, so hostile artwork fails to load rather than being rendered safely
+// forever; the response is served inert by these headers; and the editor renders
+// through `<img src>`, which gives the browser's own image sandbox.
+func (handler *NodeTypes) Icon(_ context.Context, input *nodeIconInput) (*nodeIconOutput, error) {
+	if handler.registry == nil {
+		return nil, huma.Error503ServiceUnavailable("the node catalogue is unavailable")
+	}
+	version := workflow.TypeVersion{}
+	if input.Version != "" {
+		parsed, err := workflow.ParseTypeVersion(input.Version)
+		if err != nil {
+			return nil, huma.Error422UnprocessableEntity("the node type version is not a decimal number")
+		}
+		version = parsed
+	}
+	definition, found := handler.registry.Resolve(input.Type, version)
+	if !found {
+		return nil, huma.Error404NotFound("that node type is not registered")
+	}
+	icon := definition.IconFor(input.Theme)
+	if icon == nil {
+		// A node using a builtin glyph ships no bytes; that name resolves in
+		// the editor to a component it already imports.
+		return nil, huma.Error404NotFound("that node type ships no icon")
+	}
+
+	return &nodeIconOutput{
+		ContentType: icon.MediaType,
+		NoSniff:     "nosniff",
+		// Nothing loads, nothing executes, and the document is sandboxed even
+		// if a browser is persuaded to treat it as a page.
+		CSP: "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+		// Immutable per type and version: a node's artwork does not change
+		// without its version changing.
+		CacheControl: "public, max-age=86400, immutable",
+		Body:         icon.Bytes,
 	}, nil
 }

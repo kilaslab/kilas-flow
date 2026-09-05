@@ -32,5 +32,13 @@
 	class="grid shrink-0 place-items-center border {box[size]}"
 	style={`--node-accent: ${visual.accent}; border-color: color-mix(in oklch, var(--node-accent) 28%, transparent); background: color-mix(in oklch, var(--node-accent) ${muted ? 8 : 14}%, transparent)`}
 >
-	<visual.icon class={glyph[size]} style="color: var(--node-accent)" />
+	{#if visual.iconURL}
+		<!-- A node that ships its own artwork. Rendered through <img> and never
+		     through {@html}: SVG is an active document format, this editor is
+		     embedded in customer pages, and an <img> gives the browser's own
+		     image sandbox for free. -->
+		<img src={visual.iconURL} alt="" loading="lazy" decoding="async" class={glyph[size]} />
+	{:else}
+		<visual.icon class={glyph[size]} style="color: var(--node-accent)" />
+	{/if}
 </span>

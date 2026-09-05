@@ -43,7 +43,13 @@ const (
 
 func webhookTrigger() node.Definition {
 	return node.Definition{
-		Type:        WebhookNodeType,
+		Type: WebhookNodeType,
+		// A webhook uses a credential to authenticate callers, not to call out,
+		// so only the modes the inbound boundary can verify are offered.
+		Credentials: []node.CredentialRequirement{
+			{Type: "httpBasicAuth"},
+			{Type: "httpHeaderAuth"},
+		},
 		Version:     workflow.V(1),
 		DisplayName: "Webhook",
 		Description: "Starts a workflow from an inbound HTTP request.",

@@ -45,6 +45,11 @@ type Definition struct {
 	Group []NodeGroup `json:"group"`
 	// Icon names the glyph in each theme. See NodeIcon for the two forms.
 	Icon *NodeIcon `json:"icon,omitempty"`
+	// IconLight and IconDark are a node's own artwork, served by the icon
+	// route. A node using a `builtin:` glyph ships none: that name resolves in
+	// the editor to a component it already imports.
+	IconLight *IconAsset `json:"-"`
+	IconDark  *IconAsset `json:"-"`
 	// IconColor is the accent the canvas draws the node with.
 	IconColor string `json:"iconColor,omitempty"`
 	// Subtitle is a `{{ $parameter.key }}` template the editor renders beneath
@@ -261,6 +266,11 @@ func (registry *Registry) register(definition Definition, source Source) error {
 	}
 	if err := validateDefinition(definition); err != nil {
 		return err
+	}
+	for _, icon := range []*IconAsset{definition.IconLight, definition.IconDark} {
+		if err := ValidateIcon(icon); err != nil {
+			return fmt.Errorf("node definition %q: %w", definition.Type, err)
+		}
 	}
 	key := definitionKey{nodeType: definition.Type, version: definition.Version}
 	if existing, exists := registry.definitions[key]; exists {
@@ -569,6 +579,8 @@ func cloneDefinition(definition Definition) Definition {
 		icon := *definition.Icon
 		definition.Icon = &icon
 	}
+	definition.IconLight = cloneAsset(definition.IconLight)
+	definition.IconDark = cloneAsset(definition.IconDark)
 	if definition.Codex != nil {
 		codex := NodeCodex{
 			Categories: append([]string(nil), definition.Codex.Categories...),

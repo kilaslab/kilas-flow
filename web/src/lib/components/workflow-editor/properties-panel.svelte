@@ -3,7 +3,7 @@
 	import { propertyVisible } from '$lib/workflow-editor/visibility';
 	import type { CredentialResource, Definition, Node, PropertyDefinition } from '$lib/api/generated/models';
 	import type { PropertyScope } from '$lib/workflow-editor/document';
-	import { credentialTypesFor } from '$lib/workflow-editor/credentials';
+	import { credentialTypesFor, requiresCredential } from '$lib/workflow-editor/credentials';
 
 	import NodeIcon from './node-icon.svelte';
 	import PropertyField from './property-field.svelte';
@@ -26,7 +26,8 @@
 
 	// Which credential types this node can authenticate with is derived from the
 	// node type, so the panel stays generic and gains new types for free.
-	const credentialTypes = $derived(credentialTypesFor(definition.type));
+	const credentialTypes = $derived(credentialTypesFor(definition));
+	const credentialRequired = $derived(requiresCredential(definition));
 	const selectedCredential = $derived((typeID: string) => node.credentials?.[typeID] ?? '');
 	let tab = $state<PropertyScope>('parameters');
 	const activeTab = $derived(tab === 'parameters' && (definition.parameters?.length ?? 0) === 0 ? 'settings' : tab);
@@ -76,7 +77,14 @@
 	<div class="min-h-0 flex-1 space-y-3 overflow-y-auto p-2.5" class:pointer-events-none={readOnly} class:opacity-70={readOnly} role="tabpanel" id="node-tabpanel" aria-labelledby={`node-tab-${activeTab}`}>
 		{#if activeTab === 'parameters' && credentialTypes.length > 0 && onCredentialChange}
 			<div class="grid gap-1.5 rounded-lg border border-border bg-background/40 p-2">
-				<p class="text-[0.6875rem] font-medium uppercase tracking-wider text-muted-foreground">Credential</p>
+				<p class="text-[0.6875rem] font-medium uppercase tracking-wider text-muted-foreground">
+					Credential{#if credentialRequired}<span class="text-destructive" aria-hidden="true">*</span><span class="sr-only"> (required)</span>{/if}
+				</p>
+				{#if credentialRequired && !Object.keys(node.credentials ?? {}).length}
+					<!-- A node that cannot run without a credential deserves a
+					     visible prompt rather than a silently empty select. -->
+					<p class="text-[0.6875rem] leading-4 text-destructive">This node needs a credential before it can run.</p>
+				{/if}
 				{#each credentialTypes as typeID (typeID)}
 					{@const matching = credentials.filter((candidate) => candidate.type === typeID)}
 					<label class="font-mono text-[0.625rem] text-muted-foreground" for={`credential-${typeID}`}>{typeID}</label>

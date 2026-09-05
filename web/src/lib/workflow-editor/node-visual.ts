@@ -3,6 +3,9 @@ import type { Component } from 'svelte';
 import Archive from '@lucide/svelte/icons/archive';
 import Bot from '@lucide/svelte/icons/bot';
 import Box from '@lucide/svelte/icons/box';
+import CircleHelp from '@lucide/svelte/icons/circle-help';
+import Repeat from '@lucide/svelte/icons/repeat';
+import StickyNote from '@lucide/svelte/icons/sticky-note';
 import Clock from '@lucide/svelte/icons/clock';
 import Code from '@lucide/svelte/icons/code';
 import CornerDownLeft from '@lucide/svelte/icons/corner-down-left';
@@ -38,38 +41,55 @@ export type NodeShape = 'trigger' | 'step' | 'hub' | 'attachment';
 
 export type NodeVisual = {
 	icon: Component;
-	/** A CSS custom property reference, applied as `--node-accent` on the node root. */
+	/** Set when the node ships its own artwork, which is rendered instead. */
+	iconURL: string | null;
+	/** A colour or CSS custom property reference, applied as `--node-accent`. */
 	accent: string;
 	shape: NodeShape;
 };
 
-const ICONS: Record<string, Component> = {
-	'kilasflow.manual': MousePointerClick,
-	'kilasflow.webhook': Webhook,
-	'kilasflow.schedule': Clock,
-	'kilasflow.set': PencilLine,
-	'kilasflow.if': Split,
-	'kilasflow.merge': Merge,
-	'kilasflow.httpRequest': Globe,
-	'kilasflow.respondToWebhook': CornerDownLeft,
-	'kilasflow.code': Code,
-	'kilasflow.postgres': Database,
-	'kilasflow.mysql': Database,
-	'kilasflow.sqlite': Database,
-	'kilasflow.agent': Bot,
-	'kilasflow.chatModel': Sparkles,
-	'kilasflow.memoryBuffer': Archive,
-	'kilasflow.httpTool': Wrench,
-	'kilasflow.unsupported': TriangleAlert
+/**
+ * Glyphs this editor ships, keyed by the name a definition asks for.
+ *
+ * This is not the old type-to-icon map wearing a new hat. That map keyed on the
+ * *node type*, so a node the editor had never heard of got a grey box; this
+ * keys on a name the **server** chose, so a node added on the server picks a
+ * glyph without a frontend change. A node whose artwork is not a builtin glyph
+ * ships its own bytes and is served by the icon route instead.
+ */
+const GLYPHS: Record<string, Component> = {
+	archive: Archive,
+	bot: Bot,
+	box: Box,
+	brain: Sparkles,
+	clock: Clock,
+	code: Code,
+	'circle-help': CircleHelp,
+	database: Database,
+	'git-branch': Split,
+	'git-merge': Merge,
+	globe: Globe,
+	'memory-stick': Archive,
+	'mouse-pointer-click': MousePointerClick,
+	pencil: PencilLine,
+	reply: CornerDownLeft,
+	repeat: Repeat,
+	'sticky-note': StickyNote,
+	webhook: Webhook,
+	wrench: Wrench
 };
 
-const ACCENTS: Record<string, string> = {
-	Triggers: 'var(--node-trigger)',
-	Core: 'var(--node-core)',
-	AI: 'var(--node-ai)',
-	Database: 'var(--node-data)',
-	Imported: 'var(--node-imported)'
-};
+/** The prefix that marks a glyph the editor already imports. */
+const BUILTIN_PREFIX = 'builtin:';
+
+/**
+ * The fallback glyph, used when a node names one this build does not ship.
+ *
+ * Deliberately distinguishable from a real icon: it means "this editor is older
+ * than this node", which is a different thing from "this node looks like a
+ * box", and a user seeing it should be able to tell.
+ */
+export const FALLBACK_GLYPH = Box;
 
 /** Tile geometry per silhouette, shared by the editor and the replay canvas. */
 export const TILE: Record<NodeShape, string> = {
@@ -89,12 +109,42 @@ export function portOffset(index: number, count: number): string {
 	return `${((index + 1) / (count + 1)) * 100}%`;
 }
 
+/**
+ * How one node is drawn, entirely from what the server declared.
+ *
+ * Nothing here keys on a node type. A type the editor has never seen arrives
+ * with its own glyph or artwork, its own accent and its own subtitle, and needs
+ * no frontend change — which is the whole point, because a generated pack of a
+ * hundred operations is not going to get hand-written entries.
+ */
 export function nodeVisual(definition: Definition): NodeVisual {
 	return {
-		icon: ICONS[definition.type] ?? Box,
-		accent: ACCENTS[definition.category] ?? 'var(--muted-foreground)',
+		icon: builtinGlyph(definition),
+		iconURL: servedIconURL(definition),
+		accent: definition.iconColor || 'var(--muted-foreground)',
 		shape: nodeShape(definition)
 	};
+}
+
+/** The lucide component a definition names, or the fallback. */
+function builtinGlyph(definition: Definition): Component {
+	const name = definition.icon?.light ?? '';
+	if (!name.startsWith(BUILTIN_PREFIX)) return FALLBACK_GLYPH;
+	return GLYPHS[name.slice(BUILTIN_PREFIX.length)] ?? FALLBACK_GLYPH;
+}
+
+/**
+ * The icon route for a node that ships its own artwork, or null.
+ *
+ * Rendered through `<img src>` rather than inlined: SVG is an active document
+ * format, the editor is embedded in customer pages, and an `<img>` gives the
+ * browser's own image sandbox for free.
+ */
+export function servedIconURL(definition: Definition, theme = 'light'): string | null {
+	const name = definition.icon?.light ?? '';
+	if (!name || name.startsWith(BUILTIN_PREFIX)) return null;
+	const version = encodeURIComponent(String(definition.version));
+	return `/api/v1/node-types/${encodeURIComponent(definition.type)}/icon?version=${version}&theme=${encodeURIComponent(theme)}`;
 }
 
 export function nodeShape(definition: Definition): NodeShape {
@@ -124,80 +174,32 @@ export function attachmentPorts(ports: Port[] | null | undefined): Port[] {
 }
 
 /**
- * The one parameter worth reading without opening the node.
+ * The one line under a node's name.
  *
- * A compact tile has room for a single line, so it goes to whatever most
- * distinguishes this node from another of the same type — the method and host
- * for a request, the schedule for a timer, the field count for an assignment.
- * Anything unset is omitted rather than padded with a placeholder: an empty
- * line is honest about a node that is not configured yet.
+ * Rendered from the template the definition declares, over the node's own
+ * parameters. It used to be a switch over eleven known node types with a null
+ * default, so a node the editor had never seen simply had no subtitle.
+ *
+ * A missing parameter renders as nothing rather than as the word "undefined",
+ * and a template that resolves to nothing at all yields null — an empty line is
+ * honest about a node that is not configured yet, and is what the previous
+ * default did deliberately.
  */
 export function nodeSubtitle(node: WorkflowNode, definition: Definition): string | null {
+	const template = definition.subtitle;
+	if (!template) return null;
+
 	const parameters = node.parameters ?? {};
+	const rendered = template.replace(/\{\{\s*\$parameter\.([A-Za-z0-9_]+)\s*\}\}/g, (_, key: string) => {
+		const value = parameters[key];
+		// An expression is shown as the marker rather than its template: the
+		// canvas cannot resolve it, and printing the raw {{ … }} twice over
+		// reads as a rendering bug.
+		if (isExpression(value)) return 'ƒx';
+		if (value === null || value === undefined) return '';
+		return typeof value === 'object' ? '' : String(value);
+	});
 
-	switch (definition.type) {
-		case 'kilasflow.httpRequest':
-		case 'kilasflow.httpTool': {
-			const method = text(parameters.method) || 'GET';
-			const url = text(parameters.url);
-			return url ? `${method} ${host(url)}` : method;
-		}
-		case 'kilasflow.webhook': {
-			const method = text(parameters.httpMethod) || 'POST';
-			const path = text(parameters.path);
-			return path ? `${method} /${path.replace(/^\/+/, '')}` : method;
-		}
-		case 'kilasflow.schedule':
-			return text(parameters.cron) || null;
-		case 'kilasflow.respondToWebhook':
-			return text(parameters.responseCode) || '200';
-		case 'kilasflow.set': {
-			const count = Object.keys(record(parameters.assignments)).length;
-			return count === 0 ? null : count === 1 ? '1 field' : `${count} fields`;
-		}
-		case 'kilasflow.if': {
-			const condition = Array.isArray(parameters.conditions) ? parameters.conditions[0] : undefined;
-			const field = isRecord(condition) ? text(condition.field) : '';
-			return field || null;
-		}
-		case 'kilasflow.merge':
-			return text(parameters.mode) || null;
-		case 'kilasflow.postgres':
-		case 'kilasflow.mysql':
-		case 'kilasflow.sqlite':
-			return text(parameters.operation) || null;
-		case 'kilasflow.chatModel':
-			return text(parameters.model) || null;
-		case 'kilasflow.unsupported':
-			return text(parameters.originalType) || null;
-		default:
-			return null;
-	}
-}
-
-/** Hosts read better than full URLs at tile width, and an expression is shown as itself. */
-function host(url: string): string {
-	if (url.includes('{{')) return url;
-	try {
-		return new URL(url).host;
-	} catch {
-		return url;
-	}
-}
-
-function text(value: unknown): string {
-	if (typeof value === 'string') return value;
-	if (typeof value === 'number') return String(value);
-	// An expression has no resolved value here — the server owns that — so the
-	// template is shown verbatim rather than a stale or invented result.
-	if (isExpression(value)) return value.value;
-	return '';
-}
-
-function record(value: unknown): Record<string, unknown> {
-	return isRecord(value) ? value : {};
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return value !== null && typeof value === 'object' && !Array.isArray(value);
+	const trimmed = rendered.replace(/\s+/g, ' ').trim();
+	return trimmed === '' || trimmed === '/' ? null : trimmed;
 }

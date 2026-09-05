@@ -25,7 +25,12 @@ const HTTPExecutorID = "core.httpRequest"
 
 func httpRequestNode() node.Definition {
 	return node.Definition{
-		Type:        "kilasflow.httpRequest",
+		Type: "kilasflow.httpRequest",
+		Credentials: []node.CredentialRequirement{
+			{Type: "httpBasicAuth"},
+			{Type: "httpHeaderAuth"},
+			{Type: "httpBearerAuth"},
+		},
 		Version:     workflow.V(1),
 		DisplayName: "HTTP Request",
 		Description: "Calls an external HTTP API and returns its response as items.",
@@ -33,7 +38,7 @@ func httpRequestNode() node.Definition {
 		Group:       []node.NodeGroup{node.GroupOutput},
 		Icon:        &node.NodeIcon{Light: "builtin:globe"},
 		IconColor:   "#10b981",
-		Subtitle:    "{{ $parameter.method }}",
+		Subtitle:    "{{ $parameter.method }} {{ $parameter.url }}",
 		Inputs:      mainInput(),
 		Outputs:     mainOutput(),
 		Parameters: []node.PropertyDefinition{

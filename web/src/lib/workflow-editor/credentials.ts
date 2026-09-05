@@ -1,26 +1,25 @@
-/**
- * Which credential types a node type can authenticate with.
- *
- * This is a presentation-side hint only: the server re-checks the type and the
- * credential's host scope before a secret is applied, so a client that sends
- * an unsupported pairing is rejected at execution rather than trusted.
- */
-const BY_NODE_TYPE: Record<string, string[]> = {
-	'kilasflow.httpRequest': ['httpBasicAuth', 'httpHeaderAuth', 'httpBearerAuth'],
-	// A webhook uses a credential to authenticate callers, not to call out, so
-	// only the two modes the inbound boundary can verify are offered.
-	'kilasflow.webhook': ['httpBasicAuth', 'httpHeaderAuth'],
-	// Each database node accepts exactly its own driver's credential; there is
-	// no shared or fallback connection to fall back to.
-	'kilasflow.postgres': ['postgres'],
-	'kilasflow.mysql': ['mysql'],
-	'kilasflow.sqlite': ['sqlite'],
-	// The chat model authenticates with a bearer token, so it reuses the same
-	// credential type an HTTP Request would rather than inventing one.
-	'kilasflow.chatModel': ['httpBearerAuth'],
-	'kilasflow.httpTool': ['httpBasicAuth', 'httpHeaderAuth', 'httpBearerAuth']
-};
+import type { Definition } from '$lib/api/generated/models';
 
-export function credentialTypesFor(nodeType: string): string[] {
-	return BY_NODE_TYPE[nodeType] ?? [];
+/**
+ * Which credential types a node can authenticate with, read from the node's own
+ * declaration.
+ *
+ * This used to be a map keyed by node type with `[]` as its default, and that
+ * default was not cosmetic: the properties panel renders the credential picker
+ * only when this returns something, so a node absent from the map got **no
+ * credential selector at all** — not an empty one, not a disabled one, the
+ * block simply did not render. A generated pack's node would have had no way to
+ * attach the API key it needs.
+ *
+ * It remains a presentation-side hint: the server re-checks the type and the
+ * credential's host scope before a secret is applied, so a client sending an
+ * unsupported pairing is rejected at execution rather than trusted.
+ */
+export function credentialTypesFor(definition: Definition | undefined): string[] {
+	return (definition?.credentials ?? []).map((requirement) => requirement.type);
+}
+
+/** Whether a node cannot run without a credential attached. */
+export function requiresCredential(definition: Definition | undefined): boolean {
+	return (definition?.credentials ?? []).some((requirement) => requirement.required);
 }

@@ -38,6 +38,8 @@ export * from './exportIssueSeverity';
 export * from './exportWorkflowParams';
 export * from './expressionGrammar';
 export * from './field';
+export * from './getNodeIconParams';
+export * from './getNodeIconTheme';
 export * from './healthOutputBody';
 export * from './importedWorkflowResource';
 export * from './importIssue';

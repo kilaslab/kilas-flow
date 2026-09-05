@@ -37,7 +37,11 @@ const (
 
 func databaseNode(nodeType, executorID, displayName, credentialType string) node.Definition {
 	return node.Definition{
-		Type:        nodeType,
+		Type: nodeType,
+		// Each database node accepts exactly its own driver's credential, and
+		// requires it: there is no shared or fallback connection to fall back
+		// to, which validateDatabaseConfiguration already enforces.
+		Credentials: []node.CredentialRequirement{{Type: credentialType, Required: true}},
 		Version:     workflow.V(1),
 		DisplayName: displayName,
 		Description: "Runs SQL against a " + displayName + " database you configure with a credential.",

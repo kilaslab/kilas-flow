@@ -1,7 +1,7 @@
 ---
 id: FEAT-5rvtzc
 title: Serve node icons and remove the hardcoded editor maps
-status: todo
+status: done
 priority: high
 labels:
     - registry
@@ -27,13 +27,13 @@ This ticket makes all three server-driven and adds the icon route that lets a no
 
 ## Acceptance criteria
 
-- [ ] The SPA derives a node's icon, accent, subtitle and offered credential types entirely from `/api/v1/node-types`; `ICONS`, `ACCENTS`, the `nodeSubtitle` switch and `BY_NODE_TYPE` are deleted, not merely bypassed.
-- [ ] A node type the SPA has never seen renders with its own icon, accent and subtitle, and offers its declared credential types, with no frontend change.
-- [ ] A Go route serves node icon bytes, answering only for a registered node type that declares a served icon, and 404s for anything else.
-- [ ] Served SVG cannot execute script in the editor: the response carries `Content-Type: image/svg+xml`, `X-Content-Type-Options: nosniff` and a restrictive `Content-Security-Policy`, and the SPA renders it through `<img>` and never through `{@html}`.
-- [ ] A node that declares no icon still renders a documented fallback glyph rather than an empty box, and the fallback is visibly distinguishable from a real icon.
-- [ ] Light and dark icon variants are both served and the editor picks by the active theme.
-- [ ] Icon responses are cacheable and immutable per node type and version; the existing `node-visual.test.ts` cases are rewritten against server-supplied metadata rather than deleted.
+- [x] The SPA derives a node's icon, accent, subtitle and offered credential types entirely from `/api/v1/node-types`; `ICONS`, `ACCENTS`, the `nodeSubtitle` switch and `BY_NODE_TYPE` are deleted, not merely bypassed.
+- [x] A node type the SPA has never seen renders with its own icon, accent and subtitle, and offers its declared credential types, with no frontend change.
+- [x] A Go route serves node icon bytes, answering only for a registered node type that declares a served icon, and 404s for anything else.
+- [x] Served SVG cannot execute script in the editor: the response carries `Content-Type: image/svg+xml`, `X-Content-Type-Options: nosniff` and a restrictive `Content-Security-Policy`, and the SPA renders it through `<img>` and never through `{@html}`.
+- [x] A node that declares no icon still renders a documented fallback glyph rather than an empty box, and the fallback is visibly distinguishable from a real icon.
+- [x] Light and dark icon variants are both served and the editor picks by the active theme.
+- [x] Icon responses are cacheable and immutable per node type and version; the existing `node-visual.test.ts` cases are rewritten against server-supplied metadata rather than deleted.
 
 ## Implementation Plan
 
@@ -58,3 +58,78 @@ Keep `nodeShape` exactly as it is. It already derives the silhouette from the de
 - `internal/api/docs.go` — the only route that currently sets a `Content-Security-Policy`.
 - `web/src/lib/workflow-editor/node-visual.test.ts` — the cases to rewrite.
 - Local n8n UI reference: `design-refs/n8n-v2/INDEX.md` entries 02, 08 — per-node icons and the accent treatment the hardcoded frontend maps currently stand in for. Captured from a local n8n 2.33.7 instance; gitignored, never vendored.
+
+## Outcome
+
+### The maps are gone
+
+`ICONS`, `ACCENTS`, the `nodeSubtitle` switch and `BY_NODE_TYPE` are deleted,
+not bypassed — a grep for any of them returns nothing outside the generated
+client.
+
+The most consequential was `BY_NODE_TYPE`, whose `[]` default was not cosmetic:
+the properties panel renders the credential picker only when it returns
+something, so a node absent from the map got **no credential selector at all** —
+not empty, not disabled, the block did not render. Every one of the 124
+operations p3 generates would have had no way to attach its API key.
+
+`GLYPHS` is not the old map wearing a new hat. It keys on a **name the server
+chose** rather than on a node type, so a node the editor has never seen picks a
+glyph with no frontend change.
+
+### Icons
+
+`GET /node-types/{type}/icon` serves bytes the registry holds, so a pack loaded
+at composition carries its own artwork without an asset-directory convention
+nobody would remember.
+
+Three defences, all wanted:
+
+1. **At registration.** SVG is an active document format, and this editor is
+   embedded in customer pages, so a stored XSS in an icon is a cross-tenant
+   problem. A pack shipping hostile artwork **fails to load** rather than being
+   rendered safely forever by defences that only have to be forgotten once.
+   Script elements, `foreignObject`, `on*` handlers, external and `javascript:`
+   references, and anything that does not parse are all refused — tested.
+2. **On the response.** `image/svg+xml`, `nosniff`, and
+   `default-src 'none'; style-src 'unsafe-inline'; sandbox`.
+3. **In the editor.** Rendered through `<img src>`, never `{@html}`, which gives
+   the browser's own image sandbox.
+
+Cacheable and immutable per type and version, because artwork does not change
+without the version changing.
+
+The fallback glyph is deliberately distinguishable: it means "this editor is
+older than this node", which is a different thing from "this node looks like a
+box", and a user seeing it should be able to tell.
+
+### Subtitles
+
+Rendered from the definition's template over the node's own parameters. A
+missing parameter renders as nothing rather than "undefined", and a template
+resolving to nothing yields null — an empty line is honest about an
+unconfigured node, which is what the old `default: return null` did on purpose.
+
+An expression renders as `ƒx` rather than its raw template: the canvas cannot
+resolve it, and printing `{{ … }}` on a node reads as a rendering bug.
+
+The reference screenshot confirmed the shape — n8n's own tool subtitle is
+`GET: https://api.frankfur…`, method and URL truncated visually — so a plain
+template loses nothing against the old switch's host extraction.
+
+### Kept
+
+`nodeShape` is untouched. It already derives the silhouette from declared ports
+rather than a list of type names, which is the pattern the rest of this ticket
+copied; regressing it into a server field would have been backwards.
+
+`node-visual.test.ts` was rewritten rather than deleted — 17 cases now, feeding
+server-shaped definitions in, several of them using a node type the editor has
+never heard of, which is what actually proves the change.
+
+### One thing added beyond the criteria
+
+A node declaring a **required** credential with none attached now shows a
+visible prompt and an asterisk, rather than an empty select. The ticket flagged
+that the `{#if}` guard deserved revisiting; a required credential silently
+missing is exactly the case a user cannot diagnose from the panel.

@@ -42,7 +42,10 @@ const descriptorKey = "$ai"
 
 func chatModelNode() node.Definition {
 	return node.Definition{
-		Type:        ChatModelNodeType,
+		Type: ChatModelNodeType,
+		Credentials: []node.CredentialRequirement{
+			{Type: "httpBearerAuth"},
+		},
 		Version:     workflow.V(1),
 		DisplayName: "OpenAI Chat Model",
 		Description: "Supplies an OpenAI-compatible chat model to an AI Agent.",
@@ -118,6 +121,8 @@ func httpToolNode() node.Definition {
 	definition.Category = "AI"
 	definition.Inputs = nil
 	definition.Outputs = []workflow.Port{{Name: "tool", Kind: workflow.ConnectionTool}}
+	// Inherited from the HTTP node it is built from: a tool makes the same
+	// outbound call and authenticates the same way.
 	definition.ExecutorID = HTTPToolExecutorID
 	// The tool's own naming and description sit in front of the HTTP Request
 	// parameters, which are reused verbatim rather than re-declared.

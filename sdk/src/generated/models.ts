@@ -908,6 +908,25 @@ export type StreamExecutionEvents200Item = {
   retry?: number;
 };
 
+export type GetNodeIconParams = {
+/**
+ * Node type version. Omit for the registered default.
+ */
+version?: string;
+/**
+ * Which variant to serve. A node shipping one variant serves it for both.
+ */
+theme?: GetNodeIconTheme;
+};
+
+export type GetNodeIconTheme = typeof GetNodeIconTheme[keyof typeof GetNodeIconTheme];
+
+
+export const GetNodeIconTheme = {
+  light: 'light',
+  dark: 'dark',
+} as const;
+
 export type ExportWorkflowParams = {
 /**
  * Only "n8n" is supported
@@ -1718,6 +1737,66 @@ export const listNodeTypes = async ( options?: RequestInit): Promise<listNodeTyp
 
   const data: listNodeTypesResponse['data'] = body ? JSON.parse(body) : {}
   return { data, status: res.status, headers: res.headers } as listNodeTypesResponse
+}
+
+
+
+export type getNodeIconResponse200 = {
+  data: string
+  status: 200
+}
+
+export type getNodeIconResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type getNodeIconResponseSuccess = (getNodeIconResponse200) & {
+  headers: Headers;
+};
+export type getNodeIconResponseError = (getNodeIconResponseDefault) & {
+  headers: Headers;
+};
+
+export type getNodeIconResponse = (getNodeIconResponseSuccess | getNodeIconResponseError)
+
+export const getGetNodeIconUrl = (type: string,
+    params?: GetNodeIconParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/node-types/${type}/icon?${stringifiedParams}` : `/api/v1/node-types/${type}/icon`
+}
+
+/**
+ * Returns the artwork a node ships. Only a registered node type that declares a served icon answers; everything else is 404.
+ * @summary Serve a node's icon
+ */
+export const getNodeIcon = async (type: string,
+    params?: GetNodeIconParams, options?: RequestInit): Promise<getNodeIconResponse> => {
+
+  const res = await fetch(getGetNodeIconUrl(type,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: getNodeIconResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as getNodeIconResponse
 }
 
 

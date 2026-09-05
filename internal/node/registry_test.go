@@ -744,3 +744,63 @@ func TestEveryBuiltinIsTaggedAsSuch(t *testing.T) {
 		}
 	}
 }
+
+// TestAHostileIconIsRefusedAtRegistration is the layer that matters most.
+//
+// SVG is an active document format — it can carry script, event handlers and
+// external references — and this editor is embedded in customer pages, so a
+// stored XSS in an icon is a cross-tenant problem rather than a cosmetic one.
+// Checking at registration means a pack shipping hostile artwork fails to load,
+// loudly, rather than being rendered safely forever by defences that only have
+// to be forgotten once.
+func TestAHostileIconIsRefusedAtRegistration(t *testing.T) {
+	register := func(body string) error {
+		return node.NewRegistry().RegisterFrom(node.SourcePack, node.Definition{
+			Type: "pack.icon", Version: workflow.V(1),
+			DisplayName: "Icon", Category: "Test", ExecutorID: "pack.exec",
+			Group:     []node.NodeGroup{node.GroupTransform},
+			IconLight: &node.IconAsset{MediaType: node.IconSVG, Bytes: []byte(body)},
+		})
+	}
+
+	for name, body := range map[string]string{
+		"script element":  `<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`,
+		"event handler":   `<svg xmlns="http://www.w3.org/2000/svg"><circle onload="alert(1)" r="1"/></svg>`,
+		"foreign object":  `<svg xmlns="http://www.w3.org/2000/svg"><foreignObject><body/></foreignObject></svg>`,
+		"external image":  `<svg xmlns="http://www.w3.org/2000/svg"><image href="https://evil.test/x.png"/></svg>`,
+		"javascript href": `<svg xmlns="http://www.w3.org/2000/svg"><a href="javascript:alert(1)"/></svg>`,
+		"not an svg":      `{"totally":"not svg"}`,
+	} {
+		if err := register(body); err == nil {
+			t.Errorf("%s: a hostile icon was accepted", name)
+		}
+	}
+
+	// Ordinary artwork registers.
+	if err := register(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 4h16v16H4z"/></svg>`); err != nil {
+		t.Errorf("an ordinary SVG was refused: %v", err)
+	}
+}
+
+// TestIconVariantsFallBackToLight covers a node shipping one variant.
+func TestIconVariantsFallBackToLight(t *testing.T) {
+	light := &node.IconAsset{MediaType: node.IconPNG, Bytes: []byte("light")}
+	dark := &node.IconAsset{MediaType: node.IconPNG, Bytes: []byte("dark")}
+
+	both := node.Definition{IconLight: light, IconDark: dark}
+	if string(both.IconFor("dark").Bytes) != "dark" {
+		t.Error("the dark variant was not served for the dark theme")
+	}
+	if string(both.IconFor("light").Bytes) != "light" {
+		t.Error("the light variant was not served for the light theme")
+	}
+
+	onlyLight := node.Definition{IconLight: light}
+	if string(onlyLight.IconFor("dark").Bytes) != "light" {
+		t.Error("a node shipping one variant did not fall back to it")
+	}
+
+	if (node.Definition{}).IconFor("light") != nil {
+		t.Error("a node shipping no artwork returned some")
+	}
+}
