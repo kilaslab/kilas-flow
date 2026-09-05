@@ -6,9 +6,13 @@ An embeddable open-source workflow engine for APIs, AI agents, and SaaS products
 
 Go-native · single binary · API-first · embeddable · white-label · SQLite by default
 
-> **Status: scaffolding.** The HTTP server, configuration, persistence, generated
-> API documentation and the SPA shell are in place and wired together. The
-> workflow engine itself starts at Milestone 1 — see [Roadmap](#roadmap).
+The V1 platform is built. The execution engine, the canvas editor, the node
+registry, encrypted credentials, the expression evaluator, webhook and cron
+triggers, the database and AI nodes, the WebAssembly Go Code node, the
+white-label embedded editor, the n8n importer and exporter, the WAHA and
+Telegram node packs and the declarative routing interpreter that runs them are
+all in the tree and covered by tests. Current work is n8n workflow
+compatibility; `.pine/roadmap.md` is where that is planned and tracked.
 
 ## Quick start
 
@@ -21,9 +25,10 @@ make dev            # Go on :8080, Vite on :5173
 that directory itself, so it does not require adding `GOBIN` or `GOPATH/bin`
 to your shell `PATH`. Set `AIR=/path/to/air make dev` only to override it.
 
-Open **<http://localhost:5173>**. The page calls the Go backend through the Vite
-proxy and reports what it gets back, so a broken proxy or a stopped backend is
-visible immediately.
+Open **<http://localhost:5173>**. The page there calls the backend's liveness
+and readiness endpoints through the Vite proxy and shows what came back, so a
+broken proxy or a stopped backend is visible immediately rather than as an
+empty editor. The editor itself is at `/app/workflows`.
 
 Production build — one binary containing the API and the editor:
 
@@ -36,18 +41,53 @@ Everything is then served from <http://localhost:8080>.
 
 ## Endpoints
 
-| Path | Description |
+| Path | What it is |
 | --- | --- |
-| `GET /api/v1/health` | Liveness. Always 200 while the process serves. |
+| `GET /api/v1/health` | Liveness. 200 while the process serves; touches no dependency. |
 | `GET /api/v1/ready` | Readiness. 503 when the database is unreachable. |
-| `GET /docs` | API reference, rendered with Scalar |
-| `GET /api/openapi.json` | OpenAPI 3.1 document (also `.yaml`, and 3.0.3 variants) |
-| `POST /webhook/:id` | Reserved for workflow triggers — currently 501 |
-| `GET /*` | The editor SPA, with history-API fallback |
+| `GET /docs` | The API reference, rendered from the OpenAPI document. |
+| `GET /api/openapi.json` | OpenAPI 3.1. Also `.yaml`, and `/api/openapi-3.0.json` / `.yaml` for tools that cannot read 3.1. |
+| `/webhook/{route}` | Inbound workflow triggers. |
+| `GET /*` | The editor SPA, with history-API fallback. |
 
-The OpenAPI document is generated from the Go handler types rather than
-maintained alongside them, so the published contract cannot drift from the code
-that serves it.
+Everything else is under `/api/v1` — 35 operations across workflows, executions,
+credentials, schedules, node types, embed sessions and n8n import/export — and
+is deliberately not listed here. This table used to name two of those 35 and
+give no sign that the rest existed, and it described the webhook route as
+returning 501 long after it had stopped doing so — the ordinary fate of a
+hand-maintained index of an API that is still growing. `/docs` and
+`/api/openapi.json` are generated from the same Go types that serve the
+requests, so they cannot drift the way this table did.
+
+### The webhook route
+
+`/webhook/{route}` is the live inbound surface. `{route}` is an opaque hex
+segment minted per trigger node the first time its workflow is activated, and
+then reused for the life of that node — reissuing it on each activation would
+change the public URL every time a workflow was toggled off and on, breaking
+every sender already configured against it. The route carries 16 bytes of
+entropy because this endpoint is very often unauthenticated, and being
+unguessable is then the only defence it has.
+
+Every request that does not resolve to an active binding gets the same 404 with
+the same body. An inactive workflow, a deleted one, one that was never
+activated, and a request with the wrong HTTP method are indistinguishable from
+outside, so the endpoint cannot be used to enumerate which workflows exist. The
+accepted method comes from the trigger node's own configuration rather than
+being fixed at `POST`.
+
+Beyond that, a trigger type can verify a delivery before it becomes an
+execution — Telegram's `X-Telegram-Bot-Api-Secret-Token`, WAHA's HMAC over the
+raw request body — and a failed check is a 401 with no run recorded. A delivery
+the trigger was configured to filter out is answered `200` instead, because it
+was received correctly and deliberately not acted on, and telling the sender
+otherwise would make it retry. Retries carrying a delivery identifier the
+trigger names are deduplicated, so a sender that gives up waiting and repeats
+itself does not run the workflow again.
+
+Two limits bound a request: `webhook.max_body_bytes` (1 MiB) and
+`webhook.response_timeout` (30 seconds, for a workflow configured to answer
+from its own graph).
 
 ## Configuration
 
@@ -62,7 +102,11 @@ KILASFLOW_DATABASE_DSN='postgres://kilasflow:pw@localhost:5432/kilasflow' \
 ```
 
 Environment variables take precedence over the file, which takes precedence over
-the defaults. The variable name is `KILASFLOW_<SECTION>_<KEY>`.
+the defaults. The variable name is `KILASFLOW_<SECTION>_<KEY>`, and only the
+first underscore after the prefix separates the section from the key — the rest
+belong to the key. `KILASFLOW_SERVER_READ_HEADER_TIMEOUT` therefore sets
+`server.read_header_timeout`, not `server.read.header.timeout`, which would
+match no field and be discarded without a word.
 
 Credentials are encrypted at rest with AES-256-GCM. The master key comes from
 the environment, never from the config file:
@@ -71,38 +115,78 @@ the environment, never from the config file:
 export KILASFLOW_ENCRYPTION_KEY="$(openssl rand -base64 32)"
 ```
 
+Without it the server still starts, but credential storage is switched off and
+says so in the log at startup. Refusing to boot would make the key mandatory for
+anyone who only wants to look at the editor; defaulting to a built-in key would
+mean shipping secrets encrypted with a key that is public.
+
 ## Layout
 
 ```
-cmd/kilasflow/            entrypoint; wiring only
+cmd/kilasflow/          entrypoint; wiring only
+cmd/nodepackgen/        generates a node pack from an OpenAPI document
 internal/
-  api/                HTTP transport, routes, generated OpenAPI
-  config/             layered configuration
-  database/           GORM setup for SQLite and PostgreSQL
-  web/                embeds and serves the built SPA
-  engine/             workflow execution            (Milestone 1)
-  node/               node contract and registry    (Milestone 1)
-  workflow/           canonical workflow document   (Milestone 1)
-  execution/          run and node-run records      (Milestone 1)
-  repository/         persistence interfaces        (Milestone 1)
-  expression/         {{ $json.x }} evaluation      (Milestone 2)
-  credentials/        encrypted secret storage      (Milestone 2)
-  webhook/            inbound trigger routing       (Milestone 2)
-  scheduler/          cron triggers                 (Milestone 2+)
-  ai/                 agent contracts               (Milestone 4)
-  ai/maf/             Microsoft Agent Framework adapter
-  runcode/            Go Code node, WASM sandbox    (Milestone 5)
-  embed/              iframe session security       (Milestone 6)
-nodes/                built-in node implementations
-web/                  SvelteKit SPA
+  api/                  HTTP transport, routes, generated OpenAPI, docs page
+  api/handlers/         the operations under /api/v1
+  api/middleware/       request identity, access logging, panic recovery
+  config/               layered configuration
+  database/             GORM setup for SQLite and PostgreSQL
+  repository/           persistence interfaces and their GORM implementations
+  web/                  embeds and serves the built SPA
+
+  workflow/             the canonical workflow document: shape, validation, versions
+  node/                 the node contract and the registry
+  property/             the description language for a configurable field
+  engine/               executes a compiled workflow graph
+  execution/            a run and its per-node runs
+  events/               the execution event contract and the in-process broker
+  expression/           evaluates the `{{ … }}` templates a parameter may carry
+  conditions/           the filter language IF, Filter and Switch share
+  datetime/             the one place instants become text and text becomes instants
+  binary/               payload storage for items that refer to files
+
+  credentials/          stores and resolves the secrets workflows reference
+  webhook/              maps an inbound request to its workflow and trigger node
+  scheduler/            runs cron-triggered workflows
+  embed/                issues and validates iframe editor sessions
+  safehttp/             outbound clients that refuse to reach internal infrastructure
+
+  routing/              interprets declarative node metadata as an HTTP request
+  nodepack/             the on-disk format of a generated node pack
+  loadoptions/          resolves a property's selectable values at edit time
+  sqlbuild/             turns a described operation into a bound SQL statement
+  sqlnode/              connects workflows to databases the user configures
+  runcode/              compiles and executes user-supplied Go for the Code node
+  ai/                   agent contracts and the built-in tool loop
+  interop/n8n/          converts between n8n workflow JSON and our document
+  guardrails/           checks for invariants no single package owns
+
+nodes/                  the built-in node definitions and executors
+packs/                  declarative node packs — WAHA (generated), Telegram (hand-written)
+third_party/            vendored upstream specs the packs are generated from
+sdk/                    @kilasflow/sdk, the TypeScript host SDK
+pkg/sdk/                reserved for the guest-side Go module a WASM pack author will import
+schemas/                the published workflow JSON Schema
+web/                    SvelteKit SPA
 ```
 
-The engine deliberately does not import `internal/api`, GORM, or any agent
-framework. Persistence is reached through repository interfaces and the agent
-runtime through `internal/ai`, so either can be replaced without touching
-execution semantics.
+`internal/ai/maf/` is a `doc.go` and nothing else. It reserves the one place
+allowed to import Microsoft Agent Framework for Go, so that when the adapter is
+written the churn of a preview-stage dependency is confined to a single package.
+The runtime that actually serves the AI nodes today is `ai.LoopRuntime`, a
+deterministic tool loop behind the same `ai.AgentRuntime` interface.
+
+The engine does not import `internal/api` or `internal/ai`: it reaches
+persistence through the `internal/repository` interfaces and the agent runtime
+through an injected `ai.AgentRuntime`, so either can be replaced without
+touching execution semantics. GORM is nonetheless in the engine's transitive
+closure, because `internal/repository` holds the interfaces and their GORM
+implementations in one package. `internal/workflow` and `internal/execution` —
+the document and the run record — are free of it.
 
 ## Development
+
+`make help` lists every target; the ones worth knowing:
 
 | Command | Effect |
 | --- | --- |
@@ -111,6 +195,7 @@ execution semantics.
 | `make lint` | `go vet`, `gofmt`, and `svelte-check` |
 | `make build-all` | SPA + binary |
 | `make docker` | Container image |
+| `make node-packs` | Regenerate the committed packs from their vendored specs |
 | `make smoke-sqlite` | Embedded binary against a fresh temporary SQLite database |
 | `make smoke-dev` | Vite development proxy against a temporary Go server |
 | `make smoke-docker` | Non-root Docker image with a temporary persisted SQLite bind mount |
@@ -157,7 +242,9 @@ Scalar still attempts at runtime.
 The result is a documentation page that makes **zero external requests** — it
 works air-gapped, and an embedding customer's traffic never reaches a third
 party. `TestDocsUIHasNoExternalDependencies` guards the page; the CSP guards
-the runtime. Cost: about 3.6 MB of the binary.
+the runtime. Cost: 3.6 MB of the binary, which is what `vendor-docs.mjs` reports
+for the bundle it copies. A binary built without a frontend build serves a
+fallback page pointing at the raw specification, rather than a blank screen.
 
 ### Receiving Telegram updates on a laptop
 
@@ -192,18 +279,13 @@ Either way the bot token is a `telegramApi` credential. Its Base URL field is
 normally empty; set it only if you run [Telegram's own local Bot API
 server](https://core.telegram.org/bots/api#using-a-local-bot-api-server).
 
-## Roadmap
+## Design history
 
-| Milestone | Scope |
-| --- | --- |
-| 0 | Foundation — configuration, persistence, HTTP, SPA, single binary |
-| 1 | Workflow core — CRUD, node registry, graph runner, Manual/Set/IF/Merge |
-| 2 | API automation — HTTP Request, webhooks, credentials, expressions |
-| 3 | Database nodes — PostgreSQL, MySQL, SQLite |
-| 4 | AI — agent runtime adapter, chat model, memory, tools |
-| 5 | Go Code node — WASM compilation and sandboxed execution |
-| 6 | Embedding — `/embed/:id`, sessions, postMessage, white-label |
-| 7 | Interop — n8n JSON import and export |
+[`gflow-prd-v1.md`](gflow-prd-v1.md) is the product requirements document V1 was
+built from. It is kept for its reasoning, not as a description of the system:
+`gflow` was this project's working name, and where the document and the code
+disagree the code is right. Its own header says so and gives examples. Current
+planning lives in `.pine/roadmap.md` and the tickets under `.pine/tickets/`.
 
 ## License
 
