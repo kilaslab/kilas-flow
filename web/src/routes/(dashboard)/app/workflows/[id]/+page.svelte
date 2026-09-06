@@ -14,6 +14,7 @@
 	import { activationFailure, activationNotices, dismissNotice, type ActivationNoticeView } from '$lib/workflow-editor/activation';
 	import { setExpressionGrammar } from '$lib/workflow-editor/expression-grammar';
 	import WorkflowEditor, { type WorkflowHistoryHost } from '$lib/components/workflow-editor/workflow-editor.svelte';
+	import ExportDialog from './export-dialog.svelte';
 	import { Button } from '$lib/components/ui/button';
 	import { validationIssuesFromApiError, type CanvasValidationIssue } from '$lib/workflow-editor/validation';
 
@@ -219,7 +220,10 @@
 	<a href="/app/workflows" class="grid size-7 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" aria-label="All workflows">
 		<ArrowLeft aria-hidden="true" class="size-3.5" />
 	</a>
-	<p class="min-w-0 max-w-24 truncate text-[0.8125rem] font-medium sm:max-w-56">{currentWorkflow?.name ?? 'Loading…'}</p>
+	<p class="min-w-0 max-w-24 flex-1 truncate text-[0.8125rem] font-medium sm:max-w-56">{currentWorkflow?.name ?? 'Loading…'}</p>
+	{#if currentWorkflow}
+		<span class="ml-auto shrink-0"><ExportDialog workflowID={currentWorkflow.id} workflowName={currentWorkflow.name} /></span>
+	{/if}
 {/snippet}
 
 <section class="flex h-full min-h-0 flex-col">

@@ -19,6 +19,15 @@
 	const node = $derived(data.workflowNode);
 	const subtitle = $derived(nodeSubtitle(node, data.definition));
 	const invalid = $derived(Boolean(data.validationMessage));
+	// An n8n import keeps a node it has no equivalent for as a visible
+	// placeholder and stores the source identity in the parameters capsule
+	// (`originalType`, `originalTypeVersion`). The capsule marks the tile so
+	// the placeholder is identifiable without opening it.
+	const capsuleType = $derived(
+		typeof node.parameters?.originalType === 'string' && node.parameters.originalType !== ''
+			? node.parameters.originalType
+			: null
+	);
 
 	const mainInputs = $derived(mainPorts(data.definition.inputs));
 	const mainOutputs = $derived(mainPorts(data.definition.outputs));
@@ -92,6 +101,9 @@
 	<div class="pointer-events-none absolute left-1/2 top-full w-40 -translate-x-1/2 pt-1.5 text-center">
 		{#if visual.shape !== 'hub'}
 			<p class="truncate text-[0.8125rem] font-semibold leading-tight">{node.name}</p>
+		{/if}
+		{#if capsuleType}
+			<p class="mx-auto mt-0.5 w-fit truncate rounded-full border border-destructive/30 bg-destructive/10 px-1.5 py-px text-[0.625rem] font-medium leading-tight text-destructive" title={`Unsupported node imported from n8n as ${capsuleType}`}>Unsupported</p>
 		{/if}
 		{#if subtitle}
 			<p class="truncate pt-0.5 font-mono text-[0.6875rem] leading-tight text-muted-foreground">{subtitle}</p>

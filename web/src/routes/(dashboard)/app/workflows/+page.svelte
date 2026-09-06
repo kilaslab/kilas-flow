@@ -12,6 +12,7 @@
 	import * as Dialog from '$lib/components/ui/dialog';
 	import { Input } from '$lib/components/ui/input';
 	import { activationFailure, activationNotices, dismissNotice, type ActivationNoticeView } from '$lib/workflow-editor/activation';
+	import ImportDialog from './import-dialog.svelte';
 
 	const workflows = createListWorkflows<WorkflowSummary[]>(() => ({
 		query: {
@@ -122,7 +123,9 @@
 				{#if !workflows.isPending && !workflows.isError}{rows.length} in this workspace{:else}Automation flows your product exposes{/if}
 			</p>
 		</div>
-		<Dialog.Root bind:open={createOpen} onOpenChange={(open) => !open && resetCreateDialog()}>
+		<div class="flex shrink-0 items-center gap-2">
+			<ImportDialog onImported={() => void workflows.refetch()} />
+			<Dialog.Root bind:open={createOpen} onOpenChange={(open) => !open && resetCreateDialog()}>
 			<Dialog.Trigger>
 				{#snippet child({ props })}
 					<Button {...props} size="sm">
@@ -151,6 +154,7 @@
 				</form>
 			</Dialog.Content>
 		</Dialog.Root>
+		</div>
 	</div>
 
 	{#if activationError}

@@ -31,6 +31,7 @@
 	import PowerOff from '@lucide/svelte/icons/power-off';
 	import Save from '@lucide/svelte/icons/save';
 	import Trash2 from '@lucide/svelte/icons/trash-2';
+	import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
 	import X from '@lucide/svelte/icons/x';
 
 	import type { CredentialResource, Definition, Document, WorkflowDocumentInput } from '$lib/api/generated/models';
@@ -190,6 +191,23 @@
 	// The inspector only exists while a node is selected. A permanent empty panel
 	// would cost the canvas 20rem to say nothing, and the canvas is what the user
 	// came here for.
+	// A selected node the catalogue does not know — most often an n8n
+	// import's unsupported placeholder — has no definition, so the inspector
+	// above never opens for it. It still needs a surface that says what it
+	// is: the import capsule in its parameters carries the original n8n type
+	// and version, and without that the placeholder is a grey tile with no
+	// explanation. Read-only by construction: there is nothing to edit.
+	const selectedUncatalogued = $derived(selectedNode !== null && selectedDefinition === null);
+	const capsuleOrigin = $derived(
+		selectedNode &&
+		typeof selectedNode.parameters?.originalType === 'string' &&
+		selectedNode.parameters.originalType !== ''
+			? {
+					type: selectedNode.parameters.originalType,
+					version: selectedNode.parameters.originalTypeVersion
+				}
+			: null
+	);
 	const showInspector = $derived(!narrow.current && Boolean(selectedNode && selectedDefinition));
 
 	setCanvasActions({
@@ -501,7 +519,7 @@
 		</div>
 	{/if}
 
-	<div class="relative flex min-h-0 flex-1 flex-col lg:grid" style={showInspector ? 'grid-template-columns: minmax(0,1fr) 20rem' : 'grid-template-columns: minmax(0,1fr)'}>
+	<div class="relative flex min-h-0 flex-1 flex-col lg:grid" style={showInspector || selectedUncatalogued ? 'grid-template-columns: minmax(0,1fr) 20rem' : 'grid-template-columns: minmax(0,1fr)'}>
 		<!-- tabindex makes this a place focus can land after a node is deleted; -1
 		     keeps it out of the tab sequence. -->
 		<div bind:this={canvasRegion} tabindex="-1" class="relative min-h-0 flex-1 overflow-hidden outline-none" data-testid="workflow-canvas">
@@ -528,11 +546,57 @@
 				<PropertiesPanel node={selectedNode} definition={selectedDefinition} {credentials} readOnly={locked} onChange={updateProperty} onCredentialChange={updateCredential} />
 			</aside>
 		{/if}
+		{#if selectedUncatalogued && selectedNode}
+			<aside tabindex="-1" class="hidden min-h-0 overflow-y-auto border-l border-border bg-card outline-none lg:block">
+				<section aria-label={`${selectedNode.name} details`} class="flex h-full min-h-0 flex-col p-3">
+					<p class="flex items-center gap-1.5 text-xs font-semibold">
+						<TriangleAlert aria-hidden="true" class="size-3.5 shrink-0 text-destructive" />
+						{capsuleOrigin ? 'Unsupported node' : 'Unknown node type'}
+					</p>
+					<p class="mt-1 truncate text-[0.8125rem] font-medium">{selectedNode.name}</p>
+					{#if capsuleOrigin}
+						<dl class="mt-2 grid gap-1 rounded-lg border border-border bg-muted/40 px-2.5 py-2 font-mono text-[0.6875rem] leading-5">
+							<div class="flex min-w-0 gap-2"><dt class="shrink-0 text-muted-foreground">type</dt><dd class="min-w-0 flex-1 truncate">{capsuleOrigin.type}</dd></div>
+							{#if capsuleOrigin.version !== undefined && capsuleOrigin.version !== null}
+								<div class="flex min-w-0 gap-2"><dt class="shrink-0 text-muted-foreground">version</dt><dd class="min-w-0 flex-1 truncate">{String(capsuleOrigin.version)}</dd></div>
+							{/if}
+						</dl>
+						<p class="mt-2 text-xs leading-5 text-muted-foreground">Imported from n8n as an unsupported placeholder. Replace this node before activating or running this workflow.</p>
+						<p class="mt-1 text-xs leading-5 text-muted-foreground">Its original configuration is preserved and will round-trip on export.</p>
+					{:else}
+						<p class="mt-2 text-xs leading-5 text-muted-foreground">This stored node version is not available in the current registry. Its configuration will be preserved.</p>
+					{/if}
+				</section>
+			</aside>
+		{/if}
 
 		{#if narrow.current && propertyPanelOpen && selectedNode && selectedDefinition}
 			<div bind:this={propertyDialog} class="absolute inset-x-2 bottom-2 z-30 max-h-[min(28rem,calc(100%-1rem))] overflow-hidden rounded-xl border border-border bg-card shadow-xl" role="dialog" aria-modal="true" aria-label={`${selectedNode.name} properties`} tabindex="-1" onkeydown={handlePropertyDialogKeydown}>
 				<div class="flex justify-end border-b border-border px-1.5 py-1"><button bind:this={propertyCloseButton} type="button" class="grid size-6 place-items-center rounded-md text-muted-foreground hover:bg-muted" aria-label="Close node properties" onclick={closePropertyPanel}><X aria-hidden="true" class="size-3.5" /></button></div>
 				<PropertiesPanel node={selectedNode} definition={selectedDefinition} {credentials} readOnly={locked} onChange={updateProperty} onCredentialChange={updateCredential} />
+			</div>
+		{/if}
+		{#if narrow.current && propertyPanelOpen && selectedUncatalogued && selectedNode}
+			<div class="absolute inset-x-2 bottom-2 z-30 max-h-[min(28rem,calc(100%-1rem))] overflow-hidden rounded-xl border border-border bg-card shadow-xl" role="dialog" aria-modal="true" aria-label={`${selectedNode.name} details`} tabindex="-1" onkeydown={handlePropertyDialogKeydown}>
+				<div class="flex justify-end border-b border-border px-1.5 py-1"><button type="button" class="grid size-6 place-items-center rounded-md text-muted-foreground hover:bg-muted" aria-label="Close node details" onclick={closePropertyPanel}><X aria-hidden="true" class="size-3.5" /></button></div>
+				<section aria-label={`${selectedNode.name} details`} class="max-h-[min(24rem,calc(100%-3rem))] overflow-y-auto p-3">
+					<p class="flex items-center gap-1.5 text-xs font-semibold">
+						<TriangleAlert aria-hidden="true" class="size-3.5 shrink-0 text-destructive" />
+						{capsuleOrigin ? 'Unsupported node' : 'Unknown node type'}
+					</p>
+					<p class="mt-1 truncate text-[0.8125rem] font-medium">{selectedNode.name}</p>
+					{#if capsuleOrigin}
+						<dl class="mt-2 grid gap-1 rounded-lg border border-border bg-muted/40 px-2.5 py-2 font-mono text-[0.6875rem] leading-5">
+							<div class="flex min-w-0 gap-2"><dt class="shrink-0 text-muted-foreground">type</dt><dd class="min-w-0 flex-1 truncate">{capsuleOrigin.type}</dd></div>
+							{#if capsuleOrigin.version !== undefined && capsuleOrigin.version !== null}
+								<div class="flex min-w-0 gap-2"><dt class="shrink-0 text-muted-foreground">version</dt><dd class="min-w-0 flex-1 truncate">{String(capsuleOrigin.version)}</dd></div>
+							{/if}
+						</dl>
+						<p class="mt-2 text-xs leading-5 text-muted-foreground">Imported from n8n as an unsupported placeholder. Replace this node before activating or running this workflow.</p>
+					{:else}
+						<p class="mt-2 text-xs leading-5 text-muted-foreground">This stored node version is not available in the current registry. Its configuration will be preserved.</p>
+					{/if}
+				</section>
 			</div>
 		{/if}
 	</div>
