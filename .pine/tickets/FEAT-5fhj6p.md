@@ -1,7 +1,7 @@
 ---
 id: FEAT-5fhj6p
 title: Run the epic acceptance scenario as an executable suite
-status: todo
+status: doing
 priority: high
 labels:
     - e2e
@@ -16,7 +16,7 @@ deps:
 parent: EPIC-m42s3g
 phase: p11
 created: "2026-09-05T12:06:43Z"
-updated: "2026-09-05T12:06:43Z"
+updated: "2026-09-06T06:58:47Z"
 ---
 
 ## Scope
@@ -67,3 +67,78 @@ One thing to decide: what happens when a proof fails because a third party is do
 - `README.md` — the Telegram tunnel walkthrough, `server.public_url`, and the secret-token scheme.
 - `.pine/roadmap.md` — "Open items for the owner", the credentials this suite formalises.
 - `scripts/smoke-postgres.sh` — the PostgreSQL topology the datastore proof runs on.
+
+## E2E progress (EpicSuite, 2026-09-06)
+
+Delivered, verified, not closed (main verifies and closes). Three new files,
+no harness edits, no edits outside new e2e files:
+
+- `e2e/tests/epic-acceptance.spec.ts` — the four epic proofs in order plus a
+  report test, `test.describe.serial`, observable waits only, single admitted
+  private endpoint per server, `allow_private_networks` never set.
+- `e2e/fixtures/epic-telegram.ts` — Telegram Bot API stub
+  (getWebhookInfo/setWebhook/deleteWebhook/sendMessage/getUpdates) plus a
+  byte-transparent /v1/* proxy to the local Ollama, so one endpoint covers
+  the bot and the model together; secret derivation, signed delivery helper,
+  Ollama probe/warm (xr7ga9 skip convention), full-channel SSE reader.
+- `e2e/fixtures/epic-external.ts` — scratch external app (npm pack, tarball
+  shape check, plain `npm install` outside the repo, packed-client import),
+  its host page + static server, `withEnv` server tuning, and the mechanical
+  no-Node check (lsof LISTEN pid resolves to the kilasflow binary; its
+  subtree holds no `node` process).
+
+Verification: `npx playwright test tests/epic-acceptance.spec.ts` (same path
+as `make test-e2e`; binary+SPA via `make build-all`) → 6 passed, 1 skipped,
+~20s warm. Per-proof evidence:
+
+- Proof 1 (Telegram+AI): activation called getWebhookInfo then one setWebhook
+  with `url=https://epic-external.invalid/webhook/<32hex>`,
+  `allowed_updates=["message"]`, and `secret_token` equal to the test's own
+  HMAC derivation; wrong/missing secret → 401 with no execution; real update
+  → succeeded; agent output non-empty; `ai.model.delta` + `execution.completed`
+  on the channel; stub got exactly one sendMessage with chat 774411 and text
+  byte-equal to the agent output; deactivation called deleteWebhook and the
+  route 404s afterwards. lsof+ps verdict clean while live.
+- Proof 2 (WAHA x2 tenants): chatting template imported twice, fresh opaque
+  routes, cross-delivery 404; forged HMAC → 401 with no execution, correct
+  HMAC (sha512 hex over raw bytes) → succeeded on each tenant with the other
+  silent; ≥2 `/api/sendText` stub hits containing "pong".
+- Proof 3 (datastore sqlite): create → 2 columns → rename; workflow
+  write+filtered read succeeded with the row listed; n8n CSV round-trips
+  byte-identical; n8n Data Table import blocks naming dt_metrics_01, binds to
+  the store and runs; second instance reads 404 (indistinguishable bodies)
+  on get/rows/write/enumerate and its node probe fails `unknown datastore`
+  with tenant A's row untouched.
+- Proof 3 PG: SKIPPED — no DSN (`pgSkipReason()`); same gate as
+  datastore-pg.spec.ts. Nothing asserted silently.
+- Proof 4 (external, no checkout): scratch dir in os.tmpdir (asserted outside
+  the repo), SDK 0.1.0 packed+installed via plain npm; tarball holds
+  dist/server.js and no src/; directory-installed pack.e2ehello lists with
+  source pack and runs to stub POST /sendMessage; SDK datastore
+  create/edit/write/filtered-update/cursor-exhaustion/required-filter-refusal/delete;
+  SDK importWorkflow reports /webhook/<32hex> and activates; SDK-minted embed
+  session mounts the editor in the external host.html (embed-ready observed,
+  waiting state gone, no alert). lsof+ps verdict clean while connected.
+- Report: server f7deaa3-dirty, sdk 0.1.0, 56 node-types (builtin:51 pack:5),
+  corpus present, postgres absent, ollama gemma4:12b-mlx.
+
+Driver matrix: sqlite always; postgres joins on DSN; proof 1 joins on the
+pinned Ollama model; proof 2 joins on the materialised corpus. All three
+gates skip with their recovery command.
+
+Honest deviations from the ticket (all stated in the spec header too): stub
+third parties instead of real Telegram/WAHA/registry/image — the
+rarely-run real-credential capstone is still open; setWebhook registers an
+RFC-2606 `.invalid` URL (https shape without a tunnel) while deliveries go
+to the real local route; the no-Node criterion is enforced literally as its
+acceptance box words it (in or beside the SERVER — the SDK consumer and the
+harness are Node by definition); corpus fidelity is reported as live
+catalogue counts + versions, not a rescored BASELINE.md.
+
+Left for main: close with evidence; decide whether this stubbed suite or a
+separate scheduled file should own the real-credential run (recommended: keep
+this file on the per-PR path — it is hermetic — and grow the real-credential
+capstone separately per the ticket's "do not gate merges" rule).
+
+## Blocked on real credentials (Main, 2026-09-06)
+Hermetic suite green (6 passed + 1 PG skip, twice; full `make test-e2e` 57 passed + 4 honest PG skips). Remaining boxes need operator-owned secrets no agent can mint: a real Telegram bot token, a real WAHA session pair, npm registry publish, plus scheduling/credential-docs scope. Recommend: keep the hermetic file on the per-PR path; grow a real-credential capstone separately when the operator provides them. Status held at doing for that reason, not for lack of code.

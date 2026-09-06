@@ -173,6 +173,25 @@ describe('mountWorkflowEditor', () => {
 			mountWorkflowEditor({ container, baseUrl: EDITOR_ORIGIN, session: session({ embedUrl: '' }) })
 		).toThrow(/workflow/);
 	});
+
+	it('fails cleanly on a datastore-only session instead of mounting a dead iframe', () => {
+		const container = document.createElement('div');
+		document.body.appendChild(container);
+
+		// A datastore session carries no editor URL: embedUrl is empty and
+		// the scopes name the datastore family.
+		expect(() =>
+			mountWorkflowEditor({
+				container,
+				baseUrl: EDITOR_ORIGIN,
+				session: session({ embedUrl: '', scopes: ['datastore:read'], datastoreId: 'datastore_1' })
+			})
+		).toThrow(/datastore-scoped session for datastore datastore_1/);
+
+		// Cleanly means nothing was mounted and nothing is pending: no
+		// iframe to handshake, no timer to fire, no listener left behind.
+		expect(container.querySelector('iframe')).toBeNull();
+	});
 });
 
 /** Minimal EventSource stand-in; jsdom has none. */
