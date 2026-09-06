@@ -41,6 +41,33 @@ const session = await kilasflow.createEmbedSession({
 });
 ```
 
+## Operation surface
+
+One thin, typed method per API operation — all 46 under `/api/v1`, grouped
+here the way the [API contract](../docs/src/content/docs/reference/api-contract.md)
+groups them. Every method takes an `AbortSignal` last, resolves `Promise<void>`
+for 204 responses, and surfaces failures as `KilasFlowError` (RFC 9457).
+
+| Group | Methods |
+| --- | --- |
+| Workflows | `listWorkflows`, `getWorkflow`, `createWorkflow`, `updateWorkflow`, `deleteWorkflow`, `runWorkflow`, `activateWorkflow`, `deactivateWorkflow`, `listWorkflowVersions`, `getWorkflowVersion`, `publishWorkflowVersion`, `restoreWorkflowVersion`, `listWorkflowPublishEvents` |
+| Executions | `listExecutions`, `getExecution`, `cancelExecution`, `executionEventsUrl` |
+| Credentials | `listCredentialTypes`, `listCredentials`, `createCredential`, `getCredential`, `updateCredential`, `deleteCredential`, `testCredential`, `testCredentialPayload` |
+| Auth and keys | `login`, `logout`, `getMe`, `listApiKeys`, `createApiKey`, `revokeApiKey`, `createStreamTicket` |
+| Schedules | `listSchedules`, `createSchedule`, `updateSchedule`, `deleteSchedule` |
+| Node catalogue | `listNodeTypes`, `nodeIconUrl`, `loadNodePropertyOptions`, `loadNodePropertySchema`, `getExpressionGrammar` |
+| Interop | `importWorkflow`, `exportWorkflow` |
+| Embed | `createEmbedSession` |
+| System | `getHealth`, `getReady` |
+
+Two operations stream rather than answer JSON, so they are URL builders
+instead of request methods: `executionEventsUrl` for the live SSE stream
+(spend a `createStreamTicket` ticket as `?ticket=` when the caller cannot set
+an `Authorization` header) and `nodeIconUrl` for artwork served with an inert
+content policy and a long immutable cache lifetime. `importWorkflow` takes the
+n8n document as `unknown` inside a typed envelope — it is untrusted input —
+while its diagnostics and minted webhook URLs are fully typed.
+
 Authentication is always explicit configuration. `headers` is a plain record
 rather than a dedicated `apiKey` field because deployments authenticate
 differently — a bearer token, a gateway header, a signed proxy — and inventing
