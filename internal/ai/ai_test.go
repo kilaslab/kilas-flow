@@ -517,3 +517,169 @@ func TestMemoryKeepsDistinctBucketsForDistinctSessions(t *testing.T) {
 		t.Errorf("bob's history = %#v, want only his own message", bobHistory)
 	}
 }
+
+func TestAgentReturnsMessagesOnTheSuccessPath(t *testing.T) {
+	t.Parallel()
+
+	model := &fakeModel{responses: []ai.ModelResponse{
+		toolTurn("get_weather", `{"city":"Utrecht"}`),
+		answer("It is 19C."),
+	}}
+	weather := &fakeTool{name: "get_weather", result: `{"tempC":19}`}
+
+	result, err := ai.NewLoopRuntime().Run(context.Background(), ai.AgentRequest{
+		Model: model, ModelName: "m", SystemPrompt: "Be brief.", Input: "Weather?",
+		Tools: []ai.Tool{weather},
+	}, nil)
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	// returnIntermediateSteps has nothing to return unless the success path
+	// carries the conversation too.
+	if len(result.Messages) != 5 {
+		t.Fatalf("Messages = %#v, want system, user, assistant, tool, assistant", result.Messages)
+	}
+	roles := []ai.Role{
+		ai.RoleSystem, ai.RoleUser, ai.RoleAssistant, ai.RoleTool, ai.RoleAssistant,
+	}
+	for index, want := range roles {
+		if result.Messages[index].Role != want {
+			t.Errorf("Messages[%d].Role = %q, want %q", index, result.Messages[index].Role, want)
+		}
+	}
+	if result.Messages[3].Name != "get_weather" {
+		t.Errorf("tool turn = %#v, want the tool result attributed", result.Messages[3])
+	}
+}
+
+func TestAgentAppliesTheSessionPolicyItWasGiven(t *testing.T) {
+	t.Parallel()
+
+	memory, err := ai.NewBufferMemory(ai.Retention{}, nil)
+	if err != nil {
+		t.Fatalf("NewBufferMemory() error = %v", err)
+	}
+	session := ai.SessionKey{TenantID: "t", WorkflowID: "w", SessionID: "s"}
+
+	// Two nodes in one workflow declare different bounds; the store default
+	// is wider than either, so whatever survives came from the policy.
+	model := &fakeModel{responses: []ai.ModelResponse{answer("ok")}}
+	if _, err := ai.NewLoopRuntime().Run(context.Background(), ai.AgentRequest{
+		Model: model, ModelName: "m", Input: "remember this", Memory: memory, Session: session,
+		SessionPolicy: ai.Retention{MaxMessages: 2, MaxAge: time.Hour},
+	}, nil); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	loaded, err := memory.LoadWithPolicy(context.Background(), session, ai.Retention{MaxMessages: 2, MaxAge: time.Hour})
+	if err != nil {
+		t.Fatalf("LoadWithPolicy() error = %v", err)
+	}
+	if len(loaded) != 2 {
+		t.Fatalf("loaded %d messages, want the policy's two", len(loaded))
+	}
+	// The same conversation under a wider policy keeps everything the run
+	// stored.
+	wide, err := memory.LoadWithPolicy(context.Background(), session, ai.Retention{MaxMessages: 40, MaxAge: 24 * time.Hour})
+	if err != nil {
+		t.Fatalf("LoadWithPolicy() error = %v", err)
+	}
+	if len(wide) != 2 {
+		t.Fatalf("loaded %d messages under the wide policy, want both turns", len(wide))
+	}
+}
+
+func TestMemoryEnforcesPerNodeAgeThenCount(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 9, 5, 10, 0, 0, 0, time.UTC)
+	clock := func() time.Time { return now }
+	memory, err := ai.NewBufferMemory(ai.Retention{}, clock)
+	if err != nil {
+		t.Fatalf("NewBufferMemory() error = %v", err)
+	}
+	session := ai.SessionKey{TenantID: "t", WorkflowID: "w", SessionID: "s"}
+	ctx := context.Background()
+
+	for index := range 5 {
+		if err := memory.AppendWithPolicy(ctx, session,
+			[]ai.Message{{Role: ai.RoleUser, Content: fmt.Sprintf("m%d", index)}},
+			ai.Retention{MaxMessages: 3, MaxAge: time.Hour}); err != nil {
+			t.Fatalf("AppendWithPolicy() error = %v", err)
+		}
+	}
+	loaded, _ := memory.LoadWithPolicy(ctx, session, ai.Retention{MaxMessages: 3, MaxAge: time.Hour})
+	if len(loaded) != 3 || loaded[0].Content != "m2" {
+		t.Fatalf("loaded = %#v, want the newest three", loaded)
+	}
+	// Age applies before count: a long-idle session is emptied, not trimmed.
+	now = now.Add(2 * time.Hour)
+	expired, _ := memory.LoadWithPolicy(ctx, session, ai.Retention{MaxMessages: 3, MaxAge: time.Hour})
+	if len(expired) != 0 {
+		t.Fatalf("loaded %#v after the window, want nothing", expired)
+	}
+}
+
+func TestPerTenantCeilingEvictsTheOldestSessionFirst(t *testing.T) {
+	t.Parallel()
+
+	memory, err := ai.NewBufferMemory(ai.Retention{}, nil, ai.WithPerTenantSessionLimit(2))
+	if err != nil {
+		t.Fatalf("NewBufferMemory() error = %v", err)
+	}
+	ctx := context.Background()
+	say := func(tenant, session, content string) {
+		t.Helper()
+		key := ai.SessionKey{TenantID: tenant, WorkflowID: "w", SessionID: session}
+		if err := memory.Append(ctx, key, []ai.Message{{Role: ai.RoleUser, Content: content}}); err != nil {
+			t.Fatalf("Append(%s/%s) error = %v", tenant, session, err)
+		}
+	}
+
+	say("tenant-a", "one", "first")
+	say("tenant-a", "two", "second")
+	say("tenant-b", "one", "unrelated tenant keeps its own")
+	say("tenant-a", "three", "third")
+
+	stats := memory.Stats()
+	if stats.Sessions != 3 {
+		t.Fatalf("Stats().Sessions = %d, want 3", stats.Sessions)
+	}
+	if stats.PerTenant["tenant-a"] != 2 || stats.PerTenant["tenant-b"] != 1 {
+		t.Fatalf("Stats().PerTenant = %#v, want the ceiling applied per tenant", stats.PerTenant)
+	}
+	evicted, _ := memory.Load(ctx, ai.SessionKey{TenantID: "tenant-a", WorkflowID: "w", SessionID: "one"})
+	if len(evicted) != 0 {
+		t.Fatalf("oldest session survived the ceiling: %#v", evicted)
+	}
+	kept, _ := memory.Load(ctx, ai.SessionKey{TenantID: "tenant-a", WorkflowID: "w", SessionID: "three"})
+	if len(kept) != 1 {
+		t.Fatalf("newest session = %#v, want it retained", kept)
+	}
+}
+
+func TestForgetWorkflowAndTenantDropTheirSessions(t *testing.T) {
+	t.Parallel()
+
+	memory, _ := ai.NewBufferMemory(ai.Retention{}, nil)
+	ctx := context.Background()
+	appendTo := func(tenant, workflow, session string) {
+		t.Helper()
+		key := ai.SessionKey{TenantID: tenant, WorkflowID: workflow, SessionID: session}
+		if err := memory.Append(ctx, key, []ai.Message{{Role: ai.RoleUser, Content: "hi"}}); err != nil {
+			t.Fatalf("Append() error = %v", err)
+		}
+	}
+	appendTo("t", "gone", "s1")
+	appendTo("t", "gone", "s2")
+	appendTo("t", "kept", "s1")
+
+	memory.ForgetWorkflow("t", "gone")
+	if stats := memory.Stats(); stats.Sessions != 1 {
+		t.Fatalf("Stats().Sessions = %d after ForgetWorkflow, want 1", stats.Sessions)
+	}
+
+	memory.ForgetTenant("t")
+	if stats := memory.Stats(); stats.Sessions != 0 {
+		t.Fatalf("Stats().Sessions = %d after ForgetTenant, want 0", stats.Sessions)
+	}
+}

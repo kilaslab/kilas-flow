@@ -2225,6 +2225,22 @@ func stringText(value any) string {
 // transcribed into testdata/n8n_cluster_nodes.json with the file it was read
 // from and the date. The reference checkout is never a build input.
 
+// refuseNonToolsAgent names why a pre-1.82 agent selector value other than
+// the Tools Agent must not import as this server's AI Agent.
+//
+// n8n removed the selector in 1.82 and only the Tools Agent remains, so an
+// absent key is a Tools Agent by construction. Anything else naming another
+// agent would silently run as one if carried across.
+func refuseNonToolsAgent(node Node) string {
+	agent := stringParameter(node.Parameters, "agent")
+	switch agent {
+	case "", "toolsAgent":
+		return ""
+	default:
+		return fmt.Sprintf("this node uses the %q agent, which KilasFlow does not implement. Only the Tools Agent imports: the node was kept as a placeholder and cannot run until it is replaced or rebuilt as a Tools Agent.", agent)
+	}
+}
+
 // agentToKilas maps n8n's Tools Agent onto this server's AI Agent.
 func agentToKilas(node Node) (map[string]any, []Unsupported) {
 	issues := make([]Unsupported, 0)
@@ -2253,10 +2269,26 @@ func agentToKilas(node Node) (map[string]any, []Unsupported) {
 
 	options, _ := node.Parameters["options"].(map[string]any)
 	if system := options["systemMessage"]; system != nil && system != "" {
-		parameters["systemPrompt"] = fromN8NValue(system)
+		parameters["systemMessage"] = fromN8NValue(system)
 	}
 	if iterations, ok := numberParameter(options, "maxIterations"); ok {
 		parameters["maxIterations"] = iterations
+	}
+	// The toggles this server's agent carries under the same names.
+	for _, key := range []string{"returnIntermediateSteps", "passthroughBinaryImages", "enableStreaming"} {
+		if value, present := options[key]; present && value != nil {
+			parameters[key] = value
+		}
+	}
+	// Batching is accepted into neither document: this server runs items in
+	// order, so a batch size n8n ran in parallel would silently become
+	// sequential. Reported as dropped rather than carried.
+	if batching, present := options["batching"]; present && batching != nil {
+		issues = append(issues, Unsupported{
+			Severity: SeverityDropped, Field: "options.batching",
+			Reason: "this agent processed items in parallel batches, which this server does not implement. " +
+				"The batching options were dropped and items run in order.",
+		})
 	}
 
 	// Both of these are sub-node slots this server does not have. Reported
@@ -2284,11 +2316,22 @@ func agentToKilas(node Node) (map[string]any, []Unsupported) {
 func agentToN8N(node workflow.Node) (map[string]any, []Lossy) {
 	lossy := make([]Lossy, 0)
 	options := map[string]any{}
-	if system := node.Parameters["systemPrompt"]; system != nil && system != "" {
+	// systemMessage first, with the legacy alias behind it for documents
+	// imported while the importer still wrote systemPrompt.
+	system := node.Parameters["systemMessage"]
+	if system == nil || system == "" {
+		system = node.Parameters["systemPrompt"]
+	}
+	if system != nil && system != "" {
 		options["systemMessage"] = toN8NValue(system)
 	}
 	if iterations, ok := numberParameter(node.Parameters, "maxIterations"); ok {
 		options["maxIterations"] = iterations
+	}
+	for _, key := range []string{"returnIntermediateSteps", "passthroughBinaryImages", "enableStreaming"} {
+		if value, present := node.Parameters[key]; present && value != nil {
+			options[key] = value
+		}
 	}
 	return map[string]any{
 		// "define" rather than "auto": the prompt is written on this node, and
@@ -2298,6 +2341,146 @@ func agentToN8N(node workflow.Node) (map[string]any, []Lossy) {
 		"text":       toN8NValue(node.Parameters["prompt"]),
 		"options":    options,
 	}, lossy
+}
+
+// chainToKilas maps n8n's Basic LLM Chain onto this server's. The prompt
+// surface crosses almost verbatim — promptType, text and the messageValues
+// rows share names and shapes on both sides — so the translator mostly
+// reports what has no equivalent.
+func chainToKilas(node Node) (map[string]any, []Unsupported) {
+	issues := make([]Unsupported, 0)
+	parameters := map[string]any{}
+
+	if promptType := stringParameter(node.Parameters, "promptType"); promptType != "" {
+		parameters["promptType"] = promptType
+	}
+	if text := node.Parameters["text"]; text != nil && text != "" {
+		parameters["text"] = fromN8NValue(text)
+	}
+	if carried, rowIssues := chainMessagesToKilas(node.Parameters["messages"]); carried != nil || len(rowIssues) > 0 {
+		if carried != nil {
+			parameters["messages"] = carried
+		}
+		issues = append(issues, rowIssues...)
+	}
+	// A top-level batching collection n8n runs in parallel from version 1.7.
+	// Dropped, with the same reasoning as the agent's: items run in order.
+	if batching, present := node.Parameters["batching"]; present && batching != nil {
+		issues = append(issues, Unsupported{
+			Severity: SeverityDropped, Field: "batching",
+			Reason: "this chain processed items in parallel batches, which this server does not implement. " +
+				"The batching options were dropped and items run in order.",
+		})
+	}
+	if parser, _ := node.Parameters["hasOutputParser"].(bool); parser {
+		issues = append(issues, Unsupported{
+			Severity: SeverityBlocking, Field: "hasOutputParser",
+			Reason: "this chain parsed its answer through a connected output parser sub-node, which this server does not have yet. " +
+				"The chain was imported without it and returns the model's text unparsed.",
+		})
+	}
+	if fallback, _ := node.Parameters["needsFallback"].(bool); fallback {
+		issues = append(issues, Unsupported{
+			Severity: SeverityBlocking, Field: "needsFallback",
+			Reason: "this chain had a fallback chat model for when the first one fails, and this server's chain takes exactly one model. " +
+				"Only the primary model was carried.",
+		})
+	}
+	return parameters, issues
+}
+
+// chainToN8N writes the chain back.
+func chainToN8N(node workflow.Node) (map[string]any, []Lossy) {
+	lossy := make([]Lossy, 0)
+	parameters := map[string]any{}
+	if promptType := stringParameter(node.Parameters, "promptType"); promptType != "" {
+		parameters["promptType"] = promptType
+	}
+	if text := node.Parameters["text"]; text != nil && text != "" {
+		parameters["text"] = toN8NValue(text)
+	}
+	if messages := chainMessagesToN8N(node.Parameters["messages"]); messages != nil {
+		parameters["messages"] = messages
+	}
+	// n8n's auto mode always reads chatInput; a renamed field cannot be
+	// expressed there.
+	if field := stringParameter(node.Parameters, "inputField"); field != "" && field != "chatInput" {
+		lossy = append(lossy, Lossy{
+			Severity: SeverityLossy, Field: "inputField",
+			Reason: fmt.Sprintf(
+				"this chain read its prompt from field %q. n8n's automatic prompt always reads chatInput, "+
+					"so the exported chain reads chatInput instead.", field),
+		})
+	}
+	return parameters, lossy
+}
+
+// chainMessagesToKilas carries a chain's messageValues rows, converting the
+// text of each row the way any other expression-valued parameter converts.
+// Image rows have no text equivalent here: they are dropped and named
+// rather than carried as empty rows the chain would refuse to compile.
+func chainMessagesToKilas(value any) (any, []Unsupported) {
+	collection, ok := value.(map[string]any)
+	if !ok || collection == nil {
+		return nil, nil
+	}
+	raw, present := collection["messageValues"]
+	if !present {
+		return nil, nil
+	}
+	rows, ok := raw.([]any)
+	if !ok {
+		return nil, nil
+	}
+	issues := make([]Unsupported, 0)
+	carried := make([]any, 0, len(rows))
+	for index, row := range rows {
+		fields, ok := row.(map[string]any)
+		if !ok {
+			continue
+		}
+		if messageType := stringParameter(fields, "messageType"); messageType != "" && messageType != "text" {
+			issues = append(issues, Unsupported{
+				Severity: SeverityDropped, Field: fmt.Sprintf("messages.messageValues[%d]", index),
+				Reason: "this prompt row carried an image, which this server's chain does not implement. " +
+					"The row was dropped and the chain runs on its text rows.",
+			})
+			continue
+		}
+		carried = append(carried, map[string]any{
+			"type":    fromN8NValue(fields["type"]),
+			"message": fromN8NValue(fields["message"]),
+		})
+	}
+	return map[string]any{"messageValues": carried}, issues
+}
+
+// chainMessagesToN8N writes the rows back, re-adding n8n's expression prefix.
+func chainMessagesToN8N(value any) any {
+	collection, ok := value.(map[string]any)
+	if !ok || collection == nil {
+		return nil
+	}
+	raw, present := collection["messageValues"]
+	if !present {
+		return nil
+	}
+	rows, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	carried := make([]any, 0, len(rows))
+	for _, row := range rows {
+		fields, ok := row.(map[string]any)
+		if !ok {
+			continue
+		}
+		carried = append(carried, map[string]any{
+			"type":    toN8NValue(fields["type"]),
+			"message": toN8NValue(fields["message"]),
+		})
+	}
+	return map[string]any{"messageValues": carried}
 }
 
 // n8nChatModelOptionKeys are the sampling and transport options both servers
@@ -2445,17 +2628,23 @@ func memoryToKilas(node Node) (map[string]any, []Unsupported) {
 	issues := make([]Unsupported, 0)
 	parameters := map[string]any{}
 
-	sessionKey := node.Parameters["sessionKey"]
+	// The modes cross under their own names, so the scoping rule travels
+	// with the key: a fromInput key stays node-scoped here exactly as it
+	// was there, instead of collapsing into one shared conversation under
+	// the legacy sessionId.
 	if stringParameter(node.Parameters, "sessionIdType") == "customKey" {
-		parameters["sessionId"] = fromN8NValue(sessionKey)
-	} else if sessionKey == nil || sessionKey == "" {
+		parameters["sessionIdType"] = "customKey"
+		parameters["sessionKey"] = fromN8NValue(node.Parameters["sessionKey"])
+	} else if key := node.Parameters["sessionKey"]; key != nil && key != "" {
+		parameters["sessionIdType"] = "fromInput"
+		parameters["sessionKey"] = fromN8NValue(key)
+	} else {
 		// "fromInput", and every n8n version below 1.2, which had no selector
 		// at all. The default is materialised for the same reason the agent's
-		// prompt is: sessionId is required here, and a field the author never
+		// prompt is: sessionKey is required here, and a field the author never
 		// edited was never stored.
-		parameters["sessionId"] = expressionValue("{{ $json.sessionId }}")
-	} else {
-		parameters["sessionId"] = fromN8NValue(sessionKey)
+		parameters["sessionIdType"] = "fromInput"
+		parameters["sessionKey"] = expressionValue("{{ $json.sessionId }}")
 	}
 
 	if length, ok := numberParameter(node.Parameters, "contextWindowLength"); ok {
@@ -2466,12 +2655,19 @@ func memoryToKilas(node Node) (map[string]any, []Unsupported) {
 
 func memoryToN8N(node workflow.Node) (map[string]any, []Lossy) {
 	lossy := make([]Lossy, 0)
+	mode := stringParameter(node.Parameters, "sessionIdType")
+	key := node.Parameters["sessionKey"]
+	if mode != "fromInput" && mode != "customKey" {
+		// A legacy sessionId is written on this node. "customKey" rather
+		// than "fromInput": the session is written on this node, and
+		// fromInput would have n8n read it from a connected chat trigger's
+		// payload instead — silently loading a different conversation.
+		mode = "customKey"
+		key = node.Parameters["sessionId"]
+	}
 	parameters := map[string]any{
-		// "customKey" rather than "fromInput": the session is written on this
-		// node, and fromInput would have n8n read it from a connected chat
-		// trigger's payload instead — silently loading a different conversation.
-		"sessionIdType": "customKey",
-		"sessionKey":    toN8NValue(node.Parameters["sessionId"]),
+		"sessionIdType": mode,
+		"sessionKey":    toN8NValue(key),
 	}
 	if length, ok := numberParameter(node.Parameters, "maxMessages"); ok {
 		parameters["contextWindowLength"] = length
@@ -2487,7 +2683,7 @@ func httpToolToKilas(node Node) (map[string]any, []Unsupported) {
 	// n8n has no tool-name parameter at all: the name a model calls is derived
 	// from the node's own canvas name. Deriving it the same way is what keeps an
 	// imported system prompt that named the tool still naming the same tool.
-	parameters["toolName"] = toolNameFrom(node.Name)
+	parameters["toolName"] = nodes.NormalizeToolName(node.Name)
 
 	description := node.Parameters["toolDescription"]
 	if description == nil || description == "" {
@@ -2522,33 +2718,13 @@ func httpToolToN8N(node workflow.Node) (map[string]any, []Lossy) {
 
 	// The name the model calls is the node's canvas name in n8n and a parameter
 	// here, so a tool renamed away from its node name cannot be expressed.
-	if name := stringParameter(node.Parameters, "toolName"); name != "" && name != toolNameFrom(node.Name) {
+	if name := stringParameter(node.Parameters, "toolName"); name != "" && name != nodes.NormalizeToolName(node.Name) {
 		lossy = append(lossy, Lossy{
 			Severity: SeverityLossy, Field: "toolName",
 			Reason: fmt.Sprintf(
 				"the model called this tool %q. n8n derives a tool's name from the node's own name, "+
-					"so after export it is called %q; rename the node to keep the old name.", name, toolNameFrom(node.Name)),
+					"so after export it is called %q; rename the node to keep the old name.", name, nodes.NormalizeToolName(node.Name)),
 		})
 	}
 	return parameters, lossy
-}
-
-// toolNameFrom derives the name a model calls from a node's canvas name, the
-// way n8n does. The node's own validator accepts letters, digits and
-// underscores, so anything else becomes an underscore.
-func toolNameFrom(name string) string {
-	var built strings.Builder
-	for _, letter := range name {
-		switch {
-		case letter >= 'a' && letter <= 'z', letter >= 'A' && letter <= 'Z',
-			letter >= '0' && letter <= '9', letter == '_':
-			built.WriteRune(letter)
-		default:
-			built.WriteRune('_')
-		}
-	}
-	if built.Len() == 0 {
-		return "http_request"
-	}
-	return built.String()
 }

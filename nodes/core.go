@@ -40,6 +40,7 @@ func RegisterAll(registry *node.Registry) error {
 		memoryNode(),
 		httpToolNode(),
 		agentNode(),
+		chainLlmNode(),
 		codeNode(),
 		stickyNoteNode(),
 		loopNode(),

@@ -27,6 +27,7 @@ const (
 	MemoryExecutorID              = "core.memoryBuffer"
 	HTTPToolExecutorID            = "core.httpTool"
 	AgentExecutorID               = "core.agent"
+	ChainExecutorID               = "core.chainLlm"
 )
 
 // Node types for the AI family.
@@ -43,6 +44,7 @@ const (
 	MemoryNodeType              = "kilasflow.memoryBuffer"
 	HTTPToolNodeType            = "kilasflow.httpTool"
 	AgentNodeType               = "kilasflow.agent"
+	ChainNodeType               = "kilasflow.chainLlm"
 )
 
 // Credential types the chat models accept.
@@ -373,8 +375,20 @@ func memoryNode() node.Definition {
 		Outputs:     []workflow.Port{{Name: "memory", Kind: workflow.ConnectionMemory}},
 		Parameters: []node.PropertyDefinition{
 			{
-				Key: "sessionId", Label: "Session ID", Kind: node.PropertyString, Required: true,
-				Description: "Identifies the conversation. Supports expressions, for example {{ $json.chatId }}.",
+				Key: "sessionIdType", Label: "Session ID", Kind: node.PropertyOptions, Default: sessionIDTypeFromInput,
+				Options: []node.PropertyOption{
+					{Label: "Connected Chat Trigger Node", Value: sessionIDTypeFromInput},
+					{Label: "Define below", Value: sessionIDTypeCustomKey},
+				},
+				Description: "Take the session key from the incoming item, or define it with an expression.",
+			},
+			{
+				Key: "sessionKey", Label: "Session Key", Kind: node.PropertyString, Default: "{{ $json.sessionId }}",
+				Description: "Identifies the conversation. Supports expressions, for example {{ $json.sessionId }}.",
+			},
+			{
+				Key: "sessionId", Label: "Session ID (legacy)", Kind: node.PropertyString,
+				Description: "Kept for nodes saved before the session key modes existed. It is used only when no session key mode is stored; prefer Session Key instead.",
 			},
 			{Key: "maxMessages", Label: "Maximum messages", Kind: node.PropertyNumber, Default: 40},
 			{Key: "maxAgeMinutes", Label: "Maximum age (minutes)", Kind: node.PropertyNumber, Default: 1440},
@@ -384,6 +398,14 @@ func memoryNode() node.Definition {
 		Validate:       validateMemoryConfiguration,
 	}
 }
+
+// Session key modes, named as n8n names them so an imported memory node keeps
+// its meaning: fromInput reads the key off the incoming item, customKey takes
+// an expression the author wrote.
+const (
+	sessionIDTypeFromInput = "fromInput"
+	sessionIDTypeCustomKey = "customKey"
+)
 
 func httpToolNode() node.Definition {
 	definition := httpRequestNode()
@@ -400,8 +422,8 @@ func httpToolNode() node.Definition {
 	// parameters, which are reused verbatim rather than re-declared.
 	definition.Parameters = append([]node.PropertyDefinition{
 		{
-			Key: "toolName", Label: "Tool name", Kind: node.PropertyString, Required: true, Default: "http_request",
-			Description: "The name the model calls. Letters, digits, and underscores.",
+			Key: "toolName", Label: "Tool name", Kind: node.PropertyString,
+			Description: "Optional override for the name the model calls. Defaults to the node name, normalised to letters, digits, and underscores.",
 		},
 		{
 			Key: "toolDescription", Label: "Tool description", Kind: node.PropertyString, Required: true,
@@ -445,12 +467,117 @@ func agentNode() node.Definition {
 				Key: "prompt", Label: "Prompt", Kind: node.PropertyString, Required: true,
 				Description: "The user turn for this run. Supports expressions.",
 			},
-			{Key: "systemPrompt", Label: "System prompt", Kind: node.PropertyString},
-			{Key: "maxIterations", Label: "Maximum tool iterations", Kind: node.PropertyNumber, Default: 8},
+			{
+				Key: "systemMessage", Label: "System message", Kind: node.PropertyString,
+				Description: "The message sent to the agent before the conversation starts. Supports expressions.",
+			},
+			{
+				Key: "systemPrompt", Label: "System prompt (legacy)", Kind: node.PropertyString,
+				Description: "Kept for graphs saved before the system message existed. It is used only when no system message is set.",
+			},
+			{Key: "maxIterations", Label: "Maximum tool iterations", Kind: node.PropertyNumber, Default: 10},
+			{
+				Key: "returnIntermediateSteps", Label: "Return intermediate steps", Kind: node.PropertyBoolean, Default: false,
+				Description: "Include the full ordered message list, tool turns included, in the output item.",
+			},
+			{
+				Key: "passthroughBinaryImages", Label: "Passthrough binary images", Kind: node.PropertyBoolean, Default: true,
+				Description: "Carry the incoming item's binary attachments through to the output item.",
+			},
+			{
+				Key: "enableStreaming", Label: "Enable streaming", Kind: node.PropertyBoolean, Default: false,
+				Description: "Stream the model's response in real time as it generates text.",
+			},
 		},
 		SharedSettings: sharedSettings(),
 		ExecutorID:     AgentExecutorID,
 		Validate:       validateAgentConfiguration,
+	}
+}
+
+// Chain prompt sources, named as n8n names them: auto takes the text from a
+// named field of the incoming item, define takes the text below plus the
+// ordered message list.
+const (
+	chainPromptAuto   = "auto"
+	chainPromptDefine = "define"
+)
+
+// Chain message roles, using the model's own vocabulary.
+const (
+	chainRoleSystem = "system"
+	chainRoleHuman  = "human"
+	chainRoleAI     = "ai"
+)
+
+func chainLlmNode() node.Definition {
+	return node.Definition{
+		Type:        ChainNodeType,
+		Version:     workflow.V(1),
+		DisplayName: "Basic LLM Chain",
+		Description: "Prompts a language model once per item, with an optional output parser.",
+		Category:    "AI",
+		Group:       []node.NodeGroup{node.GroupTransform},
+		Icon:        &node.NodeIcon{Light: "builtin:link"},
+		IconColor:   "#0ea5e9",
+		Inputs: []workflow.Port{
+			{Name: "main", Kind: workflow.ConnectionMain},
+			{
+				Name: "model", DisplayName: "Chat Model", Kind: workflow.ConnectionLanguageModel,
+				Required: true, MaxConnections: 1,
+			},
+			// Deliberately no memory slot: n8n's chain has none, and a user
+			// who wires memory expects the agent. Adding one here would make
+			// an exported workflow unrepresentable.
+			{
+				Name: "outputParser", DisplayName: "Output Parser", Kind: workflow.ConnectionOutputParser,
+				MaxConnections: 1,
+			},
+		},
+		Outputs: mainOutput(),
+		Parameters: []node.PropertyDefinition{
+			{
+				Key: "promptType", Label: "Source for Prompt", Kind: node.PropertyOptions, Default: chainPromptAuto,
+				Options: []node.PropertyOption{
+					{Label: "Take from Field", Value: chainPromptAuto},
+					{Label: "Define below", Value: chainPromptDefine},
+				},
+				Description: "Take the user message from a field of the incoming item, or define it with text and an ordered message list.",
+			},
+			{
+				Key: "inputField", Label: "Input Field", Kind: node.PropertyString, Default: "chatInput",
+				Description: "The field of the incoming item holding the user message.",
+			},
+			{
+				Key: "text", Label: "Prompt (User Message)", Kind: node.PropertyString,
+				Description: "The user message. Supports expressions.",
+			},
+			{
+				Key: "messages", Label: "Chat Messages", Kind: node.PropertyFixedCollection,
+				TypeOptions: &node.TypeOptions{MultipleValues: true, MultipleValueButtonText: "Add prompt"},
+				Description: "Ordered System, Human, and AI messages sent before the user message. Each row's text supports expressions.",
+				Groups: []node.PropertyGroup{{
+					Key: "messageValues", Label: "Prompt",
+					Fields: []node.PropertyDefinition{
+						{
+							Key: "type", Label: "Type", Kind: node.PropertyOptions, Default: chainRoleSystem,
+							Options: []node.PropertyOption{
+								{Label: "System", Value: chainRoleSystem},
+								{Label: "Human", Value: chainRoleHuman},
+								{Label: "AI", Value: chainRoleAI},
+							},
+						},
+						{
+							Key: "message", Label: "Message", Kind: node.PropertyString, Required: true,
+							Description: "The message text. Supports expressions.",
+						},
+					},
+				}},
+			},
+		},
+		SharedSettings: sharedSettings(),
+		ExecutorID:     ChainExecutorID,
+		Validate:       validateChainConfiguration,
 	}
 }
 
@@ -484,18 +611,33 @@ func validateProviderChatModel(provider chatModelProvider) workflow.ConfigValida
 }
 
 func validateMemoryConfiguration(n workflow.Node) error {
-	if statementText(n.Parameters, "sessionId") == "" {
-		return fmt.Errorf("sessionId is required")
+	mode := statementText(n.Parameters, "sessionIdType")
+	switch mode {
+	case "", sessionIDTypeFromInput, sessionIDTypeCustomKey, "expression":
+	default:
+		return fmt.Errorf("sessionIdType must be %q or %q", sessionIDTypeFromInput, sessionIDTypeCustomKey)
+	}
+	if mode == "" {
+		// No mode stored: a node saved before the session key modes existed.
+		// It keeps addressing its conversation by sessionId alone, with no
+		// auto-scoping suffix — or by a newly-entered sessionKey, which is
+		// honoured as a defined key.
+		if statementText(n.Parameters, "sessionId") == "" && statementText(n.Parameters, "sessionKey") == "" {
+			return fmt.Errorf("sessionId is required")
+		}
+		return nil
+	}
+	if mode != "expression" && statementText(n.Parameters, "sessionKey") == "" {
+		return fmt.Errorf("sessionKey is required")
 	}
 	return nil
 }
 
 func validateHTTPToolConfiguration(n workflow.Node) error {
-	name := statementText(n.Parameters, "toolName")
-	if name == "" {
-		return fmt.Errorf("toolName is required")
-	}
-	if !validToolName(name) {
+	// An empty toolName is not missing: the name derives from the canvas
+	// name. Only an explicit override has to satisfy the charset here; the
+	// derived name is normalised at run time and cannot fail it.
+	if name := statementText(n.Parameters, "toolName"); name != "" && !validToolName(name) {
 		return fmt.Errorf("toolName must contain only letters, digits, and underscores")
 	}
 	if statementText(n.Parameters, "toolDescription") == "" {
@@ -518,6 +660,34 @@ func validToolName(name string) bool {
 		}
 	}
 	return name != ""
+}
+
+// NormalizeToolName derives the model-facing tool name from a canvas name.
+// The rule is workflow.NormalizeToolName, stated once in the graph package
+// so the compiler can refuse duplicates before activation; this alias keeps
+// runtime callers and the n8n exporter on the same spelling.
+func NormalizeToolName(name string) string {
+	return workflow.NormalizeToolName(name)
+}
+
+// sanitizeSessionKey prepares a node name for use inside a session key. Some
+// memory backends reject characters outside this set, and node names allow
+// spaces and punctuation, so sanitise before joining rather than after.
+func sanitizeSessionKey(name string) string {
+	var builder strings.Builder
+	for _, letter := range name {
+		switch {
+		case letter >= 'a' && letter <= 'z', letter >= 'A' && letter <= 'Z',
+			letter >= '0' && letter <= '9', letter == '_', letter == '-':
+			builder.WriteRune(letter)
+		default:
+			builder.WriteRune('_')
+		}
+	}
+	if builder.Len() == 0 {
+		return "node"
+	}
+	return builder.String()
 }
 
 func validateAgentConfiguration(n workflow.Node) error {
@@ -640,15 +810,17 @@ func executeMemory(ctx context.Context, ir workflow.IRNode, input workflow.NodeI
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	// The session ID may reference the triggering item, so it is resolved here
-	// rather than treated as a fixed string.
+	// The session key may reference the triggering item, so it is resolved
+	// here from the live item rather than treated as a fixed string — and
+	// never read back out of the persisted record, which the redaction
+	// boundary has already passed over.
 	parameters, err := expression.Resolve(ir.Parameters, expressionContext(request.Input, input, request, 0))
 	if err != nil {
 		return nil, fmt.Errorf("node %q: %w", ir.Name, err)
 	}
-	sessionID := strings.TrimSpace(textValue(parameters["sessionId"], ""))
-	if sessionID == "" {
-		return nil, fmt.Errorf("node %q: sessionId resolved to an empty value", ir.Name)
+	sessionID, err := resolveSessionKey(ir.Name, parameters)
+	if err != nil {
+		return nil, fmt.Errorf("node %q: %w", ir.Name, err)
 	}
 	return workflow.NodeOutput{{{JSON: map[string]any{descriptorKey: map[string]any{
 		"kind":          "memory",
@@ -656,6 +828,39 @@ func executeMemory(ctx context.Context, ir workflow.IRNode, input workflow.NodeI
 		"maxMessages":   numberValue(parameters["maxMessages"]),
 		"maxAgeMinutes": numberValue(parameters["maxAgeMinutes"]),
 	}}}}}, nil
+}
+
+// resolveSessionKey computes the conversation key a memory node addresses.
+//
+// A node saved before the session key modes existed keeps the exact key it
+// always used — no auto-scoping suffix is added, so its history stays where
+// it is. A fromInput key is auto-scoped to this memory node, so two memory
+// nodes in one workflow never silently share a conversation; to share one on
+// purpose, use "Define below" with the same key in each node, which is also
+// the documented way out of the suffix.
+func resolveSessionKey(nodeName string, parameters map[string]any) (string, error) {
+	mode := textValue(parameters["sessionIdType"], "")
+	key := strings.TrimSpace(textValue(parameters["sessionKey"], ""))
+	switch mode {
+	case sessionIDTypeCustomKey:
+		if key == "" {
+			return "", fmt.Errorf("sessionKey resolved to an empty value")
+		}
+		return key, nil
+	case sessionIDTypeFromInput:
+		if key == "" {
+			return "", fmt.Errorf("sessionKey resolved to an empty value")
+		}
+		return key + "__" + sanitizeSessionKey(nodeName), nil
+	default:
+		if key != "" {
+			return key, nil
+		}
+		if legacy := strings.TrimSpace(textValue(parameters["sessionId"], "")); legacy != "" {
+			return legacy, nil
+		}
+		return "", fmt.Errorf("sessionId resolved to an empty value")
+	}
 }
 
 // executeHTTPTool emits a tool descriptor built from HTTP Request parameters.
@@ -673,12 +878,46 @@ func executeHTTPTool(ctx context.Context, ir workflow.IRNode, _ workflow.NodeInp
 	}
 	return workflow.NodeOutput{{{JSON: map[string]any{descriptorKey: map[string]any{
 		"kind":        "tool",
-		"name":        textValue(ir.Parameters["toolName"], "http_request"),
+		"name":        toolNameFor(ir),
 		"description": textValue(ir.Parameters["toolDescription"], ""),
 		"nodeName":    ir.Name,
 		"parameters":  parameters,
 		"credentials": credentials,
 	}}}}}, nil
+}
+
+// toolNameFor is the model-facing name one tool descriptor claims. An
+// explicit override wins; otherwise the name derives from the connected
+// node's canvas name, so two tools left at their defaults never claim one
+// name. A toolName that is still an expression is refused: the descriptor is
+// built once upstream with no item to evaluate it against, and a silently
+// substituted default would call the tool by a name the author never chose.
+func toolNameFor(ir workflow.IRNode) string {
+	if override := strings.TrimSpace(textValue(ir.Parameters["toolName"], "")); override != "" {
+		return override
+	}
+	return NormalizeToolName(ir.Name)
+}
+
+// CheckDuplicateToolNames refuses two tools claiming one model-facing name,
+// naming both canvas nodes. It runs in the agent before any model call so a
+// graph that reached the runner still fails fast instead of mid-run; the
+// compiler should call it too, where it can refuse the graph before
+// activation.
+func CheckDuplicateToolNames(descriptors []map[string]any) error {
+	seen := make(map[string]string, len(descriptors))
+	for _, descriptor := range descriptors {
+		name := textValue(descriptor["name"], "")
+		if name == "" {
+			continue
+		}
+		nodeName := textValue(descriptor["nodeName"], name)
+		if first, duplicate := seen[name]; duplicate {
+			return fmt.Errorf("tool name %q is used by both node %q and node %q; rename one of them", name, first, nodeName)
+		}
+		seen[name] = nodeName
+	}
+	return nil
 }
 
 // AgentExecutor runs the AI Agent node.
@@ -687,8 +926,19 @@ func executeHTTPTool(ctx context.Context, ir workflow.IRNode, _ workflow.NodeInp
 // the runtime behind it is replaceable without touching this node.
 type AgentExecutor struct {
 	runtime ai.AgentRuntime
-	client  *http.Client
-	memory  ai.Memory
+	modelBackend
+	memory ai.Memory
+	// httpTool is the same executor the HTTP Request node uses, so exposing an
+	// HTTP call as a tool reuses that implementation rather than copying it.
+	httpTool *HTTPExecutor
+}
+
+// modelBackend binds a deployment's outbound policy for model calls. Both the
+// agent and the chain resolve their model through it, so the descriptor's
+// credential handling — the id travels in the item, the key never does — has
+// one home instead of one copy per consumer.
+type modelBackend struct {
+	client *http.Client
 	// policy is kept so a model's base URL gets the same pre-flight gate an
 	// HTTP Request node's URL does, before a socket is opened.
 	policy safehttp.Policy
@@ -697,9 +947,109 @@ type AgentExecutor struct {
 	fallbackTimeout time.Duration
 	// timeoutCeiling is the longest this deployment lets one model node wait.
 	timeoutCeiling time.Duration
-	// httpTool is the same executor the HTTP Request node uses, so exposing an
-	// HTTP call as a tool reuses that implementation rather than copying it.
-	httpTool *HTTPExecutor
+}
+
+// newModelBackend builds the backend from the deployment's outbound policy.
+//
+// The model client carries the deployment's own policy with its clock
+// removed, not a second policy. http.Client.Timeout is a ceiling a context
+// deadline can only lower, so leaving the outbound default of thirty seconds
+// on it would make every longer per-node timeout unreachable — a slow
+// completion would die as a transport error rather than as a model error.
+// Everything that defends the call is unchanged: CheckAddress runs in the
+// same dialer on every hop, and CheckRedirect applies the same allowlist,
+// because both close over this same Policy value.
+func newModelBackend(policy safehttp.Policy) modelBackend {
+	modelPolicy := policy
+	modelPolicy.Timeout = 0
+	return modelBackend{
+		// Model calls go through the deployment's outbound policy exactly as
+		// an HTTP Request node's do, so a model consumer cannot reach an
+		// internal address the rest of the product refuses.
+		client:          safehttp.NewClient(modelPolicy),
+		policy:          policy,
+		fallbackTimeout: policy.Timeout,
+		timeoutCeiling:  DefaultModelTimeoutCeiling,
+	}
+}
+
+// resolvedModel is one model descriptor bound to a deployment: the client to
+// call it with, the name to bill it under, and the bounds to run it in.
+type resolvedModel struct {
+	model            ai.ChatModel
+	name             string
+	timeout          time.Duration
+	stream           bool
+	maxTokens        int
+	maxRetries       int
+	temperature      *float64
+	topP             *float64
+	frequencyPenalty *float64
+	presencePenalty  *float64
+}
+
+// resolveModel performs the steps every model consumer repeats: read the
+// descriptor from the typed port, re-resolve the secret through the runtime,
+// and bind the deployment's outbound policy to the credential's own domain
+// scope.
+func (backend *modelBackend) resolveModel(ctx context.Context, nodeName string, descriptor map[string]any, request engine.Request) (resolvedModel, error) {
+	credentialID, _ := descriptor["credentialId"].(string)
+	if request.Credentials == nil {
+		return resolvedModel{}, fmt.Errorf("node %q: credentials are not available in this runtime", nodeName)
+	}
+	secret, err := request.Credentials.ResolveCredential(ctx, credentialID)
+	if err != nil {
+		return resolvedModel{}, fmt.Errorf("node %q: %w", nodeName, err)
+	}
+	apiKeyField, usable := modelAPIKeyFields[secret.Type]
+	if !usable {
+		return resolvedModel{}, fmt.Errorf("node %q: credential %q is a %s credential, which no chat model can authenticate with",
+			nodeName, secret.Name, secret.Type)
+	}
+
+	baseURL := textValue(descriptor["baseUrl"], "https://api.openai.com/v1")
+	target, err := url.Parse(baseURL)
+	if err != nil {
+		return resolvedModel{}, fmt.Errorf("node %q: the model's base URL is not a valid URL", nodeName)
+	}
+	// The same pre-flight gate the HTTP node applies. The dialer refuses a
+	// private address on its own, but only once DNS has answered — so a
+	// disallowed host that does not resolve would fail as a lookup error rather
+	// than as the policy refusal it is.
+	if err := backend.policy.CheckURL(target); err != nil {
+		return resolvedModel{}, fmt.Errorf("node %q: %w", nodeName, err)
+	}
+	// A model call is an outbound request carrying a secret, so the
+	// credential's own domain scope binds it exactly as it binds an HTTP
+	// Request node's. It did not before: a credential scoped to
+	// api.openai.com could be pointed at any host by editing one parameter
+	// on the model node.
+	if !secret.AllowsHost(target.Host) {
+		return resolvedModel{}, fmt.Errorf("node %q: credential %q is not allowed for host %q",
+			nodeName, secret.Name, target.Hostname())
+	}
+
+	timeout, err := backend.modelTimeout(descriptor)
+	if err != nil {
+		return resolvedModel{}, fmt.Errorf("node %q: %w", nodeName, err)
+	}
+	return resolvedModel{
+		model:   ai.NewOpenAICompatible(backend.client, baseURL, secret.Fields[apiKeyField]),
+		name:    textValue(descriptor["model"], "gpt-4o-mini"),
+		timeout: timeout,
+		stream:  boolValue(descriptor["stream"]),
+		// A model's own -1 means "as many as the model allows", which is
+		// said by sending nothing rather than by sending a negative bound
+		// the provider would refuse.
+		maxTokens:  positiveInt(numberValue(descriptor[ModelOptionMaxTokens])),
+		maxRetries: positiveInt(numberValue(descriptor[ModelOptionMaxRetries])),
+		// Read back by presence for the reason they were written by
+		// presence: zero is a value a user chooses, not the absence of one.
+		temperature:      presentNumber(descriptor, ModelOptionTemperature),
+		topP:             presentNumber(descriptor, ModelOptionTopP),
+		frequencyPenalty: presentNumber(descriptor, ModelOptionFrequencyPenalty),
+		presencePenalty:  presentNumber(descriptor, ModelOptionPresencePenalty),
+	}, nil
 }
 
 // NewAgentExecutor builds the agent node's executor.
@@ -707,28 +1057,11 @@ func NewAgentExecutor(runtime ai.AgentRuntime, policy safehttp.Policy, memory ai
 	if runtime == nil {
 		runtime = ai.NewLoopRuntime()
 	}
-	// The model client is the deployment's own policy with its clock removed,
-	// not a second policy. http.Client.Timeout is a ceiling a context deadline
-	// can only lower, so leaving the outbound default of thirty seconds on it
-	// would make every longer per-node timeout unreachable — a slow completion
-	// would die as a transport error rather than as a model error. Everything
-	// that defends the call is unchanged: CheckAddress runs in the same dialer
-	// on every hop, and CheckRedirect applies the same allowlist, because both
-	// close over this same Policy value.
-	modelPolicy := policy
-	modelPolicy.Timeout = 0
-
 	executor := &AgentExecutor{
-		runtime: runtime,
-		// Model calls go through the deployment's outbound policy exactly as an
-		// HTTP Request node's do, so an agent cannot reach an internal address
-		// the rest of the product refuses.
-		client:          safehttp.NewClient(modelPolicy),
-		memory:          memory,
-		policy:          policy,
-		fallbackTimeout: policy.Timeout,
-		timeoutCeiling:  DefaultModelTimeoutCeiling,
-		httpTool:        NewHTTPExecutor(policy),
+		runtime:      runtime,
+		modelBackend: newModelBackend(policy),
+		memory:       memory,
+		httpTool:     NewHTTPExecutor(policy),
 	}
 	for _, option := range options {
 		option(executor)
@@ -759,8 +1092,8 @@ func WithModelTimeoutCeiling(ceiling time.Duration) AgentOption {
 // every future runtime would have to honour. For the single-call case the two
 // are the same, and for a tool loop this is the bound a user actually means:
 // how long this node may take.
-func (executor *AgentExecutor) modelTimeout(descriptor map[string]any) (time.Duration, error) {
-	ceiling := executor.timeoutCeiling
+func (backend *modelBackend) modelTimeout(descriptor map[string]any) (time.Duration, error) {
+	ceiling := backend.timeoutCeiling
 	if ceiling <= 0 {
 		ceiling = DefaultModelTimeoutCeiling
 	}
@@ -768,8 +1101,8 @@ func (executor *AgentExecutor) modelTimeout(descriptor map[string]any) (time.Dur
 	// interoperating with the format means keeping its unit too.
 	milliseconds := numberValue(descriptor[ModelOptionTimeout])
 	if milliseconds <= 0 {
-		if executor.fallbackTimeout > 0 {
-			return executor.fallbackTimeout, nil
+		if backend.fallbackTimeout > 0 {
+			return backend.fallbackTimeout, nil
 		}
 		return ceiling, nil
 	}
@@ -799,48 +1132,18 @@ func (executor *AgentExecutor) Execute(ctx context.Context, ir workflow.IRNode, 
 	// same order on every run.
 	toolDescriptors := descriptorsFrom(input["tools"])
 
-	credentialID, _ := modelDescriptor["credentialId"].(string)
-	if request.Credentials == nil {
-		return nil, fmt.Errorf("node %q: credentials are not available in this runtime", ir.Name)
-	}
-	resolved, err := request.Credentials.ResolveCredential(ctx, credentialID)
-	if err != nil {
+	// Two tools under one name would fail mid-run in the loop; refuse them
+	// here instead, naming both nodes while no model call has happened yet.
+	if err := CheckDuplicateToolNames(toolDescriptors); err != nil {
 		return nil, fmt.Errorf("node %q: %w", ir.Name, err)
 	}
-	apiKeyField, usable := modelAPIKeyFields[resolved.Type]
-	if !usable {
-		return nil, fmt.Errorf("node %q: credential %q is a %s credential, which no chat model can authenticate with",
-			ir.Name, resolved.Name, resolved.Type)
-	}
 
-	baseURL := textValue(modelDescriptor["baseUrl"], "https://api.openai.com/v1")
-	target, err := url.Parse(baseURL)
+	model, err := executor.resolveModel(ctx, ir.Name, modelDescriptor, request)
 	if err != nil {
-		return nil, fmt.Errorf("node %q: the model's base URL is not a valid URL", ir.Name)
+		return nil, err
 	}
-	// The same pre-flight gate the HTTP node applies. The dialer refuses a
-	// private address on its own, but only once DNS has answered — so a
-	// disallowed host that does not resolve would fail as a lookup error rather
-	// than as the policy refusal it is.
-	if err := executor.policy.CheckURL(target); err != nil {
-		return nil, fmt.Errorf("node %q: %w", ir.Name, err)
-	}
-	// A model call is an outbound request carrying a secret, so the credential's
-	// own domain scope binds it exactly as it binds an HTTP Request node's. It
-	// did not before: a credential scoped to api.openai.com could be pointed at
-	// any host by editing one parameter on the model node.
-	if !resolved.AllowsHost(target.Host) {
-		return nil, fmt.Errorf("node %q: credential %q is not allowed for host %q",
-			ir.Name, resolved.Name, target.Hostname())
-	}
-
-	timeout, err := executor.modelTimeout(modelDescriptor)
-	if err != nil {
-		return nil, fmt.Errorf("node %q: %w", ir.Name, err)
-	}
-	model := ai.NewOpenAICompatible(executor.client, baseURL, resolved.Fields[apiKeyField])
-
 	tools := make([]ai.Tool, 0, len(toolDescriptors))
+
 	for _, descriptor := range toolDescriptors {
 		tool, err := executor.httpToolFrom(ir, descriptor, request)
 		if err != nil {
@@ -860,25 +1163,28 @@ func (executor *AgentExecutor) Execute(ctx context.Context, ir workflow.IRNode, 
 			return nil, fmt.Errorf("node %q: %w", ir.Name, err)
 		}
 
+		// systemPrompt stays as an alias for graphs saved before the system
+		// message existed; where both are set, the message wins.
+		systemPrompt := textValue(parameters["systemMessage"], "")
+		if systemPrompt == "" {
+			systemPrompt = textValue(parameters["systemPrompt"], "")
+		}
 		agentRequest := ai.AgentRequest{
-			Model:         model,
-			ModelName:     textValue(modelDescriptor["model"], "gpt-4o-mini"),
-			SystemPrompt:  textValue(parameters["systemPrompt"], ""),
+			Model:         model.model,
+			ModelName:     model.name,
+			SystemPrompt:  systemPrompt,
 			Input:         textValue(parameters["prompt"], ""),
 			Tools:         tools,
 			MaxIterations: int(numberValue(parameters["maxIterations"])),
-			// A model's own -1 means "as many as the model allows", which is
-			// said by sending nothing rather than by sending a negative bound
-			// the provider would refuse.
-			MaxTokens:  positiveInt(numberValue(modelDescriptor[ModelOptionMaxTokens])),
-			MaxRetries: positiveInt(numberValue(modelDescriptor[ModelOptionMaxRetries])),
-			Stream:     boolValue(modelDescriptor["stream"]),
+			MaxTokens:     model.maxTokens,
+			MaxRetries:    model.maxRetries,
+			Stream:        model.stream || boolValue(parameters["enableStreaming"]),
 			// Read back by presence for the reason they were written by
 			// presence: zero is a value a user chooses, not the absence of one.
-			Temperature:      presentNumber(modelDescriptor, ModelOptionTemperature),
-			TopP:             presentNumber(modelDescriptor, ModelOptionTopP),
-			FrequencyPenalty: presentNumber(modelDescriptor, ModelOptionFrequencyPenalty),
-			PresencePenalty:  presentNumber(modelDescriptor, ModelOptionPresencePenalty),
+			Temperature:      model.temperature,
+			TopP:             model.topP,
+			FrequencyPenalty: model.frequencyPenalty,
+			PresencePenalty:  model.presencePenalty,
 		}
 		if hasMemory && executor.memory != nil {
 			agentRequest.Memory = executor.memory
@@ -887,13 +1193,20 @@ func (executor *AgentExecutor) Execute(ctx context.Context, ir workflow.IRNode, 
 				WorkflowID: request.Execution.WorkflowID,
 				SessionID:  textValue(memoryDescriptor["sessionId"], ""),
 			}
+			// The bounds the memory node declared travel beside the key, so
+			// two memory nodes with different bounds retain different
+			// amounts. Zero means the memory's own defaults.
+			agentRequest.SessionPolicy = ai.Retention{
+				MaxMessages: int(numberValue(memoryDescriptor["maxMessages"])),
+				MaxAge:      time.Duration(numberValue(memoryDescriptor["maxAgeMinutes"])) * time.Minute,
+			}
 		}
 
 		events := make([]any, 0, 8)
 		// Cancelled explicitly rather than deferred: this is a loop, and a
 		// deferred cancel would hold every item's context alive until the whole
 		// node finished.
-		runCtx, cancel := context.WithTimeout(ctx, timeout)
+		runCtx, cancel := context.WithTimeout(ctx, model.timeout)
 		result, err := executor.runtime.Run(runCtx, agentRequest, func(event ai.Event) {
 			events = append(events, event)
 			request.Events.Emit(engine.NodeEvent{
@@ -905,14 +1218,251 @@ func (executor *AgentExecutor) Execute(ctx context.Context, ir workflow.IRNode, 
 			return nil, fmt.Errorf("node %q: %w", ir.Name, err)
 		}
 
-		out = append(out, workflow.Item{JSON: map[string]any{
+		payload := map[string]any{
 			"output":     result.Output,
 			"usage":      map[string]any{"promptTokens": float64(result.Usage.PromptTokens), "completionTokens": float64(result.Usage.CompletionTokens), "totalTokens": float64(result.Usage.TotalTokens)},
 			"iterations": float64(result.Iterations),
 			"toolCalls":  float64(result.ToolCalls),
-		}})
+		}
+		// Off means byte-identical to the output this node always produced:
+		// the key is added, never removed, and nothing else moves.
+		if boolValue(parameters["returnIntermediateSteps"]) {
+			payload["intermediateSteps"] = result.Messages
+		}
+		output := workflow.Item{JSON: payload}
+		if boolValue(parameters["passthroughBinaryImages"]) && len(item.Binary) > 0 {
+			binary := make(map[string]workflow.BinaryRef, len(item.Binary))
+			for name, ref := range item.Binary {
+				binary[name] = ref
+			}
+			output.Binary = binary
+		}
+		out = append(out, output)
 	}
 	return workflow.NodeOutput{out}, nil
+}
+
+// ChainExecutor runs the Basic LLM Chain node: exactly one model call per
+// item, with no tool loop and no memory slot. It drives ai.ChatModel
+// directly rather than through the agent runtime, which would hand it a loop
+// it must not have.
+type ChainExecutor struct {
+	models modelBackend
+}
+
+// NewChainExecutor builds the chain node's executor.
+func NewChainExecutor(policy safehttp.Policy, ceiling time.Duration) *ChainExecutor {
+	backend := newModelBackend(policy)
+	if ceiling > 0 {
+		backend.timeoutCeiling = ceiling
+	}
+	return &ChainExecutor{models: backend}
+}
+
+// Execute runs the chain once per incoming item.
+func (executor *ChainExecutor) Execute(ctx context.Context, ir workflow.IRNode, input workflow.NodeInput, request engine.Request) (workflow.NodeOutput, error) {
+	modelDescriptor, found, err := soleDescriptor(input["model"], "model")
+	if err != nil {
+		return nil, fmt.Errorf("node %q: %w", ir.Name, err)
+	}
+	if !found {
+		return nil, fmt.Errorf("node %q: connect a chat model to the model port", ir.Name)
+	}
+	// No output parser node type exists yet, so anything on this port is a
+	// graph the catalogue cannot have produced. Refusing names the port
+	// instead of silently returning unstructured text where a structure was
+	// asked for.
+	if parsers := descriptorsFrom(input["outputParser"]); len(parsers) > 0 {
+		return nil, fmt.Errorf("node %q: output parsers are not supported yet", ir.Name)
+	}
+	// The model descriptor is read from the model port by name, never from
+	// main: on a well-formed graph main carries items, not descriptors, and
+	// on a malformed one it carries something surprising.
+	model, err := executor.models.resolveModel(ctx, ir.Name, modelDescriptor, request)
+	if err != nil {
+		return nil, err
+	}
+
+	items := input["main"]
+	if len(items) == 0 {
+		items = []workflow.Item{{JSON: map[string]any{}}}
+	}
+	out := make([]workflow.Item, 0, len(items))
+	for index, item := range items {
+		parameters, err := expression.Resolve(ir.Parameters, expressionContext(item, input, request, index))
+		if err != nil {
+			return nil, fmt.Errorf("node %q: %w", ir.Name, err)
+		}
+		messages, err := chainMessagesForItem(ir.Name, parameters, item)
+		if err != nil {
+			return nil, err
+		}
+		modelRequest := ai.ModelRequest{
+			Model:            model.name,
+			Messages:         messages,
+			Temperature:      model.temperature,
+			TopP:             model.topP,
+			FrequencyPenalty: model.frequencyPenalty,
+			PresencePenalty:  model.presencePenalty,
+			MaxTokens:        model.maxTokens,
+			MaxRetries:       model.maxRetries,
+		}
+		// Cancelled explicitly rather than deferred: this is a loop, and a
+		// deferred cancel would hold every item's context alive until the
+		// whole node finished.
+		runCtx, cancel := context.WithTimeout(ctx, model.timeout)
+		request.Events.Emit(engine.NodeEvent{
+			NodeID: ir.ID, Name: string(ai.EventModelStarted),
+			Detail: eventDetail(ai.Event{Kind: ai.EventModelStarted, Iteration: 1, Model: model.name}),
+		})
+		var response ai.ModelResponse
+		if model.stream {
+			response, err = model.model.Stream(runCtx, modelRequest, func(delta string) {
+				if delta == "" {
+					return
+				}
+				request.Events.Emit(engine.NodeEvent{
+					NodeID: ir.ID, Name: string(ai.EventModelDelta),
+					Detail: eventDetail(ai.Event{Kind: ai.EventModelDelta, Iteration: 1, Model: model.name, Delta: delta}),
+				})
+			})
+		} else {
+			response, err = model.model.Complete(runCtx, modelRequest)
+		}
+		cancel()
+		if err != nil {
+			request.Events.Emit(engine.NodeEvent{
+				NodeID: ir.ID, Name: string(ai.EventAgentFailed),
+				Detail: eventDetail(ai.Event{Kind: ai.EventAgentFailed, Iteration: 1, Model: model.name, Error: err.Error()}),
+			})
+			return nil, fmt.Errorf("node %q: %w", ir.Name, err)
+		}
+		usage := response.Usage
+		request.Events.Emit(engine.NodeEvent{
+			NodeID: ir.ID, Name: string(ai.EventModelCompleted),
+			Detail: eventDetail(ai.Event{Kind: ai.EventModelCompleted, Iteration: 1, Model: model.name, Usage: &usage}),
+		})
+		out = append(out, workflow.Item{JSON: map[string]any{"output": response.Message.Content}})
+	}
+	return workflow.NodeOutput{out}, nil
+}
+
+// chainMessagesForItem builds one item's prompt: the ordered message rows
+// first, then the user message from the field or the defined text.
+func chainMessagesForItem(nodeName string, parameters map[string]any, item workflow.Item) ([]ai.Message, error) {
+	rows, err := chainMessageRows(parameters["messages"])
+	if err != nil {
+		return nil, fmt.Errorf("node %q: %w", nodeName, err)
+	}
+	messages := make([]ai.Message, 0, len(rows)+1)
+	for index, row := range rows {
+		var role ai.Role
+		switch row.Type {
+		case chainRoleSystem, "":
+			role = ai.RoleSystem
+		case chainRoleHuman:
+			role = ai.RoleUser
+		case chainRoleAI:
+			role = ai.RoleAssistant
+		default:
+			return nil, fmt.Errorf("node %q: message %d has type %q, want system, human, or ai", nodeName, index+1, row.Type)
+		}
+		if strings.TrimSpace(row.Text) == "" {
+			return nil, fmt.Errorf("node %q: message %d has empty text", nodeName, index+1)
+		}
+		messages = append(messages, ai.Message{Role: role, Content: row.Text})
+	}
+	prompt := ""
+	if textValue(parameters["promptType"], chainPromptAuto) == chainPromptDefine {
+		prompt = textValue(parameters["text"], "")
+	} else {
+		field := textValue(parameters["inputField"], "chatInput")
+		if field == "" {
+			field = "chatInput"
+		}
+		prompt, _ = item.JSON[field].(string)
+	}
+	if strings.TrimSpace(prompt) != "" {
+		messages = append(messages, ai.Message{Role: ai.RoleUser, Content: prompt})
+	}
+	if len(messages) == 0 {
+		return nil, fmt.Errorf("node %q: the prompt is empty; provide text or at least one message", nodeName)
+	}
+	return messages, nil
+}
+
+// chainMessageRow is one typed row of the chain's message list.
+type chainMessageRow struct {
+	Type string
+	Text string
+}
+
+// chainMessageRows reads the stored messages fixedCollection. An
+// expression-valued collection is left for run time; anything else shaped
+// wrong is refused here rather than misread there.
+func chainMessageRows(value any) ([]chainMessageRow, error) {
+	if value == nil || expression.IsExpression(value) {
+		return nil, nil
+	}
+	collection, ok := value.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("messages must be a fixed collection of message rows")
+	}
+	raw, present := collection["messageValues"]
+	if !present {
+		return nil, nil
+	}
+	list, ok := raw.([]any)
+	if !ok {
+		return nil, fmt.Errorf("messages.messageValues must be a list of message rows")
+	}
+	rows := make([]chainMessageRow, 0, len(list))
+	for _, entry := range list {
+		fields, ok := entry.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("messages.messageValues must be a list of message rows")
+		}
+		rows = append(rows, chainMessageRow{Type: chainLiteral(fields["type"]), Text: chainLiteral(fields["message"])})
+	}
+	return rows, nil
+}
+
+// chainLiteral reads a fixed-collection cell, treating an expression as
+// present-but-unknown: static validation cannot judge it, run time resolves
+// it and refuses the empty result there.
+func chainLiteral(value any) string {
+	if expression.IsExpression(value) {
+		return "expression"
+	}
+	text, _ := value.(string)
+	return text
+}
+
+func validateChainConfiguration(n workflow.Node) error {
+	promptType := statementText(n.Parameters, "promptType")
+	switch promptType {
+	case "", chainPromptAuto, chainPromptDefine, "expression":
+	default:
+		return fmt.Errorf("promptType must be %q or %q", chainPromptAuto, chainPromptDefine)
+	}
+	rows, err := chainMessageRows(n.Parameters["messages"])
+	if err != nil {
+		return err
+	}
+	for index, row := range rows {
+		switch row.Type {
+		case chainRoleSystem, chainRoleHuman, chainRoleAI, "expression", "":
+		default:
+			return fmt.Errorf("message %d has type %q, want system, human, or ai", index+1, row.Type)
+		}
+		if strings.TrimSpace(row.Text) == "" {
+			return fmt.Errorf("message %d has empty text", index+1)
+		}
+	}
+	if promptType == chainPromptDefine && len(rows) == 0 && statementText(n.Parameters, "text") == "" {
+		return fmt.Errorf("define a prompt with text or at least one message")
+	}
+	return nil
 }
 
 func eventDetail(event ai.Event) json.RawMessage {

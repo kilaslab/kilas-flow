@@ -612,6 +612,7 @@ func TestSupportedMappingsAreAdvertisedExplicitly(t *testing.T) {
 		"@devlikeapro/n8n-nodes-waha.WAHA ↔ pack.waha",
 		"@devlikeapro/n8n-nodes-waha.wahaTrigger ↔ pack.wahaTrigger",
 		"@n8n/n8n-nodes-langchain.agent ↔ kilasflow.agent",
+		"@n8n/n8n-nodes-langchain.chainLlm ↔ kilasflow.chainLlm",
 		"@n8n/n8n-nodes-langchain.lmChatOpenAi ↔ kilasflow.lmChatOpenAi",
 		"@n8n/n8n-nodes-langchain.lmChatOpenRouter ↔ kilasflow.lmChatOpenRouter",
 		"@n8n/n8n-nodes-langchain.memoryBufferWindow ↔ kilasflow.memoryBuffer",
@@ -3106,8 +3107,8 @@ func TestAnImportedClusterArrivesConfigured(t *testing.T) {
 	}
 	// The system message and the iteration bound live inside n8n's `options`
 	// collection, not at the top level where this server keeps them.
-	if agent.Parameters["systemPrompt"] != "You are a support agent." {
-		t.Errorf("agent systemPrompt = %#v, want it read out of n8n's options collection", agent.Parameters["systemPrompt"])
+	if agent.Parameters["systemMessage"] != "You are a support agent." {
+		t.Errorf("agent systemMessage = %#v, want it read out of n8n's options collection", agent.Parameters["systemMessage"])
 	}
 	if agent.Parameters["maxIterations"] != float64(12) {
 		t.Errorf("agent maxIterations = %#v, want 12", agent.Parameters["maxIterations"])
@@ -3124,9 +3125,12 @@ func TestAnImportedClusterArrivesConfigured(t *testing.T) {
 	}
 
 	memory := nodeByName(document, "Window Memory")
-	session, _ := memory.Parameters["sessionId"].(map[string]any)
+	if memory.Parameters["sessionIdType"] != "customKey" {
+		t.Errorf("memory sessionIdType = %#v, want n8n's mode carried", memory.Parameters["sessionIdType"])
+	}
+	session, _ := memory.Parameters["sessionKey"].(map[string]any)
 	if session["value"] != "chat-{{ $json.chatId }}" {
-		t.Errorf("memory sessionId = %#v, want n8n's sessionKey", memory.Parameters["sessionId"])
+		t.Errorf("memory sessionKey = %#v, want n8n's sessionKey", memory.Parameters["sessionKey"])
 	}
 	if memory.Parameters["maxMessages"] != float64(25) {
 		t.Errorf("memory maxMessages = %#v, want n8n's contextWindowLength", memory.Parameters["maxMessages"])
@@ -3223,7 +3227,7 @@ func TestAnAgentClusterSurvivesTheRoundTripUnchanged(t *testing.T) {
 		if before.Type != after.Type {
 			t.Errorf("%s changed type across the round trip: %q then %q", name, before.Type, after.Type)
 		}
-		for _, key := range []string{"prompt", "systemPrompt", "maxIterations", "model", "sessionId", "maxMessages", "toolName", "url"} {
+		for _, key := range []string{"prompt", "systemMessage", "maxIterations", "model", "sessionIdType", "sessionKey", "sessionId", "maxMessages", "toolName", "url"} {
 			if _, present := before.Parameters[key]; !present {
 				continue
 			}
@@ -3318,5 +3322,190 @@ func TestTheClusterMappingMatchesWhatTheReferenceWasRecordedAsSaying(t *testing.
 		if len(entry.PublishedVersions) == 0 {
 			t.Errorf("%s has no recorded published versions, so an export cannot know what n8n accepts", nodeType)
 		}
+	}
+}
+
+// TestImportRefusesANonToolsAgent is the pre-1.82 selector trap. A workflow
+// carrying parameters.agent naming anything but the Tools Agent must arrive
+// as a placeholder that names the node and the agent type — never as a Tools
+// Agent that would silently run a workflow the author never wrote.
+func TestImportRefusesANonToolsAgent(t *testing.T) {
+	t.Parallel()
+
+	fixture := func(agent string) string {
+		parameters := `"promptType":"define","text":"hi"`
+		if agent != "" {
+			parameters += fmt.Sprintf(`,"agent":%q`, agent)
+		}
+		return `{
+	  "name": "Old agent",
+	  "nodes": [
+	    {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}},
+	    {"id":"b","name":"Old Agent","type":"@n8n/n8n-nodes-langchain.agent","typeVersion":1.7,"position":[220,0],"parameters":{` +
+			parameters + `}}
+	  ],
+	  "connections": {"Manual": {"main": [[{"node":"Old Agent","type":"main","index":0}]]}}
+	}`
+	}
+
+	refused := importFixture(t, fixture("conversationalAgent"))
+	node := nodeByName(refused.Document, "Old Agent")
+	if node.Type != n8n.UnsupportedNodeType {
+		t.Fatalf("a conversationalAgent imported as %q, want the unsupported placeholder", node.Type)
+	}
+	var named bool
+	for _, issue := range refused.Unsupported {
+		if issue.Severity == n8n.SeverityBlocking &&
+			issue.NodeName == "Old Agent" &&
+			strings.Contains(issue.Reason, "conversationalAgent") {
+			named = true
+		}
+	}
+	if !named {
+		t.Errorf("no blocking diagnostic names the node and the agent type: %#v", refused.Unsupported)
+	}
+
+	// The Tools Agent by name, and the post-1.82 graph with no selector at
+	// all, both import as the agent.
+	for name, agent := range map[string]string{"named tools agent": "toolsAgent", "no selector": ""} {
+		imported := importFixture(t, fixture(agent))
+		if got := nodeByName(imported.Document, "Old Agent").Type; got != "kilasflow.agent" {
+			t.Errorf("%s imported as %q, want kilasflow.agent", name, got)
+		}
+	}
+}
+
+// TestImportReportsAgentBatchingAsDropped pins the batching contract: the
+// options are never accepted into the document and silently ignored — they
+// arrive as a dropped diagnostic and items run in order.
+func TestImportReportsAgentBatchingAsDropped(t *testing.T) {
+	t.Parallel()
+
+	// n8n nests batching inside the options collection, not beside it.
+	batched := `{
+	  "name": "Batched agent",
+	  "nodes": [
+	    {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}},
+	    {"id":"b","name":"AI Agent","type":"@n8n/n8n-nodes-langchain.agent","typeVersion":3.1,"position":[220,0],"parameters":{
+	      "promptType":"define","text":"hi",
+	      "options":{"batching":{"batchSize":5,"delayBetweenBatches":100}}
+	    }}
+	  ],
+	  "connections": {"Manual": {"main": [[{"node":"AI Agent","type":"main","index":0}]]}}
+	}`
+
+	result := importFixture(t, batched)
+	node := nodeByName(result.Document, "AI Agent")
+	if node.Type != "kilasflow.agent" {
+		t.Fatalf("agent imported as %q, want kilasflow.agent", node.Type)
+	}
+	if _, present := node.Parameters["batching"]; present {
+		t.Errorf("batching was accepted into the document: %#v", node.Parameters)
+	}
+	var reported bool
+	for _, issue := range result.Unsupported {
+		if issue.Field == "options.batching" && issue.Severity == n8n.SeverityDropped && issue.NodeName == "AI Agent" {
+			reported = true
+		}
+	}
+	if !reported {
+		t.Errorf("options.batching was not reported as dropped: %#v", result.Unsupported)
+	}
+}
+
+// TestImportCarriesTheChainNode proves the Basic LLM Chain crosses with its
+// prompt surface intact, and that the slots this server does not have arrive
+// as diagnostics rather than silence.
+func TestImportCarriesTheChainNode(t *testing.T) {
+	t.Parallel()
+
+	const fixture = `{
+	  "name": "Summariser",
+	  "nodes": [
+	    {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}},
+	    {"id":"b","name":"Summarise","type":"@n8n/n8n-nodes-langchain.chainLlm","typeVersion":1.9,"position":[220,0],"parameters":{
+	      "promptType":"define","text":"Summarise:",
+	      "messages":{"messageValues":[
+	        {"type":"system","message":"You are a summariser."},
+	        {"type":"human","message":"=Be brief about {{ $json.topic }}."}
+	      ]}
+	    }}
+	  ],
+	  "connections": {"Manual": {"main": [[{"node":"Summarise","type":"main","index":0}]]}}
+	}`
+
+	result := importFixture(t, fixture)
+	node := nodeByName(result.Document, "Summarise")
+	if node.Type != "kilasflow.chainLlm" {
+		t.Fatalf("chain imported as %q, want kilasflow.chainLlm", node.Type)
+	}
+	if node.Parameters["promptType"] != "define" || node.Parameters["text"] != "Summarise:" {
+		t.Errorf("chain prompt = %#v, want promptType and text carried", node.Parameters)
+	}
+	collection, _ := node.Parameters["messages"].(map[string]any)
+	rows, _ := collection["messageValues"].([]any)
+	if len(rows) != 2 {
+		t.Fatalf("message rows = %#v, want both rows carried", node.Parameters["messages"])
+	}
+	// The `=` prefix is n8n's expression marker and has to become this
+	// server's explicit one, row by row.
+	second, _ := rows[1].(map[string]any)
+	expression, _ := second["message"].(map[string]any)
+	if expression["mode"] != "expression" || expression["value"] != "Be brief about {{ $json.topic }}." {
+		t.Errorf("row 2 message = %#v, want the n8n expression translated", second["message"])
+	}
+
+	unsupported := `{
+	  "name": "Fancy chain",
+	  "nodes": [
+	    {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}},
+	    {"id":"b","name":"Summarise","type":"@n8n/n8n-nodes-langchain.chainLlm","typeVersion":1.9,"position":[220,0],"parameters":{
+	      "promptType":"auto","hasOutputParser":true,"needsFallback":true,
+	      "batching":{"batchSize":5}
+	    }}
+	  ],
+	  "connections": {"Manual": {"main": [[{"node":"Summarise","type":"main","index":0}]]}}
+	}`
+	blocked := importFixture(t, unsupported)
+	fields := map[string]n8n.IssueSeverity{}
+	for _, issue := range blocked.Unsupported {
+		if issue.NodeName == "Summarise" && issue.Field != "" {
+			fields[issue.Field] = issue.Severity
+		}
+	}
+	for field, severity := range map[string]n8n.IssueSeverity{
+		"hasOutputParser": n8n.SeverityBlocking,
+		"needsFallback":   n8n.SeverityBlocking,
+		"batching":        n8n.SeverityDropped,
+	} {
+		if fields[field] != severity {
+			t.Errorf("%s reported as %q, want %q (all issues: %#v)", field, fields[field], severity, blocked.Unsupported)
+		}
+	}
+}
+
+// TestImportCarriesMemoryModes proves the session modes cross under their own
+// names, so the scoping rule travels with the key.
+func TestImportCarriesMemoryModes(t *testing.T) {
+	t.Parallel()
+
+	const fixture = `{
+	  "name": "Scoped memory",
+	  "nodes": [
+	    {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}},
+	    {"id":"b","name":"Window Memory","type":"@n8n/n8n-nodes-langchain.memoryBufferWindow","typeVersion":1.3,"position":[220,0],"parameters":{
+	      "sessionIdType":"fromInput","sessionKey":"={{ $json.sessionId }}"
+	    }}
+	  ],
+	  "connections": {"Manual": {"main": [[{"node":"Window Memory","type":"main","index":0}]]}}
+	}`
+
+	node := nodeByName(importFixture(t, fixture).Document, "Window Memory")
+	if node.Parameters["sessionIdType"] != "fromInput" {
+		t.Errorf("sessionIdType = %#v, want fromInput carried", node.Parameters["sessionIdType"])
+	}
+	key, _ := node.Parameters["sessionKey"].(map[string]any)
+	if key["mode"] != "expression" || key["value"] != "{{ $json.sessionId }}" {
+		t.Errorf("sessionKey = %#v, want the n8n expression translated", node.Parameters["sessionKey"])
 	}
 }

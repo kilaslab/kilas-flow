@@ -53,7 +53,7 @@ func (LoopRuntime) Run(ctx context.Context, request AgentRequest, sink EventSink
 	// History is loaded after the system prompt so a stored conversation cannot
 	// displace the instructions this run was configured with.
 	if request.Memory != nil {
-		history, err := request.Memory.Load(ctx, request.Session)
+		history, err := loadSessionMemory(ctx, request)
 		if err != nil {
 			return AgentResult{}, fmt.Errorf("load memory: %w", err)
 		}
@@ -113,7 +113,8 @@ func (LoopRuntime) Run(ctx context.Context, request AgentRequest, sink EventSink
 
 		if len(assistant.ToolCalls) == 0 {
 			result.Output = assistant.Content
-			if err := appendMemory(ctx, request, newTurns); err != nil {
+			result.Messages = messages
+			if err := appendSessionMemory(ctx, request, newTurns); err != nil {
 				return result, err
 			}
 			sink.Emit(Event{Kind: EventAgentCompleted, Iteration: iteration, Model: request.ModelName, Usage: &result.Usage})
@@ -169,8 +170,31 @@ func (LoopRuntime) Run(ctx context.Context, request AgentRequest, sink EventSink
 	return result, err
 }
 
-func appendMemory(ctx context.Context, request AgentRequest, turns []Message) error {
+// PolicyMemory is a Memory that enforces per-session retention bounds handed
+// to it with each call. A store implementing only Memory keeps its own
+// constructor bounds; the loop prefers the policy form when it is there so
+// two memory nodes with different bounds retain different amounts.
+type PolicyMemory interface {
+	Memory
+	LoadWithPolicy(ctx context.Context, session SessionKey, retention Retention) ([]Message, error)
+	AppendWithPolicy(ctx context.Context, session SessionKey, messages []Message, retention Retention) error
+}
+
+func loadSessionMemory(ctx context.Context, request AgentRequest) ([]Message, error) {
+	if policy, ok := request.Memory.(PolicyMemory); ok {
+		return policy.LoadWithPolicy(ctx, request.Session, request.SessionPolicy)
+	}
+	return request.Memory.Load(ctx, request.Session)
+}
+
+func appendSessionMemory(ctx context.Context, request AgentRequest, turns []Message) error {
 	if request.Memory == nil {
+		return nil
+	}
+	if policy, ok := request.Memory.(PolicyMemory); ok {
+		if err := policy.AppendWithPolicy(ctx, request.Session, turns, request.SessionPolicy); err != nil {
+			return fmt.Errorf("append memory: %w", err)
+		}
 		return nil
 	}
 	if err := request.Memory.Append(ctx, request.Session, turns); err != nil {

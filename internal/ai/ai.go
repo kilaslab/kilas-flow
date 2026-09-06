@@ -200,6 +200,11 @@ type AgentRequest struct {
 	// Memory and Session are optional; without both, the run is stateless.
 	Memory  Memory
 	Session SessionKey
+	// SessionPolicy carries the retention bounds the calling node declared for
+	// this session. Zero means the memory's own defaults. It travels beside
+	// the key so a durable implementation receives the bounds rather than
+	// re-deriving them from a node it cannot see.
+	SessionPolicy Retention
 	// MaxIterations bounds the tool loop. A model that keeps asking for tools
 	// would otherwise run until the execution timeout.
 	MaxIterations int
@@ -234,7 +239,7 @@ type AgentRuntime interface {
 }
 
 // DefaultMaxIterations bounds a tool loop that never converges.
-const DefaultMaxIterations = 8
+const DefaultMaxIterations = 10
 
 // Validate reports whether a request can be run at all.
 func (request AgentRequest) Validate() error {

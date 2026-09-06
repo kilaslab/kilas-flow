@@ -164,6 +164,11 @@ type mapping struct {
 	toKilas func(node Node) (map[string]any, []Unsupported)
 	// toN8N translates back. A nil translator exports no parameters.
 	toN8N func(node workflow.Node) (map[string]any, []Lossy)
+	// refuseKilas names why a source node must not import as this mapping's
+	// target, or empty when it may. It exists for mappings whose source
+	// carries a variant selector this server does not implement: importing
+	// the variant as the target would run a workflow the author never wrote.
+	refuseKilas func(node Node) string
 	// exportTypeVersion is the n8n typeVersion written on export.
 	exportTypeVersion float64
 	// publishedVersions are the n8n typeVersions the mapped node actually has,
@@ -407,6 +412,11 @@ var mappings = []mapping{
 	{
 		n8nType: "@n8n/n8n-nodes-langchain.agent", kilasType: "kilasflow.agent", kilasVersion: workflow.V(1),
 		exportTypeVersion: 3.1, toKilas: agentToKilas, toN8N: agentToN8N,
+		refuseKilas: refuseNonToolsAgent,
+	},
+	{
+		n8nType: "@n8n/n8n-nodes-langchain.chainLlm", kilasType: "kilasflow.chainLlm", kilasVersion: workflow.V(1),
+		exportTypeVersion: 1.9, toKilas: chainToKilas, toN8N: chainToN8N,
 	},
 	{
 		n8nType: "@n8n/n8n-nodes-langchain.lmChatOpenAi", kilasType: "kilasflow.lmChatOpenAi", kilasVersion: workflow.V(1),
@@ -573,21 +583,20 @@ func Import(payload []byte, catalog workflow.Catalog) (ImportResult, error) {
 			// placeholder exists so a node "came from n8n and belongs there",
 			// and a round trip that returned it stripped of its credentials,
 			// its notes or its retry policy would defeat exactly that.
-			arity := arityByName[name]
-			converted.Type = UnsupportedNodeType
-			converted.TypeVersion = workflow.V(unsupportedArityFor(arity.inputs, arity.outputs))
-			converted.Parameters = map[string]any{
-				"originalType":        node.Type,
-				"originalTypeVersion": node.TypeVersion,
-				"original":            capsule(node),
-			}
+			unsupported = append(unsupported, placeholderFor(&converted, name, id, node, arityByName,
+				fmt.Sprintf("KilasFlow has no equivalent of the n8n node %q. It was imported as an unsupported placeholder: the workflow can be edited, but it cannot run until this node is replaced.", node.Type)))
 			nodes = append(nodes, converted)
-			unsupported = append(unsupported, ImportIssue{
-				Severity: SeverityBlocking,
-				NodeName: name, NodeID: id, Type: node.Type, TypeVersion: sourceTypeVersion(node.TypeVersion),
-				Reason: fmt.Sprintf("KilasFlow has no equivalent of the n8n node %q. It was imported as an unsupported placeholder: the workflow can be edited, but it cannot run until this node is replaced.", node.Type),
-			})
 			continue
+		}
+		// A mapped node the source variant disqualifies: imported as the
+		// target it would run a workflow the author never wrote, so it
+		// arrives as the same placeholder an unmapped node does.
+		if entry.refuseKilas != nil {
+			if reason := entry.refuseKilas(node); reason != "" {
+				unsupported = append(unsupported, placeholderFor(&converted, name, id, node, arityByName, reason))
+				nodes = append(nodes, converted)
+				continue
+			}
 		}
 
 		// Node-level elements the mapping does not carry. This runs only for a
@@ -1314,6 +1323,26 @@ func capsule(node Node) map[string]any {
 		return map[string]any{"type": node.Type, "typeVersion": node.TypeVersion}
 	}
 	return decoded
+}
+
+// placeholderFor preserves a node that cannot run here as a visible
+// placeholder that blocks activation. The whole source node stays in the
+// capsule so a round trip returns it intact; the reason names what was
+// refused and why.
+func placeholderFor(converted *workflow.Node, name, id string, node Node, arityByName map[string]nodeArity, reason string) ImportIssue {
+	arity := arityByName[name]
+	converted.Type = UnsupportedNodeType
+	converted.TypeVersion = workflow.V(unsupportedArityFor(arity.inputs, arity.outputs))
+	converted.Parameters = map[string]any{
+		"originalType":        node.Type,
+		"originalTypeVersion": node.TypeVersion,
+		"original":            capsule(node),
+	}
+	return ImportIssue{
+		Severity: SeverityBlocking,
+		NodeName: name, NodeID: id, Type: node.Type, TypeVersion: sourceTypeVersion(node.TypeVersion),
+		Reason: reason,
+	}
 }
 
 // restoreCapsule turns a stored capsule back into the node n8n wrote.

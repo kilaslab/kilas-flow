@@ -299,7 +299,6 @@ func TestHTTPToolNameIsValidated(t *testing.T) {
 	for name, toolName := range map[string]string{
 		"spaces": "get weather",
 		"dashes": "get-weather",
-		"empty":  "",
 	} {
 		parameters := map[string]any{"toolName": toolName}
 		for key, value := range base {
@@ -308,6 +307,16 @@ func TestHTTPToolNameIsValidated(t *testing.T) {
 		if err := definition.Validate(workflow.Node{Parameters: parameters}); err == nil {
 			t.Errorf("tool name %s (%q) was accepted", name, toolName)
 		}
+	}
+
+	// An empty toolName is not missing: the name derives from the canvas
+	// name, so it must validate cleanly here and resolve at run time.
+	derived := map[string]any{}
+	for key, value := range base {
+		derived[key] = value
+	}
+	if err := definition.Validate(workflow.Node{Parameters: derived}); err != nil {
+		t.Errorf("Validate() without toolName = %v, want the derived name accepted", err)
 	}
 
 	valid := map[string]any{"toolName": "get_weather"}
@@ -1161,5 +1170,584 @@ func TestEveryAttachedToolReachesTheAgentInAStableOrder(t *testing.T) {
 		if reversed[index] != want {
 			t.Fatalf("reordering the edges changed the tool order: %v then %v", scrambled, reversed)
 		}
+	}
+}
+
+func runAgentNode(t *testing.T, parameters map[string]any, input workflow.NodeInput, resolver *stubCredentials, published *[]string) (workflow.NodeOutput, error) {
+	t.Helper()
+	executor := nodes.NewAgentExecutor(ai.NewLoopRuntime(), localPolicy(), nil)
+	definition, _ := aiRegistry(t).Lookup(nodes.AgentNodeType, workflow.V(1))
+	ir := workflow.IRNode{
+		ID: "agent", Name: "AI Agent", Type: nodes.AgentNodeType, TypeVersion: workflow.V(1),
+		Parameters: parameters, Definition: definition,
+	}
+	request := engine.Request{Credentials: resolver}
+	if published != nil {
+		request.Events = func(event engine.NodeEvent) { *published = append(*published, event.Name) }
+	}
+	return executor.Execute(context.Background(), ir, input, request)
+}
+
+func agentModelInput(providerURL string) workflow.NodeInput {
+	return workflow.NodeInput{
+		"main": {{JSON: map[string]any{}}},
+		"model": {{JSON: map[string]any{"$ai": map[string]any{
+			"kind": "model", "model": "gpt-test", "baseUrl": providerURL, "credentialId": "cred-key",
+		}}}},
+	}
+}
+
+func bearerResolver() *stubCredentials {
+	return &stubCredentials{credential: engine.Credential{
+		ID: "cred-key", Name: "Provider", Type: "httpBearerAuth",
+		Fields: map[string]string{"token": "sk-live-secret"},
+	}}
+}
+
+func firstMessageContent(t *testing.T, received map[string]any) string {
+	t.Helper()
+	messages, ok := received["messages"].([]any)
+	if !ok || len(messages) == 0 {
+		t.Fatalf("provider received %#v, want a message list", received["messages"])
+	}
+	first, ok := messages[0].(map[string]any)
+	if !ok {
+		t.Fatalf("first message = %#v, want an object", messages[0])
+	}
+	content, _ := first["content"].(string)
+	return content
+}
+
+// TestAgentDefaultIterationsMatchTheRuntimeBound pins the two defaults
+// together. The node's declared default is what the user sees; the package
+// constant is what a node saved before the parameter existed runs with. If
+// they disagree, older nodes silently run a different bound than the editor
+// shows.
+func TestAgentDefaultIterationsMatchTheRuntimeBound(t *testing.T) {
+	t.Parallel()
+
+	definition, _ := aiRegistry(t).Get(nodes.AgentNodeType, workflow.V(1))
+	for _, property := range definition.Parameters {
+		if property.Key != "maxIterations" {
+			continue
+		}
+		var declared float64
+		switch value := property.Default.(type) {
+		case int:
+			declared = float64(value)
+		case float64:
+			declared = value
+		default:
+			t.Fatalf("maxIterations default = %#v, want a number", property.Default)
+		}
+		if declared != float64(ai.DefaultMaxIterations) {
+			t.Fatalf("node default = %v, runtime default = %d", declared, ai.DefaultMaxIterations)
+		}
+		return
+	}
+	t.Fatal("the agent has no maxIterations parameter")
+}
+
+func TestSystemMessageWinsOverLegacySystemPrompt(t *testing.T) {
+	t.Parallel()
+
+	var received map[string]any
+	provider := answerOnce(&received, 0)
+	defer provider.Close()
+
+	if _, err := runAgentNode(t, map[string]any{
+		"prompt": "hi", "systemMessage": "You are concise.", "systemPrompt": "You are verbose.",
+	}, agentModelInput(provider.URL), bearerResolver(), nil); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if content := firstMessageContent(t, received); content != "You are concise." {
+		t.Fatalf("system message = %q, want the systemMessage value", content)
+	}
+
+	// Without a systemMessage the legacy key still works, so graphs saved
+	// before the rename run unchanged.
+	if _, err := runAgentNode(t, map[string]any{
+		"prompt": "hi", "systemPrompt": "You are verbose.",
+	}, agentModelInput(provider.URL), bearerResolver(), nil); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if content := firstMessageContent(t, received); content != "You are verbose." {
+		t.Fatalf("system message = %q, want the legacy systemPrompt honoured", content)
+	}
+}
+
+func TestReturnIntermediateStepsControlsTheOutputShape(t *testing.T) {
+	t.Parallel()
+
+	var received map[string]any
+	provider := answerOnce(&received, 0)
+	defer provider.Close()
+
+	with, err := runAgentNode(t, map[string]any{
+		"prompt": "hi", "returnIntermediateSteps": true,
+	}, agentModelInput(provider.URL), bearerResolver(), nil)
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	steps, ok := with[0][0].JSON["intermediateSteps"].([]ai.Message)
+	if !ok {
+		// The payload crossed no JSON boundary, so the raw message slice is
+		// what the executor stored.
+		t.Fatalf("intermediateSteps = %#v, want the ordered message list", with[0][0].JSON["intermediateSteps"])
+	}
+	if len(steps) != 2 || steps[0].Role != ai.RoleUser || steps[1].Role != ai.RoleAssistant {
+		t.Fatalf("intermediateSteps = %#v, want user then assistant", steps)
+	}
+
+	without, err := runAgentNode(t, map[string]any{
+		"prompt": "hi",
+	}, agentModelInput(provider.URL), bearerResolver(), nil)
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if _, present := without[0][0].JSON["intermediateSteps"]; present {
+		t.Fatalf("output = %#v, want no intermediateSteps key when the toggle is off", without[0][0].JSON)
+	}
+	for _, key := range []string{"output", "usage", "iterations", "toolCalls"} {
+		if _, present := without[0][0].JSON[key]; !present {
+			t.Errorf("output lost key %q when the toggle is off", key)
+		}
+	}
+}
+
+func TestToolNameDerivesFromTheCanvasName(t *testing.T) {
+	t.Parallel()
+
+	executors := engine.NewRegistry()
+	if err := nodes.RegisterExecutors(executors, localPolicy(), sqlGuard(), ai.NewLoopRuntime(), nil, nil); err != nil {
+		t.Fatalf("RegisterExecutors() error = %v", err)
+	}
+	definition, _ := aiRegistry(t).Lookup(nodes.HTTPToolNodeType, workflow.V(1))
+	runTool := func(name string, parameters map[string]any) map[string]any {
+		t.Helper()
+		ir := workflow.IRNode{
+			ID: "tool", Name: name, Type: nodes.HTTPToolNodeType, TypeVersion: workflow.V(1),
+			Parameters: parameters, Definition: definition,
+		}
+		output, err := runExecutor(t, executors, nodes.HTTPToolExecutorID, ir, workflow.NodeInput{}, engine.Request{})
+		if err != nil {
+			t.Fatalf("tool %q error = %v", name, err)
+		}
+		descriptor, ok := output[0][0].JSON["$ai"].(map[string]any)
+		if !ok {
+			t.Fatalf("tool %q emitted %#v, want a descriptor", name, output[0][0].JSON)
+		}
+		return descriptor
+	}
+	base := map[string]any{"method": "GET", "url": "https://api.test/x", "toolDescription": "does a thing"}
+
+	derived := runTool("Get Weather", base)
+	if derived["name"] != "Get_Weather" {
+		t.Errorf("derived name = %q, want the canvas name normalised", derived["name"])
+	}
+
+	overridden := runTool("Get Weather", map[string]any{
+		"method": "GET", "url": "https://api.test/x",
+		"toolDescription": "does a thing", "toolName": "custom_tool",
+	})
+	if overridden["name"] != "custom_tool" {
+		t.Errorf("overridden name = %q, want the explicit override kept", overridden["name"])
+	}
+}
+
+func TestDuplicateToolNamesFailFastNamingBothNodes(t *testing.T) {
+	t.Parallel()
+
+	var received map[string]any
+	provider := answerOnce(&received, 0)
+	defer provider.Close()
+
+	input := agentModelInput(provider.URL)
+	tool := func(nodeName string) workflow.Item {
+		return workflow.Item{JSON: map[string]any{"$ai": map[string]any{
+			"kind": "tool", "name": "get_weather", "description": "Weather", "nodeName": nodeName,
+			"parameters": map[string]any{}, "credentials": map[string]any{},
+		}}}
+	}
+	input["tools"] = []workflow.Item{tool("Weather A"), tool("Weather B")}
+
+	_, err := runAgentNode(t, map[string]any{"prompt": "hi"}, input, bearerResolver(), nil)
+	if err == nil {
+		t.Fatal("Execute() accepted two tools under one name")
+	}
+	for _, want := range []string{"get_weather", "Weather A", "Weather B"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %q, want it to name %q", err.Error(), want)
+		}
+	}
+	if received["messages"] != nil {
+		t.Error("the model was called before the duplicate was refused")
+	}
+}
+
+func TestAgentEnforcesPerNodeRetention(t *testing.T) {
+	t.Parallel()
+
+	memory, err := ai.NewBufferMemory(ai.Retention{}, nil)
+	if err != nil {
+		t.Fatalf("NewBufferMemory() error = %v", err)
+	}
+	var received map[string]any
+	provider := answerOnce(&received, 0)
+	defer provider.Close()
+
+	executor := nodes.NewAgentExecutor(ai.NewLoopRuntime(), localPolicy(), memory)
+	definition, _ := aiRegistry(t).Lookup(nodes.AgentNodeType, workflow.V(1))
+	ir := workflow.IRNode{
+		ID: "agent", Name: "AI Agent", Type: nodes.AgentNodeType, TypeVersion: workflow.V(1),
+		Parameters: map[string]any{"prompt": "remember this"}, Definition: definition,
+	}
+	resolver := bearerResolver()
+	execution := engine.ExecutionContext{TenantID: "tenant-a", WorkflowID: "wf-1"}
+	for range 3 {
+		input := agentModelInput(provider.URL)
+		input["memory"] = []workflow.Item{{JSON: map[string]any{"$ai": map[string]any{
+			"kind": "memory", "sessionId": "chat-1", "maxMessages": float64(2), "maxAgeMinutes": float64(60),
+		}}}}
+		if _, err := executor.Execute(context.Background(), ir, input,
+			engine.Request{Credentials: resolver, Execution: execution}); err != nil {
+			t.Fatalf("Execute() error = %v", err)
+		}
+	}
+	// Three runs stored six turns; the node's bound of two keeps two.
+	loaded, err := memory.Load(context.Background(), ai.SessionKey{
+		TenantID: "tenant-a", WorkflowID: "wf-1", SessionID: "chat-1",
+	})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(loaded) != 2 {
+		t.Fatalf("loaded %d messages, want the node's bound of two", len(loaded))
+	}
+}
+
+func runMemoryNode(t *testing.T, name string, parameters map[string]any, live workflow.Item) map[string]any {
+	t.Helper()
+	executors := engine.NewRegistry()
+	if err := nodes.RegisterExecutors(executors, localPolicy(), sqlGuard(), ai.NewLoopRuntime(), nil, nil); err != nil {
+		t.Fatalf("RegisterExecutors() error = %v", err)
+	}
+	definition, _ := aiRegistry(t).Lookup(nodes.MemoryNodeType, workflow.V(1))
+	ir := workflow.IRNode{
+		ID: "memory", Name: name, Type: nodes.MemoryNodeType, TypeVersion: workflow.V(1),
+		Parameters: parameters, Definition: definition,
+	}
+	output, err := runExecutor(t, executors, nodes.MemoryExecutorID, ir,
+		workflow.NodeInput{}, engine.Request{Input: live})
+	if err != nil {
+		t.Fatalf("memory %q error = %v", name, err)
+	}
+	descriptor, ok := output[0][0].JSON["$ai"].(map[string]any)
+	if !ok {
+		t.Fatalf("memory %q emitted %#v, want a descriptor", name, output[0][0].JSON)
+	}
+	return descriptor
+}
+
+func TestMemorySessionKeyModes(t *testing.T) {
+	t.Parallel()
+
+	live := workflow.Item{JSON: map[string]any{"sessionId": "live-9"}}
+
+	fromInput := runMemoryNode(t, "Memory", map[string]any{
+		"sessionIdType": "fromInput", "sessionKey": "chat-9",
+		"maxMessages": float64(10), "maxAgeMinutes": float64(30),
+	}, live)
+	if fromInput["sessionId"] != "chat-9__Memory" {
+		t.Errorf("fromInput sessionId = %q, want the node-scoped key", fromInput["sessionId"])
+	}
+	if fromInput["maxMessages"] != float64(10) || fromInput["maxAgeMinutes"] != float64(30) {
+		t.Errorf("descriptor = %#v, want the declared bounds carried through", fromInput)
+	}
+
+	custom := runMemoryNode(t, "Memory", map[string]any{
+		"sessionIdType": "customKey", "sessionKey": "shared",
+	}, live)
+	if custom["sessionId"] != "shared" {
+		t.Errorf("customKey sessionId = %q, want the key shared verbatim", custom["sessionId"])
+	}
+
+	// A node saved before the modes existed keeps its exact conversation.
+	legacy := runMemoryNode(t, "Memory", map[string]any{"sessionId": "old-1"}, live)
+	if legacy["sessionId"] != "old-1" {
+		t.Errorf("legacy sessionId = %q, want no suffix added", legacy["sessionId"])
+	}
+
+	// The key comes off the live item, never a stored value.
+	expression := runMemoryNode(t, "Memory", map[string]any{
+		"sessionIdType": "fromInput",
+		"sessionKey":    map[string]any{"mode": "expression", "value": "{{ $json.sessionId }}"},
+	}, live)
+	if expression["sessionId"] != "live-9__Memory" {
+		t.Errorf("expression sessionId = %q, want the live item's field scoped to the node", expression["sessionId"])
+	}
+}
+
+func TestMemorySessionKeyValidation(t *testing.T) {
+	t.Parallel()
+
+	definition, _ := aiRegistry(t).Lookup(nodes.MemoryNodeType, workflow.V(1))
+	for name, parameters := range map[string]map[string]any{
+		"fromInput without a key": {"sessionIdType": "fromInput"},
+		"nothing at all":          {},
+		"unknown mode":            {"sessionIdType": "carrierPigeon", "sessionKey": "k"},
+	} {
+		if err := definition.Validate(workflow.Node{Parameters: parameters}); err == nil {
+			t.Errorf("%s was accepted", name)
+		}
+	}
+	for name, parameters := range map[string]map[string]any{
+		"custom key":   {"sessionIdType": "customKey", "sessionKey": "shared"},
+		"legacy key":   {"sessionId": "old-1"},
+		"legacy alias": {"sessionKey": "typed-into-old-node"},
+	} {
+		if err := definition.Validate(workflow.Node{Parameters: parameters}); err != nil {
+			t.Errorf("%s rejected: %v", name, err)
+		}
+	}
+}
+
+func runChainNode(t *testing.T, parameters map[string]any, input workflow.NodeInput, resolver *stubCredentials, published *[]string) (workflow.NodeOutput, error) {
+	t.Helper()
+	executor := nodes.NewChainExecutor(localPolicy(), 0)
+	definition, _ := aiRegistry(t).Lookup(nodes.ChainNodeType, workflow.V(1))
+	ir := workflow.IRNode{
+		ID: "chain", Name: "Basic LLM Chain", Type: nodes.ChainNodeType, TypeVersion: workflow.V(1),
+		Parameters: parameters, Definition: definition,
+	}
+	request := engine.Request{Credentials: resolver}
+	if published != nil {
+		request.Events = func(event engine.NodeEvent) { *published = append(*published, event.Name) }
+	}
+	return executor.Execute(context.Background(), ir, input, request)
+}
+
+// countingProvider answers every model call with the same text while
+// recording each request body, so a test asserts call count and per-item
+// prompts rather than taking either on faith.
+func countingProvider(t *testing.T, bodies *[]map[string]any) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		decoded := map[string]any{}
+		_ = json.Unmarshal(body, &decoded)
+		*bodies = append(*bodies, decoded)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"42"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}`))
+	}))
+}
+
+func chainModelInput(providerURL string, items ...workflow.Item) workflow.NodeInput {
+	return workflow.NodeInput{
+		"main": items,
+		"model": {{JSON: map[string]any{"$ai": map[string]any{
+			"kind": "model", "model": "gpt-test", "baseUrl": providerURL, "credentialId": "cred-key",
+		}}}},
+	}
+}
+
+func promptContents(t *testing.T, body map[string]any) []map[string]any {
+	t.Helper()
+	messages, ok := body["messages"].([]any)
+	if !ok {
+		t.Fatalf("provider received %#v, want a message list", body["messages"])
+	}
+	contents := make([]map[string]any, 0, len(messages))
+	for _, message := range messages {
+		entry, ok := message.(map[string]any)
+		if !ok {
+			t.Fatalf("message = %#v, want an object", message)
+		}
+		contents = append(contents, entry)
+	}
+	return contents
+}
+
+// TestChainRunsOneModelCallPerItem is the node's core contract: no loop, no
+// memory, one call per item, proven by the bodies the provider received and
+// the ai.model.* events on the execution feed.
+func TestChainRunsOneModelCallPerItem(t *testing.T) {
+	t.Parallel()
+
+	var bodies []map[string]any
+	provider := countingProvider(t, &bodies)
+	defer provider.Close()
+
+	var published []string
+	output, err := runChainNode(t,
+		map[string]any{"promptType": "auto", "inputField": "question"},
+		chainModelInput(provider.URL,
+			workflow.Item{JSON: map[string]any{"question": "First?"}},
+			workflow.Item{JSON: map[string]any{"question": "Second?"}},
+		),
+		bearerResolver(), &published)
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if len(output[0]) != 2 {
+		t.Fatalf("output has %d items, want one per incoming item", len(output[0]))
+	}
+	for index, item := range output[0] {
+		if item.JSON["output"] != "42" {
+			t.Errorf("item %d output = %#v, want the model's text", index, item.JSON["output"])
+		}
+	}
+	if len(bodies) != 2 {
+		t.Fatalf("provider received %d calls, want exactly one per item", len(bodies))
+	}
+	for index, want := range []string{"First?", "Second?"} {
+		messages := promptContents(t, bodies[index])
+		if len(messages) != 1 || messages[0]["content"] != want {
+			t.Errorf("call %d messages = %#v, want the item's field as one user turn", index, messages)
+		}
+	}
+	started, completed := 0, 0
+	for _, name := range published {
+		switch name {
+		case string(ai.EventModelStarted):
+			started++
+		case string(ai.EventModelCompleted):
+			completed++
+		}
+	}
+	if started != 2 || completed != 2 {
+		t.Errorf("events = %v, want one model started/completed pair per item", published)
+	}
+}
+
+func TestChainMessageListRendersTypedRowsWithExpressions(t *testing.T) {
+	t.Parallel()
+
+	var bodies []map[string]any
+	provider := countingProvider(t, &bodies)
+	defer provider.Close()
+
+	output, err := runChainNode(t,
+		map[string]any{
+			"promptType": "define",
+			"text":       "Summarise:",
+			"messages": map[string]any{"messageValues": []any{
+				map[string]any{"type": "system", "message": "You are a summariser."},
+				map[string]any{"type": "human", "message": map[string]any{"mode": "expression", "value": "{{ $json.prefix }}"}},
+			}},
+		},
+		chainModelInput(provider.URL, workflow.Item{JSON: map[string]any{"prefix": "Be brief."}}),
+		bearerResolver(), nil)
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if output[0][0].JSON["output"] != "42" {
+		t.Fatalf("output = %#v, want the model's text", output[0][0].JSON)
+	}
+	messages := promptContents(t, bodies[0])
+	if len(messages) != 3 {
+		t.Fatalf("messages = %#v, want two rows then the user message", messages)
+	}
+	if messages[0]["role"] != "system" || messages[0]["content"] != "You are a summariser." {
+		t.Errorf("row 1 = %#v, want the system row verbatim", messages[0])
+	}
+	if messages[1]["role"] != "user" || messages[1]["content"] != "Be brief." {
+		t.Errorf("row 2 = %#v, want the row expression resolved against the item", messages[1])
+	}
+	if messages[2]["role"] != "user" || messages[2]["content"] != "Summarise:" {
+		t.Errorf("row 3 = %#v, want the defined text as the final user turn", messages[2])
+	}
+}
+
+func TestChainValidationNamesTheEmptyRow(t *testing.T) {
+	t.Parallel()
+
+	definition, _ := aiRegistry(t).Lookup(nodes.ChainNodeType, workflow.V(1))
+	emptyRow := map[string]any{
+		"promptType": "define", "text": "Summarise:",
+		"messages": map[string]any{"messageValues": []any{
+			map[string]any{"type": "system", "message": "You are a summariser."},
+			map[string]any{"type": "human", "message": ""},
+		}},
+	}
+	if err := definition.Validate(workflow.Node{Parameters: emptyRow}); err == nil ||
+		!strings.Contains(err.Error(), "message 2") {
+		t.Errorf("Validate() = %v, want an error naming row 2", err)
+	}
+
+	badType := map[string]any{
+		"messages": map[string]any{"messageValues": []any{
+			map[string]any{"type": "carrierPigeon", "message": "hi"},
+		}},
+	}
+	if err := definition.Validate(workflow.Node{Parameters: badType}); err == nil ||
+		!strings.Contains(err.Error(), "message 1") {
+		t.Errorf("Validate() = %v, want an error naming row 1", err)
+	}
+
+	emptyDefine := map[string]any{"promptType": "define"}
+	if err := definition.Validate(workflow.Node{Parameters: emptyDefine}); err == nil {
+		t.Errorf("Validate() accepted a defined prompt with no text and no messages")
+	}
+
+	valid := map[string]any{
+		"promptType": "define", "text": "Summarise:",
+		"messages": map[string]any{"messageValues": []any{
+			map[string]any{"type": "system", "message": "You are a summariser."},
+		}},
+	}
+	if err := definition.Validate(workflow.Node{Parameters: valid}); err != nil {
+		t.Errorf("Validate() = %v, want a complete chain accepted", err)
+	}
+	if err := definition.Validate(workflow.Node{Parameters: map[string]any{"promptType": "auto"}}); err != nil {
+		t.Errorf("Validate() = %v, want field mode accepted without rows", err)
+	}
+}
+
+func TestChainRequiresAModelOnTheModelPort(t *testing.T) {
+	t.Parallel()
+
+	// The descriptor lives on the model port by name. Main carries items on
+	// a well-formed graph and something surprising on a malformed one, so a
+	// graph with no model port must fail here rather than read main.
+	_, err := runChainNode(t, map[string]any{"promptType": "auto"},
+		workflow.NodeInput{"main": {{JSON: map[string]any{"question": "hi"}}}},
+		bearerResolver(), nil)
+	if err == nil || !strings.Contains(err.Error(), "model port") {
+		t.Fatalf("Execute() = %v, want a missing-model rejection", err)
+	}
+}
+
+func TestChainRejectsAnEmptyPrompt(t *testing.T) {
+	t.Parallel()
+
+	var bodies []map[string]any
+	provider := countingProvider(t, &bodies)
+	defer provider.Close()
+
+	_, err := runChainNode(t, map[string]any{"promptType": "auto", "inputField": "question"},
+		chainModelInput(provider.URL, workflow.Item{JSON: map[string]any{"other": "field"}}),
+		bearerResolver(), nil)
+	if err == nil || !strings.Contains(err.Error(), "prompt is empty") {
+		t.Fatalf("Execute() = %v, want an empty-prompt rejection", err)
+	}
+	if len(bodies) != 0 {
+		t.Error("the model was called with an empty prompt")
+	}
+}
+
+func TestChainRefusesAnOutputParserItCannotRun(t *testing.T) {
+	t.Parallel()
+
+	var bodies []map[string]any
+	provider := countingProvider(t, &bodies)
+	defer provider.Close()
+
+	input := chainModelInput(provider.URL, workflow.Item{JSON: map[string]any{"question": "hi"}})
+	input["outputParser"] = []workflow.Item{{JSON: map[string]any{"$ai": map[string]any{"kind": "parser"}}}}
+	_, err := runChainNode(t, map[string]any{"promptType": "auto"},
+		input, bearerResolver(), nil)
+	if err == nil || !strings.Contains(err.Error(), "output parser") {
+		t.Fatalf("Execute() = %v, want the parser refused by name", err)
 	}
 }

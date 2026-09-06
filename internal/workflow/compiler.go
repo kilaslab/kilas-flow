@@ -378,6 +378,7 @@ func Compile(document Document, catalog Catalog) (IR, error) {
 		}
 		validateExecutableTopology(ir, issues)
 		validatePortCardinality(ir, issues)
+		validateAgentToolNames(ir, issues)
 	}
 
 	if len(issues.Issues) > 0 {
@@ -853,6 +854,79 @@ func validatePortCardinality(ir IR, issues *ValidationErrors) {
 				})
 			}
 		}
+	}
+}
+
+// NormalizeToolName derives the model-facing tool name from a canvas name.
+// The model API accepts letters, digits, and underscores, so anything else
+// becomes an underscore rather than failing the run.
+//
+// It lives in the graph package rather than the node one so the compiler can
+// refuse a duplicate name before activation without importing the catalogue
+// it validates against. nodes.NormalizeToolName is the same rule for
+// runtime use; the two must stay identical.
+func NormalizeToolName(name string) string {
+	var builder strings.Builder
+	for _, letter := range name {
+		switch {
+		case letter >= 'a' && letter <= 'z', letter >= 'A' && letter <= 'Z',
+			letter >= '0' && letter <= '9', letter == '_':
+			builder.WriteRune(letter)
+		default:
+			builder.WriteRune('_')
+		}
+	}
+	if builder.Len() == 0 {
+		return "http_request"
+	}
+	return builder.String()
+}
+
+// validateAgentToolNames refuses two tools claiming one model-facing name on
+// the same agent, naming both canvas nodes.
+//
+// The tool channel's naming rule is stated here because only the compiler
+// sees the whole graph: a tool without an explicit `toolName` override is
+// called by its canvas name normalised through NormalizeToolName, exactly
+// as the runtime derives it. Waiting for the run would fail an activated
+// workflow mid-execution on a graph the compiler already accepted.
+func validateAgentToolNames(ir IR, issues *ValidationErrors) {
+	byID := make(map[string]IRNode, len(ir.Nodes))
+	indexByID := make(map[string]int, len(ir.Nodes))
+	for index, node := range ir.Nodes {
+		byID[node.ID] = node
+		indexByID[node.ID] = index
+	}
+	claimed := make(map[string]map[string]string)
+	for _, edge := range ir.Edges {
+		if edge.Kind != ConnectionTool {
+			continue
+		}
+		source, sourceFound := byID[edge.Source.NodeID]
+		target, targetFound := byID[edge.Target.NodeID]
+		if !sourceFound || !targetFound {
+			continue
+		}
+		name, _ := source.Parameters["toolName"].(string)
+		if strings.TrimSpace(name) == "" {
+			name = NormalizeToolName(source.Name)
+		} else {
+			name = strings.TrimSpace(name)
+		}
+		agents := claimed[edge.Target.NodeID]
+		if agents == nil {
+			agents = map[string]string{}
+			claimed[edge.Target.NodeID] = agents
+		}
+		if first, duplicate := agents[name]; duplicate {
+			issues.add(ValidationError{
+				Code: ErrorInvalidTopology, Path: fmt.Sprintf("/nodes/%d", indexByID[target.ID]), NodeID: target.ID,
+				Message: fmt.Sprintf("tool name %q is used by both node %q and node %q; rename one of them",
+					name, first, source.Name),
+			})
+			continue
+		}
+		agents[name] = source.Name
 	}
 }
 

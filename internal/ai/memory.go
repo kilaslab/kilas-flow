@@ -3,6 +3,7 @@ package ai
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
@@ -55,16 +56,35 @@ type storedMessage struct {
 type BufferMemory struct {
 	retention Retention
 	now       func() time.Time
+	// maxSessionsPerTenant bounds how many conversations one tenant may keep.
+	// Zero means unbounded. When a write would exceed it, the tenant's
+	// least-recently-touched session is evicted first.
+	maxSessionsPerTenant int
 
 	mu       sync.Mutex
 	sessions map[string][]storedMessage
+	touched  map[string]time.Time
 }
 
 var _ Memory = (*BufferMemory)(nil)
+var _ PolicyMemory = (*BufferMemory)(nil)
+
+// BufferOption carries a deployment decision the memory store needs.
+type BufferOption func(*BufferMemory)
+
+// WithPerTenantSessionLimit bounds how many conversations one tenant may
+// retain. A non-positive value leaves the store unbounded.
+func WithPerTenantSessionLimit(limit int) BufferOption {
+	return func(memory *BufferMemory) {
+		if limit > 0 {
+			memory.maxSessionsPerTenant = limit
+		}
+	}
+}
 
 // NewBufferMemory constructs bounded memory. A nil clock uses the system one;
 // tests supply their own so age-based expiry is deterministic.
-func NewBufferMemory(retention Retention, now func() time.Time) (*BufferMemory, error) {
+func NewBufferMemory(retention Retention, now func() time.Time, options ...BufferOption) (*BufferMemory, error) {
 	normalized, err := retention.normalized()
 	if err != nil {
 		return nil, err
@@ -72,18 +92,40 @@ func NewBufferMemory(retention Retention, now func() time.Time) (*BufferMemory, 
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
-	return &BufferMemory{retention: normalized, now: now, sessions: map[string][]storedMessage{}}, nil
+	memory := &BufferMemory{retention: normalized, now: now, sessions: map[string][]storedMessage{}, touched: map[string]time.Time{}}
+	for _, option := range options {
+		option(memory)
+	}
+	return memory, nil
 }
 
 // Load returns the retained history for a session.
 func (memory *BufferMemory) Load(_ context.Context, session SessionKey) ([]Message, error) {
+	return memory.loadPolicy(session, memory.retention)
+}
+
+// LoadWithPolicy returns the retained history for a session under per-node
+// bounds. A zero retention means the memory's own defaults, matching how the
+// constructor treats zero.
+func (memory *BufferMemory) LoadWithPolicy(_ context.Context, session SessionKey, retention Retention) ([]Message, error) {
+	effective, err := retention.normalized()
+	if err != nil {
+		return nil, err
+	}
+	return memory.loadPolicy(session, effective)
+}
+
+func (memory *BufferMemory) loadPolicy(session SessionKey, retention Retention) ([]Message, error) {
 	if !session.Valid() {
 		return nil, fmt.Errorf("memory needs a tenant, workflow, and session")
 	}
 	memory.mu.Lock()
 	defer memory.mu.Unlock()
 
-	retained := memory.prune(session.String())
+	retained := memory.prune(session.String(), retention)
+	if len(retained) > 0 {
+		memory.touched[session.String()] = memory.now().UTC()
+	}
 	messages := make([]Message, 0, len(retained))
 	for _, stored := range retained {
 		messages = append(messages, stored.message)
@@ -93,6 +135,20 @@ func (memory *BufferMemory) Load(_ context.Context, session SessionKey) ([]Messa
 
 // Append records new turns and re-applies both bounds.
 func (memory *BufferMemory) Append(_ context.Context, session SessionKey, messages []Message) error {
+	return memory.appendPolicy(session, messages, memory.retention)
+}
+
+// AppendWithPolicy records new turns under per-node bounds. A zero retention
+// means the memory's own defaults.
+func (memory *BufferMemory) AppendWithPolicy(_ context.Context, session SessionKey, messages []Message, retention Retention) error {
+	effective, err := retention.normalized()
+	if err != nil {
+		return err
+	}
+	return memory.appendPolicy(session, messages, effective)
+}
+
+func (memory *BufferMemory) appendPolicy(session SessionKey, messages []Message, retention Retention) error {
 	if !session.Valid() {
 		return fmt.Errorf("memory needs a tenant, workflow, and session")
 	}
@@ -109,7 +165,9 @@ func (memory *BufferMemory) Append(_ context.Context, session SessionKey, messag
 		stored = append(stored, storedMessage{message: message, at: at})
 	}
 	memory.sessions[key] = stored
-	memory.prune(key)
+	memory.touched[key] = at
+	memory.prune(key, retention)
+	memory.evictBeyondCeiling(session.TenantID)
 	return nil
 }
 
@@ -117,31 +175,117 @@ func (memory *BufferMemory) Append(_ context.Context, session SessionKey, messag
 func (memory *BufferMemory) Forget(session SessionKey) {
 	memory.mu.Lock()
 	defer memory.mu.Unlock()
-	delete(memory.sessions, session.String())
+	memory.drop(session.String())
+}
+
+// ForgetWorkflow drops every session of one workflow, for workflow deletion.
+func (memory *BufferMemory) ForgetWorkflow(tenantID, workflowID string) {
+	memory.mu.Lock()
+	defer memory.mu.Unlock()
+	prefix := tenantID + "\x00" + workflowID + "\x00"
+	for key := range memory.sessions {
+		if strings.HasPrefix(key, prefix) {
+			memory.drop(key)
+		}
+	}
+}
+
+// ForgetTenant drops every session of one tenant, for tenant deletion.
+func (memory *BufferMemory) ForgetTenant(tenantID string) {
+	memory.mu.Lock()
+	defer memory.mu.Unlock()
+	prefix := tenantID + "\x00"
+	for key := range memory.sessions {
+		if strings.HasPrefix(key, prefix) {
+			memory.drop(key)
+		}
+	}
+}
+
+func (memory *BufferMemory) drop(key string) {
+	delete(memory.sessions, key)
+	delete(memory.touched, key)
+}
+
+// MemoryStats is the observable usage of the store.
+type MemoryStats struct {
+	// Sessions is the total number of retained conversations.
+	Sessions int
+	// PerTenant counts retained conversations by tenant.
+	PerTenant map[string]int
+}
+
+// Stats reports the current usage of the store.
+func (memory *BufferMemory) Stats() MemoryStats {
+	memory.mu.Lock()
+	defer memory.mu.Unlock()
+	stats := MemoryStats{PerTenant: map[string]int{}}
+	for key := range memory.sessions {
+		stats.Sessions++
+		stats.PerTenant[tenantOf(key)]++
+	}
+	return stats
+}
+
+func tenantOf(key string) string {
+	if index := strings.IndexByte(key, '\x00'); index >= 0 {
+		return key[:index]
+	}
+	return ""
+}
+
+// evictBeyondCeiling drops the tenant's least-recently-touched sessions until
+// it is back under the ceiling. The caller holds the lock. An unbounded store
+// (zero ceiling) never evicts.
+func (memory *BufferMemory) evictBeyondCeiling(tenantID string) {
+	if memory.maxSessionsPerTenant <= 0 {
+		return
+	}
+	prefix := tenantID + "\x00"
+	for {
+		oldest := ""
+		var oldestAt time.Time
+		count := 0
+		for key := range memory.sessions {
+			if !strings.HasPrefix(key, prefix) {
+				continue
+			}
+			count++
+			// An untracked session reads as the zero time, which is older
+			// than any tracked one — evict the unknown first.
+			if touched := memory.touched[key]; oldest == "" || touched.Before(oldestAt) {
+				oldest, oldestAt = key, touched
+			}
+		}
+		if count <= memory.maxSessionsPerTenant || oldest == "" {
+			return
+		}
+		memory.drop(oldest)
+	}
 }
 
 // prune enforces both bounds and returns what survives. The caller holds the
 // lock. Applying age first then count means a long-idle session is emptied
 // rather than merely trimmed.
-func (memory *BufferMemory) prune(key string) []storedMessage {
+func (memory *BufferMemory) prune(key string, retention Retention) []storedMessage {
 	stored := memory.sessions[key]
 	if len(stored) == 0 {
-		delete(memory.sessions, key)
+		memory.drop(key)
 		return nil
 	}
 
-	cutoff := memory.now().UTC().Add(-memory.retention.MaxAge)
+	cutoff := memory.now().UTC().Add(-retention.MaxAge)
 	fresh := stored[:0:0]
 	for _, entry := range stored {
 		if entry.at.After(cutoff) {
 			fresh = append(fresh, entry)
 		}
 	}
-	if overflow := len(fresh) - memory.retention.MaxMessages; overflow > 0 {
+	if overflow := len(fresh) - retention.MaxMessages; overflow > 0 {
 		fresh = fresh[overflow:]
 	}
 	if len(fresh) == 0 {
-		delete(memory.sessions, key)
+		memory.drop(key)
 		return nil
 	}
 	memory.sessions[key] = fresh

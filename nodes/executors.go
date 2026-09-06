@@ -49,6 +49,7 @@ func RegisterExecutors(registry *engine.Registry, httpPolicy safehttp.Policy, da
 		MemoryExecutorID:                 engine.ExecutorFunc(executeMemory),
 		HTTPToolExecutorID:               engine.ExecutorFunc(executeHTTPTool),
 		AgentExecutorID:                  NewAgentExecutor(agentRuntime, httpPolicy, agentMemory, WithModelTimeoutCeiling(settings.modelTimeoutCeiling)),
+		ChainExecutorID:                  NewChainExecutor(httpPolicy, settings.modelTimeoutCeiling),
 		CodeExecutorID:                   NewCodeExecutor(codeCompiler, runcode.NewMemoryCache(), runcode.DefaultLimits()),
 		LoopExecutorID:                   engine.ExecutorFunc(executeLoop),
 		StickyNoteExecutorID:             engine.ExecutorFunc(executeStickyNote),
