@@ -19,7 +19,7 @@
 	import { RequestGuard } from '$lib/dashboard/request-guard';
 	import { formatDuration, formatTimestamp, statusLabel, statusTone } from '$lib/workflow-editor/execution';
 
-	const STATUSES = ['queued', 'running', 'cancelling', 'succeeded', 'failed', 'cancelled'];
+	const STATUSES = ['queued', 'running', 'cancelling', 'waiting', 'succeeded', 'failed', 'cancelled'];
 
 	const workflows = createListWorkflows<WorkflowSummary[]>(() => ({
 		query: {

@@ -35,7 +35,9 @@ const EnvPrefix = "KILASFLOW_"
 type Config struct {
 	Server     Server       `koanf:"server"`
 	Database   Database     `koanf:"database"`
+	Datastore  Datastore    `koanf:"datastore"`
 	Security   Security     `koanf:"security"`
+	Secrets    Secrets      `koanf:"secrets"`
 	Auth       Auth         `koanf:"auth"`
 	Outbound   OutboundHTTP `koanf:"outbound"`
 	Webhook    Webhook      `koanf:"webhook"`
@@ -123,6 +125,36 @@ type Database struct {
 	// an idle bound lower than open churns a TLS handshake and a backend fork
 	// per query exactly when the server is busiest.
 	MaxIdleConns int `koanf:"max_idle_conns"`
+}
+
+// Datastore bounds the data tables a tenant may build. A datastore is a real
+// table created by runtime DDL inside the operator's own database, so an
+// unbounded one hands a host application's end users the ability to grow
+// unbounded tables inside a production database. Every bound refuses the
+// write and evicts nothing.
+//
+// The section name is one word for the same reason Outbound, SQL and Binary
+// are: envKeyToPath treats the first underscore as the section separator, so
+// a two-word section could never be set from the environment.
+//
+// The defaults repeat datastore.DefaultLimits rather than importing them:
+// the datastore package imports this one for MaxTablePrefixLength, so the
+// import would be a cycle. A test in the datastore package pins the two
+// together.
+type Datastore struct {
+	// MaxDatastoresPerTenant caps how many data tables one tenant may own.
+	// Env: KILASFLOW_DATASTORE_MAX_DATASTORES_PER_TENANT. Default: 100.
+	MaxDatastoresPerTenant int `koanf:"max_datastores_per_tenant"`
+	// MaxColumnsPerDatastore caps the user columns of one data table.
+	// Env: KILASFLOW_DATASTORE_MAX_COLUMNS_PER_DATASTORE. Default: 100.
+	MaxColumnsPerDatastore int `koanf:"max_columns_per_datastore"`
+	// MaxRowsPerDatastore caps the rows of one data table.
+	// Env: KILASFLOW_DATASTORE_MAX_ROWS_PER_DATASTORE. Default: 100000.
+	MaxRowsPerDatastore int `koanf:"max_rows_per_datastore"`
+	// MaxValueBytes caps one unbounded value: a string or raw bytes. Numbers,
+	// booleans and dates bind fixed-width and are exempt.
+	// Env: KILASFLOW_DATASTORE_MAX_VALUE_BYTES. Default: 1048576.
+	MaxValueBytes int `koanf:"max_value_bytes"`
 }
 
 // MaxTablePrefixLength caps Database.TablePrefix so that the longest table,
@@ -222,6 +254,37 @@ type Security struct {
 	// Env: KILASFLOW_SECURITY_ENCRYPTION_KEY_ENV.
 	// Default: "KILASFLOW_ENCRYPTION_KEY".
 	EncryptionKeyEnv string `koanf:"encryption_key_env"`
+}
+
+// Secrets sources the credential master key from an external secrets manager
+// instead of the process environment.
+//
+// The koanf section is a single word for the same reason Outbound is:
+// envKeyToPath treats the first underscore as the section separator, so a
+// section named `secret_manager` could never be reached by an environment
+// override.
+//
+// All empty (the default) leaves the environment path exactly as before: the
+// manager is only consulted when an address is set, and a set address with
+// no token variable or no master-key reference refuses to boot rather than
+// silently running with credential storage disabled.
+type Secrets struct {
+	// ManagerAddr is the secrets manager address, e.g. Vault's
+	// "https://vault.internal:8200". Empty disables the manager path.
+	// Env: KILASFLOW_SECRETS_MANAGER_ADDR. Default: "".
+	ManagerAddr string `koanf:"manager_addr"`
+	// ManagerTokenEnv names the environment variable holding the manager
+	// token. The token itself is never read from the config file, for the
+	// same reason the credential master key is not: a file is copied, an
+	// environment is not.
+	// Env: KILASFLOW_SECRETS_MANAGER_TOKEN_ENV. Default: "".
+	ManagerTokenEnv string `koanf:"manager_token_env"`
+	// MasterKey is the reference (path) of the credential master key inside
+	// the manager, e.g. "prod/master-key". It decodes exactly like the
+	// environment path — base64, hex, or raw 32 bytes — so a key can move
+	// from one source to the other without being re-encoded.
+	// Env: KILASFLOW_SECRETS_MASTER_KEY. Default: "".
+	MasterKey string `koanf:"master_key"`
 }
 
 // Auth turns identity on and describes how the first account is created.
@@ -512,6 +575,13 @@ func Default() Config {
 			MaxOpenConns: 0,
 			MaxIdleConns: 0,
 		},
+		Datastore: Datastore{
+			// Kept equal to datastore.DefaultLimits, which a test pins.
+			MaxDatastoresPerTenant: 100,
+			MaxColumnsPerDatastore: 100,
+			MaxRowsPerDatastore:    100_000,
+			MaxValueBytes:          1 << 20,
+		},
 		Security: Security{
 			EncryptionKeyEnv: "KILASFLOW_ENCRYPTION_KEY",
 		},
@@ -666,11 +736,37 @@ func (c Config) Validate() error {
 		return fmt.Errorf("execution.retention %s must not be negative", c.Execution.Retention)
 	}
 
+	// A zero or negative datastore bound refuses every write it gates, which
+	// is an outage shaped like a configuration, so it is an error here
+	// rather than a quiet refusal later.
+	if c.Datastore.MaxDatastoresPerTenant <= 0 {
+		return fmt.Errorf("datastore.max_datastores_per_tenant %d must be positive", c.Datastore.MaxDatastoresPerTenant)
+	}
+	if c.Datastore.MaxColumnsPerDatastore <= 0 {
+		return fmt.Errorf("datastore.max_columns_per_datastore %d must be positive", c.Datastore.MaxColumnsPerDatastore)
+	}
+	if c.Datastore.MaxRowsPerDatastore <= 0 {
+		return fmt.Errorf("datastore.max_rows_per_datastore %d must be positive", c.Datastore.MaxRowsPerDatastore)
+	}
+	if c.Datastore.MaxValueBytes <= 0 {
+		return fmt.Errorf("datastore.max_value_bytes %d must be positive", c.Datastore.MaxValueBytes)
+	}
+
 	// Caught here rather than at the first login, because an instance that
 	// starts with authentication "on" and no key to sign with would answer
 	// every request with 401 and look like a broken deployment.
 	if c.Auth.Enabled && c.Auth.SigningKeyEnv == "" {
 		return fmt.Errorf("auth.signing_key_env is required when auth.enabled is true")
+	}
+
+	// A half-configured manager is worse than none: an address with no token
+	// or no master-key reference would fail every fetch at run time, and an
+	// addressless token would silently keep the environment path while the
+	// operator believes the manager is in charge. All three or none.
+	if c.Secrets.ManagerAddr == "" || c.Secrets.ManagerTokenEnv == "" || c.Secrets.MasterKey == "" {
+		if c.Secrets.ManagerAddr != "" || c.Secrets.ManagerTokenEnv != "" || c.Secrets.MasterKey != "" {
+			return fmt.Errorf("secrets.manager_addr, secrets.manager_token_env and secrets.master_key must be set together")
+		}
 	}
 
 	// The grammar is safehttp's rather than a second copy of it here. Two

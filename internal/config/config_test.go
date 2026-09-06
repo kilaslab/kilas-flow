@@ -99,6 +99,68 @@ func TestEnvOverridesUnderscoredLeafKey(t *testing.T) {
 	}
 }
 
+func TestDatastoreDefaultsBoundGrowth(t *testing.T) {
+	cfg := Default().Datastore
+	if cfg.MaxDatastoresPerTenant != 100 {
+		t.Errorf("Datastore.MaxDatastoresPerTenant = %d, want 100", cfg.MaxDatastoresPerTenant)
+	}
+	if cfg.MaxColumnsPerDatastore != 100 {
+		t.Errorf("Datastore.MaxColumnsPerDatastore = %d, want 100", cfg.MaxColumnsPerDatastore)
+	}
+	if cfg.MaxRowsPerDatastore != 100_000 {
+		t.Errorf("Datastore.MaxRowsPerDatastore = %d, want 100000", cfg.MaxRowsPerDatastore)
+	}
+	if cfg.MaxValueBytes != 1<<20 {
+		t.Errorf("Datastore.MaxValueBytes = %d, want %d", cfg.MaxValueBytes, 1<<20)
+	}
+}
+
+func TestValidateRejectsBadDatastoreBounds(t *testing.T) {
+	cases := map[string]func(*Config){
+		"datastore tenant ceiling zero":         func(c *Config) { c.Datastore.MaxDatastoresPerTenant = 0 },
+		"datastore tenant ceiling negative":     func(c *Config) { c.Datastore.MaxDatastoresPerTenant = -1 },
+		"datastore column ceiling zero":         func(c *Config) { c.Datastore.MaxColumnsPerDatastore = 0 },
+		"datastore column ceiling negative":     func(c *Config) { c.Datastore.MaxColumnsPerDatastore = -1 },
+		"datastore row ceiling zero":            func(c *Config) { c.Datastore.MaxRowsPerDatastore = 0 },
+		"datastore row ceiling negative":        func(c *Config) { c.Datastore.MaxRowsPerDatastore = -1 },
+		"datastore value byte ceiling zero":     func(c *Config) { c.Datastore.MaxValueBytes = 0 },
+		"datastore value byte ceiling negative": func(c *Config) { c.Datastore.MaxValueBytes = -1 },
+	}
+
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			cfg := Default()
+			mutate(&cfg)
+			if err := cfg.Validate(); err == nil {
+				t.Error("Validate() = nil, want error")
+			}
+		})
+	}
+}
+
+func TestDatastoreBoundsAreReachableFromYAMLAndTheEnvironment(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "kilasflow.yaml")
+	if err := os.WriteFile(path, []byte("datastore:\n  max_rows_per_datastore: 5000\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("KILASFLOW_DATASTORE_MAX_VALUE_BYTES", "4096")
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got, want := cfg.Datastore.MaxRowsPerDatastore, 5000; got != want {
+		t.Errorf("Datastore.MaxRowsPerDatastore = %d, want the file's %d", got, want)
+	}
+	if got, want := cfg.Datastore.MaxValueBytes, 4096; got != want {
+		t.Errorf("Datastore.MaxValueBytes = %d, want the environment's %d", got, want)
+	}
+	// Untouched bounds keep their defaults.
+	if got, want := cfg.Datastore.MaxColumnsPerDatastore, 100; got != want {
+		t.Errorf("Datastore.MaxColumnsPerDatastore = %d, want the default %d", got, want)
+	}
+}
+
 func TestValidateRejectsBadConfig(t *testing.T) {
 	cases := map[string]func(*Config){
 		"port out of range": func(c *Config) { c.Server.Port = 0 },

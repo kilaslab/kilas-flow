@@ -11,8 +11,8 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/sse"
-
 	"github.com/kilaslabs/kilas-flow/internal/api/middleware"
+	"github.com/kilaslabs/kilas-flow/internal/engine"
 	"github.com/kilaslabs/kilas-flow/internal/events"
 	"github.com/kilaslabs/kilas-flow/internal/execution"
 	"github.com/kilaslabs/kilas-flow/internal/repository"
@@ -50,6 +50,7 @@ type (
 	ExecutionCompletedEvent ExecutionEvent
 	ExecutionFailedEvent    ExecutionEvent
 	ExecutionCancelledEvent ExecutionEvent
+	ExecutionWaitingEvent   ExecutionEvent
 	NodeStartedEvent        ExecutionEvent
 	NodeOutputEvent         ExecutionEvent
 	NodeCompletedEvent      ExecutionEvent
@@ -64,10 +65,10 @@ func typedEvent(event ExecutionEvent, eventType events.Type) any {
 		return ExecutionStartedEvent(event)
 	case events.ExecutionCompleted:
 		return ExecutionCompletedEvent(event)
-	case events.ExecutionFailed:
-		return ExecutionFailedEvent(event)
 	case events.ExecutionCancelled:
 		return ExecutionCancelledEvent(event)
+	case engine.EventExecutionWaiting:
+		return ExecutionWaitingEvent(event)
 	case events.NodeStarted:
 		return NodeStartedEvent(event)
 	case events.NodeOutput:
@@ -172,15 +173,16 @@ func (handler *Executions) Register(api huma.API) {
 			"then streams until the execution reaches a terminal state.",
 		Tags: []string{"Executions"},
 	}, map[string]any{
-		string(events.ExecutionStarted):   ExecutionStartedEvent{},
-		string(events.ExecutionCompleted): ExecutionCompletedEvent{},
-		string(events.ExecutionFailed):    ExecutionFailedEvent{},
-		string(events.ExecutionCancelled): ExecutionCancelledEvent{},
-		string(events.NodeStarted):        NodeStartedEvent{},
-		string(events.NodeOutput):         NodeOutputEvent{},
-		string(events.NodeCompleted):      NodeCompletedEvent{},
-		string(events.NodeFailed):         NodeFailedEvent{},
-		string(events.WorkflowSaved):      WorkflowSavedEvent{},
+		string(events.ExecutionStarted):      ExecutionStartedEvent{},
+		string(events.ExecutionCompleted):    ExecutionCompletedEvent{},
+		string(events.ExecutionFailed):       ExecutionFailedEvent{},
+		string(events.ExecutionCancelled):    ExecutionCancelledEvent{},
+		string(engine.EventExecutionWaiting): ExecutionWaitingEvent{},
+		string(events.NodeStarted):           NodeStartedEvent{},
+		string(events.NodeOutput):            NodeOutputEvent{},
+		string(events.NodeCompleted):         NodeCompletedEvent{},
+		string(events.NodeFailed):            NodeFailedEvent{},
+		string(events.WorkflowSaved):         WorkflowSavedEvent{},
 	}, handler.StreamEvents)
 }
 
@@ -299,10 +301,10 @@ func (handler *Executions) List(ctx context.Context, input *listExecutionsInput)
 	}
 	return &executionListOutput{Body: resource}, nil
 }
-
 func parseExecutionStatus(value string) (execution.Status, bool) {
 	switch status := execution.Status(value); status {
 	case execution.StatusQueued, execution.StatusRunning, execution.StatusCancelling,
+		execution.StatusWaiting,
 		execution.StatusSucceeded, execution.StatusFailed, execution.StatusCancelled:
 		return status, true
 	default:
@@ -374,7 +376,21 @@ func (handler *Executions) Get(ctx context.Context, input *executionPathInput) (
 	if err := handler.ownsExecution(ctx, record); err != nil {
 		return nil, err
 	}
-	return &executionOutput{Body: executionResource(record)}, nil
+	resource := executionResource(record)
+	// A waiting execution answers with the links that resume it. The lookup
+	// is optional so existing controller fakes keep compiling: without it
+	// the record simply carries no links.
+	if record.Status == execution.StatusWaiting {
+		if linker, ok := handler.controller.(interface {
+			WaitingLinks(context.Context, repository.TenantScope, string) (string, string, bool)
+		}); ok {
+			if resumeURL, approvalURL, found := linker.WaitingLinks(ctx, handler.tenants.Resolve(ctx), record.ID); found {
+				resource.ResumeURL = resumeURL
+				resource.ApprovalURL = approvalURL
+			}
+		}
+	}
+	return &executionOutput{Body: resource}, nil
 }
 
 // Cancel persists a cancellation request and interrupts a local worker when

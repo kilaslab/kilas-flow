@@ -66,6 +66,7 @@ export function executionEvents(executionID: () => string) {
 			'execution.completed',
 			'execution.failed',
 			'execution.cancelled',
+			'execution.waiting',
 			'node.started',
 			'node.output',
 			'node.completed',

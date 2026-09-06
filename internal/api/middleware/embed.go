@@ -150,6 +150,13 @@ func permits(session embed.Session, r *http.Request) (bool, string) {
 		// covers the scope; handlers.RequireEmbedWorkflow covers the identity.
 		return session.Allows(embed.ScopeRead), "This embed session cannot read executions."
 
+	case path == "/resume" || strings.HasPrefix(path, "/resume/"):
+		// Approval resume is never available to embedded sessions: resuming
+		// someone else's approval from inside a host page is the
+		// confused-deputy shape the session restriction exists to stop. The
+		// resume handler and the service repeat this denial in depth, so a
+		// denied call never consumes its token either way.
+		return false, "An embed session cannot answer an approval."
 	default:
 		// Listing every workflow, minting another session, managing schedules
 		// or credentials: none of that belongs to an embedded editor.

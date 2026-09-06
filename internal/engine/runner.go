@@ -42,13 +42,22 @@ type WorkflowInvoker interface {
 }
 
 // ExecutionContext is the identity a node may read: the `$execution`
-// expression root exposes ID and Mode, while tenant and workflow are available
-// to executors that need to scope storage, such as agent memory.
+// expression root exposes ID, Mode and the resume links, while tenant and
+// workflow are available to executors that need to scope storage, such as
+// agent memory.
 type ExecutionContext struct {
 	ID         string
 	Mode       string
 	TenantID   string
 	WorkflowID string
+	// ResumeURL is the per-run machine resume link ($execution.resumeUrl). It
+	// is minted before the graph runs so a workflow can send it before
+	// suspending; a run that never suspends discards its token and the link
+	// answers 404. Empty when the service composed no links.
+	ResumeURL string
+	// ApprovalURL is the human page for the same token
+	// ($execution.approvalUrl). Empty alongside ResumeURL.
+	ApprovalURL string
 	// ParentID is the execution that called this one, for a sub-workflow run.
 	ParentID string
 	// Stack is the workflow IDs already on the call chain, outermost first,

@@ -179,6 +179,8 @@ export function statusTone(status: string): string {
 			return 'bg-warning/15 text-warning border-warning/30';
 		case 'running':
 			return 'bg-primary/15 text-primary border-primary/30';
+		case 'waiting':
+			return 'bg-violet-500/15 text-violet-600 border-violet-500/30 dark:text-violet-400';
 		case 'skipped':
 			return 'bg-muted text-muted-foreground border-border';
 		default:
@@ -205,10 +207,10 @@ export function statusAccent(status: string): string {
 		case 'failed':
 			return 'var(--destructive)';
 		case 'cancelled':
-		case 'cancelling':
-			return 'var(--warning)';
 		case 'running':
 			return 'var(--primary)';
+		case 'waiting':
+			return 'var(--violet-500, var(--primary))';
 		default:
 			return 'var(--muted-foreground)';
 	}

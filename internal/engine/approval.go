@@ -148,17 +148,30 @@ type WaitTicket struct {
 }
 
 // SuspendError is what an executor returns to suspend instead of succeed or
-// fail. The runner and the service do not handle it yet — see the package
-// contract above — but the signal is already distinct from both, which is
-// what lets the integrator catch it without reclassifying failures.
+// fail. The runner catches it at the attempt boundary — without retrying, and
+// without recording a failure — snapshots the run into Checkpoint, and lets
+// the service persist the wait durably. Its message never carries a token.
 type SuspendError struct {
 	Ticket *WaitTicket
+	// Mode names the wait (approval, interval, until, webhook). Set by the
+	// suspending executor; the service refuses a suspension without one.
+	Mode string
+	// ExpiresAt bounds the suspension. Zero takes DefaultApprovalTTL at
+	// the service boundary; past MaxWaitTTL out fails the run.
+	ExpiresAt time.Time
+	// NodeID and Checkpoint are filled by the runner at catch time: the
+	// suspending node and the exact run state a resumed run continues from.
+	NodeID     string
+	Checkpoint []byte
 }
 
 func (err *SuspendError) Error() string {
 	node := ""
-	if err != nil && err.Ticket != nil {
-		node = err.Ticket.NodeID
+	if err != nil {
+		node = err.NodeID
+		if err.Ticket != nil {
+			node = err.Ticket.NodeID
+		}
 	}
 	return fmt.Sprintf("node %q is waiting for approval", node)
 }

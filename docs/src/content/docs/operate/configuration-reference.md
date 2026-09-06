@@ -152,6 +152,60 @@ MaxIdleConns caps idle connections kept warm. Zero follows MaxOpenConns:
 an idle bound lower than open churns a TLS handshake and a backend fork
 per query exactly when the server is busiest.
 
+## datastore
+
+Datastore bounds the data tables a tenant may build. A datastore is a real
+table created by runtime DDL inside the operator's own database, so an
+unbounded one hands a host application's end users the ability to grow
+unbounded tables inside a production database. Every bound refuses the
+write and evicts nothing.
+
+The section name is one word for the same reason Outbound, SQL and Binary
+are: envKeyToPath treats the first underscore as the section separator, so
+a two-word section could never be set from the environment.
+
+The defaults repeat datastore.DefaultLimits rather than importing them:
+the datastore package imports this one for MaxTablePrefixLength, so the
+import would be a cycle. A test in the datastore package pins the two
+together.
+
+### datastore.max_datastores_per_tenant
+
+- Type: `integer`
+- Default: `100`
+- Environment: `KILASFLOW_DATASTORE_MAX_DATASTORES_PER_TENANT`
+- Required: no
+
+MaxDatastoresPerTenant caps how many data tables one tenant may own.
+
+### datastore.max_columns_per_datastore
+
+- Type: `integer`
+- Default: `100`
+- Environment: `KILASFLOW_DATASTORE_MAX_COLUMNS_PER_DATASTORE`
+- Required: no
+
+MaxColumnsPerDatastore caps the user columns of one data table.
+
+### datastore.max_rows_per_datastore
+
+- Type: `integer`
+- Default: `100000`
+- Environment: `KILASFLOW_DATASTORE_MAX_ROWS_PER_DATASTORE`
+- Required: no
+
+MaxRowsPerDatastore caps the rows of one data table.
+
+### datastore.max_value_bytes
+
+- Type: `integer`
+- Default: `1048576`
+- Environment: `KILASFLOW_DATASTORE_MAX_VALUE_BYTES`
+- Required: no
+
+MaxValueBytes caps one unbounded value: a string or raw bytes. Numbers,
+booleans and dates bind fixed-width and are exempt.
+
 ## security
 
 Security holds secret-material settings.
@@ -173,6 +227,55 @@ reads and writes report unconfigured. Generate one before storing
 anything (openssl rand -base64 32); there is no re-encryption pass, so
 changing the key later makes every credential already stored
 undecryptable.
+
+## secrets
+
+Secrets sources the credential master key from an external secrets manager
+instead of the process environment.
+
+The koanf section is a single word for the same reason Outbound is:
+envKeyToPath treats the first underscore as the section separator, so a
+section named `secret_manager` could never be reached by an environment
+override.
+
+All empty (the default) leaves the environment path exactly as before: the
+manager is only consulted when an address is set, and a set address with
+no token variable or no master-key reference refuses to boot rather than
+silently running with credential storage disabled.
+
+### secrets.manager_addr
+
+- Type: `string`
+- Default: `''`
+- Environment: `KILASFLOW_SECRETS_MANAGER_ADDR`
+- Required: no
+
+ManagerAddr is the secrets manager address, e.g. Vault's
+"https://vault.internal:8200". Empty disables the manager path.
+
+### secrets.manager_token_env
+
+- Type: `string`
+- Default: `''`
+- Environment: `KILASFLOW_SECRETS_MANAGER_TOKEN_ENV`
+- Required: no
+
+ManagerTokenEnv names the environment variable holding the manager
+token. The token itself is never read from the config file, for the
+same reason the credential master key is not: a file is copied, an
+environment is not.
+
+### secrets.master_key
+
+- Type: `string`
+- Default: `''`
+- Environment: `KILASFLOW_SECRETS_MASTER_KEY`
+- Required: no
+
+MasterKey is the reference (path) of the credential master key inside
+the manager, e.g. "prod/master-key". It decodes exactly like the
+environment path — base64, hex, or raw 32 bytes — so a key can move
+from one source to the other without being re-encoded.
 
 ## auth
 

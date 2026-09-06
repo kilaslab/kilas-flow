@@ -80,6 +80,21 @@ database:
   # driver: postgres
   # dsn: postgres://kilasflow:password@localhost:5432/kilasflow?sslmode=disable
 
+datastore:
+  # MaxDatastoresPerTenant caps how many data tables one tenant may own.
+  # Env: KILASFLOW_DATASTORE_MAX_DATASTORES_PER_TENANT
+  max_datastores_per_tenant: 100
+  # MaxColumnsPerDatastore caps the user columns of one data table.
+  # Env: KILASFLOW_DATASTORE_MAX_COLUMNS_PER_DATASTORE
+  max_columns_per_datastore: 100
+  # MaxRowsPerDatastore caps the rows of one data table.
+  # Env: KILASFLOW_DATASTORE_MAX_ROWS_PER_DATASTORE
+  max_rows_per_datastore: 100000
+  # MaxValueBytes caps one unbounded value: a string or raw bytes. Numbers,
+  # booleans and dates bind fixed-width and are exempt.
+  # Env: KILASFLOW_DATASTORE_MAX_VALUE_BYTES
+  max_value_bytes: 1048576
+
 security:
   # EncryptionKeyEnv names the environment variable holding the AES-256-GCM
   # master key used to encrypt stored credentials. The key itself is never
@@ -93,6 +108,24 @@ security:
   # undecryptable.
   # Env: KILASFLOW_SECURITY_ENCRYPTION_KEY_ENV
   encryption_key_env: 'KILASFLOW_ENCRYPTION_KEY'
+
+secrets:
+  # ManagerAddr is the secrets manager address, e.g. Vault's
+  # "https://vault.internal:8200". Empty disables the manager path.
+  # Env: KILASFLOW_SECRETS_MANAGER_ADDR
+  manager_addr: ''
+  # ManagerTokenEnv names the environment variable holding the manager
+  # token. The token itself is never read from the config file, for the
+  # same reason the credential master key is not: a file is copied, an
+  # environment is not.
+  # Env: KILASFLOW_SECRETS_MANAGER_TOKEN_ENV
+  manager_token_env: ''
+  # MasterKey is the reference (path) of the credential master key inside
+  # the manager, e.g. "prod/master-key". It decodes exactly like the
+  # environment path — base64, hex, or raw 32 bytes — so a key can move
+  # from one source to the other without being re-encoded.
+  # Env: KILASFLOW_SECRETS_MASTER_KEY
+  master_key: ''
 
 auth:
   # Enabled gates the whole surface. It defaults to false because turning

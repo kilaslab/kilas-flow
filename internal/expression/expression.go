@@ -12,6 +12,13 @@ import (
 type ExecutionContext struct {
 	ID   string
 	Mode string
+	// ResumeURL is the per-run machine resume link ($execution.resumeUrl),
+	// minted before the graph runs so a workflow can send it before
+	// suspending. Empty when the service composed no links.
+	ResumeURL string
+	// ApprovalURL is the human page for the same token
+	// ($execution.approvalUrl). Empty alongside ResumeURL.
+	ApprovalURL string
 }
 
 // Context supplies the approved V1 expression roots. Anything absent here is
@@ -563,7 +570,7 @@ func rootValue(root string, ctx Context) (any, error) {
 		}
 		return env, nil
 	case "$execution":
-		return map[string]any{"id": ctx.Execution.ID, "mode": ctx.Execution.Mode}, nil
+		return map[string]any{"id": ctx.Execution.ID, "mode": ctx.Execution.Mode, "resumeUrl": ctx.Execution.ResumeURL, "approvalUrl": ctx.Execution.ApprovalURL}, nil
 	case "$workflow":
 		return map[string]any{"id": ctx.Workflow.ID, "name": ctx.Workflow.Name, "active": ctx.Workflow.Active}, nil
 	case "$itemIndex":

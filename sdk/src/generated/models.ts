@@ -139,6 +139,12 @@ export interface Branding {
   name?: string;
 }
 
+export interface ClearedDatastoreOutputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  deleted: number;
+}
+
 export interface Condition {
   key: string;
   operator?: string;
@@ -154,6 +160,36 @@ export interface CreateAPIKeyInputBody {
      * @maxLength 255
      */
   label: string;
+}
+
+export interface DatastoreColumnInput {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+     * Column name
+     * @minLength 1
+     */
+  name: string;
+  /**
+     * Column type: string, number, boolean or date
+     * @minLength 1
+     */
+  type: string;
+}
+
+export interface CreateDatastoreInputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+     * User columns; empty means system columns only
+     * @nullable
+     */
+  columns?: DatastoreColumnInput[] | null;
+  /**
+     * Display name
+     * @minLength 1
+     */
+  name: string;
 }
 
 export interface CreateStreamTicketInputBody {
@@ -243,6 +279,29 @@ export interface CredentialTypeResource {
   /** @nullable */
   fields: Field[] | null;
   id: string;
+}
+
+export interface DatastoreColumnResource {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  name: string;
+  type: string;
+}
+
+export interface DatastoreResource {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  columns: DatastoreColumnResource[] | null;
+  id: string;
+  name: string;
+}
+
+export interface DatastoreListOutputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  items: DatastoreResource[] | null;
 }
 
 export type NodeCodexSubcategories = {[key: string]: string[] | null};
@@ -392,6 +451,35 @@ export interface Definition {
   /** Node type version. A decimal such as 1, 4.2, or a YYYYMM value such as 202502. Omit it to use the registered default. */
   version: number;
   webhook?: WebhookDeclaration;
+}
+
+export interface FilterCondition {
+  columnName: string;
+  condition: string;
+  value?: unknown;
+}
+
+export interface Filter {
+  /** @nullable */
+  filters: FilterCondition[] | null;
+  type: string;
+}
+
+export interface DeleteRowsInputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** Rows to delete; an empty filter is refused and removes nothing */
+  filter: Filter;
+}
+
+export type DeleteRowsOutputBodyRowsItem = {[key: string]: unknown};
+
+export interface DeleteRowsOutputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  deleted: number;
+  /** @nullable */
+  rows: DeleteRowsOutputBodyRowsItem[] | null;
 }
 
 export interface EmbedSessionBody {
@@ -564,6 +652,7 @@ export interface ExecutionRequestResource {
 export interface ExecutionResource {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  approvalUrl?: string;
   cancellationRequestedAt?: string;
   error?: unknown;
   finishedAt?: string;
@@ -574,6 +663,7 @@ export interface ExecutionResource {
   output?: unknown;
   /** The execution that called this one, for a sub-workflow run */
   parentExecutionId?: string;
+  resumeUrl?: string;
   startedAt: string;
   status: string;
   trigger: string;
@@ -584,6 +674,23 @@ export interface ExecutionResource {
 }
 
 export interface ExecutionStartedEvent {
+  at: string;
+  /** Redacted, type-specific detail */
+  data?: unknown;
+  executionId: string;
+  /**
+     * Monotonic per execution; send back as Last-Event-ID to resume
+     * @minimum 0
+     */
+  id: number;
+  nodeId?: string;
+  sequence?: number;
+  status?: string;
+  type: string;
+  workflowId?: string;
+}
+
+export interface ExecutionWaitingEvent {
   at: string;
   /** Redacted, type-specific detail */
   data?: unknown;
@@ -711,6 +818,18 @@ export interface ImportedWorkflowResource {
   /** @nullable */
   webhooks: WebhookRouteResource[] | null;
   workflow: WorkflowResource;
+}
+
+/**
+ * User column values keyed by column name
+ */
+export type InsertRowInputBodyValues = {[key: string]: unknown};
+
+export interface InsertRowInputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** User column values keyed by column name */
+  values: InsertRowInputBodyValues;
 }
 
 export interface ListAPIKeysOutputBody {
@@ -895,6 +1014,36 @@ export interface ReadyOutputBody {
   status: string;
 }
 
+export interface RenameDatastoreColumnInputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+     * New column name
+     * @minLength 1
+     */
+  name: string;
+}
+
+export interface RenameDatastoreInputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+     * New display name
+     * @minLength 1
+     */
+  name: string;
+}
+
+export type RowListOutputBodyItemsItem = {[key: string]: unknown};
+
+export interface RowListOutputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  items: RowListOutputBodyItemsItem[] | null;
+  nextCursor?: string;
+}
+
 export interface RunWorkflowInputBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -965,6 +1114,55 @@ export interface TestPayloadBody {
   credentialId?: string;
   /** Field values to test. Send the redaction placeholder to use a stored secret. */
   fields: TestPayloadBodyFields;
+}
+
+/**
+ * Columns to set
+ */
+export type UpdateRowsInputBodyValues = {[key: string]: unknown};
+
+export interface UpdateRowsInputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** Rows to update; an empty filter is refused */
+  filter: Filter;
+  /** Columns to set */
+  values: UpdateRowsInputBodyValues;
+}
+
+export type UpdateRowsOutputBodyRowsItem = {[key: string]: unknown};
+
+export interface UpdateRowsOutputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  matched: number;
+  /** @nullable */
+  rows: UpdateRowsOutputBodyRowsItem[] | null;
+}
+
+/**
+ * Columns to set or to insert with
+ */
+export type UpsertRowInputBodyValues = {[key: string]: unknown};
+
+export interface UpsertRowInputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** Rows to match; on no match one row is inserted */
+  filter: Filter;
+  /** Columns to set or to insert with */
+  values: UpsertRowInputBodyValues;
+}
+
+export type UpsertRowOutputBodyRowsItem = {[key: string]: unknown};
+
+export interface UpsertRowOutputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  inserted: boolean;
+  matched: number;
+  /** @nullable */
+  rows: UpsertRowOutputBodyRowsItem[] | null;
 }
 
 export type WorkflowDocumentInputSettings = {[key: string]: unknown};
@@ -1051,6 +1249,40 @@ export interface WorkflowVersionListResource {
   nextCursor?: string;
 }
 
+export type ListDatastoreRowsParams = {
+/**
+ * Page size; clamped to the store maximum
+ */
+limit?: number;
+/**
+ * Opaque cursor from a previous page
+ */
+cursor?: string;
+/**
+ * Any Condition matches any, All Conditions matches all; default Any Condition
+ */
+match?: string;
+/**
+ * Filter column, repeated; zipped with condition and value by position
+ * @nullable
+ */
+columnName?: string[] | null;
+/**
+ * Filter operator, repeated
+ * @nullable
+ */
+condition?: string[] | null;
+/**
+ * Filter value as JSON, repeated; unquoted text stays a string
+ * @nullable
+ */
+value?: string[] | null;
+};
+
+export type InsertDatastoreRow201 = {[key: string]: unknown};
+
+export type GetDatastoreRow200 = {[key: string]: unknown};
+
 export type ListExecutionsParams = {
 /**
  * Only list executions of this workflow
@@ -1113,6 +1345,14 @@ export type StreamExecutionEvents200Item = {
   data: ExecutionStartedEvent;
   /** The event name. */
   event: 'execution.started';
+  /** The event ID. */
+  id?: number;
+  /** The retry time in milliseconds. */
+  retry?: number;
+} | {
+  data: ExecutionWaitingEvent;
+  /** The event name. */
+  event: 'execution.waiting';
   /** The event ID. */
   id?: number;
   /** The retry time in milliseconds. */
@@ -1947,6 +2187,841 @@ export const testCredential = async (id: string, options?: RequestInit): Promise
 
   const data: testCredentialResponse['data'] = body ? JSON.parse(body) : {}
   return { data, status: res.status, headers: res.headers } as testCredentialResponse
+}
+
+
+
+export type listDatastoresResponse200 = {
+  data: DatastoreListOutputBody
+  status: 200
+}
+
+export type listDatastoresResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type listDatastoresResponseSuccess = (listDatastoresResponse200) & {
+  headers: Headers;
+};
+export type listDatastoresResponseError = (listDatastoresResponseDefault) & {
+  headers: Headers;
+};
+
+export type listDatastoresResponse = (listDatastoresResponseSuccess | listDatastoresResponseError)
+
+export const getListDatastoresUrl = () => {
+
+
+
+
+  return `/api/v1/datastores`
+}
+
+/**
+ * Returns every data table in the workspace.
+ * @summary List datastores
+ */
+export const listDatastores = async ( options?: RequestInit): Promise<listDatastoresResponse> => {
+
+  const res = await fetch(getListDatastoresUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: listDatastoresResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as listDatastoresResponse
+}
+
+
+
+export type createDatastoreResponse201 = {
+  data: DatastoreResource
+  status: 201
+}
+
+export type createDatastoreResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 201>
+}
+
+export type createDatastoreResponseSuccess = (createDatastoreResponse201) & {
+  headers: Headers;
+};
+export type createDatastoreResponseError = (createDatastoreResponseDefault) & {
+  headers: Headers;
+};
+
+export type createDatastoreResponse = (createDatastoreResponseSuccess | createDatastoreResponseError)
+
+export const getCreateDatastoreUrl = () => {
+
+
+
+
+  return `/api/v1/datastores`
+}
+
+/**
+ * Creates a data table; columns are added afterwards.
+ * @summary Create a datastore
+ */
+export const createDatastore = async (createDatastoreInputBody: NonReadonly<CreateDatastoreInputBody>, options?: RequestInit): Promise<createDatastoreResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Array.isArray(h)) return Object.fromEntries(h);
+    return h;
+  };
+const res = await fetch(getCreateDatastoreUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(createDatastoreInputBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: createDatastoreResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as createDatastoreResponse
+}
+
+
+
+export type deleteDatastoreResponse204 = {
+  data: void
+  status: 204
+}
+
+export type deleteDatastoreResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 204>
+}
+
+export type deleteDatastoreResponseSuccess = (deleteDatastoreResponse204) & {
+  headers: Headers;
+};
+export type deleteDatastoreResponseError = (deleteDatastoreResponseDefault) & {
+  headers: Headers;
+};
+
+export type deleteDatastoreResponse = (deleteDatastoreResponseSuccess | deleteDatastoreResponseError)
+
+export const getDeleteDatastoreUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/datastores/${id}`
+}
+
+/**
+ * Removes a data table and every row it holds.
+ * @summary Delete a datastore
+ */
+export const deleteDatastore = async (id: string, options?: RequestInit): Promise<deleteDatastoreResponse> => {
+
+  const res = await fetch(getDeleteDatastoreUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: deleteDatastoreResponse['data'] = body ? JSON.parse(body) : undefined
+  return { data, status: res.status, headers: res.headers } as deleteDatastoreResponse
+}
+
+
+
+export type getDatastoreResponse200 = {
+  data: DatastoreResource
+  status: 200
+}
+
+export type getDatastoreResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type getDatastoreResponseSuccess = (getDatastoreResponse200) & {
+  headers: Headers;
+};
+export type getDatastoreResponseError = (getDatastoreResponseDefault) & {
+  headers: Headers;
+};
+
+export type getDatastoreResponse = (getDatastoreResponseSuccess | getDatastoreResponseError)
+
+export const getGetDatastoreUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/datastores/${id}`
+}
+
+/**
+ * Returns one data table with its columns.
+ * @summary Get a datastore
+ */
+export const getDatastore = async (id: string, options?: RequestInit): Promise<getDatastoreResponse> => {
+
+  const res = await fetch(getGetDatastoreUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: getDatastoreResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as getDatastoreResponse
+}
+
+
+
+export type renameDatastoreResponse200 = {
+  data: DatastoreResource
+  status: 200
+}
+
+export type renameDatastoreResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type renameDatastoreResponseSuccess = (renameDatastoreResponse200) & {
+  headers: Headers;
+};
+export type renameDatastoreResponseError = (renameDatastoreResponseDefault) & {
+  headers: Headers;
+};
+
+export type renameDatastoreResponse = (renameDatastoreResponseSuccess | renameDatastoreResponseError)
+
+export const getRenameDatastoreUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/datastores/${id}`
+}
+
+/**
+ * Renames a data table; columns change through the column endpoints.
+ * @summary Rename a datastore
+ */
+export const renameDatastore = async (id: string,
+    renameDatastoreInputBody: NonReadonly<RenameDatastoreInputBody>, options?: RequestInit): Promise<renameDatastoreResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Array.isArray(h)) return Object.fromEntries(h);
+    return h;
+  };
+const res = await fetch(getRenameDatastoreUrl(id),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(renameDatastoreInputBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: renameDatastoreResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as renameDatastoreResponse
+}
+
+
+
+export type clearDatastoreResponse200 = {
+  data: ClearedDatastoreOutputBody
+  status: 200
+}
+
+export type clearDatastoreResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type clearDatastoreResponseSuccess = (clearDatastoreResponse200) & {
+  headers: Headers;
+};
+export type clearDatastoreResponseError = (clearDatastoreResponseDefault) & {
+  headers: Headers;
+};
+
+export type clearDatastoreResponse = (clearDatastoreResponseSuccess | clearDatastoreResponseError)
+
+export const getClearDatastoreUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/datastores/${id}/clear`
+}
+
+/**
+ * Removes every row and keeps the schema.
+ * @summary Clear a datastore
+ */
+export const clearDatastore = async (id: string, options?: RequestInit): Promise<clearDatastoreResponse> => {
+
+  const res = await fetch(getClearDatastoreUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: clearDatastoreResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as clearDatastoreResponse
+}
+
+
+
+export type addDatastoreColumnResponse200 = {
+  data: DatastoreColumnResource
+  status: 200
+}
+
+export type addDatastoreColumnResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type addDatastoreColumnResponseSuccess = (addDatastoreColumnResponse200) & {
+  headers: Headers;
+};
+export type addDatastoreColumnResponseError = (addDatastoreColumnResponseDefault) & {
+  headers: Headers;
+};
+
+export type addDatastoreColumnResponse = (addDatastoreColumnResponseSuccess | addDatastoreColumnResponseError)
+
+export const getAddDatastoreColumnUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/datastores/${id}/columns`
+}
+
+/**
+ * Appends one user column to a data table.
+ * @summary Add a column
+ */
+export const addDatastoreColumn = async (id: string,
+    datastoreColumnInput: NonReadonly<DatastoreColumnInput>, options?: RequestInit): Promise<addDatastoreColumnResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Array.isArray(h)) return Object.fromEntries(h);
+    return h;
+  };
+const res = await fetch(getAddDatastoreColumnUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(datastoreColumnInput)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: addDatastoreColumnResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as addDatastoreColumnResponse
+}
+
+
+
+export type deleteDatastoreColumnResponse204 = {
+  data: void
+  status: 204
+}
+
+export type deleteDatastoreColumnResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 204>
+}
+
+export type deleteDatastoreColumnResponseSuccess = (deleteDatastoreColumnResponse204) & {
+  headers: Headers;
+};
+export type deleteDatastoreColumnResponseError = (deleteDatastoreColumnResponseDefault) & {
+  headers: Headers;
+};
+
+export type deleteDatastoreColumnResponse = (deleteDatastoreColumnResponseSuccess | deleteDatastoreColumnResponseError)
+
+export const getDeleteDatastoreColumnUrl = (id: string,
+    name: string,) => {
+
+
+
+
+  return `/api/v1/datastores/${id}/columns/${name}`
+}
+
+/**
+ * Removes one user column from a data table.
+ * @summary Delete a column
+ */
+export const deleteDatastoreColumn = async (id: string,
+    name: string, options?: RequestInit): Promise<deleteDatastoreColumnResponse> => {
+
+  const res = await fetch(getDeleteDatastoreColumnUrl(id,name),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: deleteDatastoreColumnResponse['data'] = body ? JSON.parse(body) : undefined
+  return { data, status: res.status, headers: res.headers } as deleteDatastoreColumnResponse
+}
+
+
+
+export type renameDatastoreColumnResponse200 = {
+  data: DatastoreColumnResource
+  status: 200
+}
+
+export type renameDatastoreColumnResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type renameDatastoreColumnResponseSuccess = (renameDatastoreColumnResponse200) & {
+  headers: Headers;
+};
+export type renameDatastoreColumnResponseError = (renameDatastoreColumnResponseDefault) & {
+  headers: Headers;
+};
+
+export type renameDatastoreColumnResponse = (renameDatastoreColumnResponseSuccess | renameDatastoreColumnResponseError)
+
+export const getRenameDatastoreColumnUrl = (id: string,
+    name: string,) => {
+
+
+
+
+  return `/api/v1/datastores/${id}/columns/${name}`
+}
+
+/**
+ * Renames one user column of a data table.
+ * @summary Rename a column
+ */
+export const renameDatastoreColumn = async (id: string,
+    name: string,
+    renameDatastoreColumnInputBody: NonReadonly<RenameDatastoreColumnInputBody>, options?: RequestInit): Promise<renameDatastoreColumnResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Array.isArray(h)) return Object.fromEntries(h);
+    return h;
+  };
+const res = await fetch(getRenameDatastoreColumnUrl(id,name),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(renameDatastoreColumnInputBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: renameDatastoreColumnResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as renameDatastoreColumnResponse
+}
+
+
+
+export type deleteDatastoreRowsResponse200 = {
+  data: DeleteRowsOutputBody
+  status: 200
+}
+
+export type deleteDatastoreRowsResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type deleteDatastoreRowsResponseSuccess = (deleteDatastoreRowsResponse200) & {
+  headers: Headers;
+};
+export type deleteDatastoreRowsResponseError = (deleteDatastoreRowsResponseDefault) & {
+  headers: Headers;
+};
+
+export type deleteDatastoreRowsResponse = (deleteDatastoreRowsResponseSuccess | deleteDatastoreRowsResponseError)
+
+export const getDeleteDatastoreRowsUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/datastores/${id}/rows`
+}
+
+/**
+ * Removes every row matching the filter. An empty filter is refused and removes nothing. One statement, atomic per row on both drivers: the last writer wins and no row lock is taken.
+ * @summary Delete rows
+ */
+export const deleteDatastoreRows = async (id: string,
+    deleteRowsInputBody: NonReadonly<DeleteRowsInputBody>, options?: RequestInit): Promise<deleteDatastoreRowsResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Array.isArray(h)) return Object.fromEntries(h);
+    return h;
+  };
+const res = await fetch(getDeleteDatastoreRowsUrl(id),
+  {
+    ...options,
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(deleteRowsInputBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: deleteDatastoreRowsResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as deleteDatastoreRowsResponse
+}
+
+
+
+export type listDatastoreRowsResponse200 = {
+  data: RowListOutputBody
+  status: 200
+}
+
+export type listDatastoreRowsResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type listDatastoreRowsResponseSuccess = (listDatastoreRowsResponse200) & {
+  headers: Headers;
+};
+export type listDatastoreRowsResponseError = (listDatastoreRowsResponseDefault) & {
+  headers: Headers;
+};
+
+export type listDatastoreRowsResponse = (listDatastoreRowsResponseSuccess | listDatastoreRowsResponseError)
+
+export const getListDatastoreRowsUrl = (id: string,
+    params?: ListDatastoreRowsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/datastores/${id}/rows?${stringifiedParams}` : `/api/v1/datastores/${id}/rows`
+}
+
+/**
+ * Returns one page of rows in id order with the cursor for the next.
+ * @summary List rows
+ */
+export const listDatastoreRows = async (id: string,
+    params?: ListDatastoreRowsParams, options?: RequestInit): Promise<listDatastoreRowsResponse> => {
+
+  const res = await fetch(getListDatastoreRowsUrl(id,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: listDatastoreRowsResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as listDatastoreRowsResponse
+}
+
+
+
+export type insertDatastoreRowResponse201 = {
+  data: InsertDatastoreRow201
+  status: 201
+}
+
+export type insertDatastoreRowResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 201>
+}
+
+export type insertDatastoreRowResponseSuccess = (insertDatastoreRowResponse201) & {
+  headers: Headers;
+};
+export type insertDatastoreRowResponseError = (insertDatastoreRowResponseDefault) & {
+  headers: Headers;
+};
+
+export type insertDatastoreRowResponse = (insertDatastoreRowResponseSuccess | insertDatastoreRowResponseError)
+
+export const getInsertDatastoreRowUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/datastores/${id}/rows`
+}
+
+/**
+ * Writes one row and reads it back.
+ * @summary Insert a row
+ */
+export const insertDatastoreRow = async (id: string,
+    insertRowInputBody: NonReadonly<InsertRowInputBody>, options?: RequestInit): Promise<insertDatastoreRowResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Array.isArray(h)) return Object.fromEntries(h);
+    return h;
+  };
+const res = await fetch(getInsertDatastoreRowUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(insertRowInputBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: insertDatastoreRowResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as insertDatastoreRowResponse
+}
+
+
+
+export type updateDatastoreRowsResponse200 = {
+  data: UpdateRowsOutputBody
+  status: 200
+}
+
+export type updateDatastoreRowsResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type updateDatastoreRowsResponseSuccess = (updateDatastoreRowsResponse200) & {
+  headers: Headers;
+};
+export type updateDatastoreRowsResponseError = (updateDatastoreRowsResponseDefault) & {
+  headers: Headers;
+};
+
+export type updateDatastoreRowsResponse = (updateDatastoreRowsResponseSuccess | updateDatastoreRowsResponseError)
+
+export const getUpdateDatastoreRowsUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/datastores/${id}/rows`
+}
+
+/**
+ * Sets columns on every row matching the filter. One statement, atomic per row on both drivers: concurrent writers never interleave inside a row and the last writer wins; no row lock is taken.
+ * @summary Update rows
+ */
+export const updateDatastoreRows = async (id: string,
+    updateRowsInputBody: NonReadonly<UpdateRowsInputBody>, options?: RequestInit): Promise<updateDatastoreRowsResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Array.isArray(h)) return Object.fromEntries(h);
+    return h;
+  };
+const res = await fetch(getUpdateDatastoreRowsUrl(id),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(updateRowsInputBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: updateDatastoreRowsResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as updateDatastoreRowsResponse
+}
+
+
+
+export type upsertDatastoreRowResponse200 = {
+  data: UpsertRowOutputBody
+  status: 200
+}
+
+export type upsertDatastoreRowResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type upsertDatastoreRowResponseSuccess = (upsertDatastoreRowResponse200) & {
+  headers: Headers;
+};
+export type upsertDatastoreRowResponseError = (upsertDatastoreRowResponseDefault) & {
+  headers: Headers;
+};
+
+export type upsertDatastoreRowResponse = (upsertDatastoreRowResponseSuccess | upsertDatastoreRowResponseError)
+
+export const getUpsertDatastoreRowUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/datastores/${id}/rows/upsert`
+}
+
+/**
+ * Updates every row matching the filter, or inserts one row when nothing matches. Read-then-write in no single transaction: two concurrent upserts against the same filter may both insert, so a counter that must not lose writes uses increment instead.
+ * @summary Upsert rows
+ */
+export const upsertDatastoreRow = async (id: string,
+    upsertRowInputBody: NonReadonly<UpsertRowInputBody>, options?: RequestInit): Promise<upsertDatastoreRowResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Array.isArray(h)) return Object.fromEntries(h);
+    return h;
+  };
+const res = await fetch(getUpsertDatastoreRowUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(upsertRowInputBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: upsertDatastoreRowResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as upsertDatastoreRowResponse
+}
+
+
+
+export type getDatastoreRowResponse200 = {
+  data: GetDatastoreRow200
+  status: 200
+}
+
+export type getDatastoreRowResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type getDatastoreRowResponseSuccess = (getDatastoreRowResponse200) & {
+  headers: Headers;
+};
+export type getDatastoreRowResponseError = (getDatastoreRowResponseDefault) & {
+  headers: Headers;
+};
+
+export type getDatastoreRowResponse = (getDatastoreRowResponseSuccess | getDatastoreRowResponseError)
+
+export const getGetDatastoreRowUrl = (id: string,
+    rowId: number,) => {
+
+
+
+
+  return `/api/v1/datastores/${id}/rows/${rowId}`
+}
+
+/**
+ * Returns one row by id.
+ * @summary Get a row
+ */
+export const getDatastoreRow = async (id: string,
+    rowId: number, options?: RequestInit): Promise<getDatastoreRowResponse> => {
+
+  const res = await fetch(getGetDatastoreRowUrl(id,rowId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: getDatastoreRowResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as getDatastoreRowResponse
 }
 
 

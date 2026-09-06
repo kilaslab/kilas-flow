@@ -141,6 +141,16 @@
 			</dl>
 		</div>
 
+		{#if status === 'waiting' && execution.data.approvalUrl}
+			<div class="rounded-xl border border-violet-500/30 bg-violet-500/5 p-4">
+				<h2 class="text-sm font-medium">Waiting for approval</h2>
+				<p class="mt-0.5 text-xs leading-5 text-muted-foreground">
+					This run is suspended and holds no worker. Open the approval page to record a decision.
+				</p>
+				<Button class="mt-3" variant="outline" href={execution.data.approvalUrl}>Open approval page</Button>
+			</div>
+		{/if}
+
 		{#if execution.data.error}
 			<div role="alert" class="rounded-xl border border-destructive/25 bg-destructive/5 p-4">
 				<h2 class="text-sm font-medium text-destructive">Execution error</h2>

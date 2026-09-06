@@ -97,6 +97,17 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	// The operator's datastore bounds ride into the engine here, beside the
+	// prefix: Validate already refused anything non-positive, so this cannot
+	// fail on a configuration Load accepted.
+	if err := datastoreEngine.SetLimits(datastore.Limits{
+		MaxDatastoresPerTenant: cfg.Datastore.MaxDatastoresPerTenant,
+		MaxColumnsPerDatastore: cfg.Datastore.MaxColumnsPerDatastore,
+		MaxRowsPerDatastore:    cfg.Datastore.MaxRowsPerDatastore,
+		MaxValueBytes:          cfg.Datastore.MaxValueBytes,
+	}); err != nil {
+		return err
+	}
 	nodeRegistry := node.NewRegistry()
 	if err := nodes.RegisterAll(nodeRegistry); err != nil {
 		return fmt.Errorf("register built-in nodes: %w", err)
@@ -223,8 +234,11 @@ func run() error {
 	// Credentials are optional at boot: an install with no key still runs
 	// workflows, and only credential operations report that it is unconfigured.
 	// Failing startup instead would make the key mandatory for every user.
+	// That holds only when no manager is configured: a manager that is named
+	// but unreachable refuses startup, because a transient network error
+	// silently disabling every credential is worse than not starting.
 	var credentialStore *repository.GORMCredentialStore
-	key, keyErr := credentials.KeyFromEnvironment(cfg.Security.EncryptionKeyEnv)
+	key, keyErr := masterKey(ctx, cfg)
 	switch {
 	case errors.Is(keyErr, credentials.ErrNoKey):
 		log.Warn("credential encryption key is not set; credential storage is disabled",
@@ -388,12 +402,14 @@ func run() error {
 		Catalog:     nodeRegistry,
 		Runner:      engine.NewRunner(executorRegistry),
 		Credentials: credentialStore,
-		Environment: workflowEnvironment(),
 		// Named so a called workflow starts from its sub-workflow trigger and
 		// not from a webhook or schedule it also happens to carry.
 		SubworkflowTriggerType: nodes.ExecuteWorkflowTriggerType,
 		WorkerID:               fmt.Sprintf("kilasflow-%d", os.Getpid()),
 		DefaultTimeout:         cfg.Execution.DefaultTimeout,
+		// server.public_url prefixes the resume links handed to waiting
+		// executions. Empty renders path-only links for a same-origin setup.
+		PublicBaseURL: cfg.Server.PublicURL,
 	})
 	if err != nil {
 		return fmt.Errorf("configure execution runtime: %w", err)
@@ -422,7 +438,16 @@ func run() error {
 	if err := runtime.Start(ctx, cfg.Execution.MaxConcurrent); err != nil {
 		return fmt.Errorf("start execution runtime: %w", err)
 	}
-
+	// PostgreSQL wakes idle workers in every process the moment an execution
+	// is queued, instead of leaving each process to find it on its next poll
+	// tick. SQLite has no LISTEN/NOTIFY and keeps the tick as its wake path.
+	if cfg.Database.Driver == "postgres" {
+		go func() {
+			_ = runtime.WatchQueue(ctx, cfg.Database.DSN, cfg.Database.TablePrefix, func(err error) {
+				log.Error("execution wake listener dropped; the poll interval remains the fallback", "error", err)
+			})
+		}()
+	}
 	cronService, err := scheduler.New(scheduler.Options{
 		Schedules: schedules,
 		Queue: func(ctx context.Context, tenantID, workflowID, versionID, triggerNodeID string, payload json.RawMessage) error {
@@ -464,6 +489,7 @@ func run() error {
 		AuthStore:           authStore,
 		AuthIssuer:          authIssuer,
 		ExecutionController: runtime,
+		ResumeService:       runtime,
 		NodeAvailability:    nodeAvailability(codeCompiler),
 		HTTPPolicy:          outboundPolicy(cfg.Outbound),
 		DatabaseGuard:       sqlGuard,
@@ -721,6 +747,40 @@ func outboundPolicy(cfg config.OutboundHTTP) safehttp.Policy {
 		policy.Timeout = cfg.Timeout
 	}
 	return policy
+}
+
+// masterKey resolves the credential master key: from the external secrets
+// manager when the secrets section names one, from the environment
+// otherwise. The two absences stay distinguishable: nothing configured is
+// ErrNoKey (boot continues with credential storage disabled), while a named
+// but unreachable manager is ErrManagerUnreachable (boot refuses). A
+// transient network error at boot silently disabling every credential would
+// be worse than not starting, so the manager path never degrades into the
+// no-key one.
+func masterKey(ctx context.Context, cfg config.Config) ([]byte, error) {
+	if strings.TrimSpace(cfg.Secrets.ManagerAddr) == "" {
+		return credentials.KeyFromEnvironment(cfg.Security.EncryptionKeyEnv)
+	}
+	policy := outboundPolicy(cfg.Outbound)
+	provider, err := credentials.NewVaultProvider(
+		cfg.Secrets.ManagerAddr, os.Getenv(cfg.Secrets.ManagerTokenEnv), policy)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", credentials.ErrManagerUnreachable, err)
+	}
+	if err := provider.Health(ctx); err != nil {
+		return nil, fmt.Errorf("%w: %v", credentials.ErrManagerUnreachable, err)
+	}
+	key, err := credentials.KeyFromManager(ctx, provider, cfg.Secrets.MasterKey)
+	if err != nil {
+		// Partial configuration is rejected by config.Validate, so a NoKey
+		// here means the reference itself is empty: refusing beats running
+		// an install whose operator believes the manager is in charge.
+		if errors.Is(err, credentials.ErrNoKey) {
+			return nil, fmt.Errorf("secrets.master_key is required when secrets.manager_addr is set: %w", err)
+		}
+		return nil, err
+	}
+	return key, nil
 }
 
 // workflowEnvironment is the allowlist behind the `$env` expression root.

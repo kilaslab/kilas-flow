@@ -56,6 +56,12 @@ func registerRoutes(router *chi.Mux, api huma.API, deps Deps) {
 	router.Handle(WebhookPrefix, webhookHandler)
 	router.Handle(WebhookPrefix+"/*", webhookHandler)
 
+	// The resume prefix answers the same way: per-execution resume URLs keyed
+	// by an opaque single-use token, never modelled as webhook bindings.
+	resumeHandler := handlers.NewResume(deps.ResumeService, deps.Tenants).Handler()
+	router.Handle(handlers.ResumePrefix, resumeHandler)
+	router.Handle(handlers.ResumePrefix+"/*", resumeHandler)
+
 	router.Handle("/*", web.Handler())
 }
 

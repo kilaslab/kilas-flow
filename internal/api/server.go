@@ -65,7 +65,13 @@ type Deps struct {
 	// ExecutionController owns live worker wakeups and cancellation. It is
 	// separate from the repository so HTTP never reaches into ORM state.
 	ExecutionController handlers.ExecutionController
-	Tenants             handlers.TenantResolver
+	// ResumeService owns the durable-wait surface behind the /resume prefix:
+	// wait info for the approval page and token consumes that re-queue their
+	// execution. Nil leaves the prefix answering "unavailable" rather than
+	// half-working. It is a separate field rather than part of
+	// ExecutionController so existing controller fakes keep compiling.
+	ResumeService handlers.ResumeService
+	Tenants       handlers.TenantResolver
 	// AuthStore is the identity boundary: tenants, accounts and API keys. Nil
 	// leaves the identity endpoints reporting that authentication is not
 	// configured, and — with Config.Auth.Enabled set — leaves every API key

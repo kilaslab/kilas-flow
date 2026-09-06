@@ -266,20 +266,25 @@ type ExecutionNodeRunResource struct {
 // ExecutionResource surfaces the durable execution state, result, structured
 // error, and ordered node-run history through the REST API.
 type ExecutionResource struct {
-	ID                      string                     `json:"id"`
-	WorkflowID              string                     `json:"workflowId"`
-	WorkflowVersionID       string                     `json:"workflowVersionId"`
-	Status                  execution.Status           `json:"status"`
-	Trigger                 execution.Trigger          `json:"trigger"`
-	TriggerNodeID           string                     `json:"triggerNodeId,omitempty" doc:"The trigger node this run started from, when one workflow declares several"`
-	ParentExecutionID       string                     `json:"parentExecutionId,omitempty" doc:"The execution that called this one, for a sub-workflow run"`
-	Input                   json.RawMessage            `json:"input,omitempty"`
-	Output                  json.RawMessage            `json:"output,omitempty"`
-	Error                   json.RawMessage            `json:"error,omitempty"`
-	StartedAt               time.Time                  `json:"startedAt"`
-	FinishedAt              *time.Time                 `json:"finishedAt,omitempty"`
-	CancellationRequestedAt *time.Time                 `json:"cancellationRequestedAt,omitempty"`
-	NodeRuns                []ExecutionNodeRunResource `json:"nodeRuns"`
+	ID                      string            `json:"id"`
+	WorkflowID              string            `json:"workflowId"`
+	WorkflowVersionID       string            `json:"workflowVersionId"`
+	Status                  execution.Status  `json:"status"`
+	Trigger                 execution.Trigger `json:"trigger"`
+	TriggerNodeID           string            `json:"triggerNodeId,omitempty" doc:"The trigger node this run started from, when one workflow declares several"`
+	ParentExecutionID       string            `json:"parentExecutionId,omitempty" doc:"The execution that called this one, for a sub-workflow run"`
+	Input                   json.RawMessage   `json:"input,omitempty"`
+	Output                  json.RawMessage   `json:"output,omitempty"`
+	Error                   json.RawMessage   `json:"error,omitempty"`
+	StartedAt               time.Time         `json:"startedAt"`
+	FinishedAt              *time.Time        `json:"finishedAt,omitempty"`
+	CancellationRequestedAt *time.Time        `json:"cancellationRequestedAt,omitempty"`
+	// ResumeURL is the machine resume link for a waiting execution, and
+	// ApprovalURL its human page. Both are present only while the execution
+	// waits; any other status omits them.
+	ResumeURL   string                     `json:"resumeUrl,omitempty"`
+	ApprovalURL string                     `json:"approvalUrl,omitempty"`
+	NodeRuns    []ExecutionNodeRunResource `json:"nodeRuns"`
 }
 
 type executionOutput struct {

@@ -135,6 +135,17 @@ func NewService(deps ServiceDeps) (*Service, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	// The tick stays the fallback under every watcher: a dropped LISTEN/NOTIFY
+	// costs latency, never a stuck execution. Non-positive keeps the stock
+	// 100 ms / 1 min so a caller that never heard of the knobs gets them.
+	pollInterval := deps.PollInterval
+	if pollInterval <= 0 {
+		pollInterval = 100 * time.Millisecond
+	}
+	sweepInterval := deps.SweepInterval
+	if sweepInterval <= 0 {
+		sweepInterval = time.Minute
+	}
 	return &Service{
 		log:                    logger,
 		executions:             deps.Executions,
@@ -146,6 +157,9 @@ func NewService(deps ServiceDeps) (*Service, error) {
 		environment:            environment,
 		workerID:               deps.WorkerID,
 		defaultTimeout:         deps.DefaultTimeout,
+		pollInterval:           pollInterval,
+		sweepInterval:          sweepInterval,
+		publicBaseURL:          strings.TrimSuffix(deps.PublicBaseURL, "/"),
 		subworkflowTriggerType: deps.SubworkflowTriggerType,
 		active:                 make(map[string]context.CancelFunc),
 		wake:                   make(chan struct{}, 1),
@@ -197,6 +211,24 @@ func (service *Service) runOnce(ctx context.Context, workerID string) (bool, err
 		}
 		return true, nil
 	}
+	// A re-queued wait carries its checkpoint beside the execution row. Fresh
+	// executions have no wait rows and read as not-found, which simply means
+	// a fresh run. Anything else fails the claim loudly rather than running
+	// the graph from the start and firing every non-idempotent node twice.
+	resumeState, err := service.loadResumeState(ctx, tenant, record.ID)
+	if err != nil {
+		return true, err
+	}
+	seqBase := 0
+	if resumeState != nil {
+		seqBase = resumeState.RunCount
+	}
+	// Minted before the graph runs so a workflow can compose its own resume
+	// link before suspending. A run that never suspends discards its token.
+	resume, err := service.mintResumeURLs()
+	if err != nil {
+		return true, err
+	}
 	service.publish(events.Event{
 		TenantID: record.TenantID, ExecutionID: record.ID, WorkflowID: record.WorkflowID,
 		Type: events.ExecutionStarted, Status: execution.StatusRunning,
@@ -205,11 +237,35 @@ func (service *Service) runOnce(ctx context.Context, workerID string) (bool, err
 	service.activeMu.Lock()
 	service.active[record.ID] = cancel
 	service.activeMu.Unlock()
-	result, runErr := service.run(runCtx, record, document)
+	var result Result
+	var runErr error
+	if resumeState != nil {
+		result, runErr = service.resumeRun(runCtx, record, document, []string{record.WorkflowID}, *resumeState, resume)
+	} else {
+		result, runErr = service.run(runCtx, record, document, resume)
+	}
 	service.activeMu.Lock()
 	delete(service.active, record.ID)
 	service.activeMu.Unlock()
 	cancel()
+	// Suspension is neither success nor failure: the trace produced so far
+	// persists, the wait row holds the checkpoint, and the worker is free.
+	var suspended *SuspendError
+	if runErr != nil && errors.As(runErr, &suspended) {
+		parked, err := service.suspend(ctx, tenant, record, document, result, suspended, seqBase, resume)
+		if err != nil {
+			// An invalid suspension (no mode, no deadline, no checkpoint)
+			// fails the run like any other error rather than parking an
+			// execution nobody can resume.
+			if !parked {
+				runErr = err
+			} else {
+				return true, err
+			}
+		} else {
+			return true, nil
+		}
+	}
 	nodeTypes := make(map[string]string, len(document.Nodes))
 	for _, node := range document.Nodes {
 		nodeTypes[node.ID] = node.Type
@@ -247,7 +303,7 @@ func (service *Service) runOnce(ctx context.Context, workerID string) (bool, err
 		}
 		now := time.Now().UTC()
 		if _, err := service.executions.CreateNodeRun(ctx, tenant, execution.NodeRun{
-			TenantID: record.TenantID, ExecutionID: record.ID, NodeID: run.NodeID, Attempt: attemptOf(run), RunIndex: run.RunIndex, Sequence: sequence + 1,
+			TenantID: record.TenantID, ExecutionID: record.ID, NodeID: run.NodeID, Attempt: attemptOf(run), RunIndex: run.RunIndex, Sequence: seqBase + sequence + 1,
 			Status: status, Input: input, Output: output, Error: errorPayload, StartedAt: now, FinishedAt: &now, LeaseOwner: record.LeaseOwner,
 		}); err != nil {
 			return true, fmt.Errorf("persist node %q run: %w", run.NodeID, err)
@@ -264,7 +320,7 @@ func (service *Service) runOnce(ctx context.Context, workerID string) (bool, err
 		}
 		service.publish(events.Event{
 			TenantID: record.TenantID, ExecutionID: record.ID, WorkflowID: record.WorkflowID,
-			NodeID: run.NodeID, Type: eventType, Status: status, Sequence: sequence + 1,
+			NodeID: run.NodeID, Type: eventType, Status: status, Sequence: seqBase + sequence + 1,
 			Data: output,
 		})
 	}
@@ -325,6 +381,8 @@ func (service *Service) runOnce(ctx context.Context, workerID string) (bool, err
 // Start launches a bounded process-local worker pool. Every worker claims
 // records from the durable repository, so queued work remains recoverable
 // after a process restart instead of being tied to an HTTP request goroutine.
+// It also starts the expired-wait sweeper, so a forgotten approval resolves
+// instead of staying suspended forever.
 func (service *Service) Start(ctx context.Context, maxConcurrent int) error {
 	if maxConcurrent < 1 {
 		return fmt.Errorf("engine max concurrent executions must be positive")
@@ -334,6 +392,7 @@ func (service *Service) Start(ctx context.Context, maxConcurrent int) error {
 			workerID := fmt.Sprintf("%s-%d", service.workerID, index)
 			go service.worker(ctx, workerID)
 		}
+		go service.sweepLoop(ctx)
 	})
 	return nil
 }
@@ -363,9 +422,18 @@ func (service *Service) worker(ctx context.Context, workerID string) {
 		case <-ctx.Done():
 			return
 		case <-service.wake:
-		case <-time.After(100 * time.Millisecond):
+		case <-time.After(service.pollIntervalOrDefault()):
 		}
 	}
+}
+
+// pollIntervalOrDefault is the worker's idle wait. NewService already defaults
+// it, so the guard here is only for a Service built before the field existed.
+func (service *Service) pollIntervalOrDefault() time.Duration {
+	if service.pollInterval <= 0 {
+		return 100 * time.Millisecond
+	}
+	return service.pollInterval
 }
 
 // publish delivers a standardized event when a broker is configured.
@@ -394,15 +462,15 @@ func (service *Service) Wake() {
 	}
 }
 
-func (service *Service) run(ctx context.Context, record execution.Record, document workflow.Document) (Result, error) {
-	return service.runWithStack(ctx, record, document, []string{record.WorkflowID})
+func (service *Service) run(ctx context.Context, record execution.Record, document workflow.Document, resume resumeURLs) (Result, error) {
+	return service.runWithStack(ctx, record, document, []string{record.WorkflowID}, resume)
 }
 
 // runWithStack is run with the call chain that reached this execution.
 //
 // A top-level run's stack is just itself; a sub-workflow's carries every
 // workflow above it, which is what lets the next call refuse a cycle by name.
-func (service *Service) runWithStack(ctx context.Context, record execution.Record, document workflow.Document, stack []string) (Result, error) {
+func (service *Service) runWithStack(ctx context.Context, record execution.Record, document workflow.Document, stack []string, resume resumeURLs) (Result, error) {
 	ir, err := workflow.Compile(document, service.catalog)
 	if err != nil {
 		return Result{}, err
@@ -411,28 +479,9 @@ func (service *Service) runWithStack(ctx context.Context, record execution.Recor
 	if err != nil {
 		return Result{}, err
 	}
-	request := Request{
-		Input:         item,
-		TriggerNodeID: record.TriggerNodeID,
-		Execution: ExecutionContext{
-			ID: record.ID, Mode: string(record.Trigger),
-			TenantID: record.TenantID, WorkflowID: record.WorkflowID,
-			ParentID: record.ParentExecutionID, Stack: stack,
-		},
-		Workflows:   service,
-		Env:         service.environment,
-		Credentials: &tenantCredentials{store: service.credentials, tenant: repository.TenantScope{ID: record.TenantID}},
-		// Nested node progress joins the one standardized event channel rather
-		// than a parallel one. It is published as it happens, before the node's
-		// own run is durable, which is exactly why these events carry no state
-		// a consumer is allowed to treat as authoritative.
-		Events: func(event NodeEvent) {
-			service.publish(events.Event{
-				TenantID: record.TenantID, ExecutionID: record.ID, WorkflowID: record.WorkflowID,
-				NodeID: event.NodeID, Type: events.Type(event.Name), Data: event.Detail,
-			})
-		},
-	}
+	request := service.newRequest(record, document, stack, resume)
+	request.Input = item
+	request.TriggerNodeID = record.TriggerNodeID
 	// Left nil when this server has no binary storage, so a node can ask
 	// whether storing a payload is even possible. Boxing a nil store in the
 	// interface would make that question unanswerable, and a node that has to
@@ -619,7 +668,11 @@ func (service *Service) InvokeWorkflow(ctx context.Context, parent ExecutionCont
 		Type: events.ExecutionStarted, Status: execution.StatusRunning,
 	})
 
-	result, runErr := service.runWithStack(ctx, record, document, append(append([]string(nil), parent.Stack...), target))
+	result, runErr := service.runWithStack(ctx, record, document, append(append([]string(nil), parent.Stack...), target), resumeURLs{})
+	var suspended *SuspendError
+	if runErr != nil && errors.As(runErr, &suspended) {
+		runErr = refuseSuspendInChild(target, suspended)
+	}
 	if err := service.persistChild(ctx, tenant, record, result, runErr); err != nil {
 		return WorkflowCallResult{}, err
 	}
