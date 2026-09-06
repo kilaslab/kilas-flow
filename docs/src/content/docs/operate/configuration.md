@@ -1,31 +1,71 @@
 ---
-title: Configuration reference
-description: Not yet written. This page will be generated from the configuration struct rather than typed.
+title: Configuration
+description: How KilasFlow reads configuration, and what happens when keys are missing.
 sidebar:
   order: 2
 ---
 
-:::caution[This page has not been written yet]
-:::
+KilasFlow runs with no configuration file at all. Everything has a default;
+the file and the environment exist to change the defaults that matter to an
+installation.
 
-## What will be here
+## Precedence
 
-Every configuration key, its type, its default and what it does — **generated**
-from `internal/config/config.go` rather than written by hand.
+Three layers, each overriding the one before:
 
-Generating it is the point of the page, not an implementation detail. The
-repository already has a worked example of what happens otherwise:
-`config.example.yaml` documents seven sections while the code defines twelve,
-and the five it has fallen behind on include `outbound`, `webhook` and `embed` —
-which are precisely the ones that define the security boundary. A hand-written
-reference decays the same way, only less visibly, because a reader has no way to
-tell which parts of it are still true.
+1. Built-in defaults (see the [reference](/operate/configuration-reference/)).
+2. The YAML file named by `--config` (default `config.yaml`). A missing file
+   is not an error.
+3. Environment variables prefixed `KILASFLOW_`.
 
-## What to read in the meantime
+`config.example.yaml` is a copy-edit starting point generated from the same
+structs as the reference. Copy it to `config.yaml` and change values there;
+never edit its structure — regenerating overwrites it.
 
-`internal/config/config.go` is the only complete list. `config.example.yaml` is
-correct about what it covers and simply does not cover everything.
+## Environment variable names
 
-The rules for reading configuration are on the [Install](/start/install/) page:
-environment beats file, file beats defaults, and only the first underscore after
-the `KILASFLOW_` prefix separates the section from the key.
+The name is `KILASFLOW_<SECTION>_<KEY>`, uppercased: `server.port` is
+`KILASFLOW_SERVER_PORT`, `database.max_open_conns` is
+`KILASFLOW_DATABASE_MAX_OPEN_CONNS`. Only the **first** underscore after the
+prefix separates the section from the key, because leaf keys contain
+underscores themselves:
+
+- `KILASFLOW_SERVER_READ_HEADER_TIMEOUT` → `server.read_header_timeout`
+- `KILASFLOW_DATABASE_MAX_OPEN_CONNS` → `database.max_open_conns`
+
+Naively splitting on every underscore would address a path that matches
+nothing and would be silently ignored. This is also why every section name is
+a single word (`outbound`, not `outbound_http`): a two-word section could
+never be reached from the environment.
+
+## Workflow expressions cannot read secrets
+
+`$env` inside a workflow does **not** see the process environment. Only
+variables under the separate `KILASFLOW_WORKFLOW_ENV_` prefix are exposed, so
+a workflow expression can never read the database DSN, the credential master
+key, or any other secret out of the process environment. Anything a workflow
+needs from the environment must be copied under that prefix deliberately.
+
+## What a missing key does at boot
+
+Most missing keys fall back to defaults and the server starts. Three are
+worth knowing precisely, because "still starts" is the behaviour an operator
+misreads in production:
+
+- **No credential encryption key** (`KILASFLOW_ENCRYPTION_KEY` unset). The
+  server starts, runs workflows, and logs a warning — but credential storage
+  is disabled: credential reads and writes report unconfigured. Set the key
+  before storing anything. There is no re-encryption pass, so changing the key
+  later makes every credential already stored undecryptable.
+- **No embed signing key** (`KILASFLOW_EMBED_SIGNING_KEY` unset). The server
+  starts with a warning, the session endpoints report themselves
+  unconfigured, and every embed token is refused. Embedding is off until both
+  the key and at least one `embed.allowed_origins` entry are set; an empty
+  allowlist fails closed even with a key.
+- **No config file at all.** Fully supported. The server boots on SQLite with
+  an unauthenticated API on port 8080 and says so in the logs.
+
+One missing key refuses to start rather than warn: `auth.enabled: true` with
+no signing key. A server that answered every request with `401` would look
+like a broken deployment rather than a misconfigured one, so the boot fails
+with an error naming the variable.

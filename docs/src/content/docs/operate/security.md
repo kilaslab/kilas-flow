@@ -1,61 +1,88 @@
 ---
 title: Security posture
-description: Not yet written, but the parts an operator must know before deploying are stated here now.
+description: 'The whole security boundary on one page: what is defended, what is not, and what isolates.'
 sidebar:
-  order: 3
+  order: 4
 ---
 
-:::caution[This page has not been written yet]
-The full treatment is still to come. The facts below are not placeholders,
-though — they are the ones that change how you would deploy this, so they are
-stated now rather than held back until the page is finished.
-:::
+## The API is unauthenticated
 
-## The API is not authenticated
+Nothing under `/api/v1` requires a credential unless the operator turns
+identity on (`auth.enabled`, with a signing key and a bootstrapped account on
+the same first start). Listing workflows, creating them, running them,
+reading executions and managing credentials are otherwise open to anything
+that can reach the port — and the server says so at every boot until identity
+is enabled.
 
-Nothing under `/api/v1` requires a credential. Listing workflows, creating them,
-running them, reading executions and managing credentials are all open to
-anything that can reach the port.
-
-The embed session token is the only token mechanism, and it works in the
-opposite direction to the one people usually expect: it **restricts** a request
-to a single workflow and a set of scopes. A request without a token is not
-rejected — it is passed through with full access.
+The embed session token works in the opposite direction to the one people
+usually expect: it **restricts** a request to a single workflow and a set of
+scopes. A request without a token is not rejected — it is passed through with
+full access.
 
 So KilasFlow must sit behind something that authenticates, on a network that
-does not expose it directly. Treat reaching the port as equivalent to being an
-administrator, because it is.
+does not expose it directly. Treat reaching the port as equivalent to being
+an administrator, because it is.
 
 ## What is defended today
 
-These are implemented, and they are worth knowing about because they shape how
-the parts that *are* exposed behave.
+**Outbound requests refuse internal infrastructure by default.** The egress
+policy in the `outbound` section governs every workflow HTTP request (nodes,
+option loaders and trigger executors alike): private networks are refused
+unless `allow_private_networks` is turned on, which is what stops a
+tenant-authored URL probing the cloud metadata service or a neighbouring
+internal service. `allowed_hosts` narrows further when set, and
+`allowed_private_endpoints` admits one `host:port` at a time — a loopback
+model server, a test stub — without handing every request the whole internal
+network. Redirects, response size and timeout are all bounded. A self-hosted
+operator opts out explicitly. Never set `allow_private_networks: true` to
+reach one loopback dependency; name the endpoint instead.
 
-**Credentials are encrypted at rest** with AES-256-GCM. The key is read from the
-environment and never from the configuration file; without it, credential
-storage is disabled rather than silently falling back to something weaker.
+**Embedding fails closed.** The `embed` section's allowlist decides which
+pages may host the editor, and empty means disabled entirely — even with a
+signing key set. Session tokens live at most 30 minutes (default 15) because
+a token travels through a host page and sits in a browser. The signing key is
+deliberately a different variable from the dashboard auth key, so a forged
+value of one kind can never be presented as the other.
 
-**Outbound requests refuse internal infrastructure by default.** The HTTP client
-workflows use will not reach private networks unless that is turned on, which is
-what stops a workflow being used to probe the network it runs in. Redirects,
-response size and timeout are all bounded.
+**The internal database has a guard.** A SQLite workflow credential naming
+KilasFlow's own database file — including its `-wal`, `-shm` and `-journal`
+siblings, through symlinks — is refused before any connection opens. On
+PostgreSQL there is no guard yet: a `kilasflow.postgres` node pointed at
+KilasFlow's own database reads credentials, workflows and every execution
+payload. `FEAT-a94c8y` closes this, and until it lands the dedicated-schema
+deployment below is the isolation story, not the guard.
 
-**Webhook routes are unguessable rather than authenticated.** The route segment
-carries 16 bytes of entropy, because this endpoint is very often called by a
-third party that cannot hold a credential. Every request that does not resolve
-to an active binding gets the same `404` with the same body, so the endpoint
-cannot be used to enumerate which workflows exist. Individual trigger types can
-verify a delivery on top of that — a Telegram secret header, an HMAC over the
-raw body for WAHA — and a failed check is a `401` with no run recorded.
+**Credentials are sealed.** Stored credentials are encrypted at rest with
+AES-256-GCM. The key is read from the environment and never from the
+configuration file; without it, credential storage is disabled rather than
+silently falling back to something weaker. Workflow `$env` expressions can
+never reach it either: only `KILASFLOW_WORKFLOW_ENV_*` is exposed to
+workflows, so a workflow can never read the DSN or the master key.
+
+**Webhook routes are unguessable rather than authenticated.** The route
+segment carries 16 bytes of entropy, because this endpoint is very often
+called by a third party that cannot hold a credential. Every request that
+does not resolve to an active binding gets the same `404` with the same body,
+so the endpoint cannot be used to enumerate which workflows exist. Individual
+trigger types verify a delivery on top of that — a Telegram secret header, an
+HMAC over the raw body for WAHA — and a failed check is a `401` with no run
+recorded.
 
 **The bundled API reference makes no external requests.** The `/docs` page is
-served with a strict Content-Security-Policy and its JavaScript is vendored into
-the binary, so it works air-gapped and an embedding customer's traffic never
-reaches a third party.
+served with a strict Content-Security-Policy and its JavaScript is vendored
+into the binary, so it works air-gapped and an embedding customer's traffic
+never reaches a third party.
 
-## What is modelled but not enforced
+## What isolates, and what does not
 
-Every stored row carries a tenant identifier and every repository call takes a
-tenant scope. Nothing resolves a tenant from a request, so there is one tenant,
-named `default`. Do not rely on tenant separation for isolation between
-customers today.
+A table prefix is a naming convention and not an isolation boundary. It keeps
+KilasFlow's tables from colliding with a host application's in a shared
+database; it does not keep anything from reading them. The only configuration
+that genuinely isolates is KilasFlow's objects in a dedicated schema, owned
+by a role with no rights on the host application's schema, with `search_path`
+set on the KilasFlow connection.
+
+Related and equally load-bearing: every stored row carries a tenant
+identifier and every repository call takes a tenant scope, but nothing
+resolves a tenant from a request, so there is one tenant, named `default`. Do
+not rely on tenant separation for isolation between customers today.

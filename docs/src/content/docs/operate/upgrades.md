@@ -1,29 +1,69 @@
 ---
-title: Upgrades
-description: Not yet written. What the migration machinery does today.
+title: Backups and upgrades
+description: What the migration machinery does today, and how to back up, restore and upgrade each driver.
 sidebar:
-  order: 4
+  order: 5
 ---
 
-:::caution[This page has not been written yet]
-:::
+## What the migration machinery does
 
-## What will be here
+Schema changes are versioned SQL migration files under `migrations/`, one
+directory per dialect (`migrations/sqlite`, `migrations/postgres`), each with
+an up and a down, applied at boot by a runner that records what it has
+applied in a `schema_migrations` table it creates itself. A rollback is
+expressible rather than theoretical — but only through the down migrations;
+there is no compatibility policy between releases yet, because there has been
+no release to keep one against.
 
-How to move between versions: what the schema migration does, whether it can be
-rolled back, and what to check before and after.
+KilasFlow exits if it cannot reach the database at boot, so a failed
+migration is a container that does not start rather than a server running
+against the wrong schema. The Compose overlay orders on the database
+healthcheck for exactly this reason.
 
-Some of this genuinely cannot be written yet. There has been no release, so
-there is no upgrade path between two of them and no compatibility policy that
-has been tested by having to keep it.
+## Backup and restore: SQLite
 
-## What exists today
+The database is one file (default `./data/kilasflow.db`, `/app/data/` in the
+image) plus its WAL sidecars. Back up the whole directory:
 
-Schema changes are SQL migration files under `migrations/`, one directory per
-dialect, applied by a runner that records what it has applied in a
-`schema_migrations` table it creates itself. There is an up and a down for each,
-so a rollback is expressible rather than theoretical.
+1. Stop the container, or checkpoint first — copying a live WAL without one
+   can hand you a backup that needs recovery on open.
+2. Copy the data directory, file and `-wal`/`-shm` siblings together.
+3. Confirm the copy is readable by the non-root UID before trusting it: the
+   image runs as `nonroot`, and a backup restored with root-only permissions
+   is a database the server cannot open.
 
-There is currently a single baseline migration per dialect, which is the state
-you would expect of a project that has not shipped: the schema has been built up
-in the repository rather than migrated in anybody's production database.
+Restore is the reverse: stop the container, put the files back, fix
+ownership, start.
+
+## Backup and restore: PostgreSQL
+
+Use the database's own tools against the Compose service (the port is not
+published to the host, so run through the stack):
+
+```sh
+docker compose -f compose.yaml -f compose.postgres.yaml exec postgres \
+  pg_dump -U kilasflow kilasflow > kilasflow.sql
+```
+
+Restore into a fresh database of the same major version — PostgreSQL does not
+read a data directory written by a newer major, which is why the service pins
+`postgres:17-alpine`. The named volume `kilasflow-postgres` can also be
+backed up at the volume level, but a dump is the form that survives a move
+between machines and majors.
+
+## Upgrading
+
+1. Back up first, per the driver above. There is no release-to-release
+   compatibility promise yet; the backup is the rollback plan.
+2. If the data lives on a bind mount, confirm the mount is writable by the
+   container user before pulling a newer image — an upgrade that cannot write
+   its data directory fails exactly like a fresh install that cannot.
+3. Pull or build the new image and start it. Boot applies any pending
+   migrations; watch the first start, because a migration failure stops the
+   container rather than degrading it.
+4. Check `/api/v1/ready` before sending traffic: it answers `503` while the
+   database is unreachable.
+
+Switching drivers (SQLite to PostgreSQL or back) is not an upgrade path:
+there is no migration between backends, the new side comes up empty, and
+anything worth keeping must be exported first.
