@@ -1,7 +1,7 @@
 ---
 id: FEAT-ykyfbd
 title: Prove community node pack installation end to end
-status: todo
+status: doing
 priority: high
 labels:
     - e2e
@@ -14,7 +14,7 @@ deps:
 parent: EPIC-m42s3g
 phase: p11
 created: "2026-09-05T12:04:38Z"
-updated: "2026-09-05T12:04:38Z"
+updated: "2026-09-06T05:16:56Z"
 ---
 
 ## Scope
@@ -70,3 +70,32 @@ One decision to record: whether this suite installs the pack by writing files di
 - `internal/routing/routing.go` — the request path every pack node's outbound call takes.
 - `internal/safehttp/safehttp.go` — the policy a pack node must not escape.
 - `packs/telegram/pack.json` — the hand-written pack to model the fixture on.
+
+## Notes (PackE2E, 2026-09-06)
+
+- Scope kept to the carried remainder: author-to-running vocabulary + failure
+  modes. Trigger lifecycle, SSRF refusal, converter fidelity, and n8n import
+  binding stay for follow-ups; the ticket's wider boxes are not claimed here.
+- New files only, harness untouched: `e2e/tests/pack-install.spec.ts` (4 tests)
+  + `e2e/fixtures/pack-install.ts` (toolchain driver + per-test pack server).
+  No edits to `e2e/fixtures.ts`, `e2e/helpers/*`, loader, or registry.
+- Harness note from the plan, resolved without a harness change: per-test
+  pack servers boot through `startServer` with `KILASFLOW_PACKS_DIR` set
+  around the call (it spreads `process.env` into the child) and restored in
+  `finally`. Safe under `fullyParallel`: workers are separate processes, one
+  test at a time each. No fixture parameterisation was needed.
+- Author path is the Go tooling per the plan's recorded decision: `nodepackgen
+  scaffold -type pack.e2ehello -credential-type wahaApi` -> `validate` ->
+  `pack`, binary built once per worker (`go build ./cmd/nodepackgen`). No
+  Node.js process serves anything; the stub is the outbound call target only.
+- `wahaApi` (not the scaffold default `exampleApi`) because the server
+  refuses credentials of unregistered types (422) and `telegramApi`'s path
+  placement needs a `{credential.…}` marker the scaffold URL has no room for;
+  header placement + non-secret `baseUrl` fit the scaffold shape exactly.
+- Failure needles, all naming the pack dir: checksum (`"tampered"` +
+  `recorded digest`), malformed (`"broken"` + `pack.json`, after `validate`
+  refuses it first naming file+field), reserved namespace (`"evil"` +
+  `kilasflow.`).
+- Verification: `cd e2e && pnpm test pack-install` — 4 passed via the harness
+  (catalogue `source: pack`, cascade `load-options` narrows to `sendMessage`,
+  workflow `succeeded`, stub got `POST /sendMessage` with the chat/text body).
