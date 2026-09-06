@@ -43,7 +43,7 @@ const session = await kilasflow.createEmbedSession({
 
 ## Operation surface
 
-One thin, typed method per API operation — all 46 under `/api/v1`, grouped
+One thin, typed method per API operation — all 63 under `/api/v1`, grouped
 here the way the [API contract](../docs/src/content/docs/reference/api-contract.md)
 groups them. Every method takes an `AbortSignal` last, resolves `Promise<void>`
 for 204 responses, and surfaces failures as `KilasFlowError` (RFC 9457).
@@ -51,12 +51,13 @@ for 204 responses, and surfaces failures as `KilasFlowError` (RFC 9457).
 | Group | Methods |
 | --- | --- |
 | Workflows | `listWorkflows`, `getWorkflow`, `createWorkflow`, `updateWorkflow`, `deleteWorkflow`, `runWorkflow`, `activateWorkflow`, `deactivateWorkflow`, `listWorkflowVersions`, `getWorkflowVersion`, `publishWorkflowVersion`, `restoreWorkflowVersion`, `listWorkflowPublishEvents` |
-| Executions | `listExecutions`, `getExecution`, `cancelExecution`, `executionEventsUrl` |
+| Executions | `listExecutions`, `getExecution`, `cancelExecution`, `executionEventsUrl`, `iterateExecutions` |
 | Credentials | `listCredentialTypes`, `listCredentials`, `createCredential`, `getCredential`, `updateCredential`, `deleteCredential`, `testCredential`, `testCredentialPayload` |
 | Auth and keys | `login`, `logout`, `getMe`, `listApiKeys`, `createApiKey`, `revokeApiKey`, `createStreamTicket` |
 | Schedules | `listSchedules`, `createSchedule`, `updateSchedule`, `deleteSchedule` |
 | Node catalogue | `listNodeTypes`, `nodeIconUrl`, `loadNodePropertyOptions`, `loadNodePropertySchema`, `getExpressionGrammar` |
 | Interop | `importWorkflow`, `exportWorkflow` |
+| Datastores | `listDatastores`, `createDatastore`, `getDatastore`, `renameDatastore`, `deleteDatastore`, `clearDatastore`, `addDatastoreColumn`, `renameDatastoreColumn`, `deleteDatastoreColumn`, `listDatastoreRows`, `getDatastoreRow`, `insertDatastoreRow`, `updateDatastoreRows`, `deleteDatastoreRows`, `upsertDatastoreRow`, `iterateDatastoreRows`, `exportDatastoreRows`, `importDatastoreRows`, `datastoreFilter`, `paginateCursor` |
 | Embed | `createEmbedSession` |
 | System | `getHealth`, `getReady` |
 
@@ -67,6 +68,84 @@ an `Authorization` header) and `nodeIconUrl` for artwork served with an inert
 content policy and a long immutable cache lifetime. `importWorkflow` takes the
 n8n document as `unknown` inside a typed envelope — it is untrusted input —
 while its diagnostics and minted webhook URLs are fully typed.
+
+## Datastores: embed reads versus backend management
+
+Two halves, one API. The embed half — `getDatastore`, `listDatastoreRows`,
+`getDatastoreRow`, `insertDatastoreRow` — is what a datastore-scoped session
+may reach: one datastore, no schema work, refused outright for anything else.
+Everything below is the backend half and sends the host's own tenant API key;
+an embed token cannot reach it by design.
+
+```ts
+// Provisioning from the backend: create, shape, fill.
+const store = await kilasflow.createDatastore({
+  name: 'Customers',
+  columns: [{ name: 'email', type: 'string' }]
+});
+await kilasflow.addDatastoreColumn(store.id, { name: 'tier', type: 'string' });
+await kilasflow.importDatastoreRows(store.id, 'email,tier\nada@example.com,pro\n');
+```
+
+Column types are closed — `string`, `number`, `boolean`, `date` — and the
+server normalises on read (numbers arrive as numbers, booleans as booleans,
+dates as strings), so a host never branches on the driver. There is no
+retype: a column's type is fixed at creation; rename or drop and re-add
+instead.
+
+### Filters are built, not written
+
+The operator set is closed — `eq`, `neq`, `like`, `ilike`, `gt`, `gte`, `lt`,
+`lte`, `isEmpty`, `isNotEmpty` — and an unrecognised operator is a server-side
+refusal, so the builder holds the set and a misspelling fails to compile.
+`isEmpty` and `isNotEmpty` take no value; the builder withholds the slot.
+
+```ts
+import { datastoreFilter } from '@kilasflow/sdk/server';
+
+const filter = datastoreFilter('and', [
+  { columnName: 'tier', condition: 'eq', value: 'pro' },
+  { columnName: 'email', condition: 'isNotEmpty' }
+]);
+
+await kilasflow.updateDatastoreRows(store.id, filter, { tier: 'vip' });
+```
+
+A filtered write cannot be expressed without a filter: the signature requires
+one, and an empty filter is refused client-side — never sent — because on the
+server it is a 422 that removes nothing, and must never read as "every row".
+The refusal carries no row values, so a rejected write cannot leak its values
+into logs. The server exposes no dry-run parameter on these endpoints; the
+typed `matched`/`deleted`/`inserted` counts with the affected rows are the
+whole answer.
+
+### Paging without hand-rolled loops
+
+`iterateDatastoreRows` pages to exhaustion on `nextCursor`, yielding one row
+at a time; `iterateExecutions` does the same for executions through the shared
+`paginateCursor` helper, so the two cursor surfaces cannot drift. Rows are
+typed honestly: a datastore's columns are known at runtime, so hosts that
+declare a schema pass it as `TRow` and hosts that do not take the permissive
+default.
+
+```ts
+interface Customer { id: number; email: string; tier: string; [key: string]: unknown }
+
+for await (const row of kilasflow.iterateDatastoreRows<Customer>(store.id, { limit: 200 })) {
+  console.log(row.email, row.tier);
+}
+```
+
+### CSV transfer
+
+`exportDatastoreRows` resolves the file as text (`Accept: text/csv`,
+`includeSystemColumns` adds `id`, `createdAt`, `updatedAt` around the user
+columns); `importDatastoreRows` posts the file raw rather than
+base64-in-JSON and resolves the per-line report — the server validates every
+record before writing any row, so a file with a failed row imports nothing.
+
+A workflow SQL node can never read a datastore: the Datastore node and this
+API are the only paths.
 
 ## Credentials
 

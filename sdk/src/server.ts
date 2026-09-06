@@ -10,32 +10,52 @@
 import { Transport, type TransportOptions } from './http.js';
 import type {
 	APIKeyResource,
+	ClearedDatastoreOutputBody,
 	CreatedAPIKeyResource,
+	CreateDatastoreInputBody,
 	CredentialBody,
 	CredentialResource,
 	CredentialTypeResource,
+	CSVImportReport,
+	DatastoreColumnInput,
+	DatastoreColumnResource,
+	DatastoreListOutputBody,
+	DatastoreResource,
 	Definition,
+	DeleteRowsOutputBody,
 	EmbedSessionResource,
 	ExecutionListResource,
 	ExecutionResource,
+	ExecutionSummary,
 	ExportedWorkflowResource,
 	ExpressionGrammar,
+	Filter,
+	FilterCondition,
+	GetDatastoreRow200,
 	GetNodeIconTheme,
 	HealthOutputBody,
 	ImportedWorkflowResource,
 	ImportWorkflowInputBody,
+	InsertDatastoreRow201,
+	InsertRowInputBody,
 	ListAPIKeysOutputBody,
+	ListDatastoreRowsParams,
 	LoadOptionsInputBody,
 	LoadOptionsResource,
 	LoadSchemaResource,
 	LoginInputBody,
 	PrincipalResource,
 	ReadyOutputBody,
+	RowListOutputBody,
 	ScheduleBody,
 	ScheduleResource,
 	StreamTicketResource,
 	TestCredentialResource,
 	TestPayloadBody,
+	UpdateRowsInputBody,
+	UpdateRowsOutputBody,
+	UpsertRowInputBody,
+	UpsertRowOutputBody,
 	WorkflowDocumentInput,
 	WorkflowPublishEventResource,
 	WorkflowResource,
@@ -47,11 +67,25 @@ import type {
 export type { TransportOptions } from './http.js';
 export { KilasFlowError } from './http.js';
 
-/** Scopes an embed session may carry. Write and run both imply read. */
-export type EmbedScope = 'workflow:read' | 'workflow:write' | 'workflow:run';
+/**
+ * Scopes an embed session may carry. Implication stays inside one family:
+ * `workflow:write` and `workflow:run` imply `workflow:read`, and
+ * `datastore:write` implies `datastore:read` — never across.
+ */
+export type EmbedScope = 'workflow:read' | 'workflow:write' | 'workflow:run' | 'datastore:read' | 'datastore:write';
 
 export interface EmbedSessionRequest {
-	workflowId: string;
+	/**
+	 * Workflow this session may open. Exactly one of this and
+	 * `datastoreId`: a session names one subject, never both, never neither.
+	 */
+	workflowId?: string;
+	/**
+	 * Datastore this session may touch. Exactly one of this and
+	 * `workflowId`. A datastore session carries scopes from the
+	 * `datastore:*` family only.
+	 */
+	datastoreId?: string;
 	scopes: EmbedScope[];
 	/** Exact origin of the page that will frame the editor. No wildcards. */
 	origin: string;
@@ -78,6 +112,112 @@ export interface WorkflowVersionListQuery {
 	cursor?: string;
 }
 
+/**
+ * A datastore column's declared type, matching n8n's four wire values. The
+ * server normalises on read — numbers arrive as JSON numbers, booleans as
+ * JSON booleans (SQLite stores 0/1 underneath), dates as strings — so a host
+ * never branches on the driver.
+ */
+export type DatastoreColumnType = 'string' | 'number' | 'boolean' | 'date';
+
+/** One column of a datastore create or add-column call. */
+export interface DatastoreColumn {
+	name: string;
+	type: DatastoreColumnType;
+}
+
+/**
+ * One datastore row as the API returns it: the system `id`, `createdAt` and
+ * `updatedAt` beside one entry per user column. Values are JSON scalars —
+ * dates travel as strings — keyed by column name.
+ *
+ * The shape is honestly dynamic: a datastore's columns are known at runtime,
+ * not at compile time. Hosts that want static rows declare their own schema
+ * extending this record and pass it as the `TRow` parameter on the row
+ * methods; hosts that do not take the permissive default.
+ */
+export type DatastoreRow = Record<string, unknown>;
+
+/**
+ * Closed operator set for row filters, matching the server's ten supported
+ * conditions. An unrecognised operator is a server-side 422 by design — the
+ * operator slot is a predicate-bypass hole if it is ever a passthrough — so
+ * the set is closed here too and a misspelling fails to compile.
+ */
+export type DatastoreFilterOperator =
+	| 'eq'
+	| 'neq'
+	| 'like'
+	| 'ilike'
+	| 'gt'
+	| 'gte'
+	| 'lt'
+	| 'lte'
+	| 'isEmpty'
+	| 'isNotEmpty';
+
+/**
+ * One filter predicate. `isEmpty` and `isNotEmpty` take no value — they test
+ * for the absence of one — so the union withholds the slot rather than
+ * leaving a caller to guess what to put in it.
+ */
+export type DatastoreFilterCondition =
+	| { columnName: string; condition: 'isEmpty' | 'isNotEmpty' }
+	| { columnName: string; condition: Exclude<DatastoreFilterOperator, 'isEmpty' | 'isNotEmpty'>; value: unknown };
+
+/**
+ * Builds the wire filter `{type, filters: [{columnName, condition, value}]}`
+ * verbatim — the server is the authority on the shape, so the builder
+ * produces it rather than inventing a friendlier dialect. The same object
+ * the row-listing query triples express; the writes take it as JSON.
+ */
+export function datastoreFilter(type: 'and' | 'or', conditions: DatastoreFilterCondition[]): Filter {
+	return {
+		type,
+		filters: conditions.map((predicate): FilterCondition => ({ ...predicate })) as FilterCondition[]
+	};
+}
+
+/** One page of a cursor-paged listing: items plus the cursor for the next. */
+export interface CursorPage<T> {
+	items: T[] | null;
+	nextCursor?: string;
+}
+
+/**
+ * Pages a cursor listing to exhaustion, yielding items across every page.
+ * One helper for every cursor surface — datastore rows and executions share
+ * it — because a second copy is how two cursor formats drift apart. A page
+ * without `nextCursor` ends the iteration.
+ */
+export async function* paginateCursor<T>(
+	fetchPage: (cursor?: string) => Promise<CursorPage<T>>
+): AsyncGenerator<T, void, void> {
+	let cursor: string | undefined;
+	for (;;) {
+		const page = await fetchPage(cursor);
+		for (const item of page.items ?? []) yield item;
+		if (!page.nextCursor) return;
+		cursor = page.nextCursor;
+	}
+}
+
+
+/**
+ * Refuses an empty row filter before it reaches the network. The server
+ * answers an absent or empty filter with a 422 that removes nothing — an
+ * empty filter never means "every row" — so the client rejects it first,
+ * without sending, and without row values anywhere near the error. The
+ * methods guarding this way are async so the refusal rejects rather than
+ * throwing synchronously past a caller's `.catch()`.
+ */
+function requireRowFilter(filter: Filter, operation: string): void {
+	if (!filter || !Array.isArray(filter.filters) || filter.filters.length === 0) {
+		throw new Error(
+			`${operation} needs a filter with at least one condition; an empty filter matches nothing by refusal, never everything`
+		);
+	}
+}
 /**
  * The host-facing client.
  *
@@ -398,10 +538,275 @@ export class KilasFlowClient {
 		return this.#transport.request('GET', '/ready', { signal });
 	}
 
+	// --- Datastores ----------------------------------------------------------
+
+	/**
+	 * The embed-scoped subset: the definition and row reads a datastore
+	 * session may reach, plus the single-row insert proving the write scope.
+	 * Every method is session-scoped by its datastore id — the same id the
+	 * session was minted for — so a token bound to one table cannot name
+	 * another. The management surface (columns, DDL, filtered writes, CSV
+	 * transfer) follows below and stays with the backend key.
+	 */
+
+	/** Reads one datastore with its live columns in definition order. */
+	getDatastore(datastoreId: string, signal?: AbortSignal): Promise<DatastoreResource> {
+		return this.#transport.request('GET', `/datastores/${encodeURIComponent(datastoreId)}`, { signal });
+	}
+
+	/**
+	 * Lists one datastore's rows in id order with the cursor for the next
+	 * page. The flat filter triples are passed through as documented.
+	 */
+	listDatastoreRows(
+		datastoreId: string,
+		query: ListDatastoreRowsParams = {},
+		signal?: AbortSignal
+	): Promise<RowListOutputBody> {
+		// The generated params mark the repeated triples nullable; the
+		// transport has no encoding for null, so a null triple is sent as
+		// absent rather than as a value.
+		const { limit, cursor, match, columnName, condition, value } = query;
+		return this.#transport.request('GET', `/datastores/${encodeURIComponent(datastoreId)}/rows`, {
+			query: {
+				limit,
+				cursor,
+				match,
+				...(columnName ? { columnName } : {}),
+				...(condition ? { condition } : {}),
+				...(value ? { value } : {}),
+			},
+			signal,
+		});
+	}
+
+	/** Returns one row by id. */
+	getDatastoreRow(datastoreId: string, rowId: number, signal?: AbortSignal): Promise<GetDatastoreRow200> {
+		return this.#transport.request(
+			'GET',
+			`/datastores/${encodeURIComponent(datastoreId)}/rows/${encodeURIComponent(String(rowId))}`,
+			{ signal }
+		);
+	}
+
+	// --- Datastore management ------------------------------------------------
+	//
+	// The backend surface: creating and destroying datastores, editing column
+	// schemas, and filtered bulk row writes with a long-lived tenant API key.
+	// None of it is reachable through an embed token by design — an embed
+	// session is bound to one datastore and refused schema work outright —
+	// so these methods send the host's own credential, never a session token.
+	// A workflow SQL node can never read a datastore; the Datastore node and
+	// this API are the only paths.
+
+	/** Lists every datastore in the workspace. */
+	listDatastores(signal?: AbortSignal): Promise<DatastoreListOutputBody> {
+		return this.#transport.request('GET', '/datastores', { signal });
+	}
+
+	/**
+	 * Creates a datastore; columns may arrive with it or be added afterwards
+	 * through {@link addDatastoreColumn}. The column types are closed —
+	 * string, number, boolean or date — matching what the server stores.
+	 */
+	createDatastore(input: { name: string; columns?: DatastoreColumn[] }, signal?: AbortSignal): Promise<DatastoreResource> {
+		const body: CreateDatastoreInputBody = {
+			name: input.name,
+			...(input.columns ? { columns: input.columns.map((column): DatastoreColumnInput => ({ ...column })) } : {})
+		};
+		return this.#transport.request('POST', '/datastores', { body, signal });
+	}
+
+	/** Renames a datastore; columns change through the column methods. */
+	renameDatastore(datastoreId: string, name: string, signal?: AbortSignal): Promise<DatastoreResource> {
+		return this.#transport.request('PUT', `/datastores/${encodeURIComponent(datastoreId)}`, {
+			body: { name },
+			signal
+		});
+	}
+
+	/** Deletes a datastore and every row it holds. Answers 204, so resolves void. */
+	deleteDatastore(datastoreId: string, signal?: AbortSignal): Promise<void> {
+		return this.#transport.request('DELETE', `/datastores/${encodeURIComponent(datastoreId)}`, { signal });
+	}
+
+	/** Deletes every row and keeps the schema. */
+	clearDatastore(datastoreId: string, signal?: AbortSignal): Promise<ClearedDatastoreOutputBody> {
+		return this.#transport.request('POST', `/datastores/${encodeURIComponent(datastoreId)}/clear`, { signal });
+	}
+
+	/** Appends one user column to a datastore. */
+	addDatastoreColumn(datastoreId: string, column: DatastoreColumn, signal?: AbortSignal): Promise<DatastoreColumnResource> {
+		return this.#transport.request('POST', `/datastores/${encodeURIComponent(datastoreId)}/columns`, {
+			body: { ...column },
+			signal
+		});
+	}
+
+	/** Renames one user column. There is no retype: a column's type is fixed at creation. */
+	renameDatastoreColumn(
+		datastoreId: string,
+		columnName: string,
+		newName: string,
+		signal?: AbortSignal
+	): Promise<DatastoreColumnResource> {
+		return this.#transport.request(
+			'PUT',
+			`/datastores/${encodeURIComponent(datastoreId)}/columns/${encodeURIComponent(columnName)}`,
+			{ body: { name: newName }, signal }
+		);
+	}
+
+	/** Removes one user column. Answers 204, so resolves void. */
+	deleteDatastoreColumn(datastoreId: string, columnName: string, signal?: AbortSignal): Promise<void> {
+		return this.#transport.request(
+			'DELETE',
+			`/datastores/${encodeURIComponent(datastoreId)}/columns/${encodeURIComponent(columnName)}`,
+			{ signal }
+		);
+	}
+
+	/**
+	 * Sets columns on every row matching the filter and reads the touched
+	 * rows back with the match count. The filter is required and must carry
+	 * at least one condition: an empty filter is refused client-side rather
+	 * than sent, because the server answers it with a 422 and never means
+	 * "every row". The server exposes no dry-run parameter — the result
+	 * envelope below is the whole answer — so there is nothing to expose.
+	 */
+	async updateDatastoreRows(
+		datastoreId: string,
+		filter: Filter,
+		values: UpdateRowsInputBody['values'],
+		signal?: AbortSignal
+	): Promise<UpdateRowsOutputBody> {
+		requireRowFilter(filter, 'updateDatastoreRows');
+		return this.#transport.request('PUT', `/datastores/${encodeURIComponent(datastoreId)}/rows`, {
+			body: { filter, values },
+			signal
+		});
+	}
+
+	/**
+	 * Removes every row matching the filter and reads the removed rows back
+	 * with the count. The signature takes no optional filter: a delete that
+	 * cannot name its rows cannot be written, and an empty filter object is
+	 * refused client-side rather than sent — a full-table wipe stays one
+	 * forgotten argument away from impossible.
+	 */
+	async deleteDatastoreRows(datastoreId: string, filter: Filter, signal?: AbortSignal): Promise<DeleteRowsOutputBody> {
+		requireRowFilter(filter, 'deleteDatastoreRows');
+		return this.#transport.request('DELETE', `/datastores/${encodeURIComponent(datastoreId)}/rows`, {
+			body: { filter },
+			signal
+		});
+	}
+
+	/**
+	 * Updates every row matching the filter, or inserts one row from the
+	 * values when nothing matches. Reports which of the two happened through
+	 * `inserted`, with the affected rows either way.
+	 */
+	async upsertDatastoreRow(
+		datastoreId: string,
+		filter: Filter,
+		values: UpsertRowInputBody['values'],
+		signal?: AbortSignal
+	): Promise<UpsertRowOutputBody> {
+		requireRowFilter(filter, 'upsertDatastoreRow');
+		return this.#transport.request('POST', `/datastores/${encodeURIComponent(datastoreId)}/rows/upsert`, {
+			body: { filter, values },
+			signal
+		});
+	}
+
+	/**
+	 * Streams the datastore's rows as RFC 4180 CSV in id order — one header
+	 * row plus one record per row — and resolves the file as text. The Accept
+	 * header asks for text/csv; like the event-stream and icon URLs, a body
+	 * that is not JSON does not travel through the JSON transport.
+	 */
+	exportDatastoreRows(
+		datastoreId: string,
+		options: { includeSystemColumns?: boolean } = {},
+		signal?: AbortSignal
+	): Promise<string> {
+		return this.#transport.request('GET', `/datastores/${encodeURIComponent(datastoreId)}/rows/export`, {
+			query: { includeSystemColumns: options.includeSystemColumns },
+			accept: 'text/csv',
+			signal
+		});
+	}
+
+	/**
+	 * Imports rows from a CSV file with a header row naming user columns.
+	 * The file posts as raw text/csv rather than base64-in-JSON. The server
+	 * validates every record before writing any row: a file with a failed
+	 * row imports nothing, and the report names each failure with its line
+	 * number. Row contents stay in the request body — never in error
+	 * messages — so a refused import cannot leak row values into logs.
+	 */
+	importDatastoreRows(datastoreId: string, csv: string, signal?: AbortSignal): Promise<CSVImportReport> {
+		return this.#transport.request('POST', `/datastores/${encodeURIComponent(datastoreId)}/rows/import`, {
+			body: csv,
+			contentType: 'text/csv',
+			signal
+		});
+	}
+
+	/**
+	 * Pages a datastore's rows to exhaustion in id order, yielding one row
+	 * at a time. `TRow` is the host's declared schema when it has one — see
+	 * {@link DatastoreRow} — and the permissive record otherwise.
+	 */
+	async *iterateDatastoreRows<TRow extends DatastoreRow = DatastoreRow>(
+		datastoreId: string,
+		query: ListDatastoreRowsParams = {},
+		signal?: AbortSignal
+	): AsyncGenerator<TRow, void, void> {
+		const { cursor: _, ...rest } = query;
+		yield* paginateCursor<TRow>((cursor) =>
+			this.listDatastoreRows(datastoreId, { ...rest, cursor }, signal).then((page) => ({
+				items: (page.items ?? []) as TRow[],
+				nextCursor: page.nextCursor
+			}))
+		);
+	}
+
+	/**
+	 * Pages executions to exhaustion through the same {@link paginateCursor}
+	 * helper as the row iterator, so the two cursor surfaces cannot drift.
+	 */
+	async *iterateExecutions(
+		query: ExecutionListQuery = {},
+		signal?: AbortSignal
+	): AsyncGenerator<ExecutionSummary, void, void> {
+		const { cursor: _, ...rest } = query;
+		yield* paginateCursor<ExecutionSummary>((cursor) =>
+			this.listExecutions({ ...rest, cursor }, signal).then((page) => ({
+				items: page.items,
+				nextCursor: page.nextCursor
+			}))
+		);
+	}
+
+	/** Writes one row and reads it back. Values are keyed by column name. */
+	insertDatastoreRow(
+		datastoreId: string,
+		values: InsertRowInputBody['values'],
+		signal?: AbortSignal
+	): Promise<InsertDatastoreRow201> {
+		return this.#transport.request('POST', `/datastores/${encodeURIComponent(datastoreId)}/rows`, {
+			body: { values },
+			signal
+		});
+	}
+
 	// --- Embedding -----------------------------------------------------------
 
 	/**
-	 * Mints a short-lived, workflow-scoped session for one host origin.
+	 * Mints a short-lived session for one host origin, scoped to one
+	 * workflow or one datastore.
 	 *
 	 * This is a backend call because it uses the host's own credentials. The
 	 * resulting token is what the browser receives — never the API key.
@@ -410,7 +815,9 @@ export class KilasFlowClient {
 	// synchronously: a caller awaits this, and a sync throw would escape their
 	// .catch() and surface as an unhandled error instead.
 	async createEmbedSession(request: EmbedSessionRequest, signal?: AbortSignal): Promise<EmbedSessionResource> {
-		if (!request.workflowId) throw new Error('createEmbedSession needs a workflowId');
+		if ((!request.workflowId && !request.datastoreId) || (request.workflowId && request.datastoreId)) {
+			throw new Error('createEmbedSession needs exactly one of workflowId and datastoreId');
+		}
 		if (!request.origin) throw new Error('createEmbedSession needs the exact origin that will frame the editor');
 		if (!request.scopes?.length) throw new Error('createEmbedSession needs at least one scope');
 		return this.#transport.request('POST', '/embed-sessions', { body: request, signal });

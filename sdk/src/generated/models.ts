@@ -503,29 +503,29 @@ export interface EmbedSessionBody {
   readonly $schema?: string;
   /** Validated white-label values; never markup */
   branding?: Branding;
+  /** Datastore this session may touch; exactly one of this and workflowId */
+  datastoreId?: string;
   /**
      * Exact origin of the page that will frame the editor
      * @minLength 1
      */
   origin: string;
   /**
-     * workflow:read, workflow:write, workflow:run
+     * workflow:read, workflow:write, workflow:run, datastore:read, datastore:write
      * @nullable
      */
   scopes: string[] | null;
   /** Session lifetime; capped by the server */
   ttlSeconds?: number;
-  /**
-     * Workflow this session may open
-     * @minLength 1
-     */
-  workflowId: string;
+  /** Workflow this session may open; exactly one of this and datastoreId */
+  workflowId?: string;
 }
 
 export interface EmbedSessionResource {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   branding?: Branding;
+  datastoreId?: string;
   embedUrl: string;
   expiresAt: string;
   origin: string;
@@ -3194,7 +3194,7 @@ export const getCreateEmbedSessionUrl = () => {
 }
 
 /**
- * Mints a short-lived, workflow-scoped token for one host origin. The host passes it to the iframe over postMessage.
+ * Mints a short-lived token for one host origin, scoped to one workflow or one datastore. The host passes it to the iframe over postMessage.
  * @summary Create an embed session
  */
 export const createEmbedSession = async (embedSessionBody: NonReadonly<EmbedSessionBody>, options?: RequestInit): Promise<createEmbedSessionResponse> => {

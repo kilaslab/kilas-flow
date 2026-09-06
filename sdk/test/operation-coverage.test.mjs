@@ -73,6 +73,28 @@ const OPERATION_COVERAGE = {
 	'import-workflow': 'importWorkflow',
 	'export-workflow': 'exportWorkflow',
 	'create-embed-session': 'createEmbedSession',
+	// The embed-scoped datastore subset (FEAT-1c70nt): the definition and row
+	// reads a datastore session may reach, plus the single-row insert proving
+	// the write scope. The management surface — DDL, columns, filtered
+	// writes, transfer — is covered below (FEAT-nc6z9r), completing what the
+	// subset starts.
+	'get-datastore': 'getDatastore',
+	'list-datastore-rows': 'listDatastoreRows',
+	'get-datastore-row': 'getDatastoreRow',
+	'insert-datastore-row': 'insertDatastoreRow',
+	'list-datastores': 'listDatastores',
+	'create-datastore': 'createDatastore',
+	'rename-datastore': 'renameDatastore',
+	'delete-datastore': 'deleteDatastore',
+	'clear-datastore': 'clearDatastore',
+	'add-datastore-column': 'addDatastoreColumn',
+	'rename-datastore-column': 'renameDatastoreColumn',
+	'delete-datastore-column': 'deleteDatastoreColumn',
+	'update-datastore-rows': 'updateDatastoreRows',
+	'delete-datastore-rows': 'deleteDatastoreRows',
+	'upsert-datastore-row': 'upsertDatastoreRow',
+	'export-datastore-rows': 'exportDatastoreRows',
+	'import-datastore-rows': 'importDatastoreRows',
 	'get-health': 'getHealth',
 	'get-ready': 'getReady'
 

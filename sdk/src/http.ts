@@ -114,22 +114,38 @@ export class Transport {
 	async request<T>(
 		method: string,
 		path: string,
-		options: { body?: unknown; query?: Record<string, string | number | boolean | string[] | undefined>; signal?: AbortSignal } = {}
+		options: {
+			body?: unknown;
+			query?: Record<string, string | number | boolean | string[] | undefined>;
+			signal?: AbortSignal;
+			/** Overrides the Accept header. The CSV export asks for text/csv. */
+			accept?: string;
+			/**
+			 * Overrides the Content-Type for a string body, which is sent
+			 * verbatim rather than JSON-encoded. The CSV import posts raw
+			 * text/csv this way. Object bodies always serialize as JSON, and
+			 * a string body without this option keeps the previous behavior,
+			 * so existing callers are unaffected.
+			 */
+			contentType?: string;
+		} = {}
 	): Promise<T> {
 		const headers = new Headers(this.#headers);
-		headers.set('Accept', 'application/json');
-		if (options.body !== undefined) headers.set('Content-Type', 'application/json');
+		headers.set('Accept', options.accept ?? 'application/json');
+		if (options.body !== undefined) headers.set('Content-Type', options.contentType ?? 'application/json');
 
 		// A caller's own signal and the SDK's timeout both have to abort the
 		// request, so they are combined rather than one replacing the other.
 		const timeout = AbortSignal.timeout(this.#timeoutMs);
 		const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
 
+		const raw = options.body !== undefined && typeof options.body === 'string' && options.contentType !== undefined;
+		const encodedBody = options.body === undefined ? undefined : raw ? (options.body as string) : JSON.stringify(options.body);
 		const response = await this.#fetch(this.url(path, options.query), {
 			method,
 			headers,
 			signal,
-			...(options.body === undefined ? {} : { body: JSON.stringify(options.body) })
+			...(encodedBody === undefined ? {} : { body: encodedBody })
 		});
 
 		if (response.status === 204) return undefined as T;
