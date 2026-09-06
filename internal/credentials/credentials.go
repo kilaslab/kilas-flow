@@ -4,8 +4,6 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
-	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -277,14 +275,9 @@ func KeyFromEnvironment(name string) ([]byte, error) {
 	if raw == "" {
 		return nil, fmt.Errorf("%w: set %s", ErrNoKey, name)
 	}
-	if decoded, err := base64.StdEncoding.DecodeString(raw); err == nil && len(decoded) == KeySize {
-		return decoded, nil
+	decoded, err := decodeKey(raw)
+	if err != nil {
+		return nil, fmt.Errorf("%s %w", name, err)
 	}
-	if decoded, err := hex.DecodeString(raw); err == nil && len(decoded) == KeySize {
-		return decoded, nil
-	}
-	if len(raw) == KeySize {
-		return []byte(raw), nil
-	}
-	return nil, fmt.Errorf("%s must hold a %d-byte key encoded as base64, hex, or raw bytes", name, KeySize)
+	return decoded, nil
 }

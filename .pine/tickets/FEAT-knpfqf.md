@@ -1,7 +1,7 @@
 ---
 id: FEAT-knpfqf
 title: Integrate external secrets managers
-status: todo
+status: doing
 priority: low
 labels:
     - platform
@@ -11,7 +11,7 @@ deps:
 parent: EPIC-m42s3g
 phase: p8
 created: "2026-09-05T05:16:26Z"
-updated: "2026-09-05T05:16:26Z"
+updated: "2026-09-06T04:18:02Z"
 ---
 
 ## Scope
@@ -54,3 +54,42 @@ One trap to watch. `execution.Redact` catches values whose *key* looks sensitive
 - PRD: `gflow-prd-v1.md` §34 Credentials ("Master key must come from environment or external secret manager"), §57 Security Requirements, §64 ("secrets manager integrations").
 - Code: `internal/config/config.go` (`Security.EncryptionKeyEnv`, the one-word section rule on `OutboundHTTP`), `cmd/kilasflow/main.go` (the `KeyFromEnvironment` switch and its "credential storage is disabled" branch, `workflowEnvironment`), `internal/credentials/credentials.go` (`KeyFromEnvironment`, `Cipher`, the closed `definitions` map), `internal/repository/credentials.go` (`GORMCredentialStore.Resolve`), `internal/repository/models.go` (`credentialModel`), `internal/expression/expression.go` (`rootValue` and the supported roots), `internal/execution/redact.go`, `internal/safehttp/safehttp.go`.
 - Local n8n UI reference: `design-refs/n8n-v2/INDEX.md` entry 17 — External Secrets sits beside SSO and LDAP in the settings sidebar. Captured from a local n8n 2.33.7 instance; gitignored, never vendored.
+
+## Work evidence — LongtailSecrets (2026-09-06)
+
+Shipped the reference mechanism end to end; the boot wiring is an integrator
+step (main.go/config outside this slice — sketch in keysource.go header).
+
+- internal/credentials/external.go (new): ext://<binding>/<key> shape +
+  parse, Provider interface (fetch/health only), tenant-scoped Resolver with
+  bounded TTL in-memory cache (memory only, never disk), ScrubResolved for
+  known values bodies hide.
+- internal/credentials/vault.go (new): Vault KV v2 over plain HTTP through
+  safehttp (no SDK, no new deps — memory/licensing.md read). Second provider
+  = one new file implementing Provider.
+- internal/credentials/keysource.go (new): KeyFromManager with
+  ErrManagerUnreachable (configured-but-down refuses boot, never degrades to
+  ErrNoKey); KeyFromEnvironment refactored onto shared decodeKey, behavior
+  identical (existing test green).
+- internal/repository/credentials.go (narrow hook, ClaimTier cleared):
+  Resolve merges then resolveExternal — stored row keeps the sealed
+  reference, failures return no fields (never partial, never reference as
+  plaintext); public-field references refused at write; tenant cache
+  invalidation on credential/binding writes; binding CRUD + LookupBinding.
+- internal/repository/models.go + migrations 000008 (both dialects, spaces):
+  secret_bindings, unique (tenant_id, name). Number history: 000006 collided
+  with VectorTier's vector_store, both landed on 000007, agreed split —
+  000006 vector_store (theirs), 000008 secret_bindings (mine), 000007 free.
+- Deviation: interface lives in internal/credentials, not a new
+  internal/secrets package (ownership-dictated; ticket's "new file per
+  provider" property holds). No `secrets` config section (config outside
+  slice); Vault policy comes from the operator's outbound section via
+  ResolverConfig. Never allow_private_networks: tests grant loopback via
+  allowed_private_endpoints only.
+- Tests: secret never in stored row (raw payload decrypts to ext://),
+  tenant isolation (same binding name, own rows), cache TTL + binding-change
+  invalidation, unwired store fails closed, redaction intact
+  (Get/List/Redacted), Vault live-HTTP end to end incl. egress denial without
+  the grant, ScrubResolved incl. body interpolation.
+- Suites: internal/credentials, internal/repository, internal/database green.
+- Docs: operate/security.md note (manager key + references + tokens).

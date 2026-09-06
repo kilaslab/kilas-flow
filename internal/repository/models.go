@@ -29,6 +29,7 @@ func Models() []any {
 		&executionModel{},
 		&executionNodeRunModel{},
 		&credentialModel{},
+		&secretBindingModel{},
 		&webhookBindingModel{},
 		&webhookRouteModel{},
 		&webhookDeliveryModel{},
@@ -165,6 +166,30 @@ type credentialModel struct {
 
 func (credentialModel) TableName(namer schema.Namer) string {
 	return namer.TableName("credentials")
+}
+
+// secretBindingModel names one tenant's external secret source: which manager
+// a reference like ext://prod-vault/prod/api-token resolves against.
+//
+// The manager credential itself is never a column. The row names the
+// environment variable holding it, so a database dump, a replica, or a
+// support export discloses which manager to ask but nothing that answers.
+// The unique index spans tenant and name, which is what makes a reference
+// authored under one tenant unable to read a secret bound to another: the
+// lookup is always tenant first.
+type secretBindingModel struct {
+	ID        string    `gorm:"primaryKey;size:64"`
+	TenantID  string    `gorm:"not null;size:64;uniqueIndex:uidx_secret_bindings_tenant_name,priority:1;index:idx_secret_bindings_tenant,priority:1"`
+	Name      string    `gorm:"not null;size:64;uniqueIndex:uidx_secret_bindings_tenant_name,priority:2"`
+	Provider  string    `gorm:"not null;size:32"`
+	Address   string    `gorm:"not null;size:255"`
+	TokenEnv  string    `gorm:"not null;size:128"`
+	CreatedAt time.Time `gorm:"not null"`
+	UpdatedAt time.Time `gorm:"not null"`
+}
+
+func (secretBindingModel) TableName(namer schema.Namer) string {
+	return namer.TableName("secret_bindings")
 }
 
 type workflowModel struct {

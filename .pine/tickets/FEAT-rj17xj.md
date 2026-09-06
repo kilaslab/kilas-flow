@@ -1,7 +1,7 @@
 ---
 id: FEAT-rj17xj
 title: Add human approval with durable wait and resume
-status: todo
+status: doing
 priority: low
 labels:
     - platform
@@ -12,7 +12,7 @@ deps:
 parent: EPIC-m42s3g
 phase: p8
 created: "2026-09-05T05:13:37Z"
-updated: "2026-09-05T05:13:37Z"
+updated: "2026-09-06T04:18:02Z"
 ---
 
 ## Scope
@@ -62,3 +62,39 @@ One choice to make explicitly: whether a short wait suspends at all. n8n does no
 - n8n documentation (`/n8n-io/n8n-docs`, `docs/integrations/builtin/core-nodes/n8n-nodes-base.wait.md`): resume on After Time Interval, At Specified Time, On Webhook Call, On Form Submitted; execution data offloaded to the database above ~65 seconds; the Limit Wait Time option. Approval response shape from `n8n-nodes-base.slack/approvals.md`: `{data: {approved, respondedAt, …}}`.
 - Code: `internal/execution/records.go` (`Status`), `internal/engine/runner.go` (`Runner.Run`, `completed`), `internal/engine/service.go` (`runOnce`, lease window, node-run persistence loop), `internal/repository/executions.go` (`ClaimNext`, `payload`), `internal/execution/redact.go`, `internal/repository/models.go` (`uidx_webhook_bindings_route`), `internal/webhook/webhook.go` (`await`), `internal/expression/expression.go` (`rootValue`, `$execution`).
 - Local n8n UI reference: `design-refs/n8n-v2/INDEX.md` entries 09, 10 — n8n surfaces human review as a first-class picker category and lists Telegram under Human in the Loop. Captured from a local n8n 2.33.7 instance; gitignored, never vendored.
+
+## Work evidence — LongtailSecrets (2026-09-06)
+
+Shipped the wait mechanism as additive engine files only (runner.go/service.go
+hot path untouched per Main; hook via the existing wait-node extension point
+is integrator work).
+
+- internal/engine/approval.go (new): WaitRegistry with Issue (unguessable
+  16-byte single-use tokens, mandatory boundable deadline —
+  DefaultApprovalTTL 24h, MaxWaitTTL 7d), Resume (tenant-scoped lookup,
+  wrong-tenant answers exactly like unknown, embed-denied, consumed and
+  expired each refused with their own stable message), Sweep, ApprovalDecision
+  with n8n-shaped Output {approved, respondedAt, decidedBy, note},
+  SuspendError (message never carries the token), execution.waiting SSE event
+  (non-terminal; carries node+deadline, never token or payload).
+- Timeout interplay (BUG-v6tdjr caveat) stated in the file header: suspended
+  waits release the worker so execution.default_timeout/MaxWaitDuration stop
+  binding; short waits should stay in process (~65s rule), checkpointing a
+  five-second wait costs two round trips to save nothing.
+- Embed: denied (ticket silent → deny); Resume takes viaEmbed and refuses
+  before consuming, so a denied call stays resumable.
+- Integrator steps recorded in the file header, NOT done here: waiting status
+  + checkpoint column (with its own non-redacting write path — payload()
+  would corrupt it), lease release + ClaimNext exclusion, node-run persistence
+  at suspension, resume HTTP surface (own prefix, never webhook bindings —
+  uidx route collision), approval page + $execution resumeUrl, webhook-trigger
+  accepted-response behavior.
+- Tests: wait→resume→continue (exact payload preserved, decision output
+  shape), second-call consumed, expiry refuses + stable + Sweep reaps,
+  unknown vs wrong-tenant identical refusal, embed deny then legit resume,
+  deadline bounds, SuspendError token-free, token uniqueness, SSE delivery
+  without token/payload leak.
+- Suites: internal/engine green (also unblocked AIAgentE2E make build-all —
+  intermediate unused-import breakage fixed same pass, build+vet green).
+- Docs: operate/security.md note (single-use tokens, expiry, tenancy, embed
+  denial, event contents).

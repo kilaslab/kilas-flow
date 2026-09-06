@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -32,6 +33,10 @@ type CredentialRepository interface {
 type GORMCredentialStore struct {
 	db     *gorm.DB
 	cipher *credentials.Cipher
+	// external resolves ext:// references held by secret fields. Nil until
+	// SetExternalResolver attaches one, and resolution without it fails
+	// closed: a reference is never returned as plaintext.
+	external *credentials.Resolver
 }
 
 var _ CredentialRepository = (*GORMCredentialStore)(nil)
@@ -55,6 +60,9 @@ func (store *GORMCredentialStore) Create(ctx context.Context, tenant TenantScope
 		return credentials.Record{}, err
 	}
 	secret, public := credentials.Split(record.Type, record.Fields)
+	if err := rejectPublicReferences(public); err != nil {
+		return credentials.Record{}, err
+	}
 	sealed, err := store.cipher.Encrypt(secret)
 	if err != nil {
 		return credentials.Record{}, err
@@ -75,6 +83,7 @@ func (store *GORMCredentialStore) Create(ctx context.Context, tenant TenantScope
 	if err := store.db.WithContext(ctx).Create(&model).Error; err != nil {
 		return credentials.Record{}, fmt.Errorf("create credential: %w", err)
 	}
+	store.external.InvalidateTenant(tenant.ID)
 	return credentialFromModel(model)
 }
 
@@ -113,6 +122,9 @@ func (store *GORMCredentialStore) Update(ctx context.Context, tenant TenantScope
 	}
 
 	secret, public := credentials.Split(record.Type, merged)
+	if err := rejectPublicReferences(public); err != nil {
+		return credentials.Record{}, err
+	}
 	sealed, err := store.cipher.Encrypt(secret)
 	if err != nil {
 		return credentials.Record{}, err
@@ -133,6 +145,9 @@ func (store *GORMCredentialStore) Update(ctx context.Context, tenant TenantScope
 	if err := store.db.WithContext(ctx).Save(&model).Error; err != nil {
 		return credentials.Record{}, fmt.Errorf("update credential: %w", err)
 	}
+	// The reference a secret field holds may have changed, so cached values
+	// resolved under this tenant are dropped rather than trusted.
+	store.external.InvalidateTenant(tenant.ID)
 	return credentialFromModel(model)
 }
 
@@ -193,7 +208,7 @@ func (store *GORMCredentialStore) Resolve(ctx context.Context, tenant TenantScop
 			fields[key] = value
 		}
 	}
-	return record, fields, nil
+	return store.resolveExternal(ctx, tenant, record, fields)
 }
 
 // Delete removes a credential from the tenant.
@@ -208,6 +223,7 @@ func (store *GORMCredentialStore) Delete(ctx context.Context, tenant TenantScope
 	if result.RowsAffected == 0 {
 		return fmt.Errorf("%w: credential", ErrNotFound)
 	}
+	store.external.InvalidateTenant(tenant.ID)
 	return nil
 }
 
@@ -260,4 +276,182 @@ func credentialFromModel(model credentialModel) (credentials.Record, error) {
 		ID: model.ID, TenantID: model.TenantID, Name: model.Name, Type: model.Type,
 		Fields: public, AllowedDomains: domains, CreatedAt: model.CreatedAt, UpdatedAt: model.UpdatedAt,
 	}, nil
+}
+
+// SetExternalResolver attaches external secret reference resolution to the
+// store. Until it is called, any credential holding an ext:// reference fails
+// closed on Resolve: the reference is never returned as plaintext, and no new
+// route exists by which a secret leaves storage.
+func (store *GORMCredentialStore) SetExternalResolver(resolver *credentials.Resolver) {
+	store.external = resolver
+}
+
+// LookupBinding implements credentials.BindingStore: one tenant's binding by
+// name. The tenant scopes the query, so a reference authored under one tenant
+// cannot read a secret bound to another — the row is simply not found.
+func (store *GORMCredentialStore) LookupBinding(ctx context.Context, tenantID, name string) (credentials.Binding, error) {
+	var model secretBindingModel
+	if err := store.db.WithContext(ctx).Where("tenant_id = ? AND name = ?", tenantID, name).First(&model).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return credentials.Binding{}, fmt.Errorf("%w: %q", credentials.ErrUnknownBinding, name)
+		}
+		return credentials.Binding{}, fmt.Errorf("lookup secret binding: %w", err)
+	}
+	return secretBindingFromModel(model), nil
+}
+
+// CreateSecretBinding stores one tenant's manager binding. The row names the
+// environment variable holding the manager credential, never the credential.
+func (store *GORMCredentialStore) CreateSecretBinding(ctx context.Context, tenant TenantScope, binding credentials.Binding) (credentials.Binding, error) {
+	if err := tenant.validate(); err != nil {
+		return credentials.Binding{}, err
+	}
+	binding.TenantID = tenant.ID
+	binding.Name = strings.TrimSpace(binding.Name)
+	binding.Provider = strings.TrimSpace(binding.Provider)
+	binding.Address = strings.TrimSpace(binding.Address)
+	binding.TokenEnv = strings.TrimSpace(binding.TokenEnv)
+	if err := binding.Validate(); err != nil {
+		return credentials.Binding{}, err
+	}
+	id, err := workflow.NewID("sbnd")
+	if err != nil {
+		return credentials.Binding{}, err
+	}
+	now := time.Now().UTC()
+	model := secretBindingModel{
+		ID: id, TenantID: tenant.ID, Name: binding.Name, Provider: binding.Provider,
+		Address: binding.Address, TokenEnv: binding.TokenEnv, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := store.db.WithContext(ctx).Create(&model).Error; err != nil {
+		return credentials.Binding{}, fmt.Errorf("create secret binding: %w", err)
+	}
+	store.external.InvalidateBinding(tenant.ID, binding.Name)
+	return secretBindingFromModel(model), nil
+}
+
+// GetSecretBinding returns one tenant's binding without any secret: the row
+// holds none, only the variable naming it.
+func (store *GORMCredentialStore) GetSecretBinding(ctx context.Context, tenant TenantScope, name string) (credentials.Binding, error) {
+	if err := tenant.validate(); err != nil {
+		return credentials.Binding{}, err
+	}
+	return store.LookupBinding(ctx, tenant.ID, name)
+}
+
+// ListSecretBindings returns every binding of one tenant.
+func (store *GORMCredentialStore) ListSecretBindings(ctx context.Context, tenant TenantScope) ([]credentials.Binding, error) {
+	if err := tenant.validate(); err != nil {
+		return nil, err
+	}
+	var models []secretBindingModel
+	if err := store.db.WithContext(ctx).Where("tenant_id = ?", tenant.ID).Order("name ASC").Find(&models).Error; err != nil {
+		return nil, fmt.Errorf("list secret bindings: %w", err)
+	}
+	bindings := make([]credentials.Binding, 0, len(models))
+	for _, model := range models {
+		bindings = append(bindings, secretBindingFromModel(model))
+	}
+	return bindings, nil
+}
+
+// UpdateSecretBinding replaces a binding's provider, address and manager
+// credential variable. The name is the identity references use, so renaming
+// is refused: every ext://<name>/… stored anywhere would otherwise dangle.
+func (store *GORMCredentialStore) UpdateSecretBinding(ctx context.Context, tenant TenantScope, name string, binding credentials.Binding) (credentials.Binding, error) {
+	if err := tenant.validate(); err != nil {
+		return credentials.Binding{}, err
+	}
+	var model secretBindingModel
+	if err := store.db.WithContext(ctx).Where("tenant_id = ? AND name = ?", tenant.ID, name).First(&model).Error; err != nil {
+		return credentials.Binding{}, mapNotFound(err, "secret binding")
+	}
+	if binding.Name != "" && binding.Name != name {
+		return credentials.Binding{}, fmt.Errorf("secret binding %q cannot be renamed to %q", name, binding.Name)
+	}
+	binding.TenantID = tenant.ID
+	binding.Name = name
+	binding.Provider = strings.TrimSpace(binding.Provider)
+	binding.Address = strings.TrimSpace(binding.Address)
+	binding.TokenEnv = strings.TrimSpace(binding.TokenEnv)
+	if err := binding.Validate(); err != nil {
+		return credentials.Binding{}, err
+	}
+	model.Provider = binding.Provider
+	model.Address = binding.Address
+	model.TokenEnv = binding.TokenEnv
+	model.UpdatedAt = time.Now().UTC()
+	if err := store.db.WithContext(ctx).Save(&model).Error; err != nil {
+		return credentials.Binding{}, fmt.Errorf("update secret binding: %w", err)
+	}
+	store.external.InvalidateBinding(tenant.ID, name)
+	return secretBindingFromModel(model), nil
+}
+
+// DeleteSecretBinding removes one tenant's binding. Cached values it supplied
+// are dropped, so the next Resolve fails closed rather than serving a secret
+// whose binding no longer exists.
+func (store *GORMCredentialStore) DeleteSecretBinding(ctx context.Context, tenant TenantScope, name string) error {
+	if err := tenant.validate(); err != nil {
+		return err
+	}
+	result := store.db.WithContext(ctx).Where("tenant_id = ? AND name = ?", tenant.ID, name).Delete(&secretBindingModel{})
+	if result.Error != nil {
+		return fmt.Errorf("delete secret binding: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("%w: secret binding", ErrNotFound)
+	}
+	store.external.InvalidateBinding(tenant.ID, name)
+	return nil
+}
+
+// resolveExternal resolves ext:// references after decryption and before the
+// plaintext leaves storage, so the one documented exit path stays the one
+// exit path. Values are replaced in the returned map only: the stored row
+// keeps the sealed reference, and a failure anywhere returns no fields at
+// all rather than a half-resolved payload or the reference as plaintext.
+func (store *GORMCredentialStore) resolveExternal(ctx context.Context, tenant TenantScope, record credentials.Record, fields map[string]string) (credentials.Record, map[string]string, error) {
+	referenced := false
+	for _, value := range fields {
+		if credentials.IsReference(value) {
+			referenced = true
+			break
+		}
+	}
+	if !referenced {
+		return record, fields, nil
+	}
+	if store.external == nil {
+		return credentials.Record{}, nil, fmt.Errorf("credential %q holds an external reference but no secret manager is configured", record.Name)
+	}
+	resolved := make(map[string]string, len(fields))
+	for key, value := range fields {
+		fetched, err := store.external.ResolveField(ctx, tenant.ID, value)
+		if err != nil {
+			return credentials.Record{}, nil, err
+		}
+		resolved[key] = fetched
+	}
+	return record, resolved, nil
+}
+
+// rejectPublicReferences refuses an ext:// value in a non-secret field. Public
+// fields are stored in plaintext, so a reference there would disclose the
+// binding path to any reader — and a secret reachable without the Resolve
+// path is not a secret at all.
+func rejectPublicReferences(public map[string]string) error {
+	for key, value := range public {
+		if credentials.IsReference(value) {
+			return fmt.Errorf("credential field %q is not secret: an external reference needs a secret field", key)
+		}
+	}
+	return nil
+}
+
+func secretBindingFromModel(model secretBindingModel) credentials.Binding {
+	return credentials.Binding{
+		TenantID: model.TenantID, Name: model.Name, Provider: model.Provider,
+		Address: model.Address, TokenEnv: model.TokenEnv,
+	}
 }

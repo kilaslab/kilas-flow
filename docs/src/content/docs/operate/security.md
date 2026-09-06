@@ -59,6 +59,30 @@ silently falling back to something weaker. Workflow `$env` expressions can
 never reach it either: only `KILASFLOW_WORKFLOW_ENV_*` is exposed to
 workflows, so a workflow can never read the DSN or the master key.
 
+**The master key can come from a manager, and credential fields can point at
+one.** A stored credential field may hold an `ext://<binding>/<key>`
+reference instead of a sealed secret. The reference is sealed into the row
+like any secret and resolved on the Resolve path at the moment the runtime
+needs it, against a manager binding that belongs to the calling tenant — a
+reference authored under one tenant cannot read another tenant's binding.
+Resolved values are cached in process memory with a bounded TTL, never
+written to disk, and dropped when the credential or the binding changes. The
+manager leg (Vault KV v2 today) travels through the same egress policy as
+every workflow HTTP request: a manager on loopback or a private network needs
+an `allowed_private_endpoints` entry, never `allow_private_networks: true`.
+A manager that is configured but unreachable at boot refuses startup with a
+named error rather than silently disabling credential storage; a deployment
+that configures nothing keeps the environment-variable key path unchanged.
+
+**Approval waits hand out single-use resume tokens.** A suspended execution
+is resumed by an unguessable per-execution token that works exactly once and
+stops working at its deadline — a second call, a call for an already-answered
+request, and a call past expiry are each refused with their own message.
+Tokens are looked up under the caller's tenant, and resume from an embedded
+session is refused: an approval decision must not arrive through a host page.
+The waiting event on the live feed carries the node and the deadline, never
+the token and never run data.
+
 **Webhook routes are unguessable rather than authenticated.** The route
 segment carries 16 bytes of entropy, because this endpoint is very often
 called by a third party that cannot hold a credential. Every request that
