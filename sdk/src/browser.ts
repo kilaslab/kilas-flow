@@ -16,6 +16,11 @@ export interface EmbedSessionHandle {
 	/** The one origin this token may be used from: this page's own origin. */
 	origin: string;
 	branding?: Record<string, unknown>;
+	/**
+	 * The one datastore a datastore-scoped session may touch. Present only
+	 * on such sessions — which cannot open the workflow editor at all.
+	 */
+	datastoreId?: string;
 }
 
 export interface MountOptions {
@@ -66,7 +71,20 @@ export function mountWorkflowEditor(options: MountOptions): MountedEditor {
 
 	const editorOrigin = new URL(options.baseUrl).origin;
 	const workflowId = options.workflowId ?? workflowIdFrom(session);
-	if (!workflowId) throw new Error('mountWorkflowEditor could not determine the workflow to open');
+	if (!workflowId) {
+		// A datastore-only session names no workflow, so there is no editor
+		// URL to load. Say so outright: falling through would mount an
+		// iframe at a bare /embed/ that this very token is refused on, then
+		// hang until the handshake timer fires.
+		if (isDatastoreSession(session)) {
+			throw new Error(
+				'mountWorkflowEditor cannot open the workflow editor with a datastore-scoped session' +
+					(session.datastoreId ? ` for datastore ${session.datastoreId}` : '') +
+					': mint a workflow session instead'
+			);
+		}
+		throw new Error('mountWorkflowEditor could not determine the workflow to open');
+	}
 
 	const iframe = document.createElement('iframe');
 	iframe.src = `${editorOrigin}/embed/${encodeURIComponent(workflowId)}`;
@@ -137,6 +155,13 @@ export function mountWorkflowEditor(options: MountOptions): MountedEditor {
 function workflowIdFrom(session: EmbedSessionHandle): string {
 	const match = /\/embed\/([^/?#]+)/.exec(session.embedUrl ?? '');
 	return match?.[1] ? decodeURIComponent(match[1]) : '';
+}
+
+function isDatastoreSession(session: EmbedSessionHandle): boolean {
+	return (
+		(session.scopes ?? []).some((scope) => scope === 'datastore:read' || scope === 'datastore:write') ||
+		(session.datastoreId ?? '') !== ''
+	);
 }
 
 /** One standardized execution event, as the live feed sends it. */

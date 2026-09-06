@@ -9,6 +9,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"github.com/kilaslabs/kilas-flow/internal/api/middleware"
 	"github.com/kilaslabs/kilas-flow/internal/datastore"
 )
 
@@ -307,6 +308,9 @@ func (handler *Datastores) Get(ctx context.Context, input *datastorePathInput) (
 	if handler.store == nil {
 		return nil, huma.Error503ServiceUnavailable("datastore storage unavailable")
 	}
+	if err := handler.ownsDatastore(ctx, input.ID); err != nil {
+		return nil, err
+	}
 	definition, err := handler.store.GetDatastore(ctx, handler.tenants.Resolve(ctx).ID, input.ID)
 	if err != nil {
 		return nil, handler.problem(err)
@@ -401,6 +405,9 @@ func (handler *Datastores) InsertRow(ctx context.Context, input *insertRowInput)
 	if handler.store == nil {
 		return nil, huma.Error503ServiceUnavailable("datastore storage unavailable")
 	}
+	if err := handler.ownsDatastore(ctx, input.ID); err != nil {
+		return nil, err
+	}
 	row, err := handler.store.Insert(ctx, handler.tenants.Resolve(ctx).ID, input.ID, input.Body.Values)
 	if err != nil {
 		return nil, handler.problem(err)
@@ -417,6 +424,9 @@ func (handler *Datastores) InsertRow(ctx context.Context, input *insertRowInput)
 func (handler *Datastores) ListRows(ctx context.Context, input *listRowsInput) (*rowListOutput, error) {
 	if handler.store == nil {
 		return nil, huma.Error503ServiceUnavailable("datastore storage unavailable")
+	}
+	if err := handler.ownsDatastore(ctx, input.ID); err != nil {
+		return nil, err
 	}
 	filter, err := queryFilter(input)
 	if err != nil {
@@ -442,6 +452,9 @@ func (handler *Datastores) GetRow(ctx context.Context, input *rowPathInput) (*ro
 	if handler.store == nil {
 		return nil, huma.Error503ServiceUnavailable("datastore storage unavailable")
 	}
+	if err := handler.ownsDatastore(ctx, input.ID); err != nil {
+		return nil, err
+	}
 	row, err := handler.store.Get(ctx, handler.tenants.Resolve(ctx).ID, input.ID, input.RowID)
 	if err != nil {
 		return nil, handler.problem(err)
@@ -453,6 +466,9 @@ func (handler *Datastores) GetRow(ctx context.Context, input *rowPathInput) (*ro
 func (handler *Datastores) UpdateRows(ctx context.Context, input *updateRowsInput) (*updateRowsOutput, error) {
 	if handler.store == nil {
 		return nil, huma.Error503ServiceUnavailable("datastore storage unavailable")
+	}
+	if err := handler.ownsDatastore(ctx, input.ID); err != nil {
+		return nil, err
 	}
 	if err := refuseEmptyFilter(&input.Body.Filter); err != nil {
 		return nil, err
@@ -475,6 +491,9 @@ func (handler *Datastores) DeleteRows(ctx context.Context, input *deleteRowsInpu
 	if handler.store == nil {
 		return nil, huma.Error503ServiceUnavailable("datastore storage unavailable")
 	}
+	if err := handler.ownsDatastore(ctx, input.ID); err != nil {
+		return nil, err
+	}
 	if err := refuseEmptyFilter(&input.Body.Filter); err != nil {
 		return nil, err
 	}
@@ -496,6 +515,9 @@ func (handler *Datastores) DeleteRows(ctx context.Context, input *deleteRowsInpu
 func (handler *Datastores) UpsertRow(ctx context.Context, input *upsertRowInput) (*upsertRowOutput, error) {
 	if handler.store == nil {
 		return nil, huma.Error503ServiceUnavailable("datastore storage unavailable")
+	}
+	if err := handler.ownsDatastore(ctx, input.ID); err != nil {
+		return nil, err
 	}
 	if err := refuseEmptyFilter(&input.Body.Filter); err != nil {
 		return nil, err
@@ -582,6 +604,26 @@ func (handler *Datastores) problem(err error) error {
 		return huma.Error400BadRequest("row cursor is invalid")
 	}
 	return huma.Error422UnprocessableEntity(err.Error())
+}
+
+// ownsDatastore confines an embed session to its own datastore, in the shape
+// of ownsExecution: which datastore a row belongs to is addressed in the
+// path, but whether this session may name it is a handler question, because
+// the middleware answers in 403 and a session bound to one datastore must
+// read any other as unknown rather than as forbidden.
+//
+// A request with no embed session is the internal dashboard and is unaffected.
+func (handler *Datastores) ownsDatastore(ctx context.Context, datastoreID string) error {
+	session, embedded := middleware.EmbedSessionFrom(ctx)
+	if !embedded {
+		return nil
+	}
+	if session.DatastoreID != "" && session.DatastoreID == datastoreID {
+		return nil
+	}
+	// The same document an unknown id produces: an embed session has no
+	// business learning that another datastore exists.
+	return huma.Error404NotFound("datastore not found")
 }
 
 func datastoreResource(definition datastore.Datastore) DatastoreResource {

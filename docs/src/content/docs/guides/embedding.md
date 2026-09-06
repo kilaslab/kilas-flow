@@ -207,18 +207,24 @@ until somebody deliberately permits it.
 | Delete workflow | API key | Refused to embed sessions outright |
 | Mint embed session | API key | The backend's authorization decision |
 | Mint stream ticket | API key | After checking the execution is yours |
-| Read datastore | API key | Embed sessions are default-denied on `/datastores/*` |
+| Manage datastores | API key | Provisioning and schema stay with the backend key — no embed scope grants them, ever |
 | Load / save the one workflow | Embed token | Needs `workflow:read` / `workflow:write` |
 | Run the one workflow | Embed token | Needs `workflow:run` |
 | List executions of the one workflow | Embed token | Needs `workflow:read`, with `workflowId` equal to the session's |
+| Read one datastore's rows | Embed token | Needs `datastore:read` on a session minted for that datastore |
+| Write one datastore's rows | Embed token | Needs `datastore:write`, which implies `datastore:read` |
 | Watch an execution stream | Stream ticket | Single-use, seconds-lived, spent as `?ticket=` |
 | Deliver to a webhook | Webhook credential | The trigger's header or basic check, no KilasFlow identity |
 
 ## What the embed token is not
 
-- **One workflow.** Every request outside it is refused as scoped to a
-  different workflow — including listing all workflows, which would
-  otherwise enumerate the tenant.
+- **One subject: a workflow or a datastore.** A workflow session reaches
+  only its workflow — every request outside it is refused as scoped to a
+  different workflow, including listing all workflows, which would
+  otherwise enumerate the tenant. A datastore session reaches only its
+  datastore's definition and rows, and reads any other datastore as
+  unknown (404) rather than as forbidden, so it never learns siblings
+  exist. Mint a session per subject; a token never names both.
 - **One exact origin.** `scheme://host[:port]`, no wildcards, no suffix
   match: trusting "anything under this domain" is the loophole a
   subdomain takeover walks through. The origin is re-checked on every
@@ -267,9 +273,31 @@ lookup clauses on tenant and id together, so naming another tenant's
 datastore answers 404 — isolation the host relies on rather than
 reimplements:
 
+The SDK's datastore subset covers the embed path — `getDatastore`,
+`listDatastoreRows` with its filter triples, `getDatastoreRow`, and
+`insertDatastoreRow` — while provisioning and schema stay on the
+documented REST endpoints with the tenant key. The backend key below
+provisions and writes with full authority. A browser never holds it: to
+let an embedded surface touch rows, the backend mints a datastore session
+instead of a workflow one —
+
 ```js
-// The SDK has no datastore methods yet, so the host speaks the documented
-// REST endpoints with the same tenant key its SDK client holds.
+const session = await tenant.client.createEmbedSession({
+  datastoreId: id,
+  scopes: ['datastore:read', 'datastore:write'],
+  origin // a server-side constant, never taken from request headers
+});
+// -> 201 { token, datastoreId, scopes, origin } with an empty embedUrl:
+// a datastore session names no workflow, so there is no editor to open and
+// mountWorkflowEditor refuses it outright rather than loading a dead frame.
+```
+
+That token reads the one datastore's definition and rows, writes rows with
+`datastore:write`, and reaches nothing else: other datastores read as
+unknown, workflow routes stay forbidden, and creating, dropping, clearing,
+or changing a table's columns stays with the backend key.
+
+```js
 const created = await api('POST', '/datastores', {
   name: `reference-${slug}`,
   columns: [

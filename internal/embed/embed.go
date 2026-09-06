@@ -32,6 +32,12 @@ const (
 	ScopeRead  Scope = "workflow:read"
 	ScopeWrite Scope = "workflow:write"
 	ScopeRun   Scope = "workflow:run"
+	// ScopeDatastoreRead grants reads of one datastore's definition and rows.
+	ScopeDatastoreRead Scope = "datastore:read"
+	// ScopeDatastoreWrite grants row writes in one datastore. It implies
+	// ScopeDatastoreRead and nothing else: schema changes stay outside any
+	// embed session, the way workflow import and activation already are.
+	ScopeDatastoreWrite Scope = "datastore:write"
 )
 
 // ErrInvalidSession reports a token that must not be honoured.
@@ -91,18 +97,31 @@ func (branding Branding) Validate() error {
 }
 
 // Session is one issued embed authorization.
+//
+// A session names exactly one subject: the workflow it may open, or the
+// datastore whose rows it may touch. The other subject field stays empty, so
+// a token minted before datastores existed — carrying only a workflow — still
+// verifies and still resolves to its original workflow scopes.
 type Session struct {
-	ID         string    `json:"sid"`
-	TenantID   string    `json:"tid"`
-	WorkflowID string    `json:"wid"`
-	Scopes     []Scope   `json:"scp"`
-	Origin     string    `json:"org"`
-	IssuedAt   time.Time `json:"iat"`
-	ExpiresAt  time.Time `json:"exp"`
-	Branding   Branding  `json:"brd,omitempty"`
+	ID         string `json:"sid"`
+	TenantID   string `json:"tid"`
+	WorkflowID string `json:"wid"`
+	// DatastoreID is the one datastore a datastore-scoped session may touch.
+	// Empty on every workflow session, including every token minted before
+	// this field existed.
+	DatastoreID string    `json:"did,omitempty"`
+	Scopes      []Scope   `json:"scp"`
+	Origin      string    `json:"org"`
+	IssuedAt    time.Time `json:"iat"`
+	ExpiresAt   time.Time `json:"exp"`
+	Branding    Branding  `json:"brd,omitempty"`
 }
 
 // Allows reports whether the session carries a scope.
+//
+// Implication stays inside one family: a write that could read across
+// families would hand a datastore-only session the workflow, and a
+// workflow:write session the datastore rows, with nothing erroring anywhere.
 func (session Session) Allows(scope Scope) bool {
 	for _, held := range session.Scopes {
 		if held == scope {
@@ -110,6 +129,9 @@ func (session Session) Allows(scope Scope) bool {
 		}
 		// Write implies read: a session that can save must be able to load.
 		if scope == ScopeRead && (held == ScopeWrite || held == ScopeRun) {
+			return true
+		}
+		if scope == ScopeDatastoreRead && held == ScopeDatastoreWrite {
 			return true
 		}
 	}
@@ -198,28 +220,41 @@ func (issuer *Issuer) OriginAllowed(origin string) bool {
 }
 
 // Request describes a session to mint.
+//
+// Exactly one of WorkflowID and DatastoreID names the session's subject. A
+// session bound to both would be ambiguous — every check downstream reads one
+// field — and a session bound to neither can do nothing, so both readings are
+// refused rather than minted into a token that silently reaches nowhere.
 type Request struct {
-	TenantID   string
-	WorkflowID string
-	Scopes     []Scope
-	Origin     string
-	Lifetime   time.Duration
-	Branding   Branding
+	TenantID    string
+	WorkflowID  string
+	DatastoreID string
+	Scopes      []Scope
+	Origin      string
+	Lifetime    time.Duration
+	Branding    Branding
 	// SessionID is supplied by the caller in tests; production leaves it empty
 	// and the issuer generates one.
 	SessionID string
 }
 
-// Issue mints a signed token for one workflow, origin, and scope set.
+// Issue mints a signed token for one workflow or one datastore, one origin,
+// and one scope set.
 func (issuer *Issuer) Issue(request Request) (Session, string, error) {
-	if request.TenantID == "" || request.WorkflowID == "" {
+	if request.TenantID == "" || (request.WorkflowID == "" && request.DatastoreID == "") {
 		return Session{}, "", fmt.Errorf("an embed session needs a tenant and a workflow")
+	}
+	if request.WorkflowID != "" && request.DatastoreID != "" {
+		return Session{}, "", fmt.Errorf("an embed session is scoped to one workflow or one datastore, not both")
 	}
 	if !issuer.OriginAllowed(request.Origin) {
 		return Session{}, "", fmt.Errorf("origin %q is not in this deployment's embed allowlist", request.Origin)
 	}
 	scopes, err := normalizeScopes(request.Scopes)
 	if err != nil {
+		return Session{}, "", err
+	}
+	if err := scopesMatchSubject(scopes, request.WorkflowID != ""); err != nil {
 		return Session{}, "", err
 	}
 	if err := request.Branding.Validate(); err != nil {
@@ -241,7 +276,8 @@ func (issuer *Issuer) Issue(request Request) (Session, string, error) {
 	now := issuer.now().UTC()
 	session := Session{
 		ID: sessionID, TenantID: request.TenantID, WorkflowID: request.WorkflowID,
-		Scopes: scopes, Origin: NormalizeOrigin(request.Origin),
+		DatastoreID: request.DatastoreID,
+		Scopes:      scopes, Origin: NormalizeOrigin(request.Origin),
 		IssuedAt: now, ExpiresAt: now.Add(lifetime), Branding: request.Branding,
 	}
 	token, err := issuer.sign(session)
@@ -249,6 +285,24 @@ func (issuer *Issuer) Issue(request Request) (Session, string, error) {
 		return Session{}, "", err
 	}
 	return session, token, nil
+}
+
+// scopesMatchSubject refuses a scope set that could never be used: workflow
+// scopes on a datastore session and datastore scopes on a workflow session
+// would mint a token that passes every check yet reaches nothing, which reads
+// as success to the host that requested it.
+func scopesMatchSubject(scopes []Scope, workflow bool) error {
+	for _, scope := range scopes {
+		datastore := scope == ScopeDatastoreRead || scope == ScopeDatastoreWrite
+		if datastore == workflow {
+			subject, family := "a datastore session", "datastore"
+			if workflow {
+				subject, family = "a workflow session", "workflow"
+			}
+			return fmt.Errorf("scope %q does not belong on %s: mint with a %s scope", scope, subject, family)
+		}
+	}
+	return nil
 }
 
 func normalizeScopes(scopes []Scope) ([]Scope, error) {
@@ -261,7 +315,7 @@ func normalizeScopes(scopes []Scope) ([]Scope, error) {
 	normalized := make([]Scope, 0, len(scopes))
 	for _, scope := range scopes {
 		switch scope {
-		case ScopeRead, ScopeWrite, ScopeRun:
+		case ScopeRead, ScopeWrite, ScopeRun, ScopeDatastoreRead, ScopeDatastoreWrite:
 		default:
 			return nil, fmt.Errorf("scope %q is not supported", scope)
 		}
@@ -321,7 +375,18 @@ func (issuer *Issuer) Verify(token string) (Session, error) {
 	if err := json.Unmarshal(payload, &session); err != nil {
 		return Session{}, fmt.Errorf("%w: malformed payload", ErrInvalidSession)
 	}
-	if session.WorkflowID == "" || session.TenantID == "" || len(session.Scopes) == 0 {
+	// Exactly one subject, as Issue mints: a token minted before datastores
+	// existed carries only a workflow and still passes, while a payload with
+	// neither — or an ambiguous both — is refused without its contents ever
+	// being honoured.
+	subjects := 0
+	if session.WorkflowID != "" {
+		subjects++
+	}
+	if session.DatastoreID != "" {
+		subjects++
+	}
+	if subjects != 1 || session.TenantID == "" || len(session.Scopes) == 0 {
 		return Session{}, fmt.Errorf("%w: incomplete session", ErrInvalidSession)
 	}
 	if !issuer.now().UTC().Before(session.ExpiresAt) {

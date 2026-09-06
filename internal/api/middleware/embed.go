@@ -83,9 +83,9 @@ func embedToken(r *http.Request) string {
 // permits decides whether one request is inside a session's authority.
 //
 // The rule is deliberately about *what the request targets*, not about which
-// handler will run: an embed session is confined to one workflow and its
-// executions, and everything else is refused by default rather than
-// enumerated as forbidden.
+// handler will run: an embed session is confined to one subject — a workflow
+// and its executions, or a datastore and its rows — and everything else is
+// refused by default rather than enumerated as forbidden.
 func permits(session embed.Session, r *http.Request) (bool, string) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1")
 
@@ -147,8 +147,60 @@ func permits(session embed.Session, r *http.Request) (bool, string) {
 	case strings.HasPrefix(path, "/executions/"):
 		// Which workflow a single execution belongs to is only knowable by
 		// loading it, so the ownership check lives in the handler. This gate
-		// covers the scope; handlers.RequireEmbedWorkflow covers the identity.
+		// covers the scope; ownsExecution covers the identity.
 		return session.Allows(embed.ScopeRead), "This embed session cannot read executions."
+
+	case path == "/datastores":
+		// An embed session is bound to one datastore: listing every table in
+		// the tenant would leak sibling names, and creating one is schema
+		// work — the datastore equivalent of the workflow import refused
+		// above.
+		return false, "An embed session cannot manage datastores."
+
+	case strings.HasPrefix(path, "/datastores/"):
+		rest := strings.TrimPrefix(path, "/datastores/")
+		if rest == "" {
+			return false, "An embed session cannot use this endpoint."
+		}
+		// The session's datastore identity is checked in the handler, not
+		// here: a request naming another datastore must read as unknown
+		// (404) rather than as forbidden (403), so this gate covers only
+		// the scope and ownsDatastore covers the identity.
+		datastoreID, remainder, _ := strings.Cut(rest, "/")
+		if datastoreID == "" {
+			return false, "An embed session cannot use this endpoint."
+		}
+		action, _, _ := strings.Cut(remainder, "/")
+		switch {
+		case action == "":
+			// Reading one table's definition is data-plane; renaming or
+			// dropping it is schema work, refused like import and
+			// activation above.
+			if r.Method == http.MethodGet {
+				return session.Allows(embed.ScopeDatastoreRead), "This embed session cannot read."
+			}
+			return false, "An embed session cannot manage datastores."
+		case action == "clear" || action == "columns":
+			// Clearing every row and editing columns reshape the table
+			// itself, not its contents.
+			return false, "An embed session cannot manage datastores."
+		case action == "rows":
+			// Row reads, the single-row read, the CSV export, the filtered
+			// update and delete, the upsert, and the CSV import all address
+			// contents under one datastore id, so the method alone decides
+			// the family: GET reads, the mutating verbs write.
+			if r.Method == http.MethodGet {
+				return session.Allows(embed.ScopeDatastoreRead), "This embed session cannot read."
+			}
+			switch r.Method {
+			case http.MethodPost, http.MethodPut, http.MethodDelete:
+				return session.Allows(embed.ScopeDatastoreWrite), "This embed session is read-only."
+			default:
+				return false, "An embed session cannot use this endpoint."
+			}
+		default:
+			return false, "An embed session cannot use this endpoint."
+		}
 
 	case path == "/resume" || strings.HasPrefix(path, "/resume/"):
 		// Approval resume is never available to embedded sessions: resuming

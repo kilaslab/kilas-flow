@@ -151,6 +151,9 @@ func (handler *Datastores) ExportRows(ctx context.Context, input *exportDatastor
 	if handler.store == nil {
 		return nil, huma.Error503ServiceUnavailable("datastore storage unavailable")
 	}
+	if err := handler.ownsDatastore(ctx, input.ID); err != nil {
+		return nil, err
+	}
 	tenant := handler.tenants.Resolve(ctx).ID
 	definition, err := handler.store.GetDatastore(ctx, tenant, input.ID)
 	if err != nil {
@@ -206,6 +209,9 @@ func (handler *Datastores) ExportRows(ctx context.Context, input *exportDatastor
 func (handler *Datastores) ImportRows(ctx context.Context, input *importDatastoreRowsInput) (*importDatastoreRowsOutput, error) {
 	if handler.store == nil {
 		return nil, huma.Error503ServiceUnavailable("datastore storage unavailable")
+	}
+	if err := handler.ownsDatastore(ctx, input.ID); err != nil {
+		return nil, err
 	}
 	tenant := handler.tenants.Resolve(ctx).ID
 	definition, err := handler.store.GetDatastore(ctx, tenant, input.ID)

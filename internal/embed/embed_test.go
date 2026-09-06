@@ -282,3 +282,122 @@ func TestNormalizeOriginRejectsNonHTTPSchemes(t *testing.T) {
 		t.Errorf("NormalizeOrigin() = %q, want it lowercased", got)
 	}
 }
+
+func TestADatastoreSessionIsMintedAndVerifiedEndToEnd(t *testing.T) {
+	t.Parallel()
+
+	issuer := newIssuer(t, nil)
+	session, token, err := issuer.Issue(embed.Request{
+		TenantID: "tenant-a", DatastoreID: "datastore_1",
+		Scopes: []embed.Scope{embed.ScopeDatastoreRead, embed.ScopeDatastoreWrite},
+		Origin: "https://host.example",
+	})
+	if err != nil {
+		t.Fatalf("Issue() error = %v", err)
+	}
+	if session.WorkflowID != "" || session.DatastoreID != "datastore_1" {
+		t.Fatalf("session = %#v, want a datastore subject and no workflow", session)
+	}
+
+	verified, err := issuer.Verify(token)
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if verified.DatastoreID != "datastore_1" || verified.TenantID != "tenant-a" {
+		t.Fatalf("verified = %#v, want the issued datastore session", verified)
+	}
+	if !verified.Allows(embed.ScopeDatastoreRead) || !verified.Allows(embed.ScopeDatastoreWrite) {
+		t.Errorf("scopes = %#v, want the datastore scopes to survive the round trip", verified.Scopes)
+	}
+}
+
+func TestASessionNeedsExactlyOneSubject(t *testing.T) {
+	t.Parallel()
+
+	issuer := newIssuer(t, nil)
+
+	neither := validRequest()
+	neither.WorkflowID, neither.DatastoreID = "", ""
+	if _, _, err := issuer.Issue(neither); err == nil {
+		t.Error("a session with no subject was minted")
+	}
+
+	both := validRequest()
+	both.DatastoreID = "datastore_1"
+	if _, _, err := issuer.Issue(both); err == nil {
+		t.Error("a session naming both a workflow and a datastore was minted")
+	}
+}
+
+func TestScopesMustBelongToTheSessionSubject(t *testing.T) {
+	t.Parallel()
+
+	issuer := newIssuer(t, nil)
+
+	workflow := validRequest()
+	workflow.Scopes = []embed.Scope{embed.ScopeDatastoreRead}
+	if _, _, err := issuer.Issue(workflow); err == nil {
+		t.Error("a workflow session carrying a datastore scope was minted")
+	}
+
+	datastore := validRequest()
+	datastore.WorkflowID, datastore.DatastoreID = "", "datastore_1"
+	datastore.Scopes = []embed.Scope{embed.ScopeRead}
+	if _, _, err := issuer.Issue(datastore); err == nil {
+		t.Error("a datastore session carrying a workflow scope was minted")
+	}
+}
+
+func TestScopeImplicationStaysInsideOneFamily(t *testing.T) {
+	t.Parallel()
+
+	issuer := newIssuer(t, nil)
+
+	workflow, _, err := issuer.Issue(validRequest())
+	if err != nil {
+		t.Fatalf("Issue() error = %v", err)
+	}
+	for _, scope := range []embed.Scope{embed.ScopeDatastoreRead, embed.ScopeDatastoreWrite} {
+		if workflow.Allows(scope) {
+			t.Errorf("a workflow session allowed %q", scope)
+		}
+	}
+
+	request := validRequest()
+	request.WorkflowID, request.DatastoreID = "", "datastore_1"
+	request.Scopes = []embed.Scope{embed.ScopeDatastoreWrite}
+	datastore, _, err := issuer.Issue(request)
+	if err != nil {
+		t.Fatalf("Issue() error = %v", err)
+	}
+	// A session that can write rows must be able to read them.
+	if !datastore.Allows(embed.ScopeDatastoreRead) {
+		t.Errorf("scopes = %#v, want datastore write to imply datastore read", datastore.Scopes)
+	}
+	for _, scope := range []embed.Scope{embed.ScopeRead, embed.ScopeWrite, embed.ScopeRun} {
+		if datastore.Allows(scope) {
+			t.Errorf("a datastore session allowed %q", scope)
+		}
+	}
+}
+
+func TestATokenMintedBeforeDatastoresStillVerifies(t *testing.T) {
+	t.Parallel()
+
+	// Minted by the pre-datastore issuer at a fixed clock, with the same test
+	// key this file builds: the format change must never reinterpret it.
+	const fixture = "kfe1.eyJzaWQiOiJlc19maXh0dXJlMDAwMDAwMDAwMDAwMDEiLCJ0aWQiOiJ0ZW5hbnQtYSIsIndpZCI6IndmLTEiLCJzY3AiOlsid29ya2Zsb3c6cmVhZCIsIndvcmtmbG93OndyaXRlIl0sIm9yZyI6Imh0dHBzOi8vaG9zdC5leGFtcGxlIiwiaWF0IjoiMjAyNi0wOS0wNlQxMjowMDowMFoiLCJleHAiOiIyMDI2LTA5LTA2VDEyOjE1OjAwWiIsImJyZCI6e319.u6s3YMbcmnNlwyVXzsxh-9ZeSvJIkiRANAIB0NlCalk"
+	fixed := time.Date(2026, 9, 6, 12, 5, 0, 0, time.UTC)
+	issuer := newIssuer(t, func() time.Time { return fixed })
+
+	session, err := issuer.Verify(fixture)
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if session.WorkflowID != "wf-1" || session.TenantID != "tenant-a" || session.DatastoreID != "" {
+		t.Fatalf("verified = %#v, want the original workflow session", session)
+	}
+	if !session.Allows(embed.ScopeRead) || !session.Allows(embed.ScopeWrite) || session.Allows(embed.ScopeRun) {
+		t.Errorf("scopes = %#v, want the original workflow scopes and nothing else", session.Scopes)
+	}
+}

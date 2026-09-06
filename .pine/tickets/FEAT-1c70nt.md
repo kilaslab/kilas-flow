@@ -1,7 +1,7 @@
 ---
 id: FEAT-1c70nt
 title: Open the Datastore to embedded hosts and the SDK
-status: todo
+status: done
 priority: medium
 labels:
     - datastore
@@ -14,7 +14,7 @@ deps:
 parent: EPIC-m42s3g
 phase: p9
 created: "2026-09-05T08:28:44Z"
-updated: "2026-09-05T08:28:44Z"
+updated: "2026-09-06T06:23:11Z"
 ---
 
 ## Scope
@@ -33,14 +33,14 @@ The posture is what makes this the last ticket rather than an optional one. A ho
 
 ## Acceptance criteria
 
-- [ ] A session carrying a datastore scope and no workflow is minted and verified end to end, proven by unit tests in `internal/embed` covering `Issue`, `sign` and `Verify`.
-- [ ] `permits` admits the datastore routes only for a session holding the matching datastore scope and still refuses an unrecognised path by default, proven by a table-driven middleware test.
-- [ ] A session bound to one datastore reads no other datastore's rows, and the refusal is a 404 rather than a 403, proven by a handler test in the shape of `ownsExecution`.
-- [ ] A workflow-scoped session reaches no datastore route and a datastore-scoped session reaches no workflow route, proven by cases added to the existing embed middleware tests.
-- [ ] `KilasFlowClient` exposes typed datastore methods covered against a stubbed fetch, proven by `pnpm --dir sdk test` run by hand with its output recorded on the ticket.
-- [ ] `pnpm --dir sdk generate:types:check` passes against the committed `models.ts`, run by hand and recorded on the ticket, since this repository has no CI configuration of any kind.
-- [ ] `mountWorkflowEditor` given a datastore-only session fails with an error naming the cause rather than requesting `/embed/`, proven by a case in `sdk/test/browser.test.ts`.
-- [ ] A token minted before this ticket still verifies and still resolves to its original workflow scopes, proven by a fixture-token test that no format change may break.
+- [x] A session carrying a datastore scope and no workflow is minted and verified end to end, proven by unit tests in `internal/embed` covering `Issue`, `sign` and `Verify`.
+- [x] `permits` admits the datastore routes only for a session holding the matching datastore scope and still refuses an unrecognised path by default, proven by a table-driven middleware test.
+- [x] A session bound to one datastore reads no other datastore's rows, and the refusal is a 404 rather than a 403, proven by a handler test in the shape of `ownsExecution`.
+- [x] A workflow-scoped session reaches no datastore route and a datastore-scoped session reaches no workflow route, proven by cases added to the existing embed middleware tests.
+- [x] `KilasFlowClient` exposes typed datastore methods covered against a stubbed fetch, proven by `pnpm --dir sdk test` run by hand with its output recorded on the ticket.
+- [x] `pnpm --dir sdk generate:types:check` passes against the committed `models.ts`, run by hand and recorded on the ticket, since this repository has no CI configuration of any kind.
+- [x] `mountWorkflowEditor` given a datastore-only session fails with an error naming the cause rather than requesting `/embed/`, proven by a case in `sdk/test/browser.test.ts`.
+- [x] A token minted before this ticket still verifies and still resolves to its original workflow scopes, proven by a fixture-token test that no format change may break.
 
 ## Implementation Plan
 
@@ -71,3 +71,103 @@ Documentation closes the ticket rather than opening it: a scope table in `sdk/RE
 - `.pine/tickets/FEAT-nc6z9r.md` — V2-p10-7, which owns the complete Datastore management surface on the SDK and depends on this ticket.
 - `.pine/tickets/FEAT-3taswf.md` — V2-p10-8, which owns publishing the package.
 - `.pine/tickets/FEAT-frvez8.md`, `.pine/tickets/FEAT-za118x.md` — V2-p10-13 and V2-p10-10, which own the documentation.
+
+## Work notes (EmbedDatastore, 2026-09-06)
+
+Scope kept to the ticket's vocabulary brief: `DatastoreID` beside
+`WorkflowID`, the `permits` entry, `datastore:read`/`datastore:write`, the
+browser clean-fail, and the minimal client subset proving the path. No
+`internal/datastore` edits, no SQL touched, no new dependencies, no web
+frame change (the SPA serves the workflow editor only; a datastore token
+there is refused on workflow routes by design, and the SDK refuses to
+mount before any request).
+
+Design, per box:
+
+- Session: `DatastoreID string \`json:"did,omitempty"\`` beside
+  `WorkflowID`; `Issue`/`Verify` require exactly one subject; token
+  version `kfe1` untouched. `Allows` implication stays inside one family
+  (`datastore:write` implies `datastore:read` only); every cross-family
+  pair is asserted refused. Scope/subject mismatch is refused at mint
+  (a token that reaches nothing is never issued).
+- `permits`: datastore arm keyed on `/datastores` + prefix. Reads (GET
+  definition/rows/row/export) need `datastore:read`; row mutations
+  (POST/PUT/DELETE incl. upsert/import) need `datastore:write`. List,
+  create, rename, drop, clear, and all column routes are refused outright
+  (schema work, like import/activation). Identity is NOT checked in
+  `permits` — the handler answers 404. Stale
+  `handlers.RequireEmbedWorkflow` comment corrected to `ownsExecution`.
+- Handler: `ownsDatastore` in `internal/api/handlers/datastores.go`,
+  shaped like `ownsExecution`, returning the same `404 datastore not
+  found` an unknown id produces. Guarded: `Get`, `ListRows`, `GetRow`,
+  `InsertRow`, `UpdateRows`, `DeleteRows`, `UpsertRow`, plus `ExportRows`
+  and `ImportRows` in `datastores_csv.go` (two lines, agreed with
+  DatastoreCSV, their suite re-verified green).
+- Mint: `POST /embed-sessions` takes exactly one of `workflowId` /
+  `datastoreId`; datastore existence is checked through a `WithDatastores`
+  engine (wired in `routes.go`, skipped when nil like the workflow repo).
+  A datastore session answers `embedUrl: ""` plus `datastoreId`, never a
+  fabricated `/embed/`.
+- SDK: `EmbedScope` gains the two `datastore:*` scopes;
+  `EmbedSessionRequest` takes exactly one subject (client-checked);
+  `KilasFlowClient` gains `getDatastore`, `listDatastoreRows`,
+  `getDatastoreRow`, `insertDatastoreRow` — thin wrappers on generated
+  types, null triples sent as absent. Full surface stays with FEAT-nc6z9r.
+- Browser: `mountWorkflowEditor` with a datastore-only session throws
+  `mountWorkflowEditor cannot open the workflow editor with a
+  datastore-scoped session for datastore <id>: mint a workflow session
+  instead` before creating any iframe (no hang, no `/embed/` request).
+- Docs: `docs/src/content/docs/guides/embedding.md` — credential table,
+  one-subject bullet, and a datastore-session mint example. The stale
+  "default-denied on `/datastores/*`" row is gone.
+
+Proof, per box (all run by hand 2026-09-06):
+
+- [x] Box 1 — `go test ./internal/embed/` ok:
+  `TestADatastoreSessionIsMintedAndVerifiedEndToEnd`,
+  `TestASessionNeedsExactlyOneSubject`,
+  `TestScopesMustBelongToTheSessionSubject`,
+  `TestScopeImplicationStaysInsideOneFamily`.
+- [x] Box 2 — `go test ./internal/api/middleware/` ok:
+  `TestPermitsAdmitsDatastoreRoutesOnlyWithTheMatchingScope` (28 cases),
+  `TestPermitsKeepsTheTwoFamiliesApart` (10 cases).
+- [x] Box 3 — `go test ./internal/api/` ok:
+  `TestDatastoreSessionReadsNoOtherDatastore` (same-tenant 404s),
+  `TestCrossTenantDatastoreIsRefusedThroughEmbed` (two servers, one
+  engine, victim id named exactly, 404 on definition and rows),
+  `TestDatastoreSessionReadsItsOwnRows`.
+- [x] Box 4 — `TestWorkflowAndDatastoreSessionsStayApart` (live server)
+  plus the middleware family cases; the xeq6st pin
+  `TestEmbedSessionsAreDeniedOnDatastorePaths` still passes with its
+  comment refreshed to the explicit arm.
+- [x] Box 5 — stubbed-fetch coverage in `sdk/test/server.test.ts`
+  (`datastore methods`, `embed sessions`) plus live-HTTP proof in
+  `sdk/test/datastore-live.test.mjs` (real `node:http` server, real
+  transport, no injected fetch). Focused run
+  `pnpm --dir sdk exec vitest run test/server.test.ts test/browser.test.ts
+  test/datastore-live.test.mjs test/operations.test.ts test/version.test.mjs`
+  → 5 files, 59 tests, all pass. Full `pnpm --dir sdk test` → 60/61: the
+  single failure is the operation-coverage gate listing 13 datastore ops
+  (`list/create/rename/delete/clear-datastore`, 3 column ops, filtered
+  row writes, transfer pair) with no client method — pre-existing
+  (xeq6st+t26rt7 registered 17 ops; this ticket adds none) and owned by
+  FEAT-nc6z9r, whose ticket names that gate as its start signal. This
+  ticket's 4 ops (`get-datastore`, `list/get-datastore-row(s)`,
+  `insert-datastore-row`) are registered in `OPERATION_COVERAGE` and
+  verified by the gate's method-existence test.
+- [x] Box 6 — `pnpm --dir sdk generate:types` regenerated, then
+  `pnpm --dir sdk generate:types:check` passed (exit 0). Regen diff is
+  exactly the embed vocabulary (`datastoreId?` on body and resource,
+  optional `workflowId`, widened scope docs, retitled operation).
+- [x] Box 7 — `sdk/test/browser.test.ts`: `fails cleanly on a
+  datastore-only session instead of mounting a dead iframe` — asserts the
+  named throw and that no iframe was appended.
+- [x] Box 8 — `TestATokenMintedBeforeDatastoresStillVerifies`: fixture
+  token minted by the pre-change issuer at a fixed clock
+  (`es_fixture00000000000001`, 2026-09-06T12:00Z) verifies under the new
+  code and resolves to `wf-1` / `tenant-a` with exactly
+  `workflow:read,workflow:write`.
+
+Also green: `go build ./...`, `go vet` on all touched packages,
+`gofmt` clean, `pnpm --dir sdk check` (tsc) clean, full
+`go test ./internal/embed/ ./internal/api/...` ok.

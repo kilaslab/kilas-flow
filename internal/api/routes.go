@@ -40,7 +40,7 @@ func registerRoutes(router *chi.Mux, api huma.API, deps Deps) {
 		WithTestTimeout(deps.Config.Credential.TestTimeout).Register(v1)
 	handlers.NewSchedules(deps.Schedules, deps.Tenants).Register(v1)
 	handlers.NewDatastores(deps.Datastores, deps.Tenants).Register(v1)
-	handlers.NewEmbedSessions(deps.EmbedIssuer, deps.Workflows, deps.Tenants).Register(v1)
+	handlers.NewEmbedSessions(deps.EmbedIssuer, deps.Workflows, deps.Tenants).WithDatastores(deps.Datastores).Register(v1)
 	handlers.NewInterop(deps.Workflows, deps.NodeRegistry, deps.Tenants).Register(v1)
 
 	// Self-hosted API reference. Huma's own docs endpoint is disabled in

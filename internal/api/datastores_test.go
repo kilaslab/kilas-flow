@@ -322,9 +322,12 @@ func TestEmbedSessionsAreDeniedOnDatastorePaths(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Issue() error = %v", err)
 	}
-	// Every datastore path falls into permits' default arm until V2-p9-15
-	// grants a scope, so a fully-scoped session is still refused — asserted
-	// here so a later change to permits cannot open them by accident.
+	// A workflow session reaches no datastore route even fully scoped: the
+	// datastore arm of permits answers only to datastore scopes, and the
+	// family rule in Allows keeps workflow scopes from implying them.
+	// Asserted here so a later change to permits cannot open them by
+	// accident; the datastore session's own paths are proven in
+	// embed_datastore_test.go.
 	for _, route := range [][2]string{
 		{http.MethodGet, "/api/v1/datastores"},
 		{http.MethodPost, "/api/v1/datastores"},
