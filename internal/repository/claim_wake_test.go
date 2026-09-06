@@ -327,14 +327,17 @@ func TestQueuedExecutionWakesAListenerOnPostgres(t *testing.T) {
 	if !queuedIDs[got.ExecutionID] {
 		t.Errorf("wake execution %q names no queued row: the worker must re-read, but the payload must still name reality", got.ExecutionID)
 	}
-	// The woken worker re-reads rather than trusting the payload: the named
-	// row is really queued and really claimable.
+	// The woken worker re-reads rather than trusting the payload: it must
+	// come back with a row this test queued — any of them, since the setup
+	// loop queues again whenever the first LISTEN misses its NOTIFY. Pinning
+	// the woken identity would fail exactly when the listener was slow,
+	// which is a property of the test's timing, not of the claim path.
 	claimed, _, found, err := store.ClaimNext(ctx, "drv-wake-worker", time.Now().Add(time.Minute))
 	if err != nil || !found {
-		t.Fatalf("ClaimNext() after the wake = (%v, %v), want the queued row", found, err)
+		t.Fatalf("ClaimNext() after the wake = (%v, %v), want a queued row", found, err)
 	}
-	if claimed.ID != got.ExecutionID {
-		t.Errorf("claimed %q after wake for %q: FIFO order, not payload trust, decides", claimed.ID, got.ExecutionID)
+	if !queuedIDs[claimed.ID] {
+		t.Errorf("claimed %q names no row this test queued: the re-read left the queued set", claimed.ID)
 	}
 	stop()
 	if err := <-watchDone; err != nil {

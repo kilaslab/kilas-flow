@@ -10,8 +10,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kilaslabs/kilas-flow/internal/sqlbuild"
+	"github.com/kilaslabs/kilas-flow/internal/safehttp"
 	"github.com/kilaslabs/kilas-flow/internal/sqlnode"
+	"github.com/kilaslabs/kilas-flow/internal/sqlbuild"
 )
 
 var updateGolden = flag.Bool("update-golden", false, "rewrite the golden statements from this run")
@@ -454,11 +455,15 @@ func TestAQuotedIdentifierRoundTripsAgainstALiveServer(t *testing.T) {
 		t.Fatalf("KILASFLOW_TEST_POSTGRES_DSN is not a URL: %v", err)
 	}
 	password, _ := parsed.User.Password()
+	// The guard admits exactly the endpoint under test, as written: the
+	// default-deny policy refuses loopback test databases.
+	endpoint := parsed.Hostname() + ":" + parsed.Port()
+	guard := sqlnode.Guard{Policy: safehttp.Policy{AllowedPrivateEndpoints: []string{endpoint}}}
 	connection, err := sqlnode.Open(context.Background(), sqlnode.DriverPostgres, map[string]string{
 		"host": parsed.Hostname(), "port": parsed.Port(),
 		"database": strings.TrimPrefix(parsed.Path, "/"),
 		"user":     parsed.User.Username(), "password": password, "sslMode": "disable",
-	}, sqlnode.Guard{})
+	}, guard)
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}

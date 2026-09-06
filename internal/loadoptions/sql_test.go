@@ -64,15 +64,27 @@ func liveCredential(t *testing.T, env, credentialType string) *loadoptions.Resol
 
 // openLive connects the way a loader does, so a fixture is created through the
 // same path it is later read through.
+//
+// The guard admits exactly the endpoint under test — host and port as the DSN
+// spells them — because the default-deny policy refuses loopback test
+// databases, and AllowPrivateNetworks would prove nothing about production.
 func openLive(t *testing.T, credential *loadoptions.ResolvedCredential) *sqlnode.Connection {
 	t.Helper()
 	driver, _ := sqlnode.DriverForCredential(credential.Record.Type)
-	connection, err := sqlnode.Open(context.Background(), driver, credential.Fields, sqlnode.Guard{})
+	connection, err := sqlnode.Open(context.Background(), driver, credential.Fields, liveGuard(credential))
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
 	t.Cleanup(func() { _ = connection.Close() })
 	return connection
+}
+
+// liveGuard admits exactly the endpoint under test, as written: loaders open
+// their own connections through the registered guard, and the default-deny
+// policy refuses loopback test databases.
+func liveGuard(credential *loadoptions.ResolvedCredential) sqlnode.Guard {
+	endpoint := credential.Fields["host"] + ":" + credential.Fields["port"]
+	return sqlnode.Guard{Policy: safehttp.Policy{AllowedPrivateEndpoints: []string{endpoint}}}
 }
 
 func run(t *testing.T, connection *sqlnode.Connection, statements ...string) {
@@ -127,7 +139,7 @@ func TestTheFiveLoadersReadALiveDatabase(t *testing.T) {
 			}
 
 			resolver := loadoptions.NewResolver(safehttp.DefaultPolicy(), time.Nanosecond)
-			if err := loadoptions.RegisterSQL(resolver, sqlnode.Guard{}); err != nil {
+			if err := loadoptions.RegisterSQL(resolver, liveGuard(credential)); err != nil {
 				t.Fatalf("RegisterSQL() error = %v", err)
 			}
 			load := func(t *testing.T, loader string, dependencies map[string]string) loadoptions.Result {
@@ -229,7 +241,7 @@ func TestAnEmptyCatalogueSaysWhyRatherThanReadingAsAnEmptyDatabase(t *testing.T)
 		t.Run(name, func(t *testing.T) {
 			credential := liveCredential(t, live.env, live.credentialType)
 			resolver := loadoptions.NewResolver(safehttp.DefaultPolicy(), time.Nanosecond)
-			if err := loadoptions.RegisterSQL(resolver, sqlnode.Guard{}); err != nil {
+			if err := loadoptions.RegisterSQL(resolver, liveGuard(credential)); err != nil {
 				t.Fatalf("RegisterSQL() error = %v", err)
 			}
 

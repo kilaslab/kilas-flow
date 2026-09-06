@@ -798,7 +798,11 @@ func TestALiveServerBatchesAtomicallyAndReturnsRows(t *testing.T) {
 	for name, live := range liveDrivers {
 		t.Run(name, func(t *testing.T) {
 			resolver := liveCredential(t, live.env, live.credential)
-			executor := nodes.NewDatabaseExecutor(live.driver, live.credential, sqlnode.Guard{}, sqlnode.DefaultCeiling())
+			// The guard admits exactly the endpoint under test, as written:
+			// the default-deny policy refuses loopback test databases.
+			endpoint := resolver.credential.Fields["host"] + ":" + resolver.credential.Fields["port"]
+			guard := sqlnode.Guard{Policy: safehttp.Policy{AllowedPrivateEndpoints: []string{endpoint}}}
+			executor := nodes.NewDatabaseExecutor(live.driver, live.credential, guard, sqlnode.DefaultCeiling())
 
 			run := func(t *testing.T, parameters map[string]any, items []workflow.Item) (workflow.NodeOutput, error) {
 				t.Helper()
