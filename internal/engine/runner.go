@@ -357,7 +357,6 @@ func (runner *Runner) Run(ctx context.Context, ir workflow.IR, request Request) 
 	}
 	nodes, incoming, outgoing, loops := graph.nodes, graph.incoming, graph.outgoing, graph.loops
 
-
 	// Outputs are kept per run index rather than one per node: a node inside a
 	// loop or a fan-out produces several distinct runs, and an expression that
 	// reaches back to it has to be able to name which one. The last run is what
@@ -572,6 +571,7 @@ func (runner *Runner) runLoop(ctx context.Context, nodes map[string]workflow.IRN
 	}
 	return nil, nil
 }
+
 // snapshotCheckpoint copies the live run state at a suspension. The copies
 // are cheap insurance: the in-memory run ends here, but aliasing its maps
 // into durable storage would corrupt the checkpoint the moment any future

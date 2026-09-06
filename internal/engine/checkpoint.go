@@ -26,13 +26,13 @@ type Checkpoint struct {
 	// SuspendAttempt is the attempt the suspension interrupted, so the
 	// resumed run's trace row keeps the attempt sequence without colliding
 	// with failures recorded before the suspend.
-	SuspendAttempt int `json:"suspendAttempt"`
+	SuspendAttempt int    `json:"suspendAttempt"`
 	Mode           string `json:"mode"`
 	TriggerNodeID  string `json:"triggerNodeId"`
 	// Input is what the suspending node was about to run against. Stored so
 	// the resumed run records the same input and timer resumes can pass it
 	// through unchanged.
-	Input       workflow.NodeInput            `json:"input"`
+	Input       workflow.NodeInput               `json:"input"`
 	Completed   map[string]workflow.NodeOutput   `json:"completed"`
 	Runs        map[string][]workflow.NodeOutput `json:"runs"`
 	NodeOutputs map[string]map[string]any        `json:"nodeOutputs"`

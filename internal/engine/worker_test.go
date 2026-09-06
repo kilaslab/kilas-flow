@@ -80,6 +80,7 @@ func (*idleExecutionStore) StartChild(context.Context, repository.TenantScope, r
 func (*idleExecutionStore) Cancel(context.Context, repository.TenantScope, string) (execution.Record, error) {
 	return execution.Record{}, nil
 }
+
 // This test never suspends, so the durable wait surface is a stub.
 func (*idleExecutionStore) SuspendExecution(context.Context, repository.TenantScope, repository.SuspendWaitParams) (repository.Wait, execution.Record, error) {
 	return repository.Wait{}, execution.Record{}, nil
