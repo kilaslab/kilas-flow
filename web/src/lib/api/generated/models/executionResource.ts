@@ -10,6 +10,7 @@ import type { ExecutionNodeRunResource } from './executionNodeRunResource';
 export interface ExecutionResource {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  approvalUrl?: string;
   cancellationRequestedAt?: string;
   error?: unknown;
   finishedAt?: string;
@@ -20,6 +21,7 @@ export interface ExecutionResource {
   output?: unknown;
   /** The execution that called this one, for a sub-workflow run */
   parentExecutionId?: string;
+  resumeUrl?: string;
   startedAt: string;
   status: string;
   trigger: string;

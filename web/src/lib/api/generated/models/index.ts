@@ -48,6 +48,7 @@ export * from './executionRequestResource';
 export * from './executionResource';
 export * from './executionStartedEvent';
 export * from './executionSummary';
+export * from './executionWaitingEvent';
 export * from './exportedWorkflowResource';
 export * from './exportIssue';
 export * from './exportIssueSeverity';

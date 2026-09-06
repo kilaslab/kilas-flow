@@ -9,6 +9,7 @@ import type { ExecutionCancelledEvent } from './executionCancelledEvent';
 import type { ExecutionCompletedEvent } from './executionCompletedEvent';
 import type { ExecutionFailedEvent } from './executionFailedEvent';
 import type { ExecutionStartedEvent } from './executionStartedEvent';
+import type { ExecutionWaitingEvent } from './executionWaitingEvent';
 import type { NodeCompletedEvent } from './nodeCompletedEvent';
 import type { NodeFailedEvent } from './nodeFailedEvent';
 import type { NodeOutputEvent } from './nodeOutputEvent';
@@ -43,6 +44,14 @@ export type StreamExecutionEvents200Item = {
   data: ExecutionStartedEvent;
   /** The event name. */
   event: 'execution.started';
+  /** The event ID. */
+  id?: number;
+  /** The retry time in milliseconds. */
+  retry?: number;
+} | {
+  data: ExecutionWaitingEvent;
+  /** The event name. */
+  event: 'execution.waiting';
   /** The event ID. */
   id?: number;
   /** The retry time in milliseconds. */

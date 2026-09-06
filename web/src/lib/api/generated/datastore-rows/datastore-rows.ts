@@ -106,7 +106,7 @@ export const getDeleteDatastoreRowsUrl = (id: string,) => {
 }
 
 /**
- * Removes every row matching the filter. An empty filter is refused and removes nothing.
+ * Removes every row matching the filter. An empty filter is refused and removes nothing. One statement, atomic per row on both drivers: the last writer wins and no row lock is taken.
  * @summary Delete rows
  */
 export const deleteDatastoreRows = async (id: string,
@@ -415,7 +415,7 @@ export const getUpdateDatastoreRowsUrl = (id: string,) => {
 }
 
 /**
- * Sets columns on every row matching the filter.
+ * Sets columns on every row matching the filter. One statement, atomic per row on both drivers: concurrent writers never interleave inside a row and the last writer wins; no row lock is taken.
  * @summary Update rows
  */
 export const updateDatastoreRows = async (id: string,
@@ -515,7 +515,7 @@ export const getUpsertDatastoreRowUrl = (id: string,) => {
 }
 
 /**
- * Updates every row matching the filter, or inserts one row when nothing matches.
+ * Updates every row matching the filter, or inserts one row when nothing matches. Read-then-write in no single transaction: two concurrent upserts against the same filter may both insert, so a counter that must not lose writes uses increment instead.
  * @summary Upsert rows
  */
 export const upsertDatastoreRow = async (id: string,
