@@ -1,10 +1,14 @@
 package nodes
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
+	"github.com/kilaslabs/kilas-flow/internal/ai"
 	"github.com/kilaslabs/kilas-flow/internal/datastore"
 	"github.com/kilaslabs/kilas-flow/internal/engine"
 	"github.com/kilaslabs/kilas-flow/internal/expression"
@@ -65,7 +69,7 @@ func datastoreNode() node.Definition {
 		Type:        DatastoreNodeType,
 		Version:     DatastoreVersion,
 		DisplayName: "Data table",
-		Description: "Stores rows in a KilasFlow data table: insert, read, update, upsert and delete without holding a database credential.",
+		Description: "Stores rows in a KilasFlow data table: insert, read, update, upsert and delete without holding a database credential. A filtered update, delete or clear is one statement, atomic per row on both drivers, so concurrent writers never interleave inside a row and the last writer wins; nothing takes a row lock. Upsert is read-then-write in no single transaction, so two concurrent upserts against the same filter may both insert: a counter or flag that must not lose writes uses increment, or a preconditioned write with a retry, never Get followed by Update.",
 		Category:    "Datastore",
 		Group:       []node.NodeGroup{node.GroupInput},
 		Icon:        &node.NodeIcon{Light: "builtin:table"},
@@ -835,6 +839,375 @@ func isTrue(value any) bool {
 		return strings.EqualFold(strings.TrimSpace(typed), "true")
 	case float64:
 		return typed != 0
+	default:
+		return false
+	}
+}
+
+// The datastore tool's server-owned bindings: the data table as an agent
+// tool, beside the step node's own bindings above.
+const (
+	DatastoreToolNodeType   = "kilasflow.datastoreTool"
+	DatastoreToolExecutorID = "core.datastoreTool"
+)
+
+// Bounds for one datastore tool call. The row cap keeps a whole table out of
+// the model's context; the byte cap keeps wide rows from doing the same.
+// Past either the call fails naming the cap, so the model can narrow the
+// filter or lower the limit and try again.
+const (
+	datastoreToolDefaultLimit = 50
+	datastoreToolMaxLimit     = 200
+	datastoreToolMaxBytes     = 256 * 1024
+)
+
+// datastoreToolNode exposes the data table as an agent tool, derived from
+// the ordinary node rather than re-declared: same parameters, same locator,
+// differing only in ports, tool naming, and picker filing.
+func datastoreToolNode() node.Definition {
+	definition := toolVariantOf(datastoreNode(), DatastoreToolNodeType, "Data table Tool", "Reads rows from a KilasFlow data table for an AI Agent.", DatastoreToolExecutorID)
+	// The branch operations' second output belongs to the step node: a tool
+	// emits one descriptor on one port, never a fork.
+	definition.PortsFor = nil
+	definition.Validate = validateDatastoreToolConfiguration
+	return definition
+}
+
+// validateDatastoreToolConfiguration checks the tool's own binding. The tool
+// is read-only: it binds one table and answers filtered reads, so the step
+// node's resource and operation stay on the step and the tool ignores them
+// rather than carrying a second operation list to drift apart.
+func validateDatastoreToolConfiguration(n workflow.Node) error {
+	if err := validateToolNameAndDescription(n); err != nil {
+		return err
+	}
+	locator, ok := property.ReadLocator(n.Parameters["dataTableId"])
+	if !ok || strings.TrimSpace(fmt.Sprint(locator.Value)) == "" {
+		return fmt.Errorf("a datastore tool needs a data table")
+	}
+	// The table is bound when the tool is built, with no item to resolve
+	// against, so an expression here has nothing to resolve against. Refused
+	// at save, and again at run against the unresolved parameters.
+	if expression.IsExpression(locator.Value) {
+		return fmt.Errorf("a datastore tool needs a fixed data table, not an expression")
+	}
+	return nil
+}
+
+// DatastoreToolExecutor emits the descriptor that exposes one data table to
+// an AI Agent. The descriptor carries the table id and its frozen column
+// list — never rows, and no secret, since the store needs no credential.
+// That item is persisted in the execution record and streamed to the live
+// feed, which is why only the identifier travels.
+type DatastoreToolExecutor struct {
+	store DatastoreStore
+}
+
+// NewDatastoreToolExecutor builds the data-table tool executor. A nil store
+// refuses every run with the install message rather than dereferencing.
+func NewDatastoreToolExecutor(store DatastoreStore) *DatastoreToolExecutor {
+	return &DatastoreToolExecutor{store: store}
+}
+
+// Execute binds one table and emits its tool descriptor.
+func (executor *DatastoreToolExecutor) Execute(ctx context.Context, ir workflow.IRNode, _ workflow.NodeInput, request engine.Request) (workflow.NodeOutput, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if executor.store == nil {
+		return nil, fmt.Errorf("node %q: datastore storage is not available on this server", ir.Name)
+	}
+	tenant := strings.TrimSpace(request.Execution.TenantID)
+	if tenant == "" {
+		return nil, fmt.Errorf("node %q: this run carries no tenant", ir.Name)
+	}
+	// The backstop for the compile-time refusal, against the unresolved
+	// parameters: a document can reach an executor without passing
+	// validation, through an import or a direct repository write.
+	locator, ok := property.ReadLocator(ir.Parameters["dataTableId"])
+	if !ok || strings.TrimSpace(fmt.Sprint(locator.Value)) == "" {
+		return nil, fmt.Errorf("node %q: a datastore tool needs a data table", ir.Name)
+	}
+	if expression.IsExpression(locator.Value) {
+		return nil, fmt.Errorf("node %q: a datastore tool needs a fixed data table, not an expression", ir.Name)
+	}
+	id, err := datastoreToolID(ctx, executor.store, tenant, locator)
+	if err != nil {
+		return nil, fmt.Errorf("node %q: %w", ir.Name, err)
+	}
+	definition, err := executor.store.GetDatastore(ctx, tenant, id)
+	if err != nil {
+		return nil, fmt.Errorf("node %q: %w", ir.Name, err)
+	}
+	columns := make([]any, 0, len(definition.Columns))
+	for _, column := range definition.Columns {
+		columns = append(columns, map[string]any{"name": column.Name, "type": string(column.Type)})
+	}
+	return workflow.NodeOutput{{{JSON: map[string]any{descriptorKey: map[string]any{
+		"kind":          toolKindDatastore,
+		"name":          toolNameFor(ir),
+		"description":   textValue(ir.Parameters["toolDescription"], ""),
+		"nodeName":      ir.Name,
+		"datastoreId":   definition.ID,
+		"datastoreName": definition.Name,
+		"columns":       columns,
+	}}}}}, nil
+}
+
+// datastoreToolID resolves the locator to a catalogue id. By-Name resolves
+// through the tenant's own list, so one tenant's name can never address
+// another tenant's table; By-ID is checked against the tenant by the store
+// itself on the next call.
+func datastoreToolID(ctx context.Context, store DatastoreStore, tenant string, locator property.Locator) (string, error) {
+	if !strings.EqualFold(strings.TrimSpace(fmt.Sprint(locator.Mode)), "name") {
+		return fmt.Sprint(locator.Value), nil
+	}
+	want := fmt.Sprint(locator.Value)
+	definitions, err := store.ListDatastores(ctx, tenant)
+	if err != nil {
+		return "", err
+	}
+	for _, definition := range definitions {
+		if strings.EqualFold(definition.Name, want) {
+			return definition.ID, nil
+		}
+	}
+	return "", fmt.Errorf("datastore: unknown datastore %q", want)
+}
+
+// datastoreStoreOf binds the executor, keeping a typed-nil engine from
+// becoming a non-nil store interface that panics on first use.
+func datastoreStoreOf(engine *datastore.Engine) DatastoreStore {
+	var store DatastoreStore
+	if engine != nil {
+		store = engine
+	}
+	return store
+}
+
+// datastoreToolExecutorOf binds the tool executor the way datastoreExecutorOf
+// binds the step node's.
+func datastoreToolExecutorOf(settings executorSettings) engine.Executor {
+	return NewDatastoreToolExecutor(datastoreStoreOf(settings.datastoreEngine))
+}
+
+// datastoreToolColumn is one frozen column the tool's schema enumerates.
+type datastoreToolColumn struct {
+	Name string
+	Type string
+}
+
+// datastoreToolColumns reads the frozen column list back out of a descriptor.
+// Anything shaped wrong is skipped rather than misread; a descriptor left
+// with no columns is refused by the caller, not repaired here.
+func datastoreToolColumns(value any) []datastoreToolColumn {
+	list, ok := value.([]any)
+	if !ok {
+		return nil
+	}
+	columns := make([]datastoreToolColumn, 0, len(list))
+	for _, entry := range list {
+		record, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		name, _ := record["name"].(string)
+		if strings.TrimSpace(name) == "" {
+			continue
+		}
+		columnType, _ := record["type"].(string)
+		columns = append(columns, datastoreToolColumn{Name: name, Type: columnType})
+	}
+	return columns
+}
+
+// datastoreTool reads rows of its bound table for the model. The table is
+// fixed at construction: the schema carries no datastore identifier, and
+// Invoke takes none, so an argument naming another table changes nothing.
+type datastoreTool struct {
+	name          string
+	description   string
+	nodeName      string
+	agentNode     string
+	tenant        string
+	datastoreID   string
+	datastoreName string
+	columns       []datastoreToolColumn
+	store         DatastoreStore
+}
+
+// datastoreToolOperators is the fixed vocabulary a filter condition may use,
+// the same set the step node's conditions panel offers.
+var datastoreToolOperators = []string{"eq", "neq", "like", "ilike", "gt", "gte", "lt", "lte", "isEmpty", "isNotEmpty"}
+
+// Definition describes the tool to the model.
+//
+// Unlike httpRequestTool's open input object — one untyped property the model
+// fills wholesale — this schema is closed: every structural choice is an
+// enum over the bound table's own columns and the fixed operator vocabulary,
+// and only the compared values are free. The schema is a hint a provider may
+// ignore, so Invoke re-checks every column and operator before any statement
+// is built.
+func (tool *datastoreTool) Definition() ai.ToolDefinition {
+	names := make([]string, 0, len(tool.columns))
+	for _, column := range tool.columns {
+		names = append(names, column.Name)
+	}
+	description := tool.description
+	if tool.datastoreName != "" {
+		description += " Queries the " + strconv.Quote(tool.datastoreName) + " data table (columns: " + strings.Join(names, ", ") + ")."
+	}
+	return ai.ToolDefinition{
+		Name:        tool.name,
+		Description: description,
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"match": map[string]any{
+					"type":        "string",
+					"enum":        []string{"any", "all"},
+					"description": "Whether any or all of the conditions must hold for a row to match.",
+				},
+				"conditions": map[string]any{
+					"type":        "array",
+					"description": "Which rows to return. Omit for the whole table, up to the limit.",
+					"items": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"columnName": map[string]any{
+								"type":        "string",
+								"enum":        names,
+								"description": "The column to compare, one of this table's columns.",
+							},
+							"condition": map[string]any{
+								"type":        "string",
+								"enum":        datastoreToolOperators,
+								"description": "How to compare the column to the value.",
+							},
+							"value": map[string]any{
+								"description": "The value to compare against. Omit for isEmpty and isNotEmpty.",
+							},
+						},
+						"required":             []string{"columnName", "condition"},
+						"additionalProperties": false,
+					},
+				},
+				"limit": map[string]any{
+					"type":        "integer",
+					"minimum":     float64(1),
+					"maximum":     float64(datastoreToolMaxLimit),
+					"description": "How many rows to return at most. Defaults to 50.",
+				},
+			},
+			"additionalProperties": false,
+		},
+	}
+}
+
+// datastoreToolArgs is one tool call's arguments. Unknown fields — including
+// a datastore identifier, which the schema never declares — decode to
+// nothing: the call always reads the bound table.
+type datastoreToolArgs struct {
+	Match      string                  `json:"match"`
+	Conditions []datastoreToolCallCond `json:"conditions"`
+	Limit      int                     `json:"limit"`
+}
+
+// datastoreToolCallCond is one filter row in a tool call's arguments.
+type datastoreToolCallCond struct {
+	ColumnName string `json:"columnName"`
+	Condition  string `json:"condition"`
+	Value      any    `json:"value"`
+}
+
+// Invoke runs one filtered read against the bound table and returns the rows
+// as data. A row whose contents read as an instruction is returned as data
+// like any other value: it widens neither the schema nor what the next call
+// accepts, because neither is ever derived from row contents.
+func (tool *datastoreTool) Invoke(ctx context.Context, arguments json.RawMessage) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	var args datastoreToolArgs
+	if len(bytes.TrimSpace(arguments)) > 0 {
+		if err := json.Unmarshal(arguments, &args); err != nil {
+			return "", fmt.Errorf("node %q: tool %q: invalid arguments: %w", tool.agentNode, tool.name, err)
+		}
+	}
+	known := make(map[string]bool, len(tool.columns))
+	for _, column := range tool.columns {
+		known[column.Name] = true
+	}
+	conditions := make([]datastore.NodeFilterCondition, 0, len(args.Conditions))
+	for _, cond := range args.Conditions {
+		if !known[cond.ColumnName] {
+			return "", fmt.Errorf("node %q: tool %q: unknown column %q (the table has columns: %s)", tool.agentNode, tool.name, cond.ColumnName, strings.Join(tool.columnNames(), ", "))
+		}
+		if !datastoreToolOperatorOK(cond.Condition) {
+			return "", fmt.Errorf("node %q: tool %q: unknown condition %q (supported: %s)", tool.agentNode, tool.name, cond.Condition, strings.Join(datastoreToolOperators, ", "))
+		}
+		conditions = append(conditions, datastore.NodeFilterCondition{
+			KeyName:   cond.ColumnName,
+			Condition: datastore.Condition(cond.Condition),
+			KeyValue:  cond.Value,
+		})
+	}
+	var filter *datastore.Filter
+	if len(conditions) > 0 {
+		match := args.Match
+		if strings.TrimSpace(match) == "" {
+			match = "any"
+		}
+		var err error
+		filter, err = datastore.NodeConditionsToFilter(match, conditions)
+		if err != nil {
+			return "", fmt.Errorf("node %q: tool %q: %w", tool.agentNode, tool.name, err)
+		}
+	}
+	limit := args.Limit
+	if limit <= 0 {
+		limit = datastoreToolDefaultLimit
+	}
+	if limit > datastoreToolMaxLimit {
+		limit = datastoreToolMaxLimit
+	}
+	page, err := tool.store.List(ctx, tool.tenant, tool.datastoreID, datastore.RowQuery{Filter: filter, Limit: limit})
+	if err != nil {
+		return "", fmt.Errorf("node %q: tool %q: %w", tool.agentNode, tool.name, err)
+	}
+	rows := page.Rows
+	if rows == nil {
+		rows = []datastore.Row{}
+	}
+	encoded, err := json.Marshal(map[string]any{"rows": rows, "truncated": page.NextCursor != ""})
+	if err != nil {
+		return "", fmt.Errorf("node %q: tool %q: encode tool result: %w", tool.agentNode, tool.name, err)
+	}
+	if len(encoded) > datastoreToolMaxBytes {
+		return "", fmt.Errorf("node %q: tool %q: the result is %d bytes, past the %d-byte cap: narrow the filter or lower the limit", tool.agentNode, tool.name, len(encoded), datastoreToolMaxBytes)
+	}
+	return string(encoded), nil
+}
+
+// columnNames lists the frozen columns for refusal messages, so a refused
+// call tells the model what it may name instead.
+func (tool *datastoreTool) columnNames() []string {
+	names := make([]string, 0, len(tool.columns))
+	for _, column := range tool.columns {
+		names = append(names, column.Name)
+	}
+	return names
+}
+
+// datastoreToolOperatorOK reports whether the operator belongs to the fixed
+// vocabulary. A switch rather than a set: an unrecognised operator is an
+// error naming the supported set, never a dropped predicate.
+func datastoreToolOperatorOK(operator string) bool {
+	switch datastore.Condition(operator) {
+	case datastore.CondEq, datastore.CondNeq, datastore.CondLike, datastore.CondILike,
+		datastore.CondGt, datastore.CondGte, datastore.CondLt, datastore.CondLte,
+		datastore.CondIsEmpty, datastore.CondIsNotEmpty:
+		return true
 	default:
 		return false
 	}

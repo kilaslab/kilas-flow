@@ -247,15 +247,15 @@ func (handler *Datastores) Register(api huma.API) {
 	}, handler.GetRow)
 	huma.Register(api, huma.Operation{
 		OperationID: "update-datastore-rows", Method: http.MethodPut, Path: "/datastores/{id}/rows",
-		Summary: "Update rows", Description: "Sets columns on every row matching the filter.", Tags: []string{"Datastore rows"},
+		Summary: "Update rows", Description: "Sets columns on every row matching the filter. One statement, atomic per row on both drivers: concurrent writers never interleave inside a row and the last writer wins; no row lock is taken.", Tags: []string{"Datastore rows"},
 	}, handler.UpdateRows)
 	huma.Register(api, huma.Operation{
 		OperationID: "delete-datastore-rows", Method: http.MethodDelete, Path: "/datastores/{id}/rows",
-		Summary: "Delete rows", Description: "Removes every row matching the filter. An empty filter is refused and removes nothing.", Tags: []string{"Datastore rows"},
+		Summary: "Delete rows", Description: "Removes every row matching the filter. An empty filter is refused and removes nothing. One statement, atomic per row on both drivers: the last writer wins and no row lock is taken.", Tags: []string{"Datastore rows"},
 	}, handler.DeleteRows)
 	huma.Register(api, huma.Operation{
 		OperationID: "upsert-datastore-row", Method: http.MethodPost, Path: "/datastores/{id}/rows/upsert",
-		Summary: "Upsert rows", Description: "Updates every row matching the filter, or inserts one row when nothing matches.", Tags: []string{"Datastore rows"},
+		Summary: "Upsert rows", Description: "Updates every row matching the filter, or inserts one row when nothing matches. Read-then-write in no single transaction: two concurrent upserts against the same filter may both insert, so a counter that must not lose writes uses increment instead.", Tags: []string{"Datastore rows"},
 	}, handler.UpsertRow)
 }
 

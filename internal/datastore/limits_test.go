@@ -180,6 +180,56 @@ func TestRowLimitKeepsExistingRows(t *testing.T) {
 	}
 }
 
+// The row ceiling is answered by a bounded existence probe, never a COUNT(*)
+// over the whole table: on SQLite every datastore operation shares one
+// connection, and scanning a full table to answer "are there too many rows"
+// would hold it for the scan's duration. A wall-clock assertion would be
+// flaky by nature, so this pins the construction instead — the probe stops
+// at the limit-th row by LIMIT 1 OFFSET, whatever the table holds past it.
+func TestRowLimitUsesABoundedProbe(t *testing.T) {
+	for _, drv := range testDrivers() {
+		t.Run(drv.name, func(t *testing.T) {
+			_, eng := drv.open(t, "")
+			ctx := context.Background()
+			if err := eng.SetLimits(Limits{
+				MaxDatastoresPerTenant: 10,
+				MaxColumnsPerDatastore: 10,
+				MaxRowsPerDatastore:    3,
+				MaxValueBytes:          1 << 20,
+			}); err != nil {
+				t.Fatalf("SetLimits: %v", err)
+			}
+			ds, err := eng.Create(ctx, "tenant-1", "probed", []ColumnInput{{Name: "n", Type: "number"}})
+			if err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+			for i := 1; i <= 3; i++ {
+				if _, err := eng.Insert(ctx, "tenant-1", ds.ID, map[string]any{"n": float64(i)}); err != nil {
+					t.Fatalf("Insert %d: %v", i, err)
+				}
+			}
+			var composed []string
+			eng.composeHook = func(statement string) { composed = append(composed, statement) }
+			if _, err := eng.Insert(ctx, "tenant-1", ds.ID, map[string]any{"n": 4.0}); err == nil {
+				t.Fatal("Insert past max succeeded, want the refusal")
+			}
+			var probed bool
+			for _, statement := range composed {
+				upper := strings.ToUpper(statement)
+				if strings.Contains(upper, "COUNT(*)") {
+					t.Errorf("row check scanned: %q, want the bounded probe", statement)
+				}
+				if strings.Contains(upper, "LIMIT 1 OFFSET") {
+					probed = true
+				}
+			}
+			if !probed {
+				t.Errorf("no bounded probe in %q, want SELECT 1 .. LIMIT 1 OFFSET", composed)
+			}
+		})
+	}
+}
+
 // Bounds must be positive: zero or negative would refuse every write, an
 // outage shaped like a configuration, so SetLimits rejects it with the
 // offending field named.

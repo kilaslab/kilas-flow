@@ -101,3 +101,44 @@ The trap is the row lock that is not there. Anyone reading `clause.Locking{Stren
   race still belongs to queue/worker mode per the ticket); node/API
   description wording (node surface belongs to another agent — the
   semantics doc they must quote lives in concurrency.go's header).
+
+## Evidence — 2026-09-06 (DatastoreFinish slice)
+
+- Wording landed, quoting `concurrency.go`'s header (the wording source of
+  record). `nodes/datastore.go` Description now states: filtered
+  update/delete/clear are one statement, atomic per row on both drivers,
+  last writer wins, no row locks; upsert is read-then-write in no single
+  transaction, so counters use increment or a preconditioned write with a
+  retry, never Get+Update. API operation descriptions for update-rows,
+  delete-rows and upsert-row (`internal/api/handlers/datastores.go`)
+  carry the same sentences additively. Verified live: the booted server's
+  `/api/openapi.json` serves the new descriptions verbatim; SurfaceFinish
+  regenerated the web API client + SDK types carrying them.
+- PG evidence (was "code-reviewed but unverified"): the concurrency suite
+  now runs against live PostgreSQL (pgvector/pg17 image,
+  `KILASFLOW_TEST_POSTGRES_DSN`) — `TestConcurrentIncrementsLoseNoWrites`
+  (10x10 land exactly 100), `TestPreconditionedUpdate`,
+  `TestPreconditionedDelete`, `TestPurgeTenantDropsTablesAndKeepsNeighbours`
+  all PASS on both dialects. `make smoke-postgres` itself stays red for
+  the unrelated pgvector/compose reason recorded on FEAT-cjpbe6.
+- AMENDMENT (criterion 1, ON CONFLICT single-statement upsert): cannot be
+  met honestly — do not fake it. Physical tables carry no unique
+  constraint on user columns, so there is nothing to conflict on; an
+  `ON CONFLICT` clause without a conflict target/arbiter is a parse
+  error or dead syntax, and inventing a unique index on user data to
+  satisfy the test would change storage semantics for a test's sake.
+  The honest primitives are the ones shipped and tested: single-statement
+  `Increment` (atomic per row, both drivers) and single-row CAS on
+  `updatedAt` (`UpdateWithPrecondition`/`DeleteWithPrecondition`,
+  `PreconditionError` carries the current stamp for retry without a
+  second read). Proposed: strike criterion 1, accept the CAS/increment
+  tests as the atomicity proof. Needs epic-owner ack.
+- Widened-SQLite-pool run (criterion 8): still not runnable — the pool is
+  pinned to 1 inside `database.Open` with no override knob, and adding
+  one to satisfy a test would change production pinning. The concurrency
+  semantics hold by construction (single statements + CAS), identical on
+  both drivers, and the PostgreSQL halves above exercise them under a
+  real multi-connection pool. Recorded; same ack needed.
+- Verdict: this ticket STAYS DOING (carried). Wording + PG halves are
+  proven; criteria 1 and 8 are amended, not met, and closing over amended
+  criteria needs the epic owner's explicit sign-off.
