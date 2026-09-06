@@ -46,6 +46,7 @@ type Config struct {
 	SQL        SQLNodes     `koanf:"sql"`
 	Credential Credential   `koanf:"credential"`
 	Binary     Binary       `koanf:"binary"`
+	Packs      Packs        `koanf:"packs"`
 	Log        Log          `koanf:"log"`
 }
 
@@ -459,6 +460,22 @@ type Binary struct {
 	// oversized response is refused rather than truncated.
 	MaxBytes int64 `koanf:"max_bytes"`
 }
+// Packs configures directory-loaded node packs: the install path that needs
+// no rebuild. Each immediate subdirectory of Dir is one pack, carrying a
+// pack.json manifest beside the pack.sha256 checksum the operator approved.
+//
+// The section name is one word for the same reason Binary is: envKeyToPath
+// treats the first underscore as the section separator, so a two-word
+// section could never be set from the environment.
+type Packs struct {
+	// Dir is the directory packs are loaded from at startup, before the
+	// registry is shared. Empty disables directory loading, and an absent or
+	// empty directory is a normal silent condition, so the default deployment
+	// is unchanged. A pack that fails to load refuses the whole boot, naming
+	// the pack and the reason.
+	// Env: KILASFLOW_PACKS_DIR. Default: "".
+	Dir string `koanf:"dir"`
+}
 
 // Log configures structured logging.
 type Log struct {
@@ -560,6 +577,11 @@ func Default() Config {
 			// one that says it is not configured.
 			Root:     "",
 			MaxBytes: 16 << 20,
+		},
+		Packs: Packs{
+			// Empty disables directory loading: the default deployment runs
+			// the embedded packs only, exactly as before.
+			Dir: "",
 		},
 		Log: Log{
 			Level:  "info",

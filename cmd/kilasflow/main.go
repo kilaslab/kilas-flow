@@ -177,6 +177,18 @@ func run() error {
 	}); err != nil {
 		return fmt.Errorf("register the WAHA node pack: %w", err)
 	}
+	// Directory-sourced packs: the no-rebuild install path. Loaded here, at
+	// composition before the registry is shared, through the same Decode →
+	// Load → Register path as the embedded packs above. An empty or absent
+	// directory is silent; any pack failure refuses the boot, naming the pack
+	// and the reason rather than serving a half-registered catalogue.
+	if err := nodepack.LoadDir(nodepack.DirDeps{
+		Definitions: nodeRegistry, Routes: routes, Triggers: packTriggers,
+		Deliveries: webhookTriggers, Lifecycles: webhookLifecycles,
+		Executors: executorRegistry, Options: optionLoader,
+	}, cfg.Packs.Dir); err != nil {
+		return fmt.Errorf("load directory node packs: %w", err)
+	}
 
 	// Credentials are optional at boot: an install with no key still runs
 	// workflows, and only credential operations report that it is unconfigured.

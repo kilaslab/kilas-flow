@@ -275,6 +275,15 @@ binary:
   # Env: KILASFLOW_BINARY_MAX_BYTES
   max_bytes: 16777216
 
+packs:
+  # Dir is the directory packs are loaded from at startup, before the
+  # registry is shared. Empty disables directory loading, and an absent or
+  # empty directory is a normal silent condition, so the default deployment
+  # is unchanged. A pack that fails to load refuses the whole boot, naming
+  # the pack and the reason.
+  # Env: KILASFLOW_PACKS_DIR
+  dir: ''
+
 log:
   # Level is one of debug, info, warn or error. Unknown values fall back to
   # info rather than refusing to start.

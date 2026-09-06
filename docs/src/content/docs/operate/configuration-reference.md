@@ -619,6 +619,29 @@ instead of dropping an attachment on the floor.
 MaxBytes bounds one payload. It is enforced while reading, so an
 oversized response is refused rather than truncated.
 
+## packs
+
+Packs configures directory-loaded node packs: the install path that needs
+no rebuild. Each immediate subdirectory of Dir is one pack, carrying a
+pack.json manifest beside the pack.sha256 checksum the operator approved.
+
+The section name is one word for the same reason Binary is: envKeyToPath
+treats the first underscore as the section separator, so a two-word
+section could never be set from the environment.
+
+### packs.dir
+
+- Type: `string`
+- Default: `''`
+- Environment: `KILASFLOW_PACKS_DIR`
+- Required: no
+
+Dir is the directory packs are loaded from at startup, before the
+registry is shared. Empty disables directory loading, and an absent or
+empty directory is a normal silent condition, so the default deployment
+is unchanged. A pack that fails to load refuses the whole boot, naming
+the pack and the reason.
+
 ## log
 
 Log configures structured logging.
