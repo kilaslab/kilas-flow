@@ -10,10 +10,15 @@ import (
 type Status string
 
 const (
-	StatusQueued     Status = "queued"
-	StatusRunning    Status = "running"
+	StatusQueued Status = "queued"
+	StatusRunning Status = "running"
 	StatusCancelling Status = "cancelling"
-	StatusSucceeded  Status = "succeeded"
+	// StatusWaiting is a suspended execution: it holds no worker and no
+	// lease, and ClaimNext cannot see it until a resume re-queues it.
+	// Non-terminal, so the live event feed stays open across the wait
+	// rather than closing and forcing a reconnect.
+	StatusWaiting Status = "waiting"
+	StatusSucceeded Status = "succeeded"
 	// StatusSkipped is a node the runner never invoked because no incoming item
 	// channel delivered anything — the untaken arm of a branch. It is neither a
 	// success nor a failure, and recording it as either would misread a pruned

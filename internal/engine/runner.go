@@ -271,21 +271,30 @@ func NewRunner(executors *Registry) *Runner {
 	return &Runner{executors: executors}
 }
 
-// Run executes every node of one compiled graph exactly once.
-func (runner *Runner) Run(ctx context.Context, ir workflow.IR, request Request) (Result, error) {
-	if runner == nil || runner.executors == nil {
-		return Result{}, fmt.Errorf("engine executor registry is required")
-	}
+// preparedGraph is the scheduling shape of one compiled run: the live nodes,
+// their edges partitioned both ways, and the loop back edges ordinary
+// scheduling must ignore.
+type preparedGraph struct {
+	nodes    map[string]workflow.IRNode
+	incoming map[string][]workflow.IREdge
+	outgoing map[string]int
+	loops    map[string]*loopGraph
+}
+
+// prepareGraph builds the scheduling shape Run and Resume share from a
+// compiled graph: only the trigger's own subgraph executes, so a node fed by
+// two triggers waits only on the one that fired.
+func prepareGraph(ir workflow.IR, triggerNodeID string) (preparedGraph, error) {
 	if len(ir.Nodes) == 0 {
-		return Result{}, fmt.Errorf("compiled workflow graph is empty")
+		return preparedGraph{}, fmt.Errorf("compiled workflow graph is empty")
 	}
 	// Only the part of the graph belonging to this run's trigger executes. The
 	// rest is not skipped node by node — it is absent, so a node fed by both
 	// triggers waits only on the one that fired rather than deadlocking on the
 	// one that did not.
-	active, err := activeNodes(ir, request.TriggerNodeID)
+	active, err := activeNodes(ir, triggerNodeID)
 	if err != nil {
-		return Result{}, err
+		return preparedGraph{}, err
 	}
 	nodes := make(map[string]workflow.IRNode, len(active))
 	for _, node := range ir.Nodes {
@@ -325,6 +334,20 @@ func (runner *Runner) Run(ctx context.Context, ir workflow.IR, request Request) 
 			return a.ID < b.ID
 		})
 	}
+	return preparedGraph{nodes: nodes, incoming: incoming, outgoing: outgoing, loops: loops}, nil
+}
+
+// Run executes every node of one compiled graph exactly once.
+func (runner *Runner) Run(ctx context.Context, ir workflow.IR, request Request) (Result, error) {
+	if runner == nil || runner.executors == nil {
+		return Result{}, fmt.Errorf("engine executor registry is required")
+	}
+	graph, err := prepareGraph(ir, request.TriggerNodeID)
+	if err != nil {
+		return Result{}, err
+	}
+	nodes, incoming, outgoing, loops := graph.nodes, graph.incoming, graph.outgoing, graph.loops
+
 
 	// Outputs are kept per run index rather than one per node: a node inside a
 	// loop or a fan-out produces several distinct runs, and an expression that
@@ -342,6 +365,21 @@ func (runner *Runner) Run(ctx context.Context, ir workflow.IR, request Request) 
 		request.NodeItems = make(map[string]expression.NodeItem, len(nodes))
 	}
 	result := Result{NodeRuns: make([]NodeRun, 0, len(nodes)), Output: make(map[string]workflow.NodeOutput)}
+	suspended, err := runner.runLoop(ctx, nodes, incoming, outgoing, loops, &request, completed, runs, &result)
+	if err != nil {
+		return result, err
+	}
+	if suspended != nil {
+		return result, suspended
+	}
+	return result, nil
+}
+
+// runLoop schedules every node the graph still owes. It is the single pass
+// Run and Resume share: Run starts it empty, Resume starts it from a
+// checkpoint. A suspension returns the signal with the checkpoint attached,
+// alongside the runs produced so far; any other error fails the run.
+func (runner *Runner) runLoop(ctx context.Context, nodes map[string]workflow.IRNode, incoming map[string][]workflow.IREdge, outgoing map[string]int, loops map[string]*loopGraph, request *Request, completed map[string]workflow.NodeOutput, runs map[string][]workflow.NodeOutput, result *Result) (*SuspendError, error) {
 	for len(completed) < len(nodes) {
 		ready := make([]string, 0, len(nodes)-len(completed))
 		for nodeID := range nodes {
@@ -354,14 +392,14 @@ func (runner *Runner) Run(ctx context.Context, ir workflow.IR, request Request) 
 			ready = append(ready, nodeID)
 		}
 		if len(ready) == 0 {
-			return Result{}, fmt.Errorf("compiled workflow graph has no schedulable node")
+			return nil, fmt.Errorf("compiled workflow graph has no schedulable node")
 		}
 		sort.Strings(ready)
 		nodeID := ready[0]
 		node := nodes[nodeID]
 		input, err := nodeInput(iterationEdges(nodeID, incoming[nodeID], loops), completed)
 		if err != nil {
-			return Result{}, fmt.Errorf("build node %q input: %w", nodeID, err)
+			return nil, fmt.Errorf("build node %q input: %w", nodeID, err)
 		}
 
 		// A node whose item channel delivered nothing is not run at all.
@@ -397,7 +435,7 @@ func (runner *Runner) Run(ctx context.Context, ir workflow.IR, request Request) 
 
 		executor, found := runner.executors.Lookup(node.Definition.ExecutorID)
 		if !found {
-			return Result{}, fmt.Errorf("node %q executor %q is not registered", nodeID, node.Definition.ExecutorID)
+			return nil, fmt.Errorf("node %q executor %q is not registered", nodeID, node.Definition.ExecutorID)
 		}
 
 		// The attempt loop. The per-node context is rebuilt each time round,
@@ -418,10 +456,23 @@ func (runner *Runner) Run(ctx context.Context, ir workflow.IR, request Request) 
 				result.NodeRuns = append(result.NodeRuns, NodeRun{
 					NodeID: nodeID, Input: cloneInput(input), Error: err, Attempt: attempt, ErrorCode: "config.invalid",
 				})
-				return result, err
+				return nil, err
 			}
-			output, err = executor.Execute(nodeCtx, node, cloneInput(input), cloneRequest(request))
+			output, err = executor.Execute(nodeCtx, node, cloneInput(input), cloneRequest(*request))
 			cancel()
+			var suspended *SuspendError
+			if err != nil && errors.As(err, &suspended) {
+				// Suspension is neither success nor failure: the run stops
+				// here with no retry and no failure row, and the service
+				// persists the continuation durably.
+				raw, cerr := marshalCheckpoint(snapshotCheckpoint(nodeID, suspended.Mode, input, attempt, completed, runs, request, result))
+				if cerr != nil {
+					return nil, cerr
+				}
+				suspended.NodeID = nodeID
+				suspended.Checkpoint = raw
+				return suspended, nil
+			}
 			if err == nil {
 				// Earlier attempts were already recorded as they failed; this
 				// one is recorded below with its successful output.
@@ -448,7 +499,7 @@ func (runner *Runner) Run(ctx context.Context, ir workflow.IR, request Request) 
 					result.NodeRuns = append(result.NodeRuns, NodeRun{
 						NodeID: nodeID, Input: cloneInput(input), Error: ctx.Err(), Attempt: attempt + 1, ErrorCode: "execution.cancelled",
 					})
-					return result, fmt.Errorf("execute node %q: %w", nodeID, ctx.Err())
+					return nil, fmt.Errorf("execute node %q: %w", nodeID, ctx.Err())
 				}
 				continue
 			}
@@ -459,7 +510,7 @@ func (runner *Runner) Run(ctx context.Context, ir workflow.IR, request Request) 
 				result.NodeRuns = append(result.NodeRuns, NodeRun{
 					NodeID: nodeID, Input: cloneInput(input), Error: lastErr, Attempt: usedAttempt, ErrorCode: lastCode,
 				})
-				return result, fmt.Errorf("execute node %q: %w", nodeID, lastErr)
+				return nil, fmt.Errorf("execute node %q: %w", nodeID, lastErr)
 			}
 			// Tolerated: the node emits error items rather than aborting, and
 			// the run carries on. The items are *not* the input passed through
@@ -482,7 +533,7 @@ func (runner *Runner) Run(ctx context.Context, ir workflow.IR, request Request) 
 		}
 
 		if got, want := len(output), len(node.Definition.Outputs); got != want {
-			return Result{}, fmt.Errorf("node %q returned %d output streams, want %d", nodeID, got, want)
+			return nil, fmt.Errorf("node %q returned %d output streams, want %d", nodeID, got, want)
 		}
 		output = cloneOutput(output)
 		// Provenance the executor did not set is inferred by position, but only
@@ -509,6 +560,127 @@ func (runner *Runner) Run(ctx context.Context, ir workflow.IR, request Request) 
 		if outgoing[nodeID] == 0 {
 			result.Output[nodeID] = cloneOutput(output)
 		}
+	}
+	return nil, nil
+}
+// snapshotCheckpoint copies the live run state at a suspension. The copies
+// are cheap insurance: the in-memory run ends here, but aliasing its maps
+// into durable storage would corrupt the checkpoint the moment any future
+// change touches them before the marshal.
+func snapshotCheckpoint(nodeID, mode string, input workflow.NodeInput, attempt int, completed map[string]workflow.NodeOutput, runs map[string][]workflow.NodeOutput, request *Request, result *Result) Checkpoint {
+	checkpoint := Checkpoint{
+		SuspendNode: nodeID, SuspendAttempt: attempt, Mode: mode,
+		TriggerNodeID: request.TriggerNodeID,
+		Input:         cloneInput(input),
+		Completed:     make(map[string]workflow.NodeOutput, len(completed)),
+		Runs:          make(map[string][]workflow.NodeOutput, len(runs)),
+		NodeOutputs:   make(map[string]map[string]any, len(request.NodeOutputs)),
+		NodeItems:     make(map[string]expression.NodeItem, len(request.NodeItems)),
+		Output:        make(map[string]workflow.NodeOutput, len(result.Output)),
+	}
+	for id, output := range completed {
+		checkpoint.Completed[id] = cloneOutput(output)
+	}
+	for id, outputs := range runs {
+		restored := make([]workflow.NodeOutput, 0, len(outputs))
+		for _, output := range outputs {
+			restored = append(restored, cloneOutput(output))
+		}
+		checkpoint.Runs[id] = restored
+	}
+	for name, fields := range request.NodeOutputs {
+		restored := make(map[string]any, len(fields))
+		for key, value := range fields {
+			restored[key] = value
+		}
+		checkpoint.NodeOutputs[name] = restored
+	}
+	for name, item := range request.NodeItems {
+		checkpoint.NodeItems[name] = item
+	}
+	for id, output := range result.Output {
+		checkpoint.Output[id] = cloneOutput(output)
+	}
+	return checkpoint
+}
+
+// Resume continues a run suspended at checkpoint.SuspendNode, completing that
+// node with resumeOutput and then running the same pass Run would have. Nodes
+// completed before suspension never execute again: their outputs arrive in
+// the checkpoint, not from a second run.
+func (runner *Runner) Resume(ctx context.Context, ir workflow.IR, request Request, checkpoint Checkpoint, resumeOutput workflow.NodeOutput) (Result, error) {
+	if runner == nil || runner.executors == nil {
+		return Result{}, fmt.Errorf("engine executor registry is required")
+	}
+	if checkpoint.TriggerNodeID != request.TriggerNodeID {
+		return Result{}, fmt.Errorf("wait checkpoint is for a different trigger")
+	}
+	graph, err := prepareGraph(ir, request.TriggerNodeID)
+	if err != nil {
+		return Result{}, err
+	}
+	node, found := graph.nodes[checkpoint.SuspendNode]
+	if !found {
+		return Result{}, fmt.Errorf("suspended node %q is not in the compiled graph", checkpoint.SuspendNode)
+	}
+	if _, done := checkpoint.Completed[checkpoint.SuspendNode]; done {
+		return Result{}, fmt.Errorf("suspended node %q already completed", checkpoint.SuspendNode)
+	}
+	if got, want := len(resumeOutput), len(node.Definition.Outputs); got != want {
+		return Result{}, fmt.Errorf("resume output for node %q has %d streams, want %d", checkpoint.SuspendNode, got, want)
+	}
+	if request.NodeOutputs == nil {
+		request.NodeOutputs = make(map[string]map[string]any, len(checkpoint.NodeOutputs))
+	}
+	if request.NodeItems == nil {
+		request.NodeItems = make(map[string]expression.NodeItem, len(checkpoint.NodeItems))
+	}
+	for name, fields := range checkpoint.NodeOutputs {
+		request.NodeOutputs[name] = fields
+	}
+	for name, item := range checkpoint.NodeItems {
+		request.NodeItems[name] = item
+	}
+	completed := checkpoint.Completed
+	runs := checkpoint.Runs
+	result := Result{
+		NodeRuns: make([]NodeRun, 0, len(graph.nodes)),
+		Output:   make(map[string]workflow.NodeOutput, len(checkpoint.Output)),
+	}
+	for id, output := range checkpoint.Output {
+		result.Output[id] = output
+	}
+	// The suspending node completes here, mirroring a normal completion:
+	// provenance, expression state, the trace row, and loop bookkeeping all
+	// behave as if the node had just run.
+	nodeID := checkpoint.SuspendNode
+	output := cloneOutput(resumeOutput)
+	stampProvenance(node, graph.incoming[nodeID], checkpoint.Input, output, len(runs[nodeID]))
+	completed[nodeID] = output
+	runs[nodeID] = append(runs[nodeID], cloneOutput(output))
+	if first, ok := firstItem(output); ok {
+		request.NodeOutputs[node.Name] = first
+	}
+	request.NodeItems[node.Name] = nodeItemFor(node, output, checkpoint.Input)
+	attempt := checkpoint.SuspendAttempt
+	if attempt < 1 {
+		attempt = 1
+	}
+	result.NodeRuns = append(result.NodeRuns, NodeRun{
+		NodeID: nodeID, Input: cloneInput(checkpoint.Input), Output: output,
+		Attempt: attempt, RunIndex: len(runs[nodeID]) - 1,
+	})
+	reopenLoops(nodeID, node, output, graph.loops, completed)
+	closeIteration(nodeID, graph.incoming, graph.loops, completed)
+	if graph.outgoing[nodeID] == 0 {
+		result.Output[nodeID] = cloneOutput(output)
+	}
+	suspended, err := runner.runLoop(ctx, graph.nodes, graph.incoming, graph.outgoing, graph.loops, &request, completed, runs, &result)
+	if err != nil {
+		return result, err
+	}
+	if suspended != nil {
+		return result, suspended
 	}
 	return result, nil
 }

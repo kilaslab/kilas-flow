@@ -93,3 +93,18 @@ step (main.go/config outside this slice — sketch in keysource.go header).
   the grant, ScrubResolved incl. body interpolation.
 - Suites: internal/credentials, internal/repository, internal/database green.
 - Docs: operate/security.md note (manager key + references + tokens).
+
+## Work evidence — SurfaceWiring (2026-09-06, not started)
+
+Budget forced sequencing: durable waits first. Secrets boot wiring untouched
+this batch; mechanism (keysource/external/vault/binding layers by
+LongtailSecrets) stands. Ticket stays doing. Next batch, in order:
+- internal/config one-word `secrets` section (manager_addr,
+  manager_token_env, master_key) + Validate rejects partial + regen via
+  `go run ./scripts/config-reference.go`.
+- cmd/kilasflow boot beside the env switch: build Vault provider, call
+  Health, refuse startup joining ErrManagerUnreachable on any failure, never
+  fall through to the no-key path; any error refuses boot.
+- Tests: unreachable manager (127.0.0.1:1 + allowed_private_endpoints grant,
+  never allow_private_networks) errors Is ErrManagerUnreachable; healthy stub
+  returns the key; unconfigured keeps the env path.

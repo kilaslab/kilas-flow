@@ -28,6 +28,7 @@ func Models() []any {
 		&workflowPublishEventModel{},
 		&executionModel{},
 		&executionNodeRunModel{},
+		&executionWaitModel{},
 		&credentialModel{},
 		&secretBindingModel{},
 		&webhookBindingModel{},

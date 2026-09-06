@@ -391,6 +391,10 @@ func (store *GORMExecutionStore) ClaimNext(ctx context.Context, workerID string,
 		// real. Either way the UPDATE re-applies the whole predicate and a
 		// lost race reads as RowsAffected == 0, never as a double claim.
 		//
+		// A waiting execution is excluded by the status allowlist in both the
+		// SELECT and the UPDATE: suspending releases the lease, so without
+		// this a suspended run would read as a crashed one and be reclaimed
+		// mid-wait.
 		// First appends its own primary-key ordering, so the statement the
 		// server receives ends ORDER BY started_at ASC, id ASC,
 		// "executions"."id" LIMIT 1 — any EXPLAIN evidence must use that
@@ -557,7 +561,10 @@ func (store *GORMExecutionStore) Cancel(ctx context.Context, tenant TenantScope,
 	now := time.Now().UTC()
 	updates := map[string]any{}
 	switch execution.Status(model.Status) {
-	case execution.StatusQueued:
+	// A waiting execution holds no worker and no lease, so cancellation
+	// completes it at once like a queued one: entering cancelling would wait
+	// for a worker that does not exist to observe the request.
+	case execution.StatusQueued, execution.StatusWaiting:
 		updates["status"] = string(execution.StatusCancelled)
 		updates["finished_at"] = &now
 		updates["lease_owner"] = ""

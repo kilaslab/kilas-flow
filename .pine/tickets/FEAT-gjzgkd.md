@@ -116,3 +116,20 @@ Full package suite could not go green in-tree at handoff: sibling
 `credentials_external_test.go` (LongtailSecrets, mid-flight) does not compile;
 verified green in a scratch copy minus that file. Pre-existing tests
 unaffected (same run).
+
+## Work evidence — SurfaceWiring (2026-09-06, partial)
+
+ClaimTier's WatchExecutions untouched. Preparation landed; wiring remains.
+Ticket stays doing.
+
+Shipped: ServiceDeps gained PollInterval/SweepInterval/PublicBaseURL and the
+Service struct carries them — BUT NewService does not default/assign them yet
+and worker() still hardcodes the 100 ms tick. First step next batch: wire
+defaults (100 ms / 1 min) and use service.pollInterval in the worker select.
+
+Remaining: Service.WatchQueue (WatchExecutions -> Wake with onError
+passthrough), main.go postgres-only wiring after runtime.Start, sweeper
+goroutine in Start + SweepWaits (timer requeue vs fail by mode), wake-via-
+channel PG test with PollInterval=10 s to isolate the channel from the tick,
+plus sqlite fallback test (bad DSN reports, tick still delivers). Combined PG
+runs need -p 1 (shared-server race).

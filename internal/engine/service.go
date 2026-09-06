@@ -32,6 +32,21 @@ type ExecutionStore interface {
 	// StartChild creates a sub-workflow execution that is already running and
 	// already claimed, and returns the document it is pinned to.
 	StartChild(context.Context, repository.TenantScope, repository.ChildExecution) (execution.Record, workflow.Document, error)
+	// SuspendExecution parks a running execution as waiting, holding the
+	// checkpoint a resumed run continues from.
+	SuspendExecution(context.Context, repository.TenantScope, repository.SuspendWaitParams) (repository.Wait, execution.Record, error)
+	// FindWaitByToken loads a wait by its token hash for the info surface.
+	FindWaitByToken(context.Context, string) (repository.Wait, error)
+	// FindActiveWait returns the unconsumed wait holding an execution, if any.
+	FindActiveWait(context.Context, repository.TenantScope, string) (repository.Wait, error)
+	// ResumeWait consumes one token and re-queues its execution.
+	ResumeWait(context.Context, string, string, json.RawMessage, time.Time) (repository.Wait, execution.Record, error)
+	// SettleExpiredWait consumes one expired wait the sweeper reaped.
+	SettleExpiredWait(context.Context, uint, repository.ExpiredResolution, time.Time) (repository.Wait, execution.Record, error)
+	// LoadResumeState returns the checkpoint a re-queued run resumes from.
+	LoadResumeState(context.Context, repository.TenantScope, string) (repository.Wait, error)
+	// ListExpiredWaits returns unconsumed waits past their deadline.
+	ListExpiredWaits(context.Context, time.Time, int) ([]repository.Wait, error)
 }
 
 // CredentialStore resolves a stored credential for the tenant that owns the
@@ -63,6 +78,18 @@ type ServiceDeps struct {
 	// Empty leaves a sub-workflow call starting from every root, which is what
 	// a workflow written before the trigger existed still needs.
 	SubworkflowTriggerType string
+	// PollInterval bounds idle latency when no wake arrives. Non-positive
+	// keeps the 100 ms tick, which stays the fallback under every watcher:
+	// a dropped notification costs latency, never a stuck execution.
+	PollInterval time.Duration
+	// SweepInterval is how often expired waits settle. Non-positive keeps
+	// one minute. There is no knob to disable it: without the sweep a
+	// forgotten approval would stay suspended forever.
+	SweepInterval time.Duration
+	// PublicBaseURL prefixes the resume links handed to waiting executions
+	// (server.public_url). Empty renders path-only links, which is all a
+	// same-origin dashboard and approval page need.
+	PublicBaseURL string
 	// Logger receives the failures a worker cannot act on but nobody should
 	// have to guess at. Optional: an unset logger falls back to the default
 	// rather than becoming a nil dereference, because a service that refused
@@ -82,6 +109,9 @@ type Service struct {
 	environment            map[string]string
 	workerID               string
 	defaultTimeout         time.Duration
+	pollInterval           time.Duration
+	sweepInterval          time.Duration
+	publicBaseURL          string
 	subworkflowTriggerType string
 	activeMu               sync.Mutex
 	active                 map[string]context.CancelFunc
@@ -180,6 +210,10 @@ func (service *Service) runOnce(ctx context.Context, workerID string) (bool, err
 	delete(service.active, record.ID)
 	service.activeMu.Unlock()
 	cancel()
+	nodeTypes := make(map[string]string, len(document.Nodes))
+	for _, node := range document.Nodes {
+		nodeTypes[node.ID] = node.Type
+	}
 	for sequence, run := range result.NodeRuns {
 		input, err := json.Marshal(run.Input)
 		if err != nil {
@@ -189,6 +223,10 @@ func (service *Service) runOnce(ctx context.Context, workerID string) (bool, err
 		if err != nil {
 			return true, fmt.Errorf("marshal node %q output: %w", run.NodeID, err)
 		}
+		// The durable trace and the live event carry the projected output,
+		// while the next node already received the full one in memory. See
+		// projectTrace for what is projected and what is deliberately left.
+		output = projectTrace(nodeTypes[run.NodeID], output)
 		status := execution.StatusSucceeded
 		if run.Skipped {
 			// A pruned branch is neither a success nor a failure. Recording it

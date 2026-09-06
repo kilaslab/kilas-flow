@@ -98,3 +98,44 @@ is integrator work).
   intermediate unused-import breakage fixed same pass, build+vet green).
 - Docs: operate/security.md note (single-use tokens, expiry, tenancy, embed
   denial, event contents).
+
+## Work evidence — SurfaceWiring (2026-09-06, partial)
+
+Durable wait mechanism landed; HTTP surface + approval page + E2E remain for
+the next batch. Ticket stays doing.
+
+Shipped:
+- `StatusWaiting` in internal/execution/records.go (non-terminal; feed stays open).
+- `execution_waits` table via 000009 both dialects (spaces, quoted idents):
+  token_hash unique lookup, retrievable resume_token (cleared on consume),
+  verbatim checkpoint (never through redacting payload()), run_count for
+  node-run sequence offsets, expiry index, RESTRICT FK to executions.
+  postBaselineTables prepended (newest-first, child-first).
+- internal/repository/waits.go: SuspendExecution (lease-fenced, one tx),
+  ResumeWait (stable distinct refusals: unknown == wrong-tenant, consumed,
+  expired; refusals never consume), SettleExpiredWait (timer requeue vs
+  named `wait.expired` failure), FindWaitByToken/FindActiveWait,
+  LoadResumeState (latest consumed-resumed by auto-increment key),
+  ListExpiredWaits. Cancel on waiting completes terminally; ClaimNext
+  exclusion documented + tested (allowlist never selects waiting).
+- Engine: SuspendError carries Mode/ExpiresAt/NodeID/Checkpoint;
+  Checkpoint codec v1 (completed, runs, nodeOutputs, nodeItems, leaves,
+  suspend input+attempt); runner extracted to prepareGraph/runLoop/Resume
+  with zero behavior change (full engine suite green before/after).
+- ExecutionStore extended with the 7 wait methods; worker_test.go fake
+  stubbed. Note: out-of-tree ExecutionStore implementers break (in-tree fixed).
+- migrate_test adoption guard fixed: it substring-matched baseline names and
+  false-positived on `REFERENCES executions(id)`; now matches the table the
+  statement itself creates/drops.
+
+Verified: 7 new repo waits tests (single-use, refusals, verbatim checkpoint
+with sensitive keys, cancel, restart reopen); sqlite+PG migrate green;
+AutoMigrate parity green both dialects (kf-pg-vector 55434); suites green:
+engine, repository, database, config, execution, cmd; `go build ./...` green.
+
+Remaining: service runOnce suspend/resume/sweep paths, Record resume-URL
+enrichment, resume HTTP surface + waiting across list/SSE, approval page,
+$execution resumeUrl, webhook accepted-response (untouched, documented
+follow-up), suspend→resume E2E (no double-execute, no [redacted]), kill+resume
+restart proof. Webhook/form wait modes and kilasflow.wait SuspendError
+wiring are nodes-owned future work.

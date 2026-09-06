@@ -80,3 +80,31 @@ func (*idleExecutionStore) StartChild(context.Context, repository.TenantScope, r
 func (*idleExecutionStore) Cancel(context.Context, repository.TenantScope, string) (execution.Record, error) {
 	return execution.Record{}, nil
 }
+// This test never suspends, so the durable wait surface is a stub.
+func (*idleExecutionStore) SuspendExecution(context.Context, repository.TenantScope, repository.SuspendWaitParams) (repository.Wait, execution.Record, error) {
+	return repository.Wait{}, execution.Record{}, nil
+}
+
+func (*idleExecutionStore) FindWaitByToken(context.Context, string) (repository.Wait, error) {
+	return repository.Wait{}, nil
+}
+
+func (*idleExecutionStore) FindActiveWait(context.Context, repository.TenantScope, string) (repository.Wait, error) {
+	return repository.Wait{}, nil
+}
+
+func (*idleExecutionStore) ResumeWait(context.Context, string, string, json.RawMessage, time.Time) (repository.Wait, execution.Record, error) {
+	return repository.Wait{}, execution.Record{}, nil
+}
+
+func (*idleExecutionStore) SettleExpiredWait(context.Context, uint, repository.ExpiredResolution, time.Time) (repository.Wait, execution.Record, error) {
+	return repository.Wait{}, execution.Record{}, nil
+}
+
+func (*idleExecutionStore) LoadResumeState(context.Context, repository.TenantScope, string) (repository.Wait, error) {
+	return repository.Wait{}, nil
+}
+
+func (*idleExecutionStore) ListExpiredWaits(context.Context, time.Time, int) ([]repository.Wait, error) {
+	return nil, nil
+}

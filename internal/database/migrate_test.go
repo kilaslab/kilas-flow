@@ -45,6 +45,7 @@ var baselineTables = []string{
 // first — an omission does not fail until somebody runs the suite twice
 // against the same server, which is exactly when it is hardest to read.
 var postBaselineTables = []string{
+	"execution_waits",
 	"secret_bindings",
 	"vector_documents_1024",
 	"vector_documents_1536",
@@ -89,11 +90,21 @@ func assertNoBaselineTableWasRebuilt(t *testing.T, recorder *sqlRecorder, quote 
 	t.Helper()
 	for _, statement := range recorder.ddl() {
 		upper := strings.ToUpper(statement)
-		if !strings.HasPrefix(upper, "CREATE TABLE") && !strings.HasPrefix(upper, "DROP TABLE") {
+		verb := ""
+		switch {
+		case strings.HasPrefix(upper, "CREATE TABLE"):
+			verb = "CREATE TABLE "
+		case strings.HasPrefix(upper, "DROP TABLE"):
+			verb = "DROP TABLE "
+		default:
 			continue
 		}
+		// The table the statement itself creates or drops, not one it merely
+		// names: a new table's REFERENCES `executions`(`id`) contains the
+		// quoted baseline name without rebuilding anything.
+		rest := strings.TrimPrefix(strings.TrimPrefix(upper, verb), "IF NOT EXISTS ")
 		for _, table := range baselineTables {
-			if strings.Contains(statement, quote+table+quote) {
+			if strings.HasPrefix(rest, strings.ToUpper(quote+table+quote)) {
 				t.Errorf("adoption rebuilt the existing %q table: %s", table, statement)
 			}
 		}
