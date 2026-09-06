@@ -223,6 +223,20 @@ generate-types: dist-placeholder ## Regenerate the SDK types from a freshly buil
 generate-types-check: dist-placeholder ## Fail if the committed SDK types are stale
 	cd $(SDK_DIR) && pnpm generate:types:check
 
+# The public API reference is generated from the OpenAPI document of a real
+# binary, not written by hand. Like the two targets above this one boots a
+# server via scripts/openapi-spec.mjs, which is why it depends on the
+# placeholder: without a file under DIST_DIR the `go build` inside the script
+# fails on the embed directive. The committed pages live under docs/ but the
+# script itself needs only node and go, so there is no pnpm step here.
+.PHONY: generate-api-reference
+generate-api-reference: dist-placeholder ## Regenerate the docs API reference from a freshly built binary
+	node scripts/generate-api-reference.mjs
+
+.PHONY: generate-api-reference-check
+generate-api-reference-check: dist-placeholder ## Fail if the committed docs API reference is stale
+	node scripts/generate-api-reference.mjs --check
+
 # The configuration reference and the example YAML are generated from the
 # Config structs, not written by hand. Unlike the two targets above this one
 # needs no binary and no placeholder: it reads source and defaults only, so a

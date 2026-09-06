@@ -242,19 +242,21 @@ treat any non-semver `info.version` as "unreleased".
 
 ## Drift gates
 
-Two detectors keep the contract honest, and both are blocking — a
+Three detectors keep the contract honest, and all are blocking — a
 handler-type change that is not regenerated fails the build:
 
 | Detector | Regenerates | Fails when | Fix |
 | --- | --- | --- | --- |
 | `web/scripts/check-api-client.mjs` | `web/src/lib/api/generated/` | Committed web client differs from a freshly built binary's document | `pnpm generate:api` in `web/` |
 | `sdk/scripts/check-types.mjs` | `sdk/src/generated/models.ts` | Committed SDK types differ from a freshly built binary's document | `pnpm generate:types` in `sdk/` |
+| `scripts/generate-api-reference.mjs --check` | `docs/src/content/docs/reference/api.md` and `docs/src/content/docs/reference/api/` | Committed reference pages differ from a freshly built binary's document | `node scripts/generate-api-reference.mjs` |
 
-Both build and boot a real binary via `scripts/openapi-spec.mjs`, so the
+All three build and boot a real binary via `scripts/openapi-spec.mjs`, so the
 spec can never be a checked-in copy that fell behind. In the Makefile they
-are `make generate-api-check` and `make generate-types-check`; in CI they
-are the `drift` job, which runs on every pull request alongside
-`make sdk-version-check` in the `sdk` job.
+are `make generate-api-check`, `make generate-types-check`, and
+`make generate-api-reference-check`; in CI they are the `drift` job, which
+runs on every pull request alongside `make sdk-version-check` in the `sdk`
+job.
 
 ## Authentication: the escape hatch is the contract
 

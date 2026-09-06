@@ -4,7 +4,7 @@ name: CI
 #
 #   lint            go vet, gofmt, svelte-check, and the web vitest suite
 #   test            go test ./... -race, against real PostgreSQL, MySQL and MariaDB
-#   drift           the committed API client and SDK types still match the binary
+#   drift           the committed API client, SDK types, docs reference, and config reference still match the binary
 #   sdk             the host SDK typechecks, tests and compiles
 #   smoke           the binary, the Vite proxy and the distroless image all serve
 #   smoke-postgres  the image against a Compose PostgreSQL (not on pull requests)
@@ -185,6 +185,13 @@ jobs:
 
       - name: SDK types
         run: make generate-types-check
+
+      # The docs API reference is generated from the same live OpenAPI
+      # document by scripts/generate-api-reference.mjs, which builds and boots
+      # a binary with the Go toolchain this job already has. Node-only like
+      # the script: no docs dependencies to install.
+      - name: Docs API reference
+        run: make generate-api-reference-check
 
       # The configuration reference and config.example.yaml are generated from
       # the Config structs by scripts/config-reference.go, which reads source
