@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>KilasFlow reference tenant</title>
+<style>
+	:root { --accent: #0ea5e9; }
+	body { margin: 0; font: 14px system-ui, sans-serif; display: grid; grid-template-rows: auto 1fr auto; height: 100dvh; }
+	header { padding: 12px 16px; border-bottom: 3px solid var(--accent); display: flex; gap: 16px; align-items: baseline; }
+	header button { margin-left: auto; }
+	#editor { min-height: 0; }
+	footer { padding: 12px 16px; border-top: 1px solid #ddd; display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+	#log, #signups { margin: 0; padding-left: 20px; max-height: 8rem; overflow: auto; font-family: ui-monospace, monospace; font-size: 12px; }
+</style>
+</head>
+<body>
+<header><strong id="tenant">…</strong><span>customer onboarding flow</span><button id="fire" type="button">Fire signup webhook</button></header>
+<div id="editor"></div>
+<footer>
+	<div><strong>Activity</strong><ul id="log"></ul></div>
+	<div><strong>Datastore · signups</strong><ul id="signups"></ul></div>
+</footer>
+
+<script type="module">
+	import { mountWorkflowEditor, subscribeExecutionEvents } from '/node_modules/@kilasflow/sdk/dist/browser.js';
+
+	const slug = location.pathname.split('/').pop();
+	const api = (action, init) => fetch(`/api/${slug}/${action}`, init);
+
+	const log = (message) => {
+		const item = document.createElement('li');
+		item.textContent = message;
+		document.getElementById('log').prepend(item);
+	};
+
+	// The page holds no API key and knows no other tenant. Everything below
+	// is this tenant's slug talking to its own backend routes.
+	const info = await (await api('info')).json();
+	document.getElementById('tenant').textContent = info.label;
+	document.documentElement.style.setProperty('--accent', info.accent);
+	document.title = `${info.label} — embedded onboarding flow`;
+
+	// The page asks its own backend for a session. The token it gets back is
+	// scoped to this tenant's workflow, this origin, and a few minutes.
+	const session = await (await api('embed-session', { method: 'POST' })).json();
+
+	const editor = mountWorkflowEditor({
+		container: document.getElementById('editor'),
+		baseUrl: session.baseUrl,
+		session,
+		onError: (error) => log(`error: ${error.message}`),
+		onEvent: (event) => {
+			log(`editor: ${event.type}`);
+			if (event.type === 'execution-started') {
+				// Typed live events for the run the user just started. The
+				// ticket comes from our own backend per execution — the page
+				// never sees the API key — and the SDK mints a fresh one on
+				// every reconnect, resuming after the last event received.
+				subscribeExecutionEvents({
+					baseUrl: session.baseUrl,
+					executionId: event.executionId,
+					onEvent: (execution) => log(`  ${execution.type}${execution.nodeId ? ` (${execution.nodeId})` : ''}`),
+					onClose: () => log('  stream closed'),
+					ticket: async () => {
+						const response = await api(`stream-ticket?executionId=${event.executionId}`);
+						return (await response.json()).ticket;
+					}
+				});
+			}
+		}
+	});
+
+	// Firing the feature goes through the backend too: the webhook secret
+	// never reaches the browser, and the backend waits for the run to finish
+	// before it answers.
+	document.getElementById('fire').addEventListener('click', async () => {
+		log('webhook: firing…');
+		const result = await (await api('fire', { method: 'POST' })).json();
+		log(`webhook: execution ${result.executionId} ${result.status}`);
+		await refreshSignups();
+	});
+
+	async function refreshSignups() {
+		const rows = await (await api('signups')).json();
+		const list = document.getElementById('signups');
+		list.replaceChildren();
+		for (const row of rows.items ?? []) {
+			const item = document.createElement('li');
+			item.textContent = `${row.email} — ${row.plan}`;
+			list.append(item);
+		}
+	}
+
+	await refreshSignups();
+
+	// Tearing the page down removes the iframe, its listener, and its timer.
+	window.addEventListener('pagehide', () => editor.unmount());
+</script>
+</body>
+</html>

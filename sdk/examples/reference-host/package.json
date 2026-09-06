@@ -1,0 +1,13 @@
+{
+  "name": "kilasflow-reference-host",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Reference multi-tenant host for @kilasflow/sdk: two tenants, one host process, full embed loop.",
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "dependencies": {
+    "@kilasflow/sdk": "0.1.0"
+  }
+}
