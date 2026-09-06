@@ -96,16 +96,16 @@ type executionWaitModel struct {
 	// RunCount is how many node runs were persisted through this suspension.
 	// The resumed segment offsets its sequences past them: without it a
 	// second suspension would re-record sequence 1 and collide.
-	RunCount     int        `gorm:"not null"`
-	ExpiresAt    time.Time  `gorm:"not null;index:idx_execution_waits_expiry"`
+	RunCount  int       `gorm:"not null"`
+	ExpiresAt time.Time `gorm:"not null;index:idx_execution_waits_expiry"`
 	// No index tag: the expiry and execution indexes cover the sweeper and
 	// the resume lookups, and an index declared only in a tag would exist
 	// on a developer's machine and on nobody's server.
-	ConsumedAt   *time.Time
-	Outcome      string     `gorm:"not null;size:32"`
-	CreatedAt    time.Time  `gorm:"not null"`
-	UpdatedAt    time.Time  `gorm:"not null"`
-	Execution    executionModel `gorm:"foreignKey:ExecutionID;references:ID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT"`
+	ConsumedAt *time.Time
+	Outcome    string         `gorm:"not null;size:32"`
+	CreatedAt  time.Time      `gorm:"not null"`
+	UpdatedAt  time.Time      `gorm:"not null"`
+	Execution  executionModel `gorm:"foreignKey:ExecutionID;references:ID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT"`
 }
 
 func (executionWaitModel) TableName(namer schema.Namer) string {
@@ -138,8 +138,8 @@ func waitFromModel(model executionWaitModel) Wait {
 		TokenHash: model.TokenHash, ResumeToken: model.ResumeToken,
 		Checkpoint:   append(json.RawMessage(nil), model.Checkpoint...),
 		ResumeOutput: append(json.RawMessage(nil), model.ResumeOutput...),
-		RunCount: model.RunCount,
-		ExpiresAt: model.ExpiresAt, ConsumedAt: model.ConsumedAt,
+		RunCount:     model.RunCount,
+		ExpiresAt:    model.ExpiresAt, ConsumedAt: model.ConsumedAt,
 		Outcome: model.Outcome, CreatedAt: model.CreatedAt,
 	}
 }

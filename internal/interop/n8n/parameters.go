@@ -3154,7 +3154,7 @@ func dataTableParams(node Node, tool bool) (map[string]any, []Unsupported) {
 	// Must Match: Any Condition or All Conditions. Absent is n8n's own
 	// default, which is Any — the same default this server applies — so only
 	// a present and unrecognised value is worth a diagnostic.
- switch match := stringParameter(node.Parameters, "match"); match {
+	switch match := stringParameter(node.Parameters, "match"); match {
 	case "", "any", "all":
 		if match != "" {
 			parameters["match"] = match

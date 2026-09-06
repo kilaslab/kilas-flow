@@ -1,13 +1,13 @@
 package corpus_test
 
 import (
-	"io"
-	"log/slog"
 	"context"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
