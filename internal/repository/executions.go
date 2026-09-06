@@ -130,7 +130,9 @@ func (store *GORMExecutionStore) QueueManualLatest(ctx context.Context, tenant T
 		if err := tx.Create(&model).Error; err != nil {
 			return fmt.Errorf("create execution: %w", err)
 		}
-		return nil
+		// pg_notify fires on commit, so a rolled-back queue never wakes a
+		// worker for a row that is not there.
+		return notifyExecutionQueued(tx, tenant.ID, executionID)
 	})
 	if err != nil {
 		return execution.Record{}, err
@@ -178,7 +180,10 @@ func (store *GORMExecutionStore) QueueTriggered(ctx context.Context, tenant Tena
 		if parent.ActiveVersionID == nil || *parent.ActiveVersionID != versionID {
 			return fmt.Errorf("%w: workflow version is no longer active", ErrNotFound)
 		}
-		return tx.Create(&model).Error
+		if err := tx.Create(&model).Error; err != nil {
+			return err
+		}
+		return notifyExecutionQueued(tx, tenant.ID, executionID)
 	})
 	if err != nil {
 		return execution.Record{}, err
@@ -251,7 +256,7 @@ func (store *GORMExecutionStore) Create(ctx context.Context, tenant TenantScope,
 		if err := tx.Create(&model).Error; err != nil {
 			return fmt.Errorf("create execution: %w", err)
 		}
-		return nil
+		return notifyExecutionQueued(tx, tenant.ID, record.ID)
 	}); err != nil {
 		return execution.Record{}, err
 	}
@@ -378,8 +383,21 @@ func (store *GORMExecutionStore) ClaimNext(ctx context.Context, workerID string,
 	now := time.Now().UTC()
 	err = store.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var candidate executionModel
-		err := tx.Where("status = ? OR ((status = ? OR status = ?) AND lease_expires_at IS NOT NULL AND lease_expires_at <= ?)",
-			string(execution.StatusQueued), string(execution.StatusRunning), string(execution.StatusCancelling), now).
+		// SKIP LOCKED fans contending workers out over distinct rows instead
+		// of racing them all for the oldest one. The glebarez SQLite driver
+		// drops clause.Locking silently ("SQLite3 does not support row-level
+		// locking"), so on SQLite this is a plain SELECT and correctness
+		// rests on the conditional UPDATE below; on PostgreSQL the lock is
+		// real. Either way the UPDATE re-applies the whole predicate and a
+		// lost race reads as RowsAffected == 0, never as a double claim.
+		//
+		// First appends its own primary-key ordering, so the statement the
+		// server receives ends ORDER BY started_at ASC, id ASC,
+		// "executions"."id" LIMIT 1 — any EXPLAIN evidence must use that
+		// spelling, not the two-column Order above.
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: clause.LockingOptionsSkipLocked}).
+			Where("status = ? OR ((status = ? OR status = ?) AND lease_expires_at IS NOT NULL AND lease_expires_at <= ?)",
+				string(execution.StatusQueued), string(execution.StatusRunning), string(execution.StatusCancelling), now).
 			Order("started_at ASC, id ASC").
 			First(&candidate).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {

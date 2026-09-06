@@ -173,6 +173,11 @@ const maximumCatchUpSteps = 512
 // holding a row lock, so a due time fires exactly once even if two ticks
 // overlap. The next run is computed from the due time rather than from now, so
 // a slow tick cannot make a schedule drift later and later.
+//
+// The row lock reaches PostgreSQL as FOR UPDATE and never reaches SQLite at
+// all: the glebarez driver drops clause.Locking silently, so there this is a
+// plain SELECT and overlapping ticks are serialized by the single-writer
+// SQLite pool database.Open configures instead.
 func (store *GORMScheduleStore) ClaimDue(ctx context.Context, now time.Time, next func(string, time.Time) (time.Time, error)) ([]DueSchedule, error) {
 	if next == nil {
 		return nil, fmt.Errorf("schedule next-run function is required")

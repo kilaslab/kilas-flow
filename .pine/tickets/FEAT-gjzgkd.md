@@ -1,7 +1,7 @@
 ---
 id: FEAT-gjzgkd
 title: Claim work with SKIP LOCKED and wake workers over LISTEN/NOTIFY
-status: todo
+status: doing
 priority: medium
 labels:
     - persistence
@@ -13,7 +13,7 @@ deps:
 parent: EPIC-m42s3g
 phase: p6
 created: "2026-09-05T05:02:14Z"
-updated: "2026-09-05T05:02:14Z"
+updated: "2026-09-06T04:17:56Z"
 ---
 
 ## Scope
@@ -57,3 +57,62 @@ Scheduler election is optional in this ticket and worth stating either way. Toda
 - `github.com/glebarez/sqlite@v1.11.0/sqlite.go` — the `"FOR"` clause builder that drops `clause.Locking`.
 - `gorm.io/gorm@v1.31.2/clause/locking.go` — `LockingOptionsSkipLocked`.
 - `go.mod` — `github.com/jackc/pgx/v5 v5.10.0` is already a direct dependency.
+
+## Work evidence — ClaimTier (Batch-4, 2026-09-06)
+
+Ownership kept to `internal/repository/*`, no config change: the listener
+needs only the DSN and the table prefix, both already in `config.Database`,
+so no LISTEN key was added. The ticket's plan put the listener in
+`internal/database`; it lives in `internal/repository/wake.go` instead
+because Batch-4 gives ClaimTier the repository only — same shape (own
+`pgx.Conn` outside the pool, feeds the engine's existing `Wake`), one
+package. Engine/API wiring (`WatchExecutions` -> `service.Wake()`) is left
+for the integrator: no engine file is in this agent's ownership.
+
+Done:
+- `ClaimNext` candidate select carries
+  `clause.Locking{Strength: "UPDATE", Options: clause.LockingOptionsSkipLocked}`;
+  conditional UPDATE, `Order("started_at ASC, id ASC")` and `First` untouched.
+  SQLite drops the clause silently (proven by test); the compare-and-set stays
+  the correctness mechanism there.
+- `notifyExecutionQueued` runs `SELECT pg_notify(channel, payload)` inside the
+  enqueue transaction (fires on commit, never on rollback) from
+  `QueueManualLatest`, `QueueTriggered` and `Create`; no-op off postgres.
+  Channel = `ExecutionWakeChannel(tablePrefix)` (`<prefix>execution_wake`);
+  payload = tenant + execution IDs only. Channel travels as a pg_notify
+  argument (no quoting surface); LISTEN uses `pgx.Identifier` sanitize.
+- `WatchExecutions(ctx, dsn, prefix, onWake, onError)`: dedicated conn,
+  reconnect with backoff (1s doubling, 30s cap), every drop reported to
+  onError, malformed payload drops the notification never the listener,
+  nil error on ctx stop. Capacity-1 wake semantics left as the ticket
+  recommends; the 100 ms tick stays the fallback.
+- `ClaimDue` doc comment now states its FOR UPDATE never reaches SQLite.
+- No advisory-lock election introduced: `ClaimDue`'s row lock already fires
+  each due time once with several schedulers, so the conditional criterion
+  is met by absence, stated here. If election is added later, key it by the
+  table prefix per `ExecutionWakeChannel`'s doc comment.
+- `-p 1` shared-server rule commented at the top of `claim_wake_test.go`.
+
+Proof (`go test ./internal/repository/`, green on sqlite always; PG halves
+green against pgvector/pgvector:pg16 with `KILASFLOW_TEST_POSTGRES_DSN` set;
+note the stock `kf-pg` container has no `vector` extension so 000006 fails
+there — a `kf-pg-vector` container on host port 55434 was started for this):
+- `TestClaimSelectLocksSkippedRowsOnPostgres` (DryRun rendering),
+  `TestClaimSelectDropsTheLockOnSQLite`, `TestClaimSelectPlanLocksRowsOnPostgres`
+  (EXPLAIN of the exact sent statement incl. First's appended `"executions"."id"`
+  ordering shows a LockRows node).
+- `TestConcurrentWorkersClaimEachExecutionExactlyOnce` (sqlite, 10x10).
+- `TestTenWorkersClaimTenDistinctExecutionsOnPostgres` (10x10 distinct).
+- `TestQueuedExecutionWakesAListenerOnPostgres`: push wake, payload names a
+  real queued row, worker re-reads via ClaimNext; measured queue-to-wake
+  ~65us against the 100ms tick. Retry-loop instead of a setup sleep because
+  the first queue can race the listener's LISTEN.
+- `TestExecutionWakeChannelKeysTheTablePrefix`, payload size/shape +
+  malformed-payload unit tests, `TestWatchExecutionsReportsDropsAndStopsWithContext`
+  (unreachable DSN: drops reported, nil on ctx stop).
+
+No other package touched. `go.mod`/`go.sum` unchanged (pgx was already direct).
+Full package suite could not go green in-tree at handoff: sibling
+`credentials_external_test.go` (LongtailSecrets, mid-flight) does not compile;
+verified green in a scratch copy minus that file. Pre-existing tests
+unaffected (same run).
