@@ -33,19 +33,26 @@
 			baseUrl: session.baseUrl,
 			session,
 			onError: (error) => log(`error: ${error.message}`),
-			onEvent: (event) => {
-				log(`editor: ${event.type}`);
-				if (event.type === 'execution-started') {
-					// Typed live events for the run the user just started.
-					subscribeExecutionEvents({
-						baseUrl: session.baseUrl,
-						executionId: event.executionId,
-						onEvent: (execution) => log(`  ${execution.type}${execution.nodeId ? ` (${execution.nodeId})` : ''}`),
-						onClose: () => log('  stream closed')
-					});
-				}
+		onEvent: (event) => {
+			log(`editor: ${event.type}`);
+			if (event.type === 'execution-started') {
+				// Typed live events for the run the user just started. The
+				// ticket comes from our own backend per execution — the page
+				// never sees the API key — and the SDK mints a fresh one on
+				// every reconnect, resuming after the last event received.
+				subscribeExecutionEvents({
+					baseUrl: session.baseUrl,
+					executionId: event.executionId,
+					onEvent: (execution) => log(`  ${execution.type}${execution.nodeId ? ` (${execution.nodeId})` : ''}`),
+					onClose: () => log('  stream closed'),
+					ticket: async () => {
+						const response = await fetch(`/api/stream-ticket?executionId=${event.executionId}`);
+						return (await response.json()).ticket;
+					}
+				});
 			}
-		});
+		}
+	});
 
 		// Tearing the page down removes the iframe, its listener, and its timer.
 		window.addEventListener('pagehide', () => editor.unmount());

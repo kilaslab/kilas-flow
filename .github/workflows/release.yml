@@ -19,7 +19,11 @@ name: Release
 
 on:
   push:
-    tags: ["v*"]
+    # `v*` releases the container image; `sdk-v*` releases the host SDK. The
+    # namespaces are disjoint — `v*` cannot match `sdk-v0.1.0` — so each tag
+    # publishes exactly one artifact, and each job below runs only on its own
+    # namespace. Pushing a tag is the only way to publish anything.
+    tags: ["v*", "sdk-v*"]
 
 # Wider than ci.yml's read-only default, per job rather than at the top, exactly
 # as ci.yml's header asks the p10 publishing tickets to do.
@@ -90,3 +94,64 @@ jobs:
         env:
           RELEASE_VERSION: ${{ github.ref_name }}
         run: make smoke-docker-published VERSION="$RELEASE_VERSION"
+
+  sdk:
+    name: Publish SDK
+    # Only an sdk-v* tag publishes the package. Anything else — a branch, a
+    # v* image tag, a hand-run — reaches at most the gates, never the registry.
+    if: startsWith(github.ref, 'refs/tags/sdk-v')
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      # npm provenance attests the package back to this workflow run. Like
+      # keyless cosign above, the attestation needs the OIDC token only a
+      # workflow run has, which is why a publish cannot be reproduced by hand.
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: ./.github/actions/js-toolchain
+
+      - name: Install SDK dependencies
+        working-directory: sdk
+        run: pnpm install --frozen-lockfile
+
+      # The same gates a laptop runs, in the same order: typecheck, tests
+      # (including the manifest-versus-source agreement), compile. The drift
+      # gate that needs a Go binary already ran in CI on the way to this tag.
+      - run: make sdk-check
+      - run: make sdk-test
+      - run: make sdk-build
+      - run: make sdk-version-check
+
+      # The tag is the input, and the package must be it: sdk-v0.1.0
+      # publishes @kilasflow/sdk 0.1.0 and nothing else. Passing the tag
+      # through env rather than interpolating it keeps a tag's legal shell
+      # metacharacters out of the run line, as in the image job above.
+      - name: Tag agrees with the manifest
+        env:
+          SDK_TAG: ${{ github.ref_name }}
+        run: |
+          want="${SDK_TAG#sdk-v}"
+          have="$(node -p "require('./sdk/package.json').version")"
+          if [ "$want" != "$have" ]; then
+            echo "tag $SDK_TAG does not match sdk/package.json version $have; bump both together" >&2
+            exit 1
+          fi
+
+      # No registry login here on purpose: npm already points at the public
+      # registry, and authentication is the OIDC token above, exchanged by
+      # npm for a short-lived grant (trusted publishing), so there is no
+      # long-lived NPM_TOKEN to rotate or leak.
+
+      # Proved before it runs by `npm publish --dry-run` in the proof below:
+      # the packed file list is asserted without touching the registry.
+      - name: Prove the packed file list
+        working-directory: sdk
+        run: npm publish --dry-run --access public
+
+      - name: Publish @kilasflow/sdk
+        working-directory: sdk
+        run: npm publish --provenance --access public

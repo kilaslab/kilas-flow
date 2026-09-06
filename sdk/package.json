@@ -5,10 +5,19 @@
   "license": "Apache-2.0",
   "type": "module",
   "packageManager": "pnpm@10.15.0",
-  "files": [
-    "dist",
-    "README.md"
-  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kilaslabs/kilas-flow.git",
+    "directory": "sdk"
+  },
+  "homepage": "https://github.com/kilaslabs/kilas-flow#readme",
+  "bugs": "https://github.com/kilaslabs/kilas-flow/issues",
+  "keywords": ["kilasflow", "workflow", "automation", "embed", "host-sdk"],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "files": ["dist", "README.md", "CHANGELOG.md"],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -28,7 +37,8 @@
     "generate:types:check": "node scripts/check-types.mjs",
     "build": "tsc -p tsconfig.build.json",
     "check": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "prepack": "tsc -p tsconfig.build.json"
   },
   "devDependencies": {
     "jsdom": "^30.0.1",

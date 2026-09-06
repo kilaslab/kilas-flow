@@ -1,0 +1,13 @@
+{
+  "name": "kilasflow-host-page-example",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Reference host application for @kilasflow/sdk: mint a session, mount the editor, watch a run.",
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "dependencies": {
+    "@kilasflow/sdk": "0.1.0"
+  }
+}

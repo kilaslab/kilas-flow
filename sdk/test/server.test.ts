@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { KilasFlowClient, KilasFlowError } from '../src/server.js';
+import { KilasFlowClient, KilasFlowError, tenantClientFactory } from '../src/server.js';
 
 /** Records what the SDK sent so a test can assert on the request, not a mock. */
 function recordingFetch(response: { status?: number; body?: unknown; headers?: Record<string, string> } = {}) {
@@ -47,7 +47,76 @@ describe('client configuration', () => {
 		const headers = new Headers(calls[0]!.init.headers);
 		expect(headers.get('Authorization')).toBeNull();
 	});
+
+	it('sends apiKey as a bearer token without touching other headers', async () => {
+		const { calls, fetchImpl } = recordingFetch({ body: [] });
+		const host = new KilasFlowClient({
+			baseUrl: 'https://flows.example',
+			fetch: fetchImpl,
+			apiKey: 'kfa1.acme.secret',
+			headers: { 'X-Gateway': 'edge' }
+		});
+		await host.listWorkflows();
+
+		const headers = new Headers(calls[0]!.init.headers);
+		expect(headers.get('Authorization')).toBe('Bearer kfa1.acme.secret');
+		expect(headers.get('X-Gateway')).toBe('edge');
+	});
+
+	it('lets an explicit Authorization header win over apiKey', async () => {
+		const { calls, fetchImpl } = recordingFetch({ body: [] });
+		const host = new KilasFlowClient({
+			baseUrl: 'https://flows.example',
+			fetch: fetchImpl,
+			apiKey: 'kfa1.acme.secret',
+			headers: { Authorization: 'Gateway signed-value' }
+		});
+		await host.listWorkflows();
+
+		// The convenience adds; it never replaces what the host spelled out.
+		expect(new Headers(calls[0]!.init.headers).get('Authorization')).toBe('Gateway signed-value');
+	});
+
+	it('refuses an empty apiKey rather than sending an unauthenticated request by surprise', () => {
+		const { fetchImpl } = recordingFetch();
+		expect(() => new KilasFlowClient({ baseUrl: 'https://flows.example', fetch: fetchImpl, apiKey: '  ' })).toThrow(/apiKey/);
+	});
 });
+
+describe('per-tenant clients', () => {
+	it('builds one fixed-credential client per tenant key', async () => {
+		const { calls, fetchImpl } = recordingFetch({ body: [] });
+		const forTenant = tenantClientFactory({ baseUrl: 'https://flows.example', fetch: fetchImpl });
+
+		await forTenant('kfa1.acme.secret').listWorkflows();
+		await forTenant('kfa1.globex.secret').listWorkflows();
+
+		// Two tenants, two keys, no path for one to reach the other's.
+		expect(new Headers(calls[0]!.init.headers).get('Authorization')).toBe('Bearer kfa1.acme.secret');
+		expect(new Headers(calls[1]!.init.headers).get('Authorization')).toBe('Bearer kfa1.globex.secret');
+	});
+
+	it('freezes the credential at construction: later mutation changes nothing', async () => {
+		const { calls, fetchImpl } = recordingFetch({ body: [] });
+		const shared: Record<string, string> = { 'X-Gateway': 'edge' };
+		const host = new KilasFlowClient({ baseUrl: 'https://flows.example', fetch: fetchImpl, apiKey: 'kfa1.acme.secret', headers: shared });
+		shared['X-Gateway'] = 'mutated';
+		shared.Authorization = 'Bearer kfa1.evil.swapped';
+		await host.listWorkflows();
+
+		// The constructor copies: no setter, no refresh, no swap between requests.
+		const headers = new Headers(calls[0]!.init.headers);
+		expect(headers.get('Authorization')).toBe('Bearer kfa1.acme.secret');
+		expect(headers.get('X-Gateway')).toBe('edge');
+	});
+
+	it('refuses shared Authorization in the factory: the credential comes per tenant', () => {
+		const { fetchImpl } = recordingFetch();
+		expect(() =>
+			tenantClientFactory({ baseUrl: 'https://flows.example', fetch: fetchImpl, headers: { Authorization: 'Bearer shared' } })
+		).toThrow(/per tenant/);
+	});
+ });
 
 describe('workflow methods', () => {
 	it('targets the documented endpoints', async () => {
@@ -160,5 +229,24 @@ describe('errors', () => {
 			.catch((caught: unknown) => caught);
 		expect(error).toBeInstanceOf(KilasFlowError);
 		expect((error as KilasFlowError).status).toBe(502);
+	});
+
+	it('tells a wrong key from a key reaching past its tenant without parsing text', async () => {
+		const unauthorized = recordingFetch({ status: 401, body: { title: 'Unauthorized', status: 401 } });
+		const forbidden = recordingFetch({ status: 403, body: { title: 'Forbidden', status: 403 } });
+
+		const wrongKey = await client(unauthorized.fetchImpl)
+			.listWorkflows()
+			.catch((caught: unknown) => caught);
+		const otherTenant = await client(forbidden.fetchImpl)
+			.listWorkflows()
+			.catch((caught: unknown) => caught);
+
+		// The status is the signal: 401 is "your key is wrong", 403 is "your
+		// key is fine and this is not yours". No message text is read.
+		expect((wrongKey as KilasFlowError).status).toBe(401);
+		expect((otherTenant as KilasFlowError).status).toBe(403);
+		expect(wrongKey).toBeInstanceOf(KilasFlowError);
+		expect(otherTenant).toBeInstanceOf(KilasFlowError);
 	});
 });

@@ -18,9 +18,9 @@ const origin = `http://localhost:${port}`;
 
 const kilasflow = new KilasFlowClient({
 	baseUrl: process.env.KILASFLOW_URL ?? 'http://127.0.0.1:8080',
-	// However this deployment authenticates its API. Explicit host
-	// configuration; the SDK never looks one up for you.
-	headers: process.env.KILASFLOW_API_KEY ? { Authorization: `Bearer ${process.env.KILASFLOW_API_KEY}` } : {}
+	// The host's tenant-scoped API key. Explicit host configuration; the SDK
+	// never looks one up for you.
+	apiKey: process.env.KILASFLOW_API_KEY
 });
 
 createServer(async (request, response) => {
@@ -28,6 +28,15 @@ createServer(async (request, response) => {
 		if (request.url === '/' || request.url?.startsWith('/index.html')) {
 			response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
 			response.end(await readFile(join(here, 'index.html')));
+			return;
+		}
+
+		// The installed SDK, served to the page. Only the published package's
+		// compiled output is reachable — never server sources, never the key.
+		if (request.url?.startsWith('/node_modules/@kilasflow/sdk/dist/')) {
+			const file = join(here, decodeURIComponent(request.url.slice(1)));
+			response.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8' });
+			response.end(await readFile(file));
 			return;
 		}
 
@@ -43,6 +52,22 @@ createServer(async (request, response) => {
 			});
 			response.writeHead(200, { 'Content-Type': 'application/json' });
 			response.end(JSON.stringify({ ...session, baseUrl: kilasflow.baseUrl }));
+			return;
+		}
+
+		// EventSource cannot send an Authorization header, so the page asks
+		// its backend for a single-use ticket per execution and spends it as
+		// ?ticket=. The key never leaves this process.
+		if (request.url?.startsWith('/api/stream-ticket') && request.method === 'GET') {
+			const executionId = new URL(request.url, origin).searchParams.get('executionId');
+			if (!executionId) {
+				response.writeHead(400, { 'Content-Type': 'application/json' });
+				response.end(JSON.stringify({ error: 'executionId is required' }));
+				return;
+			}
+			const ticket = await kilasflow.createStreamTicket(executionId);
+			response.writeHead(200, { 'Content-Type': 'application/json' });
+			response.end(JSON.stringify(ticket));
 			return;
 		}
 

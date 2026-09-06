@@ -32,12 +32,23 @@ export interface TransportOptions {
 	/** Absolute base URL of the KilasFlow deployment, e.g. https://flows.example. */
 	baseUrl: string;
 	/**
-	 * Headers added to every request. This is where a host puts its API key.
+	 * The host's API key (`kfa1_…`), sent as `Authorization: Bearer <key>`.
 	 *
-	 * It is a plain record rather than a dedicated `apiKey` field because
-	 * deployments authenticate differently — a bearer token, a gateway header,
-	 * a signed proxy — and inventing one shape would force the others to work
-	 * around it.
+	 * A convenience layered on `headers`, never a replacement for it: when
+	 * `headers` already carries an `Authorization` entry, that explicit value
+	 * wins and `apiKey` is ignored, so gateway headers, signed proxies and
+	 * other shapes keep working exactly as before.
+	 */
+	apiKey?: string;
+	/**
+	 * Headers added to every request. This is where a host puts anything that
+	 * is not the API key — a gateway header, a signed proxy value — or an
+	 * `Authorization` value `apiKey` cannot express.
+	 *
+	 * It stays a plain record because deployments authenticate differently,
+	 * and inventing one shape would force the others to work around it. It is
+	 * a supported credential path, not a transitional one superseded by
+	 * `apiKey`.
 	 */
 	headers?: Record<string, string>;
 	/** Injected for tests, or to add tracing/retries around the SDK. */
@@ -70,7 +81,15 @@ export class Transport {
 		}
 
 		this.baseUrl = baseUrl;
-		this.#headers = { ...(options.headers ?? {}) };
+		const headers = { ...(options.headers ?? {}) };
+		if (options.apiKey !== undefined) {
+			if (!options.apiKey.trim()) throw new Error('KilasFlow SDK apiKey must not be empty; omit it for an unauthenticated request');
+			// An explicit Authorization header is the host saying it knows
+			// better than the convenience — a gateway shape, a signed proxy —
+			// so it wins and apiKey stays out of the way.
+			headers.Authorization ??= `Bearer ${options.apiKey}`;
+		}
+		this.#headers = headers;
 		this.#fetch = options.fetch ?? globalThis.fetch?.bind(globalThis);
 		this.#timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 		if (!this.#fetch) {

@@ -26,7 +26,7 @@ import { KilasFlowClient } from '@kilasflow/sdk/server';
 
 const kilasflow = new KilasFlowClient({
   baseUrl: 'https://flows.example',
-  headers: { Authorization: `Bearer ${process.env.KILASFLOW_API_KEY}` }
+  apiKey: process.env.KILASFLOW_API_KEY // a `kfa1_…` key, tenant-scoped
 });
 
 const workflow = await kilasflow.createWorkflow({
@@ -68,10 +68,59 @@ content policy and a long immutable cache lifetime. `importWorkflow` takes the
 n8n document as `unknown` inside a typed envelope — it is untrusted input —
 while its diagnostics and minted webhook URLs are fully typed.
 
-Authentication is always explicit configuration. `headers` is a plain record
-rather than a dedicated `apiKey` field because deployments authenticate
-differently — a bearer token, a gateway header, a signed proxy — and inventing
-one shape would force the others to work around it.
+## Credentials
+
+`apiKey` is a convenience layered on `headers`, never a replacement for it.
+It sends the key as `Authorization: Bearer <key>`; when `headers` already
+carries an `Authorization` entry, that explicit value wins, so gateway
+headers, signed proxies and other shapes keep working exactly as before.
+`headers` is a supported credential path, not a transitional one.
+
+### One client per tenant
+
+A host holds one API key per tenant — the server issues tenant-scoped keys
+and offers no impersonation, so an operator key used "on behalf of" a tenant
+is not a model anything supports. Build one client per key with
+`tenantClientFactory`, which takes the shared base URL and options once and
+returns a function from tenant key to client:
+
+```ts
+import { tenantClientFactory } from '@kilasflow/sdk/server';
+
+const forTenant = tenantClientFactory({ baseUrl: 'https://flows.example' });
+
+// Per request, per tenant — never a shared client whose key is swapped.
+const acme = forTenant(tenantKeyFor('acme'));
+await acme.listWorkflows();
+```
+
+The rule is stated and tested: a client's credential is fixed for its
+lifetime. There is no setter and no refresh callback, and the constructor
+copies the headers it is given, so a key cannot be reassigned by a concurrent
+request handler. Build a client per request, or cache one client per tenant
+id; never mutate.
+
+### Rotation
+
+Mint the new key, build a new client with it, direct new work at the new
+client. In-flight requests on the old client finish or fail on their own — a
+request authorized when it started and revoked before it finished fails with
+a 401 the caller already handles. There is deliberately no
+credential-refresh callback: one invites a host to hold a single long-lived
+client across a rotation, which is the shared-mutable-client bug wearing a
+different hat.
+
+### Telling 401 from 403
+
+Every failure surfaces as `KilasFlowError` with a numeric `status` — no
+message text to parse. `401` is "your key is wrong"; `403` is "your key is
+fine and this is not yours". A host retries, re-authenticates, or pages on
+the number, not the prose.
+
+Nothing in this package reads the process environment or any ambient source.
+The example above passes `process.env` explicitly because the host chose to;
+the SDK never looks one up itself, and a caller that supplies no credential
+gets an unauthenticated request rather than a surprise.
 
 ## Browser: mount the editor and watch a run
 
@@ -84,14 +133,16 @@ const editor = mountWorkflowEditor({
   session, // fetched from your own backend
   onEvent(event) {
     if (event.type === 'execution-started') {
+      // The backend minted a ticket for this execution (see below); the
+      // page spends it without ever seeing the API key.
       subscribeExecutionEvents({
         baseUrl: 'https://flows.example',
         executionId: event.executionId,
-        onEvent: (execution) => console.log(execution.type, execution.nodeId)
+        onEvent: (execution) => console.log(execution.type, execution.nodeId),
+        ticket: () => fetchTicket(event.executionId)
       });
     }
   }
-});
 
 // Removes the iframe, its message listener, and its handshake timer.
 editor.unmount();
@@ -102,6 +153,36 @@ only then is the token posted — to the editor's exact origin, never `'*'`.
 Every message received is checked against `event.origin` and against the frame
 it came from before its payload is read.
 
+### Watching a run on an authenticated server
+
+`EventSource` cannot send an `Authorization` header, so the backend exchanges
+its credential for a single-use ticket and the page spends it as `?ticket=`:
+
+```ts
+// Backend: mint adjacent to the subscribe, per execution.
+const ticket = await kilasflow.createStreamTicket(executionId);
+// => { ticket: '…', executionId, expiresAt }
+
+// Page: hand the SDK a minter, not a string. A ticket is single-use and
+// lives for seconds, so the SDK calls it before every connect — first and
+// every reconnect — and resumes after the last event received. A fixed
+// string is spent once and only suits a stream that never reconnects.
+async function fetchTicket(executionId: string): Promise<string> {
+  const response = await fetch(`/api/stream-ticket?executionId=${executionId}`);
+  return (await response.json()).ticket as string;
+}
+```
+
+## Install
+
+```sh
+npm install @kilasflow/sdk
+```
+
+Pin the exact version in production. Releases are cut from `sdk-vX.Y.Z` tags
+with npm provenance attested, and every entry in [CHANGELOG.md](./CHANGELOG.md)
+states whether it is additive, a fix, or breaking.
+
 ## Versioning
 
 `SDK_VERSION` (`sdk/src/version.ts`) follows semver for this package's
@@ -110,11 +191,16 @@ fixes. `API_VERSION` is the API it targets, versioned by its `/api/v1` path,
 and moves only when a new `/api/vN` path ships. A host can upgrade one
 without the other.
 
+The package stays on `0.x` until the server surface it targets is considered
+stable: semver's pre-1.0 allowance is the honest description of an SDK whose
+authentication story only just landed. No `1.0.0` is promised before then.
+
 The two numbers in this package MUST agree: `SDK_VERSION` mirrors `version`
-in `package.json`, and `make sdk-version-check` (run in CI) fails the build
-when they differ. Which server build you are talking to is neither of these —
-it is `info.version` in the OpenAPI document (and the binary's `-version`
-flag). Pin that, not these two. Full contract:
+in `package.json`, and `make sdk-version-check` (run in CI, mirrored by
+`test/version.test.mjs` under `pnpm test`) fails the build when they differ.
+Which server build you are talking to is neither of these — it is
+`info.version` in the OpenAPI document (and the binary's `-version` flag).
+Pin that, not these two. Full contract:
 `docs/src/content/docs/reference/api-contract.md`.
 
 ## Licence

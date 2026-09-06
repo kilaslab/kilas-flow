@@ -178,6 +178,7 @@ describe('mountWorkflowEditor', () => {
 /** Minimal EventSource stand-in; jsdom has none. */
 class FakeEventSource {
 	static last: FakeEventSource | undefined;
+	static instances: FakeEventSource[] = [];
 	readonly url: string;
 	closed = false;
 	listeners = new Map<string, Set<EventListener>>();
@@ -185,6 +186,7 @@ class FakeEventSource {
 	constructor(url: string) {
 		this.url = url;
 		FakeEventSource.last = this;
+		FakeEventSource.instances.push(this);
 	}
 
 	addEventListener(name: string, listener: EventListener) {
@@ -203,6 +205,13 @@ class FakeEventSource {
 	emit(name: string, data: unknown) {
 		for (const listener of this.listeners.get(name) ?? []) {
 			listener(new MessageEvent(name, { data: JSON.stringify(data) }) as unknown as Event);
+		}
+	}
+
+	/** Fires the error listeners, as a dropped connection would. */
+	fail() {
+		for (const listener of this.listeners.get('error') ?? []) {
+			listener(new Event('error'));
 		}
 	}
 
@@ -267,6 +276,118 @@ describe('subscribeExecutionEvents', () => {
 
 		expect(FakeEventSource.last!.closed).toBe(true);
 		expect(FakeEventSource.last!.listenerCount()).toBe(0);
+		vi.unstubAllGlobals();
+	});
+});
+
+describe('subscribeExecutionEvents with a stream ticket', () => {
+	it('spends a fixed ticket as a query parameter', () => {
+		vi.stubGlobal('EventSource', FakeEventSource);
+		const unsubscribe = subscribeExecutionEvents({
+			baseUrl: EDITOR_ORIGIN,
+			executionId: 'exec-1',
+			onEvent: () => undefined,
+			ticket: 'single-use-ticket'
+		});
+
+		expect(FakeEventSource.last?.url).toBe(
+			`${EDITOR_ORIGIN}/api/v1/executions/exec-1/events?ticket=single-use-ticket`
+		);
+		unsubscribe();
+		vi.unstubAllGlobals();
+	});
+
+	it('mints a fresh ticket per connect and resumes after the last event received', async () => {
+		vi.useFakeTimers();
+		vi.stubGlobal('EventSource', FakeEventSource);
+		FakeEventSource.instances.length = 0;
+		let minted = 0;
+		const ticket = vi.fn(async () => `ticket-${++minted}`);
+		const onError = vi.fn();
+		const events: unknown[] = [];
+		const unsubscribe = subscribeExecutionEvents({
+			baseUrl: EDITOR_ORIGIN,
+			executionId: 'exec-1',
+			onEvent: (event) => events.push(event),
+			onError,
+			ticket
+		});
+
+		await vi.advanceTimersByTimeAsync(0);
+		expect(ticket).toHaveBeenCalledTimes(1);
+		// No resume position on the first connect: nothing received yet.
+		expect(FakeEventSource.last?.url).toBe(
+			`${EDITOR_ORIGIN}/api/v1/executions/exec-1/events?ticket=ticket-1`
+		);
+
+		const first = FakeEventSource.last!;
+		first.emit('node.completed', { id: 7, type: 'node.completed', executionId: 'exec-1', at: 'now' });
+		expect(events).toHaveLength(1);
+		first.fail();
+		expect(onError).toHaveBeenCalledTimes(1);
+		expect(first.closed).toBe(true);
+
+		await vi.advanceTimersByTimeAsync(2000);
+		// A fresh ticket, never the spent one — and the resume cursor the
+		// server replays retained events after, so nothing is lost.
+		expect(ticket).toHaveBeenCalledTimes(2);
+		expect(FakeEventSource.last?.url).toBe(
+			`${EDITOR_ORIGIN}/api/v1/executions/exec-1/events?ticket=ticket-2&from=7`
+		);
+		expect(FakeEventSource.last).not.toBe(first);
+
+		unsubscribe();
+		vi.unstubAllGlobals();
+	});
+
+	it('still closes on a terminal event when ticketed, without minting again', async () => {
+		vi.useFakeTimers();
+		vi.stubGlobal('EventSource', FakeEventSource);
+		let minted = 0;
+		const ticket = vi.fn(async () => `ticket-${++minted}`);
+		const onClose = vi.fn();
+		const unsubscribe = subscribeExecutionEvents({
+			baseUrl: EDITOR_ORIGIN,
+			executionId: 'exec-1',
+			onEvent: () => undefined,
+			onClose,
+			ticket
+		});
+
+		await vi.advanceTimersByTimeAsync(0);
+		FakeEventSource.last!.emit('execution.completed', {
+			id: 9,
+			type: 'execution.completed',
+			executionId: 'exec-1',
+			at: 'now'
+		});
+		await vi.advanceTimersByTimeAsync(10_000);
+
+		expect(onClose).toHaveBeenCalledTimes(1);
+		expect(ticket).toHaveBeenCalledTimes(1);
+		expect(FakeEventSource.last!.closed).toBe(true);
+		unsubscribe();
+		vi.unstubAllGlobals();
+	});
+
+	it('cancels a pending reconnect on unsubscribe', async () => {
+		vi.useFakeTimers();
+		vi.stubGlobal('EventSource', FakeEventSource);
+		let minted = 0;
+		const ticket = vi.fn(async () => `ticket-${++minted}`);
+		const unsubscribe = subscribeExecutionEvents({
+			baseUrl: EDITOR_ORIGIN,
+			executionId: 'exec-1',
+			onEvent: () => undefined,
+			ticket
+		});
+
+		await vi.advanceTimersByTimeAsync(0);
+		FakeEventSource.last!.fail();
+		unsubscribe();
+		await vi.advanceTimersByTimeAsync(10_000);
+
+		expect(ticket).toHaveBeenCalledTimes(1);
 		vi.unstubAllGlobals();
 	});
 });

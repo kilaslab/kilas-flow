@@ -416,3 +416,52 @@ export class KilasFlowClient {
 		return this.#transport.request('POST', '/embed-sessions', { body: request, signal });
 	}
 }
+
+/**
+ * Shared configuration for every tenant client a host builds.
+ *
+ * One key per tenant: the server issues tenant-scoped keys and offers no
+ * impersonation, so a host holds one `kfa1_…` key per customer and builds one
+ * client per key. The per-tenant key itself is supplied later, to the
+ * function {@link tenantClientFactory} returns.
+ */
+export interface TenantClientPoolOptions {
+	/** Absolute base URL of the KilasFlow deployment, shared by every tenant. */
+	baseUrl: string;
+	/**
+	 * Headers sent for every tenant — a gateway header, a `User-Agent`,
+	 * tracing. Never an `Authorization` value: a shared credential here would
+	 * be sent for the wrong tenant, which is the exact leak this factory
+	 * exists to prevent.
+	 */
+	headers?: Record<string, string>;
+	/** Injected for tests, or to add tracing/retries around the SDK. */
+	fetch?: typeof globalThis.fetch;
+	/** Aborts a request that takes too long. Defaults to 30 seconds. */
+	timeoutMs?: number;
+}
+
+/**
+ * Builds one fixed-credential client per tenant.
+ *
+ * The returned function takes a tenant's API key and returns a client that
+ * sends only that key. The credential is fixed for the client's lifetime:
+ * there is no setter, no refresh callback, and the constructor copies the
+ * headers it is given, so holding one long-lived client and swapping its key
+ * between requests — the bug that leaks one customer's data to another — is
+ * not representable. Build a client per request, or cache one client per
+ * tenant id; never mutate.
+ *
+ * Rotation is the boring answer on purpose: mint the new key, build a new
+ * client with it, direct new work at the new client. In-flight requests on
+ * the old client finish or fail on their own — a request authorized when it
+ * started and revoked before it finished fails with a 401 the caller already
+ * handles — and no callback invites a host to hold one client across the
+ * rotation.
+ */
+export function tenantClientFactory(shared: TenantClientPoolOptions): (tenantApiKey: string) => KilasFlowClient {
+	if (shared.headers?.Authorization !== undefined) {
+		throw new Error('tenantClientFactory shared headers must not carry Authorization: the credential comes per tenant, not per pool');
+	}
+	return (tenantApiKey: string) => new KilasFlowClient({ ...shared, apiKey: tenantApiKey });
+}
