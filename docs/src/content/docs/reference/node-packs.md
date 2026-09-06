@@ -1,36 +1,153 @@
 ---
 title: Node pack format
-description: Not yet written. Where the format is currently specified.
+description: Every field of a node pack manifest, what the loader does with it, and what each refusal means.
 sidebar:
   order: 3
 ---
 
-:::caution[This page has not been written yet]
-:::
+A pack is a JSON manifest plus a checksum sidecar, laid out as one directory
+per pack. The manifest is what `nodepack.Decode` reads with unknown fields
+rejected; the sidecar is what the loader verifies before anything else. The
+tutorial that builds one from nothing is
+[Authoring a community node pack](/guides/node-authoring/); this page is the
+reference it points at.
 
-## What will be here
+The on-disk unit:
 
-The pack file format: every field, what the routing interpreter does with it,
-and how an operation description becomes an HTTP request.
+```text
+<packs dir>/<name>/pack.json    the manifest Decode reads
+<packs dir>/<name>/pack.sha256  the hex SHA-256 of pack.json
+```
 
-## What exists today
+## Manifest fields
 
-A pack is JSON. It describes resources, operations and properties, and it
-carries enough routing metadata for `internal/routing` to build the request at
-run time. There is no Go in a pack, which is what makes it possible for one to
-be generated — `cmd/nodepackgen` produces the WAHA packs from a vendored OpenAPI
-document, and `make node-packs` regenerates them.
+The top-level object accepts exactly these fields — anything else fails the
+strict decoder. Required unless marked optional.
 
-Three pack node types ship today: Telegram, hand-written; and WAHA plus its
-trigger, generated, at two API versions each.
+| Field | Required | Meaning |
+|---|---|---|
+| `type` | yes | Node type string. Must not claim the reserved `kilasflow.` namespace. |
+| `version` | yes | Positive type version. The registry resolves downward: requesting a version with no exact registration gets the nearest lower one. |
+| `displayName` | yes | Picker name. |
+| `description` | no | Picker description. |
+| `category` | yes | Top-level picker section. |
+| `icon` | no | `builtin:<name>` glyph, or shipped artwork. |
+| `iconColor` | no | Picker accent. |
+| `subtitle` | no | Template over the node's own parameters only — `{{ $parameter.<key> }}`. Anything else is refused. |
+| `documentationUrl` | no | Link shown in the editor. |
+| `credentialType` | no | Credential type this pack authenticates with, named by string. The operator binds a real credential after installation; the pack never carries one. |
+| `requestDefaults` | yes | `baseURL`, plus `headers`/`qs`/`body`/`path` shared by every operation. Templates over non-secret `$credentials` fields. |
+| `trigger` | no | When set, this is a webhook trigger node: events instead of resources, no routing description. |
+| `parameters` | yes | The node's properties, one per key (duplicates refused). |
+| `resources` | no | Required for action nodes; absent for triggers. |
+| `generator` | yes | Provenance block: `tool`, `source`, `sourceTitle`, `sourceVersion`, `sourceDigest`. Hand-written packs carry `{"tool": "nodepackgen", "source": "scaffold"}`. Do not copy a generated pack's provenance. |
 
-The format is specified by `internal/nodepack`, whose doc comment is the current
-reference, and `packs/waha/README.md` describes the generator's behaviour
-including what it does with the parts of an OpenAPI document that do not map
-cleanly onto a node property.
+A resource accepts `name`, `description`, `operations`. An operation accepts
+`name`, `description`, `method`, `url`, `sends`, `output`, `pagination`.
+`url` is appended to the request defaults' base URL; `{name}` placeholders are
+filled from `path` parameters, one escaped segment each.
 
-:::note
-Packs are loaded from inside the binary today. Installing one without rebuilding
-is planned and is a prerequisite for this page being much use to anyone outside
-the repository.
-:::
+A parameter accepts `key`, `label`, `description`, `kind`, `required`,
+`default`, `options`, `typeOptions`, `resources`, `operations`. Both
+`resources` and `operations` are required scoping: an operation name alone
+does not identify an operation, because names repeat across resources.
+`options` entries are `value`/`label` pairs. `key` must not be `resource` or
+`operation` — those are reserved for the pack's own cascade.
+
+A trigger accepts `events`, `catchAll`, `eventPath`, `shape`, `webhook`,
+`hmac`, `lifecycle`, `media`, `notice`. Events are in output-index order with
+the catch-all last; `hmac.algorithm` is `sha512`; `lifecycle.set` is the
+method/URL/headers/body/credentialType the server PUTs on activation.
+
+Property kinds are a closed set: `string`, `number`, `boolean`, `options`,
+`multiOptions`, `collection`, `fixedCollection`, `notice`, `json`, `dateTime`,
+`resourceLocator`, `resourceMapper`, `keyValue`, `conditions`,
+`assignmentCollection`.
+
+## Install and distribution
+
+Each immediate subdirectory of the packs directory (`packs.dir`,
+`KILASFLOW_PACKS_DIR`) is one pack. Loading happens at composition, before
+the registry is shared; an absent or empty directory is a normal, silent
+condition. The checksum sidecar is generated by the tooling
+(`nodepackgen pack -dir <pack dir>` writes it in `sha256sum`-compatible
+shape), never by hand — the check is against something a human approved
+rather than against the file's own claim about itself.
+
+Every failure names the pack and the reason and refuses the whole boot: an
+unreadable manifest, a missing sidecar, a digest mismatch, a malformed pack,
+or a duplicate registration. The server never runs with a half-registered
+catalogue. Hot reload and remote installation are out of scope: the registry
+is read-only once serving begins, and boot never fetches over the network.
+
+Licence position, matching the executable-sidecar rule: packs are
+operator-installed, never KilasFlow-distributed. You distribute your JSON; an
+operator places it and approves its checksum. Keep the format-versus-code line
+while writing — parameter shapes and routing metadata are interoperability
+facts, implementation source is not.
+
+## Troubleshooting
+
+`nodepackgen validate` collects every problem at once with file and JSON path.
+These are the errors authors actually hit, with the diagnostics verbatim:
+
+Unknown field — usually `properties` where the schema wants `parameters`, or
+a routing block at the wrong depth:
+
+```text
+pack.json: $.: unknown field "properties": want one of type, version, displayName, description, category, icon, iconColor, subtitle, documentationUrl, credentialType, requestDefaults, trigger, parameters, resources, generator
+```
+
+Reserved type namespace — only built-in nodes may use it:
+
+```text
+pack.json: $.type: node type "kilasflow.evil" claims the reserved "kilasflow." namespace, which only built-in nodes may use
+```
+
+Reserved cascade key — `resource` and `operation` belong to the generated
+cascade:
+
+```text
+pack.json: $.parameters[2].key: "resource" is reserved for the pack's own cascade
+```
+
+Duplicate parameter — one property per key:
+
+```text
+pack.json: $.parameters[2].key: node pack "pack.example" declares parameter "chatId" twice
+```
+
+Unknown property kind — the closed set is listed:
+
+```text
+pack.json: $.parameters[0].kind: parameter "chatId" has unknown kind "fancy": want one of string, number, boolean, options, multiOptions, collection, fixedCollection, notice, json, dateTime, resourceLocator, resourceMapper, keyValue, conditions, assignmentCollection
+```
+
+Refused routing hook — JavaScript closures have no data representation:
+
+```text
+pack.json: $: routing for pack.example: resource "message" operation "sendMessage": preSend hooks are JavaScript and are not supported; remove scrub
+```
+
+Unsupported post-receive action — only `rootProperty`, `setKeyValue`,
+`limit` and `binaryData` are implemented:
+
+```text
+pack.json: $: routing for pack.example: resource "message" operation "sendMessage": postReceive action "" is not supported; use rootProperty, setKeyValue, limit or binaryData
+```
+
+Subtitle reading anything but parameters:
+
+```text
+pack.json: $: node definition "pack.example" subtitle may only read $parameter.<key>, got "$json.foo"
+```
+
+Checksum mismatch — the manifest changed after approval:
+
+```text
+pack.sha256: $: pack "acme": pack.json no longer matches its recorded digest: regenerate it or restore the approved manifest
+```
+
+Icon artwork is refused at registration for containing a script element, a
+`foreignObject`, an event handler attribute, or an external or `javascript:`
+URL. Prefer `builtin:<name>` glyphs, which ship no bytes at all.
