@@ -112,27 +112,27 @@ type ServiceDeps struct {
 // Service claims queued execution records and persists their deterministic
 // runtime results. It is deliberately transport-independent.
 type Service struct {
-		executions             ExecutionStore
-		binaries               binary.Store
-		catalog                workflow.Catalog
-		runner                 *Runner
-		credentials            CredentialStore
-		events                 *events.Broker
-		environment            map[string]string
-		workerID               string
-		defaultTimeout         time.Duration
-		pollInterval           time.Duration
-		sweepInterval          time.Duration
-		relayPrefix            string
-		relaySend              func(channel, payload string) error
-		publicBaseURL          string
-		subworkflowTriggerType string
-		activeMu               sync.Mutex
-		active                 map[string]context.CancelFunc
-		startOnce              sync.Once
-		wake                   chan struct{}
-		log                    *slog.Logger
-	}
+	executions             ExecutionStore
+	binaries               binary.Store
+	catalog                workflow.Catalog
+	runner                 *Runner
+	credentials            CredentialStore
+	events                 *events.Broker
+	environment            map[string]string
+	workerID               string
+	defaultTimeout         time.Duration
+	pollInterval           time.Duration
+	sweepInterval          time.Duration
+	relayPrefix            string
+	relaySend              func(channel, payload string) error
+	publicBaseURL          string
+	subworkflowTriggerType string
+	activeMu               sync.Mutex
+	active                 map[string]context.CancelFunc
+	startOnce              sync.Once
+	wake                   chan struct{}
+	log                    *slog.Logger
+}
 
 func NewService(deps ServiceDeps) (*Service, error) {
 	if deps.Executions == nil || deps.Catalog == nil || deps.Runner == nil || deps.WorkerID == "" {
