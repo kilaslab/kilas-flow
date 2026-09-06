@@ -214,9 +214,20 @@ func (store *GORMWorkflowStore) WebhookRoutes(ctx context.Context, tenant Tenant
 		if route == "" {
 			route = model.Path
 		}
+		// Resolve decodes these for the delivery path; the listing must
+		// carry the same map, or lifecycle decisions made from listed
+		// routes (auto-register on activation) see no parameters and
+		// never fire.
+		parameters := map[string]any{}
+		if len(model.Parameters) > 0 {
+			if err := json.Unmarshal(model.Parameters, &parameters); err != nil {
+				return nil, fmt.Errorf("decode webhook parameters: %w", err)
+			}
+		}
 		bindings = append(bindings, WebhookBinding{
 			TenantID: model.TenantID, WorkflowID: model.WorkflowID, WorkflowVersionID: model.WorkflowVersionID,
 			NodeID: model.NodeID, NodeType: model.NodeType, Method: model.Method, Route: route, Path: model.Path,
+			Parameters: parameters,
 		})
 	}
 	return bindings, nil

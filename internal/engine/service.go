@@ -248,11 +248,18 @@ func (service *Service) runOnce(ctx context.Context, workerID string) (bool, err
 	delete(service.active, record.ID)
 	service.activeMu.Unlock()
 	cancel()
+	// The terminal writes below must not use ctx. On graceful shutdown ctx is
+	// already cancelled (SIGTERM), and a cancelled context fails the very
+	// writes that settle the run — leaving the execution running with its
+	// lease held until expiry instead of terminal with its lease released.
+	// Detaching costs nothing when ctx is live and saves the lease on the
+	// one path where it matters.
+	persistCtx := context.WithoutCancel(ctx)
 	// Suspension is neither success nor failure: the trace produced so far
 	// persists, the wait row holds the checkpoint, and the worker is free.
 	var suspended *SuspendError
 	if runErr != nil && errors.As(runErr, &suspended) {
-		parked, err := service.suspend(ctx, tenant, record, document, result, suspended, seqBase, resume)
+		parked, err := service.suspend(persistCtx, tenant, record, document, result, suspended, seqBase, resume)
 		if err != nil {
 			// An invalid suspension (no mode, no deadline, no checkpoint)
 			// fails the run like any other error rather than parking an
@@ -302,7 +309,7 @@ func (service *Service) runOnce(ctx context.Context, workerID string) (bool, err
 			errorPayload = structuredError(run.ErrorCode, run.Error)
 		}
 		now := time.Now().UTC()
-		if _, err := service.executions.CreateNodeRun(ctx, tenant, execution.NodeRun{
+		if _, err := service.executions.CreateNodeRun(persistCtx, tenant, execution.NodeRun{
 			TenantID: record.TenantID, ExecutionID: record.ID, NodeID: run.NodeID, Attempt: attemptOf(run), RunIndex: run.RunIndex, Sequence: seqBase + sequence + 1,
 			Status: status, Input: input, Output: output, Error: errorPayload, StartedAt: now, FinishedAt: &now, LeaseOwner: record.LeaseOwner,
 		}); err != nil {
@@ -341,7 +348,7 @@ func (service *Service) runOnce(ctx context.Context, workerID string) (bool, err
 		record.Status = status
 		record.Error = structuredError(code, runErr)
 		record.FinishedAt = &finishedAt
-		updated, updateErr := service.executions.UpdateRuntime(ctx, tenant, record)
+		updated, updateErr := service.executions.UpdateRuntime(persistCtx, tenant, record)
 		if updateErr != nil {
 			return true, updateErr
 		}
@@ -363,7 +370,7 @@ func (service *Service) runOnce(ctx context.Context, workerID string) (bool, err
 	record.Output = output
 	record.Error = json.RawMessage("null")
 	record.FinishedAt = &finishedAt
-	updated, err := service.executions.UpdateRuntime(ctx, tenant, record)
+	updated, err := service.executions.UpdateRuntime(persistCtx, tenant, record)
 	if err != nil {
 		return true, err
 	}
@@ -378,11 +385,13 @@ func (service *Service) runOnce(ctx context.Context, workerID string) (bool, err
 	return true, nil
 }
 
-// Start launches a bounded process-local worker pool. Every worker claims
-// records from the durable repository, so queued work remains recoverable
-// after a process restart instead of being tied to an HTTP request goroutine.
-// It also starts the expired-wait sweeper, so a forgotten approval resolves
-// instead of staying suspended forever.
+// Start launches a bounded worker pool. Every worker claims records from the
+// durable repository, so queued work is shared across processes pointing at
+// the same database — not tied to an HTTP request goroutine or to one
+// process — and remains recoverable after a restart. A claim stamps a fenced
+// lease owner, so of any number of workers racing for one execution exactly
+// one wins. It also starts the expired-wait sweeper, so a forgotten approval
+// resolves instead of staying suspended forever.
 func (service *Service) Start(ctx context.Context, maxConcurrent int) error {
 	if maxConcurrent < 1 {
 		return fmt.Errorf("engine max concurrent executions must be positive")
@@ -673,7 +682,10 @@ func (service *Service) InvokeWorkflow(ctx context.Context, parent ExecutionCont
 	if runErr != nil && errors.As(runErr, &suspended) {
 		runErr = refuseSuspendInChild(target, suspended)
 	}
-	if err := service.persistChild(ctx, tenant, record, result, runErr); err != nil {
+	// Like runOnce's terminal writes: the caller's context may already be
+	// cancelled (shutdown, or the parent's own cancellation), and the child's
+	// record must still settle rather than stay running with a held lease.
+	if err := service.persistChild(context.WithoutCancel(ctx), tenant, record, result, runErr); err != nil {
 		return WorkflowCallResult{}, err
 	}
 	if runErr != nil {

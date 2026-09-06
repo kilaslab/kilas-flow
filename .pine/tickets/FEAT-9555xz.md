@@ -1,7 +1,7 @@
 ---
 id: FEAT-9555xz
 title: Run executions across worker processes
-status: todo
+status: doing
 priority: low
 labels:
     - platform
@@ -11,7 +11,7 @@ deps:
 parent: EPIC-m42s3g
 phase: p8
 created: "2026-09-05T05:17:54Z"
-updated: "2026-09-05T05:17:54Z"
+updated: "2026-09-06T05:43:41Z"
 ---
 
 ## Scope
@@ -57,3 +57,50 @@ Two traps beyond those. SQLite cannot host this: one writer, no `LISTEN/NOTIFY`,
 - `.pine/roadmap.md` — p6 entries V2-p6-3 and V2-p6-4 (connection pool default, `FOR UPDATE SKIP LOCKED`, `LISTEN/NOTIFY`, the ~8000-byte NOTIFY payload cap, prefix-keyed advisory locks).
 - PRD: `gflow-prd-v1.md` §4 ("distributed workflow execution", "Kubernetes-native worker scaling" out of scope for V1), §35 Workflow Execution Model, §64 ("whether distributed workers use NATS, Redis Streams, or PostgreSQL").
 - Code: `internal/engine/service.go` (`Start`, `worker`, `Wake`, `runOnce`, `Cancel`, `active`), `cmd/kilasflow/main.go` (`WorkerID`, `runtime.Start`, `cronService.Start`), `internal/repository/executions.go` (`ClaimNext`, the `lease_owner` fencing in `UpdateRuntime` and `CreateNodeRun`), `internal/events/events.go` (in-process `Broker`), `internal/scheduler/scheduler.go` (the "runs due schedules in a single process" note and the transactional `ClaimDue`), `internal/webhook/webhook.go` (`await`), `internal/config/config.go` (`Database.MaxOpenConns` default 1, `Execution.MaxConcurrent` default 10).
+
+## Work evidence — MultiProc (Batch-7 wave 1, 2026-09-06)
+
+Ownership kept to the service loop, cmd worker flags, and the operate note;
+no repository claim-path edits (ClaimTier's paths read-only).
+
+Done:
+- Worker identity is host-qualified and unique
+  (`kilasflow-<host>-<pid>-<random>`, `unknown` when the hostname is
+  unavailable, `/`/space sanitised, host capped at 48 chars so the fencing
+  token stays inside `lease_owner`'s 128). `--worker-id` overrides it for
+  operators who want stable names. Proof:
+  `TestDefaultWorkerIDIsHostQualifiedAndUnique`,
+  `TestResolveWorkerIDHonoursAnExplicitOverride`
+  (`go test ./cmd/kilasflow/`, green).
+- Graceful shutdown settles instead of stranding: post-run persistence in
+  `runOnce` (suspend, node-run writes, both terminal writes) and the
+  sub-workflow `persistChild` now use `context.WithoutCancel`, so SIGTERM
+  mid-run still writes the terminal cancelled state and releases the lease.
+  Before this, the terminal write rode the cancelled context and failed,
+  leaving the execution running with its lease held until expiry (proven by
+  the new test failing pre-fix, passing post-fix). `Start`'s doc comment
+  now describes the shared durable queue rather than a process-local pool.
+- Docs: `operate/deployment.md` gains "Multiple workers against one
+  PostgreSQL database" (topology, distinct IDs, push-wake + 100 ms
+  fallback, shutdown-settles/kill-reclaimed, clock-skew warning with the
+  `default_timeout`-as-lease hazard, SQLite single-process refusal stated
+  as docs) and the stale "tier work remains" paragraph now records
+  wakeups + SKIP LOCKED as built in.
+
+Proof (`go test ./internal/engine/ ./cmd/kilasflow/`, green; PG halves
+green against kf-pg-vector:55434 with `KILASFLOW_TEST_POSTGRES_DSN` set,
+skip cleanly without it; combined PG runs need `-p 1`):
+- `TestTwoServicesClaimDisjointExecutionsOnPostgres`: 8 queued, two
+  services x 2 workers, distinct IDs, all 8 succeed, echo calls == 8.
+- `TestCrossProcessWakeReachesTheOtherWorkerOnPostgres`: both services on
+  a 10 s tick, only B listens; queued via the store (the "other process"),
+  success in ~0.1 s, far inside the tick; echo calls == 1.
+- `TestGracefulShutdownHandsNothingHalfDone` (sqlite, always runs):
+  context-aware executor held running, service context cancelled mid-run,
+  execution settles cancelled with the lease released, and a second
+  service's `RunOnce` finds nothing left to claim.
+
+Not in this slice (left for the ticket's remaining boxes): selectable
+API/worker role, single-scheduler election, cross-process event fan-out,
+cross-process cancel interruption, kill-9 reclaim e2e, SQLite split-role
+refusal at startup.

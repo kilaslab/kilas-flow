@@ -115,3 +115,39 @@ func TestDatabaseGuardResolvesTheInstallationsOwnTarget(t *testing.T) {
 		t.Fatalf("empty-DSN guard = %+v, want the zero guard", empty)
 	}
 }
+
+// Two processes must never share a worker identity: the pid alone repeats
+// across hosts, so the default carries the hostname, the pid, and a random
+// suffix. An explicit --worker-id keeps its spelling for operators who want
+// stable identities in their logs.
+func TestDefaultWorkerIDIsHostQualifiedAndUnique(t *testing.T) {
+	t.Parallel()
+	first, second := defaultWorkerID(), defaultWorkerID()
+	if first == "" || second == "" {
+		t.Fatal("defaultWorkerID() returned an empty identity")
+	}
+	if first == second {
+		t.Fatalf("defaultWorkerID() returned %q twice, want a unique identity per process", first)
+	}
+	for _, id := range []string{first, second} {
+		if !strings.HasPrefix(id, "kilasflow-") {
+			t.Errorf("worker ID %q has no kilasflow- prefix", id)
+		}
+		if strings.Contains(id, "/") || strings.Contains(id, " ") {
+			t.Errorf("worker ID %q carries a separator that would confuse the lease_owner fencing token", id)
+		}
+	}
+}
+
+func TestResolveWorkerIDHonoursAnExplicitOverride(t *testing.T) {
+	t.Parallel()
+	if got := resolveWorkerID("worker-07"); got != "worker-07" {
+		t.Errorf("resolveWorkerID(override) = %q, want the override untouched", got)
+	}
+	if got := resolveWorkerID("   "); got == "" || got == "   " {
+		t.Errorf("resolveWorkerID(blank) = %q, want the generated default", got)
+	}
+	if got := resolveWorkerID(""); got == "" {
+		t.Error("resolveWorkerID(empty) returned empty, want the generated default")
+	}
+}

@@ -61,10 +61,53 @@ Two facts that surprise operators coming from the SQLite default:
   the WAL pragma set are a pair and a configuration claiming otherwise would
   send an operator hunting the wrong thing.
 
-The remaining PostgreSQL tier work (queue wakeups, lock granularity, the
-shared-database guard below) is tracked on the roadmap under V2-p6-3 and
+Queue wakeups over `LISTEN`/`NOTIFY` and claim granularity over
+`FOR UPDATE SKIP LOCKED` are built into the PostgreSQL tier; the
+shared-database guard below is tracked on the roadmap under V2-p6-3 and
 follow-ups, and in `FEAT-a94c8y`. What is written here is what the tier does
 today.
+
+## Multiple workers against one PostgreSQL database
+
+Throughput scales by running more processes against the same database, not a
+bigger machine. Point two (or more) processes at the same PostgreSQL DSN and
+each runs its own worker pool over the same durable queue: every claim stamps
+a fenced lease owner, so of any number of workers racing for one execution
+exactly one wins, and every later write carries that fencing token — a worker
+whose lease was reclaimed cannot write over its successor.
+
+Three behaviours make this work:
+
+- **Distinct worker identities.** Each process identifies itself as
+  `kilasflow-<host>-<pid>-<random>` in `lease_owner` and the logs, so two
+  containers never share an identity even when both start at pid 1.
+  `--worker-id` overrides the default when an operator wants stable names.
+- **Push wake with a poll fallback.** Queuing an execution notifies every
+  listening process over PostgreSQL `LISTEN`/`NOTIFY`, so an idle worker in
+  another process picks work up in milliseconds rather than on its next
+  100 ms tick. The tick stays: a dropped notification costs latency, never a
+  stuck execution.
+- **Shutdown settles.** `SIGTERM` stops workers claiming new work; an
+  in-flight run is interrupted and written as cancelled with its lease
+  released, so nothing is left running with a lease held. A process that
+  dies without settling (`kill -9`, power loss) leaves the lease held until
+  it expires, and then another worker reclaims the execution and runs it —
+  with the partial trace cleared and the dead worker's writes fenced out.
+
+What breaks it:
+
+- **Clock skew.** Leases compare wall clocks across processes: a worker
+  whose clock runs ahead considers other workers' leases expired early and
+  reclaims executions that are still running. Persistence stays
+  at-most-once (fencing), but the graph's side effects — HTTP calls, sent
+  messages — happen twice. Run NTP on every worker, and keep
+  `execution.default_timeout` comfortably above both the skew and the
+  longest run: the same timeout bounds one run end to end and the lease it
+  holds, so a workflow that runs longer than its lease is reclaimed
+  mid-flight by design.
+- **SQLite.** One writer, no `LISTEN`/`NOTIFY`, one file: never point two
+  processes at the same SQLite database. Multi-worker topologies require
+  the PostgreSQL driver.
 
 ## Shared customer database with the `kflow_` prefix
 

@@ -4,6 +4,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -57,6 +59,7 @@ func main() {
 func run() error {
 	configPath := flag.String("config", "config.yaml", "path to the configuration file")
 	showVersion := flag.Bool("version", false, "print the version and exit")
+	workerIDOverride := flag.String("worker-id", "", "worker identity recorded in lease_owner (default: host-qualified and unique per process)")
 	flag.Parse()
 
 	if *showVersion {
@@ -405,7 +408,7 @@ func run() error {
 		// Named so a called workflow starts from its sub-workflow trigger and
 		// not from a webhook or schedule it also happens to carry.
 		SubworkflowTriggerType: nodes.ExecuteWorkflowTriggerType,
-		WorkerID:               fmt.Sprintf("kilasflow-%d", os.Getpid()),
+		WorkerID:               resolveWorkerID(*workerIDOverride),
 		DefaultTimeout:         cfg.Execution.DefaultTimeout,
 		// server.public_url prefixes the resume links handed to waiting
 		// executions. Empty renders path-only links for a same-origin setup.
@@ -477,7 +480,7 @@ func run() error {
 			return credentialLookup{store: credentialStore, tenant: tenant}
 		},
 		TriggerCoordinator: webhook.NewCoordinator(
-			webhookLifecycles, workflows, safehttp.DefaultPolicy(),
+			webhookLifecycles, workflows, outboundPolicy(cfg.Outbound),
 			func(tenantID string) engine.CredentialResolver {
 				return engine.NewTenantCredentials(credentialStore, repository.TenantScope{ID: tenantID})
 			},
@@ -498,6 +501,40 @@ func run() error {
 	})
 
 	return server.Run(ctx)
+}
+
+// resolveWorkerID returns the explicit --worker-id when set, otherwise a
+// host-qualified unique default. Two processes must never share an identity:
+// the pid alone repeats across hosts (every container starts at 1), so the
+// default carries the hostname, the pid, and a random suffix. Colliding IDs
+// cannot cross-fence another worker's writes — ClaimNext stamps every claim
+// with a fresh lease id — but they make every log line and every future
+// "which worker ran this" answer wrong.
+func resolveWorkerID(override string) string {
+	if trimmed := strings.TrimSpace(override); trimmed != "" {
+		return trimmed
+	}
+	return defaultWorkerID()
+}
+
+// defaultWorkerID builds the per-process identity. Randomness is best-effort:
+// if it fails the pid plus the process start time still separates this
+// process from any other on the same host.
+func defaultWorkerID() string {
+	host := "unknown"
+	if name, err := os.Hostname(); err == nil && strings.TrimSpace(name) != "" {
+		host = strings.TrimSpace(name)
+	}
+	host = strings.ReplaceAll(host, "/", "-")
+	host = strings.ReplaceAll(host, " ", "-")
+	if len(host) > 48 {
+		host = host[:48]
+	}
+	var suffix [4]byte
+	if _, err := rand.Read(suffix[:]); err != nil {
+		return fmt.Sprintf("kilasflow-%s-%d-%d", host, os.Getpid(), time.Now().UnixNano())
+	}
+	return fmt.Sprintf("kilasflow-%s-%d-%s", host, os.Getpid(), hex.EncodeToString(suffix[:]))
 }
 
 // historySweepInterval is how often the age bound on workflow history is
