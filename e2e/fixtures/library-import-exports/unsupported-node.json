@@ -1,0 +1,37 @@
+{
+  "_provenance": {
+    "origin": "authored-shape",
+    "note": "Authored by hand from the documented n8n import shapes (see internal/interop/n8n/n8n_test.go unsupportedFixture and importConnections). Carries one unmapped node (unsupported-node) plus one edge to a missing node (connection-gap) so the report proves both failure classes. No n8n bytes copied."
+  },
+  "name": "Library Unsupported",
+  "nodes": [
+    {
+      "id": "a",
+      "name": "Manual",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 0],
+      "parameters": {}
+    },
+    {
+      "id": "b",
+      "name": "Send Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [220, 0],
+      "parameters": { "toEmail": "ops@example.test", "subject": "Report" }
+    }
+  ],
+  "connections": {
+    "Manual": {
+      "main": [
+        [
+          { "node": "Send Email", "type": "main", "index": 0 },
+          { "node": "Ghost", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {}
+}

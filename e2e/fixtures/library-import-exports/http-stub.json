@@ -1,0 +1,46 @@
+{
+  "_provenance": {
+    "origin": "authored-shape",
+    "note": "Authored by hand from the documented n8n import shapes (see internal/interop/n8n/n8n_test.go webhookFixture and parameters.go httpToKilas). The URL is a placeholder: the spec re-points it at the per-test loopback stub after import, the same re-pointing step a migrating user performs. No n8n bytes copied."
+  },
+  "name": "Library HTTP Integration",
+  "nodes": [
+    {
+      "id": "a",
+      "name": "Manual",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 0],
+      "parameters": {}
+    },
+    {
+      "id": "b",
+      "name": "Fetch",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [220, 0],
+      "parameters": {
+        "method": "GET",
+        "url": "http://127.0.0.1:9/stub-replaced-after-import",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Accept", "value": "application/json" }] }
+      }
+    },
+    {
+      "id": "c",
+      "name": "Tag",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [440, 0],
+      "parameters": {
+        "assignments": { "assignments": [{ "id": "1", "name": "source", "type": "string", "value": "library-http" }] }
+      }
+    }
+  ],
+  "connections": {
+    "Manual": { "main": [[{ "node": "Fetch", "type": "main", "index": 0 }]] },
+    "Fetch": { "main": [[{ "node": "Tag", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": {}
+}

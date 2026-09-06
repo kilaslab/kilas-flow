@@ -1,0 +1,67 @@
+{
+  "_provenance": {
+    "origin": "authored-shape",
+    "note": "Authored by hand from the documented n8n import shapes (see internal/interop/n8n/n8n_test.go branchingFixture and parameters.go ifToKilas). No n8n bytes copied. A live-n8n export replaces this file when N8N_EMAIL/N8N_PASSWORD are present; the loader asserts this marker before import."
+  },
+  "name": "Library Flow Control",
+  "nodes": [
+    {
+      "id": "a",
+      "name": "Manual",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 0],
+      "parameters": {}
+    },
+    {
+      "id": "b",
+      "name": "Tier Check",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [220, 0],
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "id": "1",
+              "leftValue": "={{ $json.tier }}",
+              "rightValue": "gold",
+              "operator": { "type": "string", "operation": "equals" }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "c",
+      "name": "Gold",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [440, -80],
+      "parameters": {
+        "assignments": { "assignments": [{ "id": "1", "name": "priority", "type": "string", "value": "high" }] }
+      }
+    },
+    {
+      "id": "d",
+      "name": "Standard",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [440, 80],
+      "parameters": {
+        "assignments": { "assignments": [{ "id": "1", "name": "priority", "type": "string", "value": "normal" }] }
+      }
+    }
+  ],
+  "connections": {
+    "Manual": { "main": [[{ "node": "Tier Check", "type": "main", "index": 0 }]] },
+    "Tier Check": {
+      "main": [
+        [{ "node": "Gold", "type": "main", "index": 0 }],
+        [{ "node": "Standard", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {}
+}

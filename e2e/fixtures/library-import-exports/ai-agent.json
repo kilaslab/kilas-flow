@@ -1,0 +1,60 @@
+{
+  "_provenance": {
+    "origin": "authored-shape",
+    "note": "Authored by hand from the documented n8n import shapes (see internal/interop/n8n/n8n_test.go clusterFixture and parameters.go agentToKilas). The model credential is deliberately an n8n instance-local reference so the import reports a credential-gap and the workflow stays blocked until a local credential is bound. No n8n bytes copied."
+  },
+  "name": "Library AI Agent",
+  "nodes": [
+    {
+      "id": "a",
+      "name": "Manual",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 0],
+      "parameters": {}
+    },
+    {
+      "id": "b",
+      "name": "AI Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [220, 0],
+      "parameters": {
+        "promptType": "define",
+        "text": "=Answer this: {{ $json.question }}",
+        "options": { "systemMessage": "You are a support agent.", "maxIterations": 12 }
+      }
+    },
+    {
+      "id": "c",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [160, 200],
+      "parameters": {
+        "model": { "__rl": true, "mode": "list", "value": "gpt-4.1-mini" },
+        "options": { "temperature": 0.2, "maxTokens": 2048 }
+      },
+      "credentials": { "openAiApi": { "id": "7", "name": "OpenAI account" } }
+    },
+    {
+      "id": "d",
+      "name": "Window Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [280, 200],
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "=chat-{{ $json.chatId }}",
+        "contextWindowLength": 25
+      }
+    }
+  ],
+  "connections": {
+    "Manual": { "main": [[{ "node": "AI Agent", "type": "main", "index": 0 }]] },
+    "OpenAI Chat Model": { "ai_languageModel": [[{ "node": "AI Agent", "type": "ai_languageModel", "index": 0 }]] },
+    "Window Memory": { "ai_memory": [[{ "node": "AI Agent", "type": "ai_memory", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": {}
+}

@@ -1,0 +1,38 @@
+{
+  "_provenance": {
+    "origin": "authored-shape",
+    "note": "Authored by hand from the documented n8n import shapes (see internal/interop/n8n/n8n_test.go sqlFixture and parameters.go scheduleToKilas). No n8n bytes copied. A live-n8n export replaces this file when N8N_EMAIL/N8N_PASSWORD are present; the loader asserts this marker before import."
+  },
+  "name": "Library Scheduled Tick",
+  "nodes": [
+    {
+      "id": "a",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0],
+      "parameters": {
+        "rule": { "interval": [{ "field": "cronExpression", "expression": "0 9 * * 1-5" }] }
+      }
+    },
+    {
+      "id": "b",
+      "name": "Stamp",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [220, 0],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "1", "name": "tick", "type": "string", "value": "scheduled" }
+          ]
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": { "main": [[{ "node": "Stamp", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": { "timezone": "Europe/Zurich" }
+}

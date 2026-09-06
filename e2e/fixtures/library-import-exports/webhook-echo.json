@@ -1,0 +1,50 @@
+{
+  "_provenance": {
+    "origin": "authored-shape",
+    "note": "Authored by hand from the documented n8n import shapes (see internal/interop/n8n/n8n_test.go webhookFixture and parameters.go webhookToKilas/respondToKilas). No n8n bytes copied. A live-n8n export replaces this file when N8N_EMAIL/N8N_PASSWORD are present; the loader asserts this marker before import."
+  },
+  "name": "Library Webhook Echo",
+  "nodes": [
+    {
+      "id": "a",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "parameters": {
+        "path": "library-echo",
+        "httpMethod": "POST",
+        "responseMode": "responseNode",
+        "authentication": "none"
+      }
+    },
+    {
+      "id": "b",
+      "name": "Shape",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [220, 0],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "1", "name": "greeting", "type": "string", "value": "={{ $json.text }}" }
+          ]
+        }
+      }
+    },
+    {
+      "id": "c",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [440, 0],
+      "parameters": { "respondWith": "json", "responseBody": "={{ $json }}" }
+    }
+  ],
+  "connections": {
+    "Webhook": { "main": [[{ "node": "Shape", "type": "main", "index": 0 }]] },
+    "Shape": { "main": [[{ "node": "Respond", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": {}
+}

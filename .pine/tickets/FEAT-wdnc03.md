@@ -1,7 +1,7 @@
 ---
 id: FEAT-wdnc03
 title: Import and run workflows from the n8n workflow library
-status: todo
+status: done
 priority: high
 labels:
     - e2e
@@ -15,7 +15,7 @@ deps:
 parent: EPIC-m42s3g
 phase: p11
 created: "2026-09-06T06:41:09Z"
-updated: "2026-09-06T06:41:09Z"
+updated: "2026-09-06T07:14:02Z"
 ---
 
 ## Scope
@@ -60,3 +60,61 @@ Out of scope: runtime performance comparison (benchmark ticket); exhaustive all-
 - `.pine/tickets/FEAT-nch9dg.md` — Data Table → datastore mapping.
 - `.pine/tickets/FEAT-yyjfjq.md` — licence boundary (no n8n bytes in repo/image; library JSON stays gitignored).
 - Live n8n: `http://localhost:5678/signin?redirect=%252F` (creds via env, see Scope).
+
+## Work Evidence
+
+Closed by `pine close --evidence` on 2026-09-06.
+
+- Base: `db79cff1` (last commit at or before ticket created 2026-09-06)
+- Commits (1):
+  - `f7deaa38` — chore(pine): record live-n8n tickets filed mid-session, secrets redacted
+- Files changed (base → working tree):
+
+```
+ .pine/tickets/FEAT-1c70nt.md                   |  120 ++-
+ .pine/tickets/FEAT-1jqjtd.md                   |   73 ++
+ .pine/tickets/FEAT-5fhj6p.md                   |   79 +-
+ .pine/tickets/FEAT-8mymac.md                   |   58 ++
+ .pine/tickets/FEAT-9555xz.md                   | 1073 +++++++++++++++++++++++-
+ .pine/tickets/FEAT-cpdp8y.md                   |  858 ++++++++++++++++++-
+ .pine/tickets/FEAT-nc6z9r.md                   |  950 ++++++++++++++++++++-
+ .pine/tickets/FEAT-wdnc03.md                   |   62 ++
+ cmd/kilasflow/main.go                          |  140 +++-
+ docs/src/content/docs/guides/embedding.md      |   40 +-
+ docs/src/content/docs/operate/deployment.md    |   45 +-
+ e2e/fixtures/datastore.ts                      |  544 ++++++++++++
+ e2e/fixtures/epic-external.ts                  |  290 +++++++
+ e2e/fixtures/epic-telegram.ts                  |  432 ++++++++++
+ e2e/tests/datastore-pg.spec.ts                 |  257 ++++++
+ e2e/tests/datastore.spec.ts                    |  376 +++++++++
+ e2e/tests/epic-acceptance.spec.ts              |  765 +++++++++++++++++
+ internal/api/datastores_test.go                |    9 +-
+ internal/api/embed_datastore_test.go           |  230 +++++
+ internal/api/handlers/datastores.go            |   42 +
+ internal/api/handlers/datastores_csv.go        |    6 +
+ internal/api/handlers/embed.go                 |   64 +-
+ internal/api/middleware/embed.go               |   60 +-
+ internal/api/middleware/embed_test.go          |  120 +++
+ internal/api/routes.go                         |    2 +-
+ internal/embed/embed.go                        |  103 ++-
+ internal/embed/embed_test.go                   |  119 +++
+ internal/engine/checkpoint.go                  |    4 +-
+ internal/engine/multiprocess_test.go           |  553 ++++++++++++
+ internal/engine/runner.go                      |   12 +-
+ internal/engine/service.go                     |  110 ++-
+ internal/engine/worker_test.go                 |    1 +
+ internal/execution/records.go                  |    6 +-
+ internal/interop/n8n/corpus/scoreboard_test.go |    4 +-
+ internal/interop/n8n/parameters.go             |    2 +-
+ internal/repository/waits.go                   |   18 +-
+ sdk/README.md                                  |   83 +-
+ sdk/src/browser.ts                             |   27 +-
+ sdk/src/generated/models.ts                    |   14 +-
+ sdk/src/http.ts                                |   24 +-
+ sdk/src/server.ts                              |  417 ++++++++-
+ sdk/test/browser.test.ts                       |   19 +
+ sdk/test/datastore-live.test.mjs               |  100 +++
+ sdk/test/operation-coverage.test.mjs           |   22 +
+ sdk/test/server.test.ts                        |  351 +++++++-
+ 45 files changed, 8533 insertions(+), 151 deletions(-)
+```
