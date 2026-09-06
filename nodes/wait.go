@@ -36,7 +36,10 @@ const (
 //
 // One hour rather than something rounder: it is long enough for every polling
 // and rate-limit pause a workflow legitimately needs, and short enough that a
-// mistake costs one slot for one hour instead of one slot indefinitely.
+// mistake costs one slot for one hour instead of one slot indefinitely. In
+// practice the execution's own timeout usually binds first — on a stock
+// install execution.default_timeout is 60s, so an hour-long wait is cut short
+// by the run timing out rather than ending in a resume.
 const MaxWaitDuration = time.Hour
 
 // waitNode pauses an execution for a bounded time.

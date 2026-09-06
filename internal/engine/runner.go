@@ -54,11 +54,13 @@ type ExecutionContext struct {
 	// Stack is the workflow IDs already on the call chain, outermost first,
 	// including this one.
 	//
-	// A stack rather than a depth counter. A counter lets A→B→A→B run all the
-	// way to the limit and spend the whole budget before failing; the stack
-	// refuses the second A immediately and can name the cycle in the error,
-	// which is the difference between a message someone can act on and a
-	// message that says a number was exceeded.
+	// A stack beside a depth counter rather than instead of one. A counter alone
+	// lets A→B→A→B run all the way to the limit and spend the whole budget
+	// before failing; the stack refuses the second A immediately and can name
+	// the cycle in the error, which is the difference between a message someone
+	// can act on and a message that says a number was exceeded. Chains of
+	// distinct workflows that never repeat are still capped by
+	// MaxWorkflowCallDepth.
 	Stack []string
 }
 

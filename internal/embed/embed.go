@@ -157,6 +157,8 @@ type Issuer struct {
 }
 
 // NewIssuer builds the token issuer. The signing key must be at least 32 bytes.
+// The server only ever passes exactly 32: the boot path decodes the configured
+// variable through KeyFromEnvironment, which rejects anything else.
 func NewIssuer(key []byte, allowedOrigins []string, now func() time.Time) (*Issuer, error) {
 	if len(key) < 32 {
 		return nil, fmt.Errorf("embed signing key must be at least 32 bytes")
