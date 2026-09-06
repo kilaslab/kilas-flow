@@ -460,6 +460,7 @@ type Binary struct {
 	// oversized response is refused rather than truncated.
 	MaxBytes int64 `koanf:"max_bytes"`
 }
+
 // Packs configures directory-loaded node packs: the install path that needs
 // no rebuild. Each immediate subdirectory of Dir is one pack, carrying a
 // pack.json manifest beside the pack.sha256 checksum the operator approved.

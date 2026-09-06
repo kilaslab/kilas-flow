@@ -1,4 +1,5 @@
-// Command nodepackgen turns an OpenAPI 3 document into a KilasFlow node pack.
+// Command nodepackgen turns an OpenAPI 3 document into a KilasFlow node pack,
+// and helps authors write packs by hand.
 //
 // It exists because a hand-written node does not scale to a hundred operations
 // and does not scale at all to a service whose API is already described. The
@@ -32,6 +33,15 @@ func main() {
 }
 
 func run() error {
+	// Authoring subcommands dispatch on the first non-flag argument. The
+	// flag-only path below is untouched: a bare `nodepackgen -spec ...`
+	// still runs the generator, which `make node-packs` relies on.
+	if len(os.Args) > 1 && !strings.HasPrefix(os.Args[1], "-") {
+		if handled, err := runAuthor(os.Args[1], os.Args[2:]); handled {
+			return err
+		}
+		return fmt.Errorf("unknown command %q: want scaffold, validate or pack", os.Args[1])
+	}
 	specPath := flag.String("spec", "", "path to the OpenAPI 3 document")
 	manifestPath := flag.String("manifest", "", "path to the pack manifest")
 	outPath := flag.String("out", "", "path to write the pack JSON to")
