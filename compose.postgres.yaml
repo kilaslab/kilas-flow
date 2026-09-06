@@ -45,7 +45,10 @@ services:
     # Pinned to a major version. PostgreSQL does not read a data directory
     # written by a newer major, so a floating tag would eventually produce a
     # stack that will not start and cannot be rolled back without a dump.
-    image: postgres:17-alpine
+    # pgvector variant rather than stock: migration 000006_vector_store
+    # creates the vector extension, and a server without its binaries refuses
+    # the migration and the boot with it.
+    image: pgvector/pgvector:pg17
     environment:
       POSTGRES_USER: ${KILASFLOW_POSTGRES_USER:-kilasflow}
       POSTGRES_PASSWORD: ${KILASFLOW_POSTGRES_PASSWORD:-kilasflow}
