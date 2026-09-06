@@ -121,9 +121,13 @@ func TestValidateRejectsBadConfig(t *testing.T) {
 		// connections nobody budgeted for.
 		"negative open connections": func(c *Config) { c.Database.MaxOpenConns = -1 },
 		"negative idle connections": func(c *Config) { c.Database.MaxIdleConns = -1 },
-		// A negative retention puts the prune cutoff in the future, and every
-		// execution ever recorded is older than the future.
-		"negative execution retention": func(c *Config) { c.Execution.Retention = -time.Hour },
+		// A prefix that PostgreSQL would truncate joins two identifiers into
+		// one; one that does not end in an underscore reads as part of the
+		// table name rather than a namespace.
+		"prefix without a trailing underscore": func(c *Config) { c.Database.TablePrefix = "kflow" },
+		"prefix with uppercase letters":        func(c *Config) { c.Database.TablePrefix = "Kflow_" },
+		"prefix with a dash":                   func(c *Config) { c.Database.TablePrefix = "k-flow_" },
+		"prefix past the length cap":           func(c *Config) { c.Database.TablePrefix = "0123456789abcdefg_" },
 	}
 
 	for name, mutate := range cases {
@@ -134,6 +138,20 @@ func TestValidateRejectsBadConfig(t *testing.T) {
 				t.Error("Validate() = nil, want error")
 			}
 		})
+	}
+}
+
+func TestTablePrefixDefaultsToEmptyAndAcceptsAKflowPrefix(t *testing.T) {
+	for _, prefix := range []string{"", "kflow_", "tenant42_"} {
+		cfg := Default()
+		cfg.Database.TablePrefix = prefix
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("Validate() with table_prefix %q = %v, want nil", prefix, err)
+		}
+	}
+	// The section is one word, so the first-underscore cut reaches the leaf.
+	if got := envKeyToPath("KILASFLOW_DATABASE_TABLE_PREFIX"); got != "database.table_prefix" {
+		t.Errorf("envKeyToPath = %q, want %q", got, "database.table_prefix")
 	}
 }
 

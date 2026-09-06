@@ -3,6 +3,7 @@ package nodes_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/kilaslabs/kilas-flow/internal/engine"
 	"github.com/kilaslabs/kilas-flow/internal/node"
+	"github.com/kilaslabs/kilas-flow/internal/safehttp"
 	"github.com/kilaslabs/kilas-flow/internal/sqlnode"
 	"github.com/kilaslabs/kilas-flow/internal/workflow"
 	"github.com/kilaslabs/kilas-flow/nodes"
@@ -891,5 +893,144 @@ func TestALiveServerBatchesAtomicallyAndReturnsRows(t *testing.T) {
 				t.Errorf("summary = %#v, want two committed rows", summary)
 			}
 		})
+	}
+}
+
+// A credential scoped to one host must not open another, on either database
+// executor generation. The refusal names the credential and the host and
+// carries ErrForbiddenTarget, never the DSN.
+func TestDatabaseExecutorsEnforceTheCredentialDomainScope(t *testing.T) {
+	t.Parallel()
+
+	networkFields := map[string]string{
+		"host": "127.0.0.1", "port": "1", "database": "app",
+		"user": "ada", "password": "hunter2", "sslMode": "disable",
+	}
+	v1 := func(driver sqlnode.Driver, credentialType string) *nodes.DatabaseExecutor {
+		return nodes.NewDatabaseExecutor(driver, credentialType, sqlnode.Guard{}, sqlnode.DefaultCeiling())
+	}
+	for _, setup := range []struct {
+		name           string
+		nodeType       string
+		credentialType string
+		driver         sqlnode.Driver
+	}{
+		{"postgres v1", nodes.PostgresNodeType, "postgres", sqlnode.DriverPostgres},
+		{"mysql v1", nodes.MySQLNodeType, "mysql", sqlnode.DriverMySQL},
+	} {
+		t.Run(setup.name, func(t *testing.T) {
+			t.Parallel()
+
+			resolver := &stubCredentials{credential: engine.Credential{
+				ID: "cred-db", Name: "Partner", Type: setup.credentialType,
+				Fields:         networkFields,
+				AllowedDomains: []string{"db.partner.test"},
+			}}
+			executor := v1(setup.driver, setup.credentialType)
+			ir := databaseNode(t, setup.nodeType, setup.credentialType, "cred-db", map[string]any{
+				"operation": "query", "statement": `SELECT 1`,
+			})
+			_, err := executor.Execute(context.Background(), ir, workflow.NodeInput{}, engine.Request{Credentials: resolver})
+			assertScopeRefusal(t, err, "127.0.0.1")
+
+			// Scoped to the target: the pre-flight passes and the refusal
+			// underneath is the process policy's, which names the resolved
+			// address rather than the credential scope.
+			resolver.credential.AllowedDomains = []string{"127.0.0.1"}
+			_, err = executor.Execute(context.Background(), ir, workflow.NodeInput{}, engine.Request{Credentials: resolver})
+			if err == nil {
+				t.Fatal("a loopback connection was opened under the default-deny policy")
+			}
+			if !errors.Is(err, sqlnode.ErrForbiddenTarget) {
+				t.Fatalf("error = %v, want ErrForbiddenTarget", err)
+			}
+			if strings.Contains(err.Error(), "not allowed for host") {
+				t.Errorf("error = %v, the credential scope passed but the node reported a scope refusal", err)
+			}
+			if strings.Contains(err.Error(), "hunter2") {
+				t.Errorf("the refusal leaked the password: %v", err)
+			}
+		})
+	}
+}
+
+func assertScopeRefusal(t *testing.T, err error, host string) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("an out-of-scope credential opened a connection")
+	}
+	if !errors.Is(err, sqlnode.ErrForbiddenTarget) {
+		t.Fatalf("error = %v, want ErrForbiddenTarget", err)
+	}
+	if !strings.Contains(err.Error(), `not allowed for host "`+host+`"`) {
+		t.Errorf("error = %v, want the host named", err)
+	}
+	if strings.Contains(err.Error(), "hunter2") {
+		t.Errorf("the refusal leaked the password: %v", err)
+	}
+}
+
+// The version 2 operation sets resolve the same credential, so they carry the
+// same pre-flight gate. The refusal lands before any statement is built.
+func TestV2DatabaseExecutorsEnforceTheCredentialDomainScope(t *testing.T) {
+	t.Parallel()
+
+	for _, setup := range []struct {
+		name           string
+		nodeType       string
+		credentialType string
+		executor       *nodes.SQLOperationExecutor
+	}{
+		{"postgres v2", nodes.PostgresNodeType, "postgres", nodes.NewPostgresV2Executor(sqlnode.Guard{}, sqlnode.DefaultCeiling())},
+		{"mysql v2", nodes.MySQLNodeType, "mysql", nodes.NewMySQLV2Executor(sqlnode.Guard{}, sqlnode.DefaultCeiling())},
+	} {
+		t.Run(setup.name, func(t *testing.T) {
+			t.Parallel()
+
+			resolver := &stubCredentials{credential: engine.Credential{
+				ID: "cred-db", Name: "Partner", Type: setup.credentialType,
+				Fields: map[string]string{
+					"host": "127.0.0.1", "port": "1", "database": "app",
+					"user": "ada", "password": "hunter2", "sslMode": "disable",
+				},
+				AllowedDomains: []string{"db.partner.test"},
+			}}
+			ir := databaseNode(t, setup.nodeType, setup.credentialType, "cred-db", map[string]any{})
+			_, err := setup.executor.Execute(context.Background(), ir, workflow.NodeInput{}, engine.Request{Credentials: resolver})
+			assertScopeRefusal(t, err, "127.0.0.1")
+		})
+	}
+}
+
+// A MySQL dial failure echoes its DSN — password included — and the node's
+// error must not. The policy permits the dial here, so the driver is the one
+// that fails and its echo is what Sanitize has to strip.
+func TestDatabaseNodeRedactsAMySQLPasswordOnConnectionFailure(t *testing.T) {
+	t.Parallel()
+
+	policy := safehttp.DefaultPolicy()
+	policy.AllowPrivateNetworks = true
+	resolver := &stubCredentials{credential: engine.Credential{
+		ID: "cred-db", Name: "Remote", Type: "mysql",
+		Fields: map[string]string{
+			"host": "127.0.0.1", "port": "1", "database": "app",
+			"user": "ada", "password": "hunter2",
+		},
+	}}
+	executor := nodes.NewDatabaseExecutor(sqlnode.DriverMySQL, "mysql",
+		sqlnode.Guard{Policy: policy}, sqlnode.DefaultCeiling())
+	ir := databaseNode(t, nodes.MySQLNodeType, "mysql", "cred-db", map[string]any{
+		"operation": "query", "statement": `SELECT 1`,
+	})
+
+	_, err := executor.Execute(context.Background(), ir, workflow.NodeInput{}, engine.Request{Credentials: resolver})
+	if err == nil {
+		t.Fatal("a connection to a closed port reported success")
+	}
+	if errors.Is(err, sqlnode.ErrForbiddenTarget) {
+		t.Fatalf("error = %v, want a genuine dial failure rather than a policy refusal", err)
+	}
+	if strings.Contains(err.Error(), "hunter2") {
+		t.Fatalf("the node error leaked the password: %v", err)
 	}
 }

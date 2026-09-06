@@ -20,6 +20,7 @@ import (
 	"github.com/kilaslabs/kilas-flow/internal/database"
 	"github.com/kilaslabs/kilas-flow/internal/embed"
 	"github.com/kilaslabs/kilas-flow/internal/repository"
+	"github.com/kilaslabs/kilas-flow/internal/safehttp"
 	"github.com/kilaslabs/kilas-flow/internal/sqlnode"
 )
 
@@ -270,6 +271,40 @@ func TestATargetThatNeverAnswersStillYieldsAVerdict(t *testing.T) {
 	}
 }
 
+// A SQLite credential names a file, not a host, so a scope saved on one is a
+// promise nothing will keep. It is rejected at save time rather than silently
+// stored and ignored.
+func TestASQLiteCredentialCannotBeSavedWithAllowedDomains(t *testing.T) {
+	handler, _ := credentialAPI(t, api.Deps{})
+	scoped := map[string]any{
+		"name": "Scoped file", "type": "sqlite",
+		"fields":         map[string]string{"path": filepath.Join(t.TempDir(), "workflow.db")},
+		"allowedDomains": []string{"db.partner.test"},
+	}
+	requestProblem(t, handler, http.MethodPost, "/api/v1/credentials", scoped, http.StatusUnprocessableEntity)
+
+	// The same file without a scope saves, and gains none on an update that
+	// omits the type — the stored type decides, since the type is immutable.
+	stored := storeCredential(t, handler, "Workflow database", "sqlite", map[string]string{
+		"path": filepath.Join(t.TempDir(), "workflow.db"),
+	})
+	requestProblem(t, handler, http.MethodPut, "/api/v1/credentials/"+stored.ID, map[string]any{
+		"name":           "Workflow database",
+		"fields":         map[string]string{"path": filepath.Join(t.TempDir(), "workflow.db")},
+		"allowedDomains": []string{"db.partner.test"},
+	}, http.StatusUnprocessableEntity)
+
+	// A network database may be scoped: that is what the field is for.
+	requestJSON[credentialResource](t, handler, http.MethodPost, "/api/v1/credentials", map[string]any{
+		"name": "Partner", "type": "postgres",
+		"fields": map[string]string{
+			"host": "db.partner.test", "port": "5432", "database": "app",
+			"user": "ada", "password": "hunter2", "sslMode": "disable",
+		},
+		"allowedDomains": []string{"db.partner.test"},
+	}, http.StatusCreated)
+}
+
 func withCredentialTestTimeout(timeout time.Duration) config.Config {
 	cfg := config.Default()
 	cfg.Credential.TestTimeout = timeout
@@ -321,8 +356,17 @@ func TestOnlyOneTestOfACredentialRunsAtATime(t *testing.T) {
 		}
 	}()
 
-	handler, _ := credentialAPI(t, api.Deps{Config: withCredentialTestTimeout(3 * time.Second)})
 	_, port, _ := net.SplitHostPort(listener.Addr().String())
+	// The probe must reach the silent listener and hang there: under a
+	// default-deny guard the loopback dial is refused pre-flight and the
+	// first probe returns before the second arrives, which proves nothing
+	// about the claim.
+	handler, _ := credentialAPI(t, api.Deps{
+		Config: withCredentialTestTimeout(3 * time.Second),
+		DatabaseGuard: sqlnode.Guard{Policy: safehttp.Policy{
+			AllowedPrivateEndpoints: []string{"127.0.0.1:" + port},
+		}},
+	})
 	stored := storeCredential(t, handler, "Silent", "postgres", map[string]string{
 		"host": "127.0.0.1", "port": port, "database": "app",
 		"user": "ada", "password": "hunter2", "sslMode": "disable",

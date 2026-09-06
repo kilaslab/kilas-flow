@@ -4,11 +4,17 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/schema"
 )
 
 // Models returns the complete initial KilasFlow persistence schema. Keeping
 // these GORM models private prevents the ORM shape from becoming an API or
 // engine contract.
+//
+// Every model names its table through the namer rather than returning a
+// literal, so database.table_prefix applies to every query: a Tabler
+// implementation would bypass GORM's NamingStrategy entirely and silently
+// ignore the configured prefix.
 func Models() []any {
 	return []any{
 		// Tenants come first because users and API keys reference the table by
@@ -77,7 +83,9 @@ type webhookRouteModel struct {
 	CreatedAt  time.Time
 }
 
-func (webhookRouteModel) TableName() string { return "webhook_routes" }
+func (webhookRouteModel) TableName(namer schema.Namer) string {
+	return namer.TableName("webhook_routes")
+}
 
 // webhookDeliveryModel records one logical delivery so a retry does not run the
 // workflow twice.
@@ -96,9 +104,13 @@ type webhookDeliveryModel struct {
 	CreatedAt   time.Time `gorm:"not null"`
 }
 
-func (webhookDeliveryModel) TableName() string { return "webhook_deliveries" }
+func (webhookDeliveryModel) TableName(namer schema.Namer) string {
+	return namer.TableName("webhook_deliveries")
+}
 
-func (webhookBindingModel) TableName() string { return "webhook_bindings" }
+func (webhookBindingModel) TableName(namer schema.Namer) string {
+	return namer.TableName("webhook_bindings")
+}
 
 // scheduleModel is one cron schedule for a workflow.
 type scheduleModel struct {
@@ -127,7 +139,9 @@ type scheduleModel struct {
 	Workflow  workflowModel `gorm:"foreignKey:WorkflowID;references:ID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE"`
 }
 
-func (scheduleModel) TableName() string { return "schedules" }
+func (scheduleModel) TableName(namer schema.Namer) string {
+	return namer.TableName("schedules")
+}
 
 // credentialModel stores an encrypted credential payload. The plaintext never
 // exists as a column, so a database dump, a replica, or a support export
@@ -149,7 +163,9 @@ type credentialModel struct {
 	UpdatedAt      time.Time `gorm:"not null"`
 }
 
-func (credentialModel) TableName() string { return "credentials" }
+func (credentialModel) TableName(namer schema.Namer) string {
+	return namer.TableName("credentials")
+}
 
 type workflowModel struct {
 	ID              string         `gorm:"primaryKey;size:64"`
@@ -163,7 +179,9 @@ type workflowModel struct {
 	DeletedAt       gorm.DeletedAt `gorm:"index"`
 }
 
-func (workflowModel) TableName() string { return "workflows" }
+func (workflowModel) TableName(namer schema.Namer) string {
+	return namer.TableName("workflows")
+}
 
 type workflowVersionModel struct {
 	ID            string `gorm:"primaryKey;size:64"`
@@ -184,7 +202,9 @@ type workflowVersionModel struct {
 	Workflow  workflowModel `gorm:"foreignKey:WorkflowID;references:ID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT"`
 }
 
-func (workflowVersionModel) TableName() string { return "workflow_versions" }
+func (workflowVersionModel) TableName(namer schema.Namer) string {
+	return namer.TableName("workflow_versions")
+}
 
 // workflowPublishEventModel is one entry in a workflow's publish audit trail.
 //
@@ -212,7 +232,9 @@ type workflowPublishEventModel struct {
 	CreatedAt time.Time `gorm:"not null;index:idx_workflow_publish_events_workflow,priority:3"`
 }
 
-func (workflowPublishEventModel) TableName() string { return "workflow_publish_events" }
+func (workflowPublishEventModel) TableName(namer schema.Namer) string {
+	return namer.TableName("workflow_publish_events")
+}
 
 type executionModel struct {
 	ID                string `gorm:"primaryKey;size:64"`
@@ -238,7 +260,9 @@ type executionModel struct {
 	WorkflowVersion         workflowVersionModel `gorm:"foreignKey:WorkflowVersionID;references:ID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT"`
 }
 
-func (executionModel) TableName() string { return "executions" }
+func (executionModel) TableName(namer schema.Namer) string {
+	return namer.TableName("executions")
+}
 
 type executionNodeRunModel struct {
 	ID          string `gorm:"primaryKey;size:64"`
@@ -262,7 +286,9 @@ type executionNodeRunModel struct {
 	Execution  executionModel `gorm:"foreignKey:ExecutionID;references:ID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT"`
 }
 
-func (executionNodeRunModel) TableName() string { return "execution_node_runs" }
+func (executionNodeRunModel) TableName(namer schema.Namer) string {
+	return namer.TableName("execution_node_runs")
+}
 
 // tenantModel is one customer of this deployment.
 //
@@ -277,7 +303,9 @@ type tenantModel struct {
 	UpdatedAt time.Time `gorm:"not null"`
 }
 
-func (tenantModel) TableName() string { return "tenants" }
+func (tenantModel) TableName(namer schema.Namer) string {
+	return namer.TableName("tenants")
+}
 
 // userModel is a person who signs in to the dashboard.
 //
@@ -302,7 +330,9 @@ type userModel struct {
 	Tenant     tenantModel `gorm:"foreignKey:TenantID;references:ID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT"`
 }
 
-func (userModel) TableName() string { return "users" }
+func (userModel) TableName(namer schema.Namer) string {
+	return namer.TableName("users")
+}
 
 // apiKeyModel is a machine caller's tenant-scoped credential.
 //
@@ -331,4 +361,6 @@ type apiKeyModel struct {
 	Tenant    tenantModel `gorm:"foreignKey:TenantID;references:ID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT"`
 }
 
-func (apiKeyModel) TableName() string { return "api_keys" }
+func (apiKeyModel) TableName(namer schema.Namer) string {
+	return namer.TableName("api_keys")
+}

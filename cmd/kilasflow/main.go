@@ -102,11 +102,25 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	// One process egress policy for HTTP and SQL alike: the same outbound
+	// section that governs workflow HTTP requests governs database targets,
+	// so allow_private_networks: true permits a private database and false
+	// refuses it.
+	sqlGuard.Policy = outboundPolicy(cfg.Outbound)
 	codeCompiler := runcode.NewToolchainCompiler()
-	agentMemory, err := ai.NewBufferMemory(ai.Retention{}, nil)
+	// One tenant's chat volume is another tenant's memory pressure, so each
+	// tenant keeps a bounded number of conversations and the least-recently-
+	// touched session is evicted first. A deployment-level knob for this
+	// belongs in internal/config beside the other deployment decisions;
+	// until one exists the default below applies.
+	agentMemory, err := ai.NewBufferMemory(ai.Retention{}, nil,
+		ai.WithPerTenantSessionLimit(defaultAgentMemorySessionsPerTenant))
 	if err != nil {
 		return fmt.Errorf("configure agent memory: %w", err)
 	}
+	log.Info("agent memory configured",
+		"sessionsPerTenant", defaultAgentMemorySessionsPerTenant,
+		"retainedSessions", agentMemory.Stats().Sessions)
 	if err := nodes.RegisterExecutors(executorRegistry, outboundPolicy(cfg.Outbound), sqlGuard,
 		ai.NewLoopRuntime(), agentMemory, codeCompiler,
 		nodes.WithDatabaseCeiling(databaseCeiling(cfg.SQL))); err != nil {
@@ -364,6 +378,7 @@ func run() error {
 		NodeAvailability:    nodeAvailability(codeCompiler),
 		HTTPPolicy:          outboundPolicy(cfg.Outbound),
 		DatabaseGuard:       sqlGuard,
+		SessionMemory:       agentMemory,
 		Version:             version,
 	})
 
@@ -577,6 +592,12 @@ func nodeAvailability(compiler runcode.Compiler) func() map[string]string {
 		}
 	}
 }
+
+// defaultAgentMemorySessionsPerTenant bounds how many agent conversations one
+// tenant may retain in the in-process memory store. It is a constant rather
+// than a config value until internal/config gains an AI section; a workflow
+// document cannot raise it either way.
+const defaultAgentMemorySessionsPerTenant = 1000
 
 // databaseCeiling is the deployment's bound on what a SQL node's parameters
 // may ask for, which a workflow document cannot raise.

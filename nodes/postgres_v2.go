@@ -2,6 +2,7 @@ package nodes
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -280,6 +281,14 @@ func (executor *SQLOperationExecutor) Execute(ctx context.Context, ir workflow.I
 		return nil, fmt.Errorf("node %q: credential %q is a %s credential, not %s",
 			ir.Name, resolved.Name, resolved.Type, executor.credentialType)
 	}
+	guard := executor.guard
+	guard.AllowedDomains = resolved.AllowedDomains
+	// Same pre-flight gate as the version 1 database executor: a credential
+	// scoped to one host must not open another. sqlnode.Open re-checks every
+	// resolved address at dial time; this names the credential up front.
+	if host := strings.TrimSpace(resolved.Fields["host"]); host != "" && !resolved.AllowsHost(host) {
+		return nil, fmt.Errorf("node %q: %w: credential %q is not allowed for host %q", ir.Name, sqlnode.ErrForbiddenTarget, resolved.Name, host)
+	}
 
 	// The backstop for the compile-time refusal, against the unresolved
 	// parameters — the only place the marker is still visible. See
@@ -356,9 +365,14 @@ func (executor *SQLOperationExecutor) Execute(ctx context.Context, ir workflow.I
 	// deferred to the end of Execute — a connect deadline that stayed live
 	// would cancel the queries too.
 	connectCtx, cancelConnect := context.WithTimeout(ctx, time.Duration(batching.ConnectionTimeout*float64(time.Second)))
-	connection, err := sqlnode.Open(connectCtx, executor.driver, resolved.Fields, executor.guard)
+	connection, err := sqlnode.Open(connectCtx, executor.driver, resolved.Fields, guard)
 	cancelConnect()
 	if err != nil {
+		// A policy refusal never carries the DSN, so it passes through with
+		// its ErrForbiddenTarget chain intact; anything else is redacted.
+		if errors.Is(err, sqlnode.ErrForbiddenTarget) {
+			return nil, fmt.Errorf("node %q: %s connection failed: %w", ir.Name, executor.driver, err)
+		}
 		return nil, fmt.Errorf("node %q: %s connection failed: %w", ir.Name, executor.driver, sqlnode.Sanitize(err))
 	}
 	defer connection.Close()

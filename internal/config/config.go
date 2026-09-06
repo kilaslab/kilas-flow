@@ -21,6 +21,17 @@ import (
 const EnvPrefix = "KILASFLOW_"
 
 // Config is the root configuration document.
+//
+// Every section below is one word long, and that is a load-bearing rule, not a
+// style: envKeyToPath treats the first underscore after KILASFLOW_ as the
+// section separator, so a section named `outbound_http` or `workflow_history`
+// could never be reached by an environment override. Name any new section a
+// single word or KILASFLOW_* overrides for it will silently do nothing.
+//
+// Precedence is defaults, then the YAML file, then KILASFLOW_* environment
+// variables. The reference page and config.example.yaml are generated from
+// these structs by scripts/config-reference.go — edit the comments here and
+// regenerate, never the outputs by hand.
 type Config struct {
 	Server     Server       `koanf:"server"`
 	Database   Database     `koanf:"database"`
@@ -40,11 +51,18 @@ type Config struct {
 
 // Server holds HTTP listener settings.
 type Server struct {
+	// Host is the interface to bind, e.g. "0.0.0.0" or "127.0.0.1".
+	// Env: KILASFLOW_SERVER_HOST. Default: "0.0.0.0".
 	Host string `koanf:"host"`
-	Port int    `koanf:"port"`
-
+	// Port is the TCP port to listen on. Must be 1-65535.
+	// Env: KILASFLOW_SERVER_PORT. Default: 8080.
+	Port int `koanf:"port"`
+	// ReadHeaderTimeout bounds reading one request's headers.
+	// Env: KILASFLOW_SERVER_READ_HEADER_TIMEOUT. Default: 10s.
 	ReadHeaderTimeout time.Duration `koanf:"read_header_timeout"`
-	ShutdownTimeout   time.Duration `koanf:"shutdown_timeout"`
+	// ShutdownTimeout bounds graceful drain on SIGINT/SIGTERM.
+	// Env: KILASFLOW_SERVER_SHUTDOWN_TIMEOUT. Default: 15s.
+	ShutdownTimeout time.Duration `koanf:"shutdown_timeout"`
 
 	// PublicURL is how this instance is reachable from the internet, without a
 	// trailing slash. A webhook lifecycle hook has to tell a remote service
@@ -66,17 +84,54 @@ func (s Server) Addr() string {
 // This is kilasflow's own storage. It is deliberately unrelated to the SQL nodes a
 // workflow may use, which are configured through credentials.
 type Database struct {
-	// Driver is "sqlite" or "postgres".
+	// Driver selects the backend: "sqlite" (default, zero infrastructure) or
+	// "postgres". Anything else is refused at boot.
+	// Env: KILASFLOW_DATABASE_DRIVER. Default: "sqlite".
 	Driver string `koanf:"driver"`
-	DSN    string `koanf:"dsn"`
+	// DSN is the connection string. A SQLite path (a file that is created with
+	// its parent directories if missing) or a PostgreSQL URL.
+	// Required: boot fails when it is empty.
+	// Env: KILASFLOW_DATABASE_DSN. Default: "./data/kilasflow.db".
+	DSN string `koanf:"dsn"`
+
+	// TablePrefix namespaces every KilasFlow table, index and constraint for
+	// a database shared with another application: with "kflow_" the install
+	// owns kflow_workflows instead of workflows, and coexists with a host
+	// schema that already has its own workflows table and an index literally
+	// named idx_workflows_tenant_updated.
+	//
+	// Empty (the default) leaves every identifier exactly as it is today, so
+	// an existing install upgrades untouched. A non-empty prefix must be
+	// lowercase letters, digits and underscores ending in an underscore, and
+	// no longer than MaxTablePrefixLength so every identifier stays within
+	// PostgreSQL's 63-byte limit. It is fixed for the life of an install:
+	// starting with a different prefix than the database already holds
+	// refuses to boot rather than creating a second empty schema alongside
+	// the populated one. A prefix is a naming convention, not access
+	// control: anything holding this connection can still read every
+	// prefixed table.
+	// Env: KILASFLOW_DATABASE_TABLE_PREFIX. Default: "".
+	TablePrefix string `koanf:"table_prefix"`
 
 	// MaxOpenConns and MaxIdleConns size the connection pool. Zero on either
 	// means "work one out", which PoolSize does from the driver and the
 	// configured execution concurrency — see it for the sizes and for why they
 	// cannot be constants in Default().
 	MaxOpenConns int `koanf:"max_open_conns"`
+	// MaxIdleConns caps idle connections kept warm. Zero follows MaxOpenConns:
+	// an idle bound lower than open churns a TLS handshake and a backend fork
+	// per query exactly when the server is busiest.
 	MaxIdleConns int `koanf:"max_idle_conns"`
 }
+
+// MaxTablePrefixLength caps Database.TablePrefix so that the longest table,
+// index or constraint identifier the migrations create still fits
+// PostgreSQL's 63-byte limit once prefixed. Identifiers are ASCII by
+// validation, so characters and bytes coincide. The budget also leaves room
+// for the per-datastore tables a later milestone creates at run time, whose
+// names this ticket never sees: lengthen this only after re-measuring every
+// identifier the migrations define.
+const MaxTablePrefixLength = 16
 
 // Pool sizing bounds, used when the operator has set neither key.
 const (
@@ -124,11 +179,47 @@ func (d Database) PoolSize(maxConcurrent int) (open, idle int) {
 	return open, idle
 }
 
+// validateTablePrefix rejects a table prefix that would build identifiers
+// PostgreSQL refuses or silently truncates. Truncation is the hazard, not
+// refusal: past byte 63 two names that differ only at the tail collapse into
+// one, and CREATE INDEX IF NOT EXISTS then skips the second without complaint
+// while the constraint it was meant to enforce never exists.
+func validateTablePrefix(prefix string) error {
+	if prefix == "" {
+		return nil
+	}
+	if len(prefix) > MaxTablePrefixLength {
+		return fmt.Errorf("database.table_prefix %q is %d characters, longer than the maximum %d", prefix, len(prefix), MaxTablePrefixLength)
+	}
+	if !strings.HasSuffix(prefix, "_") {
+		return fmt.Errorf("database.table_prefix %q must end in an underscore", prefix)
+	}
+	for _, character := range prefix {
+		switch {
+		case character >= 'a' && character <= 'z',
+			character >= '0' && character <= '9',
+			character == '_':
+		default:
+			return fmt.Errorf("database.table_prefix %q must hold only lowercase letters, digits and underscores", prefix)
+		}
+	}
+	return nil
+}
+
 // Security holds secret-material settings.
 type Security struct {
 	// EncryptionKeyEnv names the environment variable holding the AES-256-GCM
 	// master key used to encrypt stored credentials. The key itself is never
 	// read from the config file.
+	//
+	// Optional at boot: when the named variable holds no key the server still
+	// starts and still runs workflows, but credential storage is disabled —
+	// reads and writes report unconfigured. Generate one before storing
+	// anything (openssl rand -base64 32); there is no re-encryption pass, so
+	// changing the key later makes every credential already stored
+	// undecryptable.
+	// Env: KILASFLOW_SECURITY_ENCRYPTION_KEY_ENV.
+	// Default: "KILASFLOW_ENCRYPTION_KEY".
 	EncryptionKeyEnv string `koanf:"encryption_key_env"`
 }
 
@@ -167,11 +258,15 @@ type Auth struct {
 	CookieInsecure bool `koanf:"cookie_insecure"`
 	// BootstrapTenant is the tenant a fresh installation creates.
 	BootstrapTenant string `koanf:"bootstrap_tenant"`
-	// BootstrapEmail and BootstrapPasswordEnv create the first account, and
-	// only ever on an installation that has none: a deployment that already has
-	// users is never handed another owner by an environment variable somebody
-	// forgot to remove.
-	BootstrapEmail       string `koanf:"bootstrap_email"`
+	// BootstrapEmail is the address of the first account, created once and only
+	// on an installation that has none: a deployment that already has users is
+	// never handed another owner by an environment variable somebody forgot to
+	// remove.
+	BootstrapEmail string `koanf:"bootstrap_email"`
+	// BootstrapPasswordEnv names the variable holding the first account's
+	// password. The password never comes from the file. Used once, with
+	// bootstrap_email and enabled: true on the same first start, or the lock
+	// closes before the key is cut.
 	BootstrapPasswordEnv string `koanf:"bootstrap_password_env"`
 }
 
@@ -185,8 +280,18 @@ type Auth struct {
 // and must not be able to reach the cloud metadata service or a neighbouring
 // internal service. A self-hosted operator opts out explicitly.
 type OutboundHTTP struct {
-	AllowPrivateNetworks bool     `koanf:"allow_private_networks"`
-	AllowedHosts         []string `koanf:"allowed_hosts"`
+	// AllowPrivateNetworks lifts the private-address guard for every outbound
+	// workflow request. Default false: with it off a workflow URL cannot reach
+	// loopback, RFC 1918 ranges, or the cloud metadata service, which is what
+	// stops a tenant-authored URL probing the network the server runs in.
+	// Prefer allowed_private_endpoints for a single loopback dependency.
+	// Env: KILASFLOW_OUTBOUND_ALLOW_PRIVATE_NETWORKS. Default: false.
+	AllowPrivateNetworks bool `koanf:"allow_private_networks"`
+	// AllowedHosts restricts outbound requests to these hosts when non-empty
+	// ("example.com", "*.internal.example"). Empty means no host restriction
+	// beyond the private-address guard.
+	// Env: KILASFLOW_OUTBOUND_ALLOWED_HOSTS. Default: [].
+	AllowedHosts []string `koanf:"allowed_hosts"`
 	// AllowedPrivateEndpoints admits one `host:port` at a time through the
 	// private-address guard while leaving it on for everything else, which is
 	// what an install running a model server or a test stub on loopback needs
@@ -198,15 +303,27 @@ type OutboundHTTP struct {
 	// ignored, because an allowance that quietly grants nothing reads as the
 	// guard being broken. See safehttp.Policy.AllowedPrivateEndpoints for what
 	// the grant does and does not cover.
-	AllowedPrivateEndpoints []string      `koanf:"allowed_private_endpoints"`
-	MaxRedirects            int           `koanf:"max_redirects"`
-	MaxResponseBytes        int64         `koanf:"max_response_bytes"`
-	Timeout                 time.Duration `koanf:"timeout"`
+	AllowedPrivateEndpoints []string `koanf:"allowed_private_endpoints"`
+	// MaxRedirects bounds how many redirects one outbound request follows;
+	// every hop is re-checked against the policy.
+	// Env: KILASFLOW_OUTBOUND_MAX_REDIRECTS. Default: 5.
+	MaxRedirects int `koanf:"max_redirects"`
+	// MaxResponseBytes bounds how much of one response is read into memory, in
+	// bytes. Larger bodies are refused, not truncated.
+	// Env: KILASFLOW_OUTBOUND_MAX_RESPONSE_BYTES. Default: 8388608 (8 MiB).
+	MaxResponseBytes int64 `koanf:"max_response_bytes"`
+	// Timeout bounds one whole outbound request.
+	// Env: KILASFLOW_OUTBOUND_TIMEOUT. Default: 30s.
+	Timeout time.Duration `koanf:"timeout"`
 }
 
 // Webhook bounds one inbound trigger request.
 type Webhook struct {
-	MaxBodyBytes    int64         `koanf:"max_body_bytes"`
+	// MaxBodyBytes is the largest inbound delivery accepted, in bytes.
+	// Env: KILASFLOW_WEBHOOK_MAX_BODY_BYTES. Default: 1048576 (1 MiB).
+	MaxBodyBytes int64 `koanf:"max_body_bytes"`
+	// ResponseTimeout bounds one trigger delivery end to end.
+	// Env: KILASFLOW_WEBHOOK_RESPONSE_TIMEOUT. Default: 30s.
 	ResponseTimeout time.Duration `koanf:"response_timeout"`
 }
 
@@ -217,23 +334,50 @@ type Webhook struct {
 // anywhere.
 type Embed struct {
 	// SigningKeyEnv names the environment variable holding the token signing
-	// key. Like the credential key, it never comes from the config file.
-	SigningKeyEnv  string        `koanf:"signing_key_env"`
-	AllowedOrigins []string      `koanf:"allowed_origins"`
-	SessionTTL     time.Duration `koanf:"session_ttl"`
+	// key (at least 32 bytes). Like the credential key, it never comes from
+	// the config file.
+	//
+	// Optional at boot: with no key the session endpoints report themselves
+	// unconfigured and every embed token is refused, with a warning at boot.
+	// Env: KILASFLOW_EMBED_SIGNING_KEY_ENV. Default: "KILASFLOW_EMBED_SIGNING_KEY".
+	SigningKeyEnv string `koanf:"signing_key_env"`
+	// AllowedOrigins is the per-origin allowlist for the iframe editor. Empty
+	// fails closed: even with a key set, no page may host the editor until its
+	// origin is listed here.
+	// Env: KILASFLOW_EMBED_ALLOWED_ORIGINS. Default: [].
+	AllowedOrigins []string `koanf:"allowed_origins"`
+	// SessionTTL is how long one embed session token lives. Capped at 30
+	// minutes: a token travels through a host page and sits in a browser, so a
+	// leaked one stays useful only briefly.
+	// Env: KILASFLOW_EMBED_SESSION_TTL. Default: 15m.
+	SessionTTL time.Duration `koanf:"session_ttl"`
 }
 
 // Branding drives white-label display options.
 type Branding struct {
-	Name      string `koanf:"name"`
-	Logo      string `koanf:"logo"`
-	Favicon   string `koanf:"favicon"`
-	PoweredBy bool   `koanf:"powered_by"`
+	// Name is the product name shown in the dashboard.
+	// Env: KILASFLOW_BRANDING_NAME. Default: "KilasFlow".
+	Name string `koanf:"name"`
+	// Logo is the logo URL shown in the dashboard. Empty hides it.
+	// Env: KILASFLOW_BRANDING_LOGO. Default: "".
+	Logo string `koanf:"logo"`
+	// Favicon is the favicon URL. Empty uses the built-in one.
+	// Env: KILASFLOW_BRANDING_FAVICON. Default: "".
+	Favicon string `koanf:"favicon"`
+	// PoweredBy toggles the "Powered by KilasFlow" mark.
+	// Env: KILASFLOW_BRANDING_POWERED_BY. Default: true.
+	PoweredBy bool `koanf:"powered_by"`
 }
 
 // Execution bounds workflow runs.
 type Execution struct {
-	MaxConcurrent  int           `koanf:"max_concurrent"`
+	// MaxConcurrent bounds how many workflow runs execute at once. The
+	// PostgreSQL pool derives from it (workers plus headroom), so raising it
+	// raises the pool with it; SQLite always runs on one connection.
+	// Env: KILASFLOW_EXECUTION_MAX_CONCURRENT. Default: 10.
+	MaxConcurrent int `koanf:"max_concurrent"`
+	// DefaultTimeout bounds one workflow run end to end.
+	// Env: KILASFLOW_EXECUTION_DEFAULT_TIMEOUT. Default: 60s.
 	DefaultTimeout time.Duration `koanf:"default_timeout"`
 	// Retention deletes an execution once it has been finished for longer than
 	// this, along with its node runs and its stored binary payloads.
@@ -318,9 +462,13 @@ type Binary struct {
 
 // Log configures structured logging.
 type Log struct {
-	// Level is one of debug, info, warn, error.
+	// Level is one of debug, info, warn or error. Unknown values fall back to
+	// info rather than refusing to start.
+	// Env: KILASFLOW_LOG_LEVEL. Default: "info".
 	Level string `koanf:"level"`
-	// Format is "text" or "json".
+	// Format is "text" for local reading or "json" for production log
+	// pipelines.
+	// Env: KILASFLOW_LOG_FORMAT. Default: "text".
 	Format string `koanf:"format"`
 }
 
@@ -476,6 +624,10 @@ func (c Config) Validate() error {
 
 	if c.Database.DSN == "" {
 		return fmt.Errorf("database.dsn is required")
+	}
+
+	if err := validateTablePrefix(c.Database.TablePrefix); err != nil {
+		return err
 	}
 
 	// A negative pool size means "unlimited" to database/sql, which is not

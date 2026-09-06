@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/schema"
 
 	"github.com/kilaslabs/kilas-flow/migrations"
 )
@@ -84,8 +85,10 @@ func Rollback(db *DB, log *slog.Logger) error {
 	}
 
 	err = db.Transaction(func(tx *gorm.DB) error {
+		names := definedIdentifiers(all)
+		prefix := tablePrefix(db)
 		for _, statement := range target.down {
-			if err := tx.Exec(statement).Error; err != nil {
+			if err := tx.Exec(prefixStatement(statement, prefix, names)).Error; err != nil {
 				return err
 			}
 		}
@@ -123,6 +126,12 @@ func migrateFS(db *DB, fsys fs.FS, log *slog.Logger) error {
 		return err
 	}
 
+	prefix := tablePrefix(db)
+	names := definedIdentifiers(all)
+	if err := checkTablePrefix(db, prefix, all, applied); err != nil {
+		return err
+	}
+
 	if len(applied) == 0 {
 		adopted, err := adoptExistingSchema(db, all[0], log)
 		if err != nil {
@@ -145,7 +154,7 @@ func migrateFS(db *DB, fsys fs.FS, log *slog.Logger) error {
 		if _, done := applied[pending.version]; done {
 			continue
 		}
-		if err := apply(db, dialect, pending); err != nil {
+		if err := apply(db, dialect, pending, prefix, names); err != nil {
 			return err
 		}
 		log.Info("applied migration", "version", pending.version, "name", pending.name)
@@ -162,13 +171,13 @@ func migrateFS(db *DB, fsys fs.FS, log *slog.Logger) error {
 // the first one's uncommitted row and then fail on the duplicate, on both
 // SQLite and PostgreSQL. Recording after the DDL instead would leave a window
 // where both processes are running CREATE TABLE.
-func apply(db *DB, dialect string, pending migration) error {
+func apply(db *DB, dialect string, pending migration, prefix string, names map[string]struct{}) error {
 	err := db.Transaction(func(tx *gorm.DB) error {
 		if err := recordVersion(tx, dialect, pending); err != nil {
 			return err
 		}
 		for _, statement := range pending.up {
-			if err := tx.Exec(statement).Error; err != nil {
+			if err := tx.Exec(prefixStatement(statement, prefix, names)).Error; err != nil {
 				return err
 			}
 		}
@@ -202,14 +211,15 @@ func adoptExistingSchema(db *DB, baseline migration, log *slog.Logger) (bool, er
 	if len(tables) == 0 {
 		return false, nil
 	}
+	prefix := tablePrefix(db)
 	for _, table := range tables {
-		if !db.Migrator().HasTable(table) {
+		if !db.Migrator().HasTable(prefix + table) {
 			continue
 		}
 		if err := recordVersion(db.DB, db.Dialector.Name(), baseline); err != nil {
 			return false, fmt.Errorf("adopt existing schema as migration %s: %w", baseline.label(), err)
 		}
-		log.Info("adopted an existing schema as the migration baseline", "version", baseline.version, "table", table)
+		log.Info("adopted an existing schema as the migration baseline", "version", baseline.version, "table", prefix+table)
 		return true, nil
 	}
 	return false, nil
@@ -394,6 +404,179 @@ func (m migration) createdTables() []string {
 		}
 	}
 	return tables
+}
+
+// tablePrefix is the configured table prefix read back off the handle Open
+// built, so the migration runner and the ORM resolve every name through the
+// same value and can never disagree about it. A handle Open did not build —
+// one with no naming strategy — reads as no prefix, which is what every
+// existing install has.
+func tablePrefix(db *DB) string {
+	if db == nil || db.Config == nil {
+		return ""
+	}
+	if namer, ok := db.Config.NamingStrategy.(schema.NamingStrategy); ok {
+		return namer.TablePrefix
+	}
+	return ""
+}
+
+// checkTablePrefix refuses to run when the database already holds a KilasFlow
+// schema under a different prefix than the one configured. Without it, an
+// install populated without a prefix and then restarted with table_prefix set
+// would silently create a second empty schema alongside the populated one,
+// and every query would read the empty one.
+//
+// A prefix is a naming convention, not an isolation boundary: anything holding
+// the connection can still read every table. This check stops accidents, not
+// adversaries.
+func checkTablePrefix(db *DB, prefix string, all []migration, applied map[int64]struct{}) error {
+	var tables []string
+	seen := map[string]struct{}{}
+	for _, m := range all {
+		for _, table := range m.createdTables() {
+			if _, dup := seen[table]; dup {
+				continue
+			}
+			seen[table] = struct{}{}
+			tables = append(tables, table)
+		}
+	}
+	for _, table := range tables {
+		if db.Migrator().HasTable(prefix + table) {
+			return nil
+		}
+	}
+	if prefix != "" && holdsBareBaseline(db, all) {
+		return fmt.Errorf("database already holds KilasFlow tables without a prefix but database.table_prefix is %q: refusing to create a second schema alongside them",
+			prefix)
+	}
+	// A version row is written in the same transaction as its DDL, so history
+	// without matching tables means the tables live under another prefix.
+	if len(applied) > 0 {
+		return fmt.Errorf("database has schema version history but no tables under table_prefix %q: it was migrated with a different prefix; refusing to create a second schema alongside it",
+			prefix)
+	}
+	return nil
+}
+
+// holdsBareBaseline reports whether the database holds every table of the
+// baseline migration without a prefix. All of them, not any one: a shared
+// database's host application may own workflows, executions or credentials
+// under those exact names, and one overlapping name is coexistence, not a
+// second install. A full bare baseline with no version history is an install
+// AutoMigrate built, which a prefix must never adopt as its own.
+func holdsBareBaseline(db *DB, all []migration) bool {
+	if len(all) == 0 {
+		return false
+	}
+	tables := all[0].createdTables()
+	if len(tables) == 0 {
+		return false
+	}
+	for _, table := range tables {
+		if !db.Migrator().HasTable(table) {
+			return false
+		}
+	}
+	return true
+}
+
+// definedIdentifiers collects every table, index and constraint name the
+// migrations define, so prefixStatement can rewrite each where it is
+// referenced. Collected from the same files that are run rather than written
+// out here, so a later migration that adds an identifier is picked up without
+// anyone remembering to extend a list.
+func definedIdentifiers(all []migration) map[string]struct{} {
+	names := map[string]struct{}{}
+	for _, m := range all {
+		for _, name := range m.definedNames() {
+			names[name] = struct{}{}
+		}
+	}
+	return names
+}
+
+// definedNames is createdTables plus the index and constraint names the same
+// statements declare.
+func (m migration) definedNames() []string {
+	var names []string
+	names = append(names, m.createdTables()...)
+	for _, statement := range m.up {
+		if index := statementIndexName(statement); index != "" {
+			names = append(names, index)
+		}
+		names = append(names, statementConstraintNames(statement)...)
+	}
+	return names
+}
+
+// statementIndexName names the index a CREATE INDEX statement defines, or
+// reports none. Field-based like createdTables: migration statements are
+// machine-shaped, and a regular expression would only restate the same shape
+// less readably.
+func statementIndexName(statement string) string {
+	fields := strings.Fields(statement)
+	pos := 0
+	take := func() string {
+		if pos >= len(fields) {
+			return ""
+		}
+		token := fields[pos]
+		pos++
+		return token
+	}
+	peek := func() string {
+		if pos >= len(fields) {
+			return ""
+		}
+		return fields[pos]
+	}
+	if !strings.EqualFold(take(), "CREATE") {
+		return ""
+	}
+	if strings.EqualFold(peek(), "UNIQUE") {
+		pos++
+	}
+	if !strings.EqualFold(take(), "INDEX") {
+		return ""
+	}
+	if strings.EqualFold(peek(), "IF") {
+		pos += 3
+	}
+	return strings.Trim(take(), "`\"[]")
+}
+
+// statementConstraintNames names every CONSTRAINT a statement declares. A
+// CREATE TABLE carries one per foreign key, so there can be several.
+func statementConstraintNames(statement string) []string {
+	var names []string
+	fields := strings.Fields(statement)
+	for i, token := range fields {
+		if strings.EqualFold(token, "CONSTRAINT") && i+1 < len(fields) {
+			if name := strings.Trim(fields[i+1], "`\"[]"); name != "" {
+				names = append(names, name)
+			}
+		}
+	}
+	return names
+}
+
+// prefixStatement rewrites every quoted table, index and constraint name in
+// one migration statement under the configured prefix. Only quoted
+// occurrences move: string literals stay single-quoted in both dialects, and
+// every table, index and constraint reference the migrations carry is quoted,
+// while column names are never in the defined set. An empty prefix returns the
+// statement untouched, so the default install runs byte-identical DDL.
+func prefixStatement(statement, prefix string, names map[string]struct{}) string {
+	if prefix == "" {
+		return statement
+	}
+	for name := range names {
+		statement = strings.ReplaceAll(statement, "`"+name+"`", "`"+prefix+name+"`")
+		statement = strings.ReplaceAll(statement, `"`+name+`"`, `"`+prefix+name+`"`)
+	}
+	return statement
 }
 
 // splitStatements breaks a migration file into the statements to run one at a

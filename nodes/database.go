@@ -3,6 +3,7 @@ package nodes
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -268,10 +269,29 @@ func (executor *DatabaseExecutor) Execute(ctx context.Context, ir workflow.IRNod
 		return nil, fmt.Errorf("node %q: credential %q is a %s credential, not %s", ir.Name, resolved.Name, resolved.Type, executor.credentialType)
 	}
 
-	connection, err := sqlnode.Open(ctx, executor.driver, resolved.Fields, executor.guard)
+	guard := executor.guard
+	guard.AllowedDomains = resolved.AllowedDomains
+	// The credential's own domain scope binds a database connection exactly as
+	// it binds an HTTP request or a model call: a credential scoped to one host
+	// must not open another, wildcards included. Checked here for the message
+	// those surfaces report, and again inside sqlnode.Open, which re-checks
+	// every resolved address at dial time. A file has no host, so a scoped
+	// SQLite credential falls through to sqlnode, which refuses it there.
+	if host := strings.TrimSpace(resolved.Fields["host"]); host != "" && !resolved.AllowsHost(host) {
+		return nil, fmt.Errorf("node %q: %w: credential %q is not allowed for host %q", ir.Name, sqlnode.ErrForbiddenTarget, resolved.Name, host)
+	}
+
+	connection, err := sqlnode.Open(ctx, executor.driver, resolved.Fields, guard)
 	if err != nil {
-		// The error deliberately does not echo the DSN, which would carry the
-		// password the credential store just decrypted.
+		// A policy refusal names the host and the reason and never the DSN,
+		// so it needs no redaction — and passing it through keeps the
+		// ErrForbiddenTarget chain intact for callers testing for it, which
+		// Sanitize would flatten into a bare string.
+		if errors.Is(err, sqlnode.ErrForbiddenTarget) {
+			return nil, fmt.Errorf("node %q: %s connection failed: %w", ir.Name, executor.driver, err)
+		}
+		// Any other error may echo the DSN, which would carry the password
+		// the credential store just decrypted.
 		return nil, fmt.Errorf("node %q: %s connection failed: %w", ir.Name, executor.driver, sqlnode.Sanitize(err))
 	}
 	// Closed on every path, including a failed statement, so a node error never

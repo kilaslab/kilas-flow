@@ -17,8 +17,12 @@ import (
 // caller supplies a real tenant scope.
 const DefaultTenantID = "default"
 
-// TenantScope is mandatory for every repository operation. Future auth and
-// embed sessions resolve it from request context before calling a repository.
+// TenantScope scopes the repository operations that act for a tenant, not
+// every operation. Claiming (ClaimNext, ClaimDue), routing (Resolve,
+// ClaimDelivery, RecordDeliveryExecution), history-wide pruning
+// (PruneAllVersions) and the lookups that run before any tenant is known
+// (EnsureTenant, GetTenant, FindUserForLogin, AuthenticateAPIKey, CountUsers)
+// take none. A query that forgets the tenant is a bug, but it still compiles.
 type TenantScope struct {
 	ID string
 }

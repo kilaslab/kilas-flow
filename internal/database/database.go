@@ -19,6 +19,7 @@ import (
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	gormlogger "gorm.io/gorm/logger"
+	"gorm.io/gorm/schema"
 
 	"github.com/kilaslabs/kilas-flow/internal/config"
 )
@@ -39,6 +40,9 @@ func Open(ctx context.Context, cfg config.Database, log *slog.Logger) (*DB, erro
 	}
 
 	gormDB, err := gorm.Open(dialector, &gorm.Config{
+		// The prefix the models resolve through TablerWithNamer. Empty by
+		// default, which names every table exactly as before.
+		NamingStrategy:         schema.NamingStrategy{TablePrefix: cfg.TablePrefix},
 		Logger:                 gormlogger.Discard,
 		SkipDefaultTransaction: true,
 		TranslateError:         true,

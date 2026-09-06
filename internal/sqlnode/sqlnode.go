@@ -12,6 +12,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -19,12 +20,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-sql-driver/mysql"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
+	"github.com/kilaslabs/kilas-flow/internal/credentials"
+	"github.com/kilaslabs/kilas-flow/internal/safehttp"
 	"github.com/kilaslabs/kilas-flow/internal/sqlguard"
 
-	// Registered for their database/sql driver names only.
+	// Registered for its database/sql driver name only.
 	_ "github.com/glebarez/go-sqlite"
-	_ "github.com/go-sql-driver/mysql"
-	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 // Driver names one supported external database.
@@ -109,12 +113,31 @@ func (ceiling Ceiling) Apply(limits Limits) (Limits, map[string]any) {
 	return limits, clamped
 }
 
-// Guard describes paths a SQLite credential must never be able to open.
+// Guard describes what a workflow database credential must never be able to reach.
 type Guard struct {
 	// InternalPaths are KilasFlow's own database files. A workflow that could
 	// open one would be able to read every credential, workflow, and execution
 	// in the installation.
 	InternalPaths []string
+	// Policy is the process egress policy for network databases: the same
+	// policy that governs workflow HTTP requests. A credential whose host
+	// resolves to a loopback, private, link-local or otherwise internal
+	// address is refused before anything dials, unless the policy explicitly
+	// allows it. The zero value refuses every such address, so a Guard built
+	// by hand gets the strict answer rather than an open one.
+	Policy safehttp.Policy
+	// AllowedDomains scopes one credential to the hosts it may be sent to. An
+	// empty list means unrestricted; a non-empty list refuses any host the
+	// credential is not scoped to, with the same wildcard rules the HTTP node
+	// enforces. The caller fills this from the resolved credential — a SQLite
+	// credential must never carry one, because a file path has no host for a
+	// scope to match.
+	AllowedDomains []string
+	// LookupIPAddr resolves a database host to the addresses the policy is
+	// checked against. Nil uses the system resolver; tests supply their own,
+	// so a hostname resolving to 127.0.0.1 is refused without needing DNS or
+	// a live server.
+	LookupIPAddr func(ctx context.Context, host string) ([]net.IP, error)
 }
 
 // Result is one executed statement's outcome.
@@ -169,13 +192,9 @@ func (connection *Connection) Close() error {
 
 // Open builds a connection from credential fields.
 func Open(ctx context.Context, driver Driver, fields map[string]string, guard Guard) (*Connection, error) {
-	name, dsn, err := dataSource(driver, fields, guard)
+	db, err := openDatabase(ctx, driver, fields, guard)
 	if err != nil {
 		return nil, err
-	}
-	db, err := sql.Open(name, dsn)
-	if err != nil {
-		return nil, fmt.Errorf("open %s connection: %w", driver, err)
 	}
 	// One connection per node run keeps transaction scope obvious and avoids a
 	// pool that outlives the credential it was built from.
@@ -190,6 +209,190 @@ func Open(ctx context.Context, driver Driver, fields map[string]string, guard Gu
 	connection := &Connection{db: db, driver: driver, dialect: guardDialect(driver)}
 	connection.dialect = resolveBackslashRule(ctx, db, driver, connection.dialect)
 	return connection, nil
+}
+
+// openDatabase turns credential fields into a live handle. Network drivers go
+// through the guard before anything dials, and then dial through a function
+// that re-checks every resolved address: sql.Open is lazy and the pool
+// reconnects on its own, so a check that runs once before the dial is not the
+// control, only the clearer message.
+func openDatabase(ctx context.Context, driver Driver, fields map[string]string, guard Guard) (*sql.DB, error) {
+	switch driver {
+	case DriverPostgres:
+		return openPostgres(ctx, fields, guard)
+	case DriverMySQL:
+		return openMySQL(ctx, fields, guard)
+	case DriverSQLite:
+		path, err := sqlitePath(fields, guard)
+		if err != nil {
+			return nil, err
+		}
+		return sql.Open("sqlite", path)
+	default:
+		return nil, fmt.Errorf("database driver %q is not supported", driver)
+	}
+}
+
+// openPostgres checks the credential's host against the guard and opens
+// through a dial function that enforces the same policy per connection.
+func openPostgres(ctx context.Context, fields map[string]string, guard Guard) (*sql.DB, error) {
+	host, port, err := checkTarget(ctx, DriverPostgres, fields, guard, "5432")
+	if err != nil {
+		return nil, err
+	}
+	cfg, err := pgx.ParseConfig(postgresDSN(fields, host, port))
+	if err != nil {
+		return nil, fmt.Errorf("open postgres connection: %w", err)
+	}
+	// Through the guard's resolver rather than the system one: pgconn
+	// resolves the host itself before it dials, so leaving LookupFunc at its
+	// default would check one answer and dial another — and a test resolver
+	// would never be consulted at all.
+	cfg.LookupFunc = func(lookupCtx context.Context, _ string) ([]string, error) {
+		ips, err := lookupIPs(lookupCtx, guard, host)
+		if err != nil {
+			return nil, err
+		}
+		addrs := make([]string, 0, len(ips))
+		for _, ip := range ips {
+			addrs = append(addrs, net.JoinHostPort(ip.String(), port))
+		}
+		return addrs, nil
+	}
+	cfg.DialFunc = func(dialCtx context.Context, network, addr string) (net.Conn, error) {
+		return guardedDialAddr(dialCtx, network, addr, host, guard)
+	}
+	return stdlib.OpenDB(*cfg), nil
+}
+
+// openMySQL checks the credential's host against the guard and opens through
+// a per-connection dial function. Per-connection rather than a registered
+// network name on purpose: the DSN keeps its tcp(host:port) shape, which is
+// what Sanitize looks for when it redacts the password from a driver error.
+func openMySQL(ctx context.Context, fields map[string]string, guard Guard) (*sql.DB, error) {
+	host, port, err := checkTarget(ctx, DriverMySQL, fields, guard, "3306")
+	if err != nil {
+		return nil, err
+	}
+	dsn, err := mysqlDSN(fields, host, port)
+	if err != nil {
+		return nil, err
+	}
+	cfg, err := mysql.ParseDSN(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("open mysql connection: %w", err)
+	}
+	cfg.DialFunc = func(dialCtx context.Context, network, _ string) (net.Conn, error) {
+		return guardedDial(dialCtx, network, host, port, guard)
+	}
+	connector, err := mysql.NewConnector(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("open mysql connection: %w", err)
+	}
+	return sql.OpenDB(connector), nil
+}
+
+// checkTarget refuses a network credential before it dials: first where the
+// credential may be sent, then where the process may reach at all, then the
+// addresses the host actually resolves to. The message names the host and the
+// reason, never the DSN that carries the password.
+func checkTarget(ctx context.Context, driver Driver, fields map[string]string, guard Guard, fallbackPort string) (string, string, error) {
+	host, port, err := splitHostPort(fields, fallbackPort)
+	if err != nil {
+		return "", "", err
+	}
+	if len(guard.AllowedDomains) > 0 {
+		record := credentials.Record{AllowedDomains: guard.AllowedDomains}
+		if !record.AllowsHost(host) {
+			return "", "", fmt.Errorf("%w: %s host %q is not in the credential's allowed list", ErrForbiddenTarget, driver, host)
+		}
+	}
+	if len(guard.Policy.AllowedHosts) > 0 {
+		probe := &url.URL{Scheme: "https", Host: net.JoinHostPort(host, port)}
+		if err := guard.Policy.CheckURL(probe); err != nil {
+			return "", "", fmt.Errorf("%w: %s host %q is not allowed: %v", ErrForbiddenTarget, driver, host, err)
+		}
+	}
+	addresses, err := lookupIPs(ctx, guard, host)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve %s host %q: %w", driver, host, err)
+	}
+	for _, address := range addresses {
+		if err := guard.Policy.CheckEndpointAddress(host, port, address); err != nil {
+			return "", "", fmt.Errorf("%w: %s host %q resolved to %s: %v", ErrForbiddenTarget, driver, host, address, err)
+		}
+	}
+	return host, port, nil
+}
+
+// guardedDial is the dial-time control checkTarget's pre-flight is not: it
+// resolves the host again at the moment of dialling, refuses every address
+// the policy forbids, and dials a checked address rather than the hostname,
+// so a name that changes its answer between the two checks cannot slip a
+// forbidden address through.
+func guardedDial(ctx context.Context, network, host, port string, guard Guard) (net.Conn, error) {
+	addresses, err := lookupIPs(ctx, guard, host)
+	if err != nil {
+		return nil, err
+	}
+	for _, address := range addresses {
+		if err := guard.Policy.CheckEndpointAddress(host, port, address); err != nil {
+			return nil, fmt.Errorf("%w: database host %q resolved to %s: %v", ErrForbiddenTarget, host, address, err)
+		}
+	}
+	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
+	var firstErr error
+	for _, address := range addresses {
+		connection, err := dialer.DialContext(ctx, network, net.JoinHostPort(address.String(), port))
+		if err == nil {
+			return connection, nil
+		}
+		if firstErr == nil {
+			firstErr = err
+		}
+	}
+	if firstErr == nil {
+		firstErr = fmt.Errorf("database host %q resolved to no addresses", host)
+	}
+	return nil, firstErr
+}
+
+// guardedDialAddr checks the exact address about to be dialled. pgconn hands
+// the dial function the address its own lookup produced, so this verifies
+// that address rather than resolving the hostname a second time: the check
+// and the socket cannot disagree. A non-literal address means something
+// bypassed the lookup above, and falls back to resolving and dialling a
+// checked address instead of trusting it.
+func guardedDialAddr(ctx context.Context, network, addr, host string, guard Guard) (net.Conn, error) {
+	dialHost, dialPort, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	if address := net.ParseIP(dialHost); address != nil {
+		if err := guard.Policy.CheckEndpointAddress(host, dialPort, address); err != nil {
+			return nil, fmt.Errorf("%w: database host %q resolved to %s: %v", ErrForbiddenTarget, host, address, err)
+		}
+		dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
+		return dialer.DialContext(ctx, network, addr)
+	}
+	return guardedDial(ctx, network, dialHost, dialPort, guard)
+}
+
+// lookupIPs resolves a database host through the guard's resolver, or the
+// system one when the guard names none.
+func lookupIPs(ctx context.Context, guard Guard, host string) ([]net.IP, error) {
+	if guard.LookupIPAddr != nil {
+		return guard.LookupIPAddr(ctx, host)
+	}
+	records, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	addresses := make([]net.IP, 0, len(records))
+	for _, record := range records {
+		addresses = append(addresses, record.IP)
+	}
+	return addresses, nil
 }
 
 // guardDialect is the lexical grammar of the server a driver speaks.
@@ -244,29 +447,10 @@ func resolveBackslashRule(ctx context.Context, db *sql.DB, driver Driver, dialec
 	return dialect
 }
 
-// dataSource turns credential fields into a driver name and DSN.
-func dataSource(driver Driver, fields map[string]string, guard Guard) (string, string, error) {
-	switch driver {
-	case DriverPostgres:
-		return "pgx", postgresDSN(fields), nil
-	case DriverMySQL:
-		dsn, err := mysqlDSN(fields)
-		if err != nil {
-			return "", "", err
-		}
-		return "mysql", dsn, nil
-	case DriverSQLite:
-		path, err := sqlitePath(fields, guard)
-		if err != nil {
-			return "", "", err
-		}
-		return "sqlite", path, nil
-	default:
-		return "", "", fmt.Errorf("database driver %q is not supported", driver)
-	}
-}
-
-func postgresDSN(fields map[string]string) string {
+// postgresDSN assembles the driver's URL from credential fields and an
+// already-checked host and port, so the dialler and the DSN can never
+// disagree about the address.
+func postgresDSN(fields map[string]string, host, port string) string {
 	values := url.Values{}
 	sslMode := strings.TrimSpace(fields["sslMode"])
 	if sslMode == "" {
@@ -280,14 +464,15 @@ func postgresDSN(fields map[string]string) string {
 	target := &url.URL{
 		Scheme:   "postgres",
 		User:     url.UserPassword(fields["user"], fields["password"]),
-		Host:     hostPort(fields, "5432"),
+		Host:     net.JoinHostPort(host, port),
 		Path:     "/" + strings.TrimPrefix(strings.TrimSpace(fields["database"]), "/"),
 		RawQuery: values.Encode(),
 	}
 	return target.String()
 }
 
-// mysqlDSN builds the driver's connection string from credential fields.
+// mysqlDSN builds the driver's connection string from credential fields and
+// an already-checked host and port.
 //
 // The database name is checked rather than interpolated, and this is not
 // cosmetic. go-sql-driver splits its DSN at the first `?` after the last `/`,
@@ -300,7 +485,7 @@ func postgresDSN(fields map[string]string) string {
 // Refused rather than escaped: the driver's DSN grammar has no escape for
 // these bytes, so there is nothing to escape them to. A real database name has
 // none of them.
-func mysqlDSN(fields map[string]string) (string, error) {
+func mysqlDSN(fields map[string]string, host, port string) (string, error) {
 	database := strings.TrimSpace(fields["database"])
 	if strings.ContainsAny(database, "?&/@:") {
 		return "", fmt.Errorf("%w: a MySQL database name must not contain any of ? & / @ :", ErrForbiddenTarget)
@@ -311,7 +496,7 @@ func mysqlDSN(fields map[string]string) (string, error) {
 		// before the address, so a user carrying one moves the host.
 		return "", fmt.Errorf("%w: a MySQL user name must not contain any of @ / :", ErrForbiddenTarget)
 	}
-	if host := strings.TrimSpace(fields["host"]); strings.ContainsAny(host, "()?&/@") {
+	if strings.ContainsAny(host, "()?&/@") {
 		// The address sits inside tcp( … ), so a closing parenthesis ends it
 		// early and everything after is read as the driver's own grammar.
 		return "", fmt.Errorf("%w: a MySQL host must not contain any of ( ) ? & / @", ErrForbiddenTarget)
@@ -321,23 +506,28 @@ func mysqlDSN(fields map[string]string) (string, error) {
 		parameters += "&tls=" + url.QueryEscape(tls)
 	}
 	return fmt.Sprintf("%s:%s@tcp(%s)/%s%s",
-		user, fields["password"], hostPort(fields, "3306"),
+		user, fields["password"], net.JoinHostPort(host, port),
 		database, parameters), nil
 }
 
-func hostPort(fields map[string]string, fallbackPort string) string {
+// splitHostPort reads the credential's host and port as the separate values
+// the policy is checked against. A port that does not parse is refused rather
+// than replaced with the default: silently connecting to 5432 when the
+// credential said 5432x would tell the policy one thing and dial another.
+func splitHostPort(fields map[string]string, fallbackPort string) (string, string, error) {
 	host := strings.TrimSpace(fields["host"])
 	if host == "" {
 		host = "localhost"
 	}
-	port := strings.TrimSpace(fields["port"])
-	if port == "" {
-		port = fallbackPort
+	raw := strings.TrimSpace(fields["port"])
+	if raw == "" {
+		raw = fallbackPort
 	}
-	if _, err := strconv.Atoi(port); err != nil {
-		port = fallbackPort
+	number, err := strconv.Atoi(raw)
+	if err != nil || number < 1 || number > 65535 {
+		return "", "", fmt.Errorf("database port %q is not a port number", strings.TrimSpace(fields["port"]))
 	}
-	return host + ":" + port
+	return host, strconv.Itoa(number), nil
 }
 
 // sqlitePath resolves and guards a SQLite credential's file.
@@ -347,6 +537,13 @@ func hostPort(fields map[string]string, fallbackPort string) string {
 // explicitly, must be absolute after resolution, and must not be an internal
 // database file.
 func sqlitePath(fields map[string]string, guard Guard) (string, error) {
+	if len(guard.AllowedDomains) > 0 {
+		// A file path has no host for a scope to match, so a scope carried
+		// this far would be silently ignored — the defect domain scoping
+		// exists to remove. Refused here; save-time rejection belongs to the
+		// credential endpoint that accepts the scope.
+		return "", fmt.Errorf("%w: a SQLite credential names a file, not a host, so an allowed-domains scope cannot apply to it", ErrForbiddenTarget)
+	}
 	raw := strings.TrimSpace(fields["path"])
 	if raw == "" {
 		return "", fmt.Errorf("%w: a SQLite credential must name an explicit file path", ErrForbiddenTarget)

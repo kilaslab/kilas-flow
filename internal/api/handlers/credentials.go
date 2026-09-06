@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -199,10 +200,31 @@ func (handler *Credentials) List(ctx context.Context, _ *struct{}) (*credentialL
 	return &credentialListOutput{Body: resources}, nil
 }
 
+// rejectSQLiteScope refuses a host scope on a credential that names a file.
+// A SQLite credential has no host for AllowedDomains to match, so a stored
+// scope would be a promise nothing keeps: sqlnode refuses the connection at
+// open, and saving it at all is the defect. Blank entries are ignored the
+// way the store's own normalization ignores them.
+func rejectSQLiteScope(credentialType string, domains []string) error {
+	driver, isDatabase := sqlnode.DriverForCredential(credentialType)
+	if !isDatabase || driver != sqlnode.DriverSQLite {
+		return nil
+	}
+	for _, domain := range domains {
+		if strings.TrimSpace(domain) != "" {
+			return huma.Error422UnprocessableEntity("a sqlite credential names a file, not a host: remove allowed domains to save it")
+		}
+	}
+	return nil
+}
+
 // Create stores a new encrypted credential.
 func (handler *Credentials) Create(ctx context.Context, input *createCredentialInput) (*createdCredentialOutput, error) {
 	if handler.store == nil {
 		return nil, huma.Error503ServiceUnavailable("credential storage unavailable")
+	}
+	if err := rejectSQLiteScope(input.Body.Type, input.Body.AllowedDomains); err != nil {
+		return nil, err
 	}
 	record, err := handler.store.Create(ctx, handler.tenants.Resolve(ctx), credentials.Record{
 		Name: input.Body.Name, Type: input.Body.Type,
@@ -233,6 +255,20 @@ func (handler *Credentials) Get(ctx context.Context, input *credentialPathInput)
 func (handler *Credentials) Update(ctx context.Context, input *updateCredentialInput) (*credentialOutput, error) {
 	if handler.store == nil {
 		return nil, huma.Error503ServiceUnavailable("credential storage unavailable")
+	}
+	credentialType := input.Body.Type
+	if credentialType == "" && len(input.Body.AllowedDomains) > 0 {
+		// The type is immutable after creation, so an update may omit it.
+		// The stored type decides: a scope added to a SQLite credential
+		// through a typeless update is the same defect as one set at create.
+		stored, err := handler.store.Get(ctx, handler.tenants.Resolve(ctx), input.ID)
+		if err != nil {
+			return nil, handler.problem(err)
+		}
+		credentialType = stored.Type
+	}
+	if err := rejectSQLiteScope(credentialType, input.Body.AllowedDomains); err != nil {
+		return nil, err
 	}
 	record, err := handler.store.Update(ctx, handler.tenants.Resolve(ctx), input.ID, credentials.Record{
 		Name: input.Body.Name, Type: input.Body.Type,
@@ -475,7 +511,12 @@ func (handler *Credentials) probe(ctx context.Context, record credentials.Record
 	// there is no URL to fetch, and the driver's own handshake is what a node
 	// would do. sqlnode owns the mapping so this package never assembles a DSN.
 	if driver, isDatabase := sqlnode.DriverForCredential(record.Type); isDatabase {
-		if err := sqlnode.Test(ctx, driver, fields, handler.guard); err != nil {
+		// The same guard the executors receive, narrowed to this credential's
+		// own scope: a probe held to a laxer guard would report reachable
+		// for a target a node then refuses.
+		guard := handler.guard
+		guard.AllowedDomains = record.AllowedDomains
+		if err := sqlnode.Test(ctx, driver, fields, guard); err != nil {
 			return answer(TestCredentialResource{Detail: err.Error()})
 		}
 		return answer(TestCredentialResource{OK: true, Detail: "the database accepted the connection"})
