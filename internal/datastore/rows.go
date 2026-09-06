@@ -462,6 +462,15 @@ func (e *Engine) Insert(ctx context.Context, tenantID, dsID string, values map[s
 	if err != nil {
 		return nil, err
 	}
+	// Both bounds refuse before any value is bound to SQL: the byte bound is
+	// free to check, and the row probe stops at the limit-th row rather than
+	// scanning the table behind SQLite's single connection.
+	if err := checkValueSizes(bound, e.limits.MaxValueBytes); err != nil {
+		return nil, err
+	}
+	if err := e.checkRowLimit(ctx, table); err != nil {
+		return nil, err
+	}
 	dialect := e.dialect()
 	names := make([]string, 0, len(bound))
 	placeholders := make([]string, 0, len(bound))
@@ -588,12 +597,16 @@ func (e *Engine) matchIDsAndRows(ctx context.Context, dialect, table string, col
 }
 
 // stampNow is the updatedAt bump writers apply on update: database-set, per
-// dialect, so the engine never formats a timestamp into SQL text.
+// dialect, so the engine never formats a timestamp into SQL text. SQLite
+// resolves to milliseconds rather than CURRENT_TIMESTAMP's whole seconds:
+// a stamp that moves once per second cannot tell two writes in the same
+// second apart, which would make every optimistic precondition accept a
+// stale write it should refuse.
 func stampNow(dialect string) string {
 	if dialect == "postgres" {
 		return "now()"
 	}
-	return "CURRENT_TIMESTAMP"
+	return "STRFTIME('%Y-%m-%d %H:%M:%f','now')"
 }
 
 // Update sets the given columns on every row matching the filter. With
@@ -606,11 +619,13 @@ func (e *Engine) Update(ctx context.Context, tenantID, dsID string, filter *Filt
 	if err != nil {
 		return nil, err
 	}
-	if len(values) == 0 {
-		return nil, fmt.Errorf("datastore: update needs at least one column")
-	}
 	bound, err := canonicalValues(cols, values)
 	if err != nil {
+		return nil, err
+	}
+	// An update binds values too, so the byte bound applies here as well —
+	// still before any SQL is composed.
+	if err := checkValueSizes(bound, e.limits.MaxValueBytes); err != nil {
 		return nil, err
 	}
 	dialect := e.dialect()

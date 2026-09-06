@@ -1,7 +1,7 @@
 ---
 id: FEAT-1axhdn
 title: Settle Datastore concurrency semantics
-status: todo
+status: doing
 priority: medium
 labels:
     - datastore
@@ -12,7 +12,7 @@ deps:
 parent: EPIC-m42s3g
 phase: p9
 created: "2026-09-05T08:28:44Z"
-updated: "2026-09-05T08:28:44Z"
+updated: "2026-09-06T04:48:34Z"
 ---
 
 ## Scope
@@ -63,3 +63,41 @@ The trap is the row lock that is not there. Anyone reading `clause.Locking{Stren
 - `internal/repository/executions.go:96`, `internal/repository/workflows.go:93,225`, `internal/repository/schedules.go:149` — the existing `clause.Locking` call sites that receive no lock on SQLite.
 - `internal/database/database.go:44,57-59` — `TranslateError: true`, and the `SetMaxOpenConns(1)` that hides the missing lock today.
 - `Makefile` — `smoke-postgres`, run by hand and recorded on this ticket.
+
+## Evidence — 2026-09-06 (DatastorePolicy slice)
+
+- Semantics settled as documented in `internal/datastore/concurrency.go`
+  (new): filtered Update/Delete/Clear/Increment are one statement each
+  (last-writer-wins per row, identical on both drivers); NO row locks
+  anywhere (`clause.Locking` is discarded silently by the SQLite dialector,
+  so it is barred from every datastore write path); Upsert stays
+  read-then-write with its race documented (counters/flags use Increment or
+  preconditions, never Get+Update); limit checks are advisory under races.
+  Deviation from the ticket: no single-statement `ON CONFLICT` upsert —
+  physical tables carry no unique constraint on user columns, so there is
+  nothing to conflict on; the honest primitive is CAS instead.
+- New primitives: `Increment` (atomic `SET col=COALESCE(col,0)+?`,
+  NULL starts at delta, number columns only) and
+  `UpdateWithPrecondition`/`DeleteWithPrecondition` (single-row CAS on
+  `updatedAt`, `PreconditionError` carries the current stamp for retry
+  without a second read, `errors.Is(err, ErrPreconditionConflict)`).
+- Two real bugs found by the tests and fixed in the slice:
+  (1) binding a Go `time.Time` against SQLite's second-precision
+  `CURRENT_TIMESTAMP` text never matches — predicates now compare at
+  storage resolution (`strftime %f` / `date_trunc('milliseconds')`);
+  (2) second precision makes CAS useless under contention, so `stampNow`
+  on SQLite moved to millisecond `STRFTIME` (existing tests assert only
+  non-zero stamps — verified).
+- Tests (`internal/datastore/concurrency_test.go`): 10x10 concurrent
+  increments land exactly 100; increment emits exactly one UPDATE with no
+  preceding SELECT; stale precondition refused with current stamp attached
+  and row untouched; multi-row precondition refused; delete-underneath
+  returns empty not conflict; emitted SQL contains no `FOR UPDATE` AND the
+  SQLite dialector demonstrably drops `clause.Locking` (DryRun pin).
+- NOT done in this slice: `make smoke-postgres` concurrent-increment run
+  (no PG here; the `date_trunc` predicate and `DOUBLE PRECISION` increment
+  are code-reviewed but unverified live); widened-SQLite-pool run (pool is
+  pinned to 1 by database.Open with no override knob — a second-process
+  race still belongs to queue/worker mode per the ticket); node/API
+  description wording (node surface belongs to another agent — the
+  semantics doc they must quote lives in concurrency.go's header).

@@ -1,7 +1,7 @@
 ---
 id: FEAT-cjpbe6
 title: Isolate Datastore data from redaction, traces and other tenants
-status: todo
+status: doing
 priority: medium
 labels:
     - datastore
@@ -15,7 +15,7 @@ deps:
 parent: EPIC-m42s3g
 phase: p9
 created: "2026-09-05T08:28:44Z"
-updated: "2026-09-05T08:28:44Z"
+updated: "2026-09-06T04:48:34Z"
 ---
 
 ## Scope
@@ -68,3 +68,40 @@ Express isolation and purge through the catalogue, inside the transaction V2-p9-
 - `internal/repository/workflows.go:15-30` — `DefaultTenantID`, `TenantScope` and `ErrNotFound`, the isolation shape to reproduce for datastores.
 - `internal/repository/models_test.go:303-306` — the cross-tenant read asserting `ErrNotFound`, the test shape this ticket owes.
 - `.pine/tickets/FEAT-1br8at.md` — V2-p1-6, done; it removed `looksLikeCredential` and took `session`, `pin` and `otp` off the key list.
+
+## Evidence — 2026-09-06 (DatastorePolicy slice)
+
+- Provenance-over-exemption implemented as specified: no change to
+  `sensitiveKeys`/`headerPairIsSensitive`. `internal/datastore/trace.go`
+  (new) projects datastore node outputs to
+  `{"datastore":{"ids":[...],"rows":N}}` (truncated flag past 100 ids);
+  `internal/engine/trace.go` + 5-line `runOnce` seam apply it to the
+  marshalled output before `CreateNodeRun` and the live publish, keyed by
+  node type from the execution document (`datastore.NodeType =
+  "kilasflow.datastore"`, pinned equal to `nodes.DatastoreNodeType` by
+  `TestDatastoreTraceContractMatchesNodeType`). Inputs are deliberately not
+  projected; downstream redaction loss is accepted and documented in
+  `internal/engine/trace.go`.
+- Redact untouched in behavior; doc note records the exclusion. New tests:
+  `internal/execution/redact_datastore_test.go` (table-driven, names the
+  sensitiveKeys vs headerPairIsSensitive rule per hostile shape),
+  `internal/datastore/trace_test.go` (summary envelope, truncation,
+  Redact fixed-point incl. alphabetical field order),
+  `internal/engine/trace_test.go` (service-level: persisted node-run output
+  AND live event carry only the summary; runner-level: full rows reach the
+  next node in memory).
+- Isolation: catalogue-scoped lookup already enforced tenant boundary; new
+  `PurgeTenant` (`internal/datastore/isolation.go`) drops physical tables +
+  catalogue rows in one tx. Tests: cross-tenant access across 14 entry
+  points refuses with the existing `IsUnknown` ("unknown datastore")
+  convention — deviation from the ticket's `repository.ErrNotFound`
+  recorded: that sentinel would drag a datastore->repository import edge;
+  the established `IsUnknown`->404 mapping (catalogue.go) covers it.
+  Caller-supplied table names (incl. physical names, injection strings)
+  refused; purge keeps neighbours and converges on retry.
+- NOT done in this slice: deleting the tenant's executions/node-run rows on
+  purge (repository layer, outside this ownership); by-hand
+  `make smoke-postgres` (no PG in this environment — PG-only paths
+  `pg_total_relation_size` and the `date_trunc` predicate are
+  code-reviewed but unverified); downstream-provenance travel (accepted as
+  documented loss per the ticket's own option).

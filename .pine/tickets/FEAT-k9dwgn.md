@@ -1,7 +1,7 @@
 ---
 id: FEAT-k9dwgn
 title: Bound Datastore growth with limits and retention
-status: todo
+status: doing
 priority: medium
 labels:
     - datastore
@@ -12,7 +12,7 @@ deps:
 parent: EPIC-m42s3g
 phase: p9
 created: "2026-09-05T08:28:44Z"
-updated: "2026-09-05T08:28:44Z"
+updated: "2026-09-06T04:48:34Z"
 ---
 
 ## Scope
@@ -63,3 +63,32 @@ The trap is the zero that means "unknown". The natural Go signature for a size r
 - `modernc.org/sqlite@v1.23.1/generator.go:222` — `-DSQLITE_ENABLE_DBSTAT_VTAB` inside `configTest`, the testfixture configuration rather than the shipped library's.
 - `go.mod:7,47` — `github.com/glebarez/go-sqlite v1.21.2` and the indirect `modernc.org/sqlite v1.23.1` it pins.
 - `Makefile` — `smoke-sqlite` and `smoke-postgres`, run by hand and recorded on this ticket; the repository has no CI configuration of any kind.
+
+## Evidence — 2026-09-06 (DatastorePolicy slice)
+
+- `Limits{MaxDatastoresPerTenant:100, MaxColumnsPerDatastore:100,
+  MaxRowsPerDatastore:100000, MaxValueBytes:1MiB}` in
+  `internal/datastore/limits.go` (new); `Engine` defaults to it at
+  construction, `SetLimits` moves it and rejects non-positive bounds naming
+  the field. Enforcement lives in the Engine (service layer), never the
+  handlers: Create (tenant count + column count), AddColumn (column count,
+  before catalogue/DDL), Insert/Update (per-value bytes before any bind),
+  Insert (row ceiling via bounded `LIMIT 1 OFFSET max-1` probe, never
+  COUNT(*)). Breaches refuse and delete nothing; messages name limit+count.
+- `Usage` reports exact rows everywhere; bytes exact on PostgreSQL via
+  `pg_total_relation_size`, explicit `SizeKnown:false` on SQLite (never a
+  zero that reads as empty). No auto-expiry: retention is refuse-and-keep,
+  documented in limits.go.
+- Tests (`internal/datastore/limits_test.go`): ceiling + per-tenant
+  isolation, column refusal leaves catalogue+table untouched (no DDL
+  emitted), byte refusal reaches no driver (hook empty), row refusal keeps
+  rows readable AND writable, SetLimits validation table, Usage
+  observability incl. SQLite unavailability. Full datastore suite green on
+  SQLite.
+- NOT done in this slice: `config.Datastore` block + `Default()`/`Validate`
+  wiring (touches shared config.go owned on the secrets line by another
+  agent; limits ship with `DefaultLimits`+`SetLimits` instead — config
+  binding is a mechanical follow-up); wall-clock hold-time assertion (the
+  probe is O(limit-th row) by construction; the timing test would be
+  flaky by nature); `make smoke-postgres` / `smoke-sqlite` by hand (no PG
+  here; PG byte-size path unverified live).

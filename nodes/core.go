@@ -60,6 +60,7 @@ func RegisterAll(registry *node.Registry) error {
 		summarizeNode(),
 		removeDuplicatesNode(),
 		dateTimeNode(),
+		datastoreNode(),
 		waitNode(),
 		executeWorkflowNode(),
 		executeWorkflowTrigger(),

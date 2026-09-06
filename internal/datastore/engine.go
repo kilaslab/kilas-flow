@@ -41,6 +41,10 @@ type Datastore struct {
 type Engine struct {
 	db     *database.DB
 	prefix string
+	// limits bounds per-tenant and per-table growth. It defaults to
+	// DefaultLimits at construction and moves only through SetLimits, so no
+	// call site can run unbounded by forgetting to pass a configuration.
+	limits Limits
 
 	// inject fails a stage inside the write transaction; composeHook sees
 	// every DDL statement the engine composes. Both are nil in production
@@ -59,7 +63,7 @@ func NewEngine(db *database.DB, prefix string) (*Engine, error) {
 		return nil, fmt.Errorf("datastore: table prefix %q is %d bytes, past the %d-byte cap that keeps every identifier within PostgreSQL's 63-byte limit",
 			prefix, len(prefix), config.MaxTablePrefixLength)
 	}
-	return &Engine{db: db, prefix: prefix}, nil
+	return &Engine{db: db, prefix: prefix, limits: DefaultLimits()}, nil
 }
 
 // dialect reports which DDL shape to compose. The handle only ever carries
@@ -106,8 +110,16 @@ func (e *Engine) Create(ctx context.Context, tenantID, name string, in []ColumnI
 	if name == "" {
 		return nil, errors.New("datastore: name is required")
 	}
+	// Counted before anything is minted or written, so a refused creation
+	// leaves neither a catalogue row nor a table and names what is full.
+	if err := e.checkDatastoreLimit(ctx, tenantID); err != nil {
+		return nil, err
+	}
 	cols, err := normalizeColumns(in)
 	if err != nil {
+		return nil, err
+	}
+	if err := e.checkColumnLimit(name, len(cols)); err != nil {
 		return nil, err
 	}
 	// A random collision is retried; a deterministic one would be
@@ -216,6 +228,11 @@ func (e *Engine) AddColumn(ctx context.Context, tenantID, id string, in ColumnIn
 	}
 	added := cols[len(cols)-1]
 	added.Position = len(existing)
+	// Refused before the catalogue write and the ALTER TABLE, so a breach
+	// leaves both untouched.
+	if err := e.checkColumnLimit(id, len(cols)); err != nil {
+		return err
+	}
 	table := PhysicalTableName(e.prefix, row.Surrogate)
 	return e.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(&datastoreColumnModel{

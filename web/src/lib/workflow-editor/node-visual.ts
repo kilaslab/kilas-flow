@@ -28,6 +28,7 @@ import Sparkles from '@lucide/svelte/icons/sparkles';
 import Split from '@lucide/svelte/icons/split';
 import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
 import Webhook from '@lucide/svelte/icons/webhook';
+import Table from '@lucide/svelte/icons/table';
 import Workflow from '@lucide/svelte/icons/workflow';
 import Wrench from '@lucide/svelte/icons/wrench';
 
@@ -96,6 +97,7 @@ const GLYPHS: Record<string, Component> = {
 	scissors: Scissors,
 	send: Send,
 	'sticky-note': StickyNote,
+	table: Table,
 	webhook: Webhook,
 	workflow: Workflow,
 	wrench: Wrench

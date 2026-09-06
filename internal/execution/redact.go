@@ -73,6 +73,14 @@ var headerPairKeys = struct{ name, value string }{name: "name", value: "value"}
 // Empty and syntactically invalid payloads pass through untouched. The
 // repository rejects invalid JSON with a precise error, which is better than
 // silently storing something this function rewrote.
+//
+// Datastore cells are excluded from this function by construction, not by an
+// exemption list: the engine projects datastore node outputs to row counts
+// and row identifiers before the node-run write and the live publish, so a
+// cell named `api_key` or shaped `{"name": "cookie", "value": ...}` never
+// reaches here through the trace path. An exemption list would have to be
+// per-datastore — a pure function here cannot reach the catalogue — and a
+// global one would punch the same hole in every other node's trace.
 func Redact(payload json.RawMessage) json.RawMessage {
 	if len(payload) == 0 || !json.Valid(payload) {
 		return payload

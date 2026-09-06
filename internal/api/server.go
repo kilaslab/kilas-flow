@@ -19,6 +19,7 @@ import (
 	"github.com/kilaslabs/kilas-flow/internal/api/middleware"
 	"github.com/kilaslabs/kilas-flow/internal/auth"
 	"github.com/kilaslabs/kilas-flow/internal/config"
+	"github.com/kilaslabs/kilas-flow/internal/datastore"
 	"github.com/kilaslabs/kilas-flow/internal/embed"
 	"github.com/kilaslabs/kilas-flow/internal/events"
 	"github.com/kilaslabs/kilas-flow/internal/loadoptions"
@@ -53,6 +54,8 @@ type Deps struct {
 	Events *events.Broker
 	// Schedules is the cron surface. A nil store disables the endpoints.
 	Schedules repository.ScheduleRepository
+	// Datastores is the row store. A nil engine disables the endpoints.
+	Datastores *datastore.Engine
 	// Webhook serves the reserved /webhook prefix. A nil handler keeps the
 	// prefix answering "not implemented" rather than falling through to the SPA.
 	Webhook http.Handler

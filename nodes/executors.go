@@ -9,6 +9,7 @@ import (
 
 	"github.com/kilaslabs/kilas-flow/internal/ai"
 	"github.com/kilaslabs/kilas-flow/internal/conditions"
+	"github.com/kilaslabs/kilas-flow/internal/datastore"
 	"github.com/kilaslabs/kilas-flow/internal/engine"
 	"github.com/kilaslabs/kilas-flow/internal/expression"
 	"github.com/kilaslabs/kilas-flow/internal/property"
@@ -31,6 +32,7 @@ func RegisterExecutors(registry *engine.Registry, httpPolicy safehttp.Policy, da
 	}
 	for id, executor := range map[string]engine.Executor{
 		"core.manual":                    engine.ExecutorFunc(executeManual),
+		DatastoreExecutorID:              datastoreExecutorOf(settings),
 		"core.set":                       engine.ExecutorFunc(executeSet),
 		"core.if":                        engine.ExecutorFunc(executeIF),
 		"core.merge":                     engine.ExecutorFunc(executeMerge),
@@ -101,6 +103,27 @@ type executorSettings struct {
 	// to the refusing store at construction, so a caller that never sets
 	// one gets the documented failure rather than a nil dereference.
 	vectorStore VectorStore
+	// datastoreEngine backs the data-table node. Nil leaves the executor
+	// refusing every run with the install message rather than dereferencing.
+	datastoreEngine *datastore.Engine
+}
+
+// WithDatastoreEngine hands the data-table node its row store. Without it
+// the executor refuses every run rather than dereferencing.
+func WithDatastoreEngine(engine *datastore.Engine) ExecutorOption {
+	return func(settings *executorSettings) {
+		settings.datastoreEngine = engine
+	}
+}
+
+// datastoreExecutorOf binds the executor, keeping a typed-nil engine from
+// becoming a non-nil store interface that panics on first use.
+func datastoreExecutorOf(settings executorSettings) engine.Executor {
+	var store DatastoreStore
+	if settings.datastoreEngine != nil {
+		store = settings.datastoreEngine
+	}
+	return NewDatastoreExecutor(store)
 }
 
 // WithDatabaseCeiling bounds what a workflow document may ask a database node

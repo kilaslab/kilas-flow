@@ -23,6 +23,7 @@ import (
 	"github.com/kilaslabs/kilas-flow/internal/config"
 	"github.com/kilaslabs/kilas-flow/internal/credentials"
 	"github.com/kilaslabs/kilas-flow/internal/database"
+	"github.com/kilaslabs/kilas-flow/internal/datastore"
 	"github.com/kilaslabs/kilas-flow/internal/embed"
 	"github.com/kilaslabs/kilas-flow/internal/engine"
 	"github.com/kilaslabs/kilas-flow/internal/events"
@@ -87,6 +88,15 @@ func run() error {
 	if err := database.Migrate(db, log); err != nil {
 		return err
 	}
+	// The row store behind data tables and the datastore node. Built here
+	// because this is the only place holding the database handle and the
+	// table prefix together; the API, the node executors and the option
+	// loaders all receive the same engine. A bad prefix refuses the boot
+	// rather than serving half-named tables.
+	datastoreEngine, err := datastore.NewEngine(db, cfg.Database.TablePrefix)
+	if err != nil {
+		return err
+	}
 	nodeRegistry := node.NewRegistry()
 	if err := nodes.RegisterAll(nodeRegistry); err != nil {
 		return fmt.Errorf("register built-in nodes: %w", err)
@@ -140,12 +150,10 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("configure agent memory: %w", err)
 	}
-	log.Info("agent memory configured",
-		"sessionsPerTenant", defaultAgentMemorySessionsPerTenant,
-		"retainedSessions", agentMemory.Stats().Sessions)
 	if err := nodes.RegisterExecutors(executorRegistry, outboundPolicy(cfg.Outbound), sqlGuard,
 		ai.NewLoopRuntime(), agentMemory, codeCompiler,
-		nodes.WithDatabaseCeiling(databaseCeiling(cfg.SQL)), nodes.WithVectorStore(vectorStore)); err != nil {
+		nodes.WithDatabaseCeiling(databaseCeiling(cfg.SQL)), nodes.WithVectorStore(vectorStore),
+		nodes.WithDatastoreEngine(datastoreEngine)); err != nil {
 		return fmt.Errorf("register built-in executors: %w", err)
 	}
 	// Declarative node packs run on one interpreter rather than shipping Go.
@@ -310,6 +318,55 @@ func run() error {
 		})); err != nil {
 		return fmt.Errorf("register the workflow option loader: %w", err)
 	}
+	// The data-table locator's From-list mode and the column mapper's schema.
+	// Registered here because this is the only place holding the loader
+	// registry and the row store together; the node names the loaders and
+	// never reaches storage itself.
+	if err := optionLoader.RegisterInternal(loadoptions.DatastoreListLoader, loadoptions.Datastores(
+		func(ctx context.Context, tenantID string) ([]loadoptions.DatastoreOption, error) {
+			definitions, err := datastoreEngine.ListDatastores(ctx, tenantID)
+			if err != nil {
+				return nil, err
+			}
+			listed := make([]loadoptions.DatastoreOption, 0, len(definitions))
+			for _, candidate := range definitions {
+				listed = append(listed, loadoptions.DatastoreOption{ID: candidate.ID, Name: candidate.Name})
+			}
+			return listed, nil
+		})); err != nil {
+		return fmt.Errorf("register the datastore option loader: %w", err)
+	}
+	if err := optionLoader.RegisterSchema(loadoptions.DatastoreMappingColumnsLoader, loadoptions.DatastoreColumns(
+		func(ctx context.Context, tenantID, ref string) ([]loadoptions.DatastoreColumn, error) {
+			definition, err := datastoreEngine.GetDatastore(ctx, tenantID, ref)
+			if err != nil {
+				if !datastore.IsUnknown(err) {
+					return nil, err
+				}
+				definitions, listErr := datastoreEngine.ListDatastores(ctx, tenantID)
+				if listErr != nil {
+					return nil, listErr
+				}
+				found := false
+				for _, candidate := range definitions {
+					if strings.EqualFold(candidate.Name, ref) {
+						definition = &candidate
+						found = true
+						break
+					}
+				}
+				if !found {
+					return nil, err
+				}
+			}
+			columns := make([]loadoptions.DatastoreColumn, 0, len(definition.Columns))
+			for _, column := range definition.Columns {
+				columns = append(columns, loadoptions.DatastoreColumn{Name: column.Name, Type: string(column.Type)})
+			}
+			return columns, nil
+		})); err != nil {
+		return fmt.Errorf("register the datastore schema loader: %w", err)
+	}
 	schedules := repository.NewScheduleStore(db.DB)
 	eventBroker := events.NewBroker(events.BrokerOptions{})
 	// Binary payloads live on a filesystem root, never in the database. An
@@ -379,9 +436,6 @@ func run() error {
 	}
 	cronService.Start(ctx)
 
-	startHistorySweeper(ctx, cfg.History, workflows, log)
-	startExecutionPruner(ctx, cfg.Execution, executions, runtime.DiscardBinaries, log)
-
 	server := api.NewServer(api.Deps{
 		Config:       cfg,
 		Logger:       log,
@@ -389,6 +443,7 @@ func run() error {
 		NodeRegistry: nodeRegistry,
 		Workflows:    workflows,
 		Executions:   executions,
+		Datastores:   datastoreEngine,
 		Schedules:    schedules,
 		Webhook:      webhookHandler,
 		Credentials:  credentialStore,

@@ -169,6 +169,17 @@ describe('nodeVisual', () => {
 		expect(visual.iconURL).toBeNull();
 		expect(visual.accent).toBe('#25d366');
 	});
+	it('ships the glyph the data-table node names, with its own accent', () => {
+		// kilasflow.datastore asks for `builtin:table`. The canvas must draw
+		// it with that glyph and the node's own accent rather than the Box
+		// and muted-foreground fallbacks.
+		const [n, d] = typed('kilasflow.datastore', { resource: 'row', operation: 'insert' });
+		const visual = nodeVisual({ ...d, icon: { light: 'builtin:table' }, iconColor: '#0e7490', subtitle: '{{ $parameter.resource }}/{{ $parameter.operation }}' });
+		expect(visual.icon).not.toBe(FALLBACK_GLYPH);
+		expect(visual.iconURL).toBeNull();
+		expect(visual.accent).toBe('#0e7490');
+		expect(nodeSubtitle(n, { ...d, subtitle: '{{ $parameter.resource }}/{{ $parameter.operation }}' })).toBe('row/insert');
+	});
 
 	it('falls back visibly when it does not ship the named glyph', () => {
 		// Means "this editor is older than this node", which is a different
