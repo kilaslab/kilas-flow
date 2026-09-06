@@ -895,3 +895,6 @@ Closed by `pine close --evidence` on 2026-09-06.
  web/src/routes/+page.svelte                        |     8 +-
  811 files changed, 172335 insertions(+), 2747 deletions(-)
 ```
+
+## Smoke note (Main, 2026-09-06)
+`make smoke-postgres` passes after pinning compose.postgres.yaml to pgvector/pgvector:pg17 — the stock image has no vector binaries, so migration 000006 refused the boot. The image pin is part of this ticket's landing, not just test setup.

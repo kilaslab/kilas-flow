@@ -52,6 +52,7 @@ const RUN_COVERAGE = [
 	'kilasflow.wait@1',
 	'kilasflow.executeWorkflow@1',
 	'kilasflow.executeWorkflowTrigger@1',
+	'kilasflow.datastore@1',
 	'pack.telegram@1',
 	'pack.waha@202409',
 	'pack.waha@202502',
@@ -81,6 +82,7 @@ const VALIDATION_COVERAGE = [
 	'kilasflow.mcpClientTool@1',
 	'kilasflow.embeddings@1',
 	'kilasflow.vectorStore@1',
+	'kilasflow.datastoreTool@1',
 	'kilasflow.postgres@1',
 	'kilasflow.postgres@2',
 	'kilasflow.mysql@1',
@@ -782,6 +784,37 @@ test('the agent cluster fails closed without wiring or credentials', async ({ se
 	const mcpAttempt = await startRun(server.baseURL, mcpId);
 	expect(mcpAttempt.status).toBe(422);
 	expect(errorText(mcpAttempt.body)).toContain('serverUrl is required');
+
+	// A datastore tool without its description names it before anything else.
+	// It is an agent-side sub-node, so validation is its headless tier.
+	const dsToolId = await createWorkflow(server.baseURL, 'Coverage Datastore Tool Bare', [manual(), node('tool', 'Tool', 'kilasflow.datastoreTool', 1, {})], []);
+	const dsToolAttempt = await startRun(server.baseURL, dsToolId);
+	expect(dsToolAttempt.status).toBe(422);
+	expect(errorText(dsToolAttempt.body)).toContain('toolDescription is required');
+});
+
+test('datastore rows insert and read back headless', async ({ server }) => {
+	// Data tables are server-owned: no credential, just the tables API plus
+	// the node. The insert auto-maps the incoming item onto the live schema.
+	const table = await api(server.baseURL, 'POST', '/datastores', { name: 'Coverage', columns: [{ name: 'v', type: 'string' }] }, 201);
+	const workflowId = await createWorkflow(
+		server.baseURL,
+		'Coverage Datastore',
+		[
+			manual(),
+			setter('in', 'ds-ok'),
+			node('insert', 'Insert', 'kilasflow.datastore', 1, { resource: 'row', operation: 'insert', dataTableId: table.id }),
+			node('read', 'Read', 'kilasflow.datastore', 1, { resource: 'row', operation: 'get', dataTableId: table.id })
+		],
+		[
+			conn('c1', 'manual', 'main', 'in', 'main'),
+			conn('c2', 'in', 'main', 'insert', 'main'),
+			conn('c3', 'insert', 'main', 'read', 'main')
+		]
+	);
+	const record = await runToSuccess(server.baseURL, workflowId);
+	expect(nodeRun(record, 'insert').output.datastore).toMatchObject({ rows: 1 });
+	expect(nodeRun(record, 'read').output.datastore).toMatchObject({ rows: 1 });
 });
 
 test('embeddings and vector store refuse without pgvector', async ({ server }) => {

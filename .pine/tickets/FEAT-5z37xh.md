@@ -754,3 +754,14 @@ the harness's SQLite with the pgvector install message
 (VectorUnavailableReason; availability is validated before any other
 parameter). Split is now 32 run + 22 validation = 54, exclusions still none.
 Spec 14 passed (incl. the ratchet), smoke 5 passed.
+
+## Notes (NodeCoverage, 2026-09-06, +2 datastore types, status untouched)
+
+Catalogue grew 54 → 56 (both builtin): kilasflow.datastore@1 runs to success
+— table created over POST /datastores (no credential; tables are
+server-owned), row insert auto-maps the incoming item onto the live schema,
+and both insert and get report `{datastore: {rows: 1, ids: [...]}}`, which is
+what the suite asserts. kilasflow.datastoreTool@1 joins the validation tier
+(`toolDescription is required`; agent-side sub-node with no main ports).
+Split is now 33 run + 23 validation = 56, exclusions still none. Spec 15
+passed (incl. the ratchet), smoke 5 passed.
