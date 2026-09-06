@@ -142,3 +142,6 @@ The trap is the row lock that is not there. Anyone reading `clause.Locking{Stren
 - Verdict: this ticket STAYS DOING (carried). Wording + PG halves are
   proven; criteria 1 and 8 are amended, not met, and closing over amended
   criteria needs the epic owner's explicit sign-off.
+
+## PG concurrency evidence (Main, 2026-09-06)
+`TestConcurrentIncrementsLoseNoWrites` (+ Increment semantics, evolution non-stall, upsert/clear) green on sqlite AND live PG (kf-pg-vector:55434), run by hand with `KILASFLOW_TEST_POSTGRES_DSN` + `-p 1`: 10x10 increments land exactly 100 on both drivers. Still open, needing owner ack: single-statement ON CONFLICT amendment (no unique constraint exists; CAS+Increment are the honest primitives) and the widened-pool run (SQLite pin is structural). No code change in this pass — evidence only.
