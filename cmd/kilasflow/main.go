@@ -60,6 +60,7 @@ func run() error {
 	configPath := flag.String("config", "config.yaml", "path to the configuration file")
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	workerIDOverride := flag.String("worker-id", "", "worker identity recorded in lease_owner (default: host-qualified and unique per process)")
+	roleOverride := flag.String("role", "both", "process role: api, worker, or both (default both)")
 	flag.Parse()
 
 	if *showVersion {
@@ -72,8 +73,16 @@ func run() error {
 		return err
 	}
 
+	role, err := parseProcessRole(*roleOverride)
+	if err != nil {
+		return err
+	}
+	if err := validateRoleForDriver(role, cfg.Database.Driver); err != nil {
+		return err
+	}
+
 	log := newLogger(cfg.Log)
-	log.Info("starting kilasflow", "version", version)
+	log.Info("starting kilasflow", "version", version, "role", string(role))
 
 	// Cancelled on SIGINT/SIGTERM, which unwinds the server and the database.
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -397,6 +406,19 @@ func run() error {
 		}
 		binaries = fileStore
 	}
+	// Cross-process fan-out rides the same PostgreSQL the queue does: every
+	// worker publishes its events' identifiers, every API process
+	// republishes them into its own broker for live browsers, and every
+	// holder listens for cancellation interrupts. Pooled and post-commit —
+	// the row was already written, so a delivery failure is logged by the
+	// service and never fails the run. SQLite keeps the single-process
+	// path: no LISTEN/NOTIFY, no second process (see validateRoleForDriver).
+	var relaySend func(channel, payload string) error
+	if cfg.Database.Driver == "postgres" {
+		relaySend = func(channel, payload string) error {
+			return db.Exec("SELECT pg_notify(?, ?)", channel, payload).Error
+		}
+	}
 	runtime, err := engine.NewService(engine.ServiceDeps{
 		Logger:      log,
 		Executions:  executions,
@@ -410,6 +432,8 @@ func run() error {
 		SubworkflowTriggerType: nodes.ExecuteWorkflowTriggerType,
 		WorkerID:               resolveWorkerID(*workerIDOverride),
 		DefaultTimeout:         cfg.Execution.DefaultTimeout,
+		RelayPrefix:            cfg.Database.TablePrefix,
+		RelaySend:              relaySend,
 		// server.public_url prefixes the resume links handed to waiting
 		// executions. Empty renders path-only links for a same-origin setup.
 		PublicBaseURL: cfg.Server.PublicURL,
@@ -438,32 +462,64 @@ func run() error {
 		return fmt.Errorf("verify webhook lifecycles: %w", err)
 	}
 
-	if err := runtime.Start(ctx, cfg.Execution.MaxConcurrent); err != nil {
-		return fmt.Errorf("start execution runtime: %w", err)
+	// One binary, selectable role. The default (both) is today's behaviour:
+	// workers, scheduler and API in one process. A split deployment runs
+	// one api process (API + scheduler, no workers) beside N worker
+	// processes (workers, no API, no scheduler): the scheduler stays
+	// single by role, and several api/both processes stay safe anyway
+	// because ClaimDue advances the due time inside the same transaction
+	// that reads it.
+	if role.runsWorkers() {
+		if err := runtime.Start(ctx, cfg.Execution.MaxConcurrent); err != nil {
+			return fmt.Errorf("start execution runtime: %w", err)
+		}
 	}
 	// PostgreSQL wakes idle workers in every process the moment an execution
 	// is queued, instead of leaving each process to find it on its next poll
 	// tick. SQLite has no LISTEN/NOTIFY and keeps the tick as its wake path.
-	if cfg.Database.Driver == "postgres" {
+	if cfg.Database.Driver == "postgres" && role.runsWorkers() {
 		go func() {
 			_ = runtime.WatchQueue(ctx, cfg.Database.DSN, cfg.Database.TablePrefix, func(err error) {
 				log.Error("execution wake listener dropped; the poll interval remains the fallback", "error", err)
 			})
 		}()
+		go func() {
+			_ = runtime.WatchCancellations(ctx, cfg.Database.DSN, cfg.Database.TablePrefix, func(err error) {
+				log.Error("execution cancel listener dropped; the status poll remains the fallback", "error", err)
+			})
+		}()
 	}
-	cronService, err := scheduler.New(scheduler.Options{
-		Schedules: schedules,
-		Queue: func(ctx context.Context, tenantID, workflowID, versionID, triggerNodeID string, payload json.RawMessage) error {
-			_, err := runtime.QueueScheduled(ctx, tenantID, workflowID, versionID, triggerNodeID, payload)
-			return err
-		},
-		Logger: log,
-	})
-	if err != nil {
-		return fmt.Errorf("configure scheduler: %w", err)
+	// API processes republish worker events into their own broker so a
+	// browser connected here sees runs executing elsewhere live.
+	if cfg.Database.Driver == "postgres" && role.runsAPI() {
+		go func() {
+			_ = runtime.WatchRemoteEvents(ctx, cfg.Database.DSN, cfg.Database.TablePrefix, func(err error) {
+				log.Error("execution event listener dropped; live fan-out pauses until it reconnects", "error", err)
+			})
+		}()
 	}
-	cronService.Start(ctx)
+	if role.runsScheduler() {
+		cronService, err := scheduler.New(scheduler.Options{
+			Schedules: schedules,
+			Queue: func(ctx context.Context, tenantID, workflowID, versionID, triggerNodeID string, payload json.RawMessage) error {
+				_, err := runtime.QueueScheduled(ctx, tenantID, workflowID, versionID, triggerNodeID, payload)
+				return err
+			},
+			Logger: log,
+		})
+		if err != nil {
+			return fmt.Errorf("configure scheduler: %w", err)
+		}
+		cronService.Start(ctx)
+	}
 
+	// A worker-only process has no listener: it runs until SIGINT/SIGTERM
+	// rather than exiting while its workers still hold leases.
+	if !role.runsAPI() {
+		log.Info("worker role running without the HTTP API; waiting for shutdown")
+		<-ctx.Done()
+		return nil
+	}
 	server := api.NewServer(api.Deps{
 		Config:       cfg,
 		Logger:       log,
@@ -501,6 +557,60 @@ func run() error {
 	})
 
 	return server.Run(ctx)
+}
+
+// processRole is one selectable shape of the single binary. The default
+// (both) is today's behaviour — API, workers and scheduler in one process —
+// so an upgrade that sets nothing runs exactly as before. A split
+// deployment runs one api process beside N worker processes.
+type processRole string
+
+const (
+	processRoleBoth   processRole = "both"
+	processRoleAPI    processRole = "api"
+	processRoleWorker processRole = "worker"
+)
+
+// parseProcessRole normalises the --role flag. "workers" is accepted for
+// the ticket's wording and means the same as "worker".
+func parseProcessRole(raw string) (processRole, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "both":
+		return processRoleBoth, nil
+	case "api":
+		return processRoleAPI, nil
+	case "worker", "workers":
+		return processRoleWorker, nil
+	default:
+		return "", fmt.Errorf("role %q must be api, worker, or both", raw)
+	}
+}
+
+func (role processRole) runsAPI() bool {
+	return role == processRoleBoth || role == processRoleAPI
+}
+
+func (role processRole) runsWorkers() bool {
+	return role == processRoleBoth || role == processRoleWorker
+}
+
+// runsScheduler keeps the scheduler single by role: api and both run it,
+// workers do not. Several api/both processes stay safe anyway because
+// ClaimDue advances the due time inside the same transaction that reads it,
+// so a due time still fires exactly once.
+func (role processRole) runsScheduler() bool {
+	return role == processRoleBoth || role == processRoleAPI
+}
+
+// validateRoleForDriver refuses a multi-process configuration on a driver
+// that cannot host it, at startup with an explanation rather than under
+// load. SQLite has one writer, no LISTEN/NOTIFY, and one file: two
+// processes on it are a corruption story, not a scaling story.
+func validateRoleForDriver(role processRole, driver string) error {
+	if role != processRoleBoth && driver == "sqlite" {
+		return fmt.Errorf("role %q requires the postgres driver: sqlite supports a single process only (one writer, no LISTEN/NOTIFY)", string(role))
+	}
+	return nil
 }
 
 // resolveWorkerID returns the explicit --worker-id when set, otherwise a

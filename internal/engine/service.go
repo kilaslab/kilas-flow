@@ -86,6 +86,18 @@ type ServiceDeps struct {
 	// one minute. There is no knob to disable it: without the sweep a
 	// forgotten approval would stay suspended forever.
 	SweepInterval time.Duration
+	// RelayPrefix keys the cross-process LISTEN/NOTIFY channels for live
+	// execution events and cancellation interrupts (see
+	// ExecutionEventsChannel). Empty matches a database with no table
+	// prefix, which is what every existing install has.
+	RelayPrefix string
+	// RelaySend delivers one pg_notify payload to listening processes. Nil
+	// disables cross-process notifications: the local broker and the local
+	// active map keep working, and the durable row stays the source of
+	// truth. It must be fast and must never fail a run — publish and Cancel
+	// log a delivery error and continue — because the row was already
+	// written before the notice is sent.
+	RelaySend func(channel, payload string) error
 	// PublicBaseURL prefixes the resume links handed to waiting executions
 	// (server.public_url). Empty renders path-only links, which is all a
 	// same-origin dashboard and approval page need.
@@ -100,25 +112,27 @@ type ServiceDeps struct {
 // Service claims queued execution records and persists their deterministic
 // runtime results. It is deliberately transport-independent.
 type Service struct {
-	executions             ExecutionStore
-	binaries               binary.Store
-	catalog                workflow.Catalog
-	runner                 *Runner
-	credentials            CredentialStore
-	events                 *events.Broker
-	environment            map[string]string
-	workerID               string
-	defaultTimeout         time.Duration
-	pollInterval           time.Duration
-	sweepInterval          time.Duration
-	publicBaseURL          string
-	subworkflowTriggerType string
-	activeMu               sync.Mutex
-	active                 map[string]context.CancelFunc
-	startOnce              sync.Once
-	wake                   chan struct{}
-	log                    *slog.Logger
-}
+		executions             ExecutionStore
+		binaries               binary.Store
+		catalog                workflow.Catalog
+		runner                 *Runner
+		credentials            CredentialStore
+		events                 *events.Broker
+		environment            map[string]string
+		workerID               string
+		defaultTimeout         time.Duration
+		pollInterval           time.Duration
+		sweepInterval          time.Duration
+		relayPrefix            string
+		relaySend              func(channel, payload string) error
+		publicBaseURL          string
+		subworkflowTriggerType string
+		activeMu               sync.Mutex
+		active                 map[string]context.CancelFunc
+		startOnce              sync.Once
+		wake                   chan struct{}
+		log                    *slog.Logger
+	}
 
 func NewService(deps ServiceDeps) (*Service, error) {
 	if deps.Executions == nil || deps.Catalog == nil || deps.Runner == nil || deps.WorkerID == "" {
@@ -159,6 +173,8 @@ func NewService(deps ServiceDeps) (*Service, error) {
 		defaultTimeout:         deps.DefaultTimeout,
 		pollInterval:           pollInterval,
 		sweepInterval:          sweepInterval,
+		relayPrefix:            deps.RelayPrefix,
+		relaySend:              deps.RelaySend,
 		publicBaseURL:          strings.TrimSuffix(deps.PublicBaseURL, "/"),
 		subworkflowTriggerType: deps.SubworkflowTriggerType,
 		active:                 make(map[string]context.CancelFunc),
@@ -237,6 +253,15 @@ func (service *Service) runOnce(ctx context.Context, workerID string) (bool, err
 	service.activeMu.Lock()
 	service.active[record.ID] = cancel
 	service.activeMu.Unlock()
+	// Cross-process cancellation floor. Cancel persists cancelling in the
+	// row; a holder in another process finds it here and interrupts the run
+	// between nodes (see the runner's ctx check), without waiting for the
+	// lease to expire. WatchCancellations is only the low-latency path: a
+	// dropped notification costs up to one poll interval, never a stuck
+	// run, because this poll stays even once the notification works.
+	stopPoll := make(chan struct{})
+	defer close(stopPoll)
+	go service.pollCancellation(runCtx, cancel, tenant, record.ID, stopPoll)
 	var result Result
 	var runErr error
 	if resumeState != nil {
@@ -445,16 +470,47 @@ func (service *Service) pollIntervalOrDefault() time.Duration {
 	return service.pollInterval
 }
 
-// publish delivers a standardized event when a broker is configured.
+// pollCancellation watches the durable row for a cancellation request and
+// interrupts the run holding it. It is the floor under WatchCancellations:
+// the notice arrives in milliseconds when the listener is healthy, and this
+// poll finds the same row within one tick when it is not. Poll errors are
+// best effort — the next tick retries — so a blip costs latency, never a
+// stuck run, and the watcher exits with the run it guards.
+func (service *Service) pollCancellation(runCtx context.Context, cancel context.CancelFunc, tenant repository.TenantScope, executionID string, stop <-chan struct{}) {
+	ticker := time.NewTicker(service.pollIntervalOrDefault())
+	defer ticker.Stop()
+	for {
+		select {
+		case <-runCtx.Done():
+			return
+		case <-stop:
+			return
+		case <-ticker.C:
+		}
+		pollCtx, stopPoll := context.WithTimeout(context.Background(), 5*time.Second)
+		record, err := service.executions.Get(pollCtx, tenant, executionID)
+		stopPoll()
+		if err != nil {
+			continue
+		}
+		if record.Status == execution.StatusCancelling || record.Status == execution.StatusCancelled {
+			cancel()
+			return
+		}
+	}
+}
+
+// publish delivers a standardized event when a broker is configured, and
+// relays its identifiers to listening processes when a relay is configured.
 //
 // It is deliberately fire and forget: the caller has already persisted the
 // state the event describes, so a dropped event costs a live update, never
 // correctness.
 func (service *Service) publish(event events.Event) {
-	if service.events == nil {
-		return
+	if service.events != nil {
+		service.events.Publish(event)
 	}
-	service.events.Publish(event)
+	service.notifyEvent(event)
 }
 
 // Events exposes the broker so the API can open live feeds without reaching
@@ -564,8 +620,11 @@ func (service *Service) QueueScheduled(ctx context.Context, tenantID, workflowID
 	return record, nil
 }
 
-// Cancel requests durable cancellation and interrupts the matching in-process
-// worker immediately when it is currently running on this instance.
+// Cancel requests durable cancellation, interrupts the matching in-process
+// worker immediately when it is currently running on this instance, and
+// relays the interrupt to the process holding the lease when it runs
+// elsewhere. The row is the floor: a holder that misses the notice still
+// finds cancelling on its next status poll and stops between nodes.
 func (service *Service) Cancel(ctx context.Context, tenant repository.TenantScope, executionID string) (execution.Record, error) {
 	record, err := service.executions.Cancel(ctx, tenant, executionID)
 	if err != nil {
@@ -578,6 +637,7 @@ func (service *Service) Cancel(ctx context.Context, tenant repository.TenantScop
 		if cancel != nil {
 			cancel()
 		}
+		service.notifyCancel(record.TenantID, record.ID)
 	}
 	if record.Status == execution.StatusCancelled {
 		// Queued work is cancelled without ever being claimed, so no worker

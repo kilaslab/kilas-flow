@@ -76,7 +76,23 @@ a fenced lease owner, so of any number of workers racing for one execution
 exactly one wins, and every later write carries that fencing token — a worker
 whose lease was reclaimed cannot write over its successor.
 
-Three behaviours make this work:
+### Roles
+
+One binary, three shapes via `--role` (default `both`, today's behaviour):
+
+- `both` runs the API, the workers and the scheduler in one process.
+- `api` serves the API and the scheduler with no workers.
+- `worker` (or `workers`) runs workers with no API and no scheduler.
+
+A split deployment is one `api` process beside N `worker` processes. The
+scheduler stays single by role — workers never run it — and several
+`api`/`both` processes stay safe anyway: the due claim advances `next_run_at`
+inside the same transaction that reads it, so one due time still queues
+exactly one execution. A split role on the SQLite driver is refused at
+startup: SQLite holds one writer, no `LISTEN`/`NOTIFY` and one file, so two
+processes on it are a corruption story rather than a scaling story.
+
+Five behaviours make this work:
 
 - **Distinct worker identities.** Each process identifies itself as
   `kilasflow-<host>-<pid>-<random>` in `lease_owner` and the logs, so two
@@ -87,12 +103,27 @@ Three behaviours make this work:
   another process picks work up in milliseconds rather than on its next
   100 ms tick. The tick stays: a dropped notification costs latency, never a
   stuck execution.
-- **Shutdown settles.** `SIGTERM` stops workers claiming new work; an
-  in-flight run is interrupted and written as cancelled with its lease
-  released, so nothing is left running with a lease held. A process that
-  dies without settling (`kill -9`, power loss) leaves the lease held until
-  it expires, and then another worker reclaims the execution and runs it —
-  with the partial trace cleared and the dead worker's writes fenced out.
+- **Live events fan out.** A worker publishes node progress into its own
+  broker and relays the event's identifiers (tenant, execution, node,
+  sequence, type, status — never the node's output, which would exceed the
+  ~8000-byte NOTIFY cap) to every API process, which republishes them into
+  its own broker. A browser connected to the API process sees the run live;
+  the durable trace behind `GET` stays complete whether or not a notice
+  lands.
+- **Cancel interrupts the holder.** `Cancel` persists `cancelling` in the
+  row and notifies the process holding the lease, which stops its run
+  between nodes — the runner checks the request before scheduling each
+  node, and the holder polls the row on its tick even when the notice is
+  dropped. A node that ignores its context still finishes its current
+  attempt; the next node never starts, and the terminal write records
+  `cancelled` with the lease released.
+- **Shutdown settles, `kill -9` is reclaimed.** `SIGTERM` stops workers
+  claiming new work; an in-flight run is interrupted and written as
+  cancelled with its lease released, so nothing is left running with a
+  lease held. A process that dies without settling (`kill -9`, power loss)
+  leaves the lease held until it expires, and then another worker reclaims
+  the execution and runs it — with the partial trace cleared and the dead
+  worker's writes fenced out.
 
 What breaks it:
 

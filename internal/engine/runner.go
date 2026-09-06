@@ -389,6 +389,16 @@ func (runner *Runner) Run(ctx context.Context, ir workflow.IR, request Request) 
 // alongside the runs produced so far; any other error fails the run.
 func (runner *Runner) runLoop(ctx context.Context, nodes map[string]workflow.IRNode, incoming map[string][]workflow.IREdge, outgoing map[string]int, loops map[string]*loopGraph, request *Request, completed map[string]workflow.NodeOutput, runs map[string][]workflow.NodeOutput, result *Result) (*SuspendError, error) {
 	for len(completed) < len(nodes) {
+		// Cancellation floor. A holder in another process learns about
+		// Cancel by polling the row and interrupting this context; the
+		// check here is what turns that interrupt into a stop between
+		// nodes. An executor that ignores its context still finishes its
+		// current node, but the next node never starts: without this, a
+		// cancelled run would execute every remaining node and only be
+		// relabelled cancelled when the terminal write raced the request.
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		ready := make([]string, 0, len(nodes)-len(completed))
 		for nodeID := range nodes {
 			if _, done := completed[nodeID]; done || !dependenciesComplete(schedulingEdges(incoming[nodeID], loops), completed) {
