@@ -444,7 +444,7 @@ func TestChainHasNoMemorySlot(t *testing.T) {
 }
 
 // TestToolFamilyDefinitions pins the catalogue shape the importer maps
-// onto. It needs the four RegisterAll lines; without them the lookups fail
+// onto. It needs the five RegisterAll lines; without them the lookups fail
 // and TestEveryBuiltinExecutorIsReferenced names the dead executors.
 func TestToolFamilyDefinitions(t *testing.T) {
 	t.Parallel()
@@ -469,6 +469,7 @@ func TestToolFamilyDefinitions(t *testing.T) {
 	singleToolPort(t, nodes.WorkflowToolNodeType)
 	singleToolPort(t, nodes.CalculatorToolNodeType)
 	singleToolPort(t, nodes.MCPClientToolNodeType)
+	singleToolPort(t, nodes.DatastoreToolNodeType)
 
 	parser, found := registry.Get(nodes.OutputParserNodeType, workflow.V(1))
 	if !found {

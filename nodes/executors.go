@@ -33,6 +33,7 @@ func RegisterExecutors(registry *engine.Registry, httpPolicy safehttp.Policy, da
 	for id, executor := range map[string]engine.Executor{
 		"core.manual":                    engine.ExecutorFunc(executeManual),
 		DatastoreExecutorID:              datastoreExecutorOf(settings),
+		DatastoreToolExecutorID:          datastoreToolExecutorOf(settings),
 		"core.set":                       engine.ExecutorFunc(executeSet),
 		"core.if":                        engine.ExecutorFunc(executeIF),
 		"core.merge":                     engine.ExecutorFunc(executeMerge),
@@ -50,7 +51,7 @@ func RegisterExecutors(registry *engine.Registry, httpPolicy safehttp.Policy, da
 		OpenRouterChatModelExecutorID:    executeProviderChatModel(openRouterChatModelProvider()),
 		MemoryExecutorID:                 engine.ExecutorFunc(executeMemory),
 		HTTPToolExecutorID:               engine.ExecutorFunc(executeHTTPTool),
-		AgentExecutorID:                  NewAgentExecutor(agentRuntime, httpPolicy, agentMemory, WithModelTimeoutCeiling(settings.modelTimeoutCeiling)),
+		AgentExecutorID:                  NewAgentExecutor(agentRuntime, httpPolicy, agentMemory, WithModelTimeoutCeiling(settings.modelTimeoutCeiling), WithDatastoreStore(datastoreStoreOf(settings.datastoreEngine))),
 		ChainExecutorID:                  NewChainExecutor(httpPolicy, settings.modelTimeoutCeiling),
 		WorkflowToolExecutorID:           engine.ExecutorFunc(executeWorkflowTool),
 		CalculatorExecutorID:             engine.ExecutorFunc(executeCalculator),

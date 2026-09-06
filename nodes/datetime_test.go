@@ -2,6 +2,7 @@ package nodes_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -181,26 +182,50 @@ func TestTheDateNodeRefusesAZoneThatDependsOnTheServer(t *testing.T) {
 	}
 }
 
-func TestTheWaitNodePausesAndPassesItsItemsThrough(t *testing.T) {
+func TestTheWaitNodeSuspendsInsteadOfHoldingAWorker(t *testing.T) {
 	t.Parallel()
+
+	registry := node.NewRegistry()
+	if err := nodes.RegisterAll(registry); err != nil {
+		t.Fatalf("RegisterAll() error = %v", err)
+	}
+	definition, _ := registry.Lookup(nodes.WaitNodeType, workflow.V(1))
+	executors := engine.NewRegistry()
+	if err := nodes.RegisterExecutors(executors, localPolicy(), sqlGuard(), nil, nil, nil); err != nil {
+		t.Fatalf("RegisterExecutors() error = %v", err)
+	}
+	executor, _ := executors.Lookup(definition.ExecutorID)
 
 	items := []workflow.Item{
 		{JSON: map[string]any{"id": float64(1)}},
 		{JSON: map[string]any{"id": float64(2)}},
 	}
-	started := time.Now()
-	// One wait for the node, not one per item: "wait a moment" said once over
-	// two items means one moment, and the per-item reading would be a bug
-	// nobody notices until a workflow that used to finish stops finishing.
+	before := time.Now()
+	// One suspension for the node, not one per item: the expiry is a single
+	// instant computed once, and the per-item reading would be a bug nobody
+	// notices until a workflow that used to finish stopped finishing.
+	_, err := executor.Execute(context.Background(), workflow.IRNode{
+		ID: "n1", Name: "Wait", Type: nodes.WaitNodeType, TypeVersion: workflow.V(1),
+		Parameters: map[string]any{"resume": "timeInterval", "amount": float64(0.15), "unit": "seconds"},
+		Definition: definition,
+	}, workflow.NodeInput{"main": items}, engine.Request{})
+	var suspended *engine.SuspendError
+	if !errors.As(err, &suspended) {
+		t.Fatalf("Execute() error = %v, want suspension", err)
+	}
+	if suspended.Mode != engine.WaitModeInterval {
+		t.Errorf("suspension mode = %q, want %q", suspended.Mode, engine.WaitModeInterval)
+	}
+	if until := suspended.ExpiresAt.Sub(before); until < 100*time.Millisecond || until > 5*time.Second {
+		t.Errorf("suspension expires in %s, want about 0.15 seconds", until)
+	}
+
+	// A pause of zero passes straight through with no suspension.
 	output := runNode(t, nodes.WaitNodeType, map[string]any{
-		"resume": "timeInterval", "amount": float64(0.15), "unit": "seconds",
+		"resume": "timeInterval", "amount": float64(0), "unit": "seconds",
 	}, items)
-	elapsed := time.Since(started)
 	if len(output[0]) != 2 || output[0][0].JSON["id"] != float64(1) {
 		t.Fatalf("output = %#v, want the items passed through unchanged", output[0])
-	}
-	if elapsed > 5*time.Second {
-		t.Errorf("two items waited %s, which is more than once", elapsed)
 	}
 }
 

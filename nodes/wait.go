@@ -132,13 +132,16 @@ func validateWaitConfiguration(n workflow.Node) error {
 	return nil
 }
 
-// executeWait holds the execution, then passes its items through unchanged.
+// executeWait suspends the execution, then passes its items through unchanged
+// when it resumes.
 //
 // One wait for the whole node rather than one per item: "wait an hour" said
 // once over a hundred items means an hour, not a hundred hours, and the
 // per-item reading is a mistake nobody would notice until a workflow that used
 // to finish stopped finishing. The parameters are therefore resolved against
-// the first item.
+// the first item. A pause of zero passes straight through; anything longer
+// returns SuspendError so the worker and the lease are released and the run
+// continues from storage, surviving a restart.
 func executeWait(ctx context.Context, ir workflow.IRNode, input workflow.NodeInput, request engine.Request) (workflow.NodeOutput, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -158,22 +161,17 @@ func executeWait(ctx context.Context, ir workflow.IRNode, input workflow.NodeInp
 		return nil, fmt.Errorf("node %q: %w", ir.Name, err)
 	}
 	if pause > MaxWaitDuration {
-		return nil, fmt.Errorf("node %q: a wait of %s is longer than this server's limit of %s; the run holds "+
-			"a worker for the whole of it, so a longer pause needs the execution suspended to storage",
+		return nil, fmt.Errorf("node %q: a wait of %s is longer than this server's limit of %s",
 			ir.Name, pause.Truncate(time.Second), MaxWaitDuration)
 	}
-	if pause > 0 {
-		timer := time.NewTimer(pause)
-		defer timer.Stop()
-		select {
-		case <-ctx.Done():
-			// The node's own timeout, the execution's, or a cancellation. All
-			// three mean the same thing here and the context says which.
-			return nil, ctx.Err()
-		case <-timer.C:
-		}
+	if pause <= 0 {
+		return workflow.NodeOutput{items}, nil
 	}
-	return workflow.NodeOutput{items}, nil
+	mode := engine.WaitModeInterval
+	if textValue(parameters["resume"], waitResumeInterval) == waitResumeSpecificTime {
+		mode = engine.WaitModeUntil
+	}
+	return nil, &engine.SuspendError{Mode: mode, ExpiresAt: time.Now().Add(pause)}
 }
 
 // waitDuration works out how long to pause.

@@ -958,6 +958,12 @@ type AgentExecutor struct {
 	// round trip inherits the deployment's SSRF policy rather than building
 	// a client of its own that would quietly lose it.
 	mcp *MCPClientToolExecutor
+	// datastore is the row store the datastore tool reads through. The tenant
+	// always arrives from the execution, never from the document or the
+	// model's arguments, so one tenant's tool call can never address another
+	// tenant's table. Nil refuses the tool with the install message rather
+	// than dereferencing, the way the data-table node does.
+	datastore DatastoreStore
 }
 
 // modelBackend binds a deployment's outbound policy for model calls. Both the
@@ -1109,6 +1115,15 @@ func WithModelTimeoutCeiling(ceiling time.Duration) AgentOption {
 		if ceiling > 0 {
 			executor.timeoutCeiling = ceiling
 		}
+	}
+}
+
+// WithDatastoreStore hands the agent's datastore tool its row store. Without
+// it the tool refuses every call with the install message rather than
+// dereferencing, the way the data-table node does without its engine.
+func WithDatastoreStore(store DatastoreStore) AgentOption {
+	return func(executor *AgentExecutor) {
+		executor.datastore = store
 	}
 }
 
@@ -1724,6 +1739,7 @@ const (
 	toolKindWorkflow   = "workflow"
 	toolKindCalculator = "calculator"
 	toolKindMCP        = "mcp"
+	toolKindDatastore  = "datastore"
 )
 
 // toolNameProperty is the optional override for the name the model calls,
@@ -2446,6 +2462,8 @@ func (executor *AgentExecutor) toolFrom(ir workflow.IRNode, descriptor map[strin
 		return executor.workflowToolFrom(ir, descriptor, request)
 	case toolKindCalculator:
 		return executor.calculatorToolFrom(ir, descriptor, request)
+	case toolKindDatastore:
+		return executor.datastoreToolFrom(ir, descriptor, request)
 	case toolKindMCP:
 		return executor.mcpToolFrom(ir, descriptor, request)
 	default:
@@ -2486,6 +2504,43 @@ func (executor *AgentExecutor) calculatorToolFrom(ir workflow.IRNode, descriptor
 		nodeName:    textValue(descriptor["nodeName"], name),
 		agentNode:   ir.Name,
 		request:     request,
+	}, nil
+}
+
+// datastoreToolFrom wraps a datastore tool descriptor as a callable tool. The
+// call reads through the deployment's own row store scoped to the execution's
+// tenant, so it inherits tenant isolation rather than reimplementing it.
+func (executor *AgentExecutor) datastoreToolFrom(ir workflow.IRNode, descriptor map[string]any, request engine.Request) (ai.Tool, error) {
+	name := textValue(descriptor["name"], "")
+	if name == "" {
+		return nil, fmt.Errorf("node %q: a connected tool has no name", ir.Name)
+	}
+	nodeName := textValue(descriptor["nodeName"], name)
+	if executor.datastore == nil {
+		return nil, fmt.Errorf("node %q: tool %q needs datastore storage, which is not available on this server", ir.Name, nodeName)
+	}
+	tenant := strings.TrimSpace(request.Execution.TenantID)
+	if tenant == "" {
+		return nil, fmt.Errorf("node %q: tool %q runs without a tenant", ir.Name, nodeName)
+	}
+	datastoreID := textValue(descriptor["datastoreId"], "")
+	if datastoreID == "" {
+		return nil, fmt.Errorf("node %q: tool %q names no data table", ir.Name, nodeName)
+	}
+	columns := datastoreToolColumns(descriptor["columns"])
+	if len(columns) == 0 {
+		return nil, fmt.Errorf("node %q: tool %q carries no columns", ir.Name, nodeName)
+	}
+	return &datastoreTool{
+		name:          name,
+		description:   textValue(descriptor["description"], ""),
+		nodeName:      nodeName,
+		agentNode:     ir.Name,
+		tenant:        tenant,
+		datastoreID:   datastoreID,
+		datastoreName: textValue(descriptor["datastoreName"], ""),
+		columns:       columns,
+		store:         executor.datastore,
 	}, nil
 }
 
