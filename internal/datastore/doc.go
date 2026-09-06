@@ -21,7 +21,11 @@
 // over-length identifier without erroring, so the budget is asserted by
 // tests, not by inspection.
 //
-// Row reads and writes belong to FEAT-nrfg6e, the catalogue API to its own
-// ticket, and per-table version migration to FEAT-gxppx1: this package is
-// the engine and its DDL only.
+// Rows live here too (FEAT-nrfg6e): rows.go stores and queries rows over
+// these tables at n8n's filter surface, with keyset pagination on the
+// integer id and dry-run pairs computed, never rolled back. fleet.go runs
+// the per-datastore version steps (FEAT-gxppx1), re-reading the work list
+// so mid-run creates are picked up. Schema evolution stays online
+// (FEAT-wkmv5e): add column is one statement per dialect, never a rebuild.
+// The catalogue HTTP API belongs to its own ticket, not this package.
 package datastore

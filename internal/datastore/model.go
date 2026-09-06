@@ -21,11 +21,11 @@ import (
 // physical table, and the schema version the fleet runner (FEAT-gxppx1)
 // reads without opening the physical table.
 type datastoreModel struct {
-	ID            string `gorm:"primaryKey;size:64"`
-	TenantID      string `gorm:"not null;size:64"`
-	Name          string `gorm:"not null;size:255"`
-	Surrogate     string `gorm:"not null;size:16;uniqueIndex:uidx_datastores_surrogate"`
-	SchemaVersion int    `gorm:"not null;default:1"`
+	ID            string    `gorm:"primaryKey;size:64"`
+	TenantID      string    `gorm:"not null;size:64"`
+	Name          string    `gorm:"not null;size:255"`
+	Surrogate     string    `gorm:"not null;size:16;uniqueIndex:uidx_datastores_surrogate"`
+	SchemaVersion int       `gorm:"not null;default:1"`
 	CreatedAt     time.Time `gorm:"not null"`
 	UpdatedAt     time.Time `gorm:"not null"`
 }
