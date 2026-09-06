@@ -212,8 +212,26 @@ func TestImportedWorkflowCompiles(t *testing.T) {
 			t.Errorf("%s fixture did not compile after import: %v", name, err)
 		}
 	}
-}
 
+	// The whole LangChain cluster compiles too, once its models are bound
+	// the way a user binds them after import: an import deliberately carries
+	// no credential, so the models arrive visibly unbound. If any converter
+	// emits a parameter the native validator refuses, this is where it shows.
+	clustered := importFixture(t, langchainFullFixture)
+	bound := clustered.Document
+	bound.ID = "wf_langchain"
+	for index, imported := range bound.Nodes {
+		switch imported.Type {
+		case "kilasflow.lmChatOpenAi":
+			bound.Nodes[index].Credentials = map[string]string{"openAiApi": "cred-local"}
+		case "kilasflow.lmChatOpenRouter":
+			bound.Nodes[index].Credentials = map[string]string{"openRouterApi": "cred-local"}
+		}
+	}
+	if _, err := workflow.Compile(bound, registry(t)); err != nil {
+		t.Errorf("langchain fixture did not compile after import: %v", err)
+	}
+}
 func TestImportBranchingMapsOutputIndexesToNamedPorts(t *testing.T) {
 	t.Parallel()
 
@@ -616,7 +634,9 @@ func TestSupportedMappingsAreAdvertisedExplicitly(t *testing.T) {
 		"@n8n/n8n-nodes-langchain.lmChatOpenAi ↔ kilasflow.lmChatOpenAi",
 		"@n8n/n8n-nodes-langchain.lmChatOpenRouter ↔ kilasflow.lmChatOpenRouter",
 		"@n8n/n8n-nodes-langchain.memoryBufferWindow ↔ kilasflow.memoryBuffer",
+		"@n8n/n8n-nodes-langchain.outputParserStructured ↔ kilasflow.outputParser",
 		"@n8n/n8n-nodes-langchain.toolHttpRequest ↔ kilasflow.httpTool",
+		"@n8n/n8n-nodes-langchain.toolWorkflow ↔ kilasflow.workflowTool",
 		"n8n-nodes-base.aggregate ↔ kilasflow.aggregate",
 		"n8n-nodes-base.code ↔ kilasflow.foreignCode",
 		"n8n-nodes-base.dateTime ↔ kilasflow.dateTime",
@@ -3507,5 +3527,279 @@ func TestImportCarriesMemoryModes(t *testing.T) {
 	key, _ := node.Parameters["sessionKey"].(map[string]any)
 	if key["mode"] != "expression" || key["value"] != "{{ $json.sessionId }}" {
 		t.Errorf("sessionKey = %#v, want the n8n expression translated", node.Parameters["sessionKey"])
+	}
+}
+
+// langchainFullFixture is the whole cluster in one workflow: an agent and a
+// chain, each with its own chat model, a memory and two tools on the agent —
+// one HTTP, one workflow — and a structured parser wired to the agent. The
+// chain names a parser it does not wire, so one hasOutputParser flag resolves
+// through its edge and the other stays a diagnostic.
+const langchainFullFixture = `{
+  "name": "Assistant and summarisers",
+  "nodes": [
+    {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}},
+    {"id":"b","name":"AI Agent","type":"@n8n/n8n-nodes-langchain.agent","typeVersion":3.1,"position":[220,0],"parameters":{
+      "promptType":"define","text":"Help with order {{ $json.orderId }}.",
+      "options":{"systemMessage":"You are order support.","maxIterations":10},
+      "hasOutputParser":true
+    }},
+    {"id":"c","name":"Summarise","type":"@n8n/n8n-nodes-langchain.chainLlm","typeVersion":1.9,"position":[220,320],"parameters":{
+      "promptType":"define","text":"Summarise:",
+      "messages":{"messageValues":[
+        {"type":"system","message":"You are a summariser."},
+        {"type":"human","message":"=Be brief about {{ $json.topic }}."}
+      ]},
+      "hasOutputParser":true
+    }},
+    {"id":"d","name":"Chat Model","type":"@n8n/n8n-nodes-langchain.lmChatOpenAi","typeVersion":1.2,"position":[160,200],"parameters":{
+      "model":{"mode":"list","value":"gpt-5-mini"}
+    }},
+    {"id":"e","name":"Chain Model","type":"@n8n/n8n-nodes-langchain.lmChatOpenRouter","typeVersion":1,"position":[160,420],"parameters":{
+      "model":"openai/gpt-4.1-mini"
+    }},
+    {"id":"f","name":"Window Memory","type":"@n8n/n8n-nodes-langchain.memoryBufferWindow","typeVersion":1.3,"position":[280,200],"parameters":{
+      "sessionIdType":"customKey","sessionKey":"wa-123"
+    }},
+    {"id":"g","name":"Weather","type":"@n8n/n8n-nodes-langchain.toolHttpRequest","typeVersion":1.1,"position":[400,200],"parameters":{
+      "method":"GET","url":"https://api.example.test/weather","toolDescription":"Reads the weather."
+    }},
+    {"id":"h","name":"Lookup","type":"@n8n/n8n-nodes-langchain.toolWorkflow","typeVersion":2.1,"position":[520,200],"parameters":{
+      "name":"lookup_order","description":"Looks an order up.",
+      "source":"database","workflowId":{"value":"order-workflow"},
+      "workflowInputs":{"mappingMode":"defineBelow","value":{"mapping":{"orderId":"={{ $json.orderId }}"}}}
+    }},
+    {"id":"i","name":"Answer Parser","type":"@n8n/n8n-nodes-langchain.outputParserStructured","typeVersion":1.3,"position":[280,80],"parameters":{
+      "schemaType":"fromJson","jsonSchemaExample":"{\"state\": \"California\"}",
+      "autoFix":true,"customizeRetryPrompt":true,"prompt":"Fix it: {error}"
+    }}
+  ],
+  "connections": {
+    "Manual": {"main": [[{"node":"AI Agent","type":"main","index":0},{"node":"Summarise","type":"main","index":0}]]},
+    "Chat Model": {"ai_languageModel": [[{"node":"AI Agent","type":"ai_languageModel","index":0}]]},
+    "Chain Model": {"ai_languageModel": [[{"node":"Summarise","type":"ai_languageModel","index":0}]]},
+    "Window Memory": {"ai_memory": [[{"node":"AI Agent","type":"ai_memory","index":0}]]},
+    "Weather": {"ai_tool": [[{"node":"AI Agent","type":"ai_tool","index":0}]]},
+    "Lookup": {"ai_tool": [[{"node":"AI Agent","type":"ai_tool","index":0}]]},
+    "Answer Parser": {"ai_outputParser": [[{"node":"AI Agent","type":"ai_outputParser","index":0}]]}
+  }
+}`
+
+// TestImportMapsTheWholeLangChainCluster proves every node in a representative
+// AI workflow lands on a native type with its parameters carried, and that the
+// one parser flag answered by an edge stops being a diagnostic while the one
+// without an edge stays blocking.
+func TestImportMapsTheWholeLangChainCluster(t *testing.T) {
+	t.Parallel()
+
+	result := importFixture(t, langchainFullFixture)
+
+	for name, want := range map[string]string{
+		"AI Agent": "kilasflow.agent", "Summarise": "kilasflow.chainLlm",
+		"Chat Model": "kilasflow.lmChatOpenAi", "Chain Model": "kilasflow.lmChatOpenRouter",
+		"Window Memory": "kilasflow.memoryBuffer", "Weather": "kilasflow.httpTool",
+		"Lookup": "kilasflow.workflowTool", "Answer Parser": "kilasflow.outputParser",
+	} {
+		if got := nodeByName(result.Document, name).Type; got != want {
+			t.Errorf("%s imported as %q, want %q", name, got, want)
+		}
+	}
+
+	// The workflow tool keeps its explicit name, its reference and its
+	// inputs, with the expression translated.
+	lookup := nodeByName(result.Document, "Lookup")
+	if lookup.Parameters["toolName"] != "lookup_order" {
+		t.Errorf("toolName = %#v, want the explicit name carried", lookup.Parameters["toolName"])
+	}
+	if lookup.Parameters["workflowId"] != "order-workflow" {
+		t.Errorf("workflowId = %#v, want the referenced workflow carried", lookup.Parameters["workflowId"])
+	}
+	inputs, _ := lookup.Parameters["workflowInputs"].(map[string]any)
+	entry, _ := inputs["orderId"].(map[string]any)
+	if entry["mode"] != "expression" || entry["value"] != "{{ $json.orderId }}" {
+		t.Errorf("workflowInputs.orderId = %#v, want the n8n expression translated", inputs["orderId"])
+	}
+
+	// The parser translates its mode and turns auto-fix into a retry count,
+	// while the retry prompt it cannot carry is named.
+	parser := nodeByName(result.Document, "Answer Parser")
+	if parser.Parameters["schemaType"] != "exampleJson" {
+		t.Errorf("schemaType = %#v, want fromJson translated to exampleJson", parser.Parameters["schemaType"])
+	}
+	if parser.Parameters["exampleJson"] != `{"state": "California"}` {
+		t.Errorf("exampleJson = %#v, want the example carried", parser.Parameters["exampleJson"])
+	}
+	if parser.Parameters["maxRetries"] != float64(2) {
+		t.Errorf("maxRetries = %#v, want autoFix carried as 2 retries", parser.Parameters["maxRetries"])
+	}
+
+	flags := map[string]n8n.IssueSeverity{}
+	for _, issue := range result.Unsupported {
+		if issue.Field == "hasOutputParser" || issue.Field == "customizeRetryPrompt" || issue.Field == "prompt" {
+			flags[issue.NodeName+"/"+issue.Field] = issue.Severity
+		}
+	}
+	// The agent's flag resolved through its parser edge; the chain's parser
+	// never arrived, so its flag stays blocking.
+	if _, present := flags["AI Agent/hasOutputParser"]; present {
+		t.Errorf("AI Agent/hasOutputParser still reported: %#v", result.Unsupported)
+	}
+	for field, severity := range map[string]n8n.IssueSeverity{
+		"Summarise/hasOutputParser":          n8n.SeverityBlocking,
+		"Answer Parser/customizeRetryPrompt": n8n.SeverityDropped,
+		"Answer Parser/prompt":               n8n.SeverityDropped,
+	} {
+		if flags[field] != severity {
+			t.Errorf("%s reported as %q, want %q (all issues: %#v)", field, flags[field], severity, result.Unsupported)
+		}
+	}
+
+	// The typed edges land with the sub-node as the source, including the
+	// parser channel the cluster had no test for.
+	type edge struct {
+		source string
+		target string
+		kind   workflow.ConnectionKind
+	}
+	nameByID := map[string]string{}
+	for _, node := range result.Document.Nodes {
+		nameByID[node.ID] = node.Name
+	}
+	got := map[edge]int{}
+	for _, connection := range result.Document.Connections {
+		got[edge{nameByID[connection.Source.NodeID], nameByID[connection.Target.NodeID], connection.Kind}]++
+	}
+	for _, expected := range []edge{
+		{"Chat Model", "AI Agent", workflow.ConnectionLanguageModel},
+		{"Chain Model", "Summarise", workflow.ConnectionLanguageModel},
+		{"Window Memory", "AI Agent", workflow.ConnectionMemory},
+		{"Weather", "AI Agent", workflow.ConnectionTool},
+		{"Lookup", "AI Agent", workflow.ConnectionTool},
+		{"Answer Parser", "AI Agent", workflow.ConnectionOutputParser},
+	} {
+		if got[expected] != 1 {
+			t.Errorf("edge %s -%s-> %s appeared %d times, want once", expected.source, expected.kind, expected.target, got[expected])
+		}
+	}
+}
+
+// TestLangChainClusterRoundTrip proves the two new nodes go back to n8n at
+// the versions n8n accepts, with the sub-node still the connection source.
+func TestLangChainClusterRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	imported := importFixture(t, langchainFullFixture)
+	exported, err := n8n.Export(imported.Document, registry(t))
+	if err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+	byName := map[string]n8n.Node{}
+	for _, node := range exported.Document.Nodes {
+		byName[node.Name] = node
+	}
+	if byName["Lookup"].Type != "@n8n/n8n-nodes-langchain.toolWorkflow" || byName["Lookup"].TypeVersion != 2.2 {
+		t.Errorf("Lookup exported as %s@%v, want toolWorkflow@2.2", byName["Lookup"].Type, byName["Lookup"].TypeVersion)
+	}
+	if byName["Answer Parser"].Type != "@n8n/n8n-nodes-langchain.outputParserStructured" || byName["Answer Parser"].TypeVersion != 1.3 {
+		t.Errorf("Answer Parser exported as %s@%v, want outputParserStructured@1.3",
+			byName["Answer Parser"].Type, byName["Answer Parser"].TypeVersion)
+	}
+	tool := byName["Lookup"].Parameters
+	if tool["name"] != "lookup_order" || tool["source"] != "database" {
+		t.Errorf("Lookup parameters = %#v, want name and database source carried", tool)
+	}
+	if locator, ok := tool["workflowId"].(map[string]any); !ok || locator["value"] != "order-workflow" {
+		t.Errorf("Lookup workflowId = %#v, want the referenced workflow carried", tool["workflowId"])
+	}
+	structured := byName["Answer Parser"].Parameters
+	if structured["schemaType"] != "fromJson" || structured["jsonSchemaExample"] != `{"state": "California"}` {
+		t.Errorf("Answer Parser parameters = %#v, want the example mode restored", structured)
+	}
+	if structured["autoFix"] != true {
+		t.Errorf("Answer Parser autoFix = %#v, want maxRetries 2 carried back as true", structured["autoFix"])
+	}
+	// A custom retry prompt has nowhere to go on export, so it stays
+	// dropped rather than coming back invented.
+	if _, present := structured["prompt"]; present {
+		t.Errorf("Answer Parser prompt = %#v, want no invented retry prompt", structured["prompt"])
+	}
+	for _, expected := range []struct {
+		source  string
+		channel string
+		target  string
+	}{
+		{"Lookup", "ai_tool", "AI Agent"},
+		{"Answer Parser", "ai_outputParser", "AI Agent"},
+		{"Chain Model", "ai_languageModel", "Summarise"},
+	} {
+		var found bool
+		for _, targets := range exported.Document.Connections[expected.source][expected.channel] {
+			for _, target := range targets {
+				if target.Node == expected.target && target.Type == expected.channel {
+					found = true
+				}
+			}
+		}
+		if !found {
+			t.Errorf("%s has no %s connection to %s after export", expected.source, expected.channel, expected.target)
+		}
+	}
+}
+
+// TestImportRefusesAnInlineWorkflowTool is the source=parameter trap. Inline
+// workflow JSON has no native equivalent, so the node maps but arrives with
+// a blocking diagnostic naming the field — never as a database tool calling
+// nothing.
+func TestImportRefusesAnInlineWorkflowTool(t *testing.T) {
+	t.Parallel()
+
+	const fixture = `{
+	  "name": "Inline tool",
+	  "nodes": [
+	    {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}},
+	    {"id":"b","name":"Inline","type":"@n8n/n8n-nodes-langchain.toolWorkflow","typeVersion":2.1,"position":[220,0],"parameters":{
+	      "name":"inline_tool","description":"Inline.","source":"parameter","workflowJson":"{}"
+	    }}
+	  ],
+	  "connections": {"Manual": {"main": [[{"node":"Inline","type":"main","index":0}]]}}
+	}`
+
+	result := importFixture(t, fixture)
+	if got := nodeByName(result.Document, "Inline").Type; got != "kilasflow.workflowTool" {
+		t.Fatalf("tool imported as %q, want kilasflow.workflowTool", got)
+	}
+	var named bool
+	for _, issue := range result.Unsupported {
+		if issue.NodeName == "Inline" && issue.Field == "workflowJson" && issue.Severity == n8n.SeverityBlocking {
+			named = true
+		}
+	}
+	if !named {
+		t.Errorf("no blocking diagnostic names the inline workflow JSON: %#v", result.Unsupported)
+	}
+}
+
+// TestImportReadsAPreVersionParser proves a parser from before the mode
+// selector still maps: its schema lives under `jsonSchema` and becomes this
+// server's jsonSchema mode with auto-fix off.
+func TestImportReadsAPreVersionParser(t *testing.T) {
+	t.Parallel()
+	const fixture = `{
+	  "name": "Old parser",
+	  "nodes": [
+	    {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}},
+	    {"id":"b","name":"Old Parser","type":"@n8n/n8n-nodes-langchain.outputParserStructured","typeVersion":1.1,"position":[220,0],"parameters":{
+	      "jsonSchema":"{\"type\": \"object\"}"
+	    }}
+	  ],
+	  "connections": {"Manual": {"main": [[{"node":"Old Parser","type":"main","index":0}]]}}
+	}`
+
+	node := nodeByName(importFixture(t, fixture).Document, "Old Parser")
+	if node.Type != "kilasflow.outputParser" {
+		t.Fatalf("parser imported as %q, want kilasflow.outputParser", node.Type)
+	}
+	if node.Parameters["maxRetries"] != float64(0) {
+		t.Errorf("maxRetries = %#v, want auto-fix off carried as 0", node.Parameters["maxRetries"])
 	}
 }

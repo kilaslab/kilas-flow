@@ -45,6 +45,24 @@ func (LoopRuntime) Run(ctx context.Context, request AgentRequest, sink EventSink
 		tools[definition.Name] = tool
 		definitions = append(definitions, definition)
 	}
+	// A parser changes only the stop condition: the synthetic tool is defined
+	// to the model but never enters the invocable tool map, so answering
+	// through it ends the run instead of starting another tool turn.
+	outputSchema := request.OutputSchema
+	outputRetries := request.OutputMaxRetries
+	if outputSchema != nil {
+		if outputRetries <= 0 {
+			outputRetries = DefaultOutputMaxRetries
+		}
+		if _, clash := tools[FormatFinalJSONResponse]; clash {
+			return AgentResult{}, fmt.Errorf("tool %q is reserved for the output parser", FormatFinalJSONResponse)
+		}
+		definitions = append(definitions, ToolDefinition{
+			Name:        FormatFinalJSONResponse,
+			Description: "Respond with the final answer in the requested format.",
+			Parameters:  outputSchema,
+		})
+	}
 
 	messages := make([]Message, 0, 8)
 	if prompt := strings.TrimSpace(request.SystemPrompt); prompt != "" {
@@ -66,6 +84,9 @@ func (LoopRuntime) Run(ctx context.Context, request AgentRequest, sink EventSink
 	// newTurns records only what this run produced, so memory does not
 	// re-append the history it just loaded.
 	newTurns := []Message{userTurn}
+	// outputAttempts counts parser answers that failed schema validation,
+	// across both format-tool calls and plain-text fallbacks.
+	outputAttempts := 0
 
 	for iteration := 1; iteration <= maxIterations; iteration++ {
 		if err := ctx.Err(); err != nil {
@@ -112,13 +133,31 @@ func (LoopRuntime) Run(ctx context.Context, request AgentRequest, sink EventSink
 		newTurns = append(newTurns, assistant)
 
 		if len(assistant.ToolCalls) == 0 {
-			result.Output = assistant.Content
-			result.Messages = messages
-			if err := appendSessionMemory(ctx, request, newTurns); err != nil {
-				return result, err
+			if outputSchema == nil {
+				result.Output = assistant.Content
+				result.Messages = messages
+				if err := appendSessionMemory(ctx, request, newTurns); err != nil {
+					return result, err
+				}
+				sink.Emit(Event{Kind: EventAgentCompleted, Iteration: iteration, Model: request.ModelName, Usage: &result.Usage})
+				return result, nil
 			}
-			sink.Emit(Event{Kind: EventAgentCompleted, Iteration: iteration, Model: request.ModelName, Usage: &result.Usage})
-			return result, nil
+			// A smaller model answered in plain text without calling the
+			// format tool. Validating the text is the first retry step: it
+			// costs nothing when the model merely forgot the wrapper and
+			// saves a whole extra model call.
+			value, validationErr := ParseAndValidateOutput(outputSchema, assistant.Content)
+			if validationErr == nil {
+				return finishStructuredRun(ctx, request, sink, &result, messages, newTurns, iteration, value)
+			}
+			outputAttempts++
+			if outputAttempts > outputRetries {
+				return failStructuredRun(ctx, request, sink, &result, messages, iteration, validationErr)
+			}
+			repairTurn := Message{Role: RoleUser, Content: "That response did not match the required format: " + validationErr.Error() + ". Reply by calling " + FormatFinalJSONResponse + " with the corrected arguments."}
+			messages = append(messages, repairTurn)
+			newTurns = append(newTurns, repairTurn)
+			continue
 		}
 
 		for _, call := range assistant.ToolCalls {
@@ -131,6 +170,28 @@ func (LoopRuntime) Run(ctx context.Context, request AgentRequest, sink EventSink
 				Kind: EventToolStarted, Iteration: iteration, Tool: call.Name, Detail: call.Arguments,
 			})
 
+			// The format tool is defined to the model but never invocable
+			// through the tool map: calling it is the final answer, not
+			// another turn.
+			if outputSchema != nil && call.Name == FormatFinalJSONResponse {
+				value, validationErr := parseFormatArguments(outputSchema, call.Arguments)
+				if validationErr == nil {
+					sink.Emit(Event{
+						Kind: EventToolCompleted, Iteration: iteration, Tool: call.Name,
+						Detail: call.Arguments,
+					})
+					return finishStructuredRun(ctx, request, sink, &result, messages, newTurns, iteration, value)
+				}
+				sink.Emit(Event{Kind: EventToolFailed, Iteration: iteration, Tool: call.Name, Error: validationErr.Error()})
+				outputAttempts++
+				if outputAttempts > outputRetries {
+					return failStructuredRun(ctx, request, sink, &result, messages, iteration, validationErr)
+				}
+				toolTurn := Message{Role: RoleTool, ToolCallID: call.ID, Name: call.Name, Content: "Those arguments did not match the required format: " + validationErr.Error() + ". Call " + FormatFinalJSONResponse + " again with corrected arguments."}
+				messages = append(messages, toolTurn)
+				newTurns = append(newTurns, toolTurn)
+				continue
+			}
 			tool, found := tools[call.Name]
 			if !found {
 				// Telling the model beats failing the run: a model that invents
@@ -168,6 +229,49 @@ func (LoopRuntime) Run(ctx context.Context, request AgentRequest, sink EventSink
 	sink.Emit(Event{Kind: EventAgentFailed, Iteration: maxIterations, Error: err.Error()})
 	result.Messages = messages
 	return result, err
+}
+
+// finishStructuredRun ends a parser run with the validated answer. Output is
+// the canonical JSON of the arguments, so the node reading the result
+// carries the parsed object rather than a JSON string.
+func finishStructuredRun(ctx context.Context, request AgentRequest, sink EventSink, result *AgentResult, messages []Message, newTurns []Message, iteration int, value any) (AgentResult, error) {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return *result, err
+	}
+	result.Output = string(encoded)
+	result.Messages = messages
+	if err := appendSessionMemory(ctx, request, newTurns); err != nil {
+		return *result, err
+	}
+	sink.Emit(Event{Kind: EventAgentCompleted, Iteration: iteration, Model: request.ModelName, Usage: &result.Usage})
+	return *result, nil
+}
+
+// failStructuredRun fails a parser run that exhausted its retries, carrying
+// both the validation error and the raw text so the failure is diagnosable.
+func failStructuredRun(_ context.Context, _ AgentRequest, sink EventSink, result *AgentResult, messages []Message, iteration int, validationErr error) (AgentResult, error) {
+	err := fmt.Errorf("output did not match the required format: %w", validationErr)
+	sink.Emit(Event{Kind: EventAgentFailed, Iteration: iteration, Error: err.Error()})
+	result.Messages = messages
+	return *result, err
+}
+
+// parseFormatArguments decodes one format-tool call's arguments and
+// validates them against the schema.
+func parseFormatArguments(schema map[string]any, arguments json.RawMessage) (any, error) {
+	raw := strings.TrimSpace(string(arguments))
+	if raw == "" {
+		return nil, fmt.Errorf("output is empty; raw output: %s", string(arguments))
+	}
+	var value any
+	if err := json.Unmarshal([]byte(raw), &value); err != nil {
+		return nil, fmt.Errorf("output is not valid JSON: %w; raw output: %s", err, string(arguments))
+	}
+	if err := ValidateValue(schema, value, "output"); err != nil {
+		return nil, fmt.Errorf("%w; raw output: %s", err, string(arguments))
+	}
+	return value, nil
 }
 
 // PolicyMemory is a Memory that enforces per-session retention bounds handed

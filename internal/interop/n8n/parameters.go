@@ -2298,8 +2298,8 @@ func agentToKilas(node Node) (map[string]any, []Unsupported) {
 	if parser, _ := node.Parameters["hasOutputParser"].(bool); parser {
 		issues = append(issues, Unsupported{
 			Severity: SeverityBlocking, Field: "hasOutputParser",
-			Reason: "this agent parsed its answer through a connected output parser sub-node, which this server does not have yet. " +
-				"The agent was imported without it and returns the model's text unparsed.",
+			Reason: "this agent parsed its answer through a connected output parser sub-node, which imports as its own output-parser node. " +
+				"The agent was imported without it and returns the model's text unparsed until the parser is wired back up.",
 		})
 	}
 	if fallback, _ := node.Parameters["needsFallback"].(bool); fallback {
@@ -2375,8 +2375,8 @@ func chainToKilas(node Node) (map[string]any, []Unsupported) {
 	if parser, _ := node.Parameters["hasOutputParser"].(bool); parser {
 		issues = append(issues, Unsupported{
 			Severity: SeverityBlocking, Field: "hasOutputParser",
-			Reason: "this chain parsed its answer through a connected output parser sub-node, which this server does not have yet. " +
-				"The chain was imported without it and returns the model's text unparsed.",
+			Reason: "this chain parsed its answer through a connected output parser sub-node, which imports as its own output-parser node. " +
+				"The chain was imported without it and returns the model's text unparsed until the parser is wired back up.",
 		})
 	}
 	if fallback, _ := node.Parameters["needsFallback"].(bool); fallback {
@@ -2725,6 +2725,271 @@ func httpToolToN8N(node workflow.Node) (map[string]any, []Lossy) {
 				"the model called this tool %q. n8n derives a tool's name from the node's own name, "+
 					"so after export it is called %q; rename the node to keep the old name.", name, nodes.NormalizeToolName(node.Name)),
 		})
+	}
+	return parameters, lossy
+}
+
+// --- Workflow Tool and Structured Output Parser --------------------------------
+//
+// The last two LangChain mappings, after the agent, the chain, the chat
+// models, the memory and the HTTP tool. The workflow tool wraps another
+// workflow as a callable tool; the structured parser forces model output
+// into a JSON shape. Both are sub-nodes: the tool emits ai_tool, the parser
+// emits ai_outputParser, and neither takes a main-channel input.
+
+// workflowToolToKilas maps n8n's Call n8n Workflow Tool onto this server's
+// workflow tool. The name and description cross directly; the workflow
+// reference and its inputs cross when they name a stored workflow.
+func workflowToolToKilas(node Node) (map[string]any, []Unsupported) {
+	issues := make([]Unsupported, 0)
+	parameters := map[string]any{}
+
+	// Unlike the HTTP tool this node names itself: `name` is an explicit
+	// parameter, so an author-set name is honoured and only a blank one is
+	// derived from the canvas name the way the HTTP tool always is.
+	if name := node.Parameters["name"]; name != nil && name != "" {
+		parameters["toolName"] = fromN8NValue(name)
+	} else {
+		parameters["toolName"] = nodes.NormalizeToolName(node.Name)
+	}
+	if description := node.Parameters["description"]; description != nil && description != "" {
+		parameters["toolDescription"] = fromN8NValue(description)
+	} else {
+		// Required here, and a model given no description cannot know when
+		// to call the tool. Same defaulting as the HTTP tool.
+		parameters["toolDescription"] = "Calls " + node.Name + "."
+	}
+
+	// n8n's default when the author never touched the selector.
+	source := stringParameter(node.Parameters, "source")
+	if source == "" {
+		source = "database"
+	}
+	switch source {
+	case "database":
+		// Stored as a locator object ({value}) at every published version,
+		// and as a bare string in older or hand-written documents. Either
+		// way only the identifier crosses: the referenced workflow lives in
+		// n8n's database, not in this one.
+		if id := locatorName(node.Parameters["workflowId"]); id != "" {
+			parameters["workflowId"] = fromN8NValue(id)
+		} else {
+			issues = append(issues, Unsupported{
+				Severity: SeverityBlocking, Field: "workflowId",
+				Reason: "this tool named no workflow to call, so it imports with nothing to execute. " +
+					"Point it at a workflow before activating.",
+			})
+		}
+		if carried, present, reported := workflowInputsToKilas(node.Parameters["workflowInputs"]); reported {
+			issues = append(issues, Unsupported{
+				Severity: SeverityDropped, Field: "workflowInputs",
+				Reason: "this tool declared its workflow inputs in a shape this importer does not read. " +
+					"The inputs were dropped: declare them on the tool again before activating.",
+			})
+		} else if present && carried != nil {
+			parameters["workflowInputs"] = carried
+		}
+	case "parameter":
+		// An inline workflow document has no native equivalent: this
+		// server's tool calls a stored workflow by reference.
+		issues = append(issues, Unsupported{
+			Severity: SeverityBlocking, Field: "workflowJson",
+			Reason: "this tool carried its workflow as inline JSON, which this server's workflow tool does not implement. " +
+				"Save the JSON as a workflow and point the tool at it before activating.",
+		})
+	default:
+		issues = append(issues, Unsupported{
+			Severity: SeverityBlocking, Field: "source",
+			Reason: fmt.Sprintf("this tool took its workflow from %q, which this server does not implement. "+
+				"Only a stored workflow imports: reconfigure the source before activating.", source),
+		})
+	}
+
+	// Version-1 declarations the resource mapper replaced. Reported rather
+	// than carried: silently running a tool whose inputs changed shape is
+	// the failure this whole importer exists to prevent.
+	if fields, present := node.Parameters["fields"]; present && fields != nil {
+		issues = append(issues, Unsupported{
+			Severity: SeverityDropped, Field: "fields",
+			Reason: "this tool declared its workflow inputs in the version-1 fields collection, which has no equivalent here. " +
+				"The declarations were dropped: declare the inputs on the tool again before activating.",
+		})
+	}
+	if propertyName := stringParameter(node.Parameters, "responsePropertyName"); propertyName != "" {
+		issues = append(issues, Unsupported{
+			Severity: SeverityDropped, Field: "responsePropertyName",
+			Reason: "this tool read its answer from a named response property, which this server's tool does not implement. " +
+				"The tool returns the whole result instead.",
+		})
+	}
+	return parameters, issues
+}
+
+// workflowInputsToKilas carries a workflow tool's resourceMapper value: the
+// defined-below entries become plain expression-valued inputs. Anything else
+// present is reported so the caller can name it, never carried half-read.
+func workflowInputsToKilas(value any) (map[string]any, bool, bool) {
+	collection, ok := value.(map[string]any)
+	if !ok || collection == nil {
+		return nil, value != nil, value != nil
+	}
+	inner, _ := collection["value"].(map[string]any)
+	entries, _ := inner["mapping"].(map[string]any)
+	if len(entries) == 0 {
+		// Absent, or a mapper the author never filled in. Optional either
+		// way; an empty mapper and no mapper are the same tool.
+		empty := len(collection) > 0
+		return nil, empty, false
+	}
+	carried := make(map[string]any, len(entries))
+	for _, key := range sortedKeys(entries) {
+		carried[key] = fromN8NValue(entries[key])
+	}
+	return carried, true, false
+}
+
+// workflowToolToN8N writes the workflow tool back.
+func workflowToolToN8N(node workflow.Node) (map[string]any, []Lossy) {
+	lossy := make([]Lossy, 0)
+	parameters := map[string]any{
+		"name":        toN8NValue(node.Parameters["toolName"]),
+		"description": toN8NValue(node.Parameters["toolDescription"]),
+		"source":      "database",
+		"workflowId":  map[string]any{"value": workflowReferenceToN8N(node.Parameters["workflowId"])},
+	}
+	if inputs, ok := node.Parameters["workflowInputs"].(map[string]any); ok && len(inputs) > 0 {
+		// The editor re-resolves the mapper schema from the workflow on
+		// open, so only the entries travel; the wrapper is rebuilt there.
+		value := make(map[string]any, len(inputs))
+		for _, key := range sortedKeys(inputs) {
+			value[key] = toN8NValue(inputs[key])
+		}
+		parameters["workflowInputs"] = map[string]any{"mappingMode": "defineBelow", "value": value}
+	}
+	return parameters, lossy
+}
+
+// workflowReferenceToN8N renders a stored workflow reference back into the
+// `={{ }}` form n8n's locator holds, or the plain identifier it usually is.
+func workflowReferenceToN8N(value any) string {
+	if stored, ok := value.(map[string]any); ok {
+		if mode, _ := stored["mode"].(string); mode == "expression" {
+			if template, _ := stored["value"].(string); template != "" {
+				return "=" + template
+			}
+			return ""
+		}
+		return locatorName(value)
+	}
+	if name, ok := value.(string); ok {
+		return name
+	}
+	return ""
+}
+
+// outputParserToKilas maps n8n's Structured Output Parser onto this server's
+// output parser. The mode translates rather than crossing: n8n says
+// fromJson/manual, this server says exampleJson/jsonSchema.
+func outputParserToKilas(node Node) (map[string]any, []Unsupported) {
+	issues := make([]Unsupported, 0)
+	parameters := map[string]any{}
+
+	example := node.Parameters["jsonSchemaExample"]
+	manual, hasManual := node.Parameters["inputSchema"]
+	if !hasManual {
+		// Below typeVersion 1.2 there is no mode selector and the schema
+		// lives under `jsonSchema` instead.
+		manual, hasManual = node.Parameters["jsonSchema"]
+	}
+	switch mode := stringParameter(node.Parameters, "schemaType"); mode {
+	case "manual":
+		parameters["schemaType"] = "jsonSchema"
+		if hasManual && manual != nil && manual != "" {
+			parameters["jsonSchema"] = fromN8NValue(manual)
+		}
+	case "fromJson":
+		parameters["schemaType"] = "exampleJson"
+		if example != nil && example != "" {
+			parameters["exampleJson"] = fromN8NValue(example)
+		}
+	case "":
+		// No selector: either a pre-1.2 document, or a mode the author
+		// never touched. Whichever key is populated decides.
+		if hasManual && manual != nil && manual != "" {
+			parameters["schemaType"] = "jsonSchema"
+			parameters["jsonSchema"] = fromN8NValue(manual)
+		} else {
+			parameters["schemaType"] = "exampleJson"
+			if example != nil && example != "" {
+				parameters["exampleJson"] = fromN8NValue(example)
+			}
+		}
+	default:
+		issues = append(issues, Unsupported{
+			Severity: SeverityBlocking, Field: "schemaType",
+			Reason: fmt.Sprintf("this parser specified its schema %q, which this server does not implement. "+
+				"Only a JSON example or a JSON schema imports: choose one before activating.", mode),
+		})
+		parameters["schemaType"] = "exampleJson"
+	}
+
+	// n8n retries through a model call; here that is a retry count. Absent
+	// means the author never touched it, which is n8n's own default of off.
+	// A float64, like every number this importer emits: the stored document
+	// is JSON, where there is no integer type.
+	if fixed, _ := node.Parameters["autoFix"].(bool); fixed {
+		parameters["maxRetries"] = float64(2)
+	} else {
+		parameters["maxRetries"] = float64(0)
+	}
+	// The retry prompt only fires when auto-fix does, so both are reported
+	// together with it rather than as two more mysteries.
+	if _, custom := node.Parameters["customizeRetryPrompt"].(bool); custom {
+		if fixed, _ := node.Parameters["autoFix"].(bool); fixed {
+			issues = append(issues, Unsupported{
+				Severity: SeverityDropped, Field: "customizeRetryPrompt",
+				Reason: "this parser customised its retry prompt, which this server's parser does not implement. " +
+					"The default retry prompt applies instead.",
+			})
+		}
+	}
+	if prompt := node.Parameters["prompt"]; prompt != nil && prompt != "" {
+		if fixed, _ := node.Parameters["autoFix"].(bool); fixed {
+			issues = append(issues, Unsupported{
+				Severity: SeverityDropped, Field: "prompt",
+				Reason: "this parser carried a custom retry prompt, which this server's parser does not implement. " +
+					"The prompt was dropped and the default retry prompt applies instead.",
+			})
+		}
+	}
+	return parameters, issues
+}
+
+// outputParserToN8N writes the parser back, restoring n8n's mode names.
+func outputParserToN8N(node workflow.Node) (map[string]any, []Lossy) {
+	lossy := make([]Lossy, 0)
+	parameters := map[string]any{}
+	switch stringParameter(node.Parameters, "schemaType") {
+	case "jsonSchema":
+		parameters["schemaType"] = "manual"
+		if schema := node.Parameters["jsonSchema"]; schema != nil && schema != "" {
+			parameters["inputSchema"] = toN8NValue(schema)
+		}
+	default:
+		// exampleJson, and anything a hand-built document holds instead:
+		// n8n's default mode is the example, so that is what an unknown
+		// mode degrades to rather than a version n8n cannot open.
+		parameters["schemaType"] = "fromJson"
+		if example := node.Parameters["exampleJson"]; example != nil && example != "" {
+			parameters["jsonSchemaExample"] = toN8NValue(example)
+		}
+	}
+	// This server counts retries; n8n toggles a model call. Any nonzero
+	// count is auto-fix on.
+	if retries, ok := numberParameter(node.Parameters, "maxRetries"); ok {
+		parameters["autoFix"] = retries != 0
+	} else {
+		parameters["autoFix"] = true
 	}
 	return parameters, lossy
 }

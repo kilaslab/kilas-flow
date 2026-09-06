@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -28,6 +30,10 @@ const (
 	HTTPToolExecutorID            = "core.httpTool"
 	AgentExecutorID               = "core.agent"
 	ChainExecutorID               = "core.chainLlm"
+	WorkflowToolExecutorID        = "core.workflowTool"
+	CalculatorExecutorID          = "core.calculator"
+	CalculatorToolExecutorID      = "core.calculatorTool"
+	OutputParserExecutorID        = "core.outputParser"
 )
 
 // Node types for the AI family.
@@ -45,6 +51,10 @@ const (
 	HTTPToolNodeType            = "kilasflow.httpTool"
 	AgentNodeType               = "kilasflow.agent"
 	ChainNodeType               = "kilasflow.chainLlm"
+	WorkflowToolNodeType        = "kilasflow.workflowTool"
+	CalculatorNodeType          = "kilasflow.calculator"
+	CalculatorToolNodeType      = "kilasflow.calculatorTool"
+	OutputParserNodeType        = "kilasflow.outputParser"
 )
 
 // Credential types the chat models accept.
@@ -430,6 +440,7 @@ func httpToolNode() node.Definition {
 			Description: "What the tool does, written for the model.",
 		},
 	}, definition.Parameters...)
+	definition.Codex = toolCodex()
 	definition.Validate = validateHTTPToolConfiguration
 	return definition
 }
@@ -460,6 +471,10 @@ func agentNode() node.Definition {
 			},
 			// Unbounded on purpose: an agent may hold as many tools as it likes.
 			{Name: "tools", DisplayName: "Tools", Kind: workflow.ConnectionTool},
+			{
+				Name: "outputParser", DisplayName: "Output Parser", Kind: workflow.ConnectionOutputParser,
+				MaxConnections: 1,
+			},
 		},
 		Outputs: mainOutput(),
 		Parameters: []node.PropertyDefinition{
@@ -642,6 +657,9 @@ func validateHTTPToolConfiguration(n workflow.Node) error {
 	}
 	if statementText(n.Parameters, "toolDescription") == "" {
 		return fmt.Errorf("toolDescription is required so the model knows when to call it")
+	}
+	if err := validateToolFromAI(n); err != nil {
+		return err
 	}
 	return validateHTTPConfiguration(n)
 }
@@ -1145,11 +1163,18 @@ func (executor *AgentExecutor) Execute(ctx context.Context, ir workflow.IRNode, 
 	tools := make([]ai.Tool, 0, len(toolDescriptors))
 
 	for _, descriptor := range toolDescriptors {
-		tool, err := executor.httpToolFrom(ir, descriptor, request)
+		tool, err := executor.toolFrom(ir, descriptor, request)
 		if err != nil {
 			return nil, err
 		}
 		tools = append(tools, tool)
+	}
+
+	// The parser slot is capped at one connection like the model and memory
+	// slots; two descriptors here means a graph bypassed the compiler.
+	parserSchema, parserRetries, hasParser, err := parserSlot(input["outputParser"], ir.Name)
+	if err != nil {
+		return nil, fmt.Errorf("node %q: %w", ir.Name, err)
 	}
 
 	items := input["main"]
@@ -1170,15 +1195,17 @@ func (executor *AgentExecutor) Execute(ctx context.Context, ir workflow.IRNode, 
 			systemPrompt = textValue(parameters["systemPrompt"], "")
 		}
 		agentRequest := ai.AgentRequest{
-			Model:         model.model,
-			ModelName:     model.name,
-			SystemPrompt:  systemPrompt,
-			Input:         textValue(parameters["prompt"], ""),
-			Tools:         tools,
-			MaxIterations: int(numberValue(parameters["maxIterations"])),
-			MaxTokens:     model.maxTokens,
-			MaxRetries:    model.maxRetries,
-			Stream:        model.stream || boolValue(parameters["enableStreaming"]),
+			Model:            model.model,
+			ModelName:        model.name,
+			SystemPrompt:     systemPrompt,
+			Input:            textValue(parameters["prompt"], ""),
+			Tools:            tools,
+			MaxIterations:    int(numberValue(parameters["maxIterations"])),
+			MaxTokens:        model.maxTokens,
+			MaxRetries:       model.maxRetries,
+			Stream:           model.stream || boolValue(parameters["enableStreaming"]),
+			OutputSchema:     parserSchema,
+			OutputMaxRetries: parserRetries,
 			// Read back by presence for the reason they were written by
 			// presence: zero is a value a user chooses, not the absence of one.
 			Temperature:      model.temperature,
@@ -1218,8 +1245,18 @@ func (executor *AgentExecutor) Execute(ctx context.Context, ir workflow.IRNode, 
 			return nil, fmt.Errorf("node %q: %w", ir.Name, err)
 		}
 
+		outputValue := any(result.Output)
+		if hasParser {
+			// The loop validated this against the schema; a parse failure
+			// here means a graph bypassed the runner, and failing names it.
+			var parsed any
+			if err := json.Unmarshal([]byte(result.Output), &parsed); err != nil {
+				return nil, fmt.Errorf("node %q: parser output is not valid JSON: %w", ir.Name, err)
+			}
+			outputValue = parsed
+		}
 		payload := map[string]any{
-			"output":     result.Output,
+			"output":     outputValue,
 			"usage":      map[string]any{"promptTokens": float64(result.Usage.PromptTokens), "completionTokens": float64(result.Usage.CompletionTokens), "totalTokens": float64(result.Usage.TotalTokens)},
 			"iterations": float64(result.Iterations),
 			"toolCalls":  float64(result.ToolCalls),
@@ -1268,12 +1305,9 @@ func (executor *ChainExecutor) Execute(ctx context.Context, ir workflow.IRNode, 
 	if !found {
 		return nil, fmt.Errorf("node %q: connect a chat model to the model port", ir.Name)
 	}
-	// No output parser node type exists yet, so anything on this port is a
-	// graph the catalogue cannot have produced. Refusing names the port
-	// instead of silently returning unstructured text where a structure was
-	// asked for.
-	if parsers := descriptorsFrom(input["outputParser"]); len(parsers) > 0 {
-		return nil, fmt.Errorf("node %q: output parsers are not supported yet", ir.Name)
+	parserSchema, parserRetries, hasParser, err := parserSlot(input["outputParser"], ir.Name)
+	if err != nil {
+		return nil, fmt.Errorf("node %q: %w", ir.Name, err)
 	}
 	// The model descriptor is read from the model port by name, never from
 	// main: on a well-formed graph main carries items, not descriptors, and
@@ -1310,12 +1344,35 @@ func (executor *ChainExecutor) Execute(ctx context.Context, ir workflow.IRNode, 
 		// Cancelled explicitly rather than deferred: this is a loop, and a
 		// deferred cancel would hold every item's context alive until the
 		// whole node finished.
+		output, err := executor.completeChainItem(ctx, ir, request, model, modelRequest, parserSchema, parserRetries, hasParser)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, output)
+	}
+	return workflow.NodeOutput{out}, nil
+}
+
+// completeChainItem runs one item's model call, validating against the
+// parser schema when one is attached. A response that fails validation is
+// retried a bounded number of times with the failure fed back, and then
+// fails carrying both the validation error and the raw text.
+func (executor *ChainExecutor) completeChainItem(ctx context.Context, ir workflow.IRNode, request engine.Request, model resolvedModel, modelRequest ai.ModelRequest, parserSchema map[string]any, parserRetries int, hasParser bool) (workflow.Item, error) {
+	messages := modelRequest.Messages
+	var lastErr error
+	attempts := 1
+	if hasParser {
+		attempts += parserRetries
+	}
+	for attempt := 1; attempt <= attempts; attempt++ {
+		modelRequest.Messages = messages
 		runCtx, cancel := context.WithTimeout(ctx, model.timeout)
 		request.Events.Emit(engine.NodeEvent{
 			NodeID: ir.ID, Name: string(ai.EventModelStarted),
-			Detail: eventDetail(ai.Event{Kind: ai.EventModelStarted, Iteration: 1, Model: model.name}),
+			Detail: eventDetail(ai.Event{Kind: ai.EventModelStarted, Iteration: attempt, Model: model.name}),
 		})
 		var response ai.ModelResponse
+		var err error
 		if model.stream {
 			response, err = model.model.Stream(runCtx, modelRequest, func(delta string) {
 				if delta == "" {
@@ -1323,7 +1380,7 @@ func (executor *ChainExecutor) Execute(ctx context.Context, ir workflow.IRNode, 
 				}
 				request.Events.Emit(engine.NodeEvent{
 					NodeID: ir.ID, Name: string(ai.EventModelDelta),
-					Detail: eventDetail(ai.Event{Kind: ai.EventModelDelta, Iteration: 1, Model: model.name, Delta: delta}),
+					Detail: eventDetail(ai.Event{Kind: ai.EventModelDelta, Iteration: attempt, Model: model.name, Delta: delta}),
 				})
 			})
 		} else {
@@ -1333,18 +1390,36 @@ func (executor *ChainExecutor) Execute(ctx context.Context, ir workflow.IRNode, 
 		if err != nil {
 			request.Events.Emit(engine.NodeEvent{
 				NodeID: ir.ID, Name: string(ai.EventAgentFailed),
-				Detail: eventDetail(ai.Event{Kind: ai.EventAgentFailed, Iteration: 1, Model: model.name, Error: err.Error()}),
+				Detail: eventDetail(ai.Event{Kind: ai.EventAgentFailed, Iteration: attempt, Model: model.name, Error: err.Error()}),
 			})
-			return nil, fmt.Errorf("node %q: %w", ir.Name, err)
+			return workflow.Item{}, fmt.Errorf("node %q: %w", ir.Name, err)
 		}
 		usage := response.Usage
 		request.Events.Emit(engine.NodeEvent{
 			NodeID: ir.ID, Name: string(ai.EventModelCompleted),
-			Detail: eventDetail(ai.Event{Kind: ai.EventModelCompleted, Iteration: 1, Model: model.name, Usage: &usage}),
+			Detail: eventDetail(ai.Event{Kind: ai.EventModelCompleted, Iteration: attempt, Model: model.name, Usage: &usage}),
 		})
-		out = append(out, workflow.Item{JSON: map[string]any{"output": response.Message.Content}})
+		if !hasParser {
+			return workflow.Item{JSON: map[string]any{"output": response.Message.Content}}, nil
+		}
+		value, validationErr := ai.ParseAndValidateOutput(parserSchema, response.Message.Content)
+		if validationErr == nil {
+			return workflow.Item{JSON: map[string]any{"output": value}}, nil
+		}
+		lastErr = validationErr
+		if attempt >= attempts {
+			break
+		}
+		messages = append(messages,
+			ai.Message{Role: ai.RoleAssistant, Content: response.Message.Content},
+			ai.Message{Role: ai.RoleUser, Content: "That response did not match the required format: " + validationErr.Error() + ". Reply with corrected JSON only."},
+		)
 	}
-	return workflow.NodeOutput{out}, nil
+	request.Events.Emit(engine.NodeEvent{
+		NodeID: ir.ID, Name: string(ai.EventAgentFailed),
+		Detail: eventDetail(ai.Event{Kind: ai.EventAgentFailed, Iteration: attempts, Model: model.name, Error: lastErr.Error()}),
+	})
+	return workflow.Item{}, fmt.Errorf("node %q: output did not match the required format: %w", ir.Name, lastErr)
 }
 
 // chainMessagesForItem builds one item's prompt: the ordered message rows
@@ -1518,6 +1593,15 @@ type httpRequestTool struct {
 }
 
 func (tool *httpRequestTool) Definition() ai.ToolDefinition {
+	// The schema is derived rather than hand-written: every $fromAI call in
+	// the parameters contributes a typed property carrying its description.
+	if calls, err := ai.ExtractFromAI(tool.node.Parameters); err == nil && len(calls) > 0 {
+		return ai.ToolDefinition{
+			Name:        tool.name,
+			Description: tool.description,
+			Parameters:  ai.FromAISchema(calls),
+		}
+	}
 	return ai.ToolDefinition{
 		Name:        tool.name,
 		Description: tool.description,
@@ -1537,10 +1621,12 @@ func (tool *httpRequestTool) Definition() ai.ToolDefinition {
 // as the item, so `{{ $json.city }}` in the URL resolves from what the model
 // supplied.
 func (tool *httpRequestTool) Invoke(ctx context.Context, arguments json.RawMessage) (string, error) {
+	argsMap := map[string]any{}
 	item := workflow.Item{JSON: map[string]any{}}
 	if len(arguments) > 0 && json.Valid(arguments) {
 		var decoded map[string]any
 		if err := json.Unmarshal(arguments, &decoded); err == nil {
+			argsMap = decoded
 			if nested, ok := decoded["input"].(map[string]any); ok {
 				item.JSON = nested
 			} else {
@@ -1548,6 +1634,13 @@ func (tool *httpRequestTool) Invoke(ctx context.Context, arguments json.RawMessa
 			}
 		}
 	}
+	// The model's arguments replace the $fromAI calls before the request
+	// executes; anything without such a call keeps reading them as $json.
+	parameters, err := ai.SubstituteFromAI(tool.node.Parameters, argsMap)
+	if err != nil {
+		return "", err
+	}
+	tool.node.Parameters = parameters
 
 	output, err := tool.executor.Execute(ctx, tool.node, workflow.NodeInput{"main": {item}}, tool.request)
 	if err != nil {
@@ -1612,4 +1705,772 @@ func descriptorsFrom(items []workflow.Item) []map[string]any {
 		}
 	}
 	return descriptors
+}
+
+// Tool descriptor kinds. The HTTP tool predates the family and its
+// descriptors carry "tool"; the newer tools name themselves.
+const (
+	toolKindHTTP       = "tool"
+	toolKindWorkflow   = "workflow"
+	toolKindCalculator = "calculator"
+)
+
+// toolNameProperty is the optional override for the name the model calls,
+// shared by every tool in the family so the spelling stays identical.
+func toolNameProperty() node.PropertyDefinition {
+	return node.PropertyDefinition{
+		Key: "toolName", Label: "Tool name", Kind: node.PropertyString,
+		Description: "Optional override for the name the model calls. Defaults to the node name, normalised to letters, digits, and underscores.",
+	}
+}
+
+// toolDescriptionProperty is the model-facing description every tool
+// requires: without it the model cannot know when to call the tool.
+func toolDescriptionProperty() node.PropertyDefinition {
+	return node.PropertyDefinition{
+		Key: "toolDescription", Label: "Tool description", Kind: node.PropertyString, Required: true,
+		Description: "What the tool does, written for the model.",
+	}
+}
+
+// toolCodex files a tool variant under the picker's AI tools, the way a
+// tool-capable node is re-listed when used as a tool rather than as a step.
+func toolCodex() *node.NodeCodex {
+	return &node.NodeCodex{
+		Categories:    []string{"AI"},
+		Subcategories: map[string][]string{"AI": {"Tools"}},
+	}
+}
+
+// toolVariantOf derives a tool node from an ordinary node definition: same
+// parameters, same credentials, same executor, differing only in ports,
+// tool naming, and picker filing. One definition stays one definition —
+// there are never two parameter lists to drift apart.
+func toolVariantOf(base node.Definition, toolType, displayName, description, executorID string) node.Definition {
+	base.Type = toolType
+	base.DisplayName = displayName
+	base.Description = description
+	base.Category = "AI"
+	base.Inputs = nil
+	base.Outputs = []workflow.Port{{Name: "tool", Kind: workflow.ConnectionTool}}
+	base.Parameters = append([]node.PropertyDefinition{toolNameProperty(), toolDescriptionProperty()}, base.Parameters...)
+	base.ExecutorID = executorID
+	base.Codex = toolCodex()
+	return base
+}
+
+// validateToolNameAndDescription checks the two parameters every tool in
+// the family carries, so each validator states only what its own node adds.
+func validateToolNameAndDescription(n workflow.Node) error {
+	if name := statementText(n.Parameters, "toolName"); name != "" && !validToolName(name) {
+		return fmt.Errorf("toolName must contain only letters, digits, and underscores")
+	}
+	if statementText(n.Parameters, "toolDescription") == "" {
+		return fmt.Errorf("toolDescription is required so the model knows when to call it")
+	}
+	return nil
+}
+
+// validateToolFromAI refuses a tool whose $fromAI calls cannot build a
+// schema, naming the offending call at configuration time rather than
+// mid-run.
+func validateToolFromAI(n workflow.Node) error {
+	if _, err := ai.ExtractFromAI(n.Parameters); err != nil {
+		return err
+	}
+	return nil
+}
+
+// calculatorNode is the ordinary node a calculator tool is derived from: it
+// evaluates one arithmetic expression per item, with no network, no
+// credentials, and no side effects.
+func calculatorNode() node.Definition {
+	return node.Definition{
+		Type:        CalculatorNodeType,
+		Version:     workflow.V(1),
+		DisplayName: "Calculator",
+		Description: "Evaluates an arithmetic expression per item.",
+		Category:    "Core",
+		Group:       []node.NodeGroup{node.GroupTransform},
+		Icon:        &node.NodeIcon{Light: "builtin:calculator"},
+		IconColor:   "#16a34a",
+		Inputs:      mainInput(),
+		Outputs:     mainOutput(),
+		Parameters: []node.PropertyDefinition{
+			{
+				Key: "expression", Label: "Expression", Kind: node.PropertyString, Required: true,
+				Description: "The arithmetic to evaluate, for example (19 - 32) * 5 / 9. Supports expressions; the incoming item is available as $json.",
+			},
+		},
+		SharedSettings: sharedSettings(),
+		ExecutorID:     CalculatorExecutorID,
+		Validate:       validateCalculatorConfiguration,
+	}
+}
+
+// calculatorToolNode exposes the calculator as an agent tool, derived from
+// the ordinary node rather than re-declared.
+func calculatorToolNode() node.Definition {
+	definition := toolVariantOf(calculatorNode(), CalculatorToolNodeType, "Calculator Tool", "Evaluates an arithmetic expression for an AI Agent.", CalculatorToolExecutorID)
+	definition.Validate = validateCalculatorToolConfiguration
+	return definition
+}
+
+func validateCalculatorConfiguration(n workflow.Node) error {
+	if statementText(n.Parameters, "expression") == "" {
+		return fmt.Errorf("expression is required")
+	}
+	return nil
+}
+
+func validateCalculatorToolConfiguration(n workflow.Node) error {
+	if err := validateToolNameAndDescription(n); err != nil {
+		return err
+	}
+	if err := validateToolFromAI(n); err != nil {
+		return err
+	}
+	return validateCalculatorConfiguration(n)
+}
+
+// executeCalculator evaluates the expression for each incoming item.
+func executeCalculator(ctx context.Context, ir workflow.IRNode, input workflow.NodeInput, request engine.Request) (workflow.NodeOutput, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	items := input["main"]
+	if len(items) == 0 {
+		items = []workflow.Item{{JSON: map[string]any{}}}
+	}
+	out := make([]workflow.Item, 0, len(items))
+	for index, item := range items {
+		parameters, err := expression.Resolve(ir.Parameters, expressionContext(item, input, request, index))
+		if err != nil {
+			return nil, fmt.Errorf("node %q: %w", ir.Name, err)
+		}
+		result, err := evaluateCalculatorExpression(textValue(parameters["expression"], ""))
+		if err != nil {
+			return nil, fmt.Errorf("node %q: %w", ir.Name, err)
+		}
+		out = append(out, workflow.Item{JSON: map[string]any{"result": result}})
+	}
+	return workflow.NodeOutput{out}, nil
+}
+
+// executeCalculatorTool emits a calculator tool descriptor.
+func executeCalculatorTool(ctx context.Context, ir workflow.IRNode, _ workflow.NodeInput, _ engine.Request) (workflow.NodeOutput, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	parameters := make(map[string]any, len(ir.Parameters))
+	for key, value := range ir.Parameters {
+		parameters[key] = value
+	}
+	return workflow.NodeOutput{{{JSON: map[string]any{descriptorKey: map[string]any{
+		"kind":        toolKindCalculator,
+		"name":        toolNameFor(ir),
+		"description": textValue(ir.Parameters["toolDescription"], ""),
+		"nodeName":    ir.Name,
+		"parameters":  parameters,
+	}}}}}, nil
+}
+
+// evaluateCalculatorExpression evaluates one arithmetic expression:
+// addition, subtraction, multiplication, division, remainder, and
+// exponentiation over parenthesised decimals. Anything else is refused
+// rather than guessed at.
+func evaluateCalculatorExpression(text string) (float64, error) {
+	parser := &calcParser{input: strings.TrimSpace(text)}
+	if parser.input == "" {
+		return 0, fmt.Errorf("expression is required")
+	}
+	result, err := parser.parseSum()
+	if err != nil {
+		return 0, err
+	}
+	parser.skipSpaces()
+	if parser.pos != len(parser.input) {
+		return 0, fmt.Errorf("unexpected %q at offset %d", parser.input[parser.pos:], parser.pos)
+	}
+	if math.IsNaN(result) || math.IsInf(result, 0) {
+		return 0, fmt.Errorf("the result is out of range")
+	}
+	return result, nil
+}
+
+type calcParser struct {
+	input string
+	pos   int
+}
+
+func (parser *calcParser) skipSpaces() {
+	for parser.pos < len(parser.input) && (parser.input[parser.pos] == ' ' || parser.input[parser.pos] == '\t') {
+		parser.pos++
+	}
+}
+
+func (parser *calcParser) parseSum() (float64, error) {
+	left, err := parser.parseProduct()
+	if err != nil {
+		return 0, err
+	}
+	for {
+		parser.skipSpaces()
+		if parser.pos >= len(parser.input) {
+			return left, nil
+		}
+		operator := parser.input[parser.pos]
+		if operator != '+' && operator != '-' {
+			return left, nil
+		}
+		parser.pos++
+		right, err := parser.parseProduct()
+		if err != nil {
+			return 0, err
+		}
+		if operator == '+' {
+			left += right
+		} else {
+			left -= right
+		}
+	}
+}
+
+func (parser *calcParser) parseProduct() (float64, error) {
+	left, err := parser.parseUnary()
+	if err != nil {
+		return 0, err
+	}
+	for {
+		parser.skipSpaces()
+		if parser.pos >= len(parser.input) {
+			return left, nil
+		}
+		operator := parser.input[parser.pos]
+		if operator != '*' && operator != '/' && operator != '%' {
+			return left, nil
+		}
+		parser.pos++
+		right, err := parser.parseUnary()
+		if err != nil {
+			return 0, err
+		}
+		switch operator {
+		case '*':
+			left *= right
+		case '/':
+			if right == 0 {
+				return 0, fmt.Errorf("division by zero")
+			}
+			left /= right
+		case '%':
+			if right == 0 {
+				return 0, fmt.Errorf("division by zero")
+			}
+			left = math.Mod(left, right)
+		}
+	}
+}
+
+func (parser *calcParser) parseUnary() (float64, error) {
+	parser.skipSpaces()
+	if parser.pos < len(parser.input) && (parser.input[parser.pos] == '+' || parser.input[parser.pos] == '-') {
+		negative := parser.input[parser.pos] == '-'
+		parser.pos++
+		value, err := parser.parseUnary()
+		if err != nil {
+			return 0, err
+		}
+		if negative {
+			return -value, nil
+		}
+		return value, nil
+	}
+	return parser.parsePower()
+}
+
+func (parser *calcParser) parsePower() (float64, error) {
+	base, err := parser.parsePrimary()
+	if err != nil {
+		return 0, err
+	}
+	parser.skipSpaces()
+	if parser.pos < len(parser.input) && parser.input[parser.pos] == '^' {
+		parser.pos++
+		exponent, err := parser.parseUnary()
+		if err != nil {
+			return 0, err
+		}
+		return math.Pow(base, exponent), nil
+	}
+	return base, nil
+}
+
+func (parser *calcParser) parsePrimary() (float64, error) {
+	parser.skipSpaces()
+	if parser.pos >= len(parser.input) {
+		return 0, fmt.Errorf("unexpected end of expression")
+	}
+	if parser.input[parser.pos] == '(' {
+		parser.pos++
+		value, err := parser.parseSum()
+		if err != nil {
+			return 0, err
+		}
+		parser.skipSpaces()
+		if parser.pos >= len(parser.input) || parser.input[parser.pos] != ')' {
+			return 0, fmt.Errorf("missing closing parenthesis")
+		}
+		parser.pos++
+		return value, nil
+	}
+	start := parser.pos
+	seenDigit := false
+	seenDot := false
+	for parser.pos < len(parser.input) {
+		char := parser.input[parser.pos]
+		if char >= '0' && char <= '9' {
+			seenDigit = true
+			parser.pos++
+		} else if char == '.' && !seenDot {
+			seenDot = true
+			parser.pos++
+		} else {
+			break
+		}
+	}
+	if !seenDigit {
+		return 0, fmt.Errorf("unexpected %q at offset %d", parser.input[start:], start)
+	}
+	value, err := strconv.ParseFloat(parser.input[start:parser.pos], 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid number %q", parser.input[start:parser.pos])
+	}
+	return value, nil
+}
+
+// workflowToolNode exposes another workflow of the same tenant as an agent
+// tool, so an agent can delegate a packaged task to a whole workflow.
+func workflowToolNode() node.Definition {
+	return node.Definition{
+		Type:        WorkflowToolNodeType,
+		Version:     workflow.V(1),
+		DisplayName: "Workflow Tool",
+		Description: "Calls another workflow of this tenant as an AI Agent tool.",
+		Category:    "AI",
+		Group:       []node.NodeGroup{node.GroupTransform},
+		Icon:        &node.NodeIcon{Light: "builtin:workflow"},
+		IconColor:   "#8b5cf6",
+		Inputs:      nil,
+		Outputs:     []workflow.Port{{Name: "tool", Kind: workflow.ConnectionTool}},
+		Parameters: []node.PropertyDefinition{
+			toolNameProperty(),
+			toolDescriptionProperty(),
+			{
+				Key: "workflowId", Label: "Workflow", Kind: node.PropertyResourceLocator, Required: true,
+				Description: "The workflow to run. It must belong to this tenant and be active. The model's arguments become the sub-workflow's input item.",
+				Modes: []node.PropertyMode{
+					{
+						Name: "list", Label: "From list", Kind: node.PropertyOptions,
+						Placeholder: "Choose…",
+						LoadOptions: &node.OptionsLoader{Source: property.LoaderInternal, Name: WorkflowListLoader},
+					},
+					{
+						Name: "id", Label: "By ID", Kind: node.PropertyString,
+						Placeholder: "wf_…",
+						Hint:        "The KilasFlow workflow ID. Supports expressions.",
+					},
+				},
+			},
+			{
+				Key: "workflowInputs", Label: "Workflow inputs", Kind: node.PropertyJSON,
+				Description: "Extra static inputs merged over the model's arguments into the sub-workflow's input item. Supports expressions.",
+			},
+		},
+		SharedSettings: sharedSettings(),
+		ExecutorID:     WorkflowToolExecutorID,
+		Validate:       validateWorkflowToolConfiguration,
+		Codex:          toolCodex(),
+	}
+}
+
+func validateWorkflowToolConfiguration(n workflow.Node) error {
+	if err := validateToolNameAndDescription(n); err != nil {
+		return err
+	}
+	if !property.LocatorIsSet(n.Parameters["workflowId"]) {
+		return fmt.Errorf("workflowId is required")
+	}
+	return validateToolFromAI(n)
+}
+
+// executeWorkflowTool emits a workflow tool descriptor.
+func executeWorkflowTool(ctx context.Context, ir workflow.IRNode, _ workflow.NodeInput, _ engine.Request) (workflow.NodeOutput, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	parameters := make(map[string]any, len(ir.Parameters))
+	for key, value := range ir.Parameters {
+		parameters[key] = value
+	}
+	return workflow.NodeOutput{{{JSON: map[string]any{descriptorKey: map[string]any{
+		"kind":        toolKindWorkflow,
+		"name":        toolNameFor(ir),
+		"description": textValue(ir.Parameters["toolDescription"], ""),
+		"nodeName":    ir.Name,
+		"workflowId":  ir.Parameters["workflowId"],
+		"parameters":  parameters,
+	}}}}}, nil
+}
+
+// workflowTool runs a sub-workflow through the runtime's own invoker, so a
+// tool call inherits the deployment's recursion refusal and call-depth
+// bound instead of reimplementing either.
+type workflowTool struct {
+	name        string
+	description string
+	rawWorkflow any
+	parameters  map[string]any
+	nodeName    string
+	agentNode   string
+	request     engine.Request
+}
+
+func (tool *workflowTool) Definition() ai.ToolDefinition {
+	if calls, err := ai.ExtractFromAI(tool.parameters); err == nil && len(calls) > 0 {
+		return ai.ToolDefinition{Name: tool.name, Description: tool.description, Parameters: ai.FromAISchema(calls)}
+	}
+	return ai.ToolDefinition{
+		Name:        tool.name,
+		Description: tool.description,
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"input": map[string]any{
+					"type":        "object",
+					"description": "The sub-workflow's input item.",
+				},
+			},
+		},
+	}
+}
+
+// Invoke runs the sub-workflow with the model's arguments as its input item
+// and returns what it produced.
+func (tool *workflowTool) Invoke(ctx context.Context, arguments json.RawMessage) (string, error) {
+	if tool.request.Workflows == nil {
+		return "", fmt.Errorf("node %q: this runtime cannot run sub-workflows", tool.agentNode)
+	}
+	argsMap, item, err := toolArgumentsItem(arguments)
+	if err != nil {
+		return "", err
+	}
+	parameters, err := ai.SubstituteFromAI(tool.parameters, argsMap)
+	if err != nil {
+		return "", err
+	}
+	target, err := workflowToolTarget(tool.agentNode, tool.rawWorkflow, parameters, item, tool.request)
+	if err != nil {
+		return "", err
+	}
+	inputItem, err := workflowToolInput(tool.agentNode, parameters, item, tool.request)
+	if err != nil {
+		return "", err
+	}
+	result, err := tool.request.Workflows.InvokeWorkflow(ctx, tool.request.Execution, engine.WorkflowCall{
+		WorkflowID: target, Items: []workflow.Item{inputItem}, Wait: true,
+	})
+	if err != nil {
+		return "", err
+	}
+	if len(result.Items) == 1 {
+		encoded, err := json.Marshal(result.Items[0].JSON)
+		if err != nil {
+			return "", fmt.Errorf("encode tool result: %w", err)
+		}
+		return string(encoded), nil
+	}
+	encoded, err := json.Marshal(result.Items)
+	if err != nil {
+		return "", fmt.Errorf("encode tool result: %w", err)
+	}
+	return string(encoded), nil
+}
+
+// workflowToolTarget resolves which workflow to run. A locator chosen from
+// the list is fixed; one written by ID may still be an expression, which
+// resolves against the tool's input item.
+func workflowToolTarget(agentNode string, raw any, parameters map[string]any, item workflow.Item, request engine.Request) (string, error) {
+	value := raw
+	if expression.IsExpression(raw) {
+		resolved, err := expression.Resolve(map[string]any{"workflowId": raw}, expressionContext(item, nil, request, 0))
+		if err != nil {
+			return "", fmt.Errorf("node %q: %w", agentNode, err)
+		}
+		value = resolved["workflowId"]
+	} else if expression.IsExpression(parameters["workflowId"]) {
+		resolved, err := expression.Resolve(map[string]any{"workflowId": parameters["workflowId"]}, expressionContext(item, nil, request, 0))
+		if err != nil {
+			return "", fmt.Errorf("node %q: %w", agentNode, err)
+		}
+		value = resolved["workflowId"]
+	}
+	locator, _ := property.ReadLocator(value)
+	if target := strings.TrimSpace(textValue(locator.Value, "")); target != "" {
+		return target, nil
+	}
+	return "", fmt.Errorf("node %q: a sub-workflow call needs the workflow to run", agentNode)
+}
+
+// workflowToolInput builds the sub-workflow's input item: the model's
+// arguments overlaid with the configured static inputs, which win on
+// conflict because the author wrote them explicitly.
+func workflowToolInput(agentNode string, parameters map[string]any, item workflow.Item, request engine.Request) (workflow.Item, error) {
+	merged := make(map[string]any, len(item.JSON)+1)
+	for key, value := range item.JSON {
+		merged[key] = value
+	}
+	raw, present := parameters["workflowInputs"]
+	if !present || raw == nil {
+		return workflow.Item{JSON: merged}, nil
+	}
+	resolved, err := expression.Resolve(map[string]any{"workflowInputs": raw}, expressionContext(item, nil, request, 0))
+	if err != nil {
+		return workflow.Item{}, fmt.Errorf("node %q: %w", agentNode, err)
+	}
+	extra, ok := resolved["workflowInputs"].(map[string]any)
+	if !ok {
+		return workflow.Item{}, fmt.Errorf("node %q: workflowInputs must be an object", agentNode)
+	}
+	for key, value := range extra {
+		merged[key] = value
+	}
+	return workflow.Item{JSON: merged}, nil
+}
+
+// toolArgumentsItem decodes a tool call's arguments into the item the
+// wrapped node executes against. A call shaped {"input": {...}} under the
+// legacy schema unwraps one level, so $json reads what the model sent.
+func toolArgumentsItem(arguments json.RawMessage) (map[string]any, workflow.Item, error) {
+	argsMap := map[string]any{}
+	if len(arguments) > 0 {
+		if !json.Valid(arguments) {
+			return nil, workflow.Item{}, fmt.Errorf("tool arguments are not valid JSON")
+		}
+		if err := json.Unmarshal(arguments, &argsMap); err != nil {
+			return nil, workflow.Item{}, fmt.Errorf("decode tool arguments: %w", err)
+		}
+	}
+	itemJSON := argsMap
+	if nested, ok := argsMap["input"].(map[string]any); ok && len(argsMap) == 1 {
+		itemJSON = nested
+	}
+	return argsMap, workflow.Item{JSON: itemJSON}, nil
+}
+
+// calculatorTool runs one arithmetic evaluation per tool call, with no
+// outbound path at all.
+type calculatorTool struct {
+	name        string
+	description string
+	parameters  map[string]any
+	nodeName    string
+	agentNode   string
+	request     engine.Request
+}
+
+func (tool *calculatorTool) Definition() ai.ToolDefinition {
+	if calls, err := ai.ExtractFromAI(tool.parameters); err == nil && len(calls) > 0 {
+		return ai.ToolDefinition{Name: tool.name, Description: tool.description, Parameters: ai.FromAISchema(calls)}
+	}
+	return ai.ToolDefinition{
+		Name:        tool.name,
+		Description: tool.description,
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"expression": map[string]any{
+					"type":        "string",
+					"description": "The arithmetic to evaluate, for example (19 - 32) * 5 / 9.",
+				},
+			},
+			"required": []string{"expression"},
+		},
+	}
+}
+
+// Invoke substitutes the model's arguments, resolves any remaining
+// expressions against them, and evaluates.
+func (tool *calculatorTool) Invoke(ctx context.Context, arguments json.RawMessage) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	argsMap, item, err := toolArgumentsItem(arguments)
+	if err != nil {
+		return "", err
+	}
+	parameters, err := ai.SubstituteFromAI(tool.parameters, argsMap)
+	if err != nil {
+		return "", err
+	}
+	resolved, err := expression.Resolve(parameters, expressionContext(item, nil, tool.request, 0))
+	if err != nil {
+		return "", fmt.Errorf("node %q: %w", tool.agentNode, err)
+	}
+	expressionText := textValue(resolved["expression"], "")
+	if expressionText == "" {
+		// No $fromAI call claimed the expression: the model's argument is
+		// the expression, the way $json carries it for the HTTP tool.
+		if calls, _ := ai.ExtractFromAI(tool.parameters); len(calls) == 0 {
+			expressionText = textValue(argsMap["expression"], "")
+		}
+	}
+	result, err := evaluateCalculatorExpression(expressionText)
+	if err != nil {
+		return "", fmt.Errorf("node %q: %w", tool.agentNode, err)
+	}
+	encoded, err := json.Marshal(map[string]any{"result": result})
+	if err != nil {
+		return "", fmt.Errorf("encode tool result: %w", err)
+	}
+	return string(encoded), nil
+}
+
+// outputParserNode constrains an agent's or chain's final answer to a
+// declared shape, given either as a JSON Schema or as an example document.
+func outputParserNode() node.Definition {
+	return node.Definition{
+		Type:        OutputParserNodeType,
+		Version:     workflow.V(1),
+		DisplayName: "Structured Output Parser",
+		Description: "Constrains the final answer to a JSON shape the model fills in.",
+		Category:    "AI",
+		Group:       []node.NodeGroup{node.GroupTransform},
+		Icon:        &node.NodeIcon{Light: "builtin:arrow-down-up"},
+		IconColor:   "#a855f7",
+		Inputs:      nil,
+		Outputs:     []workflow.Port{{Name: "parser", Kind: workflow.ConnectionOutputParser}},
+		Parameters: []node.PropertyDefinition{
+			{
+				Key: "schemaType", Label: "Schema source", Kind: node.PropertyOptions, Default: ai.OutputSchemaJSONSchema,
+				Options: []node.PropertyOption{
+					{Label: "JSON Schema", Value: ai.OutputSchemaJSONSchema},
+					{Label: "Example JSON", Value: ai.OutputSchemaExample},
+				},
+				Description: "Describe the output shape directly, or show one example it is inferred from.",
+			},
+			{
+				Key: "jsonSchema", Label: "JSON Schema", Kind: node.PropertyString,
+				Description: "The output shape as a JSON Schema object.",
+			},
+			{
+				Key: "exampleJson", Label: "Example JSON", Kind: node.PropertyString,
+				Description: "One example of the output; the shape is inferred from it.",
+			},
+			{
+				Key: "maxRetries", Label: "Maximum retries", Kind: node.PropertyNumber, Default: float64(ai.DefaultOutputMaxRetries),
+				Description: "How many responses that fail validation are retried before the run fails.",
+			},
+		},
+		SharedSettings: sharedSettings(),
+		ExecutorID:     OutputParserExecutorID,
+		Validate:       validateOutputParserConfiguration,
+	}
+}
+
+func validateOutputParserConfiguration(n workflow.Node) error {
+	if _, _, err := ai.ParseOutputSchema(n.Parameters); err != nil {
+		return err
+	}
+	return nil
+}
+
+// executeOutputParser validates the declared shape now and emits a parser
+// descriptor the agent or chain reads from its output parser slot.
+func executeOutputParser(ctx context.Context, ir workflow.IRNode, _ workflow.NodeInput, _ engine.Request) (workflow.NodeOutput, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	schema, maxRetries, err := ai.ParseOutputSchema(ir.Parameters)
+	if err != nil {
+		return nil, fmt.Errorf("node %q: %w", ir.Name, err)
+	}
+	return workflow.NodeOutput{{{JSON: map[string]any{descriptorKey: map[string]any{
+		"kind":       "parser",
+		"nodeName":   ir.Name,
+		"schema":     schema,
+		"maxRetries": float64(maxRetries),
+	}}}}}, nil
+}
+
+// parserSlot reads the optional parser descriptor from a root node's output
+// parser slot, which the compiler caps at one connection. Anything on the
+// slot that is not a parser descriptor is refused rather than misread.
+func parserSlot(items []workflow.Item, nodeName string) (schema map[string]any, maxRetries int, present bool, err error) {
+	descriptor, found, err := soleDescriptor(items, "outputParser")
+	if err != nil || !found {
+		return nil, 0, false, err
+	}
+	if textValue(descriptor["kind"], "") != "parser" {
+		return nil, 0, false, fmt.Errorf("node %q: the output parser port accepts only a structured output parser", nodeName)
+	}
+	schema, _ = descriptor["schema"].(map[string]any)
+	if len(schema) == 0 {
+		return nil, 0, false, fmt.Errorf("node %q: the output parser carries no schema", nodeName)
+	}
+	return schema, int(numberValue(descriptor["maxRetries"])), true, nil
+}
+
+// toolFrom wraps any connected tool descriptor as a callable tool. The HTTP
+// tool runs the same executor the HTTP Request node uses, so it inherits
+// the SSRF policy, credential scoping, timeout, and response limits rather
+// than reimplementing any of them; the workflow and calculator tools reuse
+// their own node implementations the same way.
+func (executor *AgentExecutor) toolFrom(ir workflow.IRNode, descriptor map[string]any, request engine.Request) (ai.Tool, error) {
+	switch textValue(descriptor["kind"], toolKindHTTP) {
+	case toolKindHTTP:
+		return executor.httpToolFrom(ir, descriptor, request)
+	case toolKindWorkflow:
+		return executor.workflowToolFrom(ir, descriptor, request)
+	case toolKindCalculator:
+		return executor.calculatorToolFrom(ir, descriptor, request)
+	default:
+		return nil, fmt.Errorf("node %q: connected tool %q has unknown kind %q",
+			ir.Name, textValue(descriptor["nodeName"], ""), textValue(descriptor["kind"], ""))
+	}
+}
+
+// workflowToolFrom wraps a workflow tool descriptor as a callable tool.
+func (executor *AgentExecutor) workflowToolFrom(ir workflow.IRNode, descriptor map[string]any, request engine.Request) (ai.Tool, error) {
+	name := textValue(descriptor["name"], "")
+	if name == "" {
+		return nil, fmt.Errorf("node %q: a connected tool has no name", ir.Name)
+	}
+	parameters, _ := descriptor["parameters"].(map[string]any)
+	return &workflowTool{
+		name:        name,
+		description: textValue(descriptor["description"], ""),
+		rawWorkflow: descriptor["workflowId"],
+		parameters:  parameters,
+		nodeName:    textValue(descriptor["nodeName"], name),
+		agentNode:   ir.Name,
+		request:     request,
+	}, nil
+}
+
+// calculatorToolFrom wraps a calculator tool descriptor as a callable tool.
+func (executor *AgentExecutor) calculatorToolFrom(ir workflow.IRNode, descriptor map[string]any, request engine.Request) (ai.Tool, error) {
+	name := textValue(descriptor["name"], "")
+	if name == "" {
+		return nil, fmt.Errorf("node %q: a connected tool has no name", ir.Name)
+	}
+	parameters, _ := descriptor["parameters"].(map[string]any)
+	return &calculatorTool{
+		name:        name,
+		description: textValue(descriptor["description"], ""),
+		parameters:  parameters,
+		nodeName:    textValue(descriptor["nodeName"], name),
+		agentNode:   ir.Name,
+		request:     request,
+	}, nil
 }

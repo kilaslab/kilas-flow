@@ -218,6 +218,15 @@ type AgentRequest struct {
 	MaxRetries       int
 	// Stream requests incremental content where the model supports it.
 	Stream bool
+	// OutputSchema constrains the final answer when a structured output
+	// parser is attached. The loop offers it to the model as a synthetic
+	// tool named format_final_json_response whose arguments are the answer,
+	// rather than as prompt text the model might paraphrase away. Nil means
+	// no parser: the model's plain-text answer is the result, as before.
+	OutputSchema map[string]any
+	// OutputMaxRetries bounds how many responses that fail schema validation
+	// are retried before the run fails. Zero means the default.
+	OutputMaxRetries int
 }
 
 // AgentResult is one completed agent run.

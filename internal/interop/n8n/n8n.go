@@ -437,6 +437,18 @@ var mappings = []mapping{
 		n8nType: "@n8n/n8n-nodes-langchain.toolHttpRequest", kilasType: "kilasflow.httpTool", kilasVersion: workflow.V(1),
 		exportTypeVersion: 1.1, toKilas: httpToolToKilas, toN8N: httpToolToN8N,
 	},
+	{
+		// Versions 1 through 2.2: v1 is [1, 1.1, 1.2, 1.3] and v2 is
+		// [2, 2.1, 2.2], transcribed from the two versionDescriptions.
+		// 2.2 is the export pin because it is the newest version whose
+		// resourceMapper inputs this translator writes.
+		n8nType: "@n8n/n8n-nodes-langchain.toolWorkflow", kilasType: "kilasflow.workflowTool", kilasVersion: workflow.V(1),
+		exportTypeVersion: 2.2, toKilas: workflowToolToKilas, toN8N: workflowToolToN8N,
+	},
+	{
+		n8nType: "@n8n/n8n-nodes-langchain.outputParserStructured", kilasType: "kilasflow.outputParser", kilasVersion: workflow.V(1),
+		exportTypeVersion: 1.3, toKilas: outputParserToKilas, toN8N: outputParserToN8N,
+	},
 }
 
 // The WAHA pack's node types, named here so the mapping table and the pack
@@ -661,6 +673,12 @@ func Import(payload []byte, catalog workflow.Catalog) (ImportResult, error) {
 	}
 	connections, connectionIssues := importConnections(source.Connections, idByName, typeByID, versionByID, parametersByID, catalog)
 	unsupported = append(unsupported, connectionIssues...)
+	// A hasOutputParser flag whose parser survived as its own node with an
+	// ai_outputParser edge is answered by that edge: the converter reports
+	// the flag because it sees one node, but the workflow as a whole kept
+	// its parser. Leaving the blocking diagnostic in place would claim a
+	// wired-up agent returns unparsed text.
+	unsupported = dropResolvedParserFlags(unsupported, connections)
 	settings, settingIssues := importSettings(source.Settings)
 	unsupported = append(unsupported, settingIssues...)
 	unsupported = append(unsupported, documentIssues(source)...)
@@ -874,6 +892,30 @@ func importConnections(source Connections, idByName, typeByID map[string]string,
 		}
 	}
 	return connections, issues
+}
+
+// dropResolvedParserFlags removes a hasOutputParser diagnostic when the
+// parser it names survived the import as its own node with an ai_outputParser
+// edge onto the flagged node. The per-node converter reports the flag
+// because it sees one node; only the whole graph knows the parser made it.
+func dropResolvedParserFlags(issues []Unsupported, connections []workflow.Connection) []Unsupported {
+	wired := make(map[string]bool, len(connections))
+	for _, connection := range connections {
+		if connection.Kind == workflow.ConnectionOutputParser {
+			wired[connection.Target.NodeID] = true
+		}
+	}
+	if len(wired) == 0 {
+		return issues
+	}
+	kept := issues[:0]
+	for _, issue := range issues {
+		if issue.Field == "hasOutputParser" && wired[issue.NodeID] {
+			continue
+		}
+		kept = append(kept, issue)
+	}
+	return kept
 }
 
 // portDirection selects which side of a definition resolvePort reads.

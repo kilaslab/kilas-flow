@@ -5,6 +5,7 @@ import Archive from '@lucide/svelte/icons/archive';
 import Bot from '@lucide/svelte/icons/bot';
 import Box from '@lucide/svelte/icons/box';
 import CalendarClock from '@lucide/svelte/icons/calendar-clock';
+import Calculator from '@lucide/svelte/icons/calculator';
 import CircleHelp from '@lucide/svelte/icons/circle-help';
 import Repeat from '@lucide/svelte/icons/repeat';
 import Scissors from '@lucide/svelte/icons/scissors';
@@ -72,6 +73,7 @@ const GLYPHS: Record<string, Component> = {
 	bot: Bot,
 	box: Box,
 	'calendar-clock': CalendarClock,
+	calculator: Calculator,
 	brain: Sparkles,
 	clock: Clock,
 	code: Code,
