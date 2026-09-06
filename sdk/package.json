@@ -2,7 +2,7 @@
   "name": "@kilasflow/sdk",
   "version": "0.1.0",
   "description": "Host integration SDK for KilasFlow: workflow management, embedded editor sessions, and execution events.",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "type": "module",
   "packageManager": "pnpm@10.15.0",
   "files": [

@@ -75,17 +75,26 @@ only then is the token posted — to the editor's exact origin, never `'*'`.
 Every message received is checked against `event.origin` and against the frame
 it came from before its payload is read.
 
-## Types
-
-`src/generated/models.ts` is generated from the server's own OpenAPI document
-by `pnpm generate:types`, and `pnpm generate:types:check` fails if it has
-drifted. No endpoint shape is defined twice.
-
 ## Versioning
 
-`SDK_VERSION` follows semver for this package's surface. `API_VERSION` is the
-API it targets, versioned by its `/api/v1` path. A host can upgrade one without
-the other.
+`SDK_VERSION` (`sdk/src/version.ts`) follows semver for this package's
+surface: major on a breaking change, minor on additive surface, patch on
+fixes. `API_VERSION` is the API it targets, versioned by its `/api/v1` path,
+and moves only when a new `/api/vN` path ships. A host can upgrade one
+without the other.
+
+The two numbers in this package MUST agree: `SDK_VERSION` mirrors `version`
+in `package.json`, and `make sdk-version-check` (run in CI) fails the build
+when they differ. Which server build you are talking to is neither of these —
+it is `info.version` in the OpenAPI document (and the binary's `-version`
+flag). Pin that, not these two. Full contract:
+`docs/src/content/docs/reference/api-contract.md`.
+
+## Licence
+
+Apache-2.0, matching the repository root `LICENSE` — one licence for the
+whole project, with an explicit patent grant for hosts embedding this
+package.
 
 ## Example
 
