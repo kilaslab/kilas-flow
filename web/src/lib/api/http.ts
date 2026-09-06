@@ -96,6 +96,39 @@ export async function apiFetch<T>(url: string, options: ApiFetchOptions = {}): P
 	return { data: await response.json(), status: response.status, headers: response.headers } as T;
 }
 
+/**
+ * Downloads a non-JSON response as a Blob. `apiFetch` calls
+ * `response.json()` on every non-204 answer, so a `text/csv` download
+ * through it throws a parse error instead of yielding bytes — this helper
+ * exists for that one case. The embed token rides along exactly as in
+ * `apiFetch`, so an embedded editor downloads through the same identity.
+ */
+export interface ApiDownloadResult {
+	data: Blob;
+	status: number;
+	headers: Headers;
+}
+
+export async function apiDownload(url: string, headers?: HeadersInit): Promise<ApiDownloadResult> {
+	assertSameOriginPath(url);
+
+	const requestHeaders = new Headers(headers);
+	requestHeaders.set('Accept', requestHeaders.get('Accept') ?? 'text/csv');
+	const token = currentEmbedToken();
+	if (token && !requestHeaders.has('X-KilasFlow-Embed')) {
+		requestHeaders.set('X-KilasFlow-Embed', token);
+	}
+
+	const response = await fetch(url, { headers: requestHeaders });
+
+	if (!response.ok) {
+		const problem = await readProblem(response);
+		throw new ApiError(response.status, problem?.detail ?? problem?.title ?? response.statusText, problem);
+	}
+
+	return { data: await response.blob(), status: response.status, headers: response.headers };
+}
+
 function assertSameOriginPath(url: string): void {
 	if (!url.startsWith('/') || url.startsWith('//') || url.includes('\\')) {
 		throw new TypeError('KilasFlow API URLs must be same-origin paths');

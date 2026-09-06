@@ -49,6 +49,13 @@
 		type GridColumn
 	} from '$lib/datastore/columns';
 	import { formatTimestamp } from '$lib/workflow-editor/execution';
+	import {
+		downloadExport,
+		severityLabel,
+		summarizeReport,
+		uploadImport,
+		type CSVImportReport
+	} from '$lib/datastore/transfer';
 
 	const PAGE_SIZE = 20;
 
@@ -101,6 +108,12 @@
 	let confirmingRows = $state(false);
 	let removingRows = $state(false);
 	let transfer = $state<'import' | 'export' | null>(null);
+	let transferFile = $state<File | null>(null);
+	let transferBusy = $state(false);
+	let transferError = $state<string | null>(null);
+	let transferReport = $state<CSVImportReport | null>(null);
+	let includeSystem = $state(false);
+	let savedFilename = $state<string | null>(null);
 	// Rows drive the header box: when every row on the page is checked the
 	// header follows, and when one is cleared it follows that too. The other
 	// direction — header driving the rows — is a user gesture handled in
@@ -308,6 +321,53 @@
 		}
 	}
 
+	// The transfer dialog opens fresh every time: a stale report or filename
+	// beside a new file picks the wrong story to tell.
+	function openTransfer(mode: 'import' | 'export') {
+		transfer = mode;
+		transferFile = null;
+		transferBusy = false;
+		transferError = null;
+		transferReport = null;
+		includeSystem = false;
+		savedFilename = null;
+	}
+
+	async function runExport() {
+		transferBusy = true;
+		transferError = null;
+		savedFilename = null;
+		try {
+			const saved = await downloadExport(id, includeSystem);
+			savedFilename = saved.filename;
+		} catch (error) {
+			transferError = message(error);
+		} finally {
+			transferBusy = false;
+		}
+	}
+
+	async function runImport() {
+		if (!transferFile) {
+			transferError = 'Choose a CSV file first.';
+			return;
+		}
+		transferBusy = true;
+		transferError = null;
+		transferReport = null;
+		try {
+			const report = await uploadImport(id, transferFile);
+			transferReport = report;
+			// A refused file imports nothing, so only a clean report
+			// refreshes the grid underneath the dialog.
+			if (report.failed.length === 0) await load(id);
+		} catch (error) {
+			transferError = message(error);
+		} finally {
+			transferBusy = false;
+		}
+	}
+
 	// A header-box gesture: the rows follow the box the user just set, and
 	// the sync effect above leaves the box alone once they agree.
 	function toggleAll(checked: boolean) {
@@ -368,10 +428,10 @@
 				</p>
 			</div>
 			<div class="flex flex-wrap gap-2">
-				<Button variant="outline" size="sm" onclick={() => (transfer = 'import')}>
+				<Button variant="outline" size="sm" onclick={() => openTransfer('import')}>
 					<Upload aria-hidden="true" />Import
 				</Button>
-				<Button variant="outline" size="sm" onclick={() => (transfer = 'export')}>
+				<Button variant="outline" size="sm" onclick={() => openTransfer('export')}>
 					<Download aria-hidden="true" />Export
 				</Button>
 				<Button size="sm" onclick={openRowDialog}>
@@ -657,14 +717,92 @@
 			<Dialog.Header>
 				<Dialog.Title>{transfer === 'import' ? 'Import rows' : 'Export rows'}</Dialog.Title>
 				<Dialog.Description id="transfer-description">
-					CSV transfer lands in a later ticket — this button holds its place so
-					the toolbar does not move when it arrives. A future import will
-					report per-row issues with the same Blocking, Lossy and Dropped
-					severities the workflow import report uses.
+					{#if transfer === 'import'}
+						Upload a CSV file whose header names this datastore's columns. Every
+						record is validated before any row is written: a file with a failed
+						row imports nothing.
+					{:else}
+						Download this datastore's rows as a CSV file, in row order.
+					{/if}
 				</Dialog.Description>
 			</Dialog.Header>
+
+			{#if transfer === 'export'}
+				<label class="flex cursor-pointer items-start gap-2 text-xs leading-5">
+					<input type="checkbox" bind:checked={includeSystem} class="mt-1" />
+					<span>
+						Include system columns
+						<span class="block text-muted-foreground">
+							Adds <span class="font-mono">id</span>, <span class="font-mono">createdAt</span> and
+							<span class="font-mono">updatedAt</span> around the user columns. Leave it off for a
+							sheet to edit and re-import; turn it on for a backup.
+						</span>
+					</span>
+				</label>
+			{:else}
+				<div class="grid gap-2">
+					<label for="transfer-file" class="text-xs font-medium">CSV file</label>
+					<input
+						id="transfer-file"
+						type="file"
+						accept=".csv,text/csv"
+						class="text-xs"
+						onchange={(event) => {
+							transferFile = event.currentTarget.files?.[0] ?? null;
+							transferError = null;
+						}}
+					/>
+					<p class="text-xs leading-5 text-muted-foreground">
+						The header must name user columns only — a file carrying
+						<span class="font-mono">id</span>, <span class="font-mono">createdAt</span>,
+						<span class="font-mono">updatedAt</span> or <span class="font-mono">dryRunState</span> is refused.
+					</p>
+				</div>
+			{/if}
+
+			{#if transferError}
+				<p role="alert" class="text-xs leading-5 text-destructive">{transferError}</p>
+			{/if}
+			{#if savedFilename}
+				<p role="status" class="text-xs leading-5 text-muted-foreground">Saved {savedFilename}.</p>
+			{/if}
+			{#if transferReport}
+				{#if transferReport.failed.length === 0}
+					<p role="status" class="text-xs leading-5 text-muted-foreground">{summarizeReport(transferReport)}</p>
+				{:else}
+					<section aria-label="Blocking import diagnostics" class="grid gap-1.5">
+						<div class="flex flex-wrap items-baseline gap-x-2">
+							<h3 class="text-xs font-semibold">
+								Blocking <span class="font-normal text-muted-foreground">· {transferReport.failed.length}</span>
+							</h3>
+							<p class="w-full text-xs leading-5 text-muted-foreground">
+								No rows were imported. Fix the file and try again.
+							</p>
+						</div>
+						<ul class="grid gap-1.5">
+							{#each transferReport.failed as issue (`${issue.line}-${issue.column}`)}
+								<li class="flex flex-wrap items-baseline gap-x-2 rounded-lg border border-border px-3 py-2 text-xs leading-5">
+									<span class="inline-flex items-center rounded-full border border-destructive/30 bg-destructive/10 px-2 py-0.5 text-[0.6875rem] font-medium text-destructive">{severityLabel(issue.severity)}</span>
+									<span class="font-mono text-[0.6875rem] text-muted-foreground">Line {issue.line} · {issue.column}</span>
+									<span class="w-full text-muted-foreground">{issue.reason}</span>
+								</li>
+							{/each}
+						</ul>
+					</section>
+				{/if}
+			{/if}
+
 			<Dialog.Footer>
 				<Button type="button" variant="outline" onclick={() => (transfer = null)}>Close</Button>
+				{#if transfer === 'import'}
+					<Button type="button" onclick={() => void runImport()} disabled={transferBusy || !transferFile}>
+						{transferBusy ? 'Uploading…' : 'Upload'}
+					</Button>
+				{:else}
+					<Button type="button" onclick={() => void runExport()} disabled={transferBusy}>
+						{transferBusy ? 'Downloading…' : 'Download'}
+					</Button>
+				{/if}
 			</Dialog.Footer>
 		</Dialog.Content>
 	</Dialog.Root>

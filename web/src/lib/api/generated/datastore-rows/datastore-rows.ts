@@ -22,9 +22,11 @@ import type {
 } from '@tanstack/svelte-query';
 
 import type {
+  CSVImportReport,
   DeleteRowsInputBody,
   DeleteRowsOutputBody,
   ErrorModel,
+  ExportDatastoreRowsParams,
   GetDatastoreRow200,
   InsertDatastoreRow201,
   InsertRowInputBody,
@@ -486,6 +488,215 @@ export const createUpdateDatastoreRows = <TError = ErrorType<ErrorModel>,
         TContext
       > => {
       return createMutation(() => ({ ...getUpdateDatastoreRowsMutationOptions(options?.()) }), queryClient);
+    }
+    export type exportDatastoreRowsResponse200 = {
+  data: Blob
+  status: 200
+}
+
+export type exportDatastoreRowsResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type exportDatastoreRowsResponseSuccess = (exportDatastoreRowsResponse200) & {
+  headers: Headers;
+};
+export type exportDatastoreRowsResponseError = (exportDatastoreRowsResponseDefault) & {
+  headers: Headers;
+};
+
+export type exportDatastoreRowsResponse = (exportDatastoreRowsResponseSuccess | exportDatastoreRowsResponseError)
+
+export const getExportDatastoreRowsUrl = (id: string,
+    params?: ExportDatastoreRowsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/datastores/${id}/rows/export?${stringifiedParams}` : `/api/v1/datastores/${id}/rows/export`
+}
+
+/**
+ * Streams the datastore's rows as RFC 4180 CSV in id order, one header row plus one record per row.
+ * @summary Export rows as CSV
+ */
+export const exportDatastoreRows = async (id: string,
+    params?: ExportDatastoreRowsParams, options?: Parameters<typeof apiFetch>[1]): Promise<exportDatastoreRowsResponse> => {
+
+  return apiFetch<exportDatastoreRowsResponse>(getExportDatastoreRowsUrl(id,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getExportDatastoreRowsQueryKey = (id: string,
+    params?: ExportDatastoreRowsParams,) => {
+    return [
+    `/api/v1/datastores/${id}/rows/export`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getExportDatastoreRowsQueryOptions = <TData = Awaited<ReturnType<typeof exportDatastoreRows>>, TError = ErrorType<ErrorModel>>(id: string,
+    params?: ExportDatastoreRowsParams, options?: { query?:Partial<CreateQueryOptions<Awaited<ReturnType<typeof exportDatastoreRows>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getExportDatastoreRowsQueryKey(id,params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof exportDatastoreRows>>> = ({ signal }) => exportDatastoreRows(id,params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as CreateQueryOptions<Awaited<ReturnType<typeof exportDatastoreRows>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ExportDatastoreRowsQueryResult = NonNullable<Awaited<ReturnType<typeof exportDatastoreRows>>>
+export type ExportDatastoreRowsQueryError = ErrorType<ErrorModel>
+
+
+/**
+ * @summary Export rows as CSV
+ */
+
+export function createExportDatastoreRows<TData = Awaited<ReturnType<typeof exportDatastoreRows>>, TError = ErrorType<ErrorModel>>(
+ id: () =>  string,
+    params?: () =>  ExportDatastoreRowsParams, options?: () => { query?:Partial<CreateQueryOptions<Awaited<ReturnType<typeof exportDatastoreRows>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: () => QueryClient
+ ): CreateQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+
+
+  const query = createQuery(() => getExportDatastoreRowsQueryOptions(id(),
+    params?.(),options?.()), queryClient) as CreateQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return query
+}
+
+
+
+
+
+
+export type importDatastoreRowsResponse200 = {
+  data: CSVImportReport
+  status: 200
+}
+
+export type importDatastoreRowsResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type importDatastoreRowsResponseSuccess = (importDatastoreRowsResponse200) & {
+  headers: Headers;
+};
+export type importDatastoreRowsResponseError = (importDatastoreRowsResponseDefault) & {
+  headers: Headers;
+};
+
+export type importDatastoreRowsResponse = (importDatastoreRowsResponseSuccess | importDatastoreRowsResponseError)
+
+export const getImportDatastoreRowsUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/datastores/${id}/rows/import`
+}
+
+/**
+ * Validates every record before writing any row: a file with a failed row imports nothing and reports each failure with its line number.
+ * @summary Import rows from CSV
+ */
+export const importDatastoreRows = async (id: string,
+    importDatastoreRowsBody: Blob, options?: Parameters<typeof apiFetch>[1]): Promise<importDatastoreRowsResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Array.isArray(h)) return Object.fromEntries(h);
+    return h;
+  };
+return apiFetch<importDatastoreRowsResponse>(getImportDatastoreRowsUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'text/csv', ...getHeaders(options?.headers) },
+    body: importDatastoreRowsBody
+  }
+);}
+
+
+
+
+
+export const getImportDatastoreRowsMutationKey = () => ['importDatastoreRows'] as const;
+
+export const getImportDatastoreRowsMutationOptions = <TError = ErrorType<ErrorModel>,
+    TContext = unknown>(options?: { mutation?:CreateMutationOptions<Awaited<ReturnType<typeof importDatastoreRows>>, TError,ImportDatastoreRowsMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}
+): CreateMutationOptions<Awaited<ReturnType<typeof importDatastoreRows>>, TError,ImportDatastoreRowsMutationVariables, TContext> => {
+
+const mutationKey = getImportDatastoreRowsMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof importDatastoreRows>>, ImportDatastoreRowsMutationVariables> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  importDatastoreRows(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ImportDatastoreRowsMutationResult = NonNullable<Awaited<ReturnType<typeof importDatastoreRows>>>
+    export type ImportDatastoreRowsMutationBody = Blob
+    export type ImportDatastoreRowsMutationError = ErrorType<ErrorModel>
+    export type ImportDatastoreRowsMutationVariables = {id: string;data: Blob}
+
+    /**
+ * @summary Import rows from CSV
+ */
+export const createImportDatastoreRows = <TError = ErrorType<ErrorModel>,
+    TContext = unknown>(options?: () => { mutation?:CreateMutationOptions<Awaited<ReturnType<typeof importDatastoreRows>>, TError,ImportDatastoreRowsMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: () => QueryClient): CreateMutationResult<
+        Awaited<ReturnType<typeof importDatastoreRows>>,
+        TError,
+        ImportDatastoreRowsMutationVariables,
+        TContext
+      > => {
+      return createMutation(() => ({ ...getImportDatastoreRowsMutationOptions(options?.()) }), queryClient);
     }
     export type upsertDatastoreRowResponse200 = {
   data: UpsertRowOutputBody

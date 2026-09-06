@@ -195,7 +195,9 @@ type upsertRowOutput struct {
 	}
 }
 
-// Register wires the three datastore path families.
+// Register wires the three datastore path families plus the CSV transfer
+// pair, which lives in datastores_csv.go and is mounted here so every
+// datastore operation registers in one place.
 func (handler *Datastores) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "list-datastores", Method: http.MethodGet, Path: "/datastores",
@@ -257,6 +259,7 @@ func (handler *Datastores) Register(api huma.API) {
 		OperationID: "upsert-datastore-row", Method: http.MethodPost, Path: "/datastores/{id}/rows/upsert",
 		Summary: "Upsert rows", Description: "Updates every row matching the filter, or inserts one row when nothing matches. Read-then-write in no single transaction: two concurrent upserts against the same filter may both insert, so a counter that must not lose writes uses increment instead.", Tags: []string{"Datastore rows"},
 	}, handler.UpsertRow)
+	handler.registerDatastoreTransfer(api)
 }
 
 // List returns every datastore in the tenant.
