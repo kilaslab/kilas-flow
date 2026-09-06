@@ -8,6 +8,7 @@ name: CI
 #   sdk             the host SDK typechecks, tests and compiles
 #   smoke           the binary, the Vite proxy and the distroless image all serve
 #   smoke-postgres  the image against a Compose PostgreSQL (not on pull requests)
+#   e2e             Playwright against a real binary and SPA, one isolated instance per test
 #   image           the image still cross-builds for every published architecture
 #   docs            the documentation site builds and its internal links resolve
 #   docs-publish    that site to GitHub Pages (main only, and opt-in — see below)
@@ -185,6 +186,12 @@ jobs:
       - name: SDK types
         run: make generate-types-check
 
+      # The configuration reference and config.example.yaml are generated from
+      # the Config structs by scripts/config-reference.go, which reads source
+      # and defaults only — no binary, no Node, so this step needs just Go.
+      - name: Configuration reference
+        run: make generate-config-reference-check
+
   sdk:
     name: Host SDK
     runs-on: ubuntu-latest
@@ -203,6 +210,10 @@ jobs:
       - run: make sdk-check
       - run: make sdk-test
       - run: make sdk-build
+      # Manifest-versus-source agreement for SDK_VERSION and the Apache-2.0
+      # licence: pure file reads, no Go and no binary, so it lives here rather
+      # than in the drift job.
+      - run: make sdk-version-check
 
   smoke:
     name: Smoke
@@ -256,6 +267,38 @@ jobs:
           go-version-file: go.mod
 
       - run: make smoke-postgres
+
+  e2e:
+    name: End-to-end (Playwright)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - uses: ./.github/actions/js-toolchain
+
+      # The suite boots a real binary with the real SPA embedded, so this job
+      # needs the frontend installed: global-setup runs `make build-all`.
+      - name: Install web dependencies
+        working-directory: web
+        run: pnpm install --frozen-lockfile
+
+      - name: Install e2e dependencies
+        working-directory: e2e
+        run: pnpm install --frozen-lockfile
+
+      # Needs --with-deps: the runner has no browser libraries until apt
+      # installs them, and headless Chromium does not run without them.
+      - name: Install Playwright browsers
+        working-directory: e2e
+        run: pnpm exec playwright install --with-deps chromium
+
+      # Builds once in global-setup, then boots one isolated instance per
+      # test — the same command a laptop runs.
+      - run: make test-e2e
 
   image:
     name: Image (cross-build)

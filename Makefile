@@ -155,6 +155,17 @@ sdk-test: ## Run the host SDK test suite
 sdk-build: ## Build the host SDK into sdk/dist
 	cd $(SDK_DIR) && pnpm build
 
+# `SDK_VERSION` in sdk/src/version.ts mirrors `version` in sdk/package.json by
+# contract (see docs/src/content/docs/reference/api-contract.md), and the
+# manifest licence must stay Apache-2.0 to match the repository root LICENSE.
+# Both are one-line node assertions rather than a script file because there is
+# nothing to reuse: two reads, two comparisons, and a non-zero exit naming
+# the fix. The SDK_VERSION match is extracted with a plain regex on purpose —
+# importing the module would execute it, and this check must stay a read.
+.PHONY: sdk-version-check
+sdk-version-check: ## Fail if the SDK manifest disagrees with its version source
+	node -e 'const fs=require("node:fs");const m=JSON.parse(fs.readFileSync("sdk/package.json","utf8"));const src=fs.readFileSync("sdk/src/version.ts","utf8");const v=(src.match(/export const SDK_VERSION\s*=\s*["\x27]([^"\x27]+)/)||[])[1];let ok=true;if(m.version!==v){console.error("sdk/package.json version ("+m.version+") != SDK_VERSION ("+v+"); bump both together");ok=false}if(m.license!=="Apache-2.0"){console.error("sdk/package.json license ("+m.license+") must be Apache-2.0 to match the repository LICENSE");ok=false}process.exit(ok?0:1)'
+
 # The documentation site. Like the SDK targets above, these assume `pnpm install`
 # has already been run in the directory — `make setup` deliberately installs only
 # web/, because that is the one a contributor needs to run the product, and
@@ -211,6 +222,18 @@ generate-types: dist-placeholder ## Regenerate the SDK types from a freshly buil
 .PHONY: generate-types-check
 generate-types-check: dist-placeholder ## Fail if the committed SDK types are stale
 	cd $(SDK_DIR) && pnpm generate:types:check
+
+# The configuration reference and the example YAML are generated from the
+# Config structs, not written by hand. Unlike the two targets above this one
+# needs no binary and no placeholder: it reads source and defaults only, so a
+# struct change with no regenerated reference fails the check below.
+.PHONY: generate-config-reference
+generate-config-reference: ## Regenerate the configuration reference and config.example.yaml
+	$(GO) run ./scripts/config-reference.go
+
+.PHONY: generate-config-reference-check
+generate-config-reference-check: ## Fail if the generated configuration files are stale
+	$(GO) run ./scripts/config-reference.go --check
 
 .PHONY: test-cover
 test-cover: dist-placeholder ## Run Go tests with a coverage report
@@ -328,6 +351,13 @@ smoke-docker-published: ## Prove the published image by pulling it (VERSION must
 .PHONY: smoke-postgres
 smoke-postgres: ## Prove the Docker image against the temporary Compose PostgreSQL service
 	sh scripts/smoke-postgres.sh
+
+# The Playwright suite builds the binary and the SPA itself (global-setup runs
+# `make build-all`), so this target only needs the e2e dependencies installed
+# — plus web's, for the SPA build. CI installs both before calling it.
+.PHONY: test-e2e
+test-e2e: dist-placeholder ## Run the Playwright end-to-end suite against a real binary and SPA
+	cd e2e && pnpm test
 
 .PHONY: clean
 clean: ## Remove build artifacts
