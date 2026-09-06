@@ -1,0 +1,216 @@
+{
+  "artifact": "e2e/benchmark/bench-2026-09-06T07-47-10.json",
+  "tool": "e2e/benchmark/run.mjs (FEAT-8mymac)",
+  "environment": {
+    "date": "2026-09-06T07:47:10.382Z",
+    "machine": {
+      "uname": "Darwin 25.5.0 arm64",
+      "model": "Mac16,13",
+      "cpuCount": 10,
+      "memBytes": 25769803776
+    },
+    "kilasflow": {
+      "version": "1b76522-dirty",
+      "commit": "1793d0d213bb926b2b9f00f204b5fd416f62cfd3"
+    },
+    "node": "v24.16.0"
+  },
+  "method": {
+    "runs": 30,
+    "warmup": 5,
+    "isolation": "sequential, one workflow at a time, fresh workflows per benchmark, shared warm server",
+    "primary": "client-observed wall time (delivery/run-call → terminal execution record)",
+    "secondary": "server execution record startedAt→finishedAt",
+    "peakRss": "sampled after each run via ps(1), max kept; approximate, not traced",
+    "ollama": {
+      "baseUrl": "http://127.0.0.1:11434/v1",
+      "model": "gemma4:12b-mlx"
+    },
+    "n8nUrl": "http://localhost:5678"
+  },
+  "stubLatency": {
+    "n": 30,
+    "min": 0.2,
+    "p50": 0.3,
+    "p95": 1.33,
+    "max": 5.53,
+    "mean": 0.57,
+    "stddev": 0.95
+  },
+  "kilasflow": {
+    "status": "measured",
+    "results": [
+      {
+        "key": "webhook-set-respond",
+        "name": "Webhook → Set → Respond",
+        "status": "measured",
+        "summary": {
+          "n": 30,
+          "min": 27.96,
+          "p50": 32.07,
+          "p95": 33.76,
+          "max": 34.09,
+          "mean": 31.79,
+          "stddev": 1.44
+        },
+        "serverMs": {
+          "n": 30,
+          "min": 0,
+          "p50": 1,
+          "p95": 2,
+          "max": 2,
+          "mean": 1,
+          "stddev": 0.37
+        },
+        "peakRssKib": 53856,
+        "divergence": null
+      },
+      {
+        "key": "if-fanout",
+        "name": "IF branch fan-out",
+        "status": "measured",
+        "summary": {
+          "n": 30,
+          "min": 28.36,
+          "p50": 30.6,
+          "p95": 31.84,
+          "max": 32,
+          "mean": 30.64,
+          "stddev": 0.89
+        },
+        "serverMs": {
+          "n": 30,
+          "min": 1,
+          "p50": 1,
+          "p95": 3,
+          "max": 4,
+          "mean": 1.43,
+          "stddev": 0.72
+        },
+        "peakRssKib": 54896,
+        "divergence": "Trigger differs by side: KilasFlow times a manual run, n8n times a webhook delivery of the same downstream nodes. Delivery overhead is included on the n8n side only."
+      },
+      {
+        "key": "paginated-loop",
+        "name": "Paginated Split-equivalent loop (100 items, batch 10)",
+        "status": "measured",
+        "summary": {
+          "n": 30,
+          "min": 60.32,
+          "p50": 61.86,
+          "p95": 64.87,
+          "max": 66.24,
+          "mean": 62.28,
+          "stddev": 1.44
+        },
+        "serverMs": {
+          "n": 30,
+          "min": 38,
+          "p50": 39,
+          "p95": 42,
+          "max": 42,
+          "mean": 39.8,
+          "stddev": 1.3
+        },
+        "peakRssKib": 157632,
+        "divergence": "Seed language differs (KilasFlow code node vs n8n JS code node) but both emit 100 {n} items; the timed region is the batch loop, not the seed. Trigger differs as in if-fanout."
+      },
+      {
+        "key": "http-merge-shape",
+        "name": "HTTP → Merge → data-shaping",
+        "status": "measured",
+        "summary": {
+          "n": 30,
+          "min": 28.45,
+          "p50": 55.18,
+          "p95": 57.5,
+          "max": 57.61,
+          "mean": 48.63,
+          "stddev": 11.7
+        },
+        "serverMs": {
+          "n": 30,
+          "min": 27,
+          "p50": 28,
+          "p95": 29,
+          "max": 31,
+          "mean": 27.93,
+          "stddev": 0.85
+        },
+        "peakRssKib": 212976,
+        "divergence": "Both engines call the same loopback stub, so stub latency cancels out; it is still reported separately. Trigger differs as in if-fanout."
+      },
+      {
+        "key": "agent-tool-loop",
+        "name": "AI-agent tool-loop (local Ollama)",
+        "status": "measured",
+        "summary": {
+          "n": 30,
+          "min": 3995.45,
+          "p50": 18633.34,
+          "p95": 22062.38,
+          "max": 22108.94,
+          "mean": 16314.93,
+          "stddev": 6238.11
+        },
+        "serverMs": {
+          "n": 30,
+          "min": 3985,
+          "p50": 18617,
+          "p95": 22059,
+          "max": 22082,
+          "mean": 16294.87,
+          "stddev": 6238.68
+        },
+        "peakRssKib": 93680,
+        "divergence": "Model inventory differs: KilasFlow runs the pinned local Ollama model through the bench gateway; the n8n side needs the same model wired by the operator, otherwise the agent rows are not comparable and are marked as such."
+      }
+    ]
+  },
+  "n8n": {
+    "status": "skipped-no-creds",
+    "skipReason": "live n8n comparison skipped: N8N_EMAIL/N8N_PASSWORD are not set (N8N_URL is http://localhost:5678); provision with `export N8N_URL=\"http://localhost:5678\" N8N_EMAIL=\"operator@example.com\" N8N_PASSWORD=\"the-operator-password\"` and rerun to execute this half against the reference instance",
+    "versionProbe": {
+      "/healthz": {
+        "status": 200,
+        "body": "{\"status\":\"ok\"}"
+      },
+      "/rest/settings": {
+        "status": 200,
+        "body": "{\"data\":{\"settingsMode\":\"public\",\"defaultLocale\":\"en\",\"userManagement\":{\"authenticationMethod\":\"email\",\"showSetupOnFirstLoad\":false,\"smtpSetup\":false,\"passwordMinLength\":8},\"sso\":{\"saml\":{\"loginEnabled\":false},\"ldap\":{\"loginEnabled\":false,\"loginLabel\":\"\"},\"oidc\":{\"loginEnabled\":false,\"loginUrl\":\"htt"
+      }
+    },
+    "results": [
+      {
+        "key": "webhook-set-respond",
+        "name": "Webhook → Set → Respond",
+        "status": "skipped-no-creds",
+        "note": "live n8n comparison skipped: N8N_EMAIL/N8N_PASSWORD are not set (N8N_URL is http://localhost:5678); provision with `export N8N_URL=\"http://localhost:5678\" N8N_EMAIL=\"operator@example.com\" N8N_PASSWORD=\"the-operator-password\"` and rerun to execute this half against the reference instance"
+      },
+      {
+        "key": "if-fanout",
+        "name": "IF branch fan-out",
+        "status": "skipped-no-creds",
+        "note": "live n8n comparison skipped: N8N_EMAIL/N8N_PASSWORD are not set (N8N_URL is http://localhost:5678); provision with `export N8N_URL=\"http://localhost:5678\" N8N_EMAIL=\"operator@example.com\" N8N_PASSWORD=\"the-operator-password\"` and rerun to execute this half against the reference instance"
+      },
+      {
+        "key": "paginated-loop",
+        "name": "Paginated Split-equivalent loop (100 items, batch 10)",
+        "status": "skipped-no-creds",
+        "note": "live n8n comparison skipped: N8N_EMAIL/N8N_PASSWORD are not set (N8N_URL is http://localhost:5678); provision with `export N8N_URL=\"http://localhost:5678\" N8N_EMAIL=\"operator@example.com\" N8N_PASSWORD=\"the-operator-password\"` and rerun to execute this half against the reference instance"
+      },
+      {
+        "key": "http-merge-shape",
+        "name": "HTTP → Merge → data-shaping",
+        "status": "skipped-no-creds",
+        "note": "live n8n comparison skipped: N8N_EMAIL/N8N_PASSWORD are not set (N8N_URL is http://localhost:5678); provision with `export N8N_URL=\"http://localhost:5678\" N8N_EMAIL=\"operator@example.com\" N8N_PASSWORD=\"the-operator-password\"` and rerun to execute this half against the reference instance"
+      },
+      {
+        "key": "agent-tool-loop",
+        "name": "AI-agent tool-loop (local Ollama)",
+        "status": "skipped-no-creds",
+        "note": "live n8n comparison skipped: N8N_EMAIL/N8N_PASSWORD are not set (N8N_URL is http://localhost:5678); provision with `export N8N_URL=\"http://localhost:5678\" N8N_EMAIL=\"operator@example.com\" N8N_PASSWORD=\"the-operator-password\"` and rerun to execute this half against the reference instance"
+      }
+    ]
+  }
+}

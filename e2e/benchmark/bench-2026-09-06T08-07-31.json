@@ -1,0 +1,831 @@
+{
+  "artifact": "e2e/benchmark/bench-2026-09-06T08-07-31.json",
+  "tool": "e2e/benchmark/run.mjs (FEAT-8mymac)",
+  "environment": {
+    "date": "2026-09-06T08:07:31.485Z",
+    "machine": {
+      "uname": "Darwin 25.5.0 arm64",
+      "model": "Mac16,13",
+      "cpuCount": 10,
+      "memBytes": 25769803776
+    },
+    "kilasflow": {
+      "version": "1793d0d-dirty",
+      "commit": "e326c151afa987cb872cc927109314161bb729e6"
+    },
+    "node": "v24.16.0"
+  },
+  "method": {
+    "runs": 30,
+    "warmup": 5,
+    "isolation": "sequential, one workflow at a time, fresh workflows per benchmark, shared warm server",
+    "primary": "client-observed wall time (delivery/run-call → terminal execution record)",
+    "secondary": "server execution record startedAt→finishedAt",
+    "peakRss": "sampled after each run via ps(1), max kept; approximate, not traced",
+    "ollama": {
+      "baseUrl": "http://127.0.0.1:11434/v1",
+      "model": "gemma4:12b-mlx"
+    },
+    "n8nUrl": "http://localhost:5678"
+  },
+  "stubLatency": {
+    "n": 30,
+    "min": 0.13,
+    "p50": 0.18,
+    "p95": 0.69,
+    "max": 10.9,
+    "mean": 0.62,
+    "stddev": 1.91
+  },
+  "kilasflow": {
+    "status": "measured",
+    "results": [
+      {
+        "key": "webhook-set-respond",
+        "name": "Webhook → Set → Respond",
+        "status": "measured",
+        "runs": [
+          {
+            "clientMs": 29.783999999999992,
+            "serverMs": 1
+          },
+          {
+            "clientMs": 28.276834000000008,
+            "serverMs": 1
+          },
+          {
+            "clientMs": 29.64391599999999,
+            "serverMs": 0
+          },
+          {
+            "clientMs": 32.40666699999997,
+            "serverMs": 1
+          },
+          {
+            "clientMs": 29.347916000000055,
+            "serverMs": 1
+          },
+          {
+            "clientMs": 29.606042000000116,
+            "serverMs": 1
+          },
+          {
+            "clientMs": 29.610833000000184,
+            "serverMs": 1
+          },
+          {
+            "clientMs": 30.468999999999824,
+            "serverMs": 1
+          },
+          {
+            "clientMs": 31.552208000000064,
+            "serverMs": 2
+          },
+          {
+            "clientMs": 33.22608300000002,
+            "serverMs": 1
+          },
+          {
+            "clientMs": 31.887875000000122,
+            "serverMs": 2
+          },
+          {
+            "clientMs": 32.32345800000007,
+            "serverMs": 1
+          },
+          {
+            "clientMs": 31.20724999999993,
+            "serverMs": 1
+          },
+          {
+            "clientMs": 28.389000000000124,
+            "serverMs": 1
+          },
+          {
+            "clientMs": 32.11404199999993,
+            "serverMs": 1
+          },
+          {
+            "clientMs": 32.499708000000055,
+            "serverMs": 1
+          },
+          {
+            "clientMs": 29.290042000000085,
+            "serverMs": 1
+          },
+          {
+            "clientMs": 31.684458000000177,
+            "serverMs": 3
+          },
+          {
+            "clientMs": 31.735832999999957,
+            "serverMs": 1
+          },
+          {
+            "clientMs": 32.34741699999995,
+            "serverMs": 1
+          },
+          {
+            "clientMs": 29.709542000000056,
+            "serverMs": 1
+          },
+          {
+            "clientMs": 32.762208999999984,
+            "serverMs": 1
+          },
+          {
+            "clientMs": 30.428208999999924,
+            "serverMs": 0
+          },
+          {
+            "clientMs": 32.10304199999996,
+            "serverMs": 1
+          },
+          {
+            "clientMs": 32.40741600000001,
+            "serverMs": 0
+          },
+          {
+            "clientMs": 30.337041999999883,
+            "serverMs": 1
+          },
+          {
+            "clientMs": 31.117749999999887,
+            "serverMs": 2
+          },
+          {
+            "clientMs": 29.43754100000001,
+            "serverMs": 1
+          },
+          {
+            "clientMs": 29.186583000000155,
+            "serverMs": 1
+          },
+          {
+            "clientMs": 30.184582999999975,
+            "serverMs": 1
+          }
+        ],
+        "summary": {
+          "n": 30,
+          "min": 28.28,
+          "p50": 30.47,
+          "p95": 32.76,
+          "max": 33.23,
+          "mean": 30.84,
+          "stddev": 1.39
+        },
+        "serverMs": {
+          "n": 30,
+          "min": 0,
+          "p50": 1,
+          "p95": 2,
+          "max": 3,
+          "mean": 1.07,
+          "stddev": 0.57
+        },
+        "peakRssKib": 52864,
+        "retriedRuns": 0,
+        "divergence": null
+      },
+      {
+        "key": "if-fanout",
+        "name": "IF branch fan-out",
+        "status": "measured",
+        "runs": [
+          {
+            "clientMs": 27.996208999999908,
+            "serverMs": 2
+          },
+          {
+            "clientMs": 29.0903330000001,
+            "serverMs": 1
+          },
+          {
+            "clientMs": 29.36870799999997,
+            "serverMs": 2
+          },
+          {
+            "clientMs": 30.904790999999932,
+            "serverMs": 3
+          },
+          {
+            "clientMs": 27.07833299999993,
+            "serverMs": 1
+          },
+          {
+            "clientMs": 30.118541000000278,
+            "serverMs": 2
+          },
+          {
+            "clientMs": 27.150583000000097,
+            "serverMs": 2
+          },
+          {
+            "clientMs": 29.13324999999986,
+            "serverMs": 1
+          },
+          {
+            "clientMs": 28.8701659999997,
+            "serverMs": 2
+          },
+          {
+            "clientMs": 28.855249999999614,
+            "serverMs": 1
+          },
+          {
+            "clientMs": 28.743083000000297,
+            "serverMs": 1
+          },
+          {
+            "clientMs": 28.65820900000017,
+            "serverMs": 2
+          },
+          {
+            "clientMs": 28.9543749999998,
+            "serverMs": 1
+          },
+          {
+            "clientMs": 29.01924999999983,
+            "serverMs": 2
+          },
+          {
+            "clientMs": 28.595749999999953,
+            "serverMs": 1
+          },
+          {
+            "clientMs": 27.726542000000336,
+            "serverMs": 2
+          },
+          {
+            "clientMs": 26.89350000000013,
+            "serverMs": 2
+          },
+          {
+            "clientMs": 29.06533300000001,
+            "serverMs": 2
+          },
+          {
+            "clientMs": 28.1452919999997,
+            "serverMs": 1
+          },
+          {
+            "clientMs": 27.414624999999887,
+            "serverMs": 1
+          },
+          {
+            "clientMs": 29.199750000000222,
+            "serverMs": 1
+          },
+          {
+            "clientMs": 29.23729100000037,
+            "serverMs": 1
+          },
+          {
+            "clientMs": 28.175959000000148,
+            "serverMs": 2
+          },
+          {
+            "clientMs": 28.98083299999962,
+            "serverMs": 1
+          },
+          {
+            "clientMs": 30.22812500000009,
+            "serverMs": 3
+          },
+          {
+            "clientMs": 28.975792000000183,
+            "serverMs": 1
+          },
+          {
+            "clientMs": 28.905874999999924,
+            "serverMs": 1
+          },
+          {
+            "clientMs": 29.033790999999837,
+            "serverMs": 2
+          },
+          {
+            "clientMs": 28.65883299999996,
+            "serverMs": 1
+          },
+          {
+            "clientMs": 28.839916999999787,
+            "serverMs": 1
+          }
+        ],
+        "summary": {
+          "n": 30,
+          "min": 26.89,
+          "p50": 28.87,
+          "p95": 30.23,
+          "max": 30.9,
+          "mean": 28.73,
+          "stddev": 0.88
+        },
+        "serverMs": {
+          "n": 30,
+          "min": 1,
+          "p50": 1,
+          "p95": 3,
+          "max": 3,
+          "mean": 1.53,
+          "stddev": 0.62
+        },
+        "peakRssKib": 54496,
+        "retriedRuns": 0,
+        "divergence": "Trigger differs by side: KilasFlow times a manual run, n8n times a webhook delivery of the same downstream nodes. Delivery overhead is included on the n8n side only."
+      },
+      {
+        "key": "paginated-loop",
+        "name": "Paginated Split-equivalent loop (100 items, batch 10)",
+        "status": "measured",
+        "runs": [
+          {
+            "clientMs": 63.563083000000006,
+            "serverMs": 42
+          },
+          {
+            "clientMs": 63.21387500000037,
+            "serverMs": 45
+          },
+          {
+            "clientMs": 61.43195800000012,
+            "serverMs": 43
+          },
+          {
+            "clientMs": 62.09599999999955,
+            "serverMs": 41
+          },
+          {
+            "clientMs": 62.065584000000854,
+            "serverMs": 41
+          },
+          {
+            "clientMs": 63.42641700000058,
+            "serverMs": 41
+          },
+          {
+            "clientMs": 63.03491600000052,
+            "serverMs": 42
+          },
+          {
+            "clientMs": 62.58983400000034,
+            "serverMs": 41
+          },
+          {
+            "clientMs": 61.26104200000009,
+            "serverMs": 41
+          },
+          {
+            "clientMs": 63.73712500000056,
+            "serverMs": 41
+          },
+          {
+            "clientMs": 63.517791999999645,
+            "serverMs": 43
+          },
+          {
+            "clientMs": 64.3427499999998,
+            "serverMs": 41
+          },
+          {
+            "clientMs": 63.04249999999956,
+            "serverMs": 42
+          },
+          {
+            "clientMs": 62.574208,
+            "serverMs": 41
+          },
+          {
+            "clientMs": 62.35362499999974,
+            "serverMs": 42
+          },
+          {
+            "clientMs": 64.26733400000012,
+            "serverMs": 43
+          },
+          {
+            "clientMs": 63.068082999999206,
+            "serverMs": 42
+          },
+          {
+            "clientMs": 63.36699999999928,
+            "serverMs": 41
+          },
+          {
+            "clientMs": 61.86766700000044,
+            "serverMs": 40
+          },
+          {
+            "clientMs": 62.49741699999959,
+            "serverMs": 46
+          },
+          {
+            "clientMs": 62.24724999999944,
+            "serverMs": 45
+          },
+          {
+            "clientMs": 63.32479200000034,
+            "serverMs": 41
+          },
+          {
+            "clientMs": 61.055750000000444,
+            "serverMs": 44
+          },
+          {
+            "clientMs": 64.12199999999939,
+            "serverMs": 44
+          },
+          {
+            "clientMs": 62.48441600000024,
+            "serverMs": 41
+          },
+          {
+            "clientMs": 64.44812499999989,
+            "serverMs": 42
+          },
+          {
+            "clientMs": 64.21750000000065,
+            "serverMs": 41
+          },
+          {
+            "clientMs": 60.853917000000365,
+            "serverMs": 42
+          },
+          {
+            "clientMs": 64.5074169999998,
+            "serverMs": 44
+          },
+          {
+            "clientMs": 63.457791999999245,
+            "serverMs": 42
+          }
+        ],
+        "summary": {
+          "n": 30,
+          "min": 60.85,
+          "p50": 63.04,
+          "p95": 64.45,
+          "max": 64.51,
+          "mean": 62.93,
+          "stddev": 1.01
+        },
+        "serverMs": {
+          "n": 30,
+          "min": 40,
+          "p50": 42,
+          "p95": 45,
+          "max": 46,
+          "mean": 42.17,
+          "stddev": 1.46
+        },
+        "peakRssKib": 148848,
+        "retriedRuns": 0,
+        "divergence": "Seed language differs (KilasFlow code node vs n8n JS code node) but both emit 100 {n} items; the timed region is the batch loop, not the seed. Trigger differs as in if-fanout."
+      },
+      {
+        "key": "http-merge-shape",
+        "name": "HTTP → Merge → data-shaping",
+        "status": "measured",
+        "runs": [
+          {
+            "clientMs": 55.22400000000016,
+            "serverMs": 32
+          },
+          {
+            "clientMs": 56.44854200000009,
+            "serverMs": 31
+          },
+          {
+            "clientMs": 56.765625,
+            "serverMs": 34
+          },
+          {
+            "clientMs": 58.15112500000032,
+            "serverMs": 31
+          },
+          {
+            "clientMs": 57.89075000000048,
+            "serverMs": 32
+          },
+          {
+            "clientMs": 55.88704199999938,
+            "serverMs": 30
+          },
+          {
+            "clientMs": 55.459499999999935,
+            "serverMs": 28
+          },
+          {
+            "clientMs": 55.66941600000064,
+            "serverMs": 28
+          },
+          {
+            "clientMs": 57.17662500000006,
+            "serverMs": 28
+          },
+          {
+            "clientMs": 56.07820900000024,
+            "serverMs": 29
+          },
+          {
+            "clientMs": 57.13383299999987,
+            "serverMs": 30
+          },
+          {
+            "clientMs": 55.269874999999956,
+            "serverMs": 30
+          },
+          {
+            "clientMs": 56.32074999999986,
+            "serverMs": 30
+          },
+          {
+            "clientMs": 54.241291000000274,
+            "serverMs": 29
+          },
+          {
+            "clientMs": 56.80291600000055,
+            "serverMs": 29
+          },
+          {
+            "clientMs": 55.1591669999998,
+            "serverMs": 28
+          },
+          {
+            "clientMs": 52.995750000000044,
+            "serverMs": 33
+          },
+          {
+            "clientMs": 55.54362499999843,
+            "serverMs": 28
+          },
+          {
+            "clientMs": 53.27900000000045,
+            "serverMs": 30
+          },
+          {
+            "clientMs": 57.59895900000083,
+            "serverMs": 30
+          },
+          {
+            "clientMs": 55.890166000001045,
+            "serverMs": 29
+          },
+          {
+            "clientMs": 29.54662499999904,
+            "serverMs": 28
+          },
+          {
+            "clientMs": 55.03504099999918,
+            "serverMs": 29
+          },
+          {
+            "clientMs": 54.789709000000585,
+            "serverMs": 28
+          },
+          {
+            "clientMs": 55.607874999999694,
+            "serverMs": 29
+          },
+          {
+            "clientMs": 56.012541000000056,
+            "serverMs": 29
+          },
+          {
+            "clientMs": 53.58458400000018,
+            "serverMs": 30
+          },
+          {
+            "clientMs": 55.86712500000067,
+            "serverMs": 28
+          },
+          {
+            "clientMs": 56.008834000000206,
+            "serverMs": 28
+          },
+          {
+            "clientMs": 56.38483400000041,
+            "serverMs": 28
+          }
+        ],
+        "summary": {
+          "n": 30,
+          "min": 29.55,
+          "p50": 55.87,
+          "p95": 57.89,
+          "max": 58.15,
+          "mean": 54.93,
+          "stddev": 4.87
+        },
+        "serverMs": {
+          "n": 30,
+          "min": 28,
+          "p50": 29,
+          "p95": 33,
+          "max": 34,
+          "mean": 29.53,
+          "stddev": 1.59
+        },
+        "peakRssKib": 225040,
+        "retriedRuns": 0,
+        "divergence": "Both engines call the same loopback stub, so stub latency cancels out; it is still reported separately. Trigger differs as in if-fanout."
+      },
+      {
+        "key": "agent-tool-loop",
+        "name": "AI-agent tool-loop (local Ollama)",
+        "status": "measured",
+        "runs": [
+          {
+            "clientMs": 7555.526208000003,
+            "serverMs": 7534
+          },
+          {
+            "clientMs": 7474.780958000003,
+            "serverMs": 7459
+          },
+          {
+            "clientMs": 6967.187665999998,
+            "serverMs": 6960
+          },
+          {
+            "clientMs": 8097.624540999997,
+            "serverMs": 8081
+          },
+          {
+            "clientMs": 7138.993666999988,
+            "serverMs": 7111
+          },
+          {
+            "clientMs": 7041.289875000002,
+            "serverMs": 7013
+          },
+          {
+            "clientMs": 29427.829459,
+            "serverMs": 29416
+          },
+          {
+            "clientMs": 25288.036292000004,
+            "serverMs": 25265
+          },
+          {
+            "clientMs": 25560.355125000002,
+            "serverMs": 25543
+          },
+          {
+            "clientMs": 26025.06366700001,
+            "serverMs": 26005
+          },
+          {
+            "clientMs": 25038.200500000006,
+            "serverMs": 25004
+          },
+          {
+            "clientMs": 24894.240082999982,
+            "serverMs": 24862
+          },
+          {
+            "clientMs": 27476.55679099998,
+            "serverMs": 27458
+          },
+          {
+            "clientMs": 23827.069625000004,
+            "serverMs": 23804
+          },
+          {
+            "clientMs": 23786.00345800002,
+            "serverMs": 23771
+          },
+          {
+            "clientMs": 23770.65745900001,
+            "serverMs": 23744
+          },
+          {
+            "clientMs": 25024.794417000026,
+            "serverMs": 25002
+          },
+          {
+            "clientMs": 24048.063958000042,
+            "serverMs": 24043
+          },
+          {
+            "clientMs": 24163.163332999975,
+            "serverMs": 24155
+          },
+          {
+            "clientMs": 23548.614459000004,
+            "serverMs": 23531
+          },
+          {
+            "clientMs": 23676.008417000005,
+            "serverMs": 23639
+          },
+          {
+            "clientMs": 23597.660083999974,
+            "serverMs": 23571
+          },
+          {
+            "clientMs": 24642.17291699996,
+            "serverMs": 24627
+          },
+          {
+            "clientMs": 23831.859917000053,
+            "serverMs": 23812
+          },
+          {
+            "clientMs": 24513.201583999908,
+            "serverMs": 24496
+          },
+          {
+            "clientMs": 24032.863165999996,
+            "serverMs": 24018
+          },
+          {
+            "clientMs": 24326.24125000008,
+            "serverMs": 24322
+          },
+          {
+            "clientMs": 23868.876958000008,
+            "serverMs": 23847
+          },
+          {
+            "clientMs": 23943.44745899993,
+            "serverMs": 23938
+          },
+          {
+            "clientMs": 23793.194916000008,
+            "serverMs": 23783
+          }
+        ],
+        "summary": {
+          "n": 30,
+          "min": 6967.19,
+          "p50": 23868.88,
+          "p95": 27476.56,
+          "max": 29427.83,
+          "mean": 21212.65,
+          "stddev": 7022.56
+        },
+        "serverMs": {
+          "n": 30,
+          "min": 6960,
+          "p50": 23847,
+          "p95": 27458,
+          "max": 29416,
+          "mean": 21193.8,
+          "stddev": 7023.01
+        },
+        "peakRssKib": 93440,
+        "retriedRuns": 0,
+        "divergence": "Model inventory differs: KilasFlow runs the pinned local Ollama model through the bench gateway; the n8n side needs the same model wired by the operator, otherwise the agent rows are not comparable and are marked as such."
+      }
+    ]
+  },
+  "n8n": {
+    "status": "skipped-no-creds",
+    "skipReason": "live n8n comparison skipped: N8N_EMAIL/N8N_PASSWORD are not set (N8N_URL is http://localhost:5678); provision with `export N8N_URL=\"http://localhost:5678\" N8N_EMAIL=\"operator@example.com\" N8N_PASSWORD=\"the-operator-password\"` and rerun to execute this half against the reference instance",
+    "versionProbe": {
+      "/healthz": {
+        "status": 200,
+        "body": "{\"status\":\"ok\"}"
+      },
+      "/rest/settings": {
+        "status": 200,
+        "body": "{\"data\":{\"settingsMode\":\"public\",\"defaultLocale\":\"en\",\"userManagement\":{\"authenticationMethod\":\"email\",\"showSetupOnFirstLoad\":false,\"smtpSetup\":false,\"passwordMinLength\":8},\"sso\":{\"saml\":{\"loginEnabled\":false},\"ldap\":{\"loginEnabled\":false,\"loginLabel\":\"\"},\"oidc\":{\"loginEnabled\":false,\"loginUrl\":\"htt"
+      }
+    },
+    "results": [
+      {
+        "key": "webhook-set-respond",
+        "name": "Webhook → Set → Respond",
+        "status": "skipped-no-creds",
+        "note": "live n8n comparison skipped: N8N_EMAIL/N8N_PASSWORD are not set (N8N_URL is http://localhost:5678); provision with `export N8N_URL=\"http://localhost:5678\" N8N_EMAIL=\"operator@example.com\" N8N_PASSWORD=\"the-operator-password\"` and rerun to execute this half against the reference instance"
+      },
+      {
+        "key": "if-fanout",
+        "name": "IF branch fan-out",
+        "status": "skipped-no-creds",
+        "note": "live n8n comparison skipped: N8N_EMAIL/N8N_PASSWORD are not set (N8N_URL is http://localhost:5678); provision with `export N8N_URL=\"http://localhost:5678\" N8N_EMAIL=\"operator@example.com\" N8N_PASSWORD=\"the-operator-password\"` and rerun to execute this half against the reference instance"
+      },
+      {
+        "key": "paginated-loop",
+        "name": "Paginated Split-equivalent loop (100 items, batch 10)",
+        "status": "skipped-no-creds",
+        "note": "live n8n comparison skipped: N8N_EMAIL/N8N_PASSWORD are not set (N8N_URL is http://localhost:5678); provision with `export N8N_URL=\"http://localhost:5678\" N8N_EMAIL=\"operator@example.com\" N8N_PASSWORD=\"the-operator-password\"` and rerun to execute this half against the reference instance"
+      },
+      {
+        "key": "http-merge-shape",
+        "name": "HTTP → Merge → data-shaping",
+        "status": "skipped-no-creds",
+        "note": "live n8n comparison skipped: N8N_EMAIL/N8N_PASSWORD are not set (N8N_URL is http://localhost:5678); provision with `export N8N_URL=\"http://localhost:5678\" N8N_EMAIL=\"operator@example.com\" N8N_PASSWORD=\"the-operator-password\"` and rerun to execute this half against the reference instance"
+      },
+      {
+        "key": "agent-tool-loop",
+        "name": "AI-agent tool-loop (local Ollama)",
+        "status": "skipped-no-creds",
+        "note": "live n8n comparison skipped: N8N_EMAIL/N8N_PASSWORD are not set (N8N_URL is http://localhost:5678); provision with `export N8N_URL=\"http://localhost:5678\" N8N_EMAIL=\"operator@example.com\" N8N_PASSWORD=\"the-operator-password\"` and rerun to execute this half against the reference instance"
+      }
+    ]
+  }
+}

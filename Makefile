@@ -373,6 +373,14 @@ smoke-postgres: ## Prove the Docker image against the temporary Compose PostgreS
 test-e2e: dist-placeholder ## Run the Playwright end-to-end suite against a real binary and SPA
 	cd e2e && pnpm test
 
+# On-demand only: single-machine timings with third-party-adjacent variance
+# make it a bad merge gate and a good investigation tool. FEAT-8mymac.
+# Without N8N_EMAIL/N8N_PASSWORD the n8n half records an honest skip and the
+# KilasFlow half still runs (preliminary, never a comparison).
+.PHONY: bench-compare
+bench-compare: build ## Run the KilasFlow-vs-n8n runtime benchmark (30 runs/workflow)
+	node e2e/benchmark/run.mjs
+
 .PHONY: clean
 clean: ## Remove build artifacts
 	rm -rf $(BIN_DIR) .tmp coverage.out
