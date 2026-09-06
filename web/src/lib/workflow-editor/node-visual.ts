@@ -16,6 +16,7 @@ import CornerDownLeft from '@lucide/svelte/icons/corner-down-left';
 import Database from '@lucide/svelte/icons/database';
 import Filter from '@lucide/svelte/icons/filter';
 import Globe from '@lucide/svelte/icons/globe';
+import Link from '@lucide/svelte/icons/link';
 import Merge from '@lucide/svelte/icons/merge';
 import MessageCircle from '@lucide/svelte/icons/message-circle';
 import MousePointerClick from '@lucide/svelte/icons/mouse-pointer-click';
@@ -80,6 +81,7 @@ const GLYPHS: Record<string, Component> = {
 	filter: Filter,
 	'git-merge': Merge,
 	globe: Globe,
+	link: Link,
 	'message-circle': MessageCircle,
 	'memory-stick': Archive,
 	'mouse-pointer-click': MousePointerClick,

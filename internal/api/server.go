@@ -97,6 +97,10 @@ type Deps struct {
 	// SQLite credential naming KilasFlow's own database is refused by the test
 	// endpoint too rather than only at run time.
 	DatabaseGuard sqlnode.Guard
+	// SessionMemory is the agent conversation store. Deleting a workflow
+	// drops its sessions through it. Nil leaves deletion removing only the
+	// workflow, with conversations ageing out under retention instead.
+	SessionMemory handlers.SessionForgetter
 	Version       string
 }
 

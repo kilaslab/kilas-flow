@@ -39,6 +39,17 @@ type Workflows struct {
 	triggers TriggerCoordinator
 	tenants  TenantResolver
 	waker    ExecutionWaker
+	// sessions drops a workflow's retained agent conversations on delete.
+	// Optional: without it deletion still removes the workflow, and the
+	// conversations age out under retention instead.
+	sessions SessionForgetter
+}
+
+// SessionForgetter drops a workflow's retained agent conversations. It is a
+// one-method interface so the handler never depends on the memory store
+// itself, only on the deletion it needs.
+type SessionForgetter interface {
+	ForgetWorkflow(tenantID, workflowID string)
 }
 
 // ExecutionWaker lets the lifecycle API notify idle runtime workers after it
@@ -501,8 +512,16 @@ func (handler *Workflows) Delete(ctx context.Context, input *workflowPathInput) 
 	if err := handler.available(false); err != nil {
 		return nil, err
 	}
-	if err := handler.workflows.Delete(ctx, handler.tenant(ctx), input.ID); err != nil {
+	tenant := handler.tenant(ctx)
+	if err := handler.workflows.Delete(ctx, tenant, input.ID); err != nil {
 		return nil, handler.problem(err)
+	}
+	// The conversations die with the workflow: a deleted workflow's sessions
+	// would otherwise linger until retention aged them out, addressable by
+	// nothing. Forgetting is best-effort after the commit — the store is a
+	// working buffer, and a failed drop must not fail a completed delete.
+	if handler.sessions != nil {
+		handler.sessions.ForgetWorkflow(tenant.ID, input.ID)
 	}
 	return &deletedWorkflowOutput{Status: http.StatusNoContent}, nil
 }
@@ -746,6 +765,13 @@ func executionResource(record execution.Record) ExecutionResource {
 type TriggerCoordinator interface {
 	Activated(ctx context.Context, tenantID, workflowID string, declared map[string]string) ([]webhook.Notice, error)
 	Deactivated(ctx context.Context, tenantID, workflowID string, declared map[string]string)
+}
+
+// WithSessionMemory attaches the agent conversation store, so deleting a
+// workflow also drops its sessions.
+func (handler *Workflows) WithSessionMemory(sessions SessionForgetter) *Workflows {
+	handler.sessions = sessions
+	return handler
 }
 
 // WithTriggers attaches the lifecycle coordinator.
