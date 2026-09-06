@@ -1,6 +1,8 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { appendFile, mkdtemp, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { createServer, type Server } from 'node:http';
+import { once } from 'node:events';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -94,16 +96,162 @@ export async function tamperManifest(packDir: string): Promise<void> {
 	await appendFile(join(packDir, 'pack.json'), '\n');
 }
 
-export async function startPackServer(stub: StubServer, packsDir: string): Promise<E2EServer> {
+export async function startPackServerWithEndpoint(stubEndpoint: string, packsDir: string): Promise<E2EServer> {
 	const previous = process.env[PACKS_ENV_KEY];
 	process.env[PACKS_ENV_KEY] = packsDir;
 	try {
-		return await startServer({ stubEndpoint: `127.0.0.1:${stub.port}` });
+		return await startServer({ stubEndpoint });
 	} finally {
 		if (previous === undefined) delete process.env[PACKS_ENV_KEY];
 		else process.env[PACKS_ENV_KEY] = previous;
 	}
 }
+
+export async function startPackServer(stub: StubServer, packsDir: string): Promise<E2EServer> {
+	return startPackServerWithEndpoint(`127.0.0.1:${stub.port}`, packsDir);
+}
+
+// A loopback observer that records request headers as well as method, path
+// and body. The shared stub records no headers, so a test proving a pack
+// node authenticated its call (X-Api-Key placement) points the credential at
+// one of these instead and boots its pack server against the observer's
+// endpoint. One exact host:port, so the outbound guard stays on for
+// everything else and allow_private_networks is never set.
+export interface ObservedRequest {
+	method: string;
+	path: string;
+	headers: Record<string, string | string[] | undefined>;
+	body: string;
+}
+
+export interface HeaderObserver {
+	port: number;
+	origin: string;
+	requests: ObservedRequest[];
+	close: () => Promise<void>;
+}
+
+export async function startHeaderObserver(): Promise<HeaderObserver> {
+	const requests: ObservedRequest[] = [];
+	const server: Server = createServer((request, response) => {
+		const chunks: Buffer[] = [];
+		request.on('data', (chunk: Buffer) => chunks.push(chunk));
+		request.on('end', () => {
+			const url = new URL(request.url ?? '/', 'http://127.0.0.1');
+			requests.push({
+				method: request.method ?? 'GET',
+				path: url.pathname,
+				headers: { ...request.headers },
+				body: Buffer.concat(chunks).toString('utf-8')
+			});
+			response.writeHead(200, { 'content-type': 'application/json' });
+			response.end(JSON.stringify({ ok: true, method: request.method, path: url.pathname }));
+		});
+	});
+	server.listen(0, '127.0.0.1');
+	await once(server, 'listening');
+	const address = server.address();
+	if (!address || typeof address === 'string') throw new Error('Unable to start the header observer');
+	const port = address.port;
+	let closed = false;
+	return {
+		port,
+		origin: `http://127.0.0.1:${port}`,
+		requests,
+		close: async () => {
+			if (closed) return;
+			closed = true;
+			server.close();
+			await once(server, 'close').catch(() => undefined);
+		}
+	};
+}
+
+// Writes a purpose-built minimal trigger pack: two events plus a catch-all,
+// an HMAC-free webhook binding, and a declarative lifecycle that registers
+// the minted URL with the service on activation and removes it on
+// deactivation. Modelled on packs/waha/pack-trigger-202409.json at the
+// smallest size that still exercises the path — and under its own type, so
+// the disk-loaded install never collides with the embedded WAHA packs the
+// server always registers. The caller seals the directory with
+// `nodepackgen pack`, which refuses to seal it when it does not validate.
+export const TRIGGER_PACK_TYPE = 'pack.e2ealert';
+export const TRIGGER_PACK_VERSION = 1;
+
+export async function scaffoldTriggerPack(packsDir: string, name: string, type: string): Promise<string> {
+	const dir = join(packsDir, name);
+	await mkdir(dir, { recursive: true });
+	const manifest = {
+		type,
+		version: 1,
+		displayName: 'E2E Alert Trigger',
+		description: 'Starts a workflow when the stub service delivers an event.',
+		category: 'Triggers',
+		icon: 'builtin:message-circle',
+		subtitle: '{{ $parameter.session }}',
+		credentialType: 'wahaApi',
+		requestDefaults: {},
+		trigger: {
+			events: ['message', 'session.status'],
+			catchAll: 'other',
+			eventPath: 'event',
+			shape: 'bodyAsItem',
+			webhook: { name: 'default', pathParameter: 'path', method: 'POST' },
+			lifecycle: {
+				id: 'e2e.alert.webhook',
+				enabledParameter: 'autoRegister',
+				set: {
+					method: 'PUT',
+					url: '{{ .baseUrl }}/api/subscriptions/{{ .Parameter.session }}',
+					headers: { 'Content-Type': 'application/json' },
+					body: '{"url":"{{ .PublicURL }}"}',
+					credentialType: 'wahaApi'
+				},
+				remove: {
+					method: 'DELETE',
+					url: '{{ .baseUrl }}/api/subscriptions/{{ .Parameter.session }}',
+					credentialType: 'wahaApi'
+				}
+			},
+			notice: 'The stub service is not configured to deliver here yet. Add {{ url }} to its subscription, or turn on auto-register and activate again.'
+		},
+		parameters: [
+			{ key: 'path', label: 'Path', description: 'A label for this endpoint. The public URL uses an opaque route minted on activation.', kind: 'string', required: true },
+			{ key: 'session', label: 'Session', description: 'The service session this trigger belongs to. Used when registering the webhook.', kind: 'string', default: 'default' },
+			{ key: 'autoRegister', label: 'Register this URL with the service', description: 'Install this workflow\'s webhook URL into the service session on activation and remove it on deactivation.', kind: 'boolean', default: false }
+		],
+		generator: { tool: 'nodepackgen', source: 'e2e-fixture' }
+	};
+	await writeFile(join(dir, 'pack.json'), `${JSON.stringify(manifest, null, 2)}\n`);
+	return dir;
+}
+
+// The converter path (FEAT-ed6wdy, box 7): a real declarative transcription
+// becomes an installable pack directory through nodepack.ConvertDocument,
+// never by hand-writing pack.json. The driver is build-time tooling run with
+// `go run`, so it is never on the server's boot path.
+export const CONVERTED_PACK_TYPE = 'pack.e2eacme';
+export const CONVERTED_PACK_DIR_NAME = 'acme';
+export const CONVERTED_SOURCE_TYPE = 'n8n-nodes-acme.AcmeMail';
+
+export async function convertDeclarativePack(packsDir: string, name: string, packType: string): Promise<{ packDir: string; reportPath: string }> {
+	const packDir = join(packsDir, name);
+	const reportPath = join(packsDir, `${name}-report.md`);
+	const transcription = join(repoRoot, 'e2e', 'fixtures', 'pack-acme-transcription.json');
+	try {
+		const result = await execFileAsync(
+			'go',
+			['run', join(repoRoot, 'e2e', 'fixtures', 'pack-convert-driver.go'), '-in', transcription, '-type', packType, '-out', packDir, '-report', reportPath],
+			{ cwd: repoRoot, timeout: 300_000, maxBuffer: 16 * 1024 * 1024 }
+		);
+		if (!/pack-convert:/.test(result.stderr)) throw new Error(`converter driver printed nothing recognisable:\n${result.stderr}\n${result.stdout}`);
+	} catch (error) {
+		const failure = error as { stdout?: string; stderr?: string; message?: string };
+		throw new Error(`pack-convert failed:\n${failure.stderr ?? ''}\n${failure.stdout ?? ''}\n${failure.message ?? ''}`);
+	}
+	return { packDir, reportPath };
+}
+
 
 // Boots against a packs directory that must refuse startup, and returns the
 // refusal text (the server's logs via startServer's readiness error). A

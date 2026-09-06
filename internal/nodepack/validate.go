@@ -165,6 +165,12 @@ func registerThrowaway(pack *Pack) error {
 	if err := executors.Register(routing.ExecutorID, stub); err != nil {
 		return err
 	}
+	// Trigger packs name the fan-out executor rather than the routing
+	// interpreter; without its stub every trigger pack fails validation
+	// while the server would accept it.
+	if err := executors.Register(TriggerExecutorID, stub); err != nil {
+		return err
+	}
 	if err := Register(definitions, routes, executors, nil, pack); err != nil {
 		return err
 	}
