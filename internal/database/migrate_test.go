@@ -45,6 +45,8 @@ var baselineTables = []string{
 // first — an omission does not fail until somebody runs the suite twice
 // against the same server, which is exactly when it is hardest to read.
 var postBaselineTables = []string{
+	"datastore_columns",
+	"datastores",
 	"api_keys",
 	"users",
 	"tenants",
