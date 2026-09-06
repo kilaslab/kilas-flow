@@ -2993,3 +2993,619 @@ func outputParserToN8N(node workflow.Node) (map[string]any, []Lossy) {
 	}
 	return parameters, lossy
 }
+
+// --- Data Table ---------------------------------------------------------------
+//
+// The Data Table node (n8n-nodes-base.dataTable) reads and writes n8n's
+// project-scoped data tables, and n8n-nodes-base.dataTableTool exposes the
+// same surface as an agent tool. Both map onto this server's datastore node
+// family, whose own parameter names deliberately mirror n8n's.
+//
+// Three translations below are load-bearing rather than cosmetic. The node's
+// filter rows are keyName/condition/keyValue, which differ from the
+// service-layer columnName/condition/value the same workflow would meet over
+// the API — the importer carries the node names verbatim and never assumes
+// one shape. The table-level update operation is surfaced as Rename, never
+// as a generic update. And a carried table reference is always somebody
+// else's catalogue id, so it arrives with a blocking diagnostic rather than
+// a silent bind.
+//
+// Every parameter name, option value and default below is n8n's own,
+// transcribed from the reference checkout's data-table.types.ts (row and
+// table operation unions, filter shape, system columns at 2.34.0) and the
+// design-refs captures of the node's own surface (shots 26-32, n8n 2.33.7).
+// The node's parameter descriptions are absent from the sparse checkout, so
+// anything structural the captures do not evidence produces a named
+// diagnostic instead of being assumed away.
+
+// dataTableRowOperations maps n8n's row operation names onto this server's.
+// n8n says deleteRows where this server says delete, and rowExists and
+// rowNotExists where this server branches as ifExists and ifNotExists.
+var dataTableRowOperations = map[string]string{
+	"insert": "insert", "get": "get", "update": "update", "upsert": "upsert",
+	"deleteRows": "delete", "rowExists": "ifExists", "rowNotExists": "ifNotExists",
+}
+
+// dataTableTableOperations maps n8n's table operation names onto this
+// server's. The update operation is surfaced as Rename, never as a generic
+// update, on both sides.
+var dataTableTableOperations = map[string]string{
+	"create": "create", "list": "list", "clear": "clear",
+	"update": "rename", "delete": "deleteTable",
+}
+
+// datastoreRowOperationsToN8N is the inverse of dataTableRowOperations.
+var datastoreRowOperationsToN8N = map[string]string{
+	"insert": "insert", "get": "get", "update": "update", "upsert": "upsert",
+	"delete": "deleteRows", "ifExists": "rowExists", "ifNotExists": "rowNotExists",
+}
+
+// datastoreTableOperationsToN8N is the inverse of dataTableTableOperations.
+var datastoreTableOperationsToN8N = map[string]string{
+	"create": "create", "list": "list", "clear": "clear",
+	"rename": "update", "deleteTable": "delete",
+}
+
+// dataTableConditionOperations are the filter conditions both servers spell
+// the same way. The node's Column select offers the system columns id,
+// createdAt and updatedAt alongside the user columns, and the operator set
+// is n8n's own filter union — eq, neq, like, ilike, gt, gte, lt, lte.
+var dataTableConditionOperations = map[string]bool{
+	"eq": true, "neq": true, "like": true, "ilike": true,
+	"gt": true, "gte": true, "lt": true, "lte": true,
+}
+
+// dataTableToKilas maps n8n's Data Table node onto this server's datastore
+// node. The resource, operation, locator, mapper and filter panel all cross;
+// the table reference always arrives with a blocking diagnostic, because an
+// n8n table id names a row in somebody else's catalogue.
+func dataTableToKilas(node Node) (map[string]any, []Unsupported) {
+	return dataTableParams(node, false)
+}
+
+// dataTableParams carries a Data Table node's parameters, with tool carrying
+// the toolDescription key the tool variant owns.
+func dataTableParams(node Node, tool bool) (map[string]any, []Unsupported) {
+	issues := make([]Unsupported, 0)
+	parameters := map[string]any{}
+
+	resource := stringParameter(node.Parameters, "resource")
+	if resource == "" {
+		resource = "row"
+	}
+	if resource != "row" && resource != "table" {
+		issues = append(issues, Unsupported{
+			Severity: SeverityBlocking, Field: "resource",
+			Reason: fmt.Sprintf("this node read resource %q, which this server does not implement. "+
+				"It was imported as a row node: set the resource before activating.", resource),
+		})
+		resource = "row"
+	}
+	parameters["resource"] = resource
+
+	operation := stringParameter(node.Parameters, "operation")
+	mapped := ""
+	if resource == "row" {
+		mapped = dataTableRowOperations[operation]
+	} else {
+		mapped = dataTableTableOperations[operation]
+	}
+	if mapped == "" {
+		fallback := "insert"
+		if resource == "table" {
+			fallback = "create"
+		}
+		issues = append(issues, Unsupported{
+			Severity: SeverityBlocking, Field: "operation",
+			Reason: fmt.Sprintf("this node ran operation %q, which this server does not implement. "+
+				"It was imported as %q: set the operation before activating.", operation, fallback),
+		})
+		mapped = fallback
+	}
+	parameters["operation"] = mapped
+
+	// Only create and list run without a table. Every other operation names
+	// one, and the reference is always carried with a blocking diagnostic:
+	// the id is n8n-local, no table is ever created as a side effect of an
+	// import, and the cached name is a display string n8n never guarantees
+	// is current — so matching it against a same-named local table would be
+	// a write to the wrong table that succeeds.
+	if mapped != "create" && mapped != "list" {
+		locator, tableIssue := dataTableLocatorToKilas(node.Parameters["dataTableId"])
+		if locator != nil {
+			parameters["dataTableId"] = locator
+		}
+		if tableIssue != nil {
+			issues = append(issues, *tableIssue)
+		}
+	} else if raw, ok := node.Parameters["dataTableId"]; ok && raw != nil {
+		carried, tableIssue := dataTableLocatorToKilas(raw)
+		if carried != nil {
+			parameters["dataTableId"] = carried
+		}
+		if tableIssue != nil {
+			issues = append(issues, *tableIssue)
+		}
+	} else {
+		// Create and list run without a table, but the parameter key itself
+		// is required: the compiler refuses a node that omits it outright.
+		// An empty locator is what the editor stores before a table is
+		// picked, so that is what an n8n node without a table slot becomes.
+		parameters["dataTableId"] = property.WriteLocator(property.Locator{Mode: "list"})
+	}
+
+	if name := node.Parameters["name"]; name != nil && name != "" {
+		parameters["name"] = fromN8NValue(name)
+	}
+	if columns, present := node.Parameters["columns"]; present && columns != nil {
+		carried, columnIssues := dataTableColumnsToKilas(columns)
+		if carried != nil {
+			parameters["columns"] = carried
+		}
+		issues = append(issues, columnIssues...)
+	}
+	if filters, present := node.Parameters["filters"]; present && filters != nil {
+		carried, filterIssues := dataTableFiltersToKilas(filters)
+		if carried != nil {
+			parameters["filters"] = carried
+		}
+		issues = append(issues, filterIssues...)
+	}
+	// Must Match: Any Condition or All Conditions. Absent is n8n's own
+	// default, which is Any — the same default this server applies — so only
+	// a present and unrecognised value is worth a diagnostic.
+ switch match := stringParameter(node.Parameters, "match"); match {
+	case "", "any", "all":
+		if match != "" {
+			parameters["match"] = match
+		}
+	default:
+		issues = append(issues, Unsupported{
+			Severity: SeverityLossy, Field: "match",
+			Reason: fmt.Sprintf("this node matched rows with %q, which this server does not implement. "+
+				"It was imported matching any condition instead.", match),
+		})
+	}
+	if value, present := node.Parameters["returnAll"]; present {
+		if fixed, ok := value.(bool); ok {
+			parameters["returnAll"] = fixed
+		} else {
+			issues = append(issues, Unsupported{
+				Severity: SeverityLossy, Field: "returnAll",
+				Reason: "this node carried Return All in a shape this server does not read. " +
+					"It was dropped: set Return All again before activating.",
+			})
+		}
+	}
+	if value, present := node.Parameters["limitPerInputRow"]; present && value != nil {
+		if limit, ok := numberParameter(node.Parameters, "limitPerInputRow"); ok {
+			parameters["limitPerInputRow"] = limit
+		} else {
+			issues = append(issues, Unsupported{
+				Severity: SeverityLossy, Field: "limitPerInputRow",
+				Reason: "this node carried its per-row limit in a shape this server does not read. " +
+					"It was dropped and the default limit applies instead.",
+			})
+		}
+	}
+	if options, present := node.Parameters["options"]; present && options != nil {
+		if collection, ok := options.(map[string]any); !ok || len(collection) > 0 {
+			issues = append(issues, Unsupported{
+				Severity: SeverityDropped, Field: "options",
+				Reason: "this node carried an Options collection, which this server's datastore node does not implement. " +
+					"The options were dropped.",
+			})
+		}
+	}
+	// Anything else present is a parameter this importer does not read.
+	// Reported rather than dropped silently: a parameter that disappears
+	// leaves a workflow that looks identical to the one it came from and
+	// behaves differently.
+	known := map[string]bool{
+		"resource": true, "operation": true, "dataTableId": true, "columns": true,
+		"filters": true, "match": true, "returnAll": true, "limitPerInputRow": true,
+		"name": true, "options": true,
+	}
+	if tool {
+		known["toolDescription"] = true
+	}
+	for _, key := range sortedKeys(node.Parameters) {
+		if !known[key] {
+			issues = append(issues, Unsupported{
+				Severity: SeverityDropped, Field: key,
+				Reason: fmt.Sprintf("this node carried %q, which this server's datastore node does not implement. "+
+					"It was dropped: check the node before activating.", key),
+			})
+		}
+	}
+	return parameters, issues
+}
+
+// dataTableLocatorToKilas carries n8n's data-table resource locator across.
+// All three modes — From list, By Name and By ID — are kept, with the cached
+// name travelling as display data only. The second return is always non-nil
+// when a locator was needed: a carried reference reports the n8n id it came
+// from, and an empty one reports what was missing.
+func dataTableLocatorToKilas(value any) (map[string]any, *Unsupported) {
+	raw, ok := value.(map[string]any)
+	if !ok {
+		// A bare string is the shape older documents stored: a table id with
+		// no mode and no cached name.
+		if text, ok := value.(string); ok && text != "" {
+			return property.WriteLocator(property.Locator{Mode: "id", Value: fromN8NValue(text)}),
+				&Unsupported{
+					Severity: SeverityBlocking, Field: "dataTableId",
+					Reason: fmt.Sprintf("this node addressed the n8n data table %q, which names a table in n8n's catalogue "+
+						"and has no local counterpart. No table was created: rebind this node to a KilasFlow data table before activating.", text),
+				}
+		}
+		return nil, &Unsupported{
+			Severity: SeverityBlocking, Field: "dataTableId",
+			Reason: "this node named no data table, so it imports with nothing to act on. " +
+				"Point it at a data table before activating.",
+		}
+	}
+	mode, _ := raw["mode"].(string)
+	if mode != "list" && mode != "name" && mode != "id" {
+		mode = "list"
+	}
+	cached, _ := raw["cachedResultName"].(string)
+	locator := property.Locator{Mode: mode, Value: fromN8NValue(raw["value"]), CachedResultName: cached}
+	if !property.LocatorIsSet(property.WriteLocator(locator)) {
+		return property.WriteLocator(property.Locator{Mode: mode, CachedResultName: cached}), &Unsupported{
+			Severity: SeverityBlocking, Field: "dataTableId",
+			Reason: fmt.Sprintf("this node named no data table, so it imports with nothing to act on. "+
+				"Point it at a data table before activating%s.", quotedCachedName(cached)),
+		}
+	}
+	described := locatorDescription(raw["value"], cached)
+	return property.WriteLocator(locator), &Unsupported{
+		Severity: SeverityBlocking, Field: "dataTableId",
+		Reason: fmt.Sprintf("this node addressed the n8n data table %s, which names a table in n8n's catalogue "+
+			"and has no local counterpart. No table was created: rebind this node to a KilasFlow data table before activating.", described),
+	}
+}
+
+// quotedCachedName renders the cached name a locator carried, or nothing when
+// it carried none.
+func quotedCachedName(cached string) string {
+	if cached == "" {
+		return ""
+	}
+	return fmt.Sprintf(" (it last showed %q)", cached)
+}
+
+// locatorDescription names the n8n table id and the cached name together, so
+// the diagnostic identifies the table both systems would recognise.
+func locatorDescription(value any, cached string) string {
+	identifier, _ := value.(string)
+	if identifier == "" {
+		identifier = "an unrecorded id"
+	} else {
+		identifier = fmt.Sprintf("%q", identifier)
+	}
+	if cached == "" {
+		return identifier
+	}
+	return fmt.Sprintf("%s (last shown as %q)", identifier, cached)
+}
+
+// dataTableColumnsToKilas carries the mapping-column panel across. The stored
+// shape already uses n8n's names — mappingMode of defineBelow or
+// autoMapInputData, with value, matchingColumns and a schema copy — so the
+// panel is carried rather than translated, and each mapped value converts
+// the way any other expression-valued parameter does.
+func dataTableColumnsToKilas(value any) (map[string]any, []Unsupported) {
+	issues := make([]Unsupported, 0)
+	collection, ok := value.(map[string]any)
+	if !ok {
+		if text, ok := value.(string); ok {
+			if carried := fromN8NValue(text); carried != text {
+				return carried.(map[string]any), []Unsupported{{
+					Severity: SeverityBlocking, Field: "columns",
+					Reason: "this node built its column mapping from an expression, and column names cannot be expressions. " +
+						"Map each column explicitly and keep expressions in the values.",
+				}}
+			}
+		}
+		issues = append(issues, Unsupported{
+			Severity: SeverityBlocking, Field: "columns",
+			Reason: "this node carried its column mapping in a shape this importer does not read. " +
+				"Map the columns again before activating.",
+		})
+		return nil, issues
+	}
+	// n8n's own modes, verbatim: Map Each Column Manually sets the value for
+	// each column, while Map Automatically looks for incoming data matching
+	// the data table's columns. An absent mode is n8n's default, which is
+	// manual; only a present and unrecognised one is worth a diagnostic.
+	mode, _ := collection["mappingMode"].(string)
+	if mode == "" {
+		mode = property.MappingManual
+	}
+	if mode != property.MappingManual && mode != property.MappingAuto {
+		issues = append(issues, Unsupported{
+			Severity: SeverityLossy, Field: "columns",
+			Reason: fmt.Sprintf("this node mapped its columns with mode %q, which this server does not implement. "+
+				"It was imported mapping each column manually instead.", mode),
+		})
+		mode = property.MappingManual
+	}
+	values := map[string]any{}
+	if raw, ok := collection["value"].(map[string]any); ok {
+		for _, key := range sortedKeys(raw) {
+			values[key] = fromN8NValue(raw[key])
+		}
+	} else if collection["value"] != nil {
+		issues = append(issues, Unsupported{
+			Severity: SeverityDropped, Field: "columns",
+			Reason: "this node carried its mapped column values in a shape this importer does not read. " +
+				"The values were dropped: map the columns again before activating.",
+		})
+	}
+	matching := make([]string, 0)
+	if raw, ok := collection["matchingColumns"].([]any); ok {
+		for _, entry := range raw {
+			if name, ok := entry.(string); ok {
+				matching = append(matching, name)
+			} else {
+				issues = append(issues, Unsupported{
+					Severity: SeverityDropped, Field: "columns",
+					Reason: "this node matched rows on a column this importer does not read. " +
+						"The entry was dropped: check the matching columns before activating.",
+				})
+			}
+		}
+	}
+	mapping := property.Mapping{Mode: mode, Values: values, MatchingColumns: matching}
+	if raw, ok := collection["schema"].([]any); ok {
+		for _, entry := range raw {
+			if row, ok := entry.(map[string]any); ok {
+				mapping.Schema = append(mapping.Schema, property.MapperField{
+					ID:               fieldString(row["id"]),
+					DisplayName:      fieldString(row["displayName"]),
+					Type:             fieldString(row["type"]),
+					Required:         fieldFlag(row["required"]),
+					CanBeUsedToMatch: fieldFlag(row["canBeUsedToMatch"]),
+					DefaultMatch:     fieldFlag(row["defaultMatch"]),
+					ReadOnly:         fieldFlag(row["readOnly"]),
+				})
+			}
+		}
+	}
+	return property.WriteMapping(mapping), issues
+}
+
+// fieldString reads a mapper schema field's text.
+func fieldString(value any) string {
+	text, _ := value.(string)
+	return text
+}
+
+// fieldFlag reads a mapper schema field's flag.
+func fieldFlag(value any) bool {
+	fixed, _ := value.(bool)
+	return fixed
+}
+
+// dataTableFiltersToKilas carries the Conditions panel across. The row paths
+// are the node's own — filters.conditions[i].keyName, .condition defaulting
+// to eq, and .keyValue — and they differ from the service layer's
+// columnName/condition/value, so the rows cross under the node names rather
+// than being reshaped. Only the value converts as an expression; the column
+// slot is literal-only, and an expression there is refused by name.
+func dataTableFiltersToKilas(value any) (map[string]any, []Unsupported) {
+	issues := make([]Unsupported, 0)
+	if text, ok := value.(string); ok {
+		if carried := fromN8NValue(text); carried != text {
+			return carried.(map[string]any), []Unsupported{{
+				Severity: SeverityBlocking, Field: "filters",
+				Reason: "this node built its conditions from an expression, and column names cannot be expressions. " +
+					"Add the conditions explicitly and keep expressions in the values.",
+			}}
+		}
+		issues = append(issues, Unsupported{
+			Severity: SeverityDropped, Field: "filters",
+			Reason: "this node carried its conditions in a shape this importer does not read. " +
+				"The conditions were dropped: add them again before activating.",
+		})
+		return nil, issues
+	}
+	collection, ok := value.(map[string]any)
+	if !ok {
+		issues = append(issues, Unsupported{
+			Severity: SeverityDropped, Field: "filters",
+			Reason: "this node carried its conditions in a shape this importer does not read. " +
+				"The conditions were dropped: add them again before activating.",
+		})
+		return nil, issues
+	}
+	entries, _ := collection["conditions"].([]any)
+	rows := make([]any, 0, len(entries))
+	for index, entry := range entries {
+		row, ok := entry.(map[string]any)
+		if !ok {
+			issues = append(issues, Unsupported{
+				Severity: SeverityDropped, Field: "filters",
+				Reason: fmt.Sprintf("this node carried its condition row %d in a shape this importer does not read. "+
+					"The row was dropped: check the conditions before activating.", index),
+			})
+			continue
+		}
+		carried := map[string]any{}
+		// The column slot is literal-only. An expression here would hand the
+		// choice of column to the incoming item, so it is named rather than
+		// converted — and the marker is kept, so the compiler refuses the
+		// node even if the diagnostic is never read.
+		if text, ok := row["keyName"].(string); ok && strings.HasPrefix(text, "=") {
+			carried["keyName"] = fromN8NValue(row["keyName"])
+			issues = append(issues, Unsupported{
+				Severity: SeverityBlocking, Field: "filters",
+				Reason: fmt.Sprintf("this node's condition row %d chose its column from an expression, and a column name cannot be one. "+
+					"Resolve the column to a literal name and keep the expression in the value.", index),
+			})
+		} else {
+			carried["keyName"] = row["keyName"]
+		}
+		// An absent condition is n8n's own default, which is equality. Only
+		// a condition that is present and unrecognised is worth a
+		// diagnostic: reporting the default as lossy fills the list with
+		// rows where nothing was lost.
+		condition := stringParameter(row, "condition")
+		if condition == "" {
+			condition = "eq"
+		}
+		if !dataTableConditionOperations[condition] {
+			issues = append(issues, Unsupported{
+				Severity: SeverityLossy, Field: "filters",
+				Reason: fmt.Sprintf("this node's condition row %d used condition %q, which this server does not implement. "+
+					"The row was imported as an equality instead.", index, condition),
+			})
+			condition = "eq"
+		}
+		carried["condition"] = condition
+		carried["keyValue"] = fromN8NValue(row["keyValue"])
+		rows = append(rows, carried)
+	}
+	return map[string]any{"conditions": rows}, issues
+}
+
+// dataTableToolToKilas maps n8n's Data Table Tool onto this server's
+// datastore tool, reusing the Data Table translation the two nodes share.
+func dataTableToolToKilas(node Node) (map[string]any, []Unsupported) {
+	parameters, issues := dataTableParams(node, true)
+
+	// n8n has no tool-name parameter at all: the name a model calls is derived
+	// from the node's own canvas name. Deriving it the same way is what keeps
+	// an imported system prompt that named the tool still naming the same
+	// tool.
+	parameters["toolName"] = nodes.NormalizeToolName(node.Name)
+
+	description := node.Parameters["toolDescription"]
+	if description == nil || description == "" {
+		// Required here, and a model given no description cannot know when to
+		// call the tool. Filling the gap visibly beats failing compilation
+		// with nothing for the author to look at.
+		parameters["toolDescription"] = "Calls " + node.Name + "."
+	} else {
+		parameters["toolDescription"] = fromN8NValue(description)
+	}
+	return parameters, issues
+}
+
+// dataTableToN8N writes a datastore node back out as n8n's Data Table node.
+// Operations translate back to n8n's names — delete to deleteRows, the
+// branches to rowExists and rowNotExists, rename to update and deleteTable
+// to delete — and the filter rows go back under the node's own
+// keyName/condition/keyValue paths.
+func dataTableToN8N(node workflow.Node) (map[string]any, []Lossy) {
+	return dataTableToN8NParams(node, false)
+}
+
+// dataTableToN8NParams writes either datastore flavour back, with the tool
+// carrying the description n8n's tool node owns.
+func dataTableToN8NParams(node workflow.Node, tool bool) (map[string]any, []Lossy) {
+	lossy := make([]Lossy, 0)
+	parameters := map[string]any{}
+
+	resource := defaultString(stringParameter(node.Parameters, "resource"), "row")
+	if resource != "row" && resource != "table" {
+		resource = "row"
+	}
+	parameters["resource"] = resource
+	operation := stringParameter(node.Parameters, "operation")
+	if resource == "row" {
+		operation = defaultString(datastoreRowOperationsToN8N[operation], "insert")
+	} else {
+		operation = defaultString(datastoreTableOperationsToN8N[operation], "create")
+	}
+	parameters["operation"] = operation
+
+	if locator, ok := property.ReadLocator(node.Parameters["dataTableId"]); ok {
+		exported := map[string]any{
+			property.LocatorSentinel: true,
+			"mode":                   defaultString(locator.Mode, "list"),
+			"value":                  toN8NValue(locator.Value),
+		}
+		if locator.CachedResultName != "" {
+			exported["cachedResultName"] = locator.CachedResultName
+		}
+		parameters["dataTableId"] = exported
+		// A KilasFlow table id names a row in this server's catalogue and
+		// means nothing in an n8n instance, so it is named as lost rather
+		// than emitted as a reference that resolves nowhere — in the same
+		// terms the exporter names a credential reference.
+		lossy = append(lossy, Lossy{
+			Severity: SeverityLossy, Field: "dataTableId",
+			Reason: "data table references are KilasFlow identifiers and were not exported; " +
+				"reattach the data table in n8n before running the workflow",
+		})
+	}
+	if name := node.Parameters["name"]; name != nil && name != "" {
+		parameters["name"] = toN8NValue(name)
+	}
+	if mapping, ok := property.ReadMapping(node.Parameters["columns"]); ok {
+		values := make(map[string]any, len(mapping.Values))
+		for _, key := range sortedKeys(mapping.Values) {
+			values[key] = toN8NValue(mapping.Values[key])
+		}
+		exported := property.WriteMapping(property.Mapping{
+			Mode: mapping.Mode, Values: values,
+			MatchingColumns: mapping.MatchingColumns, Schema: mapping.Schema,
+		})
+		parameters["columns"] = exported
+	} else if columns, present := node.Parameters["columns"]; present && columns != nil {
+		lossy = append(lossy, Lossy{
+			Severity: SeverityLossy, Field: "columns",
+			Reason: "this node carried its column mapping in a shape n8n does not read. " +
+				"It was not exported; map the columns again in n8n",
+		})
+	}
+	if filters, ok := node.Parameters["filters"].(map[string]any); ok {
+		entries, _ := filters["conditions"].([]any)
+		rows := make([]any, 0, len(entries))
+		for _, entry := range entries {
+			row, ok := entry.(map[string]any)
+			if !ok {
+				continue
+			}
+			rows = append(rows, map[string]any{
+				"keyName":   toN8NValue(row["keyName"]),
+				"condition": defaultString(stringParameter(row, "condition"), "eq"),
+				"keyValue":  toN8NValue(row["keyValue"]),
+			})
+		}
+		parameters["filters"] = map[string]any{"conditions": rows}
+	} else if filters, present := node.Parameters["filters"]; present && filters != nil {
+		lossy = append(lossy, Lossy{
+			Severity: SeverityLossy, Field: "filters",
+			Reason: "this node carried its conditions in a shape n8n does not read. " +
+				"It was not exported; add the conditions again in n8n",
+		})
+	}
+	for _, key := range []string{"match", "returnAll", "limitPerInputRow"} {
+		if value, present := node.Parameters[key]; present {
+			parameters[key] = value
+		}
+	}
+	if tool {
+		parameters["toolDescription"] = toN8NValue(node.Parameters["toolDescription"])
+		// The name the model calls is the node's canvas name in n8n and a
+		// parameter here, so a tool renamed away from its node name cannot
+		// be expressed.
+		if name := stringParameter(node.Parameters, "toolName"); name != "" && name != nodes.NormalizeToolName(node.Name) {
+			lossy = append(lossy, Lossy{
+				Severity: SeverityLossy, Field: "toolName",
+				Reason: fmt.Sprintf(
+					"the model called this tool %q. n8n derives a tool's name from the node's own name, "+
+						"so after export it is called %q; rename the node to keep the old name.", name, nodes.NormalizeToolName(node.Name)),
+			})
+		}
+	}
+	return parameters, lossy
+}
+
+// dataTableToolToN8N writes the datastore tool back as n8n's Data Table Tool.
+func dataTableToolToN8N(node workflow.Node) (map[string]any, []Lossy) {
+	return dataTableToN8NParams(node, true)
+}

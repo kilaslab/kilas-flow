@@ -639,6 +639,8 @@ func TestSupportedMappingsAreAdvertisedExplicitly(t *testing.T) {
 		"@n8n/n8n-nodes-langchain.toolWorkflow ↔ kilasflow.workflowTool",
 		"n8n-nodes-base.aggregate ↔ kilasflow.aggregate",
 		"n8n-nodes-base.code ↔ kilasflow.foreignCode",
+		"n8n-nodes-base.dataTable ↔ kilasflow.datastore",
+		"n8n-nodes-base.dataTableTool ↔ kilasflow.datastoreTool",
 		"n8n-nodes-base.dateTime ↔ kilasflow.dateTime",
 		"n8n-nodes-base.executeWorkflow ↔ kilasflow.executeWorkflow",
 		"n8n-nodes-base.executeWorkflowTrigger ↔ kilasflow.executeWorkflowTrigger",
@@ -3801,5 +3803,494 @@ func TestImportReadsAPreVersionParser(t *testing.T) {
 	}
 	if node.Parameters["maxRetries"] != float64(0) {
 		t.Errorf("maxRetries = %#v, want auto-fix off carried as 0", node.Parameters["maxRetries"])
+	}
+}
+
+// --- Data Table ---------------------------------------------------------------
+
+// TestDataTableOperationsImportOntoDatastoreOperations proves every one of
+// n8n's twelve Data Table operations lands on this server's operation of the
+// same meaning: deleteRows is delete, the row-exists pair become the two
+// branches, and the table update is Rename, never a generic update.
+func TestDataTableOperationsImportOntoDatastoreOperations(t *testing.T) {
+	t.Parallel()
+
+	rows := []struct {
+		n8nOperation string
+		resource     string
+		want         string
+	}{
+		{"insert", "row", "insert"},
+		{"get", "row", "get"},
+		{"update", "row", "update"},
+		{"upsert", "row", "upsert"},
+		{"deleteRows", "row", "delete"},
+		{"rowExists", "row", "ifExists"},
+		{"rowNotExists", "row", "ifNotExists"},
+		{"create", "table", "create"},
+		{"list", "table", "list"},
+		{"clear", "table", "clear"},
+		{"update", "table", "rename"},
+		{"delete", "table", "deleteTable"},
+	}
+	for _, row := range rows {
+		fixture := fmt.Sprintf(`{
+		  "name": "Data Table ops",
+		  "nodes": [
+		    {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}},
+		    {"id":"b","name":"Table","type":"n8n-nodes-base.dataTable","typeVersion":1,"position":[220,0],"parameters":{
+		      "resource": %q, "operation": %q,
+		      "dataTableId": {"mode":"id","value":"dt_1","cachedResultName":"T","__rl":true},
+		      "name": "T2"
+		    }}
+		  ],
+		  "connections": {"Manual": {"main": [[{"node":"Table","type":"main","index":0}]]}}
+		}`, row.resource, row.n8nOperation)
+		result := importFixture(t, fixture)
+		node := nodeByName(result.Document, "Table")
+		if node.Type != "kilasflow.datastore" {
+			t.Fatalf("%s/%s imported as %q, want kilasflow.datastore", row.resource, row.n8nOperation, node.Type)
+		}
+		if got := stringParameter(node.Parameters, "resource"); got != row.resource {
+			t.Errorf("%s/%s resource = %q, want %q", row.resource, row.n8nOperation, got, row.resource)
+		}
+		if got := stringParameter(node.Parameters, "operation"); got != row.want {
+			t.Errorf("%s/%s operation = %q, want %q", row.resource, row.n8nOperation, got, row.want)
+		}
+	}
+}
+
+// stringParameter reads a stored string parameter the way the exporter does.
+func stringParameter(parameters map[string]any, key string) string {
+	text, _ := parameters[key].(string)
+	return text
+}
+
+// TestDataTableRefusesAnUnknownOperationByName proves an operation outside
+// the twelve maps to nothing silently: it arrives as the resource default
+// with a blocking diagnostic naming the operation.
+func TestDataTableRefusesAnUnknownOperationByName(t *testing.T) {
+	t.Parallel()
+	const fixture = `{
+	  "name": "Unknown op",
+	  "nodes": [
+	    {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}},
+	    {"id":"b","name":"Table","type":"n8n-nodes-base.dataTable","typeVersion":1,"position":[220,0],"parameters":{
+	      "resource": "row", "operation": "vacuum",
+	      "dataTableId": {"mode":"id","value":"dt_1","cachedResultName":"T","__rl":true}
+	    }}
+	  ],
+	  "connections": {"Manual": {"main": [[{"node":"Table","type":"main","index":0}]]}}
+	}`
+
+	result := importFixture(t, fixture)
+	node := nodeByName(result.Document, "Table")
+	if got := stringParameter(node.Parameters, "operation"); got != "insert" {
+		t.Fatalf("operation = %q, want the row default insert", got)
+	}
+	var named bool
+	for _, issue := range result.Unsupported {
+		if issue.Field == "operation" && issue.Severity == n8n.SeverityBlocking &&
+			strings.Contains(issue.Reason, `"vacuum"`) {
+			named = true
+		}
+	}
+	if !named {
+		t.Errorf("no blocking diagnostic names the unknown operation: %#v", result.Unsupported)
+	}
+}
+
+// TestDataTableLocatorModesAreCarriedWithTheirCachedNames proves all three
+// resource locator modes — From list, By Name and By ID — cross with the
+// cached name travelling as display data, and that every carried reference
+// reports the n8n id it came from as blocking: the id names a row in n8n's
+// catalogue and has no local counterpart.
+func TestDataTableLocatorModesAreCarriedWithTheirCachedNames(t *testing.T) {
+	t.Parallel()
+
+	for _, mode := range []string{"list", "name", "id"} {
+		fixture := fmt.Sprintf(`{
+		  "name": "Locator modes",
+		  "nodes": [
+		    {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}},
+		    {"id":"b","name":"Table","type":"n8n-nodes-base.dataTable","typeVersion":1,"position":[220,0],"parameters":{
+		      "resource": "row", "operation": "get",
+		      "dataTableId": {"mode":%q,"value":"dt_metrics_01","cachedResultName":"Metrics","__rl":true}
+		    }}
+		  ],
+		  "connections": {"Manual": {"main": [[{"node":"Table","type":"main","index":0}]]}}
+		}`, mode)
+		result := importFixture(t, fixture)
+		node := nodeByName(result.Document, "Table")
+		locator, ok := node.Parameters["dataTableId"].(map[string]any)
+		if !ok {
+			t.Fatalf("mode %s: dataTableId was not carried: %#v", mode, node.Parameters)
+		}
+		if locator["mode"] != mode {
+			t.Errorf("mode %s: locator mode = %#v, want %q", mode, locator["mode"], mode)
+		}
+		if locator["value"] != "dt_metrics_01" {
+			t.Errorf("mode %s: locator value = %#v, want the n8n table id", mode, locator["value"])
+		}
+		if locator["cachedResultName"] != "Metrics" {
+			t.Errorf("mode %s: cached name = %#v, want Metrics", mode, locator["cachedResultName"])
+		}
+		var named bool
+		for _, issue := range result.Unsupported {
+			if issue.Field == "dataTableId" && issue.Severity == n8n.SeverityBlocking &&
+				strings.Contains(issue.Reason, "dt_metrics_01") &&
+				strings.Contains(issue.Reason, "Metrics") {
+				named = true
+			}
+		}
+		if !named {
+			t.Errorf("mode %s: no blocking diagnostic names the n8n id and cached name: %#v", mode, result.Unsupported)
+		}
+	}
+}
+
+// TestDataTableWithoutATableIsBlockingAndKeepsTheCachedName proves a locator
+// with no value still imports — the workflow can be edited — while reporting
+// what was missing, including the cached name the picker last showed.
+func TestDataTableWithoutATableIsBlockingAndKeepsTheCachedName(t *testing.T) {
+	t.Parallel()
+	const fixture = `{
+	  "name": "Empty locator",
+	  "nodes": [
+	    {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}},
+	    {"id":"b","name":"Table","type":"n8n-nodes-base.dataTable","typeVersion":1,"position":[220,0],"parameters":{
+	      "resource": "row", "operation": "insert",
+	      "dataTableId": {"mode":"list","value":"","cachedResultName":"Metrics","__rl":true}
+	    }}
+	  ],
+	  "connections": {"Manual": {"main": [[{"node":"Table","type":"main","index":0}]]}}
+	}`
+
+	result := importFixture(t, fixture)
+	node := nodeByName(result.Document, "Table")
+	if node.Type != "kilasflow.datastore" {
+		t.Fatalf("node imported as %q, want kilasflow.datastore", node.Type)
+	}
+	var named bool
+	for _, issue := range result.Unsupported {
+		if issue.Field == "dataTableId" && issue.Severity == n8n.SeverityBlocking &&
+			strings.Contains(issue.Reason, "Metrics") {
+			named = true
+		}
+	}
+	if !named {
+		t.Errorf("no blocking diagnostic names the missing table and cached name: %#v", result.Unsupported)
+	}
+}
+
+// TestDataTableMappingModesCrossVerbatim proves both mapping column modes —
+// Map Each Column Manually and Map Automatically, with their help texts
+// living on the node definition — arrive under n8n's own mode names, with
+// manual values converting as expressions and the schema copy riding along.
+func TestDataTableMappingModesCrossVerbatim(t *testing.T) {
+	t.Parallel()
+	const fixture = `{
+	  "name": "Mapping modes",
+	  "nodes": [
+	    {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}},
+	    {"id":"b","name":"Manual Map","type":"n8n-nodes-base.dataTable","typeVersion":1,"position":[220,0],"parameters":{
+	      "resource": "row", "operation": "insert",
+	      "dataTableId": {"mode":"id","value":"dt_1","cachedResultName":"T","__rl":true},
+	      "columns": {
+	        "mappingMode": "defineBelow",
+	        "value": {"metric": "cpu", "count": "={{ $json.count }}"},
+	        "matchingColumns": ["metric"],
+	        "schema": [{"id":"metric","displayName":"metric","type":"string"}]
+	      }
+	    }},
+	    {"id":"c","name":"Auto Map","type":"n8n-nodes-base.dataTable","typeVersion":1,"position":[440,0],"parameters":{
+	      "resource": "row", "operation": "insert",
+	      "dataTableId": {"mode":"id","value":"dt_1","cachedResultName":"T","__rl":true},
+	      "columns": {"mappingMode": "autoMapInputData", "value": {}}
+	    }}
+	  ],
+	  "connections": {
+	    "Manual": {"main": [[{"node":"Manual Map","type":"main","index":0}]]},
+	    "Manual Map": {"main": [[{"node":"Auto Map","type":"main","index":0}]]}
+	  }
+	}`
+
+	result := importFixture(t, fixture)
+	manual, ok := nodeByName(result.Document, "Manual Map").Parameters["columns"].(map[string]any)
+	if !ok {
+		t.Fatalf("manual columns were not carried: %#v", result.Document.Nodes)
+	}
+	if manual["mappingMode"] != "defineBelow" {
+		t.Errorf("manual mappingMode = %#v, want defineBelow", manual["mappingMode"])
+	}
+	values, _ := manual["value"].(map[string]any)
+	if marker, ok := values["count"].(map[string]any); !ok || marker["mode"] != "expression" {
+		t.Errorf("manual count = %#v, want the expression marker", values["count"])
+	}
+	matching, _ := manual["matchingColumns"].([]any)
+	if len(matching) != 1 || matching[0] != "metric" {
+		t.Errorf("matchingColumns = %#v, want [metric]", matching)
+	}
+	if values["metric"] != "cpu" {
+		t.Errorf("manual metric = %#v, want the fixed string carried as itself", values["metric"])
+	}
+	auto, ok := nodeByName(result.Document, "Auto Map").Parameters["columns"].(map[string]any)
+	if !ok || auto["mappingMode"] != "autoMapInputData" {
+		t.Errorf("auto columns = %#v, want mappingMode autoMapInputData", nodeByName(result.Document, "Auto Map").Parameters["columns"])
+	}
+}
+
+// TestDataTableFiltersUseTheNodePaths proves the Conditions panel crosses
+// under the node's own keyName/condition/keyValue paths — not the service
+// layer's columnName/condition/value — with the default eq applied silently
+// and an expression-valued column slot refused by name.
+func TestDataTableFiltersUseTheNodePaths(t *testing.T) {
+	t.Parallel()
+	const fixture = `{
+	  "name": "Filters",
+	  "nodes": [
+	    {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}},
+	    {"id":"b","name":"Get","type":"n8n-nodes-base.dataTable","typeVersion":1,"position":[220,0],"parameters":{
+	      "resource": "row", "operation": "get",
+	      "dataTableId": {"mode":"id","value":"dt_1","cachedResultName":"T","__rl":true},
+	      "match": "all",
+	      "filters": {"conditions": [
+	        {"keyName": "metric", "condition": "gte", "keyValue": "={{ $json.floor }}"},
+	        {"keyName": "count", "keyValue": 10},
+	        {"keyName": "stale", "condition": "regexp", "keyValue": "x"}
+	      ]},
+	      "returnAll": false,
+	      "limitPerInputRow": 20
+	    }},
+	    {"id":"c","name":"Bad Column","type":"n8n-nodes-base.dataTable","typeVersion":1,"position":[440,0],"parameters":{
+	      "resource": "row", "operation": "get",
+	      "dataTableId": {"mode":"id","value":"dt_1","cachedResultName":"T","__rl":true},
+	      "filters": {"conditions": [{"keyName": "={{ $json.column }}", "condition": "eq", "keyValue": "x"}]}
+	    }}
+	  ],
+	  "connections": {
+	    "Manual": {"main": [[{"node":"Get","type":"main","index":0}]]},
+	    "Get": {"main": [[{"node":"Bad Column","type":"main","index":0}]]}
+	  }
+	}`
+
+	result := importFixture(t, fixture)
+	node := nodeByName(result.Document, "Get")
+	filters, ok := node.Parameters["filters"].(map[string]any)
+	if !ok {
+		t.Fatalf("filters were not carried: %#v", node.Parameters)
+	}
+	conditions, _ := filters["conditions"].([]any)
+	if len(conditions) != 3 {
+		t.Fatalf("conditions = %#v, want three rows", filters["conditions"])
+	}
+	first, _ := conditions[0].(map[string]any)
+	if first["keyName"] != "metric" || first["condition"] != "gte" {
+		t.Errorf("first row = %#v, want keyName metric with gte", first)
+	}
+	if marker, ok := first["keyValue"].(map[string]any); !ok || marker["mode"] != "expression" {
+		t.Errorf("first keyValue = %#v, want the expression marker", first["keyValue"])
+	}
+	second, _ := conditions[1].(map[string]any)
+	if second["condition"] != "eq" {
+		t.Errorf("absent condition = %#v, want the n8n default eq carried silently", second["condition"])
+	}
+	third, _ := conditions[2].(map[string]any)
+	if third["condition"] != "eq" {
+		t.Errorf("unknown condition = %#v, want the equality fallback", third["condition"])
+	}
+	if !hasReason(result.Unsupported, `"regexp"`) {
+		t.Errorf("no diagnostic names the unmapped condition: %#v", result.Unsupported)
+	}
+	if stringParameter(node.Parameters, "match") != "all" {
+		t.Errorf("match = %#v, want all", node.Parameters["match"])
+	}
+	if limit, _ := node.Parameters["limitPerInputRow"].(float64); limit != 20 {
+		t.Errorf("limitPerInputRow = %#v, want 20", node.Parameters["limitPerInputRow"])
+	}
+	var named bool
+	for _, issue := range result.Unsupported {
+		if issue.Field == "filters" && issue.Severity == n8n.SeverityBlocking &&
+			strings.Contains(issue.Reason, "column") {
+			named = true
+		}
+	}
+	if !named {
+		t.Errorf("no blocking diagnostic names the expression-valued column slot: %#v", result.Unsupported)
+	}
+}
+
+// TestDataTableToolImportsBesideAnAgent proves n8n-nodes-base.dataTableTool
+// imports onto the datastore tool with its ai_tool edge landing on the
+// agent's tool port — the same direction the HTTP tool beside it uses.
+func TestDataTableToolImportsBesideAnAgent(t *testing.T) {
+	t.Parallel()
+	if _, found := registry(t).Lookup("kilasflow.datastoreTool", workflow.V(1)); !found {
+		t.Skip("kilasflow.datastoreTool is not registered yet; its registration is owned by the datastore-tool ticket")
+	}
+	const fixture = `{
+	  "name": "Table tool",
+	  "nodes": [
+	    {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}},
+	    {"id":"b","name":"Agent","type":"@n8n/n8n-nodes-langchain.agent","typeVersion":3.1,"position":[220,0],"parameters":{}},
+	    {"id":"c","name":"Lookup Table","type":"n8n-nodes-base.dataTableTool","typeVersion":1,"position":[220,180],"parameters":{
+	      "resource": "row", "operation": "get",
+	      "dataTableId": {"mode":"id","value":"dt_1","cachedResultName":"T","__rl":true},
+	      "toolDescription": "Looks up metrics."
+	    }}
+	  ],
+	  "connections": {
+	    "Manual": {"main": [[{"node":"Agent","type":"main","index":0}]]},
+	    "Lookup Table": {"ai_tool": [[{"node":"Agent","type":"ai_tool","index":0}]]}
+	  }
+	}`
+
+	result := importFixture(t, fixture)
+	tool := nodeByName(result.Document, "Lookup Table")
+	if tool.Type != "kilasflow.datastoreTool" {
+		t.Fatalf("tool imported as %q, want kilasflow.datastoreTool", tool.Type)
+	}
+	if stringParameter(tool.Parameters, "toolDescription") != "Looks up metrics." {
+		t.Errorf("toolDescription = %#v, want the carried description", tool.Parameters["toolDescription"])
+	}
+	var edged bool
+	for _, connection := range result.Document.Connections {
+		if connection.Kind != workflow.ConnectionTool {
+			continue
+		}
+		if nodeByName(result.Document, "Agent").ID == connection.Target.NodeID &&
+			tool.ID == connection.Source.NodeID {
+			edged = true
+		}
+	}
+	if !edged {
+		t.Errorf("no ai_tool edge runs from the table tool to the agent: %#v", result.Document.Connections)
+	}
+	if !hasReason(result.Unsupported, "dt_1") {
+		t.Errorf("no diagnostic names the tool's n8n table id: %#v", result.Unsupported)
+	}
+}
+
+// TestDataTableRoundTripPreservesOperationsAndConnections proves an imported
+// Data Table workflow goes back to n8n with its operations under n8n's names
+// — rename included — and with every connection that touched it intact. The
+// count is the assertion that matters: a dropped middle node used to export
+// as two disconnected halves.
+func TestDataTableRoundTripPreservesOperationsAndConnections(t *testing.T) {
+	t.Parallel()
+	const fixture = `{
+	  "name": "Round trip",
+	  "nodes": [
+	    {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}},
+	    {"id":"b","name":"Insert","type":"n8n-nodes-base.dataTable","typeVersion":1,"position":[220,0],"parameters":{
+	      "resource": "row", "operation": "insert",
+	      "dataTableId": {"mode":"list","value":"dt_1","cachedResultName":"Metrics","__rl":true},
+	      "columns": {"mappingMode": "defineBelow", "value": {"metric": "={{ $json.metric }}"}}
+	    }},
+	    {"id":"c","name":"Rename","type":"n8n-nodes-base.dataTable","typeVersion":1,"position":[440,0],"parameters":{
+	      "resource": "table", "operation": "update",
+	      "dataTableId": {"mode":"id","value":"dt_1","cachedResultName":"Metrics","__rl":true},
+	      "name": "Archive"
+	    }}
+	  ],
+	  "connections": {
+	    "Manual": {"main": [[{"node":"Insert","type":"main","index":0}]]},
+	    "Insert": {"main": [[{"node":"Rename","type":"main","index":0}]]}
+	  }
+	}`
+
+	imported := importFixture(t, fixture)
+	exported, err := n8n.Export(imported.Document, registry(t))
+	if err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+	if len(exported.Document.Nodes) != 3 {
+		t.Fatalf("exported %d nodes, want 3", len(exported.Document.Nodes))
+	}
+	edges := 0
+	for _, kinds := range exported.Document.Connections {
+		for _, slots := range kinds {
+			for _, targets := range slots {
+				edges += len(targets)
+			}
+		}
+	}
+	if edges != 2 {
+		t.Errorf("exported %d connections, want 2: %#v", edges, exported.Document.Connections)
+	}
+	byName := map[string]map[string]any{}
+	for _, node := range exported.Document.Nodes {
+		byName[node.Name] = node.Parameters
+	}
+	if byName["Insert"]["operation"] != "insert" || byName["Insert"]["resource"] != "row" {
+		t.Errorf("Insert exported as %#v, want row/insert", byName["Insert"])
+	}
+	if byName["Rename"]["operation"] != "update" || byName["Rename"]["resource"] != "table" {
+		t.Errorf("Rename exported as %#v, want table/update back under n8n's name", byName["Rename"])
+	}
+	locator, _ := byName["Insert"]["dataTableId"].(map[string]any)
+	if locator["mode"] != "list" || locator["value"] != "dt_1" || locator["cachedResultName"] != "Metrics" {
+		t.Errorf("locator exported as %#v, want the carried mode, id and cached name", locator)
+	}
+	columns, _ := byName["Insert"]["columns"].(map[string]any)
+	if columns["mappingMode"] != "defineBelow" {
+		t.Errorf("columns exported as %#v, want the manual mode back", columns)
+	}
+	if !hasLossyReason(exported.Lossy, "dataTableId") {
+		t.Errorf("no export diagnostic names the datastore identifier as KilasFlow-local: %#v", exported.Lossy)
+	}
+	var local bool
+	for _, issue := range exported.Lossy {
+		if issue.Field == "dataTableId" && strings.Contains(issue.Reason, "KilasFlow identifiers") {
+			local = true
+		}
+	}
+	if !local {
+		t.Errorf("no export diagnostic reports the identifier in credential-reference terms: %#v", exported.Lossy)
+	}
+}
+
+// TestImportedDataTableWorkflowCompiles proves a representative Data Table
+// workflow survives the compiler the way a hand-built one must: the adapter
+// emits no parameter the native validator refuses.
+func TestImportedDataTableWorkflowCompiles(t *testing.T) {
+	t.Parallel()
+	const fixture = `{
+	  "name": "Compiles",
+	  "nodes": [
+	    {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}},
+	    {"id":"b","name":"Insert","type":"n8n-nodes-base.dataTable","typeVersion":1,"position":[220,0],"parameters":{
+	      "resource": "row", "operation": "insert",
+	      "dataTableId": {"mode":"id","value":"dt_1","cachedResultName":"T","__rl":true},
+	      "columns": {"mappingMode": "defineBelow", "value": {"metric": "={{ $json.metric }}"}}
+	    }},
+	    {"id":"c","name":"Read","type":"n8n-nodes-base.dataTable","typeVersion":1,"position":[440,0],"parameters":{
+	      "resource": "row", "operation": "get",
+	      "dataTableId": {"mode":"name","value":"Metrics","__rl":true},
+	      "filters": {"conditions": [{"keyName": "metric", "condition": "eq", "keyValue": "cpu"}]}
+	    }}
+	  ],
+	  "connections": {
+	    "Manual": {"main": [[{"node":"Insert","type":"main","index":0}]]},
+	    "Insert": {"main": [[{"node":"Read","type":"main","index":0}]]}
+	  }
+	}`
+
+	result := importFixture(t, fixture)
+	document := result.Document
+	document.ID = "wf_datatable"
+	if _, err := workflow.Compile(document, registry(t)); err != nil {
+		t.Errorf("datatable fixture did not compile after import: %v", err)
+	}
+}
+
+// TestDatastoreTypeMatchesTheNodePack pins the canonical type the adapter
+// mirrors from the node pack. It is duplicated rather than imported so the
+// adapter does not depend on the pack, and a silent drift between them would
+// send imports to a node type nothing registers.
+func TestDatastoreTypeMatchesTheNodePack(t *testing.T) {
+	t.Parallel()
+	if n8n.DatastoreNodeType != nodes.DatastoreNodeType {
+		t.Errorf("adapter mirrors %q, node pack registers %q", n8n.DatastoreNodeType, nodes.DatastoreNodeType)
 	}
 }

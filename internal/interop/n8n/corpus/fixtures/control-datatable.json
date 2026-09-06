@@ -1,0 +1,95 @@
+{
+  "name": "Control: data table create, list, read and rename",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "7d3f0a2e-2c4b-4f8a-9d2e-0b7c5a1e3f41",
+      "name": "When clicking 'Execute workflow'",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "resource": "table",
+        "operation": "create",
+        "name": "Metrics"
+      },
+      "id": "8e8d7c6b-6a4f-4321-b0c9-8d7e6f5a4b32",
+      "name": "Create table",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [220, 0]
+    },
+    {
+      "parameters": {
+        "resource": "table",
+        "operation": "list"
+      },
+      "id": "9f9e8d7c-7b5a-5432-c1da-9e8f7a6b5c43",
+      "name": "List tables",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [440, 0]
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "mode": "name",
+          "value": "Metrics",
+          "__rl": true
+        },
+        "match": "all",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "gte",
+              "keyValue": 1
+            }
+          ]
+        },
+        "returnAll": true
+      },
+      "id": "0a0f9e8d-8c6b-6543-d2eb-0f9a8b7c6d54",
+      "name": "Read metrics",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [660, 0]
+    },
+    {
+      "parameters": {
+        "resource": "table",
+        "operation": "update",
+        "dataTableId": {
+          "mode": "name",
+          "value": "Metrics",
+          "cachedResultName": "Metrics",
+          "__rl": true
+        },
+        "name": "Metrics archive"
+      },
+      "id": "1b1a0f9e-9d7c-7654-e3fc-1a0b1c8d7e65",
+      "name": "Rename table",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [880, 0]
+    }
+  ],
+  "connections": {
+    "When clicking 'Execute workflow'": {
+      "main": [[{"node": "Create table", "type": "main", "index": 0}]]
+    },
+    "Create table": {
+      "main": [[{"node": "List tables", "type": "main", "index": 0}]]
+    },
+    "List tables": {
+      "main": [[{"node": "Read metrics", "type": "main", "index": 0}]]
+    },
+    "Read metrics": {
+      "main": [[{"node": "Rename table", "type": "main", "index": 0}]]
+    }
+  }
+}

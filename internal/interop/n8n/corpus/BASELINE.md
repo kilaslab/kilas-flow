@@ -21,18 +21,19 @@ nor blocked actually failed to execute.
 
 ## Score
 
-| Tier | Count | of 39 |
+| Tier | Count | of 40 |
 | --- | ---: | ---: |
-| imported | 39 | 100% |
-| activatable | 13 | 33% |
-| runnable | 3 | 8% |
+| imported | 40 | 100% |
+| activatable | 14 | 35% |
+| runnable | 4 | 10% |
 | _(blocked only by a Code node)_ | 0 | 0% |
-| _(blocked by the offline policy)_ | 10 | 26% |
+| _(blocked by the offline policy)_ | 10 | 25% |
 
 ## Per fixture
 
 | Fixture | Source | Nodes | Imported | Activatable | Runnable | First failure |
 | --- | --- | ---: | :---: | :---: | :---: | --- |
+| `kilasflow/control-datatable` | kilasflow | 5 | yes | yes | yes | — |
 | `kilasflow/control-manual-set` | kilasflow | 2 | yes | yes | yes | — |
 | `nodes-base/HttpRequest/test/binaryData/binaryData.test` | nodes-base | 8 | yes | yes | blocked | execute node "665fef5c-6380-4bc0-be2a-430446b140ca": node "HTTP Request (v4)2": request target is not allowed: host "dummy.domain" is not in the allowed list |
 | `nodes-base/HttpRequest/test/encoding/encoding.test` | nodes-base | 3 | yes | yes | blocked | execute node "cc2f185d-df6a-4fa3-b7f4-29f0dbad0f9b": node "HTTP Request (v4)": request target is not allowed: host "dummy.domain" is not in the allowed list |
@@ -84,7 +85,7 @@ What p3 and p4 pick their targets from, measured across the public corpus.
 | `n8n-nodes-base.stickyNote` | 52 |
 | `n8n-nodes-base.httpRequest` | 51 |
 | `n8n-nodes-base.if` | 44 |
-| `n8n-nodes-base.manualTrigger` | 30 |
+| `n8n-nodes-base.manualTrigger` | 31 |
 | `@devlikeapro/n8n-nodes-waha.WAHA` | 23 |
 | `n8n-nodes-base.postgres` | 16 |
 | `n8n-nodes-testing.testData` | 14 |
@@ -92,6 +93,7 @@ What p3 and p4 pick their targets from, measured across the public corpus.
 | `@devlikeapro/n8n-nodes-waha.wahaTrigger` | 7 |
 | `@devlikeapro/n8n-nodes-chatwoot.chatWoot` | 5 |
 | `n8n-nodes-base.splitOut` | 5 |
+| `n8n-nodes-base.dataTable` | 4 |
 | `n8n-nodes-base.wait` | 4 |
 | `n8n-nodes-base.webhook` | 4 |
 | `n8n-nodes-base.code` | 3 |

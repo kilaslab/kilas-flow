@@ -1,6 +1,8 @@
 package corpus_test
 
 import (
+	"io"
+	"log/slog"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,6 +16,9 @@ import (
 	"time"
 
 	"github.com/kilaslabs/kilas-flow/internal/ai"
+	"github.com/kilaslabs/kilas-flow/internal/config"
+	"github.com/kilaslabs/kilas-flow/internal/database"
+	"github.com/kilaslabs/kilas-flow/internal/datastore"
 	"github.com/kilaslabs/kilas-flow/internal/engine"
 	"github.com/kilaslabs/kilas-flow/internal/interop/n8n"
 	"github.com/kilaslabs/kilas-flow/internal/interop/n8n/corpus"
@@ -131,7 +136,27 @@ func corpusRuntime(t *testing.T) (*node.Registry, *engine.Registry) {
 		Timeout:          time.Second,
 	}
 	executors := engine.NewRegistry()
-	if err := nodes.RegisterExecutors(executors, offline, sqlnode.Guard{}, ai.NewLoopRuntime(), nil, nil); err != nil {
+	// The scoreboard runs against a real datastore the same way the product
+	// does: a control fixture that creates, reads and renames a table has to
+	// run somewhere, and a SQLite file inside a per-test temp dir is gone
+	// when the test is. No other fixture reaches the store, so nothing else
+	// moves.
+	storeLog := slog.New(slog.NewTextHandler(io.Discard, nil))
+	storeDB, err := database.Open(context.Background(), config.Database{
+		Driver: "sqlite", DSN: filepath.Join(t.TempDir(), "corpus-datastore.db"), TablePrefix: "corpus_",
+	}, storeLog)
+	if err != nil {
+		t.Fatalf("database.Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = storeDB.Close() })
+	if err := database.Migrate(storeDB, storeLog); err != nil {
+		t.Fatalf("database.Migrate() error = %v", err)
+	}
+	storeEngine, err := datastore.NewEngine(storeDB, "corpus_")
+	if err != nil {
+		t.Fatalf("datastore.NewEngine() error = %v", err)
+	}
+	if err := nodes.RegisterExecutors(executors, offline, sqlnode.Guard{}, ai.NewLoopRuntime(), nil, nil, nodes.WithDatastoreEngine(storeEngine)); err != nil {
 		t.Fatalf("RegisterExecutors() error = %v", err)
 	}
 	routes := routing.NewRegistry()
@@ -197,7 +222,8 @@ func scoreFixture(t *testing.T, fixture corpus.Fixture, catalog workflow.Catalog
 	result.Activatable = true
 
 	if _, err := engine.NewRunner(executors).Run(context.Background(), compiled, engine.Request{
-		Input: workflow.Item{JSON: map[string]any{}},
+		Input:     workflow.Item{JSON: map[string]any{}},
+		Execution: engine.ExecutionContext{TenantID: "corpus"},
 	}); err != nil {
 		result.Reason = firstLine(err)
 		result.Blocked = errors.Is(err, safehttp.ErrBlocked) || errors.Is(err, sqlnode.ErrForbiddenTarget)

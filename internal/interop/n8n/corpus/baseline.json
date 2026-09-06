@@ -1,11 +1,11 @@
 {
   "comment": "Baseline for the n8n importer regression corpus. Tiers: imported = n8n.Import returned no error; activatable = workflow.Compile returned no error; runnable = the workflow ran to completion with HTTP, SQL and model calls stubbed. Regenerate with go test ./internal/interop/n8n/corpus -update-baseline, and say in the commit which workflows moved and why.",
   "tiers": {
-    "activatable": 13,
-    "imported": 39,
-    "runnable": 3
+    "activatable": 14,
+    "imported": 40,
+    "runnable": 4
   },
-  "total": 39,
+  "total": 40,
   "blocked": 10,
   "codeOnly": 0,
   "nodeTypeInventory": {
@@ -14,12 +14,13 @@
     "@devlikeapro/n8n-nodes-waha.wahaTrigger": 7,
     "n8n-nodes-base.code": 3,
     "n8n-nodes-base.convertToFile": 1,
+    "n8n-nodes-base.dataTable": 4,
     "n8n-nodes-base.editImage": 1,
     "n8n-nodes-base.emailSend": 3,
     "n8n-nodes-base.extractFromFile": 1,
     "n8n-nodes-base.httpRequest": 51,
     "n8n-nodes-base.if": 44,
-    "n8n-nodes-base.manualTrigger": 30,
+    "n8n-nodes-base.manualTrigger": 31,
     "n8n-nodes-base.noOp": 70,
     "n8n-nodes-base.postgres": 16,
     "n8n-nodes-base.respondToWebhook": 3,
@@ -35,6 +36,15 @@
     "n8n-nodes-testing.testData": 14
   },
   "scores": [
+    {
+      "name": "kilasflow/control-datatable",
+      "source": "kilasflow",
+      "nodes": 5,
+      "imported": true,
+      "activatable": true,
+      "runnable": true,
+      "unsupported": 2
+    },
     {
       "name": "kilasflow/control-manual-set",
       "source": "kilasflow",

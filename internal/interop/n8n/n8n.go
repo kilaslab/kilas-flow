@@ -449,6 +449,21 @@ var mappings = []mapping{
 		n8nType: "@n8n/n8n-nodes-langchain.outputParserStructured", kilasType: "kilasflow.outputParser", kilasVersion: workflow.V(1),
 		exportTypeVersion: 1.3, toKilas: outputParserToKilas, toN8N: outputParserToN8N,
 	},
+	// The Data Table family. Twelve operations across two resources — seven
+	// row operations and five table ones, with the table update surfaced as
+	// Rename — and the same resource locator and column-mapping surface on
+	// both the node and its tool variant. The tool is its own entry rather
+	// than a derivation: KilasFlow has no usableAsTool concept to derive
+	// from, and the HTTP tool beside it is already a separately registered
+	// type. See the translators in parameters.go.
+	{
+		n8nType: DataTableNodeType, kilasType: DatastoreNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1, toKilas: dataTableToKilas, toN8N: dataTableToN8N,
+	},
+	{
+		n8nType: DataTableToolNodeType, kilasType: DatastoreToolNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1, toKilas: dataTableToolToKilas, toN8N: dataTableToolToN8N,
+	},
 }
 
 // The WAHA pack's node types, named here so the mapping table and the pack
@@ -492,6 +507,24 @@ const (
 	// TelegramNodeType is the pack; TelegramTriggerNodeType is a built-in.
 	TelegramNodeType        = "pack.telegram"
 	TelegramTriggerNodeType = "kilasflow.telegramTrigger"
+)
+
+// The Data Table family's node types, named here so the mapping table cannot
+// drift from them without a compile error somewhere. The capitalisation is
+// n8n's own — dataTable in camel case for both the node and its tool variant
+// — and is matched byte for byte, never normalised.
+const (
+	DataTableNodeType     = "n8n-nodes-base.dataTable"
+	DataTableToolNodeType = "n8n-nodes-base.dataTableTool"
+)
+
+// The datastore family's canonical types, mirrored from nodes.DatastoreNodeType
+// and the datastore tool registration rather than imported, for the same
+// reason UnsupportedNodeType is: the adapter must not depend on the node pack.
+// TestDatastoreTypesMatchTheNodePack keeps them in step.
+const (
+	DatastoreNodeType     = "kilasflow.datastore"
+	DatastoreToolNodeType = "kilasflow.datastoreTool"
 )
 
 func byN8NType(nodeType string) (mapping, bool) {
