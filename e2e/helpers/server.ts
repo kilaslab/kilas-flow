@@ -65,11 +65,13 @@ export async function startServer(options: E2EServerOptions = {}): Promise<E2ESe
 	});
 	child.stdout?.on('data', (chunk: Buffer) => {
 		chunks.push(chunk.toString());
-		logStream.write(chunk);
+		// Teardown ends the stream while the child can still flush: an
+		// unguarded write crashes the worker with ERR_STREAM_WRITE_AFTER_END.
+		if (!logStream.writableEnded) logStream.write(chunk);
 	});
 	child.stderr?.on('data', (chunk: Buffer) => {
 		chunks.push(chunk.toString());
-		logStream.write(chunk);
+		if (!logStream.writableEnded) logStream.write(chunk);
 	});
 
 	try {

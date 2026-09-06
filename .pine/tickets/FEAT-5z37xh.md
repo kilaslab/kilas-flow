@@ -744,3 +744,13 @@ Closed by `pine close --evidence` on 2026-09-06.
  web/src/routes/+page.svelte                        |    8 +-
  612 files changed, 85238 insertions(+), 2022 deletions(-)
 ```
+
+## Notes (NodeCoverage, 2026-09-06, +3 MCP/vector types, status untouched)
+
+Catalogue grew 51 → 54 (all builtin): kilasflow.mcpClientTool@1 joins the
+validation tier (`serverUrl is required`; needs a live MCP server to run),
+while kilasflow.embeddings@1 and kilasflow.vectorStore@1 refuse by design on
+the harness's SQLite with the pgvector install message
+(VectorUnavailableReason; availability is validated before any other
+parameter). Split is now 32 run + 22 validation = 54, exclusions still none.
+Spec 14 passed (incl. the ratchet), smoke 5 passed.

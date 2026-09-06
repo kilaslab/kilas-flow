@@ -78,6 +78,9 @@ const VALIDATION_COVERAGE = [
 	'kilasflow.calculatorTool@1',
 	'kilasflow.workflowTool@1',
 	'kilasflow.outputParser@1',
+	'kilasflow.mcpClientTool@1',
+	'kilasflow.embeddings@1',
+	'kilasflow.vectorStore@1',
 	'kilasflow.postgres@1',
 	'kilasflow.postgres@2',
 	'kilasflow.mysql@1',
@@ -772,6 +775,39 @@ test('the agent cluster fails closed without wiring or credentials', async ({ se
 	const parserAttempt = await startRun(server.baseURL, parserId);
 	expect(parserAttempt.status).toBe(422);
 	expect(errorText(parserAttempt.body)).toContain('jsonSchema is required when the schema type is JSON Schema');
+
+	// An MCP client tool without its server URL names the missing endpoint.
+	// It needs a live MCP server to run, so validation is its headless tier.
+	const mcpId = await createWorkflow(server.baseURL, 'Coverage MCP Bare', [manual(), node('tool', 'Tool', 'kilasflow.mcpClientTool', 1, {})], []);
+	const mcpAttempt = await startRun(server.baseURL, mcpId);
+	expect(mcpAttempt.status).toBe(422);
+	expect(errorText(mcpAttempt.body)).toContain('serverUrl is required');
+});
+
+test('embeddings and vector store refuse without pgvector', async ({ server }) => {
+	// The harness runs on SQLite, where both nodes refuse by design with the
+	// install message instead of a run-time failure: they need PostgreSQL
+	// with the pgvector extension. Availability is checked before any other
+	// parameter, so ordinary configurations exercise the refusal path.
+	const embeddingsId = await createWorkflow(
+		server.baseURL,
+		'Coverage Embeddings',
+		[manual(), node('emb', 'Embeddings', 'kilasflow.embeddings', 1, { model: 'text-embedding-3-small' })],
+		[conn('c1', 'manual', 'main', 'emb', 'main')]
+	);
+	const embeddingsAttempt = await startRun(server.baseURL, embeddingsId);
+	expect(embeddingsAttempt.status).toBe(422);
+	expect(errorText(embeddingsAttempt.body)).toContain('pgvector');
+
+	const storeId = await createWorkflow(
+		server.baseURL,
+		'Coverage Vector Store',
+		[manual(), node('store', 'Store', 'kilasflow.vectorStore', 1, { operation: 'insert', collection: 'coverage' })],
+		[conn('c1', 'manual', 'main', 'store', 'main')]
+	);
+	const storeAttempt = await startRun(server.baseURL, storeId);
+	expect(storeAttempt.status).toBe(422);
+	expect(errorText(storeAttempt.body)).toContain('pgvector');
 });
 
 test('remote database nodes fail closed without their credential', async ({ server }) => {
