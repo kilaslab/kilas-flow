@@ -21,6 +21,13 @@ func composition(t *testing.T) (*node.Registry, *engine.Registry) {
 	if err := nodes.RegisterAll(catalogue); err != nil {
 		t.Fatalf("RegisterAll() error = %v", err)
 	}
+	// main.go registers the vector pair right after the built-ins with the
+	// install's availability verdict; the test takes the verdict for the
+	// same sqlite posture its guard helper builds, so the catalogue under
+	// test is the catalogue the server runs.
+	if err := nodes.RegisterVectorNodes(catalogue, nodes.VectorUnavailableReason("sqlite")); err != nil {
+		t.Fatalf("RegisterVectorNodes() error = %v", err)
+	}
 	executors := engine.NewRegistry()
 	if err := nodes.RegisterExecutors(executors, localPolicy(), sqlGuard(), ai.NewLoopRuntime(), nil, nil); err != nil {
 		t.Fatalf("RegisterExecutors() error = %v", err)

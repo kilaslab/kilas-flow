@@ -119,6 +119,19 @@ type Guard struct {
 	// open one would be able to read every credential, workflow, and execution
 	// in the installation.
 	InternalPaths []string
+	// Internal is the installation's own network database identity: driver,
+	// host, port and database name, built once at startup from the
+	// installation's own DSN (see ParseInternalTarget). A workflow credential
+	// resolving to it is refused on every network driver before anything
+	// dials, and again at dial time. Nil means the install holds no network
+	// database of its own — a SQLite install, or an in-memory one — in which
+	// case InternalPaths above is the whole of the internal-database guard.
+	//
+	// A table prefix does not scope this refusal. The prefix is a naming
+	// convention, not a boundary: anything holding the connection can read
+	// every table under it, so the whole database is refused however the
+	// credential spells its target.
+	Internal *InternalTarget
 	// Policy is the process egress policy for network databases: the same
 	// policy that governs workflow HTTP requests. A credential whose host
 	// resolves to a loopback, private, link-local or otherwise internal
@@ -138,6 +151,139 @@ type Guard struct {
 	// so a hostname resolving to 127.0.0.1 is refused without needing DNS or
 	// a live server.
 	LookupIPAddr func(ctx context.Context, host string) ([]net.IP, error)
+}
+
+// InternalTarget is the installation's own network database, normalised once
+// at startup so every credential is compared against resolved identity rather
+// than DSN text.
+type InternalTarget struct {
+	// Driver is the installation's own driver. Only a credential for the
+	// same driver can resolve to this target; anything else is a different
+	// server grammar and cannot name this database.
+	Driver Driver
+	// Host is the installation's own database host as spelled in its DSN.
+	// Compared by resolved address, never by text: localhost, 127.0.0.1,
+	// the Compose service name and the machine's own DNS name all reach the
+	// same server, and a text check is the version of this guard that gets
+	// bypassed by someone who is not even trying.
+	Host string
+	// Port is the installation's own database port, normalised to digits.
+	Port string
+	// Database is the installation's own database name. Compared exactly:
+	// a neighbour database on the same server is a different target and
+	// passes this guard (the egress policy still applies to it).
+	Database string
+}
+
+// ParseInternalTarget normalises the installation's own database DSN into the
+// identity workflow credentials are refused against. The DSN is the
+// PostgreSQL URL the installation itself opens — userinfo, host, port and
+// path — and none of its options matter to the comparison: sslmode changes
+// how the connection is wrapped, not which database it reaches, so
+// postgres://…/kilasflow and postgres://…/kilasflow?sslmode=disable are the
+// same target and both are refused.
+//
+// SQLite installs have no network identity; their guard is the file list in
+// Guard.InternalPaths, resolved through database.SQLitePath by the caller.
+// An error means the DSN is a spelling this function does not understand,
+// and the caller must treat that as fatal rather than as an empty guard: a
+// guard that cannot resolve its own identity protects nothing, and the
+// failure is invisible.
+func ParseInternalTarget(driver Driver, dsn string) (*InternalTarget, error) {
+	if driver != DriverPostgres {
+		return nil, fmt.Errorf("the internal database guard understands the postgres DSN, not driver %q", driver)
+	}
+	raw := strings.TrimSpace(dsn)
+	if raw == "" {
+		return nil, fmt.Errorf("the internal database DSN is empty")
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return nil, fmt.Errorf("the internal database DSN could not be parsed: %w", err)
+	}
+	switch parsed.Scheme {
+	case "postgres", "postgresql":
+	default:
+		return nil, fmt.Errorf("the internal database DSN has scheme %q, want postgres", parsed.Scheme)
+	}
+	host := parsed.Hostname()
+	if host == "" {
+		return nil, fmt.Errorf("the internal database DSN names no host")
+	}
+	port := parsed.Port()
+	if port == "" {
+		port = "5432"
+	}
+	if _, err := strconv.Atoi(port); err != nil {
+		return nil, fmt.Errorf("the internal database DSN names port %q, which is not a port number", parsed.Port())
+	}
+	return &InternalTarget{
+		Driver:   driver,
+		Host:     host,
+		Port:     canonicalPort(port),
+		Database: strings.TrimSpace(strings.TrimPrefix(parsed.Path, "/")),
+	}, nil
+}
+
+// canonicalPort normalises a port to the digits splitHostPort produces, so
+// "5432" and "05432" compare equal. A value that is not a number is returned
+// as-is and never matches a normalised one.
+func canonicalPort(port string) string {
+	number, err := strconv.Atoi(strings.TrimSpace(port))
+	if err != nil || number < 1 || number > 65535 {
+		return port
+	}
+	return strconv.Itoa(number)
+}
+
+// sameServerName reports whether two host spellings name the same host
+// without consulting DNS: case-insensitive, a trailing dot ignored. This is
+// the backstop for a name whose answers disagree between lookups — DNS
+// round-robin can hand the credential one address and the installation
+// another for the very same name — where an address comparison alone misses.
+func sameServerName(left, right string) bool {
+	normalise := func(host string) string {
+		return strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), ".")
+	}
+	return normalise(left) == normalise(right)
+}
+
+// checkInternalDatabase refuses a credential that resolves to the
+// installation's own database. The caller supplies the credential's
+// normalised host, port and database name plus the addresses the host
+// resolved to; the installation's own host is resolved through the same
+// resolver, so two spellings of one server still compare equal. The message
+// names the reason, never the DSN that carries the password.
+func checkInternalDatabase(ctx context.Context, driver Driver, host, port, database string, addresses []net.IP, guard Guard) error {
+	target := guard.Internal
+	if target == nil || target.Driver != driver {
+		return nil
+	}
+	if strings.TrimSpace(database) != target.Database {
+		return nil
+	}
+	if canonicalPort(port) != canonicalPort(target.Port) {
+		return nil
+	}
+	// The same spelling is the same server whatever DNS says this second.
+	if sameServerName(host, target.Host) {
+		return fmt.Errorf("%w: that %s database is KilasFlow's own internal database", ErrForbiddenTarget, driver)
+	}
+	internal, err := lookupIPs(ctx, guard, target.Host)
+	if err != nil {
+		// The installation's own host does not resolve right now. The
+		// spellings already disagreed, so there is nothing proven to refuse
+		// on — the egress policy above still applies to the credential.
+		return nil
+	}
+	for _, candidate := range addresses {
+		for _, own := range internal {
+			if candidate.Equal(own) {
+				return fmt.Errorf("%w: that %s database is KilasFlow's own internal database", ErrForbiddenTarget, driver)
+			}
+		}
+	}
+	return nil
 }
 
 // Result is one executed statement's outcome.
@@ -240,6 +386,7 @@ func openPostgres(ctx context.Context, fields map[string]string, guard Guard) (*
 	if err != nil {
 		return nil, err
 	}
+	database := strings.TrimSpace(fields["database"])
 	cfg, err := pgx.ParseConfig(postgresDSN(fields, host, port))
 	if err != nil {
 		return nil, fmt.Errorf("open postgres connection: %w", err)
@@ -260,7 +407,7 @@ func openPostgres(ctx context.Context, fields map[string]string, guard Guard) (*
 		return addrs, nil
 	}
 	cfg.DialFunc = func(dialCtx context.Context, network, addr string) (net.Conn, error) {
-		return guardedDialAddr(dialCtx, network, addr, host, guard)
+		return guardedDialAddr(dialCtx, network, addr, host, guard, DriverPostgres, database)
 	}
 	return stdlib.OpenDB(*cfg), nil
 }
@@ -274,6 +421,7 @@ func openMySQL(ctx context.Context, fields map[string]string, guard Guard) (*sql
 	if err != nil {
 		return nil, err
 	}
+	database := strings.TrimSpace(fields["database"])
 	dsn, err := mysqlDSN(fields, host, port)
 	if err != nil {
 		return nil, err
@@ -283,7 +431,7 @@ func openMySQL(ctx context.Context, fields map[string]string, guard Guard) (*sql
 		return nil, fmt.Errorf("open mysql connection: %w", err)
 	}
 	cfg.DialFunc = func(dialCtx context.Context, network, _ string) (net.Conn, error) {
-		return guardedDial(dialCtx, network, host, port, guard)
+		return guardedDial(dialCtx, network, host, port, guard, DriverMySQL, database)
 	}
 	connector, err := mysql.NewConnector(cfg)
 	if err != nil {
@@ -294,7 +442,8 @@ func openMySQL(ctx context.Context, fields map[string]string, guard Guard) (*sql
 
 // checkTarget refuses a network credential before it dials: first where the
 // credential may be sent, then where the process may reach at all, then the
-// addresses the host actually resolves to. The message names the host and the
+// addresses the host actually resolves to, and finally whether those resolve
+// to the installation's own database. The message names the host and the
 // reason, never the DSN that carries the password.
 func checkTarget(ctx context.Context, driver Driver, fields map[string]string, guard Guard, fallbackPort string) (string, string, error) {
 	host, port, err := splitHostPort(fields, fallbackPort)
@@ -322,6 +471,9 @@ func checkTarget(ctx context.Context, driver Driver, fields map[string]string, g
 			return "", "", fmt.Errorf("%w: %s host %q resolved to %s: %v", ErrForbiddenTarget, driver, host, address, err)
 		}
 	}
+	if err := checkInternalDatabase(ctx, driver, host, port, fields["database"], addresses, guard); err != nil {
+		return "", "", err
+	}
 	return host, port, nil
 }
 
@@ -329,8 +481,10 @@ func checkTarget(ctx context.Context, driver Driver, fields map[string]string, g
 // resolves the host again at the moment of dialling, refuses every address
 // the policy forbids, and dials a checked address rather than the hostname,
 // so a name that changes its answer between the two checks cannot slip a
-// forbidden address through.
-func guardedDial(ctx context.Context, network, host, port string, guard Guard) (net.Conn, error) {
+// forbidden address through. The installation's own database is refused here
+// too, for the same reason: a name that resolved elsewhere when checked can
+// resolve at the installation when dialled.
+func guardedDial(ctx context.Context, network, host, port string, guard Guard, driver Driver, database string) (net.Conn, error) {
 	addresses, err := lookupIPs(ctx, guard, host)
 	if err != nil {
 		return nil, err
@@ -339,6 +493,9 @@ func guardedDial(ctx context.Context, network, host, port string, guard Guard) (
 		if err := guard.Policy.CheckEndpointAddress(host, port, address); err != nil {
 			return nil, fmt.Errorf("%w: database host %q resolved to %s: %v", ErrForbiddenTarget, host, address, err)
 		}
+	}
+	if err := checkInternalDatabase(ctx, driver, host, port, database, addresses, guard); err != nil {
+		return nil, err
 	}
 	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
 	var firstErr error
@@ -363,7 +520,7 @@ func guardedDial(ctx context.Context, network, host, port string, guard Guard) (
 // and the socket cannot disagree. A non-literal address means something
 // bypassed the lookup above, and falls back to resolving and dialling a
 // checked address instead of trusting it.
-func guardedDialAddr(ctx context.Context, network, addr, host string, guard Guard) (net.Conn, error) {
+func guardedDialAddr(ctx context.Context, network, addr, host string, guard Guard, driver Driver, database string) (net.Conn, error) {
 	dialHost, dialPort, err := net.SplitHostPort(addr)
 	if err != nil {
 		return nil, err
@@ -372,10 +529,13 @@ func guardedDialAddr(ctx context.Context, network, addr, host string, guard Guar
 		if err := guard.Policy.CheckEndpointAddress(host, dialPort, address); err != nil {
 			return nil, fmt.Errorf("%w: database host %q resolved to %s: %v", ErrForbiddenTarget, host, address, err)
 		}
+		if err := checkInternalDatabase(ctx, driver, host, dialPort, database, []net.IP{address}, guard); err != nil {
+			return nil, err
+		}
 		dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
 		return dialer.DialContext(ctx, network, addr)
 	}
-	return guardedDial(ctx, network, dialHost, dialPort, guard)
+	return guardedDial(ctx, network, dialHost, dialPort, guard, driver, database)
 }
 
 // lookupIPs resolves a database host through the guard's resolver, or the

@@ -91,6 +91,28 @@ func run() error {
 	if err := nodes.RegisterAll(nodeRegistry); err != nil {
 		return fmt.Errorf("register built-in nodes: %w", err)
 	}
+
+	// The vector store lives in the installation's own PostgreSQL: the same
+	// database the guard below refuses to workflow credentials. Absence only
+	// costs vector runs — every other node validates and executes unchanged —
+	// so a missing extension warns rather than refusing to boot.
+	vectorReason := nodes.VectorUnavailableReason(cfg.Database.Driver)
+	var vectorStore nodes.VectorStore = nodes.NewDisabledVectorStore(vectorReason)
+	if cfg.Database.Driver == "postgres" {
+		if sqldb, err := db.DB.DB(); err != nil {
+			log.Warn("vector store unavailable", "reason", err)
+		} else if err := nodes.ProbeVectorExtension(ctx, sqldb); err != nil {
+			log.Warn("vector store unavailable", "reason", err)
+			vectorReason = err.Error()
+			vectorStore = nodes.NewDisabledVectorStore(vectorReason)
+		} else {
+			vectorReason = ""
+			vectorStore = nodes.NewPostgresVectorStore(sqldb, cfg.Database.TablePrefix)
+		}
+	}
+	if err := nodes.RegisterVectorNodes(nodeRegistry, vectorReason); err != nil {
+		return fmt.Errorf("register vector nodes: %w", err)
+	}
 	executorRegistry := engine.NewRegistry()
 	// The Go toolchain is not in the distroless image, so this is absent on a
 	// default install. That is reported through the node catalogue rather than
@@ -123,7 +145,7 @@ func run() error {
 		"retainedSessions", agentMemory.Stats().Sessions)
 	if err := nodes.RegisterExecutors(executorRegistry, outboundPolicy(cfg.Outbound), sqlGuard,
 		ai.NewLoopRuntime(), agentMemory, codeCompiler,
-		nodes.WithDatabaseCeiling(databaseCeiling(cfg.SQL))); err != nil {
+		nodes.WithDatabaseCeiling(databaseCeiling(cfg.SQL)), nodes.WithVectorStore(vectorStore)); err != nil {
 		return fmt.Errorf("register built-in executors: %w", err)
 	}
 	// Declarative node packs run on one interpreter rather than shipping Go.
@@ -563,8 +585,20 @@ func bootstrapIdentity(ctx context.Context, cfg config.Auth, store *repository.G
 // every credential, workflow, and execution in the installation, so the path
 // is passed explicitly rather than inferred inside the node.
 func databaseGuard(cfg config.Database) (sqlnode.Guard, error) {
-	if cfg.Driver != "sqlite" || cfg.DSN == "" {
+	if cfg.DSN == "" {
 		return sqlnode.Guard{}, nil
+	}
+	if cfg.Driver == "postgres" {
+		target, err := sqlnode.ParseInternalTarget(sqlnode.DriverPostgres, cfg.DSN)
+		if err != nil {
+			// Fatal for the same reason as the SQLite path below: a guard
+			// that cannot resolve its own identity still returns "allowed"
+			// for every credential, and the install would look protected
+			// and not be.
+			return sqlnode.Guard{}, fmt.Errorf("the database guard could not resolve the configured DSN, "+
+				"so a workflow credential naming KilasFlow's own database could not be refused: %w", err)
+		}
+		return sqlnode.Guard{Internal: target}, nil
 	}
 	// Resolved through the same function that opens the file, so the guarded
 	// path and the opened path can never be derived differently. They were:

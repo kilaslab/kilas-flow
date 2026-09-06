@@ -45,6 +45,7 @@ func RegisterAll(registry *node.Registry) error {
 		calculatorToolNode(),
 		workflowToolNode(),
 		outputParserNode(),
+		mcpClientToolNode(),
 		codeNode(),
 		stickyNoteNode(),
 		loopNode(),

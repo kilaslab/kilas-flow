@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -68,5 +69,49 @@ func TestOneEgressPolicyGovernsDatabaseTargets(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "hunter2") {
 		t.Fatalf("the refusal leaked the password: %v", err)
+	}
+}
+
+// The boot guard must resolve the installation's own database on every
+// driver it serves, and refuse to boot when it cannot: an unresolvable
+// identity still returns "allowed" for every credential.
+func TestDatabaseGuardResolvesTheInstallationsOwnTarget(t *testing.T) {
+	t.Parallel()
+
+	postgres, err := databaseGuard(config.Database{
+		Driver: "postgres",
+		DSN:    "postgres://kilas:hunter2@db.internal:5433/kilasflow?sslmode=disable",
+	})
+	if err != nil {
+		t.Fatalf("databaseGuard() error = %v", err)
+	}
+	if postgres.Internal == nil {
+		t.Fatal("a postgres install has no internal network target")
+	}
+	if postgres.Internal.Host != "db.internal" || postgres.Internal.Port != "5433" || postgres.Internal.Database != "kilasflow" {
+		t.Fatalf("internal target = %+v, want db.internal:5433/kilasflow", postgres.Internal)
+	}
+
+	if _, err := databaseGuard(config.Database{Driver: "postgres", DSN: "postgres://:bad port/"}); err == nil {
+		t.Fatal("an unparsable internal DSN booted without a guard")
+	}
+
+	sqlite, err := databaseGuard(config.Database{
+		Driver: "sqlite",
+		DSN:    filepath.Join(t.TempDir(), "kilasflow.db"),
+	})
+	if err != nil {
+		t.Fatalf("databaseGuard() error = %v", err)
+	}
+	if len(sqlite.InternalPaths) != 1 || sqlite.Internal != nil {
+		t.Fatalf("sqlite guard = %+v, want exactly one file path and no network target", sqlite)
+	}
+
+	empty, err := databaseGuard(config.Database{Driver: "postgres"})
+	if err != nil {
+		t.Fatalf("databaseGuard() error = %v", err)
+	}
+	if !reflect.DeepEqual(empty, sqlnode.Guard{}) {
+		t.Fatalf("empty-DSN guard = %+v, want the zero guard", empty)
 	}
 }

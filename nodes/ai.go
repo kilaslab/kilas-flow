@@ -1,15 +1,18 @@
 package nodes
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/kilaslabs/kilas-flow/internal/ai"
@@ -28,6 +31,7 @@ const (
 	OpenRouterChatModelExecutorID = "core.openRouterChatModel"
 	MemoryExecutorID              = "core.memoryBuffer"
 	HTTPToolExecutorID            = "core.httpTool"
+	MCPClientToolExecutorID       = "core.mcpClientTool"
 	AgentExecutorID               = "core.agent"
 	ChainExecutorID               = "core.chainLlm"
 	WorkflowToolExecutorID        = "core.workflowTool"
@@ -49,6 +53,7 @@ const (
 	OpenRouterChatModelNodeType = "kilasflow.lmChatOpenRouter"
 	MemoryNodeType              = "kilasflow.memoryBuffer"
 	HTTPToolNodeType            = "kilasflow.httpTool"
+	MCPClientToolNodeType       = "kilasflow.mcpClientTool"
 	AgentNodeType               = "kilasflow.agent"
 	ChainNodeType               = "kilasflow.chainLlm"
 	WorkflowToolNodeType        = "kilasflow.workflowTool"
@@ -949,6 +954,10 @@ type AgentExecutor struct {
 	// httpTool is the same executor the HTTP Request node uses, so exposing an
 	// HTTP call as a tool reuses that implementation rather than copying it.
 	httpTool *HTTPExecutor
+	// mcp is the shared transport MCP tools call through, so every tools/call
+	// round trip inherits the deployment's SSRF policy rather than building
+	// a client of its own that would quietly lose it.
+	mcp *MCPClientToolExecutor
 }
 
 // modelBackend binds a deployment's outbound policy for model calls. Both the
@@ -1080,6 +1089,7 @@ func NewAgentExecutor(runtime ai.AgentRuntime, policy safehttp.Policy, memory ai
 		modelBackend: newModelBackend(policy),
 		memory:       memory,
 		httpTool:     NewHTTPExecutor(policy),
+		mcp:          NewMCPClientToolExecutor(policy),
 	}
 	for _, option := range options {
 		option(executor)
@@ -1713,6 +1723,7 @@ const (
 	toolKindHTTP       = "tool"
 	toolKindWorkflow   = "workflow"
 	toolKindCalculator = "calculator"
+	toolKindMCP        = "mcp"
 )
 
 // toolNameProperty is the optional override for the name the model calls,
@@ -2425,7 +2436,8 @@ func parserSlot(items []workflow.Item, nodeName string) (schema map[string]any, 
 // tool runs the same executor the HTTP Request node uses, so it inherits
 // the SSRF policy, credential scoping, timeout, and response limits rather
 // than reimplementing any of them; the workflow and calculator tools reuse
-// their own node implementations the same way.
+// their own node implementations the same way, and the MCP tool calls
+// through the shared MCP transport below for the same reason.
 func (executor *AgentExecutor) toolFrom(ir workflow.IRNode, descriptor map[string]any, request engine.Request) (ai.Tool, error) {
 	switch textValue(descriptor["kind"], toolKindHTTP) {
 	case toolKindHTTP:
@@ -2434,6 +2446,8 @@ func (executor *AgentExecutor) toolFrom(ir workflow.IRNode, descriptor map[strin
 		return executor.workflowToolFrom(ir, descriptor, request)
 	case toolKindCalculator:
 		return executor.calculatorToolFrom(ir, descriptor, request)
+	case toolKindMCP:
+		return executor.mcpToolFrom(ir, descriptor, request)
 	default:
 		return nil, fmt.Errorf("node %q: connected tool %q has unknown kind %q",
 			ir.Name, textValue(descriptor["nodeName"], ""), textValue(descriptor["kind"], ""))
@@ -2473,4 +2487,604 @@ func (executor *AgentExecutor) calculatorToolFrom(ir workflow.IRNode, descriptor
 		agentNode:   ir.Name,
 		request:     request,
 	}, nil
+}
+
+// mcpClientToolNode exposes a Model Context Protocol server's tools to an AI
+// Agent. One MCP server usually publishes many tools while one KilasFlow
+// descriptor maps to one ai.Tool, so the node lists the server at run time
+// and emits one descriptor item per selected tool on the tool port. That
+// keeps descriptorsFrom unchanged and makes the agent's duplicate-name check
+// apply naturally across MCP and HTTP tools alike.
+func mcpClientToolNode() node.Definition {
+	return node.Definition{
+		Type:        MCPClientToolNodeType,
+		Version:     workflow.V(1),
+		DisplayName: "MCP Client Tool",
+		Description: "Exposes tools from a Model Context Protocol server to an AI Agent as callable tools.",
+		Category:    "AI",
+		Group:       []node.NodeGroup{node.GroupTransform},
+		Icon:        &node.NodeIcon{Light: "builtin:wrench"},
+		IconColor:   "#a855f7",
+		Inputs:      nil,
+		Outputs:     []workflow.Port{{Name: "tool", Kind: workflow.ConnectionTool}},
+		// The generic HTTP credential types, the same three the HTTP Request
+		// node accepts: the MCP endpoint is a tenant-authored URL and its
+		// token is resolved from the store at call time, never stored in the
+		// workflow document. No new credential type was needed.
+		Credentials: []node.CredentialRequirement{
+			{Type: "httpBearerAuth"},
+			{Type: "httpHeaderAuth"},
+			{Type: "httpBasicAuth"},
+		},
+		Parameters: []node.PropertyDefinition{
+			{
+				Key: "serverUrl", Label: "Server URL", Kind: node.PropertyString, Required: true,
+				Description: "The MCP server's streamable HTTP endpoint. Supports expressions.",
+			},
+			{
+				Key: "tools", Label: "Tools to expose", Kind: node.PropertyString,
+				Description: "Comma-separated server tool names to expose. Leave empty to expose every tool the server lists.",
+			},
+			{
+				Key: "requestTimeoutSeconds", Label: "Request timeout (seconds)", Kind: node.PropertyNumber, Default: 30,
+				Description: "Time budget for listing the server's tools and for each tool call. It can only tighten the deployment's ceiling, never raise it.",
+			},
+		},
+		SharedSettings: sharedSettings(),
+		ExecutorID:     MCPClientToolExecutorID,
+		Validate:       validateMCPClientToolConfiguration,
+		Codex:          toolCodex(),
+	}
+}
+
+func validateMCPClientToolConfiguration(n workflow.Node) error {
+	raw := strings.TrimSpace(statementText(n.Parameters, "serverUrl"))
+	if raw == "" {
+		return fmt.Errorf("serverUrl is required")
+	}
+	if raw == "expression" {
+		// An expression-valued URL resolves at run time; static validation
+		// cannot judge it, and run time refuses what it cannot use.
+		return nil
+	}
+	target, err := url.Parse(raw)
+	if err != nil || target == nil {
+		return fmt.Errorf("serverUrl is not a valid URL")
+	}
+	switch strings.ToLower(target.Scheme) {
+	case "http", "https":
+		return nil
+	case "stdio":
+		return fmt.Errorf("serverUrl uses stdio, which would run a local process: point it at the server's streamable HTTP endpoint instead")
+	default:
+		return fmt.Errorf("serverUrl scheme %q is not supported; use http or https", target.Scheme)
+	}
+}
+
+// mcpProtocolVersion is the Streamable HTTP protocol version this client
+// announces in initialize. The server's answer is accepted as-is rather than
+// negotiated: refusing a server that speaks an older revision would turn a
+// working tool into a version error.
+const mcpProtocolVersion = "2025-06-18"
+
+// mcpRequestIDs numbers JSON-RPC requests process-wide, so two concurrent
+// tool calls never share an id on one server.
+var mcpRequestIDs atomic.Int64
+
+// MCPClientToolExecutor lists an MCP server's tools and calls them, every
+// request through an http.Client built by internal/safehttp. The client's
+// dialer re-checks the resolved IP of every connection and every redirect
+// hop, so a server URL pointing at loopback, a private range, or the cloud
+// metadata service is refused by the same policy the HTTP node enforces.
+type MCPClientToolExecutor struct {
+	policy safehttp.Policy
+	client *http.Client
+}
+
+// NewMCPClientToolExecutor builds the MCP client tool executor for one
+// policy. Exported so the composition root registers it beside the other
+// executors; it carries no per-workflow state.
+func NewMCPClientToolExecutor(policy safehttp.Policy) *MCPClientToolExecutor {
+	return &MCPClientToolExecutor{policy: policy, client: safehttp.NewClient(policy)}
+}
+
+// Execute lists the server's tools and emits one tool descriptor item per
+// selected tool.
+func (executor *MCPClientToolExecutor) Execute(ctx context.Context, ir workflow.IRNode, input workflow.NodeInput, request engine.Request) (workflow.NodeOutput, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	// The node carries no main input: it configures the agent rather than
+	// transforming items. Resolve against an empty item so $env and literals
+	// work; there is no $json to read here.
+	resolved, err := expression.Resolve(ir.Parameters, expressionContext(workflow.Item{JSON: map[string]any{}}, input, request, 0))
+	if err != nil {
+		return nil, fmt.Errorf("node %q: %w", ir.Name, err)
+	}
+	endpoint := strings.TrimSpace(textValue(resolved["serverUrl"], ""))
+	if endpoint == "" {
+		return nil, fmt.Errorf("node %q: serverUrl is required", ir.Name)
+	}
+	target, err := url.Parse(endpoint)
+	if err != nil || target == nil {
+		return nil, fmt.Errorf("node %q: serverUrl is not a valid URL", ir.Name)
+	}
+	if strings.ToLower(target.Scheme) == "stdio" {
+		return nil, fmt.Errorf("node %q: serverUrl uses stdio, which would run a local process: point it at the server's streamable HTTP endpoint instead", ir.Name)
+	}
+	// The same pre-flight gate the HTTP node applies. The dialer refuses a
+	// private address on its own, but only once DNS has answered — so a
+	// disallowed host that does not resolve would fail as a lookup error
+	// rather than as the policy refusal it is.
+	if err := executor.policy.CheckURL(target); err != nil {
+		return nil, fmt.Errorf("node %q: %w", ir.Name, err)
+	}
+	callCtx := ctx
+	if timeout := mcpTimeout(resolved, executor.policy); timeout > 0 {
+		var cancel context.CancelFunc
+		callCtx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+	listed, err := executor.listTools(callCtx, ir, request, endpoint)
+	if err != nil {
+		return nil, fmt.Errorf("node %q: %w", ir.Name, err)
+	}
+	wanted := mcpToolAllowlist(resolved)
+	items := make([]workflow.Item, 0, len(listed))
+	seen := make(map[string]bool, len(listed))
+	for _, tool := range listed {
+		if wanted != nil && !wanted[tool.name] {
+			continue
+		}
+		seen[tool.name] = true
+		credentials := make(map[string]any, len(ir.Credentials))
+		for typeID, id := range ir.Credentials {
+			credentials[typeID] = id
+		}
+		// The descriptor carries the credential id, never the secret: it
+		// travels in an item that is persisted in the execution record, and
+		// the agent re-resolves the secret when it actually calls the tool.
+		items = append(items, workflow.Item{JSON: map[string]any{descriptorKey: map[string]any{
+			"kind":           toolKindMCP,
+			"name":           tool.name,
+			"description":    tool.description,
+			"nodeName":       ir.Name,
+			"serverUrl":      endpoint,
+			"inputSchema":    tool.schema,
+			"timeoutSeconds": timeoutParameter(resolved, "requestTimeoutSeconds"),
+			"credentials":    credentials,
+		}}})
+	}
+	if wanted != nil {
+		missing := make([]string, 0)
+		for name := range wanted {
+			if !seen[name] {
+				missing = append(missing, name)
+			}
+		}
+		if len(missing) > 0 {
+			return nil, fmt.Errorf("node %q: the MCP server has no tools named %s", ir.Name, strings.Join(missing, ", "))
+		}
+	}
+	if len(items) == 0 {
+		return nil, fmt.Errorf("node %q: the MCP server listed no tools to expose", ir.Name)
+	}
+	return workflow.NodeOutput{items}, nil
+}
+
+// mcpToolAllowlist parses the node's tool selection. Empty means expose
+// every tool the server lists; anything else is an exact-name allowlist.
+// A plain string rather than a multi-option select: the option list can only
+// be populated once dynamic load-options exist, and a select that cannot be
+// populated would lie about what it offers.
+func mcpToolAllowlist(parameters map[string]any) map[string]bool {
+	raw := strings.TrimSpace(textValue(parameters["tools"], ""))
+	if raw == "" {
+		return nil
+	}
+	wanted := make(map[string]bool)
+	for _, name := range strings.Split(raw, ",") {
+		if trimmed := strings.TrimSpace(name); trimmed != "" {
+			wanted[trimmed] = true
+		}
+	}
+	return wanted
+}
+
+// mcpTimeout resolves the node's time budget the way the HTTP executor does:
+// the node may only tighten the deployment's ceiling, never raise it.
+func mcpTimeout(parameters map[string]any, policy safehttp.Policy) time.Duration {
+	timeout := policy.Timeout
+	if seconds := timeoutParameter(parameters, "requestTimeoutSeconds"); seconds > 0 {
+		requested := time.Duration(seconds * float64(time.Second))
+		if policy.Timeout <= 0 || requested < policy.Timeout {
+			timeout = requested
+		}
+	}
+	return timeout
+}
+
+// mcpListedTool is one entry of an MCP tools/list result.
+type mcpListedTool struct {
+	name        string
+	description string
+	schema      map[string]any
+}
+
+// listTools runs the Streamable HTTP handshake — initialize, the initialized
+// notification, then tools/list — and returns what the server publishes.
+// Resources and prompts are out of scope: this node exposes tools only.
+func (executor *MCPClientToolExecutor) listTools(ctx context.Context, ir workflow.IRNode, request engine.Request, endpoint string) ([]mcpListedTool, error) {
+	_, session, err := executor.mcpCall(ctx, ir, request, endpoint, "", "initialize", map[string]any{
+		"protocolVersion": mcpProtocolVersion,
+		"capabilities":    map[string]any{},
+		"clientInfo":      map[string]any{"name": "kilasflow", "version": "1"},
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := executor.mcpNotify(ctx, ir, request, endpoint, session); err != nil {
+		return nil, err
+	}
+	raw, _, err := executor.mcpCall(ctx, ir, request, endpoint, session, "tools/list", nil)
+	if err != nil {
+		return nil, err
+	}
+	var decoded struct {
+		Tools []struct {
+			Name        string         `json:"name"`
+			Description string         `json:"description"`
+			InputSchema map[string]any `json:"inputSchema"`
+		} `json:"tools"`
+	}
+	if len(raw) == 0 {
+		return nil, fmt.Errorf("the MCP server returned no tools/list result")
+	}
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return nil, fmt.Errorf("the MCP server's tools/list result is not valid JSON: %w", err)
+	}
+	listed := make([]mcpListedTool, 0, len(decoded.Tools))
+	for _, entry := range decoded.Tools {
+		if strings.TrimSpace(entry.Name) == "" {
+			return nil, fmt.Errorf("the MCP server listed a tool with no name")
+		}
+		schema := entry.InputSchema
+		if len(schema) == 0 {
+			schema = map[string]any{"type": "object"}
+		}
+		listed = append(listed, mcpListedTool{name: entry.Name, description: entry.Description, schema: schema})
+	}
+	return listed, nil
+}
+
+// callTool runs one tools/call round trip over a fresh handshake. A fresh
+// handshake per call costs two extra round trips against holding one session
+// open for the whole agent run; it keeps the tool stateless — no shared
+// session cache with expiry and invalidation to get wrong — and MCP
+// initialize is cheap beside a model turn.
+func (executor *MCPClientToolExecutor) callTool(ctx context.Context, ir workflow.IRNode, request engine.Request, endpoint, name string, arguments map[string]any) (string, error) {
+	_, session, err := executor.mcpCall(ctx, ir, request, endpoint, "", "initialize", map[string]any{
+		"protocolVersion": mcpProtocolVersion,
+		"capabilities":    map[string]any{},
+		"clientInfo":      map[string]any{"name": "kilasflow", "version": "1"},
+	})
+	if err != nil {
+		return "", err
+	}
+	if err := executor.mcpNotify(ctx, ir, request, endpoint, session); err != nil {
+		return "", err
+	}
+	raw, _, err := executor.mcpCall(ctx, ir, request, endpoint, session, "tools/call", map[string]any{
+		"name": name, "arguments": arguments,
+	})
+	if err != nil {
+		return "", err
+	}
+	var decoded struct {
+		Content []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"content"`
+		IsError bool `json:"isError"`
+	}
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return "", fmt.Errorf("the MCP server's tools/call result is not valid JSON: %w", err)
+	}
+	texts := make([]string, 0, len(decoded.Content))
+	for _, block := range decoded.Content {
+		if block.Type == "text" {
+			texts = append(texts, block.Text)
+		}
+	}
+	joined := strings.Join(texts, "\n")
+	if decoded.IsError {
+		if joined == "" {
+			joined = "the tool reported an error without detail"
+		}
+		return "", fmt.Errorf("MCP tool %q reported an error: %s", name, joined)
+	}
+	if joined == "" {
+		// No text blocks: hand the model the raw result rather than an
+		// empty turn that says nothing.
+		if len(raw) == 0 {
+			return "", fmt.Errorf("MCP tool %q returned nothing", name)
+		}
+		return string(raw), nil
+	}
+	return joined, nil
+}
+
+// mcpCall posts one JSON-RPC request and returns its result. Authentication
+// goes through the runtime's Authenticate, exactly as an HTTP Request node's
+// does: ownership, type and domain scope are checked before the secret
+// touches the request, and the token never appears in a log line here.
+func (executor *MCPClientToolExecutor) mcpCall(ctx context.Context, ir workflow.IRNode, request engine.Request, endpoint, session, method string, params map[string]any) (json.RawMessage, string, error) {
+	payload := map[string]any{"jsonrpc": "2.0", "id": mcpRequestIDs.Add(1), "method": method}
+	if params != nil {
+		payload["params"] = params
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return nil, "", fmt.Errorf("MCP %s: encode request: %w", method, err)
+	}
+	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(encoded))
+	if err != nil {
+		return nil, "", fmt.Errorf("MCP %s: build request: %w", method, err)
+	}
+	httpRequest.Header.Set("Content-Type", "application/json")
+	httpRequest.Header.Set("Accept", "application/json, text/event-stream")
+	if session != "" {
+		httpRequest.Header.Set("mcp-session-id", session)
+	}
+	if err := request.Authenticate(ctx, ir, httpRequest); err != nil {
+		return nil, "", err
+	}
+	response, err := executor.client.Do(httpRequest)
+	if err != nil {
+		return nil, "", fmt.Errorf("MCP %s: %w", method, err)
+	}
+	defer response.Body.Close()
+	next := response.Header.Get("mcp-session-id")
+	body, err := io.ReadAll(io.LimitReader(response.Body, mcpMaxResponseBytes(executor.policy)))
+	if err != nil {
+		return nil, "", fmt.Errorf("MCP %s: read response: %w", method, err)
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return nil, "", fmt.Errorf("MCP %s failed with status %d: %s", method, response.StatusCode, mcpErrorSnippet(body))
+	}
+	envelope, err := mcpEnvelopeFor(method, response, body)
+	if err != nil {
+		return nil, "", err
+	}
+	if envelope.Error != nil {
+		return nil, "", fmt.Errorf("MCP %s failed: %s", method, envelope.Error.Message)
+	}
+	return envelope.Result, next, nil
+}
+
+// mcpNotify posts a JSON-RPC notification, which carries no id and expects
+// no result: a 202 with an empty body is the ordinary answer.
+func (executor *MCPClientToolExecutor) mcpNotify(ctx context.Context, ir workflow.IRNode, request engine.Request, endpoint, session string) error {
+	encoded, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "method": "notifications/initialized"})
+	if err != nil {
+		return fmt.Errorf("MCP notifications/initialized: encode request: %w", err)
+	}
+	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(encoded))
+	if err != nil {
+		return fmt.Errorf("MCP notifications/initialized: build request: %w", err)
+	}
+	httpRequest.Header.Set("Content-Type", "application/json")
+	httpRequest.Header.Set("Accept", "application/json, text/event-stream")
+	if session != "" {
+		httpRequest.Header.Set("mcp-session-id", session)
+	}
+	if err := request.Authenticate(ctx, ir, httpRequest); err != nil {
+		return err
+	}
+	response, err := executor.client.Do(httpRequest)
+	if err != nil {
+		return fmt.Errorf("MCP notifications/initialized: %w", err)
+	}
+	defer response.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, mcpMaxResponseBytes(executor.policy)))
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return fmt.Errorf("MCP notifications/initialized failed with status %d", response.StatusCode)
+	}
+	return nil
+}
+
+// mcpMaxResponseBytes bounds one MCP response body in memory. The deployment
+// policy's bound applies; an unset bound falls back to the policy default
+// rather than to unbounded.
+func mcpMaxResponseBytes(policy safehttp.Policy) int64 {
+	if policy.MaxResponseBytes > 0 {
+		return policy.MaxResponseBytes
+	}
+	return 8 << 20
+}
+
+// mcpErrorSnippet renders a failing response body for a diagnostic: trimmed
+// and cut short, so an HTML error page does not flood the tool turn.
+func mcpErrorSnippet(body []byte) string {
+	snippet := strings.TrimSpace(string(body))
+	if len(snippet) > 512 {
+		snippet = snippet[:512] + "…"
+	}
+	if snippet == "" {
+		return "no response body"
+	}
+	return snippet
+}
+
+// mcpEnvelopeFor decodes one JSON-RPC response, whether the server answered
+// with plain JSON or with a text/event-stream carrying data events.
+func mcpEnvelopeFor(method string, response *http.Response, body []byte) (mcpRPCEnvelope, error) {
+	payload := body
+	if strings.Contains(response.Header.Get("Content-Type"), "text/event-stream") {
+		payload = mcpEventPayload(body)
+	}
+	payload = bytes.TrimSpace(payload)
+	if len(payload) == 0 {
+		return mcpRPCEnvelope{}, fmt.Errorf("MCP %s returned an empty response", method)
+	}
+	candidates := []json.RawMessage{payload}
+	if payload[0] == '[' {
+		var batch []json.RawMessage
+		if err := json.Unmarshal(payload, &batch); err != nil {
+			return mcpRPCEnvelope{}, fmt.Errorf("MCP %s response is not valid JSON: %w", method, err)
+		}
+		candidates = batch
+	}
+	for _, candidate := range candidates {
+		var envelope mcpRPCEnvelope
+		if err := json.Unmarshal(candidate, &envelope); err != nil {
+			continue
+		}
+		if envelope.Error != nil || len(envelope.Result) > 0 {
+			return envelope, nil
+		}
+	}
+	return mcpRPCEnvelope{}, fmt.Errorf("MCP %s response is not valid JSON-RPC", method)
+}
+
+// mcpRPCEnvelope is the response half of one JSON-RPC exchange.
+type mcpRPCEnvelope struct {
+	Result json.RawMessage `json:"result"`
+	Error  *struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+	} `json:"error"`
+}
+
+// mcpEventPayload extracts the last data event from a text/event-stream
+// body. Multi-line data fields join with newlines per the SSE framing; event
+// names and comments carry no JSON-RPC payload and are skipped.
+func mcpEventPayload(body []byte) []byte {
+	var last []byte
+	var current []string
+	flush := func() {
+		if len(current) > 0 {
+			last = []byte(strings.Join(current, "\n"))
+			current = nil
+		}
+	}
+	for _, line := range strings.Split(string(body), "\n") {
+		trimmed := strings.TrimSuffix(line, "\r")
+		switch {
+		case strings.HasPrefix(trimmed, "data:"):
+			value := strings.TrimPrefix(trimmed, "data:")
+			value = strings.TrimPrefix(value, " ")
+			current = append(current, value)
+		case trimmed == "" || strings.HasPrefix(trimmed, ":") || strings.HasPrefix(trimmed, "event:"):
+			flush()
+		}
+	}
+	flush()
+	if last == nil {
+		return bytes.TrimSpace(body)
+	}
+	return last
+}
+
+// mcpToolFrom wraps an MCP tool descriptor as a callable tool. The call goes
+// through the executor's shared MCP transport, so it inherits the SSRF
+// policy, credential scoping and response limits rather than reimplementing
+// any of them.
+func (executor *AgentExecutor) mcpToolFrom(ir workflow.IRNode, descriptor map[string]any, request engine.Request) (ai.Tool, error) {
+	name := textValue(descriptor["name"], "")
+	if name == "" {
+		return nil, fmt.Errorf("node %q: a connected tool has no name", ir.Name)
+	}
+	serverURL := strings.TrimSpace(textValue(descriptor["serverUrl"], ""))
+	if serverURL == "" {
+		return nil, fmt.Errorf("node %q: connected tool %q names no MCP server", ir.Name, textValue(descriptor["nodeName"], name))
+	}
+	schema, _ := descriptor["inputSchema"].(map[string]any)
+	credentials := map[string]string{}
+	if raw, ok := descriptor["credentials"].(map[string]any); ok {
+		for typeID, id := range raw {
+			if text, ok := id.(string); ok {
+				credentials[typeID] = text
+			}
+		}
+	}
+	parameters, _ := descriptor["parameters"].(map[string]any)
+	if parameters == nil {
+		if timeout, ok := descriptor["timeoutSeconds"]; ok {
+			parameters = map[string]any{"requestTimeoutSeconds": timeout}
+		}
+	}
+	return &mcpTool{
+		server:      executor.mcp,
+		name:        name,
+		description: textValue(descriptor["description"], ""),
+		schema:      schema,
+		serverURL:   serverURL,
+		node: workflow.IRNode{
+			ID: ir.ID + ":" + name, Name: textValue(descriptor["nodeName"], name),
+			Type: MCPClientToolNodeType, TypeVersion: workflow.V(1),
+			Parameters: parameters, Credentials: credentials,
+			Definition: workflow.NodeDefinition{
+				Type: MCPClientToolNodeType, Version: workflow.V(1),
+				Outputs: mainOutput(), ExecutorID: MCPClientToolExecutorID,
+			},
+		},
+		timeout: mcpTimeout(parameters, executor.policy),
+		request: request,
+	}, nil
+}
+
+// mcpTool is one MCP server tool exposed to the model under the server's own
+// name and input schema, so a model tool call produces a real tools/call
+// round trip whose result returns as a tool turn.
+type mcpTool struct {
+	server      *MCPClientToolExecutor
+	name        string
+	description string
+	schema      map[string]any
+	serverURL   string
+	node        workflow.IRNode
+	timeout     time.Duration
+	request     engine.Request
+}
+
+func (tool *mcpTool) Definition() ai.ToolDefinition {
+	parameters := tool.schema
+	if len(parameters) == 0 {
+		parameters = map[string]any{"type": "object"}
+	}
+	return ai.ToolDefinition{Name: tool.name, Description: tool.description, Parameters: parameters}
+}
+
+// Invoke runs one tools/call round trip with the model's arguments. A
+// failure — unreachable server, server error, over-budget call — returns an
+// error the agent reports back to the model as a tool turn, without aborting
+// the surrounding execution.
+func (tool *mcpTool) Invoke(ctx context.Context, arguments json.RawMessage) (string, error) {
+	args := map[string]any{}
+	if len(arguments) > 0 && json.Valid(arguments) {
+		var decoded map[string]any
+		if err := json.Unmarshal(arguments, &decoded); err != nil {
+			return "", fmt.Errorf("tool arguments are not valid JSON: %w", err)
+		}
+		if decoded != nil {
+			args = decoded
+		}
+	}
+	callCtx := ctx
+	if tool.timeout > 0 {
+		var cancel context.CancelFunc
+		callCtx, cancel = context.WithTimeout(ctx, tool.timeout)
+		defer cancel()
+	}
+	target, err := url.Parse(tool.serverURL)
+	if err != nil || target == nil {
+		return "", fmt.Errorf("tool %q: the MCP server URL is not valid", tool.name)
+	}
+	// Pre-flight again at call time: the descriptor outlives the listing,
+	// and the deployment's allowlist may have changed since.
+	if err := tool.server.policy.CheckURL(target); err != nil {
+		return "", fmt.Errorf("tool %q: %w", tool.name, err)
+	}
+	return tool.server.callTool(callCtx, tool.node, tool.request, tool.serverURL, tool.name, args)
 }

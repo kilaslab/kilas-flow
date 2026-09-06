@@ -468,6 +468,7 @@ func TestToolFamilyDefinitions(t *testing.T) {
 	}
 	singleToolPort(t, nodes.WorkflowToolNodeType)
 	singleToolPort(t, nodes.CalculatorToolNodeType)
+	singleToolPort(t, nodes.MCPClientToolNodeType)
 
 	parser, found := registry.Get(nodes.OutputParserNodeType, workflow.V(1))
 	if !found {

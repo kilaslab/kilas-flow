@@ -45,6 +45,12 @@ var baselineTables = []string{
 // first — an omission does not fail until somebody runs the suite twice
 // against the same server, which is exactly when it is hardest to read.
 var postBaselineTables = []string{
+	"secret_bindings",
+	"vector_documents_1024",
+	"vector_documents_1536",
+	"vector_documents_384",
+	"vector_documents_768",
+	"vector_collections",
 	"datastore_columns",
 	"datastores",
 	"api_keys",

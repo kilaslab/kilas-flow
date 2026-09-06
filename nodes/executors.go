@@ -25,7 +25,7 @@ import (
 // legitimately call services on its own network, and the guard carries the
 // install's own database paths so a SQLite credential can never open them.
 func RegisterExecutors(registry *engine.Registry, httpPolicy safehttp.Policy, databaseGuard sqlnode.Guard, agentRuntime ai.AgentRuntime, agentMemory ai.Memory, codeCompiler runcode.Compiler, options ...ExecutorOption) error {
-	settings := executorSettings{databaseCeiling: sqlnode.DefaultCeiling()}
+	settings := executorSettings{databaseCeiling: sqlnode.DefaultCeiling(), vectorStore: NewDisabledVectorStore("")}
 	for _, option := range options {
 		option(&settings)
 	}
@@ -54,6 +54,9 @@ func RegisterExecutors(registry *engine.Registry, httpPolicy safehttp.Policy, da
 		CalculatorExecutorID:             engine.ExecutorFunc(executeCalculator),
 		CalculatorToolExecutorID:         engine.ExecutorFunc(executeCalculatorTool),
 		OutputParserExecutorID:           engine.ExecutorFunc(executeOutputParser),
+		EmbeddingsExecutorID:             NewEmbeddingsExecutor(httpPolicy, settings.vectorStore),
+		VectorStoreExecutorID:            NewVectorStoreExecutor(settings.vectorStore),
+		MCPClientToolExecutorID:          NewMCPClientToolExecutor(httpPolicy),
 		CodeExecutorID:                   NewCodeExecutor(codeCompiler, runcode.NewMemoryCache(), runcode.DefaultLimits()),
 		LoopExecutorID:                   engine.ExecutorFunc(executeLoop),
 		StickyNoteExecutorID:             engine.ExecutorFunc(executeStickyNote),
@@ -94,6 +97,10 @@ type executorSettings struct {
 	// modelTimeoutCeiling is the longest any one chat model node may wait.
 	// Zero leaves DefaultModelTimeoutCeiling in force.
 	modelTimeoutCeiling time.Duration
+	// vectorStore backs the embeddings and vector store nodes. It defaults
+	// to the refusing store at construction, so a caller that never sets
+	// one gets the documented failure rather than a nil dereference.
+	vectorStore VectorStore
 }
 
 // WithDatabaseCeiling bounds what a workflow document may ask a database node
@@ -102,6 +109,15 @@ type executorSettings struct {
 func WithDatabaseCeiling(ceiling sqlnode.Ceiling) ExecutorOption {
 	return func(settings *executorSettings) {
 		settings.databaseCeiling = ceiling
+	}
+}
+
+// WithVectorStore hands the embeddings and vector store nodes their backing
+// implementation. Without it they refuse with the install message through
+// the default refusing store.
+func WithVectorStore(store VectorStore) ExecutorOption {
+	return func(settings *executorSettings) {
+		settings.vectorStore = store
 	}
 }
 
