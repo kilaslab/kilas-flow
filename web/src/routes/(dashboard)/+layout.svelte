@@ -13,6 +13,7 @@
 		if (page.url.pathname.startsWith('/executions')) return 'Executions';
 		if (page.url.pathname.startsWith('/schedules')) return 'Schedules';
 		if (page.url.pathname.startsWith('/credentials')) return 'Credentials';
+		if (page.url.pathname.startsWith('/datastores')) return 'Datastores';
 		if (page.url.pathname.startsWith('/settings')) return 'Settings';
 		return 'Workflows';
 	});

@@ -1,10 +1,11 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import Activity from '@lucide/svelte/icons/activity';
-	import CalendarClock from '@lucide/svelte/icons/calendar-clock';
-	import GitBranch from '@lucide/svelte/icons/git-branch';
-	import KeyRound from '@lucide/svelte/icons/key-round';
-	import Settings from '@lucide/svelte/icons/settings';
+import Activity from '@lucide/svelte/icons/activity';
+import CalendarClock from '@lucide/svelte/icons/calendar-clock';
+import Database from '@lucide/svelte/icons/database';
+import GitBranch from '@lucide/svelte/icons/git-branch';
+import KeyRound from '@lucide/svelte/icons/key-round';
+import Settings from '@lucide/svelte/icons/settings';
 
 	let { onNavigate }: { onNavigate?: () => void } = $props();
 
@@ -13,6 +14,7 @@
 		{ href: '/executions', label: 'Executions', icon: Activity },
 		{ href: '/schedules', label: 'Schedules', icon: CalendarClock },
 		{ href: '/credentials', label: 'Credentials', icon: KeyRound },
+		{ href: '/datastores', label: 'Datastores', icon: Database },
 		{ href: '/settings', label: 'Settings', icon: Settings }
 	];
 

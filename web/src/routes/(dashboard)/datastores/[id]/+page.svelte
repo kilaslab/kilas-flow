@@ -1,0 +1,671 @@
+<script lang="ts">
+	import { page } from '$app/state';
+	import ArrowLeft from '@lucide/svelte/icons/arrow-left';
+	import Download from '@lucide/svelte/icons/download';
+	import Pencil from '@lucide/svelte/icons/pencil';
+	import Plus from '@lucide/svelte/icons/plus';
+	import Trash2 from '@lucide/svelte/icons/trash-2';
+	import Upload from '@lucide/svelte/icons/upload';
+
+	import { message } from '$lib/api/http';
+	import { getDatastore } from '$lib/api/generated/datastores/datastores';
+	import {
+		addDatastoreColumn,
+		deleteDatastoreColumn,
+		renameDatastoreColumn
+	} from '$lib/api/generated/datastore-columns/datastore-columns';
+	import {
+		deleteDatastoreRows,
+		insertDatastoreRow,
+		listDatastoreRows
+	} from '$lib/api/generated/datastore-rows/datastore-rows';
+	import type {
+		DatastoreColumnResource,
+		DatastoreResource,
+		RowListOutputBodyItemsItem
+	} from '$lib/api/generated/models';
+	import ListStates from '$lib/components/dashboard/list-states.svelte';
+	import { Button } from '$lib/components/ui/button';
+	import * as Dialog from '$lib/components/ui/dialog';
+	import SyncedCheckbox from '$lib/components/dashboard/synced-checkbox.svelte';
+	import { Input } from '$lib/components/ui/input';
+	import * as Table from '$lib/components/ui/table';
+	import {
+		appendPage,
+		canLoadMore,
+		emptyPage,
+		readPage,
+		type CursorPage
+	} from '$lib/dashboard/cursor-page';
+	import { failedBesideRows } from '$lib/dashboard/list-state';
+	import { RequestGuard } from '$lib/dashboard/request-guard';
+	import {
+		COLUMN_TYPES,
+		coerceValue,
+		displayType,
+		gridColumns,
+		isSystemColumn,
+		wireType,
+		type GridColumn
+	} from '$lib/datastore/columns';
+	import { formatTimestamp } from '$lib/workflow-editor/execution';
+
+	const PAGE_SIZE = 20;
+
+	const id = $derived(page.params.id ?? '');
+
+	let detail = $state<DatastoreResource | null>(null);
+	let detailFailure = $state<unknown>(null);
+	let detailLoading = $state(true);
+
+	let rows = $state<CursorPage<RowListOutputBodyItemsItem>>(emptyPage());
+	let loading = $state(true);
+	let loadingMore = $state(false);
+	let failure = $state<unknown>(null);
+
+	// Row selection is by id: the system column every datastore carries. A
+	// record rather than a Set, because the checkbox primitive declares its
+	// state `bindable` and a row's membership has no lvalue in a Set.
+	let checkState = $state<Record<string, boolean>>({});
+	let allChecked = $state(false);
+	const pageIDs = $derived(rows.items.map((row) => String(row.id)));
+	const selectedIDs = $derived(pageIDs.filter((rowID) => checkState[rowID] === true));
+
+	let rowDialogOpen = $state(false);
+	let draft = $state<Record<string, string>>({});
+	let boolDraft = $state<Record<string, boolean>>({});
+	let rowError = $state<string | null>(null);
+	let savingRow = $state(false);
+
+	let columnDialogOpen = $state(false);
+	let columnName = $state('');
+	let columnType = $state<string>(COLUMN_TYPES[0]);
+	let columnError = $state<string | null>(null);
+	let savingColumn = $state(false);
+
+	let renaming = $state<string | null>(null);
+	let renameValue = $state('');
+	const headers = $derived<GridColumn[]>(gridColumns(detail?.columns ?? []));
+	const userColumns = $derived<DatastoreColumnResource[]>(
+		(detail?.columns ?? []).filter((column) => !isSystemColumn(column.name))
+	);
+	const guard = new RequestGuard();
+
+	const pagingFailure = $derived(
+		failedBesideRows({ loading, failed: failure !== null, count: rows.items.length })
+	);
+
+	let headerError = $state<string | null>(null);
+	let deletingColumn = $state<string | null>(null);
+	let removingColumn = $state(false);
+	let confirmingRows = $state(false);
+	let removingRows = $state(false);
+	let transfer = $state<'import' | 'export' | null>(null);
+	// Rows drive the header box: when every row on the page is checked the
+	// header follows, and when one is cleared it follows that too. The other
+	// direction — header driving the rows — is a user gesture handled in
+	// toggleAll, not here, so the two never chase each other.
+	$effect(() => {
+		allChecked = pageIDs.length > 0 && pageIDs.every((rowID) => checkState[rowID] === true);
+	});
+
+	$effect(() => {
+		if (id) {
+			void loadDetail(id);
+			void load(id);
+		}
+	});
+
+	async function loadDetail(datastoreID: string) {
+		detailLoading = true;
+		detailFailure = null;
+		try {
+			const response = await getDatastore(datastoreID);
+			if (response.status !== 200) throw new Error('Unexpected datastore response');
+			detail = response.data;
+		} catch (cause) {
+			detailFailure = cause;
+			detail = null;
+		} finally {
+			detailLoading = false;
+		}
+	}
+
+	async function load(datastoreID: string) {
+		const token = guard.start();
+		loading = true;
+		failure = null;
+		checkState = {};
+		allChecked = false;
+		try {
+			const response = await listDatastoreRows(datastoreID, { limit: PAGE_SIZE });
+			if (response.status !== 200) throw new Error('Unexpected row-list response');
+			if (!guard.holds(token)) return;
+			rows = readPage(response.data);
+		} catch (cause) {
+			if (!guard.holds(token)) return;
+			failure = cause;
+			rows = emptyPage();
+		} finally {
+			if (guard.holds(token)) loading = false;
+		}
+	}
+
+	async function loadMore() {
+		if (!canLoadMore(rows) || loadingMore) return;
+		// Joins the request already in flight rather than starting a new one:
+		// starting would supersede that request, which would then discard its
+		// own answer and leave the page pinned in its loading state.
+		const token = guard.current;
+		loadingMore = true;
+		failure = null;
+		try {
+			const response = await listDatastoreRows(id, { limit: PAGE_SIZE, cursor: rows.nextCursor });
+			if (response.status !== 200) throw new Error('Unexpected row-list response');
+			if (!guard.holds(token)) return;
+			rows = appendPage(rows, response.data);
+		} catch (cause) {
+			if (guard.holds(token)) failure = cause;
+		} finally {
+			loadingMore = false;
+		}
+	}
+
+	async function refresh() {
+		await loadDetail(id);
+		await load(id);
+	}
+
+	function openRowDialog() {
+		draft = Object.fromEntries(userColumns.map((column) => [column.name, '']));
+		boolDraft = Object.fromEntries(
+			userColumns.filter((column) => column.type === 'boolean').map((column) => [column.name, false])
+		);
+		rowError = null;
+		rowDialogOpen = true;
+	}
+
+	async function saveRow() {
+		const values: Record<string, unknown> = {};
+		for (const column of userColumns) {
+			if (column.type === 'boolean') {
+				values[column.name] = boolDraft[column.name] ?? false;
+				continue;
+			}
+		const coerced = coerceValue(column.type, column.name, draft[column.name] ?? '');
+		// An empty string means "leave it Null" rather than "store a
+		// wrongly-typed zero": the grid shows Null for missing cells.
+		if ((draft[column.name] ?? '').trim() === '') continue;
+		if (!coerced.ok) {
+			rowError = coerced.error;
+			return;
+		}
+		values[column.name] = coerced.value;
+		}
+		savingRow = true;
+		rowError = null;
+		try {
+			const response = await insertDatastoreRow(id, { values });
+			if (response.status !== 201) throw new Error('Unexpected row-insert response');
+			rowDialogOpen = false;
+			await load(id);
+		} catch (error) {
+			rowError = message(error);
+		} finally {
+			savingRow = false;
+		}
+	}
+
+	async function saveColumn() {
+		if (!columnName.trim()) {
+			columnError = 'Give this column a name.';
+			return;
+		}
+		savingColumn = true;
+		columnError = null;
+		try {
+			const response = await addDatastoreColumn(id, {
+				name: columnName.trim(),
+				type: wireType(columnType)
+			});
+			if (response.status !== 200) throw new Error('Unexpected column-add response');
+			columnDialogOpen = false;
+			columnName = '';
+			columnType = COLUMN_TYPES[0];
+			await refresh();
+		} catch (error) {
+			columnError = message(error);
+		} finally {
+			savingColumn = false;
+		}
+	}
+
+	function startRename(column: GridColumn) {
+		renaming = column.name;
+		renameValue = column.name;
+		headerError = null;
+	}
+
+	function cancelRename() {
+		renaming = null;
+		renameValue = '';
+	}
+
+	async function commitRename(column: GridColumn) {
+		const next = renameValue.trim();
+		if (!next || next === column.name) {
+			cancelRename();
+			return;
+		}
+		try {
+			const response = await renameDatastoreColumn(id, column.name, { name: next });
+			if (response.status !== 200) throw new Error('Unexpected column-rename response');
+			cancelRename();
+			await refresh();
+		} catch (error) {
+			headerError = message(error);
+		}
+	}
+
+	async function removeColumn() {
+		if (!deletingColumn) return;
+		removingColumn = true;
+		headerError = null;
+		try {
+			const response = await deleteDatastoreColumn(id, deletingColumn);
+			if (response.status !== 204) throw new Error('Unexpected column-delete response');
+			deletingColumn = null;
+			await refresh();
+		} catch (error) {
+			headerError = message(error);
+		} finally {
+			removingColumn = false;
+		}
+	}
+
+	async function removeRows() {
+		const targets = selectedIDs;
+		if (targets.length === 0) return;
+		removingRows = true;
+		try {
+			const response = await deleteDatastoreRows(id, {
+				filter: {
+					type: 'or',
+					filters: targets.map((rowID) => ({
+						columnName: 'id',
+						condition: 'eq',
+						value: Number(rowID)
+					}))
+				}
+			});
+			if (response.status !== 200) throw new Error('Unexpected row-delete response');
+			confirmingRows = false;
+			await load(id);
+		} catch (error) {
+			headerError = message(error);
+		} finally {
+			removingRows = false;
+		}
+	}
+
+	// A header-box gesture: the rows follow the box the user just set, and
+	// the sync effect above leaves the box alone once they agree.
+	function toggleAll(checked: boolean) {
+		if (checked) {
+			checkState = Object.fromEntries(pageIDs.map((rowID) => [rowID, true]));
+			allChecked = true;
+		} else {
+			checkState = {};
+			allChecked = false;
+		}
+	}
+
+	function cellText(row: RowListOutputBodyItemsItem, column: GridColumn): string {
+		const value = row[column.name];
+		if (value === null || value === undefined) return '';
+		if (column.name === 'createdAt' || column.name === 'updatedAt') {
+			return typeof value === 'string' ? formatTimestamp(value) : String(value);
+		}
+		return String(value);
+	}
+
+	function isNullCell(row: RowListOutputBodyItemsItem, column: GridColumn): boolean {
+		return row[column.name] === null || row[column.name] === undefined;
+	}
+</script>
+
+<svelte:head>
+	<title>{detail?.name ?? 'Datastore'} · KilasFlow</title>
+</svelte:head>
+
+<section class="mx-auto w-full max-w-5xl">
+	<a
+		href="/datastores"
+		class="inline-flex items-center gap-1.5 rounded text-xs text-muted-foreground underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2"
+	>
+		<ArrowLeft aria-hidden="true" class="size-3.5" />Datastores
+	</a>
+
+	{#if detailLoading}
+		<div aria-live="polite" class="mt-3 overflow-hidden rounded-lg border border-border">
+			<p class="sr-only">Loading datastore…</p>
+			<div class="h-11 animate-pulse bg-muted/50" aria-hidden="true"></div>
+		</div>
+	{:else if detailFailure || !detail}
+		<div class="mt-3 max-w-lg rounded-lg border border-destructive/25 bg-destructive/5 p-3">
+			<h1 class="text-sm font-medium">Datastore could not be loaded</h1>
+			<p class="mt-0.5 text-xs leading-5 text-muted-foreground">{message(detailFailure)}</p>
+			<Button class="mt-2.5" size="sm" variant="outline" onclick={() => void loadDetail(id)}>
+				Try again
+			</Button>
+		</div>
+	{:else}
+		<div class="mt-2 flex flex-wrap items-center justify-between gap-3">
+			<div class="max-w-xl">
+				<h1 class="text-base font-semibold tracking-tight">{detail.name}</h1>
+				<p class="text-xs text-muted-foreground">
+					{userColumns.length} user column{userColumns.length === 1 ? '' : 's'} · 20 rows per page
+				</p>
+			</div>
+			<div class="flex flex-wrap gap-2">
+				<Button variant="outline" size="sm" onclick={() => (transfer = 'import')}>
+					<Upload aria-hidden="true" />Import
+				</Button>
+				<Button variant="outline" size="sm" onclick={() => (transfer = 'export')}>
+					<Download aria-hidden="true" />Export
+				</Button>
+				<Button size="sm" onclick={openRowDialog}>
+					<Plus aria-hidden="true" />Add row
+				</Button>
+				<Button
+					size="sm"
+					variant="outline"
+					onclick={() => {
+						columnName = '';
+						columnType = COLUMN_TYPES[0];
+						columnError = null;
+						columnDialogOpen = true;
+					}}
+				>
+					<Plus aria-hidden="true" />Add column
+				</Button>
+			</div>
+		</div>
+
+		{#if selectedIDs.length > 0}
+			<div class="mt-3 flex flex-wrap items-center gap-3 rounded-lg border border-border bg-muted/40 px-3 py-2">
+				<p class="text-xs text-muted-foreground" role="status">
+					{selectedIDs.length} row{selectedIDs.length === 1 ? '' : 's'} selected
+				</p>
+				<Button type="button" size="sm" variant="outline" onclick={() => (confirmingRows = true)}>
+					<Trash2 aria-hidden="true" />Delete selected
+				</Button>
+				<Button type="button" size="sm" variant="ghost" onclick={() => { checkState = {}; allChecked = false; }}>
+					Clear selection
+				</Button>
+			</div>
+		{/if}
+
+		{#if headerError}
+			<p role="alert" class="mt-3 text-xs text-destructive">{headerError}</p>
+		{/if}
+
+		<div class="mt-3">
+			<ListStates
+				label="Rows"
+				{loading}
+				failed={failure !== null}
+				error={failure}
+				count={rows.items.length}
+				onRetry={() => void load(id)}
+				onRetryMore={() => void loadMore()}
+				emptyIcon={Plus}
+				emptyTitle="No rows yet"
+				emptyBody="Add the first row to start persisting data in this table."
+			>
+				<div class="overflow-hidden rounded-xl border border-border bg-card">
+					<Table.Root class="min-w-[44rem]">
+						<Table.Caption class="sr-only">Rows in {detail.name}, id order</Table.Caption>
+						<Table.Header class="[&_th]:h-7 [&_th]:px-3 [&_th]:text-xs [&_th]:uppercase [&_th]:tracking-wide [&_th]:text-muted-foreground">
+							<Table.Row>
+								<Table.Head scope="col" class="w-8">
+									<SyncedCheckbox
+										label="Select all rows on this page"
+										checked={allChecked}
+										onToggle={(next) => toggleAll(next)}
+									/>
+								</Table.Head>
+								{#each headers as column (column.name)}
+									<Table.Head scope="col">
+										<span class="inline-flex items-center gap-1.5 normal-case">
+											{#if renaming === column.name}
+												<Input
+													class="h-6 w-32 text-xs normal-case"
+													value={renameValue}
+													aria-label={`Rename column ${column.name}`}
+													oninput={(event) => (renameValue = event.currentTarget.value)}
+													onkeydown={(event) => {
+														if (event.key === 'Enter') void commitRename(column);
+														if (event.key === 'Escape') cancelRename();
+													}}
+													onblur={() => {
+														if (renaming === column.name) void commitRename(column);
+													}}
+												/>
+											{:else}
+												<span class="font-medium">{column.name}</span>
+												{#if !column.system}
+													<span class="font-normal text-muted-foreground/70">· {displayType(column.type)}</span>
+													<Button
+														type="button"
+														variant="ghost"
+														size="icon"
+														class="size-5"
+														aria-label={`Rename column ${column.name}`}
+														onclick={() => startRename(column)}
+													>
+														<Pencil aria-hidden="true" class="size-3" />
+													</Button>
+													<Button
+														type="button"
+														variant="ghost"
+														size="icon"
+														class="size-5 text-muted-foreground hover:text-destructive"
+														aria-label={`Delete column ${column.name}`}
+														onclick={() => {
+															headerError = null;
+															deletingColumn = column.name;
+														}}
+													>
+														<Trash2 aria-hidden="true" class="size-3" />
+													</Button>
+												{/if}
+											{/if}
+										</span>
+									</Table.Head>
+								{/each}
+							</Table.Row>
+						</Table.Header>
+						<Table.Body>
+							{#each rows.items as row (row.id)}
+								{@const rowID = String(row.id)}
+								<Table.Row>
+									<Table.Cell class="px-3 py-2">
+										<SyncedCheckbox
+											label={`Select row ${rowID}`}
+											checked={checkState[rowID] === true}
+											onToggle={(next) => (checkState = { ...checkState, [rowID]: next })}
+										/>
+									</Table.Cell>
+									{#each headers as column (column.name)}
+										<Table.Cell class="max-w-56 truncate px-3 py-2 tabular-nums">
+											{#if isNullCell(row, column)}
+												<span class="text-muted-foreground/60">Null</span>
+											{:else}
+												{cellText(row, column)}
+											{/if}
+										</Table.Cell>
+									{/each}
+								</Table.Row>
+							{/each}
+						</Table.Body>
+					</Table.Root>
+				</div>
+				{#if canLoadMore(rows) && !pagingFailure}
+					<div class="mt-4 flex justify-center">
+						<Button variant="outline" onclick={() => void loadMore()} disabled={loadingMore}>
+							{loadingMore ? 'Loading…' : 'Load more'}
+						</Button>
+					</div>
+				{/if}
+			</ListStates>
+		</div>
+	{/if}
+
+	<Dialog.Root bind:open={rowDialogOpen}>
+		<Dialog.Content aria-describedby="datastore-row-description">
+			<Dialog.Header>
+				<Dialog.Title>Add row</Dialog.Title>
+				<Dialog.Description id="datastore-row-description">
+					Set the value for each column. Empty stays Null — the row id and both
+					timestamps are set by the database.
+				</Dialog.Description>
+			</Dialog.Header>
+			<form class="grid gap-4" onsubmit={(event) => { event.preventDefault(); void saveRow(); }}>
+				{#each userColumns as column (column.name)}
+					<div class="grid gap-2">
+						<label for={column.type === 'boolean' ? undefined : `row-field-${column.name}`} class="text-sm font-medium">
+							{column.name}
+							<span class="ml-1 font-normal text-muted-foreground">· {displayType(column.type)}</span>
+						</label>
+						{#if column.type === 'boolean'}
+							<div class="flex items-center gap-2">
+								<SyncedCheckbox
+									label={column.name}
+									checked={boolDraft[column.name] ?? false}
+									onToggle={(next) => (boolDraft = { ...boolDraft, [column.name]: next })}
+								/>
+								<span class="text-xs text-muted-foreground">Checked means true.</span>
+							</div>
+						{:else if column.type === 'date' || column.type === 'datetime'}
+							<Input
+								id={`row-field-${column.name}`}
+								type="datetime-local"
+								value={draft[column.name] ?? ''}
+								oninput={(event) => (draft = { ...draft, [column.name]: event.currentTarget.value })}
+							/>
+						{:else if column.type === 'number'}
+							<Input
+								id={`row-field-${column.name}`}
+								type="number"
+								value={draft[column.name] ?? ''}
+								placeholder="0"
+								oninput={(event) => (draft = { ...draft, [column.name]: event.currentTarget.value })}
+							/>
+						{:else}
+							<Input
+								id={`row-field-${column.name}`}
+								value={draft[column.name] ?? ''}
+								oninput={(event) => (draft = { ...draft, [column.name]: event.currentTarget.value })}
+							/>
+						{/if}
+					</div>
+				{/each}
+				{#if rowError}<p role="alert" class="text-sm text-destructive">{rowError}</p>{/if}
+				<Dialog.Footer>
+					<Button type="button" variant="outline" onclick={() => (rowDialogOpen = false)} disabled={savingRow}>Cancel</Button>
+					<Button type="submit" disabled={savingRow}>{savingRow ? 'Adding…' : 'Add row'}</Button>
+				</Dialog.Footer>
+			</form>
+		</Dialog.Content>
+	</Dialog.Root>
+
+	<Dialog.Root bind:open={columnDialogOpen}>
+		<Dialog.Content aria-describedby="datastore-column-description">
+			<Dialog.Header>
+				<Dialog.Title>Add column</Dialog.Title>
+				<Dialog.Description id="datastore-column-description">
+					A name and a type. Nothing offers nullability, uniqueness, or a default.
+				</Dialog.Description>
+			</Dialog.Header>
+			<form class="grid gap-4" onsubmit={(event) => { event.preventDefault(); void saveColumn(); }}>
+				<div class="grid gap-2">
+					<label for="column-name" class="text-sm font-medium">Name</label>
+					<Input id="column-name" bind:value={columnName} placeholder="e.g. score" />
+				</div>
+				<div class="grid gap-2">
+					<label for="column-type" class="text-sm font-medium">Type</label>
+					<select
+						id="column-type"
+						bind:value={columnType}
+						class="h-7 rounded-md border border-input bg-background px-2 text-xs"
+					>
+						{#each COLUMN_TYPES as option (option)}
+							<option value={option}>{option}</option>
+						{/each}
+					</select>
+				</div>
+				{#if columnError}<p role="alert" class="text-sm text-destructive">{columnError}</p>{/if}
+				<Dialog.Footer>
+					<Button type="button" variant="outline" onclick={() => (columnDialogOpen = false)} disabled={savingColumn}>Cancel</Button>
+					<Button type="submit" disabled={savingColumn}>{savingColumn ? 'Adding…' : 'Add column'}</Button>
+				</Dialog.Footer>
+			</form>
+		</Dialog.Content>
+	</Dialog.Root>
+
+	<Dialog.Root open={deletingColumn !== null} onOpenChange={(open) => { if (!open) deletingColumn = null; }}>
+		<Dialog.Content aria-describedby="column-delete-description">
+			<Dialog.Header>
+				<Dialog.Title>Delete column {deletingColumn}?</Dialog.Title>
+				<Dialog.Description id="column-delete-description">
+					Every value in this column is removed with it. Cancelling sends no
+					request and leaves the datastore untouched.
+				</Dialog.Description>
+			</Dialog.Header>
+			{#if headerError}<p role="alert" class="text-sm text-destructive">{headerError}</p>{/if}
+			<Dialog.Footer>
+				<Button type="button" variant="outline" onclick={() => (deletingColumn = null)} disabled={removingColumn}>Cancel</Button>
+				<Button type="button" variant="destructive" onclick={() => void removeColumn()} disabled={removingColumn}>
+					{removingColumn ? 'Deleting…' : 'Delete column'}
+				</Button>
+			</Dialog.Footer>
+		</Dialog.Content>
+	</Dialog.Root>
+
+	<Dialog.Root bind:open={confirmingRows}>
+		<Dialog.Content aria-describedby="rows-delete-description">
+			<Dialog.Header>
+				<Dialog.Title>Delete {selectedIDs.length} row{selectedIDs.length === 1 ? '' : 's'}?</Dialog.Title>
+				<Dialog.Description id="rows-delete-description">
+					Only the selected rows are removed. Cancelling sends no request and
+					leaves every row untouched.
+				</Dialog.Description>
+			</Dialog.Header>
+			{#if headerError}<p role="alert" class="text-sm text-destructive">{headerError}</p>{/if}
+			<Dialog.Footer>
+				<Button type="button" variant="outline" onclick={() => (confirmingRows = false)} disabled={removingRows}>Cancel</Button>
+				<Button type="button" variant="destructive" onclick={() => void removeRows()} disabled={removingRows}>
+					{removingRows ? 'Deleting…' : 'Delete rows'}
+				</Button>
+			</Dialog.Footer>
+		</Dialog.Content>
+	</Dialog.Root>
+
+	<Dialog.Root open={transfer !== null} onOpenChange={(open) => { if (!open) transfer = null; }}>
+		<Dialog.Content aria-describedby="transfer-description">
+			<Dialog.Header>
+				<Dialog.Title>{transfer === 'import' ? 'Import rows' : 'Export rows'}</Dialog.Title>
+				<Dialog.Description id="transfer-description">
+					CSV transfer lands in a later ticket — this button holds its place so
+					the toolbar does not move when it arrives. A future import will
+					report per-row issues with the same Blocking, Lossy and Dropped
+					severities the workflow import report uses.
+				</Dialog.Description>
+			</Dialog.Header>
+			<Dialog.Footer>
+				<Button type="button" variant="outline" onclick={() => (transfer = null)}>Close</Button>
+			</Dialog.Footer>
+		</Dialog.Content>
+	</Dialog.Root>
+</section>
