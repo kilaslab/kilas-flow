@@ -627,6 +627,7 @@ func TestSupportedMappingsAreAdvertisedExplicitly(t *testing.T) {
 	// of the pairs would let a seventh be removed, or a new one be added and
 	// then quietly stop working, without anything going red.
 	want := []string{
+		"@aldinokemal2104/n8n-nodes-gowa.gowa ↔ kilasflow.httpRequest",
 		"@devlikeapro/n8n-nodes-waha.WAHA ↔ pack.waha",
 		"@devlikeapro/n8n-nodes-waha.wahaTrigger ↔ pack.wahaTrigger",
 		"@n8n/n8n-nodes-langchain.agent ↔ kilasflow.agent",
@@ -667,6 +668,7 @@ func TestSupportedMappingsAreAdvertisedExplicitly(t *testing.T) {
 		"n8n-nodes-base.telegramTrigger ↔ kilasflow.telegramTrigger",
 		"n8n-nodes-base.wait ↔ kilasflow.wait",
 		"n8n-nodes-base.webhook ↔ kilasflow.webhook",
+		"n8n-nodes-gowa.gowa ↔ kilasflow.httpRequest",
 		"n8n-nodes-waha.WAHA ↔ pack.waha",
 		"n8n-nodes-waha.wahaTrigger ↔ pack.wahaTrigger",
 	}

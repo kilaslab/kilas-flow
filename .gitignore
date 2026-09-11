@@ -66,3 +66,4 @@ sdk/node_modules/
 
 # Agent worktrees are checkouts of this repository, not content of it.
 .claude/worktrees/
+.gowa-ref/

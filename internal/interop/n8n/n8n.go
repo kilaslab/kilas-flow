@@ -401,6 +401,17 @@ var mappings = []mapping{
 		kilasVersion: workflow.V(202502), sharedVersion: true,
 		toKilas: packToKilas, toN8N: packToN8N, importOnly: true,
 	},
+
+	// GOWA (@aldinokemal2104/n8n-nodes-gowa). Mapped onto HTTP against the GOWA
+	// REST API for the operations this suite uses; see gowa.go and packs/gowa/GAPS.md.
+	{
+		n8nType: "@aldinokemal2104/n8n-nodes-gowa.gowa", kilasType: "kilasflow.httpRequest", kilasVersion: workflow.V(1),
+		exportTypeVersion: 1, toKilas: gowaToHTTP, toN8N: gowaToN8N,
+	},
+	{
+		n8nType: "n8n-nodes-gowa.gowa", kilasType: "kilasflow.httpRequest", kilasVersion: workflow.V(1),
+		exportTypeVersion: 1, toKilas: gowaToHTTP, toN8N: gowaToN8N, importOnly: true,
+	},
 	// The LangChain cluster. These are the AI node types, which until now had no
 	// entry at all and so arrived as the unsupported placeholder — an imported
 	// agent was a graph that could be looked at and never activated.
@@ -667,6 +678,14 @@ func Import(payload []byte, catalog workflow.Catalog) (ImportResult, error) {
 			unsupported = append(unsupported, issue)
 		}
 		if issue, referenced := credentialIssue(name, id, node); referenced {
+			// GOWA -> HTTP: the mapped node ships with no authentication, so an
+			// unbound goWhatsappApi reference must not block activation the way an
+			// unbound ERPNext header credential on a still-authenticated HTTP node
+			// would. Operators attach auth only when their GOWA instance requires it.
+			if isGOWANodeType(node.Type) {
+				issue.Severity = SeverityLossy
+				issue.Reason = issue.Reason + " The GOWA node was mapped to HTTP without authentication; set auth on the HTTP node if your GOWA instance requires it."
+			}
 			unsupported = append(unsupported, issue)
 			// The reference itself is never carried. An n8n credential id
 			// names a row in somebody else's database; storing it would leave
@@ -680,6 +699,18 @@ func Import(payload []byte, catalog workflow.Catalog) (ImportResult, error) {
 				issue.NodeName = name
 				issue.NodeID = id
 				unsupported = append(unsupported, issue)
+			}
+			// FEAT-c32499: trivial field-normalize Code → Set.
+			rewriteIssues := issues
+			if applyTrivialCodeRewrite(&converted, node, &rewriteIssues) {
+				filtered := unsupported[:0]
+				for _, issue := range unsupported {
+					if issue.NodeID == id && (issue.Field == "jsCode" || issue.Field == "pythonCode") && issue.Severity == SeverityBlocking {
+						continue
+					}
+					filtered = append(filtered, issue)
+				}
+				unsupported = append(filtered, rewriteIssues...)
 			}
 		}
 		// After the translator, never before: a translator returns the whole

@@ -51,7 +51,7 @@ pine ready [--json]              # actionable unblocked tickets
 pine show <ID> [--json]          # full ticket with deps and children
 pine prompt <ID>                 # paste-ready fix brief for one ticket
 pine context                     # full project briefing (run at session start)
-pine list [--json]               # filterable ticket list
+pine list [--all] [--json]       # open tickets by default; --all includes done
 pine log <ID> [--json]           # commits that reference or touch this ticket
 pine create / update / close     # CLI mutations
 pine close <ID> --evidence       # mark done + attach file-change evidence

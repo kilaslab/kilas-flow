@@ -1,4 +1,4 @@
-<!-- pine:begin recipe=agents profile=full version=0.1.0-dev hash=937a71905286b89e -->
+<!-- pine:begin recipe=agents profile=full version=0.8.3 hash=937a71905286b89e -->
 This project uses Pine for issue tracking.
 
 ## Pine issue tracking
