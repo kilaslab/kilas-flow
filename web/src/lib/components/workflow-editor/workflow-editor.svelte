@@ -23,14 +23,16 @@
 <script lang="ts">
 	import { tick, type Snippet } from 'svelte';
 
-	import { Background, BackgroundVariant, Controls, SvelteFlow, type Connection as FlowConnection } from '@xyflow/svelte';
+	import { Background, BackgroundVariant, SvelteFlow, type Connection as FlowConnection } from '@xyflow/svelte';
 	import History from '@lucide/svelte/icons/history';
+	import Activity from '@lucide/svelte/icons/activity';
 	import Play from '@lucide/svelte/icons/play';
 	import Plus from '@lucide/svelte/icons/plus';
 	import Power from '@lucide/svelte/icons/power';
 	import PowerOff from '@lucide/svelte/icons/power-off';
 	import Save from '@lucide/svelte/icons/save';
 	import Trash2 from '@lucide/svelte/icons/trash-2';
+	import WandSparkles from '@lucide/svelte/icons/wand-sparkles';
 	import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
 	import X from '@lucide/svelte/icons/x';
 
@@ -52,11 +54,13 @@
 		type EditorFlowNode,
 		type PropertyScope
 	} from '$lib/workflow-editor/document';
+	import { tidyDocument } from '$lib/workflow-editor/layout';
 	import { mediaQuery } from '$lib/workflow-editor/media.svelte';
 	import { canConnect, connectionFromCanvas } from '$lib/workflow-editor/ports';
 	import type { CanvasValidationIssue } from '$lib/workflow-editor/validation';
 
 	import ActivationNotices from './activation-notices.svelte';
+	import EditorControls from './editor-controls.svelte';
 	import CanvasNode from './canvas-node.svelte';
 	import NodePicker from './node-picker.svelte';
 	import PropertiesPanel from './properties-panel.svelte';
@@ -76,6 +80,7 @@
 		saveIssues = [],
 		runError = null,
 		runMessage = null,
+		lastExecutionId = null,
 		active = false,
 		activating = false,
 		notices = [],
@@ -104,6 +109,8 @@
 		saveIssues?: CanvasValidationIssue[];
 		runError?: string | null;
 		runMessage?: string | null;
+		/** Most recent execution started from this editor session, for deep-link feedback. */
+		lastExecutionId?: string | null;
 		/** Whether the server currently has this workflow pinned active. */
 		active?: boolean;
 		activating?: boolean;
@@ -402,6 +409,12 @@
 		}
 	}
 
+
+	function tidyUp() {
+		if (locked) return;
+		replaceDraft(tidyDocument(draft));
+	}
+
 	async function save() {
 		if (locked || !dirty || saving) return;
 		await onSave(toWorkflowInput(draft));
@@ -424,46 +437,57 @@
 </script>
 
 <section class="relative flex h-full min-h-0 flex-col bg-background" aria-label="Workflow editor">
-	<header class="flex h-10 shrink-0 items-center gap-1.5 overflow-x-auto border-b border-border bg-card px-2">
+	<header class="flex h-9 shrink-0 items-center gap-1 overflow-x-auto border-b border-border bg-card px-1.5">
 		{#if header}
 			{@render header()}
-			<span aria-hidden="true" class="mx-1 h-4 w-px shrink-0 bg-border"></span>
+			<span aria-hidden="true" class="mx-0.5 h-4 w-px shrink-0 bg-border"></span>
 		{/if}
 		{#if !locked}
-			<button type="button" class="inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md bg-primary px-2.5 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2" onclick={() => openPicker(false)}>
+			<button type="button" class="inline-flex h-7 shrink-0 items-center gap-1 whitespace-nowrap rounded-md bg-primary px-2 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2" onclick={() => openPicker(false)}>
 				<Plus aria-hidden="true" class="size-3.5" />Add step
 			</button>
 		{/if}
+		{#if !locked}
+			<button type="button" class="grid size-7 shrink-0 place-items-center rounded-md border border-border transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2" title="Tidy up" aria-label="Tidy up" data-testid="tidy-up-toolbar" onclick={tidyUp}>
+				<WandSparkles aria-hidden="true" class="size-3.5" />
+			</button>
+		{/if}
 		{#if !locked && !hideSave}
-			<button type="button" class="inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-border px-2.5 text-xs font-medium transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-40" disabled={!dirty || saving} onclick={() => void save()}>
-				<Save aria-hidden="true" class="size-3.5" />{saving ? 'Saving…' : 'Save'}
+			<button type="button" class="grid size-7 shrink-0 place-items-center rounded-md border border-border transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-40" disabled={!dirty || saving} title={saving ? 'Saving…' : 'Save'} aria-label={saving ? 'Saving…' : 'Save'} onclick={() => void save()}>
+				<Save aria-hidden="true" class="size-3.5" />
 			</button>
 		{/if}
 		{#if !hideRun}
 			<!-- Running is refused while a past revision is on screen: the run
 			     would execute the saved draft, not the graph being looked at,
-			     which is the one thing a preview must never be mistaken for. -->
-			<button type="button" class="inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-border px-2.5 text-xs font-medium transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-40" disabled={dirty || running || previewing} aria-describedby={dirty ? 'save-first-hint' : undefined} onclick={() => void run()}>
-				<Play aria-hidden="true" class="size-3.5" />{running ? 'Running…' : 'Run'}
+			     which is the one thing a preview must never be mistaken for.
+			     Primary brand CTA — n8n-style prominence without orange. -->
+			<button type="button" data-testid="toolbar-run" class="inline-flex h-7 shrink-0 items-center gap-1 whitespace-nowrap rounded-md bg-primary px-2.5 text-xs font-semibold text-primary-foreground shadow-sm transition-opacity hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-40" disabled={dirty || running || previewing} aria-describedby={dirty ? 'save-first-hint' : undefined} onclick={() => void run()}>
+				<Play aria-hidden="true" class="size-3.5" />{running ? 'Running…' : 'Execute'}
 			</button>
 		{/if}
+		{#if header}
+			<!-- Dashboard-only: embed hosts own execution UX via host events. -->
+			<a href="/executions" data-testid="open-executions" class="grid size-7 shrink-0 place-items-center rounded-md border border-border transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2" title="Open executions" aria-label="Open executions">
+				<Activity aria-hidden="true" class="size-3.5" />
+			</a>
+		{/if}
 		{#if history}
-			<button type="button" class="inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-border px-2.5 text-xs font-medium transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2" aria-haspopup="dialog" aria-expanded={historyOpen} onclick={() => (historyOpen = true)}>
-				<History aria-hidden="true" class="size-3.5" />History
+			<button type="button" class="grid size-7 shrink-0 place-items-center rounded-md border border-border transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2" title="History" aria-label="History" aria-haspopup="dialog" aria-expanded={historyOpen} onclick={() => (historyOpen = true)}>
+				<History aria-hidden="true" class="size-3.5" />
 			</button>
 		{/if}
 		{#if canActivate}
-			<button type="button" class="inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-border px-2.5 text-xs font-medium transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-40" disabled={activating || activationBlockedByDirty} aria-describedby={activationBlockedByDirty ? 'save-first-hint' : undefined} onclick={() => void toggleActivation()}>
+			<button type="button" class="grid size-7 shrink-0 place-items-center rounded-md border border-border transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-40" disabled={activating || activationBlockedByDirty} title={activating ? (active ? 'Deactivating…' : 'Activating…') : active ? 'Deactivate' : 'Activate'} aria-label={activating ? (active ? 'Deactivating…' : 'Activating…') : active ? 'Deactivate' : 'Activate'} aria-describedby={activationBlockedByDirty ? 'save-first-hint' : undefined} onclick={() => void toggleActivation()}>
 				{#if active}<PowerOff aria-hidden="true" class="size-3.5" />{:else}<Power aria-hidden="true" class="size-3.5" />{/if}
-				{activating ? (active ? 'Deactivating…' : 'Activating…') : active ? 'Deactivate' : 'Activate'}
 			</button>
 		{/if}
 		{#if !locked && selectedEdgeID && !selectedNodeID}
-			<button type="button" class="inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 text-xs font-medium text-destructive transition-colors hover:bg-destructive/10 focus-visible:outline-2 focus-visible:outline-offset-2" onclick={removeSelectedConnection}>
-				<Trash2 aria-hidden="true" class="size-3.5" />Delete connection
+			<button type="button" class="inline-flex h-7 shrink-0 items-center gap-1 whitespace-nowrap rounded-md px-2 text-xs font-medium text-destructive transition-colors hover:bg-destructive/10 focus-visible:outline-2 focus-visible:outline-offset-2" aria-label="Delete connection" onclick={removeSelectedConnection}>
+				<Trash2 aria-hidden="true" class="size-3.5" />Delete
 			</button>
 		{/if}
-		<span class="ml-auto flex shrink-0 items-center gap-1.5 pr-1 text-[0.6875rem] text-muted-foreground" aria-live="polite">
+		<span class="ml-auto flex shrink-0 items-center gap-1 pr-1 text-[0.6875rem] text-muted-foreground" aria-live="polite">
 			<!-- Whether the workflow is live is the state an activation notice is
 			     about, so it is stated here rather than left to be inferred from
 			     the button's label. -->
@@ -494,9 +518,19 @@
 		</ul>
 	{/if}
 	{#if runError}
-		<p role="alert" class="shrink-0 border-b border-destructive/25 bg-destructive/5 px-3 py-1.5 text-xs text-destructive">Run failed: {runError}</p>
+		<p role="alert" class="shrink-0 border-b border-destructive/25 bg-destructive/5 px-3 py-1.5 text-xs text-destructive">
+			Run failed: {runError}
+			{#if lastExecutionId}
+				<a class="ml-2 font-medium underline underline-offset-2" href={`/executions/${lastExecutionId}`}>View execution</a>
+			{/if}
+		</p>
 	{:else if runMessage}
-		<p role="status" class="shrink-0 border-b border-success/25 bg-success/5 px-3 py-1.5 text-xs text-success">{runMessage}</p>
+		<p role="status" class="flex shrink-0 items-center gap-2 border-b border-success/25 bg-success/5 px-3 py-1.5 text-xs text-success">
+			<span>{runMessage}</span>
+			{#if lastExecutionId}
+				<a class="font-medium text-primary underline underline-offset-2" href={`/executions/${lastExecutionId}`}>View execution</a>
+			{/if}
+		</p>
 	{/if}
 	<!-- A failed activation is a failure, not a notice: the workflow is not
 	     listening, and it belongs in the destructive register beside the other
@@ -525,14 +559,32 @@
 		<div bind:this={canvasRegion} tabindex="-1" class="relative min-h-0 flex-1 overflow-hidden outline-none" data-testid="workflow-canvas">
 			<SvelteFlow bind:nodes bind:edges {nodeTypes} fitView fitViewOptions={{ padding: 0.15, maxZoom: 1 }} minZoom={0.3} nodesDraggable={!locked} nodesConnectable={!locked} deleteKey={locked ? null : ['Backspace', 'Delete']} isValidConnection={(connection) => canConnect(connection, draft.nodes ?? [], definitions, draft.connections ?? [])} onconnect={onConnect} ondelete={onDelete} onnodedragstop={syncCanvas} onselectionchange={onSelectionChange} onpaneclick={() => onSelectionChange({ nodes: [], edges: [] })}>
 				<Background variant={BackgroundVariant.Dots} gap={16} size={1} patternColor="var(--border)" />
-				<Controls showLock={false} />
+				<EditorControls locked={locked} onTidy={tidyUp} />
 			</SvelteFlow>
+
+			{#if !hideRun && (displayed.nodes?.length ?? 0) > 0}
+				<!-- n8n-style bottom-center execute affordance; same guards as toolbar Run.
+				     Mobile-only: on md+ the compact toolbar Execute covers it. -->
+				<div class="pointer-events-none absolute inset-x-0 bottom-4 z-10 flex justify-center px-3 md:hidden">
+					<button
+						type="button"
+						data-testid="canvas-execute"
+						class="pointer-events-auto inline-flex h-10 items-center gap-2 rounded-full bg-primary px-5 text-sm font-semibold text-primary-foreground shadow-lg shadow-black/40 transition-opacity hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-40"
+						disabled={dirty || running || previewing}
+						aria-describedby={dirty ? 'save-first-hint' : undefined}
+						onclick={() => void run()}
+					>
+						<Play aria-hidden="true" class="size-4" />
+						{running ? 'Running…' : dirty ? 'Save to execute' : 'Execute workflow'}
+					</button>
+				</div>
+			{/if}
 
 			{#if (displayed.nodes?.length ?? 0) === 0 && !locked}
 				<div class="pointer-events-none absolute inset-0 grid place-items-center p-4">
 					<div class="pointer-events-auto text-center">
-						<button type="button" class="mx-auto grid h-22 w-22 place-items-center rounded-l-[2.75rem] rounded-r-xl border border-dashed border-border bg-card text-muted-foreground transition-colors hover:border-primary hover:text-primary focus-visible:outline-2 focus-visible:outline-offset-4" aria-label="Add first workflow step" onclick={() => openPicker(true)}>
-							<Plus aria-hidden="true" class="size-6" />
+						<button type="button" class="mx-auto grid h-17 w-17 place-items-center rounded-l-[2.125rem] rounded-r-lg border border-dashed border-border bg-card text-muted-foreground transition-colors hover:border-primary hover:text-primary focus-visible:outline-2 focus-visible:outline-offset-4" aria-label="Add first workflow step" onclick={() => openPicker(true)}>
+							<Plus aria-hidden="true" class="size-5" />
 						</button>
 						<h2 class="mt-3 text-sm font-semibold">Start with a trigger</h2>
 						<p class="mt-1 max-w-56 text-xs leading-5 text-muted-foreground">Pick what starts this workflow, then add the steps it runs.</p>

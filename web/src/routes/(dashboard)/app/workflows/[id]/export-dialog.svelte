@@ -72,9 +72,11 @@
 			<button
 				{...props}
 				type="button"
-				class="inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-border px-2.5 text-xs font-medium transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2"
+				title="Export as n8n JSON"
+				aria-label="Export as n8n JSON"
+				class="grid size-7 shrink-0 place-items-center rounded-md border border-border transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2"
 			>
-				<Download aria-hidden="true" class="size-3.5" />Export
+				<Download aria-hidden="true" class="size-3.5" />
 			</button>
 		{/snippet}
 	</Dialog.Trigger>

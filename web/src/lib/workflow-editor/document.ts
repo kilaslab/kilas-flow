@@ -44,12 +44,11 @@ export function createWorkflowNode(
 	};
 }
 
-// Spacing is a function of the tile, not a round number: a node is 88px wide
-// under a 160px name, so 220px across clears the widest label and 190px down
-// clears the label plus a port row. Wider than that and a compact canvas would
-// gain nothing over the card it replaced.
-const COLUMN = 220;
-const ROW = 190;
+// Spacing is a function of the tile, not a round number: a node is 68px wide
+// under a 128px name. Pitch tracks layout.ts tidy defaults (rankSep 80 /
+// nodeSep 44) so hand-placed steps and Tidy land on the same denser rhythm.
+const COLUMN = 152;
+const ROW = 136;
 
 export function nextNodePosition(index: number): { x: number; y: number } {
 	return { x: 60 + (index % 4) * COLUMN, y: 60 + Math.floor(index / 4) * ROW };
@@ -66,10 +65,10 @@ export function nextNodePosition(index: number): { x: number; y: number } {
  */
 export function positionAfter(source: { x: number; y: number }, occupied: { x: number; y: number }[]): { x: number; y: number } {
 	const candidate = { x: source.x + COLUMN, y: source.y };
-	// A tile is 88px under a 160px label, so anything closer than this overlaps
+	// A tile is 68px under a 128px label, so anything closer than this overlaps
 	// something the reader needs. Both bounds stay under the grid pitch, so a
 	// node in the neighbouring column or row never counts as a collision.
-	while (occupied.some((node) => Math.abs(node.x - candidate.x) < 160 && Math.abs(node.y - candidate.y) < 150)) {
+	while (occupied.some((node) => Math.abs(node.x - candidate.x) < 128 && Math.abs(node.y - candidate.y) < 120)) {
 		candidate.y += ROW;
 	}
 	return candidate;

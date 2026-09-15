@@ -62,6 +62,7 @@
 	let saveIssues = $state<CanvasValidationIssue[]>([]);
 	let runError = $state<string | null>(null);
 	let runMessage = $state<string | null>(null);
+	let lastExecutionId = $state<string | null>(null);
 	let activating = $state(false);
 	let notices = $state<ActivationNoticeView[]>([]);
 	let activationError = $state<string | null>(null);
@@ -187,14 +188,16 @@
 		running = true;
 		runError = null;
 		runMessage = null;
+		// Keep prior lastExecutionId until the new run is queued so the link stays useful mid-flight.
 		const token = ++pollingRun;
 		try {
 			const queued = await runWorkflow(currentWorkflow.id);
 			if (queued.status !== 202) throw new Error('Unexpected workflow-run response');
-			runMessage = 'Run queued…';
-			for (let attempt = 0; attempt < 80 && token === pollingRun; attempt += 1) {
-				await new Promise((resolve) => setTimeout(resolve, 250));
-				const execution = await getExecution(queued.data.id);
+			lastExecutionId = queued.data.id;
+				runMessage = 'Run queued…';
+				for (let attempt = 0; attempt < 80 && token === pollingRun; attempt += 1) {
+					await new Promise((resolve) => setTimeout(resolve, 250));
+					const execution = await getExecution(queued.data.id);
 				if (execution.status !== 200) throw new Error('Unexpected execution response');
 				const status = execution.data.status;
 				runMessage = status === 'succeeded' ? 'Run succeeded.' : `Run ${status}…`;
@@ -217,10 +220,10 @@
 </svelte:head>
 
 {#snippet breadcrumb()}
-	<a href="/app/workflows" class="grid size-7 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" aria-label="All workflows">
+	<a href="/app/workflows" class="grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" aria-label="All workflows">
 		<ArrowLeft aria-hidden="true" class="size-3.5" />
 	</a>
-	<p class="min-w-0 max-w-24 flex-1 truncate text-[0.8125rem] font-medium sm:max-w-56">{currentWorkflow?.name ?? 'Loading…'}</p>
+	<p class="min-w-0 max-w-32 flex-1 truncate text-xs font-medium sm:max-w-44">{currentWorkflow?.name ?? 'Loading…'}</p>
 	{#if currentWorkflow}
 		<span class="ml-auto shrink-0"><ExportDialog workflowID={currentWorkflow.id} workflowName={currentWorkflow.name} /></span>
 	{/if}
@@ -239,7 +242,7 @@
 		</div>
 	{:else if currentWorkflow}
 		{#key currentWorkflow.latestVersion.id}
-			<WorkflowEditor header={breadcrumb} document={currentWorkflow.latestVersion.document} definitions={nodeTypes.data} credentials={credentials.data ?? []} {saving} {running} {saveError} {saveIssues} {runError} {runMessage} active={currentWorkflow.active} {activating} {notices} {activationError} {history} onSave={save} onRun={run} onActivate={activate} onDeactivate={deactivate} onDismissNotice={(key) => (notices = dismissNotice(notices, key))} />
+			<WorkflowEditor header={breadcrumb} document={currentWorkflow.latestVersion.document} definitions={nodeTypes.data} credentials={credentials.data ?? []} {saving} {running} {saveError} {saveIssues} {runError} {runMessage} {lastExecutionId} active={currentWorkflow.active} {activating} {notices} {activationError} {history} onSave={save} onRun={run} onActivate={activate} onDeactivate={deactivate} onDismissNotice={(key) => (notices = dismissNotice(notices, key))} />
 		{/key}
 	{/if}
 </section>

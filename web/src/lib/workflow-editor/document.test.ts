@@ -74,8 +74,8 @@ describe('workflow editor document helpers', () => {
 
 	it('spaces new canvas nodes so their handles remain reachable at the default fit zoom', () => {
 		expect(nextNodePosition(0)).toEqual({ x: 60, y: 60 });
-		expect(nextNodePosition(1)).toEqual({ x: 280, y: 60 });
-		expect(nextNodePosition(4)).toEqual({ x: 60, y: 250 });
+		expect(nextNodePosition(1)).toEqual({ x: 212, y: 60 });
+		expect(nextNodePosition(4)).toEqual({ x: 60, y: 196 });
 	});
 
 	it('never drops a step from a port on top of one already added from a sibling port', () => {
@@ -85,21 +85,21 @@ describe('workflow editor document helpers', () => {
 		// exactly on its first.
 		const source = { x: 60, y: 60 };
 		const first = positionAfter(source, []);
-		expect(first).toEqual({ x: 280, y: 60 });
+		expect(first).toEqual({ x: 212, y: 60 });
 
 		const second = positionAfter(source, [first]);
-		expect(second.x).toBe(280);
-		expect(second.y).toBeGreaterThan(first.y + 140);
+		expect(second.x).toBe(212);
+		expect(second.y).toBeGreaterThan(first.y + 100);
 
 		const third = positionAfter(source, [first, second]);
 		expect([first, second].some((taken) => taken.x === third.x && taken.y === third.y)).toBe(false);
 	});
 
 	it('steps past a node the user had already dragged into the destination', () => {
-		const dragged = { x: 280, y: 60 };
+		const dragged = { x: 212, y: 60 };
 		expect(positionAfter({ x: 60, y: 60 }, [dragged]).y).toBeGreaterThan(dragged.y);
 		// A node in the next column over is not in the way.
-		expect(positionAfter({ x: 60, y: 60 }, [{ x: 500, y: 60 }])).toEqual({ x: 280, y: 60 });
+		expect(positionAfter({ x: 60, y: 60 }, [{ x: 500, y: 60 }])).toEqual({ x: 212, y: 60 });
 	});
 
 	it('draws an attachment connection as a distinct kind of edge, and keeps it out of the saved document', () => {

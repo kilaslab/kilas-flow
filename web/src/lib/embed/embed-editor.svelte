@@ -48,6 +48,7 @@
 	let saveIssues = $state<CanvasValidationIssue[]>([]);
 	let runError = $state<string | null>(null);
 	let runMessage = $state<string | null>(null);
+	let lastExecutionId = $state<string | null>(null);
 	let pollingRun = 0;
 
 	$effect(() => {
@@ -116,6 +117,7 @@
 		try {
 			const queued = await runWorkflow(currentWorkflow.id);
 			if (queued.status !== 202) throw new Error('Unexpected workflow-run response');
+			lastExecutionId = queued.data.id;
 			runMessage = 'Run queued…';
 			notifyHost('execution-started', { executionId: queued.data.id });
 			for (let attempt = 0; attempt < 80 && token === pollingRun; attempt += 1) {
@@ -177,6 +179,7 @@
 			{saveIssues}
 			{runError}
 			{runMessage}
+			{lastExecutionId}
 			{history}
 			active={currentWorkflow.active}
 			onSave={save}

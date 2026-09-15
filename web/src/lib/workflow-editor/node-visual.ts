@@ -115,17 +115,65 @@ const BUILTIN_PREFIX = 'builtin:';
  */
 export const FALLBACK_GLYPH = Box;
 
-/** Tile geometry per silhouette, shared by the editor and the replay canvas. */
+/** Tile geometry per silhouette, shared by the editor and the replay canvas.
+ *
+ * Compact default (n8n-like density): a step/trigger tile is 4.25rem (68px)
+ * square so long chains fit, with hub/attachment scaled proportionally. The
+ * name band below stays wider than the tile; layout.ts accounts for it. */
 export const TILE: Record<NodeShape, string> = {
-	trigger: 'h-22 w-22 rounded-l-[2.75rem] rounded-r-xl',
-	step: 'h-22 w-22 rounded-xl',
-	hub: 'h-18 min-w-44 max-w-72 gap-2.5 rounded-2xl px-4',
-	attachment: 'size-15 rounded-full'
+	trigger: 'h-17 w-17 rounded-l-[2.125rem] rounded-r-lg',
+	step: 'h-17 w-17 rounded-lg',
+	hub: 'h-14 min-w-36 max-w-60 gap-2 rounded-xl px-3',
+	attachment: 'size-12 rounded-full'
 };
 
 /** Glyph size per silhouette. A hub and an attachment carry a smaller icon. */
+
+/**
+ * Selection / validation / run cues for a canvas tile. Shared by the editor and
+ * the replay node so both surfaces paint the same chrome from the same rules.
+ */
+export type NodeChromeState = {
+	selected?: boolean;
+	invalid?: boolean;
+	/** Live or replayed run status when the surface knows one. */
+	runStatus?: string | null;
+};
+
+/** Border colour for the tile given selection, validation, and run state. */
+export function nodeChromeBorder(state: NodeChromeState): string {
+	if (state.invalid || state.runStatus === 'failed') return 'var(--destructive)';
+	if (state.runStatus === 'running' || state.runStatus === 'cancelling') return 'var(--primary)';
+	if (state.runStatus === 'succeeded') return 'var(--success)';
+	if (state.selected) return 'var(--node-accent)';
+	// Muted accent hue — readable at low zoom without competing with selection.
+	return 'oklch(from var(--node-accent) 0.42 0.045 h)';
+}
+
+/** Elevation and focus ring for the tile. */
+export function nodeChromeShadow(state: NodeChromeState): string {
+	if (state.invalid || state.runStatus === 'failed') {
+		return '0 0 0 2px color-mix(in oklch, var(--destructive) 42%, transparent), 0 2px 8px oklch(0 0 0 / 40%)';
+	}
+	if (state.runStatus === 'running' || state.runStatus === 'cancelling') {
+		return '0 0 0 2px color-mix(in oklch, var(--primary) 45%, transparent), 0 2px 10px oklch(0 0 0 / 42%)';
+	}
+	if (state.selected) {
+		return '0 0 0 2px color-mix(in oklch, var(--node-accent) 42%, transparent), 0 2px 10px oklch(0 0 0 / 42%)';
+	}
+	// Soft card lift so nodes read as tiles rather than flat glyphs when zoomed out.
+	return '0 1px 3px oklch(0 0 0 / 38%), 0 0 0 1px oklch(0 0 0 / 14%)';
+}
+
+/** Icon badge geometry inside a card-like tile. Compact with the tile. */
+export function nodeIconBadgeClass(shape: NodeShape): string {
+	if (shape === 'attachment') return 'grid size-7 place-items-center rounded-full border';
+	if (shape === 'hub') return 'grid size-8 shrink-0 place-items-center rounded-lg border';
+	return 'grid size-9 place-items-center rounded-lg border';
+}
+
 export function glyphClass(shape: NodeShape): string {
-	return shape === 'trigger' || shape === 'step' ? 'size-7' : 'size-5';
+	return shape === 'trigger' || shape === 'step' ? 'size-6' : 'size-4.5';
 }
 
 /** Even spacing for `count` ports along one edge of a tile, as a percentage. */

@@ -43,6 +43,7 @@
     "vitest": "^4.1.11"
   },
   "dependencies": {
+    "@dagrejs/dagre": "^3.1.1",
     "@tanstack/svelte-query": "^6.1.48",
     "@xyflow/svelte": "1.6.5",
     "bits-ui": "^2.19.0"

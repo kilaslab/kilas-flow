@@ -10,7 +10,17 @@
 
 	import type { EditorFlowNode } from '$lib/workflow-editor/document';
 	import { statusAccent, statusLabel } from '$lib/workflow-editor/execution';
-	import { TILE, attachmentPorts, glyphClass, mainPorts, nodeSubtitle, nodeVisual, portOffset } from '$lib/workflow-editor/node-visual';
+	import {
+		TILE,
+		attachmentPorts,
+		glyphClass,
+		mainPorts,
+		nodeChromeShadow,
+		nodeIconBadgeClass,
+		nodeSubtitle,
+		nodeVisual,
+		portOffset
+	} from '$lib/workflow-editor/node-visual';
 
 	/**
 	 * The replay node keeps the editor node's geometry and ports so a graph reads
@@ -44,23 +54,36 @@
 		cancelling: CircleDashed
 	};
 	const badge = $derived(BADGE[status] ?? Minus);
+
+	const shadow = $derived(
+		nodeChromeShadow({
+			selected: Boolean(selected),
+			invalid: status === 'failed',
+			runStatus: reached ? status : null
+		})
+	);
 </script>
 
-<div class="relative" style={`--node-accent: ${accent}`} data-run-status={status}>
+<div class="relative" style={`--node-accent: ${accent}`} data-run-status={status} data-selected={selected ? 'true' : undefined}>
 	<div
-		class="flex items-center justify-center border bg-card {TILE[visual.shape]}"
+		class="kf-node-tile flex items-center justify-center gap-2.5 border bg-card {TILE[visual.shape]}"
 		class:opacity-60={!reached}
 		style={`border-color: ${reached ? 'var(--node-accent)' : 'var(--border)'}; box-shadow: ${
-			selected ? '0 0 0 2px color-mix(in oklch, var(--node-accent) 35%, transparent)' : 'none'
+			reached || selected ? shadow : '0 1px 3px oklch(0 0 0 / 30%)'
 		}`}
 	>
-		<visual.icon
-			class={glyphClass(visual.shape)}
-			style={`color: ${reached ? 'var(--node-accent)' : 'var(--muted-foreground)'}`}
-			aria-hidden="true"
-		/>
+		<span
+			class={nodeIconBadgeClass(visual.shape)}
+			style="border-color: color-mix(in oklch, var(--node-accent) 32%, transparent); background: color-mix(in oklch, var(--node-accent) {reached ? 16 : 8}%, transparent)"
+		>
+			<visual.icon
+				class={glyphClass(visual.shape)}
+				style={`color: ${reached ? 'var(--node-accent)' : 'var(--muted-foreground)'}`}
+				aria-hidden="true"
+			/>
+		</span>
 		{#if visual.shape === 'hub'}
-			<span class="truncate text-[0.8125rem] font-semibold leading-tight">{node.name}</span>
+			<span class="truncate text-xs font-semibold leading-tight">{node.name}</span>
 		{/if}
 	</div>
 
@@ -76,12 +99,12 @@
 		</span>
 	{/if}
 
-	<div class="pointer-events-none absolute left-1/2 top-full w-40 -translate-x-1/2 pt-1.5 text-center">
+	<div class="pointer-events-none absolute left-1/2 top-full w-32 -translate-x-1/2 pt-1 text-center">
 		{#if visual.shape !== 'hub'}
-			<p class="truncate text-[0.8125rem] font-semibold leading-tight" class:text-muted-foreground={!reached}>{node.name}</p>
+			<p class="truncate text-xs font-semibold leading-tight" class:text-muted-foreground={!reached}>{node.name}</p>
 		{/if}
 		{#if subtitle}
-			<p class="truncate pt-0.5 font-mono text-[0.6875rem] leading-tight text-muted-foreground">{subtitle}</p>
+			<p class="truncate pt-0.5 font-mono text-[0.625rem] leading-tight text-muted-foreground">{subtitle}</p>
 		{/if}
 	</div>
 

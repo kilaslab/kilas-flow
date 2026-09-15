@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { Definition, Node, Port } from '$lib/api/generated/models';
 
-import { FALLBACK_GLYPH, TILE, attachmentPorts, mainPorts, nodeShape, nodeSubtitle, nodeVisual, portOffset } from './node-visual';
+import { FALLBACK_GLYPH, TILE, attachmentPorts, mainPorts, nodeChromeBorder, nodeChromeShadow, nodeIconBadgeClass, nodeShape, nodeSubtitle, nodeVisual, portOffset } from './node-visual';
 
 const MAIN: Port = { name: 'main', kind: 'main' };
 
@@ -193,5 +193,48 @@ describe('nodeVisual', () => {
 		const visual = nodeVisual({ ...d, icon: { light: 'waha.svg' }, version: 202502 });
 		expect(visual.iconURL).toContain('/api/v1/node-types/pack.wahaAction/icon');
 		expect(visual.iconURL).toContain('version=202502');
+	});
+});
+
+
+describe('nodeChrome', () => {
+	it('uses destructive border for invalid or failed tiles', () => {
+		expect(nodeChromeBorder({ invalid: true })).toBe('var(--destructive)');
+		expect(nodeChromeBorder({ runStatus: 'failed' })).toBe('var(--destructive)');
+	});
+
+	it('uses primary border while a node is running', () => {
+		expect(nodeChromeBorder({ runStatus: 'running' })).toBe('var(--primary)');
+		expect(nodeChromeBorder({ runStatus: 'cancelling' })).toBe('var(--primary)');
+	});
+
+	it('uses the node accent when selected and otherwise a muted accent hue', () => {
+		expect(nodeChromeBorder({ selected: true })).toBe('var(--node-accent)');
+		expect(nodeChromeBorder({})).toContain('var(--node-accent)');
+		expect(nodeChromeBorder({})).not.toBe('var(--node-accent)');
+	});
+
+	it('elevates selected and running tiles more than the idle card shadow', () => {
+		const idle = nodeChromeShadow({});
+		const selected = nodeChromeShadow({ selected: true });
+		const running = nodeChromeShadow({ runStatus: 'running' });
+		expect(selected.length).toBeGreaterThan(idle.length);
+		expect(running).toContain('var(--primary)');
+		expect(selected).toContain('var(--node-accent)');
+	});
+
+	it('sizes the icon badge per silhouette', () => {
+		expect(nodeIconBadgeClass('step')).toContain('size-9');
+		expect(nodeIconBadgeClass('trigger')).toContain('rounded-lg');
+		expect(nodeIconBadgeClass('hub')).toContain('size-8');
+		expect(nodeIconBadgeClass('attachment')).toContain('rounded-full');
+	});
+
+	it('keeps TILE silhouettes available for both editor and replay', () => {
+		expect(TILE.step).toContain('rounded-lg');
+		expect(TILE.step).toContain('h-17');
+		expect(TILE.step).toContain('w-17');
+		expect(TILE.trigger).toContain('rounded-l');
+		expect(TILE.attachment).toContain('size-12');
 	});
 });

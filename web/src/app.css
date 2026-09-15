@@ -18,10 +18,10 @@
    canvas's density instead of inventing its own.
 
      app header  2.75rem   editor toolbar 2.5rem   list row 2.75rem
-     form control 1.75rem  sidebar        13rem    page pad 1.25rem
+     form control 1.75rem  sidebar 13rem / 3.5rem collapsed   page pad 1.25rem
 
    Canvas geometry lives with it because edge routing depends on it: a step
-   tile is 5.5rem square, an attachment node is a 3.75rem circle. */
+   tile is 4.25rem square, an attachment node is a 3rem circle. */
 
 @theme {
 	--font-sans: 'Geist Variable', sans-serif;
@@ -216,8 +216,9 @@
    handle on its edge stay with the library, because those are load-bearing for
    where edges terminate. */
 .svelte-flow__handle {
-	width: 0.5rem;
-	height: 0.5rem;
+	/* 10px drawn disc — still small, but readable when the canvas is zoomed out. */
+	width: 0.625rem;
+	height: 0.625rem;
 	min-width: 0;
 	min-height: 0;
 	border: 0;
@@ -225,24 +226,28 @@
 	border-radius: 0;
 }
 
-/* A port is a small target, so the grab area is grown to 24px without growing
-   what is drawn. */
+/* A port is a small target, so the grab area is grown without growing what is drawn. */
 .svelte-flow__handle::before {
 	content: '';
 	position: absolute;
-	inset: -0.5rem;
+	inset: -0.55rem;
 }
 
 .kf-port {
 	display: block;
 	width: 100%;
 	height: 100%;
-	border: 1.5px solid var(--node-accent, var(--primary));
+	border: 2px solid var(--node-accent, var(--primary));
 	background: var(--card);
 	border-radius: 9999px;
+	box-shadow:
+		0 0 0 1px oklch(0 0 0 / 35%),
+		0 1px 2px oklch(0 0 0 / 45%);
 	transition:
 		background-color 120ms ease,
-		scale 120ms ease;
+		border-color 120ms ease,
+		scale 120ms ease,
+		box-shadow 120ms ease;
 }
 
 .kf-port-attachment {
@@ -254,7 +259,15 @@
 .svelte-flow__handle.connectingto .kf-port,
 .svelte-flow__handle:hover .kf-port {
 	background: var(--node-accent, var(--primary));
-	scale: 1.25;
+	scale: 1.35;
+	box-shadow:
+		0 0 0 2px color-mix(in oklch, var(--node-accent, var(--primary)) 35%, transparent),
+		0 1px 3px oklch(0 0 0 / 50%);
+}
+
+/* Selected / invalid tiles get a slightly stronger card lift beyond inline shadow. */
+.svelte-flow__node.selected .kf-node-tile {
+	filter: brightness(1.04);
 }
 
 /* An attachment edge is drawn as a dashed line because it carries configuration

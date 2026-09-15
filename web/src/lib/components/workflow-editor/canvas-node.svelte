@@ -6,7 +6,18 @@
 
 	import type { EditorFlowNode } from '$lib/workflow-editor/document';
 	import { getCanvasActions } from '$lib/workflow-editor/canvas-actions';
-	import { TILE, attachmentPorts, glyphClass, mainPorts, nodeSubtitle, nodeVisual, portOffset } from '$lib/workflow-editor/node-visual';
+	import {
+		TILE,
+		attachmentPorts,
+		glyphClass,
+		mainPorts,
+		nodeChromeBorder,
+		nodeChromeShadow,
+		nodeIconBadgeClass,
+		nodeSubtitle,
+		nodeVisual,
+		portOffset
+	} from '$lib/workflow-editor/node-visual';
 
 	let { data, selected }: NodeProps<EditorFlowNode> = $props();
 
@@ -19,6 +30,7 @@
 	const node = $derived(data.workflowNode);
 	const subtitle = $derived(nodeSubtitle(node, data.definition));
 	const invalid = $derived(Boolean(data.validationMessage));
+	const runStatus = $derived(data.runStatus ?? null);
 	// An n8n import keeps a node it has no equivalent for as a visible
 	// placeholder and stores the source identity in the parameters capsule
 	// (`originalType`, `originalTypeVersion`). The capsule marks the tile so
@@ -40,21 +52,18 @@
 	const showOutputLabels = $derived(mainOutputs.length > 1);
 	const editable = $derived(actions ? !actions.readOnly() : false);
 
-	// The accent's hue held exactly, at a muted lightness and chroma. Mixing
-	// toward another colour interpolates hue in a polar space and pulls every
-	// accent toward whatever it was mixed with — against `--border` that turned
-	// amber and red green and violet and azure cyan, and it carried the accent
-	// at ~68% rather than the stated share, because `--border` has an alpha.
-	const border = $derived(
-		invalid
-			? 'var(--destructive)'
-			: selected
-				? 'var(--node-accent)'
-				: 'oklch(from var(--node-accent) 0.42 0.045 h)'
-	);
+	const chrome = $derived({ selected: Boolean(selected), invalid, runStatus });
+	const border = $derived(nodeChromeBorder(chrome));
+	const shadow = $derived(nodeChromeShadow(chrome));
 </script>
 
-<div class="relative" style={`--node-accent: ${visual.accent}`}>
+<div
+	class="relative"
+	style={`--node-accent: ${visual.accent}`}
+	data-selected={selected ? 'true' : undefined}
+	data-invalid={invalid ? 'true' : undefined}
+	data-run-status={runStatus ?? undefined}
+>
 	{#if editable}
 		<NodeToolbar position={Position.Top} offset={8}>
 			<div class="nodrag flex items-center gap-0.5 rounded-lg border border-border bg-popover p-0.5 shadow-md">
@@ -70,17 +79,23 @@
 		</NodeToolbar>
 	{/if}
 
-	<!-- The tile is the whole node as far as Svelte Flow is concerned: the name
-	     below is positioned outside it so edges meet the icon, not the text. -->
+	<!-- Card-like tile: accent icon badge on a raised surface so chrome reads at low zoom. -->
 	<div
-		class="flex items-center justify-center border bg-card transition-[border-color,box-shadow] {TILE[visual.shape]}"
-		style={`border-color: ${border}; box-shadow: ${
-			selected ? '0 0 0 2px color-mix(in oklch, var(--node-accent) 35%, transparent)' : '0 1px 2px oklch(0 0 0 / 30%)'
-		}`}
+		class="kf-node-tile flex items-center justify-center gap-2.5 border bg-card transition-[border-color,box-shadow] {TILE[visual.shape]}"
+		style={`border-color: ${border}; box-shadow: ${shadow}`}
 	>
-		<visual.icon class={glyphClass(visual.shape)} style="color: var(--node-accent)" aria-hidden="true" />
+		<span
+			class={nodeIconBadgeClass(visual.shape)}
+			style="border-color: color-mix(in oklch, var(--node-accent) 32%, transparent); background: color-mix(in oklch, var(--node-accent) 16%, transparent)"
+		>
+			{#if visual.iconURL}
+				<img src={visual.iconURL} alt="" loading="lazy" decoding="async" class={glyphClass(visual.shape)} />
+			{:else}
+				<visual.icon class={glyphClass(visual.shape)} style="color: var(--node-accent)" aria-hidden="true" />
+			{/if}
+		</span>
 		{#if visual.shape === 'hub'}
-			<span class="truncate text-[0.8125rem] font-semibold leading-tight">{node.name}</span>
+			<span class="truncate text-xs font-semibold leading-tight">{node.name}</span>
 		{/if}
 	</div>
 
@@ -97,16 +112,17 @@
 	{/if}
 
 	<!-- Name and the one parameter worth reading at a glance. The hub carries its
-	     name inside the tile, so it only needs the subtitle here. -->
-	<div class="pointer-events-none absolute left-1/2 top-full w-40 -translate-x-1/2 pt-1.5 text-center">
+	     name inside the tile, so it only needs the subtitle here. Compact band
+	     (w-32) matching the 68px tile pitch so long chains fit. -->
+	<div class="pointer-events-none absolute left-1/2 top-full w-32 -translate-x-1/2 pt-1 text-center">
 		{#if visual.shape !== 'hub'}
-			<p class="truncate text-[0.8125rem] font-semibold leading-tight">{node.name}</p>
+			<p class="truncate text-xs font-semibold leading-tight">{node.name}</p>
 		{/if}
 		{#if capsuleType}
 			<p class="mx-auto mt-0.5 w-fit truncate rounded-full border border-destructive/30 bg-destructive/10 px-1.5 py-px text-[0.625rem] font-medium leading-tight text-destructive" title={`Unsupported node imported from n8n as ${capsuleType}`}>Unsupported</p>
 		{/if}
 		{#if subtitle}
-			<p class="truncate pt-0.5 font-mono text-[0.6875rem] leading-tight text-muted-foreground">{subtitle}</p>
+			<p class="truncate pt-0.5 font-mono text-[0.625rem] leading-tight text-muted-foreground">{subtitle}</p>
 		{/if}
 	</div>
 
