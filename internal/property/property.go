@@ -332,12 +332,11 @@ type VisibilityCondition struct {
 
 // visibilityOf reads a property's rule, translating the old single-value form.
 //
-// The old shape was single-value, AND-only, show-only and compared with strict
-// JavaScript equality, so it could not express "one of these", could not hide,
-// could not gate on version, and never matched a non-primitive at all. It is
-// kept as a shorthand because it is genuinely the common case, and it means the
-// existing definitions did not all have to be rewritten to say the same thing
-// at greater length.
+// Same-key entries are merged into one condition whose values are OR'd, while
+// different keys stay separate conditions that are AND'd — exactly n8n's
+// displayOptions semantics. Without the merge, a shorthand like
+// [{operation: insert}, {operation: update}] could never match, because one
+// parameter cannot equal two values at once.
 func visibilityOf(definition PropertyDefinition) Visibility {
 	if !definition.DisplayOptions.IsEmpty() {
 		return definition.DisplayOptions
@@ -346,7 +345,13 @@ func visibilityOf(definition PropertyDefinition) Visibility {
 		return Visibility{}
 	}
 	show := make([]Condition, 0, len(definition.VisibleWhen))
+	indexByKey := make(map[string]int, len(definition.VisibleWhen))
 	for _, condition := range definition.VisibleWhen {
+		if index, exists := indexByKey[condition.Key]; exists {
+			show[index].Values = append(show[index].Values, condition.Equals)
+			continue
+		}
+		indexByKey[condition.Key] = len(show)
 		show = append(show, Condition{Key: condition.Key, Values: []any{condition.Equals}})
 	}
 	return Visibility{Show: show}
@@ -414,8 +419,8 @@ type PropertyDefinition struct {
 	// LoadOptions fetches the selectable values at edit time, for a property
 	// whose valid values live on the customer's own service rather than being
 	// knowable when this binary was built.
-	LoadOptions *OptionsLoader `json:"loadOptions,omitempty"`
-	// VisibleWhen is the shorthand: every condition must match by equality.
+	// VisibleWhen is the shorthand: entries on different keys must all match by
+	// equality, while several entries on one key mean "one of these values".
 	VisibleWhen []VisibilityCondition `json:"visibleWhen,omitempty"`
 	// DisplayOptions is the full rule — show and hide groups, several accepted
 	// values per key, and operators beyond equality. When set it replaces

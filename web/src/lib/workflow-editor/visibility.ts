@@ -74,8 +74,16 @@ export function propertyVisible(
 	}
 	const shorthand = property.visibleWhen ?? [];
 	if (shorthand.length === 0) return true;
+	// Same-key entries are one condition whose values are OR'd; different keys
+	// are AND'd. Without the merge, [{operation: insert}, {operation: update}]
+	// could never match, because one parameter cannot equal two values at
+	// once — the same rule the server evaluates in visibilityOf.
+	const merged: Record<string, unknown[]> = {};
+	for (const condition of shorthand) {
+		(merged[condition.key] ??= []).push(condition.equals);
+	}
 	return visible(
-		{ show: shorthand.map((condition) => ({ key: condition.key, values: [condition.equals] })) },
+		{ show: Object.entries(merged).map(([key, values]) => ({ key, values })) },
 		parameters,
 		typeVersion
 	);

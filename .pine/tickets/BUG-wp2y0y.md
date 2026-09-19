@@ -1,7 +1,7 @@
 ---
 id: BUG-wp2y0y
 title: visibleWhen multi-value AND-ed; 22 properties never appear
-status: todo
+status: doing
 priority: critical
 labels:
     - editor
@@ -10,7 +10,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:09Z"
-updated: "2026-09-19T12:06:09Z"
+updated: "2026-09-19T12:40:44Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -38,3 +38,8 @@ Existing tickets: FEAT-3xqky1, FEAT-n5fdz3, FEAT-12s0e5, FEAT-q81bq4, FEAT-68zzq
 
 - [ ] visibleWhen with several values for one key is AND-ed, so 22 properties (Datastore columns and filters, Postgr
 - [ ] Adversarial re-verify against live stub/n8n like the Verify phase (no code-only close)
+## Work (WebFormsOps 2026-09-19)
+- status: doing. Owns internal/property/property.go + visibility.ts per Main.
+- Fix: visibilityOf (Go) + propertyVisible (TS) merge same-key visibleWhen entries into one OR condition; AND across keys (n8n displayOptions semantics).
+- Tests: added TestVisiblePropertyMergesSameKeyShorthand (fails pre-fix, passes post-fix); shared fixture suite still green; vitest visibility/conditions/assignments/key-value 47 passed.
+- Remaining: registry never-visible sweep test + commit.

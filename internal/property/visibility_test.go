@@ -75,3 +75,37 @@ func TestVisibilityRefusesAnUnsupportedPseudoKey(t *testing.T) {
 		t.Error("an unknown operator was accepted")
 	}
 }
+
+// TestVisiblePropertyMergesSameKeyShorthand pins the BUG-wp2y0y fix: several
+// shorthand entries on one key mean "one of these values", not "all at once".
+func TestVisiblePropertyMergesSameKeyShorthand(t *testing.T) {
+	t.Parallel()
+
+	shorthand := func(entries ...property.VisibilityCondition) property.PropertyDefinition {
+		return property.PropertyDefinition{Key: "columns", VisibleWhen: entries}
+	}
+	multi := shorthand(
+		property.VisibilityCondition{Key: "operation", Equals: "insert"},
+		property.VisibilityCondition{Key: "operation", Equals: "update"},
+		property.VisibilityCondition{Key: "operation", Equals: "upsert"},
+	)
+	for _, operation := range []string{"insert", "update", "upsert"} {
+		if !property.VisibleProperty(multi, map[string]any{"operation": operation}, "") {
+			t.Errorf("operation %q should show the property", operation)
+		}
+	}
+	if property.VisibleProperty(multi, map[string]any{"operation": "delete"}, "") {
+		t.Error("operation delete should hide the property")
+	}
+	// Different keys still AND: both must match.
+	anded := shorthand(
+		property.VisibilityCondition{Key: "operation", Equals: "update"},
+		property.VisibilityCondition{Key: "resource", Equals: "message"},
+	)
+	if property.VisibleProperty(anded, map[string]any{"operation": "update", "resource": "other"}, "") {
+		t.Error("a mismatched second key should hide the property")
+	}
+	if !property.VisibleProperty(anded, map[string]any{"operation": "update", "resource": "message"}, "") {
+		t.Error("both keys matching should show the property")
+	}
+}
