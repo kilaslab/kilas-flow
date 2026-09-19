@@ -60,6 +60,7 @@
 	let running = $state(false);
 	let saveError = $state<string | null>(null);
 	let saveIssues = $state<CanvasValidationIssue[]>([]);
+	let saveConflict = $state(false);
 	let runError = $state<string | null>(null);
 	let runMessage = $state<string | null>(null);
 	let lastExecutionId = $state<string | null>(null);
@@ -81,16 +82,30 @@
 		saving = true;
 		saveError = null;
 		saveIssues = [];
+		saveConflict = false;
 		try {
-			const response = await updateWorkflow(currentWorkflow.id, document);
+			const response = await updateWorkflow(currentWorkflow.id, {
+				...document,
+				baseVersionId: currentWorkflow.latestVersion.id
+			});
 			if (response.status !== 200) throw new Error('Unexpected workflow-save response');
 			currentWorkflow = response.data;
 		} catch (error) {
 			saveError = message(error);
 			saveIssues = validationIssuesFromApiError(error);
+			saveConflict = isConflictError(error);
 		} finally {
 			saving = false;
 		}
+	}
+
+	function isConflictError(error: unknown): boolean {
+		return (
+			typeof error === 'object' &&
+			error !== null &&
+			'status' in error &&
+			(error as { status?: unknown }).status === 409
+		);
 	}
 
 	async function activate() {

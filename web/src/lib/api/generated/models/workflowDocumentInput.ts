@@ -12,6 +12,8 @@ import type { WorkflowDocumentInputSettings } from './workflowDocumentInputSetti
 export interface WorkflowDocumentInput {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  /** Latest version ID the editor saved from; a save from a stale revision is refused with 409 */
+  baseVersionId?: string;
   /** @nullable */
   connections: Connection[] | null;
   name: string;
