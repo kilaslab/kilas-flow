@@ -1,16 +1,29 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
+	import LogOut from '@lucide/svelte/icons/log-out';
 	import Menu from '@lucide/svelte/icons/menu';
 	import PanelLeftClose from '@lucide/svelte/icons/panel-left-close';
 	import PanelLeftOpen from '@lucide/svelte/icons/panel-left-open';
 
+	import { getMe, logout } from '$lib/api/generated/auth/auth';
+	import type { PrincipalResource } from '$lib/api/generated/models';
 	import DashboardNav from '$lib/components/dashboard/dashboard-nav.svelte';
 	import { Button } from '$lib/components/ui/button';
 	import * as Sheet from '$lib/components/ui/sheet';
-
 	let { children } = $props();
+	let principal = $state<PrincipalResource | null>(null);
 	let mobileNavOpen = $state(false);
+
+	async function signOut() {
+		try {
+			await logout();
+		} finally {
+			await goto('/login');
+		}
+	}
+	// (removed duplicated mobileNavOpen declaration)
 
 	// Collapsed = icons-only rail. Default expanded until the client reports
 	// its stored preference, so SSR and first paint never mismatch hydration.
@@ -19,6 +32,14 @@
 	const STORAGE_KEY = 'kilasflow.sidebar.collapsed';
 
 	onMount(() => {
+		void getMe()
+			.then((response) => {
+				if (response.status === 200) principal = response.data;
+			})
+			.catch(() => {
+				// Auth-off deployments 404/401 here: the shell simply shows
+				// no user menu rather than an error.
+			});
 		try {
 			sidebarCollapsed = localStorage.getItem(STORAGE_KEY) === 'true';
 		} catch {
@@ -115,9 +136,16 @@
 				</Sheet.Content>
 			</Sheet.Root>
 
-			<div class="min-w-0">
+			<div class="min-w-0 flex-1">
 				<p class="truncate text-[0.8125rem] font-semibold tracking-tight">{sectionTitle}</p>
 			</div>
+			{#if principal}
+				<span class="hidden max-w-44 truncate text-xs text-muted-foreground sm:inline" title={principal.email ?? principal.name ?? principal.label ?? 'Signed in'}>{principal.email ?? principal.name ?? principal.label ?? 'Signed in'}</span>
+				<Button variant="ghost" size="sm" class="h-7 shrink-0 px-2 text-xs" onclick={() => void signOut()}>
+					<LogOut aria-hidden="true" class="size-3.5" />
+					Sign out
+				</Button>
+			{/if}
 		</header>
 
 		<main id="dashboard-content" tabindex="-1" class:min-h-0={editorRoute} class={editorRoute ? 'h-[calc(100dvh-2.75rem)] overflow-hidden lg:h-dvh' : 'min-w-0 px-4 py-5 sm:px-5'}>

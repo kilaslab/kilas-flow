@@ -84,6 +84,22 @@ export async function apiFetch<T>(url: string, options: ApiFetchOptions = {}): P
 		...(body === undefined ? {} : { body: jsonBody ? JSON.stringify(body) : body })
 	});
 
+	// Auth-enabled deployments answer 401 to every unauthenticated call.
+	// The SPA owns a sign-in route, so a 401 redirects there with the
+	// current location as `next` and the existing error block still throws.
+	// Skipped for auth calls themselves, the login page, embeds (which
+	// emit session-expired instead of navigating the iframe), and while an
+	// embed token is attached — approved shape per WebEditorCore.
+	if (response.status === 401 && typeof window !== 'undefined' && !currentEmbedToken()) {
+		const pathname = window.location.pathname;
+		const onLoginPage = pathname === '/login' || pathname.startsWith('/login/');
+		const isEmbed = pathname.startsWith('/embed/');
+		const isAuthCall = url.includes('/auth/');
+		if (!isAuthCall && !onLoginPage && !isEmbed) {
+			window.location.assign(`/login?next=${encodeURIComponent(pathname + window.location.search)}`);
+		}
+	}
+
 	if (!response.ok) {
 		const problem = await readProblem(response);
 		throw new ApiError(response.status, problem?.detail ?? problem?.title ?? response.statusText, problem);
