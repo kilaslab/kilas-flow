@@ -26,7 +26,7 @@
 
 	// Which credential types this node can authenticate with is derived from the
 	// node type, so the panel stays generic and gains new types for free.
-	const credentialTypes = $derived(credentialTypesFor(definition));
+	const credentialTypes = $derived(credentialTypesFor(definition, (node.parameters ?? {}) as Record<string, unknown>));
 	const credentialRequired = $derived(requiresCredential(definition));
 	const selectedCredential = $derived((typeID: string) => node.credentials?.[typeID] ?? '');
 	let tab = $state<PropertyScope>('parameters');
@@ -127,7 +127,7 @@
 			<p class="text-xs leading-5 text-muted-foreground">This node has no {activeTab === 'parameters' ? 'parameters' : 'shared settings'} to configure.</p>
 		{:else}
 			{#each visibleProperties as property (property.key)}
-				<PropertyField {property} value={values[property.key]} siblings={values} onChange={(value) => onChange(activeTab, property.key, value)} loadOptions={activeTab === 'parameters' ? loadOptions : undefined} loadSchema={activeTab === 'parameters' ? loadSchema : undefined} />
+				<PropertyField {property} value={values[property.key] ?? property.default} siblings={values} onChange={(value) => onChange(activeTab, property.key, value)} loadOptions={activeTab === 'parameters' ? loadOptions : undefined} loadSchema={activeTab === 'parameters' ? loadSchema : undefined} />
 			{/each}
 		{/if}
 	</div>
