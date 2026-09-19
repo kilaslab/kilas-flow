@@ -1,7 +1,7 @@
 ---
 id: BUG-57n76x
 title: Editor shows every imported node as Unknown node type (exact type@version lookup)
-status: todo
+status: doing
 priority: critical
 labels:
     - editor
@@ -11,7 +11,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:09Z"
-updated: "2026-09-19T12:06:09Z"
+updated: "2026-09-19T12:41:01Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -113,3 +113,11 @@ Existing tickets: FEAT-k3fmj1
 - [ ] Editor shows imported trigger nodes (and any other versioned node) as "Unknown node type" because it looks up 
 - [ ] Editor looks up node definitions by exact type and version while the server rounds down, so 984 imported nodes
 - [ ] Adversarial re-verify against live stub/n8n like the Verify phase (no code-only close)
+
+## WebEditorCore plan (2026-09-19)
+Scope: client-side round-down only. No importer/registry changes.
+1. `document.ts`: add exported `resolveDefinition(type, ver, defs)` = highest registered `<=` requested, else latest, else null; use in `documentFromCanvas`; drop exact `definitionKey` map.
+2. `ports.ts:86`, `execution.ts:132`, `workflow-editor.svelte:195`: same `resolveDefinition` (import from `document.ts`).
+3. Footer stored→resolved in `workflow-editor.svelte` inspector (own file; `properties-panel.svelte` untouched — Web-Forms-Ops).
+4. Regression tests: `document.test.ts` (round-down set@3.4/http@4.2/webhook@2, multi-version pick, fallback-latest, unknown→null, projection uses resolved def), `ports.test.ts` + `execution.test.ts` (mismatched version still connects/counts).
+5. Scoped `vitest run` on those files, commit, mark testing.

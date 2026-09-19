@@ -150,10 +150,27 @@ describe('canConnect port limits', () => {
 		).toBe(false);
 	});
 });
-
 describe('portLabel', () => {
 	it('prefers the display name and falls back to the port name', () => {
 		expect(portLabel({ name: 'model', kind: 'ai_languageModel', displayName: 'Chat Model' })).toBe('Chat Model');
 		expect(portLabel({ name: 'main', kind: 'main' })).toBe('main');
+	});
+});
+
+describe('version-tolerant port lookup', () => {
+	it('connects an imported node through its resolved definition', () => {
+		const imported: Node[] = [
+			{ id: 'manual-1', name: 'Manual Trigger', type: manual.type, typeVersion: 1, position: { x: 0, y: 0 } },
+			{ id: 'set-1', name: 'Edit Fields', type: set.type, typeVersion: 3.4, position: { x: 240, y: 0 } }
+		];
+
+		expect(
+			canConnect(
+				{ source: 'manual-1', sourceHandle: 'main', target: 'set-1', targetHandle: 'main' },
+				imported,
+				[manual, set],
+				[]
+			)
+		).toBe(true);
 	});
 });

@@ -74,13 +74,37 @@ export function positionAfter(source: { x: number; y: number }, occupied: { x: n
 	return candidate;
 }
 
+export function resolveDefinition(
+	nodeType: string,
+	typeVersion: number | undefined | null,
+	definitions: Definition[]
+): Definition | null {
+	let best: Definition | null = null;
+	for (const candidate of definitions) {
+		if (candidate.type !== nodeType) continue;
+		if (typeVersion === undefined || typeVersion === null) {
+			if (best === null || candidate.version > best.version) best = candidate;
+			continue;
+		}
+		if (candidate.version > typeVersion) continue;
+		if (best === null || best.version > typeVersion || candidate.version > best.version) best = candidate;
+	}
+	if (best !== null) return best;
+	// Nothing registered at or below the stored version: fall back to the
+	// latest registered, so an imported node always opens its inspector.
+	for (const candidate of definitions) {
+		if (candidate.type !== nodeType) continue;
+		if (best === null || candidate.version > best.version) best = candidate;
+	}
+	return best;
+}
+
 export function documentFromCanvas(document: Document, definitions: Definition[], validationIssues: CanvasValidationIssue[] = []): CanvasDocument {
-	const definitionByVersion = new Map(definitions.map((definition) => [definitionKey(definition.type, definition.version), definition]));
 	const nodeIssues = new Map(validationIssues.filter((issue) => issue.nodeID).map((issue) => [issue.nodeID!, issue.message]));
 	const edgeIssues = new Map(validationIssues.filter((issue) => issue.connectionID).map((issue) => [issue.connectionID!, issue.message]));
 	const nodes = (document.nodes ?? []).map<EditorFlowNode>((workflowNode) => {
-		const definition = definitionByVersion.get(definitionKey(workflowNode.type, workflowNode.typeVersion))
-			?? unavailableDefinition(workflowNode, document.connections ?? []);
+		const definition =
+			resolveDefinition(workflowNode.type, workflowNode.typeVersion, definitions) ?? unavailableDefinition(workflowNode, document.connections ?? []);
 		return {
 			id: workflowNode.id,
 			type: 'workflow',
@@ -204,10 +228,6 @@ function valuesFromDefinitions(definitions: NonNullable<Definition['parameters']
 		if (Object.hasOwn(definition, 'default')) values[definition.key] = clone(definition.default);
 	}
 	return values;
-}
-
-function definitionKey(type: string, version: number): string {
-	return `${type}@${version}`;
 }
 
 function unavailableDefinition(node: WorkflowNode, connections: Connection[]): Definition {

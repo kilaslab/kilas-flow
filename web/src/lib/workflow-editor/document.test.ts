@@ -7,6 +7,7 @@ import {
 	nextNodePosition,
 	positionAfter,
 	documentFromCanvas,
+	resolveDefinition,
 	toWorkflowInput,
 	updateNodeProperty,
 	workflowDocumentEquals
@@ -191,5 +192,42 @@ describe('workflow editor document helpers', () => {
 		expect(original.nodes?.[1].parameters).toEqual({ assignments: { status: 'ready' } });
 		expect(workflowDocumentEquals(original, next)).toBe(false);
 		expect(workflowDocumentEquals(original, savedDocument())).toBe(true);
+	});
+
+	it('rounds an imported typeVersion down to the highest registered version at or below it', () => {
+		const catalog: Definition[] = [
+			{ ...set, version: 1 },
+			{ ...set, version: 2 },
+			{ ...manual, type: 'kilasflow.httpRequest', version: 1, displayName: 'HTTP' }
+		];
+
+		expect(resolveDefinition('kilasflow.set', 3.4, catalog)?.version).toBe(2);
+		expect(resolveDefinition('kilasflow.httpRequest', 4.2, catalog)?.version).toBe(1);
+		expect(resolveDefinition('kilasflow.set', 1, catalog)?.version).toBe(1);
+	});
+
+	it('falls back to the latest registered version when nothing is at or below the stored one', () => {
+		const catalog: Definition[] = [{ ...set, version: 2 }, { ...set, version: 3 }];
+
+		expect(resolveDefinition('kilasflow.set', 1, catalog)?.version).toBe(3);
+		expect(resolveDefinition('kilasflow.unknown', 1, catalog)).toBeNull();
+	});
+
+	it('projects an imported node through its resolved definition with real ports', () => {
+		const original = savedDocument();
+		original.nodes?.push({
+			id: 'imported-set',
+			name: 'Edit Fields',
+			type: 'kilasflow.set',
+			typeVersion: 3.4,
+			position: { x: 552, y: 48 },
+			parameters: { assignments: { status: 'ready' } }
+		});
+
+		const canvas = documentFromCanvas(original, [manual, { ...set, version: 1 }]);
+		const projected = canvas.nodes.find((node) => node.id === 'imported-set');
+
+		expect(projected?.data.definition.version).toBe(1);
+		expect(projected?.data.definition.category).not.toBe('Unavailable');
 	});
 });

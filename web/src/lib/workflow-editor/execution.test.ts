@@ -126,6 +126,22 @@ describe('edgeItemCounts', () => {
 		expect(counts.get('c-true')).toBe(0);
 		expect(counts.get('c-false')).toBe(1);
 	});
+
+	it('counts through a resolved definition when the stored version is newer', () => {
+		const imported: Node[] = [
+			{ id: 'if', name: 'IF', type: 'kilasflow.if', typeVersion: 2.2, position: { x: 0, y: 0 } },
+			{ id: 'yes', name: 'Yes', type: 'kilasflow.set', typeVersion: 3.4, position: { x: 0, y: 0 } },
+			{ id: 'no', name: 'No', type: 'kilasflow.set', typeVersion: 3.4, position: { x: 0, y: 0 } }
+		];
+		const runs = latestNodeRuns([
+			nodeRun({ nodeId: 'if', output: [[{ json: { a: 1 } }], [{ json: { a: 2 } }, { json: { a: 3 } }]] })
+		]);
+
+		const counts = edgeItemCounts(connections, imported, definitions, runs);
+
+		expect(counts.get('c-true')).toBe(1);
+		expect(counts.get('c-false')).toBe(2);
+	});
 });
 
 describe('formatDuration', () => {

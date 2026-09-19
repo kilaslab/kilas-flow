@@ -46,12 +46,12 @@
 		documentFromFlow,
 		nextNodePosition,
 		positionAfter,
+		resolveDefinition,
 		toWorkflowInput,
 		updateNodeCredential,
 		updateNodeProperty,
 		workflowDocumentEquals,
 		type EditorFlowEdge,
-		type EditorFlowNode,
 		type PropertyScope
 	} from '$lib/workflow-editor/document';
 	import { tidyDocument } from '$lib/workflow-editor/layout';
@@ -193,8 +193,9 @@
 	const activationBlockedByDirty = $derived(!active && dirty);
 	const selectedNode = $derived((displayed.nodes ?? []).find((node) => node.id === selectedNodeID) ?? null);
 	const selectedDefinition = $derived(
-		selectedNode ? definitions.find((definition) => definition.type === selectedNode.type && definition.version === selectedNode.typeVersion) ?? null : null
+		selectedNode ? (resolveDefinition(selectedNode.type, selectedNode.typeVersion, definitions) ?? null) : null
 	);
+	const selectedResolvedVersion = $derived(selectedDefinition ? selectedDefinition.version : null);
 	// The inspector only exists while a node is selected. A permanent empty panel
 	// would cost the canvas 20rem to say nothing, and the canvas is what the user
 	// came here for.
@@ -595,7 +596,14 @@
 
 		{#if showInspector && selectedNode && selectedDefinition}
 			<aside bind:this={inspectorRegion} tabindex="-1" class="hidden min-h-0 border-l border-border outline-none lg:block">
-				<PropertiesPanel node={selectedNode} definition={selectedDefinition} {credentials} readOnly={locked} onChange={updateProperty} onCredentialChange={updateCredential} />
+				<div class="flex h-full min-h-0 flex-col">
+					<div class="min-h-0 flex-1">
+						<PropertiesPanel node={selectedNode} definition={selectedDefinition} {credentials} readOnly={locked} onChange={updateProperty} onCredentialChange={updateCredential} />
+					</div>
+					{#if selectedResolvedVersion !== null && selectedResolvedVersion !== selectedNode.typeVersion}
+						<p class="shrink-0 border-t border-border px-3 py-1.5 text-[0.6875rem] leading-4 text-muted-foreground">Stored v{selectedNode.typeVersion} · resolved to v{selectedResolvedVersion}</p>
+					{/if}
+				</div>
 			</aside>
 		{/if}
 		{#if selectedUncatalogued && selectedNode}
@@ -626,6 +634,9 @@
 			<div bind:this={propertyDialog} class="absolute inset-x-2 bottom-2 z-30 max-h-[min(28rem,calc(100%-1rem))] overflow-hidden rounded-xl border border-border bg-card shadow-xl" role="dialog" aria-modal="true" aria-label={`${selectedNode.name} properties`} tabindex="-1" onkeydown={handlePropertyDialogKeydown}>
 				<div class="flex justify-end border-b border-border px-1.5 py-1"><button bind:this={propertyCloseButton} type="button" class="grid size-6 place-items-center rounded-md text-muted-foreground hover:bg-muted" aria-label="Close node properties" onclick={closePropertyPanel}><X aria-hidden="true" class="size-3.5" /></button></div>
 				<PropertiesPanel node={selectedNode} definition={selectedDefinition} {credentials} readOnly={locked} onChange={updateProperty} onCredentialChange={updateCredential} />
+				{#if selectedResolvedVersion !== null && selectedResolvedVersion !== selectedNode.typeVersion}
+					<p class="border-t border-border px-3 py-1.5 text-[0.6875rem] leading-4 text-muted-foreground">Stored v{selectedNode.typeVersion} · resolved to v{selectedResolvedVersion}</p>
+				{/if}
 			</div>
 		{/if}
 		{#if narrow.current && propertyPanelOpen && selectedUncatalogued && selectedNode}

@@ -1,4 +1,5 @@
 import type { Connection, Definition, Node, Port } from '$lib/api/generated/models';
+import { resolveDefinition } from './document';
 
 type CanvasConnection = {
 	source?: string | null;
@@ -83,7 +84,7 @@ function lookupPort(
 ): Port | undefined {
 	const node = nodes.find((candidate) => candidate.id === nodeID);
 	if (!node) return undefined;
-	const definition = definitions.find((candidate) => candidate.type === node.type && candidate.version === node.typeVersion);
+	const definition = resolveDefinition(node.type, node.typeVersion, definitions);
 	return definition?.[direction]?.find((port) => port.name === portName);
 }
 

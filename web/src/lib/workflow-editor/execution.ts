@@ -1,4 +1,5 @@
 import type { Connection, Definition, ExecutionNodeRunResource, Node } from '$lib/api/generated/models';
+import { resolveDefinition } from './document';
 
 /**
  * `skipped` names a node that did not run, as against one that ran and failed —
@@ -129,7 +130,7 @@ export function edgeItemCounts(
 	for (const connection of connections ?? []) {
 		const source = nodeByID.get(connection.source.nodeId);
 		if (!source) continue;
-		const definition = definitions.find((candidate) => candidate.type === source.type && candidate.version === source.typeVersion);
+	const definition = resolveDefinition(source.type, source.typeVersion, definitions);
 		const portIndex = (definition?.outputs ?? []).findIndex((port) => port.name === connection.source.port);
 		if (portIndex < 0) continue;
 
