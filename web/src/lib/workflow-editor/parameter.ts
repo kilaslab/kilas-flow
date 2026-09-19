@@ -37,3 +37,19 @@ export function asExpression(value: unknown): ExpressionValue {
 export function asFixed(value: unknown): string {
 	return isExpression(value) ? value.value : typeof value === 'string' ? value : value === undefined || value === null ? '' : String(value);
 }
+
+/**
+ * Whether a fixed value needs a multi-line control.
+ *
+ * Browsers strip line breaks from an `<input>`'s value, so a value that
+ * arrived multi-line must never be bound to one: the first keystroke would
+ * write the flattened text back and silently destroy expressions, JSON
+ * bodies and sticky-note markdown. `rows` is the definition's own request;
+ * a value carrying `\n` upgrades itself even when the definition asks for
+ * none, which is also what keeps old nodes and Go-side defaults safe
+ * without touching node definitions owned by other slices.
+ */
+export function needsMultiline(value: unknown, rows?: number): boolean {
+	if ((rows ?? 0) > 1) return true;
+	return typeof value === 'string' && value.includes('\n');
+}

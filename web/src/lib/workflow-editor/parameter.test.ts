@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { asExpression, asFixed, expressionTemplate, isExpression, parameterMode } from './parameter';
+import { asExpression, asFixed, expressionTemplate, isExpression, needsMultiline, parameterMode } from './parameter';
+
 
 describe('parameter mode', () => {
 	it('recognizes only a well-formed expression marker', () => {
@@ -36,5 +37,23 @@ describe('switching modes', () => {
 	it('reads the template out of a marker', () => {
 		expect(expressionTemplate({ mode: 'expression', value: '{{ $json.a }}' })).toBe('{{ $json.a }}');
 		expect(expressionTemplate('plain')).toBe('');
+	});
+});
+
+describe('needsMultiline', () => {
+	it('upgrades a plain fixed string carrying a newline, whatever the definition asks', () => {
+		expect(needsMultiline('## Title\n\nLine two')).toBe(true);
+		expect(needsMultiline('single line')).toBe(false);
+	});
+
+	it('honours the definition rows request even for a single-line value', () => {
+		expect(needsMultiline('single line', 3)).toBe(true);
+		expect(needsMultiline('single line', 1)).toBe(false);
+		expect(needsMultiline('single line')).toBe(false);
+	});
+
+	it('never upgrades non-strings: structured values render through their own controls', () => {
+		expect(needsMultiline({ mode: 'expression', value: 'a\nb' })).toBe(false);
+		expect(needsMultiline(undefined)).toBe(false);
 	});
 });

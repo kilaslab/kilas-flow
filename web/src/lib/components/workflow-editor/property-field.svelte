@@ -56,7 +56,7 @@
 		strandedOptions,
 		unreadable
 	} from '$lib/workflow-editor/collection';
-	import { asExpression, asFixed, expressionTemplate, isExpression } from '$lib/workflow-editor/parameter';
+import { asExpression, asFixed, expressionTemplate, isExpression, needsMultiline } from '$lib/workflow-editor/parameter';
 
 	let {
 		property,
@@ -413,8 +413,25 @@
 			<input id={`property-${property.key}`} type="checkbox" class="size-3.5" checked={Boolean(value)} onchange={(event) => onChange(event.currentTarget.checked)} />
 			<span>{Boolean(value) ? 'Enabled' : 'Disabled'}</span>
 		</label>
-	{:else if property.kind === 'number'}
-		<input id={`property-${property.key}`} type="number" value={stringValue} class="h-7 rounded-md border border-input bg-background px-2 text-xs" oninput={(event) => onChange(event.currentTarget.value === '' ? undefined : Number(event.currentTarget.value))} />
+{:else if property.kind === 'number'}
+	<!-- Raw text while typing, coerced on blur: Number() on every keystroke
+	     turns a leading '-' into NaN (cloned to null), clearing the field
+	     before a negative value can be finished. -->
+	<input id={`property-${property.key}`} type="text" inputmode="decimal" value={stringValue} class="h-7 rounded-md border border-input bg-background px-2 text-xs" oninput={(event) => {
+		const text = event.currentTarget.value;
+		if (text === '' || text === '-' || text === '.' || text === '-.') onChange(text);
+		else {
+			const numeric = Number(text);
+			onChange(Number.isNaN(numeric) ? text : numeric);
+		}
+	}} onblur={(event) => {
+		const text = event.currentTarget.value.trim();
+		if (text === '') onChange(undefined);
+		else {
+			const numeric = Number(text);
+			if (!Number.isNaN(numeric) && typeof value !== 'string') onChange(numeric);
+		}
+	}} />
 	{:else if property.kind === 'notice'}
 		<!-- A notice holds no value: it is never stored, never required, and
 		     never sends an onChange. One that round-tripped into the document
@@ -566,7 +583,11 @@
 						</button>
 					</div>
 					<div class="grid grid-cols-[minmax(0,1fr)_auto] gap-1">
-						<input aria-label={`${property.label} field value`} value={keyValueText(item)} class="h-7 min-w-0 rounded border border-input bg-background px-1.5 font-mono text-[0.6875rem]" oninput={(event) => keyValueInput(key, item, event.currentTarget.value)} />
+						{#if !isExpression(item) && typeof item === 'string' && item.includes('\n')}
+							<textarea aria-label={`${property.label} field value`} value={keyValueText(item)} rows={Math.min(8, Math.max(2, String(item).split('\n').length))} class="min-w-0 rounded border border-input bg-background px-1.5 py-1 font-mono text-[0.6875rem]" oninput={(event) => keyValueInput(key, item, event.currentTarget.value)}></textarea>
+						{:else}
+							<input aria-label={`${property.label} field value`} value={keyValueText(item)} class="h-7 min-w-0 rounded border border-input bg-background px-1.5 font-mono text-[0.6875rem]" oninput={(event) => keyValueInput(key, item, event.currentTarget.value)} />
+						{/if}
 						<button type="button" aria-label={`Remove ${key || 'assignment'}`} class="grid size-7 place-items-center rounded text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive" onclick={() => removeKeyValue(key)}>
 							<X aria-hidden="true" class="size-3.5" />
 						</button>
@@ -599,6 +620,10 @@
 								<option value="true">true</option>
 								<option value="false">false</option>
 							</select>
+						{:else if typeof row.value === 'string' && (row.value as string).includes('\n')}
+							<!-- Same rule as top-level strings: a multi-line row value
+							     gets a textarea, never an input that would flatten it. -->
+							<textarea aria-label={`${property.label} field value`} value={assignmentText(row)} rows={Math.min(8, Math.max(2, (row.value as string).split('\n').length))} class="min-w-0 rounded border border-input bg-background px-1.5 py-1 font-mono text-[0.6875rem]" oninput={(event) => assignmentInput(index, row, event.currentTarget.value)}></textarea>
 						{:else}
 							<input aria-label={`${property.label} field value`} value={assignmentText(row)} class="h-7 min-w-0 rounded border border-input bg-background px-1.5 font-mono text-[0.6875rem]" oninput={(event) => assignmentInput(index, row, event.currentTarget.value)} />
 						{/if}
@@ -787,11 +812,11 @@
 				<Plus aria-hidden="true" class="size-3" />Add condition
 			</button>
 		</div>
-	{:else if RENDERED.has(property.kind) && ((typeOptions.rows ?? 0) > 1 || (typeof value === 'string' && value.includes('\n')))}
-		<!-- Multi-line is a different element, not an attribute: rows has no
-		     meaning on an input, and an input strips the newlines of a value
-		     that arrived multi-line. -->
-		<textarea id={`property-${property.key}`} value={stringValue} rows={Math.max(typeOptions.rows ?? 3, stringValue.split('\n').length)} class="rounded-md border border-input bg-background px-2 py-1.5 text-xs" oninput={(event) => onChange(event.currentTarget.value)}></textarea>
+{:else if RENDERED.has(property.kind) && needsMultiline(value, typeOptions.rows)}
+	<!-- Multi-line is a different element, not an attribute: rows has no
+	     meaning on an input, and an input strips the newlines of a value
+	     that arrived multi-line. -->
+	<textarea id={`property-${property.key}`} value={stringValue} rows={Math.max(typeOptions.rows ?? 3, stringValue.split('\n').length)} class="rounded-md border border-input bg-background px-2 py-1.5 text-xs" oninput={(event) => onChange(event.currentTarget.value)}></textarea>
 	{:else if RENDERED.has(property.kind)}
 		<input id={`property-${property.key}`} value={stringValue} type={typeOptions.password ? 'password' : 'text'} class="h-7 rounded-md border border-input bg-background px-2 text-xs" oninput={(event) => onChange(event.currentTarget.value)} />
 	{:else}
