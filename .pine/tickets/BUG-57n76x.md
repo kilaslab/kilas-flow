@@ -1,7 +1,7 @@
 ---
 id: BUG-57n76x
 title: Editor shows every imported node as Unknown node type (exact type@version lookup)
-status: doing
+status: testing
 priority: critical
 labels:
     - editor
@@ -11,7 +11,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:09Z"
-updated: "2026-09-19T12:41:01Z"
+updated: "2026-09-19T13:19:59Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -119,5 +119,9 @@ Scope: client-side round-down only. No importer/registry changes.
 1. `document.ts`: add exported `resolveDefinition(type, ver, defs)` = highest registered `<=` requested, else latest, else null; use in `documentFromCanvas`; drop exact `definitionKey` map.
 2. `ports.ts:86`, `execution.ts:132`, `workflow-editor.svelte:195`: same `resolveDefinition` (import from `document.ts`).
 3. Footer stored→resolved in `workflow-editor.svelte` inspector (own file; `properties-panel.svelte` untouched — Web-Forms-Ops).
-4. Regression tests: `document.test.ts` (round-down set@3.4/http@4.2/webhook@2, multi-version pick, fallback-latest, unknown→null, projection uses resolved def), `ports.test.ts` + `execution.test.ts` (mismatched version still connects/counts).
 5. Scoped `vitest run` on those files, commit, mark testing.
+
+## Fix & test evidence (WebEditorCore, 2026-09-19)
+Commit `8766843` — `resolveDefinition(type, ver, defs)` = highest registered `<=` requested, else latest, else null; used in `documentFromCanvas` (`document.ts`), `lookupPort` (`ports.ts:86`), `edgeItemCounts` (`execution.ts:132`), `selectedDefinition` (`workflow-editor.svelte:195`); stored→resolved footer in inspector (`Stored vX · resolved to vY`, wide + narrow).
+Tests: `npx vitest run document.test.ts ports.test.ts execution.test.ts` → 3 files, 36 tests passed (new: round-down set@3.4/http@4.2/webhook path, latest-fallback, projection/ports/counts version-tolerant).
+Residual: properties-panel footer untouched (Web-Forms-Ops file); execution-canvas needs no change (shares `documentFromCanvas`).
