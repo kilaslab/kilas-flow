@@ -1,7 +1,7 @@
 ---
 id: BUG-6bqh51
 title: 'Ops executions UI: SSE failed state, approval 500s, live progress, stop/retry, lists, inspector'
-status: doing
+status: testing
 priority: high
 labels:
     - ui
@@ -10,7 +10,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:10Z"
-updated: "2026-09-19T13:44:26Z"
+updated: "2026-09-19T14:10:46Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -182,3 +182,8 @@ Files: /Users/izzadev/projects/k-flow/web/src/lib/workflow-editor/event-stream.s
 - [ ] Execute polls for a fixed 20 s, then reports 'Run failed: ...did not finish in time' and re-enables Execute wh
 - [ ] The live execution feed silently drops ai.* events: the server sends them without an SSE event name and the cl
 - [ ] Adversarial re-verify against live stub/n8n like the Verify phase (no code-only close)
+## Progress (WebFormsOps2 2026-09-19, ops slice)
+
+- Commit e57eb04 (executions/[id]/+page.svelte, rebase-safe per WebEditorCore — their guard not landed): Stop button (cancelExecution, 202/200, stopping state + error) in header + waiting boxes; workflow name + "Open workflow" link in header; execution/node errors as wrapped title+detail+collapsible JSON+copy (no sideways blob); inspector large-payload guard (200k chars, char count, "Show anyway" opt-in); waiting box split — approvalUrl → approval UI, otherwise "resumes on its own, no decision" + Stop; Live dot only while !finished.
+- Not touched (owners'): typedEvent ExecutionFailed case + SSE map (SecurityDx, with regression test), framing/CSP (SecurityDx), 401 interceptor (SecurityDx — I build only /login route + Settings), event-stream/workflow-editor.svelte/[id] refetch guard (WebEditorCore), engine live-progress/timestamps/retry/delete endpoints (engine owners).
+- Remaining mine: executions list auto-refresh + URL filters + Stop-per-row + deleted-marker (next), then FEAT-56nep4 NDV panes/credentials/webhook, FEAT-x5km1z /login + Settings API keys, FEAT-0895qc workflows CRUD/search/import dialog. Scoped proof: svelte-check clean on edited pages.

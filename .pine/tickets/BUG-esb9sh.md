@@ -1,7 +1,7 @@
 ---
 id: BUG-esb9sh
 title: 'Ops credentials/datastore/schedules UI: forms, validation, test, grid editing, framing, markers'
-status: doing
+status: testing
 priority: medium
 labels:
     - ui
@@ -9,7 +9,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:10Z"
-updated: "2026-09-19T12:40:44Z"
+updated: "2026-09-19T14:05:05Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -131,3 +131,8 @@ Files: /Users/izzadev/projects/k-flow/web/src/routes/(dashboard)/datastores/[id]
 - [ ] Executions of deleted workflows are listed by raw workflow id with no "deleted" marker
 - [ ] Datastore grid: rows cannot be edited, and there is no filter, sort or search
 - [ ] Adversarial re-verify against live stub/n8n like the Verify phase (no code-only close)
+## Progress (WebFormsOps2 2026-09-19)
+
+- Commit df6c87c: datastore grid — server-side text search (ilike %pattern% OR across text columns via list params), client-side column sort (sortable header buttons with aria-labels), inline type-aware cell editing via updateDatastoreRows (Enter/blur commit, Escape cancel, system columns read-only), per-page row count + cell error surface. svelte-check clean; columns.test.ts 13 pass.
+- Commit 34ee7d4: schedules — trigger-owned rows (nodeId) read-only with "open in editor" link, inactive-workflow warning ("won't fire until activated"), create-refused for inactive workflows, delete confirm; credentials/datastores/schedules headers flex-col on phones (fixes 390px overflow). Credential rows already min-h-11 + truncate + title (prior agent).
+- Remaining: framing headers (SecurityDx owns), credential usage count (needs API), deleted-workflow marker on executions list, schedules "why paused" record. Credential form defaults+test done by prior agent (f4322ac).
