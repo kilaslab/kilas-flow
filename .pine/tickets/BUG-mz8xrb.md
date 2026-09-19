@@ -1,0 +1,40 @@
+---
+id: BUG-mz8xrb
+title: HTTP Request Tool reuses first call's $fromAI args for every later call
+status: todo
+priority: critical
+labels:
+    - ai
+    - tools
+    - full-review
+    - wf-c415e773
+parent: EPIC-cfe7ny
+created: "2026-09-19T12:06:09Z"
+updated: "2026-09-19T12:06:09Z"
+---
+
+Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
+
+Consolidates 1 finding(s) from dims: find:ai-ollama.
+
+---
+### HTTP Request Tool reuses the first call's $fromAI arguments for every later call, so answers use the wrong data [find:ai-ollama] (critical/bug) · area: AI tools / HTTP Request Tool · confidence: high
+
+httpRequestTool.Invoke writes the substituted parameters back into the tool's own template (tool.node.Parameters = parameters). After the first call the $fromAI placeholders are gone, so every later call in the run, and every later item, repeats the first call's request. The agent then answers with the wrong data and the execution still shows success.
+
+Evidence: wf "[ai-ollama] t5 http tool fromAI" on :8090 (agent + kilasflow.httpTool url `http://127.0.0.1:8095/weather?city={{ $fromAI('city','the city name','string') }}`). Prompt "What's the weather in Paris and in Tokyo right now?" -> exec_01a0b8e4-0f11-7870-a11c-8ed0abbb5b95. intermediateSteps: call 1 args {"city":"Paris"}, call 2 args {"city":"Tokyo"}. The stub log shows both HTTP requests hit /weather?city=Paris. Tool result 2 is Paris's body, and the agent says Tokyo is 18°C (Paris's data). Status: succeeded. Code: nodes/ai.go ~1664-1668 `parameters, err := ai.SubstituteFromAI(tool.node.Parameters, argsMap); tool.node.Parameters = parameters`. After this, Definition() on the next item falls back to the generic `input` schema. The workflow, calculator and MCP tools use a local variable and are not affected.
+
+n8n behavior: Each tool call evaluates $fromAI again from that call's own arguments.
+
+Impact: Any agent that calls an HTTP tool more than once per run (lookups for several cities or ids, retries, multi-item input) quietly gets the first response again. The HTTP tool is the general-purpose tool for anything without a dedicated node, and toolHttpRequest is used in 6 top-100 templates.
+
+Suggested fix: Substitute into a copy inside Invoke (node := tool.node; node.Parameters = substituted) and never change the tool's template. Add a regression test with two calls that carry different arguments.
+
+Files: nodes/ai.go
+
+Existing tickets: FEAT-je4f4t (done; introduced $fromAI for the HTTP tool; this is a defect in that feature)
+
+## Acceptance criteria
+
+- [ ] HTTP Request Tool reuses the first call's $fromAI arguments for every later call, so answers use the wrong dat
+- [ ] Adversarial re-verify against live stub/n8n like the Verify phase (no code-only close)
