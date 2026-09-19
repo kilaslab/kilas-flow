@@ -1,7 +1,7 @@
 ---
 id: BUG-ze1nn8
 title: Single-line inputs strip newlines; editing silently flattens expressions/JSON/notes
-status: doing
+status: testing
 priority: critical
 labels:
     - editor
@@ -10,7 +10,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:09Z"
-updated: "2026-09-19T12:40:44Z"
+updated: "2026-09-19T13:55:03Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -106,3 +106,9 @@ Files: /Users/izzadev/projects/k-flow/web/src/lib/components/workflow-editor/pro
 - [ ] Sticky notes: editing Content strips every line break, and notes render as 68px icon tiles instead of notes
 - [ ] Set node rows cannot hold expressions: imported expression values show as raw JSON and are corrupted on edit, 
 - [ ] Adversarial re-verify against live stub/n8n like the Verify phase (no code-only close)
+## Progress (WebFormsOps2 2026-09-19)
+
+- Commit 87499d8: `needsMultiline(value, rows)` helper in parameter.ts — multiline is a different element, not an attribute; any fixed string carrying `\n` upgrades to textarea even when the definition has no rows (web-layer fallback, no nodes/*.go edits needed). property-field top-level branch now calls the helper; negative-number typing keeps raw text and coerces on blur; keyValue + assignment rows with multiline strings render textareas.
+- Scoped tests: vitest parameter.test.ts + assignments + key-value + conditions — 4 files, 32 tests pass.
+- Remaining: sticky canvas tile (canvas-node.svelte, not mine — hub WebEditorCore/Main), CodeMirror pending (deferred: textarea preserves newlines, the data-loss defect; full code editor is a larger FEAT), expression-mode textarea already landed by prior agent.
+- Risk: number-as-text intermediate (e.g. "-" typed) flows into draft as string until blur coerces; server validation treats like before.
