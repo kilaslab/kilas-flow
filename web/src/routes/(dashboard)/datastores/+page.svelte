@@ -96,7 +96,7 @@
 </svelte:head>
 
 <section class="mx-auto w-full max-w-4xl">
-	<div class="flex items-center justify-between gap-4">
+	<div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 		<div class="max-w-xl">
 			<h1 class="text-base font-semibold tracking-tight">Datastores</h1>
 			<p class="text-xs text-muted-foreground">
@@ -104,7 +104,7 @@
 				credentials that use them.
 			</p>
 		</div>
-		<Button onclick={openCreate} class="w-full sm:w-auto">
+		<Button onclick={openCreate} class="w-full sm:w-auto sm:shrink-0">
 			<Database aria-hidden="true" />
 			New datastore
 		</Button>

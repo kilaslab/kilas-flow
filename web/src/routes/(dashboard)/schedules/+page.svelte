@@ -47,6 +47,21 @@
 		editorOpen = true;
 	}
 
+	/** A row owned by a Schedule Trigger node is edited on the canvas, never
+	 * here: editing it here would put the list out of sync with the node. */
+	function triggerOwned(schedule: ScheduleResource): boolean {
+		return Boolean(schedule.nodeId);
+	}
+
+	/** Warns rather than refuses: the scheduler silently pauses schedules of
+	 * inactive workflows, so saving Active for one must say it will not run. */
+	function inactiveWarning(schedule: ScheduleResource): string | null {
+		if (!schedule.active) return null;
+		const workflow = (workflows.data ?? []).find((candidate) => candidate.id === schedule.workflowId);
+		if (workflow && !workflow.active) return 'This workflow is not activated, so this schedule will not fire until it is.';
+		return null;
+	}
+
 	function openEdit(schedule: ScheduleResource) {
 		editing = schedule;
 		workflowID = schedule.workflowId;
@@ -60,6 +75,13 @@
 		if (!workflowID) {
 			formError = 'Choose the workflow this schedule runs.';
 			return;
+		}
+		if (!editing) {
+			const workflow = (workflows.data ?? []).find((candidate) => candidate.id === workflowID);
+			if (workflow && !workflow.active) {
+				formError = 'That workflow is not activated — activate it first, or the schedule will pause without firing.';
+				return;
+			}
 		}
 		saving = true;
 		formError = null;
@@ -77,6 +99,8 @@
 	}
 
 	async function remove(schedule: ScheduleResource) {
+		if (triggerOwned(schedule)) return;
+		if (!confirm(`Delete the schedule ${schedule.cron} for ${workflowNames.get(schedule.workflowId) ?? schedule.workflowId}? It will stop firing.`)) return;
 		try {
 			await deleteSchedule(schedule.id);
 			await schedules.refetch();
@@ -91,14 +115,14 @@
 </svelte:head>
 
 <section class="mx-auto w-full max-w-4xl">
-	<div class="flex items-center justify-between gap-4">
+	<div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 		<div class="max-w-xl">
 			<h1 class="text-base font-semibold tracking-tight">Schedules</h1>
 			<p class="text-xs text-muted-foreground">
 				Run an active workflow on a cron expression. Times are evaluated in UTC.
 			</p>
 		</div>
-		<Button onclick={openCreate} disabled={workflows.isPending} class="w-full sm:w-auto">
+		<Button onclick={openCreate} disabled={workflows.isPending} class="w-full sm:w-auto sm:shrink-0">
 			<CalendarClock aria-hidden="true" />
 			New schedule
 		</Button>
@@ -119,28 +143,37 @@
 		>
 			<ul aria-label="Schedules" class="divide-y divide-border overflow-hidden rounded-lg border border-border">
 				{#each rows as schedule (schedule.id)}
-					<li class="flex h-11 items-center gap-3 px-3">
+					<li class="flex min-h-11 items-center gap-3 px-3 py-1.5">
 						<div class="min-w-0 flex-1">
-							<p class="truncate text-sm font-medium">{workflowNames.get(schedule.workflowId) ?? schedule.workflowId}</p>
-							<p class="mt-1 text-xs text-muted-foreground">
+							<p class="truncate text-sm font-medium" title={workflowNames.get(schedule.workflowId) ?? schedule.workflowId}>{workflowNames.get(schedule.workflowId) ?? schedule.workflowId}</p>
+							<p class="truncate text-xs text-muted-foreground" title={`${schedule.cron} · Next ${schedule.nextRunAt ?? '—'} · Last ${schedule.lastRunAt ?? '—'}`}>
 								<code class="font-mono">{schedule.cron}</code>
 								· Next {formatTimestamp(schedule.nextRunAt)}
 								· Last {formatTimestamp(schedule.lastRunAt)}
 							</p>
+							{#if triggerOwned(schedule)}
+								<p class="text-[0.625rem] text-muted-foreground">Managed by a Schedule Trigger node — <a class="underline underline-offset-2" href={`/app/workflows/${schedule.workflowId}`}>open in editor</a>.</p>
+							{:else if inactiveWarning(schedule)}
+								<p class="text-[0.625rem] text-warning" role="note">{inactiveWarning(schedule)}</p>
+							{/if}
 						</div>
-						<span class="rounded-full border px-2 py-0.5 text-xs font-medium {schedule.active ? 'border-success/30 bg-success/15 text-success' : 'border-border bg-muted text-muted-foreground'}">
+						<span class="shrink-0 rounded-full border px-2 py-0.5 text-xs font-medium {schedule.active ? 'border-success/30 bg-success/15 text-success' : 'border-border bg-muted text-muted-foreground'}">
 							{schedule.active ? 'Active' : 'Paused'}
 						</span>
-						<Button variant="outline" size="sm" onclick={() => openEdit(schedule)}>Edit</Button>
-						<Button variant="ghost" size="sm" aria-label={`Delete schedule ${schedule.cron}`} onclick={() => void remove(schedule)}>
-							<Trash2 aria-hidden="true" class="size-4 text-destructive" />
-						</Button>
+						{#if triggerOwned(schedule)}
+							<Button variant="outline" size="sm" disabled title="Managed by a Schedule Trigger node — edit it on the canvas">Edit</Button>
+							<Button variant="ghost" size="sm" disabled title="Managed by a Schedule Trigger node — delete it on the canvas" aria-label={`Delete schedule ${schedule.cron}`}><Trash2 aria-hidden="true" class="size-4 text-destructive" /></Button>
+						{:else}
+							<Button variant="outline" size="sm" onclick={() => openEdit(schedule)}>Edit</Button>
+							<Button variant="ghost" size="sm" aria-label={`Delete schedule ${schedule.cron}`} onclick={() => void remove(schedule)}>
+								<Trash2 aria-hidden="true" class="size-4 text-destructive" />
+							</Button>
+						{/if}
 					</li>
 				{/each}
 			</ul>
 		</ListStates>
 	</div>
-
 	<Dialog.Root bind:open={editorOpen}>
 		<Dialog.Content aria-describedby="schedule-form-description">
 			<Dialog.Header>
