@@ -512,6 +512,11 @@ func run() error {
 		}
 		cronService.Start(ctx)
 	}
+	// Retention runs beside the scheduler: both sweep on their own clocks, prune
+	// idempotently, and refuse to start when retention is off — so sweeping the
+	// same database from several processes is safe rather than coordinated.
+	startHistorySweeper(ctx, cfg.History, workflows, log)
+	startExecutionPruner(ctx, cfg.Execution, executions, runtime.DiscardBinaries, log)
 
 	// A worker-only process has no listener: it runs until SIGINT/SIGTERM
 	// rather than exiting while its workers still hold leases.
