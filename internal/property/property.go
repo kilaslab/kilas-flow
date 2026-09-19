@@ -419,6 +419,7 @@ type PropertyDefinition struct {
 	// LoadOptions fetches the selectable values at edit time, for a property
 	// whose valid values live on the customer's own service rather than being
 	// knowable when this binary was built.
+	LoadOptions *OptionsLoader `json:"loadOptions,omitempty"`
 	// VisibleWhen is the shorthand: entries on different keys must all match by
 	// equality, while several entries on one key mean "one of these values".
 	VisibleWhen []VisibilityCondition `json:"visibleWhen,omitempty"`
