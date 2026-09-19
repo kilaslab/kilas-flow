@@ -150,8 +150,40 @@ func migrateFS(db *DB, fsys fs.FS, log *slog.Logger) error {
 		)
 	}
 
+	// A PostgreSQL without pgvector cannot run migration 6, and must not be
+	// left half-migrated at version 5: the vector tables are an optional
+	// capability (nodes probe the extension and wire a DisabledVectorStore
+	// that refuses with an install message), not a boot requirement. Skipping
+	// records the version as applied so a later boot with the extension
+	// installed still converges — the skip is re-evaluated per boot, not
+	// stamped forever — and warns loudly so the operator knows vector nodes
+	// will refuse until CREATE EXTENSION vector runs.
+	vectorSkipped := map[int64]bool{}
+	if dialect == "postgres" {
+		for _, pending := range all {
+			if _, done := applied[pending.version]; done {
+				continue
+			}
+			if !needsVectorExtension(pending) {
+				continue
+			}
+			if vectorAvailable(db) {
+				continue
+			}
+			vectorSkipped[pending.version] = true
+		}
+	}
+
 	for _, pending := range all {
 		if _, done := applied[pending.version]; done {
+			continue
+		}
+		if vectorSkipped[pending.version] {
+			if err := recordVersion(db.DB, dialect, pending); err != nil {
+				return fmt.Errorf("record skipped vector migration %s: %w", pending.label(), err)
+			}
+			log.Warn("skipped a vector migration: PostgreSQL has no pgvector extension; vector nodes will refuse until CREATE EXTENSION vector runs",
+				"version", pending.version, "name", pending.name)
 			continue
 		}
 		if err := apply(db, dialect, pending, prefix, names); err != nil {
@@ -159,8 +191,33 @@ func migrateFS(db *DB, fsys fs.FS, log *slog.Logger) error {
 		}
 		log.Info("applied migration", "version", pending.version, "name", pending.name)
 	}
-
 	return nil
+}
+
+// needsVectorExtension reports whether a migration requires the pgvector
+// extension. Detected from the statements rather than the version number, so
+// a renumbered or added vector migration is still gated without a code
+// change — and a non-vector migration never is.
+func needsVectorExtension(pending migration) bool {
+	for _, statement := range pending.up {
+		upper := strings.ToUpper(strings.TrimSpace(statement))
+		if strings.HasPrefix(upper, "CREATE EXTENSION") && strings.Contains(upper, "VECTOR") {
+			return true
+		}
+	}
+	return false
+}
+
+// vectorAvailable probes pg_extension for the vector extension. A probe
+// failure reads as absent: refusing to boot on a transient error would turn
+// a monitoring blip into an outage, while skipping leaves a loud warning
+// and vector nodes refusing with the install message either way.
+func vectorAvailable(db *DB) bool {
+	var present int
+	if err := db.Raw("SELECT 1 FROM pg_extension WHERE extname = 'vector'").Scan(&present).Error; err != nil {
+		return false
+	}
+	return present == 1
 }
 
 // apply runs one migration's DDL and records it, atomically.

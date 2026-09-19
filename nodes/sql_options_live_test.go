@@ -2,12 +2,15 @@ package nodes_test
 
 import (
 	"context"
+	"net/url"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/kilaslabs/kilas-flow/internal/engine"
 	"github.com/kilaslabs/kilas-flow/internal/node"
+	"github.com/kilaslabs/kilas-flow/internal/safehttp"
 	"github.com/kilaslabs/kilas-flow/internal/sqlbuild"
 	"github.com/kilaslabs/kilas-flow/internal/sqlnode"
 	"github.com/kilaslabs/kilas-flow/internal/workflow"
@@ -490,12 +493,36 @@ func TestALiveServerAppliesTheRemainingRowOptions(t *testing.T) {
 	}
 }
 
+// liveGuard admits exactly the endpoint named by an integration DSN, the way
+// database_test.go and sqlbuild_test.go already do. A zero Guard carries the
+// default-deny policy, which refuses the loopback test database — so every
+// live test using one failed whenever the DSN env vars were set.
+func liveGuard(t *testing.T, env string) sqlnode.Guard {
+	t.Helper()
+	dsn := os.Getenv(env)
+	if dsn == "" {
+		return sqlnode.Guard{Policy: safehttp.Policy{AllowPrivateNetworks: true}}
+	}
+	parsed, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatalf("%s is not a URL: %v", env, err)
+	}
+	return sqlnode.Guard{Policy: safehttp.Policy{
+		AllowedPrivateEndpoints: []string{parsed.Hostname() + ":" + parsed.Port()},
+	}}
+}
+
 func newV2Executor(t *testing.T, credentialType string) *nodes.SQLOperationExecutor {
 	t.Helper()
+	env := "KILASFLOW_TEST_MYSQL_DSN"
 	if credentialType == "postgres" {
-		return nodes.NewPostgresV2Executor(sqlnode.Guard{}, sqlnode.DefaultCeiling())
+		env = "KILASFLOW_TEST_POSTGRES_DSN"
 	}
-	return nodes.NewMySQLV2Executor(sqlnode.Guard{}, sqlnode.DefaultCeiling())
+	guard := liveGuard(t, env)
+	if credentialType == "postgres" {
+		return nodes.NewPostgresV2Executor(guard, sqlnode.DefaultCeiling())
+	}
+	return nodes.NewMySQLV2Executor(guard, sqlnode.DefaultCeiling())
 }
 
 func bindOne(dialect sqlbuild.Dialect) string {
@@ -572,7 +599,7 @@ func TestAConnectionTimeoutBoundsReachingTheServer(t *testing.T) {
 			"user": "kilas", "password": "hunter2", "sslMode": "disable",
 		},
 	}}
-	executor := nodes.NewPostgresV2Executor(sqlnode.Guard{}, sqlnode.DefaultCeiling())
+	executor := nodes.NewPostgresV2Executor(sqlnode.Guard{Policy: safehttp.Policy{AllowPrivateNetworks: true}}, sqlnode.DefaultCeiling())
 	ir := v2Node(t, nodes.PostgresNodeType, "postgres", map[string]any{
 		"operation": "executeQuery", "query": "SELECT 1",
 		"options": map[string]any{"connectionTimeout": float64(1)},

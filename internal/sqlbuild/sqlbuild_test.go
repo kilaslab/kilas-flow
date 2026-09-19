@@ -642,11 +642,13 @@ func openLive(t *testing.T, env string, driver sqlnode.Driver) *sqlnode.Connecti
 		t.Fatalf("%s is not a URL: %v", env, err)
 	}
 	password, _ := parsed.User.Password()
+	endpoint := parsed.Hostname() + ":" + parsed.Port()
+	guard := sqlnode.Guard{Policy: safehttp.Policy{AllowedPrivateEndpoints: []string{endpoint}}}
 	connection, err := sqlnode.Open(context.Background(), driver, map[string]string{
 		"host": parsed.Hostname(), "port": parsed.Port(),
 		"database": strings.TrimPrefix(parsed.Path, "/"),
 		"user":     parsed.User.Username(), "password": password, "sslMode": "disable",
-	}, sqlnode.Guard{})
+	}, guard)
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}

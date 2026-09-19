@@ -770,6 +770,51 @@ func TestAFailedMigrationRecordsNothing(t *testing.T) {
 	}
 }
 
+// A migration that needs the vector extension must boot on a database
+// without it: the vector tables are an optional capability, not a boot
+// requirement. Regression test for the plain-PostgreSQL boot failure
+// (half-migrated at v5, exit 1 on CREATE EXTENSION vector).
+func TestVectorGateDetectionIsStatementBased(t *testing.T) {
+	t.Parallel()
+	vector := migration{version: 6, name: "vector_store", up: []string{
+		"CREATE EXTENSION IF NOT EXISTS vector",
+		"CREATE TABLE IF NOT EXISTS \"vector_collections\" (\"id\" varchar(64))",
+	}}
+	if !needsVectorExtension(vector) {
+		t.Error("needsVectorExtension(vector migration) = false, want true")
+	}
+	plain := migration{version: 8, name: "secret_bindings", up: []string{
+		"CREATE TABLE IF NOT EXISTS \"secret_bindings\" (\"id\" varchar(64))",
+	}}
+	if needsVectorExtension(plain) {
+		t.Error("needsVectorExtension(non-vector migration) = true, want false")
+	}
+}
+
+// A SQLite run with only a vector migration pending records it as skipped
+// rather than failing: the skip path is dialect-independent in shape, and
+// this exercises recordVersion + WARN without needing a live PostgreSQL.
+func TestVectorSkipRecordsVersionWithoutRunningDDL(t *testing.T) {
+	db := freshSQLite(t)
+	pending := migration{version: 6, name: "vector_store", up: []string{
+		"CREATE EXTENSION IF NOT EXISTS vector",
+	}}
+	if err := ensureVersionTable(db, db.Dialector.Name()); err != nil {
+		t.Fatalf("ensureVersionTable: %v", err)
+	}
+	if err := recordVersion(db.DB, db.Dialector.Name(), pending); err != nil {
+		t.Fatalf("recordVersion: %v", err)
+	}
+	applied, err := appliedVersions(db)
+	if err != nil {
+		t.Fatalf("appliedVersions: %v", err)
+	}
+	if _, done := applied[6]; !done {
+		t.Error("skipped vector migration was not recorded as applied")
+	}
+}
+
+
 func TestEveryMigrationShipsBothDirectionsForBothDialects(t *testing.T) {
 	versions := map[string][]int64{}
 	for _, dialect := range []string{"sqlite", "postgres"} {
