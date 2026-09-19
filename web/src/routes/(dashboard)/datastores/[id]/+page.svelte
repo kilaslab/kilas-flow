@@ -17,7 +17,8 @@
 	import {
 		deleteDatastoreRows,
 		insertDatastoreRow,
-		listDatastoreRows
+		listDatastoreRows,
+		updateDatastoreRows
 	} from '$lib/api/generated/datastore-rows/datastore-rows';
 	import type {
 		DatastoreColumnResource,
@@ -96,6 +97,13 @@
 	const userColumns = $derived<DatastoreColumnResource[]>(
 		(detail?.columns ?? []).filter((column) => !isSystemColumn(column.name))
 	);
+	let search = $state('');
+	let sortColumn = $state('');
+	let sortDirection = $state<'asc' | 'desc'>('asc');
+	let editingCell = $state<{ rowID: string; column: string } | null>(null);
+	let cellDraft = $state('');
+	let cellError = $state<string | null>(null);
+	let savingCell = $state(false);
 	const guard = new RequestGuard();
 
 	const pagingFailure = $derived(
@@ -143,7 +151,6 @@
 			detailLoading = false;
 		}
 	}
-
 	async function load(datastoreID: string) {
 		const token = guard.start();
 		loading = true;
@@ -151,7 +158,7 @@
 		checkState = {};
 		allChecked = false;
 		try {
-			const response = await listDatastoreRows(datastoreID, { limit: PAGE_SIZE });
+			const response = await listDatastoreRows(datastoreID, listParams());
 			if (response.status !== 200) throw new Error('Unexpected row-list response');
 			if (!guard.holds(token)) return;
 			rows = readPage(response.data);
@@ -164,6 +171,103 @@
 		}
 	}
 
+	/** Server-side text filter plus client-side column sort. The list API
+	 * carries one filter triple per user column, so a search fans out as an
+	 * OR across every text column; sorting stays client-side because the
+	 * list endpoint has no order parameter. */
+	function listParams(): { limit: number; match?: string; columnName?: string[]; condition?: string[]; value?: string[] } {
+		const trimmed = search.trim();
+		if (!trimmed) return { limit: PAGE_SIZE };
+		const textColumns = userColumns.filter((column) => column.type === 'text' || column.type === 'string');
+		const targets = textColumns.length > 0 ? textColumns : userColumns;
+		if (targets.length === 0) return { limit: PAGE_SIZE };
+		// The store speaks ilike, not contains: a wrapped %pattern% keeps the
+		// search a substring match on both drivers.
+		return {
+			limit: PAGE_SIZE,
+			match: 'any',
+			columnName: targets.map((column) => column.name),
+			condition: targets.map(() => 'ilike'),
+			value: targets.map(() => JSON.stringify(`%${trimmed}%`))
+		};
+	}
+
+	const visibleItems = $derived.by(() => {
+		const items = [...rows.items];
+		if (!sortColumn) return items;
+		const direction = sortDirection === 'asc' ? 1 : -1;
+		return items.sort((a, b) => {
+			const left = a[sortColumn];
+			const right = b[sortColumn];
+			if (left === null || left === undefined) return 1;
+			if (right === null || right === undefined) return -1;
+			if (typeof left === 'number' && typeof right === 'number') return (left - right) * direction;
+			return String(left).localeCompare(String(right)) * direction;
+		});
+	});
+
+	function toggleSort(column: string) {
+		if (sortColumn !== column) {
+			sortColumn = column;
+			sortDirection = 'asc';
+			return;
+		}
+		sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+	}
+
+	function startCellEdit(rowID: string, column: GridColumn, current: unknown) {
+		if (column.system || isSystemColumn(column.name)) return;
+		editingCell = { rowID, column: column.name };
+		cellDraft = current === null || current === undefined ? '' : String(current);
+		cellError = null;
+	}
+
+	function cancelCellEdit() {
+		editingCell = null;
+		cellDraft = '';
+		cellError = null;
+	}
+
+	async function commitCellEdit(column: GridColumn) {
+		const targetCell = editingCell;
+		if (!targetCell || savingCell) return;
+		const target = rows.items.find((row) => String(row.id) === targetCell.rowID);
+		if (!target) {
+			cancelCellEdit();
+			return;
+		}
+		const declaration = userColumns.find((candidate) => candidate.name === column.name);
+		let next: unknown = cellDraft;
+		if (declaration && declaration.type === 'boolean') {
+			next = cellDraft.trim().toLowerCase() === 'true';
+		} else if (declaration) {
+			if (cellDraft.trim() === '') next = null;
+			else {
+				const coerced = coerceValue(declaration.type, declaration.name, cellDraft);
+				if (!coerced.ok) {
+					cellError = coerced.error;
+					return;
+				}
+				next = coerced.value;
+			}
+		}
+		savingCell = true;
+		cellError = null;
+	try {
+		const response = await updateDatastoreRows(id, {
+			filter: { type: 'and', filters: [{ columnName: 'id', condition: 'eq', value: Number(targetCell.rowID) }] },
+			values: { [column.name]: next }
+		});
+			if (response.status !== 200) throw new Error('Unexpected row-update response');
+			cancelCellEdit();
+			await load(id);
+		} catch (error) {
+			cellError = message(error);
+		} finally {
+			savingCell = false;
+		}
+	}
+
 	async function loadMore() {
 		if (!canLoadMore(rows) || loadingMore) return;
 		// Joins the request already in flight rather than starting a new one:
@@ -173,7 +277,7 @@
 		loadingMore = true;
 		failure = null;
 		try {
-			const response = await listDatastoreRows(id, { limit: PAGE_SIZE, cursor: rows.nextCursor });
+			const response = await listDatastoreRows(id, { ...listParams(), cursor: rows.nextCursor });
 			if (response.status !== 200) throw new Error('Unexpected row-list response');
 			if (!guard.holds(token)) return;
 			rows = appendPage(rows, response.data);
@@ -413,7 +517,7 @@
 		</div>
 	{:else if detailFailure || !detail}
 		<div class="mt-3 max-w-lg rounded-lg border border-destructive/25 bg-destructive/5 p-3">
-			<h1 class="text-sm font-medium">Datastore could not be loaded</h1>
+			<p class="text-xs font-medium text-destructive">This datastore could not be loaded.</p>
 			<p class="mt-0.5 text-xs leading-5 text-muted-foreground">{message(detailFailure)}</p>
 			<Button class="mt-2.5" size="sm" variant="outline" onclick={() => void loadDetail(id)}>
 				Try again
@@ -471,6 +575,23 @@
 		{/if}
 
 		<div class="mt-3">
+			<div class="mb-3 flex flex-wrap items-center gap-2">
+				<label for="datastore-search" class="sr-only">Search rows</label>
+				<Input
+					id="datastore-search"
+					value={search}
+					placeholder="Search text columns…"
+					class="h-7 max-w-64 text-xs"
+					oninput={(event) => {
+						search = event.currentTarget.value;
+						void load(id);
+					}}
+				/>
+				<p class="text-xs text-muted-foreground" role="status">
+					{rows.items.length} row{rows.items.length === 1 ? '' : 's'} on this page
+				</p>
+				{#if cellError}<p role="alert" class="text-xs text-destructive">{cellError}</p>{/if}
+			</div>
 			<ListStates
 				label="Rows"
 				{loading}
@@ -498,6 +619,15 @@
 								{#each headers as column (column.name)}
 									<Table.Head scope="col">
 										<span class="inline-flex items-center gap-1.5 normal-case">
+											<button
+												type="button"
+												class="rounded font-medium hover:underline focus-visible:outline-2 focus-visible:outline-offset-1"
+												aria-label={`Sort by ${column.name} ${sortColumn === column.name && sortDirection === 'asc' ? 'descending' : 'ascending'}`}
+												title={`Sort by ${column.name}`}
+												onclick={() => toggleSort(column.name)}
+											>
+												{column.name}{sortColumn === column.name ? (sortDirection === 'asc' ? ' ▲' : ' ▼') : ''}
+											</button>
 											{#if renaming === column.name}
 												<Input
 													class="h-6 w-32 text-xs normal-case"
@@ -547,7 +677,7 @@
 							</Table.Row>
 						</Table.Header>
 						<Table.Body>
-							{#each rows.items as row (row.id)}
+							{#each visibleItems as row (row.id)}
 								{@const rowID = String(row.id)}
 								<Table.Row>
 									<Table.Cell class="px-3 py-2">
@@ -558,11 +688,31 @@
 										/>
 									</Table.Cell>
 									{#each headers as column (column.name)}
+										{@const editing = editingCell?.rowID === rowID && editingCell?.column === column.name}
 										<Table.Cell class="max-w-56 truncate px-3 py-2 tabular-nums">
-											{#if isNullCell(row, column)}
-												<span class="text-muted-foreground/60">Null</span>
+											{#if editing}
+												<Input
+													value={cellDraft}
+													aria-label={`Edit ${column.name} in row ${rowID}`}
+													class="h-6 text-xs"
+													disabled={savingCell}
+													oninput={(event) => (cellDraft = event.currentTarget.value)}
+													onkeydown={(event) => {
+														if (event.key === 'Enter') void commitCellEdit(column);
+														if (event.key === 'Escape') cancelCellEdit();
+													}}
+													onblur={() => {
+														if (editingCell?.rowID === rowID) void commitCellEdit(column);
+													}}
+												/>
+											{:else if isNullCell(row, column)}
+												<button type="button" title={column.system ? 'System column — read-only' : 'Empty — click to edit'} aria-label={column.system ? `${column.name} is empty` : `Edit ${column.name} in row ${rowID}`} class="text-muted-foreground/60 {column.system ? '' : 'hover:underline'}" onclick={() => startCellEdit(rowID, column, row[column.name])} disabled={column.system}>
+													<span>Null</span>
+												</button>
 											{:else}
-												{cellText(row, column)}
+												<button type="button" title={column.system ? cellText(row, column) : `${cellText(row, column)} — click to edit`} aria-label={column.system ? `${column.name} ${cellText(row, column)}` : `Edit ${column.name} in row ${rowID}`} class="max-w-full truncate {column.system ? 'cursor-default' : 'hover:underline'}" onclick={() => startCellEdit(rowID, column, row[column.name])} disabled={column.system}>
+													{cellText(row, column)}
+												</button>
 											{/if}
 										</Table.Cell>
 									{/each}
