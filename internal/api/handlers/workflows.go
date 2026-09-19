@@ -120,6 +120,7 @@ type workflowDocumentInput struct {
 	Nodes         []workflow.Node       `json:"nodes"`
 	Connections   []workflow.Connection `json:"connections"`
 	Settings      map[string]any        `json:"settings"`
+	BaseVersionID string `json:"baseVersionId,omitempty" doc:"Latest version ID the editor saved from; a save from a stale revision is refused with 409"`
 }
 
 func (input workflowDocumentInput) document(id string) workflow.Document {
@@ -215,6 +216,7 @@ func (input publishVersionInput) reason() string {
 
 type updateWorkflowInput struct {
 	ID   string `path:"id" minLength:"1" doc:"Workflow identifier"`
+	IfMatch string `header:"If-Match" doc:"Latest version ID the editor saved from; a save from a stale revision is refused with 409"`
 	Body workflowDocumentInput
 }
 
@@ -494,22 +496,47 @@ func (handler *Workflows) ListPublishEvents(ctx context.Context, input *workflow
 }
 
 // Update appends a new immutable draft revision for an existing workflow.
+//
+// A save names the revision it was taken from, in `If-Match` or
+// `baseVersionId`. A save from a stale revision is refused with 409 before
+// anything is written, so two tabs can never silently overwrite each other —
+// the loser reloads or retries against the newer revision.
 func (handler *Workflows) Update(ctx context.Context, input *updateWorkflowInput) (*workflowOutput, error) {
 	if err := handler.available(false); err != nil {
 		return nil, err
 	}
-	if _, err := handler.workflows.Get(ctx, handler.tenant(ctx), input.ID); err != nil {
+	stored, err := handler.workflows.Get(ctx, handler.tenant(ctx), input.ID)
+	if err != nil {
 		return nil, handler.problem(err)
+	}
+	if base := input.baseVersion(); base != "" && base != stored.LatestVersion.ID {
+		return nil, &huma.ErrorModel{
+			Status: http.StatusConflict,
+			Title:  "Conflict",
+			Detail: "This workflow changed since you loaded it (expected revision " + base + ", latest is " + stored.LatestVersion.ID + "). Reload and save again.",
+		}
 	}
 	document := input.Body.document(input.ID)
 	if err := workflow.ValidateDraft(document); err != nil {
 		return nil, draftProblem(err)
 	}
-	stored, err := handler.workflows.SaveDraft(ctx, handler.tenant(ctx), document)
+	saved, err := handler.workflows.SaveDraft(ctx, handler.tenant(ctx), document)
 	if err != nil {
 		return nil, handler.problem(err)
 	}
-	return &workflowOutput{Body: workflowResource(stored)}, nil
+	return &workflowOutput{Body: workflowResource(saved)}, nil
+}
+
+// baseVersion prefers the header form; the body field covers generated clients
+// that cannot set headers per call.
+func (input *updateWorkflowInput) baseVersion() string {
+	if input == nil {
+		return ""
+	}
+	if input.IfMatch != "" {
+		return input.IfMatch
+	}
+	return input.Body.BaseVersionID
 }
 
 // Delete removes a workflow from future tenant-scoped reads.
