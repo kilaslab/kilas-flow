@@ -17,7 +17,7 @@
 		type Assignment,
 		type AssignmentType
 	} from '$lib/workflow-editor/assignments';
-	import { expressionRoots, unknownExpressionRoot } from '$lib/workflow-editor/expression-grammar';
+import { validateExpressionShape } from '$lib/workflow-editor/expression-grammar';
 	import {
 		VALUELESS_OPERATORS,
 		moveCondition,
@@ -350,24 +350,11 @@ import { asExpression, asFixed, expressionTemplate, isExpression, needsMultiline
 	/**
 	 * Best-effort preview of what an expression references. The authoritative
 	 * evaluation happens on the server, so this reports shape problems only and
-	 * never claims a value.
+	 * never claims a value. The check itself lives in expression-grammar next
+	 * to the served allowlist it reads, so there is exactly one copy.
 	 */
 	function expressionHint(text: string): string | null {
-		const opens = (text.match(/\{\{/g) ?? []).length;
-		const closes = (text.match(/\}\}/g) ?? []).length;
-		if (opens === 0) return 'No {{ }} expression yet — this will be sent as literal text.';
-		if (opens !== closes) return 'Unbalanced {{ }} — the server will reject this expression.';
-		// The allowlist comes from the server. Keeping a copy here meant every
-		// root added in Go was rejected in the editor until this file was
-		// remembered.
-		const unknown = unknownExpressionRoot(text);
-		if (unknown) {
-			const roots = expressionRoots();
-			return roots.length > 0
-				? `${unknown} is not an available root. Use ${roots.join(', ')}.`
-				: `${unknown} is not an available root.`;
-		}
-		return null;
+		return validateExpressionShape(text);
 	}
 
 	function isObject(candidate: unknown): candidate is Record<string, unknown> {
