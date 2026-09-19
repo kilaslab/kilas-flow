@@ -31,6 +31,14 @@
 	let importing = $state(false);
 	let result = $state<ImportedWorkflowResource | null>(null);
 	let fileInput = $state<HTMLInputElement | null>(null);
+	// The report used to open scrolled to the bottom: the focus trap lands
+	// on the first focusable element, which is the closing "Open" button.
+	// Scrolling the dialog back to the top keeps the verdict on screen.
+	let dialogScroll = $state<HTMLElement | null>(null);
+
+	$effect(() => {
+		if (result) dialogScroll?.scrollTo({ top: 0 });
+	});
 
 	function reset() {
 		fileName = null;
@@ -130,7 +138,8 @@
 	</Dialog.Trigger>
 	<Dialog.Content
 		aria-describedby="import-n8n-description"
-		class={result ? 'max-h-[85vh] overflow-y-auto sm:max-w-3xl' : 'sm:max-w-lg'}
+		bind:ref={dialogScroll}
+		class={result ? 'max-h-[85vh] overflow-y-auto sm:max-w-3xl' : 'max-h-[85vh] overflow-y-auto sm:max-w-lg'}
 	>
 		<Dialog.Header>
 			<Dialog.Title>{result ? `Imported ${result.workflow.name}` : 'Import from n8n'}</Dialog.Title>
@@ -180,7 +189,7 @@
 						bind:value={pasted}
 						placeholder={'{"name": "My workflow", "nodes": […]}'}
 						rows={6}
-						class="font-mono text-xs"
+						class="max-h-48 overflow-y-auto font-mono text-xs"
 						disabled={fileText !== null}
 					/>
 					{#if fileText !== null}

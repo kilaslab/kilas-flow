@@ -87,8 +87,8 @@
 						{info.action}
 					</p>
 				</div>
-				<div class="mt-1.5 overflow-hidden rounded-lg border border-border">
-					<Table.Root>
+				<div class="mt-1.5 overflow-x-auto rounded-lg border border-border">
+					<Table.Root class="min-w-[36rem]">
 						<Table.Caption class="sr-only">{info.heading} import diagnostics</Table.Caption>
 						<Table.Header class="[&_th]:h-7 [&_th]:px-3 [&_th]:text-xs [&_th]:uppercase [&_th]:tracking-wide [&_th]:text-muted-foreground">
 							<Table.Row>
@@ -105,9 +105,9 @@
 									<Table.Cell class="whitespace-nowrap px-3 py-2">
 										<span class={`inline-flex items-center rounded-full border px-2 py-0.5 text-[0.6875rem] font-medium ${info.badge}`}>{row.severity}</span>
 									</Table.Cell>
-									<Table.Cell class="max-w-40 truncate px-3 py-2 font-medium">{nodeLabel(row)}</Table.Cell>
-									<Table.Cell class="max-w-48 truncate px-3 py-2 font-mono text-[0.6875rem] text-muted-foreground">{typeLabel(row)}</Table.Cell>
-									<Table.Cell class="max-w-40 truncate px-3 py-2 font-mono text-[0.6875rem] text-muted-foreground">{row.field ?? '—'}</Table.Cell>
+									<Table.Cell class="max-w-40 truncate px-3 py-2 font-medium" title={nodeLabel(row)}>{nodeLabel(row)}</Table.Cell>
+									<Table.Cell class="max-w-48 truncate px-3 py-2 font-mono text-[0.6875rem] text-muted-foreground" title={typeLabel(row)}>{typeLabel(row)}</Table.Cell>
+									<Table.Cell class="max-w-40 truncate px-3 py-2 font-mono text-[0.6875rem] text-muted-foreground" title={row.field ?? '—'}>{row.field ?? '—'}</Table.Cell>
 									<Table.Cell class="min-w-56 whitespace-normal px-3 py-2 text-xs leading-5 text-muted-foreground">{row.reason}</Table.Cell>
 								</Table.Row>
 							{/each}
