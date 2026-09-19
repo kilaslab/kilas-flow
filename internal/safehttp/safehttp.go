@@ -22,6 +22,32 @@ import (
 
 // ErrBlocked reports a target the policy refuses to contact.
 var ErrBlocked = errors.New("request target is not allowed")
+// CredentialScope is the domain bound a credential places on one outbound
+// request. Carried on the request context from Authenticate to CheckRedirect
+// so a redirect outside the scope stops the chain instead of carrying the
+// secret to a host it was never allowed to reach.
+type CredentialScope struct {
+	// AllowsHost reports whether the credential may be sent to a host,
+	// using the same wildcard rule Authenticate applied to the first URL.
+	AllowsHost func(host string) bool
+}
+
+type credentialScopeKey struct{}
+
+// WithCredentialScope attaches a credential's domain bound to a request
+// context. A nil AllowsHost is stored as-is and never consulted — the
+// redirect check treats a scope without a rule as absent rather than as a
+// refusal, so callers that have no credential behave exactly as before.
+func WithCredentialScope(ctx context.Context, scope CredentialScope) context.Context {
+	return context.WithValue(ctx, credentialScopeKey{}, scope)
+}
+
+// CredentialScopeFrom returns the domain bound carried by ctx, if any.
+func CredentialScopeFrom(ctx context.Context) (CredentialScope, bool) {
+	scope, ok := ctx.Value(credentialScopeKey{}).(CredentialScope)
+	return scope, ok
+}
+
 
 // Policy bounds what an outbound workflow request may do.
 type Policy struct {
@@ -287,11 +313,18 @@ func blockedReason(ip net.IP) string {
 
 // NewClient builds an HTTP client that enforces the policy on every
 // connection, including each redirect hop.
+//
+// Tenant-authored egress never uses a proxy: ProxyFromEnvironment would hand
+// the dial to a proxy whose address alone is validated, while the real target
+// (metadata IP, RFC1918, loopback) is never resolved or checked — voiding
+// the private-address guard on every deployment that sets HTTP(S)_PROXY. An
+// operator that needs egress through a proxy terminates it outside this
+// client, where the proxy enforces its own policy.
 func NewClient(policy Policy) *http.Client {
 	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
 
 	transport := &http.Transport{
-		Proxy: http.ProxyFromEnvironment,
+		Proxy: nil,
 		// The address is checked here, after DNS resolution and immediately
 		// before the socket is opened, so a hostname that resolves to a public
 		// address on the first lookup and an internal one on the second cannot
@@ -343,7 +376,24 @@ func NewClient(policy Policy) *http.Client {
 			}
 			// A redirect can point anywhere, so the destination gets the same
 			// scheme and allowlist check the original URL did.
-			return policy.CheckURL(request.URL)
+			if err := policy.CheckURL(request.URL); err != nil {
+				return err
+			}
+			// And the credential's own domain scope must survive the hop: Go
+			// strips only Authorization/Cookie on cross-host redirects, so a
+			// scoped header/query secret would otherwise follow a 30x to a
+			// host its AllowedDomains never named. A hop outside the scope
+			// stops the chain with the last in-scope response rather than
+			// leaking the secret or failing the whole call. The full
+			// host:port is passed (not just the hostname) so a scope may be
+			// port-aware where the deployment needs it; AllowsHost
+			// implementations that match hostnames ignore the port half.
+			if scope, ok := CredentialScopeFrom(request.Context()); ok {
+				if !scope.AllowsHost(request.URL.Host) {
+					return http.ErrUseLastResponse
+				}
+			}
+			return nil
 		},
 	}
 }

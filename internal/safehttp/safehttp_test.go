@@ -393,3 +393,100 @@ func TestCheckEndpointAddressExemptsOnlyTheEndpointItWasAskedAbout(t *testing.T)
 		t.Errorf("CheckEndpointAddress(public address) = %v, want allowed", err)
 	}
 }
+
+// A credential's domain scope must survive redirects: Go strips only
+// Authorization/Cookie on cross-host hops, so a scoped header secret would
+// otherwise follow a 30x to a host its AllowedDomains never named.
+// Regression test for the redirect secret-leak finding.
+func TestCredentialScopeStopsARedirectOutsideItsDomains(t *testing.T) {
+	t.Parallel()
+
+	var leaked http.Header
+	outsider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		leaked = r.Header.Clone()
+		_, _ = w.Write([]byte("exfiltrated"))
+	}))
+	defer outsider.Close()
+
+	insider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, outsider.URL+"/leaked", http.StatusFound)
+	}))
+	defer insider.Close()
+
+	// Both httptest servers share 127.0.0.1, so the scope is port-aware the
+	// way AllowedDomains matching is host-aware in production: the insider
+	// port is in scope, the outsider port is not.
+	insiderEndpoint := endpointOf(t, insider.URL)
+	outsiderEndpoint := endpointOf(t, outsider.URL)
+	policy := safehttp.DefaultPolicy()
+	policy.AllowPrivateNetworks = true
+
+	// Without a scope the redirect is followed: the policy alone admits
+	// both loopback servers, which is the baseline this test tightens.
+	unscoped, err := safehttp.NewClient(policy).Get(insider.URL)
+	if err != nil {
+		t.Fatalf("Get(unscoped redirect) error = %v, want the hop followed", err)
+	}
+	_ = unscoped.Body.Close()
+	if leaked == nil {
+		t.Fatal("the unscoped redirect never reached the outsider")
+	}
+
+	// With a scope naming only the insider, the chain stops with the last
+	// in-scope response instead of carrying the secret outward.
+	leaked = nil
+	_ = outsiderEndpoint
+	scope := safehttp.CredentialScope{AllowsHost: func(host string) bool { return host == insiderEndpoint }}
+	request, err := http.NewRequest("GET", insider.URL, nil)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	request = request.WithContext(safehttp.WithCredentialScope(request.Context(), scope))
+	request.Header.Set("X-Api-Key", "SCOPED-SECRET")
+	response, err := safehttp.NewClient(policy).Do(request)
+	if err != nil {
+		t.Fatalf("Do(scoped redirect) error = %v, want the last in-scope response", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusFound {
+		t.Errorf("Do(scoped redirect) status = %d, want 302 (the un-followed hop)", response.StatusCode)
+	}
+	if leaked != nil {
+		t.Error("the scoped secret reached a host outside its domains")
+	}
+}
+
+// Tenant-authored egress must not honour proxy environment variables: with
+// ProxyFromEnvironment the dialer validates only the proxy's address while
+// the real target (here, a blocked host) is never resolved or checked.
+func TestClientIgnoresProxyEnvironment(t *testing.T) {
+	proxied := false
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		proxied = true
+		_, _ = w.Write([]byte("via proxy"))
+	}))
+	defer proxy.Close()
+
+	t.Setenv("HTTP_PROXY", proxy.URL)
+	t.Setenv("HTTPS_PROXY", proxy.URL)
+	t.Setenv("http_proxy", proxy.URL)
+	t.Setenv("https_proxy", proxy.URL)
+
+	policy := safehttp.DefaultPolicy()
+	policy.AllowedHosts = []string{"api.test"}
+	if _, err := safehttp.NewClient(policy).Get("http://api.test/"); err == nil {
+		t.Error("Get through a proxy env = nil, want the dial to fail without a proxy")
+	}
+	if proxied {
+		t.Error("the request went through the proxy named by the environment")
+	}
+}
+
+func mustHostname(t *testing.T, rawURL string) string {
+	t.Helper()
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		t.Fatalf("parse %q: %v", rawURL, err)
+	}
+	return parsed.Hostname()
+}
