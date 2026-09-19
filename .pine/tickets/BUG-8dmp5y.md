@@ -1,7 +1,7 @@
 ---
 id: BUG-8dmp5y
 title: 'Auth/session hardening: redirect secret leak, proxy SSRF bypass, login throttle, revalidation'
-status: todo
+status: doing
 priority: high
 labels:
     - security
@@ -10,7 +10,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:09Z"
-updated: "2026-09-19T12:06:09Z"
+updated: "2026-09-19T14:24:35Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -88,3 +88,9 @@ Existing tickets: FEAT-ddzk2k
 - [ ] Login has no throttling/lockout and is an unauthenticated PBKDF2 CPU-exhaustion vector
 - [ ] Stateless sessions are never revalidated: disabled/password-changed users keep full access and can mint non-ex
 - [ ] Adversarial re-verify against live stub/n8n like the Verify phase (no code-only close)
+## Progress 2026-09-19 (SecurityDx)
+- Status: doing. Research + partial implementation done this session.
+
+## Progress 2026-09-19 (SecurityDx, partial)
+- safehttp (committed in ad23336): Proxy:nil for tenant egress + CredentialScope ctx carrier (WithCredentialScope/CredentialScopeFrom) consulted in CheckRedirect (host:port passed, ErrUseLastResponse stops chain) + tests TestCredentialScopeStopsARedirectOutsideItsDomains, TestClientIgnoresProxyEnvironment. Scoped: go test ./internal/safehttp/ PASS.
+- Remaining: engine Authenticate() 1-line scope attach (spec sent to EngineExpression, agreed); login throttle (429+Retry-After, per-IP/account buckets, PBKDF2 semaphore); session revalidation (user-version bind, disabled check per request, API-key mint re-auth/expiry); credential-test probe scope attach.

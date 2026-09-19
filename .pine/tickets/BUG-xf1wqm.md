@@ -1,7 +1,7 @@
 ---
 id: BUG-xf1wqm
 title: Execution + history retention never runs (sweeper call sites deleted)
-status: testing
+status: doing
 priority: high
 labels:
     - ops
@@ -10,7 +10,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:09Z"
-updated: "2026-09-19T14:16:09Z"
+updated: "2026-09-19T14:24:35Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -38,3 +38,5 @@ Existing tickets: FEAT-5fv8gf, FEAT-ajw7wt
 
 - [ ] Regression: execution retention and workflow-history retention never run (sweeper call sites deleted by merge 
 - [ ] Adversarial re-verify against live stub/n8n like the Verify phase (no code-only close)
+## Progress 2026-09-19 (SecurityDx)
+- Landed 2e43b78: restored startHistorySweeper + startExecutionPruner call-sites in run() (after scheduler, before API-only gate) + cmd/kilasflow/retention_test.go (TestRetentionSweepersPruneExpiredRows, TestRetentionSweepersAreWired). Scoped: go test ./cmd/kilasflow/ -run TestRetention PASS.

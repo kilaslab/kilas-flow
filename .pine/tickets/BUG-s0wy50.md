@@ -1,7 +1,7 @@
 ---
 id: BUG-s0wy50
 title: PostgreSQL without pgvector cannot boot (migration 000006 unconditional)
-status: testing
+status: doing
 priority: high
 labels:
     - postgres
@@ -10,7 +10,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:09Z"
-updated: "2026-09-19T14:19:42Z"
+updated: "2026-09-19T14:24:35Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -52,3 +52,5 @@ Existing tickets: FEAT-4d0bje
 - [ ] PostgreSQL without pgvector cannot boot: migration 000006 unconditionally runs CREATE EXTENSION vector (regres
 - [ ] CI is red on main: live SQL tests use a zero-policy guard that the database SSRF policy refuses, plus pgvector
 - [ ] Adversarial re-verify against live stub/n8n like the Verify phase (no code-only close)
+## Progress 2026-09-19 (SecurityDx)
+- Landed f79cb9a: migrateFS skips CREATE-EXTENSION-vector migrations on PG without pgvector (statement-detected, version recorded as applied, WARN) + needsVectorExtension/vectorAvailable helpers + live-test zero-Guard fixes (nodes/sql_options_live_test.go liveGuard, internal/sqlbuild openLive). Scoped: go test ./internal/database/ -run 'TestVector|TestAFailedMigration|TestEveryMigration' PASS; ./internal/sqlbuild/ PASS.

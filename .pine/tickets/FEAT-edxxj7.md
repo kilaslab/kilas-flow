@@ -1,7 +1,7 @@
 ---
 id: FEAT-edxxj7
 title: 'Release + docs + dead code: 0 releases, wrong namespace, contradicting docs, placeholder, CLI'
-status: todo
+status: doing
 priority: medium
 labels:
     - dx
@@ -10,7 +10,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:10Z"
-updated: "2026-09-19T12:06:10Z"
+updated: "2026-09-19T14:24:35Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -146,3 +146,5 @@ Files: go.mod, Makefile, Dockerfile, compose.yaml
 - [ ] No i18n infrastructure: all UI copy, plurals and sentences are inline English and lang is fixed to 'en' (matte
 - [ ] All published coordinates point at an unowned GitHub namespace "kilaslabs" (the real repo is kilaslab/kilas-fl
 - [ ] Adversarial re-verify against live stub/n8n like the Verify phase (no code-only close)
+## Progress 2026-09-19 (SecurityDx)
+- Status: doing. Research + partial implementation done this session.
