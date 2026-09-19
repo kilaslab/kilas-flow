@@ -10,7 +10,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:09Z"
-updated: "2026-09-19T14:24:35Z"
+updated: "2026-09-19T14:25:53Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -94,3 +94,7 @@ Existing tickets: FEAT-ddzk2k
 ## Progress 2026-09-19 (SecurityDx, partial)
 - safehttp (committed in ad23336): Proxy:nil for tenant egress + CredentialScope ctx carrier (WithCredentialScope/CredentialScopeFrom) consulted in CheckRedirect (host:port passed, ErrUseLastResponse stops chain) + tests TestCredentialScopeStopsARedirectOutsideItsDomains, TestClientIgnoresProxyEnvironment. Scoped: go test ./internal/safehttp/ PASS.
 - Remaining: engine Authenticate() 1-line scope attach (spec sent to EngineExpression, agreed); login throttle (429+Retry-After, per-IP/account buckets, PBKDF2 semaphore); session revalidation (user-version bind, disabled check per request, API-key mint re-auth/expiry); credential-test probe scope attach.
+
+## Work (Main review 2026-09-19)
+- safehttp partial (SecurityDx, in ad23336): Proxy:nil (tenant egress never via ProxyFromEnvironment), CredentialScope ctx + CheckRedirect hop check with ErrUseLastResponse, 2 regression tests green (`go test ./internal/safehttp/` ok).
+- Remaining per agent: engine Authenticate() attach (EngineExpression agreed), login throttle + PBKDF2 guard, session revalidation, probe/loader scope attach. Redirect secret leak + proxy SSRF bypass done; login throttle + revalidation open.
