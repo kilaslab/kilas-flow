@@ -1,9 +1,13 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
+	import { createListCredentialTypes } from '$lib/api/generated/credentials/credentials';
 	import { loadNodePropertyOptions, loadNodePropertySchema } from '$lib/api/generated/nodes/nodes';
+	import { testCredential } from '$lib/api/generated/credentials/credentials';
 	import { propertyVisible, withDefaults } from '$lib/workflow-editor/visibility';
-	import type { CredentialResource, Definition, Node, PropertyDefinition } from '$lib/api/generated/models';
+	import type { CredentialResource, CredentialTypeResource, Definition, Node, PropertyDefinition } from '$lib/api/generated/models';
 	import type { PropertyScope } from '$lib/workflow-editor/document';
 	import { credentialTypesFor, requiresCredential } from '$lib/workflow-editor/credentials';
+	import { Button } from '$lib/components/ui/button';
 
 	import NodeIcon from './node-icon.svelte';
 	import PropertyField from './property-field.svelte';
@@ -24,12 +28,45 @@
 		onCredentialChange?: (typeID: string, credentialID: string) => void;
 	} = $props();
 
+	// Display names for credential type ids. Loaded here rather than passed
+	// down: the panel is rendered by the canvas editor owned elsewhere, and
+	// threading a prop through it would touch files outside this slice.
+	const credentialTypeList = createListCredentialTypes<CredentialTypeResource[]>(() => ({
+		query: {
+			select: (response) => (response.status === 200 ? (response.data ?? []) : [])
+		}
+	}));
+
 	// Which credential types this node can authenticate with is derived from the
 	// node type, so the panel stays generic and gains new types for free.
-	const credentialTypes = $derived(credentialTypesFor(definition, (node.parameters ?? {}) as Record<string, unknown>));
+	// The `visibleWhen` gating lives in credentialTypesFor: a webhook with
+	// Authentication None shows no picker at all, not two raw-id selects.
+	const applicableCredentialTypes = $derived(credentialTypesFor(definition, (node.parameters ?? {}) as Record<string, unknown>));
 	const credentialRequired = $derived(requiresCredential(definition));
 	const selectedCredential = $derived((typeID: string) => node.credentials?.[typeID] ?? '');
 	let tab = $state<PropertyScope>('parameters');
+	/** Display name for a credential type id; falls back to the raw id. */
+	function credentialTypeName(typeID: string): string {
+		return (credentialTypeList.data ?? []).find((candidate) => candidate.id === typeID)?.displayName ?? typeID;
+	}
+	let testingCredentialID = $state<string | null>(null);
+	let credentialTestResult = $state<{ id: string; ok: boolean; detail: string } | null>(null);
+
+	async function testSelectedCredential(typeID: string) {
+		const credentialID = selectedCredential(typeID);
+		if (!credentialID || testingCredentialID) return;
+		testingCredentialID = credentialID;
+		credentialTestResult = null;
+		try {
+			const response = await testCredential(credentialID);
+			if (response.status !== 200) throw new Error('Unexpected credential-test response');
+			credentialTestResult = { id: credentialID, ok: response.data.ok, detail: response.data.detail ?? '' };
+		} catch (error) {
+			credentialTestResult = { id: credentialID, ok: false, detail: error instanceof Error ? error.message : 'The test could not run.' };
+		} finally {
+			testingCredentialID = null;
+		}
+	}
 	const activeTab = $derived(tab === 'parameters' && (definition.parameters?.length ?? 0) === 0 ? 'settings' : tab);
 	const properties = $derived(activeTab === 'parameters' ? definition.parameters ?? [] : definition.sharedSettings ?? []);
 	const values = $derived((activeTab === 'parameters' ? node.parameters : node.settings) ?? {});
@@ -84,6 +121,9 @@
 			<h2 class="truncate text-[0.8125rem] font-semibold leading-tight">{node.name}</h2>
 			<p class="truncate font-mono text-[0.625rem] leading-tight text-muted-foreground">{definition.type}</p>
 		</div>
+		{#if definition.documentationUrl}
+			<a href={definition.documentationUrl} target="_blank" rel="noreferrer" class="shrink-0 rounded-md border border-border px-1.5 py-0.5 text-[0.625rem] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring">Docs</a>
+		{/if}
 	</div>
 
 	<div class="flex shrink-0 gap-3 border-b border-border px-2.5" role="tablist" aria-label="Node configuration">
@@ -92,32 +132,51 @@
 	</div>
 
 	<div class="min-h-0 flex-1 space-y-3 overflow-y-auto p-2.5" class:pointer-events-none={readOnly} class:opacity-70={readOnly} role="tabpanel" id="node-tabpanel" aria-labelledby={`node-tab-${activeTab}`}>
-		{#if activeTab === 'parameters' && credentialTypes.length > 0 && onCredentialChange}
+		{#if activeTab === 'parameters' && definition.webhook}
+			{@const pathParam = definition.webhook.pathParameter ? String((node.parameters as Record<string, unknown> | undefined)?.[definition.webhook.pathParameter] ?? '') : definition.webhook.staticPath ?? ''}
+			<div class="grid gap-1.5 rounded-lg border border-border bg-background/40 p-2">
+				<p class="text-[0.6875rem] font-medium uppercase tracking-wider text-muted-foreground">Webhook URL</p>
+				{#if pathParam}
+					<code class="truncate rounded border border-border bg-muted/40 px-1.5 py-1 font-mono text-[0.6875rem] select-all" title={`/webhook/${pathParam}`}>{`/webhook/${pathParam}`}</code>
+					<p class="text-[0.625rem] leading-4 text-muted-foreground">The full address is shown after import and on activation. Prefix it with your host when pointing the sender at it.</p>
+				{:else}
+					<p class="text-[0.625rem] leading-4 text-muted-foreground">Set the path below — the public URL is minted from it on activation.</p>
+				{/if}
+			</div>
+		{/if}
+		{#if activeTab === 'parameters' && applicableCredentialTypes.length > 0 && onCredentialChange}
 			<div class="grid gap-1.5 rounded-lg border border-border bg-background/40 p-2">
 				<p class="text-[0.6875rem] font-medium uppercase tracking-wider text-muted-foreground">
 					Credential{#if credentialRequired}<span class="text-destructive" aria-hidden="true">*</span><span class="sr-only"> (required)</span>{/if}
 				</p>
 				{#if credentialRequired && !Object.keys(node.credentials ?? {}).length}
-					<!-- A node that cannot run without a credential deserves a
-					     visible prompt rather than a silently empty select. -->
 					<p class="text-[0.6875rem] leading-4 text-destructive">This node needs a credential before it can run.</p>
 				{/if}
-				{#each credentialTypes as typeID (typeID)}
+				{#each applicableCredentialTypes as typeID (typeID)}
 					{@const matching = credentials.filter((candidate) => candidate.type === typeID)}
-					<label class="font-mono text-[0.625rem] text-muted-foreground" for={`credential-${typeID}`}>{typeID}</label>
-					<select
-						id={`credential-${typeID}`}
-						value={selectedCredential(typeID)}
-						class="h-7 rounded-md border border-input bg-background px-1.5 text-xs"
-						onchange={(event) => onCredentialChange?.(typeID, event.currentTarget.value)}
-					>
-						<option value="">None</option>
-						{#each matching as candidate (candidate.id)}
-							<option value={candidate.id}>{candidate.name}</option>
-						{/each}
-					</select>
+					<label class="text-[0.6875rem] font-medium" for={`credential-${typeID}`}>{credentialTypeName(typeID)}</label>
+					<div class="flex items-center gap-1.5">
+						<select
+							id={`credential-${typeID}`}
+							value={selectedCredential(typeID)}
+							class="h-7 min-w-0 flex-1 rounded-md border border-input bg-background px-1.5 text-xs"
+							onchange={(event) => onCredentialChange?.(typeID, event.currentTarget.value)}
+						>
+							<option value="">None</option>
+							{#each matching as candidate (candidate.id)}
+								<option value={candidate.id}>{candidate.name}</option>
+							{/each}
+						</select>
+						{#if selectedCredential(typeID)}
+							<Button variant="outline" size="sm" class="h-7 shrink-0 px-2 text-[0.6875rem]" disabled={testingCredentialID !== null} onclick={() => void testSelectedCredential(typeID)}>
+								{testingCredentialID ? 'Testing…' : 'Test'}
+							</Button>
+						{/if}
+					</div>
 					{#if matching.length === 0}
-						<p class="text-[0.625rem] leading-4 text-muted-foreground">No {typeID} credential yet — add one under Credentials.</p>
+						<p class="text-[0.625rem] leading-4 text-muted-foreground">No {credentialTypeName(typeID)} credential yet — <button type="button" class="underline underline-offset-2" onclick={() => void goto('/credentials')}>add one under Credentials</button>.</p>
+					{:else if credentialTestResult && credentialTestResult.id === selectedCredential(typeID)}
+						<p role="status" class={`text-[0.625rem] leading-4 ${credentialTestResult.ok ? 'text-success' : 'text-destructive'}`}>{credentialTestResult.ok ? `Connected${credentialTestResult.detail ? ` — ${credentialTestResult.detail}` : ''}` : `Test failed — ${credentialTestResult.detail}`}</p>
 					{/if}
 				{/each}
 				<p class="text-[0.625rem] leading-4 text-muted-foreground">The workflow records only the reference. Secrets stay in credential storage.</p>
@@ -131,4 +190,8 @@
 			{/each}
 		{/if}
 	</div>
+	<footer class="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-0.5 border-t border-border px-2.5 py-1.5 text-[0.625rem] leading-4 text-muted-foreground">
+		<span class="truncate">{definition.displayName} version {definition.version}</span>
+		{#if definition.description}<span class="min-w-0 flex-1 truncate" title={definition.description}>{definition.description}</span>{/if}
+	</footer>
 </section>

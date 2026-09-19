@@ -18,6 +18,7 @@
 		type AssignmentType
 	} from '$lib/workflow-editor/assignments';
 import { validateExpressionShape } from '$lib/workflow-editor/expression-grammar';
+import { expressionCompletions, previewStep, type CompletionCandidate } from '$lib/workflow-editor/expression-assist';
 	import {
 		VALUELESS_OPERATORS,
 		moveCondition,
@@ -64,28 +65,23 @@ import { asExpression, asFixed, expressionTemplate, isExpression, needsMultiline
 		siblings = {},
 		onChange,
 		loadOptions,
-		loadSchema
+		loadSchema,
+		upstreamNodeNames = [],
+		upstreamFieldPaths = [],
+		resolvedValues = []
 	}: {
 		property: PropertyDefinition;
 		value: unknown;
-		/**
-		 * The node's other parameters, for the visibility rules of a nested
-		 * field. An option shown only for one operation depends on `operation`,
-		 * which is this property's sibling rather than its own member — so the
-		 * component cannot answer the question from what it holds.
-		 */
 		siblings?: Record<string, unknown>;
 		onChange: (value: unknown) => void;
-		/**
-		 * Fetches a property's selectable values. Supplied by the panel, which
-		 * knows the node this property belongs to; this component only knows
-		 * the property.
-		 */
 		loadOptions?: (property: PropertyDefinition, mode?: string) => Promise<{ options: { label: string; value: string }[]; reason: string }>;
-		/** Fetches a resource mapper's columns. Its own seam, because a column
-		 * carries a type, a required flag and match eligibility, none of which
-		 * fit in an option's {label, value}. */
 		loadSchema?: (property: PropertyDefinition) => Promise<{ fields: MapperColumn[]; reason: string }>;
+		/** Names of upstream nodes, for `$('Name')` completions. */
+		upstreamNodeNames?: string[];
+		/** Dotted `$json` paths from the last run, for field completions. */
+		upstreamFieldPaths?: string[];
+		/** Server-resolved values of this template per item, when the host has them. */
+		resolvedValues?: string[];
 	} = $props();
 
 	// Every free-text control can carry an expression; only a checkbox and a
@@ -204,6 +200,20 @@ import { asExpression, asFixed, expressionTemplate, isExpression, needsMultiline
 	}
 	const expressionMode = $derived(isExpression(value));
 	const template = $derived(expressionTemplate(value));
+	// Completions read the served grammar plus the run context the host
+	// passes down: `$json` fields from the last execution, upstream node
+	// names, and the engine's function list. Nothing here evaluates — it
+	// only names what the server will accept.
+	const assistPrefix = $derived.by(() => {
+		const cursor = template.match(/(\$[A-Za-z0-9_.(']*)$/);
+		return cursor?.[1] ?? '';
+	});
+	const assistCandidates = $derived<CompletionCandidate[]>(
+		expressionCompletions(assistPrefix, { nodeNames: upstreamNodeNames, fieldPaths: upstreamFieldPaths })
+	);
+	let assistOpen = $state(false);
+	let previewIndex = $state(0);
+	const preview = $derived(previewStep(resolvedValues, previewIndex));
 	const stringValue = $derived(typeof value === 'string' ? value : value === undefined || value === null ? '' : String(value));
 
 	// The three views of an options collection: what is set, what can still be
@@ -212,7 +222,6 @@ import { asExpression, asFixed, expressionTemplate, isExpression, needsMultiline
 	const addable = $derived(property.kind === 'collection' ? addableOptions(property, value, siblings) : []);
 	const strandedKeys = $derived(property.kind === 'collection' ? strandedOptions(property, value, siblings) : []);
 	const unreadableCollection = $derived(property.kind === 'collection' ? unreadable(value) : null);
-
 	// Structured values are pretty-printed rather than String()'d: String on an
 	// object is "[object Object]", and the first keystroke wrote that text back.
 	function jsonText(input: unknown): string {
@@ -385,13 +394,38 @@ import { asExpression, asFixed, expressionTemplate, isExpression, needsMultiline
 		{/if}
 	</div>
 	{#if expressionMode}
-		<!-- An auto-growing textarea, never an input: browsers strip line breaks
-		     from an input's value, so a multi-line expression flattened on first
-		     edit and the flattened text was written back on the next keystroke. -->
 		<textarea id={`property-${property.key}`} value={template} spellcheck="false" rows={Math.min(12, Math.max(3, template.split('\n').length))} class="rounded-md border border-primary/40 bg-primary/5 px-2 py-1.5 font-mono text-xs" aria-describedby={`property-${property.key}-hint`} oninput={(event) => {
 			const next = event.currentTarget.value;
+			assistOpen = true;
 			onChange(next.includes('{{') ? { mode: 'expression', value: next } : next);
-		}}></textarea>
+		}} onfocus={() => (assistOpen = true)} onblur={() => setTimeout(() => (assistOpen = false), 120)}></textarea>
+		{#if assistOpen && assistCandidates.length > 0 && assistPrefix}
+			<ul role="listbox" aria-label={`${property.label} expression suggestions`} class="max-h-36 overflow-y-auto rounded-md border border-border bg-popover p-1 shadow-md">
+				{#each assistCandidates.slice(0, 8) as candidate (candidate.insert)}
+					<li role="option" aria-selected="false">
+						<button type="button" class="flex w-full items-center gap-2 rounded px-1.5 py-1 text-left font-mono text-[0.6875rem] hover:bg-muted" onmousedown={(event) => {
+							event.preventDefault();
+							const next = `${template}${candidate.insert.trim()} }}`;
+							assistOpen = false;
+							onChange({ mode: 'expression', value: next });
+						}}>
+							<span class="min-w-0 flex-1 truncate">{candidate.insert.trim()}</span>
+							<span class="shrink-0 text-muted-foreground">{candidate.detail}</span>
+						</button>
+					</li>
+				{/each}
+			</ul>
+		{/if}
+		{#if preview.total > 0}
+			<div class="flex items-center gap-1.5 rounded-md border border-border bg-muted/40 px-2 py-1">
+				<span class="text-[0.6875rem] text-muted-foreground">Result{preview.total > 1 ? ` ${preview.index + 1}/${preview.total}` : ''}:</span>
+				<code class="min-w-0 flex-1 truncate font-mono text-[0.6875rem]" title={preview.value}>{preview.value}</code>
+				{#if preview.total > 1}
+					<button type="button" class="shrink-0 rounded border border-border px-1 text-[0.6875rem]" disabled={preview.index <= 0} onclick={() => (previewIndex = preview.index - 1)} aria-label="Previous item">‹</button>
+					<button type="button" class="shrink-0 rounded border border-border px-1 text-[0.6875rem]" disabled={preview.index >= preview.total - 1} onclick={() => (previewIndex = preview.index + 1)} aria-label="Next item">›</button>
+				{/if}
+			</div>
+		{/if}
 		<p id={`property-${property.key}-hint`} class="text-[0.6875rem] leading-4 {expressionHint(template) ? 'text-destructive' : 'text-muted-foreground'}">
 			{expressionHint(template) ?? 'Resolved per item on the server, for example {{ $json.id }}.'}
 		</p>
