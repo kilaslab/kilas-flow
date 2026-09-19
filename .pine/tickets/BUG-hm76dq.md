@@ -1,7 +1,7 @@
 ---
 id: BUG-hm76dq
 title: 'Core node condition/type parity: IF/Filter/Switch loose types, v1 ops, empty values, $loop leak'
-status: todo
+status: doing
 priority: high
 labels:
     - nodes
@@ -10,7 +10,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:10Z"
-updated: "2026-09-19T12:06:10Z"
+updated: "2026-09-19T13:43:42Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -100,3 +100,5 @@ Existing tickets: FEAT-sar60r, FEAT-vvwpjw
 - [ ] IF v1 conditions: operation names, per-type default operations and combineOperation are not translated
 - [ ] Loop Over Items (SplitInBatches) injects an internal "$loop" object with pending/collected item copies into ev
 - [ ] Adversarial re-verify against live stub/n8n like the Verify phase (no code-only close)
+## Work (Main review 2026-09-19)
+- IF v1 legacyCondition op-name translation + per-type defaults landed. Loose-type conversion (internal/conditions) + $loop leak + Set coerce table remain for EngineExpression/owner coordination.

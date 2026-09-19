@@ -58,6 +58,24 @@ func stringParameter(parameters map[string]any, key string) string {
 	return text
 }
 
+// textOf reads any scalar as text, for parameters whose JSON shape varies.
+func textOf(value any) string {
+	switch typed := value.(type) {
+	case nil:
+		return ""
+	case string:
+		return typed
+	case bool:
+		if typed {
+			return "true"
+		}
+		return "false"
+	case float64:
+		return strconv.FormatFloat(typed, 'f', -1, 64)
+	default:
+		return ""
+	}
+}
 func numberParameter(parameters map[string]any, key string) (float64, bool) {
 	switch typed := parameters[key].(type) {
 	case float64:
@@ -77,17 +95,24 @@ func numberParameter(parameters map[string]any, key string) (float64, bool) {
 
 // --- Set --------------------------------------------------------------------
 
-// setToKilas reads n8n's Set assignments.
+// setToKilas reads n8n's Set node in every shape it has had.
 //
-// n8n v3 nests them under `assignments.assignments` as typed entries; older
-// versions used `values.string` and friends. Both are read, because an
-// exported workflow in the wild may be either.
-// setToKilas reads n8n's Set node in either of the shapes it has had.
+// n8n v3 nests assignments under `assignments.assignments` as typed entries;
+// v3.0-3.2 used `fields.values` with `<type>Value` keys; v1/v2 used
+// `values.<kind>`. All three are read, because an exported workflow in the
+// wild may be any of them.
 //
 // Both are *ordered lists with a declared type per row*, and both are carried
 // through as one. The importer used to collapse them into a `map[name]value`,
 // which lost the order the author typed and the type of every entry — so a
 // boolean returned to n8n as a string and the fields came back alphabetical.
+//
+// The include half is version-aware: n8n Set >= 3.3 defaults
+// includeOtherFields=false (output only the set fields), so a node that
+// carries no key at all still means "none". Older versions default to keeping
+// the input (v1/v2 keepOnlySet=false, v3.0-3.2 include=all). The executor
+// already supports include/mode/options; the importer never filled them, so
+// every such node leaked every input field downstream.
 func setToKilas(node Node) (map[string]any, []Unsupported) {
 	entries := make([]any, 0, 4)
 	issues := make([]Unsupported, 0)
@@ -110,15 +135,11 @@ func setToKilas(node Node) (map[string]any, []Unsupported) {
 		}
 	}
 
-	// Set v2's pre-assignment control: a fixed collection whose type lives in
-	// the *key* — `stringValue`, `numberValue` — rather than in a type field.
-	if values, ok := node.Parameters["values"].(map[string]any); ok {
-		for _, kind := range sortedKeys(values) {
-			list, ok := values[kind].([]any)
-			if !ok {
-				continue
-			}
-			for index, entry := range list {
+	// Set v3.0-3.2 `fields.values`: the type lives in the *value key* —
+	// `stringValue`, `numberValue` — and there is one entry per row.
+	if wrapper, ok := node.Parameters["fields"].(map[string]any); ok {
+		if rows, ok := wrapper["values"].([]any); ok {
+			for _, entry := range rows {
 				fields, ok := entry.(map[string]any)
 				if !ok {
 					continue
@@ -128,24 +149,166 @@ func setToKilas(node Node) (map[string]any, []Unsupported) {
 					continue
 				}
 				identifier, _ := fields["id"].(string)
-				entries = append(entries, assignmentEntry(node, len(entries)+index, identifier, name,
+				declared, value := fieldsValueOf(fields)
+				entries = append(entries, assignmentEntry(node, len(entries), identifier, name,
+					declared, fromN8NValue(value)))
+			}
+		}
+	}
+
+	// Set v2's pre-assignment control: a fixed collection whose type lives in
+	// the *key* — `stringValue`, `numberValue` — rather than in a type field.
+	if values, ok := node.Parameters["values"].(map[string]any); ok {
+		for _, kind := range sortedKeys(values) {
+			list, ok := values[kind].([]any)
+			if !ok {
+				continue
+			}
+			for _, entry := range list {
+				fields, ok := entry.(map[string]any)
+				if !ok {
+					continue
+				}
+				name, _ := fields["name"].(string)
+				if strings.TrimSpace(name) == "" {
+					continue
+				}
+				identifier, _ := fields["id"].(string)
+				entries = append(entries, assignmentEntry(node, len(entries), identifier, name,
 					assignmentTypeOf(kind), fromN8NValue(fields["value"])))
 			}
 		}
 	}
 
-	if keepOnly, ok := node.Parameters["includeOtherFields"].(bool); ok && !keepOnly {
-		// KilasFlow's Set always adds to the incoming item.
-		issues = append(issues, Unsupported{
-			Reason: "n8n's \"keep only set fields\" option has no KilasFlow equivalent; the imported Set adds its fields to every incoming item instead of replacing them",
-		})
-	}
-	if len(entries) == 0 {
+	converted := map[string]any{"assignments": map[string]any{"assignments": entries}}
+	issues = append(issues, setIncludeToKilas(node, converted)...)
+	issues = append(issues, setModeToKilas(node, converted)...)
+	if len(entries) == 0 && textOf(converted["mode"]) != "raw" {
 		issues = append(issues, Unsupported{
 			Reason: "this Set node has no readable assignments; add at least one field before running the workflow",
 		})
 	}
-	return map[string]any{"assignments": map[string]any{"assignments": entries}}, issues
+	return converted, issues
+}
+
+// fieldsValueOf reads one v3.0-3.2 `fields.values` row: the declared type is
+// the key whose name ends in `Value`, and its value is the row's value.
+func fieldsValueOf(fields map[string]any) (string, any) {
+	for _, key := range sortedKeys(fields) {
+		if key == "name" || key == "id" {
+			continue
+		}
+		if strings.HasSuffix(key, "Value") {
+			return assignmentTypeOf(key), fields[key]
+		}
+	}
+	if value, ok := fields["value"]; ok {
+		return assignmentTypeOf(fields["type"]), value
+	}
+	return string(property.AssignmentString), nil
+}
+
+// setIncludeToKilas maps n8n's keep-only/include surface onto the executor's
+// include/includeFields/excludeFields.
+func setIncludeToKilas(node Node, converted map[string]any) []Unsupported {
+	issues := make([]Unsupported, 0)
+	version := node.TypeVersion
+
+	if includeOtherFields, present := node.Parameters["includeOtherFields"].(bool); present {
+		if !includeOtherFields {
+			converted["include"] = "none"
+			return issues
+		}
+		// Explicitly true: input fields survive, narrowed by include when set.
+		switch include := stringParameter(node.Parameters, "include"); include {
+		case "selected":
+			converted["include"] = "selected"
+			converted["includeFields"] = includeFieldList(node.Parameters["includeFields"])
+		case "except":
+			converted["include"] = "except"
+			converted["excludeFields"] = includeFieldList(node.Parameters["excludeFields"])
+		default:
+			converted["include"] = "all"
+		}
+		return issues
+	}
+
+	// No includeOtherFields key. n8n >= 3.3 omits its own default (false), so
+	// a modern Set with no key means "only the set fields".
+	if version >= 3.3 {
+		converted["include"] = "none"
+		return issues
+	}
+
+	// Older shapes: v3.0-3.2 include defaults to all; v1/v2 carry keepOnlySet.
+	if keepOnly, _ := node.Parameters["keepOnlySet"].(bool); keepOnly {
+		converted["include"] = "none"
+		return issues
+	}
+	switch include := stringParameter(node.Parameters, "include"); include {
+	case "selected":
+		converted["include"] = "selected"
+		converted["includeFields"] = includeFieldList(node.Parameters["includeFields"])
+	case "except":
+		converted["include"] = "except"
+		converted["excludeFields"] = includeFieldList(node.Parameters["excludeFields"])
+	default:
+		converted["include"] = "all"
+	}
+	return issues
+}
+
+// includeFieldList reads n8n's include/exclude field list, which is either a
+// comma-separated string or a fixed collection of names.
+func includeFieldList(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return typed
+	case map[string]any:
+		names := namedList(typed, "field")
+		if len(names) == 0 {
+			names = namedList(typed, "fieldName")
+		}
+		return strings.Join(names, ",")
+	default:
+		return ""
+	}
+}
+
+// setModeToKilas maps n8n's raw JSON mode and options onto the executor's
+// mode/jsonOutput/options.
+func setModeToKilas(node Node, converted map[string]any) []Unsupported {
+	issues := make([]Unsupported, 0)
+	if mode := stringParameter(node.Parameters, "mode"); mode == "raw" {
+		converted["mode"] = "raw"
+		if body, ok := node.Parameters["jsonOutput"]; ok {
+			converted["jsonOutput"] = fromN8NValue(body)
+		}
+	} else {
+		converted["mode"] = "manual"
+	}
+	if options, ok := node.Parameters["options"].(map[string]any); ok {
+		carried := map[string]any{}
+		for _, key := range []string{"dotNotation", "ignoreConversionErrors", "includeBinary", "stripBinary"} {
+			if value, present := options[key]; present && value != nil {
+				carried[key] = value
+			}
+		}
+		if len(carried) > 0 {
+			converted["options"] = carried
+		}
+		for key := range options {
+			switch key {
+			case "dotNotation", "ignoreConversionErrors", "includeBinary", "stripBinary":
+			default:
+				issues = append(issues, Unsupported{
+					Field:  "options." + key,
+					Reason: fmt.Sprintf("the Set option %q has no KilasFlow equivalent and was not carried", key),
+				})
+			}
+		}
+	}
+	return issues
 }
 
 // assignmentEntry builds one row.
@@ -227,10 +390,60 @@ func setToN8N(node workflow.Node) (map[string]any, []Lossy) {
 			"value": toN8NValue(fields["value"]),
 		})
 	}
-	return map[string]any{
+	written := map[string]any{
 		"assignments": map[string]any{"assignments": entries},
-		"options":     map[string]any{},
-	}, nil
+		"options":     setOptionsToN8N(node.Parameters),
+	}
+	setIncludeToN8N(node.Parameters, written)
+	setModeToN8N(node.Parameters, written)
+	return written, nil
+}
+
+// setIncludeToN8N writes the include half back: includeOtherFields plus the
+// include selector, so a node imported at >= 3.3 returns to the shape n8n
+// reads as keep-only.
+func setIncludeToN8N(parameters, written map[string]any) {
+	switch textOf(parameters["include"]) {
+	case "none":
+		written["includeOtherFields"] = false
+	case "selected":
+		written["includeOtherFields"] = true
+		written["include"] = "selected"
+		if fields := textOf(parameters["includeFields"]); fields != "" {
+			written["includeFields"] = fields
+		}
+	case "except":
+		written["includeOtherFields"] = true
+		written["include"] = "except"
+		if fields := textOf(parameters["excludeFields"]); fields != "" {
+			written["excludeFields"] = fields
+		}
+	default:
+		written["includeOtherFields"] = true
+	}
+}
+
+// setModeToN8N writes the mode half back: raw carries its JSON body.
+func setModeToN8N(parameters, written map[string]any) {
+	if textOf(parameters["mode"]) == "raw" {
+		written["mode"] = "raw"
+		if body, ok := parameters["jsonOutput"]; ok {
+			written["jsonOutput"] = toN8NValue(body)
+		}
+	}
+}
+
+// setOptionsToN8N carries the options the executor honours.
+func setOptionsToN8N(parameters map[string]any) map[string]any {
+	options := map[string]any{}
+	if stored, ok := parameters["options"].(map[string]any); ok {
+		for _, key := range []string{"dotNotation", "ignoreConversionErrors", "includeBinary", "stripBinary"} {
+			if value, present := stored[key]; present && value != nil {
+				options[key] = value
+			}
+		}
+	}
+	return options
 }
 
 // --- IF ---------------------------------------------------------------------
@@ -347,10 +560,15 @@ func filterToKilas(value any) (map[string]any, []Unsupported) {
 //
 // v1 had no operator object: the *group* was the type and `operation` sat
 // beside the values. Reading it here means the evaluator sees one shape.
+// The operation names are translated too: v1 `larger` is v2 `largerEquals`'s
+// neighbour `bigger`, v1 `equal` is `equals`, and so on. An untranslated name
+// would import cleanly and then fail the run with "not supported".
 func legacyCondition(row map[string]any, group string) map[string]any {
 	operation, _ := row["operation"].(string)
 	if operation == "" {
-		operation = "equals"
+		operation = legacyDefaultOperation(group)
+	} else if mapped, ok := legacyOperations[operation]; ok {
+		operation = mapped
 	}
 	return map[string]any{
 		"leftValue":  row["value1"],
@@ -359,7 +577,36 @@ func legacyCondition(row map[string]any, group string) map[string]any {
 	}
 }
 
-// filterToN8N writes the shared shape back out.
+// legacyOperations translates n8n v1 operation names to their v2 equivalents.
+// The v2 vocabulary is the evaluator's: equals/notEquals/contains and friends
+// for strings, larger/smaller/largerEquals/smallerEquals for numbers,
+// empty/notEmpty for presence, after/before for dates.
+var legacyOperations = map[string]string{
+	"equal":        "equals",
+	"notEqual":     "notEquals",
+	"larger":       "larger",
+	"largerEqual":  "largerEquals",
+	"smaller":      "smaller",
+	"smallerEqual": "smallerEquals",
+	"contains":     "contains",
+	"notContains":  "notContains",
+	"startsWith":   "startsWith",
+	"endsWith":     "endsWith",
+	"regex":        "regex",
+	"isEmpty":      "empty",
+	"isNotEmpty":   "notEmpty",
+	"after":        "after",
+	"before":       "before",
+}
+
+// legacyDefaultOperation is n8n v1's per-type default when the operation is
+// omitted: numbers default to `smaller`, everything else to `equals`.
+func legacyDefaultOperation(group string) string {
+	if group == "number" {
+		return "smaller"
+	}
+	return "equals"
+}
 func filterToN8N(value any) map[string]any {
 	declared, ok := value.(map[string]any)
 	if !ok {
@@ -463,19 +710,55 @@ func mergeOptions(existing any, defaults map[string]any) map[string]any {
 // values travel as themselves.
 func mergeToKilas(node Node) (map[string]any, []Unsupported) {
 	issues := make([]Unsupported, 0)
-	converted := map[string]any{"mode": defaultString(stringParameter(node.Parameters, "mode"), "append")}
+	mode := defaultString(stringParameter(node.Parameters, "mode"), "append")
+	converted := map[string]any{}
 
+	// n8n v2 names the same family differently: `combinationMode` with
+	// mergeByFields/mergeByPosition/multiplex. v3 spells it `mode: combine`
+	// plus `combineBy`. Both land on the executor's mode vocabulary.
+	if combination := stringParameter(node.Parameters, "combinationMode"); combination != "" {
+		switch combination {
+		case "mergeByFields":
+			mode, converted["combineBy"] = "combine", "combineByFields"
+		case "mergeByPosition":
+			mode, converted["combineBy"] = "combine", "combineByPosition"
+		case "multiplex":
+			mode, converted["combineBy"] = "combine", "combineAll"
+		default:
+			issues = append(issues, Unsupported{
+				Field:  "combinationMode",
+				Reason: fmt.Sprintf("the n8n Merge combination mode %q has no equivalent; the node was imported as append", combination),
+			})
+			mode = "append"
+		}
+	}
 	if combineBy := stringParameter(node.Parameters, "combineBy"); combineBy != "" {
 		converted["combineBy"] = combineBy
+		if mode == "append" {
+			mode = "combine"
+		}
 	}
+	converted["mode"] = mode
+
 	if count, ok := numberParameter(node.Parameters, "numberInputs"); ok {
 		converted["numberInputs"] = count
 	}
+	// The branch to keep: v3 `useDataOfInput`/`output` names it by input,
+	// v2 `output` does too, and `chooseBranch` is the executor's own key.
 	if branch, ok := numberParameter(node.Parameters, "chooseBranch"); ok {
 		converted["chooseBranch"] = branch
+	} else if branch, ok := numberParameter(node.Parameters, "useDataOfInput"); ok {
+		converted["chooseBranch"] = branch
+	} else if output := stringParameter(node.Parameters, "output"); output != "" {
+		if resolved := mergeOutputBranch(output); resolved > 0 {
+			converted["chooseBranch"] = float64(resolved)
+		}
 	}
 	if joinMode := stringParameter(node.Parameters, "joinMode"); joinMode != "" {
 		converted["joinMode"] = joinMode
+	}
+	if from := stringParameter(node.Parameters, "outputDataFrom"); from != "" {
+		converted["outputDataFrom"] = from
 	}
 
 	// n8n's fields-to-match is a fixed collection of `{field1, field2}` pairs.
@@ -506,18 +789,67 @@ func mergeToKilas(node Node) (map[string]any, []Unsupported) {
 			converted["fieldsToMatch"] = strings.Join(names, ",")
 		}
 	}
+
+	if options, ok := node.Parameters["options"].(map[string]any); ok {
+		carried := map[string]any{}
+		for _, key := range []string{"includeUnpaired", "keepNonMatches", "enrichInput2", "clashHandling", "mergeMode", "multipleMatches"} {
+			if value, present := options[key]; present && value != nil {
+				carried[key] = value
+			}
+		}
+		if len(carried) > 0 {
+			converted["options"] = carried
+		}
+		for key := range options {
+			switch key {
+			case "includeUnpaired", "keepNonMatches", "enrichInput2", "clashHandling", "mergeMode", "multipleMatches":
+			default:
+				issues = append(issues, Unsupported{
+					Field:  "options." + key,
+					Reason: fmt.Sprintf("the Merge option %q has no KilasFlow equivalent and was not carried", key),
+				})
+			}
+		}
+	}
+	if mode == "combineBySql" || stringParameter(node.Parameters, "combineBy") == "combineBySql" ||
+		mode == "passThrough" || mode == "wait" {
+		issues = append(issues, Unsupported{
+			Severity: SeverityBlocking, Field: "mode",
+			Reason: fmt.Sprintf("the n8n Merge mode %q has no KilasFlow equivalent; replace it before running the workflow", stringParameter(node.Parameters, "mode")),
+		})
+	}
 	return converted, issues
+}
+
+// mergeOutputBranch reads n8n's v2/v3 output selector: `input1`/`input2` or a
+// bare number. Zero means unrecognized rather than a valid branch.
+func mergeOutputBranch(output string) int {
+	trimmed := strings.TrimSpace(output)
+	if strings.HasPrefix(strings.ToLower(trimmed), "input") {
+		if number, err := strconv.Atoi(strings.TrimSpace(trimmed[5:])); err == nil {
+			return number
+		}
+		return 0
+	}
+	if number, err := strconv.Atoi(trimmed); err == nil {
+		return number
+	}
+	return 0
 }
 
 func mergeToN8N(node workflow.Node) (map[string]any, []Lossy) {
 	written := map[string]any{
-		"mode":    defaultString(stringParameter(node.Parameters, "mode"), "append"),
-		"options": map[string]any{},
+		"mode": defaultString(stringParameter(node.Parameters, "mode"), "append"),
 	}
-	for _, key := range []string{"combineBy", "numberInputs", "chooseBranch", "joinMode"} {
+	for _, key := range []string{"combineBy", "numberInputs", "chooseBranch", "joinMode", "outputDataFrom"} {
 		if value, present := node.Parameters[key]; present {
 			written[key] = value
 		}
+	}
+	if options, ok := node.Parameters["options"].(map[string]any); ok && len(options) > 0 {
+		written["options"] = options
+	} else {
+		written["options"] = map[string]any{}
 	}
 	if fields := stringParameter(node.Parameters, "fieldsToMatch"); fields != "" {
 		values := make([]any, 0, 2)
@@ -594,12 +926,29 @@ func switchToKilas(node Node) (map[string]any, []Unsupported) {
 	built := map[string]any{"rules": converted}
 	if options, ok := node.Parameters["options"].(map[string]any); ok {
 		if options["fallbackOutput"] != nil {
-			// n8n writes "none", "extra", or an output index. An index names a
-			// rule's own output, which KilasFlow reaches by wiring rather than
-			// by a fallback, so only the two named forms carry.
-			if fallback, _ := options["fallbackOutput"].(string); fallback == "extra" {
-				built["fallbackOutput"] = "extra"
-			} else if fallback != "none" && fallback != "" {
+			// n8n writes "none", "extra", or an output index. A numeric
+			// index names a rule's own output; the executor routes by
+			// index, so the number carries as itself rather than as a
+			// warning about wiring.
+			switch fallback := options["fallbackOutput"].(type) {
+			case string:
+				if fallback == "extra" {
+					built["fallbackOutput"] = "extra"
+				} else if fallback != "none" && fallback != "" {
+					if number, err := strconv.Atoi(strings.TrimSpace(fallback)); err == nil {
+						built["fallbackOutput"] = fmt.Sprintf("%d", number)
+					} else {
+						issues = append(issues, Unsupported{
+							Field:  "options.fallbackOutput",
+							Reason: fmt.Sprintf("this Switch sent unmatched items to output %v; wire that rule's own output instead", options["fallbackOutput"]),
+						})
+					}
+				}
+			case float64:
+				built["fallbackOutput"] = fmt.Sprintf("%d", int(fallback))
+			case int:
+				built["fallbackOutput"] = fmt.Sprintf("%d", fallback)
+			default:
 				issues = append(issues, Unsupported{
 					Field:  "options.fallbackOutput",
 					Reason: fmt.Sprintf("this Switch sent unmatched items to output %v; wire that rule's own output instead", options["fallbackOutput"]),
@@ -1169,18 +1518,21 @@ func dateTimeToKilas(node Node) (map[string]any, []Unsupported) {
 	issues := make([]Unsupported, 0)
 	parameters := map[string]any{}
 	options, _ := node.Parameters["options"].(map[string]any)
-
-	if action, isV1 := node.Parameters["action"].(string); isV1 {
+	operation := defaultString(stringParameter(node.Parameters, "operation"), "getCurrentDate")
+	// v1 is detected by typeVersion, not by the `action` key: a v1 node at
+	// the default action stores no `action` at all, and keying on it imports
+	// a "format MMMM DD YYYY" node as "get current date".
+	if action, isV1 := node.Parameters["action"].(string); isV1 || node.TypeVersion < 2 {
 		switch action {
 		case "", "format":
 			parameters["operation"] = "formatDate"
 			parameters["date"] = fromN8NValue(node.Parameters["value"])
-			parameters["format"] = luxonFormat(stringParameter(node.Parameters, "toFormat"))
+			parameters["format"] = luxonFormat(momentToLuxon(stringParameter(node.Parameters, "toFormat")))
 		case "calculate":
 			parameters["operation"] = "addToDate"
 			parameters["date"] = fromN8NValue(node.Parameters["value"])
 			parameters["duration"] = node.Parameters["duration"]
-			parameters["unit"] = defaultString(stringParameter(node.Parameters, "timeUnit"), "days")
+			parameters["unit"] = dateUnit(defaultString(stringParameter(node.Parameters, "timeUnit"), "days"))
 			if stringParameter(node.Parameters, "operation") == "subtract" {
 				parameters["operation"] = "subtractFromDate"
 			}
@@ -1195,22 +1547,23 @@ func dateTimeToKilas(node Node) (map[string]any, []Unsupported) {
 				"the input format %q was not carried; this node reads ISO 8601, Unix timestamps and the "+
 					"common human forms without being told which one to expect", from)})
 		}
-		return withDateOutputField(parameters, options, node), issues
+		// v1 writes its result to `data`, not `date`.
+		name := defaultString(stringParameter(node.Parameters, "dataPropertyName"), stringParameter(options, "outputFieldName"))
+		parameters["outputField"] = defaultString(name, "data")
+		return parameters, issues
 	}
-
-	operation := defaultString(stringParameter(node.Parameters, "operation"), "getCurrentDate")
+	// `magnitude` is v2's name for the date being worked on; `date` is what
+	// extractDate calls the same thing, and `startDate` what the comparison
+	// does. One field here, three names there.
 	switch operation {
 	case "getCurrentDate", "addToDate", "subtractFromDate", "formatDate", "roundDate", "extractDate", "getTimeBetweenDates":
 		parameters["operation"] = operation
 	default:
 		issues = append(issues, Unsupported{Field: "operation", Reason: fmt.Sprintf(
 			"the n8n Date & Time operation %q has no equivalent; the node was imported as \"get current date\"", operation)})
-		parameters["operation"] = "getCurrentDate"
+		operation = "getCurrentDate"
+		parameters["operation"] = operation
 	}
-
-	// `magnitude` is v2's name for the date being worked on; `date` is what
-	// extractDate calls the same thing, and `startDate` what the comparison
-	// does. One field here, three names there.
 	for _, key := range []string{"magnitude", "date", "startDate"} {
 		if value, present := node.Parameters[key]; present && value != nil {
 			parameters["date"] = fromN8NValue(value)
@@ -1223,8 +1576,10 @@ func dateTimeToKilas(node Node) (map[string]any, []Unsupported) {
 	if value, present := node.Parameters["duration"]; present {
 		parameters["duration"] = value
 	}
+	// Singular units (`day`, `month`) are n8n's own vocabulary beside the
+	// plural; both land on the executor's plural units.
 	if unit := defaultString(stringParameter(node.Parameters, "timeUnit"), stringParameter(node.Parameters, "units")); unit != "" {
-		parameters["unit"] = unit
+		parameters["unit"] = dateUnit(unit)
 	}
 	if part := stringParameter(node.Parameters, "part"); part != "" {
 		parameters["part"] = part
@@ -1232,8 +1587,12 @@ func dateTimeToKilas(node Node) (map[string]any, []Unsupported) {
 	if mode := stringParameter(node.Parameters, "mode"); mode != "" {
 		parameters["roundMode"] = mode
 	}
+	// Rounding down snaps to the start of `toNearest`; n8n's singular `day`
+	// is this node's plural `days`.
 	if to := stringParameter(node.Parameters, "to"); to != "" {
-		parameters["roundTo"] = to
+		parameters["roundTo"] = dateUnit(to)
+	} else if to := stringParameter(node.Parameters, "toNearest"); to != "" {
+		parameters["roundTo"] = dateUnit(to)
 	}
 	if layout := defaultString(stringParameter(node.Parameters, "customFormat"), stringParameter(node.Parameters, "format")); layout != "" {
 		parameters["format"] = luxonFormat(layout)
@@ -1241,21 +1600,67 @@ func dateTimeToKilas(node Node) (map[string]any, []Unsupported) {
 	if zone := stringParameter(options, "timezone"); zone != "" {
 		parameters["timezone"] = zone
 	}
-	if include, present := options["includeInputFields"]; present && include == false {
-		// This node always keeps the incoming item and adds a field, which is
-		// n8n's own default. Replacing the item is the setting it does not have.
-		issues = append(issues, Unsupported{Field: "options.includeInputFields", Reason: "this node always keeps " +
-			"the incoming item's fields and adds the result beside them; use a Set node afterwards to keep only the date"})
+	// n8n's default keeps only the new field; this node keeps the whole item
+	// unless told otherwise at run time. Carried rather than defaulted, so
+	// the editor shows what the import meant.
+	if include, present := options["includeInputFields"]; present && include == true {
+		parameters["includeInputFields"] = true
 	}
-	return withDateOutputField(parameters, options, node), issues
+	return withDateOutputField(parameters, options, node, defaultString(stringParameter(node.Parameters, "operation"), "getCurrentDate")), issues
+}
+
+// dateUnit normalises n8n's singular units onto the executor's plural ones.
+func dateUnit(unit string) string {
+	switch strings.ToLower(strings.TrimSpace(unit)) {
+	case "day":
+		return "days"
+	case "month":
+		return "months"
+	case "year":
+		return "years"
+	case "hour":
+		return "hours"
+	case "minute":
+		return "minutes"
+	case "second":
+		return "seconds"
+	case "week":
+		return "weeks"
+	default:
+		return unit
+	}
 }
 
 // withDateOutputField carries n8n's output field name, under either of the two
-// spellings it has used.
-func withDateOutputField(parameters map[string]any, options map[string]any, node Node) map[string]any {
+// spellings it has used. Absent, each operation keeps n8n's own default:
+// formattedDate for a format, newDate for arithmetic, timeDifference for a
+// comparison — because a downstream `{{ $json.formattedDate }}` that resolves
+// empty is a silent break.
+func withDateOutputField(parameters map[string]any, options map[string]any, node Node, operation string) map[string]any {
 	name := defaultString(stringParameter(node.Parameters, "outputFieldName"), stringParameter(options, "outputFieldName"))
+	if name == "" {
+		name = dateDefaultOutputField(operation)
+	}
 	parameters["outputField"] = defaultString(name, "date")
 	return parameters
+}
+
+// dateDefaultOutputField is n8n's per-operation default output field.
+func dateDefaultOutputField(operation string) string {
+	switch operation {
+	case "formatDate":
+		return "formattedDate"
+	case "addToDate", "subtractFromDate":
+		return "newDate"
+	case "getTimeBetweenDates":
+		return "timeDifference"
+	case "extractDate":
+		return "date"
+	case "roundDate":
+		return "date"
+	default:
+		return "date"
+	}
 }
 
 // luxonFormat carries a format string across unchanged.
@@ -1265,6 +1670,28 @@ func withDateOutputField(parameters map[string]any, options map[string]any, node
 // a future need to translate should have somewhere obvious to go rather than
 // being scattered over the call sites.
 func luxonFormat(layout string) string {
+	return layout
+}
+
+// momentToLuxon translates n8n v1's moment tokens to the Luxon tokens this
+// node's `format` speaks. Only the tokens templates actually use are mapped;
+// anything else crosses unchanged and renders literally on both sides.
+func momentToLuxon(layout string) string {
+	replacements := []struct{ from, to string }{
+		{"YYYY", "yyyy"}, {"YY", "yy"},
+		{"MMMM", "MMMM"}, {"MMM", "MMM"}, {"MM", "MM"}, {"M", "M"},
+		{"DDDD", "ooo"}, {"DDD", "o"}, {"DD", "dd"}, {"D", "d"},
+		{"dddd", "cccc"}, {"ddd", "ccc"}, {"dd", "cc"}, {"d", "c"},
+		{"HH", "HH"}, {"H", "H"}, {"hh", "hh"}, {"h", "h"},
+		{"mm", "mm"}, {"m", "m"}, {"ss", "ss"}, {"s", "s"},
+		{"A", "a"}, {"a", "a"},
+		{"ZZ", "ZZ"}, {"Z", "ZZ"},
+		{"X", "s"},
+	}
+	for _, replacement := range replacements {
+		layout = strings.ReplaceAll(layout, replacement.from, "\x00"+replacement.to+"\x00")
+	}
+	layout = strings.ReplaceAll(layout, "\x00", "")
 	return layout
 }
 
@@ -1994,21 +2421,78 @@ func namedList(value any, key string) []string {
 }
 
 func aggregateToKilas(node Node) (map[string]any, []Unsupported) {
+	issues := make([]Unsupported, 0)
 	converted := map[string]any{
 		"aggregate": defaultString(stringParameter(node.Parameters, "aggregate"), "aggregateIndividualFields"),
 	}
-	if fields := namedList(node.Parameters["fieldsToAggregate"], "fieldToAggregate"); len(fields) > 0 {
-		converted["fieldsToAggregate"] = strings.Join(fields, ",")
+	// n8n's key is `fieldToAggregate` (singular), not `values`: a fixed
+	// collection read under the wrong key imports empty and then fails
+	// activation with "needs at least one field name" — with no issue
+	// saying why.
+	if wrapper, ok := node.Parameters["fieldsToAggregate"].(map[string]any); ok {
+		entries, _ := wrapper["fieldToAggregate"].([]any)
+		if len(entries) == 0 {
+			entries, _ = wrapper["values"].([]any)
+		}
+		fields := make([]string, 0, len(entries))
+		outputs := make([]string, 0, len(entries))
+		for _, entry := range entries {
+			row, _ := entry.(map[string]any)
+			if row == nil {
+				continue
+			}
+			name, _ := row["fieldToAggregate"].(string)
+			if strings.TrimSpace(name) == "" {
+				continue
+			}
+			fields = append(fields, strings.TrimSpace(name))
+			// A renamed field is stored as `source>output` beside the plain
+			// list, so the executor can name its output without a second
+			// parameter shape.
+			renamed := strings.TrimSpace(stringParameter(row, "outputFieldName"))
+			if renamed == "" {
+				renamed = strings.TrimSpace(stringParameter(row, "renameField"))
+			}
+			if renamed != "" {
+				outputs = append(outputs, strings.TrimSpace(name)+">"+renamed)
+			}
+		}
+		if len(fields) == 0 && len(wrapper) > 0 {
+			issues = append(issues, Unsupported{
+				Field:  "fieldsToAggregate",
+				Reason: "this Aggregate lists fields in a shape the importer could not read; add the field names before running the workflow",
+			})
+		}
+		if len(fields) > 0 {
+			converted["fieldsToAggregate"] = strings.Join(fields, ",")
+		}
+		if len(outputs) > 0 {
+			converted["outputFieldNames"] = strings.Join(outputs, ",")
+		}
+	}
+	if include := stringParameter(node.Parameters, "include"); include == "specifiedFields" {
+		converted["include"] = "specifiedFields"
+		if fields := namedList(node.Parameters["fieldsToInclude"], "field"); len(fields) > 0 {
+			converted["fieldsToInclude"] = strings.Join(fields, ",")
+		} else if fields := stringParameter(node.Parameters, "fieldsToInclude"); fields != "" {
+			converted["fieldsToInclude"] = fields
+		}
 	}
 	if options, ok := node.Parameters["options"].(map[string]any); ok {
-		if name, _ := options["destinationFieldName"].(string); name != "" {
-			converted["destinationFieldName"] = name
+		for _, key := range []string{"mergeLists", "keepMissing", "disableDotNotation"} {
+			if value, present := options[key]; present && value != nil {
+				if carried, ok := converted["options"].(map[string]any); ok {
+					carried[key] = value
+				} else {
+					converted["options"] = map[string]any{key: value}
+				}
+			}
 		}
 	}
 	if name := stringParameter(node.Parameters, "destinationFieldName"); name != "" {
 		converted["destinationFieldName"] = name
 	}
-	return converted, nil
+	return converted, issues
 }
 
 func aggregateToN8N(node workflow.Node) (map[string]any, []Lossy) {
@@ -2017,14 +2501,35 @@ func aggregateToN8N(node workflow.Node) (map[string]any, []Lossy) {
 		"options":   map[string]any{},
 	}
 	values := make([]any, 0, 2)
-	for _, field := range strings.Split(stringParameter(node.Parameters, "fieldsToAggregate"), ",") {
-		if trimmed := strings.TrimSpace(field); trimmed != "" {
-			values = append(values, map[string]any{"fieldToAggregate": trimmed})
+	renames := map[string]string{}
+	for _, pair := range strings.Split(stringParameter(node.Parameters, "outputFieldNames"), ",") {
+		if source, output, found := strings.Cut(pair, ">"); found {
+			renames[strings.TrimSpace(source)] = strings.TrimSpace(output)
 		}
 	}
-	written["fieldsToAggregate"] = map[string]any{"values": values}
+	for _, field := range strings.Split(stringParameter(node.Parameters, "fieldsToAggregate"), ",") {
+		if trimmed := strings.TrimSpace(field); trimmed != "" {
+			row := map[string]any{"fieldToAggregate": trimmed}
+			if renamed, ok := renames[trimmed]; ok && renamed != "" {
+				row["outputFieldName"] = renamed
+			}
+			values = append(values, row)
+		}
+	}
+	// n8n's key is `fieldToAggregate`: writing `values` produces a node n8n
+	// opens with "No fields specified".
+	written["fieldsToAggregate"] = map[string]any{"fieldToAggregate": values}
 	if name := stringParameter(node.Parameters, "destinationFieldName"); name != "" {
 		written["destinationFieldName"] = name
+	}
+	if include := stringParameter(node.Parameters, "include"); include != "" {
+		written["include"] = include
+		if fields := stringParameter(node.Parameters, "fieldsToInclude"); fields != "" {
+			written["fieldsToInclude"] = fields
+		}
+	}
+	if options, ok := node.Parameters["options"].(map[string]any); ok && len(options) > 0 {
+		written["options"] = options
 	}
 	return written, nil
 }
@@ -2076,7 +2581,13 @@ func sortToKilas(node Node) (map[string]any, []Unsupported) {
 
 	converted := map[string]any{"type": mode}
 	keys := make([]string, 0, 2)
-	wrapper, _ := node.Parameters["sortFieldsUI"].(map[string]any)
+	// n8n's key is `sortFieldsUi` with a lower-case i. Reading only the
+	// camel-cased `sortFieldsUI` imports an empty sort that then fails
+	// activation — with no issue saying why.
+	wrapper, _ := node.Parameters["sortFieldsUi"].(map[string]any)
+	if wrapper == nil {
+		wrapper, _ = node.Parameters["sortFieldsUI"].(map[string]any)
+	}
 	entries, _ := wrapper["sortField"].([]any)
 	for _, entry := range entries {
 		row, _ := entry.(map[string]any)
@@ -2091,6 +2602,11 @@ func sortToKilas(node Node) (map[string]any, []Unsupported) {
 	}
 	if len(keys) > 0 {
 		converted["sortFieldsUI"] = strings.Join(keys, ",")
+	} else if wrapper != nil {
+		issues = append(issues, Unsupported{
+			Field:  "sortFieldsUi",
+			Reason: "this Sort lists fields in a shape the importer could not read; add the field names before running the workflow",
+		})
 	}
 	return converted, issues
 }
@@ -2115,11 +2631,14 @@ func sortToN8N(node workflow.Node) (map[string]any, []Lossy) {
 		}
 		entries = append(entries, map[string]any{"fieldName": name, "order": order})
 	}
-	written["sortFieldsUI"] = map[string]any{"sortField": entries}
+	// n8n's key is `sortFieldsUi` with a lower-case i: writing `sortFieldsUI`
+	// produces a node n8n opens with "No sorting specified".
+	written["sortFieldsUi"] = map[string]any{"sortField": entries}
 	return written, nil
 }
 
 func summarizeToKilas(node Node) (map[string]any, []Unsupported) {
+	issues := make([]Unsupported, 0)
 	converted := map[string]any{}
 	if wrapper, ok := node.Parameters["fieldsToSummarize"].(map[string]any); ok {
 		entries, _ := wrapper["values"].([]any)
@@ -2145,7 +2664,35 @@ func summarizeToKilas(node Node) (map[string]any, []Unsupported) {
 	} else if fields := stringParameter(node.Parameters, "fieldsToSplitBy"); fields != "" {
 		converted["fieldsToSplitBy"] = fields
 	}
-	return converted, nil
+	// The concatenate separator: n8n's default is a bare comma, and the
+	// author may set a custom one. Dropped, every concatenation joins with
+	// ", " instead.
+	if separator := stringParameter(node.Parameters, "separateBy"); separator != "" {
+		converted["separator"] = separator
+	} else if separator := stringParameter(node.Parameters, "customSeparator"); separator != "" {
+		converted["separator"] = separator
+	}
+	if outputFormat := stringParameter(node.Parameters, "outputFormat"); outputFormat != "" {
+		converted["outputFormat"] = outputFormat
+	}
+	if options, ok := node.Parameters["options"].(map[string]any); ok {
+		for key, value := range options {
+			if _, carried := converted[key]; !carried && value != nil {
+				if carriedOptions, ok := converted["options"].(map[string]any); ok {
+					carriedOptions[key] = value
+				} else {
+					converted["options"] = map[string]any{key: value}
+				}
+			}
+		}
+		if separateBy, _ := options["separateBy"].(string); separateBy != "" {
+			converted["separator"] = separateBy
+		}
+		if custom, _ := options["customSeparator"].(string); custom != "" {
+			converted["separator"] = custom
+		}
+	}
+	return converted, issues
 }
 
 func summarizeToN8N(node workflow.Node) (map[string]any, []Lossy) {
@@ -2164,6 +2711,9 @@ func summarizeToN8N(node workflow.Node) (map[string]any, []Lossy) {
 	}
 	if fields := stringParameter(node.Parameters, "fieldsToSplitBy"); fields != "" {
 		written["fieldsToSplitBy"] = fields
+	}
+	if separator := stringParameter(node.Parameters, "separator"); separator != "" {
+		written["options"] = map[string]any{"separateBy": separator}
 	}
 	return written, nil
 }

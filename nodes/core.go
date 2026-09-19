@@ -257,6 +257,8 @@ func mergeNode() node.Definition {
 					{Label: "Keep Matches", Value: "keepMatches"},
 					{Label: "Keep Everything", Value: "keepEverything"},
 					{Label: "Enrich Input 1", Value: "enrichInput1"},
+					{Label: "Enrich Input 2", Value: "enrichInput2"},
+					{Label: "Keep Non-Matches", Value: "keepNonMatches"},
 				},
 				VisibleWhen: []node.VisibilityCondition{{Key: "mode", Equals: MergeByFields}},
 			},

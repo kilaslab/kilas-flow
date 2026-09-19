@@ -227,16 +227,16 @@ func TestSummarizeAggregatesEveryWayItAdvertises(t *testing.T) {
 	for key, want := range map[string]any{
 		"sum_score": float64(30), "average_score": float64(15),
 		"min_score": float64(10), "max_score": float64(20),
-		"count_name": float64(2), "countUnique_name": float64(2),
-		"concatenate_name": "Ada, Grace",
+		"count_name": float64(2), "unique_count_name": float64(2),
+		"concatenated_name": "Ada,Grace",
 	} {
 		if core[key] != want {
 			t.Errorf("%s = %#v, want %#v", key, core[key], want)
 		}
 	}
-	appended, _ := core["append_name"].([]any)
+	appended, _ := core["appended_name"].([]any)
 	if len(appended) != 2 {
-		t.Errorf("append_name = %#v, want both names", core["append_name"])
+		t.Errorf("appended_name = %#v, want both names", core["appended_name"])
 	}
 }
 

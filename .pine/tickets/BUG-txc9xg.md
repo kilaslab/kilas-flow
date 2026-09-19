@@ -1,7 +1,7 @@
 ---
 id: BUG-txc9xg
 title: Set import keeps only assignments; include/raw/fields/options lost
-status: todo
+status: doing
 priority: critical
 labels:
     - importer
@@ -11,7 +11,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:09Z"
-updated: "2026-09-19T12:06:09Z"
+updated: "2026-09-19T13:43:42Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -67,3 +67,5 @@ Existing tickets: FEAT-jwhdsy (done: claims Set raw/include mapping and named di
 - [ ] Set v3 import ignores keep-only/include/raw/options, so Set passes through every input field
 - [ ] Set import keeps only `assignments`: n8n 3.3+ 'only set fields' default, raw/JSON mode, v3.0-3.2 `fields`, inc
 - [ ] Adversarial re-verify against live stub/n8n like the Verify phase (no code-only close)
+## Work (Main review 2026-09-19)
+- Set importer version-aware (assignments + v3.0-3.2 fields.values + v1/v2 values; include/mode/options mapped; exporter inverse). Index sequencing fixed in review. Scoped suites green.

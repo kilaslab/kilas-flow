@@ -520,15 +520,41 @@ func joinOnFields(left, right []workflow.Item, fields []string, joinMode string)
 		index[key] = append(index[key], item)
 	}
 
+	// keepNonMatches answers with only the unmatched items from both sides:
+	// matched pairs are dropped, unmatched left items keep their order,
+	// then unmatched right items in their own order — matches first is
+	// meaningless when there are no matches.
+	if joinMode == "keepNonMatches" {
+		matchedRight := map[string]bool{}
+		for _, item := range left {
+			if key, ok := matchKey(item, fields); ok && len(index[key]) > 0 {
+				matchedRight[key] = true
+			}
+		}
+		kept := []workflow.Item{}
+		for _, item := range left {
+			if key, ok := matchKey(item, fields); !ok || len(index[key]) == 0 {
+				kept = append(kept, item)
+			}
+		}
+		for _, item := range right {
+			if key, ok := matchKey(item, fields); !ok || !matchedRight[key] {
+				kept = append(kept, item)
+			}
+		}
+		return kept
+	}
+
 	combined := []workflow.Item{}
 	matchedRight := map[string]bool{}
 	for _, item := range left {
 		key, ok := matchKey(item, fields)
 		partners := index[key]
 		if !ok || len(partners) == 0 {
-			// keepEverything and enrichInput1 both keep an unmatched left item;
-			// keepMatches drops it, which is what a join means.
-			if joinMode == "keepEverything" || joinMode == "enrichInput1" {
+			// keepEverything, enrichInput1 and enrichInput2 all keep an
+			// unmatched left item; keepMatches drops it, which is what a
+			// join means.
+			if joinMode == "keepEverything" || joinMode == "enrichInput1" || joinMode == "enrichInput2" {
 				combined = append(combined, item)
 			}
 			continue

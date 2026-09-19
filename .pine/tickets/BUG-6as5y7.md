@@ -1,7 +1,7 @@
 ---
 id: BUG-6as5y7
 title: 'Transform parity: Aggregate/Sort keys, Merge modes, Date&Time, Summarize, SplitOut, Switch, key order'
-status: todo
+status: doing
 priority: high
 labels:
     - nodes
@@ -10,7 +10,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:10Z"
-updated: "2026-09-19T12:06:10Z"
+updated: "2026-09-19T13:43:42Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -213,3 +213,8 @@ Existing tickets: FEAT-jwhdsy (done: claims both-direction mapping; regression)
 - [ ] Item JSON key order is not preserved (keys are alphabetised)
 - [ ] Aggregate and Sort translators use the wrong n8n parameter keys in both directions: fields are lost on import 
 - [ ] Adversarial re-verify against live stub/n8n like the Verify phase (no code-only close)
+## Work (Main review 2026-09-19)
+- Reviewed ImporterWebhook uncommitted delivery: Set v3/v2/import include+mode+options both directions, IF-v1 legacy op translation, Merge v2 combinationMode + options passthrough + executor enrichInput2/keepNonMatches, Date&Time v1-by-typeVersion + per-op output names + tz + duration object, Aggregate/Sort key fixes both directions, Summarize separator/output names.
+- Fixes applied in review: Set fields.values/v2-values index sequencing (len(entries)+index → len(entries)), gofmt nodes/core.go + parameters.go.
+- Caution: datetime_test drops unix-timestamp cases and re-pins compare as duration object + tz format expectation flip 00:00→07:00 — behavior changes match BUG-6as5y7 finding (n8n parity), not re-pins; transform_test summarize keys follow n8n output names per finding. Scoped suites green: interop/n8n, nodes, property.
+- Remaining per agent report: SplitOut path semantics, key-order preservation, Summarize group-order, SIB/workflowInputs (BUG-8t94wn overlap untouched).

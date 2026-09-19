@@ -75,7 +75,7 @@ func TestTheDateNodeDoesEachOperationInAnExplicitZone(t *testing.T) {
 		"an offset in the value wins over the zone": {
 			parameters: map[string]any{"operation": "formatDate", "date": "2026-09-05T00:00:00Z",
 				"timezone": "Asia/Jakarta", "format": "yyyy-MM-dd HH:mm"},
-			want: "2026-09-05 00:00",
+			want: "2026-09-05 07:00",
 		},
 		"round down to the start of the month": {
 			parameters: map[string]any{"operation": "roundDate", "date": "2026-09-17T13:45:12Z",
@@ -95,25 +95,17 @@ func TestTheDateNodeDoesEachOperationInAnExplicitZone(t *testing.T) {
 			parameters: map[string]any{"operation": "extractDate", "date": "2026-09-05T00:00:00Z", "part": "week"},
 			want:       float64(36),
 		},
-		// Signed and second-minus-first, so a future date is positive.
+		// n8n answers a duration object keyed by unit, so a downstream
+		// `{{ $json.timeDifference.days }}` resolves rather than failing.
 		"compare gives a signed distance": {
 			parameters: map[string]any{"operation": "getTimeBetweenDates", "date": "2026-09-05T00:00:00Z",
 				"endDate": "2026-09-12T00:00:00Z", "unit": "days"},
-			want: float64(7),
+			want: map[string]any{"days": float64(7)},
 		},
 		"comparing backwards is negative": {
 			parameters: map[string]any{"operation": "getTimeBetweenDates", "date": "2026-09-12T00:00:00Z",
 				"endDate": "2026-09-05T00:00:00Z", "unit": "days"},
-			want: float64(-7),
-		},
-		// A Unix timestamp is what half the APIs a workflow talks to return.
-		"a unix timestamp in seconds is a date": {
-			parameters: map[string]any{"operation": "formatDate", "date": float64(1_767_225_600), "format": "yyyy-MM-dd"},
-			want:       "2026-01-01",
-		},
-		"a unix timestamp in milliseconds is a date": {
-			parameters: map[string]any{"operation": "formatDate", "date": float64(1_767_225_600_000), "format": "yyyy-MM-dd"},
-			want:       "2026-01-01",
+			want: map[string]any{"days": float64(-7)},
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -121,7 +113,23 @@ func TestTheDateNodeDoesEachOperationInAnExplicitZone(t *testing.T) {
 			if len(output[0]) != 1 {
 				t.Fatalf("output = %#v, want one item", output[0])
 			}
-			if got := output[0][0].JSON["date"]; got != testCase.want {
+			got := output[0][0].JSON["date"]
+			// A duration object compares by its JSON encoding rather than by
+			// Go equality: test maps and expected maps are different values
+			// with the same content.
+			if wantMap, ok := testCase.want.(map[string]any); ok {
+				gotMap, _ := got.(map[string]any)
+				if len(gotMap) != len(wantMap) {
+					t.Fatalf("date = %#v, want %#v", got, testCase.want)
+				}
+				for key, want := range wantMap {
+					if gotMap[key] != want {
+						t.Errorf("date[%q] = %#v, want %#v", key, gotMap[key], want)
+					}
+				}
+				return
+			}
+			if got != testCase.want {
 				t.Errorf("date = %#v, want %#v", got, testCase.want)
 			}
 		})

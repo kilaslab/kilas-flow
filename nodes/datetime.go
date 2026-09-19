@@ -3,6 +3,7 @@ package nodes
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/kilaslabs/kilas-flow/internal/datetime"
@@ -235,13 +236,13 @@ func applyDateOperation(parameters map[string]any, startedAt time.Time) (any, er
 
 	switch operation {
 	case dateOperationAdd:
-		return shift(instant, textValue(parameters["unit"], "days"), int(numberValue(parameters["duration"]))).Format(time.RFC3339), nil
+		return shift(instant, textValue(parameters["unit"], "days"), int(numberValue(parameters["duration"]))).In(location).Format(time.RFC3339), nil
 	case dateOperationSubtract:
-		return shift(instant, textValue(parameters["unit"], "days"), -int(numberValue(parameters["duration"]))).Format(time.RFC3339), nil
+		return shift(instant, textValue(parameters["unit"], "days"), -int(numberValue(parameters["duration"]))).In(location).Format(time.RFC3339), nil
 	case dateOperationFormat:
-		return datetime.Format(instant, textValue(parameters["format"], "yyyy-MM-dd'T'HH:mm:ssZZ")), nil
+		return datetime.Format(instant.In(location), textValue(parameters["format"], "yyyy-MM-dd'T'HH:mm:ssZZ")), nil
 	case dateOperationRound:
-		return round(instant, textValue(parameters["roundTo"], "days"), textValue(parameters["roundMode"], "roundDown")).Format(time.RFC3339), nil
+		return round(instant.In(location), textValue(parameters["roundTo"], "days"), textValue(parameters["roundMode"], "roundDown")).Format(time.RFC3339), nil
 	case dateOperationExtract:
 		return extract(instant, textValue(parameters["part"], "year")), nil
 	case dateOperationCompare:
@@ -249,9 +250,50 @@ func applyDateOperation(parameters map[string]any, startedAt time.Time) (any, er
 		if err != nil {
 			return nil, err
 		}
-		return compare(instant, other, textValue(parameters["unit"], "days")), nil
+		return compareDuration(instant, other, textValue(parameters["unit"], "days")), nil
 	default:
 		return nil, fmt.Errorf("operation %q is not supported", operation)
+	}
+}
+
+// compareDuration answers n8n's duration object: one key per requested unit.
+// A single unit still answers as an object (`{"days": 36}`), because a
+// downstream `{{ $json.timeDifference.days }}` that resolves empty is a
+// silent break — and the object is what n8n emits.
+func compareDuration(left, right time.Time, unit string) any {
+	units := splitFieldList(unit)
+	if len(units) == 0 {
+		units = []string{"days"}
+	}
+	if len(units) == 1 {
+		return map[string]any{durationKey(units[0]): compare(left, right, normalizeDateUnit(units[0]))}
+	}
+	duration := make(map[string]any, len(units))
+	for _, name := range units {
+		duration[durationKey(name)] = compare(left, right, normalizeDateUnit(name))
+	}
+	return duration
+}
+
+// durationKey is n8n's plural key for one unit: days, hours, minutes.
+func durationKey(unit string) string {
+	switch normalizeDateUnit(unit) {
+	case "days":
+		return "days"
+	case "hours":
+		return "hours"
+	case "minutes":
+		return "minutes"
+	case "seconds":
+		return "seconds"
+	case "weeks":
+		return "weeks"
+	case "months":
+		return "months"
+	case "years":
+		return "years"
+	default:
+		return unit
 	}
 }
 
@@ -262,7 +304,7 @@ func applyDateOperation(parameters map[string]any, startedAt time.Time) (any, er
 // saving boundary keeps the wall-clock time. Clock units are added as
 // durations, because that is what "add two hours" means.
 func shift(instant time.Time, unit string, amount int) time.Time {
-	switch unit {
+	switch normalizeDateUnit(unit) {
 	case "years":
 		return instant.AddDate(amount, 0, 0)
 	case "months":
@@ -281,6 +323,32 @@ func shift(instant time.Time, unit string, amount int) time.Time {
 		return instant.Add(time.Duration(amount) * time.Millisecond)
 	default:
 		return instant
+	}
+}
+
+// normalizeDateUnit accepts n8n's singular units beside the plural ones this
+// node stores. A stored document always holds plural; an expression or an
+// import may hand either.
+func normalizeDateUnit(unit string) string {
+	switch strings.ToLower(strings.TrimSpace(unit)) {
+	case "year":
+		return "years"
+	case "month":
+		return "months"
+	case "week":
+		return "weeks"
+	case "day":
+		return "days"
+	case "hour":
+		return "hours"
+	case "minute":
+		return "minutes"
+	case "second":
+		return "seconds"
+	case "millisecond":
+		return "milliseconds"
+	default:
+		return unit
 	}
 }
 

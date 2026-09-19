@@ -435,6 +435,22 @@ type summarizeColumn struct {
 	field       string
 }
 
+// summarizeOutputName is n8n's output key for one aggregation: count_ and
+// sum_ are bare, unique counts and concatenations carry n8n's own prefixes.
+func summarizeOutputName(aggregation, field string) string {
+	suffix := lastSegment(field)
+	switch aggregation {
+	case "countUnique":
+		return "unique_count_" + suffix
+	case "concatenate":
+		return "concatenated_" + suffix
+	case "append":
+		return "appended_" + suffix
+	default:
+		return aggregation + "_" + suffix
+	}
+}
+
 func summarizeColumns(parameters map[string]any) ([]summarizeColumn, error) {
 	list, ok := parameters["fieldsToSummarize"].([]any)
 	if !ok {
@@ -516,7 +532,7 @@ func executeSummarize(ctx context.Context, ir workflow.IRNode, input workflow.No
 			built.JSON[field] = cloneValue(value)
 		}
 		for _, column := range columns {
-			built.JSON[column.aggregation+"_"+lastSegment(column.field)] = summarize(column, groups[key])
+			built.JSON[summarizeOutputName(column.aggregation, column.field)] = summarize(ir.Parameters, column, groups[key])
 		}
 		items = append(items, built)
 	}
@@ -538,7 +554,7 @@ func summarizeKey(item workflow.Item, splitBy []string) (string, map[string]any)
 	return strings.Join(parts, "\x00"), values
 }
 
-func summarize(column summarizeColumn, items []workflow.Item) any {
+func summarize(parameters map[string]any, column summarizeColumn, items []workflow.Item) any {
 	switch column.aggregation {
 	case "count":
 		count := 0
@@ -594,17 +610,23 @@ func summarize(column summarizeColumn, items []workflow.Item) any {
 		}
 		return best
 	case "concatenate":
+		// n8n's default separator is a bare comma, and empty values are
+		// skipped rather than joined as empty segments.
+		separator := textOf(parameters["separator"])
+		if separator == "" {
+			separator = ","
+		}
 		parts := make([]string, 0, len(items))
 		for _, item := range items {
-			if value := itemPath(item.JSON, column.field); value != nil {
+			if value := itemPath(item.JSON, column.field); value != nil && textValue(value, "") != "" {
 				parts = append(parts, textValue(value, ""))
 			}
 		}
-		return strings.Join(parts, ", ")
+		return strings.Join(parts, separator)
 	default: // append
 		gathered := make([]any, 0, len(items))
 		for _, item := range items {
-			if value := itemPath(item.JSON, column.field); value != nil {
+			if value := itemPath(item.JSON, column.field); value != nil && textValue(value, "") != "" {
 				gathered = append(gathered, cloneValue(value))
 			}
 		}

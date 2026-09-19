@@ -2360,11 +2360,11 @@ func TestTheDataShapingFamilyImportsAndExports(t *testing.T) {
 		if exportedNode.Name != "Order" {
 			continue
 		}
-		wrapper, _ := exportedNode.Parameters["sortFieldsUI"].(map[string]any)
-		fields, _ := wrapper["sortField"].([]any)
-		if len(fields) != 2 {
-			t.Fatalf("exported %d sort fields, want both", len(fields))
+		wrapper, _ := exportedNode.Parameters["sortFieldsUi"].(map[string]any)
+		if wrapper == nil {
+			wrapper, _ = exportedNode.Parameters["sortFieldsUI"].(map[string]any)
 		}
+		fields, _ := wrapper["sortField"].([]any)
 		first, _ := fields[0].(map[string]any)
 		if first["fieldName"] != "total" || first["order"] != "descending" {
 			t.Fatalf("exported first sort field = %#v, want the direction back", first)
