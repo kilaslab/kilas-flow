@@ -98,3 +98,4 @@ Existing tickets: FEAT-ddzk2k
 ## Work (Main review 2026-09-19)
 - safehttp partial (SecurityDx, in ad23336): Proxy:nil (tenant egress never via ProxyFromEnvironment), CredentialScope ctx + CheckRedirect hop check with ErrUseLastResponse, 2 regression tests green (`go test ./internal/safehttp/` ok).
 - Remaining per agent: engine Authenticate() attach (EngineExpression agreed), login throttle + PBKDF2 guard, session revalidation, probe/loader scope attach. Redirect secret leak + proxy SSRF bypass done; login throttle + revalidation open.
+- Note: safehttp.go + safehttp_test.go content landed inside ad23336 (chore commit also carrying them); 136ca57 records review note only. Future moves: keep security hunks in dedicated commits.
