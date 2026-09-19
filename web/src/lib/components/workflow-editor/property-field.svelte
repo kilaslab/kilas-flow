@@ -22,11 +22,13 @@
 		VALUELESS_OPERATORS,
 		moveCondition,
 		newCondition,
-		readConditions,
+		readFilterValue,
 		removeCondition,
 		updateCondition,
+		writeFilterValue,
 		type Condition,
-		type ConditionOperator
+		type ConditionOperator,
+		type ConditionValueType
 	} from '$lib/workflow-editor/conditions';
 	import { currentMode, readLocator, switchMode, writeLocator } from '$lib/workflow-editor/resource-locator';
 	import {
@@ -86,18 +88,20 @@
 		loadSchema?: (property: PropertyDefinition) => Promise<{ fields: MapperColumn[]; reason: string }>;
 	} = $props();
 
-	// Only text-shaped controls can carry an expression: a checkbox or a select
-	// has no free-text surface for one, and silently accepting a marker there
-	// would produce a value the control could not display.
-	// Which kinds may hold an expression. A checkbox, a select and a nested
-	// collection have no free-text surface to show a template in, so offering
-	// the toggle there would produce a control the user cannot read back. n8n
-	// reaches the same conclusion through noDataExpression.
+	// Every free-text control can carry an expression; only a checkbox and a
+	// nested collection lack a surface to show a template in. Selects,
+	// locators, key-value rows, assignment rows and condition operands all get
+	// the toggle — n8n reaches the same shape through noDataExpression.
 	const expressionCapable = $derived(
 		property.kind === 'string' ||
 			property.kind === 'number' ||
 			property.kind === 'json' ||
-			property.kind === 'dateTime'
+			property.kind === 'dateTime' ||
+			property.kind === 'options' ||
+			property.kind === 'resourceLocator' ||
+			property.kind === 'keyValue' ||
+			property.kind === 'assignmentCollection' ||
+			property.kind === 'conditions'
 	);
 
 	/** Every kind this panel knows how to render. */
@@ -208,9 +212,32 @@
 	const addable = $derived(property.kind === 'collection' ? addableOptions(property, value, siblings) : []);
 	const strandedKeys = $derived(property.kind === 'collection' ? strandedOptions(property, value, siblings) : []);
 	const unreadableCollection = $derived(property.kind === 'collection' ? unreadable(value) : null);
+
+	// Structured values are pretty-printed rather than String()'d: String on an
+	// object is "[object Object]", and the first keystroke wrote that text back.
+	function jsonText(input: unknown): string {
+		if (typeof input === 'string') return input;
+		if (input === undefined || input === null) return '';
+		try {
+			return JSON.stringify(input, null, 2);
+		} catch {
+			return String(input);
+		}
+	}
+
+	let jsonError = $state<string | null>(null);
+
+	function tryParseJson(text: string): { ok: true; value: unknown } | { ok: false } {
+		const trimmed = text.trim();
+		if (trimmed === '') return { ok: true, value: '' };
+		try {
+			return { ok: true, value: JSON.parse(text) };
+		} catch {
+			return { ok: false };
+		}
+	}
 	const objectValue = $derived(isObject(value) ? value : {});
 	// Rows, never a string. The whole list is handed back on every edit, so
-	// nothing in this component can turn an assignment collection into text.
 	const assignments = $derived(readAssignments(value));
 
 	function updateAssignment(index: number, patch: Partial<Assignment>) {
@@ -231,20 +258,54 @@
 		onChange(writeAssignments([...assignments, { id: newAssignmentID(assignments), name: '', type: 'string', value: '' }]));
 	}
 
-	/** What a row's value editor shows. Structured values are edited as JSON. */
+	/** What a row's value editor shows: the template text for expressions. */
 	function assignmentText(row: Assignment): string {
+		if (isExpression(row.value)) return expressionTemplate(row.value);
 		if (row.type === 'array' || row.type === 'object') {
 			return typeof row.value === 'string' ? row.value : JSON.stringify(row.value ?? (row.type === 'array' ? [] : {}));
 		}
 		return displayValue(row.value);
 	}
 
-	function renameKey(previousKey: string, nextKey: string) {
-		onChange(renameKeyValue(objectValue, previousKey, nextKey));
+	function assignmentIsExpression(row: Assignment): boolean {
+		return isExpression(row.value);
 	}
 
-	function updateKeyValue(key: string, nextValue: string) {
-		onChange({ ...objectValue, [key]: parseValue(nextValue) });
+	function toggleAssignmentExpression(index: number) {
+		const row = assignments[index];
+		const next = assignmentIsExpression(row) ? asFixed(row.value) : asExpression(row.value);
+		updateAssignment(index, { value: next });
+	}
+
+	function assignmentInput(index: number, row: Assignment, text: string) {
+		// Typing {{ switches the row to expression mode, as n8n does; clearing
+		// the braces back out returns it to a literal.
+		if (isExpression(row.value) || text.includes('{{')) {
+			updateAssignment(index, { value: { mode: 'expression', value: text } });
+			return;
+		}
+		updateAssignment(index, { value: row.type === 'number' ? text : text });
+	}
+
+	function keyValueText(item: unknown): string {
+		return isExpression(item) ? expressionTemplate(item) : displayValue(item);
+	}
+
+	function toggleKeyValueExpression(key: string) {
+		const item = objectValue[key];
+		onChange({ ...objectValue, [key]: isExpression(item) ? asFixed(item) : asExpression(item) });
+	}
+
+	function keyValueInput(key: string, item: unknown, text: string) {
+		if (isExpression(item) || text.includes('{{')) {
+			onChange({ ...objectValue, [key]: { mode: 'expression', value: text } });
+			return;
+		}
+		onChange({ ...objectValue, [key]: parseValue(text) });
+	}
+
+	function renameKey(previousKey: string, nextKey: string) {
+		onChange(renameKeyValue(objectValue, previousKey, nextKey));
 	}
 
 	function removeKeyValue(key: string) {
@@ -254,13 +315,27 @@
 	}
 
 	function addKeyValue() {
-		onChange({ ...objectValue, '': '' });
+		// A suffixed key rather than '': adding twice must yield two rows, and
+		// renaming onto an existing key must not silently overwrite it.
+		let candidate = `field${Object.keys(objectValue).length + 1}`;
+		let suffix = Object.keys(objectValue).length + 1;
+		while (Object.prototype.hasOwnProperty.call(objectValue, candidate)) {
+			suffix += 1;
+			candidate = `field${suffix}`;
+		}
+		onChange({ ...objectValue, [candidate]: '' });
 	}
 
-	const conditionRows = $derived(readConditions(value));
+	const conditionFilter = $derived(readFilterValue(value));
 
-	function writeConditions(rows: Condition[]) {
-		onChange(rows);
+	function writeFilter(next: { combinator?: 'and' | 'or'; conditions?: Condition[] }) {
+		onChange(
+			writeFilterValue({
+				combinator: next.combinator ?? conditionFilter.combinator,
+				conditions: next.conditions ?? conditionFilter.conditions,
+				options: conditionFilter.options
+			})
+		);
 	}
 
 	/** The label of a chosen option, cached so the picker reads back. */
@@ -322,10 +397,14 @@
 			</button>
 		{/if}
 	</div>
-	{#if property.description}<p class="text-[0.6875rem] leading-4 text-muted-foreground">{property.description}</p>{/if}
-
 	{#if expressionMode}
-		<input id={`property-${property.key}`} value={template} spellcheck="false" class="h-7 rounded-md border border-primary/40 bg-primary/5 px-2 font-mono text-xs" aria-describedby={`property-${property.key}-hint`} oninput={(event) => onChange({ mode: 'expression', value: event.currentTarget.value })} />
+		<!-- An auto-growing textarea, never an input: browsers strip line breaks
+		     from an input's value, so a multi-line expression flattened on first
+		     edit and the flattened text was written back on the next keystroke. -->
+		<textarea id={`property-${property.key}`} value={template} spellcheck="false" rows={Math.min(12, Math.max(3, template.split('\n').length))} class="rounded-md border border-primary/40 bg-primary/5 px-2 py-1.5 font-mono text-xs" aria-describedby={`property-${property.key}-hint`} oninput={(event) => {
+			const next = event.currentTarget.value;
+			onChange(next.includes('{{') ? { mode: 'expression', value: next } : next);
+		}}></textarea>
 		<p id={`property-${property.key}-hint`} class="text-[0.6875rem] leading-4 {expressionHint(template) ? 'text-destructive' : 'text-muted-foreground'}">
 			{expressionHint(template) ?? 'Resolved per item on the server, for example {{ $json.id }}.'}
 		</p>
@@ -346,7 +425,18 @@
 	{:else if property.kind === 'dateTime'}
 		<input id={`property-${property.key}`} type="datetime-local" value={stringValue} class="h-7 rounded-md border border-input bg-background px-2 text-xs" oninput={(event) => onChange(event.currentTarget.value)} />
 	{:else if property.kind === 'json'}
-		<textarea id={`property-${property.key}`} value={stringValue} spellcheck="false" rows={typeOptions.rows || 4} class="rounded-md border border-input bg-background px-2 py-1.5 font-mono text-[0.6875rem]" oninput={(event) => onChange(event.currentTarget.value)}></textarea>
+		<textarea id={`property-${property.key}`} value={jsonText(value)} spellcheck="false" rows={typeOptions.rows || 4} class="rounded-md border border-input bg-background px-2 py-1.5 font-mono text-[0.6875rem]" aria-describedby={jsonError ? `property-${property.key}-json-error` : undefined} oninput={(event) => {
+			jsonError = null;
+		}} onblur={(event) => {
+			const parsed = tryParseJson(event.currentTarget.value);
+			if (parsed.ok) {
+				jsonError = null;
+				onChange(parsed.value);
+			} else {
+				jsonError = 'This is not valid JSON yet — fix it before saving.';
+			}
+		}}></textarea>
+		{#if jsonError}<p id={`property-${property.key}-json-error`} role="alert" class="text-[0.6875rem] leading-4 text-destructive">{jsonError}</p>{/if}
 	{:else if property.kind === 'multiOptions'}
 		<div class="grid gap-1 rounded-md border border-input p-1.5">
 			{#each property.options ?? [] as option (option.value)}
@@ -455,33 +545,32 @@
 			{/if}
 		</div>
 	{:else if property.kind === 'fixedCollection'}
-		<!-- The multi-group fixed collection, which has no control yet: shown
-		     as what is configured without pretending to edit a shape there is
-		     no control for. -->
+		<!-- The multi-group fixed collection, which has no row builder yet for
+		     several groups: shown as what is configured without pretending to
+		     edit a shape there is no control for. -->
 		<div class="grid gap-1 rounded-md border border-dashed border-input p-1.5 text-[0.6875rem] text-muted-foreground">
 			<span>{(property.fields ?? []).length || (property.groups ?? []).length} nested field(s)</span>
-			<textarea aria-label={`${property.label} value`} value={stringValue} spellcheck="false" rows={3} class="rounded border border-input bg-background px-1.5 py-1 font-mono text-[0.6875rem]" oninput={(event) => onChange(event.currentTarget.value)}></textarea>
+			<textarea aria-label={`${property.label} value`} value={jsonText(value)} spellcheck="false" rows={3} class="rounded border border-input bg-background px-1.5 py-1 font-mono text-[0.6875rem]" onblur={(event) => {
+				const parsed = tryParseJson(event.currentTarget.value);
+				if (parsed.ok) onChange(parsed.value);
+			}}></textarea>
 		</div>
-	{:else if property.kind === 'options'}
-		<select id={`property-${property.key}`} value={stringValue} class="h-7 rounded-md border border-input bg-background px-1.5 text-xs" onchange={(event) => onChange(event.currentTarget.value)}>
-			{#each selectableOptions as option (option.value)}
-				<option value={option.value}>{option.label}</option>
-			{/each}
-		</select>
-		{#if loadState.reason}
-			<!-- An empty list the user can act on, rather than an empty dropdown
-			     that reads as "this service has nothing". -->
-			<p class="text-[0.6875rem] leading-4 text-muted-foreground">{loadState.reason}</p>
-		{/if}
 	{:else if property.kind === 'keyValue'}
 		<div class="grid gap-1.5 rounded-md border border-input p-1.5">
 			{#each Object.entries(objectValue) as [key, item] (key)}
-				<div class="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-1">
-					<input aria-label={`${property.label} field name`} value={key} class="h-7 min-w-0 rounded border border-input bg-background px-1.5 font-mono text-[0.6875rem]" onchange={(event) => renameKey(key, event.currentTarget.value)} />
-					<input aria-label={`${property.label} field value`} value={displayValue(item)} class="h-7 min-w-0 rounded border border-input bg-background px-1.5 text-[0.6875rem]" oninput={(event) => updateKeyValue(key, event.currentTarget.value)} />
-					<button type="button" aria-label={`Remove ${key || 'assignment'}`} class="grid size-7 place-items-center rounded text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive" onclick={() => removeKeyValue(key)}>
-						<X aria-hidden="true" class="size-3.5" />
-					</button>
+				<div class="grid gap-1 rounded border border-border/70 p-1.5">
+					<div class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-1">
+						<input aria-label={`${property.label} field name`} value={key} class="h-7 min-w-0 rounded border border-input bg-background px-1.5 font-mono text-[0.6875rem]" onchange={(event) => renameKey(key, event.currentTarget.value)} />
+						<button type="button" role="switch" aria-checked={isExpression(item)} aria-label={`${property.label} ${key}: expression mode`} class="shrink-0 rounded border border-border px-1 py-0.5 font-mono text-[0.625rem] text-muted-foreground transition-colors hover:bg-muted aria-checked:border-primary/40 aria-checked:bg-primary/10 aria-checked:text-primary" onclick={() => toggleKeyValueExpression(key)}>
+							{isExpression(item) ? 'expr' : 'fixed'}
+						</button>
+					</div>
+					<div class="grid grid-cols-[minmax(0,1fr)_auto] gap-1">
+						<input aria-label={`${property.label} field value`} value={keyValueText(item)} class="h-7 min-w-0 rounded border border-input bg-background px-1.5 font-mono text-[0.6875rem]" oninput={(event) => keyValueInput(key, item, event.currentTarget.value)} />
+						<button type="button" aria-label={`Remove ${key || 'assignment'}`} class="grid size-7 place-items-center rounded text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive" onclick={() => removeKeyValue(key)}>
+							<X aria-hidden="true" class="size-3.5" />
+						</button>
+					</div>
 				</div>
 			{/each}
 			<button type="button" class="inline-flex h-6 items-center gap-1 justify-self-start rounded border border-border px-1.5 text-[0.6875rem] transition-colors hover:bg-muted" onclick={addKeyValue}>
@@ -491,24 +580,32 @@
 	{:else if property.kind === 'assignmentCollection'}
 		<div class="grid gap-1.5 rounded-md border border-input p-1.5">
 			{#each assignments as row, index (row.id)}
-				<div class="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1.2fr)_auto] gap-1">
-					<input aria-label={`${property.label} field name`} value={row.name} placeholder="fieldName" class="h-7 min-w-0 rounded border border-input bg-background px-1.5 font-mono text-[0.6875rem]" oninput={(event) => updateAssignment(index, { name: event.currentTarget.value })} />
-					<select aria-label={`${property.label} field type`} value={row.type} class="h-7 rounded border border-input bg-background px-1 text-[0.6875rem]" onchange={(event) => retypeAssignment(index, event.currentTarget.value as AssignmentType)}>
-						{#each ASSIGNMENT_TYPES as type (type)}
-							<option value={type}>{type}</option>
-						{/each}
-					</select>
-					{#if row.type === 'boolean'}
-						<select aria-label={`${property.label} field value`} value={row.value === true ? 'true' : 'false'} class="h-7 rounded border border-input bg-background px-1 text-[0.6875rem]" onchange={(event) => updateAssignment(index, { value: event.currentTarget.value === 'true' })}>
-							<option value="true">true</option>
-							<option value="false">false</option>
+				<div class="grid gap-1 rounded border border-border/70 p-1.5">
+					<div class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-1">
+						<input aria-label={`${property.label} field name`} value={row.name} placeholder="fieldName" class="h-7 min-w-0 rounded border border-input bg-background px-1.5 font-mono text-[0.6875rem]" oninput={(event) => updateAssignment(index, { name: event.currentTarget.value })} />
+						<button type="button" role="switch" aria-checked={assignmentIsExpression(row)} aria-label={`${property.label} ${row.name || 'field'}: expression mode`} class="shrink-0 rounded border border-border px-1 py-0.5 font-mono text-[0.625rem] text-muted-foreground transition-colors hover:bg-muted aria-checked:border-primary/40 aria-checked:bg-primary/10 aria-checked:text-primary" onclick={() => toggleAssignmentExpression(index)}>
+							{assignmentIsExpression(row) ? 'expr' : 'fixed'}
+						</button>
+					</div>
+					<div class="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1.2fr)_auto] gap-1">
+						<select aria-label={`${property.label} field type`} value={row.type} class="h-7 rounded border border-input bg-background px-1 text-[0.6875rem]" onchange={(event) => retypeAssignment(index, event.currentTarget.value as AssignmentType)}>
+							{#each ASSIGNMENT_TYPES as type (type)}
+								<option value={type}>{type}</option>
+							{/each}
 						</select>
-					{:else}
-						<input aria-label={`${property.label} field value`} value={assignmentText(row)} class="h-7 min-w-0 rounded border border-input bg-background px-1.5 text-[0.6875rem]" oninput={(event) => updateAssignment(index, { value: row.type === 'number' ? Number(event.currentTarget.value) : event.currentTarget.value })} />
-					{/if}
-					<button type="button" aria-label={`Remove ${row.name || 'field'}`} class="grid size-7 place-items-center rounded text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive" onclick={() => removeAssignment(index)}>
-						<X aria-hidden="true" class="size-3.5" />
-					</button>
+						<span class="sr-only">value</span>
+						{#if row.type === 'boolean' && !assignmentIsExpression(row)}
+							<select aria-label={`${property.label} field value`} value={row.value === true ? 'true' : 'false'} class="h-7 rounded border border-input bg-background px-1 text-[0.6875rem]" onchange={(event) => updateAssignment(index, { value: event.currentTarget.value === 'true' })}>
+								<option value="true">true</option>
+								<option value="false">false</option>
+							</select>
+						{:else}
+							<input aria-label={`${property.label} field value`} value={assignmentText(row)} class="h-7 min-w-0 rounded border border-input bg-background px-1.5 font-mono text-[0.6875rem]" oninput={(event) => assignmentInput(index, row, event.currentTarget.value)} />
+						{/if}
+						<button type="button" aria-label={`Remove ${row.name || 'field'}`} class="grid size-7 place-items-center rounded text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive" onclick={() => removeAssignment(index)}>
+							<X aria-hidden="true" class="size-3.5" />
+						</button>
+					</div>
 				</div>
 			{/each}
 			<button type="button" class="inline-flex h-6 items-center gap-1 justify-self-start rounded border border-border px-1.5 text-[0.6875rem] transition-colors hover:bg-muted" onclick={addAssignment}>
@@ -625,40 +722,76 @@
 		</div>
 	{:else if property.kind === 'conditions'}
 		<div class="grid gap-1.5 rounded-md border border-input p-1.5">
-			{#each conditionRows as row, index (index)}
+			<div class="flex items-center gap-2">
+				<span class="text-[0.6875rem] text-muted-foreground">Match</span>
+				<select aria-label={`${property.label} combinator`} value={conditionFilter.combinator} class="h-7 rounded border border-input bg-background px-1.5 text-[0.6875rem]" onchange={(event) => writeFilter({ combinator: event.currentTarget.value === 'or' ? 'or' : 'and' })}>
+					<option value="and">All (AND)</option>
+					<option value="or">Any (OR)</option>
+				</select>
+			</div>
+			{#each conditionFilter.conditions as row, index (index)}
 				<div class="grid gap-1 rounded border border-border/70 p-1.5">
 					<div class="flex items-center gap-1">
-						<input aria-label={`${property.label} field ${index + 1}`} value={row.field} placeholder="customer.tier" class="h-7 min-w-0 flex-1 rounded border border-input bg-background px-1.5 font-mono text-[0.6875rem]" oninput={(event) => writeConditions(updateCondition(conditionRows, index, { field: event.currentTarget.value }))} />
+						<input aria-label={`${property.label} left value ${index + 1}`} value={String(row.leftValue ?? '')} placeholder={'{{ $json.field }}'} class="h-7 min-w-0 flex-1 rounded border border-input bg-background px-1.5 font-mono text-[0.6875rem]" oninput={(event) => writeFilter({ conditions: updateCondition(conditionFilter.conditions, index, { leftValue: event.currentTarget.value }) })} />
 						<!-- Order is meaningful: the rules read top to bottom. -->
-						<button type="button" aria-label={`Move condition ${index + 1} up`} disabled={index === 0} class="grid size-7 place-items-center rounded text-muted-foreground transition-colors hover:bg-muted disabled:opacity-40" onclick={() => writeConditions(moveCondition(conditionRows, index, -1))}>
+						<button type="button" aria-label={`Move condition ${index + 1} up`} disabled={index === 0} class="grid size-7 place-items-center rounded text-muted-foreground transition-colors hover:bg-muted disabled:opacity-40" onclick={() => writeFilter({ conditions: moveCondition(conditionFilter.conditions, index, -1) })}>
 							<ChevronUp aria-hidden="true" class="size-3.5" />
 						</button>
-						<button type="button" aria-label={`Move condition ${index + 1} down`} disabled={index === conditionRows.length - 1} class="grid size-7 place-items-center rounded text-muted-foreground transition-colors hover:bg-muted disabled:opacity-40" onclick={() => writeConditions(moveCondition(conditionRows, index, 1))}>
+						<button type="button" aria-label={`Move condition ${index + 1} down`} disabled={index === conditionFilter.conditions.length - 1} class="grid size-7 place-items-center rounded text-muted-foreground transition-colors hover:bg-muted disabled:opacity-40" onclick={() => writeFilter({ conditions: moveCondition(conditionFilter.conditions, index, 1) })}>
 							<ChevronDown aria-hidden="true" class="size-3.5" />
 						</button>
-						<button type="button" aria-label={`Remove condition ${index + 1}`} class="grid size-7 place-items-center rounded text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive" onclick={() => writeConditions(removeCondition(conditionRows, index))}>
+						<button type="button" aria-label={`Remove condition ${index + 1}`} class="grid size-7 place-items-center rounded text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive" onclick={() => writeFilter({ conditions: removeCondition(conditionFilter.conditions, index) })}>
 							<X aria-hidden="true" class="size-3.5" />
 						</button>
 					</div>
-					<select aria-label={`${property.label} operator ${index + 1}`} value={row.operator} class="h-7 rounded border border-input bg-background px-1.5 text-[0.6875rem]" onchange={(event) => writeConditions(updateCondition(conditionRows, index, { operator: event.currentTarget.value as ConditionOperator }))}>
-						<option value="equals">equals</option>
-						<option value="notEquals">does not equal</option>
-						<option value="exists">exists</option>
-						<option value="notExists">does not exist</option>
-					</select>
-					{#if !VALUELESS_OPERATORS.includes(row.operator)}
-						<input aria-label={`${property.label} value ${index + 1}`} value={displayValue(row.value)} class="h-7 rounded border border-input bg-background px-1.5 text-[0.6875rem]" oninput={(event) => writeConditions(updateCondition(conditionRows, index, { value: parseValue(event.currentTarget.value) }))} />
+					<div class="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-1">
+						<select aria-label={`${property.label} type ${index + 1}`} value={row.operator.type} class="h-7 rounded border border-input bg-background px-1.5 text-[0.6875rem]" onchange={(event) => writeFilter({ conditions: updateCondition(conditionFilter.conditions, index, { operator: { type: event.currentTarget.value as ConditionValueType, operation: row.operator.operation } }) })}>
+							<option value="string">String</option>
+							<option value="number">Number</option>
+							<option value="boolean">Boolean</option>
+							<option value="dateTime">Date &amp; Time</option>
+							<option value="array">Array</option>
+							<option value="object">Object</option>
+						</select>
+						<select aria-label={`${property.label} operator ${index + 1}`} value={row.operator.operation} class="h-7 rounded border border-input bg-background px-1.5 text-[0.6875rem]" onchange={(event) => writeFilter({ conditions: updateCondition(conditionFilter.conditions, index, { operator: { type: row.operator.type, operation: event.currentTarget.value as ConditionOperator } }) })}>
+							<option value="equals">equals</option>
+							<option value="notEquals">does not equal</option>
+							<option value="contains">contains</option>
+							<option value="notContains">does not contain</option>
+							<option value="startsWith">starts with</option>
+							<option value="notStartsWith">does not start with</option>
+							<option value="endsWith">ends with</option>
+							<option value="notEndsWith">does not end with</option>
+							<option value="regex">matches regex</option>
+							<option value="notRegex">does not match regex</option>
+							<option value="empty">is empty</option>
+							<option value="notEmpty">is not empty</option>
+							<option value="exists">exists</option>
+							<option value="notExists">does not exist</option>
+							<option value="larger">larger than</option>
+							<option value="largerEqual">larger or equal</option>
+							<option value="smaller">smaller than</option>
+							<option value="smallerEqual">smaller or equal</option>
+							<option value="true">is true</option>
+							<option value="false">is false</option>
+							<option value="after">after</option>
+							<option value="before">before</option>
+						</select>
+					</div>
+					{#if !VALUELESS_OPERATORS.includes(row.operator.operation)}
+						<input aria-label={`${property.label} right value ${index + 1}`} value={String(row.rightValue ?? '')} class="h-7 rounded border border-input bg-background px-1.5 font-mono text-[0.6875rem]" oninput={(event) => writeFilter({ conditions: updateCondition(conditionFilter.conditions, index, { rightValue: event.currentTarget.value }) })} />
 					{/if}
 				</div>
 			{/each}
-			<button type="button" class="inline-flex h-6 items-center gap-1 justify-self-start rounded border border-border px-1.5 text-[0.6875rem] transition-colors hover:bg-muted" onclick={() => writeConditions([...conditionRows, newCondition()])}>
+			<button type="button" class="inline-flex h-6 items-center gap-1 justify-self-start rounded border border-border px-1.5 text-[0.6875rem] transition-colors hover:bg-muted" onclick={() => writeFilter({ conditions: [...conditionFilter.conditions, newCondition()] })}>
 				<Plus aria-hidden="true" class="size-3" />Add condition
 			</button>
 		</div>
-	{:else if RENDERED.has(property.kind) && (typeOptions.rows ?? 0) > 1}
+	{:else if RENDERED.has(property.kind) && ((typeOptions.rows ?? 0) > 1 || (typeof value === 'string' && value.includes('\n')))}
 		<!-- Multi-line is a different element, not an attribute: rows has no
-		     meaning on an input. -->
-		<textarea id={`property-${property.key}`} value={stringValue} rows={typeOptions.rows} class="rounded-md border border-input bg-background px-2 py-1.5 text-xs" oninput={(event) => onChange(event.currentTarget.value)}></textarea>
+		     meaning on an input, and an input strips the newlines of a value
+		     that arrived multi-line. -->
+		<textarea id={`property-${property.key}`} value={stringValue} rows={Math.max(typeOptions.rows ?? 3, stringValue.split('\n').length)} class="rounded-md border border-input bg-background px-2 py-1.5 text-xs" oninput={(event) => onChange(event.currentTarget.value)}></textarea>
 	{:else if RENDERED.has(property.kind)}
 		<input id={`property-${property.key}`} value={stringValue} type={typeOptions.password ? 'password' : 'text'} class="h-7 rounded-md border border-input bg-background px-2 text-xs" oninput={(event) => onChange(event.currentTarget.value)} />
 	{:else}

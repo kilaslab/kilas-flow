@@ -1,48 +1,149 @@
 /**
  * Reading and writing a `conditions` property's rows.
  *
- * The stored value has always been an array; the control only ever wrote
- * `[next]`, so the second row was unreachable — a rule that needed two
- * conditions could be imported and could run, but could not be edited without
- * hand-writing JSON.
+ * The stored value is n8n's filter object
+ * `{combinator, conditions: [{leftValue, operator: {type, operation}, rightValue}], options}`
+ * — the shape the runtime executes and the importer writes. A bare array of
+ * legacy `{field, operator, value}` rows (what this editor used to write) is
+ * still read, so old documents keep opening.
  */
 
-export type ConditionOperator = 'equals' | 'notEquals' | 'exists' | 'notExists';
+export type ConditionOperator =
+	| 'equals'
+	| 'notEquals'
+	| 'contains'
+	| 'notContains'
+	| 'startsWith'
+	| 'notStartsWith'
+	| 'endsWith'
+	| 'notEndsWith'
+	| 'regex'
+	| 'notRegex'
+	| 'empty'
+	| 'notEmpty'
+	| 'exists'
+	| 'notExists'
+	| 'larger'
+	| 'largerEqual'
+	| 'smaller'
+	| 'smallerEqual'
+	| 'true'
+	| 'false'
+	| 'after'
+	| 'before';
+
+export type ConditionValueType = 'string' | 'number' | 'boolean' | 'dateTime' | 'array' | 'object';
+
+export type Combinator = 'and' | 'or';
 
 export type Condition = {
-	field: string;
-	operator: ConditionOperator;
-	/** Absent for the operators that take no value. */
-	value?: unknown;
+	leftValue: unknown;
+	operator: { type: ConditionValueType; operation: ConditionOperator };
+	rightValue?: unknown;
+};
+
+export type FilterValue = {
+	combinator: Combinator;
+	conditions: Condition[];
+	options: { caseSensitive: boolean };
 };
 
 /** The operators that compare against nothing. */
-export const VALUELESS_OPERATORS: ConditionOperator[] = ['exists', 'notExists'];
+export const VALUELESS_OPERATORS: ConditionOperator[] = ['exists', 'notExists', 'empty', 'notEmpty', 'true', 'false'];
 
-const OPERATORS: ConditionOperator[] = ['equals', 'notEquals', 'exists', 'notExists'];
+const OPERATOR_TYPES: Record<ConditionOperator, ConditionValueType> = {
+	equals: 'string',
+	notEquals: 'string',
+	contains: 'string',
+	notContains: 'string',
+	startsWith: 'string',
+	notStartsWith: 'string',
+	endsWith: 'string',
+	notEndsWith: 'string',
+	regex: 'string',
+	notRegex: 'string',
+	empty: 'string',
+	notEmpty: 'string',
+	exists: 'string',
+	notExists: 'string',
+	larger: 'number',
+	largerEqual: 'number',
+	smaller: 'number',
+	smallerEqual: 'number',
+	true: 'boolean',
+	false: 'boolean',
+	after: 'dateTime',
+	before: 'dateTime'
+};
+
+const KNOWN_OPERATIONS = new Set<string>(Object.keys(OPERATOR_TYPES));
 
 function isObject(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function operatorOf(value: unknown): ConditionOperator {
-	return OPERATORS.includes(value as ConditionOperator) ? (value as ConditionOperator) : 'equals';
+function operatorOf(type: unknown, operation: unknown): { type: ConditionValueType; operation: ConditionOperator } {
+	const op = KNOWN_OPERATIONS.has(String(operation)) ? (String(operation) as ConditionOperator) : 'equals';
+	const declared = type === 'string' || type === 'number' || type === 'boolean' || type === 'dateTime' || type === 'array' || type === 'object' ? (type as ConditionValueType) : null;
+	return { type: declared ?? OPERATOR_TYPES[op], operation: op };
+}
+
+function combinatorOf(value: unknown): Combinator {
+	return value === 'or' ? 'or' : 'and';
+}
+
+/** Reads the stored filter, whatever shape it currently holds. */
+export function readFilterValue(value: unknown): FilterValue {
+	if (isObject(value) && Array.isArray(value.conditions)) {
+		const options = isObject(value.options) ? value.options : {};
+		return {
+			combinator: combinatorOf(value.combinator),
+			conditions: value.conditions.filter(isObject).map((row) => readRichRow(row)),
+			options: { caseSensitive: typeof options.caseSensitive === 'boolean' ? options.caseSensitive : true }
+		};
+	}
+	return { combinator: 'and', conditions: readConditions(value), options: { caseSensitive: true } };
+}
+
+function readRichRow(row: Record<string, unknown>): Condition {
+	const operator = isObject(row.operator) ? row.operator : {};
+	const parsed = operatorOf(operator.type, operator.operation);
+	const condition: Condition = { leftValue: row.leftValue ?? '', operator: parsed };
+	if (!VALUELESS_OPERATORS.includes(parsed.operation)) condition.rightValue = row.rightValue ?? '';
+	return condition;
+}
+
+/** Writes rows back in the rich shape the runtime executes. */
+export function writeFilterValue(filter: FilterValue): Record<string, unknown> {
+	return {
+		combinator: filter.combinator,
+		conditions: filter.conditions.map((row) => {
+			const entry: Record<string, unknown> = {
+				leftValue: row.leftValue,
+				operator: { type: row.operator.type, operation: row.operator.operation }
+			};
+			if (!VALUELESS_OPERATORS.includes(row.operator.operation)) entry.rightValue = row.rightValue ?? '';
+			return entry;
+		}),
+		options: { caseSensitive: filter.options.caseSensitive }
+	};
 }
 
 /** Reads the stored rows, in order, skipping anything that is not one. */
 export function readConditions(value: unknown): Condition[] {
 	if (!Array.isArray(value)) return [];
 	return value.filter(isObject).map((row) => {
-		const operator = operatorOf(row.operator);
-		const condition: Condition = { field: typeof row.field === 'string' ? row.field : '', operator };
-		if (!VALUELESS_OPERATORS.includes(operator)) condition.value = row.value;
+		if (isObject(row.operator)) return readRichRow(row);
+		const operator = operatorOf(undefined, row.operator);
+		const condition: Condition = { leftValue: typeof row.field === 'string' ? row.field : '', operator };
+		if (!VALUELESS_OPERATORS.includes(operator.operation)) condition.rightValue = row.value;
 		return condition;
 	});
 }
 
 /** A fresh row, at the defaults the control shows. */
 export function newCondition(): Condition {
-	return { field: '', operator: 'equals', value: '' };
+	return { leftValue: '', operator: { type: 'string', operation: 'equals' }, rightValue: '' };
 }
 
 /**
@@ -54,7 +155,7 @@ export function updateCondition(rows: Condition[], index: number, patch: Partial
 	return rows.map((row, position) => {
 		if (position !== index) return row;
 		const next: Condition = { ...row, ...patch };
-		if (VALUELESS_OPERATORS.includes(next.operator)) delete next.value;
+		if (next.operator && VALUELESS_OPERATORS.includes(next.operator.operation)) delete next.rightValue;
 		return next;
 	});
 }

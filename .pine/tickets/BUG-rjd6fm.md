@@ -1,7 +1,7 @@
 ---
 id: BUG-rjd6fm
 title: 'NDV inputs: condition builder, routing rules, key-value rows, defaults, validation, timestamps'
-status: todo
+status: doing
 priority: high
 labels:
     - editor
@@ -10,7 +10,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:10Z"
-updated: "2026-09-19T12:06:10Z"
+updated: "2026-09-19T12:40:44Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -262,3 +262,11 @@ Files: web/src/lib/components/workflow-editor/property-field.svelte
 - [ ] Nodes cannot be renamed, and new nodes get duplicate names that break $('Name') and the n8n export
 - [ ] Notice properties render their text twice
 - [ ] Adversarial re-verify against live stub/n8n like the Verify phase (no code-only close)
+## Work (WebFormsOps 2026-09-19)
+- status: doing → testing after commit.
+- Condition builder reads/writes n8n filter shape (combinator + typed operators + expression operands), keeps legacy flat rows readable, never overwrites unparseable values with blank rows (conditions.ts + property-field builder).
+- Switch/structured json: pretty-print + parse-on-blur with inline error instead of String()/string-write (no more [object Object] corruption).
+- Set assignments + HTTP keyValue rows: per-row fixed/expr toggle, template text display, auto-expr on {{ typing; number rows no longer Number()-coerce on keystroke (typing preserved, '-' no longer clears field).
+- KeyValue add: suffixed fieldN keys (double-add works); rename onto existing key overwrites still (object shape — array migration needs executor change, out of slice; documented).
+- Defaults shown (values[key] ?? default), load-failure stored value kept as option, resource-locator same (needs panel edit below).
+- Tests: conditions.test.ts rewritten for rich shape (15 passed); vitest conditions+credentials+visibility+assignments+key-value 52 passed; svelte-check 0 errors.
