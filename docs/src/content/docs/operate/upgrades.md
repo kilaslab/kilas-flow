@@ -71,6 +71,16 @@ majors.
 4. Check `/api/v1/ready` before sending traffic: it answers `503` while the
    database is unreachable.
 
+A database populated by a build that predates webhook routes can hold webhook
+bindings with no route, which used to answer on their path label. The
+`webhook_route_backfill` migration gives each of them a minted route on the first
+boot (the log line is `applied migration` with that name), and a webhook is only
+ever matched by its route, never by its path label. Such a binding's address
+therefore changes from `/webhook/<label>` to `/webhook/<route>`: read the new
+one with `GET /workflows/{id}/webhooks`, and activate again any workflow whose
+trigger registers its own address with the sender (Telegram, WAHA), so that the
+sender learns it. Bindings that already have a route are not touched.
+
 Switching drivers (SQLite to PostgreSQL or back) is not an upgrade path:
 there is no migration between backends, the new side comes up empty, and
 anything worth keeping must be exported first.

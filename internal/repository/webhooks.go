@@ -66,19 +66,40 @@ type WebhookRepository interface {
 
 var _ WebhookRepository = (*GORMWorkflowStore)(nil)
 
-// Resolve finds the active binding for one inbound request.
+// Resolve finds the active binding for one inbound request, by method and route.
 //
-// It is deliberately not tenant-scoped: an inbound webhook has no session, and
-// the route is the only thing identifying it. The binding it returns carries
-// the tenant, which every downstream operation is then scoped by. Because the
-// route is opaque and globally unique, exactly one row can match — a
-// tenant-scoped index without a tenant in the URL would have produced two rows
-// matching one request, which is a cross-tenant routing bug rather than a
-// refused activation.
+// It is the deliberate unscoped binding lookup: it takes no tenant, and the
+// binding it returns carries the tenant that every downstream operation is then
+// scoped by. That is a decision rather than an omission, and it holds because:
+//
+//  1. An inbound webhook has no session and its URL carries no tenant, and the
+//     public URL format must not change, so the lookup cannot take one.
+//  2. The route in a binding comes only from mintWebhookRoute, which draws it
+//     from webhook_routes. (The webhook_route_backfill migration gave rows an
+//     older build left with none a route from the same table.)
+//  3. webhook_routes is unique on the route and on (tenant, workflow, node), so
+//     one route names exactly one node of one tenant.
+//  4. uidx_webhook_bindings_route is unique on (method, route), so one request
+//     leaves at most one row.
+//  5. The path label is not an identity. Migration 000011 made it non-unique
+//     and two tenants routinely hold the same one, so it is never a lookup key:
+//     a row with no route is unroutable, not routable by its label.
+//
+// What the schema does not enforce is that a binding's route belongs to its own
+// node. Bindings have no foreign key to webhook_routes, and they cannot be
+// unique on the route alone because one node binds several methods on one
+// route. That is why ResolveRoute, which can return several rows, checks that
+// they agree on one owner.
 func (store *GORMWorkflowStore) Resolve(ctx context.Context, method, route string) (WebhookBinding, error) {
+	// An empty route names nothing. It is also what the column holds on a row
+	// that has no route, so without this a lookup for nothing would answer with
+	// one.
+	if route == "" {
+		return WebhookBinding{}, mapNotFound(gorm.ErrRecordNotFound, "webhook binding")
+	}
 	var model webhookBindingModel
 	if err := store.db.WithContext(ctx).
-		Where("method = ? AND (route = ? OR (route = '' AND path = ?))", method, route, route).
+		Where("method = ? AND route = ?", method, route).
 		First(&model).Error; err != nil {
 		return WebhookBinding{}, mapNotFound(err, "webhook binding")
 	}
@@ -89,28 +110,40 @@ func (store *GORMWorkflowStore) Resolve(ctx context.Context, method, route strin
 //
 // A route is the routing identity, so a caller that names one — a CORS
 // preflight does, before it knows which method the request will use — needs
-// the bindings on it rather than the single row Resolve picks by method. A row
-// activated before routes were minted answers on its path, so one route can
-// carry more than one method's binding; a caller that already knows the method
-// calls Resolve, which is the narrower lookup.
+// the bindings on it rather than the single row Resolve picks by method. One
+// node bound on several methods shares one route, so a route can carry more
+// than one method's binding; a caller that already knows the method calls
+// Resolve, which is the narrower lookup.
+//
+// Like Resolve it is unscoped by tenant, for the reasons given there, and it
+// matches the route alone: a row with no route is not found, and a path label
+// never is. It is also the one lookup that can return several rows, so it
+// checks what the schema cannot — that they belong to a single tenant,
+// workflow and node — and refuses a route that does not as not found. Callers
+// already answer every error the same way, so the refusal costs nothing and
+// keeps a preflight from advertising the methods of two different owners.
 //
 // The order is by method so a caller can build a stable answer — an Allow
 // header — from the slice without sorting it again.
 func (store *GORMWorkflowStore) ResolveRoute(ctx context.Context, route string) ([]WebhookBinding, error) {
-	// An empty route would match every row activated before routes were
-	// minted, whose route column is empty — a lookup for nothing answering
-	// with everything.
+	// Defence in depth. Nothing is bound on an empty route, and a lookup for
+	// nothing must never answer with something.
 	if route == "" {
 		return nil, mapNotFound(gorm.ErrRecordNotFound, "webhook binding")
 	}
 	var models []webhookBindingModel
 	if err := store.db.WithContext(ctx).
-		Where("route = ? OR (route = '' AND path = ?)", route, route).
+		Where("route = ?", route).
 		Order("method ASC").Find(&models).Error; err != nil {
 		return nil, fmt.Errorf("resolve webhook route: %w", err)
 	}
 	if len(models) == 0 {
 		return nil, mapNotFound(gorm.ErrRecordNotFound, "webhook binding")
+	}
+	for _, model := range models[1:] {
+		if model.TenantID != models[0].TenantID || model.WorkflowID != models[0].WorkflowID || model.NodeID != models[0].NodeID {
+			return nil, fmt.Errorf("webhook route is bound to more than one node and is not routable: %w", ErrNotFound)
+		}
 	}
 	bindings := make([]WebhookBinding, 0, len(models))
 	for _, model := range models {
@@ -136,16 +169,14 @@ func bindingFromModel(model webhookBindingModel) (WebhookBinding, error) {
 			return WebhookBinding{}, fmt.Errorf("decode webhook parameters: %w", err)
 		}
 	}
-	// A row whose route is empty was activated before routes were minted; its
-	// path is its route, so those URLs keep working without reactivation.
-	route := model.Route
-	if route == "" {
-		route = model.Path
-	}
+	// The route is reported as stored. A row with no route used to be given its
+	// path here, which would have handed every caller a label to use as an
+	// address; the row is now unroutable and the migration that backfills routes
+	// leaves none of them.
 	return WebhookBinding{
 		TenantID: model.TenantID, WorkflowID: model.WorkflowID, WorkflowVersionID: model.WorkflowVersionID,
 		NodeID: model.NodeID, NodeType: model.NodeType, Method: model.Method,
-		Route: route, Path: model.Path, Parameters: parameters,
+		Route: model.Route, Path: model.Path, Parameters: parameters,
 	}, nil
 }
 

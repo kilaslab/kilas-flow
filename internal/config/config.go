@@ -400,6 +400,15 @@ type Webhook struct {
 	// ResponseTimeout bounds one trigger delivery end to end.
 	// Env: KILASFLOW_WEBHOOK_RESPONSE_TIMEOUT. Default: 30s.
 	ResponseTimeout time.Duration `koanf:"response_timeout"`
+	// RequireAuth refuses a delivery to any webhook trigger whose
+	// authentication mode is none. Off by default; on is a deployment-wide
+	// posture change. A trigger that verifies its own senders counts as
+	// authenticated — Telegram's secret header, a pack trigger holding an HMAC
+	// secret — while an IP allow-list alone does not. The refusal is a 403 that
+	// names the workflow and the fix, and hosted form pages face the same gate
+	// (a CORS preflight does not, because it cannot carry a credential).
+	// Env: KILASFLOW_WEBHOOK_REQUIRE_AUTH. Default: false.
+	RequireAuth bool `koanf:"require_auth"`
 }
 
 // Embed configures the iframe editor surface.
@@ -654,6 +663,7 @@ func Default() Config {
 		Webhook: Webhook{
 			MaxBodyBytes:    1 << 20,
 			ResponseTimeout: 30 * time.Second,
+			RequireAuth:     false,
 		},
 		Embed: Embed{
 			SigningKeyEnv: "KILASFLOW_EMBED_SIGNING_KEY",

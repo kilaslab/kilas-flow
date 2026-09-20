@@ -251,50 +251,71 @@ func TestClaimedRouteIsReportedAsAConflict(t *testing.T) {
 
 // ResolveRoute answers a request that names a route but not the method it will
 // use, which is what a preflight is. A route bound by several methods has to
-// come back whole — including rows minted before routes existed, whose path is
-// their route.
+// come back whole. It answers on the minted route alone: a row with no route is
+// not routable, and its path — a label, not an address — is never a key, even
+// when a caller names a route that happens to spell one.
+//
+// This replaces a test that also pinned the opposite for rows minted before
+// routes existed ("a row with no minted route answers on its path"). That
+// fallback is what let one tenant's label reach another tenant's workflow, so
+// the clause is gone and its inverse is asserted below.
 func TestResolveRouteReturnsEveryMethodOnOneRoute(t *testing.T) {
 	t.Parallel()
 
+	const route = "0123456789abcdef0123456789abcdef"
 	db, store := newPathLabelStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC()
-	for _, method := range []string{"GET", "POST"} {
+	insert := func(nodeID, method, route, path string) {
+		t.Helper()
 		if err := db.Exec(
 			"INSERT INTO webhook_bindings (tenant_id, workflow_id, workflow_version_id, node_id, node_type, method, route, path, parameters, created_at)"+
 				" VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-			"tenant-a", "wf_legacy", "v_legacy", method, "kilasflow.webhook", method, "", "items", []byte(`{}`), now,
+			"tenant-a", "wf_routed", "v_routed", nodeID, "kilasflow.webhook", method, route, path, []byte(`{}`), now,
 		).Error; err != nil {
 			t.Fatalf("seed the %s binding: %v", method, err)
 		}
 	}
+	// One node bound on two methods shares the one route the node was minted:
+	// that is what a REST endpoint's GET and POST are.
+	for _, method := range []string{"GET", "POST"} {
+		insert("n1", method, route, "items")
+	}
+	// A row with no minted route whose label spells the route above. It must
+	// not answer, whatever it is called.
+	insert("n-unrouted", "PUT", "", route)
 
-	bindings, err := store.ResolveRoute(ctx, "items")
+	bindings, err := store.ResolveRoute(ctx, route)
 	if err != nil {
 		t.Fatalf("ResolveRoute() error = %v", err)
 	}
 	if len(bindings) != 2 {
-		t.Fatalf("ResolveRoute(items) returned %d bindings (%#v), want 2", len(bindings), bindings)
+		t.Fatalf("ResolveRoute(%s) returned %d bindings (%#v), want 2", route, len(bindings), bindings)
 	}
 	if bindings[0].Method != "GET" || bindings[1].Method != "POST" {
 		t.Errorf("methods = [%s %s], want [GET POST] in order", bindings[0].Method, bindings[1].Method)
 	}
 	for _, binding := range bindings {
-		// A row with no minted route answers on its path, so that is the route
-		// the caller asked about.
-		if binding.Route != "items" {
-			t.Errorf("binding route = %q, want %q", binding.Route, "items")
+		if binding.Route != route {
+			t.Errorf("binding route = %q, want %q", binding.Route, route)
+		}
+		if binding.NodeID != "n1" {
+			t.Errorf("binding node = %q, want the routed node n1 and not the unrouted row", binding.NodeID)
 		}
 	}
 	// The method-specific lookup still picks exactly one of them.
 	for _, method := range []string{"GET", "POST"} {
-		resolved, err := store.Resolve(ctx, method, "items")
+		resolved, err := store.Resolve(ctx, method, route)
 		if err != nil {
-			t.Fatalf("Resolve(%s, items) error = %v", method, err)
+			t.Fatalf("Resolve(%s, %s) error = %v", method, route, err)
 		}
 		if resolved.Method != method {
-			t.Errorf("Resolve(%s, items) method = %q", method, resolved.Method)
+			t.Errorf("Resolve(%s, %s) method = %q", method, route, resolved.Method)
 		}
+	}
+	// The unrouted row is not reachable by the route its label spells.
+	if _, err := store.Resolve(ctx, "PUT", route); !errors.Is(err, repository.ErrNotFound) {
+		t.Errorf("Resolve(PUT, %s) error = %v, want ErrNotFound for a row that has no route", route, err)
 	}
 
 	if _, err := store.ResolveRoute(ctx, "no-such-route"); !errors.Is(err, repository.ErrNotFound) {
@@ -303,4 +324,141 @@ func TestResolveRouteReturnsEveryMethodOnOneRoute(t *testing.T) {
 	if _, err := store.ResolveRoute(ctx, ""); !errors.Is(err, repository.ErrNotFound) {
 		t.Errorf("ResolveRoute(empty) error = %v, want ErrNotFound", err)
 	}
+}
+
+// seedResolveBinding inserts one binding by SQL, so a test can hold a state the
+// activation path never produces — a row with no route, or one route on two
+// tenants — and ask what the lookups make of it.
+func seedResolveBinding(t *testing.T, db *database.DB, tenant, workflowID, nodeID, method, route, path string) {
+	t.Helper()
+	if err := db.Exec(
+		"INSERT INTO webhook_bindings (tenant_id, workflow_id, workflow_version_id, node_id, node_type, method, route, path, parameters, created_at)"+
+			" VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		tenant, workflowID, "v-"+workflowID, nodeID, "kilasflow.webhook", method, route, path, []byte(`{}`), time.Now().UTC(),
+	).Error; err != nil {
+		t.Fatalf("seed the %s binding for %s: %v", method, tenant, err)
+	}
+}
+
+// resolveTenantPrefix marks the tenants the Resolve tests seed. The drv- prefix
+// keeps them with the other driver-parity fixtures, and the rest is this
+// file's own so a sweep here cannot delete another test's rows.
+const resolveTenantPrefix = "drv-t9j-"
+
+// cleanResolveBindings removes what the Resolve tests seed, now and when the
+// test ends. Both, because the (method, route) index is global: on a shared
+// PostgreSQL a row left by a run that crashed would make the next run's seed
+// fail on the index rather than on anything about routing.
+func cleanResolveBindings(t *testing.T, db *database.DB) {
+	t.Helper()
+	remove := func() error {
+		return db.Exec("DELETE FROM webhook_bindings WHERE tenant_id LIKE ?", resolveTenantPrefix+"%").Error
+	}
+	if err := remove(); err != nil {
+		t.Fatalf("clear earlier Resolve fixtures: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := remove(); err != nil {
+			t.Errorf("remove the Resolve fixtures: %v", err)
+		}
+	})
+}
+
+// A path is a label, not an identity: migration 000011 made it non-unique, so
+// two tenants can hold the same one. A request that names only a label must
+// therefore match nothing — it used to match a row that had no minted route, and
+// with no tenant in the URL that ran whichever tenant's workflow the row
+// belonged to.
+//
+// No t.Parallel: on PostgreSQL the rows are shared with every other test in the
+// database, and they are cleaned by this test alone.
+func TestResolveNeverMatchesByPathLabel(t *testing.T) {
+	eachDriver(t, func(t *testing.T, db *database.DB) {
+		cleanResolveBindings(t, db)
+		store := repository.NewWorkflowStore(db.DB)
+		ctx := context.Background()
+
+		const minted = "r-b-minted-t9j"
+		// Tenant A has a row with no route — what a database predating routes
+		// holds — and tenant B has a routed row under the very same label.
+		seedResolveBinding(t, db, resolveTenantPrefix+"a", "wf-a", "n1", "POST", "", "items")
+		seedResolveBinding(t, db, resolveTenantPrefix+"b", "wf-b", "n1", "GET", minted, "items")
+
+		// Each lookup answers with the tenant of the row it found, so a failure
+		// says whose workflow a label reached.
+		one := func(binding repository.WebhookBinding, err error) (string, error) { return binding.TenantID, err }
+		for name, lookup := range map[string]func() (string, error){
+			"Resolve(POST, label)": func() (string, error) { return one(store.Resolve(ctx, "POST", "items")) },
+			"Resolve(GET, label)":  func() (string, error) { return one(store.Resolve(ctx, "GET", "items")) },
+			"ResolveRoute(label)": func() (string, error) {
+				bindings, err := store.ResolveRoute(ctx, "items")
+				if len(bindings) > 0 {
+					return bindings[0].TenantID, err
+				}
+				return "", err
+			},
+			// An empty route equals the column of every unrouted row, so a
+			// lookup for nothing would answer with a row.
+			"Resolve(POST, empty)": func() (string, error) { return one(store.Resolve(ctx, "POST", "")) },
+			"ResolveRoute(empty)": func() (string, error) {
+				bindings, err := store.ResolveRoute(ctx, "")
+				if len(bindings) > 0 {
+					return bindings[0].TenantID, err
+				}
+				return "", err
+			},
+		} {
+			if tenant, err := lookup(); !errors.Is(err, repository.ErrNotFound) {
+				t.Errorf("%s = tenant %q, error %v; want ErrNotFound: a label is not an address", name, tenant, err)
+			}
+		}
+
+		resolved, err := store.Resolve(ctx, "GET", minted)
+		if err != nil {
+			t.Fatalf("Resolve(GET, minted route) error = %v", err)
+		}
+		if resolved.TenantID != resolveTenantPrefix+"b" || resolved.WorkflowID != "wf-b" || resolved.Route != minted {
+			t.Errorf("Resolve(GET, minted route) = %#v, want tenant B's routed binding", resolved)
+		}
+	})
+}
+
+// One route names one node in one tenant: webhook_routes is unique on the route
+// and on (tenant, workflow, node), and activation draws every binding's route
+// from it. The bindings table cannot say so itself — its index is (method,
+// route), because one node binds several methods on one route — so a route held
+// by two tenants can only be hand-edited data. ResolveRoute is the lookup that
+// would return both, one per method, and hand a preflight the answer of
+// whichever came first, so it refuses.
+//
+// The guard checks that the bindings agree with each other. It does not consult
+// webhook_routes, and it does not need to: two owners is already wrong.
+func TestResolveRouteRefusesARouteBoundToTwoTenants(t *testing.T) {
+	eachDriver(t, func(t *testing.T, db *database.DB) {
+		cleanResolveBindings(t, db)
+		store := repository.NewWorkflowStore(db.DB)
+		ctx := context.Background()
+
+		const route = "r-shared-t9j"
+		seedResolveBinding(t, db, resolveTenantPrefix+"a", "wf-a", "n1", "POST", route, "orders")
+		seedResolveBinding(t, db, resolveTenantPrefix+"b", "wf-b", "n1", "GET", route, "orders")
+
+		bindings, err := store.ResolveRoute(ctx, route)
+		if !errors.Is(err, repository.ErrNotFound) {
+			t.Fatalf("ResolveRoute(shared route) = %#v, %v; want ErrNotFound for a route with two owners", bindings, err)
+		}
+		if len(bindings) != 0 {
+			t.Errorf("ResolveRoute(shared route) returned %#v alongside the refusal, want none", bindings)
+		}
+
+		// A request that names its method is still answered by the one row the
+		// (method, route) index leaves for it.
+		resolved, err := store.Resolve(ctx, "POST", route)
+		if err != nil {
+			t.Fatalf("Resolve(POST, shared route) error = %v", err)
+		}
+		if resolved.TenantID != resolveTenantPrefix+"a" {
+			t.Errorf("Resolve(POST, shared route) tenant = %q, want %q", resolved.TenantID, resolveTenantPrefix+"a")
+		}
+	})
 }

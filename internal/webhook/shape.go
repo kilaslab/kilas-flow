@@ -202,6 +202,16 @@ type TriggerKind struct {
 	// Verify is optional. When set it runs before the execution is queued and
 	// its error is the client's answer.
 	Verify Verifier
+	// Verifies is optional and reports whether Verify actually checks the
+	// sender of a delivery to this binding. A nil Verifies means Verify, when
+	// set, always does.
+	//
+	// It exists because a verifier can be conditional on the binding: a pack
+	// trigger declares an HMAC verifier but has nothing to check against when
+	// the node holds no secret, so it skips the check and admits everyone. "Has
+	// a Verify" and "authenticates its callers" are therefore different
+	// questions, and webhook.require_auth asks the second one.
+	Verifies func(Delivery) bool
 	// Accept is optional and is *not* verification. It answers whether this
 	// delivery is one the node asked for — a Telegram update from a chat the
 	// trigger is restricted away from, say.

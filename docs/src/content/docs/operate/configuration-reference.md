@@ -492,6 +492,21 @@ MaxBodyBytes is the largest inbound delivery accepted, in bytes.
 
 ResponseTimeout bounds one trigger delivery end to end.
 
+### webhook.require_auth
+
+- Type: `bool`
+- Default: `false`
+- Environment: `KILASFLOW_WEBHOOK_REQUIRE_AUTH`
+- Required: no
+
+RequireAuth refuses a delivery to any webhook trigger whose
+authentication mode is none. Off by default; on is a deployment-wide
+posture change. A trigger that verifies its own senders counts as
+authenticated — Telegram's secret header, a pack trigger holding an HMAC
+secret — while an IP allow-list alone does not. The refusal is a 403 that
+names the workflow and the fix, and hosted form pages face the same gate
+(a CORS preflight does not, because it cannot carry a credential).
+
 ## embed
 
 Embed configures the iframe editor surface.

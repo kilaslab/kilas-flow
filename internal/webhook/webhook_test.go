@@ -38,6 +38,7 @@ type harness struct {
 	runner      *recordingRunner
 	registry    *node.Registry
 	tenant      repository.TenantScope
+	db          *database.DB
 }
 
 // recordingRunner remembers what a delivery queued.
@@ -156,6 +157,7 @@ func newHarness(t *testing.T) harness {
 		runner:      runner,
 		registry:    registry,
 		tenant:      repository.TenantScope{ID: repository.DefaultTenantID},
+		db:          db,
 	}
 }
 

@@ -120,7 +120,9 @@ the same body. An inactive workflow, a deleted one, one that was never
 activated, and a request with the wrong HTTP method are indistinguishable from
 outside, so the endpoint cannot be used to enumerate which workflows exist. The
 accepted method comes from the trigger node's own configuration rather than
-being fixed at `POST`.
+being fixed at `POST`. A request is matched by method and route only, never by
+the trigger's `path` label, which is display metadata that two tenants can
+share.
 
 Beyond that, a trigger type can verify a delivery before it becomes an
 execution — Telegram's `X-Telegram-Bot-Api-Secret-Token`, WAHA's HMAC over the
@@ -129,7 +131,10 @@ the trigger was configured to filter out is answered `200` instead, because it
 was received correctly and deliberately not acted on, and telling the sender
 otherwise would make it retry. Retries carrying a delivery identifier the
 trigger names are deduplicated, so a sender that gives up waiting and repeats
-itself does not run the workflow again.
+itself does not run the workflow again. Where unguessability is not enough, the
+`webhook.require_auth` deployment setting refuses every delivery to a trigger
+that does not authenticate its own callers, with a `403` naming the workflow and
+the fix.
 
 Two limits bound a request: `webhook.max_body_bytes` (1 MiB) and
 `webhook.response_timeout` (30 seconds, for a workflow configured to answer

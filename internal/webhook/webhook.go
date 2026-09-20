@@ -58,6 +58,11 @@ type Handler struct {
 	events      *events.Broker
 	limits      Limits
 	logger      *slog.Logger
+	// requireAuth is the deployment switch that refuses a delivery to any
+	// trigger that does not authenticate its callers. Off by default, because
+	// an imported workflow arrives with a trigger that has never authenticated
+	// anything.
+	requireAuth bool
 }
 
 // WithLogger replaces the handler's logger. A filtered delivery is the only
@@ -296,6 +301,14 @@ func (handler *Handler) hostedPage(r *http.Request, path string) (repository.Web
 func (handler *Handler) admit(w http.ResponseWriter, r *http.Request, binding repository.WebhookBinding) bool {
 	if !addressAllowed(r, binding) {
 		problem(w, http.StatusForbidden, "This webhook does not accept requests from your address.")
+		return false
+	}
+	// The deployment switch is checked before the trigger's own credential so
+	// a refusal names the workflow and the fix. It sits after the allow-list on
+	// purpose: a caller the address check already refused is not the one to
+	// hand a workflow id to.
+	if handler.requireAuth && !handler.authenticates(r, binding) {
+		handler.refuseUnauthenticated(w, binding)
 		return false
 	}
 	authentication, _ := binding.Parameters["authentication"].(string)

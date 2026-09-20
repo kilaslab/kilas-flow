@@ -520,11 +520,7 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("configure execution runtime: %w", err)
 	}
-	webhookHandler := webhook.NewHandler(workflows, runtime, credentialStore, eventBroker, webhook.Limits{
-		MaxBodyBytes:    cfg.Webhook.MaxBodyBytes,
-		ResponseTimeout: cfg.Webhook.ResponseTimeout,
-		DeliveryWindow:  repository.DefaultDeliveryWindow,
-	}).WithTriggers(webhookTriggers).WithLogger(log)
+	webhookHandler := startWebhookHandler(role, cfg, workflows, runtime, credentialStore, eventBroker, webhookTriggers, log)
 
 	// Telegram's development delivery mode. The supervisor's context is the
 	// server's, not an activation request's: a poller cancelled when its HTTP
@@ -660,6 +656,44 @@ func run() error {
 	}
 
 	return serveErr
+}
+
+// startWebhookHandler builds the inbound webhook boundary and, in a process
+// that serves the HTTP API, states its authentication posture once at boot.
+//
+// The deployment switch and the posture line that reports it live in one
+// function rather than as two call sites in run() so a merge cannot drop one on
+// its own: cmd/kilasflow/main.go is a cross-ticket contention file, and a
+// dropped RequireAuthentication line used to leave webhook.require_auth loaded
+// into the configuration but unenforced, with every package still green.
+// TestWebhookRequireAuthSwitchIsWiredAtBoot drives this function and fails if
+// either the switch or the posture line disappears.
+func startWebhookHandler(
+	role processRole,
+	cfg config.Config,
+	bindings repository.WebhookRepository,
+	runner webhook.Runner,
+	credentialStore repository.CredentialRepository,
+	broker *events.Broker,
+	triggers *webhook.Registry,
+	log *slog.Logger,
+) *webhook.Handler {
+	handler := webhook.NewHandler(bindings, runner, credentialStore, broker, webhook.Limits{
+		MaxBodyBytes:    cfg.Webhook.MaxBodyBytes,
+		ResponseTimeout: cfg.Webhook.ResponseTimeout,
+		DeliveryWindow:  repository.DefaultDeliveryWindow,
+	}).WithTriggers(triggers).WithLogger(log).
+		// The deployment posture towards unauthenticated deliveries. Off means
+		// every trigger keeps the answer it gave before this setting existed.
+		RequireAuthentication(cfg.Webhook.RequireAuth)
+
+	// Claimed only for a process that serves the API: a worker-only process has
+	// no webhook surface, so a posture line for one would be a line about
+	// nothing.
+	if role.runsAPI() {
+		handler.LogPosture()
+	}
+	return handler
 }
 
 // processRole is one selectable shape of the single binary. The default

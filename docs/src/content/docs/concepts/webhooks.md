@@ -38,6 +38,23 @@ exists only while the workflow is active.
 Because the route already carries the tenant implicitly, no tenant identifier
 appears in the URL and the sender learns nothing about the installation from it.
 
+## The path label is never an address
+
+A request is matched by method and route, and by nothing else. The `path` an
+author gives a webhook node is display metadata: what the editor shows, and the
+pattern a request's trailing `:param` segments are matched against. It is not
+unique — two tenants that import one template hold the same path — so it cannot
+say which workflow a request is for, and a request that names only a path
+matches nothing and gets the same 404 as any other miss.
+
+A binding that has no minted route, which only a database that predates routes
+holds, is given one when the server boots, by the `webhook_route_backfill`
+migration. Its address therefore changes from `/webhook/<label>` to
+`/webhook/<route>`; read the new one with `GET /workflows/{id}/webhooks`. A
+trigger that registers its own address with the sender when the workflow is
+activated — Telegram's `setWebhook`, whose secret is derived from the route, and
+WAHA — has to be activated again so the sender is given the new address.
+
 ## Every miss looks identical
 
 An unknown route, an inactive workflow, a deleted workflow, a workflow that was
@@ -168,6 +185,44 @@ should never become an execution.
 The failure mode is closed. A webhook configured to authenticate but unable to —
 because its credential is missing or unreadable — refuses the request. Failing
 open would silently publish an unprotected endpoint.
+
+## Requiring authentication on every trigger
+
+A deployment can refuse unauthenticated deliveries outright with
+`webhook.require_auth` (environment: `KILASFLOW_WEBHOOK_REQUIRE_AUTH`). It is
+off by default, so nothing changes until an operator sets it, and it is a
+posture for the whole process rather than a per-workflow switch.
+
+With it on, a delivery to a trigger whose authentication mode is `none` is a
+`403` whose body names the workflow and the fix:
+
+> This deployment requires webhook authentication (webhook.require_auth) and
+> workflow `<workflow id>` does not authenticate this trigger. Set the trigger
+> node's Authentication to Basic auth, Header auth or JWT auth and attach a
+> credential, then activate the workflow again.
+
+A trigger that checks its own senders counts as authenticated without an
+`authentication` mode: Telegram's secret-token header, and a pack trigger's HMAC
+over the raw body — but only while that pack trigger actually holds a secret to
+check against, since one with no secret verifies nothing. An IP allow-list does
+**not** count: it restricts by network address rather than by credential, and
+the peer address is a proxy's wherever one sits in front. A caller outside the
+allow-list is refused by the address check first, so the workflow id is never
+handed to a caller that check already rejected.
+
+The hosted page of a form trigger faces the same gate as its submission — with
+the flag on, an unauthenticated form is neither served nor accepted. A CORS
+preflight is not gated: it cannot carry a credential, and refusing it would
+break the browser flow the route exists for. The check happens at delivery time,
+so a workflow with an unauthenticated trigger still activates and is refused
+when it is called; refusing it at activation instead is a follow-up.
+
+The boot log states the posture either way:
+
+```
+msg="inbound webhooks require authentication" require_auth=true
+msg="inbound webhooks accept unauthenticated deliveries unless the trigger sets its own authentication" require_auth=false enable_with=KILASFLOW_WEBHOOK_REQUIRE_AUTH=true
+```
 
 ## Shapes: what the trigger emits
 

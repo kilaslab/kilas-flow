@@ -53,10 +53,12 @@ type webhookBindingModel struct {
 	// parsed body at the top level rather than nested under a key.
 	NodeType string `gorm:"not null;size:128;default:''"`
 	// Route is the opaque segment the URL actually carries, and it is what an
-	// inbound request resolves on. The unique index still spans the whole
-	// route globally, because an inbound webhook has no session and the route
-	// is the only thing identifying it — two rows matching one request would
-	// be a cross-tenant routing bug far worse than a refused activation.
+	// inbound request resolves on. The unique index is on (method, route) and
+	// spans every tenant, because an inbound webhook has no session and the
+	// route is the only thing identifying it — two rows matching one request
+	// would be a cross-tenant routing bug far worse than a refused
+	// activation. It is not unique on the route alone: one node binds several
+	// methods on the one route it was minted.
 	Method string `gorm:"not null;size:8;uniqueIndex:uidx_webhook_bindings_route,priority:1"`
 	Route  string `gorm:"not null;size:64;uniqueIndex:uidx_webhook_bindings_route,priority:2"`
 	// Path is what the workflow's author called this endpoint. It is a label

@@ -375,6 +375,14 @@ func (trigger *Trigger) TriggerKind() webhook.TriggerKind {
 		}
 		return verify(delivery)
 	}
+	// The verifier above skips itself when the node holds no secret, so it
+	// authenticates a delivery only while one is configured. Without this a
+	// deployment with webhook.require_auth on would refuse every pack trigger
+	// that never had a secret to check — the state every imported workflow
+	// arrives in.
+	kind.Verifies = func(delivery webhook.Delivery) bool {
+		return trigger.secretOf(delivery) != ""
+	}
 	return kind
 }
 

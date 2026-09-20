@@ -115,7 +115,10 @@ does not resolve to an active binding gets the same `404` with the same body,
 so the endpoint cannot be used to enumerate which workflows exist. Individual
 trigger types verify a delivery on top of that — a Telegram secret header, an
 HMAC over the raw body for WAHA — and a failed check is a `401` with no run
-recorded.
+recorded. Where being unguessable is not enough, set `webhook.require_auth` to
+turn that posture into a required-credential one: it refuses any delivery to a
+trigger that does not authenticate its callers with a `403` naming the workflow
+and the fix, and the boot log states which posture is running.
 
 **The bundled API reference makes no external requests.** The `/docs` page is
 served with a strict Content-Security-Policy and its JavaScript is vendored
