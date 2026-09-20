@@ -435,3 +435,44 @@ func TestExpressionsCannotBecomeCode(t *testing.T) {
 		}
 	}
 }
+
+// TestAResolvedDateSurvivesJSONEncoding is the Set-node path without the node:
+// Resolve a parameter tree, marshal it, and check the date is a timestamp.
+// Before, the evaluator's own struct escaped and marshalled to "{}", so the
+// value written to a sheet or an API body was the two characters `{}`.
+func TestAResolvedDateSurvivesJSONEncoding(t *testing.T) {
+	t.Parallel()
+
+	ctx := parityContext()
+	ctx.Now = time.Date(2026, 9, 19, 8, 35, 38, 0, time.UTC)
+	ctx.Timezone = "Asia/Jakarta"
+
+	resolved, err := expression.Resolve(map[string]any{
+		"at":      map[string]any{"mode": "expression", "value": "{{ $now }}"},
+		"today":   map[string]any{"mode": "expression", "value": "{{ $today }}"},
+		"shifted": map[string]any{"mode": "expression", "value": "{{ $now.plusDays(1) }}"},
+		"text":    map[string]any{"mode": "expression", "value": "run at {{ $now }}"},
+	}, ctx)
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+
+	encoded, err := json.Marshal(resolved)
+	if err != nil {
+		t.Fatalf("marshalling the resolved parameters failed: %v", err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatalf("decoding the resolved parameters failed: %v", err)
+	}
+	for key, want := range map[string]string{
+		"at":      "2026-09-19T15:35:38+07:00",
+		"today":   "2026-09-19T00:00:00+07:00",
+		"shifted": "2026-09-20T15:35:38+07:00",
+		"text":    "run at 2026-09-19T15:35:38.000+07:00",
+	} {
+		if decoded[key] != want {
+			t.Errorf("resolved[%q] = %#v, want %#v", key, decoded[key], want)
+		}
+	}
+}
