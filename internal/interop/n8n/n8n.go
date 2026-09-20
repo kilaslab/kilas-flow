@@ -241,6 +241,17 @@ var mappings = []mapping{
 		n8nType: "n8n-nodes-base.respondToWebhook", kilasType: "kilasflow.respondToWebhook", kilasVersion: workflow.V(1),
 		exportTypeVersion: 1.1, toKilas: respondToKilas, toN8N: respondToN8N,
 	},
+	// The error workflow pair. An error workflow is what n8n runs when another
+	// workflow fails, and both halves of it had no mapping — so a workflow that
+	// was *about* handling failures imported as unsupported placeholders.
+	{
+		n8nType: "n8n-nodes-base.errorTrigger", kilasType: ErrorTriggerNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1, toKilas: errorTriggerToKilas, toN8N: errorTriggerToN8N,
+	},
+	{
+		n8nType: "n8n-nodes-base.stopAndError", kilasType: StopAndErrorNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1, toKilas: stopAndErrorToKilas, toN8N: stopAndErrorToN8N,
+	},
 	// The Form Trigger. Both spellings: the community package published it as
 	// `n8n-nodes-base.formTrigger` before it was folded into core, and an
 	// exported workflow may name either.
@@ -580,6 +591,13 @@ const (
 // nodes.FormTriggerType rather than imported, for the same reason every other
 // type here is; TestMirroredNodeTypesMatchTheNodePack keeps them in step.
 const FormTriggerType = "kilasflow.formTrigger"
+
+// The error-workflow pair's canonical types, mirrored from
+// nodes.ErrorTriggerNodeType and nodes.StopAndErrorNodeType.
+const (
+	ErrorTriggerNodeType = "kilasflow.errorTrigger"
+	StopAndErrorNodeType = "kilasflow.stopAndError"
+)
 
 const (
 	SwitchNodeType = "kilasflow.switch"

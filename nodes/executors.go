@@ -39,6 +39,8 @@ func RegisterExecutors(registry *engine.Registry, httpPolicy safehttp.Policy, da
 		"core.merge":                     engine.ExecutorFunc(executeMerge),
 		HTTPExecutorID:                   NewHTTPExecutor(httpPolicy),
 		WebhookExecutorID:                engine.ExecutorFunc(executeWebhook),
+		ErrorTriggerExecutorID:           engine.ExecutorFunc(executeErrorTrigger),
+		StopAndErrorExecutorID:           engine.ExecutorFunc(executeStopAndError),
 		ScheduleExecutorID:               engine.ExecutorFunc(executeSchedule),
 		RespondExecutorID:                engine.ExecutorFunc(executeRespond),
 		PostgresExecutorID:               NewDatabaseExecutor(sqlnode.DriverPostgres, "postgres", databaseGuard, settings.databaseCeiling),

@@ -704,3 +704,69 @@ func TestFormTriggerMapsOntoTheNativeNode(t *testing.T) {
 		t.Errorf("unsupported = %#v, want the test mode named", testMode.Unsupported)
 	}
 }
+
+// TestErrorWorkflowNodesMapOntoTheNativePair covers n8n's error workflow.
+//
+// An error workflow is what n8n runs when another workflow fails, and both
+// halves of it imported as unsupported placeholders — so a workflow that was
+// *about* handling failures could not run at all.
+func TestErrorWorkflowNodesMapOntoTheNativePair(t *testing.T) {
+	t.Parallel()
+
+	const fixture = `{
+	  "name": "Error handler",
+	  "nodes": [
+	    {"id":"a","name":"Error Trigger","type":"n8n-nodes-base.errorTrigger","typeVersion":1,"position":[0,0],
+	     "parameters":{"workflowId":"wf_self"}},
+	    {"id":"b","name":"Tell me","type":"n8n-nodes-base.stopAndError","typeVersion":1,"position":[220,0],
+	     "parameters":{"errorObject":"object","errorMessage":"={{ $json.execution.error.message }}",
+	       "errorDescription":"the run failed"}},
+	    {"id":"c","name":"Bad JSON","type":"n8n-nodes-base.stopAndError","typeVersion":1,"position":[440,0],
+	     "parameters":{"errorObject":"json","errorObjectJson":"{not json"}}
+	  ],
+	  "connections": {"Error Trigger": {"main": [[{"node":"Tell me","type":"main","index":0}]]}}
+	}`
+
+	result := importFixture(t, fixture)
+	if got := nodeByName(result.Document, "Error Trigger").Type; got != "kilasflow.errorTrigger" {
+		t.Fatalf("error trigger type = %q, want the native node", got)
+	}
+	stop := nodeByName(result.Document, "Tell me")
+	if stop.Type != "kilasflow.stopAndError" {
+		t.Fatalf("stop type = %q, want the native node", stop.Type)
+	}
+	message, _ := stop.Parameters["errorMessage"].(map[string]any)
+	if message["value"] != "{{ $json.execution.error.message }}" {
+		t.Errorf("errorMessage = %#v, want the expression carried", stop.Parameters["errorMessage"])
+	}
+	// The object mode becomes JSON text, description included: dropping it
+	// would throw away the half of the error the author wrote for a human.
+	object, _ := stop.Parameters["errorObject"].(string)
+	if !strings.Contains(object, "the run failed") || !strings.Contains(object, "errorMessage") {
+		t.Errorf("errorObject = %q, want the message and description serialised", object)
+	}
+
+	// Unreadable JSON blocks rather than throwing an empty error.
+	blocked := false
+	for _, issue := range result.Unsupported {
+		if issue.Severity == n8n.SeverityBlocking && issue.Field == "errorObject" {
+			blocked = true
+		}
+	}
+	if !blocked {
+		t.Errorf("unsupported = %#v, want unreadable JSON blocked", result.Unsupported)
+	}
+
+	// The pair goes back out as n8n's own nodes.
+	exported, err := n8n.Export(result.Document, registry(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := map[string]bool{}
+	for _, node := range exported.Document.Nodes {
+		names[node.Type] = true
+	}
+	if !names["n8n-nodes-base.errorTrigger"] || !names["n8n-nodes-base.stopAndError"] {
+		t.Errorf("exported types = %#v, want n8n's error pair", names)
+	}
+}

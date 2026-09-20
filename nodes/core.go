@@ -23,6 +23,8 @@ func RegisterAll(registry *node.Registry) error {
 		httpRequestNode(),
 		webhookTrigger(),
 		formTrigger(),
+		errorTriggerNode(),
+		stopAndErrorNode(),
 		respondToWebhookNode(),
 		scheduleTrigger(),
 		postgresNode(),

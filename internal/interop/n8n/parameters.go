@@ -1936,12 +1936,11 @@ func formTriggerToKilas(node Node) (map[string]any, []Unsupported) {
 				"server has one form endpoint, so the form answers on its production path",
 		})
 	}
+	// The native form trigger has the same option, so it is carried rather than
+	// reported: an issue here would tell the user something was lost that was
+	// not.
 	if value, present := node.Parameters["appendAttribution"]; present && value != nil {
-		issues = append(issues, Unsupported{
-			Severity: SeverityDropped, Field: "appendAttribution",
-			Reason: "n8n appends an attribution line to the form page; this server's form does not, and " +
-				"the option was not carried",
-		})
+		parameters["appendAttribution"] = fromN8NValue(value)
 	}
 	return parameters, issues
 }
@@ -1966,6 +1965,9 @@ func formTriggerToN8N(node workflow.Node) (map[string]any, []Lossy) {
 	parameters["responseMode"] = responseMode
 	if authentication := stringParameter(node.Parameters, "authentication"); authentication != "" && authentication != "none" {
 		parameters["authentication"] = authentication
+	}
+	if attribution, present := node.Parameters["appendAttribution"]; present && attribution != nil {
+		parameters["appendAttribution"] = toN8NValue(attribution)
 	}
 	if wrapper, ok := node.Parameters["formFields"].(map[string]any); ok {
 		rows, _ := wrapper["values"].([]any)
@@ -1998,6 +2000,132 @@ func formTriggerToN8N(node workflow.Node) (map[string]any, []Lossy) {
 		if len(values) > 0 {
 			parameters["formFields"] = map[string]any{"values": values}
 		}
+	}
+	return parameters, nil
+}
+
+// errorTriggerToKilas maps n8n's Error Trigger onto this server's.
+//
+// The node is where an error workflow begins, and it takes nothing: the
+// payload is the failed execution's, which the engine supplies. n8n's
+// `workflowId` on the trigger is the id of the workflow it belongs to, which
+// this server knows without being told.
+func errorTriggerToKilas(node Node) (map[string]any, []Unsupported) {
+	issues := make([]Unsupported, 0)
+	if id := locatorName(node.Parameters["workflowId"]); id != "" {
+		issues = append(issues, Unsupported{
+			Severity: SeverityDropped, Field: "workflowId",
+			Reason: "n8n's error trigger names the workflow it belongs to; this server reads that from " +
+				"the workflow itself, so the value was not carried",
+		})
+	}
+	return map[string]any{}, issues
+}
+
+func errorTriggerToN8N(node workflow.Node) (map[string]any, []Lossy) {
+	return map[string]any{}, nil
+}
+
+// stopAndErrorToKilas maps n8n's Stop and Error onto this server's.
+//
+// n8n keeps the error in one of three shapes behind `errorObject`: a plain
+// message, an object of message and description, or JSON the author typed.
+// This server's node takes a message and, optionally, JSON text — so an object
+// is serialised into that text and a plain message stays a message. The
+// alternative, mapping the object mode onto the message alone, would throw away
+// the description the author wrote.
+func stopAndErrorToKilas(node Node) (map[string]any, []Unsupported) {
+	issues := make([]Unsupported, 0)
+	parameters := map[string]any{}
+
+	message, _ := node.Parameters["errorMessage"]
+	if message == nil || message == "" {
+		issues = append(issues, Unsupported{
+			Severity: SeverityBlocking, Field: "errorMessage",
+			Reason: "this node stops the workflow with no message, so nothing would say why; give it a " +
+				"message before activating",
+		})
+	} else {
+		parameters["errorMessage"] = fromN8NValue(message)
+	}
+
+	switch mode := stringParameter(node.Parameters, "errorObject"); mode {
+	case "", "message":
+		// The default: the message is the whole error.
+	case "object":
+		described := map[string]any{}
+		if value := node.Parameters["errorMessage"]; value != nil && value != "" {
+			described["errorMessage"] = fromN8NValue(value)
+		}
+		if value := node.Parameters["errorDescription"]; value != nil && value != "" {
+			described["errorDescription"] = fromN8NValue(value)
+		}
+		if len(described) > 0 {
+			if encoded, err := json.Marshal(described); err == nil {
+				parameters["errorObject"] = string(encoded)
+			}
+		}
+	case "json":
+		value := node.Parameters["errorObjectJson"]
+		if value == nil {
+			value = node.Parameters["errorObject"]
+		}
+		if encoded := jsonText(value); encoded != "" {
+			parameters["errorObject"] = encoded
+		} else {
+			issues = append(issues, Unsupported{
+				Severity: SeverityBlocking, Field: "errorObject",
+				Reason: "this node throws a JSON error object and its JSON could not be read; fix the JSON " +
+					"before activating",
+			})
+		}
+	default:
+		issues = append(issues, Unsupported{
+			Field:  "errorObject",
+			Reason: fmt.Sprintf("the n8n error shape %q has no equivalent; the node throws its message only", mode),
+		})
+	}
+	return parameters, issues
+}
+
+// jsonText renders an n8n value as JSON text, or "" when it cannot be.
+//
+// An expression marker is not JSON and is left to resolve at run time: the
+// parameter it was written for is a string, and the evaluator produces the text
+// the author's expression returns.
+func jsonText(value any) string {
+	if value == nil {
+		return ""
+	}
+	if marker, ok := value.(map[string]any); ok {
+		if mode, _ := marker["mode"].(string); mode == "expression" {
+			return ""
+		}
+	}
+	if text, ok := value.(string); ok {
+		if strings.HasPrefix(text, "=") {
+			return ""
+		}
+		if !json.Valid([]byte(text)) {
+			return ""
+		}
+		return text
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return ""
+	}
+	return string(encoded)
+}
+
+func stopAndErrorToN8N(node workflow.Node) (map[string]any, []Lossy) {
+	parameters := map[string]any{
+		"errorObject":  "message",
+		"errorMessage": toN8NValue(node.Parameters["errorMessage"]),
+	}
+	if text := stringParameter(node.Parameters, "errorObject"); text != "" {
+		parameters["errorObject"] = "json"
+		parameters["errorObjectJson"] = text
 	}
 	return parameters, nil
 }
