@@ -41,17 +41,28 @@ func evaluate(body string, ctx Context) (any, error) {
 		return nil, err
 	}
 	engine := &evaluator{ctx: ctx}
-	value, err := engine.eval(parsed)
+	return engine.eval(parsed)
+}
+
+// eval runs one node of the tree.
+//
+// The wrapper exists for one rule: a lineage refusal is never a value. It
+// carries why no single item could be chosen, so it becomes an error the moment
+// it is produced, before it can be embedded in a list, concatenated into text
+// or written to a parameter as `{}` — which is what dropping the refusal inside
+// a container used to do.
+func (e *evaluator) eval(expression node) (any, error) {
+	value, err := e.evalNode(expression)
 	if err != nil {
 		return nil, err
 	}
-	if failure, unavailable := value.(lineageError); unavailable {
-		return nil, fmt.Errorf("%s", failure.reason)
+	if refusal, unavailable := value.(lineageError); unavailable {
+		return nil, fmt.Errorf("%s", refusal.reason)
 	}
 	return value, nil
 }
 
-func (e *evaluator) eval(expression node) (any, error) {
+func (e *evaluator) evalNode(expression node) (any, error) {
 	switch typed := expression.(type) {
 	case literalNode:
 		return typed.value, nil
@@ -174,11 +185,6 @@ func readMember(receiver any, name string) (any, error) {
 	switch typed := receiver.(type) {
 	case nil, undefinedValue:
 		return Undefined, nil
-	case lineageError:
-		// Propagate rather than swallow: `.item` on a node whose provenance is
-		// unknown carries why, and the read has to fail with that reason
-		// instead of resolving to a plausible value.
-		return typed, nil
 	case map[string]any:
 		if value, found := typed[name]; found {
 			return value, nil
@@ -237,8 +243,6 @@ func readIndex(receiver, key any) (any, error) {
 	switch typed := receiver.(type) {
 	case nil, undefinedValue:
 		return Undefined, nil
-	case lineageError:
-		return typed, nil
 	case map[string]any:
 		if text, ok := key.(string); ok {
 			if value, found := typed[text]; found {
@@ -408,9 +412,6 @@ func (e *evaluator) method(name string, receiver any, args []any) (any, error) {
 	entry, found := methods[name]
 	if !found {
 		return nil, fmt.Errorf("%s is not a function", name)
-	}
-	if _, unavailable := receiver.(lineageError); unavailable {
-		return nil, fmt.Errorf("%s: %s", name, receiver.(lineageError).reason)
 	}
 	if receiver == nil || IsUndefined(receiver) {
 		return nil, fmt.Errorf("cannot read %s() of %s", name, describeValue(receiver))
@@ -688,6 +689,14 @@ func jsString(value any) string {
 			return encoded
 		}
 		return "[object Object]"
+	case inputSource:
+		// An object of ports rather than a value, so it follows the same rule
+		// as any other object here: JSON, never Go's own map syntax.
+		return jsString(typed.plain())
+	case envSource:
+		return jsString(fieldsOfEnv(typed))
+	case namespaceValue:
+		return "[object " + typed.tag() + "]"
 	case closure:
 		return "function"
 	default:
@@ -759,12 +768,10 @@ func normalizeJSON(value any) any {
 			normalized[key] = normalizeJSON(entry)
 		}
 		return normalized
+	case inputSource:
+		return typed.plain()
 	case envSource:
-		normalized := make(map[string]any, len(typed))
-		for key, entry := range typed {
-			normalized[key] = entry
-		}
-		return normalized
+		return fieldsOfEnv(typed)
 	default:
 		return value
 	}

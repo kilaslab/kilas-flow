@@ -2,6 +2,7 @@ package expression
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"time"
 )
@@ -182,9 +183,8 @@ func Evaluate(template string, ctx Context) (any, error) {
 			// time.Time is what those nodes already accept, and it marshals as
 			// an ISO timestamp with an offset.
 			return typed.at, nil
-		default:
-			return value, nil
 		}
+		return plainValue(value)
 	}
 
 	var builder strings.Builder
@@ -205,6 +205,77 @@ func Evaluate(template string, ctx Context) (any, error) {
 type segment struct {
 	text         string
 	isExpression bool
+}
+
+// plainValue converts an evaluated value into one a parameter can carry.
+//
+// The evaluator's own types are not parameters. `$input` is an object of ports
+// with n8n's API on it, a namespace is a bag of functions, a function is not a
+// value and a lineage refusal is not an item — and each of them used to reach a
+// Set node as the literal `{}`, because that is what an unexported struct with
+// no exported fields marshals to. `$input` was the regression: it returned the
+// port map before the rewrite and returned `{}` after it.
+//
+// Containers are walked for the same reason, so a rule that holds for a lone
+// expression holds one level down. A refusal inside a container cannot reach
+// here — the evaluator raises it where it is produced — and the marker the
+// runtime attaches to a node view is dropped rather than written as null.
+func plainValue(value any) (any, error) {
+	switch typed := value.(type) {
+	case nil, undefinedValue:
+		return nil, nil
+	case inputSource:
+		return typed.plain(), nil
+	case envSource:
+		return fieldsOfEnv(typed), nil
+	case namespaceValue:
+		// JSON's own encoding of a namespace is `{}`: every member is a
+		// function, which JSON cannot carry. Producing that deliberately is the
+		// point — it is no longer an accident of Go's reflection.
+		return map[string]any{}, nil
+	case closure:
+		return nil, fmt.Errorf("a function is not a parameter value")
+	case lineageError:
+		return nil, fmt.Errorf("%s", typed.reason)
+	case dateValue, time.Time, FromAIRequest:
+		// A date keeps its own type inside a container because it knows how to
+		// marshal as an ISO timestamp, and the agent's marker is a plain struct.
+		return value, nil
+	case float64:
+		// JSON cannot carry NaN or Infinity. JavaScript's own encoding of them
+		// is null, which is also what a workflow that divides by a zero count
+		// should find in its item rather than an execution that fails after its
+		// side effects.
+		if math.IsNaN(typed) || math.IsInf(typed, 0) {
+			return nil, nil
+		}
+		return typed, nil
+	case []any:
+		values := make([]any, len(typed))
+		for index, entry := range typed {
+			converted, err := plainValue(entry)
+			if err != nil {
+				return nil, err
+			}
+			values[index] = converted
+		}
+		return values, nil
+	case map[string]any:
+		fields := make(map[string]any, len(typed))
+		for key, entry := range typed {
+			if _, refused := entry.(lineageError); refused {
+				continue
+			}
+			converted, err := plainValue(entry)
+			if err != nil {
+				return nil, err
+			}
+			fields[key] = converted
+		}
+		return fields, nil
+	default:
+		return value, nil
+	}
 }
 
 // split separates literal text from `{{ … }}` expressions. An unterminated

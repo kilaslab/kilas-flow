@@ -13,6 +13,18 @@ import (
 // JSON, Object, Array, Math and Luxon's DateTime.
 type namespaceValue struct{ name string }
 
+// tag is what Object.prototype.toString reports for this namespace: JSON and
+// Math carry a Symbol.toStringTag, the constructor-shaped names are functions
+// in JavaScript and have no tag, and a plain object renders as Object.
+func (namespace namespaceValue) tag() string {
+	switch namespace.name {
+	case "JSON", "Math":
+		return namespace.name
+	default:
+		return "Object"
+	}
+}
+
 // globals are the names an expression may read that are not roots. Arrow
 // function parameters shadow them, and nothing else can.
 var globals = map[string]any{

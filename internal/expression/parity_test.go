@@ -2,6 +2,7 @@ package expression_test
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -501,5 +502,109 @@ func TestCommonJavaScriptNamesResolve(t *testing.T) {
 		if !sameValue(got, want) {
 			t.Errorf("Evaluate(%s) = %#v, want %#v", template, got, want)
 		}
+	}
+}
+
+// TestInputAndNamespacesResolveToJSONValues is the `{}` escape class the
+// ticket had already closed for dates: the lone-value switch in Evaluate knew
+// about undefined and a date, so everything else the evaluator owns reached a
+// Set node as the two characters `{}`. `$input` is a regression from the port
+// map it returned before the rewrite, and a namespace is a bag of functions
+// whose own JSON encoding is `{}` — but produced on purpose, not by marshalling
+// an unexported struct.
+func TestInputAndNamespacesResolveToJSONValues(t *testing.T) {
+	t.Parallel()
+
+	ctx := parityContext()
+	ctx.Input = map[string][]map[string]any{
+		"main": {{"v": "a"}, {"v": "b"}, {"v": "c"}},
+	}
+	const ports = `{"main":[{"v":"a"},{"v":"b"},{"v":"c"}]}`
+	// A stringify result is itself a string, so its JSON encoding is quoted.
+	encoded := func(text string) string {
+		quoted, err := json.Marshal(text)
+		if err != nil {
+			t.Fatalf("marshalling %q failed: %v", text, err)
+		}
+		return string(quoted)
+	}
+
+	for template, want := range map[string]string{
+		"{{ $input }}":                 ports,
+		"{{ JSON.stringify($input) }}": encoded(ports),
+		"{{ [$input] }}":               `[` + ports + `]`,
+		"{{ JSON }}":                   `{}`,
+		"{{ JSON.stringify(JSON) }}":   encoded("{}"),
+		"{{ JSON.stringify(Math) }}":   encoded("{}"),
+		"{{ JSON.stringify($env) }}":   encoded(`{"REGION":"eu-west-1"}`),
+	} {
+		got := evaluateOne(t, template, ctx)
+		gotJSON, err := json.Marshal(got)
+		if err != nil {
+			t.Errorf("Evaluate(%s) = %#v (%T), which does not marshal: %v", template, got, got, err)
+			continue
+		}
+		if string(gotJSON) != want {
+			t.Errorf("Evaluate(%s) marshalled to %s, want %s", template, gotJSON, want)
+		}
+	}
+
+	// A namespace mixed into text renders the way JavaScript's own toString
+	// does rather than as Go's formatting of an unexported struct.
+	for template, want := range map[string]any{
+		"{{ Math + '' }}":       "[object Math]",
+		"{{ JSON + '' }}":       "[object JSON]",
+		"{{ 'ns=' + JSON }}":    "ns=[object JSON]",
+		"{{ $input + '' }}":     ports,
+		"{{ 'ports=' + $env }}": `ports={"REGION":"eu-west-1"}`,
+	} {
+		got := evaluateOne(t, template, ctx)
+		if got != want {
+			t.Errorf("Evaluate(%s) = %#v, want %#v", template, got, want)
+		}
+	}
+
+	// A function is not a parameter value, and a lineage refusal is not an
+	// item: both fail with the reason instead of being embedded and dropped.
+	for name, template := range map[string]string{
+		"a bare closure":      "{{ (x => x) }}",
+		"a closure in a map":  "{{ {f: (x => x)} }}",
+		"a closure in a list": "{{ [(x => x)] }}",
+	} {
+		_, err := expression.Evaluate(template, ctx)
+		if err == nil {
+			t.Errorf("%s: Evaluate(%s) succeeded, want a refusal", name, template)
+			continue
+		}
+		if !strings.Contains(err.Error(), "function") {
+			t.Errorf("%s: error = %v, want it to say a function is not a value", name, err)
+		}
+	}
+	for name, template := range map[string]string{
+		"a refusal in a list": `{{ [$('Many').item] }}`,
+		"a refusal in a map":  `{{ {x: $('Many').item} }}`,
+		"a refusal in text":   `{{ $('Many').item + '' }}`,
+		"a refused read":      `{{ $('Many').item.json.n }}`,
+	} {
+		_, err := expression.Evaluate(template, nodeContext())
+		if err == nil {
+			t.Errorf("%s: Evaluate(%s) succeeded, want the lineage refusal", name, template)
+			continue
+		}
+		if !strings.Contains(err.Error(), "3 items") {
+			t.Errorf("%s: error = %v, want it to explain why there is no single item", name, err)
+		}
+	}
+
+	// The node object itself is readable — only `.item` refuses — and the
+	// refusal marker inside it is not part of the value, which is what n8n's
+	// non-enumerable getter amounts to.
+	node := evaluateOne(t, `{{ $('Many') }}`, nodeContext())
+	nodeJSON, err := json.Marshal(node)
+	if err != nil {
+		t.Fatalf("marshalling the node object failed: %v", err)
+	}
+	if !strings.Contains(string(nodeJSON), `"all"`) || strings.Contains(string(nodeJSON), "produced 3 items") {
+		t.Errorf("$('Many') = %s, want the node view without the refusal marker", nodeJSON)
 	}
 }

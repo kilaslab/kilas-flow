@@ -125,6 +125,7 @@ func (source inputSource) all() []any {
 	return wrapped
 }
 
+// member resolves `$input.<name>`: the n8n accessors, then a port by name.
 func (source inputSource) member(name string) (any, error) {
 	switch name {
 	case "item":
@@ -142,6 +143,31 @@ func (source inputSource) member(name string) (any, error) {
 		return wrapped, nil
 	}
 	return Undefined, nil
+}
+
+// plain is `$input` as a parameter value: port name to the port's items, which
+// is the shape the root had before the evaluator gave it n8n's object API, and
+// the shape a Set node writes.
+func (source inputSource) plain() map[string]any {
+	ports := make(map[string]any, len(source.ports))
+	for name, items := range source.ports {
+		list := make([]any, len(items))
+		for index, item := range items {
+			list[index] = anyMap(item)
+		}
+		ports[name] = list
+	}
+	return ports
+}
+
+// fieldsOfEnv is `$env` as a plain object, which is what both a parameter value
+// and JSON.stringify need.
+func fieldsOfEnv(source envSource) map[string]any {
+	fields := make(map[string]any, len(source))
+	for key, value := range source {
+		fields[key] = value
+	}
+	return fields
 }
 
 // itemWrapper exposes one item the way n8n does: `json` for the payload, and
