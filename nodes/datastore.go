@@ -196,12 +196,26 @@ func datastoreNode() node.Definition {
 // datastorePortsFor gives the branch operations their second output. Every
 // other operation keeps one, so the canvas never shows a fork an insert
 // cannot take.
+//
+// The two ports are named the way the IF node names its branches — `true` for
+// the outcome the operation tests for, `false` for the one it does not —
+// rather than after the operation's own vocabulary: a port's identity has to
+// hold while the label follows the configuration, and `rowFound` would be the
+// *first* port for If Exists and the *second* for If Not Exists. Two ports
+// sharing one name is what made the second unreachable: the compiler resolves
+// a connection's port by name and takes the first match, so every wire landed
+// on index 0.
 func datastorePortsFor(parameters map[string]any, _ workflow.TypeVersion) ([]workflow.Port, []workflow.Port) {
 	switch textValue(parameters["operation"], DatastoreOperationInsert) {
-	case DatastoreOperationIfExists, DatastoreOperationIfNotExists:
+	case DatastoreOperationIfExists:
 		return mainInput(), []workflow.Port{
-			{Name: "main", Kind: workflow.ConnectionMain},
-			{Name: "main", Kind: workflow.ConnectionMain},
+			{Name: "true", DisplayName: "Row found", Kind: workflow.ConnectionMain},
+			{Name: "false", DisplayName: "No row", Kind: workflow.ConnectionMain},
+		}
+	case DatastoreOperationIfNotExists:
+		return mainInput(), []workflow.Port{
+			{Name: "true", DisplayName: "No row", Kind: workflow.ConnectionMain},
+			{Name: "false", DisplayName: "Row found", Kind: workflow.ConnectionMain},
 		}
 	default:
 		return mainInput(), mainOutput()
@@ -672,10 +686,13 @@ func (executor *DatastoreExecutor) runRow(ctx context.Context, tenant, operation
 	}
 }
 
-// runBranch runs If Exists and If Not Exists. A match emits the rows on the
-// first port for If Exists and on the second for If Not Exists; a miss emits
-// the incoming item on the other port, so downstream always has an item
-// whose lineage names the input that was tested.
+// runBranch runs If Exists and If Not Exists. The two ports are the two
+// outcomes of the operation's own test: the first carries what the branch
+// produced, the second the incoming item when the test did not hold, so
+// downstream always has an item whose lineage names the input that was tested.
+// If Exists produces the rows that matched; If Not Exists has no rows to
+// produce, so the item it tested passes on the first port when the table holds
+// no match — the fork is otherwise a first port that can never carry anything.
 func (executor *DatastoreExecutor) runBranch(ctx context.Context, tenant, operation string, parameters map[string]any, item workflow.Item, lineage *workflow.PairedItem, emit func([]datastore.Row) []workflow.Item) ([]workflow.Item, []workflow.Item, bool, error) {
 	id, err := executor.datastoreID(ctx, tenant, parameters)
 	if err != nil {
@@ -692,17 +709,19 @@ func (executor *DatastoreExecutor) runBranch(ctx context.Context, tenant, operat
 	if err != nil {
 		return nil, nil, false, err
 	}
-	miss := []workflow.Item{{JSON: map[string]any(item.JSON), Paired: lineage}}
+	// The item as it arrived, carrying this item's lineage: it is what leaves
+	// on the second port when the operation's test does not hold.
+	passed := []workflow.Item{{JSON: map[string]any(item.JSON), Paired: lineage}}
 	if len(page.Rows) > 0 {
 		if operation == DatastoreOperationIfExists {
 			return emit(page.Rows), []workflow.Item{}, true, nil
 		}
-		return []workflow.Item{}, miss, true, nil
+		return []workflow.Item{}, passed, true, nil
 	}
 	if operation == DatastoreOperationIfNotExists {
-		return emit([]datastore.Row{}), miss, true, nil
+		return passed, []workflow.Item{}, true, nil
 	}
-	return []workflow.Item{}, miss, true, nil
+	return []workflow.Item{}, passed, true, nil
 }
 
 // datastoreID resolves the locator to a catalogue id. From-list and By-ID

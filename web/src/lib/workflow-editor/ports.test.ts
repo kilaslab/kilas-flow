@@ -318,17 +318,21 @@ describe('resolvedPorts', () => {
 		expect(resolvedPorts(four, mergeDefinition).outputs).toEqual(mergeDefinition.outputs);
 	});
 
-	it('forks a datastore branch operation into two outputs', () => {
-		for (const operation of ['ifExists', 'ifNotExists']) {
+	it('forks a datastore branch operation into two reachable outputs', () => {
+		const labels = (operation: string) => {
 			const node: Node = { ...datastoreBase, parameters: { operation } };
 			const { inputs, outputs } = resolvedPorts(node, datastoreDefinition);
 
 			expect(inputs).toEqual(datastoreDefinition.inputs);
-			expect(outputs).toEqual([
-				{ name: 'main', kind: 'main' },
-				{ name: 'main', kind: 'main' }
-			]);
-		}
+			// Distinct names: the canvas handle id is the port name, so two
+			// ports sharing one collapse into a single unreachable handle.
+			expect(outputs.map((port) => port.name)).toEqual(['true', 'false']);
+			return outputs.map(portLabel);
+		};
+
+		// The test the operation asks and its inverse, in that order.
+		expect(labels('ifExists')).toEqual(['Row found', 'No row']);
+		expect(labels('ifNotExists')).toEqual(['No row', 'Row found']);
 
 		const insert: Node = { ...datastoreBase, parameters: { operation: 'insert' } };
 		expect(resolvedPorts(insert, datastoreDefinition).outputs).toEqual(datastoreDefinition.outputs);

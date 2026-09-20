@@ -184,13 +184,25 @@ function mergeInputs(parameters: Node['parameters']): Port[] {
  * The branch operations fork, so they carry a second output; every other
  * operation keeps the definition's list, and the canvas never shows a fork an
  * insert cannot take.
+ *
+ * The two ports are named `true` and `false` — the outcome the operation tests
+ * for and the one it does not — because a port's identity has to hold while
+ * its label follows the configuration. Two ports sharing one name is what made
+ * the second unreachable: a connection's port is resolved by name, so every
+ * wire landed on the first branch.
  */
 function datastoreOutputs(parameters: Node['parameters'], declared: Port[]): Port[] {
 	const operation = parameters?.['operation'];
-	if (operation === 'ifExists' || operation === 'ifNotExists') {
+	if (operation === 'ifExists') {
 		return [
-			{ name: 'main', kind: 'main' },
-			{ name: 'main', kind: 'main' }
+			{ name: 'true', displayName: 'Row found', kind: 'main' },
+			{ name: 'false', displayName: 'No row', kind: 'main' }
+		];
+	}
+	if (operation === 'ifNotExists') {
+		return [
+			{ name: 'true', displayName: 'No row', kind: 'main' },
+			{ name: 'false', displayName: 'Row found', kind: 'main' }
 		];
 	}
 	return declared;

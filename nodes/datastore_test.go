@@ -220,9 +220,17 @@ func TestDatastoreRowBranchesRouteToTheirPort(t *testing.T) {
 	if len(missing) != 2 || len(missing[0]) != 0 || len(missing[1]) != 1 {
 		t.Fatalf("if-exists on an absent row = %v items per port, want 0 and 1", portSizes(missing))
 	}
+	// If Not Exists is the same fork with its test inverted: the item passes
+	// on the first port when the table holds no match, and on the second when
+	// it does. Either way the tested item is what leaves, since there is no
+	// matched row to emit.
 	notExists := branch(nodes.DatastoreOperationIfNotExists, "absent")
-	if len(notExists) != 2 || len(notExists[0]) != 0 || len(notExists[1]) != 1 {
-		t.Fatalf("if-not-exists on an absent row = %v items per port, want 0 and 1", portSizes(notExists))
+	if len(notExists) != 2 || len(notExists[0]) != 1 || len(notExists[1]) != 0 {
+		t.Fatalf("if-not-exists on an absent row = %v items per port, want 1 and 0", portSizes(notExists))
+	}
+	notExistsPresent := branch(nodes.DatastoreOperationIfNotExists, "present")
+	if len(notExistsPresent) != 2 || len(notExistsPresent[0]) != 0 || len(notExistsPresent[1]) != 1 {
+		t.Fatalf("if-not-exists on a present row = %v items per port, want 0 and 1", portSizes(notExistsPresent))
 	}
 }
 
@@ -452,5 +460,221 @@ func TestDatastoreFailuresNameTheirItemAndContinueOnFailEmitsTheRest(t *testing.
 		if _, failed := item.JSON[engine.ErrorItemKey]; failed {
 			t.Fatalf("item %d = %#v, want the row that did insert", index+1, item.JSON)
 		}
+	}
+}
+
+// The two test node types the branch run is wired through: a seed that starts
+// item flow, and a recorder that hands back what it was given.
+const (
+	datastoreSeedType   = "test.seed"
+	datastoreRecordType = "test.record"
+)
+
+// datastoreBranchCatalog is the real node set plus the two test types, so a
+// document compiles against the datastore node's own definition — PortsFor
+// included — rather than a stand-in.
+func datastoreBranchCatalog(t *testing.T) *node.Registry {
+	t.Helper()
+	catalog := node.NewRegistry()
+	if err := nodes.RegisterAll(catalog); err != nil {
+		t.Fatalf("RegisterAll() error = %v", err)
+	}
+	for _, definition := range []node.Definition{
+		{
+			Group: []node.NodeGroup{node.GroupTransform},
+			Type:  datastoreSeedType, Version: workflow.V(1), DisplayName: "Seed", Category: "Test",
+			Outputs:    []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+			ExecutorID: datastoreSeedType,
+		},
+		{
+			Group: []node.NodeGroup{node.GroupTransform},
+			Type:  datastoreRecordType, Version: workflow.V(1), DisplayName: "Record", Category: "Test",
+			Inputs:     []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+			Outputs:    []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+			ExecutorID: datastoreRecordType,
+		},
+	} {
+		if err := catalog.Register(definition); err != nil {
+			t.Fatalf("Register(%s) error = %v", definition.Type, err)
+		}
+	}
+	return catalog
+}
+
+// datastoreBranchExecutors binds the datastore executor to the given store and
+// the two test types to the trivial behaviour their names promise.
+func datastoreBranchExecutors(t *testing.T, store *datastore.Engine, seed workflow.Item) *engine.Registry {
+	t.Helper()
+	executors := engine.NewRegistry()
+	if err := nodes.RegisterExecutors(executors, safehttp.DefaultPolicy(), sqlnode.Guard{}, nil, nil, nil,
+		nodes.WithDatastoreEngine(store)); err != nil {
+		t.Fatalf("RegisterExecutors() error = %v", err)
+	}
+	if err := executors.Register(datastoreSeedType, engine.ExecutorFunc(
+		func(context.Context, workflow.IRNode, workflow.NodeInput, engine.Request) (workflow.NodeOutput, error) {
+			return workflow.NodeOutput{{seed}}, nil
+		})); err != nil {
+		t.Fatalf("Register(%s) error = %v", datastoreSeedType, err)
+	}
+	if err := executors.Register(datastoreRecordType, engine.ExecutorFunc(
+		func(_ context.Context, _ workflow.IRNode, input workflow.NodeInput, _ engine.Request) (workflow.NodeOutput, error) {
+			return workflow.NodeOutput{input["main"]}, nil
+		})); err != nil {
+		t.Fatalf("Register(%s) error = %v", datastoreRecordType, err)
+	}
+	return executors
+}
+
+// datastoreBranchDocument wires a seed into a datastore branch node and each
+// of its two outputs into its own recorder, so a run says which port an item
+// left on. The node ids are the port names for exactly that reason.
+func datastoreBranchDocument(id, operation, match string) workflow.Document {
+	parameters := datastoreRowParams(id, operation, map[string]any{
+		"match": "any",
+		"filters": datastoreConditions(map[string]any{
+			"keyName": "title", "condition": "eq", "keyValue": match,
+		}),
+	})
+	return workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_datastore_branch",
+		Name:          "Datastore branch",
+		Nodes: []workflow.Node{
+			{ID: "seed", Name: "Seed", Type: datastoreSeedType, TypeVersion: workflow.V(1)},
+			{ID: "branch", Name: "Branch", Type: nodes.DatastoreNodeType, TypeVersion: workflow.V(1), Parameters: parameters},
+			{ID: "true", Name: "True", Type: datastoreRecordType, TypeVersion: workflow.V(1)},
+			{ID: "false", Name: "False", Type: datastoreRecordType, TypeVersion: workflow.V(1)},
+		},
+		Connections: []workflow.Connection{
+			{ID: "seed-branch", Kind: workflow.ConnectionMain,
+				Source: workflow.Endpoint{NodeID: "seed", Port: "main"},
+				Target: workflow.Endpoint{NodeID: "branch", Port: "main"}},
+			{ID: "branch-true", Kind: workflow.ConnectionMain,
+				Source: workflow.Endpoint{NodeID: "branch", Port: "true"},
+				Target: workflow.Endpoint{NodeID: "true", Port: "main"}},
+			{ID: "branch-false", Kind: workflow.ConnectionMain,
+				Source: workflow.Endpoint{NodeID: "branch", Port: "false"},
+				Target: workflow.Endpoint{NodeID: "false", Port: "main"}},
+		},
+		Settings: map[string]any{},
+	}
+}
+
+// The defect this pins: both branch outputs were named `main`, so the
+// compiler — which resolves a connection's port by name and takes the first
+// match — put every wire on index 0 and the second branch was unreachable.
+func TestDatastoreBranchPortsNameBothOutcomesAndResolveByPosition(t *testing.T) {
+	t.Parallel()
+	catalog := datastoreBranchCatalog(t)
+	definition, found := catalog.Lookup(nodes.DatastoreNodeType, workflow.V(1))
+	if !found {
+		t.Fatalf("node type %q is not registered", nodes.DatastoreNodeType)
+	}
+
+	for _, operation := range []string{nodes.DatastoreOperationIfExists, nodes.DatastoreOperationIfNotExists} {
+		_, outputs := definition.PortsFor(map[string]any{"resource": "row", "operation": operation}, workflow.V(1))
+		if len(outputs) != 2 {
+			t.Fatalf("%s declares %d outputs, want two", operation, len(outputs))
+		}
+		names := []string{outputs[0].Name, outputs[1].Name}
+		if names[0] == names[1] {
+			t.Fatalf("%s outputs are both named %q, so one of them can never be addressed", operation, names[0])
+		}
+		if names[0] != "true" || names[1] != "false" {
+			t.Fatalf("%s output names = %v, want [true false]", operation, names)
+		}
+		for _, port := range outputs {
+			if port.DisplayName == "" {
+				t.Errorf("%s port %q has no label, so the canvas would show the name", operation, port.Name)
+			}
+		}
+	}
+
+	// A wire on the second port survives compilation as output slot 1: that
+	// index is what the runner dispatches on.
+	ir, err := workflow.Compile(datastoreBranchDocument("datastore_1", nodes.DatastoreOperationIfExists, "present"), catalog)
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+	indexes := map[string]int{}
+	for _, edge := range ir.Edges {
+		if edge.Source.NodeID == "branch" {
+			indexes[edge.Source.Port] = edge.SourceOutputIndex
+		}
+	}
+	if indexes["true"] != 0 || indexes["false"] != 1 {
+		t.Fatalf("branch output indexes = %v, want true=0 false=1", indexes)
+	}
+
+	// The name the two ports used to share resolves to nothing now, which is
+	// the point: a document written against that shape is refused with the
+	// port named, rather than silently rewired onto the first branch.
+	stale := datastoreBranchDocument("datastore_1", nodes.DatastoreOperationIfExists, "present")
+	stale.Connections[2].Source.Port = "main"
+	_, err = workflow.Compile(stale, catalog)
+	issues, ok := err.(*workflow.ValidationErrors)
+	if !ok {
+		t.Fatalf("Compile() error = %v, want validation issues naming the port", err)
+	}
+	refused := false
+	for _, issue := range issues.Issues {
+		if issue.Code == workflow.ErrorUnknownPort && issue.ConnectionID == "branch-false" {
+			refused = true
+		}
+	}
+	if !refused {
+		t.Fatalf("Compile() issues = %+v, want an unknown-port issue for the retired name", issues.Issues)
+	}
+}
+
+// The end-to-end half: the item that fails the test reaches the node wired on
+// the second port, and the first port's node is skipped — the fork is a fork,
+// not two names for one wire.
+func TestDatastoreIfExistsBranchRunsOnItsSecondPort(t *testing.T) {
+	t.Parallel()
+	store := datastoreEngine(t)
+	id := datastoreTable(t, store, "Branches")
+	if _, err := store.Insert(context.Background(), "tenant-a", id, map[string]any{"title": "present"}); err != nil {
+		t.Fatalf("Insert() error = %v", err)
+	}
+	catalog := datastoreBranchCatalog(t)
+	executors := datastoreBranchExecutors(t, store, workflow.Item{JSON: map[string]any{"title": "probe"}})
+
+	run := func(match string) map[string]engine.NodeRun {
+		t.Helper()
+		ir, err := workflow.Compile(datastoreBranchDocument(id, nodes.DatastoreOperationIfExists, match), catalog)
+		if err != nil {
+			t.Fatalf("Compile() error = %v", err)
+		}
+		result, err := engine.NewRunner(executors).Run(context.Background(), ir,
+			engine.Request{Execution: engine.ExecutionContext{TenantID: "tenant-a"}})
+		if err != nil {
+			t.Fatalf("Run() error = %v", err)
+		}
+		runs := make(map[string]engine.NodeRun, len(result.NodeRuns))
+		for _, nodeRun := range result.NodeRuns {
+			runs[nodeRun.NodeID] = nodeRun
+		}
+		return runs
+	}
+
+	// A matching row: the found rows leave on the first port, and the second
+	// port's node never runs.
+	matched := run("present")
+	if run := matched["true"]; run.Skipped || len(run.Input["main"]) != 1 || run.Input["main"][0].JSON["title"] != "present" {
+		t.Fatalf("true-port run = %+v, want the matched row", run)
+	}
+	if run := matched["false"]; !run.Skipped {
+		t.Fatalf("false-port run = %+v, want it skipped when the row was found", run)
+	}
+
+	// No matching row: the tested item leaves on the second port, which is
+	// what a workflow needs to act on the absence of the row.
+	absent := run("absent")
+	if run := absent["false"]; run.Skipped || len(run.Input["main"]) != 1 || run.Input["main"][0].JSON["title"] != "probe" {
+		t.Fatalf("false-port run = %+v, want the tested item", run)
+	}
+	if run := absent["true"]; !run.Skipped {
+		t.Fatalf("true-port run = %+v, want it skipped when no row matched", run)
 	}
 }
