@@ -13,12 +13,14 @@ function definition(): Definition {
 		source: 'test',
 		type: 'kilasflow.webhook',
 		version: 1,
+		parameters: [],
+		sharedSettings: [],
 		credentials: [
 			{ type: 'httpBasicAuth', visibleWhen: [{ key: 'authentication', equals: 'basicAuth' }] },
 			{ type: 'httpHeaderAuth', visibleWhen: [{ key: 'authentication', equals: 'headerAuth' }] },
 			{ type: 'openAiApi' }
 		]
-	} as Definition;
+	};
 }
 
 describe('credentialTypesFor', () => {
