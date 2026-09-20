@@ -1,7 +1,7 @@
 ---
 id: BUG-rrkjrd
 title: $('Node').item fails whenever the referenced node produced more than one item
-status: doing
+status: testing
 priority: critical
 labels:
     - expression
@@ -11,7 +11,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:09Z"
-updated: "2026-09-20T00:35:55Z"
+updated: "2026-09-20T01:02:13Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -67,3 +67,9 @@ Existing tickets: FEAT-9knk67, FEAT-v8k1tc
 - Tests: `TestDollarItemFollowsPairedLineagePerItem` (Manual -> Split Out -> Set -> IF -> Filter -> Limit -> probe reading `$('Split Out').item.json.v`, expects a/b/c per item) and `TestDollarItemFailsRatherThanGuessingWhenLineageIsAmbiguous` (refusal carries a reason, no NUL in the text).
 - Scoped proof (isolated worktree at HEAD + only these files): `go test ./internal/engine/ -count=1` ok, `go test ./internal/workflow/ -count=1` ok.
 - Remaining: ExpressionParity's one-line wiring in internal/engine/authenticate.go (`NodeItems: PairNodeItems(request.NodeItems, item, index)`), then the end-to-end check through the real node executors (without the manual call the test makes). Not a code-only close: the pre-wiring failure was observed (`TestDollarNodeByNameReachesTheExecutor`: "lineage is not available for this node").
+
+## Progress (EngineFlow 2026-09-20, engine/flow slice) — part 2: end-to-end verified
+
+- ExpressionParity landed the wiring (d26f242, internal/engine/authenticate.go): `NodeItems: PairNodeItems(request.NodeItems, item, index)`. `TestDollarItemFollowsPairedLineagePerItem` now goes through the real `ExpressionContext` (the manual pairing call in the probe is gone) and resolves a/b/c per item across Manual -> Split Out -> Set -> IF -> Filter -> Limit -> probe.
+- Scoped proof: `go test ./internal/engine/ -run 'TestDollar|TestLineage|TestExpression' -count=1` ok; full `./internal/engine/` suite ok.
+- Known bound, documented in code: the runner stamps each item with the origin it descends from, not every intermediate step, so a chain that both drops and reorders items between X and the current node can only be paired positionally; genuine ambiguity and lost lineage still fail with a reason instead of a guess. The `$node\x00` prefix in the old failure text is gone from the pairing reasons.
