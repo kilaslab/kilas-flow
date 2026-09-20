@@ -21,6 +21,12 @@ var globals = map[string]any{
 	"Array":    namespaceValue{name: "Array"},
 	"Math":     namespaceValue{name: "Math"},
 	"DateTime": namespaceValue{name: "DateTime"},
+	// Number, String and Boolean are both a namespace (`Number.isInteger`) and
+	// a function (`Number(x)`). A call is dispatched to the builtin before this
+	// map is consulted, so both spellings work.
+	"Number":  namespaceValue{name: "Number"},
+	"String":  namespaceValue{name: "String"},
+	"Boolean": namespaceValue{name: "Boolean"},
 }
 
 // builtinFunc is a global function, called without a receiver.
