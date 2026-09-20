@@ -70,3 +70,4 @@ sdk/node_modules/
 .claude/worktrees/
 .gowa-ref/
 /kilasflow
+.svelte-kit/
