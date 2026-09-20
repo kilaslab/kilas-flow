@@ -40,6 +40,21 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
   Telegram or WAHA workflow again so the sender is given the new address.
   Bindings that already have a route keep it.
 
+### Changed
+
+- `embed.session_ttl` now sets the default lifetime of an embed session token
+  (it was read by nothing); values below one second or above 30 minutes are
+  refused at startup.
+- `branding.name` and `branding.logo` now default the header of embedded editor
+  sessions that carry no branding of their own (they were read by nothing); the
+  default of `branding.name` changed from `KilasFlow` to empty, so existing
+  embeds keep the headerless look they have today.
+
+### Removed
+
+- `branding.favicon` and `branding.powered_by` (read by nothing; a configuration
+  that still sets them is warned about at start).
+
 ### Security
 
 - `SECURITY.md` documents the private disclosure path, and private vulnerability

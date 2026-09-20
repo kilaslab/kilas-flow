@@ -254,25 +254,29 @@ embed:
   # origin is listed here.
   # Env: KILASFLOW_EMBED_ALLOWED_ORIGINS
   allowed_origins: []
-  # SessionTTL is how long one embed session token lives. Capped at 30
-  # minutes: a token travels through a host page and sits in a browser, so a
-  # leaked one stays useful only briefly.
+  # SessionTTL is how long an embed session token lives when the host does
+  # not ask for a lifetime (ttlSeconds when it mints the session). It is a
+  # default, not a ceiling: a host may ask for longer, and no token ever
+  # outlives 30 minutes whatever is asked or configured here. A value below
+  # one second or above 30 minutes is refused at startup rather than clamped,
+  # so the file never says one lifetime while the server enforces another.
+  # Write a unit (15m): a bare number in YAML is read as nanoseconds. Tokens
+  # travel through a host page and sit in a browser, so a leaked one should
+  # stay useful only briefly.
   # Env: KILASFLOW_EMBED_SESSION_TTL
   session_ttl: 15m0s
 
 branding:
-  # Name is the product name shown in the dashboard.
+  # Name is the product name drawn in the header of an embedded editor whose
+  # session names none: letters, digits, spaces and simple punctuation, up to
+  # 60 characters. Empty draws no name.
   # Env: KILASFLOW_BRANDING_NAME
-  name: 'KilasFlow'
-  # Logo is the logo URL shown in the dashboard. Empty hides it.
+  name: ''
+  # Logo is the logo URL drawn in that header when a session gives none: an
+  # absolute https URL. Empty draws no logo; with neither a name nor a logo
+  # the editor shows no header at all.
   # Env: KILASFLOW_BRANDING_LOGO
   logo: ''
-  # Favicon is the favicon URL. Empty uses the built-in one.
-  # Env: KILASFLOW_BRANDING_FAVICON
-  favicon: ''
-  # PoweredBy toggles the "Powered by KilasFlow" mark.
-  # Env: KILASFLOW_BRANDING_POWERED_BY
-  powered_by: true
 
 execution:
   # MaxConcurrent bounds how many workflow runs execute at once. The

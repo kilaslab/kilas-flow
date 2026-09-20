@@ -138,8 +138,8 @@ const session = await tenant.client.createEmbedSession({
 ```
 
 Minting is cheap, so mint per page load and re-check entitlement each
-time. A fifteen-minute token is also the point at which a long editing
-session re-verifies the user is still allowed.
+time. A default-length (fifteen-minute) token is also the point at which a
+long editing session re-verifies the user is still allowed.
 
 ### 4. Mount the editor, watch the run
 
@@ -242,9 +242,14 @@ until somebody deliberately permits it.
   both — and a request with no `Origin` header at all skips the
   per-request check, which is fine for browsers (they always send it)
   and worth knowing for anything else.
-- **Minutes, not hours.** Fifteen by default, thirty maximum; a longer
-  request is clamped, not refused. A leaked token stays useful only
-  briefly, and minting another is the re-authorization point.
+- **Minutes, not hours.** Fifteen by default (an operator changes the
+  default with `embed.session_ttl`), thirty maximum; a longer request is
+  clamped, not refused. The setting is a default, not a ceiling: a host
+  that passes `ttlSeconds` still gets the lifetime it asked for, up to the
+  thirty-minute cap, which no configuration raises. A configured default
+  outside one second to thirty minutes is refused at startup rather than
+  clamped. A leaked token stays useful only briefly, and minting another
+  is the re-authorization point.
 - **No activate, no delete, no import.** Activation publishes a public
   endpoint, deletion destroys the tenant's data, import creates
   workflows outside the session's single-workflow authority. Each
@@ -275,6 +280,23 @@ themeable, exactly:
 | `logoUrl` | Absolute `https` URL | `data:` and `javascript:` URLs are the classic injection through a "safe" string field |
 | `accent` | Hex, `oklch()`, `rgb()`, or a plain colour name | Anything that is not a colour literal |
 | `hideRun`, `hideSave` | Booleans | They are presentation only: the server still enforces scopes, so hiding a control can never be the thing that stops an action |
+
+### Deployment defaults
+
+An operator may set `branding.name` and `branding.logo` to the values an
+embedded editor carries when the session that opens it names none. Values the
+host passes win field by field; an empty value cannot blank a deployment
+default, so a deployment hosting more than one brand leaves both settings empty
+and passes everything per session.
+
+Both sets of values pass the same validation — the deployment's at boot, the
+host's at mint — so a logo the editor could never render stops the server
+instead of refusing every session a host asks for. The merged values come back
+in the mint response's `branding` field, which means the host has to forward
+that response to its page the way the [reference host](https://github.com/kilaslab/kilas-flow/blob/main/sdk/examples/reference-host/server.mjs)
+does; a session handle built by hand carries no branding. The operator
+dashboard does not read these settings: it keeps its own name, logo and icon,
+and only the embedded editor a host's end users see is white-labelled.
 
 ## The datastore path
 

@@ -43,14 +43,34 @@ const (
 // ErrInvalidSession reports a token that must not be honoured.
 var ErrInvalidSession = errors.New("embed session is not valid")
 
-// MaxLifetime bounds how long a session may live.
+// MaxLifetime bounds how long a session may live. It is a hard cap: no
+// configuration raises it, and a default configured above it is refused rather
+// than clamped.
 //
 // An embed token travels through a host page and sits in a browser, so it is
 // deliberately short: a leaked token is only useful for minutes.
 const MaxLifetime = 30 * time.Minute
 
-// DefaultLifetime is used when a caller asks for none.
+// DefaultLifetime is used when a caller asks for none and nothing is
+// configured. embed.session_ttl overrides it: see WithDefaultLifetime.
 const DefaultLifetime = 15 * time.Minute
+
+// MinDefaultLifetime is the shortest default an operator may configure.
+// Anything shorter is a unit mistake, not a policy: a bare number in YAML
+// decodes as nanoseconds, so `session_ttl: 900` is 900ns and would mint tokens
+// that are dead on arrival.
+const MinDefaultLifetime = time.Second
+
+// CheckDefaultLifetime reports why a configured default could never be
+// honoured. The issuer option and the configuration validator both call it, so
+// the two cannot disagree about the range.
+func CheckDefaultLifetime(lifetime time.Duration) error {
+	if lifetime < MinDefaultLifetime || lifetime > MaxLifetime {
+		return fmt.Errorf("embed session default lifetime %s must be between %s and %s",
+			lifetime, MinDefaultLifetime, MaxLifetime)
+	}
+	return nil
+}
 
 // Branding is the white-label surface.
 //
@@ -94,6 +114,29 @@ func (branding Branding) Validate() error {
 		return fmt.Errorf("branding accent must be a plain CSS colour")
 	}
 	return nil
+}
+
+// WithDefaults fills what this branding leaves empty with the deployment's,
+// field by field.
+//
+// A value the session names wins; a value it leaves empty cannot blank a
+// deployment default — so a deployment hosting more than one brand leaves
+// branding.* empty and passes every value per session. The booleans are ORed:
+// a deployment default may add a presentation restriction, never lift one the
+// session asked for, and neither can reach a scope.
+func (branding Branding) WithDefaults(defaults Branding) Branding {
+	if branding.Name == "" {
+		branding.Name = defaults.Name
+	}
+	if branding.LogoURL == "" {
+		branding.LogoURL = defaults.LogoURL
+	}
+	if branding.Accent == "" {
+		branding.Accent = defaults.Accent
+	}
+	branding.HideRun = branding.HideRun || defaults.HideRun
+	branding.HideSave = branding.HideSave || defaults.HideSave
+	return branding
 }
 
 // Session is one issued embed authorization.
@@ -186,12 +229,60 @@ type Issuer struct {
 	// token for a page the operator never approved.
 	allowedOrigins []string
 	now            func() time.Time
+	// defaultLifetime is what a session lives when its request names none. It
+	// is still capped by MaxLifetime.
+	defaultLifetime time.Duration
+	// defaultBranding is the deployment's white-label values, merged under a
+	// workflow session's own so a host that passes none still reaches its users
+	// with the operator's name and logo.
+	defaultBranding Branding
+}
+
+// IssuerOption customises an Issuer at construction. Options are applied once,
+// in order, and the Issuer is immutable afterwards, so no locking is needed.
+type IssuerOption func(*Issuer) error
+
+// WithDefaultLifetime sets the lifetime of a session whose request names none.
+//
+// It is a default, not a ceiling: a request that asks for a lifetime still gets
+// it, up to MaxLifetime. A value CheckDefaultLifetime refuses is an error here
+// rather than a clamp, so a configuration never says one lifetime while the
+// issuer enforces another.
+func WithDefaultLifetime(lifetime time.Duration) IssuerOption {
+	return func(issuer *Issuer) error {
+		if err := CheckDefaultLifetime(lifetime); err != nil {
+			return err
+		}
+		issuer.defaultLifetime = lifetime
+		return nil
+	}
+}
+
+// WithDefaultBranding sets the white-label values a workflow session carries
+// when it names none of its own, and how a host's values merge with them:
+// see Branding.WithDefaults.
+//
+// The defaults are validated here, where they are set, exactly as a host's are
+// validated at mint. A deployment that configured a logo the editor could never
+// render therefore fails its boot instead of refusing every session its hosts
+// ask for.
+func WithDefaultBranding(defaults Branding) IssuerOption {
+	return func(issuer *Issuer) error {
+		if err := defaults.Validate(); err != nil {
+			return fmt.Errorf("embed default %w", err)
+		}
+		issuer.defaultBranding = defaults
+		return nil
+	}
 }
 
 // NewIssuer builds the token issuer. The signing key must be at least 32 bytes.
 // The server only ever passes exactly 32: the boot path decodes the configured
 // variable through KeyFromEnvironment, which rejects anything else.
-func NewIssuer(key []byte, allowedOrigins []string, now func() time.Time) (*Issuer, error) {
+//
+// Options adjust the deployment defaults; with none, the issuer behaves as it
+// always has.
+func NewIssuer(key []byte, allowedOrigins []string, now func() time.Time, options ...IssuerOption) (*Issuer, error) {
 	if len(key) < 32 {
 		return nil, fmt.Errorf("embed signing key must be at least 32 bytes")
 	}
@@ -205,7 +296,16 @@ func NewIssuer(key []byte, allowedOrigins []string, now func() time.Time) (*Issu
 		}
 	}
 	sort.Strings(normalized)
-	return &Issuer{key: append([]byte(nil), key...), allowedOrigins: normalized, now: now}, nil
+	issuer := &Issuer{
+		key: append([]byte(nil), key...), allowedOrigins: normalized, now: now,
+		defaultLifetime: DefaultLifetime,
+	}
+	for _, option := range options {
+		if err := option(issuer); err != nil {
+			return nil, err
+		}
+	}
+	return issuer, nil
 }
 
 // AllowedOrigins returns the configured allowlist.
@@ -275,10 +375,19 @@ func (issuer *Issuer) Issue(request Request) (Session, string, error) {
 	if err := request.Branding.Validate(); err != nil {
 		return Session{}, "", err
 	}
+	// The deployment defaults fill what the session leaves blank. They exist for
+	// the header an embedded editor draws, and only a workflow session has an
+	// editor: a datastore session renders nothing, so it keeps exactly what its
+	// host asked for. The host's values are validated above, before the merge,
+	// so a bad one is still refused the way it always was.
+	branding := request.Branding
+	if request.WorkflowID != "" {
+		branding = branding.WithDefaults(issuer.defaultBranding)
+	}
 
 	lifetime := request.Lifetime
 	if lifetime <= 0 {
-		lifetime = DefaultLifetime
+		lifetime = issuer.defaultLifetime
 	}
 	if lifetime > MaxLifetime {
 		lifetime = MaxLifetime
@@ -293,7 +402,7 @@ func (issuer *Issuer) Issue(request Request) (Session, string, error) {
 		ID: sessionID, TenantID: request.TenantID, WorkflowID: request.WorkflowID,
 		DatastoreID: request.DatastoreID,
 		Scopes:      scopes, Origin: NormalizeOrigin(request.Origin),
-		IssuedAt: now, ExpiresAt: now.Add(lifetime), Branding: request.Branding,
+		IssuedAt: now, ExpiresAt: now.Add(lifetime), Branding: branding,
 		Confinement: request.Confinement.normalized(request.WorkflowID),
 	}
 	token, err := issuer.sign(session)

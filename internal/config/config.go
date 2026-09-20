@@ -434,27 +434,37 @@ type Embed struct {
 	// origin is listed here.
 	// Env: KILASFLOW_EMBED_ALLOWED_ORIGINS. Default: [].
 	AllowedOrigins []string `koanf:"allowed_origins"`
-	// SessionTTL is how long one embed session token lives. Capped at 30
-	// minutes: a token travels through a host page and sits in a browser, so a
-	// leaked one stays useful only briefly.
+	// SessionTTL is how long an embed session token lives when the host does
+	// not ask for a lifetime (ttlSeconds when it mints the session). It is a
+	// default, not a ceiling: a host may ask for longer, and no token ever
+	// outlives 30 minutes whatever is asked or configured here. A value below
+	// one second or above 30 minutes is refused at startup rather than clamped,
+	// so the file never says one lifetime while the server enforces another.
+	// Write a unit (15m): a bare number in YAML is read as nanoseconds. Tokens
+	// travel through a host page and sit in a browser, so a leaked one should
+	// stay useful only briefly.
 	// Env: KILASFLOW_EMBED_SESSION_TTL. Default: 15m.
 	SessionTTL time.Duration `koanf:"session_ttl"`
 }
 
-// Branding drives white-label display options.
+// Branding is the deployment-wide default for the white-label values an
+// embedded editor session carries.
+//
+// A host that passes its own branding when it mints a session overrides these
+// field by field; a host that passes none gets them, in the mint response and in
+// the session token. They reach only the embedded editor, the surface a host's
+// end users see: the operator dashboard keeps its own name, logo and icon.
 type Branding struct {
-	// Name is the product name shown in the dashboard.
-	// Env: KILASFLOW_BRANDING_NAME. Default: "KilasFlow".
+	// Name is the product name drawn in the header of an embedded editor whose
+	// session names none: letters, digits, spaces and simple punctuation, up to
+	// 60 characters. Empty draws no name.
+	// Env: KILASFLOW_BRANDING_NAME. Default: "".
 	Name string `koanf:"name"`
-	// Logo is the logo URL shown in the dashboard. Empty hides it.
+	// Logo is the logo URL drawn in that header when a session gives none: an
+	// absolute https URL. Empty draws no logo; with neither a name nor a logo
+	// the editor shows no header at all.
 	// Env: KILASFLOW_BRANDING_LOGO. Default: "".
 	Logo string `koanf:"logo"`
-	// Favicon is the favicon URL. Empty uses the built-in one.
-	// Env: KILASFLOW_BRANDING_FAVICON. Default: "".
-	Favicon string `koanf:"favicon"`
-	// PoweredBy toggles the "Powered by KilasFlow" mark.
-	// Env: KILASFLOW_BRANDING_POWERED_BY. Default: true.
-	PoweredBy bool `koanf:"powered_by"`
 }
 
 // Execution bounds workflow runs.
@@ -669,10 +679,11 @@ func Default() Config {
 			SigningKeyEnv: "KILASFLOW_EMBED_SIGNING_KEY",
 			SessionTTL:    15 * time.Minute,
 		},
-		Branding: Branding{
-			Name:      "KilasFlow",
-			PoweredBy: true,
-		},
+		// Empty on purpose. The editor draws a header bar as soon as a name or a
+		// logo is present, so any non-empty default — branding.name used to be
+		// "KilasFlow" — would add one to every white-label embed that already
+		// exists. See Branding.
+		Branding: Branding{},
 		Execution: Execution{
 			MaxConcurrent:  10,
 			DefaultTimeout: 60 * time.Second,
@@ -1076,6 +1087,10 @@ func (c Config) Validate() error {
 		if _, err := datetime.Zone(c.Execution.DefaultTimezone); err != nil {
 			return fmt.Errorf("execution.default_timezone %q: %w", c.Execution.DefaultTimezone, err)
 		}
+	}
+
+	if err := c.validateEmbed(); err != nil {
+		return err
 	}
 
 	return nil

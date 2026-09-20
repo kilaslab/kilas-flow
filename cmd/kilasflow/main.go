@@ -323,7 +323,7 @@ func run() error {
 	// silently being frameable.
 	var embedIssuer *embed.Issuer
 	if embedKey, err := credentials.KeyFromEnvironment(cfg.Embed.SigningKeyEnv); err == nil {
-		issuer, issuerErr := embed.NewIssuer(embedKey, cfg.Embed.AllowedOrigins, nil)
+		issuer, issuerErr := newEmbedIssuer(embedKey, cfg)
 		if issuerErr != nil {
 			return fmt.Errorf("configure embed sessions: %w", issuerErr)
 		}

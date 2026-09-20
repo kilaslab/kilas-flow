@@ -551,22 +551,36 @@ origin is listed here.
 - Environment: `KILASFLOW_EMBED_SESSION_TTL`
 - Required: no
 
-SessionTTL is how long one embed session token lives. Capped at 30
-minutes: a token travels through a host page and sits in a browser, so a
-leaked one stays useful only briefly.
+SessionTTL is how long an embed session token lives when the host does
+not ask for a lifetime (ttlSeconds when it mints the session). It is a
+default, not a ceiling: a host may ask for longer, and no token ever
+outlives 30 minutes whatever is asked or configured here. A value below
+one second or above 30 minutes is refused at startup rather than clamped,
+so the file never says one lifetime while the server enforces another.
+Write a unit (15m): a bare number in YAML is read as nanoseconds. Tokens
+travel through a host page and sit in a browser, so a leaked one should
+stay useful only briefly.
 
 ## branding
 
-Branding drives white-label display options.
+Branding is the deployment-wide default for the white-label values an
+embedded editor session carries.
+
+A host that passes its own branding when it mints a session overrides these
+field by field; a host that passes none gets them, in the mint response and in
+the session token. They reach only the embedded editor, the surface a host's
+end users see: the operator dashboard keeps its own name, logo and icon.
 
 ### branding.name
 
 - Type: `string`
-- Default: `'KilasFlow'`
+- Default: `''`
 - Environment: `KILASFLOW_BRANDING_NAME`
 - Required: no
 
-Name is the product name shown in the dashboard.
+Name is the product name drawn in the header of an embedded editor whose
+session names none: letters, digits, spaces and simple punctuation, up to
+60 characters. Empty draws no name.
 
 ### branding.logo
 
@@ -575,25 +589,9 @@ Name is the product name shown in the dashboard.
 - Environment: `KILASFLOW_BRANDING_LOGO`
 - Required: no
 
-Logo is the logo URL shown in the dashboard. Empty hides it.
-
-### branding.favicon
-
-- Type: `string`
-- Default: `''`
-- Environment: `KILASFLOW_BRANDING_FAVICON`
-- Required: no
-
-Favicon is the favicon URL. Empty uses the built-in one.
-
-### branding.powered_by
-
-- Type: `bool`
-- Default: `true`
-- Environment: `KILASFLOW_BRANDING_POWERED_BY`
-- Required: no
-
-PoweredBy toggles the "Powered by KilasFlow" mark.
+Logo is the logo URL drawn in that header when a session gives none: an
+absolute https URL. Empty draws no logo; with neither a name nor a logo
+the editor shows no header at all.
 
 ## execution
 

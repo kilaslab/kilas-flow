@@ -39,10 +39,11 @@ reach one loopback dependency; name the endpoint instead.
 
 **Embedding fails closed.** The `embed` section's allowlist decides which
 pages may host the editor, and empty means disabled entirely — even with a
-signing key set. Session tokens live at most 30 minutes (default 15) because
-a token travels through a host page and sits in a browser. The signing key is
-deliberately a different variable from the dashboard auth key, so a forged
-value of one kind can never be presented as the other.
+signing key set. Session tokens live at most 30 minutes (default 15, set with
+`embed.session_ttl`) because a token travels through a host page and sits in a
+browser. The signing key is deliberately a different variable from the
+dashboard auth key, so a forged value of one kind can never be presented as
+the other.
 
 **The internal database has a guard, on both drivers.** A workflow database
 credential naming KilasFlow's own database is refused before a socket or a file
