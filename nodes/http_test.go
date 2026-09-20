@@ -427,6 +427,63 @@ func TestHTTPRequestSendsResolvedBodyFieldsRatherThanExpressionWrappers(t *testi
 	}
 }
 
+// An expression resolved into a URL can hold anything the item holds, and a
+// space used to reach the request line verbatim — the upstream answered 400
+// while n8n's client percent-encoded it.
+func TestHTTPRequestEncodesInterpolatedURLValues(t *testing.T) {
+	t.Parallel()
+
+	var received *url.URL
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		received = r.URL
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+
+	_, err := nodes.NewHTTPExecutor(localPolicy()).Execute(context.Background(), httpNode(map[string]any{
+		"method": "GET",
+		"url":    map[string]any{"mode": "expression", "value": server.URL + `/echo/{{ $json.x }}?v={{ $json.x }}`},
+	}), workflow.NodeInput{"main": {{JSON: map[string]any{"x": "hello world"}}}}, engine.Request{})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if received == nil {
+		t.Fatal("the request never reached the server")
+	}
+	if got := received.Query().Get("v"); got != "hello world" {
+		t.Errorf("query value = %q, want the resolved value", got)
+	}
+	if got := received.Path; got != "/echo/hello world" {
+		t.Errorf("path = %q, want the resolved value", got)
+	}
+}
+
+// An existing escape must survive: encoding `%20` a second time sends `%2520`
+// and the upstream receives the literal text instead of a space.
+func TestHTTPRequestDoesNotDoubleEncodeAnExistingEscape(t *testing.T) {
+	t.Parallel()
+
+	var received *url.URL
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		received = r.URL
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+
+	_, err := nodes.NewHTTPExecutor(localPolicy()).Execute(context.Background(), httpNode(map[string]any{
+		"method": "GET", "url": server.URL + "/echo?a=1%202",
+	}), workflow.NodeInput{}, engine.Request{})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if received == nil {
+		t.Fatal("the request never reached the server")
+	}
+	if got := received.Query().Get("a"); got != "1 2" {
+		t.Errorf("query value = %q, want the single-encoded value", got)
+	}
+}
+
 func TestHTTPRequestRejectsAnInvalidJSONBodyBeforeSending(t *testing.T) {
 	t.Parallel()
 

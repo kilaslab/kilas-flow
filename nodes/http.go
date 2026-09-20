@@ -272,7 +272,7 @@ func (executor *HTTPExecutor) sendOne(ctx context.Context, ir workflow.IRNode, p
 		return nil, fmt.Errorf("node %q: method %q is not supported", ir.Name, method)
 	}
 
-	target, err := url.Parse(strings.TrimSpace(textValue(parameters["url"], "")))
+	target, err := url.Parse(encodeURL(strings.TrimSpace(textValue(parameters["url"], ""))))
 	if err != nil {
 		return nil, fmt.Errorf("node %q: url is not a valid URL", ir.Name)
 	}
@@ -626,6 +626,89 @@ func requestBody(parameters map[string]any) (io.Reader, string, error) {
 		return strings.NewReader(form.Encode()), "application/x-www-form-urlencoded", nil
 	default:
 		return strings.NewReader(raw), textValue(parameters["rawContentType"], "text/plain; charset=utf-8"), nil
+	}
+}
+
+// encodeURL escapes the characters an interpolated value may have introduced.
+//
+// An expression is resolved into the URL *after* the template was written, so
+// `{{ $json.x }}` holding "hello world" put a raw space on the request line and
+// the upstream answered 400 — n8n's HTTP client percent-encodes instead. The
+// path needs nothing here: net/url re-escapes it on the way out. The query is
+// carried verbatim by net/url, so it is the part that has to be fixed.
+//
+// Existing escapes are left alone, so a URL that already carries `%20` is not
+// encoded twice into `%2520`.
+func encodeURL(raw string) string {
+	target, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	target.RawQuery = escapeKeepingEscapes(target.RawQuery)
+	return target.String()
+}
+
+// escapeKeepingEscapes percent-encodes the bytes a URL component may not carry,
+// leaving an existing `%XX` sequence as it is.
+func escapeKeepingEscapes(value string) string {
+	var builder strings.Builder
+	builder.Grow(len(value))
+	for index := 0; index < len(value); {
+		letter := value[index]
+		if letter == '%' && index+3 <= len(value) && isHexPair(value[index+1:]) {
+			builder.WriteString(value[index : index+3])
+			index += 3
+			continue
+		}
+		if allowedInQuery(letter) {
+			builder.WriteByte(letter)
+			index++
+			continue
+		}
+		// Percent-encoded rather than QueryEscape, which writes a space as `+`:
+		// valid in a query but not in a path, and not what an upstream API that
+		// compares its own input expects to see.
+		builder.WriteString(fmt.Sprintf("%%%02X", letter))
+		index++
+	}
+	return builder.String()
+}
+
+// isHexPair reports whether a string starts with two hex digits.
+func isHexPair(value string) bool {
+	if len(value) < 2 {
+		return false
+	}
+	return isHexDigit(value[0]) && isHexDigit(value[1])
+}
+
+func isHexDigit(letter byte) bool {
+	switch {
+	case letter >= '0' && letter <= '9':
+		return true
+	case letter >= 'a' && letter <= 'f':
+		return true
+	case letter >= 'A' && letter <= 'F':
+		return true
+	default:
+		return false
+	}
+}
+
+// allowedInQuery is the set of bytes that may stay as they are in a query.
+//
+// Deliberately conservative: everything else is escaped, which is always valid
+// in a URL, while leaving a stray space or a quote in place is not.
+func allowedInQuery(letter byte) bool {
+	switch {
+	case letter >= 'a' && letter <= 'z', letter >= 'A' && letter <= 'Z', letter >= '0' && letter <= '9':
+		return true
+	}
+	switch letter {
+	case '-', '_', '.', '~', '!', '$', '&', '(', ')', '*', '+', ',', ';', '=', ':', '@', '/', '?', '[', ']', '\'':
+		return true
+	default:
+		return false
 	}
 }
 
