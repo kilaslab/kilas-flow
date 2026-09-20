@@ -165,8 +165,23 @@ type meOutput struct {
 	Body PrincipalResource
 }
 
+// listAPIKeysInput is one page of a tenant's keys.
+//
+// The bounds match the repository's own clamp, so an out-of-range value is
+// refused at the edge with a schema error rather than silently clamped behind
+// the caller's back. An absent limit is not validated at all and reaches the
+// repository as zero, which is its documented default.
+type listAPIKeysInput struct {
+	Limit  int    `query:"limit" minimum:"1" maximum:"500" doc:"Maximum keys to return (default 100)"`
+	Cursor string `query:"cursor" doc:"Opaque cursor from the previous page's X-Next-Cursor header"`
+}
+
 type listAPIKeysOutput struct {
-	Body struct {
+	// NextCursor is empty on the last page. It travels in a header because the
+	// body is the object the dashboard already reads: adding a field to it
+	// would be a change to a contract a running client is parsing.
+	NextCursor string `header:"X-Next-Cursor" doc:"Cursor for the next page; empty when there is none"`
+	Body       struct {
 		Items []APIKeyResource `json:"items"`
 	}
 }
@@ -244,7 +259,7 @@ func (handler *Auth) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "list-api-keys", Method: http.MethodGet, Path: "/api-keys",
 		Summary:     "List API keys",
-		Description: "Lists this tenant's keys. No secret is ever included.",
+		Description: "Lists one page of this tenant's keys, newest first. No secret is ever included. The next page's cursor is in the X-Next-Cursor response header, empty on the last page.",
 		Tags:        []string{"Auth"},
 	}, handler.ListKeys)
 
@@ -446,18 +461,25 @@ func (handler *Auth) Me(ctx context.Context, _ *struct{}) (*meOutput, error) {
 }
 
 // ListKeys returns this tenant's keys, secrets excluded by construction.
-func (handler *Auth) ListKeys(ctx context.Context, _ *struct{}) (*listAPIKeysOutput, error) {
+func (handler *Auth) ListKeys(ctx context.Context, input *listAPIKeysInput) (*listAPIKeysOutput, error) {
 	if handler.store == nil {
 		return nil, huma.Error503ServiceUnavailable("authentication is not configured on this instance")
 	}
 	tenant := handler.tenants.Resolve(ctx)
-	keys, err := handler.store.ListAPIKeys(ctx, tenant)
+	page, err := handler.store.ListAPIKeysPage(ctx, tenant, repository.APIKeyFilter{
+		Limit: input.Limit, Cursor: input.Cursor,
+	})
+	// A cursor the client did not receive from this API is a bad request, not a
+	// server fault, so it must not be reported as a 500.
+	if errors.Is(err, repository.ErrInvalidCursor) {
+		return nil, huma.Error400BadRequest("api key cursor is invalid")
+	}
 	if err != nil {
 		return nil, serverProblem(ctx, "could not list API keys", err)
 	}
-	out := &listAPIKeysOutput{}
-	out.Body.Items = make([]APIKeyResource, 0, len(keys))
-	for _, key := range keys {
+	out := &listAPIKeysOutput{NextCursor: page.NextCursor}
+	out.Body.Items = make([]APIKeyResource, 0, len(page.Keys))
+	for _, key := range page.Keys {
 		out.Body.Items = append(out.Body.Items, apiKeyResource(key))
 	}
 	return out, nil

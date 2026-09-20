@@ -27,14 +27,18 @@ import (
 	"github.com/kilaslabs/kilas-flow/internal/repository"
 )
 
-// loginStore answers the one question the login handler asks of storage.
+// loginStore answers the two questions these tests ask of storage: who signs in
+// as an address, and one page of a tenant's keys.
 //
 // Every other method is unreachable from these tests, so the embedded nil
 // interface is the honest way to say so.
 type loginStore struct {
 	repository.AuthRepository
-	user repository.User
-	err  error
+	user     repository.User
+	err      error
+	page     repository.APIKeyPage
+	pageErr  error
+	received repository.APIKeyFilter
 }
 
 func (store *loginStore) FindUserForLogin(context.Context, string) (repository.User, error) {
@@ -42,6 +46,11 @@ func (store *loginStore) FindUserForLogin(context.Context, string) (repository.U
 		return repository.User{}, store.err
 	}
 	return store.user, nil
+}
+
+func (store *loginStore) ListAPIKeysPage(_ context.Context, _ repository.TenantScope, filter repository.APIKeyFilter) (repository.APIKeyPage, error) {
+	store.received = filter
+	return store.page, store.pageErr
 }
 
 func loginTestKey() []byte {
@@ -291,5 +300,50 @@ func TestLoginThrottlesByTheConnectedAddress(t *testing.T) {
 	// client gets its own allowance.
 	if other := attempt("198.51.100.21:50001", "", "owner-elsewhere@example.test"); other.Code != http.StatusUnauthorized {
 		t.Errorf("a second client = %d, want the ordinary 401 (body: %s)", other.Code, other.Body)
+	}
+}
+
+// Key listing pages through the X-Next-Cursor header rather than a field in the
+// body, because the dashboard already reads {"items": [...]} and a running
+// client must not have to change to keep working.
+func TestListAPIKeysPagesThroughTheHeader(t *testing.T) {
+	store := &loginStore{page: repository.APIKeyPage{
+		Keys: []repository.APIKey{
+			{ID: "key-1", TenantID: "tenant-a", Prefix: "aa", Label: "CI"},
+			{ID: "key-2", TenantID: "tenant-a", Prefix: "bb", Label: "Deploy"},
+		},
+		NextCursor: "c2Vjb25k",
+	}}
+	handler := loginTestHandler(t, store)
+
+	out, err := handler.ListKeys(context.Background(), &listAPIKeysInput{Limit: 2, Cursor: "Zmlyc3Q"})
+	if err != nil {
+		t.Fatalf("ListKeys() error = %v", err)
+	}
+	if len(out.Body.Items) != 2 || out.Body.Items[0].ID != "key-1" {
+		t.Errorf("items = %#v, want the page the store returned", out.Body.Items)
+	}
+	if out.NextCursor != "c2Vjb25k" {
+		t.Errorf("NextCursor = %q, want the store's cursor", out.NextCursor)
+	}
+	// The page request reaches the repository unchanged: the handler is a
+	// translation layer, not a second place that decides what a page is.
+	if store.received.Limit != 2 || store.received.Cursor != "Zmlyc3Q" {
+		t.Errorf("repository filter = %#v, want the request's limit and cursor", store.received)
+	}
+	// No secret can appear, because the resource has nowhere to put one.
+	if out.Body.Items[0].Prefix != "aa" || out.Body.Items[0].Label != "CI" {
+		t.Errorf("first item = %#v, want the key's public handle and label", out.Body.Items[0])
+	}
+}
+
+// A cursor the client did not receive from this API is the client's mistake, so
+// it is a 400 rather than the 500 a raw repository error would produce.
+func TestListAPIKeysRefusesACursorItDidNotIssue(t *testing.T) {
+	handler := loginTestHandler(t, &loginStore{pageErr: repository.ErrInvalidCursor})
+
+	_, err := handler.ListKeys(context.Background(), &listAPIKeysInput{Cursor: "not-a-cursor"})
+	if status := loginStatus(t, err); status != http.StatusBadRequest {
+		t.Errorf("a bad cursor = %d, want 400", status)
 	}
 }
