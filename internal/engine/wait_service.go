@@ -196,11 +196,21 @@ func (timers *waitTimers) arm(after time.Duration, fire func()) {
 		// A Service used without Start: the timers still have to fire.
 		timers.armed = make(map[*time.Timer]struct{})
 	}
-	var timer *time.Timer
-	timer = time.AfterFunc(after, func() {
-		timers.forget(timer)
+
+	// The handle reaches its own callback through a channel rather than being
+	// captured directly. time.AfterFunc may run the callback before it returns —
+	// and the delay here is zero whenever a wait has already expired — so a
+	// closure that reads the variable this function is still assigning is a data
+	// race, which is exactly what the detector reports when an expired wait and
+	// a running sweep loop overlap. The callback's receive cannot happen before
+	// the send below, and the send happens after the assignment, which is what
+	// orders the two.
+	handle := make(chan *time.Timer, 1)
+	timer := time.AfterFunc(after, func() {
+		timers.forget(<-handle)
 		fire()
 	})
+	handle <- timer
 	timers.armed[timer] = struct{}{}
 }
 
