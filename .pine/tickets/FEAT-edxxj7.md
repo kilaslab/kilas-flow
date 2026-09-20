@@ -1,7 +1,7 @@
 ---
 id: FEAT-edxxj7
 title: 'Release + docs + dead code: 0 releases, wrong namespace, contradicting docs, placeholder, CLI'
-status: doing
+status: testing
 priority: medium
 labels:
     - dx
@@ -10,7 +10,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:10Z"
-updated: "2026-09-19T14:24:35Z"
+updated: "2026-09-20T00:48:14Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
