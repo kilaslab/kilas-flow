@@ -1,7 +1,7 @@
 ---
 id: FEAT-emf6k5
 title: Per-tenant node visibility so a host can ship its own nodes to one customer
-status: doing
+status: done
 priority: medium
 labels:
     - registry
@@ -9,7 +9,7 @@ labels:
     - platform
 parent: EPIC-bkj6yf
 created: "2026-09-20T05:26:52Z"
-updated: "2026-09-20T07:42:30Z"
+updated: "2026-09-20T11:16:11Z"
 ---
 
 ## Problem
@@ -421,3 +421,153 @@ changed): `gofmt -l` on changed Go files (none; also clean on `internal/node/vis
 (44 pages built, starlight-links-validator: "All internal links are valid"; stage 3's note recorded
 43 for the same command, a difference this commit does not introduce, since it adds no page — the
 only docs file it touches is `concepts/node-registry.md`).
+
+## Work Evidence
+
+Closed by `pine close --evidence` on 2026-09-20.
+
+- Base: `794adbb3` (last commit at or before ticket created 2026-09-20)
+- Commits (3):
+  - `b3809c15` — FEAT-emf6k5: scope node types to tenants, with packs.visible_to and node.not_available
+  - `b3c9f3f9` — chore(pine): start the board — the open tickets move to doing before the parallel wave
+  - `f8156140` — chore(pine): record the ticket board — the new tickets, memory entries and their notes
+- Files changed (base → working tree):
+
+```
+ .pine/MEMORY.md                                    |   1 +
+ .pine/memory/embedding.md                          |   8 +
+ .pine/tickets/BUG-fng4m2.md                        |  88 +++
+ .pine/tickets/BUG-fvdz46.md                        | 400 +++++++++++
+ .pine/tickets/BUG-p3t7yq.md                        |  30 +
+ .pine/tickets/BUG-t9j2ek.md                        | 452 ++++++++++++
+ .pine/tickets/BUG-vzzkg3.md                        |  54 ++
+ .pine/tickets/BUG-w8h3km.md                        | 123 ++++
+ .pine/tickets/BUG-xmr673.md                        |  46 ++
+ .pine/tickets/EPIC-bkj6yf.md                       |  46 ++
+ .pine/tickets/EPIC-m0bne8.md                       |  57 ++
+ .pine/tickets/EPIC-r0yg5q.md                       |  27 +
+ .pine/tickets/FEAT-3taswf.md                       |  14 +-
+ .pine/tickets/FEAT-48hreg.md                       |  20 +-
+ .pine/tickets/FEAT-4jns31.md                       |  26 +
+ .pine/tickets/FEAT-4ve1bq.md                       |  67 ++
+ .pine/tickets/FEAT-77rveq.md                       |  73 ++
+ .pine/tickets/FEAT-7cg0cd.md                       |  20 +-
+ .pine/tickets/FEAT-8mymac.md                       |   4 +-
+ .pine/tickets/FEAT-bb4s6e.md                       |  27 +
+ .pine/tickets/FEAT-bp59m4.md                       |  32 +
+ .pine/tickets/FEAT-c72set.md                       |  26 +
+ .pine/tickets/FEAT-cwmw90.md                       | 513 ++++++++++++-
+ .pine/tickets/FEAT-emf6k5.md                       | 423 +++++++++++
+ .pine/tickets/FEAT-ew46cb.md                       |  26 +
+ .pine/tickets/FEAT-fpqvwx.md                       |  57 ++
+ .pine/tickets/FEAT-g07pj8.md                       |  67 ++
+ .pine/tickets/FEAT-hj8pyx.md                       |  52 ++
+ .pine/tickets/FEAT-m4d2y1.md                       |  30 +
+ .pine/tickets/FEAT-mha6a0.md                       | 259 +++++++
+ .pine/tickets/FEAT-p77zr3.md                       |  67 ++
+ .pine/tickets/FEAT-qdedm0.md                       |   4 +-
+ .pine/tickets/FEAT-x5qqpm.md                       |  26 +
+ .pine/tickets/FEAT-yxwyav.md                       |  26 +
+ CHANGELOG.md                                       |  43 ++
+ README.md                                          |   9 +-
+ cmd/kilasflow/embed_issuer.go                      |  18 +
+ cmd/kilasflow/embed_issuer_test.go                 | 134 ++++
+ cmd/kilasflow/main.go                              |  77 +-
+ cmd/kilasflow/webhook_wiring_test.go               | 138 ++++
+ config.example.yaml                                |  53 +-
+ docs/src/content/docs/concepts/credentials.md      |  21 +-
+ docs/src/content/docs/concepts/execution-model.md  |   1 +
+ docs/src/content/docs/concepts/node-registry.md    |  40 ++
+ docs/src/content/docs/concepts/webhooks.md         | 107 ++-
+ docs/src/content/docs/guides/embedding.md          |  32 +-
+ docs/src/content/docs/guides/node-authoring.md     |   6 +
+ .../src/content/docs/guides/tenant-scoped-nodes.md | 183 +++++
+ .../docs/operate/configuration-reference.md        |  85 ++-
+ docs/src/content/docs/operate/security.md          |  23 +-
+ docs/src/content/docs/operate/upgrades.md          |  10 +
+ docs/src/content/docs/reference/api-contract.md    |   7 +-
+ docs/src/content/docs/reference/api.md             |   4 +-
+ docs/src/content/docs/reference/api/nodes.md       |  16 +-
+ docs/src/content/docs/reference/api/workflows.md   |  21 +
+ docs/src/content/docs/reference/node-packs.md      |  15 +-
+ docs/src/content/docs/start/what-kilasflow-is.md   |  11 +-
+ .../specs/2026-09-20-agent-surface-design.md       | 519 ++++++++++++++
+ e2e/fixtures/live-backend.ts                       |  12 +-
+ e2e/helpers/stub.ts                                |   8 +
+ e2e/tests/live-backend-api.spec.ts                 |  52 +-
+ e2e/tests/live-backend-http-auth.spec.ts           |  94 +++
+ e2e/tests/live-backend-webhook.spec.ts             | 117 ++-
+ go.mod                                             |   1 +
+ go.sum                                             |   2 +
+ internal/api/embed_defaults_test.go                | 150 ++++
+ internal/api/handlers/auth_test.go                 |  63 +-
+ internal/api/handlers/interop.go                   |   6 +-
+ internal/api/handlers/nodes.go                     |  76 +-
+ internal/api/handlers/workflows.go                 |  81 ++-
+ internal/api/middleware/embed.go                   |   3 +-
+ internal/api/middleware/loginlimit.go              |  13 +
+ internal/api/middleware/loginlimit_test.go         |   3 +-
+ internal/api/node_visibility_test.go               | 544 ++++++++++++++
+ internal/api/workflows_test.go                     |  71 +-
+ internal/config/config.go                          |  79 +-
+ internal/config/embed_branding_test.go             | 192 +++++
+ internal/config/embed_validate.go                  |  34 +
+ internal/config/packs_visibility.go                |  83 +++
+ internal/config/packs_visibility_test.go           | 168 +++++
+ internal/config/webhook_require_auth_test.go       |  50 ++
+ internal/credentials/builtin.go                    |  68 ++
+ internal/credentials/credentials_test.go           |  58 ++
+ internal/credentials/registry.go                   |  63 ++
+ internal/database/webhook_route_backfill_test.go   | 491 +++++++++++++
+ internal/embed/embed.go                            | 121 +++-
+ internal/embed/embed_branding_test.go              | 164 +++++
+ internal/embed/embed_lifetime_test.go              | 146 ++++
+ internal/engine/export_test.go                     |  20 +
+ internal/engine/service.go                         |  30 +-
+ internal/engine/tenant_visibility_test.go          | 379 ++++++++++
+ internal/engine/wait_service.go                    |  47 +-
+ internal/engine/wait_service_test.go               | 219 +++++-
+ internal/guardrails/compile_scope_test.go          | 440 ++++++++++++
+ internal/interop/n8n/parameters.go                 |   3 +-
+ internal/node/registry.go                          |  31 +
+ internal/node/registry_bench_test.go               | 112 +++
+ internal/node/visibility.go                        | 347 +++++++++
+ internal/node/visibility_test.go                   | 796 +++++++++++++++++++++
+ internal/nodepack/nodepack.go                      |  18 +
+ internal/nodepack/trigger.go                       |   8 +
+ internal/nodepack/trigger_require_auth_test.go     |  43 ++
+ internal/nodepack/validate.go                      |  13 +-
+ internal/nodepack/visibility_test.go               | 262 +++++++
+ internal/repository/models.go                      |  10 +-
+ internal/repository/webhooks.go                    |  79 +-
+ internal/repository/webhooks_test.go               | 184 ++++-
+ internal/webhook/jwt.go                            | 144 ++++
+ internal/webhook/jwt_test.go                       | 212 ++++++
+ internal/webhook/require_auth.go                   |  74 ++
+ internal/webhook/require_auth_test.go              | 367 ++++++++++
+ internal/webhook/route_label_test.go               | 172 +++++
+ internal/webhook/shape.go                          |  27 +-
+ internal/webhook/shape_test.go                     |  30 +
+ internal/webhook/webhook.go                        |  83 ++-
+ internal/webhook/webhook_test.go                   | 194 ++++-
+ internal/workflow/catalog_scope.go                 |  39 +
+ internal/workflow/compiler.go                      |  24 +-
+ internal/workflow/compiler_visibility_test.go      | 280 ++++++++
+ .../000014_webhook_route_backfill.down.sql         |  14 +
+ .../postgres/000014_webhook_route_backfill.up.sql  |  62 ++
+ .../sqlite/000014_webhook_route_backfill.down.sql  |  14 +
+ .../sqlite/000014_webhook_route_backfill.up.sql    |  58 ++
+ nodes/core.go                                      |   5 +
+ nodes/error_workflow.go                            |   4 +
+ nodes/http.go                                      |   2 +
+ nodes/presentation_test.go                         |  35 +
+ nodes/webhook.go                                   |  18 +-
+ scripts/generate-api-reference.mjs                 |   4 +-
+ sdk/src/generated/models.ts                        |  60 +-
+ sdk/src/server.ts                                  |  10 +
+ sdk/test/operation-coverage.test.mjs               |   1 +
+ .../generated/models/executionNodeRunResource.ts   |   1 +
+ web/src/lib/api/generated/nodes/nodes.ts           |   8 +-
+ web/src/lib/api/generated/workflows/workflows.ts   |  97 +++
+ 135 files changed, 12495 insertions(+), 362 deletions(-)
+```
