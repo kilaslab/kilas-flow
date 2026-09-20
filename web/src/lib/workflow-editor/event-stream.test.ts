@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { ExecutionNodeRunResource } from '$lib/api/generated/models';
-import { applyEvents, isTerminal, latestExecutionStatus, type ExecutionEvent } from './event-stream.svelte';
+import { applyEvents, isTerminal, isTerminalStatus, latestExecutionStatus, type ExecutionEvent } from './event-stream.svelte';
 
 function event(overrides: Partial<ExecutionEvent> & { type: string }): ExecutionEvent {
 	return { id: 1, executionId: 'exec-1', at: '2026-09-05T01:00:00Z', ...overrides };
@@ -10,6 +10,25 @@ function event(overrides: Partial<ExecutionEvent> & { type: string }): Execution
 function run(nodeId: string, status: string): ExecutionNodeRunResource {
 	return { nodeId, attempt: 1, runIndex: 0, sequence: 1, status, startedAt: '2026-09-05T01:00:00Z' };
 }
+
+// The subscription gate: a trace that already ended must not open a stream, or
+// every finished execution page holds an idle connection until the server
+// hangs up on it.
+describe('isTerminalStatus', () => {
+	it('recognizes a trace that will never emit another event', () => {
+		expect(isTerminalStatus('succeeded')).toBe(true);
+		expect(isTerminalStatus('failed')).toBe(true);
+		expect(isTerminalStatus('cancelled')).toBe(true);
+	});
+
+	it('keeps streaming a run that can still move', () => {
+		expect(isTerminalStatus('running')).toBe(false);
+		expect(isTerminalStatus('queued')).toBe(false);
+		// A wait is not an end: the run resumes when its timer or webhook does.
+		expect(isTerminalStatus('waiting')).toBe(false);
+		expect(isTerminalStatus(undefined)).toBe(false);
+	});
+});
 
 describe('isTerminal', () => {
 	it('recognizes the events that end a stream', () => {

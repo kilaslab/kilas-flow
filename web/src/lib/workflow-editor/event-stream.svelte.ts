@@ -20,6 +20,26 @@ export function isTerminal(type: string): boolean {
 }
 
 /**
+ * The statuses an execution never leaves.
+ *
+ * The distinction from `isTerminal` matters at the point of subscription: an
+ * event *type* is terminal when it arrives, while a *status* read from the
+ * durable trace is terminal before anything arrives. A finished run has
+ * nothing left to stream, and opening a source for it costs a connection that
+ * lives until the server hangs up.
+ */
+const TERMINAL_STATUSES: Record<string, true> = {
+	succeeded: true,
+	failed: true,
+	cancelled: true
+};
+
+/** Whether a trace status means the run will never emit another event. */
+export function isTerminalStatus(status: string | null | undefined): status is string {
+	return typeof status === 'string' && TERMINAL_STATUSES[status] === true;
+}
+
+/**
  * Live execution feed.
  *
  * `EventSource` handles reconnection and resends Last-Event-ID on its own, so
@@ -27,15 +47,19 @@ export function isTerminal(type: string): boolean {
  * from the start. The stream is closed explicitly on a terminal event: the
  * server closes too, and without this the browser would reconnect forever to a
  * run that already finished.
+ *
+ * `live` is what the durable trace already says about the run. A finished
+ * execution is never streamed: the trace is complete, and a subscription for
+ * it would hold an idle connection open for as long as the page is.
  */
-export function executionEvents(executionID: () => string) {
+export function executionEvents(executionID: () => string, live: () => boolean = () => true) {
 	let events = $state<ExecutionEvent[]>([]);
 	let connected = $state(false);
 	let finished = $state(false);
 
 	$effect(() => {
 		const id = executionID();
-		if (!id) return;
+		if (!id || !live()) return;
 
 		events = [];
 		connected = false;

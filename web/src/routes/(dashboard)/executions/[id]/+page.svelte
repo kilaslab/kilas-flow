@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
+
 	import { page } from '$app/state';
 	import ArrowLeft from '@lucide/svelte/icons/arrow-left';
 	import Paperclip from '@lucide/svelte/icons/paperclip';
@@ -10,7 +12,7 @@
 	import type { Definition, ExecutionResource, WorkflowVersionResource } from '$lib/api/generated/models';
 	import { Button } from '$lib/components/ui/button';
 	import ExecutionCanvas from '$lib/components/workflow-editor/execution-canvas.svelte';
-	import { applyEvents, executionEvents, latestExecutionStatus } from '$lib/workflow-editor/event-stream.svelte';
+	import { applyEvents, executionEvents, isTerminalStatus, latestExecutionStatus } from '$lib/workflow-editor/event-stream.svelte';
 	import {
 		binaryAttachments,
 		executionDurationMs,
@@ -75,7 +77,13 @@
 
 	// The live feed advances what the fetched trace already showed. It never
 	// replaces it: a refresh and a live update converge on the same picture.
-	const live = executionEvents(() => page.params.id ?? '');
+	// Nothing is streamed before the trace arrives, and nothing at all for a
+	// trace that is already terminal — opening on mount put a request on the
+	// wire for every finished execution, whose stream was closed a moment later.
+	const live = executionEvents(
+		() => page.params.id ?? '',
+		() => Boolean(execution.data) && !isTerminalStatus(execution.data?.status)
+	);
 
 	const runs = $derived(latestNodeRuns(execution.data?.nodeRuns));
 	const nodeStatuses = $derived(applyEvents(runs, live.events));
@@ -95,10 +103,26 @@
 		(selectedNodeID ? nodeStatuses.get(selectedNodeID) : undefined) ?? selectedRun?.status ?? 'skipped'
 	);
 
+	/**
+	 * Re-reads the durable trace once, the moment the live feed reports the run
+	 * ended.
+	 *
+	 * Once, because the effect used to read the whole query object while it
+	 * refetched, so every notify re-triggered it: a finished execution page sat
+	 * in a 200/abort loop at ~900 requests a second, and the constant
+	 * re-rendering is what kept a node click from ever opening the inspector.
+	 * `untrack` keeps the call out of the dependency set, and the flag makes
+	 * the false→true edge the only thing that fires it.
+	 */
+	let refetchedAfterFinish = false;
 	$effect(() => {
-		// Live events carry status, not payloads. Once the run ends, re-read the
-		// durable trace so the inspector shows what was actually persisted.
-		if (live.finished) void execution.refetch();
+		if (!live.finished) {
+			refetchedAfterFinish = false;
+			return;
+		}
+		if (refetchedAfterFinish) return;
+		refetchedAfterFinish = true;
+		untrack(() => void execution.refetch());
 	});
 
 	function asJSON(value: unknown): string {
@@ -172,13 +196,22 @@
 
 	{#if execution.isPending}
 		<p aria-live="polite" class="text-sm text-muted-foreground">Loading execution…</p>
-	{:else if execution.isError}
+	{:else if execution.isError && !execution.data}
 		<div class="max-w-xl rounded-lg border border-destructive/25 bg-destructive/5 p-3">
 			<h1 class="font-medium">Execution could not be loaded</h1>
 			<p class="mt-0.5 text-xs leading-5 text-muted-foreground">{message(execution.error)}</p>
 			<Button class="mt-4" variant="outline" onclick={() => void execution.refetch()}>Try again</Button>
 		</div>
 	{:else if execution.data}
+		<!-- A refetch that fails once the trace is already on screen is a
+		     refresh failure, not a page failure: replacing the inspector with an
+		     error card throws away the only view of the run the user has. -->
+		{#if execution.isError}
+			<div role="alert" class="flex flex-wrap items-center gap-2 rounded-lg border border-destructive/25 bg-destructive/5 p-3">
+				<p class="min-w-0 flex-1 text-xs leading-5 text-destructive">This view may be out of date — the last refresh failed: {message(execution.error)}</p>
+				<Button variant="outline" size="sm" onclick={() => void execution.refetch()}>Refresh</Button>
+			</div>
+		{/if}
 		<div class="flex flex-wrap items-start justify-between gap-3">
 			<div class="min-w-0">
 				<div class="flex flex-wrap items-center gap-2">
@@ -271,6 +304,8 @@
 			<div class="h-[26rem] overflow-hidden rounded-lg border border-border lg:h-[calc(100dvh-13rem)] lg:min-h-[26rem]">
 				{#if version.isPending}
 					<p aria-live="polite" class="grid h-full place-items-center text-sm text-muted-foreground">Loading the graph this execution ran…</p>
+				{:else if version.data && nodeTypes.data}
+					<ExecutionCanvas document={version.data.document} definitions={nodeTypes.data} {runs} statuses={nodeStatuses} bind:selectedNodeID />
 				{:else if version.isError || nodeTypes.isError}
 					<div class="grid h-full place-items-center p-6 text-center">
 						<div class="max-w-sm">
@@ -278,8 +313,8 @@
 							<Button class="mt-4" variant="outline" onclick={() => { void version.refetch(); void nodeTypes.refetch(); }}>Try again</Button>
 						</div>
 					</div>
-				{:else if version.data && nodeTypes.data}
-					<ExecutionCanvas document={version.data.document} definitions={nodeTypes.data} {runs} statuses={nodeStatuses} bind:selectedNodeID />
+				{:else}
+					<p aria-live="polite" class="grid h-full place-items-center text-sm text-muted-foreground">Loading the graph this execution ran…</p>
 				{/if}
 			</div>
 
