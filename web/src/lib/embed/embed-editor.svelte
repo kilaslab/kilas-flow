@@ -1,8 +1,10 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
+
 	import { useQueryClient } from '@tanstack/svelte-query';
 
 	import { message } from '$lib/api/http';
-	import { createListCredentials } from '$lib/api/generated/credentials/credentials';
+	import { listCredentials } from '$lib/api/generated/credentials/credentials';
 	import { createListNodeTypes } from '$lib/api/generated/nodes/nodes';
 	import { getExecution } from '$lib/api/generated/executions/executions';
 	import { runWorkflow } from '$lib/api/generated/workflow-lifecycle/workflow-lifecycle';
@@ -11,6 +13,7 @@
 	import { Button } from '$lib/components/ui/button';
 	import WorkflowEditor, { type RunSelection, type WorkflowHistoryHost } from '$lib/components/workflow-editor/workflow-editor.svelte';
 	import { SCOPE_PUBLISH, scopeAllows, type EmbedSession } from './session.svelte';
+	import { DRAIN_PAGE_LIMIT, drainPages, headerCursor, readPage } from '$lib/dashboard/cursor-page';
 	import { cacheWorkflow } from '$lib/workflow-editor/workflow-cache';
 	import { validationIssuesFromApiError, withNodeNames, type CanvasValidationIssue } from '$lib/workflow-editor/validation';
 
@@ -43,9 +46,23 @@
 	const nodeTypes = createListNodeTypes<Definition[]>(() => ({
 		query: { select: (response) => (response.status === 200 ? (response.data ?? []) : []) }
 	}));
-	const credentials = createListCredentials<CredentialResource[]>(undefined, () => ({
-		query: { select: (response) => (response.status === 200 ? (response.data ?? []) : []) }
-	}));
+	// The listing is paged by the server, so it is read to the end: a credential
+	// past the first page is still one this workflow may select. A failure —
+	// credential storage is optional, and an embedded session may not be allowed
+	// to read them — leaves the picker with nothing to offer rather than
+	// blocking the editor.
+	let credentials = $state<CredentialResource[]>([]);
+	onMount(async () => {
+		try {
+			credentials = await drainPages(async (cursor) => {
+				const response = await listCredentials({ limit: DRAIN_PAGE_LIMIT, cursor: cursor || undefined });
+				if (response.status !== 200) throw new Error('Unexpected credential-list response');
+				return readPage({ items: response.data, nextCursor: headerCursor(response.headers) });
+			});
+		} catch {
+			credentials = [];
+		}
+	});
 
 	let currentWorkflow = $state<WorkflowResource | null>(null);
 	let saving = $state(false);
@@ -279,7 +296,7 @@
 		<WorkflowEditor
 			document={currentWorkflow.latestVersion.document}
 			definitions={nodeTypes.data ?? []}
-			credentials={credentials.data ?? []}
+			credentials={credentials}
 			readOnly={!canWrite}
 			hideRun={!canRun || branding.hideRun === true}
 			hideSave={branding.hideSave === true}

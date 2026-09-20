@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onDestroy } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
 
 	import { useQueryClient } from '@tanstack/svelte-query';
 
@@ -8,13 +8,14 @@
 	import ArrowLeft from '@lucide/svelte/icons/arrow-left';
 
 	import { message } from '$lib/api/http';
-	import { createListCredentials } from '$lib/api/generated/credentials/credentials';
+	import { listCredentials } from '$lib/api/generated/credentials/credentials';
 	import { createGetExpressionGrammar, createListNodeTypes } from '$lib/api/generated/nodes/nodes';
 	import { getExecution } from '$lib/api/generated/executions/executions';
 	import { workflowDiagnostics } from '$lib/api/generated/interop/interop';
 	import { activateWorkflow, deactivateWorkflow, runWorkflow } from '$lib/api/generated/workflow-lifecycle/workflow-lifecycle';
 	import { createGetWorkflow, getWorkflow, updateWorkflow } from '$lib/api/generated/workflows/workflows';
 	import type { CredentialResource, Definition, ExpressionGrammar, WorkflowDiagnosticsResource, WorkflowDocumentInput, WorkflowResource } from '$lib/api/generated/models';
+	import { DRAIN_PAGE_LIMIT, drainPages, headerCursor, readPage } from '$lib/dashboard/cursor-page';
 	import { activationFailure, activationNotices, dismissNotice, type ActivationNoticeView } from '$lib/workflow-editor/activation';
 	import { cacheWorkflow } from '$lib/workflow-editor/workflow-cache';
 	import { setExpressionGrammar } from '$lib/workflow-editor/expression-grammar';
@@ -58,12 +59,21 @@
 	$effect(() => setExpressionGrammar(grammar.data));
 
 	// Credential storage is optional, so a failure here must not block the
-	// editor: the picker simply offers nothing to select.
-	const credentials = createListCredentials<CredentialResource[]>(undefined, () => ({
-		query: {
-			select: (response) => (response.status === 200 ? (response.data ?? []) : [])
+	// editor: the picker simply offers nothing to select. The listing is paged
+	// by the server, so it is read to the end — a credential past the first
+	// page is still one this workflow may select.
+	let credentials = $state<CredentialResource[]>([]);
+	onMount(async () => {
+		try {
+			credentials = await drainPages(async (cursor) => {
+				const response = await listCredentials({ limit: DRAIN_PAGE_LIMIT, cursor: cursor || undefined });
+				if (response.status !== 200) throw new Error('Unexpected credential-list response');
+				return readPage({ items: response.data, nextCursor: headerCursor(response.headers) });
+			});
+		} catch {
+			credentials = [];
 		}
-	}));
+	});
 
 	let currentWorkflow = $state<WorkflowResource | null>(null);
 	let saving = $state(false);
@@ -531,7 +541,7 @@
 				header={breadcrumb}
 				document={currentWorkflow.latestVersion.document}
 				definitions={nodeTypes.data ?? []}
-				credentials={credentials.data ?? []}
+				credentials={credentials}
 				{saving}
 				{running}
 				{saveError}

@@ -1,16 +1,17 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { page as route } from '$app/state';
+	import { onMount } from 'svelte';
 	import Ellipsis from '@lucide/svelte/icons/ellipsis';
 	import FilePlus2 from '@lucide/svelte/icons/file-plus-2';
 
 	import { message } from '$lib/api/http';
 	import { activateWorkflow, deactivateWorkflow } from '$lib/api/generated/workflow-lifecycle/workflow-lifecycle';
 	import {
-		createListWorkflows,
 		createWorkflow,
 		deleteWorkflow,
 		getWorkflow,
+		listWorkflows,
 		updateWorkflow
 	} from '$lib/api/generated/workflows/workflows';
 	import type { WorkflowDocumentInput, WorkflowSummary } from '$lib/api/generated/models';
@@ -30,16 +31,47 @@
 		parseWorkflowListQuery,
 		WORKFLOWS_PER_PAGE
 	} from '$lib/dashboard/workflow-list';
+	import { DRAIN_PAGE_LIMIT, drainPages, headerCursor, readPage, type CursorPage } from '$lib/dashboard/cursor-page';
+	import { RequestGuard } from '$lib/dashboard/request-guard';
 	import ImportDialog from './import-dialog.svelte';
 
-	const workflows = createListWorkflows<WorkflowSummary[]>(undefined, () => ({
-		query: {
-			select: (response) => {
-				if (response.status !== 200) throw new Error('Unexpected workflow-list response');
-				return response.data ?? [];
-			}
+	// The list is paged by the server, and the search, filter, sort and page
+	// controls below work over what the page holds — so the whole list is read
+	// before any of them is offered. A single request would be the first page of
+	// 100 and would under-count the heading and hide every row past it.
+	let allRows = $state<WorkflowSummary[]>([]);
+	let loading = $state(true);
+	// The rejection itself rather than its text: message() is applied once, at the
+	// shell, so this page holds no opinion about how a failure is worded.
+	let listFailure = $state<unknown>(null);
+	const listGuard = new RequestGuard();
+
+	/** One page of the workflow listing: rows from the body, cursor from the header. */
+	async function fetchWorkflowPage(cursor: string): Promise<CursorPage<WorkflowSummary>> {
+		const response = await listWorkflows({ limit: DRAIN_PAGE_LIMIT, cursor: cursor || undefined });
+		if (response.status !== 200) throw new Error('Unexpected workflow-list response');
+		return readPage({ items: response.data, nextCursor: headerCursor(response.headers) });
+	}
+
+	async function loadWorkflows() {
+		const token = listGuard.start();
+		listFailure = null;
+		// Rows already on screen stay while a reload runs, exactly as a refetch
+		// behaved: only the first load has nothing to show instead of a skeleton.
+		loading = allRows.length === 0;
+		try {
+			const rows = await drainPages(fetchWorkflowPage);
+			if (!listGuard.holds(token)) return;
+			allRows = rows;
+		} catch (cause) {
+			if (!listGuard.holds(token)) return;
+			listFailure = cause;
+		} finally {
+			if (listGuard.holds(token)) loading = false;
 		}
-	}));
+	}
+
+	onMount(() => void loadWorkflows());
 
 	// Search, filter, sort and page live in the URL (?q=&active=&sort=&page=)
 	// so a narrowed view survives reload and can be linked. Writes use
@@ -73,10 +105,9 @@
 	let bulkBusy = $state(false);
 	let bulkError = $state<string | null>(null);
 
-	// Read once here rather than through the query object in the markup: the
-	// rows are used inside a snippet, where the `!isPending && !isError`
+	// Read from the drained list rather than through a query object: the rows
+	// are also used inside a snippet, where the `!isPending && !isError`
 	// narrowing that made `.data` non-optional no longer reaches.
-	const allRows = $derived(workflows.data ?? []);
 	const filtered = $derived(filterWorkflows(allRows, { search, active: activeFilter, sort }));
 	const paged = $derived(pageWorkflows(filtered, listPage));
 	// A delete on the last page clamps to the page that still has rows,
@@ -118,7 +149,7 @@
 			};
 			const response = await createWorkflow(document);
 			if (response.status !== 201) throw new Error('Unexpected workflow-create response');
-			await workflows.refetch();
+			await loadWorkflows();
 			createOpen = false;
 			resetCreateDialog();
 			await goto(`/app/workflows/${response.data.id}`);
@@ -160,7 +191,7 @@
 			// workflow is live, so it is re-read from the server either way: a
 			// failed activation the server rolled back must not leave the row
 			// claiming otherwise.
-			await workflows.refetch();
+			await loadWorkflows();
 		}
 	}
 
@@ -198,7 +229,7 @@
 				settings: document.settings
 			});
 			if (response.status !== 200) throw new Error('Unexpected workflow-rename response');
-			await workflows.refetch();
+			await loadWorkflows();
 			renameOpen = false;
 			renaming = null;
 		} catch (error) {
@@ -225,7 +256,7 @@
 				settings: document.settings ?? {}
 			});
 			if (response.status !== 201) throw new Error('Unexpected workflow-duplicate response');
-			await workflows.refetch();
+			await loadWorkflows();
 			await goto(`/app/workflows/${response.data.id}`);
 		} catch (error) {
 			rowError = { id: workflow.id, text: message(error) };
@@ -248,7 +279,7 @@
 			const response = await deleteWorkflow(deleting.id);
 			if (response.status !== 204 && response.status !== 200) throw new Error('Unexpected workflow-delete response');
 			selected = new Set([...selected].filter((id) => id !== deleting?.id));
-			await workflows.refetch();
+			await loadWorkflows();
 			deleteOpen = false;
 			deleting = null;
 		} catch (error) {
@@ -268,7 +299,7 @@
 				if (response.status !== 200) throw new Error(`Unexpected bulk ${active ? 'activate' : 'deactivate'} response`);
 			}
 			selected = new Set();
-			await workflows.refetch();
+			await loadWorkflows();
 		} catch (error) {
 			bulkError = message(error);
 		} finally {
@@ -288,7 +319,7 @@
 				await deleteWorkflow(id);
 			}
 			selected = new Set();
-			await workflows.refetch();
+			await loadWorkflows();
 		} catch (error) {
 			bulkError = message(error);
 		} finally {
@@ -340,11 +371,11 @@
 		<div class="min-w-0">
 			<h1 class="text-base font-semibold tracking-tight">Workflows</h1>
 			<p class="text-xs text-muted-foreground">
-				{#if !workflows.isPending && !workflows.isError}{filtered.length} in this workspace{:else}Automation flows your product exposes{/if}
+				{#if !loading && listFailure === null}{filtered.length} in this workspace{:else}Automation flows your product exposes{/if}
 			</p>
 		</div>
 		<div class="flex shrink-0 items-center gap-2">
-			<ImportDialog onImported={() => void workflows.refetch()} />
+			<ImportDialog onImported={() => void loadWorkflows()} />
 			<Dialog.Root bind:open={createOpen} onOpenChange={(open) => !open && resetCreateDialog()}>
 			<Dialog.Trigger>
 				{#snippet child({ props })}
@@ -425,12 +456,12 @@
 	<div class="mt-4">
 		<ListStates
 			label="Workflows"
-			loading={workflows.isPending}
-			failed={workflows.isError}
-			error={workflows.error}
+			loading={loading}
+			failed={listFailure !== null}
+			error={listFailure}
 			count={rows.length}
 			rows={4}
-			onRetry={() => void workflows.refetch()}
+			onRetry={() => void loadWorkflows()}
 			emptyIcon={FilePlus2}
 			emptyTitle={allRows.length === 0 ? 'Build your first flow' : 'No workflows match'}
 			emptyBody={allRows.length === 0 ? 'A workflow starts as a private draft, then grows into the automation your product needs.' : 'Loosen the search or filter above, or clear it to see everything again.'}
@@ -442,7 +473,7 @@
 							<FilePlus2 aria-hidden="true" />
 							New workflow
 						</Button>
-						<ImportDialog onImported={() => void workflows.refetch()} />
+						<ImportDialog onImported={() => void loadWorkflows()} />
 					</div>
 				{:else}
 					<Button class="mt-3" size="sm" variant="outline" onclick={resetListQuery}>Clear search and filters</Button>

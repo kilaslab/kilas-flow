@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { appendPage, canLoadMore, emptyPage, readPage } from './cursor-page';
+import { appendPage, canLoadMore, drainPages, emptyPage, headerCursor, readPage } from './cursor-page';
 
 describe('reading a page of a cursor-paged list', () => {
 	it('keeps the rows and the cursor the response carried', () => {
@@ -67,5 +67,88 @@ describe('deciding whether to offer another page', () => {
 
 	it('offers nothing from a list that has loaded nothing', () => {
 		expect(canLoadMore(emptyPage())).toBe(false);
+	});
+});
+
+describe('reading the cursor out of a listing response', () => {
+	it('reads the next cursor the server put in the header', () => {
+		expect(headerCursor(new Headers({ 'X-Next-Cursor': 'cursor_2' }))).toBe('cursor_2');
+	});
+
+	// The last page carries no header at all rather than an empty one, and the
+	// drain ends on that absence.
+	it('reads a missing header as the end of the list', () => {
+		expect(headerCursor(new Headers())).toBe('');
+	});
+});
+
+describe('draining every page of a listing', () => {
+	/** A server that pages four rows two at a time, recording what it was asked. */
+	function threePages() {
+		const requested: string[] = [];
+		const pages = new Map<string, { items: string[]; nextCursor?: string }>([
+			['', { items: ['a', 'b'], nextCursor: 'cursor_2' }],
+			['cursor_2', { items: ['c'], nextCursor: 'cursor_3' }],
+			['cursor_3', { items: ['d'] }]
+		]);
+		const fetchPage = async (cursor: string) => {
+			requested.push(cursor);
+			return readPage(pages.get(cursor));
+		};
+		return { requested, fetchPage };
+	}
+
+	it('returns every row in the order the pages were read', async () => {
+		const { fetchPage } = threePages();
+
+		expect(await drainPages(fetchPage)).toEqual(['a', 'b', 'c', 'd']);
+	});
+
+	it('asks for each page once, following the cursor the previous one named', async () => {
+		const { requested, fetchPage } = threePages();
+
+		await drainPages(fetchPage);
+
+		expect(requested).toEqual(['', 'cursor_2', 'cursor_3']);
+	});
+
+	it('reads a one-page list in a single request', async () => {
+		const requested: string[] = [];
+		const items = await drainPages(async (cursor) => {
+			requested.push(cursor);
+			return readPage({ items: ['a'] });
+		});
+
+		expect(items).toEqual(['a']);
+		expect(requested).toEqual(['']);
+	});
+
+	// Half a list is not a list: the caller shows the failure instead of a
+	// count over rows it never read, so the rejection has to come back out.
+	it('stops at the page that failed and reports it', async () => {
+		const failure = new Error('Unexpected workflow-list response');
+		const requested: string[] = [];
+		const fetchPage = async (cursor: string) => {
+			requested.push(cursor);
+			if (cursor === 'cursor_2') throw failure;
+			return readPage({ items: ['a', 'b'], nextCursor: 'cursor_2' });
+		};
+
+		await expect(drainPages(fetchPage)).rejects.toBe(failure);
+		expect(requested).toEqual(['', 'cursor_2']);
+	});
+
+	// The cursor is opaque, so a server that handed back the one it was given
+	// would be asked for the same page forever, appending its rows each time.
+	// The second request is the proof that this terminates rather than loops.
+	it('terminates on a cursor that does not advance', async () => {
+		const requested: string[] = [];
+		const fetchPage = async (cursor: string) => {
+			requested.push(cursor);
+			return readPage({ items: ['a'], nextCursor: 'cursor_2' });
+		};
+
+		await expect(drainPages(fetchPage)).rejects.toThrow(/cursor stopped advancing/);
+		expect(requested).toEqual(['', 'cursor_2']);
 	});
 });

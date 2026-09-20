@@ -1,28 +1,69 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import CalendarClock from '@lucide/svelte/icons/calendar-clock';
 	import Trash2 from '@lucide/svelte/icons/trash-2';
 
 	import { message } from '$lib/api/http';
-	import { createListSchedules, createSchedule, deleteSchedule, updateSchedule } from '$lib/api/generated/schedules/schedules';
-	import { createListWorkflows } from '$lib/api/generated/workflows/workflows';
+	import { createSchedule, deleteSchedule, listSchedules, updateSchedule } from '$lib/api/generated/schedules/schedules';
+	import { listWorkflows } from '$lib/api/generated/workflows/workflows';
 	import type { ScheduleResource, WorkflowSummary } from '$lib/api/generated/models';
 	import ListStates from '$lib/components/dashboard/list-states.svelte';
 	import { Button } from '$lib/components/ui/button';
 	import * as Dialog from '$lib/components/ui/dialog';
 	import { Input } from '$lib/components/ui/input';
+	import { DRAIN_PAGE_LIMIT, drainPages, headerCursor, readPage, type CursorPage } from '$lib/dashboard/cursor-page';
+	import { RequestGuard } from '$lib/dashboard/request-guard';
 	import { formatTimestamp } from '$lib/workflow-editor/execution';
 
-	const schedules = createListSchedules<ScheduleResource[]>(undefined, () => ({
-		query: {
-			select: (response) => {
-				if (response.status !== 200) throw new Error('Unexpected schedule-list response');
-				return response.data ?? [];
-			}
+	// Both lists are paged by the server, so one request is only the first page
+	// of each: the schedules are read to the end before they are shown, and so
+	// are the workflows whose names the rows carry and whose picker the form
+	// offers — a workflow past the first page would otherwise show as a bare id
+	// and be unselectable.
+	let rows = $state<ScheduleResource[]>([]);
+	let workflows = $state<WorkflowSummary[]>([]);
+	let loading = $state(true);
+	let listFailure = $state<unknown>(null);
+	const listGuard = new RequestGuard();
+
+	/** One page of the schedule listing: rows from the body, cursor from the header. */
+	async function fetchSchedulePage(cursor: string): Promise<CursorPage<ScheduleResource>> {
+		const response = await listSchedules({ limit: DRAIN_PAGE_LIMIT, cursor: cursor || undefined });
+		if (response.status !== 200) throw new Error('Unexpected schedule-list response');
+		return readPage({ items: response.data, nextCursor: headerCursor(response.headers) });
+	}
+
+	/** One page of the workflow listing, read only for the names and the picker. */
+	async function fetchWorkflowPage(cursor: string): Promise<CursorPage<WorkflowSummary>> {
+		const response = await listWorkflows({ limit: DRAIN_PAGE_LIMIT, cursor: cursor || undefined });
+		if (response.status !== 200) throw new Error('Unexpected workflow-list response');
+		return readPage({ items: response.data, nextCursor: headerCursor(response.headers) });
+	}
+
+	async function loadSchedules() {
+		const token = listGuard.start();
+		listFailure = null;
+		loading = rows.length === 0;
+		try {
+			// The schedules are what this page is about; the workflow names are
+			// read alongside them and failing to get them must not hide the
+			// rows, so that half is allowed to come back empty.
+			const [schedules, names] = await Promise.all([
+				drainPages(fetchSchedulePage),
+				drainPages(fetchWorkflowPage).catch(() => [] as WorkflowSummary[])
+			]);
+			if (!listGuard.holds(token)) return;
+			rows = schedules;
+			workflows = names;
+		} catch (cause) {
+			if (!listGuard.holds(token)) return;
+			listFailure = cause;
+		} finally {
+			if (listGuard.holds(token)) loading = false;
 		}
-	}));
-	const workflows = createListWorkflows<WorkflowSummary[]>(undefined, () => ({
-		query: { select: (response) => (response.status === 200 ? (response.data ?? []) : []) }
-	}));
+	}
+
+	onMount(() => void loadSchedules());
 
 	let editorOpen = $state(false);
 	let editing = $state<ScheduleResource | null>(null);
@@ -32,15 +73,11 @@
 	let saving = $state(false);
 	let formError = $state<string | null>(null);
 
-	const workflowNames = $derived(new Map((workflows.data ?? []).map((workflow) => [workflow.id, workflow.name])));
-	// Read once here rather than through the query object in the markup: the
-	// rows are used inside a snippet, where the `!isPending && !isError`
-	// narrowing that made `.data` non-optional no longer reaches.
-	const rows = $derived(schedules.data ?? []);
+	const workflowNames = $derived(new Map(workflows.map((workflow) => [workflow.id, workflow.name])));
 
 	function openCreate() {
 		editing = null;
-		workflowID = workflows.data?.[0]?.id ?? '';
+		workflowID = workflows[0]?.id ?? '';
 		cron = '0 * * * *';
 		active = true;
 		formError = null;
@@ -57,7 +94,7 @@
 	 * inactive workflows, so saving Active for one must say it will not run. */
 	function inactiveWarning(schedule: ScheduleResource): string | null {
 		if (!schedule.active) return null;
-		const workflow = (workflows.data ?? []).find((candidate) => candidate.id === schedule.workflowId);
+		const workflow = workflows.find((candidate) => candidate.id === schedule.workflowId);
 		if (workflow && !workflow.active) return 'This workflow is not activated, so this schedule will not fire until it is.';
 		return null;
 	}
@@ -77,7 +114,7 @@
 			return;
 		}
 		if (!editing) {
-			const workflow = (workflows.data ?? []).find((candidate) => candidate.id === workflowID);
+			const workflow = workflows.find((candidate) => candidate.id === workflowID);
 			if (workflow && !workflow.active) {
 				formError = 'That workflow is not activated — activate it first, or the schedule will pause without firing.';
 				return;
@@ -89,7 +126,7 @@
 			const body = { workflowId: workflowID, cron: cron.trim(), active };
 			const response = editing ? await updateSchedule(editing.id, body) : await createSchedule(body);
 			if (response.status !== 200 && response.status !== 201) throw new Error('Unexpected schedule-save response');
-			await schedules.refetch();
+			await loadSchedules();
 			editorOpen = false;
 		} catch (error) {
 			formError = message(error);
@@ -103,7 +140,7 @@
 		if (!confirm(`Delete the schedule ${schedule.cron} for ${workflowNames.get(schedule.workflowId) ?? schedule.workflowId}? It will stop firing.`)) return;
 		try {
 			await deleteSchedule(schedule.id);
-			await schedules.refetch();
+			await loadSchedules();
 		} catch (error) {
 			formError = message(error);
 		}
@@ -122,7 +159,7 @@
 				Run an active workflow on a cron expression. Times are evaluated in UTC.
 			</p>
 		</div>
-		<Button onclick={openCreate} disabled={workflows.isPending} class="w-full sm:w-auto sm:shrink-0">
+		<Button onclick={openCreate} disabled={loading} class="w-full sm:w-auto sm:shrink-0">
 			<CalendarClock aria-hidden="true" />
 			New schedule
 		</Button>
@@ -131,12 +168,12 @@
 	<div class="mt-4">
 		<ListStates
 			label="Schedules"
-			loading={schedules.isPending}
-			failed={schedules.isError}
-			error={schedules.error}
+			loading={loading}
+			failed={listFailure !== null}
+			error={listFailure}
 			count={rows.length}
 			rows={2}
-			onRetry={() => void schedules.refetch()}
+			onRetry={() => void loadSchedules()}
 			emptyIcon={CalendarClock}
 			emptyTitle="No schedules yet"
 			emptyBody="Add one to run an activated workflow on a recurring cadence."
@@ -186,7 +223,7 @@
 				<div class="grid gap-2">
 					<label for="schedule-workflow" class="text-sm font-medium">Workflow</label>
 					<select id="schedule-workflow" bind:value={workflowID} disabled={Boolean(editing)} class="h-7 rounded-md border border-input bg-background px-2 text-xs disabled:opacity-60">
-						{#each workflows.data ?? [] as workflow (workflow.id)}
+						{#each workflows as workflow (workflow.id)}
 							<option value={workflow.id}>{workflow.name}{workflow.active ? '' : ' (not activated)'}</option>
 						{/each}
 					</select>

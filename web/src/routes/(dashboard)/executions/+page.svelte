@@ -1,13 +1,14 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { page as route } from '$app/state';
+	import { onMount } from 'svelte';
 	import Activity from '@lucide/svelte/icons/activity';
 	import RefreshCw from '@lucide/svelte/icons/refresh-cw';
 	import Square from '@lucide/svelte/icons/square';
 
 	import { message } from '$lib/api/http';
 	import { cancelExecution, listExecutions } from '$lib/api/generated/executions/executions';
-	import { createListWorkflows } from '$lib/api/generated/workflows/workflows';
+	import { listWorkflows } from '$lib/api/generated/workflows/workflows';
 	import type { ExecutionSummary, WorkflowSummary } from '$lib/api/generated/models';
 	import ListStates from '$lib/components/dashboard/list-states.svelte';
 	import { Button } from '$lib/components/ui/button';
@@ -15,7 +16,10 @@
 	import {
 		appendPage,
 		canLoadMore,
+		DRAIN_PAGE_LIMIT,
+		drainPages,
 		emptyPage,
+		headerCursor,
 		readPage,
 		type CursorPage
 	} from '$lib/dashboard/cursor-page';
@@ -32,11 +36,40 @@
 	import { RequestGuard } from '$lib/dashboard/request-guard';
 	import { formatDuration, formatTimestamp, statusLabel, statusTone } from '$lib/workflow-editor/execution';
 
-	const workflows = createListWorkflows<WorkflowSummary[]>(undefined, () => ({
-		query: {
-			select: (response) => (response.status === 200 ? (response.data ?? []) : [])
+	// Names, the filter's options and the "deleted" badge all come from the
+	// workflow listing, which the server pages: reading one page would put every
+	// workflow past it beyond the filter's reach and label its executions
+	// "deleted" simply because the page could not see them.
+	let workflowRows = $state<WorkflowSummary[]>([]);
+	let workflowsLoading = $state(true);
+	let workflowsFailed = $state(false);
+	const workflowGuard = new RequestGuard();
+
+	/** One page of the workflow listing, read only for its names and ids. */
+	async function fetchWorkflowPage(cursor: string): Promise<CursorPage<WorkflowSummary>> {
+		const response = await listWorkflows({ limit: DRAIN_PAGE_LIMIT, cursor: cursor || undefined });
+		if (response.status !== 200) throw new Error('Unexpected workflow-list response');
+		return readPage({ items: response.data, nextCursor: headerCursor(response.headers) });
+	}
+
+	async function loadWorkflowNames() {
+		const token = workflowGuard.start();
+		workflowsFailed = false;
+		try {
+			const items = await drainPages(fetchWorkflowPage);
+			if (!workflowGuard.holds(token)) return;
+			workflowRows = items;
+		} catch {
+			// A failure here leaves the ids as the only labels and no row
+			// marked deleted: an unreadable name is not a deleted workflow.
+			if (!workflowGuard.holds(token)) return;
+			workflowsFailed = true;
+		} finally {
+			if (workflowGuard.holds(token)) workflowsLoading = false;
 		}
-	}));
+	}
+
+	onMount(() => void loadWorkflowNames());
 
 	// Filters live in the URL (?status=&workflowId=) so a view survives
 	// reload and can be linked. `replaceState` on change keeps the back
@@ -60,9 +93,11 @@
 	// so it drives its own request state instead of TanStack Query.
 	const guard = new RequestGuard();
 
-	const workflowNames = $derived(new Map((workflows.data ?? []).map((workflow) => [workflow.id, workflow.name])));
-	const workflowsLoaded = $derived(!workflows.isPending && !workflows.isError);
-	const workflowFilterOptions = $derived(filterWorkflowOptions(workflows.data ?? [], workflowSearch));
+	const workflowNames = $derived(new Map(workflowRows.map((workflow) => [workflow.id, workflow.name])));
+	// "Loaded" is what licenses the deleted badge: only a list that was read to
+	// the end can say an id is not in it.
+	const workflowsLoaded = $derived(!workflowsLoading && !workflowsFailed);
+	const workflowFilterOptions = $derived(filterWorkflowOptions(workflowRows, workflowSearch));
 
 	// A failure with rows behind it came from "Load more" — load() empties the
 	// page before it records one, so a first-load failure never reaches here.
@@ -234,7 +269,7 @@
 				{/each}
 			</select>
 		</div>
-		{#if (workflows.data ?? []).length > 8}
+		{#if workflowRows.length > 8}
 			<div class="grid gap-1">
 				<label for="execution-workflow-search" class="text-xs font-medium text-muted-foreground">Find workflow</label>
 				<input id="execution-workflow-search" type="search" bind:value={workflowSearch} placeholder="Type to narrow…" class="h-7 w-44 rounded-md border border-input bg-background px-2 text-xs" />

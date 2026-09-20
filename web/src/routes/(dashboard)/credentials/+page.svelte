@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import KeyRound from '@lucide/svelte/icons/key-round';
 	import Trash2 from '@lucide/svelte/icons/trash-2';
 
@@ -6,8 +7,8 @@
 	import {
 		createCredential,
 		createListCredentialTypes,
-		createListCredentials,
 		deleteCredential,
+		listCredentials,
 		testCredentialPayload,
 		updateCredential
 	} from '$lib/api/generated/credentials/credentials';
@@ -16,15 +17,42 @@
 	import { Button } from '$lib/components/ui/button';
 	import * as Dialog from '$lib/components/ui/dialog';
 	import { Input } from '$lib/components/ui/input';
+	import { DRAIN_PAGE_LIMIT, drainPages, headerCursor, readPage, type CursorPage } from '$lib/dashboard/cursor-page';
+	import { RequestGuard } from '$lib/dashboard/request-guard';
 
-	const credentials = createListCredentials<CredentialResource[]>(undefined, () => ({
-		query: {
-			select: (response) => {
-				if (response.status !== 200) throw new Error('Unexpected credential-list response');
-				return response.data ?? [];
-			}
+	// The listing is paged by the server, so one request is only its first
+	// page: the rows are read to the end before they are shown, or a credential
+	// past it would be invisible and unreachable from the editor's picker.
+	let rows = $state<CredentialResource[]>([]);
+	let loading = $state(true);
+	let listFailure = $state<unknown>(null);
+	const listGuard = new RequestGuard();
+
+	/** One page of the credential listing: rows from the body, cursor from the header. */
+	async function fetchCredentialPage(cursor: string): Promise<CursorPage<CredentialResource>> {
+		const response = await listCredentials({ limit: DRAIN_PAGE_LIMIT, cursor: cursor || undefined });
+		if (response.status !== 200) throw new Error('Unexpected credential-list response');
+		return readPage({ items: response.data, nextCursor: headerCursor(response.headers) });
+	}
+
+	async function loadCredentials() {
+		const token = listGuard.start();
+		listFailure = null;
+		loading = rows.length === 0;
+		try {
+			const items = await drainPages(fetchCredentialPage);
+			if (!listGuard.holds(token)) return;
+			rows = items;
+		} catch (cause) {
+			if (!listGuard.holds(token)) return;
+			listFailure = cause;
+		} finally {
+			if (listGuard.holds(token)) loading = false;
 		}
-	}));
+	}
+
+	onMount(() => void loadCredentials());
+
 	const types = createListCredentialTypes<CredentialTypeResource[]>(() => ({
 		query: {
 			select: (response) => {
@@ -51,10 +79,6 @@
 	let testing = $state(false);
 
 	const definition = $derived((types.data ?? []).find((candidate) => candidate.id === typeID) ?? null);
-	// Read once here rather than through the query object in the markup: the
-	// rows are used inside a snippet, where the `!isPending && !isError`
-	// narrowing that made `.data` non-optional no longer reaches.
-	const rows = $derived(credentials.data ?? []);
 
 	const REDACTED = '••••••••';
 
@@ -144,7 +168,7 @@
 		try {
 			const response = editing ? await updateCredential(editing.id, body) : await createCredential(body);
 			if (response.status !== 200 && response.status !== 201) throw new Error('Unexpected credential-save response');
-			await credentials.refetch();
+			await loadCredentials();
 			editorOpen = false;
 		} catch (error) {
 			formError = message(error);
@@ -165,7 +189,7 @@
 		deleteError = null;
 		try {
 			await deleteCredential(pendingDelete.id);
-			await credentials.refetch();
+			await loadCredentials();
 			deleteOpen = false;
 			pendingDelete = null;
 		} catch (error) {
@@ -215,12 +239,12 @@
 	<div class="mt-4">
 		<ListStates
 			label="Credentials"
-			loading={credentials.isPending}
-			failed={credentials.isError}
-			error={credentials.error}
+			loading={loading}
+			failed={listFailure !== null}
+			error={listFailure}
 			count={rows.length}
 			rows={2}
-			onRetry={() => void credentials.refetch()}
+			onRetry={() => void loadCredentials()}
 			emptyIcon={KeyRound}
 			emptyTitle="No credentials yet"
 			emptyBody="Add one to authenticate HTTP Request nodes without putting a secret in a workflow."

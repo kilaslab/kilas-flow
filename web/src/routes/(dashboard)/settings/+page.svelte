@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import Copy from '@lucide/svelte/icons/copy';
 	import Check from '@lucide/svelte/icons/check';
 	import KeyRound from '@lucide/svelte/icons/key-round';
@@ -8,7 +9,7 @@
 	import {
 		createApiKey,
 		createGetMe,
-		createListApiKeys,
+		listApiKeys,
 		logout,
 		revokeApiKey
 	} from '$lib/api/generated/auth/auth';
@@ -18,6 +19,8 @@
 	import { Button } from '$lib/components/ui/button';
 	import * as Dialog from '$lib/components/ui/dialog';
 	import { Input } from '$lib/components/ui/input';
+	import { DRAIN_PAGE_LIMIT, drainPages, headerCursor, readPage, type CursorPage } from '$lib/dashboard/cursor-page';
+	import { RequestGuard } from '$lib/dashboard/request-guard';
 	import { formatTimestamp } from '$lib/workflow-editor/execution';
 
 	/**
@@ -29,14 +32,36 @@
 	 * for audit, which is why the list marks revoked keys rather than
 	 * dropping them.
 	 */
-	const keys = createListApiKeys<{ items: APIKeyResource[] }>(undefined, () => ({
-		query: {
-			select: (response) => {
-				if (response.status !== 200) throw new Error('Unexpected API-key response');
-				return { items: response.data.items ?? [] };
-			}
+	let rows = $state<APIKeyResource[]>([]);
+	let loading = $state(true);
+	let listFailure = $state<unknown>(null);
+	const listGuard = new RequestGuard();
+
+	/** One page of the key listing: rows from the body, cursor from the header. */
+	async function fetchKeyPage(cursor: string): Promise<CursorPage<APIKeyResource>> {
+		const response = await listApiKeys({ limit: DRAIN_PAGE_LIMIT, cursor: cursor || undefined });
+		if (response.status !== 200) throw new Error('Unexpected API-key response');
+		return readPage({ items: response.data.items, nextCursor: headerCursor(response.headers) });
+	}
+
+	async function loadKeys() {
+		const token = listGuard.start();
+		listFailure = null;
+		loading = rows.length === 0;
+		try {
+			const items = await drainPages(fetchKeyPage);
+			if (!listGuard.holds(token)) return;
+			rows = items;
+		} catch (cause) {
+			if (!listGuard.holds(token)) return;
+			listFailure = cause;
+		} finally {
+			if (listGuard.holds(token)) loading = false;
 		}
-	}));
+	}
+
+	onMount(() => void loadKeys());
+
 	const identity = createGetMe<PrincipalResource>(() => ({
 		query: {
 			retry: false,
@@ -65,8 +90,7 @@
 	let revokingBusy = $state(false);
 	let pageError = $state<string | null>(null);
 
-	const rows = $derived(keys.data?.items ?? []);
-	const authOff = $derived(keys.isError || identity.isError);
+	const authOff = $derived(listFailure !== null || identity.isError);
 
 	async function submitCreate() {
 		const trimmed = label.trim();
@@ -81,7 +105,7 @@
 			if (response.status !== 201) throw new Error('Unexpected API-key response');
 			minted = response.data;
 			label = '';
-			await keys.refetch();
+			await loadKeys();
 		} catch (error) {
 			createError = message(error);
 		} finally {
@@ -113,7 +137,7 @@
 		try {
 			await revokeApiKey(revoking.id);
 			revoking = null;
-			await keys.refetch();
+			await loadKeys();
 		} catch (error) {
 			pageError = message(error);
 		} finally {
@@ -227,12 +251,12 @@
 			<div class="mt-4">
 				<ListStates
 					label="API keys"
-					loading={keys.isPending}
-					failed={keys.isError}
-					error={keys.error}
+					loading={loading}
+					failed={listFailure !== null}
+					error={listFailure}
 					count={rows.length}
 					rows={2}
-					onRetry={() => void keys.refetch()}
+					onRetry={() => void loadKeys()}
 					emptyIcon={KeyRound}
 					emptyTitle={authOff ? 'API keys need authentication' : 'No API keys yet'}
 					emptyBody={authOff

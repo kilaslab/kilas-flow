@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import Database from '@lucide/svelte/icons/database';
 	import Pencil from '@lucide/svelte/icons/pencil';
 	import Trash2 from '@lucide/svelte/icons/trash-2';
@@ -6,8 +7,8 @@
 	import { message } from '$lib/api/http';
 	import {
 		createDatastore,
-		createListDatastores,
 		deleteDatastore,
+		listDatastores,
 		renameDatastore
 	} from '$lib/api/generated/datastores/datastores';
 	import type { DatastoreResource } from '$lib/api/generated/models';
@@ -15,15 +16,41 @@
 	import { Button } from '$lib/components/ui/button';
 	import * as Dialog from '$lib/components/ui/dialog';
 	import { Input } from '$lib/components/ui/input';
+	import { DRAIN_PAGE_LIMIT, drainPages, headerCursor, readPage, type CursorPage } from '$lib/dashboard/cursor-page';
+	import { RequestGuard } from '$lib/dashboard/request-guard';
 
-	const datastores = createListDatastores<DatastoreResource[]>(undefined, () => ({
-		query: {
-			select: (response) => {
-				if (response.status !== 200) throw new Error('Unexpected datastore-list response');
-				return response.data?.items ?? [];
-			}
+	// The listing is paged by the server, so one request is only its first page:
+	// the rows are read to the end before they are shown, or a datastore past it
+	// would be unreachable from this page entirely.
+	let rows = $state<DatastoreResource[]>([]);
+	let loading = $state(true);
+	let listFailure = $state<unknown>(null);
+	const listGuard = new RequestGuard();
+
+	/** One page of the datastore listing: rows from the body, cursor from the header. */
+	async function fetchDatastorePage(cursor: string): Promise<CursorPage<DatastoreResource>> {
+		const response = await listDatastores({ limit: DRAIN_PAGE_LIMIT, cursor: cursor || undefined });
+		if (response.status !== 200) throw new Error('Unexpected datastore-list response');
+		return readPage({ items: response.data.items, nextCursor: headerCursor(response.headers) });
+	}
+
+	async function loadDatastores() {
+		const token = listGuard.start();
+		listFailure = null;
+		loading = rows.length === 0;
+		try {
+			const items = await drainPages(fetchDatastorePage);
+			if (!listGuard.holds(token)) return;
+			rows = items;
+		} catch (cause) {
+			if (!listGuard.holds(token)) return;
+			listFailure = cause;
+		} finally {
+			if (listGuard.holds(token)) loading = false;
 		}
-	}));
+	}
+
+	onMount(() => void loadDatastores());
 
 	let editorOpen = $state(false);
 	let editing = $state<DatastoreResource | null>(null);
@@ -33,10 +60,6 @@
 	let deleting = $state<DatastoreResource | null>(null);
 	let removing = $state(false);
 
-	// Read once here rather than through the query object in the markup: the
-	// rows are used inside a snippet, where the `!isPending && !isError`
-	// narrowing that made `.data` non-optional no longer reaches.
-	const rows = $derived(datastores.data ?? []);
 
 	function openCreate() {
 		editing = null;
@@ -66,7 +89,7 @@
 				: await createDatastore(body);
 			if (response.status !== 200 && response.status !== 201)
 				throw new Error('Unexpected datastore-save response');
-			await datastores.refetch();
+			await loadDatastores();
 			editorOpen = false;
 		} catch (error) {
 			formError = message(error);
@@ -82,7 +105,7 @@
 		try {
 			await deleteDatastore(deleting.id);
 			deleting = null;
-			await datastores.refetch();
+			await loadDatastores();
 		} catch (error) {
 			formError = message(error);
 		} finally {
@@ -113,12 +136,12 @@
 	<div class="mt-4">
 		<ListStates
 			label="Datastores"
-			loading={datastores.isPending}
-			failed={datastores.isError}
-			error={datastores.error}
+			loading={loading}
+			failed={listFailure !== null}
+			error={listFailure}
 			count={rows.length}
 			rows={2}
-			onRetry={() => void datastores.refetch()}
+			onRetry={() => void loadDatastores()}
 			emptyIcon={Database}
 			emptyTitle="No datastores yet"
 			emptyBody="Use datastores to persist execution results, share data between workflows, and track metrics for evaluation."

@@ -1,4 +1,61 @@
 /**
+ * The page size the dashboard asks for while it drains a listing.
+ *
+ * Every listing endpoint caps a page at 500 rows. The dashboard lists hold the
+ * whole list — they filter, sort and count over what they have — so they ask
+ * for the largest page the API serves and keep asking until the cursor runs
+ * out. Leaving the size to the server default (100) would multiply the round
+ * trips for a tenant with more rows than that.
+ */
+export const DRAIN_PAGE_LIMIT = 500;
+
+/**
+ * The cursor a listing response carries in its `X-Next-Cursor` header.
+ *
+ * The header rather than the body: every listing endpoint pages this way, and
+ * the empty header on the last page is what ends a drain.
+ */
+export function headerCursor(headers: Headers): string {
+	return headers.get('X-Next-Cursor') ?? '';
+}
+
+/**
+ * Every page of a cursor-paged listing, in the order the server named them.
+ *
+ * The listings use this instead of one request per view: the API pages them
+ * server-side, so a single call is only the first page, and a page that showed
+ * one as if it were the workspace put rows out of reach, under-counted its
+ * heading and labelled executions of the workflows it could not see "deleted".
+ *
+ * The first rejection ends the drain and is rethrown. Half a list is not a
+ * list: a caller that rendered one would print a count and a "deleted" badge
+ * that are wrong rather than absent, which is the defect this exists to fix.
+ * Callers show the failure instead, and the rows they already had, if any.
+ *
+ * A cursor that does not advance ends it too, with an error rather than
+ * another request: the cursor is opaque, so a server that handed one back
+ * unchanged would otherwise be asked for the same page forever, and every
+ * round trip would append its rows again.
+ */
+export async function drainPages<T>(
+	fetchPage: (cursor: string) => Promise<CursorPage<T>>
+): Promise<T[]> {
+	const items: T[] = [];
+	const requested = new Set<string>();
+	let cursor = '';
+	for (;;) {
+		requested.add(cursor);
+		const page = await fetchPage(cursor);
+		items.push(...page.items);
+		if (page.nextCursor === '') return items;
+		if (requested.has(page.nextCursor)) {
+			throw new Error('The list cursor stopped advancing before the last page');
+		}
+		cursor = page.nextCursor;
+	}
+}
+
+/**
  * What a cursor-paged list has loaded so far.
  *
  * The rows and the cursor move together — every page that arrives replaces the
