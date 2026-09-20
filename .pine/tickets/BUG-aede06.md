@@ -1,7 +1,7 @@
 ---
 id: BUG-aede06
 title: 'Engine policy: timeouts, timezone, error workflow, live progress, polls, manual triggers'
-status: done
+status: doing
 priority: medium
 labels:
     - engine
@@ -9,7 +9,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:10Z"
-updated: "2026-09-20T02:03:59Z"
+updated: "2026-09-20T02:42:18Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -792,3 +792,6 @@ Closed by `pine close --evidence` on 2026-09-20.
  web/vite.config.ts                                 |    7 +-
  434 files changed, 61048 insertions(+), 4725 deletions(-)
 ```
+
+## Reopened by review (2026-09-20) — Important
+- **Activation gate mis-reads an expression target**: `SubworkflowCalls` (`nodes/subworkflow.go:343-352`) drops the `Expression` flag its own `WorkflowCall` carries and returns the raw locator text as a `WorkflowID`, so `refuseInactiveSubworkflows` (`internal/repository/workflows.go:502`) looks up `{"mode":"expression","value":"={{ $json.wf }}"}` (or `={{ $json.wf }}`) and refuses activation — a workflow whose call node uses an expression locator can never be published, where before this wave it published fine. The sibling gate already handles this (`DocumentReferences` skips `call.Target == "" || call.Expression`). Fix: skip an expression target in the activation gate; add an activation test with an expression locator.

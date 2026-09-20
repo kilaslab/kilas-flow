@@ -1,7 +1,7 @@
 ---
 id: BUG-ysvmaa
 title: 'Engine waits/loops: 1-min sweep, 1h cap, shutdown drain, nested loops, wait-in-loop, lineage'
-status: done
+status: doing
 priority: high
 labels:
     - engine
@@ -9,7 +9,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:10Z"
-updated: "2026-09-20T02:04:04Z"
+updated: "2026-09-20T02:42:18Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -750,3 +750,6 @@ Closed by `pine close --evidence` on 2026-09-20.
  web/vite.config.ts                                 |    7 +-
  434 files changed, 73298 insertions(+), 4725 deletions(-)
 ```
+
+## Reopened by review (2026-09-20) — Important
+- **Per-item suspension loses the remaining items**: `runPerItem` appends the items a suspending node has not reached onto `state.pending` *after* `runner.invoke` marshalled the suspension checkpoint (`internal/engine/runner.go:1041` copies `state.pending`; the mutation at :1081-1091 is never read again), so the checkpoint does not carry them and a resumed run drops every item after the first. Trigger: a node with `onError: continueRegularOutput/continueErrorOutput` (perItemTolerance, :1780) that also suspends — e.g. Wait with On Error = Continue over three items; after resume `done` carries 1 instead of 3. Fix: schedule the remaining per-item work before the checkpoint is marshalled (or copy it into the checkpoint explicitly), plus a regression test that suspends inside a per-item node.

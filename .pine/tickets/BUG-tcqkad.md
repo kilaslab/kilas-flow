@@ -1,7 +1,7 @@
 ---
 id: BUG-tcqkad
 title: 'AI agent loop defects: parser+memory 400, chain shape/schema, timeout, vision, retries'
-status: done
+status: doing
 priority: high
 labels:
     - ai
@@ -10,7 +10,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:09Z"
-updated: "2026-09-20T02:04:03Z"
+updated: "2026-09-20T02:42:18Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -637,3 +637,8 @@ Closed by `pine close --evidence` on 2026-09-20.
  web/vite.config.ts                                 |    7 +-
  434 files changed, 70597 insertions(+), 4725 deletions(-)
 ```
+
+## Reopened by review (2026-09-20) — Important
+- **Max-iterations fallback parsed as the parser schema**: the loop now completes with `MaxIterationsMessage` (`internal/ai/agent.go:230`), but the parser branch (`nodes/ai.go:1377-1384`) still unmarshals that string, so a graph with a Structured Output Parser attached fails with "parser output is not valid JSON" naming the wrong cause (verified: same graph without the parser succeeds). Fix: don't parse the fallback (a boolean on `ai.AgentResult` set at the bound is cleaner than matching the message), plus a test.
+- **Sampling options from an imported model are ignored**: `chatModel` reads sampling keys from the node top level only (`nodes/ai.go:781-786`), while `chatModelToKilas` (`internal/interop/n8n/parameters.go:4689`) writes temperature/topP/maxTokens/penalties/timeout/maxRetries into the `options` collection and marks them consumed — so every imported Ollama/Gemini/DeepSeek/Groq/Mistral/xAI model silently runs at provider defaults (verified by descriptor probe). Fix: read the same names from the options collection when the top level did not set them.
+- **Run-ceiling timeout error names a knob that cannot raise it** (`nodes/ai.go:1367-1371`): it points at the chat model's Timeout option, which is refused above the ceiling (`ErrModelTimeoutAboveCeiling`), while the real bound is the deployment ceiling with no config value behind it. Fix: name the ceiling (or wire it to configuration) instead of the node option.
