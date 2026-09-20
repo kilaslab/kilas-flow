@@ -1,7 +1,7 @@
 ---
 id: BUG-ysvmaa
 title: 'Engine waits/loops: 1-min sweep, 1h cap, shutdown drain, nested loops, wait-in-loop, lineage'
-status: doing
+status: testing
 priority: high
 labels:
     - engine
@@ -9,7 +9,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:10Z"
-updated: "2026-09-20T00:33:12Z"
+updated: "2026-09-20T01:21:31Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -222,3 +222,77 @@ What that proves: a 50 ms timer wait is re-queued inside a second without anyone
 - Nested loops and wait-inside-loop: EngineFlow's runner rewrite (loop state is runner-owned as of 9df1c1c; nested-loop scheduling rewrite and `Checkpoint.NodeState` in flight under BUG-c241hm). Not verified by me.
 - Imported loops capped at 100 batches / dropped `options.reset`: ImporterTail (`splitInBatchesToKilas` in internal/interop/n8n/parameters.go).
 - Graceful shutdown at the process level: `Service.Drain(ctx)` exists and is tested, but cmd/kilasflow/main.go must call it after the server drains, bounded by `server.shutdown_timeout` — SecurityFront2 (main.go is theirs this wave). Until that call lands, a real SIGTERM still exits without waiting for the workers, which is the half of the finding the unit test cannot cover.
+
+## Work (EngineRemnants 2026-09-20, verification slice)
+
+Verified every remaining finding on this ticket against the tree, and closed the
+two that had landed without a test. Commits: `06846cc` (loop resume + loop item
+fidelity tests), `677c513` (loop-reset diagnostic), plus `bcd5787`/`606355b`
+carry the `QueueManualLatest` signature this slice shares with BUG-aede06.
+
+Per finding, what closes it:
+
+- **Graceful shutdown does not drain workers** (high). Closed by `5990e7f`
+  (SecurityFront2): `cmd/kilasflow/main.go:645-657` calls `runtime.Drain(ctx)`
+  after the listener closes, bounded by `cfg.Server.ShutdownTimeout`, and logs a
+  worker that outlived the window instead of exiting silently. Worker side:
+  `Service.workers` WaitGroup in `Start` + `Service.Drain`. Tests:
+  `TestGracefulShutdownHandsNothingHalfDone`, `TestDrainDoesNotWaitForeverOnAStuckNode`
+  (both pass).
+- **Nested loops mis-detected** (high). Closed by EngineFlow's `findLoops`
+  rewrite (`schedulingEdges` no longer hides the inner entry);
+  `TestNestedLoopsIterateIndependently` passes, and the loop bound, cursor and
+  collect tests (`TestLoopDispatchesOneBatchPerIteration`,
+  `TestLoopCollectsEveryBatchOntoDone`, `TestLoopKeepsItsCursorWhenTheBodyReturnsNewItems`,
+  `TestLoopFailsRatherThanTruncatingAtItsBound`) pin the surrounding semantics.
+- **A Wait inside a loop ends the loop after the first batch** (high). The fix
+  keeps loop scheduling state in `Checkpoint.NodeState` (runner.go:778 stores it,
+  :864-866 restores it). It had **no test**, which is what this slice adds:
+  `TestResumeInsideALoopProcessesEveryBatch` suspends in batch one, resumes
+  through the approval token on a *fresh* worker, and asserts all three batches
+  ran (`done` carries 3 items). Bite check: with `checkpoint.NodeState` no longer
+  written the test fails exactly as the finding reports it (`done carried 1
+  items, want all 3 batches: the loop ended after the first one`).
+- **Timer waits resume only on the 1-minute sweep** / **Short Wait nodes take up
+  to 60 s**: closed by EngineWaits `b41e9c4` (per-suspension `time.AfterFunc`
+  arming, sweep as the floor, configurable interval);
+  `TestExpiredWaitsResolveOnTheirOwnDeadline` proves a 50 ms wait requeues inside
+  a second.
+- **Durable waits capped at 1 hour, webhook/form resume unreachable** (high).
+  Closed: `engine.MaxWaitTTL` = 7 days (`internal/engine/approval.go:86`),
+  refused past it (`TestWaitNeedsABoundableDeadline` covers the 30-day refusal
+  and the ~24 h default), `resume=webhook`/`resume=form` implemented in
+  `nodes/wait.go` with n8n's `limitWaitTime`/`limitType`/`limitAmount`/`limitUnit`
+  (nodes/datetime_test.go:351+).
+- **Loops drop binary data and pairedItem lineage after the first batch and on
+  `done`** (high). Lineage already had a test
+  (`TestDollarItemResolvesThroughHttpAndALoop`); the binary half had none, so
+  `TestLoopCarriesBinaryAndLineageThroughEveryBatch` now asserts an item with a
+  `BinaryRef` reaches *every* batch with its file and its source lineage, and that
+  the collected `done` output keeps both.
+- **`$loop` embedded in items / quadratic state** (high). Closed by EngineFlow
+  (runner-owned loop state, `9df1c1c`); `TestLoopDoesNotWriteItsStateOntoItems`
+  asserts no item carries a `$loop` key and the payload does not grow with
+  batches (`internal/engine/loopstate_test.go`).
+- **Imported loops capped at 100 batches** (medium). Closed by ImporterTail:
+  `splitInBatchesToKilas` writes the instance ceiling
+  (`workflow.MaxLoopIterations`) rather than the loop's own default, covered by
+  `TestSplitInBatchesCarriesTheLoopBound` (internal/interop/n8n/waitsubworkflow_test.go).
+- **`options.reset` on import**. Carried and reported lossy — the value is kept
+  so a round trip returns the node as authored, and the restart semantics are
+  deliberately *not* implemented. What this slice fixed: the diagnostic reason
+  claimed "this was not carried", which contradicted the code that stores it
+  (`677c513`), and the carry/report pair had no test
+  (`TestSplitInBatchesKeepsAndNamesItsResetOption` now pins both). This is the
+  one intentional residual on the ticket, documented at the surface that matters
+  (the import diagnostic) rather than silently approximated.
+
+Scoped proof (each package run once, working tree at `677c513`):
+
+```
+go test ./internal/engine/ -run 'TestResumeInsideALoopProcessesEveryBatch|TestLoopCarriesBinaryAndLineageThroughEveryBatch|TestLoopDoesNotWriteItsStateOntoItems|TestNestedLoopsIterateIndependently|TestDollarItemResolvesThroughHttpAndALoop|TestSuspendResumeContinuesWithExactUpstreamData|TestExpiredWaitsResolveOnTheirOwnDeadline' -count=1   # ok
+go test ./internal/interop/n8n/ -count=1   # ok 0.351s (whole package)
+```
+
+Not re-verified here: the adversarial live repro against stub/n8n (the ticket's
+last acceptance line) is the wave's end-to-end pass, not a package test.

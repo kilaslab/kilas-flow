@@ -1,7 +1,7 @@
 ---
 id: BUG-aede06
 title: 'Engine policy: timeouts, timezone, error workflow, live progress, polls, manual triggers'
-status: doing
+status: testing
 priority: medium
 labels:
     - engine
@@ -9,7 +9,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:10Z"
-updated: "2026-09-20T00:33:12Z"
+updated: "2026-09-20T01:21:31Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -233,3 +233,73 @@ What that proves: a workflow declaring `settings.executionTimeout` runs past the
 - Error workflow (finding "No error-workflow mechanism"), commit 1d8191e + a8700dd: a failed (never cancelled) run starts the workflow `settings.errorWorkflow` names, from its Error Trigger, with n8n's `{execution:{id,mode,lastNodeExecuted,error}, workflow:{id,name}, trigger:{mode}}` payload, as its own execution parented to the failure; best effort and logged, self-reference refused. New nodes `kilasflow.errorTrigger` (root; hands the error object through) and `kilasflow.stopAndError` (terminal; fails the run with the author's message — literal, expression-marked or an inline `{{ }}` template — or the imported `errorObject` JSON text). Importer carries `errorWorkflow` in and out and no longer calls it unmapped; the dropped-settings reason now names only what genuinely remains (execution order, save-data flags). `ServiceDeps.ErrorTriggerType` still needs wiring in main.go for the trigger branch to be selected rather than every root.
 - Sub-workflow activation validation, commit 3e1fbda: `WithSubworkflows(nodes.SubworkflowCalls)` refuses to activate a document whose Execute Sub-workflow / Workflow Tool node calls a workflow that is missing or not active, naming the node; nothing is pinned on a refusal; nil keeps the old behaviour.
 - Scoped proof at each commit and again at HEAD: `go test ./internal/engine/ ./internal/repository/ ./nodes/ ./internal/database/ ./internal/interop/n8n/ -count=1` → all ok.
+
+## Work (EngineRemnants 2026-09-20, remaining slices)
+
+Two of this ticket's findings were code-complete without proof, and one had no
+route from the API at all. Commits: `c311215` (executeOnce/alwaysOutputData
+coverage), `bcd5787` (manual trigger selection) + `606355b` (EngineCore's
+pruned-trace relaxation, swept in because it shares the migrated file).
+
+### alwaysOutputData / executeOnce — now covered, nothing to re-implement
+
+The importer carries both (`errorHandlingSettings`) and the runner honours them
+(`runner.go:716` delivery to a target that asked for data, `:959` executeOnce
+trims the batch to its first item, `:998` an empty output becomes one empty
+item). What was missing was proof, which is the shape the finding described ("a
+setting that visibly existed and did nothing"):
+
+- `TestImportCarriesTheErrorHandlingSettingsTheRunnerHonours` now asserts both
+  keys land on the imported node and that neither is reported as dropped — the
+  two "dropped" diagnostics are gone, including the false negative of a
+  diagnostic naming a setting that crossed intact.
+- `TestExecuteOnceRunsTheNodeOnceForTheWholeBatch`: a 3-item batch reaches such a
+  node as one item (n8n runs it once, with the first item). Pre-fix message:
+  `the node with executeOnce saw 3 items, want the first one alone`.
+- `TestAlwaysOutputDataKeepsTheBranchAliveWithOneEmptyItem`: the node emits one
+  empty item and the branch below runs once — with the same graph run without
+  the setting as the control, so the test proves the setting is what kept the
+  branch alive. Pre-fix message: `the branch after the empty node ran 0 times`.
+
+Bite checks were run by temporarily disabling each handler in `runner.go` and
+restoring it (both new tests failed with exactly the reported symptom).
+
+### Manual trigger selection on POST /run — implemented end to end
+
+A manual run of a workflow with several triggers fired all of them with the same
+item (the live repro: three triggers, one `/multi` stub hit three times). Now:
+
+- `POST /workflows/{id}/run` accepts `triggerNodeId` and echoes it on the queued
+  request; `QueueManualLatest` gained the parameter (matching `QueueTriggered`'s
+  shape) and stores it, so the choice is durable on the row rather than a
+  process-local detail; the service already hands `record.TriggerNodeID` to the
+  runner, which executes only that trigger's subgraph.
+- Omitted means every trigger — the documented default, unchanged for a
+  single-trigger workflow.
+- A named node that cannot start a run is refused with 422 naming it (must
+  exist in the pinned revision, not be disabled, and nothing may feed it): the
+  runner would otherwise seed a mid-graph node with an empty input and report
+  success.
+- Proof: `TestQueueManualLatestCarriesTheChosenTriggerAndRefusesWhatCannotStartIt`
+  (repository), `TestAManualRunStartsOnlyFromTheTriggerItChose` (engine: three
+  triggers, chosen branch only, `shared` ran once), and
+  `TestWorkflowAPIRunCanChooseTheTriggerToStartFrom` (API: echo, default,
+  422 code/name). Bite check through the service seam (`request.TriggerNodeID =
+  record.TriggerNodeID` dropped): `node "shared" ran 2 times, want once` — the
+  duplicate delivery itself.
+
+Scoped proof:
+
+```
+go test ./internal/interop/n8n/ -run TestImportCarriesTheErrorHandlingSettingsTheRunnerHonours -count=1   # ok
+go test ./internal/engine/ -run 'TestExecuteOnceRunsTheNodeOnceForTheWholeBatch|TestAlwaysOutputDataKeepsTheBranchAliveWithOneEmptyItem|TestAManualRunStartsOnlyFromTheTriggerItChose' -count=1   # ok
+go test ./internal/repository/ -run TestQueueManualLatestCarriesTheChosenTriggerAndRefusesWhatCannotStartIt -count=1   # ok
+go test ./internal/api/ -run 'TestWorkflowAPIRunCanChooseTheTriggerToStartFrom|TestWorkflowAPIActivatesAndQueuesOnlyLatestValidDraft' -count=1   # ok
+```
+
+### Remaining on this ticket
+
+- The editor's Run button should send the selected trigger (FrontendCore3's
+  `web/` half). The API accepts it today; until the button sends it, an editor
+  manual run of a multi-trigger workflow keeps the every-trigger default. No
+  engine or API work is outstanding for it.
