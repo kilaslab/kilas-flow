@@ -369,7 +369,16 @@ func (issuer *Issuer) mac(body string) []byte {
 //
 // The signature is checked before the payload is parsed, so a forged token is
 // rejected without its contents ever being interpreted.
+//
+// A nil issuer verifies nothing. A caller may hold *Issuer as a nil field — an
+// installation with no embed signing key — and pass it through an interface,
+// where it stops comparing equal to nil; refusing the token here is what keeps
+// that wiring an "embed sessions are not configured", not a panic in a request
+// handler.
 func (issuer *Issuer) Verify(token string) (Session, error) {
+	if issuer == nil {
+		return Session{}, fmt.Errorf("%w: embed sessions are not configured", ErrInvalidSession)
+	}
 	parts := strings.Split(strings.TrimSpace(token), ".")
 	if len(parts) != 3 || parts[0] != tokenVersion {
 		return Session{}, fmt.Errorf("%w: malformed token", ErrInvalidSession)

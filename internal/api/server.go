@@ -161,7 +161,17 @@ func NewServer(deps Deps) *Server {
 	// Mounted for every request, but inert unless a request carries an embed
 	// token: the internal dashboard is unaffected, and an embedded editor is
 	// confined to its own workflow and scopes.
-	router.Use(middleware.EmbedAuth(deps.EmbedIssuer))
+	//
+	// The field is a *embed.Issuer and the middleware takes an interface, so an
+	// installation with no embed signing key must hand it a nil interface and
+	// not a typed nil: a nil pointer inside a non-nil interface is not equal to
+	// nil, and the layer's "embed sessions are not configured" answer would be
+	// replaced by a nil dereference on the first token a stranger sends.
+	var embedVerifier middleware.EmbedVerifier
+	if deps.EmbedIssuer != nil {
+		embedVerifier = deps.EmbedIssuer
+	}
+	router.Use(middleware.EmbedAuth(embedVerifier))
 
 	api := humachi.New(router, openAPIConfig(deps))
 

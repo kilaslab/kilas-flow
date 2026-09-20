@@ -401,3 +401,17 @@ func TestATokenMintedBeforeDatastoresStillVerifies(t *testing.T) {
 		t.Errorf("scopes = %#v, want the original workflow scopes and nothing else", session.Scopes)
 	}
 }
+
+// A nil issuer refuses every token.
+//
+// An installation with no embed signing key holds its issuer as a nil *Issuer,
+// and that value can travel through an interface — where it no longer compares
+// equal to nil. Refusing the token here is what keeps such a wiring an
+// "embed sessions are not configured" rather than a nil dereference inside a
+// request handler.
+func TestANilIssuerRefusesEveryToken(t *testing.T) {
+	var issuer *embed.Issuer
+	if _, err := issuer.Verify("kfe1.eyJ0ZW5hbnRJZCI6InQifQ.c2lnbmF0dXJl"); !errors.Is(err, embed.ErrInvalidSession) {
+		t.Fatalf("Verify() error = %v, want an invalid-session refusal", err)
+	}
+}

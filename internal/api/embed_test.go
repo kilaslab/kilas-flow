@@ -413,3 +413,30 @@ func TestAnEmbedSessionCanReadTheSubWorkflowRunsItStarted(t *testing.T) {
 		t.Errorf("unrelated execution status = %d, want 404 (body: %s)", got.Code, got.Body)
 	}
 }
+
+// An installation with no embed signing key must answer "embed sessions are not
+// configured", not crash.
+//
+// The review found the opposite: cmd/kilasflow leaves its issuer a nil
+// *embed.Issuer when KILASFLOW_EMBED_SIGNING_KEY is unset, the server handed
+// that nil pointer to the embed layer as a non-nil interface — so the layer's
+// own nil check never fired — and the first three-segment token a stranger sent
+// reached Verify on a nil receiver: a 500 with a recovered stack trace per
+// request, unauthenticated, on the installations that need the refusal most.
+func TestAnInstallationWithNoEmbedKeyAnswers503InsteadOfCrashing(t *testing.T) {
+	// The exact wiring main.go produces for a missing key: a typed nil in the
+	// Deps field, which is what the embed layer receives as an interface.
+	server := newTestServer(t, api.Deps{DB: stubPinger{}, EmbedIssuer: (*embed.Issuer)(nil)})
+
+	// The token is well formed — three segments, the right version — because
+	// that is what gets it past the "is this even an embed token" test and into
+	// verification. It is not claimed to be valid.
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/workflows", nil)
+	request.Header.Set("X-KilasFlow-Embed", "kfe1.eyJ0ZW5hbnRJZCI6InQifQ.c2lnbmF0dXJl")
+	server.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503 on an instance with no embed key (body: %s)", recorder.Code, recorder.Body)
+	}
+}
