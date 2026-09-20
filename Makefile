@@ -362,9 +362,11 @@ smoke-sqlite: ## Prove the embedded binary against a fresh SQLite database
 
 # The repository is github.com/kilaslab/kilas-flow, and every coordinate a
 # consumer reads — image, source URL, OCI label, docs, SDK metadata — has to say
-# so. The name "kilaslabs" appeared throughout and belongs to nobody, which is a
-# squatting target rather than a typo. See scripts/check-coordinates.sh for what
-# is checked and what is deliberately excepted (the Go module path, BUG-341sxn).
+# so. The old organisation name appeared throughout and belongs to nobody, which
+# is a squatting target rather than a typo — so this guard greps for it, and this
+# comment deliberately does not spell it out (the guard cannot except its own
+# prose without weakening itself). See scripts/check-coordinates.sh for what is
+# checked and what is deliberately excepted (the Go module path, BUG-341sxn).
 .PHONY: coordinates-check
 coordinates-check: ## Fail if a published coordinate names the wrong GitHub owner
 	sh scripts/check-coordinates.sh
