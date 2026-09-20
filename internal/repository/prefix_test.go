@@ -70,11 +70,11 @@ func TestPrefixedStoreReadsAndWritesPrefixedTables(t *testing.T) {
 		t.Errorf("Get() name = %q, want %q", got.Name, "Prefixed workflow")
 	}
 
-	listed, err := store.List(context.Background(), tenant)
+	page, err := store.ListSummaries(context.Background(), tenant, repository.WorkflowFilter{})
 	if err != nil {
-		t.Fatalf("List() error = %v", err)
+		t.Fatalf("ListSummaries() error = %v", err)
 	}
-	if len(listed) != 1 {
-		t.Errorf("List() returned %d workflows, want 1", len(listed))
+	if len(page.Workflows) != 1 {
+		t.Errorf("ListSummaries() returned %d workflows, want 1", len(page.Workflows))
 	}
 }

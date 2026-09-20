@@ -2,9 +2,11 @@ package repository
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -38,7 +40,11 @@ var ErrInvalidCursor = errors.New("repository cursor is invalid")
 // later API handlers. The execution engine never imports GORM.
 type WorkflowRepository interface {
 	SaveDraft(context.Context, TenantScope, workflow.Document) (workflow.StoredWorkflow, error)
-	List(context.Context, TenantScope) ([]workflow.StoredWorkflow, error)
+	// ListSummaries is the dashboard's listing. It returns page summaries
+	// rather than StoredWorkflow values because materialising each workflow's
+	// latest document to render four fields is what made one list request load
+	// every graph in the tenant (BUG-fv5fer).
+	ListSummaries(context.Context, TenantScope, WorkflowFilter) (WorkflowSummaryPage, error)
 	Get(context.Context, TenantScope, string) (workflow.StoredWorkflow, error)
 	GetVersion(context.Context, TenantScope, string, int) (workflow.Version, error)
 	GetVersionByID(context.Context, TenantScope, string, string) (workflow.Version, error)
@@ -176,27 +182,131 @@ func (store *GORMWorkflowStore) SaveDraft(ctx context.Context, tenant TenantScop
 	return store.Get(ctx, tenant, document.ID)
 }
 
-// List returns every visible workflow for a tenant in stable dashboard order.
-func (store *GORMWorkflowStore) List(ctx context.Context, tenant TenantScope) ([]workflow.StoredWorkflow, error) {
+// DefaultWorkflowPageSize and MaxWorkflowPageSize bound the dashboard's
+// workflow listing so a tenant with a thousand workflows cannot make one
+// request load all of them, and all of their documents, into memory.
+const (
+	DefaultWorkflowPageSize = 100
+	MaxWorkflowPageSize     = 500
+)
+
+// WorkflowFilter narrows a workflow listing. The zero value returns the first
+// page of the whole tenant.
+type WorkflowFilter struct {
+	Limit int
+	// Cursor continues a previous listing. It is opaque to callers; only
+	// ListSummaries may construct one.
+	Cursor string
+}
+
+// WorkflowSummary is one row of the dashboard's workflow list: the identity and
+// the lifecycle state the list renders, and nothing that costs a read of its
+// own.
+//
+// It exists because the list used to load every workflow's latest document —
+// one version row per workflow, each carrying the whole canonical graph — to
+// read four fields out of it. A tenant with many workflows paid for every
+// document on every page view (BUG-fv5fer).
+type WorkflowSummary struct {
+	ID             string
+	Name           string
+	Active         bool
+	LatestRevision int
+	UpdatedAt      time.Time
+}
+
+// WorkflowSummaryPage is one page of workflow summaries.
+type WorkflowSummaryPage struct {
+	Workflows  []WorkflowSummary
+	NextCursor string
+}
+
+// ListSummaries returns one page of workflow summaries, newest first.
+//
+// Pagination is keyset rather than offset based, on the sort key the list has
+// always used: the cursor pins the last (updated_at, id) pair seen, so a
+// workflow saved while a user pages through the list cannot shift a row onto a
+// page they already read. The tiebreaker is ascending where updated_at is
+// descending, matching the ORDER BY the dashboard already relied on: two
+// workflows saved in the same millisecond appear in a stable, total order, and
+// the cursor predicate can express exactly that order in SQL.
+func (store *GORMWorkflowStore) ListSummaries(ctx context.Context, tenant TenantScope, filter WorkflowFilter) (WorkflowSummaryPage, error) {
 	if err := tenant.validate(); err != nil {
-		return nil, err
+		return WorkflowSummaryPage{}, err
 	}
-	var models []workflowModel
-	if err := store.db.WithContext(ctx).
-		Where("tenant_id = ?", tenant.ID).
-		Order("updated_at DESC, id ASC").
-		Find(&models).Error; err != nil {
-		return nil, fmt.Errorf("list workflows: %w", err)
+
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = DefaultWorkflowPageSize
 	}
-	workflows := make([]workflow.StoredWorkflow, 0, len(models))
-	for _, model := range models {
-		stored, err := store.storedWorkflow(ctx, tenant, model)
+	if limit > MaxWorkflowPageSize {
+		limit = MaxWorkflowPageSize
+	}
+
+	query := store.db.WithContext(ctx).Model(&workflowModel{}).Where("tenant_id = ?", tenant.ID)
+	if filter.Cursor != "" {
+		updatedAt, id, err := decodeWorkflowCursor(filter.Cursor)
 		if err != nil {
-			return nil, err
+			return WorkflowSummaryPage{}, err
 		}
-		workflows = append(workflows, stored)
+		query = query.Where("(updated_at < ?) OR (updated_at = ? AND id > ?)", updatedAt, updatedAt, id)
 	}
-	return workflows, nil
+
+	// Read one extra row to learn whether another page exists without a second
+	// COUNT over the same predicate.
+	var models []workflowModel
+	if err := query.Order("updated_at DESC, id ASC").Limit(limit + 1).Find(&models).Error; err != nil {
+		return WorkflowSummaryPage{}, fmt.Errorf("list workflows: %w", err)
+	}
+
+	page := WorkflowSummaryPage{Workflows: make([]WorkflowSummary, 0, limit)}
+	if len(models) > limit {
+		last := models[limit-1]
+		page.NextCursor = encodeWorkflowCursor(last.UpdatedAt, last.ID)
+		models = models[:limit]
+	}
+	for _, model := range models {
+		page.Workflows = append(page.Workflows, WorkflowSummary{
+			ID: model.ID, Name: model.Name, Active: model.Active,
+			LatestRevision: model.LatestRevision, UpdatedAt: model.UpdatedAt,
+		})
+	}
+	return page, nil
+}
+
+// encodeWorkflowCursor pins the last (updated_at, id) pair seen.
+//
+// The timestamp keeps the zone it was read in — deliberately, and this is the
+// one subtle part of the listing. GORM stamps updated_at with time.Now(), which
+// is local, and the SQLite driver renders a bound time.Time with that value's
+// own offset. Round-tripping through UTC would therefore bind
+// "2026-09-20 00:38:17Z" against a stored "2026-09-20 07:38:17+07:00" and match
+// nothing: the second page came back empty (BUG-fv5fer). Carrying the offset
+// the row was read with makes the bound value the same text the column holds,
+// which is also exactly what ORDER BY compares — so the cursor's total order is
+// the query's own, whatever zone the rows were written in.
+func encodeWorkflowCursor(updatedAt time.Time, id string) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(updatedAt.Format(time.RFC3339Nano) + "\x00" + id))
+}
+
+// decodeWorkflowCursor inverts encodeWorkflowCursor. A cursor this store did
+// not issue is an error rather than a position, so a client cannot invent one
+// to skip a page it is not entitled to see — the tenant predicate still applies
+// either way, and ErrInvalidCursor is the 400 the API answers with.
+func decodeWorkflowCursor(cursor string) (time.Time, string, error) {
+	decoded, err := base64.RawURLEncoding.DecodeString(cursor)
+	if err != nil {
+		return time.Time{}, "", fmt.Errorf("%w: workflow cursor is malformed", ErrInvalidCursor)
+	}
+	timestamp, id, found := strings.Cut(string(decoded), "\x00")
+	if !found || id == "" {
+		return time.Time{}, "", fmt.Errorf("%w: workflow cursor is malformed", ErrInvalidCursor)
+	}
+	updatedAt, err := time.Parse(time.RFC3339Nano, timestamp)
+	if err != nil {
+		return time.Time{}, "", fmt.Errorf("%w: workflow cursor is malformed", ErrInvalidCursor)
+	}
+	return updatedAt, id, nil
 }
 
 // Get returns a workflow and its latest snapshot, scoped to one tenant.

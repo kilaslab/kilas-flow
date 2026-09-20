@@ -23,8 +23,8 @@ func (stub *conflictRepository) SaveDraft(context.Context, repository.TenantScop
 	return stub.stored, nil
 }
 
-func (stub *conflictRepository) List(context.Context, repository.TenantScope) ([]workflow.StoredWorkflow, error) {
-	return nil, errors.New("List is not part of this test")
+func (stub *conflictRepository) ListSummaries(context.Context, repository.TenantScope, repository.WorkflowFilter) (repository.WorkflowSummaryPage, error) {
+	return repository.WorkflowSummaryPage{}, errors.New("ListSummaries is not part of this test")
 }
 
 func (stub *conflictRepository) Get(context.Context, repository.TenantScope, string) (workflow.StoredWorkflow, error) {

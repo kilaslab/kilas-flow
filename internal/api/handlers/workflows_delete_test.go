@@ -24,8 +24,8 @@ func (stub *stubWorkflowRepository) SaveDraft(context.Context, repository.Tenant
 	panic("SaveDraft is not part of this test")
 }
 
-func (stub *stubWorkflowRepository) List(context.Context, repository.TenantScope) ([]workflow.StoredWorkflow, error) {
-	panic("List is not part of this test")
+func (stub *stubWorkflowRepository) ListSummaries(context.Context, repository.TenantScope, repository.WorkflowFilter) (repository.WorkflowSummaryPage, error) {
+	panic("ListSummaries is not part of this test")
 }
 
 func (stub *stubWorkflowRepository) Get(context.Context, repository.TenantScope, string) (workflow.StoredWorkflow, error) {
