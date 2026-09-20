@@ -2,6 +2,7 @@ package nodes
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/kilaslabs/kilas-flow/internal/engine"
@@ -14,15 +15,6 @@ const LoopExecutorID = "core.loop"
 
 // LoopNodeType dispatches its input in batches, one batch per iteration.
 const LoopNodeType = "kilasflow.loop"
-
-// LoopStateKey is where a loop node keeps its remaining work between
-// iterations.
-//
-// The state travels on the item rather than in the runner. That keeps the
-// runner free of node-specific knowledge — it schedules a graph, it does not
-// know what a loop is — and it means the state lands in the execution record
-// for free, so an operator can see which batch a run was on when it failed.
-const LoopStateKey = "$loop"
 
 // DefaultLoopMaxIterations bounds a loop that never converges.
 const DefaultLoopMaxIterations = 100
@@ -79,6 +71,11 @@ func validateLoopConfiguration(n workflow.Node) error {
 }
 
 // loopState is what a loop node remembers between iterations.
+//
+// It lives in the runner's per-node state for this execution, not on the items
+// the loop dispatches: a body node that builds its output from scratch — an
+// HTTP call, a Code node, an aggregate — would drop anything riding on an item
+// and the loop would restart on its own output, forever.
 type loopState struct {
 	// Cursor is how many items have already been dispatched.
 	Cursor int
@@ -94,9 +91,11 @@ type loopState struct {
 // executeLoop dispatches one batch per invocation.
 //
 // The first call sees the upstream items and takes the whole set as its work.
-// Every later call is the body wiring back in, carrying the state it was handed
-// and the items the body produced.
-func executeLoop(ctx context.Context, ir workflow.IRNode, input workflow.NodeInput, _ engine.Request) (workflow.NodeOutput, error) {
+// Every later call is the body wiring back in, carrying the items the body
+// produced. Which of the two it is comes from the runner's node state, never
+// from anything on the items: the same input that restarts a lost loop is
+// indistinguishable from a body's return if the state rides on the items.
+func executeLoop(ctx context.Context, ir workflow.IRNode, input workflow.NodeInput, request engine.Request) (workflow.NodeOutput, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -109,20 +108,28 @@ func executeLoop(ctx context.Context, ir workflow.IRNode, input workflow.NodeInp
 		maxIterations = int(max)
 	}
 
+	fields := request.NodeState[ir.ID]
+	if fields == nil {
+		return nil, fmt.Errorf("node %q: loop state is not available in this runtime", ir.Name)
+	}
 	incoming := input["main"]
-	state, returning := readLoopState(incoming)
+	state, returning := decodeLoopState(fields)
 	if !returning {
 		// First entry: the upstream items are the work.
 		state = loopState{Pending: cloneItems(incoming)}
 	} else {
-		// The body came back. Everything it produced, minus the state marker,
-		// is this iteration's result.
-		state.Collected = append(state.Collected, strippedItems(incoming)...)
+		// The body came back: everything it produced is this iteration's
+		// result.
+		state.Collected = append(state.Collected, cloneItems(incoming)...)
 	}
 
 	if len(state.Pending) == 0 {
 		// Nothing left: the accumulated items leave on `done` and the body is
-		// given an empty stream, which the runner prunes.
+		// given an empty stream, which the runner prunes. The state is cleared
+		// in place so a later dispatch of this node starts a new loop rather
+		// than appending to a finished one; the map is the runner's, so the
+		// clear is visible to it.
+		resetLoopState(fields)
 		return workflow.NodeOutput{state.Collected, []workflow.Item{}}, nil
 	}
 
@@ -141,90 +148,73 @@ func executeLoop(ctx context.Context, ir workflow.IRNode, input workflow.NodeInp
 	batch := state.Pending[:size]
 	state.Pending = state.Pending[size:]
 	state.Cursor += size
-
-	dispatched := make([]workflow.Item, 0, len(batch))
-	for _, item := range batch {
-		dispatched = append(dispatched, cloneItem(item))
-	}
-	// The state rides on the first item of the batch, so whatever the body does
-	// to the others it comes back intact.
-	if len(dispatched) > 0 {
-		dispatched[0].JSON[LoopStateKey] = encodeLoopState(state)
-	}
-	return workflow.NodeOutput{[]workflow.Item{}, dispatched}, nil
+	encodeLoopState(fields, state)
+	return workflow.NodeOutput{[]workflow.Item{}, cloneItems(batch)}, nil
 }
 
-func readLoopState(items []workflow.Item) (loopState, bool) {
-	for _, item := range items {
-		raw, present := item.JSON[LoopStateKey]
-		if !present {
-			continue
-		}
-		if state, ok := decodeLoopState(raw); ok {
-			return state, true
-		}
-	}
-	return loopState{}, false
-}
-
-// strippedItems removes the loop's own bookkeeping so it never reaches a
-// downstream node's `$json`.
-func strippedItems(items []workflow.Item) []workflow.Item {
-	stripped := make([]workflow.Item, 0, len(items))
-	for _, item := range items {
-		copied := cloneItem(item)
-		delete(copied.JSON, LoopStateKey)
-		stripped = append(stripped, copied)
-	}
-	return stripped
-}
-
-func encodeLoopState(state loopState) map[string]any {
-	return map[string]any{
-		"cursor":    float64(state.Cursor),
-		"iteration": float64(state.Iteration),
-		"pending":   itemsToAny(state.Pending),
-		"collected": itemsToAny(state.Collected),
-	}
-}
-
-func decodeLoopState(raw any) (loopState, bool) {
-	fields, ok := raw.(map[string]any)
-	if !ok {
+// decodeLoopState reads the state the runner kept for this node. It reports
+// false when nothing has been dispatched yet, which is the only thing that
+// makes an invocation a first entry.
+func decodeLoopState(fields map[string]any) (loopState, bool) {
+	raw, present := fields["iteration"]
+	if !present {
 		return loopState{}, false
 	}
 	state := loopState{}
+	if iteration, ok := raw.(float64); ok {
+		state.Iteration = int(iteration)
+	}
 	if cursor, ok := fields["cursor"].(float64); ok {
 		state.Cursor = int(cursor)
 	}
-	if iteration, ok := fields["iteration"].(float64); ok {
-		state.Iteration = int(iteration)
-	}
-	state.Pending = anyToItems(fields["pending"])
-	state.Collected = anyToItems(fields["collected"])
+	state.Pending = stateItems(fields["pending"])
+	state.Collected = stateItems(fields["collected"])
 	return state, true
 }
 
-func itemsToAny(items []workflow.Item) []any {
-	encoded := make([]any, 0, len(items))
-	for _, item := range items {
-		encoded = append(encoded, cloneMap(item.JSON))
-	}
-	return encoded
+// encodeLoopState writes the state back into the runner's map.
+//
+// The items are stored as workflow.Item values, so binary references and
+// paired-item lineage survive a checkpoint round trip — the alternative, a
+// JSON-ish projection, is what loses them.
+func encodeLoopState(fields map[string]any, state loopState) {
+	fields["iteration"] = float64(state.Iteration)
+	fields["cursor"] = float64(state.Cursor)
+	fields["pending"] = state.Pending
+	fields["collected"] = state.Collected
 }
 
-func anyToItems(raw any) []workflow.Item {
-	entries, ok := raw.([]any)
-	if !ok {
+// resetLoopState empties the entry in place. Replacing the map outright would
+// write to the copy the executor was handed rather than to the runner's own
+// entry, and the finished loop would come back on the next dispatch.
+func resetLoopState(fields map[string]any) {
+	for key := range fields {
+		delete(fields, key)
+	}
+}
+
+// stateItems reads an item list out of node state.
+//
+// In memory the value is the []workflow.Item that was stored; after a
+// checkpoint round trip the same value arrives as decoded JSON, so both shapes
+// have to be readable.
+func stateItems(raw any) []workflow.Item {
+	switch typed := raw.(type) {
+	case []workflow.Item:
+		return cloneItems(typed)
+	case []any:
+		encoded, err := json.Marshal(typed)
+		if err != nil {
+			return nil
+		}
+		var items []workflow.Item
+		if err := json.Unmarshal(encoded, &items); err != nil {
+			return nil
+		}
+		return items
+	default:
 		return nil
 	}
-	items := make([]workflow.Item, 0, len(entries))
-	for _, entry := range entries {
-		if fields, ok := entry.(map[string]any); ok {
-			items = append(items, workflow.Item{JSON: cloneMap(fields)})
-		}
-	}
-	return items
 }
 
 // numericParameter coerces a node parameter to a number. Parameters arrive from

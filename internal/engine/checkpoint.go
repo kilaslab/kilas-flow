@@ -37,6 +37,12 @@ type Checkpoint struct {
 	Runs        map[string][]workflow.NodeOutput `json:"runs"`
 	NodeOutputs map[string]map[string]any        `json:"nodeOutputs"`
 	NodeItems   map[string]expression.NodeItem   `json:"nodeItems"`
+	// NodeState is the per-execution memory a node keeps between its own
+	// invocations, keyed by node ID. A loop's cursor belongs here rather than
+	// on the items it dispatches: a body node that replaces an item's fields
+	// (an HTTP call, an aggregate) would otherwise destroy the loop's own
+	// state and restart it.
+	NodeState map[string]map[string]any `json:"nodeState"`
 	// Output holds the terminal outputs reached before suspension, so the
 	// resumed run's final output merges them instead of dropping branches
 	// that finished early.
@@ -74,6 +80,9 @@ func unmarshalCheckpoint(raw []byte) (Checkpoint, error) {
 	}
 	if checkpoint.NodeItems == nil {
 		checkpoint.NodeItems = map[string]expression.NodeItem{}
+	}
+	if checkpoint.NodeState == nil {
+		checkpoint.NodeState = map[string]map[string]any{}
 	}
 	if checkpoint.Output == nil {
 		checkpoint.Output = map[string]workflow.NodeOutput{}

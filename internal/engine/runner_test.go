@@ -165,6 +165,20 @@ func TestRunnerMergesFanInByDeclaredInputPortOrder(t *testing.T) {
 	}
 }
 
+// copyItems snapshots the items a test executor was handed, so an assertion
+// after the run reads what the executor actually received.
+func copyItems(items []workflow.Item) []workflow.Item {
+	copied := make([]workflow.Item, len(items))
+	for index, item := range items {
+		fields := make(map[string]any, len(item.JSON))
+		for key, value := range item.JSON {
+			fields[key] = value
+		}
+		copied[index] = workflow.Item{JSON: fields, Paired: item.Paired}
+	}
+	return copied
+}
+
 func nodeRun(t *testing.T, result engine.Result, nodeID string) engine.NodeRun {
 	t.Helper()
 	for _, run := range result.NodeRuns {
@@ -1207,10 +1221,6 @@ func TestLoopCollectsEveryBatchOntoDone(t *testing.T) {
 		if item.JSON["touched"] != "yes" {
 			t.Errorf("item %d on done did not pass through the body: %#v", index, item.JSON)
 		}
-		// The loop's own bookkeeping must never reach a downstream node.
-		if _, leaked := item.JSON[nodes.LoopStateKey]; leaked {
-			t.Errorf("item %d carries the loop's internal state: %#v", index, item.JSON)
-		}
 	}
 }
 
@@ -1292,6 +1302,135 @@ func TestLoopFailsRatherThanTruncatingAtItsBound(t *testing.T) {
 	}
 	if bodyRuns != 3 {
 		t.Errorf("recorded %d successful body runs, want the 3 that completed before the bound", bodyRuns)
+	}
+}
+
+// TestLoopKeepsItsCursorWhenTheBodyReturnsNewItems is the regression for a loop
+// that restarted on its own body's output.
+//
+// The cursor used to travel on the first dispatched item. A body node that
+// builds its output from scratch — HTTP Request, Code, an aggregate, a
+// database query — drops it, and the loop then read the body's output as a
+// fresh entry: the iteration counter restarted at 1 on every pass, the bound
+// never tripped, and the loop called the body's API without limit. The state
+// now lives in the runner, keyed by the loop node, where nothing the body does
+// to an item can reach it.
+func TestLoopKeepsItsCursorWhenTheBodyReturnsNewItems(t *testing.T) {
+	catalog := node.NewRegistry()
+	for _, definition := range []node.Definition{
+		{
+			Group: []node.NodeGroup{node.GroupTransform},
+			Type:  "test.three", Version: workflow.V(1), DisplayName: "Three", Category: "Test",
+			Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}}, ExecutorID: "test.three",
+		},
+		{
+			Group: []node.NodeGroup{node.GroupTransform},
+			Type:  "test.replacing", Version: workflow.V(1), DisplayName: "Replacing", Category: "Test",
+			Inputs:  []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+			Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}}, ExecutorID: "test.replacing",
+		},
+	} {
+		if err := catalog.Register(definition); err != nil {
+			t.Fatalf("Register() error = %v", err)
+		}
+	}
+	if err := nodes.RegisterAll(catalog); err != nil {
+		t.Fatalf("RegisterAll() error = %v", err)
+	}
+
+	ir, err := workflow.Compile(workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_loop_state", Name: "Loop with a body that replaces its items",
+		Nodes: []workflow.Node{
+			{ID: "src", Name: "Source", Type: "test.three", TypeVersion: workflow.V(1)},
+			{ID: "loop", Name: "Loop", Type: nodes.LoopNodeType, TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"batchSize": float64(1), "maxIterations": float64(10)}},
+			{ID: "body", Name: "Body", Type: "test.replacing", TypeVersion: workflow.V(1)},
+		},
+		Connections: []workflow.Connection{
+			{ID: "c1", Kind: workflow.ConnectionMain,
+				Source: workflow.Endpoint{NodeID: "src", Port: "main"},
+				Target: workflow.Endpoint{NodeID: "loop", Port: "main"}},
+			{ID: "c2", Kind: workflow.ConnectionMain,
+				Source: workflow.Endpoint{NodeID: "loop", Port: "loop"},
+				Target: workflow.Endpoint{NodeID: "body", Port: "main"}},
+			{ID: "c3", Kind: workflow.ConnectionMain,
+				Source: workflow.Endpoint{NodeID: "body", Port: "main"},
+				Target: workflow.Endpoint{NodeID: "loop", Port: "main"}},
+		},
+		Settings: map[string]any{},
+	}, catalog)
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+
+	executors := engine.NewRegistry()
+	if err := executors.Register("test.three", engine.ExecutorFunc(
+		func(context.Context, workflow.IRNode, workflow.NodeInput, engine.Request) (workflow.NodeOutput, error) {
+			items := make([]workflow.Item, 0, 3)
+			for index := range 3 {
+				items = append(items, workflow.Item{JSON: map[string]any{"n": float64(index)}})
+			}
+			return workflow.NodeOutput{items}, nil
+		})); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	// The body answers with an item of its own, exactly as an HTTP node does:
+	// nothing of the item it was handed survives.
+	var bodyInputs [][]workflow.Item
+	if err := executors.Register("test.replacing", engine.ExecutorFunc(
+		func(_ context.Context, _ workflow.IRNode, input workflow.NodeInput, _ engine.Request) (workflow.NodeOutput, error) {
+			handed := copyItems(input["main"])
+			bodyInputs = append(bodyInputs, handed)
+			items := make([]workflow.Item, 0, len(handed))
+			for _, item := range handed {
+				items = append(items, workflow.Item{JSON: map[string]any{"from": "api", "asked": item.JSON["n"]}})
+			}
+			return workflow.NodeOutput{items}, nil
+		})); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	if err := nodes.RegisterExecutors(executors, safehttp.DefaultPolicy(), sqlnode.Guard{}, ai.NewLoopRuntime(), nil, nil); err != nil {
+		t.Fatalf("RegisterExecutors() error = %v", err)
+	}
+
+	result, err := engine.NewRunner(executors).Run(context.Background(), ir, engine.Request{
+		Input: workflow.Item{JSON: map[string]any{}},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	// Three items at one per batch is three body calls, whatever the body
+	// answers with.
+	if len(bodyInputs) != 3 {
+		t.Fatalf("body ran %d times, want one call per item", len(bodyInputs))
+	}
+	for index, handed := range bodyInputs {
+		if len(handed) != 1 {
+			t.Fatalf("batch %d carried %d items, want 1", index, len(handed))
+		}
+		// The loop must hand the body the upstream item untouched: bookkeeping
+		// riding on it is what a body node destroys.
+		if len(handed[0].JSON) != 1 || handed[0].JSON["n"] != float64(index) {
+			t.Errorf("batch %d item = %#v, want the source item alone", index, handed[0].JSON)
+		}
+	}
+
+	var last engine.NodeRun
+	for _, run := range result.NodeRuns {
+		if run.NodeID == "loop" {
+			last = run
+		}
+	}
+	done := last.Output[0]
+	if len(done) != 3 {
+		t.Fatalf("done carried %d items, want the 3 the body returned", len(done))
+	}
+	for index, item := range done {
+		if item.JSON["from"] != "api" || item.JSON["asked"] != float64(index) {
+			t.Errorf("done item %d = %#v, want what the body returned", index, item.JSON)
+		}
 	}
 }
 

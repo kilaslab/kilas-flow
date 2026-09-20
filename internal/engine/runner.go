@@ -153,6 +153,18 @@ type Request struct {
 	NodeItems map[string]expression.NodeItem
 	// Workflow identifies the workflow, backing `$workflow`.
 	Workflow expression.WorkflowContext
+	// NodeState is per-node memory the runner owns for the whole execution,
+	// keyed by node ID.
+	//
+	// A node that needs to remember something between its own invocations — a
+	// loop's cursor is the one node that does — reads and writes its entry
+	// here. Keeping it in the runner rather than on the items the node emits
+	// is what makes it survive a body node that replaces an item's fields
+	// entirely, which is exactly how n8n's Split In Batches keeps its cursor in
+	// node context. An executor may mutate its own node's map in place; the
+	// runner passes the same map to every invocation of that node and persists
+	// it with the wait checkpoint.
+	NodeState map[string]map[string]any
 	// TriggerNodeID names the trigger this execution starts from.
 	//
 	// A workflow may declare several — a webhook beside a nightly schedule is
@@ -371,6 +383,17 @@ func (runner *Runner) Run(ctx context.Context, ir workflow.IR, request Request) 
 	}
 	if request.NodeItems == nil {
 		request.NodeItems = make(map[string]expression.NodeItem, len(nodes))
+	}
+	if request.NodeState == nil {
+		request.NodeState = make(map[string]map[string]any, len(nodes))
+	}
+	// Every node gets its own entry up front, because the executor mutates it in
+	// place: a node that replaces its entry would write to a copy the runner
+	// never sees.
+	for nodeID := range nodes {
+		if _, exists := request.NodeState[nodeID]; !exists {
+			request.NodeState[nodeID] = map[string]any{}
+		}
 	}
 	result := Result{NodeRuns: make([]NodeRun, 0, len(nodes)), Output: make(map[string]workflow.NodeOutput)}
 	suspended, err := runner.runLoop(ctx, nodes, incoming, outgoing, loops, &request, completed, runs, &result)
@@ -595,6 +618,7 @@ func snapshotCheckpoint(nodeID, mode string, input workflow.NodeInput, attempt i
 		Runs:          make(map[string][]workflow.NodeOutput, len(runs)),
 		NodeOutputs:   make(map[string]map[string]any, len(request.NodeOutputs)),
 		NodeItems:     make(map[string]expression.NodeItem, len(request.NodeItems)),
+		NodeState:     cloneNodeState(request.NodeState),
 		Output:        make(map[string]workflow.NodeOutput, len(result.Output)),
 	}
 	for id, output := range completed {
@@ -659,6 +683,19 @@ func (runner *Runner) Resume(ctx context.Context, ir workflow.IR, request Reques
 	}
 	for name, item := range checkpoint.NodeItems {
 		request.NodeItems[name] = item
+	}
+	// Loop state comes back with the run: a loop that suspended inside its body
+	// must resume on the batch it was on, not start again from the first one.
+	if request.NodeState == nil {
+		request.NodeState = make(map[string]map[string]any, len(checkpoint.NodeState))
+	}
+	for id, state := range checkpoint.NodeState {
+		request.NodeState[id] = cloneStateFields(state)
+	}
+	for nodeID := range graph.nodes {
+		if _, exists := request.NodeState[nodeID]; !exists {
+			request.NodeState[nodeID] = map[string]any{}
+		}
 	}
 	completed := checkpoint.Completed
 	runs := checkpoint.Runs
@@ -867,6 +904,7 @@ func cloneRequest(request Request) Request {
 		Env:           make(map[string]string, len(request.Env)),
 		NodeOutputs:   make(map[string]map[string]any, len(request.NodeOutputs)),
 		NodeItems:     make(map[string]expression.NodeItem, len(request.NodeItems)),
+		NodeState:     make(map[string]map[string]any, len(request.NodeState)),
 	}
 	for key, value := range request.Env {
 		cloned.Env[key] = value
@@ -879,6 +917,40 @@ func cloneRequest(request Request) Request {
 	// map cannot see a half-written node.
 	for name, item := range request.NodeItems {
 		cloned.NodeItems[name] = item
+	}
+	// The outer map is copied so one node cannot swap another's state entry out
+	// from under the runner, but the inner maps are shared deliberately: a
+	// node's own state is meant to be mutated across its invocations, and a
+	// copy here would throw away every write a loop makes.
+	for id, state := range request.NodeState {
+		cloned.NodeState[id] = state
+	}
+	return cloned
+}
+
+// cloneNodeState copies every node's state at a checkpoint boundary. The inner
+// maps are copied here, unlike cloneRequest, because the checkpoint outlives
+// the invocation that wrote it.
+func cloneNodeState(source map[string]map[string]any) map[string]map[string]any {
+	cloned := make(map[string]map[string]any, len(source))
+	for id, fields := range source {
+		cloned[id] = cloneStateFields(fields)
+	}
+	return cloned
+}
+
+func cloneStateFields(fields map[string]any) map[string]any {
+	if fields == nil {
+		return map[string]any{}
+	}
+	cloned := make(map[string]any, len(fields))
+	for key, value := range fields {
+		if items, ok := value.([]workflow.Item); ok {
+			// What a loop holds between batches, in memory.
+			cloned[key] = cloneItems(items)
+			continue
+		}
+		cloned[key] = cloneValue(value)
 	}
 	return cloned
 }
