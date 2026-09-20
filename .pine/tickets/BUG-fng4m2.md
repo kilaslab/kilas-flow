@@ -1,13 +1,13 @@
 ---
 id: BUG-fng4m2
 title: Login-spray test is wall-clock dependent and flakes under load
-status: doing
+status: done
 priority: high
 labels:
     - ci
     - testing
 created: "2026-09-20T17:05:00Z"
-updated: "2026-09-20T17:05:00Z"
+updated: "2026-09-20T10:51:55Z"
 ---
 
 ## Problem
@@ -77,3 +77,12 @@ Scoped gates for this commit:
 - `go vet ./...` → clean.
 - `go build ./...` → clean.
 - `go test -race -count=1 ./internal/api/... ./internal/api/middleware/... ./internal/guardrails/...` → all ok.
+
+## Work Evidence
+
+Closed by `pine close --evidence` on 2026-09-20.
+
+- Base: `67c6c900` (last commit at or before ticket created 2026-09-20)
+- Commits (2):
+  - `67c6c900` — BUG-fng4m2: hold the sign-in throttle's clock still so the login-spray test asserts on attempts
+  - `1520a85a` — chore(pine): open BUG-fng4m2 — the login-spray test asserts on wall-clock rate
