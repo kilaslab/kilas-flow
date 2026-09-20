@@ -45,3 +45,17 @@ All 50 findings tickets landed, verified by scoped tests, and closed with eviden
 Verification at the final tree: `go build ./...` clean, `go vet ./...` clean, `go test ./... -count=1` green (import corpus scoreboard regenerated: activatable 14→15, runnable 4→5 after onError support), `web: vitest 496 passed`, `svelte-check 0 errors (1517 files)`, `make generate-api-check` green, `pine doctor` clean. Live smoke at HEAD: a manual→Set→Loop→body→done graph ran to `succeeded` with `$('Seed').item` resolving per item inside the loop and `$('Body').item` after the done port.
 
 Bound recorded by every ticket: the live adversarial re-verify against a stub/private n8n instance (acceptance criterion 2) was not run — no stub/n8n instance was reachable in this environment; each ticket names what replaced it (in-process repro, n8n reference source, worktree A/B).
+
+## Review pass (2026-09-20)
+
+A five-slice adversarial review (security/tenancy, engine+repository, expression engine, importer/webhook/AI, web/SDK/docs) over b4f2147..HEAD found 30 defects the first pass shipped; all were fixed with a failing-first regression test each and the tickets were reopened and closed again:
+
+- security: embed confinement missed the Workflow Tool node (critical), load-options credential bound read the wrong revision, typed-nil embed issuer 500, interop 500s leaking driver text, credentials/schedules/datastores discarding the 500 cause, config warning before the logger, CORS scope, SSE terminal frame.
+- engine: per-item suspend dropped the items behind it, expression sub-workflow targets blocked activation, parser parsed the max-iterations fallback, imported sampling options ignored, `fullResponse` envelope regression, v4 redirect default, run-ceiling message.
+- expression: `$input`/namespaces marshalling to `{}`, `}}`-scan truncation, abstract equality, Object key order, undefined properties, sort comparator, `['length']`, Math.round, toFixed, exponent form, non-finite JSON.
+- importer/webhook: Respond answer lost across processes (critical), Calculator Tool unreachable, followRedirects/timeout units, moment token cascade, Merge options bag, Switch fallback, multi-method binding, form page before the allow-list, multi-method export version.
+- web: `make coordinates-check` red on its own comment (P0), listings hiding rows past the first cursor page, editor stealing Enter, suggestion list keyboard path, quickstart path.
+
+Two of the review's own regression tests were themselves defective (a pointer-type classifier that read `*pgconn.PgError` as a caller mistake, and a `.Rows()` on an `Exec`); both were corrected before the suites went green.
+
+Final gates at the closing tree: `go build ./...` + `go vet ./...` clean, `go test ./... -count=1` green, web `vitest` 514 passed, `svelte-check` 0 errors (1517 files), `make generate-api-check`, `make coordinates-check`, `make build-clean-check` green, `pine doctor` clean, and a live smoke (loop lineage + a POST webhook answering n8n's `{"message":"Workflow was started"}` with the trigger item carrying body/headers/executionMode and read-surface redaction).
