@@ -371,9 +371,7 @@ func (handler *Executions) StreamEvents(ctx context.Context, input *executionEve
 	_ = send(sse.Message{Retry: 2000, Comment: "connected"})
 
 	// Everything the broker retained is already in the queue, so the replay is
-	// delivered before the live loop starts — and for a finished execution,
-	// which can publish nothing further, an empty queue after that replay means
-	// the outcome will never arrive from the feed at all.
+	// delivered before the live loop starts.
 	queued, open := drainQueued(subscription)
 	for _, event := range queued {
 		if err := send(sse.Message{ID: int(event.ID), Data: typedEvent(executionEventResource(event), event.Type)}); err != nil {
@@ -386,12 +384,18 @@ func (handler *Executions) StreamEvents(ctx context.Context, input *executionEve
 		}
 	}
 	if gated {
-		// The replay held no terminal frame. For a finished run whose retained
-		// history is gone, or whose history was already closed, that frame can
-		// never arrive from the feed — so the durable record supplies it. A
-		// run that still holds retained events is left alone: its terminal
-		// frame may be a publish away.
-		if terminal, ok := syntheticTerminal(record); ok && (len(queued) == 0 || !open) {
+		// The replay held no terminal frame — the loop above returns the moment
+		// it sends one, so reaching here means none was sent. For a finished run
+		// that frame can never arrive from the feed: the durable record says the
+		// execution is over, and a run that is over publishes nothing further.
+		// The record therefore supplies it, reconstructed from the same status
+		// the REST API reports.
+		//
+		// Gating this on an empty replay was the bug: a replay that kept earlier
+		// frames but lost the terminal one — a dropped publication, a released
+		// history — left the stream emitting heartbeats forever, which is the
+		// held connection this endpoint exists not to hold.
+		if terminal, ok := syntheticTerminal(record); ok {
 			sendSyntheticTerminal(send, input, terminal)
 			return
 		}

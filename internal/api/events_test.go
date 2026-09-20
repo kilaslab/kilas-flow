@@ -4,16 +4,22 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/kilaslabs/kilas-flow/internal/api"
+	"github.com/kilaslabs/kilas-flow/internal/config"
+	"github.com/kilaslabs/kilas-flow/internal/database"
 	"github.com/kilaslabs/kilas-flow/internal/events"
 	"github.com/kilaslabs/kilas-flow/internal/execution"
 	"github.com/kilaslabs/kilas-flow/internal/repository"
+	"github.com/kilaslabs/kilas-flow/internal/workflow"
 )
 
 type streamedEvent struct {
@@ -270,5 +276,88 @@ func TestExecutionEventStreamIsDocumentedInTheOpenAPISpec(t *testing.T) {
 	}
 	if _, ok := operation.Responses["200"].Content["text/event-stream"]; !ok {
 		t.Errorf("documented content types = %#v, want text/event-stream", operation.Responses["200"].Content)
+	}
+}
+
+// A finished run whose terminal frame never reached the broker still ends its
+// stream, because the durable record is what says the run is over.
+//
+// The gate reads that record before the stream opens, and the handler used to
+// synthesize the terminal frame only when the replay was empty. A replay that
+// kept earlier frames but lost the terminal one — a dropped publication, a
+// released history — therefore streamed heartbeats forever: exactly the held
+// connection this endpoint exists not to hold, and one a browser tab reopens
+// after every reconnect.
+func TestAFinishedExecutionEndsItsStreamEvenWhenTheTerminalFrameWasLost(t *testing.T) {
+	db, err := database.Open(context.Background(), config.Database{
+		Driver: "sqlite", DSN: filepath.Join(t.TempDir(), "events.db"),
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatalf("database.Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := database.Migrate(db, slog.New(slog.NewTextHandler(io.Discard, nil))); err != nil {
+		t.Fatalf("database.Migrate() error = %v", err)
+	}
+
+	tenant := repository.TenantScope{ID: repository.DefaultTenantID}
+	workflow, err := repository.NewWorkflowStore(db.DB).SaveDraft(context.Background(), tenant, workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion, Name: "Streamed",
+		Nodes:       []workflow.Node{{ID: "manual", Name: "Manual", Type: "kilasflow.manual", TypeVersion: workflow.V(1)}},
+		Connections: []workflow.Connection{}, Settings: map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("SaveDraft() error = %v", err)
+	}
+
+	executions := repository.NewExecutionStore(db.DB)
+	finished := time.Now().UTC()
+	record, err := executions.Create(context.Background(), tenant, execution.Record{
+		WorkflowID: workflow.ID, WorkflowVersionID: workflow.LatestVersion.ID, Status: execution.StatusSucceeded,
+		Trigger: execution.TriggerManual, StartedAt: finished.Add(-time.Second), FinishedAt: &finished,
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	broker := events.NewBroker(events.BrokerOptions{})
+	// The frames before the outcome survived; the outcome itself did not.
+	broker.Publish(events.Event{TenantID: repository.DefaultTenantID, ExecutionID: record.ID, Type: events.ExecutionStarted, Status: execution.StatusRunning})
+	broker.Publish(events.Event{TenantID: repository.DefaultTenantID, ExecutionID: record.ID, NodeID: "n1", Type: events.NodeCompleted, Status: execution.StatusSucceeded})
+
+	server := httptest.NewServer(newTestServer(t, api.Deps{
+		DB: db, Events: broker, Executions: executions,
+	}))
+	t.Cleanup(server.Close)
+
+	// The client deadline is what turns "the stream never ends" into a failed
+	// read rather than a hung test: this endpoint's defect is a stream that
+	// stays open, so the test has to bound its own patience.
+	client := &http.Client{Timeout: 5 * time.Second}
+	response, err := client.Get(server.URL + "/api/v1/executions/" + record.ID + "/events")
+	if err != nil {
+		t.Fatalf("open stream: %v", err)
+	}
+	defer response.Body.Close()
+
+	streamed := readStream(t, bufio.NewReader(response.Body), 3)
+	if len(streamed) != 3 {
+		t.Fatalf("streamed %d events, want the two retained frames and the outcome", len(streamed))
+	}
+	if last := streamed[2]; last.name != string(events.ExecutionCompleted) || last.data["status"] != string(execution.StatusSucceeded) {
+		t.Fatalf("the reconstructed outcome = %#v, want execution.completed with the record's status", last)
+	}
+	// And the stream is over rather than waiting for a publication that can
+	// never come.
+	rest := make([]byte, 1)
+	done := make(chan struct{})
+	go func() {
+		_, _ = response.Body.Read(rest)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Error("the stream stayed open for a run that had already finished")
 	}
 }
