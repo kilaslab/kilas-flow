@@ -49,9 +49,25 @@ var version = "0.1.0-dev"
 
 func main() {
 	if err := run(); err != nil {
-		fmt.Fprintf(os.Stderr, "kilasflow: %v\n", err)
+		reportFatal(err)
 		os.Exit(1)
 	}
+}
+
+// reportFatal prints the reason this process is exiting.
+//
+// The format comes from KILASFLOW_LOG_FORMAT alone rather than from the loaded
+// configuration, because the configuration file is often exactly what failed to
+// load. It matters for the same reason: the Docker image defaults to JSON, so a
+// boot failure in a crash loop printed as plain text is the one line a log
+// shipper cannot parse — and that is the line an operator needs.
+func reportFatal(err error) {
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("KILASFLOW_LOG_FORMAT")), "json") {
+		slog.New(slog.NewJSONHandler(os.Stderr, nil)).
+			Error("kilasflow exited", "error", err.Error())
+		return
+	}
+	fmt.Fprintf(os.Stderr, "kilasflow: %v\n", err)
 }
 
 // run wires the application from constructors, so every dependency is explicit
@@ -60,8 +76,18 @@ func run() error {
 	configPath := flag.String("config", "config.yaml", "path to the configuration file")
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	workerIDOverride := flag.String("worker-id", "", "worker identity recorded in lease_owner (default: host-qualified and unique per process)")
-	roleOverride := flag.String("role", "both", "process role: api, worker, or both (default both)")
+	roleOverride := flag.String("role", "", "process role: api, worker, or both (default both)")
 	flag.Parse()
+
+	// A leftover argument is a mistake, and answering it by starting a server is
+	// the worst possible way to report one: `kilasflow version` used to boot a
+	// full instance on the default port, against ./data, from whatever directory
+	// the operator happened to be in. Refusing is the only safe reading of an
+	// argument this binary does not define.
+	if flag.NArg() > 0 {
+		flag.Usage()
+		return fmt.Errorf("unexpected argument %q: this binary takes flags only (see -h)", flag.Arg(0))
+	}
 
 	if *showVersion {
 		fmt.Println(version)

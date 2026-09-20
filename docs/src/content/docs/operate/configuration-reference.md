@@ -308,8 +308,9 @@ they do.
 - Required: yes, when auth.enabled is true — boot is refused without a key
 
 SigningKeyEnv names the environment variable holding the session and
-stream-ticket signing key. Like the credential and embed keys, it never
-comes from the config file.
+stream-ticket signing key: exactly 32 bytes, encoded as base64, hex, or
+raw bytes (`openssl rand -base64 32`). Like the credential and embed keys,
+it never comes from the config file.
 
 It is deliberately a different variable from the embed key. One key
 signing both would mean a forged value of either kind could be presented
@@ -495,11 +496,15 @@ anywhere.
 - Required: no
 
 SigningKeyEnv names the environment variable holding the token signing
-key (at least 32 bytes). Like the credential key, it never comes from
-the config file.
+key: exactly 32 bytes, encoded as base64, hex, or raw bytes. Like the
+credential key, it never comes from the config file.
 
 Optional at boot: with no key the session endpoints report themselves
 unconfigured and every embed token is refused, with a warning at boot.
+
+Generate one with `openssl rand -base64 32`. A longer key is refused at
+boot rather than truncated: the error names the length, and reading it
+after a truncated key silently shipped would be much worse.
 
 ### embed.allowed_origins
 

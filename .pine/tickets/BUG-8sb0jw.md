@@ -189,3 +189,9 @@ Files: devbox.json, Makefile
   fresh clone + `go build` explains itself instead of 404ing or serving a blank editor. `make build-web` now
   only writes gitignored output, so `git describe --dirty` stays clean. Makefile: dist-placeholder target
   deleted, build-clean-check added.
+
+- CLI rough edges: `kilasflow version` (and any stray positional argument) now exits 1 with a usage error
+  instead of booting a server against ./data; -h no longer shows the duplicated "(default both)"; fatal errors
+  go through slog when KILASFLOW_LOG_FORMAT=json.
+- Embed/auth signing key comments now say exactly 32 bytes and name `openssl rand -base64 32`;
+  config.example.yaml + operate/configuration-reference.md regenerated (generate-config-reference-check passes).
