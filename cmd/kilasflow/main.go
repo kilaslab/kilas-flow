@@ -495,6 +495,9 @@ func run() error {
 		// timer survived a restart.
 		MaxTimeout:    cfg.Execution.MaxTimeout,
 		SweepInterval: cfg.Execution.WaitSweepInterval,
+		// The instance zone a workflow inherits when it names none, so a
+		// schedule written for the operator's own time is not read as UTC.
+		DefaultTimezone: cfg.Execution.DefaultTimezone,
 		// The allowlist behind `$env`. It reaches no further than the
 		// KILASFLOW_WORKFLOW_ENV_ prefix, so a workflow can never read the
 		// database DSN or the credential master key out of this process.
@@ -628,7 +631,26 @@ func run() error {
 		Version:             version,
 	})
 
-	return server.Run(ctx)
+	// The HTTP surface drains first, then the workers: a request in flight may
+	// be the one that queued a run, and draining workers before the listener is
+	// closed would settle a run nobody had asked for yet. Drain is bounded by
+	// the same shutdown window the server was given, because a worker stuck in
+	// a node that ignores cancellation must not hold the process open — the
+	// lease expiry reclaims it, which is the same recovery as a crash.
+	serveErr := server.Run(ctx)
+
+	drainCtx, cancelDrain := context.WithTimeout(context.WithoutCancel(ctx), cfg.Server.ShutdownTimeout)
+	defer cancelDrain()
+	if drainErr := runtime.Drain(drainCtx); drainErr != nil {
+		// Logged rather than returned as a second error: the run in flight is
+		// already accounted for by its lease, and the operator needs the line
+		// saying the wait did not finish.
+		log.Error("workers did not finish draining before the shutdown window closed", "error", drainErr)
+	} else {
+		log.Info("workers drained")
+	}
+
+	return serveErr
 }
 
 // processRole is one selectable shape of the single binary. The default
