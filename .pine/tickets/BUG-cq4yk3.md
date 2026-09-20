@@ -10,7 +10,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:10Z"
-updated: "2026-09-20T02:37:46Z"
+updated: "2026-09-20T03:01:20Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -798,3 +798,35 @@ Closed by `pine close --evidence` on 2026-09-20.
 - **P1 cross-process regression**: `executeRespond` now publishes the answer only as an engine event (`nodes/webhook.go:875`) and the boundary reads it only from its own broker (`internal/webhook/webhook.go:730-750`); node events carry no Data across processes (`internal/engine/multiproc.go:62-80`, `:186-200`). In the documented api+worker split on PostgreSQL, a `responseMode=responseNode` webhook never sees the answer and answers an empty 200 (:871-874) — the durable `findResponse` this replaced worked. Fix: keep a durable copy (persist it with the Respond node's run) and consult it in the terminal fallback.
 - **Multi-method binds only the stale single method**: `declaredMethods` (:1131-1139) reads `httpMethod` before `httpMethods`, while the node's own authority (`nodes/webhook.go:601-611`) checks `multipleMethods` first; a node storing `httpMethod:"POST"` beside `multipleMethods:true, httpMethods:[GET,POST]` binds only POST, so the GET half 404s. Fix: honour `multipleMethods`/`httpMethods` first.
 - **Form page served before the allow-list and credential checks**: the hosted-page branch (`internal/webhook/webhook.go:114-121`) returns before `addressAllowed`/`authenticate`, so a form with `ipWhitelist` or basicAuth exposes its title/labels/options to any caller. Fix: run those checks before writing the page.
+
+## Progress — FixImporterFindings (2026-09-20)
+
+Landed from the Reopened-by-review list (commit IDs below). Status stays `doing`: the
+ReviewImporter findings assigned to this slice are closed, the adversarial live re-verify
+is not.
+
+**P1 cross-process Respond (commit `f2bac0d`, with the runner hunks in `9b690d8`)** — the
+answer a Respond to Webhook node produces is now captured by the runner while the node runs
+and persisted with the node's own run row (new nullable `response` column on
+`execution_node_runs`, migration 000013 sqlite+postgres; `execution.NodeRun.Response`,
+`engine.NodeRun.Response`, `engine.ResponseEventName`). `internal/webhook.respondFromExecution`
+consults that durable copy first — before the status gate — so a split api+worker deployment
+answers the node's body instead of an empty 200.
+Proof: `TestWebhookAnswersFromTheDurableResponseWhenTheBoundarySeesNoEvent` (boundary with no
+broker, i.e. the relay carried identifiers only). Pre-fix it answered `200` with an empty body;
+post-fix `201` `{"ok":true}` with `X-Kilas: yes`. `go test ./internal/webhook/ -count=1` ok.
+
+**declaredMethods precedence (commit `86e690b`)** — `multipleMethods` now decides which
+parameter is live, as the node's own definition does, so `httpMethod:"POST"` beside
+`multipleMethods:true, httpMethods:[GET,POST]` binds both. Proof:
+`TestWebhookBindsEveryMethodTheNodeSelected`; pre-fix `GET status = 404`.
+
+**Form page before the allow-list/credential (commit `86e690b`)** — the hosted page and the
+delivery now share one `admit` (address allow-list, then credential). Proof:
+`TestFormPageIsRefusedToAnAddressOutsideTheAllowList`; pre-fix the page was `200` with the form
+in the body.
+
+Still open in this ticket (not in this slice): the webhook item shape/params/`webhookUrl`
+medium item, the query/header array items, CORS-with-`allowedOrigins` per node, JWT auth
+implementation, path-label uniqueness (repository/API), and the URL-discovery UX item —
+`internal/api/**` was off-limits for this pass.

@@ -10,7 +10,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:10Z"
-updated: "2026-09-20T02:37:47Z"
+updated: "2026-09-20T03:01:20Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -527,3 +527,29 @@ Closed by `pine close --evidence` on 2026-09-20.
 - **`followRedirects: true` dropped**: `httpOptionsToKilas` (`parameters.go:1497-1503`) writes the option only when false and marks it consumed, so an n8n node that enabled redirects imports as "do not follow" (`nodes/http.go:232`) with a clean report; export has the same asymmetry (:1629-1630). Fix: carry the flag both ways.
 - **Timeout unit inverted**: both option spellings are copied into `requestTimeoutSeconds` unchanged (`:1443-1454`) although n8n's `timeout` is milliseconds; 5000 becomes 5000 s, clamped to the deployment ceiling, and export writes seconds back as milliseconds. Fix: /1000 on import, ×1000 on export for the `timeout` spelling; keep `requestTimeout` as seconds.
 - **Multi-method export**: `webhookToN8N` writes an array `httpMethod` (`:1800-1812`) without n8n's `multipleMethods` flag and pins exportTypeVersion 2 (`n8n.go:237-239`), so n8n cannot represent the selection. Fix: write `multipleMethods: true` and export at the version that publishes it, or emit a Lossy note.
+
+## Progress — FixImporterFindings (2026-09-20)
+
+**`followRedirects` two ways + n8n's v4 default (commit `567b476`)** — both values are carried
+on import, export writes the flag instead of dropping `true`, and a v4+ node with no redirect
+option gets `followRedirects: true` written for it (n8n's own default; this server's node
+defaults the other way). Proof: `TestHTTPRequestRedirectPolicyTravelsBothWays`,
+`TestHTTPRequestFollowsRedirectsByDefaultFromV4`; pre-fix both `followRedirects = <nil>`.
+
+**Timeout unit (commit `567b476`)** — `options.timeout` is milliseconds and is divided by 1000
+on import and multiplied back on export; `options.requestTimeout` stays seconds. The fixture
+that pinned the wrong unit is revised (it said `"timeout":15` and asserted 15 seconds).
+Proof: `TestHTTPRequestTimeoutUnitIsMillisecondsOnImport` and the revised
+`TestHTTPRequestOptionsAndBodyFieldsAreCarried`; pre-fix `5000, want 5 seconds`.
+
+**Multi-method export (commit `86e690b`)** — `multipleMethods: true` is written and the version
+is raised to 2.1 through the new raise-only `minimumExportVersion` on the mapping, so n8n can
+represent the selection. Proof: `TestMultiMethodWebhookExportsAtTheVersionThatPublishesIt`
+(round trip re-imports both methods); pre-fix `typeVersion = 2` and `multipleMethods = <nil>`.
+
+`go test ./internal/interop/n8n/ -count=1` ok.
+
+Remaining from the ReviewEngine addendum for this file, not yet done (budget-stopped):
+(d) `fullResponse` JSON-marshals a parsed body into a string, so `$json.body.<field>` stops
+resolving — the parsed body should stay in the envelope with the textual body under the
+output-property name.

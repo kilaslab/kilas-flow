@@ -9,7 +9,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:09Z"
-updated: "2026-09-20T02:37:46Z"
+updated: "2026-09-20T03:01:20Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -690,3 +690,21 @@ Closed by `pine close --evidence` on 2026-09-20.
 
 ## Reopened by review (2026-09-20) — Important
 - **Calculator Tool unreachable**: `nodes/ai.go:2162-2166` relaxes the *validator* so the expression is optional, but the property is still declared `Required: true` with no Default (:2150-2153) and the tool variant inherits it, so `registry.RequiredFor` (:628-648) → `compiler.go:289-300` refuses the node with `ErrorRequiredConfig`. Any imported calculator (importer writes only toolName/toolDescription) still cannot be activated; the test misses it because it calls `definition.Validate` instead of compiling a document. Fix: clear the requirement on the tool variant (Required false or a Default) and add a compile-level test.
+
+## Progress — FixImporterFindings (2026-09-20)
+
+**Calculator Tool reachable (commit `64a90f9`)** — the tool variant now clears the `Required`
+flag on `expression` (`optionalProperty`), not only the validator, because the compiler reads
+the declaration through `registry.RequiredFor`. An imported calculator (toolName +
+toolDescription only) compiles and can be activated.
+Proof: `TestCalculatorToolCompilesWithNoExpression` — pre-fix
+`Compile() error = node "tool" requires parameter "expression"`; post-fix ok.
+`go test ./nodes/ -run 'TestCalculator' -count=1` ok.
+
+Remaining from the ReviewEngine addendum for this file, not yet done (budget-stopped):
+(a) the Structured Output Parser branch unmarshals `MaxIterationsMessage`, so the
+max-iterations fallback fails with "parser output is not valid JSON" — plan is a boolean on
+`ai.AgentResult` rather than parsing the fallback; (b) `chatModel` reads sampling keys from the
+node top level only while the importer writes them into the `options` collection;
+(c) the run-ceiling timeout error names the chat model's Timeout option instead of the
+deployment ceiling.
