@@ -1,10 +1,11 @@
 /**
  * Pure helpers for the workflows list (FEAT-0895qc).
  *
- * Client-side search, filter, sort and paging over the workspace's
- * workflows. The list API returns every summary in one response (no server
- * paging), so the page filters and pages in memory; this module owns the
- * decisions and stays unit-testable without a browser.
+ * Client-side search, filter, sort and paging over the workspace's workflows.
+ * The list API pages server-side (BUG-fv5fer), so the page drains every page
+ * through cursor-page.ts (BUG-th16c1) and this module then filters, sorts and
+ * pages the complete list in memory; it owns the decisions and stays
+ * unit-testable without a browser.
  */
 import type { WorkflowSummary } from '$lib/api/generated/models';
 
@@ -119,4 +120,16 @@ export function duplicateName(source: string, taken: ReadonlySet<string>): strin
 	let suffix = 2;
 	while (taken.has(`${base} (${suffix})`)) suffix += 1;
 	return `${base} (${suffix})`;
+}
+
+/**
+ * What to print for a workflow count: the whole workspace when nothing narrows
+ * the list, and shown-of-total when a search or filter does.
+ *
+ * Printing the filtered count alone under "in this workspace" made a search
+ * look like the workspace had shrunk; shown-of-total stays true either way.
+ */
+export function workflowCountLabel(shown: number, total: number): string {
+	if (shown !== total) return `${shown} of ${total} workflows`;
+	return total === 1 ? '1 workflow' : `${total} workflows`;
 }

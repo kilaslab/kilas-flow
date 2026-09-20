@@ -3,9 +3,12 @@
  *
  * They live here rather than in `+page.svelte` so they are unit-testable
  * without a browser: URL parsing, the stoppable set, the deleted-workflow
- * marker rule, and the workflow-filter search. The page owns fetching,
- * polling and navigation; this module owns the decisions.
+ * marker rule, the workflow-filter search, the listing request (page size and
+ * filters), the auto-refresh poll decision and the "what this list holds"
+ * line. The page owns fetching, polling and navigation; this module owns the
+ * decisions.
  */
+import type { ListExecutionsParams } from '$lib/api/generated/models';
 
 /** Statuses the list can filter by. Mirrors the page's STATUSES. */
 export const EXECUTION_STATUSES = [
@@ -103,4 +106,95 @@ export function filterWorkflowOptions(
 /** Whether any filter is set — what separates "nothing yet" from "no match". */
 export function hasActiveFilters(filters: ExecutionFilters): boolean {
 	return filters.status !== '' || filters.workflowId !== '';
+}
+
+/**
+ * The page size the executions list asks for.
+ *
+ * Twice the server default of 25 and half the API maximum of 100
+ * (`MaxExecutionPageSize`, internal/repository/executions.go:38, and
+ * `maximum:"100"` on the operation), so the first load, every "Load more" and
+ * every auto-refresh agree on one number instead of taking whatever the server
+ * happens to default to.
+ */
+export const EXECUTIONS_PAGE_LIMIT = 50;
+
+/** How often the executions list refreshes its newest page while it is idle. */
+export const HEAD_POLL_INTERVAL_MS = 5000;
+
+/**
+ * The query for one executions listing request.
+ *
+ * Status and workflow are server-side filters, so they narrow the whole
+ * history rather than the rows that happen to be loaded, and unset ones are
+ * left out of the query rather than sent empty.
+ */
+export function buildListExecutionsParams(
+	filters: { status: string; workflowId: string },
+	cursor = ''
+): ListExecutionsParams {
+	return {
+		limit: EXECUTIONS_PAGE_LIMIT,
+		...(filters.status ? { status: [filters.status] } : {}),
+		...(filters.workflowId ? { workflowId: filters.workflowId } : {}),
+		...(cursor ? { cursor } : {})
+	};
+}
+
+export interface HeadPollSignals {
+	/** Auto-refresh is on. */
+	enabled: boolean;
+	/** A first load or a manual Refresh is in flight. */
+	loading: boolean;
+	/** "Load more" is in flight. */
+	loadingMore: boolean;
+	/** The tab is in the background. */
+	hidden: boolean;
+	/** A first-load failure is on screen, so there is no list to refresh. */
+	failedFirstLoad: boolean;
+}
+
+/**
+ * Whether the auto-refresh poll should run now.
+ *
+ * Deliberately says nothing about cursors or loaded rows: polling used to stop
+ * the moment the list carried a cursor — which is every workspace with more
+ * runs than fit on one page — and a poll that merges into what is loaded
+ * (`mergeHead` in cursor-page.ts) is what makes polling a paged list safe.
+ */
+export function shouldPollHead(signals: HeadPollSignals): boolean {
+	return (
+		signals.enabled &&
+		!signals.loading &&
+		!signals.loadingMore &&
+		!signals.hidden &&
+		!signals.failedFirstLoad
+	);
+}
+
+/**
+ * One line saying what the executions list is showing.
+ *
+ * It counts the rows that are loaded and nothing else: the listing is read page
+ * by page, so the page holds no total and printing one would be a number the
+ * server never sent. All of this copy lives here (FEAT-15k49d will move it into
+ * the strings catalog) so the page renders one expression.
+ */
+export function executionListSummary(input: {
+	count: number;
+	hasMore: boolean;
+	filtered: boolean;
+}): string {
+	const { count, hasMore, filtered } = input;
+	const scope = filtered ? ' matching these filters' : '';
+	if (count === 0) return `Showing no executions${scope}.`;
+	// The singular cases drop the count rather than pluralise it: "the newest 1
+	// executions" reads wrong, and there is only one way to say it right.
+	if (count === 1) {
+		return hasMore
+			? `Showing the newest execution${scope}. More are available.`
+			: `Showing the only execution${scope}.`;
+	}
+	const head = hasMore ? `the newest ${count} executions` : `all ${count} executions`;
+	return `Showing ${head}${scope}.${hasMore ? ' More are available.' : ''}`;
 }

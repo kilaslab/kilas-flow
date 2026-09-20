@@ -66,6 +66,18 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 - `branding.favicon` and `branding.powered_by` (read by nothing; a configuration
   that still sets them is warned about at start).
 
+### Changed
+
+- The executions list asks for 50 runs a page, says how many it is showing and
+  whether more are available, and the workflows page shows the workspace total
+  in its heading and "N of M" while a search narrows the list.
+
+### Fixed
+
+- Auto-refresh on the executions list now keeps working, and keeps the runs you
+  have already loaded, when the workspace has more runs than fit on one page,
+  and again after the tab has been in the background.
+
 ### Security
 
 - `SECURITY.md` documents the private disclosure path, and private vulnerability

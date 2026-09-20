@@ -7,7 +7,8 @@ import {
 	filterWorkflows,
 	pageWorkflows,
 	parseWorkflowListQuery,
-	type WorkflowRow
+	type WorkflowRow,
+	workflowCountLabel
 } from './workflow-list';
 
 function row(overrides: Partial<WorkflowRow> & { id: string }): WorkflowRow {
@@ -97,5 +98,22 @@ describe('naming a duplicated workflow', () => {
 		expect(duplicateName('Orders', new Set(['Copy of Orders', 'Copy of Orders (2)']))).toBe(
 			'Copy of Orders (3)'
 		);
+	});
+});
+
+describe('counting workflows honestly', () => {
+	it('reads a plain count when nothing narrows the list', () => {
+		expect(workflowCountLabel(618, 618)).toBe('618 workflows');
+	});
+
+	// The trap: the heading printed the filtered count under "in this workspace",
+	// so a search made the workspace look smaller than it is. Shown-of-total is
+	// the only wording that stays true while a search narrows the list.
+	it('reads shown-of-total while a search or filter narrows it', () => {
+		expect(workflowCountLabel(3, 618)).toBe('3 of 618 workflows');
+	});
+
+	it('uses the singular for one', () => {
+		expect(workflowCountLabel(1, 1)).toBe('1 workflow');
 	});
 });

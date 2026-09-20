@@ -29,7 +29,8 @@
 		filterWorkflows,
 		pageWorkflows,
 		parseWorkflowListQuery,
-		WORKFLOWS_PER_PAGE
+		WORKFLOWS_PER_PAGE,
+		workflowCountLabel
 	} from '$lib/dashboard/workflow-list';
 	import { DRAIN_PAGE_LIMIT, drainPages, headerCursor, readPage, type CursorPage } from '$lib/dashboard/cursor-page';
 	import { RequestGuard } from '$lib/dashboard/request-guard';
@@ -371,7 +372,7 @@
 		<div class="min-w-0">
 			<h1 class="text-base font-semibold tracking-tight">Workflows</h1>
 			<p class="text-xs text-muted-foreground">
-				{#if !loading && listFailure === null}{filtered.length} in this workspace{:else}Automation flows your product exposes{/if}
+				{#if !loading && listFailure === null}{allRows.length} in this workspace{:else}Automation flows your product exposes{/if}
 			</p>
 		</div>
 		<div class="flex shrink-0 items-center gap-2">
@@ -483,7 +484,7 @@
 				<ul aria-label="Workflows" class="divide-y divide-border">
 					<li class="flex items-center gap-3 border-b border-border bg-muted/40 px-3 py-1.5">
 						<input type="checkbox" checked={rows.length > 0 && rows.every((entry) => selected.has(entry.id))} onchange={(event) => togglePage(event.currentTarget.checked)} aria-label="Select all workflows on this page" class="size-3.5 accent-primary" />
-						<span class="text-[0.6875rem] text-muted-foreground">{filtered.length} workflows · page {currentPage} of {totalPages}</span>
+						<span class="text-[0.6875rem] text-muted-foreground">{workflowCountLabel(filtered.length, allRows.length)} · page {currentPage} of {totalPages}</span>
 						{#if totalPages > 1}
 							<span class="ml-auto flex items-center gap-1">
 								<Button variant="ghost" size="sm" class="h-6 px-2 text-xs" disabled={currentPage <= 1} onclick={() => (listPage = currentPage - 1)}>Previous</Button>
@@ -539,7 +540,7 @@
 			{#if totalPages > 1}
 				<div class="mt-4 flex items-center justify-center gap-2">
 					<Button variant="outline" size="sm" disabled={currentPage <= 1} onclick={() => (listPage = currentPage - 1)}>Previous</Button>
-					<span class="text-xs text-muted-foreground">Page {currentPage} of {totalPages} · {filtered.length} workflows</span>
+					<span class="text-xs text-muted-foreground">Page {currentPage} of {totalPages} · {workflowCountLabel(filtered.length, allRows.length)}</span>
 					<Button variant="outline" size="sm" disabled={currentPage >= totalPages} onclick={() => (listPage = currentPage + 1)}>Next</Button>
 				</div>
 			{/if}

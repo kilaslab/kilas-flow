@@ -14,23 +14,29 @@
 	import { Button } from '$lib/components/ui/button';
 	import * as Table from '$lib/components/ui/table';
 	import {
-		appendPage,
+		appendPageIfCurrent,
 		canLoadMore,
 		DRAIN_PAGE_LIMIT,
 		drainPages,
 		emptyPage,
 		headerCursor,
+		mergeHead,
 		readPage,
 		type CursorPage
 	} from '$lib/dashboard/cursor-page';
 	import {
 		EXECUTION_STATUSES,
+		HEAD_POLL_INTERVAL_MS,
 		buildExecutionSearch,
+		buildListExecutionsParams,
+		executionListSummary,
 		filterWorkflowOptions,
 		hasActiveFilters,
 		isDeletedWorkflow,
 		isStoppableStatus,
-		parseExecutionFilters
+		parseExecutionFilters,
+		shouldPollHead,
+		type HeadPollSignals
 	} from '$lib/dashboard/execution-list';
 	import { failedBesideRows } from '$lib/dashboard/list-state';
 	import { RequestGuard } from '$lib/dashboard/request-guard';
@@ -69,7 +75,14 @@
 		}
 	}
 
-	onMount(() => void loadWorkflowNames());
+	onMount(() => {
+		// The tab can already be in the background when this page boots, and
+		// `tabHidden` starts false because it must be a value the poll effect
+		// can react to: seeding it from the real document here is what keeps a
+		// hidden tab from arming a poll nothing would ever re-arm.
+		tabHidden = document.hidden;
+		void loadWorkflowNames();
+	});
 
 	// Filters live in the URL (?status=&workflowId=) so a view survives
 	// reload and can be linked. `replaceState` on change keeps the back
@@ -80,6 +93,15 @@
 	let workflowID = $state(parseExecutionFilters(route.url.search).workflowId);
 	let workflowSearch = $state('');
 	let autoRefresh = $state(true);
+	// Whether the tab is in the background, as reactive state: a poll effect
+	// that reads document.hidden directly never re-runs when the tab comes
+	// back, which is how polling used to stop for good after one hide. Seeded
+	// in onMount and kept honest by the visibilitychange handler in the markup.
+	let tabHidden = $state(false);
+	// Bumped after every poll. A poll that finds nothing new changes no other
+	// reactive value the poll effect reads, so without this the effect would
+	// arm exactly one timer and then stop.
+	let pollTurn = $state(0);
 	let page = $state<CursorPage<ExecutionSummary>>(emptyPage());
 	let loading = $state(true);
 	let loadingMore = $state(false);
@@ -89,8 +111,12 @@
 	let stoppingID = $state<string | null>(null);
 	let stopError = $state<string | null>(null);
 
-	// This list is the only one that pages a cursor and filters on the server,
-	// so it drives its own request state instead of TanStack Query.
+	// This list reads lazily by cursor and filters on the server, so it drives
+	// its own request state instead of TanStack Query. It pages rather than
+	// draining because it grows with traffic (execution.retention keeps every
+	// run by default) and the server filters the whole history; the
+	// tenant-bounded lists drain every page instead (drainPages in
+	// cursor-page.ts has the reasoning).
 	const guard = new RequestGuard();
 
 	const workflowNames = $derived(new Map(workflowRows.map((workflow) => [workflow.id, workflow.name])));
@@ -118,15 +144,37 @@
 		void load(status, workflowID);
 	});
 
+	// One source of truth for whether the poll may run, read by the effect
+	// below and by refreshHead itself (a timer that fired just as a load began
+	// must not fetch either).
+	function pollSignals(): HeadPollSignals {
+		return {
+			enabled: autoRefresh,
+			loading,
+			loadingMore,
+			hidden: tabHidden,
+			failedFirstLoad: failure !== null && page.items.length === 0
+		};
+	}
+
 	$effect(() => {
-		// Auto-refresh polls the head of the list while it is on: watching
-		// production runs without pressing Refresh is the reason this page
-		// exists. It pauses itself on any page with a cursor (Load more),
-		// on a manual load, and when the tab is hidden — polling behind
-		// those would either discard the loaded tail or burn a laptop.
-		if (!autoRefresh || loading || loadingMore || document.hidden) return;
-		if (page.nextCursor) return;
-		const timer = setTimeout(() => void refreshHead(status, workflowID), 5000);
+		// Auto-refresh polls the newest page and MERGES it into what is loaded
+		// (mergeHead), so a poll keeps the tail the user loaded and the cursor
+		// "Load more" resumes from instead of cutting the list back to the
+		// first page. Watching production runs without pressing Refresh is the
+		// reason this page exists; it pauses on a manual load, on a first-load
+		// failure and while the tab is hidden, where a fetch would either
+		// discard loaded rows or burn a laptop.
+		//
+		// `pollTurn` is read so the chain keeps going: a poll that finds
+		// nothing new changes no other reactive value this effect reads (the
+		// `&&` in pollSignals short-circuits the page read whenever there is
+		// no failure), so without it the effect would arm one timer and stop.
+		// The effect only READS reactive state — pollTurn is written by
+		// refreshHead, outside the effect — so it cannot loop.
+		void pollTurn;
+		if (!shouldPollHead(pollSignals())) return;
+		const timer = setTimeout(() => void refreshHead(status, workflowID), HEAD_POLL_INTERVAL_MS);
 		return () => clearTimeout(timer);
 	});
 
@@ -135,10 +183,9 @@
 		loading = true;
 		failure = null;
 		try {
-			const response = await listExecutions({
-				...(activeStatus ? { status: [activeStatus] } : {}),
-				...(activeWorkflow ? { workflowId: activeWorkflow } : {})
-			});
+			const response = await listExecutions(
+				buildListExecutionsParams({ status: activeStatus, workflowId: activeWorkflow })
+			);
 			if (response.status !== 200) throw new Error('Unexpected execution-list response');
 			if (!guard.holds(token)) return;
 			page = readPage(response.data);
@@ -152,23 +199,32 @@
 	}
 
 	async function refreshHead(activeStatus: string, activeWorkflow: string) {
-		// A poll that replaces the whole head must never surface as a failure:
-		// the rows on screen arrived intact, and a transient poll error is
-		// news about nothing. It also never touches the cursor, so a Load
-		// more tail is left exactly where it was.
-		if (loading || loadingMore || document.hidden) return;
+		// A poll that finds nothing new must never surface as a failure: the
+		// rows on screen arrived intact, and a transient poll error is news
+		// about nothing. It rewrites the rows the head covers and leaves a
+		// Load more tail where it was, but it can move the list's cursor: when
+		// the head falls back to the newest page alone, the cursor it carries
+		// replaces the loaded one, which is why loadMore re-checks the cursor
+		// it asked with before appending (appendPageIfCurrent).
+		if (!shouldPollHead(pollSignals())) return;
 		const token = guard.current;
 		try {
-			const response = await listExecutions({
-				...(activeStatus ? { status: [activeStatus] } : {}),
-				...(activeWorkflow ? { workflowId: activeWorkflow } : {})
-			});
+			const response = await listExecutions(
+				buildListExecutionsParams({ status: activeStatus, workflowId: activeWorkflow })
+			);
 			if (response.status !== 200) throw new Error('Unexpected execution-list response');
 			if (!guard.holds(token)) return;
-			const head = readPage(response.data);
-			page = { items: head.items, nextCursor: page.nextCursor };
+			// `page` is read here, when the response resolves, not before the
+			// await: a Load more that finished meanwhile is part of the list
+			// this merge folds the new page into, and a copy taken earlier
+			// would overwrite it.
+			page = mergeHead(page, readPage(response.data), (row) => row.id);
 		} catch {
 			// Deliberately swallowed: see above.
+		} finally {
+			// Bumped even after a swallowed failure: the chain has to keep
+			// going, or one bad poll would end auto-refresh for good.
+			pollTurn += 1;
 		}
 	}
 
@@ -178,25 +234,31 @@
 		// starting would supersede that request, which would then discard its
 		// own answer and leave the page stuck on its skeleton.
 		const token = guard.current;
+		// The cursor this request is made with, held so the answer can be
+		// checked against it: a poll that lands in the meantime may have moved
+		// the list's cursor, and the page that arrives under the old one no
+		// longer follows the rows it would be appended to.
+		const asked = page.nextCursor;
 		loadingMore = true;
 		// Clearing here rather than on success is what makes a second press of
 		// the button read as a retry: the notice goes away while the attempt
 		// it describes is running, and comes back only if this one fails too.
 		failure = null;
 		try {
-			const response = await listExecutions({
-				cursor: page.nextCursor,
-				...(status ? { status: [status] } : {}),
-				...(workflowID ? { workflowId: workflowID } : {})
-			});
+			const response = await listExecutions(
+				buildListExecutionsParams({ status, workflowId: workflowID }, asked)
+			);
 			if (response.status !== 200) throw new Error('Unexpected execution-list response');
 			if (!guard.holds(token)) return;
-			page = appendPage(page, response.data);
+			// Drop the page instead of splicing it on when the cursor moved:
+			// appending it anyway would leave a hole the user never sees.
+			// appendPageIfCurrent reads `page` when the response resolves.
+			page = appendPageIfCurrent(page, asked, response.data);
 		} catch (cause) {
-			// `page` is deliberately left alone: appendPage is the only thing
-			// that moves the cursor, and it only runs on success, so a retry
-			// asks for the page that failed rather than the one after it.
-			// Resetting the rows here would lose every page already loaded.
+			// `page` is deliberately left alone: the cursor only moves on
+			// success, so a retry asks for the page that failed rather than
+			// the one after it. Resetting the rows here would lose every page
+			// already loaded.
 			if (guard.holds(token)) failure = cause;
 		} finally {
 			loadingMore = false;
@@ -224,6 +286,8 @@
 		workflowSearch = '';
 	}
 </script>
+
+<svelte:document onvisibilitychange={() => (tabHidden = document.hidden)} />
 
 <svelte:head>
 	<title>Executions · KilasFlow</title>
@@ -298,6 +362,9 @@
 					<Button class="mt-3" size="sm" variant="outline" onclick={clearFilters}>Clear filters</Button>
 				{/if}
 			{/snippet}
+			<!-- A plain paragraph, not role=status: with auto-refresh on, a live
+			     region would announce every new run to a screen reader. -->
+			<p class="mb-2 text-xs text-muted-foreground">{executionListSummary({ count: page.items.length, hasMore: canLoadMore(page), filtered: filtersActive })}</p>
 			<div class="overflow-hidden rounded-xl border border-border bg-card">
 				<Table.Root class="min-w-[48rem]">
 					<Table.Caption class="sr-only">Workflow executions, newest first</Table.Caption>

@@ -1,11 +1,41 @@
 /**
+ * Two ways to read a paged listing.
+ *
+ * DRAIN — `drainPages`, page size `DRAIN_PAGE_LIMIT` (500). Workflows,
+ * credentials, datastores, schedules and API keys, the workflow-name maps on
+ * the executions and schedules pages, and both credential pickers. These lists
+ * are bounded by authoring rather than by traffic, and each surface computes
+ * over the whole set — search, filter, sort and counts, the duplicate-name
+ * check, the name lookup and the "deleted" badge, and the pickers — so half a
+ * list would print a count and a badge that are wrong rather than absent.
+ * Datastores are additionally capped per tenant
+ * (`datastore.max_datastores_per_tenant`, default 100).
+ *
+ * LOAD MORE — `readPage` / `appendPage` / `appendPageIfCurrent` /
+ * `canLoadMore` / `mergeHead`, explicit page size (`EXECUTIONS_PAGE_LIMIT`,
+ * 50). Executions, whose history grows with traffic (`execution.retention`
+ * defaults to keeping everything), plus the datastore rows grid and the
+ * version panel. The server filters and sorts these exactly and pages them by
+ * a keyset on a value written once, so a page is a slice of the truth and the
+ * surface says which slice it is holding.
+ *
+ * Revisit trigger: a drained list that realistically passes ~5,000 rows moves
+ * to a server-side `q`/`limit` rather than a bigger drain. Known ceiling: the
+ * executions page still drains every workflow just to resolve names (about two
+ * requests at 600 workflows).
+ */
+
+/**
  * The page size the dashboard asks for while it drains a listing.
  *
- * Every listing endpoint caps a page at 500 rows. The dashboard lists hold the
- * whole list — they filter, sort and count over what they have — so they ask
- * for the largest page the API serves and keep asking until the cursor runs
- * out. Leaving the size to the server default (100) would multiply the round
- * trips for a tenant with more rows than that.
+ * The drain listings — workflows, credentials, datastores, schedules and API
+ * keys — cap a page at 500 rows; the two listings that page by cursor
+ * themselves, GET /executions and the workflow-versions listing, cap at 100 and
+ * never ask for this size. The dashboard lists hold the whole list — they
+ * filter, sort and count over what they have — so they ask for the largest page
+ * the API serves and keep asking until the cursor runs out. Leaving the size to
+ * the server default (100) would multiply the round trips for a tenant with
+ * more rows than that.
  */
 export const DRAIN_PAGE_LIMIT = 500;
 
@@ -118,4 +148,56 @@ export function appendPage<T>(
  */
 export function canLoadMore<T>(loaded: CursorPage<T>): boolean {
 	return loaded.nextCursor !== '';
+}
+
+/**
+ * The loaded list with a response appended, but only if the list still waits on
+ * the cursor that response was asked for with.
+ *
+ * A "Load more" is in flight while a poll can land, and a poll that falls back
+ * to the newest page moves the list's cursor. The page that arrives under the
+ * old cursor no longer follows the rows it would be appended to, and splicing
+ * it on would leave a hole with the rows in between never listed. Dropping the
+ * answer instead leaves the button armed with the cursor that is still true.
+ */
+export function appendPageIfCurrent<T>(
+	loaded: CursorPage<T>,
+	askedWith: string,
+	response: { items?: T[] | null; nextCursor?: string | null } | null | undefined
+): CursorPage<T> {
+	return loaded.nextCursor === askedWith ? appendPage(loaded, response) : loaded;
+}
+
+/**
+ * The loaded list with the newest page folded into it.
+ *
+ * A poll and a "Load more" are two ways into the same list and the poll must
+ * not undo the other: replacing the list with the head would drop the older
+ * rows the user loaded and the cursor "Load more" resumes from, and a list
+ * loaded to its end would silently shrink back to the first page. So the head
+ * takes over the rows it covers — which is what refreshes their status — and
+ * the rows below it are kept, minus any key the head already lists.
+ *
+ * When no loaded row joins the head (a whole page of runs arrived between two
+ * polls) the head alone is returned: splicing across that gap would skip the
+ * rows in between, and a shorter list is honest where a hole is not. Rows below
+ * the newest page keep their status until Refresh reloads from the top.
+ */
+export function mergeHead<T>(
+	loaded: CursorPage<T>,
+	head: CursorPage<T>,
+	keyOf: (item: T) => string
+): CursorPage<T> {
+	if (head.items.length === 0 || head.nextCursor === '') return head;
+	const boundary = keyOf(head.items[head.items.length - 1]);
+	const at = loaded.items.findIndex((item) => keyOf(item) === boundary);
+	if (at === -1) return head;
+	const covered = new Set(head.items.map((item) => keyOf(item)));
+	const tail = loaded.items.slice(at + 1).filter((item) => !covered.has(keyOf(item)));
+	return {
+		items: [...head.items, ...tail],
+		// With no row below the boundary the head's own cursor is the truth: the
+		// held one was read before the rows in the head existed.
+		nextCursor: at + 1 < loaded.items.length ? loaded.nextCursor : head.nextCursor
+	};
 }
