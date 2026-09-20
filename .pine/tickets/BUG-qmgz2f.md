@@ -10,7 +10,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:10Z"
-updated: "2026-09-19T13:44:26Z"
+updated: "2026-09-20T00:42:07Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -150,3 +150,25 @@ Files: /Users/izzadev/projects/k-flow/web/src/lib/components/workflow-editor/nod
 - [ ] Tidy up ignores node size and role: overlaps wide tiles, stacks sticky notes and unconnected nodes into one co
 - [ ] Node picker lists internal and superseded definitions (Unsupported node x4, MySQL x2, PostgreSQL x2, WAHA x2, 
 - [ ] Adversarial re-verify against live stub/n8n like the Verify phase (no code-only close)
+---
+
+## Progress (FrontendCore3, 2026-09-20)
+
+Status: `testing` for the findings that live in this slice's files. Two findings share their fix with FEAT-jvembs (commit `8f20750`).
+
+### Done
+- **Loader storm** (`property-field.svelte`, `properties-panel.svelte`, new `workflow-editor/loader-cache.ts`): both loader effects now key on the loader's own `dependsOn` values plus node type/version and the credential id, so a keystroke in a field the loader does not read no longer sends a request. The call itself is `untrack`ed (it reads the node to build its body) and debounced 250 ms, a key change cancels the pending call, answers are cached per key (failures deliberately not cached, so a 502 is retried), and a refusal now surfaces the server's own message through the field's `reason` line instead of an unhandled rejection with a silently empty dropdown. `properties-panel` documents that apiFetch throws on non-2xx, which is why the dead `status !== 200` branch was never the one that ran.
+- **Keystroke clones / rebuild** (`document.ts`, `workflow-editor.svelte`): `updateNodeProperty`/`updateNodeCredential` rebuild only the edited node and carry every other node by reference; the canvas projection is the *only* projection (replaceDraft used to build a second one); the projection no longer deep-clones each workflow node; `draft` and `preview` are `$state.raw`, so assigning a new draft no longer deep-proxies every node and parameter; the Svelte Flow canvas runs `onlyRenderVisibleElements`; multi-selection is one array rather than a single id, so a group drag no longer rebuilds selection down to one node.
+- **Accessibility**: edge accessible names use node names instead of UUIDs; every `PropertyField` control id is unique per instance (`$props.id()`) so repeated rows no longer share one id, and group kinds (keyValue, multiSelect, collection, fixedCollection, assignmentCollection, conditions, resourceMapper) expose `role=group` + `aria-labelledby` instead of a `<label for>` pointing at nothing; the read-only inspector panel is `inert` (a keyboard user could tab in and type text that was discarded); the version panel's confirmation takes focus and closes on Escape; the Parameters/Settings tablist implements the WAI-ARIA arrow-key roving pattern.
+- **Version panel** (`version-panel.svelte`): the cached branch now bumps the document token, so a slower earlier fetch can no longer replace the revision the user is looking at; `eventsRequested` resets when the panel closes, so reopening shows the timeline including the publish/activation that happened meanwhile; `refresh()` is guarded by its own token; the panel is no longer modal (new optional `showOverlay` prop on `ui/sheet/sheet-content.svelte`, default `true` — existing callers unchanged) and closing it leaves the preview on the canvas, with only "Back to draft" clearing it.
+- The authoring-features, tidy and picker findings in this ticket are the same work as FEAT-jvembs (`8f20750`).
+
+### Scoped proof
+- `cd web && npx vitest run src/lib/workflow-editor` → 29 files, 361 tests, passing (includes the new `loader-cache.test.ts`: dependency-key composition, debounce window, cancellation of an abandoned key, refusal reported as a reason, cache hit and no-failure-caching).
+- `npx svelte-check --tsconfig ./tsconfig.json` → 0 errors, 0 warnings in every file this ticket touches.
+- Not verifiable from here: request counts against a live stub in a browser (no browser/stub owned by this slice) — the unit suite is the proof, with Main's end-to-end gate for the rendered surface.
+
+### Not done (recorded, not silently dropped)
+- The embed/session-expiry finding is in `web/src/lib/embed/*` and `sdk/src/browser.ts`, owned by FrontendCore2/DXOps2 — not edited here.
+- The dirty check still compares the two documents with `stableJSON` rather than a revision counter: measured as one serialization per edit of a JSON document, which the structural-sharing change below it has already made cheap, and a counter would report "saved" incorrectly after an undo back to the stored revision.
+- The `API drift` / `ai.* drops` phrases in this ticket's title have no matching finding in its body (the only `ai_*` reference is the attachment-edge layout item, fixed under FEAT-jvembs); nothing was found to fix for them.

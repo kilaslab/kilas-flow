@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { tick } from 'svelte';
 	import Check from '@lucide/svelte/icons/check';
 	import History from '@lucide/svelte/icons/history';
 	import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
@@ -90,6 +91,10 @@
 	let eventsError = $state<string | null>(null);
 	let loadingEvents = $state(false);
 	let listRegion = $state<HTMLDivElement>();
+	// The confirmation is a step of its own: when it opens it has to take focus,
+	// or a keyboard user is still typing into whatever was behind it.
+	let confirmReason = $state<HTMLInputElement>();
+	let wasConfirming = $state(false);
 	// Documents are immutable once stored, so a revision fetched once never has
 	// to be fetched again — which is what makes flicking between two versions to
 	// compare them feel like reading rather than like loading.
@@ -99,8 +104,12 @@
 	let documentRequest = 0;
 	// Deliberately not reactive: the timeline is fetched once per opening, and
 	// an effect that read a flag it also writes would re-fire on its own answer
-	// — forever, for a workflow whose publish history is empty.
+	// — forever, for a workflow whose publish history is empty. Reset when the
+	// panel closes so reopening shows the timeline the new publish appended to.
 	let eventsRequested = false;
+	// Same guard as `documentRequest`, for the list: a slower earlier refresh
+	// must not overwrite a newer one.
+	let listRequest = 0;
 	/** The row that was clicked, kept only as a fallback for the derivation below. */
 	let selectedSummary = $state<WorkflowVersionSummaryResource | null>(null);
 
@@ -122,23 +131,37 @@
 	});
 
 	$effect(() => {
-		if (!open || tab !== 'timeline' || eventsRequested) return;
+		if (confirming && !wasConfirming) void tick().then(() => confirmReason?.focus());
+		wasConfirming = Boolean(confirming);
+	});
+
+	$effect(() => {
+		if (!open) {
+			// The next opening is a new panel: its timeline has to include the
+			// publish or activation that happened while this one was shut.
+			eventsRequested = false;
+			return;
+		}
+		if (tab !== 'timeline' || eventsRequested) return;
 		eventsRequested = true;
 		void loadEvents();
 	});
 
 	async function refresh() {
+		const token = ++listRequest;
 		loading = true;
 		listError = null;
 		try {
 			const response = await listWorkflowVersions(workflowID, { limit: 25 });
 			if (response.status !== 200) throw new Error('Unexpected workflow-versions response');
+			if (token !== listRequest) return;
 			loaded = readPage(response.data);
 		} catch (error) {
+			if (token !== listRequest) return;
 			listError = message(error);
 			loaded = emptyPage();
 		} finally {
-			loading = false;
+			if (token === listRequest) loading = false;
 		}
 	}
 
@@ -183,6 +206,11 @@
 		selectedSummary = summary;
 		const cached = documents.get(summary.id);
 		if (cached) {
+			// Bumping the token is what stops an earlier, still-in-flight fetch
+			// from landing on the canvas after this cached revision: the token it
+			// holds is now stale, so its response is dropped.
+			documentRequest += 1;
+			loadingDocument = false;
 			preview = { versionID: summary.id, revision: summary.revision, document: cached };
 			return;
 		}
@@ -277,8 +305,15 @@
 	}
 </script>
 
-<Sheet.Root bind:open onOpenChange={(next) => !next && backToDraft()}>
-	<Sheet.Content side="right" class="flex w-[min(26rem,92vw)] flex-col gap-0 p-0 sm:max-w-none" aria-label="Version history">
+<!--
+	Deliberately not modal: the panel exists to show a stored revision *on the
+	canvas*, and a backdrop over that canvas hides the thing being compared. The
+	preview also outlives the panel — closing it leaves the revision on screen
+	with the editor's own "Back to draft" strip offering the way out, so closing
+	a panel can never silently discard what the user was looking at.
+-->
+<Sheet.Root bind:open>
+	<Sheet.Content side="right" showOverlay={false} trapFocus={false} preventScroll={false} class="flex w-[min(26rem,92vw)] flex-col gap-0 border-l border-border p-0 sm:max-w-none" aria-label="Version history">
 		<Sheet.Header class="shrink-0 gap-1 border-b border-border px-4 py-3 pr-12">
 			<Sheet.Title class="flex items-center gap-2 text-sm">
 				<History aria-hidden="true" class="size-4 text-muted-foreground" />Version history
@@ -487,14 +522,27 @@
 			<!-- A confirmation inside the sheet rather than a dialog over it: the
 			     sheet already traps focus, and stacking a second modal on it is
 			     what makes Escape ambiguous. -->
-			<div role="alertdialog" aria-modal="true" aria-label={pending.action === 'restore' ? 'Confirm restore' : 'Confirm publish'} class="shrink-0 border-t border-border bg-card px-4 py-3">
+			<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+			<div
+				role="alertdialog"
+				tabindex="-1"
+				aria-modal="true"
+				aria-label={pending.action === 'restore' ? 'Confirm restore' : 'Confirm publish'}
+				class="shrink-0 border-t border-border bg-card px-4 py-3"
+				onkeydown={(event) => {
+					if (event.key === 'Escape') {
+						event.stopPropagation();
+						confirming = null;
+					}
+				}}
+			>
 				<h3 class="text-xs font-semibold">{pending.action === 'restore' ? 'Restore this revision?' : 'Publish this revision?'}</h3>
 				<p class="mt-1 text-[0.6875rem] leading-4 text-muted-foreground">
 					{pending.action === 'restore' ? restoreConfirmation(pending.summary) : publishConfirmation(pending.summary)}
 				</p>
 				<label class="mt-2 block">
 					<span class="text-[0.6875rem] font-medium text-muted-foreground">Reason (optional, kept in the audit trail)</span>
-					<input bind:value={reason} maxlength="255" class="mt-1 h-7 w-full rounded-md border border-border bg-background px-2 text-xs focus-visible:outline-2 focus-visible:outline-offset-1" placeholder="Rolling back the pricing change" />
+					<input bind:this={confirmReason} bind:value={reason} maxlength="255" class="mt-1 h-7 w-full rounded-md border border-border bg-background px-2 text-xs focus-visible:outline-2 focus-visible:outline-offset-1" placeholder="Rolling back the pricing change" />
 				</label>
 				<div class="mt-2.5 flex justify-end gap-1.5">
 					<button type="button" class="inline-flex h-7 items-center rounded-md px-2.5 text-xs font-medium text-muted-foreground hover:bg-muted" disabled={busy} onclick={() => (confirming = null)}>Cancel</button>

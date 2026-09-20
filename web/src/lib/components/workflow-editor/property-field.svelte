@@ -1,4 +1,17 @@
+<script lang="ts" module>
+	import type { MapperColumn as MapperColumnShape } from '$lib/api/generated/models';
+
+	// Shared across every field of every node on the page, and bounded inside
+	// `loadSoon`: the same loader with the same dependencies and the same
+	// credential has one answer, so flicking between two nodes of a type must
+	// not re-ask the server for it.
+	const optionsCache = new Map<string, { options: { label: string; value: string }[]; reason: string }>();
+	const schemaCache = new Map<string, { fields: MapperColumnShape[]; reason: string }>();
+</script>
+
 <script lang="ts">
+	import { untrack } from 'svelte';
+
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
 	import ChevronUp from '@lucide/svelte/icons/chevron-up';
 	import Plus from '@lucide/svelte/icons/plus';
@@ -58,6 +71,7 @@ import { expressionCompletions, previewStep, type CompletionCandidate } from '$l
 		unreadable
 	} from '$lib/workflow-editor/collection';
 import { asExpression, asFixed, expressionTemplate, isExpression, needsMultiline } from '$lib/workflow-editor/parameter';
+import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 
 	let {
 		property,
@@ -66,6 +80,7 @@ import { asExpression, asFixed, expressionTemplate, isExpression, needsMultiline
 		onChange,
 		loadOptions,
 		loadSchema,
+		contextKey = '',
 		upstreamNodeNames = [],
 		upstreamFieldPaths = [],
 		resolvedValues = []
@@ -76,6 +91,14 @@ import { asExpression, asFixed, expressionTemplate, isExpression, needsMultiline
 		onChange: (value: unknown) => void;
 		loadOptions?: (property: PropertyDefinition, mode?: string) => Promise<{ options: { label: string; value: string }[]; reason: string }>;
 		loadSchema?: (property: PropertyDefinition) => Promise<{ fields: MapperColumn[]; reason: string }>;
+		/**
+		 * What outside the node's parameters a loader's answer depends on — the
+		 * selected credential, today.
+		 *
+		 * Passed in rather than read from the node: this component must not track
+		 * the whole node, or every keystroke elsewhere re-fires its loader.
+		 */
+		contextKey?: string;
 		/** Names of upstream nodes, for `$('Name')` completions. */
 		upstreamNodeNames?: string[];
 		/** Dotted `$json` paths from the last run, for field completions. */
@@ -108,6 +131,33 @@ import { asExpression, asFixed, expressionTemplate, isExpression, needsMultiline
 	]);
 
 	const typeOptions = $derived(property.typeOptions ?? {});
+
+	/**
+	 * A unique suffix for this field's controls.
+	 *
+	 * `property-{key}` was reused by every recursive instance, so two rows of a
+	 * fixed collection shared one id and every label pointed at the first of
+	 * them.
+	 */
+	const fieldID = $props.id();
+
+	/**
+	 * Kinds that render one element carrying the field's id.
+	 *
+	 * The others — collections, key/value rows, a mapper — are a group of
+	 * controls with no single target, and a `<label for>` pointing at an id
+	 * nothing renders is a label that does not label anything.
+	 */
+	const CONTROL_KINDS: Record<string, true> = {
+		string: true,
+		number: true,
+		boolean: true,
+		options: true,
+		dateTime: true,
+		json: true,
+		resourceLocator: true
+	};
+	const labelTarget = $derived(CONTROL_KINDS[property.kind] ? `property-${fieldID}` : null);
 
 	/** The one group of a repeatable fixedCollection, when the property is one. */
 	const group = $derived(repeatedGroup(property));
@@ -147,15 +197,19 @@ import { asExpression, asFixed, expressionTemplate, isExpression, needsMultiline
 	// the form is not empty on the first render of a saved node.
 	const schemaColumns = $derived(schemaState.fields.length > 0 ? schemaState.fields : (mapping.schema ?? []));
 
+	/** A resource mapper's columns depend on the parameters it declared, as above. */
+	const schemaKey = $derived(property.kind === 'resourceMapper' ? loaderSignature(property.mapper?.schema, siblings, contextKey) : '');
+
 	$effect(() => {
-		if (property.kind !== 'resourceMapper' || !loadSchema) return;
-		let cancelled = false;
-		void loadSchema(property).then((result) => {
-			if (!cancelled) schemaState = result;
+		const key = schemaKey;
+		if (key === '' || !loadSchema) return;
+		return loadSoon({
+			key: `schema:${key}`,
+			load: () => untrack(() => loadSchema(property)),
+			apply: (result) => (schemaState = result),
+			fail: (reason) => ({ fields: [], reason }),
+			cache: schemaCache
 		});
-		return () => {
-			cancelled = true;
-		};
 	});
 
 	function setColumn(id: string, next: unknown) {
@@ -178,18 +232,32 @@ import { asExpression, asFixed, expressionTemplate, isExpression, needsMultiline
 	const activeLoader = $derived(locatorMode?.loadOptions ?? property.loadOptions);
 	const selectableOptions = $derived(activeLoader ? loadState.options : (property.options ?? []));
 
+	/**
+	 * What a loader's answer depends on: the parameters it declared, and the
+	 * credential the call is made with.
+	 *
+	 * Keying the effect on anything else — the whole node, as it was — means a
+	 * keystroke in an unrelated field sends a new request, and for a model list,
+	 * one to the customer's own AI provider.
+	 */
+	const loaderKey = $derived(loaderSignature(activeLoader, siblings, contextKey));
+
 	$effect(() => {
-		const loader = activeLoader;
-		const mode = property.kind === 'resourceLocator' ? locator.mode : undefined;
+		const key = loaderKey;
+		const loader = untrack(() => activeLoader);
 		if (!loader || !loadOptions) return;
-		let cancelled = false;
-		void loadOptions(property, mode).then((result) => {
-			if (!cancelled) loadState = result;
+		const mode = untrack(() => (property.kind === 'resourceLocator' ? locator.mode : undefined));
+		return loadSoon({
+			key,
+			// The request itself reads the node's parameters to build its body, so
+			// the call is untracked: the key above is the whole dependency.
+			load: () => untrack(() => loadOptions(property, mode)),
+			apply: (result) => (loadState = result),
+			fail: (reason) => ({ options: [], reason }),
+			cache: optionsCache
 		});
-		return () => {
-			cancelled = true;
-		};
 	});
+
 	const selected = $derived(Array.isArray(value) ? (value as unknown[]).map(String) : []);
 
 	function toggleOption(option: string, on: boolean): void {
@@ -384,9 +452,13 @@ import { asExpression, asFixed, expressionTemplate, isExpression, needsMultiline
 	}
 </script>
 
-<div class="grid gap-1">
+<div class="grid gap-1" role={labelTarget ? undefined : 'group'} aria-labelledby={labelTarget ? undefined : `property-label-${fieldID}`}>
 	<div class="flex items-baseline justify-between gap-2">
-		<label class="text-xs font-medium leading-tight" for={`property-${property.key}`}>{property.label}{#if property.required}<span aria-hidden="true" class="text-destructive"> *</span>{/if}</label>
+		{#if labelTarget}
+			<label class="text-xs font-medium leading-tight" for={labelTarget}>{property.label}{#if property.required}<span aria-hidden="true" class="text-destructive"> *</span>{/if}</label>
+		{:else}
+			<span id={`property-label-${fieldID}`} class="text-xs font-medium leading-tight">{property.label}{#if property.required}<span aria-hidden="true" class="text-destructive"> *</span>{/if}</span>
+		{/if}
 		{#if expressionCapable}
 			<button type="button" role="switch" aria-checked={expressionMode} aria-label={`${property.label}: expression mode`} class="shrink-0 rounded border border-border px-1 py-0.5 font-mono text-[0.625rem] leading-4 text-muted-foreground transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring aria-checked:border-primary/40 aria-checked:bg-primary/10 aria-checked:text-primary" onclick={toggleExpression}>
 				{expressionMode ? 'expr' : 'fixed'}
@@ -394,7 +466,7 @@ import { asExpression, asFixed, expressionTemplate, isExpression, needsMultiline
 		{/if}
 	</div>
 	{#if expressionMode}
-		<textarea id={`property-${property.key}`} value={template} spellcheck="false" rows={Math.min(12, Math.max(3, template.split('\n').length))} class="rounded-md border border-primary/40 bg-primary/5 px-2 py-1.5 font-mono text-xs" aria-describedby={`property-${property.key}-hint`} oninput={(event) => {
+		<textarea id={`property-${fieldID}`} value={template} spellcheck="false" rows={Math.min(12, Math.max(3, template.split('\n').length))} class="rounded-md border border-primary/40 bg-primary/5 px-2 py-1.5 font-mono text-xs" aria-describedby={`property-${fieldID}-hint`} oninput={(event) => {
 			const next = event.currentTarget.value;
 			assistOpen = true;
 			onChange(next.includes('{{') ? { mode: 'expression', value: next } : next);
@@ -426,19 +498,19 @@ import { asExpression, asFixed, expressionTemplate, isExpression, needsMultiline
 				{/if}
 			</div>
 		{/if}
-		<p id={`property-${property.key}-hint`} class="text-[0.6875rem] leading-4 {expressionHint(template) ? 'text-destructive' : 'text-muted-foreground'}">
+		<p id={`property-${fieldID}-hint`} class="text-[0.6875rem] leading-4 {expressionHint(template) ? 'text-destructive' : 'text-muted-foreground'}">
 			{expressionHint(template) ?? 'Resolved per item on the server, for example {{ $json.id }}.'}
 		</p>
 	{:else if property.kind === 'boolean'}
 		<label class="flex h-7 items-center gap-2 rounded-md border border-input px-2 text-xs">
-			<input id={`property-${property.key}`} type="checkbox" class="size-3.5" checked={Boolean(value)} onchange={(event) => onChange(event.currentTarget.checked)} />
+			<input id={`property-${fieldID}`} type="checkbox" class="size-3.5" checked={Boolean(value)} onchange={(event) => onChange(event.currentTarget.checked)} />
 			<span>{Boolean(value) ? 'Enabled' : 'Disabled'}</span>
 		</label>
 {:else if property.kind === 'number'}
 	<!-- Raw text while typing, coerced on blur: Number() on every keystroke
 	     turns a leading '-' into NaN (cloned to null), clearing the field
 	     before a negative value can be finished. -->
-	<input id={`property-${property.key}`} type="text" inputmode="decimal" value={stringValue} class="h-7 rounded-md border border-input bg-background px-2 text-xs" oninput={(event) => {
+	<input id={`property-${fieldID}`} type="text" inputmode="decimal" value={stringValue} class="h-7 rounded-md border border-input bg-background px-2 text-xs" oninput={(event) => {
 		const text = event.currentTarget.value;
 		if (text === '' || text === '-' || text === '.' || text === '-.') onChange(text);
 		else {
@@ -461,9 +533,9 @@ import { asExpression, asFixed, expressionTemplate, isExpression, needsMultiline
 			{property.description || property.label}
 		</p>
 	{:else if property.kind === 'dateTime'}
-		<input id={`property-${property.key}`} type="datetime-local" value={stringValue} class="h-7 rounded-md border border-input bg-background px-2 text-xs" oninput={(event) => onChange(event.currentTarget.value)} />
+		<input id={`property-${fieldID}`} type="datetime-local" value={stringValue} class="h-7 rounded-md border border-input bg-background px-2 text-xs" oninput={(event) => onChange(event.currentTarget.value)} />
 	{:else if property.kind === 'json'}
-		<textarea id={`property-${property.key}`} value={jsonText(value)} spellcheck="false" rows={typeOptions.rows || 4} class="rounded-md border border-input bg-background px-2 py-1.5 font-mono text-[0.6875rem]" aria-describedby={jsonError ? `property-${property.key}-json-error` : undefined} oninput={(event) => {
+		<textarea id={`property-${fieldID}`} value={jsonText(value)} spellcheck="false" rows={typeOptions.rows || 4} class="rounded-md border border-input bg-background px-2 py-1.5 font-mono text-[0.6875rem]" aria-describedby={jsonError ? `property-${fieldID}-json-error` : undefined} oninput={(event) => {
 			jsonError = null;
 		}} onblur={(event) => {
 			const parsed = tryParseJson(event.currentTarget.value);
@@ -474,7 +546,7 @@ import { asExpression, asFixed, expressionTemplate, isExpression, needsMultiline
 				jsonError = 'This is not valid JSON yet — fix it before saving.';
 			}
 		}}></textarea>
-		{#if jsonError}<p id={`property-${property.key}-json-error`} role="alert" class="text-[0.6875rem] leading-4 text-destructive">{jsonError}</p>{/if}
+		{#if jsonError}<p id={`property-${fieldID}-json-error`} role="alert" class="text-[0.6875rem] leading-4 text-destructive">{jsonError}</p>{/if}
 	{:else if property.kind === 'multiOptions'}
 		<div class="grid gap-1 rounded-md border border-input p-1.5">
 			{#each property.options ?? [] as option (option.value)}
@@ -505,6 +577,7 @@ import { asExpression, asFixed, expressionTemplate, isExpression, needsMultiline
 						<PropertyField
 							property={field}
 							value={entry[field.key] ?? field.default}
+							{contextKey}
 							onChange={(next: unknown) => updateGroupEntry(index, field.key, next)}
 							{loadOptions}
 						/>
@@ -540,6 +613,7 @@ import { asExpression, asFixed, expressionTemplate, isExpression, needsMultiline
 						property={field}
 						value={collectionValue(value)[field.key]}
 						siblings={{ ...siblings, ...collectionValue(value) }}
+						{contextKey}
 						onChange={(next: unknown) => onChange(setOption(value, field.key, next))}
 						{loadOptions}
 					/>
@@ -680,14 +754,14 @@ import { asExpression, asFixed, expressionTemplate, isExpression, needsMultiline
 						This editor does not know the mode “{locator.mode}”. Its value is {displayValue(locator.value) || 'empty'} and cannot be edited here.
 					</p>
 				{:else if locatorMode.kind === 'options'}
-					<select id={`property-${property.key}`} value={displayValue(locator.value)} class="h-7 min-w-0 flex-1 rounded-md border border-input bg-background px-1.5 text-xs" onchange={(event) => onChange(writeLocator({ ...locator, value: event.currentTarget.value, cachedResultName: selectedLabel(event.currentTarget.value) }))}>
+					<select id={`property-${fieldID}`} value={displayValue(locator.value)} class="h-7 min-w-0 flex-1 rounded-md border border-input bg-background px-1.5 text-xs" onchange={(event) => onChange(writeLocator({ ...locator, value: event.currentTarget.value, cachedResultName: selectedLabel(event.currentTarget.value) }))}>
 						<option value="">{locatorMode.placeholder || 'Choose…'}</option>
 						{#each selectableOptions as option (option.value)}
 							<option value={option.value}>{option.label}</option>
 						{/each}
 					</select>
 				{:else}
-					<input id={`property-${property.key}`} value={displayValue(locator.value)} placeholder={locatorMode.placeholder ?? ''} class="h-7 min-w-0 flex-1 rounded-md border border-input bg-background px-2 text-xs" oninput={(event) => onChange(writeLocator({ ...locator, value: event.currentTarget.value }))} />
+					<input id={`property-${fieldID}`} value={displayValue(locator.value)} placeholder={locatorMode.placeholder ?? ''} class="h-7 min-w-0 flex-1 rounded-md border border-input bg-background px-2 text-xs" oninput={(event) => onChange(writeLocator({ ...locator, value: event.currentTarget.value }))} />
 				{/if}
 			</div>
 			{#if locatorMode?.hint}
@@ -837,9 +911,9 @@ import { asExpression, asFixed, expressionTemplate, isExpression, needsMultiline
 	<!-- Multi-line is a different element, not an attribute: rows has no
 	     meaning on an input, and an input strips the newlines of a value
 	     that arrived multi-line. -->
-	<textarea id={`property-${property.key}`} value={stringValue} rows={Math.max(typeOptions.rows ?? 3, stringValue.split('\n').length)} class="rounded-md border border-input bg-background px-2 py-1.5 text-xs" oninput={(event) => onChange(event.currentTarget.value)}></textarea>
+	<textarea id={`property-${fieldID}`} value={stringValue} rows={Math.max(typeOptions.rows ?? 3, stringValue.split('\n').length)} class="rounded-md border border-input bg-background px-2 py-1.5 text-xs" oninput={(event) => onChange(event.currentTarget.value)}></textarea>
 	{:else if RENDERED.has(property.kind)}
-		<input id={`property-${property.key}`} value={stringValue} type={typeOptions.password ? 'password' : 'text'} class="h-7 rounded-md border border-input bg-background px-2 text-xs" oninput={(event) => onChange(event.currentTarget.value)} />
+		<input id={`property-${fieldID}`} value={stringValue} type={typeOptions.password ? 'password' : 'text'} class="h-7 rounded-md border border-input bg-background px-2 text-xs" oninput={(event) => onChange(event.currentTarget.value)} />
 	{:else}
 		<!-- A kind this build does not know. Degrading to a named read-only JSON
 		     view is what stops a newer pack's field rendering as nothing at all,

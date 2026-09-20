@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { tick } from 'svelte';
+
 	import { goto } from '$app/navigation';
 	import { createListCredentialTypes } from '$lib/api/generated/credentials/credentials';
 	import { loadNodePropertyOptions, loadNodePropertySchema } from '$lib/api/generated/nodes/nodes';
@@ -18,6 +20,7 @@
 		credentials = [],
 		readOnly = false,
 		onChange,
+		onRename,
 		onCredentialChange
 	}: {
 		node: Node;
@@ -25,6 +28,8 @@
 		credentials?: CredentialResource[];
 		readOnly?: boolean;
 		onChange: (scope: PropertyScope, key: string, value: unknown) => void;
+		/** Renames the node and rewrites the expressions that address it. */
+		onRename?: (name: string) => void;
 		onCredentialChange?: (typeID: string, credentialID: string) => void;
 	} = $props();
 
@@ -45,6 +50,18 @@
 	const credentialRequired = $derived(requiresCredential(definition));
 	const selectedCredential = $derived((typeID: string) => node.credentials?.[typeID] ?? '');
 	let tab = $state<PropertyScope>('parameters');
+	const tabButtons: Record<PropertyScope, HTMLButtonElement | undefined> = { parameters: undefined, settings: undefined };
+
+	/** The WAI-ARIA tabs pattern: arrows move between tabs, and focus follows. */
+	function moveTab(event: KeyboardEvent, from: PropertyScope) {
+		const order: PropertyScope[] = ['parameters', 'settings'];
+		const step = event.key === 'ArrowRight' || event.key === 'ArrowDown' ? 1 : event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1 : 0;
+		if (step === 0) return;
+		event.preventDefault();
+		const next = order[(order.indexOf(from) + step + order.length) % order.length];
+		tab = next;
+		void tick().then(() => tabButtons[next]?.focus());
+	}
 	/** Display name for a credential type id; falls back to the raw id. */
 	function credentialTypeName(typeID: string): string {
 		return (credentialTypeList.data ?? []).find((candidate) => candidate.id === typeID)?.displayName ?? typeID;
@@ -71,6 +88,14 @@
 	const properties = $derived(activeTab === 'parameters' ? definition.parameters ?? [] : definition.sharedSettings ?? []);
 	const values = $derived((activeTab === 'parameters' ? node.parameters : node.settings) ?? {});
 	/**
+	 * What a loader's answer depends on outside the node's parameters.
+	 *
+	 * Node type and version are part of it because the same loader name can be
+	 * registered by two types, and the credential because a model list is
+	 * fetched with it.
+	 */
+	const loaderContext = $derived(`${node.type}@${node.typeVersion}:${Object.values(node.credentials ?? {}).join(',')}`);
+	/**
 	 * Fetches a property's selectable values from the server.
 	 *
 	 * The loader itself is never sent — the server takes it from the registered
@@ -78,6 +103,9 @@
 	 * the server makes an outbound call shaped by it.
 	 */
 	async function loadOptions(property: PropertyDefinition, mode?: string) {
+		// A refusal (a non-2xx) never arrives here: apiFetch throws, and the
+		// field that asked catches it and shows the server's own message. The
+		// `reason` below is only for an answer with no options and no error.
 		const response = await loadNodePropertyOptions(node.type, {
 			version: String(node.typeVersion ?? ''),
 			property: property.key,
@@ -93,6 +121,7 @@
 
 	/** A resource mapper's columns. Its own call, for the reason above. */
 	async function loadSchema(property: PropertyDefinition) {
+		// Same contract as loadOptions: failures reach the field as a throw.
 		const response = await loadNodePropertySchema(node.type, {
 			version: String(node.typeVersion ?? ''),
 			property: property.key,
@@ -118,7 +147,27 @@
 	<div class="flex shrink-0 items-center gap-2 border-b border-border px-2.5 py-2">
 		<NodeIcon {definition} size="md" label={`${definition.category} node`} />
 		<div class="min-w-0 flex-1">
-			<h2 class="truncate text-[0.8125rem] font-semibold leading-tight">{node.name}</h2>
+			{#if onRename && !readOnly}
+				<!-- The title is where n8n renames from, and the name is what
+				     expressions address: an imported node whose name cannot be
+				     changed is a node nothing can safely reference. -->
+				<label class="sr-only" for={`node-name-${node.id}`}>Node name</label>
+				<input
+					id={`node-name-${node.id}`}
+					class="w-full truncate rounded border border-transparent bg-transparent text-[0.8125rem] font-semibold leading-tight hover:border-border focus-visible:border-primary focus-visible:outline-none"
+					value={node.name}
+					onkeydown={(event) => {
+						if (event.key === 'Enter') event.currentTarget.blur();
+						if (event.key === 'Escape') {
+							event.currentTarget.value = node.name;
+							event.currentTarget.blur();
+						}
+					}}
+					onchange={(event) => onRename?.(event.currentTarget.value)}
+				/>
+			{:else}
+				<h2 class="truncate text-[0.8125rem] font-semibold leading-tight">{node.name}</h2>
+			{/if}
 			<p class="truncate font-mono text-[0.625rem] leading-tight text-muted-foreground">{definition.type}</p>
 		</div>
 		{#if definition.documentationUrl}
@@ -126,12 +175,17 @@
 		{/if}
 	</div>
 
-	<div class="flex shrink-0 gap-3 border-b border-border px-2.5" role="tablist" aria-label="Node configuration">
-		<button type="button" role="tab" id="node-tab-parameters" aria-controls="node-tabpanel" aria-selected={activeTab === 'parameters'} class="-mb-px border-b-2 border-transparent py-1.5 text-xs text-muted-foreground transition-colors aria-selected:border-primary aria-selected:font-medium aria-selected:text-foreground" onclick={() => (tab = 'parameters')}>Parameters</button>
-		<button type="button" role="tab" id="node-tab-settings" aria-controls="node-tabpanel" aria-selected={activeTab === 'settings'} class="-mb-px border-b-2 border-transparent py-1.5 text-xs text-muted-foreground transition-colors aria-selected:border-primary aria-selected:font-medium aria-selected:text-foreground" onclick={() => (tab = 'settings')}>Settings</button>
+	<div class="flex shrink-0 gap-3 border-b border-border px-2.5" role="tablist" tabindex="-1" aria-label="Node configuration" onkeydown={(event) => {
+		if (event.key === 'ArrowRight' || event.key === 'ArrowLeft' || event.key === 'ArrowUp' || event.key === 'ArrowDown') moveTab(event, tab);
+	}}>
+		<button bind:this={tabButtons.parameters} type="button" role="tab" id="node-tab-parameters" aria-controls="node-tabpanel" aria-selected={activeTab === 'parameters'} tabindex={activeTab === 'parameters' ? 0 : -1} class="-mb-px border-b-2 border-transparent py-1.5 text-xs text-muted-foreground transition-colors aria-selected:border-primary aria-selected:font-medium aria-selected:text-foreground" onclick={() => (tab = 'parameters')}>Parameters</button>
+		<button bind:this={tabButtons.settings} type="button" role="tab" id="node-tab-settings" aria-controls="node-tabpanel" aria-selected={activeTab === 'settings'} tabindex={activeTab === 'settings' ? 0 : -1} class="-mb-px border-b-2 border-transparent py-1.5 text-xs text-muted-foreground transition-colors aria-selected:border-primary aria-selected:font-medium aria-selected:text-foreground" onclick={() => (tab = 'settings')}>Settings</button>
 	</div>
 
-	<div class="min-h-0 flex-1 space-y-3 overflow-y-auto p-2.5" class:pointer-events-none={readOnly} class:opacity-70={readOnly} role="tabpanel" id="node-tabpanel" aria-labelledby={`node-tab-${activeTab}`}>
+	<!-- `inert` rather than a pointer-events class: a keyboard user could tab
+	     into a read-only field and type text that was silently discarded. The
+	     tabpanel still announces why it is inert. -->
+	<div class="min-h-0 flex-1 space-y-3 overflow-y-auto p-2.5" inert={readOnly} class:opacity-70={readOnly} role="tabpanel" id="node-tabpanel" aria-labelledby={`node-tab-${activeTab}`}>
 		{#if activeTab === 'parameters' && definition.webhook}
 			{@const pathParam = definition.webhook.pathParameter ? String((node.parameters as Record<string, unknown> | undefined)?.[definition.webhook.pathParameter] ?? '') : definition.webhook.staticPath ?? ''}
 			<div class="grid gap-1.5 rounded-lg border border-border bg-background/40 p-2">
@@ -186,7 +240,7 @@
 			<p class="text-xs leading-5 text-muted-foreground">This node has no {activeTab === 'parameters' ? 'parameters' : 'shared settings'} to configure.</p>
 		{:else}
 			{#each visibleProperties as property (property.key)}
-				<PropertyField {property} value={values[property.key] ?? property.default} siblings={values} onChange={(value) => onChange(activeTab, property.key, value)} loadOptions={activeTab === 'parameters' ? loadOptions : undefined} loadSchema={activeTab === 'parameters' ? loadSchema : undefined} />
+				<PropertyField {property} value={values[property.key] ?? property.default} siblings={values} contextKey={loaderContext} onChange={(value) => onChange(activeTab, property.key, value)} loadOptions={activeTab === 'parameters' ? loadOptions : undefined} loadSchema={activeTab === 'parameters' ? loadSchema : undefined} />
 			{/each}
 		{/if}
 	</div>
