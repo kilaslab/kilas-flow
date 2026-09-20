@@ -324,5 +324,10 @@ func sharedSettings() []node.PropertyDefinition {
 			Key: "waitBetweenTries", Label: "Wait Between Attempts (ms)", Kind: node.PropertyNumber, Default: 1000,
 			VisibleWhen: []node.VisibilityCondition{{Key: "retryOnFail", Equals: true}},
 		},
+		{
+			Key: "alwaysOutputData", Label: "Always Output Data", Kind: node.PropertyBoolean, Default: false,
+			Description: "Hand downstream nodes an empty item when this node produced none, so a branch that matched " +
+				"nothing still runs — a filtered read with no rows still reaches a Respond to Webhook node.",
+		},
 	}
 }

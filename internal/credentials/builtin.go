@@ -58,6 +58,74 @@ func RegisterAll(registry *Registry) error {
 			Authenticate: &Authentication{Placement: PlacementBearer, Value: "{{ token }}"},
 		},
 		{
+			ID: "jwtAuth", DisplayName: "JWT Auth",
+			Description: "Holds the key that verifies incoming JSON Web Tokens.",
+			Properties: []property.PropertyDefinition{
+				{
+					Key: "keyType", Label: "Key Type", Kind: property.KindOptions, Required: true, Default: "passphrase",
+					Options: []property.PropertyOption{
+						{Label: "Passphrase", Value: "passphrase"},
+						{Label: "PEM Key", Value: "pemKey"},
+					},
+				},
+				{
+					Key: "secret", Label: "Secret", Kind: property.KindString,
+					TypeOptions: &property.TypeOptions{Password: true},
+					VisibleWhen: []property.VisibilityCondition{{Key: "keyType", Equals: "passphrase"}},
+					Description: "The shared secret an HMAC-signed token was signed with.",
+				},
+				{
+					Key: "publicKey", Label: "Public Key", Kind: property.KindString,
+					VisibleWhen: []property.VisibilityCondition{{Key: "keyType", Equals: "pemKey"}},
+					Description: "PEM-encoded public key (RSA or ECDSA) the token signature is checked against.",
+				},
+				{
+					Key: "privateKey", Label: "Private Key", Kind: property.KindString,
+					TypeOptions: &property.TypeOptions{Password: true},
+					VisibleWhen: []property.VisibilityCondition{{Key: "keyType", Equals: "pemKey"}},
+					Description: "Kept so a payload written by n8n's JWT credential is stored unchanged; inbound verification reads the public key.",
+				},
+				{
+					Key: "algorithm", Label: "Algorithm", Kind: property.KindOptions, Required: true, Default: "HS256",
+					Options: []property.PropertyOption{
+						{Label: "HS256", Value: "HS256"}, {Label: "HS384", Value: "HS384"}, {Label: "HS512", Value: "HS512"},
+						{Label: "RS256", Value: "RS256"}, {Label: "RS384", Value: "RS384"}, {Label: "RS512", Value: "RS512"},
+						{Label: "ES256", Value: "ES256"}, {Label: "ES384", Value: "ES384"}, {Label: "ES512", Value: "ES512"},
+						{Label: "PS256", Value: "PS256"}, {Label: "PS384", Value: "PS384"}, {Label: "PS512", Value: "PS512"},
+					},
+				},
+			},
+			Secrets: []string{"secret", "privateKey"},
+			// No Authenticate descriptor: this credential verifies callers
+			// arriving at us, it does not sign our outbound requests.
+		},
+		{
+			ID: "httpQueryAuth", DisplayName: "HTTP Query Auth",
+			Description: "Sends a fixed query parameter, for example ?api_key=…",
+			Properties: []property.PropertyDefinition{
+				{Key: "name", Label: "Query parameter name", Kind: property.KindString, Required: true},
+				{
+					Key: "value", Label: "Query parameter value", Kind: property.KindString, Required: true,
+					TypeOptions: &property.TypeOptions{Password: true},
+				},
+			},
+			Secrets:      []string{"value"},
+			Authenticate: &Authentication{Placement: PlacementQuery, Name: "{{ name }}", Value: "{{ value }}"},
+		},
+		{
+			ID: "httpCustomAuth", DisplayName: "HTTP Custom Auth",
+			Description: "Sends several headers and query parameters described by a JSON template, for example {\"headers\":{\"X-Api-Key\":\"abc\"},\"qs\":{\"tenant\":\"acme\"}}.",
+			Properties: []property.PropertyDefinition{
+				{
+					Key: "json", Label: "JSON", Kind: property.KindString, Required: true,
+					TypeOptions: &property.TypeOptions{Password: true},
+					Description: "An object with optional headers and qs objects. Every value is sent as written; the body is not modifiable from here.",
+				},
+			},
+			Secrets:      []string{"json"},
+			Authenticate: &Authentication{Placement: PlacementCustom, Value: "{{ json }}"},
+		},
+		{
 			ID: "postgres", DisplayName: "PostgreSQL",
 			Description: "Connects to a PostgreSQL database you own.",
 			Properties: []property.PropertyDefinition{

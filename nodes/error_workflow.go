@@ -57,6 +57,10 @@ func errorTriggerNode() node.Definition {
 		Outputs:     mainOutput(),
 		Parameters:  []node.PropertyDefinition{},
 		ExecutorID:  ErrorTriggerExecutorID,
+		// Shared with every other executable node: an error workflow's trigger
+		// is a node like any other, and the settings it inherited were the ones
+		// a note has — none.
+		SharedSettings: sharedSettings(),
 	}
 }
 

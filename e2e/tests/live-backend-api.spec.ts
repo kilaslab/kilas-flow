@@ -3,14 +3,11 @@
 // caller — against the real binary on a fresh SQLite data directory per test
 // (e2e/fixtures.ts).
 //
-// Route discovery: the only API reporting a minted webhook address is
-// POST /workflows/import (webhooks[].url). A natively authored workflow has no
-// read path yet (FEAT-cwmw90), so for those this suite reads the binding row
-// the server itself wrote, straight from the instance SQLite. It never invents
-// an address the server did not publish.
-import { DatabaseSync } from 'node:sqlite';
+// Route discovery: GET /workflows/{id}/webhooks reports the opaque address a
+// natively authored workflow answers on, before activation and unchanged by it,
+// so this suite never reaches into the instance database to learn a URL
+// (FEAT-cwmw90).
 import { randomBytes } from 'node:crypto';
-import { join } from 'node:path';
 
 import { test, expect } from '../fixtures';
 import {
@@ -64,24 +61,20 @@ function jsonObject(value: unknown, what: string): JsonObject {
 	return value as JsonObject;
 }
 
-// webhookRoute reads the opaque route an activation minted for one trigger
-// node from the instance's own SQLite (`webhook_bindings.route`, written by
-// internal/repository/webhooks.go). No API exposes it for a natively authored
-// workflow today — see FEAT-cwmw90 — and this suite asserts what the server
-// recorded rather than guessing a URL.
-function webhookRoute(dataDir: string, workflowId: string, nodeId: string, method: string): string {
-	const db = new DatabaseSync(join(dataDir, 'kilasflow.db'), { readOnly: true });
-	try {
-		const row = db
-			.prepare('SELECT route FROM webhook_bindings WHERE workflow_id = ? AND node_id = ? AND method = ?')
-			.get(workflowId, nodeId, method) as { route?: string } | undefined;
-		expect(row?.route, `no ${method} binding recorded for node ${nodeId} of ${workflowId}`).toMatch(
-			/^[0-9a-f]{32}$/
-		);
-		return `/webhook/${row!.route}`;
-	} finally {
-		db.close();
-	}
+// webhookUrl reads the opaque address a workflow's trigger answers on.
+//
+// It is the API's own published URL — minted on first read — so the suite
+// asserts what a sender is told rather than reconstructing it from storage.
+async function webhookUrl(baseURL: string, workflowId: string, nodeId: string): Promise<string> {
+	const listed = await liveApi<Array<{ nodeId: string; method: string; url: string }>>(
+		baseURL,
+		'GET',
+		`/workflows/${workflowId}/webhooks`
+	);
+	const route = listed.find((entry) => entry.nodeId === nodeId);
+	expect(route, `no webhook address published for node ${nodeId} of ${workflowId}`).toBeTruthy();
+	expect(route!.url).toMatch(/^\/webhook\/[0-9a-f]{32}$/);
+	return route!.url;
 }
 
 async function executionIds(baseURL: string, workflowId: string): Promise<string[]> {
@@ -145,10 +138,17 @@ test('a workflow authored over REST answers as a JSON API', async ({ server }) =
 	const saved = await liveApi<WorkflowResource>(baseURL, 'PUT', `/workflows/${createdBody.id}`, evolved);
 	expect(saved.latestVersion.revision).toBe(2);
 
+	// The address is published before activation, so a caller can configure the
+	// sender while the workflow is still a draft…
+	const published = await webhookUrl(baseURL, createdBody.id, 'webhook');
+
 	const activated = await liveApi<WorkflowResource>(baseURL, 'POST', `/workflows/${createdBody.id}/activate`);
 	expect(activated.active).toBe(true);
 
-	const url = webhookRoute(server.dataDir, createdBody.id, 'webhook', 'POST');
+	// …and activation does not change it: a sender already pointed at the URL
+	// it was given keeps working.
+	const url = await webhookUrl(baseURL, createdBody.id, 'webhook');
+	expect(url).toBe(published);
 	const before = await executionIds(baseURL, createdBody.id);
 
 	const response = await deliver(baseURL, url, { json: { text: 'hello backend' } });

@@ -64,6 +64,7 @@ import type {
 	UpsertRowInputBody,
 	UpsertRowOutputBody,
 	UserResource,
+	WebhookRouteResource,
 	WorkflowDiagnosticsResource,
 	WorkflowDocumentInput,
 	WorkflowPublishEventResource,
@@ -342,6 +343,15 @@ export class KilasFlowClient {
 			query: { versionId: options.versionId },
 			signal
 		});
+	}
+
+	/**
+	 * Lists every webhook trigger's public address: the URL a sender is
+	 * configured with, minted on the first read (or the first import) and
+	 * reused forever, so it is known before activation and unchanged by it.
+	 */
+	listWorkflowWebhooks(workflowId: string, signal?: AbortSignal): Promise<WebhookRouteResource[]> {
+		return this.#transport.request('GET', `/workflows/${encodeURIComponent(workflowId)}/webhooks`, { signal });
 	}
 
 	activateWorkflow(workflowId: string, signal?: AbortSignal): Promise<WorkflowResource> {

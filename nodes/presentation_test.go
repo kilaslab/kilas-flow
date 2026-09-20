@@ -58,3 +58,38 @@ func TestTriggerGroupIsBehaviouralNotACategoryLabel(t *testing.T) {
 		}
 	}
 }
+
+// TestEveryBuiltinCanAlwaysOutputData pins the toggle's presence in every
+// node's settings.
+//
+// The engine has honoured `alwaysOutputData` for a while, but the setting was
+// never declared, so the editor had nothing to render: the one option that makes
+// a no-rows read still answer `{}` was unreachable from the UI. Asserted over
+// the whole registry, so a node added later inherits it by construction.
+func TestEveryBuiltinCanAlwaysOutputData(t *testing.T) {
+	registry := node.NewRegistry()
+	if err := nodes.RegisterAll(registry); err != nil {
+		t.Fatalf("RegisterAll() error = %v", err)
+	}
+	for _, definition := range registry.List() {
+		// The canvas annotation is the one definition with no settings at all,
+		// and it is named rather than matched by a rule so any other node that
+		// loses its settings still fails this test: a note never runs, so a
+		// retry or output toggle on it would be a control that does nothing.
+		if definition.Type == nodes.StickyNoteNodeType {
+			if len(definition.SharedSettings) != 0 {
+				t.Errorf("%s declared settings; a note never runs", definition.Type)
+			}
+			continue
+		}
+		declared := false
+		for _, setting := range definition.SharedSettings {
+			if setting.Key == "alwaysOutputData" {
+				declared = setting.Kind == node.PropertyBoolean
+			}
+		}
+		if !declared {
+			t.Errorf("%s does not offer alwaysOutputData as a boolean setting", definition.Type)
+		}
+	}
+}

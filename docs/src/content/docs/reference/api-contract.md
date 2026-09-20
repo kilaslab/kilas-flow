@@ -38,7 +38,7 @@ Consequences:
 
 ## The operation surface
 
-The document a server serves holds 73 operations, all under `/api/v1`, in
+The document a server serves holds 74 operations, all under `/api/v1`, in
 eleven groups. The tables below are the workflow-facing core this contract was
 written around — the operations that existed when it was last revised. The
 always-current list is the [generated reference](/reference/api/), which is
@@ -49,13 +49,14 @@ tenant/account groups are documented there ([/reference/api/datastores/](/refere
 Paths, HTTP methods, and operation ids are **stable**: they change only under a
 new `/api/vN` path (see [Breaking changes](#breaking-changes)).
 
-### Workflows (13)
+### Workflows (14)
 
 | Method | Path | Operation id |
 | --- | --- | --- |
 | POST | `/workflows` | `create-workflow` |
 | GET | `/workflows` | `list-workflows` |
 | GET | `/workflows/{id}` | `get-workflow` |
+| GET | `/workflows/{id}/webhooks` | `list-workflow-webhooks` |
 | PUT | `/workflows/{id}` | `update-workflow` |
 | DELETE | `/workflows/{id}` | `delete-workflow` |
 | POST | `/workflows/{id}/run` | `run-workflow` |

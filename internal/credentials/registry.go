@@ -2,6 +2,7 @@ package credentials
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -38,6 +39,12 @@ const (
 	// It is also not the same as declaring no authentication, which still means
 	// "this credential cannot sign an HTTP request" and is still refused.
 	PlacementPath Placement = "path"
+	// PlacementCustom merges a JSON template into the request: an object with an
+	// optional `headers` object and an optional `qs` object, whose values are
+	// sent as written. It is n8n's Custom Auth shape, and it exists because one
+	// credential can legitimately inject several headers and query parameters
+	// that the single-Name placements cannot express.
+	PlacementCustom Placement = "custom"
 )
 
 // credentialPathMarker is what a node writes where a credential field goes.
@@ -222,6 +229,42 @@ func ApplyAuthentication(request *http.Request, credentialType Type, fields map[
 		query := request.URL.Query()
 		query.Set(name, expand(descriptor.Value, fields))
 		request.URL.RawQuery = query.Encode()
+	case PlacementCustom:
+		template := expand(descriptor.Value, fields)
+		var decoded map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(template), &decoded); err != nil {
+			return fmt.Errorf("credential %q holds a template that does not parse as JSON", credentialType.ID)
+		}
+		for key := range decoded {
+			if key != "headers" && key != "qs" {
+				return fmt.Errorf("credential %q holds a template with unsupported key %q; only headers and qs are sent", credentialType.ID, key)
+			}
+		}
+		headers := map[string]string{}
+		query := map[string]string{}
+		if raw, present := decoded["headers"]; present {
+			if err := json.Unmarshal(raw, &headers); err != nil {
+				return fmt.Errorf("credential %q holds a headers object that does not read as strings", credentialType.ID)
+			}
+		}
+		if raw, present := decoded["qs"]; present {
+			if err := json.Unmarshal(raw, &query); err != nil {
+				return fmt.Errorf("credential %q holds a qs object that does not read as strings", credentialType.ID)
+			}
+		}
+		if len(headers) == 0 && len(query) == 0 {
+			return fmt.Errorf("credential %q holds a template with neither headers nor qs", credentialType.ID)
+		}
+		for _, name := range sortedKeys(headers) {
+			request.Header.Set(name, headers[name])
+		}
+		if len(query) > 0 {
+			values := request.URL.Query()
+			for _, name := range sortedKeys(query) {
+				values.Set(name, query[name])
+			}
+			request.URL.RawQuery = values.Encode()
+		}
 	default:
 		return fmt.Errorf("credential type %q declares unsupported placement %q", credentialType.ID, descriptor.Placement)
 	}
@@ -240,6 +283,17 @@ func expand(template string, fields map[string]string) string {
 		result = strings.ReplaceAll(result, "{{"+key+"}}", value)
 	}
 	return result
+}
+
+// sortedKeys returns a map's keys in a stable order, so two applications of the
+// same request are identical.
+func sortedKeys(values map[string]string) []string {
+	names := make([]string, 0, len(values))
+	for name := range values {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // Fields renders a type's properties in the older flat shape.

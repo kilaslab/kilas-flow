@@ -298,8 +298,13 @@ func (handler *Handler) admit(w http.ResponseWriter, r *http.Request, binding re
 		problem(w, http.StatusForbidden, "This webhook does not accept requests from your address.")
 		return false
 	}
+	authentication, _ := binding.Parameters["authentication"].(string)
 	if status, err := handler.authenticate(r, binding); err != nil {
-		if status == http.StatusUnauthorized {
+		// The challenge belongs to basic auth alone: a header-auth or JWT
+		// caller that was refused has no browser credential prompt to answer,
+		// and advertising one would invite a retry with a scheme this endpoint
+		// does not accept.
+		if status == http.StatusUnauthorized && authentication == "basicAuth" {
 			w.Header().Set("WWW-Authenticate", `Basic realm="webhook"`)
 		}
 		problem(w, status, err.Error())
@@ -564,7 +569,7 @@ func (handler *Handler) authenticate(r *http.Request, binding repository.Webhook
 	switch authentication {
 	case "", "none":
 		return 0, nil
-	case "basicAuth", "headerAuth":
+	case "basicAuth", "headerAuth", "jwtAuth":
 	default:
 		return http.StatusInternalServerError, errors.New("The webhook authentication mode is not supported.")
 	}
@@ -597,6 +602,15 @@ func (handler *Handler) authenticate(r *http.Request, binding repository.Webhook
 		if name == "" || !equal(r.Header.Get(name), fields["value"]) {
 			return http.StatusUnauthorized, errors.New("Header authentication failed.")
 		}
+	case "jwtAuth":
+		if record.Type != "jwtAuth" {
+			return http.StatusInternalServerError, errors.New("This webhook is bound to a credential of the wrong type.")
+		}
+		claims, status, err := verifyJWT(r, fields)
+		if err != nil {
+			return status, err
+		}
+		withJWTClaims(r, claims)
 	}
 	return 0, nil
 }
@@ -700,6 +714,9 @@ func (handler *Handler) readDelivery(r *http.Request, binding repository.Webhook
 		Request: r, RawBody: raw, ContentType: contentType, Binding: binding,
 		Headers: headers, Query: query, Params: params, WebhookURL: requestURL(r),
 		Body: decodeBody(raw, contentType),
+		// A verified token's payload, when this trigger's mode put one on the
+		// request context. Empty for every other mode.
+		Claims: jwtClaims(r),
 		// A closure rather than the record: a delivery that never verifies
 		// never decrypts anything.
 		Credential: func(credentialType string) (map[string]string, error) {

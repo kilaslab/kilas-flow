@@ -42,6 +42,7 @@ const OPERATION_COVERAGE = {
 	'publish-workflow-version': 'publishWorkflowVersion',
 	'restore-workflow-version': 'restoreWorkflowVersion',
 	'list-workflow-publish-events': 'listWorkflowPublishEvents',
+	'list-workflow-webhooks': 'listWorkflowWebhooks',
 	'workflow-diagnostics': 'getWorkflowDiagnostics',
 	'list-executions': 'listExecutions',
 	'get-execution': 'getExecution',

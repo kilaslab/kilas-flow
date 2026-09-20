@@ -31,6 +31,8 @@ func httpRequestNode() node.Definition {
 			{Type: "httpBasicAuth"},
 			{Type: "httpHeaderAuth"},
 			{Type: "httpBearerAuth"},
+			{Type: "httpQueryAuth"},
+			{Type: "httpCustomAuth"},
 		},
 		Version:     workflow.V(1),
 		DisplayName: "HTTP Request",

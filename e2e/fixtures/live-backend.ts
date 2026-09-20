@@ -9,9 +9,11 @@
 // and every delivery path — auth, response modes, dedupe, oversized bodies —
 // is exercised through the same fetch the sender would use.
 //
-// Webhook URL rule: the only API reporting a minted address today is
-// POST /workflows/import (`webhooks[].url`); natively authored graphs reuse the
-// mint-then-shape flow below. GET /workflows/{id}/webhooks is FEAT-cwmw90.
+// Webhook URL rule: GET /workflows/{id}/webhooks reports every trigger's
+// minted address, before or after activation, and POST /workflows/import
+// reports the same addresses for an imported graph. Both read the same route
+// table, so a natively authored workflow no longer needs the instance SQLite to
+// learn its own URL (FEAT-cwmw90).
 import { expect } from '@playwright/test';
 
 import { readExecutionEvents, waitForExecution } from '../helpers/seed';
@@ -57,6 +59,10 @@ export interface ExecutionRecord {
 	status: string;
 	trigger: string;
 	triggerNodeId?: string;
+	// input is the shaped trigger item the run started from — the n8n webhook
+	// envelope, including the verified `jwtPayload` when the delivery was a
+	// signed JWT. It is the contract an imported workflow reads `$json` from.
+	input?: unknown;
 	nodeRuns?: ExecutionNodeRun[];
 	startedAt?: string;
 	finishedAt?: string;

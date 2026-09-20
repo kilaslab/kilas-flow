@@ -46,11 +46,12 @@ const (
 
 // Webhook authentication modes.
 //
-// jwtAuth is accepted from an import and refused at activation rather than
-// rewritten to "none": an n8n endpoint behind a JWT arrived here unauthenticated
-// and activated, which silently published a protected endpoint. Refusing to
-// activate is a visible failure an operator can act on; silently dropping the
-// check is not.
+// jwtAuth is verified by the inbound boundary from a jwtAuth credential's
+// algorithm and key material — the credential names HS/RS/PS/ES and holds the
+// secret or public key — so the mode is offered and gated exactly like the
+// other two. An n8n endpoint behind a JWT used to arrive here unauthenticated
+// and activate, which silently published a protected endpoint; a mode this
+// server can verify is what makes refusing that unnecessary.
 const (
 	WebhookAuthNone   = "none"
 	WebhookAuthBasic  = "basicAuth"
@@ -99,6 +100,7 @@ func webhookTrigger() node.Definition {
 		Credentials: []node.CredentialRequirement{
 			{Type: "httpBasicAuth"},
 			{Type: "httpHeaderAuth"},
+			{Type: "jwtAuth"},
 		},
 		Version:     workflow.V(1),
 		DisplayName: "Webhook",
@@ -158,6 +160,7 @@ func webhookTrigger() node.Definition {
 					{Label: "None", Value: WebhookAuthNone},
 					{Label: "Basic auth", Value: WebhookAuthBasic},
 					{Label: "Header auth", Value: WebhookAuthHeader},
+					{Label: "JWT auth", Value: WebhookAuthJWT},
 				},
 				Description: "An authenticated endpoint needs a credential of the matching type attached to the node " +
 					"before the workflow can be activated.",
@@ -572,7 +575,7 @@ func validateWebhookConfiguration(node workflow.Node) error {
 	authentication := textParameter(node.Parameters, "authentication")
 	switch authentication {
 	case "", WebhookAuthNone:
-	case WebhookAuthBasic, WebhookAuthHeader:
+	case WebhookAuthBasic, WebhookAuthHeader, WebhookAuthJWT:
 		// A webhook configured to authenticate but with nothing to check
 		// against used to activate and then answer 500 to every caller. Failing
 		// at activation names the problem while it can still be fixed.
@@ -580,9 +583,6 @@ func validateWebhookConfiguration(node workflow.Node) error {
 		if !hasCredential(node, required) {
 			return fmt.Errorf("this webhook authenticates with %s, so it needs a %s credential attached before it can be activated", authentication, required)
 		}
-	case WebhookAuthJWT:
-		return fmt.Errorf("n8n's jwtAuth mode is not supported yet; the imported webhook will not activate " +
-			"unauthenticated — attach an httpHeaderAuth credential and switch the mode to headerAuth")
 	default:
 		return fmt.Errorf("authentication mode is not supported")
 	}

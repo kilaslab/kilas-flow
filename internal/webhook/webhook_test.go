@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
+
 	"github.com/kilaslab/kilas-flow/internal/ai"
 	"github.com/kilaslab/kilas-flow/internal/config"
 	"github.com/kilaslab/kilas-flow/internal/credentials"
@@ -550,19 +552,127 @@ func TestWebhookConfiguredToAuthenticateWithoutACredentialIsRefusedAtActivation(
 	}
 }
 
-// A jwtAuth webhook is refused rather than quietly unauthenticated: n8n's JWT
-// mode has no verification here yet, and importing one used to activate an open
-// endpoint.
-func TestJWTWebhookIsRefusedAtActivationRatherThanSilentlyOpen(t *testing.T) {
+// A jwtAuth webhook needs a jwtAuth credential, exactly like the other two
+// modes: the mode is offered now, and an endpoint that asks for a verification
+// nothing can perform is still refused at activation rather than published
+// open.
+func TestJWTWebhookNeedsACredentialBeforeActivation(t *testing.T) {
 	h := newHarness(t)
-	stored, err := h.workflows.SaveDraft(context.Background(), h.tenant, webhookDocument("JWT", map[string]any{
+	document := webhookDocument("JWT", map[string]any{
 		"path": "jwt", "httpMethod": http.MethodPost, "responseMode": "immediate", "authentication": "jwtAuth",
-	}))
+	})
+	stored, err := h.workflows.SaveDraft(context.Background(), h.tenant, document)
 	if err != nil {
 		t.Fatalf("SaveDraft() error = %v", err)
 	}
 	if _, err := h.workflows.Activate(context.Background(), h.tenant, stored.ID, h.registry); err == nil {
-		t.Fatal("a jwtAuth webhook activated without any JWT verification existing")
+		t.Fatal("a jwtAuth webhook activated without a credential")
+	} else if !strings.Contains(err.Error(), "jwtAuth") {
+		t.Errorf("error = %v, want it to name the credential type the node needs", err)
+	}
+
+	// A credential of another type, attached under its own key, is not a
+	// jwtAuth credential: the reference the validator looks for is absent, so
+	// the endpoint remains unverifiable and stays refused.
+	header, err := h.credentials.Create(context.Background(), h.tenant, credentials.Record{
+		Name: "Wrong type", Type: "httpHeaderAuth", Fields: map[string]string{"name": "X-Api-Key", "value": "k-1"},
+	})
+	if err != nil {
+		t.Fatalf("Create() credential error = %v", err)
+	}
+	document.ID = stored.ID
+	document.Nodes[0].Credentials = map[string]string{"httpHeaderAuth": header.ID}
+	if _, err := h.workflows.SaveDraft(context.Background(), h.tenant, document); err != nil {
+		t.Fatalf("SaveDraft() error = %v", err)
+	}
+	if _, err := h.workflows.Activate(context.Background(), h.tenant, stored.ID, h.registry); err == nil {
+		t.Fatal("a jwtAuth webhook activated with a credential of another type attached")
+	}
+}
+
+func TestJWTWebhookRunsForAValidTokenAndRefusesOthers(t *testing.T) {
+	h := newHarness(t)
+	credential, err := h.credentials.Create(context.Background(), h.tenant, credentials.Record{
+		Name: "Inbound JWT", Type: "jwtAuth",
+		Fields: map[string]string{"keyType": "passphrase", "secret": "hunter2-secret", "algorithm": "HS256"},
+	})
+	if err != nil {
+		t.Fatalf("Create() credential error = %v", err)
+	}
+
+	document := webhookDocument("Armed", map[string]any{
+		"path": "jwt-armed", "httpMethod": http.MethodPost, "responseMode": "immediate", "authentication": "jwtAuth",
+	})
+	document.Nodes[0].Credentials = map[string]string{"jwtAuth": credential.ID}
+	active := h.activate(t, document)
+
+	deliver := func(target workflow.StoredWorkflow, token string) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodPost, h.url(t, target), strings.NewReader(`{"note":"hi"}`))
+		if token != "" {
+			request.Header.Set("Authorization", "Bearer "+token)
+		}
+		recorder := httptest.NewRecorder()
+		h.handler.ServeHTTP(recorder, request)
+		return recorder
+	}
+	tokenFor := func(secret string, claims jwt.MapClaims) string {
+		t.Helper()
+		signed, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(secret))
+		if err != nil {
+			t.Fatalf("SignedString() error = %v", err)
+		}
+		return signed
+	}
+
+	valid := tokenFor("hunter2-secret", jwt.MapClaims{"sub": "ada"})
+	if recorder := deliver(active, valid); recorder.Code != http.StatusOK {
+		t.Fatalf("a valid token status = %d, want 200 (body: %s)", recorder.Code, recorder.Body)
+	}
+	h.drain(t)
+	record, err := h.runtime.Get(context.Background(), h.tenant, h.lastExecution(t))
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	var item map[string]any
+	if err := json.Unmarshal(record.Input, &item); err != nil {
+		t.Fatalf("the queued payload is not an item: %v (%s)", err, record.Input)
+	}
+	// n8n's own contract: the verified payload reaches the workflow as
+	// `jwtPayload`, so an imported workflow reading `$json.jwtPayload.sub`
+	// resolves.
+	claims, ok := item["jwtPayload"].(map[string]any)
+	if !ok || claims["sub"] != "ada" {
+		t.Errorf("jwtPayload = %#v, want the token's subject", item["jwtPayload"])
+	}
+
+	refused := deliver(active, "")
+	if refused.Code != http.StatusUnauthorized {
+		t.Errorf("no token status = %d, want 401", refused.Code)
+	}
+	if challenge := refused.Header().Get("WWW-Authenticate"); challenge != "" {
+		t.Errorf("a refused JWT caller was sent the basic-auth challenge %q", challenge)
+	}
+	// The token is signed, well-formed and unexpired — with somebody else's
+	// secret. Only the credential's own secret may open the endpoint.
+	if wrong := deliver(active, tokenFor("other-secret", jwt.MapClaims{"sub": "ada"})); wrong.Code != http.StatusUnauthorized {
+		t.Errorf("a token signed with another secret = %d, want 401", wrong.Code)
+	}
+
+	// A reference under the jwtAuth key that resolves to a credential of
+	// another type is a misconfiguration: using it would mean verifying tokens
+	// with an API key.
+	header, err := h.credentials.Create(context.Background(), h.tenant, credentials.Record{
+		Name: "Wrong type", Type: "httpHeaderAuth", Fields: map[string]string{"name": "X-Api-Key", "value": "k-1"},
+	})
+	if err != nil {
+		t.Fatalf("Create() credential error = %v", err)
+	}
+	mistyped := webhookDocument("Mistyped", map[string]any{
+		"path": "jwt-mistyped", "httpMethod": http.MethodPost, "responseMode": "immediate", "authentication": "jwtAuth",
+	})
+	mistyped.Nodes[0].Credentials = map[string]string{"jwtAuth": header.ID}
+	if recorder := deliver(h.activate(t, mistyped), valid); recorder.Code != http.StatusInternalServerError {
+		t.Errorf("a jwtAuth reference to an httpHeaderAuth credential = %d, want 500", recorder.Code)
 	}
 }
 

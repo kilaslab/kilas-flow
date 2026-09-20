@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -928,6 +929,14 @@ type importedWorkflowResource struct {
 	} `json:"webhooks"`
 }
 
+// webhookRouteResource is one address the listing endpoint reports.
+type webhookRouteResource struct {
+	NodeID string `json:"nodeId"`
+	Method string `json:"method"`
+	Path   string `json:"path"`
+	URL    string `json:"url"`
+}
+
 type exportedWorkflowResource struct {
 	Format   string          `json:"format"`
 	Workflow json.RawMessage `json:"workflow"`
@@ -1097,9 +1106,69 @@ func TestImportReportsTheWebhookAddressToPasteIntoTheSender(t *testing.T) {
 	}
 }
 
-func TestAResourceLocatorSurvivesSaveReloadAndExport(t *testing.T) {
+// TestWorkflowWebhooksListMintsOnceAndKeepsTheAddress closes the gap the E2E
+// suite used to work around by reading the instance's SQLite: a natively
+// authored workflow had no API read path for its own webhook address, and only
+// an import reported one.
+func TestWorkflowWebhooksListMintsOnceAndKeepsTheAddress(t *testing.T) {
 	handler, _, _ := newWorkflowAPI(t)
 
+	created := createWorkflow(t, handler, workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion, Name: "Order receiver",
+		Nodes: []workflow.Node{{
+			ID: "trigger", Name: "Webhook", Type: nodes.WebhookNodeType, TypeVersion: workflow.V(1),
+			Parameters: map[string]any{"path": "orders", "httpMethod": http.MethodPost, "responseMode": "immediate"},
+		}},
+		Connections: []workflow.Connection{},
+		Settings:    map[string]any{},
+	})
+
+	listed := requestJSON[[]webhookRouteResource](t, handler, http.MethodGet,
+		"/api/v1/workflows/"+created.ID+"/webhooks", nil, http.StatusOK)
+	if len(listed) != 1 {
+		t.Fatalf("webhooks = %#v, want the one trigger's address", listed)
+	}
+	route := listed[0]
+	if route.NodeID != "trigger" || route.Method != http.MethodPost || route.Path != "orders" {
+		t.Errorf("route = %#v, want the trigger, its method and its path label", route)
+	}
+	if !regexp.MustCompile(`^/webhook/[0-9a-f]{32}$`).MatchString(route.URL) {
+		t.Errorf("url = %q, want an opaque 32-hex-digit route", route.URL)
+	}
+
+	// Reading is idempotent: the address reported before activation is the
+	// address that answers after it.
+	again := requestJSON[[]webhookRouteResource](t, handler, http.MethodGet,
+		"/api/v1/workflows/"+created.ID+"/webhooks", nil, http.StatusOK)
+	if again[0].URL != route.URL {
+		t.Errorf("a second read returned %q, want the same address %q", again[0].URL, route.URL)
+	}
+
+	requestJSON[workflowResource](t, handler, http.MethodPost,
+		"/api/v1/workflows/"+created.ID+"/activate", nil, http.StatusOK)
+
+	after := requestJSON[[]webhookRouteResource](t, handler, http.MethodGet,
+		"/api/v1/workflows/"+created.ID+"/webhooks", nil, http.StatusOK)
+	if after[0].URL != route.URL {
+		t.Errorf("activation changed the address to %q, want %q", after[0].URL, route.URL)
+	}
+
+	// A workflow with nothing to route answers an empty array, not null: a
+	// client iterating the body must not have to special-case its absence.
+	plain := createWorkflow(t, handler, validManualWorkflow("No trigger"))
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/workflows/"+plain.ID+"/webhooks", nil)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", recorder.Code, recorder.Body)
+	}
+	if body := strings.TrimSpace(recorder.Body.String()); body != "[]" {
+		t.Errorf("body = %q, want an empty array", body)
+	}
+}
+
+func TestAResourceLocatorSurvivesSaveReloadAndExport(t *testing.T) {
+	handler, _, _ := newWorkflowAPI(t)
 	// Every declared mode, because the whole point of storing the mode is that
 	// it comes back — a locator that lost it would render as the first mode
 	// with someone else's value in it.

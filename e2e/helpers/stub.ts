@@ -4,6 +4,12 @@ import { once } from 'node:events';
 export interface StubRequest {
 	method: string;
 	path: string;
+	// query is the raw query string, leading '?' included, so a credential that
+	// injects a parameter is observable.
+	query: string;
+	// headers is what the workflow actually sent; a credential-injected header
+	// is the observable under test.
+	headers: Record<string, string | string[] | undefined>;
 	body: string;
 }
 
@@ -33,6 +39,8 @@ export async function startStub(): Promise<StubServer> {
 			requests.push({
 				method: request.method ?? 'GET',
 				path: url.pathname,
+				query: url.search,
+				headers: { ...request.headers },
 				body: Buffer.concat(chunks).toString('utf-8')
 			});
 			if (url.pathname === '/host') {

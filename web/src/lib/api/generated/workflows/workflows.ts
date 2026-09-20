@@ -25,6 +25,7 @@ import type {
   ErrorModel,
   ListWorkflowVersionsParams,
   ListWorkflowsParams,
+  WebhookRouteResource,
   WorkflowDocumentInput,
   WorkflowResource,
   WorkflowSummary,
@@ -767,6 +768,102 @@ export function createGetWorkflowVersion<TData = Awaited<ReturnType<typeof getWo
 
   const query = createQuery(() => getGetWorkflowVersionQueryOptions(id(),
     versionId(),options?.()), queryClient) as CreateQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return query
+}
+
+
+
+
+
+
+export type listWorkflowWebhooksResponse200 = {
+  data: WebhookRouteResource[] | null
+  status: 200
+}
+
+export type listWorkflowWebhooksResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type listWorkflowWebhooksResponseSuccess = (listWorkflowWebhooksResponse200) & {
+  headers: Headers;
+};
+export type listWorkflowWebhooksResponseError = (listWorkflowWebhooksResponseDefault) & {
+  headers: Headers;
+};
+
+export type listWorkflowWebhooksResponse = (listWorkflowWebhooksResponseSuccess | listWorkflowWebhooksResponseError)
+
+export const getListWorkflowWebhooksUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/workflows/${id}/webhooks`
+}
+
+/**
+ * Returns every webhook trigger's public address. The opaque route is minted on first read and reused forever, so the URL is known before activation and unchanged by it.
+ * @summary List a workflow's webhook URLs
+ */
+export const listWorkflowWebhooks = async (id: string, options?: Parameters<typeof apiFetch>[1]): Promise<listWorkflowWebhooksResponse> => {
+
+  return apiFetch<listWorkflowWebhooksResponse>(getListWorkflowWebhooksUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListWorkflowWebhooksQueryKey = (id: string,) => {
+    return [
+    `/api/v1/workflows/${id}/webhooks`
+    ] as const;
+    }
+
+
+export const getListWorkflowWebhooksQueryOptions = <TData = Awaited<ReturnType<typeof listWorkflowWebhooks>>, TError = ErrorType<ErrorModel>>(id: string, options?: { query?:Partial<CreateQueryOptions<Awaited<ReturnType<typeof listWorkflowWebhooks>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListWorkflowWebhooksQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listWorkflowWebhooks>>> = ({ signal }) => listWorkflowWebhooks(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as CreateQueryOptions<Awaited<ReturnType<typeof listWorkflowWebhooks>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListWorkflowWebhooksQueryResult = NonNullable<Awaited<ReturnType<typeof listWorkflowWebhooks>>>
+export type ListWorkflowWebhooksQueryError = ErrorType<ErrorModel>
+
+
+/**
+ * @summary List a workflow's webhook URLs
+ */
+
+export function createListWorkflowWebhooks<TData = Awaited<ReturnType<typeof listWorkflowWebhooks>>, TError = ErrorType<ErrorModel>>(
+ id: () =>  string, options?: () => { query?:Partial<CreateQueryOptions<Awaited<ReturnType<typeof listWorkflowWebhooks>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: () => QueryClient
+ ): CreateQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+
+
+  const query = createQuery(() => getListWorkflowWebhooksQueryOptions(id(),options?.()), queryClient) as CreateQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 
   return query
 }

@@ -696,6 +696,7 @@ export interface ExecutionNodeRunResource {
   input?: unknown;
   nodeId: string;
   output?: unknown;
+  response?: unknown;
   /** The Nth time this node ran in the execution, counting from zero. Distinct from attempt, which counts retries of one run. */
   runIndex: number;
   sequence: number;
@@ -5694,4 +5695,55 @@ const res = await fetch(getRestoreWorkflowVersionUrl(id,versionId),
 
   const data: restoreWorkflowVersionResponse['data'] = body ? JSON.parse(body) : {}
   return { data, status: res.status, headers: res.headers } as restoreWorkflowVersionResponse
+}
+
+
+
+export type listWorkflowWebhooksResponse200 = {
+  data: WebhookRouteResource[] | null
+  status: 200
+}
+
+export type listWorkflowWebhooksResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type listWorkflowWebhooksResponseSuccess = (listWorkflowWebhooksResponse200) & {
+  headers: Headers;
+};
+export type listWorkflowWebhooksResponseError = (listWorkflowWebhooksResponseDefault) & {
+  headers: Headers;
+};
+
+export type listWorkflowWebhooksResponse = (listWorkflowWebhooksResponseSuccess | listWorkflowWebhooksResponseError)
+
+export const getListWorkflowWebhooksUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/workflows/${id}/webhooks`
+}
+
+/**
+ * Returns every webhook trigger's public address. The opaque route is minted on first read and reused forever, so the URL is known before activation and unchanged by it.
+ * @summary List a workflow's webhook URLs
+ */
+export const listWorkflowWebhooks = async (id: string, options?: RequestInit): Promise<listWorkflowWebhooksResponse> => {
+
+  const res = await fetch(getListWorkflowWebhooksUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: listWorkflowWebhooksResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as listWorkflowWebhooksResponse
 }

@@ -71,6 +71,27 @@ Responses:
 
 Embed: Allow with `workflow:read` — on the session’s workflow only.
 
+## List a workflow's webhook URLs (`list-workflow-webhooks`)
+
+`GET /api/v1/workflows/{id}/webhooks`
+
+Returns every webhook trigger's public address. The opaque route is minted on first read and reused forever, so the URL is known before activation and unchanged by it.
+
+Parameters:
+
+| Name | In | Required | Type | Description |
+| --- | --- | --- | --- | --- |
+| `id` | path | yes | string | Workflow identifier |
+
+Responses:
+
+| Status | Description | Body |
+| --- | --- | --- |
+| `200` | OK | `application/json` — `array or null` |
+| `default` | Error | `application/problem+json` |
+
+Embed: Allow with `workflow:read` — on the session’s workflow only.
+
 ## Save a workflow draft (`update-workflow`)
 
 `PUT /api/v1/workflows/{id}`

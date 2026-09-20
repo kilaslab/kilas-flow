@@ -169,6 +169,45 @@ func TestApplyAttachesAuthenticationToARequest(t *testing.T) {
 	}
 }
 
+func TestQueryAuthPlacesItsParameter(t *testing.T) {
+	t.Parallel()
+
+	request, _ := http.NewRequest(http.MethodGet, "https://api.test/x?a=1", nil)
+	if err := credentials.Apply(request, "httpQueryAuth", map[string]string{"name": "api_key", "value": "k-1"}); err != nil {
+		t.Fatalf("Apply() query error = %v", err)
+	}
+	if got := request.URL.RawQuery; got != "a=1&api_key=k-1" {
+		t.Errorf("query = %q, want %q", got, "a=1&api_key=k-1")
+	}
+}
+
+func TestCustomAuthAppliesItsTemplate(t *testing.T) {
+	t.Parallel()
+
+	request, _ := http.NewRequest(http.MethodGet, "https://api.test/x", nil)
+	template := `{"headers":{"X-Api-Key":"k-2"},"qs":{"tenant":"acme"}}`
+	if err := credentials.Apply(request, "httpCustomAuth", map[string]string{"json": template}); err != nil {
+		t.Fatalf("Apply() custom error = %v", err)
+	}
+	if got := request.Header.Get("X-Api-Key"); got != "k-2" {
+		t.Errorf("custom header = %q, want %q", got, "k-2")
+	}
+	if got := request.URL.Query().Get("tenant"); got != "acme" {
+		t.Errorf("custom query = %q, want %q", got, "acme")
+	}
+
+	empty, _ := http.NewRequest(http.MethodGet, "https://api.test/x", nil)
+	if err := credentials.Apply(empty, "httpCustomAuth", map[string]string{"json": `{"headers":{}}`}); err == nil {
+		t.Error("a template with neither headers nor qs was accepted")
+	}
+
+	unsupported, _ := http.NewRequest(http.MethodGet, "https://api.test/x", nil)
+	err := credentials.Apply(unsupported, "httpCustomAuth", map[string]string{"json": `{"body":{"x":"1"}}`})
+	if err == nil || !strings.Contains(err.Error(), "body") {
+		t.Errorf("a template naming an unsupported key = %v, want an error naming body", err)
+	}
+}
+
 func TestAllowsHostScopesACredentialToItsDomains(t *testing.T) {
 	t.Parallel()
 
@@ -251,6 +290,9 @@ func TestEveryStoredCredentialTypeStillResolves(t *testing.T) {
 		"httpBasicAuth":  {"user", "password"},
 		"httpHeaderAuth": {"name", "value"},
 		"httpBearerAuth": {"token"},
+		"jwtAuth":        {"keyType", "secret", "publicKey", "privateKey", "algorithm"},
+		"httpQueryAuth":  {"name", "value"},
+		"httpCustomAuth": {"json"},
 		"postgres":       {"host", "port", "database", "user", "password", "sslMode"},
 		"mysql":          {"host", "port", "database", "user", "password", "tls"},
 		"sqlite":         {"path"},

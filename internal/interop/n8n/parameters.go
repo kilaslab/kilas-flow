@@ -1894,8 +1894,7 @@ func webhookToKilas(node Node) (map[string]any, []Unsupported) {
 		// "unauthenticated" is an endpoint somebody will leave open.
 		parameters["authentication"] = "jwtAuth"
 		issues = append(issues, Unsupported{
-			Reason: "this Webhook used n8n JWT auth. Attach the KilasFlow credential that verifies the " +
-				"same tokens before activating the workflow.",
+			Reason: "this Webhook used n8n JWT auth. Attach a KilasFlow jwtAuth credential (Key Type Passphrase or PEM Key, with the matching algorithm) before activating the workflow.",
 		})
 	default:
 		parameters["authentication"] = "none"

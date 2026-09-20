@@ -44,6 +44,10 @@ type Delivery struct {
 	WebhookURL string
 	// Body is the decoded body: a map or slice for JSON, a string otherwise.
 	Body any
+	// Claims is the verified JWT payload this delivery presented, when its
+	// trigger authenticated with jwtAuth. n8n puts the same value on the item as
+	// `jwtPayload`.
+	Claims map[string]any
 	// Credential resolves the credential the binding names, by type.
 	//
 	// A verifier needs it: Telegram's per-delivery secret is derived from the
@@ -102,7 +106,7 @@ func (shape Shape) Apply(delivery Delivery) map[string]any {
 			// failing on an undefined root.
 			params = map[string]any{}
 		}
-		return map[string]any{
+		item := map[string]any{
 			"body":    delivery.Body,
 			"headers": delivery.Headers,
 			"params":  params,
@@ -115,6 +119,15 @@ func (shape Shape) Apply(delivery Delivery) map[string]any {
 			"webhookUrl":    delivery.WebhookURL,
 			"executionMode": ExecutionModeProduction,
 		}
+		// n8n puts the verified token on the item as `jwtPayload`, and an
+		// imported workflow reads it there — `$json.jwtPayload.sub`, usually.
+		// The key is absent, not empty, when no token was verified: a workflow
+		// branching on its presence must see the difference between "no JWT"
+		// and "a JWT with no claims".
+		if len(delivery.Claims) > 0 {
+			item["jwtPayload"] = delivery.Claims
+		}
+		return item
 	case ShapeFormSubmission:
 		if body, ok := delivery.Body.(map[string]any); ok {
 			item := make(map[string]any, len(body))

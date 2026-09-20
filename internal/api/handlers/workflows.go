@@ -275,16 +275,20 @@ type executionRequestOutput struct {
 // ExecutionNodeRunResource is the externally inspectable trace of one node
 // attempt. Payloads were already redacted at the repository boundary.
 type ExecutionNodeRunResource struct {
-	NodeID     string           `json:"nodeId"`
-	Attempt    int              `json:"attempt"`
-	RunIndex   int              `json:"runIndex" doc:"The Nth time this node ran in the execution, counting from zero. Distinct from attempt, which counts retries of one run."`
-	Sequence   int              `json:"sequence"`
-	Status     execution.Status `json:"status"`
-	Input      json.RawMessage  `json:"input,omitempty"`
-	Output     json.RawMessage  `json:"output,omitempty"`
-	Error      json.RawMessage  `json:"error,omitempty"`
-	StartedAt  time.Time        `json:"startedAt"`
-	FinishedAt *time.Time       `json:"finishedAt,omitempty"`
+	NodeID   string           `json:"nodeId"`
+	Attempt  int              `json:"attempt"`
+	RunIndex int              `json:"runIndex" doc:"The Nth time this node ran in the execution, counting from zero. Distinct from attempt, which counts retries of one run."`
+	Sequence int              `json:"sequence"`
+	Status   execution.Status `json:"status"`
+	Input    json.RawMessage  `json:"input,omitempty"`
+	Output   json.RawMessage  `json:"output,omitempty"`
+	Error    json.RawMessage  `json:"error,omitempty"`
+	// Response is the HTTP answer a Respond to Webhook node produced for a
+	// waiting caller, persisted with the run so an inspector — or a boundary in
+	// another process — can read what the caller received.
+	Response   json.RawMessage `json:"response,omitempty"`
+	StartedAt  time.Time       `json:"startedAt"`
+	FinishedAt *time.Time      `json:"finishedAt,omitempty"`
 }
 
 // ExecutionResource surfaces the durable execution state, result, structured
@@ -341,6 +345,12 @@ func (handler *Workflows) Register(api huma.API) {
 		OperationID: "get-workflow", Method: http.MethodGet, Path: "/workflows/{id}",
 		Summary: "Get a workflow", Description: "Returns the current canonical document and lifecycle metadata.", Tags: []string{"Workflows"},
 	}, handler.Get)
+	huma.Register(api, huma.Operation{
+		OperationID: "list-workflow-webhooks", Method: http.MethodGet, Path: "/workflows/{id}/webhooks",
+		Summary:     "List a workflow's webhook URLs",
+		Description: "Returns every webhook trigger's public address. The opaque route is minted on first read and reused forever, so the URL is known before activation and unchanged by it.",
+		Tags:        []string{"Workflows"},
+	}, handler.ListWebhooks)
 	huma.Register(api, huma.Operation{
 		OperationID: "get-workflow-version", Method: http.MethodGet, Path: "/workflows/{id}/versions/{versionId}",
 		Summary: "Get one workflow revision", Description: "Returns an immutable revision by ID, so an execution inspector can replay the exact graph that ran.", Tags: []string{"Workflows"},
@@ -440,6 +450,45 @@ func (handler *Workflows) Get(ctx context.Context, input *workflowPathInput) (*w
 		return nil, handler.problem(ctx, err)
 	}
 	return &workflowOutput{Body: workflowResource(stored)}, nil
+}
+
+type workflowWebhookListOutput struct {
+	Body []WebhookRouteResource
+}
+
+// ListWebhooks mints — or reads back — each trigger's public route.
+//
+// Minting here rather than only at activation reuses repository.WebhookRouteMinter
+// exactly as POST /workflows/import does (internal/api/handlers/interop.go:214):
+// routes are keyed by (tenant, workflow, node) and reused forever, so a GET that
+// mints once is idempotent and the URL it reports is the URL that will answer.
+func (handler *Workflows) ListWebhooks(ctx context.Context, input *workflowPathInput) (*workflowWebhookListOutput, error) {
+	if err := handler.available(false); err != nil {
+		return nil, err
+	}
+	tenant := handler.tenant(ctx)
+	stored, err := handler.workflows.Get(ctx, tenant, input.ID)
+	if err != nil {
+		return nil, handler.problem(ctx, err)
+	}
+	minter, ok := handler.workflows.(repository.WebhookRouteMinter)
+	if !ok {
+		return nil, huma.Error503ServiceUnavailable("workflow storage cannot resolve webhook addresses")
+	}
+	bindings, err := minter.EnsureWebhookRoutes(ctx, tenant, stored.ID, stored.LatestVersion.Document)
+	if err != nil {
+		return nil, handler.problem(ctx, err)
+	}
+	// An empty array rather than null: a workflow with no trigger has an empty
+	// list of addresses, not an absent one.
+	resources := make([]WebhookRouteResource, 0, len(bindings))
+	for _, binding := range bindings {
+		resources = append(resources, WebhookRouteResource{
+			NodeID: binding.NodeID, Method: binding.Method, Path: binding.Path,
+			URL: "/webhook/" + binding.Route,
+		})
+	}
+	return &workflowWebhookListOutput{Body: resources}, nil
 }
 
 // GetVersion returns one immutable revision by ID.
@@ -865,6 +914,7 @@ func executionResource(record execution.Record) ExecutionResource {
 			NodeID: nodeRun.NodeID, Attempt: nodeRun.Attempt, RunIndex: nodeRun.RunIndex, Sequence: nodeRun.Sequence,
 			Status: nodeRun.Status, Input: execution.Redact(nodeRun.Input),
 			Output: execution.Redact(nodeRun.Output), Error: execution.Redact(nodeRun.Error),
+			Response:  execution.Redact(nodeRun.Response),
 			StartedAt: nodeRun.StartedAt, FinishedAt: nodeRun.FinishedAt,
 		})
 	}

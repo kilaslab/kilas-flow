@@ -6,6 +6,8 @@
 // Every case mints its own workflow from the pinned webhook-echo sample
 // (mintWebhookWorkflows) and reshapes the trigger node in place, so the minted
 // route survives and the test is the caller a real sender would be.
+import { createHmac } from 'node:crypto';
+
 import { test, expect } from '../fixtures';
 import { deliver, liveApi, mintWebhookWorkflows, waitForTriggerExecution, type ExecutionPage, type WorkflowResource } from '../fixtures/live-backend';
 import { createCredential } from '../helpers/seed';
@@ -82,8 +84,34 @@ test('an endpoint that cannot route is refused at activation, and deactivation u
 		await liveApi(baseURL, 'POST', `/workflows/${created.id}/activate`, {}, 422);
 	}
 
-	// n8n's jwtAuth has no verifier here, so the import refuses to activate
-	// rather than silently publishing an open endpoint.
+	// A deactivated workflow keeps its route reserved but answers 404, and a
+	// refused delivery is not an execution.
+	const [minted] = await mintWebhookWorkflows(baseURL, 1, uniqueName('webhook matrix'));
+	const before = await executionIds(baseURL, minted.workflowId);
+	const deactivated = await liveApi<WorkflowResource>(baseURL, 'POST', `/workflows/${minted.workflowId}/deactivate`);
+	expect(deactivated.active).toBe(false);
+	const refused = await deliver(baseURL, minted.url, { json: { text: 'nobody home' } });
+	expect(refused.status).toBe(404);
+	expect(refused.text).toContain('No active workflow is bound');
+	expect(await executionIds(baseURL, minted.workflowId)).toEqual(before);
+});
+
+// hs256Token signs a token the way an n8n JWT credential's holder would.
+// Node's own crypto is the signer, so the suite needs no JWT dependency to be
+// the caller.
+function hs256Token(secret: string, claims: JsonObject): string {
+	const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
+	const payload = Buffer.from(JSON.stringify(claims)).toString('base64url');
+	const signature = createHmac('sha256', secret).update(`${header}.${payload}`).digest('base64url');
+	return `${header}.${payload}.${signature}`;
+}
+
+test('jwtAuth verifies deliveries from its credential and refuses every other caller', async ({ server }) => {
+	const baseURL = server.baseURL;
+
+	// n8n's jwtAuth arrives with the mode intact and refuses to activate until a
+	// credential that can verify it is attached — a mode this server cannot
+	// check is never silently published open.
 	const imported = await importN8nTemplate(
 		baseURL,
 		{
@@ -106,16 +134,69 @@ test('an endpoint that cannot route is refused at activation, and deactivation u
 	);
 	await liveApi(baseURL, 'POST', `/workflows/${imported.workflow.id}/activate`, {}, 422);
 
-	// A deactivated workflow keeps its route reserved but answers 404, and a
-	// refused delivery is not an execution.
-	const [minted] = await mintWebhookWorkflows(baseURL, 1, uniqueName('webhook matrix'));
-	const before = await executionIds(baseURL, minted.workflowId);
-	const deactivated = await liveApi<WorkflowResource>(baseURL, 'POST', `/workflows/${minted.workflowId}/deactivate`);
-	expect(deactivated.active).toBe(false);
-	const refused = await deliver(baseURL, minted.url, { json: { text: 'nobody home' } });
-	expect(refused.status).toBe(404);
-	expect(refused.text).toContain('No active workflow is bound');
-	expect(await executionIds(baseURL, minted.workflowId)).toEqual(before);
+	const credential = await createCredential(baseURL, {
+		name: uniqueName('webhook jwt'),
+		type: 'jwtAuth',
+		fields: { keyType: 'passphrase', secret: 'hunter2-secret', algorithm: 'HS256' }
+	});
+	const document = await fetchDocument(baseURL, imported.workflow.id);
+	const webhook = document.nodes.find((node) => node.type === 'kilasflow.webhook');
+	if (!webhook) throw new Error('the imported workflow carries no webhook trigger');
+	webhook.credentials = { jwtAuth: credential.id };
+	await saveDocument(baseURL, imported.workflow.id, document);
+	await activateWorkflow(baseURL, imported.workflow.id);
+
+	// The minted route survives the re-save, which is why the sender's
+	// configured address is the one that answers.
+	const url = imported.webhooks[0]?.url ?? '';
+	expect(url).toMatch(/^\/webhook\/[0-9a-f]{32}$/);
+
+	const before = await executionIds(baseURL, imported.workflow.id);
+
+	const anonymous = await deliver(baseURL, url, { json: { text: 'no token' } });
+	expect(anonymous.status).toBe(401);
+	// The challenge is basic auth's, and this endpoint's scheme is not: a JWT
+	// caller has no browser prompt to answer.
+	expect(anonymous.headers['www-authenticate']).toBeUndefined();
+
+	const forged = await deliver(baseURL, url, {
+		headers: { authorization: `Bearer ${hs256Token('not-the-secret', { sub: 'mallory' })}` },
+		json: { text: 'forged' }
+	});
+	expect(forged.status).toBe(401);
+
+	const expired = await deliver(baseURL, url, {
+		headers: {
+			authorization: `Bearer ${hs256Token('hunter2-secret', {
+				sub: 'ada',
+				exp: Math.floor(Date.now() / 1000) - 60
+			})}`
+		},
+		json: { text: 'stale' }
+	});
+	expect(expired.status).toBe(401);
+	// None of the three was queued: verification happens at the HTTP boundary,
+	// before an execution exists.
+	expect(await executionIds(baseURL, imported.workflow.id)).toEqual(before);
+
+	const signed = await deliver(baseURL, url, {
+		headers: {
+			authorization: `Bearer ${hs256Token('hunter2-secret', {
+				sub: 'ada',
+				exp: Math.floor(Date.now() / 1000) + 300
+			})}`
+		},
+		json: { text: 'signed' }
+	});
+	expect(signed.status).toBeLessThan(300);
+
+	const record = await waitForTriggerExecution(baseURL, imported.workflow.id, 'webhook', before);
+	expect(record.status).toBe('succeeded');
+	// n8n's own contract: the verified payload reaches the workflow as
+	// `jwtPayload`, so an imported graph reading `$json.jwtPayload.sub` sees who
+	// the caller is.
+	const input = jsonObject(record.input, 'the verified delivery item');
+	expect(jsonObject(input.jwtPayload, 'the item jwtPayload').sub).toBe('ada');
 });
 
 test('basic auth refuses a nameless caller and admits the credential holder', async ({ server }) => {
@@ -207,8 +288,10 @@ test('response modes answer the caller immediately, from the last node, or from 
 
 	// responseNode: the Respond node's own status and body answer the caller
 	// while the run continues (awaitResponse on the live event). The durable
-	// copy of that response is what a split api+worker deployment reads back;
-	// it is asserted at the store level in Go (BUG-cq4yk3), not exposed here.
+	// copy of that answer is what a boundary in another process reads — the
+	// cross-process relay carries identifiers, not data — so it is asserted
+	// through GET /executions/{id}, which is the whole point of persisting it
+	// (BUG-cq4yk3).
 	const [responseNode] = await mintWebhookWorkflows(baseURL, 1, uniqueName('webhook respond'));
 	await reshapeWebhook(baseURL, responseNode.workflowId, { responseMode: 'responseNode' });
 	const document2 = await fetchDocument(baseURL, responseNode.workflowId);
@@ -230,7 +313,11 @@ test('response modes answer the caller immediately, from the last node, or from 
 	expect(shaped.status).toBe(202);
 	expect(jsonObject(shaped.json, 'responseNode body').greeting).toBe('shaped ack');
 	const record = await waitForTriggerExecution(baseURL, responseNode.workflowId, 'webhook', before);
-	expect(record.nodeRuns?.find((run) => run.nodeId === respond2.id)?.status).toBe('succeeded');
+	const respondRun = record.nodeRuns?.find((run) => run.nodeId === respond2.id);
+	expect(respondRun?.status).toBe('succeeded');
+	const durable = jsonObject(respondRun?.response, 'the durable Respond answer');
+	expect(durable.statusCode).toBe(202);
+	expect(jsonObject(JSON.parse(String(durable.body)), 'the durable answer body').greeting).toBe('shaped ack');
 });
 
 test('a repeated delivery with the same identifier runs the workflow once', async ({ server }) => {
