@@ -1,7 +1,7 @@
 ---
 id: BUG-277a2m
 title: Simple Memory sessionKey evaluated before main chain; per-item/upstream refs fail
-status: doing
+status: testing
 priority: high
 labels:
     - ai
@@ -10,7 +10,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:09Z"
-updated: "2026-09-20T00:32:57Z"
+updated: "2026-09-20T00:48:14Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -45,3 +45,10 @@ Fix: the memory descriptor no longer resolves anything. `executeMemory` emits `{
 This makes `{{ $json.sessionId }}`, `{{ $('Trigger').item.json.sessionId }}` and any other upstream reference resolve against the item the agent is answering, and gives each item of a batch its own conversation.
 
 Proof (scoped): `go test ./nodes/ -run 'TestMemorySessionKey|TestMemoryCustomAndLegacy' -count=1` — per-item batch yields `alice__Memory` and `bob__Memory`; `$('Trigger').item.json.sessionId` yields `from-trigger`; customKey and the legacy `sessionId` key are unchanged; the descriptor carries the unresolved expression.
+**Commits**: f246ea9 (internal/ai: memory window, loop, transport), 047b8d1 (nodes/ai.go: tools, memory key, chain, vision, retries). Both land every ticket in this batch because `nodes/ai.go` and `internal/ai/agent.go` are shared by all five.
+
+**Scoped proof (final, tree at 047b8d1)**:
+- `go test ./internal/ai/ -count=1` → ok
+- `go test ./nodes/ -run 'TestAI|TestAgent|TestMemory|TestChain|TestHTTPTool|TestCalculator|TestChatModel|TestAnUnset|TestStreamed|TestReturnIntermediate|TestToolName|TestDuplicate' -count=1` → ok
+
+**Known red, not mine**: `go test ./nodes/ -count=1` also runs `TestEveryAttachedToolReachesTheAgentInAStableOrder`, which fails with `node "AI Agent": connect an OpenAI Chat Model to the model port`. Cause is `internal/engine/runner.go` `push()`/`next()`: a pending invocation built by `push` carries only the main-port items, so a node started by a branch loses its typed ports (model/memory/tools) — the fallback path merges them via `nodeInput`, the pushed path does not. Reported to EngineFlow; the compiled IR is correct (verified: the `ai_languageModel` edge is present).

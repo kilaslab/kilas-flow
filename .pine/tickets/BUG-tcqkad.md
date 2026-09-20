@@ -1,7 +1,7 @@
 ---
 id: BUG-tcqkad
 title: 'AI agent loop defects: parser+memory 400, chain shape/schema, timeout, vision, retries'
-status: doing
+status: testing
 priority: high
 labels:
     - ai
@@ -10,7 +10,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:09Z"
-updated: "2026-09-20T00:32:57Z"
+updated: "2026-09-20T00:48:14Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -177,3 +177,10 @@ Landed in this pass (all in `nodes/ai.go` + `internal/ai/*`):
 Proof (scoped): `go test ./internal/ai/ -count=1` (all pass, including the new retry-pacing, Retry-After, per-request-timeout and content-parts tests) and `go test ./nodes/ -run 'TestChain|TestAgentSendsTheItemsImages|TestChatModelNode|TestAnUnsetRetryOption|TestCalculator|TestHTTPTool' -count=1`.
 
 Not in my slice (owned elsewhere, reported to the owner): the importer's `workflowInputs.value` mapping, the `<base>Tool` variant mapping, `contextWindowLength -> maxMessages` (ImporterTail); the agent log in the executions UI and the execution event history (EngineWaits/FrontendCore2).
+**Commits**: f246ea9 (internal/ai: memory window, loop, transport), 047b8d1 (nodes/ai.go: tools, memory key, chain, vision, retries). Both land every ticket in this batch because `nodes/ai.go` and `internal/ai/agent.go` are shared by all five.
+
+**Scoped proof (final, tree at 047b8d1)**:
+- `go test ./internal/ai/ -count=1` → ok
+- `go test ./nodes/ -run 'TestAI|TestAgent|TestMemory|TestChain|TestHTTPTool|TestCalculator|TestChatModel|TestAnUnset|TestStreamed|TestReturnIntermediate|TestToolName|TestDuplicate' -count=1` → ok
+
+**Known red, not mine**: `go test ./nodes/ -count=1` also runs `TestEveryAttachedToolReachesTheAgentInAStableOrder`, which fails with `node "AI Agent": connect an OpenAI Chat Model to the model port`. Cause is `internal/engine/runner.go` `push()`/`next()`: a pending invocation built by `push` carries only the main-port items, so a node started by a branch loses its typed ports (model/memory/tools) — the fallback path merges them via `nodeInput`, the pushed path does not. Reported to EngineFlow; the compiled IR is correct (verified: the `ai_languageModel` edge is present).
