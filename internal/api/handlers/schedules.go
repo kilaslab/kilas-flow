@@ -65,7 +65,19 @@ type createdScheduleOutput struct {
 	Body     ScheduleResource
 }
 
-type scheduleListOutput struct{ Body []ScheduleResource }
+// listSchedulesInput is one page request. The bounds match the repository's own
+// clamp so an out-of-range value is a schema error at the edge.
+type listSchedulesInput struct {
+	Limit  int    `query:"limit" minimum:"1" maximum:"500" doc:"Maximum schedules to return (default 100)"`
+	Cursor string `query:"cursor" doc:"Opaque cursor from the previous page's X-Next-Cursor header"`
+}
+
+type scheduleListOutput struct {
+	// NextCursor is empty on the last page. It is a header so the body stays
+	// the bare array existing clients read.
+	NextCursor string `header:"X-Next-Cursor" doc:"Cursor for the next page; empty when there is none"`
+	Body       []ScheduleResource
+}
 
 type deletedScheduleOutput struct {
 	Status int `status:"204"`
@@ -75,7 +87,7 @@ type deletedScheduleOutput struct {
 func (handler *Schedules) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "list-schedules", Method: http.MethodGet, Path: "/schedules",
-		Summary: "List schedules", Description: "Returns every cron schedule in the workspace.", Tags: []string{"Schedules"},
+		Summary: "List schedules", Description: "Returns one page of cron schedules, oldest first. The next page's cursor is in the X-Next-Cursor response header, empty on the last page.", Tags: []string{"Schedules"},
 	}, handler.List)
 	huma.Register(api, huma.Operation{
 		OperationID: "create-schedule", Method: http.MethodPost, Path: "/schedules", DefaultStatus: http.StatusCreated,
@@ -91,20 +103,27 @@ func (handler *Schedules) Register(api huma.API) {
 	}, handler.Delete)
 }
 
-// List returns every schedule in the tenant.
-func (handler *Schedules) List(ctx context.Context, _ *struct{}) (*scheduleListOutput, error) {
+// List returns one page of the tenant's schedules, oldest first.
+func (handler *Schedules) List(ctx context.Context, input *listSchedulesInput) (*scheduleListOutput, error) {
 	if handler.store == nil {
 		return nil, huma.Error503ServiceUnavailable("schedules unavailable")
 	}
-	schedules, err := handler.store.List(ctx, handler.tenants.Resolve(ctx))
+	page, err := handler.store.ListPage(ctx, handler.tenants.Resolve(ctx), repository.ScheduleFilter{
+		Limit: input.Limit, Cursor: input.Cursor,
+	})
+	// A cursor the client did not receive from this API is a bad request, not a
+	// server fault, so it must not be reported as a 500.
+	if errors.Is(err, repository.ErrInvalidCursor) {
+		return nil, huma.Error400BadRequest("schedule cursor is invalid")
+	}
 	if err != nil {
 		return nil, handler.problem(err)
 	}
-	resources := make([]ScheduleResource, 0, len(schedules))
-	for _, schedule := range schedules {
+	resources := make([]ScheduleResource, 0, len(page.Schedules))
+	for _, schedule := range page.Schedules {
 		resources = append(resources, scheduleResource(schedule))
 	}
-	return &scheduleListOutput{Body: resources}, nil
+	return &scheduleListOutput{Body: resources, NextCursor: page.NextCursor}, nil
 }
 
 // Create stores a schedule and computes its first due time.

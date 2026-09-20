@@ -72,8 +72,19 @@ type createdDatastoreOutput struct {
 	Body     DatastoreResource
 }
 
+// listDatastoresInput is one page request for the catalogue. The bounds match
+// the engine's own clamp, so an out-of-range value is refused at the edge with
+// a schema error rather than clamped behind the caller's back.
+type listDatastoresInput struct {
+	Limit  int    `query:"limit" minimum:"1" maximum:"500" doc:"Maximum datastores to return (default 100)"`
+	Cursor string `query:"cursor" doc:"Opaque cursor from the previous page's X-Next-Cursor header"`
+}
+
 type datastoreListOutput struct {
-	Body struct {
+	// NextCursor is empty on the last page. It rides in a header so the body
+	// keeps the object shape the dashboard already reads.
+	NextCursor string `header:"X-Next-Cursor" doc:"Cursor for the next page; empty when there is none"`
+	Body       struct {
 		Items []DatastoreResource `json:"items"`
 	}
 }
@@ -202,7 +213,7 @@ type upsertRowOutput struct {
 func (handler *Datastores) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "list-datastores", Method: http.MethodGet, Path: "/datastores",
-		Summary: "List datastores", Description: "Returns every data table in the workspace.", Tags: []string{"Datastores"},
+		Summary: "List datastores", Description: "Returns one page of data tables, in name order. The next page's cursor is in the X-Next-Cursor response header, empty on the last page.", Tags: []string{"Datastores"},
 	}, handler.List)
 	huma.Register(api, huma.Operation{
 		OperationID: "create-datastore", Method: http.MethodPost, Path: "/datastores", DefaultStatus: http.StatusCreated,
@@ -263,20 +274,22 @@ func (handler *Datastores) Register(api huma.API) {
 	handler.registerDatastoreTransfer(api)
 }
 
-// List returns every datastore in the tenant.
-func (handler *Datastores) List(ctx context.Context, _ *struct{}) (*datastoreListOutput, error) {
+// List returns one page of the tenant's datastores, in name order.
+func (handler *Datastores) List(ctx context.Context, input *listDatastoresInput) (*datastoreListOutput, error) {
 	if handler.store == nil {
 		return nil, huma.Error503ServiceUnavailable("datastore storage unavailable")
 	}
-	definitions, err := handler.store.ListDatastores(ctx, handler.tenants.Resolve(ctx).ID)
+	page, err := handler.store.ListDatastoresPage(ctx, handler.tenants.Resolve(ctx).ID, datastore.DatastoreQuery{
+		Limit: input.Limit, Cursor: input.Cursor,
+	})
 	if err != nil {
 		return nil, handler.problem(err)
 	}
-	items := make([]DatastoreResource, 0, len(definitions))
-	for _, definition := range definitions {
+	items := make([]DatastoreResource, 0, len(page.Datastores))
+	for _, definition := range page.Datastores {
 		items = append(items, datastoreResource(definition))
 	}
-	out := &datastoreListOutput{}
+	out := &datastoreListOutput{NextCursor: page.NextCursor}
 	out.Body.Items = items
 	return out, nil
 }
@@ -602,6 +615,9 @@ func (handler *Datastores) problem(err error) error {
 	}
 	if errors.Is(err, datastore.ErrInvalidRowCursor) {
 		return huma.Error400BadRequest("row cursor is invalid")
+	}
+	if errors.Is(err, datastore.ErrInvalidDatastoreCursor) {
+		return huma.Error400BadRequest("datastore cursor is invalid")
 	}
 	return huma.Error422UnprocessableEntity(err.Error())
 }
