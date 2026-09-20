@@ -430,6 +430,16 @@ func TestAdminOperatorProvisionsATenantUserAndKey(t *testing.T) {
 		t.Errorf("Location = %q, want %q", created.Location, adminTestPrefix+"/tenants/acme")
 	}
 
+	// Reading it back is what the create response's Location points at, and the
+	// count it reports is the one the operator sees in the listing.
+	read, err := handler.GetTenant(ctx, &getTenantInput{ID: "acme"})
+	if err != nil {
+		t.Fatalf("GetTenant() error = %v", err)
+	}
+	if read.Body.ID != "acme" || read.Body.UserCount != 0 {
+		t.Errorf("GetTenant() = %#v, want acme with no accounts yet", read.Body)
+	}
+
 	userInput := &createTenantUserInput{ID: "acme"}
 	userInput.Body.Email = "owner@acme.example"
 	userInput.Body.Name = "Acme Owner"

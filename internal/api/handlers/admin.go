@@ -485,19 +485,22 @@ func (handler *Admin) setDisabled(ctx context.Context, input *setUserDisabledInp
 }
 
 // tenantSummary reads one tenant together with its account count.
+//
+// It goes through the listing rather than a GetTenant plus a count of its own:
+// the count behind the listing is one grouped query for every tenant, where a
+// per-tenant count would either load every account row or want a second store
+// method doing the same aggregation for one ID.
 func (handler *Admin) tenantSummary(ctx context.Context, id string) (repository.TenantSummary, error) {
-	tenant, err := handler.store.GetTenant(ctx, id)
+	summaries, err := handler.store.ListTenants(ctx)
 	if err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
-			return repository.TenantSummary{}, huma.Error404NotFound("tenant not found")
-		}
 		return repository.TenantSummary{}, serverProblem(ctx, "could not read the tenant", err)
 	}
-	users, err := handler.store.ListUsers(ctx, repository.TenantScope{ID: id})
-	if err != nil {
-		return repository.TenantSummary{}, serverProblem(ctx, "could not count the tenant's accounts", err)
+	for _, summary := range summaries {
+		if summary.ID == id {
+			return summary, nil
+		}
 	}
-	return repository.TenantSummary{Tenant: tenant, UserCount: int64(len(users))}, nil
+	return repository.TenantSummary{}, huma.Error404NotFound("tenant not found")
 }
 
 // tenantPath is where a tenant can be read back.
