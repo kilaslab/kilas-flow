@@ -137,7 +137,7 @@ func TestHTTPRequestOptionsAndBodyFieldsAreCarried(t *testing.T) {
 	     "parameters":{"method":"POST","url":"https://api.test/orders","sendBody":true,"contentType":"json",
 	       "specifyBody":"keypair","bodyParameters":{"parameters":[
 	         {"name":"id","value":"={{ $json.id }}"},{"name":"note","value":"plain"}]},
-	       "options":{"timeout":15,"response":{"response":{"neverError":true,"responseFormat":"text",
+	       "options":{"timeout":15000,"response":{"response":{"neverError":true,"responseFormat":"text",
 	         "fullResponse":true,"outputPropertyName":"payload"}},
 	         "redirect":{"redirect":{"followRedirects":false,"maxRedirects":3}},
 	         "pagination":{"pagination":{}}}}}
@@ -154,8 +154,11 @@ func TestHTTPRequestOptionsAndBodyFieldsAreCarried(t *testing.T) {
 	if fields["note"] != "plain" {
 		t.Errorf("bodyFields[note] = %#v, want the fixed value kept", fields["note"])
 	}
+	// n8n's `timeout` option is milliseconds, so 15000 in the fixture is 15
+	// seconds. The fixture used to say 15 and this assertion pinned the number
+	// straight through, which is the unit the importer got wrong.
 	if call.Parameters["requestTimeoutSeconds"] != float64(15) {
-		t.Errorf("timeout = %#v, want it carried", call.Parameters["requestTimeoutSeconds"])
+		t.Errorf("timeout = %#v, want it carried in seconds", call.Parameters["requestTimeoutSeconds"])
 	}
 	if call.Parameters["neverError"] != true || call.Parameters["responseFormat"] != "text" ||
 		call.Parameters["fullResponse"] != true || call.Parameters["outputPropertyName"] != "payload" {
@@ -190,6 +193,132 @@ func TestHTTPRequestOptionsAndBodyFieldsAreCarried(t *testing.T) {
 			t.Fatalf("exported bodyParameters = %#v, want both fields", node.Parameters["bodyParameters"])
 		}
 	}
+}
+
+// TestHTTPRequestRedirectPolicyTravelsBothWays covers a flag the importer
+// carried only when it was false.
+//
+// `followRedirects: true` reached the document as "do not follow" with a clean
+// report, so a node whose author turned redirects on stopped at the first 3xx.
+// Export had the same asymmetry in the other direction.
+func TestHTTPRequestRedirectPolicyTravelsBothWays(t *testing.T) {
+	t.Parallel()
+
+	result := importFixture(t, `{
+	  "name": "Redirects",
+	  "nodes": [
+	    {"id":"a","name":"Call","type":"n8n-nodes-base.httpRequest","typeVersion":4.2,"position":[0,0],
+	     "parameters":{"method":"GET","url":"https://api.test/old","options":{
+	       "redirect":{"redirect":{"followRedirects":true,"maxRedirects":5}}}}}
+	  ],
+	  "connections": {}
+	}`)
+	call := nodeByName(result.Document, "Call")
+	if call.Parameters["followRedirects"] != true {
+		t.Fatalf("followRedirects = %#v, want true carried", call.Parameters["followRedirects"])
+	}
+	if call.Parameters["maxRedirects"] != float64(5) {
+		t.Errorf("maxRedirects = %#v, want it carried", call.Parameters["maxRedirects"])
+	}
+
+	// And back out: the flag survives the round trip rather than being written
+	// only when it is false.
+	exported, err := n8n.Export(result.Document, registry(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	redirect := exportedOptions(t, exported.Document, "Call")["redirect"]
+	wrapper, _ := redirect.(map[string]any)
+	inner, _ := wrapper["redirect"].(map[string]any)
+	if inner["followRedirects"] != true {
+		t.Errorf("exported redirect = %#v, want followRedirects true", redirect)
+	}
+}
+
+// TestHTTPRequestFollowsRedirectsByDefaultFromV4 covers the default the two
+// sides disagree about.
+//
+// n8n omits a parameter holding its default and follows redirects from v4 on,
+// while this server's node defaults to not following — so a v4 node with no
+// redirect option (nearly every exported one) has to be told to follow.
+func TestHTTPRequestFollowsRedirectsByDefaultFromV4(t *testing.T) {
+	t.Parallel()
+
+	result := importFixture(t, `{
+	  "name": "Defaults",
+	  "nodes": [
+	    {"id":"a","name":"Modern","type":"n8n-nodes-base.httpRequest","typeVersion":4.2,"position":[0,0],
+	     "parameters":{"method":"GET","url":"https://api.test/modern"}},
+	    {"id":"b","name":"Legacy","type":"n8n-nodes-base.httpRequest","typeVersion":3,"position":[220,0],
+	     "parameters":{"method":"GET","url":"https://api.test/legacy"}},
+	    {"id":"c","name":"Off","type":"n8n-nodes-base.httpRequest","typeVersion":4.2,"position":[440,0],
+	     "parameters":{"method":"GET","url":"https://api.test/off","options":{
+	       "redirect":{"redirect":{"followRedirects":false}}}}}
+	  ],
+	  "connections": {}
+	}`)
+	if modern := nodeByName(result.Document, "Modern"); modern.Parameters["followRedirects"] != true {
+		t.Errorf("v4 followRedirects = %#v, want n8n's own default", modern.Parameters["followRedirects"])
+	}
+	// The legacy spelling never had that default, and inventing it would change
+	// what a v3 node does.
+	if legacy := nodeByName(result.Document, "Legacy"); legacy.Parameters["followRedirects"] != nil {
+		t.Errorf("v3 followRedirects = %#v, want nothing invented", legacy.Parameters["followRedirects"])
+	}
+	if off := nodeByName(result.Document, "Off"); off.Parameters["followRedirects"] != false {
+		t.Errorf("explicit followRedirects = %#v, want the node's own choice", off.Parameters["followRedirects"])
+	}
+}
+
+// TestHTTPRequestTimeoutUnitIsMillisecondsOnImport covers the unit n8n uses for
+// the `timeout` spelling.
+//
+// Both spellings were copied into a seconds parameter unchanged, so a 5000 ms
+// timeout became 5000 seconds — clamped to the deployment ceiling — and the
+// node waited far longer than its author asked for.
+func TestHTTPRequestTimeoutUnitIsMillisecondsOnImport(t *testing.T) {
+	t.Parallel()
+
+	result := importFixture(t, `{
+	  "name": "Timeouts",
+	  "nodes": [
+	    {"id":"a","name":"Millis","type":"n8n-nodes-base.httpRequest","typeVersion":3,"position":[0,0],
+	     "parameters":{"method":"GET","url":"https://api.test/ms","options":{"timeout":5000}}},
+	    {"id":"b","name":"Seconds","type":"n8n-nodes-base.httpRequest","typeVersion":4.2,"position":[220,0],
+	     "parameters":{"method":"GET","url":"https://api.test/s","options":{"requestTimeout":30}}}
+	  ],
+	  "connections": {}
+	}`)
+	if millis := nodeByName(result.Document, "Millis"); millis.Parameters["requestTimeoutSeconds"] != float64(5) {
+		t.Errorf("milliseconds timeout = %#v, want 5 seconds", millis.Parameters["requestTimeoutSeconds"])
+	}
+	// `requestTimeout` is already seconds and must not be divided.
+	if seconds := nodeByName(result.Document, "Seconds"); seconds.Parameters["requestTimeoutSeconds"] != float64(30) {
+		t.Errorf("seconds timeout = %#v, want 30 seconds", seconds.Parameters["requestTimeoutSeconds"])
+	}
+
+	// And out again in the unit of the spelling the export writes.
+	exported, err := n8n.Export(result.Document, registry(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := exportedOptions(t, exported.Document, "Millis")["timeout"]; got != float64(5000) {
+		t.Errorf("exported timeout = %#v, want milliseconds", got)
+	}
+}
+
+// exportedOptions reads the `options` collection off one exported node.
+func exportedOptions(t *testing.T, document n8n.Document, name string) map[string]any {
+	t.Helper()
+	for _, node := range document.Nodes {
+		if node.Name != name {
+			continue
+		}
+		options, _ := node.Parameters["options"].(map[string]any)
+		return options
+	}
+	t.Fatalf("node %q was not exported", name)
+	return nil
 }
 
 // TestPostgresOperationDefaultsToInsert covers n8n's own default, which differs

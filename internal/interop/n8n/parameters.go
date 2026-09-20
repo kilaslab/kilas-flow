@@ -1434,17 +1434,24 @@ func httpToKilas(node Node) (map[string]any, []Unsupported) {
 func httpOptionsToKilas(node Node, parameters map[string]any) []Unsupported {
 	options, ok := node.Parameters["options"].(map[string]any)
 	if !ok || len(options) == 0 {
+		// A node with no options at all still has a redirect policy, and the
+		// two sides default it differently — so the default is written even
+		// when there is nothing else to read.
+		applyRedirectDefault(node, parameters)
 		return nil
 	}
 	issues := make([]Unsupported, 0)
 	consumed := map[string]bool{}
 
-	// Timeout. n8n's option is in milliseconds in versions below 4.2 and in
-	// seconds at 4.2, where the field was renamed.
+	// Timeout. n8n renamed this option at 4.2 and changed its unit with the
+	// name: `timeout` is milliseconds, `requestTimeout` is seconds. Copying
+	// either one into a seconds parameter made a 5000 ms timeout 5000 seconds
+	// — clamped to the deployment's ceiling, so the node silently waited far
+	// longer than its author asked for.
 	if timeout, present := optionNumber(options, "timeout"); present {
 		consumed["timeout"] = true
 		if timeout > 0 {
-			parameters["requestTimeoutSeconds"] = timeout
+			parameters["requestTimeoutSeconds"] = timeout / 1000
 		}
 	} else if timeout, present := optionNumber(options, "requestTimeout"); present {
 		consumed["requestTimeout"] = true
@@ -1497,8 +1504,12 @@ func httpOptionsToKilas(node Node, parameters map[string]any) []Unsupported {
 	for _, path := range [][]string{{"redirect", "redirect", "followRedirects"}, {"redirect", "followRedirects"}, {"followRedirects"}} {
 		if value, present := optionAt(options, path...); present {
 			consumed[strings.Join(path, ".")] = true
-			if flag, isFlag := value.(bool); isFlag && !flag {
-				parameters["followRedirects"] = false
+			if flag, isFlag := value.(bool); isFlag {
+				// Both values are carried. Writing only `false` meant a node
+				// whose author turned redirects *on* imported as "do not
+				// follow", which is the opposite of what it said — and the
+				// import report stayed clean.
+				parameters["followRedirects"] = flag
 			}
 			break
 		}
@@ -1512,6 +1523,12 @@ func httpOptionsToKilas(node Node, parameters map[string]any) []Unsupported {
 			break
 		}
 	}
+	// n8n's HTTP Request follows redirects by default from v4 on, and that
+	// default is what its own description declares. This server's node defaults
+	// the other way, so a v4 node that never opened the redirect option — which
+	// is nearly every exported one — imported as "do not follow" and stopped at
+	// the first 3xx with a body its author never expected.
+	applyRedirectDefault(node, parameters)
 
 	if optionFlag(options, "allowUnauthorizedCerts") {
 		consumed["allowUnauthorizedCerts"] = true
@@ -1601,6 +1618,24 @@ func httpToN8N(node workflow.Node) (map[string]any, []Lossy) {
 	return parameters, lossy
 }
 
+// applyRedirectDefault writes the redirect policy an n8n HTTP Request node
+// implies when its options say nothing about it.
+//
+// n8n's own node description defaults `followRedirects` to true from
+// typeVersion 4 on, and n8n omits a parameter that holds its default, so the
+// overwhelming majority of exported v4+ nodes carry no redirect option at all.
+// KilasFlow's node defaults it to false, so without this the two sides disagree
+// about every one of those nodes and the imported request stops at the first
+// 3xx. An explicit option always wins.
+func applyRedirectDefault(node Node, parameters map[string]any) {
+	if _, set := parameters["followRedirects"]; set {
+		return
+	}
+	if node.TypeVersion >= 4 {
+		parameters["followRedirects"] = true
+	}
+}
+
 // httpOptionsToN8N is the inverse of httpOptionsToKilas, and the same
 // principle applies: an option this server read goes back where n8n keeps it,
 // and an option it never had is not invented.
@@ -1608,7 +1643,10 @@ func httpOptionsToN8N(source map[string]any) map[string]any {
 	options := map[string]any{}
 	response := map[string]any{}
 	if seconds, ok := source["requestTimeoutSeconds"].(float64); ok && seconds > 0 {
-		options["timeout"] = seconds
+		// Milliseconds, which is the unit of the `timeout` spelling this export
+		// writes: n8n reads it as milliseconds and changed both the name and
+		// the unit at 4.2 (`requestTimeout`, seconds).
+		options["timeout"] = seconds * 1000
 	}
 	if flag, _ := source["neverError"].(bool); flag {
 		response["neverError"] = true
@@ -1626,8 +1664,12 @@ func httpOptionsToN8N(source map[string]any) map[string]any {
 		options["response"] = map[string]any{"response": response}
 	}
 	redirect := map[string]any{}
-	if flag, set := source["followRedirects"].(bool); set && !flag {
-		redirect["followRedirects"] = false
+	// Both values go out. Writing only `false` lost the flag in the other
+	// direction: a KilasFlow node that follows redirects exported with no
+	// option at all, so an n8n instance read its own default instead of the
+	// node's.
+	if flag, set := source["followRedirects"].(bool); set {
+		redirect["followRedirects"] = flag
 	}
 	if redirects, ok := source["maxRedirects"].(float64); ok && redirects > 0 {
 		redirect["maxRedirects"] = redirects
