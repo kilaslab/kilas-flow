@@ -159,6 +159,15 @@ func (store *GORMWorkflowStore) WithRetention(policy RetentionPolicy) *GORMWorkf
 // SaveDraft appends an immutable revision. A newly created document receives a
 // server-generated workflow ID before document validation and persistence.
 func (store *GORMWorkflowStore) SaveDraft(ctx context.Context, tenant TenantScope, document workflow.Document) (workflow.StoredWorkflow, error) {
+	return store.saveDraft(ctx, tenant, document, nil)
+}
+
+// saveDraft is the one append path for an ordinary save and an imported one.
+// SaveDraftWithDiagnostics passes the import report it must keep with the
+// revision; everything else — the ID minting, the validation, the row lock, the
+// retention bound — is shared, so the two cannot drift into disagreeing about
+// what a saved revision is.
+func (store *GORMWorkflowStore) saveDraft(ctx context.Context, tenant TenantScope, document workflow.Document, diagnostics json.RawMessage) (workflow.StoredWorkflow, error) {
 	if err := tenant.validate(); err != nil {
 		return workflow.StoredWorkflow{}, err
 	}
@@ -198,7 +207,7 @@ func (store *GORMWorkflowStore) SaveDraft(ctx context.Context, tenant TenantScop
 			return fmt.Errorf("find workflow: %w", err)
 		}
 
-		version, err := appendVersion(tx, tenant, model, definition, document, nil, ActorFrom(ctx))
+		version, err := appendVersion(tx, tenant, model, definition, document, diagnostics, nil, ActorFrom(ctx))
 		if err != nil {
 			return err
 		}

@@ -199,7 +199,7 @@ func (store *GORMWorkflowStore) RestoreVersion(ctx context.Context, tenant Tenan
 			return err
 		}
 		label := fmt.Sprintf("Restored from revision %d", source.Revision)
-		version, err := appendVersion(tx, tenant, model, source.Definition, restored.Document, &label, ActorFrom(ctx))
+		version, err := appendVersion(tx, tenant, model, source.Definition, restored.Document, nil, &label, ActorFrom(ctx))
 		if err != nil {
 			return err
 		}
@@ -222,7 +222,10 @@ func (store *GORMWorkflowStore) RestoreVersion(ctx context.Context, tenant Tenan
 // appendVersion writes the next revision of a workflow inside the caller's
 // transaction. It is the single append path, so a restore and a save cannot
 // disagree about what a new revision looks like.
-func appendVersion(tx *gorm.DB, tenant TenantScope, model workflowModel, definition []byte, document workflow.Document, label *string, actor string) (workflowVersionModel, error) {
+//
+// diagnostics is the import report the revision was created with, and is nil
+// for every writer that is not an import.
+func appendVersion(tx *gorm.DB, tenant TenantScope, model workflowModel, definition []byte, document workflow.Document, diagnostics []byte, label *string, actor string) (workflowVersionModel, error) {
 	versionID, err := workflow.NewID("wfv")
 	if err != nil {
 		return workflowVersionModel{}, err
@@ -234,7 +237,12 @@ func appendVersion(tx *gorm.DB, tenant TenantScope, model workflowModel, definit
 		Revision:      model.LatestRevision + 1,
 		SchemaVersion: document.SchemaVersion,
 		Definition:    definition,
-		Label:         label,
+		// A restore copies an older revision's document, deliberately not its
+		// report: the new revision is a restore, not an import, and carrying the
+		// old report forward would claim this revision's nodes were translated
+		// by an importer when they were restored by hand.
+		Diagnostics: diagnostics,
+		Label:       label,
 	}
 	if actor != "" {
 		version.CreatedBy = &actor

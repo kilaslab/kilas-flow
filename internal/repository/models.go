@@ -219,6 +219,12 @@ type workflowVersionModel struct {
 	Revision      int    `gorm:"not null;uniqueIndex:uidx_workflow_versions_revision,priority:3"`
 	SchemaVersion int    `gorm:"not null"`
 	Definition    []byte `gorm:"not null"`
+	// Diagnostics is the import report this revision was created with: what the
+	// n8n adapter refused to carry faithfully, per node and per field. It is
+	// nullable because most revisions are not imports, and an empty report is a
+	// different claim from no report at all — one says the import had nothing
+	// to report, the other says nothing was imported (BUG-f9frth).
+	Diagnostics []byte
 	// Label is what a person called this revision, and CreatedBy is who wrote
 	// it. Both are nullable, and nullable is the whole point: the main API has
 	// no authentication yet, so every request resolves to tenant "default" and
