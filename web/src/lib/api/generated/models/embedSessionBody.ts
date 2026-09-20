@@ -12,21 +12,20 @@ export interface EmbedSessionBody {
   readonly $schema?: string;
   /** Validated white-label values; never markup */
   branding?: Branding;
+  /** Datastore this session may touch; exactly one of this and workflowId */
+  datastoreId?: string;
   /**
      * Exact origin of the page that will frame the editor
      * @minLength 1
      */
   origin: string;
   /**
-     * workflow:read, workflow:write, workflow:run
+     * workflow:read, workflow:write, workflow:run, datastore:read, datastore:write
      * @nullable
      */
   scopes: string[] | null;
   /** Session lifetime; capped by the server */
   ttlSeconds?: number;
-  /**
-     * Workflow this session may open
-     * @minLength 1
-     */
-  workflowId: string;
+  /** Workflow this session may open; exactly one of this and datastoreId */
+  workflowId?: string;
 }

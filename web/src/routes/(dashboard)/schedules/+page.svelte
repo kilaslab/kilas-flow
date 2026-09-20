@@ -12,7 +12,7 @@
 	import { Input } from '$lib/components/ui/input';
 	import { formatTimestamp } from '$lib/workflow-editor/execution';
 
-	const schedules = createListSchedules<ScheduleResource[]>(() => ({
+	const schedules = createListSchedules<ScheduleResource[]>(undefined, () => ({
 		query: {
 			select: (response) => {
 				if (response.status !== 200) throw new Error('Unexpected schedule-list response');
@@ -20,7 +20,7 @@
 			}
 		}
 	}));
-	const workflows = createListWorkflows<WorkflowSummary[]>(() => ({
+	const workflows = createListWorkflows<WorkflowSummary[]>(undefined, () => ({
 		query: { select: (response) => (response.status === 200 ? (response.data ?? []) : []) }
 	}));
 

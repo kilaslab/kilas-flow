@@ -17,7 +17,7 @@
 	import * as Dialog from '$lib/components/ui/dialog';
 	import { Input } from '$lib/components/ui/input';
 
-	const credentials = createListCredentials<CredentialResource[]>(() => ({
+	const credentials = createListCredentials<CredentialResource[]>(undefined, () => ({
 		query: {
 			select: (response) => {
 				if (response.status !== 200) throw new Error('Unexpected credential-list response');

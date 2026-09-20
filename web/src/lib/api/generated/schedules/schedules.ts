@@ -23,6 +23,7 @@ import type {
 
 import type {
   ErrorModel,
+  ListSchedulesParams,
   ScheduleBody,
   ScheduleResource
 } from '../models';
@@ -88,21 +89,28 @@ export type listSchedulesResponseError = (listSchedulesResponseDefault) & {
 
 export type listSchedulesResponse = (listSchedulesResponseSuccess | listSchedulesResponseError)
 
-export const getListSchedulesUrl = () => {
+export const getListSchedulesUrl = (params?: ListSchedulesParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/v1/schedules`
+  return stringifiedParams.length > 0 ? `/api/v1/schedules?${stringifiedParams}` : `/api/v1/schedules`
 }
 
 /**
- * Returns every cron schedule in the workspace.
+ * Returns one page of cron schedules, oldest first. The next page's cursor is in the X-Next-Cursor response header, empty on the last page.
  * @summary List schedules
  */
-export const listSchedules = async ( options?: Parameters<typeof apiFetch>[1]): Promise<listSchedulesResponse> => {
+export const listSchedules = async (params?: ListSchedulesParams, options?: Parameters<typeof apiFetch>[1]): Promise<listSchedulesResponse> => {
 
-  return apiFetch<listSchedulesResponse>(getListSchedulesUrl(),
+  return apiFetch<listSchedulesResponse>(getListSchedulesUrl(params),
   {
     ...options,
     method: 'GET'
@@ -115,23 +123,23 @@ export const listSchedules = async ( options?: Parameters<typeof apiFetch>[1]): 
 
 
 
-export const getListSchedulesQueryKey = () => {
+export const getListSchedulesQueryKey = (params?: ListSchedulesParams,) => {
     return [
-    `/api/v1/schedules`
+    `/api/v1/schedules`, ...(params ? [params] : [])
     ] as const;
     }
 
 
-export const getListSchedulesQueryOptions = <TData = Awaited<ReturnType<typeof listSchedules>>, TError = ErrorType<ErrorModel>>( options?: { query?:Partial<CreateQueryOptions<Awaited<ReturnType<typeof listSchedules>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+export const getListSchedulesQueryOptions = <TData = Awaited<ReturnType<typeof listSchedules>>, TError = ErrorType<ErrorModel>>(params?: ListSchedulesParams, options?: { query?:Partial<CreateQueryOptions<Awaited<ReturnType<typeof listSchedules>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getListSchedulesQueryKey();
+  const queryKey =  queryOptions?.queryKey ?? getListSchedulesQueryKey(params);
 
 
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listSchedules>>> = ({ signal }) => listSchedules({ signal, ...requestOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listSchedules>>> = ({ signal }) => listSchedules(params, { signal, ...requestOptions });
 
 
 
@@ -149,13 +157,13 @@ export type ListSchedulesQueryError = ErrorType<ErrorModel>
  */
 
 export function createListSchedules<TData = Awaited<ReturnType<typeof listSchedules>>, TError = ErrorType<ErrorModel>>(
-  options?: () => { query?:Partial<CreateQueryOptions<Awaited<ReturnType<typeof listSchedules>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ params?: () =>  ListSchedulesParams, options?: () => { query?:Partial<CreateQueryOptions<Awaited<ReturnType<typeof listSchedules>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: () => QueryClient
  ): CreateQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
 
 
-  const query = createQuery(() => getListSchedulesQueryOptions(options?.()), queryClient) as CreateQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+  const query = createQuery(() => getListSchedulesQueryOptions(params?.(),options?.()), queryClient) as CreateQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 
   return query
 }

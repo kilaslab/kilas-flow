@@ -16,7 +16,7 @@
 	import * as Dialog from '$lib/components/ui/dialog';
 	import { Input } from '$lib/components/ui/input';
 
-	const datastores = createListDatastores<DatastoreResource[]>(() => ({
+	const datastores = createListDatastores<DatastoreResource[]>(undefined, () => ({
 		query: {
 			select: (response) => {
 				if (response.status !== 200) throw new Error('Unexpected datastore-list response');

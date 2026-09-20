@@ -29,7 +29,7 @@
 	 * for audit, which is why the list marks revoked keys rather than
 	 * dropping them.
 	 */
-	const keys = createListApiKeys<{ items: APIKeyResource[] }>(() => ({
+	const keys = createListApiKeys<{ items: APIKeyResource[] }>(undefined, () => ({
 		query: {
 			select: (response) => {
 				if (response.status !== 200) throw new Error('Unexpected API-key response');

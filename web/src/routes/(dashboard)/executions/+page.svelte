@@ -32,7 +32,7 @@
 	import { RequestGuard } from '$lib/dashboard/request-guard';
 	import { formatDuration, formatTimestamp, statusLabel, statusTone } from '$lib/workflow-editor/execution';
 
-	const workflows = createListWorkflows<WorkflowSummary[]>(() => ({
+	const workflows = createListWorkflows<WorkflowSummary[]>(undefined, () => ({
 		query: {
 			select: (response) => (response.status === 200 ? (response.data ?? []) : [])
 		}

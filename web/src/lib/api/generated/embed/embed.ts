@@ -91,7 +91,7 @@ export const getCreateEmbedSessionUrl = () => {
 }
 
 /**
- * Mints a short-lived, workflow-scoped token for one host origin. The host passes it to the iframe over postMessage.
+ * Mints a short-lived token for one host origin, scoped to one workflow or one datastore. The host passes it to the iframe over postMessage.
  * @summary Create an embed session
  */
 export const createEmbedSession = async (embedSessionBody: NonReadonly<EmbedSessionBody>, options?: Parameters<typeof apiFetch>[1]): Promise<createEmbedSessionResponse> => {

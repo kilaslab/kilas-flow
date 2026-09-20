@@ -55,7 +55,7 @@
 
 	// Credential storage is optional, so a failure here must not block the
 	// editor: the picker simply offers nothing to select.
-	const credentials = createListCredentials<CredentialResource[]>(() => ({
+	const credentials = createListCredentials<CredentialResource[]>(undefined, () => ({
 		query: {
 			select: (response) => (response.status === 200 ? (response.data ?? []) : [])
 		}

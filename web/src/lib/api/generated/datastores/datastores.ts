@@ -27,6 +27,7 @@ import type {
   DatastoreListOutputBody,
   DatastoreResource,
   ErrorModel,
+  ListDatastoresParams,
   RenameDatastoreInputBody
 } from '../models';
 
@@ -91,21 +92,28 @@ export type listDatastoresResponseError = (listDatastoresResponseDefault) & {
 
 export type listDatastoresResponse = (listDatastoresResponseSuccess | listDatastoresResponseError)
 
-export const getListDatastoresUrl = () => {
+export const getListDatastoresUrl = (params?: ListDatastoresParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/v1/datastores`
+  return stringifiedParams.length > 0 ? `/api/v1/datastores?${stringifiedParams}` : `/api/v1/datastores`
 }
 
 /**
- * Returns every data table in the workspace.
+ * Returns one page of data tables, in name order. The next page's cursor is in the X-Next-Cursor response header, empty on the last page.
  * @summary List datastores
  */
-export const listDatastores = async ( options?: Parameters<typeof apiFetch>[1]): Promise<listDatastoresResponse> => {
+export const listDatastores = async (params?: ListDatastoresParams, options?: Parameters<typeof apiFetch>[1]): Promise<listDatastoresResponse> => {
 
-  return apiFetch<listDatastoresResponse>(getListDatastoresUrl(),
+  return apiFetch<listDatastoresResponse>(getListDatastoresUrl(params),
   {
     ...options,
     method: 'GET'
@@ -118,23 +126,23 @@ export const listDatastores = async ( options?: Parameters<typeof apiFetch>[1]):
 
 
 
-export const getListDatastoresQueryKey = () => {
+export const getListDatastoresQueryKey = (params?: ListDatastoresParams,) => {
     return [
-    `/api/v1/datastores`
+    `/api/v1/datastores`, ...(params ? [params] : [])
     ] as const;
     }
 
 
-export const getListDatastoresQueryOptions = <TData = Awaited<ReturnType<typeof listDatastores>>, TError = ErrorType<ErrorModel>>( options?: { query?:Partial<CreateQueryOptions<Awaited<ReturnType<typeof listDatastores>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+export const getListDatastoresQueryOptions = <TData = Awaited<ReturnType<typeof listDatastores>>, TError = ErrorType<ErrorModel>>(params?: ListDatastoresParams, options?: { query?:Partial<CreateQueryOptions<Awaited<ReturnType<typeof listDatastores>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getListDatastoresQueryKey();
+  const queryKey =  queryOptions?.queryKey ?? getListDatastoresQueryKey(params);
 
 
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listDatastores>>> = ({ signal }) => listDatastores({ signal, ...requestOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listDatastores>>> = ({ signal }) => listDatastores(params, { signal, ...requestOptions });
 
 
 
@@ -152,13 +160,13 @@ export type ListDatastoresQueryError = ErrorType<ErrorModel>
  */
 
 export function createListDatastores<TData = Awaited<ReturnType<typeof listDatastores>>, TError = ErrorType<ErrorModel>>(
-  options?: () => { query?:Partial<CreateQueryOptions<Awaited<ReturnType<typeof listDatastores>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ params?: () =>  ListDatastoresParams, options?: () => { query?:Partial<CreateQueryOptions<Awaited<ReturnType<typeof listDatastores>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: () => QueryClient
  ): CreateQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
 
 
-  const query = createQuery(() => getListDatastoresQueryOptions(options?.()), queryClient) as CreateQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+  const query = createQuery(() => getListDatastoresQueryOptions(params?.(),options?.()), queryClient) as CreateQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 
   return query
 }

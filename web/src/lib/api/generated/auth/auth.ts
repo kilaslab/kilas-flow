@@ -28,6 +28,7 @@ import type {
   CreatedAPIKeyResource,
   ErrorModel,
   ListAPIKeysOutputBody,
+  ListApiKeysParams,
   LoginInputBody,
   PrincipalResource,
   StreamTicketResource
@@ -94,21 +95,28 @@ export type listApiKeysResponseError = (listApiKeysResponseDefault) & {
 
 export type listApiKeysResponse = (listApiKeysResponseSuccess | listApiKeysResponseError)
 
-export const getListApiKeysUrl = () => {
+export const getListApiKeysUrl = (params?: ListApiKeysParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/v1/api-keys`
+  return stringifiedParams.length > 0 ? `/api/v1/api-keys?${stringifiedParams}` : `/api/v1/api-keys`
 }
 
 /**
- * Lists this tenant's keys. No secret is ever included.
+ * Lists one page of this tenant's keys, newest first. No secret is ever included. The next page's cursor is in the X-Next-Cursor response header, empty on the last page.
  * @summary List API keys
  */
-export const listApiKeys = async ( options?: Parameters<typeof apiFetch>[1]): Promise<listApiKeysResponse> => {
+export const listApiKeys = async (params?: ListApiKeysParams, options?: Parameters<typeof apiFetch>[1]): Promise<listApiKeysResponse> => {
 
-  return apiFetch<listApiKeysResponse>(getListApiKeysUrl(),
+  return apiFetch<listApiKeysResponse>(getListApiKeysUrl(params),
   {
     ...options,
     method: 'GET'
@@ -121,23 +129,23 @@ export const listApiKeys = async ( options?: Parameters<typeof apiFetch>[1]): Pr
 
 
 
-export const getListApiKeysQueryKey = () => {
+export const getListApiKeysQueryKey = (params?: ListApiKeysParams,) => {
     return [
-    `/api/v1/api-keys`
+    `/api/v1/api-keys`, ...(params ? [params] : [])
     ] as const;
     }
 
 
-export const getListApiKeysQueryOptions = <TData = Awaited<ReturnType<typeof listApiKeys>>, TError = ErrorType<ErrorModel>>( options?: { query?:Partial<CreateQueryOptions<Awaited<ReturnType<typeof listApiKeys>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+export const getListApiKeysQueryOptions = <TData = Awaited<ReturnType<typeof listApiKeys>>, TError = ErrorType<ErrorModel>>(params?: ListApiKeysParams, options?: { query?:Partial<CreateQueryOptions<Awaited<ReturnType<typeof listApiKeys>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getListApiKeysQueryKey();
+  const queryKey =  queryOptions?.queryKey ?? getListApiKeysQueryKey(params);
 
 
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listApiKeys>>> = ({ signal }) => listApiKeys({ signal, ...requestOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listApiKeys>>> = ({ signal }) => listApiKeys(params, { signal, ...requestOptions });
 
 
 
@@ -155,13 +163,13 @@ export type ListApiKeysQueryError = ErrorType<ErrorModel>
  */
 
 export function createListApiKeys<TData = Awaited<ReturnType<typeof listApiKeys>>, TError = ErrorType<ErrorModel>>(
-  options?: () => { query?:Partial<CreateQueryOptions<Awaited<ReturnType<typeof listApiKeys>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ params?: () =>  ListApiKeysParams, options?: () => { query?:Partial<CreateQueryOptions<Awaited<ReturnType<typeof listApiKeys>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: () => QueryClient
  ): CreateQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
 
 
-  const query = createQuery(() => getListApiKeysQueryOptions(options?.()), queryClient) as CreateQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+  const query = createQuery(() => getListApiKeysQueryOptions(params?.(),options?.()), queryClient) as CreateQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 
   return query
 }

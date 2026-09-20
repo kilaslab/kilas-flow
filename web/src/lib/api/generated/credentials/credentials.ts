@@ -26,6 +26,7 @@ import type {
   CredentialResource,
   CredentialTypeResource,
   ErrorModel,
+  ListCredentialsParams,
   TestCredentialResource,
   TestPayloadBody
 } from '../models';
@@ -287,21 +288,28 @@ export type listCredentialsResponseError = (listCredentialsResponseDefault) & {
 
 export type listCredentialsResponse = (listCredentialsResponseSuccess | listCredentialsResponseError)
 
-export const getListCredentialsUrl = () => {
+export const getListCredentialsUrl = (params?: ListCredentialsParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/v1/credentials`
+  return stringifiedParams.length > 0 ? `/api/v1/credentials?${stringifiedParams}` : `/api/v1/credentials`
 }
 
 /**
  * Returns stored credentials without any secret value.
  * @summary List credentials
  */
-export const listCredentials = async ( options?: Parameters<typeof apiFetch>[1]): Promise<listCredentialsResponse> => {
+export const listCredentials = async (params?: ListCredentialsParams, options?: Parameters<typeof apiFetch>[1]): Promise<listCredentialsResponse> => {
 
-  return apiFetch<listCredentialsResponse>(getListCredentialsUrl(),
+  return apiFetch<listCredentialsResponse>(getListCredentialsUrl(params),
   {
     ...options,
     method: 'GET'
@@ -314,23 +322,23 @@ export const listCredentials = async ( options?: Parameters<typeof apiFetch>[1])
 
 
 
-export const getListCredentialsQueryKey = () => {
+export const getListCredentialsQueryKey = (params?: ListCredentialsParams,) => {
     return [
-    `/api/v1/credentials`
+    `/api/v1/credentials`, ...(params ? [params] : [])
     ] as const;
     }
 
 
-export const getListCredentialsQueryOptions = <TData = Awaited<ReturnType<typeof listCredentials>>, TError = ErrorType<ErrorModel>>( options?: { query?:Partial<CreateQueryOptions<Awaited<ReturnType<typeof listCredentials>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+export const getListCredentialsQueryOptions = <TData = Awaited<ReturnType<typeof listCredentials>>, TError = ErrorType<ErrorModel>>(params?: ListCredentialsParams, options?: { query?:Partial<CreateQueryOptions<Awaited<ReturnType<typeof listCredentials>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getListCredentialsQueryKey();
+  const queryKey =  queryOptions?.queryKey ?? getListCredentialsQueryKey(params);
 
 
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listCredentials>>> = ({ signal }) => listCredentials({ signal, ...requestOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listCredentials>>> = ({ signal }) => listCredentials(params, { signal, ...requestOptions });
 
 
 
@@ -348,13 +356,13 @@ export type ListCredentialsQueryError = ErrorType<ErrorModel>
  */
 
 export function createListCredentials<TData = Awaited<ReturnType<typeof listCredentials>>, TError = ErrorType<ErrorModel>>(
-  options?: () => { query?:Partial<CreateQueryOptions<Awaited<ReturnType<typeof listCredentials>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ params?: () =>  ListCredentialsParams, options?: () => { query?:Partial<CreateQueryOptions<Awaited<ReturnType<typeof listCredentials>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: () => QueryClient
  ): CreateQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
 
 
-  const query = createQuery(() => getListCredentialsQueryOptions(options?.()), queryClient) as CreateQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+  const query = createQuery(() => getListCredentialsQueryOptions(params?.(),options?.()), queryClient) as CreateQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 
   return query
 }

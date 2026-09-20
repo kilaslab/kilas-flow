@@ -24,6 +24,7 @@ import type {
 import type {
   ErrorModel,
   ListWorkflowVersionsParams,
+  ListWorkflowsParams,
   WorkflowDocumentInput,
   WorkflowResource,
   WorkflowSummary,
@@ -92,21 +93,28 @@ export type listWorkflowsResponseError = (listWorkflowsResponseDefault) & {
 
 export type listWorkflowsResponse = (listWorkflowsResponseSuccess | listWorkflowsResponseError)
 
-export const getListWorkflowsUrl = () => {
+export const getListWorkflowsUrl = (params?: ListWorkflowsParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/v1/workflows`
+  return stringifiedParams.length > 0 ? `/api/v1/workflows?${stringifiedParams}` : `/api/v1/workflows`
 }
 
 /**
- * Lists workflows visible to the current tenant.
+ * Returns one page of workflow summaries, newest first. The next page's cursor is in the X-Next-Cursor response header, empty on the last page.
  * @summary List workflows
  */
-export const listWorkflows = async ( options?: Parameters<typeof apiFetch>[1]): Promise<listWorkflowsResponse> => {
+export const listWorkflows = async (params?: ListWorkflowsParams, options?: Parameters<typeof apiFetch>[1]): Promise<listWorkflowsResponse> => {
 
-  return apiFetch<listWorkflowsResponse>(getListWorkflowsUrl(),
+  return apiFetch<listWorkflowsResponse>(getListWorkflowsUrl(params),
   {
     ...options,
     method: 'GET'
@@ -119,23 +127,23 @@ export const listWorkflows = async ( options?: Parameters<typeof apiFetch>[1]): 
 
 
 
-export const getListWorkflowsQueryKey = () => {
+export const getListWorkflowsQueryKey = (params?: ListWorkflowsParams,) => {
     return [
-    `/api/v1/workflows`
+    `/api/v1/workflows`, ...(params ? [params] : [])
     ] as const;
     }
 
 
-export const getListWorkflowsQueryOptions = <TData = Awaited<ReturnType<typeof listWorkflows>>, TError = ErrorType<ErrorModel>>( options?: { query?:Partial<CreateQueryOptions<Awaited<ReturnType<typeof listWorkflows>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+export const getListWorkflowsQueryOptions = <TData = Awaited<ReturnType<typeof listWorkflows>>, TError = ErrorType<ErrorModel>>(params?: ListWorkflowsParams, options?: { query?:Partial<CreateQueryOptions<Awaited<ReturnType<typeof listWorkflows>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getListWorkflowsQueryKey();
+  const queryKey =  queryOptions?.queryKey ?? getListWorkflowsQueryKey(params);
 
 
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listWorkflows>>> = ({ signal }) => listWorkflows({ signal, ...requestOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listWorkflows>>> = ({ signal }) => listWorkflows(params, { signal, ...requestOptions });
 
 
 
@@ -153,13 +161,13 @@ export type ListWorkflowsQueryError = ErrorType<ErrorModel>
  */
 
 export function createListWorkflows<TData = Awaited<ReturnType<typeof listWorkflows>>, TError = ErrorType<ErrorModel>>(
-  options?: () => { query?:Partial<CreateQueryOptions<Awaited<ReturnType<typeof listWorkflows>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ params?: () =>  ListWorkflowsParams, options?: () => { query?:Partial<CreateQueryOptions<Awaited<ReturnType<typeof listWorkflows>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: () => QueryClient
  ): CreateQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
 
 
-  const query = createQuery(() => getListWorkflowsQueryOptions(options?.()), queryClient) as CreateQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+  const query = createQuery(() => getListWorkflowsQueryOptions(params?.(),options?.()), queryClient) as CreateQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 
   return query
 }

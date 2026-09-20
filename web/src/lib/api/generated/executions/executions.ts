@@ -374,7 +374,7 @@ export const getStreamExecutionEventsUrl = (id: string,
 }
 
 /**
- * Live standardized event feed for one execution. Replays retained events after Last-Event-ID, then streams until the execution reaches a terminal state.
+ * Live standardized event feed for one execution. Replays retained events after Last-Event-ID, then streams until the execution reaches a terminal state. A run that has already finished answers 404 when its record is gone, and otherwise replays its outcome and closes.
  * @summary Stream execution events
  */
 export const streamExecutionEvents = async (id: string,

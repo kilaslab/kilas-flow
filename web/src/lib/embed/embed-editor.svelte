@@ -43,7 +43,7 @@
 	const nodeTypes = createListNodeTypes<Definition[]>(() => ({
 		query: { select: (response) => (response.status === 200 ? (response.data ?? []) : []) }
 	}));
-	const credentials = createListCredentials<CredentialResource[]>(() => ({
+	const credentials = createListCredentials<CredentialResource[]>(undefined, () => ({
 		query: { select: (response) => (response.status === 200 ? (response.data ?? []) : []) }
 	}));
 

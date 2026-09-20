@@ -32,7 +32,7 @@
 	} from '$lib/dashboard/workflow-list';
 	import ImportDialog from './import-dialog.svelte';
 
-	const workflows = createListWorkflows<WorkflowSummary[]>(() => ({
+	const workflows = createListWorkflows<WorkflowSummary[]>(undefined, () => ({
 		query: {
 			select: (response) => {
 				if (response.status !== 200) throw new Error('Unexpected workflow-list response');

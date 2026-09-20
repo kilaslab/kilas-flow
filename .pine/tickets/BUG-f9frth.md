@@ -296,3 +296,8 @@ VERIFICATION
 - Live: executions detail verified (see BUG-t2wezf note). Editor page verified to load, render the canvas and stay mounted on the stub harness.
 - NOT verified by me: the UI-driven save scenario. Drag (mouse + pointer) and inspector typing did not produce a dirty canvas against the stub fixture — the node sits at the top edge of the canvas where the editor toolbar overlaps its centre, and `Add step`/`Tidy up` left the draft clean, so the marker-survives-save assertion is unproven. Status left at `doing` for that reason; the 409 banner path is likewise unexercised end-to-end.
 - A real bug I introduced and fixed inside this ticket: the loading branch `(workflow.isPending || nodeTypes.isPending) && !currentWorkflow` let the editor mount while the catalogue was still pending, so `definitions` was undefined and the child threw on render — the page sat on "Loading workflow editor…" forever with no console error. Correct shape: `nodeTypes.isPending || (workflow.isPending && !currentWorkflow)` plus `definitions={nodeTypes.data ?? []}` (also applied to the embed editor).
+
+### API-client drift migration (FrontendCore2 2026-09-20, requested by Main)
+
+- `createListCredentials` call sites migrated to the regenerated signature (`params` first, options factory second): `web/src/routes/(dashboard)/app/workflows/[id]/+page.svelte:58` and `web/src/lib/embed/embed-editor.svelte:46`, both `createListCredentials<CredentialResource[]>(undefined, () => ({ query: { select … } }))` — same shape WebFormsOps3 used on the credential list page.
+- `cd web && pnpm check` → `1508 FILES 0 ERRORS 0 WARNINGS 0 FILES_WITH_PROBLEMS`. This also confirms the two type errors FrontendCore3 reported against my files are gone (`definitions={nodeTypes.data ?? []}`).

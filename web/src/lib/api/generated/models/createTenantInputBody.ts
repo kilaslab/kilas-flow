@@ -5,17 +5,20 @@
  * Embeddable workflow automation engine. Every operation available in the editor is available here: the canvas is a client of this API, not the owner of workflow state.
  * OpenAPI spec version: 0.1.0-dev
  */
-import type { Branding } from './branding';
 
-export interface EmbedSessionResource {
+export interface CreateTenantInputBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  branding?: Branding;
-  datastoreId?: string;
-  embedUrl: string;
-  expiresAt: string;
-  origin: string;
-  /** @nullable */
-  scopes: string[] | null;
-  token: string;
+  /**
+     * Stable ID; it appears in URLs and on every row scoped to this tenant
+     * @minLength 1
+     * @maxLength 64
+     * @pattern ^[a-z0-9][a-z0-9_-]*$
+     */
+  id: string;
+  /**
+     * Display name. Defaults to the ID
+     * @maxLength 255
+     */
+  name: string;
 }

@@ -12,6 +12,7 @@ import type { Position } from './position';
 
 export interface Node {
   credentials?: NodeCredentials;
+  disabled?: boolean;
   id: string;
   name: string;
   parameters?: NodeParameters;
