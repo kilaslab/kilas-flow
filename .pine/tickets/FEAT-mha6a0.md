@@ -1,7 +1,7 @@
 ---
 id: FEAT-mha6a0
 title: 'Agent surface: CLI plus an agent skills bundle first, MCP adapter to follow'
-status: doing
+status: done
 priority: medium
 labels:
     - api
@@ -9,7 +9,7 @@ labels:
     - agent
 parent: EPIC-bkj6yf
 created: "2026-09-20T05:26:52Z"
-updated: "2026-09-20T07:42:30Z"
+updated: "2026-09-20T07:48:23Z"
 ---
 
 ## Decision already taken (2026-09-20)
@@ -32,21 +32,21 @@ exists in the embed session (`internal/embed/embed.go`: `workflow:read|write|run
 
 ## What the design must specify
 
-- [ ] The agent token: format, scopes, optional workflow/datastore binding, TTL, minting
+- [x] The agent token: format, scopes, optional workflow/datastore binding, TTL, minting
       authority, revocation, and which operations are refused at any scope (activate, delete,
       import, credential read beyond names).
-- [ ] Audit: where the agent's identity is recorded (executions, publish events, workflow
+- [x] Audit: where the agent's identity is recorded (executions, publish events, workflow
       versions) and what an operator can query afterwards.
-- [ ] The debug loop: which primitives are missing today and how they are added —
+- [x] The debug loop: which primitives are missing today and how they are added —
       validate-without-saving, run a pinned revision, replay from a node, evaluate an
       expression against an execution's context, tail the event stream.
-- [ ] The CLI surface: command tree, `--json` output contract, exit codes, token storage and
+- [x] The CLI surface: command tree, `--json` output contract, exit codes, token storage and
       precedence, and how it coexists with the existing binary (`kilasflow` with no
       subcommand must keep meaning "serve", because the container entrypoint depends on it).
       Note `bin/kflow` in the tree is a stale build of the server binary, not a CLI.
-- [ ] The MCP adapter: tool list, which tools are read-only vs guarded, and how tool calls map
+- [x] The MCP adapter: tool list, which tools are read-only vs guarded, and how tool calls map
       onto the same operations rather than a second implementation.
-- [ ] Dependencies on other work: idempotent runs, per-tenant node visibility for
+- [x] Dependencies on other work: idempotent runs, per-tenant node visibility for
       `node_list`, and the existing SSE stream for `tail`.
 
 ## Deliverable
@@ -149,10 +149,111 @@ kilasflow context                           # read-only briefing: tenant, node t
 
 ### Added acceptance criteria
 
-- [ ] The design document specifies the bundle layout, the inventory above, the install targets,
+- [x] The design document specifies the bundle layout, the inventory above, the install targets,
       the version-stamp rule, and the four CI gates.
-- [ ] The design states explicitly which capabilities the skills must present as **not shipped**
+- [x] The design states explicitly which capabilities the skills must present as **not shipped**
       today (WASM packs, sidecar, agent tokens, tenant deletion, idempotency) so the bundle
       cannot repeat the drift the audit found.
-- [ ] Implementation tickets are cut for: command tree + `api` escape hatch, skills bundle,
+- [x] Implementation tickets are cut for: command tree + `api` escape hatch, skills bundle,
       coverage gates, install/check, and the router skill.
+
+
+## Decomposition (2026-09-20)
+
+Deliverable one is the design document `docs/superpowers/specs/2026-09-20-agent-surface-design.md`
+(committed as 3569a38). Deliverable two is the implementation tickets it decomposes into, cut
+under `EPIC-r0yg5q` in the design's own phase order (section 7):
+
+| Phase | Ticket | Blocked by |
+|---|---|---|
+| 1 | FEAT-bp59m4 CLI command tree, `api` escape hatch, output contract, read-only verbs | nothing |
+| 1 | FEAT-x5qqpm skills bundle v1 (12 domain skills, generated index, honest `Not shipped yet`) | FEAT-bp59m4 |
+| 1 | FEAT-4jns31 embed the bundle + `skills list/show/install/check/export` | FEAT-x5qqpm |
+| 1 | FEAT-bb4s6e drift gates G1-G5 + `make skills-check` | FEAT-4jns31 |
+| 1 | FEAT-c72set router skill `using-kilasflow-skills` | FEAT-x5qqpm |
+| 2 | FEAT-m4d2y1 scoped agent tokens, enforcement arm, guarded verbs, audit columns | FEAT-hj8pyx, FEAT-bp59m4 |
+| 3 | FEAT-ew46cb debug primitives (validate, run --revision, duplicate, retry, eval) | FEAT-m4d2y1 |
+| 4 | FEAT-yxwyav MCP adapter | FEAT-ew46cb |
+
+The five CI-gate criteria under "How the skills stay true" are behaviour of the implementation,
+not of the design; they are carried by FEAT-bb4s6e and stay unticked here on purpose. The design
+specifies them (section 5.7).
+
+Owner review: the design was committed under the owner's name and the owner directed the whole
+board to be completed on 2026-09-20, which is taken as the go-ahead to cut the implementation
+tickets. A separate written approval was not recorded. The open questions of section 9 are
+carried by the tickets they gate (`debug eval` by FEAT-ew46cb, the MCP dependency by
+FEAT-yxwyav).
+
+## Work Evidence
+
+Closed by `pine close --evidence` on 2026-09-20.
+
+- Base: `794adbb3` (last commit at or before ticket created 2026-09-20)
+- Commits (3):
+  - `b3c9f3f9` — chore(pine): start the board — the open tickets move to doing before the parallel wave
+  - `3569a384` — FEAT-mha6a0: design the agent surface — CLI, agent skills bundle, MCP adapter
+  - `f8156140` — chore(pine): record the ticket board — the new tickets, memory entries and their notes
+- Files changed (base → working tree):
+
+```
+ .pine/MEMORY.md                                    |   1 +
+ .pine/memory/embedding.md                          |   8 +
+ .pine/tickets/BUG-fvdz46.md                        |  42 ++
+ .pine/tickets/BUG-t9j2ek.md                        |  54 +++
+ .pine/tickets/BUG-vzzkg3.md                        |  54 +++
+ .pine/tickets/BUG-xmr673.md                        |  46 ++
+ .pine/tickets/EPIC-bkj6yf.md                       |  46 ++
+ .pine/tickets/EPIC-m0bne8.md                       |  57 +++
+ .pine/tickets/FEAT-3taswf.md                       |  14 +-
+ .pine/tickets/FEAT-48hreg.md                       |  20 +-
+ .pine/tickets/FEAT-4ve1bq.md                       |  67 +++
+ .pine/tickets/FEAT-77rveq.md                       |  73 +++
+ .pine/tickets/FEAT-7cg0cd.md                       |  20 +-
+ .pine/tickets/FEAT-8mymac.md                       |   4 +-
+ .pine/tickets/FEAT-cwmw90.md                       | 513 +++++++++++++++++++-
+ .pine/tickets/FEAT-emf6k5.md                       |  51 ++
+ .pine/tickets/FEAT-fpqvwx.md                       |  57 +++
+ .pine/tickets/FEAT-g07pj8.md                       |  67 +++
+ .pine/tickets/FEAT-hj8pyx.md                       |  52 +++
+ .pine/tickets/FEAT-mha6a0.md                       | 186 ++++++++
+ .pine/tickets/FEAT-p77zr3.md                       |  67 +++
+ .pine/tickets/FEAT-qdedm0.md                       |   4 +-
+ docs/src/content/docs/concepts/credentials.md      |  21 +-
+ docs/src/content/docs/concepts/webhooks.md         |  52 ++-
+ docs/src/content/docs/reference/api-contract.md    |   5 +-
+ docs/src/content/docs/reference/api.md             |   4 +-
+ docs/src/content/docs/reference/api/workflows.md   |  21 +
+ .../specs/2026-09-20-agent-surface-design.md       | 519 +++++++++++++++++++++
+ e2e/fixtures/live-backend.ts                       |  12 +-
+ e2e/helpers/stub.ts                                |   8 +
+ e2e/tests/live-backend-api.spec.ts                 |  52 +--
+ e2e/tests/live-backend-http-auth.spec.ts           |  94 ++++
+ e2e/tests/live-backend-webhook.spec.ts             | 117 ++++-
+ go.mod                                             |   1 +
+ go.sum                                             |   2 +
+ internal/api/handlers/workflows.go                 |  70 ++-
+ internal/api/workflows_test.go                     |  71 ++-
+ internal/credentials/builtin.go                    |  68 +++
+ internal/credentials/credentials_test.go           |  58 +++
+ internal/credentials/registry.go                   |  63 +++
+ internal/interop/n8n/parameters.go                 |   3 +-
+ internal/webhook/jwt.go                            | 144 ++++++
+ internal/webhook/jwt_test.go                       | 212 +++++++++
+ internal/webhook/shape.go                          |  17 +-
+ internal/webhook/shape_test.go                     |  30 ++
+ internal/webhook/webhook.go                        |  70 ++-
+ internal/webhook/webhook_test.go                   | 192 +++++++-
+ nodes/core.go                                      |   5 +
+ nodes/error_workflow.go                            |   4 +
+ nodes/http.go                                      |   2 +
+ nodes/presentation_test.go                         |  35 ++
+ nodes/webhook.go                                   |  18 +-
+ scripts/generate-api-reference.mjs                 |   2 +-
+ sdk/src/generated/models.ts                        |  52 +++
+ sdk/src/server.ts                                  |  10 +
+ sdk/test/operation-coverage.test.mjs               |   1 +
+ .../generated/models/executionNodeRunResource.ts   |   1 +
+ web/src/lib/api/generated/workflows/workflows.ts   |  97 ++++
+ 58 files changed, 3508 insertions(+), 128 deletions(-)
+```
