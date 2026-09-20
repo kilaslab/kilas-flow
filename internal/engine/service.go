@@ -112,6 +112,11 @@ type ServiceDeps struct {
 	// Empty leaves a sub-workflow call starting from every root, which is what
 	// a workflow written before the trigger existed still needs.
 	SubworkflowTriggerType string
+	// ErrorTriggerType is the node type an error workflow starts from, for the
+	// workflow named by settings.errorWorkflow. Empty leaves an error workflow
+	// starting from every root, which is what it would otherwise do when the
+	// error workflow also carries a webhook or a schedule.
+	ErrorTriggerType string
 	// PollInterval bounds idle latency when no wake arrives. Non-positive
 	// keeps the 100 ms tick, which stays the fallback under every watcher:
 	// a dropped notification costs latency, never a stuck execution.
@@ -164,6 +169,7 @@ type Service struct {
 	relaySend              func(channel, payload string) error
 	publicBaseURL          string
 	subworkflowTriggerType string
+	errorTriggerType       string
 	activeMu               sync.Mutex
 	active                 map[string]context.CancelFunc
 	waitTimers             waitTimers
@@ -219,6 +225,7 @@ func NewService(deps ServiceDeps) (*Service, error) {
 		relaySend:              deps.RelaySend,
 		publicBaseURL:          strings.TrimSuffix(deps.PublicBaseURL, "/"),
 		subworkflowTriggerType: deps.SubworkflowTriggerType,
+		errorTriggerType:       deps.ErrorTriggerType,
 		active:                 make(map[string]context.CancelFunc),
 		wake:                   make(chan struct{}, 1),
 	}, nil
@@ -436,6 +443,13 @@ func (service *Service) runOnce(ctx context.Context, workerID string) (bool, err
 			TenantID: record.TenantID, ExecutionID: record.ID, WorkflowID: record.WorkflowID,
 			Type: terminal, Status: updated.Status, Data: updated.Error,
 		})
+		// The workflow named by settings.errorWorkflow, if any. Started after
+		// the failed execution is terminal, so the error workflow reads a
+		// settled record, and never for a cancellation: n8n does not treat a
+		// user stopping a run as a failure to report.
+		if updated.Status == execution.StatusFailed {
+			service.runErrorWorkflow(persistCtx, tenant, record, document, result, code, runErr)
+		}
 		return true, nil
 	}
 	output, err := json.Marshal(result.Output)
@@ -1053,6 +1067,111 @@ func attemptOf(run NodeRun) int {
 	return run.Attempt
 }
 
+// runErrorWorkflow starts the workflow a failed run names as its error
+// workflow, if it names one.
+//
+// n8n's settings.errorWorkflow: a workflow carries the ID of another workflow
+// to run when it fails, and that workflow starts from an Error Trigger with the
+// error. Best effort and logged, deliberately: an error workflow that cannot be
+// started — it was deleted, it is not active, it fails itself — must not change
+// the outcome of the execution that already failed, and it must not turn a
+// failed execution into a worker that reports an error nobody can act on.
+func (service *Service) runErrorWorkflow(ctx context.Context, tenant repository.TenantScope, record execution.Record, document workflow.Document, result Result, code string, runErr error) {
+	target := errorWorkflowID(document)
+	if target == "" {
+		return
+	}
+	if target == record.WorkflowID {
+		// A workflow naming itself would recurse: the error run fails, which
+		// starts the error run again. Refused here rather than left to the call
+		// stack, because this is a configuration mistake worth naming.
+		service.log.Warn("error workflow names its own workflow; not starting it",
+			"execution", record.ID, "workflow", record.WorkflowID)
+		return
+	}
+	item := errorWorkflowItem(record, document, result, code, runErr)
+	if service.errorTriggerType == "" {
+		service.log.Warn("no error trigger type is configured; the error workflow starts from every root",
+			"execution", record.ID, "errorWorkflow", target)
+	}
+	invoked, err := service.invokeWorkflow(ctx, ExecutionContext{
+		ID: record.ID, Mode: string(record.Trigger), TenantID: record.TenantID,
+		WorkflowID: record.WorkflowID, Stack: []string{record.WorkflowID},
+	}, WorkflowCall{WorkflowID: target, Items: []workflow.Item{item}}, service.errorTriggerSelector)
+	if err != nil {
+		service.log.Error("error workflow failed", "execution", record.ID, "errorWorkflow", target, "error", err)
+		return
+	}
+	service.log.Info("error workflow started", "execution", record.ID, "errorWorkflow", target, "errorExecution", invoked.ExecutionID)
+}
+
+// errorTriggerSelector names the node an error workflow starts from.
+func (service *Service) errorTriggerSelector(document workflow.Document) string {
+	if service.errorTriggerType == "" {
+		return ""
+	}
+	for _, node := range document.Nodes {
+		if node.Type == service.errorTriggerType {
+			return node.ID
+		}
+	}
+	return ""
+}
+
+// errorWorkflowID reads the workflow named in the document's settings.
+//
+// The setting is n8n's, and it is a workflow ID rather than a name: the
+// imported documents carry exactly that, and resolving a name would make the
+// error workflow a workflow somebody can rename into silence.
+func errorWorkflowID(document workflow.Document) string {
+	declared, _ := document.Settings[errorWorkflowSetting].(string)
+	return strings.TrimSpace(declared)
+}
+
+// errorWorkflowSetting names the document setting holding the error workflow.
+const errorWorkflowSetting = "errorWorkflow"
+
+// errorWorkflowItem builds the item an Error Trigger receives.
+//
+// The shape is n8n's, because the workflow on the other side is usually one
+// imported from n8n and reads `{{ $json.execution.error.message }}`,
+// `{{ $json.execution.id }}` and `{{ $json.workflow.name }}`. Renaming or
+// flattening those keys would make every imported error workflow silently
+// report nothing, which is worse than a failure it cannot report.
+func errorWorkflowItem(record execution.Record, document workflow.Document, result Result, code string, runErr error) workflow.Item {
+	message := "the workflow failed"
+	if runErr != nil {
+		message = runErr.Error()
+	}
+	errorDetail := map[string]any{"message": message, "code": code, "timestamp": time.Now().UTC().Format(time.RFC3339)}
+	lastNode := ""
+	for _, run := range result.NodeRuns {
+		if run.Error == nil {
+			continue
+		}
+		lastNode = run.NodeID
+		for _, node := range document.Nodes {
+			if node.ID == run.NodeID {
+				errorDetail["node"] = map[string]any{"id": node.ID, "name": node.Name, "type": node.Type}
+				break
+			}
+		}
+	}
+	// Both modes report how the failed execution was started: the error run is
+	// a consequence of that trigger, and an error workflow that branches on
+	// "was this a webhook or a schedule" is reading the run that failed.
+	return workflow.Item{JSON: map[string]any{
+		"execution": map[string]any{
+			"id":               record.ID,
+			"mode":             string(record.Trigger),
+			"lastNodeExecuted": lastNode,
+			"error":            errorDetail,
+		},
+		"workflow": map[string]any{"id": record.WorkflowID, "name": document.Name},
+		"trigger":  map[string]any{"mode": string(record.Trigger)},
+	}}
+}
+
 // MaxWorkflowCallDepth bounds how deep a chain of sub-workflow calls may go.
 //
 // A limit beside the cycle check rather than instead of it. The stack refuses a
@@ -1075,6 +1194,17 @@ const MaxWorkflowCallDepth = 16
 // already running and already claimed, because a queued one would be visible to
 // ClaimNext and could be run a second time in parallel with this one.
 func (service *Service) InvokeWorkflow(ctx context.Context, parent ExecutionContext, call WorkflowCall) (WorkflowCallResult, error) {
+	return service.invokeWorkflow(ctx, parent, call, service.subworkflowTrigger)
+}
+
+// invokeWorkflow runs another workflow inline, starting from the root the
+// selector names.
+//
+// The selector is the caller's: a sub-workflow call starts from the workflow's
+// own sub-workflow trigger, while an error workflow starts from its Error
+// Trigger, and both must be confined to that branch — a workflow carrying a
+// webhook beside the trigger it was called for must not also post to it.
+func (service *Service) invokeWorkflow(ctx context.Context, parent ExecutionContext, call WorkflowCall, selectTrigger func(workflow.Document) string) (WorkflowCallResult, error) {
 	if service == nil || service.executions == nil {
 		return WorkflowCallResult{}, fmt.Errorf("this runtime cannot run sub-workflows")
 	}
@@ -1093,7 +1223,7 @@ func (service *Service) InvokeWorkflow(ctx context.Context, parent ExecutionCont
 	}
 	record, document, err := service.executions.StartChild(ctx, tenant, repository.ChildExecution{
 		WorkflowID: target, ParentExecutionID: parent.ID,
-		Input: input, SelectTrigger: service.subworkflowTrigger,
+		Input: input, SelectTrigger: selectTrigger,
 		LeaseOwner: service.workerID, LeaseUntil: time.Now().UTC().Add(service.leaseDurationOrDefault()),
 	})
 	if err != nil {
