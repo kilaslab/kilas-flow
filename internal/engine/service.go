@@ -425,7 +425,11 @@ func (service *Service) runOnce(ctx context.Context, workerID string) (bool, err
 	}
 	output, err := json.Marshal(result.Output)
 	if err != nil {
-		return true, fmt.Errorf("marshal execution output: %w", err)
+		// A node produced something JSON cannot carry — a NaN, an infinity, a
+		// channel — and the result cannot be persisted. Terminal, like a failed
+		// trace write: left running it would be reclaimed and the whole graph
+		// run again, side effects included, to fail at the same marshal.
+		return service.failPersist(persistCtx, tenant, record, fmt.Errorf("marshal execution output: %w", err))
 	}
 	record.Status = execution.StatusSucceeded
 	record.Output = output
@@ -1102,7 +1106,14 @@ func (service *Service) persistChild(ctx context.Context, tenant repository.Tena
 		})
 	}
 	if _, err := service.executions.CreateNodeRuns(ctx, tenant, rows); err != nil {
-		return fmt.Errorf("persist sub-workflow trace: %w", err)
+		// The child is a durable execution with a lease of its own, so a trace it
+		// cannot write is settled the way a top-level run's is: left running, a
+		// reclaim would run the child's graph — and its side effects — a second
+		// time to fail at the same write. The cause is returned either way, so
+		// the node that called it fails with the same reason.
+		cause := fmt.Errorf("persist sub-workflow trace: %w", err)
+		_, _ = service.failPersist(ctx, tenant, record, cause)
+		return cause
 	}
 
 	finishedAt := time.Now().UTC()

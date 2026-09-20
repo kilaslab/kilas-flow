@@ -27,6 +27,13 @@ func registerRoutes(router *chi.Mux, api huma.API, deps Deps) {
 	secureCookie := !deps.Config.Auth.CookieInsecure
 	handlers.NewAuth(deps.AuthStore, deps.AuthIssuer, deps.Executions, deps.Tenants).
 		WithCookie(auth.CookieName(secureCookie), secureCookie).Register(v1)
+	// The operator surface is registered beside the identity endpoints because
+	// it is the same boundary: it mints the tenants and accounts every other
+	// route is then scoped to. It is not a tenant-scoped handler — it takes the
+	// API prefix instead of a TenantResolver, because a resolver would answer
+	// "which tenant is this request for" when the whole point of these
+	// operations is that the operator names a different one.
+	handlers.NewAdmin(deps.AuthStore, APIPrefix).Register(v1)
 	handlers.NewNodeTypes(deps.NodeRegistry).
 		WithOptionLoading(deps.Tenants, deps.OptionLoader, deps.CredentialResolverFor).
 		WithAvailability(deps.NodeAvailability).
