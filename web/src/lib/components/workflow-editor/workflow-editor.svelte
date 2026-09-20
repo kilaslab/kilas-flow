@@ -407,8 +407,11 @@
 	 * it used to do nothing at all, so the wire had to be dragged onto a handle
 	 * that did not exist yet.
 	 */
-	function onConnectEnd(event: MouseEvent | TouchEvent) {
+	function onConnectEnd(event: MouseEvent | TouchEvent, connectionState: { toNode?: unknown }) {
 		if (locked || !flow) return;
+		// Ending on a handle is a connection that already exists; only a release
+		// in empty space has nothing to land on and needs a node created for it.
+		if (connectionState.toNode) return;
 		const point = 'changedTouches' in event ? event.changedTouches[0] : event;
 		if (!point) return;
 		const source = connectSource;
@@ -727,7 +730,7 @@
 			const text = await navigator.clipboard.readText();
 			if (!pasteText(text)) canvasMessage = 'Nothing on the clipboard to paste.';
 		} catch {
-			canvasMessage = 'The browser would not give this page the clipboard. Paste with the keyboard shortcut instead.';
+			canvasMessage = 'The browser would not let this page read the clipboard.';
 		}
 	}
 
