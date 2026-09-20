@@ -69,7 +69,12 @@ func registerRoutes(router *chi.Mux, api huma.API, deps Deps) {
 	router.Handle(handlers.ResumePrefix, resumeHandler)
 	router.Handle(handlers.ResumePrefix+"/*", resumeHandler)
 
-	router.Handle("/*", web.Handler())
+	// Last, because it reads the document every registration above wrote into:
+	// the public operations have to be marked after they exist, and the SPA route
+	// above is the one that must stay last among the handlers.
+	markPublicOperations(api)
+
+	router.Handle("/*", web.Handler(web.WithFrameAncestors(deps.Config.Embed.AllowedOrigins)))
 }
 
 // workflowCredentials lists the credential IDs one workflow's nodes reference.
