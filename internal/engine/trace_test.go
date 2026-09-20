@@ -188,6 +188,12 @@ func TestServiceProjectsDatastoreOutputFromTrace(t *testing.T) {
 			if event.NodeID != "ds" {
 				continue
 			}
+			// node.started is published before the node runs, so it carries no
+			// data by design: the event this asserts on is the one that reports
+			// what the node produced.
+			if event.Type == events.NodeStarted {
+				continue
+			}
 			if string(event.Data) != string(ds) {
 				t.Errorf("live event data = %s, want the persisted summary %s", event.Data, ds)
 			}
