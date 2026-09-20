@@ -1,7 +1,7 @@
 ---
 id: BUG-f9frth
 title: 'Canvas editing core: save conflicts, unsaved guard, remount loss, ports, errors, run display'
-status: doing
+status: testing
 priority: high
 labels:
     - editor
@@ -10,7 +10,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:10Z"
-updated: "2026-09-20T00:53:27Z"
+updated: "2026-09-20T01:51:56Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -301,3 +301,110 @@ VERIFICATION
 
 - `createListCredentials` call sites migrated to the regenerated signature (`params` first, options factory second): `web/src/routes/(dashboard)/app/workflows/[id]/+page.svelte:58` and `web/src/lib/embed/embed-editor.svelte:46`, both `createListCredentials<CredentialResource[]>(undefined, () => ({ query: { select … } }))` — same shape WebFormsOps3 used on the credential list page.
 - `cd web && pnpm check` → `1508 FILES 0 ERRORS 0 WARNINGS 0 FILES_WITH_PROBLEMS`. This also confirms the two type errors FrontendCore3 reported against my files are gone (`definitions={nodeTypes.data ?? []}`).
+
+## Work (PortsDiagnostics 2026-09-20) — remaining slice: import-diagnostics surface, ports, execute-per-node
+
+Asked for the last workable remainder without a new API. Verdict up front: **the import-diagnostics surface cannot land without new server storage**, so it is recorded here rather than half-landed. The ports remainder is landed (under BUG-66es9z). The rest is recorded with what each needs.
+
+### Import diagnostics (finding "Import diagnostics … are then lost") — NOT REACHABLE WITHOUT NEW STORAGE
+
+Checked in the tree, not assumed:
+- `internal/api/handlers/interop.go` `Import` (lines 142–165) builds `Unsupported []n8n.ImportIssue` and `Webhooks []WebhookRouteResource` into the **response body only**; the document is persisted through the ordinary `SaveDraft`, which takes no diagnostics.
+- `n8n.ImportIssue` (`internal/interop/n8n/n8n.go:117`) is a response shape: severity, node name/id, field, type, typeVersion, reason. Nothing in it is written into the document — the importer's diagnostics are not recoverable from a stored revision, so "re-derive on read" is impossible without the original n8n JSON.
+- `workflowVersionModel` (`internal/repository/models.go:215–232`) has no metadata/notes column: `definition`, `label`, `created_by`, `created_at` only. `appendVersion`'s only extra parameter is the 255-byte label.
+- No read route exists (`openapi`/handlers have no import-report GET; the report appears once in `POST /workflows/import`).
+
+What landing it needs, in order: (1) a migration adding a diagnostics column to `workflow_versions` (or a `workflow_import_reports` table keyed by revision) — `internal/database` + `internal/repository`; (2) `SaveDraft` carrying the report into `appendVersion`, and a read accessor; (3) a read route on the workflow resource — `internal/api/**`; (4) the editor surface — per-node warning badges (`canvas-node.svelte`) and an Import report drawer reusing `import-report.svelte`.
+
+Rejected as a half-measure: stashing the report client-side (navigation state / localStorage) so the editor shows it once after import. It dies on reload, is invisible to the next tab or the next person, and covers nothing for an API-driven import — which is exactly what the finding names as the failure.
+
+Ownership: repository files are EngineCore's active area and `internal/api/**` is SecurityFront2's, so both sides need a hub/ticket before anyone starts. **Recommend a ticket of its own** (the shape FEAT-cwmw90 took for the webhook URL): "Persist the n8n import report with the revision and surface it in the editor".
+
+### Dynamic ports (Switch/Merge/datastore branch) — LANDED under BUG-66es9z
+
+`db8831e` — `nodes/datastore.go` `datastorePortsFor` now declares `true`/`false` instead of two `main` outputs, and `web/src/lib/workflow-editor/ports.ts` `datastoreOutputs` mirrors the same names and labels, so the canvas handle, `canConnect` and the compiler agree. The executor's If Not Exists arm now emits on the first port when the table holds no match (it previously emitted nothing there at all). Proof and the pre-fix failures are on BUG-66es9z. Switch and Merge were already done by FrontendCore2 (`ports.test.ts`).
+
+### Execute-per-node feedback (finding "Execute shows nothing per node") — needs a server parameter
+
+`POST /workflows/{id}/run` carries `triggerNodeId` (`internal/api/handlers/workflows.go:237`) but no destination/start-node parameter, so "execute step" and a canvas that shows per-node status/item counts while a run goes need: a server-side destination node on the run request (EngineFlow/Service), `GET /executions?workflowId=` filtering, and the editor props/NDV panes (FrontendCore3/WebFormsOps). Not started here — the file owners are other live slices and the API change is not in this ticket's reach.
+
+### Webhook public URL — ticketed
+
+FEAT-cwmw90 ("Expose a workflow's webhook URLs through the API (GET /workflows/{id}/webhooks)"), status `todo`: the URL is minted server-side and only ever returned in the n8n import response.
+
+### Everything else on this ticket
+
+Landed and reported by FrontendCore2/FrontendCore3 in the Progress section above (concurrent-save `baseVersionId`, unsaved guard, no-remount, TanStack cache, 422 per-node issues, Switch/Merge ports, run-poll watch, version preview, JSON-kind fields, validation-issue key). Status stays `doing` for the three remainders above.
+
+#### Update (PortsDiagnostics, same day) — the storage/read half landed after that verdict
+
+The verdict above was written against the tree before `000a437` ("BUG-f9frth: read a revision's import report back over HTTP"). Since then the two server halves it called for exist, exactly in the shape it named:
+
+- `workflowVersionModel.Diagnostics []byte` (`internal/repository/models.go`), the column the report needed;
+- `repository.WorkflowDiagnosticsStore` — `SaveDraftWithDiagnostics` (the import path now stores instead of only returning) and `WorkflowDiagnostics` (`internal/repository/import_diagnostics.go`), so a report is read back per revision and a later hand-edit revision correctly carries none;
+- `GET /workflows/{id}/diagnostics` (`operationId: workflow-diagnostics`, `internal/api/handlers/interop.go`), with the client regenerated in `9ae45a0`.
+
+So the finding is now landable: what remains is the editor surface (per-node badges + report drawer), which the live `ImportDiagnostics` agent owns. My part of this ticket — the port defect — is landed under BUG-66es9z (`db8831e`). The other two remainders are unchanged: webhook URL = FEAT-cwmw90 (`todo`); execute-per-node still needs a destination-node parameter on the run request (the `triggerNodeId` half landed for trigger *selection*, not for "execute up to this node").
+
+---
+### Import-diagnostics surface (BUG-f9frth) — server + editor landed, one blocker
+
+Status: testing. Commits: 68b0dbc (migration), 6cb0608 (repository), 000a437
+(read route), 4268702 + 5709b4d (editor badge/drawer), plus 9ae45a0 from
+WebFormsOps3 (generated client). Ticket not closed on the last acceptance line
+only: the live browser proof of the badge/drawer.
+
+Landed
+- `workflow_versions.diagnostics` (blob/bytea, nullable), 000012 in both
+  dialects, space-indented. Additive; no index. `internal/database` suite green
+  (fresh, twice, rollback, both directions, tabs check). PostgreSQL leg SKIPPED:
+  KILASFLOW_TEST_POSTGRES_DSN is unset and nothing listens on :5432 here.
+- Repository: `WorkflowDiagnosticsStore` (optional capability, the
+  WebhookRouteMinter shape) = `SaveDraftWithDiagnostics` + `WorkflowDiagnostics`.
+  SaveDraft and the new variant share one append path; a restore writes no
+  report; an empty report is refused. Tests: round trip byte-for-byte, report
+  stays on its own revision after a later save, tenant scoping, empty refusal,
+  restore. `go test ./internal/database/ ./internal/repository/ -count=1` -> ok.
+- Route: `GET /workflows/{id}/diagnostics?versionId=` (operationId
+  `workflow-diagnostics`). Import writes the report in the same call that saves
+  the draft and refuses the import (503) when the store cannot keep one. Tests:
+  the import response's report comes back identical from storage, a later draft
+  save leaves it on its revision and the newest reports none, a hand-built
+  workflow reports none, unknown ids are 404. `go test ./internal/api/ -run
+  'Import|Diagnostic' -count=1` -> ok.
+- Editor: badge per affected node (severity-coloured, reasons in the accessible
+  name, `data-import-diagnostic` for tests), toolbar button with the counts, and
+  a right-side drawer reusing import-report.svelte. import-report.svelte now
+  takes what it renders (issues, name, optional webhooks/node names/open button)
+  so the dialog and the drawer can both use it. Report is read for the revision
+  the canvas was built from, so a save does not erase the explanation of nodes
+  that are still on the canvas. `pnpm check` 0 errors / 0 warnings;
+  vitest src/lib/workflow-editor 373 passed.
+
+Live proof (stub-free, `/tmp/kf-diag`)
+- POST /api/v1/workflows/import on a real server (sqlite) with an n8n file
+  holding a manual trigger, an unknown node, `notes` and `pinData`: 201 with
+  1 blocking + 2 dropped issues.
+- GET /api/v1/workflows/{id}/diagnostics -> 200 with source "n8n", importedAt,
+  the same three issues, and the imported revision id/1.
+- Same result after `make build-web` and against the embedded SPA origin.
+
+BLOCKER (pre-existing, not from this change): the editor page cannot render
+state that arrives after its first flush. `effect_update_depth_exceeded` is
+thrown on main at 9ae45a0 (page checked out from that commit, my changes
+absent) and again from the production bundle, for a hand-built workflow as well
+as the imported one. Cause, from reading the component: the canvas projection
+effect in workflow-editor.svelte reads `selectedNodeIDs`, and
+`onSelectionChange` assigns it a fresh array on every Flow selection event, so
+each projection re-triggers the event that re-triggers the projection. Every
+later write (the diagnostics included) dies with the aborted flush, which is why
+no badge or report button can appear in a browser. Owner: whoever holds
+workflow-editor.svelte. Evidence: the diagnostics request is visible in the page
+(200, correct versionId) and the DOM never shows a badge; the same loop fires
+with my page file replaced by the pre-change one; screenshots impossible while
+the flush is aborted.
+
+Not claimed
+- No visual confirmation of the badge/drawer (blocked above); the canvas-side
+  derivation is pinned only by unit tests.
+- PostgreSQL migration execution (no DSN available).
