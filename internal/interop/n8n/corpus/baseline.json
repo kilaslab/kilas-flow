@@ -1,9 +1,9 @@
 {
   "comment": "Baseline for the n8n importer regression corpus. Tiers: imported = n8n.Import returned no error; activatable = workflow.Compile returned no error; runnable = the workflow ran to completion with HTTP, SQL and model calls stubbed. Regenerate with go test ./internal/interop/n8n/corpus -update-baseline, and say in the commit which workflows moved and why.",
   "tiers": {
-    "activatable": 14,
+    "activatable": 15,
     "imported": 40,
-    "runnable": 4
+    "runnable": 5
   },
   "total": 40,
   "blocked": 10,
@@ -63,7 +63,7 @@
       "runnable": false,
       "blocked": true,
       "unsupported": 1,
-      "reason": "execute node \"665fef5c-6380-4bc0-be2a-430446b140ca\": node \"HTTP Request (v4)2\": request target is not allowed: host \"dummy.domain\" is not in the allowed list"
+      "reason": "execute node \"n8n-2\": node \"HTTP Request (v1)\": request target is not allowed: host \"dummy.domain\" is not in the allowed list"
     },
     {
       "name": "nodes-base/HttpRequest/test/encoding/encoding.test",
@@ -74,7 +74,7 @@
       "runnable": false,
       "blocked": true,
       "unsupported": 1,
-      "reason": "execute node \"cc2f185d-df6a-4fa3-b7f4-29f0dbad0f9b\": node \"HTTP Request (v4)\": request target is not allowed: host \"dummy.domain\" is not in the allowed list"
+      "reason": "execute node \"eb243cfd-fbd6-41ef-935d-4ea98617355f\": node \"HTTP Request (v3)\": request target is not allowed: host \"dummy.domain\" is not in the allowed list"
     },
     {
       "name": "nodes-base/HttpRequest/test/encodingQuoted/encodingQuoted.test",
@@ -85,7 +85,7 @@
       "runnable": false,
       "blocked": true,
       "unsupported": 1,
-      "reason": "execute node \"cc2f185d-df6a-4fa3-b7f4-29f0dbad0f9b\": node \"HTTP Request (v4)\": request target is not allowed: host \"dummy.domain\" is not in the allowed list"
+      "reason": "execute node \"eb243cfd-fbd6-41ef-935d-4ea98617355f\": node \"HTTP Request (v3)\": request target is not allowed: host \"dummy.domain\" is not in the allowed list"
     },
     {
       "name": "nodes-base/HttpRequest/test/node/workflow.delete",
@@ -107,7 +107,7 @@
       "runnable": false,
       "blocked": true,
       "unsupported": 3,
-      "reason": "execute node \"38ec1a50-7f0e-4749-822d-f26370b00694\": node \"HTTP Request empty header\": request target is not allowed: host \"dummyjson.com\" is not in the allo…"
+      "reason": "execute node \"96f38d87-0bdd-420c-b981-26fd55d11cb2\": node \"HTTP Request\": request target is not allowed: host \"dummyjson.com\" is not in the allowed list"
     },
     {
       "name": "nodes-base/HttpRequest/test/node/workflow.pagination",
@@ -117,8 +117,8 @@
       "activatable": true,
       "runnable": false,
       "blocked": true,
-      "unsupported": 6,
-      "reason": "execute node \"0e9bbc1b-902a-40ad-be73-709ce4917422\": node \"POST JSON\": request target is not allowed: host \"dummyjson.com\" is not in the allowed list"
+      "unsupported": 24,
+      "reason": "execute node \"d8185b9f-a2ec-484e-b57c-6ac6b7ac9d57\": node \"Complete Expression - JSON Autodetect set\": request target is not allowed: host \"dummyjson.com\" is…"
     },
     {
       "name": "nodes-base/HttpRequest/test/node/workflow.patch",
@@ -158,10 +158,9 @@
       "source": "nodes-base",
       "nodes": 7,
       "imported": true,
-      "activatable": false,
-      "runnable": false,
-      "unsupported": 7,
-      "reason": "workflow node \"baa75f00-e0dd-40b2-b718-1e8311549a05\" is disconnected from the trigger"
+      "activatable": true,
+      "runnable": true,
+      "unsupported": 3
     },
     {
       "name": "nodes-base/HttpRequest/test/node/workflow.userAgent",
@@ -271,7 +270,7 @@
       "imported": true,
       "activatable": false,
       "runnable": false,
-      "unsupported": 17,
+      "unsupported": 4,
       "reason": "node \"70c10657-5d81-46c5-b931-966024d7ce45\" configuration is invalid: this node was imported from n8n-nodes-testing.testData, which KilasFlow does not suppor…"
     },
     {
@@ -301,7 +300,7 @@
       "imported": true,
       "activatable": true,
       "runnable": true,
-      "unsupported": 8
+      "unsupported": 3
     },
     {
       "name": "nodes-base/Set/test/Set.workflow.number",
@@ -319,7 +318,7 @@
       "imported": true,
       "activatable": false,
       "runnable": false,
-      "unsupported": 5,
+      "unsupported": 4,
       "reason": "node \"a0062c52-b6fe-48a1-8347-8ff082964d81\" requires a wahaApi credential"
     },
     {
@@ -329,7 +328,7 @@
       "imported": true,
       "activatable": false,
       "runnable": false,
-      "unsupported": 14,
+      "unsupported": 11,
       "reason": "node \"b71d79fa-2eae-4fb8-97f6-665c496c85f9\" requires a wahaApi credential"
     },
     {
@@ -349,7 +348,7 @@
       "imported": true,
       "activatable": false,
       "runnable": false,
-      "unsupported": 21,
+      "unsupported": 16,
       "reason": "node \"48043a43-2edd-4c4e-9640-03be184a5af0\" requires a postgres credential"
     },
     {
@@ -369,7 +368,7 @@
       "imported": true,
       "activatable": false,
       "runnable": false,
-      "unsupported": 11,
+      "unsupported": 10,
       "reason": "node \"490960e8-c5de-463b-b3d4-06b52e083666\" requires a wahaApi credential"
     },
     {
@@ -399,7 +398,7 @@
       "imported": true,
       "activatable": false,
       "runnable": false,
-      "unsupported": 16,
+      "unsupported": 13,
       "reason": "node \"af16c0da-c302-4d8b-983c-3d69e12f7260\" requires a postgres credential"
     },
     {
@@ -409,7 +408,7 @@
       "imported": true,
       "activatable": false,
       "runnable": false,
-      "unsupported": 8,
+      "unsupported": 7,
       "reason": "node \"052ad79c-4c69-41fe-baf5-b6e609f663ca\" requires a wahaApi credential"
     },
     {
@@ -429,7 +428,7 @@
       "imported": true,
       "activatable": false,
       "runnable": false,
-      "unsupported": 7,
+      "unsupported": 6,
       "reason": "node \"d965e045-faab-44d2-982c-dd9be8c58c06\" requires a wahaApi credential"
     },
     {
@@ -439,7 +438,7 @@
       "imported": true,
       "activatable": false,
       "runnable": false,
-      "unsupported": 30,
+      "unsupported": 22,
       "reason": "node \"259a1703-699b-4673-948c-cf21b7684667\" requires a wahaApi credential"
     }
   ]

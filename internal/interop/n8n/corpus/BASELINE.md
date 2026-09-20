@@ -24,8 +24,8 @@ nor blocked actually failed to execute.
 | Tier | Count | of 40 |
 | --- | ---: | ---: |
 | imported | 40 | 100% |
-| activatable | 14 | 35% |
-| runnable | 4 | 10% |
+| activatable | 15 | 38% |
+| runnable | 5 | 12% |
 | _(blocked only by a Code node)_ | 0 | 0% |
 | _(blocked by the offline policy)_ | 10 | 25% |
 
@@ -35,16 +35,16 @@ nor blocked actually failed to execute.
 | --- | --- | ---: | :---: | :---: | :---: | --- |
 | `kilasflow/control-datatable` | kilasflow | 5 | yes | yes | yes | — |
 | `kilasflow/control-manual-set` | kilasflow | 2 | yes | yes | yes | — |
-| `nodes-base/HttpRequest/test/binaryData/binaryData.test` | nodes-base | 8 | yes | yes | blocked | execute node "665fef5c-6380-4bc0-be2a-430446b140ca": node "HTTP Request (v4)2": request target is not allowed: host "dummy.domain" is not in the allowed list |
-| `nodes-base/HttpRequest/test/encoding/encoding.test` | nodes-base | 3 | yes | yes | blocked | execute node "cc2f185d-df6a-4fa3-b7f4-29f0dbad0f9b": node "HTTP Request (v4)": request target is not allowed: host "dummy.domain" is not in the allowed list |
-| `nodes-base/HttpRequest/test/encodingQuoted/encodingQuoted.test` | nodes-base | 3 | yes | yes | blocked | execute node "cc2f185d-df6a-4fa3-b7f4-29f0dbad0f9b": node "HTTP Request (v4)": request target is not allowed: host "dummy.domain" is not in the allowed list |
+| `nodes-base/HttpRequest/test/binaryData/binaryData.test` | nodes-base | 8 | yes | yes | blocked | execute node "n8n-2": node "HTTP Request (v1)": request target is not allowed: host "dummy.domain" is not in the allowed list |
+| `nodes-base/HttpRequest/test/encoding/encoding.test` | nodes-base | 3 | yes | yes | blocked | execute node "eb243cfd-fbd6-41ef-935d-4ea98617355f": node "HTTP Request (v3)": request target is not allowed: host "dummy.domain" is not in the allowed list |
+| `nodes-base/HttpRequest/test/encodingQuoted/encodingQuoted.test` | nodes-base | 3 | yes | yes | blocked | execute node "eb243cfd-fbd6-41ef-935d-4ea98617355f": node "HTTP Request (v3)": request target is not allowed: host "dummy.domain" is not in the allowed list |
 | `nodes-base/HttpRequest/test/node/workflow.delete` | nodes-base | 2 | yes | yes | blocked | execute node "312e64ca-00bf-40e6-b21d-1f73930ef98c": node "HTTP Request": request target is not allowed: host "dummyjson.com" is not in the allowed list |
-| `nodes-base/HttpRequest/test/node/workflow.get` | nodes-base | 5 | yes | yes | blocked | execute node "38ec1a50-7f0e-4749-822d-f26370b00694": node "HTTP Request empty header": request target is not allowed: host "dummyjson.com" is not in the allo… |
-| `nodes-base/HttpRequest/test/node/workflow.pagination` | nodes-base | 37 | yes | yes | blocked | execute node "0e9bbc1b-902a-40ad-be73-709ce4917422": node "POST JSON": request target is not allowed: host "dummyjson.com" is not in the allowed list |
+| `nodes-base/HttpRequest/test/node/workflow.get` | nodes-base | 5 | yes | yes | blocked | execute node "96f38d87-0bdd-420c-b981-26fd55d11cb2": node "HTTP Request": request target is not allowed: host "dummyjson.com" is not in the allowed list |
+| `nodes-base/HttpRequest/test/node/workflow.pagination` | nodes-base | 37 | yes | yes | blocked | execute node "d8185b9f-a2ec-484e-b57c-6ac6b7ac9d57": node "Complete Expression - JSON Autodetect set": request target is not allowed: host "dummyjson.com" is… |
 | `nodes-base/HttpRequest/test/node/workflow.patch` | nodes-base | 2 | yes | yes | blocked | execute node "312e64ca-00bf-40e6-b21d-1f73930ef98c": node "HTTP Request": request target is not allowed: host "dummyjson.com" is not in the allowed list |
 | `nodes-base/HttpRequest/test/node/workflow.post` | nodes-base | 3 | yes | yes | blocked | execute node "07670093-862f-403f-96a5-ddf7fdb0d225": node "HTTP Request": request target is not allowed: host "dummyjson.com" is not in the allowed list |
 | `nodes-base/HttpRequest/test/node/workflow.put` | nodes-base | 2 | yes | yes | blocked | execute node "07670093-862f-403f-96a5-ddf7fdb0d225": node "HTTP Request": request target is not allowed: host "dummyjson.com" is not in the allowed list |
-| `nodes-base/HttpRequest/test/node/workflow.use_error_output` | nodes-base | 7 | yes | no | no | workflow node "baa75f00-e0dd-40b2-b718-1e8311549a05" is disconnected from the trigger |
+| `nodes-base/HttpRequest/test/node/workflow.use_error_output` | nodes-base | 7 | yes | yes | yes | — |
 | `nodes-base/HttpRequest/test/node/workflow.userAgent` | nodes-base | 3 | yes | yes | blocked | execute node "1aa13a8d-6e32-4a5e-9b3c-3a4d5e6f7a01": node "HTTP Request default UA": request target is not allowed: host "ua.example.com" is not in the allow… |
 | `nodes-base/If/test/v1/IF.boolean` | nodes-base | 11 | yes | no | no | node "2aa0a57b-b25a-4293-b7bf-fc240d4d21f4" configuration is invalid: this node was imported from n8n-nodes-testing.testData, which KilasFlow does not suppor… |
 | `nodes-base/If/test/v1/IF.date-time` | nodes-base | 8 | yes | no | no | node "c5d906bc-909a-45d9-a990-9ea6279cc807" configuration is invalid: this node was imported from n8n-nodes-testing.testData, which KilasFlow does not suppor… |
