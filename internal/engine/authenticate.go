@@ -8,6 +8,7 @@ import (
 
 	"github.com/kilaslabs/kilas-flow/internal/credentials"
 	"github.com/kilaslabs/kilas-flow/internal/expression"
+	"github.com/kilaslabs/kilas-flow/internal/safehttp"
 	"github.com/kilaslabs/kilas-flow/internal/workflow"
 )
 
@@ -29,6 +30,22 @@ func (request Request) Authenticate(ctx context.Context, ir workflow.IRNode, htt
 	if !resolved.AllowsHost(httpRequest.URL.Host) {
 		return fmt.Errorf("node %q: credential %q is not allowed for host %q", ir.Name, resolved.Name, httpRequest.URL.Hostname())
 	}
+	// The same bound has to survive a redirect. The check above covers the URL
+	// the node names; without the scope on the request context, a 30x from it
+	// carries the credential's header or query secret to a host AllowedDomains
+	// never named, because Go strips only Authorization and Cookie on a
+	// cross-host hop. The redirect check reads the scope off the initial
+	// request's context, so it is attached here — beside the check that
+	// produced it — rather than in each caller, which is the whole reason this
+	// function exists instead of a copy per node.
+	//
+	// The request is mutated in place because its context is what the HTTP
+	// client carries into the redirect chain; returning a new request would
+	// change a signature two callers already use.
+	*httpRequest = *httpRequest.WithContext(safehttp.WithCredentialScope(
+		httpRequest.Context(),
+		safehttp.CredentialScope{AllowsHost: resolved.AllowsHost},
+	))
 	if err := credentials.Apply(httpRequest, resolved.Type, resolved.Fields); err != nil {
 		return fmt.Errorf("node %q: %w", ir.Name, err)
 	}

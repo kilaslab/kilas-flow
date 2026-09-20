@@ -151,3 +151,33 @@ packages were mid-edit (final state: internal/engine/runner.go:531 undefined
 `delivered`). Re-run `go test ./internal/api/ -run 'Login|Session|APIKey'`.
 Attribution: 47544b7 also carries unrelated files swept in by a shared index
 (internal/interop/n8n/gowa.go, several .pine ticket files) — those are not this ticket's.
+
+## Progress 2026-09-20 (ExpressionParity) — engine Authenticate now scopes the redirect
+
+Last open piece of the redirect-leak finding: `engine.Request.Authenticate`
+checked `AllowsHost` against the initial URL and then dropped the bound, so a
+30x from an in-scope host carried a custom header/query secret to any host
+(safehttp's `CheckRedirect` reads the scope off the request context, and only
+the probe and the load-options loader were attaching it).
+
+Change: `internal/engine/authenticate.go` attaches
+`safehttp.WithCredentialScope(httpRequest.Context(), CredentialScope{AllowsHost:
+resolved.AllowsHost})` after the `AllowsHost` check passes and before
+`credentials.Apply`. The request is mutated in place because its context is what
+the HTTP client carries into the redirect chain; returning a new request would
+change a signature two callers already use.
+
+Tests (`internal/engine/authenticate_test.go`, new):
+- `TestAuthenticateScopesTheCredentialToItsAllowedDomains` — the scope is on the
+  request context, allows the checked host (with `host:port`), refuses another,
+  and an out-of-scope first URL is still refused before the secret is applied.
+- `TestARedirectOutsideTheScopeStopsTheChainWithoutTheSecret` — end to end with
+  two real servers: `127.0.0.1` (allowed) redirects to `localhost` (not named),
+  the chain stops at the redirect and the destination receives no
+  `X-Api-Key`. This is the finding's own repro shape.
+
+TDD: with the hunk reverted, both tests fail — the redirect is followed and the
+destination logs `X-Api-Key: s3cret`; with the hunk in place, both pass.
+
+Scoped run: `go test ./internal/engine/ -run
+'TestAuthenticate|TestARedirectOutsideTheScope' -count=1` → ok.
