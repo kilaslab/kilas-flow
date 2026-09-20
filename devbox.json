@@ -10,8 +10,6 @@
   ],
   "shell": {
     "init_hook": [
-      "export CGO_ENABLED=0",
-      "export KILASFLOW_ENV=development",
       "export PATH=\"$(go env GOPATH)/bin:$PATH\"",
       "echo 'kilasflow devbox shell — run: make setup, then make dev'"
     ],

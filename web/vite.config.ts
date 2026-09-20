@@ -7,6 +7,11 @@ import { defineConfig } from 'vite';
 // needs to know which port the backend is on.
 //
 // Keep these prefixes in step with internal/api/server.go.
+//
+// /resume is the one that got missed, and its absence is invisible until it
+// matters: the approval page POSTs to /resume/<token> to resume a waiting
+// execution, and without the rule Vite answers the POST itself with the SPA
+// document, so the page reports a successful request that resumed nothing.
 const backend = process.env.KILASFLOW_BACKEND_URL ?? 'http://127.0.0.1:8080';
 
 // strictPort keeps the dev URL predictable: silently sliding to the next free
@@ -14,7 +19,7 @@ const backend = process.env.KILASFLOW_BACKEND_URL ?? 'http://127.0.0.1:8080';
 // KILASFLOW_WEB_PORT when 5173 is taken by another project.
 const port = Number(process.env.KILASFLOW_WEB_PORT ?? 5173);
 
-const proxied = ['/api', '/webhook', '/docs'];
+const proxied = ['/api', '/webhook', '/docs', '/resume'];
 
 export default defineConfig({
 	plugins: [tailwindcss(), sveltekit()],

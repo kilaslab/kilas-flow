@@ -82,4 +82,31 @@ wait_for_url "$web_url" "$web_pid" "$web_log" "Vite"
 curl -fsS "$web_url/api/v1/health" | grep -q '"status":"ok"'
 curl -fsS "$web_url" | grep -qi '<!doctype html>'
 
+# Every prefix the Go server mounts has to be proxied, and the failure mode when
+# one is not is silent: Vite answers the request itself with the SPA document, so
+# a page that POSTs to /resume/<token> reports success and resumes nothing.
+#
+# The check is the backend's own answer for that path, not a marker that Vite
+# left behind. A marker does not work here: SvelteKit's development shell serves
+# the application document without injecting `/@vite/client`, so "the body does
+# not contain Vite's client" is true of a proxied request and of an unproxied one
+# alike. Each expectation below is something only the Go server produces.
+#
+# Keep this list in step with `proxied` in web/vite.config.ts and the prefix
+# block in internal/api/server.go.
+probe_prefix() {
+	prefix=$1
+	expected=$2
+	if ! curl -sS "$web_url$prefix" | grep -q "$expected"; then
+		echo "smoke-dev: $prefix was not answered by the Go server (wanted $expected in the body)" >&2
+		exit 1
+	fi
+}
+
+probe_prefix /api/v1/health '"status":"ok"'
+probe_prefix /webhook 'No webhook path was given'
+probe_prefix /docs 'KilasFlow API'
+probe_prefix /resume 'wait.not_found'
+
+echo "smoke-dev: every mounted prefix reaches the Go server"
 echo "smoke-dev: passed"
