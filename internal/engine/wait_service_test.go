@@ -23,6 +23,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -67,12 +68,22 @@ type waitSuspender struct {
 	requests  *[]engine.Request
 	mode      string
 	expiresAt time.Time
+	// expiresAfter mints the deadline when the node runs instead of when the
+	// test was set up, which is what a real wait node does: it turns a
+	// duration into a deadline at execution time. A test that runs on the wall
+	// clock and mints its deadline earlier would spend the margin on the run
+	// prefix before the suspension rather than on the deadline.
+	expiresAfter time.Duration
 }
 
 func (executor *waitSuspender) Execute(_ context.Context, _ workflow.IRNode, _ workflow.NodeInput, request engine.Request) (workflow.NodeOutput, error) {
 	*executor.calls++
 	*executor.requests = append(*executor.requests, request)
-	return nil, &engine.SuspendError{Mode: executor.mode, ExpiresAt: executor.expiresAt}
+	expiresAt := executor.expiresAt
+	if executor.expiresAfter > 0 {
+		expiresAt = time.Now().Add(executor.expiresAfter)
+	}
+	return nil, &engine.SuspendError{Mode: executor.mode, ExpiresAt: expiresAt}
 }
 
 func waitTestDefinition(nodeType, executorID string) node.Definition {
@@ -131,6 +142,75 @@ func waitTestService(t *testing.T, store *repository.GORMExecutionStore, catalog
 	if err != nil {
 		t.Fatalf("NewService() error = %v", err)
 	}
+	return service
+}
+
+// waitClock is a clock the test owns. Deadlines are validated, swept and
+// armed against it through the service's seam, so a test moves time instead
+// of racing the wall clock: a loaded machine can no longer push a 50 ms
+// deadline into the past between minting it and validating it.
+type waitClock struct {
+	mu  sync.Mutex
+	now time.Time
+}
+
+func newWaitClock() *waitClock {
+	return &waitClock{now: time.Now().UTC()}
+}
+
+func (clock *waitClock) Now() time.Time {
+	clock.mu.Lock()
+	defer clock.mu.Unlock()
+	return clock.now
+}
+
+func (clock *waitClock) Advance(d time.Duration) {
+	clock.mu.Lock()
+	defer clock.mu.Unlock()
+	clock.now = clock.now.Add(d)
+}
+
+// waitTimerStub stands in for time.AfterFunc: it records the delay a
+// suspension armed and holds its callback, so the test decides when a wait's
+// exact deadline fires. That is what proves "the deadline itself requeues the
+// execution" without a wall-clock latency margin that load can blow through.
+type waitTimerStub struct {
+	mu    sync.Mutex
+	delay time.Duration
+	fire  func()
+}
+
+func (stub *waitTimerStub) AfterFunc(after time.Duration, fire func()) *time.Timer {
+	stub.mu.Lock()
+	defer stub.mu.Unlock()
+	stub.delay = after
+	stub.fire = fire
+	return &time.Timer{}
+}
+
+func (stub *waitTimerStub) armed() time.Duration {
+	stub.mu.Lock()
+	defer stub.mu.Unlock()
+	return stub.delay
+}
+
+// release hands back the callback the last arm registered and clears it, so
+// one wake-up cannot be fired twice.
+func (stub *waitTimerStub) release() func() {
+	stub.mu.Lock()
+	defer stub.mu.Unlock()
+	fire := stub.fire
+	stub.fire = nil
+	return fire
+}
+
+// waitTestServiceWithClock builds the usual test service and points its wait
+// clock and timer scheduler at the test-owned fakes.
+func waitTestServiceWithClock(t *testing.T, store *repository.GORMExecutionStore, catalog *node.Registry, executors *engine.Registry, worker string, clock *waitClock, timers *waitTimerStub) *engine.Service {
+	t.Helper()
+	service := waitTestService(t, store, catalog, executors, worker)
+	service.SetClockForTest(clock.Now)
+	service.SetTimerForTest(timers.AfterFunc)
 	return service
 }
 
@@ -516,13 +596,19 @@ func TestResumeOfAPerItemSuspendProcessesEveryItem(t *testing.T) {
 	ctx, db, store, catalog, executors, tenant := waitTestSetup(t)
 	_ = db
 
+	// The wait clock is the test's: the 50 ms deadline is minted and validated
+	// against the same clock, so a loaded machine cannot push it into the past
+	// before the suspension is written.
+	clock := newWaitClock()
+	timers := &waitTimerStub{}
+
 	// A wait with a deadline resumes on its own by passing the item it held
 	// through, so every item downstream can be traced back to the batch.
 	var holdCalls int
 	hold := &waitSuspendOnce{
 		calls:     &holdCalls,
 		mode:      engine.WaitModeInterval,
-		expiresAt: time.Now().Add(50 * time.Millisecond),
+		expiresAt: clock.Now().Add(50 * time.Millisecond),
 	}
 	if err := executors.Register("test.hold", hold); err != nil {
 		t.Fatalf("Register(hold) error = %v", err)
@@ -580,7 +666,7 @@ func TestResumeOfAPerItemSuspendProcessesEveryItem(t *testing.T) {
 	if err != nil {
 		t.Fatalf("QueueManualLatest() error = %v", err)
 	}
-	service := waitTestService(t, store, catalog, executors, "worker-1")
+	service := waitTestServiceWithClock(t, store, catalog, executors, "worker-1", clock, timers)
 	if worked, err := service.RunOnce(ctx); err != nil || !worked {
 		t.Fatalf("RunOnce(suspend) = (%v, %v), want (true, nil)", worked, err)
 	}
@@ -594,6 +680,16 @@ func TestResumeOfAPerItemSuspendProcessesEveryItem(t *testing.T) {
 	if holdCalls != 1 {
 		t.Fatalf("the waiting node ran %d times before the wait, want the first item alone", holdCalls)
 	}
+
+	// The suspension armed the wake-up for its own deadline, and firing that
+	// wake-up alone — with the clock at the deadline and no sweep tick —
+	// requeues the execution. That is the property the periodic sweep could
+	// never deliver, proven without a wall-clock latency margin.
+	if got := timers.armed(); got != 50*time.Millisecond {
+		t.Fatalf("the suspension armed a %s wake-up, want its 50 ms deadline", got)
+	}
+	clock.Advance(50 * time.Millisecond)
+	timers.release()()
 
 	// The deadline requeues the execution; a fresh worker continues it.
 	awaitExecutionStatus(t, store, tenant, queued.ID, execution.StatusQueued)
@@ -633,14 +729,17 @@ func TestResumeOfAPerItemSuspendProcessesEveryItem(t *testing.T) {
 
 // The deadline used to be noticed only by the periodic sweep, so a two-second
 // pause took up to a minute and a webhook whose workflow waited answered 504
-// long before the wait ended. Each suspension now arms a timer for the deadline
-// it was written with; the sweep remains the floor for waits a process left
-// behind when it exited. The assertion is deliberately about latency, because
-// that is the part the sweep alone could never deliver.
+// long before the wait ended. Each suspension now arms a timer for the exact
+// deadline it was written with; the sweep remains the floor for waits a
+// process left behind when it exited. The test owns the service's clock and
+// timer through the seam, so it proves that wake-up — not the periodic sweep,
+// and not wall-clock luck — is what settles the wait.
 func TestExpiredWaitsResolveOnTheirOwnDeadline(t *testing.T) {
 	ctx, db, store, catalog, executors, tenant := waitTestSetup(t)
 	_ = db
-	hold := &waitSuspender{mode: engine.WaitModeApproval, expiresAt: time.Now().Add(250 * time.Millisecond)}
+	clock := newWaitClock()
+	timers := &waitTimerStub{}
+	hold := &waitSuspender{mode: engine.WaitModeApproval, expiresAt: clock.Now().Add(250 * time.Millisecond)}
 	var calls int
 	var inputs []workflow.NodeInput
 	hold.calls = &calls
@@ -656,7 +755,7 @@ func TestExpiredWaitsResolveOnTheirOwnDeadline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("QueueManualLatest() error = %v", err)
 	}
-	service := waitTestService(t, store, catalog, executors, "worker-1")
+	service := waitTestServiceWithClock(t, store, catalog, executors, "worker-1", clock, timers)
 	if worked, err := service.RunOnce(ctx); err != nil || !worked {
 		t.Fatalf("RunOnce(suspend) = (%v, %v), want (true, nil)", worked, err)
 	}
@@ -665,9 +764,14 @@ func TestExpiredWaitsResolveOnTheirOwnDeadline(t *testing.T) {
 	if settled, err := service.SweepWaits(ctx); err != nil || settled != 0 {
 		t.Fatalf("SweepWaits(before the deadline) = (%d, %v), want (0, nil)", settled, err)
 	}
+	if got := timers.armed(); got != 250*time.Millisecond {
+		t.Fatalf("the suspension armed a %s wake-up, want its 250 ms deadline", got)
+	}
 	// The execution settles itself. An approval is the mode nothing resumes on
 	// its own, so it fails by name at the deadline rather than staying
 	// suspended forever.
+	clock.Advance(250 * time.Millisecond)
+	timers.release()()
 	awaitExecutionStatus(t, store, tenant, queued.ID, execution.StatusFailed)
 	failed, err := store.Get(ctx, tenant, queued.ID)
 	if err != nil {
@@ -683,23 +787,25 @@ func TestExpiredWaitsResolveOnTheirOwnDeadline(t *testing.T) {
 		t.Fatalf("SweepWaits(after settling) = (%d, %v), want (0, nil): settling twice must be a no-op", settled, err)
 	}
 
-	// Timer waits resolve the other way: the deadline IS the resume. The
-	// requeue has to happen inside a second of a 50 ms deadline — the
-	// assertion the one-minute sweep could not have met.
+	// Timer waits resolve the other way: the deadline IS the resume. Firing
+	// the exact 50 ms wake-up the suspension armed requeues the execution,
+	// with no sweep tick and no wall-clock margin in the way.
 	hold.mode = engine.WaitModeInterval
-	hold.expiresAt = time.Now().Add(50 * time.Millisecond)
+	hold.expiresAt = clock.Now().Add(50 * time.Millisecond)
 	queuedTimer, err := store.QueueManualLatest(ctx, tenant, saved.ID, catalog, "", json.RawMessage(`{"customer":"Bo"}`))
 	if err != nil {
 		t.Fatalf("QueueManualLatest(timer) error = %v", err)
 	}
-	suspendedAt := time.Now()
 	if worked, err := service.RunOnce(ctx); err != nil || !worked {
 		t.Fatalf("RunOnce(timer suspend) = (%v, %v), want (true, nil)", worked, err)
 	}
-	awaitExecutionStatus(t, store, tenant, queuedTimer.ID, execution.StatusQueued)
-	if elapsed := time.Since(suspendedAt); elapsed > time.Second {
-		t.Errorf("a 50 ms wait took %s to requeue; the deadline itself must do it", elapsed)
+	awaitExecutionStatus(t, store, tenant, queuedTimer.ID, execution.StatusWaiting)
+	if got := timers.armed(); got != 50*time.Millisecond {
+		t.Fatalf("the suspension armed a %s wake-up, want its 50 ms deadline", got)
 	}
+	clock.Advance(50 * time.Millisecond)
+	timers.release()()
+	awaitExecutionStatus(t, store, tenant, queuedTimer.ID, execution.StatusQueued)
 	if worked, err := service.RunOnce(ctx); err != nil || !worked {
 		t.Fatalf("RunOnce(timer resume) = (%v, %v), want (true, nil)", worked, err)
 	}
@@ -714,7 +820,7 @@ func TestExpiredWaitsResolveOnTheirOwnDeadline(t *testing.T) {
 	// An absolute deadline resolves the same way: until is a timer with a
 	// clock time instead of a duration.
 	hold.mode = engine.WaitModeUntil
-	hold.expiresAt = time.Now().Add(50 * time.Millisecond)
+	hold.expiresAt = clock.Now().Add(50 * time.Millisecond)
 	queuedUntil, err := store.QueueManualLatest(ctx, tenant, saved.ID, catalog, "", json.RawMessage(`{"customer":"Cy"}`))
 	if err != nil {
 		t.Fatalf("QueueManualLatest(until) error = %v", err)
@@ -722,6 +828,12 @@ func TestExpiredWaitsResolveOnTheirOwnDeadline(t *testing.T) {
 	if worked, err := service.RunOnce(ctx); err != nil || !worked {
 		t.Fatalf("RunOnce(until suspend) = (%v, %v), want (true, nil)", worked, err)
 	}
+	awaitExecutionStatus(t, store, tenant, queuedUntil.ID, execution.StatusWaiting)
+	if got := timers.armed(); got != 50*time.Millisecond {
+		t.Fatalf("the suspension armed a %s wake-up, want its 50 ms deadline", got)
+	}
+	clock.Advance(50 * time.Millisecond)
+	timers.release()()
 	awaitExecutionStatus(t, store, tenant, queuedUntil.ID, execution.StatusQueued)
 	if worked, err := service.RunOnce(ctx); err != nil || !worked {
 		t.Fatalf("RunOnce(until resume) = (%v, %v), want (true, nil)", worked, err)
@@ -732,6 +844,77 @@ func TestExpiredWaitsResolveOnTheirOwnDeadline(t *testing.T) {
 	}
 	if resumedUntil.Status != execution.StatusSucceeded {
 		t.Fatalf("until status = %q, want succeeded (error %s)", resumedUntil.Status, resumedUntil.Error)
+	}
+}
+
+// TestDefaultSchedulerSettlesAWaitAtItsDeadline is the production half of the
+// deadline proof above, and it exists because owning the seam everywhere left
+// the nil defaults untested: the tests above always install a clock and a
+// scheduler, so nothing would notice if the fallbacks behind them broke.
+// Replace the nil scheduler with one that never fires and every other test in
+// this package stays green, while a deployed process arms no wake-up at all —
+// only the minute-long sweep settles a wait, and a webhook whose workflow
+// waits answers 504 long before its wait ends.
+//
+// So this test wires the service exactly as production does — no
+// SetClockForTest, no SetTimerForTest — and gives the wait a real 20 ms
+// deadline on the wall clock. Nothing here moves time, calls SweepWaits or
+// fires a wake-up by hand: the real time.AfterFunc timer is the only thing
+// that can requeue the execution, and the assertion is the exact status it
+// leaves behind, not how long that took.
+func TestDefaultSchedulerSettlesAWaitAtItsDeadline(t *testing.T) {
+	ctx, db, store, catalog, executors, tenant := waitTestSetup(t)
+	_ = db
+	var calls int
+	var inputs []workflow.NodeInput
+	hold := &waitSuspender{
+		mode:         engine.WaitModeInterval,
+		expiresAfter: 20 * time.Millisecond,
+		calls:        &calls,
+		requests:     &[]engine.Request{},
+	}
+	waitRegisterFakes(t, executors, hold, &calls, &inputs)
+
+	workflowStore := repository.NewWorkflowStore(db.DB)
+	saved, err := workflowStore.SaveDraft(ctx, tenant, waitTestWorkflow())
+	if err != nil {
+		t.Fatalf("SaveDraft() error = %v", err)
+	}
+	queued, err := store.QueueManualLatest(ctx, tenant, saved.ID, catalog, "", json.RawMessage(`{"customer":"Ada"}`))
+	if err != nil {
+		t.Fatalf("QueueManualLatest() error = %v", err)
+	}
+	service := waitTestService(t, store, catalog, executors, "worker-1")
+	if worked, err := service.RunOnce(ctx); err != nil || !worked {
+		t.Fatalf("RunOnce(suspend) = (%v, %v), want (true, nil)", worked, err)
+	}
+	// A suspension that never parked an execution would be indistinguishable
+	// from an expired one later, so the wait is proven parked before the
+	// deadline is allowed to pass.
+	suspended, err := store.Get(ctx, tenant, queued.ID)
+	if err != nil {
+		t.Fatalf("Get(suspended) error = %v", err)
+	}
+	if suspended.Status != execution.StatusWaiting {
+		t.Fatalf("status = %q, want waiting on a 20 ms deadline the production clock accepted (error %s)",
+			suspended.Status, suspended.Error)
+	}
+
+	// Only the armed production timer requeues this execution.
+	awaitExecutionStatus(t, store, tenant, queued.ID, execution.StatusQueued)
+
+	// The requeue is a real resume, not just a status change: a second worker
+	// continues the workflow from the checkpoint and finishes it.
+	resuming := waitTestService(t, store, catalog, executors, "worker-2")
+	if worked, err := resuming.RunOnce(ctx); err != nil || !worked {
+		t.Fatalf("RunOnce(resume) = (%v, %v), want (true, nil)", worked, err)
+	}
+	resumed, err := store.Get(ctx, tenant, queued.ID)
+	if err != nil {
+		t.Fatalf("Get(resumed) error = %v", err)
+	}
+	if resumed.Status != execution.StatusSucceeded {
+		t.Fatalf("resumed status = %q, want succeeded (error %s) runs=%s", resumed.Status, resumed.Error, describeRuns(resumed))
 	}
 }
 

@@ -149,6 +149,10 @@ type waitTimers struct {
 	ctx     context.Context
 	stopped bool
 	armed   map[*time.Timer]struct{}
+	// afterFunc schedules one wake-up; nil means time.AfterFunc. Tests set it
+	// through the unexported seam in export_test.go so they own when a wait's
+	// deadline fires instead of waiting on the wall clock.
+	afterFunc func(time.Duration, func()) *time.Timer
 }
 
 // attach binds the timer set to the sweep loop's lifetime. Called once per
@@ -198,15 +202,19 @@ func (timers *waitTimers) arm(after time.Duration, fire func()) {
 	}
 
 	// The handle reaches its own callback through a channel rather than being
-	// captured directly. time.AfterFunc may run the callback before it returns —
-	// and the delay here is zero whenever a wait has already expired — so a
-	// closure that reads the variable this function is still assigning is a data
-	// race, which is exactly what the detector reports when an expired wait and
-	// a running sweep loop overlap. The callback's receive cannot happen before
-	// the send below, and the send happens after the assignment, which is what
-	// orders the two.
+	// captured directly. The scheduler may run the callback before it
+	// returns — and the delay here is zero whenever a wait has already
+	// expired — so a closure that reads the variable this function is still
+	// assigning is a data race, which is exactly what the detector reports
+	// when an expired wait and a running sweep loop overlap. The callback's
+	// receive cannot happen before the send below, and the send happens after
+	// the assignment, which is what orders the two.
 	handle := make(chan *time.Timer, 1)
-	timer := time.AfterFunc(after, func() {
+	schedule := timers.afterFunc
+	if schedule == nil {
+		schedule = time.AfterFunc
+	}
+	timer := schedule(after, func() {
 		timers.forget(<-handle)
 		fire()
 	})
@@ -220,11 +228,24 @@ func (timers *waitTimers) forget(timer *time.Timer) {
 	delete(timers.armed, timer)
 }
 
+// clock reads the service's time source. Every wait deadline is validated,
+// swept and armed against this one call, so production reads the wall clock
+// and a test can freeze or move it through the unexported seam in
+// export_test.go. Reading time.Now directly at each site is what let a
+// loaded machine slip a 50 ms deadline into the past between the point a
+// test minted it and the point suspend validated it.
+func (service *Service) clock() time.Time {
+	if service.now != nil {
+		return service.now()
+	}
+	return time.Now()
+}
+
 // armWaitTimer arms the exact wake-up for one suspension. The delay is taken
 // from the deadline the wait row was written with, so the wake-up and the row
 // can never disagree about when the wait ends.
 func (service *Service) armWaitTimer(expiresAt time.Time) {
-	delay := time.Until(expiresAt)
+	delay := expiresAt.Sub(service.clock())
 	if delay < 0 {
 		delay = 0
 	}
@@ -253,7 +274,7 @@ func (service *Service) settleDueWaits() {
 // wait another call already consumed reports settled, not failed: the sweeper
 // moves on rather than failing an execution twice.
 func (service *Service) SweepWaits(ctx context.Context) (int, error) {
-	now := time.Now().UTC()
+	now := service.clock().UTC()
 	waits, err := service.executions.ListExpiredWaits(ctx, now, 0)
 	if err != nil {
 		return 0, fmt.Errorf("list expired waits: %w", err)
@@ -521,7 +542,7 @@ func validateSuspend(suspended *SuspendError, now time.Time) (time.Time, error) 
 // (webhook.terminal), so those answer 504 at ResponseTimeout while the
 // execution waits durably.
 func (service *Service) suspend(ctx context.Context, tenant repository.TenantScope, record execution.Record, document workflow.Document, result Result, suspended *SuspendError, seqBase int, resume resumeURLs, trace *traceWriter) (bool, error) {
-	now := time.Now().UTC()
+	now := service.clock().UTC()
 	expiresAt, err := validateSuspend(suspended, now)
 	if err != nil {
 		return false, err
@@ -702,7 +723,7 @@ func (service *Service) resumeWithOutput(ctx context.Context, callerTenant, toke
 	if strings.TrimSpace(token) == "" {
 		return repository.Wait{}, execution.Record{}, repository.ErrWaitNotFound
 	}
-	wait, record, err := service.executions.ResumeWait(ctx, callerTenant, repository.HashWaitToken(token), output, time.Now().UTC())
+	wait, record, err := service.executions.ResumeWait(ctx, callerTenant, repository.HashWaitToken(token), output, service.clock().UTC())
 	if err != nil {
 		return repository.Wait{}, execution.Record{}, err
 	}

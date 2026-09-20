@@ -170,13 +170,18 @@ type Service struct {
 	publicBaseURL          string
 	subworkflowTriggerType string
 	errorTriggerType       string
-	activeMu               sync.Mutex
-	active                 map[string]context.CancelFunc
-	waitTimers             waitTimers
-	workers                sync.WaitGroup
-	startOnce              sync.Once
-	wake                   chan struct{}
-	log                    *slog.Logger
+	// now reads the clock the wait deadlines are validated, swept and armed
+	// against. Production leaves it nil for the wall clock; tests set it
+	// through the unexported seam in export_test.go so they move time
+	// instead of racing it. See Service.clock.
+	now        func() time.Time
+	activeMu   sync.Mutex
+	active     map[string]context.CancelFunc
+	waitTimers waitTimers
+	workers    sync.WaitGroup
+	startOnce  sync.Once
+	wake       chan struct{}
+	log        *slog.Logger
 }
 
 func NewService(deps ServiceDeps) (*Service, error) {
