@@ -1,0 +1,24 @@
+-- The import report, kept with the revision it describes.
+--
+-- POST /workflows/import already answered with everything the n8n adapter
+-- refused to carry faithfully — a blocking issue for a node it has no
+-- equivalent for, a lossy one for a field it carried differently, a dropped
+-- one for a field it did not carry at all — and then the report was gone: the
+-- dialog closed, the response was discarded, and the editor had no way to say
+-- which of its nodes were affected. A user reopening the workflow saw the same
+-- graph with no trace of why two of its nodes cannot run (BUG-f9frth).
+--
+-- The column lives on the revision rather than on the workflow because the
+-- report is a fact about one translation of one file. Editing the draft does
+-- not make a stale report true of the new document, and the newest revision of
+-- a workflow that was never imported has no report at all.
+--
+-- Nullable, and that is the point. A NOT NULL column would force every
+-- hand-built revision, every restore and every pre-existing row to carry an
+-- empty report — which says "the import had no diagnostics" about a document
+-- nobody imported. Absent and empty are different answers here.
+--
+-- Additive and unindexed: it is read by (tenant, workflow, version) — the
+-- primary key and the revision index already cover that — and never searched.
+
+ALTER TABLE `workflow_versions` ADD COLUMN `diagnostics` blob;
