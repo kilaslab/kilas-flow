@@ -354,13 +354,25 @@ func TestSuspendResumeContinuesWithExactUpstreamData(t *testing.T) {
 type waitSuspendOnce struct {
 	calls     *int
 	suspended bool
+	// mode is the suspension it raises: an approval wait when empty, which is
+	// what a human decision resumes, otherwise the timer mode whose deadline
+	// resumes by passing the item that waited through.
+	mode      string
+	expiresAt time.Time
 }
 
 func (executor *waitSuspendOnce) Execute(_ context.Context, _ workflow.IRNode, input workflow.NodeInput, _ engine.Request) (workflow.NodeOutput, error) {
 	*executor.calls++
 	if !executor.suspended {
 		executor.suspended = true
-		return nil, &engine.SuspendError{Mode: engine.WaitModeApproval, ExpiresAt: time.Now().Add(time.Hour)}
+		mode, expiresAt := executor.mode, executor.expiresAt
+		if mode == "" {
+			mode = engine.WaitModeApproval
+		}
+		if expiresAt.IsZero() {
+			expiresAt = time.Now().Add(time.Hour)
+		}
+		return nil, &engine.SuspendError{Mode: mode, ExpiresAt: expiresAt}
 	}
 	return workflow.NodeOutput{input["main"]}, nil
 }
@@ -489,8 +501,137 @@ func TestResumeInsideALoopProcessesEveryBatch(t *testing.T) {
 	}
 }
 
-// An expired wait resolves at its own deadline, and nothing has to call the
-// sweeper for that to happen.
+// TestResumeOfAPerItemSuspendProcessesEveryItem is the finding that a node
+// resolving its failures item by item dropped the items behind the one that
+// suspended.
+//
+// A tolerated failure is resolved one item at a time, so a node that waits on
+// its first item has two more to reach when the suspension ends the pass. The
+// scheduling of those items used to happen after the checkpoint had already
+// been marshalled, and the checkpoint is the only thing a resumed run reads its
+// work from: the run resumed, the waiting node completed from its stored output,
+// and every item behind it was lost — silently, with the execution reporting
+// success.
+func TestResumeOfAPerItemSuspendProcessesEveryItem(t *testing.T) {
+	ctx, db, store, catalog, executors, tenant := waitTestSetup(t)
+	_ = db
+
+	// A wait with a deadline resumes on its own by passing the item it held
+	// through, so every item downstream can be traced back to the batch.
+	var holdCalls int
+	hold := &waitSuspendOnce{
+		calls:     &holdCalls,
+		mode:      engine.WaitModeInterval,
+		expiresAt: time.Now().Add(50 * time.Millisecond),
+	}
+	if err := executors.Register("test.hold", hold); err != nil {
+		t.Fatalf("Register(hold) error = %v", err)
+	}
+	var doneCalls int
+	var doneInputs []workflow.NodeInput
+	if err := executors.Register("test.passthrough", &waitPassthrough{calls: &doneCalls, inputs: &doneInputs}); err != nil {
+		t.Fatalf("Register(passthrough) error = %v", err)
+	}
+	if err := executors.Register("test.three", engine.ExecutorFunc(
+		func(context.Context, workflow.IRNode, workflow.NodeInput, engine.Request) (workflow.NodeOutput, error) {
+			return workflow.NodeOutput{{
+				{JSON: map[string]any{"n": float64(1)}},
+				{JSON: map[string]any{"n": float64(2)}},
+				{JSON: map[string]any{"n": float64(3)}},
+			}}, nil
+		})); err != nil {
+		t.Fatalf("Register(source) error = %v", err)
+	}
+	if err := catalog.Register(waitTestDefinition("test.three", "test.three")); err != nil {
+		t.Fatalf("Register(source) error = %v", err)
+	}
+
+	link := func(id, source, target string) workflow.Connection {
+		return workflow.Connection{ID: id, Kind: workflow.ConnectionMain,
+			Source: workflow.Endpoint{NodeID: source, Port: "main"},
+			Target: workflow.Endpoint{NodeID: target, Port: "main"}}
+	}
+	workflowStore := repository.NewWorkflowStore(db.DB)
+	saved, err := workflowStore.SaveDraft(ctx, tenant, workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_per_item_wait", Name: "Per-item wait",
+		Nodes: []workflow.Node{
+			{ID: "manual", Name: "Manual", Type: "kilasflow.manual", TypeVersion: workflow.V(1)},
+			{ID: "three", Name: "Three", Type: "test.three", TypeVersion: workflow.V(1)},
+			// Tolerating the failure is what resolves this node one item at a
+			// time; without it the batch is a single invocation and there is
+			// nothing left to schedule.
+			{ID: "hold", Name: "Hold", Type: "test.hold", TypeVersion: workflow.V(1),
+				Settings: map[string]any{"onError": "continueRegularOutput"}},
+			{ID: "done", Name: "Done", Type: "test.done", TypeVersion: workflow.V(1)},
+		},
+		Connections: []workflow.Connection{
+			link("c1", "manual", "three"),
+			link("c2", "three", "hold"),
+			link("c3", "hold", "done"),
+		},
+		Settings: map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("SaveDraft() error = %v", err)
+	}
+
+	queued, err := store.QueueManualLatest(ctx, tenant, saved.ID, catalog, "", json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("QueueManualLatest() error = %v", err)
+	}
+	service := waitTestService(t, store, catalog, executors, "worker-1")
+	if worked, err := service.RunOnce(ctx); err != nil || !worked {
+		t.Fatalf("RunOnce(suspend) = (%v, %v), want (true, nil)", worked, err)
+	}
+	suspended, err := store.Get(ctx, tenant, queued.ID)
+	if err != nil {
+		t.Fatalf("Get(suspended) error = %v", err)
+	}
+	if suspended.Status != execution.StatusWaiting {
+		t.Fatalf("status = %q, want waiting at the per-item wait (error %s)", suspended.Status, suspended.Error)
+	}
+	if holdCalls != 1 {
+		t.Fatalf("the waiting node ran %d times before the wait, want the first item alone", holdCalls)
+	}
+
+	// The deadline requeues the execution; a fresh worker continues it.
+	awaitExecutionStatus(t, store, tenant, queued.ID, execution.StatusQueued)
+	restarted := waitTestService(t, store, catalog, executors, "worker-2")
+	if worked, err := restarted.RunOnce(ctx); err != nil || !worked {
+		t.Fatalf("RunOnce(resume) = (%v, %v), want (true, nil)", worked, err)
+	}
+	finished, err := store.Get(ctx, tenant, queued.ID)
+	if err != nil {
+		t.Fatalf("Get(resumed) error = %v", err)
+	}
+	if finished.Status != execution.StatusSucceeded {
+		t.Fatalf("resumed status = %q, want succeeded (error %s)", finished.Status, finished.Error)
+	}
+	// Every item of the batch reaches the node downstream: the one that waited
+	// and the two the wait never got to.
+	seen := map[float64]int{}
+	for _, input := range doneInputs {
+		for _, item := range input["main"] {
+			number, ok := item.JSON["n"].(float64)
+			if !ok {
+				t.Fatalf("the node after the wait saw %v, want an item of the batch", item.JSON)
+			}
+			seen[number]++
+		}
+	}
+	for _, want := range []float64{1, 2, 3} {
+		if seen[want] != 1 {
+			t.Errorf("item %v reached the node after the wait %d times, want exactly once; it saw %v",
+				want, seen[want], seen)
+		}
+	}
+	if holdCalls != 3 {
+		t.Errorf("the waiting node ran %d times, want one per item: %d", holdCalls, doneCalls)
+	}
+}
+
+
 //
 // The deadline used to be noticed only by the periodic sweep, so a two-second
 // pause took up to a minute and a webhook whose workflow waited answered 504

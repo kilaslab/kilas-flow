@@ -84,6 +84,16 @@ type NodeEvent struct {
 	Detail json.RawMessage
 }
 
+// ResponseEventName is the nested event under which a node hands over the HTTP
+// answer it produced for a caller waiting on this run.
+//
+// The name lives here rather than in the boundary that reads it because the
+// runner is what makes the answer durable: it is captured while the node runs
+// and written with the node's own trace row. That copy is what a boundary in
+// another process answers from, since the cross-process relay carries event
+// identifiers alone — a node's data can exceed PostgreSQL's NOTIFY payload cap.
+const ResponseEventName = "webhook.response"
+
 // NodeEventSink receives nested node events. It must never block the run: an
 // implementation that cannot keep up drops rather than stalls, because event
 // delivery is never allowed to gate execution.
@@ -95,6 +105,28 @@ func (sink NodeEventSink) Emit(event NodeEvent) {
 		return
 	}
 	sink(event)
+}
+
+// responseCapture collects the HTTP answer a node produced while it ran.
+//
+// The runner wraps the run's event sink for one invocation, so the answer is
+// available to attach to that node's trace row: the sink reaches this process's
+// live broker, the row reaches every other process, and a split api+worker
+// deployment has only the latter. The first answer wins, matching the boundary,
+// which answers the caller from the first response the execution produced.
+type responseCapture struct {
+	response json.RawMessage
+}
+
+// sink returns the event sink the executor is handed: it records the answer and
+// forwards every event, so wrapping a node's sink never costs a live update.
+func (capture *responseCapture) sink(next NodeEventSink) NodeEventSink {
+	return func(event NodeEvent) {
+		if event.Name == ResponseEventName && len(event.Detail) > 0 && capture.response == nil {
+			capture.response = append(json.RawMessage(nil), event.Detail...)
+		}
+		next.Emit(event)
+	}
 }
 
 // CredentialResolver hands an executor the decrypted fields of a credential
@@ -283,6 +315,11 @@ type NodeRun struct {
 	// is exactly what someone reading a branch needs to see.
 	Skipped   bool
 	ErrorCode string
+	// Response is the HTTP answer this node produced for a caller waiting on
+	// the run, captured from the node's own ResponseEventName event so it can
+	// be persisted with the run. It is what a boundary in another process
+	// answers from — the live relay carries identifiers, not data.
+	Response json.RawMessage
 }
 
 // Result contains node data in execution order and outputs of graph leaves.
@@ -813,6 +850,23 @@ func snapshotCheckpoint(nodeID, mode string, input workflow.NodeInput, attempt i
 	return checkpoint
 }
 
+// suspendWithCheckpoint attaches the checkpoint a suspended run continues from.
+//
+// The caller takes the checkpoint rather than invoke, because the stack it
+// carries is the caller's: runPerItem schedules the items a suspending node had
+// not reached yet, and a checkpoint marshalled before that scheduling would
+// resume without them — the items after the wait would vanish from the run
+// silently, which is exactly what a checkpoint that predates the schedule does.
+func suspendWithCheckpoint(suspended *SuspendError, nodeID string, input workflow.NodeInput, attempt int, state *runState, request *Request) (*SuspendError, error) {
+	raw, err := marshalCheckpoint(snapshotCheckpoint(nodeID, suspended.Mode, input, attempt, state, request))
+	if err != nil {
+		return nil, err
+	}
+	suspended.NodeID = nodeID
+	suspended.Checkpoint = raw
+	return suspended, nil
+}
+
 // Resume continues a run suspended at checkpoint.SuspendNode, completing that
 // node with resumeOutput and then running the same pass Run would have. Nodes
 // completed before suspension never execute again: their outputs arrive in
@@ -970,12 +1024,13 @@ func (runner *Runner) runNode(ctx context.Context, graph preparedGraph, request 
 		return runner.runPerItem(ctx, graph, request, state, node, input, policy)
 	}
 
-	output, cause, code, attempt, suspended, err := runner.invoke(ctx, node, input, request, state, policy)
+	capture := &responseCapture{}
+	output, cause, code, attempt, suspended, err := runner.invoke(ctx, node, input, request, state, policy, capture)
 	if err != nil {
 		return nil, err
 	}
 	if suspended != nil {
-		return suspended, nil
+		return suspendWithCheckpoint(suspended, node.ID, input, attempt, state, request)
 	}
 	if cause != nil {
 		if policy.onError == errorStop {
@@ -989,6 +1044,7 @@ func (runner *Runner) runNode(ctx context.Context, graph preparedGraph, request 
 		output = toleratedOutput(node, input, cause, policy.onError)
 		state.complete(graph, node, input, output, NodeRun{
 			NodeID: node.ID, Input: cloneInput(input), Error: cause, Attempt: attempt, ErrorCode: code,
+			Response: capture.response,
 		}, request)
 		return nil, nil
 	}
@@ -1007,6 +1063,7 @@ func (runner *Runner) runNode(ctx context.Context, graph preparedGraph, request 
 	stampProvenance(node, graph.incoming[node.ID], input, output, len(state.runs[node.ID]))
 	state.complete(graph, node, input, output, NodeRun{
 		NodeID: node.ID, Input: cloneInput(input), Attempt: attempt,
+		Response: capture.response,
 	}, request)
 	return nil, nil
 }
@@ -1016,7 +1073,12 @@ func (runner *Runner) runNode(ctx context.Context, graph preparedGraph, request 
 // It returns the output on success, or the last cause with the code that
 // classifies it. A suspension is neither: it ends the run with no retry and no
 // failure row, and the caller hands the signal back to the service.
-func (runner *Runner) invoke(ctx context.Context, node workflow.IRNode, input workflow.NodeInput, request *Request, state *runState, policy retry) (workflow.NodeOutput, error, string, int, *SuspendError, error) {
+//
+// The suspended signal leaves without a checkpoint: the caller attaches it
+// (suspendWithCheckpoint), because the stack a checkpoint carries is the
+// caller's. A node that suspends one item at a time still owes the items after
+// it, and only the loop that ran them knows which ones those are.
+func (runner *Runner) invoke(ctx context.Context, node workflow.IRNode, input workflow.NodeInput, request *Request, state *runState, policy retry, capture *responseCapture) (workflow.NodeOutput, error, string, int, *SuspendError, error) {
 	executor, _ := runner.executors.Lookup(node.Definition.ExecutorID)
 	var (
 		output  workflow.NodeOutput
@@ -1034,16 +1096,17 @@ func (runner *Runner) invoke(ctx context.Context, node workflow.IRNode, input wo
 			state.record(NodeRun{NodeID: node.ID, Input: cloneInput(input), Error: err, Attempt: attempt, ErrorCode: "config.invalid"}, request)
 			return nil, nil, "", attempt, nil, err
 		}
-		output, err = executor.Execute(nodeCtx, node, cloneInput(input), cloneRequest(*request))
+		execution := cloneRequest(*request)
+		// The node's events are wrapped so an answer it produces is captured
+		// for its trace row. A nil capture (a caller that wants none) leaves
+		// the sink exactly as it was.
+		if capture != nil {
+			execution.Events = capture.sink(execution.Events)
+		}
+		output, err = executor.Execute(nodeCtx, node, cloneInput(input), execution)
 		cancel()
 		var suspended *SuspendError
 		if err != nil && errors.As(err, &suspended) {
-			raw, cerr := marshalCheckpoint(snapshotCheckpoint(node.ID, suspended.Mode, input, attempt, state, request))
-			if cerr != nil {
-				return nil, nil, "", attempt, nil, cerr
-			}
-			suspended.NodeID = node.ID
-			suspended.Checkpoint = raw
 			return nil, nil, "", attempt, suspended, nil
 		}
 		if err == nil {
@@ -1081,20 +1144,27 @@ func (runner *Runner) runPerItem(ctx context.Context, graph preparedGraph, reque
 	errorPort := errorPortIndex(node)
 	var firstCause error
 	failed := 0
+	// One capture for the whole node, so a Respond node resolved item by item
+	// answers the caller from the first item — the same item the boundary
+	// answers from.
+	capture := &responseCapture{}
 	for position, item := range items {
-		output, cause, _, _, suspended, err := runner.invoke(ctx, node, singleItemInput(input, item), request, state, policy)
+		itemInput := singleItemInput(input, item)
+		output, cause, _, attempt, suspended, err := runner.invoke(ctx, node, itemInput, request, state, policy, capture)
 		if err != nil {
 			return nil, err
 		}
 		if suspended != nil {
-			// The items this node has not reached yet are scheduled, so a
-			// resumed run finishes them instead of dropping them.
+			// The items this node has not reached yet are scheduled before the
+			// checkpoint is taken — the checkpoint is the only thing a resumed
+			// run reads its work from, so scheduling after it would drop every
+			// item after the one that suspended.
 			if remaining := items[position+1:]; len(remaining) > 0 {
 				state.pending = append(state.pending, pendingInvocation{
 					nodeID: node.ID, input: singleItemInput(input, remaining...),
 				})
 			}
-			return suspended, nil
+			return suspendWithCheckpoint(suspended, node.ID, itemInput, attempt, state, request)
 		}
 		if cause != nil {
 			failed++
@@ -1111,7 +1181,7 @@ func (runner *Runner) runPerItem(ctx context.Context, graph preparedGraph, reque
 		}
 		mergeOutput(assembled, output)
 	}
-	run := NodeRun{NodeID: node.ID, Input: cloneInput(input), Error: firstCause}
+	run := NodeRun{NodeID: node.ID, Input: cloneInput(input), Error: firstCause, Response: capture.response}
 	if firstCause != nil {
 		run.ErrorCode = "node.partial"
 		if failed == len(items) {
