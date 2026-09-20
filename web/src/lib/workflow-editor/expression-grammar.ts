@@ -49,12 +49,16 @@ export function expressionFunctions(): string[] {
 
 /**
  * Best-effort expression check beyond the root allowlist: brace balance plus
- * unknown roots (delegated) plus method names the served function list does
- * not carry. The served functions are method names (`toUpperCase`,
- * `toISOString`, …): the engine exposes no free calls and no `JSON` or
- * Luxon surface, so `JSON.stringify(` and `.toFormat(` are both rejected
- * shapes. The server remains the authority — this never claims a value,
- * only flags shapes the server will reject.
+ * unknown roots (delegated) plus names the served function list does not carry.
+ *
+ * The served list is whatever the engine's own allowlist reports, and it now
+ * carries method names (`toUpperCase`), namespace members (`JSON.stringify`,
+ * `Object.keys`, `Math.round`, `DateTime.now`) and the Luxon-style methods on a
+ * DateTime (`toFormat`, `plus`) — the engine evaluates all of them, so the
+ * check must never name them as missing. It flags only what the list does not
+ * carry, which is how `require('fs')` and a misspelled method are caught. The
+ * server remains the authority: this never claims a value, only flags shapes
+ * the server will reject.
  */
 export function validateExpressionShape(text: string): string | null {
 	const opens = (text.match(/\{\{/g) ?? []).length;

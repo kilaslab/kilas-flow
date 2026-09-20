@@ -33,7 +33,8 @@ describe('validateExpressionShape', () => {
 
 	it('flags an unknown method and an unknown free call', () => {
 		setExpressionGrammar({ roots: ['$json'], functions: ['toUpperCase'] });
-		// Luxon-style method the engine does not carry.
+		// A method the served list does not carry: the real list is the engine's
+		// own allowlist, so this checks the rule rather than a hardcoded surface.
 		expect(validateExpressionShape("{{ $json.a.toFormat('x') }}")).toContain('toFormat()');
 		// Node-style free call the engine does not carry.
 		expect(validateExpressionShape("{{ require('fs') }}")).toContain("require()");
