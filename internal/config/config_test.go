@@ -3,11 +3,31 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/kilaslab/kilas-flow/internal/sqlnode"
 )
+
+// TestMain drops any KILASFLOW_* variable the caller's environment is carrying
+// before a single case runs.
+//
+// The loader composes the process environment, so a variable the test never set
+// is a key it will warn about, and an unexpected warning is a different result:
+// the Makefile exports KILASFLOW_WEB_PORT for `make dev`, and with it in the
+// environment every case here sees a `web.port` that matches no field — which is
+// what fails TestAKnownKeyIsNeverReportedAsUnknown under `make test` while the
+// same suite passes when run directly. A suite that only passes in a clean
+// environment is testing the shell rather than the loader.
+func TestMain(m *testing.M) {
+	for _, entry := range os.Environ() {
+		if name, _, found := strings.Cut(entry, "="); found && strings.HasPrefix(name, EnvPrefix) {
+			os.Unsetenv(name)
+		}
+	}
+	os.Exit(m.Run())
+}
 
 func TestLoadDefaultsWhenNoFile(t *testing.T) {
 	cfg, err := Load(filepath.Join(t.TempDir(), "absent.yaml"))
