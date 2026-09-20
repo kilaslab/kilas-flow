@@ -1,14 +1,14 @@
 ---
 id: BUG-t9j2ek
 title: Inbound webhooks default to no authentication, and legacy empty-route bindings match by a non-unique path
-status: todo
+status: doing
 priority: high
 labels:
     - security
     - api
 parent: EPIC-bkj6yf
 created: "2026-09-20T05:26:52Z"
-updated: "2026-09-20T05:26:52Z"
+updated: "2026-09-20T07:42:30Z"
 ---
 
 ## Problem

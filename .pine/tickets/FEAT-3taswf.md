@@ -1,7 +1,7 @@
 ---
 id: FEAT-3taswf
 title: Publish @kilasflow/sdk to npm
-status: todo
+status: doing
 priority: high
 labels:
     - sdk
@@ -12,7 +12,7 @@ deps:
 parent: EPIC-m42s3g
 phase: p10
 created: "2026-09-05T11:51:49Z"
-updated: "2026-09-20T05:27:04Z"
+updated: "2026-09-20T07:42:30Z"
 ---
 
 ## Scope

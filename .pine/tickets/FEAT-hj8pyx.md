@@ -1,7 +1,7 @@
 ---
 id: FEAT-hj8pyx
 title: Idempotent execution requests and datastore writes
-status: todo
+status: doing
 priority: high
 labels:
     - api
@@ -9,7 +9,7 @@ labels:
     - correctness
 parent: EPIC-bkj6yf
 created: "2026-09-20T05:26:52Z"
-updated: "2026-09-20T05:26:52Z"
+updated: "2026-09-20T07:42:30Z"
 ---
 
 ## Problem

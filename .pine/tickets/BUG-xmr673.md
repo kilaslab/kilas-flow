@@ -1,7 +1,7 @@
 ---
 id: BUG-xmr673
 title: Datastore fleet migration runner is never started, and rows refuse any version mismatch
-status: todo
+status: doing
 priority: high
 labels:
     - datastore
@@ -9,7 +9,7 @@ labels:
     - correctness
 parent: EPIC-bkj6yf
 created: "2026-09-20T05:26:52Z"
-updated: "2026-09-20T05:26:52Z"
+updated: "2026-09-20T07:42:30Z"
 ---
 
 ## Problem

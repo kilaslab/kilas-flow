@@ -1,7 +1,7 @@
 ---
 id: FEAT-emf6k5
 title: Per-tenant node visibility so a host can ship its own nodes to one customer
-status: todo
+status: doing
 priority: medium
 labels:
     - registry
@@ -9,7 +9,7 @@ labels:
     - platform
 parent: EPIC-bkj6yf
 created: "2026-09-20T05:26:52Z"
-updated: "2026-09-20T05:26:52Z"
+updated: "2026-09-20T07:42:30Z"
 ---
 
 ## Problem

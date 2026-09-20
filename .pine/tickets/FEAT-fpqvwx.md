@@ -1,7 +1,7 @@
 ---
 id: FEAT-fpqvwx
 title: 'Tenant lifecycle: delete a customer and purge everything it owns'
-status: todo
+status: doing
 priority: high
 labels:
     - api
@@ -9,7 +9,7 @@ labels:
     - security
 parent: EPIC-bkj6yf
 created: "2026-09-20T05:26:31Z"
-updated: "2026-09-20T05:26:31Z"
+updated: "2026-09-20T07:42:30Z"
 ---
 
 ## Problem

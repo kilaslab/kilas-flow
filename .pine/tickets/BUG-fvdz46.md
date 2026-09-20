@@ -1,14 +1,14 @@
 ---
 id: BUG-fvdz46
 title: 'Config keys nothing reads: branding.* and embed.session_ttl'
-status: todo
+status: doing
 priority: medium
 labels:
     - platform
     - docs
 parent: EPIC-bkj6yf
 created: "2026-09-20T05:26:31Z"
-updated: "2026-09-20T05:26:31Z"
+updated: "2026-09-20T07:42:30Z"
 ---
 
 ## Problem

@@ -1,10 +1,10 @@
 ---
 id: FEAT-qdedm0
 title: Dashboard lists fetch every row; adopt limit/cursor from the paged list endpoints
-status: todo
+status: doing
 priority: medium
 created: "2026-09-20T00:51:08Z"
-updated: "2026-09-20T00:51:08Z"
+updated: "2026-09-20T07:42:30Z"
 ---
 
 # Description

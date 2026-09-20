@@ -1,7 +1,7 @@
 ---
 id: FEAT-7cg0cd
 title: Run programmatic community nodes in a JavaScript sidecar
-status: todo
+status: doing
 priority: low
 labels:
     - platform
@@ -13,7 +13,7 @@ deps:
 parent: EPIC-m42s3g
 phase: p8
 created: "2026-09-05T05:11:19Z"
-updated: "2026-09-20T05:27:04Z"
+updated: "2026-09-20T07:42:30Z"
 ---
 
 ## Scope

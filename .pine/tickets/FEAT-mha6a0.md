@@ -1,7 +1,7 @@
 ---
 id: FEAT-mha6a0
 title: 'Agent surface: CLI plus an agent skills bundle first, MCP adapter to follow'
-status: todo
+status: doing
 priority: medium
 labels:
     - api
@@ -9,7 +9,7 @@ labels:
     - agent
 parent: EPIC-bkj6yf
 created: "2026-09-20T05:26:52Z"
-updated: "2026-09-20T06:52:03Z"
+updated: "2026-09-20T07:42:30Z"
 ---
 
 ## Decision already taken (2026-09-20)

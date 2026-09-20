@@ -1,7 +1,7 @@
 ---
 id: FEAT-48hreg
 title: Publish a native community module SDK on WebAssembly
-status: todo
+status: doing
 priority: low
 labels:
     - platform
@@ -12,7 +12,7 @@ deps:
 parent: EPIC-m42s3g
 phase: p8
 created: "2026-09-05T05:14:52Z"
-updated: "2026-09-20T05:27:04Z"
+updated: "2026-09-20T07:42:29Z"
 ---
 
 ## Scope

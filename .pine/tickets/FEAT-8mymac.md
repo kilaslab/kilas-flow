@@ -1,7 +1,7 @@
 ---
 id: FEAT-8mymac
 title: Benchmark KilasFlow runtime against n8n and publish comparison
-status: todo
+status: doing
 priority: high
 labels:
     - e2e
@@ -15,7 +15,7 @@ deps:
 parent: EPIC-m42s3g
 phase: p11
 created: "2026-09-06T06:41:11Z"
-updated: "2026-09-06T06:41:11Z"
+updated: "2026-09-20T07:42:30Z"
 ---
 
 ## Scope
