@@ -325,10 +325,28 @@ func WorkflowCalls(document workflow.Document) []WorkflowCall {
 		calls = append(calls, WorkflowCall{
 			Node:       node,
 			Target:     strings.TrimSpace(textValue(locator.Value, "")),
-			Expression: property.ExpressionMarker(locator.Value),
+			Expression: expressionTarget(locator.Value),
 		})
 	}
 	return calls
+}
+
+// expressionTarget reports a locator whose value is a template rather than a
+// workflow ID.
+//
+// KilasFlow spells its expression marker as an explicit object; n8n spells it
+// as a leading `=` on a plain string, and a document can still carry that
+// spelling — it is what the importer translates, and both mean the same thing
+// here. What matters to every gate reading this walk is that the text is not a
+// workflow ID: looking it up as one refuses a call whose target is only
+// knowable at run time, and the confinement walk would bound a name the run
+// never uses.
+func expressionTarget(value any) bool {
+	if property.ExpressionMarker(value) {
+		return true
+	}
+	text, _ := value.(string)
+	return strings.HasPrefix(strings.TrimSpace(text), "=")
 }
 
 // SubworkflowCalls reads the workflows a document calls.
@@ -340,10 +358,15 @@ func WorkflowCalls(document workflow.Document) []WorkflowCall {
 // A node whose locator holds nothing is skipped rather than reported: the
 // compiler already refuses an unset required locator at save time, and a
 // half-built draft must not be the thing that blocks an unrelated activation.
+//
+// A node whose locator holds an expression is skipped for the same reason from
+// the other side: its target is only knowable at run time, so there is no
+// workflow to look up, and looking the template up as an ID refused the
+// activation of every document that calls a sub-workflow dynamically.
 func SubworkflowCalls(document workflow.Document) []repository.SubworkflowCall {
 	var calls []repository.SubworkflowCall
 	for _, call := range WorkflowCalls(document) {
-		if call.Target == "" {
+		if call.Target == "" || call.Expression {
 			continue
 		}
 		calls = append(calls, repository.SubworkflowCall{

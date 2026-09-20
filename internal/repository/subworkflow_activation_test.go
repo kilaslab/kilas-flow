@@ -7,6 +7,7 @@ import (
 
 	"github.com/kilaslabs/kilas-flow/internal/repository"
 	"github.com/kilaslabs/kilas-flow/internal/workflow"
+	"github.com/kilaslabs/kilas-flow/nodes"
 )
 
 // A workflow cannot be activated while the workflow it calls is not.
@@ -130,6 +131,86 @@ func TestActivationRefusesASubWorkflowCallToAnInactiveWorkflow(t *testing.T) {
 	plain := repository.NewWorkflowStore(db.DB)
 	if _, err := plain.Activate(ctx, tenant, orphan.ID, catalog); err != nil {
 		t.Errorf("Activate(orphan) without an extractor = %v, want the check off", err)
+	}
+}
+
+// A document that calls a sub-workflow dynamically activates.
+//
+// The gate reads the workflows a document calls and refuses the ones whose
+// target cannot run, but a call node whose locator holds an expression holds no
+// workflow ID: its target is only knowable when the node runs. The gate looked
+// the template up as an ID — for a marker locator that was the marker's own
+// JSON — and refused the activation, so a workflow calling a sub-workflow
+// dynamically could not be published at all.
+func TestActivationAllowsADynamicSubWorkflowTarget(t *testing.T) {
+	db := openClaimDB(t, "kilasflow.db")
+	ctx := context.Background()
+	tenant := repository.TenantScope{ID: "tenant-activation-dynamic"}
+	main := workflow.Port{Name: "main", Kind: workflow.ConnectionMain}
+	catalog := activationCatalog{
+		"kilasflow.manual": {Type: "kilasflow.manual", Version: workflow.V(1), Outputs: []workflow.Port{main}},
+		nodes.ExecuteWorkflowNodeType: {Type: nodes.ExecuteWorkflowNodeType, Version: workflow.V(1),
+			Inputs: []workflow.Port{main}, Outputs: []workflow.Port{main}},
+	}
+	// The production reading, not a stand-in: this is the walk the gate refuses
+	// on and the one the confinement is minted from.
+	workflows := repository.NewWorkflowStore(db.DB).WithSubworkflows(nodes.SubworkflowCalls)
+
+	caller := func(id, name string, locator map[string]any) workflow.StoredWorkflow {
+		t.Helper()
+		stored, err := workflows.SaveDraft(ctx, tenant, workflow.Document{
+			SchemaVersion: workflow.CurrentSchemaVersion,
+			ID:            id,
+			Name:          name,
+			Nodes: []workflow.Node{
+				{ID: "manual", Name: "Manual Trigger", Type: "kilasflow.manual", TypeVersion: workflow.V(1)},
+				{ID: "call", Name: "Run dynamic", Type: nodes.ExecuteWorkflowNodeType, TypeVersion: workflow.V(1),
+					Parameters: map[string]any{"workflowId": locator}},
+			},
+			Connections: []workflow.Connection{{
+				ID: "c1", Kind: workflow.ConnectionMain,
+				Source: workflow.Endpoint{NodeID: "manual", Port: "main"},
+				Target: workflow.Endpoint{NodeID: "call", Port: "main"},
+			}},
+			Settings: map[string]any{},
+		})
+		if err != nil {
+			t.Fatalf("SaveDraft(%q) error = %v", id, err)
+		}
+		return stored
+	}
+
+	// The marker spelling: the expression sits in the locator's value slot.
+	marked := caller("wf_dynamic_marker", "Dynamic by marker", map[string]any{
+		"__rl": true, "mode": "id",
+		"value": map[string]any{"mode": "expression", "value": "{{ $json.wf }}"},
+	})
+	activated, err := workflows.Activate(ctx, tenant, marked.ID, catalog)
+	if err != nil {
+		t.Fatalf("Activate(dynamic by marker) error = %v, want the activation to succeed", err)
+	}
+	if !activated.Active {
+		t.Error("the caller is not active after activating a dynamic target")
+	}
+
+	// n8n spells the same thing as a leading `=` on a plain string, and a
+	// document can still carry that spelling.
+	prefixed := caller("wf_dynamic_string", "Dynamic by string", map[string]any{
+		"__rl": true, "mode": "id", "value": "={{ $json.wf }}",
+	})
+	if _, err := workflows.Activate(ctx, tenant, prefixed.ID, catalog); err != nil {
+		t.Fatalf("Activate(dynamic by string) error = %v, want the activation to succeed", err)
+	}
+
+	// A literal target is still a target: one that does not exist is refused,
+	// with the message it has always used.
+	missing := caller("wf_literal_missing", "Literal missing", map[string]any{
+		"__rl": true, "mode": "list", "value": "wf_gone",
+	})
+	if _, err := workflows.Activate(ctx, tenant, missing.ID, catalog); err == nil {
+		t.Error("Activate(literal missing) succeeded, want a refusal")
+	} else if !strings.Contains(err.Error(), "does not exist") {
+		t.Errorf("Activate(literal missing) error = %v, want it to say the target does not exist", err)
 	}
 }
 

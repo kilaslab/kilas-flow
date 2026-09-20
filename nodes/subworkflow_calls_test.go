@@ -54,3 +54,37 @@ func TestSubworkflowCallsReadsBothCallingNodeTypes(t *testing.T) {
 		t.Errorf("plain-string target = %q, want wf_c", byNode["plain"])
 	}
 }
+
+// A target only knowable at run time is not a workflow ID to look up.
+//
+// The activation gate looks every target this walk returns up as a workflow,
+// and the confinement is minted and checked from the same reading, so a
+// template returned as an ID refuses an activation that should succeed — the
+// marker's own JSON was looked up as a workflow ID — while telling the
+// confinement nothing true about the run.
+func TestSubworkflowCallsSkipsExpressionTargets(t *testing.T) {
+	t.Parallel()
+
+	document := workflow.Document{Nodes: []workflow.Node{
+		{ID: "marker", Name: "Dynamic call", Type: nodes.ExecuteWorkflowNodeType,
+			Parameters: map[string]any{"workflowId": map[string]any{
+				"__rl": true, "mode": "id",
+				"value": map[string]any{"mode": "expression", "value": "{{ $json.wf }}"},
+			}}},
+		// n8n spells the same thing as a leading `=` on a plain string, and an
+		// imported document can still carry that spelling.
+		{ID: "prefixed", Name: "Imported dynamic call", Type: nodes.ExecuteWorkflowNodeType,
+			Parameters: map[string]any{"workflowId": map[string]any{
+				"__rl": true, "mode": "id", "value": "={{ $json.wf }}",
+			}}},
+		{ID: "literal", Name: "Literal call", Type: nodes.ExecuteWorkflowNodeType,
+			Parameters: map[string]any{"workflowId": map[string]any{
+				"__rl": true, "mode": "list", "value": "wf_literal",
+			}}},
+	}}
+
+	calls := nodes.SubworkflowCalls(document)
+	if len(calls) != 1 || calls[0].NodeID != "literal" || calls[0].WorkflowID != "wf_literal" {
+		t.Fatalf("calls = %#v, want the literal target alone: an expression is not a workflow to look up", calls)
+	}
+}
