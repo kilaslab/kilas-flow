@@ -1,7 +1,7 @@
 ---
 id: BUG-y57cz4
 title: 'Boot/config/observability: binary default, list env keys, silent config, 500 cause, SSE shutdown'
-status: doing
+status: testing
 priority: high
 labels:
     - ops
@@ -10,7 +10,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:10Z"
-updated: "2026-09-19T14:24:35Z"
+updated: "2026-09-20T00:41:49Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -110,3 +110,58 @@ Files: internal/config/config.go, cmd/kilasflow/main.go
 - [ ] Adversarial re-verify against live stub/n8n like the Verify phase (no code-only close)
 ## Progress 2026-09-19 (SecurityDx)
 - Status: doing. Research + partial implementation done this session.
+
+## Progress 2026-09-19 (SecurityFront2) — landed, testing
+Status: testing (code landed; one scoped test pending, see Unverified).
+- Binary storage is ON by default: `binary.root` defaults to `./data/binary`, beside
+  the default SQLite DSN, so a stock install and the container image (WORKDIR /app,
+  DSN /app/data/kilasflow.db) share one volume. Boot logs a WARN naming
+  `binary.root`/`KILASFLOW_BINARY_ROOT` when an operator turns it off. The runtime
+  message is now `binary.ErrNotConfigured`, which names the key and the env var
+  instead of "binary storage is not configured on this server" (internal/binary
+  updated; the two node call sites are WebhookParity's files and are delegated).
+- List-valued config keys take several entries from the environment:
+  `env.ProviderWithValue` + comma splitting for every field the struct declares as a
+  slice (derived by reflection, so a new list key cannot be forgotten). A value that
+  merely contains a comma (DSN, password, path) is never split.
+- Config mistakes are loud: `config.LoadExplicit` refuses a missing `-config` path
+  while the implicit `config.yaml` stays optional; unknown YAML keys and misspelled
+  `KILASFLOW_*` vars are WARNed with the nearest valid key (Levenshtein);
+  `log.format` must be text or json; `execution.default_timezone` is validated
+  against the real zone database; the boot line names the config path and whether it
+  was named explicitly. `newLogger` installs `slog.SetDefault`, so those warnings and
+  the handler error logs use the configured formatter.
+- SSE stream no longer hangs: the durable record is read by an operation middleware
+  before the stream opens (huma commits 200 for SSE before the handler, so the
+  handler cannot choose a status) — unknown ids and another workflow's execution
+  answer a real 404; a finished run with no retained events emits a reconstructed
+  terminal frame from the durable record and closes; a broker-dropped stream does the
+  same; concurrent streams are capped at 32 per tenant. `events.ExecutionFailed` was
+  missing from typedEvent, so every failure frame went out unnamed as `message` with a
+  huma stack trace per stream — restored, with `executionEventSchemas()` extracted so
+  a test can prove every events.Type has a registered name.
+- Graceful shutdown: `http.Server.BaseContext` is cancelled when shutdown begins, so
+  open event streams see Done immediately instead of holding Shutdown for the full 15s
+  timeout; shutdown completion and failure are logged through slog.
+- 500s now log their cause: `serverProblem(ctx, detail, err)` in
+  internal/api/handlers/problem.go logs err at ERROR with the request id and returns the
+  same generic problem. Applied in executions.go and workflows.go (Workflows.problem now
+  takes ctx). auth.go (AuthHardening) and interop.go (ImporterTail) are delegated.
+- Also landed for other slices, same file: `config.Auth.OperatorKeyEnv` +
+  default KILASFLOW_AUTH_OPERATOR_KEY and the bootstrapIdentity operator-tenant/key
+  registration (TenancyAdmin); `execution.wait_sweep_interval`, `execution.max_timeout`,
+  `execution.default_timezone` + main.go wiring (EngineWaits); `Environment:
+  workflowEnvironment()` restored in ServiceDeps (ExpressionParity/BUG-4053h6 — `$env`
+  was always empty); `api.ResumePrefix` const (DXOps2).
+Evidence (scoped, passed):
+- `go test ./internal/config/ -count=1` ok (incl. 11 new regression tests in
+  internal/config/boot_strictness_test.go)
+- `go build ./internal/config/ ./internal/embed/ ./nodes/` ok
+- `go vet ./cmd/kilasflow/` was blocked by a sibling's in-flight
+  internal/repository/workflows.go (workflows.List undefined) — not this ticket.
+Unverified: no scoped test run yet for the SSE/shutdown/config-in-main halves
+(`go test ./internal/api/ -run 'Events|Shutdown'` could not run while sibling packages
+were mid-edit). Those need a re-run before close.
+Remaining: credentials.go pagination (BUG-fv5fer) still to apply — pattern is in the
+ApiLists message (ListPage + base64 `<RFC3339Nano>\x00<id>` cursor, X-Next-Cursor
+header, ErrInvalidCursor -> 400). Not done here for time; recorded so it is not lost.

@@ -5,6 +5,8 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
+	"reflect"
 	"strings"
 	"time"
 
@@ -14,6 +16,7 @@ import (
 	"github.com/knadh/koanf/providers/structs"
 	"github.com/knadh/koanf/v2"
 
+	"github.com/kilaslabs/kilas-flow/internal/datetime"
 	"github.com/kilaslabs/kilas-flow/internal/safehttp"
 )
 
@@ -333,6 +336,12 @@ type Auth struct {
 	// bootstrap_email and enabled: true on the same first start, or the lock
 	// closes before the key is cut.
 	BootstrapPasswordEnv string `koanf:"bootstrap_password_env"`
+	// OperatorKeyEnv names the variable holding the operator's API key: the
+	// one credential that may provision customers. It is registered at boot
+	// rather than minted, because the value exists in the environment before
+	// the process starts. The key itself never comes from the file.
+	// Env: KILASFLOW_AUTH_OPERATOR_KEY_ENV. Default: "KILASFLOW_AUTH_OPERATOR_KEY".
+	OperatorKeyEnv string `koanf:"operator_key_env"`
 }
 
 // OutboundHTTP bounds requests workflow nodes make to the outside world.
@@ -456,7 +465,26 @@ type Execution struct {
 	// installing a new build deleted the run history they were about to debug.
 	// Turning it on is how an installation stops growing without bound, which
 	// until this key existed it had no way to do at all.
+	// Env: KILASFLOW_EXECUTION_RETENTION. Default: 0 (keep everything).
 	Retention time.Duration `koanf:"retention"`
+	// WaitSweepInterval is how often expired durable waits are settled when no
+	// exact timer is armed for them. The wait suspender arms an exact timer
+	// in-process for a wait it is holding, so this is the restart-recovery
+	// floor: a wait whose process died is settled within one interval of the
+	// next boot.
+	// Env: KILASFLOW_EXECUTION_WAIT_SWEEP_INTERVAL. Default: 10s.
+	WaitSweepInterval time.Duration `koanf:"wait_sweep_interval"`
+	// MaxTimeout is the ceiling a workflow's own settings.executionTimeout is
+	// clamped to, in the spirit of n8n's EXECUTIONS_TIMEOUT_MAX. Zero means no
+	// ceiling beyond the workflow's own value; DefaultTimeout stays the budget
+	// for a workflow that names none.
+	// Env: KILASFLOW_EXECUTION_MAX_TIMEOUT. Default: 1h.
+	MaxTimeout time.Duration `koanf:"max_timeout"`
+	// DefaultTimezone is the instance's IANA zone, used by a workflow whose
+	// settings.timezone is absent or is n8n's literal "DEFAULT". Empty means
+	// UTC, which is what a server with no configured zone has always used.
+	// Env: KILASFLOW_EXECUTION_DEFAULT_TIMEZONE. Default: "".
+	DefaultTimezone string `koanf:"default_timezone"`
 }
 
 // History bounds how much workflow version history an installation keeps.
@@ -520,12 +548,25 @@ type Credential struct {
 // first underscore in KILASFLOW_* to the section separator, so a two-word
 // section could never be set from the environment.
 type Binary struct {
-	// Root is the directory payloads are written under. Empty disables binary
-	// storage, and a node that needs it then fails with a clear message
-	// instead of dropping an attachment on the floor.
+	// Root is the directory payloads are written under.
+	//
+	// It has a default rather than being off, because it used to be off: a
+	// stock install and the container image ran with no binary storage at all,
+	// and the HTTP Request node's default autodetect then decoded a downloaded
+	// file as text and reported success — a silent corruption that only showed
+	// up downstream. A node that needs storage now finds it, and the directory
+	// sits beside the default SQLite database, so it is inside whatever volume
+	// the operator already mounted.
+	//
+	// Setting it to the empty string still disables storage deliberately; the
+	// server then warns at boot, and every node that needs a payload names
+	// this key and its environment variable instead of failing with a message
+	// nobody can act on.
+	// Env: KILASFLOW_BINARY_ROOT. Default: "./data/binary".
 	Root string `koanf:"root"`
 	// MaxBytes bounds one payload. It is enforced while reading, so an
 	// oversized response is refused rather than truncated.
+	// Env: KILASFLOW_BINARY_MAX_BYTES. Default: 16777216 (16 MiB).
 	MaxBytes int64 `koanf:"max_bytes"`
 }
 
@@ -601,6 +642,7 @@ func Default() Config {
 			// upgraded install already has stay reachable.
 			BootstrapTenant:      "default",
 			BootstrapPasswordEnv: "KILASFLOW_BOOTSTRAP_PASSWORD",
+			OperatorKeyEnv:       "KILASFLOW_AUTH_OPERATOR_KEY",
 		},
 		Outbound: OutboundHTTP{
 			AllowPrivateNetworks: false,
@@ -625,6 +667,14 @@ func Default() Config {
 			DefaultTimeout: 60 * time.Second,
 			// Keep every execution. See the field.
 			Retention: 0,
+			// Frequent enough that a wait whose process died is settled soon
+			// after the next boot, coarse enough that the sweep is not a
+			// per-second query on an idle install.
+			WaitSweepInterval: 10 * time.Second,
+			// An hour, matching n8n's EXECUTIONS_TIMEOUT_MAX default. A
+			// workflow that asks for more than this is asking for a run that
+			// holds a worker for the rest of the day.
+			MaxTimeout: time.Hour,
 		},
 		History: History{
 			// Keep everything. Deleting a customer's history is not a default
@@ -647,11 +697,9 @@ func Default() Config {
 			TestTimeout: 10 * time.Second,
 		},
 		Binary: Binary{
-			// Empty root disables binary storage rather than defaulting to
-			// somewhere surprising: a product that silently starts writing
-			// multi-megabyte media into an unexpected directory is worse than
-			// one that says it is not configured.
-			Root:     "",
+			// Beside the default database, so the two share a volume and a
+			// backup. See the field for why this is on by default.
+			Root:     "./data/binary",
 			MaxBytes: 16 << 20,
 		},
 		Packs: Packs{
@@ -669,25 +717,56 @@ func Default() Config {
 // Load builds a Config from defaults, then the YAML file at path if it exists,
 // then KILASFLOW_* environment variables.
 //
-// A missing config file is not an error: kilasflow is meant to run with no
-// configuration at all.
+// A missing config file is not an error here: kilasflow is meant to run with no
+// configuration at all, and config.yaml is the name it looks for by default. A
+// caller whose operator named the file themselves wants LoadExplicit, where
+// absence is a mistake worth stopping for.
 func Load(path string) (Config, error) {
+	return load(path, false)
+}
+
+// LoadExplicit builds a Config the way Load does, but treats a missing file as
+// an error.
+//
+// It exists because silence used to be indistinguishable from success in both
+// directions: `kilasflow -config /etc/kilasflow/does-not-exist.yaml` booted on
+// defaults with no warning, so an operator who mistyped a path — or who moved a
+// file and forgot — believed their egress and storage settings were applied.
+func LoadExplicit(path string) (Config, error) {
+	return load(path, true)
+}
+
+// load merges defaults, an optional file, and the environment, then warns about
+// anything in either source that matched no configuration key.
+func load(path string, mustExist bool) (Config, error) {
 	k := koanf.New(".")
 
 	if err := k.Load(structs.Provider(Default(), "koanf"), nil); err != nil {
 		return Config{}, fmt.Errorf("load defaults: %w", err)
 	}
 
+	fileRead := false
 	if path != "" {
-		if err := k.Load(file.Provider(path), yaml.Parser()); err != nil {
-			// Only a genuine read/parse failure is fatal; absence is normal.
-			if !isNotExist(err) {
-				return Config{}, fmt.Errorf("load %s: %w", path, err)
+		err := k.Load(file.Provider(path), yaml.Parser())
+		switch {
+		case err == nil:
+			fileRead = true
+		case isNotExist(err):
+			if mustExist {
+				return Config{}, fmt.Errorf("config file %s does not exist", path)
 			}
+		default:
+			return Config{}, fmt.Errorf("load %s: %w", path, err)
 		}
 	}
 
-	if err := k.Load(env.Provider(EnvPrefix, ".", envKeyToPath), nil); err != nil {
+	// ProviderWithValue rather than Provider so a list-valued key can come from
+	// the environment at all: the default decoder turns one string into a
+	// one-element slice, which is why outbound.allowed_hosts,
+	// outbound.allowed_private_endpoints and embed.allowed_origins used to
+	// accept at most one entry from an environment variable — while the
+	// generated reference documented an Env var for each of them.
+	if err := k.Load(env.ProviderWithValue(EnvPrefix, ".", envValue), nil); err != nil {
 		return Config{}, fmt.Errorf("load environment: %w", err)
 	}
 
@@ -705,7 +784,170 @@ func Load(path string) (Config, error) {
 		return Config{}, err
 	}
 
+	warnUnknownKeys(k, path, fileRead)
 	return cfg, nil
+}
+
+// envValue maps one environment variable to a koanf path and value.
+//
+// A key whose target is a list is split on commas, because that is the only way
+// a container deployment with no mounted file can allow two hosts, two private
+// endpoints, or two embed origins. Everything else stays a string: a DSN, a
+// password, or a path may legitimately contain a comma, and splitting those
+// would corrupt a value that was perfectly correct.
+func envValue(key, value string) (string, any) {
+	path := envKeyToPath(key)
+	if listPaths[path] {
+		return path, splitList(value)
+	}
+	return path, value
+}
+
+// splitList turns a comma-separated environment value into its entries.
+//
+// Empty entries are dropped rather than kept as empty strings: an empty string
+// in outbound.allowed_hosts is an entry that matches nothing and would read as
+// a configured host, and the same in embed.allowed_origins is an origin that
+// can never be normalised.
+func splitList(value string) []string {
+	parts := strings.Split(value, ",")
+	entries := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			entries = append(entries, trimmed)
+		}
+	}
+	return entries
+}
+
+// listPaths holds every leaf path whose field is a slice.
+//
+// Derived from the struct by reflection rather than listed by hand: a
+// hand-written list is one more thing to forget when a slice key is added, and
+// the way it fails is an environment variable that silently keeps only its
+// first entry — the exact defect this exists to remove.
+var listPaths = sliceFieldPaths()
+
+// warnUnknownKeys reports every merged key that matches no field, with the
+// nearest key that does.
+//
+// Both a YAML typo and a misspelled KILASFLOW_* variable land here, because
+// both reach the merged tree as a path nothing reads: koanf drops what no field
+// claims, and the operator is left believing a security setting is in force.
+func warnUnknownKeys(k *koanf.Koanf, path string, fileRead bool) {
+	known := fieldPaths()
+	for _, key := range k.Keys() {
+		if known[key] {
+			continue
+		}
+		slog.Warn("configuration key matches nothing and was ignored",
+			"key", key,
+			"source", configSource(path, fileRead),
+			"did_you_mean", nearestKey(key, known))
+	}
+}
+
+// configSource names where the merged value came from, for a warning's benefit.
+func configSource(path string, fileRead bool) string {
+	switch {
+	case path == "":
+		return "environment"
+	case fileRead:
+		return path
+	default:
+		return path + " (not found)"
+	}
+}
+
+// nearestKey finds the configured key closest to an unknown one, so a warning
+// names the key the operator probably meant.
+func nearestKey(unknown string, known map[string]bool) string {
+	best, bestDistance := "", -1
+	for candidate := range known {
+		distance := editDistance(unknown, candidate)
+		if bestDistance < 0 || distance < bestDistance {
+			best, bestDistance = candidate, distance
+		}
+	}
+	return best
+}
+
+// editDistance is the Levenshtein distance between two keys. Keys are short, so
+// the quadratic table costs nothing next to reading the file.
+func editDistance(left, right string) int {
+	previous := make([]int, len(right)+1)
+	current := make([]int, len(right)+1)
+	for index := range previous {
+		previous[index] = index
+	}
+	for i := 1; i <= len(left); i++ {
+		current[0] = i
+		for j := 1; j <= len(right); j++ {
+			cost := 1
+			if left[i-1] == right[j-1] {
+				cost = 0
+			}
+			current[j] = min(previous[j]+1, min(current[j-1]+1, previous[j-1]+cost))
+		}
+		previous, current = current, previous
+	}
+	return previous[len(right)]
+}
+
+// fieldPaths returns every leaf and section path the Config struct declares.
+//
+// Sections are included as well as leaves: koanf reports a key for a section
+// that holds a scalar only if a file or the environment set one, and a section
+// name is never a typo worth warning about on its own.
+func fieldPaths() map[string]bool {
+	paths := map[string]bool{}
+	collectFieldPaths(reflect.TypeOf(Config{}), "", paths, false)
+	return paths
+}
+
+// sliceFieldPaths returns every leaf path whose field is a slice.
+func sliceFieldPaths() map[string]bool {
+	paths := map[string]bool{}
+	collectFieldPaths(reflect.TypeOf(Config{}), "", paths, true)
+	return paths
+}
+
+// collectFieldPaths walks the configuration struct through its koanf tags.
+//
+// onlySlices selects the two jobs this walk does: the full set of known paths,
+// and the subset whose values are lists. One walk rather than two, so the two
+// answers cannot come from two readings of the same struct that disagree.
+func collectFieldPaths(t reflect.Type, prefix string, into map[string]bool, onlySlices bool) {
+	for index := range t.NumField() {
+		field := t.Field(index)
+		name, tagged := field.Tag.Lookup("koanf")
+		if !tagged || name == "" || name == "-" {
+			continue
+		}
+		path := name
+		if prefix != "" {
+			path = prefix + "." + name
+		}
+		fieldType := field.Type
+		for fieldType.Kind() == reflect.Pointer {
+			fieldType = fieldType.Elem()
+		}
+		switch fieldType.Kind() {
+		case reflect.Struct:
+			if !onlySlices {
+				into[path] = true
+			}
+			collectFieldPaths(fieldType, path, into, onlySlices)
+		case reflect.Slice:
+			// A slice is a leaf for both jobs: it is a known path, and it is
+			// one whose environment value has to be split.
+			into[path] = true
+		default:
+			if !onlySlices {
+				into[path] = true
+			}
+		}
+	}
 }
 
 // Validate rejects configurations that cannot produce a working server.
@@ -781,6 +1023,26 @@ func (c Config) Validate() error {
 	for index, entry := range c.Outbound.AllowedPrivateEndpoints {
 		if err := safehttp.CheckPrivateEndpoint(entry); err != nil {
 			return fmt.Errorf("outbound.allowed_private_endpoints[%d]: %w", index, err)
+		}
+	}
+
+	// Refused rather than silently falling back to text: an operator who
+	// mistypes "json" gets a deployment whose log pipeline quietly discards
+	// everything it was configured to collect, and the mistake is invisible
+	// from the inside. log.level keeps its documented fallback, because a
+	// level that is too high loses detail rather than structure.
+	switch c.Log.Format {
+	case "text", "json":
+	default:
+		return fmt.Errorf("log.format %q must be text or json", c.Log.Format)
+	}
+
+	// Checked here so a typo names the key at boot rather than surfacing as
+	// every schedule computing its next run in UTC. Empty means UTC, which is
+	// what a server with no configured zone has always used.
+	if strings.TrimSpace(c.Execution.DefaultTimezone) != "" {
+		if _, err := datetime.Zone(c.Execution.DefaultTimezone); err != nil {
+			return fmt.Errorf("execution.default_timezone %q: %w", c.Execution.DefaultTimezone, err)
 		}
 	}
 

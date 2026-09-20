@@ -134,3 +134,39 @@ Files: internal/api/handlers/workflows.go, internal/repository/workflows.go, int
 - [ ] Adversarial re-verify against live stub/n8n like the Verify phase (no code-only close)
 ## Progress 2026-09-19 (SecurityDx)
 - Status: doing. Research + partial implementation done this session.
+
+## Progress 2026-09-19 (SecurityFront2) — mostly landed, still doing
+Status: doing (three of seven findings landed by me + two agents this wave).
+- SSE hang (finding 1) — LANDED by me, see BUG-y57cz4 for the detail: the durable
+  record is read before the stream opens (real 404 for unknown ids and for another
+  workflow's execution), a finished run with nothing left to replay emits a
+  reconstructed terminal frame and closes, a broker-dropped stream does the same, and
+  concurrent streams are capped at 32 per tenant. No scoped test run yet (sibling
+  packages were mid-edit); re-run `go test ./internal/api/ -run Events`.
+- CORS (finding 2) — LANDED: internal/api/middleware/cors.go by agent ApiLists (commit
+  69e7f02), mounted by me in internal/api/server.go BEFORE the auth gate so a preflight
+  (which carries no credential by definition) is answered; reflects only
+  embed.allowed_origins, answers OPTIONS 204, never allows credentials.
+- Framing headers (finding 4) — LANDED by ApiLists in internal/web/embed.go:
+  frame-ancestors 'self' for /app, the configured allowlist for /embed (X-Frame-Options
+  omitted there because it cannot express a list), nosniff + Referrer-Policy everywhere.
+  Wired in internal/api/routes.go by ApiLists.
+- CSV formula neutralisation (finding 5) — LANDED by ApiLists in
+  internal/api/handlers/datastores_csv.go.
+- Pagination (finding 7) — LANDED by ApiLists for workflows (ListSummaries), schedules
+  (ListPage) and datastores (ListDatastoresPage): limit (1..500, default 100) + keyset
+  cursor, body shape unchanged, next cursor in the X-Next-Cursor header so the
+  SvelteKit dashboard keeps working, ErrInvalidCursor -> 400. NOT done: credentials.go
+  (mine — pattern recorded in BUG-y57cz4) and api-keys in internal/api/handlers/auth.go
+  (AuthHardening's file).
+- Onboarding (finding 3) — LANDED by agent TenancyAdmin (commit ca313a9): operator-only
+  admin surface, GET/POST /tenants, GET/POST /tenants/{id}/users,
+  POST /tenants/{id}/users/{userId}/disable|enable|password, POST /tenants/{id}/api-keys.
+  Gate is key-only on the operator tenant; a customer key, a customer session, an
+  operator-tenant session and no identity are each 403 on all 9 routes; an embed token
+  is refused by permits()'s default deny. The operator key is registered at boot from
+  KILASFLOW_AUTH_OPERATOR_KEY (config + main.go wiring landed by me).
+- Docs (finding 6) — reference-host README is owned by DXOps2; the corrected text was
+  handed to them via hub by TenancyAdmin. Not yet confirmed landed.
+Unverified: no scoped test re-run for the SSE half from my side; ApiLists' and
+TenancyAdmin's own scoped tests are green per their reports.

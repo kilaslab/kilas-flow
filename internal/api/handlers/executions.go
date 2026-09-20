@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -59,12 +61,21 @@ type (
 )
 
 // typedEvent converts one event into the Go type bound to its name.
+//
+// Every events.Type needs a case here. huma looks the SSE `event:` name up by
+// the data's Go type, so a type with no case is sent as an unnamed `message`
+// frame — which every client ignores — and huma prints an "unknown event type"
+// stack trace to stderr for each one. That is exactly how execution.failed went
+// missing for a while: the frame reached the browser with no name, the editor
+// never learned the run had failed, and the server log filled with traces.
 func typedEvent(event ExecutionEvent, eventType events.Type) any {
 	switch eventType {
 	case events.ExecutionStarted:
 		return ExecutionStartedEvent(event)
 	case events.ExecutionCompleted:
 		return ExecutionCompletedEvent(event)
+	case events.ExecutionFailed:
+		return ExecutionFailedEvent(event)
 	case events.ExecutionCancelled:
 		return ExecutionCancelledEvent(event)
 	case engine.EventExecutionWaiting:
@@ -81,6 +92,26 @@ func typedEvent(event ExecutionEvent, eventType events.Type) any {
 		return WorkflowSavedEvent(event)
 	default:
 		return event
+	}
+}
+
+// executionEventSchemas is the SSE registration's name-to-type map.
+//
+// It is one function rather than a literal inside Register so a test can read
+// it: the defect this guards against is a name added to events.Type with no
+// entry here, which no compiler and no other test would notice.
+func executionEventSchemas() map[string]any {
+	return map[string]any{
+		string(events.ExecutionStarted):      ExecutionStartedEvent{},
+		string(events.ExecutionCompleted):    ExecutionCompletedEvent{},
+		string(events.ExecutionFailed):       ExecutionFailedEvent{},
+		string(events.ExecutionCancelled):    ExecutionCancelledEvent{},
+		string(engine.EventExecutionWaiting): ExecutionWaitingEvent{},
+		string(events.NodeStarted):           NodeStartedEvent{},
+		string(events.NodeOutput):            NodeOutputEvent{},
+		string(events.NodeCompleted):         NodeCompletedEvent{},
+		string(events.NodeFailed):            NodeFailedEvent{},
+		string(events.WorkflowSaved):         WorkflowSavedEvent{},
 	}
 }
 
@@ -102,6 +133,17 @@ type Executions struct {
 	history    repository.ExecutionRepository
 	events     *events.Broker
 	tenants    TenantResolver
+	// api is the surface this handler registered on, kept so an operation
+	// middleware can write the same RFC 9457 problem body every other
+	// endpoint does. huma hands the API to Register and to nothing else, and a
+	// hand-built body would be the one refusal in the API that a generated
+	// client cannot parse.
+	api huma.API
+	// streams bounds how many event streams one tenant may hold open at once.
+	// A stream is a held connection with a goroutine behind it, so without a
+	// bound a single caller can pin an unbounded number of them by opening
+	// streams for ids it knows exist.
+	streams sync.Map
 }
 
 type executionPathInput struct {
@@ -153,6 +195,7 @@ func NewExecutions(controller ExecutionController, history repository.ExecutionR
 // Register wires execution history reads and the controls that need the live
 // runtime service.
 func (handler *Executions) Register(api huma.API) {
+	handler.api = api
 	huma.Register(api, huma.Operation{
 		OperationID: "list-executions", Method: http.MethodGet, Path: "/executions",
 		Summary: "List workflow executions", Description: "Returns one page of execution history, newest first.", Tags: []string{"Executions"},
@@ -166,55 +209,196 @@ func (handler *Executions) Register(api huma.API) {
 		Summary: "Cancel a workflow execution", Description: "Requests cancellation of queued or running work.", Tags: []string{"Executions"},
 	}, handler.Cancel)
 
-	sse.Register(api, huma.Operation{
+	operation := huma.Operation{
 		OperationID: "stream-execution-events", Method: http.MethodGet, Path: "/executions/{id}/events",
 		Summary: "Stream execution events",
 		Description: "Live standardized event feed for one execution. Replays retained events after Last-Event-ID, " +
-			"then streams until the execution reaches a terminal state.",
+			"then streams until the execution reaches a terminal state. A run that has already finished answers " +
+			"404 when its record is gone, and otherwise replays its outcome and closes.",
 		Tags: []string{"Executions"},
-	}, map[string]any{
-		string(events.ExecutionStarted):      ExecutionStartedEvent{},
-		string(events.ExecutionCompleted):    ExecutionCompletedEvent{},
-		string(events.ExecutionFailed):       ExecutionFailedEvent{},
-		string(events.ExecutionCancelled):    ExecutionCancelledEvent{},
-		string(engine.EventExecutionWaiting): ExecutionWaitingEvent{},
-		string(events.NodeStarted):           NodeStartedEvent{},
-		string(events.NodeOutput):            NodeOutputEvent{},
-		string(events.NodeCompleted):         NodeCompletedEvent{},
-		string(events.NodeFailed):            NodeFailedEvent{},
-		string(events.WorkflowSaved):         WorkflowSavedEvent{},
-	}, handler.StreamEvents)
+		// The record is read before the stream opens, so an unknown or
+		// another workflow's execution answers a real 404 rather than a 200
+		// stream that never says anything. It has to be an operation
+		// middleware: huma commits 200 for an SSE response before the handler
+		// runs, so the handler itself can no longer choose a status.
+		Middlewares: huma.Middlewares{handler.gateStreamRecord},
+	}
+	sse.Register(api, operation, executionEventSchemas(), handler.StreamEvents)
+}
+
+// streamRecordKey carries the record the gate read into the stream handler.
+type streamRecordKey struct{}
+
+// gateStreamRecord refuses a stream for an execution the caller cannot see.
+//
+// It runs before the SSE machinery commits a response, so a caller learns the
+// truth with a status code instead of holding an open connection that emits
+// nothing. Two cases are refused the same way: an execution that does not exist
+// in this tenant, and one that belongs to a workflow an embed session was not
+// granted. Both are 404, because "does not exist" is all an embed session has
+// any business learning.
+//
+// A deployment with no durable history store keeps the previous behaviour and
+// opens the stream anyway: the alternative is refusing every stream on an
+// installation whose broker is wired but whose repository is not.
+func (handler *Executions) gateStreamRecord(ctx huma.Context, next func(huma.Context)) {
+	record, found := handler.streamRecord(ctx.Context(), ctx.Param("id"))
+	if !found {
+		// A store that cannot answer is not the same as a missing execution,
+		// and only the second one is a 404.
+		if handler.history == nil && handler.controller == nil {
+			next(ctx)
+			return
+		}
+		huma.WriteErr(handler.api, ctx, http.StatusNotFound, "execution not found")
+		return
+	}
+	if err := handler.ownsExecution(ctx.Context(), record); err != nil {
+		huma.WriteErr(handler.api, ctx, http.StatusNotFound, "execution not found")
+		return
+	}
+	next(huma.WithValue(ctx, streamRecordKey{}, record))
+}
+
+// streamRecord reads the durable execution a stream would describe.
+func (handler *Executions) streamRecord(ctx context.Context, executionID string) (execution.Record, bool) {
+	if executionID == "" {
+		return execution.Record{}, false
+	}
+	tenant := handler.tenants.Resolve(ctx)
+	if handler.history != nil {
+		record, err := handler.history.Get(ctx, tenant, executionID)
+		if err == nil {
+			return record, true
+		}
+		if !errors.Is(err, repository.ErrNotFound) {
+			return execution.Record{}, false
+		}
+	}
+	if handler.controller != nil {
+		record, err := handler.controller.Get(ctx, tenant, executionID)
+		if err == nil {
+			return record, true
+		}
+	}
+	return execution.Record{}, false
+}
+
+// streamRecordFrom returns the record the gate read, if it ran.
+func streamRecordFrom(ctx context.Context) (execution.Record, bool) {
+	record, found := ctx.Value(streamRecordKey{}).(execution.Record)
+	return record, found
+}
+
+// terminalEventType maps a finished execution's status to the event its stream
+// ends on. It reports false for a run that has not finished.
+func terminalEventType(status execution.Status) (events.Type, bool) {
+	switch status {
+	case execution.StatusSucceeded:
+		return events.ExecutionCompleted, true
+	case execution.StatusFailed:
+		return events.ExecutionFailed, true
+	case execution.StatusCancelled:
+		return events.ExecutionCancelled, true
+	default:
+		return "", false
+	}
+}
+
+// syntheticTerminal builds the event a stream ends on when the live feed has
+// nothing left to replay.
+//
+// A finished execution whose events are gone — the process restarted, or the
+// broker's bounded history aged out — would otherwise leave a subscriber
+// waiting for a terminal frame that can never arrive. The durable record is the
+// authority, so the frame is reconstructed from it rather than invented: the
+// same status the record already reports over the REST API.
+func syntheticTerminal(record execution.Record) (ExecutionEvent, bool) {
+	eventType, terminal := terminalEventType(record.Status)
+	if !terminal {
+		return ExecutionEvent{}, false
+	}
+	at := record.StartedAt
+	if record.FinishedAt != nil {
+		at = *record.FinishedAt
+	}
+	detail := json.RawMessage(nil)
+	if eventType == events.ExecutionFailed && len(record.Error) > 0 {
+		// Redacted by the broker on publish; the same treatment here, because
+		// a failure detail is the one place a credential-shaped value could
+		// reach a browser.
+		detail = execution.Redact(record.Error)
+	}
+	return ExecutionEvent{
+		Type: string(eventType), ExecutionID: record.ID, WorkflowID: record.WorkflowID,
+		Status: string(record.Status), At: at, Data: detail,
+	}, true
 }
 
 // StreamEvents serves the live feed for one execution.
 //
-// The subscription is opened before the durable record is read, so an event
-// published between the two is queued rather than missed.
+// The subscription is opened before the terminal decision is made, so an event
+// published in between is queued rather than missed — and everything the queue
+// holds is already there when Subscribe returns, because the broker replays a
+// stream's retained history synchronously.
+//
+// The record the gate read is what keeps a finished execution's stream from
+// waiting forever. Without it a stream opened for a run whose events are gone —
+// finished before a restart, or aged out of the broker's bounded history —
+// emitted heartbeats until the client gave up, which is how a browser tab
+// pinned a server connection per abandoned view.
 func (handler *Executions) StreamEvents(ctx context.Context, input *executionEventsInput, send sse.Sender) {
 	if handler.events == nil {
 		_ = send.Comment("execution events are unavailable")
 		return
 	}
-	tenant := handler.tenants.Resolve(ctx)
-	// An embed session may only watch its own workflow's runs. The execution is
-	// loaded first so its owner is known before any event is streamed.
-	if session, embedded := middleware.EmbedSessionFrom(ctx); embedded {
-		if handler.controller == nil {
-			_ = send.Comment("execution events are unavailable")
+	record, gated := streamRecordFrom(ctx)
+	if gated {
+		if ok, done := handler.claimStream(ctx, record.TenantID); !ok {
+			_ = send.Comment("too many executions are being watched at once")
 			return
-		}
-		record, err := handler.controller.Get(ctx, tenant, input.ID)
-		if err != nil || record.WorkflowID != session.WorkflowID {
-			_ = send.Comment("execution not found")
-			return
+		} else {
+			defer done()
 		}
 	}
+	tenant := handler.tenants.Resolve(ctx)
+
 	subscription := handler.events.Subscribe(tenant.ID, input.ID, resumeFrom(input))
 	defer subscription.Close()
 
 	// A comment immediately after connect flushes headers, so a client knows
 	// the stream is open even before the first event.
 	_ = send(sse.Message{Retry: 2000, Comment: "connected"})
+
+	// Everything the broker retained is already in the queue, so the replay is
+	// delivered before the live loop starts — and for a finished execution,
+	// which can publish nothing further, an empty queue after that replay means
+	// the outcome will never arrive from the feed at all.
+	queued, open := drainQueued(subscription)
+	for _, event := range queued {
+		if err := send(sse.Message{ID: int(event.ID), Data: typedEvent(executionEventResource(event), event.Type)}); err != nil {
+			return
+		}
+		if event.Type.Terminal() {
+			// Closing on a terminal event is what stops a browser from
+			// reconnecting forever to a run that already finished.
+			return
+		}
+	}
+	if gated {
+		// The replay held no terminal frame. For a finished run whose retained
+		// history is gone, or whose history was already closed, that frame can
+		// never arrive from the feed — so the durable record supplies it. A
+		// run that still holds retained events is left alone: its terminal
+		// frame may be a publish away.
+		if terminal, ok := syntheticTerminal(record); ok && (len(queued) == 0 || !open) {
+			sendSyntheticTerminal(send, input, terminal)
+			return
+		}
+	}
+	if !open {
+		return
+	}
 
 	heartbeat := time.NewTicker(20 * time.Second)
 	defer heartbeat.Stop()
@@ -229,20 +413,86 @@ func (handler *Executions) StreamEvents(ctx context.Context, input *executionEve
 			if err := send.Comment("heartbeat"); err != nil {
 				return
 			}
-		case event, open := <-subscription.Events():
-			if !open {
+		case event, stillOpen := <-subscription.Events():
+			if !stillOpen {
+				// The broker dropped this stream — its history was released,
+				// or the process is shutting down. A client watching a
+				// finished run still needs its outcome, so it gets the same
+				// frame a run with no events left would have produced.
+				if gated {
+					if terminal, ok := syntheticTerminal(record); ok {
+						sendSyntheticTerminal(send, input, terminal)
+					}
+				}
 				return
 			}
 			if err := send(sse.Message{ID: int(event.ID), Data: typedEvent(executionEventResource(event), event.Type)}); err != nil {
 				return
 			}
 			if event.Type.Terminal() {
-				// Closing on a terminal event is what stops a browser from
-				// reconnecting forever to a run that already finished.
 				return
 			}
 		}
 	}
+}
+
+// drainQueued collects everything the broker replayed into a fresh
+// subscription.
+//
+// Subscribe delivers the retained history synchronously, so a non-blocking read
+// yields the replay and never a live event that has not happened yet. It
+// reports whether the subscription is still open: a closed channel means the
+// stream is over, not that the queue is empty.
+func drainQueued(subscription *events.Subscription) ([]events.Event, bool) {
+	queued := []events.Event{}
+	for {
+		select {
+		case event, open := <-subscription.Events():
+			if !open {
+				return queued, false
+			}
+			queued = append(queued, event)
+		default:
+			return queued, true
+		}
+	}
+}
+
+// sendSyntheticTerminal delivers the reconstructed terminal frame.
+func sendSyntheticTerminal(send sse.Sender, input *executionEventsInput, terminal ExecutionEvent) {
+	_ = send(sse.Message{ID: int(resumeFrom(input) + 1), Data: typedEvent(terminal, events.Type(terminal.Type))})
+}
+
+// maxStreamsPerTenant bounds how many event streams one tenant holds open.
+//
+// A stream is a held connection, a goroutine, and a broker subscription, and
+// nothing else bounds them: the endpoint is reachable by any credential the
+// tenant holds, so one client looping over execution ids could pin as many as
+// it likes and starve everyone sharing the process.
+const maxStreamsPerTenant = 32
+
+// claimStream admits one stream per tenant up to the cap.
+//
+// The counter is never removed from the map. Deleting it on the way to zero
+// races with a concurrent claim that already holds the pointer, and that claim
+// would then increment a detached counter — resetting the cap for the rest of
+// the process. One int32 per tenant the process has served is bounded by the
+// number of tenants, which is the smaller problem.
+func (handler *Executions) claimStream(ctx context.Context, tenantID string) (bool, func()) {
+	key := tenantID
+	if key == "" {
+		key = handler.tenants.Resolve(ctx).ID
+	}
+	current, _ := handler.streams.LoadOrStore(key, new(int32))
+	count, _ := current.(*int32)
+	if count == nil {
+		return true, func() {}
+	}
+	if atomic.AddInt32(count, 1) <= maxStreamsPerTenant {
+		return true, func() { atomic.AddInt32(count, -1) }
+	}
+	atomic.AddInt32(count, -1)
+	return false, func() {}
 }
 
 // resumeFrom prefers the standard SSE header and falls back to a query
@@ -292,7 +542,7 @@ func (handler *Executions) List(ctx context.Context, input *listExecutionsInput)
 		return nil, huma.Error400BadRequest("execution cursor is invalid")
 	}
 	if err != nil {
-		return nil, huma.Error500InternalServerError("execution listing failed")
+		return nil, serverProblem(ctx, "execution listing failed", err)
 	}
 
 	resource := ExecutionListResource{Items: make([]ExecutionSummary, 0, len(page.Records)), NextCursor: page.NextCursor}
@@ -371,7 +621,7 @@ func (handler *Executions) Get(ctx context.Context, input *executionPathInput) (
 		return nil, huma.Error404NotFound("execution not found")
 	}
 	if err != nil {
-		return nil, huma.Error500InternalServerError("execution lookup failed")
+		return nil, serverProblem(ctx, "execution lookup failed", err)
 	}
 	if err := handler.ownsExecution(ctx, record); err != nil {
 		return nil, err
@@ -404,7 +654,7 @@ func (handler *Executions) Cancel(ctx context.Context, input *executionPathInput
 		return nil, huma.Error404NotFound("execution not found")
 	}
 	if err != nil {
-		return nil, huma.Error500InternalServerError("execution cancellation failed")
+		return nil, serverProblem(ctx, "execution cancellation failed", err)
 	}
 	if err := handler.ownsExecution(ctx, record); err != nil {
 		return nil, err

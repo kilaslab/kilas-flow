@@ -187,6 +187,17 @@ type Scoped struct {
 	scope Scope
 }
 
+// ErrNotConfigured is what a node gets when this server has nowhere to put a
+// payload.
+//
+// It names the setting and its environment variable because the node that
+// needed storage is rarely the place the mistake was made: the operator set the
+// root wrong at boot, or never set it, and the error appears much later inside
+// a workflow run. "Binary storage is not configured" alone sent people looking
+// through the node's own configuration.
+var ErrNotConfigured = errors.New(
+	"binary storage is not configured on this server: set binary.root (KILASFLOW_BINARY_ROOT) to a writable directory")
+
 // For returns a store bound to one execution.
 func For(store Store, tenantID, executionID string) *Scoped {
 	if store == nil {
@@ -198,7 +209,7 @@ func For(store Store, tenantID, executionID string) *Scoped {
 // Put writes a payload within this execution's scope.
 func (scoped *Scoped) Put(name, mediaType string, body io.Reader) (workflow.BinaryRef, error) {
 	if scoped == nil || scoped.store == nil {
-		return workflow.BinaryRef{}, fmt.Errorf("binary storage is not configured on this server")
+		return workflow.BinaryRef{}, ErrNotConfigured
 	}
 	return scoped.store.Put(scoped.scope, name, mediaType, body)
 }
@@ -206,7 +217,7 @@ func (scoped *Scoped) Put(name, mediaType string, body io.Reader) (workflow.Bina
 // Get reads a payload within this execution's scope.
 func (scoped *Scoped) Get(id string) (io.ReadCloser, workflow.BinaryRef, error) {
 	if scoped == nil || scoped.store == nil {
-		return nil, workflow.BinaryRef{}, fmt.Errorf("binary storage is not configured on this server")
+		return nil, workflow.BinaryRef{}, ErrNotConfigured
 	}
 	return scoped.store.Get(scoped.scope, id)
 }

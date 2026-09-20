@@ -43,7 +43,7 @@ func Models() []any {
 // re-check activation.
 type webhookBindingModel struct {
 	ID                uint   `gorm:"primaryKey;autoIncrement"`
-	TenantID          string `gorm:"not null;size:64;index:idx_webhook_bindings_workflow,priority:1;uniqueIndex:uidx_webhook_bindings_label,priority:1"`
+	TenantID          string `gorm:"not null;size:64;index:idx_webhook_bindings_workflow,priority:1;index:idx_webhook_bindings_path,priority:1"`
 	WorkflowID        string `gorm:"not null;size:64;index:idx_webhook_bindings_workflow,priority:2"`
 	WorkflowVersionID string `gorm:"not null;size:64"`
 	NodeID            string `gorm:"not null;size:64"`
@@ -59,12 +59,15 @@ type webhookBindingModel struct {
 	// be a cross-tenant routing bug far worse than a refused activation.
 	Method string `gorm:"not null;size:8;uniqueIndex:uidx_webhook_bindings_route,priority:1"`
 	Route  string `gorm:"not null;size:64;uniqueIndex:uidx_webhook_bindings_route,priority:2"`
-	// Path is what the workflow's author called this endpoint. It is a display
-	// label now rather than the route, so two tenants importing the same n8n
-	// template both keep the template's path and neither collides. The
-	// per-tenant unique index preserves the old rule where it still makes
-	// sense: one tenant still cannot claim the same endpoint twice.
-	Path       string    `gorm:"not null;size:255;uniqueIndex:uidx_webhook_bindings_label,priority:2"`
+	// Path is what the workflow's author called this endpoint. It is a label
+	// rather than the route: the public URL carries the opaque Route, so a
+	// path is not an identity and must not be unique. One document may bind
+	// GET and POST on the same path — a REST endpoint's two halves — and
+	// importing the same template twice must give two workflows two routes
+	// rather than refusing the second activation. The index here is a plain
+	// one, there to serve the tenant listing and the activation diagnostics
+	// that read bindings by tenant and path.
+	Path       string    `gorm:"not null;size:255;index:idx_webhook_bindings_path,priority:2"`
 	Parameters []byte    `gorm:"not null"`
 	CreatedAt  time.Time `gorm:"not null"`
 }

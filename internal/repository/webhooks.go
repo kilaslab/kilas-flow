@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -54,6 +53,10 @@ type WebhookExtractor func(workflow.Document) []WebhookTrigger
 // WebhookRepository resolves inbound requests to their binding.
 type WebhookRepository interface {
 	Resolve(ctx context.Context, method, route string) (WebhookBinding, error)
+	// ResolveRoute returns every binding answering on one route, across
+	// methods, which is what a request that names a route but not the method
+	// it will use — a CORS preflight — needs to be answered.
+	ResolveRoute(ctx context.Context, route string) ([]WebhookBinding, error)
 	// ClaimDelivery dedupes a retried delivery. It returns the execution that
 	// owns the identifier and whether this caller won the claim.
 	ClaimDelivery(ctx context.Context, route, deliveryID, executionID string, window time.Duration) (string, bool, error)
@@ -72,9 +75,6 @@ var _ WebhookRepository = (*GORMWorkflowStore)(nil)
 // tenant-scoped index without a tenant in the URL would have produced two rows
 // matching one request, which is a cross-tenant routing bug rather than a
 // refused activation.
-//
-// A row whose route is empty was activated before routes were minted; its path
-// is its route, so those URLs keep working without reactivation.
 func (store *GORMWorkflowStore) Resolve(ctx context.Context, method, route string) (WebhookBinding, error) {
 	var model webhookBindingModel
 	if err := store.db.WithContext(ctx).
@@ -82,22 +82,108 @@ func (store *GORMWorkflowStore) Resolve(ctx context.Context, method, route strin
 		First(&model).Error; err != nil {
 		return WebhookBinding{}, mapNotFound(err, "webhook binding")
 	}
+	return bindingFromModel(model)
+}
+
+// ResolveRoute returns every binding for one route, across methods.
+//
+// A route is the routing identity, so a caller that names one — a CORS
+// preflight does, before it knows which method the request will use — needs
+// the bindings on it rather than the single row Resolve picks by method. A row
+// activated before routes were minted answers on its path, so one route can
+// carry more than one method's binding; a caller that already knows the method
+// calls Resolve, which is the narrower lookup.
+//
+// The order is by method so a caller can build a stable answer — an Allow
+// header — from the slice without sorting it again.
+func (store *GORMWorkflowStore) ResolveRoute(ctx context.Context, route string) ([]WebhookBinding, error) {
+	// An empty route would match every row activated before routes were
+	// minted, whose route column is empty — a lookup for nothing answering
+	// with everything.
+	if route == "" {
+		return nil, mapNotFound(gorm.ErrRecordNotFound, "webhook binding")
+	}
+	var models []webhookBindingModel
+	if err := store.db.WithContext(ctx).
+		Where("route = ? OR (route = '' AND path = ?)", route, route).
+		Order("method ASC").Find(&models).Error; err != nil {
+		return nil, fmt.Errorf("resolve webhook route: %w", err)
+	}
+	if len(models) == 0 {
+		return nil, mapNotFound(gorm.ErrRecordNotFound, "webhook binding")
+	}
+	bindings := make([]WebhookBinding, 0, len(models))
+	for _, model := range models {
+		binding, err := bindingFromModel(model)
+		if err != nil {
+			return nil, err
+		}
+		bindings = append(bindings, binding)
+	}
+	return bindings, nil
+}
+
+// bindingFromModel materialises one stored row.
+//
+// Every reader goes through here so they cannot disagree about what a row
+// means. The parameters in particular: a listing that dropped them would
+// silently disable every trigger that auto-registers itself on activation,
+// WAHA included, because the lifecycle decides from the listed routes.
+func bindingFromModel(model webhookBindingModel) (WebhookBinding, error) {
 	parameters := map[string]any{}
 	if len(model.Parameters) > 0 {
 		if err := json.Unmarshal(model.Parameters, &parameters); err != nil {
 			return WebhookBinding{}, fmt.Errorf("decode webhook parameters: %w", err)
 		}
 	}
-	binding := WebhookBinding{
+	// A row whose route is empty was activated before routes were minted; its
+	// path is its route, so those URLs keep working without reactivation.
+	route := model.Route
+	if route == "" {
+		route = model.Path
+	}
+	return WebhookBinding{
 		TenantID: model.TenantID, WorkflowID: model.WorkflowID, WorkflowVersionID: model.WorkflowVersionID,
 		NodeID: model.NodeID, NodeType: model.NodeType, Method: model.Method,
-		Route: model.Route, Path: model.Path, Parameters: parameters,
-	}
-	if binding.Route == "" {
-		binding.Route = model.Path
-	}
-	return binding, nil
+		Route: route, Path: model.Path, Parameters: parameters,
+	}, nil
 }
+
+// ErrWebhookPathClaimed reports that an activation was refused because an
+// endpoint it needs is already answering.
+//
+// It is a sentinel so the HTTP boundary can tell "the graph is wrong" from
+// "the endpoint is taken" and answer 409 with a message instead of a generic
+// 500. The caller's document is valid; somebody else simply holds the route.
+var ErrWebhookPathClaimed = errors.New("webhook endpoint already claimed")
+
+// WebhookConflictError names the endpoint that could not be claimed and the
+// workflow already answering on it.
+//
+// It wraps ErrWebhookPathClaimed, so errors.Is finds the sentinel while
+// errors.As recovers the identifiers a message and a link need.
+type WebhookConflictError struct {
+	// Path is the label the refused document gave the endpoint.
+	Path string
+	// Method and Route are the binding that was refused. The route is the
+	// identity that actually collided; the path is what the author called it.
+	Method string
+	Route  string
+	// WorkflowID is the workflow already bound to that method and route. It is
+	// empty when the row disappeared before it could be named, which is honest
+	// — inventing a workflow would be worse than naming none.
+	WorkflowID string
+}
+
+func (e *WebhookConflictError) Error() string {
+	if e.WorkflowID == "" {
+		return fmt.Sprintf("webhook %s %q is already claimed by another workflow", e.Method, e.Path)
+	}
+	return fmt.Sprintf("webhook %s %q is already claimed by workflow %s", e.Method, e.Path, e.WorkflowID)
+}
+
+// Unwrap is what makes errors.Is(err, ErrWebhookPathClaimed) work.
+func (e *WebhookConflictError) Unwrap() error { return ErrWebhookPathClaimed }
 
 // syncWebhookBindings replaces a workflow's bindings inside the caller's
 // transaction.
@@ -127,20 +213,48 @@ func syncWebhookBindings(tx *gorm.DB, tenantID, workflowID, versionID string, tr
 			NodeID: trigger.NodeID, NodeType: trigger.NodeType,
 			Method: trigger.Method, Route: route, Path: trigger.Path, Parameters: parameters, CreatedAt: now,
 		}
-		if err := tx.Create(&binding).Error; err != nil {
-			// Two indexes can fail here and they mean different things. The
-			// per-tenant one on (tenant, path) is the rule that still holds:
-			// one tenant cannot claim the same endpoint twice. The global one
-			// on the minted route can only fire on a minting bug, and saying
-			// "already claimed" for that would send someone hunting for a
-			// workflow that does not exist.
+		if err := insertBinding(tx, &binding); err != nil {
+			// The path is not unique, so the only index that can refuse this
+			// row is the global one on the minted route: another workflow is
+			// already answering on it. That is a genuine conflict — the
+			// endpoint is taken — so it is reported as one, naming the
+			// workflow that holds it.
 			if isRouteCollision(err) {
-				return fmt.Errorf("webhook route collision for node %q; this is a minting fault, not a claimed path", trigger.NodeID)
+				return &WebhookConflictError{
+					Path: trigger.Path, Route: route, Method: trigger.Method,
+					WorkflowID: bindingOwner(tx, trigger.Method, route),
+				}
 			}
-			return fmt.Errorf("webhook path %q is already claimed by another active workflow in this tenant", trigger.Path)
+			return fmt.Errorf("record webhook binding for node %q: %w", trigger.NodeID, err)
 		}
 	}
 	return nil
+}
+
+// insertBinding writes one binding behind a savepoint.
+//
+// The savepoint is what makes the failure above reportable. PostgreSQL aborts
+// the enclosing transaction after a failed statement, so a plain insert would
+// leave the lookup that names the conflicting workflow unable to run and the
+// caller with a conflict it could not describe; rolling back to the savepoint
+// returns the transaction to a usable state. Nothing is salvaged by it — the
+// caller rolls the whole activation back either way — only reported.
+func insertBinding(tx *gorm.DB, binding *webhookBindingModel) error {
+	return tx.Transaction(func(inner *gorm.DB) error {
+		return inner.Create(binding).Error
+	})
+}
+
+// bindingOwner names the workflow already bound to one method and route.
+//
+// It is empty when the row is gone, which is honest: the conflict is real
+// whatever named it, and inventing a workflow would be worse than naming none.
+func bindingOwner(tx *gorm.DB, method, route string) string {
+	var owner webhookBindingModel
+	if err := tx.Where("method = ? AND route = ?", method, route).First(&owner).Error; err != nil {
+		return ""
+	}
+	return owner.WorkflowID
 }
 
 // removeWebhookBindings drops every binding a workflow owns.
@@ -187,10 +301,18 @@ func mintWebhookRoute(tx *gorm.DB, tenantID, workflowID, nodeID string) (string,
 	return minted.Route, nil
 }
 
-// isRouteCollision distinguishes the global route index from the per-tenant
-// path index, which fail for entirely different reasons.
+// isRouteCollision reports whether a refused binding insert was refused by the
+// unique index on the minted route.
+//
+// Both drivers translate a unique violation into gorm.ErrDuplicatedKey, so the
+// test is on that sentinel rather than on the message text, which differs by
+// dialect and by whether a table prefix rewrote the table name. The route
+// index is the only unique index webhook_bindings carries — the path label is
+// deliberately not unique — so a duplicate key from this insert is the route
+// index and nothing else. A failure inside mintWebhookRoute is not passed
+// through here: a route that cannot be minted is a fault, not a conflict.
 func isRouteCollision(err error) bool {
-	return err != nil && strings.Contains(strings.ToLower(err.Error()), "uidx_webhook_bindings_route")
+	return errors.Is(err, gorm.ErrDuplicatedKey)
 }
 
 // WebhookRoutes lists the public routes a workflow's triggers answer on, so an
@@ -210,25 +332,11 @@ func (store *GORMWorkflowStore) WebhookRoutes(ctx context.Context, tenant Tenant
 	}
 	bindings := make([]WebhookBinding, 0, len(models))
 	for _, model := range models {
-		route := model.Route
-		if route == "" {
-			route = model.Path
+		binding, err := bindingFromModel(model)
+		if err != nil {
+			return nil, err
 		}
-		// Resolve decodes these for the delivery path; the listing must
-		// carry the same map, or lifecycle decisions made from listed
-		// routes (auto-register on activation) see no parameters and
-		// never fire.
-		parameters := map[string]any{}
-		if len(model.Parameters) > 0 {
-			if err := json.Unmarshal(model.Parameters, &parameters); err != nil {
-				return nil, fmt.Errorf("decode webhook parameters: %w", err)
-			}
-		}
-		bindings = append(bindings, WebhookBinding{
-			TenantID: model.TenantID, WorkflowID: model.WorkflowID, WorkflowVersionID: model.WorkflowVersionID,
-			NodeID: model.NodeID, NodeType: model.NodeType, Method: model.Method, Route: route, Path: model.Path,
-			Parameters: parameters,
-		})
+		bindings = append(bindings, binding)
 	}
 	return bindings, nil
 }

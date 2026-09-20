@@ -99,3 +99,27 @@ Existing tickets: FEAT-ddzk2k
 - safehttp partial (SecurityDx, in ad23336): Proxy:nil (tenant egress never via ProxyFromEnvironment), CredentialScope ctx + CheckRedirect hop check with ErrUseLastResponse, 2 regression tests green (`go test ./internal/safehttp/` ok).
 - Remaining per agent: engine Authenticate() attach (EngineExpression agreed), login throttle + PBKDF2 guard, session revalidation, probe/loader scope attach. Redirect secret leak + proxy SSRF bypass done; login throttle + revalidation open.
 - Note: safehttp.go + safehttp_test.go content landed inside ad23336 (chore commit also carrying them); 136ca57 records review note only. Future moves: keep security hunks in dedicated commits.
+
+## Progress 2026-09-19 (SecurityFront2) — delegated, still doing
+Status: doing. Two of four findings were already closed (redirect secret leak, proxy
+SSRF bypass — safehttp, ad23336). The remaining two plus the two scope-attach sites are
+being landed this wave by agent AuthHardening (files: internal/api/handlers/auth.go,
+internal/api/middleware/auth.go, internal/auth/*, internal/credentials/registry.go,
+internal/loadoptions/loadoptions.go):
+- login throttle (per-IP + per-account token bucket -> 429 + Retry-After, PBKDF2
+  concurrency semaphore, failed logins logged);
+- session revalidation (user-version fingerprint bound into the session token,
+  per-request cached user lookup, disabled users refused, API-key revocation already
+  covered by AuthenticateAPIKey per request);
+- credential scope attached at the probe (internal/credentials RunTest) and the HTTP
+  option loader, so CheckRedirect stops a hop outside the credential's AllowedDomains.
+Wiring I landed for it in internal/api/server.go: `Users: deps.AuthStore` in
+middleware.AuthOptions (nil on an auth-disabled install — fail closed, no panic).
+Delegated to ExpressionParity (owner of internal/engine/authenticate.go): the same
+one-line `safehttp.WithCredentialScope` attach inside `Request.Authenticate`, so the
+HTTP node and the routing interpreter are covered too. Verified only that the safehttp
+carrier it needs exists; not re-verified from my side.
+Evidence so far (scoped, passed): `go test ./internal/safehttp/ -count=1` ok (from
+ad23336, re-confirmed this wave by AuthHardening).
+Remaining: AuthHardening's report (per-finding status + commit SHA) has not arrived at
+the time of writing; the ticket stays `doing` until it does.

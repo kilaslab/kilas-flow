@@ -89,12 +89,28 @@ func run() error {
 		return fmt.Errorf("unexpected argument %q: this binary takes flags only (see -h)", flag.Arg(0))
 	}
 
+	// The path is only required when the operator named it. `config.yaml` is
+	// the name the binary looks for by default, and its absence is how a
+	// deployment that is configured entirely from the environment starts; a
+	// path somebody typed, on the other hand, is either there or a mistake
+	// worth stopping for. Telling the two apart is what flag.Visit is for.
+	configNamed := false
+	flag.Visit(func(visited *flag.Flag) {
+		if visited.Name == "config" {
+			configNamed = true
+		}
+	})
+
 	if *showVersion {
 		fmt.Println(version)
 		return nil
 	}
 
-	cfg, err := config.Load(*configPath)
+	load := config.Load
+	if configNamed {
+		load = config.LoadExplicit
+	}
+	cfg, err := load(*configPath)
 	if err != nil {
 		return err
 	}
@@ -108,7 +124,17 @@ func run() error {
 	}
 
 	log := newLogger(cfg.Log)
-	log.Info("starting kilasflow", "version", version, "role", string(role))
+	log.Info("starting kilasflow", "version", version, "role", string(role), "config", *configPath, "config_named", configNamed)
+
+	// Binary storage is on by default, so this only fires when an operator
+	// turned it off. It fires because the symptom otherwise appears much later
+	// and somewhere else: a downloaded file is decoded as text and the node
+	// reports success, which reads as the remote service sending nonsense
+	// rather than as this server having nowhere to put a payload.
+	if strings.TrimSpace(cfg.Binary.Root) == "" {
+		log.Warn("binary storage is disabled (binary.root is empty): file downloads, Telegram media, and attachments will fail or be decoded as text",
+			"key", "binary.root", "env", "KILASFLOW_BINARY_ROOT")
+	}
 
 	// Cancelled on SIGINT/SIGTERM, which unwinds the server and the database.
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -345,7 +371,9 @@ func run() error {
 	// transaction.
 	workflows := repository.NewWorkflowStore(db.DB).
 		WithWebhooks(webhook.Extract(nodeRegistry, nodes.WebhookPath)).
-		WithSchedules(scheduler.Extract(nodes.ScheduleType), scheduler.Next).
+		WithSchedules(
+			scheduler.DefaultTimezone(scheduler.Extract(nodes.ScheduleType), cfg.Execution.DefaultTimezone),
+			scheduler.Next).
 		WithRetention(repository.RetentionPolicy{
 			MaxAge:      cfg.History.Retention,
 			MaxVersions: cfg.History.MaxVersions,
@@ -356,12 +384,16 @@ func run() error {
 	// store; the node names the loader and never reaches storage itself.
 	if err := optionLoader.RegisterInternal(nodes.WorkflowListLoader, loadoptions.Workflows(
 		func(ctx context.Context, tenant repository.TenantScope) ([]loadoptions.WorkflowOption, error) {
-			stored, err := workflows.List(ctx, tenant)
+			// The summaries listing, not the dashboard's page of them: a
+			// picker offers the tenant's workflows and has no cursor to
+			// continue from, so it asks for the largest page the store will
+			// serve rather than the default.
+			page, err := workflows.ListSummaries(ctx, tenant, repository.WorkflowFilter{Limit: repository.MaxWorkflowPageSize})
 			if err != nil {
 				return nil, err
 			}
-			listed := make([]loadoptions.WorkflowOption, 0, len(stored))
-			for _, candidate := range stored {
+			listed := make([]loadoptions.WorkflowOption, 0, len(page.Workflows))
+			for _, candidate := range page.Workflows {
 				listed = append(listed, loadoptions.WorkflowOption{
 					ID: candidate.ID, Name: candidate.Name, Active: candidate.Active,
 				})
@@ -458,7 +490,16 @@ func run() error {
 		SubworkflowTriggerType: nodes.ExecuteWorkflowTriggerType,
 		WorkerID:               resolveWorkerID(*workerIDOverride),
 		DefaultTimeout:         cfg.Execution.DefaultTimeout,
-		RelayPrefix:            cfg.Database.TablePrefix,
+		// The ceiling a workflow's own settings.executionTimeout is clamped
+		// to, and how often an expired durable wait is settled when no exact
+		// timer survived a restart.
+		MaxTimeout:    cfg.Execution.MaxTimeout,
+		SweepInterval: cfg.Execution.WaitSweepInterval,
+		// The allowlist behind `$env`. It reaches no further than the
+		// KILASFLOW_WORKFLOW_ENV_ prefix, so a workflow can never read the
+		// database DSN or the credential master key out of this process.
+		Environment: workflowEnvironment(),
+		RelayPrefix: cfg.Database.TablePrefix,
 		RelaySend:              relaySend,
 		// server.public_url prefixes the resume links handed to waiting
 		// executions. Empty renders path-only links for a same-origin setup.
@@ -807,6 +848,24 @@ func bootstrapIdentity(ctx context.Context, cfg config.Auth, store *repository.G
 		return fmt.Errorf("bootstrap the first tenant: %w", err)
 	}
 
+	// The operator tenant is a tenant like any other, so it needs a row before
+	// a key can reference it. It is ensured on every boot for the same reason
+	// the bootstrap tenant is.
+	if _, err := store.EnsureTenant(ctx, repository.OperatorTenantID, "operator"); err != nil {
+		return fmt.Errorf("bootstrap the operator tenant: %w", err)
+	}
+	// Registered, not minted: the value is in the environment already, and an
+	// operator restarting the process must keep the key they wrote down.
+	// Absent, nothing is registered and the admin surface simply has no
+	// credential — which is the correct state for every installation that does
+	// not provision customers through the API.
+	if token := strings.TrimSpace(os.Getenv(cfg.OperatorKeyEnv)); token != "" {
+		if _, err := store.EnsureAPIKey(ctx, repository.TenantScope{ID: repository.OperatorTenantID}, "operator", token); err != nil {
+			return fmt.Errorf("register the operator key: %w", err)
+		}
+		log.Info("registered the operator API key", "tenant", repository.OperatorTenantID)
+	}
+
 	email := strings.TrimSpace(cfg.BootstrapEmail)
 	if email == "" {
 		return nil
@@ -982,6 +1041,13 @@ func workflowEnvironment() map[string]string {
 }
 
 // newLogger builds the structured logger described by the configuration.
+//
+// It also installs the result as the process default. Two things need it:
+// configuration warnings are emitted while the config is being loaded — before
+// this function could return one — and a handler that logs its own internal
+// failure has no logger threaded to it, only a request context. Without the
+// default they would land on stderr in a different shape from every other line,
+// which is exactly the line an operator would then fail to find.
 func newLogger(cfg config.Log) *slog.Logger {
 	opts := &slog.HandlerOptions{Level: parseLevel(cfg.Level)}
 
@@ -992,7 +1058,9 @@ func newLogger(cfg config.Log) *slog.Logger {
 		handler = slog.NewTextHandler(os.Stdout, opts)
 	}
 
-	return slog.New(handler)
+	logger := slog.New(handler)
+	slog.SetDefault(logger)
+	return logger
 }
 
 func parseLevel(level string) slog.Level {
