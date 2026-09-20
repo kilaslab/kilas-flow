@@ -337,10 +337,16 @@ func TestRunWithNoNamedTriggerRunsEveryRoot(t *testing.T) {
 	for _, run := range result.NodeRuns {
 		ran[run.NodeID]++
 	}
-	for _, want := range []string{"hook", "cron", "hook-only", "cron-only", "shared"} {
+	for _, want := range []string{"hook", "cron", "hook-only", "cron-only"} {
 		if ran[want] != 1 {
 			t.Errorf("node %q ran %d times on a manual run, want once", want, ran[want])
 		}
+	}
+	// The node both roots feed runs once per delivering branch, which is what
+	// n8n v1 does: a manual run of a two-trigger workflow is two runs into the
+	// shared tail, each with its own items, not one run over both streams.
+	if ran["shared"] != 2 {
+		t.Errorf("the shared node ran %d times on a manual run, want once per root branch (2)", ran["shared"])
 	}
 }
 
@@ -818,8 +824,11 @@ func TestRetryAndContinueOnFailComposeSoTheBudgetIsSpentFirst(t *testing.T) {
 		Run(context.Background(), ir, engine.Request{Input: workflow.Item{JSON: map[string]any{}}}); err != nil {
 		t.Fatalf("Run() error = %v, want the exhausted failure tolerated", err)
 	}
-	if calls != 3 {
-		t.Errorf("executor was called %d times, want the full budget before tolerating", calls)
+	// A tolerated failure is resolved one item at a time — that is what keeps
+	// the items after a failing one from being skipped — so the budget is spent
+	// per item: two items from the trigger, three attempts each.
+	if calls != 6 {
+		t.Errorf("executor was called %d times, want the full budget of 3 spent on each of the 2 items", calls)
 	}
 	if afterCalls != 1 {
 		t.Errorf("the downstream node ran %d times, want 1", afterCalls)
@@ -1641,5 +1650,575 @@ func TestDollarNodeByNameReachesTheExecutor(t *testing.T) {
 		if seen[key] != want {
 			t.Errorf("%s = %#v, want %#v", key, seen[key], want)
 		}
+	}
+}
+
+// testCatalog is a node registry with the product's own nodes plus whatever
+// test node types a case needs.
+func testCatalog(t *testing.T, definitions ...node.Definition) *node.Registry {
+	t.Helper()
+	catalog := node.NewRegistry()
+	for _, definition := range definitions {
+		if err := catalog.Register(definition); err != nil {
+			t.Fatalf("Register(%s) error = %v", definition.Type, err)
+		}
+	}
+	if err := nodes.RegisterAll(catalog); err != nil {
+		t.Fatalf("RegisterAll() error = %v", err)
+	}
+	return catalog
+}
+
+// stepType is a test node with one item input and one item output.
+func stepType(typeID, displayName string) node.Definition {
+	return node.Definition{
+		Group: []node.NodeGroup{node.GroupTransform},
+		Type:  typeID, Version: workflow.V(1), DisplayName: displayName, Category: "Test",
+		Inputs:  []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+		Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}}, ExecutorID: typeID,
+	}
+}
+
+// startType is a test trigger: no input, one item output.
+func startType(typeID, displayName string) node.Definition {
+	return node.Definition{
+		Group: []node.NodeGroup{node.GroupTransform},
+		Type:  typeID, Version: workflow.V(1), DisplayName: displayName, Category: "Test",
+		Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}}, ExecutorID: typeID,
+	}
+}
+
+// compileDoc compiles a document, failing the test with the validation issues.
+func compileDoc(t *testing.T, catalog *node.Registry, document workflow.Document) workflow.IR {
+	t.Helper()
+	ir, err := workflow.Compile(document, catalog)
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+	return ir
+}
+
+func mainEdge(id, source, sourcePort, target string) workflow.Connection {
+	return workflow.Connection{
+		ID: id, Kind: workflow.ConnectionMain,
+		Source: workflow.Endpoint{NodeID: source, Port: sourcePort},
+		Target: workflow.Endpoint{NodeID: target, Port: "main"},
+	}
+}
+
+// TestBranchesRunDepthFirstInCanvasOrder is the parity gap that made
+// cross-branch reads fail.
+//
+// Branches used to be chosen by node ID, so an imported workflow — whose IDs
+// are n8n's random UUIDs — visited them in an order nobody drew, and a whole
+// branch did not finish before the next one started. n8n v1 runs the topmost
+// branch to its end first, ordered by output index and then by canvas
+// position. The IDs here are deliberately reversed against the canvas so an
+// ID-ordered scheduler cannot pass.
+func TestBranchesRunDepthFirstInCanvasOrder(t *testing.T) {
+	catalog := testCatalog(t, startType("test.start", "Start"), stepType("test.step", "Step"))
+
+	ir := compileDoc(t, catalog, workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_order", Name: "Two branches",
+		Nodes: []workflow.Node{
+			{ID: "start", Name: "Start", Type: "test.start", TypeVersion: workflow.V(1)},
+			{ID: "zz-a1", Name: "A1", Type: "test.step", TypeVersion: workflow.V(1), Position: workflow.Position{X: 200, Y: 0}},
+			{ID: "zz-a2", Name: "A2", Type: "test.step", TypeVersion: workflow.V(1), Position: workflow.Position{X: 400, Y: 0}},
+			{ID: "aa-b1", Name: "B1", Type: "test.step", TypeVersion: workflow.V(1), Position: workflow.Position{X: 200, Y: 300}},
+		},
+		Connections: []workflow.Connection{
+			mainEdge("c1", "start", "main", "zz-a1"),
+			mainEdge("c2", "zz-a1", "main", "zz-a2"),
+			mainEdge("c3", "start", "main", "aa-b1"),
+		},
+		Settings: map[string]any{},
+	})
+
+	var order []string
+	executors := engine.NewRegistry()
+	if err := executors.Register("test.start", engine.ExecutorFunc(
+		func(context.Context, workflow.IRNode, workflow.NodeInput, engine.Request) (workflow.NodeOutput, error) {
+			return workflow.NodeOutput{{{JSON: map[string]any{}}}}, nil
+		})); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	if err := executors.Register("test.step", engine.ExecutorFunc(
+		func(_ context.Context, node workflow.IRNode, input workflow.NodeInput, _ engine.Request) (workflow.NodeOutput, error) {
+			order = append(order, node.Name)
+			return workflow.NodeOutput{input["main"]}, nil
+		})); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	if err := nodes.RegisterExecutors(executors, safehttp.DefaultPolicy(), sqlnode.Guard{}, ai.NewLoopRuntime(), nil, nil); err != nil {
+		t.Fatalf("RegisterExecutors() error = %v", err)
+	}
+
+	if _, err := engine.NewRunner(executors).Run(context.Background(), ir, engine.Request{Input: workflow.Item{JSON: map[string]any{}}}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got, want := strings.Join(order, ","), "A1,A2,B1"; got != want {
+		t.Errorf("execution order = %s, want %s — the topmost branch runs to its end first", got, want)
+	}
+}
+
+// TestAFanInNodeRunsOncePerDeliveringBranch is n8n v1's other half.
+//
+// Every incoming edge on one port used to be concatenated into a single
+// invocation, so a branch that re-joined a shared tail ran the tail once with
+// both streams and $runIndex and per-run side effects differed from n8n. n8n
+// runs the node once for each branch that delivered data.
+func TestAFanInNodeRunsOncePerDeliveringBranch(t *testing.T) {
+	catalog := testCatalog(t, startType("test.start", "Start"), stepType("test.step", "Step"))
+
+	ir := compileDoc(t, catalog, workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_fanin", Name: "Two branches into one tail",
+		Nodes: []workflow.Node{
+			{ID: "start", Name: "Start", Type: "test.start", TypeVersion: workflow.V(1)},
+			{ID: "set-a", Name: "Set A", Type: "test.step", TypeVersion: workflow.V(1), Position: workflow.Position{X: 200, Y: 0}},
+			{ID: "set-b", Name: "Set B", Type: "test.step", TypeVersion: workflow.V(1), Position: workflow.Position{X: 200, Y: 300}},
+			{ID: "limit", Name: "Limit", Type: "test.step", TypeVersion: workflow.V(1), Position: workflow.Position{X: 400, Y: 150}},
+			{ID: "after", Name: "After", Type: "test.step", TypeVersion: workflow.V(1), Position: workflow.Position{X: 600, Y: 150}},
+		},
+		Connections: []workflow.Connection{
+			mainEdge("c1", "start", "main", "set-a"),
+			mainEdge("c2", "start", "main", "set-b"),
+			mainEdge("c3", "set-a", "main", "limit"),
+			mainEdge("c4", "set-b", "main", "limit"),
+			mainEdge("c5", "limit", "main", "after"),
+		},
+		Settings: map[string]any{},
+	})
+
+	runs := map[string][][]string{}
+	executors := engine.NewRegistry()
+	if err := executors.Register("test.start", engine.ExecutorFunc(
+		func(context.Context, workflow.IRNode, workflow.NodeInput, engine.Request) (workflow.NodeOutput, error) {
+			return workflow.NodeOutput{{{JSON: map[string]any{}}}}, nil
+		})); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	if err := executors.Register("test.step", engine.ExecutorFunc(
+		func(_ context.Context, node workflow.IRNode, input workflow.NodeInput, _ engine.Request) (workflow.NodeOutput, error) {
+			produced := make([]workflow.Item, 0, len(input["main"]))
+			for _, item := range input["main"] {
+				source, _ := item.JSON["src"].(string)
+				runs[node.Name] = append(runs[node.Name], []string{source})
+				produced = append(produced, workflow.Item{JSON: map[string]any{"src": source}})
+			}
+			if node.Name != "Start" && len(produced) == 0 {
+				produced = append(produced, workflow.Item{JSON: map[string]any{}})
+			}
+			return workflow.NodeOutput{produced}, nil
+		})); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	if err := nodes.RegisterExecutors(executors, safehttp.DefaultPolicy(), sqlnode.Guard{}, ai.NewLoopRuntime(), nil, nil); err != nil {
+		t.Fatalf("RegisterExecutors() error = %v", err)
+	}
+
+	// The two branches carry their own labels.
+	executors2 := engine.NewRegistry()
+	_ = executors2
+	if _, err := engine.NewRunner(executors).Run(context.Background(), ir, engine.Request{Input: workflow.Item{JSON: map[string]any{}}}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if got, want := len(runs["Limit"]), 2; got != want {
+		t.Fatalf("the fan-in node ran %d times, want once per delivering branch (%d)", got, want)
+	}
+	if got, want := len(runs["After"]), 2; got != want {
+		t.Errorf("the node below the fan-in ran %d times, want %d", got, want)
+	}
+}
+
+// TestDisabledNodePassesItsInputThrough is the safety property: an imported
+// workflow carries nodes its author switched off, and importing one must not
+// fire them.
+func TestDisabledNodePassesItsInputThrough(t *testing.T) {
+	catalog := testCatalog(t, startType("test.start", "Start"), stepType("test.step", "Step"))
+
+	ir := compileDoc(t, catalog, workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_disabled", Name: "Switched off in the middle",
+		Nodes: []workflow.Node{
+			{ID: "start", Name: "Start", Type: "test.start", TypeVersion: workflow.V(1)},
+			{ID: "off", Name: "Off", Type: "test.step", TypeVersion: workflow.V(1), Disabled: true},
+			{ID: "after", Name: "After", Type: "test.step", TypeVersion: workflow.V(1)},
+		},
+		Connections: []workflow.Connection{
+			mainEdge("c1", "start", "main", "off"),
+			mainEdge("c2", "off", "main", "after"),
+		},
+		Settings: map[string]any{},
+	})
+
+	var invoked []string
+	var afterItems []workflow.Item
+	executors := engine.NewRegistry()
+	if err := executors.Register("test.start", engine.ExecutorFunc(
+		func(context.Context, workflow.IRNode, workflow.NodeInput, engine.Request) (workflow.NodeOutput, error) {
+			return workflow.NodeOutput{{{JSON: map[string]any{"customer": "Ada"}}}}, nil
+		})); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	if err := executors.Register("test.step", engine.ExecutorFunc(
+		func(_ context.Context, node workflow.IRNode, input workflow.NodeInput, _ engine.Request) (workflow.NodeOutput, error) {
+			invoked = append(invoked, node.Name)
+			if node.Name == "After" {
+				afterItems = input["main"]
+			}
+			return workflow.NodeOutput{input["main"]}, nil
+		})); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	if err := nodes.RegisterExecutors(executors, safehttp.DefaultPolicy(), sqlnode.Guard{}, ai.NewLoopRuntime(), nil, nil); err != nil {
+		t.Fatalf("RegisterExecutors() error = %v", err)
+	}
+
+	if _, err := engine.NewRunner(executors).Run(context.Background(), ir, engine.Request{Input: workflow.Item{JSON: map[string]any{}}}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	for _, name := range invoked {
+		if name == "Off" {
+			t.Error("a disabled node was invoked")
+		}
+	}
+	if len(afterItems) != 1 || afterItems[0].JSON["customer"] != "Ada" {
+		t.Errorf("the node after a disabled one received %#v, want the input passed through", afterItems)
+	}
+}
+
+// TestDisabledTriggerNeverFires covers the other half: a trigger the author
+// switched off must not start a run, and naming it is an error rather than a
+// silent run of everything.
+func TestDisabledTriggerNeverFires(t *testing.T) {
+	catalog := testCatalog(t, startType("test.start", "Start"), stepType("test.step", "Step"))
+
+	ir := compileDoc(t, catalog, workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_off_trigger", Name: "A switched-off trigger",
+		Nodes: []workflow.Node{
+			{ID: "on", Name: "On", Type: "test.start", TypeVersion: workflow.V(1), Position: workflow.Position{X: 0, Y: 0}},
+			{ID: "off", Name: "Off", Type: "test.start", TypeVersion: workflow.V(1), Disabled: true, Position: workflow.Position{X: 0, Y: 200}},
+			{ID: "after-on", Name: "After On", Type: "test.step", TypeVersion: workflow.V(1)},
+			{ID: "after-off", Name: "After Off", Type: "test.step", TypeVersion: workflow.V(1)},
+		},
+		Connections: []workflow.Connection{
+			mainEdge("c1", "on", "main", "after-on"),
+			mainEdge("c2", "off", "main", "after-off"),
+		},
+		Settings: map[string]any{},
+	})
+
+	var invoked []string
+	executors := engine.NewRegistry()
+	if err := executors.Register("test.start", engine.ExecutorFunc(
+		func(context.Context, workflow.IRNode, workflow.NodeInput, engine.Request) (workflow.NodeOutput, error) {
+			return workflow.NodeOutput{{{JSON: map[string]any{}}}}, nil
+		})); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	if err := executors.Register("test.step", engine.ExecutorFunc(
+		func(_ context.Context, node workflow.IRNode, input workflow.NodeInput, _ engine.Request) (workflow.NodeOutput, error) {
+			invoked = append(invoked, node.Name)
+			return workflow.NodeOutput{input["main"]}, nil
+		})); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	if err := nodes.RegisterExecutors(executors, safehttp.DefaultPolicy(), sqlnode.Guard{}, ai.NewLoopRuntime(), nil, nil); err != nil {
+		t.Fatalf("RegisterExecutors() error = %v", err)
+	}
+	runner := engine.NewRunner(executors)
+
+	result, err := runner.Run(context.Background(), ir, engine.Request{Input: workflow.Item{JSON: map[string]any{}}})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	byNode := map[string]engine.NodeRun{}
+	for _, run := range result.NodeRuns {
+		byNode[run.NodeID] = run
+	}
+	if !byNode["off"].Skipped {
+		t.Error("a disabled trigger was started")
+	}
+	if !byNode["after-off"].Skipped {
+		t.Error("a node fed only by a disabled trigger ran")
+	}
+	if byNode["after-on"].Skipped {
+		t.Error("the enabled trigger's branch did not run")
+	}
+	for _, name := range invoked {
+		if name == "After Off" {
+			t.Error("the disabled trigger's branch was invoked")
+		}
+	}
+
+	if _, err := runner.Run(context.Background(), ir, engine.Request{
+		Input: workflow.Item{JSON: map[string]any{}}, TriggerNodeID: "off",
+	}); err == nil {
+		t.Error("running a disabled trigger by name was accepted")
+	}
+}
+
+// TestContinueOnFailKeepsTheItemsThatSucceeded is the per-item property.
+//
+// Error tolerance used to work per node: any executor error replaced the whole
+// output with error items and stopped at the first failing item, so the items
+// that had already succeeded were discarded and the ones after it never ran —
+// a bulk sender silently skipping every item after its first failure.
+func TestContinueOnFailKeepsTheItemsThatSucceeded(t *testing.T) {
+	catalog := testCatalog(t, startType("test.start", "Start"), stepType("test.perItem", "Per item"))
+
+	ir := compileDoc(t, catalog, workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_per_item", Name: "One failing item",
+		Nodes: []workflow.Node{
+			{ID: "start", Name: "Start", Type: "test.start", TypeVersion: workflow.V(1)},
+			{ID: "send", Name: "Send", Type: "test.perItem", TypeVersion: workflow.V(1),
+				Settings: map[string]any{"onError": "continueRegularOutput"}},
+		},
+		Connections: []workflow.Connection{mainEdge("c1", "start", "main", "send")},
+		Settings:    map[string]any{},
+	})
+
+	var attempted []string
+	executors := engine.NewRegistry()
+	if err := executors.Register("test.start", engine.ExecutorFunc(
+		func(context.Context, workflow.IRNode, workflow.NodeInput, engine.Request) (workflow.NodeOutput, error) {
+			items := make([]workflow.Item, 0, 3)
+			for _, p := range []string{"ok1", "fail", "ok3"} {
+				items = append(items, workflow.Item{JSON: map[string]any{"p": p}})
+			}
+			return workflow.NodeOutput{items}, nil
+		})); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	if err := executors.Register("test.perItem", engine.ExecutorFunc(
+		func(_ context.Context, _ workflow.IRNode, input workflow.NodeInput, _ engine.Request) (workflow.NodeOutput, error) {
+			p, _ := input["main"][0].JSON["p"].(string)
+			attempted = append(attempted, p)
+			if p == "fail" {
+				return nil, errors.New("upstream returned 500")
+			}
+			return workflow.NodeOutput{{{JSON: map[string]any{"sent": p}}}}, nil
+		})); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	if err := nodes.RegisterExecutors(executors, safehttp.DefaultPolicy(), sqlnode.Guard{}, ai.NewLoopRuntime(), nil, nil); err != nil {
+		t.Fatalf("RegisterExecutors() error = %v", err)
+	}
+
+	result, err := engine.NewRunner(executors).Run(context.Background(), ir, engine.Request{Input: workflow.Item{JSON: map[string]any{}}})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	// Every item was attempted, including the one after the failure.
+	if got, want := strings.Join(attempted, ","), "ok1,fail,ok3"; got != want {
+		t.Errorf("attempted items = %s, want %s", got, want)
+	}
+
+	send := nodeRun(t, result, "send")
+	items := send.Output[0]
+	if len(items) != 3 {
+		t.Fatalf("emitted %d items, want one per input item (3)", len(items))
+	}
+	if items[0].JSON["sent"] != "ok1" || items[2].JSON["sent"] != "ok3" {
+		t.Errorf("the successful items were not kept: %#v", items)
+	}
+	descriptor, ok := items[1].JSON[engine.ErrorItemKey].(map[string]any)
+	if !ok {
+		t.Fatalf("the failed item = %#v, want an %s descriptor", items[1].JSON, engine.ErrorItemKey)
+	}
+	if descriptor["message"] != "upstream returned 500" {
+		t.Errorf("error message = %#v, want the cause", descriptor["message"])
+	}
+	if _, old := items[1].JSON["$error"]; old {
+		t.Errorf("the failed item still uses $error: %#v", items[1].JSON)
+	}
+	if items[1].Paired == nil {
+		t.Error("the failed item lost its paired-item lineage")
+	}
+}
+
+// TestContinueErrorOutputRoutesFailuresToTheErrorBranch is n8n's
+// continueErrorOutput, and the reason a wired error branch used to make a
+// workflow unrunnable: the port the branch was wired to did not exist.
+func TestContinueErrorOutputRoutesFailuresToTheErrorBranch(t *testing.T) {
+	catalog := testCatalog(t, startType("test.start", "Start"),
+		stepType("test.perItem", "Per item"), stepType("test.step", "Step"))
+
+	ir := compileDoc(t, catalog, workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_error_branch", Name: "Error branch",
+		Nodes: []workflow.Node{
+			{ID: "start", Name: "Start", Type: "test.start", TypeVersion: workflow.V(1)},
+			{ID: "send", Name: "Send", Type: "test.perItem", TypeVersion: workflow.V(1),
+				Settings: map[string]any{"onError": "continueErrorOutput"}},
+			{ID: "ok", Name: "OK", Type: "test.step", TypeVersion: workflow.V(1)},
+			{ID: "bad", Name: "Bad", Type: "test.step", TypeVersion: workflow.V(1)},
+		},
+		Connections: []workflow.Connection{
+			mainEdge("c1", "start", "main", "send"),
+			mainEdge("c2", "send", "main", "ok"),
+			mainEdge("c3", "send", "error", "bad"),
+		},
+		Settings: map[string]any{},
+	})
+
+	executors := engine.NewRegistry()
+	if err := executors.Register("test.start", engine.ExecutorFunc(
+		func(context.Context, workflow.IRNode, workflow.NodeInput, engine.Request) (workflow.NodeOutput, error) {
+			items := make([]workflow.Item, 0, 3)
+			for _, p := range []string{"ok1", "fail", "ok3"} {
+				items = append(items, workflow.Item{JSON: map[string]any{"p": p}})
+			}
+			return workflow.NodeOutput{items}, nil
+		})); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	if err := executors.Register("test.perItem", engine.ExecutorFunc(
+		func(_ context.Context, _ workflow.IRNode, input workflow.NodeInput, _ engine.Request) (workflow.NodeOutput, error) {
+			p, _ := input["main"][0].JSON["p"].(string)
+			if p == "fail" {
+				return nil, errors.New("upstream returned 500")
+			}
+			return workflow.NodeOutput{{{JSON: map[string]any{"sent": p}}}}, nil
+		})); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	if err := executors.Register("test.step", engine.ExecutorFunc(
+		func(_ context.Context, _ workflow.IRNode, input workflow.NodeInput, _ engine.Request) (workflow.NodeOutput, error) {
+			return workflow.NodeOutput{input["main"]}, nil
+		})); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	if err := nodes.RegisterExecutors(executors, safehttp.DefaultPolicy(), sqlnode.Guard{}, ai.NewLoopRuntime(), nil, nil); err != nil {
+		t.Fatalf("RegisterExecutors() error = %v", err)
+	}
+
+	result, err := engine.NewRunner(executors).Run(context.Background(), ir, engine.Request{Input: workflow.Item{JSON: map[string]any{}}})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	send := nodeRun(t, result, "send")
+	if len(send.Output) != 2 {
+		t.Fatalf("Send returned %d streams, want the main output and the error output", len(send.Output))
+	}
+	if got, want := len(send.Output[0]), 2; got != want {
+		t.Errorf("main output carried %d items, want the %d that succeeded", got, want)
+	}
+	if got, want := len(send.Output[1]), 1; got != want {
+		t.Fatalf("error output carried %d items, want the 1 that failed", got)
+	}
+	failed := send.Output[1][0]
+	if failed.JSON["p"] != "fail" {
+		t.Errorf("the error branch item = %#v, want the input item plus the error", failed.JSON)
+	}
+	if _, ok := failed.JSON[engine.ErrorItemKey].(map[string]any); !ok {
+		t.Errorf("the error branch item carries no %s: %#v", engine.ErrorItemKey, failed.JSON)
+	}
+	// Both branches ran: the successes continued and the failure was handled.
+	if run := nodeRun(t, result, "ok"); len(run.Output[0]) != 2 {
+		t.Errorf("the success branch received %d items, want 2", len(run.Output[0]))
+	}
+	if run := nodeRun(t, result, "bad"); len(run.Output[0]) != 1 {
+		t.Errorf("the error branch received %d items, want 1", len(run.Output[0]))
+	}
+}
+
+// TestNestedLoopsIterateIndependently is the property that made a loop body's
+// analysis fragile: an inner loop inside an outer loop's body.
+//
+// The scheduler no longer classifies a loop's body at all — a loop's ports and
+// its runner-owned state are enough — so nesting is a shape the graph either
+// is or is not, rather than a case the analysis has to get right.
+func TestNestedLoopsIterateIndependently(t *testing.T) {
+	catalog := testCatalog(t, startType("test.start", "Start"), stepType("test.step", "Step"))
+
+	ir := compileDoc(t, catalog, workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_nested_loops", Name: "A loop inside a loop",
+		Nodes: []workflow.Node{
+			{ID: "src", Name: "Source", Type: "test.start", TypeVersion: workflow.V(1)},
+			{ID: "outer", Name: "Outer", Type: nodes.LoopNodeType, TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"batchSize": float64(1), "maxIterations": float64(10)}},
+			{ID: "expand", Name: "Expand", Type: "test.step", TypeVersion: workflow.V(1)},
+			{ID: "inner", Name: "Inner", Type: nodes.LoopNodeType, TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"batchSize": float64(1), "maxIterations": float64(10)}},
+			{ID: "body", Name: "Body", Type: "test.step", TypeVersion: workflow.V(1)},
+			{ID: "after", Name: "After", Type: "test.step", TypeVersion: workflow.V(1)},
+		},
+		Connections: []workflow.Connection{
+			// Source is an ordinary node with a fixed output; the loop reads it.
+			mainEdge("c1", "src", "main", "outer"),
+			mainEdge("c2", "outer", "loop", "expand"),
+			mainEdge("c3", "expand", "main", "inner"),
+			mainEdge("c4", "inner", "loop", "body"),
+			mainEdge("c5", "body", "main", "inner"),
+			mainEdge("c6", "inner", "done", "outer"),
+			mainEdge("c7", "outer", "done", "after"),
+		},
+		Settings: map[string]any{},
+	})
+
+	executors := engine.NewRegistry()
+	if err := executors.Register("test.start", engine.ExecutorFunc(
+		func(context.Context, workflow.IRNode, workflow.NodeInput, engine.Request) (workflow.NodeOutput, error) {
+			return workflow.NodeOutput{{{JSON: map[string]any{"n": 0}}, {JSON: map[string]any{"n": 1}}, {JSON: map[string]any{"n": 2}}}}, nil
+		})); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	if err := executors.Register("test.step", engine.ExecutorFunc(
+		func(_ context.Context, node workflow.IRNode, input workflow.NodeInput, _ engine.Request) (workflow.NodeOutput, error) {
+			switch node.Name {
+			case "Expand":
+				// Each outer batch becomes two inner items.
+				items := make([]workflow.Item, 0, 2*len(input["main"]))
+				for _, item := range input["main"] {
+					items = append(items, workflow.Item{JSON: map[string]any{"n": item.JSON["n"], "half": 0}})
+					items = append(items, workflow.Item{JSON: map[string]any{"n": item.JSON["n"], "half": 1}})
+				}
+				return workflow.NodeOutput{items}, nil
+			default:
+				return workflow.NodeOutput{input["main"]}, nil
+			}
+		})); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	if err := nodes.RegisterExecutors(executors, safehttp.DefaultPolicy(), sqlnode.Guard{}, ai.NewLoopRuntime(), nil, nil); err != nil {
+		t.Fatalf("RegisterExecutors() error = %v", err)
+	}
+
+	result, err := engine.NewRunner(executors).Run(context.Background(), ir, engine.Request{Input: workflow.Item{JSON: map[string]any{}}})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	bodyRuns := 0
+	for _, run := range result.NodeRuns {
+		if run.NodeID == "body" && !run.Skipped {
+			bodyRuns++
+		}
+	}
+	// Three outer batches, two inner items each.
+	if bodyRuns != 6 {
+		t.Errorf("the inner body ran %d times, want 3 outer iterations x 2 inner items", bodyRuns)
+	}
+
+	var last engine.NodeRun
+	for _, run := range result.NodeRuns {
+		if run.NodeID == "outer" {
+			last = run
+		}
+	}
+	if got, want := len(last.Output[0]), 6; got != want {
+		t.Errorf("the outer loop's done carried %d items, want %d", got, want)
+	}
+	if got, want := len(nodeRun(t, result, "after").Output[0]), 6; got != want {
+		t.Errorf("the node after the outer loop received %d items, want %d", got, want)
 	}
 }

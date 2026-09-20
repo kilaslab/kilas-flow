@@ -146,6 +146,10 @@ type Request struct {
 	// with its index in completion order, so a service can persist progress
 	// while the execution is still running. Nil is a no-op.
 	NodeRunSink func(index int, run NodeRun)
+	// NodeStartSink is called with a node's ID just before its executor runs,
+	// so a service can announce a node that has started — the half of live
+	// progress a completed-row sink cannot report. Nil is a no-op.
+	NodeStartSink func(nodeID string)
 	// NodeOutputs maps a completed node's display name to its first output
 	// item, backing the `$node` expression root. The runner fills it as the
 	// graph progresses, so a node only ever sees nodes that ran before it.
@@ -413,6 +417,11 @@ func (runner *Runner) Run(ctx context.Context, ir workflow.IR, request Request) 
 type pendingInvocation struct {
 	nodeID string
 	input  workflow.NodeInput
+	// skipped marks a delivery that carried nothing: the node is not run, and
+	// the trace records that a branch reached it and produced no items. It is
+	// recorded when the delivery happens rather than at the end of the run, so
+	// a node inside a loop keeps one pruned row per iteration.
+	skipped bool
 }
 
 // runState is the live scheduling state of one pass: what has run, what the run
@@ -514,12 +523,22 @@ func (state *runState) next(graph preparedGraph) (pendingInvocation, bool, error
 		if !state.configReady(graph, candidate.nodeID) {
 			continue
 		}
+		// The invocation carries the items one branch delivered. Everything
+		// else the node reads — its chat model, its memory, its tools — arrives
+		// on typed ports from nodes that have already run, exactly as the
+		// fallback below builds it.
+		if err := state.mergeConfigInputs(graph, &candidate); err != nil {
+			return pendingInvocation{}, false, err
+		}
 		state.pending = append(state.pending[:index], state.pending[index+1:]...)
 		return candidate, true, nil
 	}
 	ready := make([]string, 0, len(graph.nodes))
 	for nodeID := range graph.nodes {
 		if _, done := state.completed[nodeID]; done {
+			continue
+		}
+		if graph.nodes[nodeID].Disabled {
 			continue
 		}
 		if !dependenciesComplete(graph.incoming[nodeID], state.completed) {
@@ -577,6 +596,27 @@ func delivered(graph preparedGraph, nodeID string, completed map[string]workflow
 		}
 	}
 	return true
+}
+
+// mergeConfigInputs fills a scheduled invocation's typed inputs from the nodes
+// that have already run.
+//
+// An attachment edge carries configuration rather than items, so it is never
+// part of what a branch delivers: an agent started by its trigger still has to
+// find its model on the model port, and a scheduled invocation that carried
+// only the trigger's items would leave every attachment empty.
+func (state *runState) mergeConfigInputs(graph preparedGraph, invocation *pendingInvocation) error {
+	for _, edge := range graph.incoming[invocation.nodeID] {
+		if edge.Kind == workflow.ConnectionMain {
+			continue
+		}
+		output := state.completed[edge.Source.NodeID]
+		if edge.SourceOutputIndex < 0 || edge.SourceOutputIndex >= len(output) {
+			return fmt.Errorf("source node %q did not return output port %q", edge.Source.NodeID, edge.Source.Port)
+		}
+		invocation.input[edge.Target.Port] = append(invocation.input[edge.Target.Port], cloneItems(output[edge.SourceOutputIndex])...)
+	}
+	return nil
 }
 
 // configReady reports whether a scheduled invocation may run: every typed
@@ -638,10 +678,20 @@ func (state *runState) record(run NodeRun, request *Request) {
 // Children are pushed in reverse, so the stack pops them in canvas order and
 // each branch runs to its end before the next one starts.
 func (state *runState) push(graph preparedGraph, node workflow.IRNode, output workflow.NodeOutput) {
+	// Whether this run of a loop entry dispatched a batch. A node below the
+	// loop's `done` port is not reached while it has: an empty `done` on a
+	// dispatch is not a branch that produced nothing, it is a branch that has
+	// not run yet, and recording it would put a pruned row in the trace for
+	// every iteration.
+	dispatched := node.Definition.LoopEntry && portHasItems(node, output, loopPortName)
+
 	byTarget := make(map[string]*pendingInvocation, 2)
 	ordered := make([]*pendingInvocation, 0, 2)
 	for _, edge := range graph.outgoing[node.ID] {
 		if edge.Kind != workflow.ConnectionMain {
+			continue
+		}
+		if dispatched && edge.Source.Port == donePortName {
 			continue
 		}
 		target := graph.nodes[edge.Target.NodeID]
@@ -655,20 +705,24 @@ func (state *runState) push(graph preparedGraph, node workflow.IRNode, output wo
 		if edge.SourceOutputIndex >= 0 && edge.SourceOutputIndex < len(output) {
 			items = output[edge.SourceOutputIndex]
 		}
-		if len(items) == 0 && !settingBool(target.Settings, "alwaysOutputData") {
-			// Nothing on this port is nothing to deliver — unless the target
-			// asked for an item regardless, which is what Always Output Data
-			// means.
-			continue
-		}
+		// Nothing on this port is nothing to deliver — unless the target asked
+		// for an item regardless, which is what Always Output Data means.
+		//
+		// A loop entry is deliberately not exempt. It is invoked by the data its
+		// body returns, and an empty return means the body produced nothing to
+		// iterate: starting the next batch on it would both mis-order a nested
+		// loop — the inner loop's `done` is empty on every iteration it has not
+		// finished — and hand the outer loop work it never received.
+		empty := len(items) == 0 && !settingBool(target.Settings, "alwaysOutputData")
 		entry, found := byTarget[edge.Target.NodeID]
 		if !found {
-			entry = &pendingInvocation{nodeID: edge.Target.NodeID, input: workflow.NodeInput{}}
+			entry = &pendingInvocation{nodeID: edge.Target.NodeID, input: workflow.NodeInput{}, skipped: empty}
 			byTarget[edge.Target.NodeID] = entry
 			ordered = append(ordered, entry)
 		}
 		if len(items) > 0 {
 			entry.input[edge.Target.Port] = append(entry.input[edge.Target.Port], cloneItems(items)...)
+			entry.skipped = false
 		}
 	}
 	for index := len(ordered) - 1; index >= 0; index-- {
@@ -878,6 +932,13 @@ func (runner *Runner) runLoop(ctx context.Context, graph preparedGraph, request 
 // runNode executes one scheduled invocation.
 func (runner *Runner) runNode(ctx context.Context, graph preparedGraph, request *Request, state *runState, invocation pendingInvocation) (*SuspendError, error) {
 	node := graph.nodes[invocation.nodeID]
+	// A delivery that carried nothing reaches the node without running it: the
+	// untaken arm of a branch is recorded, and pruned the same way further
+	// down, rather than vanishing from the trace.
+	if invocation.skipped {
+		state.skip(graph, invocation, request)
+		return nil, nil
+	}
 	// A disabled node is never invoked. It passes its first main input through,
 	// which is what n8n does: switching a node off in the middle of a chain
 	// leaves the chain working, with that node's own edit missing.
@@ -889,6 +950,9 @@ func (runner *Runner) runNode(ctx context.Context, graph preparedGraph, request 
 	}
 	if _, found := runner.executors.Lookup(node.Definition.ExecutorID); !found {
 		return nil, fmt.Errorf("node %q executor %q is not registered", node.ID, node.Definition.ExecutorID)
+	}
+	if request.NodeStartSink != nil {
+		request.NodeStartSink(node.ID)
 	}
 	policy := retryPolicy(node.Settings)
 	input := invocation.input
@@ -1057,6 +1121,27 @@ func (runner *Runner) runPerItem(ctx context.Context, graph preparedGraph, reque
 	return nil, nil
 }
 
+// skip records a node a branch reached with no items, and passes the same
+// emptiness on: the cascade downstream falls out of this one rule instead of
+// needing a second traversal.
+func (state *runState) skip(graph preparedGraph, invocation pendingInvocation, request *Request) {
+	node := graph.nodes[invocation.nodeID]
+	empty := make(workflow.NodeOutput, len(node.Definition.Outputs))
+	for index := range empty {
+		empty[index] = []workflow.Item{}
+	}
+	state.completed[node.ID] = empty
+	state.runs[node.ID] = append(state.runs[node.ID], cloneOutput(empty))
+	state.record(NodeRun{NodeID: node.ID, Input: cloneInput(invocation.input), Skipped: true, Output: empty}, request)
+	if len(graph.outgoing[node.ID]) == 0 {
+		state.result.Output[node.ID] = cloneOutput(empty)
+	}
+	// Deliberately not pushed on: emptiness travels no further than the node it
+	// reached. Everything below an unreached node is recorded as skipped at the
+	// end of the run, and pushing emptiness around a loop's back edge would
+	// never stop.
+}
+
 // passThrough is what a disabled node emits: its first main input, unchanged.
 func passThrough(node workflow.IRNode, input workflow.NodeInput) workflow.NodeOutput {
 	output := make(workflow.NodeOutput, len(node.Definition.Outputs))
@@ -1133,6 +1218,24 @@ func firstItemOnly(input workflow.NodeInput) workflow.NodeInput {
 	}
 	truncated[mainPortName] = items[:1]
 	return truncated
+}
+
+// The two ports a loop node declares, named as the node declares them.
+const (
+	donePortName = "done"
+	loopPortName = "loop"
+)
+
+// portHasItems reports whether one of a node's declared output ports carried
+// items in this run.
+func portHasItems(node workflow.IRNode, output workflow.NodeOutput, port string) bool {
+	for index, declared := range node.Definition.Outputs {
+		if declared.Name != port || index >= len(output) {
+			continue
+		}
+		return len(output[index]) > 0
+	}
+	return false
 }
 
 // errorPortName is the extra output a node that continues on a separate error
@@ -1342,6 +1445,7 @@ func cloneRequest(request Request) Request {
 		Credentials:   request.Credentials,
 		Events:        request.Events,
 		NodeRunSink:   request.NodeRunSink,
+		NodeStartSink: request.NodeStartSink,
 		Workflows:     request.Workflows,
 		Env:           make(map[string]string, len(request.Env)),
 		NodeOutputs:   make(map[string]map[string]any, len(request.NodeOutputs)),

@@ -41,6 +41,12 @@ func Extract(scheduleNodeTypes ...string) repository.ScheduleExtractor {
 			if _, wanted := types[node.Type]; !wanted {
 				continue
 			}
+			// A disabled trigger is not registered: activating a workflow must
+			// not start the schedule its author switched off. The runtime does
+			// not start it either, so the two agree about what is on.
+			if node.Disabled {
+				continue
+			}
 			for index, interval := range NodeIntervals(node.Parameters) {
 				if err := interval.Validate(); err != nil {
 					continue
