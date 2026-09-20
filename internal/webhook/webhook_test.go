@@ -455,14 +455,16 @@ func TestJWTWebhookIsRefusedAtActivationRatherThanSilentlyOpen(t *testing.T) {
 	}
 }
 
-// TestWebhookRedactsInboundHeadersButKeepsTheBody pins the split this boundary
-// now makes.
+// TestWebhookKeepsInboundHeadersForTheRunAndRedactsThemOnRead pins the split
+// Main ruled on (2026-09-20).
 //
-// A caller's Authorization or Cookie header is a credential and is never stored.
-// The body is the caller's own data and the running workflow reads it straight
-// back out of the record, so redacting it would put "[redacted]" on the wire in
-// place of what actually arrived.
-func TestWebhookRedactsInboundHeadersButKeepsTheBody(t *testing.T) {
+// The stored record is what the runner rehydrates as the trigger item, so
+// redacting it on write would change what the tenant's own workflow sees — an
+// imported n8n workflow's `$json.headers['x-api-key']` check has to read the
+// caller's value. Inbound caller headers are the tenant's own data, and the read
+// surfaces are where they are hidden: every record served by the executions API
+// or the live event feed goes through execution.Redact.
+func TestWebhookKeepsInboundHeadersForTheRunAndRedactsThemOnRead(t *testing.T) {
 	h := newHarness(t)
 	active := h.activate(t, webhookDocument("Redacting", map[string]any{
 		"path": "redact", "httpMethod": http.MethodPost, "responseMode": "immediate",
@@ -482,14 +484,35 @@ func TestWebhookRedactsInboundHeadersButKeepsTheBody(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get() error = %v", err)
 	}
-	encoded, _ := json.Marshal(record)
-	for _, secret := range []string{"inbound-secret", "inbound-cookie"} {
-		if strings.Contains(string(encoded), secret) {
-			t.Errorf("the execution record retained the header credential %q: %s", secret, encoded)
+	// What the run executes on: the caller's own headers, verbatim.
+	for _, value := range []string{"inbound-secret", "inbound-cookie", "body-value"} {
+		if !strings.Contains(string(record.Input), value) {
+			t.Errorf("the stored trigger input lost %q, which the workflow runs on: %s", value, record.Input)
 		}
 	}
-	if !strings.Contains(string(encoded), "body-value") {
-		t.Errorf("the execution record lost the request body, which the workflow runs on: %s", encoded)
+
+	// What a reader is served: the same record through the redaction the API
+	// handlers and the live feed apply.
+	served, err := json.Marshal(execution.Redact(record.Input))
+	if err != nil {
+		t.Fatalf("marshal the served input = %v", err)
+	}
+	for _, secret := range []string{"inbound-secret", "inbound-cookie"} {
+		if strings.Contains(string(served), secret) {
+			t.Errorf("the served input retained the header credential %q: %s", secret, served)
+		}
+	}
+	if !strings.Contains(string(served), "body-value") {
+		t.Errorf("the served input lost the request body: %s", served)
+	}
+
+	// And the node-run trace never carries a whole header value, whatever the
+	// trigger copy holds.
+	trace, _ := json.Marshal(record.NodeRuns)
+	for _, secret := range []string{"inbound-secret", "inbound-cookie"} {
+		if strings.Contains(string(trace), secret) {
+			t.Errorf("the node-run trace retained the header credential %q: %s", secret, trace)
+		}
 	}
 }
 
