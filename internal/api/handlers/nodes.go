@@ -28,23 +28,6 @@ type NodeTypes struct {
 	// availability reports which nodes this deployment cannot run, keyed by
 	// node type. Nil means everything registered can run.
 	availability func() map[string]string
-	// workflowCredentials lists the credential IDs one workflow's nodes
-	// reference. It bounds an embed session to the credentials its own workflow
-	// actually uses; see scopeFor.
-	workflowCredentials func(ctx context.Context, tenantID, workflowID string) ([]string, error)
-}
-
-// WithWorkflowCredentials bounds an embed session to the credentials its own
-// workflow references.
-//
-// Without it, a session confined to one workflow could name any credential in
-// the tenant and read the schema of every database that credential reaches —
-// the picker becomes an enumeration oracle for the whole tenant, and nothing
-// else on this path stops it: permits grants the entire /node-types/ subtree on
-// read scope without ever consulting a workflow.
-func (handler *NodeTypes) WithWorkflowCredentials(list func(ctx context.Context, tenantID, workflowID string) ([]string, error)) *NodeTypes {
-	handler.workflowCredentials = list
-	return handler
 }
 
 // WithOptionLoading enables the load-options endpoint.
@@ -342,28 +325,25 @@ func (handler *NodeTypes) scopeFor(ctx context.Context, input *loadOptionsInput,
 	}
 	scope.WorkflowID = session.WorkflowID
 
-	// And the credential has to be one this workflow actually uses. A schema
+	// And the credential has to be one this session may read with. A schema
 	// read is performed on behalf of whoever holds the editor, so "this session
 	// may read" and "this session may read *with that credential*" are two
 	// different permissions and only the second one bounds the blast radius.
+	//
+	// The bound is the session's own confinement — minted from the revision the
+	// workflow's owner published — and not a fresh read of the workflow's
+	// latest draft. Reading the draft here made the two gates disagree: a guest
+	// could attach a credential to an unsaved draft and drive the internal
+	// loaders with a secret the published revision never referenced, while the
+	// save and run of that same draft were refused.
 	if strings.TrimSpace(input.Body.CredentialID) == "" {
 		return scope, nil
 	}
-	if handler.workflowCredentials == nil {
-		return loadoptions.Scope{}, huma.Error403Forbidden(
-			"this server cannot tell which credentials this workflow uses, so an embedded editor may not name one")
+	if !session.Confinement.AllowsCredential(strings.TrimSpace(input.Body.CredentialID)) {
+		return loadoptions.Scope{}, huma.Error403Forbidden(fmt.Sprintf(
+			"workflow %s does not use that credential, so this embed session may not read with it", session.WorkflowID))
 	}
-	referenced, err := handler.workflowCredentials(ctx, scope.TenantID, session.WorkflowID)
-	if err != nil {
-		return loadoptions.Scope{}, huma.Error403Forbidden("this embed session's workflow could not be read")
-	}
-	for _, candidate := range referenced {
-		if candidate == input.Body.CredentialID {
-			return scope, nil
-		}
-	}
-	return loadoptions.Scope{}, huma.Error403Forbidden(fmt.Sprintf(
-		"workflow %s does not use that credential, so this embed session may not read with it", session.WorkflowID))
+	return scope, nil
 }
 
 // locatorDependency renders a dependency value for a loader's path.

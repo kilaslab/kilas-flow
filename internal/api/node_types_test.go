@@ -331,6 +331,10 @@ func credentialAwareLoaderAPI(t *testing.T, issuer *embed.Issuer) (http.Handler,
 	handler := newTestServer(t, api.Deps{
 		DB: db, NodeRegistry: registry, OptionLoader: resolver, EmbedIssuer: issuer,
 		Workflows: workflowStore, Credentials: credentialStore,
+		// Activation complains that the workflow service is unavailable without
+		// an execution store, and the loader bound is derived from the revision
+		// an activation published — so the test has to be able to activate.
+		Executions: repository.NewExecutionStore(db.DB),
 		CredentialResolverFor: func(tenant repository.TenantScope) loadoptions.CredentialResolver {
 			return credentialLookup{store: credentialStore, tenant: tenant}
 		},
@@ -393,6 +397,42 @@ func TestALoaderResolvesItsCredentialInTheCallersTenant(t *testing.T) {
 	}
 }
 
+// embedLoaderDocument is a workflow whose one node attaches a credential, so a
+// session minted from it may read with exactly that credential.
+//
+// The workflow id is threaded so a second draft can be saved over the first,
+// which is how the test writes a revision the session's authority does not
+// come from.
+func embedLoaderDocument(workflowID, credentialID string) workflow.Document {
+	return workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion, ID: workflowID, Name: "Embedded",
+		Nodes: []workflow.Node{
+			{ID: "manual", Name: "Manual", Type: "kilasflow.manual", TypeVersion: workflow.V(1)},
+			{ID: "sql", Name: "SQL", Type: nodes.PostgresNodeType, TypeVersion: workflow.V(1),
+				Parameters:  map[string]any{"operation": "query", "statement": "SELECT 1"},
+				Credentials: map[string]string{"postgres": credentialID}},
+		},
+		Connections: []workflow.Connection{{
+			ID: "c1", Kind: workflow.ConnectionMain,
+			Source: workflow.Endpoint{NodeID: "manual", Port: "main"},
+			Target: workflow.Endpoint{NodeID: "sql", Port: "main"},
+		}},
+		Settings: map[string]any{},
+	}
+}
+
+// A load-options request carries a credential id from a session that holds no
+// authority of its own, and a schema read is performed on behalf of whoever
+// holds the editor: "this session may read" and "this session may read *with
+// that credential*" are two different permissions, and only the second one
+// bounds the blast radius.
+//
+// The bound is the session's confinement, which was minted from the revision
+// the workflow's owner published. It used to be a fresh read of the workflow's
+// latest draft: a draft is inside a guest's write authority, so a guest could
+// attach any credential to the draft and drive the internal loaders with a
+// secret the published revision never named — while saving and running that
+// same draft was refused.
 func TestAnEmbedSessionMayOnlyLoadWithItsOwnWorkflowsCredentials(t *testing.T) {
 	issuer := embedIssuer(t)
 	handler, workflows, store := credentialAwareLoaderAPI(t, issuer)
@@ -414,37 +454,29 @@ func TestAnEmbedSessionMayOnlyLoadWithItsOwnWorkflowsCredentials(t *testing.T) {
 		t.Fatalf("Create() error = %v", err)
 	}
 
-	// The session's workflow references exactly one of them.
-	stored, err := workflows.SaveDraft(ctx, tenant, workflow.Document{
-		SchemaVersion: workflow.CurrentSchemaVersion, Name: "Embedded",
-		Nodes: []workflow.Node{
-			{ID: "manual", Name: "Manual", Type: "kilasflow.manual", TypeVersion: workflow.V(1)},
-			{ID: "sql", Name: "SQL", Type: nodes.PostgresNodeType, TypeVersion: workflow.V(1),
-				Parameters:  map[string]any{"operation": "query", "statement": "SELECT 1"},
-				Credentials: map[string]string{"postgres": used.ID}},
-		},
-		Connections: []workflow.Connection{{
-			ID: "c1", Kind: workflow.ConnectionMain,
-			Source: workflow.Endpoint{NodeID: "manual", Port: "main"},
-			Target: workflow.Endpoint{NodeID: "sql", Port: "main"},
-		}},
-		Settings: map[string]any{},
-	})
+	// The owner publishes a revision that references exactly one of them. That
+	// revision is the session's whole authority.
+	stored, err := workflows.SaveDraft(ctx, tenant, embedLoaderDocument("", used.ID))
 	if err != nil {
 		t.Fatalf("SaveDraft() error = %v", err)
 	}
-	_, token, err := issuer.Issue(embed.Request{
-		TenantID: repository.DefaultTenantID, WorkflowID: stored.ID,
-		Scopes: []embed.Scope{embed.ScopeRead}, Origin: hostOrigin,
-	})
-	if err != nil {
-		t.Fatalf("Issue() error = %v", err)
+	requestJSON[workflowResource](t, handler, http.MethodPost, "/api/v1/workflows/"+stored.ID+"/activate", nil, http.StatusOK)
+
+	// Then the workflow's latest draft references the other one — a draft that
+	// nobody published.
+	if _, err := workflows.SaveDraft(ctx, tenant, embedLoaderDocument(stored.ID, unused.ID)); err != nil {
+		t.Fatalf("SaveDraft() error = %v", err)
 	}
 
-	// Introspection is a read of a customer's database performed on behalf of
-	// whoever holds the editor. "This session may read" and "this session may
-	// read with that credential" are two different permissions, and only the
-	// second one bounds the blast radius.
+	token := mintEmbedSession(t, handler, stored.ID, "workflow:read")
+	session, err := issuer.Verify(token)
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if len(session.Confinement.Credentials) != 1 || session.Confinement.Credentials[0] != used.ID {
+		t.Fatalf("confinement = %#v, want the published revision's one credential", session.Confinement)
+	}
+
 	allowed := embedRequest(t, handler, token, http.MethodPost, "/api/v1/node-types/test.picker/load-options",
 		map[string]any{"property": "table", "credentialId": used.ID})
 	if allowed.Code != http.StatusOK {
@@ -454,6 +486,9 @@ func TestAnEmbedSessionMayOnlyLoadWithItsOwnWorkflowsCredentials(t *testing.T) {
 		t.Errorf("body = %s, want the workflow's own credential used", allowed.Body)
 	}
 
+	// The credential the unpublished draft carries is refused: the session may
+	// not read with a secret its published revision never named, whatever the
+	// workflow's latest draft happens to say.
 	refused := embedRequest(t, handler, token, http.MethodPost, "/api/v1/node-types/test.picker/load-options",
 		map[string]any{"property": "table", "credentialId": unused.ID})
 	if refused.Code != http.StatusForbidden {
