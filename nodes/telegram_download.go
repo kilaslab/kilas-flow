@@ -10,6 +10,7 @@ import (
 	"path"
 	"strings"
 
+	"github.com/kilaslabs/kilas-flow/internal/binary"
 	"github.com/kilaslabs/kilas-flow/internal/engine"
 	"github.com/kilaslabs/kilas-flow/internal/safehttp"
 	"github.com/kilaslabs/kilas-flow/internal/workflow"
@@ -73,7 +74,7 @@ func (executor *TelegramTriggerExecutor) download(ctx context.Context, ir workfl
 		return nil
 	}
 	if request.Binaries == nil {
-		return fmt.Errorf("node %q: binary storage is not configured on this server", ir.Name)
+		return fmt.Errorf("node %q: %w", ir.Name, binary.ErrNotConfigured)
 	}
 	if executor.files == nil {
 		return fmt.Errorf("node %q: this deployment cannot download Telegram files", ir.Name)

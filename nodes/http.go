@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kilaslabs/kilas-flow/internal/binary"
 	"github.com/kilaslabs/kilas-flow/internal/engine"
 	"github.com/kilaslabs/kilas-flow/internal/expression"
 	"github.com/kilaslabs/kilas-flow/internal/node"
@@ -351,7 +352,10 @@ func (executor *HTTPExecutor) sendOne(ctx context.Context, ir workflow.IRNode, p
 		return nil, fmt.Errorf("node %q: response exceeds the configured size limit and cannot be stored as a file", ir.Name)
 	}
 	if request.Binaries == nil {
-		return nil, fmt.Errorf("node %q: binary storage is not configured on this server", ir.Name)
+		// The shared error names the setting and its environment variable,
+		// because the node that needed storage is rarely where the mistake was
+		// made — the root was set wrong at boot.
+		return nil, fmt.Errorf("node %q: %w", ir.Name, binary.ErrNotConfigured)
 	}
 	reference, err := request.Binaries.Put(responseFileName(response, target), mediaType(responseType), bytes.NewReader(contents))
 	if err != nil {
