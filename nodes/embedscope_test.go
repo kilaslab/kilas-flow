@@ -124,6 +124,52 @@ func TestEmbedScopeIssuesBoundsTheDataTableToolNode(t *testing.T) {
 	}
 }
 
+func TestEmbedScopeIssuesBoundsTheWorkflowToolNode(t *testing.T) {
+	// The Workflow Tool is the second node type that calls a workflow, and it
+	// is the one the confinement did not know: the mint and the check switched
+	// on the Execute Sub-workflow type alone while the activation gate already
+	// knew both, so a tool node naming any workflow in the tenant saved and ran
+	// unchecked with the tenant's authority. Both walks now come from one
+	// enumeration, and this is the case that pins it.
+	document := workflow.Document{Nodes: []workflow.Node{
+		embedTestNode(WorkflowToolNodeType, "tool", map[string]any{
+			"toolName":   "delegate",
+			"workflowId": embedTestLocator("id", "wf_sibling"),
+		}),
+	}}
+
+	issues := EmbedScopeIssues(document, embed.Confinement{})
+	if len(issues) != 1 {
+		t.Fatalf("issues = %v, want the tool node's target refused", issues)
+	}
+	if !strings.Contains(issues[0], "tool") || !strings.Contains(issues[0], "wf_sibling") {
+		t.Errorf("issue %q does not name the node and the workflow it calls", issues[0])
+	}
+
+	// And the mint reads the same walk: a document that calls a workflow is
+	// what a confinement derived from it allows, which is what keeps the two
+	// functions inverses for this node type too.
+	collected := DocumentReferences(document)
+	if len(collected.Workflows) != 1 || collected.Workflows[0] != "wf_sibling" {
+		t.Fatalf("workflows = %v, want wf_sibling: the tool node calls a workflow", collected.Workflows)
+	}
+	if inside := EmbedScopeIssues(document, collected); len(inside) != 0 {
+		t.Fatalf("issues = %v, want none inside the confinement it was minted from", inside)
+	}
+
+	// A tool node whose target is an expression is unbounded for the same
+	// reason an Execute Sub-workflow node's is: the value is only knowable at
+	// run time.
+	expression := workflow.Document{Nodes: []workflow.Node{
+		embedTestNode(WorkflowToolNodeType, "tool", map[string]any{
+			"workflowId": embedTestLocator("id", map[string]any{"mode": "expression", "value": "={{ $json.wf }}"}),
+		}),
+	}}
+	if issues := EmbedScopeIssues(expression, collected); len(issues) != 1 {
+		t.Fatalf("issues = %v, want the expression target refused", issues)
+	}
+}
+
 func TestEmbedScopeIssuesBoundsCredentialsAndSubWorkflows(t *testing.T) {
 	document := workflow.Document{Nodes: []workflow.Node{
 		{

@@ -38,16 +38,22 @@ func DocumentReferences(document workflow.Document) embed.Confinement {
 		for _, credentialID := range credentialIDs(node) {
 			confinement.Credentials = append(confinement.Credentials, credentialID)
 		}
-		switch node.Type {
-		case DatastoreNodeType, DatastoreToolNodeType:
+		if node.Type == DatastoreNodeType || node.Type == DatastoreToolNodeType {
 			if datastore := datastoreReference(node); datastore != nil {
 				confinement.Datastores = append(confinement.Datastores, *datastore)
 			}
-		case ExecuteWorkflowNodeType:
-			if target := embedLocatorText(node.Parameters["workflowId"]); target != "" {
-				confinement.Workflows = append(confinement.Workflows, target)
-			}
 		}
+	}
+	// The workflows the graph calls come from the one walk that knows which node
+	// types call one — the same walk the check below and the activation gate
+	// read. Reading them here instead would be a second list of node types, and
+	// a second list is one that gets forgotten: the Workflow Tool was missing
+	// from this function while the activation gate knew about it.
+	for _, call := range WorkflowCalls(document) {
+		if call.Target == "" || call.Expression {
+			continue
+		}
+		confinement.Workflows = append(confinement.Workflows, call.Target)
 	}
 	return confinement
 }
@@ -80,9 +86,13 @@ func EmbedScopeIssues(document workflow.Document, confinement embed.Confinement)
 			// no operation of its own — reads are the whole of it — so only the
 			// table it names has to be inside the confinement.
 			issues = append(issues, datastoreTargetIssues(node, confinement)...)
-		case ExecuteWorkflowNodeType:
-			issues = append(issues, subworkflowConfinementIssues(node, confinement)...)
 		}
+	}
+	// The same walk the confinement is minted from, so a node type that calls a
+	// workflow cannot be bounded at mint time and unchecked here, or the other
+	// way round.
+	for _, call := range WorkflowCalls(document) {
+		issues = append(issues, subworkflowConfinementIssues(call, confinement)...)
 	}
 	return issues
 }
@@ -141,25 +151,22 @@ func datastoreTargetIssues(node workflow.Node, confinement embed.Confinement) []
 	return nil
 }
 
-// subworkflowConfinementIssues bounds one Execute Sub-workflow node.
-func subworkflowConfinementIssues(node workflow.Node, confinement embed.Confinement) []string {
-	locator, found := property.ReadLocator(node.Parameters["workflowId"])
-	if !found || !property.LocatorIsSet(node.Parameters["workflowId"]) {
-		return nil
-	}
-	if property.ExpressionMarker(locator.Value) {
+// subworkflowConfinementIssues bounds one node that calls a workflow.
+func subworkflowConfinementIssues(call WorkflowCall, confinement embed.Confinement) []string {
+	if call.Expression {
 		return []string{fmt.Sprintf(
 			"node %s chooses its sub-workflow with an expression, which this embed session cannot be confined to",
-			embedNodeLabel(node))}
+			embedNodeLabel(call.Node))}
 	}
-	target := strings.TrimSpace(fmt.Sprint(locator.Value))
-	if target == "" {
+	if call.Target == "" {
+		// A node naming nothing cannot reach anything: the compiler refuses it
+		// before it can run.
 		return nil
 	}
-	if !confinement.AllowsWorkflow(target) {
+	if !confinement.AllowsWorkflow(call.Target) {
 		return []string{fmt.Sprintf(
-			"node %s runs workflow %s, which this embed session was not granted",
-			embedNodeLabel(node), target)}
+			"node %s calls workflow %s, which this embed session was not granted",
+			embedNodeLabel(call.Node), call.Target)}
 	}
 	return nil
 }
@@ -207,14 +214,4 @@ func embedNodeLabel(node workflow.Node) string {
 		return fmt.Sprintf("%q", name)
 	}
 	return node.ID
-}
-
-// embedLocatorText reads the plain value out of a resource locator, or "" when
-// the locator is absent, unset, or an expression.
-func embedLocatorText(value any) string {
-	locator, found := property.ReadLocator(value)
-	if !found || property.ExpressionMarker(locator.Value) {
-		return ""
-	}
-	return strings.TrimSpace(fmt.Sprint(locator.Value))
 }

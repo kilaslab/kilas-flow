@@ -48,6 +48,22 @@ func embedDatastoreNode(id, operation, mode, value string) workflow.Node {
 	}
 }
 
+// embedWorkflowToolNode builds one Workflow Tool node naming a workflow.
+//
+// It is the second node type that calls another workflow, and the one the
+// confinement used to miss: the review's escape was a guest editor saving a
+// tool node that named any workflow in the tenant, then running it, so the tool
+// then executed with the tenant's authority rather than the session's.
+func embedWorkflowToolNode(id, workflowID string) workflow.Node {
+	return workflow.Node{
+		ID: id, Name: id, Type: "kilasflow.workflowTool", TypeVersion: workflow.V(1),
+		Parameters: map[string]any{
+			"toolName":   "delegate",
+			"workflowId": map[string]any{"__rl": true, "mode": "id", "value": workflowID},
+		},
+	}
+}
+
 // documentReferencing builds a workflow document made of one trigger plus the
 // supplied nodes, each wired from the trigger.
 //
@@ -269,6 +285,58 @@ func TestASessionForAnUnpublishedWorkflowCarriesNoReferences(t *testing.T) {
 	}
 	if session.Confinement.AllowsWorkflow("wf_someone_else") {
 		t.Errorf("confinement = %#v, want no other workflow", session.Confinement)
+	}
+}
+
+// The Workflow Tool is the second node type that calls another workflow, and it
+// was the hole: the confinement switched on the Execute Sub-workflow type alone,
+// so a guest editor could save a tool node naming any workflow in the tenant and
+// run it, and the tool then invoked that workflow with the tenant's authority.
+// The unit walker could not catch this on its own — the escape lived in the gap
+// between the walker and the node types that exist — so it is reproduced here
+// through the same save and run the attack used.
+func TestAnEmbedSessionCannotSaveAWorkflowToolNamingASiblingWorkflow(t *testing.T) {
+	handler, _, workflowID := embedServer(t)
+
+	// A second workflow of the same tenant: what the tool node would reach.
+	sibling := createWorkflow(t, handler, validManualWorkflow("Sibling"))
+
+	token := mintEmbedSession(t, handler, workflowID, "workflow:read", "workflow:write")
+	hostile := documentReferencing("Embeddable", embedWorkflowToolNode("delegate", sibling.ID))
+	got := embedRequest(t, handler, token, http.MethodPut, "/api/v1/workflows/"+workflowID, workflowDraft(hostile))
+	if got.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 for a workflow tool naming a workflow the session was not granted (body: %s)",
+			got.Code, got.Body)
+	}
+	if !strings.Contains(got.Body.String(), sibling.ID) {
+		t.Errorf("the refusal does not name the workflow the tool would run: %s", got.Body)
+	}
+}
+
+// The run path compiles the latest revision, so a tool node that reached storage
+// before the check existed — or through an owner's draft — has to be refused at
+// the moment it would execute with the tenant's authority.
+//
+// The refusal is asserted as 403 rather than "anything but 202": the gate runs
+// before the queue, and before the queue's own validation of the revision. A run
+// that answers 422 is a run the gate let through to a later layer.
+func TestAnEmbedSessionCannotRunAStoredWorkflowToolOutsideItsConfinement(t *testing.T) {
+	handler, _, workflowID := embedServer(t)
+	sibling := createWorkflow(t, handler, validManualWorkflow("Sibling"))
+
+	// The published revision calls nothing...
+	requestJSON[workflowResource](t, handler, http.MethodPost, "/api/v1/workflows/"+workflowID+"/activate", nil, http.StatusOK)
+
+	// ...and a later draft — written by the owner, or saved before the tool node
+	// was known to the confinement — names the sibling through the tool.
+	requestJSON[workflowResource](t, handler, http.MethodPut, "/api/v1/workflows/"+workflowID,
+		workflowDraft(documentReferencing("Embeddable", embedWorkflowToolNode("delegate", sibling.ID))), http.StatusOK)
+
+	token := mintEmbedSession(t, handler, workflowID, "workflow:run")
+	got := embedRequest(t, handler, token, http.MethodPost, "/api/v1/workflows/"+workflowID+"/run", nil)
+	if got.Code != http.StatusForbidden {
+		t.Fatalf("run status = %d, want 403 — the latest revision calls a workflow outside the session (body: %s)",
+			got.Code, got.Body)
 	}
 }
 

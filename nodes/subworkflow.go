@@ -288,29 +288,67 @@ func projectSubworkflowInput(parameters map[string]any, items []workflow.Item) [
 	return out
 }
 
-// SubworkflowCalls reads the workflows a document calls.
+// WorkflowCall is one node in a document that names another workflow to run.
+type WorkflowCall struct {
+	// Node is the calling node itself, so a refusal can name it.
+	Node workflow.Node
+	// Target is the workflow the node names, read exactly as the executor will
+	// read it: the plain text of the locator. Empty when the node names nothing
+	// yet.
+	Target string
+	// Expression reports a locator whose value is only knowable at run time.
+	Expression bool
+}
+
+// WorkflowCalls lists every node in a document that names another workflow to
+// run.
 //
-// For activation: a workflow whose document calls a workflow that is not active
-// would activate cleanly and fail mid-run, so the store refuses it and this is
-// the reading it refuses on. Two node types call another workflow — Execute
-// Sub-workflow and the Workflow Tool an agent uses — and both name their target
-// with the same locator key, so one pass over the document covers them.
+// This is the one enumeration of "a node that calls a workflow", and it exists
+// because there is more than one gate that has to know: activation refuses a
+// call to a workflow that is not active, and an embed session's confinement is
+// both minted from (DocumentReferences) and checked against (EmbedScopeIssues)
+// the same reading. Two node types call another workflow — Execute Sub-workflow
+// and the Workflow Tool an agent uses — and both name their target with the same
+// locator key.
 //
-// A node whose locator holds nothing is skipped rather than reported: the
-// compiler already refuses an unset required locator at save time, and a
-// half-built draft must not be the thing that blocks an unrelated activation.
-func SubworkflowCalls(document workflow.Document) []repository.SubworkflowCall {
-	calls := make([]repository.SubworkflowCall, 0, 2)
+// When these walks were separate the Workflow Tool was missing from the
+// confinement, so a guest editor could save a tool node naming any workflow in
+// the tenant and run it with the tenant's authority. A node type added here is
+// now a node type every gate knows about, which is the point.
+func WorkflowCalls(document workflow.Document) []WorkflowCall {
+	calls := make([]WorkflowCall, 0, 2)
 	for _, node := range document.Nodes {
 		if node.Type != ExecuteWorkflowNodeType && node.Type != WorkflowToolNodeType {
 			continue
 		}
 		locator, _ := property.ReadLocator(node.Parameters["workflowId"])
-		target := strings.TrimSpace(textValue(locator.Value, ""))
-		if target == "" {
+		calls = append(calls, WorkflowCall{
+			Node:       node,
+			Target:     strings.TrimSpace(textValue(locator.Value, "")),
+			Expression: property.ExpressionMarker(locator.Value),
+		})
+	}
+	return calls
+}
+
+// SubworkflowCalls reads the workflows a document calls.
+//
+// For activation: a workflow whose document calls a workflow that is not active
+// would activate cleanly and fail mid-run, so the store refuses it and this is
+// the reading it refuses on.
+//
+// A node whose locator holds nothing is skipped rather than reported: the
+// compiler already refuses an unset required locator at save time, and a
+// half-built draft must not be the thing that blocks an unrelated activation.
+func SubworkflowCalls(document workflow.Document) []repository.SubworkflowCall {
+	var calls []repository.SubworkflowCall
+	for _, call := range WorkflowCalls(document) {
+		if call.Target == "" {
 			continue
 		}
-		calls = append(calls, repository.SubworkflowCall{NodeID: node.ID, NodeName: node.Name, WorkflowID: target})
+		calls = append(calls, repository.SubworkflowCall{
+			NodeID: call.Node.ID, NodeName: call.Node.Name, WorkflowID: call.Target,
+		})
 	}
 	return calls
 }
