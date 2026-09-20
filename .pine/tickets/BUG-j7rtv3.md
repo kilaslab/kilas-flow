@@ -1,14 +1,14 @@
 ---
 id: BUG-j7rtv3
 title: Editor page throws effect_update_depth_exceeded (canvas projection ↔ selection identity loop)
-status: testing
+status: done
 priority: medium
 labels:
     - editor
     - canvas
     - regression
 created: "2026-09-20T01:46:34Z"
-updated: "2026-09-20T01:57:55Z"
+updated: "2026-09-20T02:04:01Z"
 ---
 
 Found by ImportDiagnostics (BUG-f9frth): the editor page could not show anything that
@@ -88,3 +88,50 @@ red blocking badge on the Mystery node.
   authentication disabled; it predates this change.
 - The stacked port labels on the unsupported "Mystery" placeholder tile are cosmetic and
   unrelated (they render identically before and after).
+
+## Work Evidence
+
+Closed by `pine close --evidence` on 2026-09-20.
+
+- Base: `5709b4d2` (last commit at or before ticket created 2026-09-20)
+- Commits (2):
+  - `31c424f8` — chore(pine): file editor-loop, conditions-coercion, paging and follow-up tickets
+  - `a62ba8f3` — BUG-j7rtv3: fix the editor's selection/projection loop
+- Files changed (base → working tree):
+
+```
+ .pine/tickets/BUG-1tj5wy.md                        | 454 +++++++++++++++-
+ .pine/tickets/BUG-277a2m.md                        | 454 +++++++++++++++-
+ .pine/tickets/BUG-341sxn.md                        |  40 ++
+ .pine/tickets/BUG-4053h6.md                        | 464 ++++++++++++++++-
+ .pine/tickets/BUG-57n76x.md                        | 455 +++++++++++++++-
+ .pine/tickets/BUG-66es9z.md                        | 248 +++++++++
+ .pine/tickets/BUG-6as5y7.md                        | 453 +++++++++++++++-
+ .pine/tickets/BUG-6bqh51.md                        | 455 +++++++++++++++-
+ .pine/tickets/BUG-6jvcs5.md                        | 455 +++++++++++++++-
+ .pine/tickets/BUG-8dmp5y.md                        | 460 ++++++++++++++++-
+ .pine/tickets/BUG-8h4yy1.md                        | 454 +++++++++++++++-
+ .pine/tickets/BUG-8sb0jw.md                        | 460 ++++++++++++++++-
+ .pine/tickets/BUG-8t94wn.md                        | 453 +++++++++++++++-
+ .pine/tickets/BUG-9853ay.md                        | 454 +++++++++++++++-
+ .pine/tickets/BUG-a1648n.md                        |  85 ++-
+ .pine/tickets/BUG-a9mp5a.md                        | Bin 10476 -> 38076 bytes
+ .pine/tickets/BUG-aede06.md                        | 472 ++++++++++++++++-
+ .pine/tickets/BUG-c241hm.md                        | 457 ++++++++++++++++-
+ .pine/tickets/BUG-cq4yk3.md                        | 461 ++++++++++++++++-
+ .pine/tickets/BUG-dndnhn.md                        | 453 +++++++++++++++-
+ .pine/tickets/BUG-esb9sh.md                        | 456 +++++++++++++++-
+ .pine/tickets/BUG-f9frth.md                        | 571 ++++++++++++++++++++-
+ .pine/tickets/BUG-fv5fer.md                        | 467 ++++++++++++++++-
+ .pine/tickets/BUG-gaavr5.md                        | 454 +++++++++++++++-
+ .pine/tickets/BUG-hfhzq6.md                        | 456 +++++++++++++++-
+ .pine/tickets/BUG-hm76dq.md                        | 454 +++++++++++++++-
+ .pine/tickets/BUG-j7rtv3.md                        |  90 ++++
+ .pine/tickets/FEAT-15k49d.md                       |  37 ++
+ .pine/tickets/FEAT-cwmw90.md                       |  21 +
+ .pine/tickets/FEAT-jvembs.md                       |   4 +-
+ internal/interop/n8n/corpus/BASELINE.md            |  16 +-
+ internal/interop/n8n/corpus/baseline.json          |  43 +-
+ .../workflow-editor/workflow-editor.svelte         |  31 +-
+ 33 files changed, 10707 insertions(+), 80 deletions(-)
+```
