@@ -378,6 +378,11 @@ func (runner *Runner) Run(ctx context.Context, ir workflow.IR, request Request) 
 	// `$node["Name"]` reads the first item a completed node produced. Building
 	// it here keeps the lookup ordered by actual execution, so a node can never
 	// observe one that has not run yet.
+	// `$workflow` reads the compiled graph's identity: the caller supplies what
+	// only it knows (whether the workflow is active), and the runner fills in
+	// the rest rather than leaving `$workflow.name` empty in every production
+	// run.
+	request.Workflow = workflowContextFor(ir, request.Workflow)
 	if request.NodeOutputs == nil {
 		request.NodeOutputs = make(map[string]map[string]any, len(nodes))
 	}
@@ -587,7 +592,7 @@ func (runner *Runner) runLoop(ctx context.Context, nodes map[string]workflow.IRN
 		if first, ok := firstItem(output); ok {
 			request.NodeOutputs[node.Name] = first
 		}
-		request.NodeItems[node.Name] = nodeItemFor(node, output, input)
+		request.NodeItems[node.Name] = nodeItemFor(node, output)
 		result.NodeRuns = append(result.NodeRuns, NodeRun{
 			NodeID: nodeID, Input: cloneInput(input), Output: output,
 			Attempt: usedAttempt, RunIndex: len(runs[nodeID]) - 1,
@@ -672,6 +677,7 @@ func (runner *Runner) Resume(ctx context.Context, ir workflow.IR, request Reques
 	if got, want := len(resumeOutput), len(node.Definition.Outputs); got != want {
 		return Result{}, fmt.Errorf("resume output for node %q has %d streams, want %d", checkpoint.SuspendNode, got, want)
 	}
+	request.Workflow = workflowContextFor(ir, request.Workflow)
 	if request.NodeOutputs == nil {
 		request.NodeOutputs = make(map[string]map[string]any, len(checkpoint.NodeOutputs))
 	}
@@ -717,7 +723,7 @@ func (runner *Runner) Resume(ctx context.Context, ir workflow.IR, request Reques
 	if first, ok := firstItem(output); ok {
 		request.NodeOutputs[node.Name] = first
 	}
-	request.NodeItems[node.Name] = nodeItemFor(node, output, checkpoint.Input)
+	request.NodeItems[node.Name] = nodeItemFor(node, output)
 	attempt := checkpoint.SuspendAttempt
 	if attempt < 1 {
 		attempt = 1
@@ -1442,48 +1448,164 @@ func awaitingLoop(edges []workflow.IREdge, loops map[string]*loopGraph) bool {
 
 // nodeItemFor exposes one completed node to expressions.
 //
-// `.item` reads the paired-item lineage the runner tracks. When lineage cannot
-// be established the reason is carried rather than a fallback: returning the
-// first item when the correspondence is unknown is correct only if every node
-// processed exactly one item, and confidently wrong otherwise — which is the
-// failure mode this whole area exists to remove.
-func nodeItemFor(node workflow.IRNode, output workflow.NodeOutput, input workflow.NodeInput) expression.NodeItem {
-	item := expression.NodeItem{}
+// It publishes the node's whole run — items plus, per item, the canonical name
+// of the origin that item descends from — and deliberately does not pick `.item`
+// here. Which item is "the" paired one depends on the item being processed,
+// which this function has never seen; PairNodeItems makes that choice per
+// evaluation.
+func nodeItemFor(node workflow.IRNode, output workflow.NodeOutput) expression.NodeItem {
+	item := expression.NodeItem{
+		// The node's own configuration, which `$('X').params` reads.
+		Parameters: cloneMap(node.Parameters),
+	}
 	for _, port := range output {
 		for _, entry := range port {
 			item.Items = append(item.Items, entry.JSON)
+			item.ItemOrigins = append(item.ItemOrigins, originKeyOf(entry.Paired))
 		}
 	}
 	if len(item.Items) > 0 {
 		item.JSON = item.Items[0]
-	}
-
-	// The paired item is the one on *this* node that the item currently being
-	// processed descends from. Establishing it needs provenance on the output,
-	// and a single unambiguous origin.
-	for _, port := range output {
-		for _, entry := range port {
-			if entry.Paired == nil {
-				item.LineageReason = "this node did not record where its items came from"
-				return item
-			}
-			if entry.Paired.Lost {
-				item.LineageReason = fmt.Sprintf("node %q changed the item correspondence, so there is no single item to pair with", node.Name)
-				return item
-			}
+		// A single item is unambiguous on its own, and every caller that
+		// evaluates an expression without a per-item context — a webhook
+		// response, an agent's tool parameters — still reads `.item` from here.
+		// PairNodeItems overrides this the moment a current item is known.
+		if len(item.Items) == 1 {
+			item.Paired = item.Items[0]
+			return item
 		}
+		item.LineageReason = fmt.Sprintf("node %q produced %d items; use .all(), .first() or .last() to choose one", node.Name, len(item.Items))
+		return item
+	}
+	item.LineageReason = fmt.Sprintf("node %q produced no items", node.Name)
+	return item
+}
+
+// PairNodeItems resolves `.item` for the item being evaluated.
+//
+// n8n's `$('X').item` is the item of X that the current item descends from,
+// found by following paired-item lineage. Every item the runner produces is
+// stamped with the origin it descends from, so the correspondence is an
+// equality of two origin names: the current item's, and each of X's items'.
+//
+// Four answers, in order, because they are increasingly weaker:
+//
+//  1. A unique item of X descends from the same origin as this one. That is the
+//     answer, and it covers a one-to-one chain where each item carries its own
+//     origin (A -> Set -> B over three items).
+//  2. A node that produced exactly one item is unambiguous whatever the
+//     lineage says: every single-item reference has always resolved to it.
+//  3. The origin is shared by several of X's items — a fan-out, as after Split
+//     Out — and the current item sits at position N of its own run, so X's item
+//     at position N is the one it descends from. This is the positional
+//     correspondence n8n relies on for a same-order chain.
+//  4. Otherwise the correspondence is genuinely unknown and saying so beats
+//     guessing: a confident wrong item is the failure mode this exists to
+//     prevent.
+//
+// The map is rebuilt rather than mutated because `Request.NodeItems` is the
+// runner's live view of the run and must not carry one item's pairing into the
+// next item's evaluation.
+func PairNodeItems(items map[string]expression.NodeItem, current workflow.Item, itemIndex int) map[string]expression.NodeItem {
+	if len(items) == 0 {
+		return items
+	}
+	key := originKeyOf(current.Paired)
+	paired := make(map[string]expression.NodeItem, len(items))
+	for name, item := range items {
+		paired[name] = pairNodeItem(name, item, key, current.Paired, itemIndex)
+	}
+	return paired
+}
+
+func pairNodeItem(name string, item expression.NodeItem, key string, origin *workflow.PairedItem, itemIndex int) expression.NodeItem {
+	item.Paired, item.LineageReason = nil, ""
+	if len(item.Items) == 0 {
+		item.LineageReason = fmt.Sprintf("node %q produced no items", name)
+		return item
 	}
 	if len(item.Items) == 1 {
 		item.Paired = item.Items[0]
 		return item
 	}
-	if len(item.Items) == 0 {
-		item.LineageReason = fmt.Sprintf("node %q produced no items", node.Name)
+	if key == "" {
+		// The item being processed records no origin of its own: an executor
+		// built it from scratch, or its correspondence was already lost.
+		if origin != nil && origin.Lost {
+			item.LineageReason = "the item being processed lost its lineage upstream, so there is no single item to pair with"
+			return item
+		}
+		item.LineageReason = "the item being processed did not record where it came from"
 		return item
 	}
-	// Several items and no current-item context to choose between them. The
-	// executor that evaluates an expression per item supplies that; until it
-	// does, saying so beats guessing.
-	item.LineageReason = fmt.Sprintf("node %q produced %d items; use .all(), .first() or .last() to choose one", node.Name, len(item.Items))
-	return item
+
+	match, matches := -1, 0
+	unknown := 0
+	for index, candidate := range item.ItemOrigins {
+		if candidate == "" {
+			unknown++
+			continue
+		}
+		if candidate != key {
+			continue
+		}
+		matches++
+		if match < 0 {
+			match = index
+		}
+	}
+	switch {
+	case matches == 1:
+		item.Paired = item.Items[match]
+		return item
+	case matches > 1, matches == 0 && unknown == 0:
+		// A fan-out gave several of X's items the same origin, or the positions
+		// of the run are the only correspondence left. Position is the answer
+		// n8n uses for a same-order chain; outside the run it is not an answer
+		// at all.
+		if itemIndex >= 0 && itemIndex < len(item.Items) {
+			item.Paired = item.Items[itemIndex]
+			return item
+		}
+		if matches > 1 {
+			item.LineageReason = fmt.Sprintf("node %q produced several items paired with this one; use .all(), .first() or .last() to choose one", name)
+			return item
+		}
+		item.LineageReason = fmt.Sprintf("no item of node %q descends from the item being processed; use .all(), .first() or .last()", name)
+		return item
+	default:
+		item.LineageReason = fmt.Sprintf("node %q changed the item correspondence, so there is no single item to pair with", name)
+		return item
+	}
+}
+
+// originKeyOf names the origin an item descends from, in the exact form the
+// expression package compares. An item with no usable origin — one an executor
+// built from scratch, or one whose correspondence was lost — has no name, and
+// never matches another item.
+func originKeyOf(origin *workflow.PairedItem) string {
+	if origin == nil || origin.Lost {
+		return ""
+	}
+	return expression.OriginKey(origin.SourceNodeID, origin.SourcePort, origin.RunIndex, origin.ItemIndex)
+}
+
+// workflowContextFor exposes the compiled workflow to `$workflow`.
+//
+// The caller may have supplied identity the engine cannot know — whether the
+// workflow is active, for one — so anything already set is left alone and only
+// the fields the compiled graph carries are filled in.
+func workflowContextFor(ir workflow.IR, provided expression.WorkflowContext) expression.WorkflowContext {
+	if provided.ID == "" {
+		provided.ID = ir.WorkflowID
+	}
+	if provided.Name == "" {
+		provided.Name = ir.Name
+	}
+	if provided.Timezone == "" {
+		if timezone, ok := ir.Settings["timezone"].(string); ok {
+			provided.Timezone = timezone
+		}
+	}
+	return provided
 }

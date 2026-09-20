@@ -1,7 +1,7 @@
 ---
 id: BUG-rrkjrd
 title: $('Node').item fails whenever the referenced node produced more than one item
-status: todo
+status: doing
 priority: critical
 labels:
     - expression
@@ -11,7 +11,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:09Z"
-updated: "2026-09-19T12:06:09Z"
+updated: "2026-09-20T00:35:55Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -59,3 +59,11 @@ Existing tickets: FEAT-9knk67, FEAT-v8k1tc
 - [ ] $('Node').item fails whenever the referenced node produced more than one item
 - [ ] $('Node').item still fails whenever Node produced more than one item; FEAT-9knk67's criterion is ticked but no
 - [ ] Adversarial re-verify against live stub/n8n like the Verify phase (no code-only close)
+## Progress (EngineFlow 2026-09-20, engine/flow slice)
+
+- `$('X').item` now resolves per item. `nodeItemFor` publishes each completed node's whole run with, per item, the canonical origin key it descends from (`expression.OriginKey`, so the runner and the evaluator cannot drift on the format). `engine.PairNodeItems(items, current, itemIndex)` then picks the paired item for the item being evaluated: a unique item descending from the same origin; else a node that produced exactly one item; else the item at the current position (the positional correspondence n8n uses for a same-order chain, which is what a fan-out like Split Out needs); else a refusal carrying the reason. Ambiguity and lost lineage fail with a reason instead of a confident wrong item.
+- `nodeItemFor` keeps the single-item pairing so nothing depends on the wiring landing first; `PairNodeItems` recomputes it per item.
+- Also filled while there: `NodeItem.Parameters` (`$('X').params`) and `$workflow` identity/name/timezone from the compiled graph (`workflowContextFor`), which was empty in every production run.
+- Tests: `TestDollarItemFollowsPairedLineagePerItem` (Manual -> Split Out -> Set -> IF -> Filter -> Limit -> probe reading `$('Split Out').item.json.v`, expects a/b/c per item) and `TestDollarItemFailsRatherThanGuessingWhenLineageIsAmbiguous` (refusal carries a reason, no NUL in the text).
+- Scoped proof (isolated worktree at HEAD + only these files): `go test ./internal/engine/ -count=1` ok, `go test ./internal/workflow/ -count=1` ok.
+- Remaining: ExpressionParity's one-line wiring in internal/engine/authenticate.go (`NodeItems: PairNodeItems(request.NodeItems, item, index)`), then the end-to-end check through the real node executors (without the manual call the test makes). Not a code-only close: the pre-wiring failure was observed (`TestDollarNodeByNameReachesTheExecutor`: "lineage is not available for this node").

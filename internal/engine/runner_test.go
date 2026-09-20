@@ -1434,6 +1434,132 @@ func TestLoopKeepsItsCursorWhenTheBodyReturnsNewItems(t *testing.T) {
 	}
 }
 
+// TestDollarItemFollowsPairedLineagePerItem is the other half of the lineage
+// contract: `$('X').item` has to resolve per item, not just exist.
+//
+// The shape is n8n's canonical one — Manual -> Split Out -> a chain of
+// one-to-one and filtering nodes -> a node reading back with
+// `$('Split Out').item`. Before this, `.item` only resolved when the referenced
+// node produced exactly one item, so every reference to a node that produced
+// several failed at run time: the single most common expression form in the
+// import corpus, broken on any multi-item flow.
+func TestDollarItemFollowsPairedLineagePerItem(t *testing.T) {
+	catalog := node.NewRegistry()
+	if err := catalog.Register(node.Definition{
+		Group: []node.NodeGroup{node.GroupTransform},
+		Type:  "test.probe", Version: workflow.V(1), DisplayName: "Probe", Category: "Test",
+		Inputs:  []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+		Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}}, ExecutorID: "test.probe",
+	}); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	if err := nodes.RegisterAll(catalog); err != nil {
+		t.Fatalf("RegisterAll() error = %v", err)
+	}
+
+	passing := []any{map[string]any{"field": "seen", "operator": "equals", "value": "yes"}}
+	ir, err := workflow.Compile(workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_item_lineage", Name: "Read Split Out per item",
+		Nodes: []workflow.Node{
+			{ID: "manual", Name: "Manual", Type: "kilasflow.manual", TypeVersion: workflow.V(1)},
+			{ID: "split", Name: "Split Out", Type: nodes.SplitOutNodeType, TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"fieldToSplitOut": "list"}},
+			{ID: "set", Name: "Set", Type: "kilasflow.set", TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"assignments": map[string]any{"seen": "yes"}}},
+			{ID: "if", Name: "IF", Type: "kilasflow.if", TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"conditions": passing}},
+			{ID: "filter", Name: "Filter", Type: nodes.FilterNodeType, TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"conditions": passing}},
+			{ID: "limit", Name: "Limit", Type: nodes.LimitNodeType, TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"maxItems": float64(3)}},
+			{ID: "probe", Name: "Probe", Type: "test.probe", TypeVersion: workflow.V(1)},
+		},
+		Connections: []workflow.Connection{
+			{ID: "c1", Kind: workflow.ConnectionMain, Source: workflow.Endpoint{NodeID: "manual", Port: "main"}, Target: workflow.Endpoint{NodeID: "split", Port: "main"}},
+			{ID: "c2", Kind: workflow.ConnectionMain, Source: workflow.Endpoint{NodeID: "split", Port: "main"}, Target: workflow.Endpoint{NodeID: "set", Port: "main"}},
+			{ID: "c3", Kind: workflow.ConnectionMain, Source: workflow.Endpoint{NodeID: "set", Port: "main"}, Target: workflow.Endpoint{NodeID: "if", Port: "main"}},
+			{ID: "c4", Kind: workflow.ConnectionMain, Source: workflow.Endpoint{NodeID: "if", Port: "true"}, Target: workflow.Endpoint{NodeID: "filter", Port: "main"}},
+			{ID: "c5", Kind: workflow.ConnectionMain, Source: workflow.Endpoint{NodeID: "filter", Port: "main"}, Target: workflow.Endpoint{NodeID: "limit", Port: "main"}},
+			{ID: "c6", Kind: workflow.ConnectionMain, Source: workflow.Endpoint{NodeID: "limit", Port: "main"}, Target: workflow.Endpoint{NodeID: "probe", Port: "main"}},
+		},
+		Settings: map[string]any{},
+	}, catalog)
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+
+	executors := engine.NewRegistry()
+	var seen []any
+	if err := executors.Register("test.probe", engine.ExecutorFunc(
+		func(_ context.Context, _ workflow.IRNode, input workflow.NodeInput, request engine.Request) (workflow.NodeOutput, error) {
+			items := make([]workflow.Item, 0, len(input["main"]))
+			for index, item := range input["main"] {
+				ctx := request.ExpressionContext(item, input, index)
+				// What ExpressionContext does for every expression a node
+				// resolves: pair each completed node's items with this one.
+				ctx.NodeItems = engine.PairNodeItems(ctx.NodeItems, item, index)
+				resolved, err := expression.Resolve(map[string]any{
+					"origin": map[string]any{"mode": "expression", "value": "{{ $('Split Out').item.json.v }}"},
+				}, ctx)
+				if err != nil {
+					return nil, err
+				}
+				seen = append(seen, resolved["origin"])
+				items = append(items, workflow.Item{JSON: map[string]any{"saw": resolved["origin"]}})
+			}
+			return workflow.NodeOutput{items}, nil
+		})); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	if err := nodes.RegisterExecutors(executors, safehttp.DefaultPolicy(), sqlnode.Guard{}, ai.NewLoopRuntime(), nil, nil); err != nil {
+		t.Fatalf("RegisterExecutors() error = %v", err)
+	}
+
+	if _, err := engine.NewRunner(executors).Run(context.Background(), ir, engine.Request{
+		Input: workflow.Item{JSON: map[string]any{"list": []any{
+			map[string]any{"v": "a"}, map[string]any{"v": "b"}, map[string]any{"v": "c"},
+		}}},
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	// Item N of Split Out for item N of the chain, not the first item three
+	// times.
+	if len(seen) != 3 {
+		t.Fatalf("probe resolved %d items, want 3", len(seen))
+	}
+	for index, want := range []string{"a", "b", "c"} {
+		if seen[index] != want {
+			t.Errorf("item %d read %#v from $('Split Out').item, want %#v", index, seen[index], want)
+		}
+	}
+}
+
+// TestDollarItemFailsRatherThanGuessingWhenLineageIsAmbiguous covers the
+// refusal: when the correspondence into a fan-out cannot be established and
+// the position is not an answer either, `.item` fails with a reason instead of
+// returning a confident wrong item.
+func TestDollarItemFailsRatherThanGuessingWhenLineageIsAmbiguous(t *testing.T) {
+	items := map[string]expression.NodeItem{
+		"Fan": {
+			Items:       []map[string]any{{"part": 1}, {"part": 2}},
+			ItemOrigins: []string{"", ""},
+		},
+	}
+	current := workflow.Item{JSON: map[string]any{}, Paired: &workflow.PairedItem{SourceNodeID: "src", RunIndex: 0, ItemIndex: 0}}
+	paired := engine.PairNodeItems(items, current, 7)
+	if paired["Fan"].Paired != nil {
+		t.Errorf("Fan paired to %#v on no evidence", paired["Fan"].Paired)
+	}
+	if paired["Fan"].LineageReason == "" {
+		t.Error("a refused pairing must carry the reason it was refused")
+	}
+	if strings.Contains(paired["Fan"].LineageReason, "\x00") {
+		t.Errorf("lineage reason leaks an internal root name: %q", paired["Fan"].LineageReason)
+	}
+}
+
 // TestDollarNodeByNameReachesTheExecutor is the regression for a defect that
 // made `$('Name')` — the form every imported n8n workflow uses to read an
 // earlier node — resolve to "that node has not produced output in this run" no
