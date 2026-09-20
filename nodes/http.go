@@ -87,7 +87,7 @@ func httpRequestNode() node.Definition {
 			},
 			{
 				Key: "rawContentType", Label: "Raw content type", Kind: node.PropertyString,
-				Default: "text/plain; charset=utf-8",
+				Default:     "text/plain; charset=utf-8",
 				Description: "Content type sent with a raw body.",
 				VisibleWhen: []node.VisibilityCondition{
 					{Key: "sendBody", Equals: true}, {Key: "bodyType", Equals: "raw"},
@@ -109,6 +109,17 @@ func httpRequestNode() node.Definition {
 				Key: "outputPropertyName", Label: "Binary property", Kind: node.PropertyString, Default: "data",
 				Description: "Which binary property on the output item the response is attached to.",
 				VisibleWhen: []node.VisibilityCondition{{Key: "responseFormat", Equals: "file"}},
+			},
+			{
+				Key: "fullResponse", Label: "Include response headers and status", Kind: node.PropertyBoolean, Default: false,
+				Description: "Off, the parsed response body is the item — an object as it is, a top-level array as one " +
+					"item per element, anything else under `data`, so `$json.<field>` reads the response. On, the item " +
+					"is {body, headers, statusCode, statusMessage} with lower-case header names.",
+			},
+			{
+				Key: "followRedirects", Label: "Follow redirects", Kind: node.PropertyBoolean, Default: false,
+				Description: "Off, a 3xx response is returned to the workflow as it is. On, the request follows up to " +
+					"the deployment's redirect ceiling.",
 			},
 			{
 				Key: "neverError", Label: "Never fail on HTTP error status", Kind: node.PropertyBoolean, Default: false,
@@ -190,12 +201,37 @@ func stringParameter(parameters map[string]any, key string) (string, error) {
 // HTTPExecutor performs outbound requests under an SSRF policy.
 type HTTPExecutor struct {
 	policy safehttp.Policy
+	// client follows redirects up to the policy's ceiling.
 	client *http.Client
+	// stopping hands the redirect response itself back to the node, which is
+	// n8n's default.
+	stopping *http.Client
 }
 
 // NewHTTPExecutor builds the HTTP Request executor for one policy.
+//
+// Two clients rather than one. n8n's HTTP Request node does not follow
+// redirects unless it is asked to, and it hands the 302 itself to the workflow;
+// KilasFlow followed them unconditionally, so `options.redirect.followRedirects
+// = false` could not be expressed and a workflow that wanted to inspect a
+// redirect never saw one. Both clients share the policy's transport, so the
+// redirect hop check, the address allowlist and the credential domain scope all
+// still apply on the following client.
 func NewHTTPExecutor(policy safehttp.Policy) *HTTPExecutor {
-	return &HTTPExecutor{policy: policy, client: safehttp.NewClient(policy)}
+	following := safehttp.NewClient(policy)
+	stopping := safehttp.NewClient(policy)
+	stopping.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	return &HTTPExecutor{policy: policy, client: following, stopping: stopping}
+}
+
+// redirectClient returns the client a node's redirect policy selects.
+func (executor *HTTPExecutor) redirectClient(parameters map[string]any) *http.Client {
+	if boolValue(parameters["followRedirects"]) {
+		return executor.client
+	}
+	return executor.stopping
 }
 
 // Execute sends one request per incoming item and maps each response to an
@@ -215,11 +251,11 @@ func (executor *HTTPExecutor) Execute(ctx context.Context, ir workflow.IRNode, i
 		if err != nil {
 			return nil, fmt.Errorf("node %q: %w", ir.Name, err)
 		}
-		result, err := executor.sendOne(ctx, ir, resolved, request)
+		produced, err := executor.sendOne(ctx, ir, resolved, request)
 		if err != nil {
 			return nil, err
 		}
-		results = append(results, result)
+		results = append(results, produced...)
 	}
 	return workflow.NodeOutput{results}, nil
 }
@@ -230,18 +266,18 @@ func expressionContext(item workflow.Item, input workflow.NodeInput, request eng
 	return request.ExpressionContext(item, input, index)
 }
 
-func (executor *HTTPExecutor) sendOne(ctx context.Context, ir workflow.IRNode, parameters map[string]any, request engine.Request) (workflow.Item, error) {
+func (executor *HTTPExecutor) sendOne(ctx context.Context, ir workflow.IRNode, parameters map[string]any, request engine.Request) ([]workflow.Item, error) {
 	method := strings.ToUpper(textValue(parameters["method"], http.MethodGet))
 	if !knownHTTPMethod(method) {
-		return workflow.Item{}, fmt.Errorf("node %q: method %q is not supported", ir.Name, method)
+		return nil, fmt.Errorf("node %q: method %q is not supported", ir.Name, method)
 	}
 
 	target, err := url.Parse(strings.TrimSpace(textValue(parameters["url"], "")))
 	if err != nil {
-		return workflow.Item{}, fmt.Errorf("node %q: url is not a valid URL", ir.Name)
+		return nil, fmt.Errorf("node %q: url is not a valid URL", ir.Name)
 	}
 	if err := executor.policy.CheckURL(target); err != nil {
-		return workflow.Item{}, fmt.Errorf("node %q: %w", ir.Name, err)
+		return nil, fmt.Errorf("node %q: %w", ir.Name, err)
 	}
 	if boolValue(parameters["sendQuery"]) {
 		query := target.Query()
@@ -253,7 +289,7 @@ func (executor *HTTPExecutor) sendOne(ctx context.Context, ir workflow.IRNode, p
 
 	body, contentType, err := requestBody(parameters)
 	if err != nil {
-		return workflow.Item{}, fmt.Errorf("node %q: %w", ir.Name, err)
+		return nil, fmt.Errorf("node %q: %w", ir.Name, err)
 	}
 
 	timeout := executor.policy.Timeout
@@ -273,7 +309,7 @@ func (executor *HTTPExecutor) sendOne(ctx context.Context, ir workflow.IRNode, p
 
 	httpRequest, err := http.NewRequestWithContext(requestCtx, method, target.String(), body)
 	if err != nil {
-		return workflow.Item{}, fmt.Errorf("node %q: build request: %w", ir.Name, err)
+		return nil, fmt.Errorf("node %q: build request: %w", ir.Name, err)
 	}
 	if contentType != "" {
 		httpRequest.Header.Set("Content-Type", contentType)
@@ -284,55 +320,171 @@ func (executor *HTTPExecutor) sendOne(ctx context.Context, ir workflow.IRNode, p
 		}
 	}
 	if err := request.Authenticate(requestCtx, ir, httpRequest); err != nil {
-		return workflow.Item{}, err
+		return nil, err
 	}
 
-	response, err := executor.client.Do(httpRequest)
+	response, err := executor.redirectClient(parameters).Do(httpRequest)
 	if err != nil {
-		return workflow.Item{}, fmt.Errorf("node %q: %w", ir.Name, err)
+		return nil, fmt.Errorf("node %q: %w", ir.Name, err)
 	}
 	defer response.Body.Close()
 
 	contents, truncated, err := executor.policy.ReadBody(response.Body)
 	if err != nil {
-		return workflow.Item{}, fmt.Errorf("node %q: read response: %w", ir.Name, err)
+		return nil, fmt.Errorf("node %q: read response: %w", ir.Name, err)
 	}
 	if !boolValue(parameters["neverError"]) && response.StatusCode >= 400 {
-		return workflow.Item{}, fmt.Errorf("node %q: request failed with status %d", ir.Name, response.StatusCode)
+		return nil, fmt.Errorf("node %q: request failed with status %d", ir.Name, response.StatusCode)
 	}
-
-	item := workflow.Item{JSON: map[string]any{
-		"statusCode": float64(response.StatusCode),
-		"headers":    responseHeaders(response),
-		"truncated":  truncated,
-	}}
 
 	format := textValue(parameters["responseFormat"], "autodetect")
 	responseType := response.Header.Get("Content-Type")
+
 	if !storesAFile(format, responseType, truncated, request.Binaries != nil) {
-		item.JSON["body"] = decodeBody(contents, format, responseType)
-		return item, nil
+		return decodeItems(response, contents, format, responseType, truncated, parameters), nil
 	}
 
 	// A truncated payload is refused rather than stored. Half a PDF that
 	// reports success is worse than a failure naming the bound, and the item
 	// carries no length a downstream node could check against.
 	if truncated {
-		return workflow.Item{}, fmt.Errorf("node %q: response exceeds the configured size limit and cannot be stored as a file", ir.Name)
+		return nil, fmt.Errorf("node %q: response exceeds the configured size limit and cannot be stored as a file", ir.Name)
 	}
 	if request.Binaries == nil {
-		return workflow.Item{}, fmt.Errorf("node %q: binary storage is not configured on this server", ir.Name)
+		return nil, fmt.Errorf("node %q: binary storage is not configured on this server", ir.Name)
 	}
 	reference, err := request.Binaries.Put(responseFileName(response, target), mediaType(responseType), bytes.NewReader(contents))
 	if err != nil {
-		return workflow.Item{}, fmt.Errorf("node %q: store response: %w", ir.Name, err)
+		return nil, fmt.Errorf("node %q: store response: %w", ir.Name, err)
 	}
 	// The payload itself never enters the item, the execution record or a log
 	// line — only the reference does.
-	item.Binary = map[string]workflow.BinaryRef{
-		textValue(parameters["outputPropertyName"], "data"): reference,
+	item := workflow.Item{
+		JSON: map[string]any{},
+		Binary: map[string]workflow.BinaryRef{
+			textValue(parameters["outputPropertyName"], "data"): reference,
+		},
 	}
-	return item, nil
+	if boolValue(parameters["fullResponse"]) {
+		// n8n keeps the envelope beside the file when both were asked for, so
+		// a workflow reading `$json.statusCode` still resolves.
+		item.JSON = responseEnvelope(response, "", truncated)
+	}
+	return []workflow.Item{item}, nil
+}
+
+// decodeItems turns one response body into the items n8n would produce.
+//
+// n8n's default output is the parsed body itself, not an envelope around it: an
+// object becomes the item, a top-level array becomes one item per element, any
+// other body lands under `data`, and an empty body yields `{}`. KilasFlow used
+// to wrap every response in {body, headers, statusCode, truncated}, so every
+// `$json.<field>` downstream of an imported HTTP Request resolved to nothing —
+// 199 nodes across the template corpus.
+//
+// fullResponse asks for the envelope instead, and then the shape is exactly
+// n8n's: {body, headers, statusCode, statusMessage} with lower-case header
+// names.
+func decodeItems(response *http.Response, contents []byte, format, contentType string, truncated bool, parameters map[string]any) []workflow.Item {
+	body := decodeBody(contents, format, contentType)
+	if boolValue(parameters["fullResponse"]) {
+		return []workflow.Item{{JSON: responseEnvelope(response, bodyString(contents, body), truncated)}}
+	}
+	if len(bytes.TrimSpace(contents)) == 0 {
+		// A 204, a HEAD response, or an empty body: n8n answers with an empty
+		// object rather than `{data: ""}`, so a downstream node reading a
+		// field it expected to be absent behaves the same on both platforms.
+		return []workflow.Item{{JSON: map[string]any{}}}
+	}
+
+	switch typed := body.(type) {
+	case map[string]any:
+		if truncated {
+			// A truncated body is incomplete, and the parsed keys are the only
+			// place the loss can be reported without hiding it in a wrapper
+			// the workflow does not read.
+			typed = copyObject(typed)
+			typed["truncated"] = true
+		}
+		return []workflow.Item{{JSON: typed}}
+	case []any:
+		items := make([]workflow.Item, 0, len(typed))
+		for _, entry := range typed {
+			if object, ok := entry.(map[string]any); ok {
+				items = append(items, workflow.Item{JSON: object})
+				continue
+			}
+			// An array element that is not an object cannot be an item, so it
+			// is carried under `data` — the same key n8n uses for a body that
+			// is not an object — rather than dropped.
+			items = append(items, workflow.Item{JSON: map[string]any{"data": entry}})
+		}
+		if len(items) == 0 {
+			return []workflow.Item{{JSON: map[string]any{}}}
+		}
+		return items
+	case nil:
+		return []workflow.Item{{JSON: map[string]any{}}}
+	default:
+		item := map[string]any{"data": typed}
+		if truncated {
+			item["truncated"] = true
+		}
+		return []workflow.Item{{JSON: item}}
+	}
+}
+
+// responseEnvelope builds n8n's full-response shape.
+//
+// Header names are lower-cased, which is what n8n's item carries and what an
+// expression like `$json.headers['content-type']` is written against. The
+// status message is added because n8n's envelope has one and an imported node
+// reading it would otherwise resolve to nothing.
+func responseEnvelope(response *http.Response, body string, truncated bool) map[string]any {
+	envelope := map[string]any{
+		"body":          body,
+		"headers":       lowerCaseHeaders(response),
+		"statusCode":    float64(response.StatusCode),
+		"statusMessage": http.StatusText(response.StatusCode),
+	}
+	if truncated {
+		envelope["truncated"] = true
+	}
+	return envelope
+}
+
+// lowerCaseHeaders is n8n's header map: every name in lower case, so an
+// expression written against n8n (`$json.headers['content-type']`) resolves.
+func lowerCaseHeaders(response *http.Response) map[string]any {
+	headers := make(map[string]any, len(response.Header))
+	for key, values := range response.Header {
+		if len(values) > 0 {
+			headers[strings.ToLower(key)] = values[0]
+		}
+	}
+	return headers
+}
+
+func copyObject(object map[string]any) map[string]any {
+	copied := make(map[string]any, len(object)+1)
+	for key, value := range object {
+		copied[key] = value
+	}
+	return copied
+}
+
+func bodyString(contents []byte, body any) string {
+	if len(contents) == 0 {
+		return ""
+	}
+	if text, ok := body.(string); ok {
+		return text
+	}
+	encoded, err := json.Marshal(body)
+	if err != nil {
+		return string(contents)
+	}
+	return string(encoded)
 }
 
 // storesAFile decides whether a response is attached instead of decoded.

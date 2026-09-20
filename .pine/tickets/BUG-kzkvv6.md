@@ -1,7 +1,7 @@
 ---
 id: BUG-kzkvv6
 title: HTTP Request output envelope vs n8n parsed-body items; import drops options/bodies
-status: todo
+status: doing
 priority: high
 labels:
     - http
@@ -10,7 +10,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:10Z"
-updated: "2026-09-19T12:06:10Z"
+updated: "2026-09-20T00:26:48Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -63,3 +63,12 @@ Existing tickets: FEAT-pn3dtq, FEAT-nbqye0
 - [ ] HTTP Request output is always a {statusCode, headers, truncated, body} envelope instead of n8n's parsed-body i
 - [ ] HTTP Request import silently drops options, JSON query/headers, raw and multipart bodies
 - [ ] Adversarial re-verify against live stub/n8n like the Verify phase (no code-only close)
+## Progress (WebhookParity 2026-09-20)
+
+- Runtime half landed in `nodes/http.go`: the default output is now n8n's, not an envelope. Parsed object → the item; top-level array → one item per element; anything else → `{data: …}`; empty body (204/HEAD) → `{}`. The `{body, headers, statusCode, statusMessage}` envelope now appears only with the new `fullResponse` option (n8n's `options.response.response.fullResponse`), and there the header names are lower-cased and `statusMessage` is present, as n8n's item is.
+- `sendOne` returns `[]workflow.Item` so an array response can fan out to one item per element.
+- Also landed: `followRedirects` (default false, n8n's default) — the executor now holds two policy clients, so a 3xx is handed to the workflow unless the node asks to follow, and the following client keeps the address allowlist, per-hop check and credential domain scope. `rawContentType` for raw bodies (see BUG-pwckhd note).
+- Truncation: with `fullResponse` the envelope carries `truncated`; without it the flag is added to the item (object body) or beside `data`, because a truncated body is incomplete and reporting it in a wrapper the workflow never reads is how it went unnoticed.
+- Scoped proof (isolated worktree at baseline a91157f + only my files, siblings mid-edit): `go test ./nodes/ -count=1` → ok (whole package, 11.6s), including three new tests. Pre-fix, `TestHTTPRequestDefaultOutputIsTheParsedBodyLikeN8N`, `TestHTTPRequestFullResponseMatchesN8NEnvelope` and `TestHTTPRequestDoesNotFollowRedirectsUnlessAsked` all fail on the old envelope/canonical-case/redirect behaviour.
+- Tests updated to the new contract, not re-pinned to wording: `neverError` now reports the parsed body, a textual response is `{data: …}`, a JSON response is its parsed keys, response headers reach the item only under `fullResponse`.
+- Remaining (ImporterTail's file): `httpToKilas` must carry `options.*` (timeout → `requestTimeoutSeconds`, `neverError`, `responseFormat`, `fullResponse`, redirect, `specifyQuery/specifyHeaders=json`) and report pagination/batching/multipart as issues; `httpToN8N` writes them back. Contract sent via hub.

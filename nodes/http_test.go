@@ -83,12 +83,13 @@ func TestHTTPRequestResolvesExpressionsPerItem(t *testing.T) {
 	if len(paths) != 2 || paths[0] != "/users/ada?region=eu-west-1" || paths[1] != "/users/grace?region=eu-west-1" {
 		t.Fatalf("requested paths = %v, want one per item with the resolved query", paths)
 	}
-	body, ok := output[0][0].JSON["body"].(map[string]any)
-	if !ok || body["ok"] != true {
-		t.Fatalf("first item body = %#v, want the decoded JSON response", output[0][0].JSON["body"])
+	// The parsed response body *is* the item, which is what n8n produces and
+	// what an imported workflow's `$json.<field>` expects.
+	if output[0][0].JSON["ok"] != true {
+		t.Fatalf("first item = %#v, want the decoded JSON response", output[0][0].JSON)
 	}
-	if output[0][0].JSON["statusCode"] != float64(http.StatusOK) {
-		t.Errorf("statusCode = %#v, want 200", output[0][0].JSON["statusCode"])
+	if output[0][0].JSON["path"] != "/users/ada" {
+		t.Errorf("path = %#v, want the response body's own field", output[0][0].JSON["path"])
 	}
 }
 
@@ -175,6 +176,7 @@ func TestHTTPRequestFailsOnErrorStatusUnlessTold(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = w.Write([]byte(`{"error":"boom"}`))
 	}))
@@ -192,8 +194,152 @@ func TestHTTPRequestFailsOnErrorStatusUnlessTold(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute() with neverError = %v", err)
 	}
-	if output[0][0].JSON["statusCode"] != float64(http.StatusInternalServerError) {
-		t.Errorf("statusCode = %#v, want 500 reported as data", output[0][0].JSON["statusCode"])
+	// n8n parity: with neverError the response is ordinary data, so the parsed
+	// body is the item and the status is visible only through fullResponse.
+	if output[0][0].JSON["error"] != "boom" {
+		t.Errorf("JSON = %#v, want the 500 response's parsed body as the item", output[0][0].JSON)
+	}
+}
+
+// The default output is n8n's, not an envelope: the parsed body as the item, a
+// top-level array split into one item per element, anything else under `data`,
+// and `{}` for an empty body. Every downstream `$json.<field>` after an
+// imported HTTP Request depends on this, and 199 nodes in the corpus read it.
+func TestHTTPRequestDefaultOutputIsTheParsedBodyLikeN8N(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/array":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[{"id":1},{"id":2},{"id":3}]`))
+		case "/text":
+			w.Header().Set("Content-Type", "text/plain")
+			_, _ = w.Write([]byte("hello plain text"))
+		case "/empty":
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":7,"name":"ada"}`))
+		}
+	}))
+	defer server.Close()
+
+	executor := nodes.NewHTTPExecutor(localPolicy())
+
+	run := func(path string) []workflow.Item {
+		t.Helper()
+		output, err := executor.Execute(context.Background(), httpNode(map[string]any{
+			"method": "GET", "url": server.URL + path,
+		}), workflow.NodeInput{}, engine.Request{})
+		if err != nil {
+			t.Fatalf("Execute(%s) error = %v", path, err)
+		}
+		return output[0]
+	}
+
+	object := run("/object")
+	if len(object) != 1 || object[0].JSON["id"] != float64(7) {
+		t.Fatalf("object response = %#v, want the parsed body as the item", object)
+	}
+	if _, wrapped := object[0].JSON["body"]; wrapped {
+		t.Errorf("object response = %#v, want no envelope key", object[0].JSON)
+	}
+	if _, wrapped := object[0].JSON["statusCode"]; wrapped {
+		t.Errorf("object response = %#v, want no status key without fullResponse", object[0].JSON)
+	}
+
+	array := run("/array")
+	if len(array) != 3 {
+		t.Fatalf("array response produced %d items, want one per element", len(array))
+	}
+	for index, item := range array {
+		if item.JSON["id"] != float64(index+1) {
+			t.Errorf("item %d = %#v, want the element at that index", index, item.JSON)
+		}
+	}
+
+	text := run("/text")
+	if len(text) != 1 || text[0].JSON["data"] != "hello plain text" {
+		t.Fatalf("text response = %#v, want {data: ...}", text)
+	}
+
+	empty := run("/empty")
+	if len(empty) != 1 || len(empty[0].JSON) != 0 {
+		t.Fatalf("empty response = %#v, want {}", empty)
+	}
+}
+
+// fullResponse is the only way to the envelope, and then it is n8n's shape:
+// lower-case header names and a status message beside the status code.
+func TestHTTPRequestFullResponseMatchesN8NEnvelope(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Trace", "abc")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+
+	output, err := nodes.NewHTTPExecutor(localPolicy()).Execute(context.Background(), httpNode(map[string]any{
+		"method": "GET", "url": server.URL, "fullResponse": true,
+	}), workflow.NodeInput{}, engine.Request{})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	item := output[0][0].JSON
+	if item["statusCode"] != float64(http.StatusCreated) {
+		t.Errorf("statusCode = %#v, want 201", item["statusCode"])
+	}
+	if item["statusMessage"] != "Created" {
+		t.Errorf("statusMessage = %#v, want Created", item["statusMessage"])
+	}
+	headers, _ := item["headers"].(map[string]any)
+	if headers["x-trace"] != "abc" || headers["content-type"] != "application/json" {
+		t.Errorf("headers = %#v, want lower-case names", headers)
+	}
+	body, _ := item["body"].(string)
+	if body != `{"ok":true}` {
+		t.Errorf("body = %#v, want the response body", item["body"])
+	}
+}
+
+// n8n does not follow redirects unless it is told to; a workflow that wants to
+// inspect a 302 never saw one.
+func TestHTTPRequestDoesNotFollowRedirectsUnlessAsked(t *testing.T) {
+	t.Parallel()
+
+	final := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"landed":true}`))
+	}))
+	defer final.Close()
+	redirecting := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, final.URL, http.StatusFound)
+	}))
+	defer redirecting.Close()
+
+	executor := nodes.NewHTTPExecutor(localPolicy())
+	output, err := executor.Execute(context.Background(), httpNode(map[string]any{
+		"method": "GET", "url": redirecting.URL, "fullResponse": true,
+	}), workflow.NodeInput{}, engine.Request{})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if output[0][0].JSON["statusCode"] != float64(http.StatusFound) {
+		t.Fatalf("statusCode = %#v, want the 302 handed to the workflow", output[0][0].JSON["statusCode"])
+	}
+
+	followed, err := executor.Execute(context.Background(), httpNode(map[string]any{
+		"method": "GET", "url": redirecting.URL, "fullResponse": true, "followRedirects": true,
+	}), workflow.NodeInput{}, engine.Request{})
+	if err != nil {
+		t.Fatalf("Execute() with followRedirects error = %v", err)
+	}
+	if followed[0][0].JSON["statusCode"] != float64(http.StatusOK) {
+		t.Fatalf("statusCode = %#v, want the redirect followed when asked", followed[0][0].JSON["statusCode"])
 	}
 }
 
@@ -355,7 +501,9 @@ func TestHTTPRequestTruncatesAnOversizedResponse(t *testing.T) {
 	if item["truncated"] != true {
 		t.Errorf("truncated = %#v, want true", item["truncated"])
 	}
-	if body, _ := item["body"].(string); len(body) != 128 {
+	// A body that is not an object lands under `data`, which is the key n8n
+	// uses for it.
+	if body, _ := item["data"].(string); len(body) != 128 {
 		t.Errorf("body length = %d, want the policy limit of 128", len(body))
 	}
 }
@@ -395,7 +543,7 @@ func TestHTTPRequestResponseCanBeSerializedForPersistence(t *testing.T) {
 	defer server.Close()
 
 	output, err := nodes.NewHTTPExecutor(localPolicy()).Execute(context.Background(), httpNode(map[string]any{
-		"method": "GET", "url": server.URL,
+		"method": "GET", "url": server.URL, "fullResponse": true,
 	}), workflow.NodeInput{}, engine.Request{})
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
@@ -404,9 +552,10 @@ func TestHTTPRequestResponseCanBeSerializedForPersistence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal output = %v", err)
 	}
-	// The node itself returns the response cookie; the redaction boundary in
-	// the repository is what keeps it out of storage.
-	if !strings.Contains(string(encoded), "Set-Cookie") {
+	// The node itself returns the response cookie — under n8n's lower-case
+	// header name — and the redaction boundary in the repository is what keeps
+	// it out of storage.
+	if !strings.Contains(string(encoded), "set-cookie") {
 		t.Errorf("output = %s, want response headers preserved for redaction downstream", encoded)
 	}
 }
@@ -494,8 +643,17 @@ func TestHTTPRequestKeepsTextualResponsesInJSON(t *testing.T) {
 		if output[0][0].Binary != nil {
 			t.Fatalf("Content-Type %q was stored as a file, want it decoded", contentType)
 		}
-		if _, present := output[0][0].JSON["body"]; !present {
-			t.Fatalf("Content-Type %q produced no body", contentType)
+		item := output[0][0].JSON
+		if strings.Contains(contentType, "json") {
+			if item["ok"] != true {
+				t.Fatalf("Content-Type %q produced %#v, want the parsed body as the item", contentType, item)
+			}
+			continue
+		}
+		// Not labelled JSON: n8n keeps the raw text under `data` rather than
+		// guessing, and every key of the item is still readable.
+		if item["data"] != `{"ok":true}` {
+			t.Fatalf("Content-Type %q produced %#v, want {data: ...}", contentType, item)
 		}
 	}
 }
@@ -605,8 +763,8 @@ func TestHTTPRequestAutodetectDecodesWhenThereIsNowhereToStore(t *testing.T) {
 	if output[0][0].Binary != nil {
 		t.Fatalf("Binary = %#v, want none with no store configured", output[0][0].Binary)
 	}
-	if output[0][0].JSON["body"] != "%PDF-1.4" {
-		t.Fatalf("body = %#v, want the response decoded as text", output[0][0].JSON["body"])
+	if output[0][0].JSON["data"] != "%PDF-1.4" {
+		t.Fatalf("data = %#v, want the response decoded as text", output[0][0].JSON["data"])
 	}
 }
 
