@@ -1,7 +1,7 @@
 ---
 id: FEAT-bp59m4
 title: 'Agent CLI: command tree, api escape hatch, output contract, config and read-only verbs'
-status: todo
+status: done
 priority: medium
 labels:
     - agent
@@ -10,7 +10,7 @@ labels:
 parent: EPIC-r0yg5q
 phase: p1
 created: "2026-09-20T07:47:52Z"
-updated: "2026-09-20T07:47:52Z"
+updated: "2026-09-20T11:53:49Z"
 ---
 
 ## Scope
@@ -209,3 +209,212 @@ The delta review re-derived every round-1 fix and found no code defect; it found
 - **`error.code` vocabulary.** The list the round extended with `output_error` read as the CLI's complete local vocabulary but omitted `config_error` (`internal/cli/config.go:240`) and `unexpected_response` (`verbs_auth.go:224`, `verbs_workflow.go:352`). Both are now listed and described, and the paragraph is scoped as the generic vocabulary rather than a closed set, with the verb-specific codes (`execution_failed`, `invalid_pack`, `stream_closed`, `timeout`) documented in the verb's own section — wording that stays true when a later ticket adds a code. Both new codes were reproduced live: `auth logout --config <unwritable file> --json` -> exit 1 `config_error`; `auth whoami` against a stub answering a JSON array -> exit 1 `unexpected_response`.
 
 Verification for this round: `go test -count=1 ./internal/guardrails/...` ok; `make docs-build` -> 44 pages, links valid; `make smoke-cli` -> passed.
+
+## Work Evidence
+
+Closed by `pine close --evidence` on 2026-09-20.
+
+- Base: `b3c9f3f9` (last commit at or before ticket created 2026-09-20)
+- Commits (2):
+  - `8e278639` — FEAT-bp59m4: add `kilasflow <verb>`, the agent CLI, as a one-verb-per-operation client of /api/v1
+  - `aa307d46` — FEAT-mha6a0: cut the agent-surface implementation tickets from the design
+- Files changed (base → working tree):
+
+```
+ .github/actions/js-toolchain/action.yml            |   11 +-
+ .github/workflows/ci.yml                           |   25 +-
+ .github/workflows/release.yml                      |  120 +-
+ .pine/tickets/BUG-fng4m2.md                        |   88 ++
+ .pine/tickets/BUG-fvdz46.md                        |  368 +++++-
+ .pine/tickets/BUG-p3t7yq.md                        |   30 +
+ .pine/tickets/BUG-t9j2ek.md                        |  410 ++++++-
+ .pine/tickets/BUG-w8h3km.md                        |  123 ++
+ .pine/tickets/BUG-xmr673.md                        |  707 +++++++++++-
+ .pine/tickets/EPIC-r0yg5q.md                       |   27 +
+ .pine/tickets/FEAT-3taswf.md                       | 1193 +++++++++++++++-----
+ .pine/tickets/FEAT-4jns31.md                       |   26 +
+ .pine/tickets/FEAT-bb4s6e.md                       |   27 +
+ .pine/tickets/FEAT-bp59m4.md                       |  211 ++++
+ .pine/tickets/FEAT-c72set.md                       |   26 +
+ .pine/tickets/FEAT-emf6k5.md                       |  536 ++++++++-
+ .pine/tickets/FEAT-ew46cb.md                       |   26 +
+ .pine/tickets/FEAT-m4d2y1.md                       |   30 +
+ .pine/tickets/FEAT-mha6a0.md                       |  123 +-
+ .pine/tickets/FEAT-qdedm0.md                       |  993 +++++++++++++++-
+ .pine/tickets/FEAT-x5qqpm.md                       |   26 +
+ .pine/tickets/FEAT-yxwyav.md                       |   26 +
+ CHANGELOG.md                                       |   89 ++
+ CONTRIBUTING.md                                    |    3 +
+ Makefile                                           |   53 +
+ README.md                                          |   11 +-
+ cmd/kilasflow/embed_issuer.go                      |   18 +
+ cmd/kilasflow/embed_issuer_test.go                 |  134 +++
+ cmd/kilasflow/fleet.go                             |   92 ++
+ cmd/kilasflow/fleet_test.go                        |  395 +++++++
+ cmd/kilasflow/main.go                              |  109 +-
+ cmd/kilasflow/webhook_wiring_test.go               |  138 +++
+ config.example.yaml                                |   53 +-
+ docs/src/content/docs/concepts/execution-model.md  |    1 +
+ docs/src/content/docs/concepts/node-registry.md    |   40 +
+ docs/src/content/docs/concepts/webhooks.md         |   55 +
+ docs/src/content/docs/guides/embedding.md          |   32 +-
+ docs/src/content/docs/guides/node-authoring.md     |    6 +
+ .../src/content/docs/guides/tenant-scoped-nodes.md |  183 +++
+ .../docs/operate/configuration-reference.md        |   85 +-
+ docs/src/content/docs/operate/deployment.md        |   10 +-
+ docs/src/content/docs/operate/security.md          |   23 +-
+ docs/src/content/docs/operate/upgrades.md          |   61 +-
+ docs/src/content/docs/reference/api-contract.md    |   12 +-
+ docs/src/content/docs/reference/api/errors.md      |    2 +-
+ docs/src/content/docs/reference/api/nodes.md       |   16 +-
+ docs/src/content/docs/reference/api/system.md      |    3 +-
+ docs/src/content/docs/reference/cli.md             |  628 +++++++++++
+ docs/src/content/docs/reference/node-packs.md      |   15 +-
+ docs/src/content/docs/start/install.md             |   12 +-
+ docs/src/content/docs/start/what-kilasflow-is.md   |   11 +-
+ e2e/tests/dashboard-lists.spec.ts                  |  187 +++
+ go.mod                                             |    1 +
+ go.sum                                             |    2 +
+ internal/api/embed_defaults_test.go                |  150 +++
+ internal/api/handlers/auth_test.go                 |   63 +-
+ internal/api/handlers/interop.go                   |    6 +-
+ internal/api/handlers/nodes.go                     |   76 +-
+ internal/api/handlers/problem.go                   |   17 +
+ internal/api/handlers/system.go                    |  142 ++-
+ internal/api/handlers/workflows.go                 |   11 +-
+ internal/api/middleware/embed.go                   |    3 +-
+ internal/api/middleware/loginlimit.go              |   13 +
+ internal/api/middleware/loginlimit_test.go         |    3 +-
+ internal/api/node_visibility_test.go               |  544 +++++++++
+ internal/api/ready_fleet_test.go                   |  358 ++++++
+ internal/api/routes.go                             |   10 +-
+ internal/cli/api_prefix.go                         |   43 +
+ internal/cli/cli.go                                |  382 +++++++
+ internal/cli/cli_test.go                           |  248 ++++
+ internal/cli/client.go                             |  397 +++++++
+ internal/cli/client_test.go                        |  320 ++++++
+ internal/cli/command.go                            |  139 +++
+ internal/cli/command_test.go                       |  302 +++++
+ internal/cli/config.go                             |  258 +++++
+ internal/cli/config_test.go                        |  749 ++++++++++++
+ internal/cli/context.go                            |  318 ++++++
+ internal/cli/context_test.go                       |  236 ++++
+ internal/cli/doc.go                                |   35 +
+ internal/cli/exit.go                               |  113 ++
+ internal/cli/exit_test.go                          |  101 ++
+ internal/cli/flags.go                              |   84 ++
+ internal/cli/guard.go                              |   43 +
+ internal/cli/guard_test.go                         |  212 ++++
+ internal/cli/openapi.go                            |  202 ++++
+ internal/cli/openapi_contract_test.go              |  411 +++++++
+ internal/cli/output.go                             |  116 ++
+ internal/cli/output_test.go                        |  246 ++++
+ internal/cli/sse.go                                |  151 +++
+ internal/cli/sse_test.go                           |  149 +++
+ internal/cli/verbs_api.go                          |  315 ++++++
+ internal/cli/verbs_api_test.go                     |  820 ++++++++++++++
+ internal/cli/verbs_auth.go                         |  289 +++++
+ internal/cli/verbs_credential.go                   |  146 +++
+ internal/cli/verbs_credential_test.go              |  119 ++
+ internal/cli/verbs_datastore.go                    |  209 ++++
+ internal/cli/verbs_datastore_test.go               |  215 ++++
+ internal/cli/verbs_exec.go                         |  413 +++++++
+ internal/cli/verbs_exec_test.go                    |  436 +++++++
+ internal/cli/verbs_node.go                         |  292 +++++
+ internal/cli/verbs_node_test.go                    |  196 ++++
+ internal/cli/verbs_pack.go                         |  143 +++
+ internal/cli/verbs_pack_test.go                    |  195 ++++
+ internal/cli/verbs_run.go                          |  257 +++++
+ internal/cli/verbs_run_test.go                     |  314 ++++++
+ internal/cli/verbs_schedule.go                     |   36 +
+ internal/cli/verbs_schedule_test.go                |   46 +
+ internal/cli/verbs_system.go                       |  282 +++++
+ internal/cli/verbs_system_test.go                  |  182 +++
+ internal/cli/verbs_tenant.go                       |   86 ++
+ internal/cli/verbs_tenant_test.go                  |  116 ++
+ internal/cli/verbs_workflow.go                     |  592 ++++++++++
+ internal/cli/verbs_workflow_test.go                |  425 +++++++
+ internal/config/config.go                          |   79 +-
+ internal/config/embed_branding_test.go             |  192 ++++
+ internal/config/embed_validate.go                  |   34 +
+ internal/config/packs_visibility.go                |   83 ++
+ internal/config/packs_visibility_test.go           |  168 +++
+ internal/config/webhook_require_auth_test.go       |   50 +
+ internal/database/webhook_route_backfill_test.go   |  491 ++++++++
+ internal/datastore/concurrency.go                  |    5 +-
+ internal/datastore/doc.go                          |    4 +-
+ internal/datastore/engine.go                       |   17 +-
+ internal/datastore/fleet.go                        |  364 +++++-
+ internal/datastore/fleet_engine_test.go            |  711 ++++++++++++
+ internal/datastore/rows.go                         |   25 +-
+ internal/embed/embed.go                            |  121 +-
+ internal/embed/embed_branding_test.go              |  164 +++
+ internal/embed/embed_lifetime_test.go              |  146 +++
+ internal/engine/export_test.go                     |   20 +
+ internal/engine/service.go                         |   30 +-
+ internal/engine/tenant_visibility_test.go          |  379 +++++++
+ internal/engine/wait_service.go                    |   47 +-
+ internal/engine/wait_service_test.go               |  219 +++-
+ internal/guardrails/compile_scope_test.go          |  440 ++++++++
+ internal/node/registry.go                          |   31 +
+ internal/node/registry_bench_test.go               |  112 ++
+ internal/node/visibility.go                        |  347 ++++++
+ internal/node/visibility_test.go                   |  796 +++++++++++++
+ internal/nodepack/nodepack.go                      |   18 +
+ internal/nodepack/trigger.go                       |    8 +
+ internal/nodepack/trigger_require_auth_test.go     |   43 +
+ internal/nodepack/validate.go                      |   13 +-
+ internal/nodepack/visibility_test.go               |  262 +++++
+ internal/repository/models.go                      |   10 +-
+ internal/repository/webhooks.go                    |   79 +-
+ internal/repository/webhooks_test.go               |  184 ++-
+ internal/webhook/require_auth.go                   |   74 ++
+ internal/webhook/require_auth_test.go              |  367 ++++++
+ internal/webhook/route_label_test.go               |  172 +++
+ internal/webhook/shape.go                          |   10 +
+ internal/webhook/webhook.go                        |   13 +
+ internal/webhook/webhook_test.go                   |    2 +
+ internal/workflow/catalog_scope.go                 |   39 +
+ internal/workflow/compiler.go                      |   24 +-
+ internal/workflow/compiler_visibility_test.go      |  280 +++++
+ .../000014_webhook_route_backfill.down.sql         |   14 +
+ .../postgres/000014_webhook_route_backfill.up.sql  |   62 +
+ .../sqlite/000014_webhook_route_backfill.down.sql  |   14 +
+ .../sqlite/000014_webhook_route_backfill.up.sql    |   58 +
+ scripts/check-coordinates.sh                       |   21 +
+ scripts/generate-api-reference.mjs                 |    4 +-
+ scripts/smoke-cli.sh                               |  228 ++++
+ sdk/CHANGELOG.md                                   |    9 +-
+ sdk/LICENSE                                        |  202 ++++
+ sdk/README.md                                      |   58 +-
+ sdk/RELEASING.md                                   |  188 +++
+ sdk/examples/host-page/README.md                   |   64 +-
+ sdk/examples/host-page/server.mjs                  |   68 +-
+ sdk/package.json                                   |   11 +-
+ sdk/pnpm-lock.yaml                                 |    3 +
+ sdk/scripts/check-example.mjs                      |  320 ++++++
+ sdk/scripts/check-package.mjs                      |  315 ++++++
+ sdk/scripts/lib/pack.mjs                           |   77 ++
+ sdk/scripts/lib/release.mjs                        |  266 +++++
+ sdk/scripts/release.mjs                            |  149 +++
+ sdk/src/generated/models.ts                        |   59 +-
+ sdk/test/operation-coverage.test.mjs               |   19 +
+ sdk/test/release-workflow.test.mjs                 |  223 ++++
+ sdk/test/release.test.mjs                          |  390 +++++++
+ web/src/lib/api/generated/models/index.ts          |    3 +
+ .../lib/api/generated/models/notReadyProblem.ts    |   31 +
+ .../lib/api/generated/models/readyDatastores.ts    |   19 +
+ .../api/generated/models/readyDatastoresSpread.ts  |   12 +
+ .../lib/api/generated/models/readyOutputBody.ts    |    3 +
+ web/src/lib/api/generated/nodes/nodes.ts           |    8 +-
+ web/src/lib/api/generated/system/system.ts         |   18 +-
+ web/src/lib/dashboard/cursor-page.test.ts          |  285 ++++-
+ web/src/lib/dashboard/cursor-page.ts               |   92 +-
+ web/src/lib/dashboard/execution-list.test.ts       |  148 ++-
+ web/src/lib/dashboard/execution-list.ts            |   98 +-
+ web/src/lib/dashboard/workflow-list.test.ts        |   20 +-
+ web/src/lib/dashboard/workflow-list.ts             |   21 +-
+ .../routes/(dashboard)/app/workflows/+page.svelte  |    9 +-
+ web/src/routes/(dashboard)/executions/+page.svelte |  143 ++-
+ 195 files changed, 29994 insertions(+), 818 deletions(-)
+```
