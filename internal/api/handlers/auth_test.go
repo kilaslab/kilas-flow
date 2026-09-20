@@ -1,0 +1,295 @@
+package handlers
+
+// Sign-in hardening proof: the endpoint throttles by client address and by
+// account, it says how long to wait, the address it throttles is the connected
+// one rather than anything a caller can set, and the password work is capped so
+// a flood cannot starve the rest of the API.
+
+import (
+	"context"
+	"crypto/pbkdf2"
+	"crypto/sha256"
+	"encoding/base64"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/danielgtaylor/huma/v2"
+	"github.com/danielgtaylor/huma/v2/adapters/humachi"
+	"github.com/go-chi/chi/v5"
+
+	"github.com/kilaslabs/kilas-flow/internal/api/middleware"
+	"github.com/kilaslabs/kilas-flow/internal/auth"
+	"github.com/kilaslabs/kilas-flow/internal/repository"
+)
+
+// loginStore answers the one question the login handler asks of storage.
+//
+// Every other method is unreachable from these tests, so the embedded nil
+// interface is the honest way to say so.
+type loginStore struct {
+	repository.AuthRepository
+	user repository.User
+	err  error
+}
+
+func (store *loginStore) FindUserForLogin(context.Context, string) (repository.User, error) {
+	if store.err != nil {
+		return repository.User{}, store.err
+	}
+	return store.user, nil
+}
+
+func loginTestKey() []byte {
+	key := make([]byte, 32)
+	for index := range key {
+		key[index] = byte(index * 7)
+	}
+	return key
+}
+
+func loginTestHandler(t *testing.T, store repository.AuthRepository) *Auth {
+	t.Helper()
+	issuer, err := auth.NewIssuer(loginTestKey(), time.Hour, nil)
+	if err != nil {
+		t.Fatalf("NewIssuer() error = %v", err)
+	}
+	return NewAuth(store, issuer, nil, nil)
+}
+
+// cheapPasswordHash stores a password at one PBKDF2 iteration.
+//
+// The stored form records its own work factor, so a real hash here would make
+// these tests pay six hundred thousand iterations per attempt — a minute of
+// hashing to prove a counter. What is under test is the throttle, and the hash
+// still has to be one MatchPassword accepts.
+func cheapPasswordHash(t *testing.T, password, salt string) string {
+	t.Helper()
+	derived, err := pbkdf2.Key(sha256.New, password, []byte(salt), 1, sha256.Size)
+	if err != nil {
+		t.Fatalf("pbkdf2.Key() error = %v", err)
+	}
+	return "pbkdf2-sha256$1$" +
+		base64.RawStdEncoding.EncodeToString([]byte(salt)) + "$" +
+		base64.RawStdEncoding.EncodeToString(derived)
+}
+
+func loginAttempt(t *testing.T, handler *Auth, address, email, password string) error {
+	t.Helper()
+	ctx := middleware.WithClientIP(context.Background(), address)
+	input := &loginInput{}
+	input.Body.Email = email
+	input.Body.Password = password
+	_, err := handler.Login(ctx, input)
+	return err
+}
+
+func loginStatus(t *testing.T, err error) int {
+	t.Helper()
+	if err == nil {
+		return http.StatusOK
+	}
+	var status huma.StatusError
+	if !errors.As(err, &status) {
+		t.Fatalf("login error = %v, want a status error", err)
+	}
+	return status.GetStatus()
+}
+
+// retryAfter reads the header the client needs in order to back off, which the
+// status code alone cannot express.
+func retryAfter(t *testing.T, err error) int {
+	t.Helper()
+	var withHeaders huma.HeadersError
+	if !errors.As(err, &withHeaders) {
+		t.Fatalf("login error = %v, want a 429 carrying Retry-After", err)
+	}
+	raw := withHeaders.GetHeaders().Get("Retry-After")
+	seconds, parseErr := strconv.Atoi(raw)
+	if parseErr != nil || seconds < 1 {
+		t.Fatalf("Retry-After = %q, want a positive number of seconds", raw)
+	}
+	return seconds
+}
+
+// One address spraying many accounts is the shape of the flood the finding
+// measured: nothing about a single account looks wrong, and the work is spread
+// across addresses that do not exist.
+func TestLoginRefusesASprayFromOneAddress(t *testing.T) {
+	handler := loginTestHandler(t, &loginStore{err: repository.ErrNotFound})
+	const attacker = "203.0.113.7:40001"
+
+	for attempt := 0; attempt < middleware.DefaultLoginAttemptsPerMinute; attempt++ {
+		email := "nobody" + strconv.Itoa(attempt) + "@example.test"
+		if status := loginStatus(t, loginAttempt(t, handler, attacker, email, "guess")); status != http.StatusUnauthorized {
+			t.Fatalf("attempt %d = %d, want 401", attempt, status)
+		}
+	}
+
+	err := loginAttempt(t, handler, attacker, "nobody-again@example.test", "guess")
+	if status := loginStatus(t, err); status != http.StatusTooManyRequests {
+		t.Fatalf("attempt after the allowance = %d, want 429", status)
+	}
+	if retryAfter(t, err) < 1 {
+		t.Error("the refusal did not say how long to wait")
+	}
+
+	// The throttle is per address, so a second client is unaffected by the
+	// first one's spending. Anything else would let one attacker lock out the
+	// whole installation.
+	other := loginAttempt(t, handler, "203.0.113.8:40002", "someone@example.test", "guess")
+	if status := loginStatus(t, other); status != http.StatusUnauthorized {
+		t.Errorf("a different address = %d, want the ordinary 401", status)
+	}
+}
+
+// Guessing one account from many addresses is the other half: a credential
+// stuffing run that rotates its source address still meets the account's own
+// bucket.
+func TestLoginRefusesRepeatedGuessesAtOneAccount(t *testing.T) {
+	handler := loginTestHandler(t, &loginStore{err: repository.ErrNotFound})
+	const victim = "owner@example.test"
+
+	// A wrong password costs two tokens — one for the attempt, one for the
+	// mistake — so an account meets its ceiling after half the allowance.
+	admitted := middleware.DefaultLoginAttemptsPerMinute / 2
+	for attempt := 0; attempt < admitted; attempt++ {
+		address := "198.51.100." + strconv.Itoa(attempt) + ":40000"
+		if status := loginStatus(t, loginAttempt(t, handler, address, victim, "guess")); status != http.StatusUnauthorized {
+			t.Fatalf("attempt %d = %d, want 401", attempt, status)
+		}
+	}
+
+	throttled := loginAttempt(t, handler, "198.51.100.200:40000", victim, "guess")
+	if status := loginStatus(t, throttled); status != http.StatusTooManyRequests {
+		t.Fatalf("a further address for one account = %d, want 429", status)
+	}
+	// The throttle is the account's, not the whole installation's: another
+	// account from a fresh address is still served.
+	if status := loginStatus(t, loginAttempt(t, handler, "198.51.100.201:40000", "someone-else@example.test", "guess")); status != http.StatusUnauthorized {
+		t.Errorf("a different account = %d, want the ordinary 401", status)
+	}
+}
+
+// A person who mistypes a password and then gets it right has proved they are
+// not the guesser the counter was tracking, so their mistakes are forgotten.
+// Held against them, every typo would leave the account one step closer to
+// being locked out.
+func TestLoginForgetsMistakesAfterASuccessfulSignIn(t *testing.T) {
+	hash := cheapPasswordHash(t, "correct horse", "salt-a")
+	store := &loginStore{user: repository.User{
+		ID: "usr-1", TenantID: "tenant-a", Email: "owner@example.test",
+		Name: "Owner", PasswordHash: hash,
+	}}
+	handler := loginTestHandler(t, store)
+
+	for attempt := 0; attempt < 3; attempt++ {
+		address := "192.0.2." + strconv.Itoa(attempt) + ":40000"
+		if status := loginStatus(t, loginAttempt(t, handler, address, "owner@example.test", "wrong")); status != http.StatusUnauthorized {
+			t.Fatalf("mistake %d = %d, want 401", attempt, status)
+		}
+	}
+	// The correct password from a fresh address: a success resets the account's
+	// bucket, and the address bucket has not been touched by the mistakes.
+	if err := loginAttempt(t, handler, "192.0.2.50:40000", "owner@example.test", "correct horse"); err != nil {
+		t.Fatalf("sign-in with the right password error = %v", err)
+	}
+
+	// Five more mistakes from addresses of their own. Without the reset the
+	// account bucket would already hold three failures plus three penalties
+	// plus the sign-in, so these would run out after one.
+	for attempt := 0; attempt < 5; attempt++ {
+		address := "192.0.2." + strconv.Itoa(60+attempt) + ":40000"
+		if status := loginStatus(t, loginAttempt(t, handler, address, "owner@example.test", "wrong")); status != http.StatusUnauthorized {
+			t.Errorf("mistake %d after a successful sign-in = %d, want 401", attempt, status)
+		}
+	}
+}
+
+// Signing in is the most expensive thing an unauthenticated caller can ask for,
+// so the number of hashes in flight is capped: past the cap the endpoint refuses
+// instead of queueing, and an authenticated read is not made to wait behind a
+// flood of passwords.
+func TestLoginRefusesWhileEveryPasswordSlotIsBusy(t *testing.T) {
+	hash := cheapPasswordHash(t, "correct horse", "salt-b")
+	handler := loginTestHandler(t, &loginStore{user: repository.User{
+		ID: "usr-1", TenantID: "tenant-a", Email: "owner@example.test", PasswordHash: hash,
+	}})
+
+	// Every slot taken, as it would be under a flood.
+	for slot := 0; slot < maxConcurrentPasswordChecks; slot++ {
+		handler.passwords <- struct{}{}
+	}
+	defer func() {
+		for slot := 0; slot < maxConcurrentPasswordChecks; slot++ {
+			<-handler.passwords
+		}
+	}()
+
+	started := time.Now()
+	err := loginAttempt(t, handler, "203.0.113.30:40000", "owner@example.test", "correct horse")
+	if status := loginStatus(t, err); status != http.StatusServiceUnavailable {
+		t.Fatalf("login with every slot busy = %d, want 503", status)
+	}
+	// Refused rather than queued: the wait is bounded, so a caller cannot hold
+	// a goroutine behind the flood indefinitely.
+	if elapsed := time.Since(started); elapsed > 5*time.Second {
+		t.Errorf("the refusal took %s, want it bounded", elapsed)
+	}
+}
+
+// The address has to come from the connection. A caller who could name it in a
+// header would rotate it per request and never meet a bucket.
+func TestLoginThrottlesByTheConnectedAddress(t *testing.T) {
+	handler := loginTestHandler(t, &loginStore{user: repository.User{
+		ID: "usr-1", TenantID: "tenant-a", Email: "owner@example.test",
+		PasswordHash: cheapPasswordHash(t, "correct horse", "salt-c"),
+	}})
+
+	router := chi.NewMux()
+	// Mounted the way the server mounts it: a version group over the API,
+	// because a middleware attached to an operation has to survive that.
+	handler.Register(huma.NewGroup(humachi.New(router, huma.DefaultConfig("test", "0")), "/api/v1"))
+
+	attempt := func(address, forwarded, email string) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login",
+			strings.NewReader(`{"email":"`+email+`","password":"wrong"}`))
+		request.Header.Set("Content-Type", "application/json")
+		if forwarded != "" {
+			request.Header.Set("X-Forwarded-For", forwarded)
+		}
+		request.RemoteAddr = address
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, request)
+		return recorder
+	}
+
+	for attemptIndex := 0; attemptIndex < middleware.DefaultLoginAttemptsPerMinute; attemptIndex++ {
+		// A different claimed address and a different account on every attempt,
+		// so only the connection can be what runs out: if the header were
+		// honoured, each attempt would land in a bucket of its own.
+		response := attempt("198.51.100.20:50000", "10.0.0."+strconv.Itoa(attemptIndex),
+			"owner"+strconv.Itoa(attemptIndex)+"@example.test")
+		if response.Code != http.StatusUnauthorized {
+			t.Fatalf("attempt %d = %d, want 401 (body: %s)", attemptIndex, response.Code, response.Body)
+		}
+	}
+
+	refused := attempt("198.51.100.20:50000", "10.0.0.99", "owner-again@example.test")
+	if refused.Code != http.StatusTooManyRequests {
+		t.Fatalf("the connected address was not throttled: got %d (body: %s)", refused.Code, refused.Body)
+	}
+	if refused.Header().Get("Retry-After") == "" {
+		t.Error("the refusal carried no Retry-After header")
+	}
+
+	// And it is the connection that is counted, not the whole process: a second
+	// client gets its own allowance.
+	if other := attempt("198.51.100.21:50001", "", "owner-elsewhere@example.test"); other.Code != http.StatusUnauthorized {
+		t.Errorf("a second client = %d, want the ordinary 401 (body: %s)", other.Code, other.Body)
+	}
+}

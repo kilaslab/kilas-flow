@@ -295,7 +295,10 @@ func Default() *Registry { return defaultRegistry }
 // RunTest probes a credential through the instance's egress policy.
 //
 // The credential's own AllowedDomains narrow the policy further, so a scoped
-// credential cannot be used to reach anywhere its workflows could not.
+// credential cannot be used to reach anywhere its workflows could not. That
+// bound follows the request through redirects as well: a hop outside the
+// credential's domains stops the chain with the last in-scope response instead
+// of carrying the secret onward.
 func RunTest(ctx context.Context, credentialType Type, record Record, fields map[string]string, policy safehttp.Policy) (string, error) {
 	if credentialType.Test == nil {
 		return "", fmt.Errorf("this credential type has no test defined")
@@ -316,7 +319,16 @@ func RunTest(ctx context.Context, credentialType Type, record Record, fields map
 	if method == "" {
 		method = http.MethodGet
 	}
-	request, err := http.NewRequestWithContext(ctx, method, target, nil)
+	// The scope rides on the request context so the redirect chain re-checks it.
+	// The check above covers the URL the credential's own test names; without
+	// this, a 30x from that URL carries the header or query secret to a host
+	// AllowedDomains never named, because Go strips only Authorization and
+	// Cookie on a cross-host hop. AllowsHost is handed the full host:port and
+	// ignores the port half, exactly as the check above does with the hostname.
+	request, err := http.NewRequestWithContext(
+		safehttp.WithCredentialScope(ctx, safehttp.CredentialScope{AllowsHost: record.AllowsHost}),
+		method, target, nil,
+	)
 	if err != nil {
 		return "", fmt.Errorf("the test request could not be built")
 	}

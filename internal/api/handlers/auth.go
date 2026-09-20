@@ -3,13 +3,44 @@ package handlers
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"github.com/kilaslabs/kilas-flow/internal/api/middleware"
 	"github.com/kilaslabs/kilas-flow/internal/auth"
 	"github.com/kilaslabs/kilas-flow/internal/repository"
+)
+
+const (
+	// maxConcurrentPasswordChecks caps how many password hashes this process
+	// computes at once.
+	//
+	// Signing in is the only unauthenticated request that costs real CPU: one
+	// verification is a deliberate 600,000 PBKDF2 iterations, and an unknown
+	// address pays the same for its decoy hash. Uncapped, a flood of logins
+	// fills every core the API shares, and an authenticated read waits seconds
+	// behind work that will almost all be refusals.
+	//
+	// Four is a quarter of a small server's cores: low enough that the rest of
+	// the API keeps running through a flood, high enough that a handful of
+	// people signing in at once — an office arriving in the morning — never
+	// notices. The number is a ceiling on damage, not a throughput target;
+	// raising it trades the API's responsiveness for a slightly shorter queue
+	// of guesses.
+	maxConcurrentPasswordChecks = 4
+
+	// passwordCheckBudget bounds how long a sign-in waits for a hash slot.
+	//
+	// Waiting is what turns a flood into an unbounded queue: every refused
+	// request still holds a goroutine and a connection. Half a second is long
+	// enough that a person on a loaded instance still gets in on the first
+	// try, and short enough that a flood is shed rather than absorbed. A caller
+	// refused this way is told to retry, which costs the process nothing.
+	passwordCheckBudget = 500 * time.Millisecond
 )
 
 // PrincipalResource is what the dashboard needs to render "who am I".
@@ -65,6 +96,13 @@ type Auth struct {
 	tenants      TenantResolver
 	cookieName   string
 	secureCookie bool
+	// limiter throttles sign-in by client address and by account. It is a
+	// pointer to shared state: the buckets have to outlive one request.
+	limiter *middleware.LoginLimiter
+	// passwords is the slot pool that caps concurrent PBKDF2 work. A buffered
+	// channel rather than a semaphore package: acquisition is a select with a
+	// timeout, which is exactly what a channel offers.
+	passwords chan struct{}
 }
 
 // NewAuth builds the identity handler.
@@ -79,7 +117,20 @@ func NewAuth(store repository.AuthRepository, issuer *auth.Issuer, executions re
 	return &Auth{
 		store: store, issuer: issuer, executions: executions, tenants: tenants,
 		cookieName: auth.SessionCookieName, secureCookie: true,
+		limiter:   middleware.NewLoginLimiter(middleware.DefaultLoginAttemptsPerMinute),
+		passwords: make(chan struct{}, maxConcurrentPasswordChecks),
 	}
+}
+
+// WithLoginLimiter replaces the sign-in throttle.
+//
+// The throttle is built by default rather than left to the caller, because an
+// endpoint this expensive must not be unprotected by an omission. This exists
+// for a deployment that wants a different allowance, and for a test that wants
+// to drive one.
+func (handler *Auth) WithLoginLimiter(limiter *middleware.LoginLimiter) *Auth {
+	handler.limiter = limiter
+	return handler
 }
 
 // WithCookie chooses the session cookie's name and whether it is Secure.
@@ -150,6 +201,19 @@ type createStreamTicketOutput struct {
 	Body   StreamTicketResource
 }
 
+// loginAddress is the middleware that hands the login handler its client's
+// address.
+//
+// huma passes a handler a bare context.Context, so a value the handler needs
+// has to be put there by the operation's own middleware. Doing it here rather
+// than in the router's authentication gate keeps the dependency where it is
+// used: the throttle cannot be silently defused by a deployment that mounts
+// these operations differently, and the address is read from the connection
+// (ctx.RemoteAddr) rather than from any header a caller could set.
+var loginAddress = huma.Middlewares{func(ctx huma.Context, next func(huma.Context)) {
+	next(huma.WithContext(ctx, middleware.WithClientIP(ctx.Context(), ctx.RemoteAddr())))
+}}
+
 // Register wires the identity operations.
 func (handler *Auth) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
@@ -157,7 +221,8 @@ func (handler *Auth) Register(api huma.API) {
 		Summary: "Sign in",
 		Description: "Exchanges an email and password for a session cookie. " +
 			"The cookie is HttpOnly, so the browser can never read it back.",
-		Tags: []string{"Auth"},
+		Tags:        []string{"Auth"},
+		Middlewares: loginAddress,
 	}, handler.Login)
 
 	huma.Register(api, huma.Operation{
@@ -214,30 +279,82 @@ func (handler *Auth) Register(api huma.API) {
 //
 // Every failure answers 401 with one message. An unknown address, a wrong
 // password and a disabled account are indistinguishable from outside, so the
-// endpoint cannot be used to find out who has an account here.
+// endpoint cannot be used to find out who has an account here. The two refusals
+// that are not about the credentials at all — too many attempts, and the
+// process already hashing as much as it will — are 429 and 503, and they are
+// the same for every address, so they say nothing about who exists either.
+//
+// The work is bounded on the way in: an attempt is counted against the client's
+// address and against the account before anything is hashed, and the hash
+// itself runs in one of a small number of slots. An unauthenticated flood
+// therefore costs this endpoint a refusal rather than the whole process its
+// CPU.
 func (handler *Auth) Login(ctx context.Context, input *loginInput) (*loginOutput, error) {
 	if handler.store == nil || handler.issuer == nil {
 		return nil, huma.Error503ServiceUnavailable("authentication is not configured on this instance")
 	}
 	const refusal = "email address or password is incorrect"
 
+	// Two buckets, because each covers the other's blind spot: one address
+	// working through a list of accounts meets the address bucket, and one
+	// account guessed from many addresses meets the account bucket. An attempt
+	// that cannot say which address it came from shares one bucket, which is
+	// the fail-closed reading of not knowing.
+	clientIP := middleware.ClientIPFrom(ctx)
+	if clientIP == "" {
+		clientIP = "unknown"
+	}
+	account := repository.NormalizeEmail(input.Body.Email)
+	accountKey := "account:" + account
+	for _, key := range []string{"address:" + clientIP, accountKey} {
+		if allowed, retryAfter := handler.limiter.Allow(key); !allowed {
+			// Not logged: the access log already carries the 429, and a
+			// refusal this cheap must not be usable to fill a log disk.
+			return nil, huma.ErrorWithHeaders(
+				huma.Error429TooManyRequests("too many sign-in attempts; wait and try again"),
+				http.Header{"Retry-After": []string{strconv.Itoa(int(retryAfter / time.Second))}},
+			)
+		}
+	}
+
 	user, err := handler.store.FindUserForLogin(ctx, input.Body.Email)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			// The password is still hashed for an address that does not exist,
 			// so the time a refusal takes does not reveal whether it did.
-			auth.MatchPassword(input.Body.Password, auth.DecoyPasswordHash())
+			if _, busy := handler.matchPassword(ctx, input.Body.Password, auth.DecoyPasswordHash()); busy {
+				return nil, handler.busyRefusal()
+			}
+			handler.noteRefusal(ctx, account, clientIP, "no such account")
+			handler.limiter.Fail(accountKey)
 			return nil, huma.Error401Unauthorized(refusal)
 		}
-		return nil, huma.Error500InternalServerError("could not read the account")
-	}
-	if !auth.MatchPassword(input.Body.Password, user.PasswordHash) || user.DisabledAt != nil {
-		return nil, huma.Error401Unauthorized(refusal)
+		return nil, serverProblem(ctx, "could not read the account", err)
 	}
 
-	_, token, err := handler.issuer.IssueSession(user.ID, user.TenantID, user.Email)
+	matched, busy := handler.matchPassword(ctx, input.Body.Password, user.PasswordHash)
+	if busy {
+		return nil, handler.busyRefusal()
+	}
+	if !matched || user.DisabledAt != nil {
+		reason := "wrong password"
+		if user.DisabledAt != nil {
+			reason = "account disabled"
+		}
+		handler.noteRefusal(ctx, account, clientIP, reason)
+		handler.limiter.Fail(accountKey)
+		return nil, huma.Error401Unauthorized(refusal)
+	}
+	// The password was right, so the mistakes made on the way here are
+	// forgotten. Only the account's bucket is cleared: forgiving the address
+	// bucket would let one working account reset an attacker's allowance for
+	// everything else.
+	handler.limiter.Succeed(accountKey)
+
+	_, token, err := handler.issuer.IssueSession(user.ID, user.TenantID, user.Email,
+		auth.UserVersion(user.PasswordHash, user.DisabledAt != nil))
 	if err != nil {
-		return nil, huma.Error500InternalServerError("could not start a session")
+		return nil, serverProblem(ctx, "could not start a session", err)
 	}
 
 	return &loginOutput{
@@ -247,6 +364,62 @@ func (handler *Auth) Login(ctx context.Context, input *loginInput) (*loginOutput
 			UserID: user.ID, Email: user.Email, Name: user.Name,
 		},
 	}, nil
+}
+
+// matchPassword verifies one password in one of the process's hash slots.
+//
+// The second result reports that no slot came free inside passwordCheckBudget,
+// which the caller answers by telling the client to retry rather than by
+// waiting: the wait is what an attacker would use to hold a goroutine per
+// connection.
+func (handler *Auth) matchPassword(ctx context.Context, password, stored string) (bool, bool) {
+	timer := time.NewTimer(passwordCheckBudget)
+	defer timer.Stop()
+
+	select {
+	case handler.passwords <- struct{}{}:
+		// The deferred release runs after the comparison has produced its
+		// result, so the slot is held for exactly the CPU work and not a
+		// moment longer.
+		defer func() { <-handler.passwords }()
+		return auth.MatchPassword(password, stored), false
+	case <-timer.C:
+		return false, true
+	case <-ctx.Done():
+		return false, true
+	}
+}
+
+// busyRefusal answers a sign-in that could not start hashing.
+//
+// 503 rather than 429 because the limit that was reached is the process's, not
+// this caller's: the same answer goes to everyone while the slots are full, so
+// it reveals nothing about the address that asked. Retry-After says when the
+// client should come back, which for a queue this short is measured in the time
+// one hash takes.
+//
+// It is not logged, for the reason noteRefusal gives: this is a path a flood
+// reaches at full rate, and the access log already records the status.
+func (handler *Auth) busyRefusal() error {
+	return huma.ErrorWithHeaders(
+		huma.Error503ServiceUnavailable("sign-in is busy; try again shortly"),
+		http.Header{"Retry-After": []string{"1"}},
+	)
+}
+
+// noteRefusal records a sign-in that was refused on its credentials.
+//
+// The address and the account are logged and the password never is: a password
+// in a log is a credential in a log. Throttled and saturated refusals are not
+// logged here at all — they are the cheap paths, and a flood of them would turn
+// this line into the log-flood vector the throttle exists to prevent.
+func (handler *Auth) noteRefusal(ctx context.Context, account, clientIP, reason string) {
+	slog.WarnContext(ctx, "sign-in refused",
+		slog.String("email", account),
+		slog.String("client_ip", clientIP),
+		slog.String("reason", reason),
+		slog.String("request_id", middleware.RequestIDFrom(ctx)),
+	)
 }
 
 // Logout clears the cookie in the browser that asked.
@@ -280,7 +453,7 @@ func (handler *Auth) ListKeys(ctx context.Context, _ *struct{}) (*listAPIKeysOut
 	tenant := handler.tenants.Resolve(ctx)
 	keys, err := handler.store.ListAPIKeys(ctx, tenant)
 	if err != nil {
-		return nil, huma.Error500InternalServerError("could not list API keys")
+		return nil, serverProblem(ctx, "could not list API keys", err)
 	}
 	out := &listAPIKeysOutput{}
 	out.Body.Items = make([]APIKeyResource, 0, len(keys))
@@ -298,7 +471,7 @@ func (handler *Auth) CreateKey(ctx context.Context, input *createAPIKeyInput) (*
 	tenant := handler.tenants.Resolve(ctx)
 	key, token, err := handler.store.CreateAPIKey(ctx, tenant, input.Body.Label)
 	if err != nil {
-		return nil, huma.Error500InternalServerError("could not create the API key")
+		return nil, serverProblem(ctx, "could not create the API key", err)
 	}
 	return &createAPIKeyOutput{
 		Status: http.StatusCreated,
@@ -320,7 +493,7 @@ func (handler *Auth) RevokeKey(ctx context.Context, input *revokeAPIKeyInput) (*
 		if errors.Is(err, repository.ErrNotFound) {
 			return nil, huma.Error404NotFound("API key not found")
 		}
-		return nil, huma.Error500InternalServerError("could not revoke the API key")
+		return nil, serverProblem(ctx, "could not revoke the API key", err)
 	}
 	return &revokeAPIKeyOutput{Body: apiKeyResource(key)}, nil
 }
@@ -343,7 +516,7 @@ func (handler *Auth) CreateStreamTicket(ctx context.Context, input *createStream
 	}
 	ticket, token, err := handler.issuer.IssueTicket(tenant.ID, input.Body.ExecutionID, 0)
 	if err != nil {
-		return nil, huma.Error500InternalServerError("could not mint a stream ticket")
+		return nil, serverProblem(ctx, "could not mint a stream ticket", err)
 	}
 	return &createStreamTicketOutput{
 		Status: http.StatusCreated,

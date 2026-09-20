@@ -243,6 +243,17 @@ func (resolver *Resolver) loadHTTP(
 		if !record.AllowsHost(target.Hostname()) {
 			return Result{}, fmt.Errorf("request target is not allowed: this credential cannot reach that host")
 		}
+		// The same bound has to survive a redirect. The check above covers the
+		// URL this loader names; without the scope on the request context, a 30x
+		// from it carries the credential's header or query secret to a host
+		// AllowedDomains never named, because Go strips only Authorization and
+		// Cookie on a cross-host hop. Attaching it here keeps the scope beside
+		// the check that produced it, and AllowsHost ignores the port half of
+		// the host:port the redirect check hands it.
+		request = request.WithContext(safehttp.WithCredentialScope(
+			request.Context(),
+			safehttp.CredentialScope{AllowsHost: record.AllowsHost},
+		))
 		credentialType, known := credentials.Default().Get(record.Type)
 		if !known {
 			return Result{Reason: "this credential's type is not registered on this server"}, nil

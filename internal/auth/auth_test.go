@@ -159,7 +159,7 @@ func TestASessionRoundTripsAndCarriesItsTenant(t *testing.T) {
 	t.Parallel()
 
 	issuer := newIssuer(t, nil)
-	session, token, err := issuer.IssueSession("usr-1", "tenant-a", "someone@example.com")
+	session, token, err := issuer.IssueSession("usr-1", "tenant-a", "someone@example.com", "v1")
 	if err != nil {
 		t.Fatalf("IssueSession() error = %v", err)
 	}
@@ -174,6 +174,42 @@ func TestASessionRoundTripsAndCarriesItsTenant(t *testing.T) {
 	if verified.TenantID != "tenant-a" || verified.UserID != "usr-1" {
 		t.Errorf("verified session = %#v, want the issued one", verified)
 	}
+	// The fingerprint rides in the token, because a verifier that re-reads the
+	// account has nothing else to compare against.
+	if verified.UserVersion != "v1" {
+		t.Errorf("verified UserVersion = %q, want the one issued", verified.UserVersion)
+	}
+}
+
+// A session that cannot name the credential state it was minted against can
+// never be revoked, so the issuer refuses to mint one rather than hand the
+// middleware a token it would have to refuse anyway.
+func TestASessionWithoutAUserVersionIsNotMinted(t *testing.T) {
+	t.Parallel()
+
+	if _, _, err := newIssuer(t, nil).IssueSession("usr-1", "tenant-a", "someone@example.com", ""); err == nil {
+		t.Error("IssueSession() minted a session with no user version")
+	}
+}
+
+func TestAUserVersionChangesWithTheCredentialStateItSummarises(t *testing.T) {
+	t.Parallel()
+
+	enabled := auth.UserVersion("pbkdf2-sha256$600000$c2FsdA$aGFzaA", false)
+	if enabled == "" {
+		t.Fatal("UserVersion() = empty, want a fingerprint")
+	}
+	// The hash itself must not be recoverable from what the cookie carries.
+	if strings.Contains(enabled, "aGFzaA") || strings.Contains(enabled, "pbkdf2") {
+		t.Errorf("the fingerprint %q discloses the stored hash", enabled)
+	}
+	// The two things revalidation has to notice, and only those.
+	if auth.UserVersion("pbkdf2-sha256$600000$c2FsdA$b3RoZXI", false) == enabled {
+		t.Error("a changed password hash produced the same fingerprint")
+	}
+	if auth.UserVersion("pbkdf2-sha256$600000$c2FsdA$aGFzaA", true) == enabled {
+		t.Error("a disabled account produced the same fingerprint")
+	}
 }
 
 func TestASessionSignedByAnotherKeyIsRefused(t *testing.T) {
@@ -183,7 +219,7 @@ func TestASessionSignedByAnotherKeyIsRefused(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewIssuer() error = %v", err)
 	}
-	_, token, err := other.IssueSession("usr-1", "tenant-a", "someone@example.com")
+	_, token, err := other.IssueSession("usr-1", "tenant-a", "someone@example.com", "v1")
 	if err != nil {
 		t.Fatalf("IssueSession() error = %v", err)
 	}
@@ -199,7 +235,7 @@ func TestAnExpiredSessionIsRefused(t *testing.T) {
 	moment := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
 	clock := moment
 	issuer := newIssuer(t, func() time.Time { return clock })
-	_, token, err := issuer.IssueSession("usr-1", "tenant-a", "someone@example.com")
+	_, token, err := issuer.IssueSession("usr-1", "tenant-a", "someone@example.com", "v1")
 	if err != nil {
 		t.Fatalf("IssueSession() error = %v", err)
 	}

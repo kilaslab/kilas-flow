@@ -55,18 +55,65 @@ const MaxTicketTTL = 30 * time.Second
 
 // Session is a signed browser login.
 //
-// It is stateless: everything needed to verify it is in the token, so no table
-// is read on the hot path. The cost of that choice is that a session cannot be
-// revoked before it expires — signing out clears the cookie in the one browser
-// holding it, and a copy taken from that browser beforehand keeps working until
-// ExpiresAt. Shortening SessionTTL is the only lever against that; a revocation
-// list would need storage this deliberately does not have.
+// Verifying the token alone is stateless: the signature and the expiry are all
+// that is needed, so an installation that never turns the account lookup on
+// reads no table on the hot path. The cost of that is that a signature-only
+// check cannot revoke anything — signing out clears the cookie in the one
+// browser holding it, and a copy taken from that browser beforehand keeps
+// working until ExpiresAt.
+//
+// UserVersion is the lever against the worst half of that: a verifier that does
+// re-read the account refuses a session whose user has been disabled or whose
+// password has changed, and the window it takes to notice is the verifier's own
+// cache lifetime rather than the session's remaining hours. A build that skips
+// the lookup gets the old behaviour back and should say so where it wires the
+// middleware.
 type Session struct {
-	UserID    string    `json:"sub"`
-	TenantID  string    `json:"tid"`
-	Email     string    `json:"eml"`
-	IssuedAt  time.Time `json:"iat"`
-	ExpiresAt time.Time `json:"exp"`
+	UserID   string `json:"sub"`
+	TenantID string `json:"tid"`
+	Email    string `json:"eml"`
+	// UserVersion fingerprints the account's stored credential state at the
+	// moment of signing in — the password hash and whether the account was
+	// disabled. It is a digest, never the hash itself, so a session that leaks
+	// discloses nothing about the password.
+	//
+	// It exists so that a token whose signer never re-reads a row can still be
+	// revoked: a verifier that does look the account up compares this value
+	// against the fingerprint of what is stored now, and refuses a token whose
+	// account has since had its password changed or been disabled. A token
+	// minted before this field existed carries nothing here and is refused —
+	// every session in flight dies once on the deploy that introduces it,
+	// which is the intended cost of closing that hole.
+	UserVersion string    `json:"uvv"`
+	IssuedAt    time.Time `json:"iat"`
+	ExpiresAt   time.Time `json:"exp"`
+}
+
+// userVersionLength is how much of the digest a session carries, in hex
+// characters.
+//
+// 16 characters is 64 bits: far too little to attack the hash it summarises
+// (finding a password whose fingerprint matches a chosen one is a 2^64 search
+// even though the digest itself is public), and short enough that a session
+// cookie stays small.
+const userVersionLength = 16
+
+// UserVersion builds the fingerprint a session binds to.
+//
+// The caller passes the account's current stored state rather than the account
+// itself, so this package never needs to know how an account is stored.
+func UserVersion(passwordHash string, disabled bool) string {
+	// The separator makes the two halves unambiguous: a hash format that could
+	// end in the flag's own text must not fingerprint the same as a
+	// passwordless account of the other state.
+	state := passwordHash + "\x00"
+	if disabled {
+		state += "disabled"
+	} else {
+		state += "enabled"
+	}
+	sum := sha256.Sum256([]byte(state))
+	return hex.EncodeToString(sum[:userVersionLength/2])
 }
 
 // Ticket authorises one execution's event stream for one caller.
@@ -118,14 +165,24 @@ func NewIssuer(key []byte, sessionTTL time.Duration, now func() time.Time) (*Iss
 func (issuer *Issuer) SessionTTL() time.Duration { return issuer.sessionTTL }
 
 // IssueSession mints a dashboard login for one user.
-func (issuer *Issuer) IssueSession(userID, tenantID, email string) (Session, string, error) {
+//
+// userVersion is the fingerprint of the account's stored credential state, from
+// UserVersion. It is required rather than optional: a session that carries no
+// fingerprint can never be revalidated, so minting one would be minting a token
+// that no verifier can revoke. An empty value is a caller bug, and reporting it
+// here is better than issuing a session the middleware will refuse.
+func (issuer *Issuer) IssueSession(userID, tenantID, email, userVersion string) (Session, string, error) {
 	if userID == "" || tenantID == "" {
 		return Session{}, "", fmt.Errorf("a session needs a user and a tenant")
+	}
+	if userVersion == "" {
+		return Session{}, "", fmt.Errorf("a session needs a user version")
 	}
 	now := issuer.now().UTC()
 	session := Session{
 		UserID: userID, TenantID: tenantID, Email: email,
-		IssuedAt: now, ExpiresAt: now.Add(issuer.sessionTTL),
+		UserVersion: userVersion,
+		IssuedAt:    now, ExpiresAt: now.Add(issuer.sessionTTL),
 	}
 	token, err := issuer.sign(SessionVersion, session)
 	if err != nil {
@@ -134,7 +191,14 @@ func (issuer *Issuer) IssueSession(userID, tenantID, email string) (Session, str
 	return session, token, nil
 }
 
-// VerifySession checks a session token's signature and expiry.
+// VerifySession checks a session token's signature, expiry, and shape.
+//
+// The signature is what makes the token unforgeable; the shape checks make a
+// signed-but-unusable token refuse rather than authenticate. A session with no
+// UserVersion is one signed before the fingerprint existed, so it is refused
+// here: the middleware cannot revalidate it, and admitting it would hand every
+// still-valid old cookie a pass through the revalidation it is the whole point
+// of the field to enforce.
 func (issuer *Issuer) VerifySession(token string) (Session, error) {
 	var session Session
 	if err := issuer.verify(SessionVersion, token, &session); err != nil {
@@ -143,7 +207,7 @@ func (issuer *Issuer) VerifySession(token string) (Session, error) {
 	if issuer.now().UTC().After(session.ExpiresAt) {
 		return Session{}, ErrUnauthenticated
 	}
-	if session.UserID == "" || session.TenantID == "" {
+	if session.UserID == "" || session.TenantID == "" || session.UserVersion == "" {
 		return Session{}, ErrUnauthenticated
 	}
 	return session, nil

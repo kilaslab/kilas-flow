@@ -407,10 +407,12 @@ var mappings = []mapping{
 	{
 		n8nType: "@aldinokemal2104/n8n-nodes-gowa.gowa", kilasType: "kilasflow.httpRequest", kilasVersion: workflow.V(1),
 		exportTypeVersion: 1, toKilas: gowaToHTTP, toN8N: gowaToN8N,
+		refuseKilas: refuseUnknownGOWAOperation,
 	},
 	{
 		n8nType: "n8n-nodes-gowa.gowa", kilasType: "kilasflow.httpRequest", kilasVersion: workflow.V(1),
 		exportTypeVersion: 1, toKilas: gowaToHTTP, toN8N: gowaToN8N, importOnly: true,
+		refuseKilas: refuseUnknownGOWAOperation,
 	},
 	// The LangChain cluster. These are the AI node types, which until now had no
 	// entry at all and so arrived as the unsupported placeholder — an imported
@@ -608,8 +610,13 @@ func Import(payload []byte, catalog workflow.Catalog) (ImportResult, error) {
 	seenName := make(map[string]bool, len(source.Nodes))
 
 	for index, node := range source.Nodes {
-		name := strings.TrimSpace(node.Name)
-		if name == "" {
+		// Verbatim, never trimmed. n8n keys connections by the name as written,
+		// and a name with a trailing space is legal there — so trimming here and
+		// looking the raw name up below dropped every edge of a node called
+		// "Get ScreenShot ". Only a name that is *entirely* whitespace needs a
+		// substitute, because nothing can refer to it.
+		name := node.Name
+		if strings.TrimSpace(name) == "" {
 			name = fmt.Sprintf("Node %d", index+1)
 		}
 		if seenName[name] {
@@ -678,14 +685,10 @@ func Import(payload []byte, catalog workflow.Catalog) (ImportResult, error) {
 			unsupported = append(unsupported, issue)
 		}
 		if issue, referenced := credentialIssue(name, id, node); referenced {
-			// GOWA -> HTTP: the mapped node ships with no authentication, so an
-			// unbound goWhatsappApi reference must not block activation the way an
-			// unbound ERPNext header credential on a still-authenticated HTTP node
-			// would. Operators attach auth only when their GOWA instance requires it.
-			if isGOWANodeType(node.Type) {
-				issue.Severity = SeverityLossy
-				issue.Reason = issue.Reason + " The GOWA node was mapped to HTTP without authentication; set auth on the HTTP node if your GOWA instance requires it."
-			}
+			// Blocking, including for GOWA. An unbound credential on a node that
+			// had one in n8n is a node that will call somebody's service
+			// unauthenticated or not at all, and downgrading it to lossy let a
+			// GOWA automation activate against a host it was never pointed at.
 			unsupported = append(unsupported, issue)
 			// The reference itself is never carried. An n8n credential id
 			// names a row in somebody else's database; storing it would leave
@@ -700,18 +703,6 @@ func Import(payload []byte, catalog workflow.Catalog) (ImportResult, error) {
 				issue.NodeID = id
 				unsupported = append(unsupported, issue)
 			}
-			// FEAT-c32499: trivial field-normalize Code → Set.
-			rewriteIssues := issues
-			if applyTrivialCodeRewrite(&converted, node, &rewriteIssues) {
-				filtered := unsupported[:0]
-				for _, issue := range unsupported {
-					if issue.NodeID == id && (issue.Field == "jsCode" || issue.Field == "pythonCode") && issue.Severity == SeverityBlocking {
-						continue
-					}
-					filtered = append(filtered, issue)
-				}
-				unsupported = append(filtered, rewriteIssues...)
-			}
 		}
 		// After the translator, never before: a translator returns the whole
 		// parameter map and would overwrite anything written ahead of it.
@@ -719,9 +710,18 @@ func Import(payload []byte, catalog workflow.Catalog) (ImportResult, error) {
 			unsupported = append(unsupported, issue)
 		}
 		if node.Disabled {
+			// Blocking, and one issue rather than two. The node's side effects
+			// are the hazard — a disabled trigger becomes a live endpoint, a
+			// disabled HTTP node starts polling — so importing it as an active,
+			// activatable node is exactly the silent behaviour change this
+			// adapter exists to refuse. nodeIssues no longer repeats it.
 			unsupported = append(unsupported, Unsupported{
-				NodeName: name, NodeID: id, Type: node.Type,
-				Reason: "KilasFlow has no disabled-node concept, so this node was imported as active. Remove it if it should not run.",
+				Severity: SeverityBlocking,
+				NodeName: name, NodeID: id, Type: node.Type, Field: "disabled",
+				TypeVersion: sourceTypeVersion(node.TypeVersion),
+				Reason: "this node is disabled in n8n, so n8n never runs it, and KilasFlow has no " +
+					"disabled-node flag — importing it as active would start its side effects. Delete " +
+					"the node, or re-enable it in n8n first if it was meant to run.",
 			})
 		}
 		nodes = append(nodes, converted)
@@ -735,7 +735,7 @@ func Import(payload []byte, catalog workflow.Catalog) (ImportResult, error) {
 		versionByID[converted.ID] = converted.TypeVersion
 		parametersByID[converted.ID] = converted.Parameters
 	}
-	connections, connectionIssues := importConnections(source.Connections, idByName, typeByID, versionByID, parametersByID, catalog)
+	connections, connectionIssues := importConnections(source.Connections, idByName, typeByID, versionByID, parametersByID, errorOutputNodes(source, idByName), catalog)
 	unsupported = append(unsupported, connectionIssues...)
 	// A hasOutputParser flag whose parser survived as its own node with an
 	// ai_outputParser edge is answered by that edge: the converter reports
@@ -806,10 +806,13 @@ func importSettings(source map[string]any) (map[string]any, []ImportIssue) {
 	settings := map[string]any{}
 	issues := make([]ImportIssue, 0)
 	zone, _ := source["timezone"].(string)
-	if strings.TrimSpace(zone) == "" {
-		return settings, issues
-	}
-	if _, err := time.LoadLocation(strings.TrimSpace(zone)); err != nil {
+	zone = strings.TrimSpace(zone)
+	if zone == "" || strings.EqualFold(zone, "DEFAULT") {
+		// n8n writes the sentinel "DEFAULT" for "use the instance's zone", and
+		// the instance's zone is what applies here too. Carried verbatim it was
+		// a literal this server's document validation refuses — so a workflow
+		// that relied on n8n's default zone could not even be activated.
+	} else if _, err := time.LoadLocation(zone); err != nil {
 		// Named rather than carried. A zone this server cannot resolve would
 		// fall back to UTC at run time with nothing reporting it, which is the
 		// same silent wrong hour by a different route.
@@ -818,15 +821,33 @@ func importSettings(source map[string]any) (map[string]any, []ImportIssue) {
 			Reason: fmt.Sprintf("the workflow's timezone %q is not a zone this server knows, so it was not "+
 				"carried and schedules will run in UTC", zone),
 		})
+	} else {
+		settings["timezone"] = zone
 	}
-	settings["timezone"] = strings.TrimSpace(zone)
+
+	// The workflow's own run budget. n8n's -1 means "no timeout", which is not
+	// a duration this server can honour — the absence of the key is what means
+	// the instance default applies, so -1 is left uncarried and named.
+	if timeout, ok := numberParameter(source, "executionTimeout"); ok {
+		if timeout > 0 {
+			settings["executionTimeout"] = timeout
+		} else if timeout < 0 {
+			issues = append(issues, ImportIssue{
+				Severity: SeverityLossy, Field: "settings.executionTimeout",
+				Reason: "this workflow disabled n8n's execution timeout, and this server always applies " +
+					"one; the instance's limit applies instead",
+			})
+		}
+	}
 	return settings, issues
 }
 
 // hasUncarriedSettings reports settings beyond the ones importSettings keeps.
 func hasUncarriedSettings(source map[string]any) bool {
 	for key := range source {
-		if key != "timezone" {
+		switch key {
+		case "timezone", "executionTimeout":
+		default:
 			return true
 		}
 	}
@@ -859,6 +880,26 @@ func documentIssues(source Document) []ImportIssue {
 	return issues
 }
 
+// errorOutputNodes names the imported nodes that gained n8n's error output.
+//
+// n8n gives a node a second, error-only output when settings.onError is
+// continueErrorOutput. KilasFlow has no per-node error output, so every edge
+// leaving that slot is held back — and the hold-back message ("declares no main
+// port") describes a broken graph rather than the missing feature that
+// actually dropped fourteen templates' error branches.
+func errorOutputNodes(source Document, idByName map[string]string) map[string]bool {
+	flagged := make(map[string]bool)
+	for _, node := range source.Nodes {
+		if node.OnError != "continueErrorOutput" {
+			continue
+		}
+		if id, known := idByName[node.Name]; known {
+			flagged[id] = true
+		}
+	}
+	return flagged
+}
+
 // importConnections converts n8n's name-keyed connection map into canonical
 // edges.
 //
@@ -867,7 +908,7 @@ func documentIssues(source Document) []ImportIssue {
 // model emits ai_languageModel, an agent receives it. KilasFlow declares the
 // same shape, so the loop is already directionally correct for every kind; what
 // it needed was the kind itself and ports that exist on both endpoints.
-func importConnections(source Connections, idByName, typeByID map[string]string, versionByID map[string]workflow.TypeVersion, parametersByID map[string]map[string]any, catalog workflow.Catalog) ([]workflow.Connection, []Unsupported) {
+func importConnections(source Connections, idByName, typeByID map[string]string, versionByID map[string]workflow.TypeVersion, parametersByID map[string]map[string]any, errorOutputs map[string]bool, catalog workflow.Catalog) ([]workflow.Connection, []Unsupported) {
 	connections := make([]workflow.Connection, 0)
 	issues := make([]Unsupported, 0)
 
@@ -927,6 +968,19 @@ func importConnections(source Connections, idByName, typeByID map[string]string,
 
 					sourcePort, sourceOK := resolvePort(catalog, typeByID[sourceID], versionByID[sourceID], parametersByID[sourceID], kind, outputIndex, portOutput)
 					targetPort, targetOK := resolvePort(catalog, typeByID[targetID], versionByID[targetID], parametersByID[targetID], kind, target.Index, portInput)
+					if !sourceOK && errorOutputs[sourceID] {
+						// The source declares an error output n8n gave it, which
+						// no canonical node has. Named as that, rather than as
+						// a missing port: the user is looking for a feature.
+						issues = append(issues, Unsupported{
+							NodeName: sourceName,
+							Reason: fmt.Sprintf("the error branch from %q to %q was dropped: this node's "+
+								"failed items leave on an n8n error output (settings.onError = "+
+								"continueErrorOutput), and KilasFlow has no per-node error output yet",
+								sourceName, target.Node),
+						})
+						continue
+					}
 					if !sourceOK || !targetOK {
 						// Held back rather than dropped silently: recording an
 						// edge onto a port that does not exist would fail
@@ -1004,6 +1058,14 @@ const (
 // inverse of the other. Going through the catalogue is also what keeps this
 // working when generated node packs arrive with ports nobody hardcoded.
 func resolvePort(catalog workflow.Catalog, nodeType string, version workflow.TypeVersion, parameters map[string]any, kind workflow.ConnectionKind, index int, direction portDirection) (string, bool) {
+	// A source node whose outputs changed meaning between its own versions
+	// cannot be resolved from the canonical port list alone: the list
+	// describes the *current* node, and the edge was drawn against an older
+	// one. This is asked before the catalogue, so it holds with or without
+	// one.
+	if name, remapped := legacyOutputPort(nodeType, version, kind, direction, index); remapped {
+		return name, true
+	}
 	if catalog == nil {
 		// No catalogue: fall back to the positional names, which is what the
 		// adapter did before it could ask. Only the item channel is nameable
@@ -1050,6 +1112,33 @@ func resolvePort(catalog workflow.Catalog, nodeType string, version workflow.Typ
 		return "", false
 	}
 	return matching[index].Name, true
+}
+
+// legacyOutputPort resolves an n8n output index whose meaning changed between
+// versions of the source node, for the mappings where it did.
+//
+// It is a small, explicit table rather than a per-mapping hook, because there
+// is exactly one such node today and the table is the place a second one is
+// added — with the version comparison that makes it right, next to the comment
+// that says why. A remap that a mapping forgot to declare is a silently
+// rewired workflow, which is the defect this exists to close.
+func legacyOutputPort(kilasType string, version workflow.TypeVersion, kind workflow.ConnectionKind, direction portDirection, index int) (string, bool) {
+	if kind != workflow.ConnectionMain || direction != portOutput {
+		return "", false
+	}
+	switch kilasType {
+	case LoopNodeType:
+		// n8n's Split In Batches v1 and v2 have a single output carrying each
+		// batch; v3 split it into `done` (index 0) and `loop` (index 1).
+		// Resolving positionally put the loop body on `done`, so the body ran
+		// once at the end — when it ran at all: the compiler usually refused
+		// the graph first, with a message about scheduling rather than about
+		// the loop.
+		if version.Compare(workflow.V(3)) < 0 && index == 0 {
+			return "loop", true
+		}
+	}
+	return "", false
 }
 
 // outputPortName maps an n8n output index onto a canonical port name.
@@ -1124,6 +1213,7 @@ func Export(document workflow.Document, catalog workflow.Catalog) (ExportResult,
 	nameByID := make(map[string]string, len(document.Nodes))
 	typeByID := make(map[string]string, len(document.Nodes))
 	portIndex := make(map[string]map[string]int, len(document.Nodes))
+	inputIndex := make(map[string]map[string]int, len(document.Nodes))
 
 	for _, node := range document.Nodes {
 		nameByID[node.ID] = node.Name
@@ -1157,6 +1247,7 @@ func Export(document workflow.Document, catalog workflow.Catalog) (ExportResult,
 			// to n8n output 0, silently rewiring a Switch so that all its
 			// branches left the first slot.
 			portIndex[node.ID] = placeholderOutputIndexes(node)
+			inputIndex[node.ID] = inputIndexesFor(catalog, node.Type, node.TypeVersion, node.Parameters)
 			continue
 		}
 
@@ -1187,12 +1278,29 @@ func Export(document workflow.Document, catalog workflow.Catalog) (ExportResult,
 			// Its own ports, so a multi-output node keeps its branches rather
 			// than sending every outgoing edge to n8n output 0.
 			portIndex[node.ID] = outputIndexesFor(catalog, node.Type, node.TypeVersion, node.Parameters)
+			inputIndex[node.ID] = inputIndexesFor(catalog, node.Type, node.TypeVersion, node.Parameters)
 			continue
 		}
 
+		version := exportVersion(entry, node)
 		exported := Node{
-			ID: node.ID, Name: node.Name, Type: entry.n8nType, TypeVersion: exportVersion(entry, node),
+			ID: node.ID, Name: node.Name, Type: entry.n8nType, TypeVersion: version,
 			Position: []float64{node.Position.X, node.Position.Y},
+		}
+		// A node that arrived at a version this mapping cannot write back is
+		// named, not silently re-versioned. The two sides' version numbers mean
+		// different things for a core node, so the comparison is only meaningful
+		// for a node carrying its own n8n version — which is exactly the case
+		// where a version change is a behaviour change nobody asked for.
+		if !entry.sharedVersion && !node.TypeVersion.IsZero() && node.TypeVersion != entry.kilasVersion &&
+			version != node.TypeVersion.Float() {
+			result.Lossy = append(result.Lossy, Lossy{
+				NodeName: node.Name, Field: "typeVersion", Severity: SeverityLossy,
+				Reason: fmt.Sprintf("this node was authored at n8n typeVersion %s and was exported at %s: "+
+					"the translator writes that version's parameter shape, and n8n does not publish the "+
+					"original. Check the node's settings in n8n after importing the file.",
+					node.TypeVersion.String(), strconv.FormatFloat(version, 'g', -1, 64)),
+			})
 		}
 		// The error handling goes back out with it. It used to be left behind,
 		// and the asymmetry was the sharp part: a node with no n8n equivalent
@@ -1221,12 +1329,21 @@ func Export(document workflow.Document, catalog workflow.Catalog) (ExportResult,
 		}
 		result.Document.Nodes = append(result.Document.Nodes, exported)
 		portIndex[node.ID] = outputIndexesFor(catalog, node.Type, node.TypeVersion, node.Parameters)
+		inputIndex[node.ID] = inputIndexesFor(catalog, node.Type, node.TypeVersion, node.Parameters)
 	}
 
 	exported := map[string]bool{}
 	for _, node := range result.Document.Nodes {
 		exported[node.Name] = true
 	}
+
+	// The AI sub-node flags are decided by the graph, not by the node, so they
+	// are written after every node exists. n8n computes a root node's inputs
+	// from hasOutputParser and needsFallback, and its default is false — so an
+	// exported agent with an ai_outputParser edge but no flag offers no input
+	// for that edge, and n8n drops the parser on open. The import side already
+	// reports the flag; this is the other half.
+	result.Document.Nodes = applySubnodeFlags(result.Document.Nodes, document.Connections)
 
 	for _, connection := range document.Connections {
 		sourceName, sourceKnown := nameByID[connection.Source.NodeID]
@@ -1258,6 +1375,11 @@ func Export(document workflow.Document, catalog workflow.Catalog) (ExportResult,
 				}
 			}
 			targetIndex = inputIndexFor(typeByID[connection.Target.NodeID], connection.Target.Port)
+			if indexes, known := inputIndex[connection.Target.NodeID]; known {
+				if position, found := indexes[connection.Target.Port]; found {
+					targetIndex = position
+				}
+			}
 		}
 		if result.Document.Connections[sourceName] == nil {
 			result.Document.Connections[sourceName] = map[string][][]Target{}
@@ -1274,6 +1396,50 @@ func Export(document workflow.Document, catalog workflow.Catalog) (ExportResult,
 
 	result.Lossy = withDefaultExportSeverity(result.Lossy)
 	return result, nil
+}
+
+// applySubnodeFlags writes the boolean flags n8n derives a root node's inputs
+// from.
+//
+// An n8n agent or chain declares its Output Parser input only when
+// hasOutputParser is true, and its fallback model input only when needsFallback
+// is. Both default to false, so a node exported with the wired-up sub-node but
+// without the flag comes back in n8n with an edge onto an input that does not
+// exist — and structured output silently stops working.
+func applySubnodeFlags(nodes []Node, connections []workflow.Connection) []Node {
+	parsers := map[string]bool{}
+	models := map[string]int{}
+	for _, connection := range connections {
+		switch connection.Kind {
+		case workflow.ConnectionOutputParser:
+			parsers[connection.Target.NodeID] = true
+		case workflow.ConnectionLanguageModel:
+			models[connection.Target.NodeID]++
+		}
+	}
+	if len(parsers) == 0 && len(models) == 0 {
+		return nodes
+	}
+	for index := range nodes {
+		parameters := nodes[index].Parameters
+		if parameters == nil {
+			continue
+		}
+		switch nodes[index].Type {
+		case "kilasflow.agent", "kilasflow.chainLlm":
+		default:
+			continue
+		}
+		if parsers[nodes[index].ID] {
+			parameters["hasOutputParser"] = true
+		}
+		// A second model is the fallback one: n8n's needsFallback is exactly
+		// "there is more than one model attached".
+		if models[nodes[index].ID] > 1 {
+			parameters["needsFallback"] = true
+		}
+	}
+	return nodes
 }
 
 // exportVersion is the typeVersion written back out.
@@ -1332,6 +1498,40 @@ func outputIndexesFor(catalog workflow.Catalog, nodeType string, version workflo
 		}
 	}
 	for index, port := range outputPortsFor(nodeType) {
+		indexes[port] = index
+	}
+	return indexes
+}
+
+// inputIndexesFor maps a canonical node's named input ports onto n8n's
+// positional ones.
+//
+// It asks the catalogue for the same reason the output side does, and the
+// defect it closes is the same shape: the static table only knew input1 and
+// input2, so every edge into a Merge's third and later inputs was written to
+// slot 0. A nine-input Merge exported as a Merge with one input carrying all
+// nine wires — a workflow that looks complete and combines the wrong items.
+func inputIndexesFor(catalog workflow.Catalog, nodeType string, version workflow.TypeVersion, parameters map[string]any) map[string]int {
+	indexes := map[string]int{}
+	if catalog != nil {
+		if definition, found := catalog.Lookup(nodeType, version); found {
+			if definition.PortsFor != nil {
+				definition.Inputs, _ = definition.PortsFor(parameters, version)
+			}
+			position := 0
+			for _, port := range definition.Inputs {
+				// Only the item channel is positional; a typed AI channel
+				// always reads slot zero.
+				if port.Kind != workflow.ConnectionMain {
+					continue
+				}
+				indexes[port.Name] = position
+				position++
+			}
+			return indexes
+		}
+	}
+	for index, port := range inputPortsFor(nodeType) {
 		indexes[port] = index
 	}
 	return indexes
@@ -1547,29 +1747,18 @@ func nodeIssues(name, id string, node Node) []ImportIssue {
 	if strings.TrimSpace(node.WebhookID) != "" {
 		add("webhookId", "n8n's per-node webhook identity is meaningless in this installation; KilasFlow assigns its own webhook binding on activation")
 	}
-	if node.Disabled {
-		add("disabled", "n8n's disabled flag has no KilasFlow equivalent, so this node will run")
-	}
 
-	// continueOnFail, retryOnFail, maxTries and waitBetweenTries are carried
-	// onto the canonical settings by errorHandlingSettings, so they are not
-	// reported here. These three have no equivalent yet.
-	for _, field := range []struct {
-		name    string
-		present bool
-		reason  string
-	}{
-		{"alwaysOutputData", node.AlwaysOutputData,
-			"n8n emits an empty item when a node produces nothing; KilasFlow has no equivalent setting, so a node that produces nothing produces nothing"},
-		{"executeOnce", node.ExecuteOnce,
-			"n8n can run a node once for the whole batch rather than once per item; KilasFlow has no equivalent, so the node runs as it normally would"},
-		{"onError", strings.TrimSpace(node.OnError) != "",
-			"n8n's onError modes — stop, continue, and continue on a separate error output — have no KilasFlow equivalent beyond continueOnFail, which was carried"},
-	} {
-		if !field.present {
-			continue
-		}
-		add(field.name, field.reason)
+	// continueOnFail, retryOnFail, maxTries, waitBetweenTries, alwaysOutputData,
+	// executeOnce and onError="continueRegularOutput" are carried onto the
+	// canonical settings by errorHandlingSettings, so they are not reported
+	// here. What is left is the one onError mode this server has no equivalent
+	// for: a second, error-only output.
+	if node.OnError == "continueErrorOutput" {
+		add("onError", "n8n routes this node's failed items to its own error output; KilasFlow has no "+
+			"per-node error output yet, so the failing item is not routed anywhere and the branch the "+
+			"error output was wired to never runs")
+	} else if mode := strings.TrimSpace(node.OnError); mode != "" && mode != "stopWorkflow" && mode != "continueRegularOutput" {
+		add("onError", fmt.Sprintf("the n8n onError mode %q has no KilasFlow equivalent", mode))
 	}
 	return issues
 }
@@ -1584,6 +1773,20 @@ func errorHandlingSettings(node Node) map[string]any {
 	settings := map[string]any{}
 	if node.ContinueOnFail {
 		settings["continueOnFail"] = true
+	}
+	// Current n8n writes `onError: "continueRegularOutput"` instead of the
+	// legacy boolean, and the runner already honours exactly that: the failing
+	// item is replaced and the run continues. Reading only the boolean meant 26
+	// nodes in 8 templates stopped a run they were written to tolerate, while
+	// the diagnostic said continueOnFail "was carried".
+	if node.OnError == "continueRegularOutput" {
+		settings["continueOnFail"] = true
+	}
+	if node.AlwaysOutputData {
+		settings["alwaysOutputData"] = true
+	}
+	if node.ExecuteOnce {
+		settings["executeOnce"] = true
 	}
 	if node.RetryOnFail {
 		settings["retryOnFail"] = true
@@ -1624,6 +1827,9 @@ func exportSettings(settings map[string]any) map[string]any {
 	if zone, _ := settings["timezone"].(string); strings.TrimSpace(zone) != "" {
 		exported["timezone"] = zone
 	}
+	if timeout := numberSetting(settings["executionTimeout"]); timeout > 0 {
+		exported["executionTimeout"] = timeout
+	}
 	return exported
 }
 
@@ -1639,6 +1845,17 @@ func applyErrorHandling(exported *Node, settings map[string]any) {
 	}
 	if flag, _ := settings["continueOnFail"].(bool); flag {
 		exported.ContinueOnFail = true
+		// n8n 1.x reads the legacy boolean and 2.x reads onError. Writing the
+		// modern spelling as well is what makes the round trip a no-op on a
+		// current instance: a node that arrived with continueRegularOutput must
+		// not go back with a setting current n8n ignores.
+		exported.OnError = "continueRegularOutput"
+	}
+	if flag, _ := settings["alwaysOutputData"].(bool); flag {
+		exported.AlwaysOutputData = true
+	}
+	if flag, _ := settings["executeOnce"].(bool); flag {
+		exported.ExecuteOnce = true
 	}
 	if flag, _ := settings["retryOnFail"].(bool); flag {
 		exported.RetryOnFail = true

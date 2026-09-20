@@ -59,11 +59,27 @@ func UnsupportedArityFor(inputs, outputs int) int {
 // optional by nature. Both directions are declared because a placeholder may
 // stand in for either half of an AI edge — the agent that consumes a model, or
 // the model that supplies one.
+//
+// Every kind n8n writes is declared, not just the three the first import
+// happened to need. A RAG cluster attaches its embeddings, its document loader,
+// its splitter, its vector store and its output parser by typed edge, and an
+// undeclared port does not degrade gracefully: the edge is held back and the
+// export of a workflow that was imported and never touched is missing the wires
+// that say which sub-node belonged to which root.
 func unsupportedAIPorts(prefix string) []workflow.Port {
 	return []workflow.Port{
 		{Name: prefix + "Model", Kind: workflow.ConnectionLanguageModel},
 		{Name: prefix + "Memory", Kind: workflow.ConnectionMemory},
 		{Name: prefix + "Tool", Kind: workflow.ConnectionTool},
+		{Name: prefix + "Embedding", Kind: workflow.ConnectionEmbedding},
+		{Name: prefix + "Document", Kind: workflow.ConnectionDocument},
+		{Name: prefix + "TextSplitter", Kind: workflow.ConnectionTextSplitter},
+		{Name: prefix + "VectorStore", Kind: workflow.ConnectionVectorStore},
+		{Name: prefix + "OutputParser", Kind: workflow.ConnectionOutputParser},
+		{Name: prefix + "Retriever", Kind: workflow.ConnectionRetriever},
+		{Name: prefix + "Reranker", Kind: workflow.ConnectionReranker},
+		{Name: prefix + "Agent", Kind: workflow.ConnectionAgent},
+		{Name: prefix + "Chain", Kind: workflow.ConnectionChain},
 	}
 }
 

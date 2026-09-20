@@ -100,7 +100,12 @@ func (row assignmentRow) coerce() (any, error) {
 		return row.Value, nil
 	case property.AssignmentString:
 		if row.Value == nil {
-			return "", nil
+			// Null, not empty text. n8n writes null for a lone expression that
+			// resolved to null or undefined (`{{ $json.missing }}`), and it
+			// writes null for a null-type assignment; turning both into "" made
+			// a missing field indistinguishable from an empty one downstream,
+			// where `{{ $json.x }}` answered "" instead of nothing.
+			return nil, nil
 		}
 		if text, ok := row.Value.(string); ok {
 			return text, nil

@@ -39,13 +39,19 @@ func gowaToHTTP(node Node) (map[string]any, []Unsupported) {
 		params["jsonBody"] = gowaJSONBody(bodyKeys, node)
 	}
 	if !known {
+		// Unreachable through Import, which refuses the pair before this runs
+		// (see refuseUnknownGOWAOperation). Kept as a belt-and-braces path for
+		// any caller that reaches the translator directly, and blocking rather
+		// than lossy: this is the case where the imported node would send a
+		// *different* GOWA call.
 		issues = append(issues, Unsupported{
-			Severity: SeverityLossy,
+			Severity: SeverityBlocking,
 			Field:    "resource",
 			Reason: fmt.Sprintf(
-				"GOWA resource %q operation %q has no dedicated KilasFlow mapping yet; "+
-					"imported as HTTP %s %s — set the URL/body to the GOWA REST call you need "+
-					"(see packs/gowa/GAPS.md)", resource, operation, method, url),
+				"GOWA resource %q operation %q has no dedicated KilasFlow mapping; "+
+					"the fallback HTTP call %s %s would not be the call this node made — "+
+					"replace the node with the GOWA REST call you need (see packs/gowa/GAPS.md)",
+				resource, operation, method, url),
 		})
 	} else {
 		issues = append(issues, Unsupported{
@@ -149,6 +155,29 @@ func gowaToN8N(node workflow.Node) (map[string]any, []Lossy) {
 		Field:  "httpRequest",
 		Reason: "exported back as the GOWA community node with resource/operation only; HTTP URL/body details were not reconstituted",
 	}}
+}
+
+// refuseUnknownGOWAOperation names why a GOWA node must not import as HTTP.
+//
+// The fallback route used to be "POST /send/message" or "GET /app/devices",
+// reported as lossy — so a node written to send an image, or to revoke a
+// message, activated and then sent a text message instead. An automation that
+// messages real contacts with the wrong content is not a fidelity gap; it is
+// the importer doing something nobody asked for, and the honest answer is the
+// unsupported placeholder.
+func refuseUnknownGOWAOperation(node Node) string {
+	resource := strings.TrimSpace(stringParameter(node.Parameters, "resource"))
+	operation := strings.TrimSpace(stringParameter(node.Parameters, "operation"))
+	if operation == "" {
+		operation = strings.TrimSpace(stringParameter(node.Parameters, "operationApp"))
+	}
+	if _, _, _, known := gowaRoute(resource, operation); known {
+		return ""
+	}
+	return fmt.Sprintf("GOWA's %q / %q operation has no KilasFlow mapping, and the generic HTTP "+
+		"fallback would call a different GOWA endpoint than this node called — sending different "+
+		"content to real contacts. Replace this node with the GOWA REST call you need (see "+
+		"packs/gowa/GAPS.md).", resource, operation)
 }
 
 func isGOWANodeType(t string) bool {

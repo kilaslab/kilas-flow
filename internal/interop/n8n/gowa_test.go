@@ -43,13 +43,22 @@ func TestGOWAAppDevicesImportsAsHTTPNotUnsupported(t *testing.T) {
 	if !found {
 		t.Fatal("GOWA node missing")
 	}
+	// The node had a credential in n8n, so it arrives unbound and *blocking*:
+	// a GOWA node that authenticated in n8n must not activate here against a
+	// host nobody pointed it at. The mapping itself is still HTTP, and the
+	// blocking issue is about the credential rather than about the operation.
+	blockingCredential := false
 	for _, u := range result.Unsupported {
-		if u.Severity == n8n.SeverityBlocking && u.NodeName == "Get device information" {
-			t.Fatalf("blocking unsupported remained: %+v", u)
+		if u.Severity != n8n.SeverityBlocking {
+			continue
 		}
-		if u.Type == "@aldinokemal2104/n8n-nodes-gowa.gowa" && u.Severity == n8n.SeverityBlocking {
-			t.Fatalf("still blocking on GOWA type: %+v", u)
+		if u.Field != "credentials" {
+			t.Fatalf("blocking issue that is not about the credential: %+v", u)
 		}
+		blockingCredential = true
+	}
+	if !blockingCredential {
+		t.Fatal("an unbound GOWA credential was not reported as blocking")
 	}
 }
 

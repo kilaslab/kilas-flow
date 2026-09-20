@@ -15,11 +15,27 @@ import (
 	"github.com/kilaslabs/kilas-flow/nodes"
 )
 
-// n8n marks an expression by prefixing the string with `=`, and uses the same
-// `{{ }}` interpolation KilasFlow does. KilasFlow marks one with an explicit
-// `{"mode":"expression"}` value instead, so the prefix is translated rather
-// than carried.
+// n8nFromAIMarker is the comment n8n writes into an expression when a user
+// clicks "let the model define this parameter".
+//
+// It is a JavaScript comment, so n8n's own evaluator ignores it — but this
+// server's parser is not a JavaScript parser, and `{{ /*…*/ $fromAI(…) }}`
+// failed with "expression must start with a supported root". Every parameter
+// the model was meant to fill in therefore failed on every tool call, which is
+// 27 of the 52 $fromAI parameters in the corpus. Stripped here, at the one
+// place n8n expressions are read, so every node type that carries one is fixed
+// at once.
+const n8nFromAIMarker = "/*n8n-auto-generated-fromAI-override*/"
+
+// expressionValue marks a template as an expression.
 func expressionValue(template string) map[string]any {
+	template = strings.ReplaceAll(template, n8nFromAIMarker, "")
+	// The comment left a run of spaces behind; tidying it keeps the stored
+	// template readable and keeps an expression that is *only* the comment from
+	// arriving as whitespace.
+	if strings.Contains(template, n8nFromAIMarker) {
+		template = strings.ReplaceAll(template, n8nFromAIMarker, "")
+	}
 	return map[string]any{"mode": "expression", "value": template}
 }
 
@@ -129,6 +145,14 @@ func setToKilas(node Node) (map[string]any, []Unsupported) {
 					continue
 				}
 				identifier, _ := fields["id"].(string)
+				if assignmentTypeIsNull(fields["type"]) {
+					issues = append(issues, Unsupported{
+						Field: fmt.Sprintf("assignments.assignments[%d].type", index),
+						Reason: "this field was assigned n8n's null type, which this server has no type " +
+							"for; it is carried as a string assignment holding null, which writes the " +
+							"same value",
+					})
+				}
 				entries = append(entries, assignmentEntry(node, index, identifier, name,
 					assignmentTypeOf(fields["type"]), fromN8NValue(fields["value"])))
 			}
@@ -340,9 +364,24 @@ func assignmentTypeOf(declared any) string {
 	case property.AssignmentString, property.AssignmentNumber, property.AssignmentBoolean,
 		property.AssignmentArray, property.AssignmentObject:
 		return name
+	case "null":
+		// n8n's null assignment type. This server has no such type, and a
+		// string row holding nil *is* null once the executor stops turning nil
+		// into "" — so the row is carried as a string assignment whose value is
+		// null, which is the same field value n8n writes. Named as lossy rather
+		// than done quietly: the editor shows the type as `string`, and a user
+		// comparing the two nodes should know why.
+		return string(property.AssignmentString)
 	default:
 		return string(property.AssignmentString)
 	}
+}
+
+// assignmentTypeIsNull reports n8n's null assignment type, which this server
+// carries as a string row holding null.
+func assignmentTypeIsNull(declared any) bool {
+	name, _ := declared.(string)
+	return strings.TrimSpace(name) == "null"
 }
 
 // setToN8N writes the rows back in the order and with the types they carry.
@@ -896,6 +935,16 @@ func switchToKilas(node Node) (map[string]any, []Unsupported) {
 	rules, _ := node.Parameters["rules"].(map[string]any)
 	values, _ := rules["values"].([]any)
 	converted := make([]any, 0, len(values))
+	if len(values) == 0 {
+		// n8n's Switch v1 and v2 keep their rules under `rules.rules`, one row
+		// per output, holding `value1`/`value2`, a `dataType` and an
+		// `operation`. Reading only the v3 shape imported those as a node with
+		// no rules and one output — so every branch from output 1 onwards was
+		// held back and the workflow failed with "switch rules must be a list".
+		legacy, legacyIssues := legacySwitchRules(rules)
+		issues = append(issues, legacyIssues...)
+		converted = legacy
+	}
 	for index, entry := range values {
 		rule, ok := entry.(map[string]any)
 		if !ok {
@@ -924,42 +973,103 @@ func switchToKilas(node Node) (map[string]any, []Unsupported) {
 	}
 
 	built := map[string]any{"rules": converted}
-	if options, ok := node.Parameters["options"].(map[string]any); ok {
-		if options["fallbackOutput"] != nil {
-			// n8n writes "none", "extra", or an output index. A numeric
-			// index names a rule's own output; the executor routes by
-			// index, so the number carries as itself rather than as a
-			// warning about wiring.
-			switch fallback := options["fallbackOutput"].(type) {
-			case string:
-				if fallback == "extra" {
-					built["fallbackOutput"] = "extra"
-				} else if fallback != "none" && fallback != "" {
-					if number, err := strconv.Atoi(strings.TrimSpace(fallback)); err == nil {
-						built["fallbackOutput"] = fmt.Sprintf("%d", number)
-					} else {
-						issues = append(issues, Unsupported{
-							Field:  "options.fallbackOutput",
-							Reason: fmt.Sprintf("this Switch sent unmatched items to output %v; wire that rule's own output instead", options["fallbackOutput"]),
-						})
-					}
+	fallback, fallbackField := switchFallback(node)
+	if fallback != nil {
+		switch value := fallback.(type) {
+		case string:
+			if value == "extra" {
+				built["fallbackOutput"] = "extra"
+			} else if value != "none" && value != "" {
+				if number, err := strconv.Atoi(strings.TrimSpace(value)); err == nil {
+					built["fallbackOutput"] = fmt.Sprintf("%d", number)
+				} else {
+					issues = append(issues, Unsupported{
+						Field:  fallbackField,
+						Reason: fmt.Sprintf("this Switch sent unmatched items to output %v; wire that rule's own output instead", value),
+					})
 				}
-			case float64:
-				built["fallbackOutput"] = fmt.Sprintf("%d", int(fallback))
-			case int:
-				built["fallbackOutput"] = fmt.Sprintf("%d", fallback)
-			default:
-				issues = append(issues, Unsupported{
-					Field:  "options.fallbackOutput",
-					Reason: fmt.Sprintf("this Switch sent unmatched items to output %v; wire that rule's own output instead", options["fallbackOutput"]),
-				})
 			}
+		case float64:
+			built["fallbackOutput"] = fmt.Sprintf("%d", int(value))
+		case int:
+			built["fallbackOutput"] = fmt.Sprintf("%d", value)
+		default:
+			issues = append(issues, Unsupported{
+				Field:  fallbackField,
+				Reason: fmt.Sprintf("this Switch sent unmatched items to output %v; wire that rule's own output instead", value),
+			})
 		}
+	}
+	if options, ok := node.Parameters["options"].(map[string]any); ok {
 		if all, _ := options["allMatchingOutputs"].(bool); all {
 			built["allMatchingOutputs"] = true
 		}
 	}
 	return built, issues
+}
+
+// switchFallback reads the fallback output, which the versions keep in
+// different places: v3 under `options.fallbackOutput`, v1/v2 as a top-level
+// parameter. Reading only the first lost the branch unmatched items were
+// supposed to take, so a legacy Switch silently dropped them.
+func switchFallback(node Node) (any, string) {
+	if options, ok := node.Parameters["options"].(map[string]any); ok {
+		if value := options["fallbackOutput"]; value != nil {
+			return value, "options.fallbackOutput"
+		}
+	}
+	if value := node.Parameters["fallbackOutput"]; value != nil {
+		return value, "fallbackOutput"
+	}
+	return nil, ""
+}
+
+// legacySwitchRules translates n8n's v1/v2 Switch rules.
+//
+// One row per output, each carrying the left-hand value, the comparison and the
+// right-hand value — the same shape a v1 If condition has, so the row is
+// translated by the same code (legacyCondition), including the operation-name
+// vocabulary that changed between the two generations. A row's output index is
+// its position, which is how the Switch routes.
+func legacySwitchRules(rules map[string]any) ([]any, []Unsupported) {
+	rows, _ := rules["rules"].([]any)
+	converted := make([]any, 0, len(rows))
+	for _, entry := range rows {
+		row, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		if _, present := row["value1"]; !present {
+			continue
+		}
+		dataType, _ := row["dataType"].(string)
+		if dataType == "" {
+			dataType = "string"
+		}
+		condition := legacyCondition(row, dataType)
+		// Converted, so an expression in a legacy rule stays an expression
+		// rather than arriving as the literal text `={{ … }}`.
+		condition["leftValue"] = fromN8NValue(condition["leftValue"])
+		condition["rightValue"] = fromN8NValue(condition["rightValue"])
+		built := map[string]any{
+			"conditions": map[string]any{
+				"conditions": []any{condition},
+				"options":    map[string]any{"caseSensitive": true},
+			},
+		}
+		if name, _ := row["renameOutput"].(string); name != "" {
+			built["outputKey"] = name
+		}
+		converted = append(converted, built)
+	}
+	if len(converted) == 0 {
+		return nil, []Unsupported{{
+			Severity: SeverityBlocking, Field: "rules",
+			Reason: "this Switch's rules could not be read in either the current or the legacy shape; " +
+				"rebuild them before running the workflow",
+		}}
+	}
+	return converted, nil
 }
 
 func switchToN8N(node workflow.Node) (map[string]any, []Lossy) {
@@ -1015,6 +1125,194 @@ func limitToN8N(node workflow.Node) (map[string]any, []Lossy) {
 
 // --- HTTP Request -----------------------------------------------------------
 
+// fromN8NTree converts every value inside a nested parameter tree.
+//
+// fromN8NValue only reads the top level, which is right for a flat parameter
+// and wrong for an option group: `options.responseHeaders.entries[0].value`
+// is an expression two levels down, and leaving it unmarked exported it as the
+// literal text `={{ … }}`.
+func fromN8NTree(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		converted := make(map[string]any, len(typed))
+		for key, nested := range typed {
+			converted[key] = fromN8NTree(nested)
+		}
+		return converted
+	case []any:
+		converted := make([]any, 0, len(typed))
+		for _, entry := range typed {
+			converted = append(converted, fromN8NTree(entry))
+		}
+		return converted
+	default:
+		return fromN8NValue(value)
+	}
+}
+
+// optionAt reads an option that n8n nests under a group in newer versions and
+// wrote flat in older ones.
+//
+// Both spellings exist in the wild, and reading only the nested one silently
+// ignored every option on a node imported from an older n8n.
+func optionAt(options map[string]any, path ...string) (any, bool) {
+	current := any(options)
+	for _, key := range path {
+		object, ok := current.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		current, ok = object[key]
+		if !ok {
+			return nil, false
+		}
+	}
+	return current, true
+}
+
+// optionNumber reads a numeric option wherever its version put it.
+func optionNumber(options map[string]any, path ...string) (float64, bool) {
+	value, present := optionAt(options, path...)
+	if !present {
+		return 0, false
+	}
+	switch typed := value.(type) {
+	case float64:
+		return typed, true
+	case int:
+		return float64(typed), true
+	case int64:
+		return float64(typed), true
+	case string:
+		parsed, err := strconv.ParseFloat(strings.TrimSpace(typed), 64)
+		return parsed, err == nil
+	default:
+		return 0, false
+	}
+}
+
+// optionFlag reads a boolean option wherever its version put it.
+func optionFlag(options map[string]any, path ...string) bool {
+	value, present := optionAt(options, path...)
+	if !present {
+		return false
+	}
+	flag, _ := value.(bool)
+	return flag
+}
+
+// httpCollection reads a name/value collection under either of the two names
+// n8n gives it: the HTTP Request node's, and the HTTP Request tool's.
+func httpCollection(parameters map[string]any, flag string, keys ...string) (map[string]any, bool) {
+	for _, key := range keys {
+		if values, ok := namedValues(parameters, flag, key); ok {
+			return values, true
+		}
+	}
+	return nil, false
+}
+
+// reportUnconsumedOptions names every option key nothing read.
+//
+// The importer promises never to drop a source parameter in silence, and an
+// options collection is where the drops hid: the translator read six keys out
+// of twenty and said nothing about the rest. `consumed` holds the keys the
+// translator read, spelled as the path the choice was made at.
+func reportUnconsumedOptions(options map[string]any, consumed map[string]bool, issues []Unsupported) []Unsupported {
+	for _, key := range sortedKeys(options) {
+		if consumed[key] || options[key] == nil {
+			continue
+		}
+		if nested, isObject := options[key].(map[string]any); isObject {
+			// An option group: walked one level deeper, because the outer
+			// group being consumed is exactly how a setting two levels down
+			// disappears without a word.
+			for _, inner := range sortedKeys(nested) {
+				child, nestsFurther := nested[inner].(map[string]any)
+				if nestsFurther {
+					for _, leaf := range sortedKeys(child) {
+						if consumed[key+"."+inner+"."+leaf] {
+							continue
+						}
+						issues = append(issues, Unsupported{
+							Severity: SeverityDropped, Field: "options." + key + "." + inner + "." + leaf,
+							Reason: fmt.Sprintf("the n8n option %q has no KilasFlow equivalent and was not carried", leaf),
+						})
+					}
+					continue
+				}
+				if consumed[key+"."+inner] {
+					continue
+				}
+				issues = append(issues, Unsupported{
+					Severity: SeverityDropped, Field: "options." + key + "." + inner,
+					Reason: fmt.Sprintf("the n8n option %q has no KilasFlow equivalent and was not carried", inner),
+				})
+			}
+			continue
+		}
+		issues = append(issues, Unsupported{
+			Severity: SeverityDropped, Field: "options." + key,
+			Reason: fmt.Sprintf("the n8n option %q has no KilasFlow equivalent and was not carried", key),
+		})
+	}
+	return issues
+}
+
+// jsonParameters reads n8n's JSON spelling of a parameter collection.
+//
+// `specifyQuery: json` and `specifyHeaders: json` hold the whole collection as
+// JSON text. It was not read at all, so those nodes imported with no query and
+// no headers — a request that looks configured and calls a different URL.
+func jsonParameters(parameters map[string]any, key string, field string, issues []Unsupported) (map[string]any, []Unsupported) {
+	raw, present := parameters[key]
+	if !present || raw == nil {
+		return nil, issues
+	}
+	text, isText := raw.(string)
+	if !isText || strings.TrimSpace(text) == "" {
+		return nil, issues
+	}
+	if strings.HasPrefix(text, "=") {
+		// The whole collection is one expression, which a key/value map cannot
+		// hold. Named rather than dropped: the request would otherwise go out
+		// with none of the parameters it was written to send.
+		return nil, append(issues, Unsupported{
+			Severity: SeverityBlocking, Field: field,
+			Reason: "this node builds its parameters from an expression that returns the whole JSON " +
+				"object, which this server cannot evaluate into a parameter list; write the fields out " +
+				"one by one",
+		})
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(text), &parsed); err != nil {
+		return nil, append(issues, Unsupported{
+			Severity: SeverityBlocking, Field: field,
+			Reason: fmt.Sprintf("this node's JSON parameters could not be read (%v); fix the JSON before running the workflow", err),
+		})
+	}
+	converted := make(map[string]any, len(parsed))
+	for name, value := range parsed {
+		converted[name] = fromN8NTree(value)
+	}
+	return converted, issues
+}
+
+// httpBodyFields carries n8n's key/value body parameters.
+//
+// Kept as a map of name → value with expression markers intact rather than
+// marshalled into a JSON string. Marshalling turned `={{ $json.id }}` into the
+// literal text of the marker, so a body field that was an expression arrived as
+// a JSON object describing an expression.
+func httpBodyFields(node Node, parameters map[string]any, issues []Unsupported) []Unsupported {
+	fields, ok := namedValues(node.Parameters, "sendBody", "bodyParameters")
+	if !ok || len(fields) == 0 {
+		return issues
+	}
+	parameters["bodyFields"] = fields
+	return issues
+}
+
 func httpToKilas(node Node) (map[string]any, []Unsupported) {
 	issues := make([]Unsupported, 0)
 	parameters := map[string]any{
@@ -1022,43 +1320,105 @@ func httpToKilas(node Node) (map[string]any, []Unsupported) {
 		"url":    fromN8NValue(node.Parameters["url"]),
 	}
 
-	if query, ok := namedValues(node.Parameters, "sendQuery", "queryParameters"); ok {
+	if stringParameter(node.Parameters, "specifyQuery") == "json" {
+		query, queryIssues := jsonParameters(node.Parameters, "jsonQuery", "jsonQuery", issues)
+		issues = queryIssues
+		if len(query) > 0 {
+			parameters["sendQuery"] = true
+			parameters["queryParameters"] = query
+		}
+	} else if query, ok := httpCollection(node.Parameters, "sendQuery", "queryParameters", "parametersQuery"); ok {
 		parameters["sendQuery"] = true
 		parameters["queryParameters"] = query
 	}
-	if headers, ok := namedValues(node.Parameters, "sendHeaders", "headerParameters"); ok {
+
+	if stringParameter(node.Parameters, "specifyHeaders") == "json" {
+		headers, headerIssues := jsonParameters(node.Parameters, "jsonHeaders", "jsonHeaders", issues)
+		issues = headerIssues
+		if len(headers) > 0 {
+			parameters["sendHeaders"] = true
+			parameters["headers"] = headers
+		}
+	} else if headers, ok := httpCollection(node.Parameters, "sendHeaders", "headerParameters", "parametersHeaders"); ok {
 		parameters["sendHeaders"] = true
 		parameters["headers"] = headers
 	}
 
 	if send, _ := node.Parameters["sendBody"].(bool); send {
 		parameters["sendBody"] = true
-		switch contentType := stringParameter(node.Parameters, "contentType"); contentType {
-		case "json", "":
-			parameters["bodyType"] = "json"
-			if body, ok := node.Parameters["jsonBody"]; ok {
-				parameters["body"] = fromN8NValue(body)
-			} else if fields, ok := namedValues(node.Parameters, "sendBody", "bodyParameters"); ok {
-				encoded, _ := json.Marshal(fields)
-				parameters["body"] = string(encoded)
-			}
-		case "form-urlencoded":
+		contentType := stringParameter(node.Parameters, "contentType")
+		specifyBody := stringParameter(node.Parameters, "specifyBody")
+		switch {
+		case strings.Contains(contentType, "multipart"):
+			// A multipart body is built from binary parts this server has no
+			// way to attach, so the choice is refusing or sending something
+			// else. Sending something else is how a form upload becomes an
+			// empty POST that the far end accepts.
 			parameters["bodyType"] = "form"
-			if fields, ok := namedValues(node.Parameters, "sendBody", "bodyParameters"); ok {
-				encoded, _ := json.Marshal(fields)
-				parameters["body"] = string(encoded)
-			}
-		default:
+			issues = append(issues, Unsupported{
+				Severity: SeverityBlocking, Field: "contentType",
+				Reason: "this node sends a multipart form body, which this server does not build; " +
+					"send the fields as a form-urlencoded or JSON body instead",
+			})
+		case contentType == "binaryData":
 			parameters["bodyType"] = "raw"
 			issues = append(issues, Unsupported{
-				Reason: fmt.Sprintf("the n8n body content type %q is outside the supported subset; the body was imported as raw text", contentType),
+				Severity: SeverityBlocking, Field: "contentType",
+				Reason: "this node sends a binary body from the item's binary data, which this server " +
+					"does not attach to a request; reference the file from an expression instead",
+			})
+		case contentType == "raw":
+			parameters["bodyType"] = "raw"
+			if rawContentType := stringParameter(node.Parameters, "rawContentType"); rawContentType != "" {
+				parameters["rawContentType"] = rawContentType
+			}
+			if body, present := node.Parameters["body"]; present {
+				parameters["body"] = fromN8NValue(body)
+			}
+		case contentType == "form-urlencoded":
+			parameters["bodyType"] = "form"
+			issues = httpBodyFields(node, parameters, issues)
+		default:
+			parameters["bodyType"] = "json"
+			if specifyBody == "json" {
+				if body, present := node.Parameters["jsonBody"]; present {
+					parameters["body"] = fromN8NValue(body)
+				}
+			} else {
+				carried := httpBodyFields(node, parameters, issues)
+				issues = carried
+				if _, present := parameters["bodyFields"]; !present {
+					// No key/value body was stored either, so the node has an
+					// empty body: `jsonBody` may still be there in every shape.
+					if body, present := node.Parameters["jsonBody"]; present {
+						parameters["body"] = fromN8NValue(body)
+					}
+				}
+			}
+		}
+
+		if stringParameter(node.Parameters, "inputDataFieldName") != "" && contentType == "binaryData" {
+			issues = append(issues, Unsupported{
+				Severity: SeverityDropped, Field: "inputDataFieldName",
+				Reason: "the name of the binary field this node sent is meaningless without a binary body and was not carried",
 			})
 		}
 	}
 
+	issues = append(issues, httpOptionsToKilas(node, parameters)...)
+
 	if authentication := stringParameter(node.Parameters, "authentication"); authentication != "" && authentication != "none" {
 		// A credential reference in an exported n8n workflow is an n8n ID and
 		// means nothing here, so it is named rather than silently dropped.
+		//
+		// The mode itself is carried, because the mode is what decides which
+		// KilasFlow credential type has to be attached. It used to be dropped
+		// along with the reference, so a node that used generic header auth
+		// imported looking unauthenticated.
+		parameters["authentication"] = authentication
+		if generic := stringParameter(node.Parameters, "genericAuthType"); generic != "" {
+			parameters["genericAuthType"] = generic
+		}
 		issues = append(issues, Unsupported{
 			Reason: "this HTTP Request used an n8n credential. Credentials are not imported; attach a KilasFlow credential before running the workflow.",
 		})
@@ -1066,12 +1426,128 @@ func httpToKilas(node Node) (map[string]any, []Unsupported) {
 	return parameters, issues
 }
 
+// httpOptionsToKilas carries the request options this server implements and
+// names the ones it does not.
+func httpOptionsToKilas(node Node, parameters map[string]any) []Unsupported {
+	options, ok := node.Parameters["options"].(map[string]any)
+	if !ok || len(options) == 0 {
+		return nil
+	}
+	issues := make([]Unsupported, 0)
+	consumed := map[string]bool{}
+
+	// Timeout. n8n's option is in milliseconds in versions below 4.2 and in
+	// seconds at 4.2, where the field was renamed.
+	if timeout, present := optionNumber(options, "timeout"); present {
+		consumed["timeout"] = true
+		if timeout > 0 {
+			parameters["requestTimeoutSeconds"] = timeout
+		}
+	} else if timeout, present := optionNumber(options, "requestTimeout"); present {
+		consumed["requestTimeout"] = true
+		if timeout > 0 {
+			parameters["requestTimeoutSeconds"] = timeout
+		}
+	}
+
+	for _, path := range [][]string{{"response", "response", "neverError"}, {"response", "neverError"}, {"neverError"}} {
+		if optionFlag(options, path...) {
+			consumed[strings.Join(path, ".")] = true
+			parameters["neverError"] = true
+			break
+		}
+	}
+	for _, path := range [][]string{{"response", "response", "responseFormat"}, {"response", "responseFormat"}, {"responseFormat"}} {
+		if value, present := optionAt(options, path...); present {
+			consumed[strings.Join(path, ".")] = true
+			if format := textOf(value); format != "" {
+				switch format {
+				case "autodetect", "json", "text", "file":
+					parameters["responseFormat"] = format
+				default:
+					issues = append(issues, Unsupported{
+						Severity: SeverityBlocking, Field: "options.response.responseFormat",
+						Reason: fmt.Sprintf("the n8n response format %q is not one this server reads "+
+							"(autodetect, json, text, file); the response would be decoded the wrong way", format),
+					})
+				}
+			}
+			break
+		}
+	}
+	for _, path := range [][]string{{"response", "response", "fullResponse"}, {"response", "fullResponse"}, {"fullResponse"}} {
+		if optionFlag(options, path...) {
+			consumed[strings.Join(path, ".")] = true
+			parameters["fullResponse"] = true
+			break
+		}
+	}
+	for _, path := range [][]string{{"response", "response", "outputPropertyName"}, {"response", "outputPropertyName"}, {"outputPropertyName"}} {
+		if value, present := optionAt(options, path...); present {
+			consumed[strings.Join(path, ".")] = true
+			if name := textOf(value); name != "" {
+				parameters["outputPropertyName"] = name
+			}
+			break
+		}
+	}
+	for _, path := range [][]string{{"redirect", "redirect", "followRedirects"}, {"redirect", "followRedirects"}, {"followRedirects"}} {
+		if value, present := optionAt(options, path...); present {
+			consumed[strings.Join(path, ".")] = true
+			if flag, isFlag := value.(bool); isFlag && !flag {
+				parameters["followRedirects"] = false
+			}
+			break
+		}
+	}
+	for _, path := range [][]string{{"redirect", "redirect", "maxRedirects"}, {"redirect", "maxRedirects"}, {"maxRedirects"}} {
+		if redirects, present := optionNumber(options, path...); present {
+			consumed[strings.Join(path, ".")] = true
+			if redirects > 0 {
+				parameters["maxRedirects"] = redirects
+			}
+			break
+		}
+	}
+
+	if optionFlag(options, "allowUnauthorizedCerts") {
+		consumed["allowUnauthorizedCerts"] = true
+		// Refused rather than ignored, and refused loudly: a node that skips
+		// TLS verification to reach a self-signed endpoint fails every call
+		// here, and quietly verifying the certificate instead is not a
+		// behaviour anybody asked for.
+		issues = append(issues, Unsupported{
+			Severity: SeverityBlocking, Field: "options.allowUnauthorizedCerts",
+			Reason: "this node accepts unauthorized TLS certificates, which this server never does; " +
+				"install the endpoint's certificate or disable this option before running the workflow",
+		})
+	}
+	if _, present := optionAt(options, "pagination"); present {
+		consumed["pagination"] = true
+		issues = append(issues, Unsupported{
+			Field: "options.pagination",
+			Reason: "n8n's request pagination is not implemented here; the node sends one request and " +
+				"returns its response, so add a loop node for the remaining pages",
+		})
+	}
+	if _, present := optionAt(options, "batching"); present {
+		consumed["batching"] = true
+		issues = append(issues, Unsupported{
+			Field: "options.batching",
+			Reason: "n8n splits a batched request into several; this server sends one request with " +
+				"every item, so split the items with a loop node instead",
+		})
+	}
+
+	return reportUnconsumedOptions(options, consumed, issues)
+}
+
 func httpToN8N(node workflow.Node) (map[string]any, []Lossy) {
 	lossy := make([]Lossy, 0)
 	parameters := map[string]any{
 		"method":  defaultString(stringParameter(node.Parameters, "method"), "GET"),
 		"url":     toN8NValue(node.Parameters["url"]),
-		"options": map[string]any{},
+		"options": httpOptionsToN8N(node.Parameters),
 	}
 
 	if enabled, _ := node.Parameters["sendQuery"].(bool); enabled {
@@ -1087,13 +1563,34 @@ func httpToN8N(node workflow.Node) (map[string]any, []Lossy) {
 		switch stringParameter(node.Parameters, "bodyType") {
 		case "form":
 			parameters["contentType"] = "form-urlencoded"
+			if fields, ok := node.Parameters["bodyFields"].(map[string]any); ok && len(fields) > 0 {
+				parameters["bodyParameters"] = n8nNamedValues(fields)
+			}
+			if body, present := node.Parameters["body"]; present {
+				parameters["body"] = toN8NValue(body)
+			}
 		case "raw":
 			parameters["contentType"] = "raw"
+			if contentType := stringParameter(node.Parameters, "rawContentType"); contentType != "" {
+				parameters["rawContentType"] = contentType
+			}
+			parameters["body"] = toN8NValue(node.Parameters["body"])
 		default:
 			parameters["contentType"] = "json"
-			parameters["specifyBody"] = "json"
+			if fields, ok := node.Parameters["bodyFields"].(map[string]any); ok && len(fields) > 0 {
+				parameters["specifyBody"] = "keypair"
+				parameters["bodyParameters"] = n8nNamedValues(fields)
+			} else {
+				parameters["specifyBody"] = "json"
+				parameters["jsonBody"] = toN8NValue(node.Parameters["body"])
+			}
 		}
-		parameters["jsonBody"] = toN8NValue(node.Parameters["body"])
+	}
+	if authentication := stringParameter(node.Parameters, "authentication"); authentication != "" {
+		parameters["authentication"] = authentication
+		if generic := stringParameter(node.Parameters, "genericAuthType"); generic != "" {
+			parameters["genericAuthType"] = generic
+		}
 	}
 	if _, set := node.Parameters["neverError"]; set {
 		lossy = append(lossy, Lossy{Field: "neverError", Reason: "n8n expresses this as an error-handling setting rather than a parameter; set \"Continue On Fail\" in n8n if it is needed"})
@@ -1101,16 +1598,62 @@ func httpToN8N(node workflow.Node) (map[string]any, []Lossy) {
 	return parameters, lossy
 }
 
-// namedValues reads n8n's `{parameters: [{name, value}]}` collections.
-func namedValues(parameters map[string]any, flag, key string) (map[string]any, bool) {
-	if enabled, _ := parameters[flag].(bool); !enabled {
-		return nil, false
+// httpOptionsToN8N is the inverse of httpOptionsToKilas, and the same
+// principle applies: an option this server read goes back where n8n keeps it,
+// and an option it never had is not invented.
+func httpOptionsToN8N(source map[string]any) map[string]any {
+	options := map[string]any{}
+	response := map[string]any{}
+	if seconds, ok := source["requestTimeoutSeconds"].(float64); ok && seconds > 0 {
+		options["timeout"] = seconds
 	}
+	if flag, _ := source["neverError"].(bool); flag {
+		response["neverError"] = true
+	}
+	if format := stringParameter(source, "responseFormat"); format != "" && format != "autodetect" {
+		response["responseFormat"] = format
+	}
+	if name := stringParameter(source, "outputPropertyName"); name != "" {
+		response["outputPropertyName"] = name
+	}
+	if flag, set := source["fullResponse"].(bool); set && flag {
+		response["fullResponse"] = true
+	}
+	if len(response) > 0 {
+		options["response"] = map[string]any{"response": response}
+	}
+	redirect := map[string]any{}
+	if flag, set := source["followRedirects"].(bool); set && !flag {
+		redirect["followRedirects"] = false
+	}
+	if redirects, ok := source["maxRedirects"].(float64); ok && redirects > 0 {
+		redirect["maxRedirects"] = redirects
+	}
+	if len(redirect) > 0 {
+		options["redirect"] = map[string]any{"redirect": redirect}
+	}
+	return options
+}
+
+// namedValues reads n8n's `{parameters: [{name, value}]}` collections.
+//
+// The HTTP Request *tool* keeps the same list under different names and a
+// different wrapper key (`parametersQuery.values`, not
+// `queryParameters.parameters`), and it has no sendQuery flag at all — the
+// presence of the collection is the flag. Reading only the node's spelling
+// imported every tool request with no query parameters and no headers.
+func namedValues(parameters map[string]any, flag, key string) (map[string]any, bool) {
 	wrapper, ok := parameters[key].(map[string]any)
 	if !ok {
 		return nil, false
 	}
+	if enabled, present := parameters[flag].(bool); present && !enabled {
+		return nil, false
+	}
 	entries, ok := wrapper["parameters"].([]any)
+	if !ok {
+		entries, ok = wrapper["values"].([]any)
+	}
 	if !ok {
 		return nil, false
 	}
@@ -1146,8 +1689,49 @@ func n8nNamedValues(value any) map[string]any {
 func webhookToKilas(node Node) (map[string]any, []Unsupported) {
 	issues := make([]Unsupported, 0)
 	parameters := map[string]any{
-		"path":       strings.Trim(stringParameter(node.Parameters, "path"), "/"),
-		"httpMethod": strings.ToUpper(defaultString(stringParameter(node.Parameters, "httpMethod"), "POST")),
+		"path": strings.Trim(stringParameter(node.Parameters, "path"), "/"),
+	}
+
+	// n8n's Webhook defaults to GET, and an export omits a parameter still
+	// holding its default — so a method-less webhook is a GET webhook. Reading
+	// the absence as POST minted a POST-only endpoint, and every caller the
+	// workflow was written for got a 404.
+	switch method := node.Parameters["httpMethod"].(type) {
+	case []any:
+		// n8n 2.1 allows several methods on one path.
+		methods := make([]any, 0, len(method))
+		for _, entry := range method {
+			if name := strings.ToUpper(strings.TrimSpace(textOf(entry))); name != "" {
+				methods = append(methods, name)
+			}
+		}
+		if len(methods) > 0 {
+			parameters["httpMethods"] = methods
+		} else {
+			parameters["httpMethod"] = "GET"
+		}
+	case string:
+		if trimmed := strings.TrimSpace(method); trimmed == "" {
+			parameters["httpMethod"] = "GET"
+		} else {
+			parameters["httpMethod"] = strings.ToUpper(trimmed)
+		}
+	default:
+		parameters["httpMethod"] = "GET"
+	}
+
+	// n8n keeps the response configuration in two places: two keys at the top
+	// level and the rest under options. Both are read, and the options travel
+	// as they are — the runtime reads the keys n8n wrote, so renaming them here
+	// would break the one thing that has to line up.
+	if value, present := node.Parameters["responseData"]; present {
+		parameters["responseData"] = textOf(value)
+	}
+	if value, present := node.Parameters["responseCode"]; present {
+		parameters["responseCode"] = fromN8NTree(value)
+	}
+	if options, ok := node.Parameters["options"].(map[string]any); ok && len(options) > 0 {
+		parameters["options"] = fromN8NTree(options)
 	}
 
 	switch responseMode := stringParameter(node.Parameters, "responseMode"); responseMode {
@@ -1171,6 +1755,15 @@ func webhookToKilas(node Node) (map[string]any, []Unsupported) {
 		parameters["authentication"] = "headerAuth"
 		issues = append(issues, Unsupported{
 			Reason: "this Webhook used n8n header auth. Attach a KilasFlow httpHeaderAuth credential before activating the workflow.",
+		})
+	case "jwtAuth":
+		// Kept rather than rewritten to none. The mode is what decides which
+		// credential has to be attached, and an imported endpoint that says
+		// "unauthenticated" is an endpoint somebody will leave open.
+		parameters["authentication"] = "jwtAuth"
+		issues = append(issues, Unsupported{
+			Reason: "this Webhook used n8n JWT auth. Attach the KilasFlow credential that verifies the " +
+				"same tokens before activating the workflow.",
 		})
 	default:
 		parameters["authentication"] = "none"
@@ -1198,12 +1791,52 @@ func webhookToN8N(node workflow.Node) (map[string]any, []ExportIssue) {
 	case "immediate", "":
 		responseMode = "onReceived"
 	}
-	return map[string]any{
+	written := map[string]any{
 		"path":         stringParameter(node.Parameters, "path"),
-		"httpMethod":   defaultString(stringParameter(node.Parameters, "httpMethod"), "POST"),
 		"responseMode": responseMode,
 		"options":      map[string]any{},
-	}, nil
+	}
+	if methods, ok := node.Parameters["httpMethods"].([]any); ok && len(methods) > 0 {
+		written["httpMethod"] = methods
+	} else {
+		// Written explicitly rather than left to n8n's default: an imported
+		// GET webhook exported without the key is a GET webhook in n8n too,
+		// but saying so costs nothing and makes the round trip readable.
+		written["httpMethod"] = defaultString(strings.ToUpper(stringParameter(node.Parameters, "httpMethod")), "GET")
+	}
+	if value, present := node.Parameters["responseData"]; present {
+		written["responseData"] = textOf(value)
+	}
+	if value, present := node.Parameters["responseCode"]; present {
+		written["responseCode"] = toN8NTree(value)
+	}
+	if options, ok := node.Parameters["options"].(map[string]any); ok && len(options) > 0 {
+		written["options"] = toN8NTree(options)
+	}
+	if authentication := stringParameter(node.Parameters, "authentication"); authentication != "" && authentication != "none" {
+		written["authentication"] = authentication
+	}
+	return written, nil
+}
+
+// toN8NTree is the export inverse of fromN8NTree.
+func toN8NTree(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		converted := make(map[string]any, len(typed))
+		for key, nested := range typed {
+			converted[key] = toN8NTree(nested)
+		}
+		return converted
+	case []any:
+		converted := make([]any, 0, len(typed))
+		for _, entry := range typed {
+			converted = append(converted, toN8NTree(entry))
+		}
+		return converted
+	default:
+		return toN8NValue(value)
+	}
 }
 
 func respondToKilas(node Node) (map[string]any, []Unsupported) {
@@ -1223,11 +1856,19 @@ func respondToKilas(node Node) (map[string]any, []Unsupported) {
 	if url, ok := node.Parameters["redirectURL"]; ok {
 		parameters["redirectURL"] = fromN8NValue(url)
 	}
+	if headers := responseHeaderEntries(options); len(headers) > 0 {
+		parameters["responseHeaders"] = headers
+	}
+	if key := stringParameter(options, "responseKey"); key != "" {
+		parameters["responseKey"] = key
+	}
 
 	switch respondWith := stringParameter(node.Parameters, "respondWith"); respondWith {
 	case "":
-		// n8n's own default.
-		parameters["respondWith"] = "text"
+		// n8n's own default is the first incoming item, and an export omits a
+		// parameter holding its default. Reading the absence as `text` answered
+		// every webhook-backed API with an empty body.
+		parameters["respondWith"] = "firstIncomingItem"
 	case "text", "json", "allIncomingItems", "firstIncomingItem", "noData", "redirect":
 		parameters["respondWith"] = respondWith
 	case "binary":
@@ -1251,7 +1892,35 @@ func respondToKilas(node Node) (map[string]any, []Unsupported) {
 			"the n8n Respond to Webhook mode %q has no equivalent; the node was imported as a text response", respondWith)})
 		parameters["respondWith"] = "text"
 	}
+	// The options this node did not read are named rather than forgotten;
+	// responseCode, responseHeaders and responseKey are the ones it does.
+	if len(options) > 0 {
+		consumed := map[string]bool{"responseCode": true, "responseHeaders": true, "responseKey": true}
+		issues = reportUnconsumedOptions(options, consumed, issues)
+	}
 	return parameters, issues
+}
+
+// responseHeaderEntries reads n8n's `{entries: [{name, value}]}` header list.
+func responseHeaderEntries(options map[string]any) map[string]any {
+	collection, ok := options["responseHeaders"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	entries, _ := collection["entries"].([]any)
+	headers := make(map[string]any, len(entries))
+	for _, entry := range entries {
+		fields, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		name, _ := fields["name"].(string)
+		if strings.TrimSpace(name) == "" {
+			continue
+		}
+		headers[name] = fromN8NValue(fields["value"])
+	}
+	return headers
 }
 
 // respondToN8N writes the response mode the node actually holds.
@@ -1273,8 +1942,22 @@ func respondToN8N(node workflow.Node) (map[string]any, []ExportIssue) {
 		}
 	}
 	parameters := map[string]any{"respondWith": respondWith, "options": map[string]any{}}
+	options := map[string]any{}
 	if code, ok := numberParameter(node.Parameters, "responseCode"); ok {
-		parameters["options"] = map[string]any{"responseCode": code}
+		options["responseCode"] = code
+	}
+	if headers, ok := node.Parameters["responseHeaders"].(map[string]any); ok && len(headers) > 0 {
+		entries := make([]any, 0, len(headers))
+		for _, name := range sortedKeys(headers) {
+			entries = append(entries, map[string]any{"name": name, "value": toN8NValue(headers[name])})
+		}
+		options["responseHeaders"] = map[string]any{"entries": entries}
+	}
+	if key := stringParameter(node.Parameters, "responseKey"); key != "" {
+		options["responseKey"] = key
+	}
+	if len(options) > 0 {
+		parameters["options"] = options
 	}
 	if body, ok := node.Parameters["responseBody"]; ok {
 		parameters["responseBody"] = toN8NValue(body)
@@ -1318,17 +2001,38 @@ func executeWorkflowToKilas(node Node) (map[string]any, []Unsupported) {
 		})
 	}
 	// The imported ID is n8n's, so it will not resolve here whatever mode it
-	// used. Said once, on every import, rather than discovered at run time.
-	issues = append(issues, Unsupported{
-		Severity: SeverityBlocking, Field: "workflowId",
-		Reason: "the sub-workflow is identified by its n8n workflow ID, which does not exist on this server; " +
-			"set this node's Workflow to the KilasFlow workflow that should run",
-	})
+	// used — unless it names the workflow it sits in, which this server's
+	// evaluator resolves at run time exactly as n8n does.
+	if n8nSelfWorkflowReference(node.Parameters["workflowId"]) {
+		parameters["workflowId"] = property.WriteLocator(property.Locator{
+			Mode: "id", Value: expressionValue(n8nSelfWorkflowTemplate),
+		})
+	} else {
+		// Said once, on every import, rather than discovered at run time.
+		issues = append(issues, Unsupported{
+			Severity: SeverityBlocking, Field: "workflowId",
+			Reason: "the sub-workflow is identified by its n8n workflow ID, which does not exist on this server; " +
+				"set this node's Workflow to the KilasFlow workflow that should run",
+		})
+	}
 
 	if mode := stringParameter(node.Parameters, "mode"); mode == "each" {
 		parameters["itemsPerCall"] = "eachItem"
 	} else {
 		parameters["itemsPerCall"] = "allItems"
+	}
+	// n8n's "Define using fields below" mapper — what the sub-workflow is told,
+	// per item, in the caller's context. It was never read, so every modern
+	// sub-workflow call sent its raw items and a sub-workflow that routes on a
+	// mapped field suddenly had nothing to route on.
+	if fields, _, reported := workflowInputsToKilas(node.Parameters["workflowInputs"]); !reported && len(fields) > 0 {
+		parameters["inputFields"] = fields
+	} else if reported {
+		issues = append(issues, Unsupported{
+			Severity: SeverityDropped, Field: "workflowInputs",
+			Reason: "this call mapped its workflow inputs in a shape this importer does not read, so the " +
+				"sub-workflow receives the incoming items unchanged: define the fields on the call again",
+		})
 	}
 	options, _ := node.Parameters["options"].(map[string]any)
 	// n8n spells "do not wait" as waitForSubWorkflow: false.
@@ -1356,17 +2060,40 @@ func executeWorkflowToN8N(node workflow.Node) (map[string]any, []Lossy) {
 	if stringParameter(node.Parameters, "mode") == "fireAndForget" {
 		parameters["options"] = map[string]any{"waitForSubWorkflow": false}
 	}
+	if fields, ok := node.Parameters["inputFields"].(map[string]any); ok && len(fields) > 0 {
+		value := make(map[string]any, len(fields))
+		for _, key := range sortedKeys(fields) {
+			value[key] = toN8NValue(fields[key])
+		}
+		parameters["workflowInputs"] = map[string]any{"mappingMode": "defineBelow", "value": value}
+	}
 	return parameters, nil
 }
 
 func executeWorkflowTriggerToKilas(node Node) (map[string]any, []Unsupported) {
 	parameters := map[string]any{}
 	source := stringParameter(node.Parameters, "inputSource")
+	inputs, declared := node.Parameters["workflowInputs"].(map[string]any)
 	switch source {
 	case "workflowInputs", "fields":
 		parameters["inputSource"] = "fields"
-		if inputs, ok := node.Parameters["workflowInputs"].(map[string]any); ok {
+		if declared {
 			parameters["workflowInputs"] = inputs
+		}
+	case "":
+		// n8n 1.1 made workflowInputs the default, and an export omits a
+		// parameter still holding its default — so a trigger that declares the
+		// fields it expects carries no inputSource at all. Reading only an
+		// explicit value imported every one of those as passthrough with its
+		// declarations discarded. A trigger with nothing declared is left as
+		// passthrough: an empty declaration and no declaration are the same
+		// tool, and claiming `fields` for it would describe a contract nobody
+		// wrote.
+		if declared && declaredFieldCount(inputs) > 0 {
+			parameters["inputSource"] = "fields"
+			parameters["workflowInputs"] = inputs
+		} else {
+			parameters["inputSource"] = "passthrough"
 		}
 	default:
 		// n8n's passthrough, and its jsonExample mode, both mean "take what the
@@ -1375,6 +2102,13 @@ func executeWorkflowTriggerToKilas(node Node) (map[string]any, []Unsupported) {
 		parameters["inputSource"] = "passthrough"
 	}
 	return parameters, nil
+}
+
+// declaredFieldCount counts the entries of an n8n `{values: [{name, type}]}`
+// declaration.
+func declaredFieldCount(inputs map[string]any) int {
+	values, _ := inputs["values"].([]any)
+	return len(values)
 }
 
 func executeWorkflowTriggerToN8N(node workflow.Node) (map[string]any, []Lossy) {
@@ -1730,6 +2464,44 @@ func dateTimeToN8N(node workflow.Node) (map[string]any, []Lossy) {
 	return parameters, nil
 }
 
+// waitDefaults are n8n's own Wait defaults for a node version.
+//
+// n8n omits a parameter that still holds its default, so an export usually says
+// nothing about the amount or the unit — and the two versions disagree about
+// both. v1 waits one hour; v1.1 changed the default to five seconds, which is
+// what every "pause for a moment" node in the corpus relies on. Reading either
+// through one hard-coded pair turned "wait three seconds" into three hours and
+// an omitted amount into no pause at all.
+func waitDefaults(version float64) (float64, string) {
+	if version >= 1.1 {
+		return 5, "seconds"
+	}
+	return 1, "hours"
+}
+
+// waitUnits are the units n8n's Wait accepts, and therefore the ones this
+// server must know.
+var waitUnits = map[string]bool{"seconds": true, "minutes": true, "hours": true, "days": true}
+
+// readableAsNumber reports whether a converted n8n value is something the
+// executor can read as a number: a number, an expression, or numeric text.
+func readableAsNumber(value any) bool {
+	switch typed := value.(type) {
+	case float64, int, int64, json.Number:
+		return true
+	case string:
+		_, err := strconv.ParseFloat(strings.TrimSpace(typed), 64)
+		return err == nil
+	case map[string]any:
+		// An expression marker. Whether it resolves to a number is only
+		// knowable per item, at run time.
+		mode, _ := typed["mode"].(string)
+		return mode == "expression"
+	default:
+		return false
+	}
+}
+
 // waitToKilas maps n8n's Wait node, refusing the two durable resume modes.
 func waitToKilas(node Node) (map[string]any, []Unsupported) {
 	issues := make([]Unsupported, 0)
@@ -1738,26 +2510,91 @@ func waitToKilas(node Node) (map[string]any, []Unsupported) {
 
 	switch resume {
 	case "timeInterval":
-		parameters["amount"] = node.Parameters["amount"]
-		parameters["unit"] = defaultString(stringParameter(node.Parameters, "unit"), "hours")
+		defaultAmount, defaultUnit := waitDefaults(node.TypeVersion)
+		// Converted, not copied: an amount written as `={{ $json.w }}` is a
+		// string, and a string that reached the executor's number reader was
+		// read as zero — a rate-limit pause that silently did not happen.
+		amount := fromN8NValue(node.Parameters["amount"])
+		if amount == nil {
+			amount = defaultAmount
+		} else if !readableAsNumber(amount) {
+			issues = append(issues, Unsupported{
+				Severity: SeverityBlocking, Field: "amount",
+				Reason: fmt.Sprintf("this Wait's amount %q is neither a number nor an expression this "+
+					"server can read, so the pause would be zero; set a fixed amount or an expression",
+					textOf(node.Parameters["amount"])),
+			})
+		}
+		parameters["amount"] = amount
+
+		unit := fromN8NValue(node.Parameters["unit"])
+		if unit == nil {
+			unit = defaultUnit
+		} else if text, isText := unit.(string); isText && !waitUnits[strings.TrimSpace(text)] {
+			issues = append(issues, Unsupported{
+				Severity: SeverityBlocking, Field: "unit",
+				Reason: fmt.Sprintf("the n8n wait unit %q is not one this server knows (seconds, minutes, "+
+					"hours, days); the pause would be wrong, so set the unit explicitly", text),
+			})
+		}
+		parameters["unit"] = unit
 	case "specificTime":
 		parameters["dateTime"] = fromN8NValue(node.Parameters["dateTime"])
-	case "webhook", "form":
-		// Imported as the shape it is rather than silently rewritten, so the
-		// editor shows what the workflow actually said and the validator
-		// refuses to activate it with a message that names what is missing.
-		// Rewriting it to a time interval would produce a workflow that
-		// activates, runs, and does the wrong thing.
+	case "webhook":
+		// Carried as itself: the execution parks in storage and wakes on the
+		// resume URL, which is what n8n's mode means.
+	case "form":
+		// Also carried, but not as an arbitrary form: this server's form mode
+		// is the approval page, so an n8n form with fields of its own renders
+		// as approve/deny. Named rather than refused — the wait works, the
+		// page is different, and a user needs to know which.
 		issues = append(issues, Unsupported{
-			Severity: SeverityBlocking, Field: "resume",
-			Reason: fmt.Sprintf("resuming on %q needs the execution to be suspended to storage and woken again "+
-				"later, which this server does not do yet; split the workflow at this point and start the "+
-				"second half from a Webhook trigger", resume),
+			Severity: SeverityLossy, Field: "resume",
+			Reason: "n8n's form wait resumes on a form the workflow defines; this server resumes on its " +
+				"approval page, where the run is approved or denied. Any fields the n8n form collected " +
+				"are not part of that page.",
 		})
 	default:
 		issues = append(issues, Unsupported{Field: "resume", Reason: fmt.Sprintf(
 			"the n8n Wait resume mode %q has no equivalent; the node was imported as a time interval", resume)})
 		parameters["resume"] = "timeInterval"
+	}
+
+	// n8n's own bound on how long the wait may last. Carried under the names
+	// the executor reads, and only when the source actually set it: n8n omits
+	// a parameter holding its default, and the default is "no limit".
+	if options, ok := node.Parameters["options"].(map[string]any); ok {
+		carried := map[string]any{}
+		if limit, _ := options["limitWaitTime"].(bool); limit {
+			carried["limitWaitTime"] = true
+			if kind := stringParameter(options, "limitType"); kind != "" {
+				carried["limitType"] = kind
+			}
+			if amount, ok := numberParameter(options, "limitAmount"); ok {
+				carried["limitAmount"] = amount
+			}
+			if unit := stringParameter(options, "limitUnit"); unit != "" {
+				carried["limitUnit"] = unit
+			}
+			if at, present := options["limitAt"]; present && at != nil {
+				carried["limitAt"] = fromN8NValue(at)
+			}
+		}
+		for key := range options {
+			switch key {
+			case "limitWaitTime", "limitType", "limitAmount", "limitUnit", "limitAt":
+			default:
+				issues = append(issues, Unsupported{
+					Severity: SeverityDropped, Field: "options." + key,
+					Reason: fmt.Sprintf("the n8n Wait option %q has no KilasFlow equivalent and was not carried", key),
+				})
+			}
+		}
+		if len(carried) > 0 {
+			for key, value := range carried {
+				parameters[key] = value
+			}
+		}
 	}
 	return parameters, issues
 }
@@ -1767,13 +2604,31 @@ func waitToN8N(node workflow.Node) (map[string]any, []Lossy) {
 		"resume": defaultString(stringParameter(node.Parameters, "resume"), "timeInterval"),
 	}
 	if value, present := node.Parameters["amount"]; present {
-		parameters["amount"] = value
+		// Converted, not copied: the amount may be an expression marker, and
+		// n8n reads a fixed value there — writing the marker object back
+		// exported a node whose amount was a JSON object.
+		parameters["amount"] = toN8NValue(value)
 	}
-	if unit := stringParameter(node.Parameters, "unit"); unit != "" {
-		parameters["unit"] = unit
+	if value, present := node.Parameters["unit"]; present {
+		parameters["unit"] = toN8NValue(value)
 	}
 	if value, present := node.Parameters["dateTime"]; present {
 		parameters["dateTime"] = toN8NValue(value)
+	}
+	// The wait's own limit goes back where n8n keeps it. Written only when the
+	// document has it, because n8n's default is "no limit" and writing the
+	// default back would be inventing a setting.
+	if limit, _ := node.Parameters["limitWaitTime"].(bool); limit {
+		options := map[string]any{"limitWaitTime": true}
+		for _, key := range []string{"limitType", "limitAmount", "limitUnit"} {
+			if value, present := node.Parameters[key]; present {
+				options[key] = value
+			}
+		}
+		if value, present := node.Parameters["limitAt"]; present {
+			options["limitAt"] = toN8NValue(value)
+		}
+		parameters["options"] = options
 	}
 	return parameters, nil
 }
@@ -1895,7 +2750,13 @@ func mysqlToN8N(node workflow.Node) (map[string]any, []Lossy) {
 
 func postgresToKilas(node Node) (map[string]any, []Unsupported) {
 	issues := make([]Unsupported, 0)
-	operation := defaultString(stringParameter(node.Parameters, "operation"), "executeQuery")
+	// n8n's own default is insert, and an export omits a parameter still
+	// holding its default — so a node whose author never opened the dropdown
+	// carries no `operation` at all. Reading that as executeQuery produced a
+	// node with no query, a discarded column mapping and a blocking "an execute
+	// query needs a query" at activation, for a node that was written to insert
+	// rows. The MySQL translator already patches the same default.
+	operation := defaultString(stringParameter(node.Parameters, "operation"), "insert")
 	parameters := map[string]any{"operation": operation}
 
 	switch operation {
@@ -2126,7 +2987,10 @@ var postgresConditionOperators = map[string]string{
 // The values are the same on both sides, so this is a copy rather than a
 // translation — which is what makes an imported node round-trip unchanged.
 func postgresToN8N(node workflow.Node) (map[string]any, []Lossy) {
-	operation := defaultString(stringParameter(node.Parameters, "operation"), "executeQuery")
+	// Written explicitly, and defaulted the same way the import does: the two
+	// sides default this key differently, so an absent key means "insert" in
+	// n8n and something else here. Never let a default cross.
+	operation := defaultString(stringParameter(node.Parameters, "operation"), "insert")
 	options, lossy := sqlOptionsToN8N(node.Parameters)
 	parameters := map[string]any{"operation": operation, "options": options}
 	if operation == "executeQuery" {
@@ -2365,22 +3229,54 @@ func telegramTriggerToKilas(node Node) (map[string]any, []Unsupported) {
 }
 
 // splitInBatchesToKilas maps n8n's Loop Over Items onto the bounded loop.
+//
+// The versions do not agree about what the node's outputs are. v3 split one
+// batch output into `done` (0) and `loop` (1); v1/v2 have a single output that
+// emits each batch, and the loop ends when an If node reads
+// `$node["…"].context["noItemsLeft"]`. The port itself is remapped where the
+// ports are resolved (see legacyOutputPort), and the node is flagged here
+// because the *exit* is a graph the user has to rewire, not a parameter that
+// can be translated.
 func splitInBatchesToKilas(node Node) (map[string]any, []Unsupported) {
 	issues := make([]Unsupported, 0)
 	converted := map[string]any{}
 	if size, ok := numberParameter(node.Parameters, "batchSize"); ok {
 		converted["batchSize"] = size
 	}
+	// n8n's loop has no iteration bound: it runs until its items are exhausted.
+	// This server's fails rather than truncating, so the bound is written
+	// explicitly at the instance-wide ceiling — an imported loop that would
+	// legitimately run a few hundred batches must not inherit a lower default
+	// and die halfway, which reads as a defect in the data rather than a
+	// limit nobody chose.
+	converted["maxIterations"] = float64(workflow.MaxLoopIterations)
 	if options, ok := node.Parameters["options"].(map[string]any); ok {
-		if reset, present := options["reset"]; present && reset != false {
-			// n8n's `reset` restarts the loop mid-run from an expression.
-			// KilasFlow's loop runs its batches once and stops, which is the
-			// bounded shape the compiler allows a cycle for at all.
+		if reset, present := options["reset"]; present && reset != nil {
+			// Carried, so a round trip returns the node as it was authored,
+			// and still reported: n8n's `reset` restarts a running loop
+			// mid-flight from an expression, and KilasFlow's loop runs its
+			// batches once and stops. Keeping the value is honest; pretending
+			// it does something would not be.
+			converted["reset"] = fromN8NValue(reset)
 			issues = append(issues, Unsupported{
 				Field:  "options.reset",
 				Reason: "n8n's loop reset restarts a running loop; KilasFlow's loop runs its batches once, so this was not carried",
 			})
 		}
+	}
+	if node.TypeVersion < 3 {
+		// Blocking rather than lossy: the batch body keeps running, but the
+		// branch the loop used to leave on never fires — a truncated workflow
+		// that reports success is worse than one that refuses to start.
+		issues = append(issues, Unsupported{
+			Severity: SeverityBlocking, Field: "typeVersion",
+			Reason: fmt.Sprintf("this cycle is an n8n Split In Batches v%g, whose single output emits each "+
+				"batch and whose loop ends on an If node reading $node[…].context[\"noItemsLeft\"]. "+
+				"KilasFlow's loop ends by itself: the batch output was wired to `loop`, so reconnect this "+
+				"node's `done` output to whatever the If's true branch reached, and delete the noItemsLeft "+
+				"test — the items collected by the body leave on `done` once the batches run out",
+				node.TypeVersion),
+		})
 	}
 	return converted, issues
 }
@@ -2390,13 +3286,20 @@ func splitInBatchesToN8N(node workflow.Node) (map[string]any, []Lossy) {
 	if size, present := node.Parameters["batchSize"]; present {
 		written["batchSize"] = size
 	}
+	if reset, present := node.Parameters["reset"]; present {
+		written["options"] = map[string]any{"reset": toN8NValue(reset)}
+	}
 	// maxIterations is KilasFlow's own bound and has no n8n equivalent; n8n
-	// loops until the items run out.
-	if _, present := node.Parameters["maxIterations"]; present {
-		return written, []Lossy{{
-			Field:  "maxIterations",
-			Reason: "KilasFlow's iteration bound has no n8n equivalent; the exported loop runs until its items are exhausted",
-		}}
+	// loops until the items run out. The ceiling this importer writes itself
+	// carries no information n8n lacks, so it goes quietly; a bound somebody
+	// lowered is named, because n8n will run past it.
+	if max, present := node.Parameters["maxIterations"]; present {
+		if numberSetting(max) != float64(workflow.MaxLoopIterations) {
+			return written, []Lossy{{
+				Field:  "maxIterations",
+				Reason: "KilasFlow's iteration bound has no n8n equivalent; the exported loop runs until its items are exhausted",
+			}}
+		}
 	}
 	return written, nil
 }
@@ -2913,6 +3816,15 @@ func chainToKilas(node Node) (map[string]any, []Unsupported) {
 		}
 		issues = append(issues, rowIssues...)
 	}
+	// n8n's chain versions below 1.4 keep the user prompt in a single `prompt`
+	// field, and the importer read only `text` — so an imported chain lost its
+	// question and ran on its system message alone.
+	if _, present := node.Parameters["text"]; !present {
+		if prompt, ok := node.Parameters["prompt"]; ok && prompt != nil && prompt != "" {
+			parameters["promptType"] = "define"
+			parameters["text"] = fromN8NValue(prompt)
+		}
+	}
 	// A top-level batching collection n8n runs in parallel from version 1.7.
 	// Dropped, with the same reasoning as the agent's: items run in order.
 	if batching, present := node.Parameters["batching"]; present && batching != nil {
@@ -2997,12 +3909,48 @@ func chainMessagesToKilas(value any) (any, []Unsupported) {
 			})
 			continue
 		}
+		role, _ := fields["type"].(string)
+		if strings.TrimSpace(role) == "" {
+			// n8n omits the type when it holds its default, which is the
+			// system prompt.
+			role = "SystemMessagePromptTemplate"
+		}
+		mapped, known := kilasChainRoles[role]
+		if !known {
+			issues = append(issues, Unsupported{
+				Field: fmt.Sprintf("messages.messageValues[%d].type", index),
+				Reason: fmt.Sprintf("the prompt row's role %q is not one this server knows (system, human, "+
+					"ai); the row was imported as a system message", role),
+			})
+			mapped = "system"
+		}
 		carried = append(carried, map[string]any{
-			"type":    fromN8NValue(fields["type"]),
+			"type":    mapped,
 			"message": fromN8NValue(fields["message"]),
 		})
 	}
 	return map[string]any{"messageValues": carried}, issues
+}
+
+// kilasChainRoles translates n8n's prompt-template class names to the role
+// names this server's chain accepts.
+//
+// The two vocabularies are the same idea spelled differently: n8n stores the
+// LangChain class name, this server stores the role. Copying the class name
+// through verbatim imported a chain that could not activate — "message 1 has
+// type HumanMessagePromptTemplate, want system, human, or ai" — which is a
+// failure that names a shape rather than the mapping nobody wrote.
+var kilasChainRoles = map[string]string{
+	"SystemMessagePromptTemplate": "system",
+	"HumanMessagePromptTemplate":  "human",
+	"AIMessagePromptTemplate":     "ai",
+}
+
+// n8nChainRoles is the inverse, for export.
+var n8nChainRoles = map[string]string{
+	"system": "SystemMessagePromptTemplate",
+	"human":  "HumanMessagePromptTemplate",
+	"ai":     "AIMessagePromptTemplate",
 }
 
 // chainMessagesToN8N writes the rows back, re-adding n8n's expression prefix.
@@ -3025,8 +3973,12 @@ func chainMessagesToN8N(value any) any {
 		if !ok {
 			continue
 		}
+		role, _ := fields["type"].(string)
+		if mapped, known := n8nChainRoles[role]; known {
+			role = mapped
+		}
 		carried = append(carried, map[string]any{
-			"type":    toN8NValue(fields["type"]),
+			"type":    role,
 			"message": toN8NValue(fields["message"]),
 		})
 	}
@@ -3173,7 +4125,14 @@ func chatModelToN8N(node workflow.Node, asLocator bool, defaultBaseURL string) (
 	return parameters, lossy
 }
 
-// memoryToKilas maps n8n's window memory onto this server's Simple Memory.
+// defaultContextWindowLength is n8n's own default for a Buffer Window Memory.
+//
+// n8n omits a parameter still holding its default, so a memory node authored
+// without touching the field carries no key at all — and the absence has to be
+// read as this, not as "remember nothing".
+const defaultContextWindowLength = 5
+
+// memoryToKilas maps n8n's Buffer Window Memory onto this server's memory.
 func memoryToKilas(node Node) (map[string]any, []Unsupported) {
 	issues := make([]Unsupported, 0)
 	parameters := map[string]any{}
@@ -3197,9 +4156,18 @@ func memoryToKilas(node Node) (map[string]any, []Unsupported) {
 		parameters["sessionKey"] = expressionValue("{{ $json.sessionId }}")
 	}
 
-	if length, ok := numberParameter(node.Parameters, "contextWindowLength"); ok {
-		parameters["maxMessages"] = length
+	// n8n counts *interactions* — one human turn and one AI turn — where this
+	// server counts messages, so the window is doubled rather than copied. A
+	// contextWindowLength of 10 means ten exchanges, and importing it as ten
+	// messages silently halved every conversation an imported agent could
+	// remember. The default is materialised for the same reason the session key
+	// is: n8n omits a parameter still holding its default, and this node's own
+	// default is a different number of turns.
+	length, ok := numberParameter(node.Parameters, "contextWindowLength")
+	if !ok {
+		length = defaultContextWindowLength
 	}
+	parameters["maxMessages"] = length * 2
 	return parameters, issues
 }
 
@@ -3219,8 +4187,10 @@ func memoryToN8N(node workflow.Node) (map[string]any, []Lossy) {
 		"sessionIdType": mode,
 		"sessionKey":    toN8NValue(key),
 	}
+	// Halved, the exact inverse of the import: this server counts messages and
+	// n8n counts interactions.
 	if length, ok := numberParameter(node.Parameters, "maxMessages"); ok {
-		parameters["contextWindowLength"] = length
+		parameters["contextWindowLength"] = length / 2
 	}
 	return parameters, lossy
 }
@@ -3317,6 +4287,15 @@ func workflowToolToKilas(node Node) (map[string]any, []Unsupported) {
 	}
 	switch source {
 	case "database":
+		if n8nSelfWorkflowReference(node.Parameters["workflowId"]) {
+			// `{{ $workflow.id }}` means "call this workflow", which n8n
+			// resolves at run time — a recursive agent is the usual reason.
+			// It is carried as the same expression, which this server's
+			// evaluator resolves to the running workflow's own ID, so the
+			// self-reference keeps working instead of blocking activation.
+			parameters["workflowId"] = expressionValue(n8nSelfWorkflowTemplate)
+			break
+		}
 		// Stored as a locator object ({value}) at every published version,
 		// and as a bare string in older or hand-written documents. Either
 		// way only the identifier crosses: the referenced workflow lives in
@@ -3386,6 +4365,12 @@ func workflowInputsToKilas(value any) (map[string]any, bool, bool) {
 	inner, _ := collection["value"].(map[string]any)
 	entries, _ := inner["mapping"].(map[string]any)
 	if len(entries) == 0 {
+		// The modern resource mapper holds the fields directly under `value`;
+		// the `mapping` wrapper is an older shape. Reading only the wrapper
+		// imported every current n8n mapper as empty.
+		entries = inner
+	}
+	if len(entries) == 0 {
 		// Absent, or a mapper the author never filled in. Optional either
 		// way; an empty mapper and no mapper are the same tool.
 		empty := len(collection) > 0
@@ -3399,6 +4384,27 @@ func workflowInputsToKilas(value any) (map[string]any, bool, bool) {
 }
 
 // workflowToolToN8N writes the workflow tool back.
+// n8nSelfWorkflowTemplate is how n8n writes "the workflow this node is in".
+const n8nSelfWorkflowTemplate = "{{ $workflow.id }}"
+
+// n8nSelfWorkflowReference reports whether a workflow reference points at the
+// workflow it sits in rather than at another one.
+//
+// n8n writes it as `={{ $workflow.id }}` inside a resource locator, and a
+// hand-written document may carry the bare expression. Only an exact match
+// counts: anything else is an identifier from another instance, which this
+// server cannot resolve and must not pretend to.
+func n8nSelfWorkflowReference(value any) bool {
+	text := locatorName(value)
+	if text == "" {
+		text = textOf(value)
+	}
+	text = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(text), "="))
+	text = strings.TrimSpace(strings.TrimPrefix(text, "{{"))
+	text = strings.TrimSpace(strings.TrimSuffix(text, "}}"))
+	return text == "$workflow.id"
+}
+
 func workflowToolToN8N(node workflow.Node) (map[string]any, []Lossy) {
 	lossy := make([]Lossy, 0)
 	parameters := map[string]any{
@@ -3440,6 +4446,16 @@ func workflowReferenceToN8N(value any) string {
 // outputParserToKilas maps n8n's Structured Output Parser onto this server's
 // output parser. The mode translates rather than crossing: n8n says
 // fromJson/manual, this server says exampleJson/jsonSchema.
+// n8nStructuredParserExample is n8n's built-in default example for the
+// Structured Output Parser.
+//
+// Its field default is this JSON text, and n8n omits a parameter still holding
+// its default — so a parser whose author never filled the example in carries
+// nothing, and the parser asks the model for this shape. Applying the same
+// example here is what keeps such a node working; leaving it empty refused
+// activation instead.
+const n8nStructuredParserExample = `{"example":"value"}`
+
 func outputParserToKilas(node Node) (map[string]any, []Unsupported) {
 	issues := make([]Unsupported, 0)
 	parameters := map[string]any{}
@@ -3461,6 +4477,18 @@ func outputParserToKilas(node Node) (map[string]any, []Unsupported) {
 		parameters["schemaType"] = "exampleJson"
 		if example != nil && example != "" {
 			parameters["exampleJson"] = fromN8NValue(example)
+		} else {
+			// n8n fills its built-in example in when the author never touched
+			// the field, and an export omits a parameter holding its default —
+			// so the absence is n8n's example, not "no example". Importing it
+			// as empty failed activation with "exampleJson is required when the
+			// schema type is example JSON" for a node that worked in n8n.
+			parameters["exampleJson"] = n8nStructuredParserExample
+			issues = append(issues, Unsupported{
+				Severity: SeverityLossy, Field: "jsonSchemaExample",
+				Reason: "this parser used n8n's built-in example, which was not stored in the export; " +
+					"n8n's own default example was applied, so edit it to the shape this parser should return",
+			})
 		}
 	case "":
 		// No selector: either a pre-1.2 document, or a mode the author
@@ -3472,6 +4500,8 @@ func outputParserToKilas(node Node) (map[string]any, []Unsupported) {
 			parameters["schemaType"] = "exampleJson"
 			if example != nil && example != "" {
 				parameters["exampleJson"] = fromN8NValue(example)
+			} else {
+				parameters["exampleJson"] = n8nStructuredParserExample
 			}
 		}
 	default:

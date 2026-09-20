@@ -87,6 +87,12 @@ func executeWorkflowNode() node.Definition {
 					{Label: "One run per incoming item", Value: "eachItem"},
 				},
 			},
+			{
+				Key: "inputFields", Label: "Input fields", Kind: node.PropertyKeyValue,
+				Description: "What to send the sub-workflow, evaluated in this workflow once per item — " +
+					"field name to value, expressions allowed. Empty sends the incoming items unchanged, " +
+					"which is what an n8n call that defines no fields sends too.",
+			},
 		},
 		SharedSettings: sharedSettings(),
 		ExecutorID:     ExecuteWorkflowExecutorID,
@@ -195,7 +201,14 @@ func executeExecuteWorkflow(ctx context.Context, ir workflow.IRNode, input workf
 	wait := textValue(parameters["mode"], subworkflowWaitForCompletion) != subworkflowFireAndForget
 
 	if textValue(parameters["itemsPerCall"], "allItems") != "eachItem" {
-		produced, err := callSubworkflow(ctx, ir, request, parameters, items, wait)
+		// The declared fields are evaluated once per incoming item, because
+		// that is what n8n's mapper means: one resolve against the first item
+		// would send that item's values for all of them.
+		sent, err := mappedSubworkflowItems(ir, items, input, request, parameters)
+		if err != nil {
+			return nil, fmt.Errorf("node %q: %w", ir.Name, err)
+		}
+		produced, err := callSubworkflow(ctx, ir, request, parameters, sent, wait)
 		if err != nil {
 			return nil, err
 		}
@@ -213,7 +226,7 @@ func executeExecuteWorkflow(ctx context.Context, ir workflow.IRNode, input workf
 		if err != nil {
 			return nil, fmt.Errorf("node %q: %w", ir.Name, err)
 		}
-		produced, err := callSubworkflow(ctx, ir, request, perItem, []workflow.Item{item}, wait)
+		produced, err := callSubworkflow(ctx, ir, request, perItem, projectSubworkflowInput(perItem, []workflow.Item{item}), wait)
 		if err != nil {
 			return nil, fmt.Errorf("node %q: item %d: %w", ir.Name, index+1, err)
 		}
@@ -224,6 +237,54 @@ func executeExecuteWorkflow(ctx context.Context, ir workflow.IRNode, input workf
 		out = append(out, produced...)
 	}
 	return workflow.NodeOutput{out}, nil
+}
+
+// mappedSubworkflowItems evaluates the declared input fields per incoming item.
+//
+// The fields are resolved from the node's raw parameters rather than from the
+// already-resolved tree, so each item is mapped with its own `$json` — which is
+// the whole point of the mapping.
+func mappedSubworkflowItems(ir workflow.IRNode, items []workflow.Item, input workflow.NodeInput, request engine.Request, resolved map[string]any) ([]workflow.Item, error) {
+	if fields, ok := resolved["inputFields"].(map[string]any); !ok || len(fields) == 0 {
+		return items, nil
+	}
+	out := make([]workflow.Item, 0, len(items))
+	for index, item := range items {
+		fields, err := expression.Resolve(
+			map[string]any{"inputFields": ir.Parameters["inputFields"]},
+			expressionContext(item, input, request, index))
+		if err != nil {
+			return nil, fmt.Errorf("input fields: %w", err)
+		}
+		out = append(out, projectSubworkflowInput(fields, []workflow.Item{item})...)
+	}
+	return out, nil
+}
+
+// projectSubworkflowInput replaces each item with the fields the caller
+// declared.
+//
+// Declared keys only, and a declared key whose expression resolved to nothing
+// arrives as null: n8n's mapper builds the item from the mapping, so a field
+// the caller's expression could not produce is present and empty rather than
+// missing, and a downstream `$json.x` reads null instead of failing to resolve.
+// An undeclared key the caller's own items carried is not sent — the mapping is
+// the contract, and passing the raw item through alongside it would send the
+// very fields the mapping exists to replace.
+func projectSubworkflowInput(parameters map[string]any, items []workflow.Item) []workflow.Item {
+	fields, _ := parameters["inputFields"].(map[string]any)
+	if len(fields) == 0 {
+		return items
+	}
+	out := make([]workflow.Item, 0, len(items))
+	for range items {
+		projected := make(map[string]any, len(fields))
+		for name, value := range fields {
+			projected[name] = value
+		}
+		out = append(out, workflow.Item{JSON: projected})
+	}
+	return out
 }
 
 func callSubworkflow(ctx context.Context, ir workflow.IRNode, request engine.Request, parameters map[string]any, items []workflow.Item, wait bool) ([]workflow.Item, error) {
@@ -248,7 +309,9 @@ func callSubworkflow(ctx context.Context, ir workflow.IRNode, request engine.Req
 // The declared field list is not applied here. It describes what a caller ought
 // to send, and enforcing it would mean dropping fields a caller did send —
 // which turns a mismatched contract into silently missing data rather than a
-// visible one.
+// visible one. n8n behaves the same way: its trigger hands the caller's items
+// through, and the caller's own field mapping (imported onto the Execute
+// Sub-workflow node) is what shapes them.
 func executeExecuteWorkflowTrigger(ctx context.Context, _ workflow.IRNode, _ workflow.NodeInput, request engine.Request) (workflow.NodeOutput, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err

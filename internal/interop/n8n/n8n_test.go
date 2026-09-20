@@ -206,6 +206,10 @@ func TestImportedWorkflowCompiles(t *testing.T) {
 		result := importFixture(t, fixture)
 		document := result.Document
 		document.ID = "wf_imported"
+		// An import deliberately carries no credential, so an authenticated
+		// trigger arrives visibly unbound and the compiler refuses it — which
+		// is the point. Binding it here is what a user does next.
+		bindImportedCredentials(&document)
 		// The existing compiler is the single validation authority; the adapter
 		// deliberately does not add a second, weaker one.
 		if _, err := workflow.Compile(document, registry(t)); err != nil {
@@ -230,6 +234,24 @@ func TestImportedWorkflowCompiles(t *testing.T) {
 	}
 	if _, err := workflow.Compile(bound, registry(t)); err != nil {
 		t.Errorf("langchain fixture did not compile after import: %v", err)
+	}
+}
+
+// bindImportedCredentials attaches a local credential to every node the
+// compiler requires one for, which is the step a user takes after an import.
+func bindImportedCredentials(document *workflow.Document) {
+	for index, imported := range document.Nodes {
+		switch imported.Type {
+		case "kilasflow.webhook":
+			switch imported.Parameters["authentication"] {
+			case "basicAuth":
+				document.Nodes[index].Credentials = map[string]string{"httpBasicAuth": "cred-local"}
+			case "headerAuth":
+				document.Nodes[index].Credentials = map[string]string{"httpHeaderAuth": "cred-local"}
+			case "jwtAuth":
+				document.Nodes[index].Credentials = map[string]string{"jwtAuth": "cred-local"}
+			}
+		}
 	}
 }
 func TestImportBranchingMapsOutputIndexesToNamedPorts(t *testing.T) {
@@ -1554,12 +1576,13 @@ func TestImportReportsEveryDroppedElement(t *testing.T) {
 		// Workflow level.
 		"settings", "pinData", "meta", "staticData",
 		// Node level.
-		"notes", "webhookId", "disabled",
-		// The error-handling fields that still have no equivalent. The other
-		// four — continueOnFail, retryOnFail, maxTries and waitBetweenTries —
-		// are now carried onto the canonical settings, which is asserted by
+		"notes", "webhookId",
+		// The error-handling fields that still have no equivalent. The rest —
+		// continueOnFail, retryOnFail, maxTries, waitBetweenTries,
+		// alwaysOutputData, executeOnce and onError="continueRegularOutput" —
+		// are carried onto the canonical settings, which is asserted by
 		// TestImportCarriesTheErrorHandlingSettingsTheRunnerHonours.
-		"alwaysOutputData", "executeOnce", "onError",
+		"onError",
 	} {
 		issue, found := reported[field]
 		if !found {
@@ -1574,6 +1597,15 @@ func TestImportReportsEveryDroppedElement(t *testing.T) {
 		if issue.Reason == "" {
 			t.Errorf("%q was reported with no reason", field)
 		}
+	}
+
+	// A disabled node is not a dropped element: it is a node whose side effects
+	// would fire, so the diagnostic blocks activation rather than noting a
+	// setting that was left behind.
+	if issue, found := reported["disabled"]; !found {
+		t.Error("a disabled node was not reported")
+	} else if issue.Severity != n8n.SeverityBlocking {
+		t.Errorf("disabled reported severity %q, want %q", issue.Severity, n8n.SeverityBlocking)
 	}
 
 	// A node-level diagnostic names its node; a workflow-level one does not.
@@ -2493,21 +2525,54 @@ func TestAWaitThatNeedsDurableSuspensionIsBlockingRatherThanRewritten(t *testing
 
 	result := importFixture(t, fixture)
 
-	// Rewriting it to a time interval would produce a workflow that activates,
-	// runs, and quietly does the wrong thing. Blocking says what is missing and
-	// what to do instead.
-	blocking := false
+	// The mode is carried as itself: the execution parks in storage and wakes
+	// on the resume URL, which is what n8n's mode means. It used to be a
+	// blocking refusal, and a blocking refusal of a feature that now works is
+	// a workflow that cannot be activated for no reason.
 	for _, issue := range result.Unsupported {
-		if issue.Severity == n8n.SeverityBlocking && strings.Contains(issue.Reason, "Webhook trigger") {
-			blocking = true
+		if issue.Severity == n8n.SeverityBlocking {
+			t.Fatalf("blocking issue for a wait this server now supports: %+v", issue)
 		}
-	}
-	if !blocking {
-		t.Fatalf("unsupported = %#v, want a blocking issue naming the alternative", result.Unsupported)
 	}
 	wait := nodeByName(result.Document, "Wait for approval")
 	if wait.Parameters["resume"] != "webhook" {
 		t.Errorf("resume = %#v, want the workflow's own answer kept rather than rewritten", wait.Parameters["resume"])
+	}
+}
+
+// TestAnImportedFormWaitIsCarriedAsTheApprovalPage pins the one durable mode
+// that does not translate exactly: n8n resumes on a form the workflow defines,
+// and this server resumes on its approve/deny page. The wait works; the page
+// is different, and that is a lossy note rather than a refusal.
+func TestAnImportedFormWaitIsCarriedAsTheApprovalPage(t *testing.T) {
+	t.Parallel()
+
+	const fixture = `{
+	  "name": "Form wait",
+	  "nodes": [
+	    {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}},
+	    {"id":"b","name":"Wait for form","type":"n8n-nodes-base.wait","typeVersion":1.1,"position":[220,0],
+	     "parameters":{"resume":"form"}}
+	  ],
+	  "connections": {"Manual": {"main": [[{"node":"Wait for form","type":"main","index":0}]]}}
+	}`
+
+	result := importFixture(t, fixture)
+	wait := nodeByName(result.Document, "Wait for form")
+	if wait.Parameters["resume"] != "form" {
+		t.Errorf("resume = %#v, want it carried", wait.Parameters["resume"])
+	}
+	noted := false
+	for _, issue := range result.Unsupported {
+		if issue.Severity == n8n.SeverityLossy && strings.Contains(issue.Reason, "approval page") {
+			noted = true
+		}
+		if issue.Severity == n8n.SeverityBlocking {
+			t.Fatalf("blocking issue for a form wait: %+v", issue)
+		}
+	}
+	if !noted {
+		t.Fatalf("unsupported = %#v, want a lossy note about the approval page", result.Unsupported)
 	}
 }
 
@@ -3156,8 +3221,10 @@ func TestAnImportedClusterArrivesConfigured(t *testing.T) {
 	if session["value"] != "chat-{{ $json.chatId }}" {
 		t.Errorf("memory sessionKey = %#v, want n8n's sessionKey", memory.Parameters["sessionKey"])
 	}
-	if memory.Parameters["maxMessages"] != float64(25) {
-		t.Errorf("memory maxMessages = %#v, want n8n's contextWindowLength", memory.Parameters["maxMessages"])
+	// n8n counts interactions — one human turn and one AI turn — and this
+	// server counts messages, so the window is doubled rather than copied.
+	if memory.Parameters["maxMessages"] != float64(50) {
+		t.Errorf("memory maxMessages = %#v, want twice n8n's contextWindowLength", memory.Parameters["maxMessages"])
 	}
 
 	tool := nodeByName(document, "Get Weather")
