@@ -1,20 +1,16 @@
 <script lang="ts">
 	import { page } from '$app/state';
 
-	import { setEmbedToken } from '$lib/api/http';
 	import EmbedEditor from '$lib/embed/embed-editor.svelte';
 	import { embedSession } from '$lib/embed/session.svelte';
 
 	const workflowID = $derived(page.params.id ?? '');
+	// The session module attaches the token the moment it accepts the host's
+	// message, before `session` is readable, and clears it when the frame is
+	// torn down. That is deliberately not an effect here: an effect runs after
+	// its children's, and the editor's first queries go out from those.
 	const embed = embedSession(() => workflowID);
 	const branding = $derived(embed.session?.branding ?? {});
-
-	$effect(() => {
-		// Every API request carries the token once the handshake completes, and
-		// stops carrying it when the frame is torn down.
-		setEmbedToken(embed.session?.token ?? null);
-		return () => setEmbedToken(null);
-	});
 </script>
 
 <svelte:head>

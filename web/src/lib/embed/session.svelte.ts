@@ -8,6 +8,8 @@
  * frame's state to whatever page happened to embed it.
  */
 
+import { setEmbedToken } from '$lib/api/http';
+
 export type EmbedBranding = {
 	name?: string;
 	logoUrl?: string;
@@ -84,6 +86,46 @@ export function scopeAllows(session: EmbedSession | null, scope: string): boolea
 }
 
 /**
+ * Accepts the host's session message, or says why it cannot.
+ *
+ * The token is attached *before* the session is handed back, and that order is
+ * the whole point: the editor mounts on the render the session appears in and
+ * fires its first three queries from that mount's effects, which run after
+ * this function has returned. A page-level `$effect` that called
+ * `setEmbedToken` looked equivalent and was not — it ran after its children's,
+ * so the workflow, node-catalogue and credential requests all went out without
+ * the header and the frame answered 401 to every one of them.
+ */
+export function acceptEmbedSession(
+	data: Record<string, unknown> | null,
+	expectedWorkflow: string,
+	origin: string,
+	attachToken: (token: string | null) => void = setEmbedToken
+): { session: EmbedSession } | { error: string } {
+	if (!data || data.type !== MESSAGE_TYPE) return { error: 'Not an embed session message.' };
+
+	const token = typeof data.token === 'string' ? data.token : '';
+	const scopes = Array.isArray(data.scopes) ? data.scopes.filter((scope): scope is string => typeof scope === 'string') : [];
+	if (!token || scopes.length === 0) return { error: 'The host sent an incomplete embed session.' };
+	// The frame is loaded at /embed/:workflowID, so a token for another workflow
+	// is a host mistake worth naming rather than silently letting the server
+	// reject every call.
+	const tokenWorkflow = typeof data.workflowId === 'string' ? data.workflowId : expectedWorkflow;
+	if (tokenWorkflow !== expectedWorkflow) return { error: 'The embed session is for a different workflow.' };
+
+	attachToken(token);
+	return {
+		session: {
+			token,
+			workflowId: expectedWorkflow,
+			scopes,
+			branding: sanitizeBranding(data.branding),
+			origin
+		}
+	};
+}
+
+/**
  * Listens for the host's session message.
  *
  * Returns reactive state rather than a promise so the page can render a
@@ -114,33 +156,18 @@ export function embedSession(workflowID: () => string) {
 			// all: an attacker-framed page must not be able to reach any of the
 			// parsing below.
 			if (event.origin !== expectedOrigin) return;
-			const data = event.data as Record<string, unknown> | null;
-			if (!data || data.type !== MESSAGE_TYPE) return;
 
-			const token = typeof data.token === 'string' ? data.token : '';
-			const scopes = Array.isArray(data.scopes) ? data.scopes.filter((s): s is string => typeof s === 'string') : [];
-			if (!token || scopes.length === 0) {
-				error = 'The host sent an incomplete embed session.';
-				waiting = false;
-				return;
-			}
-			// The frame is loaded at /embed/:workflowID, so a token for another
-			// workflow is a host mistake worth naming rather than silently
-			// letting the server reject every call.
-			const tokenWorkflow = typeof data.workflowId === 'string' ? data.workflowId : expectedWorkflow;
-			if (tokenWorkflow !== expectedWorkflow) {
-				error = 'The embed session is for a different workflow.';
+			const accepted = acceptEmbedSession(event.data as Record<string, unknown> | null, expectedWorkflow, expectedOrigin);
+			if ('error' in accepted) {
+				// A message that is not ours leaves the handshake still waiting
+				// for the real one.
+				if (accepted.error === 'Not an embed session message.') return;
+				error = accepted.error;
 				waiting = false;
 				return;
 			}
 
-			session = {
-				token,
-				workflowId: expectedWorkflow,
-				scopes,
-				branding: sanitizeBranding(data.branding),
-				origin: expectedOrigin
-			};
+			session = accepted.session;
 			error = null;
 			waiting = false;
 		}
@@ -160,6 +187,8 @@ export function embedSession(workflowID: () => string) {
 		return () => {
 			window.removeEventListener('message', onMessage);
 			clearTimeout(timeout);
+			// The frame is gone: nothing may answer with the token afterwards.
+			setEmbedToken(null);
 		};
 	});
 

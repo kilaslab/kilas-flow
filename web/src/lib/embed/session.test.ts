@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { SCOPE_PUBLISH, sanitizeBranding, scopeAllows, type EmbedSession } from './session.svelte';
+import { apiFetch, setEmbedToken } from '$lib/api/http';
+import { SCOPE_PUBLISH, acceptEmbedSession, sanitizeBranding, scopeAllows, type EmbedSession } from './session.svelte';
 
 function session(scopes: string[]): EmbedSession {
 	return { token: 't', workflowId: 'wf-1', scopes, branding: {}, origin: 'https://host.example' };
@@ -96,5 +97,66 @@ describe('sanitizeBranding', () => {
 		expect(sanitizeBranding({ hideRun: 'true' }).hideRun).toBe(false);
 		expect(sanitizeBranding({ hideSave: 1 }).hideSave).toBe(false);
 		expect(sanitizeBranding({ hideSave: true }).hideSave).toBe(true);
+	});
+});
+
+describe('accepting the host session', () => {
+	afterEach(() => {
+		setEmbedToken(null);
+		vi.unstubAllGlobals();
+	});
+
+	const message = { type: 'kilasflow:embed-session', token: 'tok-123', workflowId: 'wf-1', scopes: ['workflow:read'] };
+
+	// The regression this covers: the editor mounted on the render the session
+	// appears in and fired its first three queries from that mount, which ran
+	// before the page-level effect that attached the token — so every one of
+	// them answered 401. Attaching the token is therefore part of accepting the
+	// message, not something that happens after it.
+	it('has the token on the wire by the time the first request is made', async () => {
+		const sent: Headers[] = [];
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (_url: string, init?: RequestInit) => {
+				sent.push(new Headers(init?.headers));
+				return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
+			})
+		);
+
+		const accepted = acceptEmbedSession(message, 'wf-1', 'https://host.example');
+		expect('session' in accepted).toBe(true);
+
+		await apiFetch('/api/v1/workflows/wf-1');
+
+		expect(sent[0]?.get('X-KilasFlow-Embed')).toBe('tok-123');
+	});
+
+	it('accepts a session that names no workflow of its own', () => {
+		const accepted = acceptEmbedSession({ type: 'kilasflow:embed-session', token: 'tok', scopes: ['workflow:run'] }, 'wf-9', 'https://host.example');
+
+		expect('session' in accepted && accepted.session.workflowId).toBe('wf-9');
+	});
+
+	it('attaches nothing when the message is refused', () => {
+		const refused = [
+			acceptEmbedSession(message, 'wf-2', 'https://host.example'),
+			acceptEmbedSession({ ...message, token: '' }, 'wf-1', 'https://host.example'),
+			acceptEmbedSession({ ...message, scopes: [] }, 'wf-1', 'https://host.example'),
+			acceptEmbedSession({ type: 'kilasflow:other', token: 'tok-123' }, 'wf-1', 'https://host.example')
+		];
+
+		for (const answer of refused) expect('error' in answer).toBe(true);
+
+		const sent: Headers[] = [];
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (_url: string, init?: RequestInit) => {
+				sent.push(new Headers(init?.headers));
+				return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
+			})
+		);
+		return apiFetch('/api/v1/workflows/wf-1').then(() => {
+			expect(sent[0]?.has('X-KilasFlow-Embed')).toBe(false);
+		});
 	});
 });

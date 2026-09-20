@@ -1,19 +1,25 @@
 <script lang="ts">
+	import { useQueryClient } from '@tanstack/svelte-query';
+
 	import { message } from '$lib/api/http';
 	import { createListCredentials } from '$lib/api/generated/credentials/credentials';
 	import { createListNodeTypes } from '$lib/api/generated/nodes/nodes';
 	import { getExecution } from '$lib/api/generated/executions/executions';
 	import { runWorkflow } from '$lib/api/generated/workflow-lifecycle/workflow-lifecycle';
-	import { createGetWorkflow, updateWorkflow } from '$lib/api/generated/workflows/workflows';
+	import { createGetWorkflow, getWorkflow, updateWorkflow } from '$lib/api/generated/workflows/workflows';
 	import type { CredentialResource, Definition, WorkflowDocumentInput, WorkflowResource } from '$lib/api/generated/models';
+	import { Button } from '$lib/components/ui/button';
 	import WorkflowEditor, { type WorkflowHistoryHost } from '$lib/components/workflow-editor/workflow-editor.svelte';
 	import { SCOPE_PUBLISH, scopeAllows, type EmbedSession } from './session.svelte';
-	import { validationIssuesFromApiError, type CanvasValidationIssue } from '$lib/workflow-editor/validation';
+	import { cacheWorkflow } from '$lib/workflow-editor/workflow-cache';
+	import { validationIssuesFromApiError, withNodeNames, type CanvasValidationIssue } from '$lib/workflow-editor/validation';
 
 	// This component is mounted only after the host handshake has completed, so
 	// every query it creates is created with the embed token already attached.
 	// Gating the queries with `enabled` instead left them permanently idle.
 	let { session }: { session: EmbedSession } = $props();
+
+	const queryClient = useQueryClient();
 
 	const canWrite = $derived(scopeAllows(session, 'workflow:write'));
 	const canRun = $derived(scopeAllows(session, 'workflow:run'));
@@ -46,13 +52,45 @@
 	let running = $state(false);
 	let saveError = $state<string | null>(null);
 	let saveIssues = $state<CanvasValidationIssue[]>([]);
+	let saveConflict = $state(false);
 	let runError = $state<string | null>(null);
+	let runIssues = $state<CanvasValidationIssue[]>([]);
 	let runMessage = $state<string | null>(null);
 	let lastExecutionId = $state<string | null>(null);
+	let editorDirty = $state(false);
+	let newerRevision = $state<WorkflowResource | null>(null);
+	/** The draft the last save carried, kept for the overwrite answer. */
+	let pendingSave = $state<WorkflowDocumentInput | null>(null);
 	let pollingRun = 0;
 
+	/**
+	 * The revision the canvas was built from.
+	 *
+	 * It is the editor's remount key and it moves on load and on restore, never
+	 * on a save — a host that saves and keeps editing must not lose the
+	 * selection, the open inspector or the viewport on every save.
+	 */
+	let canvasFrom = $state<string | null>(null);
+
 	$effect(() => {
-		if (workflow.data) currentWorkflow = workflow.data;
+		const incoming = workflow.data;
+		if (!incoming) return;
+		if (!currentWorkflow || incoming.id !== currentWorkflow.id) {
+			currentWorkflow = incoming;
+			canvasFrom = `${incoming.id}:${incoming.latestVersion.id}`;
+			newerRevision = null;
+			editorDirty = false;
+			return;
+		}
+		if (incoming.latestVersion.id === currentWorkflow.latestVersion.id) return;
+		if (editorDirty) {
+			// Adopting a revision this draft did not come from would make the
+			// host's next save revert whoever wrote it.
+			newerRevision = incoming;
+			return;
+		}
+		currentWorkflow = incoming;
+		canvasFrom = `${incoming.id}:${incoming.latestVersion.id}`;
 	});
 
 	/** Tells the host what happened, always to its exact origin, never '*'. */
@@ -60,22 +98,66 @@
 		window.parent.postMessage({ type: `kilasflow:${type}`, workflowId: session.workflowId, ...detail }, session.origin);
 	}
 
-	async function save(document: WorkflowDocumentInput) {
+	function adoptFromServer(workflow: WorkflowResource) {
+		currentWorkflow = workflow;
+		canvasFrom = `${workflow.id}:${workflow.latestVersion.id}`;
+		newerRevision = null;
+		saveConflict = false;
+		saveError = null;
+		saveIssues = [];
+		editorDirty = false;
+		cacheWorkflow(queryClient, workflow);
+	}
+
+	async function reloadTheirs() {
+		if (!currentWorkflow) return;
+		saving = true;
+		try {
+			const response = await getWorkflow(currentWorkflow.id);
+			if (response.status !== 200) throw new Error('Unexpected workflow response');
+			adoptFromServer(response.data);
+		} catch (error) {
+			saveError = message(error);
+		} finally {
+			saving = false;
+		}
+	}
+
+	async function overwriteTheirs() {
+		if (!pendingSave) return;
+		saveConflict = false;
+		saveError = null;
+		await save(pendingSave, { force: true });
+	}
+
+	async function save(document: WorkflowDocumentInput, options: { force?: boolean } = {}) {
 		if (!currentWorkflow || !canWrite) return;
 		saving = true;
 		saveError = null;
 		saveIssues = [];
+		saveConflict = false;
+		runIssues = [];
+		pendingSave = document;
 		try {
-			const response = await updateWorkflow(currentWorkflow.id, document);
+			const response = await updateWorkflow(currentWorkflow.id, {
+				...document,
+				...(options.force ? {} : { baseVersionId: currentWorkflow.latestVersion.id })
+			});
 			if (response.status !== 200) throw new Error('Unexpected workflow-save response');
 			currentWorkflow = response.data;
+			cacheWorkflow(queryClient, response.data);
 			notifyHost('workflow-saved', { revision: response.data.latestVersion.revision });
 		} catch (error) {
 			saveError = message(error);
-			saveIssues = validationIssuesFromApiError(error);
+			saveIssues = withNodeNames(validationIssuesFromApiError(error), currentWorkflow.latestVersion.document.nodes);
+			saveConflict = isConflictError(error);
 		} finally {
 			saving = false;
 		}
+	}
+
+	function isConflictError(error: unknown): boolean {
+		return typeof error === 'object' && error !== null && 'status' in error && (error as { status?: unknown }).status === 409;
 	}
 
 	/**
@@ -94,15 +176,17 @@
 					canRestore: canWrite,
 					canPublish,
 					onRestored: (workflow) => {
-						currentWorkflow = workflow;
+						adoptFromServer(workflow);
 						notifyHost('workflow-saved', { revision: workflow.latestVersion.revision });
 					},
 					onPublished: (workflow, version) => {
 						currentWorkflow = workflow;
+						cacheWorkflow(queryClient, workflow);
 						notifyHost('workflow-published', { versionId: version.id, revision: version.revision });
 					},
 					onUnpublished: (workflow) => {
 						currentWorkflow = workflow;
+						cacheWorkflow(queryClient, workflow);
 					}
 				}
 			: null
@@ -112,6 +196,7 @@
 		if (!currentWorkflow || !canRun) return;
 		running = true;
 		runError = null;
+		runIssues = [];
 		runMessage = null;
 		const token = ++pollingRun;
 		try {
@@ -120,8 +205,12 @@
 			lastExecutionId = queued.data.id;
 			runMessage = 'Run queued…';
 			notifyHost('execution-started', { executionId: queued.data.id });
-			for (let attempt = 0; attempt < 80 && token === pollingRun; attempt += 1) {
-				await new Promise((resolve) => setTimeout(resolve, 250));
+			// The host decides how long its user waits; the editor only stops
+			// watching a run that is still going after half an hour, and says so
+			// rather than calling a healthy run a failure.
+			const deadline = Date.now() + 30 * 60 * 1000;
+			while (token === pollingRun && Date.now() < deadline) {
+				await new Promise((resolve) => setTimeout(resolve, 1000));
 				const execution = await getExecution(queued.data.id);
 				if (execution.status !== 200) throw new Error('Unexpected execution response');
 				const status = execution.data.status;
@@ -132,9 +221,10 @@
 					return;
 				}
 			}
-			if (token === pollingRun) runError = 'The execution did not finish in time.';
+			if (token === pollingRun) runError = 'The editor stopped watching a run that is still going.';
 		} catch (error) {
 			runError = message(error);
+			runIssues = withNodeNames(validationIssuesFromApiError(error), currentWorkflow.latestVersion.document.nodes);
 		} finally {
 			if (token === pollingRun) running = false;
 		}
@@ -155,20 +245,36 @@
 	</div>
 {/if}
 
-{#if workflow.isError || nodeTypes.isError}
+{#if (workflow.isError || nodeTypes.isError) && !currentWorkflow}
 	<div class="grid flex-1 place-items-center p-6">
 		<div role="alert" class="max-w-md rounded-xl border border-destructive/25 bg-destructive/5 p-5 text-center">
 			<h1 class="font-semibold">This workflow could not be loaded</h1>
 			<p class="mt-1 text-sm leading-6 text-muted-foreground">{message(workflow.isError ? workflow.error : nodeTypes.error)}</p>
 		</div>
 	</div>
-{:else if workflow.isPending || nodeTypes.isPending}
+{:else if nodeTypes.isPending || (workflow.isPending && !currentWorkflow)}
 	<div aria-live="polite" class="grid flex-1 place-items-center text-sm text-muted-foreground">Loading workflow…</div>
 {:else if currentWorkflow}
-	{#key currentWorkflow.latestVersion.id}
+	<!-- An embed token that expires turns the next background refetch into a
+	     401. That is a refresh failure, not a reason to unmount the editor the
+	     host's user is working in. -->
+	{#if workflow.isError}
+		<div role="alert" class="flex flex-wrap items-center gap-2 border-b border-destructive/25 bg-destructive/5 px-3 py-1.5">
+			<p class="min-w-0 flex-1 text-xs leading-5 text-destructive">This editor may be out of date — the last refresh failed: {message(workflow.error)}</p>
+			<Button variant="outline" size="sm" onclick={() => void workflow.refetch()}>Refresh</Button>
+		</div>
+	{/if}
+	{#if newerRevision}
+		<div role="status" class="flex flex-wrap items-center gap-2 border-b border-warning/40 bg-warning/10 px-3 py-1.5">
+			<p class="min-w-0 flex-1 text-xs leading-5">A newer revision ({newerRevision.latestVersion.revision}) was saved elsewhere while you were editing.</p>
+			<Button variant="outline" size="sm" onclick={() => void reloadTheirs()}>Reload theirs</Button>
+			<Button variant="ghost" size="sm" onclick={() => (newerRevision = null)}>Keep mine</Button>
+		</div>
+	{/if}
+	{#key canvasFrom}
 		<WorkflowEditor
 			document={currentWorkflow.latestVersion.document}
-			definitions={nodeTypes.data}
+			definitions={nodeTypes.data ?? []}
 			credentials={credentials.data ?? []}
 			readOnly={!canWrite}
 			hideRun={!canRun || branding.hideRun === true}
@@ -177,10 +283,15 @@
 			{running}
 			{saveError}
 			{saveIssues}
+			{saveConflict}
 			{runError}
 			{runMessage}
 			{lastExecutionId}
 			{history}
+			hostIssues={runIssues}
+			onDirtyChange={(value) => (editorDirty = value)}
+			onReloadConflict={() => void reloadTheirs()}
+			onOverwriteConflict={() => void overwriteTheirs()}
 			active={currentWorkflow.active}
 			onSave={save}
 			onRun={run}
