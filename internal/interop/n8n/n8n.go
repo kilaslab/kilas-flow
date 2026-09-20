@@ -881,12 +881,13 @@ func withDefaultExportSeverity(issues []ExportIssue) []ExportIssue {
 // `pinData` is dropped rather than parked under a reserved key. Carrying data
 // nothing reads would create a second silent-drop problem one release later,
 // and the diagnostic is what the user actually needs.
-// importSettings carries the workflow settings this product understands.
+// importSettings carries the workflow settings this product understands: the
+// timezone, the workflow's own run budget, and the error workflow.
 //
-// Only the timezone, for now, and it matters: a scheduled workflow whose zone
-// was dropped runs at the wrong hour every day, and nothing anywhere says why.
-// It was reported as uncarried until the Schedule Trigger learned to read it,
-// and the diagnostic outlived the gap it described.
+// The timezone matters because a scheduled workflow whose zone was dropped runs
+// at the wrong hour every day, and nothing anywhere says why; it was reported
+// as uncarried until the Schedule Trigger learned to read it, and the
+// diagnostic outlived the gap it described.
 func importSettings(source map[string]any) (map[string]any, []ImportIssue) {
 	settings := map[string]any{}
 	issues := make([]ImportIssue, 0)
@@ -924,6 +925,21 @@ func importSettings(source map[string]any) (map[string]any, []ImportIssue) {
 			})
 		}
 	}
+
+	// The workflow to run when this one fails. The engine reads the same
+	// setting and starts that workflow from its Error Trigger, so the value is
+	// carried as the ID n8n held. What the import cannot know is whether that
+	// workflow came into this workspace too — n8n's IDs do not survive the trip
+	// unless the whole export was imported — so the caveat is named rather than
+	// discovered later as a failure that quietly alerts nobody.
+	if target, _ := source["errorWorkflow"].(string); strings.TrimSpace(target) != "" {
+		settings["errorWorkflow"] = strings.TrimSpace(target)
+		issues = append(issues, ImportIssue{
+			Severity: SeverityLossy, Field: "settings.errorWorkflow",
+			Reason: "n8n's error workflow is carried as the workflow ID it named; unless that workflow " +
+				"was imported into this workspace as well, the reference resolves to nothing",
+		})
+	}
 	return settings, issues
 }
 
@@ -931,7 +947,7 @@ func importSettings(source map[string]any) (map[string]any, []ImportIssue) {
 func hasUncarriedSettings(source map[string]any) bool {
 	for key := range source {
 		switch key {
-		case "timezone", "executionTimeout":
+		case "timezone", "executionTimeout", "errorWorkflow":
 		default:
 			return true
 		}
@@ -947,7 +963,8 @@ func documentIssues(source Document) []ImportIssue {
 		reason  string
 	}{
 		{"settings", hasUncarriedSettings(source.Settings),
-			"n8n workflow settings other than the timezone — error workflow, execution order and the rest — have no KilasFlow equivalent yet and were not carried"},
+			"n8n workflow settings beyond the timezone, the execution timeout and the error workflow — " +
+				"execution order, the save-data flags and the rest — have no KilasFlow equivalent yet and were not carried"},
 		{"pinData", len(source.PinData) > 0,
 			"pinned test data is an n8n editor feature with no KilasFlow equivalent; it was not carried, so the nodes that had it pinned will run for real"},
 		{"meta", len(source.Meta) > 0,
@@ -1911,6 +1928,13 @@ func exportSettings(settings map[string]any) map[string]any {
 	}
 	if timeout := numberSetting(settings["executionTimeout"]); timeout > 0 {
 		exported["executionTimeout"] = timeout
+	}
+	// The error workflow, as the ID this workspace holds. n8n reads it the same
+	// way it wrote it; a workflow that references a workflow of this workspace
+	// is only meaningful to an n8n instance that holds it, which is the same
+	// caveat the import reports in the other direction.
+	if target, _ := settings["errorWorkflow"].(string); strings.TrimSpace(target) != "" {
+		exported["errorWorkflow"] = strings.TrimSpace(target)
 	}
 	return exported
 }
