@@ -112,13 +112,12 @@ still exist.
 - **Authenticated webhook.** The trigger requires the stored header
   credential; a delivery without it answers 401 and never becomes an
   execution. The secret lives in the backend state file — the page fires
-  through `/api/:tenant/fire` and never sees the header value. The run id is
-  *not* in the delivery acknowledgement: the trigger is in n8n's `onReceived`
-  mode, whose answer is n8n's own `{"message":"Workflow was started"}`, so a
-  host finds its run through the tenant's own key — the newest execution of
-  that workflow — and then owns the id. `server.mjs` still reads
-  `receipt.executionId` from the old `{executionId, status}` acknowledgement and
-  needs that one lookup before it works against a current server.
+  through `/api/:tenant/fire` and never sees the header value. The
+  acknowledgement names no run, because the trigger is in n8n's `onReceived`
+  mode and its body is n8n's own `{"message":"Workflow was started"}`: the host
+  reads its execution back through the tenant's own key — the newest execution
+  of that workflow, which the server queued before it answered — and hands that
+  id to the page.
 - **Owned reads.** Stream tickets and execution polls re-check that the
   execution belongs to the tenant's workflow before answering.
 - **Isolated datastores.** Each tenant provisions `reference-<tenant>`

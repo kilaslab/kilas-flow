@@ -156,10 +156,16 @@ async function serveTenantApi(tenant, action, url, request, response) {
 			body: JSON.stringify({ email, plan: 'trial' })
 		});
 		if (!delivery.ok) return json(502, { error: `webhook answered ${delivery.status}` });
-		const receipt = await delivery.json();
-		const execution = await waitForExecution(tenant, receipt.executionId);
+		// The acknowledgement is n8n's own immediate answer and names no run, so
+		// the id comes from the tenant's own key instead. A delivery the server
+		// filtered was never queued, and says so rather than waiting for a run
+		// that does not exist.
+		const acknowledgement = await delivery.json();
+		if (acknowledgement.filtered) return json(200, { filtered: true });
+		const executionId = await newestExecutionId(tenant);
+		const execution = await waitForExecution(tenant, executionId);
 		await recordSignup(tenant, email);
-		return json(200, { executionId: receipt.executionId, status: execution.status });
+		return json(200, { executionId, status: execution.status });
 	}
 
 	// Host-side datastore read through the tenant's own key: the embed token
@@ -197,6 +203,23 @@ async function waitForExecution(tenant, executionId) {
 		if (Date.now() > deadline) throw new Error(`execution ${executionId} did not finish in 30s`);
 		await new Promise((resolve) => setTimeout(resolve, 500));
 	}
+}
+
+/**
+ * The id of the execution a delivery just queued.
+ *
+ * The trigger answers in n8n's `onReceived` mode, whose body is n8n's own
+ * `{"message":"Workflow was started"}` — an imported workflow's caller expects
+ * exactly that, and no part of it names a run. So the id is read back through
+ * the tenant's own key instead: the execution list is newest-first, the server
+ * queues the execution before it writes the acknowledgement, and this sample
+ * fires one delivery at a time per tenant.
+ */
+async function newestExecutionId(tenant) {
+	const page = await tenant.client.listExecutions({ workflowId: tenant.workflowId, limit: 1 });
+	const newest = page.items?.[0];
+	if (!newest) throw new Error(`the delivery queued no execution for ${tenant.label}`);
+	return newest.id;
 }
 
 /**
