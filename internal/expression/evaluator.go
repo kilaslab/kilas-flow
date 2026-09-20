@@ -768,8 +768,14 @@ func jsString(value any) string {
 	}
 }
 
-// jsNumber renders a float the way JavaScript does, including the two spellings
-// JavaScript has for values Go would print differently.
+// jsNumber renders a float the way JavaScript's Number::toString does.
+//
+// Two spellings come out of the magnitude: decimal notation while the value is
+// at least 1e-6 and below 1e21, and exponent notation outside it — so 1e-5 is
+// "0.00001" and 1e-7 is "1e-7", where Go's shortest form would give "1e-05" and
+// "1e-07". Go pads an exponent to two digits and JavaScript does not, so the
+// exponent is rewritten; and negative zero prints as "0", which is what
+// String(-0) is.
 func jsNumber(value float64) string {
 	switch {
 	case math.IsNaN(value):
@@ -778,11 +784,32 @@ func jsNumber(value float64) string {
 		return "Infinity"
 	case math.IsInf(value, -1):
 		return "-Infinity"
-	case value == math.Trunc(value) && math.Abs(value) < 1e21:
-		return strconv.FormatFloat(value, 'f', -1, 64)
+	case value == 0:
+		return "0"
+	case math.Abs(value) < 1e-6 || math.Abs(value) >= 1e21:
+		return trimExponent(strconv.FormatFloat(value, 'e', -1, 64))
 	default:
-		return strconv.FormatFloat(value, 'g', -1, 64)
+		return strconv.FormatFloat(value, 'f', -1, 64)
 	}
+}
+
+// trimExponent drops the zero padding Go writes into an exponent: "1e-07" is
+// JavaScript's "1e-7", and the sign JavaScript writes is kept either way.
+func trimExponent(text string) string {
+	marker := strings.IndexByte(text, 'e')
+	if marker < 0 {
+		return text
+	}
+	mantissa, exponent := text[:marker], text[marker+1:]
+	sign := ""
+	if exponent != "" && (exponent[0] == '+' || exponent[0] == '-') {
+		sign, exponent = exponent[:1], exponent[1:]
+	}
+	exponent = strings.TrimLeft(exponent, "0")
+	if exponent == "" {
+		exponent = "0"
+	}
+	return mantissa + "e" + sign + exponent
 }
 
 // fixedDecimal renders a number with a fixed number of decimals the way

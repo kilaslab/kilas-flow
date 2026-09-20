@@ -949,3 +949,43 @@ func TestToFixedRoundsHalfUpAtTheExactDecimal(t *testing.T) {
 		}
 	}
 }
+
+// TestNumbersRenderTheWayJavaScriptRendersThem: jsNumber went through Go's
+// shortest form, which zero-pads the exponent (1e-07 where JavaScript writes
+// 1e-7) and switches to exponent notation at a different magnitude (1e-05 where
+// JavaScript writes 0.00001). The string is what lands in a URL, a filename or
+// a message built from a computed number.
+func TestNumbersRenderTheWayJavaScriptRendersThem(t *testing.T) {
+	t.Parallel()
+
+	for template, want := range map[string]any{
+		"{{ 1e-7 + '' }}":                   "1e-7",
+		"{{ 1.5e-7 + '' }}":                 "1.5e-7",
+		"{{ -1e-7 + '' }}":                  "-1e-7",
+		"{{ 5e-324 + '' }}":                 "5e-324",
+		"{{ 1e-6 + '' }}":                   "0.000001",
+		"{{ 1e-5 + '' }}":                   "0.00001",
+		"{{ 0.0001 + '' }}":                 "0.0001",
+		"{{ 1e21 + '' }}":                   "1e+21",
+		"{{ -1e21 + '' }}":                  "-1e+21",
+		"{{ 1e20 + '' }}":                   "100000000000000000000",
+		"{{ 1.7976931348623157e308 + '' }}": "1.7976931348623157e+308",
+		"{{ 0.1 + '' }}":                    "0.1",
+		"{{ 42 + '' }}":                     "42",
+		"{{ -0 + '' }}":                     "0",
+		"{{ 1/3 + '' }}":                    "0.3333333333333333",
+	} {
+		got := evaluateOne(t, template, parityContext())
+		if got != want {
+			t.Errorf("Evaluate(%s) = %#v, want %#v", template, got, want)
+		}
+	}
+
+	// The same rendering is used wherever a number becomes text.
+	if got := evaluateOne(t, "{{ `e=${1e-7}` }}", parityContext()); got != "e=1e-7" {
+		t.Errorf("template interpolation = %#v, want the JavaScript spelling", got)
+	}
+	if got := evaluateOne(t, "{{ 1e-7 }}", parityContext()); got != float64(1e-7) {
+		t.Errorf("a lone number = %#v, want the number itself", got)
+	}
+}
