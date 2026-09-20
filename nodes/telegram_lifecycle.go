@@ -387,6 +387,7 @@ func RegisterTriggerKinds(registry *webhook.Registry) error {
 		// `$json.params`, `$json.webhookUrl` and `$json.executionMode`, and
 		// none of those six keys existed under the envelope.
 		WebhookNodeType:         {Shape: webhook.ShapeN8NCore},
+		FormTriggerNodeType:     FormTriggerKind(),
 		TelegramTriggerNodeType: TelegramTriggerKind(),
 	} {
 		if err := registry.Register(nodeType, kind); err != nil {

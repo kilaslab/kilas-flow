@@ -85,6 +85,10 @@ const (
 	// third-party trigger such as WAHA's produces — those workflows read
 	// $json.event, not $json.body.event.
 	ShapeBodyAsItem Shape = "bodyAsItem"
+	// ShapeFormSubmission is the submitted fields at the top level, which is
+	// what n8n's form trigger emits: the page's own field labels, plus
+	// `submittedAt` and `formMode` that the boundary stamps.
+	ShapeFormSubmission Shape = "formSubmission"
 )
 
 // Apply builds the item for one delivery.
@@ -111,6 +115,17 @@ func (shape Shape) Apply(delivery Delivery) map[string]any {
 			"webhookUrl":    delivery.WebhookURL,
 			"executionMode": ExecutionModeProduction,
 		}
+	case ShapeFormSubmission:
+		if body, ok := delivery.Body.(map[string]any); ok {
+			item := make(map[string]any, len(body))
+			for key, value := range body {
+				item[key] = value
+			}
+			return item
+		}
+		// A form with no readable field cannot be an item, so it is reported
+		// rather than queued as an empty run.
+		return map[string]any{"body": delivery.Body}
 	case ShapeBodyAsItem:
 		if body, ok := delivery.Body.(map[string]any); ok {
 			item := make(map[string]any, len(body))
@@ -141,9 +156,34 @@ func (shape Shape) Apply(delivery Delivery) map[string]any {
 // become an execution at all.
 type Verifier func(Delivery) error
 
+// HostedPage is how a trigger serves a page of its own and receives what that
+// page sends back.
+//
+// It is a set of readers rather than a description, because the page belongs to
+// one *binding* — a workflow's own fields and title — while a trigger kind is
+// registered once per node type. Everything the page needs is therefore read
+// from the delivery that arrived, which is also what keeps the HTTP boundary
+// free of node-type knowledge: it renders whatever the registered reader
+// returns.
+type HostedPage struct {
+	// Form describes the page for one delivery.
+	Form func(Delivery) Form
+	// Submission turns a submitted body into the item the workflow sees, or
+	// refuses it. Refusing here is what stops a browser that disabled its own
+	// validation from starting a run with an empty required field.
+	Submission func(Delivery) (map[string]any, error)
+	// Message is the page a submission is answered with when the trigger
+	// answers immediately. A person filling in a form is owed a page, not a
+	// JSON body.
+	Message func(Delivery) (string, string)
+}
+
 // TriggerKind is how a webhook trigger node type wants its deliveries handled.
 type TriggerKind struct {
 	Shape Shape
+	// Page, when set, makes this trigger serve a hosted page on GET and read a
+	// submission on POST.
+	Page *HostedPage
 	// Verify is optional. When set it runs before the execution is queued and
 	// its error is the client's answer.
 	Verify Verifier

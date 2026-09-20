@@ -111,6 +111,17 @@ func (handler *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A hosted page is answered from the route rather than from a
+	// method-specific binding: the page is a GET, and a form trigger whose
+	// submission method is the only one declared still has a page to serve.
+	if r.Method == http.MethodGet || r.Method == http.MethodHead {
+		if binding, page, found := handler.hostedPage(r, path); found {
+			applyCORS(w, r, binding)
+			writePage(w, http.StatusOK, page)
+			return
+		}
+	}
+
 	binding, params, err := handler.resolveBinding(r.Context(), strings.ToUpper(r.Method), path)
 	if err != nil {
 		// An inactive, deleted, or never-activated workflow has no binding, and
@@ -146,6 +157,26 @@ func (handler *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// acceptable at all. A signature check belongs here rather than inside the
 	// workflow: a request that fails it should never become an execution.
 	kind := handler.triggers.Lookup(binding.NodeType)
+
+	// A trigger that owns a page answers GET with it and reads POST as the
+	// submission that page sent back. Neither is a workflow run of its own: the
+	// page is rendered from the workflow's own declaration, and the submission
+	// is the trigger item.
+	if kind.Page != nil {
+		page := kind.Page.Form(delivery)
+		switch r.Method {
+		case http.MethodGet, http.MethodHead:
+			writePage(w, http.StatusOK, RenderForm(page, requestURL(r)))
+			return
+		default:
+			submission, err := kind.Page.Submission(delivery)
+			if err != nil {
+				writePage(w, http.StatusBadRequest, RenderFormMessage("Submission rejected", err.Error(), page.Attribution))
+				return
+			}
+			delivery.Body = submission
+		}
+	}
 	if kind.Verify != nil {
 		if err := kind.Verify(delivery); err != nil {
 			problem(w, http.StatusUnauthorized, err.Error())
@@ -210,7 +241,7 @@ func (handler *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if responseMode(binding) == modeImmediate {
-		handler.respondImmediate(w, r, binding)
+		handler.respondImmediate(w, r, binding, kind)
 		return
 	}
 	handler.awaitResponse(w, r, binding, record)
@@ -223,6 +254,37 @@ const (
 	modeLastNode
 	modeResponseNode
 )
+
+// hostedPage renders the page a trigger serves on this route, if it serves one.
+//
+// The lookup ignores the method on purpose. A form's page and its submission are
+// two methods of one endpoint, and a document that named only the submission —
+// an import, or an API client that did not write the default — would otherwise
+// answer 404 to the browser asking for the page it was told about.
+func (handler *Handler) hostedPage(r *http.Request, path string) (repository.WebhookBinding, []byte, bool) {
+	if handler.bindings == nil {
+		return repository.WebhookBinding{}, nil, false
+	}
+	candidates := []string{path}
+	if route, _, found := strings.Cut(path, "/"); found {
+		candidates = append(candidates, route)
+	}
+	for _, candidate := range candidates {
+		bindings, err := handler.bindings.ResolveRoute(r.Context(), candidate)
+		if err != nil {
+			continue
+		}
+		for _, binding := range bindings {
+			kind := handler.triggers.Lookup(binding.NodeType)
+			if kind.Page == nil || kind.Page.Form == nil {
+				continue
+			}
+			form := kind.Page.Form(Delivery{Request: r, Binding: binding})
+			return binding, RenderForm(form, requestURL(r)), true
+		}
+	}
+	return repository.WebhookBinding{}, nil, false
+}
 
 // resolveBinding finds the binding for one request, filling path parameters.
 //
@@ -744,7 +806,7 @@ func terminal(status execution.Status) bool {
 // `{executionId, status}` and ignored the configured code, body and headers, so
 // a workflow that acknowledged with 201 and a custom body — or with no body at
 // all — did neither.
-func (handler *Handler) respondImmediate(w http.ResponseWriter, r *http.Request, binding repository.WebhookBinding) {
+func (handler *Handler) respondImmediate(w http.ResponseWriter, r *http.Request, binding repository.WebhookBinding, kind TriggerKind) {
 	options, _ := binding.Parameters["options"].(map[string]any)
 	for name, value := range responseHeaderEntries(options["responseHeaders"]) {
 		w.Header().Set(name, value)
@@ -753,6 +815,17 @@ func (handler *Handler) respondImmediate(w http.ResponseWriter, r *http.Request,
 
 	if noBody, _ := options["noResponseBody"].(bool); noBody {
 		w.WriteHeader(status)
+		return
+	}
+	// A person filled in a form in a browser, so the acknowledgement is a page:
+	// n8n renders a thank-you page for the same reason, and a caller staring at
+	// `{"message":"Workflow was started"}` cannot tell whether it was received.
+	if kind.Page != nil {
+		title, message := "Form submitted", ""
+		if kind.Page.Message != nil {
+			title, message = kind.Page.Message(deliveryOf(r, binding, kind))
+		}
+		writePage(w, status, RenderFormMessage(title, message, true))
 		return
 	}
 	if body, ok := options["responseData"].(string); ok && strings.TrimSpace(body) != "" {
@@ -764,6 +837,25 @@ func (handler *Handler) respondImmediate(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	writeJSON(w, status, map[string]any{"message": "Workflow was started"})
+}
+
+// deliveryOf rebuilds the slice of a delivery the page readers need.
+//
+// The submission's own fields are not carried here: an acknowledgement page
+// renders the title and message the trigger configured, which are binding
+// parameters and nothing else.
+func deliveryOf(r *http.Request, binding repository.WebhookBinding, _ TriggerKind) Delivery {
+	return Delivery{Request: r, Binding: binding}
+}
+
+// writePage answers with a rendered page.
+func writePage(w http.ResponseWriter, status int, page []byte) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// A form page is per-workflow and per-binding, so a shared cache holding
+	// one tenant's form for another tenant's browser is not acceptable.
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(status)
+	_, _ = w.Write(page)
 }
 
 // respondFromExecution answers from a finished execution.

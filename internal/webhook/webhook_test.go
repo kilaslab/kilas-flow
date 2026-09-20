@@ -1294,6 +1294,102 @@ func TestRespondToWebhookDoesNotLeakTheResponseIntoDownstreamItems(t *testing.T)
 	}
 }
 
+// formDocument is a workflow that starts from a hosted form.
+func formDocument(parameters map[string]any) workflow.Document {
+	return workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		Name:          "Hosted form",
+		Nodes: []workflow.Node{{
+			ID: "trigger", Name: "Form", Type: nodes.FormTriggerNodeType, TypeVersion: workflow.V(1),
+			Parameters: parameters,
+		}},
+		Connections: []workflow.Connection{},
+		Settings:    map[string]any{},
+	}
+}
+
+// The form trigger is a GET that renders the page and a POST that submits it,
+// which is why both methods are bound on one route.
+func TestFormTriggerServesItsPageAndStartsTheRunOnSubmit(t *testing.T) {
+	h := newHarness(t)
+	active := h.activate(t, formDocument(map[string]any{
+		"path": "signup", "formTitle": "Sign up", "formDescription": "Tell us who you are.",
+		"formFields": map[string]any{"values": []any{
+			map[string]any{"fieldLabel": "Name", "fieldType": "text", "requiredField": true},
+			map[string]any{"fieldLabel": "Plan", "fieldType": "dropdown",
+				"fieldOptions": map[string]any{"values": []any{"free", "pro"}}},
+		}},
+		"responseMode": "immediate",
+	}))
+	url := h.url(t, active)
+
+	// GET renders the page and runs nothing: a form is filled in before it is
+	// submitted.
+	page := httptest.NewRecorder()
+	h.handler.ServeHTTP(page, httptest.NewRequest(http.MethodGet, url, nil))
+	if page.Code != http.StatusOK {
+		t.Fatalf("GET status = %d (body: %s), want the page", page.Code, page.Body)
+	}
+	if contentType := page.Header().Get("Content-Type"); !strings.HasPrefix(contentType, "text/html") {
+		t.Errorf("Content-Type = %q, want the page rendered as HTML", contentType)
+	}
+	for _, expected := range []string{"Sign up", "Tell us who you are.", `name="Name"`, `<option value="pro">pro</option>`} {
+		if !strings.Contains(page.Body.String(), expected) {
+			t.Errorf("page is missing %q:\n%s", expected, page.Body)
+		}
+	}
+	if h.queuedCount() != 0 {
+		t.Error("rendering the page queued an execution")
+	}
+
+	// A submission that omits a required field is refused and runs nothing.
+	refused := httptest.NewRequest(http.MethodPost, url, strings.NewReader("Plan=pro"))
+	refused.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	refusal := httptest.NewRecorder()
+	h.handler.ServeHTTP(refusal, refused)
+	if refusal.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d (body: %s), want a refusal", refusal.Code, refusal.Body)
+	}
+	if !strings.Contains(refusal.Body.String(), "Name") {
+		t.Errorf("refusal = %s, want it to name the missing field", refusal.Body)
+	}
+	if h.queuedCount() != 0 {
+		t.Error("a refused submission still queued an execution")
+	}
+
+	// A complete submission runs the workflow, and the item is the submitted
+	// fields plus the two keys n8n's own form trigger adds.
+	submission := httptest.NewRequest(http.MethodPost, url, strings.NewReader("Name=Ada&Plan=pro"))
+	submission.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	accepted := httptest.NewRecorder()
+	h.handler.ServeHTTP(accepted, submission)
+	if accepted.Code != http.StatusOK {
+		t.Fatalf("status = %d (body: %s), want the acknowledgement page", accepted.Code, accepted.Body)
+	}
+	if contentType := accepted.Header().Get("Content-Type"); !strings.HasPrefix(contentType, "text/html") {
+		t.Errorf("Content-Type = %q, want a page rather than a JSON body", contentType)
+	}
+
+	h.drain(t)
+	record, err := h.runtime.Get(context.Background(), h.tenant, h.lastExecution(t))
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	var item map[string]any
+	if err := json.Unmarshal(record.Input, &item); err != nil {
+		t.Fatalf("decode trigger input = %v", err)
+	}
+	if item["Name"] != "Ada" || item["Plan"] != "pro" {
+		t.Errorf("item = %#v, want the submitted fields at the top level", item)
+	}
+	if item["formMode"] != "production" {
+		t.Errorf("formMode = %#v, want production", item["formMode"])
+	}
+	if _, present := item["submittedAt"].(string); !present {
+		t.Errorf("item = %#v, want a submittedAt stamp", item)
+	}
+}
+
 // decodeBody reads a response body as JSON, whichever shape it is.
 func decodeBody[T any](t *testing.T, recorder *httptest.ResponseRecorder) T {
 	t.Helper()

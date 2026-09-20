@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/kilaslabs/kilas-flow/internal/engine"
 	"github.com/kilaslabs/kilas-flow/internal/expression"
@@ -25,9 +26,22 @@ const (
 // WebhookNodeType and RespondNodeType are needed outside this package to bind
 // routes and to find the responding node in an execution result.
 const (
-	WebhookNodeType = "kilasflow.webhook"
-	RespondNodeType = "kilasflow.respondToWebhook"
-	ScheduleType    = "kilasflow.schedule"
+	WebhookNodeType     = "kilasflow.webhook"
+	RespondNodeType     = "kilasflow.respondToWebhook"
+	ScheduleType        = "kilasflow.schedule"
+	FormTriggerNodeType = "kilasflow.formTrigger"
+)
+
+// Form field kinds, using n8n's own names so an imported form's fields land in
+// the same control they had there.
+const (
+	FormFieldText     = "text"
+	FormFieldEmail    = "email"
+	FormFieldNumber   = "number"
+	FormFieldDate     = "date"
+	FormFieldDropdown = "dropdown"
+	FormFieldTextarea = "textarea"
+	FormFieldFile     = "file"
 )
 
 // Webhook authentication modes.
@@ -280,6 +294,223 @@ func respondToWebhookNode() node.Definition {
 		ExecutorID:     RespondExecutorID,
 		Validate:       validateRespondConfiguration,
 	}
+}
+
+// formTrigger serves a hosted form and starts the workflow when it is
+// submitted.
+//
+// n8n's own form trigger is a GET that renders a page and a POST that submits
+// it, which is why this node binds both methods on one route. It is a trigger
+// in its own right rather than a Webhook with a page because the page is the
+// point: 9 of the 100 templates in the corpus start from a hosted form, and
+// every one of them imported as a blocking placeholder.
+func formTrigger() node.Definition {
+	return node.Definition{
+		Type:        FormTriggerNodeType,
+		Version:     workflow.V(1),
+		DisplayName: "Form",
+		Description: "Serves a hosted form at this workflow's URL and starts the run when it is submitted.",
+		Category:    "Triggers",
+		Group:       []node.NodeGroup{node.GroupTrigger},
+		Icon:        &node.NodeIcon{Light: "builtin:form"},
+		IconColor:   "#8b5cf6",
+		Subtitle:    "{{ $parameter.formTitle }}",
+		// Both methods on one route: GET renders the page, POST is the
+		// submission. The declaration names the parameter so the extractor
+		// still holds no node-type knowledge of its own.
+		Webhook: &node.WebhookDeclaration{
+			Name:            "form",
+			PathParameter:   "path",
+			MethodParameter: "formMethods",
+			Method:          http.MethodPost,
+		},
+		Credentials: []node.CredentialRequirement{
+			{Type: "httpBasicAuth"},
+			{Type: "httpHeaderAuth"},
+		},
+		Outputs: mainOutput(),
+		Parameters: []node.PropertyDefinition{
+			{
+				Key: "path", Label: "Path", Kind: node.PropertyString, Required: true,
+				Description: "A label for this endpoint. The public URL uses an opaque route minted on activation.",
+			},
+			{
+				Key: "formMethods", Label: "Methods", Kind: node.PropertyMultiOptions,
+				Default: []any{http.MethodGet, http.MethodPost},
+				Description: "A form is a GET that renders the page and a POST that submits it. Both are required; " +
+					"changing them breaks the form.",
+				Options: []node.PropertyOption{
+					{Label: "GET", Value: http.MethodGet}, {Label: "POST", Value: http.MethodPost},
+				},
+			},
+			{
+				Key: "formTitle", Label: "Form Title", Kind: node.PropertyString, Required: true, Default: "Form",
+			},
+			{
+				Key: "formDescription", Label: "Form Description", Kind: node.PropertyString,
+				Description: "Shown under the title on the page.",
+			},
+			{
+				Key: "formFields", Label: "Form Fields", Kind: node.PropertyFixedCollection,
+				TypeOptions: &node.TypeOptions{MultipleValues: true, MultipleValueButtonText: "Add Field"},
+				Description: "One row per field. Each field's label is the key the submitted value arrives under.",
+				Groups: []node.PropertyGroup{{
+					Key: "values", Label: "Field",
+					Fields: []node.PropertyDefinition{
+						{
+							Key: "fieldLabel", Label: "Label", Kind: node.PropertyString, Required: true,
+							Description: "Also the key this field's value arrives under.",
+						},
+						{
+							Key: "fieldType", Label: "Field Type", Kind: node.PropertyOptions, Default: FormFieldText,
+							Options: []node.PropertyOption{
+								{Label: "Text", Value: FormFieldText},
+								{Label: "Email", Value: FormFieldEmail},
+								{Label: "Number", Value: FormFieldNumber},
+								{Label: "Date", Value: FormFieldDate},
+								{Label: "Dropdown", Value: FormFieldDropdown},
+								{Label: "Textarea", Value: FormFieldTextarea},
+								{Label: "File", Value: FormFieldFile},
+							},
+						},
+						{
+							Key: "requiredField", Label: "Required Field", Kind: node.PropertyBoolean, Default: false,
+						},
+						{
+							Key: "placeholder", Label: "Placeholder", Kind: node.PropertyString,
+						},
+						{
+							Key: "fieldOptions", Label: "Dropdown Options", Kind: node.PropertyFixedCollection,
+							TypeOptions: &node.TypeOptions{MultipleValues: true, MultipleValueButtonText: "Add Option"},
+							VisibleWhen: []node.VisibilityCondition{{Key: "fieldType", Equals: FormFieldDropdown}},
+							Groups: []node.PropertyGroup{{
+								Key: "values", Label: "Option",
+								Fields: []node.PropertyDefinition{
+									{Key: "option", Label: "Option", Kind: node.PropertyString, Required: true},
+								},
+							}},
+						},
+					},
+				}},
+			},
+			{
+				Key: "responseMode", Label: "Respond", Kind: node.PropertyOptions, Required: true, Default: ResponseModeImmediate,
+				Options: []node.PropertyOption{
+					{Label: "Immediately", Value: ResponseModeImmediate},
+					{Label: "When the last node finishes", Value: ResponseModeLastNode},
+					{Label: "Using a Respond to Webhook node", Value: ResponseModeNode},
+				},
+			},
+			{
+				Key: "appendAttribution", Label: "Append Attribution", Kind: node.PropertyBoolean, Default: true,
+				Description: "Add a line naming KilasFlow under the form.",
+			},
+			{
+				Key: "authentication", Label: "Authentication", Kind: node.PropertyOptions, Required: true, Default: WebhookAuthNone,
+				Options: []node.PropertyOption{
+					{Label: "None", Value: WebhookAuthNone},
+					{Label: "Basic auth", Value: WebhookAuthBasic},
+					{Label: "Header auth", Value: WebhookAuthHeader},
+				},
+			},
+			{
+				Key: "options", Label: "Options", Kind: node.PropertyCollection,
+				Fields: []node.PropertyDefinition{
+					{
+						Key: "responseData", Label: "Response Data", Kind: node.PropertyString,
+						Description: "The thank-you text shown after a submission.",
+						VisibleWhen: []node.VisibilityCondition{{Key: "responseMode", Equals: ResponseModeImmediate}},
+					},
+					{
+						Key: "allowedOrigins", Label: "Allowed Origins (CORS)", Kind: node.PropertyString, Default: "*",
+					},
+					{
+						Key: "ipWhitelist", Label: "IP Allow-list", Kind: node.PropertyString,
+						Description: "Comma-separated addresses or CIDR ranges allowed to open and submit this form.",
+					},
+				},
+			},
+		},
+		SharedSettings: sharedSettings(),
+		ExecutorID:     WebhookExecutorID,
+		Validate:       validateFormConfiguration,
+	}
+}
+
+// FormTriggerKind is how the form trigger serves its page and reads the
+// submission that page sends back.
+//
+// The page description is read from the binding on every request rather than
+// captured here: a trigger kind is registered once per node type, while a form
+// belongs to one workflow, and a captured description would serve the first
+// form every workflow activated.
+func FormTriggerKind() webhook.TriggerKind {
+	return webhook.TriggerKind{
+		Shape: webhook.ShapeFormSubmission,
+		Page: &webhook.HostedPage{
+			Form: func(delivery webhook.Delivery) webhook.Form {
+				return webhook.FormFromParameters(delivery.Binding.Parameters)
+			},
+			Submission: func(delivery webhook.Delivery) (map[string]any, error) {
+				form := webhook.FormFromParameters(delivery.Binding.Parameters)
+				fields := webhook.SubmissionFields(delivery.Body, time.Now())
+				if missing := webhook.MissingRequiredFields(form, fields); len(missing) > 0 {
+					return nil, fmt.Errorf("these fields are required: %s", strings.Join(missing, ", "))
+				}
+				return fields, nil
+			},
+			Message: func(delivery webhook.Delivery) (string, string) {
+				options, _ := delivery.Binding.Parameters["options"].(map[string]any)
+				message, _ := options["responseData"].(string)
+				if strings.TrimSpace(message) == "" {
+					message = "Your response has been recorded."
+				}
+				return "Form submitted", message
+			},
+		},
+	}
+}
+
+func validateFormConfiguration(node workflow.Node) error {
+	path := WebhookPath(textParameter(node.Parameters, "path"))
+	if path == "" {
+		return fmt.Errorf("path is required")
+	}
+	if strings.TrimSpace(textParameter(node.Parameters, "formTitle")) == "" {
+		return fmt.Errorf("a form needs a title; the page renders without one otherwise")
+	}
+	if len(webhook.FormFromParameters(node.Parameters).Fields) == 0 {
+		return fmt.Errorf("a form needs at least one field, or a submission carries nothing")
+	}
+	methods := map[string]bool{}
+	for _, method := range listParameter(node.Parameters["formMethods"]) {
+		methods[strings.ToUpper(method)] = true
+	}
+	if len(methods) == 0 {
+		methods[http.MethodGet] = true
+		methods[http.MethodPost] = true
+	}
+	// Both halves are load-bearing: without GET there is no page to fill in,
+	// and without POST there is nowhere to submit it.
+	if !methods[http.MethodGet] || !methods[http.MethodPost] {
+		return fmt.Errorf("a form answers GET (the page) and POST (the submission); both methods are required")
+	}
+	switch authentication := textParameter(node.Parameters, "authentication"); authentication {
+	case "", WebhookAuthNone:
+	case WebhookAuthBasic, WebhookAuthHeader:
+		required := credentialTypesForAuth[authentication]
+		if !hasCredential(node, required) {
+			return fmt.Errorf("this form authenticates with %s, so it needs a %s credential attached before it can be activated", authentication, required)
+		}
+	default:
+		return fmt.Errorf("authentication mode is not supported")
+	}
+	switch textParameter(node.Parameters, "responseMode") {
+	case "", ResponseModeImmediate, ResponseModeLastNode, ResponseModeNode:
+	default:
+		return fmt.Errorf("responseMode is not supported")
+	}
+	return nil
 }
 
 func scheduleTrigger() node.Definition {
