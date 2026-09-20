@@ -47,4 +47,4 @@ exposed over REST (Go-covered per BUG-cq4yk3).
 Closed by `pine close --evidence` on 2026-09-20.
 
 - Base: `458b038c` (last commit at or before ticket created 2026-09-20)
-- _(no file changes detected since ticket creation)_
+- `0cb9eee` — the live-backend e2e suites. The suites were untracked when this ticket was closed, which is why the section above found no changes: this is the commit they landed in, and `git log --grep=EPIC-87t47t` is the durable link.
