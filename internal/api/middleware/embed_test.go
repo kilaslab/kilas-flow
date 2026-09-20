@@ -5,7 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/kilaslabs/kilas-flow/internal/embed"
+	"github.com/kilaslab/kilas-flow/internal/embed"
 )
 
 func datastoreSession(scopes ...embed.Scope) embed.Session {

@@ -5,11 +5,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kilaslabs/kilas-flow/internal/engine"
-	"github.com/kilaslabs/kilas-flow/internal/node"
-	"github.com/kilaslabs/kilas-flow/internal/safehttp"
-	"github.com/kilaslabs/kilas-flow/internal/workflow"
-	"github.com/kilaslabs/kilas-flow/nodes"
+	"github.com/kilaslab/kilas-flow/internal/engine"
+	"github.com/kilaslab/kilas-flow/internal/node"
+	"github.com/kilaslab/kilas-flow/internal/safehttp"
+	"github.com/kilaslab/kilas-flow/internal/workflow"
+	"github.com/kilaslab/kilas-flow/nodes"
 )
 
 func flowExecutor(t *testing.T, id string) engine.Executor {

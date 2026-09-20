@@ -9,9 +9,9 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
-	"github.com/kilaslabs/kilas-flow/internal/interop/n8n"
-	"github.com/kilaslabs/kilas-flow/internal/repository"
-	"github.com/kilaslabs/kilas-flow/internal/workflow"
+	"github.com/kilaslab/kilas-flow/internal/interop/n8n"
+	"github.com/kilaslab/kilas-flow/internal/repository"
+	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
 
 // ImportedWorkflowResource is the saved draft plus everything the adapter
@@ -154,7 +154,7 @@ func (handler *Interop) Register(api huma.API) {
 	}, handler.Export)
 	huma.Register(api, huma.Operation{
 		OperationID: "workflow-diagnostics", Method: http.MethodGet, Path: "/workflows/{id}/diagnostics",
-		Summary:     "Read a revision's import report",
+		Summary: "Read a revision's import report",
 		Description: "Returns the report stored with a revision when an import created it: what the n8n " +
 			"translation could not carry faithfully, per node and per field. A revision that was not " +
 			"imported answers with no source and no issues.",

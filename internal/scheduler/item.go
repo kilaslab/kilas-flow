@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kilaslabs/kilas-flow/internal/datetime"
+	"github.com/kilaslab/kilas-flow/internal/datetime"
 )
 
 // TriggerItem is what a scheduled run starts with.

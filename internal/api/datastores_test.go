@@ -12,12 +12,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kilaslabs/kilas-flow/internal/api"
-	"github.com/kilaslabs/kilas-flow/internal/config"
-	"github.com/kilaslabs/kilas-flow/internal/database"
-	"github.com/kilaslabs/kilas-flow/internal/datastore"
-	"github.com/kilaslabs/kilas-flow/internal/embed"
-	"github.com/kilaslabs/kilas-flow/internal/repository"
+	"github.com/kilaslab/kilas-flow/internal/api"
+	"github.com/kilaslab/kilas-flow/internal/config"
+	"github.com/kilaslab/kilas-flow/internal/database"
+	"github.com/kilaslab/kilas-flow/internal/datastore"
+	"github.com/kilaslab/kilas-flow/internal/embed"
+	"github.com/kilaslab/kilas-flow/internal/repository"
 )
 
 // fixedTenant resolves every request to one tenant, so two servers sharing

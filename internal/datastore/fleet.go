@@ -6,7 +6,7 @@ import (
 
 	"gorm.io/gorm"
 
-	"github.com/kilaslabs/kilas-flow/internal/database"
+	"github.com/kilaslab/kilas-flow/internal/database"
 )
 
 // CurrentSchemaVersion is the physical-table shape Create issues today. It

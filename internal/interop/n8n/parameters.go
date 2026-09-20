@@ -8,11 +8,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/kilaslabs/kilas-flow/internal/property"
-	"github.com/kilaslabs/kilas-flow/internal/scheduler"
-	"github.com/kilaslabs/kilas-flow/internal/sqlbuild"
-	"github.com/kilaslabs/kilas-flow/internal/workflow"
-	"github.com/kilaslabs/kilas-flow/nodes"
+	"github.com/kilaslab/kilas-flow/internal/property"
+	"github.com/kilaslab/kilas-flow/internal/scheduler"
+	"github.com/kilaslab/kilas-flow/internal/sqlbuild"
+	"github.com/kilaslab/kilas-flow/internal/workflow"
+	"github.com/kilaslab/kilas-flow/nodes"
 )
 
 // n8nFromAIMarker is the comment n8n writes into an expression when a user

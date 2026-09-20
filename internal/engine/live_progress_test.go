@@ -5,10 +5,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kilaslabs/kilas-flow/internal/engine"
-	"github.com/kilaslabs/kilas-flow/internal/events"
-	"github.com/kilaslabs/kilas-flow/internal/execution"
-	"github.com/kilaslabs/kilas-flow/internal/repository"
+	"github.com/kilaslab/kilas-flow/internal/engine"
+	"github.com/kilaslab/kilas-flow/internal/events"
+	"github.com/kilaslab/kilas-flow/internal/execution"
+	"github.com/kilaslab/kilas-flow/internal/repository"
 )
 
 // A run reports progress while it is still running.

@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kilaslabs/kilas-flow/internal/engine"
-	"github.com/kilaslabs/kilas-flow/internal/workflow"
+	"github.com/kilaslab/kilas-flow/internal/engine"
+	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
 
 // An escaped apostrophe is ordinary SQL and must reach a real server.

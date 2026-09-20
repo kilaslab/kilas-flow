@@ -11,7 +11,7 @@ other:
 
 | | Guest SDK | Host SDK |
 |---|---|---|
-| Import | `github.com/kilaslabs/kilas-flow/pkg/sdk` (Go, the module path in `go.mod`) | `@kilasflow/sdk` (npm, TypeScript — not published yet, see the [SDK README](https://github.com/kilaslab/kilas-flow/blob/main/sdk/README.md)) |
+| Import | `github.com/kilaslab/kilas-flow/pkg/sdk` (Go, the module path in `go.mod`) | `@kilasflow/sdk` (npm, TypeScript — not published yet, see the [SDK README](https://github.com/kilaslab/kilas-flow/blob/main/sdk/README.md)) |
 | Audience | Node **authors** shipping a pack | Developers **embedding** KilasFlow in a host app |
 | Runs | Inside the WASM sandbox, one function per call | Outside the server, against its HTTP API |
 | Ships in | The pack author's `.wasm` module | The host application's `node_modules` |

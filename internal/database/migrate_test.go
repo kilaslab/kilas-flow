@@ -15,9 +15,9 @@ import (
 	"gorm.io/gorm"
 	gormlogger "gorm.io/gorm/logger"
 
-	"github.com/kilaslabs/kilas-flow/internal/config"
-	"github.com/kilaslabs/kilas-flow/internal/repository"
-	"github.com/kilaslabs/kilas-flow/migrations"
+	"github.com/kilaslab/kilas-flow/internal/config"
+	"github.com/kilaslab/kilas-flow/internal/repository"
+	"github.com/kilaslab/kilas-flow/migrations"
 )
 
 // baselineTables is what the schema looked like when migrations took over from
@@ -813,7 +813,6 @@ func TestVectorSkipRecordsVersionWithoutRunningDDL(t *testing.T) {
 		t.Error("skipped vector migration was not recorded as applied")
 	}
 }
-
 
 func TestEveryMigrationShipsBothDirectionsForBothDialects(t *testing.T) {
 	versions := map[string][]int64{}

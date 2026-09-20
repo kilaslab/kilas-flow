@@ -5,9 +5,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/kilaslabs/kilas-flow/internal/embed"
-	"github.com/kilaslabs/kilas-flow/internal/property"
-	"github.com/kilaslabs/kilas-flow/internal/workflow"
+	"github.com/kilaslab/kilas-flow/internal/embed"
+	"github.com/kilaslab/kilas-flow/internal/property"
+	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
 
 // This file is the one place that knows how a document reaches outside itself.

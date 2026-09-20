@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kilaslabs/kilas-flow/internal/safehttp"
-	"github.com/kilaslabs/kilas-flow/internal/sqlnode"
+	"github.com/kilaslab/kilas-flow/internal/safehttp"
+	"github.com/kilaslab/kilas-flow/internal/sqlnode"
 )
 
 // loopbackFields is a credential pointing at the machine itself: the oldest

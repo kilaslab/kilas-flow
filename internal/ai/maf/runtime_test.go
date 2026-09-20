@@ -13,7 +13,7 @@ import (
 	"github.com/microsoft/agent-framework-go/tool"
 	"github.com/microsoft/agent-framework-go/tool/functool"
 
-	"github.com/kilaslabs/kilas-flow/internal/ai"
+	"github.com/kilaslab/kilas-flow/internal/ai"
 )
 
 // stubModel satisfies ai.ChatModel for request validation. The framework agent

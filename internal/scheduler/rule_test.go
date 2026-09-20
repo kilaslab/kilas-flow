@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kilaslabs/kilas-flow/internal/scheduler"
+	"github.com/kilaslab/kilas-flow/internal/scheduler"
 )
 
 func TestAnIntervalBecomesTheCronItMeans(t *testing.T) {

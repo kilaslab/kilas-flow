@@ -11,12 +11,12 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/kilaslabs/kilas-flow/internal/ai"
-	"github.com/kilaslabs/kilas-flow/internal/datastore"
-	"github.com/kilaslabs/kilas-flow/internal/engine"
-	"github.com/kilaslabs/kilas-flow/internal/node"
-	"github.com/kilaslabs/kilas-flow/internal/workflow"
-	"github.com/kilaslabs/kilas-flow/nodes"
+	"github.com/kilaslab/kilas-flow/internal/ai"
+	"github.com/kilaslab/kilas-flow/internal/datastore"
+	"github.com/kilaslab/kilas-flow/internal/engine"
+	"github.com/kilaslab/kilas-flow/internal/node"
+	"github.com/kilaslab/kilas-flow/internal/workflow"
+	"github.com/kilaslab/kilas-flow/nodes"
 )
 
 // stubDatastoreTable is one tenant's table in the tool-test double.

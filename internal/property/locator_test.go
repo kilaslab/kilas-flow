@@ -4,8 +4,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/kilaslabs/kilas-flow/internal/expression"
-	"github.com/kilaslabs/kilas-flow/internal/property"
+	"github.com/kilaslab/kilas-flow/internal/expression"
+	"github.com/kilaslab/kilas-flow/internal/property"
 )
 
 func TestALocatorSurvivesExpressionResolutionIntact(t *testing.T) {

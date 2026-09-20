@@ -1,9 +1,9 @@
 package nodes
 
 import (
-	"github.com/kilaslabs/kilas-flow/internal/engine"
-	"github.com/kilaslabs/kilas-flow/internal/routing"
-	"github.com/kilaslabs/kilas-flow/internal/safehttp"
+	"github.com/kilaslab/kilas-flow/internal/engine"
+	"github.com/kilaslab/kilas-flow/internal/routing"
+	"github.com/kilaslab/kilas-flow/internal/safehttp"
 )
 
 // RoutingExecutorID is the binding a declarative node pack names instead of

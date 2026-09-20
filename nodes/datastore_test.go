@@ -9,16 +9,16 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kilaslabs/kilas-flow/internal/config"
-	"github.com/kilaslabs/kilas-flow/internal/database"
-	"github.com/kilaslabs/kilas-flow/internal/datastore"
-	"github.com/kilaslabs/kilas-flow/internal/engine"
-	"github.com/kilaslabs/kilas-flow/internal/node"
-	"github.com/kilaslabs/kilas-flow/internal/property"
-	"github.com/kilaslabs/kilas-flow/internal/safehttp"
-	"github.com/kilaslabs/kilas-flow/internal/sqlnode"
-	"github.com/kilaslabs/kilas-flow/internal/workflow"
-	"github.com/kilaslabs/kilas-flow/nodes"
+	"github.com/kilaslab/kilas-flow/internal/config"
+	"github.com/kilaslab/kilas-flow/internal/database"
+	"github.com/kilaslab/kilas-flow/internal/datastore"
+	"github.com/kilaslab/kilas-flow/internal/engine"
+	"github.com/kilaslab/kilas-flow/internal/node"
+	"github.com/kilaslab/kilas-flow/internal/property"
+	"github.com/kilaslab/kilas-flow/internal/safehttp"
+	"github.com/kilaslab/kilas-flow/internal/sqlnode"
+	"github.com/kilaslab/kilas-flow/internal/workflow"
+	"github.com/kilaslab/kilas-flow/nodes"
 )
 
 func datastoreEngine(t *testing.T) *datastore.Engine {

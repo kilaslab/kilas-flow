@@ -3,8 +3,8 @@ package nodes_test
 import (
 	"testing"
 
-	"github.com/kilaslabs/kilas-flow/internal/node"
-	"github.com/kilaslabs/kilas-flow/nodes"
+	"github.com/kilaslab/kilas-flow/internal/node"
+	"github.com/kilaslab/kilas-flow/nodes"
 )
 
 // TestEveryBuiltinDeclaresItsPresentation is what stops a node arriving on the

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kilaslabs/kilas-flow/internal/embed"
+	"github.com/kilaslab/kilas-flow/internal/embed"
 )
 
 func testKey() []byte {

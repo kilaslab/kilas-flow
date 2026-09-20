@@ -13,11 +13,11 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/sse"
-	"github.com/kilaslabs/kilas-flow/internal/api/middleware"
-	"github.com/kilaslabs/kilas-flow/internal/engine"
-	"github.com/kilaslabs/kilas-flow/internal/events"
-	"github.com/kilaslabs/kilas-flow/internal/execution"
-	"github.com/kilaslabs/kilas-flow/internal/repository"
+	"github.com/kilaslab/kilas-flow/internal/api/middleware"
+	"github.com/kilaslab/kilas-flow/internal/engine"
+	"github.com/kilaslab/kilas-flow/internal/events"
+	"github.com/kilaslab/kilas-flow/internal/execution"
+	"github.com/kilaslab/kilas-flow/internal/repository"
 )
 
 // ExecutionController is the narrow runtime service surface exposed to HTTP.

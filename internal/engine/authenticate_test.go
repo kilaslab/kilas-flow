@@ -6,9 +6,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/kilaslabs/kilas-flow/internal/engine"
-	"github.com/kilaslabs/kilas-flow/internal/safehttp"
-	"github.com/kilaslabs/kilas-flow/internal/workflow"
+	"github.com/kilaslab/kilas-flow/internal/engine"
+	"github.com/kilaslab/kilas-flow/internal/safehttp"
+	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
 
 // stubCredentials resolves one credential, whatever it is asked for.

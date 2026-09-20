@@ -3,13 +3,13 @@ package credentials_test
 import (
 	"bytes"
 	"errors"
-	"github.com/kilaslabs/kilas-flow/internal/property"
+	"github.com/kilaslab/kilas-flow/internal/property"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
-	"github.com/kilaslabs/kilas-flow/internal/credentials"
+	"github.com/kilaslab/kilas-flow/internal/credentials"
 )
 
 func testKey() []byte {

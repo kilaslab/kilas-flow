@@ -12,8 +12,8 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
-	"github.com/kilaslabs/kilas-flow/internal/execution"
-	"github.com/kilaslabs/kilas-flow/internal/workflow"
+	"github.com/kilaslab/kilas-flow/internal/execution"
+	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
 
 // ExecutionRepository is the persistence seam for the graph engine. Payloads

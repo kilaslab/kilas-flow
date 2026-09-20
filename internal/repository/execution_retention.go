@@ -7,7 +7,7 @@ import (
 
 	"gorm.io/gorm"
 
-	"github.com/kilaslabs/kilas-flow/internal/execution"
+	"github.com/kilaslab/kilas-flow/internal/execution"
 )
 
 // ExecutionRetention bounds how much execution history an installation keeps.

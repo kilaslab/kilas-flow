@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/kilaslabs/kilas-flow/internal/property"
+	"github.com/kilaslab/kilas-flow/internal/property"
 )
 
 // The two loaders a datastore node's pickers are built from.

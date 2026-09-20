@@ -8,7 +8,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
-	"github.com/kilaslabs/kilas-flow/internal/api/middleware"
+	"github.com/kilaslab/kilas-flow/internal/api/middleware"
 )
 
 // serverProblem logs the cause of an internal failure and answers with the
@@ -34,7 +34,7 @@ func serverProblem(ctx context.Context, detail string, err error) error {
 
 // modulePath is this project's own import prefix, so a type it defines is told
 // apart from one a dependency defines.
-const modulePath = "github.com/kilaslabs/kilas-flow"
+const modulePath = "github.com/kilaslab/kilas-flow"
 
 // internalFailure reports whether err came from underneath this process — a
 // database driver, a network stack, another library — rather than from the

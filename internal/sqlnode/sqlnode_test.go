@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kilaslabs/kilas-flow/internal/sqlnode"
+	"github.com/kilaslab/kilas-flow/internal/sqlnode"
 )
 
 func TestSQLiteRequiresAnExplicitPath(t *testing.T) {

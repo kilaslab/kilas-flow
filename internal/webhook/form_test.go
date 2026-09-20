@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kilaslabs/kilas-flow/internal/webhook"
+	"github.com/kilaslab/kilas-flow/internal/webhook"
 )
 
 // formParameters is a form trigger's own configuration, as a workflow stores

@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kilaslabs/kilas-flow/internal/api"
-	"github.com/kilaslabs/kilas-flow/internal/embed"
-	"github.com/kilaslabs/kilas-flow/internal/execution"
-	"github.com/kilaslabs/kilas-flow/internal/repository"
+	"github.com/kilaslab/kilas-flow/internal/api"
+	"github.com/kilaslab/kilas-flow/internal/embed"
+	"github.com/kilaslab/kilas-flow/internal/execution"
+	"github.com/kilaslab/kilas-flow/internal/repository"
 )
 
 const hostOrigin = "https://host.example"

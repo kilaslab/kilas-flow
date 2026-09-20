@@ -23,7 +23,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/kilaslabs/kilas-flow/internal/workflow"
+	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
 
 // ErrNotFound reports a reference the store does not hold.

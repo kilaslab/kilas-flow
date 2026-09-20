@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/kilaslabs/kilas-flow/internal/workflow"
+	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
 
 // WorkflowDiagnosticsStore is the optional half of the workflow repository that

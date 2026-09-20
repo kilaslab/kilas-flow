@@ -9,8 +9,8 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
-	"github.com/kilaslabs/kilas-flow/internal/config"
-	"github.com/kilaslabs/kilas-flow/internal/database"
+	"github.com/kilaslab/kilas-flow/internal/config"
+	"github.com/kilaslab/kilas-flow/internal/database"
 )
 
 // Injection stages for Engine.inject, the test seam that proves the single

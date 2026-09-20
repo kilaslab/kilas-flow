@@ -14,7 +14,7 @@ import (
 	"fmt"
 	"strings"
 
-	sdk "github.com/kilaslabs/kilas-flow/pkg/sdk"
+	sdk "github.com/kilaslab/kilas-flow/pkg/sdk"
 )
 
 func run(items []sdk.Item) ([]sdk.Item, error) {

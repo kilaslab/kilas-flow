@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/kilaslabs/kilas-flow/internal/node"
-	"github.com/kilaslabs/kilas-flow/internal/sqlbuild"
+	"github.com/kilaslab/kilas-flow/internal/node"
+	"github.com/kilaslab/kilas-flow/internal/sqlbuild"
 )
 
 // The database nodes' options collection.

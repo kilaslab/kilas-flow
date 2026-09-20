@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/kilaslabs/kilas-flow/internal/property"
+	"github.com/kilaslab/kilas-flow/internal/property"
 )
 
 // SchemaLoader answers a resource mapper's column list.

@@ -9,9 +9,9 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/kilaslabs/kilas-flow/internal/node"
-	"github.com/kilaslabs/kilas-flow/internal/webhook"
-	"github.com/kilaslabs/kilas-flow/internal/workflow"
+	"github.com/kilaslab/kilas-flow/internal/node"
+	"github.com/kilaslab/kilas-flow/internal/webhook"
+	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
 
 // Telegram's server-owned bindings.

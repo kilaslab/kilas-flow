@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kilaslabs/kilas-flow/internal/interop/n8n"
+	"github.com/kilaslab/kilas-flow/internal/interop/n8n"
 )
 
 func TestGOWAAppDevicesImportsAsHTTPNotUnsupported(t *testing.T) {

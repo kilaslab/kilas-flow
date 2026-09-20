@@ -19,9 +19,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/kilaslabs/kilas-flow/internal/property"
-	"github.com/kilaslabs/kilas-flow/internal/routing"
-	"github.com/kilaslabs/kilas-flow/internal/workflow"
+	"github.com/kilaslab/kilas-flow/internal/property"
+	"github.com/kilaslab/kilas-flow/internal/routing"
+	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
 
 // ScaffoldOptions names the pack Scaffold builds. Zero values fall back to

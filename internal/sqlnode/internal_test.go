@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kilaslabs/kilas-flow/internal/safehttp"
-	"github.com/kilaslabs/kilas-flow/internal/sqlnode"
+	"github.com/kilaslab/kilas-flow/internal/safehttp"
+	"github.com/kilaslab/kilas-flow/internal/sqlnode"
 )
 
 // internalTargetFor builds the installation's own database identity the way

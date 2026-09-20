@@ -14,9 +14,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kilaslabs/kilas-flow/internal/credentials"
-	"github.com/kilaslabs/kilas-flow/internal/execution"
-	"github.com/kilaslabs/kilas-flow/internal/safehttp"
+	"github.com/kilaslab/kilas-flow/internal/credentials"
+	"github.com/kilaslab/kilas-flow/internal/execution"
+	"github.com/kilaslab/kilas-flow/internal/safehttp"
 )
 
 // fakeStore is a BindingStore keyed by tenant and name.

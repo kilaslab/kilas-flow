@@ -33,10 +33,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/kilaslabs/kilas-flow/internal/loadoptions"
-	"github.com/kilaslabs/kilas-flow/internal/node"
-	"github.com/kilaslabs/kilas-flow/internal/routing"
-	"github.com/kilaslabs/kilas-flow/internal/webhook"
+	"github.com/kilaslab/kilas-flow/internal/loadoptions"
+	"github.com/kilaslab/kilas-flow/internal/node"
+	"github.com/kilaslab/kilas-flow/internal/routing"
+	"github.com/kilaslab/kilas-flow/internal/webhook"
 )
 
 // ManifestName is the file each pack directory carries that Decode reads.

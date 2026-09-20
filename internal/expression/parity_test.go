@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kilaslabs/kilas-flow/internal/expression"
+	"github.com/kilaslab/kilas-flow/internal/expression"
 )
 
 // These are the parity probes the full review ran side by side against n8n.

@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kilaslabs/kilas-flow/internal/node"
-	"github.com/kilaslabs/kilas-flow/internal/workflow"
-	"github.com/kilaslabs/kilas-flow/nodes"
+	"github.com/kilaslab/kilas-flow/internal/node"
+	"github.com/kilaslab/kilas-flow/internal/workflow"
+	"github.com/kilaslab/kilas-flow/nodes"
 )
 
 // n8nOption is one row of the transcription in testdata/n8n_sql_options.json.

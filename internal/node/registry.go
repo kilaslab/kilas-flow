@@ -6,8 +6,8 @@ import (
 	"sort"
 	"strings"
 
-	propertypkg "github.com/kilaslabs/kilas-flow/internal/property"
-	"github.com/kilaslabs/kilas-flow/internal/workflow"
+	propertypkg "github.com/kilaslab/kilas-flow/internal/property"
+	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
 
 // Definition is the complete server-owned description of a supported node.

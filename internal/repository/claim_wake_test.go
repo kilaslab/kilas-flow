@@ -23,11 +23,11 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
-	"github.com/kilaslabs/kilas-flow/internal/config"
-	"github.com/kilaslabs/kilas-flow/internal/database"
-	"github.com/kilaslabs/kilas-flow/internal/execution"
-	"github.com/kilaslabs/kilas-flow/internal/repository"
-	"github.com/kilaslabs/kilas-flow/internal/workflow"
+	"github.com/kilaslab/kilas-flow/internal/config"
+	"github.com/kilaslab/kilas-flow/internal/database"
+	"github.com/kilaslab/kilas-flow/internal/execution"
+	"github.com/kilaslab/kilas-flow/internal/repository"
+	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
 
 // claimProbe stands in for the execution row for SQL-shape assertions: the

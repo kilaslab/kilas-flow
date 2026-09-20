@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/kilaslabs/kilas-flow/internal/expression"
-	"github.com/kilaslabs/kilas-flow/internal/workflow"
+	"github.com/kilaslab/kilas-flow/internal/expression"
+	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
 
 // checkpointVersion is the only checkpoint encoding this binary reads and

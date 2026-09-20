@@ -6,7 +6,7 @@ import (
 
 	"gorm.io/gorm/schema"
 
-	"github.com/kilaslabs/kilas-flow/internal/config"
+	"github.com/kilaslab/kilas-flow/internal/config"
 )
 
 // The reserved words refuse every case permutation, and the error names the

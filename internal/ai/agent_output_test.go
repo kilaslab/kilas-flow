@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kilaslabs/kilas-flow/internal/ai"
+	"github.com/kilaslab/kilas-flow/internal/ai"
 )
 
 func TestParserFinishesThroughFormatTool(t *testing.T) {

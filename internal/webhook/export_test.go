@@ -3,7 +3,7 @@ package webhook
 import (
 	"net/http"
 
-	"github.com/kilaslabs/kilas-flow/internal/repository"
+	"github.com/kilaslab/kilas-flow/internal/repository"
 )
 
 // ReadDeliveryForTest exposes delivery capture so a shape test can build one

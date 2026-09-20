@@ -10,9 +10,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kilaslabs/kilas-flow/internal/safehttp"
-	"github.com/kilaslabs/kilas-flow/internal/sqlbuild"
-	"github.com/kilaslabs/kilas-flow/internal/sqlnode"
+	"github.com/kilaslab/kilas-flow/internal/safehttp"
+	"github.com/kilaslab/kilas-flow/internal/sqlbuild"
+	"github.com/kilaslab/kilas-flow/internal/sqlnode"
 )
 
 var updateGolden = flag.Bool("update-golden", false, "rewrite the golden statements from this run")

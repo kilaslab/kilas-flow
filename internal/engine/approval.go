@@ -54,7 +54,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/kilaslabs/kilas-flow/internal/events"
+	"github.com/kilaslab/kilas-flow/internal/events"
 )
 
 // Wait modes sharing the token machinery. Approval is the human mode built on

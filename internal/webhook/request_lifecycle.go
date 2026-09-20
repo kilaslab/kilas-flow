@@ -10,9 +10,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/kilaslabs/kilas-flow/internal/credentials"
-	"github.com/kilaslabs/kilas-flow/internal/engine"
-	"github.com/kilaslabs/kilas-flow/internal/safehttp"
+	"github.com/kilaslab/kilas-flow/internal/credentials"
+	"github.com/kilaslab/kilas-flow/internal/engine"
+	"github.com/kilaslab/kilas-flow/internal/safehttp"
 )
 
 // RequestDescriptor is one HTTP call expressed as data.

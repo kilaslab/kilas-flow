@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kilaslabs/kilas-flow/internal/execution"
+	"github.com/kilaslab/kilas-flow/internal/execution"
 )
 
 // Datastore cells look exactly like credentials to key-based redaction,

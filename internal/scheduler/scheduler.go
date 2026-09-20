@@ -10,7 +10,7 @@ import (
 
 	"github.com/robfig/cron/v3"
 
-	"github.com/kilaslabs/kilas-flow/internal/repository"
+	"github.com/kilaslab/kilas-flow/internal/repository"
 )
 
 // parser accepts standard five-field cron, with an optional leading seconds

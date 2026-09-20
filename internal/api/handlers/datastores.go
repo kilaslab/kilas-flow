@@ -9,8 +9,8 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
-	"github.com/kilaslabs/kilas-flow/internal/api/middleware"
-	"github.com/kilaslabs/kilas-flow/internal/datastore"
+	"github.com/kilaslab/kilas-flow/internal/api/middleware"
+	"github.com/kilaslab/kilas-flow/internal/datastore"
 )
 
 // Datastores is the REST surface over the row store: tables, columns and

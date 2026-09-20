@@ -22,7 +22,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/kilaslabs/kilas-flow/internal/sqlnode"
+	"github.com/kilaslab/kilas-flow/internal/sqlnode"
 )
 
 // Target is the table an operation acts on.

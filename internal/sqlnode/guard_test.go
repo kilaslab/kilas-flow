@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kilaslabs/kilas-flow/internal/database"
-	"github.com/kilaslabs/kilas-flow/internal/sqlnode"
+	"github.com/kilaslab/kilas-flow/internal/database"
+	"github.com/kilaslab/kilas-flow/internal/sqlnode"
 )
 
 // The guard must refuse the internal database however the operator spelled its

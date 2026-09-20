@@ -9,8 +9,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/kilaslabs/kilas-flow/internal/property"
-	"github.com/kilaslabs/kilas-flow/internal/safehttp"
+	"github.com/kilaslab/kilas-flow/internal/property"
+	"github.com/kilaslab/kilas-flow/internal/safehttp"
 )
 
 // Placement is where a credential puts its secret on an outbound request.

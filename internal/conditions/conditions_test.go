@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kilaslabs/kilas-flow/internal/conditions"
-	"github.com/kilaslabs/kilas-flow/internal/expression"
+	"github.com/kilaslab/kilas-flow/internal/conditions"
+	"github.com/kilaslab/kilas-flow/internal/expression"
 )
 
 func op(valueType conditions.ValueType, operation string) conditions.Operator {

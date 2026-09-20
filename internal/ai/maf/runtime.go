@@ -27,7 +27,7 @@ import (
 	"github.com/microsoft/agent-framework-go/agent"
 	"github.com/microsoft/agent-framework-go/message"
 
-	"github.com/kilaslabs/kilas-flow/internal/ai"
+	"github.com/kilaslab/kilas-flow/internal/ai"
 )
 
 // Runtime runs one agent invocation through a prebuilt framework agent.

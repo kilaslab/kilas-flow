@@ -7,9 +7,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/kilaslabs/kilas-flow/internal/engine"
-	"github.com/kilaslabs/kilas-flow/internal/repository"
-	"github.com/kilaslabs/kilas-flow/internal/safehttp"
+	"github.com/kilaslab/kilas-flow/internal/engine"
+	"github.com/kilaslab/kilas-flow/internal/repository"
+	"github.com/kilaslab/kilas-flow/internal/safehttp"
 )
 
 // LifecycleContext is what a trigger needs to register itself with a remote

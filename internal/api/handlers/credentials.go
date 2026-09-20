@@ -11,10 +11,10 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
-	"github.com/kilaslabs/kilas-flow/internal/credentials"
-	"github.com/kilaslabs/kilas-flow/internal/repository"
-	"github.com/kilaslabs/kilas-flow/internal/safehttp"
-	"github.com/kilaslabs/kilas-flow/internal/sqlnode"
+	"github.com/kilaslab/kilas-flow/internal/credentials"
+	"github.com/kilaslab/kilas-flow/internal/repository"
+	"github.com/kilaslab/kilas-flow/internal/safehttp"
+	"github.com/kilaslab/kilas-flow/internal/sqlnode"
 )
 
 // CredentialTypeResource describes one credential type so the editor can

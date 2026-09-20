@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kilaslabs/kilas-flow/internal/api"
+	"github.com/kilaslab/kilas-flow/internal/api"
 )
 
 // csvImportReport mirrors the transfer report for response decoding.

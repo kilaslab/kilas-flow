@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kilaslabs/kilas-flow/internal/expression"
+	"github.com/kilaslab/kilas-flow/internal/expression"
 )
 
 // Combinator joins a filter's conditions.

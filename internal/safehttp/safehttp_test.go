@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kilaslabs/kilas-flow/internal/safehttp"
+	"github.com/kilaslab/kilas-flow/internal/safehttp"
 )
 
 func TestCheckURLRejectsUnsupportedSchemesAndHostlessTargets(t *testing.T) {

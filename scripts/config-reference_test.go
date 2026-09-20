@@ -5,7 +5,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/kilaslabs/kilas-flow/internal/config"
+	"github.com/kilaslab/kilas-flow/internal/config"
 )
 
 func testRepoRoot(t *testing.T) string {

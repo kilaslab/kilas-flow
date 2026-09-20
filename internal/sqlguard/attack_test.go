@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kilaslabs/kilas-flow/internal/sqlguard"
+	"github.com/kilaslab/kilas-flow/internal/sqlguard"
 )
 
 // Everything an adversarial pass found once the guard was written.

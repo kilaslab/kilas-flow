@@ -22,6 +22,7 @@ import (
 
 // ErrBlocked reports a target the policy refuses to contact.
 var ErrBlocked = errors.New("request target is not allowed")
+
 // CredentialScope is the domain bound a credential places on one outbound
 // request. Carried on the request context from Authenticate to CheckRedirect
 // so a redirect outside the scope stops the chain instead of carrying the
@@ -47,7 +48,6 @@ func CredentialScopeFrom(ctx context.Context) (CredentialScope, bool) {
 	scope, ok := ctx.Value(credentialScopeKey{}).(CredentialScope)
 	return scope, ok
 }
-
 
 // Policy bounds what an outbound workflow request may do.
 type Policy struct {

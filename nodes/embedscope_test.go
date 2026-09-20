@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kilaslabs/kilas-flow/internal/embed"
-	"github.com/kilaslabs/kilas-flow/internal/workflow"
+	"github.com/kilaslab/kilas-flow/internal/embed"
+	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
 
 // The document walker is the one place that decides what a graph reaches

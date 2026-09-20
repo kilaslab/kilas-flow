@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kilaslabs/kilas-flow/internal/config"
-	"github.com/kilaslabs/kilas-flow/migrations"
+	"github.com/kilaslab/kilas-flow/internal/config"
+	"github.com/kilaslab/kilas-flow/migrations"
 )
 
 // openPrefixedSQLite opens a handle whose namer and migration runner both see

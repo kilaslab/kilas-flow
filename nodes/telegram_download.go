@@ -10,10 +10,10 @@ import (
 	"path"
 	"strings"
 
-	"github.com/kilaslabs/kilas-flow/internal/binary"
-	"github.com/kilaslabs/kilas-flow/internal/engine"
-	"github.com/kilaslabs/kilas-flow/internal/safehttp"
-	"github.com/kilaslabs/kilas-flow/internal/workflow"
+	"github.com/kilaslab/kilas-flow/internal/binary"
+	"github.com/kilaslab/kilas-flow/internal/engine"
+	"github.com/kilaslab/kilas-flow/internal/safehttp"
+	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
 
 // TelegramFileClient resolves and downloads a bot's files.

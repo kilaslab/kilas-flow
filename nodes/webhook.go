@@ -8,12 +8,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kilaslabs/kilas-flow/internal/engine"
-	"github.com/kilaslabs/kilas-flow/internal/expression"
-	"github.com/kilaslabs/kilas-flow/internal/node"
-	"github.com/kilaslabs/kilas-flow/internal/scheduler"
-	"github.com/kilaslabs/kilas-flow/internal/webhook"
-	"github.com/kilaslabs/kilas-flow/internal/workflow"
+	"github.com/kilaslab/kilas-flow/internal/engine"
+	"github.com/kilaslab/kilas-flow/internal/expression"
+	"github.com/kilaslab/kilas-flow/internal/node"
+	"github.com/kilaslab/kilas-flow/internal/scheduler"
+	"github.com/kilaslab/kilas-flow/internal/webhook"
+	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
 
 // Executor IDs for the trigger family.

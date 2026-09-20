@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kilaslabs/kilas-flow/internal/auth"
-	"github.com/kilaslabs/kilas-flow/internal/repository"
+	"github.com/kilaslab/kilas-flow/internal/auth"
+	"github.com/kilaslab/kilas-flow/internal/repository"
 )
 
 // newAdminStore is the identity store with the operator tenant in place, which

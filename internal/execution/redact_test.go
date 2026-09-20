@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kilaslabs/kilas-flow/internal/execution"
+	"github.com/kilaslab/kilas-flow/internal/execution"
 )
 
 // TestRedactionRules names, for every key and every shape, whether it is

@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/kilaslabs/kilas-flow/internal/execution"
+	"github.com/kilaslab/kilas-flow/internal/execution"
 )
 
 // Type names one standardized event.

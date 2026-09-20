@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/kilaslabs/kilas-flow/internal/workflow"
+	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
 
 // ExecutorID is the server-owned binding for the declarative interpreter. A

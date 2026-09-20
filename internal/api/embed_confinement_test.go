@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kilaslabs/kilas-flow/internal/workflow"
+	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
 
 // These tests reproduce the escape the full review found, at the API surface

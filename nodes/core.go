@@ -2,8 +2,8 @@
 package nodes
 
 import (
-	"github.com/kilaslabs/kilas-flow/internal/node"
-	"github.com/kilaslabs/kilas-flow/internal/workflow"
+	"github.com/kilaslab/kilas-flow/internal/node"
+	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
 
 // RegisterAll installs the built-ins supported by the first graph slice.

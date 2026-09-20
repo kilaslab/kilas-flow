@@ -14,7 +14,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/schema"
 
-	"github.com/kilaslabs/kilas-flow/migrations"
+	"github.com/kilaslab/kilas-flow/migrations"
 )
 
 // schemaMigrationsTable records which migrations this database has run.

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kilaslabs/kilas-flow/internal/execution"
+	"github.com/kilaslab/kilas-flow/internal/execution"
 )
 
 // Unrecognised shapes pass through byte-identical: the projector never

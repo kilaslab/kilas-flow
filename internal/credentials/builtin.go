@@ -3,7 +3,7 @@ package credentials
 import (
 	"fmt"
 
-	"github.com/kilaslabs/kilas-flow/internal/property"
+	"github.com/kilaslab/kilas-flow/internal/property"
 )
 
 // RegisterAll registers the credential types this server ships with.

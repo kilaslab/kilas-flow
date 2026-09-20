@@ -6,8 +6,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/kilaslabs/kilas-flow/internal/api"
-	"github.com/kilaslabs/kilas-flow/internal/config"
+	"github.com/kilaslab/kilas-flow/internal/api"
+	"github.com/kilaslab/kilas-flow/internal/config"
 )
 
 // openAPIDocument is only the part of the document these tests read.

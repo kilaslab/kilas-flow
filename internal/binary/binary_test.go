@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kilaslabs/kilas-flow/internal/binary"
+	"github.com/kilaslab/kilas-flow/internal/binary"
 )
 
 func store(t *testing.T, maxBytes int64) (*binary.FileStore, string) {

@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/kilaslabs/kilas-flow/internal/repository"
-	"github.com/kilaslabs/kilas-flow/internal/workflow"
+	"github.com/kilaslab/kilas-flow/internal/repository"
+	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
 
 // listDocument is the smallest document SaveDraft accepts, with an identity the

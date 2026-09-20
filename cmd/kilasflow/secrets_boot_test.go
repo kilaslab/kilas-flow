@@ -18,8 +18,8 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/kilaslabs/kilas-flow/internal/config"
-	"github.com/kilaslabs/kilas-flow/internal/credentials"
+	"github.com/kilaslab/kilas-flow/internal/config"
+	"github.com/kilaslab/kilas-flow/internal/credentials"
 )
 
 func TestMasterKeyKeepsTheEnvironmentPathWhenUnconfigured(t *testing.T) {

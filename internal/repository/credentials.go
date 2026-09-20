@@ -11,8 +11,8 @@ import (
 
 	"gorm.io/gorm"
 
-	"github.com/kilaslabs/kilas-flow/internal/credentials"
-	"github.com/kilaslabs/kilas-flow/internal/workflow"
+	"github.com/kilaslab/kilas-flow/internal/credentials"
+	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
 
 // CredentialRepository is the persistence seam for stored secrets.

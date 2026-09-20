@@ -17,7 +17,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/kilaslabs/kilas-flow/internal/repository"
+	"github.com/kilaslab/kilas-flow/internal/repository"
 )
 
 // Delivery is everything the HTTP boundary knows about one inbound request.

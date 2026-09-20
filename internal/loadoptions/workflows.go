@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/kilaslabs/kilas-flow/internal/repository"
+	"github.com/kilaslab/kilas-flow/internal/repository"
 )
 
 // Workflows answers the Execute Sub-workflow node's list mode.

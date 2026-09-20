@@ -12,13 +12,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kilaslabs/kilas-flow/internal/credentials"
-	"github.com/kilaslabs/kilas-flow/internal/engine"
-	"github.com/kilaslabs/kilas-flow/internal/node"
-	"github.com/kilaslabs/kilas-flow/internal/nodepack"
-	"github.com/kilaslabs/kilas-flow/internal/property"
-	"github.com/kilaslabs/kilas-flow/internal/routing"
-	"github.com/kilaslabs/kilas-flow/internal/workflow"
+	"github.com/kilaslab/kilas-flow/internal/credentials"
+	"github.com/kilaslab/kilas-flow/internal/engine"
+	"github.com/kilaslab/kilas-flow/internal/node"
+	"github.com/kilaslab/kilas-flow/internal/nodepack"
+	"github.com/kilaslab/kilas-flow/internal/property"
+	"github.com/kilaslab/kilas-flow/internal/routing"
+	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
 
 // A scaffolded pack validates cleanly and round-trips through the real
@@ -67,7 +67,6 @@ func TestScaffoldRoundTripThroughLoadDir(t *testing.T) {
 		t.Fatalf("Credentials = %#v, want the exampleApi credential type", definition.Credentials)
 	}
 
-	registerExampleCredential(t)
 	executor, _ := set.executors.Lookup(routing.ExecutorID)
 	irDefinition, found := set.definitions.Lookup("pack.example", workflow.V(1))
 	if !found {
@@ -92,12 +91,31 @@ func TestScaffoldRoundTripThroughLoadDir(t *testing.T) {
 	}
 }
 
-func registerExampleCredential(t *testing.T) {
-	t.Helper()
-	if _, found := credentials.Default().Get("exampleApi"); found {
-		return
+// TestMain registers the credential type the scaffolded pack references, once,
+// before any test runs.
+//
+// Registering it from inside a test — which is what this package used to do —
+// writes to the process-wide credentials registry while a sibling test is
+// reading it, and `go test -race` reports exactly that as a data race. The
+// registry's contract is composition-time registration ("Register adds one type
+// during composition"), so the test was out of order rather than the registry
+// being unsafe: nothing registers a credential type after the wiring in
+// cmd/kilasflow has run.
+func TestMain(m *testing.M) {
+	if _, found := credentials.Default().Get("exampleApi"); !found {
+		if err := credentials.Default().Register(exampleApiType()); err != nil {
+			fmt.Fprintf(os.Stderr, "nodepack tests: register exampleApi: %v\n", err)
+			os.Exit(1)
+		}
 	}
-	err := credentials.Default().Register(credentials.Type{
+	os.Exit(m.Run())
+}
+
+// exampleApiType is the credential type Scaffold templates a pack's default base
+// URL over, and the type the scaffolded pack binds in the round-trip test. It is
+// declared here so there is one writer that runs before the parallel section.
+func exampleApiType() credentials.Type {
+	return credentials.Type{
 		ID: "exampleApi", DisplayName: "Example",
 		Description: "A self-hosted example instance: its base URL and its API key.",
 		Properties: []property.PropertyDefinition{
@@ -107,9 +125,6 @@ func registerExampleCredential(t *testing.T) {
 		},
 		Secrets:      []string{"apiKey"},
 		Authenticate: &credentials.Authentication{Placement: credentials.PlacementQuery, Name: "key", Value: "{{ apiKey }}"},
-	})
-	if err != nil && !strings.Contains(err.Error(), "already registered") {
-		t.Fatalf("Register(exampleApi) error = %v", err)
 	}
 }
 

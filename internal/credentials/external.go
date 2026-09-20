@@ -20,8 +20,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/kilaslabs/kilas-flow/internal/execution"
-	"github.com/kilaslabs/kilas-flow/internal/safehttp"
+	"github.com/kilaslab/kilas-flow/internal/execution"
+	"github.com/kilaslab/kilas-flow/internal/safehttp"
 )
 
 // ReferenceScheme prefixes every external secret reference stored in a

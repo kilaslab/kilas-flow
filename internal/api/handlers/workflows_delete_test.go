@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/kilaslabs/kilas-flow/internal/repository"
-	"github.com/kilaslabs/kilas-flow/internal/workflow"
+	"github.com/kilaslab/kilas-flow/internal/repository"
+	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
 
 // stubWorkflowRepository is a WorkflowRepository that only deletes. Delete

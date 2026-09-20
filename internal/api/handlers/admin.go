@@ -9,8 +9,8 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
-	"github.com/kilaslabs/kilas-flow/internal/auth"
-	"github.com/kilaslabs/kilas-flow/internal/repository"
+	"github.com/kilaslab/kilas-flow/internal/auth"
+	"github.com/kilaslab/kilas-flow/internal/repository"
 )
 
 // TenantResource is one customer as the operator sees it.

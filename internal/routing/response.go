@@ -3,8 +3,8 @@ package routing
 import (
 	"fmt"
 
-	"github.com/kilaslabs/kilas-flow/internal/expression"
-	"github.com/kilaslabs/kilas-flow/internal/workflow"
+	"github.com/kilaslab/kilas-flow/internal/expression"
+	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
 
 // postProcess turns one decoded response into items.

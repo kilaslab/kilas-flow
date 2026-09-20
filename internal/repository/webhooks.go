@@ -11,7 +11,7 @@ import (
 
 	"gorm.io/gorm"
 
-	"github.com/kilaslabs/kilas-flow/internal/workflow"
+	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
 
 // WebhookBinding is one routable inbound endpoint.

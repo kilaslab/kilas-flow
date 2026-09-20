@@ -6,10 +6,10 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
-	"github.com/kilaslabs/kilas-flow/internal/api/middleware"
-	"github.com/kilaslabs/kilas-flow/internal/embed"
-	"github.com/kilaslabs/kilas-flow/internal/workflow"
-	"github.com/kilaslabs/kilas-flow/nodes"
+	"github.com/kilaslab/kilas-flow/internal/api/middleware"
+	"github.com/kilaslab/kilas-flow/internal/embed"
+	"github.com/kilaslab/kilas-flow/internal/workflow"
+	"github.com/kilaslab/kilas-flow/nodes"
 )
 
 // This file is where an embed session's confinement is derived and enforced.

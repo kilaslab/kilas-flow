@@ -34,8 +34,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/kilaslabs/kilas-flow/internal/events"
-	"github.com/kilaslabs/kilas-flow/internal/execution"
+	"github.com/kilaslab/kilas-flow/internal/events"
+	"github.com/kilaslab/kilas-flow/internal/execution"
 )
 
 // executionEventsBaseName is the unprefixed LISTEN/NOTIFY channel live

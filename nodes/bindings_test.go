@@ -3,11 +3,11 @@ package nodes_test
 import (
 	"testing"
 
-	"github.com/kilaslabs/kilas-flow/internal/ai"
-	"github.com/kilaslabs/kilas-flow/internal/engine"
-	"github.com/kilaslabs/kilas-flow/internal/node"
-	"github.com/kilaslabs/kilas-flow/internal/webhook"
-	"github.com/kilaslabs/kilas-flow/nodes"
+	"github.com/kilaslab/kilas-flow/internal/ai"
+	"github.com/kilaslab/kilas-flow/internal/engine"
+	"github.com/kilaslab/kilas-flow/internal/node"
+	"github.com/kilaslab/kilas-flow/internal/webhook"
+	"github.com/kilaslab/kilas-flow/nodes"
 )
 
 // composition builds both registries exactly as cmd/kilasflow/main.go does.

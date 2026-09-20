@@ -7,16 +7,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kilaslabs/kilas-flow/internal/ai"
-	"github.com/kilaslabs/kilas-flow/internal/conditions"
-	"github.com/kilaslabs/kilas-flow/internal/datastore"
-	"github.com/kilaslabs/kilas-flow/internal/engine"
-	"github.com/kilaslabs/kilas-flow/internal/expression"
-	"github.com/kilaslabs/kilas-flow/internal/property"
-	"github.com/kilaslabs/kilas-flow/internal/runcode"
-	"github.com/kilaslabs/kilas-flow/internal/safehttp"
-	"github.com/kilaslabs/kilas-flow/internal/sqlnode"
-	"github.com/kilaslabs/kilas-flow/internal/workflow"
+	"github.com/kilaslab/kilas-flow/internal/ai"
+	"github.com/kilaslab/kilas-flow/internal/conditions"
+	"github.com/kilaslab/kilas-flow/internal/datastore"
+	"github.com/kilaslab/kilas-flow/internal/engine"
+	"github.com/kilaslab/kilas-flow/internal/expression"
+	"github.com/kilaslab/kilas-flow/internal/property"
+	"github.com/kilaslab/kilas-flow/internal/runcode"
+	"github.com/kilaslab/kilas-flow/internal/safehttp"
+	"github.com/kilaslab/kilas-flow/internal/sqlnode"
+	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
 
 // RegisterExecutors installs native implementations for the core definitions.

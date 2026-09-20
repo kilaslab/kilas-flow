@@ -18,7 +18,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/kilaslabs/kilas-flow/internal/nodepack"
+	"github.com/kilaslab/kilas-flow/internal/nodepack"
 )
 
 // runAuthor runs one authoring subcommand. It reports whether the subcommand

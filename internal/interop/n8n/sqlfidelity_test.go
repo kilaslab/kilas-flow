@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kilaslabs/kilas-flow/internal/interop/n8n"
-	"github.com/kilaslabs/kilas-flow/internal/sqlbuild"
-	"github.com/kilaslabs/kilas-flow/internal/workflow"
-	"github.com/kilaslabs/kilas-flow/nodes"
+	"github.com/kilaslab/kilas-flow/internal/interop/n8n"
+	"github.com/kilaslab/kilas-flow/internal/sqlbuild"
+	"github.com/kilaslab/kilas-flow/internal/workflow"
+	"github.com/kilaslab/kilas-flow/nodes"
 )
 
 // sqlFixture is a one-node n8n workflow carrying the given Postgres parameters.

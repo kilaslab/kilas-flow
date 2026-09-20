@@ -3,7 +3,7 @@ package engine
 import (
 	"encoding/json"
 
-	"github.com/kilaslabs/kilas-flow/internal/datastore"
+	"github.com/kilaslab/kilas-flow/internal/datastore"
 )
 
 // projectTrace maps a marshalled node output to its durable trace form.

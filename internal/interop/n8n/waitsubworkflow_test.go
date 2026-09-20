@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kilaslabs/kilas-flow/internal/interop/n8n"
-	"github.com/kilaslabs/kilas-flow/internal/workflow"
+	"github.com/kilaslab/kilas-flow/internal/interop/n8n"
+	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
 
 // TestWaitDefaultsFollowTheNodeVersion covers the defaults n8n omits.

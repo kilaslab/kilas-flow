@@ -21,7 +21,7 @@ import (
 	gormlogger "gorm.io/gorm/logger"
 	"gorm.io/gorm/schema"
 
-	"github.com/kilaslabs/kilas-flow/internal/config"
+	"github.com/kilaslab/kilas-flow/internal/config"
 )
 
 // DB wraps the GORM handle.

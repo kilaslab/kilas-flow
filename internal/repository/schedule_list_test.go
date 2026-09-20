@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/kilaslabs/kilas-flow/internal/database"
-	"github.com/kilaslabs/kilas-flow/internal/repository"
+	"github.com/kilaslab/kilas-flow/internal/database"
+	"github.com/kilaslab/kilas-flow/internal/repository"
 )
 
 // scheduleWorkflow stores one workflow and returns its ID: schedule rows carry

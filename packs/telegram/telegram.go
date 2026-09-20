@@ -18,10 +18,10 @@ import (
 	_ "embed"
 	"fmt"
 
-	"github.com/kilaslabs/kilas-flow/internal/loadoptions"
-	"github.com/kilaslabs/kilas-flow/internal/node"
-	"github.com/kilaslabs/kilas-flow/internal/nodepack"
-	"github.com/kilaslabs/kilas-flow/internal/routing"
+	"github.com/kilaslab/kilas-flow/internal/loadoptions"
+	"github.com/kilaslab/kilas-flow/internal/node"
+	"github.com/kilaslab/kilas-flow/internal/nodepack"
+	"github.com/kilaslab/kilas-flow/internal/routing"
 )
 
 //go:embed pack.json

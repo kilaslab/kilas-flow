@@ -14,7 +14,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
-	"github.com/kilaslabs/kilas-flow/internal/datastore"
+	"github.com/kilaslab/kilas-flow/internal/datastore"
 )
 
 // csvImportMaxBodyBytes is the explicit ceiling on a CSV import upload. Huma

@@ -22,9 +22,9 @@ import (
 	"github.com/danielgtaylor/huma/v2/adapters/humachi"
 	"github.com/go-chi/chi/v5"
 
-	"github.com/kilaslabs/kilas-flow/internal/api/middleware"
-	"github.com/kilaslabs/kilas-flow/internal/auth"
-	"github.com/kilaslabs/kilas-flow/internal/repository"
+	"github.com/kilaslab/kilas-flow/internal/api/middleware"
+	"github.com/kilaslab/kilas-flow/internal/auth"
+	"github.com/kilaslab/kilas-flow/internal/repository"
 )
 
 // loginStore answers the two questions these tests ask of storage: who signs in

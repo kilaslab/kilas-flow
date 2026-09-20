@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/kilaslabs/kilas-flow/internal/property"
+	"github.com/kilaslab/kilas-flow/internal/property"
 )
 
 // visibilityCase is one row of the shared fixture.

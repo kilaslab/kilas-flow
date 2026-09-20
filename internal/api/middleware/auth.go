@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kilaslabs/kilas-flow/internal/auth"
-	"github.com/kilaslabs/kilas-flow/internal/repository"
+	"github.com/kilaslab/kilas-flow/internal/auth"
+	"github.com/kilaslab/kilas-flow/internal/repository"
 )
 
 // KeyAuthenticator resolves a presented API key to the row that owns it.

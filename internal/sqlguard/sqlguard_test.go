@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kilaslabs/kilas-flow/internal/sqlguard"
+	"github.com/kilaslab/kilas-flow/internal/sqlguard"
 )
 
 // Every entry here was executed against the pinned driver before it was

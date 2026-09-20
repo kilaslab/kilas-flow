@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kilaslabs/kilas-flow/internal/expression"
+	"github.com/kilaslab/kilas-flow/internal/expression"
 )
 
 func testContext() expression.Context {

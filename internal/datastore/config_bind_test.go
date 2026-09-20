@@ -3,7 +3,7 @@ package datastore
 import (
 	"testing"
 
-	"github.com/kilaslabs/kilas-flow/internal/config"
+	"github.com/kilaslab/kilas-flow/internal/config"
 )
 
 // The operator-facing defaults in config.Datastore repeat DefaultLimits

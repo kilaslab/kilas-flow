@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kilaslabs/kilas-flow/internal/datetime"
+	"github.com/kilaslab/kilas-flow/internal/datetime"
 )
 
 func TestFormatRendersLuxonTokens(t *testing.T) {

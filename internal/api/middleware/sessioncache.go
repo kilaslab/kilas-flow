@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/kilaslabs/kilas-flow/internal/auth"
+	"github.com/kilaslab/kilas-flow/internal/auth"
 )
 
 // sessionCache answers "is this session's account still the account that signed

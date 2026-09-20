@@ -3,8 +3,8 @@ package nodes_test
 import (
 	"testing"
 
-	"github.com/kilaslabs/kilas-flow/internal/workflow"
-	"github.com/kilaslabs/kilas-flow/nodes"
+	"github.com/kilaslab/kilas-flow/internal/workflow"
+	"github.com/kilaslab/kilas-flow/nodes"
 )
 
 // Both node types that call another workflow are read, and nothing else is.

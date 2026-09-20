@@ -17,7 +17,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/kilaslabs/kilas-flow/internal/nodepack"
+	"github.com/kilaslab/kilas-flow/internal/nodepack"
 )
 
 func main() {

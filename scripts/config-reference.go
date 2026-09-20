@@ -28,7 +28,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kilaslabs/kilas-flow/internal/config"
+	"github.com/kilaslab/kilas-flow/internal/config"
 )
 
 var durationType = reflect.TypeOf(time.Duration(0))

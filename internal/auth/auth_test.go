@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kilaslabs/kilas-flow/internal/auth"
+	"github.com/kilaslab/kilas-flow/internal/auth"
 )
 
 func testKey() []byte {

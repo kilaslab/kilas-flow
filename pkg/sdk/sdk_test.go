@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	sdk "github.com/kilaslabs/kilas-flow/pkg/sdk"
+	sdk "github.com/kilaslab/kilas-flow/pkg/sdk"
 )
 
 func echo(items []sdk.Item) ([]sdk.Item, error) { return items, nil }

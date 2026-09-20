@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/kilaslabs/kilas-flow/internal/datastore"
+	"github.com/kilaslab/kilas-flow/internal/datastore"
 )
 
 // csvTestColumns is the schema the export tests render against: one column per

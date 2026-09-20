@@ -12,8 +12,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kilaslabs/kilas-flow/internal/repository"
-	"github.com/kilaslabs/kilas-flow/internal/webhook"
+	"github.com/kilaslab/kilas-flow/internal/repository"
+	"github.com/kilaslab/kilas-flow/internal/webhook"
 )
 
 func delivery(t *testing.T, body, contentType string, binding repository.WebhookBinding) webhook.Delivery {

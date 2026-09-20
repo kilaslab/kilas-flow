@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kilaslabs/kilas-flow/internal/interop/n8n"
-	"github.com/kilaslabs/kilas-flow/packs/telegram"
+	"github.com/kilaslab/kilas-flow/internal/interop/n8n"
+	"github.com/kilaslab/kilas-flow/packs/telegram"
 )
 
 // TestWebhookMethodDefaultsToGet covers n8n's own default.

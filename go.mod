@@ -1,4 +1,4 @@
-module github.com/kilaslabs/kilas-flow
+module github.com/kilaslab/kilas-flow
 
 go 1.27
 

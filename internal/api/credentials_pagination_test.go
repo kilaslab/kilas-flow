@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/kilaslabs/kilas-flow/internal/api"
+	"github.com/kilaslab/kilas-flow/internal/api"
 )
 
 // decodeCredentials reads a listing body, which is still a bare JSON array.

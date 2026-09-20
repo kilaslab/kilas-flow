@@ -10,11 +10,11 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
-	"github.com/kilaslabs/kilas-flow/internal/execution"
-	"github.com/kilaslabs/kilas-flow/internal/node"
-	"github.com/kilaslabs/kilas-flow/internal/repository"
-	"github.com/kilaslabs/kilas-flow/internal/webhook"
-	"github.com/kilaslabs/kilas-flow/internal/workflow"
+	"github.com/kilaslab/kilas-flow/internal/execution"
+	"github.com/kilaslab/kilas-flow/internal/node"
+	"github.com/kilaslab/kilas-flow/internal/repository"
+	"github.com/kilaslab/kilas-flow/internal/webhook"
+	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
 
 // TenantResolver isolates the temporary standalone tenant from future auth or
@@ -125,7 +125,7 @@ type workflowDocumentInput struct {
 	Nodes         []workflow.Node       `json:"nodes"`
 	Connections   []workflow.Connection `json:"connections"`
 	Settings      map[string]any        `json:"settings"`
-	BaseVersionID string `json:"baseVersionId,omitempty" doc:"Latest version ID the editor saved from; a save from a stale revision is refused with 409"`
+	BaseVersionID string                `json:"baseVersionId,omitempty" doc:"Latest version ID the editor saved from; a save from a stale revision is refused with 409"`
 }
 
 func (input workflowDocumentInput) document(id string) workflow.Document {
@@ -220,9 +220,9 @@ func (input publishVersionInput) reason() string {
 }
 
 type updateWorkflowInput struct {
-	ID   string `path:"id" minLength:"1" doc:"Workflow identifier"`
+	ID      string `path:"id" minLength:"1" doc:"Workflow identifier"`
 	IfMatch string `header:"If-Match" doc:"Latest version ID the editor saved from; a save from a stale revision is refused with 409"`
-	Body workflowDocumentInput
+	Body    workflowDocumentInput
 }
 
 type runWorkflowInput struct {

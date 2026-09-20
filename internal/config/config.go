@@ -17,8 +17,8 @@ import (
 	"github.com/knadh/koanf/providers/structs"
 	"github.com/knadh/koanf/v2"
 
-	"github.com/kilaslabs/kilas-flow/internal/datetime"
-	"github.com/kilaslabs/kilas-flow/internal/safehttp"
+	"github.com/kilaslab/kilas-flow/internal/datetime"
+	"github.com/kilaslab/kilas-flow/internal/safehttp"
 )
 
 // EnvPrefix is the prefix for environment overrides, e.g. KILASFLOW_SERVER_PORT.

@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/kilaslabs/kilas-flow/internal/conditions"
-	"github.com/kilaslabs/kilas-flow/internal/workflow"
+	"github.com/kilaslab/kilas-flow/internal/conditions"
+	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
 
 // readFilter reads a node's condition parameter in either shape.

@@ -201,7 +201,7 @@ func TestNoN8NDependencyInGoModule(t *testing.T) {
 // TestForbiddenModuleRequiresDetectsN8N proves the go.mod check fires, which
 // the check running against the real go.mod can never show on its own.
 func TestForbiddenModuleRequiresDetectsN8N(t *testing.T) {
-	const fixture = `module github.com/kilaslabs/kilas-flow
+	const fixture = `module github.com/kilaslab/kilas-flow
 
 go 1.27
 
@@ -258,7 +258,7 @@ func TestForbiddenDependencyMatchesNamesNotProse(t *testing.T) {
 	allowed := []string{
 		"svelte",
 		"@sveltejs/kit",
-		"github.com/kilaslabs/kilas-flow",
+		"github.com/kilaslab/kilas-flow",
 		"typescript",
 		"connection8nine",
 		"my-n8n8-thing",

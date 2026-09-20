@@ -22,7 +22,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kilaslabs/kilas-flow/internal/workflow"
+	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
 
 // UnsupportedNodeType is the canonical placeholder an unmappable n8n node

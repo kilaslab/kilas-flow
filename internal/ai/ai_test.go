@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kilaslabs/kilas-flow/internal/ai"
+	"github.com/kilaslab/kilas-flow/internal/ai"
 )
 
 // fakeModel is the deterministic stand-in every agent test uses. No live

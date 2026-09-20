@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kilaslabs/kilas-flow/internal/events"
+	"github.com/kilaslab/kilas-flow/internal/events"
 )
 
 func TestBrokerDeliversEventsToEverySubscriberOfThatExecution(t *testing.T) {

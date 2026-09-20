@@ -3,11 +3,11 @@ package nodes
 import (
 	"fmt"
 
-	"github.com/kilaslabs/kilas-flow/internal/loadoptions"
-	"github.com/kilaslabs/kilas-flow/internal/node"
-	"github.com/kilaslabs/kilas-flow/internal/property"
-	"github.com/kilaslabs/kilas-flow/internal/sqlbuild"
-	"github.com/kilaslabs/kilas-flow/internal/workflow"
+	"github.com/kilaslab/kilas-flow/internal/loadoptions"
+	"github.com/kilaslab/kilas-flow/internal/node"
+	"github.com/kilaslab/kilas-flow/internal/property"
+	"github.com/kilaslab/kilas-flow/internal/sqlbuild"
+	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
 
 // MySQLV2ExecutorID binds the MySQL operation set's executor.

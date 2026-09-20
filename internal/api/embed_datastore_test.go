@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/kilaslabs/kilas-flow/internal/api"
-	"github.com/kilaslabs/kilas-flow/internal/embed"
+	"github.com/kilaslab/kilas-flow/internal/api"
+	"github.com/kilaslab/kilas-flow/internal/embed"
 )
 
 // newDatastoreEmbedAPI builds one server with the row store and an embed

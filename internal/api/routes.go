@@ -6,10 +6,10 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/go-chi/chi/v5"
 
-	"github.com/kilaslabs/kilas-flow/internal/api/handlers"
-	"github.com/kilaslabs/kilas-flow/internal/auth"
-	"github.com/kilaslabs/kilas-flow/internal/safehttp"
-	"github.com/kilaslabs/kilas-flow/internal/web"
+	"github.com/kilaslab/kilas-flow/internal/api/handlers"
+	"github.com/kilaslab/kilas-flow/internal/auth"
+	"github.com/kilaslab/kilas-flow/internal/safehttp"
+	"github.com/kilaslab/kilas-flow/internal/web"
 )
 
 // registerRoutes mounts every route kilasflow serves.

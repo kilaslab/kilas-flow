@@ -3,7 +3,7 @@ package nodepack_test
 import (
 	"testing"
 
-	"github.com/kilaslabs/kilas-flow/internal/nodepack"
+	"github.com/kilaslab/kilas-flow/internal/nodepack"
 )
 
 // This one function decides whether every imported WAHA workflow matches or

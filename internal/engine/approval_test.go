@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kilaslabs/kilas-flow/internal/engine"
-	"github.com/kilaslabs/kilas-flow/internal/events"
+	"github.com/kilaslab/kilas-flow/internal/engine"
+	"github.com/kilaslab/kilas-flow/internal/events"
 )
 
 func waitForEvent(t *testing.T, sub *events.Subscription) events.Event {

@@ -21,7 +21,7 @@ import (
 	// which is what carries the SPA into the binary. The two are unrelated: the
 	// stdlib package is a compiler directive, this one is the iframe session
 	// allowlist.
-	kembed "github.com/kilaslabs/kilas-flow/internal/embed"
+	kembed "github.com/kilaslab/kilas-flow/internal/embed"
 )
 
 // assets holds the built SPA.

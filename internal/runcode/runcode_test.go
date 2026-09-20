@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kilaslabs/kilas-flow/internal/runcode"
+	"github.com/kilaslab/kilas-flow/internal/runcode"
 )
 
 // sharedModules gives a test the process-wide translation cache a server keeps.

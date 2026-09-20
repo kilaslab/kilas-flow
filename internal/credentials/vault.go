@@ -15,7 +15,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/kilaslabs/kilas-flow/internal/safehttp"
+	"github.com/kilaslab/kilas-flow/internal/safehttp"
 )
 
 // VaultProviderName is the provider name bindings use for HashiCorp Vault.
