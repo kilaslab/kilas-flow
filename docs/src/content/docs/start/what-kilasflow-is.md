@@ -117,5 +117,5 @@ tenancy and the embed boundary — and the [HTTP API reference](/reference/api/)
 generated from the running server's own OpenAPI document rather than written by
 hand. The doc comments on the Go packages under `internal/` remain the closest
 description of the code itself, and the repository's
-[`README.md`](https://github.com/kilaslabs/k-flow/blob/main/README.md) covers
+[`README.md`](https://github.com/kilaslab/kilas-flow/blob/main/README.md) covers
 building it, running it and laying it out.
