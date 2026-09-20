@@ -378,6 +378,61 @@ func TestWebhookAnswersEmptyWhenNoResponseNodeWasReached(t *testing.T) {
 	}
 }
 
+// TestWebhookBindsEveryMethodTheNodeSelected covers the precedence between the
+// two parameters that name a method.
+//
+// A node edited into multi-method mode keeps `httpMethod` holding the single
+// value it had before, and the node's own definition reads `multipleMethods`
+// first. Binding extraction read `httpMethod` first, so the GET half of a
+// two-method endpoint answered 404 to every caller while the POST half worked.
+func TestWebhookBindsEveryMethodTheNodeSelected(t *testing.T) {
+	h := newHarness(t)
+	active := h.activate(t, webhookDocument("Two methods", map[string]any{
+		"path": "items", "responseMode": "immediate",
+		"multipleMethods": true, "httpMethods": []any{"GET", "POST"}, "httpMethod": "POST",
+	}))
+
+	for _, method := range []string{http.MethodGet, http.MethodPost} {
+		recorder := httptest.NewRecorder()
+		h.handler.ServeHTTP(recorder, httptest.NewRequest(method, h.url(t, active), strings.NewReader(`{}`)))
+		if recorder.Code != http.StatusOK {
+			t.Errorf("%s status = %d, want the route to answer (body: %s)", method, recorder.Code, recorder.Body)
+		}
+	}
+	h.drain(t)
+}
+
+// TestFormPageIsRefusedToAnAddressOutsideTheAllowList covers the order the page
+// was served in.
+//
+// The hosted page was written before the allow-list and the credential were
+// checked, so a form restricted by IP served its title, labels and options to
+// any caller who found the URL — while the submission it exists for was
+// refused.
+func TestFormPageIsRefusedToAnAddressOutsideTheAllowList(t *testing.T) {
+	h := newHarness(t)
+	active := h.activate(t, formDocument(map[string]any{
+		"path": "secret-form", "formTitle": "Staff only",
+		"formFields": map[string]any{"values": []any{
+			map[string]any{"fieldLabel": "Name", "fieldType": "text"},
+		}},
+		"responseMode": "immediate",
+		"options":      map[string]any{"ipWhitelist": "10.0.0.1"},
+	}))
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, h.url(t, active), nil)
+	request.RemoteAddr = "203.0.113.9:1234"
+	h.handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want the page refused (body: %s)", recorder.Code, recorder.Body)
+	}
+	if strings.Contains(recorder.Body.String(), "Staff only") {
+		t.Errorf("the refused page still carried the form:\n%s", recorder.Body)
+	}
+}
+
 func TestWebhookTimesOutRatherThanHangingForever(t *testing.T) {
 	h := newHarness(t)
 	active := h.activate(t, webhookDocument("Slow", map[string]any{

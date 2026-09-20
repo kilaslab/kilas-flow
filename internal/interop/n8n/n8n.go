@@ -185,6 +185,15 @@ type mapping struct {
 	// Empty means "do not carry the node's own version", which is the right
 	// answer for a mapping whose two sides number their versions differently.
 	publishedVersions []float64
+	// minimumExportVersion raises the written typeVersion for a node whose
+	// parameters need a newer n8n version than the pin.
+	//
+	// It only ever raises: a node imported at a version n8n publishes keeps
+	// that version, and one whose configuration would be meaningless at the pin
+	// — a Webhook answering several methods exists only from 2.1 — is written
+	// at the version that publishes it instead of one that cannot represent it.
+	// Zero means the pin applies.
+	minimumExportVersion func(node workflow.Node) float64
 	// sharedVersion marks a mapping whose two sides use the same version
 	// numbers, so export writes the node's own version rather than a fixed one.
 	//
@@ -236,6 +245,7 @@ var mappings = []mapping{
 	{
 		n8nType: "n8n-nodes-base.webhook", kilasType: "kilasflow.webhook", kilasVersion: workflow.V(1),
 		exportTypeVersion: 2, toKilas: webhookToKilas, toN8N: webhookToN8N,
+		minimumExportVersion: webhookMinimumVersion,
 	},
 	{
 		n8nType: "n8n-nodes-base.respondToWebhook", kilasType: "kilasflow.respondToWebhook", kilasVersion: workflow.V(1),
@@ -1540,6 +1550,11 @@ func applySubnodeFlags(nodes []Node, connections []workflow.Connection) []Node {
 // at the versions the package it mirrors publishes, and exporting both as one
 // number would send a workflow back claiming a version it was not authored at.
 func exportVersion(entry mapping, node workflow.Node) float64 {
+	return raiseVersion(entry, node, pinnedVersion(entry, node))
+}
+
+// pinnedVersion is the version the mapping's own rules choose.
+func pinnedVersion(entry mapping, node workflow.Node) float64 {
 	if node.TypeVersion.IsZero() {
 		return entry.exportTypeVersion
 	}
@@ -1564,6 +1579,22 @@ func exportVersion(entry mapping, node workflow.Node) float64 {
 		}
 	}
 	return entry.exportTypeVersion
+}
+
+// raiseVersion lifts the written version to the oldest one whose n8n node can
+// represent this configuration.
+//
+// Raising only, never lowering: a node imported at a version n8n publishes goes
+// back at that version, and the configuration that needs a newer node than the
+// pin is the only thing that moves the number.
+func raiseVersion(entry mapping, node workflow.Node, version float64) float64 {
+	if entry.minimumExportVersion == nil {
+		return version
+	}
+	if required := entry.minimumExportVersion(node); required > version {
+		return required
+	}
+	return version
 }
 
 // errorPortName is the extra output a node that continues on a separate error

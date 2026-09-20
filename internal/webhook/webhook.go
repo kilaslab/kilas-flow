@@ -118,6 +118,14 @@ func (handler *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet || r.Method == http.MethodHead {
 		if binding, page, found := handler.hostedPage(r, path); found {
 			applyCORS(w, r, binding)
+			// The page faces the same gate as the submission. It used to be
+			// written before either check, so a form restricted by IP
+			// allow-list or by basic auth served its title, labels and options
+			// to any caller who found the URL — while the submission the page
+			// exists for was refused.
+			if !handler.admit(w, r, binding) {
+				return
+			}
 			writePage(w, http.StatusOK, page)
 			return
 		}
@@ -133,18 +141,7 @@ func (handler *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	applyCORS(w, r, binding)
 
-	// An allow-list is checked before the credential, so a refused caller
-	// cannot use the endpoint to probe for valid secrets.
-	if !addressAllowed(r, binding) {
-		problem(w, http.StatusForbidden, "This webhook does not accept requests from your address.")
-		return
-	}
-
-	if status, err := handler.authenticate(r, binding); err != nil {
-		if status == http.StatusUnauthorized {
-			w.Header().Set("WWW-Authenticate", `Basic realm="webhook"`)
-		}
-		problem(w, status, err.Error())
+	if !handler.admit(w, r, binding) {
 		return
 	}
 
@@ -285,6 +282,30 @@ func (handler *Handler) hostedPage(r *http.Request, path string) (repository.Web
 		}
 	}
 	return repository.WebhookBinding{}, nil, false
+}
+
+// admit runs the checks every request to a bound route faces before anything is
+// served: the address allow-list, then the credential.
+//
+// The allow-list is checked before the credential so a refused caller cannot use
+// the endpoint to probe for valid secrets. It is one function because the
+// hosted page and the delivery must face the same gate — the page used to be
+// written before either check, so a form restricted by IP allow-list or by
+// basic auth served its title, labels and options to any caller who found the
+// URL.
+func (handler *Handler) admit(w http.ResponseWriter, r *http.Request, binding repository.WebhookBinding) bool {
+	if !addressAllowed(r, binding) {
+		problem(w, http.StatusForbidden, "This webhook does not accept requests from your address.")
+		return false
+	}
+	if status, err := handler.authenticate(r, binding); err != nil {
+		if status == http.StatusUnauthorized {
+			w.Header().Set("WWW-Authenticate", `Basic realm="webhook"`)
+		}
+		problem(w, status, err.Error())
+		return false
+	}
+	return true
 }
 
 // resolveBinding finds the binding for one request, filling path parameters.
@@ -1134,6 +1155,13 @@ func Extract(catalog Catalog, normalizePath func(string) string) repository.Webh
 // webhook answered 404 to its own callers. `httpMethods` and an array-valued
 // `httpMethod` are both read, because n8n v2.1 stores several methods in the
 // same parameter the single-method form uses a string for.
+//
+// `multipleMethods` decides which of the two parameters is the live one, which
+// is the order the node's own definition reads them in. Reading `httpMethod`
+// first bound a node storing `httpMethod:"POST"` beside
+// `multipleMethods:true, httpMethods:["GET","POST"]` to POST alone — the
+// leftover single-method value, not the selection — so the GET half of a
+// two-method endpoint answered 404 to every caller.
 func declaredMethods(parameters map[string]any, declaration *node.WebhookDeclaration) []string {
 	collect := func(value any) []string {
 		switch typed := value.(type) {
@@ -1153,6 +1181,11 @@ func declaredMethods(parameters map[string]any, declaration *node.WebhookDeclara
 			return methods
 		}
 		return nil
+	}
+	if multiple, _ := parameters["multipleMethods"].(bool); multiple {
+		if methods := collect(parameters["httpMethods"]); len(methods) > 0 {
+			return methods
+		}
 	}
 	if declaration.MethodParameter != "" {
 		if methods := collect(parameters[declaration.MethodParameter]); len(methods) > 0 {

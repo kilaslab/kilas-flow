@@ -437,6 +437,63 @@ func TestMergeOptionWithNoEquivalentIsNamed(t *testing.T) {
 	}
 }
 
+// TestMultiMethodWebhookExportsAtTheVersionThatPublishesIt covers the export
+// half of a two-method endpoint.
+//
+// The array went out under `httpMethod` with no `multipleMethods` flag and at
+// the 2.0 pin, so n8n — whose node has no such parameter before 2.1 — read it
+// as a single method or refused the file, and the selection was lost with
+// nothing reported.
+func TestMultiMethodWebhookExportsAtTheVersionThatPublishesIt(t *testing.T) {
+	t.Parallel()
+
+	imported := importFixture(t, `{
+	  "name": "Multi",
+	  "nodes": [
+	    {"id":"a","name":"Hook","type":"n8n-nodes-base.webhook","typeVersion":2.1,"position":[0,0],
+	     "parameters":{"path":"items","multipleMethods":true,"httpMethod":["GET","POST"],"responseMode":"lastNode"}}
+	  ],
+	  "connections": {}
+	}`)
+	if methods, _ := nodeByName(imported.Document, "Hook").Parameters["httpMethods"].([]any); len(methods) != 2 {
+		t.Fatalf("httpMethods = %#v, want both methods imported", methods)
+	}
+
+	exported, err := n8n.Export(imported.Document, registry(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var hook n8n.Node
+	for _, node := range exported.Document.Nodes {
+		if node.Name == "Hook" {
+			hook = node
+		}
+	}
+	if hook.TypeVersion != 2.1 {
+		t.Errorf("typeVersion = %v, want the version that publishes multipleMethods", hook.TypeVersion)
+	}
+	if hook.Parameters["multipleMethods"] != true {
+		t.Errorf("multipleMethods = %#v, want the flag written", hook.Parameters["multipleMethods"])
+	}
+	methods, _ := hook.Parameters["httpMethod"].([]any)
+	if len(methods) != 2 {
+		t.Errorf("httpMethod = %#v, want the array kept", hook.Parameters["httpMethod"])
+	}
+
+	// And the round trip: what went out imports back with both methods.
+	encoded, err := json.Marshal(exported.Document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := n8n.Import(encoded, registry(t))
+	if err != nil {
+		t.Fatalf("Import() of the exported document error = %v", err)
+	}
+	if methods, _ := nodeByName(again.Document, "Hook").Parameters["httpMethods"].([]any); len(methods) != 2 {
+		t.Errorf("re-imported httpMethods = %#v, want both methods", methods)
+	}
+}
+
 // TestPostgresOperationDefaultsToInsert covers n8n's own default, which differs
 // from this server's.
 //

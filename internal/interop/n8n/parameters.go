@@ -1906,6 +1906,20 @@ func webhookToKilas(node Node) (map[string]any, []Unsupported) {
 	return parameters, issues
 }
 
+// webhookMinimumVersion is the oldest n8n Webhook typeVersion that can express
+// this node's method selection.
+//
+// `multipleMethods` and the array-valued `httpMethod` arrived in 2.1, so a node
+// answering several methods exported at the 2.0 pin claimed a version whose
+// node has no such parameter — n8n would read the array as a single method or
+// refuse the file, and the selection was lost either way.
+func webhookMinimumVersion(node workflow.Node) float64 {
+	if methods, ok := node.Parameters["httpMethods"].([]any); ok && len(methods) > 1 {
+		return 2.1
+	}
+	return 0
+}
+
 // webhookToN8N is the exact inverse of webhookToKilas.
 //
 // The response mode has to be translated rather than passed through. n8n's
@@ -1929,7 +1943,12 @@ func webhookToN8N(node workflow.Node) (map[string]any, []ExportIssue) {
 		"options":      map[string]any{},
 	}
 	if methods, ok := node.Parameters["httpMethods"].([]any); ok && len(methods) > 0 {
+		// n8n keeps the list in the same `httpMethod` parameter the single
+		// form uses and gates it behind `multipleMethods`. Writing the array
+		// without the flag produced a node n8n reads as a single method — the
+		// selection was not representable in the file at all.
 		written["httpMethod"] = methods
+		written["multipleMethods"] = true
 	} else {
 		// Written explicitly rather than left to n8n's default: an imported
 		// GET webhook exported without the key is a GET webhook in n8n too,
