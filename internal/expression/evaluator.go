@@ -266,6 +266,12 @@ func readIndex(receiver, key any) (any, error) {
 		}
 		return Undefined, nil
 	case []any:
+		// `['length']` is the same read as `.length`: a key that arrives from
+		// the item, or a computed property name, is how a workflow reaches the
+		// length dynamically.
+		if name, ok := key.(string); ok && name == "length" {
+			return float64(len(typed)), nil
+		}
 		position, ok := indexOf(key)
 		if !ok || position < 0 || position >= len(typed) {
 			return Undefined, nil

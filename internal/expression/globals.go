@@ -279,7 +279,14 @@ func registerNamespaces() {
 	mathOne("abs", math.Abs)
 	mathOne("ceil", math.Ceil)
 	mathOne("floor", math.Floor)
-	mathOne("round", math.Round)
+	// JavaScript's Math.round is floor(x + 0.5), so a negative half goes up
+	// towards zero: -2.5 is -2 where Go's math.Round gives -3.
+	mathOne("round", func(value float64) float64 {
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return value
+		}
+		return math.Floor(value + 0.5)
+	})
 	mathOne("trunc", math.Trunc)
 	mathOne("sqrt", math.Sqrt)
 	mathOne("cbrt", math.Cbrt)

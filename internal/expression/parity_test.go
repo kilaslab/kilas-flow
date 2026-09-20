@@ -854,3 +854,58 @@ func TestSortRunsTheComparatorItAccepts(t *testing.T) {
 		}
 	}
 }
+
+// TestListLengthReadsThroughABracketKey: readMember special-cased `length` for a
+// list and readIndex only did for a string, so `[1,2,3].length` was 3 while
+// `[1,2,3]['length']` was undefined. A dynamic key — a field name arriving from
+// the item — silently resolved to nothing instead of the length.
+func TestListLengthReadsThroughABracketKey(t *testing.T) {
+	t.Parallel()
+
+	for template, want := range map[string]any{
+		"{{ [1,2,3]['length'] }}":                     float64(3),
+		"{{ [1,2,3].length }}":                        float64(3),
+		"{{ $json.tags['length'] }}":                  float64(3),
+		"{{ $json.tags.length }}":                     float64(3),
+		"{{ $json.tags[$json.missing ?? 'length'] }}": float64(3),
+		"{{ []['length'] }}":                          float64(0),
+		// An index is still an index, and a missing one is still undefined.
+		"{{ [1,2,3]['1'] }}":          float64(2),
+		"{{ [1,2,3]['7'] }}":          nil,
+		"{{ {length: 9}['length'] }}": float64(9),
+	} {
+		got := evaluateOne(t, template, parityContext())
+		if !sameValue(got, want) {
+			t.Errorf("Evaluate(%s) = %#v, want %#v", template, got, want)
+		}
+	}
+}
+
+// TestMathRoundRoundsHalfUp: the namespace registered Go's math.Round, which
+// rounds a negative half away from zero, so Math.round(-2.5) was -3 and
+// Math.round(-0.5) was -1 where JavaScript's floor(x + 0.5) gives -2 and 0.
+func TestMathRoundRoundsHalfUp(t *testing.T) {
+	t.Parallel()
+
+	for template, want := range map[string]any{
+		"{{ Math.round(-2.5) }}":                 float64(-2),
+		"{{ Math.round(-0.5) }}":                 float64(0),
+		"{{ Math.round(2.5) }}":                  float64(3),
+		"{{ Math.round(-2.4) }}":                 float64(-2),
+		"{{ Math.round(-2.6) }}":                 float64(-3),
+		"{{ Math.round(0.4) }}":                  float64(0),
+		"{{ Math.round(1.5) }}":                  float64(2),
+		"{{ Math.round(-1.5) }}":                 float64(-1),
+		"{{ Math.round($json.count / 4 - 11) }}": float64(0),
+	} {
+		got := evaluateOne(t, template, parityContext())
+		if got != want {
+			t.Errorf("Evaluate(%s) = %#v, want %#v", template, got, want)
+		}
+	}
+
+	// A non-finite input stays non-finite rather than becoming a number.
+	if got := evaluateOne(t, "{{ Math.round(1/0) + '' }}", parityContext()); got != "Infinity" {
+		t.Errorf("Math.round(1/0) = %#v, want Infinity", got)
+	}
+}
