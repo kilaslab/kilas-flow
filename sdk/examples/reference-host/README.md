@@ -19,26 +19,40 @@ for the package this directory depends on by path. The commands below are
 the published shape, with the local build noted where it differs.
 
 ```sh
-# 1. KilasFlow itself, with authentication and embedding enabled for this
-#    origin. Substitute the exact release tag once one exists; until then,
-#    `make docker` in the checkout builds `kilasflow:<version>` locally and
-#    `ghcr.io/kilaslab/kilasflow:v0.1.0` below is the tag it will be.
+# 1. Build the image from the checkout and give it the registry name. The tag
+#    below is the exact version `make docker` stamps — its VERSION default,
+#    `git describe --tags --always --dirty` — because what it builds is
+#    `kilasflow:<that>`, not the published name.
+make docker
+docker tag "kilasflow:$(git describe --tags --always --dirty)" ghcr.io/kilaslab/kilasflow:v0.1.0
+
+# 2. KilasFlow itself: authentication and embedding for this origin, credential
+#    storage (the host stores a header credential per tenant — without the
+#    encryption key the server runs but refuses to store one), and a named
+#    volume, because the state file below assumes the installation kept its
+#    database across restarts.
 export KILASFLOW_OPERATOR_KEY="$(printf 'kfa1_%s_%s' \
   "$(openssl rand -hex 6)" "$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=')")"
 docker run --rm -p 8080:8080 \
+  -v kilasflow-reference-data:/app/data \
   -e KILASFLOW_AUTH_ENABLED=true \
   -e KILASFLOW_AUTH_SIGNING_KEY="$(openssl rand -base64 32)" \
   -e KILASFLOW_AUTH_OPERATOR_KEY="$KILASFLOW_OPERATOR_KEY" \
   -e KILASFLOW_AUTH_BOOTSTRAP_EMAIL=owner@example.com \
-  -e KILASFLOW_AUTH_BOOTSTRAP_PASSWORD=choose-a-first-password \
+  -e KILASFLOW_BOOTSTRAP_PASSWORD=choose-a-first-password \
+  -e KILASFLOW_ENCRYPTION_KEY="$(openssl rand -base64 32)" \
   -e KILASFLOW_EMBED_SIGNING_KEY="$(openssl rand -base64 32)" \
   -e KILASFLOW_EMBED_ALLOWED_ORIGINS=http://localhost:4174 \
   ghcr.io/kilaslab/kilasflow:v0.1.0
 
-# 2. Provision both tenants through the operator surface. The operator key is
+# 3. Provision both tenants through the operator surface. The operator key is
 #    not a tenant key: it is scoped to the `operator` tenant and it is the only
-#    credential that may create tenants, users or another tenant's key. Every
-#    minted token is shown once, as kfa1_<prefix>_<secret> — note each down.
+#    credential that may create tenants, users or another tenant's key. It is
+#    registered at boot from `KILASFLOW_AUTH_OPERATOR_KEY` (the variable
+#    `auth.operator_key_env` names), and it has to be shaped like every other
+#    key — `kfa1_`, a hex prefix, then the secret — or the server refuses to
+#    start. Every minted token is shown once, as kfa1_<prefix>_<secret> — note
+#    each down.
 KILASFLOW_URL=http://127.0.0.1:8080
 op() { curl -sS -H "Authorization: Bearer $KILASFLOW_OPERATOR_KEY" \
   -H 'Content-Type: application/json' "$@"; }
@@ -57,7 +71,7 @@ op -X POST $KILASFLOW_URL/api/v1/tenants/birch/users \
 op -X POST $KILASFLOW_URL/api/v1/tenants/acme/api-keys -d '{"label":"reference host"}'
 op -X POST $KILASFLOW_URL/api/v1/tenants/birch/api-keys -d '{"label":"reference host"}'
 
-# 3. Point the host at those two keys and start it. The SDK is not on npm yet:
+# 4. Point the host at those two keys and start it. The SDK is not on npm yet:
 #    `cd ../../ && pnpm install && pnpm build` first, then `pnpm install` here
 #    (package.json depends on it by path).
 npm install
@@ -66,7 +80,7 @@ KILASFLOW_URL=http://127.0.0.1:8080 \
   TENANT_B_API_KEY=kfa1_<birch prefix>_<birch secret> \
   npm start
 
-# 4. Open http://localhost:4174 — Acme and Birch side by side, each with
+# 5. Open http://localhost:4174 — Acme and Birch side by side, each with
 #    its own editor, webhook, and signups list.
 ```
 
@@ -98,8 +112,13 @@ still exist.
 - **Authenticated webhook.** The trigger requires the stored header
   credential; a delivery without it answers 401 and never becomes an
   execution. The secret lives in the backend state file — the page fires
-  through `/api/:tenant/fire` and learns the execution id, never the
-  header value.
+  through `/api/:tenant/fire` and never sees the header value. The run id is
+  *not* in the delivery acknowledgement: the trigger is in n8n's `onReceived`
+  mode, whose answer is n8n's own `{"message":"Workflow was started"}`, so a
+  host finds its run through the tenant's own key — the newest execution of
+  that workflow — and then owns the id. `server.mjs` still reads
+  `receipt.executionId` from the old `{executionId, status}` acknowledgement and
+  needs that one lookup before it works against a current server.
 - **Owned reads.** Stream tickets and execution polls re-check that the
   execution belongs to the tenant's workflow before answering.
 - **Isolated datastores.** Each tenant provisions `reference-<tenant>`
@@ -109,9 +128,18 @@ still exist.
 ## Datastore note
 
 The datastore path here is host-side REST (`/api/v1/datastores/*`) with
-the tenant's key, because the SDK has no datastore methods yet and embed
-tokens are default-denied on those endpoints — backend-key-only by
-construction. Writing from inside a workflow uses the datastore node
+the tenant's key. The SDK has datastore methods now — `insertDatastoreRow`,
+`listDatastoreRows`, `getDatastoreRow`, `updateDatastoreRows`,
+`deleteDatastoreRows`, `upsertDatastoreRow`, the CSV export/import pair, and the
+column operations — so a host written today can use those instead; this sample
+predates them and the REST call is the same request.
+
+Embed sessions can reach data too, and only within one datastore: a session
+minted for a `datastoreId` with `datastore:read` or `datastore:write` may read
+the table definition and read or write its **rows**. Everything that reshapes the
+table — listing datastores, clearing it, adding, renaming or dropping a column,
+and the CSV import — stays with the backend key, and a workflow-scoped session
+never reaches any of it. Writing from inside a workflow uses the datastore node
 (`kilasflow.datastore`, insert with `dataTableId` and a `columns`
 mapping); see the [embedding guide](../../../docs/src/content/docs/guides/embedding.md)
-for the exact parameters.
+for the exact parameters and the scope table.
