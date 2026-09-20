@@ -1,7 +1,7 @@
 ---
 id: BUG-9853ay
 title: Workflow-scoped embed session escapes to all datastores + any credential
-status: done
+status: doing
 priority: critical
 labels:
     - embed
@@ -11,7 +11,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:09Z"
-updated: "2026-09-20T02:03:59Z"
+updated: "2026-09-20T02:29:07Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -532,3 +532,9 @@ Closed by `pine close --evidence` on 2026-09-20.
  web/vite.config.ts                                 |    7 +-
  434 files changed, 60517 insertions(+), 4725 deletions(-)
 ```
+
+## Reopened by review (2026-09-20) — Critical
+ReviewSecurity (b4f2147..HEAD) found the confinement is NOT airtight:
+- **C1 (critical)**: `nodes/embedscope.go` `DocumentReferences` (:46) and `EmbedScopeIssues` (:83) switch on `ExecuteWorkflowNodeType` only, while `nodes.SubworkflowCalls` (:301-316) covers BOTH `ExecuteWorkflowNodeType` and `WorkflowToolNodeType`. A `kilasflow.workflowTool` node naming any workflow X passes save (:563) and run (:725) unchecked, then `nodes/ai.go:2542-2556` invokes X with the tenant's authority — the escape this ticket exists to close. No test covers the tool node.
+- **I1 (medium)**: the load-options credential bound (`internal/api/routes.go:85-100` → `handlers/nodes.go:345-365`) reads `LatestVersion` (draft) while the confinement is minted from the published revision (`handlers/embedscope.go:68-75`), so an unpublished draft's credential can still drive internal loaders.
+Fix: one shared enumerator for "nodes that call a workflow" used by both the activation gate and the confinement walkers; bound load-options by `session.Confinement.AllowsCredential`; add API-level repros (save 403, run 403, tool node).

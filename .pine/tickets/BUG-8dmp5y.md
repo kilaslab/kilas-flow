@@ -1,7 +1,7 @@
 ---
 id: BUG-8dmp5y
 title: 'Auth/session hardening: redirect secret leak, proxy SSRF bypass, login throttle, revalidation'
-status: done
+status: doing
 priority: high
 labels:
     - security
@@ -10,7 +10,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:09Z"
-updated: "2026-09-20T02:03:58Z"
+updated: "2026-09-20T02:29:07Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -637,3 +637,6 @@ Closed by `pine close --evidence` on 2026-09-20.
  web/vite.config.ts                                 |    7 +-
  434 files changed, 58706 insertions(+), 4725 deletions(-)
 ```
+
+## Reopened by review (2026-09-20) — Important
+- **I2 (medium)**: `internal/api/server.go:164` mounts `EmbedAuth` with `deps.EmbedIssuer`, which `cmd/kilasflow/main.go:324-335` leaves nil when no embed key is configured. A nil `*embed.Issuer` inside a non-nil interface defeats the `verifier == nil` guard (`internal/api/middleware/embed.go:38-41`); a three-segment `kfe1.a.b` token reaches `internal/embed/embed.go:362-363` and dereferences nil. `Authenticate` waves embed tokens through, so it is reachable unauthenticated: 500 + recovered stack per request, and the intended 503 path can never run. Fix: pass a real nil (or make `Verify` nil-receiver-safe) and test the no-key install.

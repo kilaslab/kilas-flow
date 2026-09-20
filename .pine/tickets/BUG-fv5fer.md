@@ -1,7 +1,7 @@
 ---
 id: BUG-fv5fer
 title: 'Event-stream/CORS/tenancy gaps: SSE hang, CORS, onboarding, headers, CSV, pagination'
-status: done
+status: doing
 priority: medium
 labels:
     - security
@@ -10,7 +10,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:09Z"
-updated: "2026-09-20T02:04:00Z"
+updated: "2026-09-20T02:29:07Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -633,3 +633,7 @@ Closed by `pine close --evidence` on 2026-09-20.
  web/vite.config.ts                                 |    7 +-
  434 files changed, 63787 insertions(+), 4725 deletions(-)
 ```
+
+## Reopened by review (2026-09-20) — Minor
+- **M2 (low)**: CORS is mounted on the shared mux (`internal/api/server.go:144`), so allowlisted origins get CORS on `/webhook/*` and SPA responses too; scope it to `APIPrefix` to keep the fix as narrow as its justification (the events endpoint).
+- **M3 (low, confidence medium)**: `handlers/executions.go:394` gates the reconstructed terminal frame on `len(queued) == 0 || !open`, but the record was already terminal when `gateStreamRecord` read it — so a terminal run with a non-empty replay and a dropped terminal publication streams heartbeats forever. Track whether a terminal frame was actually sent and synthesize when it was not.

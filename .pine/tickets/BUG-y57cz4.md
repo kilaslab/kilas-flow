@@ -1,7 +1,7 @@
 ---
 id: BUG-y57cz4
 title: 'Boot/config/observability: binary default, list env keys, silent config, 500 cause, SSE shutdown'
-status: done
+status: doing
 priority: high
 labels:
     - ops
@@ -10,7 +10,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:10Z"
-updated: "2026-09-20T02:04:04Z"
+updated: "2026-09-20T02:29:07Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -615,3 +615,8 @@ Closed by `pine close --evidence` on 2026-09-20.
  web/vite.config.ts                                 |    7 +-
  434 files changed, 72848 insertions(+), 4725 deletions(-)
 ```
+
+## Reopened by review (2026-09-20) — Important
+- **I3 (medium)**: `internal/api/handlers/interop.go:289`, `:302`, `:218` call `huma.Error500InternalServerError(detail, err)`; huma copies every err into `errors[].message`, so driver/ORM text (table/column names) reaches the caller — against this wave's own rule (`handlers/problem.go:24-31`). Route them through `serverProblem`.
+- **I4 (medium)**: `credentials.go:319-325`, `schedules.go:198-203`, `datastores.go:609-621` still discard the 500 cause (no log), and datastores maps every unrecognised error to 422 carrying `err.Error()`, presenting server faults as caller mistakes and disclosing the driver text.
+- **M1 (low)**: `config.go:837-849` warns about unknown keys before `newLogger`/`slog.SetDefault` (`main.go:121` vs `:1082-1094`), so on `KILASFLOW_LOG_FORMAT=json` the warning that a security setting was ignored is written by the default handler and lost.
