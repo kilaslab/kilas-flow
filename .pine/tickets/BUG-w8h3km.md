@@ -1,13 +1,13 @@
 ---
 id: BUG-w8h3km
 title: Wait-service tests flake under load with "the deadline is in the past"
-status: doing
+status: done
 priority: high
 labels:
     - ci
     - testing
 created: "2026-09-20T17:25:00Z"
-updated: "2026-09-20T17:25:00Z"
+updated: "2026-09-20T11:02:15Z"
 ---
 
 ## Problem
@@ -113,3 +113,11 @@ Verification (this round):
 - Never weakened, skipped or deleted an existing test: the only production file
   touched this round was the mutation, which was reverted.
 
+## Work Evidence
+
+Closed by `pine close --evidence` on 2026-09-20.
+
+- Base: `c2b856a0` (last commit at or before ticket created 2026-09-20)
+- Commits (2):
+  - `c2b856a0` — BUG-w8h3km: drive wait-service deadlines through a clock/timer seam
+  - `72d02004` — chore(pine): open BUG-w8h3km — the wait-service tests flake under load
