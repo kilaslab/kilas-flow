@@ -2161,8 +2161,32 @@ func calculatorNode() node.Definition {
 // the ordinary node rather than re-declared.
 func calculatorToolNode() node.Definition {
 	definition := toolVariantOf(calculatorNode(), CalculatorToolNodeType, "Calculator Tool", "Evaluates an arithmetic expression for an AI Agent.", CalculatorToolExecutorID)
+	// The model supplies the arithmetic, so `expression` is not required here.
+	// Clearing the declaration — not only the validator — is what matters: the
+	// compiler reads the declaration through registry.RequiredFor, so a tool
+	// that declared it required and stored nothing was refused with
+	// `config.required` before its executor ever ran. That is how every
+	// imported calculator tool (the importer writes only toolName and
+	// toolDescription) stayed unactivatable while the validator said the
+	// parameter was optional.
+	definition.Parameters = optionalProperty(definition.Parameters, "expression")
 	definition.Validate = validateCalculatorToolConfiguration
 	return definition
+}
+
+// optionalProperty returns the properties with one key's requirement cleared.
+//
+// It exists for a variant where a value is supplied at run time rather than
+// configured — a tool's argument comes from the model — and the declaration
+// inherited from the node it is derived from still says otherwise.
+func optionalProperty(properties []node.PropertyDefinition, key string) []node.PropertyDefinition {
+	cleared := append([]node.PropertyDefinition(nil), properties...)
+	for index := range cleared {
+		if cleared[index].Key == key {
+			cleared[index].Required = false
+		}
+	}
+	return cleared
 }
 
 func validateCalculatorConfiguration(n workflow.Node) error {

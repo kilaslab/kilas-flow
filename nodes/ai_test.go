@@ -2050,6 +2050,30 @@ func TestCalculatorToolEvaluatesWhatTheModelAsks(t *testing.T) {
 	t.Fatalf("no tool result was published: %#v", published)
 }
 
+// TestCalculatorToolCompilesWithNoExpression is the half the validator test
+// above cannot see: the compiler reads the *declaration* through
+// registry.RequiredFor, not the validator, so a tool that declared `expression`
+// required and stored nothing was refused with config.required even though
+// Validate accepted it. That is exactly the node an import produces — the n8n
+// adapter writes toolName and toolDescription and nothing else — so the import
+// could not be activated at all.
+func TestCalculatorToolCompilesWithNoExpression(t *testing.T) {
+	t.Parallel()
+
+	document := aiDocument([]workflow.Node{{
+		ID: "tool", Name: "Calculator Tool", Type: nodes.CalculatorToolNodeType, TypeVersion: workflow.V(1),
+		Parameters: map[string]any{"toolName": "calculator", "toolDescription": "does arithmetic"},
+	}}, []workflow.Connection{{
+		ID: "c-tool", Kind: workflow.ConnectionTool,
+		Source: workflow.Endpoint{NodeID: "tool", Port: "tool"},
+		Target: workflow.Endpoint{NodeID: "agent", Port: "tools"},
+	}})
+
+	if _, err := workflow.Compile(document, aiRegistry(t)); err != nil {
+		t.Fatalf("Compile() error = %v, want an imported calculator tool accepted", err)
+	}
+}
+
 // TestCalculatorUnderstandsNamedConstants: a model reaches for pi, and
 // refusing it burns a call it cannot recover from.
 func TestCalculatorUnderstandsNamedConstants(t *testing.T) {
