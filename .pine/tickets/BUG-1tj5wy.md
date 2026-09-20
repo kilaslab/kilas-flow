@@ -1,7 +1,7 @@
 ---
 id: BUG-1tj5wy
 title: Worker lease never renewed and equals run timeout; duplicate concurrent execution
-status: todo
+status: testing
 priority: critical
 labels:
     - engine
@@ -10,7 +10,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:09Z"
-updated: "2026-09-19T12:06:09Z"
+updated: "2026-09-20T00:41:16Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -46,3 +46,4 @@ Existing tickets: FEAT-9555xz, BUG-br7ggc
 - Tests (regression, red before the fix — verified in a pre-fix worktree at HEAD): `TestAClaimedExecutionOutlivesItsRunTimeout` (claim has 199.61 ms left against a 200 ms run timeout before; 30 s now), `TestAWorkerThatOutlivesItsLeaseIsNotReclaimed` (a second service cannot claim a run held 3 lease periods), `TestExecutionStoreSettlesAnExecutionPastTheReclaimCapAsCrashed`, `TestExecutionStoreExtendLeaseOnlyRenewsTheHolder`. Pre-fix probe recorded 5 of 5 reclaims accepted with an expired lease (unbounded); post-fix the third is settled crashed.
 - Scoped proof: `go test ./internal/engine/ -count=1` green, `go test ./internal/repository/ -count=1` green, `go test ./internal/database/ -count=1` green (migration 000010 up and the rollback-all path).
 - Remaining: the ticket's adversarial live re-verify (stub/private instance, `t_lease.py` shape) is Main's final gate — this slice is the code plus scoped proof, with no live instance run from here. Residual risk: a worker killed *between* the trace write and the terminal write is still reclaimed (unchanged recovery path); with the heartbeat a live worker is no longer reclaimed, and a poison execution is now bounded by the cap instead of looping.
+- Landed: 591b3c4 (lease heartbeat/duration + reclaim cap + batched trace persist, with the regression tests) and 2f26c0d (an unpersistable result or sub-workflow trace settles the run instead of leaving it for reopen). Status set to `testing`; scoped suites at that revision: internal/engine ok, internal/repository ok, internal/database ok.
