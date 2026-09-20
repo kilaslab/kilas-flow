@@ -793,7 +793,8 @@ func TestVectorGateDetectionIsStatementBased(t *testing.T) {
 
 // A SQLite run with only a vector migration pending records it as skipped
 // rather than failing: the skip path is dialect-independent in shape, and
-// this exercises recordVersion + WARN without needing a live PostgreSQL.
+// this exercises recordSkippedVersion + WARN without needing a live
+// PostgreSQL.
 func TestVectorSkipRecordsVersionWithoutRunningDDL(t *testing.T) {
 	db := freshSQLite(t)
 	pending := migration{version: 6, name: "vector_store", up: []string{
@@ -802,8 +803,15 @@ func TestVectorSkipRecordsVersionWithoutRunningDDL(t *testing.T) {
 	if err := ensureVersionTable(db, db.Dialector.Name()); err != nil {
 		t.Fatalf("ensureVersionTable: %v", err)
 	}
-	if err := recordVersion(db.DB, db.Dialector.Name(), pending); err != nil {
-		t.Fatalf("recordVersion: %v", err)
+	if err := recordSkippedVersion(db.DB, db.Dialector.Name(), pending); err != nil {
+		t.Fatalf("recordSkippedVersion: %v", err)
+	}
+	// The second record stands in for the loser of a race between two processes
+	// starting together, which decided to skip the same migration: it has to be
+	// a no-op rather than the duplicate-key failure a plain insert produced —
+	// the failure the concurrent PostgreSQL case reproduces (BUG-rpkjpy).
+	if err := recordSkippedVersion(db.DB, db.Dialector.Name(), pending); err != nil {
+		t.Fatalf("recording the same skip twice: %v", err)
 	}
 	applied, err := appliedVersions(db)
 	if err != nil {
@@ -811,6 +819,13 @@ func TestVectorSkipRecordsVersionWithoutRunningDDL(t *testing.T) {
 	}
 	if _, done := applied[6]; !done {
 		t.Error("skipped vector migration was not recorded as applied")
+	}
+	var rows int64
+	if err := db.Raw("SELECT COUNT(*) FROM `schema_migrations` WHERE version = 6").Scan(&rows).Error; err != nil {
+		t.Fatalf("count version rows: %v", err)
+	}
+	if rows != 1 {
+		t.Errorf("schema_migrations rows for version 6 = %d, want 1", rows)
 	}
 }
 

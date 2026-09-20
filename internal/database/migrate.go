@@ -179,7 +179,7 @@ func migrateFS(db *DB, fsys fs.FS, log *slog.Logger) error {
 			continue
 		}
 		if vectorSkipped[pending.version] {
-			if err := recordVersion(db.DB, dialect, pending); err != nil {
+			if err := recordSkippedVersion(db.DB, dialect, pending); err != nil {
 				return fmt.Errorf("record skipped vector migration %s: %w", pending.label(), err)
 			}
 			log.Warn("skipped a vector migration: PostgreSQL has no pgvector extension; vector nodes will refuse until CREATE EXTENSION vector runs",
@@ -287,6 +287,31 @@ func recordVersion(tx *gorm.DB, dialect string, applied migration) error {
 		"INSERT INTO "+quoteIdentifier(dialect, schemaMigrationsTable)+" (version, name, applied_at) VALUES (?, ?, ?)",
 		applied.version, applied.name, time.Now().UTC(),
 	).Error
+}
+
+// recordSkippedVersion records a migration this boot decided not to run.
+//
+// The insert has to survive losing a race, because two processes started
+// together make the same decision about the same migration and only one of them
+// can insert the row. `apply` handles that collision by re-reading the table
+// after the error, which works there because its insert is also the claim that
+// keeps the DDL from running twice and the loser has something to wait for. A
+// skipped migration has no DDL behind it and nothing to wait for, so the
+// conflict is declared in the statement instead and the loser carries on. That
+// is what the constants below spell per dialect: SQLite's INSERT OR IGNORE and
+// PostgreSQL's ON CONFLICT DO NOTHING.
+//
+// Only the version row is tolerant, never the migration: a skipped migration is
+// still recorded exactly once, and a database whose owner later installs the
+// extension converges on the next boot that finds it already there.
+func recordSkippedVersion(db *gorm.DB, dialect string, skipped migration) error {
+	statement := "INSERT OR IGNORE INTO " + quoteIdentifier(dialect, schemaMigrationsTable) +
+		" (version, name, applied_at) VALUES (?, ?, ?)"
+	if dialect == "postgres" {
+		statement = "INSERT INTO " + quoteIdentifier(dialect, schemaMigrationsTable) +
+			" (version, name, applied_at) VALUES (?, ?, ?) ON CONFLICT (version) DO NOTHING"
+	}
+	return db.Exec(statement, skipped.version, skipped.name, time.Now().UTC()).Error
 }
 
 func ensureVersionTable(db *DB, dialect string) error {
