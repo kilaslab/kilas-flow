@@ -348,6 +348,147 @@ func TestSuspendResumeContinuesWithExactUpstreamData(t *testing.T) {
 	}
 }
 
+// waitSuspendOnce suspends the first time it runs and passes its input through
+// after that, which is the rate-limited loop shape: the iteration that waited
+// resumes, and the iterations after it do not wait again.
+type waitSuspendOnce struct {
+	calls     *int
+	suspended bool
+}
+
+func (executor *waitSuspendOnce) Execute(_ context.Context, _ workflow.IRNode, input workflow.NodeInput, _ engine.Request) (workflow.NodeOutput, error) {
+	*executor.calls++
+	if !executor.suspended {
+		executor.suspended = true
+		return nil, &engine.SuspendError{Mode: engine.WaitModeApproval, ExpiresAt: time.Now().Add(time.Hour)}
+	}
+	return workflow.NodeOutput{input["main"]}, nil
+}
+
+// TestResumeInsideALoopProcessesEveryBatch is the finding that a Wait inside a
+// loop silently ended the loop and reported success.
+//
+// The scheduling state that says which batch is next lived only in memory, so
+// the resumed run never reopened the loop entry: the done branch saw an empty
+// stream and the remaining items were simply never processed — silent data loss
+// in the Loop -> API -> Wait -> Loop shape that most throttled workflows use.
+// The state is in the checkpoint now, and this pins the promise end to end.
+func TestResumeInsideALoopProcessesEveryBatch(t *testing.T) {
+	ctx, db, store, catalog, executors, tenant := waitTestSetup(t)
+	_ = db
+
+	var bodyCalls int
+	if err := executors.Register("test.once", &waitSuspendOnce{calls: &bodyCalls}); err != nil {
+		t.Fatalf("Register(waiting body) error = %v", err)
+	}
+	var doneCalls int
+	var doneInputs []workflow.NodeInput
+	if err := executors.Register("test.passthrough", &waitPassthrough{calls: &doneCalls, inputs: &doneInputs}); err != nil {
+		t.Fatalf("Register(passthrough) error = %v", err)
+	}
+	if err := executors.Register("test.three", engine.ExecutorFunc(
+		func(context.Context, workflow.IRNode, workflow.NodeInput, engine.Request) (workflow.NodeOutput, error) {
+			return workflow.NodeOutput{{
+				{JSON: map[string]any{"n": 1}},
+				{JSON: map[string]any{"n": 2}},
+				{JSON: map[string]any{"n": 3}},
+			}}, nil
+		})); err != nil {
+		t.Fatalf("Register(source) error = %v", err)
+	}
+	for _, definition := range []node.Definition{
+		waitTestDefinition("test.three", "test.three"),
+		waitTestDefinition("test.once", "test.once"),
+	} {
+		if err := catalog.Register(definition); err != nil {
+			t.Fatalf("Register(%q) error = %v", definition.Type, err)
+		}
+	}
+
+	link := func(id, source, target, port string) workflow.Connection {
+		return workflow.Connection{ID: id, Kind: workflow.ConnectionMain,
+			Source: workflow.Endpoint{NodeID: source, Port: port},
+			Target: workflow.Endpoint{NodeID: target, Port: "main"}}
+	}
+	workflowStore := repository.NewWorkflowStore(db.DB)
+	saved, err := workflowStore.SaveDraft(ctx, tenant, workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_loop_wait", Name: "Throttled loop",
+		Nodes: []workflow.Node{
+			{ID: "manual", Name: "Manual", Type: "kilasflow.manual", TypeVersion: workflow.V(1)},
+			{ID: "three", Name: "Three", Type: "test.three", TypeVersion: workflow.V(1)},
+			{ID: "loop", Name: "Loop", Type: nodes.LoopNodeType, TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"batchSize": float64(1), "maxIterations": float64(10)}},
+			{ID: "hold", Name: "Hold", Type: "test.once", TypeVersion: workflow.V(1)},
+			{ID: "done", Name: "Done", Type: "test.done", TypeVersion: workflow.V(1)},
+		},
+		Connections: []workflow.Connection{
+			link("c1", "manual", "three", "main"),
+			link("c2", "three", "loop", "main"),
+			// The loop output runs the body and the body returns to the loop, so
+			// the wait is inside the loop exactly as the throttle pattern puts it.
+			link("c3", "loop", "hold", "loop"),
+			link("c4", "hold", "loop", "main"),
+			link("c5", "loop", "done", "done"),
+		},
+		Settings: map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("SaveDraft() error = %v", err)
+	}
+
+	queued, err := store.QueueManualLatest(ctx, tenant, saved.ID, catalog, "", json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("QueueManualLatest() error = %v", err)
+	}
+	service := waitTestService(t, store, catalog, executors, "worker-1")
+	if worked, err := service.RunOnce(ctx); err != nil || !worked {
+		t.Fatalf("RunOnce(suspend) = (%v, %v), want (true, nil)", worked, err)
+	}
+	suspended, err := store.Get(ctx, tenant, queued.ID)
+	if err != nil {
+		t.Fatalf("Get(suspended) error = %v", err)
+	}
+	if suspended.Status != execution.StatusWaiting {
+		t.Fatalf("status = %q, want waiting at the wait inside the loop (error %s)", suspended.Status, suspended.Error)
+	}
+	if bodyCalls != 1 {
+		t.Fatalf("body ran %d times before the wait, want the first batch alone", bodyCalls)
+	}
+
+	wait, err := store.FindActiveWait(ctx, tenant, queued.ID)
+	if err != nil {
+		t.Fatalf("FindActiveWait() error = %v", err)
+	}
+	if _, _, err := service.ResumeApproval(ctx, tenant.ID, wait.ResumeToken,
+		engine.ApprovalDecision{Approved: true, DecidedBy: "tester", RespondedAt: time.Now().UTC()}, false); err != nil {
+		t.Fatalf("ResumeApproval() error = %v", err)
+	}
+
+	// A fresh worker continues the run, so nothing about the loop's cursor can
+	// have survived in process memory.
+	restarted := waitTestService(t, store, catalog, executors, "worker-2")
+	if worked, err := restarted.RunOnce(ctx); err != nil || !worked {
+		t.Fatalf("RunOnce(resume) = (%v, %v), want (true, nil)", worked, err)
+	}
+	finished, err := store.Get(ctx, tenant, queued.ID)
+	if err != nil {
+		t.Fatalf("Get(resumed) error = %v", err)
+	}
+	if finished.Status != execution.StatusSucceeded {
+		t.Fatalf("resumed status = %q, want succeeded (error %s)", finished.Status, finished.Error)
+	}
+	if bodyCalls != 3 {
+		t.Errorf("body ran %d times, want one call per batch: the batches after the wait were dropped", bodyCalls)
+	}
+	if doneCalls != 1 {
+		t.Fatalf("the done branch ran %d times, want once", doneCalls)
+	}
+	if got := len(doneInputs[0]["main"]); got != 3 {
+		t.Errorf("done carried %d items, want all 3 batches: the loop ended after the first one", got)
+	}
+}
+
 // An expired wait resolves at its own deadline, and nothing has to call the
 // sweeper for that to happen.
 //

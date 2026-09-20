@@ -1596,6 +1596,142 @@ func TestLoopKeepsItsCursorWhenTheBodyReturnsNewItems(t *testing.T) {
 	}
 }
 
+// TestLoopCarriesBinaryAndLineageThroughEveryBatch pins the other half of the
+// loop's item fidelity.
+//
+// The finding was that binary data and pairedItem lineage survived the first
+// batch and were lost after it, including on `done` — a loop that fetched a PDF
+// and uploaded it in the body handed the second batch an item with no file. The
+// loop now passes items through untouched, so every batch and the collected
+// output carry both.
+func TestLoopCarriesBinaryAndLineageThroughEveryBatch(t *testing.T) {
+	catalog := node.NewRegistry()
+	for _, definition := range []node.Definition{
+		{Group: []node.NodeGroup{node.GroupInput}, Type: "test.files", Version: workflow.V(1),
+			DisplayName: "Files", Category: "Test",
+			Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}}, ExecutorID: "test.files"},
+		{Group: []node.NodeGroup{node.GroupTransform}, Type: "test.upload", Version: workflow.V(1),
+			DisplayName: "Upload", Category: "Test",
+			Inputs:     []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+			Outputs:    []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+			ExecutorID: "test.upload"},
+	} {
+		if err := catalog.Register(definition); err != nil {
+			t.Fatalf("Register(%s) error = %v", definition.Type, err)
+		}
+	}
+	if err := nodes.RegisterAll(catalog); err != nil {
+		t.Fatalf("RegisterAll() error = %v", err)
+	}
+
+	ir, err := workflow.Compile(workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_loop_binary", Name: "Binary through a loop",
+		Nodes: []workflow.Node{
+			{ID: "files", Name: "Files", Type: "test.files", TypeVersion: workflow.V(1)},
+			{ID: "loop", Name: "Loop", Type: nodes.LoopNodeType, TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"batchSize": float64(1), "maxIterations": float64(10)}},
+			{ID: "upload", Name: "Upload", Type: "test.upload", TypeVersion: workflow.V(1)},
+			{ID: "after", Name: "After", Type: "test.upload", TypeVersion: workflow.V(1)},
+		},
+		Connections: []workflow.Connection{
+			{ID: "c1", Kind: workflow.ConnectionMain,
+				Source: workflow.Endpoint{NodeID: "files", Port: "main"},
+				Target: workflow.Endpoint{NodeID: "loop", Port: "main"}},
+			{ID: "c2", Kind: workflow.ConnectionMain,
+				Source: workflow.Endpoint{NodeID: "loop", Port: "loop"},
+				Target: workflow.Endpoint{NodeID: "upload", Port: "main"}},
+			{ID: "c3", Kind: workflow.ConnectionMain,
+				Source: workflow.Endpoint{NodeID: "upload", Port: "main"},
+				Target: workflow.Endpoint{NodeID: "loop", Port: "main"}},
+			{ID: "c4", Kind: workflow.ConnectionMain,
+				Source: workflow.Endpoint{NodeID: "loop", Port: "done"},
+				Target: workflow.Endpoint{NodeID: "after", Port: "main"}},
+		},
+		Settings: map[string]any{},
+	}, catalog)
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+
+	executors := engine.NewRegistry()
+	if err := executors.Register("test.files", engine.ExecutorFunc(
+		func(context.Context, workflow.IRNode, workflow.NodeInput, engine.Request) (workflow.NodeOutput, error) {
+			items := make([]workflow.Item, 0, 3)
+			for index := range 3 {
+				items = append(items, workflow.Item{
+					JSON:   map[string]any{"n": float64(index)},
+					Binary: map[string]workflow.BinaryRef{"data": {ID: fmt.Sprintf("file-%d", index), MediaType: "application/pdf"}},
+				})
+			}
+			return workflow.NodeOutput{items}, nil
+		})); err != nil {
+		t.Fatalf("Register(files) error = %v", err)
+	}
+	// The body answers with what it was handed, the way an HTTP node that
+	// uploads the file and returns the response item does.
+	var batches []workflow.Item
+	if err := executors.Register("test.upload", engine.ExecutorFunc(
+		func(_ context.Context, node workflow.IRNode, input workflow.NodeInput, _ engine.Request) (workflow.NodeOutput, error) {
+			// A shallow copy keeps the binary references the helper used by the
+			// lineage tests deliberately drops.
+			items := append([]workflow.Item(nil), input["main"]...)
+			if node.ID == "upload" {
+				batches = append(batches, items...)
+			}
+			return workflow.NodeOutput{items}, nil
+		})); err != nil {
+		t.Fatalf("Register(upload) error = %v", err)
+	}
+	if err := nodes.RegisterExecutors(executors, safehttp.DefaultPolicy(), sqlnode.Guard{}, ai.NewLoopRuntime(), nil, nil); err != nil {
+		t.Fatalf("RegisterExecutors() error = %v", err)
+	}
+
+	result, err := engine.NewRunner(executors).Run(context.Background(), ir, engine.Request{
+		Input: workflow.Item{JSON: map[string]any{}},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	// Every batch, not just the first, is handed the file its item names.
+	if len(batches) != 3 {
+		t.Fatalf("the body saw %d items across batches, want one per source item", len(batches))
+	}
+	for index, item := range batches {
+		reference, ok := item.Binary["data"]
+		if !ok || reference.MediaType != "application/pdf" {
+			t.Fatalf("batch %d reached the body without its binary data: %#v", index, item.Binary)
+		}
+		if want := fmt.Sprintf("file-%d", index); reference.ID != want {
+			t.Errorf("batch %d carries %q, want the item's own %q", index, reference.ID, want)
+		}
+		if item.Paired == nil || item.Paired.SourceNodeID != "files" || item.Paired.ItemIndex != index {
+			t.Errorf("batch %d lineage = %#v, want it to name source item %d", index, item.Paired, index)
+		}
+	}
+
+	// And the collected output keeps both, which is where the second half of the
+	// finding showed up.
+	var done workflow.NodeOutput
+	for _, run := range result.NodeRuns {
+		if run.NodeID == "loop" {
+			done = run.Output
+		}
+	}
+	if len(done) == 0 || len(done[0]) != 3 {
+		t.Fatalf("done carried %#v, want the three items the body returned", done)
+	}
+	for index, item := range done[0] {
+		if _, ok := item.Binary["data"]; !ok {
+			t.Errorf("done item %d lost its binary data: %#v", index, item.Binary)
+		}
+		if item.Paired == nil || item.Paired.ItemIndex != index {
+			t.Errorf("done item %d lineage = %#v, want source item %d", index, item.Paired, index)
+		}
+	}
+}
+
 // TestDollarItemFollowsPairedLineagePerItem is the other half of the lineage
 // contract: `$('X').item` has to resolve per item, not just exist.
 //
