@@ -1,14 +1,14 @@
 ---
 id: EPIC-cfe7ny
 title: KilasFlow full-review remediation — Find/Verify/Critique backlog
-status: todo
+status: done
 priority: critical
 labels:
     - review
     - n8n-parity
     - remediation
 created: "2026-09-19T11:56:35Z"
-updated: "2026-09-19T12:06:28Z"
+updated: "2026-09-20T02:04:30Z"
 ---
 # Description
 
@@ -37,3 +37,11 @@ Critical-first: T01 exact-version lookup, T02 http-body-expression, T03 paired-i
 - Workflow journal: `~/.claude/projects/-Users-izzadev-projects-k-flow/21032eb5-98ed-492e-a372-bbee00f55df0/subagents/workflows/wf_c415e773-4e1/journal.jsonl`.
 - Not done (token ran out in Claude Code): 4 gap probes (pg-multiprocess, data-nodes-parity, messaging-packs-e2e, load-concurrency) + Consolidate phase. Critic gap briefs saved in journal result `ada9e8e96a7c33367`.
 
+
+## Remediation complete (2026-09-20)
+
+All 50 findings tickets landed, verified by scoped tests, and closed with evidence. Follow-up tickets filed during the work live outside this epic: BUG-j7rtv3 (editor selection/projection loop — fixed), BUG-a1648n (editor coerced imported gt/gte to equals — fixed), BUG-66es9z (datastore ifExists second port unreachable — fixed), FEAT-cwmw90 (webhook URL API), FEAT-qdedm0 (adopt list paging), BUG-341sxn (Go module rename), FEAT-15k49d (i18n).
+
+Verification at the final tree: `go build ./...` clean, `go vet ./...` clean, `go test ./... -count=1` green (import corpus scoreboard regenerated: activatable 14→15, runnable 4→5 after onError support), `web: vitest 496 passed`, `svelte-check 0 errors (1517 files)`, `make generate-api-check` green, `pine doctor` clean. Live smoke at HEAD: a manual→Set→Loop→body→done graph ran to `succeeded` with `$('Seed').item` resolving per item inside the loop and `$('Body').item` after the done port.
+
+Bound recorded by every ticket: the live adversarial re-verify against a stub/private n8n instance (acceptance criterion 2) was not run — no stub/n8n instance was reachable in this environment; each ticket names what replaced it (in-process repro, n8n reference source, worktree A/B).

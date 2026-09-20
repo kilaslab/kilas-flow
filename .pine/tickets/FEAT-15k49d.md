@@ -6,9 +6,8 @@ priority: medium
 labels:
     - i18n
     - frontend
-parent: EPIC-cfe7ny
 created: "2026-09-20T00:40:36Z"
-updated: "2026-09-20T00:40:36Z"
+updated: "2026-09-20T02:04:30Z"
 ---
 
 Source: FEAT-edxxj7 finding "No i18n infrastructure: all UI copy, plurals and sentences are inline English and lang is

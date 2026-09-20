@@ -7,9 +7,8 @@ labels:
     - dx
     - security
     - deferred
-parent: EPIC-cfe7ny
 created: "2026-09-20T00:39:41Z"
-updated: "2026-09-20T00:39:41Z"
+updated: "2026-09-20T02:04:30Z"
 ---
 
 Source: FEAT-edxxj7 finding "All published coordinates point at an unowned GitHub namespace kilaslabs". The distribution
