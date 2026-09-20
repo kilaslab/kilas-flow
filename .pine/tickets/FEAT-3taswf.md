@@ -1,7 +1,7 @@
 ---
 id: FEAT-3taswf
 title: Publish @kilasflow/sdk to npm
-status: done
+status: todo
 priority: high
 labels:
     - sdk
@@ -12,7 +12,7 @@ deps:
 parent: EPIC-m42s3g
 phase: p10
 created: "2026-09-05T11:51:49Z"
-updated: "2026-09-06T04:47:05Z"
+updated: "2026-09-20T05:27:04Z"
 ---
 
 ## Scope
@@ -784,3 +784,13 @@ Closed by `pine close --evidence` on 2026-09-06.
  web/src/routes/+page.svelte                        |    8 +-
  682 files changed, 99916 insertions(+), 2322 deletions(-)
 ```
+
+## Reopened 2026-09-20
+
+Closed `done` with every acceptance criterion unticked, and the deliverable does not exist:
+`npm view @kilasflow/sdk version` answers `E404 Not Found` against the live registry, and
+`git tag` is empty, so the tag-driven publish this ticket describes has never run.
+
+Reopened to `todo` by the board reconciliation ticket `BUG-vzzkg3`. The remaining work is the
+publish itself (and whatever of the manifest criteria is still unmet — the Makefile targets and
+`publishConfig` have since landed).

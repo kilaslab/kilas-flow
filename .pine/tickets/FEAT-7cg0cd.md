@@ -1,7 +1,7 @@
 ---
 id: FEAT-7cg0cd
 title: Run programmatic community nodes in a JavaScript sidecar
-status: done
+status: todo
 priority: low
 labels:
     - platform
@@ -13,7 +13,7 @@ deps:
 parent: EPIC-m42s3g
 phase: p8
 created: "2026-09-05T05:11:19Z"
-updated: "2026-09-06T04:47:06Z"
+updated: "2026-09-20T05:27:04Z"
 ---
 
 ## Scope
@@ -884,3 +884,19 @@ Closed by `pine close --evidence` on 2026-09-06.
  web/src/routes/+page.svelte                        |     8 +-
  811 files changed, 174796 insertions(+), 2747 deletions(-)
 ```
+
+## Reopened 2026-09-20
+
+Closed `done` with every acceptance criterion unticked. `sidecar/` implements the protocol, the
+per-tenant pool and the host-enforced limits, and is tested — but nothing in the product uses
+it:
+
+- no production import (`grep kilaslab/kilas-flow/sidecar` outside `./sidecar/` returns nothing),
+- no config section, so an operator cannot enable it,
+- `node.SourceSidecar` has no `RegisterFrom` call site, so no sidecar node can appear in the
+  catalogue,
+- no `engine.Executor` adapter and no egress proxy, which the protocol's deny-by-default
+  host-call rule requires before any outbound HTTP can happen.
+
+Reopened to `todo` by `BUG-vzzkg3`. The licence position in `.pine/memory/licensing.md` is the
+first criterion and is the decision that gates the rest.

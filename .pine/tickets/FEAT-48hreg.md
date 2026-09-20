@@ -1,7 +1,7 @@
 ---
 id: FEAT-48hreg
 title: Publish a native community module SDK on WebAssembly
-status: done
+status: todo
 priority: low
 labels:
     - platform
@@ -12,7 +12,7 @@ deps:
 parent: EPIC-m42s3g
 phase: p8
 created: "2026-09-05T05:14:52Z"
-updated: "2026-09-06T04:47:06Z"
+updated: "2026-09-20T05:27:04Z"
 ---
 
 ## Scope
@@ -892,3 +892,19 @@ Closed by `pine close --evidence` on 2026-09-06.
  web/src/routes/+page.svelte                        |     8 +-
  811 files changed, 173989 insertions(+), 2747 deletions(-)
 ```
+
+## Reopened 2026-09-20
+
+Closed `done` with every acceptance criterion unticked. The guest half shipped (`pkg/sdk`,
+`pkg/sdk/example/echo`); the host half did not:
+
+- `internal/nodepack/nodepack.go` — `Pack` has no module field, so a manifest cannot name a
+  `.wasm` artifact.
+- `internal/nodepack/loaddir.go:6-8` — still describes WASM packs as future work.
+- `internal/runcode` — the guest gets stdin/stdout/stderr and clocks, no host module, so the
+  "capabilities only through an explicit host module" criterion is unimplemented.
+- No production code builds a `runcode.Artifact` from a pack.
+
+Reopened to `todo` by `BUG-vzzkg3`. Note the ticket's own p10 amendment: the install path is
+owned by `FEAT-czbzs6` (done), so this work builds on the directory loader rather than
+inventing a second one.
