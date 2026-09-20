@@ -6,9 +6,20 @@ import (
 	"testing"
 )
 
+// apiPrefix is the surface the layer is mounted on, and the one path every
+// probe below is made against.
+const apiPrefix = "/api/v1"
+
 // corsProbe drives one request through the middleware and reports the response,
 // whether the wrapped handler ran, and the headers it was answered with.
 func corsProbe(t *testing.T, allowed []string, method string, headers map[string]string) (*httptest.ResponseRecorder, bool) {
+	t.Helper()
+	return corsProbePath(t, allowed, method, apiPrefix+"/executions/exec_1/events", headers)
+}
+
+// corsProbePath is corsProbe against a chosen path, for the surfaces the layer
+// is deliberately not mounted on.
+func corsProbePath(t *testing.T, allowed []string, method, path string, headers map[string]string) (*httptest.ResponseRecorder, bool) {
 	t.Helper()
 
 	reached := false
@@ -17,14 +28,49 @@ func corsProbe(t *testing.T, allowed []string, method string, headers map[string
 		w.WriteHeader(http.StatusOK)
 	})
 
-	request := httptest.NewRequest(method, "/api/v1/executions/exec_1/events", nil)
+	request := httptest.NewRequest(method, path, nil)
 	for name, value := range headers {
 		request.Header.Set(name, value)
 	}
 
 	recorder := httptest.NewRecorder()
-	CORS(allowed)(next).ServeHTTP(recorder, request)
+	CORS(allowed, apiPrefix)(next).ServeHTTP(recorder, request)
 	return recorder, reached
+}
+
+// The layer is scoped to the API, which is the whole of its justification: the
+// event stream a host page opens. The same mux serves the public webhook
+// surface and the SPA, and decorating those with CORS headers widens a control
+// that exists for one endpoint.
+func TestCORSAnswersOnlyInsideTheAPIPrefix(t *testing.T) {
+	t.Parallel()
+
+	for _, path := range []string{"/webhook/incoming", "/resume/token", "/embed/wf-1", "/app/workflows"} {
+		recorder, reached := corsProbePath(t, []string{"https://host.example"}, http.MethodGet, path, map[string]string{
+			"Origin": "https://host.example",
+		})
+		if !reached {
+			t.Errorf("%s: a request outside the API must pass through untouched", path)
+		}
+		for _, name := range []string{
+			"Access-Control-Allow-Origin", "Access-Control-Allow-Methods",
+			"Access-Control-Allow-Headers", "Access-Control-Expose-Headers", "Vary",
+		} {
+			if got := recorder.Header().Get(name); got != "" {
+				t.Errorf("%s: %s = %q, want no CORS headers outside %s", path, name, got, apiPrefix)
+			}
+		}
+	}
+
+	// And the preflight of the endpoint the layer exists for is still answered,
+	// since it is the request the auth gate must never see.
+	recorder, reached := corsProbe(t, []string{"https://host.example"}, http.MethodOptions, map[string]string{
+		"Origin":                        "https://host.example",
+		"Access-Control-Request-Method": http.MethodGet,
+	})
+	if reached || recorder.Code != http.StatusNoContent {
+		t.Errorf("preflight inside the prefix = %d (reached: %v), want 204 without the handler", recorder.Code, reached)
+	}
 }
 
 func TestCORSReflectsAnAllowlistedOrigin(t *testing.T) {

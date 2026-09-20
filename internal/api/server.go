@@ -141,7 +141,11 @@ func NewServer(deps Deps) *Server {
 	// request that was supposed to authorise the real one. The layer reflects
 	// only the configured embed origins and never allows credentials, so a page
 	// outside the allowlist still gets nothing.
-	router.Use(middleware.CORS(deps.Config.Embed.AllowedOrigins))
+	//
+	// Scoped to the API prefix, because that is the whole of its justification:
+	// the host page opens the execution event stream against the API, and the
+	// webhook surface and the SPA's own assets are not cross-origin API calls.
+	router.Use(middleware.CORS(deps.Config.Embed.AllowedOrigins, APIPrefix))
 	// Ahead of EmbedAuth, and composing with it rather than stacking on top:
 	// a request carrying an embed token is passed straight through to the embed
 	// layer, so it is confined to one workflow instead of also having to

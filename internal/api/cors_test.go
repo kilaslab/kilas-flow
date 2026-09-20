@@ -100,3 +100,37 @@ func TestCORSWithNoAllowlistAnswersNoOrigin(t *testing.T) {
 		t.Errorf("Access-Control-Allow-Origin = %q with no configured origins, want none", got)
 	}
 }
+
+// The layer exists for one endpoint — the execution event stream a host page
+// opens against the API — and it is mounted on the API prefix alone.
+//
+// Mounted on the shared mux it also decorated the public webhook surface and
+// the SPA's own responses, which widened a control that one route justifies:
+// a host page's browser learned, from a response to a URL that is not the API,
+// that this instance speaks cross-origin.
+func TestCORSHeadersStayInsideTheAPIPrefix(t *testing.T) {
+	handler := corsServer(t, []string{"https://host.example"})
+	origin := map[string]string{"Origin": "https://host.example"}
+
+	for _, path := range []string{
+		"/webhook/incoming",
+		"/resume/exec_1",
+		"/embed/wf_1",
+		"/app/workflows",
+	} {
+		recorder := corsRequest(t, handler, http.MethodGet, path, origin)
+		if got := recorder.Header().Get("Access-Control-Allow-Origin"); got != "" {
+			t.Errorf("%s: Access-Control-Allow-Origin = %q, want none outside %s", path, got, api.APIPrefix)
+		}
+		if got := recorder.Header().Get("Vary"); got != "" {
+			t.Errorf("%s: Vary = %q, want no CORS headers at all", path, got)
+		}
+	}
+
+	// The endpoint the layer exists for still carries them, which is the half
+	// that must not be lost with the narrowing.
+	recorder := corsRequest(t, handler, http.MethodGet, api.APIPrefix+"/executions/exec_1/events?ticket=abc", origin)
+	if got := recorder.Header().Get("Access-Control-Allow-Origin"); got != "https://host.example" {
+		t.Errorf("events: Access-Control-Allow-Origin = %q, want the allowlisted origin reflected", got)
+	}
+}

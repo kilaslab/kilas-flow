@@ -63,7 +63,13 @@ const (
 // The middleware is a pure passthrough for everything that is not an allowlisted
 // cross-origin request, including an unknown route, so mounting it first costs
 // one map lookup per request and changes nothing else.
-func CORS(allowedOrigins []string) func(http.Handler) http.Handler {
+//
+// prefix is the surface this layer is justified by, and it is required rather
+// than optional: the same mux carries the public webhook surface and the SPA,
+// and neither is a cross-origin API. Mounted on the whole mux the layer also
+// decorated those responses, widening a control whose only reason to exist is
+// the event stream a host page opens against the API.
+func CORS(allowedOrigins []string, prefix string) func(http.Handler) http.Handler {
 	// Normalise once, at mount time rather than per request: the allowlist is
 	// static for the life of the process, and re-parsing a URL for every
 	// request would put that work on the hot path for no benefit.
@@ -76,6 +82,10 @@ func CORS(allowedOrigins []string) func(http.Handler) http.Handler {
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if prefix != "" && !strings.HasPrefix(r.URL.Path, prefix) {
+				next.ServeHTTP(w, r)
+				return
+			}
 			origin := r.Header.Get("Origin")
 			if origin == "" {
 				next.ServeHTTP(w, r)
