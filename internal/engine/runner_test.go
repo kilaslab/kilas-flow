@@ -839,6 +839,155 @@ func TestRetryAndContinueOnFailComposeSoTheBudgetIsSpentFirst(t *testing.T) {
 	}
 }
 
+// flagIR wires a trigger, a node carrying the settings under test, and a node
+// after it, so a test can see what a setting changed for the branch below.
+func flagIR(t *testing.T, settings map[string]any) workflow.IR {
+	t.Helper()
+	catalog := node.NewRegistry()
+	for _, definition := range []node.Definition{
+		{Group: []node.NodeGroup{node.GroupTransform}, Type: "test.source", Version: workflow.V(1),
+			DisplayName: "Source", Category: "Test",
+			Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}}, ExecutorID: "test.source"},
+		{Group: []node.NodeGroup{node.GroupTransform}, Type: "test.flags", Version: workflow.V(1),
+			DisplayName: "Flags", Category: "Test",
+			Inputs:     []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+			Outputs:    []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+			ExecutorID: "test.flags"},
+		{Group: []node.NodeGroup{node.GroupTransform}, Type: "test.after", Version: workflow.V(1),
+			DisplayName: "After", Category: "Test",
+			Inputs:     []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+			Outputs:    []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+			ExecutorID: "test.after"},
+	} {
+		if err := catalog.Register(definition); err != nil {
+			t.Fatalf("Register(%s) error = %v", definition.Type, err)
+		}
+	}
+
+	ir, err := workflow.Compile(workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_flags",
+		Name:          "Flagged",
+		Nodes: []workflow.Node{
+			{ID: "source", Name: "Source", Type: "test.source", TypeVersion: workflow.V(1)},
+			{ID: "flags", Name: "Flags", Type: "test.flags", TypeVersion: workflow.V(1), Settings: settings},
+			{ID: "after", Name: "After", Type: "test.after", TypeVersion: workflow.V(1)},
+		},
+		Connections: []workflow.Connection{
+			{ID: "c1", Kind: workflow.ConnectionMain,
+				Source: workflow.Endpoint{NodeID: "source", Port: "main"},
+				Target: workflow.Endpoint{NodeID: "flags", Port: "main"}},
+			{ID: "c2", Kind: workflow.ConnectionMain,
+				Source: workflow.Endpoint{NodeID: "flags", Port: "main"},
+				Target: workflow.Endpoint{NodeID: "after", Port: "main"}},
+		},
+		Settings: map[string]any{},
+	}, catalog)
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+	return ir
+}
+
+// TestExecuteOnceRunsTheNodeOnceForTheWholeBatch is the half of the deferred
+// pair that duplicates side effects when it is ignored.
+//
+// n8n runs such a node once, with the first item of its input, so a paid render
+// or an LLM call happens once per run rather than once per item. The live repro
+// that opened this ticket saw three POSTs where n8n makes one.
+func TestExecuteOnceRunsTheNodeOnceForTheWholeBatch(t *testing.T) {
+	ir := flagIR(t, map[string]any{"executeOnce": true})
+
+	calls, itemsSeen := 0, 0
+	executors := engine.NewRegistry()
+	for id, executor := range map[string]engine.Executor{
+		"test.source": engine.ExecutorFunc(func(context.Context, workflow.IRNode, workflow.NodeInput, engine.Request) (workflow.NodeOutput, error) {
+			return workflow.NodeOutput{{
+				{JSON: map[string]any{"n": 1}},
+				{JSON: map[string]any{"n": 2}},
+				{JSON: map[string]any{"n": 3}},
+			}}, nil
+		}),
+		"test.flags": engine.ExecutorFunc(func(_ context.Context, _ workflow.IRNode, input workflow.NodeInput, _ engine.Request) (workflow.NodeOutput, error) {
+			calls++
+			itemsSeen += len(input["main"])
+			return workflow.NodeOutput{input["main"]}, nil
+		}),
+		"test.after": engine.ExecutorFunc(func(_ context.Context, _ workflow.IRNode, input workflow.NodeInput, _ engine.Request) (workflow.NodeOutput, error) {
+			return workflow.NodeOutput{input["main"]}, nil
+		}),
+	} {
+		if err := executors.Register(id, executor); err != nil {
+			t.Fatalf("Register(%s) error = %v", id, err)
+		}
+	}
+
+	if _, err := engine.NewRunner(executors).Run(context.Background(), ir, engine.Request{
+		Input: workflow.Item{JSON: map[string]any{}},
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if calls != 1 {
+		t.Errorf("the node with executeOnce ran %d times for a 3-item batch, want once", calls)
+	}
+	if itemsSeen != 1 {
+		t.Errorf("the node with executeOnce saw %d items, want the first one alone", itemsSeen)
+	}
+}
+
+// TestAlwaysOutputDataKeepsTheBranchAliveWithOneEmptyItem is the other half: an
+// "insert if missing" step that found nothing must still reach the branch that
+// creates it.
+//
+// The second run is the control — the same graph without the setting — so the
+// test proves the setting is what kept the branch alive rather than that the
+// branch runs regardless.
+func TestAlwaysOutputDataKeepsTheBranchAliveWithOneEmptyItem(t *testing.T) {
+	afterCalls, itemsSeen := 0, 0
+	executors := engine.NewRegistry()
+	for id, executor := range map[string]engine.Executor{
+		"test.source": engine.ExecutorFunc(func(context.Context, workflow.IRNode, workflow.NodeInput, engine.Request) (workflow.NodeOutput, error) {
+			return workflow.NodeOutput{{
+				{JSON: map[string]any{"n": 1}},
+				{JSON: map[string]any{"n": 2}},
+			}}, nil
+		}),
+		// n8n's lookup-then-create node: nothing matched, so it passes nothing.
+		"test.flags": engine.ExecutorFunc(func(context.Context, workflow.IRNode, workflow.NodeInput, engine.Request) (workflow.NodeOutput, error) {
+			return workflow.NodeOutput{{}}, nil
+		}),
+		"test.after": engine.ExecutorFunc(func(_ context.Context, _ workflow.IRNode, input workflow.NodeInput, _ engine.Request) (workflow.NodeOutput, error) {
+			afterCalls++
+			itemsSeen += len(input["main"])
+			return workflow.NodeOutput{input["main"]}, nil
+		}),
+	} {
+		if err := executors.Register(id, executor); err != nil {
+			t.Fatalf("Register(%s) error = %v", id, err)
+		}
+	}
+
+	if _, err := engine.NewRunner(executors).Run(context.Background(), flagIR(t, map[string]any{"alwaysOutputData": true}), engine.Request{
+		Input: workflow.Item{JSON: map[string]any{}},
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if afterCalls != 1 || itemsSeen != 1 {
+		t.Fatalf("the branch after the empty node ran %d times over %d items, want once with the single empty item n8n emits", afterCalls, itemsSeen)
+	}
+
+	// The control: without the setting the branch stops, which is exactly the
+	// silent "not found" that never runs.
+	if _, err := engine.NewRunner(executors).Run(context.Background(), flagIR(t, map[string]any{}), engine.Request{
+		Input: workflow.Item{JSON: map[string]any{}},
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if afterCalls != 1 {
+		t.Errorf("the branch ran %d more times without alwaysOutputData, want it not to run at all", afterCalls-1)
+	}
+}
+
 // TestLineageSurvivesAOneToOneChain is the property the ticket exists for.
 //
 // About a third of the expressions in the import corpus reach sideways with

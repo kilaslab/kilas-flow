@@ -1717,6 +1717,12 @@ func TestImportCarriesTheErrorHandlingSettingsTheRunnerHonours(t *testing.T) {
 		"retryOnFail":      true,
 		"maxTries":         float64(5),
 		"waitBetweenTries": float64(2500),
+		// The two the runner honours for branch semantics rather than for
+		// failures: a node with executeOnce that runs per item multiplies paid
+		// calls, and a node with alwaysOutputData that emits nothing stops a
+		// branch n8n would continue.
+		"alwaysOutputData": true,
+		"executeOnce":      true,
 	} {
 		if got := edit.Settings[key]; got != want {
 			t.Errorf("settings[%q] = %#v, want %#v", key, got, want)
@@ -1726,7 +1732,7 @@ func TestImportCarriesTheErrorHandlingSettingsTheRunnerHonours(t *testing.T) {
 	// And they are no longer reported as dropped.
 	for _, issue := range result.Unsupported {
 		switch issue.Field {
-		case "continueOnFail", "retryOnFail", "maxTries", "waitBetweenTries":
+		case "continueOnFail", "retryOnFail", "maxTries", "waitBetweenTries", "alwaysOutputData", "executeOnce":
 			t.Errorf("%q is carried now, but still reported as dropped: %#v", issue.Field, issue)
 		}
 	}
