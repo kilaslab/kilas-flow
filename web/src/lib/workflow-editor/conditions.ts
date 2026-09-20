@@ -23,10 +23,10 @@ export type ConditionOperator =
 	| 'notEmpty'
 	| 'exists'
 	| 'notExists'
-	| 'larger'
-	| 'largerEqual'
-	| 'smaller'
-	| 'smallerEqual'
+	| 'gt'
+	| 'gte'
+	| 'lt'
+	| 'lte'
 	| 'true'
 	| 'false'
 	| 'after'
@@ -66,10 +66,10 @@ const OPERATOR_TYPES: Record<ConditionOperator, ConditionValueType> = {
 	notEmpty: 'string',
 	exists: 'string',
 	notExists: 'string',
-	larger: 'number',
-	largerEqual: 'number',
-	smaller: 'number',
-	smallerEqual: 'number',
+	gt: 'number',
+	gte: 'number',
+	lt: 'number',
+	lte: 'number',
 	true: 'boolean',
 	false: 'boolean',
 	after: 'dateTime',
@@ -78,14 +78,53 @@ const OPERATOR_TYPES: Record<ConditionOperator, ConditionValueType> = {
 
 const KNOWN_OPERATIONS = new Set<string>(Object.keys(OPERATOR_TYPES));
 
+/**
+ * Legacy aliases folded to the canonical vocabulary the evaluator runs.
+ * n8n v1 spelled the numeric comparisons larger/largerEqual/smaller/
+ * smallerEqual; the Go evaluator folds both spellings at the comparison
+ * (numberOperation), so the editor canonicalises at the read boundary and
+ * documents never carry the old names after a save.
+ */
+const OPERATOR_ALIASES: Record<string, ConditionOperator> = {
+	larger: 'gt',
+	largerEqual: 'gte',
+	smaller: 'lt',
+	smallerEqual: 'lte'
+};
+
 function isObject(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function operatorOf(type: unknown, operation: unknown): { type: ConditionValueType; operation: ConditionOperator } {
-	const op = KNOWN_OPERATIONS.has(String(operation)) ? (String(operation) as ConditionOperator) : 'equals';
+	const name = String(operation);
+	const canonical = OPERATOR_ALIASES[name] ?? (KNOWN_OPERATIONS.has(name) ? (name as ConditionOperator) : 'equals');
 	const declared = type === 'string' || type === 'number' || type === 'boolean' || type === 'dateTime' || type === 'array' || type === 'object' ? (type as ConditionValueType) : null;
-	return { type: declared ?? OPERATOR_TYPES[op], operation: op };
+	return { type: declared ?? OPERATOR_TYPES[canonical], operation: canonical };
+}
+
+/**
+ * The type family an operation compares in. Switching a row from `equals` to
+ * `gt` while keeping `string` would send the comparison down the string
+ * branch, which refuses it — so the operator picker coerces the type when the
+ * operation demands its own family, and leaves it alone otherwise.
+ */
+export function typeForOperation(operation: ConditionOperator): ConditionValueType | null {
+	switch (operation) {
+		case 'gt':
+		case 'gte':
+		case 'lt':
+		case 'lte':
+			return 'number';
+		case 'after':
+		case 'before':
+			return 'dateTime';
+		case 'true':
+		case 'false':
+			return 'boolean';
+		default:
+			return null;
+	}
 }
 
 function combinatorOf(value: unknown): Combinator {

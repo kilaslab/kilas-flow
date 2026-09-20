@@ -53,11 +53,44 @@ describe('readConditions', () => {
 		expect(readConditions(value)).toEqual([]);
 	});
 
+	it('keeps n8n-v2 numeric comparisons through a read+write cycle', () => {
+		// BUG-a1648n: gt/gte/lt/lte were absent from KNOWN_OPERATIONS, so an
+		// imported numeric comparison was coerced to equals on read and the
+		// next save silently rewrote the comparison.
+		const filter = {
+			combinator: 'and',
+			conditions: [
+				{ leftValue: '{{ $json.count }}', operator: { type: 'number', operation: 'gt' }, rightValue: 5 },
+				{ leftValue: '{{ $json.count }}', operator: { type: 'number', operation: 'gte' }, rightValue: 5 },
+				{ leftValue: '{{ $json.count }}', operator: { type: 'number', operation: 'lt' }, rightValue: 5 },
+				{ leftValue: '{{ $json.count }}', operator: { type: 'number', operation: 'lte' }, rightValue: 5 }
+			],
+			options: { caseSensitive: true }
+		};
+		const read = readFilterValue(filter);
+		expect(read.conditions.map((row) => row.operator.operation)).toEqual(['gt', 'gte', 'lt', 'lte']);
+		const written = writeFilterValue(read).conditions as { operator: { operation: string } }[];
+		expect(written.map((row) => row.operator.operation)).toEqual(['gt', 'gte', 'lt', 'lte']);
+	});
+
+	it('folds the legacy larger/smaller spellings to the canonical vocabulary', () => {
+		const read = readFilterValue({
+			combinator: 'and',
+			conditions: [
+				{ leftValue: 'a', operator: { type: 'number', operation: 'larger' }, rightValue: 1 },
+				{ leftValue: 'b', operator: { type: 'number', operation: 'largerEqual' }, rightValue: 2 },
+				{ leftValue: 'c', operator: { type: 'number', operation: 'smaller' }, rightValue: 3 },
+				{ leftValue: 'd', operator: { type: 'number', operation: 'smallerEqual' }, rightValue: 4 }
+			],
+			options: {}
+		});
+		expect(read.conditions.map((row) => row.operator.operation)).toEqual(['gt', 'gte', 'lt', 'lte']);
+	});
+
 	it('defaults an unrecognised operator rather than storing it', () => {
 		expect(readConditions([{ leftValue: 'a', operator: { type: 'string', operation: 'sortOf' } }])[0].operator.operation).toBe('equals');
 	});
 });
-
 describe('updateCondition', () => {
 	it('edits one row and leaves the rest', () => {
 		const next = updateCondition(rows, 1, { leftValue: 'renamed' });

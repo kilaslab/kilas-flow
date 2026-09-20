@@ -36,8 +36,9 @@ import { expressionCompletions, previewStep, type CompletionCandidate } from '$l
 		VALUELESS_OPERATORS,
 		moveCondition,
 		newCondition,
-		readFilterValue,
 		removeCondition,
+		readFilterValue,
+		typeForOperation,
 		updateCondition,
 		writeFilterValue,
 		type Condition,
@@ -873,7 +874,11 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 							<option value="array">Array</option>
 							<option value="object">Object</option>
 						</select>
-						<select aria-label={`${property.label} operator ${index + 1}`} value={row.operator.operation} class="h-7 rounded border border-input bg-background px-1.5 text-[0.6875rem]" onchange={(event) => writeFilter({ conditions: updateCondition(conditionFilter.conditions, index, { operator: { type: row.operator.type, operation: event.currentTarget.value as ConditionOperator } }) })}>
+						<select aria-label={`${property.label} operator ${index + 1}`} value={row.operator.operation} class="h-7 rounded border border-input bg-background px-1.5 text-[0.6875rem]" onchange={(event) => {
+							const operation = event.currentTarget.value as ConditionOperator;
+							const coerced = typeForOperation(operation);
+							writeFilter({ conditions: updateCondition(conditionFilter.conditions, index, { operator: { type: coerced ?? row.operator.type, operation } }) });
+						}}>
 							<option value="equals">equals</option>
 							<option value="notEquals">does not equal</option>
 							<option value="contains">contains</option>
@@ -888,10 +893,10 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 							<option value="notEmpty">is not empty</option>
 							<option value="exists">exists</option>
 							<option value="notExists">does not exist</option>
-							<option value="larger">larger than</option>
-							<option value="largerEqual">larger or equal</option>
-							<option value="smaller">smaller than</option>
-							<option value="smallerEqual">smaller or equal</option>
+							<option value="gt">larger than</option>
+							<option value="gte">larger or equal</option>
+							<option value="lt">smaller than</option>
+							<option value="lte">smaller or equal</option>
 							<option value="true">is true</option>
 							<option value="false">is false</option>
 							<option value="after">after</option>
