@@ -1,7 +1,7 @@
 ---
 id: BUG-fv5fer
 title: 'Event-stream/CORS/tenancy gaps: SSE hang, CORS, onboarding, headers, CSV, pagination'
-status: doing
+status: testing
 priority: medium
 labels:
     - security
@@ -10,7 +10,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:09Z"
-updated: "2026-09-20T02:29:07Z"
+updated: "2026-09-20T02:53:21Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -637,3 +637,28 @@ Closed by `pine close --evidence` on 2026-09-20.
 ## Reopened by review (2026-09-20) — Minor
 - **M2 (low)**: CORS is mounted on the shared mux (`internal/api/server.go:144`), so allowlisted origins get CORS on `/webhook/*` and SPA responses too; scope it to `APIPrefix` to keep the fix as narrow as its justification (the events endpoint).
 - **M3 (low, confidence medium)**: `handlers/executions.go:394` gates the reconstructed terminal frame on `len(queued) == 0 || !open`, but the record was already terminal when `gateStreamRecord` read it — so a terminal run with a non-empty replay and a dropped terminal publication streams heartbeats forever. Track whether a terminal frame was actually sent and synthesize when it was not.
+
+## Progress 2026-09-20 (FixSecurityFindings) — review findings M2, M3 closed, testing
+Status: testing.
+
+**M2 (low)** — commit `4017f2e`: `middleware.CORS` now takes the prefix it is mounted for
+and `internal/api/server.go` mounts it with `APIPrefix`, so the layer no longer decorates
+`/webhook/*`, `/resume/*`, `/embed/*` or the SPA. The scoping is a property of the layer
+rather than of where somebody remembered to call `Use`.
+TDD: `TestCORSHeadersStayInsideTheAPIPrefix` (api) fails pre-fix — an allowlisted origin
+got `Access-Control-Allow-Origin` on `/webhook/incoming`, `/resume/*`, `/embed/*` and
+`/app/*` — and passes after; the events endpoint still reflects the origin, and the
+preflight is still answered 204 before the auth gate. The middleware-level
+`TestCORSAnswersOnlyInsideTheAPIPrefix` pins the same rule where the layer lives.
+
+**M3 (low)** — commit `fc545c8`: the reconstructed terminal frame was gated on
+`len(queued) == 0 || !open`, but the durable record the gate read already said the run was
+over, so a replay that kept earlier frames and lost the terminal one streamed heartbeats
+forever. The replay loop returns the moment it sends a terminal frame, so reaching the
+synthesis means none was sent; the guard is gone and the record supplies the outcome.
+TDD: `TestAFinishedExecutionEndsItsStreamEvenWhenTheTerminalFrameWasLost` (2 retained
+non-terminal frames + a terminal durable record, no terminal publication) fails pre-fix
+(5s of heartbeats, no outcome) and passes after.
+
+Evidence (scoped, passed): `go test ./internal/api/ -run 'CORS|Events|Stream|Embed' -count=1` ok;
+`go test ./internal/api/middleware/ -count=1` ok.
