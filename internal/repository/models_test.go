@@ -393,7 +393,22 @@ func TestWorkflowStoreActivatesOnlyLatestExecutableRevision(t *testing.T) {
 	}
 }
 
-func TestExecutionStoreRedactsCredentialsBeforeStorage(t *testing.T) {
+// The stored trigger input is the input the run executes on, and the credential
+// an inbound caller sent is the workflow's own data, so storage keeps it while
+// every read surface serves it redacted.
+//
+// This used to assert the opposite — that the stored column never held the
+// header — and the reasoning behind that was real (a dump or a support export
+// bypasses the API mapper), but it made redaction a change to what the tenant's
+// workflow sees: the runner rehydrates the trigger item with
+// inputItem(record.Input), so an imported workflow checking its own
+// `headers['x-api-key']` or reading a cookie took its rejection branch on every
+// call, and the value the workflow was handed was "[redacted]" (BUG-cq4yk3,
+// ruled). The protection moved to the surfaces that serve a record back, which
+// is what this test now pins on both sides of the boundary. Outbound credential
+// material is unaffected: the trace columns below still go through payload()
+// and its whole-value redaction.
+func TestExecutionStoreKeepsTheTriggerInputTheRunExecutesOnAndServesItRedacted(t *testing.T) {
 	db, tenant, stored := newExecutionFixture(t)
 	store := repository.NewExecutionStore(db.DB)
 
@@ -408,17 +423,26 @@ func TestExecutionStoreRedactsCredentialsBeforeStorage(t *testing.T) {
 		t.Fatalf("Create() error = %v", err)
 	}
 
-	// The stored column, not just the returned record, must be clean: a later
-	// reader, a database dump, and a support export all bypass the API mapper.
+	// The column the runner reads: the caller's header survives, because the
+	// run is handed this value.
 	var raw string
 	if err := db.Raw("SELECT input FROM executions WHERE id = ?", created.ID).Scan(&raw).Error; err != nil {
 		t.Fatalf("read stored input: %v", err)
 	}
-	if strings.Contains(raw, "c3VwZXItc2VjcmV0") {
-		t.Fatalf("stored execution input still contains the Basic credential: %s", raw)
+	if !strings.Contains(raw, "c3VwZXItc2VjcmV0") {
+		t.Errorf("stored execution input lost the caller's own header: %s — the workflow is handed this value", raw)
 	}
-	if !strings.Contains(raw, "application/json") {
-		t.Fatalf("redaction dropped a safe header from storage: %s", raw)
+	// The value a reader is served: the API handlers and the live feed both
+	// pass the record through execution.Redact before it leaves the server.
+	served, err := json.Marshal(execution.Redact(json.RawMessage(raw)))
+	if err != nil {
+		t.Fatalf("redact served input: %v", err)
+	}
+	if strings.Contains(string(served), "c3VwZXItc2VjcmV0") {
+		t.Errorf("the value served to readers still carries the credential: %s", served)
+	}
+	if !strings.Contains(string(served), "application/json") {
+		t.Errorf("redaction dropped a safe header from the served value: %s", served)
 	}
 
 	claimed, _, found, err := store.ClaimNext(context.Background(), "redaction-worker", time.Now().Add(time.Second))

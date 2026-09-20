@@ -740,6 +740,11 @@ func (store *GORMExecutionStore) CreateNodeRun(ctx context.Context, tenant Tenan
 	if err != nil {
 		return execution.NodeRun{}, err
 	}
+	if len(stored) == 0 {
+		// Already stored under this exact key and sequence: the caller's own
+		// row, as it is in the table, rather than an empty answer.
+		return nodeRun, nil
+	}
 	return stored[0], nil
 }
 
@@ -783,6 +788,7 @@ func (store *GORMExecutionStore) CreateNodeRuns(ctx context.Context, tenant Tena
 		}
 	}
 	models := make([]executionNodeRunModel, 0, len(nodeRuns))
+	var created []executionNodeRunModel
 	for _, nodeRun := range nodeRuns {
 		model, err := nodeRunModel(tenant, nodeRun)
 		if err != nil {
@@ -802,7 +808,7 @@ func (store *GORMExecutionStore) CreateNodeRuns(ctx context.Context, tenant Tena
 		// The stored keys are read once for the whole batch. Repairing from the
 		// in-memory keys alone would be enough for a fresh trace and wrong for a
 		// resumed one, whose first segment is already in the table.
-		kept := make([]executionNodeRunModel, 0, len(models))
+		created = make([]executionNodeRunModel, 0, len(models))
 		for index := range models {
 			key := nodeRunKey{models[index].NodeID, models[index].Attempt, models[index].RunIndex}
 			// Walk the key forward until it is either free — the missing index
@@ -825,12 +831,12 @@ func (store *GORMExecutionStore) CreateNodeRuns(ctx context.Context, tenant Tena
 				continue
 			}
 			taken[key] = models[index].Sequence
-			kept = append(kept, models[index])
+			created = append(created, models[index])
 		}
-		if len(kept) == 0 {
+		if len(created) == 0 {
 			return nil
 		}
-		if err := tx.Create(&kept).Error; err != nil {
+		if err := tx.Create(&created).Error; err != nil {
 			return fmt.Errorf("create execution node runs: %w", err)
 		}
 		return nil
@@ -838,12 +844,15 @@ func (store *GORMExecutionStore) CreateNodeRuns(ctx context.Context, tenant Tena
 	if err != nil {
 		return nil, err
 	}
-	// Returned in the caller's order, carrying the index each row was stored
-	// under. A skipped row is returned unchanged: it is in the table under
-	// exactly the key and sequence it arrived with.
-	stored := make([]execution.NodeRun, 0, len(models))
-	for index := range models {
-		stored = append(stored, nodeRunFromModel(models[index]))
+	// Only the rows this call created, in the caller's sequence order, each
+	// carrying the run index it was stored under. A row that was already
+	// stored under the same key and sequence is not returned: it is not this
+	// call's row to announce, which is what lets an incremental writer publish
+	// the rows it persisted and the flush publish only the ones it added
+	// itself.
+	stored := make([]execution.NodeRun, 0, len(created))
+	for index := range created {
+		stored = append(stored, nodeRunFromModel(created[index]))
 	}
 	return stored, nil
 }
@@ -953,19 +962,23 @@ func payload(value json.RawMessage) ([]byte, error) {
 	return append([]byte(nil), execution.Redact(encoded)...), nil
 }
 
-// triggerPayload validates a trigger input and redacts only its headers.
+// triggerPayload validates a trigger input on its way into durable storage.
 //
-// A trigger input is the caller's own data, not something the runtime resolved,
-// and the runner rehydrates the trigger item straight back out of the stored
-// record — so redacting the whole thing does not protect a credential, it puts
-// "[redacted]" on the wire in place of the session the caller sent. The body,
-// query, method and path are therefore stored exactly as they arrived.
+// The value is stored exactly as it arrived, headers included. A trigger input
+// is the caller's own data and the stored record IS the input the run executes
+// on — the runner rehydrates it with inputItem(record.Input) — so redacting on
+// write does not protect storage, it changes what the tenant's workflow sees:
+// an imported workflow checking its own `headers['x-api-key']`, or reading a
+// cookie, then takes the rejection branch on every call (BUG-cq4yk3, ruled).
 //
-// The header map is the exception, because it is the one part of an inbound
-// request that genuinely carries a caller's credential. The webhook handler
-// already redacts it at ingest; doing it here as well keeps the repository the
-// last line of defence, so a trigger source added later cannot leak headers by
-// forgetting.
+// Protection lives at the read surfaces instead. Every path that serves a
+// record back — the API boundary and the live feed — passes it through
+// execution.Redact, which normalises header names and redacts credential keys,
+// and the node-run trace goes through payload(), which redacts whole values.
+// What storage holds is what the workflow runs on; what a reader, a dump or a
+// support export is served is redacted by those surfaces. A database dump does
+// carry the caller's headers now, which is why the operator note about
+// protecting backups exists beside this.
 func triggerPayload(value json.RawMessage) (json.RawMessage, error) {
 	if len(value) == 0 {
 		return json.RawMessage("null"), nil
@@ -973,7 +986,7 @@ func triggerPayload(value json.RawMessage) (json.RawMessage, error) {
 	if !json.Valid(value) {
 		return nil, fmt.Errorf("must be valid JSON")
 	}
-	return execution.RedactTriggerHeaders(value), nil
+	return value, nil
 }
 
 // ChildExecution is a sub-workflow call, as durable storage needs it.
