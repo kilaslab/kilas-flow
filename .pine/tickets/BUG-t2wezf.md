@@ -1,7 +1,7 @@
 ---
 id: BUG-t2wezf
 title: Execution detail refetches ~900x/s; node data cannot be opened
-status: doing
+status: testing
 priority: critical
 labels:
     - editor
@@ -10,7 +10,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:09Z"
-updated: "2026-09-19T13:44:26Z"
+updated: "2026-09-20T00:53:27Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -72,3 +72,14 @@ Existing tickets: FEAT-f681vt
 - [ ] A failed background refetch of the workflow unmounts the editor and throws away unsaved edits (dashboard and e
 - [ ] A successful focus refetch silently remounts the editor over a dirty draft, and saves have no concurrency chec
 - [ ] Adversarial re-verify against live stub/n8n like the Verify phase (no code-only close)
+## Progress (FrontendCore2 2026-09-20)
+
+- Commit 7ac3c8d: execution detail — `$effect` no longer refetches on every query notify. The terminal refetch is now a false→true edge on `live.finished`, with the refetch call inside `untrack` (the effect used to read the whole query object, so every notify re-ran it: 200/abort at ~900 req/s). `executionEvents(id, live)` takes a gate, and the page passes `Boolean(execution.data) && !isTerminalStatus(status)`, so a finished run opens no stream at all (`isTerminalStatus` added to event-stream.svelte.ts, `waiting` deliberately not terminal). Canvas/execution error branches reordered so `version.data && nodeTypes.data` wins over `isError`; the full-page error is `isError && !data` and a failed refetch over loaded data is a non-blocking banner with Refresh.
+- Verified live (vite dev :5199 + throwaway stub backend on :8080, `/tmp/fc2-stub.ts`): opening `/executions/exec-1` (status succeeded) → exactly **1** GET `/api/v1/executions/exec-1` in 4s and **0** requests to `/api/v1/executions/exec-1/events`; node click on 'HTTP fail' opened the Node data panel with Input `[{ "json": { "url": "https://example.com" } }]`, Output `[]`, status Failed, error `connect ECONNREFUSED 127.0.0.1:9`; both canvas nodes measured 68×68 and `visibility: visible` (the hidden/zero-width wrapper symptom is gone). Screenshot `/tmp/fc2-execution-node-data.png` (taken while a sibling's in-progress file showed its HMR overlay; DOM evidence above is the real proof).
+- Scoped tests: `cd web && npx vitest run src/lib/workflow-editor/event-stream.test.ts src/lib/workflow-editor/ports.test.ts src/lib/workflow-editor/validation.test.ts src/lib/embed/session.test.ts src/lib/workflow-editor/workflow-cache.test.ts` → 5 files, 51 tests pass.
+- Findings 2 and 3 (failed background refetch unmounting the editor; a successful focus refetch remounting over a dirty draft) are landed in `web/src/routes/(dashboard)/app/workflows/[id]/+page.svelte`: full-page error only when `!currentWorkflow`, refetch failure rendered as a banner, the editor's remount key is now `canvasFrom` (`id:revision`, moved on load/restore only), and a newer server revision arriving while the canvas is dirty is *held* (`newerRevision`) with Reload theirs / Keep mine instead of replacing the draft. Those hunks ride the BUG-f9frth commit; see that ticket for the browser proof.
+- Remaining: none in this ticket's scope. Adversarial re-verify against a real server (not the stub) is Main's final gate.
+
+### Verification detail (FrontendCore2 2026-09-20)
+
+Stub harness: `bun /tmp/fc2-stub.ts` on 127.0.0.1:8080 + `KILASFLOW_BACKEND_URL=http://127.0.0.1:8080 npx vite dev --port 5199`; every request logged to /tmp/fc2-count.log with its `X-KilasFlow-Embed` header. Findings 2/3 (workflow editor) verified as far as the harness got: the editor loads, a failed refetch no longer replaces it and the remount key no longer moves on save; the *UI-driven* save/drag scenario (mark the canvas element, drag, Save, assert the marker survives) did NOT complete — node dragging and inspector typing produced no dirty state under the stub fixture, so the marker/selection-preserved assertion is unproven by me and should be re-run by the verifier. Status set to testing on the strength of the execution-detail proof plus the landed workflow-page hunks.

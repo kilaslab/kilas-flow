@@ -1,7 +1,7 @@
 ---
 id: BUG-8h4yy1
 title: 'Embedded editor 401s: first queries fire before embed token attached'
-status: doing
+status: testing
 priority: critical
 labels:
     - embed
@@ -10,7 +10,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:09Z"
-updated: "2026-09-19T13:44:26Z"
+updated: "2026-09-20T00:53:27Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -38,3 +38,9 @@ Existing tickets: FEAT-900msn
 
 - [ ] Embedded editor always fails with 401: its first queries go out before the embed token is attached
 - [ ] Adversarial re-verify against live stub/n8n like the Verify phase (no code-only close)
+## Progress (FrontendCore2 2026-09-20)
+
+- Commit 50938a6. `acceptEmbedSession(data, expectedWorkflow, origin, attachToken = setEmbedToken)` in `web/src/lib/embed/session.svelte.ts` now attaches the token *inside* the acceptance path, before the session becomes readable, and the frame clears it in the effect teardown. The page-level `$effect` that used to call `setEmbedToken` is gone from `web/src/routes/embed/[id]/+page.svelte`: an effect runs after its children's, so the editor mounted on the same render and its first three queries (workflow, node-types, credentials) went out with no header and every one answered 401.
+- Regression test `web/src/lib/embed/session.test.ts` → 'has the token on the wire by the time the first request is made': accept the host message, then `await apiFetch('/api/v1/workflows/wf-1')` against a stubbed `fetch`, and assert `X-KilasFlow-Embed: tok-123` on the first request; a refused message (foreign workflow, empty token, empty scopes, not our message type) attaches nothing. Scoped run: `cd web && npx vitest run src/lib/embed/session.test.ts` → 17 tests pass.
+- Also in that commit: the embed editor's full-page error is `isError && !data` with a non-blocking refresh banner, and its loading branch keeps waiting for the node catalogue (`nodeTypes.isPending || (workflow.isPending && !currentWorkflow)`, `definitions={nodeTypes.data ?? []}`) — mounting the editor with `definitions` undefined threw inside the child and left the page stuck on its loading branch.
+- NOT verified end-to-end by me: an auth-on instance with a real host page (needs the built binary; my stub harness could not complete the iframe handshake before the run ended). The unit test proves the ordering, not a live 200. Verifier: load `/embed/{id}` from a host page on an allowed origin and confirm the first three requests carry the header (the stub logs it at /tmp/fc2-count.log when reused).

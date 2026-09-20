@@ -10,7 +10,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:10Z"
-updated: "2026-09-19T13:44:26Z"
+updated: "2026-09-20T00:53:27Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -270,3 +270,29 @@ Files: /Users/izzadev/projects/k-flow/web/src/lib/components/workflow-editor/pro
 - [ ] Import diagnostics (blocking, lossy, dropped) appear once in the import dialog and are then lost; the editor n
 - [ ] JSON-kind fields show structured values as '(object Object)', and any keystroke overwrites the stored structur
 - [ ] Adversarial re-verify against live stub/n8n like the Verify phase (no code-only close)
+## Progress (FrontendCore2 2026-09-20) — LANDED vs REMAINING
+
+Commits: 5c9f22b (editor-core modules), 50938a6 (editor + embed pages, shared with BUG-t2wezf/BUG-8h4yy1), 7ac3c8d (execution detail).
+
+LANDED (my files)
+- Concurrent save: PUT carries `baseVersionId` = the loaded revision (server already answers 409, internal/api/handlers/workflows.go:501). `saveConflict` is set on 409 and `reloadTheirs()` (re-GET + adopt + cache) / `overwriteTheirs()` (re-PUT the same draft with no base revision, which the handler treats as a deliberate overwrite) are wired to FrontendCore3's `saveConflict` / `onReloadConflict` / `onOverwriteConflict` props.
+- No unsaved-changes guard → `beforeNavigate` confirm on in-app navigation plus a `beforeunload` handler while dirty, driven by FrontendCore3's new `onDirtyChange`.
+- No-remount-on-save: the editor's key is now `canvasFrom` (`id:revision`) and moves on load/restore only. A save adopts the returned document in place (`noteCanvasRevision` + `currentWorkflow = response.data`), so viewport, selection and the open inspector survive. A successful focus refetch that finds a newer revision while the canvas is dirty is *held* in `newerRevision` with Reload theirs / Keep mine instead of replacing the draft; a failed refetch is a banner, never the page.
+- TanStack cache: `cacheWorkflow(queryClient, workflow)` (web/src/lib/workflow-editor/workflow-cache.ts) sets the `getWorkflow` envelope + invalidates the list, called from save/activate/deactivate/restore/publish in both the dashboard page and the embed editor. Test: workflow-cache.test.ts (reopened editor reads the saved revision).
+- 422 per-node: `validationIssuesFromApiError` keeps entries with no node/connection and entries with no `value` at all (draft refusals carry the reason only in the message); `withNodeNames` resolves node ids to names; the page maps save, run and activate 422s into the issue list and passes them as `hostIssues`.
+- Dynamic ports: `resolvedPorts(node, definition)` in ports.ts mirrors the server's `PortsFor` for Switch (one output per rule, positional names, `Fallback` for `fallbackOutput: 'extra'`) and Merge (`input1..inputN` from `numberInputs`, cap 32), strictly collapsing to the single `0`/`Rule 1` port exactly when the server rejects the rule set. `canConnect`/`lookupPort` resolve through it, so a wire to a Switch's third branch now validates. FrontendCore3 renders it in canvas-node.svelte. 17 tests in ports.test.ts.
+- Run polling cap: 80×250 ms ("did not finish in time" at 20 s) replaced by a 30-minute watch that reports "stopped watching" instead of a failure.
+
+REMAINING (not mine to land, or blocked)
+- Webhook public URL: no `GET /workflows/{id}/webhooks` exists (the URL is only in the n8n import response, internal/api/handlers/interop.go:147). SecurityFront2 declined for this wave (internal/api/routes.go owned elsewhere); asked for a ticket addressed to WebhookParity + the handler owner. FE surface = properties-panel.svelte (FrontendCore3).
+- Datastore ifExists/ifNotExists: two outputs both named `main`, and the compiler resolves a connection's port name to the first index (internal/workflow/compiler.go:706), so the false branch is unreachable and a second handle would silently wire the true branch. Reproduced in ports.ts (mirrors the server); needs distinct port names server-side. SecurityFront2 confirms it is real and out of their tickets.
+- Execute-per-node feedback (run status/item counts on the editor canvas, NDV input/output panes, execute step, `/executions?workflowId=`): needs WorkflowEditor props + properties-panel work (FrontendCore3) and, for a partial run, a server-side destination-node parameter. Not started.
+- Import diagnostics surface (per-node badges + report drawer): needs the report stored with the revision (internal/api/handlers/interop.go) or re-derived on read, plus canvas-node/import-report work.
+- Version preview: FrontendCore3 landed the non-modal panel + preview surviving close.
+- JSON-kind fields: already pretty-printed and parse-guarded since 3e6a9b9 (FrontendCore3 re-checked); no `[object Object]` path remains in property-field.
+- Validation-issue each-key: fixed by FrontendCore3 (index-backed key).
+
+VERIFICATION
+- Live: executions detail verified (see BUG-t2wezf note). Editor page verified to load, render the canvas and stay mounted on the stub harness.
+- NOT verified by me: the UI-driven save scenario. Drag (mouse + pointer) and inspector typing did not produce a dirty canvas against the stub fixture — the node sits at the top edge of the canvas where the editor toolbar overlaps its centre, and `Add step`/`Tidy up` left the draft clean, so the marker-survives-save assertion is unproven. Status left at `doing` for that reason; the 409 banner path is likewise unexercised end-to-end.
+- A real bug I introduced and fixed inside this ticket: the loading branch `(workflow.isPending || nodeTypes.isPending) && !currentWorkflow` let the editor mount while the catalogue was still pending, so `definitions` was undefined and the child threw on render — the page sat on "Loading workflow editor…" forever with no console error. Correct shape: `nodeTypes.isPending || (workflow.isPending && !currentWorkflow)` plus `definitions={nodeTypes.data ?? []}` (also applied to the embed editor).
