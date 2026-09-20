@@ -527,10 +527,39 @@
 		replaceDraft({ ...draft, connections: [...(draft.connections ?? []), next] });
 	}
 
+	/**
+	 * Whether two selections name the same nodes.
+	 *
+	 * Order-insensitive: Flow is free to report the same selection in another
+	 * order, and treating that as a new selection is what closed the loop this
+	 * comparison exists to break.
+	 */
+	function sameSelection(left: readonly string[], right: readonly string[]): boolean {
+		if (left.length !== right.length) return false;
+		const held = new Set(left);
+		return right.every((id) => held.has(id));
+	}
+
+	/**
+	 * Adopts the selection the canvas reported.
+	 *
+	 * Flow answers a replaced `nodes` array with a selection event of its own,
+	 * so assigning a fresh array on every event made the projection effect
+	 * re-run on the output of its previous run: projection → selection event →
+	 * fresh array → projection. That flush never drained, so every write queued
+	 * behind it — the import report among them — never reached the DOM, and
+	 * Svelte aborted the page with `effect_update_depth_exceeded` (BUG-j7rtv3).
+	 * A selection equal to the one already held is therefore not written at
+	 * all: the state is replaced only when what it holds really changed.
+	 */
 	function onSelectionChange({ nodes: selectedNodes, edges: selectedEdges }: { nodes: EditorFlowNode[]; edges: EditorFlowEdge[] }) {
 		// Every selected node is kept, not just the first: collapsing a group
 		// drag to one node made a following Delete remove only that one.
-		selectedNodeIDs = selectedNodes.map((node) => node.id);
+		const ids = selectedNodes.map((node) => node.id);
+		if (!sameSelection(ids, selectedNodeIDs)) selectedNodeIDs = ids;
+		// The primary selection is the held array's first, not the reported
+		// one's: while the set is unchanged, the held order is what the state
+		// above still describes.
 		selectedNodeID = selectedNodeIDs[0] ?? null;
 		selectedEdgeID = selectedEdges[0]?.id ?? null;
 		propertyPanelOpen = selectedNodes.length > 0;
