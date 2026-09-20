@@ -17,6 +17,22 @@ const FormatFinalJSONResponse = "format_final_json_response"
 // schema validation is retried before the run fails diagnosably.
 const DefaultOutputMaxRetries = 2
 
+// FormatInstructions states a schema to the model in words.
+//
+// A chain with a parser has to ask for the shape up front. Validating a
+// free-text answer and then describing the failure one error at a time spends
+// the retry budget on a guess the model had no way to make, which on a small
+// local model is a run that always fails.
+func FormatInstructions(schema map[string]any) string {
+	encoded, err := json.Marshal(schema)
+	if err != nil {
+		return "Reply with a single JSON object, and nothing else."
+	}
+	return "Reply with a single JSON object that matches this JSON Schema exactly. " +
+		"Use every required property, use no property the schema does not declare, " +
+		"and write no prose and no code fences around the object.\n" + string(encoded)
+}
+
 // Output parser parameter keys, shared by the node definition, its
 // validator, and the agent and chain executors that consume the descriptor.
 const (

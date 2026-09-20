@@ -29,12 +29,28 @@ const (
 type Message struct {
 	Role    Role   `json:"role"`
 	Content string `json:"content,omitempty"`
+	// Images are image parts sent beside the text, as data URIs
+	// (`data:image/png;base64,…`). They are deliberately absent from JSON:
+	// a turn that carries a picture would otherwise put a base64 payload of
+	// megabytes into every execution record, every live event, and every
+	// memory entry that holds the turn.
+	Images []string `json:"-"`
 	// ToolCalls are the tools an assistant turn asked to run.
 	ToolCalls []ToolCall `json:"toolCalls,omitempty"`
 	// ToolCallID ties a tool result back to the call that requested it.
 	ToolCallID string `json:"toolCallId,omitempty"`
 	// Name is the tool that produced a tool-role message.
 	Name string `json:"name,omitempty"`
+}
+
+// OpensATurn reports whether a message can be the first of a conversation
+// window. A tool result belongs to the assistant turn that asked for it, and
+// an assistant turn asking for tools is only valid once its results follow.
+func (message Message) OpensATurn() bool {
+	if message.Role == RoleTool {
+		return false
+	}
+	return !(message.Role == RoleAssistant && len(message.ToolCalls) > 0)
 }
 
 // ToolCall is one tool invocation a model requested.
@@ -87,6 +103,12 @@ type ModelRequest struct {
 	// MaxRetries bounds how many times a refused or unreachable request is
 	// re-sent. Zero means one attempt and no retry.
 	MaxRetries int
+	// Timeout bounds one attempt, the way a provider's own timeout option
+	// does. It is a transport concern the adapter applies, not a bound on
+	// the whole conversation: an agent that takes three tool turns is three
+	// requests, and each of them is allowed this long. Zero means the
+	// adapter's own default.
+	Timeout time.Duration
 }
 
 // ModelResponse is one completion.
@@ -196,7 +218,11 @@ type AgentRequest struct {
 	SystemPrompt string
 	// Input is the user turn for this run.
 	Input string
-	Tools []Tool
+	// Images are image parts sent beside the user turn, as data URIs. An
+	// agent whose input item carries a picture sends it to the model here
+	// rather than dropping it and answering as though the item were text.
+	Images []string
+	Tools  []Tool
 	// Memory and Session are optional; without both, the run is stateless.
 	Memory  Memory
 	Session SessionKey
@@ -216,6 +242,9 @@ type AgentRequest struct {
 	PresencePenalty  *float64
 	MaxTokens        int
 	MaxRetries       int
+	// RequestTimeout bounds one model request, not the whole run. The
+	// runtime passes it to the model adapter, which applies it per attempt.
+	RequestTimeout time.Duration
 	// Stream requests incremental content where the model supports it.
 	Stream bool
 	// OutputSchema constrains the final answer when a structured output

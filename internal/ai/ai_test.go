@@ -229,23 +229,137 @@ func TestAgentStopsAtTheIterationBound(t *testing.T) {
 	sink, events := collect()
 
 	// A model that keeps asking for tools would otherwise run until the whole
-	// execution times out.
+	// execution times out. n8n answers with a fallback and lets the workflow
+	// continue, so a flaky tool does not take the chat reply with it.
 	result, err := ai.NewLoopRuntime().Run(context.Background(), ai.AgentRequest{
 		Model: model, ModelName: "test-model", Input: "Spin", Tools: []ai.Tool{looping}, MaxIterations: 3,
 	}, sink)
-	if err == nil {
-		t.Fatal("an endless tool loop reported success")
+	if err != nil {
+		t.Fatalf("hitting the bound failed the run: %v", err)
 	}
-	if !strings.Contains(err.Error(), "3 iterations") {
-		t.Errorf("error = %v, want it to name the bound", err)
+	if result.Output != ai.MaxIterationsMessage {
+		t.Errorf("output = %q, want n8n's max-iterations answer", result.Output)
 	}
-	// The partial conversation is still returned so an inspector can show what
-	// happened rather than nothing at all.
 	if result.Iterations != 3 || len(result.Messages) == 0 {
 		t.Errorf("result = %#v, want the partial run reported", result)
 	}
-	if !contains(eventKinds(*events), ai.EventAgentFailed) {
-		t.Error("hitting the bound emitted no failure event")
+	if !contains(eventKinds(*events), ai.EventAgentCompleted) {
+		t.Error("hitting the bound did not report the run completed")
+	}
+}
+
+func TestMaxIterationsAnswerIsRememberedAsTheReply(t *testing.T) {
+	t.Parallel()
+
+	looping := &fakeTool{name: "spin", result: "again"}
+	responses := make([]ai.ModelResponse, 0, 4)
+	for range 4 {
+		responses = append(responses, toolTurn("spin", `{}`))
+	}
+	memory, err := ai.NewBufferMemory(ai.Retention{}, nil)
+	if err != nil {
+		t.Fatalf("NewBufferMemory() error = %v", err)
+	}
+	session := ai.SessionKey{TenantID: "t", WorkflowID: "w", SessionID: "s"}
+	if _, err := ai.NewLoopRuntime().Run(context.Background(), ai.AgentRequest{
+		Model: &fakeModel{responses: responses}, ModelName: "m", Input: "Spin",
+		Tools: []ai.Tool{looping}, MaxIterations: 2, Memory: memory, Session: session,
+	}, nil); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	// The stored conversation is the question and the fallback answer, so the
+	// next turn is a history the provider accepts.
+	loaded, err := memory.Load(context.Background(), session)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(loaded) != 2 || loaded[0].Role != ai.RoleUser || loaded[1].Content != ai.MaxIterationsMessage {
+		t.Fatalf("loaded = %#v, want the question and the fallback answer", loaded)
+	}
+}
+
+func TestMemoryWindowNeverOpensWithAToolStep(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 9, 5, 10, 0, 0, 0, time.UTC)
+	memory, err := ai.NewBufferMemory(ai.Retention{MaxMessages: 3, MaxAge: time.Hour}, func() time.Time { return now })
+	if err != nil {
+		t.Fatalf("NewBufferMemory() error = %v", err)
+	}
+	session := ai.SessionKey{TenantID: "t", WorkflowID: "w", SessionID: "s"}
+	ctx := context.Background()
+
+	// A tool turn is four messages: the question, the assistant turn asking
+	// for the tool, its result, and the answer. A count-based trim of the
+	// newest three lands on the tool result.
+	if err := memory.Append(ctx, session, []ai.Message{
+		{Role: ai.RoleUser, Content: "what is 2+2"},
+		{Role: ai.RoleAssistant, ToolCalls: []ai.ToolCall{{ID: "call_1", Name: "calc", Arguments: json.RawMessage(`{"expression":"2+2"}`)}}},
+		{Role: ai.RoleTool, ToolCallID: "call_1", Name: "calc", Content: "4"},
+		{Role: ai.RoleAssistant, Content: "4"},
+	}); err != nil {
+		t.Fatalf("Append() error = %v", err)
+	}
+
+	loaded, err := memory.Load(ctx, session)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(loaded) == 0 {
+		t.Fatal("the window was emptied rather than moved to a turn boundary")
+	}
+	// A window that opens with a tool result, or with an assistant turn whose
+	// calls were cut off, is rejected by providers that enforce message order:
+	// the conversation fails with a 400 at a turn nobody can explain.
+	for _, message := range loaded {
+		if message.OpensATurn() {
+			return
+		}
+	}
+	t.Fatalf("window = %#v, want it to open with a message that can start a turn", loaded)
+}
+
+func TestStructuredRunLeavesNoUnansweredToolCallInMemory(t *testing.T) {
+	t.Parallel()
+
+	schema := map[string]any{
+		"type":       "object",
+		"properties": map[string]any{"answer": map[string]any{"type": "string"}},
+		"required":   []any{"answer"},
+	}
+	memory, err := ai.NewBufferMemory(ai.Retention{}, nil)
+	if err != nil {
+		t.Fatalf("NewBufferMemory() error = %v", err)
+	}
+	session := ai.SessionKey{TenantID: "t", WorkflowID: "w", SessionID: "s"}
+
+	first := &fakeModel{responses: []ai.ModelResponse{toolTurn(ai.FormatFinalJSONResponse, `{"answer":"ok"}`)}}
+	if _, err := ai.NewLoopRuntime().Run(context.Background(), ai.AgentRequest{
+		Model: first, ModelName: "m", Input: "extract", Memory: memory, Session: session, OutputSchema: schema,
+	}, nil); err != nil {
+		t.Fatalf("first run error = %v", err)
+	}
+
+	// The second turn in the same session must send a history whose tool calls
+	// are all answered: the format tool's call is how the first run ended, and
+	// storing it replayed an assistant turn with no result.
+	second := &fakeModel{responses: []ai.ModelResponse{answer(`{"answer":"ok"}`)}}
+	if _, err := ai.NewLoopRuntime().Run(context.Background(), ai.AgentRequest{
+		Model: second, ModelName: "m", Input: "extract again", Memory: memory, Session: session, OutputSchema: schema,
+	}, nil); err != nil {
+		t.Fatalf("second run error = %v", err)
+	}
+	for index, message := range second.requests[0].Messages {
+		if len(message.ToolCalls) > 0 {
+			t.Fatalf("history message %d asks for tools (%#v) that nothing answers", index, message.ToolCalls)
+		}
+		if message.Role == ai.RoleTool {
+			t.Fatalf("history message %d is a tool result whose call was cut off", index)
+		}
+	}
+	if len(second.requests[0].Messages) != 3 {
+		t.Fatalf("history = %#v, want the question, the answer, and the new turn", second.requests[0].Messages)
 	}
 }
 

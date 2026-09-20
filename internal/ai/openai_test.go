@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/kilaslabs/kilas-flow/internal/ai"
 )
@@ -329,4 +330,148 @@ func TestARejectedModelRequestIsNotSentAgain(t *testing.T) {
 	if attempts != 1 {
 		t.Errorf("attempts = %d, want the request sent once", attempts)
 	}
+}
+
+// TestARetryWaitsBeforeSendingAgain pins the pacing half of the retry
+// contract: a refusal answered immediately is the same rate limit again, so
+// the second attempt waits — and honours the delay the provider asked for.
+func TestARetryWaitsBeforeSendingAgain(t *testing.T) {
+	t.Parallel()
+
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		attempts++
+		if attempts == 1 {
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"error":"slow down"}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`))
+	}))
+	defer server.Close()
+
+	start := time.Now()
+	_, err := ai.NewOpenAICompatible(server.Client(), server.URL, "sk-test").
+		Complete(context.Background(), ai.ModelRequest{
+			Model: "m", Messages: []ai.Message{{Role: ai.RoleUser, Content: "x"}}, MaxRetries: 1,
+		})
+	if err != nil {
+		t.Fatalf("Complete() error = %v", err)
+	}
+	if elapsed := time.Since(start); elapsed < 900*time.Millisecond {
+		t.Errorf("retried after %s, want the provider's Retry-After of one second honoured", elapsed)
+	}
+}
+
+// TestRetriesBackOffRatherThanLooping pins the other half: with no hint from
+// the provider each retry waits longer than the one before.
+func TestRetriesBackOffRatherThanLooping(t *testing.T) {
+	t.Parallel()
+
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		attempts++
+		if attempts < 3 {
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte(`{"error":"upstream"}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`))
+	}))
+	defer server.Close()
+
+	start := time.Now()
+	_, err := ai.NewOpenAICompatible(server.Client(), server.URL, "sk-test").
+		Complete(context.Background(), ai.ModelRequest{
+			Model: "m", Messages: []ai.Message{{Role: ai.RoleUser, Content: "x"}}, MaxRetries: 2,
+		})
+	if err != nil {
+		t.Fatalf("Complete() error = %v", err)
+	}
+	// Two waits, the second twice the first: the run takes at least the
+	// base delay plus double it.
+	if elapsed := time.Since(start); elapsed < 600*time.Millisecond {
+		t.Errorf("two retries took %s, want a delay before each", elapsed)
+	}
+}
+
+// TestAModelRequestTimeoutNamesTheSetting: a slow endpoint must fail with the
+// option that would allow it to be slower, rather than a bare context error.
+func TestAModelRequestTimeoutNamesTheSetting(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Long enough for the client's own 50ms deadline to expire, short
+		// enough not to hold the suite.
+		time.Sleep(300 * time.Millisecond)
+	}))
+	defer server.Close()
+
+	_, err := ai.NewOpenAICompatible(server.Client(), server.URL, "sk-test").
+		Complete(context.Background(), ai.ModelRequest{
+			Model: "m", Messages: []ai.Message{{Role: ai.RoleUser, Content: "x"}}, Timeout: 50 * time.Millisecond,
+		})
+	if err == nil {
+		t.Fatal("Complete() succeeded past its request timeout")
+	}
+	if !strings.Contains(err.Error(), "Timeout option") {
+		t.Errorf("error = %v, want it to name the setting that raises the bound", err)
+	}
+}
+
+// TestAnImageOnTheUserTurnIsSentAsAContentPart: a model that supports vision
+// receives the picture as the part list the API expects, not as a dropped
+// attachment the answer then ignores.
+func TestAnImageOnTheUserTurnIsSentAsAContentPart(t *testing.T) {
+	t.Parallel()
+
+	var received map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &received)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"742"},"finish_reason":"stop"}]}`))
+	}))
+	defer server.Close()
+
+	if _, err := ai.NewOpenAICompatible(server.Client(), server.URL, "sk-test").
+		Complete(context.Background(), ai.ModelRequest{
+			Model: "m",
+			Messages: []ai.Message{{
+				Role: ai.RoleUser, Content: "what number is on the plate",
+				Images: []string{"data:image/png;base64,iVBORw0KGgo="},
+			}},
+		}); err != nil {
+		t.Fatalf("Complete() error = %v", err)
+	}
+
+	messages, _ := received["messages"].([]any)
+	if len(messages) != 1 {
+		t.Fatalf("messages = %#v, want one turn", received["messages"])
+	}
+	wire, _ := messages[0].(map[string]any)
+	parts, ok := wire["content"].([]any)
+	if !ok {
+		t.Fatalf("content = %#v, want the part list a vision turn needs", wire["content"])
+	}
+	kinds := make([]string, 0, len(parts))
+	for _, part := range parts {
+		entry, _ := part.(map[string]any)
+		kinds = append(kinds, textValue(entry["type"]))
+	}
+	if len(parts) != 2 || kinds[0] != "text" || kinds[1] != "image_url" {
+		t.Fatalf("parts = %#v, want the prompt and the image", parts)
+	}
+	image, _ := parts[1].(map[string]any)["image_url"].(map[string]any)
+	if image["url"] != "data:image/png;base64,iVBORw0KGgo=" {
+		t.Errorf("image_url = %#v, want the data URI the caller supplied", image)
+	}
+}
+
+func textValue(value any) string {
+	text, _ := value.(string)
+	return text
 }

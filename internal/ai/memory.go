@@ -284,10 +284,31 @@ func (memory *BufferMemory) prune(key string, retention Retention) []storedMessa
 	if overflow := len(fresh) - retention.MaxMessages; overflow > 0 {
 		fresh = fresh[overflow:]
 	}
+	// The count bound is applied, then moved forward to a turn boundary. A
+	// tool result whose tool_call the trim removed — or an assistant turn
+	// whose tool results it removed — is a window no provider that enforces
+	// message order will accept, and the refusal arrives as a 400 in the
+	// middle of a conversation that was working.
+	fresh = alignToTurnStart(fresh)
 	if len(fresh) == 0 {
 		memory.drop(key)
 		return nil
 	}
 	memory.sessions[key] = fresh
 	return fresh
+}
+
+// alignToTurnStart drops leading messages that cannot open a window.
+//
+// A tool result belongs to the assistant turn that asked for it, and an
+// assistant turn asking for tools is only valid when its results follow. A
+// window that begins with either is missing the message that made it
+// meaningful, which providers that enforce message order reject outright.
+func alignToTurnStart(stored []storedMessage) []storedMessage {
+	for index, entry := range stored {
+		if entry.message.OpensATurn() {
+			return stored[index:]
+		}
+	}
+	return nil
 }

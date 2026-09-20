@@ -5,8 +5,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"math/rand/v2"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -208,15 +212,25 @@ func (model *OpenAICompatible) post(ctx context.Context, request ModelRequest, s
 		attempts = 1
 	}
 	var lastErr error
-	for attempt := 0; attempt < attempts; attempt++ {
+	for attempt := range attempts {
 		if err := ctx.Err(); err != nil {
 			if lastErr != nil {
 				return nil, lastErr
 			}
 			return nil, err
 		}
-		httpRequest, err := http.NewRequestWithContext(ctx, http.MethodPost, model.baseURL+"/chat/completions", bytes.NewReader(encoded))
+		// Each attempt gets its own deadline, the way a provider's timeout
+		// option is meant: a slow answer is this request's problem, not the
+		// conversation's. The deadline is released when the body is closed,
+		// so a streamed answer is not cut off by the call returning.
+		attemptCtx := ctx
+		cancel := context.CancelFunc(func() {})
+		if request.Timeout > 0 {
+			attemptCtx, cancel = context.WithTimeout(ctx, request.Timeout)
+		}
+		httpRequest, err := http.NewRequestWithContext(attemptCtx, http.MethodPost, model.baseURL+"/chat/completions", bytes.NewReader(encoded))
 		if err != nil {
+			cancel()
 			return nil, fmt.Errorf("build model request: %w", err)
 		}
 		httpRequest.Header.Set("Content-Type", "application/json")
@@ -229,7 +243,17 @@ func (model *OpenAICompatible) post(ctx context.Context, request ModelRequest, s
 
 		response, err := model.client.Do(httpRequest)
 		if err != nil {
-			lastErr = fmt.Errorf("call model: %w", err)
+			cancel()
+			if request.Timeout > 0 && errors.Is(attemptCtx.Err(), context.DeadlineExceeded) {
+				lastErr = fmt.Errorf("model request did not answer within %s (raise the model node's Timeout option to allow longer): %w", request.Timeout, err)
+			} else {
+				lastErr = fmt.Errorf("call model: %w", err)
+			}
+			if attempt+1 < attempts {
+				if err := waitBeforeRetry(ctx, retryDelay(attempt, "")); err != nil {
+					return nil, lastErr
+				}
+			}
 			continue
 		}
 		if attempt+1 < attempts && retryableStatus(response.StatusCode) {
@@ -237,12 +261,88 @@ func (model *OpenAICompatible) post(ctx context.Context, request ModelRequest, s
 			// connection returns to the pool instead of being torn down on
 			// every retry.
 			lastErr = model.statusError(response)
+			retryAfter := response.Header.Get("Retry-After")
 			response.Body.Close()
+			cancel()
+			// A rate limit answered immediately produces the same rate limit:
+			// back off, and honour the delay the provider asked for.
+			if err := waitBeforeRetry(ctx, retryDelay(attempt, retryAfter)); err != nil {
+				return nil, lastErr
+			}
 			continue
+		}
+		if request.Timeout > 0 {
+			response.Body = cancelOnClose{ReadCloser: response.Body, cancel: cancel}
+		} else {
+			cancel()
 		}
 		return response, nil
 	}
 	return nil, lastErr
+}
+
+// cancelOnClose releases an attempt's deadline once its body has been read,
+// rather than when the call returned: a streamed answer is still arriving
+// after post() hands the response back.
+type cancelOnClose struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (body cancelOnClose) Close() error {
+	err := body.ReadCloser.Close()
+	body.cancel()
+	return err
+}
+
+// Retry pacing: a refusal worth retrying is a refusal worth waiting out, and
+// three requests a millisecond apart spend the user's quota to collect the
+// same answer again.
+const (
+	retryBackoffBase = 250 * time.Millisecond
+	retryBackoffCap  = 10 * time.Second
+)
+
+// retryDelay is how long to wait before the retry that follows attempt
+// (zero-based). A provider that states Retry-After is obeyed within this
+// deployment's ceiling; otherwise the delay doubles per attempt, with jitter
+// so several nodes that hit one rate limit do not return in lockstep.
+func retryDelay(attempt int, retryAfter string) time.Duration {
+	if seconds, err := strconv.Atoi(strings.TrimSpace(retryAfter)); err == nil && seconds > 0 {
+		delay := time.Duration(seconds) * time.Second
+		if delay > retryBackoffCap {
+			delay = retryBackoffCap
+		}
+		return delay
+	}
+	delay := retryBackoffBase
+	for range attempt {
+		delay *= 2
+		if delay >= retryBackoffCap {
+			delay = retryBackoffCap
+			break
+		}
+	}
+	if half := delay / 2; half > 0 {
+		delay += time.Duration(rand.Int64N(int64(half)))
+	}
+	return delay
+}
+
+// waitBeforeRetry pauses until the delay elapses or the run is cancelled. It
+// is a variable so a test can observe the pacing without spending it.
+var waitBeforeRetry = func(ctx context.Context, delay time.Duration) error {
+	if delay <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 // retryableStatus reports a refusal worth sending again.
@@ -293,12 +393,46 @@ type wireMessage struct {
 	Name       string         `json:"name,omitempty"`
 	ToolCallID string         `json:"tool_call_id,omitempty"`
 	ToolCalls  []wireToolCall `json:"tool_calls,omitempty"`
+	// Images never carry their own JSON: MarshalJSON folds them into the
+	// content parts, and a decoded response has none.
+	Images []string `json:"-"`
+}
+
+// MarshalJSON writes the text-only shape unless the turn carries images, in
+// which case content becomes the part list the OpenAI API expects —
+// `[{type:"text"},{type:"image_url"}]` — while everything else is unchanged.
+// A plain request keeps the string form, which every compatible endpoint
+// accepts.
+func (wire wireMessage) MarshalJSON() ([]byte, error) {
+	type plain wireMessage
+	if len(wire.Images) == 0 {
+		return json.Marshal(plain(wire))
+	}
+	parts := make([]map[string]any, 0, len(wire.Images)+1)
+	if wire.Content != "" {
+		parts = append(parts, map[string]any{"type": "text", "text": wire.Content})
+	}
+	for _, url := range wire.Images {
+		parts = append(parts, map[string]any{"type": "image_url", "image_url": map[string]any{"url": url}})
+	}
+	type withParts struct {
+		Role       string           `json:"role"`
+		Content    []map[string]any `json:"content"`
+		Name       string           `json:"name,omitempty"`
+		ToolCallID string           `json:"tool_call_id,omitempty"`
+		ToolCalls  []wireToolCall   `json:"tool_calls,omitempty"`
+	}
+	return json.Marshal(withParts{
+		Role: wire.Role, Content: parts,
+		Name: wire.Name, ToolCallID: wire.ToolCallID, ToolCalls: wire.ToolCalls,
+	})
 }
 
 func wireMessageFrom(message Message) wireMessage {
 	wire := wireMessage{
 		Role: string(message.Role), Content: message.Content,
 		Name: message.Name, ToolCallID: message.ToolCallID,
+		Images: message.Images,
 	}
 	for _, call := range message.ToolCalls {
 		arguments := string(call.Arguments)

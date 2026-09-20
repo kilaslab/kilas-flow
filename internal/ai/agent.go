@@ -77,13 +77,16 @@ func (LoopRuntime) Run(ctx context.Context, request AgentRequest, sink EventSink
 		}
 		messages = append(messages, history...)
 	}
-	userTurn := Message{Role: RoleUser, Content: request.Input}
+	userTurn := Message{Role: RoleUser, Content: request.Input, Images: request.Images}
 	messages = append(messages, userTurn)
 
 	result := AgentResult{}
-	// newTurns records only what this run produced, so memory does not
-	// re-append the history it just loaded.
-	newTurns := []Message{userTurn}
+	// remembered is what this run contributes to the conversation: the human
+	// turn and the final answer, with the tool steps and repair prompts left
+	// out. Saving those is what produced histories a provider refuses — an
+	// assistant turn asking for the format tool with no result answering it,
+	// and a window whose first message was a tool result.
+	remembered := []Message{userTurn}
 	// outputAttempts counts parser answers that failed schema validation,
 	// across both format-tool calls and plain-text fallbacks.
 	outputAttempts := 0
@@ -100,6 +103,7 @@ func (LoopRuntime) Run(ctx context.Context, request AgentRequest, sink EventSink
 			Temperature: request.Temperature, TopP: request.TopP,
 			FrequencyPenalty: request.FrequencyPenalty, PresencePenalty: request.PresencePenalty,
 			MaxTokens: request.MaxTokens, MaxRetries: request.MaxRetries,
+			Timeout: request.RequestTimeout,
 		}
 		sink.Emit(Event{Kind: EventModelStarted, Iteration: iteration, Model: request.ModelName})
 
@@ -130,13 +134,13 @@ func (LoopRuntime) Run(ctx context.Context, request AgentRequest, sink EventSink
 		assistant := response.Message
 		assistant.Role = RoleAssistant
 		messages = append(messages, assistant)
-		newTurns = append(newTurns, assistant)
 
 		if len(assistant.ToolCalls) == 0 {
 			if outputSchema == nil {
 				result.Output = assistant.Content
 				result.Messages = messages
-				if err := appendSessionMemory(ctx, request, newTurns); err != nil {
+				remembered = append(remembered, assistant)
+				if err := appendSessionMemory(ctx, request, remembered); err != nil {
 					return result, err
 				}
 				sink.Emit(Event{Kind: EventAgentCompleted, Iteration: iteration, Model: request.ModelName, Usage: &result.Usage})
@@ -148,7 +152,7 @@ func (LoopRuntime) Run(ctx context.Context, request AgentRequest, sink EventSink
 			// saves a whole extra model call.
 			value, validationErr := ParseAndValidateOutput(outputSchema, assistant.Content)
 			if validationErr == nil {
-				return finishStructuredRun(ctx, request, sink, &result, messages, newTurns, iteration, value)
+				return finishStructuredRun(ctx, request, sink, &result, messages, remembered, iteration, value)
 			}
 			outputAttempts++
 			if outputAttempts > outputRetries {
@@ -156,7 +160,6 @@ func (LoopRuntime) Run(ctx context.Context, request AgentRequest, sink EventSink
 			}
 			repairTurn := Message{Role: RoleUser, Content: "That response did not match the required format: " + validationErr.Error() + ". Reply by calling " + FormatFinalJSONResponse + " with the corrected arguments."}
 			messages = append(messages, repairTurn)
-			newTurns = append(newTurns, repairTurn)
 			continue
 		}
 
@@ -180,7 +183,7 @@ func (LoopRuntime) Run(ctx context.Context, request AgentRequest, sink EventSink
 						Kind: EventToolCompleted, Iteration: iteration, Tool: call.Name,
 						Detail: call.Arguments,
 					})
-					return finishStructuredRun(ctx, request, sink, &result, messages, newTurns, iteration, value)
+					return finishStructuredRun(ctx, request, sink, &result, messages, remembered, iteration, value)
 				}
 				sink.Emit(Event{Kind: EventToolFailed, Iteration: iteration, Tool: call.Name, Error: validationErr.Error()})
 				outputAttempts++
@@ -189,7 +192,6 @@ func (LoopRuntime) Run(ctx context.Context, request AgentRequest, sink EventSink
 				}
 				toolTurn := Message{Role: RoleTool, ToolCallID: call.ID, Name: call.Name, Content: "Those arguments did not match the required format: " + validationErr.Error() + ". Call " + FormatFinalJSONResponse + " again with corrected arguments."}
 				messages = append(messages, toolTurn)
-				newTurns = append(newTurns, toolTurn)
 				continue
 			}
 			tool, found := tools[call.Name]
@@ -200,7 +202,6 @@ func (LoopRuntime) Run(ctx context.Context, request AgentRequest, sink EventSink
 				sink.Emit(Event{Kind: EventToolFailed, Iteration: iteration, Tool: call.Name, Error: message})
 				toolTurn := Message{Role: RoleTool, ToolCallID: call.ID, Name: call.Name, Content: message}
 				messages = append(messages, toolTurn)
-				newTurns = append(newTurns, toolTurn)
 				continue
 			}
 
@@ -210,7 +211,6 @@ func (LoopRuntime) Run(ctx context.Context, request AgentRequest, sink EventSink
 				sink.Emit(Event{Kind: EventToolFailed, Iteration: iteration, Tool: call.Name, Error: err.Error()})
 				toolTurn := Message{Role: RoleTool, ToolCallID: call.ID, Name: call.Name, Content: message}
 				messages = append(messages, toolTurn)
-				newTurns = append(newTurns, toolTurn)
 				continue
 			}
 			sink.Emit(Event{
@@ -219,29 +219,46 @@ func (LoopRuntime) Run(ctx context.Context, request AgentRequest, sink EventSink
 			})
 			toolTurn := Message{Role: RoleTool, ToolCallID: call.ID, Name: call.Name, Content: output}
 			messages = append(messages, toolTurn)
-			newTurns = append(newTurns, toolTurn)
 		}
 	}
 
-	// Reaching the bound is a real outcome, not a crash: the partial
-	// conversation is still returned so an inspector can show what happened.
-	err := fmt.Errorf("agent stopped after %d iterations without a final answer", maxIterations)
-	sink.Emit(Event{Kind: EventAgentFailed, Iteration: maxIterations, Error: err.Error()})
+	// Reaching the bound is a real outcome, not a crash: a model that keeps
+	// asking for tools is answered the way n8n answers it, so the workflow
+	// continues with a stated fallback instead of failing and taking the chat
+	// reply with it. The partial conversation is still returned for an
+	// inspector.
+	result.Output = MaxIterationsMessage
 	result.Messages = messages
-	return result, err
+	remembered = append(remembered, Message{Role: RoleAssistant, Content: result.Output})
+	if err := appendSessionMemory(ctx, request, remembered); err != nil {
+		return result, err
+	}
+	sink.Emit(Event{Kind: EventAgentCompleted, Iteration: maxIterations, Model: request.ModelName, Usage: &result.Usage})
+	return result, nil
 }
+
+// MaxIterationsMessage is what an agent that cannot converge answers with, in
+// n8n's own words, so a workflow reading the output sees the same string it
+// would see there.
+const MaxIterationsMessage = "Agent stopped due to max iterations."
 
 // finishStructuredRun ends a parser run with the validated answer. Output is
 // the canonical JSON of the arguments, so the node reading the result
 // carries the parsed object rather than a JSON string.
-func finishStructuredRun(ctx context.Context, request AgentRequest, sink EventSink, result *AgentResult, messages []Message, newTurns []Message, iteration int, value any) (AgentResult, error) {
+//
+// What is remembered is the human turn and this answer, never the assistant
+// turn that called the format tool: that call has no result answering it, and
+// a provider that enforces message order rejects the history it would produce
+// the next time the session is used.
+func finishStructuredRun(ctx context.Context, request AgentRequest, sink EventSink, result *AgentResult, messages []Message, remembered []Message, iteration int, value any) (AgentResult, error) {
 	encoded, err := json.Marshal(value)
 	if err != nil {
 		return *result, err
 	}
 	result.Output = string(encoded)
 	result.Messages = messages
-	if err := appendSessionMemory(ctx, request, newTurns); err != nil {
+	remembered = append(remembered, Message{Role: RoleAssistant, Content: result.Output})
+	if err := appendSessionMemory(ctx, request, remembered); err != nil {
 		return *result, err
 	}
 	sink.Emit(Event{Kind: EventAgentCompleted, Iteration: iteration, Model: request.ModelName, Usage: &result.Usage})
@@ -285,23 +302,59 @@ type PolicyMemory interface {
 }
 
 func loadSessionMemory(ctx context.Context, request AgentRequest) ([]Message, error) {
+	var (
+		history []Message
+		err     error
+	)
 	if policy, ok := request.Memory.(PolicyMemory); ok {
-		return policy.LoadWithPolicy(ctx, request.Session, request.SessionPolicy)
+		history, err = policy.LoadWithPolicy(ctx, request.Session, request.SessionPolicy)
+	} else {
+		history, err = request.Memory.Load(ctx, request.Session)
 	}
-	return request.Memory.Load(ctx, request.Session)
+	if err != nil {
+		return nil, err
+	}
+	// Whatever the store kept, a window that opens with a tool result or with
+	// an assistant turn asking for tools is not a conversation. Dropping those
+	// leading turns is the difference between a history the provider accepts
+	// and a 400 the user cannot explain.
+	for index, message := range history {
+		if message.OpensATurn() {
+			return history[index:], nil
+		}
+	}
+	return nil, nil
 }
 
 func appendSessionMemory(ctx context.Context, request AgentRequest, turns []Message) error {
 	if request.Memory == nil {
 		return nil
 	}
+	// Only turns that can be replayed are stored. A tool result or an
+	// assistant turn asking for tools is meaningful only beside the message
+	// that introduced it, and a stored picture would be re-sent with every
+	// later turn of the conversation.
+	remembered := make([]Message, 0, len(turns))
+	for _, turn := range turns {
+		if turn.Role != RoleUser && turn.Role != RoleAssistant {
+			continue
+		}
+		if turn.Role == RoleAssistant && len(turn.ToolCalls) > 0 {
+			continue
+		}
+		turn.Images = nil
+		remembered = append(remembered, turn)
+	}
+	if len(remembered) == 0 {
+		return nil
+	}
 	if policy, ok := request.Memory.(PolicyMemory); ok {
-		if err := policy.AppendWithPolicy(ctx, request.Session, turns, request.SessionPolicy); err != nil {
+		if err := policy.AppendWithPolicy(ctx, request.Session, remembered, request.SessionPolicy); err != nil {
 			return fmt.Errorf("append memory: %w", err)
 		}
 		return nil
 	}
-	if err := request.Memory.Append(ctx, request.Session, turns); err != nil {
+	if err := request.Memory.Append(ctx, request.Session, remembered); err != nil {
 		return fmt.Errorf("append memory: %w", err)
 	}
 	return nil
