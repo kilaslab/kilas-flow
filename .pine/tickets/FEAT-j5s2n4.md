@@ -171,3 +171,18 @@ pass-through (`internal/workflow/document.go`, `internal/engine/runner.go` —
 EngineFlow); the generic consumed-key diff exists only for the HTTP/webhook/wait
 translators, not every node type; Code auto-translation is unstarted (see
 BUG-gaavr5).
+
+### Follow-up (same day, EngineFlow's half landed)
+
+The disabled flag and `onError` are now carried natively rather than reported:
+`workflow.Node.Disabled` is set from the n8n node (and written back on export),
+and `settings["onError"]` carries `stopWorkflow | continueRegularOutput |
+continueErrorOutput` verbatim. The blocking "disabled" issue and the "no
+equivalent" onError diagnostics are gone, and an error branch now imports onto
+the node's own `error` output port — which the compiler declares for
+`continueErrorOutput` — instead of being held back as an unroutable edge.
+
+Proof: `go test ./internal/interop/n8n/ -count=1` green, including
+`TestDisabledNodesStayDisabled` (flag carried, exported back, no diagnostic) and
+`TestOnErrorContinueRegularOutputBecomesContinueOnFail` (error branch wired to
+the `error` port; the mode round-trips).

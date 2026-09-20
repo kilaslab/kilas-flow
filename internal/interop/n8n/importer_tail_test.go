@@ -398,19 +398,23 @@ func TestOnErrorContinueRegularOutputBecomesContinueOnFail(t *testing.T) {
 	if branchy.Settings["continueOnFail"] != true {
 		t.Errorf("settings = %#v, want continueOnFail carried from onError", branchy.Settings)
 	}
-	// The error output has no equivalent, and the diagnostic says so instead of
-	// claiming a port is missing.
-	named := false
-	for _, issue := range result.Unsupported {
-		if issue.Field == "onError" && strings.Contains(issue.Reason, "error output") {
-			named = true
-		}
-		if strings.Contains(issue.Reason, "declares no main port") {
-			t.Fatalf("the error output was reported as a missing port: %+v", issue)
+	// The error branch is a real edge now: the compiler declares the node's
+	// own `error` output for continueErrorOutput, and the import wires the
+	// branch to it instead of holding the edge back.
+	ports := map[string]string{}
+	for _, connection := range result.Document.Connections {
+		if connection.Target.NodeID == "b" {
+			ports[connection.Source.Port] = connection.Target.Port
 		}
 	}
-	if !named {
-		t.Errorf("unsupported = %#v, want the error output named", result.Unsupported)
+	if _, ok := ports["error"]; !ok {
+		t.Errorf("connections = %#v, want the error branch wired to the error port", ports)
+	}
+	for _, issue := range result.Unsupported {
+		if strings.Contains(issue.Reason, "declares no main port") ||
+			strings.Contains(issue.Reason, "error branch") {
+			t.Fatalf("the error output was not resolved: %+v", issue)
+		}
 	}
 
 	// And the settings go back out as the modern spelling n8n reads.
@@ -425,12 +429,12 @@ func TestOnErrorContinueRegularOutputBecomesContinueOnFail(t *testing.T) {
 	}
 }
 
-// TestDisabledNodesBlockActivation covers the side effects of a disabled node.
+// TestDisabledNodesStayDisabled covers the side effects of a disabled node.
 //
-// KilasFlow has no disabled-node concept, so an imported disabled trigger
-// becomes a live endpoint and a disabled HTTP node starts polling. Refusing to
-// activate is the only honest answer until the flag exists.
-func TestDisabledNodesBlockActivation(t *testing.T) {
+// The flag is carried onto the node, and the runtime never invokes a disabled
+// node — a disabled trigger is never started — so an imported automation does
+// not begin calling endpoints the author switched off.
+func TestDisabledNodesStayDisabled(t *testing.T) {
 	t.Parallel()
 
 	result := importFixture(t, `{
@@ -442,17 +446,24 @@ func TestDisabledNodesBlockActivation(t *testing.T) {
 	  ],
 	  "connections": {"Manual": {"main": [[{"node":"Poll","type":"main","index":0}]]}}
 	}`)
-	blocking := 0
+	if !nodeByName(result.Document, "Poll").Disabled {
+		t.Error("the disabled flag did not reach the node")
+	}
 	for _, issue := range result.Unsupported {
 		if issue.Field == "disabled" {
-			blocking++
-			if issue.Severity != n8n.SeverityBlocking {
-				t.Errorf("disabled reported %q, want blocking", issue.Severity)
-			}
+			t.Errorf("a carried flag was reported as a loss: %+v", issue)
 		}
 	}
-	if blocking != 1 {
-		t.Errorf("disabled issues = %d, want exactly one", blocking)
+
+	// And it goes back out switched off.
+	exported, err := n8n.Export(result.Document, registry(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, node := range exported.Document.Nodes {
+		if node.Name == "Poll" && !node.Disabled {
+			t.Error("the exported node came back enabled")
+		}
 	}
 }
 

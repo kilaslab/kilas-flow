@@ -1584,14 +1584,10 @@ func TestImportReportsEveryDroppedElement(t *testing.T) {
 	for _, field := range []string{
 		// Workflow level.
 		"settings", "pinData", "meta", "staticData",
-		// Node level.
+		// Node level. Everything else a node carries — the error-handling set,
+		// the disabled flag, the notes and the webhook identity — is either
+		// carried onto the canonical node or has its own test.
 		"notes", "webhookId",
-		// The error-handling fields that still have no equivalent. The rest —
-		// continueOnFail, retryOnFail, maxTries, waitBetweenTries,
-		// alwaysOutputData, executeOnce and onError="continueRegularOutput" —
-		// are carried onto the canonical settings, which is asserted by
-		// TestImportCarriesTheErrorHandlingSettingsTheRunnerHonours.
-		"onError",
 	} {
 		issue, found := reported[field]
 		if !found {
@@ -1608,17 +1604,8 @@ func TestImportReportsEveryDroppedElement(t *testing.T) {
 		}
 	}
 
-	// A disabled node is not a dropped element: it is a node whose side effects
-	// would fire, so the diagnostic blocks activation rather than noting a
-	// setting that was left behind.
-	if issue, found := reported["disabled"]; !found {
-		t.Error("a disabled node was not reported")
-	} else if issue.Severity != n8n.SeverityBlocking {
-		t.Errorf("disabled reported severity %q, want %q", issue.Severity, n8n.SeverityBlocking)
-	}
-
 	// A node-level diagnostic names its node; a workflow-level one does not.
-	for _, field := range []string{"notes", "onError"} {
+	for _, field := range []string{"notes"} {
 		if reported[field].NodeName != "Edit" {
 			t.Errorf("%q did not name the node it came from: %#v", field, reported[field])
 		}

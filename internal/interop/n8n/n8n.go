@@ -768,33 +768,25 @@ func Import(payload []byte, catalog workflow.Catalog) (ImportResult, error) {
 		if issue, invented := webhookPathIssue(catalog, name, id, node, &converted); invented {
 			unsupported = append(unsupported, issue)
 		}
-		if node.Disabled {
-			// Blocking, and one issue rather than two. The node's side effects
-			// are the hazard — a disabled trigger becomes a live endpoint, a
-			// disabled HTTP node starts polling — so importing it as an active,
-			// activatable node is exactly the silent behaviour change this
-			// adapter exists to refuse. nodeIssues no longer repeats it.
-			unsupported = append(unsupported, Unsupported{
-				Severity: SeverityBlocking,
-				NodeName: name, NodeID: id, Type: node.Type, Field: "disabled",
-				TypeVersion: sourceTypeVersion(node.TypeVersion),
-				Reason: "this node is disabled in n8n, so n8n never runs it, and KilasFlow has no " +
-					"disabled-node flag — importing it as active would start its side effects. Delete " +
-					"the node, or re-enable it in n8n first if it was meant to run.",
-			})
-		}
+		// Carried as itself. A disabled node is one the author switched off, and
+		// the runtime skips it — passing its input through and never starting a
+		// disabled trigger — so importing it as active would start side effects
+		// nobody asked for. Nothing is reported: the flag crossed intact.
+		converted.Disabled = node.Disabled
 		nodes = append(nodes, converted)
 	}
 
 	typeByID := make(map[string]string, len(nodes))
 	versionByID := make(map[string]workflow.TypeVersion, len(nodes))
 	parametersByID := make(map[string]map[string]any, len(nodes))
+	settingsByID := make(map[string]map[string]any, len(nodes))
 	for _, converted := range nodes {
 		typeByID[converted.ID] = converted.Type
 		versionByID[converted.ID] = converted.TypeVersion
 		parametersByID[converted.ID] = converted.Parameters
+		settingsByID[converted.ID] = converted.Settings
 	}
-	connections, connectionIssues := importConnections(source.Connections, idByName, typeByID, versionByID, parametersByID, errorOutputNodes(source, idByName), catalog)
+	connections, connectionIssues := importConnections(source.Connections, idByName, typeByID, versionByID, parametersByID, settingsByID, catalog)
 	unsupported = append(unsupported, connectionIssues...)
 	// A hasOutputParser flag whose parser survived as its own node with an
 	// ai_outputParser edge is answered by that edge: the converter reports
@@ -939,26 +931,6 @@ func documentIssues(source Document) []ImportIssue {
 	return issues
 }
 
-// errorOutputNodes names the imported nodes that gained n8n's error output.
-//
-// n8n gives a node a second, error-only output when settings.onError is
-// continueErrorOutput. KilasFlow has no per-node error output, so every edge
-// leaving that slot is held back — and the hold-back message ("declares no main
-// port") describes a broken graph rather than the missing feature that
-// actually dropped fourteen templates' error branches.
-func errorOutputNodes(source Document, idByName map[string]string) map[string]bool {
-	flagged := make(map[string]bool)
-	for _, node := range source.Nodes {
-		if node.OnError != "continueErrorOutput" {
-			continue
-		}
-		if id, known := idByName[node.Name]; known {
-			flagged[id] = true
-		}
-	}
-	return flagged
-}
-
 // importConnections converts n8n's name-keyed connection map into canonical
 // edges.
 //
@@ -967,7 +939,7 @@ func errorOutputNodes(source Document, idByName map[string]string) map[string]bo
 // model emits ai_languageModel, an agent receives it. KilasFlow declares the
 // same shape, so the loop is already directionally correct for every kind; what
 // it needed was the kind itself and ports that exist on both endpoints.
-func importConnections(source Connections, idByName, typeByID map[string]string, versionByID map[string]workflow.TypeVersion, parametersByID map[string]map[string]any, errorOutputs map[string]bool, catalog workflow.Catalog) ([]workflow.Connection, []Unsupported) {
+func importConnections(source Connections, idByName, typeByID map[string]string, versionByID map[string]workflow.TypeVersion, parametersByID, settingsByID map[string]map[string]any, catalog workflow.Catalog) ([]workflow.Connection, []Unsupported) {
 	connections := make([]workflow.Connection, 0)
 	issues := make([]Unsupported, 0)
 
@@ -1026,20 +998,19 @@ func importConnections(source Connections, idByName, typeByID map[string]string,
 					}
 
 					sourcePort, sourceOK := resolvePort(catalog, typeByID[sourceID], versionByID[sourceID], parametersByID[sourceID], kind, outputIndex, portOutput)
-					targetPort, targetOK := resolvePort(catalog, typeByID[targetID], versionByID[targetID], parametersByID[targetID], kind, target.Index, portInput)
-					if !sourceOK && errorOutputs[sourceID] {
-						// The source declares an error output n8n gave it, which
-						// no canonical node has. Named as that, rather than as
-						// a missing port: the user is looking for a feature.
-						issues = append(issues, Unsupported{
-							NodeName: sourceName,
-							Reason: fmt.Sprintf("the error branch from %q to %q was dropped: this node's "+
-								"failed items leave on an n8n error output (settings.onError = "+
-								"continueErrorOutput), and KilasFlow has no per-node error output yet",
-								sourceName, target.Node),
-						})
-						continue
+					if !sourceOK {
+						// A node that continues on a separate error branch has
+						// one more output than its type declares, and n8n writes
+						// it in the slot just past them. The compiler adds that
+						// port to the definition for exactly this reason, so the
+						// edge resolves to it rather than being held back.
+						if mode, _ := settingsByID[sourceID]["onError"].(string); mode == "continueErrorOutput" &&
+							kind == workflow.ConnectionMain &&
+							outputIndex == mainOutputCount(catalog, typeByID[sourceID], versionByID[sourceID], parametersByID[sourceID]) {
+							sourcePort, sourceOK = errorPortName, true
+						}
 					}
+					targetPort, targetOK := resolvePort(catalog, typeByID[targetID], versionByID[targetID], parametersByID[targetID], kind, target.Index, portInput)
 					if !sourceOK || !targetOK {
 						// Held back rather than dropped silently: recording an
 						// edge onto a port that does not exist would fail
@@ -1369,6 +1340,8 @@ func Export(document workflow.Document, catalog workflow.Catalog) (ExportResult,
 		// continued on failure returned to n8n as one that fails the whole run
 		// on the first error.
 		applyErrorHandling(&exported, node.Settings)
+		// A node the author switched off goes back switched off.
+		exported.Disabled = node.Disabled
 		if entry.toN8N != nil {
 			parameters, issues := entry.toN8N(node)
 			exported.Parameters = parameters
@@ -1431,6 +1404,15 @@ func Export(document workflow.Document, catalog workflow.Catalog) (ExportResult,
 			if indexes, known := portIndex[connection.Source.NodeID]; known {
 				if position, found := indexes[connection.Source.Port]; found {
 					index = position
+				}
+			}
+			if connection.Source.Port == errorPortName {
+				// One past the declared outputs, which is where n8n writes the
+				// error branch of a node that continues on a separate output.
+				// The map holds exactly the positional item ports, so its
+				// length is the index of the slot after them.
+				if indexes, known := portIndex[connection.Source.NodeID]; known {
+					index = len(indexes)
 				}
 			}
 			targetIndex = inputIndexFor(typeByID[connection.Target.NodeID], connection.Target.Port)
@@ -1531,6 +1513,19 @@ func exportVersion(entry mapping, node workflow.Node) float64 {
 		}
 	}
 	return entry.exportTypeVersion
+}
+
+// errorPortName is the extra output a node that continues on a separate error
+// branch declares. Mirrored from the compiler's own name so an imported error
+// edge lands on the port the runner fills.
+const errorPortName = "error"
+
+// mainOutputCount is how many positional item outputs a node type declares.
+//
+// The error output sits in the slot just past them, which is how n8n numbers
+// it: a node with one output writes its error branch at index 1.
+func mainOutputCount(catalog workflow.Catalog, nodeType string, version workflow.TypeVersion, parameters map[string]any) int {
+	return len(outputIndexesFor(catalog, nodeType, version, parameters))
 }
 
 // outputIndexesFor maps a canonical node's named output ports onto n8n's
@@ -1808,17 +1803,10 @@ func nodeIssues(name, id string, node Node) []ImportIssue {
 	}
 
 	// continueOnFail, retryOnFail, maxTries, waitBetweenTries, alwaysOutputData,
-	// executeOnce and onError="continueRegularOutput" are carried onto the
-	// canonical settings by errorHandlingSettings, so they are not reported
-	// here. What is left is the one onError mode this server has no equivalent
-	// for: a second, error-only output.
-	if node.OnError == "continueErrorOutput" {
-		add("onError", "n8n routes this node's failed items to its own error output; KilasFlow has no "+
-			"per-node error output yet, so the failing item is not routed anywhere and the branch the "+
-			"error output was wired to never runs")
-	} else if mode := strings.TrimSpace(node.OnError); mode != "" && mode != "stopWorkflow" && mode != "continueRegularOutput" {
-		add("onError", fmt.Sprintf("the n8n onError mode %q has no KilasFlow equivalent", mode))
-	}
+	// executeOnce, onError and the disabled flag are all carried onto the
+	// canonical node — the settings by errorHandlingSettings, the flag on the
+	// node itself — so none of them is reported here. A diagnostic that says a
+	// setting was dropped when it crossed intact is worse than no diagnostic.
 	return issues
 }
 
@@ -1833,13 +1821,14 @@ func errorHandlingSettings(node Node) map[string]any {
 	if node.ContinueOnFail {
 		settings["continueOnFail"] = true
 	}
-	// Current n8n writes `onError: "continueRegularOutput"` instead of the
-	// legacy boolean, and the runner already honours exactly that: the failing
-	// item is replaced and the run continues. Reading only the boolean meant 26
-	// nodes in 8 templates stopped a run they were written to tolerate, while
-	// the diagnostic said continueOnFail "was carried".
-	if node.OnError == "continueRegularOutput" {
-		settings["continueOnFail"] = true
+	// Current n8n writes `onError` instead of the legacy boolean. The mode
+	// crosses verbatim — the runner executes all three — and continueOnFail
+	// keeps its own key for a document that carries the old boolean.
+	if mode := strings.TrimSpace(node.OnError); mode != "" {
+		settings["onError"] = mode
+		if mode == "continueRegularOutput" {
+			settings["continueOnFail"] = true
+		}
 	}
 	if node.AlwaysOutputData {
 		settings["alwaysOutputData"] = true
@@ -1902,13 +1891,18 @@ func applyErrorHandling(exported *Node, settings map[string]any) {
 	if settings == nil {
 		return
 	}
+	if mode, _ := settings["onError"].(string); mode != "" {
+		exported.OnError = mode
+	}
 	if flag, _ := settings["continueOnFail"].(bool); flag {
-		exported.ContinueOnFail = true
 		// n8n 1.x reads the legacy boolean and 2.x reads onError. Writing the
 		// modern spelling as well is what makes the round trip a no-op on a
 		// current instance: a node that arrived with continueRegularOutput must
 		// not go back with a setting current n8n ignores.
-		exported.OnError = "continueRegularOutput"
+		exported.ContinueOnFail = true
+		if exported.OnError == "" {
+			exported.OnError = "continueRegularOutput"
+		}
 	}
 	if flag, _ := settings["alwaysOutputData"].(bool); flag {
 		exported.AlwaysOutputData = true
