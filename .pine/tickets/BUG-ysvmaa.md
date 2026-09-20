@@ -9,7 +9,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:10Z"
-updated: "2026-09-20T02:42:18Z"
+updated: "2026-09-20T02:49:39Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -753,3 +753,38 @@ Closed by `pine close --evidence` on 2026-09-20.
 
 ## Reopened by review (2026-09-20) — Important
 - **Per-item suspension loses the remaining items**: `runPerItem` appends the items a suspending node has not reached onto `state.pending` *after* `runner.invoke` marshalled the suspension checkpoint (`internal/engine/runner.go:1041` copies `state.pending`; the mutation at :1081-1091 is never read again), so the checkpoint does not carry them and a resumed run drops every item after the first. Trigger: a node with `onError: continueRegularOutput/continueErrorOutput` (perItemTolerance, :1780) that also suspends — e.g. Wait with On Error = Continue over three items; after resume `done` carries 1 instead of 3. Fix: schedule the remaining per-item work before the checkpoint is marshalled (or copy it into the checkpoint explicitly), plus a regression test that suspends inside a per-item node.
+
+## Fix (2026-09-20, status doing) — commit 9b690d8
+Fixed by moving the checkpoint out of `invoke` and into the caller:
+`invoke` returns the suspension bare and `suspendWithCheckpoint` (runner.go) marshals
+`snapshotCheckpoint` at the call site, so `runPerItem` appends the items the suspending
+node had not reached to `state.pending` *before* the snapshot is taken (`runNode` attaches
+its checkpoint the same way). No decode/re-marshal dance, and the ordering is now correct
+by construction: the stack the checkpoint carries is the caller's.
+
+Regression test `TestResumeOfAPerItemSuspendProcessesEveryItem`
+(internal/engine/wait_service_test.go): manual -> 3 items -> wait (`onError
+continueRegularOutput`, interval resume) -> done. `awaitExecutionStatus` is used for the
+timer requeue, and the assertions are per item ("reached exactly once"), not a bare count.
+`waitSuspendOnce` gained a `mode`/`expiresAt` pair (approval when empty, which the loop
+test keeps) so the same fake can stand for either resume path.
+
+Pre-fix proof in a detached worktree at 47a4d9b with only the new test copied in:
+```
+$ go test ./internal/engine/ -run TestResumeOfAPerItemSuspendProcessesEveryItem -count=1
+--- FAIL: TestResumeOfAPerItemSuspendProcessesEveryItem (0.06s)
+    wait_service_test.go:625: item 2 reached the node after the wait 0 times, want exactly once; it saw map[1:1]
+    wait_service_test.go:625: item 3 reached the node after the wait 0 times, want exactly once; it saw map[1:1]
+    wait_service_test.go:630: the waiting node ran 1 times, want one per item: 1
+FAIL
+```
+Post-fix (worktree removed, fix in place):
+```
+$ go test ./internal/engine/ -run TestResumeOfAPerItemSuspendProcessesEveryItem -count=1
+ok  	github.com/kilaslabs/kilas-flow/internal/engine
+$ go test ./internal/engine/ -count=1
+ok  	github.com/kilaslabs/kilas-flow/internal/engine	3.831s
+```
+No existing test was loosened. runner.go also carries FixImporterFindings' BUG-cq4yk3
+response-capture hunks, which shared the file.
+

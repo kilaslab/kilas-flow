@@ -9,7 +9,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:10Z"
-updated: "2026-09-20T02:42:18Z"
+updated: "2026-09-20T02:49:39Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -795,3 +795,40 @@ Closed by `pine close --evidence` on 2026-09-20.
 
 ## Reopened by review (2026-09-20) — Important
 - **Activation gate mis-reads an expression target**: `SubworkflowCalls` (`nodes/subworkflow.go:343-352`) drops the `Expression` flag its own `WorkflowCall` carries and returns the raw locator text as a `WorkflowID`, so `refuseInactiveSubworkflows` (`internal/repository/workflows.go:502`) looks up `{"mode":"expression","value":"={{ $json.wf }}"}` (or `={{ $json.wf }}`) and refuses activation — a workflow whose call node uses an expression locator can never be published, where before this wave it published fine. The sibling gate already handles this (`DocumentReferences` skips `call.Target == "" || call.Expression`). Fix: skip an expression target in the activation gate; add an activation test with an expression locator.
+
+## Fix (2026-09-20, status doing) — commit cb77ac7
+`WorkflowCalls` now reports `Expression` for both spellings of an expression target —
+KilasFlow's marker object (as `property.ExpressionMarker` already did) and n8n's leading
+`=` on a plain string, which is the spelling a document can still carry and which the
+marker's own doc comment names. `SubworkflowCalls` then skips `call.Target == "" ||
+call.Expression`, exactly as the sibling gate `DocumentReferences` already skipped the
+marker, so the activation gate no longer looks a template up as a workflow ID. Literal
+targets are untouched: missing/still-draft targets are refused with the same messages.
+`internal/repository/workflows.go` needed no change — the reading is the fix.
+
+Tests:
+- `nodes/subworkflow_calls_test.go`: `TestSubworkflowCallsSkipsExpressionTargets` (marker
+  object, `=`-prefixed string, literal in one document).
+- `internal/repository/subworkflow_activation_test.go`:
+  `TestActivationAllowsADynamicSubWorkflowTarget`, wired with the production
+  `nodes.SubworkflowCalls` through a real store, activating a marker document and a
+  `=`-prefixed document and still refusing a literal missing target ("does not exist").
+
+Pre-fix proof in a detached worktree at 47a4d9b with only the new test files copied in:
+```
+$ go test ./nodes/ -run TestSubworkflowCalls -count=1
+    subworkflow_calls_test.go:88: calls = [...{NodeID:"marker", WorkflowID:"{\"mode\":\"expression\",\"value\":\"{{ $json.wf }}\"}"}, {NodeID:"prefixed", WorkflowID:"={{ $json.wf }}"}, ...], want the literal target alone
+$ go test ./internal/repository/ -run TestActivationAllowsADynamicSubWorkflowTarget -count=1
+    Activate(dynamic by marker) error = node "Run dynamic" (call) calls workflow "{\"mode\":\"expression\",\"value\":\"{{ $json.wf }}\"}", which does not exist in this workspace: point it at a workflow that is active, or remove the node
+```
+Post-fix:
+```
+$ go test ./nodes/ -count=1
+ok  	github.com/kilaslabs/kilas-flow/nodes	6.851s
+$ go test ./internal/repository/ -count=1
+ok  	github.com/kilaslabs/kilas-flow/internal/repository	4.742s
+$ go test ./internal/workflow/ -count=1
+ok  	github.com/kilaslabs/kilas-flow/internal/workflow	0.482s
+```
+`TestActivationRefusesASubWorkflowCallToAnInactiveWorkflow` is unchanged and still passes.
+
