@@ -92,13 +92,27 @@ func (request Request) ExpressionContext(item workflow.Item, input workflow.Node
 		inputItems[port] = converted
 	}
 	return expression.Context{
-		JSON:      item.JSON,
-		Input:     inputItems,
-		Nodes:     request.NodeOutputs,
-		NodeItems: request.NodeItems,
+		JSON:  item.JSON,
+		Input: inputItems,
+		Nodes: request.NodeOutputs,
+		// Pairing is done here rather than left to each node, because this is
+		// the one place every executor's expression context is built: an
+		// executor that forgot it would read `$('X').item` and the legacy
+		// `$node["X"].json` from the wrong item, silently.
+		NodeItems: PairNodeItems(request.NodeItems, item, index),
 		Workflow:  request.Workflow,
 		Env:       request.Env,
-		Execution: expression.ExecutionContext{ID: request.Execution.ID, Mode: request.Execution.Mode},
+		Execution: expression.ExecutionContext{
+			ID:   request.Execution.ID,
+			Mode: request.Execution.Mode,
+			// The resume links are minted before the graph runs so a workflow
+			// can send one out before it suspends. Dropping them here made
+			// `$execution.resumeUrl` and `$execution.approvalUrl` always empty,
+			// which left the Wait node's webhook and form modes unusable — the
+			// author had no way to compose the link to send.
+			ResumeURL:   request.Execution.ResumeURL,
+			ApprovalURL: request.Execution.ApprovalURL,
+		},
 		ItemIndex: index,
 		// The clock reads the workflow's own settings.timezone, which the
 		// importer preserves. Without it `$today` was midnight UTC, which is
