@@ -1,7 +1,7 @@
 ---
 id: BUG-qq4xva
 title: n8n auto-generated fromAI-override comment breaks every $fromAI tool parameter
-status: doing
+status: testing
 priority: high
 labels:
     - ai
@@ -11,7 +11,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:09Z"
-updated: "2026-09-20T00:43:17Z"
+updated: "2026-09-20T00:47:48Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -39,3 +39,19 @@ Existing tickets: FEAT-je4f4t, FEAT-cgm1y3
 
 - [ ] n8n's auto-generated `/*n8n-auto-generated-fromAI-override*/` comment breaks every $fromAI tool parameter
 - [ ] Adversarial re-verify against live stub/n8n like the Verify phase (no code-only close)
+---
+## ImporterTail slice — 2026-09-20
+
+Status: `testing`. Commit: `47544b7` (content; swept into a peer's commit).
+
+Landed: `expressionValue` in `internal/interop/n8n/parameters.go` strips n8n's
+`/*n8n-auto-generated-fromAI-override*/` marker, so every imported `$fromAI`
+parameter keeps a body the evaluator accepts. One place fixes every node type
+that carries an n8n expression (tools, HTTP tool, data table tool, agent
+parameters). Regression test:
+`TestFromAIOverrideCommentIsStripped` uses n8n's exact auto-generated form,
+backticks included.
+
+Remaining: an expression typed by hand in KilasFlow's own editor that contains
+that comment still reaches the evaluator untouched — that half belongs to
+`internal/expression`/`internal/ai` (ExpressionParity, AINodes2; asked).

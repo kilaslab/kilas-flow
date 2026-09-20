@@ -1,7 +1,7 @@
 ---
 id: BUG-8t94wn
 title: 'Wait/sub-workflow mapping: expression amounts, v1/v2 ports, workflowInputs, SplitInBatches'
-status: doing
+status: testing
 priority: high
 labels:
     - nodes
@@ -10,7 +10,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:10Z"
-updated: "2026-09-20T00:43:17Z"
+updated: "2026-09-20T00:47:48Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -146,3 +146,34 @@ Files: /Users/izzadev/projects/k-flow/internal/interop/n8n/parameters.go, /Users
 - [ ] SplitInBatches v1/v2 imports silently wire the batch output to the loop's `done` port, and the run dies with '
 - [ ] Wait v1.1 imports with v1 defaults: a missing unit becomes 'hours' (n8n: seconds) and a missing amount becomes
 - [ ] Adversarial re-verify against live stub/n8n like the Verify phase (no code-only close)
+---
+## ImporterTail slice — 2026-09-20
+
+Status: `testing`. Commits: `47544b7` (swept into a peer's commit — content is in
+`internal/interop/n8n/`), `41f1d50`.
+
+Landed (all in `internal/interop/n8n/*`, `nodes/subworkflow.go`):
+- Wait version-aware defaults (v1: 1 hour; v1.1+: 5 seconds), expression amounts
+  converted rather than copied, unknown units blocking, n8n's `limitWaitTime`
+  bound carried under the executor's names, durable resume modes no longer
+  refused (webhook as itself, form as the approval page with a lossy note).
+- SplitInBatches v1/v2: output 0 remapped to the `loop` port (`legacyOutputPort`),
+  the exit that needs rewiring named as a blocking issue, `maxIterations` written
+  at the instance ceiling instead of inheriting a lower default, `options.reset`
+  carried and reported.
+- Sub-workflows: the caller's `workflowInputs` mapper is carried (`inputFields`)
+  and applied per item in `executeExecuteWorkflow`; an omitted `inputSource` on a
+  1.1 trigger now reads as the declared fields n8n defaults to; `$workflow.id`
+  self-references resolve instead of blocking.
+
+Scoped proof: `go test ./internal/interop/n8n/ -count=1` green, including 20 new
+regression tests (`waitsubworkflow_test.go`, `importer_tail_test.go`);
+`go test ./nodes/ -count=1 -run 'Subworkflow|Assignment|Unsupported|Loop'` green.
+
+Remaining (deliberate, not silent):
+- The v1/v2 loop *exit* stays a manual rewire: KilasFlow's loop ends on its own,
+  so the If/noItemsLeft test is named as blocking rather than rewritten.
+- The trigger side deliberately does not filter to declared fields — n8n does not
+  either (its own repro shows `fromSub` leaking through both), so filtering would
+  drop data n8n keeps.
+- Adversarial re-verify against a live n8n/stub instance is Main's final step.

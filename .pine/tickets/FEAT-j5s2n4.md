@@ -1,7 +1,7 @@
 ---
 id: FEAT-j5s2n4
 title: 'Importer fidelity program: 4/100 activate, disabled nodes, onError, defaults, silent drops'
-status: doing
+status: testing
 priority: high
 labels:
     - importer
@@ -10,7 +10,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:10Z"
-updated: "2026-09-20T00:43:17Z"
+updated: "2026-09-20T00:47:48Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -140,3 +140,34 @@ Existing tickets: FEAT-nbqye0 (done: 'Report every field the n8n importer drops'
 - [ ] Respond to Webhook with no stored respondWith answers with an empty text body; n8n answers with the first item
 - [ ] Many other source parameters vanish with no diagnostic, breaking the 'never silent' contract
 - [ ] Adversarial re-verify against live stub/n8n like the Verify phase (no code-only close)
+---
+## ImporterTail slice — 2026-09-20
+
+Status: `testing`. Commit: `47544b7` (content; swept into a peer's commit).
+
+Landed:
+- Disabled nodes are blocking, with exactly one issue (the duplicate in
+  `nodeIssues` is gone): importing a disabled trigger as a live endpoint is the
+  behaviour change the adapter exists to refuse.
+- `onError: "continueRegularOutput"` becomes `continueOnFail` and is written back
+  as the modern spelling; `continueErrorOutput` is reported for what it is — an
+  error output this server has no equivalent for — instead of the misleading
+  "declares no main port".
+- Webhook `httpMethod` defaults to GET; Respond to Webhook defaults to
+  `firstIncomingItem`.
+- Settings: `alwaysOutputData` and `executeOnce` carried onto node settings (the
+  two "dropped" diagnostics removed, per EngineWaits), `executionTimeout` carried,
+  the `"DEFAULT"` timezone sentinel dropped.
+- Silent drops: the HTTP Request and Respond to Webhook option collections are
+  now diffed key by key and each unconsumed key is named, as are the Wait's own
+  options.
+
+Scoped proof: `go test ./internal/interop/n8n/ -count=1` green, including
+`TestDisabledNodesBlockActivation`, `TestOnErrorContinueRegularOutputBecomesContinueOnFail`,
+`TestWebhookMethodDefaultsToGet`, `TestRespondToWebhookDefaultsToTheFirstItem`.
+
+Remaining: full disabled-node semantics need a canonical flag and runner
+pass-through (`internal/workflow/document.go`, `internal/engine/runner.go` —
+EngineFlow); the generic consumed-key diff exists only for the HTTP/webhook/wait
+translators, not every node type; Code auto-translation is unstarted (see
+BUG-gaavr5).

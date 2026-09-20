@@ -1,7 +1,7 @@
 ---
 id: BUG-wdypd2
 title: 'Shipped-but-unreachable: $env, Wait defaults, importer hacks, Telegram/GOWA, durable waits'
-status: doing
+status: testing
 priority: high
 labels:
     - importer
@@ -10,7 +10,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:10Z"
-updated: "2026-09-20T00:43:17Z"
+updated: "2026-09-20T00:47:48Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -196,3 +196,35 @@ Files: internal/config/config.go, config.example.yaml, web/src/routes/+layout.sv
 - [ ] JavaScript sidecar for community nodes (FEAT-7cg0cd, done) is an unwired library, while the docs describe enab
 - [ ] Deployment-level white-label config (branding.name/logo/favicon/powered_by) is dead; the dashboard hard-codes 
 - [ ] Adversarial re-verify against live stub/n8n like the Verify phase (no code-only close)
+---
+## ImporterTail slice — 2026-09-20
+
+Status: `testing` (importer half). Commits: `47544b7` (content; swept into a
+peer's commit), `41f1d50`.
+
+Landed:
+- Wait v1.1 defaults (5 seconds, not hours) and a missing amount defaulted
+  rather than read as zero; the amount is converted, so an expression survives.
+- The customer-specific Code hack is **gone**: `trivialcode.go` and its test are
+  deleted, and the call site in `Import` with them. A JS Code node whose source
+  merely mentioned a few keywords is no longer rewritten into fixed assignments;
+  it imports as the blocking `foreignCode` placeholder that keeps its source and
+  names the native node that most likely replaces it.
+- GOWA: an unmapped resource/operation pair is refused (`refuseKilas`) and lands
+  on `kilasflow.unsupported` instead of being sent as a different live GOWA call,
+  and an unbound GOWA credential is blocking again rather than downgraded to
+  lossy — a node that authenticated in n8n must not activate against a host
+  nobody pointed it at.
+- Telegram: Additional Fields mapped onto the pack's names, inline keyboards
+  rebuilt as Bot API JSON, unknown operations (sendAndWait and the rich-message
+  pair) blocking, `appendAttribution` named as dropped.
+- Workflow settings: `executionTimeout` carried (EngineWaits' reader), the
+  `"DEFAULT"` timezone sentinel omitted instead of stored as a literal that
+  document validation refuses.
+
+Scoped proof: `go test ./internal/interop/n8n/ -count=1` green.
+
+Other findings on this ticket are other slices and untouched here: durable wait
+modes and the resume-token scoping (EngineWaits), embed publish scope and ext://
+secrets (SecurityFront2), the sidecar (DXOps2), deployment branding
+(SecurityFront2).

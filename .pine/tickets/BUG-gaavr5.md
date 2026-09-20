@@ -1,7 +1,7 @@
 ---
 id: BUG-gaavr5
 title: 'Importer node mapping long tail: AI edges, Date/Chain roles, exporter, Postgres op, Code, notes'
-status: doing
+status: testing
 priority: medium
 labels:
     - importer
@@ -9,7 +9,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:10Z"
-updated: "2026-09-20T00:43:17Z"
+updated: "2026-09-20T00:47:48Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -309,3 +309,55 @@ Existing tickets: FEAT-nbqye0 (done)
 - [ ] Code nodes: none of 79 are auto-translated, although 37 are diagnosed as replaceable by one native node; legac
 - [ ] Per-node notes are discarded (77 notes in 12 templates), losing template documentation
 - [ ] Adversarial re-verify against live stub/n8n like the Verify phase (no code-only close)
+---
+## ImporterTail slice — 2026-09-20
+
+Status: `testing`. Commits: `47544b7` (content; swept into a peer's commit),
+`41f1d50`.
+
+Landed:
+- HTTP Request: `options` read (timeout, response.neverError/responseFormat/
+  fullResponse/outputPropertyName, redirect.followRedirects/maxRedirects),
+  key/value bodies carried as `bodyFields` with expressions intact rather than
+  marshalled to text, tool-variant collections (`parametersQuery`/
+  `parametersHeaders`) read, and pagination/batching/multipart/binary/unauthorized
+  certs named (multipart, binary and allowUnauthorizedCerts blocking).
+- Webhook: `httpMethod` defaults to GET, arrays become `httpMethods`, HEAD
+  accepted, `responseData`/`responseCode`/`options` carried verbatim, `jwtAuth`
+  kept instead of rewritten to none.
+- Respond to Webhook: missing `respondWith` defaults to `firstIncomingItem`,
+  `options.responseHeaders.entries` and `responseKey` carried.
+- Postgres: a missing `operation` defaults to insert (n8n's default), not
+  executeQuery.
+- Switch: legacy `rules.rules` rows and the top-level `fallbackOutput` translated.
+- Chain: role names mapped both ways (System/Human/AIMessagePromptTemplate ↔
+  system/human/ai) and pre-1.4 `prompt` becomes the user prompt.
+- Memory: `contextWindowLength` (interactions) → `maxMessages` (messages) ×2.
+- Node names kept verbatim, so trailing-space names keep their edges.
+- Export: Merge inputs past the second resolve from the catalogue (`inputIndexesFor`)
+  instead of collapsing onto slot 0; `hasOutputParser`/`needsFallback` written
+  from the graph; a version change the translator cannot honour is reported as
+  lossy instead of happening silently.
+- Placeholders: every typed AI kind (embedding, document, splitter, vector store,
+  output parser, retriever, reranker, agent, chain) is declared, so RAG edges are
+  no longer held back and lost on export.
+- Native mappings added for toolCalculator, mcpClientTool, lmChatOllama/lmOllama
+  and the OpenAI-compatible providers (Gemini, DeepSeek, Groq, Mistral, xAI).
+- Structured Output Parser: an empty node gets n8n's built-in example.
+
+Scoped proof: `go test ./internal/interop/n8n/ -count=1` green (20 new regression
+tests); `go test ./nodes/ -count=1 -run 'Subworkflow|Assignment|Unsupported|Loop|Telegram'` green.
+
+Remaining:
+- Code auto-translation: the customer-specific keyword rewrite was **removed**
+  (see BUG-wdypd2) and 79 Code nodes still import as blocking `foreignCode` with
+  their source and a suggested replacement. Extending the rewrite to the patterns
+  the importer classifies (Set/DateTime/Filter/Sort/Aggregate/Limit) is unstarted.
+- Per-node notes need a canonical field on `workflow.Node` (EngineFlow's
+  `internal/workflow/document.go`) plus rendering; the dropped diagnostic stays
+  until then.
+- `publishedVersions` per mapping is unpopulated: preserving a source version is
+  only safe where the translator emits that version's shape, and the core
+  translators emit the pinned shape. Version changes are reported instead.
+- Structured Output Parser JSON Schema `type` arrays / `anyOf` are refused by the
+  validator in `nodes/ai.go` (AINodes2's file; asked).
