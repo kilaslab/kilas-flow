@@ -1,13 +1,13 @@
 ---
 id: BUG-5gws7n
 title: Wait timers race the callback against the handle assignment in waitTimers.arm
-status: testing
+status: done
 priority: high
 labels:
     - engine
     - concurrency
 created: "2026-09-20T05:08:00Z"
-updated: "2026-09-20T05:08:00Z"
+updated: "2026-09-20T05:02:49Z"
 ---
 
 # Description
@@ -81,3 +81,17 @@ commits) in a fresh worktree with `-count=1` forced.
 - `internal/engine/service.go`
 
 # Attachments
+
+## Work Evidence
+
+Closed by `pine close --evidence` on 2026-09-20.
+
+- Base: `8bbff74c` (last commit at or before ticket created 2026-09-20)
+- Commits (1):
+  - `9e3134f1` — BUG-5gws7n: the wait timer hands its handle to the callback instead of capturing it
+- Files changed (base → working tree):
+
+```
+ .pine/tickets/BUG-rpkjpy.md | 185 +++++++++++++++++++++-----------------------
+ 1 file changed, 89 insertions(+), 96 deletions(-)
+```
