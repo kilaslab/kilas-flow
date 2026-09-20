@@ -1,10 +1,10 @@
 ---
 id: BUG-th16c1
 title: Dashboard listings hide rows past the first cursor page (workflows/credentials/datastores/schedules/api-keys)
-status: testing
+status: done
 priority: medium
 created: "2026-09-20T02:32:33Z"
-updated: "2026-09-20T03:12:18Z"
+updated: "2026-09-20T03:17:21Z"
 ---
 
 # Description
@@ -108,3 +108,111 @@ Live, against the seeded instance above:
 - web/src/routes/(dashboard)/schedules/+page.svelte
 - web/src/routes/(dashboard)/settings/+page.svelte
 - web/src/lib/embed/embed-editor.svelte
+
+## Work Evidence
+
+Closed by `pine close --evidence` on 2026-09-20.
+
+- Base: `f5d0f320` (last commit at or before ticket created 2026-09-20)
+- Commits (4):
+  - `aabb522d` — chore(pine): commit the outstanding ticket notes
+  - `b8bc90ba` — chore(pine): record the web review's P1 and keyboard/doc fixes on their tickets
+  - `4a49d70e` — BUG-th16c1: the dashboard lists drain every cursor page instead of showing the first — web
+  - `fbfc7692` — chore(pine): reopen 6jvcs5, cq4yk3, kzkvv6, 6as5y7 with the importer review's findings
+- Files changed (base → working tree):
+
+```
+ .pine/tickets/BUG-4053h6.md                        | 350 ++++++++------
+ .pine/tickets/BUG-6as5y7.md                        | 281 ++++++-----
+ .pine/tickets/BUG-6jvcs5.md                        | 279 ++++++-----
+ .pine/tickets/BUG-8dmp5y.md                        | 284 ++++++-----
+ .pine/tickets/BUG-8sb0jw.md                        | 276 ++++++-----
+ .pine/tickets/BUG-9853ay.md                        | 284 +++++------
+ .pine/tickets/BUG-aede06.md                        | 271 ++++++-----
+ .pine/tickets/BUG-cq4yk3.md                        | 271 ++++++-----
+ .pine/tickets/BUG-fv5fer.md                        | 276 ++++++-----
+ .pine/tickets/BUG-kzkvv6.md                        | 262 +++++-----
+ .pine/tickets/BUG-qmgz2f.md                        | 252 +++++-----
+ .pine/tickets/BUG-tcqkad.md                        | 243 +++++-----
+ .pine/tickets/BUG-th16c1.md                        | 110 +++++
+ .pine/tickets/BUG-y57cz4.md                        |  36 +-
+ .pine/tickets/BUG-ysvmaa.md                        |  42 +-
+ .pine/tickets/FEAT-qdedm0.md                       |  15 +
+ docs/src/content/docs/start/install.md             |   2 +-
+ internal/ai/agent.go                               |   3 +
+ internal/ai/ai.go                                  |  16 +-
+ internal/ai/openai.go                              |   8 +-
+ internal/api/cors_test.go                          |  34 ++
+ internal/api/credentials_test.go                   |  98 ++++
+ internal/api/datastores_test.go                    |  41 ++
+ internal/api/embed_confinement_test.go             |  68 +++
+ internal/api/embed_test.go                         |  27 ++
+ internal/api/events_test.go                        |  89 ++++
+ internal/api/handlers/credentials.go               |  28 +-
+ internal/api/handlers/datastores.go                |  44 +-
+ internal/api/handlers/datastores_csv.go            |   6 +-
+ internal/api/handlers/executions.go                |  22 +-
+ internal/api/handlers/interop.go                   |  12 +-
+ internal/api/handlers/nodes.go                     |  44 +-
+ internal/api/handlers/problem.go                   |  81 ++++
+ internal/api/handlers/schedules.go                 |  17 +-
+ internal/api/middleware/cors.go                    |  12 +-
+ internal/api/middleware/cors_test.go               |  50 +-
+ internal/api/node_types_test.go                    |  85 +++-
+ internal/api/routes.go                             |  29 +-
+ internal/api/server.go                             |  18 +-
+ internal/config/boot_strictness_test.go            |  66 +++
+ internal/config/config.go                          |  24 +-
+ internal/embed/embed.go                            |   9 +
+ internal/embed/embed_test.go                       |  14 +
+ internal/engine/runner.go                          | 100 +++-
+ internal/engine/service.go                         |   2 +
+ internal/engine/wait_service.go                    |   2 +-
+ internal/engine/wait_service_test.go               | 147 +++++-
+ internal/execution/records.go                      |  11 +
+ internal/expression/doc.go                         |  13 +
+ internal/expression/evaluator.go                   | 227 +++++++--
+ internal/expression/expression.go                  | 165 ++++++-
+ internal/expression/globals.go                     |  45 +-
+ internal/expression/methods.go                     |  40 +-
+ internal/expression/parity_test.go                 | 536 +++++++++++++++++++++
+ internal/expression/roots.go                       |  26 +
+ internal/interop/n8n/importer_tail_test.go         | 323 ++++++++++++-
+ internal/interop/n8n/n8n.go                        |  31 ++
+ internal/interop/n8n/parameters.go                 | 262 ++++++++--
+ internal/repository/executions.go                  |  12 +
+ internal/repository/models.go                      |  19 +-
+ internal/repository/subworkflow_activation_test.go |  81 ++++
+ internal/webhook/webhook.go                        | 105 +++-
+ internal/webhook/webhook_test.go                   | 111 +++++
+ .../postgres/000013_node_run_response.down.sql     |   9 +
+ .../postgres/000013_node_run_response.up.sql       |  28 ++
+ .../sqlite/000013_node_run_response.down.sql       |   9 +
+ migrations/sqlite/000013_node_run_response.up.sql  |  23 +
+ nodes/ai.go                                        |  51 +-
+ nodes/ai_test.go                                   | 141 ++++++
+ nodes/embedscope.go                                |  59 ++-
+ nodes/embedscope_test.go                           |  46 ++
+ nodes/http.go                                      |  54 ++-
+ nodes/http_test.go                                 |  57 ++-
+ nodes/subworkflow.go                               |  85 +++-
+ nodes/subworkflow_calls_test.go                    |  34 ++
+ nodes/webhook.go                                   |   7 +-
+ .../workflow-editor/property-field.svelte          |  91 +++-
+ .../workflow-editor/workflow-editor.svelte         |  13 +-
+ web/src/lib/dashboard/cursor-page.test.ts          |  85 +++-
+ web/src/lib/dashboard/cursor-page.ts               |  57 +++
+ web/src/lib/embed/embed-editor.svelte              |  27 +-
+ .../lib/workflow-editor/expression-assist.test.ts  |  55 ++-
+ web/src/lib/workflow-editor/expression-assist.ts   |  50 ++
+ web/src/lib/workflow-editor/shortcuts.test.ts      |  34 +-
+ web/src/lib/workflow-editor/shortcuts.ts           |  24 +
+ .../routes/(dashboard)/app/workflows/+page.svelte  |  81 +++-
+ .../(dashboard)/app/workflows/[id]/+page.svelte    |  26 +-
+ .../routes/(dashboard)/credentials/+page.svelte    |  60 ++-
+ web/src/routes/(dashboard)/datastores/+page.svelte |  59 ++-
+ web/src/routes/(dashboard)/executions/+page.svelte |  53 +-
+ web/src/routes/(dashboard)/schedules/+page.svelte  |  93 ++--
+ web/src/routes/(dashboard)/settings/+page.svelte   |  56 ++-
+ 92 files changed, 6162 insertions(+), 2042 deletions(-)
+```
