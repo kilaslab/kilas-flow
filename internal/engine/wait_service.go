@@ -423,11 +423,36 @@ func (service *Service) newRequest(record execution.Record, document workflow.Do
 }
 
 // workflowTimezoneSetting names the document setting holding a workflow's own
+// IANA zone. The scheduler package owns the same name for the schedule half of
+// it (scheduler.WorkflowTimezoneSetting); the two read one setting, and a
+// rename has to move both.
 const workflowTimezoneSetting = "timezone"
+
 // workflowContext backs `$workflow` and the clock expressions read.
+//
+// `$workflow.id`, `.name` and `.active` were empty and false on every run
+// because nothing ever filled this field, which 27 parameters across the
+// imported corpus read. Active is true for the run in flight: an execution was
+// queued from a version of this workflow and is running it now, so a run that
+// exists is a run of a workflow in use. The durable flag on the workflow row
+// answers a different question — whether something will start the workflow
+// next — and reading it here would need a lookup per run.
+//
+// The zone is left empty when the document names a real one, because the
+// runner fills it from the compiled settings and two places writing it would
+// eventually disagree. Only the instance default is supplied from here, which
+// is the half the document cannot know: n8n's own resolution of an absent zone
+// and of the DEFAULT sentinel is the instance's GENERIC_TIMEZONE.
 func (service *Service) workflowContext(document workflow.Document) expression.WorkflowContext {
+	context := expression.WorkflowContext{ID: document.ID, Name: document.Name, Active: true}
 	declared, _ := document.Settings[workflowTimezoneSetting].(string)
+	if trimmed := strings.TrimSpace(declared); trimmed != "" && !strings.EqualFold(trimmed, "DEFAULT") {
+		return context
+	}
 	context.Timezone = service.defaultTimezone
+	return context
+}
+
 // validateSuspend refuses a suspension the service cannot honour. A missing
 // mode, a deadline in the past, or a wait past the maximum never parks an
 // execution: the run fails loudly instead, so a misconfigured wait is an
