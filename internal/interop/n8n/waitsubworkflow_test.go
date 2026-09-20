@@ -222,6 +222,50 @@ func splitInBatchesFixture(version string) string {
 	}`
 }
 
+// TestSplitInBatchesKeepsAndNamesItsResetOption is the other half of the loop
+// contract: the value n8n restarts a running loop with is kept so a round trip
+// returns the node as authored, and the diagnostic says what does not happen
+// rather than claiming the value was dropped.
+func TestSplitInBatchesKeepsAndNamesItsResetOption(t *testing.T) {
+	t.Parallel()
+
+	const fixture = `{
+	  "name": "Batched",
+	  "nodes": [
+	    {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}},
+	    {"id":"l","name":"Split In Batches","type":"n8n-nodes-base.splitInBatches","typeVersion":3,
+	     "position":[220,0],"parameters":{"batchSize":2,"options":{"reset":"={{ $runIndex > 0 }}"}}}
+	  ],
+	  "connections": {"Manual": {"main": [[{"node":"Split In Batches","type":"main","index":0}]]}}
+	}`
+
+	result := importFixture(t, fixture)
+	loop := nodeByName(result.Document, "Split In Batches")
+	reset, _ := loop.Parameters["reset"].(map[string]any)
+	if reset["value"] != "{{ $runIndex > 0 }}" || reset["mode"] != "expression" {
+		t.Errorf("reset = %#v, want the expression kept (without n8n's marker)", loop.Parameters["reset"])
+	}
+
+	reported := false
+	for _, issue := range result.Unsupported {
+		if issue.Field != "options.reset" {
+			continue
+		}
+		reported = true
+		if issue.Severity != n8n.SeverityLossy {
+			t.Errorf("options.reset severity = %q, want %q: the value is carried, what it does is not",
+				issue.Severity, n8n.SeverityLossy)
+		}
+		if strings.Contains(issue.Reason, "was not carried") {
+			t.Errorf("options.reset reason = %q, want it to say the value is kept and only its effect is missing",
+				issue.Reason)
+		}
+	}
+	if !reported {
+		t.Error("options.reset was carried without a diagnostic; the restart semantics are not implemented")
+	}
+}
+
 // TestExecuteWorkflowInputMappingShapesTheSubWorkflowInput covers the caller's
 // "define using fields below" mapper.
 //
