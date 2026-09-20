@@ -226,6 +226,61 @@ func TestHTTPRequestSendsAJSONBody(t *testing.T) {
 	}
 }
 
+func TestHTTPRequestSendsResolvedBodyFieldsRatherThanExpressionWrappers(t *testing.T) {
+	t.Parallel()
+
+	var received string
+	var contentType string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		received = string(body)
+		contentType = r.Header.Get("Content-Type")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+
+	// The shape an imported n8n bodyParameter set is stored as: each value is
+	// the item's own expression, resolved per item by the runtime. Sending the
+	// wrapper instead is the bug — the upstream API received
+	// {"id":{"mode":"expression","value":"{{ $json.id }}"}} and the node still
+	// reported success.
+	parameters := func(bodyType string) map[string]any {
+		return map[string]any{
+			"method": "POST", "url": server.URL, "sendBody": true, "bodyType": bodyType,
+			"bodyFields": map[string]any{
+				"id":  map[string]any{"mode": "expression", "value": "{{ $json.id }}"},
+				"q":   map[string]any{"mode": "expression", "value": "{{ $json.q }}"},
+				"lit": "plain",
+			},
+		}
+	}
+
+	executor := nodes.NewHTTPExecutor(localPolicy())
+	if _, err := executor.Execute(context.Background(), httpNode(parameters("json")), workflow.NodeInput{"main": {
+		{JSON: map[string]any{"id": float64(1), "q": "hello"}},
+	}}, engine.Request{}); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if received != `{"id":1,"lit":"plain","q":"hello"}` {
+		t.Errorf("JSON body = %q, want the fields encoded from their resolved values", received)
+	}
+	if contentType != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", contentType)
+	}
+
+	if _, err := executor.Execute(context.Background(), httpNode(parameters("form")), workflow.NodeInput{"main": {
+		{JSON: map[string]any{"id": float64(1), "q": "hello"}},
+	}}, engine.Request{}); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if received != "id=1&lit=plain&q=hello" {
+		t.Errorf("form body = %q, want the fields encoded from their resolved values", received)
+	}
+	if contentType != "application/x-www-form-urlencoded" {
+		t.Errorf("Content-Type = %q, want application/x-www-form-urlencoded", contentType)
+	}
+}
+
 func TestHTTPRequestRejectsAnInvalidJSONBodyBeforeSending(t *testing.T) {
 	t.Parallel()
 

@@ -1,7 +1,7 @@
 ---
 id: BUG-pwckhd
 title: HTTP Request body expressions sent upstream as literal expression-wrapper JSON
-status: todo
+status: doing
 priority: critical
 labels:
     - http
@@ -11,7 +11,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:09Z"
-updated: "2026-09-19T12:06:09Z"
+updated: "2026-09-20T00:25:29Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -55,3 +55,9 @@ Files: internal/interop/n8n/parameters.go, nodes/http.go
 - [ ] HTTP Request body fields that use expressions are sent as literal {"mode":"expression",...} JSON
 - [ ] HTTP Request bodyParameters expressions are sent upstream as literal {"mode":"expression"} JSON
 - [ ] Adversarial re-verify against live stub/n8n like the Verify phase (no code-only close)
+## Progress (WebhookParity 2026-09-20)
+
+- Runtime half landed: `kilasflow.httpRequest` now carries a structured `bodyFields` key/value parameter (`nodes/http.go`). The values are resolved per item by `expression.Resolve` (nested maps already recurse), then the executor encodes them — JSON via `json.Marshal` (so a lone expression keeps its native type, matching n8n's `{"id":1,"q":"hello"}`) and form via `url.Values`. An absent/empty `bodyFields` falls back to the existing `body` field, so nothing already saved changes.
+- Also added `rawContentType` (default `text/plain; charset=utf-8`) so a raw body keeps n8n's `rawContentType` instead of a hard-coded text/plain.
+- Scoped proof (isolated worktree at baseline a91157f + only my files, because siblings were mid-edit): `go test ./nodes/ -run TestHTTPRequest -count=1` → ok. New test `TestHTTPRequestSendsResolvedBodyFieldsRatherThanExpressionWrappers` fails pre-fix (`body = ""`, the wrapper map was never encoded) and passes post-fix, asserting `{"id":1,"lit":"plain","q":"hello"}` and `id=1&lit=plain&q=hello` on the wire.
+- Remaining (ImporterTail's file): `httpToKilas` must map `bodyParameters` to `bodyFields` instead of `json.Marshal`-ing into `body`, and `httpToN8N` must write `bodyParameters` back. Contract sent via hub (field names + shapes). Runtime side is complete and independently tested.

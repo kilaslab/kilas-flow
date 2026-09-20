@@ -79,6 +79,21 @@ func httpRequestNode() node.Definition {
 				VisibleWhen: []node.VisibilityCondition{{Key: "sendBody", Equals: true}},
 			},
 			{
+				Key: "bodyFields", Label: "Body fields", Kind: node.PropertyKeyValue,
+				Description: "One field per row. Each value is resolved for the item being sent and the " +
+					"body is encoded after resolution, so `{{ $json.id }}` sends the id rather than the " +
+					"template. Leave every row empty to use the Body field above instead.",
+				VisibleWhen: []node.VisibilityCondition{{Key: "sendBody", Equals: true}},
+			},
+			{
+				Key: "rawContentType", Label: "Raw content type", Kind: node.PropertyString,
+				Default: "text/plain; charset=utf-8",
+				Description: "Content type sent with a raw body.",
+				VisibleWhen: []node.VisibilityCondition{
+					{Key: "sendBody", Equals: true}, {Key: "bodyType", Equals: "raw"},
+				},
+			},
+			{
 				Key: "responseFormat", Label: "Response format", Kind: node.PropertyOptions, Default: "autodetect",
 				Options: []node.PropertyOption{
 					{Label: "Autodetect", Value: "autodetect"},
@@ -414,8 +429,29 @@ func requestBody(parameters map[string]any) (io.Reader, string, error) {
 	if !boolValue(parameters["sendBody"]) {
 		return nil, "", nil
 	}
+	kind := textValue(parameters["bodyType"], "json")
+	// Fields are encoded *after* the per-item expression pass, which is the
+	// whole point of holding them as a map: `{{ $json.id }}` reaches this
+	// function as the item's id, and the wire sees the value rather than the
+	// template that produced it.
+	if fields, present := objectValue(parameters["bodyFields"]); present && len(fields) > 0 {
+		switch kind {
+		case "form":
+			form := url.Values{}
+			for key, value := range fields {
+				form.Set(key, textValue(value, ""))
+			}
+			return strings.NewReader(form.Encode()), "application/x-www-form-urlencoded", nil
+		default:
+			encoded, err := json.Marshal(fields)
+			if err != nil {
+				return nil, "", fmt.Errorf("body fields are not encodable as JSON")
+			}
+			return strings.NewReader(string(encoded)), "application/json", nil
+		}
+	}
 	raw := textValue(parameters["body"], "")
-	switch textValue(parameters["bodyType"], "json") {
+	switch kind {
 	case "json":
 		if strings.TrimSpace(raw) == "" {
 			return nil, "application/json", nil
@@ -437,7 +473,7 @@ func requestBody(parameters map[string]any) (io.Reader, string, error) {
 		}
 		return strings.NewReader(form.Encode()), "application/x-www-form-urlencoded", nil
 	default:
-		return strings.NewReader(raw), "text/plain; charset=utf-8", nil
+		return strings.NewReader(raw), textValue(parameters["rawContentType"], "text/plain; charset=utf-8"), nil
 	}
 }
 
@@ -513,4 +549,14 @@ func numberValue(value any) float64 {
 func mapValue(value any) map[string]any {
 	typed, _ := value.(map[string]any)
 	return typed
+}
+
+// objectValue distinguishes an absent object from an empty one.
+//
+// `mapValue` cannot: a parameter that is not a map and a parameter that is an
+// empty map both read as nil, and "no fields were configured" has to fall back
+// to the Body field while "two fields were configured" must not.
+func objectValue(value any) (map[string]any, bool) {
+	typed, ok := value.(map[string]any)
+	return typed, ok
 }
