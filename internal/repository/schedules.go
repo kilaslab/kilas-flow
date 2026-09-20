@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"strings"
 	"time"
@@ -63,6 +64,9 @@ type ScheduleRepository interface {
 	Create(context.Context, TenantScope, Schedule) (Schedule, error)
 	Update(context.Context, TenantScope, string, Schedule) (Schedule, error)
 	List(context.Context, TenantScope) ([]Schedule, error)
+	// ListPage is the bounded listing the API serves, so one request cannot
+	// return every schedule a tenant owns.
+	ListPage(context.Context, TenantScope, ScheduleFilter) (SchedulePage, error)
 	Delete(context.Context, TenantScope, string) error
 	// ClaimDue atomically claims schedules due at or before now and advances
 	// their next run, so one due time produces exactly one execution.
@@ -129,6 +133,11 @@ func (store *GORMScheduleStore) Update(ctx context.Context, tenant TenantScope, 
 }
 
 // List returns every schedule in the tenant.
+//
+// Unbounded on purpose, and kept for the in-process callers that genuinely want
+// the whole set — the scheduler's own tests list the table to assert what
+// activation and deletion wrote. The HTTP listing is ListPage: a request from a
+// browser must not be able to ask for every row a tenant owns (BUG-fv5fer).
 func (store *GORMScheduleStore) List(ctx context.Context, tenant TenantScope) ([]Schedule, error) {
 	if err := tenant.validate(); err != nil {
 		return nil, err
@@ -142,6 +151,109 @@ func (store *GORMScheduleStore) List(ctx context.Context, tenant TenantScope) ([
 		schedules = append(schedules, scheduleFromModel(model))
 	}
 	return schedules, nil
+}
+
+// DefaultSchedulePageSize and MaxSchedulePageSize bound the schedules listing.
+const (
+	DefaultSchedulePageSize = 100
+	MaxSchedulePageSize     = 500
+)
+
+// ScheduleFilter narrows a schedule listing. The zero value returns the first
+// page.
+type ScheduleFilter struct {
+	Limit int
+	// Cursor continues a previous listing. It is opaque to callers; only
+	// ListPage may construct one.
+	Cursor string
+}
+
+// SchedulePage is one page of schedules in creation order with the cursor for
+// the next.
+type SchedulePage struct {
+	Schedules  []Schedule
+	NextCursor string
+}
+
+// ListPage returns one page of schedules, oldest first.
+//
+// The order is the one List has always used — created_at ascending, the order a
+// person reads a list they built over time — with id as the tiebreaker, because
+// several schedules are created inside the same millisecond when a workflow is
+// activated with several intervals and the dashboard still has to page through
+// them without repeating or skipping a row.
+func (store *GORMScheduleStore) ListPage(ctx context.Context, tenant TenantScope, filter ScheduleFilter) (SchedulePage, error) {
+	if err := tenant.validate(); err != nil {
+		return SchedulePage{}, err
+	}
+
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = DefaultSchedulePageSize
+	}
+	if limit > MaxSchedulePageSize {
+		limit = MaxSchedulePageSize
+	}
+
+	query := store.db.WithContext(ctx).Model(&scheduleModel{}).Where("tenant_id = ?", tenant.ID)
+	if filter.Cursor != "" {
+		createdAt, id, err := decodeScheduleCursor(filter.Cursor)
+		if err != nil {
+			return SchedulePage{}, err
+		}
+		query = query.Where("(created_at > ?) OR (created_at = ? AND id > ?)", createdAt, createdAt, id)
+	}
+
+	// Read one extra row to learn whether another page exists without a second
+	// COUNT over the same predicate.
+	var models []scheduleModel
+	if err := query.Order("created_at ASC, id ASC").Limit(limit + 1).Find(&models).Error; err != nil {
+		return SchedulePage{}, fmt.Errorf("list schedules: %w", err)
+	}
+
+	page := SchedulePage{Schedules: make([]Schedule, 0, limit)}
+	if len(models) > limit {
+		last := models[limit-1]
+		page.NextCursor = encodeScheduleCursor(last.CreatedAt, last.ID)
+		models = models[:limit]
+	}
+	for _, model := range models {
+		page.Schedules = append(page.Schedules, scheduleFromModel(model))
+	}
+	return page, nil
+}
+
+// encodeScheduleCursor pins the last (created_at, id) pair seen, keeping the
+// zone the row was read in.
+//
+// The zone is carried rather than normalised to UTC because created_at is
+// stamped by Create with time.Now() — local — and the SQLite driver renders a
+// bound time.Time with that value's own offset. A UTC cursor would bind
+// "2026-09-20 00:38:17Z" against a stored "2026-09-20 07:38:17+07:00" and match
+// nothing, so the second page would come back empty (BUG-fv5fer, the same trap
+// the workflow listing hit). This way the bound value is the text the column
+// holds, which is what ORDER BY itself compares.
+func encodeScheduleCursor(createdAt time.Time, id string) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(createdAt.Format(time.RFC3339Nano) + "\x00" + id))
+}
+
+// decodeScheduleCursor inverts encodeScheduleCursor. A cursor this store did
+// not issue is ErrInvalidCursor, which the API answers as a 400 rather than
+// paging from a position nobody handed out.
+func decodeScheduleCursor(cursor string) (time.Time, string, error) {
+	decoded, err := base64.RawURLEncoding.DecodeString(cursor)
+	if err != nil {
+		return time.Time{}, "", fmt.Errorf("%w: schedule cursor is malformed", ErrInvalidCursor)
+	}
+	timestamp, id, found := strings.Cut(string(decoded), "\x00")
+	if !found || id == "" {
+		return time.Time{}, "", fmt.Errorf("%w: schedule cursor is malformed", ErrInvalidCursor)
+	}
+	createdAt, err := time.Parse(time.RFC3339Nano, timestamp)
+	if err != nil {
+		return time.Time{}, "", fmt.Errorf("%w: schedule cursor is malformed", ErrInvalidCursor)
+	}
+	return createdAt, id, nil
 }
 
 // Delete removes a schedule.
