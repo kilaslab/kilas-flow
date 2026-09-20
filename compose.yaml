@@ -28,7 +28,7 @@ name: kilasflow
 services:
   kilasflow:
     # No KilasFlow release has been published yet: the release workflow exists,
-    # but no version tag has ever been pushed, so `ghcr.io/kilaslabs/kilasflow`
+    # but no version tag has ever been pushed, so `ghcr.io/kilaslab/kilasflow`
     # holds nothing. The default below therefore names a *local* image, and the
     # command that produces it is:
     #
@@ -38,7 +38,7 @@ services:
     # ran this file on its own without having built that image — add the overlay.
     #
     # Once a release exists, set KILASFLOW_IMAGE in .env to the exact version —
-    # `ghcr.io/kilaslabs/kilasflow:v1.2.3`, never `:latest` and never `:v1.2`.
+    # `ghcr.io/kilaslab/kilasflow:v1.2.3`, never `:latest` and never `:v1.2`.
     # Both of those move underneath a running deployment, which turns "my stack
     # changed overnight" into a question nobody can answer from the compose file.
     # scripts/docker-tags.sh is where that vocabulary is defined.
@@ -83,12 +83,12 @@ services:
 
     # There is no healthcheck here, and that is a limitation rather than an
     # oversight worth hiding. The runtime image is distroless: no shell, no curl,
-    # no wget, and the binary itself has no probe subcommand — `-config` and
-    # `-version` are its only flags. Every healthcheck expressible against this
-    # image would either fail always (a missing binary) or pass immediately (the
-    # binary exists), and the second is worse than none, because a `depends_on:
-    # service_healthy` pointing at it would report a server ready before it had
-    # opened its listener.
+    # no wget, and the binary itself has no probe subcommand — its flags are
+    # `-config`, `-version`, `-role` and `-worker-id`. Every healthcheck
+    # expressible against this image would either fail always (a missing binary)
+    # or pass immediately (the binary exists), and the second is worse than none,
+    # because a `depends_on: service_healthy` pointing at it would report a
+    # server ready before it had opened its listener.
     #
     # Readiness is checked from outside instead, which is what the quickstart
     # does and what scripts/smoke-docker.sh has always done:

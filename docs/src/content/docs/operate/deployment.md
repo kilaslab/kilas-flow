@@ -18,8 +18,15 @@ first boot:
 ```sh
 mkdir data
 chmod 777 data
+make docker
 docker run -d -p 127.0.0.1::8080 -v ./data:/app/data kilasflow:latest
 ```
+
+`kilasflow:latest` is the tag `make docker` writes next to the versioned one. No
+image has been published to a registry yet, so that build above is not optional:
+a `docker run` without it pulls nothing. The published coordinates are
+`ghcr.io/kilaslab/kilasflow` (see the `IMAGE` variable in the Makefile), and they
+will be filled once a release tag exists.
 
 The `chmod` is load-bearing rather than ceremonial: the process runs as
 `nonroot`, so a bind mount owned by root with default permissions is a
@@ -62,9 +69,9 @@ Two facts that surprise operators coming from the SQLite default:
   send an operator hunting the wrong thing.
 
 Queue wakeups over `LISTEN`/`NOTIFY` and claim granularity over
-`FOR UPDATE SKIP LOCKED` are built into the PostgreSQL tier; the
-shared-database guard below is tracked on the roadmap under V2-p6-3 and
-follow-ups, and in `FEAT-a94c8y`. What is written here is what the tier does
+`FOR UPDATE SKIP LOCKED` are built into the PostgreSQL tier, as is the guard
+that refuses a workflow credential naming the installation's own database (see
+[Security](/operate/security/)). What is written here is what the tier does
 today.
 
 ## Multiple workers against one PostgreSQL database
@@ -146,11 +153,14 @@ The topology the white-label operator most wants: KilasFlow's tables live
 alongside the host application's in one PostgreSQL database, distinguished by
 a table prefix. This is supported as a naming convention today and must be
 understood as exactly that — **a table prefix is a naming convention, not an
-isolation boundary**. It stops table-name collisions. It does not stop a
-`kilasflow.postgres` node whose credential points at the shared database from
-reading `credentials`, `workflows` and every execution payload: the
-internal-database guard currently refuses SQLite files only, and SQL nodes do
-no host validation (`FEAT-a94c8y` closes both).
+isolation boundary**. It stops table-name collisions. What it does not stop is
+the *host application* reading `credentials`, `workflows` and every execution
+payload: both live in one database, and no prefix changes what the other
+client's role may read. KilasFlow's own fight is a different one, and it is
+covered — a `kilasflow.postgres` node whose credential names the installation's
+own host, port and database is refused before it dials, prefix or no prefix, and
+SQL targets are held to the instance egress policy like HTTP ones (see
+[Security](/operate/security/)).
 
 The only deployment that genuinely isolates KilasFlow from its host database
 is a dedicated schema owned by a role with no rights outside it, with

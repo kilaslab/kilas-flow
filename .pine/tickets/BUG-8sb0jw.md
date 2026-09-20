@@ -208,3 +208,19 @@ Files: devbox.json, Makefile
   `make e2e-skip-budget` after the run) fails the job on an unexplained skip, on a PostgreSQL skip (CI provides
   it), or on a total past the recorded budget. Verified against real Playwright JSON reports for the pass case
   and all three failure modes.
+
+- Operator docs corrected against the shipped product: operate/upgrades.md no longer tells operators to restore into
+  `postgres:17-alpine` (the service pins pgvector/pgvector:pg17 and a dump carries CREATE EXTENSION vector, which that
+  image cannot satisfy); start/install.md gained a "PostgreSQL requirements" section (pgvector, the superuser privilege
+  CREATE EXTENSION needs, and the fact that a missing extension is a warned skip rather than a failed boot) and its
+  migration count no longer says "three"; operate/security.md and operate/deployment.md now describe the
+  internal-database guard as shipped (SQLite paths and the PostgreSQL network identity, plus egress-policy and
+  allowed-domains checks on SQL targets) instead of "no guard yet / no host validation ... FEAT-a94c8y closes this";
+  compose.yaml's healthcheck comment lists the binary's four flags; compose.postgres.yaml no longer claims a boot
+  failure without pgvector.
+- Remaining from this ticket, with reasons: (a) a self-authored, licence-clean WAHA template so waha-migration.spec.ts
+  and epic proof 2 run in CI — the official template is committed material we have no licence for, so the fixture has
+  to be ours and the spec's pinned diagnostics rewritten around it; (b) an OpenAI-compatible stub model so the four
+  ai-agent-ollama model tests and epic proof 1 run without a local Ollama; (c) `kilasflow healthcheck` as a subcommand
+  (the finding half implemented by the compose comment correction and the Dockerfile shipping nodepackgen). Until (a)
+  and (b) land, `make e2e-skip-budget` keeps every one of those skips named and counted rather than passing silently.

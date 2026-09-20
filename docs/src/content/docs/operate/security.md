@@ -44,13 +44,23 @@ a token travels through a host page and sits in a browser. The signing key is
 deliberately a different variable from the dashboard auth key, so a forged
 value of one kind can never be presented as the other.
 
-**The internal database has a guard.** A SQLite workflow credential naming
-KilasFlow's own database file — including its `-wal`, `-shm` and `-journal`
-siblings, through symlinks — is refused before any connection opens. On
-PostgreSQL there is no guard yet: a `kilasflow.postgres` node pointed at
-KilasFlow's own database reads credentials, workflows and every execution
-payload. `FEAT-a94c8y` closes this, and until it lands the dedicated-schema
-deployment below is the isolation story, not the guard.
+**The internal database has a guard, on both drivers.** A workflow database
+credential naming KilasFlow's own database is refused before a socket or a file
+is opened, and again at dial time: on SQLite the path and its `-wal`, `-shm` and
+`-journal` siblings are resolved through symlinks and matched, and on PostgreSQL
+the connection's host, port and database name are matched against the
+installation's own DSN. A table prefix does not scope the refusal — anything
+holding the connection can read every table under it, so the whole database is
+refused however the credential spells its target.
+
+**SQL targets are checked like HTTP ones.** A network database credential is
+also subject to the instance egress policy: a host that resolves to loopback,
+private, link-local or otherwise internal address is refused before anything
+dials unless the policy explicitly allows it, and a credential carrying an
+allowed-domains list reaches only the hosts on it. What the guard does not do is
+police the *host application* that shares the database: it stops KilasFlow's own
+SQL nodes, so a shared-database deployment still needs a dedicated schema — the
+isolation story below is about the other direction.
 
 **Credentials are sealed.** Stored credentials are encrypted at rest with
 AES-256-GCM. The key is read from the environment and never from the

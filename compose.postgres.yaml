@@ -45,9 +45,12 @@ services:
     # Pinned to a major version. PostgreSQL does not read a data directory
     # written by a newer major, so a floating tag would eventually produce a
     # stack that will not start and cannot be rolled back without a dump.
-    # pgvector variant rather than stock: migration 000006_vector_store
-    # creates the vector extension, and a server without its binaries refuses
-    # the migration and the boot with it.
+    # pgvector variant rather than stock: migration 000006_vector_store runs
+    # CREATE EXTENSION vector, and a server without the extension's binaries
+    # cannot satisfy it. KilasFlow still boots without it — the migration is
+    # recorded as skipped, with a warning naming the statement to run — but the
+    # vector nodes refuse until it exists, which is the wrong default for the
+    # one-command path.
     image: pgvector/pgvector:pg17
     environment:
       POSTGRES_USER: ${KILASFLOW_POSTGRES_USER:-kilasflow}

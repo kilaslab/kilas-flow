@@ -45,11 +45,18 @@ docker compose -f compose.yaml -f compose.postgres.yaml exec postgres \
   pg_dump -U kilasflow kilasflow > kilasflow.sql
 ```
 
-Restore into a fresh database of the same major version — PostgreSQL does not
-read a data directory written by a newer major, which is why the service pins
-`postgres:17-alpine`. The named volume `kilasflow-postgres` can also be
-backed up at the volume level, but a dump is the form that survives a move
-between machines and majors.
+Restore into a server that can provide the same extensions, on the same major
+version. PostgreSQL does not read a data directory written by a newer major,
+which is why the Compose service pins a major at all; it pins
+`pgvector/pgvector:pg17` rather than stock PostgreSQL because migration
+`000006_vector_store` creates the `vector` extension, and a dump taken from it
+contains that `CREATE EXTENSION`. Restoring such a dump into a
+`postgres:17-alpine` container fails on the first statement, because that image
+ships no pgvector to install — see [PostgreSQL
+requirements](/start/install/#postgresql-requirements) for the two ways to
+satisfy it. The named volume `kilasflow-postgres` can also be backed up at the
+volume level, but a dump is the form that survives a move between machines and
+majors.
 
 ## Upgrading
 

@@ -9,7 +9,7 @@ build touches runs inside a container.
 ## Quickstart
 
 ```sh
-git clone https://github.com/kilaslabs/k-flow
+git clone https://github.com/kilaslab/kilas-flow
 cd k-flow
 
 cp .env.example .env
@@ -36,7 +36,7 @@ running server generates for itself is at **http://localhost:8080/docs**, and
 The multi-architecture image pipeline and the release workflow are both in the
 tree, and `scripts/docker-tags.sh` already defines what each published tag
 means. But no version tag has ever been pushed, so
-`ghcr.io/kilaslabs/kilasflow` holds nothing and there is no image to pull. The
+`ghcr.io/kilaslab/kilasflow` holds nothing and there is no image to pull. The
 `compose.build.yaml` overlay is how you get one until that changes.
 
 When the first release lands, set `KILASFLOW_IMAGE` in `.env` to the exact
@@ -44,7 +44,7 @@ version and drop the overlay — `docker compose up -d` then pulls in seconds
 rather than building in minutes:
 
 ```sh
-KILASFLOW_IMAGE=ghcr.io/kilaslabs/kilasflow:v1.2.3
+KILASFLOW_IMAGE=ghcr.io/kilaslab/kilasflow:v1.2.3
 ```
 
 Pin the full `vX.Y.Z`. The `vX.Y` and `latest` tags both move forward onto later
@@ -164,8 +164,9 @@ docker compose -f compose.yaml -f compose.postgres.yaml up -d
 The overlay adds the database service, waits for its healthcheck before starting
 KilasFlow, and passes the connection string through the environment. The
 resulting stack answers the same checks as the default one — `/api/v1/ready`
-reports `"database":"ok"`, and the log shows `driver=postgres` with the same
-three migrations applied against `migrations/postgres/`.
+reports `"database":"ok"`, and the log shows `driver=postgres` followed by one
+line per applied migration from `migrations/postgres/` (ten files today:
+`000001`–`000006` and `000008`–`000011`, so the numbering is not contiguous).
 
 Decide before your first run. There is no migration path between the two
 backends: the PostgreSQL schema is created fresh and the stack comes up empty,
@@ -175,6 +176,37 @@ Change `KILASFLOW_POSTGRES_PASSWORD` in `.env` before this is reachable by
 anything but you. The database port is deliberately not published to the host,
 so the default is contained rather than safe; reach it with `docker compose exec
 postgres psql -U kilasflow`.
+
+## PostgreSQL requirements
+
+Three things a PostgreSQL server has to give KilasFlow, in the order they bite:
+
+**pgvector, for vector collections.** Migration `000006_vector_store` runs
+`CREATE EXTENSION IF NOT EXISTS vector` and then creates one typed document
+table per embedding dimension it supports (384, 768, 1024 and 1536), so a
+collection's dimension has to be one of those. The Compose overlay therefore
+pins `pgvector/pgvector:pg17`, and an image built from it is what the backup and
+restore steps in [Upgrades](/operate/upgrades/) assume.
+
+**The privilege to create that extension — or someone who has it.** pgvector is
+not a trusted extension, so `CREATE EXTENSION` needs a superuser. The image
+above makes the Compose user one, which is why the quickstart just works. In a
+shared or managed database the role KilasFlow connects as usually is not, and
+the migration fails at that first statement with a permission error. The fix is
+one statement by whoever owns the database, run once:
+
+```sql
+CREATE EXTENSION IF NOT EXISTS vector;
+```
+
+**A boot without it is not a failed boot.** When the extension is absent,
+KilasFlow records the vector migration as skipped, logs a warning naming
+`CREATE EXTENSION vector`, and starts: everything except the vector nodes works,
+and those refuse with the install message until the extension exists. A later
+boot on a server that has it applies the migration normally. This is deliberate
+— a database where an owner must be asked for a privilege should not cost you
+the rest of the product — but it does mean `/api/v1/ready` reporting `ok` is not
+by itself proof that vector search is available.
 
 ## Upgrading
 
@@ -196,7 +228,7 @@ docker run --rm -v kilasflow_kilasflow-data:/data -v "$PWD":/backup alpine \
 Then change the version in `.env` and recreate:
 
 ```sh
-# KILASFLOW_IMAGE=ghcr.io/kilaslabs/kilasflow:v1.3.0
+# KILASFLOW_IMAGE=ghcr.io/kilaslab/kilasflow:v1.3.0
 docker compose pull
 docker compose up -d
 ```
