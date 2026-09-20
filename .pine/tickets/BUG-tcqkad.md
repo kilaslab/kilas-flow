@@ -10,7 +10,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:09Z"
-updated: "2026-09-20T02:42:18Z"
+updated: "2026-09-20T03:11:24Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -642,3 +642,11 @@ Closed by `pine close --evidence` on 2026-09-20.
 - **Max-iterations fallback parsed as the parser schema**: the loop now completes with `MaxIterationsMessage` (`internal/ai/agent.go:230`), but the parser branch (`nodes/ai.go:1377-1384`) still unmarshals that string, so a graph with a Structured Output Parser attached fails with "parser output is not valid JSON" naming the wrong cause (verified: same graph without the parser succeeds). Fix: don't parse the fallback (a boolean on `ai.AgentResult` set at the bound is cleaner than matching the message), plus a test.
 - **Sampling options from an imported model are ignored**: `chatModel` reads sampling keys from the node top level only (`nodes/ai.go:781-786`), while `chatModelToKilas` (`internal/interop/n8n/parameters.go:4689`) writes temperature/topP/maxTokens/penalties/timeout/maxRetries into the `options` collection and marks them consumed — so every imported Ollama/Gemini/DeepSeek/Groq/Mistral/xAI model silently runs at provider defaults (verified by descriptor probe). Fix: read the same names from the options collection when the top level did not set them.
 - **Run-ceiling timeout error names a knob that cannot raise it** (`nodes/ai.go:1367-1371`): it points at the chat model's Timeout option, which is refused above the ceiling (`ErrModelTimeoutAboveCeiling`), while the real bound is the deployment ceiling with no config value behind it. Fix: name the ceiling (or wire it to configuration) instead of the node option.
+
+## Addendum done (FixAiHttpRemnants 2026-09-20, commit `209e150`)
+
+- **(a) parser + max iterations** — `ai.AgentResult` gained `MaxIterationsReached`, set by `LoopRuntime` when the loop ends on the bound (`internal/ai/agent.go`), and the parse branch in `nodes/ai.go` is skipped for that result, so the run's stated fallback is returned rather than json.Unmarshal'd. Proof: `TestAParserRunThatHitsTheIterationBoundAnswersWithTheFallback`; pre-fix `Execute() error = node "AI Agent": parser output is not valid JSON: invalid character 'A' looking for beginning of value`.
+- **(b) imported sampling options** — `executeChatModel` reads the `options` collection first and the top-level fields second, so an imported model's temperature/topP/maxTokens/penalties/timeout/maxRetries reach the descriptor and a value the node's own form shows still wins. Proof: `TestAnImportedModelsSamplingOptionsReachTheDescriptor`; pre-fix `descriptor["temperature"] = <nil>, want 0.2 from the options collection` (all five nil).
+- **(c) run-ceiling message** — the node now names the deployment's model timeout ceiling and says no node option raises it, and the model adapter no longer reports a request timeout that had not elapsed: `internal/ai/openai.go` said "did not answer within 30s (raise the model node's Timeout option …)" for a run that ended at the deployment's 300ms ceiling, and now only names that timeout when it is what expired. Proof: `TestTheRunCeilingErrorNamesTheCeilingAndNotTheNodeTimeout`; pre-fix `error = node "AI Agent": the agent did not finish within 300ms; raise the chat model node's Timeout option to allow a slower model: … model request did not answer within 30s (raise the model node's Timeout option …)`.
+
+`go test ./nodes/ -run 'Agent|Parser|ChatModel|HTTP' -count=1` and `go test ./internal/ai/ -count=1` ok. Status left `doing` for the re-verify phase.

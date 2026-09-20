@@ -10,7 +10,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:10Z"
-updated: "2026-09-20T03:01:20Z"
+updated: "2026-09-20T03:11:25Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -553,3 +553,22 @@ Remaining from the ReviewEngine addendum for this file, not yet done (budget-sto
 (d) `fullResponse` JSON-marshals a parsed body into a string, so `$json.body.<field>` stops
 resolving — the parsed body should stay in the envelope with the textual body under the
 output-property name.
+
+## Addendum (d) done (FixAiHttpRemnants 2026-09-20, commit `209e150`)
+
+`fullResponse` no longer stringifies the decoded body. `responseEnvelope` takes `body any` and
+keeps a parsed JSON response under `body`, so `$json.body.<field>` — the expression every
+imported workflow is written with — resolves again; a body read as text goes under the node's
+output property name (default `data`), which is where n8n's text branch puts it; and a stored
+file's envelope carries no `body` key at all, as n8n's file branch does. The now-unused
+`bodyString` helper is gone. An empty JSON body answers `{}` under `body`, matching n8n.
+
+Proof: `TestHTTPRequestFullResponseMatchesN8NEnvelope`, revised — it pinned the stringified
+shape, which is the regression itself (`body` was asserted to be the raw response text), so it
+was corrected rather than loosened: it now asserts the parsed object under `body` and the text
+case under `data`. Pre-fix (the revised tests copied into a worktree at HEAD):
+`body = "{\"ok\":true}", want the parsed response object`,
+`text body = "hello plain text", want a text response carried under the output property`,
+`data = <nil>, want the response text`. Post-fix:
+`go test ./nodes/ -run 'Agent|Parser|ChatModel|HTTP' -count=1` ok. Status left `doing` for the
+re-verify phase.
