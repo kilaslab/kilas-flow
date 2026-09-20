@@ -17,6 +17,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -428,7 +429,7 @@ func TestExpiredWaitsResolveOnTheirOwnDeadline(t *testing.T) {
 		t.Fatalf("Get(timer) error = %v", err)
 	}
 	if resumed.Status != execution.StatusSucceeded {
-		t.Fatalf("timer status = %q, want succeeded (error %s)", resumed.Status, resumed.Error)
+		t.Fatalf("timer status = %q, want succeeded (error %s) runs=%s", resumed.Status, resumed.Error, describeRuns(resumed))
 	}
 
 	// An absolute deadline resolves the same way: until is a timer with a
@@ -711,4 +712,14 @@ func TestWatchQueueReportsDropsAndTickStillDelivers(t *testing.T) {
 	if worked, err := service.RunOnce(ctx); err != nil || !worked {
 		t.Fatalf("RunOnce() = (%v, %v), want (true, nil)", worked, err)
 	}
+}
+
+// describeRuns renders one execution's node runs for a failure message: which
+// node ran, in what status, and how many times.
+func describeRuns(record execution.Record) string {
+	rendered := make([]string, 0, len(record.NodeRuns))
+	for _, run := range record.NodeRuns {
+		rendered = append(rendered, fmt.Sprintf("%s#%d/%s", run.NodeID, run.RunIndex, run.Status))
+	}
+	return "[" + strings.Join(rendered, " ") + "]"
 }
