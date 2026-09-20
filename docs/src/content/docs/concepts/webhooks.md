@@ -83,29 +83,47 @@ the header carrying the delivery identifier, and the claim on it is taken
 
 The trigger's `responseMode` parameter decides what the caller gets back.
 
-**Immediate** (the default) acknowledges without waiting:
-`{"executionId":…, "status":"queued"}`. The status code can be overridden by the
-trigger's `responseCode` parameter, within 100–599. This is the right mode for
-anything that will take longer than the sender's own timeout.
+**Immediate** (the default) acknowledges without waiting, with n8n's own body:
+`{"message":"Workflow was started"}`. Four options change that answer.
+`options.responseCode` sets the status (100–599, otherwise `200`), and the
+legacy top-level `responseCode` is read too, so a workflow saved either way keeps
+answering with the code it was configured for. `options.responseHeaders` adds
+headers, in n8n's `{entries: [{name, value}]}` shape or as a plain map.
+`options.responseData` sends that text instead of the JSON body, as
+`text/html; charset=utf-8` — which is what n8n's own HTTP layer does with a
+string. `options.noResponseBody` sends the status with no body at all. This is
+the right mode for anything that will take longer than the sender's own timeout.
 
 **Last node** waits for the run and returns the last node's data as the body —
 where "last" means the highest-sequence node run that succeeded and produced
-items. A sub-setting chooses between `204 No Content`, the first item's JSON as
-an object, or all items as a JSON array. This mode used to write KilasFlow's own
+items, with a skipped node and an empty node both passed over. The trigger's
+`responseData` parameter picks the shape: the default is the first item as a JSON
+object, `allEntries` is always a JSON array (including for one item), and
+`noData` sends the configured status with an empty body — n8n's own "No Data",
+and deliberately not a `204`, because the option is about the body rather than
+about the status. Two answers come from the platform rather than the workflow: a
+successful run whose last node produced nothing gets n8n's own
+`500 {"message":"No item to return was found"}` instead of an echo of the
+trigger's request data, and a run that did not succeed gets
+`500 {"message":"Error in workflow"}` — deliberately generic, because the caller
+is whoever found the URL, and the specific failure used to name nodes and quote
+the upstream's own error text. This mode used to write KilasFlow's own
 `{executionId, status, data}` envelope instead, which meant an imported workflow
 configured for `lastNode` returned `200` and handed its caller the wrong body
 with nothing reporting it.
 
-**Respond node** waits, then answers from a Respond to Webhook node's item — its
-`statusCode`, `headers` and `body`. If no `Content-Type` was set, the handler
-picks `application/json` when the body is valid JSON and `text/plain` otherwise.
-If the graph finished without reaching a Respond node, the answer is `500` saying
-exactly that, which beats returning a misleading `200` with the last node's data.
-
-The search for that node walks the node runs in **execution order** rather than
-iterating the output map, because Go randomises map iteration: with a Respond
-node on each arm of an `IF`, which one answered the caller was decided by a coin
-flip.
+**Respond node** answers when the Respond to Webhook node runs. Its `statusCode`,
+`headers` and `body` are the answer, and if it set no `Content-Type` the handler
+picks `application/json` when the body parses as JSON and
+`text/html; charset=utf-8` otherwise. The answer travels as an event the node
+publishes, so the caller is answered at that moment and **the rest of the
+workflow keeps going** — a Slack or WhatsApp webhook has about three seconds to
+acknowledge, and a workflow that acknowledged before doing slow work used to time
+out, be retried, and duplicate its side effects. Events already retained for the
+execution are replayed to the waiter, so a response published before anything
+subscribed is not missed. A run that finished successfully without reaching a
+Respond node is answered `200` with an empty body, which is n8n's own answer; a
+run that failed is answered `500 {"message":"Error in workflow"}`.
 
 **Filtered** is not a mode but is worth knowing about. A trigger restricted to
 certain event types answers `200 {"filtered": true, …}` for an update it was
@@ -140,9 +158,15 @@ one opaque segment with no pattern behind it. The key is present rather than
 absent so an expression reading it gets an empty object instead of failing.
 `bodyAsItem` makes the parsed body the item itself.
 
-Headers are redacted before the delivery is recorded. The **body is deliberately
-not**: a workflow's whole purpose is usually the body, and redacting it would
-make the execution trace useless for the thing people actually open it for.
+The delivery is recorded exactly as it arrived — headers included — because the
+stored record *is* the input the run executes on: a workflow reading its own
+`headers['x-api-key']`, or a cookie, sees what the caller sent rather than a
+placeholder. Redaction belongs to the surfaces that hand a record back instead.
+API responses, the live feed and the inspector pass the payload through one rule
+that normalises header names and withholds credential keys, so a reader never
+sees them even though storage holds them. That is a storage-posture fact, not a
+detail: see [the security page](/operate/security/) for what it means for
+backups and dumps.
 
 ## Which node types can bind a route
 

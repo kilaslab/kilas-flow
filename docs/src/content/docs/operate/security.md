@@ -93,6 +93,21 @@ session is refused: an approval decision must not arrive through a host page.
 The waiting event on the live feed carries the node and the deadline, never
 the token and never run data.
 
+**Redaction is a read-surface guarantee, not a storage one.** A trigger delivery
+is the caller's own data and the stored record *is* the input the run executes
+on, so the execution row keeps it exactly as it arrived — headers included — and
+an imported workflow checking its own `headers['x-api-key']`, or reading a
+cookie, sees what the caller sent rather than a placeholder. Every surface that
+hands a record back redacts instead: API responses, the live event feed and the
+editor's inspector pass the payload through the same rule, which normalises
+header names and withholds credential keys as `[redacted]`. The node-run trace
+keeps redacting on the way *in*, so a credential the runtime resolved never
+lands in a node's stored input or output. What follows for an operator is the
+part worth reading twice: **a raw table dump, a database backup or a support
+export carries inbound trigger headers and bodies verbatim.** Treat those files
+as credential-bearing, and prefer the API over a SQL client when handing run
+data to somebody else.
+
 **Webhook routes are unguessable rather than authenticated.** The route
 segment carries 16 bytes of entropy, because this endpoint is very often
 called by a third party that cannot hold a credential. Every request that
@@ -116,7 +131,12 @@ that genuinely isolates is KilasFlow's objects in a dedicated schema, owned
 by a role with no rights on the host application's schema, with `search_path`
 set on the KilasFlow connection.
 
-Related and equally load-bearing: every stored row carries a tenant
-identifier and every repository call takes a tenant scope, but nothing
-resolves a tenant from a request, so there is one tenant, named `default`. Do
-not rely on tenant separation for isolation between customers today.
+Related and equally load-bearing: every stored row carries a tenant identifier
+and every repository call takes a tenant scope, and the tenant is resolved from
+whatever authenticated the request — an embed session first, then a signed-in
+session or an API key. A row belonging to another tenant does not fail a
+permission check; it does not exist. What a tenant *is*, though, is a row: an
+id, a name and timestamps, with no per-tenant configuration and no per-tenant
+quota, and every tenant's rows share the same tables. With authentication off,
+which is the default, every caller is the operator and every request resolves to
+the one tenant named `default`.

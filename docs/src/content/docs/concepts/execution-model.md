@@ -301,10 +301,18 @@ and output.
 fencing token, and exposing it would publish a detail whose only purpose is to
 let a repository refuse a write from a worker whose claim has been taken away.
 
-Redaction happens before anything is persisted or published:
-`internal/execution` holds the redaction rules, and webhook headers in particular
-go through them. Bodies deliberately do not — a workflow's whole purpose is often
-the body, and redacting it would make the trace useless.
+Redaction is a read-surface guarantee rather than a storage one. A trigger
+delivery is stored exactly as it arrived — headers included — because the stored
+record *is* the input the run executes on: a workflow reading its own
+`headers['x-api-key']`, or a cookie, has to see what the caller sent rather than
+a placeholder. The surfaces that serve a record back redact instead; API
+responses, the live feed and the inspector pass the payload through
+`internal/execution`'s rules, which normalise header names and withhold
+credential keys as `[redacted]`. The node-run trace keeps redacting on the way
+*in*, so a credential the runtime resolved never lands in a node's stored input
+or output. A raw database dump or a backup therefore carries inbound trigger
+headers and bodies verbatim, and [the security
+page](/operate/security/) says what that asks of an operator.
 
 Listing executions is **keyset-paginated, not offset-paginated**. The cursor pins
 the last `(started_at, id)` pair seen, so an execution created while somebody is

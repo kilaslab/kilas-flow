@@ -61,7 +61,7 @@ the same scheme and allowlist check the original URL did — and because each ho
 re-enters the dialer, the address check runs again as well. After five hops the
 request fails.
 
-### The two levers do not consult each other
+### The levers do not consult each other
 
 This is the single most misunderstood thing in this area, so it is worth stating
 flatly:
@@ -70,17 +70,24 @@ flatly:
   and never looks at an IP.
 - `outbound.allow_private_networks` is a blanket **IP-range** disable. It is read
   at dial time and never looks at the allowlist.
+- `outbound.allowed_private_endpoints` is a list of literal `host:port` pairs,
+  also read at dial time. A target on it is admitted past the address guard and
+  nothing else is.
 
-Neither reads the other. An allowlisted host that resolves to `10.0.0.1` is still
-refused at dial. A private address is still reachable when
+None of them read each other. An allowlisted host that resolves to `10.0.0.1` is
+still refused at dial. A private address is still reachable when
 `allow_private_networks` is on, allowlist or not.
 
-The practical consequence: **there is no way today to permit one specific
-loopback service without permitting all private addresses.** Reaching a local
-model server at `127.0.0.1:11434` requires `allow_private_networks`, which
-removes the guard for everything. Do not set it to make a test pass — a suite
-running with it on has a security posture production does not, and can never
-catch a regression in the guard.
+The practical consequence is about which lever to reach for, not about
+all-or-nothing. `allowed_hosts` narrows by hostname and must still clear the
+address check, so it can never admit an internal target on its own. The setting
+that admits one is `outbound.allowed_private_endpoints`, which takes a literal
+`host:port` and lets that target — and nothing else — through the address guard:
+use it for a loopback model server at `127.0.0.1:11434` instead of
+`allow_private_networks`, which lifts the guard for every outbound request in the
+installation. Do not set that one to make a test pass — a suite running with it on
+has a security posture production does not, and can never catch a regression in
+the guard.
 
 An entry of the form `*.example.com` matches any subdomain and **not** the bare
 parent domain.
@@ -101,14 +108,12 @@ Note that `http.ProxyFromEnvironment` is honoured, so a proxy set in the
 process environment is used. That is normally what an operator wants, and it is
 worth knowing it is there.
 
-:::caution[Two call sites use the default policy, not the configured one]
-Edit-time option loading and the webhook lifecycle coordinator construct their
-clients from `safehttp.DefaultPolicy()` rather than from the policy built out of
-`outbound.*`. The address, redirect and response-size guards therefore still
-apply to them with their default values, but a custom `outbound.allowed_hosts`,
-`outbound.timeout` or `outbound.max_response_bytes` does **not**. Verified
-against `cmd/kilasflow/main.go` at the time of writing.
-:::
+Both of the call sites that used to differ here are now constructed with the
+configured policy: the edit-time option loader and the webhook lifecycle
+coordinator are both handed the policy built out of `outbound.*`, so a custom
+allowlist, timeout or response-size bound applies to them exactly as it applies
+to a workflow's own HTTP node. `cmd/kilasflow/main.go` is where that wiring
+lives, and it is worth re-reading whenever a section is added to the policy.
 
 ### Credentials narrow it further
 
@@ -148,10 +153,15 @@ On a match the connection is refused. The same guard is applied at **edit time**
 so a SQLite credential naming KilasFlow's own database is refused when it is
 tested exactly as it is when a workflow runs.
 
-On a PostgreSQL-backed installation this guard is empty, because there is no
-filesystem path to protect and a node can never be handed the engine's DSN. There
-is no host-and-port comparison for PostgreSQL or MySQL targets; the structural
-separation is the whole defence there.
+A network target has its own half of the same guard. A PostgreSQL or MySQL
+credential whose database name, port and host match the installation's own DSN is
+refused before anything dials, and when the spelling differs the addresses both
+names resolve to are compared, so a second name for the same server is refused
+too. A table prefix does not scope the refusal — anything holding the connection
+can read every table under it — so the whole database is refused however the
+credential spells its target. What this is not is a defence against the *host
+application* that shares the database: it stops KilasFlow's own SQL nodes, and a
+shared-database deployment still needs a dedicated schema.
 
 **Query ceilings clamp rather than refuse.** A deployment sets `sql.max_rows`
 (default 50,000) and `sql.max_statement_timeout` (default 5 minutes); a node's own
@@ -239,21 +249,35 @@ These are as important as the list above.
 administrator, and the server logs that on every boot. See
 [tenancy and the embed boundary](/concepts/tenancy-and-embedding/).
 
-**There is no rate limiting** on the API or on the webhook surface.
+**There is no general rate limiting.** The one limiter is on sign-in: ten attempts
+a minute per account and per address, plus a process-wide cap on how many password
+hashes may be computed at once, so a flood of logins cannot fill every core of the
+API. Nothing rate-limits the rest of the API, and nothing at all rate-limits the
+webhook surface — an inbound trigger is as fast as its sender chooses to make it.
 
-**There is no execution retention.** Nothing prunes execution rows, so history
-grows without bound and every input and output a workflow ever handled stays
-readable. The one exception is not a retention policy: reclaiming an expired
-lease deletes that execution's node runs so the recovered attempt can rewrite
-them.
+**Execution retention is off by default.** `execution.retention` deletes a
+finished execution — with its node runs and its stored payloads — once it has been
+finished for longer than the configured age, and a pruner sweeps every fifteen
+minutes. Zero, the default, keeps everything: history grows without bound and
+every input and output a workflow ever handled stays readable. Two things that are
+not retention policies are easy to confuse with one: reclaiming an expired lease
+deletes that execution's node runs so the recovered attempt can rewrite them, and
+a suspension keeps the checkpoint it will resume from.
 
-**A recovered execution re-runs from the beginning.** There is no checkpointing,
-so a workflow with non-idempotent side effects can perform them twice if its
-worker dies mid-run.
+**A recovered execution re-runs from the beginning.** A suspension is the only
+thing that carries a checkpoint; a worker that died mid-run is reclaimed and
+restarts the graph, so a workflow with non-idempotent side effects can perform
+them twice. After two hand-offs the execution is settled `failed` rather than run
+again, which bounds the repeats but not the first duplication.
 
-**A workflow can consume its worker.** A `Wait` node holds a worker slot for the
-whole pause, bounded by `execution.default_timeout` (60 s) and refused outright
-above an hour, and the pool is `execution.max_concurrent` deep — 10 by default.
+**A wait no longer holds a worker, but it does hold a row.** A `Wait` node parks
+the execution in storage — status `waiting`, no worker and no lease — so a pause
+of hours costs a row rather than a slot and the pool of
+`execution.max_concurrent` (10 by default) stays free for other runs. What is
+bounded is the suspension: seven days at most, and a call-resumed wait that nobody
+answers fails by name at its own deadline. A run's own budget is still
+`execution.default_timeout` (60 s) unless the workflow names its own
+`settings.executionTimeout`.
 
 **Anyone who can write a workflow can exfiltrate any credential in their
 tenant.** No credential endpoint returns a plaintext secret — reads come back
@@ -263,13 +287,21 @@ control and read it off the wire, subject only to that credential's
 `allowedDomains` and the egress policy. Write access to workflows is therefore
 equivalent to read access to secrets, and should be granted on that basis.
 
-## Configuration caveat
+**Storage keeps what the caller sent.** Redaction is a read-surface guarantee:
+API responses, the live event feed and the inspector withhold credential keys and
+normalise header names, but a raw table dump, a database backup or a support
+export carries inbound trigger headers and bodies exactly as they arrived. See
+[the security posture](/operate/security/) for what that asks of an operator.
 
-`config.example.yaml` does not cover every section the code defines, and the
-sections it omits include `outbound`, `webhook`, `embed`, `auth` and `sql` —
-which are precisely the ones on this page. `internal/config/config.go` is the
-only complete list until
-[the generated configuration reference](/operate/configuration/) exists.
+## Configuration is generated from the code
+
+`config.example.yaml` and
+[the configuration reference](/operate/configuration-reference/) are generated
+from the `Config` structs by `make generate-config-reference`, not written by
+hand, so every section the code defines appears in both — the pages on this site
+name the keys they rely on rather than reproducing the list. A struct change with
+no regenerated pair fails `make generate-config-reference-check`, which is what
+stops a list like this one from silently going stale.
 
 ## Source
 
@@ -279,5 +311,8 @@ builds), `internal/sqlnode/sqlnode.go` (`Guard`,
 `sqlitePath`, `Ceiling`), `internal/runcode/` (the wazero sandbox and its
 limits), `internal/credentials/credentials.go` (`AllowsHost`),
 `internal/binary/binary.go`, `internal/expression/doc.go`,
+`internal/repository/execution_retention.go` (`PruneExpired`),
+`internal/engine/wait_service.go` (suspension, resume and the wait sweep),
+`internal/api/middleware/loginlimit.go` (the sign-in limiter),
 `cmd/kilasflow/main.go` (`outboundPolicy`, `databaseGuard`,
 `workflowEnvironment`, `nodeAvailability`).

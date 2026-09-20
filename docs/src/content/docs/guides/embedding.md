@@ -188,11 +188,16 @@ const delivery = await fetch(kilasflowUrl + tenant.webhookUrl, {
   headers: { 'Content-Type': 'application/json', 'X-Reference-Key': tenant.webhookSecret },
   body: JSON.stringify({ email, plan: 'trial' })
 });
-const receipt = await delivery.json(); // { executionId, status: 'queued' }
+const receipt = await delivery.json();
+// Immediate mode (the default) acknowledges with n8n's own body and no run id:
+// {"message":"Workflow was started"}. The one answer that does carry one is a
+// repeat of the same delivery: { executionId, status, duplicate: true }.
 ```
 
-The host then polls `getExecution` through the tenant's client until the
-status is terminal. Ticket minting and execution polling both re-check
+The host then finds the run through the tenant's own client — list the
+workflow's executions and take the newest, or have the trigger answer from its
+graph with a Respond to Webhook node — and polls `getExecution` until the status
+is terminal. Ticket minting and execution polling both re-check
 that the execution belongs to the tenant's workflow first — a ticket for
 another customer's run would be a cross-tenant read.
 

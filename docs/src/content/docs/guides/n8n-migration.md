@@ -89,6 +89,36 @@ curl -s -H "Authorization: Bearer $KILASFLOW_API_KEY" \
 | `@devlikeapro/n8n-nodes-waha.WAHA` | `pack.waha` |
 | `n8n-nodes-waha.WAHA` | `pack.waha` |
 
+**The HTTP Request node's output is n8n's, not a KilasFlow envelope.** This is
+the one mapping where the *shape* a migrated workflow reads changed, so it is the
+first thing to check when an expression downstream of an HTTP node resolves to
+nothing. n8n's default output is the parsed body itself: an object body becomes
+the item, a top-level array becomes one item per element, a body that is neither
+lands under `data`, and an empty body yields `{}` — so `$json.<field>` keeps
+meaning what it meant in n8n. KilasFlow used to wrap every response in
+`{body, headers, statusCode, truncated}`, which the executor's own note counts as
+199 nodes across the template corpus reading a field that was not there.
+
+`fullResponse` asks for the envelope instead, and then it is n8n's own:
+`{body, headers, statusCode, statusMessage}` with lower-case header names. A
+response stored as a file puts only the binary reference in the item (under the
+`outputPropertyName` parameter, default `data`), with that envelope beside it when
+`fullResponse` was asked for too; a response large enough to be truncated is
+refused rather than stored half.
+
+Two other defaults are n8n's and did not used to be. **Redirects are not
+followed unless you ask**: the 302 itself is handed to the workflow, where
+KilasFlow used to follow it unconditionally, so a workflow that meant to inspect a
+redirect never saw one. Nothing about the egress policy changes with it — the
+redirect target is checked on the same terms as the first request. And
+**`bodyFields` is a structured map**, n8n's "Using Fields Below", encoded *after*
+the per-item expression pass, so `{{ $json.id }}` reaches the wire as the value
+rather than as the template that produced it; it is sent as JSON for
+`bodyType: json` and form-encoded for `form`, and a raw body carries
+`rawContentType` (default `text/plain; charset=utf-8`). An interpolated value in
+the URL's query string is percent-encoded after resolution as well, so a space or
+an `&` inside `{{ $json.query }}` no longer truncates the request line.
+
 ### AI
 
 | n8n node type | KilasFlow node type |
@@ -187,7 +217,7 @@ a **dropped** diagnostic:
 
 | Field | Why it is not carried |
 | --- | --- |
-| `settings` | Everything except the timezone. Error workflow, execution order and the rest have no KilasFlow equivalent yet. The timezone *is* carried, and matters: a scheduled workflow whose zone was dropped runs at the wrong hour every day. A zone this server cannot resolve is reported as lossy rather than silently falling back to UTC. |
+| `settings` | Everything except the timezone and the workflow's own `executionTimeout`. Error workflow, execution order and the rest have no KilasFlow equivalent yet. Both carried keys matter: a scheduled workflow whose zone was dropped runs at the wrong hour every day, and the timeout is the workflow's run budget. A zone this server cannot resolve is reported as lossy rather than silently falling back to UTC, and so is n8n's `-1` "no timeout", because this server always applies the instance's budget. |
 | `pinData` | Pinned test data is an n8n editor feature. It is dropped rather than parked under a reserved key, because carrying data nothing reads would create a second silent-drop problem a release later. The nodes that had data pinned will run for real. |
 | `meta` | n8n instance metadata describing where the workflow came from. It has no meaning in another installation. |
 | `staticData` | n8n's per-workflow scratch space that its nodes persist between runs. There is no equivalent. |
@@ -200,21 +230,17 @@ its capsule — the following are reported as **dropped**:
 - `notes`, the node's note.
 - `webhookId`, n8n's per-node webhook identity, which is meaningless in another
   installation; KilasFlow assigns its own binding on activation.
-- `disabled`. **KilasFlow has no disabled-node concept, so a disabled node is
-  imported as active and will run.** If a node was disabled for a reason,
-  delete it before activating.
-- `alwaysOutputData`. n8n emits an empty item when a node produces nothing;
-  here a node that produces nothing produces nothing.
-- `executeOnce`. n8n can run a node once for a whole batch rather than once per
-  item; there is no equivalent.
-- `onError`. n8n's stop, continue, and continue-on-a-separate-error-output modes
-  have no equivalent beyond `continueOnFail`, which is carried.
 
-`continueOnFail`, `retryOnFail`, `maxTries` and `waitBetweenTries` **are**
-carried onto the node's canonical settings and honoured by the runner.
-`maxTries` is clamped to 8 and `waitBetweenTries` to 300,000 ms — clamped rather
-than refused, so a workflow with a larger retry budget still imports and one
-typo cannot become thousands of calls.
+Everything else n8n writes on a node crosses, and is honoured rather than merely
+stored: `disabled` lands on the imported node and goes back out on export,
+`onError` carries the mode verbatim (with the legacy `continueOnFail` boolean
+kept beside it), an edge leaving n8n's error slot resolves to the node's own
+`error` port, `alwaysOutputData` emits the empty item n8n emits, `executeOnce`
+runs the node once for the whole batch, and `retryOnFail`, `maxTries`,
+`waitBetweenTries` land on the node's canonical settings. `maxTries` is clamped
+to 8 and `waitBetweenTries` to 300,000 ms — clamped rather than refused, so a
+workflow with a larger retry budget still imports and one typo cannot become
+thousands of calls.
 
 ## The diagnostic vocabulary
 
@@ -227,7 +253,7 @@ and moved on".
 | --- | --- | --- |
 | `blocking` | The workflow cannot run as imported. | Fix it. The workflow will not activate until you do. This is an unsupported node type, a Code node, a credential that must be re-bound, an unavailable `typeVersion`, or a parameter the mapped node genuinely cannot express. |
 | `lossy` | The element was carried, but differently. | Read it and decide. The workflow will activate. Whether the difference matters is a judgement only you can make — a query replacement split into three bound values is fine if the values had no commas in them and wrong if they did. |
-| `dropped` | The element was not carried at all. | Decide whether you need it. Nothing about it survived, and calling it lossy would imply a setting was applied in some reduced form when it was ignored entirely. A dropped `disabled` flag means a node you switched off is now running. |
+| `dropped` | The element was not carried at all. | Decide whether you need it. Nothing about it survived, and calling it lossy would imply a setting was applied in some reduced form when it was ignored entirely. A dropped `webhookId` means this installation minted its own binding for the node. |
 
 Each issue names the node (`nodeName`, `nodeId`), the original n8n `type` and
 `typeVersion`, and where there is one, the specific `field` — `pinData`,
@@ -235,9 +261,10 @@ Each issue names the node (`nodeName`, `nodeId`), the original n8n `type` and
 written for a person.
 
 The `dropped` severity is also the project's own progress signal. The
-error-handling set is dropped rather than lossy specifically because the runner
-does not honour it yet; when it learns to, those diagnostics disappear on their
-own.
+error-handling set was dropped for exactly as long as the runner did not honour
+it, and the importer stopped reporting it in the same change that taught the
+runner the modes — which is why those diagnostics disappear on their own rather
+than being curated away.
 
 ## The migration, step by step
 
@@ -637,7 +664,7 @@ workflows will fail. Twenty-four of the 26 failures are a credential nobody
 created or n8n's own test scaffolding. What the number is good for is the thing
 a number is normally bad for: it is a measurement this project publishes about
 itself, including the parts that look bad, so that when the mapping table says
-thirty-seven pairs you have some reason to believe it.
+51 types you have some reason to believe it.
 
 :::note[Why you cannot see the fixtures]
 The corpus is measured, never committed. n8n's fixtures are under
@@ -657,20 +684,19 @@ enforces that on every run rather than trusting anyone to remember it.
 
 ## Current limits worth planning around
 
-- **Import and export are API operations and are not yet reachable from the
-  editor.** They exist on `/api/v1` and in the generated clients, but no button
-  calls them. Use `curl` or a generated client for now. See the
-  [HTTP API reference](/reference/api/).
-- **A disabled node is imported as active.** There is no disabled concept here.
 - **The Code node does not run**, in either language.
-- **`onError` beyond `continueOnFail` is not honoured**, so error-output
-  branches do not survive.
-- **The node subset is thirty-seven pairs.** Anything outside it imports as a
+- **The node subset is 51 n8n node types**, mapped onto 41 KilasFlow node types
+  — `internal/interop/n8n/n8n.go` is the list of record, and the tables above
+  name the ones you are most likely to meet. Anything outside it imports as a
   placeholder that blocks activation. If your workflows lean on integrations
-  that are not in the table above, the honest answer today is that they will
-  import, open, and not run until you replace those nodes — with an HTTP Request
-  node against the same API, in most cases, since that is what the missing node
-  would have been doing.
+  that are not in those tables, import them and read your diagnostics rather than
+  guessing: the honest answer is that each one will import, open, and not run
+  until you replace that node — with an HTTP Request node against the same API,
+  in most cases, since that is what the missing node would have been doing.
+- **n8n's error workflow and execution order have no equivalent.** `settings` is
+  read for the timezone and the workflow's own `executionTimeout` — both of which
+  are carried, and honoured — and the rest is reported as dropped rather than
+  quietly applied.
 
 For what exists more broadly and what does not, start with
 [what KilasFlow is](/start/what-kilasflow-is/). For the node types available to
