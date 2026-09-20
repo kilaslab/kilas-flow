@@ -3,6 +3,7 @@ import { test, expect } from '@playwright/test';
 import { startServer } from '../helpers/server';
 import { createCredential, createWorkflow, runWorkflow } from '../helpers/seed';
 import { startAIGateway, type AIGateway } from '../fixtures/ai-gateway';
+import { gate } from '../fixtures/gates';
 
 // Serial, not parallel: the constrained resource here is one laptop-sized
 // model serving every test in this file, and parallel turns make its timing
@@ -48,26 +49,32 @@ test.beforeAll(async () => {
 	test.info().setTimeout(600_000);
 	const catalogue = await fetch(`${trimSlash(OLLAMA_BASE_URL)}/models`, { signal: AbortSignal.timeout(20_000) }).catch(
 		(error) => {
-			skipReason =
+			skipReason = gate(
+				'model',
 				`${OLLAMA_BASE_URL} is set but nothing answered there (${shortError(error)}). ` +
-				`Start it with \`ollama serve\`, then \`ollama pull ${OLLAMA_MODEL}\`.`;
+					`Start it with \`ollama serve\`, then \`ollama pull ${OLLAMA_MODEL}\`.`
+			);
 			return undefined;
 		}
 	);
 	if (catalogue === undefined) return;
 	if (!catalogue.ok) {
-		skipReason =
+		skipReason = gate(
+			'model',
 			`${OLLAMA_BASE_URL} answered ${catalogue.status} for /v1/models ` +
-			`(is \`ollama serve\` running? wants \`ollama pull ${OLLAMA_MODEL}\` next).`;
+				`(is \`ollama serve\` running? wants \`ollama pull ${OLLAMA_MODEL}\` next).`
+		);
 		return;
 	}
 	const payload = (await catalogue.json()) as { data?: Array<{ id?: string }> };
 	const offered = (payload.data ?? []).map((entry) => entry.id).filter((id): id is string => typeof id === 'string');
 	if (!offered.includes(OLLAMA_MODEL)) {
-		skipReason =
+		skipReason = gate(
+			'model',
 			`${OLLAMA_BASE_URL} does not serve ${JSON.stringify(OLLAMA_MODEL)} — run \`ollama pull ${OLLAMA_MODEL}\`. ` +
-			`The pinned tag is an Apple MLX build, so a non-Apple-Silicon machine has to set ` +
-			`KILASFLOW_TEST_OLLAMA_MODEL to a portable tag. It offers: ${offered.join(', ') || '(nothing)'}.`;
+				`The pinned tag is an Apple MLX build, so a non-Apple-Silicon machine has to set ` +
+				`KILASFLOW_TEST_OLLAMA_MODEL to a portable tag. It offers: ${offered.join(', ') || '(nothing)'}.`
+		);
 		return;
 	}
 	gateway = await startAIGateway(trimSlash(OLLAMA_BASE_URL));
@@ -85,7 +92,10 @@ test.beforeAll(async () => {
 		}),
 		signal: AbortSignal.timeout(300_000)
 	}).catch((error) => {
-		skipReason = `${OLLAMA_BASE_URL} would not answer a completion for ${JSON.stringify(OLLAMA_MODEL)}: ${shortError(error)}.`;
+		skipReason = gate(
+			'model',
+			`${OLLAMA_BASE_URL} would not answer a completion for ${JSON.stringify(OLLAMA_MODEL)}: ${shortError(error)}.`
+		);
 		return undefined;
 	});
 	if (warmed === undefined) {
@@ -100,8 +110,8 @@ test.afterAll(async () => {
 });
 
 function requireRuntime(): void {
-	test.skip(skipReason !== '', skipReason || 'The local model runtime was not probed.');
-	if (!gateway) test.skip(true, skipReason || 'The local model runtime is unavailable.');
+	test.skip(skipReason !== '', skipReason || gate('model', 'the runtime was not probed'));
+	if (!gateway) test.skip(true, skipReason || gate('model', 'the runtime is unreachable'));
 }
 
 function trimSlash(value: string): string {

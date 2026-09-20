@@ -27,6 +27,7 @@ import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { gate } from './gates';
 
 export interface DatastoreColumn {
 	name: string;
@@ -420,9 +421,10 @@ export function pgDsn(): string | null {
 }
 
 export function pgSkipReason(): string {
-	return (
-		'postgres driver skipped: set KILASFLOW_TEST_POSTGRES_DSN (or KILASFLOW_E2E_POSTGRES_DSN) ' +
-		'to a live pgvector PostgreSQL DSN to run it (e.g. postgres://kilas:hunter2@127.0.0.1:55434/kilasflow?sslmode=disable)'
+	return gate(
+		'postgres',
+		'set KILASFLOW_TEST_POSTGRES_DSN (or KILASFLOW_E2E_POSTGRES_DSN) to a live pgvector ' +
+			'PostgreSQL DSN to run it (e.g. postgres://kilas:hunter2@127.0.0.1:55434/kilasflow?sslmode=disable)'
 	);
 }
 

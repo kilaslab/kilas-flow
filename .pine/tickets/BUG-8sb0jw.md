@@ -195,3 +195,16 @@ Files: devbox.json, Makefile
   go through slog when KILASFLOW_LOG_FORMAT=json.
 - Embed/auth signing key comments now say exactly 32 bytes and name `openssl rand -base64 32`;
   config.example.yaml + operate/configuration-reference.md regenerated (generate-config-reference-check passes).
+
+- PostgreSQL-gated Go tests: `make test` now passes `-p 1` whenever KILASFLOW_TEST_POSTGRES_DSN is set (the
+  packages share one database and internal/database drops every table); CI documents the reason next to the DSN.
+- CI: the test job's service is now pgvector/pgvector:pg17 (stock postgres cannot CREATE EXTENSION vector, so
+  every PostgreSQL-gated package failed at migration 000006 — the current red); the four drift steps run with
+  `if: always()` so all stale generated artifacts are reported in one run; the lint job gained
+  `make build-clean-check`.
+- e2e: the job now runs a pgvector service and sets KILASFLOW_E2E_POSTGRES_DSN, which moves the three
+  datastore-pg tests and epic proof 3 from skipped into run. Every remaining skip names its dependency through
+  e2e/fixtures/gates.ts and a new skip-budget check (e2e/scripts/skip-budget.mjs + e2e/skip-budget.json, wired as
+  `make e2e-skip-budget` after the run) fails the job on an unexplained skip, on a PostgreSQL skip (CI provides
+  it), or on a total past the recorded budget. Verified against real Playwright JSON reports for the pass case
+  and all three failure modes.

@@ -1,4 +1,5 @@
 import { test, expect } from '../fixtures';
+import { gate } from '../fixtures/gates';
 import { startServer } from '../helpers/server';
 import {
 	activateWorkflow,
@@ -36,7 +37,10 @@ async function loadTemplateOrSkip(): Promise<Record<string, unknown>> {
 	const template = await loadChattingTemplate();
 	test.skip(
 		template === null,
-		'WAHA corpus absent: run `make corpus` (KILASFLOW_N8N_REFERENCE must point at the read-only n8n checkout) and retry'
+		gate(
+			'corpus',
+			'run `make corpus` (KILASFLOW_N8N_REFERENCE must point at the read-only n8n checkout) and retry'
+		)
 	);
 	return template!;
 }

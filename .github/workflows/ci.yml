@@ -59,6 +59,15 @@ jobs:
 
       - run: make lint
 
+      # The workspace must survive a build unchanged. A build that rewrites a
+      # tracked file makes the tree dirty before `git describe --dirty` runs, so
+      # every binary, image and /health response is stamped "-dirty" from a clean
+      # checkout — and a fresh clone ships build output that references files it
+      # does not have. Runs build-all, which is why this job installs web's
+      # dependencies above.
+      - name: Build leaves the tree clean
+        run: make build-clean-check
+
   test:
     name: Go tests
     runs-on: ubuntu-latest
@@ -77,8 +86,13 @@ jobs:
     # still pass. Credentials mirror .pine/memory/live-databases.md so a failure
     # here reproduces by hand with the commands already written down there.
     services:
+      # pgvector rather than stock PostgreSQL: migration 000006 creates a
+      # vector column and runs CREATE EXTENSION vector, so against postgres:17
+      # every PostgreSQL-gated package fails at migration time — which is a red
+      # check for a build that is fine. compose.postgres.yaml pins the same
+      # image for the same reason.
       postgres:
-        image: postgres:17-alpine
+        image: pgvector/pgvector:pg17
         env:
           POSTGRES_USER: kilas
           POSTGRES_PASSWORD: hunter2
@@ -130,6 +144,10 @@ jobs:
       # CGO stays enabled here. A devbox shell exports CGO_ENABLED=0 for the
       # distroless build, and copying that setting into this job would break
       # `-race`, which needs cgo.
+      # `make test` turns package parallelism off when a PostgreSQL DSN is set:
+      # these packages share the one database, and internal/database's migration
+      # tests drop every table. See the comment on the test target in the
+      # Makefile.
       - name: Go tests
         env:
           KILASFLOW_TEST_POSTGRES_DSN: postgres://kilas:hunter2@127.0.0.1:5432/kilasflow?sslmode=disable
@@ -180,10 +198,17 @@ jobs:
       # shared artifact would reintroduce the checked-in copy they exist to
       # eliminate. Each prints its own "…is stale" message on failure, naming the
       # generate command to run.
+      #
+      # `if: always()` on all four: they are independent, and stopping at the
+      # first one hid the other stale artifacts — a run that regenerated only the
+      # client it was told about left the next one to fail on someone else's
+      # afternoon. A failed step still fails the job.
       - name: Web API client
+        if: always()
         run: make generate-api-check
 
       - name: SDK types
+        if: always()
         run: make generate-types-check
 
       # The docs API reference is generated from the same live OpenAPI
@@ -191,12 +216,14 @@ jobs:
       # a binary with the Go toolchain this job already has. Node-only like
       # the script: no docs dependencies to install.
       - name: Docs API reference
+        if: always()
         run: make generate-api-reference-check
 
       # The configuration reference and config.example.yaml are generated from
       # the Config structs by scripts/config-reference.go, which reads source
       # and defaults only — no binary, no Node, so this step needs just Go.
       - name: Configuration reference
+        if: always()
         run: make generate-config-reference-check
 
   sdk:
@@ -278,6 +305,31 @@ jobs:
   e2e:
     name: End-to-end (Playwright)
     runs-on: ubuntu-latest
+
+    # The suite is environment-gated: PostgreSQL, the WAHA corpus, a local model
+    # and a live n8n each make their specs skip when absent, and a skip reads as
+    # a pass in a summarised run. What this job can provide, it does — the
+    # database service below turns the PostgreSQL half of the epic acceptance
+    # suite from skipped into run. What it cannot provide (the corpus is
+    # third-party material with no licence, a model is not on a runner, and n8n
+    # credentials are not in the repository) stays skipped, and the skip-budget
+    # step at the end of this job is what keeps that visible: every skip must
+    # name a reason on the allowlist and the total may not grow.
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: kilas
+          POSTGRES_PASSWORD: hunter2
+          POSTGRES_DB: kilasflow
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U kilas -d kilasflow"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -304,8 +356,22 @@ jobs:
         run: pnpm exec playwright install --with-deps chromium
 
       # Builds once in global-setup, then boots one isolated instance per
-      # test — the same command a laptop runs.
+      # test — the same command a laptop runs. global-setup writes only
+      # gitignored output, so running the suite no longer leaves the checkout
+      # modified (see the build-clean-check step in the lint job).
       - run: make test-e2e
+        env:
+          # Both names are read by the datastore fixture; the e2e one keeps a
+          # throwaway database from disturbing a developer's Go test runs.
+          KILASFLOW_E2E_POSTGRES_DSN: postgres://kilas:hunter2@127.0.0.1:5432/kilasflow?sslmode=disable
+
+      # A skipped test is not a passing test, and the summary counts them as
+      # neither. This step reads the JSON report the run wrote and refuses a
+      # skip whose reason is not on the allowlist in e2e/skip-budget.json, or a
+      # total that grew past the recorded one.
+      - name: Skip budget
+        if: always()
+        run: make e2e-skip-budget
 
   image:
     name: Image (cross-build)

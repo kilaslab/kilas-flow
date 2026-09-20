@@ -389,6 +389,13 @@ smoke-postgres: ## Prove the Docker image against the temporary Compose PostgreS
 test-e2e: ## Run the Playwright end-to-end suite against a real binary and SPA
 	cd e2e && pnpm test
 
+# Run after test-e2e (and after a failure, hence the CI `if: always()`): the
+# JSON report it reads exists either way. A skipped test is not a passing test,
+# and this is the step that says so — see e2e/skip-budget.json.
+.PHONY: e2e-skip-budget
+e2e-skip-budget: ## Fail if the e2e suite skipped more than its recorded budget
+	node e2e/scripts/skip-budget.mjs
+
 # On-demand only: single-machine timings with third-party-adjacent variance
 # make it a bad merge gate and a good investigation tool. FEAT-8mymac.
 # Without N8N_EMAIL/N8N_PASSWORD the n8n half records an honest skip and the

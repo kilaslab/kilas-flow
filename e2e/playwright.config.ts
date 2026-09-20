@@ -11,6 +11,10 @@ import { defineConfig } from '@playwright/test';
 export default defineConfig({
 	testDir: './tests',
 	globalSetup: './global-setup.ts',
+	// The JSON report is what makes a skipped test visible rather than implied:
+	// scripts/skip-budget.mjs reads it after the run and fails when a skip is
+	// unexplained or the total grew. `line` stays for the run's own output.
+	reporter: [['line'], ['json', { outputFile: 'test-results/report.json' }]],
 	// One test boots a server, seeds over the API and runs a workflow: slower
 	// than a unit test, faster than a container probe.
 	timeout: 120_000,

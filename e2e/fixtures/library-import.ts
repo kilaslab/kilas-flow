@@ -16,6 +16,8 @@
 // are env-only and fail closed. No credential value ever appears in a file.
 import { readFile } from 'node:fs/promises';
 
+import { gate } from './gates';
+
 export interface ImportIssue {
 	severity: string;
 	nodeName?: string;
@@ -118,11 +120,12 @@ export function n8nLiveConfig(): N8nLiveConfig {
 export function liveSkipReason(): string | null {
 	const config = n8nLiveConfig();
 	if (config.email === '' || config.password === '') {
-		return (
-			`live n8n export skipped: N8N_EMAIL/N8N_PASSWORD are unset. ` +
-			`To run: export N8N_EMAIL='<operator login>' N8N_PASSWORD='<operator password>' ` +
-			`[N8N_URL='${config.url}']; N8N_URL defaults to http://localhost:5678. ` +
-			`Secrets stay in env, never in files.`
+		return gate(
+			'n8nLive',
+			`N8N_EMAIL/N8N_PASSWORD are unset. ` +
+				`To run: export N8N_EMAIL='<operator login>' N8N_PASSWORD='<operator password>' ` +
+				`[N8N_URL='${config.url}']; N8N_URL defaults to http://localhost:5678. ` +
+				`Secrets stay in env, never in files.`
 		);
 	}
 	return null;

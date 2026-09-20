@@ -1,4 +1,5 @@
 import { expect } from '@playwright/test';
+import { gate } from './gates';
 
 // Live-n8n comparison fixture for FEAT-1jqjtd.
 //
@@ -50,10 +51,13 @@ export function isN8nLiveConfigured(): boolean {
 // secret set and the exact exports that provision it, so a skipped run tells
 // the operator how to un-skip it.
 export const N8N_LIVE_SKIP_REASON =
-	'live n8n comparison skipped: N8N_EMAIL/N8N_PASSWORD are not set ' +
+	gate(
+		'n8nLive',
+		'N8N_EMAIL/N8N_PASSWORD are not set ' +
 	`(N8N_URL is ${N8N_URL}); provision with ` +
-	'`export N8N_URL="http://localhost:5678" N8N_EMAIL="operator@example.com" N8N_PASSWORD="the-operator-password"` ' +
-	'and rerun to execute this case against the reference instance';
+			'`export N8N_URL="http://localhost:5678" N8N_EMAIL="operator@example.com" N8N_PASSWORD="the-operator-password"` ' +
+			'and rerun to execute this case against the reference instance'
+	);
 
 export function n8nLiveSkipReason(node: string): string {
 	return `${node}: ${N8N_LIVE_SKIP_REASON}`;

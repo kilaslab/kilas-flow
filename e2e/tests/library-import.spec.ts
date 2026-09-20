@@ -15,6 +15,7 @@
 // real instance when N8N_EMAIL/N8N_PASSWORD are present and skips by name with
 // the exact export commands otherwise — never a silent pass.
 import { test, expect } from '../fixtures';
+import { gate } from '../fixtures/gates';
 import { waitForExecution } from '../helpers/seed';
 import {
 	LIBRARY_SAMPLES,
@@ -309,7 +310,10 @@ test('the WAHA chatting template imports with its webhook re-pointed', async ({ 
 	const template = await loadChattingTemplate();
 	test.skip(
 		template === null,
-		'WAHA corpus absent: run `make corpus` (KILASFLOW_N8N_REFERENCE must point at the read-only n8n checkout) and retry'
+		gate(
+			'corpus',
+			'run `make corpus` (KILASFLOW_N8N_REFERENCE must point at the read-only n8n checkout) and retry'
+		)
 	);
 	// Composition, not restatement: gg85se's waha-migration.spec.ts proves the
 	// full migrate → rebind → activate → reply path plus the two-tenant
@@ -331,7 +335,7 @@ test.describe('live n8n library exports (env-gated)', () => {
 	for (const sample of LIBRARY_SAMPLES) {
 		test(`${sample.id} matches its live-n8n export`, async ({ server }) => {
 			const skip = liveSkipReason();
-			test.skip(skip !== null, skip ?? 'live n8n unavailable');
+			test.skip(skip !== null, skip ?? gate('n8nLive', 'no live configuration'));
 			const live = await exportLiveWorkflow(`Library ${sample.id}`);
 			const pin = await loadLibraryExport(sample.id);
 			// Same node-type shape on both sides: a drift here means the pin

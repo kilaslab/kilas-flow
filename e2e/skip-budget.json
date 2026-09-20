@@ -1,0 +1,25 @@
+{
+	"_comment": [
+		"The accepted gaps in the Playwright suite, checked by scripts/skip-budget.mjs after every CI run.",
+		"A skip is not a pass: this file is what makes that visible rather than implied.",
+		"Lower maxSkipped whenever a gate is unblocked (2026-09-20: the pgvector service in the e2e job moved",
+		"the four PostgreSQL-gated tests into the run)."
+	],
+	"recorded": {
+		"before": 26,
+		"expected": 22,
+		"note": "26 before the e2e job gained a pgvector service; 4 PostgreSQL-gated tests (3 datastore-pg, 1 epic proof 3) now run. The cap keeps two slots of slack so a runner difference does not turn the job red, and lowering it is the next step as the remaining gates are unblocked."
+	},
+	"maxSkipped": 24,
+	"allowedPrefixes": [
+		"local model unavailable",
+		"WAHA corpus unavailable",
+		"live n8n unavailable"
+	],
+	"forbidden": [
+		{
+			"prefix": "postgres driver unavailable",
+			"why": "The e2e job runs a pgvector/pgvector:pg17 service and sets KILASFLOW_E2E_POSTGRES_DSN, so this reason means the service, the DSN or the connection is broken — the datastore half of the suite would otherwise be missing while the job stayed green."
+		}
+	]
+}

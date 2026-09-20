@@ -27,6 +27,7 @@ import {
 	type ServerResponse
 } from 'node:http';
 import { expect } from '@playwright/test';
+import { gate } from './gates';
 
 export const OLLAMA_BASE_URL = process.env.KILASFLOW_TEST_OLLAMA_BASE_URL?.trim() || 'http://127.0.0.1:11434/v1';
 export const OLLAMA_MODEL = process.env.KILASFLOW_TEST_OLLAMA_MODEL?.trim() || 'gemma4:12b-mlx';
@@ -59,17 +60,21 @@ export async function probeOllama(): Promise<OllamaProbe> {
 	if (catalogue === undefined) {
 		return {
 			ready: false,
-			reason:
+			reason: gate(
+				'model',
 				`${OLLAMA_BASE_URL} answered nothing (${failure}). ` +
-				`Start it with \`ollama serve\`, then \`ollama pull ${OLLAMA_MODEL}\`.`
+					`Start it with \`ollama serve\`, then \`ollama pull ${OLLAMA_MODEL}\`.`
+			)
 		};
 	}
 	if (!catalogue.ok) {
 		return {
 			ready: false,
-			reason:
+			reason: gate(
+				'model',
 				`${OLLAMA_BASE_URL} answered ${catalogue.status} for /v1/models ` +
-				`(is \`ollama serve\` running? wants \`ollama pull ${OLLAMA_MODEL}\` next).`
+					`(is \`ollama serve\` running? wants \`ollama pull ${OLLAMA_MODEL}\` next).`
+			)
 		};
 	}
 	const payload = (await catalogue.json()) as { data?: Array<{ id?: string }> };
@@ -77,9 +82,11 @@ export async function probeOllama(): Promise<OllamaProbe> {
 	if (!offered.includes(OLLAMA_MODEL)) {
 		return {
 			ready: false,
-			reason:
+			reason: gate(
+				'model',
 				`${OLLAMA_BASE_URL} does not serve ${JSON.stringify(OLLAMA_MODEL)} — run \`ollama pull ${OLLAMA_MODEL}\`. ` +
-				`It offers: ${offered.join(', ') || '(nothing)'}.`
+					`It offers: ${offered.join(', ') || '(nothing)'}.`
+			)
 		};
 	}
 	const warmed = await fetch(`${base}/chat/completions`, {
@@ -97,7 +104,10 @@ export async function probeOllama(): Promise<OllamaProbe> {
 	if (warmed === undefined || !warmed.ok) {
 		return {
 			ready: false,
-			reason: `${OLLAMA_BASE_URL} would not answer a completion for ${JSON.stringify(OLLAMA_MODEL)}.`
+			reason: gate(
+				'model',
+				`${OLLAMA_BASE_URL} would not answer a completion for ${JSON.stringify(OLLAMA_MODEL)}.`
+			)
 		};
 	}
 	return { ready: true, reason: '' };

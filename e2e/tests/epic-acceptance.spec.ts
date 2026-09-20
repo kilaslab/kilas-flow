@@ -37,6 +37,7 @@
 // untouched. Observable waits throughout: executions, SSE channels and the
 // editor handshake are awaited with assertions, never fixed sleeps.
 import { test, expect } from '@playwright/test';
+import { gate } from '../fixtures/gates';
 import { createHmac, randomBytes } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
@@ -144,7 +145,7 @@ test.describe.serial('epic acceptance', () => {
 		test.setTimeout(600_000);
 		test.slow();
 		const probe = await probeOllama();
-		test.skip(!probe.ready, `epic proof 1 needs the local model: ${probe.reason}`);
+		test.skip(!probe.ready, gate('model', `epic proof 1: ${probe.reason}`));
 		const tg = await startTelegramStub(OLLAMA_BASE_URL);
 		let server: Awaited<ReturnType<typeof startServer>> | undefined;
 		try {
@@ -309,7 +310,10 @@ test.describe.serial('epic acceptance', () => {
 		const template = await loadChattingTemplate();
 		test.skip(
 			template === null,
-			'WAHA corpus absent: run `make corpus` (KILASFLOW_N8N_REFERENCE must point at the read-only n8n checkout) and retry'
+			gate(
+				'corpus',
+				'run `make corpus` (KILASFLOW_N8N_REFERENCE must point at the read-only n8n checkout) and retry'
+			)
 		);
 
 		const stub = await startStub();
