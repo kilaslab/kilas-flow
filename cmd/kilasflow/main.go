@@ -494,8 +494,11 @@ func run() error {
 		// Named so a called workflow starts from its sub-workflow trigger and
 		// not from a webhook or schedule it also happens to carry.
 		SubworkflowTriggerType: nodes.ExecuteWorkflowTriggerType,
-		WorkerID:               resolveWorkerID(*workerIDOverride),
-		DefaultTimeout:         cfg.Execution.DefaultTimeout,
+		// Named for the same reason: an error workflow starts from its Error
+		// Trigger, not from whatever else its document roots.
+		ErrorTriggerType: nodes.ErrorTriggerNodeType,
+		WorkerID:         resolveWorkerID(*workerIDOverride),
+		DefaultTimeout:   cfg.Execution.DefaultTimeout,
 		// The ceiling a workflow's own settings.executionTimeout is clamped
 		// to, and how often an expired durable wait is settled when no exact
 		// timer survived a restart.
