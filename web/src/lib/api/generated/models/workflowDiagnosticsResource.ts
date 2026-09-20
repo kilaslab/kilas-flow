@@ -5,12 +5,16 @@
  * Embeddable workflow automation engine. Every operation available in the editor is available here: the canvas is a client of this API, not the owner of workflow state.
  * OpenAPI spec version: 0.1.0-dev
  */
+import type { ImportIssue } from './importIssue';
 
-export interface RunWorkflowInputBody {
+export interface WorkflowDiagnosticsResource {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /** Optional manual-run input JSON */
-  input?: unknown;
-  /** Trigger node this manual run starts from. Omit to run every trigger. */
-  triggerNodeId?: string;
+  importedAt?: string;
+  /** @nullable */
+  issues: ImportIssue[] | null;
+  revision: number;
+  source?: string;
+  versionId: string;
+  workflowId: string;
 }

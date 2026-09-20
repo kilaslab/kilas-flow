@@ -383,7 +383,7 @@ export const getRunWorkflowUrl = (id: string,) => {
 }
 
 /**
- * Validates and queues the latest saved revision without requiring activation.
+ * Validates and queues the latest saved revision without requiring activation. Body.triggerNodeId selects the trigger to start from; omit it to run every trigger, and a node that cannot start a run is refused with 422.
  * @summary Queue a manual workflow run
  */
 export const runWorkflow = async (id: string,

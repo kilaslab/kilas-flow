@@ -26,7 +26,9 @@ import type {
   ExportWorkflowParams,
   ExportedWorkflowResource,
   ImportWorkflowInputBody,
-  ImportedWorkflowResource
+  ImportedWorkflowResource,
+  WorkflowDiagnosticsParams,
+  WorkflowDiagnosticsResource
 } from '../models';
 
 import { apiFetch } from '../../http';
@@ -170,7 +172,116 @@ export const createImportWorkflow = <TError = ErrorType<ErrorModel>,
       > => {
       return createMutation(() => ({ ...getImportWorkflowMutationOptions(options?.()) }), queryClient);
     }
-    export type exportWorkflowResponse200 = {
+    export type workflowDiagnosticsResponse200 = {
+  data: WorkflowDiagnosticsResource
+  status: 200
+}
+
+export type workflowDiagnosticsResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type workflowDiagnosticsResponseSuccess = (workflowDiagnosticsResponse200) & {
+  headers: Headers;
+};
+export type workflowDiagnosticsResponseError = (workflowDiagnosticsResponseDefault) & {
+  headers: Headers;
+};
+
+export type workflowDiagnosticsResponse = (workflowDiagnosticsResponseSuccess | workflowDiagnosticsResponseError)
+
+export const getWorkflowDiagnosticsUrl = (id: string,
+    params?: WorkflowDiagnosticsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/workflows/${id}/diagnostics?${stringifiedParams}` : `/api/v1/workflows/${id}/diagnostics`
+}
+
+/**
+ * Returns the report stored with a revision when an import created it: what the n8n translation could not carry faithfully, per node and per field. A revision that was not imported answers with no source and no issues.
+ * @summary Read a revision's import report
+ */
+export const workflowDiagnostics = async (id: string,
+    params?: WorkflowDiagnosticsParams, options?: Parameters<typeof apiFetch>[1]): Promise<workflowDiagnosticsResponse> => {
+
+  return apiFetch<workflowDiagnosticsResponse>(getWorkflowDiagnosticsUrl(id,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getWorkflowDiagnosticsQueryKey = (id: string,
+    params?: WorkflowDiagnosticsParams,) => {
+    return [
+    `/api/v1/workflows/${id}/diagnostics`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getWorkflowDiagnosticsQueryOptions = <TData = Awaited<ReturnType<typeof workflowDiagnostics>>, TError = ErrorType<ErrorModel>>(id: string,
+    params?: WorkflowDiagnosticsParams, options?: { query?:Partial<CreateQueryOptions<Awaited<ReturnType<typeof workflowDiagnostics>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getWorkflowDiagnosticsQueryKey(id,params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof workflowDiagnostics>>> = ({ signal }) => workflowDiagnostics(id,params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as CreateQueryOptions<Awaited<ReturnType<typeof workflowDiagnostics>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type WorkflowDiagnosticsQueryResult = NonNullable<Awaited<ReturnType<typeof workflowDiagnostics>>>
+export type WorkflowDiagnosticsQueryError = ErrorType<ErrorModel>
+
+
+/**
+ * @summary Read a revision's import report
+ */
+
+export function createWorkflowDiagnostics<TData = Awaited<ReturnType<typeof workflowDiagnostics>>, TError = ErrorType<ErrorModel>>(
+ id: () =>  string,
+    params?: () =>  WorkflowDiagnosticsParams, options?: () => { query?:Partial<CreateQueryOptions<Awaited<ReturnType<typeof workflowDiagnostics>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: () => QueryClient
+ ): CreateQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+
+
+  const query = createQuery(() => getWorkflowDiagnosticsQueryOptions(id(),
+    params?.(),options?.()), queryClient) as CreateQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return query
+}
+
+
+
+
+
+
+export type exportWorkflowResponse200 = {
   data: ExportedWorkflowResource
   status: 200
 }

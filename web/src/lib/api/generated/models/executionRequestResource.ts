@@ -14,6 +14,7 @@ export interface ExecutionRequestResource {
   input?: unknown;
   status: string;
   trigger: string;
+  triggerNodeId?: string;
   workflowId: string;
   workflowVersionId: string;
 }

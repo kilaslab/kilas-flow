@@ -143,6 +143,8 @@ export * from './visibility';
 export * from './visibilityCondition';
 export * from './webhookDeclaration';
 export * from './webhookRouteResource';
+export * from './workflowDiagnosticsParams';
+export * from './workflowDiagnosticsResource';
 export * from './workflowDocumentInput';
 export * from './workflowDocumentInputSettings';
 export * from './workflowPublishEventResource';
