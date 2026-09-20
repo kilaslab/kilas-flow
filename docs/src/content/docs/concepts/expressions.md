@@ -145,6 +145,13 @@ whose names begin with `KILASFLOW_WORKFLOW_ENV_`, with that prefix stripped —
 so `KILASFLOW_WORKFLOW_ENV_SLACK_URL` is readable as `$env.SLACK_URL` and
 nothing else is readable at all.
 
+A name that is not in that map is a **loud error**, not an empty string:
+`$env.FOO` fails with `$env.FOO is not set; only variables exported as
+KILASFLOW_WORKFLOW_ENV_FOO reach a workflow`. A mistyped credential that
+resolved to `""` used to send a request to an empty base URL and look like an
+upstream failure; naming the allowlist turns the typo into a message the author
+can act on.
+
 The reason is direct: the process environment is where the database DSN and the
 credential master key live. A `$env` that read `os.Environ()` would let any
 workflow author in any tenant read both.
@@ -162,21 +169,25 @@ deliberate configuration rather than a leak.
 
 ## The functions
 
-Nineteen, and they are the whole list. Strings get `toUpperCase`,
-`toLowerCase`, `trim`, `split`, `replace`, `startsWith`, `endsWith`, `includes`,
-`length`, `toString` and `toNumber`. Lists get `join`, `first`, `last`, `all`,
-`includes` and `length`. Dates get `format`, `toISOString`, `plusDays` and
-`minusDays`.
+The full list is served by the evaluator itself and published at
+`GET /api/v1/expression-grammar`, and the
+[expression grammar reference](/reference/expression-grammar/) describes the
+groups. It is a JavaScript method surface: strings, lists, objects, numbers and
+dates, plus the `JSON`, `Object`, `Array`, `Math`, `Number` and `DateTime`
+namespaces. Where a name is also a JavaScript name it behaves the way JavaScript
+does — `replace` replaces the first occurrence and `replaceAll` the rest,
+`includes` on a list compares with SameValueZero rather than stringifying, and
+`join` with no argument joins with `,`.
 
 ```
 {{ $json.email.trim().toLowerCase() }}
 {{ $json.tags.join(", ") }}
-{{ $now.plusDays(7).format("2006-01-02") }}
+{{ $now.plusDays(7).format('yyyy-MM-dd') }}
 ```
 
-`format` takes a **Go** layout string, not a `YYYY-MM-DD` pattern. That is a real
-difference from n8n's Luxon-based formatting and an imported expression using a
-Luxon pattern will not produce what its author intended.
+`format` takes **Luxon** tokens, not a Go layout: `yyyy-MM-dd` and `d. MMM. y`
+mean what an n8n author wrote them to mean. `$now` and `$today` also read the
+workflow's `settings.timezone`, so `$today` is the local calendar day.
 
 `first()`, `last()` and `all()` accept either a plain list or a node, so
 `$('Name').first()` and `$json.tags.first()` are the same function. Both forms

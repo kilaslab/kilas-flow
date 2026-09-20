@@ -442,7 +442,7 @@ survive an import unchanged are the ones that read data and transform it:
 ```
 {{ $json.email.trim().toLowerCase() }}
 {{ $node["Fetch user"].json.name }}
-{{ $now.plusDays(7).format("2006-01-02") }}
+{{ $now.plusDays(7).format('yyyy-MM-dd') }}
 ```
 
 Two differences to look for in your own workflows. **Arbitrary JavaScript inside
