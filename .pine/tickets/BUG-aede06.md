@@ -202,3 +202,28 @@ Landed in this slice (internal/engine/service.go, internal/engine/wait_service.g
 - Wait node resume modes (webhook/form) implemented in nodes/wait.go — see BUG-ysvmaa.
 
 Remaining in other slices: node.started + incremental NodeRun persistence (EngineFlow's `Request.NodeRunSink`, my service-side writer once it lands), alwaysOutputData/executeOnce (EngineFlow runner + ImporterTail importer), manual trigger selection on /run (EngineFlow default + SecurityFront2 API + FrontendCore3 editor), error workflow + Error Trigger/Stop and Error (EngineCore failure path, ImporterTail n8n.go, ImporterTail nodes/core.go), sub-workflow activation validation (ImporterTail nodes/subworkflow.go + EngineCore).
+
+### Landed SHAs and evidence (EngineWaits)
+
+- `6e03f2c` — internal/scheduler/extract.go (`DefaultTimezone`), internal/scheduler/scheduler_test.go, internal/engine/service_test.go (light-poll and run-budget tests), internal/engine/wait_service.go (`workflowContext`).
+- `5d46f4e` — repair commit: the previous partial stage had truncated the `workflowContext` block; the tip is the correct one.
+- `591b3c4` (EngineCore's commit; my hunks rode along) — internal/engine/service.go: `ServiceDeps.MaxTimeout`/`DefaultTimezone`, `runBudget` + `ExecutionTimeoutSetting`, `pollCancellation` reading `ExecutionState`, the `ExecutionState` delegation.
+
+Evidence (scoped, and re-run in a clean worktree at HEAD):
+
+```
+go test ./internal/engine/ -count=1                                  # ok  4.1s
+go test ./internal/engine/ -run 'TestAWorkflowKeepsTheRunBudgetItAsksFor|TestCancellationReachesARunningExecutionThroughTheStatusRead' -count=1   # ok
+go test ./internal/scheduler/ -run TestAnUnnamedWorkflowTimezoneResolvesToTheInstanceZone -count=1   # ok
+```
+
+What that proves: a workflow declaring `settings.executionTimeout` runs past the instance default and is still capped by the instance ceiling (and `-1` means no timeout); a cancellation written straight to the store by another process reaches a running execution through the one-column status read, and the poll makes no full-record read at all (the test's decorated store fails if it does); an absent or `DEFAULT` workflow zone resolves to the instance zone (`0 9 * * *` → 02:00Z for Asia/Jakarta), an author's own zone is untouched, and an unresolvable instance zone is never written into a schedule row (robfig would refuse the spec and the schedule would stop firing).
+
+### Still open on this ticket (other slices)
+
+- Live progress (`node.started`, incremental node-run persistence): EngineFlow's `Request.NodeRunSink` (BUG-c241hm) plus my service-side writer. Not landed when this note was written, so nothing of it is claimed here. `events.NodeStarted` already exists and needs no change.
+- `alwaysOutputData` / `executeOnce`: EngineFlow (runner honours `node.Settings`) + ImporterTail (carry them in `errorHandlingSettings`, drop the two "dropped" diagnostics).
+- Manual trigger selection on `POST /run`: EngineFlow (default to the manual trigger when `TriggerNodeID` is empty) + SecurityFront2 (`internal/api/handlers/workflows.go`) + FrontendCore3 (editor Run button sends the selected trigger).
+- Error workflow: EngineCore (failure path queues `settings.errorWorkflow`) + ImporterTail (carry the setting; `errorTrigger` and `stopAndError` in nodes/core.go).
+- Sub-workflow activation validation (the sibling finding on this ticket): ImporterTail (`nodes/subworkflow.go`) + EngineCore.
+- Config keys `execution.wait_sweep_interval`, `execution.max_timeout`, `execution.default_timezone` and the main.go wiring for `SweepInterval`/`MaxTimeout`/`DefaultTimezone`/`Drain`: SecurityFront2 (agreed key names and signatures, see their thread).

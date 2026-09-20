@@ -197,3 +197,28 @@ Landed in this slice (files: nodes/wait.go, internal/engine/wait_service.go, int
 - Cancellation poll reads one status column (`ExecutionState`) instead of the whole execution record; also exposed on the service for the webhook await (WebhookParity).
 
 Remaining in other slices (handed over, not this slice's files): nested loops / wait-inside-loop / loop binary+lineage / `$loop` in items / maxIterations+`options.reset` on import — EngineFlow (loop state is runner-owned as of 9df1c1c, nested-loop scheduling rewrite in progress) and ImporterTail (import defaults); shutdown drain call in cmd/kilasflow/main.go and the config keys — SecurityFront2; `$execution.resumeUrl` in `ExpressionContext` — ExpressionParity.
+
+### Landed SHAs and evidence (EngineWaits)
+
+- `b41e9c4` — nodes/wait.go, internal/engine/wait_service.go (waitTimers/sweepLoop/armWaitTimer/suspend arming), internal/engine/wait_service_test.go, internal/engine/multiprocess_test.go. Exact per-suspension timers, 7-day cap, webhook/form resume modes with n8n's limit, worker drain assertions.
+- `591b3c4` (EngineCore's commit; my hunks rode along, as they asked) — internal/engine/service.go: `ServiceDeps` wait/timeout fields, `pollCancellation` light read, `ExecutionState` delegation, and the shutdown drain itself (`workers` WaitGroup in `Start` + `Service.Drain(ctx)`).
+- `6e03f2c`, `5d46f4e` — shared-file hunks for BUG-aede06 (run budget, instance timezone, poll), which is why they are listed on that ticket.
+
+Evidence (scoped, run in the working tree and re-run in a clean worktree at b41e9c4):
+
+```
+go build ./internal/engine/ ./internal/scheduler/ ./nodes/            # ok
+go test ./internal/engine/ -count=1                                   # ok  4.1s (whole package)
+go test ./internal/engine/ -run 'TestExpiredWaitsResolveOnTheirOwnDeadline|TestDrainDoesNotWaitForeverOnAStuckNode' -count=1   # ok
+go test ./internal/scheduler/ -count=1                                # ok  0.59s
+go test ./nodes/ -run Wait -count=1                                   # ok  0.56s
+go test ./internal/engine/ -run 'TestGracefulShutdownHandsNothingHalfDone' -count=1   # ok
+```
+
+What that proves: a 50 ms timer wait is re-queued inside a second without anyone calling SweepWaits (the old behaviour needed the minute tick, which is what made "wait 2 seconds" take 54 s); an unanswered approval still fails by name at its deadline; `SweepWaits` is idempotent; `Drain` returns only after the in-flight run is durably cancelled and obeys its bound on a node that ignores cancellation; a 2-day wait is accepted and a 30-day one is refused naming `MaxWaitDuration` (= engine.MaxWaitTTL, 7 days); `resume=webhook` suspends in webhook mode, `resume=form` in approval mode, and a limited call-resumed wait is held as interval/until.
+
+### Still open on this ticket (other slices, not verified here)
+
+- Nested loops and wait-inside-loop: EngineFlow's runner rewrite (loop state is runner-owned as of 9df1c1c; nested-loop scheduling rewrite and `Checkpoint.NodeState` in flight under BUG-c241hm). Not verified by me.
+- Imported loops capped at 100 batches / dropped `options.reset`: ImporterTail (`splitInBatchesToKilas` in internal/interop/n8n/parameters.go).
+- Graceful shutdown at the process level: `Service.Drain(ctx)` exists and is tested, but cmd/kilasflow/main.go must call it after the server drains, bounded by `server.shutdown_timeout` — SecurityFront2 (main.go is theirs this wave). Until that call lands, a real SIGTERM still exits without waiting for the workers, which is the half of the finding the unit test cannot cover.
