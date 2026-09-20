@@ -148,3 +148,31 @@ Files: go.mod, Makefile, Dockerfile, compose.yaml
 - [ ] Adversarial re-verify against live stub/n8n like the Verify phase (no code-only close)
 ## Progress 2026-09-19 (SecurityDx)
 - Status: doing. Research + partial implementation done this session.
+
+## Progress 2026-09-20 (DXOps2)
+- Release/distribution coordinates moved to the real owner `kilaslab`: Makefile IMAGE/SOURCE_URL, Dockerfile OCI source
+  label, compose.yaml, .env.example, README.md, docs (install/404/index/what-is/community-nodes), sdk/package.json,
+  release.yml comment, sdk/examples. New `make coordinates-check` (scripts/check-coordinates.sh, wired into CI lint)
+  fails on the unowned `kilaslabs` namespace and asserts the canonical image/source values; negative-tested both ways.
+  The Go module path is deliberately excepted — deferred to BUG-341sxn (created, linked below) because a 233-file
+  rename needs a quiet tree.
+- Nothing is published: sdk/README.md now says so and gives the checkout install path (`pnpm build` + `file:` dep);
+  guides/embedding.md says the same where the `@kilasflow/sdk/browser` import appears;
+  sdk/examples/reference-host/README.md takes the operator-surface fence (POST /tenants, /tenants/{id}/users,
+  /tenants/{id}/api-keys, KILASFLOW_AUTH_* env names, kfa1_<prefix>_<secret> key shape) and its package.json depends
+  on the SDK by path; host-page/README.md no longer claims a published image or package; operate/deployment.md's
+  `kilasflow:latest` now names `make docker` as the thing that creates it.
+- `kilasflow pack …` is gone as a claim: the binary refuses stray arguments (BUG-8sb0jw), docs/guides/node-authoring.md
+  names `nodepackgen` and says how to get it, and the Dockerfile builds and ships /app/nodepackgen so image users have
+  the validator and checksum tool.
+- Dead/stale half-wired code: internal/engine/approval.go's WaitRegistry comment now says it is test-only and that the
+  durable path is wait_service.go; internal/datastore/fleet.go's FleetRunner comment now says nothing starts it and
+  FEAT-gxppx1's readiness criterion is unmet. Deletion (the other half of "delete or wire") is recorded as the
+  follow-up — EngineCore confirms neither file is in any slice's contract this wave, and deleting production code in a
+  package another agent is mid-landing was not a call to take unilaterally. Hub sent to AINodes2 (internal/ai/maf +
+  agent-framework-go dependency) and EngineWaits (nodes/wait.go:29-43, internal/scheduler/doc.go).
+- No unused-code linter added to CI, deliberately: a staticcheck U1000 gate needs a clean baseline, and the audit's own
+  dead-code list lives in slices that have not landed their deletions. Recorded here rather than added red.
+- i18n (the finding's largest item) moved to FEAT-15k49d: a message catalog plus plurals plus a locale on the embed
+  branding type is a rewrite of the frontend copy layer, not a hygiene commit.
+- Deferred: BUG-341sxn (Go module path rename off kilaslabs — quiet tree required), FEAT-15k49d (i18n).

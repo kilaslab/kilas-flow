@@ -23,7 +23,7 @@ import { baseLinks } from './plugins/base-links.mjs';
 // Rather than hardcode the repository name, both come from the environment. The
 // CI job sets them from `actions/configure-pages`, which derives them from the
 // repository actually being built. That matters here more than it usually would:
-// the git remote is `kilaslabs/k-flow` while `go.mod` and the README both say
+// the git remote is `kilaslab/kilas-flow` while `go.mod` still says
 // `kilas-flow`, so any name written down in this file would be a guess, and a
 // wrong guess produces a site whose every stylesheet 404s.
 const site = process.env.DOCS_SITE || undefined;
@@ -56,7 +56,7 @@ export default defineConfig({
 				{
 					icon: 'github',
 					label: 'GitHub',
-					href: 'https://github.com/kilaslabs/k-flow',
+					href: 'https://github.com/kilaslab/kilas-flow',
 				},
 			],
 

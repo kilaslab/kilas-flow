@@ -143,6 +143,11 @@ session re-verifies the user is still allowed.
 
 ### 4. Mount the editor, watch the run
 
+The SDK is not on npm yet, so the import below resolves only after building it
+from the checkout: `cd sdk && pnpm install && pnpm build`, then
+`pnpm add file:/path/to/kilas-flow/sdk` in the host. See the
+[SDK README](https://github.com/kilaslab/kilas-flow/blob/main/sdk/README.md).
+
 ```js
 import { mountWorkflowEditor, subscribeExecutionEvents } from '@kilasflow/sdk/browser';
 

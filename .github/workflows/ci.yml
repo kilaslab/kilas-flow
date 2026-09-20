@@ -59,6 +59,12 @@ jobs:
 
       - run: make lint
 
+      # Pure grep over a file list, no toolchain: every published coordinate
+      # (image, source label, docs, SDK metadata) must name the repository's real
+      # owner. See scripts/check-coordinates.sh.
+      - name: Published coordinates
+        run: make coordinates-check
+
       # The workspace must survive a build unchanged. A build that rewrites a
       # tracked file makes the tree dirty before `git describe --dirty` runs, so
       # every binary, image and /health response is stamped "-dirty" from a clean

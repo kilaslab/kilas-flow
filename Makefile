@@ -16,10 +16,10 @@ GO_BIN      := $(shell $(GO) env GOBIN 2>/dev/null)
 # repository name (k-flow) because it is what a consumer types in a `docker pull`;
 # it stays overridable so a fork can publish into its own namespace without
 # editing this file.
-IMAGE          ?= ghcr.io/kilaslabs/kilasflow
+IMAGE          ?= ghcr.io/kilaslab/kilasflow
 PLATFORMS      ?= linux/amd64,linux/arm64
 REVISION       ?= $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
-SOURCE_URL     ?= https://github.com/kilaslabs/k-flow
+SOURCE_URL     ?= https://github.com/kilaslab/kilas-flow
 
 # Where `docker buildx --push` writes the digest of what it published. Under .tmp
 # because `make clean` already removes it and .gitignore already covers it.
@@ -359,6 +359,15 @@ corpus-check: ## Verify BASELINE.md, or say the corpus is not materialised
 .PHONY: smoke-sqlite
 smoke-sqlite: ## Prove the embedded binary against a fresh SQLite database
 	sh scripts/smoke-sqlite.sh
+
+# The repository is github.com/kilaslab/kilas-flow, and every coordinate a
+# consumer reads — image, source URL, OCI label, docs, SDK metadata — has to say
+# so. The name "kilaslabs" appeared throughout and belongs to nobody, which is a
+# squatting target rather than a typo. See scripts/check-coordinates.sh for what
+# is checked and what is deliberately excepted (the Go module path, BUG-341sxn).
+.PHONY: coordinates-check
+coordinates-check: ## Fail if a published coordinate names the wrong GitHub owner
+	sh scripts/check-coordinates.sh
 
 .PHONY: smoke-dev
 smoke-dev: ## Prove the Vite development proxy against a temporary Go server

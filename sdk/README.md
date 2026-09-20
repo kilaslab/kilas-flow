@@ -254,6 +254,18 @@ async function fetchTicket(executionId: string): Promise<string> {
 
 ## Install
 
+The package is not on npm yet — `npm view @kilasflow/sdk` answers 404 — so there
+is nothing published to install. Build it from the checkout and depend on the
+directory until the first `sdk-vX.Y.Z` tag is cut:
+
+```sh
+cd sdk && pnpm install && pnpm build     # writes sdk/dist
+pnpm add file:/absolute/path/to/kilas-flow/sdk   # in the host application
+```
+
+Once it is on npm, the install is the one line below, and the version pin
+matters:
+
 ```sh
 npm install @kilasflow/sdk
 ```

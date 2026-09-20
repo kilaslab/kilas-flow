@@ -8,6 +8,6 @@
     "start": "node server.mjs"
   },
   "dependencies": {
-    "@kilasflow/sdk": "0.1.0"
+    "@kilasflow/sdk": "file:../.."
   }
 }

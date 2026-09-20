@@ -190,11 +190,18 @@ type IssueParams struct {
 	ExpiresAt time.Time
 }
 
-// WaitRegistry issues and redeems resume tokens. In-process memory, safe for
-// concurrent use; the durable backing (checkpoint column, waiting status) is
-// the integrator's step in Service.runOnce, and until it lands a process
-// restart drops suspended runs rather than resuming them — said plainly here
-// so nobody mistakes this registry for durability it does not yet have.
+// WaitRegistry issues and redeems resume tokens in process memory, safe for
+// concurrent use.
+//
+// It is not what the server runs. Waits are durable now: Service.runOnce
+// suspends an execution to storage with status `waiting` and a resume URL, and
+// internal/engine/wait_service.go redeems the token and re-queues the run, so a
+// restart resumes rather than drops. Nothing outside this package's tests
+// constructs a WaitRegistry, and a caller that wired it up instead would get
+// exactly the old behaviour — tokens lost on the next deploy — which is why
+// this comment exists rather than a caller. Deleting the type (and the tests
+// that keep it alive) is the other half of the audit finding; it is left to a
+// pass that can take the decision on the engine package as a whole.
 type WaitRegistry struct {
 	mu      sync.Mutex
 	tickets map[string]*WaitTicket

@@ -23,7 +23,14 @@ type FleetStep func(ctx context.Context, tx *gorm.DB, ds Datastore) error
 
 // FleetRunner applies registered steps to every datastore behind
 // CurrentSchemaVersion, one datastore per transaction, re-reading the work
-// list each time rather than snapshotting it. With no steps registered it
+// list each time rather than snapshotting it.
+//
+// Nothing starts one. The composition root does not construct a runner, so a
+// datastore is migrated only by a test or by an explicit call, and readiness
+// does not report the fleet's version spread — FEAT-gxppx1's criterion is
+// unmet as written. The runner is honest about what it does; this note is here
+// because a reader would otherwise assume something calls it. Wiring it or
+// deleting it is the follow-up. With no steps registered it
 // migrates nothing; a datastore ahead of the binary is refused with both
 // versions named rather than silently served.
 //

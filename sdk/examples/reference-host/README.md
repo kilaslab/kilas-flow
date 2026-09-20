@@ -12,52 +12,69 @@ only a short-lived, workflow-scoped token for its own tenant.
 
 ## Run it
 
-No checkout of the KilasFlow repository: the server is a published
-container image and the SDK is the published package. Copy these four
-files out of the repository (`package.json`, `server.mjs`,
-`tenant.html`, this README) into an empty directory and start there.
+Nothing is published yet: `ghcr.io/kilaslab/kilasflow` holds no image and
+`@kilasflow/sdk` is not on npm, so both come from the checkout for now —
+`make docker` for the image, and `pnpm install && pnpm build` in `sdk/`
+for the package this directory depends on by path. The commands below are
+the published shape, with the local build noted where it differs.
 
 ```sh
-# 1. A published KilasFlow image with authentication and embedding enabled
-#    for this origin:
+# 1. KilasFlow itself, with authentication and embedding enabled for this
+#    origin. Substitute the exact release tag once one exists; until then,
+#    `make docker` in the checkout builds `kilasflow:<version>` locally and
+#    `ghcr.io/kilaslab/kilasflow:v0.1.0` below is the tag it will be.
+export KILASFLOW_OPERATOR_KEY="$(printf 'kfa1_%s_%s' \
+  "$(openssl rand -hex 6)" "$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=')")"
 docker run --rm -p 8080:8080 \
   -e KILASFLOW_AUTH_ENABLED=true \
   -e KILASFLOW_AUTH_SIGNING_KEY="$(openssl rand -base64 32)" \
-  -e KILASFLOW_BOOTSTRAP_EMAIL=owner@example.com \
-  -e KILASFLOW_BOOTSTRAP_PASSWORD="$(openssl rand -base64 24)" \
-# 2. One API key per tenant. The dashboard session arrives as a cookie, so
-#    keep a jar: log in as the bootstrap owner, then mint the first
-#    tenant's key through the API (the token is shown once — note it):
-KILASFLOW_URL=http://127.0.0.1:8080
-curl -s -c jar.txt -X POST $KILASFLOW_URL/api/v1/auth/login \
-  -H 'Content-Type: application/json' \
-  -d '{"email":"owner@example.com","password":"<bootstrap password>"}'
-curl -s -b jar.txt -X POST $KILASFLOW_URL/api/v1/api-keys \
-  -H 'Content-Type: application/json' \
-  -d '{"label":"reference host"}'
+  -e KILASFLOW_AUTH_OPERATOR_KEY="$KILASFLOW_OPERATOR_KEY" \
+  -e KILASFLOW_AUTH_BOOTSTRAP_EMAIL=owner@example.com \
+  -e KILASFLOW_AUTH_BOOTSTRAP_PASSWORD=choose-a-first-password \
+  -e KILASFLOW_EMBED_SIGNING_KEY="$(openssl rand -base64 32)" \
+  -e KILASFLOW_EMBED_ALLOWED_ORIGINS=http://localhost:4174 \
+  ghcr.io/kilaslab/kilasflow:v0.1.0
 
-# Tenant provisioning is an operator action: there is no self-service
-# signup endpoint and no user-invitation endpoint. Insert the second
-# tenant's row at the store layer (or the equivalent SQL against the
-# deployment's database):
-#   INSERT INTO tenants (id, name) VALUES ('birch', 'birch');
-# then create that tenant's owner and first key the same way — at the
-# store layer (`CreateUser` + `CreateAPIKey`), because both calls are
-# scoped to the caller's own tenant and cannot reach into a new one.
-# The bootstrap tenant already exists as `default`, so its key is the
-# one minted above.
+# 2. Provision both tenants through the operator surface. The operator key is
+#    not a tenant key: it is scoped to the `operator` tenant and it is the only
+#    credential that may create tenants, users or another tenant's key. Every
+#    minted token is shown once, as kfa1_<prefix>_<secret> — note each down.
+KILASFLOW_URL=http://127.0.0.1:8080
+op() { curl -sS -H "Authorization: Bearer $KILASFLOW_OPERATOR_KEY" \
+  -H 'Content-Type: application/json' "$@"; }
+
+op -X POST $KILASFLOW_URL/api/v1/tenants -d '{"id":"acme","name":"Acme"}'
+op -X POST $KILASFLOW_URL/api/v1/tenants -d '{"id":"birch","name":"Birch"}'
+
+# A first user per tenant — the whole of onboarding, no SQL and no store call.
+op -X POST $KILASFLOW_URL/api/v1/tenants/acme/users \
+  -d '{"email":"owner@acme.example","name":"Acme Owner","password":"choose-one"}'
+op -X POST $KILASFLOW_URL/api/v1/tenants/birch/users \
+  -d '{"email":"owner@birch.example","name":"Birch Owner","password":"choose-one"}'
+
+# One API key per tenant, minted for that tenant by the operator. The bootstrap
+# tenant `default` also exists; this example does not use it.
+op -X POST $KILASFLOW_URL/api/v1/tenants/acme/api-keys -d '{"label":"reference host"}'
+op -X POST $KILASFLOW_URL/api/v1/tenants/birch/api-keys -d '{"label":"reference host"}'
+
+# 3. Point the host at those two keys and start it. The SDK is not on npm yet:
+#    `cd ../../ && pnpm install && pnpm build` first, then `pnpm install` here
+#    (package.json depends on it by path).
 npm install
 KILASFLOW_URL=http://127.0.0.1:8080 \
-  TENANT_A_API_KEY=kfa1.… \
-  TENANT_B_API_KEY=kfa1.… \
+  TENANT_A_API_KEY=kfa1_<acme prefix>_<acme secret> \
+  TENANT_B_API_KEY=kfa1_<birch prefix>_<birch secret> \
   npm start
 
 # 4. Open http://localhost:4174 — Acme and Birch side by side, each with
 #    its own editor, webhook, and signups list.
 ```
 
-Pin both versions in production: the exact image tag (`v0.1.0`, not
-`latest`) and the exact SDK version in `package.json`.
+Pin both versions in production once both are published: the exact image
+tag (`v0.1.0`, not `latest`) and the exact SDK version in `package.json`.
+Until then `package.json` names the SDK by path (`file:../..`), which is
+what makes this directory runnable from the checkout — switch it back to a
+version range on the day the package is on npm.
 
 On first boot the server provisions each tenant idempotently — import a
 webhook workflow (the import response is the only call that reports the

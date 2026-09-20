@@ -2,7 +2,7 @@
 
 An embeddable open-source workflow engine for APIs, AI agents, and SaaS products.
 
-**Repository:** https://github.com/kilaslabs/kilas-flow
+**Repository:** https://github.com/kilaslab/kilas-flow
 
 Go-native · single binary · API-first · embeddable · white-label · SQLite by default
 
@@ -36,7 +36,7 @@ Then open **<http://localhost:8080/app/workflows>**.
 
 The build overlay is temporary. The multi-architecture image pipeline and the
 release workflow are both in the tree, but no version tag has ever been pushed,
-so there is nothing in `ghcr.io/kilaslabs/kilasflow` to pull yet. Once there is,
+so there is nothing in `ghcr.io/kilaslab/kilasflow` to pull yet. Once there is,
 set `KILASFLOW_IMAGE` in `.env` to the exact `vX.Y.Z` tag and the whole thing
 becomes `docker compose up -d` against a pulled image, which is seconds rather
 than minutes.

@@ -7,11 +7,11 @@
   "packageManager": "pnpm@10.15.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/kilaslabs/kilas-flow.git",
+    "url": "git+https://github.com/kilaslab/kilas-flow.git",
     "directory": "sdk"
   },
-  "homepage": "https://github.com/kilaslabs/kilas-flow#readme",
-  "bugs": "https://github.com/kilaslabs/kilas-flow/issues",
+  "homepage": "https://github.com/kilaslab/kilas-flow#readme",
+  "bugs": "https://github.com/kilaslab/kilas-flow/issues",
   "keywords": ["kilasflow", "workflow", "automation", "embed", "host-sdk"],
   "publishConfig": {
     "access": "public",

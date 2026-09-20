@@ -1,13 +1,19 @@
 ---
 title: Authoring a community node pack
-description: Write a declarative node pack as JSON, check it with pack validate, and install it with a checksum the operator approves.
+description: Write a declarative node pack as JSON, check it with nodepackgen validate, and install it with a checksum the operator approves.
 ---
 
 A node pack is JSON, not code. You describe resources, operations, parameters
 and routing metadata; the server interprets them at run time. There is no Go
 to write, no SDK to import, and nothing to compile. The whole flow is three
 steps — **scaffold**, **validate**, **pack** — and every sample on this page is
-a real file that `pack validate` accepts.
+a real file that `nodepackgen validate` accepts.
+
+`nodepackgen` is a second binary, not a subcommand of `kilasflow`: the server
+binary takes flags only, so `kilasflow pack validate …` refuses the argument
+rather than doing anything. Build the tool from the repository with
+`go build ./cmd/nodepackgen`, or run it out of the container image, which ships
+it at `/app/nodepackgen`.
 
 The reference to imitate is `packs/telegram/pack.json`: a hand-written
 declarative pack with resources, operations, a credential type and the

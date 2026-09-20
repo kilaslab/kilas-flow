@@ -37,7 +37,8 @@ jobs:
 
     permissions:
       contents: read
-      # Push to GitHub Container Registry under the kilaslabs namespace. GHCR was
+      # Push to GitHub Container Registry under the kilaslab namespace (the
+      # repository's owner; `IMAGE` in the Makefile carries the same name). GHCR was
       # chosen over Docker Hub because the repository and this runner are already
       # on GitHub, so it needs no credential beyond the token below.
       packages: write

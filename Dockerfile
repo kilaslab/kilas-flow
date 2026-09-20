@@ -62,6 +62,18 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
     -o /out/kilasflow \
     ./cmd/kilasflow
 
+# The pack toolchain ships beside the server. docs/guides/node-authoring.md tells
+# pack authors to validate and checksum with `nodepackgen`, and an operator
+# working inside the image had no way to run it: the image carried only
+# /app/kilasflow. It is a second binary rather than a `kilasflow pack`
+# subcommand because the server binary's contract is flags-only — a stray
+# argument is refused rather than starting a server against ./data.
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
+    -trimpath \
+    -ldflags="-s -w" \
+    -o /out/nodepackgen \
+    ./cmd/nodepackgen
+
 # The runtime image is distroless and has no shell, so the data directory has
 # to be created here and copied in with the right ownership. kilasflow runs as
 # nonroot and creates ./data itself on first start, which it cannot do inside a
@@ -82,6 +94,7 @@ FROM gcr.io/distroless/static-debian12:nonroot
 WORKDIR /app
 
 COPY --from=build /out/kilasflow /app/kilasflow
+COPY --from=build /out/nodepackgen /app/nodepackgen
 COPY --from=build --chown=nonroot:nonroot /out/data /app/data
 
 # Provenance a consumer can read off a running container, so tracing one back to
@@ -95,7 +108,7 @@ COPY --from=build --chown=nonroot:nonroot /out/data /app/data
 # difference.
 ARG VERSION=0.0.0-dev
 ARG REVISION=unknown
-ARG SOURCE=https://github.com/kilaslabs/k-flow
+ARG SOURCE=https://github.com/kilaslab/kilas-flow
 LABEL org.opencontainers.image.title="KilasFlow" \
       org.opencontainers.image.description="Workflow automation server with an embedded SPA" \
       org.opencontainers.image.source="${SOURCE}" \

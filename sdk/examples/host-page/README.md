@@ -9,8 +9,10 @@ short-lived, workflow-scoped token.
 
 ## Run it
 
-No checkout of the KilasFlow repository: the server is a published container
-image and the SDK is the published package.
+Nothing is published yet: neither the image nor the SDK package exists
+outside the checkout, so build both before starting — `make docker` for the
+image, `cd sdk && pnpm install && pnpm build` for the package. The commands
+below then read the way they will once a release tag exists.
 
 ```sh
 # 1. Get this example without the repository (or copy these three files out
@@ -19,9 +21,10 @@ image and the SDK is the published package.
 docker run --rm -p 8080:8080 \
   -e KILASFLOW_EMBED_SIGNING_KEY="$(openssl rand -base64 32)" \
   -e KILASFLOW_EMBED_ALLOWED_ORIGINS="http://localhost:4173" \
-  ghcr.io/kilaslabs/kilasflow:v0.1.0
+  kilasflow:latest   # or ghcr.io/kilaslab/kilasflow:v0.1.0 once a tag exists
 
-# 3. The host backend — the published SDK, installed, never vendored:
+# 3. The host backend — the SDK, installed from the checkout until the package
+#    is on npm (see package.json), never vendored:
 npm install
 KILASFLOW_URL=http://127.0.0.1:8080 KILASFLOW_API_KEY=kfa1.… npm start
 
