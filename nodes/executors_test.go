@@ -335,6 +335,72 @@ func TestSetRefusesAValueThatIsNotItsDeclaredType(t *testing.T) {
 	}
 }
 
+// n8n's conversion table for a typed assignment.
+//
+// An empty value is where a webhook payload, a form submission and a CRM export
+// differ most from anything hand-typed, and n8n writes null for a value that is
+// not there and zero for an empty number rather than failing the run: an
+// optional field one item in a hundred omits must not cost the whole execution.
+func TestSetWritesN8nsValuesForEmptyAndTextualInput(t *testing.T) {
+	t.Parallel()
+
+	executors := engine.NewRegistry()
+	if err := nodes.RegisterExecutors(executors, safehttp.DefaultPolicy(), sqlGuard(), nil, nil, nil); err != nil {
+		t.Fatalf("RegisterExecutors() error = %v", err)
+	}
+	executor, _ := executors.Lookup("core.set")
+
+	// The item has no `total` field: a row reading an absent one is the case
+	// that used to abort the run.
+	incoming := workflow.NodeInput{"main": {{JSON: map[string]any{"present": "yes"}}}}
+	absent := map[string]any{"mode": "expression", "value": "{{ $json.total }}"}
+
+	run := func(t *testing.T, row map[string]any) map[string]any {
+		t.Helper()
+		output, err := executor.Execute(context.Background(), workflow.IRNode{
+			ID: "set", Name: "Set", Type: "kilasflow.set", TypeVersion: workflow.V(1),
+			Parameters: map[string]any{"assignments": map[string]any{"assignments": []any{row}}},
+		}, incoming, engine.Request{})
+		if err != nil {
+			t.Fatalf("Execute() error = %v", err)
+		}
+		return output[0][0].JSON
+	}
+
+	for name, testCase := range map[string]struct {
+		row  map[string]any
+		want any
+	}{
+		// n8n: Number('') and Number('  ') are both zero.
+		"an empty number is zero": {map[string]any{"name": "n", "type": "number", "value": ""}, float64(0)},
+		"a blank number is zero":  {map[string]any{"name": "n", "type": "number", "value": "   "}, float64(0)},
+		// n8n writes null for undefined from 3.2 on, whatever the declared type.
+		"a missing number is null":  {map[string]any{"name": "n", "type": "number", "value": absent}, nil},
+		"a missing boolean is null": {map[string]any{"name": "n", "type": "boolean", "value": absent}, nil},
+		"a missing string is null":  {map[string]any{"name": "n", "type": "string", "value": absent}, nil},
+		// Text that carries the value is read as the declared type.
+		"text that is a number":    {map[string]any{"name": "n", "type": "number", "value": "12"}, float64(12)},
+		"text that is a fraction":  {map[string]any{"name": "n", "type": "number", "value": "7.5"}, float64(7.5)},
+		"a boolean is a number":    {map[string]any{"name": "n", "type": "number", "value": true}, float64(1)},
+		"one is a true boolean":    {map[string]any{"name": "n", "type": "boolean", "value": "1"}, true},
+		"zero is a false boolean":  {map[string]any{"name": "n", "type": "boolean", "value": "0"}, false},
+		"false is a false boolean": {map[string]any{"name": "n", "type": "boolean", "value": "false"}, false},
+		"TRUE is a true boolean":   {map[string]any{"name": "n", "type": "boolean", "value": "TRUE"}, true},
+		"a number is text":         {map[string]any{"name": "n", "type": "string", "value": float64(5)}, "5"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			item := run(t, testCase.row)
+			got, present := item["n"]
+			if !present {
+				t.Fatalf("the row wrote nothing: item = %#v", item)
+			}
+			if got != testCase.want {
+				t.Errorf("n = %#v, want %#v", got, testCase.want)
+			}
+		})
+	}
+}
+
 // The Set node's whole surface: modes, include, duplication, dot notation and
 // binary.
 func TestSetHonoursItsWholeParameterSurface(t *testing.T) {

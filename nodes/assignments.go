@@ -3,9 +3,10 @@ package nodes
 import (
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"strings"
 
+	"github.com/kilaslabs/kilas-flow/internal/conditions"
+	"github.com/kilaslabs/kilas-flow/internal/expression"
 	"github.com/kilaslabs/kilas-flow/internal/property"
 )
 
@@ -94,19 +95,24 @@ func orderedAssignments(object map[string]any) ([]assignmentRow, bool) {
 // number typed into a form is a string, and a workflow comparing it downstream
 // takes the wrong branch. An undeclared type — the legacy shape — writes the
 // value through untouched, which is what that shape has always done.
+//
+// The table is n8n's own (`validateFieldType`, which a Set node has used since
+// 3.2): a value that is undefined or null is written as null whatever the
+// declared type, an empty string is zero for a number, and only a value that
+// genuinely cannot be converted is an error — and then only when the node was
+// not asked to ignore conversion errors.
 func (row assignmentRow) coerce() (any, error) {
-	switch row.Type {
-	case "":
+	if row.Type == "" {
 		return row.Value, nil
+	}
+	if row.Value == nil || expression.IsUndefined(row.Value) {
+		// n8n writes null here for every type. A missing field and an empty
+		// one have to stay distinguishable downstream, and "" for a missing
+		// value was how they stopped being.
+		return nil, nil
+	}
+	switch row.Type {
 	case property.AssignmentString:
-		if row.Value == nil {
-			// Null, not empty text. n8n writes null for a lone expression that
-			// resolved to null or undefined (`{{ $json.missing }}`), and it
-			// writes null for a null-type assignment; turning both into "" made
-			// a missing field indistinguishable from an empty one downstream,
-			// where `{{ $json.x }}` answered "" instead of nothing.
-			return nil, nil
-		}
 		if text, ok := row.Value.(string); ok {
 			return text, nil
 		}
@@ -116,31 +122,19 @@ func (row assignmentRow) coerce() (any, error) {
 		}
 		return string(encoded), nil
 	case property.AssignmentNumber:
-		switch typed := row.Value.(type) {
-		case float64:
-			return typed, nil
-		case int:
-			return float64(typed), nil
-		case json.Number:
-			return typed.Float64()
-		case string:
-			number, err := strconv.ParseFloat(strings.TrimSpace(typed), 64)
-			if err != nil {
-				return nil, fmt.Errorf("assignment %q is declared a number and %q is not one", row.Name, typed)
-			}
+		if number, ok := conditions.Number(row.Value); ok {
 			return number, nil
+		}
+		if text, isText := row.Value.(string); isText {
+			return nil, fmt.Errorf("assignment %q is declared a number and %q is not one", row.Name, text)
 		}
 		return nil, fmt.Errorf("assignment %q is declared a number and its value is not one", row.Name)
 	case property.AssignmentBoolean:
-		switch typed := row.Value.(type) {
-		case bool:
-			return typed, nil
-		case string:
-			decided, err := strconv.ParseBool(strings.TrimSpace(typed))
-			if err != nil {
-				return nil, fmt.Errorf("assignment %q is declared a boolean and %q is not one", row.Name, typed)
-			}
+		if decided, ok := conditions.Boolean(row.Value); ok {
 			return decided, nil
+		}
+		if text, isText := row.Value.(string); isText {
+			return nil, fmt.Errorf("assignment %q is declared a boolean and %q is not one", row.Name, text)
 		}
 		return nil, fmt.Errorf("assignment %q is declared a boolean and its value is not one", row.Name)
 	case property.AssignmentArray:

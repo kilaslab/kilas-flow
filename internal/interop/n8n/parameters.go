@@ -618,15 +618,18 @@ func legacyCondition(row map[string]any, group string) map[string]any {
 
 // legacyOperations translates n8n v1 operation names to their v2 equivalents.
 // The v2 vocabulary is the evaluator's: equals/notEquals/contains and friends
-// for strings, larger/smaller/largerEquals/smallerEquals for numbers,
-// empty/notEmpty for presence, after/before for dates.
+// for strings, larger/smaller/largerEqual/smallerEqual for numbers, empty and
+// notEmpty for presence, after/before for dates. Only the four number names
+// actually change spelling; the rest already read the same in both
+// generations, and are listed so that a name v1 has and this server does not
+// is visible here rather than at run time.
 var legacyOperations = map[string]string{
 	"equal":        "equals",
 	"notEqual":     "notEquals",
 	"larger":       "larger",
-	"largerEqual":  "largerEquals",
+	"largerEqual":  "largerEqual",
 	"smaller":      "smaller",
-	"smallerEqual": "smallerEquals",
+	"smallerEqual": "smallerEqual",
 	"contains":     "contains",
 	"notContains":  "notContains",
 	"startsWith":   "startsWith",
@@ -3752,8 +3755,10 @@ func splitInBatchesToKilas(node Node) (map[string]any, []Unsupported) {
 			// it does something would not be.
 			converted["reset"] = fromN8NValue(reset)
 			issues = append(issues, Unsupported{
-				Field:  "options.reset",
-				Reason: "n8n's loop reset restarts a running loop; KilasFlow's loop runs its batches once, so this was not carried",
+				Field: "options.reset",
+				Reason: "n8n's loop reset restarts a running loop from an expression; the value is carried so a " +
+					"round trip returns the node as it was authored, but KilasFlow's loop runs its batches once " +
+					"and does not restart on it",
 			})
 		}
 	}

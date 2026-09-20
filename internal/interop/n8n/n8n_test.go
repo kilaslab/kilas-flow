@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kilaslabs/kilas-flow/internal/conditions"
 	"github.com/kilaslabs/kilas-flow/internal/engine"
 	"github.com/kilaslabs/kilas-flow/internal/interop/n8n"
 	"github.com/kilaslabs/kilas-flow/internal/loadoptions"
@@ -477,6 +478,61 @@ func TestImportCarriesARegexCondition(t *testing.T) {
 	operator, _ := condition["operator"].(map[string]any)
 	if operator["operation"] != "regex" {
 		t.Fatalf("operator = %#v, want the regex operation carried", condition["operator"])
+	}
+}
+
+// An IF v1 condition is translated into an operation the evaluator actually
+// runs.
+//
+// v1 grouped its conditions by value type, and named its count comparisons
+// larger, smaller, largerEqual and smallerEqual — not the v2 filter's gt, gte,
+// lt and lte. The translation used to hand those names through (one of them
+// misspelt), so an imported v1 IF failed the run with `condition operation
+// "larger" is not supported for a number value`: it imported cleanly and could
+// not run at all. Reading the translated operation back would not catch that,
+// so each one is evaluated.
+func TestImportTranslatesIFV1CountOperationsIntoRunnableOnes(t *testing.T) {
+	t.Parallel()
+
+	for operation, want := range map[string]bool{
+		"larger":       true,
+		"largerEqual":  true,
+		"smaller":      false,
+		"smallerEqual": false,
+	} {
+		t.Run(operation, func(t *testing.T) {
+			result := importFixture(t, `{
+			  "name": "IF v1",
+			  "nodes": [{"id":"b","name":"If","type":"n8n-nodes-base.if","typeVersion":1,
+			    "parameters":{"conditions":{"number":[{"value1":"10","value2":3,"operation":"`+operation+`"}]}}}],
+			  "connections": {}
+			}`)
+
+			filter, _ := nodeByName(result.Document, "If").Parameters["conditions"].(map[string]any)
+			rows, _ := filter["conditions"].([]any)
+			if len(rows) != 1 {
+				t.Fatalf("conditions = %#v, want the one row carried", filter)
+			}
+			operator, _ := rows[0].(map[string]any)["operator"].(map[string]any)
+			if operator["type"] != "number" {
+				t.Fatalf("operator = %#v, want the v1 group kept as the value type", operator)
+			}
+
+			// 10 against 3, through the evaluator the IF node itself calls.
+			matched, err := conditions.Match(conditions.Condition{
+				LeftValue: float64(10), RightValue: float64(3),
+				Operator: conditions.Operator{
+					Type:      conditions.ValueType(operator["type"].(string)),
+					Operation: operator["operation"].(string),
+				},
+			}, conditions.Options{CaseSensitive: true})
+			if err != nil {
+				t.Fatalf("the imported condition does not run: %v", err)
+			}
+			if matched != want {
+				t.Errorf("10 %s 3 = %t, want %t", operation, matched, want)
+			}
+		})
 	}
 }
 

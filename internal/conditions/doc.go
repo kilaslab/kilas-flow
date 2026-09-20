@@ -21,6 +21,14 @@
 // condition comparing one to a number has to work. `strict` refuses instead,
 // and says which value was the wrong type.
 //
+// The conversions are n8n's own: text is read with JavaScript's `Number()` and
+// `Boolean()` — so `""` is the number zero, `"yes"` is true, and `"5"` is 5 —
+// and text that carries JSON is that JSON. A value that is not there at all
+// (JSON null, or a field the item does not have) is not a conversion error in
+// either mode: n8n passes it to the comparison, which routes the item rather
+// than stopping the run. The same table serves the Set node's typed
+// assignments.
+//
 // The conversions are table-tested rather than inferred, because the difference
 // between "5" being 5 and "5" being nothing is a branch a workflow takes.
 package conditions
