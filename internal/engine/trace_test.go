@@ -109,7 +109,7 @@ func TestServiceProjectsDatastoreOutputFromTrace(t *testing.T) {
 	}
 	catalog := traceCatalog(t)
 	executionStore := repository.NewExecutionStore(db.DB)
-	queued, err := executionStore.QueueManualLatest(ctx, tenant, stored.ID, catalog, nil)
+	queued, err := executionStore.QueueManualLatest(ctx, tenant, stored.ID, catalog, "", nil)
 	if err != nil {
 		t.Fatalf("QueueManualLatest() error = %v", err)
 	}

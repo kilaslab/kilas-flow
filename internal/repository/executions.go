@@ -21,7 +21,7 @@ import (
 // implicitly by GORM.
 type ExecutionRepository interface {
 	Create(context.Context, TenantScope, execution.Record) (execution.Record, error)
-	QueueManualLatest(context.Context, TenantScope, string, workflow.Catalog, json.RawMessage) (execution.Record, error)
+	QueueManualLatest(context.Context, TenantScope, string, workflow.Catalog, string, json.RawMessage) (execution.Record, error)
 	QueueTriggered(context.Context, TenantScope, string, string, execution.Trigger, string, json.RawMessage) (execution.Record, error)
 	Get(context.Context, TenantScope, string) (execution.Record, error)
 	List(context.Context, TenantScope, ExecutionFilter) (ExecutionPage, error)
@@ -102,7 +102,14 @@ func NewExecutionStore(db *gorm.DB) *GORMExecutionStore {
 // queued manual execution while holding the workflow row lock. Keeping those
 // actions together prevents a concurrent draft save from making the queued
 // execution point at a revision that was already superseded when it persisted.
-func (store *GORMExecutionStore) QueueManualLatest(ctx context.Context, tenant TenantScope, workflowID string, catalog workflow.Catalog, input json.RawMessage) (execution.Record, error) {
+//
+// triggerNodeID names the trigger this run starts from, for a workflow that
+// declares several. Empty is the documented default: every root runs, which is
+// what a manual run of a single-trigger workflow has always meant. A named node
+// is checked against the revision being pinned here, so a choice that cannot
+// start a run is refused while the caller is still there to read why instead of
+// being discovered by a worker as a run that did the wrong thing.
+func (store *GORMExecutionStore) QueueManualLatest(ctx context.Context, tenant TenantScope, workflowID string, catalog workflow.Catalog, triggerNodeID string, input json.RawMessage) (execution.Record, error) {
 	if err := tenant.validate(); err != nil {
 		return execution.Record{}, err
 	}
@@ -140,8 +147,14 @@ func (store *GORMExecutionStore) QueueManualLatest(ctx context.Context, tenant T
 		if err != nil {
 			return err
 		}
-		if _, err := workflow.Compile(storedVersion.Document, catalog); err != nil {
+		ir, err := workflow.Compile(storedVersion.Document, catalog)
+		if err != nil {
 			return err
+		}
+		if triggerNodeID != "" {
+			if err := manualStartProblem(ir, triggerNodeID); err != nil {
+				return err
+			}
 		}
 
 		model = executionModel{
@@ -151,6 +164,7 @@ func (store *GORMExecutionStore) QueueManualLatest(ctx context.Context, tenant T
 			WorkflowVersionID: version.ID,
 			Status:            string(execution.StatusQueued),
 			Trigger:           string(execution.TriggerManual),
+			TriggerNodeID:     triggerNodeID,
 			Input:             inputPayload,
 			Output:            []byte("null"),
 			Error:             []byte("null"),
@@ -167,6 +181,44 @@ func (store *GORMExecutionStore) QueueManualLatest(ctx context.Context, tenant T
 		return execution.Record{}, err
 	}
 	return executionFromModel(model), nil
+}
+
+// manualStartProblem refuses a manual run that names a node it cannot start
+// from.
+//
+// The runner takes any node ID and runs the subgraph below it, so a node in the
+// middle of the graph would be seeded with an empty input and the nodes above
+// it would simply not run — a run that reports success and does something the
+// caller did not ask for. A disabled trigger is refused for the same reason the
+// runner refuses it: the author switched it off.
+func manualStartProblem(ir workflow.IR, triggerNodeID string) error {
+	invalid := func(message string) error {
+		return &workflow.ValidationErrors{Issues: []workflow.ValidationError{{
+			Code: workflow.ErrorInvalidTopology, Path: "/triggerNodeId",
+			NodeID: triggerNodeID, Message: message,
+		}}}
+	}
+	known := false
+	for _, node := range ir.Nodes {
+		if node.ID != triggerNodeID {
+			continue
+		}
+		known = true
+		if node.Disabled {
+			return invalid(fmt.Sprintf("node %q is disabled, so it cannot start a run", triggerNodeID))
+		}
+		break
+	}
+	if !known {
+		return invalid(fmt.Sprintf("this workflow has no node %q to start the run from", triggerNodeID))
+	}
+	for _, edge := range ir.Edges {
+		if edge.Target.NodeID == triggerNodeID {
+			return invalid(fmt.Sprintf("node %q is fed by %q, so a run cannot start from it; name a trigger node instead",
+				triggerNodeID, edge.Source.NodeID))
+		}
+	}
+	return nil
 }
 
 // QueueTriggered persists a queued execution against one pinned revision.

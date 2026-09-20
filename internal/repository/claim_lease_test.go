@@ -57,7 +57,7 @@ func queueOneNodeExecution(t *testing.T, db *database.DB, tenant repository.Tena
 	}
 	queued, err := repository.NewExecutionStore(db.DB).QueueManualLatest(ctx, tenant, workflowID, activationCatalog{
 		"kilasflow.manual": {Type: "kilasflow.manual", Version: workflow.V(1), Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}}},
-	}, nil)
+	}, "", nil)
 	if err != nil {
 		t.Fatalf("QueueManualLatest(%q) error = %v", workflowID, err)
 	}

@@ -126,7 +126,7 @@ func caller(name, targetID string, parameters map[string]any) workflow.Document 
 func (setup composition) runManual(t *testing.T, workflowID string, input string) execution.Record {
 	t.Helper()
 	ctx := context.Background()
-	queued, err := setup.executions.QueueManualLatest(ctx, setup.tenant, workflowID, setup.catalog, json.RawMessage(input))
+	queued, err := setup.executions.QueueManualLatest(ctx, setup.tenant, workflowID, setup.catalog, "", json.RawMessage(input))
 	if err != nil {
 		t.Fatalf("QueueManualLatest() error = %v", err)
 	}

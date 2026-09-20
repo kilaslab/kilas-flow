@@ -180,8 +180,10 @@ type Request struct {
 	// this, every root's executor would run seeded with the same item, so a
 	// schedule trigger would fire on a webhook delivery.
 	//
-	// Empty means every root, which is what a manual run of a workflow means
-	// and what preserves today's behaviour for a single-root graph.
+	// Empty means every root, which is the default a manual run keeps and what
+	// preserves today's behaviour for a single-root graph. A manual run that
+	// names a trigger carries the user's choice here instead, so a workflow
+	// that declares several runs the one they picked rather than all of them.
 	TriggerNodeID string
 }
 

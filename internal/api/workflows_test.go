@@ -56,6 +56,7 @@ type executionRequestResource struct {
 	WorkflowVersionID string `json:"workflowVersionId"`
 	Status            string `json:"status"`
 	Trigger           string `json:"trigger"`
+	TriggerNodeID     string `json:"triggerNodeId,omitempty"`
 }
 
 type recordingExecutionController struct {
@@ -104,11 +105,11 @@ func (store *saveBeforeExecutionStore) Create(ctx context.Context, tenant reposi
 	return store.GORMExecutionStore.Create(ctx, tenant, record)
 }
 
-func (store *saveBeforeExecutionStore) QueueManualLatest(ctx context.Context, tenant repository.TenantScope, workflowID string, catalog workflow.Catalog, input json.RawMessage) (execution.Record, error) {
+func (store *saveBeforeExecutionStore) QueueManualLatest(ctx context.Context, tenant repository.TenantScope, workflowID string, catalog workflow.Catalog, triggerNodeID string, input json.RawMessage) (execution.Record, error) {
 	if err := store.beforePersist(); err != nil {
 		return execution.Record{}, err
 	}
-	return store.GORMExecutionStore.QueueManualLatest(ctx, tenant, workflowID, catalog, input)
+	return store.GORMExecutionStore.QueueManualLatest(ctx, tenant, workflowID, catalog, triggerNodeID, input)
 }
 
 // workflowDraftRequest is the public write shape. Workflow identifiers belong
@@ -218,7 +219,7 @@ func TestWorkflowAPIActivatesAndQueuesOnlyLatestValidDraft(t *testing.T) {
 		t.Fatalf("invalid draft revision = %d, want %d", got, want)
 	}
 	requestProblem(t, handler, http.MethodPost, "/api/v1/workflows/"+created.ID+"/activate", nil, http.StatusUnprocessableEntity)
-	problem := requestValidationProblem(t, handler, http.MethodPost, "/api/v1/workflows/"+created.ID+"/run")
+	problem := requestValidationProblem(t, handler, http.MethodPost, "/api/v1/workflows/"+created.ID+"/run", nil)
 	if got, want := problem.Errors[0].Value.Code, string(workflow.ErrorUnknownNode); got != want {
 		t.Errorf("run validation issue code = %q, want %q", got, want)
 	}
@@ -238,6 +239,58 @@ func TestWorkflowAPIActivatesAndQueuesOnlyLatestValidDraft(t *testing.T) {
 	second := requestJSON[workflowResource](t, handler, http.MethodPost, "/api/v1/workflows/"+created.ID+"/deactivate", nil, http.StatusOK)
 	if first.Active || second.Active {
 		t.Errorf("deactivation must be idempotent, got %#v then %#v", first, second)
+	}
+}
+
+func TestWorkflowAPIRunCanChooseTheTriggerToStartFrom(t *testing.T) {
+	handler, _, executions := newWorkflowAPI(t)
+	document := validManualWorkflow("Two triggers")
+	document.Nodes = append(document.Nodes,
+		workflow.Node{ID: "hook", Name: "Webhook", Type: "kilasflow.webhook", TypeVersion: workflow.V(1),
+			Parameters: map[string]any{"path": "orders", "httpMethod": "POST"}},
+		workflow.Node{ID: "work", Name: "Work", Type: "kilasflow.set", TypeVersion: workflow.V(1),
+			Parameters: map[string]any{"assignments": map[string]any{"seen": "yes"}}},
+	)
+	document.Connections = []workflow.Connection{
+		{ID: "c1", Kind: workflow.ConnectionMain,
+			Source: workflow.Endpoint{NodeID: "manual", Port: "main"},
+			Target: workflow.Endpoint{NodeID: "work", Port: "main"}},
+		{ID: "c2", Kind: workflow.ConnectionMain,
+			Source: workflow.Endpoint{NodeID: "hook", Port: "main"},
+			Target: workflow.Endpoint{NodeID: "work", Port: "main"}},
+	}
+	created := createWorkflow(t, handler, document)
+
+	// The chosen trigger is what the queued run records, and it is echoed so a
+	// client can tell which branch it queued.
+	run := requestJSON[executionRequestResource](t, handler, http.MethodPost, "/api/v1/workflows/"+created.ID+"/run",
+		map[string]any{"triggerNodeId": "hook", "input": map[string]any{"order": "A-1"}}, http.StatusAccepted)
+	if run.TriggerNodeID != "hook" {
+		t.Errorf("queued request trigger node = %q, want the chosen %q", run.TriggerNodeID, "hook")
+	}
+	persisted, err := executions.Get(context.Background(), repository.TenantScope{ID: repository.DefaultTenantID}, run.ID)
+	if err != nil {
+		t.Fatalf("load queued execution = %v", err)
+	}
+	if persisted.TriggerNodeID != "hook" {
+		t.Errorf("persisted trigger node = %q, want the choice to reach the worker", persisted.TriggerNodeID)
+	}
+
+	// Omitting the choice keeps the old behaviour: no named trigger.
+	unnamed := requestJSON[executionRequestResource](t, handler, http.MethodPost, "/api/v1/workflows/"+created.ID+"/run", nil, http.StatusAccepted)
+	if unnamed.TriggerNodeID != "" {
+		t.Errorf("trigger node = %q, want empty when the caller chose nothing", unnamed.TriggerNodeID)
+	}
+
+	// A node the run cannot start from is refused by name rather than queued as
+	// a run that quietly does something else.
+	problem := requestValidationProblem(t, handler, http.MethodPost, "/api/v1/workflows/"+created.ID+"/run",
+		map[string]any{"triggerNodeId": "work"})
+	if got, want := problem.Errors[0].Value.NodeID, "work"; got != want {
+		t.Errorf("validation issue node = %q, want %q", got, want)
+	}
+	if got, want := problem.Errors[0].Value.Code, string(workflow.ErrorInvalidTopology); got != want {
+		t.Errorf("validation issue code = %q, want %q", got, want)
 	}
 }
 
@@ -508,7 +561,7 @@ func requestProblem(t *testing.T, handler http.Handler, method, path string, bod
 	}
 }
 
-func requestValidationProblem(t *testing.T, handler http.Handler, method, path string) struct {
+func requestValidationProblem(t *testing.T, handler http.Handler, method, path string, body any) struct {
 	Errors []struct {
 		Value struct {
 			Code   string `json:"code"`
@@ -517,7 +570,18 @@ func requestValidationProblem(t *testing.T, handler http.Handler, method, path s
 	} `json:"errors"`
 } {
 	t.Helper()
-	request := httptest.NewRequest(method, path, nil)
+	var contents io.Reader
+	if body != nil {
+		encoded, err := json.Marshal(body)
+		if err != nil {
+			t.Fatalf("marshal request body = %v", err)
+		}
+		contents = bytes.NewReader(encoded)
+	}
+	request := httptest.NewRequest(method, path, contents)
+	if body != nil {
+		request.Header.Set("Content-Type", "application/json")
+	}
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusUnprocessableEntity {

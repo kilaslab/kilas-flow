@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -98,8 +99,12 @@ type ExecutionRequestResource struct {
 	WorkflowVersionID string            `json:"workflowVersionId"`
 	Status            execution.Status  `json:"status"`
 	Trigger           execution.Trigger `json:"trigger"`
-	Input             json.RawMessage   `json:"input,omitempty"`
-	CreatedAt         time.Time         `json:"createdAt"`
+	// TriggerNodeID is the trigger this run starts from. It echoes the run
+	// request's choice, so a client can tell which branch it queued without
+	// reading the execution back; empty means every trigger runs.
+	TriggerNodeID string          `json:"triggerNodeId,omitempty"`
+	Input         json.RawMessage `json:"input,omitempty"`
+	CreatedAt     time.Time       `json:"createdAt"`
 }
 
 // WorkflowValidationIssue is attached to an RFC 9457 error detail's value so
@@ -224,6 +229,12 @@ type runWorkflowInput struct {
 	ID   string `path:"id" minLength:"1" doc:"Workflow identifier"`
 	Body *struct {
 		Input json.RawMessage `json:"input,omitempty" doc:"Optional manual-run input JSON"`
+		// TriggerNodeID picks which trigger the run starts from. A workflow
+		// that declares several — a webhook beside a nightly schedule is the
+		// standard shape — fires only the one named here, with that trigger's
+		// item shape. Empty runs every trigger, which is what a single-trigger
+		// workflow has always done.
+		TriggerNodeID string `json:"triggerNodeId,omitempty" doc:"Trigger node this manual run starts from. Omit to run every trigger."`
 	}
 }
 
@@ -368,7 +379,7 @@ func (handler *Workflows) Register(api huma.API) {
 	}, handler.Deactivate)
 	huma.Register(api, huma.Operation{
 		OperationID: "run-workflow", Method: http.MethodPost, Path: "/workflows/{id}/run", DefaultStatus: http.StatusAccepted,
-		Summary: "Queue a manual workflow run", Description: "Validates and queues the latest saved revision without requiring activation.", Tags: []string{"Workflow lifecycle"},
+		Summary: "Queue a manual workflow run", Description: "Validates and queues the latest saved revision without requiring activation. Body.triggerNodeId selects the trigger to start from; omit it to run every trigger, and a node that cannot start a run is refused with 422.", Tags: []string{"Workflow lifecycle"},
 	}, handler.Run)
 }
 
@@ -701,6 +712,12 @@ func (handler *Workflows) lifecycleIDs() map[string]string {
 // own token, and a run is where a document that escaped the save-time check —
 // an older revision, saved before the check existed — would otherwise execute
 // with the tenant's authority.
+//
+// The body may name the trigger to start from. A workflow that declares several
+// — a webhook beside a nightly schedule — otherwise fires all of them with the
+// same item, which sends duplicate writes and hands trigger-shaped expressions
+// the wrong payload; and the run is refused by name when the node cannot start
+// one.
 func (handler *Workflows) Run(ctx context.Context, input *runWorkflowInput) (*executionRequestOutput, error) {
 	if err := handler.available(true); err != nil {
 		return nil, err
@@ -709,10 +726,12 @@ func (handler *Workflows) Run(ctx context.Context, input *runWorkflowInput) (*ex
 		return nil, err
 	}
 	var payload json.RawMessage
+	triggerNodeID := ""
 	if input.Body != nil {
 		payload = input.Body.Input
+		triggerNodeID = strings.TrimSpace(input.Body.TriggerNodeID)
 	}
-	created, err := handler.executions.QueueManualLatest(ctx, handler.tenant(ctx), input.ID, handler.catalog, payload)
+	created, err := handler.executions.QueueManualLatest(ctx, handler.tenant(ctx), input.ID, handler.catalog, triggerNodeID, payload)
 	if err != nil {
 		return nil, handler.problem(ctx, err)
 	}
@@ -806,7 +825,8 @@ func workflowVersionResource(version workflow.Version) WorkflowVersionResource {
 func executionRequestResource(record execution.Record) ExecutionRequestResource {
 	return ExecutionRequestResource{
 		ID: record.ID, WorkflowID: record.WorkflowID, WorkflowVersionID: record.WorkflowVersionID,
-		Status: record.Status, Trigger: record.Trigger, Input: execution.Redact(record.Input), CreatedAt: record.StartedAt,
+		Status: record.Status, Trigger: record.Trigger, TriggerNodeID: record.TriggerNodeID,
+		Input: execution.Redact(record.Input), CreatedAt: record.StartedAt,
 	}
 }
 

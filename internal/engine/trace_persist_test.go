@@ -84,7 +84,7 @@ func loopWithPrunedBranch(t *testing.T, sandbox *engineSandbox, tenant repositor
 	if err != nil {
 		t.Fatalf("SaveDraft(%q) error = %v", workflowID, err)
 	}
-	queued, err := sandbox.store.QueueManualLatest(sandbox.ctx, tenant, workflowID, sandbox.catalog, json.RawMessage(`{"arr":[1,3,4]}`))
+	queued, err := sandbox.store.QueueManualLatest(sandbox.ctx, tenant, workflowID, sandbox.catalog, "", json.RawMessage(`{"arr":[1,3,4]}`))
 	if err != nil {
 		t.Fatalf("QueueManualLatest(%q) error = %v", workflowID, err)
 	}

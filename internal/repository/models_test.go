@@ -200,7 +200,7 @@ func TestExecutionStoreReclaimsAnExpiredWorkerLease(t *testing.T) {
 	store := repository.NewExecutionStore(db.DB)
 	queued, err := store.QueueManualLatest(context.Background(), tenant, stored.ID, activationCatalog{
 		"kilasflow.manual": {Type: "kilasflow.manual", Version: workflow.V(1), Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}}},
-	}, nil)
+	}, "", nil)
 	if err != nil {
 		t.Fatalf("QueueManualLatest() error = %v", err)
 	}
@@ -592,6 +592,107 @@ func TestExecutionStoreFiltersListByWorkflow(t *testing.T) {
 	}
 	if len(page.Records) != 1 || page.Records[0].WorkflowID != stored.ID {
 		t.Fatalf("workflow filter returned %#v", page.Records)
+	}
+}
+
+// TestQueueManualLatestCarriesTheChosenTriggerAndRefusesWhatCannotStartIt
+//
+// A workflow that declares several triggers used to fire all of them with the
+// same item — a nightly schedule delivering on a webhook test run — because the
+// manual-run API had no way to say which one the caller meant. The choice is
+// recorded on the queued row here, and a node the run cannot start from is
+// refused while the caller is still there to read why: the alternative is a
+// worker discovering it as a run that succeeded while doing something else.
+func TestQueueManualLatestCarriesTheChosenTriggerAndRefusesWhatCannotStartIt(t *testing.T) {
+	db, tenant, stored := newExecutionFixture(t)
+	ctx := context.Background()
+
+	link := func(id, source, target string) workflow.Connection {
+		return workflow.Connection{ID: id, Kind: workflow.ConnectionMain,
+			Source: workflow.Endpoint{NodeID: source, Port: "main"},
+			Target: workflow.Endpoint{NodeID: target, Port: "main"}}
+	}
+	// Revision 2 is the two-trigger shape this is about.
+	if _, err := repository.NewWorkflowStore(db.DB).SaveDraft(ctx, tenant, workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            stored.ID,
+		Name:          "Two triggers",
+		Nodes: []workflow.Node{
+			{ID: "manual", Name: "Manual", Type: "kilasflow.manual", TypeVersion: workflow.V(1)},
+			{ID: "hook", Name: "Webhook", Type: "kilasflow.webhook", TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"path": "orders", "httpMethod": "POST"}},
+			{ID: "shared", Name: "Shared", Type: "kilasflow.set", TypeVersion: workflow.V(1)},
+		},
+		Connections: []workflow.Connection{link("c1", "manual", "shared"), link("c2", "hook", "shared")},
+		Settings:    map[string]any{},
+	}); err != nil {
+		t.Fatalf("SaveDraft(two triggers) error = %v", err)
+	}
+
+	catalog := activationCatalog{}
+	for _, definition := range []workflow.NodeDefinition{
+		{Type: "kilasflow.manual", Version: workflow.V(1),
+			Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}}},
+		{Type: "kilasflow.webhook", Version: workflow.V(1),
+			Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}}},
+		{Type: "kilasflow.set", Version: workflow.V(1),
+			Inputs:  []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+			Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}}},
+	} {
+		catalog[definition.Type] = definition
+	}
+	store := repository.NewExecutionStore(db.DB)
+
+	queued, err := store.QueueManualLatest(ctx, tenant, stored.ID, catalog, "hook", json.RawMessage(`{"customer":"Ada"}`))
+	if err != nil {
+		t.Fatalf("QueueManualLatest(chosen trigger) error = %v", err)
+	}
+	if queued.TriggerNodeID != "hook" {
+		t.Errorf("queued run starts from %q, want the chosen trigger", queued.TriggerNodeID)
+	}
+	persisted, err := store.Get(ctx, tenant, queued.ID)
+	if err != nil {
+		t.Fatalf("Get(queued) error = %v", err)
+	}
+	if persisted.TriggerNodeID != "hook" {
+		t.Errorf("stored trigger node = %q, want the choice to be durable, not just returned", persisted.TriggerNodeID)
+	}
+	if persisted.Trigger != execution.TriggerManual {
+		t.Errorf("stored trigger = %q, want the run to stay a manual one", persisted.Trigger)
+	}
+
+	// The default is unchanged: no choice names no trigger, which the runner
+	// reads as every root.
+	unnamed, err := store.QueueManualLatest(ctx, tenant, stored.ID, catalog, "", nil)
+	if err != nil {
+		t.Fatalf("QueueManualLatest(no choice) error = %v", err)
+	}
+	if unnamed.TriggerNodeID != "" {
+		t.Errorf("trigger node = %q, want empty when the caller chose nothing", unnamed.TriggerNodeID)
+	}
+
+	for _, refused := range []struct{ choice, names string }{
+		// Fed by both triggers, so it cannot start a run.
+		{"shared", "shared"},
+		// Not in this revision at all.
+		{"nowhere", "nowhere"},
+	} {
+		_, err := store.QueueManualLatest(ctx, tenant, stored.ID, catalog, refused.choice, nil)
+		var validation *workflow.ValidationErrors
+		if !errors.As(err, &validation) {
+			t.Fatalf("QueueManualLatest(%q) error = %v, want ValidationErrors", refused.choice, err)
+		}
+		if !strings.Contains(validation.Issues[0].Message, refused.names) {
+			t.Errorf("issue for %q = %q, want it to name the node", refused.choice, validation.Issues[0].Message)
+		}
+	}
+	// And the refusals left nothing queued behind them.
+	page, err := store.List(ctx, tenant, repository.ExecutionFilter{Limit: 10})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(page.Records) != 2 {
+		t.Errorf("queued executions = %d, want the two accepted runs alone", len(page.Records))
 	}
 }
 

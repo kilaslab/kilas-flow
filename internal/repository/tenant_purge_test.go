@@ -80,7 +80,7 @@ func purgeFixtureExecution(t *testing.T, ctx context.Context, executions *reposi
 	if err != nil {
 		t.Fatalf("SaveDraft() error = %v", err)
 	}
-	queued, err := executions.QueueManualLatest(ctx, tenant, saved.ID, driverCatalog(), json.RawMessage(`{}`))
+	queued, err := executions.QueueManualLatest(ctx, tenant, saved.ID, driverCatalog(), "", json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatalf("QueueManualLatest() error = %v", err)
 	}

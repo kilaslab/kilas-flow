@@ -124,7 +124,7 @@ func TestAFailedRunStartsTheErrorWorkflowNamedInItsSettings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SaveDraft(fragile) error = %v", err)
 	}
-	queued, err := sandbox.store.QueueManualLatest(sandbox.ctx, tenant, stored.ID, sandbox.catalog, nil)
+	queued, err := sandbox.store.QueueManualLatest(sandbox.ctx, tenant, stored.ID, sandbox.catalog, "", nil)
 	if err != nil {
 		t.Fatalf("QueueManualLatest() error = %v", err)
 	}
@@ -214,7 +214,7 @@ func TestAFailedRunStartsTheErrorWorkflowNamedInItsSettings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SaveDraft(self referential) error = %v", err)
 	}
-	if _, err := sandbox.store.QueueManualLatest(sandbox.ctx, tenant, self.ID, sandbox.catalog, nil); err != nil {
+	if _, err := sandbox.store.QueueManualLatest(sandbox.ctx, tenant, self.ID, sandbox.catalog, "", nil); err != nil {
 		t.Fatalf("QueueManualLatest(self referential) error = %v", err)
 	}
 	if worked, err := service.RunOnce(sandbox.ctx); err != nil || !worked {

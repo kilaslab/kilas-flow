@@ -55,7 +55,7 @@ func queueAndClaimWaitFixture(t *testing.T, db *database.DB, tenantID, workflowI
 		t.Fatalf("SaveDraft() error = %v", err)
 	}
 	store := repository.NewExecutionStore(db.DB)
-	if _, err := store.QueueManualLatest(ctx, tenant, saved.ID, driverCatalog(), json.RawMessage(`{"start":"here"}`)); err != nil {
+	if _, err := store.QueueManualLatest(ctx, tenant, saved.ID, driverCatalog(), "", json.RawMessage(`{"start":"here"}`)); err != nil {
 		t.Fatalf("QueueManualLatest() error = %v", err)
 	}
 	record, _, claimed, err := store.ClaimNext(ctx, "worker-1", time.Now().UTC().Add(time.Minute))

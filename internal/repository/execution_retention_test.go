@@ -58,8 +58,7 @@ func newRetentionFixture(t *testing.T, db *database.DB, workflowID string) reten
 // queue puts one manual run on the queue and returns it.
 func (fixture retentionFixture) queue(t *testing.T) execution.Record {
 	t.Helper()
-	queued, err := fixture.executions.QueueManualLatest(
-		context.Background(), fixture.tenant, fixture.workflowID, driverCatalog(), nil)
+	queued, err := fixture.executions.QueueManualLatest(context.Background(), fixture.tenant, fixture.workflowID, driverCatalog(), "", nil)
 	if err != nil {
 		t.Fatalf("QueueManualLatest() error = %v", err)
 	}

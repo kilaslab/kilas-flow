@@ -161,7 +161,7 @@ func queueClaimFixture(t *testing.T, db *database.DB, tenantID, workflowID strin
 	executions := repository.NewExecutionStore(db.DB)
 	ids := make([]string, 0, count)
 	for range count {
-		queued, err := executions.QueueManualLatest(ctx, tenant, saved.ID, driverCatalog(), nil)
+		queued, err := executions.QueueManualLatest(ctx, tenant, saved.ID, driverCatalog(), "", nil)
 		if err != nil {
 			t.Fatalf("QueueManualLatest() error = %v", err)
 		}
@@ -303,7 +303,7 @@ func TestQueuedExecutionWakesAListenerOnPostgres(t *testing.T) {
 		if woken {
 			break
 		}
-		queued, err := store.QueueManualLatest(ctx, tenant, saved.ID, driverCatalog(), nil)
+		queued, err := store.QueueManualLatest(ctx, tenant, saved.ID, driverCatalog(), "", nil)
 		if err != nil {
 			t.Fatalf("QueueManualLatest() error = %v", err)
 		}

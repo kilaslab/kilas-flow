@@ -59,7 +59,7 @@ func TestServiceRunOncePersistsCompletedManualSetExecution(t *testing.T) {
 		t.Fatalf("RegisterAll() error = %v", err)
 	}
 	executionStore := repository.NewExecutionStore(db.DB)
-	queued, err := executionStore.QueueManualLatest(ctx, tenant, stored.ID, catalog, json.RawMessage(`{"customer":"Ada"}`))
+	queued, err := executionStore.QueueManualLatest(ctx, tenant, stored.ID, catalog, "", json.RawMessage(`{"customer":"Ada"}`))
 	if err != nil {
 		t.Fatalf("QueueManualLatest() error = %v", err)
 	}
@@ -131,7 +131,7 @@ func TestServiceRunOncePersistsCompletedManualSetExecution(t *testing.T) {
 	// the terminal execution update. The next worker must clear that incomplete
 	// attempt and complete the pinned workflow rather than becoming stuck on the
 	// node-run uniqueness constraints.
-	abandoned, err := executionStore.QueueManualLatest(ctx, tenant, stored.ID, catalog, nil)
+	abandoned, err := executionStore.QueueManualLatest(ctx, tenant, stored.ID, catalog, "", nil)
 	if err != nil {
 		t.Fatalf("QueueManualLatest(abandoned) error = %v", err)
 	}
@@ -158,6 +158,118 @@ func TestServiceRunOncePersistsCompletedManualSetExecution(t *testing.T) {
 	}
 	if got, want := len(recovered.NodeRuns), 2; got != want {
 		t.Errorf("recovered node runs = %d, want %d without the partial attempt", got, want)
+	}
+}
+
+// TestAManualRunStartsOnlyFromTheTriggerItChose is the whole point of the
+// trigger selection, end to end: the choice the API recorded reaches the runner
+// and the run executes one trigger's branch.
+//
+// Without it a manual run of a two-trigger workflow seeds every root with the
+// same item, so the shared tail writes once per trigger and every
+// trigger-shaped expression reads the wrong payload — the duplicate side
+// effects the live repro caught.
+func TestAManualRunStartsOnlyFromTheTriggerItChose(t *testing.T) {
+	ctx := context.Background()
+	db, err := database.Open(ctx, config.Database{Driver: "sqlite", DSN: filepath.Join(t.TempDir(), "kilasflow.db")}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := database.Migrate(db, slog.New(slog.NewTextHandler(io.Discard, nil))); err != nil {
+		t.Fatalf("Migrate() error = %v", err)
+	}
+
+	link := func(id, source, target string) workflow.Connection {
+		return workflow.Connection{ID: id, Kind: workflow.ConnectionMain,
+			Source: workflow.Endpoint{NodeID: source, Port: "main"},
+			Target: workflow.Endpoint{NodeID: target, Port: "main"}}
+	}
+	tenant := repository.TenantScope{ID: "tenant-a"}
+	stored, err := repository.NewWorkflowStore(db.DB).SaveDraft(ctx, tenant, workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_trigger_choice",
+		Name:          "Webhook and schedule",
+		Nodes: []workflow.Node{
+			{ID: "manual", Name: "Manual Trigger", Type: "kilasflow.manual", TypeVersion: workflow.V(1)},
+			{ID: "hook", Name: "Webhook", Type: "kilasflow.webhook", TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"path": "orders", "httpMethod": "POST"}},
+			{ID: "manual-only", Name: "Manual only", Type: "kilasflow.set", TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"assignments": map[string]any{"via": "manual"}}},
+			{ID: "hook-only", Name: "Hook only", Type: "kilasflow.set", TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"assignments": map[string]any{"via": "webhook"}}},
+			{ID: "shared", Name: "Shared", Type: "kilasflow.set", TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"assignments": map[string]any{"seen": "yes"}}},
+		},
+		Connections: []workflow.Connection{
+			link("c1", "manual", "manual-only"),
+			link("c2", "hook", "hook-only"),
+			link("c3", "manual", "shared"),
+			link("c4", "hook", "shared"),
+		},
+		Settings: map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("SaveDraft() error = %v", err)
+	}
+	catalog := node.NewRegistry()
+	if err := nodes.RegisterAll(catalog); err != nil {
+		t.Fatalf("RegisterAll() error = %v", err)
+	}
+
+	executionStore := repository.NewExecutionStore(db.DB)
+	queued, err := executionStore.QueueManualLatest(ctx, tenant, stored.ID, catalog, "hook", json.RawMessage(`{"order":"A-1"}`))
+	if err != nil {
+		t.Fatalf("QueueManualLatest(chosen trigger) error = %v", err)
+	}
+	executors := engine.NewRegistry()
+	if err := nodes.RegisterExecutors(executors, safehttp.DefaultPolicy(), sqlnode.Guard{}, ai.NewLoopRuntime(), nil, nil); err != nil {
+		t.Fatalf("RegisterExecutors() error = %v", err)
+	}
+	service, err := engine.NewService(engine.ServiceDeps{
+		Executions: executionStore, Catalog: catalog, Runner: engine.NewRunner(executors),
+		WorkerID: "test-worker", DefaultTimeout: time.Second,
+	})
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	if worked, err := service.RunOnce(ctx); err != nil || !worked {
+		t.Fatalf("RunOnce() = (%v, %v), want (true, nil)", worked, err)
+	}
+	persisted, err := executionStore.Get(ctx, tenant, queued.ID)
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if got, want := persisted.Status, execution.StatusSucceeded; got != want {
+		t.Fatalf("status = %q, want %q (error %s)", got, want, persisted.Error)
+	}
+
+	ran := map[string]int{}
+	for _, run := range persisted.NodeRuns {
+		ran[run.NodeID]++
+	}
+	for _, want := range []string{"hook", "hook-only", "shared"} {
+		if ran[want] != 1 {
+			t.Errorf("node %q ran %d times, want once", want, ran[want])
+		}
+	}
+	for _, unwanted := range []string{"manual", "manual-only"} {
+		if ran[unwanted] != 0 {
+			t.Errorf("node %q ran %d times on a run that chose the webhook trigger, want never", unwanted, ran[unwanted])
+		}
+	}
+	// The shared tail ran once, fed by the chosen trigger's item alone.
+	var sharedInput map[string][]workflow.Item
+	for _, run := range persisted.NodeRuns {
+		if run.NodeID == "shared" {
+			if err := json.Unmarshal(run.Input, &sharedInput); err != nil {
+				t.Fatalf("decode shared input: %v (%s)", err, run.Input)
+			}
+		}
+	}
+	if len(sharedInput["main"]) != 1 || sharedInput["main"][0].JSON["order"] != "A-1" {
+		t.Errorf("shared input = %#v, want the single item the webhook run carried", sharedInput)
 	}
 }
 
@@ -205,7 +317,7 @@ func TestServicePersistsFailedNodeRunWhenItsConfiguredTimeoutExpires(t *testing.
 		t.Fatalf("SaveDraft() error = %v", err)
 	}
 	executionStore := repository.NewExecutionStore(db.DB)
-	queued, err := executionStore.QueueManualLatest(ctx, tenant, stored.ID, catalog, nil)
+	queued, err := executionStore.QueueManualLatest(ctx, tenant, stored.ID, catalog, "", nil)
 	if err != nil {
 		t.Fatalf("QueueManualLatest() error = %v", err)
 	}
@@ -272,7 +384,7 @@ func TestServiceCancelsQueuedExecutionBeforeAWorkerClaimsIt(t *testing.T) {
 		t.Fatalf("SaveDraft() error = %v", err)
 	}
 	executionStore := repository.NewExecutionStore(db.DB)
-	queued, err := executionStore.QueueManualLatest(ctx, tenant, stored.ID, catalog, nil)
+	queued, err := executionStore.QueueManualLatest(ctx, tenant, stored.ID, catalog, "", nil)
 	if err != nil {
 		t.Fatalf("QueueManualLatest() error = %v", err)
 	}
@@ -309,7 +421,7 @@ func TestServiceCancelsQueuedExecutionBeforeAWorkerClaimsIt(t *testing.T) {
 	// A cancellation accepted after the owner has claimed work must survive a
 	// process crash. The recovery worker finalizes the expired cancelling lease
 	// without re-running the workflow.
-	abandoned, err := executionStore.QueueManualLatest(ctx, tenant, stored.ID, catalog, nil)
+	abandoned, err := executionStore.QueueManualLatest(ctx, tenant, stored.ID, catalog, "", nil)
 	if err != nil {
 		t.Fatalf("QueueManualLatest(cancelling recovery) error = %v", err)
 	}
@@ -369,7 +481,7 @@ func TestServiceCancelsAnActiveExecutionAndPersistsCancelledNodeRun(t *testing.T
 		t.Fatalf("SaveDraft() error = %v", err)
 	}
 	executionStore := repository.NewExecutionStore(db.DB)
-	queued, err := executionStore.QueueManualLatest(ctx, tenant, stored.ID, catalog, nil)
+	queued, err := executionStore.QueueManualLatest(ctx, tenant, stored.ID, catalog, "", nil)
 	if err != nil {
 		t.Fatalf("QueueManualLatest() error = %v", err)
 	}
@@ -496,7 +608,7 @@ func TestCancellationReachesARunningExecutionThroughTheStatusRead(t *testing.T) 
 		t.Fatalf("SaveDraft() error = %v", err)
 	}
 	inner := repository.NewExecutionStore(db.DB)
-	queued, err := inner.QueueManualLatest(ctx, tenant, stored.ID, catalog, nil)
+	queued, err := inner.QueueManualLatest(ctx, tenant, stored.ID, catalog, "", nil)
 	if err != nil {
 		t.Fatalf("QueueManualLatest() error = %v", err)
 	}
@@ -624,7 +736,7 @@ func TestAWorkflowKeepsTheRunBudgetItAsksFor(t *testing.T) {
 	// The instance default still binds a workflow that asks for nothing: that
 	// is the behaviour the setting is measured against.
 	defaulted := save("wf_budget_default", map[string]any{})
-	queuedDefault, err := store.QueueManualLatest(ctx, tenant, defaulted.ID, catalog, nil)
+	queuedDefault, err := store.QueueManualLatest(ctx, tenant, defaulted.ID, catalog, "", nil)
 	if err != nil {
 		t.Fatalf("QueueManualLatest(default) error = %v", err)
 	}
@@ -639,7 +751,7 @@ func TestAWorkflowKeepsTheRunBudgetItAsksFor(t *testing.T) {
 
 	// Five seconds asked for, four hundred milliseconds used.
 	budgeted := save("wf_budget_asked", map[string]any{engine.ExecutionTimeoutSetting: float64(5)})
-	queuedAsked, err := store.QueueManualLatest(ctx, tenant, budgeted.ID, catalog, nil)
+	queuedAsked, err := store.QueueManualLatest(ctx, tenant, budgeted.ID, catalog, "", nil)
 	if err != nil {
 		t.Fatalf("QueueManualLatest(asked) error = %v", err)
 	}
@@ -655,7 +767,7 @@ func TestAWorkflowKeepsTheRunBudgetItAsksFor(t *testing.T) {
 	// n8n's -1 means no timeout at all, which is also the only way to run a
 	// workflow whose work is genuinely open-ended.
 	unbounded := save("wf_budget_none", map[string]any{engine.ExecutionTimeoutSetting: float64(-1)})
-	queuedNone, err := store.QueueManualLatest(ctx, tenant, unbounded.ID, catalog, nil)
+	queuedNone, err := store.QueueManualLatest(ctx, tenant, unbounded.ID, catalog, "", nil)
 	if err != nil {
 		t.Fatalf("QueueManualLatest(unbounded) error = %v", err)
 	}
@@ -677,7 +789,7 @@ func TestAWorkflowKeepsTheRunBudgetItAsksFor(t *testing.T) {
 		t.Fatalf("NewService(capped) error = %v", err)
 	}
 	greedy := save("wf_budget_greedy", map[string]any{engine.ExecutionTimeoutSetting: float64(3600)})
-	queuedGreedy, err := store.QueueManualLatest(ctx, tenant, greedy.ID, catalog, nil)
+	queuedGreedy, err := store.QueueManualLatest(ctx, tenant, greedy.ID, catalog, "", nil)
 	if err != nil {
 		t.Fatalf("QueueManualLatest(greedy) error = %v", err)
 	}

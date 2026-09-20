@@ -169,7 +169,7 @@ func TestTwoServicesClaimDisjointExecutionsOnPostgres(t *testing.T) {
 	store := repository.NewExecutionStore(db.DB)
 	ids := make([]string, 0, queued)
 	for range queued {
-		record, err := store.QueueManualLatest(ctx, tenant, "drv_wf_multiproc", catalog, json.RawMessage(`{"n":1}`))
+		record, err := store.QueueManualLatest(ctx, tenant, "drv_wf_multiproc", catalog, "", json.RawMessage(`{"n":1}`))
 		if err != nil {
 			t.Fatalf("QueueManualLatest() error = %v", err)
 		}
@@ -250,7 +250,7 @@ func TestCrossProcessWakeReachesTheOtherWorkerOnPostgres(t *testing.T) {
 	time.Sleep(time.Second)
 
 	queuedAt := time.Now()
-	queued, err := store.QueueManualLatest(ctx, tenant, "drv_wf_multiproc_wake", catalog, json.RawMessage(`{"ping":"wake"}`))
+	queued, err := store.QueueManualLatest(ctx, tenant, "drv_wf_multiproc_wake", catalog, "", json.RawMessage(`{"ping":"wake"}`))
 	if err != nil {
 		t.Fatalf("QueueManualLatest() error = %v", err)
 	}
@@ -337,7 +337,7 @@ func TestGracefulShutdownHandsNothingHalfDone(t *testing.T) {
 		t.Fatalf("SaveDraft() error = %v", err)
 	}
 	store := repository.NewExecutionStore(db.DB)
-	queued, err := store.QueueManualLatest(ctx, tenant, "wf_shutdown", catalog, nil)
+	queued, err := store.QueueManualLatest(ctx, tenant, "wf_shutdown", catalog, "", nil)
 	if err != nil {
 		t.Fatalf("QueueManualLatest() error = %v", err)
 	}
@@ -568,7 +568,7 @@ func TestWorkerEventsReachAnAPIProcessBrokerOnPostgres(t *testing.T) {
 	time.Sleep(time.Second)
 
 	store := repository.NewExecutionStore(db.DB)
-	queued, err := store.QueueManualLatest(ctx, tenant, "drv_wf_multiproc_events", catalog, json.RawMessage(`{"n":1}`))
+	queued, err := store.QueueManualLatest(ctx, tenant, "drv_wf_multiproc_events", catalog, "", json.RawMessage(`{"n":1}`))
 	if err != nil {
 		t.Fatalf("QueueManualLatest() error = %v", err)
 	}
@@ -693,7 +693,7 @@ func TestRemoteCancelStopsTheHolderBetweenNodesOnSQLite(t *testing.T) {
 		t.Fatalf("SaveDraft() error = %v", err)
 	}
 	store := repository.NewExecutionStore(db.DB)
-	queued, err := store.QueueManualLatest(ctx, tenant, "wf_remote_cancel", catalog, nil)
+	queued, err := store.QueueManualLatest(ctx, tenant, "wf_remote_cancel", catalog, "", nil)
 	if err != nil {
 		t.Fatalf("QueueManualLatest() error = %v", err)
 	}
@@ -849,7 +849,7 @@ func TestCancelNoticeInterruptsTheHolderWithoutThePollIntervalOnPostgres(t *test
 	time.Sleep(time.Second)
 
 	store := repository.NewExecutionStore(db.DB)
-	queued, err := store.QueueManualLatest(ctx, tenant, "drv_wf_cancel", catalog, json.RawMessage(`{"n":1}`))
+	queued, err := store.QueueManualLatest(ctx, tenant, "drv_wf_cancel", catalog, "", json.RawMessage(`{"n":1}`))
 	if err != nil {
 		t.Fatalf("QueueManualLatest() error = %v", err)
 	}
@@ -907,7 +907,7 @@ func TestAbandonedLeaseIsReclaimedWithoutDuplicateNodeRunsOnPostgres(t *testing.
 	catalog, executors, mu, calls := multiprocessCatalog(t)
 	multiprocessWorkflow(t, ctx, db, tenant, "drv_wf_reclaim")
 	store := repository.NewExecutionStore(db.DB)
-	queued, err := store.QueueManualLatest(ctx, tenant, "drv_wf_reclaim", catalog, json.RawMessage(`{"n":1}`))
+	queued, err := store.QueueManualLatest(ctx, tenant, "drv_wf_reclaim", catalog, "", json.RawMessage(`{"n":1}`))
 	if err != nil {
 		t.Fatalf("QueueManualLatest() error = %v", err)
 	}
@@ -1042,7 +1042,7 @@ func TestDrainDoesNotWaitForeverOnAStuckNode(t *testing.T) {
 		t.Fatalf("SaveDraft() error = %v", err)
 	}
 	store := repository.NewExecutionStore(db.DB)
-	if _, err := store.QueueManualLatest(ctx, tenant, "wf_stuck", catalog, nil); err != nil {
+	if _, err := store.QueueManualLatest(ctx, tenant, "wf_stuck", catalog, "", nil); err != nil {
 		t.Fatalf("QueueManualLatest() error = %v", err)
 	}
 	service, err := engine.NewService(engine.ServiceDeps{

@@ -113,7 +113,7 @@ func TestAnExecutionReachesATerminalStatusOnEveryDriver(t *testing.T) {
 		}
 
 		executions := repository.NewExecutionStore(db.DB)
-		queued, err := executions.QueueManualLatest(ctx, tenant, saved.ID, driverCatalog(), nil)
+		queued, err := executions.QueueManualLatest(ctx, tenant, saved.ID, driverCatalog(), "", nil)
 		if err != nil {
 			t.Fatalf("QueueManualLatest() error = %v", err)
 		}
@@ -178,7 +178,7 @@ func TestACancellingExecutionLandsOnCancelledOnEveryDriver(t *testing.T) {
 			t.Fatalf("SaveDraft() error = %v", err)
 		}
 		executions := repository.NewExecutionStore(db.DB)
-		if _, err := executions.QueueManualLatest(ctx, tenant, saved.ID, driverCatalog(), nil); err != nil {
+		if _, err := executions.QueueManualLatest(ctx, tenant, saved.ID, driverCatalog(), "", nil); err != nil {
 			t.Fatalf("QueueManualLatest() error = %v", err)
 		}
 		claimed, _, ok, err := executions.ClaimNext(ctx, "drv-worker", time.Now().Add(time.Minute))

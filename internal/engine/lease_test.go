@@ -115,7 +115,7 @@ func (sandbox *engineSandbox) queuedLeaseWorkflow(t *testing.T, scope repository
 	if err != nil {
 		t.Fatalf("SaveDraft(%q) error = %v", workflowID, err)
 	}
-	queued, err := sandbox.store.QueueManualLatest(sandbox.ctx, scope, workflowID, sandbox.catalog, nil)
+	queued, err := sandbox.store.QueueManualLatest(sandbox.ctx, scope, workflowID, sandbox.catalog, "", nil)
 	if err != nil {
 		t.Fatalf("QueueManualLatest(%q) error = %v", workflowID, err)
 	}

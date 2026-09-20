@@ -207,8 +207,7 @@ func TestSuspendResumeContinuesWithExactUpstreamData(t *testing.T) {
 	}
 	// api_token looks sensitive and customer does not: the checkpoint must
 	// carry both verbatim, where the redacting write path would not.
-	queued, err := store.QueueManualLatest(ctx, tenant, saved.ID, catalog,
-		json.RawMessage(`{"api_token":"secret-123","customer":"Ada"}`))
+	queued, err := store.QueueManualLatest(ctx, tenant, saved.ID, catalog, "", json.RawMessage(`{"api_token":"secret-123","customer":"Ada"}`))
 	if err != nil {
 		t.Fatalf("QueueManualLatest() error = %v", err)
 	}
@@ -373,7 +372,7 @@ func TestExpiredWaitsResolveOnTheirOwnDeadline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SaveDraft() error = %v", err)
 	}
-	queued, err := store.QueueManualLatest(ctx, tenant, saved.ID, catalog, json.RawMessage(`{"customer":"Ada"}`))
+	queued, err := store.QueueManualLatest(ctx, tenant, saved.ID, catalog, "", json.RawMessage(`{"customer":"Ada"}`))
 	if err != nil {
 		t.Fatalf("QueueManualLatest() error = %v", err)
 	}
@@ -409,7 +408,7 @@ func TestExpiredWaitsResolveOnTheirOwnDeadline(t *testing.T) {
 	// assertion the one-minute sweep could not have met.
 	hold.mode = engine.WaitModeInterval
 	hold.expiresAt = time.Now().Add(50 * time.Millisecond)
-	queuedTimer, err := store.QueueManualLatest(ctx, tenant, saved.ID, catalog, json.RawMessage(`{"customer":"Bo"}`))
+	queuedTimer, err := store.QueueManualLatest(ctx, tenant, saved.ID, catalog, "", json.RawMessage(`{"customer":"Bo"}`))
 	if err != nil {
 		t.Fatalf("QueueManualLatest(timer) error = %v", err)
 	}
@@ -436,7 +435,7 @@ func TestExpiredWaitsResolveOnTheirOwnDeadline(t *testing.T) {
 	// clock time instead of a duration.
 	hold.mode = engine.WaitModeUntil
 	hold.expiresAt = time.Now().Add(50 * time.Millisecond)
-	queuedUntil, err := store.QueueManualLatest(ctx, tenant, saved.ID, catalog, json.RawMessage(`{"customer":"Cy"}`))
+	queuedUntil, err := store.QueueManualLatest(ctx, tenant, saved.ID, catalog, "", json.RawMessage(`{"customer":"Cy"}`))
 	if err != nil {
 		t.Fatalf("QueueManualLatest(until) error = %v", err)
 	}
@@ -471,7 +470,7 @@ func TestApprovalResumeRefusedToEmbedSessionsStaysResumable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SaveDraft() error = %v", err)
 	}
-	queued, err := store.QueueManualLatest(ctx, tenant, saved.ID, catalog, json.RawMessage(`{}`))
+	queued, err := store.QueueManualLatest(ctx, tenant, saved.ID, catalog, "", json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatalf("QueueManualLatest() error = %v", err)
 	}
@@ -631,7 +630,7 @@ func TestQueuedExecutionWakesWorkerViaChannel(t *testing.T) {
 	// listener subscribes is correctly missed, and the 10 s tick would hide
 	// that miss past this test's deadline.
 	time.Sleep(time.Second)
-	queued, err := store.QueueManualLatest(ctx, tenant, saved.ID, catalog, json.RawMessage(`{"ping":"wake"}`))
+	queued, err := store.QueueManualLatest(ctx, tenant, saved.ID, catalog, "", json.RawMessage(`{"ping":"wake"}`))
 	if err != nil {
 		t.Fatalf("QueueManualLatest() error = %v", err)
 	}
@@ -706,7 +705,7 @@ func TestWatchQueueReportsDropsAndTickStillDelivers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SaveDraft() error = %v", err)
 	}
-	if _, err := store.QueueManualLatest(ctx, tenant, saved.ID, catalog, nil); err != nil {
+	if _, err := store.QueueManualLatest(ctx, tenant, saved.ID, catalog, "", nil); err != nil {
 		t.Fatalf("QueueManualLatest() error = %v", err)
 	}
 	if worked, err := service.RunOnce(ctx); err != nil || !worked {
