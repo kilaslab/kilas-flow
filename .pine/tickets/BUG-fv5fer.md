@@ -1,7 +1,7 @@
 ---
 id: BUG-fv5fer
 title: 'Event-stream/CORS/tenancy gaps: SSE hang, CORS, onboarding, headers, CSV, pagination'
-status: doing
+status: testing
 priority: medium
 labels:
     - security
@@ -10,7 +10,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:09Z"
-updated: "2026-09-19T14:24:35Z"
+updated: "2026-09-20T00:53:27Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).

@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,6 +24,9 @@ type CredentialRepository interface {
 	Create(context.Context, TenantScope, credentials.Record) (credentials.Record, error)
 	Update(context.Context, TenantScope, string, credentials.Record) (credentials.Record, error)
 	List(context.Context, TenantScope) ([]credentials.Record, error)
+	// ListPage is the paginated listing the API serves. List stays for the
+	// in-process callers that want every credential in one go.
+	ListPage(context.Context, TenantScope, CredentialFilter) (CredentialPage, error)
 	Get(context.Context, TenantScope, string) (credentials.Record, error)
 	Delete(context.Context, TenantScope, string) error
 	// Resolve returns the decrypted payload for runtime use only.
@@ -169,6 +173,105 @@ func (store *GORMCredentialStore) List(ctx context.Context, tenant TenantScope) 
 		records = append(records, record)
 	}
 	return records, nil
+}
+
+// CredentialFilter bounds one listing.
+type CredentialFilter struct {
+	Limit int
+	// Cursor continues a previous listing. It is opaque to callers; only
+	// ListPage may construct one.
+	Cursor string
+}
+
+// CredentialPage is one page of stored credentials.
+type CredentialPage struct {
+	Credentials []credentials.Record
+	NextCursor  string
+}
+
+const (
+	// DefaultCredentialPageSize and MaxCredentialPageSize bound the listing.
+	// Unbounded, one tenant with a thousand credentials made every editor load
+	// and decrypt-describe all of them to render a picker.
+	DefaultCredentialPageSize = 100
+	MaxCredentialPageSize     = 500
+)
+
+// ListPage returns one page of credentials, in the listing's own order.
+//
+// Keyset rather than offset: the cursor pins the last (name, id) pair seen, so
+// a credential created or renamed between two pages cannot make a row appear
+// twice or disappear — which is exactly what an offset does under a concurrent
+// write.
+//
+// The cursor carries text, not a timestamp, so the zone pitfall the API-key
+// cursor has (GORM stamps local time and the driver renders its offset, so a
+// normalised-to-UTC cursor binds against a different string and the next page
+// comes back empty) cannot arise here.
+func (store *GORMCredentialStore) ListPage(ctx context.Context, tenant TenantScope, filter CredentialFilter) (CredentialPage, error) {
+	if err := tenant.validate(); err != nil {
+		return CredentialPage{}, err
+	}
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = DefaultCredentialPageSize
+	}
+	if limit > MaxCredentialPageSize {
+		limit = MaxCredentialPageSize
+	}
+
+	query := store.db.WithContext(ctx).Where("tenant_id = ?", tenant.ID)
+	if filter.Cursor != "" {
+		name, id, err := decodeCredentialCursor(filter.Cursor)
+		if err != nil {
+			return CredentialPage{}, err
+		}
+		query = query.Where("name > ? OR (name = ? AND id > ?)", name, name, id)
+	}
+
+	var models []credentialModel
+	// One row past the page is what tells us whether a next page exists,
+	// without a second COUNT query over the same predicate.
+	if err := query.Order("name ASC, id ASC").Limit(limit + 1).Find(&models).Error; err != nil {
+		return CredentialPage{}, fmt.Errorf("list credentials: %w", err)
+	}
+
+	page := CredentialPage{}
+	if len(models) > limit {
+		last := models[limit-1]
+		page.NextCursor = encodeCredentialCursor(last.Name, last.ID)
+		models = models[:limit]
+	}
+	page.Credentials = make([]credentials.Record, 0, len(models))
+	for _, model := range models {
+		record, err := credentialFromModel(model)
+		if err != nil {
+			return CredentialPage{}, err
+		}
+		page.Credentials = append(page.Credentials, record)
+	}
+	return page, nil
+}
+
+// encodeCredentialCursor renders the last row a page returned.
+func encodeCredentialCursor(name, id string) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(name + "\x00" + id))
+}
+
+// decodeCredentialCursor reads one back.
+//
+// A cursor this store did not issue is a bad request, not a server fault: the
+// API answers it 400 rather than paging from a position that means nothing.
+func decodeCredentialCursor(cursor string) (string, string, error) {
+	raw, err := base64.RawURLEncoding.DecodeString(cursor)
+	if err != nil {
+		return "", "", fmt.Errorf("%w: credential cursor is malformed", ErrInvalidCursor)
+	}
+	name, id, found := strings.Cut(string(raw), "\x00")
+	if !found || id == "" {
+		return "", "", fmt.Errorf("%w: credential cursor is malformed", ErrInvalidCursor)
+	}
+	return name, id, nil
 }
 
 // Get returns one credential's metadata without its payload.

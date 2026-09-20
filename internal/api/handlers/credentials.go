@@ -118,8 +118,17 @@ type createdCredentialOutput struct {
 	Body     CredentialResource
 }
 
+type credentialListInput struct {
+	Limit  int    `query:"limit" minimum:"1" maximum:"500" doc:"Maximum credentials to return (default 100)"`
+	Cursor string `query:"cursor" doc:"Opaque cursor from a previous listing's X-Next-Cursor header"`
+}
+
 type credentialListOutput struct {
-	Body []CredentialResource
+	// NextCursor is a response header rather than a body field: the body is
+	// still a bare JSON array, so the dashboard's existing client keeps
+	// working while a caller that wants the next page reads this.
+	NextCursor string               `header:"X-Next-Cursor"`
+	Body       []CredentialResource `json:"body"`
 }
 
 type credentialTypeListOutput struct {
@@ -191,22 +200,29 @@ func (handler *Credentials) ListTypes(context.Context, *struct{}) (*credentialTy
 // needs names to render the current value — but "the names this workflow's own
 // document may attach" and "every credential this tenant stores" are two very
 // different disclosures, and a guest page has no business with the second.
-func (handler *Credentials) List(ctx context.Context, _ *struct{}) (*credentialListOutput, error) {
+func (handler *Credentials) List(ctx context.Context, input *credentialListInput) (*credentialListOutput, error) {
 	if handler.store == nil {
 		return nil, huma.Error503ServiceUnavailable("credential storage unavailable")
 	}
-	records, err := handler.store.List(ctx, handler.tenants.Resolve(ctx))
+	page, err := handler.store.ListPage(ctx, handler.tenants.Resolve(ctx), repository.CredentialFilter{
+		Limit: input.Limit, Cursor: input.Cursor,
+	})
+	// A cursor the client did not receive from this API is a bad request, not
+	// a server fault.
+	if errors.Is(err, repository.ErrInvalidCursor) {
+		return nil, huma.Error400BadRequest("credential cursor is invalid")
+	}
 	if err != nil {
 		return nil, handler.problem(err)
 	}
-	resources := make([]CredentialResource, 0, len(records))
-	for _, record := range records {
+	resources := make([]CredentialResource, 0, len(page.Credentials))
+	for _, record := range page.Credentials {
 		if !embedAllowsCredential(ctx, record.ID) {
 			continue
 		}
 		resources = append(resources, credentialResource(record))
 	}
-	return &credentialListOutput{Body: resources}, nil
+	return &credentialListOutput{NextCursor: page.NextCursor, Body: resources}, nil
 }
 
 // rejectSQLiteScope refuses a host scope on a credential that names a file.
