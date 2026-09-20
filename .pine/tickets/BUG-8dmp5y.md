@@ -1,7 +1,7 @@
 ---
 id: BUG-8dmp5y
 title: 'Auth/session hardening: redirect secret leak, proxy SSRF bypass, login throttle, revalidation'
-status: doing
+status: testing
 priority: high
 labels:
     - security
@@ -10,7 +10,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:09Z"
-updated: "2026-09-19T14:25:53Z"
+updated: "2026-09-20T00:46:32Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -123,3 +123,31 @@ Evidence so far (scoped, passed): `go test ./internal/safehttp/ -count=1` ok (fr
 ad23336, re-confirmed this wave by AuthHardening).
 Remaining: AuthHardening's report (per-finding status + commit SHA) has not arrived at
 the time of writing; the ticket stays `doing` until it does.
+
+## Progress 2026-09-19 (SecurityFront2) — landed, testing
+Status: testing. Agent AuthHardening landed the remainder in 47544b7
+("BUG-8dmp5y: throttle login, revalidate sessions, bound credential scope through
+redirects — auth/security"): internal/api/handlers/auth.go (+197),
+internal/api/middleware/{auth.go,clientip.go,loginlimit.go,sessioncache.go} (new
+per-IP/per-account token bucket with 429+Retry-After, PBKDF2 concurrency semaphore,
+user-version session revalidation with a cached lookup, disabled users refused),
+internal/auth/session.go (+94, UserVersion bound into the signed session),
+internal/credentials/registry.go (credential scope attached to the probe so
+CheckRedirect stops an out-of-scope hop), plus their own test files.
+Wiring landed by me in e0187b3 (BUG-y57cz4): `Users: deps.AuthStore` in
+middleware.AuthOptions (internal/api/server.go).
+Delegated to ExpressionParity (owner of internal/engine/authenticate.go): the same
+one-line safehttp.WithCredentialScope attach inside Request.Authenticate, so the HTTP
+node and the routing interpreter are covered too. NOT verified from my side.
+Evidence (scoped, passed this session):
+- go test ./internal/auth/ -count=1 ok
+- go test ./internal/api/middleware/ -count=1 ok
+- go test ./internal/credentials/ -count=1 ok
+- go test ./internal/loadoptions/ -count=1 ok
+- go test ./internal/safehttp/ -count=1 ok (ad23336, re-confirmed by AuthHardening)
+Unverified: the end-to-end login/session behaviour through the HTTP surface
+(internal/api tests) — that package could not be run to completion because sibling
+packages were mid-edit (final state: internal/engine/runner.go:531 undefined
+`delivered`). Re-run `go test ./internal/api/ -run 'Login|Session|APIKey'`.
+Attribution: 47544b7 also carries unrelated files swept in by a shared index
+(internal/interop/n8n/gowa.go, several .pine ticket files) — those are not this ticket's.

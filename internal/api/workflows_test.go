@@ -360,6 +360,18 @@ func newWorkflowAPIWithEmbed(t *testing.T, issuer *embed.Issuer) (http.Handler, 
 	if err := nodes.RegisterAll(registry); err != nil {
 		t.Fatalf("RegisterAll() error = %v", err)
 	}
+	// A real cipher, not nil: the embed confinement is checked against the
+	// credential ids a document references, so a test that needs one stored has
+	// to be able to store it. With a nil cipher every credential write answers
+	// "credential encryption is not configured".
+	cipherKey := make([]byte, credentials.KeySize)
+	for index := range cipherKey {
+		cipherKey[index] = byte(index + 1)
+	}
+	cipher, err := credentials.NewCipher(cipherKey)
+	if err != nil {
+		t.Fatalf("NewCipher() error = %v", err)
+	}
 	executions := repository.NewExecutionStore(db.DB)
 	runtime, err := engine.NewService(engine.ServiceDeps{
 		Executions: executions, Catalog: registry, Runner: engine.NewRunner(engine.NewRegistry()),
@@ -373,7 +385,7 @@ func newWorkflowAPIWithEmbed(t *testing.T, issuer *embed.Issuer) (http.Handler, 
 		NodeRegistry:        registry,
 		Workflows:           repository.NewWorkflowStore(db.DB).WithWebhooks(webhook.Extract(registry, nodes.WebhookPath)),
 		Executions:          executions,
-		Credentials:         repository.NewCredentialStore(db.DB, nil),
+		Credentials:         repository.NewCredentialStore(db.DB, cipher),
 		ExecutionController: runtime,
 		Events:              events.NewBroker(events.BrokerOptions{}),
 		EmbedIssuer:         issuer,

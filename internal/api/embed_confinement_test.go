@@ -49,10 +49,23 @@ func embedDatastoreNode(id, operation, mode, value string) workflow.Node {
 }
 
 // documentReferencing builds a workflow document made of one trigger plus the
-// supplied nodes.
+// supplied nodes, each wired from the trigger.
+//
+// The wiring is not decoration: activation compiles the graph, and an
+// unconnected node is refused as an invalid topology — so a test that wants a
+// published revision to derive a confinement from has to send a graph that
+// could actually be published.
 func documentReferencing(name string, nodes ...workflow.Node) workflow.Document {
 	document := validManualWorkflow(name)
-	document.Nodes = append(document.Nodes, nodes...)
+	for _, node := range nodes {
+		document.Nodes = append(document.Nodes, node)
+		document.Connections = append(document.Connections, workflow.Connection{
+			ID:     "manual-" + node.ID,
+			Kind:   "main",
+			Source: workflow.Endpoint{NodeID: "manual", Port: "main"},
+			Target: workflow.Endpoint{NodeID: node.ID, Port: "main"},
+		})
+	}
 	return document
 }
 
@@ -96,8 +109,10 @@ func TestAnEmbedSessionCannotAttachACredentialItsWorkflowNeverReferenced(t *test
 	// And the draft is untouched: a refused save must not have written
 	// anything, or the next run would carry it.
 	stored := requestJSON[workflowResource](t, handler, http.MethodGet, "/api/v1/workflows/"+workflowID, nil, http.StatusOK)
-	if len(stored.LatestVersion.Document.Nodes) != 0 {
-		t.Errorf("a refused save left nodes behind: %#v", stored.LatestVersion.Document.Nodes)
+	for _, node := range stored.LatestVersion.Document.Nodes {
+		if node.ID == "exfil" {
+			t.Errorf("a refused save stored the node it refused: %#v", node)
+		}
 	}
 	_ = issuer
 }
@@ -236,7 +251,8 @@ func TestTheCredentialPickerShowsAnEmbedSessionOnlyItsOwnCredentials(t *testing.
 }
 
 // The confinement is minted, not derived per request, so the token itself is
-// evidence: a session whose workflow has published nothing carries nothing.
+// evidence: a session whose workflow has published nothing may reference no
+// credential and no data table — only the workflow it already owns.
 func TestASessionForAnUnpublishedWorkflowCarriesNoReferences(t *testing.T) {
 	handler, issuer, workflowID := embedServer(t)
 	token := mintEmbedSession(t, handler, workflowID, "workflow:read")
@@ -245,8 +261,14 @@ func TestASessionForAnUnpublishedWorkflowCarriesNoReferences(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Verify() error = %v", err)
 	}
-	if !session.Confinement.Empty() {
-		t.Fatalf("confinement = %#v, want empty for a workflow with no credential and no data table", session.Confinement)
+	if len(session.Confinement.Credentials) != 0 || len(session.Confinement.Datastores) != 0 {
+		t.Fatalf("confinement = %#v, want no credential and no data table", session.Confinement)
+	}
+	if !session.Confinement.AllowsWorkflow(workflowID) {
+		t.Errorf("confinement = %#v, want the session's own workflow allowed for recursion", session.Confinement)
+	}
+	if session.Confinement.AllowsWorkflow("wf_someone_else") {
+		t.Errorf("confinement = %#v, want no other workflow", session.Confinement)
 	}
 }
 
