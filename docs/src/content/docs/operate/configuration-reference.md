@@ -374,6 +374,18 @@ password. The password never comes from the file. Used once, with
 bootstrap_email and enabled: true on the same first start, or the lock
 closes before the key is cut.
 
+### auth.operator_key_env
+
+- Type: `string`
+- Default: `'KILASFLOW_AUTH_OPERATOR_KEY'`
+- Environment: `KILASFLOW_AUTH_OPERATOR_KEY_ENV`
+- Required: no
+
+OperatorKeyEnv names the variable holding the operator's API key: the
+one credential that may provision customers. It is registered at boot
+rather than minted, because the value exists in the environment before
+the process starts. The key itself never comes from the file.
+
 ## outbound
 
 OutboundHTTP bounds requests workflow nodes make to the outside world.
@@ -608,6 +620,42 @@ installing a new build deleted the run history they were about to debug.
 Turning it on is how an installation stops growing without bound, which
 until this key existed it had no way to do at all.
 
+### execution.wait_sweep_interval
+
+- Type: `duration`
+- Default: `10s`
+- Environment: `KILASFLOW_EXECUTION_WAIT_SWEEP_INTERVAL`
+- Required: no
+
+WaitSweepInterval is how often expired durable waits are settled when no
+exact timer is armed for them. The wait suspender arms an exact timer
+in-process for a wait it is holding, so this is the restart-recovery
+floor: a wait whose process died is settled within one interval of the
+next boot.
+
+### execution.max_timeout
+
+- Type: `duration`
+- Default: `1h0m0s`
+- Environment: `KILASFLOW_EXECUTION_MAX_TIMEOUT`
+- Required: no
+
+MaxTimeout is the ceiling a workflow's own settings.executionTimeout is
+clamped to, in the spirit of n8n's EXECUTIONS_TIMEOUT_MAX. Zero means no
+ceiling beyond the workflow's own value; DefaultTimeout stays the budget
+for a workflow that names none.
+
+### execution.default_timezone
+
+- Type: `string`
+- Default: `''`
+- Environment: `KILASFLOW_EXECUTION_DEFAULT_TIMEZONE`
+- Required: no
+
+DefaultTimezone is the instance's IANA zone, used by a workflow whose
+settings.timezone is absent or is n8n's literal "DEFAULT". Empty means
+UTC, which is what a server with no configured zone has always used.
+
 ## history
 
 History bounds how much workflow version history an installation keeps.
@@ -709,13 +757,24 @@ section could never be set from the environment.
 ### binary.root
 
 - Type: `string`
-- Default: `''`
+- Default: `'./data/binary'`
 - Environment: `KILASFLOW_BINARY_ROOT`
 - Required: no
 
-Root is the directory payloads are written under. Empty disables binary
-storage, and a node that needs it then fails with a clear message
-instead of dropping an attachment on the floor.
+Root is the directory payloads are written under.
+
+It has a default rather than being off, because it used to be off: a
+stock install and the container image ran with no binary storage at all,
+and the HTTP Request node's default autodetect then decoded a downloaded
+file as text and reported success — a silent corruption that only showed
+up downstream. A node that needs storage now finds it, and the directory
+sits beside the default SQLite database, so it is inside whatever volume
+the operator already mounted.
+
+Setting it to the empty string still disables storage deliberately; the
+server then warns at boot, and every node that needs a payload names
+this key and its environment variable instead of failing with a message
+nobody can act on.
 
 ### binary.max_bytes
 

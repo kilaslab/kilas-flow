@@ -174,6 +174,12 @@ auth:
   # closes before the key is cut.
   # Env: KILASFLOW_AUTH_BOOTSTRAP_PASSWORD_ENV
   bootstrap_password_env: 'KILASFLOW_BOOTSTRAP_PASSWORD'
+  # OperatorKeyEnv names the variable holding the operator's API key: the
+  # one credential that may provision customers. It is registered at boot
+  # rather than minted, because the value exists in the environment before
+  # the process starts. The key itself never comes from the file.
+  # Env: KILASFLOW_AUTH_OPERATOR_KEY_ENV
+  operator_key_env: 'KILASFLOW_AUTH_OPERATOR_KEY'
 
 outbound:
   # AllowPrivateNetworks lifts the private-address guard for every outbound
@@ -278,6 +284,24 @@ execution:
   # until this key existed it had no way to do at all.
   # Env: KILASFLOW_EXECUTION_RETENTION
   retention: 0
+  # WaitSweepInterval is how often expired durable waits are settled when no
+  # exact timer is armed for them. The wait suspender arms an exact timer
+  # in-process for a wait it is holding, so this is the restart-recovery
+  # floor: a wait whose process died is settled within one interval of the
+  # next boot.
+  # Env: KILASFLOW_EXECUTION_WAIT_SWEEP_INTERVAL
+  wait_sweep_interval: 10s
+  # MaxTimeout is the ceiling a workflow's own settings.executionTimeout is
+  # clamped to, in the spirit of n8n's EXECUTIONS_TIMEOUT_MAX. Zero means no
+  # ceiling beyond the workflow's own value; DefaultTimeout stays the budget
+  # for a workflow that names none.
+  # Env: KILASFLOW_EXECUTION_MAX_TIMEOUT
+  max_timeout: 1h0m0s
+  # DefaultTimezone is the instance's IANA zone, used by a workflow whose
+  # settings.timezone is absent or is n8n's literal "DEFAULT". Empty means
+  # UTC, which is what a server with no configured zone has always used.
+  # Env: KILASFLOW_EXECUTION_DEFAULT_TIMEZONE
+  default_timezone: ''
 
 history:
   # Retention drops versions older than this. Zero keeps every age.
@@ -303,11 +327,22 @@ credential:
   test_timeout: 10s
 
 binary:
-  # Root is the directory payloads are written under. Empty disables binary
-  # storage, and a node that needs it then fails with a clear message
-  # instead of dropping an attachment on the floor.
+  # Root is the directory payloads are written under.
+  #
+  # It has a default rather than being off, because it used to be off: a
+  # stock install and the container image ran with no binary storage at all,
+  # and the HTTP Request node's default autodetect then decoded a downloaded
+  # file as text and reported success — a silent corruption that only showed
+  # up downstream. A node that needs storage now finds it, and the directory
+  # sits beside the default SQLite database, so it is inside whatever volume
+  # the operator already mounted.
+  #
+  # Setting it to the empty string still disables storage deliberately; the
+  # server then warns at boot, and every node that needs a payload names
+  # this key and its environment variable instead of failing with a message
+  # nobody can act on.
   # Env: KILASFLOW_BINARY_ROOT
-  root: ''
+  root: './data/binary'
   # MaxBytes bounds one payload. It is enforced while reading, so an
   # oversized response is refused rather than truncated.
   # Env: KILASFLOW_BINARY_MAX_BYTES

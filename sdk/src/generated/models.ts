@@ -76,6 +76,7 @@ export type NodeSettings = {[key: string]: unknown};
 
 export interface Node {
   credentials?: NodeCredentials;
+  disabled?: boolean;
   id: string;
   name: string;
   parameters?: NodeParameters;
@@ -216,6 +217,55 @@ export interface CreateStreamTicketInputBody {
      * @minLength 1
      */
   executionId: string;
+}
+
+export interface CreateTenantAPIKeyInputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+     * How the key will be recognised later
+     * @maxLength 255
+     */
+  label: string;
+}
+
+export interface CreateTenantInputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+     * Stable ID; it appears in URLs and on every row scoped to this tenant
+     * @minLength 1
+     * @maxLength 64
+     * @pattern ^[a-z0-9][a-z0-9_-]*$
+     */
+  id: string;
+  /**
+     * Display name. Defaults to the ID
+     * @maxLength 255
+     */
+  name: string;
+}
+
+export interface CreateTenantUserInputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+     * Sign-in address. Unique across the deployment, because login presents an address and nothing else
+     * @minLength 3
+     * @maxLength 255
+     */
+  email: string;
+  /**
+     * Display name
+     * @maxLength 255
+     */
+  name: string;
+  /**
+     * Hashed with PBKDF2 before it reaches the database
+     * @minLength 1
+     * @maxLength 1024
+     */
+  password: string;
 }
 
 export interface CreatedAPIKeyResource {
@@ -661,6 +711,7 @@ export interface ExecutionRequestResource {
   input?: unknown;
   status: string;
   trigger: string;
+  triggerNodeId?: string;
   workflowId: string;
   workflowVersionId: string;
 }
@@ -853,6 +904,41 @@ export interface ListAPIKeysOutputBody {
   readonly $schema?: string;
   /** @nullable */
   items: APIKeyResource[] | null;
+}
+
+export interface UserResource {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  createdAt: string;
+  disabledAt?: string;
+  email: string;
+  id: string;
+  name: string;
+  tenantId: string;
+}
+
+export interface ListTenantUsersOutputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  items: UserResource[] | null;
+}
+
+export interface TenantResource {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  createdAt: string;
+  id: string;
+  name: string;
+  /** Accounts this tenant holds */
+  userCount: number;
+}
+
+export interface ListTenantsOutputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  items: TenantResource[] | null;
 }
 
 export type LoadOptionsInputBodyParameters = {[key: string]: unknown};
@@ -1065,6 +1151,8 @@ export interface RunWorkflowInputBody {
   readonly $schema?: string;
   /** Optional manual-run input JSON */
   input?: unknown;
+  /** Trigger node this manual run starts from. Omit to run every trigger. */
+  triggerNodeId?: string;
 }
 
 export interface ScheduleBody {
@@ -1092,6 +1180,17 @@ export interface ScheduleResource {
   nodeId?: string;
   updatedAt: string;
   workflowId: string;
+}
+
+export interface SetUserPasswordInputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+     * Replacement password. The old one stops working immediately
+     * @minLength 1
+     * @maxLength 1024
+     */
+  password: string;
 }
 
 export interface StreamTicketResource {
@@ -1181,11 +1280,25 @@ export interface UpsertRowOutputBody {
   rows: UpsertRowOutputBodyRowsItem[] | null;
 }
 
+export interface WorkflowDiagnosticsResource {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  importedAt?: string;
+  /** @nullable */
+  issues: ImportIssue[] | null;
+  revision: number;
+  source?: string;
+  versionId: string;
+  workflowId: string;
+}
+
 export type WorkflowDocumentInputSettings = {[key: string]: unknown};
 
 export interface WorkflowDocumentInput {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  /** Latest version ID the editor saved from; a save from a stale revision is refused with 409 */
+  baseVersionId?: string;
   /** @nullable */
   connections: Connection[] | null;
   name: string;
@@ -1264,6 +1377,45 @@ export interface WorkflowVersionListResource {
   /** Pass back as ?cursor= to read the next page */
   nextCursor?: string;
 }
+
+export type ListApiKeysParams = {
+/**
+ * Maximum keys to return (default 100)
+ * @minimum 1
+ * @maximum 500
+ */
+limit?: number;
+/**
+ * Opaque cursor from the previous page's X-Next-Cursor header
+ */
+cursor?: string;
+};
+
+export type ListCredentialsParams = {
+/**
+ * Maximum credentials to return (default 100)
+ * @minimum 1
+ * @maximum 500
+ */
+limit?: number;
+/**
+ * Opaque cursor from a previous listing's X-Next-Cursor header
+ */
+cursor?: string;
+};
+
+export type ListDatastoresParams = {
+/**
+ * Maximum datastores to return (default 100)
+ * @minimum 1
+ * @maximum 500
+ */
+limit?: number;
+/**
+ * Opaque cursor from the previous page's X-Next-Cursor header
+ */
+cursor?: string;
+};
 
 export type ListDatastoreRowsParams = {
 /**
@@ -1441,6 +1593,39 @@ export const GetNodeIconTheme = {
   dark: 'dark',
 } as const;
 
+export type ListSchedulesParams = {
+/**
+ * Maximum schedules to return (default 100)
+ * @minimum 1
+ * @maximum 500
+ */
+limit?: number;
+/**
+ * Opaque cursor from the previous page's X-Next-Cursor header
+ */
+cursor?: string;
+};
+
+export type ListWorkflowsParams = {
+/**
+ * Maximum workflows to return (default 100)
+ * @minimum 1
+ * @maximum 500
+ */
+limit?: number;
+/**
+ * Opaque cursor from the previous page's X-Next-Cursor header
+ */
+cursor?: string;
+};
+
+export type WorkflowDiagnosticsParams = {
+/**
+ * Revision to read; defaults to the newest
+ */
+versionId?: string;
+};
+
 export type ExportWorkflowParams = {
 /**
  * Only "n8n" is supported
@@ -1487,21 +1672,28 @@ export type listApiKeysResponseError = (listApiKeysResponseDefault) & {
 
 export type listApiKeysResponse = (listApiKeysResponseSuccess | listApiKeysResponseError)
 
-export const getListApiKeysUrl = () => {
+export const getListApiKeysUrl = (params?: ListApiKeysParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/v1/api-keys`
+  return stringifiedParams.length > 0 ? `/api/v1/api-keys?${stringifiedParams}` : `/api/v1/api-keys`
 }
 
 /**
- * Lists this tenant's keys. No secret is ever included.
+ * Lists one page of this tenant's keys, newest first. No secret is ever included. The next page's cursor is in the X-Next-Cursor response header, empty on the last page.
  * @summary List API keys
  */
-export const listApiKeys = async ( options?: RequestInit): Promise<listApiKeysResponse> => {
+export const listApiKeys = async (params?: ListApiKeysParams, options?: RequestInit): Promise<listApiKeysResponse> => {
 
-  const res = await fetch(getListApiKeysUrl(),
+  const res = await fetch(getListApiKeysUrl(params),
   {
     ...options,
     method: 'GET'
@@ -1914,21 +2106,28 @@ export type listCredentialsResponseError = (listCredentialsResponseDefault) & {
 
 export type listCredentialsResponse = (listCredentialsResponseSuccess | listCredentialsResponseError)
 
-export const getListCredentialsUrl = () => {
+export const getListCredentialsUrl = (params?: ListCredentialsParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/v1/credentials`
+  return stringifiedParams.length > 0 ? `/api/v1/credentials?${stringifiedParams}` : `/api/v1/credentials`
 }
 
 /**
  * Returns stored credentials without any secret value.
  * @summary List credentials
  */
-export const listCredentials = async ( options?: RequestInit): Promise<listCredentialsResponse> => {
+export const listCredentials = async (params?: ListCredentialsParams, options?: RequestInit): Promise<listCredentialsResponse> => {
 
-  const res = await fetch(getListCredentialsUrl(),
+  const res = await fetch(getListCredentialsUrl(params),
   {
     ...options,
     method: 'GET'
@@ -2233,21 +2432,28 @@ export type listDatastoresResponseError = (listDatastoresResponseDefault) & {
 
 export type listDatastoresResponse = (listDatastoresResponseSuccess | listDatastoresResponseError)
 
-export const getListDatastoresUrl = () => {
+export const getListDatastoresUrl = (params?: ListDatastoresParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/v1/datastores`
+  return stringifiedParams.length > 0 ? `/api/v1/datastores?${stringifiedParams}` : `/api/v1/datastores`
 }
 
 /**
- * Returns every data table in the workspace.
+ * Returns one page of data tables, in name order. The next page's cursor is in the X-Next-Cursor response header, empty on the last page.
  * @summary List datastores
  */
-export const listDatastores = async ( options?: RequestInit): Promise<listDatastoresResponse> => {
+export const listDatastores = async (params?: ListDatastoresParams, options?: RequestInit): Promise<listDatastoresResponse> => {
 
-  const res = await fetch(getListDatastoresUrl(),
+  const res = await fetch(getListDatastoresUrl(params),
   {
     ...options,
     method: 'GET'
@@ -3419,7 +3625,7 @@ export const getStreamExecutionEventsUrl = (id: string,
 }
 
 /**
- * Live standardized event feed for one execution. Replays retained events after Last-Event-ID, then streams until the execution reaches a terminal state.
+ * Live standardized event feed for one execution. Replays retained events after Last-Event-ID, then streams until the execution reaches a terminal state. A run that has already finished answers 404 when its record is gone, and otherwise replays its outcome and closes.
  * @summary Stream execution events
  */
 export const streamExecutionEvents = async (id: string,
@@ -3842,21 +4048,28 @@ export type listSchedulesResponseError = (listSchedulesResponseDefault) & {
 
 export type listSchedulesResponse = (listSchedulesResponseSuccess | listSchedulesResponseError)
 
-export const getListSchedulesUrl = () => {
+export const getListSchedulesUrl = (params?: ListSchedulesParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/v1/schedules`
+  return stringifiedParams.length > 0 ? `/api/v1/schedules?${stringifiedParams}` : `/api/v1/schedules`
 }
 
 /**
- * Returns every cron schedule in the workspace.
+ * Returns one page of cron schedules, oldest first. The next page's cursor is in the X-Next-Cursor response header, empty on the last page.
  * @summary List schedules
  */
-export const listSchedules = async ( options?: RequestInit): Promise<listSchedulesResponse> => {
+export const listSchedules = async (params?: ListSchedulesParams, options?: RequestInit): Promise<listSchedulesResponse> => {
 
-  const res = await fetch(getListSchedulesUrl(),
+  const res = await fetch(getListSchedulesUrl(params),
   {
     ...options,
     method: 'GET'
@@ -4097,6 +4310,498 @@ const res = await fetch(getCreateStreamTicketUrl(),
 
 
 
+export type listTenantsResponse200 = {
+  data: ListTenantsOutputBody
+  status: 200
+}
+
+export type listTenantsResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type listTenantsResponseSuccess = (listTenantsResponse200) & {
+  headers: Headers;
+};
+export type listTenantsResponseError = (listTenantsResponseDefault) & {
+  headers: Headers;
+};
+
+export type listTenantsResponse = (listTenantsResponseSuccess | listTenantsResponseError)
+
+export const getListTenantsUrl = () => {
+
+
+
+
+  return `/api/v1/tenants`
+}
+
+/**
+ * Every tenant in this deployment with its account count, oldest first. Requires the operator credential: an API key scoped to the operator tenant. Any other principal, a customer's key or any session, is refused.
+ * @summary List tenants
+ */
+export const listTenants = async ( options?: RequestInit): Promise<listTenantsResponse> => {
+
+  const res = await fetch(getListTenantsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: listTenantsResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as listTenantsResponse
+}
+
+
+
+export type createTenantResponse201 = {
+  data: TenantResource
+  status: 201
+}
+
+export type createTenantResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 201>
+}
+
+export type createTenantResponseSuccess = (createTenantResponse201) & {
+  headers: Headers;
+};
+export type createTenantResponseError = (createTenantResponseDefault) & {
+  headers: Headers;
+};
+
+export type createTenantResponse = (createTenantResponseSuccess | createTenantResponseError)
+
+export const getCreateTenantUrl = () => {
+
+
+
+
+  return `/api/v1/tenants`
+}
+
+/**
+ * Adds a customer. Answers 409 if the ID is taken, so a mistyped create is never mistaken for a successful one. Requires the operator credential: an API key scoped to the operator tenant. Any other principal, a customer's key or any session, is refused.
+ * @summary Create a tenant
+ */
+export const createTenant = async (createTenantInputBody: NonReadonly<CreateTenantInputBody>, options?: RequestInit): Promise<createTenantResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Array.isArray(h)) return Object.fromEntries(h);
+    return h;
+  };
+const res = await fetch(getCreateTenantUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(createTenantInputBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: createTenantResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as createTenantResponse
+}
+
+
+
+export type getTenantResponse200 = {
+  data: TenantResource
+  status: 200
+}
+
+export type getTenantResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type getTenantResponseSuccess = (getTenantResponse200) & {
+  headers: Headers;
+};
+export type getTenantResponseError = (getTenantResponseDefault) & {
+  headers: Headers;
+};
+
+export type getTenantResponse = (getTenantResponseSuccess | getTenantResponseError)
+
+export const getGetTenantUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/tenants/${id}`
+}
+
+/**
+ * The resource the create response points at. Requires the operator credential: an API key scoped to the operator tenant. Any other principal, a customer's key or any session, is refused.
+ * @summary Read one tenant
+ */
+export const getTenant = async (id: string, options?: RequestInit): Promise<getTenantResponse> => {
+
+  const res = await fetch(getGetTenantUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: getTenantResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as getTenantResponse
+}
+
+
+
+export type createTenantApiKeyResponse201 = {
+  data: CreatedAPIKeyResource
+  status: 201
+}
+
+export type createTenantApiKeyResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 201>
+}
+
+export type createTenantApiKeyResponseSuccess = (createTenantApiKeyResponse201) & {
+  headers: Headers;
+};
+export type createTenantApiKeyResponseError = (createTenantApiKeyResponseDefault) & {
+  headers: Headers;
+};
+
+export type createTenantApiKeyResponse = (createTenantApiKeyResponseSuccess | createTenantApiKeyResponseError)
+
+export const getCreateTenantApiKeyUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/tenants/${id}/api-keys`
+}
+
+/**
+ * Mints a key on another tenant's behalf. The existing /api-keys endpoint can only mint for the caller, so without this a new tenant could be created and then never used. The token is returned exactly once and is never listed. Requires the operator credential: an API key scoped to the operator tenant. Any other principal, a customer's key or any session, is refused.
+ * @summary Mint an API key for a tenant
+ */
+export const createTenantApiKey = async (id: string,
+    createTenantAPIKeyInputBody: NonReadonly<CreateTenantAPIKeyInputBody>, options?: RequestInit): Promise<createTenantApiKeyResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Array.isArray(h)) return Object.fromEntries(h);
+    return h;
+  };
+const res = await fetch(getCreateTenantApiKeyUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(createTenantAPIKeyInputBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: createTenantApiKeyResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as createTenantApiKeyResponse
+}
+
+
+
+export type listTenantUsersResponse200 = {
+  data: ListTenantUsersOutputBody
+  status: 200
+}
+
+export type listTenantUsersResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type listTenantUsersResponseSuccess = (listTenantUsersResponse200) & {
+  headers: Headers;
+};
+export type listTenantUsersResponseError = (listTenantUsersResponseDefault) & {
+  headers: Headers;
+};
+
+export type listTenantUsersResponse = (listTenantUsersResponseSuccess | listTenantUsersResponseError)
+
+export const getListTenantUsersUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/tenants/${id}/users`
+}
+
+/**
+ * Reads one tenant's accounts. No password hash is ever included. Requires the operator credential: an API key scoped to the operator tenant. Any other principal, a customer's key or any session, is refused.
+ * @summary List a tenant's accounts
+ */
+export const listTenantUsers = async (id: string, options?: RequestInit): Promise<listTenantUsersResponse> => {
+
+  const res = await fetch(getListTenantUsersUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: listTenantUsersResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as listTenantUsersResponse
+}
+
+
+
+export type createTenantUserResponse201 = {
+  data: UserResource
+  status: 201
+}
+
+export type createTenantUserResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 201>
+}
+
+export type createTenantUserResponseSuccess = (createTenantUserResponse201) & {
+  headers: Headers;
+};
+export type createTenantUserResponseError = (createTenantUserResponseDefault) & {
+  headers: Headers;
+};
+
+export type createTenantUserResponse = (createTenantUserResponseSuccess | createTenantUserResponseError)
+
+export const getCreateTenantUserUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/tenants/${id}/users`
+}
+
+/**
+ * Creates a dashboard account that can sign in immediately. This is the path that used to be reachable only through the one-time bootstrap or a raw insert. Requires the operator credential: an API key scoped to the operator tenant. Any other principal, a customer's key or any session, is refused.
+ * @summary Create an account in a tenant
+ */
+export const createTenantUser = async (id: string,
+    createTenantUserInputBody: NonReadonly<CreateTenantUserInputBody>, options?: RequestInit): Promise<createTenantUserResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Array.isArray(h)) return Object.fromEntries(h);
+    return h;
+  };
+const res = await fetch(getCreateTenantUserUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(createTenantUserInputBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: createTenantUserResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as createTenantUserResponse
+}
+
+
+
+export type disableTenantUserResponse200 = {
+  data: UserResource
+  status: 200
+}
+
+export type disableTenantUserResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type disableTenantUserResponseSuccess = (disableTenantUserResponse200) & {
+  headers: Headers;
+};
+export type disableTenantUserResponseError = (disableTenantUserResponseDefault) & {
+  headers: Headers;
+};
+
+export type disableTenantUserResponse = (disableTenantUserResponseSuccess | disableTenantUserResponseError)
+
+export const getDisableTenantUserUrl = (id: string,
+    userId: string,) => {
+
+
+
+
+  return `/api/v1/tenants/${id}/users/${userId}/disable`
+}
+
+/**
+ * Stops the account signing in from the next request onwards. The row is kept so the workflows and executions it authored still have a name. Requires the operator credential: an API key scoped to the operator tenant. Any other principal, a customer's key or any session, is refused.
+ * @summary Disable an account
+ */
+export const disableTenantUser = async (id: string,
+    userId: string, options?: RequestInit): Promise<disableTenantUserResponse> => {
+
+  const res = await fetch(getDisableTenantUserUrl(id,userId),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: disableTenantUserResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as disableTenantUserResponse
+}
+
+
+
+export type enableTenantUserResponse200 = {
+  data: UserResource
+  status: 200
+}
+
+export type enableTenantUserResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type enableTenantUserResponseSuccess = (enableTenantUserResponse200) & {
+  headers: Headers;
+};
+export type enableTenantUserResponseError = (enableTenantUserResponseDefault) & {
+  headers: Headers;
+};
+
+export type enableTenantUserResponse = (enableTenantUserResponseSuccess | enableTenantUserResponseError)
+
+export const getEnableTenantUserUrl = (id: string,
+    userId: string,) => {
+
+
+
+
+  return `/api/v1/tenants/${id}/users/${userId}/enable`
+}
+
+/**
+ * Clears the offboarding marker, so the account signs in again with its existing password. Requires the operator credential: an API key scoped to the operator tenant. Any other principal, a customer's key or any session, is refused.
+ * @summary Re-enable an account
+ */
+export const enableTenantUser = async (id: string,
+    userId: string, options?: RequestInit): Promise<enableTenantUserResponse> => {
+
+  const res = await fetch(getEnableTenantUserUrl(id,userId),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: enableTenantUserResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as enableTenantUserResponse
+}
+
+
+
+export type setTenantUserPasswordResponse200 = {
+  data: UserResource
+  status: 200
+}
+
+export type setTenantUserPasswordResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type setTenantUserPasswordResponseSuccess = (setTenantUserPasswordResponse200) & {
+  headers: Headers;
+};
+export type setTenantUserPasswordResponseError = (setTenantUserPasswordResponseDefault) & {
+  headers: Headers;
+};
+
+export type setTenantUserPasswordResponse = (setTenantUserPasswordResponseSuccess | setTenantUserPasswordResponseError)
+
+export const getSetTenantUserPasswordUrl = (id: string,
+    userId: string,) => {
+
+
+
+
+  return `/api/v1/tenants/${id}/users/${userId}/password`
+}
+
+/**
+ * Sets a new password. This is the operator's reset: the old password stops working at once, and sessions minted under it are cut loose by the account's password version. Requires the operator credential: an API key scoped to the operator tenant. Any other principal, a customer's key or any session, is refused.
+ * @summary Replace an account's password
+ */
+export const setTenantUserPassword = async (id: string,
+    userId: string,
+    setUserPasswordInputBody: NonReadonly<SetUserPasswordInputBody>, options?: RequestInit): Promise<setTenantUserPasswordResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Array.isArray(h)) return Object.fromEntries(h);
+    return h;
+  };
+const res = await fetch(getSetTenantUserPasswordUrl(id,userId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(setUserPasswordInputBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: setTenantUserPasswordResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as setTenantUserPasswordResponse
+}
+
+
+
 export type listWorkflowsResponse200 = {
   data: WorkflowSummary[] | null
   status: 200
@@ -4116,21 +4821,28 @@ export type listWorkflowsResponseError = (listWorkflowsResponseDefault) & {
 
 export type listWorkflowsResponse = (listWorkflowsResponseSuccess | listWorkflowsResponseError)
 
-export const getListWorkflowsUrl = () => {
+export const getListWorkflowsUrl = (params?: ListWorkflowsParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/v1/workflows`
+  return stringifiedParams.length > 0 ? `/api/v1/workflows?${stringifiedParams}` : `/api/v1/workflows`
 }
 
 /**
- * Lists workflows visible to the current tenant.
+ * Returns one page of workflow summaries, newest first. The next page's cursor is in the X-Next-Cursor response header, empty on the last page.
  * @summary List workflows
  */
-export const listWorkflows = async ( options?: RequestInit): Promise<listWorkflowsResponse> => {
+export const listWorkflows = async (params?: ListWorkflowsParams, options?: RequestInit): Promise<listWorkflowsResponse> => {
 
-  const res = await fetch(getListWorkflowsUrl(),
+  const res = await fetch(getListWorkflowsUrl(params),
   {
     ...options,
     method: 'GET'
@@ -4524,6 +5236,66 @@ export const deactivateWorkflow = async (id: string, options?: RequestInit): Pro
 
 
 
+export type workflowDiagnosticsResponse200 = {
+  data: WorkflowDiagnosticsResource
+  status: 200
+}
+
+export type workflowDiagnosticsResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type workflowDiagnosticsResponseSuccess = (workflowDiagnosticsResponse200) & {
+  headers: Headers;
+};
+export type workflowDiagnosticsResponseError = (workflowDiagnosticsResponseDefault) & {
+  headers: Headers;
+};
+
+export type workflowDiagnosticsResponse = (workflowDiagnosticsResponseSuccess | workflowDiagnosticsResponseError)
+
+export const getWorkflowDiagnosticsUrl = (id: string,
+    params?: WorkflowDiagnosticsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/workflows/${id}/diagnostics?${stringifiedParams}` : `/api/v1/workflows/${id}/diagnostics`
+}
+
+/**
+ * Returns the report stored with a revision when an import created it: what the n8n translation could not carry faithfully, per node and per field. A revision that was not imported answers with no source and no issues.
+ * @summary Read a revision's import report
+ */
+export const workflowDiagnostics = async (id: string,
+    params?: WorkflowDiagnosticsParams, options?: RequestInit): Promise<workflowDiagnosticsResponse> => {
+
+  const res = await fetch(getWorkflowDiagnosticsUrl(id,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: workflowDiagnosticsResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as workflowDiagnosticsResponse
+}
+
+
+
 export type exportWorkflowResponse200 = {
   data: ExportedWorkflowResource
   status: 200
@@ -4663,7 +5435,7 @@ export const getRunWorkflowUrl = (id: string,) => {
 }
 
 /**
- * Validates and queues the latest saved revision without requiring activation.
+ * Validates and queues the latest saved revision without requiring activation. Body.triggerNodeId selects the trigger to start from; omit it to run every trigger, and a node that cannot start a run is refused with 422.
  * @summary Queue a manual workflow run
  */
 export const runWorkflow = async (id: string,

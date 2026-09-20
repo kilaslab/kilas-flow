@@ -55,6 +55,13 @@ Embed: Deny — listing workflows, minting sessions, schedules, credential write
 
 Returns stored credentials without any secret value.
 
+Parameters:
+
+| Name | In | Required | Type | Description |
+| --- | --- | --- | --- | --- |
+| `limit` | query | no | integer | Maximum credentials to return (default 100) |
+| `cursor` | query | no | string | Opaque cursor from a previous listing's X-Next-Cursor header |
+
 Responses:
 
 | Status | Description | Body |

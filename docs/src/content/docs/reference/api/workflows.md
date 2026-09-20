@@ -120,7 +120,7 @@ Embed: Deny — an embed session cannot delete a workflow.
 
 `POST /api/v1/workflows/{id}/run`
 
-Validates and queues the latest saved revision without requiring activation.
+Validates and queues the latest saved revision without requiring activation. Body.triggerNodeId selects the trigger to start from; omit it to run every trigger, and a node that cannot start a run is refused with 422.
 
 Parameters:
 
@@ -291,6 +291,28 @@ Responses:
 | Status | Description | Body |
 | --- | --- | --- |
 | `200` | OK | `application/json` — `array or null` |
+| `default` | Error | `application/problem+json` |
+
+Embed: Allow with `workflow:read` — on the session’s workflow only.
+
+## Read a revision's import report (`workflow-diagnostics`)
+
+`GET /api/v1/workflows/{id}/diagnostics`
+
+Returns the report stored with a revision when an import created it: what the n8n translation could not carry faithfully, per node and per field. A revision that was not imported answers with no source and no issues.
+
+Parameters:
+
+| Name | In | Required | Type | Description |
+| --- | --- | --- | --- | --- |
+| `id` | path | yes | string | Workflow identifier |
+| `versionId` | query | no | string | Revision to read; defaults to the newest |
+
+Responses:
+
+| Status | Description | Body |
+| --- | --- | --- |
+| `200` | OK | `application/json` — `WorkflowDiagnosticsResource` |
 | `default` | Error | `application/problem+json` |
 
 Embed: Allow with `workflow:read` — on the session’s workflow only.
