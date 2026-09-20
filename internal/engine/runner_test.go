@@ -2344,3 +2344,105 @@ func TestContinueOnFailSendsEveryItemToARealServer(t *testing.T) {
 		t.Errorf("the stopping node sent %s, want %s", got, want)
 	}
 }
+
+// TestDollarItemResolvesThroughHttpAndALoop extends the lineage contract to the
+// two topologies the ticket names that a one-to-one chain does not cover: a
+// real HTTP Request per item, and a Loop Over Items whose body returns new
+// items.
+func TestDollarItemResolvesThroughHttpAndALoop(t *testing.T) {
+	var (
+		mu   sync.Mutex
+		seen []string
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		v := strings.TrimPrefix(request.URL.Path, "/item/")
+		mu.Lock()
+		seen = append(seen, v)
+		mu.Unlock()
+		writer.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(writer, `{"echo":%q}`, v)
+	}))
+	defer server.Close()
+	host := strings.TrimPrefix(server.URL, "http://")
+
+	catalog := testCatalog(t, stepType("test.probe", "Probe"))
+	ir := compileDoc(t, catalog, workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_lineage_http_loop", Name: "Lineage through HTTP and a loop",
+		Nodes: []workflow.Node{
+			{ID: "manual", Name: "Manual", Type: "kilasflow.manual", TypeVersion: workflow.V(1)},
+			{ID: "split", Name: "Split Out", Type: nodes.SplitOutNodeType, TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"fieldToSplitOut": "list"}},
+			{ID: "http", Name: "HTTP", Type: "kilasflow.httpRequest", TypeVersion: workflow.V(1),
+				Parameters: map[string]any{
+					"method": "GET",
+					"url":    map[string]any{"mode": "expression", "value": "http://" + host + "/item/{{ $json.v }}"},
+				}},
+			{ID: "loop", Name: "Loop", Type: nodes.LoopNodeType, TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"batchSize": float64(1), "maxIterations": float64(10)}},
+			{ID: "body", Name: "Body", Type: "kilasflow.set", TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"assignments": map[string]any{"touched": "yes"}}},
+			{ID: "probe", Name: "Probe", Type: "test.probe", TypeVersion: workflow.V(1)},
+		},
+		Connections: []workflow.Connection{
+			mainEdge("c1", "manual", "main", "split"),
+			mainEdge("c2", "split", "main", "http"),
+			mainEdge("c3", "http", "main", "loop"),
+			mainEdge("c4", "loop", "loop", "body"),
+			mainEdge("c5", "body", "main", "loop"),
+			mainEdge("c6", "loop", "done", "probe"),
+		},
+		Settings: map[string]any{},
+	})
+
+	var seenByProbe []any
+	executors := engine.NewRegistry()
+	if err := executors.Register("test.probe", engine.ExecutorFunc(
+		func(_ context.Context, _ workflow.IRNode, input workflow.NodeInput, request engine.Request) (workflow.NodeOutput, error) {
+			items := make([]workflow.Item, 0, len(input["main"]))
+			for index, item := range input["main"] {
+				resolved, err := expression.Resolve(map[string]any{
+					"origin": map[string]any{"mode": "expression", "value": "{{ $('Split Out').item.json.v }}"},
+				}, request.ExpressionContext(item, input, index))
+				if err != nil {
+					return nil, err
+				}
+				seenByProbe = append(seenByProbe, resolved["origin"])
+				items = append(items, workflow.Item{JSON: map[string]any{"saw": resolved["origin"]}})
+			}
+			return workflow.NodeOutput{items}, nil
+		})); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	if err := nodes.RegisterExecutors(executors, safehttp.Policy{
+		AllowedHosts:            []string{"127.0.0.1"},
+		AllowedPrivateEndpoints: []string{host},
+		MaxResponseBytes:        1 << 20,
+		Timeout:                 5 * time.Second,
+	}, sqlnode.Guard{}, ai.NewLoopRuntime(), nil, nil); err != nil {
+		t.Fatalf("RegisterExecutors() error = %v", err)
+	}
+
+	if _, err := engine.NewRunner(executors).Run(context.Background(), ir, engine.Request{
+		Input: workflow.Item{JSON: map[string]any{"list": []any{
+			map[string]any{"v": "a"}, map[string]any{"v": "b"}, map[string]any{"v": "c"},
+		}}},
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	mu.Lock()
+	requested := append([]string(nil), seen...)
+	mu.Unlock()
+	if got, want := strings.Join(requested, ","), "a,b,c"; got != want {
+		t.Errorf("the HTTP node requested %s, want one request per split item", got)
+	}
+	if len(seenByProbe) != 3 {
+		t.Fatalf("the probe resolved %d items, want 3", len(seenByProbe))
+	}
+	for index, want := range []string{"a", "b", "c"} {
+		if seenByProbe[index] != want {
+			t.Errorf("after HTTP and a loop, item %d read %#v from $('Split Out').item, want %#v", index, seenByProbe[index], want)
+		}
+	}
+}
