@@ -1,7 +1,7 @@
 ---
 id: BUG-277a2m
 title: Simple Memory sessionKey evaluated before main chain; per-item/upstream refs fail
-status: todo
+status: doing
 priority: high
 labels:
     - ai
@@ -10,7 +10,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:09Z"
-updated: "2026-09-19T12:06:09Z"
+updated: "2026-09-20T00:32:57Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -38,3 +38,10 @@ Existing tickets: FEAT-096vs9 (done, session key modes)
 
 - [ ] Simple Memory's session key is evaluated before the main chain runs: $('Trigger') fails, $json is the executio
 - [ ] Adversarial re-verify against live stub/n8n like the Verify phase (no code-only close)
+## Progress — AINodes2 (2026-09-20)
+
+Fix: the memory descriptor no longer resolves anything. `executeMemory` emits `{kind, nodeName, parameters}` with the node's raw parameters, and `AgentExecutor.Execute` resolves them **per item** through `resolveMemorySession` using `expressionContext(item, input, request, index)` before building the `ai.SessionKey`. The `fromInput` suffix still uses the memory node's own name (`nodeName`), so two memory nodes stay scoped apart.
+
+This makes `{{ $json.sessionId }}`, `{{ $('Trigger').item.json.sessionId }}` and any other upstream reference resolve against the item the agent is answering, and gives each item of a batch its own conversation.
+
+Proof (scoped): `go test ./nodes/ -run 'TestMemorySessionKey|TestMemoryCustomAndLegacy' -count=1` — per-item batch yields `alice__Memory` and `bob__Memory`; `$('Trigger').item.json.sessionId` yields `from-trigger`; customKey and the legacy `sessionId` key are unchanged; the descriptor carries the unresolved expression.

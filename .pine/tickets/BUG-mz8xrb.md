@@ -1,7 +1,7 @@
 ---
 id: BUG-mz8xrb
 title: HTTP Request Tool reuses first call's $fromAI args for every later call
-status: todo
+status: doing
 priority: critical
 labels:
     - ai
@@ -10,7 +10,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:09Z"
-updated: "2026-09-19T12:06:09Z"
+updated: "2026-09-20T00:32:57Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -38,3 +38,10 @@ Existing tickets: FEAT-je4f4t (done; introduced $fromAI for the HTTP tool; this 
 
 - [ ] HTTP Request Tool reuses the first call's $fromAI arguments for every later call, so answers use the wrong dat
 - [ ] Adversarial re-verify against live stub/n8n like the Verify phase (no code-only close)
+## Progress — AINodes2 (2026-09-20)
+
+Fix: `httpRequestTool.Invoke` substitutes `$fromAI` into a **copy** of the node (`node := tool.node; node.Parameters = parameters`) and executes the copy, so the tool's own template keeps its placeholders. `Definition()` therefore also keeps offering the real argument schema after the first call instead of degrading to the generic `input` object.
+
+Proof (scoped): `go test ./nodes/ -run TestHTTPToolReevaluatesItsFromAIArgumentsOnEveryCall -count=1` — a stub agent asks for Paris then Tokyo; the stub HTTP server records `/weather?city=` twice and the test asserts `[Paris, Tokyo]`. Fails pre-fix (both requests were Paris), passes post-fix.
+
+Remaining in this ticket: adversarial re-verify against a live stub/n8n instance (Main's final verification phase).

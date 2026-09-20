@@ -3,6 +3,7 @@ package nodes
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -109,6 +111,12 @@ var samplingOptionKeys = []string{
 // call holds a worker for as long as the provider cares to keep the socket
 // open.
 const DefaultModelTimeoutCeiling = 10 * time.Minute
+
+// defaultModelMaxRetries is what a node that never set the option gets,
+// matching n8n's own default for its chat model nodes. Absent-means-two rather
+// than absent-means-none is the difference between a rate limit being waited
+// out and a run failing on the first 429.
+const defaultModelMaxRetries = 2
 
 // ErrModelTimeoutAboveCeiling reports a node asking to wait longer than this
 // deployment permits.
@@ -310,7 +318,7 @@ func chatModelOptions(provider chatModelProvider) node.PropertyDefinition {
 			{
 				Key: ModelOptionTimeout, Label: "Timeout", Kind: node.PropertyNumber, Default: provider.defaultTimeout,
 				TypeOptions: &node.TypeOptions{MinValue: numberBound(0)},
-				Description: "How long one run may wait for the model, in milliseconds. Above this deployment's ceiling the node is refused rather than quietly given less.",
+				Description: "How long one model request may wait, in milliseconds. Above this deployment's ceiling the node is refused rather than quietly given less.",
 			},
 			{
 				Key: ModelOptionTopP, Label: "Top P", Kind: node.PropertyNumber, Default: float64(1),
@@ -328,6 +336,11 @@ func numberBound(value float64) *float64 { return &value }
 func chatModelNode() node.Definition {
 	return node.Definition{
 		Type: ChatModelNodeType,
+		// Not required: an endpoint that speaks OpenAI's protocol and is not
+		// OpenAI — a local Ollama, a vLLM server, an air-gapped gateway —
+		// usually authenticates nobody. Requiring a credential made users
+		// store a fake token, which is a meaningless secret that gets sent
+		// with every request.
 		Credentials: []node.CredentialRequirement{
 			{Type: BearerCredentialType},
 		},
@@ -370,6 +383,26 @@ func chatModelNode() node.Definition {
 			{Key: "temperature", Label: "Temperature", Kind: node.PropertyNumber},
 			{Key: "maxTokens", Label: "Maximum tokens", Kind: node.PropertyNumber},
 			{Key: "stream", Label: "Stream output", Kind: node.PropertyBoolean, Default: true},
+			// The transport settings the provider nodes already offer. Without
+			// them the local-model path had no way to outlive the deployment's
+			// outbound timeout, so a long answer died at thirty seconds with
+			// nothing in the node to raise.
+			{
+				Key: modelOptionsKey, Label: "Options", Kind: node.PropertyCollection,
+				Description: "An option you do not add is not sent, so the provider applies its own default.",
+				Fields: []node.PropertyDefinition{
+					{
+						Key: ModelOptionTimeout, Label: "Timeout", Kind: node.PropertyNumber,
+						TypeOptions: &node.TypeOptions{MinValue: numberBound(0)},
+						Description: "How long one model request may wait, in milliseconds. A slower local model needs a larger value; above this deployment's ceiling the node is refused rather than quietly given less.",
+					},
+					{
+						Key: ModelOptionMaxRetries, Label: "Max Retries", Kind: node.PropertyNumber, Default: float64(defaultModelMaxRetries),
+						TypeOptions: &node.TypeOptions{MinValue: numberBound(0)},
+						Description: "How many times a rate-limited or failed request is sent again, with exponential backoff.",
+					},
+				},
+			},
 		},
 		SharedSettings: sharedSettings(),
 		ExecutorID:     ChatModelExecutorID,
@@ -405,7 +438,10 @@ func memoryNode() node.Definition {
 				Key: "sessionId", Label: "Session ID (legacy)", Kind: node.PropertyString,
 				Description: "Kept for nodes saved before the session key modes existed. It is used only when no session key mode is stored; prefer Session Key instead.",
 			},
-			{Key: "maxMessages", Label: "Maximum messages", Kind: node.PropertyNumber, Default: 40},
+			{
+				Key: "maxMessages", Label: "Maximum messages", Kind: node.PropertyNumber, Default: 40,
+				Description: "How many messages of the conversation are kept. A question and its answer are two messages; the window is trimmed to whole exchanges, so it never begins in the middle of one.",
+			},
 			{Key: "maxAgeMinutes", Label: "Maximum age (minutes)", Kind: node.PropertyNumber, Default: 1440},
 		},
 		SharedSettings: sharedSettings(),
@@ -605,11 +641,10 @@ func validateChatModelConfiguration(n workflow.Node) error {
 	if statementText(n.Parameters, "model") == "" {
 		return fmt.Errorf("model is required")
 	}
-	// A chat model without a credential would have to fall back to an ambient
-	// key, and an ambient key is exactly what must not exist.
-	if id, found := n.Credentials[BearerCredentialType]; !found || strings.TrimSpace(id) == "" {
-		return fmt.Errorf("an httpBearerAuth credential holding the API key is required")
-	}
+	// No credential is accepted, and none is looked up ambiently: the key
+	// comes from the credential the node names, or the request carries no
+	// Authorization header at all. An endpoint that needs no key is the normal
+	// case for this node, and demanding one made users store a fake token.
 	return nil
 }
 
@@ -725,12 +760,14 @@ func executeChatModel(ctx context.Context, ir workflow.IRNode, _ workflow.NodeIn
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	// A credential is optional here: an OpenAI-compatible endpoint that
+	// authenticates nobody is the normal case for a local model, and demanding
+	// a credential made every local user store a token the server ignores.
 	credentialID := strings.TrimSpace(ir.Credentials[BearerCredentialType])
-	if credentialID == "" {
-		return nil, fmt.Errorf("node %q: an httpBearerAuth credential is required", ir.Name)
-	}
-	if _, err := resolveModelCredential(ctx, ir, request, credentialID, BearerCredentialType); err != nil {
-		return nil, err
+	if credentialID != "" {
+		if _, err := resolveModelCredential(ctx, ir, request, credentialID, BearerCredentialType); err != nil {
+			return nil, err
+		}
 	}
 
 	descriptor := modelDescriptorFor(ir, credentialID, BearerCredentialType,
@@ -741,6 +778,10 @@ func executeChatModel(ctx context.Context, ir workflow.IRNode, _ workflow.NodeIn
 	// `!= 0` guard dropped it, leaving the provider to apply its own default
 	// on the one setting the user had been most explicit about.
 	copyPresentOptions(descriptor, ir.Parameters, samplingOptionKeys)
+	// The transport options stay out of the request body: this server checks
+	// the timeout against the deployment's ceiling and performs the retries.
+	options := mapValue(ir.Parameters[modelOptionsKey])
+	copyPresentOptions(descriptor, options, []string{ModelOptionTimeout, ModelOptionMaxRetries})
 	return workflow.NodeOutput{{{JSON: map[string]any{descriptorKey: descriptor}}}}, nil
 }
 
@@ -829,28 +870,51 @@ func copyPresentOptions(descriptor map[string]any, source map[string]any, keys [
 }
 
 // executeMemory emits a memory descriptor.
-func executeMemory(ctx context.Context, ir workflow.IRNode, input workflow.NodeInput, request engine.Request) (workflow.NodeOutput, error) {
+//
+// The descriptor carries the node's raw parameters rather than a resolved
+// session key, because this node runs before the trigger and before the nodes
+// upstream of the agent: the item that `$('Trigger').item.json.chatId` or
+// `{{ $json.sessionId }}` names does not exist yet, and the execution input is
+// not what the agent is answering. The agent resolves these parameters against
+// its own current item, which is also what gives every item of a batch its own
+// conversation.
+func executeMemory(ctx context.Context, ir workflow.IRNode, _ workflow.NodeInput, _ engine.Request) (workflow.NodeOutput, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	// The session key may reference the triggering item, so it is resolved
-	// here from the live item rather than treated as a fixed string — and
-	// never read back out of the persisted record, which the redaction
-	// boundary has already passed over.
-	parameters, err := expression.Resolve(ir.Parameters, expressionContext(request.Input, input, request, 0))
-	if err != nil {
-		return nil, fmt.Errorf("node %q: %w", ir.Name, err)
-	}
-	sessionID, err := resolveSessionKey(ir.Name, parameters)
-	if err != nil {
-		return nil, fmt.Errorf("node %q: %w", ir.Name, err)
+	parameters := make(map[string]any, len(ir.Parameters))
+	for key, value := range ir.Parameters {
+		parameters[key] = value
 	}
 	return workflow.NodeOutput{{{JSON: map[string]any{descriptorKey: map[string]any{
-		"kind":          "memory",
-		"sessionId":     sessionID,
-		"maxMessages":   numberValue(parameters["maxMessages"]),
-		"maxAgeMinutes": numberValue(parameters["maxAgeMinutes"]),
+		"kind": "memory",
+		// The node's own name, so the fromInput suffix still scopes two
+		// memory nodes apart once the key is resolved downstream.
+		"nodeName":   ir.Name,
+		"parameters": parameters,
 	}}}}}, nil
+}
+
+// resolveMemorySession evaluates a memory node's parameters against the agent's
+// current item and returns the conversation key and the retention bounds.
+func resolveMemorySession(agentNode string, descriptor map[string]any, item workflow.Item, input workflow.NodeInput, request engine.Request, index int) (string, ai.Retention, error) {
+	raw, _ := descriptor["parameters"].(map[string]any)
+	if len(raw) == 0 {
+		return "", ai.Retention{}, fmt.Errorf("the memory node attached to node %q has no parameters", agentNode)
+	}
+	resolved, err := expression.Resolve(raw, expressionContext(item, input, request, index))
+	if err != nil {
+		return "", ai.Retention{}, err
+	}
+	memoryNode := textValue(descriptor["nodeName"], agentNode)
+	sessionID, err := resolveSessionKey(memoryNode, resolved)
+	if err != nil {
+		return "", ai.Retention{}, fmt.Errorf("memory node %q: %w", memoryNode, err)
+	}
+	return sessionID, ai.Retention{
+		MaxMessages: int(numberValue(resolved["maxMessages"])),
+		MaxAge:      time.Duration(numberValue(resolved["maxAgeMinutes"])) * time.Minute,
+	}, nil
 }
 
 // resolveSessionKey computes the conversation key a memory node addresses.
@@ -1027,17 +1091,25 @@ type resolvedModel struct {
 // scope.
 func (backend *modelBackend) resolveModel(ctx context.Context, nodeName string, descriptor map[string]any, request engine.Request) (resolvedModel, error) {
 	credentialID, _ := descriptor["credentialId"].(string)
-	if request.Credentials == nil {
-		return resolvedModel{}, fmt.Errorf("node %q: credentials are not available in this runtime", nodeName)
-	}
-	secret, err := request.Credentials.ResolveCredential(ctx, credentialID)
-	if err != nil {
-		return resolvedModel{}, fmt.Errorf("node %q: %w", nodeName, err)
-	}
-	apiKeyField, usable := modelAPIKeyFields[secret.Type]
-	if !usable {
-		return resolvedModel{}, fmt.Errorf("node %q: credential %q is a %s credential, which no chat model can authenticate with",
-			nodeName, secret.Name, secret.Type)
+	// No credential is the local-endpoint case: the request goes out with no
+	// Authorization header rather than with a fake token.
+	apiKey := ""
+	secret := engine.Credential{}
+	if credentialID != "" {
+		if request.Credentials == nil {
+			return resolvedModel{}, fmt.Errorf("node %q: credentials are not available in this runtime", nodeName)
+		}
+		var err error
+		secret, err = request.Credentials.ResolveCredential(ctx, credentialID)
+		if err != nil {
+			return resolvedModel{}, fmt.Errorf("node %q: %w", nodeName, err)
+		}
+		apiKeyField, usable := modelAPIKeyFields[secret.Type]
+		if !usable {
+			return resolvedModel{}, fmt.Errorf("node %q: credential %q is a %s credential, which no chat model can authenticate with",
+				nodeName, secret.Name, secret.Type)
+		}
+		apiKey = secret.Fields[apiKeyField]
 	}
 
 	baseURL := textValue(descriptor["baseUrl"], "https://api.openai.com/v1")
@@ -1057,7 +1129,7 @@ func (backend *modelBackend) resolveModel(ctx context.Context, nodeName string, 
 	// Request node's. It did not before: a credential scoped to
 	// api.openai.com could be pointed at any host by editing one parameter
 	// on the model node.
-	if !secret.AllowsHost(target.Host) {
+	if credentialID != "" && !secret.AllowsHost(target.Host) {
 		return resolvedModel{}, fmt.Errorf("node %q: credential %q is not allowed for host %q",
 			nodeName, secret.Name, target.Hostname())
 	}
@@ -1066,8 +1138,15 @@ func (backend *modelBackend) resolveModel(ctx context.Context, nodeName string, 
 	if err != nil {
 		return resolvedModel{}, fmt.Errorf("node %q: %w", nodeName, err)
 	}
+	// A node that never set the option keeps n8n's own default of two
+	// retries rather than none: imported workflows rarely set it, and the
+	// first rate limit would otherwise end the run.
+	maxRetries := defaultModelMaxRetries
+	if value, present := descriptor[ModelOptionMaxRetries]; present && value != nil {
+		maxRetries = positiveInt(numberValue(value))
+	}
 	return resolvedModel{
-		model:   ai.NewOpenAICompatible(backend.client, baseURL, secret.Fields[apiKeyField]),
+		model:   ai.NewOpenAICompatible(backend.client, baseURL, apiKey),
 		name:    textValue(descriptor["model"], "gpt-4o-mini"),
 		timeout: timeout,
 		stream:  boolValue(descriptor["stream"]),
@@ -1075,7 +1154,7 @@ func (backend *modelBackend) resolveModel(ctx context.Context, nodeName string, 
 		// said by sending nothing rather than by sending a negative bound
 		// the provider would refuse.
 		maxTokens:  positiveInt(numberValue(descriptor[ModelOptionMaxTokens])),
-		maxRetries: positiveInt(numberValue(descriptor[ModelOptionMaxRetries])),
+		maxRetries: maxRetries,
 		// Read back by presence for the reason they were written by
 		// presence: zero is a value a user chooses, not the absence of one.
 		temperature:      presentNumber(descriptor, ModelOptionTemperature),
@@ -1127,14 +1206,13 @@ func WithDatastoreStore(store DatastoreStore) AgentOption {
 	}
 }
 
-// modelTimeout resolves how long one run of this agent may wait for its model.
+// modelTimeout resolves how long one model request may wait.
 //
-// The deadline bounds the whole turn rather than each individual model call.
-// The runtime owns the tool loop, and threading a per-call deadline through
-// AgentRuntime would push a transport concern into the agent contract that
-// every future runtime would have to honour. For the single-call case the two
-// are the same, and for a tool loop this is the bound a user actually means:
-// how long this node may take.
+// It is a request bound, not a run bound: the adapter applies it to each
+// attempt, so an agent that takes three tool turns makes three requests and
+// each of them is allowed this long — which is what a provider's timeout
+// option means there too. The whole run stays bounded by the deployment's
+// ceiling (see AgentExecutor.runTimeout).
 func (backend *modelBackend) modelTimeout(descriptor map[string]any) (time.Duration, error) {
 	ceiling := backend.timeoutCeiling
 	if ceiling <= 0 {
@@ -1239,34 +1317,58 @@ func (executor *AgentExecutor) Execute(ctx context.Context, ir workflow.IRNode, 
 			PresencePenalty:  model.presencePenalty,
 		}
 		if hasMemory && executor.memory != nil {
+			sessionID, policy, err := resolveMemorySession(ir.Name, memoryDescriptor, item, input, request, index)
+			if err != nil {
+				return nil, fmt.Errorf("node %q: %w", ir.Name, err)
+			}
 			agentRequest.Memory = executor.memory
 			agentRequest.Session = ai.SessionKey{
 				TenantID:   request.Execution.TenantID,
 				WorkflowID: request.Execution.WorkflowID,
-				SessionID:  textValue(memoryDescriptor["sessionId"], ""),
+				SessionID:  sessionID,
 			}
 			// The bounds the memory node declared travel beside the key, so
 			// two memory nodes with different bounds retain different
 			// amounts. Zero means the memory's own defaults.
-			agentRequest.SessionPolicy = ai.Retention{
-				MaxMessages: int(numberValue(memoryDescriptor["maxMessages"])),
-				MaxAge:      time.Duration(numberValue(memoryDescriptor["maxAgeMinutes"])) * time.Minute,
-			}
+			agentRequest.SessionPolicy = policy
 		}
+
+		// The parameter's declared default is on, so a document that never
+		// wrote it behaves the way the node describes. The editor writes
+		// defaults into the document and an import does not, and the node must
+		// mean the same thing either way.
+		if boolOr(parameters, "passthroughBinaryImages", true) {
+			images, err := inputImages(request, item)
+			if err != nil {
+				return nil, fmt.Errorf("node %q: %w", ir.Name, err)
+			}
+			agentRequest.Images = images
+		}
+		// One model request, not the whole run: an agent that takes three tool
+		// turns makes three requests and each of them gets this long. The run
+		// as a whole stays bounded by the deployment's ceiling.
+		agentRequest.RequestTimeout = model.timeout
 
 		events := make([]any, 0, 8)
 		// Cancelled explicitly rather than deferred: this is a loop, and a
 		// deferred cancel would hold every item's context alive until the whole
 		// node finished.
-		runCtx, cancel := context.WithTimeout(ctx, model.timeout)
-		result, err := executor.runtime.Run(runCtx, agentRequest, func(event ai.Event) {
+		runCtx, cancel := context.WithTimeout(ctx, executor.runTimeout())
+		stream := newDeltaCoalescer(ir.ID, request, func(event ai.Event) {
 			events = append(events, event)
 			request.Events.Emit(engine.NodeEvent{
 				NodeID: ir.ID, Name: string(event.Kind), Detail: eventDetail(event),
 			})
 		})
+		result, err := executor.runtime.Run(runCtx, agentRequest, stream.emit)
+		stream.flush()
 		cancel()
 		if err != nil {
+			// A run that hit the ceiling names the setting that would raise
+			// it: the message a user actually needs is which knob to turn.
+			if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
+				return nil, fmt.Errorf("node %q: the agent did not finish within %s; raise the chat model node's Timeout option to allow a slower model: %w", ir.Name, executor.runTimeout(), err)
+			}
 			return nil, fmt.Errorf("node %q: %w", ir.Name, err)
 		}
 
@@ -1287,12 +1389,15 @@ func (executor *AgentExecutor) Execute(ctx context.Context, ir workflow.IRNode, 
 			"toolCalls":  float64(result.ToolCalls),
 		}
 		// Off means byte-identical to the output this node always produced:
-		// the key is added, never removed, and nothing else moves.
+		// the key is added, never removed, and nothing else moves. On means
+		// n8n's step list — {action, observation} per tool call — rather than
+		// the raw message list, which echoed the system prompt into the output
+		// of every workflow that asked for it.
 		if boolValue(parameters["returnIntermediateSteps"]) {
-			payload["intermediateSteps"] = result.Messages
+			payload["intermediateSteps"] = agentSteps(result.Messages)
 		}
 		output := workflow.Item{JSON: payload}
-		if boolValue(parameters["passthroughBinaryImages"]) && len(item.Binary) > 0 {
+		if boolOr(parameters, "passthroughBinaryImages", true) && len(item.Binary) > 0 {
 			binary := make(map[string]workflow.BinaryRef, len(item.Binary))
 			for name, ref := range item.Binary {
 				binary[name] = ref
@@ -1302,6 +1407,169 @@ func (executor *AgentExecutor) Execute(ctx context.Context, ir workflow.IRNode, 
 		out = append(out, output)
 	}
 	return workflow.NodeOutput{out}, nil
+}
+
+// runTimeout is the deployment's ceiling on one node's model work. The chat
+// model node's Timeout option bounds one request (AgentRequest.RequestTimeout);
+// this is the bound that guarantees the node ends, so a model whose tools keep
+// failing cannot run until the execution timeout.
+func (backend *modelBackend) runTimeout() time.Duration {
+	if backend.timeoutCeiling > 0 {
+		return backend.timeoutCeiling
+	}
+	return DefaultModelTimeoutCeiling
+}
+
+// deltaInterval is how often accumulated streamed tokens are published.
+const deltaInterval = 250 * time.Millisecond
+
+// deltaCoalescer bounds how often streamed tokens reach the execution feed.
+//
+// The model stream is one delta per token. Published one event each, a
+// few-hundred-word answer filled the execution's bounded event history with
+// tokens and pushed out the tool and model events that describe the run, so a
+// client that opened the execution mid-stream saw tokens and never the
+// terminal event. Tokens are still delivered — just not as fast as the model
+// produces them.
+type deltaCoalescer struct {
+	nodeID    string
+	request   engine.Request
+	emitEvent func(ai.Event)
+	interval  time.Duration
+	last      time.Time
+	pending   strings.Builder
+	model     string
+	iteration int
+}
+
+func newDeltaCoalescer(nodeID string, request engine.Request, emit func(ai.Event)) *deltaCoalescer {
+	return &deltaCoalescer{nodeID: nodeID, request: request, emitEvent: emit, interval: deltaInterval}
+}
+
+// emit is the sink the runtime writes to.
+func (coalescer *deltaCoalescer) emit(event ai.Event) {
+	if event.Kind != ai.EventModelDelta {
+		coalescer.flush()
+		coalescer.emitEvent(event)
+		return
+	}
+	coalescer.pending.WriteString(event.Delta)
+	coalescer.model = event.Model
+	coalescer.iteration = event.Iteration
+	if coalescer.last.IsZero() || time.Since(coalescer.last) >= coalescer.interval {
+		coalescer.flush()
+	}
+}
+
+// flush publishes what has accumulated. It runs before every non-delta event
+// and once when the run ends, so the deltas a consumer sees are never missing
+// their tail.
+func (coalescer *deltaCoalescer) flush() {
+	if coalescer.pending.Len() == 0 {
+		return
+	}
+	coalescer.emitEvent(ai.Event{
+		Kind: ai.EventModelDelta, Iteration: coalescer.iteration, Model: coalescer.model,
+		Delta: coalescer.pending.String(),
+	})
+	coalescer.pending.Reset()
+	coalescer.last = time.Now()
+}
+
+// Vision bounds. A picture travels base64-encoded inside the request, so an
+// unbounded attachment is a memory and bandwidth problem rather than a feature.
+const (
+	maxVisionImages = 4
+	maxVisionBytes  = 8 << 20
+)
+
+// inputImages turns an item's image attachments into the data URIs the model
+// reads. Anything that is not an image is skipped: an image part built from a
+// PDF fails the whole request.
+func inputImages(request engine.Request, item workflow.Item) ([]string, error) {
+	if len(item.Binary) == 0 || request.Binaries == nil {
+		return nil, nil
+	}
+	names := make([]string, 0, len(item.Binary))
+	for name := range item.Binary {
+		names = append(names, name)
+	}
+	// Sorted, so an item with several attachments sends them in the same
+	// order on every run rather than in map order.
+	sort.Strings(names)
+	images := make([]string, 0, min(len(names), maxVisionImages))
+	for _, name := range names {
+		if len(images) >= maxVisionImages {
+			break
+		}
+		reference := item.Binary[name]
+		if !strings.HasPrefix(reference.MediaType, "image/") {
+			continue
+		}
+		body, resolved, err := request.Binaries.Get(reference.ID)
+		if err != nil {
+			return nil, fmt.Errorf("read image %q: %w", name, err)
+		}
+		contents, readErr := io.ReadAll(io.LimitReader(body, maxVisionBytes+1))
+		body.Close()
+		if readErr != nil {
+			return nil, fmt.Errorf("read image %q: %w", name, readErr)
+		}
+		if len(contents) > maxVisionBytes {
+			continue
+		}
+		mediaType := resolved.MediaType
+		if mediaType == "" {
+			mediaType = reference.MediaType
+		}
+		images = append(images, "data:"+mediaType+";base64,"+base64.StdEncoding.EncodeToString(contents))
+	}
+	return images, nil
+}
+
+// agentStep is one intermediate step in n8n's shape: the tool the model asked
+// for, what it asked with, and what came back.
+type agentStep struct {
+	Action      map[string]any `json:"action"`
+	Observation string         `json:"observation,omitempty"`
+}
+
+// agentSteps pairs every tool call in a run with its result, in call order.
+// The parser's synthetic format tool is left out: it is how a run ends, not a
+// step of it.
+func agentSteps(messages []ai.Message) []agentStep {
+	observations := map[string]string{}
+	for _, message := range messages {
+		if message.Role == ai.RoleTool {
+			observations[message.ToolCallID] = message.Content
+		}
+	}
+	steps := make([]agentStep, 0, len(observations))
+	for _, message := range messages {
+		if message.Role != ai.RoleAssistant {
+			continue
+		}
+		for _, call := range message.ToolCalls {
+			if call.Name == ai.FormatFinalJSONResponse {
+				continue
+			}
+			var input any = string(call.Arguments)
+			if len(call.Arguments) > 0 && json.Valid(call.Arguments) {
+				var decoded any
+				if err := json.Unmarshal(call.Arguments, &decoded); err == nil {
+					input = decoded
+				}
+			}
+			steps = append(steps, agentStep{
+				Action: map[string]any{
+					"tool": call.Name, "toolInput": input, "toolCallId": call.ID,
+					"log": call.Name, "messageLog": message.Content,
+				},
+				Observation: observations[call.ID],
+			})
+		}
+	}
+	return steps
 }
 
 // ChainExecutor runs the Basic LLM Chain node: exactly one model call per
@@ -1356,6 +1624,13 @@ func (executor *ChainExecutor) Execute(ctx context.Context, ir workflow.IRNode, 
 		if err != nil {
 			return nil, err
 		}
+		if hasParser {
+			// The schema goes to the model up front, the way n8n's parser
+			// appends its format instructions to the prompt. Validating a
+			// free-text answer and then repairing it burns model calls, and on
+			// a small local model it usually fails outright.
+			messages = withFormatInstructions(messages, ai.FormatInstructions(parserSchema))
+		}
 		modelRequest := ai.ModelRequest{
 			Model:            model.name,
 			Messages:         messages,
@@ -1365,6 +1640,7 @@ func (executor *ChainExecutor) Execute(ctx context.Context, ir workflow.IRNode, 
 			PresencePenalty:  model.presencePenalty,
 			MaxTokens:        model.maxTokens,
 			MaxRetries:       model.maxRetries,
+			Timeout:          model.timeout,
 		}
 		// Cancelled explicitly rather than deferred: this is a loop, and a
 		// deferred cancel would hold every item's context alive until the
@@ -1391,7 +1667,7 @@ func (executor *ChainExecutor) completeChainItem(ctx context.Context, ir workflo
 	}
 	for attempt := 1; attempt <= attempts; attempt++ {
 		modelRequest.Messages = messages
-		runCtx, cancel := context.WithTimeout(ctx, model.timeout)
+		runCtx, cancel := context.WithTimeout(ctx, executor.models.runTimeout())
 		request.Events.Emit(engine.NodeEvent{
 			NodeID: ir.ID, Name: string(ai.EventModelStarted),
 			Detail: eventDetail(ai.Event{Kind: ai.EventModelStarted, Iteration: attempt, Model: model.name}),
@@ -1425,7 +1701,11 @@ func (executor *ChainExecutor) completeChainItem(ctx context.Context, ir workflo
 			Detail: eventDetail(ai.Event{Kind: ai.EventModelCompleted, Iteration: attempt, Model: model.name, Usage: &usage}),
 		})
 		if !hasParser {
-			return workflow.Item{JSON: map[string]any{"output": response.Message.Content}}, nil
+			// n8n's Basic LLM Chain answers with `text` when no parser is
+			// attached, and every imported `{{ $json.text }}` downstream
+			// reads that field. Answering with `output` alone made those
+			// references resolve to nothing while the run reported success.
+			return workflow.Item{JSON: map[string]any{"text": response.Message.Content}}, nil
 		}
 		value, validationErr := ai.ParseAndValidateOutput(parserSchema, response.Message.Content)
 		if validationErr == nil {
@@ -1435,9 +1715,12 @@ func (executor *ChainExecutor) completeChainItem(ctx context.Context, ir workflo
 		if attempt >= attempts {
 			break
 		}
+		// The repair turn carries the whole schema rather than one validation
+		// error: a model guessing field names one error at a time spends every
+		// retry it has.
 		messages = append(messages,
 			ai.Message{Role: ai.RoleAssistant, Content: response.Message.Content},
-			ai.Message{Role: ai.RoleUser, Content: "That response did not match the required format: " + validationErr.Error() + ". Reply with corrected JSON only."},
+			ai.Message{Role: ai.RoleUser, Content: "That response did not match the required format: " + validationErr.Error() + "\n" + ai.FormatInstructions(parserSchema)},
 		)
 	}
 	request.Events.Emit(engine.NodeEvent{
@@ -1489,6 +1772,26 @@ func chainMessagesForItem(nodeName string, parameters map[string]any, item workf
 		return nil, fmt.Errorf("node %q: the prompt is empty; provide text or at least one message", nodeName)
 	}
 	return messages, nil
+}
+
+// withFormatInstructions states the required output shape in the last human
+// turn, which is what n8n does and what every provider accepts. A trailing
+// system message would be refused by the providers that only allow one at the
+// start.
+func withFormatInstructions(messages []ai.Message, instructions string) []ai.Message {
+	if instructions == "" {
+		return messages
+	}
+	for index := len(messages) - 1; index >= 0; index-- {
+		if messages[index].Role != ai.RoleUser {
+			continue
+		}
+		last := messages[index]
+		last.Content = last.Content + "\n\n" + instructions
+		messages[index] = last
+		return messages
+	}
+	return append(messages, ai.Message{Role: ai.RoleUser, Content: instructions})
 }
 
 // chainMessageRow is one typed row of the chain's message list.
@@ -1665,9 +1968,17 @@ func (tool *httpRequestTool) Invoke(ctx context.Context, arguments json.RawMessa
 	if err != nil {
 		return "", err
 	}
-	tool.node.Parameters = parameters
+	// The substitution goes into a copy of the node, never into the tool's own
+	// template. A tool outlives one call: writing the first call's arguments
+	// back over the $fromAI placeholders made every later call — and every
+	// later item — repeat the first request, while the agent answered with the
+	// wrong data and the execution still reported success. The copy is also
+	// what keeps Definition() offering the model the real argument schema
+	// after the first call.
+	node := tool.node
+	node.Parameters = parameters
 
-	output, err := tool.executor.Execute(ctx, tool.node, workflow.NodeInput{"main": {item}}, tool.request)
+	output, err := tool.executor.Execute(ctx, node, workflow.NodeInput{"main": {item}}, tool.request)
 	if err != nil {
 		return "", err
 	}
@@ -1679,6 +1990,17 @@ func (tool *httpRequestTool) Invoke(ctx context.Context, arguments json.RawMessa
 		return "", fmt.Errorf("encode tool result: %w", err)
 	}
 	return string(encoded), nil
+}
+
+// boolOr reads a boolean parameter, falling back to the default the node
+// declares when the document never wrote one. The editor writes defaults into
+// the document, an imported workflow does not, and a node must mean the same
+// thing either way.
+func boolOr(parameters map[string]any, key string, fallback bool) bool {
+	if value, present := parameters[key]; present {
+		return boolValue(value)
+	}
+	return fallback
 }
 
 // presentNumber reads a descriptor key that has to survive being zero.
@@ -1854,10 +2176,10 @@ func validateCalculatorToolConfiguration(n workflow.Node) error {
 	if err := validateToolNameAndDescription(n); err != nil {
 		return err
 	}
-	if err := validateToolFromAI(n); err != nil {
-		return err
-	}
-	return validateCalculatorConfiguration(n)
+	// No expression is required: the model supplies it, the way n8n's
+	// Calculator tool takes the arithmetic from the call. The parameter is
+	// still honoured when it holds an expression or a $fromAI call.
+	return validateToolFromAI(n)
 }
 
 // executeCalculator evaluates the expression for each incoming item.
@@ -1929,6 +2251,10 @@ type calcParser struct {
 	input string
 	pos   int
 }
+
+// calcConstants are the named values the calculator evaluates, matching what
+// n8n's own Calculator tool resolves.
+var calcConstants = map[string]float64{"pi": math.Pi, "e": math.E}
 
 func (parser *calcParser) skipSpaces() {
 	for parser.pos < len(parser.input) && (parser.input[parser.pos] == ' ' || parser.input[parser.pos] == '\t') {
@@ -2067,7 +2393,24 @@ func (parser *calcParser) parsePrimary() (float64, error) {
 		}
 	}
 	if !seenDigit {
-		return 0, fmt.Errorf("unexpected %q at offset %d", parser.input[start:], start)
+		// Named constants: a model asked to work out a circumference reaches
+		// for pi, and refusing it burns a tool call it cannot recover from.
+		nameStart := parser.pos
+		for parser.pos < len(parser.input) {
+			char := parser.input[parser.pos]
+			if char < 'a' || char > 'z' {
+				if char < 'A' || char > 'Z' {
+					break
+				}
+			}
+			parser.pos++
+		}
+		if name := parser.input[nameStart:parser.pos]; name != "" {
+			if constant, ok := calcConstants[strings.ToLower(name)]; ok {
+				return constant, nil
+			}
+		}
+		return 0, fmt.Errorf("unexpected %q at offset %d", parser.input[nameStart:], nameStart)
 	}
 	value, err := strconv.ParseFloat(parser.input[start:parser.pos], 64)
 	if err != nil {
@@ -2208,7 +2551,12 @@ func (tool *workflowTool) Invoke(ctx context.Context, arguments json.RawMessage)
 		WorkflowID: target, Items: []workflow.Item{inputItem}, Wait: true,
 	})
 	if err != nil {
-		return "", err
+		// The model reads this text and repeats it to the user, so an internal
+		// lookup failure is translated rather than echoed: "repository record
+		// not found: active workflow" is how an agent ends up telling someone
+		// their order does not exist while the execution reports success.
+		return "", fmt.Errorf("node %q: the sub-workflow %q this tool calls could not be run — it is not active, or it no longer exists. This is a configuration problem in this workflow, not a missing record: tell the user the tool is unavailable instead of answering with the data it would have returned (%w)",
+			tool.agentNode, target, err)
 	}
 	if len(result.Items) == 1 {
 		encoded, err := json.Marshal(result.Items[0].JSON)
@@ -2345,11 +2693,13 @@ func (tool *calculatorTool) Invoke(ctx context.Context, arguments json.RawMessag
 		return "", fmt.Errorf("node %q: %w", tool.agentNode, err)
 	}
 	expressionText := textValue(resolved["expression"], "")
-	if expressionText == "" {
-		// No $fromAI call claimed the expression: the model's argument is
-		// the expression, the way $json carries it for the HTTP tool.
-		if calls, _ := ai.ExtractFromAI(tool.parameters); len(calls) == 0 {
-			expressionText = textValue(argsMap["expression"], "")
+	// With no $fromAI call claiming the expression, the model's argument is
+	// the arithmetic. Letting a literal parameter win instead made the tool
+	// answer every call with the same number while the execution reported
+	// success, which is the worst possible outcome for a calculator.
+	if calls, _ := ai.ExtractFromAI(tool.parameters); len(calls) == 0 {
+		if fromModel := textValue(argsMap["expression"], ""); fromModel != "" {
+			expressionText = fromModel
 		}
 	}
 	result, err := evaluateCalculatorExpression(expressionText)

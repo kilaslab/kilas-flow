@@ -1,7 +1,7 @@
 ---
 id: BUG-tcqkad
 title: 'AI agent loop defects: parser+memory 400, chain shape/schema, timeout, vision, retries'
-status: todo
+status: doing
 priority: high
 labels:
     - ai
@@ -10,7 +10,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:09Z"
-updated: "2026-09-19T12:06:09Z"
+updated: "2026-09-20T00:32:57Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -164,3 +164,16 @@ Existing tickets: FEAT-c2a081 (done; MCP client tool shipped without an import m
 - [ ] No agent log in the UI: model turns, tool calls and token usage are emitted as ai.* events but never shown
 - [ ] Native Calculator Tool and MCP Client Tool exist, but n8n's toolCalculator, mcpClientTool and lmChatOllama imp
 - [ ] Adversarial re-verify against live stub/n8n like the Verify phase (no code-only close)
+## Progress — AINodes2 (2026-09-20)
+
+Landed in this pass (all in `nodes/ai.go` + `internal/ai/*`):
+- **parser + memory 400**: the loop remembers only the user turn and the final answer (`finishStructuredRun` stores `remembered`), never the assistant turn that called `format_final_json_response`. Regression: `internal/ai` `TestStructuredRunLeavesNoUnansweredToolCallInMemory` asserts the next turn's history contains no tool-calls assistant turn and no tool message.
+- **chain output shape**: a parser-less chain now answers `{text}` (n8n's key, so imported `{{ $json.text }}` resolves) and keeps `{output}` when a parser is attached.
+- **chain + parser never sent the schema**: the schema is now stated in the last human turn (`withFormatInstructions`) and repeated in every repair turn.
+- **timeout**: `kilasflow.chatModel` gained the same `Options` collection the provider nodes have (`timeout`, `maxRetries`); the timeout is now applied **per model request** by the adapter (`ai.ModelRequest.Timeout`) instead of once for the whole agent run, the run stays bounded by the deployment ceiling, and the deadline error names the option to raise.
+- **retries**: exponential backoff with jitter plus `Retry-After` honouring in `internal/ai/openai.go`; an unset `maxRetries` now means n8n's default of 2 instead of 0.
+- **vision**: `ai.Message.Images` / `ai.AgentRequest.Images` carry data URIs, the OpenAI adapter emits `content` as `[text, image_url]` parts, and the AI Agent builds them from the input item's image binaries when `passthroughBinaryImages` is on (still carried through to the output). `kilasflow.chatModel`'s credential is now optional and a request with no credential sends no `Authorization` header, so a local endpoint needs no fake token.
+
+Proof (scoped): `go test ./internal/ai/ -count=1` (all pass, including the new retry-pacing, Retry-After, per-request-timeout and content-parts tests) and `go test ./nodes/ -run 'TestChain|TestAgentSendsTheItemsImages|TestChatModelNode|TestAnUnsetRetryOption|TestCalculator|TestHTTPTool' -count=1`.
+
+Not in my slice (owned elsewhere, reported to the owner): the importer's `workflowInputs.value` mapping, the `<base>Tool` variant mapping, `contextWindowLength -> maxMessages` (ImporterTail); the agent log in the executions UI and the execution event history (EngineWaits/FrontendCore2).

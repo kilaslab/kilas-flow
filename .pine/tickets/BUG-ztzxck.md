@@ -1,7 +1,7 @@
 ---
 id: BUG-ztzxck
 title: Simple Memory trims by raw count; window starts with orphan tool result (400)
-status: todo
+status: doing
 priority: high
 labels:
     - ai
@@ -10,7 +10,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:09Z"
-updated: "2026-09-19T12:06:09Z"
+updated: "2026-09-20T00:32:57Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -38,3 +38,10 @@ Existing tickets: FEAT-096vs9 (done, retention/window semantics)
 
 - [ ] Simple Memory trims by raw message count, so a window can start with an orphan tool result and the provider re
 - [ ] Adversarial re-verify against live stub/n8n like the Verify phase (no code-only close)
+## Progress — AINodes2 (2026-09-20)
+
+Fix (both halves of the suggested fix):
+- `internal/ai/agent.go` `appendSessionMemory` now stores only replayable turns: `user` and `assistant`-without-tool-calls. Tool results, the assistant turn that asked for tools, the parser's format-tool turn and repair prompts are no longer written, so the stored conversation is human/AI pairs like n8n's buffer window. Stored turns drop their `Images` too (a stored picture would be re-sent on every later turn).
+- `internal/ai/memory.go` `prune` applies the count bound and then advances the window to a turn boundary (`alignToTurnStart` + `Message.OpensATurn`), so a window can never begin with a tool result or with a tool-calls assistant turn. `loadSessionMemory` applies the same rule to whatever a store returns.
+
+Proof (scoped): `go test ./internal/ai/ -run 'TestMemoryWindowNeverOpensWithAToolStep|TestStructuredRunLeavesNoUnansweredToolCallInMemory|TestAgentUsesAndUpdatesMemory|TestMemoryEnforcesItsRetentionContract|TestMemoryEnforcesPerNodeAgeThenCount' -count=1`.

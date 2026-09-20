@@ -1,15 +1,18 @@
 package nodes_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +20,7 @@ import (
 	"github.com/kilaslabs/kilas-flow/internal/ai"
 	"github.com/kilaslabs/kilas-flow/internal/credentials"
 	"github.com/kilaslabs/kilas-flow/internal/engine"
+	"github.com/kilaslabs/kilas-flow/internal/expression"
 	"github.com/kilaslabs/kilas-flow/internal/node"
 	"github.com/kilaslabs/kilas-flow/internal/property"
 	"github.com/kilaslabs/kilas-flow/internal/safehttp"
@@ -144,13 +148,22 @@ func TestCompilerRejectsAToolWiredIntoTheModelPort(t *testing.T) {
 	}
 }
 
-func TestChatModelRequiresACredentialRatherThanAnAmbientKey(t *testing.T) {
+// TestChatModelNeedsNoCredentialButInventsNone: the OpenAI-compatible node is
+// the local-endpoint node, and a local endpoint authenticates nobody. What must
+// not change is the other half: no credential means no key is looked up
+// ambiently, and the provider nodes still require their own credential type.
+func TestChatModelNeedsNoCredentialButInventsNone(t *testing.T) {
 	t.Parallel()
 
-	definition, _ := aiRegistry(t).Lookup(nodes.ChatModelNodeType, workflow.V(1))
-	err := definition.Validate(workflow.Node{Parameters: map[string]any{"model": "gpt-test"}})
-	if err == nil || !strings.Contains(err.Error(), "credential") {
-		t.Fatalf("Validate() = %v, want a credential requirement", err)
+	compatible, _ := aiRegistry(t).Lookup(nodes.ChatModelNodeType, workflow.V(1))
+	if err := compatible.Validate(workflow.Node{Parameters: map[string]any{"model": "llama3"}}); err != nil {
+		t.Fatalf("Validate() = %v, want a local endpoint accepted with no credential", err)
+	}
+	for _, nodeType := range []string{nodes.OpenAIChatModelNodeType, nodes.OpenRouterChatModelNodeType} {
+		definition, _ := aiRegistry(t).Lookup(nodeType, workflow.V(1))
+		if err := definition.Validate(workflow.Node{Parameters: map[string]any{"model": modelLocator("gpt-test")}}); err == nil {
+			t.Errorf("%s was accepted with no credential", nodeType)
+		}
 	}
 }
 
@@ -1279,24 +1292,52 @@ func TestSystemMessageWinsOverLegacySystemPrompt(t *testing.T) {
 func TestReturnIntermediateStepsControlsTheOutputShape(t *testing.T) {
 	t.Parallel()
 
-	var received map[string]any
-	provider := answerOnce(&received, 0)
+	// A run that calls a tool, so the step list has something to pair: n8n
+	// reports one entry per tool call — {action, observation} — rather than the
+	// raw message list, which echoed the system prompt into the output.
+	calls := 0
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		if calls == 1 {
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"id":"call_7","type":"function","function":{"name":"plus","arguments":"{\"a\":1,\"b\":2}"}}]},"finish_reason":"tool_calls"}]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"3"},"finish_reason":"stop"}]}`))
+	}))
 	defer provider.Close()
 
+	input := agentModelInput(provider.URL)
+	input["tools"] = []workflow.Item{{JSON: map[string]any{"$ai": map[string]any{
+		"kind": "calculator", "name": "plus", "description": "adds",
+		"parameters": map[string]any{"expression": map[string]any{"mode": "expression", "value": "{{ $json.a }} + {{ $json.b }}"}},
+	}}}}
 	with, err := runAgentNode(t, map[string]any{
-		"prompt": "hi", "returnIntermediateSteps": true,
-	}, agentModelInput(provider.URL), bearerResolver(), nil)
+		"prompt": "hi", "systemMessage": "You are concise.", "returnIntermediateSteps": true,
+	}, input, bearerResolver(), nil)
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
-	steps, ok := with[0][0].JSON["intermediateSteps"].([]ai.Message)
-	if !ok {
-		// The payload crossed no JSON boundary, so the raw message slice is
-		// what the executor stored.
-		t.Fatalf("intermediateSteps = %#v, want the ordered message list", with[0][0].JSON["intermediateSteps"])
+	// The step list crosses into the execution record as JSON, so that is the
+	// shape asserted here rather than the executor's internal type.
+	encoded, err := json.Marshal(with[0][0].JSON["intermediateSteps"])
+	if err != nil {
+		t.Fatalf("encode intermediateSteps: %v", err)
 	}
-	if len(steps) != 2 || steps[0].Role != ai.RoleUser || steps[1].Role != ai.RoleAssistant {
-		t.Fatalf("intermediateSteps = %#v, want user then assistant", steps)
+	var steps []map[string]any
+	if err := json.Unmarshal(encoded, &steps); err != nil {
+		t.Fatalf("decode intermediateSteps: %v", err)
+	}
+	if len(steps) != 1 {
+		t.Fatalf("steps = %s, want one step for the one tool call", encoded)
+	}
+	action, _ := steps[0]["action"].(map[string]any)
+	input0, _ := action["toolInput"].(map[string]any)
+	if action["tool"] != "plus" || steps[0]["observation"] != `{"result":3}` || input0["a"] != float64(1) {
+		t.Fatalf("step = %s, want n8n's action with the call's input and its observation", encoded)
+	}
+	if strings.Contains(string(encoded), "You are concise.") {
+		t.Fatalf("intermediateSteps leaked the system prompt: %s", encoded)
 	}
 
 	without, err := runAgentNode(t, map[string]any{
@@ -1407,7 +1448,11 @@ func TestAgentEnforcesPerNodeRetention(t *testing.T) {
 	for range 3 {
 		input := agentModelInput(provider.URL)
 		input["memory"] = []workflow.Item{{JSON: map[string]any{"$ai": map[string]any{
-			"kind": "memory", "sessionId": "chat-1", "maxMessages": float64(2), "maxAgeMinutes": float64(60),
+			"kind": "memory", "nodeName": "Memory",
+			"parameters": map[string]any{
+				"sessionIdType": "customKey", "sessionKey": "chat-1",
+				"maxMessages": float64(2), "maxAgeMinutes": float64(60),
+			},
 		}}}}
 		if _, err := executor.Execute(context.Background(), ir, input,
 			engine.Request{Credentials: resolver, Execution: execution}); err != nil {
@@ -1449,42 +1494,180 @@ func runMemoryNode(t *testing.T, name string, parameters map[string]any, live wo
 	return descriptor
 }
 
-func TestMemorySessionKeyModes(t *testing.T) {
+// memoryDescriptorFor runs the memory node and returns the descriptor it
+// emits, which is what the agent resolves per item.
+func memoryDescriptorFor(t *testing.T, name string, parameters map[string]any) map[string]any {
+	t.Helper()
+	return runMemoryNode(t, name, parameters, workflow.Item{JSON: map[string]any{}})
+}
+
+// sessionRecorder is the memory store the agent writes through, remembering
+// which conversation each run addressed. Probing a fixed list of session IDs
+// would only find the keys a test already expected.
+type sessionRecorder struct {
+	inner    *ai.BufferMemory
+	sessions []string
+}
+
+func (recorder *sessionRecorder) Load(ctx context.Context, session ai.SessionKey) ([]ai.Message, error) {
+	return recorder.inner.Load(ctx, session)
+}
+
+func (recorder *sessionRecorder) Append(ctx context.Context, session ai.SessionKey, messages []ai.Message) error {
+	recorder.sessions = append(recorder.sessions, session.SessionID)
+	return recorder.inner.Append(ctx, session, messages)
+}
+
+func (recorder *sessionRecorder) LoadWithPolicy(ctx context.Context, session ai.SessionKey, retention ai.Retention) ([]ai.Message, error) {
+	return recorder.inner.LoadWithPolicy(ctx, session, retention)
+}
+
+func (recorder *sessionRecorder) AppendWithPolicy(ctx context.Context, session ai.SessionKey, messages []ai.Message, retention ai.Retention) error {
+	recorder.sessions = append(recorder.sessions, session.SessionID)
+	return recorder.inner.AppendWithPolicy(ctx, session, messages, retention)
+}
+
+// agentSessionsFor runs the agent once per item with a memory node's
+// descriptor and reports the conversations the store ended up holding, keyed
+// by session ID.
+func agentSessionsFor(t *testing.T, descriptor map[string]any, nodeItems map[string]expression.NodeItem, items ...workflow.Item) map[string][]ai.Message {
+	t.Helper()
+
+	inner, err := ai.NewBufferMemory(ai.Retention{MaxMessages: 40, MaxAge: time.Hour}, nil)
+	if err != nil {
+		t.Fatalf("NewBufferMemory() error = %v", err)
+	}
+	recorder := &sessionRecorder{inner: inner}
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`))
+	}))
+	defer provider.Close()
+
+	executor := nodes.NewAgentExecutor(ai.NewLoopRuntime(), localPolicy(), recorder)
+	definition, _ := aiRegistry(t).Lookup(nodes.AgentNodeType, workflow.V(1))
+	ir := workflow.IRNode{
+		ID: "agent", Name: "AI Agent", Type: nodes.AgentNodeType, TypeVersion: workflow.V(1),
+		Parameters: map[string]any{"prompt": "hi"}, Definition: definition,
+	}
+	input := agentModelInput(provider.URL)
+	input["main"] = items
+	input["memory"] = []workflow.Item{{JSON: map[string]any{"$ai": descriptor}}}
+	request := engine.Request{
+		Credentials: bearerResolver(),
+		Execution:   engine.ExecutionContext{TenantID: "tenant-a", WorkflowID: "wf-1"},
+		NodeItems:   nodeItems,
+	}
+	if _, err := executor.Execute(context.Background(), ir, input, request); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	sessions := map[string][]ai.Message{}
+	for _, sessionID := range recorder.sessions {
+		loaded, err := inner.Load(context.Background(), ai.SessionKey{
+			TenantID: "tenant-a", WorkflowID: "wf-1", SessionID: sessionID,
+		})
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		sessions[sessionID] = loaded
+	}
+	return sessions
+}
+
+// TestMemorySessionKeyModesStayUnresolvedUntilTheAgentRuns: the memory node
+// runs before the trigger, so resolving its key there read the execution input
+// rather than the item the agent is answering, and `$json.sessionId` or
+// `$('Trigger')` had nothing to resolve against.
+func TestMemorySessionKeyModesStayUnresolvedUntilTheAgentRuns(t *testing.T) {
 	t.Parallel()
 
-	live := workflow.Item{JSON: map[string]any{"sessionId": "live-9"}}
-
-	fromInput := runMemoryNode(t, "Memory", map[string]any{
+	fromInput := memoryDescriptorFor(t, "Memory", map[string]any{
 		"sessionIdType": "fromInput", "sessionKey": "chat-9",
 		"maxMessages": float64(10), "maxAgeMinutes": float64(30),
-	}, live)
-	if fromInput["sessionId"] != "chat-9__Memory" {
-		t.Errorf("fromInput sessionId = %q, want the node-scoped key", fromInput["sessionId"])
+	})
+	parameters, _ := fromInput["parameters"].(map[string]any)
+	if parameters["sessionIdType"] != "fromInput" || parameters["sessionKey"] != "chat-9" {
+		t.Fatalf("descriptor = %#v, want the node's own parameters carried", fromInput)
 	}
-	if fromInput["maxMessages"] != float64(10) || fromInput["maxAgeMinutes"] != float64(30) {
-		t.Errorf("descriptor = %#v, want the declared bounds carried through", fromInput)
-	}
-
-	custom := runMemoryNode(t, "Memory", map[string]any{
-		"sessionIdType": "customKey", "sessionKey": "shared",
-	}, live)
-	if custom["sessionId"] != "shared" {
-		t.Errorf("customKey sessionId = %q, want the key shared verbatim", custom["sessionId"])
+	if fromInput["nodeName"] != "Memory" {
+		t.Fatalf("descriptor = %#v, want the memory node's name for the key suffix", fromInput)
 	}
 
-	// A node saved before the modes existed keeps its exact conversation.
-	legacy := runMemoryNode(t, "Memory", map[string]any{"sessionId": "old-1"}, live)
-	if legacy["sessionId"] != "old-1" {
-		t.Errorf("legacy sessionId = %q, want no suffix added", legacy["sessionId"])
+	// An expression-valued key is carried as written, not resolved against
+	// whatever input the memory node happened to see.
+	expressionKey := memoryDescriptorFor(t, "Memory", map[string]any{
+		"sessionIdType": "customKey",
+		"sessionKey":    map[string]any{"mode": "expression", "value": "{{ $json.sessionId }}"},
+	})
+	expressionParameters, _ := expressionKey["parameters"].(map[string]any)
+	if _, isMap := expressionParameters["sessionKey"].(map[string]any); !isMap {
+		t.Fatalf("sessionKey = %#v, want the expression carried to the agent", expressionParameters["sessionKey"])
 	}
+}
 
-	// The key comes off the live item, never a stored value.
-	expression := runMemoryNode(t, "Memory", map[string]any{
+// TestMemorySessionKeyIsResolvedPerItem: a batch gives every item its own
+// conversation, and the key is read from that item rather than from the
+// execution input.
+func TestMemorySessionKeyIsResolvedPerItem(t *testing.T) {
+	t.Parallel()
+
+	descriptor := memoryDescriptorFor(t, "Memory", map[string]any{
 		"sessionIdType": "fromInput",
 		"sessionKey":    map[string]any{"mode": "expression", "value": "{{ $json.sessionId }}"},
-	}, live)
-	if expression["sessionId"] != "live-9__Memory" {
-		t.Errorf("expression sessionId = %q, want the live item's field scoped to the node", expression["sessionId"])
+	})
+	sessions := agentSessionsFor(t, descriptor, nil,
+		workflow.Item{JSON: map[string]any{"sessionId": "alice"}},
+		workflow.Item{JSON: map[string]any{"sessionId": "bob"}},
+	)
+	if len(sessions) != 2 {
+		t.Fatalf("sessions = %#v, want one conversation per item", sessions)
+	}
+	for _, sessionID := range []string{"alice__Memory", "bob__Memory"} {
+		if len(sessions[sessionID]) != 2 {
+			t.Errorf("session %q = %#v, want the item's own exchange", sessionID, sessions[sessionID])
+		}
+	}
+}
+
+// TestMemorySessionKeyCanReferenceAnUpstreamNode is the reported repro: a chat
+// trigger's id, read through $('Trigger'), reached the memory node before the
+// trigger had produced anything.
+func TestMemorySessionKeyCanReferenceAnUpstreamNode(t *testing.T) {
+	t.Parallel()
+
+	descriptor := memoryDescriptorFor(t, "Memory", map[string]any{
+		"sessionIdType": "customKey",
+		"sessionKey":    map[string]any{"mode": "expression", "value": "{{ $('Trigger').item.json.sessionId }}"},
+	})
+	nodeItems := map[string]expression.NodeItem{
+		"Trigger": {
+			Items:  []map[string]any{{"sessionId": "from-trigger"}},
+			Paired: map[string]any{"sessionId": "from-trigger"},
+		},
+	}
+	sessions := agentSessionsFor(t, descriptor, nodeItems, workflow.Item{JSON: map[string]any{}})
+	if len(sessions["from-trigger"]) != 2 {
+		t.Fatalf("sessions = %#v, want the trigger's id as the conversation", sessions)
+	}
+}
+
+// TestMemoryCustomAndLegacyKeysStillAddressOneConversation pins the two modes
+// that must not change: a defined key is used verbatim, and a node saved
+// before the modes existed keeps the key it always had.
+func TestMemoryCustomAndLegacyKeysStillAddressOneConversation(t *testing.T) {
+	t.Parallel()
+
+	shared := memoryDescriptorFor(t, "Memory", map[string]any{
+		"sessionIdType": "customKey", "sessionKey": "shared",
+	})
+	if sessions := agentSessionsFor(t, shared, nil, workflow.Item{JSON: map[string]any{}}); len(sessions["shared"]) != 2 {
+		t.Fatalf("sessions = %#v, want the defined key used verbatim", sessions)
+	}
+
+	legacy := memoryDescriptorFor(t, "Memory", map[string]any{"sessionId": "old-1"})
+	if sessions := agentSessionsFor(t, legacy, nil, workflow.Item{JSON: map[string]any{}}); len(sessions["old-1"]) != 2 {
+		t.Fatalf("sessions = %#v, want the legacy key kept as it was", sessions)
 	}
 }
 
@@ -1593,8 +1776,10 @@ func TestChainRunsOneModelCallPerItem(t *testing.T) {
 		t.Fatalf("output has %d items, want one per incoming item", len(output[0]))
 	}
 	for index, item := range output[0] {
-		if item.JSON["output"] != "42" {
-			t.Errorf("item %d output = %#v, want the model's text", index, item.JSON["output"])
+		// n8n's chain answers with `text` when no parser is attached, and
+		// imported references read that field.
+		if item.JSON["text"] != "42" {
+			t.Errorf("item %d text = %#v, want the model's answer under n8n's key", index, item.JSON["text"])
 		}
 	}
 	if len(bodies) != 2 {
@@ -1641,7 +1826,7 @@ func TestChainMessageListRendersTypedRowsWithExpressions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
-	if output[0][0].JSON["output"] != "42" {
+	if output[0][0].JSON["text"] != "42" {
 		t.Fatalf("output = %#v, want the model's text", output[0][0].JSON)
 	}
 	messages := promptContents(t, bodies[0])
@@ -1750,4 +1935,464 @@ func TestChainRefusesAnOutputParserItCannotRun(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "output parser") {
 		t.Fatalf("Execute() = %v, want the parser refused by name", err)
 	}
+}
+
+// TestHTTPToolReevaluatesItsFromAIArgumentsOnEveryCall is the reported repro:
+// the tool wrote the first call's substituted parameters back over its own
+// template, so every later call repeated the first request while the agent
+// answered from the wrong data.
+func TestHTTPToolReevaluatesItsFromAIArgumentsOnEveryCall(t *testing.T) {
+	t.Parallel()
+
+	requested := make([]string, 0, 2)
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requested = append(requested, r.URL.Query().Get("city"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"temp":"18C"}`))
+	}))
+	defer stub.Close()
+
+	calls := 0
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		if calls == 1 {
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{\"city\":\"Paris\"}"}}]},"finish_reason":"tool_calls"}]}`))
+			return
+		}
+		if calls == 2 {
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"id":"call_2","type":"function","function":{"name":"get_weather","arguments":"{\"city\":\"Tokyo\"}"}}]},"finish_reason":"tool_calls"}]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"both looked up"},"finish_reason":"stop"}]}`))
+	}))
+	defer provider.Close()
+
+	input := agentModelInput(provider.URL)
+	input["tools"] = []workflow.Item{{JSON: map[string]any{"$ai": map[string]any{
+		"kind": "tool", "name": "get_weather", "description": "Weather", "nodeName": "Get Weather",
+		"parameters": map[string]any{
+			"method": "GET",
+			"url": map[string]any{
+				"mode":  "expression",
+				"value": stub.URL + "/weather?city={{ $fromAI('city','the city name','string') }}",
+			},
+		},
+		"credentials": map[string]any{},
+	}}}}
+	if _, err := runAgentNode(t, map[string]any{"prompt": "Paris and Tokyo?", "maxIterations": 3},
+		input, bearerResolver(), nil); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if len(requested) != 2 || requested[0] != "Paris" || requested[1] != "Tokyo" {
+		t.Fatalf("requests = %#v, want each call to use its own arguments", requested)
+	}
+}
+
+// TestCalculatorToolEvaluatesWhatTheModelAsks pins both halves of the fix: the
+// tool needs no configured expression, and a literal one no longer answers
+// every call with the same number.
+func TestCalculatorToolEvaluatesWhatTheModelAsks(t *testing.T) {
+	t.Parallel()
+
+	definition, found := aiRegistry(t).Get(nodes.CalculatorToolNodeType, workflow.V(1))
+	if !found {
+		t.Fatal("the Calculator Tool node is not registered")
+	}
+	if err := definition.Validate(workflow.Node{Parameters: map[string]any{"toolDescription": "does arithmetic"}}); err != nil {
+		t.Fatalf("a calculator tool with no expression was refused: %v", err)
+	}
+
+	calls := 0
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		if calls == 1 {
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"id":"call_1","type":"function","function":{"name":"calculator","arguments":"{\"expression\":\"17 * 23\"}"}}]},"finish_reason":"tool_calls"}]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"391"},"finish_reason":"stop"}]}`))
+	}))
+	defer provider.Close()
+
+	var published []ai.Event
+	input := agentModelInput(provider.URL)
+	input["tools"] = []workflow.Item{{JSON: map[string]any{"$ai": map[string]any{
+		"kind": "calculator", "name": "calculator", "description": "does arithmetic", "nodeName": "Calculator Tool",
+		// A literal the author typed, which must not override the model.
+		"parameters": map[string]any{"expression": "1+1"},
+	}}}}
+	executor := nodes.NewAgentExecutor(ai.NewLoopRuntime(), localPolicy(), nil)
+	agentDefinition, _ := aiRegistry(t).Lookup(nodes.AgentNodeType, workflow.V(1))
+	ir := workflow.IRNode{
+		ID: "agent", Name: "AI Agent", Type: nodes.AgentNodeType, TypeVersion: workflow.V(1),
+		Parameters: map[string]any{"prompt": "what is 17 * 23"}, Definition: agentDefinition,
+	}
+	if _, err := executor.Execute(context.Background(), ir, input, engine.Request{
+		Credentials: bearerResolver(),
+		Events: func(event engine.NodeEvent) {
+			var decoded ai.Event
+			if json.Unmarshal(event.Detail, &decoded) == nil {
+				published = append(published, decoded)
+			}
+		},
+	}); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	for _, event := range published {
+		if event.Kind == ai.EventToolCompleted && event.Tool == "calculator" {
+			if string(event.Detail) != `"{\"result\":391}"` {
+				t.Fatalf("tool result = %s, want the model's own arithmetic", event.Detail)
+			}
+			return
+		}
+	}
+	t.Fatalf("no tool result was published: %#v", published)
+}
+
+// TestCalculatorUnderstandsNamedConstants: a model reaches for pi, and
+// refusing it burns a call it cannot recover from.
+func TestCalculatorUnderstandsNamedConstants(t *testing.T) {
+	t.Parallel()
+
+	registry := aiRegistry(t)
+	definition, _ := registry.Lookup(nodes.CalculatorNodeType, workflow.V(1))
+	ir := workflow.IRNode{
+		ID: "calc", Name: "Calculator", Type: nodes.CalculatorNodeType, TypeVersion: workflow.V(1),
+		Parameters: map[string]any{"expression": "pi * 2"}, Definition: definition,
+	}
+	executors := engine.NewRegistry()
+	if err := nodes.RegisterExecutors(executors, localPolicy(), sqlGuard(), ai.NewLoopRuntime(), nil, nil); err != nil {
+		t.Fatalf("RegisterExecutors() error = %v", err)
+	}
+	output, err := runExecutor(t, executors, nodes.CalculatorExecutorID, ir,
+		workflow.NodeInput{"main": {{JSON: map[string]any{}}}}, engine.Request{})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result, _ := output[0][0].JSON["result"].(float64); result < 6.28 || result > 6.29 {
+		t.Fatalf("result = %#v, want pi evaluated", output[0][0].JSON["result"])
+	}
+}
+
+// TestAgentSendsTheItemsImagesToTheModel is the vision half of
+// passthroughBinaryImages: the picture on the input item reaches the model as
+// a content part, rather than the agent answering as though the item were
+// text-only.
+func TestAgentSendsTheItemsImagesToTheModel(t *testing.T) {
+	t.Parallel()
+
+	payload := []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a, 0x01, 0x02}
+	store := binaryStore(t)
+	stored, err := store.Put("plate.png", "image/png", bytes.NewReader(payload))
+	if err != nil {
+		t.Fatalf("Put() error = %v", err)
+	}
+
+	var received map[string]any
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &received)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"742"},"finish_reason":"stop"}]}`))
+	}))
+	defer provider.Close()
+
+	input := agentModelInput(provider.URL)
+	input["main"] = []workflow.Item{{JSON: map[string]any{}, Binary: map[string]workflow.BinaryRef{
+		"data": {ID: stored.ID, FileName: "plate.png", MediaType: "image/png", Size: int64(len(payload))},
+	}}}
+	executor := nodes.NewAgentExecutor(ai.NewLoopRuntime(), localPolicy(), nil)
+	definition, _ := aiRegistry(t).Lookup(nodes.AgentNodeType, workflow.V(1))
+	ir := workflow.IRNode{
+		ID: "agent", Name: "AI Agent", Type: nodes.AgentNodeType, TypeVersion: workflow.V(1),
+		Parameters: map[string]any{"prompt": "what number is on the plate"}, Definition: definition,
+	}
+	output, err := executor.Execute(context.Background(), ir, input,
+		engine.Request{Credentials: bearerResolver(), Binaries: store})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	messages, _ := received["messages"].([]any)
+	if len(messages) != 1 {
+		t.Fatalf("provider received %#v, want one user turn", received["messages"])
+	}
+	turn, _ := messages[0].(map[string]any)
+	parts, ok := turn["content"].([]any)
+	if !ok || len(parts) != 2 {
+		t.Fatalf("content = %#v, want the prompt and the image", turn["content"])
+	}
+	image, _ := parts[1].(map[string]any)
+	imageURL, _ := image["image_url"].(map[string]any)
+	if url, _ := imageURL["url"].(string); !strings.HasPrefix(url, "data:image/png;base64,") {
+		t.Fatalf("image part = %#v, want the stored picture as a data URI", image)
+	}
+	// The picture is carried through to the output as well, which is what the
+	// flag meant before it also meant vision.
+	if len(output[0][0].Binary) != 1 {
+		t.Fatalf("output = %#v, want the attachment carried through", output[0][0].Binary)
+	}
+}
+
+// TestAgentSendsImagesOnlyWhenTheFlagIsOn keeps the opt-out honest.
+func TestAgentSendsImagesOnlyWhenTheFlagIsOn(t *testing.T) {
+	t.Parallel()
+
+	store := binaryStore(t)
+	stored, err := store.Put("plate.png", "image/png", bytes.NewReader([]byte{0x89, 'P', 'N', 'G'}))
+	if err != nil {
+		t.Fatalf("Put() error = %v", err)
+	}
+
+	var received map[string]any
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &received)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`))
+	}))
+	defer provider.Close()
+
+	input := agentModelInput(provider.URL)
+	input["main"] = []workflow.Item{{JSON: map[string]any{}, Binary: map[string]workflow.BinaryRef{
+		"data": {ID: stored.ID, FileName: "plate.png", MediaType: "image/png"},
+	}}}
+	executor := nodes.NewAgentExecutor(ai.NewLoopRuntime(), localPolicy(), nil)
+	definition, _ := aiRegistry(t).Lookup(nodes.AgentNodeType, workflow.V(1))
+	ir := workflow.IRNode{
+		ID: "agent", Name: "AI Agent", Type: nodes.AgentNodeType, TypeVersion: workflow.V(1),
+		Parameters: map[string]any{"prompt": "hi", "passthroughBinaryImages": false}, Definition: definition,
+	}
+	if _, err := executor.Execute(context.Background(), ir, input,
+		engine.Request{Credentials: bearerResolver(), Binaries: store}); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	messages, _ := received["messages"].([]any)
+	turn, _ := messages[0].(map[string]any)
+	if _, isParts := turn["content"].([]any); isParts {
+		t.Fatalf("content = %#v, want no image parts when the flag is off", turn["content"])
+	}
+}
+
+// TestChatModelNodeNeedsNoCredentialForALocalEndpoint: an endpoint that
+// authenticates nobody must not force a fake token, and the request must go
+// out with no Authorization header.
+func TestChatModelNodeNeedsNoCredentialForALocalEndpoint(t *testing.T) {
+	t.Parallel()
+
+	executors := engine.NewRegistry()
+	if err := nodes.RegisterExecutors(executors, localPolicy(), sqlGuard(), ai.NewLoopRuntime(), nil, nil); err != nil {
+		t.Fatalf("RegisterExecutors() error = %v", err)
+	}
+	definition, _ := aiRegistry(t).Lookup(nodes.ChatModelNodeType, workflow.V(1))
+	ir := workflow.IRNode{
+		ID: "model", Name: "Local Model", Type: nodes.ChatModelNodeType, TypeVersion: workflow.V(1),
+		Parameters: map[string]any{"model": "llama3", "baseUrl": "http://127.0.0.1:11434/v1"},
+		Definition: definition,
+	}
+	output, err := runExecutor(t, executors, nodes.ChatModelExecutorID, ir, workflow.NodeInput{}, engine.Request{})
+	if err != nil {
+		t.Fatalf("a model node with no credential was refused: %v", err)
+	}
+	descriptor, _ := output[0][0].JSON["$ai"].(map[string]any)
+	if descriptor["credentialId"] != "" {
+		t.Fatalf("descriptor = %#v, want no credential carried", descriptor)
+	}
+
+	var authorization string
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authorization = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`))
+	}))
+	defer provider.Close()
+
+	agentDefinition, _ := aiRegistry(t).Lookup(nodes.AgentNodeType, workflow.V(1))
+	agent := workflow.IRNode{
+		ID: "agent", Name: "AI Agent", Type: nodes.AgentNodeType, TypeVersion: workflow.V(1),
+		Parameters: map[string]any{"prompt": "hi"}, Definition: agentDefinition,
+	}
+	input := workflow.NodeInput{
+		"main": {{JSON: map[string]any{}}},
+		"model": {{JSON: map[string]any{"$ai": map[string]any{
+			"kind": "model", "model": "llama3", "baseUrl": provider.URL, "credentialId": "",
+		}}}},
+	}
+	// A resolver that fails any lookup: the run must not ask for a credential
+	// it was never given.
+	if _, err := nodes.NewAgentExecutor(ai.NewLoopRuntime(), localPolicy(), nil).Execute(context.Background(), agent, input,
+		engine.Request{Credentials: &stubCredentials{err: errors.New("no credential was configured")}}); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if authorization != "" {
+		t.Fatalf("Authorization = %q, want no header for an endpoint that needs none", authorization)
+	}
+}
+
+// TestChatModelNodeCarriesTheTransportOptions: the local-model path had no
+// timeout or retry setting at all, so a long answer died at the deployment's
+// outbound timeout with nothing to raise.
+func TestChatModelNodeCarriesTheTransportOptions(t *testing.T) {
+	t.Parallel()
+
+	executors := engine.NewRegistry()
+	if err := nodes.RegisterExecutors(executors, localPolicy(), sqlGuard(), ai.NewLoopRuntime(), nil, nil); err != nil {
+		t.Fatalf("RegisterExecutors() error = %v", err)
+	}
+	definition, _ := aiRegistry(t).Lookup(nodes.ChatModelNodeType, workflow.V(1))
+	ir := workflow.IRNode{
+		ID: "model", Name: "Local Model", Type: nodes.ChatModelNodeType, TypeVersion: workflow.V(1),
+		Parameters: map[string]any{
+			"model": "llama3", "baseUrl": "http://127.0.0.1:11434/v1",
+			"options": map[string]any{"timeout": float64(240000), "maxRetries": float64(4)},
+		},
+		Definition: definition,
+	}
+	output, err := runExecutor(t, executors, nodes.ChatModelExecutorID, ir, workflow.NodeInput{}, engine.Request{})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	descriptor, _ := output[0][0].JSON["$ai"].(map[string]any)
+	if descriptor["timeout"] != float64(240000) || descriptor["maxRetries"] != float64(4) {
+		t.Fatalf("descriptor = %#v, want the transport options carried", descriptor)
+	}
+}
+
+// TestAnUnsetRetryOptionKeepsTwoRetries is n8n's default: imported models
+// rarely set maxRetries, and absent-means-none failed the run on the first 429.
+func TestAnUnsetRetryOptionKeepsTwoRetries(t *testing.T) {
+	t.Parallel()
+
+	attempts := 0
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		attempts++
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":"slow down"}`))
+	}))
+	defer provider.Close()
+
+	_, err := runAgentNode(t, map[string]any{"prompt": "hi"}, agentModelInput(provider.URL), bearerResolver(), nil)
+	if err == nil {
+		t.Fatal("Execute() succeeded against a provider that always rate-limits")
+	}
+	if attempts != 3 {
+		t.Fatalf("attempts = %d, want the default two retries", attempts)
+	}
+}
+
+// TestStreamedTokensReachTheFeedCoalesced: one event per token filled the
+// execution's bounded event history with tokens and pushed the tool and model
+// events out of it. The deltas must still arrive complete — just fewer of them.
+func TestStreamedTokensReachTheFeedCoalesced(t *testing.T) {
+	t.Parallel()
+
+	tokens := make([]string, 0, 20)
+	for index := range 20 {
+		tokens = append(tokens, fmt.Sprintf("tok%d ", index))
+	}
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		for _, token := range tokens {
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", `{"choices":[{"delta":{"content":`+strconv.Quote(token)+`}}]}`)
+		}
+		_, _ = w.Write([]byte("data: " + `{"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":20,"total_tokens":23}}` + "\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer provider.Close()
+
+	input := agentModelInput(provider.URL)
+	descriptor := input["model"][0].JSON["$ai"].(map[string]any)
+	descriptor["stream"] = true
+
+	var deltas []string
+	executor := nodes.NewAgentExecutor(ai.NewLoopRuntime(), localPolicy(), nil)
+	definition, _ := aiRegistry(t).Lookup(nodes.AgentNodeType, workflow.V(1))
+	ir := workflow.IRNode{
+		ID: "agent", Name: "AI Agent", Type: nodes.AgentNodeType, TypeVersion: workflow.V(1),
+		Parameters: map[string]any{"prompt": "hi"}, Definition: definition,
+	}
+	output, err := executor.Execute(context.Background(), ir, input, engine.Request{
+		Credentials: bearerResolver(),
+		Events: func(event engine.NodeEvent) {
+			if event.Name != string(ai.EventModelDelta) {
+				return
+			}
+			var decoded ai.Event
+			if json.Unmarshal(event.Detail, &decoded) == nil {
+				deltas = append(deltas, decoded.Delta)
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if assembled := strings.Join(deltas, ""); assembled != strings.Join(tokens, "") {
+		t.Fatalf("streamed = %q, want every token delivered", assembled)
+	}
+	if len(deltas) >= len(tokens) {
+		t.Fatalf("published %d delta events for %d tokens, want them coalesced", len(deltas), len(tokens))
+	}
+	if output[0][0].JSON["output"] != strings.Join(tokens, "") {
+		t.Fatalf("output = %#v, want the assembled answer", output[0][0].JSON["output"])
+	}
+}
+
+// TestChainSendsTheParserSchemaWithThePrompt: the chain used the parser only
+// to judge the answer afterwards, so the first reply was free text and the run
+// usually failed — especially on a small local model.
+func TestChainSendsTheParserSchemaWithThePrompt(t *testing.T) {
+	t.Parallel()
+
+	var bodies []map[string]any
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		decoded := map[string]any{}
+		_ = json.Unmarshal(body, &decoded)
+		bodies = append(bodies, decoded)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"{\"fullName\":\"Budi\",\"ageYears\":34}"},"finish_reason":"stop"}]}`))
+	}))
+	defer provider.Close()
+
+	schema := `{"type":"object","properties":{"fullName":{"type":"string"},"ageYears":{"type":"integer"}},"required":["fullName","ageYears"]}`
+	input := chainModelInput(provider.URL, workflow.Item{JSON: map[string]any{"question": "Budi is 34"}})
+	input["outputParser"] = []workflow.Item{parserDescriptor(t, schema)}
+	output, err := runChainNode(t, map[string]any{"promptType": "auto", "inputField": "question"},
+		input, bearerResolver(), nil)
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	messages := promptContents(t, bodies[0])
+	last := messages[len(messages)-1]
+	content, _ := last["content"].(string)
+	if !strings.Contains(content, "ageYears") || !strings.Contains(content, "JSON Schema") {
+		t.Fatalf("prompt = %q, want the schema stated to the model", content)
+	}
+	// With a parser the answer keeps n8n's `output` key, holding the parsed
+	// object rather than the raw text.
+	parsed, _ := output[0][0].JSON["output"].(map[string]any)
+	if parsed == nil {
+		t.Fatalf("output = %#v, want the parsed object", output[0][0].JSON)
+	}
+}
+
+// parserDescriptor runs the Structured Output Parser node, so a test consumes
+// the same descriptor the agent and chain do rather than a hand-built one.
+func parserDescriptor(t *testing.T, schema string) workflow.Item {
+	t.Helper()
+	executors := engine.NewRegistry()
+	if err := nodes.RegisterExecutors(executors, localPolicy(), sqlGuard(), ai.NewLoopRuntime(), nil, nil); err != nil {
+		t.Fatalf("RegisterExecutors() error = %v", err)
+	}
+	definition, _ := aiRegistry(t).Lookup(nodes.OutputParserNodeType, workflow.V(1))
+	ir := workflow.IRNode{
+		ID: "parser", Name: "Parser", Type: nodes.OutputParserNodeType, TypeVersion: workflow.V(1),
+		Parameters: map[string]any{"schemaType": "jsonSchema", "jsonSchema": schema}, Definition: definition,
+	}
+	output, err := runExecutor(t, executors, nodes.OutputParserExecutorID, ir, workflow.NodeInput{}, engine.Request{})
+	if err != nil {
+		t.Fatalf("parser node error = %v", err)
+	}
+	return output[0][0]
 }

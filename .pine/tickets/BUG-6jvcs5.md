@@ -1,7 +1,7 @@
 ---
 id: BUG-6jvcs5
 title: 'AI memory/tools long tail: window semantics, tool mapping, streaming, iterations, UX'
-status: todo
+status: doing
 priority: medium
 labels:
     - ai
@@ -9,7 +9,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:09Z"
-updated: "2026-09-19T12:06:09Z"
+updated: "2026-09-20T00:32:57Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -215,3 +215,15 @@ Existing tickets: FEAT-kwxxd0 (done)
 - [ ] AI Agent item shape differs from n8n: extra usage/iterations/toolCalls keys, and intermediateSteps is a raw me
 - [ ] Local models need a fake API key: there is no Ollama credential type, and the OpenAI-Compatible Chat Model req
 - [ ] Adversarial re-verify against live stub/n8n like the Verify phase (no code-only close)
+## Progress — AINodes2 (2026-09-20)
+
+Landed in this pass:
+- **max iterations**: `LoopRuntime` now finishes with `ai.MaxIterationsMessage` ("Agent stopped due to max iterations.") and reports the run completed, as n8n does, instead of failing the node; the partial conversation and the answer are stored in memory.
+- **window semantics**: only human/AI turns are stored and the window is trimmed to turn boundaries, so `maxMessages` counts real conversation messages (two per exchange) and an imported window keeps whole exchanges.
+- **streaming flood**: `nodes/ai.go` coalesces `ai.model.delta` events to at most one per 250 ms (flushing before every other event and at the end), so a long streamed answer no longer evicts the tool/model events from the execution's bounded history. Terminal-event delivery for late subscribers remains `internal/events` (EngineWaits).
+- **Calculator Tool**: no configured expression is required any more, the model's `expression` argument wins over a literal parameter (the literal is only a fallback), and `pi`/`e` are evaluated.
+- **AI Agent item shape**: `intermediateSteps` is now n8n's `[{action:{tool,toolInput,toolCallId,log,messageLog}, observation}]` rather than the raw message list, so the system prompt is no longer echoed into output data. `output`/`usage`/`iterations`/`toolCalls` are unchanged (cost reporting reads them).
+- **Workflow Tool on an inactive target**: the runtime failure is translated for the model — it now says the sub-workflow is not active and that this is a configuration problem, instead of "repository record not found", which agents repeated to users as "the data does not exist". Activation-time refusal (checking tool targets before publishing) is `internal/engine`/`internal/api`, not in this slice — reported for the owner.
+- **Ollama credential**: covered in BUG-tcqkad (credential optional, no `Authorization` header without one).
+
+Proof (scoped): `go test ./internal/ai/ -run 'TestAgentStopsAtTheIterationBound|TestMaxIterationsAnswerIsRememberedAsTheReply|TestMemoryWindowNeverOpensWithAToolStep' -count=1`, `go test ./nodes/ -run 'TestReturnIntermediateSteps|TestStreamedTokensReachTheFeedCoalesced|TestCalculatorTool|TestCalculatorUnderstandsNamedConstants' -count=1`.
