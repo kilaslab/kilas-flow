@@ -832,19 +832,42 @@ func mergeToKilas(node Node) (map[string]any, []Unsupported) {
 		}
 	}
 
+	// n8n keeps the Merge's output choice under `options`, under a name that
+	// moved between versions: v3 spells it `mergeMode`, v2 `joinMode`, and v2
+	// also carries the booleans `includeUnpaired`, `keepNonMatches` and
+	// `enrichInput2`. All of them mean one thing — which items survive the join
+	// — and the executor implements exactly that set as `joinMode`, so they are
+	// mapped onto it.
+	//
+	// They used to be parked in an `options` bag nothing read. That was worse
+	// than dropping them: the keys were marked consumed, so the import report
+	// stayed clean, and the unpaired items simply disappeared from the output.
 	if options, ok := node.Parameters["options"].(map[string]any); ok {
-		carried := map[string]any{}
-		for _, key := range []string{"includeUnpaired", "keepNonMatches", "enrichInput2", "clashHandling", "mergeMode", "multipleMatches"} {
-			if value, present := options[key]; present && value != nil {
-				carried[key] = value
-			}
+		mode, unmapped := mergeJoinMode(options)
+		if mode != "" {
+			converted["joinMode"] = mode
 		}
-		if len(carried) > 0 {
-			converted["options"] = carried
+		if unmapped != "" {
+			issues = append(issues, Unsupported{
+				Field: unmapped,
+				Reason: fmt.Sprintf("the Merge output type %q is not one this server implements "+
+					"(keepMatches, keepEverything, enrichInput1, enrichInput2, keepNonMatches); "+
+					"the node keeps matches only, so items that do not match are not carried",
+					textOf(options[strings.TrimPrefix(unmapped, "options.")])),
+			})
+		}
+		for _, key := range []string{"clashHandling", "multipleMatches"} {
+			if _, present := options[key]; present {
+				issues = append(issues, Unsupported{
+					Field: "options." + key,
+					Reason: fmt.Sprintf("the Merge option %q decides which of several matches is kept; this server "+
+						"combines every matching pair and keeps each field of each item, so the option was not carried", key),
+				})
+			}
 		}
 		for key := range options {
 			switch key {
-			case "includeUnpaired", "keepNonMatches", "enrichInput2", "clashHandling", "mergeMode", "multipleMatches":
+			case "includeUnpaired", "keepNonMatches", "enrichInput2", "clashHandling", "mergeMode", "multipleMatches", "joinMode":
 			default:
 				issues = append(issues, Unsupported{
 					Field:  "options." + key,
@@ -861,6 +884,50 @@ func mergeToKilas(node Node) (map[string]any, []Unsupported) {
 		})
 	}
 	return converted, issues
+}
+
+// mergeJoinMode reads the output choice n8n's Merge keeps under `options`, and
+// names the key it could not map.
+//
+// Three spellings mean the same thing and moved between versions: v3's
+// `mergeMode`, v2's `joinMode`, and v2's booleans — `includeUnpaired` keeps
+// everything, `keepNonMatches` keeps only what did not match, `enrichInput2`
+// keeps input 2 whole. The executor implements exactly that set, so they are
+// mapped onto its `joinMode` rather than parked in a bag nothing reads.
+//
+// A value this server does not implement is named rather than mapped onto the
+// nearest guess: a join that silently drops items is the failure this mapping
+// exists to prevent.
+func mergeJoinMode(options map[string]any) (mode string, unmapped string) {
+	for _, key := range []string{"mergeMode", "joinMode"} {
+		value, ok := options[key].(string)
+		if !ok || strings.TrimSpace(value) == "" {
+			continue
+		}
+		if joinModeIsImplemented(value) {
+			return value, ""
+		}
+		return "", "options." + key
+	}
+	switch {
+	case optionFlag(options, "includeUnpaired"):
+		return "keepEverything", ""
+	case optionFlag(options, "keepNonMatches"):
+		return "keepNonMatches", ""
+	case optionFlag(options, "enrichInput2"):
+		return "enrichInput2", ""
+	}
+	return "", ""
+}
+
+// joinModeIsImplemented reports whether the merge executor implements this
+// output choice. It mirrors the node's own option list.
+func joinModeIsImplemented(mode string) bool {
+	switch mode {
+	case "keepMatches", "keepEverything", "enrichInput1", "enrichInput2", "keepNonMatches":
+		return true
+	}
+	return false
 }
 
 // mergeOutputBranch reads n8n's v2/v3 output selector: `input1`/`input2` or a
@@ -983,19 +1050,22 @@ func switchToKilas(node Node) (map[string]any, []Unsupported) {
 			if value == "extra" {
 				built["fallbackOutput"] = "extra"
 			} else if value != "none" && value != "" {
-				if number, err := strconv.Atoi(strings.TrimSpace(value)); err == nil {
-					built["fallbackOutput"] = fmt.Sprintf("%d", number)
-				} else {
-					issues = append(issues, Unsupported{
-						Field:  fallbackField,
-						Reason: fmt.Sprintf("this Switch sent unmatched items to output %v; wire that rule's own output instead", value),
-					})
+				// A numeric string is the same case as a number: it names an
+				// existing output rather than the extra one.
+				index, err := strconv.Atoi(strings.TrimSpace(value))
+				if err == nil {
+					issues = append(issues, switchNumericFallback(fallbackField, index))
+					break
 				}
+				issues = append(issues, Unsupported{
+					Field:  fallbackField,
+					Reason: fmt.Sprintf("this Switch sent unmatched items to output %v; wire that rule's own output instead", value),
+				})
 			}
 		case float64:
-			built["fallbackOutput"] = fmt.Sprintf("%d", int(value))
+			issues = append(issues, switchNumericFallback(fallbackField, int(value)))
 		case int:
-			built["fallbackOutput"] = fmt.Sprintf("%d", value)
+			issues = append(issues, switchNumericFallback(fallbackField, value))
 		default:
 			issues = append(issues, Unsupported{
 				Field:  fallbackField,
@@ -1009,6 +1079,23 @@ func switchToKilas(node Node) (map[string]any, []Unsupported) {
 		}
 	}
 	return built, issues
+}
+
+// switchNumericFallback reports an n8n fallback that names an existing output.
+//
+// A numeric fallback means "send unmatched items to output N", which is one of
+// the rules' own branches. This server's Switch routes unmatched items to a new
+// "extra" output or not at all, so the index has no equivalent — and writing it
+// into `fallbackOutput` was worse than dropping it: the executor reads only
+// "none" and "extra", so the value was inert, the items were dropped, and the
+// import report said nothing at all. The index is named here instead.
+func switchNumericFallback(field string, index int) Unsupported {
+	return Unsupported{
+		Field: field,
+		Reason: fmt.Sprintf("this Switch sent unmatched items to output %d, one of the rules' own branches; "+
+			"this server routes unmatched items to a new output or not at all, so wire that branch from the rule itself "+
+			"or expect unmatched items to be dropped", index),
+	}
 }
 
 // switchFallback reads the fallback output, which the versions keep in
@@ -2743,26 +2830,58 @@ func luxonFormat(layout string) string {
 	return layout
 }
 
+// momentTokens maps an n8n v1 moment token to the Luxon token this node's
+// `format` speaks.
+//
+// Longest first, so a four-letter token is never read as two two-letter ones,
+// and the list is read in one pass — see momentToLuxon for why that matters.
+//
+// The offset rows are the ones worth stating: moment's `Z` is `+07:00` and its
+// `ZZ` is `+0700`, while Luxon's `Z` is the narrow `+7`, `ZZ` is `+07:00` and
+// `ZZZ` is `+0700`. So moment's `Z` lands on Luxon's `ZZ` and moment's `ZZ` on
+// Luxon's `ZZZ` — one row further along, not on the token of the same name.
+//
+// `X` (Unix seconds) is Luxon's `X` as well, and `x` (Unix milliseconds) is not
+// listed because Luxon spells it the same way.
+var momentTokens = []struct{ from, to string }{
+	{"YYYY", "yyyy"}, {"MMMM", "MMMM"}, {"DDDD", "ooo"}, {"dddd", "cccc"},
+	{"MMM", "MMM"}, {"DDD", "o"}, {"ddd", "ccc"},
+	{"YY", "yy"}, {"MM", "MM"}, {"DD", "dd"}, {"dd", "cc"},
+	{"HH", "HH"}, {"hh", "hh"}, {"mm", "mm"}, {"ss", "ss"}, {"ZZ", "ZZZ"},
+	{"M", "M"}, {"D", "d"}, {"d", "c"}, {"H", "H"}, {"h", "h"},
+	{"m", "m"}, {"s", "s"}, {"A", "a"}, {"a", "a"}, {"Z", "ZZ"}, {"X", "X"},
+}
+
 // momentToLuxon translates n8n v1's moment tokens to the Luxon tokens this
 // node's `format` speaks. Only the tokens templates actually use are mapped;
 // anything else crosses unchanged and renders literally on both sides.
+//
+// One pass over the layout, longest token first, and a replacement is never
+// rescanned. It used to run the tokens as a sequence of ReplaceAll passes, and
+// the output of one pass stayed matchable by the next: `DD` became `dd` and
+// then `cc` — the ISO weekday — and `ZZ` became `ZZZZ`. A format was therefore
+// silently translated into a different one, and `YYYY-MM-DD` rendered the
+// weekday where the day of the month belongs: a wrong date rather than an
+// error, which is the worst thing an import can produce.
 func momentToLuxon(layout string) string {
-	replacements := []struct{ from, to string }{
-		{"YYYY", "yyyy"}, {"YY", "yy"},
-		{"MMMM", "MMMM"}, {"MMM", "MMM"}, {"MM", "MM"}, {"M", "M"},
-		{"DDDD", "ooo"}, {"DDD", "o"}, {"DD", "dd"}, {"D", "d"},
-		{"dddd", "cccc"}, {"ddd", "ccc"}, {"dd", "cc"}, {"d", "c"},
-		{"HH", "HH"}, {"H", "H"}, {"hh", "hh"}, {"h", "h"},
-		{"mm", "mm"}, {"m", "m"}, {"ss", "ss"}, {"s", "s"},
-		{"A", "a"}, {"a", "a"},
-		{"ZZ", "ZZ"}, {"Z", "ZZ"},
-		{"X", "s"},
+	var translated strings.Builder
+	translated.Grow(len(layout))
+	for index := 0; index < len(layout); {
+		matched := false
+		for _, token := range momentTokens {
+			if strings.HasPrefix(layout[index:], token.from) {
+				translated.WriteString(token.to)
+				index += len(token.from)
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			translated.WriteByte(layout[index])
+			index++
+		}
 	}
-	for _, replacement := range replacements {
-		layout = strings.ReplaceAll(layout, replacement.from, "\x00"+replacement.to+"\x00")
-	}
-	layout = strings.ReplaceAll(layout, "\x00", "")
-	return layout
+	return translated.String()
 }
 
 func dateTimeToN8N(node workflow.Node) (map[string]any, []Lossy) {

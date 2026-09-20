@@ -321,6 +321,122 @@ func exportedOptions(t *testing.T, document n8n.Document, name string) map[strin
 	return nil
 }
 
+// TestDateTimeV1FormatTokensAreTranslatedInOnePass covers the format a v1 Date
+// & Time node carries.
+//
+// The tokens were applied as a sequence of ReplaceAll passes, and one pass's
+// output stayed matchable by the next: `DD` became `dd` and then `cc` (the ISO
+// weekday), and `ZZ` became `ZZZZ`. `YYYY-MM-DD HH:mm` therefore rendered the
+// weekday where the day of the month belongs, which is a wrong date rather than
+// an error. The offset rows were off by one token as well: moment's `Z` is
+// `+07:00` and its `ZZ` is `+0700`, while Luxon's `ZZ` is `+07:00` and `ZZZ` is
+// `+0700`.
+func TestDateTimeV1FormatTokensAreTranslatedInOnePass(t *testing.T) {
+	t.Parallel()
+
+	result := importFixture(t, `{
+	  "name": "Formats",
+	  "nodes": [
+	    {"id":"a","name":"Stamp","type":"n8n-nodes-base.dateTime","typeVersion":1,"position":[0,0],
+	     "parameters":{"action":"format","value":"={{ $json.at }}","toFormat":"YYYY-MM-DD HH:mm"}},
+	    {"id":"b","name":"Offset","type":"n8n-nodes-base.dateTime","typeVersion":1,"position":[220,0],
+	     "parameters":{"action":"format","value":"={{ $json.at }}","toFormat":"ZZ"}},
+	    {"id":"c","name":"Epoch","type":"n8n-nodes-base.dateTime","typeVersion":1,"position":[440,0],
+	     "parameters":{"action":"format","value":"={{ $json.at }}","toFormat":"X"}}
+	  ],
+	  "connections": {}
+	}`)
+	for name, want := range map[string]string{
+		"Stamp":  "yyyy-MM-dd HH:mm", // not "yyyy-cc-cc": the day of the month.
+		"Offset": "ZZZ",              // +0700, which is Luxon's ZZZ and not ZZZZ.
+		"Epoch":  "X",                // Unix seconds, which Luxon spells the same way.
+	} {
+		node := nodeByName(result.Document, name)
+		if got := node.Parameters["format"]; got != want {
+			t.Errorf("%s format = %#v, want %q", name, got, want)
+		}
+	}
+}
+
+// TestMergeOutputTypeReachesJoinMode covers the options bag the Merge mapping
+// parked its keys in.
+//
+// includeUnpaired/keepNonMatches/enrichInput2/mergeMode were copied into
+// `converted["options"]`, a bag no Merge path reads, and marked consumed so
+// nothing was reported either — while the executor implements exactly those
+// semantics under `joinMode`. Unpaired items therefore vanished from the output
+// of an import that reported nothing.
+func TestMergeOutputTypeReachesJoinMode(t *testing.T) {
+	t.Parallel()
+
+	for name, want := range map[string]string{
+		"Include unpaired":  "keepEverything",
+		"Keep non-matches":  "keepNonMatches",
+		"Enrich input two":  "enrichInput2",
+		"Modern merge mode": "keepEverything",
+	} {
+		result := importFixture(t, `{
+		  "name": "Merge",
+		  "nodes": [
+		    {"id":"a","name":"`+name+`","type":"n8n-nodes-base.merge","typeVersion":3,"position":[0,0],
+		     "parameters":{"mode":"combineByFields","fieldsToMatchString":"id","options":`+mergeOptionsFor(name)+`}}
+		  ],
+		  "connections": {}
+		}`)
+		node := nodeByName(result.Document, name)
+		if got := node.Parameters["joinMode"]; got != want {
+			t.Errorf("%s joinMode = %#v, want %q", name, got, want)
+		}
+		if _, parked := node.Parameters["options"]; parked {
+			t.Errorf("%s kept an options bag nothing reads: %#v", name, node.Parameters["options"])
+		}
+	}
+}
+
+// mergeOptionsFor is the n8n options object one case above arrives with.
+func mergeOptionsFor(name string) string {
+	switch name {
+	case "Include unpaired":
+		return `{"includeUnpaired":true}`
+	case "Keep non-matches":
+		return `{"keepNonMatches":true}`
+	case "Enrich input two":
+		return `{"enrichInput2":true}`
+	default:
+		return `{"mergeMode":"keepEverything"}`
+	}
+}
+
+// TestMergeOptionWithNoEquivalentIsNamed: what the executor does not implement
+// is reported rather than mapped onto the nearest guess.
+func TestMergeOptionWithNoEquivalentIsNamed(t *testing.T) {
+	t.Parallel()
+
+	result := importFixture(t, `{
+	  "name": "Merge",
+	  "nodes": [
+	    {"id":"a","name":"Join","type":"n8n-nodes-base.merge","typeVersion":3.1,"position":[0,0],
+	     "parameters":{"mode":"combineByFields","fieldsToMatchString":"id","options":{
+	       "clashHandling":{"values":{"resolveClash":"preferInput2","mergeFields":""}},
+	       "multipleMatches":"first"}}}
+	  ],
+	  "connections": {}
+	}`)
+	node := nodeByName(result.Document, "Join")
+	if _, set := node.Parameters["joinMode"]; set {
+		t.Errorf("joinMode = %#v, want nothing invented", node.Parameters["joinMode"])
+	}
+	named := map[string]bool{}
+	for _, issue := range result.Unsupported {
+		named[issue.Field] = true
+	}
+	for _, field := range []string{"options.clashHandling", "options.multipleMatches"} {
+		if !named[field] {
+			t.Errorf("unsupported = %#v, want %s named", result.Unsupported, field)
+		}
+	}
+}
+
 // TestPostgresOperationDefaultsToInsert covers n8n's own default, which differs
 // from this server's.
 //
@@ -386,8 +502,21 @@ func TestLegacySwitchRulesAreTranslated(t *testing.T) {
 	if left["value"] != "{{ $json.command }}" {
 		t.Errorf("leftValue = %#v, want the expression carried", condition["leftValue"])
 	}
-	if node.Parameters["fallbackOutput"] != "2" {
-		t.Errorf("fallbackOutput = %#v, want the top-level legacy index carried", node.Parameters["fallbackOutput"])
+	// A numeric fallback names one of the rules' own outputs, which this
+	// server's Switch cannot route to. Writing the index produced a value the
+	// executor never reads — unmatched items were dropped while the import
+	// report stayed clean — so the index is named instead.
+	if node.Parameters["fallbackOutput"] != nil {
+		t.Errorf("fallbackOutput = %#v, want no inert value written", node.Parameters["fallbackOutput"])
+	}
+	named := false
+	for _, issue := range result.Unsupported {
+		if issue.Field == "fallbackOutput" && strings.Contains(issue.Reason, "output 2") {
+			named = true
+		}
+	}
+	if !named {
+		t.Errorf("unsupported = %#v, want the numeric fallback named with its index", result.Unsupported)
 	}
 }
 
