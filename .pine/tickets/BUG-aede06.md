@@ -319,6 +319,8 @@ Editor half landed; the request is `POST /workflows/{id}/run` with an optional `
 - `cd web && npx vitest run src/lib/workflow-editor` → 31 files, 370 tests, passing (new `run-trigger.test.ts`: multi-trigger pick, single-trigger silence, non-trigger selection, annotation in the selection).
 - `cd web && npx svelte-check --tsconfig ./tsconfig.json` → 0 errors, 0 warnings.
 
-### Handed to the file owners (not edited here)
-- `src/routes/(dashboard)/app/workflows/[id]/+page.svelte` and `src/lib/embed/embed-editor.svelte` (FrontendCore2): pass `selection?.triggerNodeId` into `runWorkflow(id, { triggerNodeId })`. Until that forward lands, the editor computes the trigger and the request stays as it was — the editor half alone cannot change what the server is told.
-- `web/src/lib/api/generated` (WebFormsOps3's regen commit): `RunWorkflowInputBody` needs the new field, which only a regeneration after `bcd5787` produces; the drift check is red until then for that reason alone.
+### Also landed here (FrontendCore2 acked the hunks in their files)
+- `src/routes/(dashboard)/app/workflows/[id]/+page.svelte` and `src/lib/embed/embed-editor.svelte`: `run(selection?: RunSelection)` now passes `selection?.triggerNodeId` into `runWorkflow(id, { triggerNodeId })`, with each host keeping its own 422 → `runIssues` mapping and its 30-minute run watch untouched. Without this forward the editor's answer never reaches the server.
+- Verified together with the regenerated client (WebFormsOps3's pending regen, which adds `RunWorkflowInputBody.triggerNodeId`): `cd web && npx svelte-check` → 0 errors, 0 warnings; `cd web && npx vitest run src/lib/workflow-editor` → 31 files, 370 tests, passing.
+
+End to end: the editor names the picked trigger only for a multi-trigger workflow, both hosts send it, the server runs that trigger's subgraph, and every other shape of workflow keeps the previous request byte-for-byte.

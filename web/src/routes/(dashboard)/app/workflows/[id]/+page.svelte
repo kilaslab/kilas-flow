@@ -17,7 +17,7 @@
 	import { activationFailure, activationNotices, dismissNotice, type ActivationNoticeView } from '$lib/workflow-editor/activation';
 	import { cacheWorkflow } from '$lib/workflow-editor/workflow-cache';
 	import { setExpressionGrammar } from '$lib/workflow-editor/expression-grammar';
-	import WorkflowEditor, { type WorkflowHistoryHost } from '$lib/components/workflow-editor/workflow-editor.svelte';
+	import WorkflowEditor, { type RunSelection, type WorkflowHistoryHost } from '$lib/components/workflow-editor/workflow-editor.svelte';
 	import ExportDialog from './export-dialog.svelte';
 	import { Button } from '$lib/components/ui/button';
 	import { validationIssuesFromApiError, withNodeNames, type CanvasValidationIssue } from '$lib/workflow-editor/validation';
@@ -351,7 +351,7 @@
 		activationError = null;
 	}
 
-	async function run() {
+	async function run(selection?: RunSelection) {
 		if (!currentWorkflow) return;
 		running = true;
 		runError = null;
@@ -360,7 +360,13 @@
 		// Keep prior lastExecutionId until the new run is queued so the link stays useful mid-flight.
 		const token = ++pollingRun;
 		try {
-			const queued = await runWorkflow(currentWorkflow.id);
+			// Naming the trigger is what keeps Execute from firing every trigger of
+			// a multi-trigger workflow: the editor sends one only when the user
+			// picked it, and the server runs every trigger when none is named.
+			const queued = await runWorkflow(
+				currentWorkflow.id,
+				selection?.triggerNodeId ? { triggerNodeId: selection.triggerNodeId } : undefined
+			);
 			if (queued.status !== 202) throw new Error('Unexpected workflow-run response');
 			lastExecutionId = queued.data.id;
 			runMessage = 'Run queued…';

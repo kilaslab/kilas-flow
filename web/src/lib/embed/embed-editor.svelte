@@ -9,7 +9,7 @@
 	import { createGetWorkflow, getWorkflow, updateWorkflow } from '$lib/api/generated/workflows/workflows';
 	import type { CredentialResource, Definition, WorkflowDocumentInput, WorkflowResource } from '$lib/api/generated/models';
 	import { Button } from '$lib/components/ui/button';
-	import WorkflowEditor, { type WorkflowHistoryHost } from '$lib/components/workflow-editor/workflow-editor.svelte';
+	import WorkflowEditor, { type RunSelection, type WorkflowHistoryHost } from '$lib/components/workflow-editor/workflow-editor.svelte';
 	import { SCOPE_PUBLISH, scopeAllows, type EmbedSession } from './session.svelte';
 	import { cacheWorkflow } from '$lib/workflow-editor/workflow-cache';
 	import { validationIssuesFromApiError, withNodeNames, type CanvasValidationIssue } from '$lib/workflow-editor/validation';
@@ -192,7 +192,7 @@
 			: null
 	);
 
-	async function run() {
+	async function run(selection?: RunSelection) {
 		if (!currentWorkflow || !canRun) return;
 		running = true;
 		runError = null;
@@ -200,7 +200,11 @@
 		runMessage = null;
 		const token = ++pollingRun;
 		try {
-			const queued = await runWorkflow(currentWorkflow.id);
+			// Same rule as the dashboard: a named trigger runs that subgraph only.
+			const queued = await runWorkflow(
+				currentWorkflow.id,
+				selection?.triggerNodeId ? { triggerNodeId: selection.triggerNodeId } : undefined
+			);
 			if (queued.status !== 202) throw new Error('Unexpected workflow-run response');
 			lastExecutionId = queued.data.id;
 			runMessage = 'Run queued…';
