@@ -1,7 +1,7 @@
 ---
 id: BUG-6as5y7
 title: 'Transform parity: Aggregate/Sort keys, Merge modes, Date&Time, Summarize, SplitOut, Switch, key order'
-status: done
+status: doing
 priority: high
 labels:
     - nodes
@@ -10,7 +10,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:10Z"
-updated: "2026-09-20T02:03:58Z"
+updated: "2026-09-20T02:37:47Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -667,3 +667,8 @@ Closed by `pine close --evidence` on 2026-09-20.
  web/vite.config.ts                                 |    7 +-
  434 files changed, 57355 insertions(+), 4725 deletions(-)
 ```
+
+## Reopened by review (2026-09-20) — Important
+- **moment token cascade**: `momentToLuxon` (`parameters.go:2707-2721`) applies sequential `ReplaceAll` passes whose outputs stay matchable, so `DD`→`dd`→`cc`, `ZZ`→`ZZZZ`, and `X` maps to Luxon's `s`; `YYYY-MM-DD HH:mm` renders the ISO weekday instead of the day (v1 Date & Time). Fix: single index-based pass (like `escapeKeepingEscapes`) and correct the offset rows.
+- **Merge options parked in an unread bag**: `mergeToKilas` (`:836-852`) copies includeUnpaired/keepNonMatches/enrichInput2/clashHandling/mergeMode/multipleMatches into `converted["options"]`, marks them consumed so nothing is reported, but no Merge path reads that bag — the executor implements exactly these semantics under `joinMode` (`nodes/executors.go:529,:559`), so unpaired items vanish silently. Fix: map the implemented keys onto `joinMode` and report the rest.
+- **Switch numeric fallbackOutput inert**: the numeric arms write `fallbackOutput` (`:985-998`) but the Switch understands only `none`/`extra` (`nodes/flow.go:64-69,152-156,179`), so unmatched items disappear while the import report stays clean — the previous code warned instead. Fix: report the numeric case (or map it onto a reachable rule output).

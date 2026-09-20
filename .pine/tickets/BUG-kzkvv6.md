@@ -1,7 +1,7 @@
 ---
 id: BUG-kzkvv6
 title: HTTP Request output envelope vs n8n parsed-body items; import drops options/bodies
-status: done
+status: doing
 priority: high
 labels:
     - http
@@ -10,7 +10,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:10Z"
-updated: "2026-09-20T02:04:01Z"
+updated: "2026-09-20T02:37:47Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -522,3 +522,8 @@ Closed by `pine close --evidence` on 2026-09-20.
  web/vite.config.ts                                 |    7 +-
  434 files changed, 65649 insertions(+), 4725 deletions(-)
 ```
+
+## Reopened by review (2026-09-20) — Important
+- **`followRedirects: true` dropped**: `httpOptionsToKilas` (`parameters.go:1497-1503`) writes the option only when false and marks it consumed, so an n8n node that enabled redirects imports as "do not follow" (`nodes/http.go:232`) with a clean report; export has the same asymmetry (:1629-1630). Fix: carry the flag both ways.
+- **Timeout unit inverted**: both option spellings are copied into `requestTimeoutSeconds` unchanged (`:1443-1454`) although n8n's `timeout` is milliseconds; 5000 becomes 5000 s, clamped to the deployment ceiling, and export writes seconds back as milliseconds. Fix: /1000 on import, ×1000 on export for the `timeout` spelling; keep `requestTimeout` as seconds.
+- **Multi-method export**: `webhookToN8N` writes an array `httpMethod` (`:1800-1812`) without n8n's `multipleMethods` flag and pins exportTypeVersion 2 (`n8n.go:237-239`), so n8n cannot represent the selection. Fix: write `multipleMethods: true` and export at the version that publishes it, or emit a Lossy note.

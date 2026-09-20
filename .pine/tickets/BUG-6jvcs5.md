@@ -1,7 +1,7 @@
 ---
 id: BUG-6jvcs5
 title: 'AI memory/tools long tail: window semantics, tool mapping, streaming, iterations, UX'
-status: done
+status: doing
 priority: medium
 labels:
     - ai
@@ -9,7 +9,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:09Z"
-updated: "2026-09-20T02:03:58Z"
+updated: "2026-09-20T02:37:46Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -687,3 +687,6 @@ Closed by `pine close --evidence` on 2026-09-20.
  web/vite.config.ts                                 |    7 +-
  434 files changed, 58255 insertions(+), 4725 deletions(-)
 ```
+
+## Reopened by review (2026-09-20) — Important
+- **Calculator Tool unreachable**: `nodes/ai.go:2162-2166` relaxes the *validator* so the expression is optional, but the property is still declared `Required: true` with no Default (:2150-2153) and the tool variant inherits it, so `registry.RequiredFor` (:628-648) → `compiler.go:289-300` refuses the node with `ErrorRequiredConfig`. Any imported calculator (importer writes only toolName/toolDescription) still cannot be activated; the test misses it because it calls `definition.Validate` instead of compiling a document. Fix: clear the requirement on the tool variant (Required false or a Default) and add a compile-level test.

@@ -1,7 +1,7 @@
 ---
 id: BUG-cq4yk3
 title: 'Webhook answering: Respond timing, responseData, $response leak, shape, CORS, JWT, WAHA, defaults'
-status: done
+status: doing
 priority: high
 labels:
     - webhook
@@ -10,7 +10,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:10Z"
-updated: "2026-09-20T02:04:00Z"
+updated: "2026-09-20T02:37:46Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -793,3 +793,8 @@ Closed by `pine close --evidence` on 2026-09-20.
  web/vite.config.ts                                 |    7 +-
  434 files changed, 61969 insertions(+), 4725 deletions(-)
 ```
+
+## Reopened by review (2026-09-20) — Critical path + Important
+- **P1 cross-process regression**: `executeRespond` now publishes the answer only as an engine event (`nodes/webhook.go:875`) and the boundary reads it only from its own broker (`internal/webhook/webhook.go:730-750`); node events carry no Data across processes (`internal/engine/multiproc.go:62-80`, `:186-200`). In the documented api+worker split on PostgreSQL, a `responseMode=responseNode` webhook never sees the answer and answers an empty 200 (:871-874) — the durable `findResponse` this replaced worked. Fix: keep a durable copy (persist it with the Respond node's run) and consult it in the terminal fallback.
+- **Multi-method binds only the stale single method**: `declaredMethods` (:1131-1139) reads `httpMethod` before `httpMethods`, while the node's own authority (`nodes/webhook.go:601-611`) checks `multipleMethods` first; a node storing `httpMethod:"POST"` beside `multipleMethods:true, httpMethods:[GET,POST]` binds only POST, so the GET half 404s. Fix: honour `multipleMethods`/`httpMethods` first.
+- **Form page served before the allow-list and credential checks**: the hosted-page branch (`internal/webhook/webhook.go:114-121`) returns before `addressAllowed`/`authenticate`, so a form with `ipWhitelist` or basicAuth exposes its title/labels/options to any caller. Fix: run those checks before writing the page.
