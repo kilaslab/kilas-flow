@@ -812,6 +812,11 @@ func jsonEncodeIndent(value any, indent string) (string, error) {
 func normalizeJSON(value any) any {
 	switch typed := value.(type) {
 	case undefinedValue, lineageError, closure:
+		// Only an array slot keeps a placeholder for these. An object property
+		// whose value is undefined or a function is not written at all:
+		// `JSON.stringify({a: undefined, b: 1})` is `{"b":1}` in JavaScript, and
+		// writing an explicit null there sends an upstream a deliberate clear
+		// that no workflow asked for.
 		return nil
 	case []any:
 		normalized := make([]any, len(typed))
@@ -822,6 +827,9 @@ func normalizeJSON(value any) any {
 	case map[string]any:
 		normalized := make(map[string]any, len(typed))
 		for key, entry := range typed {
+			if dropped(entry) {
+				continue
+			}
 			normalized[key] = normalizeJSON(entry)
 		}
 		return normalized
@@ -831,5 +839,16 @@ func normalizeJSON(value any) any {
 		return fieldsOfEnv(typed)
 	default:
 		return value
+	}
+}
+
+// dropped reports a property value JSON has no place for, which is therefore
+// left out of the object rather than written as null.
+func dropped(value any) bool {
+	switch value.(type) {
+	case undefinedValue, lineageError, closure:
+		return true
+	default:
+		return false
 	}
 }

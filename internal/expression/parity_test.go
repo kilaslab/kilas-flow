@@ -758,3 +758,45 @@ func TestObjectKeysOrderListIndicesNumerically(t *testing.T) {
 		}
 	}
 }
+
+// TestStringifyOmitsUndefinedProperties is the payload finding: normalising
+// mapped the undefined sentinel to nil everywhere, so an optional field placed
+// in a hand-built API body or prompt was sent as an explicit null — something
+// n8n never sends and an upstream may read as a deliberate clear. An array slot
+// is the one place JavaScript does write null, and that already worked.
+func TestStringifyOmitsUndefinedProperties(t *testing.T) {
+	t.Parallel()
+
+	ctx := parityContext()
+	ctx.JSON = map[string]any{"name": "Ada", "count": float64(42)}
+
+	for template, want := range map[string]any{
+		"{{ JSON.stringify({a: $json.missing, b: 1}) }}":      `{"b":1}`,
+		"{{ JSON.stringify({a: undefined, b: undefined}) }}":  `{}`,
+		"{{ JSON.stringify({o: {a: $json.missing, b: 2}}) }}": `{"o":{"b":2}}`,
+		"{{ JSON.stringify([$json.missing, 1]) }}":            `[null,1]`,
+		"{{ JSON.stringify({a: [undefined], b: 1}) }}":        `{"a":[null],"b":1}`,
+		// A function is dropped from an object the same way.
+		"{{ JSON.stringify({f: (x => x), b: 1}) }}": `{"b":1}`,
+		"{{ JSON.stringify([(x => x)]) }}":          `[null]`,
+		// The same rule through the n8n extension a prompt is built with.
+		"{{ {a: $json.missing, b: 1}.toJsonString() }}":     `{"b":1}`,
+		"{{ {a: $json.missing, b: 1}.toJsonString(true) }}": "{\n  \"b\": 1\n}",
+	} {
+		got := evaluateOne(t, template, ctx)
+		if got != want {
+			t.Errorf("Evaluate(%s) = %#v, want %#v", template, got, want)
+		}
+	}
+
+	// The node view's refusal marker is not a property of the node either: n8n
+	// keeps `.item` non-enumerable, so stringify never reaches it.
+	node := evaluateOne(t, `{{ JSON.stringify($('Many')) }}`, nodeContext())
+	text, _ := node.(string)
+	if !strings.Contains(text, `"json"`) || !strings.Contains(text, `"all"`) {
+		t.Errorf("JSON.stringify($('Many')) = %s, want the node's own fields", text)
+	}
+	if strings.Contains(text, `"item"`) || strings.Contains(text, "produced 3 items") {
+		t.Errorf("JSON.stringify($('Many')) = %s, want the refusal marker left out", text)
+	}
+}
