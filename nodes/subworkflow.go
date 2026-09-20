@@ -9,6 +9,7 @@ import (
 	"github.com/kilaslabs/kilas-flow/internal/expression"
 	"github.com/kilaslabs/kilas-flow/internal/node"
 	"github.com/kilaslabs/kilas-flow/internal/property"
+	"github.com/kilaslabs/kilas-flow/internal/repository"
 	"github.com/kilaslabs/kilas-flow/internal/workflow"
 )
 
@@ -285,6 +286,33 @@ func projectSubworkflowInput(parameters map[string]any, items []workflow.Item) [
 		out = append(out, workflow.Item{JSON: projected})
 	}
 	return out
+}
+
+// SubworkflowCalls reads the workflows a document calls.
+//
+// For activation: a workflow whose document calls a workflow that is not active
+// would activate cleanly and fail mid-run, so the store refuses it and this is
+// the reading it refuses on. Two node types call another workflow — Execute
+// Sub-workflow and the Workflow Tool an agent uses — and both name their target
+// with the same locator key, so one pass over the document covers them.
+//
+// A node whose locator holds nothing is skipped rather than reported: the
+// compiler already refuses an unset required locator at save time, and a
+// half-built draft must not be the thing that blocks an unrelated activation.
+func SubworkflowCalls(document workflow.Document) []repository.SubworkflowCall {
+	calls := make([]repository.SubworkflowCall, 0, 2)
+	for _, node := range document.Nodes {
+		if node.Type != ExecuteWorkflowNodeType && node.Type != WorkflowToolNodeType {
+			continue
+		}
+		locator, _ := property.ReadLocator(node.Parameters["workflowId"])
+		target := strings.TrimSpace(textValue(locator.Value, ""))
+		if target == "" {
+			continue
+		}
+		calls = append(calls, repository.SubworkflowCall{NodeID: node.ID, NodeName: node.Name, WorkflowID: target})
+	}
+	return calls
 }
 
 func callSubworkflow(ctx context.Context, ir workflow.IRNode, request engine.Request, parameters map[string]any, items []workflow.Item, wait bool) ([]workflow.Item, error) {

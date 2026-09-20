@@ -73,6 +73,9 @@ type GORMWorkflowStore struct {
 	// schedule-driven workflow activated cleanly and then never ran.
 	schedules ScheduleExtractor
 	next      func(string, time.Time) (time.Time, error)
+	// subworkflows extracts the workflows a document calls, so activation can
+	// refuse a caller whose target is not live. Nil leaves the check off.
+	subworkflows SubworkflowExtractor
 	// retention bounds how much history survives. The zero value keeps
 	// everything, which is what an installation that never configured this gets.
 	retention RetentionPolicy
@@ -83,6 +86,42 @@ var _ WorkflowRepository = (*GORMWorkflowStore)(nil)
 // NewWorkflowStore constructs the GORM-backed workflow persistence boundary.
 func NewWorkflowStore(db *gorm.DB) *GORMWorkflowStore {
 	return &GORMWorkflowStore{db: db}
+}
+
+// SubworkflowCall names one workflow a document calls, for activation checks.
+//
+// It carries the node it came from as well as the target, because the refusal
+// has to say which node to fix: a workflow with a dozen Execute Workflow nodes
+// and one inactive target is a puzzle without the node's name on it.
+type SubworkflowCall struct {
+	NodeID     string
+	NodeName   string
+	WorkflowID string
+}
+
+// SubworkflowExtractor reads the workflows one document calls.
+//
+// A function rather than node knowledge: persistence stays free of node types,
+// exactly as it is for webhooks and schedules, and the caller that owns the
+// node definitions supplies the reading.
+type SubworkflowExtractor func(workflow.Document) []SubworkflowCall
+
+// WithSubworkflows returns a store that refuses to activate a workflow whose
+// saved document calls a workflow that is not active.
+//
+// The check exists because the failure it prevents is silent. A sub-workflow
+// call resolves its target at run time, so activating the caller while the
+// target is a draft — or deleted, or renamed away — publishes a workflow that
+// looks healthy on the canvas and fails the moment it runs, halfway through a
+// graph whose earlier nodes have already done their work. n8n refuses the
+// activation instead, and so does this: activate the target, or point the node
+// at one that is live.
+//
+// Nil leaves the check off, which is what an installation that never wires the
+// extractor gets: activation behaves exactly as it did before.
+func (store *GORMWorkflowStore) WithSubworkflows(extract SubworkflowExtractor) *GORMWorkflowStore {
+	store.subworkflows = extract
+	return store
 }
 
 // WithWebhooks returns a store that keeps webhook bindings in step with
@@ -408,6 +447,9 @@ func (store *GORMWorkflowStore) publish(ctx context.Context, tenant TenantScope,
 		if _, err := workflow.Compile(storedVersion.Document, catalog); err != nil {
 			return err
 		}
+		if err := refuseInactiveSubworkflows(tx, tenant, model.ID, storedVersion.Document, store.subworkflows); err != nil {
+			return err
+		}
 		if err := tx.Model(&workflowModel{}).
 			Where("tenant_id = ? AND id = ?", tenant.ID, model.ID).
 			Updates(map[string]any{"active": true, "active_version_id": version.ID}).Error; err != nil {
@@ -433,6 +475,44 @@ func (store *GORMWorkflowStore) publish(ctx context.Context, tenant TenantScope,
 		return workflow.StoredWorkflow{}, err
 	}
 	return store.Get(ctx, tenant, workflowID)
+}
+
+// refuseInactiveSubworkflows fails an activation whose document calls a
+// workflow that cannot run.
+//
+// Read inside the publishing transaction, so the answer is the state the
+// activation is committing against rather than the one a moment before it. The
+// caller's own row is exempt: a workflow that calls itself is refused by the
+// compiler's cycle check, which is the right error for it, and a self-reference
+// is not a target that has to be active.
+//
+// The two failures are one error each and both name the node: a target that
+// does not exist in this tenant (deleted, or never imported) and one that
+// exists but is not active (still a draft, or deactivated). "Not active" is
+// deliberately not reported as "not found": they need different fixes.
+func refuseInactiveSubworkflows(tx *gorm.DB, tenant TenantScope, workflowID string, document workflow.Document, extract SubworkflowExtractor) error {
+	if extract == nil {
+		return nil
+	}
+	for _, call := range extract(document) {
+		target := strings.TrimSpace(call.WorkflowID)
+		if target == "" || target == workflowID {
+			continue
+		}
+		var model workflowModel
+		if err := tx.Where("tenant_id = ? AND id = ?", tenant.ID, target).First(&model).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return fmt.Errorf("node %q (%s) calls workflow %q, which does not exist in this workspace: point it at a workflow that is active, or remove the node",
+					call.NodeName, call.NodeID, target)
+			}
+			return fmt.Errorf("look up the workflow node %q calls: %w", call.NodeName, err)
+		}
+		if !model.Active {
+			return fmt.Errorf("node %q (%s) calls workflow %q, which is not active: activate that workflow first, then activate this one",
+				call.NodeName, call.NodeID, target)
+		}
+	}
+	return nil
 }
 
 // lockedVersion resolves the snapshot a publish is about, inside the caller's

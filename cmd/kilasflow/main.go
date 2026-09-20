@@ -371,6 +371,12 @@ func run() error {
 	// transaction.
 	workflows := repository.NewWorkflowStore(db.DB).
 		WithWebhooks(webhook.Extract(nodeRegistry, nodes.WebhookPath)).
+		// Activation refuses a document whose Execute Sub-workflow or Workflow
+		// Tool node calls a workflow that is not active. Read at activation
+		// rather than at run time on purpose: a call resolves its target when
+		// it runs, so the alternative is publishing a workflow that fails
+		// halfway through, after its earlier nodes have already done their work.
+		WithSubworkflows(nodes.SubworkflowCalls).
 		WithSchedules(
 			scheduler.DefaultTimezone(scheduler.Extract(nodes.ScheduleType), cfg.Execution.DefaultTimezone),
 			scheduler.Next).
@@ -503,7 +509,7 @@ func run() error {
 		// database DSN or the credential master key out of this process.
 		Environment: workflowEnvironment(),
 		RelayPrefix: cfg.Database.TablePrefix,
-		RelaySend:              relaySend,
+		RelaySend:   relaySend,
 		// server.public_url prefixes the resume links handed to waiting
 		// executions. Empty renders path-only links for a same-origin setup.
 		PublicBaseURL: cfg.Server.PublicURL,
