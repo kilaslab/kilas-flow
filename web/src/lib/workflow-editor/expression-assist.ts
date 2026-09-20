@@ -72,6 +72,42 @@ export function fieldPathsFromValue(value: unknown): string[] {
 	return paths.slice(0, 40);
 }
 
+/** What a keystroke asks of the open suggestion list. */
+export type AssistAction = 'move' | 'accept' | 'dismiss';
+
+export interface AssistKeyDecision {
+	/** The candidate the highlight sits on once the key has been handled. */
+	index: number;
+	/** What the key meant to the list, or null when the list ignores it. */
+	action: AssistAction | null;
+}
+
+/**
+ * What an open suggestion list does with a keystroke, and which candidate the
+ * highlight lands on afterwards.
+ *
+ * The list is rendered as a listbox and the textarea keeps focus — typing has
+ * to keep working — so the arrows move a highlight that aria-activedescendant
+ * points at, Enter inserts the highlighted candidate, and Escape puts the list
+ * away. Everything else, Space and Tab included, stays the textarea's; that
+ * whole keyboard contract is here rather than in a switch in the component so
+ * it is one decision with one test rather than a branch per handler.
+ *
+ * The highlight does not wrap: the ends are the ends, as in the node picker.
+ * An index past the end of a list that shrank under it (a narrower prefix
+ * matched less) clamps to the last row rather than pointing at nothing.
+ */
+export function assistKey(index: number, count: number, key: string): AssistKeyDecision {
+	if (count <= 0) return { index: 0, action: null };
+	const last = count - 1;
+	const held = Math.min(Math.max(index, 0), last);
+	if (key === 'ArrowDown') return { index: Math.min(held + 1, last), action: 'move' };
+	if (key === 'ArrowUp') return { index: Math.max(held - 1, 0), action: 'move' };
+	if (key === 'Enter') return { index: held, action: 'accept' };
+	if (key === 'Escape') return { index: held, action: 'dismiss' };
+	return { index: held, action: null };
+}
+
 export interface PreviewStep {
 	index: number;
 	total: number;

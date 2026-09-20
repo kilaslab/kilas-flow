@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { setExpressionGrammar } from './expression-grammar';
-import { expressionCompletions, fieldPathsFromValue, previewStep } from './expression-assist';
+import { assistKey, expressionCompletions, fieldPathsFromValue, previewStep } from './expression-assist';
 
 describe('expression completions', () => {
 	it('offers served roots for an empty prefix without flooding', () => {
@@ -46,5 +46,43 @@ describe('stepping through resolved preview values', () => {
 
 	it('reports an empty model when nothing resolved', () => {
 		expect(previewStep([], 0)).toEqual({ index: 0, total: 0, value: '' });
+	});
+});
+
+describe('the keyboard contract of the suggestion list', () => {
+	it('moves the highlight down and up one row at a time', () => {
+		expect(assistKey(0, 3, 'ArrowDown')).toEqual({ index: 1, action: 'move' });
+		expect(assistKey(1, 3, 'ArrowUp')).toEqual({ index: 0, action: 'move' });
+	});
+
+	// The ends are the ends: wrapping from the last row to the first would look
+	// like the key was ignored on a list already scrolled to the bottom.
+	it('holds at both ends instead of wrapping', () => {
+		expect(assistKey(2, 3, 'ArrowDown')).toEqual({ index: 2, action: 'move' });
+		expect(assistKey(0, 3, 'ArrowUp')).toEqual({ index: 0, action: 'move' });
+	});
+
+	// A narrower prefix matches less, so the list can shrink under the
+	// highlight: Enter has to insert a row that exists.
+	it('clamps a highlight the list shrank out from under', () => {
+		expect(assistKey(6, 2, 'Enter')).toEqual({ index: 1, action: 'accept' });
+		expect(assistKey(6, 2, 'ArrowDown')).toEqual({ index: 1, action: 'move' });
+	});
+
+	it('accepts on Enter and dismisses on Escape', () => {
+		expect(assistKey(1, 3, 'Enter')).toEqual({ index: 1, action: 'accept' });
+		expect(assistKey(1, 3, 'Escape')).toEqual({ index: 1, action: 'dismiss' });
+	});
+
+	// Space, Tab and the letters belong to the textarea the user is typing in,
+	// and the caret keys must not stop moving when the list is not showing.
+	it('ignores every other key', () => {
+		for (const key of [' ', 'Tab', 'a', 'ArrowLeft', 'Home']) {
+			expect(assistKey(1, 3, key)).toEqual({ index: 1, action: null });
+		}
+	});
+
+	it('claims nothing when there is nothing to show', () => {
+		expect(assistKey(0, 0, 'Enter')).toEqual({ index: 0, action: null });
 	});
 });

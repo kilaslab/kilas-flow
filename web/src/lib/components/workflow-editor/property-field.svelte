@@ -31,7 +31,7 @@
 		type AssignmentType
 	} from '$lib/workflow-editor/assignments';
 import { validateExpressionShape } from '$lib/workflow-editor/expression-grammar';
-import { expressionCompletions, previewStep, type CompletionCandidate } from '$lib/workflow-editor/expression-assist';
+import { assistKey, expressionCompletions, previewStep, type CompletionCandidate } from '$lib/workflow-editor/expression-assist';
 	import {
 		VALUELESS_OPERATORS,
 		moveCondition,
@@ -281,6 +281,50 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 		expressionCompletions(assistPrefix, { nodeNames: upstreamNodeNames, fieldPaths: upstreamFieldPaths })
 	);
 	let assistOpen = $state(false);
+	// Only the first screen of candidates is offered, and the highlight is kept
+	// as a raw index so a narrower prefix cannot leave it past the end: what is
+	// shown is derived and clamped, the keystroke moves the raw value.
+	const assistOptions = $derived(assistCandidates.slice(0, 8));
+	const assistVisible = $derived(assistOpen && assistPrefix !== '' && assistOptions.length > 0);
+	let assistIndex = $state(0);
+	const assistActive = $derived(Math.min(Math.max(assistIndex, 0), Math.max(assistOptions.length - 1, 0)));
+	let assistList = $state<HTMLElement>();
+	const assistOptionID = (index: number) => `property-${fieldID}-suggestion-${index}`;
+
+	/** Inserts a candidate, closing the braces the prefix left open. */
+	function acceptSuggestion(candidate: CompletionCandidate) {
+		assistOpen = false;
+		onChange({ mode: 'expression', value: `${template}${candidate.insert.trim()} }}` });
+	}
+
+	/**
+	 * The keyboard path for the suggestion list. The textarea keeps focus — it
+	 * is where the user is typing — and the arrows move the highlight that
+	 * aria-activedescendant points at, so this stops the caret moving instead
+	 * and, for Enter, stops the newline the textarea would otherwise insert.
+	 */
+	function onAssistKeydown(event: KeyboardEvent) {
+		if (!assistVisible) return;
+		const decision = assistKey(assistIndex, assistOptions.length, event.key);
+		if (decision.action === null) return;
+		event.preventDefault();
+		assistIndex = decision.index;
+		if (decision.action === 'move') return;
+		if (decision.action === 'dismiss') {
+			assistOpen = false;
+			return;
+		}
+		acceptSuggestion(assistOptions[decision.index]);
+	}
+
+	// The list scrolls, and eight candidates do not fit in it: without this the
+	// arrows could walk the highlight off the bottom with nothing on screen
+	// moving to say which row Enter would insert.
+	$effect(() => {
+		if (!assistVisible) return;
+		assistList?.querySelector(`#${assistOptionID(assistActive)}`)?.scrollIntoView({ block: 'nearest' });
+	});
+
 	let previewIndex = $state(0);
 	const preview = $derived(previewStep(resolvedValues, previewIndex));
 	const stringValue = $derived(typeof value === 'string' ? value : value === undefined || value === null ? '' : String(value));
@@ -467,27 +511,41 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 		{/if}
 	</div>
 	{#if expressionMode}
-		<textarea id={`property-${fieldID}`} value={template} spellcheck="false" rows={Math.min(12, Math.max(3, template.split('\n').length))} class="rounded-md border border-primary/40 bg-primary/5 px-2 py-1.5 font-mono text-xs" aria-describedby={`property-${fieldID}-hint`} oninput={(event) => {
+		<textarea id={`property-${fieldID}`} value={template} spellcheck="false" rows={Math.min(12, Math.max(3, template.split('\n').length))} class="rounded-md border border-primary/40 bg-primary/5 px-2 py-1.5 font-mono text-xs" aria-describedby={`property-${fieldID}-hint`} role="combobox" aria-expanded={assistVisible} aria-controls={`property-${fieldID}-suggestions`} aria-autocomplete="list" aria-activedescendant={assistVisible ? assistOptionID(assistActive) : undefined} onkeydown={onAssistKeydown} oninput={(event) => {
 			const next = event.currentTarget.value;
+			// A new prefix is a new list: the old highlight pointed into the
+			// candidates that are about to be replaced.
+			assistIndex = 0;
 			assistOpen = true;
 			onChange(next.includes('{{') ? { mode: 'expression', value: next } : next);
 		}} onfocus={() => (assistOpen = true)} onblur={() => setTimeout(() => (assistOpen = false), 120)}></textarea>
-		{#if assistOpen && assistCandidates.length > 0 && assistPrefix}
-			<ul role="listbox" aria-label={`${property.label} expression suggestions`} class="max-h-36 overflow-y-auto rounded-md border border-border bg-popover p-1 shadow-md">
-				{#each assistCandidates.slice(0, 8) as candidate (candidate.insert)}
-					<li role="option" aria-selected="false">
-						<button type="button" class="flex w-full items-center gap-2 rounded px-1.5 py-1 text-left font-mono text-[0.6875rem] hover:bg-muted" onmousedown={(event) => {
+		{#if assistVisible}
+			<div
+				id={`property-${fieldID}-suggestions`}
+				bind:this={assistList}
+				role="listbox"
+				aria-label={`${property.label} expression suggestions`}
+				class="max-h-36 overflow-y-auto rounded-md border border-border bg-popover p-1 shadow-md"
+			>
+				{#each assistOptions as candidate, index (candidate.insert)}
+					<button
+						type="button"
+						id={assistOptionID(index)}
+						role="option"
+						tabindex="-1"
+						aria-selected={index === assistActive}
+						class="flex w-full items-center gap-2 rounded px-1.5 py-1 text-left font-mono text-[0.6875rem] hover:bg-muted aria-selected:bg-accent focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
+						onmousedown={(event) => {
 							event.preventDefault();
-							const next = `${template}${candidate.insert.trim()} }}`;
-							assistOpen = false;
-							onChange({ mode: 'expression', value: next });
-						}}>
-							<span class="min-w-0 flex-1 truncate">{candidate.insert.trim()}</span>
-							<span class="shrink-0 text-muted-foreground">{candidate.detail}</span>
-						</button>
-					</li>
+							acceptSuggestion(candidate);
+						}}
+						onmousemove={() => (assistIndex = index)}
+					>
+						<span class="min-w-0 flex-1 truncate">{candidate.insert.trim()}</span>
+						<span class="shrink-0 text-muted-foreground">{candidate.detail}</span>
+					</button>
 				{/each}
-			</ul>
+			</div>
 		{/if}
 		{#if preview.total > 0}
 			<div class="flex items-center gap-1.5 rounded-md border border-border bg-muted/40 px-2 py-1">
