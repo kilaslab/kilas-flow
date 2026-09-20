@@ -212,12 +212,12 @@ and runs it under a time and memory limit.
 
 ### Document-level elements
 
-Four things on the n8n document are read and then not carried, each reported as
-a **dropped** diagnostic:
+Four things on the n8n document are read and then not carried — or carried only
+in part — each reported as a **dropped** diagnostic:
 
 | Field | Why it is not carried |
 | --- | --- |
-| `settings` | Everything except the timezone and the workflow's own `executionTimeout`. Error workflow, execution order and the rest have no KilasFlow equivalent yet. Both carried keys matter: a scheduled workflow whose zone was dropped runs at the wrong hour every day, and the timeout is the workflow's run budget. A zone this server cannot resolve is reported as lossy rather than silently falling back to UTC, and so is n8n's `-1` "no timeout", because this server always applies the instance's budget. |
+| `settings` | Everything except the timezone, the workflow's own `executionTimeout` and `errorWorkflow`. Execution order and the other globals have no KilasFlow equivalent yet. All three carried keys matter: a scheduled workflow whose zone was dropped runs at the wrong hour every day, the timeout is the workflow's run budget, and an error workflow is started from its own error trigger when a run of this one fails. A zone this server cannot resolve is reported as lossy rather than silently falling back to UTC; so are n8n's `-1` "no timeout" (this server always applies the instance's budget) and an `errorWorkflow` id, because n8n's ids survive the trip only if that workflow was imported too. |
 | `pinData` | Pinned test data is an n8n editor feature. It is dropped rather than parked under a reserved key, because carrying data nothing reads would create a second silent-drop problem a release later. The nodes that had data pinned will run for real. |
 | `meta` | n8n instance metadata describing where the workflow came from. It has no meaning in another installation. |
 | `staticData` | n8n's per-workflow scratch space that its nodes persist between runs. There is no equivalent. |
@@ -424,8 +424,11 @@ reports:
 > does not support. Replace it before activating or running this workflow
 
 Once it activates, run it once by hand before pointing live traffic at it. The
-diagnostics tell you what changed structurally; they cannot tell you whether a
-`dropped` `alwaysOutputData` matters to the branch downstream of it.
+diagnostics tell you what crossed and what did not; what they cannot tell you is
+whether a `lossy` difference matters to the nodes downstream of it — a query
+replacement re-bound as separate values is fine unless one of them contained a
+comma, and an error workflow carried as the workflow id it named only resolves if
+that workflow was imported here as well.
 
 ## Expressions
 
@@ -693,10 +696,10 @@ enforces that on every run rather than trusting anyone to remember it.
   guessing: the honest answer is that each one will import, open, and not run
   until you replace that node — with an HTTP Request node against the same API,
   in most cases, since that is what the missing node would have been doing.
-- **n8n's error workflow and execution order have no equivalent.** `settings` is
-  read for the timezone and the workflow's own `executionTimeout` — both of which
-  are carried, and honoured — and the rest is reported as dropped rather than
-  quietly applied.
+- **n8n's execution order and the other global settings have no equivalent.**
+  `settings` is read for the timezone, the workflow's own `executionTimeout` and
+  `errorWorkflow` — all three carried, and all three honoured — and the rest is
+  reported as dropped rather than quietly applied.
 
 For what exists more broadly and what does not, start with
 [what KilasFlow is](/start/what-kilasflow-is/). For the node types available to
