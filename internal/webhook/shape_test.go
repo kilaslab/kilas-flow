@@ -1,10 +1,12 @@
 package webhook_test
 
 import (
+	"bytes"
 	"crypto/hmac"
 	"crypto/sha512"
 	"encoding/hex"
 	"encoding/json"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -54,7 +56,7 @@ func TestShapesProduceTheItemEachTriggerFamilyExpects(t *testing.T) {
 
 	t.Run("n8nCore matches n8n's own webhook node", func(t *testing.T) {
 		item := webhook.ShapeN8NCore.Apply(built)
-		for _, key := range []string{"body", "headers", "params", "query"} {
+		for _, key := range []string{"body", "headers", "params", "query", "webhookUrl", "executionMode"} {
 			if _, present := item[key]; !present {
 				t.Errorf("n8nCore is missing %q", key)
 			}
@@ -62,12 +64,28 @@ func TestShapesProduceTheItemEachTriggerFamilyExpects(t *testing.T) {
 		if _, unwanted := item["method"]; unwanted {
 			t.Error("n8nCore carries method, which n8n's node does not emit")
 		}
-		// params is present and empty rather than absent: a binding has no
+		// params is present and empty rather than absent: this binding has no
 		// route pattern behind it, so there are no path parameters to extract,
 		// and an expression reading it should get an empty object.
 		params, ok := item["params"].(map[string]any)
 		if !ok || len(params) != 0 {
 			t.Errorf("params = %#v, want an empty object", item["params"])
+		}
+		if item["executionMode"] != "production" {
+			t.Errorf("executionMode = %#v, want production", item["executionMode"])
+		}
+	})
+
+	// A route pattern's variables become the item's parameters, which is how
+	// n8n serves `/user/:id` and what KilasFlow answered 404 to.
+	t.Run("path parameters come from the route pattern", func(t *testing.T) {
+		parameterised := repository.WebhookBinding{Path: "user/:id/orders", Method: http.MethodGet}
+		withParams := delivery(t, `{}`, "application/json", parameterised)
+		withParams.Params = map[string]any{"id": "42"}
+		item := webhook.ShapeN8NCore.Apply(withParams)
+		params, _ := item["params"].(map[string]any)
+		if params["id"] != "42" {
+			t.Errorf("params = %#v, want the captured path parameter", item["params"])
 		}
 	})
 
@@ -129,6 +147,130 @@ func TestANonJSONBodyReachesTheTriggerIntact(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestHeadersReachTheItemLowerCasedAndUnredacted is the half of the header
+// finding the boundary owns.
+//
+// Header names arrived in Go's canonical case, so an imported workflow's own
+// `$json.headers['x-api-key']` check was always undefined, and credential-like
+// values were replaced with "[redacted]" before the item was ever built — so a
+// workflow could not read its own caller's key, cookie or content type. Host was
+// missing altogether. Redaction still happens where it belongs: on the stored
+// record and on every API read.
+func TestHeadersReachTheItemLowerCasedAndUnredacted(t *testing.T) {
+	t.Parallel()
+
+	request := httptest.NewRequest(http.MethodPost, "/webhook/abc", strings.NewReader(`{}`))
+	request.Header.Set("X-Api-Key", "abc")
+	request.Header.Set("Authorization", "Bearer caller-secret")
+	request.Host = "flows.example.test"
+	handler := webhook.NewHandler(nil, nil, nil, nil, webhook.DefaultLimits())
+	built, err := webhook.ReadDeliveryForTest(handler, request, repository.WebhookBinding{Path: "headers", Method: http.MethodPost})
+	if err != nil {
+		t.Fatalf("readDelivery() error = %v", err)
+	}
+
+	item := webhook.ShapeN8NCore.Apply(built)
+	headers, ok := item["headers"].(map[string]any)
+	if !ok {
+		t.Fatalf("headers = %#v, want an object", item["headers"])
+	}
+	if headers["x-api-key"] != "abc" {
+		t.Errorf("x-api-key = %#v, want the caller's real value under its lower-case name", headers["x-api-key"])
+	}
+	if headers["authorization"] != "Bearer caller-secret" {
+		t.Errorf("authorization = %#v, want the value the workflow runs on", headers["authorization"])
+	}
+	if headers["host"] != "flows.example.test" {
+		t.Errorf("host = %#v, want the address the request was addressed to", headers["host"])
+	}
+	if _, canonical := headers["X-Api-Key"]; canonical {
+		t.Error("the canonical-case name is still present; an n8n workflow looks up the lower-case one")
+	}
+}
+
+// TestEveryBodyTypeN8NAcceptsIsDecoded covers multipart, XML, repeated form
+// keys and a body that is not text at all.
+func TestEveryBodyTypeN8NAcceptsIsDecoded(t *testing.T) {
+	t.Parallel()
+
+	t.Run("multipart fields and files", func(t *testing.T) {
+		var body bytes.Buffer
+		writer := multipart.NewWriter(&body)
+		_ = writer.WriteField("name", "alice")
+		_ = writer.WriteField("tags", "a")
+		_ = writer.WriteField("tags", "b")
+		part, err := writer.CreateFormFile("upload", "note.txt")
+		if err != nil {
+			t.Fatalf("CreateFormFile() error = %v", err)
+		}
+		_, _ = part.Write([]byte("hello file"))
+		_ = writer.Close()
+
+		built := delivery(t, body.String(), writer.FormDataContentType(), repository.WebhookBinding{Path: "p"})
+		fields, ok := built.Body.(map[string]any)
+		if !ok {
+			t.Fatalf("body = %#v, want an object rather than the raw multipart text", built.Body)
+		}
+		if fields["name"] != "alice" {
+			t.Errorf("name = %#v, want the field", fields["name"])
+		}
+		tags, ok := fields["tags"].([]any)
+		if !ok || len(tags) != 2 || tags[0] != "a" || tags[1] != "b" {
+			t.Errorf("tags = %#v, want a repeated field as a list", fields["tags"])
+		}
+		file, ok := fields["upload"].(map[string]any)
+		if !ok {
+			t.Fatalf("upload = %#v, want the file part decoded", fields["upload"])
+		}
+		if file["fileName"] != "note.txt" || file["fileSize"] != float64(len("hello file")) {
+			t.Errorf("upload = %#v, want the file's name and size", file)
+		}
+		if file["data"] != "aGVsbG8gZmlsZQ==" {
+			t.Errorf("upload data = %#v, want the bytes base64-encoded", file["data"])
+		}
+	})
+
+	t.Run("xml becomes an object", func(t *testing.T) {
+		built := delivery(t, `<a><b>1</b></a>`, "application/xml", repository.WebhookBinding{Path: "p"})
+		decoded, ok := built.Body.(map[string]any)
+		if !ok {
+			t.Fatalf("body = %#v, want an object rather than the raw XML", built.Body)
+		}
+		inner, ok := decoded["a"].(map[string]any)
+		if !ok || inner["b"] != "1" {
+			t.Fatalf("body = %#v, want {a: {b: \"1\"}}", decoded)
+		}
+	})
+
+	t.Run("repeated form keys are lists", func(t *testing.T) {
+		built := delivery(t, "tags[]=a&tags[]=b&y=2&y=3", "application/x-www-form-urlencoded", repository.WebhookBinding{Path: "p"})
+		fields, ok := built.Body.(map[string]any)
+		if !ok {
+			t.Fatalf("body = %#v, want an object", built.Body)
+		}
+		y, ok := fields["y"].([]any)
+		if !ok || len(y) != 2 || y[0] != "2" || y[1] != "3" {
+			t.Errorf("y = %#v, want both values", fields["y"])
+		}
+	})
+
+	t.Run("bytes that are not text keep their bytes", func(t *testing.T) {
+		payload := string([]byte{0x89, 'P', 'N', 'G', 0x00, 0x01, 0xff})
+		built := delivery(t, payload, "application/octet-stream", repository.WebhookBinding{Path: "p"})
+		decoded, ok := built.Body.(map[string]any)
+		if !ok {
+			t.Fatalf("body = %#v, want the bytes carried rather than forced through a string", built.Body)
+		}
+		if decoded["fileSize"] != float64(len(payload)) {
+			t.Errorf("fileSize = %#v, want %d", decoded["fileSize"], len(payload))
+		}
+		encoded, _ := decoded["data"].(string)
+		if !strings.Contains(encoded, "iVBORw") {
+			t.Errorf("data = %q, want the payload base64-encoded", encoded)
+		}
+	})
 }
 
 // TestHMACVerificationUsesTheExactBytes is what the raw-body capture exists for.

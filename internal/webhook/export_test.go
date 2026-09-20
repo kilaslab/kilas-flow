@@ -10,5 +10,5 @@ import (
 // from a real *http.Request rather than by hand, which is what makes the
 // raw-body assertions meaningful.
 func ReadDeliveryForTest(handler *Handler, r *http.Request, binding repository.WebhookBinding) (Delivery, error) {
-	return handler.readDelivery(r, binding)
+	return handler.readDelivery(r, binding, nil)
 }

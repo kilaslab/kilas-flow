@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/netip"
 	"sort"
 	"strings"
 	"time"
@@ -100,12 +102,29 @@ func (handler *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	binding, err := handler.bindings.Resolve(r.Context(), strings.ToUpper(r.Method), path)
+	// A browser's preflight names the route but not the method it will use, so
+	// it is answered from the methods bound on that route rather than by
+	// matching one. Routing by method alone answered 404, which is why no
+	// browser page could post to a KilasFlow webhook at all.
+	if r.Method == http.MethodOptions {
+		handler.servePreflight(w, r, path)
+		return
+	}
+
+	binding, params, err := handler.resolveBinding(r.Context(), strings.ToUpper(r.Method), path)
 	if err != nil {
 		// An inactive, deleted, or never-activated workflow has no binding, and
 		// a wrong method has none either. Answering both the same way keeps the
 		// endpoint from confirming which workflows exist.
 		problem(w, http.StatusNotFound, "No active workflow is bound to this webhook.")
+		return
+	}
+	applyCORS(w, r, binding)
+
+	// An allow-list is checked before the credential, so a refused caller
+	// cannot use the endpoint to probe for valid secrets.
+	if !addressAllowed(r, binding) {
+		problem(w, http.StatusForbidden, "This webhook does not accept requests from your address.")
 		return
 	}
 
@@ -117,7 +136,7 @@ func (handler *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	delivery, err := handler.readDelivery(r, binding)
+	delivery, err := handler.readDelivery(r, binding, params)
 	if err != nil {
 		problem(w, http.StatusRequestEntityTooLarge, err.Error())
 		return
@@ -150,6 +169,16 @@ func (handler *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A crawler that found the URL is acknowledged and not run, which is what
+	// n8n's "Ignore Bots" option means: a preview fetch from a chat client must
+	// not trigger the workflow's side effects.
+	if ignoreBots(r, binding) {
+		handler.logger.Info("a delivery was ignored as a bot",
+			"route", binding.Route, "workflow", binding.WorkflowID, "node", binding.NodeID)
+		writeJSON(w, http.StatusOK, map[string]any{"filtered": true, "reason": "the request looks like a bot"})
+		return
+	}
+
 	// A retried delivery must not run the workflow twice. WAHA retries fifteen
 	// times at two-second intervals, so a slow workflow that eventually
 	// succeeds could otherwise send fifteen WhatsApp replies.
@@ -171,24 +200,20 @@ func (handler *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = handler.bindings.RecordDeliveryExecution(r.Context(), binding.Route, deliveryID, record.ID)
 	}
 	if err != nil {
+		// Logged rather than only answered: the caller gets a generic 500 on
+		// purpose, and without this the cause — a workflow that fails to
+		// compile, a version that was archived — is invisible to the operator.
+		handler.logger.Error("a webhook delivery could not be queued",
+			"route", binding.Route, "workflow", binding.WorkflowID, "node", binding.NodeID, "error", err)
 		problem(w, http.StatusInternalServerError, "The workflow could not be queued.")
 		return
 	}
 
-	if mode := responseMode(binding); mode == modeImmediate {
-		writeJSON(w, immediateStatus(binding), map[string]any{
-			"executionId": record.ID,
-			"status":      string(record.Status),
-		})
+	if responseMode(binding) == modeImmediate {
+		handler.respondImmediate(w, r, binding)
 		return
 	}
-
-	finished, err := handler.await(r.Context(), binding, record.ID)
-	if err != nil {
-		problem(w, http.StatusGatewayTimeout, "The workflow did not finish before the response timeout.")
-		return
-	}
-	handler.respondFromExecution(w, binding, finished, responseMode(binding))
+	handler.awaitResponse(w, r, binding, record)
 }
 
 type mode int
@@ -198,6 +223,199 @@ const (
 	modeLastNode
 	modeResponseNode
 )
+
+// resolveBinding finds the binding for one request, filling path parameters.
+//
+// A request may carry segments after the route — that is how n8n's
+// `/webhook/<id>/user/:id` endpoints work — so an exact lookup is tried first
+// and the route is then matched against the node's own path pattern.
+func (handler *Handler) resolveBinding(ctx context.Context, method, path string) (repository.WebhookBinding, map[string]any, error) {
+	if binding, err := handler.bindings.Resolve(ctx, method, path); err == nil {
+		return binding, nil, nil
+	}
+	route, rest, found := strings.Cut(path, "/")
+	if !found || strings.TrimSpace(rest) == "" {
+		return repository.WebhookBinding{}, nil, errors.New("no binding for this path")
+	}
+	binding, err := handler.bindings.Resolve(ctx, method, route)
+	if err != nil {
+		return repository.WebhookBinding{}, nil, err
+	}
+	params, matched := matchPathParams(binding.Path, strings.Split(rest, "/"))
+	if !matched {
+		return repository.WebhookBinding{}, nil, fmt.Errorf("no binding for this path")
+	}
+	return binding, params, nil
+}
+
+// matchPathParams maps trailing request segments onto a route pattern.
+//
+// n8n serves `/webhook/<id>/user/:id`, so a node's path pattern is part of the
+// URL after its identifier. KilasFlow's route is one opaque segment replacing
+// both, so the pattern's *trailing* segments are what a request after the route
+// supplies: `/user/:id` takes one segment, `:id/orders` takes two and matches
+// `orders` literally.
+func matchPathParams(pattern string, rest []string) (map[string]any, bool) {
+	if len(rest) == 0 {
+		return nil, false
+	}
+	segments := strings.Split(strings.Trim(pattern, "/"), "/")
+	if len(rest) > len(segments) {
+		return nil, false
+	}
+	tail := segments[len(segments)-len(rest):]
+	params := make(map[string]any, len(rest))
+	for index, segment := range tail {
+		value := rest[index]
+		if value == "" {
+			return nil, false
+		}
+		if name, variable := strings.CutPrefix(segment, ":"); variable && name != "" {
+			params[name] = value
+			continue
+		}
+		if segment != value {
+			return nil, false
+		}
+	}
+	return params, true
+}
+
+// servePreflight answers a CORS preflight for a bound route.
+//
+// The methods advertised are the ones actually bound on the route plus OPTIONS
+// itself, so a browser learns that a GET-only endpoint will refuse its POST
+// instead of discovering it as a 404 with no CORS headers — which is what a
+// browser reports as an opaque CORS failure.
+func (handler *Handler) servePreflight(w http.ResponseWriter, r *http.Request, path string) {
+	route, _, _ := strings.Cut(path, "/")
+	bindings, err := handler.bindings.ResolveRoute(r.Context(), route)
+	if err != nil || len(bindings) == 0 {
+		problem(w, http.StatusNotFound, "No active workflow is bound to this webhook.")
+		return
+	}
+	applyCORS(w, r, bindings[0])
+
+	methods := make([]string, 0, len(bindings)+1)
+	seen := make(map[string]bool, len(bindings)+1)
+	for _, binding := range bindings {
+		if seen[binding.Method] {
+			continue
+		}
+		seen[binding.Method] = true
+		methods = append(methods, binding.Method)
+	}
+	if !seen[http.MethodOptions] {
+		methods = append(methods, http.MethodOptions)
+	}
+	w.Header().Set("Access-Control-Allow-Methods", strings.Join(methods, ", "))
+	if requested := r.Header.Get("Access-Control-Request-Headers"); requested != "" {
+		w.Header().Set("Access-Control-Allow-Headers", requested)
+	}
+	w.Header().Set("Access-Control-Max-Age", "300")
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// applyCORS answers a cross-origin caller.
+//
+// n8n sends these headers on every webhook answer and defaults its allow-list
+// to `*`, echoing the caller's own origin. KilasFlow sent none at all, so a
+// chat widget, a landing-page form or an SPA backend — the ordinary
+// "n8n webhook as an API" shape — failed in the browser before it started.
+func applyCORS(w http.ResponseWriter, r *http.Request, binding repository.WebhookBinding) {
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if origin == "" {
+		return
+	}
+	allowed := allowedOrigins(binding)
+	if len(allowed) == 0 || allowed["*"] || allowed[strings.ToLower(origin)] {
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+		w.Header().Add("Vary", "Origin")
+	}
+}
+
+// allowedOrigins reads the trigger's own origin allow-list.
+//
+// An absent list is `*`, which is n8n's default. A list that does not name the
+// caller's origin sets no header at all, which is what makes the browser refuse
+// the response rather than the workflow silently accepting it.
+func allowedOrigins(binding repository.WebhookBinding) map[string]bool {
+	options, _ := binding.Parameters["options"].(map[string]any)
+	raw, _ := options["allowedOrigins"].(string)
+	allowed := map[string]bool{}
+	for _, entry := range strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || r == ' ' }) {
+		if entry = strings.ToLower(strings.TrimSpace(entry)); entry != "" {
+			allowed[entry] = true
+		}
+	}
+	return allowed
+}
+
+// addressAllowed applies the trigger's IP allow-list.
+//
+// An n8n endpoint restricted by `ipWhitelist` used to arrive here open, which
+// silently published a protected endpoint to the internet. Both single
+// addresses and CIDR ranges are accepted, which is what n8n's own field takes.
+//
+// The check uses the connection's own peer address and deliberately does not
+// trust X-Forwarded-For: a header any caller can set is not a source of truth
+// for an allow-list, and honouring it would let a caller name itself an allowed
+// address. A deployment behind a reverse proxy therefore sees the proxy's
+// address and should enforce the list there as well; that fails closed, which
+// is the right direction for an access rule.
+func addressAllowed(r *http.Request, binding repository.WebhookBinding) bool {
+	options, _ := binding.Parameters["options"].(map[string]any)
+	raw, _ := options["ipWhitelist"].(string)
+	entries := strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || r == ' ' || r == '\n' || r == '\t' })
+	if len(entries) == 0 {
+		return true
+	}
+	peer, err := netip.ParseAddr(peerAddress(r))
+	if err != nil {
+		return false
+	}
+	for _, entry := range entries {
+		if prefix, err := netip.ParsePrefix(entry); err == nil {
+			if prefix.Contains(peer) {
+				return true
+			}
+			continue
+		}
+		if address, err := netip.ParseAddr(entry); err == nil && address == peer {
+			return true
+		}
+	}
+	return false
+}
+
+// peerAddress is the address the connection came from, without its port.
+func peerAddress(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return strings.TrimSpace(r.RemoteAddr)
+	}
+	return host
+}
+
+// ignoreBots reports whether a delivery looks like a crawler rather than a
+// caller, which is what n8n's own option of that name skips.
+func ignoreBots(r *http.Request, binding repository.WebhookBinding) bool {
+	options, _ := binding.Parameters["options"].(map[string]any)
+	enabled, _ := options["ignoreBots"].(bool)
+	if !enabled {
+		return false
+	}
+	agent := strings.ToLower(r.Header.Get("User-Agent"))
+	if agent == "" {
+		return false
+	}
+	for _, marker := range []string{"bot", "crawler", "spider", "preview", "facebookexternalhit", "slackbot", "telegrambot", "curl/"} {
+		if strings.Contains(agent, marker) {
+			return true
+		}
+	}
+	return false
+}
 
 func responseMode(binding repository.WebhookBinding) mode {
 	switch value, _ := binding.Parameters["responseMode"].(string); value {
@@ -210,12 +428,50 @@ func responseMode(binding repository.WebhookBinding) mode {
 	}
 }
 
-func immediateStatus(binding repository.WebhookBinding) int {
-	code, ok := binding.Parameters["responseCode"].(float64)
-	if !ok || code < 100 || code > 599 {
-		return http.StatusOK
+// responseStatus is the status a webhook answers with.
+//
+// The trigger's `options.responseCode` is what n8n's own option writes, and the
+// top-level `responseCode` is where KilasFlow kept it before the options
+// collection existed — both are read so a workflow saved either way keeps
+// answering with the code it was configured for.
+func responseStatus(binding repository.WebhookBinding) int {
+	options, _ := binding.Parameters["options"].(map[string]any)
+	for _, value := range []any{options["responseCode"], binding.Parameters["responseCode"]} {
+		code, ok := value.(float64)
+		if ok && code >= 100 && code <= 599 {
+			return int(code)
+		}
 	}
-	return int(code)
+	return http.StatusOK
+}
+
+// responseHeaderEntries reads the response headers a trigger or a Respond node
+// was configured with, in either shape they are stored in: n8n's
+// `{entries: [{name, value}]}` collection, or KilasFlow's own key/value map.
+func responseHeaderEntries(value any) map[string]string {
+	headers := map[string]string{}
+	if wrapper, ok := value.(map[string]any); ok {
+		if entries, present := wrapper["entries"].([]any); present {
+			for _, entry := range entries {
+				fields, ok := entry.(map[string]any)
+				if !ok {
+					continue
+				}
+				name, _ := fields["name"].(string)
+				text, _ := fields["value"].(string)
+				if strings.TrimSpace(name) != "" {
+					headers[name] = text
+				}
+			}
+			return headers
+		}
+		for name, entry := range wrapper {
+			if text, ok := entry.(string); ok {
+				headers[name] = text
+			}
+		}
+	}
+	return headers
 }
 
 // authenticate applies the binding's configured V1 auth mode.
@@ -316,7 +572,7 @@ func equal(got, want string) bool {
 // be verified. WAHA's X-Webhook-Hmac is a sha512 over the raw body, and a
 // re-marshalled body does not hash to the same value, so HMAC verification was
 // not merely unimplemented but impossible.
-func (handler *Handler) readDelivery(r *http.Request, binding repository.WebhookBinding) (Delivery, error) {
+func (handler *Handler) readDelivery(r *http.Request, binding repository.WebhookBinding, params map[string]any) (Delivery, error) {
 	raw, err := io.ReadAll(io.LimitReader(r.Body, handler.limits.MaxBodyBytes+1))
 	if err != nil {
 		return Delivery{}, errors.New("The request body could not be read.")
@@ -325,29 +581,41 @@ func (handler *Handler) readDelivery(r *http.Request, binding repository.Webhook
 		return Delivery{}, fmt.Errorf("The request body exceeds the %d byte limit.", handler.limits.MaxBodyBytes)
 	}
 
-	headers := make(map[string]any, len(r.Header))
+	// Header names are lower-cased, which is what n8n's item carries and what
+	// an imported workflow's own `$json.headers['x-api-key']` check is written
+	// against — Go's canonical case made every such check miss.
+	headers := make(map[string]any, len(r.Header)+1)
 	for key, values := range r.Header {
 		if len(values) > 0 {
-			headers[key] = values[0]
+			headers[strings.ToLower(key)] = values[0]
 		}
 	}
-	// Only the headers are redacted. The body is the caller's own data and the
-	// running workflow reads it straight back out of the stored record, so
-	// redacting it would put "[redacted]" on the wire to WAHA rather than the
-	// session the envelope named.
-	headers = execution.RedactMap(headers)
+	if r.Host != "" {
+		headers["host"] = r.Host
+	}
 
 	query := make(map[string]any, len(r.URL.Query()))
 	for key, values := range r.URL.Query() {
-		if len(values) > 0 {
+		switch len(values) {
+		case 0:
+		case 1:
 			query[key] = values[0]
+		default:
+			// A repeated query key is a list, which is what n8n's parser
+			// produces and what `$json.query.tag` expects.
+			list := make([]any, 0, len(values))
+			for _, value := range values {
+				list = append(list, value)
+			}
+			query[key] = list
 		}
 	}
 
 	contentType := r.Header.Get("Content-Type")
 	return Delivery{
 		Request: r, RawBody: raw, ContentType: contentType, Binding: binding,
-		Headers: headers, Query: query, Body: decodeBody(raw, contentType),
+		Headers: headers, Query: query, Params: params, WebhookURL: requestURL(r),
+		Body: decodeBody(raw, contentType),
 		// A closure rather than the record: a delivery that never verifies
 		// never decrypts anything.
 		Credential: func(credentialType string) (map[string]string, error) {
@@ -356,28 +624,108 @@ func (handler *Handler) readDelivery(r *http.Request, binding repository.Webhook
 	}, nil
 }
 
-// await waits for the execution to reach a terminal state.
+// requestURL is the address the request arrived at, which n8n puts on the item
+// as `webhookUrl`.
+func requestURL(r *http.Request) string {
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	if forwarded := strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Proto"), ",")[0]); forwarded == "http" || forwarded == "https" {
+		scheme = forwarded
+	}
+	return scheme + "://" + r.Host + r.URL.Path
+}
+
+// stateReader is the cheap half of a runner: one status read with no node runs
+// and no payloads.
 //
-// It polls the durable record rather than trusting a live event, because the
-// record is what the response must reflect and it is correct even if the
-// broker dropped an event under backpressure.
-func (handler *Handler) await(ctx context.Context, binding repository.WebhookBinding, executionID string) (execution.Record, error) {
+// Polling `Get` re-reads the whole execution — every node run, its input and its
+// output — twenty times a second, which on a large execution is megabytes per
+// poll for a single status field. A runner that implements this is polled
+// through it and only read in full once the run is terminal.
+type stateReader interface {
+	ExecutionState(ctx context.Context, tenant repository.TenantScope, executionID string) (execution.Status, bool, error)
+}
+
+// awaitResponse answers the caller from the graph.
+//
+// A Respond to Webhook node answers the caller itself: the executor publishes
+// the response as an engine event the moment it runs, and this writes it out
+// and returns while the rest of the workflow keeps going. That is n8n's
+// behaviour and the point of the node — a Slack or WhatsApp webhook has about
+// three seconds to acknowledge, and a workflow that acknowledged and then did
+// slow work used to time out, be retried, and duplicate its side effects.
+//
+// The durable record is still watched, because a run that fails before reaching
+// any Respond node has to be answered too, and the broker is optional.
+func (handler *Handler) awaitResponse(w http.ResponseWriter, r *http.Request, binding repository.WebhookBinding, record execution.Record) {
+	var subscription *events.Subscription
+	if handler.events != nil {
+		// Subscribing replays the events already retained for this execution,
+		// so a response published before this line is not missed.
+		subscription = handler.events.Subscribe(binding.TenantID, record.ID, 0)
+		defer subscription.Close()
+	}
+
 	deadline := time.Now().Add(handler.limits.ResponseTimeout)
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
 	tenant := repository.TenantScope{ID: binding.TenantID}
 	for {
-		record, err := handler.runner.Get(ctx, tenant, executionID)
-		if err == nil && terminal(record.Status) {
-			return record, nil
+		if subscription != nil {
+			select {
+			case event, open := <-subscription.Events():
+				if !open {
+					// The broker released the stream; the record is the floor.
+					subscription = nil
+					continue
+				}
+				if response, found := responseFromEvent(event); found {
+					writeResponse(w, response)
+					return
+				}
+				continue
+			case <-ticker.C:
+			case <-r.Context().Done():
+				return
+			}
+		} else {
+			select {
+			case <-ticker.C:
+			case <-r.Context().Done():
+				return
+			}
+		}
+
+		if status, err := handler.executionStatus(r.Context(), tenant, record.ID); err == nil && terminal(status) {
+			finished, err := handler.runner.Get(r.Context(), tenant, record.ID)
+			if err != nil {
+				problem(w, http.StatusInternalServerError, "The execution could not be read.")
+				return
+			}
+			handler.respondFromExecution(w, binding, finished)
+			return
 		}
 		if time.Now().After(deadline) {
-			return execution.Record{}, errors.New("timed out")
-		}
-		select {
-		case <-ctx.Done():
-			return execution.Record{}, ctx.Err()
-		case <-time.After(25 * time.Millisecond):
+			problem(w, http.StatusGatewayTimeout, "The workflow did not finish before the response timeout.")
+			return
 		}
 	}
+}
+
+// executionStatus reads just the status, through the cheap reader when the
+// runner offers one.
+func (handler *Handler) executionStatus(ctx context.Context, tenant repository.TenantScope, executionID string) (execution.Status, error) {
+	if reader, ok := handler.runner.(stateReader); ok {
+		status, _, err := reader.ExecutionState(ctx, tenant, executionID)
+		return status, err
+	}
+	record, err := handler.runner.Get(ctx, tenant, executionID)
+	if err != nil {
+		return "", err
+	}
+	return record.Status, nil
 }
 
 func terminal(status execution.Status) bool {
@@ -389,46 +737,53 @@ func terminal(status execution.Status) bool {
 	}
 }
 
-// respondFromExecution turns a finished execution into the HTTP response.
-func (handler *Handler) respondFromExecution(w http.ResponseWriter, binding repository.WebhookBinding, record execution.Record, responseMode mode) {
+// respondImmediate acknowledges a delivery without waiting for the run.
+//
+// The body is n8n's own `{"message":"Workflow was started"}`, and the status and
+// headers come from the trigger's options. KilasFlow answered with
+// `{executionId, status}` and ignored the configured code, body and headers, so
+// a workflow that acknowledged with 201 and a custom body — or with no body at
+// all — did neither.
+func (handler *Handler) respondImmediate(w http.ResponseWriter, r *http.Request, binding repository.WebhookBinding) {
+	options, _ := binding.Parameters["options"].(map[string]any)
+	for name, value := range responseHeaderEntries(options["responseHeaders"]) {
+		w.Header().Set(name, value)
+	}
+	status := responseStatus(binding)
+
+	if noBody, _ := options["noResponseBody"].(bool); noBody {
+		w.WriteHeader(status)
+		return
+	}
+	if body, ok := options["responseData"].(string); ok && strings.TrimSpace(body) != "" {
+		// A custom acknowledgement is text, and n8n sends it as text/html —
+		// which is what its own HTTP layer does with a string body.
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(status)
+		_, _ = io.WriteString(w, body)
+		return
+	}
+	writeJSON(w, status, map[string]any{"message": "Workflow was started"})
+}
+
+// respondFromExecution answers from a finished execution.
+func (handler *Handler) respondFromExecution(w http.ResponseWriter, binding repository.WebhookBinding, record execution.Record) {
 	if record.Status != execution.StatusSucceeded {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{
-			"executionId": record.ID,
-			"status":      string(record.Status),
-			"error":       json.RawMessage(record.Error),
-		})
+		// A generic body on purpose. The caller is whoever found the URL, and
+		// the specific failure used to be returned here — node names and the
+		// upstream's own error text — which told an unauthenticated caller what
+		// the workflow is made of. n8n answers the same way.
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"message": "Error in workflow"})
 		return
 	}
-
-	if responseMode == modeLastNode {
-		handler.respondFromLastNode(w, binding, record)
+	if responseMode(binding) == modeResponseNode {
+		// The graph was configured to answer from a node and finished without
+		// reaching one. n8n answers 200 with an empty body; answering 500 said
+		// the workflow had broken when it had run cleanly.
+		w.WriteHeader(http.StatusOK)
 		return
 	}
-
-	outputs := map[string][][]workflow.Item{}
-	if len(record.Output) > 0 {
-		_ = json.Unmarshal(record.Output, &outputs)
-	}
-
-	if responseMode == modeResponseNode {
-		if response, found := findResponse(record.NodeRuns); found {
-			writeResponse(w, response)
-			return
-		}
-		// The graph was configured to answer from a node but never reached one.
-		// Saying so beats returning a misleading 200 with the last node's data.
-		writeJSON(w, http.StatusInternalServerError, map[string]any{
-			"executionId": record.ID,
-			"error":       "The workflow finished without reaching a Respond to Webhook node.",
-		})
-		return
-	}
-
-	writeJSON(w, http.StatusOK, map[string]any{
-		"executionId": record.ID,
-		"status":      string(record.Status),
-		"data":        outputs,
-	})
+	handler.respondFromLastNode(w, binding, record)
 }
 
 // respondFromLastNode answers with the items of the last node that ran.
@@ -445,9 +800,12 @@ func (handler *Handler) respondFromExecution(w http.ResponseWriter, binding repo
 // node the caller would call the last node.
 func (handler *Handler) respondFromLastNode(w http.ResponseWriter, binding repository.WebhookBinding, record execution.Record) {
 	items := lastNodeItems(record.NodeRuns)
+	status := responseStatus(binding)
 	switch shape, _ := binding.Parameters["responseData"].(string); shape {
 	case "noData":
-		w.WriteHeader(http.StatusNoContent)
+		// An empty 200, which is what n8n sends for "No Data" — not a 204: the
+		// option is about the body, not about the status.
+		w.WriteHeader(status)
 		return
 	case "allEntries":
 		// Always an array, including for one item, which is what n8n's own
@@ -456,15 +814,18 @@ func (handler *Handler) respondFromLastNode(w http.ResponseWriter, binding repos
 		for _, item := range items {
 			payload = append(payload, itemJSON(item))
 		}
-		writeJSON(w, http.StatusOK, payload)
+		writeJSON(w, status, payload)
 		return
 	default:
-		// n8n's default: the first entry's JSON, always an object.
 		if len(items) == 0 {
-			writeJSON(w, http.StatusOK, map[string]any{})
+			// n8n's own answer when the last node produced nothing: an error
+			// naming the situation, never the trigger's own request data, which
+			// is what used to be echoed back to the caller — headers added by a
+			// proxy included.
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"message": "No item to return was found"})
 			return
 		}
-		writeJSON(w, http.StatusOK, itemJSON(items[0]))
+		writeJSON(w, status, itemJSON(items[0]))
 	}
 }
 
@@ -500,68 +861,45 @@ func itemJSON(item workflow.Item) map[string]any {
 	return item.JSON
 }
 
-// ResponseKey marks the item field a Respond to Webhook node writes.
-const ResponseKey = "$response"
+// ResponseEventName is the node event a Respond to Webhook node publishes.
+//
+// The response travels as an event rather than as item data. n8n passes the
+// Respond node's input items through unchanged, and a `$response` field written
+// onto them leaked into every downstream node's `$json` and into the stored
+// execution output — where a "respond and keep going" workflow's next node saw
+// an extra object it never asked for. An event keeps the answer out of the item
+// stream entirely and still reaches the HTTP boundary that is waiting for it.
+const ResponseEventName = "webhook.response"
 
+// nodeResponse is one answer produced by a Respond to Webhook node.
 type nodeResponse struct {
 	statusCode int
 	headers    map[string]string
 	body       string
 }
 
-// findResponse returns the response a Respond to Webhook node produced.
-//
-// It walks the node runs in execution order rather than iterating the output
-// map, because Go randomises map iteration: with a Respond node on each arm of
-// an IF, which one answered the caller was decided by a coin flip. Pruning
-// removes that for the common case — only the taken arm runs now — but a graph
-// can still legitimately produce two responses, and the caller is better served
-// by a defined answer than by a different one on each request.
-//
-// The first in execution order wins. A skipped node produced no response at
-// all, so it is passed over without needing a special case.
-func findResponse(runs []execution.NodeRun) (nodeResponse, bool) {
-	ordered := append([]execution.NodeRun(nil), runs...)
-	sort.SliceStable(ordered, func(left, right int) bool {
-		return ordered[left].Sequence < ordered[right].Sequence
-	})
-	for _, run := range ordered {
-		if len(run.Output) == 0 {
-			continue
-		}
-		var ports [][]workflow.Item
-		if err := json.Unmarshal(run.Output, &ports); err != nil {
-			continue
-		}
-		for _, items := range ports {
-			for _, item := range items {
-				response, ok := responseFromItem(item)
-				if ok {
-					return response, true
-				}
-			}
-		}
+// responseFromEvent reads a published response, if this event is one.
+func responseFromEvent(event events.Event) (nodeResponse, bool) {
+	if string(event.Type) != ResponseEventName {
+		return nodeResponse{}, false
 	}
-	return nodeResponse{}, false
+	return parseResponse(event.Data)
 }
 
-func responseFromItem(item workflow.Item) (nodeResponse, bool) {
-	raw, ok := item.JSON[ResponseKey].(map[string]any)
-	if !ok {
+// parseResponse decodes the response a Respond node published.
+func parseResponse(payload json.RawMessage) (nodeResponse, bool) {
+	var decoded map[string]any
+	if err := json.Unmarshal(payload, &decoded); err != nil {
 		return nodeResponse{}, false
 	}
 	response := nodeResponse{statusCode: http.StatusOK, headers: map[string]string{}}
-	if code, ok := raw["statusCode"].(float64); ok && code >= 100 && code <= 599 {
+	if code, ok := decoded["statusCode"].(float64); ok && code >= 100 && code <= 599 {
 		response.statusCode = int(code)
 	}
-	if headers, ok := raw["headers"].(map[string]any); ok {
-		for key, value := range headers {
-			if text, ok := value.(string); ok {
-				response.headers[key] = text
-			}
-		}
+	for name, value := range responseHeaderEntries(decoded["headers"]) {
+		response.headers[name] = value
 	}
-	response.body, _ = raw["body"].(string)
+	response.body, _ = decoded["body"].(string)
 	return response, true
 }
 
@@ -573,7 +911,10 @@ func writeResponse(w http.ResponseWriter, response nodeResponse) {
 		if json.Valid([]byte(response.body)) {
 			w.Header().Set("Content-Type", "application/json")
 		} else {
-			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			// n8n answers a text response as text/html, which is what its own
+			// HTTP layer does with a string — and what makes an HTML result
+			// page render rather than appear as source.
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		}
 	}
 	w.WriteHeader(response.statusCode)
@@ -610,6 +951,12 @@ func Extract(catalog Catalog, normalizePath func(string) string) repository.Webh
 	return func(document workflow.Document) []repository.WebhookTrigger {
 		triggers := make([]repository.WebhookTrigger, 0, 1)
 		for _, node := range document.Nodes {
+			if node.Disabled {
+				// A trigger its author switched off must not open an endpoint:
+				// the runner refuses to start a disabled trigger, so binding it
+				// would publish a URL that answers and then never runs anything.
+				continue
+			}
 			definition, found := catalog.Resolve(node.Type, node.TypeVersion)
 			if !found || definition.Webhook == nil {
 				continue
@@ -630,14 +977,9 @@ func Extract(catalog Catalog, normalizePath func(string) string) repository.Webh
 				continue
 			}
 
-			method := declaration.Method
-			if declaration.MethodParameter != "" {
-				if configured, ok := node.Parameters[declaration.MethodParameter].(string); ok && configured != "" {
-					method = configured
-				}
-			}
-			if method == "" {
-				method = http.MethodPost
+			methods := declaredMethods(node.Parameters, declaration)
+			if len(methods) == 0 {
+				methods = []string{http.MethodGet}
 			}
 
 			parameters := make(map[string]any, len(node.Parameters)+1)
@@ -653,13 +995,59 @@ func Extract(catalog Catalog, normalizePath func(string) string) repository.Webh
 				}
 				parameters["$credentials"] = references
 			}
-			triggers = append(triggers, repository.WebhookTrigger{
-				NodeID: node.ID, NodeType: node.Type,
-				Method: strings.ToUpper(method), Path: path, Parameters: parameters,
-			})
+			// One binding per method: n8n v2.1 lets a single webhook node answer
+			// several, and a node that named two used to bind only one of them —
+			// every caller of the other got a 404.
+			for _, method := range methods {
+				triggers = append(triggers, repository.WebhookTrigger{
+					NodeID: node.ID, NodeType: node.Type,
+					Method: strings.ToUpper(method), Path: path, Parameters: parameters,
+				})
+			}
 		}
 		return triggers
 	}
+}
+
+// declaredMethods reads the HTTP methods a webhook node answers on.
+//
+// A missing method is GET, which is n8n's own default and therefore what its
+// export omits — KilasFlow bound every such node as POST, so an imported GET
+// webhook answered 404 to its own callers. `httpMethods` and an array-valued
+// `httpMethod` are both read, because n8n v2.1 stores several methods in the
+// same parameter the single-method form uses a string for.
+func declaredMethods(parameters map[string]any, declaration *node.WebhookDeclaration) []string {
+	collect := func(value any) []string {
+		switch typed := value.(type) {
+		case string:
+			if trimmed := strings.TrimSpace(typed); trimmed != "" {
+				return []string{trimmed}
+			}
+		case []string:
+			return typed
+		case []any:
+			methods := make([]string, 0, len(typed))
+			for _, entry := range typed {
+				if text, ok := entry.(string); ok && strings.TrimSpace(text) != "" {
+					methods = append(methods, text)
+				}
+			}
+			return methods
+		}
+		return nil
+	}
+	if declaration.MethodParameter != "" {
+		if methods := collect(parameters[declaration.MethodParameter]); len(methods) > 0 {
+			return methods
+		}
+	}
+	if methods := collect(parameters["httpMethods"]); len(methods) > 0 {
+		return methods
+	}
+	if declaration.Method != "" {
+		return []string{declaration.Method}
+	}
+	return nil
 }
 
 // Catalog is the slice of the node registry extraction needs. Declaring it here

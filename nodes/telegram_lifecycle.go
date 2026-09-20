@@ -382,7 +382,11 @@ func RegisterLifecycles(registry *webhook.LifecycleRegistry, pollers *TelegramPo
 // their deliveries.
 func RegisterTriggerKinds(registry *webhook.Registry) error {
 	for nodeType, kind := range map[string]webhook.TriggerKind{
-		WebhookNodeType:         {Shape: webhook.ShapeEnvelope},
+		// The n8n shape, not KilasFlow's own envelope: an imported webhook's
+		// workflow reads `$json.body`, `$json.query`, `$json.headers`,
+		// `$json.params`, `$json.webhookUrl` and `$json.executionMode`, and
+		// none of those six keys existed under the envelope.
+		WebhookNodeType:         {Shape: webhook.ShapeN8NCore},
 		TelegramTriggerNodeType: TelegramTriggerKind(),
 	} {
 		if err := registry.Register(nodeType, kind); err != nil {

@@ -17,6 +17,8 @@ import (
 	"github.com/kilaslabs/kilas-flow/internal/credentials"
 	"github.com/kilaslabs/kilas-flow/internal/database"
 	"github.com/kilaslabs/kilas-flow/internal/engine"
+	"github.com/kilaslabs/kilas-flow/internal/events"
+	"github.com/kilaslabs/kilas-flow/internal/execution"
 	"github.com/kilaslabs/kilas-flow/internal/node"
 	"github.com/kilaslabs/kilas-flow/internal/repository"
 	"github.com/kilaslabs/kilas-flow/internal/safehttp"
@@ -31,9 +33,40 @@ type harness struct {
 	workflows   *repository.GORMWorkflowStore
 	credentials *repository.GORMCredentialStore
 	runtime     *engine.Service
+	runner      *recordingRunner
 	registry    *node.Registry
 	tenant      repository.TenantScope
 }
+
+// recordingRunner remembers what a delivery queued.
+//
+// The acknowledgement body is n8n's own — `{"message":"Workflow was started"}` —
+// and carries no execution id, so a test that wants to inspect the run reads the
+// id from here instead of from the response.
+type recordingRunner struct {
+	*engine.Service
+	queued []string
+}
+
+func (runner *recordingRunner) QueueWebhook(ctx context.Context, binding repository.WebhookBinding, payload json.RawMessage) (execution.Record, error) {
+	record, err := runner.Service.QueueWebhook(ctx, binding, payload)
+	if err == nil {
+		runner.queued = append(runner.queued, record.ID)
+	}
+	return record, err
+}
+
+// lastExecution is the execution the most recent delivery queued.
+func (h harness) lastExecution(t *testing.T) string {
+	t.Helper()
+	if len(h.runner.queued) == 0 {
+		t.Fatal("no execution was queued")
+	}
+	return h.runner.queued[len(h.runner.queued)-1]
+}
+
+// queuedCount is how many executions deliveries have queued.
+func (h harness) queuedCount() int { return len(h.runner.queued) }
 
 // drain runs queued work until the queue is empty, so a test never sleeps
 // waiting for a background worker.
@@ -89,19 +122,36 @@ func newHarness(t *testing.T) harness {
 		WithWebhooks(webhook.Extract(registry, nodes.WebhookPath))
 	credentialStore := repository.NewCredentialStore(db.DB, cipher)
 	executions := repository.NewExecutionStore(db.DB)
+	// The broker is what carries a Respond to Webhook node's answer to the
+	// waiting HTTP boundary, so the harness wires the same one into the engine
+	// and the handler — which is what composition does.
+	broker := events.NewBroker(events.BrokerOptions{})
 	runtime, err := engine.NewService(engine.ServiceDeps{
 		Executions: executions, Catalog: registry, Runner: engine.NewRunner(executors),
 		Credentials: credentialStore, WorkerID: "webhook-test", DefaultTimeout: 5 * time.Second,
+		Events: broker,
 	})
 	if err != nil {
 		t.Fatalf("NewService() error = %v", err)
 	}
+	runner := &recordingRunner{Service: runtime}
+
+	// The trigger registry is what tells the boundary how each trigger type
+	// shapes a delivery, so the harness wires it exactly as composition does.
+	// Without it every delivery falls back to KilasFlow's own envelope and the
+	// tests would assert a shape no deployment produces.
+	triggers := webhook.NewRegistry()
+	if err := nodes.RegisterTriggerKinds(triggers); err != nil {
+		t.Fatalf("RegisterTriggerKinds() error = %v", err)
+	}
 
 	return harness{
-		handler:     webhook.NewHandler(workflows, runtime, credentialStore, nil, webhook.Limits{MaxBodyBytes: 512, ResponseTimeout: 2 * time.Second}),
+		handler: webhook.NewHandler(workflows, runner, credentialStore, broker, webhook.Limits{MaxBodyBytes: 512, ResponseTimeout: 2 * time.Second}).
+			WithTriggers(triggers),
 		workflows:   workflows,
 		credentials: credentialStore,
 		runtime:     runtime,
+		runner:      runner,
 		registry:    registry,
 		tenant:      repository.TenantScope{ID: repository.DefaultTenantID},
 	}
@@ -176,20 +226,20 @@ func TestWebhookAnswersImmediatelyAndQueuesANormalExecution(t *testing.T) {
 	if recorder.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, want the configured 202 (body: %s)", recorder.Code, recorder.Body)
 	}
+	// n8n's own acknowledgement, not KilasFlow's {executionId, status}.
 	var body struct {
-		ExecutionID string `json:"executionId"`
-		Status      string `json:"status"`
+		Message string `json:"message"`
 	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode response = %v", err)
 	}
-	if body.ExecutionID == "" || body.Status != "queued" {
-		t.Fatalf("response = %#v, want a queued execution record", body)
+	if body.Message != "Workflow was started" {
+		t.Fatalf("response = %#v, want n8n's acknowledgement", body)
 	}
 
 	// The webhook must go through the same durable queue as a manual run.
 	h.drain(t)
-	record, err := h.runtime.Get(context.Background(), h.tenant, body.ExecutionID)
+	record, err := h.runtime.Get(context.Background(), h.tenant, h.lastExecution(t))
 	if err != nil {
 		t.Fatalf("Get() error = %v", err)
 	}
@@ -205,6 +255,7 @@ func TestWebhookRespondsFromARespondToWebhookNode(t *testing.T) {
 	}, workflow.Node{
 		ID: "respond", Name: "Respond to Webhook", Type: nodes.RespondNodeType, TypeVersion: workflow.V(1),
 		Parameters: map[string]any{
+			"respondWith":     "json",
 			"responseCode":    float64(201),
 			"responseBody":    `{"ok":true}`,
 			"responseHeaders": map[string]any{"X-Kilas": "yes"},
@@ -242,7 +293,7 @@ func TestWebhookRespondsFromARespondToWebhookNode(t *testing.T) {
 	}
 }
 
-func TestWebhookReportsWhenNoResponseNodeWasReached(t *testing.T) {
+func TestWebhookAnswersEmptyWhenNoResponseNodeWasReached(t *testing.T) {
 	h := newHarness(t)
 	// Configured to answer from a node, but the graph has none.
 	active := h.activate(t, webhookDocument("No responder", map[string]any{
@@ -261,11 +312,13 @@ func TestWebhookReportsWhenNoResponseNodeWasReached(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	h.handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, h.url(t, active), strings.NewReader(`{}`)))
 
-	if recorder.Code != http.StatusInternalServerError {
-		t.Fatalf("status = %d, want 500 (body: %s)", recorder.Code, recorder.Body)
+	// n8n answers 200 with an empty body: the run finished cleanly, it simply
+	// had nothing to say. A 500 here told the caller the workflow had broken.
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", recorder.Code, recorder.Body)
 	}
-	if !strings.Contains(recorder.Body.String(), "Respond to Webhook") {
-		t.Errorf("body = %s, want it to name the missing node", recorder.Body)
+	if got := strings.TrimSpace(recorder.Body.String()); got != "" {
+		t.Errorf("body = %q, want nothing", got)
 	}
 }
 
@@ -365,22 +418,40 @@ func TestWebhookEnforcesBasicAuthentication(t *testing.T) {
 	}
 }
 
-func TestWebhookConfiguredToAuthenticateFailsClosedWithoutACredential(t *testing.T) {
+// An endpoint that asks for authentication but has nothing to check against
+// used to activate and then answer 500 to every caller. Refusing activation
+// names the problem while it can still be fixed, and keeps a secured n8n
+// endpoint from going live unprotected.
+func TestWebhookConfiguredToAuthenticateWithoutACredentialIsRefusedAtActivation(t *testing.T) {
 	h := newHarness(t)
-	// Authentication requested, but no credential bound.
-	active := h.activate(t, webhookDocument("Misconfigured", map[string]any{
+	stored, err := h.workflows.SaveDraft(context.Background(), h.tenant, webhookDocument("Misconfigured", map[string]any{
 		"path": "half-secured", "httpMethod": http.MethodPost, "responseMode": "immediate", "authentication": "headerAuth",
 	}))
-
-	recorder := httptest.NewRecorder()
-	h.handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, h.url(t, active), strings.NewReader(`{}`)))
-
-	// Failing open would silently publish an unprotected endpoint.
-	if recorder.Code == http.StatusOK {
-		t.Fatalf("a webhook configured to authenticate answered without a credential: %s", recorder.Body)
+	if err != nil {
+		t.Fatalf("SaveDraft() error = %v", err)
 	}
-	if recorder.Code != http.StatusInternalServerError {
-		t.Errorf("status = %d, want 500", recorder.Code)
+	_, err = h.workflows.Activate(context.Background(), h.tenant, stored.ID, h.registry)
+	if err == nil {
+		t.Fatal("a webhook configured to authenticate was activated without a credential")
+	}
+	if !strings.Contains(err.Error(), "httpHeaderAuth") {
+		t.Errorf("error = %v, want it to name the credential type the node needs", err)
+	}
+}
+
+// A jwtAuth webhook is refused rather than quietly unauthenticated: n8n's JWT
+// mode has no verification here yet, and importing one used to activate an open
+// endpoint.
+func TestJWTWebhookIsRefusedAtActivationRatherThanSilentlyOpen(t *testing.T) {
+	h := newHarness(t)
+	stored, err := h.workflows.SaveDraft(context.Background(), h.tenant, webhookDocument("JWT", map[string]any{
+		"path": "jwt", "httpMethod": http.MethodPost, "responseMode": "immediate", "authentication": "jwtAuth",
+	}))
+	if err != nil {
+		t.Fatalf("SaveDraft() error = %v", err)
+	}
+	if _, err := h.workflows.Activate(context.Background(), h.tenant, stored.ID, h.registry); err == nil {
+		t.Fatal("a jwtAuth webhook activated without any JWT verification existing")
 	}
 }
 
@@ -406,12 +477,8 @@ func TestWebhookRedactsInboundHeadersButKeepsTheBody(t *testing.T) {
 		t.Fatalf("status = %d (body: %s)", recorder.Code, recorder.Body)
 	}
 
-	var body struct {
-		ExecutionID string `json:"executionId"`
-	}
-	_ = json.Unmarshal(recorder.Body.Bytes(), &body)
 	h.drain(t)
-	record, err := h.runtime.Get(context.Background(), h.tenant, body.ExecutionID)
+	record, err := h.runtime.Get(context.Background(), h.tenant, h.lastExecution(t))
 	if err != nil {
 		t.Fatalf("Get() error = %v", err)
 	}
@@ -448,12 +515,8 @@ func TestWebhookDeliversSessionAndSchemePrefixedTextVerbatim(t *testing.T) {
 		t.Fatalf("status = %d (body: %s)", recorder.Code, recorder.Body)
 	}
 
-	var body struct {
-		ExecutionID string `json:"executionId"`
-	}
-	_ = json.Unmarshal(recorder.Body.Bytes(), &body)
 	h.drain(t)
-	record, err := h.runtime.Get(context.Background(), h.tenant, body.ExecutionID)
+	record, err := h.runtime.Get(context.Background(), h.tenant, h.lastExecution(t))
 	if err != nil {
 		t.Fatalf("Get() error = %v", err)
 	}
@@ -497,54 +560,311 @@ func TestWebhookEnforcesTheBodyLimit(t *testing.T) {
 	}
 }
 
-func TestActivationRefusesTwoWorkflowsClaimingTheSameEndpoint(t *testing.T) {
+// Two workflows may carry the same path label.
+//
+// The label is a display name; the routable identity is the opaque route minted
+// per node, so importing the same n8n template twice — or activating two
+// workflows that both call their endpoint "shared" — is not a conflict. It used
+// to be refused, with a 500 naming nothing.
+func TestTwoWorkflowsMayShareOnePathLabel(t *testing.T) {
 	h := newHarness(t)
-	h.activate(t, webhookDocument("First", map[string]any{
+	first := h.activate(t, webhookDocument("First", map[string]any{
+		"path": "shared", "httpMethod": http.MethodPost, "responseMode": "immediate",
+	}))
+	second := h.activate(t, webhookDocument("Second", map[string]any{
 		"path": "shared", "httpMethod": http.MethodPost, "responseMode": "immediate",
 	}))
 
-	second, err := h.workflows.SaveDraft(context.Background(), h.tenant, webhookDocument("Second", map[string]any{
-		"path": "shared", "httpMethod": http.MethodPost, "responseMode": "immediate",
-	}))
-	if err != nil {
-		t.Fatalf("SaveDraft() error = %v", err)
+	for name, testCase := range map[string]struct {
+		url  string
+		want string
+	}{
+		"first":  {h.url(t, first), first.ID},
+		"second": {h.url(t, second), second.ID},
+	} {
+		recorder := httptest.NewRecorder()
+		h.handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, testCase.url, strings.NewReader(`{}`)))
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("%s: status = %d (body: %s)", name, recorder.Code, recorder.Body)
+		}
+		h.drain(t)
+		record, err := h.runtime.Get(context.Background(), h.tenant, h.lastExecution(t))
+		if err != nil {
+			t.Fatalf("%s: Get() error = %v", name, err)
+		}
+		if record.WorkflowID != testCase.want {
+			t.Errorf("%s: delivery ran workflow %s, want %s", name, record.WorkflowID, testCase.want)
+		}
 	}
-	// An ambiguous route has no correct destination, so activation must fail
-	// rather than leaving the winner to chance.
-	if _, err := h.workflows.Activate(context.Background(), h.tenant, second.ID, h.registry); err == nil {
-		t.Fatal("two active workflows were allowed to claim the same endpoint")
+}
+
+// One path may answer several methods: n8n serves GET and POST on the same
+// endpoint, and binding only one of them answered 404 to the other.
+func TestOnePathMayAnswerSeveralMethods(t *testing.T) {
+	h := newHarness(t)
+	active := h.activate(t, webhookDocument("Paired", map[string]any{
+		"path": "items", "multipleMethods": true, "httpMethods": []any{http.MethodGet, http.MethodPost},
+		"responseMode": "immediate",
+	}))
+
+	for _, method := range []string{http.MethodGet, http.MethodPost} {
+		recorder := httptest.NewRecorder()
+		h.handler.ServeHTTP(recorder, httptest.NewRequest(method, h.url(t, active), nil))
+		if recorder.Code != http.StatusOK {
+			t.Errorf("%s status = %d (body: %s), want both bound methods answered", method, recorder.Code, recorder.Body)
+		}
 	}
 }
 
 func TestWebhookPayloadCarriesTheRequestShape(t *testing.T) {
 	h := newHarness(t)
+	// The Set node reads a header inside the workflow, which is the half that
+	// has to see the caller's real value under n8n's lower-case name: asserting
+	// on the stored record alone would prove nothing, because the repository
+	// redacts credential-shaped header names on the way to disk.
 	active := h.activate(t, webhookDocument("Shape", map[string]any{
 		"path": "shape", "httpMethod": http.MethodPost, "responseMode": "immediate",
+	}, workflow.Node{
+		ID: "set", Name: "Set", Type: "kilasflow.set", TypeVersion: workflow.V(1),
+		Parameters: map[string]any{"assignments": map[string]any{
+			"seen": map[string]any{"mode": "expression", "value": "{{ $json.headers['x-api-key'] }}"},
+		}},
 	}))
 
+	request := httptest.NewRequest(http.MethodPost, h.url(t, active)+"?tier=gold&tag=a&tag=b", strings.NewReader(`{"id":9}`))
+	request.Header.Set("X-Api-Key", "abc")
+	request.Header.Set("X-Tenant", "acme")
 	recorder := httptest.NewRecorder()
-	h.handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, h.url(t, active)+"?tier=gold", strings.NewReader(`{"id":9}`)))
-	var body struct {
-		ExecutionID string `json:"executionId"`
-	}
-	_ = json.Unmarshal(recorder.Body.Bytes(), &body)
+	h.handler.ServeHTTP(recorder, request)
 
 	h.drain(t)
-	record, err := h.runtime.Get(context.Background(), h.tenant, body.ExecutionID)
+	record, err := h.runtime.Get(context.Background(), h.tenant, h.lastExecution(t))
 	if err != nil {
 		t.Fatalf("Get() error = %v", err)
 	}
 	var input struct {
-		Method string            `json:"method"`
-		Path   string            `json:"path"`
-		Query  map[string]string `json:"query"`
-		Body   map[string]any    `json:"body"`
+		Body          map[string]any `json:"body"`
+		Headers       map[string]any `json:"headers"`
+		Params        map[string]any `json:"params"`
+		Query         map[string]any `json:"query"`
+		WebhookURL    string         `json:"webhookUrl"`
+		ExecutionMode string         `json:"executionMode"`
 	}
 	if err := json.Unmarshal(record.Input, &input); err != nil {
 		t.Fatalf("decode trigger input = %v", err)
 	}
-	if input.Method != http.MethodPost || input.Path != "shape" || input.Query["tier"] != "gold" || input.Body["id"] != float64(9) {
-		t.Fatalf("trigger input = %#v, want the request shape", input)
+	// n8n's item shape, key for key. The item carries the parsed body, the
+	// request headers under their lower-case names, the path parameters, the
+	// query, the address it arrived at and the mode it ran in.
+	if input.Body["id"] != float64(9) {
+		t.Errorf("body = %#v, want the parsed request body", input.Body)
+	}
+	if _, present := input.Headers["x-api-key"]; !present {
+		t.Errorf("headers = %#v, want the caller's header under its lower-case name", input.Headers)
+	}
+	if input.Headers["host"] == nil {
+		t.Errorf("headers = %#v, want host", input.Headers)
+	}
+	if input.Query["tier"] != "gold" {
+		t.Errorf("query = %#v, want the query string", input.Query)
+	}
+	tags, ok := input.Query["tag"].([]any)
+	if !ok || len(tags) != 2 || tags[0] != "a" || tags[1] != "b" {
+		t.Errorf("query tag = %#v, want a list for a repeated key", input.Query["tag"])
+	}
+	if _, present := input.Params["id"]; present {
+		t.Errorf("params = %#v, want no parameters on a route with none", input.Params)
+	}
+	if !strings.HasSuffix(input.WebhookURL, h.url(t, active)) {
+		t.Errorf("webhookUrl = %q, want the address the request arrived at", input.WebhookURL)
+	}
+	if input.ExecutionMode != "production" {
+		t.Errorf("executionMode = %q, want production", input.ExecutionMode)
+	}
+
+	// What the workflow saw. A header check written the way an n8n workflow
+	// writes it — `$json.headers['x-api-key']` — resolves to the caller's real
+	// value, which it could not before: the name arrived as `X-Api-Key` so the
+	// lookup was undefined, and the value was "[redacted]" before the item was
+	// ever built. Main's ruling of 2026-09-20 is that the stored record is the
+	// runtime input, so inbound headers are stored verbatim and every read
+	// surface (the executions API, the event feed) is where they are hidden.
+	encoded, _ := json.Marshal(record)
+	if !strings.Contains(string(encoded), `"seen":"abc"`) {
+		t.Errorf("the workflow did not read the caller's header value: %s", encoded)
+	}
+}
+
+// A trigger the author switched off must not open an endpoint. The runner
+// refuses to start a disabled trigger, so a binding for one would answer and
+// then never run anything.
+func TestADisabledTriggerIsNotRegistered(t *testing.T) {
+	h := newHarness(t)
+	document := webhookDocument("Disabled", map[string]any{
+		"path": "switched-off", "httpMethod": http.MethodPost, "responseMode": "immediate",
+	})
+	document.Nodes[0].Disabled = true
+	stored, err := h.workflows.SaveDraft(context.Background(), h.tenant, document)
+	if err != nil {
+		t.Fatalf("SaveDraft() error = %v", err)
+	}
+	active, err := h.workflows.Activate(context.Background(), h.tenant, stored.ID, h.registry)
+	if err != nil {
+		t.Fatalf("Activate() error = %v", err)
+	}
+	routes, err := h.workflows.WebhookRoutes(context.Background(), h.tenant, active.ID)
+	if err != nil {
+		t.Fatalf("WebhookRoutes() error = %v", err)
+	}
+	if len(routes) != 0 {
+		t.Fatalf("routes = %#v, want none for a disabled trigger", routes)
+	}
+}
+
+// A route pattern's parameters are filled from the segments after the route,
+// which is how n8n's `/user/:id` endpoints work and what used to be impossible:
+// the request answered 404 and `$json.params` was always empty.
+func TestWebhookFillsPathParametersFromTheRoutePattern(t *testing.T) {
+	h := newHarness(t)
+	active := h.activate(t, webhookDocument("REST", map[string]any{
+		"path": "user/:id", "httpMethod": http.MethodGet, "responseMode": "immediate",
+	}))
+
+	recorder := httptest.NewRecorder()
+	h.handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, h.url(t, active)+"/42", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d (body: %s), want the parameterised route to match", recorder.Code, recorder.Body)
+	}
+	h.drain(t)
+	record, err := h.runtime.Get(context.Background(), h.tenant, h.lastExecution(t))
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	var input struct {
+		Params map[string]any `json:"params"`
+	}
+	if err := json.Unmarshal(record.Input, &input); err != nil {
+		t.Fatalf("decode trigger input = %v", err)
+	}
+	if input.Params["id"] != "42" {
+		t.Fatalf("params = %#v, want the path parameter", input.Params)
+	}
+}
+
+// A cross-origin caller is answered with CORS headers, and its preflight is
+// answered at all — a browser page could not post to a KilasFlow webhook
+// before this, because OPTIONS matched no binding and 404ed.
+func TestWebhookAnswersCORSPreflightAndEchoesTheOrigin(t *testing.T) {
+	h := newHarness(t)
+	active := h.activate(t, webhookDocument("Browser", map[string]any{
+		"path": "browser", "httpMethod": http.MethodPost, "responseMode": "immediate",
+	}))
+
+	preflight := httptest.NewRequest(http.MethodOptions, h.url(t, active), nil)
+	preflight.Header.Set("Origin", "https://app.example.test")
+	preflight.Header.Set("Access-Control-Request-Method", http.MethodPost)
+	preflight.Header.Set("Access-Control-Request-Headers", "content-type")
+	recorder := httptest.NewRecorder()
+	h.handler.ServeHTTP(recorder, preflight)
+
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("preflight status = %d, want 204 (body: %s)", recorder.Code, recorder.Body)
+	}
+	if got := recorder.Header().Get("Access-Control-Allow-Origin"); got != "https://app.example.test" {
+		t.Errorf("Allow-Origin = %q, want the caller's origin", got)
+	}
+	if got := recorder.Header().Get("Access-Control-Allow-Methods"); !strings.Contains(got, http.MethodPost) {
+		t.Errorf("Allow-Methods = %q, want the bound method", got)
+	}
+	if got := recorder.Header().Get("Access-Control-Allow-Headers"); got != "content-type" {
+		t.Errorf("Allow-Headers = %q, want the requested headers", got)
+	}
+	if recorder.Header().Get("Access-Control-Max-Age") == "" {
+		t.Error("a preflight was answered without a Max-Age")
+	}
+
+	request := httptest.NewRequest(http.MethodPost, h.url(t, active), strings.NewReader(`{}`))
+	request.Header.Set("Origin", "https://app.example.test")
+	answered := httptest.NewRecorder()
+	h.handler.ServeHTTP(answered, request)
+	if got := answered.Header().Get("Access-Control-Allow-Origin"); got != "https://app.example.test" {
+		t.Errorf("delivery Allow-Origin = %q, want the caller's origin echoed", got)
+	}
+}
+
+// An origin the trigger does not allow gets no CORS header, so the browser
+// refuses the response rather than the workflow silently accepting it.
+func TestWebhookRefusesAnOriginOutsideTheAllowList(t *testing.T) {
+	h := newHarness(t)
+	active := h.activate(t, webhookDocument("Locked", map[string]any{
+		"path": "locked", "httpMethod": http.MethodPost, "responseMode": "immediate",
+		"options": map[string]any{"allowedOrigins": "https://app.example.test"},
+	}))
+
+	request := httptest.NewRequest(http.MethodPost, h.url(t, active), strings.NewReader(`{}`))
+	request.Header.Set("Origin", "https://elsewhere.example.test")
+	recorder := httptest.NewRecorder()
+	h.handler.ServeHTTP(recorder, request)
+
+	if got := recorder.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Errorf("Allow-Origin = %q, want none for an origin outside the allow-list", got)
+	}
+}
+
+// An endpoint restricted by an IP allow-list used to arrive open after an
+// import, which silently published a protected endpoint.
+func TestWebhookIPAllowListRefusesOtherCallers(t *testing.T) {
+	h := newHarness(t)
+	active := h.activate(t, webhookDocument("Guarded", map[string]any{
+		"path": "guarded", "httpMethod": http.MethodPost, "responseMode": "immediate",
+		"options": map[string]any{"ipWhitelist": "10.0.0.1, 203.0.113.0/24"},
+	}))
+
+	refused := httptest.NewRequest(http.MethodPost, h.url(t, active), strings.NewReader(`{}`))
+	refused.RemoteAddr = "198.51.100.7:1234"
+	recorder := httptest.NewRecorder()
+	h.handler.ServeHTTP(recorder, refused)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("status = %d (body: %s), want 403 for an address outside the list", recorder.Code, recorder.Body)
+	}
+	if h.queuedCount() != 0 {
+		t.Error("a refused caller still queued an execution")
+	}
+
+	allowed := httptest.NewRequest(http.MethodPost, h.url(t, active), strings.NewReader(`{}`))
+	allowed.RemoteAddr = "203.0.113.9:1234"
+	accepted := httptest.NewRecorder()
+	h.handler.ServeHTTP(accepted, allowed)
+	if accepted.Code != http.StatusOK {
+		t.Fatalf("status = %d (body: %s), want an address inside the range accepted", accepted.Code, accepted.Body)
+	}
+}
+
+// An immediate acknowledgement carries the configured code, body and headers,
+// and defaults to n8n's own message.
+func TestWebhookImmediateAcknowledgementCarriesTheConfiguredAnswer(t *testing.T) {
+	h := newHarness(t)
+	active := h.activate(t, webhookDocument("Ack", map[string]any{
+		"path": "ack", "httpMethod": http.MethodPost, "responseMode": "immediate",
+		"options": map[string]any{
+			"responseCode":    float64(201),
+			"responseData":    "thanks!",
+			"responseHeaders": map[string]any{"X-Ack": "1"},
+			"allowedOrigins":  "*",
+		},
+	}))
+
+	recorder := httptest.NewRecorder()
+	h.handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, h.url(t, active), strings.NewReader(`{}`)))
+
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want the configured 201 (body: %s)", recorder.Code, recorder.Body)
+	}
+	if got := recorder.Body.String(); got != "thanks!" {
+		t.Errorf("body = %q, want the configured acknowledgement", got)
+	}
+	if got := recorder.Header().Get("X-Ack"); got != "1" {
+		t.Errorf("X-Ack = %q, want the configured header", got)
 	}
 }
 
@@ -571,9 +891,9 @@ func TestBranchedWebhookAnswersFromTheBranchThatRan(t *testing.T) {
 					"field": "body.tier", "operator": "equals", "value": "vip",
 				}}}},
 			{ID: "vip", Name: "VIP reply", Type: "kilasflow.respondToWebhook", TypeVersion: workflow.V(1),
-				Parameters: map[string]any{"responseCode": float64(200), "responseBody": "vip-branch"}},
+				Parameters: map[string]any{"respondWith": "text", "responseCode": float64(200), "responseBody": "vip-branch"}},
 			{ID: "standard", Name: "Standard reply", Type: "kilasflow.respondToWebhook", TypeVersion: workflow.V(1),
-				Parameters: map[string]any{"responseCode": float64(202), "responseBody": "standard-branch"}},
+				Parameters: map[string]any{"respondWith": "text", "responseCode": float64(202), "responseBody": "standard-branch"}},
 		},
 		Connections: []workflow.Connection{
 			{ID: "c1", Kind: workflow.ConnectionMain,
@@ -693,11 +1013,7 @@ func TestTwoTenantsCanActivateTheSameTemplatePath(t *testing.T) {
 		if recorder.Code != http.StatusAccepted {
 			t.Fatalf("%s: status = %d (body: %s)", name, recorder.Code, recorder.Body)
 		}
-		var body struct {
-			ExecutionID string `json:"executionId"`
-		}
-		_ = json.Unmarshal(recorder.Body.Bytes(), &body)
-		record, err := h.runtime.Get(context.Background(), testCase.tenant, body.ExecutionID)
+		record, err := h.runtime.Get(context.Background(), testCase.tenant, h.lastExecution(t))
 		if err != nil {
 			t.Fatalf("%s: Get() error = %v", name, err)
 		}
@@ -761,7 +1077,13 @@ func TestRepeatedDeliveryRunsTheWorkflowOnce(t *testing.T) {
 			t.Errorf("attempt %d was not reported as a duplicate", attempt)
 		}
 		if body.ExecutionID != "" {
+			// A duplicate answer is KilasFlow's own, and it names the original
+			// execution so a retrying sender can follow it.
 			executions[body.ExecutionID] = true
+			continue
+		}
+		if attempt == 0 {
+			executions[h.lastExecution(t)] = true
 		}
 	}
 
@@ -786,11 +1108,7 @@ func TestDistinctDeliveriesAreNeverCollapsed(t *testing.T) {
 		request.Header.Set("X-Webhook-Request-Id", id)
 		recorder := httptest.NewRecorder()
 		h.handler.ServeHTTP(recorder, request)
-		var body struct {
-			ExecutionID string `json:"executionId"`
-		}
-		_ = json.Unmarshal(recorder.Body.Bytes(), &body)
-		executions[body.ExecutionID] = true
+		executions[h.lastExecution(t)] = true
 	}
 	if len(executions) != 3 {
 		t.Errorf("three distinct deliveries produced %d executions, want 3", len(executions))
@@ -814,11 +1132,7 @@ func TestADeliveryWithNoIdentifierIsNeverDeduped(t *testing.T) {
 		// a user are not a duplicate delivery.
 		recorder := httptest.NewRecorder()
 		h.handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, url, strings.NewReader(`{"text":"hi"}`)))
-		var body struct {
-			ExecutionID string `json:"executionId"`
-		}
-		_ = json.Unmarshal(recorder.Body.Bytes(), &body)
-		executions[body.ExecutionID] = true
+		executions[h.lastExecution(t)] = true
 	}
 	if len(executions) != 3 {
 		t.Errorf("three unidentified deliveries produced %d executions, want 3", len(executions))
@@ -847,12 +1161,8 @@ func TestRawBytesNeverReachAStoredRecord(t *testing.T) {
 		t.Fatalf("status = %d (body: %s)", recorder.Code, recorder.Body)
 	}
 
-	var accepted struct {
-		ExecutionID string `json:"executionId"`
-	}
-	_ = json.Unmarshal(recorder.Body.Bytes(), &accepted)
 	h.drain(t)
-	record, err := h.runtime.Get(context.Background(), h.tenant, accepted.ExecutionID)
+	record, err := h.runtime.Get(context.Background(), h.tenant, h.lastExecution(t))
 	if err != nil {
 		t.Fatalf("Get() error = %v", err)
 	}
@@ -897,6 +1207,70 @@ func drainWhile(t *testing.T, h harness, request func()) {
 	<-done
 }
 
+// A Respond node holding n8n's default respondWith (which an export omits)
+// answers with the first incoming item, not an empty text response.
+func TestRespondToWebhookDefaultsToTheFirstIncomingItem(t *testing.T) {
+	h := newHarness(t)
+	active := h.activate(t, webhookDocument("Default responder", map[string]any{
+		"path": "default-respond", "httpMethod": http.MethodPost, "responseMode": "responseNode",
+	}, workflow.Node{
+		ID: "set", Name: "Set", Type: "kilasflow.set", TypeVersion: workflow.V(1),
+		Parameters: map[string]any{"assignments": map[string]any{"status": "ready"}},
+	}, workflow.Node{
+		ID: "respond", Name: "Respond to Webhook", Type: nodes.RespondNodeType, TypeVersion: workflow.V(1),
+		Parameters: map[string]any{},
+	}))
+
+	recorder := httptest.NewRecorder()
+	drainWhile(t, h, func() {
+		h.handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, h.url(t, active), strings.NewReader(`{}`)))
+	})
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d (body: %s)", recorder.Code, recorder.Body)
+	}
+	item := decodeBody[map[string]any](t, recorder)
+	if item["status"] != "ready" {
+		t.Fatalf("body = %s, want the first incoming item", recorder.Body)
+	}
+}
+
+// The response must not travel on the items: n8n passes the Respond node's
+// input through unchanged, and a `$response` field leaked into every downstream
+// node's data and into the stored execution output.
+func TestRespondToWebhookDoesNotLeakTheResponseIntoDownstreamItems(t *testing.T) {
+	h := newHarness(t)
+	active := h.activate(t, webhookDocument("Passthrough", map[string]any{
+		"path": "passthrough", "httpMethod": http.MethodPost, "responseMode": "responseNode",
+	}, workflow.Node{
+		ID: "respond", Name: "Respond to Webhook", Type: nodes.RespondNodeType, TypeVersion: workflow.V(1),
+		Parameters: map[string]any{"respondWith": "text", "responseBody": "accepted"},
+	}, workflow.Node{
+		ID: "after", Name: "After", Type: "kilasflow.noOp", TypeVersion: workflow.V(1),
+		Parameters: map[string]any{},
+	}))
+
+	recorder := httptest.NewRecorder()
+	drainWhile(t, h, func() {
+		h.handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, h.url(t, active), strings.NewReader(`{"id":3}`)))
+	})
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d (body: %s)", recorder.Code, recorder.Body)
+	}
+	if got := recorder.Body.String(); got != "accepted" {
+		t.Fatalf("body = %q, want the Respond node's text", got)
+	}
+
+	record, err := h.runtime.Get(context.Background(), h.tenant, h.lastExecution(t))
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	encoded, _ := json.Marshal(record)
+	if strings.Contains(string(encoded), "$response") {
+		t.Fatalf("the stored execution carries $response as item data: %s", encoded)
+	}
+}
+
 // decodeBody reads a response body as JSON, whichever shape it is.
 func decodeBody[T any](t *testing.T, recorder *httptest.ResponseRecorder) T {
 	t.Helper()
@@ -923,7 +1297,7 @@ func TestWebhookLastNodeReturnsTheLastNodesItemsAsN8NDoes(t *testing.T) {
 	}{
 		"the default is the first entry as an object": {wantStatus: http.StatusOK},
 		"all entries is always an array":              {responseData: "allEntries", wantStatus: http.StatusOK, wantArray: true},
-		"no data is an empty 204":                     {responseData: "noData", wantStatus: http.StatusNoContent, wantEmpty: true},
+		"no data is an empty 200":                     {responseData: "noData", wantStatus: http.StatusOK, wantEmpty: true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			h := newHarness(t)
@@ -993,11 +1367,12 @@ func TestRespondToWebhookCoversN8NsRespondWithSet(t *testing.T) {
 			parameters: map[string]any{"respondWith": "noData", "responseCode": float64(204)},
 			wantStatus: http.StatusNoContent, wantBody: "",
 		},
-		// A redirect with a 200 is not a redirect, so the code defaults to 302
-		// rather than leaving a browser on a blank page.
-		"redirect defaults to 302 and sets Location": {
+		// A redirect with a 200 is not a redirect, so the code defaults to 307 —
+		// n8n's own default, which keeps a POST a POST where a 302 turns it into
+		// a GET in every browser.
+		"redirect defaults to 307 and sets Location": {
 			parameters: map[string]any{"respondWith": "redirect", "redirectURL": "https://example.test/thanks"},
-			wantStatus: http.StatusFound, wantBody: "",
+			wantStatus: http.StatusTemporaryRedirect, wantBody: "",
 			wantHeader: [2]string{"Location", "https://example.test/thanks"},
 		},
 	} {

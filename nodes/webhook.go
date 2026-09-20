@@ -11,6 +11,7 @@ import (
 	"github.com/kilaslabs/kilas-flow/internal/expression"
 	"github.com/kilaslabs/kilas-flow/internal/node"
 	"github.com/kilaslabs/kilas-flow/internal/scheduler"
+	"github.com/kilaslabs/kilas-flow/internal/webhook"
 	"github.com/kilaslabs/kilas-flow/internal/workflow"
 )
 
@@ -29,12 +30,26 @@ const (
 	ScheduleType    = "kilasflow.schedule"
 )
 
-// Webhook authentication modes approved for V1.
+// Webhook authentication modes.
+//
+// jwtAuth is accepted from an import and refused at activation rather than
+// rewritten to "none": an n8n endpoint behind a JWT arrived here unauthenticated
+// and activated, which silently published a protected endpoint. Refusing to
+// activate is a visible failure an operator can act on; silently dropping the
+// check is not.
 const (
 	WebhookAuthNone   = "none"
 	WebhookAuthBasic  = "basicAuth"
 	WebhookAuthHeader = "headerAuth"
+	WebhookAuthJWT    = "jwtAuth"
 )
+
+// credentialTypesForAuth is the credential each auth mode needs attached.
+var credentialTypesForAuth = map[string]string{
+	WebhookAuthBasic:  "httpBasicAuth",
+	WebhookAuthHeader: "httpHeaderAuth",
+	WebhookAuthJWT:    "jwtAuth",
+}
 
 // Response modes decide when and with what a webhook request is answered.
 const (
@@ -98,12 +113,30 @@ func webhookTrigger() node.Definition {
 				Description: "Header carrying the sender's own identifier for a delivery, such as X-Webhook-Request-Id. When set, a repeated delivery with the same identifier is answered without running the workflow again. Leave empty to run every request.",
 			},
 			{
-				Key: "httpMethod", Label: "HTTP method", Kind: node.PropertyOptions, Required: true, Default: "POST",
+				// GET is n8n's own default, which is why an n8n export of a GET
+				// webhook carries no method at all — and why every such import
+				// used to bind POST and answer 404 to its own callers.
+				Key: "httpMethod", Label: "HTTP method", Kind: node.PropertyOptions, Required: true, Default: http.MethodGet,
 				Options: []node.PropertyOption{
 					{Label: "GET", Value: http.MethodGet}, {Label: "POST", Value: http.MethodPost},
 					{Label: "PUT", Value: http.MethodPut}, {Label: "PATCH", Value: http.MethodPatch},
-					{Label: "DELETE", Value: http.MethodDelete},
+					{Label: "DELETE", Value: http.MethodDelete}, {Label: "HEAD", Value: http.MethodHead},
 				},
+				VisibleWhen: []node.VisibilityCondition{{Key: "multipleMethods", Equals: false}},
+			},
+			{
+				Key: "multipleMethods", Label: "Allow Multiple HTTP Methods", Kind: node.PropertyBoolean, Default: false,
+				Description: "Answer several methods on one endpoint, which is how n8n's v2.1 webhook works.",
+			},
+			{
+				Key: "httpMethods", Label: "HTTP methods", Kind: node.PropertyMultiOptions, Default: []any{http.MethodGet},
+				Description: "Every method this endpoint answers. One binding is created per method.",
+				Options: []node.PropertyOption{
+					{Label: "GET", Value: http.MethodGet}, {Label: "POST", Value: http.MethodPost},
+					{Label: "PUT", Value: http.MethodPut}, {Label: "PATCH", Value: http.MethodPatch},
+					{Label: "DELETE", Value: http.MethodDelete}, {Label: "HEAD", Value: http.MethodHead},
+				},
+				VisibleWhen: []node.VisibilityCondition{{Key: "multipleMethods", Equals: true}},
 			},
 			{
 				Key: "authentication", Label: "Authentication", Kind: node.PropertyOptions, Required: true, Default: WebhookAuthNone,
@@ -112,6 +145,8 @@ func webhookTrigger() node.Definition {
 					{Label: "Basic auth", Value: WebhookAuthBasic},
 					{Label: "Header auth", Value: WebhookAuthHeader},
 				},
+				Description: "An authenticated endpoint needs a credential of the matching type attached to the node " +
+					"before the workflow can be activated.",
 			},
 			{
 				Key: "responseMode", Label: "Respond", Kind: node.PropertyOptions, Required: true, Default: ResponseModeImmediate,
@@ -135,6 +170,52 @@ func webhookTrigger() node.Definition {
 				Description: "What the last node's items become in the response body.",
 				VisibleWhen: []node.VisibilityCondition{{Key: "responseMode", Equals: ResponseModeLastNode}},
 			},
+			{
+				// n8n's own options collection, key for key, so an imported node's
+				// settings land in the same controls and a saved native node
+				// means the same thing on both platforms.
+				Key: "options", Label: "Options", Kind: node.PropertyCollection,
+				Fields: []node.PropertyDefinition{
+					{
+						Key: "responseCode", Label: "Response Code", Kind: node.PropertyNumber,
+						Description: "The status the caller is answered with.",
+					},
+					{
+						Key: "responseData", Label: "Response Data", Kind: node.PropertyString,
+						Description: "A custom acknowledgement body, sent instead of the default message.",
+						VisibleWhen: []node.VisibilityCondition{{Key: "responseMode", Equals: ResponseModeImmediate}},
+					},
+					{
+						Key: "responseHeaders", Label: "Response Headers", Kind: node.PropertyKeyValue,
+						Description: "Headers added to the acknowledgement.",
+					},
+					{
+						Key: "noResponseBody", Label: "No Response Body", Kind: node.PropertyBoolean, Default: false,
+						Description: "Acknowledge with the status and no body at all.",
+						VisibleWhen: []node.VisibilityCondition{{Key: "responseMode", Equals: ResponseModeImmediate}},
+					},
+					{
+						Key: "allowedOrigins", Label: "Allowed Origins (CORS)", Kind: node.PropertyString, Default: "*",
+						Description: "Comma-separated origins allowed to call this endpoint from a browser. `*` accepts any.",
+					},
+					{
+						Key: "ipWhitelist", Label: "IP Allow-list", Kind: node.PropertyString,
+						Description: "Comma-separated addresses or CIDR ranges allowed to call this endpoint. " +
+							"Empty accepts every caller. The check uses the connection's own peer address and " +
+							"deliberately does not trust X-Forwarded-For, so behind a reverse proxy the list " +
+							"should also be enforced there.",
+					},
+					{
+						Key: "ignoreBots", Label: "Ignore Bots", Kind: node.PropertyBoolean, Default: false,
+						Description: "Deliveries whose User-Agent names a crawler are acknowledged and not run.",
+					},
+					{
+						Key: "rawBody", Label: "Raw Body", Kind: node.PropertyBoolean, Default: false,
+						Description: "Send the acknowledgement with the body exactly as configured rather than as JSON.",
+						VisibleWhen: []node.VisibilityCondition{{Key: "responseMode", Equals: ResponseModeImmediate}},
+					},
+				},
+			},
 		},
 		SharedSettings: sharedSettings(),
 		ExecutorID:     WebhookExecutorID,
@@ -156,7 +237,10 @@ func respondToWebhookNode() node.Definition {
 		Outputs:     mainOutput(),
 		Parameters: []node.PropertyDefinition{
 			{
-				Key: "respondWith", Label: "Respond with", Kind: node.PropertyOptions, Required: true, Default: RespondWithText,
+				// n8n's default is the first incoming item, and an import that
+				// omits the parameter (because it holds the default) used to be
+				// mapped to an empty text response.
+				Key: "respondWith", Label: "Respond with", Kind: node.PropertyOptions, Required: true, Default: RespondWithFirstIncomingItem,
 				Options: []node.PropertyOption{
 					{Label: "Text", Value: RespondWithText},
 					{Label: "JSON", Value: RespondWithJSON},
@@ -181,10 +265,16 @@ func respondToWebhookNode() node.Definition {
 			},
 			{
 				Key: "redirectURL", Label: "Redirect to", Kind: node.PropertyString,
-				Description: "Where the caller is sent. The status code defaults to 302 unless you set one.",
+				Description: "Where the caller is sent. The status code defaults to 307 unless you set one, so a " +
+					"POST stays a POST — a 302 turns it into a GET in every browser.",
 				VisibleWhen: []node.VisibilityCondition{{Key: "respondWith", Equals: RespondWithRedirect}},
 			},
 			{Key: "responseHeaders", Label: "Headers", Kind: node.PropertyKeyValue},
+			{
+				Key: "responseKey", Label: "Response key", Kind: node.PropertyString,
+				Description: "Wrap a JSON response under this key, so the caller receives `{\"key\": …}` rather than " +
+					"a bare object or array.",
+			},
 		},
 		SharedSettings: sharedSettings(),
 		ExecutorID:     RespondExecutorID,
@@ -241,14 +331,27 @@ func validateWebhookConfiguration(node workflow.Node) error {
 	if strings.ContainsAny(path, " ?#") {
 		return fmt.Errorf("path must not contain spaces, ?, or #")
 	}
-	method := strings.ToUpper(textParameter(node.Parameters, "httpMethod"))
-	switch method {
-	case "", http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
-	default:
-		return fmt.Errorf("httpMethod %q is not supported", method)
+	for _, method := range webhookMethods(node.Parameters) {
+		switch method {
+		case http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete, http.MethodHead:
+		default:
+			return fmt.Errorf("httpMethod %q is not supported", method)
+		}
 	}
-	switch textParameter(node.Parameters, "authentication") {
-	case "", WebhookAuthNone, WebhookAuthBasic, WebhookAuthHeader:
+	authentication := textParameter(node.Parameters, "authentication")
+	switch authentication {
+	case "", WebhookAuthNone:
+	case WebhookAuthBasic, WebhookAuthHeader:
+		// A webhook configured to authenticate but with nothing to check
+		// against used to activate and then answer 500 to every caller. Failing
+		// at activation names the problem while it can still be fixed.
+		required := credentialTypesForAuth[authentication]
+		if !hasCredential(node, required) {
+			return fmt.Errorf("this webhook authenticates with %s, so it needs a %s credential attached before it can be activated", authentication, required)
+		}
+	case WebhookAuthJWT:
+		return fmt.Errorf("n8n's jwtAuth mode is not supported yet; the imported webhook will not activate " +
+			"unauthenticated — attach an httpHeaderAuth credential and switch the mode to headerAuth")
 	default:
 		return fmt.Errorf("authentication mode is not supported")
 	}
@@ -258,6 +361,56 @@ func validateWebhookConfiguration(node workflow.Node) error {
 		return fmt.Errorf("responseMode is not supported")
 	}
 	return nil
+}
+
+// webhookMethods is every method the node answers on, from either the single
+// or the multi-method form.
+//
+// A node with nothing configured is GET, which is n8n's own default.
+func webhookMethods(parameters map[string]any) []string {
+	if multiple, _ := parameters["multipleMethods"].(bool); multiple {
+		methods := make([]string, 0, 2)
+		for _, entry := range listParameter(parameters["httpMethods"]) {
+			methods = append(methods, strings.ToUpper(entry))
+		}
+		if len(methods) > 0 {
+			return methods
+		}
+	}
+	method := strings.ToUpper(textParameter(parameters, "httpMethod"))
+	if method == "" {
+		return []string{http.MethodGet}
+	}
+	return []string{method}
+}
+
+// listParameter reads a multi-value parameter as a list of strings.
+func listParameter(value any) []string {
+	switch typed := value.(type) {
+	case []string:
+		return typed
+	case []any:
+		values := make([]string, 0, len(typed))
+		for _, entry := range typed {
+			if text, ok := entry.(string); ok && strings.TrimSpace(text) != "" {
+				values = append(values, strings.TrimSpace(text))
+			}
+		}
+		return values
+	case string:
+		if strings.TrimSpace(typed) == "" {
+			return nil
+		}
+		return []string{strings.TrimSpace(typed)}
+	default:
+		return nil
+	}
+}
+
+// hasCredential reports whether the node references a credential of one type.
+func hasCredential(node workflow.Node, credentialType string) bool {
+	id, present := node.Credentials[credentialType]
+	return present && strings.TrimSpace(id) != ""
 }
 
 func validateRespondConfiguration(node workflow.Node) error {
@@ -440,14 +593,15 @@ func executeRespond(ctx context.Context, ir workflow.IRNode, input workflow.Node
 		if err != nil {
 			return nil, fmt.Errorf("node %q: %w", ir.Name, err)
 		}
-		with := textValue(parameters["respondWith"], RespondWithText)
+		with := textValue(parameters["respondWith"], RespondWithFirstIncomingItem)
 		code := int(numberValue(parameters["responseCode"]))
 		if code == 0 {
 			code = http.StatusOK
 			if with == RespondWithRedirect {
-				// A redirect with a 200 is not a redirect. n8n defaults this
-				// one too rather than leaving a browser on a blank page.
-				code = http.StatusFound
+				// A redirect with a 200 is not a redirect. n8n defaults this one
+				// too rather than leaving a browser on a blank page, and its
+				// default code is 307 — a 302 rewrites a POST into a GET.
+				code = http.StatusTemporaryRedirect
 			}
 		}
 		if code < 100 || code > 599 {
@@ -465,16 +619,48 @@ func executeRespond(ctx context.Context, ir workflow.IRNode, input workflow.Node
 		if with == RespondWithRedirect {
 			headers["Location"] = textValue(parameters["redirectURL"], "")
 		}
-
-		copied := cloneItem(item)
-		copied.JSON[ResponseKey] = map[string]any{
-			"statusCode": float64(code),
-			"headers":    headers,
-			"body":       body,
+		if body, err = wrapResponseKey(body, textValue(parameters["responseKey"], "")); err != nil {
+			return nil, fmt.Errorf("node %q: %w", ir.Name, err)
 		}
-		out = append(out, copied)
+
+		// The items pass through unchanged. The response is *not* written onto
+		// them: n8n's Respond node hands its input on as it received it, and a
+		// `$response` field leaked into every downstream node's `$json` and into
+		// the stored execution output.
+		out = append(out, cloneItem(item))
+
+		// The first item's response is the one the caller receives, which is
+		// what n8n does with several items, so only it is published.
+		if index == 0 {
+			detail, err := json.Marshal(map[string]any{
+				"statusCode": float64(code), "headers": headers, "body": body,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("node %q: encode the response: %w", ir.Name, err)
+			}
+			// An event rather than item data, so the HTTP boundary can answer
+			// the caller the moment this node runs while the rest of the graph
+			// keeps going.
+			request.Events.Emit(engine.NodeEvent{NodeID: ir.ID, Name: webhook.ResponseEventName, Detail: detail})
+		}
 	}
 	return workflow.NodeOutput{out}, nil
+}
+
+// wrapResponseKey wraps a JSON response under the key the node names.
+//
+// n8n's `responseKey` option exists so a caller receives `{"data": […]}` rather
+// than a bare array, which several frontends require. A body that is not JSON is
+// left alone: wrapping text in a JSON envelope is not what the option means.
+func wrapResponseKey(body, key string) (string, error) {
+	if strings.TrimSpace(key) == "" || strings.TrimSpace(body) == "" || !json.Valid([]byte(body)) {
+		return body, nil
+	}
+	wrapped, err := json.Marshal(map[string]json.RawMessage{key: json.RawMessage(body)})
+	if err != nil {
+		return "", fmt.Errorf("wrap the response under %q: %w", key, err)
+	}
+	return string(wrapped), nil
 }
 
 // respondBody renders the response body for one respondWith choice.
@@ -485,7 +671,11 @@ func executeRespond(ctx context.Context, ir workflow.IRNode, input workflow.Node
 // of which item this iteration is on.
 func respondBody(with string, parameters map[string]any, items []workflow.Item, item workflow.Item) (string, error) {
 	switch with {
-	case "", RespondWithText:
+	case "":
+		// n8n's default, and what an import of a node holding the default
+		// arrives as.
+		return respondBody(RespondWithFirstIncomingItem, parameters, items, item)
+	case RespondWithText:
 		return textValue(parameters["responseBody"], ""), nil
 	case RespondWithJSON:
 		// The JSON field first, falling back to the text one: a node saved
@@ -530,7 +720,3 @@ func jsonOf(item workflow.Item) map[string]any {
 	}
 	return item.JSON
 }
-
-// ResponseKey marks the item field carrying a webhook response. The HTTP
-// boundary looks for exactly this key rather than guessing from shape.
-const ResponseKey = "$response"
