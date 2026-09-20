@@ -402,7 +402,6 @@ func adaptStoredResumeOutput(ir workflow.IR, nodeID string, raw json.RawMessage)
 // newRequest builds the runner request runWithStack and resumeRun share,
 // including the execution links a workflow may compose before suspending.
 func (service *Service) newRequest(record execution.Record, document workflow.Document, stack []string, resume resumeURLs) Request {
-	_ = document
 	return Request{
 		Execution: ExecutionContext{
 			ID: record.ID, Mode: string(record.Trigger),
@@ -410,6 +409,7 @@ func (service *Service) newRequest(record execution.Record, document workflow.Do
 			ParentID: record.ParentExecutionID, Stack: stack,
 			ResumeURL: resume.resumeURL, ApprovalURL: resume.approvalURL,
 		},
+		Workflow:    service.workflowContext(document),
 		Workflows:   service,
 		Env:         service.environment,
 		Credentials: &tenantCredentials{store: service.credentials, tenant: repository.TenantScope{ID: record.TenantID}},
@@ -422,6 +422,12 @@ func (service *Service) newRequest(record execution.Record, document workflow.Do
 	}
 }
 
+// workflowTimezoneSetting names the document setting holding a workflow's own
+const workflowTimezoneSetting = "timezone"
+// workflowContext backs `$workflow` and the clock expressions read.
+func (service *Service) workflowContext(document workflow.Document) expression.WorkflowContext {
+	declared, _ := document.Settings[workflowTimezoneSetting].(string)
+	context.Timezone = service.defaultTimezone
 // validateSuspend refuses a suspension the service cannot honour. A missing
 // mode, a deadline in the past, or a wait past the maximum never parks an
 // execution: the run fails loudly instead, so a misconfigured wait is an

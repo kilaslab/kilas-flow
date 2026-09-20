@@ -1,7 +1,7 @@
 ---
 id: BUG-aede06
 title: 'Engine policy: timeouts, timezone, error workflow, live progress, polls, manual triggers'
-status: todo
+status: doing
 priority: medium
 labels:
     - engine
@@ -9,7 +9,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:10Z"
-updated: "2026-09-19T12:06:10Z"
+updated: "2026-09-20T00:33:12Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -191,3 +191,14 @@ Existing tickets: FEAT-az620p
 - [ ] The cancellation poll (every 100 ms per running execution) and webhook await (every 25 ms per waiting request)
 - [ ] Activating a parent does not check that its Execute Workflow targets are active; the run then fails with 'repo
 - [ ] Adversarial re-verify against live stub/n8n like the Verify phase (no code-only close)
+---
+## Progress (EngineWaits)
+
+Landed in this slice (internal/engine/service.go, internal/engine/wait_service.go, internal/scheduler/extract.go, nodes/wait.go):
+
+- Run timeout: `settings.executionTimeout` (seconds; -1 = no timeout, n8n's own convention) is applied per run by `Service.runBudget`, capped by the new `ServiceDeps.MaxTimeout` (`execution.max_timeout`, validated in config). A workflow that names none still gets `execution.default_timeout`. Import carrying of the setting is ImporterTail's half.
+- Instance timezone: `scheduler.DefaultTimezone` maps an absent or `DEFAULT` workflow zone to `execution.default_timezone`, and `Request.Workflow.Timezone` is now filled so `$now`/`$today`/`DateTime.local()` read it. Importer no longer stores the literal `DEFAULT` (which the compiler refuses); EngineFlow's `validateDocumentTimezone` accepts it as a belt-and-braces.
+- Poll cost: the cancellation watcher (`pollCancellation`) reads one status column through the new `ExecutionState` store method instead of loading the whole execution record with every node-run payload, ten times a second. `*engine.Service.ExecutionState` is exposed for WebhookParity's 25 ms webhook await.
+- Wait node resume modes (webhook/form) implemented in nodes/wait.go — see BUG-ysvmaa.
+
+Remaining in other slices: node.started + incremental NodeRun persistence (EngineFlow's `Request.NodeRunSink`, my service-side writer once it lands), alwaysOutputData/executeOnce (EngineFlow runner + ImporterTail importer), manual trigger selection on /run (EngineFlow default + SecurityFront2 API + FrontendCore3 editor), error workflow + Error Trigger/Stop and Error (EngineCore failure path, ImporterTail n8n.go, ImporterTail nodes/core.go), sub-workflow activation validation (ImporterTail nodes/subworkflow.go + EngineCore).

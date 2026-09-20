@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -428,4 +429,264 @@ func jsonContains(payload, fragment string) bool {
 	var value map[string]any
 	var wanted map[string]any
 	return json.Unmarshal([]byte(payload), &value) == nil && json.Unmarshal([]byte(fragment), &wanted) == nil && value["code"] == wanted["code"]
+}
+
+// lightPollStore counts the two ways a cancellation can be noticed: the whole
+// record, and the one-column status read.
+type lightPollStore struct {
+	*repository.GORMExecutionStore
+	states atomic.Int64
+	gets   atomic.Int64
+}
+
+func (store *lightPollStore) Get(ctx context.Context, tenant repository.TenantScope, executionID string) (execution.Record, error) {
+	store.gets.Add(1)
+	return store.GORMExecutionStore.Get(ctx, tenant, executionID)
+}
+
+func (store *lightPollStore) ExecutionState(ctx context.Context, tenant repository.TenantScope, executionID string) (execution.Status, bool, error) {
+	store.states.Add(1)
+	return store.GORMExecutionStore.ExecutionState(ctx, tenant, executionID)
+}
+
+// A cancellation requested by another process reaches a running execution
+// through the status read alone.
+//
+// The poll used to load the whole execution record ten times a second — every
+// node-run row and every payload this execution had written, for a run that
+// could be sitting on megabytes of them — to answer one question about one
+// small column. This test fails if the poll goes back to the full read: the
+// decorated store fails the assertion when Get is touched while a run is in
+// flight, and the cancellation is written straight through the store so
+// nothing but the poll can deliver it.
+func TestCancellationReachesARunningExecutionThroughTheStatusRead(t *testing.T) {
+	ctx := context.Background()
+	db, err := database.Open(ctx, config.Database{Driver: "sqlite", DSN: filepath.Join(t.TempDir(), "kilasflow.db")}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := database.Migrate(db, slog.New(slog.NewTextHandler(io.Discard, nil))); err != nil {
+		t.Fatalf("Migrate() error = %v", err)
+	}
+	catalog := node.NewRegistry()
+	if err := nodes.RegisterAll(catalog); err != nil {
+		t.Fatalf("RegisterAll() error = %v", err)
+	}
+	if err := catalog.Register(node.Definition{
+		Group: []node.NodeGroup{node.GroupTransform},
+		Type:  "kilasflow.test.cancellable", Version: workflow.V(1), DisplayName: "Cancellable", Category: "Test",
+		Inputs:  []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+		Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}}, ExecutorID: "test.cancellable",
+	}); err != nil {
+		t.Fatalf("Register(cancellable) error = %v", err)
+	}
+	tenant := repository.TenantScope{ID: "tenant-poll"}
+	stored, err := repository.NewWorkflowStore(db.DB).SaveDraft(ctx, tenant, workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_poll", Name: "Poll",
+		Nodes: []workflow.Node{
+			{ID: "manual", Name: "Manual Trigger", Type: "kilasflow.manual", TypeVersion: workflow.V(1)},
+			{ID: "wait", Name: "Cancellable", Type: "kilasflow.test.cancellable", TypeVersion: workflow.V(1)},
+		},
+		Connections: []workflow.Connection{{ID: "manual-wait", Kind: workflow.ConnectionMain, Source: workflow.Endpoint{NodeID: "manual", Port: "main"}, Target: workflow.Endpoint{NodeID: "wait", Port: "main"}}},
+		Settings:    map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("SaveDraft() error = %v", err)
+	}
+	inner := repository.NewExecutionStore(db.DB)
+	queued, err := inner.QueueManualLatest(ctx, tenant, stored.ID, catalog, nil)
+	if err != nil {
+		t.Fatalf("QueueManualLatest() error = %v", err)
+	}
+	executors := engine.NewRegistry()
+	if err := nodes.RegisterExecutors(executors, safehttp.DefaultPolicy(), sqlnode.Guard{}, ai.NewLoopRuntime(), nil, nil); err != nil {
+		t.Fatalf("RegisterExecutors() error = %v", err)
+	}
+	started := make(chan struct{})
+	if err := executors.Register("test.cancellable", engine.ExecutorFunc(func(ctx context.Context, _ workflow.IRNode, _ workflow.NodeInput, _ engine.Request) (workflow.NodeOutput, error) {
+		close(started)
+		<-ctx.Done()
+		return nil, ctx.Err()
+	})); err != nil {
+		t.Fatalf("Register(cancellable executor) error = %v", err)
+	}
+	store := &lightPollStore{GORMExecutionStore: inner}
+	service, err := engine.NewService(engine.ServiceDeps{
+		Executions: store, Catalog: catalog, Runner: engine.NewRunner(executors),
+		WorkerID: "test-worker", DefaultTimeout: 30 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := service.RunOnce(ctx)
+		done <- err
+	}()
+	<-started
+	// Written through the store, not service.Cancel: the in-process shortcut
+	// must not be what delivers this.
+	if _, err := inner.Cancel(ctx, tenant, queued.ID); err != nil {
+		t.Fatalf("Cancel() error = %v", err)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("RunOnce() error = %v", err)
+	}
+	if gets := store.gets.Load(); gets != 0 {
+		t.Errorf("the cancellation poll loaded the whole execution record %d time(s); it must read only the status", gets)
+	}
+	if states := store.states.Load(); states == 0 {
+		t.Error("the cancellation poll never made a status read")
+	}
+	final, err := inner.Get(ctx, tenant, queued.ID)
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if final.Status != execution.StatusCancelled {
+		t.Errorf("execution status = %q, want %q", final.Status, execution.StatusCancelled)
+	}
+}
+
+// A workflow that asks for a longer run gets one, and the instance default is
+// only what applies when it asks for nothing.
+//
+// Every execution used to be killed at execution.default_timeout whatever the
+// workflow said, so an imported workflow declaring five minutes died at sixty
+// seconds — and the import dropped the setting, so nobody could see why. This
+// asserts the setting is what changed: the same node that fails under the
+// instance default succeeds under the workflow's own budget.
+func TestAWorkflowKeepsTheRunBudgetItAsksFor(t *testing.T) {
+	ctx := context.Background()
+	db, err := database.Open(ctx, config.Database{Driver: "sqlite", DSN: filepath.Join(t.TempDir(), "kilasflow.db")}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := database.Migrate(db, slog.New(slog.NewTextHandler(io.Discard, nil))); err != nil {
+		t.Fatalf("Migrate() error = %v", err)
+	}
+	catalog := node.NewRegistry()
+	if err := nodes.RegisterAll(catalog); err != nil {
+		t.Fatalf("RegisterAll() error = %v", err)
+	}
+	if err := catalog.Register(node.Definition{
+		Group: []node.NodeGroup{node.GroupTransform},
+		Type:  "kilasflow.test.slow", Version: workflow.V(1), DisplayName: "Slow", Category: "Test",
+		Inputs:  []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+		Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}}, ExecutorID: "test.slow",
+	}); err != nil {
+		t.Fatalf("Register(slow) error = %v", err)
+	}
+	executors := engine.NewRegistry()
+	if err := nodes.RegisterExecutors(executors, safehttp.DefaultPolicy(), sqlnode.Guard{}, ai.NewLoopRuntime(), nil, nil); err != nil {
+		t.Fatalf("RegisterExecutors() error = %v", err)
+	}
+	if err := executors.Register("test.slow", engine.ExecutorFunc(func(ctx context.Context, _ workflow.IRNode, input workflow.NodeInput, _ engine.Request) (workflow.NodeOutput, error) {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(400 * time.Millisecond):
+		}
+		return workflow.NodeOutput{input["main"]}, nil
+	})); err != nil {
+		t.Fatalf("Register(slow executor) error = %v", err)
+	}
+	tenant := repository.TenantScope{ID: "tenant-budget"}
+	workflowStore := repository.NewWorkflowStore(db.DB)
+	save := func(id string, settings map[string]any) workflow.StoredWorkflow {
+		t.Helper()
+		stored, err := workflowStore.SaveDraft(ctx, tenant, workflow.Document{
+			SchemaVersion: workflow.CurrentSchemaVersion,
+			ID:            id, Name: id,
+			Nodes: []workflow.Node{
+				{ID: "manual", Name: "Manual Trigger", Type: "kilasflow.manual", TypeVersion: workflow.V(1)},
+				{ID: "slow", Name: "Slow", Type: "kilasflow.test.slow", TypeVersion: workflow.V(1)},
+			},
+			Connections: []workflow.Connection{{ID: "manual-slow", Kind: workflow.ConnectionMain, Source: workflow.Endpoint{NodeID: "manual", Port: "main"}, Target: workflow.Endpoint{NodeID: "slow", Port: "main"}}},
+			Settings:    settings,
+		})
+		if err != nil {
+			t.Fatalf("SaveDraft(%s) error = %v", id, err)
+		}
+		return stored
+	}
+	store := repository.NewExecutionStore(db.DB)
+	service, err := engine.NewService(engine.ServiceDeps{
+		Executions: store, Catalog: catalog, Runner: engine.NewRunner(executors),
+		WorkerID: "test-worker", DefaultTimeout: 100 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	// The instance default still binds a workflow that asks for nothing: that
+	// is the behaviour the setting is measured against.
+	defaulted := save("wf_budget_default", map[string]any{})
+	queuedDefault, err := store.QueueManualLatest(ctx, tenant, defaulted.ID, catalog, nil)
+	if err != nil {
+		t.Fatalf("QueueManualLatest(default) error = %v", err)
+	}
+	if worked, err := service.RunOnce(ctx); err != nil || !worked {
+		t.Fatalf("RunOnce(default) = (%v, %v), want (true, nil)", worked, err)
+	}
+	if record, err := store.Get(ctx, tenant, queuedDefault.ID); err != nil {
+		t.Fatalf("Get(default) error = %v", err)
+	} else if record.Status != execution.StatusFailed {
+		t.Errorf("status without a workflow timeout = %q, want failed at the instance default", record.Status)
+	}
+
+	// Five seconds asked for, four hundred milliseconds used.
+	budgeted := save("wf_budget_asked", map[string]any{engine.ExecutionTimeoutSetting: float64(5)})
+	queuedAsked, err := store.QueueManualLatest(ctx, tenant, budgeted.ID, catalog, nil)
+	if err != nil {
+		t.Fatalf("QueueManualLatest(asked) error = %v", err)
+	}
+	if worked, err := service.RunOnce(ctx); err != nil || !worked {
+		t.Fatalf("RunOnce(asked) = (%v, %v), want (true, nil)", worked, err)
+	}
+	if record, err := store.Get(ctx, tenant, queuedAsked.ID); err != nil {
+		t.Fatalf("Get(asked) error = %v", err)
+	} else if record.Status != execution.StatusSucceeded {
+		t.Errorf("status with settings.executionTimeout = %q, want succeeded (error %s)", record.Status, record.Error)
+	}
+
+	// n8n's -1 means no timeout at all, which is also the only way to run a
+	// workflow whose work is genuinely open-ended.
+	unbounded := save("wf_budget_none", map[string]any{engine.ExecutionTimeoutSetting: float64(-1)})
+	queuedNone, err := store.QueueManualLatest(ctx, tenant, unbounded.ID, catalog, nil)
+	if err != nil {
+		t.Fatalf("QueueManualLatest(unbounded) error = %v", err)
+	}
+	if worked, err := service.RunOnce(ctx); err != nil || !worked {
+		t.Fatalf("RunOnce(unbounded) = (%v, %v), want (true, nil)", worked, err)
+	}
+	if record, err := store.Get(ctx, tenant, queuedNone.ID); err != nil {
+		t.Fatalf("Get(unbounded) error = %v", err)
+	} else if record.Status != execution.StatusSucceeded {
+		t.Errorf("status with a -1 timeout = %q, want succeeded (error %s)", record.Status, record.Error)
+	}
+
+	// The instance ceiling still wins over what the workflow asks for.
+	capped, err := engine.NewService(engine.ServiceDeps{
+		Executions: store, Catalog: catalog, Runner: engine.NewRunner(executors),
+		WorkerID: "test-worker-capped", DefaultTimeout: 100 * time.Millisecond, MaxTimeout: 200 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("NewService(capped) error = %v", err)
+	}
+	greedy := save("wf_budget_greedy", map[string]any{engine.ExecutionTimeoutSetting: float64(3600)})
+	queuedGreedy, err := store.QueueManualLatest(ctx, tenant, greedy.ID, catalog, nil)
+	if err != nil {
+		t.Fatalf("QueueManualLatest(greedy) error = %v", err)
+	}
+	if worked, err := capped.RunOnce(ctx); err != nil || !worked {
+		t.Fatalf("RunOnce(greedy) = (%v, %v), want (true, nil)", worked, err)
+	}
+	if record, err := store.Get(ctx, tenant, queuedGreedy.ID); err != nil {
+		t.Fatalf("Get(greedy) error = %v", err)
+	} else if record.Status != execution.StatusFailed {
+		t.Errorf("status with an hour asked for under a 200 ms ceiling = %q, want failed", record.Status)
+	}
 }

@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"strings"
+	"time"
 
 	"github.com/kilaslabs/kilas-flow/internal/repository"
 	"github.com/kilaslabs/kilas-flow/internal/workflow"
@@ -78,4 +79,49 @@ func NodeIntervals(parameters map[string]any) []Interval {
 func documentTimezone(document workflow.Document) string {
 	zone, _ := document.Settings[WorkflowTimezoneSetting].(string)
 	return strings.TrimSpace(zone)
+}
+
+// DefaultTimezone resolves the schedules of an extractor's documents into the
+// instance's own zone.
+//
+// n8n keeps the zone on the workflow (settings.timezone) and resolves the
+// literal DEFAULT — which is what most exports carry, and what a workflow with
+// no zone at all means — to the instance's GENERIC_TIMEZONE. This installation
+// had no instance zone, so every imported schedule ran in UTC: an import of
+// "every day at 09:00" fired at 16:00 in Jakarta, silently, for as long as
+// nobody compared the two clocks.
+//
+// Wrapping rather than changing the extractor keeps the stored row honest: it
+// records the zone the schedule is actually evaluated in, which is what the
+// schedules API and the editor show, instead of leaving the resolution to
+// every reader.
+//
+// An empty or unresolvable instance zone resolves to UTC, which is what an
+// unnamed zone already meant. An unresolvable zone is deliberately not written
+// into the row either: robfig's parser refuses a `TZ=` naming a zone it cannot
+// load, so an operator's typo would stop the schedule firing altogether. A
+// wrong label is a far smaller failure than a schedule that never runs.
+func DefaultTimezone(extract repository.ScheduleExtractor, zone string) repository.ScheduleExtractor {
+	resolved := strings.TrimSpace(zone)
+	if resolved != "" {
+		if _, err := time.LoadLocation(resolved); err != nil {
+			resolved = ""
+		}
+	}
+	return func(document workflow.Document) []repository.ScheduleTrigger {
+		triggers := extract(document)
+		for index := range triggers {
+			if namesNoZone(triggers[index].Timezone) {
+				triggers[index].Timezone = resolved
+			}
+		}
+		return triggers
+	}
+}
+
+// namesNoZone reports a stored zone that leaves the schedule in UTC: absent,
+// or n8n's DEFAULT sentinel meaning "whatever the instance uses".
+func namesNoZone(zone string) bool {
+	trimmed := strings.TrimSpace(zone)
+	return trimmed == "" || strings.EqualFold(trimmed, "DEFAULT")
 }

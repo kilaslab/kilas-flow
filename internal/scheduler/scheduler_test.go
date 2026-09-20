@@ -478,3 +478,70 @@ func TestASchedulePastDueSkipsForwardRatherThanBuildingABacklog(t *testing.T) {
 		t.Errorf("a second tick queued %d more runs, so the backlog survived", queued)
 	}
 }
+
+// A workflow that names no zone runs in the instance's zone, not in UTC.
+//
+// n8n keeps the zone on the workflow and resolves the DEFAULT sentinel — what
+// most exports carry — to the instance's GENERIC_TIMEZONE. This installation
+// had no instance zone at all, so every imported "every day at 09:00" fired at
+// 09:00 UTC, which in Jakarta is four in the afternoon. Silent, and wrong for
+// everyone who does not live in Greenwich.
+func TestAnUnnamedWorkflowTimezoneResolvesToTheInstanceZone(t *testing.T) {
+	t.Parallel()
+
+	registry := node.NewRegistry()
+	if err := nodes.RegisterAll(registry); err != nil {
+		t.Fatalf("RegisterAll() error = %v", err)
+	}
+	daily := map[string]any{"field": "days", "triggerAtHour": float64(9)}
+	extract := scheduler.DefaultTimezone(scheduler.Extract(nodes.ScheduleType), "Asia/Jakarta")
+
+	// Absent, and n8n's own DEFAULT sentinel, mean the same thing.
+	for _, named := range []string{"", "DEFAULT", " default "} {
+		rows := extract(scheduleDocument("Daily", named, daily))
+		if len(rows) != 1 {
+			t.Fatalf("extract(%q) returned %d rows, want one", named, len(rows))
+		}
+		if rows[0].Timezone != "Asia/Jakarta" {
+			t.Errorf("timezone for %q = %q, want the instance zone", named, rows[0].Timezone)
+		}
+	}
+
+	// An author's own zone is left exactly as written: the instance zone is a
+	// default, not an override.
+	rows := extract(scheduleDocument("Daily", "America/New_York", daily))
+	if rows[0].Timezone != "America/New_York" {
+		t.Errorf("timezone = %q, want the workflow's own", rows[0].Timezone)
+	}
+
+	// And the resolved zone is the one the schedule is actually evaluated in:
+	// nine in Jakarta is two in the morning UTC.
+	jakarta := extract(scheduleDocument("Daily", "", daily))
+	spec := scheduler.InZone(jakarta[0].Cron, jakarta[0].Timezone)
+	next, err := scheduler.Next(spec, time.Date(2026, time.September, 5, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("Next() error = %v", err)
+	}
+	if want := time.Date(2026, time.September, 5, 2, 0, 0, 0, time.UTC); !next.Equal(want) {
+		t.Errorf("next run = %s, want %s (09:00 in Jakarta)", next, want)
+	}
+
+	// No instance zone configured: nothing is relabelled, and an unnamed zone
+	// keeps meaning UTC.
+	plain := scheduler.DefaultTimezone(scheduler.Extract(nodes.ScheduleType), "")
+	if rows := plain(scheduleDocument("Daily", "DEFAULT", daily)); rows[0].Timezone != "" {
+		t.Errorf("timezone without an instance default = %q, want it left unnamed", rows[0].Timezone)
+	}
+
+	// A zone that does not load is never written into the row: robfig refuses a
+	// TZ= naming a zone it cannot load, so an operator's typo would stop the
+	// schedule firing altogether instead of merely mislabelling it.
+	broken := scheduler.DefaultTimezone(scheduler.Extract(nodes.ScheduleType), "Mars/Olympus")
+	rows = broken(scheduleDocument("Daily", "", daily))
+	if rows[0].Timezone != "" {
+		t.Errorf("timezone for an unresolvable instance zone = %q, want it left unnamed", rows[0].Timezone)
+	}
+	if _, err := scheduler.Next(scheduler.InZone(rows[0].Cron, rows[0].Timezone), time.Now().UTC()); err != nil {
+		t.Errorf("Next() error = %v, want a schedule that still fires", err)
+	}
+}
