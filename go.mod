@@ -3,6 +3,7 @@ module github.com/kilaslab/kilas-flow
 go 1.27
 
 require (
+	github.com/BurntSushi/toml v1.6.0
 	github.com/danielgtaylor/huma/v2 v2.39.1
 	github.com/glebarez/go-sqlite v1.21.2
 	github.com/glebarez/sqlite v1.11.0

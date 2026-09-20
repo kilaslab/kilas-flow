@@ -23,6 +23,7 @@ import (
 	"github.com/kilaslab/kilas-flow/internal/api/handlers"
 	"github.com/kilaslab/kilas-flow/internal/auth"
 	"github.com/kilaslab/kilas-flow/internal/binary"
+	"github.com/kilaslab/kilas-flow/internal/cli"
 	"github.com/kilaslab/kilas-flow/internal/config"
 	"github.com/kilaslab/kilas-flow/internal/credentials"
 	"github.com/kilaslab/kilas-flow/internal/database"
@@ -49,7 +50,21 @@ import (
 var version = "0.1.0-dev"
 
 func main() {
-	if err := run(); err != nil {
+	// `kilasflow` with no subcommand, or with only flags, still serves: the
+	// container entrypoint and every Compose file depend on it. CLI verbs never
+	// parse the server's flags; when the CLI does not claim the invocation it
+	// returns handled=false and run() takes over.
+	args := os.Args[1:]
+	if code, handled := cli.Run(cli.Env{Args: args, Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr, Getenv: os.Getenv, TTY: cli.IsTTY(os.Stdout), Version: version}); handled {
+		os.Exit(code)
+	}
+
+	// The hand-back does not consume the word it hands back on: `serve` is
+	// still sitting in argv, and run() refuses a leftover positional, so the
+	// explicit spelling of "serve" would print the server's usage and exit 1.
+	// The CLI owns the verb's spelling; this drops it so both spellings reach
+	// the server's flag parsing with the same arguments.
+	if err := run(cli.ServerArgs(args)); err != nil {
 		reportFatal(err)
 		os.Exit(1)
 	}
@@ -73,12 +88,16 @@ func reportFatal(err error) {
 
 // run wires the application from constructors, so every dependency is explicit
 // and there is no global service locator to unpick later.
-func run() error {
+//
+// args are the server's own arguments, with the explicit `serve` verb already
+// removed by ServerArgs; they are parsed here rather than read from os.Args
+// because the word that selected this path is not a flag the server defines.
+func run(args []string) error {
 	configPath := flag.String("config", "config.yaml", "path to the configuration file")
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	workerIDOverride := flag.String("worker-id", "", "worker identity recorded in lease_owner (default: host-qualified and unique per process)")
 	roleOverride := flag.String("role", "", "process role: api, worker, or both (default both)")
-	flag.Parse()
+	_ = flag.CommandLine.Parse(args)
 
 	// A leftover argument is a mistake, and answering it by starting a server is
 	// the worst possible way to report one: `kilasflow version` used to boot a

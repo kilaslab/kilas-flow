@@ -469,3 +469,12 @@ clean: ## Remove build artifacts
 	# directory is recreated around its tracked .gitkeep rather than removed.
 	rm -rf $(DIST_DIR)
 	@mkdir -p $(DIST_DIR) && touch $(DIST_DIR)/.gitkeep
+
+# The CLI is the surface an agent drives, so its proof is the same shape as the
+# server's: boot a real binary, then assert on exit codes and envelopes rather
+# than on the absence of a crash. Auth is on for this run (the script explains
+# why), and nothing here needs a database other than the script's own SQLite
+# file.
+.PHONY: smoke-cli
+smoke-cli: ## Prove the agent CLI against a booted server
+	sh scripts/smoke-cli.sh

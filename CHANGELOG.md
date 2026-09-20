@@ -39,6 +39,14 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 - The `@kilasflow/sdk` tarball now ships its `LICENSE` and `CHANGELOG.md`,
   `make sdk-release-check` proves the package the way a consumer installs it,
   and the `sdk-vX.Y.Z` release runbook lives in `sdk/RELEASING.md`.
+- `kilasflow <verb>` is a command line as well as a server: bare `kilasflow`
+  still serves, every verb in
+  [`reference/cli.md`](docs/src/content/docs/reference/cli.md) maps to exactly
+  one API operation, and `kilasflow api <operation-id>` reaches every operation
+  in the API contract. `--json` prints one stable envelope per invocation and
+  the exit code says whether to fix the call, ask the user, wait or report — a
+  refused scope is its own code, and a guarded verb refuses without `--yes`.
+  `make smoke-cli` proves the tree against a booted server.
 
 ### Changed
 
