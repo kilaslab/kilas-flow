@@ -16,7 +16,21 @@ export type CanvasActions = {
 	readOnly: () => boolean;
 	/** Adds a step already connected to this output port. */
 	addFrom: (nodeID: string, port: string) => void;
+	/**
+	 * Fills an attachment slot — an agent's model, memory or tool.
+	 *
+	 * Filtered by the port's kind so the picker offers only what can attach
+	 * there; the tile lands under the slot already wired to it.
+	 */
+	addAttached: (nodeID: string, port: string, kind: string) => void;
 	remove: (nodeID: string) => void;
+	/** Splices a new step into this connection, between the two nodes it joins. */
+	splice: (edgeID: string) => void;
+	removeEdge: (edgeID: string) => void;
+	/** Opens the inline rename editor on this node (F2, or a double click). */
+	rename: (nodeID: string) => void;
+	/** Writes back the size a sticky note was dragged to. */
+	resize: (nodeID: string, width: number, height: number) => void;
 };
 
 export function setCanvasActions(actions: CanvasActions): void {

@@ -7,7 +7,10 @@ import {
 	nextNodePosition,
 	positionAfter,
 	documentFromCanvas,
+	duplicateNodes,
+	renameNode,
 	resolveDefinition,
+	uniqueNodeName,
 	toWorkflowInput,
 	updateNodeProperty,
 	workflowDocumentEquals
@@ -229,5 +232,122 @@ describe('workflow editor document helpers', () => {
 
 		expect(projected?.data.definition.version).toBe(1);
 		expect(projected?.data.definition.category).not.toBe('Unavailable');
+	});
+});
+
+describe('canvas authoring helpers', () => {
+	it('names a new node so two of the same type stay addressable by name', () => {
+		const first = createWorkflowNode(set, { x: 0, y: 0 }, () => 'set-2', ['Set']);
+		expect(first.name).toBe('Set1');
+
+		const third = createWorkflowNode(set, { x: 0, y: 0 }, () => 'set-3', ['Set', 'Set1']);
+		expect(third.name).toBe('Set2');
+
+		expect(uniqueNodeName('Set1', ['Set'])).toBe('Set1');
+		expect(uniqueNodeName('Set1', ['Set1'])).toBe('Set2');
+		// A name with no stem at all still gets one, rather than becoming "1".
+		expect(uniqueNodeName('2', ['2'])).toBe('21');
+	});
+
+	it('rewrites the expressions that name a node when it is renamed', () => {
+		const original = savedDocument();
+		original.nodes = [
+			...original.nodes!,
+			{
+				id: 'set-2',
+				name: 'Flag',
+				type: set.type,
+				typeVersion: 1,
+				position: { x: 400, y: 48 },
+				parameters: {
+					assignments: {
+						owner: "={{ $('Set').item.json.status }}",
+						other: "={{ $node['Set'].json.status }}",
+						unrelated: "={{ $('Set fields').json.status }}",
+						settings: '={{ $items("Set").length }}'
+					},
+					original: { name: 'Set' }
+				}
+			}
+		];
+
+		const renamed = renameNode(original, 'set-1', 'Set fields');
+		const target = renamed.nodes?.find((node) => node.id === 'set-1');
+		const referencing = renamed.nodes?.find((node) => node.id === 'set-2');
+
+		expect(target?.name).toBe('Set fields');
+		expect(referencing?.parameters?.assignments).toEqual({
+			owner: "={{ $('Set fields').item.json.status }}",
+			other: "={{ $node['Set fields'].json.status }}",
+			unrelated: "={{ $('Set fields').json.status }}",
+			settings: '={{ $items("Set fields").length }}'
+		});
+		// The import capsule is a verbatim copy of the source node; rewriting
+		// inside it would corrupt what an export returns.
+		expect((referencing?.parameters as { original: { name: string } }).original).toEqual({ name: 'Set' });
+	});
+
+	it('refuses a rename that changes nothing, and one that would blank the name', () => {
+		const original = savedDocument();
+		expect(renameNode(original, 'set-1', 'Set')).toBe(original);
+		expect(renameNode(original, 'set-1', '   ')).toBe(original);
+	});
+
+	it('duplicates a selection offset from the original, with fresh ids and unique names', () => {
+		const original = savedDocument();
+		let counter = 0;
+		const { document: copy, nodeIDs } = duplicateNodes(original, ['set-1'], { x: 40, y: 40 }, () => `copy-${(counter += 1)}`);
+
+		expect(nodeIDs).toEqual(['copy-1']);
+		expect(copy.nodes?.at(-1)?.name).toBe('Set1');
+		expect(copy.nodes?.at(-1)?.position).toEqual({ x: 332, y: 88 });
+		// The copy is not wired to the node it was copied from.
+		expect(copy.connections).toEqual(original.connections);
+		expect(duplicateNodes(original, [], { x: 0, y: 0 }).document).toBe(original);
+	});
+
+	it('shares the untouched nodes when one property changes', () => {
+		const original = savedDocument();
+		const next = updateNodeProperty(original, 'set-1', 'parameters', 'assignments', { status: 'queued' });
+
+		expect(next.nodes?.[0]).toBe(original.nodes?.[0]);
+		expect(next.nodes?.[1]).not.toBe(original.nodes?.[1]);
+		expect(updateNodeProperty(original, 'missing', 'parameters', 'x', 1)).toBe(original);
+	});
+
+	it('draws a sticky note as a sized rectangle behind the graph, and names its edges' + ' by node name', () => {
+		const original = savedDocument();
+		original.nodes?.push({
+			id: 'note-1',
+			name: 'Sticky Note',
+			type: 'kilasflow.stickyNote',
+			typeVersion: 1,
+			position: { x: 0, y: 200 },
+			parameters: { content: '## Steps', width: 320, height: 200, color: 3 }
+		});
+		const note: Definition = {
+			type: 'kilasflow.stickyNote',
+			version: 1,
+			displayName: 'Sticky Note',
+			category: 'Annotation',
+			group: ['organization'],
+			source: 'builtin',
+			inputs: [],
+			outputs: [],
+			parameters: [],
+			sharedSettings: []
+		};
+
+		const canvas = documentFromCanvas(original, [manual, set, note]);
+		const projected = canvas.nodes.find((node) => node.id === 'note-1');
+
+		expect(projected?.style).toBe('width: 320px; height: 200px');
+		expect(projected?.zIndex).toBe(-1);
+		// A step is unaffected: it keeps Svelte Flow's own geometry.
+		expect(canvas.nodes[0].style).toBeUndefined();
+		expect(canvas.nodes[0].zIndex).toBeUndefined();
+
+		expect(canvas.edges[0].ariaLabel).toBe('Manual Trigger main to Set main');
+		expect(canvas.toDocument(original)).toEqual(original);
 	});
 });

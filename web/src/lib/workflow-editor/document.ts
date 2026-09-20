@@ -1,6 +1,7 @@
 import { MarkerType, type Edge as FlowEdge, type Node as FlowNode } from '@xyflow/svelte';
 
 import type { Connection, Definition, Document, Node as WorkflowNode, WorkflowDocumentInput } from '$lib/api/generated/models';
+import { isAnnotation } from './node-visual';
 import type { CanvasValidationIssue } from './validation';
 
 export type PropertyScope = 'parameters' | 'settings';
@@ -28,14 +29,15 @@ export type CanvasDocument = {
 export function createWorkflowNode(
 	definition: Definition,
 	position: { x: number; y: number },
-	newNodeID: () => string = createID
+	newNodeID: () => string = createID,
+	takenNames: Iterable<string> = []
 ): WorkflowNode {
 	const parameters = valuesFromDefinitions(definition.parameters ?? []);
 	const settings = valuesFromDefinitions(definition.sharedSettings ?? []);
 
 	return {
 		id: newNodeID(),
-		name: definition.displayName,
+		name: uniqueNodeName(definition.displayName, takenNames),
 		type: definition.type,
 		typeVersion: definition.version,
 		position: { ...position },
@@ -102,14 +104,29 @@ export function resolveDefinition(
 export function documentFromCanvas(document: Document, definitions: Definition[], validationIssues: CanvasValidationIssue[] = []): CanvasDocument {
 	const nodeIssues = new Map(validationIssues.filter((issue) => issue.nodeID).map((issue) => [issue.nodeID!, issue.message]));
 	const edgeIssues = new Map(validationIssues.filter((issue) => issue.connectionID).map((issue) => [issue.connectionID!, issue.message]));
+	const labels = new Map((document.nodes ?? []).map((node) => [node.id, node.name]));
 	const nodes = (document.nodes ?? []).map<EditorFlowNode>((workflowNode) => {
 		const definition =
 			resolveDefinition(workflowNode.type, workflowNode.typeVersion, definitions) ?? unavailableDefinition(workflowNode, document.connections ?? []);
+		// The workflow node is shared, not cloned: the draft is immutable at
+		// every mutation boundary, so the node object can never change under a
+		// component that is reading it — and deep-cloning every node here is
+		// what made one keystroke cost a full-canvas copy. Only the annotation
+		// geometry below is derived, and it is derived from the parameters.
+		const annotation = isAnnotation(definition);
 		return {
 			id: workflowNode.id,
 			type: 'workflow',
 			position: { ...workflowNode.position },
-			data: { definition, workflowNode: clone(workflowNode), validationMessage: nodeIssues.get(workflowNode.id) },
+			// A sticky note is a rectangle behind the graph, not a tile: it
+			// carries its own size and takes no part in the flow.
+			...(annotation
+				? {
+						style: `width: ${positiveSize(workflowNode.parameters?.width, 240)}px; height: ${positiveSize(workflowNode.parameters?.height, 160)}px`,
+						zIndex: -1
+					}
+				: {}),
+			data: { definition, workflowNode, validationMessage: nodeIssues.get(workflowNode.id) },
 			ariaLabel: nodeIssues.has(workflowNode.id) ? `${workflowNode.name}: ${nodeIssues.get(workflowNode.id)}` : workflowNode.name
 		};
 	});
@@ -119,6 +136,10 @@ export function documentFromCanvas(document: Document, definitions: Definition[]
 		// curve from below rather than a stepped line with an arrow, so the two
 		// connection kinds cannot be mistaken for each other at a glance.
 		const attachment = connection.kind !== 'main';
+		// Named by the nodes' names, not their ids: a screen reader announcing a
+		// connection has to say what it connects, and a UUID says nothing.
+		const from = `${labels.get(connection.source.nodeId) ?? connection.source.nodeId} ${connection.source.port}`;
+		const to = `${labels.get(connection.target.nodeId) ?? connection.target.nodeId} ${connection.target.port}`;
 		return {
 			id: connection.id,
 			type: attachment ? 'default' : 'smoothstep',
@@ -130,7 +151,7 @@ export function documentFromCanvas(document: Document, definitions: Definition[]
 			targetHandle: connection.target.port,
 			data: { connection: clone(connection), validationMessage },
 			...(validationMessage ? { style: 'stroke: var(--destructive); stroke-width: 2px' } : {}),
-			ariaLabel: `${connection.source.nodeId} ${connection.source.port} to ${connection.target.nodeId} ${connection.target.port}${validationMessage ? `: ${validationMessage}` : ''}`
+			ariaLabel: `${from} to ${to}${validationMessage ? `: ${validationMessage}` : ''}`
 		};
 	});
 
@@ -173,16 +194,18 @@ export function updateNodeProperty(
 	key: string,
 	value: unknown
 ): Document {
-	return {
-		...clone(document),
-		nodes: (document.nodes ?? []).map((node) => {
-			if (node.id !== nodeID) return clone(node);
-			return {
-				...clone(node),
-				[scope]: { ...(clone(node[scope] ?? {}) as Record<string, unknown>), [key]: clone(value) }
-			};
-		})
-	};
+	let found = false;
+	// Only the edited node is rebuilt; every other node object is carried over
+	// by reference. Cloning all of them here is what made a keystroke in one
+	// field cost a copy of the whole canvas, and the projection downstream
+	// re-renders only what actually changed.
+	const nodes = (document.nodes ?? []).map((node) => {
+		if (node.id !== nodeID) return node;
+		found = true;
+		return { ...node, [scope]: { ...((node[scope] ?? {}) as Record<string, unknown>), [key]: clone(value) } };
+	});
+	if (!found) return document;
+	return { ...document, nodes };
 }
 
 /**
@@ -193,29 +216,196 @@ export function updateNodeProperty(
  * material.
  */
 export function updateNodeCredential(document: Document, nodeID: string, typeID: string, credentialID: string): Document {
-	return {
-		...clone(document),
-		nodes: (document.nodes ?? []).map((node) => {
-			if (node.id !== nodeID) return clone(node);
-			const credentials = { ...(clone(node.credentials ?? {}) as Record<string, string>) };
-			if (credentialID) {
-				credentials[typeID] = credentialID;
-			} else {
-				delete credentials[typeID];
-			}
-			const next = clone(node);
-			if (Object.keys(credentials).length > 0) {
-				next.credentials = credentials;
-			} else {
-				delete next.credentials;
-			}
-			return next;
-		})
-	};
+	let found = false;
+	const nodes = (document.nodes ?? []).map((node) => {
+		if (node.id !== nodeID) return node;
+		found = true;
+		const credentials = { ...((node.credentials ?? {}) as Record<string, string>) };
+		if (credentialID) {
+			credentials[typeID] = credentialID;
+		} else {
+			delete credentials[typeID];
+		}
+		const next = { ...node };
+		if (Object.keys(credentials).length > 0) {
+			next.credentials = credentials;
+		} else {
+			delete next.credentials;
+		}
+		return next;
+	});
+	if (!found) return document;
+	return { ...document, nodes };
 }
 
 export function workflowDocumentEquals(left: Document, right: Document): boolean {
 	return stableJSON(left) === stableJSON(right);
+}
+
+/**
+ * A name no other node is using, n8n-style: "Set" then "Set1", "Set2".
+ *
+ * Expressions address nodes by name, so two nodes called "Set" make
+ * `$('Set')` ambiguous and the second one unreachable. A name already ending
+ * in a number counts up from it, which is what makes duplicating a duplicate
+ * read as one more copy rather than "Set11".
+ */
+export function uniqueNodeName(desired: string, taken: Iterable<string>): string {
+	const used = taken instanceof Set ? taken : new Set(taken);
+	const base = desired.trim() === '' ? 'Node' : desired.trim();
+	if (!used.has(base)) return base;
+
+	const numbered = /^(\D*)(\d+)$/.exec(base);
+	const stem = numbered && numbered[1] !== '' ? numbered[1] : base;
+	let counter = numbered && numbered[1] !== '' ? Number(numbered[2]) + 1 : 1;
+	while (used.has(`${stem}${counter}`)) counter += 1;
+	return `${stem}${counter}`;
+}
+
+/**
+ * Renames a node and rewrites every reference to it.
+ *
+ * A rename that left `$('Old name')` behind would break the workflow silently:
+ * the expression still parses, the node it named is simply gone. The rewrite
+ * covers the reference forms the expression surface accepts — `$('Name')`,
+ * `$items('Name')`, `$node['Name']` — in both quote styles.
+ *
+ * The `original` capsule on an imported placeholder is skipped: it is a
+ * verbatim copy of the source node, kept so an export returns it whole, and
+ * rewriting inside it would corrupt that.
+ */
+export function renameNode(document: Document, nodeID: string, rawName: string): Document {
+	const name = rawName.trim();
+	const target = (document.nodes ?? []).find((node) => node.id === nodeID);
+	if (!target || name === '' || name === target.name) return document;
+
+	return {
+		...document,
+		nodes: (document.nodes ?? []).map((node) => {
+			if (node.id === nodeID) return { ...node, name };
+			return rewriteNodeReferences(node, target.name, name);
+		})
+	};
+}
+
+/**
+ * Inserts a detached set of nodes and connections — a paste, or a duplicate.
+ *
+ * Ids are regenerated and names made unique, because both operations produce a
+ * second copy of something that already exists and the document's identity is
+ * its ids and its names. Connections are remapped through the same table, so a
+ * fragment never lands pointing at the node it was copied from.
+ */
+export function insertNodes(
+	document: Document,
+	nodes: WorkflowNode[],
+	connections: Connection[],
+	offset: { x: number; y: number },
+	newID: () => string = createID
+): { document: Document; nodeIDs: string[] } {
+	if (nodes.length === 0) return { document, nodeIDs: [] };
+
+	const taken = new Set((document.nodes ?? []).map((node) => node.name));
+	const idMap = new Map<string, string>();
+	const inserted = nodes.map((node) => {
+		const id = newID();
+		idMap.set(node.id, id);
+		const name = uniqueNodeName(node.name, taken);
+		taken.add(name);
+		return {
+			...clone(node),
+			id,
+			name,
+			position: { x: node.position.x + offset.x, y: node.position.y + offset.y }
+		};
+	});
+	const rewired = connections.flatMap<Connection>((connection) => {
+		const source = idMap.get(connection.source.nodeId);
+		const target = idMap.get(connection.target.nodeId);
+		// A connection to a node outside the fragment is dropped rather than
+		// kept pointing at the original, which is the node the user is
+		// duplicating.
+		if (!source || !target) return [];
+		return [{ ...clone(connection), id: newID(), source: { ...connection.source, nodeId: source }, target: { ...connection.target, nodeId: target } }];
+	});
+
+	return {
+		document: {
+			...document,
+			nodes: [...(document.nodes ?? []), ...inserted],
+			connections: [...(document.connections ?? []), ...rewired]
+		},
+		nodeIDs: inserted.map((node) => node.id)
+	};
+}
+
+/** A copy of the named nodes, offset so the copy is visibly a second one. */
+export function duplicateNodes(
+	document: Document,
+	nodeIDs: Iterable<string>,
+	offset = { x: 40, y: 40 },
+	newID: () => string = createID
+): { document: Document; nodeIDs: string[] } {
+	const wanted = new Set(nodeIDs);
+	const nodes = (document.nodes ?? []).filter((node) => wanted.has(node.id));
+	if (nodes.length === 0) return { document, nodeIDs: [] };
+	const connections = (document.connections ?? []).filter(
+		(connection) => wanted.has(connection.source.nodeId) && wanted.has(connection.target.nodeId)
+	);
+	return insertNodes(document, nodes, connections, offset, newID);
+}
+
+/**
+ * Writes back the size a sticky note was dragged to.
+ *
+ * Size is a parameter rather than a canvas-only measurement, because it is part
+ * of what the note *is*: an export of an n8n workflow carries the note's
+ * dimensions, and discarding them would lose the layout on the way back.
+ */
+export function updateNodeSize(document: Document, nodeID: string, width: number, height: number): Document {
+	let found = false;
+	const nodes = (document.nodes ?? []).map((node) => {
+		if (node.id !== nodeID) return node;
+		found = true;
+		return { ...node, parameters: { ...(node.parameters ?? {}), width: Math.round(width), height: Math.round(height) } };
+	});
+	if (!found) return document;
+	return { ...document, nodes };
+}
+
+function rewriteNodeReferences(node: WorkflowNode, from: string, to: string): WorkflowNode {
+	const next = clone(node);
+	for (const scope of ['parameters', 'settings'] as const) {
+		const values = next[scope] as Record<string, unknown> | undefined;
+		if (!values) continue;
+		const rewritten: Record<string, unknown> = {};
+		for (const [key, value] of Object.entries(values)) {
+			rewritten[key] = key === 'original' ? value : rewriteValue(value, from, to);
+		}
+		next[scope] = rewritten as never;
+	}
+	return next;
+}
+
+function rewriteValue(value: unknown, from: string, to: string): unknown {
+	if (typeof value === 'string') return rewriteReferencesInText(value, from, to);
+	if (Array.isArray(value)) return value.map((item) => rewriteValue(item, from, to));
+	if (value !== null && typeof value === 'object') {
+		return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, item]) => [key, rewriteValue(item, from, to)]));
+	}
+	return value;
+}
+
+const REFERENCE_CALL = /(\$\w*\(\s*)(['"`])((?:\\.|(?!\2).)*)\2/g;
+const REFERENCE_INDEX = /(\$\w+\[\s*)(['"`])((?:\\.|(?!\2).)*)\2(\s*\])/g;
+
+function rewriteReferencesInText(text: string, from: string, to: string): string {
+	if (!text.includes(from)) return text;
+	const replace = (all: string, prefix: string, quote: string, name: string, suffix = '') =>
+		name === from ? `${prefix}${quote}${to}${quote}${suffix}` : all;
+	return text
+		.replace(REFERENCE_CALL, (all, prefix: string, quote: string, name: string) => replace(all, prefix, quote, name))
+		.replace(REFERENCE_INDEX, (all, prefix: string, quote: string, name: string, suffix: string) => replace(all, prefix, quote, name, suffix));
 }
 
 export function cloneWorkflowDocument(document: Document): Document {
@@ -257,6 +447,11 @@ function portsFromConnections(nodeID: string, connections: Connection[], endpoin
 
 function createID(): string {
 	return crypto.randomUUID();
+}
+
+/** A sticky note's stored dimension, or its default when it has none. */
+function positiveSize(value: unknown, fallback: number): number {
+	return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
 function clone<T>(value: T): T {

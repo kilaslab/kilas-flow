@@ -17,6 +17,7 @@
 		class: className,
 		side = "right",
 		showCloseButton = true,
+		showOverlay = true,
 		portalProps,
 		children,
 		...restProps
@@ -24,12 +25,20 @@
 		portalProps?: WithoutChildrenOrChild<ComponentProps<typeof SheetPortal>>;
 		side?: Side;
 		showCloseButton?: boolean;
+		/**
+		 * Whether the panel dims the surface behind it.
+		 *
+		 * A sheet that previews something on the page — a revision on the canvas
+		 * — must leave that page visible and interactive, and there is nothing to
+		 * dim when the panel is not taking over.
+		 */
+		showOverlay?: boolean;
 		children: Snippet;
 	} = $props();
 </script>
 
 <SheetPortal {...portalProps}>
-	<SheetOverlay />
+	{#if showOverlay}<SheetOverlay />{/if}
 	<SheetPrimitive.Content
 		bind:ref
 		data-slot="sheet-content"

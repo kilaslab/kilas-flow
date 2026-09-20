@@ -237,6 +237,18 @@ export function isAttachment(port: Port): boolean {
 	return port.kind !== 'main';
 }
 
+/**
+ * Whether a node annotates the canvas instead of executing.
+ *
+ * Decided by the behavioural group, not by the type name: the registry marks
+ * the organization group "annotates the canvas and never executes", and a
+ * sticky note is the member of it. A second annotation node added server-side
+ * is drawn as an annotation here without a frontend change.
+ */
+export function isAnnotation(definition: Definition): boolean {
+	return (definition.group ?? []).includes('organization');
+}
+
 export function mainPorts(ports: Port[] | null | undefined): Port[] {
 	return (ports ?? []).filter((port) => !isAttachment(port));
 }

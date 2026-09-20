@@ -23,8 +23,11 @@
 <script lang="ts">
 	import { tick, type Snippet } from 'svelte';
 
-	import { Background, BackgroundVariant, SvelteFlow, type Connection as FlowConnection } from '@xyflow/svelte';
+	import { Background, BackgroundVariant, MiniMap, SvelteFlow, ViewportPortal, type Connection as FlowConnection, type EdgeTypes } from '@xyflow/svelte';
 	import History from '@lucide/svelte/icons/history';
+	import Keyboard from '@lucide/svelte/icons/keyboard';
+	import Redo2 from '@lucide/svelte/icons/redo-2';
+	import Undo2 from '@lucide/svelte/icons/undo-2';
 	import Activity from '@lucide/svelte/icons/activity';
 	import Play from '@lucide/svelte/icons/play';
 	import Plus from '@lucide/svelte/icons/plus';
@@ -36,7 +39,7 @@
 	import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
 	import X from '@lucide/svelte/icons/x';
 
-	import type { CredentialResource, Definition, Document, WorkflowDocumentInput } from '$lib/api/generated/models';
+	import type { CredentialResource, Definition, Document, Node as WorkflowNode, WorkflowDocumentInput } from '$lib/api/generated/models';
 	import type { ActivationNoticeView } from '$lib/workflow-editor/activation';
 	import { setCanvasActions } from '$lib/workflow-editor/canvas-actions';
 	import {
@@ -44,23 +47,35 @@
 		createWorkflowNode,
 		documentFromCanvas,
 		documentFromFlow,
+		duplicateNodes,
 		nextNodePosition,
 		positionAfter,
+		renameNode,
 		resolveDefinition,
 		toWorkflowInput,
+		uniqueNodeName,
 		updateNodeCredential,
 		updateNodeProperty,
+		updateNodeSize,
 		workflowDocumentEquals,
 		type EditorFlowEdge,
+		type EditorFlowNode,
 		type PropertyScope
 	} from '$lib/workflow-editor/document';
+	import { copySelection, pasteInto, readClipboard } from '$lib/workflow-editor/clipboard';
+	import { emptyHistory, record as recordHistory, redo as redoHistory, undo as undoHistory, type History as DocumentHistory } from '$lib/workflow-editor/history';
+	import { SHORTCUT_REFERENCE, canvasShortcut, isTypingTarget } from '$lib/workflow-editor/shortcuts';
 	import { tidyDocument } from '$lib/workflow-editor/layout';
 	import { mediaQuery } from '$lib/workflow-editor/media.svelte';
-	import { canConnect, connectionFromCanvas } from '$lib/workflow-editor/ports';
+	import { isAnnotation } from '$lib/workflow-editor/node-visual';
+	import { canConnect, connectionFromCanvas, resolvedPorts } from '$lib/workflow-editor/ports';
+	import type { CanvasShortcut } from '$lib/workflow-editor/shortcuts';
 	import type { CanvasValidationIssue } from '$lib/workflow-editor/validation';
 
 	import ActivationNotices from './activation-notices.svelte';
 	import EditorControls from './editor-controls.svelte';
+	import CanvasBridge, { type CanvasFlow } from './canvas-bridge.svelte';
+	import CanvasEdge from './canvas-edge.svelte';
 	import CanvasNode from './canvas-node.svelte';
 	import NodePicker from './node-picker.svelte';
 	import PropertiesPanel from './properties-panel.svelte';
@@ -86,11 +101,16 @@
 		notices = [],
 		activationError = null,
 		history = null,
+		saveConflict = false,
+		hostIssues = [],
 		onSave,
 		onRun,
 		onActivate,
 		onDeactivate,
-		onDismissNotice
+		onDismissNotice,
+		onDirtyChange,
+		onReloadConflict,
+		onOverwriteConflict
 	}: {
 		/** Rendered at the head of the toolbar. The embed surface passes none. */
 		header?: Snippet;
@@ -119,26 +139,61 @@
 		activationError?: string | null;
 		/** Supplied by a surface that can reach the version history. Null hides it. */
 		history?: WorkflowHistoryHost | null;
+		/** The server holds a newer revision than the one this draft was loaded from. */
+		saveConflict?: boolean;
+		/** Compile failures a host learned from activate/run, shown beside the save issues. */
+		hostIssues?: CanvasValidationIssue[];
 		onSave: (input: WorkflowDocumentInput) => Promise<void>;
 		onRun: () => Promise<void>;
 		onActivate?: () => Promise<void>;
 		onDeactivate?: () => Promise<void>;
 		onDismissNotice?: (key: string) => void;
+		/**
+		 * Whether the canvas has edits the server has not stored.
+		 *
+		 * The host owns the browser-level guards — leaving the page, adopting a
+		 * newer server revision — and only this component knows the answer.
+		 */
+		onDirtyChange?: (dirty: boolean) => void;
+		/** Replace the draft with the server's newer revision. */
+		onReloadConflict?: () => void;
+		/** Keep this draft and store it over the newer revision. */
+		onOverwriteConflict?: () => void;
 	} = $props();
 
 	const nodeTypes = { workflow: CanvasNode };
+	// Registered under the built-in names so the replay canvas, which uses the
+	// same projection and registers nothing, keeps rendering plain edges.
+	// Typed as the library's own edge map: the component receives the built-in
+	// edge props plus `data`, which the canvas edge ignores.
+	const edgeTypes = { smoothstep: CanvasEdge, default: CanvasEdge } as unknown as EdgeTypes;
 	// Matches the `lg:` breakpoint the layout below switches on.
 	const narrow = mediaQuery('(max-width: 1023.98px)');
 	function initialCanvasState() {
 		return documentFromCanvas(document, definitions);
 	}
-	let draft = $state<Document>(initialDraft());
+	// `raw` state on purpose: assigning a proxied document deep-wraps every node
+	// and parameter on each keystroke, which is work the canvas never reads —
+	// everything that touches the draft replaces it wholesale.
+	let draft = $state.raw<Document>(initialDraft());
 	const initialCanvas = initialCanvasState();
 	// Svelte Flow owns the mutable node/edge objects while the editor replaces
 	// the arrays at each canonical-document boundary. Keeping them raw avoids
 	// wrapping Flow internals in Svelte proxies on large canvases.
 	let nodes = $state.raw<EditorFlowNode[]>(initialCanvas.nodes);
 	let edges = $state.raw<EditorFlowEdge[]>(initialCanvas.edges);
+	/**
+	 * Undo/redo, as snapshots of the whole draft.
+	 *
+	 * A draft is already replaced rather than mutated, so keeping the previous
+	 * one costs a reference — while an inverse operation per edit would be a
+	 * second implementation of every mutation, free to drift from the first.
+	 */
+	let undoStack = $state.raw<DocumentHistory<Document>>(emptyHistory());
+	const canUndo = $derived(undoStack.past.length > 0);
+	const canRedo = $derived(undoStack.future.length > 0);
+	/** Every selected node, not just the first: a group drag used to lose all but one. */
+	let selectedNodeIDs = $state<string[]>([]);
 	let selectedNodeID = $state<string | null>(null);
 	let selectedEdgeID = $state<string | null>(null);
 	let pickerOpen = $state(false);
@@ -146,6 +201,21 @@
 	// Set when the picker was opened from a node's output port, so the step it
 	// adds arrives already connected instead of stranded on the canvas.
 	let pendingSource = $state<{ nodeID: string; port: string } | null>(null);
+	/** The connection kind an attachment slot accepts, so the picker offers only what fits. */
+	let pendingKind = $state<string | null>(null);
+	/** The connection a new step is being spliced into, or null. */
+	let pendingSplice = $state<string | null>(null);
+	/** Where a wire was dropped on empty canvas: the new step lands under the pointer. */
+	let pendingPosition = $state<{ x: number; y: number } | null>(null);
+	/** The node whose name is being edited inline, and the text so far. */
+	let renameTarget = $state<string | null>(null);
+	let renameValue = $state('');
+	let renameInput = $state<HTMLInputElement>();
+	let shortcutsOpen = $state(false);
+	/** What the last clipboard action did, until the next action. */
+	let canvasMessage = $state<string | null>(null);
+	let editorSection = $state<HTMLElement>();
+	let flow = $state<CanvasFlow | null>(null);
 	let propertyPanelOpen = $state(false);
 	let propertyDialog = $state<HTMLDivElement>();
 	let propertyCloseButton = $state<HTMLButtonElement>();
@@ -163,7 +233,7 @@
 	 * closing the panel, would leave the user's unsaved edits overwritten by a
 	 * version they were only looking at.
 	 */
-	let preview = $state<{ versionID: string; revision: number; document: Document } | null>(null);
+	let preview = $state.raw<{ versionID: string; revision: number; document: Document } | null>(null);
 	/** Compile failures a publish was refused with, shown in the save-issue list. */
 	let historyIssues = $state<CanvasValidationIssue[]>([]);
 
@@ -174,9 +244,13 @@
 	// into one flag so a new mutation cannot be added that honours one and not
 	// the other.
 	const locked = $derived(readOnly || previewing);
-	const issues = $derived([...saveIssues, ...historyIssues]);
+	const issues = $derived([...saveIssues, ...hostIssues, ...historyIssues]);
 
 	const dirty = $derived(!workflowDocumentEquals(document, draft));
+	// The host owns the unsaved-changes guards and cannot see the draft.
+	$effect(() => {
+		onDirtyChange?.(dirty);
+	});
 	// What the toolbar's live region announces. A preview outranks the other
 	// three because it is the only one under which the controls do nothing.
 	const canvasStatus = $derived(
@@ -217,11 +291,23 @@
 			: null
 	);
 	const showInspector = $derived(!narrow.current && Boolean(selectedNode && selectedDefinition));
+	// A surface that owns the keyboard while it is open. The canvas shortcuts
+	// must not act behind a dialog, and on a narrow screen the inspector *is* a
+	// modal.
+	const overlayOpen = $derived(shortcutsOpen || pickerOpen || historyOpen || (narrow.current && propertyPanelOpen));
 
 	setCanvasActions({
 		readOnly: () => locked,
-		addFrom: (nodeID, port) => openPickerFrom(nodeID, port),
-		remove: (nodeID) => removeNode(nodeID)
+		addFrom: (nodeID, port) => openPickerFrom(nodeID, port, null),
+		addAttached: (nodeID, port, kind) => openPickerFrom(nodeID, port, kind),
+		remove: (nodeID) => removeNode(nodeID),
+		splice: (edgeID) => openPickerSplice(edgeID),
+		removeEdge: (edgeID) => removeConnection(edgeID),
+		rename: (nodeID) => startRename(nodeID),
+		resize: (nodeID, width, height) => {
+			if (locked) return;
+			replaceDraft(updateNodeSize(draft, nodeID, width, height));
+		}
 	});
 
 	$effect(() => {
@@ -232,16 +318,17 @@
 		wasPropertyPanelOpen = propertyPanelOpen;
 	});
 
+	/**
+	 * The one place the canonical document becomes canvas data.
+	 *
+	 * Every mutation used to run this twice — once while replacing the draft and
+	 * once here — which is what made typing cost a full rebuild per keystroke.
+	 * The document is the input; this is its only projection.
+	 */
 	$effect(() => {
-		// Save validation errors arrive after the local graph has been drawn. Rebuild
-		// only the Flow projection so compiler locations become visible without
-		// discarding the user's canonical draft or current selection.
-		//
-		// Entering and leaving a preview runs through here for the same reason:
-		// only the projection changes, and `draft` is never read back out of it,
-		// so returning to the draft restores exactly what the user had.
 		const canvas = documentFromCanvas(displayed, definitions, issues);
-		nodes = canvas.nodes.map((node) => ({ ...node, selected: node.id === selectedNodeID }));
+		const selectedNow = new Set(selectedNodeIDs);
+		nodes = canvas.nodes.map((node) => ({ ...node, selected: selectedNow.has(node.id) }));
 		edges = canvas.edges.map((edge) => ({ ...edge, selected: edge.id === selectedEdgeID }));
 	});
 
@@ -263,13 +350,18 @@
 		});
 	}
 
-	function replaceDraft(next: Document) {
+	/**
+	 * Swaps in a new draft and records the one it replaced.
+	 *
+	 * `key` names the control being edited when the change is one step of a run
+	 * of them — typing in a field — so undo lands on the state before the first
+	 * keystroke instead of the state before the last. Everything else is its own
+	 * step.
+	 */
+	function replaceDraft(next: Document, options: { key?: string } = {}) {
+		if (next === draft) return;
+		undoStack = recordHistory(undoStack, draft, { key: options.key ?? null });
 		draft = next;
-		const canvas = documentFromCanvas(next, definitions, issues);
-		// Hydrating canvas data from the canonical draft must not discard the
-		// current inspector selection after each property keystroke.
-		nodes = canvas.nodes.map((node) => ({ ...node, selected: node.id === selectedNodeID }));
-		edges = canvas.edges.map((edge) => ({ ...edge, selected: edge.id === selectedEdgeID }));
 	}
 
 	function initialDraft(): Document {
@@ -278,13 +370,55 @@
 
 	function openPicker(onlyTriggers = false) {
 		pendingSource = null;
+		pendingKind = null;
+		pendingSplice = null;
+		pendingPosition = null;
 		triggersOnly = onlyTriggers;
 		pickerOpen = true;
 	}
 
-	function openPickerFrom(nodeID: string, port: string) {
+	function openPickerFrom(nodeID: string, port: string, kind: string | null) {
 		if (locked) return;
 		pendingSource = { nodeID, port };
+		pendingKind = kind;
+		pendingSplice = null;
+		pendingPosition = null;
+		triggersOnly = false;
+		pickerOpen = true;
+	}
+
+	/** Adds a step between the two nodes a connection already joins. */
+	function openPickerSplice(edgeID: string) {
+		if (locked) return;
+		const connection = (draft.connections ?? []).find((candidate) => candidate.id === edgeID);
+		if (!connection) return;
+		pendingSplice = edgeID;
+		pendingSource = { nodeID: connection.source.nodeId, port: connection.source.port };
+		pendingKind = null;
+		pendingPosition = null;
+		triggersOnly = false;
+		pickerOpen = true;
+	}
+
+	/**
+	 * A wire dropped on empty canvas opens the picker.
+	 *
+	 * Releasing a connection in mid-air is how an n8n user chains the next step;
+	 * it used to do nothing at all, so the wire had to be dragged onto a handle
+	 * that did not exist yet.
+	 */
+	function onConnectEnd(event: MouseEvent | TouchEvent) {
+		if (locked || !flow) return;
+		const point = 'changedTouches' in event ? event.changedTouches[0] : event;
+		if (!point) return;
+		const source = connectSource;
+		connectSource = null;
+		if (!source) return;
+		const position = flow.screenToFlowPosition({ x: point.clientX, y: point.clientY });
+		pendingSource = source;
+		pendingKind = null;
+		pendingSplice = null;
+		pendingPosition = position;
 		triggersOnly = false;
 		pickerOpen = true;
 	}
@@ -294,15 +428,27 @@
 		const existing = draft.nodes ?? [];
 		const from = pendingSource;
 		const source = from ? existing.find((candidate) => candidate.id === from.nodeID) : undefined;
+		const dropped = pendingPosition;
 		const node = createWorkflowNode(
 			definition,
-			source ? positionAfter(source.position, existing.map((candidate) => candidate.position)) : nextNodePosition(existing.length)
+			dropped
+				? { x: Math.round(dropped.x - TILE_CENTRE), y: Math.round(dropped.y - TILE_CENTRE) }
+				: source
+					? positionAfter(source.position, existing.map((candidate) => candidate.position))
+					: viewportPlacement(existing.length),
+			undefined,
+			existing.map((candidate) => candidate.name)
 		);
 
 		const nextNodes = [...existing, node];
+		const ports = resolvedPorts(node, definition);
 		let connections = draft.connections ?? [];
+		// Splicing keeps the wire it interrupts: the graph becomes
+		// source → new step → the node the wire used to reach.
+		const interrupted = pendingSplice ? connections.find((connection) => connection.id === pendingSplice) : undefined;
+		if (interrupted) connections = connections.filter((connection) => connection.id !== interrupted.id);
 		if (from) {
-			const target = (definition.inputs ?? []).find((port) => port.kind === 'main');
+			const target = ports.inputs.find((port) => port.kind === (pendingKind ?? 'main'));
 			// Built through the same validator a dragged connection uses, so a step
 			// added from a port can never produce an edge the canvas would refuse.
 			const connection = target
@@ -310,8 +456,24 @@
 				: null;
 			if (connection) connections = [...connections, connection];
 		}
+		if (interrupted) {
+			const output = ports.outputs.find((port) => port.kind === interrupted.kind);
+			const connection = output
+				? connectionFromCanvas(
+						{ source: node.id, sourceHandle: output.name, target: interrupted.target.nodeId, targetHandle: interrupted.target.port },
+						nextNodes,
+						definitions,
+						connections
+					)
+				: null;
+			if (connection) connections = [...connections, connection];
+		}
 
 		pendingSource = null;
+		pendingKind = null;
+		pendingSplice = null;
+		pendingPosition = null;
+		selectedNodeIDs = [node.id];
 		selectedNodeID = node.id;
 		selectedEdgeID = null;
 		replaceDraft({ ...draft, nodes: nextNodes, connections });
@@ -319,11 +481,21 @@
 		// The inspector for the new node is the natural next stop, and on a wide
 		// screen nothing else moves focus there.
 		restoreFocus(inspectorRegion);
+		// Pan only when the node did not land in front of the user: a step placed
+		// by hand on the canvas is already where they are looking.
+		if (!dropped && !source) void flow?.setCenter(node.position.x + TILE_CENTRE, node.position.y + TILE_CENTRE, { duration: 250 });
 	}
 
 	function syncCanvas() {
 		if (locked) return;
 		replaceDraft(documentFromFlow(draft, nodes, edges));
+	}
+
+	/** Where a drag out of a handle started, for the drop-on-empty-canvas path. */
+	let connectSource: { nodeID: string; port: string } | null = null;
+
+	function onConnectStart(_event: unknown, params: { nodeId: string | null; handleId: string | null; handleType?: string | null }) {
+		connectSource = params.nodeId && params.handleId ? { nodeID: params.nodeId, port: params.handleId } : null;
 	}
 
 	function onConnect(connection: FlowConnection) {
@@ -334,9 +506,30 @@
 	}
 
 	function onSelectionChange({ nodes: selectedNodes, edges: selectedEdges }: { nodes: EditorFlowNode[]; edges: EditorFlowEdge[] }) {
-		selectedNodeID = selectedNodes[0]?.id ?? null;
+		// Every selected node is kept, not just the first: collapsing a group
+		// drag to one node made a following Delete remove only that one.
+		selectedNodeIDs = selectedNodes.map((node) => node.id);
+		selectedNodeID = selectedNodeIDs[0] ?? null;
 		selectedEdgeID = selectedEdges[0]?.id ?? null;
 		propertyPanelOpen = selectedNodes.length > 0;
+	}
+
+	function selectAll() {
+		selectedNodeIDs = (displayed.nodes ?? []).map((node) => node.id);
+		selectedNodeID = selectedNodeIDs[0] ?? null;
+		selectedEdgeID = null;
+		propertyPanelOpen = selectedNodeIDs.length > 0;
+	}
+
+	/** Drops ids that no longer exist, after an undo or a delete. */
+	function forgetMissingSelection() {
+		const present = new Set((draft.nodes ?? []).map((node) => node.id));
+		const kept = selectedNodeIDs.filter((id) => present.has(id));
+		if (kept.length !== selectedNodeIDs.length) {
+			selectedNodeIDs = kept;
+			selectedNodeID = kept[0] ?? null;
+			propertyPanelOpen = kept.length > 0;
+		}
 	}
 
 	function removeNode(nodeID: string) {
@@ -348,6 +541,7 @@
 		});
 		if (selectedNodeID === nodeID) {
 			selectedNodeID = null;
+			selectedNodeIDs = selectedNodeIDs.filter((id) => id !== nodeID);
 			propertyPanelOpen = false;
 		}
 		restoreFocus();
@@ -358,6 +552,11 @@
 		if (locked || !selectedEdgeID) return;
 		const edgeID = selectedEdgeID;
 		selectedEdgeID = null;
+		removeConnection(edgeID);
+	}
+
+	function removeConnection(edgeID: string) {
+		if (locked) return;
 		replaceDraft({ ...draft, connections: (draft.connections ?? []).filter((connection) => connection.id !== edgeID) });
 		restoreFocus();
 	}
@@ -365,6 +564,7 @@
 	function onDelete() {
 		syncCanvas();
 		selectedNodeID = null;
+		selectedNodeIDs = [];
 		selectedEdgeID = null;
 		propertyPanelOpen = false;
 		restoreFocus();
@@ -372,7 +572,11 @@
 
 	function updateProperty(scope: PropertyScope, key: string, value: unknown) {
 		if (locked || !selectedNode) return;
-		replaceDraft(updateNodeProperty(draft, selectedNode.id, scope, key, value));
+		// One history step per field, however many keystrokes it took: undoing a
+		// word should not need one press per letter.
+		replaceDraft(updateNodeProperty(draft, selectedNode.id, scope, key, value), {
+			key: `${selectedNode.id}:${scope}:${key}`
+		});
 	}
 
 	function updateCredential(typeID: string, credentialID: string) {
@@ -381,6 +585,7 @@
 	}
 
 	function focusValidationIssue(issue: CanvasValidationIssue) {
+		selectedNodeIDs = issue.nodeID ? [issue.nodeID] : [];
 		selectedNodeID = issue.nodeID ?? null;
 		selectedEdgeID = issue.connectionID ?? null;
 		propertyPanelOpen = Boolean(issue.nodeID);
@@ -411,9 +616,255 @@
 	}
 
 
-	function tidyUp() {
+	async function tidyUp() {
 		if (locked) return;
-		replaceDraft(tidyDocument(draft));
+		// Three things dagre cannot know: how big the tiles actually are, which
+		// nodes are annotations rather than steps, and which wires carry
+		// configuration. Sizes come from Svelte Flow's own measurement, so a
+		// 240px hub is laid out as a 240px hub.
+		const sizes: Record<string, { width: number; height: number }> = {};
+		const annotations: string[] = [];
+		for (const node of draft.nodes ?? []) {
+			const measured = flow?.getInternalNode(node.id)?.measured;
+			if (measured?.width && measured?.height) sizes[node.id] = { width: measured.width, height: measured.height };
+			const definition = resolveDefinition(node.type, node.typeVersion, definitions);
+			if (definition && isAnnotation(definition)) annotations.push(node.id);
+		}
+
+		replaceDraft(tidyDocument(draft, { sizes, annotations }));
+		// Both Tidy buttons have to land the user on the result, and the toolbar
+		// one used to leave the view where it was.
+		await tick();
+		await flow?.fitView({ padding: 0.15, duration: 300 });
+	}
+
+	/** Half a 68px tile: the offset that centres a tile on a point. */
+	const TILE_CENTRE = 34;
+
+	/** Where a node added with no source belongs: the middle of what the user can see. */
+	function viewportPlacement(index: number): { x: number; y: number } {
+		const rect = canvasRegion?.getBoundingClientRect();
+		if (!flow || !rect) return nextNodePosition(index);
+		const centre = flow.screenToFlowPosition({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
+		return { x: Math.round(centre.x - TILE_CENTRE), y: Math.round(centre.y - TILE_CENTRE) };
+	}
+
+	function undo() {
+		if (locked) return;
+		const step = undoHistory(undoStack, draft);
+		if (!step) return;
+		undoStack = step.history;
+		draft = step.state;
+		forgetMissingSelection();
+	}
+
+	function redo() {
+		if (locked) return;
+		const step = redoHistory(undoStack, draft);
+		if (!step) return;
+		undoStack = step.history;
+		draft = step.state;
+		forgetMissingSelection();
+	}
+
+	async function copySelectionToClipboard() {
+		const json = copySelection(draft, selectedNodeIDs);
+		if (!json) {
+			canvasMessage = 'Select a node first.';
+			return;
+		}
+		try {
+			await navigator.clipboard.writeText(json);
+			canvasMessage = `Copied ${selectedNodeIDs.length} node${selectedNodeIDs.length === 1 ? '' : 's'}.`;
+		} catch {
+			canvasMessage = 'The browser would not give this page the clipboard.';
+		}
+	}
+
+	/**
+	 * Pastes workflow JSON, from this editor or from n8n.
+	 *
+	 * The two shapes are the same document with different connection tables, so
+	 * one reader handles both and the report says what could not be carried
+	 * across — a placeholder not replacing anything, or a wire no port here
+	 * accepts — rather than dropping it silently.
+	 */
+	function pasteText(text: string): boolean {
+		const payload = readClipboard(text, definitions);
+		if (!payload) return false;
+		const { document: next, nodeIDs } = pasteInto(draft, payload, pasteOffset(payload.nodes));
+		replaceDraft(next);
+		selectedNodeIDs = nodeIDs;
+		selectedNodeID = nodeIDs[0] ?? null;
+		selectedEdgeID = null;
+		const notes: string[] = [`Pasted ${nodeIDs.length} node${nodeIDs.length === 1 ? '' : 's'}`];
+		if (payload.unsupported.length > 0) notes.push(`${payload.unsupported.length} placeholder${payload.unsupported.length === 1 ? '' : 's'} to replace`);
+		if (payload.dropped > 0) notes.push(`${payload.dropped} connection${payload.dropped === 1 ? '' : 's'} not placed`);
+		canvasMessage = `${notes.join(' · ')}.`;
+		return true;
+	}
+
+	/** Centres a pasted fragment on the visible canvas, as a paste of a snippet should land. */
+	function pasteOffset(nodes: WorkflowNode[]): { x: number; y: number } {
+		const rect = canvasRegion?.getBoundingClientRect();
+		if (!flow || !rect || nodes.length === 0) return { x: 40, y: 40 };
+		const centre = flow.screenToFlowPosition({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
+		return {
+			x: Math.round(centre.x - Math.min(...nodes.map((node) => node.position.x))),
+			y: Math.round(centre.y - Math.min(...nodes.map((node) => node.position.y)))
+		};
+	}
+
+	function onPaste(event: ClipboardEvent) {
+		if (locked) return;
+		const text = event.clipboardData?.getData('text/plain') ?? '';
+		if (text !== '' && pasteText(text)) event.preventDefault();
+	}
+
+	async function pasteFromClipboard() {
+		if (locked) return;
+		try {
+			const text = await navigator.clipboard.readText();
+			if (!pasteText(text)) canvasMessage = 'Nothing on the clipboard to paste.';
+		} catch {
+			canvasMessage = 'The browser would not give this page the clipboard. Paste with the keyboard shortcut instead.';
+		}
+	}
+
+	function duplicateSelection() {
+		if (locked) return;
+		const { document: next, nodeIDs } = duplicateNodes(draft, selectedNodeIDs);
+		if (nodeIDs.length === 0) {
+			canvasMessage = 'Select a node first.';
+			return;
+		}
+		replaceDraft(next);
+		selectedNodeIDs = nodeIDs;
+		selectedNodeID = nodeIDs[0] ?? null;
+		selectedEdgeID = null;
+		canvasMessage = `Duplicated ${nodeIDs.length} node${nodeIDs.length === 1 ? '' : 's'}.`;
+	}
+
+	function startRename(nodeID: string) {
+		if (locked) return;
+		const node = (displayed.nodes ?? []).find((candidate) => candidate.id === nodeID);
+		if (!node) return;
+		renameTarget = nodeID;
+		renameValue = node.name;
+		void tick().then(() => {
+			renameInput?.focus();
+			renameInput?.select();
+		});
+	}
+
+	/** Rename from the inspector's title, which is where n8n renames from. */
+	function renameSelected(rawName: string) {
+		if (locked || !selectedNode) return;
+		const taken = (draft.nodes ?? []).filter((node) => node.id !== selectedNode.id).map((node) => node.name);
+		const name = uniqueNodeName(rawName, taken);
+		if (name !== rawName.trim()) canvasMessage = `Renamed to “${name}” — that name was taken.`;
+		replaceDraft(renameNode(draft, selectedNode.id, name));
+	}
+
+	function commitRename() {
+		const nodeID = renameTarget;
+		renameTarget = null;
+		if (!nodeID) return;
+		const taken = (draft.nodes ?? []).filter((node) => node.id !== nodeID).map((node) => node.name);
+		const name = uniqueNodeName(renameValue, taken);
+		if (name !== renameValue.trim()) canvasMessage = `Renamed to “${name}” — that name was taken.`;
+		replaceDraft(renameNode(draft, nodeID, name));
+		restoreFocus();
+	}
+
+	/**
+	 * The canvas keymap.
+	 *
+	 * Bound on the window rather than on the canvas element, because focus
+	 * follows the node the user selected out of the pane. Three guards: the
+	 * keystroke must not belong to a field, no overlay may be open, and focus
+	 * has to be inside this editor — a second editor on the page must not act on
+	 * the first one's keys.
+	 */
+	function handleShortcut(event: KeyboardEvent) {
+		if (event.defaultPrevented || isTypingTarget(event.target)) return;
+		if (renameTarget || overlayOpen) return;
+		const focused = globalThis.document.activeElement;
+		if (focused && focused !== globalThis.document.body && editorSection && !editorSection.contains(focused)) return;
+		const action = canvasShortcut(event);
+		if (!action || !performShortcut(action)) return;
+		event.preventDefault();
+		// The status line reports the last clipboard action; any other key makes
+		// it stale.
+		if (action !== 'copy' && action !== 'paste' && action !== 'duplicate') canvasMessage = null;
+	}
+
+	function performShortcut(action: CanvasShortcut): boolean {
+		switch (action) {
+			case 'undo':
+				if (!canUndo) return false;
+				undo();
+				return true;
+			case 'redo':
+				if (!canRedo) return false;
+				redo();
+				return true;
+			case 'save':
+				if (locked || !dirty || saving) return false;
+				void save();
+				return true;
+			case 'select-all':
+				if ((displayed.nodes?.length ?? 0) === 0) return false;
+				selectAll();
+				return true;
+			case 'copy':
+				if (selectedNodeIDs.length === 0) return false;
+				void copySelectionToClipboard();
+				return true;
+			case 'paste':
+				if (locked) return false;
+				void pasteFromClipboard();
+				return true;
+			case 'duplicate':
+				if (locked || selectedNodeIDs.length === 0) return false;
+				duplicateSelection();
+				return true;
+			case 'rename':
+				if (!selectedNodeID) return false;
+				startRename(selectedNodeID);
+				return true;
+			case 'open-selection':
+				if (!selectedNodeID) return false;
+				propertyPanelOpen = true;
+				return true;
+			case 'add-step':
+				if (locked) return false;
+				openPicker(false);
+				return true;
+			case 'tidy':
+				if (locked) return false;
+				void tidyUp();
+				return true;
+			case 'fit-view':
+				if (!flow) return false;
+				void flow.fitView({ padding: 0.15, duration: 200 });
+				return true;
+			case 'reset-zoom':
+				if (!flow) return false;
+				void flow.setZoom(1, { duration: 200 });
+				return true;
+			case 'zoom-in':
+				if (!flow) return false;
+				void flow.zoomIn({ duration: 150 });
+				return true;
+			case 'zoom-out':
+				if (!flow) return false;
+				void flow.zoomOut({ duration: 150 });
+				return true;
+			case 'help':
+				shortcutsOpen = true;
+				return true;
+		}
 	}
 
 	async function save() {
@@ -437,7 +888,9 @@
 	}
 </script>
 
-<section class="relative flex h-full min-h-0 flex-col bg-background" aria-label="Workflow editor">
+<svelte:window onkeydown={handleShortcut} />
+
+<section bind:this={editorSection} onpaste={onPaste} class="relative flex h-full min-h-0 flex-col bg-background" aria-label="Workflow editor">
 	<header class="flex h-9 shrink-0 items-center gap-1 overflow-x-auto border-b border-border bg-card px-1.5">
 		{#if header}
 			{@render header()}
@@ -446,6 +899,16 @@
 		{#if !locked}
 			<button type="button" class="inline-flex h-7 shrink-0 items-center gap-1 whitespace-nowrap rounded-md bg-primary px-2 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2" onclick={() => openPicker(false)}>
 				<Plus aria-hidden="true" class="size-3.5" />Add step
+			</button>
+		{/if}
+		{#if !locked}
+			<!-- Undo/redo sit beside Tidy because they are what makes Tidy safe to
+			     press on an imported template. -->
+			<button type="button" class="grid size-7 shrink-0 place-items-center rounded-md border border-border transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-40" disabled={!canUndo} title="Undo (⌘Z)" aria-label="Undo" data-testid="undo-toolbar" onclick={undo}>
+				<Undo2 aria-hidden="true" class="size-3.5" />
+			</button>
+			<button type="button" class="grid size-7 shrink-0 place-items-center rounded-md border border-border transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-40" disabled={!canRedo} title="Redo (⌘⇧Z)" aria-label="Redo" data-testid="redo-toolbar" onclick={redo}>
+				<Redo2 aria-hidden="true" class="size-3.5" />
 			</button>
 		{/if}
 		{#if !locked}
@@ -478,6 +941,9 @@
 				<History aria-hidden="true" class="size-3.5" />
 			</button>
 		{/if}
+		<button type="button" class="grid size-7 shrink-0 place-items-center rounded-md border border-border transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2" title="Keyboard shortcuts" aria-label="Keyboard shortcuts" aria-haspopup="dialog" aria-expanded={shortcutsOpen} onclick={() => (shortcutsOpen = true)}>
+			<Keyboard aria-hidden="true" class="size-3.5" />
+		</button>
 		{#if canActivate}
 			<button type="button" class="grid size-7 shrink-0 place-items-center rounded-md border border-border transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-40" disabled={activating || activationBlockedByDirty} title={activating ? (active ? 'Deactivating…' : 'Activating…') : active ? 'Deactivate' : 'Activate'} aria-label={activating ? (active ? 'Deactivating…' : 'Activating…') : active ? 'Deactivate' : 'Activate'} aria-describedby={activationBlockedByDirty ? 'save-first-hint' : undefined} onclick={() => void toggleActivation()}>
 				{#if active}<PowerOff aria-hidden="true" class="size-3.5" />{:else}<Power aria-hidden="true" class="size-3.5" />{/if}
@@ -504,8 +970,24 @@
 		{#if dirty}<span id="save-first-hint" class="sr-only">Save your changes before running or activating this workflow.</span>{/if}
 	</header>
 
+	{#if saveConflict}
+		<!-- Both answers are offered because the editor cannot choose: keeping
+		     this draft may overwrite a colleague's, and reloading discards the
+		     user's own edits. -->
+		<div role="alert" class="flex shrink-0 flex-wrap items-center gap-2 border-b border-warning/30 bg-warning/10 px-3 py-1.5 text-xs">
+			<span class="min-w-0 flex-1">This workflow changed elsewhere while you were editing.</span>
+			<button type="button" class="shrink-0 rounded-md border border-border bg-background px-2 py-0.5 font-medium transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-1" onclick={() => onReloadConflict?.()}>Reload theirs</button>
+			<button type="button" class="shrink-0 rounded-md border border-border bg-background px-2 py-0.5 font-medium transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-1" onclick={() => onOverwriteConflict?.()}>Save mine anyway</button>
+		</div>
+	{/if}
 	{#if saveError}
 		<p role="alert" class="shrink-0 border-b border-destructive/25 bg-destructive/5 px-3 py-1.5 text-xs text-destructive">Save failed: {saveError}</p>
+	{/if}
+	{#if canvasMessage}
+		<p role="status" class="shrink-0 border-b border-border bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground">
+			{canvasMessage}
+			<button type="button" class="ml-2 underline underline-offset-2" onclick={() => (canvasMessage = null)}>Dismiss</button>
+		</p>
 	{/if}
 	<!-- A publish refused by the compiler produces the same structured problem a
 	     refused save does, so both are rendered by this one list. A second list
@@ -513,7 +995,10 @@
 	     through to the node at fault. -->
 	{#if issues.length > 0}
 		<ul aria-label="Workflow validation issues" class="shrink-0 divide-y divide-destructive/10 border-b border-destructive/20 bg-destructive/5">
-			{#each issues as issue (`${issue.code ?? ''}-${issue.nodeID ?? issue.connectionID ?? issue.message}`)}
+			<!-- Keyed by position as well as identity: the compiler can report two
+			     issues for one node with the same code, and a duplicate key crashed
+			     the render (each_key_duplicate) rather than showing both. -->
+			{#each issues as issue, index (`${issue.code ?? ''}-${issue.nodeID ?? issue.connectionID ?? ''}-${index}`)}
 				<li><button type="button" class="w-full px-3 py-1.5 text-left text-xs text-destructive underline decoration-destructive/30 underline-offset-2 hover:decoration-destructive" onclick={() => focusValidationIssue(issue)}>{issue.message}{#if issue.nodeID} (node){:else if issue.connectionID} (connection){/if}</button></li>
 			{/each}
 		</ul>
@@ -558,9 +1043,77 @@
 		<!-- tabindex makes this a place focus can land after a node is deleted; -1
 		     keeps it out of the tab sequence. -->
 		<div bind:this={canvasRegion} tabindex="-1" class="relative min-h-0 flex-1 overflow-hidden outline-none" data-testid="workflow-canvas">
-			<SvelteFlow bind:nodes bind:edges {nodeTypes} fitView fitViewOptions={{ padding: 0.15, maxZoom: 1 }} minZoom={0.3} nodesDraggable={!locked} nodesConnectable={!locked} deleteKey={locked ? null : ['Backspace', 'Delete']} isValidConnection={(connection) => canConnect(connection, draft.nodes ?? [], definitions, draft.connections ?? [])} onconnect={onConnect} ondelete={onDelete} onnodedragstop={syncCanvas} onselectionchange={onSelectionChange} onpaneclick={() => onSelectionChange({ nodes: [], edges: [] })}>
+			<SvelteFlow
+				bind:nodes
+				bind:edges
+				{nodeTypes}
+				{edgeTypes}
+				fitView
+				fitViewOptions={{ padding: 0.15, maxZoom: 1 }}
+				minZoom={0.1}
+				onlyRenderVisibleElements
+				nodesDraggable={!locked}
+				nodesConnectable={!locked}
+				deleteKey={locked ? null : ['Backspace', 'Delete']}
+				isValidConnection={(connection) => canConnect(connection, draft.nodes ?? [], definitions, draft.connections ?? [])}
+				onconnect={onConnect}
+				onconnectstart={onConnectStart}
+				onconnectend={onConnectEnd}
+				ondelete={onDelete}
+				onnodedragstop={syncCanvas}
+				onselectionchange={onSelectionChange}
+				onpaneclick={() => onSelectionChange({ nodes: [], edges: [] })}
+			>
 				<Background variant={BackgroundVariant.Dots} gap={16} size={1} patternColor="var(--border)" />
 				<EditorControls locked={locked} onTidy={tidyUp} />
+				<!-- Svelte Flow owns the viewport and only a component inside it can
+				     read that context; this hands the editor the handful of calls it
+				     needs and renders nothing. -->
+				<CanvasBridge onReady={(next) => (flow = next)} />
+				<!-- A minimap over a few nodes is noise; on a 63-node import it is
+				     the only way to know where you are. -->
+				{#if (displayed.nodes?.length ?? 0) > 12 && !narrow.current}
+					<MiniMap
+						position="bottom-left"
+						pannable
+						zoomable
+						ariaLabel="Workflow minimap"
+						bgColor="var(--card)"
+						maskColor="color-mix(in oklch, var(--background) 70%, transparent)"
+						nodeColor="var(--border)"
+						nodeStrokeWidth={2}
+					/>
+				{/if}
+				{#if renameTarget}
+					{@const renaming = (displayed.nodes ?? []).find((node) => node.id === renameTarget)}
+					{#if renaming}
+						<!-- Rendered in the flow's own coordinate space so the field sits on
+						     the tile it renames, at whatever zoom the user is at. -->
+						<ViewportPortal target="front">
+							<div class="nodrag nopan absolute" style={`left: ${renaming.position.x - 60}px; top: ${renaming.position.y - 8}px; width: 10rem`}>
+								<label class="sr-only" for="node-rename-input">Node name</label>
+								<input
+									id="node-rename-input"
+									bind:this={renameInput}
+									bind:value={renameValue}
+									class="h-7 w-full rounded-md border border-primary bg-background px-2 text-xs shadow-md outline-none"
+									onkeydown={(event) => {
+										if (event.key === 'Enter') {
+											event.preventDefault();
+											commitRename();
+										}
+										if (event.key === 'Escape') {
+											event.preventDefault();
+											renameTarget = null;
+											restoreFocus();
+										}
+									}}
+									onblur={commitRename}
+								/>
+							</div>
+						</ViewportPortal>
+					{/if}
+				{/if}
 			</SvelteFlow>
 
 			{#if !hideRun && (displayed.nodes?.length ?? 0) > 0}
@@ -598,7 +1151,7 @@
 			<aside bind:this={inspectorRegion} tabindex="-1" class="hidden min-h-0 border-l border-border outline-none lg:block">
 				<div class="flex h-full min-h-0 flex-col">
 					<div class="min-h-0 flex-1">
-						<PropertiesPanel node={selectedNode} definition={selectedDefinition} {credentials} readOnly={locked} onChange={updateProperty} onCredentialChange={updateCredential} />
+						<PropertiesPanel node={selectedNode} definition={selectedDefinition} {credentials} readOnly={locked} onChange={updateProperty} onRename={renameSelected} onCredentialChange={updateCredential} />
 					</div>
 					{#if selectedResolvedVersion !== null && selectedResolvedVersion !== selectedNode.typeVersion}
 						<p class="shrink-0 border-t border-border px-3 py-1.5 text-[0.6875rem] leading-4 text-muted-foreground">Stored v{selectedNode.typeVersion} · resolved to v{selectedResolvedVersion}</p>
@@ -633,7 +1186,7 @@
 		{#if narrow.current && propertyPanelOpen && selectedNode && selectedDefinition}
 			<div bind:this={propertyDialog} class="absolute inset-x-2 bottom-2 z-30 max-h-[min(28rem,calc(100%-1rem))] overflow-hidden rounded-xl border border-border bg-card shadow-xl" role="dialog" aria-modal="true" aria-label={`${selectedNode.name} properties`} tabindex="-1" onkeydown={handlePropertyDialogKeydown}>
 				<div class="flex justify-end border-b border-border px-1.5 py-1"><button bind:this={propertyCloseButton} type="button" class="grid size-6 place-items-center rounded-md text-muted-foreground hover:bg-muted" aria-label="Close node properties" onclick={closePropertyPanel}><X aria-hidden="true" class="size-3.5" /></button></div>
-				<PropertiesPanel node={selectedNode} definition={selectedDefinition} {credentials} readOnly={locked} onChange={updateProperty} onCredentialChange={updateCredential} />
+				<PropertiesPanel node={selectedNode} definition={selectedDefinition} {credentials} readOnly={locked} onChange={updateProperty} onRename={renameSelected} onCredentialChange={updateCredential} />
 				{#if selectedResolvedVersion !== null && selectedResolvedVersion !== selectedNode.typeVersion}
 					<p class="border-t border-border px-3 py-1.5 text-[0.6875rem] leading-4 text-muted-foreground">Stored v{selectedNode.typeVersion} · resolved to v{selectedResolvedVersion}</p>
 				{/if}
@@ -664,7 +1217,38 @@
 		{/if}
 	</div>
 
-	<NodePicker bind:open={pickerOpen} {definitions} {triggersOnly} connecting={Boolean(pendingSource)} onSelect={addNode} onDismiss={() => (pendingSource = null)} />
+	<NodePicker
+		bind:open={pickerOpen}
+		{definitions}
+		{triggersOnly}
+		connecting={Boolean(pendingSource)}
+		providesKind={pendingKind}
+		onSelect={addNode}
+		onDismiss={() => {
+			pendingSource = null;
+			pendingKind = null;
+			pendingSplice = null;
+			pendingPosition = null;
+		}}
+	/>
+
+	{#if shortcutsOpen}
+		<div class="absolute inset-0 z-50 grid place-items-center bg-background/60 p-4 backdrop-blur-sm" role="presentation">
+			<button type="button" tabindex="-1" aria-hidden="true" class="absolute inset-0 cursor-default" onclick={() => (shortcutsOpen = false)}></button>
+			<div class="relative max-h-[min(32rem,calc(100dvh-2rem))] w-full max-w-sm overflow-y-auto rounded-xl border border-border bg-popover p-4 shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="shortcut-title">
+				<h2 id="shortcut-title" class="text-sm font-semibold">Keyboard shortcuts</h2>
+				<!-- Rendered from the keymap itself, so a shortcut cannot exist in the
+				     handler and be missing from the list a user reads. -->
+				<dl class="mt-3 grid grid-cols-[auto_1fr] items-baseline gap-x-3 gap-y-1.5 text-xs">
+					{#each SHORTCUT_REFERENCE as shortcut (shortcut.action)}
+						<dt class="font-mono text-muted-foreground">{shortcut.keys}</dt>
+						<dd>{shortcut.label}</dd>
+					{/each}
+				</dl>
+				<button type="button" class="mt-4 w-full rounded-md border border-border px-2 py-1 text-xs font-medium transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-1" onclick={() => (shortcutsOpen = false)}>Close</button>
+			</div>
+		</div>
+	{/if}
 
 	{#if history}
 		<!-- Mounted here rather than by each host so both surfaces get the same

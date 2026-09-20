@@ -1,7 +1,7 @@
 ---
 id: FEAT-jvembs
 title: 'Canvas authoring parity: undo/redo, copy/paste, rename, shortcuts, picker, minimap, tidy, edges'
-status: todo
+status: doing
 priority: medium
 labels:
     - editor
@@ -9,7 +9,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:10Z"
-updated: "2026-09-19T12:06:10Z"
+updated: "2026-09-20T00:41:22Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -333,3 +333,31 @@ Files: /Users/izzadev/projects/k-flow/web/src/lib/components/workflow-editor/wor
 - [ ] White-label leak: a 'Svelte Flow' attribution link appears on every canvas
 - [ ] At phone width the workflow name disappears, Activate and status move off-screen, and Execute appears twice
 - [ ] Adversarial re-verify against live stub/n8n like the Verify phase (no code-only close)
+---
+
+## Progress (FrontendCore3, 2026-09-20)
+
+Status: `testing`. Landed in one commit; scoped proof below.
+
+### Done
+- **Undo/redo** (`workflow-editor.svelte` + `workflow-editor/history.ts`): bounded snapshot stack (64 steps) over the immutable draft, coalescing per field within 700 ms so a typed word is one step; Mod+Z / Mod+Shift+Z / Mod+Y, toolbar buttons, `git`-free redo cleared on the next edit. Delete, Tidy, drag (one step per drag via `onnodedragstop`), connect, rename, paste and property edits all record.
+- **Copy / paste / duplicate** (`workflow-editor/clipboard.ts`): Mod+C copies the selection as workflow JSON (`kind: kilasflow.node-fragment`), Mod+V accepts both that fragment and an n8n payload (`{nodes, connections}` keyed by node name, positions as `[x, y]`), Mod+D duplicates. Paste regenerates ids, de-duplicates names, offsets onto the viewport centre, and reports placeholders/dropped wires in a status strip. Node types resolve against the catalogue by exact type then by last segment; an unknown type becomes the same `kilasflow.unsupported` capsule an import produces, at the arity its own edges need.
+- **Rename**: F2, node toolbar, double-click on a tile, and an editable title in the inspector. Names are made unique on add/paste/duplicate (`Set` → `Set1` → `Set2`) and `renameNode` rewrites `$('Old')`, `$items("Old")` and `$node['Old']` references in every node's parameters/settings, skipping the imported `original` capsule.
+- **Shortcuts** (`workflow-editor/shortcuts.ts` + `?` help overlay rendered from the same table): Mod+S save, Mod+A select all, Mod+C/V/D, F2 rename, Enter opens the inspector, Tab/N node picker, 1 fit, 0 reset zoom, +/− zoom, Shift+Mod+T tidy, ? help. Suppressed in text fields, while an overlay is open, and when focus is outside this editor.
+- **Node picker** (`workflow-editor/catalog.ts`): one entry per type at its latest version, import-only types and deployment-unavailable nodes hidden, ranking name > type/alias > description > category, arrow/Home/End + Enter with `aria-activedescendant`, and a `providesKind` filter so an agent slot offers only what fits it.
+- **AI slots** (`canvas-node.svelte`): a `+` per empty attachment input that opens the picker filtered to that port's kind and drops the tile under the slot already wired; required-and-empty slots are marked; labels truncate and stagger two rows deep instead of colliding. Ports now come from FrontendCore2's `resolvedPorts`, so Switch/Merge branch counts follow the node's parameters.
+- **Sticky notes**: rendered as sized, coloured rectangles behind the graph with a safe markdown subset (`workflow-editor/sticky.ts` — runs of text, never markup), zIndex below steps, drag-resizable writing `width`/`height` back.
+- **Minimap / zoom**: minimap above 12 nodes on wide screens, `minZoom` 0.1, Tidy now uses measured tile sizes and fits the view.
+- **Tidy** (`layout.ts`): sticker notes excluded and translated with the nodes they covered, attachment tiles placed beneath their consumer instead of as upstream rank columns, main-flow edges only through dagre, real measured sizes, and a final separation pass so no two tiles overlap.
+- **Edges** (`canvas-edge.svelte`): hover `+` splices a new step into a connection (source → new → old target), hover trash deletes it; releasing a dragged wire on empty canvas opens the picker at the drop point.
+- **Multi-selection**: every selected id is kept (a group drag no longer collapses to one node), and select-all is bound.
+
+### Scoped proof
+- `cd web && npx vitest run src/lib/workflow-editor` → 29 files, 361 tests, all passing.
+- `npx svelte-check --tsconfig ./tsconfig.json` → 0 errors in the files this ticket touches (3 remaining errors are in `credentials.test.ts` (pre-existing), `embed/embed-editor.svelte:277` and `routes/(dashboard)/app/workflows/[id]/+page.svelte:420`, all owned elsewhere).
+- New tests added: `history.test.ts`, `shortcuts.test.ts`, `catalog.test.ts`, `clipboard.test.ts`, `sticky.test.ts`, plus layout/document cases (attachment columns, overlap-freedom, sticky travel, wide tiles, unique names, reference rewrite, fragment paste).
+
+### Not done (recorded, not silently dropped)
+- Disable/pin/notes (BUG-xmcm8x's deferred model work), execute-without-save/test input, workflow rename + settings dialog, and the side-panel node-creator restructure need files outside this slice (`internal/**`, `routes/**`) — left for their owners.
+- Svelte Flow's attribution link is still shown. Hiding it needs a Pro subscription per xyflow's terms; recorded as a licensing decision for Main rather than changed silently.
+- Visual verification in a browser was not possible from this slice (no backend/stub of my own); proof is the unit suites plus the type check, with Main's end-to-end gate covering the rendered surface.
