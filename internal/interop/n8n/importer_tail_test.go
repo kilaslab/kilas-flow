@@ -1,10 +1,12 @@
 package n8n_test
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
 	"github.com/kilaslabs/kilas-flow/internal/interop/n8n"
+	"github.com/kilaslabs/kilas-flow/packs/telegram"
 )
 
 // TestWebhookMethodDefaultsToGet covers n8n's own default.
@@ -339,7 +341,7 @@ func TestAnOmittedChainPromptBecomesTheUserPrompt(t *testing.T) {
 
 // TestFromAIOverrideCommentIsStripped covers n8n's auto-generated comment.
 //
-// n8n writes `{{ /*n8n-auto-generated-fromAI-override*/ $fromAI('x', ``, 'string') }}`
+// n8n writes `{{ /*n8n-auto-generated-fromAI-override*/ $fromAI('x', “, 'string') }}`
 // when a user clicks "let the model define this parameter". The comment is a
 // JavaScript comment that n8n ignores, and this server's evaluator refused the
 // body — so 27 of the corpus's 52 $fromAI parameters failed on every call.
@@ -526,5 +528,83 @@ func TestSelfReferencingWorkflowToolIsCarried(t *testing.T) {
 	}
 	if !blocked {
 		t.Errorf("unsupported = %#v, want a foreign workflow ID blocked", foreign.Unsupported)
+	}
+}
+
+// TestTelegramOperationsMatchThePack keeps the mirrored operation list honest.
+//
+// The adapter must not import the node pack, so the list is duplicated — and a
+// duplication nobody checks is a mapping that silently stops covering an
+// operation the pack gained.
+func TestTelegramOperationsMatchThePack(t *testing.T) {
+	t.Parallel()
+
+	pack, err := telegram.Pack()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, resource := range pack.Resources {
+		for _, operation := range resource.Operations {
+			if !n8n.TelegramOperationKnown(resource.Name, operation.Name) {
+				t.Errorf("pack declares %s/%s, which the importer does not know about",
+					resource.Name, operation.Name)
+			}
+		}
+	}
+}
+
+// TestTelegramAdditionalFieldsReachThePack covers the options n8n keeps in a
+// collection and the pack reads at the top level.
+//
+// Copying the node verbatim dropped every one of them: HTML formatting
+// disappeared and messages arrived with raw tags, and sendAndWait activated and
+// then failed because the pack has no such request.
+func TestTelegramAdditionalFieldsReachThePack(t *testing.T) {
+	t.Parallel()
+
+	const fixture = `{
+	  "name": "Telegram",
+	  "nodes": [
+	    {"id":"a","name":"Send","type":"n8n-nodes-base.telegram","typeVersion":1.2,"position":[0,0],
+	     "parameters":{"resource":"message","operation":"sendMessage","chatId":"123","text":"hi",
+	       "additionalFields":{"parse_mode":"HTML","disable_notification":true,"reply_to_message_id":"7"},
+	       "replyMarkup":"inlineKeyboard","inlineKeyboard":{"rows":[{"row":{"buttons":[
+	         {"text":"Yes","additionalFields":{"callback_data":"yes"}}]}}]}}}
+	  ],
+	  "connections": {}
+	}`
+
+	result := importFixture(t, fixture)
+	send := nodeByName(result.Document, "Send")
+	if send.Parameters["parseMode"] != "HTML" || send.Parameters["disableNotification"] != true ||
+		send.Parameters["replyToMessageId"] != "7" {
+		t.Errorf("parameters = %#v, want the additional fields mapped onto the pack's names", send.Parameters)
+	}
+	encoded, err := json.Marshal(send.Parameters["replyMarkup"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(encoded) != `{"inline_keyboard":[[{"callback_data":"yes","text":"Yes"}]]}` {
+		t.Fatalf("replyMarkup = %s, want the inline keyboard built as Bot API JSON", encoded)
+	}
+
+	// An operation the pack does not implement blocks rather than activating
+	// and failing on its first run.
+	approval := importFixture(t, `{
+	  "name": "Approval",
+	  "nodes": [
+	    {"id":"a","name":"Ask","type":"n8n-nodes-base.telegram","typeVersion":1.2,"position":[0,0],
+	     "parameters":{"resource":"message","operation":"sendAndWait","chatId":"123","text":"ok?"}}
+	  ],
+	  "connections": {}
+	}`)
+	blocked := false
+	for _, issue := range approval.Unsupported {
+		if issue.Severity == n8n.SeverityBlocking && issue.Field == "operation" {
+			blocked = true
+		}
+	}
+	if !blocked {
+		t.Errorf("unsupported = %#v, want sendAndWait blocked", approval.Unsupported)
 	}
 }

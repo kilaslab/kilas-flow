@@ -362,7 +362,7 @@ var mappings = []mapping{
 	// rather than data.
 	{
 		n8nType: "n8n-nodes-base.telegram", kilasType: TelegramNodeType, kilasVersion: workflow.V(1),
-		exportTypeVersion: 1.2, toKilas: packToKilas, toN8N: packToN8N,
+		exportTypeVersion: 1.2, toKilas: telegramToKilas, toN8N: telegramToN8N,
 	},
 	{
 		n8nType: "n8n-nodes-base.telegramTrigger", kilasType: TelegramTriggerNodeType, kilasVersion: workflow.V(1),
@@ -449,6 +449,65 @@ var mappings = []mapping{
 	{
 		n8nType: "@n8n/n8n-nodes-langchain.toolHttpRequest", kilasType: "kilasflow.httpTool", kilasVersion: workflow.V(1),
 		exportTypeVersion: 1.1, toKilas: httpToolToKilas, toN8N: httpToolToN8N,
+	},
+	// The tool and model nodes this server already implements, whose n8n
+	// equivalents had no entry at all — so they arrived as unsupported
+	// placeholders and blocked the whole workflow, although the native node
+	// was sitting right there. Every entry below is a mapping between two
+	// nodes that both exist; none of them needed new node code.
+	{
+		n8nType: "@n8n/n8n-nodes-langchain.toolCalculator", kilasType: "kilasflow.calculatorTool", kilasVersion: workflow.V(1),
+		exportTypeVersion: 1, toKilas: toolCalculatorToKilas, toN8N: toolCalculatorToN8N,
+	},
+	{
+		n8nType: "@n8n/n8n-nodes-langchain.mcpClientTool", kilasType: "kilasflow.mcpClientTool", kilasVersion: workflow.V(1),
+		exportTypeVersion: 1.2, toKilas: mcpClientToolToKilas, toN8N: mcpClientToolToN8N,
+	},
+	// The OpenAI-compatible providers. Each publishes an endpoint that speaks
+	// OpenAI's protocol, so the native node is the same one in every case and
+	// only the base URL differs.
+	{
+		n8nType: "@n8n/n8n-nodes-langchain.lmChatOllama", kilasType: "kilasflow.chatModel", kilasVersion: workflow.V(1),
+		exportTypeVersion: 1, toKilas: ollamaModelToKilas, importOnly: true,
+	},
+	{
+		n8nType: "@n8n/n8n-nodes-langchain.lmOllama", kilasType: "kilasflow.chatModel", kilasVersion: workflow.V(1),
+		exportTypeVersion: 1, toKilas: ollamaModelToKilas, importOnly: true,
+	},
+	{
+		n8nType: "@n8n/n8n-nodes-langchain.lmChatGoogleGemini", kilasType: "kilasflow.chatModel", kilasVersion: workflow.V(1),
+		exportTypeVersion: 1, importOnly: true,
+		toKilas: func(node Node) (map[string]any, []Unsupported) {
+			return openAICompatibleModelToKilas(node, "https://generativelanguage.googleapis.com/v1beta/openai", "model")
+		},
+	},
+	{
+		n8nType: "@n8n/n8n-nodes-langchain.lmChatDeepSeek", kilasType: "kilasflow.chatModel", kilasVersion: workflow.V(1),
+		exportTypeVersion: 1, importOnly: true,
+		toKilas: func(node Node) (map[string]any, []Unsupported) {
+			return openAICompatibleModelToKilas(node, "https://api.deepseek.com/v1", "model")
+		},
+	},
+	{
+		n8nType: "@n8n/n8n-nodes-langchain.lmChatGroq", kilasType: "kilasflow.chatModel", kilasVersion: workflow.V(1),
+		exportTypeVersion: 1, importOnly: true,
+		toKilas: func(node Node) (map[string]any, []Unsupported) {
+			return openAICompatibleModelToKilas(node, "https://api.groq.com/openai/v1", "model")
+		},
+	},
+	{
+		n8nType: "@n8n/n8n-nodes-langchain.lmChatMistralCloud", kilasType: "kilasflow.chatModel", kilasVersion: workflow.V(1),
+		exportTypeVersion: 1, importOnly: true,
+		toKilas: func(node Node) (map[string]any, []Unsupported) {
+			return openAICompatibleModelToKilas(node, "https://api.mistral.ai/v1", "model")
+		},
+	},
+	{
+		n8nType: "@n8n/n8n-nodes-langchain.lmChatXAiGrok", kilasType: "kilasflow.chatModel", kilasVersion: workflow.V(1),
+		exportTypeVersion: 1, importOnly: true,
+		toKilas: func(node Node) (map[string]any, []Unsupported) {
+			return openAICompatibleModelToKilas(node, "https://api.x.ai/v1", "model")
+		},
 	},
 	{
 		// Versions 1 through 2.2: v1 is [1, 1.1, 1.2, 1.3] and v2 is

@@ -3205,6 +3205,208 @@ func packToN8N(node workflow.Node) (map[string]any, []Lossy) {
 	return converted, nil
 }
 
+// telegramToN8N writes the pack's parameters back into n8n's shape.
+//
+// The Additional Fields go back under the collection n8n reads, in its own
+// snake_case names; a pack key with no n8n equivalent is named rather than
+// dropped quietly, because the alternative is a round trip that looks clean and
+// sends different messages.
+func telegramToN8N(node workflow.Node) (map[string]any, []Lossy) {
+	parameters, _ := packToN8N(node)
+	if parameters == nil {
+		parameters = map[string]any{}
+	}
+	additional := map[string]any{}
+	for n8nKey, packKey := range telegramAdditionalFieldKeys {
+		if value, present := node.Parameters[packKey]; present && value != nil && value != "" {
+			additional[n8nKey] = toN8NValue(value)
+			delete(parameters, packKey)
+		}
+	}
+	if len(additional) > 0 {
+		parameters["additionalFields"] = additional
+	}
+	return parameters, nil
+}
+
+// telegramOperations mirrors the operations packs/telegram declares, resource
+// by resource.
+//
+// Mirrored rather than imported for the same reason the node-type constants
+// are: the adapter must not depend on the node pack. TestTelegramOperationsMatch
+// ThePack keeps the two in step, so a pack that gains an operation and a
+// mapping that forgets it cannot drift apart silently.
+var telegramOperations = map[string][]string{
+	"message": {"sendMessage", "sendPhoto", "sendDocument", "sendAnimation", "sendAudio", "sendVideo",
+		"sendSticker", "sendMediaGroup", "sendLocation", "sendChatAction", "editMessageText",
+		"deleteMessage", "pinChatMessage", "unpinChatMessage"},
+	"chat":     {"get", "administrators", "member", "leave", "setTitle", "setDescription"},
+	"callback": {"answerQuery", "answerInlineQuery"},
+	"file":     {"get"},
+}
+
+// telegramAdditionalFieldKeys maps n8n's Additional Fields members onto the
+// pack's parameter names.
+//
+// n8n stores per-send options under `additionalFields` with the Bot API's own
+// snake_case names, and the pack reads them at the top level in camel case.
+// Copying the collection through verbatim meant HTML formatting was silently
+// dropped and messages arrived with raw tags.
+var telegramAdditionalFieldKeys = map[string]string{
+	"parse_mode":           "parseMode",
+	"caption":              "caption",
+	"disable_notification": "disableNotification",
+	"reply_to_message_id":  "replyToMessageId",
+}
+
+// telegramToKilas maps n8n's Telegram node onto the pack.
+//
+// Two things the verbatim copy got wrong, and both of them changed what the
+// workflow did: an operation the pack does not have activated and then failed
+// at run time, and every Additional Field was dropped because the two nodes
+// keep them in different places.
+func telegramToKilas(node Node) (map[string]any, []Unsupported) {
+	converted, _ := packToKilas(node)
+	issues := make([]Unsupported, 0)
+	if converted == nil {
+		converted = map[string]any{}
+	}
+
+	resource := stringParameter(node.Parameters, "resource")
+	operation := stringParameter(node.Parameters, "operation")
+	if resource == "" {
+		resource = "message"
+	}
+	if operation != "" && !telegramOperationKnown(resource, operation) {
+		// Blocking, and it blocks *before* the node can activate: n8n's
+		// sendAndWait and its rich-message operations have no pack request, so
+		// the node would activate and then fail on its first run.
+		issues = append(issues, Unsupported{
+			Severity: SeverityBlocking, Field: "operation",
+			Reason: fmt.Sprintf("the n8n Telegram operation %q on resource %q has no equivalent in this "+
+				"server's Telegram node; replace the node or rebuild the call as an HTTP Request before "+
+				"activating", operation, resource),
+		})
+	}
+
+	if additional, ok := node.Parameters["additionalFields"].(map[string]any); ok {
+		for _, key := range sortedKeys(additional) {
+			if value := additional[key]; value != nil && value != "" {
+				if mapped, known := telegramAdditionalFieldKeys[key]; known {
+					converted[mapped] = fromN8NValue(value)
+					continue
+				}
+			}
+			if additional[key] == nil {
+				continue
+			}
+			issues = append(issues, Unsupported{
+				Severity: SeverityDropped, Field: "additionalFields." + key,
+				Reason: fmt.Sprintf("the n8n Telegram option %q has no equivalent in this server's Telegram "+
+					"node and was not carried", key),
+			})
+		}
+	}
+
+	// The binary attachment: n8n keeps the property name at the top level and
+	// the pack reads it under the same name, but only on the operations that
+	// upload, so an empty one is left absent.
+	if propertyName := stringParameter(node.Parameters, "binaryPropertyName"); propertyName != "" {
+		converted["binaryPropertyName"] = propertyName
+	}
+	if _, present := node.Parameters["binaryData"]; present {
+		converted["binaryData"] = node.Parameters["binaryData"]
+	}
+
+	// The reply markup: n8n selects a keyboard *type* and keeps each type's
+	// rows in its own collection, while the pack takes the Bot API's JSON.
+	if markup, _ := node.Parameters["replyMarkup"].(string); markup != "" {
+		switch markup {
+		case "inlineKeyboard":
+			if keyboard := inlineKeyboardJSON(node.Parameters["inlineKeyboard"]); keyboard != nil {
+				converted["replyMarkup"] = keyboard
+			}
+		case "keyboard":
+			issues = append(issues, Unsupported{
+				Severity: SeverityLossy, Field: "replyMarkup",
+				Reason: "this node sent a custom reply keyboard, which this server's Telegram node does not " +
+					"build; send the keyboard as the Bot API's JSON in Reply Markup instead",
+			})
+		}
+	}
+	if _, present := node.Parameters["appendAttribution"]; present {
+		issues = append(issues, Unsupported{
+			Severity: SeverityDropped, Field: "appendAttribution",
+			Reason: "n8n appends an attribution line to the message; this server's Telegram node does not, " +
+				"and the option was not carried",
+		})
+	}
+	return converted, issues
+}
+
+// TelegramOperationKnown reports whether the pack declares a resource/operation
+// pair. Exported so the mirror above can be pinned against the pack itself.
+func TelegramOperationKnown(resource, operation string) bool {
+	return telegramOperationKnown(resource, operation)
+}
+
+// telegramOperationKnown reports whether the pack declares a resource/operation
+// pair.
+func telegramOperationKnown(resource, operation string) bool {
+	for _, candidate := range telegramOperations[strings.ToLower(resource)] {
+		if candidate == operation {
+			return true
+		}
+	}
+	return false
+}
+
+// inlineKeyboardJSON turns n8n's inline keyboard collection into the Bot API's
+// JSON.
+//
+// n8n's shape is a list of rows, each holding a list of buttons, each with a
+// text and its own additional fields; the Bot API wants an array of arrays of
+// button objects. The two are the same information in different shapes, and
+// the pack's Reply Markup takes the Bot API's.
+func inlineKeyboardJSON(value any) map[string]any {
+	collection, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	rows, _ := collection["rows"].([]any)
+	keyboard := make([][]any, 0, len(rows))
+	for _, entry := range rows {
+		row, _ := entry.(map[string]any)
+		buttons, _ := row["row"].(map[string]any)
+		list, _ := buttons["buttons"].([]any)
+		converted := make([]any, 0, len(list))
+		for _, item := range list {
+			button, _ := item.(map[string]any)
+			built := map[string]any{}
+			if text, present := button["text"]; present {
+				built["text"] = fromN8NValue(text)
+			}
+			if extra, ok := button["additionalFields"].(map[string]any); ok {
+				for key, extraValue := range extra {
+					if extraValue != nil {
+						built[key] = fromN8NValue(extraValue)
+					}
+				}
+			}
+			if len(built) > 0 {
+				converted = append(converted, built)
+			}
+		}
+		if len(converted) > 0 {
+			keyboard = append(keyboard, converted)
+		}
+	}
+	if len(keyboard) == 0 {
+		return nil
+	}
+	return map[string]any{"inline_keyboard": keyboard}
+}
+
 // telegramTriggerToKilas carries the trigger's parameters and names the ones
 // KilasFlow does not have.
 //
@@ -3992,6 +4194,192 @@ func chainMessagesToN8N(value any) any {
 var n8nChatModelOptionKeys = []string{
 	"frequencyPenalty", "maxTokens", "maxRetries",
 	"presencePenalty", "temperature", "timeout", "topP",
+}
+
+// openAICompatibleModelToKilas maps a provider's chat-model node onto this
+// server's OpenAI-compatible model.
+//
+// The providers below publish an OpenAI-compatible endpoint, so the node is a
+// model name, a base URL and the same sampling options — and the mapping costs
+// one table entry rather than a provider implementation. The base URL is
+// written explicitly because n8n keeps it in the credential, which never
+// imports: a deployment pointed at a gateway, or at a local Ollama, has to be
+// told where to point here, and the diagnostic says so.
+func openAICompatibleModelToKilas(node Node, defaultBaseURL string, modelField string) (map[string]any, []Unsupported) {
+	parameters, issues := chatModelToKilas(node, "")
+	if modelField != "" {
+		if value, present := node.Parameters[modelField]; present && value != nil && value != "" {
+			parameters["model"] = fromN8NValue(value)
+		}
+	}
+	parameters["baseUrl"] = defaultBaseURL
+	return parameters, append(issues, Unsupported{
+		Severity: SeverityLossy, Field: "credentials",
+		Reason: fmt.Sprintf("this model's endpoint came from an n8n credential, which does not import; "+
+			"the base URL was set to %s — point it at your deployment before running the workflow",
+			defaultBaseURL),
+	})
+}
+
+// ollamaModelToKilas maps n8n's Ollama chat model, whose endpoint is the
+// local server's OpenAI-compatible path rather than a vendor API.
+func ollamaModelToKilas(node Node) (map[string]any, []Unsupported) {
+	parameters, issues := openAICompatibleModelToKilas(node, "http://localhost:11434/v1", "model")
+	// n8n's Ollama node names the token budget `numPredict`; the shared option
+	// vocabulary names it `maxTokens`.
+	if options, ok := node.Parameters["options"].(map[string]any); ok {
+		if predict, ok := numberParameter(options, "numPredict"); ok {
+			carried, _ := parameters["options"].(map[string]any)
+			if carried == nil {
+				carried = map[string]any{}
+			}
+			carried["maxTokens"] = predict
+			parameters["options"] = carried
+		}
+	}
+	return parameters, issues
+}
+
+// toolCalculatorToKilas maps n8n's Calculator tool.
+//
+// It has no parameters the model does not supply: the expression arrives in the
+// tool call, so only the model-facing description crosses.
+func toolCalculatorToKilas(node Node) (map[string]any, []Unsupported) {
+	parameters := map[string]any{
+		"toolName": nodes.NormalizeToolName(node.Name),
+	}
+	if description := node.Parameters["description"]; description != nil && description != "" {
+		parameters["toolDescription"] = fromN8NValue(description)
+	} else {
+		parameters["toolDescription"] = "Evaluates an arithmetic expression."
+	}
+	return parameters, nil
+}
+
+func toolCalculatorToN8N(node workflow.Node) (map[string]any, []Lossy) {
+	return map[string]any{
+		"description": toN8NValue(node.Parameters["toolDescription"]),
+	}, nil
+}
+
+// mcpClientToolToKilas maps n8n's MCP Client tool onto this server's.
+//
+// n8n names the endpoint `endpointUrl` at the versions that speak streamable
+// HTTP and `sseEndpoint` at the ones that speak SSE. Both carry: this server's
+// client speaks the streamable transport, so an SSE-only endpoint is named as a
+// lossy note rather than silently requested with the wrong protocol.
+func mcpClientToolToKilas(node Node) (map[string]any, []Unsupported) {
+	issues := make([]Unsupported, 0)
+	parameters := map[string]any{
+		"toolName": nodes.NormalizeToolName(node.Name),
+	}
+	if description := node.Parameters["description"]; description != nil && description != "" {
+		parameters["toolDescription"] = fromN8NValue(description)
+	} else {
+		parameters["toolDescription"] = "Calls the MCP server " + node.Name + "."
+	}
+	endpoint := stringParameter(node.Parameters, "endpointUrl")
+	if endpoint == "" {
+		endpoint = stringParameter(node.Parameters, "sseEndpoint")
+		if endpoint != "" {
+			issues = append(issues, Unsupported{
+				Severity: SeverityLossy, Field: "sseEndpoint",
+				Reason: "this tool pointed at an MCP server's SSE endpoint; this server's client speaks " +
+					"the streamable HTTP transport, so point the URL at the server's /mcp endpoint",
+			})
+		}
+	}
+	if endpoint == "" {
+		issues = append(issues, Unsupported{
+			Severity: SeverityBlocking, Field: "endpointUrl",
+			Reason: "this MCP tool named no server endpoint, so it imports with nothing to call; " +
+				"set the Server URL before activating.",
+		})
+	} else {
+		parameters["serverUrl"] = fromN8NValue(endpoint)
+	}
+
+	switch include := stringParameter(node.Parameters, "toolsToInclude"); include {
+	case "selected":
+		names := stringList(node.Parameters["includeTools"])
+		if len(names) == 0 {
+			issues = append(issues, Unsupported{
+				Severity: SeverityBlocking, Field: "includeTools",
+				Reason: "this tool was set to expose only the tools it lists, and the list is empty; " +
+					"name the tools to expose before activating.",
+			})
+		}
+		parameters["tools"] = strings.Join(names, ",")
+	case "allExcept":
+		names := stringList(node.Parameters["excludeTools"])
+		issues = append(issues, Unsupported{
+			Severity: SeverityLossy, Field: "excludeTools",
+			Reason: fmt.Sprintf("this tool exposed every server tool except %s; this server's MCP tool "+
+				"names the tools to expose rather than the ones to hide, so every tool is exposed — "+
+				"list the ones you want in Tools to expose", strings.Join(names, ", ")),
+		})
+	}
+	if authentication := stringParameter(node.Parameters, "authentication"); authentication != "" && authentication != "none" {
+		issues = append(issues, Unsupported{
+			Reason: "this MCP tool authenticated with an n8n credential. Credentials are not imported; " +
+				"attach a KilasFlow HTTP credential before running the workflow.",
+		})
+	}
+	return parameters, issues
+}
+
+func mcpClientToolToN8N(node workflow.Node) (map[string]any, []Lossy) {
+	parameters := map[string]any{
+		"description":    toN8NValue(node.Parameters["toolDescription"]),
+		"endpointUrl":    toN8NValue(node.Parameters["serverUrl"]),
+		"toolsToInclude": "all",
+	}
+	if names := stringParameter(node.Parameters, "tools"); names != "" {
+		parameters["toolsToInclude"] = "selected"
+		parameters["includeTools"] = splitListAny(names)
+	}
+	return parameters, nil
+}
+
+// stringList reads n8n's array-of-strings parameter, which a hand-written
+// document may hold as a comma-separated string.
+func stringList(value any) []string {
+	switch typed := value.(type) {
+	case []any:
+		names := make([]string, 0, len(typed))
+		for _, entry := range typed {
+			if name := strings.TrimSpace(textOf(entry)); name != "" {
+				names = append(names, name)
+			}
+		}
+		return names
+	case string:
+		return splitList(typed)
+	default:
+		return nil
+	}
+}
+
+// splitList splits a comma-separated list, dropping empty entries.
+func splitList(value string) []string {
+	parts := strings.Split(value, ",")
+	names := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			names = append(names, trimmed)
+		}
+	}
+	return names
+}
+
+// splitListAny is splitList for a parameter the exporter writes as JSON.
+func splitListAny(value string) []any {
+	names := splitList(value)
+	entries := make([]any, 0, len(names))
+	for _, name := range names {
+		entries = append(entries, name)
+	}
+	return entries
 }
 
 func openAIModelToKilas(node Node) (map[string]any, []Unsupported) {
