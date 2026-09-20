@@ -651,3 +651,67 @@ func TestDelimiterScanUnderstandsNestedLiterals(t *testing.T) {
 		t.Errorf("error = %v, want it to name the missing closing braces", err)
 	}
 }
+
+// TestAbstractEqualityCoercesBooleansAndCollections is the wrong-branch
+// finding: `==` handled nullish, text/text and text/non-text, then fell through
+// to strict equality, so a flag compared against 1 and a collection compared
+// against false were both silently false where JavaScript says true.
+//
+// A collection coerces through the same rendering the rest of the package
+// uses — a list joins with commas, which is exactly Array.prototype.join, and
+// an object is its JSON text, which is the documented rendering this runtime
+// gives an object inside a string rather than Go's map syntax.
+func TestAbstractEqualityCoercesBooleansAndCollections(t *testing.T) {
+	t.Parallel()
+
+	ctx := parityContext()
+	ctx.JSON = map[string]any{
+		"active":  true,
+		"off":     false,
+		"count":   float64(42),
+		"zero":    float64(0),
+		"empty":   []any{},
+		"pair":    []any{float64(1), float64(2)},
+		"blank":   "",
+		"text42":  "42",
+		"missing": nil,
+	}
+
+	for template, want := range map[string]any{
+		// A boolean is a number in an abstract comparison.
+		"{{ true == 1 }}":          true,
+		"{{ true == '1' }}":        true,
+		"{{ 1 == true }}":          true,
+		"{{ false == 0 }}":         true,
+		"{{ $json.active == 1 }}":  true,
+		"{{ $json.active != 1 }}":  false,
+		"{{ $json.off == 0 }}":     true,
+		"{{ $json.active === 1 }}": false,
+		// A collection becomes a primitive: an array joins, an object is text.
+		"{{ [] == false }}":            true,
+		"{{ [] == 0 }}":                true,
+		"{{ [] == '' }}":               true,
+		"{{ [1,2] == '1,2' }}":         true,
+		"{{ [1,2] != '1,2' }}":         false,
+		"{{ ({a:1}) == '{\"a\":1}' }}": true,
+		"{{ $json.empty == false }}":   true,
+		"{{ $json.pair == '1,2' }}":    true,
+		// The coercions that already worked keep working.
+		"{{ $json.count == '42' }}": true,
+		"{{ $json.blank == 0 }}":    true,
+		"{{ '' == 0 }}":             true,
+		"{{ $json.count == 42 }}":   true,
+		"{{ $json.text42 == 42 }}":  true,
+		// null is not 0, and an absent field is not an empty string.
+		"{{ null == 0 }}":                  false,
+		"{{ $json.missing == 0 }}":         false,
+		"{{ $json.missing == '' }}":        false,
+		"{{ $json.missing == null }}":      true,
+		"{{ $json.missing == undefined }}": true,
+	} {
+		got := evaluateOne(t, template, ctx)
+		if got != want {
+			t.Errorf("Evaluate(%s) = %#v, want %#v", template, got, want)
+		}
+	}
+}

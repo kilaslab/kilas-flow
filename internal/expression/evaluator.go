@@ -585,21 +585,78 @@ func strictlyEqual(left, right any) bool {
 	return false
 }
 
+// looselyEqual is JavaScript's abstract equality (`==`).
+//
+// It is not "strict equality with a text conversion": a boolean is a number
+// here, and a collection becomes a primitive, so `true == 1`, `false == 0`,
+// `[] == false` and `[1,2] == '1,2'` are all true. The old version fell through
+// to strict equality for everything that was not text, which turned every one
+// of those into a false that a workflow branched on.
 func looselyEqual(left, right any) bool {
 	if isNullish(left) || isNullish(right) {
+		// null and undefined are equal to each other and to nothing else —
+		// in particular not to 0 or to ''.
 		return isNullish(left) && isNullish(right)
+	}
+	if _, isBool := left.(bool); isBool {
+		number, _ := toNumber(left)
+		return looselyEqual(number, right)
+	}
+	if _, isBool := right.(bool); isBool {
+		number, _ := toNumber(right)
+		return looselyEqual(left, number)
+	}
+	leftNumber, leftIsNumber := numberValue(left)
+	rightNumber, rightIsNumber := numberValue(right)
+	if leftIsNumber && rightIsNumber {
+		return leftNumber == rightNumber
 	}
 	leftText, leftIsText := left.(string)
 	rightText, rightIsText := right.(string)
-	if leftIsText && rightIsText {
+	switch {
+	case leftIsText && rightIsText:
 		return leftText == rightText
-	}
-	if leftIsText != rightIsText {
-		leftNumber, _ := toNumber(left)
-		rightNumber, _ := toNumber(right)
-		return leftNumber == rightNumber
+	case leftIsText && rightIsNumber:
+		number, ok := toNumber(leftText)
+		return ok && number == rightNumber
+	case leftIsNumber && rightIsText:
+		number, ok := toNumber(rightText)
+		return ok && leftNumber == number
+	case isObjectValue(left) && isObjectValue(right):
+		// Two objects are equal only when they are the same object, and this
+		// evaluator never hands out two references to one object.
+		return strictlyEqual(left, right)
+	case isObjectValue(left):
+		// ToPrimitive: a collection is compared as the text it renders as.
+		return looselyEqual(jsString(left), right)
+	case isObjectValue(right):
+		return looselyEqual(left, jsString(right))
 	}
 	return strictlyEqual(left, right)
+}
+
+// numberValue reads the numeric types an expression can hold. Text is
+// deliberately excluded: `'42'` is only a number once the other side is one.
+func numberValue(value any) (float64, bool) {
+	switch typed := value.(type) {
+	case float64:
+		return typed, true
+	case int:
+		return float64(typed), true
+	default:
+		return 0, false
+	}
+}
+
+// isObjectValue reports whether a value is a collection or a wrapper rather
+// than a primitive, which is what decides whether `==` has to convert it.
+func isObjectValue(value any) bool {
+	switch value.(type) {
+	case []any, map[string]any, dateValue, time.Time, closure, inputSource, envSource, namespaceValue, FromAIRequest:
+		return true
+	default:
+		return false
+	}
 }
 
 func isNullish(value any) bool {
