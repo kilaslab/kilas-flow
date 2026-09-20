@@ -108,6 +108,20 @@ export function assistKey(index: number, count: number, key: string): AssistKeyD
 	return { index: held, action: null };
 }
 
+/**
+ * The body text after a candidate is accepted: the typed prefix is *replaced*
+ * by what the candidate inserts, not appended to.
+ *
+ * The prefix is what the suggestion list matched (`$`, `$json.`, `$('Set').`),
+ * so appending would leave `{{ $$json }}` for a prefix that ended in a bare
+ * `$`. The closing braces belong to the caller — the component writes
+ * `{{ <body> }}` — so this returns the body alone.
+ */
+export function completionInsertion(template: string, prefix: string, insert: string): string {
+	const body = prefix !== '' && template.endsWith(prefix) ? template.slice(0, template.length - prefix.length) : template;
+	return `${body}${insert.trim()}`;
+}
+
 export interface PreviewStep {
 	index: number;
 	total: number;

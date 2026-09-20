@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { setExpressionGrammar } from './expression-grammar';
-import { assistKey, expressionCompletions, fieldPathsFromValue, previewStep } from './expression-assist';
+import { assistKey, completionInsertion, expressionCompletions, fieldPathsFromValue, previewStep } from './expression-assist';
 
 describe('expression completions', () => {
 	it('offers served roots for an empty prefix without flooding', () => {
@@ -84,5 +84,20 @@ describe('the keyboard contract of the suggestion list', () => {
 
 	it('claims nothing when there is nothing to show', () => {
 		expect(assistKey(0, 0, 'Enter')).toEqual({ index: 0, action: null });
+	});
+});
+
+describe('completionInsertion', () => {
+	it('replaces the typed prefix instead of appending to it', () => {
+		expect(completionInsertion('{{ $', '$', ' $json.name ')).toBe('{{ $json.name');
+		expect(completionInsertion('{{ $json.', '$json.', ' $json.name ')).toBe('{{ $json.name');
+		expect(completionInsertion("{{ $('Set').", "$('Set').", " $('Set').item.json.v ")).toBe(
+			"{{ $('Set').item.json.v"
+		);
+	});
+
+	it('leaves a template with no matching prefix alone', () => {
+		expect(completionInsertion('{{ ', '', ' $json.name ')).toBe('{{ $json.name');
+		expect(completionInsertion('{{ 1 + ', '$json.', ' $json.name ')).toBe('{{ 1 + $json.name');
 	});
 });

@@ -31,7 +31,7 @@
 		type AssignmentType
 	} from '$lib/workflow-editor/assignments';
 import { validateExpressionShape } from '$lib/workflow-editor/expression-grammar';
-import { assistKey, expressionCompletions, previewStep, type CompletionCandidate } from '$lib/workflow-editor/expression-assist';
+import { assistKey, completionInsertion, expressionCompletions, previewStep, type CompletionCandidate } from '$lib/workflow-editor/expression-assist';
 	import {
 		VALUELESS_OPERATORS,
 		moveCondition,
@@ -294,7 +294,8 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 	/** Inserts a candidate, closing the braces the prefix left open. */
 	function acceptSuggestion(candidate: CompletionCandidate) {
 		assistOpen = false;
-		onChange({ mode: 'expression', value: `${template}${candidate.insert.trim()} }}` });
+		const body = completionInsertion(template, assistPrefix, candidate.insert);
+		onChange({ mode: 'expression', value: `${body} }}` });
 	}
 
 	/**
