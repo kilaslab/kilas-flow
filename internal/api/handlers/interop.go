@@ -3,7 +3,9 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 
@@ -51,6 +53,34 @@ type ExportedWorkflowResource struct {
 	SupportedMappings []string `json:"supportedMappings"`
 }
 
+// importDiagnostics is the report stored with the revision an import created.
+//
+// It carries an envelope, not a bare issue list, because a reader has to be
+// able to tell "this revision was not imported" from "this import had nothing
+// to report": the first revision of a hand-built workflow has no report at all,
+// and rendering that as a clean import would invent a fact.
+type importDiagnostics struct {
+	Source     string            `json:"source"`
+	ImportedAt time.Time         `json:"importedAt"`
+	Issues     []n8n.ImportIssue `json:"issues"`
+}
+
+// WorkflowDiagnosticsResource is one revision's stored import report.
+type WorkflowDiagnosticsResource struct {
+	WorkflowID string `json:"workflowId"`
+	VersionID  string `json:"versionId"`
+	Revision   int    `json:"revision"`
+	// Source is empty when nothing recorded an import for this revision, which
+	// is the normal case for a workflow built in the editor.
+	Source string `json:"source,omitempty"`
+	// ImportedAt is when the import ran.
+	ImportedAt *time.Time `json:"importedAt,omitempty"`
+	// Issues is what the import could not carry faithfully, each naming the
+	// node or field it is about. It is empty for a clean import and for a
+	// revision that was never imported; Source is what tells them apart.
+	Issues []n8n.ImportIssue `json:"issues"`
+}
+
 // Interop is the n8n import and export boundary.
 type Interop struct {
 	workflows repository.WorkflowRepository
@@ -95,7 +125,18 @@ type exportWorkflowOutput struct {
 	Body ExportedWorkflowResource
 }
 
-// Register wires import and export.
+type workflowDiagnosticsInput struct {
+	ID string `path:"id" minLength:"1" doc:"Workflow identifier"`
+	// VersionID names the revision to read. Empty means the newest revision,
+	// which is what an editor showing the current draft asks for.
+	VersionID string `query:"versionId" doc:"Revision to read; defaults to the newest"`
+}
+
+type workflowDiagnosticsOutput struct {
+	Body WorkflowDiagnosticsResource
+}
+
+// Register wires import, export and the stored import report.
 func (handler *Interop) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "import-workflow", Method: http.MethodPost, Path: "/workflows/import",
@@ -111,6 +152,14 @@ func (handler *Interop) Register(api huma.API) {
 		Description: "Converts the latest revision into n8n-compatible JSON and reports what could not be carried.",
 		Tags:        []string{"Interop"},
 	}, handler.Export)
+	huma.Register(api, huma.Operation{
+		OperationID: "workflow-diagnostics", Method: http.MethodGet, Path: "/workflows/{id}/diagnostics",
+		Summary:     "Read a revision's import report",
+		Description: "Returns the report stored with a revision when an import created it: what the n8n " +
+			"translation could not carry faithfully, per node and per field. A revision that was not " +
+			"imported answers with no source and no issues.",
+		Tags: []string{"Interop"},
+	}, handler.Diagnostics)
 }
 
 // Import translates n8n JSON and saves the result as an ordinary draft.
@@ -132,16 +181,34 @@ func (handler *Interop) Import(ctx context.Context, input *importWorkflowInput) 
 		result.Document.Name = name
 	}
 
-	// Saved through the ordinary draft path: the same validation, the same
-	// revision history, no import-specific write route.
-	stored, err := handler.workflows.SaveDraft(ctx, handler.tenants.Resolve(ctx), result.Document)
-	if err != nil {
-		return nil, huma.Error422UnprocessableEntity(err.Error())
-	}
-
 	unsupported := result.Unsupported
 	if unsupported == nil {
 		unsupported = []n8n.ImportIssue{}
+	}
+
+	// The report is stored with the revision, not only returned. The response
+	// is read once and then discarded with the dialog, and the nodes an import
+	// left blocked, lossy or dropped have to still be nameable when somebody
+	// opens the workflow tomorrow (BUG-f9frth).
+	report, err := json.Marshal(importDiagnostics{
+		Source: "n8n", ImportedAt: time.Now().UTC(), Issues: unsupported,
+	})
+	if err != nil {
+		return nil, huma.Error500InternalServerError("could not encode the import report")
+	}
+
+	// Saved through the ordinary draft path — the same validation, the same
+	// revision history, no import-specific write route — carrying the report.
+	store, ok := handler.workflows.(repository.WorkflowDiagnosticsStore)
+	if !ok {
+		// Answering 201 with a report that nothing kept would reproduce exactly
+		// the bug this route exists to fix, so a store that cannot hold one is
+		// named rather than quietly degraded.
+		return nil, huma.Error503ServiceUnavailable("workflow storage cannot record import diagnostics")
+	}
+	stored, err := store.SaveDraftWithDiagnostics(ctx, handler.tenants.Resolve(ctx), result.Document, report)
+	if err != nil {
+		return nil, huma.Error422UnprocessableEntity(err.Error())
 	}
 
 	webhooks := []WebhookRouteResource{}
@@ -197,4 +264,51 @@ func (handler *Interop) Export(ctx context.Context, input *exportWorkflowInput) 
 		Format: "n8n", Workflow: encoded, Lossy: lossy,
 		SupportedMappings: n8n.SupportedMappings(),
 	}}, nil
+}
+
+// Diagnostics returns the import report stored with one revision.
+//
+// It is a read of the revision, not of the workflow: the newest revision of a
+// workflow somebody has since edited carries no report, and the revision an
+// import created keeps the one it was written with. The editor asks for the
+// revision it is displaying and states nothing about the ones it is not.
+func (handler *Interop) Diagnostics(ctx context.Context, input *workflowDiagnosticsInput) (*workflowDiagnosticsOutput, error) {
+	if handler.workflows == nil {
+		return nil, huma.Error503ServiceUnavailable("workflow storage unavailable")
+	}
+	store, ok := handler.workflows.(repository.WorkflowDiagnosticsStore)
+	if !ok {
+		return nil, huma.Error503ServiceUnavailable("workflow storage cannot read import diagnostics")
+	}
+
+	stored, err := store.WorkflowDiagnostics(ctx, handler.tenants.Resolve(ctx), input.ID, input.VersionID)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return nil, huma.Error404NotFound("workflow revision not found")
+		}
+		return nil, huma.Error500InternalServerError("could not read the workflow's import report", err)
+	}
+
+	resource := WorkflowDiagnosticsResource{
+		WorkflowID: input.ID, VersionID: stored.VersionID, Revision: stored.Revision,
+		Issues: []n8n.ImportIssue{},
+	}
+	if len(stored.Report) > 0 {
+		var report importDiagnostics
+		if err := json.Unmarshal(stored.Report, &report); err != nil {
+			// The column is written by this file and read back whole. A payload
+			// that does not parse was written by something else, and inventing a
+			// report out of it would be worse than saying so.
+			return nil, huma.Error500InternalServerError("the stored import report is unreadable", err)
+		}
+		resource.Source = report.Source
+		if !report.ImportedAt.IsZero() {
+			importedAt := report.ImportedAt
+			resource.ImportedAt = &importedAt
+		}
+		if report.Issues != nil {
+			resource.Issues = report.Issues
+		}
+	}
+	return &workflowDiagnosticsOutput{Body: resource}, nil
 }
