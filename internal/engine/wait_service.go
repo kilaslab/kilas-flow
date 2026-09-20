@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kilaslabs/kilas-flow/internal/events"
@@ -108,9 +109,13 @@ func (service *Service) WatchQueue(ctx context.Context, dsn, tablePrefix string,
 }
 
 // sweepLoop settles expired waits on the service's sweep interval until ctx
-// is done. There is no knob to disable it: without the sweep a forgotten
-// approval would stay suspended forever.
+// is done, and owns the exact timers the suspensions arm. There is no knob to
+// disable it: without the sweep a forgotten approval would stay suspended
+// forever, and a wait suspended by a process that then exited would have
+// nobody left to notice its deadline.
 func (service *Service) sweepLoop(ctx context.Context) {
+	service.waitTimers.attach(ctx)
+	defer service.waitTimers.detach()
 	interval := service.sweepInterval
 	if interval <= 0 {
 		interval = time.Minute
@@ -126,6 +131,109 @@ func (service *Service) sweepLoop(ctx context.Context) {
 				service.log.Error("sweeping expired waits", "error", err)
 			}
 		}
+	}
+}
+
+// waitTimers holds the exact wake-ups one process armed for the waits it
+// suspended.
+//
+// A suspended wait used to resume only when the periodic sweep noticed its
+// deadline, so a two-second pause took up to a minute — the whole point of
+// suspending (releasing the worker) was paid for in latency, and a webhook
+// whose workflow waited always answered 504 before the wait ever finished.
+// Each suspension therefore arms a timer for its own deadline, and the sweep
+// stays as the floor: a process that exits with waits outstanding costs the
+// next process's sweep interval, never a stuck execution.
+type waitTimers struct {
+	mu      sync.Mutex
+	ctx     context.Context
+	stopped bool
+	armed   map[*time.Timer]struct{}
+}
+
+// attach binds the timer set to the sweep loop's lifetime. Called once per
+// process by Start; a Service used without Start (a single RunOnce, a test)
+// leaves the set unattached and each timer carries its own bounded context.
+func (timers *waitTimers) attach(ctx context.Context) {
+	timers.mu.Lock()
+	defer timers.mu.Unlock()
+	timers.ctx = ctx
+	timers.stopped = false
+	if timers.armed == nil {
+		timers.armed = make(map[*time.Timer]struct{})
+	}
+}
+
+// detach stops every armed timer and refuses new ones. Races with the
+// shutdown that ends the sweep loop, which is when it runs.
+func (timers *waitTimers) detach() {
+	timers.mu.Lock()
+	defer timers.mu.Unlock()
+	timers.stopped = true
+	timers.ctx = nil
+	for timer := range timers.armed {
+		timer.Stop()
+	}
+	timers.armed = nil
+}
+
+// context returns the lifetime an armed timer settles inside, or nil when this
+// process never started a sweep loop.
+func (timers *waitTimers) context() context.Context {
+	timers.mu.Lock()
+	defer timers.mu.Unlock()
+	return timers.ctx
+}
+
+// arm schedules one wake-up after the given delay.
+func (timers *waitTimers) arm(after time.Duration, fire func()) {
+	timers.mu.Lock()
+	defer timers.mu.Unlock()
+	if timers.stopped {
+		return
+	}
+	if timers.armed == nil {
+		// A Service used without Start: the timers still have to fire.
+		timers.armed = make(map[*time.Timer]struct{})
+	}
+	var timer *time.Timer
+	timer = time.AfterFunc(after, func() {
+		timers.forget(timer)
+		fire()
+	})
+	timers.armed[timer] = struct{}{}
+}
+
+func (timers *waitTimers) forget(timer *time.Timer) {
+	timers.mu.Lock()
+	defer timers.mu.Unlock()
+	delete(timers.armed, timer)
+}
+
+// armWaitTimer arms the exact wake-up for one suspension. The delay is taken
+// from the deadline the wait row was written with, so the wake-up and the row
+// can never disagree about when the wait ends.
+func (service *Service) armWaitTimer(expiresAt time.Time) {
+	delay := time.Until(expiresAt)
+	if delay < 0 {
+		delay = 0
+	}
+	service.waitTimers.arm(delay, service.settleDueWaits)
+}
+
+// settleDueWaits runs the sweep for one armed timer. It uses the sweep loop's
+// lifetime when there is one, so the work a process still owes is cancelled by
+// the shutdown that stops the loop; without a loop the timer carries its own
+// bounded context, which is what a single RunOnce in a test needs.
+func (service *Service) settleDueWaits() {
+	ctx := service.waitTimers.context()
+	if ctx == nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+	}
+	if _, err := service.SweepWaits(ctx); err != nil {
+		service.log.Error("settling a due wait", "error", err)
 	}
 }
 
@@ -401,6 +509,11 @@ func (service *Service) suspend(ctx context.Context, tenant repository.TenantSco
 	if err != nil {
 		return true, fmt.Errorf("park execution as waiting: %w", err)
 	}
+	// The row carries the deadline, and this process arms the exact wake-up
+	// for it: waiting for the periodic sweep instead made a two-second pause
+	// cost up to a minute and made every webhook whose workflow waits answer
+	// 504 before the wait ever ended.
+	service.armWaitTimer(wait.ExpiresAt)
 	data, _ := json.Marshal(map[string]any{
 		"nodeId":    wait.NodeID,
 		"mode":      wait.Mode,

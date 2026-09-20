@@ -348,10 +348,19 @@ func TestSuspendResumeContinuesWithExactUpstreamData(t *testing.T) {
 	}
 }
 
-func TestSweeperFailsExpiredApprovalsAndRequeuesExpiredTimers(t *testing.T) {
+// An expired wait resolves at its own deadline, and nothing has to call the
+// sweeper for that to happen.
+//
+// The deadline used to be noticed only by the periodic sweep, so a two-second
+// pause took up to a minute and a webhook whose workflow waited answered 504
+// long before the wait ended. Each suspension now arms a timer for the deadline
+// it was written with; the sweep remains the floor for waits a process left
+// behind when it exited. The assertion is deliberately about latency, because
+// that is the part the sweep alone could never deliver.
+func TestExpiredWaitsResolveOnTheirOwnDeadline(t *testing.T) {
 	ctx, db, store, catalog, executors, tenant := waitTestSetup(t)
 	_ = db
-	hold := &waitSuspender{mode: engine.WaitModeApproval, expiresAt: time.Now().Add(30 * time.Millisecond)}
+	hold := &waitSuspender{mode: engine.WaitModeApproval, expiresAt: time.Now().Add(250 * time.Millisecond)}
 	var calls int
 	var inputs []workflow.NodeInput
 	hold.calls = &calls
@@ -371,21 +380,18 @@ func TestSweeperFailsExpiredApprovalsAndRequeuesExpiredTimers(t *testing.T) {
 	if worked, err := service.RunOnce(ctx); err != nil || !worked {
 		t.Fatalf("RunOnce(suspend) = (%v, %v), want (true, nil)", worked, err)
 	}
-	// Past the 30 ms deadline, inside the sweeper's reach.
-	time.Sleep(100 * time.Millisecond)
-	settled, err := service.SweepWaits(ctx)
-	if err != nil {
-		t.Fatalf("SweepWaits() error = %v", err)
+	// Nothing to settle yet: the same call that would have reaped a minute-old
+	// wait finds this one still inside its deadline, and that is not an error.
+	if settled, err := service.SweepWaits(ctx); err != nil || settled != 0 {
+		t.Fatalf("SweepWaits(before the deadline) = (%d, %v), want (0, nil)", settled, err)
 	}
-	if settled != 1 {
-		t.Fatalf("settled = %d, want the one expired approval", settled)
-	}
+	// The execution settles itself. An approval is the mode nothing resumes on
+	// its own, so it fails by name at the deadline rather than staying
+	// suspended forever.
+	awaitExecutionStatus(t, store, tenant, queued.ID, execution.StatusFailed)
 	failed, err := store.Get(ctx, tenant, queued.ID)
 	if err != nil {
 		t.Fatalf("Get(expired) error = %v", err)
-	}
-	if failed.Status != execution.StatusFailed {
-		t.Fatalf("status = %q, want failed", failed.Status)
 	}
 	if !strings.Contains(string(failed.Error), repository.WaitExpiredCode) {
 		t.Errorf("error = %s, want the named %q failure", failed.Error, repository.WaitExpiredCode)
@@ -393,24 +399,26 @@ func TestSweeperFailsExpiredApprovalsAndRequeuesExpiredTimers(t *testing.T) {
 	if failed.FinishedAt == nil {
 		t.Error("expired execution has no finish timestamp")
 	}
+	if settled, err := service.SweepWaits(ctx); err != nil || settled != 0 {
+		t.Fatalf("SweepWaits(after settling) = (%d, %v), want (0, nil): settling twice must be a no-op", settled, err)
+	}
 
-	// Timer waits resolve the other way: the deadline IS the resume.
+	// Timer waits resolve the other way: the deadline IS the resume. The
+	// requeue has to happen inside a second of a 50 ms deadline — the
+	// assertion the one-minute sweep could not have met.
 	hold.mode = engine.WaitModeInterval
-	hold.expiresAt = time.Now().Add(30 * time.Millisecond)
+	hold.expiresAt = time.Now().Add(50 * time.Millisecond)
 	queuedTimer, err := store.QueueManualLatest(ctx, tenant, saved.ID, catalog, json.RawMessage(`{"customer":"Bo"}`))
 	if err != nil {
 		t.Fatalf("QueueManualLatest(timer) error = %v", err)
 	}
+	suspendedAt := time.Now()
 	if worked, err := service.RunOnce(ctx); err != nil || !worked {
 		t.Fatalf("RunOnce(timer suspend) = (%v, %v), want (true, nil)", worked, err)
 	}
-	time.Sleep(100 * time.Millisecond)
-	settled, err = service.SweepWaits(ctx)
-	if err != nil {
-		t.Fatalf("SweepWaits(timer) error = %v", err)
-	}
-	if settled != 1 {
-		t.Fatalf("timer settled = %d, want 1", settled)
+	awaitExecutionStatus(t, store, tenant, queuedTimer.ID, execution.StatusQueued)
+	if elapsed := time.Since(suspendedAt); elapsed > time.Second {
+		t.Errorf("a 50 ms wait took %s to requeue; the deadline itself must do it", elapsed)
 	}
 	if worked, err := service.RunOnce(ctx); err != nil || !worked {
 		t.Fatalf("RunOnce(timer resume) = (%v, %v), want (true, nil)", worked, err)
@@ -426,7 +434,7 @@ func TestSweeperFailsExpiredApprovalsAndRequeuesExpiredTimers(t *testing.T) {
 	// An absolute deadline resolves the same way: until is a timer with a
 	// clock time instead of a duration.
 	hold.mode = engine.WaitModeUntil
-	hold.expiresAt = time.Now().Add(30 * time.Millisecond)
+	hold.expiresAt = time.Now().Add(50 * time.Millisecond)
 	queuedUntil, err := store.QueueManualLatest(ctx, tenant, saved.ID, catalog, json.RawMessage(`{"customer":"Cy"}`))
 	if err != nil {
 		t.Fatalf("QueueManualLatest(until) error = %v", err)
@@ -434,14 +442,7 @@ func TestSweeperFailsExpiredApprovalsAndRequeuesExpiredTimers(t *testing.T) {
 	if worked, err := service.RunOnce(ctx); err != nil || !worked {
 		t.Fatalf("RunOnce(until suspend) = (%v, %v), want (true, nil)", worked, err)
 	}
-	time.Sleep(100 * time.Millisecond)
-	settled, err = service.SweepWaits(ctx)
-	if err != nil {
-		t.Fatalf("SweepWaits(until) error = %v", err)
-	}
-	if settled != 1 {
-		t.Fatalf("until settled = %d, want 1", settled)
-	}
+	awaitExecutionStatus(t, store, tenant, queuedUntil.ID, execution.StatusQueued)
 	if worked, err := service.RunOnce(ctx); err != nil || !worked {
 		t.Fatalf("RunOnce(until resume) = (%v, %v), want (true, nil)", worked, err)
 	}

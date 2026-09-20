@@ -251,15 +251,31 @@ func TestAWaitLongerThanTheServerAllowsIsRefusedRatherThanHeld(t *testing.T) {
 	}
 	executor, _ := executors.Lookup(definition.ExecutorID)
 
-	// The run holds a worker for the whole of the wait, so a two-day pause is
-	// refused up front rather than discovered as a timeout two days later.
+	// A two-day pause is what the durable suspension exists for: it parks in
+	// storage and costs no worker while it waits, so the old one-hour ceiling
+	// refused exactly the waits people write.
 	_, err := executor.Execute(context.Background(), workflow.IRNode{
 		ID: "n1", Name: "Wait", Type: nodes.WaitNodeType, TypeVersion: workflow.V(1),
 		Parameters: map[string]any{"resume": "timeInterval", "amount": float64(2), "unit": "days"},
 		Definition: definition,
 	}, workflow.NodeInput{}, engine.Request{})
+	var suspended *engine.SuspendError
+	if !errors.As(err, &suspended) {
+		t.Fatalf("a two-day wait was not suspended: error = %v", err)
+	}
+	if suspended.Mode != engine.WaitModeInterval {
+		t.Errorf("suspension mode = %q, want %q", suspended.Mode, engine.WaitModeInterval)
+	}
+
+	// Past the ceiling the wait still fails up front, with the limit named: a
+	// wait that cannot resolve is a leak, not a pause.
+	_, err = executor.Execute(context.Background(), workflow.IRNode{
+		ID: "n1", Name: "Wait", Type: nodes.WaitNodeType, TypeVersion: workflow.V(1),
+		Parameters: map[string]any{"resume": "timeInterval", "amount": float64(30), "unit": "days"},
+		Definition: definition,
+	}, workflow.NodeInput{}, engine.Request{})
 	if err == nil {
-		t.Fatal("a two-day wait was accepted")
+		t.Fatal("a thirty-day wait was accepted")
 	}
 	if !strings.Contains(err.Error(), nodes.MaxWaitDuration.String()) {
 		t.Errorf("error = %v, want the server's limit named", err)
@@ -282,26 +298,107 @@ func TestAWaitUntilATimeAlreadyPastResumesImmediately(t *testing.T) {
 	}
 }
 
-func TestTheWaitNodeRefusesTheModesThatNeedDurableSuspension(t *testing.T) {
+func TestTheWaitNodeSuspendsOnTheModesThatWaitForACall(t *testing.T) {
 	t.Parallel()
 
 	registry := node.NewRegistry()
 	if err := nodes.RegisterAll(registry); err != nil {
 		t.Fatalf("RegisterAll() error = %v", err)
 	}
-	definition, _ := registry.Get(nodes.WaitNodeType, workflow.V(1))
+	definition, _ := registry.Lookup(nodes.WaitNodeType, workflow.V(1))
+	executors := engine.NewRegistry()
+	if err := nodes.RegisterExecutors(executors, localPolicy(), sqlGuard(), nil, nil, nil); err != nil {
+		t.Fatalf("RegisterExecutors() error = %v", err)
+	}
+	executor, _ := executors.Lookup(definition.ExecutorID)
+	items := []workflow.Item{{JSON: map[string]any{"id": float64(1)}}}
 
-	for _, mode := range []string{"webhook", "form"} {
-		err := definition.Validate(workflow.Node{
+	suspend := func(parameters map[string]any) *engine.SuspendError {
+		t.Helper()
+		_, err := executor.Execute(context.Background(), workflow.IRNode{
 			ID: "n1", Name: "Wait", Type: nodes.WaitNodeType, TypeVersion: workflow.V(1),
-			Parameters: map[string]any{"resume": mode},
-		})
-		if err == nil {
-			t.Fatalf("Validate() accepted resume %q", mode)
+			Parameters: parameters, Definition: definition,
+		}, workflow.NodeInput{"main": items}, engine.Request{})
+		var suspended *engine.SuspendError
+		if !errors.As(err, &suspended) {
+			t.Fatalf("Execute(%v) error = %v, want a suspension", parameters["resume"], err)
 		}
-		// The message has to say what to do instead, or it is only a refusal.
-		if !strings.Contains(err.Error(), "Webhook trigger") {
-			t.Errorf("error for %q = %v, want the alternative named", mode, err)
+		return suspended
+	}
+
+	// A webhook wait with no limit is held as a webhook wait: it ends when
+	// something calls the resume URL, and the engine's own wait lifetime is
+	// what stops it outliving everyone's memory of it.
+	webhook := suspend(map[string]any{"resume": "webhook"})
+	if webhook.Mode != engine.WaitModeWebhook {
+		t.Errorf("webhook mode = %q, want %q", webhook.Mode, engine.WaitModeWebhook)
+	}
+	if !webhook.ExpiresAt.IsZero() {
+		t.Errorf("webhook expiry = %s, want the engine's default lifetime applied at the service boundary", webhook.ExpiresAt)
+	}
+
+	// A form wait is this installation's approval page: a human approves or
+	// rejects, and the run continues with that decision.
+	form := suspend(map[string]any{"resume": "form"})
+	if form.Mode != engine.WaitModeApproval {
+		t.Errorf("form mode = %q, want %q", form.Mode, engine.WaitModeApproval)
+	}
+
+	// With a limit it is held as a timer instead, because the limit is what
+	// resumes it: a call may still end it early, but nothing arriving is no
+	// longer a failure the way an unanswered approval is.
+	limited := suspend(map[string]any{
+		"resume": "webhook", "limitWaitTime": true, "limitType": "afterTimeInterval",
+		"limitAmount": float64(30), "limitUnit": "minutes",
+	})
+	if limited.Mode != engine.WaitModeInterval {
+		t.Errorf("limited webhook mode = %q, want %q", limited.Mode, engine.WaitModeInterval)
+	}
+	if until := time.Until(limited.ExpiresAt); until < 29*time.Minute || until > 31*time.Minute {
+		t.Errorf("limited webhook expires in %s, want about 30 minutes", until)
+	}
+
+	// The same limit written as a clock time is an absolute one.
+	at := suspend(map[string]any{
+		"resume": "webhook", "limitWaitTime": true, "limitType": "atSpecifiedTime",
+		"limitAt": time.Now().Add(2 * time.Hour).UTC().Format(time.RFC3339),
+	})
+	if at.Mode != engine.WaitModeUntil {
+		t.Errorf("at-specified-time limit mode = %q, want %q", at.Mode, engine.WaitModeUntil)
+	}
+
+	// A limit already past resumes the node immediately, exactly as a pause of
+	// zero does: there is nothing left to wait for.
+	if _, err := executor.Execute(context.Background(), workflow.IRNode{
+		ID: "n1", Name: "Wait", Type: nodes.WaitNodeType, TypeVersion: workflow.V(1),
+		Parameters: map[string]any{
+			"resume": "webhook", "limitWaitTime": true, "limitType": "atSpecifiedTime",
+			"limitAt": "2020-01-01T00:00:00Z",
+		},
+		Definition: definition,
+	}, workflow.NodeInput{"main": items}, engine.Request{}); err != nil {
+		t.Fatalf("Execute(past limit) error = %v, want the items passed through", err)
+	}
+
+	// Every mode above must validate: the node's own validation is what the
+	// editor shows before a workflow is activated.
+	for _, parameters := range []map[string]any{
+		{"resume": "webhook"},
+		{"resume": "form"},
+		{"resume": "webhook", "limitWaitTime": true, "limitType": "afterTimeInterval", "limitAmount": float64(1), "limitUnit": "hours"},
+		{"resume": "webhook", "limitWaitTime": true, "limitType": "atSpecifiedTime", "limitAt": "2026-01-01T00:00:00Z"},
+	} {
+		if err := definition.Validate(workflow.Node{ID: "n1", Name: "Wait", Type: nodes.WaitNodeType, TypeVersion: workflow.V(1), Parameters: parameters}); err != nil {
+			t.Errorf("Validate(%v) error = %v", parameters, err)
 		}
+	}
+	// A limit at a specified time with no time is the one shape worth refusing
+	// before it runs: the wait would otherwise never end on its own.
+	err := definition.Validate(workflow.Node{
+		ID: "n1", Name: "Wait", Type: nodes.WaitNodeType, TypeVersion: workflow.V(1),
+		Parameters: map[string]any{"resume": "webhook", "limitWaitTime": true, "limitType": "atSpecifiedTime"},
+	})
+	if err == nil {
+		t.Error("Validate() accepted a limit at a specified time with no time")
 	}
 }

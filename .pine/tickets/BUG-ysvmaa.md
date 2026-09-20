@@ -1,7 +1,7 @@
 ---
 id: BUG-ysvmaa
 title: 'Engine waits/loops: 1-min sweep, 1h cap, shutdown drain, nested loops, wait-in-loop, lineage'
-status: todo
+status: doing
 priority: high
 labels:
     - engine
@@ -9,7 +9,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:10Z"
-updated: "2026-09-19T12:06:10Z"
+updated: "2026-09-20T00:33:12Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -183,3 +183,17 @@ Existing tickets: FEAT-q81bq4, FEAT-rj17xj
 - [ ] Imported n8n loops are capped at 100 batches (kilasflow.loop maxIterations default), and because of the duplic
 - [ ] Short Wait nodes take up to 60 s because timer waits only settle on a 1-minute sweep, which also breaks synchr
 - [ ] Adversarial re-verify against live stub/n8n like the Verify phase (no code-only close)
+---
+## Progress (EngineWaits)
+
+Landed in this slice (files: nodes/wait.go, internal/engine/wait_service.go, internal/engine/service.go, internal/scheduler/extract.go):
+
+- Timer waits now resume at their own deadline. Every suspension arms an exact `time.AfterFunc` for the deadline the wait row was written with (`waitTimers` in internal/engine/wait_service.go, armed from `suspend`, stopped with the sweep loop on shutdown). The periodic sweep stays as the floor for waits a process left behind, so a restart costs one sweep interval instead of losing the wait. This is the "Wait 2 seconds takes 54 s" and the webhook-504 finding: the wait no longer waits for the next tick.
+- Sweep interval is configurable (`ServiceDeps.SweepInterval`, wired from `execution.wait_sweep_interval` by SecurityFront2; default in config 10s, NewService fallback 1 min).
+- Durable wait cap raised from 1 h to `engine.MaxWaitTTL` (7 days) in nodes/wait.go; the node now suspends on `resume=webhook` (Mode webhook) and `resume=form` (Mode approval, the /approve page), with n8n's `limitWaitTime`/`limitType`/`limitAmount`/`limitUnit`/`limitAt` implemented as the limit that resumes a call-resumed wait (held as interval/until so nothing arriving is not a failure). `$execution.resumeUrl` was already exposed by the expression layer.
+- Per-workflow run budget: `settings.executionTimeout` (n8n semantics, -1 = none) is honoured, capped by the new instance ceiling `execution.max_timeout` (ServiceDeps.MaxTimeout). The worker lease is no longer the same number as the run timeout (EngineCore's heartbeat) so a longer budget cannot be reclaimed mid-run.
+- Instance default timezone: `scheduler.DefaultTimezone(extract, zone)` resolves an absent or n8n-`DEFAULT` workflow zone to the instance zone (`execution.default_timezone`), and the service fills `Request.Workflow` (ID/Name/Active/Timezone) so `$workflow.*` and `$now`/`$today` read the instance zone. Config + main.go wiring by SecurityFront2.
+- Graceful drain: `Service.Drain(ctx)` (WaitGroup over `Start`'s worker goroutines) returns only after each worker has settled the run it was in. main.go wiring by SecurityFront2; the process-level half of the "SIGTERM re-runs a completed run" finding.
+- Cancellation poll reads one status column (`ExecutionState`) instead of the whole execution record; also exposed on the service for the webhook await (WebhookParity).
+
+Remaining in other slices (handed over, not this slice's files): nested loops / wait-inside-loop / loop binary+lineage / `$loop` in items / maxIterations+`options.reset` on import — EngineFlow (loop state is runner-owned as of 9df1c1c, nested-loop scheduling rewrite in progress) and ImporterTail (import defaults); shutdown drain call in cmd/kilasflow/main.go and the config keys — SecurityFront2; `$execution.resumeUrl` in `ExpressionContext` — ExpressionParity.

@@ -13,6 +13,7 @@ package engine_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
@@ -376,6 +377,24 @@ func TestGracefulShutdownHandsNothingHalfDone(t *testing.T) {
 
 	// SIGTERM: the service context ends while the run is in flight.
 	stop()
+	// Drain is what a process exits on. It returns only once the worker has
+	// settled the run it was in, so the terminal state is already durable when
+	// it does — and the process that exits on that return leaves nothing for a
+	// lease expiry to reclaim and re-run. Asserted without polling, because
+	// polling would pass even if Drain returned immediately and the write
+	// landed afterwards, which is exactly the process-exit race this fixes.
+	drainCtx, stopDrain := context.WithTimeout(context.Background(), 5*time.Second)
+	defer stopDrain()
+	if err := service.Drain(drainCtx); err != nil {
+		t.Fatalf("Drain() error = %v, want the worker to settle its run first", err)
+	}
+	settled, err := store.Get(ctx, tenant, queued.ID)
+	if err != nil {
+		t.Fatalf("Get(after drain) error = %v", err)
+	}
+	if got, want := settled.Status, execution.StatusCancelled; got != want {
+		t.Errorf("status at Drain() return = %q, want %q already durable", got, want)
+	}
 	terminalDeadline := time.Now().Add(10 * time.Second)
 	var terminal execution.Record
 	for {
@@ -964,5 +983,87 @@ func TestAbandonedLeaseIsReclaimedWithoutDuplicateNodeRunsOnPostgres(t *testing.
 		StartedAt: now, FinishedAt: &now, LeaseOwner: deadLease,
 	}); err == nil {
 		t.Error("CreateNodeRun(dead lease) succeeded, want it rejected: the fence must hold for traces too")
+	}
+}
+
+// A worker stuck in a node that ignores cancellation must not hold shutdown
+// open: Drain obeys its bound and reports the timeout, and the caller exits
+// anyway. The lease expiry is then the floor — the same recovery as a crash —
+// which is why the bound exists as well as the wait.
+func TestDrainDoesNotWaitForeverOnAStuckNode(t *testing.T) {
+	ctx := context.Background()
+	quiet := slog.New(slog.NewTextHandler(io.Discard, nil))
+	db, err := database.Open(ctx, config.Database{Driver: "sqlite", DSN: t.TempDir() + "/kilasflow.db"}, quiet)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := database.Migrate(db, quiet); err != nil {
+		t.Fatalf("Migrate() error = %v", err)
+	}
+	tenant := repository.TenantScope{ID: "tenant-stuck"}
+	catalog := node.NewRegistry()
+	if err := nodes.RegisterAll(catalog); err != nil {
+		t.Fatalf("RegisterAll() error = %v", err)
+	}
+	if err := catalog.Register(multiprocessDefinition("test.stuck", "test.stuck")); err != nil {
+		t.Fatalf("Register(test.stuck) error = %v", err)
+	}
+	executors := engine.NewRegistry()
+	if err := nodes.RegisterExecutors(executors, safehttp.DefaultPolicy(), sqlnode.Guard{}, ai.NewLoopRuntime(), nil, nil); err != nil {
+		t.Fatalf("RegisterExecutors() error = %v", err)
+	}
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	defer close(release)
+	if err := executors.Register("test.stuck", engine.ExecutorFunc(func(context.Context, workflow.IRNode, workflow.NodeInput, engine.Request) (workflow.NodeOutput, error) {
+		close(entered)
+		// Deliberately deaf to context cancellation: a third-party SDK that
+		// blocks in a syscall cannot be interrupted either.
+		<-release
+		return workflow.NodeOutput{}, nil
+	})); err != nil {
+		t.Fatalf("Register(stuck executor) error = %v", err)
+	}
+	if _, err := repository.NewWorkflowStore(db.DB).SaveDraft(ctx, tenant, workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_stuck", Name: "Stuck",
+		Nodes: []workflow.Node{
+			{ID: "manual", Name: "Manual Trigger", Type: "kilasflow.manual", TypeVersion: workflow.V(1)},
+			{ID: "stuck", Name: "Stuck", Type: "test.stuck", TypeVersion: workflow.V(1)},
+		},
+		Connections: []workflow.Connection{{
+			ID: "manual-stuck", Kind: workflow.ConnectionMain,
+			Source: workflow.Endpoint{NodeID: "manual", Port: "main"},
+			Target: workflow.Endpoint{NodeID: "stuck", Port: "main"},
+		}},
+		Settings: map[string]any{},
+	}); err != nil {
+		t.Fatalf("SaveDraft() error = %v", err)
+	}
+	store := repository.NewExecutionStore(db.DB)
+	if _, err := store.QueueManualLatest(ctx, tenant, "wf_stuck", catalog, nil); err != nil {
+		t.Fatalf("QueueManualLatest() error = %v", err)
+	}
+	service, err := engine.NewService(engine.ServiceDeps{
+		Executions: store, Catalog: catalog, Runner: engine.NewRunner(executors),
+		WorkerID: "stuck-1", DefaultTimeout: 30 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+	runCtx, stop := context.WithCancel(context.Background())
+	defer stop()
+	if err := service.Start(runCtx, 1); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	service.Wake()
+	<-entered
+	stop()
+
+	bounded, stopBounded := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer stopBounded()
+	if err := service.Drain(bounded); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Drain(stuck node) error = %v, want the bound reported rather than waited out", err)
 	}
 }
