@@ -383,7 +383,7 @@ func TestADriverFailureUnderTheEngineIsNotAnsweredAsTheCallersMistake(t *testing
 		Row().Scan(&physical); err != nil {
 		t.Fatalf("find the physical table: %v", err)
 	}
-	if _, err := db.Exec("DROP TABLE " + physical).Rows(); err != nil {
+	if err := db.Exec("DROP TABLE " + physical).Error; err != nil {
 		t.Fatalf("drop the physical table: %v", err)
 	}
 

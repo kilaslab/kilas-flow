@@ -55,12 +55,17 @@ const modulePath = "github.com/kilaslabs/kilas-flow"
 // while "modernc.org/sqlite", "github.com/jackc/pgx/v5/pgconn" and
 // "github.com/go-sql-driver/mysql" read as the database's own answer.
 //
+// The named type is what carries the package path, so a pointer receiver is
+// dereferenced first: reflect's PkgPath is empty for a pointer, which would
+// otherwise read every `*pgconn.PgError` (the shape a driver actually returns)
+// as a mistake the caller made.
+//
 // The rule is one-sided on purpose. Anything unrecognised reads as the caller's
 // — the reading every one of these handlers already had — so a validation path
 // added later cannot start answering 500 by being written.
 func internalFailure(err error) bool {
 	for _, current := range errorChain(err) {
-		path := reflect.TypeOf(current).PkgPath()
+		path := errorTypePath(current)
 		first, _, _ := strings.Cut(path, "/")
 		if !strings.Contains(first, ".") || strings.HasPrefix(path, modulePath) {
 			continue
@@ -68,6 +73,19 @@ func internalFailure(err error) bool {
 		return true
 	}
 	return false
+}
+
+// errorTypePath is the package path of the type behind an error, following
+// pointers to the named type that declares it.
+func errorTypePath(err error) string {
+	declared := reflect.TypeOf(err)
+	for declared != nil && declared.Kind() == reflect.Pointer {
+		declared = declared.Elem()
+	}
+	if declared == nil {
+		return ""
+	}
+	return declared.PkgPath()
 }
 
 // errorChain flattens an error and everything it wraps, including the multiple
