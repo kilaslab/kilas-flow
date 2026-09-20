@@ -55,16 +55,7 @@
       "notice": "WAHA is not configured to deliver here yet. Add {{ url }} to this session's webhook configuration, or turn on \"Register this URL with WAHA\" and activate again.",
       "lifecycle": {
         "id": "waha.session.webhook",
-        "enabledParameter": "autoRegister",
-        "set": {
-          "method": "PUT",
-          "url": "{{ .baseUrl }}/api/sessions/{{ .Parameter.session }}",
-          "credentialType": "wahaApi",
-          "headers": {
-            "Content-Type": "application/json"
-          },
-          "body": "{\"config\":{\"webhooks\":[{\"url\":\"{{ .PublicURL }}\",\"events\":[\"*\"]}]}}"
-        }
+        "enabledParameter": "autoRegister"
       },
       "media": {
         "enabledParameter": "downloadMedia",

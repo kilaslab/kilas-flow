@@ -22,10 +22,21 @@
 // `@devlikeapro/n8n-nodes-waha.WAHA` either; the importer maps that foreign
 // string onto this one and leaves the original visible in the import
 // diagnostics, which is where a reader wants it.
+//
+// # Registration merges, it does not replace
+//
+// WAHA's `PUT /api/sessions/{session}` replaces a session's whole configuration
+// and restarts it, so a trigger that sent one webhook would delete the
+// customer's other webhooks, their proxy and their engine settings, and restart
+// their live session. The trigger therefore reads the session, replaces only
+// its own entry and writes the session back, from the description in
+// `webhook-lifecycle.json` beside the packs.
 package waha
 
 import (
+	"bytes"
 	"embed"
+	"encoding/json"
 	"fmt"
 
 	"github.com/kilaslabs/kilas-flow/internal/loadoptions"
@@ -35,8 +46,18 @@ import (
 	"github.com/kilaslabs/kilas-flow/internal/webhook"
 )
 
-//go:embed pack-*.json
+//go:embed pack-*.json webhook-lifecycle.json
 var packs embed.FS
+
+// MergeFile describes how this pack installs its delivery URL into a session
+// that is already configured.
+//
+// A file of its own rather than a block in the trigger pack because the pack
+// format refuses unknown fields: a merge cannot be expressed as a descriptor
+// (`set` sends one fixed body, and WAHA's PUT replaces the session's whole
+// configuration and restarts it), and adding fields to the generated format for
+// one service's shape would put one service's shape in everybody's format.
+const mergeFile = "webhook-lifecycle.json"
 
 // NodeType is the action node this pack registers, at two versions.
 const NodeType = "pack.waha"
@@ -92,6 +113,10 @@ func Register(deps Deps) error {
 	if err != nil {
 		return err
 	}
+	merge, err := mergeLifecycle()
+	if err != nil {
+		return err
+	}
 	for _, pack := range decoded {
 		if err := nodepack.Register(deps.Definitions, deps.Routes, deps.Executors, deps.Options, pack); err != nil {
 			return fmt.Errorf("register WAHA pack %s v%s: %w", pack.Type, pack.Version, err)
@@ -99,9 +124,65 @@ func Register(deps Deps) error {
 		if pack.Trigger == nil {
 			continue
 		}
+		if err := registerMerge(deps, pack, merge); err != nil {
+			return fmt.Errorf("register WAHA trigger v%s: %w", pack.Version, err)
+		}
 		if err := nodepack.RegisterTrigger(deps.Triggers, deps.Deliveries, deps.Lifecycles, pack); err != nil {
 			return fmt.Errorf("register WAHA trigger v%s: %w", pack.Version, err)
 		}
+	}
+	return nil
+}
+
+// mergeLifecycle reads the merge description.
+//
+// Strict, like the pack format and for the same reason: a merge file naming a
+// field this build does not implement must fail at startup rather than
+// registering a lifecycle that quietly does something else.
+func mergeLifecycle() (webhook.WebhookListLifecycle, error) {
+	raw, err := packs.ReadFile(mergeFile)
+	if err != nil {
+		return webhook.WebhookListLifecycle{}, fmt.Errorf("read %s: %w", mergeFile, err)
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	var merge webhook.WebhookListLifecycle
+	if err := decoder.Decode(&merge); err != nil {
+		return webhook.WebhookListLifecycle{}, fmt.Errorf("%s: %w", mergeFile, err)
+	}
+	return merge, nil
+}
+
+// registerMerge binds the read-merge-write lifecycle in place of the trigger's
+// descriptors.
+//
+// The trigger's own lifecycle block is cleared first, because
+// nodepack.RegisterTrigger registers the descriptor form under the same ID and
+// the registry keeps whichever arrived first: a descriptor `set` sends one
+// fixed body, so leaving it in would restore exactly the behaviour this exists
+// to remove. The ID and the gating parameter are the pack's — by the time this
+// runs the node definition already carries the ID — and only the requests
+// behind them are replaced.
+//
+// Both versions declare one ID and one merge: the merge is the same document
+// for both, so the first registration is the one that counts.
+func registerMerge(deps Deps, pack *nodepack.Pack, merge webhook.WebhookListLifecycle) error {
+	declared := pack.Trigger.Lifecycle
+	if declared == nil {
+		return nil
+	}
+	notice := pack.Trigger.Notice
+	pack.Trigger.Lifecycle = nil
+	if _, registered := deps.Lifecycles.Lookup(declared.ID); registered {
+		return nil
+	}
+	gated := webhook.GatedLifecycle{
+		EnabledParameter: declared.EnabledParameter,
+		Lifecycle:        merge,
+		Notice:           notice,
+	}
+	if err := deps.Lifecycles.Register(declared.ID, gated); err != nil {
+		return fmt.Errorf("register webhook lifecycle %q: %w", declared.ID, err)
 	}
 	return nil
 }

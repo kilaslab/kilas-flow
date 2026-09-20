@@ -7,7 +7,29 @@ the diff.
 | --- | --- |
 | `manifest-<version>.json` | The decisions the OpenAPI document cannot make: node type, credential mapping, and the two injected parameter defaults. |
 | `pack-<version>.json` | The generated pack. Its `generator` block records the SHA-256 of the document it came from, and a test asserts that digest still matches. |
+| `pack-trigger-<version>.json` | The generated webhook trigger: one output per event, in the document's order, plus the `trigger` block the manifest supplies. |
+| `webhook-lifecycle.json` | **Hand-written**, not generated — the file the trigger's activation is registered from. See below. |
 | `REPORT-<version>.md` | Everything in the document that is **absent from the pack**, operation by operation. |
+
+## Why registration has a file of its own
+
+WAHA documents `PUT /api/sessions/{session}` as replacing a session's whole
+configuration and restarting it. A trigger that sent one fixed body — which is
+what a `lifecycle.set` descriptor can express — therefore deleted the customer's
+other webhooks, their proxy and their engine settings and restarted their live
+session, and a second workflow on the same session evicted the first. So
+activation reads the session, replaces only its own entry and writes the session
+back, and `webhook-lifecycle.json` is the description of that merge: the session
+path, the list path (`config.webhooks`), the entry field holding the URL, and
+the entry template — including the `hmac.key` WAHA signs with, which is left out
+entirely when the node has no secret.
+
+It is not part of the pack format on purpose. A pack file is decoded with unknown
+fields refused, and a merge is not a request: giving the generated format a
+per-service merge shape would put one service's shape in everybody's format. The
+trigger's manifest therefore keeps `lifecycle.id` and `lifecycle.enabledParameter`
+— the binding and the off-by-default gate — and the requests behind that binding
+come from here, through `internal/webhook`'s `WebhookListLifecycle`.
 
 ## Provenance and licence
 

@@ -1,7 +1,7 @@
 ---
 id: BUG-cq4yk3
 title: 'Webhook answering: Respond timing, responseData, $response leak, shape, CORS, JWT, WAHA, defaults'
-status: todo
+status: doing
 priority: high
 labels:
     - webhook
@@ -10,7 +10,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:10Z"
-updated: "2026-09-19T12:06:10Z"
+updated: "2026-09-20T00:29:23Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -311,3 +311,9 @@ Files: internal/webhook/webhook.go, nodes/routing.go
 - [ ] Respond to Webhook with default respondWith returns an empty body; Respond injects "$response" into items; red
 - [ ] Respond to Webhook answers only after the whole execution ends, and a failure after the Respond node turns the
 - [ ] Adversarial re-verify against live stub/n8n like the Verify phase (no code-only close)
+## Progress (WebhookParity 2026-09-20)
+
+Slices landed so far, each with its own scoped proof:
+
+- **Path labels are not identities** (commit 5693d98, repository): `uidx_webhook_bindings_label` dropped in migration `000011` (both dialects, spaces-indented) and replaced by a plain `(tenant_id, path)` index; the routable identity is the globally unique opaque `route`, which is what an inbound request resolves on. `WebhookRepository.ResolveRoute(ctx, route)` lists every method bound on one route (needed for CORS preflight). Conflicts now surface as `repository.ErrWebhookPathClaimed` / `*repository.WebhookConflictError{Path, Method, Route, WorkflowID}` instead of a string-matched guess; the API layer maps them to 409 (SecurityFront2's file, asked via hub). Proof: `go test ./internal/repository/ -count=1` and `./internal/database/ -count=1` green in an isolated worktree; pre-fix, one path bound to GET+POST and two workflows sharing a label both failed activation.
+- **WAHA trigger registration merges instead of replacing** (packs/waha + internal/webhook/request_lifecycle.go): activation now GETs the session, replaces only this route's entry in `config.webhooks` and PUTs the rest of the document back byte-for-byte (name/status/engine/proxy/config.debug survive), includes `hmac.key` only when a secret is set, and deactivation removes only this route's entry. Registration is now a hand-written Go lifecycle because a declarative descriptor cannot merge; the merge description lives in `packs/waha/webhook-lifecycle.json` — a deviation from the ticket's "add check/remove descriptors" wording, because `nodepack.Decode` is strict and the merge fields cannot live inside `trigger.lifecycle`. Proof: `go test ./packs/waha/ -count=1` (and `-race`) green in an isolated worktree; the pre-fix body PUT a document containing only this webhook, which restarts the customer's live session and evicts their other webhooks.

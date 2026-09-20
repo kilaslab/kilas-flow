@@ -13,7 +13,9 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/kilaslabs/kilas-flow/internal/ai"
@@ -1038,44 +1040,194 @@ func TestActivationSaysWhatItDidNotDo(t *testing.T) {
 	}
 }
 
-// Auto-registration is opt-in because it writes to a customer's own WAHA
-// instance, and importing a workflow should not do that silently.
-func TestAutoRegistrationIsOffByDefaultAndInstallsTheURLWhenTurnedOn(t *testing.T) {
+// TestTheRegisteredTriggerDeclaresABoundLifecycle is composition's own boot
+// check, run against the real pack.
+//
+// It is here because the merge replaces the trigger's descriptor block: the
+// node definition carries the lifecycle ID that `nodepack.Register` read before
+// the block was cleared, and clearing it a moment too early would leave a
+// trigger that saves, activates, and silently never registers with WAHA.
+func TestTheRegisteredTriggerDeclaresABoundLifecycle(t *testing.T) {
 	t.Parallel()
-
-	type call struct {
-		method, path, apiKey, body string
-	}
-	var calls []call
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		raw, _ := io.ReadAll(r.Body)
-		calls = append(calls, call{r.Method, r.URL.Path, r.Header.Get("X-Api-Key"), string(raw)})
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"name":"default"}`))
-	}))
-	defer server.Close()
 
 	set := install(t, safehttp.DefaultPolicy())
 	packs := triggerPacks(t)
+	for _, pack := range packs {
+		declared := pack.Trigger.Lifecycle.ID
+		if declared == "" {
+			t.Fatalf("the %s pack declares no lifecycle", pack.Version)
+		}
+		bound := set.definitions.LifecycleIDs()
+		if len(bound) != 1 || bound[0] != declared {
+			t.Fatalf("registered definitions declare %#v, want the pack's %q", bound, declared)
+		}
+		if err := webhook.VerifyLifecycleBindings(bound, set.lifecycles); err != nil {
+			t.Fatalf("VerifyLifecycleBindings() error = %v", err)
+		}
+	}
+}
+
+// sessionCall is one request a stub session saw.
+type sessionCall struct {
+	method string
+	path   string
+	apiKey string
+}
+
+// sessionStub is a WAHA session: a document of its own that holds a webhook
+// list beside settings this pack has no business touching, and the requests it
+// received.
+//
+// Stateful on purpose. The bug this covers is only visible in what the session
+// is left holding, not in what one request said.
+type sessionStub struct {
+	mu       sync.Mutex
+	document string
+	calls    []sessionCall
+}
+
+func newSessionStub(t *testing.T, document string) (*sessionStub, *httptest.Server) {
+	t.Helper()
+	stub := &sessionStub{document: document}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		stub.mu.Lock()
+		stub.calls = append(stub.calls, sessionCall{method: r.Method, path: r.URL.Path, apiKey: r.Header.Get("X-Api-Key")})
+		if r.Method == http.MethodPut {
+			stub.document = string(raw)
+		}
+		document := stub.document
+		stub.mu.Unlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, document)
+	}))
+	t.Cleanup(server.Close)
+	return stub, server
+}
+
+func (stub *sessionStub) recorded() []sessionCall {
+	stub.mu.Lock()
+	defer stub.mu.Unlock()
+	return append([]sessionCall(nil), stub.calls...)
+}
+
+// writes counts the writes of the session document. WAHA stops and restarts a
+// session when its configuration is PUT, so the number of writes is part of
+// what activation is allowed to cost.
+func (stub *sessionStub) writes() int {
+	writes := 0
+	for _, call := range stub.recorded() {
+		if call.method == http.MethodPut {
+			writes++
+		}
+	}
+	return writes
+}
+
+func (stub *sessionStub) decode(t *testing.T) map[string]any {
+	t.Helper()
+	stub.mu.Lock()
+	defer stub.mu.Unlock()
+	document := map[string]any{}
+	if err := json.Unmarshal([]byte(stub.document), &document); err != nil {
+		t.Fatalf("session document %q error = %v", stub.document, err)
+	}
+	return document
+}
+
+// webhooks is the session's own webhook list.
+func (stub *sessionStub) webhooks(t *testing.T) []map[string]any {
+	t.Helper()
+	config, _ := stub.decode(t)["config"].(map[string]any)
+	raw, _ := config["webhooks"].([]any)
+	entries := make([]map[string]any, 0, len(raw))
+	for _, entry := range raw {
+		if object, isObject := entry.(map[string]any); isObject {
+			entries = append(entries, object)
+		}
+	}
+	return entries
+}
+
+// entryFor is the session's entry for a route, or nil.
+func (stub *sessionStub) entryFor(t *testing.T, route string) map[string]any {
+	t.Helper()
+	for _, entry := range stub.webhooks(t) {
+		if url, _ := entry["url"].(string); strings.Contains(url, route) {
+			return entry
+		}
+	}
+	return nil
+}
+
+// settings is everything in the session document except its webhook list —
+// which is exactly what a rewrite destroys.
+func (stub *sessionStub) settings(t *testing.T) map[string]any {
+	t.Helper()
+	document := stub.decode(t)
+	if config, isObject := document["config"].(map[string]any); isObject {
+		delete(config, "webhooks")
+	}
+	return document
+}
+
+// configuredSession is a session somebody else set up: another workflow's
+// webhook, and the proxy, engine and own fields WAHA's PUT replaces.
+const configuredSession = `{
+  "name": "sales",
+  "status": "WORKING",
+  "engine": {"type": "NOWEB"},
+  "proxy": {"server": "http://proxy.example.test:3128", "enabled": true},
+  "config": {"webhooks": [{"url": "https://someone-else.example.test/hook", "events": ["message"]}], "debug": true}
+}`
+
+// bindingFor is one trigger node's binding, as activation resolves it.
+func bindingFor(route string, autoRegister bool, extra map[string]any) repository.WebhookBinding {
+	parameters := map[string]any{
+		"session": "sales", "autoRegister": autoRegister,
+		"$credentials": map[string]any{waha.CredentialType: "cred-1"},
+	}
+	for key, value := range extra {
+		parameters[key] = value
+	}
+	return repository.WebhookBinding{
+		NodeID: "trigger", NodeType: waha.TriggerNodeType, Route: route, Parameters: parameters,
+	}
+}
+
+// declaredLifecycle is the hook ID the trigger node declares to activation.
+func declaredLifecycle(t *testing.T) map[string]string {
+	t.Helper()
+	packs := triggerPacks(t)
 	latest := packs[len(packs)-1]
-	declared := map[string]string{waha.TriggerNodeType: latest.Trigger.Lifecycle.ID}
+	return map[string]string{waha.TriggerNodeType: latest.Trigger.Lifecycle.ID}
+}
+
+// Auto-registration is opt-in because it writes to a customer's own WAHA
+// instance, and importing a workflow should not do that silently.
+//
+// When it is on, the registration merges: the session keeps its other webhook,
+// its proxy, its engine and its own fields, and activating twice does not write
+// twice — because writing WAHA's session document stops and restarts a live
+// WhatsApp session.
+func TestAutoRegistrationIsOffByDefaultAndInstallsTheURLWhenTurnedOn(t *testing.T) {
+	t.Parallel()
+
+	stub, server := newSessionStub(t, configuredSession)
+	set := install(t, safehttp.DefaultPolicy())
+	declared := declaredLifecycle(t)
 	credential := stubCredential{baseURL: server.URL}
 
-	off := repository.WebhookBinding{
-		NodeID: "trigger", NodeType: waha.TriggerNodeType, Route: "abc123",
-		Parameters: map[string]any{"session": "default", "autoRegister": false,
-			"$credentials": map[string]any{waha.CredentialType: "cred-1"}},
-	}
+	off := bindingFor("abc123", false, nil)
 	if _, err := coordinator(t, set, off, credential).Activated(context.Background(), "tenant-a", "wf_1", declared); err != nil {
 		t.Fatalf("Activated() error = %v", err)
 	}
-	if len(calls) != 0 {
+	if calls := stub.recorded(); len(calls) != 0 {
 		t.Fatalf("activation called WAHA %d times with auto-registration off: %#v", len(calls), calls)
 	}
 
-	on := off
-	on.Parameters = map[string]any{"session": "sales", "autoRegister": true,
-		"$credentials": map[string]any{waha.CredentialType: "cred-1"}}
+	on := bindingFor("abc123", true, nil)
 	notices, err := coordinator(t, set, on, credential).Activated(context.Background(), "tenant-a", "wf_1", declared)
 	if err != nil {
 		t.Fatalf("Activated() error = %v", err)
@@ -1083,17 +1235,182 @@ func TestAutoRegistrationIsOffByDefaultAndInstallsTheURLWhenTurnedOn(t *testing.
 	if len(notices) != 0 {
 		t.Fatalf("notices = %#v, want none when the URL was installed", notices)
 	}
-	if len(calls) != 1 {
-		t.Fatalf("activation made %d calls, want one: %#v", len(calls), calls)
+
+	writes := 0
+	for _, call := range stub.recorded() {
+		if call.method != http.MethodPut {
+			continue
+		}
+		writes++
+		if call.path != "/api/sessions/sales" {
+			t.Fatalf("PUT path = %q, want the session the node names", call.path)
+		}
+		if call.apiKey != "k-waha" {
+			t.Fatalf("X-Api-Key = %q, want the credential applied", call.apiKey)
+		}
 	}
-	if calls[0].method != http.MethodPut || calls[0].path != "/api/sessions/sales" {
-		t.Fatalf("call = %s %s, want the session the node names", calls[0].method, calls[0].path)
+	if writes != 1 {
+		t.Fatalf("activation wrote the session %d times, want one: %#v", writes, stub.recorded())
 	}
-	if calls[0].apiKey != "k-waha" {
-		t.Fatalf("X-Api-Key = %q, want the credential applied", calls[0].apiKey)
+
+	installed := stub.entryFor(t, "abc123")
+	if installed == nil {
+		t.Fatalf("session webhooks = %#v, want this workflow's URL installed", stub.webhooks(t))
 	}
-	if !strings.Contains(calls[0].body, "https://flows.example.test/webhook/abc123") {
-		t.Fatalf("body = %q, want this workflow's own URL installed", calls[0].body)
+	if installed["url"] != "https://flows.example.test/webhook/abc123" {
+		t.Fatalf("installed entry = %#v, want this workflow's own URL", installed)
+	}
+	if !reflect.DeepEqual(installed["events"], []any{"*"}) {
+		t.Fatalf("installed entry = %#v, want every event of the session", installed)
+	}
+	if stub.entryFor(t, "someone-else") == nil {
+		t.Fatalf("session webhooks = %#v, want the other workflow's webhook kept", stub.webhooks(t))
+	}
+	want := decodedDocument(t, configuredSession)
+	delete(want["config"].(map[string]any), "webhooks")
+	if !reflect.DeepEqual(stub.settings(t), want) {
+		t.Fatalf("session = %s, want everything but the webhook list untouched:\n%s",
+			mustEncodeJSON(t, stub.settings(t)), mustEncodeJSON(t, want))
+	}
+
+	// Activating an already-active workflow re-checks rather than re-registers,
+	// so the session is not restarted again.
+	if _, err := coordinator(t, set, on, credential).Activated(context.Background(), "tenant-a", "wf_1", declared); err != nil {
+		t.Fatalf("second Activated() error = %v", err)
+	}
+	if writes := stub.writes(); writes != 1 {
+		t.Fatalf("second activation wrote the session: %#v", stub.recorded())
+	}
+	if entries := stub.webhooks(t); len(entries) != 2 {
+		t.Fatalf("session webhooks = %#v, want this route once", entries)
+	}
+}
+
+func decodedDocument(t *testing.T, document string) map[string]any {
+	t.Helper()
+	decoded := map[string]any{}
+	if err := json.Unmarshal([]byte(document), &decoded); err != nil {
+		t.Fatalf("decode session document error = %v", err)
+	}
+	return decoded
+}
+
+func mustEncodeJSON(t *testing.T, value any) string {
+	t.Helper()
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("encode error = %v", err)
+	}
+	return string(encoded)
+}
+
+// TestTheRegisteredWebhookCarriesTheHMACKeyOnlyWhenASecretIsConfigured: WAHA
+// signs with config.webhooks[].hmac.key, and the node refuses any delivery it
+// cannot verify, so a secret the node has and WAHA does not sign with makes
+// every delivery fail — and an hmac entry that signs with the text of a
+// template would fail them the other way round.
+func TestTheRegisteredWebhookCarriesTheHMACKeyOnlyWhenASecretIsConfigured(t *testing.T) {
+	t.Parallel()
+
+	for name, testCase := range map[string]struct {
+		extra map[string]any
+		want  any
+	}{
+		"with a secret":    {extra: map[string]any{"hmacSecret": "topsecret"}, want: map[string]any{"key": "topsecret"}},
+		"without a secret": {want: nil},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			stub, server := newSessionStub(t, configuredSession)
+			set := install(t, safehttp.DefaultPolicy())
+			credential := stubCredential{baseURL: server.URL}
+			binding := bindingFor("abc123", true, testCase.extra)
+			if _, err := coordinator(t, set, binding, credential).Activated(context.Background(), "tenant-a", "wf_1", declaredLifecycle(t)); err != nil {
+				t.Fatalf("Activated() error = %v", err)
+			}
+
+			installed := stub.entryFor(t, "abc123")
+			if installed == nil {
+				t.Fatalf("session webhooks = %#v, want this workflow's URL installed", stub.webhooks(t))
+			}
+			hmac, present := installed["hmac"]
+			if testCase.want == nil {
+				if present {
+					t.Fatalf("installed entry = %#v, want no hmac key at all", installed)
+				}
+				return
+			}
+			if !reflect.DeepEqual(hmac, testCase.want) {
+				t.Fatalf("installed hmac = %#v, want %#v", hmac, testCase.want)
+			}
+		})
+	}
+}
+
+// TestDeactivationRemovesOnlyThisWorkflowsWebhook: leaving this route behind
+// makes WAHA retry a delivery that can only answer 404, and unregistering
+// somebody else's workflow because it shares the session is the same bug as
+// registration's, on the way out.
+func TestDeactivationRemovesOnlyThisWorkflowsWebhook(t *testing.T) {
+	t.Parallel()
+
+	stub, server := newSessionStub(t, configuredSession)
+	set := install(t, safehttp.DefaultPolicy())
+	declared := declaredLifecycle(t)
+	credential := stubCredential{baseURL: server.URL}
+	binding := bindingFor("abc123", true, nil)
+
+	if _, err := coordinator(t, set, binding, credential).Activated(context.Background(), "tenant-a", "wf_1", declared); err != nil {
+		t.Fatalf("Activated() error = %v", err)
+	}
+	coordinator(t, set, binding, credential).Deactivated(context.Background(), "tenant-a", "wf_1", declared)
+
+	if installed := stub.entryFor(t, "abc123"); installed != nil {
+		t.Fatalf("session webhooks = %#v, want this workflow's URL gone", stub.webhooks(t))
+	}
+	if stub.entryFor(t, "someone-else") == nil {
+		t.Fatalf("session webhooks = %#v, want the other workflow's webhook kept", stub.webhooks(t))
+	}
+	want := decodedDocument(t, configuredSession)
+	delete(want["config"].(map[string]any), "webhooks")
+	if !reflect.DeepEqual(stub.settings(t), want) {
+		t.Fatalf("session = %s, want everything but the webhook list untouched", mustEncodeJSON(t, stub.settings(t)))
+	}
+
+	// Deactivating again must not restart the session to change nothing.
+	writes := stub.writes()
+	coordinator(t, set, binding, credential).Deactivated(context.Background(), "tenant-a", "wf_1", declared)
+	if stub.writes() != writes {
+		t.Fatalf("second deactivation wrote the session: %#v", stub.recorded())
+	}
+}
+
+// TestASecondWorkflowOnTheSameSessionDoesNotEvictTheFirst is the impact this
+// fix is for: two workflows on one WAHA session used to evict each other, and
+// the evicted one kept receiving retries it could only answer with a 404.
+func TestASecondWorkflowOnTheSameSessionDoesNotEvictTheFirst(t *testing.T) {
+	t.Parallel()
+
+	stub, server := newSessionStub(t, configuredSession)
+	set := install(t, safehttp.DefaultPolicy())
+	declared := declaredLifecycle(t)
+	credential := stubCredential{baseURL: server.URL}
+
+	for _, route := range []string{"first111", "second222"} {
+		binding := bindingFor(route, true, nil)
+		if _, err := coordinator(t, set, binding, credential).Activated(context.Background(), "tenant-a", "wf_1", declared); err != nil {
+			t.Fatalf("Activated(%s) error = %v", route, err)
+		}
+	}
+
+	for _, route := range []string{"first111", "second222", "someone-else"} {
+		if stub.entryFor(t, route) == nil {
+			t.Fatalf("session webhooks = %#v, want %s still registered", stub.webhooks(t), route)
+		}
+	}
+	if entries := stub.webhooks(t); len(entries) != 3 {
+		t.Fatalf("session webhooks = %#v, want three entries", entries)
 	}
 }
 

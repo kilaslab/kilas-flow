@@ -1,0 +1,14 @@
+{
+  "session": "/api/sessions/{{ .Parameter.session }}",
+  "baseUrlField": "baseUrl",
+  "credentialType": "wahaApi",
+  "listPath": "config.webhooks",
+  "urlField": "url",
+  "entry": {
+    "url": "{{ .PublicURL }}",
+    "events": ["*"],
+    "hmac": {
+      "key": "{{ .Parameter.hmacSecret }}"
+    }
+  }
+}
