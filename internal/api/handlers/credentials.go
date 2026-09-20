@@ -185,6 +185,12 @@ func (handler *Credentials) ListTypes(context.Context, *struct{}) (*credentialTy
 }
 
 // List returns every credential in the tenant.
+//
+// An embed session gets the subset its confinement names. The endpoint is
+// reachable by an embedded editor on read scope because a credential picker
+// needs names to render the current value — but "the names this workflow's own
+// document may attach" and "every credential this tenant stores" are two very
+// different disclosures, and a guest page has no business with the second.
 func (handler *Credentials) List(ctx context.Context, _ *struct{}) (*credentialListOutput, error) {
 	if handler.store == nil {
 		return nil, huma.Error503ServiceUnavailable("credential storage unavailable")
@@ -195,6 +201,9 @@ func (handler *Credentials) List(ctx context.Context, _ *struct{}) (*credentialL
 	}
 	resources := make([]CredentialResource, 0, len(records))
 	for _, record := range records {
+		if !embedAllowsCredential(ctx, record.ID) {
+			continue
+		}
 		resources = append(resources, credentialResource(record))
 	}
 	return &credentialListOutput{Body: resources}, nil

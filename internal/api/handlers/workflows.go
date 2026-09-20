@@ -237,8 +237,19 @@ type createdWorkflowOutput struct {
 	Body     WorkflowResource
 }
 
+// listWorkflowsInput is one page request from the dashboard. The bounds match
+// the repository's own clamp, so an out-of-range value is refused at the edge
+// with a schema error rather than silently clamped behind the caller's back.
+type listWorkflowsInput struct {
+	Limit  int    `query:"limit" minimum:"1" maximum:"500" doc:"Maximum workflows to return (default 100)"`
+	Cursor string `query:"cursor" doc:"Opaque cursor from the previous page's X-Next-Cursor header"`
+}
+
 type workflowListOutput struct {
-	Body []WorkflowSummary
+	// NextCursor is empty on the last page. It is a header rather than a body
+	// field because the body is the bare array the dashboard has always read.
+	NextCursor string `header:"X-Next-Cursor" doc:"Cursor for the next page; empty when there is none"`
+	Body       []WorkflowSummary
 }
 
 type deletedWorkflowOutput struct {
@@ -313,7 +324,7 @@ func (handler *Workflows) Register(api huma.API) {
 	}, handler.Create)
 	huma.Register(api, huma.Operation{
 		OperationID: "list-workflows", Method: http.MethodGet, Path: "/workflows",
-		Summary: "List workflows", Description: "Lists workflows visible to the current tenant.", Tags: []string{"Workflows"},
+		Summary: "List workflows", Description: "Returns one page of workflow summaries, newest first. The next page's cursor is in the X-Next-Cursor response header, empty on the last page.", Tags: []string{"Workflows"},
 	}, handler.List)
 	huma.Register(api, huma.Operation{
 		OperationID: "get-workflow", Method: http.MethodGet, Path: "/workflows/{id}",
@@ -372,29 +383,40 @@ func (handler *Workflows) Create(ctx context.Context, input *createWorkflowInput
 	}
 	stored, err := handler.workflows.SaveDraft(ctx, handler.tenant(ctx), document)
 	if err != nil {
-		return nil, handler.problem(err)
+		return nil, handler.problem(ctx, err)
 	}
 	return &createdWorkflowOutput{
 		Status: http.StatusCreated, Location: "/api/v1/workflows/" + stored.ID, Body: workflowResource(stored),
 	}, nil
 }
 
-// List returns tenant-scoped workflow summaries.
-func (handler *Workflows) List(ctx context.Context, _ *struct{}) (*workflowListOutput, error) {
+// List returns one page of tenant-scoped workflow summaries.
+//
+// The body stays a bare array that the dashboard already reads; the cursor for
+// the next page rides in a header, so adding pagination did not change the
+// response shape a running client depends on.
+func (handler *Workflows) List(ctx context.Context, input *listWorkflowsInput) (*workflowListOutput, error) {
 	if err := handler.available(false); err != nil {
 		return nil, err
 	}
-	stored, err := handler.workflows.List(ctx, handler.tenant(ctx))
-	if err != nil {
-		return nil, handler.problem(err)
+	page, err := handler.workflows.ListSummaries(ctx, handler.tenant(ctx), repository.WorkflowFilter{
+		Limit: input.Limit, Cursor: input.Cursor,
+	})
+	// A cursor the client did not receive from this API is a bad request, not a
+	// server fault, so it must not be reported as a 500.
+	if errors.Is(err, repository.ErrInvalidCursor) {
+		return nil, huma.Error400BadRequest("workflow cursor is invalid")
 	}
-	items := make([]WorkflowSummary, 0, len(stored))
-	for _, item := range stored {
+	if err != nil {
+		return nil, handler.problem(ctx, err)
+	}
+	items := make([]WorkflowSummary, 0, len(page.Workflows))
+	for _, item := range page.Workflows {
 		items = append(items, WorkflowSummary{
-			ID: item.ID, Name: item.Name, Active: item.Active, LatestRevision: item.LatestVersion.Revision, UpdatedAt: item.UpdatedAt,
+			ID: item.ID, Name: item.Name, Active: item.Active, LatestRevision: item.LatestRevision, UpdatedAt: item.UpdatedAt,
 		})
 	}
-	return &workflowListOutput{Body: items}, nil
+	return &workflowListOutput{Body: items, NextCursor: page.NextCursor}, nil
 }
 
 // Get returns the stored canonical document and lifecycle state.
@@ -404,7 +426,7 @@ func (handler *Workflows) Get(ctx context.Context, input *workflowPathInput) (*w
 	}
 	stored, err := handler.workflows.Get(ctx, handler.tenant(ctx), input.ID)
 	if err != nil {
-		return nil, handler.problem(err)
+		return nil, handler.problem(ctx, err)
 	}
 	return &workflowOutput{Body: workflowResource(stored)}, nil
 }
@@ -416,7 +438,7 @@ func (handler *Workflows) GetVersion(ctx context.Context, input *workflowVersion
 	}
 	version, err := handler.workflows.GetVersionByID(ctx, handler.tenant(ctx), input.ID, input.VersionID)
 	if err != nil {
-		return nil, handler.problem(err)
+		return nil, handler.problem(ctx, err)
 	}
 	return &workflowVersionOutput{Body: workflowVersionResource(version)}, nil
 }
@@ -435,7 +457,7 @@ func (handler *Workflows) ListVersions(ctx context.Context, input *listWorkflowV
 		return nil, huma.Error400BadRequest("workflow version cursor is invalid")
 	}
 	if err != nil {
-		return nil, handler.problem(err)
+		return nil, handler.problem(ctx, err)
 	}
 	resource := WorkflowVersionListResource{
 		Items:      make([]WorkflowVersionSummaryResource, 0, len(page.Versions)),
@@ -457,9 +479,12 @@ func (handler *Workflows) PublishVersion(ctx context.Context, input *publishVers
 	if err := handler.available(true); err != nil {
 		return nil, err
 	}
+	if err := handler.embedVersionProblem(ctx, input.ID, input.VersionID); err != nil {
+		return nil, err
+	}
 	stored, err := handler.workflows.PublishVersion(ctx, handler.tenant(ctx), input.ID, input.VersionID, handler.catalog, input.reason())
 	if err != nil {
-		return nil, handler.problem(err)
+		return nil, handler.problem(ctx, err)
 	}
 	return &workflowOutput{Body: workflowResource(stored)}, nil
 }
@@ -469,9 +494,12 @@ func (handler *Workflows) RestoreVersion(ctx context.Context, input *publishVers
 	if err := handler.available(false); err != nil {
 		return nil, err
 	}
+	if err := handler.embedVersionProblem(ctx, input.ID, input.VersionID); err != nil {
+		return nil, err
+	}
 	stored, err := handler.workflows.RestoreVersion(ctx, handler.tenant(ctx), input.ID, input.VersionID, input.reason())
 	if err != nil {
-		return nil, handler.problem(err)
+		return nil, handler.problem(ctx, err)
 	}
 	return &workflowOutput{Body: workflowResource(stored)}, nil
 }
@@ -483,7 +511,7 @@ func (handler *Workflows) ListPublishEvents(ctx context.Context, input *workflow
 	}
 	events, err := handler.workflows.ListPublishEvents(ctx, handler.tenant(ctx), input.ID)
 	if err != nil {
-		return nil, handler.problem(err)
+		return nil, handler.problem(ctx, err)
 	}
 	items := make([]WorkflowPublishEventResource, 0, len(events))
 	for _, event := range events {
@@ -507,7 +535,7 @@ func (handler *Workflows) Update(ctx context.Context, input *updateWorkflowInput
 	}
 	stored, err := handler.workflows.Get(ctx, handler.tenant(ctx), input.ID)
 	if err != nil {
-		return nil, handler.problem(err)
+		return nil, handler.problem(ctx, err)
 	}
 	if base := input.baseVersion(); base != "" && base != stored.LatestVersion.ID {
 		return nil, &huma.ErrorModel{
@@ -517,12 +545,19 @@ func (handler *Workflows) Update(ctx context.Context, input *updateWorkflowInput
 		}
 	}
 	document := input.Body.document(input.ID)
+	// An embed session is refused before the compiler is consulted: what it may
+	// put in the document is a question about its authority, and answering it
+	// first keeps a refusal from arriving as a graph error the guest cannot
+	// act on.
+	if err := embedDocumentProblem(ctx, document); err != nil {
+		return nil, err
+	}
 	if err := workflow.ValidateDraft(document); err != nil {
 		return nil, draftProblem(err)
 	}
 	saved, err := handler.workflows.SaveDraft(ctx, handler.tenant(ctx), document)
 	if err != nil {
-		return nil, handler.problem(err)
+		return nil, handler.problem(ctx, err)
 	}
 	return &workflowOutput{Body: workflowResource(saved)}, nil
 }
@@ -546,7 +581,7 @@ func (handler *Workflows) Delete(ctx context.Context, input *workflowPathInput) 
 	}
 	tenant := handler.tenant(ctx)
 	if err := handler.workflows.Delete(ctx, tenant, input.ID); err != nil {
-		return nil, handler.problem(err)
+		return nil, handler.problem(ctx, err)
 	}
 	// The conversations die with the workflow: a deleted workflow's sessions
 	// would otherwise linger until retention aged them out, addressable by
@@ -566,7 +601,7 @@ func (handler *Workflows) Activate(ctx context.Context, input *workflowPathInput
 	tenant := handler.tenant(ctx)
 	stored, err := handler.workflows.Activate(ctx, tenant, input.ID, handler.catalog)
 	if err != nil {
-		return nil, handler.problem(err)
+		return nil, handler.problem(ctx, err)
 	}
 
 	// Lifecycle hooks run after the commit, never inside it. A remote call can
@@ -637,7 +672,7 @@ func (handler *Workflows) Deactivate(ctx context.Context, input *workflowPathInp
 	}
 	stored, err := handler.workflows.Deactivate(ctx, tenant, input.ID)
 	if err != nil {
-		return nil, handler.problem(err)
+		return nil, handler.problem(ctx, err)
 	}
 	return &workflowOutput{Body: workflowResource(stored)}, nil
 }
@@ -660,8 +695,17 @@ func (handler *Workflows) lifecycleIDs() map[string]string {
 
 // Run validates the latest draft and records a queued manual request. The
 // engine consumes queued records in the dependent execution-runtime ticket.
+//
+// An embed session is checked against the revision this call would compile
+// before anything is queued: a session can only reach this route carrying its
+// own token, and a run is where a document that escaped the save-time check —
+// an older revision, saved before the check existed — would otherwise execute
+// with the tenant's authority.
 func (handler *Workflows) Run(ctx context.Context, input *runWorkflowInput) (*executionRequestOutput, error) {
 	if err := handler.available(true); err != nil {
+		return nil, err
+	}
+	if err := handler.embedStoredProblem(ctx, input.ID); err != nil {
 		return nil, err
 	}
 	var payload json.RawMessage
@@ -670,7 +714,7 @@ func (handler *Workflows) Run(ctx context.Context, input *runWorkflowInput) (*ex
 	}
 	created, err := handler.executions.QueueManualLatest(ctx, handler.tenant(ctx), input.ID, handler.catalog, payload)
 	if err != nil {
-		return nil, handler.problem(err)
+		return nil, handler.problem(ctx, err)
 	}
 	if handler.waker != nil {
 		handler.waker.Wake()
@@ -689,7 +733,13 @@ func (handler *Workflows) available(needsExecution bool) error {
 	return nil
 }
 
-func (handler *Workflows) problem(err error) error {
+// problem maps a repository failure onto the problem a caller sees.
+//
+// The ctx is passed rather than reconstructed because the cause is logged
+// here: a 500 whose reason is discarded leaves an operator with a status code
+// and a path, which is how the review found 49,014 unexplained execution
+// failures in one shared log.
+func (handler *Workflows) problem(ctx context.Context, err error) error {
 	if errors.Is(err, repository.ErrNotFound) {
 		return huma.Error404NotFound("workflow not found")
 	}
@@ -697,7 +747,7 @@ func (handler *Workflows) problem(err error) error {
 	if errors.As(err, &validation) {
 		return compileProblem(validation)
 	}
-	return huma.Error500InternalServerError("workflow operation failed")
+	return serverProblem(ctx, "workflow operation failed", err)
 }
 
 func draftProblem(err error) error {

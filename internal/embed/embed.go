@@ -115,6 +115,16 @@ type Session struct {
 	IssuedAt    time.Time `json:"iat"`
 	ExpiresAt   time.Time `json:"exp"`
 	Branding    Branding  `json:"brd,omitempty"`
+	// Confinement is what this session's document may reference: the
+	// credentials, data tables, and sub-workflows a save or a run is checked
+	// against. It is minted here rather than derived per request, because a
+	// document cannot be its own authority — a revision poisoned before this
+	// check existed would otherwise keep authorising itself forever.
+	//
+	// A token minted before this field existed carries none, which reads as
+	// the strictest possible confinement rather than as no confinement: such a
+	// session may reference nothing it did not already have.
+	Confinement Confinement `json:"cfn,omitempty"`
 }
 
 // Allows reports whether the session carries a scope.
@@ -233,6 +243,11 @@ type Request struct {
 	Origin      string
 	Lifetime    time.Duration
 	Branding    Branding
+	// Confinement is what the new session's document may reference. The
+	// caller derives it from the revision the workflow's owner published; an
+	// empty value confines the session to nothing, which is the safe reading
+	// for a workflow that has never been published by a trusted caller.
+	Confinement Confinement
 	// SessionID is supplied by the caller in tests; production leaves it empty
 	// and the issuer generates one.
 	SessionID string
@@ -279,6 +294,7 @@ func (issuer *Issuer) Issue(request Request) (Session, string, error) {
 		DatastoreID: request.DatastoreID,
 		Scopes:      scopes, Origin: NormalizeOrigin(request.Origin),
 		IssuedAt: now, ExpiresAt: now.Add(lifetime), Branding: request.Branding,
+		Confinement: request.Confinement.normalized(request.WorkflowID),
 	}
 	token, err := issuer.sign(session)
 	if err != nil {

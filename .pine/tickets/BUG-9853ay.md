@@ -1,7 +1,7 @@
 ---
 id: BUG-9853ay
 title: Workflow-scoped embed session escapes to all datastores + any credential
-status: doing
+status: testing
 priority: critical
 labels:
     - embed
@@ -11,7 +11,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:09Z"
-updated: "2026-09-19T14:24:35Z"
+updated: "2026-09-20T00:41:49Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -39,3 +39,46 @@ Files: internal/api/middleware/embed.go, internal/api/handlers/embed.go, nodes/d
 - [ ] Adversarial re-verify against live stub/n8n like the Verify phase (no code-only close)
 ## Progress 2026-09-19 (SecurityDx)
 - Status: doing. Research + partial implementation done this session.
+
+## Progress 2026-09-19 (SecurityFront2) — landed, testing
+Status: testing (code landed; one scoped test pending, see Unverified).
+Fix: an embed session's authority is now minted into its token as a `Confinement`
+(credentials, data tables by id+name, sub-workflow ids), derived at mint time from
+the revision the workflow's OWNER published (active, else latest), and enforced at
+every point an embed session can hand the server a document: PUT (save),
+publish, restore, and run. A document is never its own authority, so a revision
+poisoned before the check existed cannot re-authorise itself.
+- internal/embed/confinement.go (new): Confinement + DatastoreRef, accessors,
+  normalisation (trim/dedupe/sort, self-workflow always allowed).
+- internal/embed/embed.go: Session.Confinement + Request.Confinement, normalised in Issue.
+- nodes/embedscope.go (new): DocumentReferences (inverse of the check, used to mint)
+  and EmbedScopeIssues (the check). Data-table table operations (create/list/rename/
+  deleteTable/clear) refused unconditionally; row ops must address an allowlisted
+  table by id or by name (case-insensitive, matching the executor's resolution); an
+  expression in dataTableId/workflowId is refused (a target the check cannot read
+  cannot be bounded); `kilasflow.datastoreTool` (agent tool) is covered too.
+- internal/api/handlers/embedscope.go (new): embedDocumentProblem,
+  embedConfinementOf, embedVersionProblem, embedStoredProblem, embedAllowsCredential.
+- internal/api/handlers/workflows.go: checks in Update, PublishVersion, RestoreVersion, Run.
+- internal/api/handlers/embed.go: mint derives the confinement from the published revision.
+- internal/api/handlers/credentials.go: GET /credentials narrowed to the session's
+  confinement (names only, and only the ones its document may attach).
+Evidence (scoped, passed):
+- `go test ./internal/embed/ -count=1` ok
+- `go test ./nodes/ -count=1 -run 'Embed|DocumentReferences'` ok
+- `go build ./internal/config/ ./internal/embed/ ./nodes/` ok
+Adversarial reproduction in internal/api/embed_confinement_test.go: 8 API-level tests
+(credential the workflow never referenced -> 403; every table operation -> 403; sibling
+table by id and by name -> 403; the published revision's own reference -> 200; a draft
+outside the published revision -> save 403 AND run 403; credential picker narrowed;
+dashboard unaffected).
+Unverified: `go test ./internal/api/ -run 'EmbedConfinement|Embed'` could not run —
+internal/api/handlers and internal/webhook were mid-edit by sibling agents for the whole
+session (undefined symbols in their files). Re-run it once the wave settles.
+Known residual (documented, not hidden): for a workflow that has NEVER been activated the
+confinement is derived from its latest draft, because there is no owner-published revision
+to read. A draft poisoned before this check existed would therefore still hold its own
+references. The unconditional table-operation refusal still stops the list/drop half for
+such a revision.
+Remaining in this ticket: the second acceptance criterion (live stub/n8n adversarial
+re-verify) needs a running instance and is Main's call.

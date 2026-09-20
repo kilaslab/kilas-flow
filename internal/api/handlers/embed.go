@@ -100,10 +100,17 @@ func (handler *EmbedSessions) Create(ctx context.Context, input *createEmbedSess
 	if input.Body.WorkflowID != "" && input.Body.DatastoreID != "" {
 		return nil, huma.Error422UnprocessableEntity("an embed session is scoped to one workflow or one datastore, not both")
 	}
+	// A workflow session's confinement is derived here, from the revision its
+	// owner published, and travels inside the token. Deriving it per request
+	// instead would let a poisoned revision authorise itself, and the whole
+	// point of the confinement is that the document is not its own authority.
+	confinement := embed.Confinement{}
 	if input.Body.WorkflowID != "" && handler.workflows != nil {
-		if _, err := handler.workflows.Get(ctx, tenant, input.Body.WorkflowID); err != nil {
+		stored, err := handler.workflows.Get(ctx, tenant, input.Body.WorkflowID)
+		if err != nil {
 			return nil, huma.Error404NotFound("workflow not found")
 		}
+		confinement = embedConfinementOf(stored)
 	}
 	if input.Body.DatastoreID != "" && handler.datastores != nil {
 		if _, err := handler.datastores.GetDatastore(ctx, tenant.ID, input.Body.DatastoreID); err != nil {
@@ -119,8 +126,9 @@ func (handler *EmbedSessions) Create(ctx context.Context, input *createEmbedSess
 	session, token, err := handler.issuer.Issue(embed.Request{
 		TenantID: tenant.ID, WorkflowID: input.Body.WorkflowID, DatastoreID: input.Body.DatastoreID,
 		Scopes: scopes, Origin: input.Body.Origin,
-		Lifetime: time.Duration(input.Body.TTLSeconds) * time.Second,
-		Branding: input.Body.Branding,
+		Lifetime:    time.Duration(input.Body.TTLSeconds) * time.Second,
+		Branding:    input.Body.Branding,
+		Confinement: confinement,
 	})
 	if err != nil {
 		return nil, huma.Error422UnprocessableEntity(err.Error())
