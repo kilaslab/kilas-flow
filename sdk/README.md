@@ -43,14 +43,14 @@ const session = await kilasflow.createEmbedSession({
 
 ## Operation surface
 
-One thin, typed method per API operation — all 63 under `/api/v1`, grouped
+One thin, typed method per API operation — all 73 under `/api/v1`, grouped
 here the way the [API contract](../docs/src/content/docs/reference/api-contract.md)
 groups them. Every method takes an `AbortSignal` last, resolves `Promise<void>`
 for 204 responses, and surfaces failures as `KilasFlowError` (RFC 9457).
 
 | Group | Methods |
 | --- | --- |
-| Workflows | `listWorkflows`, `getWorkflow`, `createWorkflow`, `updateWorkflow`, `deleteWorkflow`, `runWorkflow`, `activateWorkflow`, `deactivateWorkflow`, `listWorkflowVersions`, `getWorkflowVersion`, `publishWorkflowVersion`, `restoreWorkflowVersion`, `listWorkflowPublishEvents` |
+| Workflows | `listWorkflows`, `getWorkflow`, `createWorkflow`, `updateWorkflow`, `deleteWorkflow`, `runWorkflow`, `activateWorkflow`, `deactivateWorkflow`, `listWorkflowVersions`, `getWorkflowVersion`, `publishWorkflowVersion`, `restoreWorkflowVersion`, `listWorkflowPublishEvents`, `getWorkflowDiagnostics` |
 | Executions | `listExecutions`, `getExecution`, `cancelExecution`, `executionEventsUrl`, `iterateExecutions` |
 | Credentials | `listCredentialTypes`, `listCredentials`, `createCredential`, `getCredential`, `updateCredential`, `deleteCredential`, `testCredential`, `testCredentialPayload` |
 | Auth and keys | `login`, `logout`, `getMe`, `listApiKeys`, `createApiKey`, `revokeApiKey`, `createStreamTicket` |
@@ -58,8 +58,15 @@ for 204 responses, and surfaces failures as `KilasFlowError` (RFC 9457).
 | Node catalogue | `listNodeTypes`, `nodeIconUrl`, `loadNodePropertyOptions`, `loadNodePropertySchema`, `getExpressionGrammar` |
 | Interop | `importWorkflow`, `exportWorkflow` |
 | Datastores | `listDatastores`, `createDatastore`, `getDatastore`, `renameDatastore`, `deleteDatastore`, `clearDatastore`, `addDatastoreColumn`, `renameDatastoreColumn`, `deleteDatastoreColumn`, `listDatastoreRows`, `getDatastoreRow`, `insertDatastoreRow`, `updateDatastoreRows`, `deleteDatastoreRows`, `upsertDatastoreRow`, `iterateDatastoreRows`, `exportDatastoreRows`, `importDatastoreRows`, `datastoreFilter`, `paginateCursor` |
+| Tenants and accounts | `listTenants`, `createTenant`, `getTenant`, `listTenantUsers`, `createTenantUser`, `disableTenantUser`, `enableTenantUser`, `setTenantUserPassword`, `createTenantApiKey` |
 | Embed | `createEmbedSession` |
 | System | `getHealth`, `getReady` |
+
+The tenant group is the operator surface: every method in it needs an API key
+scoped to the operator tenant and reaches across customers, so a tenant's own
+key — and every embed session — is refused by the server. A host that provisions
+its customers from its own control plane uses these; a host that provisions them
+out of band, the way `examples/reference-host` does, never calls them.
 
 Two operations stream rather than answer JSON, so they are URL builders
 instead of request methods: `executionEventsUrl` for the live SSE stream

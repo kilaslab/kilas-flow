@@ -42,6 +42,7 @@ const OPERATION_COVERAGE = {
 	'publish-workflow-version': 'publishWorkflowVersion',
 	'restore-workflow-version': 'restoreWorkflowVersion',
 	'list-workflow-publish-events': 'listWorkflowPublishEvents',
+	'workflow-diagnostics': 'getWorkflowDiagnostics',
 	'list-executions': 'listExecutions',
 	'get-execution': 'getExecution',
 	'cancel-execution': 'cancelExecution',
@@ -96,7 +97,19 @@ const OPERATION_COVERAGE = {
 	'export-datastore-rows': 'exportDatastoreRows',
 	'import-datastore-rows': 'importDatastoreRows',
 	'get-health': 'getHealth',
-	'get-ready': 'getReady'
+	'get-ready': 'getReady',
+	// The operator surface: tenants, their accounts, and keys minted for
+	// another tenant. The server refuses anything but an operator credential,
+	// but every operation is still reachable through a client method.
+	'list-tenants': 'listTenants',
+	'create-tenant': 'createTenant',
+	'get-tenant': 'getTenant',
+	'create-tenant-api-key': 'createTenantApiKey',
+	'list-tenant-users': 'listTenantUsers',
+	'create-tenant-user': 'createTenantUser',
+	'disable-tenant-user': 'disableTenantUser',
+	'enable-tenant-user': 'enableTenantUser',
+	'set-tenant-user-password': 'setTenantUserPassword'
 
 };
 

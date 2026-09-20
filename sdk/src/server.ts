@@ -13,6 +13,9 @@ import type {
 	ClearedDatastoreOutputBody,
 	CreatedAPIKeyResource,
 	CreateDatastoreInputBody,
+	CreateTenantAPIKeyInputBody,
+	CreateTenantInputBody,
+	CreateTenantUserInputBody,
 	CredentialBody,
 	CredentialResource,
 	CredentialTypeResource,
@@ -40,6 +43,8 @@ import type {
 	InsertRowInputBody,
 	ListAPIKeysOutputBody,
 	ListDatastoreRowsParams,
+	ListTenantsOutputBody,
+	ListTenantUsersOutputBody,
 	LoadOptionsInputBody,
 	LoadOptionsResource,
 	LoadSchemaResource,
@@ -49,13 +54,17 @@ import type {
 	RowListOutputBody,
 	ScheduleBody,
 	ScheduleResource,
+	SetUserPasswordInputBody,
 	StreamTicketResource,
+	TenantResource,
 	TestCredentialResource,
 	TestPayloadBody,
 	UpdateRowsInputBody,
 	UpdateRowsOutputBody,
 	UpsertRowInputBody,
 	UpsertRowOutputBody,
+	UserResource,
+	WorkflowDiagnosticsResource,
 	WorkflowDocumentInput,
 	WorkflowPublishEventResource,
 	WorkflowResource,
@@ -317,6 +326,24 @@ export class KilasFlowClient {
 		return this.#transport.request('GET', `/workflows/${encodeURIComponent(workflowId)}/publish-events`, { signal });
 	}
 
+	/**
+	 * Reads the import report stored with a revision: what the n8n
+	 * translation could not carry faithfully, per node and per field. A
+	 * revision that was not imported answers with no source and no issues,
+	 * so "clean import" and "never imported" stay distinguishable. Without a
+	 * `versionId` the newest revision is read.
+	 */
+	getWorkflowDiagnostics(
+		workflowId: string,
+		options: { versionId?: string } = {},
+		signal?: AbortSignal
+	): Promise<WorkflowDiagnosticsResource> {
+		return this.#transport.request('GET', `/workflows/${encodeURIComponent(workflowId)}/diagnostics`, {
+			query: { versionId: options.versionId },
+			signal
+		});
+	}
+
 	activateWorkflow(workflowId: string, signal?: AbortSignal): Promise<WorkflowResource> {
 		return this.#transport.request('POST', `/workflows/${encodeURIComponent(workflowId)}/activate`, { signal });
 	}
@@ -438,6 +465,104 @@ export class KilasFlowClient {
 	 */
 	createStreamTicket(executionId: string, signal?: AbortSignal): Promise<StreamTicketResource> {
 		return this.#transport.request('POST', '/stream-tickets', { body: { executionId }, signal });
+	}
+
+	// --- Tenants (operator surface) ----------------------------------------------
+	//
+	// The deployment's customers, their accounts, and keys minted on their
+	// behalf. Every method here requires the operator credential — an API key
+	// scoped to the operator tenant — and reaches across tenants, so a
+	// customer's own key or any session is refused by the server. No embed
+	// session may reach any of it: an embedded editor is bound to one workflow
+	// or one datastore, never to the roster behind it.
+
+	/** Lists every tenant in the deployment, oldest first, with its account count. */
+	listTenants(signal?: AbortSignal): Promise<ListTenantsOutputBody> {
+		return this.#transport.request('GET', '/tenants', { signal });
+	}
+
+	/**
+	 * Adds a tenant. The ID is stable — it appears in URLs and on every row
+	 * scoped to the tenant — so a taken ID is answered with a 409 rather than
+	 * a silent reuse of the tenant already holding it.
+	 */
+	createTenant(input: CreateTenantInputBody, signal?: AbortSignal): Promise<TenantResource> {
+		return this.#transport.request('POST', '/tenants', { body: input, signal });
+	}
+
+	/** Reads one tenant, such as the resource a create answered with. */
+	getTenant(tenantId: string, signal?: AbortSignal): Promise<TenantResource> {
+		return this.#transport.request('GET', `/tenants/${encodeURIComponent(tenantId)}`, { signal });
+	}
+
+	/**
+	 * Mints a key on another tenant's behalf and returns it in full exactly
+	 * once. The tenant-scoped `/api-keys` can only mint for the caller, so a
+	 * tenant created without this call would have no credential of its own.
+	 */
+	createTenantApiKey(
+		tenantId: string,
+		input: CreateTenantAPIKeyInputBody,
+		signal?: AbortSignal
+	): Promise<CreatedAPIKeyResource> {
+		return this.#transport.request('POST', `/tenants/${encodeURIComponent(tenantId)}/api-keys`, {
+			body: input,
+			signal
+		});
+	}
+
+	/** Lists one tenant's accounts. No password hash is ever included. */
+	listTenantUsers(tenantId: string, signal?: AbortSignal): Promise<ListTenantUsersOutputBody> {
+		return this.#transport.request('GET', `/tenants/${encodeURIComponent(tenantId)}/users`, { signal });
+	}
+
+	/** Creates an account that can sign in immediately with the password it was given. */
+	createTenantUser(tenantId: string, input: CreateTenantUserInputBody, signal?: AbortSignal): Promise<UserResource> {
+		return this.#transport.request('POST', `/tenants/${encodeURIComponent(tenantId)}/users`, {
+			body: input,
+			signal
+		});
+	}
+
+	/**
+	 * Stops an account signing in from the next request onwards. The row is
+	 * kept, so the workflows and executions it authored still have a name,
+	 * and {@link enableTenantUser} reverses the marker without touching the
+	 * password.
+	 */
+	disableTenantUser(tenantId: string, userId: string, signal?: AbortSignal): Promise<UserResource> {
+		return this.#transport.request(
+			'POST',
+			`/tenants/${encodeURIComponent(tenantId)}/users/${encodeURIComponent(userId)}/disable`,
+			{ signal }
+		);
+	}
+
+	/** Clears the offboarding marker, so the account signs in with the password it already had. */
+	enableTenantUser(tenantId: string, userId: string, signal?: AbortSignal): Promise<UserResource> {
+		return this.#transport.request(
+			'POST',
+			`/tenants/${encodeURIComponent(tenantId)}/users/${encodeURIComponent(userId)}/enable`,
+			{ signal }
+		);
+	}
+
+	/**
+	 * Sets a new password: the operator's reset. The old password stops
+	 * working at once, and sessions minted under it are cut loose by the
+	 * account's password version rather than left to expire.
+	 */
+	setTenantUserPassword(
+		tenantId: string,
+		userId: string,
+		input: SetUserPasswordInputBody,
+		signal?: AbortSignal
+	): Promise<UserResource> {
+		return this.#transport.request(
+			'POST',
+			`/tenants/${encodeURIComponent(tenantId)}/users/${encodeURIComponent(userId)}/password`,
+			{ body: input, signal }
+		);
 	}
 
 	// --- Schedules -------------------------------------------------------------
