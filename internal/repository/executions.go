@@ -38,6 +38,35 @@ const (
 	MaxExecutionPageSize     = 100
 )
 
+// MaxExecutionReclaims bounds how many times an expired worker lease may hand
+// the same execution to another worker.
+//
+// Reclaiming is recovery, not a retry policy: a worker that died mid-run leaves
+// work nobody else can finish, and its successor clears the partial trace and
+// runs the graph. It is bounded because the same mechanism silently becomes a
+// loop when the reason the worker died is the execution itself — a trace that
+// cannot be persisted (BUG-hfhzq6), a node that exhausts memory, a crash on one
+// item. Each pass repeats whatever side effects the graph already performed,
+// once per lease period, for ever, and the run never reaches a terminal state.
+//
+// Past the cap the execution is settled as crashed instead: a failed record an
+// operator can see and deliberately re-queue, rather than a queue entry that is
+// quietly run again every minute.
+const MaxExecutionReclaims = 2
+
+// claimScanLimit bounds how many poisoned rows one claim call settles before it
+// returns empty-handed, so a backlog of crashed executions drains a few per
+// claim instead of inside one unbounded transaction.
+const claimScanLimit = 8
+
+// nodeRunKey is the identity of one trace row: the uniqueness the
+// uidx_node_runs_attempt index enforces, in Go.
+type nodeRunKey struct {
+	nodeID   string
+	attempt  int
+	runIndex int
+}
+
 // ExecutionFilter narrows an execution history listing. The zero value lists
 // the newest executions across every workflow in the tenant.
 type ExecutionFilter struct {
@@ -382,75 +411,100 @@ func (store *GORMExecutionStore) ClaimNext(ctx context.Context, workerID string,
 	found := false
 	now := time.Now().UTC()
 	err = store.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var candidate executionModel
-		// SKIP LOCKED fans contending workers out over distinct rows instead
-		// of racing them all for the oldest one. The glebarez SQLite driver
-		// drops clause.Locking silently ("SQLite3 does not support row-level
-		// locking"), so on SQLite this is a plain SELECT and correctness
-		// rests on the conditional UPDATE below; on PostgreSQL the lock is
-		// real. Either way the UPDATE re-applies the whole predicate and a
-		// lost race reads as RowsAffected == 0, never as a double claim.
-		//
-		// A waiting execution is excluded by the status allowlist in both the
-		// SELECT and the UPDATE: suspending releases the lease, so without
-		// this a suspended run would read as a crashed one and be reclaimed
-		// mid-wait.
-		// First appends its own primary-key ordering, so the statement the
-		// server receives ends ORDER BY started_at ASC, id ASC,
-		// "executions"."id" LIMIT 1 — any EXPLAIN evidence must use that
-		// spelling, not the two-column Order above.
-		err := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: clause.LockingOptionsSkipLocked}).
-			Where("status = ? OR ((status = ? OR status = ?) AND lease_expires_at IS NOT NULL AND lease_expires_at <= ?)",
-				string(execution.StatusQueued), string(execution.StatusRunning), string(execution.StatusCancelling), now).
-			Order("started_at ASC, id ASC").
-			First(&candidate).Error
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil
-		}
-		if err != nil {
-			return fmt.Errorf("find queued execution: %w", err)
-		}
-		reclaimingExpiredLease := candidate.Status == string(execution.StatusRunning)
-		nextStatus := execution.StatusRunning
-		if candidate.Status == string(execution.StatusCancelling) {
-			nextStatus = execution.StatusCancelling
-		}
-		result := tx.Model(&executionModel{}).
-			Where("id = ? AND tenant_id = ? AND (status = ? OR ((status = ? OR status = ?) AND lease_expires_at IS NOT NULL AND lease_expires_at <= ?))",
-				candidate.ID, candidate.TenantID, string(execution.StatusQueued), string(execution.StatusRunning), string(execution.StatusCancelling), now).
-			Updates(map[string]any{
+		// A loop rather than one candidate: a row past its reclaim cap is
+		// settled here and then leaves the predicate, so the scan has to move
+		// on to the next one. Returning empty-handed instead would leave the
+		// crashed row first in the order and every later claim of every worker
+		// would settle it again and claim nothing — a busy queue that looks
+		// idle.
+		for range claimScanLimit {
+			var candidate executionModel
+			// SKIP LOCKED fans contending workers out over distinct rows instead
+			// of racing them all for the oldest one. The glebarez SQLite driver
+			// drops clause.Locking silently ("SQLite3 does not support row-level
+			// locking"), so on SQLite this is a plain SELECT and correctness
+			// rests on the conditional UPDATE below; on PostgreSQL the lock is
+			// real. Either way the UPDATE re-applies the whole predicate and a
+			// lost race reads as RowsAffected == 0, never as a double claim.
+			//
+			// A waiting execution is excluded by the status allowlist in both the
+			// SELECT and the UPDATE: suspending releases the lease, so without
+			// this a suspended run would read as a crashed one and be reclaimed
+			// mid-wait.
+			// First appends its own primary-key ordering, so the statement the
+			// server receives ends ORDER BY started_at ASC, id ASC,
+			// "executions"."id" LIMIT 1 — any EXPLAIN evidence must use that
+			// spelling, not the two-column Order above.
+			err := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: clause.LockingOptionsSkipLocked}).
+				Where("status = ? OR ((status = ? OR status = ?) AND lease_expires_at IS NOT NULL AND lease_expires_at <= ?)",
+					string(execution.StatusQueued), string(execution.StatusRunning), string(execution.StatusCancelling), now).
+				Order("started_at ASC, id ASC").
+				First(&candidate).Error
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil
+			}
+			if err != nil {
+				return fmt.Errorf("find queued execution: %w", err)
+			}
+			reclaimingExpiredLease := candidate.Status == string(execution.StatusRunning)
+			if reclaimingExpiredLease && candidate.ReclaimCount+1 > MaxExecutionReclaims {
+				if err := settleCrashedExecution(tx, candidate, now); err != nil {
+					return err
+				}
+				continue
+			}
+			nextStatus := execution.StatusRunning
+			if candidate.Status == string(execution.StatusCancelling) {
+				nextStatus = execution.StatusCancelling
+			}
+			claim := map[string]any{
 				"status":           string(nextStatus),
 				"lease_owner":      leaseOwner,
 				"lease_expires_at": leaseUntil,
-			})
-		if result.Error != nil {
-			return fmt.Errorf("claim execution: %w", result.Error)
-		}
-		if result.RowsAffected == 0 {
+			}
+			if reclaimingExpiredLease {
+				claim["reclaim_count"] = gorm.Expr("reclaim_count + 1")
+			}
+			result := tx.Model(&executionModel{}).
+				Where("id = ? AND tenant_id = ? AND (status = ? OR ((status = ? OR status = ?) AND lease_expires_at IS NOT NULL AND lease_expires_at <= ?))",
+					candidate.ID, candidate.TenantID, string(execution.StatusQueued), string(execution.StatusRunning), string(execution.StatusCancelling), now).
+				Updates(claim)
+			if result.Error != nil {
+				return fmt.Errorf("claim execution: %w", result.Error)
+			}
+			if result.RowsAffected == 0 {
+				// Another worker claimed it between the SELECT and the UPDATE.
+				// Its lease is now in the future, so the next candidate is a
+				// different row, not this one again.
+				continue
+			}
+			if reclaimingExpiredLease {
+				// Node runs are written after the in-memory graph has completed. A
+				// process can die between individual trace writes, leaving a partial
+				// attempt that would otherwise conflict with the recovered attempt's
+				// (execution, sequence) and (execution, node, attempt) keys.
+				if err := tx.Where("tenant_id = ? AND execution_id = ?", candidate.TenantID, candidate.ID).Delete(&executionNodeRunModel{}).Error; err != nil {
+					return fmt.Errorf("clear abandoned execution trace: %w", err)
+				}
+			}
+			candidate.Status = string(nextStatus)
+			candidate.LeaseOwner = leaseOwner
+			candidate.LeaseExpiresAt = &leaseUntil
+			if reclaimingExpiredLease {
+				candidate.ReclaimCount++
+			}
+
+			var version workflowVersionModel
+			if err := tx.Where("tenant_id = ? AND id = ?", candidate.TenantID, candidate.WorkflowVersionID).First(&version).Error; err != nil {
+				return mapNotFound(err, "workflow version")
+			}
+			storedVersion, err := versionFromModel(version)
+			if err != nil {
+				return err
+			}
+			claimed, document, found = candidate, storedVersion.Document, true
 			return nil
 		}
-		if reclaimingExpiredLease {
-			// Node runs are written after the in-memory graph has completed. A
-			// process can die between individual trace writes, leaving a partial
-			// attempt that would otherwise conflict with the recovered attempt's
-			// (execution, sequence) and (execution, node, attempt) keys.
-			if err := tx.Where("tenant_id = ? AND execution_id = ?", candidate.TenantID, candidate.ID).Delete(&executionNodeRunModel{}).Error; err != nil {
-				return fmt.Errorf("clear abandoned execution trace: %w", err)
-			}
-		}
-		candidate.Status = string(nextStatus)
-		candidate.LeaseOwner = leaseOwner
-		candidate.LeaseExpiresAt = &leaseUntil
-
-		var version workflowVersionModel
-		if err := tx.Where("tenant_id = ? AND id = ?", candidate.TenantID, candidate.WorkflowVersionID).First(&version).Error; err != nil {
-			return mapNotFound(err, "workflow version")
-		}
-		storedVersion, err := versionFromModel(version)
-		if err != nil {
-			return err
-		}
-		claimed, document, found = candidate, storedVersion.Document, true
 		return nil
 	})
 	if err != nil {
@@ -462,8 +516,98 @@ func (store *GORMExecutionStore) ClaimNext(ctx context.Context, workerID string,
 	return executionFromModel(claimed), document, true, nil
 }
 
-// UpdateRuntime persists the terminal state and safe result data written by
-// the engine after it has claimed an execution.
+// settleCrashedExecution ends an execution whose lease expired more times than
+// MaxExecutionReclaims allows, without running its graph again.
+//
+// The partial trace is deliberately kept: it is the only record of what the
+// abandoned attempts did, and it is what an operator reads before deciding to
+// re-queue. The row is terminal and its lease is released, so it leaves the
+// claim predicate for good — the difference between one crashed execution and
+// a worker that re-runs it for ever.
+func settleCrashedExecution(tx *gorm.DB, candidate executionModel, now time.Time) error {
+	reclaims := candidate.ReclaimCount
+	message := fmt.Sprintf("execution was abandoned by its worker %d times and is not being run again; re-queue it to try once more", reclaims)
+	errorPayload, err := json.Marshal(map[string]string{"code": "execution.crashed", "message": message})
+	if err != nil {
+		return err
+	}
+	result := tx.Model(&executionModel{}).
+		Where("id = ? AND tenant_id = ? AND status = ? AND lease_expires_at IS NOT NULL AND lease_expires_at <= ?",
+			candidate.ID, candidate.TenantID, string(execution.StatusRunning), now).
+		Updates(map[string]any{
+			"status":           string(execution.StatusFailed),
+			"output":           []byte("null"),
+			"error":            []byte(errorPayload),
+			"finished_at":      &now,
+			"lease_owner":      "",
+			"lease_expires_at": nil,
+		})
+	if result.Error != nil {
+		return fmt.Errorf("settle crashed execution: %w", result.Error)
+	}
+	return nil
+}
+
+// ExtendLease renews the fenced lease of one running execution.
+//
+// It is the heartbeat under the lease. A lease long enough to cover the longest
+// run is a lease that keeps crashed work invisible for that long, and a lease
+// as short as the run timeout expires while the worker is still persisting the
+// trace it just produced — which is how the same execution came to be run twice
+// (BUG-1tj5wy). Renewing the lease while the worker is alive makes the lease
+// mean "this worker is still here" rather than "this worker was predicted to
+// need this long", and leaves recovery of a genuinely dead worker to the same
+// expiry it always used.
+//
+// The update carries the lease owner and the two live statuses, so it is a
+// no-op — false, not an error — for a lease this worker no longer holds: a row
+// whose lease was reclaimed, or one already settled. The caller decides what a
+// lost fence means; the repository only reports it.
+func (store *GORMExecutionStore) ExtendLease(ctx context.Context, tenant TenantScope, executionID, leaseOwner string, leaseUntil time.Time) (bool, error) {
+	if err := tenant.validate(); err != nil {
+		return false, err
+	}
+	if executionID == "" || leaseOwner == "" || leaseUntil.IsZero() {
+		return false, fmt.Errorf("execution ID, lease owner, and lease expiry are required")
+	}
+	result := store.db.WithContext(ctx).Model(&executionModel{}).
+		Where("tenant_id = ? AND id = ? AND lease_owner = ? AND status IN ?",
+			tenant.ID, executionID, leaseOwner, []string{string(execution.StatusRunning), string(execution.StatusCancelling)}).
+		Update("lease_expires_at", leaseUntil.UTC())
+	if result.Error != nil {
+		return false, fmt.Errorf("extend execution lease: %w", result.Error)
+	}
+	return result.RowsAffected > 0, nil
+}
+
+// ExecutionState reads the status of one execution, and nothing else.
+//
+// The poll a running worker keeps to notice cancellation asks one question
+// several times a second. Get answers it by loading the record and its whole
+// node-run trace, which is a payload read per tick per running execution and
+// grows with the trace the run is producing. This is the same question asked as
+// a single-column read.
+//
+// The second return reports whether cancellation has been requested or already
+// taken effect, which is the only part of the answer the poll acts on.
+func (store *GORMExecutionStore) ExecutionState(ctx context.Context, tenant TenantScope, executionID string) (execution.Status, bool, error) {
+	if err := tenant.validate(); err != nil {
+		return "", false, err
+	}
+	if executionID == "" {
+		return "", false, fmt.Errorf("execution ID is required")
+	}
+	var state struct{ Status string }
+	if err := store.db.WithContext(ctx).Model(&executionModel{}).
+		Select("status").
+		Where("tenant_id = ? AND id = ?", tenant.ID, executionID).
+		First(&state).Error; err != nil {
+		return "", false, mapNotFound(err, "execution")
+	}
+	status := execution.Status(state.Status)
+	return status, status == execution.StatusCancelling || status == execution.StatusCancelled, nil
+}
+
 func (store *GORMExecutionStore) UpdateRuntime(ctx context.Context, tenant TenantScope, record execution.Record) (execution.Record, error) {
 	if err := tenant.validate(); err != nil {
 		return execution.Record{}, err
@@ -586,17 +730,153 @@ func (store *GORMExecutionStore) Cancel(ctx context.Context, tenant TenantScope,
 
 // CreateNodeRun appends a node attempt only to an execution visible to the
 // current tenant.
+//
+// One row is the batch of one: the collision handling that keeps a loop trace
+// writable (see CreateNodeRuns) applies to the suspend path and the incremental
+// writers too, so a caller cannot append a row that the same run has already
+// recorded.
 func (store *GORMExecutionStore) CreateNodeRun(ctx context.Context, tenant TenantScope, nodeRun execution.NodeRun) (execution.NodeRun, error) {
-	if err := tenant.validate(); err != nil {
+	stored, err := store.CreateNodeRuns(ctx, tenant, []execution.NodeRun{nodeRun})
+	if err != nil {
 		return execution.NodeRun{}, err
 	}
+	return stored[0], nil
+}
+
+// CreateNodeRuns appends a batch of node attempts to one execution in a single
+// transaction, and returns them as stored.
+//
+// One transaction rather than one per row, because the trace is written after
+// the graph has finished: a hundred-iteration loop is a hundred round trips in
+// the window where the worker must still hold its lease, and the wall time of
+// that window is what used to push a run past its lease and hand it to a second
+// worker (BUG-1tj5wy).
+//
+// The batch is also where the trace's keys are made unique. The runner stamps
+// RunIndex on a row that ran, and leaves it 0 on the rows it records for
+// another reason — skipped, failed, retried, tolerated by continueOnFail. A
+// node inside a loop therefore produces several rows with the same
+// (execution, node, attempt, run_index), which uidx_node_runs_attempt refuses,
+// and the run never reaches a terminal state: the write fails, the execution
+// stays running, and the next lease holder re-runs the graph and hits the same
+// collision for ever (BUG-hfhzq6).
+//
+// So a row whose key is taken is given the next free index instead of being
+// refused — the row is real, its node ran (or was pruned) a second time, and
+// only its index was missing. A row whose key is taken *and* whose sequence
+// matches the stored row is the same row written twice, which is what an
+// incremental writer followed by this batch produces; it is skipped rather than
+// duplicated, which is what makes this write idempotent.
+func (store *GORMExecutionStore) CreateNodeRuns(ctx context.Context, tenant TenantScope, nodeRuns []execution.NodeRun) ([]execution.NodeRun, error) {
+	if err := tenant.validate(); err != nil {
+		return nil, err
+	}
+	if len(nodeRuns) == 0 {
+		return nil, nil
+	}
+	// One execution and one lease per batch: the fence below is checked once,
+	// so a batch naming a second lease owner would smuggle rows past it.
+	executionID, leaseOwner := nodeRuns[0].ExecutionID, nodeRuns[0].LeaseOwner
+	for _, nodeRun := range nodeRuns {
+		if nodeRun.ExecutionID != executionID || nodeRun.LeaseOwner != leaseOwner {
+			return nil, fmt.Errorf("a node run batch must belong to one execution and one lease owner")
+		}
+	}
+	models := make([]executionNodeRunModel, 0, len(nodeRuns))
+	for _, nodeRun := range nodeRuns {
+		model, err := nodeRunModel(tenant, nodeRun)
+		if err != nil {
+			return nil, err
+		}
+		models = append(models, model)
+	}
+	err := store.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var parent executionModel
+		if err := tx.Where("tenant_id = ? AND id = ? AND lease_owner = ? AND status IN (?, ?)", tenant.ID, executionID, leaseOwner, string(execution.StatusRunning), string(execution.StatusCancelling)).First(&parent).Error; err != nil {
+			return mapNotFound(err, "execution")
+		}
+		taken, err := existingNodeRuns(tx, tenant.ID, executionID)
+		if err != nil {
+			return err
+		}
+		// The stored keys are read once for the whole batch. Repairing from the
+		// in-memory keys alone would be enough for a fresh trace and wrong for a
+		// resumed one, whose first segment is already in the table.
+		kept := make([]executionNodeRunModel, 0, len(models))
+		for index := range models {
+			key := nodeRunKey{models[index].NodeID, models[index].Attempt, models[index].RunIndex}
+			// Walk the key forward until it is either free — the missing index
+			// this row needs — or turns out to be this very row, already
+			// stored under a later index because an earlier call repaired it.
+			alreadyStored := false
+			for {
+				storedSequence, collides := taken[key]
+				if !collides {
+					break
+				}
+				if storedSequence == models[index].Sequence {
+					alreadyStored = true
+					break
+				}
+				models[index].RunIndex++
+				key = nodeRunKey{models[index].NodeID, models[index].Attempt, models[index].RunIndex}
+			}
+			if alreadyStored {
+				continue
+			}
+			taken[key] = models[index].Sequence
+			kept = append(kept, models[index])
+		}
+		if len(kept) == 0 {
+			return nil
+		}
+		if err := tx.Create(&kept).Error; err != nil {
+			return fmt.Errorf("create execution node runs: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	// Returned in the caller's order, carrying the index each row was stored
+	// under. A skipped row is returned unchanged: it is in the table under
+	// exactly the key and sequence it arrived with.
+	stored := make([]execution.NodeRun, 0, len(models))
+	for index := range models {
+		stored = append(stored, nodeRunFromModel(models[index]))
+	}
+	return stored, nil
+}
+
+// existingNodeRuns reads the identity of every trace row already stored for one
+// execution: node, attempt, run index and the sequence that distinguishes a row
+// from a duplicate of itself.
+func existingNodeRuns(tx *gorm.DB, tenantID, executionID string) (map[nodeRunKey]int, error) {
+	var rows []executionNodeRunModel
+	if err := tx.Model(&executionNodeRunModel{}).
+		Select("node_id", "attempt", "run_index", "sequence").
+		Where("tenant_id = ? AND execution_id = ?", tenantID, executionID).
+		Find(&rows).Error; err != nil {
+		return nil, fmt.Errorf("read execution trace keys: %w", err)
+	}
+	taken := make(map[nodeRunKey]int, len(rows))
+	for _, row := range rows {
+		taken[nodeRunKey{row.NodeID, row.Attempt, row.RunIndex}] = row.Sequence
+	}
+	return taken, nil
+}
+
+// nodeRunModel validates one node run on its way to durable storage, mints the
+// identifier and start time a caller left unset, and encodes the three payload
+// columns through the redacting payload path.
+func nodeRunModel(tenant TenantScope, nodeRun execution.NodeRun) (executionNodeRunModel, error) {
 	if err := validateNodeRun(nodeRun); err != nil {
-		return execution.NodeRun{}, err
+		return executionNodeRunModel{}, err
 	}
 	if nodeRun.ID == "" {
 		id, err := workflow.NewID("run")
 		if err != nil {
-			return execution.NodeRun{}, err
+			return executionNodeRunModel{}, err
 		}
 		nodeRun.ID = id
 	}
@@ -605,17 +885,17 @@ func (store *GORMExecutionStore) CreateNodeRun(ctx context.Context, tenant Tenan
 	}
 	input, err := payload(nodeRun.Input)
 	if err != nil {
-		return execution.NodeRun{}, fmt.Errorf("node run input: %w", err)
+		return executionNodeRunModel{}, fmt.Errorf("node run input: %w", err)
 	}
 	output, err := payload(nodeRun.Output)
 	if err != nil {
-		return execution.NodeRun{}, fmt.Errorf("node run output: %w", err)
+		return executionNodeRunModel{}, fmt.Errorf("node run output: %w", err)
 	}
 	errorPayload, err := payload(nodeRun.Error)
 	if err != nil {
-		return execution.NodeRun{}, fmt.Errorf("node run error: %w", err)
+		return executionNodeRunModel{}, fmt.Errorf("node run error: %w", err)
 	}
-	model := executionNodeRunModel{
+	return executionNodeRunModel{
 		ID:          nodeRun.ID,
 		TenantID:    tenant.ID,
 		ExecutionID: nodeRun.ExecutionID,
@@ -629,20 +909,7 @@ func (store *GORMExecutionStore) CreateNodeRun(ctx context.Context, tenant Tenan
 		Error:       errorPayload,
 		StartedAt:   nodeRun.StartedAt,
 		FinishedAt:  nodeRun.FinishedAt,
-	}
-	if err := store.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var parent executionModel
-		if err := tx.Where("tenant_id = ? AND id = ? AND lease_owner = ? AND status IN (?, ?)", tenant.ID, nodeRun.ExecutionID, nodeRun.LeaseOwner, string(execution.StatusRunning), string(execution.StatusCancelling)).First(&parent).Error; err != nil {
-			return mapNotFound(err, "execution")
-		}
-		if err := tx.Create(&model).Error; err != nil {
-			return fmt.Errorf("create execution node run: %w", err)
-		}
-		return nil
-	}); err != nil {
-		return execution.NodeRun{}, err
-	}
-	return nodeRunFromModel(model), nil
+	}, nil
 }
 
 func validateExecution(record execution.Record) error {

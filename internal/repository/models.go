@@ -279,11 +279,18 @@ type executionModel struct {
 	Error                   []byte    `gorm:"not null"`
 	StartedAt               time.Time `gorm:"not null;index:idx_executions_tenant_started,priority:2"`
 	FinishedAt              *time.Time
-	LeaseOwner              string               `gorm:"size:128;index"`
-	LeaseExpiresAt          *time.Time           `gorm:"index"`
-	CancellationRequestedAt *time.Time           `gorm:"index"`
-	Workflow                workflowModel        `gorm:"foreignKey:WorkflowID;references:ID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT"`
-	WorkflowVersion         workflowVersionModel `gorm:"foreignKey:WorkflowVersionID;references:ID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT"`
+	LeaseOwner              string     `gorm:"size:128;index"`
+	LeaseExpiresAt          *time.Time `gorm:"index"`
+	CancellationRequestedAt *time.Time `gorm:"index"`
+	// ReclaimCount is how many times an expired lease has handed this
+	// execution to a fresh worker. It is what MaxExecutionReclaims compares
+	// against: the claim that would exceed the cap settles the row as
+	// crashed instead of running its graph — and its side effects — once
+	// more. Declared here as well as in 000010 so a query can read it; the
+	// migration is what creates it.
+	ReclaimCount    int64                `gorm:"not null;default:0"`
+	Workflow        workflowModel        `gorm:"foreignKey:WorkflowID;references:ID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT"`
+	WorkflowVersion workflowVersionModel `gorm:"foreignKey:WorkflowVersionID;references:ID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT"`
 }
 
 func (executionModel) TableName(namer schema.Namer) string {

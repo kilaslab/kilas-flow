@@ -28,6 +28,16 @@ type ExecutionStore interface {
 	Get(context.Context, repository.TenantScope, string) (execution.Record, error)
 	UpdateRuntime(context.Context, repository.TenantScope, execution.Record) (execution.Record, error)
 	CreateNodeRun(context.Context, repository.TenantScope, execution.NodeRun) (execution.NodeRun, error)
+	// CreateNodeRuns appends a whole completed trace in one transaction,
+	// giving a row whose run index the runner left unset the next free one
+	// instead of failing the write.
+	CreateNodeRuns(context.Context, repository.TenantScope, []execution.NodeRun) ([]execution.NodeRun, error)
+	// ExtendLease renews the fenced lease of a running execution. False means
+	// this worker no longer holds it.
+	ExtendLease(context.Context, repository.TenantScope, string, string, time.Time) (bool, error)
+	// ExecutionState reads one execution's status and whether cancellation has
+	// been requested, without loading its trace.
+	ExecutionState(context.Context, repository.TenantScope, string) (execution.Status, bool, error)
 	Cancel(context.Context, repository.TenantScope, string) (execution.Record, error)
 	// StartChild creates a sub-workflow execution that is already running and
 	// already claimed, and returns the document it is pinned to.
@@ -74,6 +84,30 @@ type ServiceDeps struct {
 	Environment    map[string]string
 	WorkerID       string
 	DefaultTimeout time.Duration
+	// MaxTimeout caps the timeout a workflow asks for in its own settings
+	// (settings.executionTimeout, n8n's own EXECUTIONS_TIMEOUT_MAX). Zero
+	// applies no ceiling of its own: a workflow that names a timeout gets it,
+	// and one that names none still gets DefaultTimeout.
+	//
+	// The default timeout is a budget for one run, not a policy about how long
+	// a workflow may take: an imported workflow that says it needs five minutes
+	// was being killed at sixty seconds, which is a workflow that fails
+	// everywhere it used to work.
+	MaxTimeout time.Duration
+	// DefaultTimezone is the instance's IANA zone (n8n's GENERIC_TIMEZONE).
+	// A workflow that names no zone — or carries n8n's DEFAULT sentinel —
+	// reads its clock in it, both for its schedules and for `$now`, `$today`
+	// and DateTime.local() inside expressions. Empty means UTC, which is what
+	// an unnamed zone has always meant here.
+	DefaultTimezone string
+	// LeaseDuration is how long a claim is held before another worker may
+	// treat the execution as abandoned. It is deliberately not the run
+	// timeout: the lease is renewed by a heartbeat while the worker holds it,
+	// so it only has to be longer than the interval between two renewals, and
+	// a run that takes its full timeout — or a trace that lands just after
+	// it — no longer outlives its own claim. Non-positive derives two run
+	// timeouts with a floor (see leaseDurationOrDefault).
+	LeaseDuration time.Duration
 	// SubworkflowTriggerType is the node type a called workflow starts from.
 	// Empty leaves a sub-workflow call starting from every root, which is what
 	// a workflow written before the trigger existed still needs.
@@ -121,14 +155,19 @@ type Service struct {
 	environment            map[string]string
 	workerID               string
 	defaultTimeout         time.Duration
+	leaseDuration          time.Duration
 	pollInterval           time.Duration
 	sweepInterval          time.Duration
+	maxTimeout             time.Duration
+	defaultTimezone        string
 	relayPrefix            string
 	relaySend              func(channel, payload string) error
 	publicBaseURL          string
 	subworkflowTriggerType string
 	activeMu               sync.Mutex
 	active                 map[string]context.CancelFunc
+	waitTimers             waitTimers
+	workers                sync.WaitGroup
 	startOnce              sync.Once
 	wake                   chan struct{}
 	log                    *slog.Logger
@@ -171,8 +210,11 @@ func NewService(deps ServiceDeps) (*Service, error) {
 		environment:            environment,
 		workerID:               deps.WorkerID,
 		defaultTimeout:         deps.DefaultTimeout,
+		leaseDuration:          deps.LeaseDuration,
 		pollInterval:           pollInterval,
 		sweepInterval:          sweepInterval,
+		maxTimeout:             deps.MaxTimeout,
+		defaultTimezone:        strings.TrimSpace(deps.DefaultTimezone),
 		relayPrefix:            deps.RelayPrefix,
 		relaySend:              deps.RelaySend,
 		publicBaseURL:          strings.TrimSuffix(deps.PublicBaseURL, "/"),
@@ -209,9 +251,29 @@ func (service *Service) Get(ctx context.Context, tenant repository.TenantScope, 
 	return service.executions.Get(ctx, tenant, executionID)
 }
 
+// ExecutionState reads one execution's status and nothing else: no node runs,
+// no payloads. It exists for the callers that poll a run they did not start —
+// a cancellation watcher, a webhook waiting to answer its trigger — because
+// reading the whole record ten times a second re-reads every payload the run
+// has written, which is the largest row in the database read for the smallest
+// fact in it.
+//
+// It is deliberately a thin delegation so a caller holding this service, and
+// not the store, can still ask the light question.
+func (service *Service) ExecutionState(ctx context.Context, tenant repository.TenantScope, executionID string) (execution.Status, bool, error) {
+	return service.executions.ExecutionState(ctx, tenant, executionID)
+}
+
 func (service *Service) runOnce(ctx context.Context, workerID string) (bool, error) {
-	leaseUntil := time.Now().UTC().Add(service.defaultTimeout)
-	record, document, claimed, err := service.executions.ClaimNext(ctx, workerID, leaseUntil)
+	// The lease is not the run timeout. It used to be the same number, which
+	// made the claim an assertion about how long the run would take: a run that
+	// used its whole timeout, or a trace written just after it, outlived the
+	// claim, and another worker reclaimed the execution while this one was
+	// still persisting its result — the same workflow, twice, from one trigger
+	// (BUG-1tj5wy). The lease is now renewed by a heartbeat for as long as this
+	// worker holds the execution, so it only has to outlive the interval
+	// between two renewals.
+	record, document, claimed, err := service.executions.ClaimNext(ctx, workerID, time.Now().UTC().Add(service.leaseDurationOrDefault()))
 	if err != nil || !claimed {
 		return claimed, err
 	}
@@ -249,10 +311,17 @@ func (service *Service) runOnce(ctx context.Context, workerID string) (bool, err
 		TenantID: record.TenantID, ExecutionID: record.ID, WorkflowID: record.WorkflowID,
 		Type: events.ExecutionStarted, Status: execution.StatusRunning,
 	})
-	runCtx, cancel := context.WithTimeout(ctx, service.defaultTimeout)
+	runCtx, cancel := service.runBudget(ctx, document)
 	service.activeMu.Lock()
 	service.active[record.ID] = cancel
 	service.activeMu.Unlock()
+	// Renewed from the moment the claim lands until this worker has settled the
+	// execution — through the run, and through the trace write that used to
+	// fall outside the lease. Losing the fence cancels the run: the execution
+	// has been reclaimed, so it is somebody else's work now, and every node
+	// this one still executed would be a side effect performed twice.
+	heartbeat := service.startLeaseHeartbeat(ctx, tenant, record, cancel)
+	defer heartbeat.Stop()
 	// Cross-process cancellation floor. Cancel persists cancelling in the
 	// row; a holder in another process finds it here and interrupts the run
 	// between nodes (see the runner's ctx check), without waiting for the
@@ -302,59 +371,26 @@ func (service *Service) runOnce(ctx context.Context, workerID string) (bool, err
 	for _, node := range document.Nodes {
 		nodeTypes[node.ID] = node.Type
 	}
-	for sequence, run := range result.NodeRuns {
-		input, err := json.Marshal(run.Input)
-		if err != nil {
-			return true, fmt.Errorf("marshal node %q input: %w", run.NodeID, err)
-		}
-		output, err := json.Marshal(run.Output)
-		if err != nil {
-			return true, fmt.Errorf("marshal node %q output: %w", run.NodeID, err)
-		}
-		// The durable trace and the live event carry the projected output,
-		// while the next node already received the full one in memory. See
-		// projectTrace for what is projected and what is deliberately left.
-		output = projectTrace(nodeTypes[run.NodeID], output)
-		status := execution.StatusSucceeded
-		if run.Skipped {
-			// A pruned branch is neither a success nor a failure. Recording it
-			// as succeeded would make an untaken arm look like one that ran and
-			// happened to produce nothing.
-			status = execution.StatusSkipped
-		}
-		var errorPayload json.RawMessage
-		if run.Error != nil {
-			status = execution.StatusFailed
-			if errors.Is(run.Error, context.Canceled) {
-				status = execution.StatusCancelled
-				if run.ErrorCode == "" || run.ErrorCode == "node.failed" {
-					run.ErrorCode = "execution.cancelled"
-				}
-			}
-			errorPayload = structuredError(run.ErrorCode, run.Error)
-		}
-		now := time.Now().UTC()
-		if _, err := service.executions.CreateNodeRun(persistCtx, tenant, execution.NodeRun{
-			TenantID: record.TenantID, ExecutionID: record.ID, NodeID: run.NodeID, Attempt: attemptOf(run), RunIndex: run.RunIndex, Sequence: seqBase + sequence + 1,
-			Status: status, Input: input, Output: output, Error: errorPayload, StartedAt: now, FinishedAt: &now, LeaseOwner: record.LeaseOwner,
-		}); err != nil {
-			return true, fmt.Errorf("persist node %q run: %w", run.NodeID, err)
-		}
-		// Published only after the node run is durable, so a subscriber can
-		// never observe a state the record does not already carry.
-		eventType := events.NodeCompleted
-		// A skipped node reached a terminal state without failing. Publishing
-		// node.failed for it would light a pruned branch up as an error on the
-		// live canvas; the node-run record carries the skipped status, which is
-		// what a reader needs to tell the two apart.
-		if status != execution.StatusSucceeded && status != execution.StatusSkipped {
-			eventType = events.NodeFailed
-		}
-		service.publish(events.Event{
-			TenantID: record.TenantID, ExecutionID: record.ID, WorkflowID: record.WorkflowID,
-			NodeID: run.NodeID, Type: eventType, Status: status, Sequence: seqBase + sequence + 1,
-			Data: output,
-		})
+	rows, err := service.traceRows(record, nodeTypes, seqBase, result.NodeRuns)
+	if err != nil {
+		return service.failPersist(persistCtx, tenant, record, err)
+	}
+	// One transaction for the whole trace. Written row by row this was a
+	// round trip per node inside the window where the lease had to survive,
+	// and the write of row 40 of 100 could already have outlived the claim.
+	// Idempotent by row identity too, so a run whose trace was partly written
+	// before a crash cannot collide with itself here (BUG-hfhzq6).
+	runs := make([]execution.NodeRun, 0, len(rows))
+	for _, row := range rows {
+		runs = append(runs, row.run)
+	}
+	if _, err := service.executions.CreateNodeRuns(persistCtx, tenant, runs); err != nil {
+		return service.failPersist(persistCtx, tenant, record, fmt.Errorf("persist execution trace: %w", err))
+	}
+	// Published only after the whole trace is durable, so a subscriber can
+	// never observe a state the record does not already carry.
+	for _, row := range rows {
+		service.publish(row.event)
 	}
 	finishedAt := time.Now().UTC()
 	if runErr != nil {
@@ -410,6 +446,213 @@ func (service *Service) runOnce(ctx context.Context, workerID string) (bool, err
 	return true, nil
 }
 
+// defaultLeaseDuration is the shortest claim a worker takes when the
+// deployment names no lease: long enough that recovering a crashed worker is
+// not the first thing every restart does, short enough that an execution whose
+// worker died resumes without an operator.
+const defaultLeaseDuration = 30 * time.Second
+
+// leaseDurationOrDefault decouples the worker lease from the run timeout.
+//
+// The two used to be the same number, which made the claim an assertion about
+// how long a run would take rather than a statement that a worker is alive.
+// Twice the run timeout, with a floor, so a claim covers a run that uses its
+// whole budget and the trace write after it even if no renewal lands; the
+// heartbeat under it is what makes the length almost irrelevant.
+func (service *Service) leaseDurationOrDefault() time.Duration {
+	if service.leaseDuration > 0 {
+		return service.leaseDuration
+	}
+	lease := 2 * service.defaultTimeout
+	if lease < defaultLeaseDuration {
+		lease = defaultLeaseDuration
+	}
+	return lease
+}
+
+// leaseHeartbeat renews one worker's claim for as long as the worker holds it.
+type leaseHeartbeat struct {
+	stop     chan struct{}
+	done     chan struct{}
+	stopOnce sync.Once
+}
+
+// startLeaseHeartbeat renews one execution's lease until Stop is called.
+//
+// It is the difference between a lease that means "this worker was predicted
+// to need this long" and one that means "this worker is still here". A worker
+// that dies stops renewing, so its execution is reclaimed exactly as before
+// once the lease runs out; a worker that is alive but slower than its lease —
+// a long run, a slow trace write, a database that paused — keeps its claim and
+// no second worker starts the same graph (BUG-1tj5wy).
+//
+// lostFence runs when the renewal finds the execution is no longer this
+// worker's: it has been reclaimed or settled, so stopping the run is what keeps
+// its side effects from happening twice. The last renewal is deliberately not
+// required to succeed — a lease is allowed to expire while the worker finishes
+// a write it has already started, and the writes themselves are fenced.
+func (service *Service) startLeaseHeartbeat(ctx context.Context, tenant repository.TenantScope, record execution.Record, lostFence func()) *leaseHeartbeat {
+	lease := service.leaseDurationOrDefault()
+	interval := lease / 3
+	if interval < 10*time.Millisecond {
+		interval = 10 * time.Millisecond
+	}
+	beat := &leaseHeartbeat{stop: make(chan struct{}), done: make(chan struct{})}
+	// Detached from the run's own cancellation on purpose: cancelling a run
+	// (shutdown, a cancel request) still ends in a terminal write under this
+	// lease, and that write must not race a claim that has just expired.
+	heartbeatCtx, stopHeartbeat := context.WithCancel(context.WithoutCancel(ctx))
+	go func() {
+		defer close(beat.done)
+		defer stopHeartbeat()
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-beat.stop:
+				return
+			case <-ticker.C:
+			}
+			extendCtx, stopExtend := context.WithTimeout(heartbeatCtx, 5*time.Second)
+			held, err := service.executions.ExtendLease(extendCtx, tenant, record.ID, record.LeaseOwner, time.Now().UTC().Add(lease))
+			stopExtend()
+			if err != nil {
+				// A blip costs one renewal when there is still two thirds of
+				// the lease left to spend; the next tick retries. A database
+				// that is unreachable for longer than the lease has a louder
+				// problem than this line.
+				service.log.Debug("execution lease renewal failed", "execution", record.ID, "error", err)
+				continue
+			}
+			if !held {
+				if lostFence != nil {
+					lostFence()
+				}
+				return
+			}
+		}
+	}()
+	return beat
+}
+
+// Stop ends the heartbeat and waits for it to return, so no renewal can be
+// issued after the caller has settled the execution.
+func (beat *leaseHeartbeat) Stop() {
+	if beat == nil {
+		return
+	}
+	beat.stopOnce.Do(func() { close(beat.stop) })
+	<-beat.done
+}
+
+// traceRow is one durable node-run row beside the live event that announces it.
+//
+// Built together because they carry the same status: publishing from the row
+// after the write is what guarantees a subscriber never sees a state the record
+// does not already hold, and computing the status twice is how the two drifted
+// apart in the first place.
+type traceRow struct {
+	run   execution.NodeRun
+	event events.Event
+}
+
+// traceRows renders one run's node results into the rows and events to persist.
+//
+// RunIndex is passed through as the runner recorded it. The runner leaves it
+// unset on the rows it writes for something other than a run — skipped, failed,
+// retried, tolerated by continueOnFail — so a node inside a loop produces
+// several rows with the same (node, attempt, run_index). Stamping a counter
+// here would depend on this loop seeing every row of the execution, which is
+// not true of a resumed run or of a trace written in segments; the store owns
+// the key instead, where the whole trace is in scope (CreateNodeRuns).
+func (service *Service) traceRows(record execution.Record, nodeTypes map[string]string, seqBase int, runs []NodeRun) ([]traceRow, error) {
+	rows := make([]traceRow, 0, len(runs))
+	for sequence, run := range runs {
+		input, err := json.Marshal(run.Input)
+		if err != nil {
+			return nil, fmt.Errorf("marshal node %q input: %w", run.NodeID, err)
+		}
+		output, err := json.Marshal(run.Output)
+		if err != nil {
+			return nil, fmt.Errorf("marshal node %q output: %w", run.NodeID, err)
+		}
+		// The durable trace and the live event carry the projected output,
+		// while the next node already received the full one in memory. See
+		// projectTrace for what is projected and what is deliberately left.
+		output = projectTrace(nodeTypes[run.NodeID], output)
+		status := execution.StatusSucceeded
+		if run.Skipped {
+			// A pruned branch is neither a success nor a failure. Recording it
+			// as succeeded would make an untaken arm look like one that ran and
+			// happened to produce nothing.
+			status = execution.StatusSkipped
+		}
+		var errorPayload json.RawMessage
+		if run.Error != nil {
+			status = execution.StatusFailed
+			if errors.Is(run.Error, context.Canceled) {
+				status = execution.StatusCancelled
+				if run.ErrorCode == "" || run.ErrorCode == "node.failed" {
+					run.ErrorCode = "execution.cancelled"
+				}
+			}
+			errorPayload = structuredError(run.ErrorCode, run.Error)
+		}
+		now := time.Now().UTC()
+		sequenceNumber := seqBase + sequence + 1
+		eventType := events.NodeCompleted
+		// A skipped node reached a terminal state without failing. Publishing
+		// node.failed for it would light a pruned branch up as an error on the
+		// live canvas; the node-run record carries the skipped status, which is
+		// what a reader needs to tell the two apart.
+		if status != execution.StatusSucceeded && status != execution.StatusSkipped {
+			eventType = events.NodeFailed
+		}
+		rows = append(rows, traceRow{
+			run: execution.NodeRun{
+				TenantID: record.TenantID, ExecutionID: record.ID, NodeID: run.NodeID,
+				Attempt: attemptOf(run), RunIndex: run.RunIndex, Sequence: sequenceNumber,
+				Status: status, Input: input, Output: output, Error: errorPayload,
+				StartedAt: now, FinishedAt: &now, LeaseOwner: record.LeaseOwner,
+			},
+			event: events.Event{
+				TenantID: record.TenantID, ExecutionID: record.ID, WorkflowID: record.WorkflowID,
+				NodeID: run.NodeID, Type: eventType, Status: status, Sequence: sequenceNumber,
+				Data: output,
+			},
+		})
+	}
+	return rows, nil
+}
+
+// failPersist settles an execution whose trace could not be written.
+//
+// Leaving it running is what made a broken trace expensive instead of visible:
+// the row kept its lease, the lease expired, the next worker reclaimed the
+// execution, deleted the trace and ran the whole graph — side effects included
+// — only to fail at the same write. That is how one collision on a run index
+// became a workflow that never stopped running (BUG-hfhzq6). Terminal, with the
+// reason on the record, is the same failure reported once.
+func (service *Service) failPersist(ctx context.Context, tenant repository.TenantScope, record execution.Record, cause error) (bool, error) {
+	now := time.Now().UTC()
+	record.Status = execution.StatusFailed
+	record.Output = json.RawMessage("null")
+	record.Error = structuredError("execution.persist_failed", cause)
+	record.FinishedAt = &now
+	updated, err := service.executions.UpdateRuntime(ctx, tenant, record)
+	if err != nil {
+		// The fence is gone as well — the row was reclaimed or settled
+		// elsewhere — so there is nothing left to mark, and the original cause
+		// is the one worth reporting.
+		return true, cause
+	}
+	service.publish(events.Event{
+		TenantID: record.TenantID, ExecutionID: record.ID, WorkflowID: record.WorkflowID,
+		Type: events.ExecutionFailed, Status: updated.Status, Data: updated.Error,
+	})
+	return true, cause
+}
+
 // Start launches a bounded worker pool. Every worker claims records from the
 // durable repository, so queued work is shared across processes pointing at
 // the same database — not tied to an HTTP request goroutine or to one
@@ -424,11 +667,45 @@ func (service *Service) Start(ctx context.Context, maxConcurrent int) error {
 	service.startOnce.Do(func() {
 		for index := 1; index <= maxConcurrent; index++ {
 			workerID := fmt.Sprintf("%s-%d", service.workerID, index)
-			go service.worker(ctx, workerID)
+			service.workers.Add(1)
+			go func() {
+				defer service.workers.Done()
+				service.worker(ctx, workerID)
+			}()
 		}
 		go service.sweepLoop(ctx)
 	})
 	return nil
+}
+
+// Drain waits for the workers to finish the run each of them is in the middle
+// of, bounded by ctx.
+//
+// Without it, shutdown is a lie the database tells on the next restart: the
+// process exits with a run still in flight, the row stays `running`, the lease
+// expires, and the workflow runs again from its trigger — every payment,
+// message and API call it had already made happening a second time, with the
+// final history showing one clean run. Waiting for the workers is what lets
+// each of them settle its execution as cancelled and release its lease before
+// the process goes away, which is also why the terminal writes in runOnce
+// deliberately do not use the cancelled context.
+//
+// The bound matters as much as the wait: a worker stuck in a node that ignores
+// cancellation must not hold shutdown open forever. When ctx expires the
+// caller exits anyway, and the lease expiry reclaims whatever was left — the
+// same recovery as a crash, which is the honest floor.
+func (service *Service) Drain(ctx context.Context) error {
+	done := make(chan struct{})
+	go func() {
+		service.workers.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (service *Service) worker(ctx context.Context, workerID string) {
@@ -476,6 +753,11 @@ func (service *Service) pollIntervalOrDefault() time.Duration {
 // poll finds the same row within one tick when it is not. Poll errors are
 // best effort — the next tick retries — so a blip costs latency, never a
 // stuck run, and the watcher exits with the run it guards.
+//
+// It reads one execution's status and nothing else. Reading the whole record
+// meant loading every node-run payload this execution had written, ten times a
+// second, for an answer that is one small column — which is the largest,
+// dumbest reader of the biggest rows in the database.
 func (service *Service) pollCancellation(runCtx context.Context, cancel context.CancelFunc, tenant repository.TenantScope, executionID string, stop <-chan struct{}) {
 	ticker := time.NewTicker(service.pollIntervalOrDefault())
 	defer ticker.Stop()
@@ -488,12 +770,12 @@ func (service *Service) pollCancellation(runCtx context.Context, cancel context.
 		case <-ticker.C:
 		}
 		pollCtx, stopPoll := context.WithTimeout(context.Background(), 5*time.Second)
-		record, err := service.executions.Get(pollCtx, tenant, executionID)
+		_, cancelling, err := service.executions.ExecutionState(pollCtx, tenant, executionID)
 		stopPoll()
 		if err != nil {
 			continue
 		}
-		if record.Status == execution.StatusCancelling || record.Status == execution.StatusCancelled {
+		if cancelling {
 			cancel()
 			return
 		}
@@ -727,11 +1009,22 @@ func (service *Service) InvokeWorkflow(ctx context.Context, parent ExecutionCont
 	record, document, err := service.executions.StartChild(ctx, tenant, repository.ChildExecution{
 		WorkflowID: target, ParentExecutionID: parent.ID,
 		Input: input, SelectTrigger: service.subworkflowTrigger,
-		LeaseOwner: service.workerID, LeaseUntil: time.Now().UTC().Add(service.defaultTimeout),
+		LeaseOwner: service.workerID, LeaseUntil: time.Now().UTC().Add(service.leaseDurationOrDefault()),
 	})
 	if err != nil {
 		return WorkflowCallResult{}, err
 	}
+	// A child runs inline in this goroutine but is still a durable execution
+	// with a lease of its own, and a workflow whose executionTimeout is longer
+	// than the lease would otherwise outlive its own claim mid-call and be
+	// reclaimed by a worker that runs it in parallel with this one. Renewed the
+	// way a top-level run is, for the run and the trace write after it. No
+	// cancellation on a lost fence: this goroutine has no cancel of its own to
+	// call — the caller's context belongs to the parent — and the child's
+	// writes are fenced by the lease, so a stolen child cannot write over its
+	// successor's trace either way.
+	heartbeat := service.startLeaseHeartbeat(ctx, tenant, record, nil)
+	defer heartbeat.Stop()
 	service.publish(events.Event{
 		TenantID: record.TenantID, ExecutionID: record.ID, WorkflowID: record.WorkflowID,
 		Type: events.ExecutionStarted, Status: execution.StatusRunning,
@@ -779,6 +1072,9 @@ func checkCallStack(stack []string, target string) error {
 
 // persistChild writes the child's node runs and its terminal state.
 func (service *Service) persistChild(ctx context.Context, tenant repository.TenantScope, record execution.Record, result Result, runErr error) error {
+	// One transaction, like the top-level trace: a sub-workflow is a whole
+	// execution and its child lease has to survive its trace write too.
+	rows := make([]execution.NodeRun, 0, len(result.NodeRuns))
 	for sequence, run := range result.NodeRuns {
 		input, err := json.Marshal(run.Input)
 		if err != nil {
@@ -798,14 +1094,15 @@ func (service *Service) persistChild(ctx context.Context, tenant repository.Tena
 			errorPayload = structuredError(run.ErrorCode, run.Error)
 		}
 		now := time.Now().UTC()
-		if _, err := service.executions.CreateNodeRun(ctx, tenant, execution.NodeRun{
+		rows = append(rows, execution.NodeRun{
 			TenantID: record.TenantID, ExecutionID: record.ID, NodeID: run.NodeID,
 			Attempt: attemptOf(run), RunIndex: run.RunIndex, Sequence: sequence + 1,
 			Status: status, Input: input, Output: output, Error: errorPayload,
 			StartedAt: now, FinishedAt: &now, LeaseOwner: record.LeaseOwner,
-		}); err != nil {
-			return fmt.Errorf("persist sub-workflow node %q run: %w", run.NodeID, err)
-		}
+		})
+	}
+	if _, err := service.executions.CreateNodeRuns(ctx, tenant, rows); err != nil {
+		return fmt.Errorf("persist sub-workflow trace: %w", err)
 	}
 
 	finishedAt := time.Now().UTC()
@@ -899,4 +1196,36 @@ func terminalItems(output map[string]workflow.NodeOutput) []workflow.Item {
 		}
 	}
 	return items
+}
+
+// ExecutionTimeoutSetting is the document setting holding a workflow's own run
+// budget in seconds, under n8n's name for it so an imported workflow keeps
+// meaning what it meant. A negative value is n8n's "no execution timeout".
+const ExecutionTimeoutSetting = "executionTimeout"
+
+// runBudget bounds one run by the budget its workflow asked for.
+//
+// Every execution used to get the instance's default timeout whatever the
+// workflow said, so an imported workflow declaring five minutes died at sixty
+// seconds on the first slow call. The workflow's own setting wins, capped by
+// the instance ceiling when one is configured — which is n8n's own precedence
+// (settings.executionTimeout against EXECUTIONS_TIMEOUT_MAX). A workflow that
+// names nothing still gets the instance default, so the bound is never absent
+// by accident.
+func (service *Service) runBudget(ctx context.Context, document workflow.Document) (context.Context, context.CancelFunc) {
+	seconds, found := settingNumber(document.Settings[ExecutionTimeoutSetting])
+	if !found || seconds == 0 {
+		return context.WithTimeout(ctx, service.defaultTimeout)
+	}
+	if seconds < 0 {
+		// No timeout at all, which is what n8n's default install runs with.
+		// Nothing is left unbounded by it: the run still ends on cancellation,
+		// on a node's own timeout, and on the worker lease's fence.
+		return context.WithCancel(ctx)
+	}
+	budget := time.Duration(seconds * float64(time.Second))
+	if service.maxTimeout > 0 && budget > service.maxTimeout {
+		budget = service.maxTimeout
+	}
+	return context.WithTimeout(ctx, budget)
 }
