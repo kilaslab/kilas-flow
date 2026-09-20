@@ -283,7 +283,7 @@ func (handler *Datastores) List(ctx context.Context, input *listDatastoresInput)
 		Limit: input.Limit, Cursor: input.Cursor,
 	})
 	if err != nil {
-		return nil, handler.problem(err)
+		return nil, handler.problem(ctx, err)
 	}
 	items := make([]DatastoreResource, 0, len(page.Datastores))
 	for _, definition := range page.Datastores {
@@ -307,7 +307,7 @@ func (handler *Datastores) Create(ctx context.Context, input *createDatastoreInp
 	}
 	definition, err := handler.store.Create(ctx, handler.tenants.Resolve(ctx).ID, input.Body.Name, columns)
 	if err != nil {
-		return nil, handler.problem(err)
+		return nil, handler.problem(ctx, err)
 	}
 	return &createdDatastoreOutput{
 		Status:   http.StatusCreated,
@@ -326,7 +326,7 @@ func (handler *Datastores) Get(ctx context.Context, input *datastorePathInput) (
 	}
 	definition, err := handler.store.GetDatastore(ctx, handler.tenants.Resolve(ctx).ID, input.ID)
 	if err != nil {
-		return nil, handler.problem(err)
+		return nil, handler.problem(ctx, err)
 	}
 	return &datastoreOutput{Body: datastoreResource(*definition)}, nil
 }
@@ -339,11 +339,11 @@ func (handler *Datastores) Rename(ctx context.Context, input *renameDatastoreInp
 	}
 	tenant := handler.tenants.Resolve(ctx).ID
 	if err := handler.store.RenameDatastore(ctx, tenant, input.ID, input.Body.Name); err != nil {
-		return nil, handler.problem(err)
+		return nil, handler.problem(ctx, err)
 	}
 	definition, err := handler.store.GetDatastore(ctx, tenant, input.ID)
 	if err != nil {
-		return nil, handler.problem(err)
+		return nil, handler.problem(ctx, err)
 	}
 	return &datastoreOutput{Body: datastoreResource(*definition)}, nil
 }
@@ -357,10 +357,10 @@ func (handler *Datastores) Delete(ctx context.Context, input *datastorePathInput
 	}
 	tenant := handler.tenants.Resolve(ctx).ID
 	if _, err := handler.store.GetDatastore(ctx, tenant, input.ID); err != nil {
-		return nil, handler.problem(err)
+		return nil, handler.problem(ctx, err)
 	}
 	if err := handler.store.Drop(ctx, tenant, input.ID); err != nil {
-		return nil, handler.problem(err)
+		return nil, handler.problem(ctx, err)
 	}
 	return &deletedDatastoreOutput{Status: http.StatusNoContent}, nil
 }
@@ -372,7 +372,7 @@ func (handler *Datastores) Clear(ctx context.Context, input *datastorePathInput)
 	}
 	deleted, err := handler.store.Clear(ctx, handler.tenants.Resolve(ctx).ID, input.ID)
 	if err != nil {
-		return nil, handler.problem(err)
+		return nil, handler.problem(ctx, err)
 	}
 	out := &clearedDatastoreOutput{}
 	out.Body.Deleted = deleted
@@ -386,7 +386,7 @@ func (handler *Datastores) AddColumn(ctx context.Context, input *addDatastoreCol
 	}
 	tenant := handler.tenants.Resolve(ctx).ID
 	if err := handler.store.AddColumn(ctx, tenant, input.ID, datastore.ColumnInput{Name: input.Body.Name, Type: input.Body.Type}); err != nil {
-		return nil, handler.problem(err)
+		return nil, handler.problem(ctx, err)
 	}
 	return &datastoreColumnOutput{Body: DatastoreColumnResource{Name: input.Body.Name, Type: input.Body.Type}}, nil
 }
@@ -397,7 +397,7 @@ func (handler *Datastores) RenameColumn(ctx context.Context, input *renameDatast
 		return nil, huma.Error503ServiceUnavailable("datastore storage unavailable")
 	}
 	if err := handler.store.RenameColumn(ctx, handler.tenants.Resolve(ctx).ID, input.ID, input.Name, input.Body.Name); err != nil {
-		return nil, handler.problem(err)
+		return nil, handler.problem(ctx, err)
 	}
 	return &datastoreColumnOutput{Body: DatastoreColumnResource{Name: input.Body.Name}}, nil
 }
@@ -408,7 +408,7 @@ func (handler *Datastores) DropColumn(ctx context.Context, input *datastoreColum
 		return nil, huma.Error503ServiceUnavailable("datastore storage unavailable")
 	}
 	if err := handler.store.DropColumn(ctx, handler.tenants.Resolve(ctx).ID, input.ID, input.Name); err != nil {
-		return nil, handler.problem(err)
+		return nil, handler.problem(ctx, err)
 	}
 	return &deletedDatastoreOutput{Status: http.StatusNoContent}, nil
 }
@@ -423,7 +423,7 @@ func (handler *Datastores) InsertRow(ctx context.Context, input *insertRowInput)
 	}
 	row, err := handler.store.Insert(ctx, handler.tenants.Resolve(ctx).ID, input.ID, input.Body.Values)
 	if err != nil {
-		return nil, handler.problem(err)
+		return nil, handler.problem(ctx, err)
 	}
 	id, _ := row["id"].(int64)
 	return &createdRowOutput{
@@ -449,7 +449,7 @@ func (handler *Datastores) ListRows(ctx context.Context, input *listRowsInput) (
 		Filter: filter, Cursor: input.Cursor, Limit: input.Limit,
 	})
 	if err != nil {
-		return nil, handler.problem(err)
+		return nil, handler.problem(ctx, err)
 	}
 	out := &rowListOutput{}
 	out.Body.Items = page.Rows
@@ -470,7 +470,7 @@ func (handler *Datastores) GetRow(ctx context.Context, input *rowPathInput) (*ro
 	}
 	row, err := handler.store.Get(ctx, handler.tenants.Resolve(ctx).ID, input.ID, input.RowID)
 	if err != nil {
-		return nil, handler.problem(err)
+		return nil, handler.problem(ctx, err)
 	}
 	return &rowOutput{Body: row}, nil
 }
@@ -488,7 +488,7 @@ func (handler *Datastores) UpdateRows(ctx context.Context, input *updateRowsInpu
 	}
 	result, err := handler.store.Update(ctx, handler.tenants.Resolve(ctx).ID, input.ID, &input.Body.Filter, input.Body.Values, false)
 	if err != nil {
-		return nil, handler.problem(err)
+		return nil, handler.problem(ctx, err)
 	}
 	out := &updateRowsOutput{}
 	out.Body.Matched = result.Matched
@@ -512,7 +512,7 @@ func (handler *Datastores) DeleteRows(ctx context.Context, input *deleteRowsInpu
 	}
 	result, err := handler.store.Delete(ctx, handler.tenants.Resolve(ctx).ID, input.ID, &input.Body.Filter, false)
 	if err != nil {
-		return nil, handler.problem(err)
+		return nil, handler.problem(ctx, err)
 	}
 	out := &deleteRowsOutput{}
 	out.Body.Deleted = int64(len(result.Rows))
@@ -537,7 +537,7 @@ func (handler *Datastores) UpsertRow(ctx context.Context, input *upsertRowInput)
 	}
 	result, err := handler.store.Upsert(ctx, handler.tenants.Resolve(ctx).ID, input.ID, &input.Body.Filter, input.Body.Values, false)
 	if err != nil {
-		return nil, handler.problem(err)
+		return nil, handler.problem(ctx, err)
 	}
 	out := &upsertRowOutput{}
 	out.Body.Inserted = result.Inserted
@@ -606,7 +606,7 @@ func queryValue(raw string) any {
 	return decoded
 }
 
-func (handler *Datastores) problem(err error) error {
+func (handler *Datastores) problem(ctx context.Context, err error) error {
 	if datastore.IsUnknown(err) {
 		return huma.Error404NotFound("datastore not found")
 	}
@@ -618,6 +618,14 @@ func (handler *Datastores) problem(err error) error {
 	}
 	if errors.Is(err, datastore.ErrInvalidDatastoreCursor) {
 		return huma.Error400BadRequest("datastore cursor is invalid")
+	}
+	// What the engine refuses about the request — a column it cannot resolve, a
+	// name it will not take, a filter it cannot build — is the caller's to fix
+	// and its message names what to change. A failure underneath the engine is
+	// not: answering it 422 with the driver's own text presented a server fault
+	// as a caller mistake and disclosed the table and column names it named.
+	if internalFailure(err) {
+		return serverProblem(ctx, "datastore operation failed", err)
 	}
 	return huma.Error422UnprocessableEntity(err.Error())
 }

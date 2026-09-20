@@ -157,12 +157,12 @@ func (handler *Datastores) ExportRows(ctx context.Context, input *exportDatastor
 	tenant := handler.tenants.Resolve(ctx).ID
 	definition, err := handler.store.GetDatastore(ctx, tenant, input.ID)
 	if err != nil {
-		return nil, handler.problem(err)
+		return nil, handler.problem(ctx, err)
 	}
 	header := csvExportHeader(input.IncludeSystemColumns, definition.Columns)
 	first, err := handler.store.List(ctx, tenant, input.ID, datastore.RowQuery{Limit: csvExportPageSize})
 	if err != nil {
-		return nil, handler.problem(err)
+		return nil, handler.problem(ctx, err)
 	}
 	filename := "datastore-" + strings.ReplaceAll(input.ID, `"`, "") + ".csv"
 	return &huma.StreamResponse{
@@ -216,7 +216,7 @@ func (handler *Datastores) ImportRows(ctx context.Context, input *importDatastor
 	tenant := handler.tenants.Resolve(ctx).ID
 	definition, err := handler.store.GetDatastore(ctx, tenant, input.ID)
 	if err != nil {
-		return nil, handler.problem(err)
+		return nil, handler.problem(ctx, err)
 	}
 	rows, skipped, failed, err := decodeCSVImport(input.RawBody, definition.Columns, handler.store.CurrentLimits().MaxValueBytes)
 	if err != nil {

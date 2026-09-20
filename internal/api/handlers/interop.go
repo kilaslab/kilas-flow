@@ -194,7 +194,7 @@ func (handler *Interop) Import(ctx context.Context, input *importWorkflowInput) 
 		Source: "n8n", ImportedAt: time.Now().UTC(), Issues: unsupported,
 	})
 	if err != nil {
-		return nil, huma.Error500InternalServerError("could not encode the import report")
+		return nil, serverProblem(ctx, "could not encode the import report", err)
 	}
 
 	// Saved through the ordinary draft path — the same validation, the same
@@ -215,7 +215,7 @@ func (handler *Interop) Import(ctx context.Context, input *importWorkflowInput) 
 	if router, ok := handler.workflows.(repository.WebhookRouteMinter); ok {
 		routes, err := router.EnsureWebhookRoutes(ctx, handler.tenants.Resolve(ctx), stored.ID, stored.LatestVersion.Document)
 		if err != nil {
-			return nil, huma.Error500InternalServerError("could not determine the imported webhook addresses", err)
+			return nil, serverProblem(ctx, "could not determine the imported webhook addresses", err)
 		}
 		for _, route := range routes {
 			webhooks = append(webhooks, WebhookRouteResource{
@@ -249,11 +249,11 @@ func (handler *Interop) Export(ctx context.Context, input *exportWorkflowInput) 
 
 	result, err := n8n.Export(stored.LatestVersion.Document, handler.catalog)
 	if err != nil {
-		return nil, huma.Error500InternalServerError("workflow could not be exported")
+		return nil, serverProblem(ctx, "workflow could not be exported", err)
 	}
 	encoded, err := json.Marshal(result.Document)
 	if err != nil {
-		return nil, huma.Error500InternalServerError("workflow could not be encoded")
+		return nil, serverProblem(ctx, "workflow could not be encoded", err)
 	}
 
 	lossy := result.Lossy
@@ -286,7 +286,7 @@ func (handler *Interop) Diagnostics(ctx context.Context, input *workflowDiagnost
 		if errors.Is(err, repository.ErrNotFound) {
 			return nil, huma.Error404NotFound("workflow revision not found")
 		}
-		return nil, huma.Error500InternalServerError("could not read the workflow's import report", err)
+		return nil, serverProblem(ctx, "could not read the workflow's import report", err)
 	}
 
 	resource := WorkflowDiagnosticsResource{
@@ -299,7 +299,7 @@ func (handler *Interop) Diagnostics(ctx context.Context, input *workflowDiagnost
 			// The column is written by this file and read back whole. A payload
 			// that does not parse was written by something else, and inventing a
 			// report out of it would be worse than saying so.
-			return nil, huma.Error500InternalServerError("the stored import report is unreadable", err)
+			return nil, serverProblem(ctx, "the stored import report is unreadable", err)
 		}
 		resource.Source = report.Source
 		if !report.ImportedAt.IsZero() {

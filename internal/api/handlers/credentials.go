@@ -213,7 +213,7 @@ func (handler *Credentials) List(ctx context.Context, input *credentialListInput
 		return nil, huma.Error400BadRequest("credential cursor is invalid")
 	}
 	if err != nil {
-		return nil, handler.problem(err)
+		return nil, handler.problem(ctx, err)
 	}
 	resources := make([]CredentialResource, 0, len(page.Credentials))
 	for _, record := range page.Credentials {
@@ -256,7 +256,7 @@ func (handler *Credentials) Create(ctx context.Context, input *createCredentialI
 		Fields: input.Body.Fields, AllowedDomains: input.Body.AllowedDomains,
 	})
 	if err != nil {
-		return nil, handler.problem(err)
+		return nil, handler.problem(ctx, err)
 	}
 	return &createdCredentialOutput{
 		Status: http.StatusCreated, Location: "/api/v1/credentials/" + record.ID,
@@ -271,7 +271,7 @@ func (handler *Credentials) Get(ctx context.Context, input *credentialPathInput)
 	}
 	record, err := handler.store.Get(ctx, handler.tenants.Resolve(ctx), input.ID)
 	if err != nil {
-		return nil, handler.problem(err)
+		return nil, handler.problem(ctx, err)
 	}
 	return &credentialOutput{Body: credentialResource(record)}, nil
 }
@@ -288,7 +288,7 @@ func (handler *Credentials) Update(ctx context.Context, input *updateCredentialI
 		// through a typeless update is the same defect as one set at create.
 		stored, err := handler.store.Get(ctx, handler.tenants.Resolve(ctx), input.ID)
 		if err != nil {
-			return nil, handler.problem(err)
+			return nil, handler.problem(ctx, err)
 		}
 		credentialType = stored.Type
 	}
@@ -300,7 +300,7 @@ func (handler *Credentials) Update(ctx context.Context, input *updateCredentialI
 		Fields: input.Body.Fields, AllowedDomains: input.Body.AllowedDomains,
 	})
 	if err != nil {
-		return nil, handler.problem(err)
+		return nil, handler.problem(ctx, err)
 	}
 	return &credentialOutput{Body: credentialResource(record)}, nil
 }
@@ -311,17 +311,23 @@ func (handler *Credentials) Delete(ctx context.Context, input *credentialPathInp
 		return nil, huma.Error503ServiceUnavailable("credential storage unavailable")
 	}
 	if err := handler.store.Delete(ctx, handler.tenants.Resolve(ctx), input.ID); err != nil {
-		return nil, handler.problem(err)
+		return nil, handler.problem(ctx, err)
 	}
 	return &deletedCredentialOutput{Status: http.StatusNoContent}, nil
 }
 
-func (handler *Credentials) problem(err error) error {
+func (handler *Credentials) problem(ctx context.Context, err error) error {
 	if errors.Is(err, repository.ErrNotFound) {
 		return huma.Error404NotFound("credential not found")
 	}
-	// Validation failures here are about the submitted payload — an unknown
-	// type, a missing required field — so they belong to the client.
+	// A failure underneath the store — the database, the cipher, a secret
+	// manager — is a server fault. It is logged with its cause and answered
+	// generically, because its message can name a table, a host, or the tenant.
+	if internalFailure(err) {
+		return serverProblem(ctx, "credential operation failed", err)
+	}
+	// What is left is about the submitted payload — an unknown type, a missing
+	// required field — so it belongs to the client.
 	return huma.Error422UnprocessableEntity(err.Error())
 }
 
@@ -397,7 +403,7 @@ func (handler *Credentials) Test(ctx context.Context, input *testCredentialInput
 	tenant := handler.tenants.Resolve(ctx)
 	record, fields, err := handler.store.Resolve(ctx, tenant, input.ID)
 	if err != nil {
-		return nil, handler.problem(err)
+		return nil, handler.problem(ctx, err)
 	}
 
 	release, err := handler.claim(tenant, input.ID)
@@ -496,7 +502,7 @@ func (handler *Credentials) mergeStoredSecrets(ctx context.Context, tenant repos
 	}
 	stored, storedFields, err := handler.store.Resolve(ctx, tenant, input.Body.CredentialID)
 	if err != nil {
-		return nil, nil, handler.problem(err)
+		return nil, nil, handler.problem(ctx, err)
 	}
 	if stored.Type != input.Type {
 		return nil, nil, huma.Error422UnprocessableEntity(

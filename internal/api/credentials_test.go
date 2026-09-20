@@ -1,8 +1,10 @@
 package api_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -13,6 +15,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/kilaslabs/kilas-flow/internal/api"
 	"github.com/kilaslabs/kilas-flow/internal/config"
@@ -398,4 +402,98 @@ func TestOnlyOneTestOfACredentialRunsAtATime(t *testing.T) {
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status after the first finished = %d, want 200 (body: %s)", recorder.Code, recorder.Body)
 	}
+}
+
+// A failure underneath the store is a server fault, and it says so: it is
+// logged with its cause and answered generically.
+//
+// The review found the opposite in credentials, schedules, and datastores —
+// every error that was not "not found" became 422 carrying err.Error(), so a
+// driver message (table names, column names, the host) reached the caller and a
+// database outage read as a mistake the integrator had made.
+//
+// The store is faked rather than broken because what is under test is the
+// mapping, and a driver error is what the mapping has to recognise: the
+// Postgres error below is the shape a real deployment produces.
+func TestAStoreFailureIsLoggedAndNotAnsweredAsTheCallersMistake(t *testing.T) {
+	driver := fmt.Errorf("update credential: %w", &pgconn.PgError{
+		Severity: "ERROR", Code: "42P01", Message: `relation "credentials" does not exist`,
+	})
+
+	// serverProblem writes to the default logger, which main.go points at the
+	// configured handler; a test captures it there rather than through Deps.
+	var logged bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	for _, testCase := range []struct {
+		name    string
+		deps    api.Deps
+		method  string
+		path    string
+		handler func(http.Handler) *httptest.ResponseRecorder
+	}{
+		{
+			name:   "credentials",
+			deps:   api.Deps{DB: stubPinger{}, Credentials: failingCredentialStore{err: driver}},
+			method: http.MethodGet, path: "/api/v1/credentials",
+		},
+		{
+			name:   "schedules",
+			deps:   api.Deps{DB: stubPinger{}, Schedules: failingScheduleStore{err: driver}},
+			method: http.MethodGet, path: "/api/v1/schedules",
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			logged.Reset()
+			handler := newTestServer(t, testCase.deps)
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, httptest.NewRequest(testCase.method, testCase.path, nil))
+
+			if recorder.Code != http.StatusInternalServerError {
+				t.Fatalf("status = %d, want 500 (body: %s)", recorder.Code, recorder.Body)
+			}
+			// The driver's own text names the table; the caller gets the
+			// handler's sentence and nothing else.
+			for _, leak := range []string{"credentials", "relation", "42P01", "does not exist"} {
+				if strings.Contains(recorder.Body.String(), leak) {
+					t.Errorf("the 500 disclosed %q: %s", leak, recorder.Body)
+				}
+			}
+			// The cause is not discarded: it is in the log, beside the request
+			// id that ties it to the access line.
+			if !strings.Contains(logged.String(), "does not exist") {
+				t.Errorf("the cause is not in the log: %s", logged.String())
+			}
+		})
+	}
+}
+
+// failingCredentialStore answers every read with the supplied failure.
+type failingCredentialStore struct {
+	repository.CredentialRepository
+	err error
+}
+
+func (store failingCredentialStore) List(context.Context, repository.TenantScope) ([]credentials.Record, error) {
+	return nil, store.err
+}
+
+func (store failingCredentialStore) ListPage(context.Context, repository.TenantScope, repository.CredentialFilter) (repository.CredentialPage, error) {
+	return repository.CredentialPage{}, store.err
+}
+
+// failingScheduleStore answers every read with the supplied failure.
+type failingScheduleStore struct {
+	repository.ScheduleRepository
+	err error
+}
+
+func (store failingScheduleStore) List(context.Context, repository.TenantScope) ([]repository.Schedule, error) {
+	return nil, store.err
+}
+
+func (store failingScheduleStore) ListPage(context.Context, repository.TenantScope, repository.ScheduleFilter) (repository.SchedulePage, error) {
+	return repository.SchedulePage{}, store.err
 }

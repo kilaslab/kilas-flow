@@ -117,7 +117,7 @@ func (handler *Schedules) List(ctx context.Context, input *listSchedulesInput) (
 		return nil, huma.Error400BadRequest("schedule cursor is invalid")
 	}
 	if err != nil {
-		return nil, handler.problem(err)
+		return nil, handler.problem(ctx, err)
 	}
 	resources := make([]ScheduleResource, 0, len(page.Schedules))
 	for _, schedule := range page.Schedules {
@@ -140,7 +140,7 @@ func (handler *Schedules) Create(ctx context.Context, input *createScheduleInput
 		Cron: input.Body.Cron, Active: input.Body.Active, NextRunAt: next,
 	})
 	if err != nil {
-		return nil, handler.problem(err)
+		return nil, handler.problem(ctx, err)
 	}
 	return &createdScheduleOutput{
 		Status: http.StatusCreated, Location: "/api/v1/schedules/" + schedule.ID,
@@ -161,7 +161,7 @@ func (handler *Schedules) Update(ctx context.Context, input *updateScheduleInput
 		Cron: input.Body.Cron, Active: input.Body.Active, NextRunAt: next,
 	})
 	if err != nil {
-		return nil, handler.problem(err)
+		return nil, handler.problem(ctx, err)
 	}
 	return &scheduleOutput{Body: scheduleResource(schedule)}, nil
 }
@@ -172,7 +172,7 @@ func (handler *Schedules) Delete(ctx context.Context, input *schedulePathInput) 
 		return nil, huma.Error503ServiceUnavailable("schedules unavailable")
 	}
 	if err := handler.store.Delete(ctx, handler.tenants.Resolve(ctx), input.ID); err != nil {
-		return nil, handler.problem(err)
+		return nil, handler.problem(ctx, err)
 	}
 	return &deletedScheduleOutput{Status: http.StatusNoContent}, nil
 }
@@ -195,9 +195,16 @@ func (handler *Schedules) nextRun(expression string, active bool) (*time.Time, e
 	return &next, nil
 }
 
-func (handler *Schedules) problem(err error) error {
+func (handler *Schedules) problem(ctx context.Context, err error) error {
 	if errors.Is(err, repository.ErrNotFound) {
 		return huma.Error404NotFound("schedule not found")
+	}
+	// The store's own refusals are about the submitted schedule — a missing
+	// workflow, an expression it cannot read — and belong to the caller. A
+	// failure underneath it is a server fault, logged with its cause and
+	// answered generically.
+	if internalFailure(err) {
+		return serverProblem(ctx, "schedule operation failed", err)
 	}
 	return huma.Error422UnprocessableEntity(err.Error())
 }

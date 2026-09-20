@@ -356,3 +356,44 @@ func doJSON(t *testing.T, handler http.Handler, method, path string, body any) *
 	handler.ServeHTTP(recorder, request)
 	return recorder
 }
+
+// A failure underneath the engine is a server fault, and it is answered as one.
+//
+// The review found the reverse: every error that was not one of the engine's
+// own refusals became 422 carrying err.Error(), so a database failure arrived
+// as a caller mistake whose message named the physical table the driver could
+// not read.
+//
+// The table is dropped rather than faked because that is what the mapping has
+// to recognise — a real driver error, from a real query — and because the
+// datastore handler holds the engine itself rather than an interface.
+func TestADriverFailureUnderTheEngineIsNotAnsweredAsTheCallersMistake(t *testing.T) {
+	db, engine := sharedDatastoreDB(t)
+	handler := newTestServer(t, api.Deps{
+		DB: db, Datastores: engine, Tenants: fixedTenant{id: "tenant-a"},
+	})
+	created := createDatastore(t, handler, "Metrics")
+	requestJSON[datastoreResource](t, handler, http.MethodPost, "/api/v1/datastores/"+created.ID+"/columns",
+		map[string]any{"name": "title", "type": "string"}, http.StatusOK)
+
+	// The catalogue still knows the table; the table is gone. That is the state
+	// a failed migration or a restore from an older snapshot leaves behind.
+	var physical string
+	if err := db.Raw("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'ds_%'").
+		Row().Scan(&physical); err != nil {
+		t.Fatalf("find the physical table: %v", err)
+	}
+	if _, err := db.Exec("DROP TABLE " + physical).Rows(); err != nil {
+		t.Fatalf("drop the physical table: %v", err)
+	}
+
+	recorder := doJSON(t, handler, http.MethodGet, "/api/v1/datastores/"+created.ID+"/rows", nil)
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500 for a failure underneath the engine (body: %s)", recorder.Code, recorder.Body)
+	}
+	// The driver's text names the physical table, which is exactly what a
+	// caller must not learn from a server fault.
+	if strings.Contains(recorder.Body.String(), physical) || strings.Contains(recorder.Body.String(), "no such table") {
+		t.Fatalf("the 500 disclosed the driver's message: %s", recorder.Body)
+	}
+}
