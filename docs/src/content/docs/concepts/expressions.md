@@ -43,28 +43,35 @@ if you are reading an n8n export you will see the prefix.
 Resolution walks the whole parameter tree, so an expression can sit anywhere
 inside a nested object or list, not just at the top level of a parameter.
 
-## The grammar is deliberately not a language
+## What the grammar is
 
-An expression is a **root**, followed by field reads, index reads, and calls
-drawn from a closed allowlist. There are no operators, no bare identifiers and
-no general call syntax.
+An expression is **JavaScript expression syntax over a closed surface**. It
+begins with a root — `$json`, `$node[...]`, `$('Name')`, `$now` and the rest of
+the table below — but it is a language, not a single root followed by field
+reads: arithmetic and comparison operators, `&&`/`||`/`??`, the ternary,
+optional chaining (`?.`), template literals, array and object literals, and
+arrow functions inside the list methods all parse. `items.map(i => i.price)`
+and `$json.total > 100 ? 'large' : 'small'` are expressions a workflow can be
+saved with.
 
-The consequence is worth stating the way the package itself states it:
-`require('fs')` is not blocked by a denylist — it **cannot be written**, because
-a body that does not begin with a supported root never parses. There is no
-sandbox to escape, because there is no interpreter for a general language to
-escape from.
-
-Calls resolve at parse time, so naming a function that does not exist fails when
-the workflow is saved rather than on the first item that reaches that node.
+What it is not is a host language. Calls resolve against a closed surface at
+parse time — naming a function that does not exist fails when the workflow is
+saved, not on the first item that reaches the node — and `require('fs')` is not
+blocked by a denylist, it **cannot be written**: there is no `require`, no
+`process`, no module access and no way to reach the host at all. Statement-level
+syntax is refused too, because a parameter is an expression rather than a
+program: no assignment, no `;`, no `let`/`const`, no loop bodies. The shape of
+the surface — every root, every method and every namespace — is at
+[Expression grammar](/reference/expression-grammar/), and the server serves the
+same list at `GET /api/v1/expression-grammar`.
 
 ## The roots
 
 | Root | What it reads |
 | --- | --- |
 | `$json` | the current item's fields |
-| `$input` | every item on each input port |
-| `$node["Name"].json.field` | another node's first output item |
+| `$input` | every item on each input port, plus `.item`, `.first()`, `.last()`, `.all()` and `.isExecuted` |
+| `$node["Name"].json.field` | that node's item corresponding to the current one (the paired item, else the same position) |
 | `$('Name').item` | that node's single item, when its provenance is intact |
 | `$('Name').first()` | its first item |
 | `$('Name').last()` | its last item |
@@ -77,7 +84,12 @@ the workflow is saved rather than on the first item that reaches that node.
 | `$fromAI('name')` | a parameter an AI agent fills in |
 
 `$now` and `$today` are fixed for the whole evaluation of one parameter tree, so
-a node that reads the clock twice sees one instant — and a test can pin it.
+a node that reads the clock twice sees one instant — and a test can pin it. They
+read the workflow's `settings.timezone` and fall back to UTC, and they stringify
+as ISO 8601 with milliseconds and an offset rather than as a locale string.
+`$vars`, `$runIndex` and `$items('Name')` are also available; the
+[grammar reference](/reference/expression-grammar/) lists every root with what
+each one supports.
 
 `$fromAI` is gated: it is only meaningful in a parameter an AI agent fills, and
 anywhere else it is a clear error rather than a value. Without that gate an
@@ -196,16 +208,21 @@ of the same idea.
 
 ## What this deliberately is not
 
-There is no arithmetic, no comparison, no conditional and no user-defined
-function. A workflow that needs those uses the `IF` and `Switch` nodes for
-control flow, the Set node's assignment collection for shaping data, or — for
-genuinely arbitrary computation — the Code node, which runs in the WebAssembly
-sandbox described under [safety boundaries](/concepts/safety-boundaries/).
+There is no assignment, no declaration, no statement and no user-defined
+function: an expression computes a value, it does not run a program. There is
+also no host access, which is the part that matters — `$env` reaches only the
+variables an operator exported as `KILASFLOW_WORKFLOW_ENV_*`, and nothing in the
+surface can open a file, a socket or a module. A workflow that needs a loop, a
+variable or a helper function uses the nodes for it: `IF` and `Switch` for
+control flow, the Set node's assignment collection for shaping data, the Loop
+node for iteration, or — for genuinely arbitrary computation — the Code node,
+which runs in the WebAssembly sandbox described under [safety
+boundaries](/concepts/safety-boundaries/).
 
 That is the trade the design makes on purpose. Node parameters are authored by
 whoever can edit a workflow, which in an embedded multi-tenant deployment is a
-customer's end user. Keeping the parameter language incapable of computation is
-what makes "a tenant can write any expression they like" a safe sentence.
+customer's end user, so the parameter language is powerful enough to be useful
+and has no reach outside the run it is evaluating in.
 
 ## API operations
 
@@ -216,6 +233,9 @@ See the [HTTP API reference](/reference/api/).
 
 `internal/expression/doc.go` (the design rationale, and the most complete prose
 on this in the repository), `internal/expression/expression.go` (the marker and
-`Resolve`), `internal/expression/roots.go`, `internal/expression/functions.go`,
+`Resolve`), `internal/expression/parser.go` (what the surface is),
+`internal/expression/evaluator.go` (how it evaluates), `internal/expression/methods.go`
+(value methods), `internal/expression/globals.go` (namespaces and global
+functions), `internal/expression/luxon.go` (dates),
 `internal/interop/n8n/parameters.go` (the dialect translation),
 `cmd/kilasflow/main.go` (`workflowEnvironment`).

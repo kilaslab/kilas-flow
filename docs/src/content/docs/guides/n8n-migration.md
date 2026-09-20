@@ -432,12 +432,15 @@ The explicit marker exists to remove an ambiguity. In n8n a fixed string that
 genuinely begins with `=` is unrepresentable; here, a fixed string containing
 `{{ }}` is still just data, and only a value carrying the marker is evaluated.
 
-The grammar is deliberately not a language. An expression is a root followed by
-field reads, index reads and calls drawn from a closed allowlist — there are no
-operators, no bare identifiers and no general call syntax. `require('fs')` is
-not blocked by a denylist; it cannot be written, because a body that does not
-begin with a supported root never parses. Practically, the n8n expressions that
-survive an import unchanged are the ones that read data and transform it:
+The grammar is JavaScript expression syntax over a closed surface. Roots, field
+and index reads, calls, operators, the ternary, optional chaining, template
+literals, array and object literals and arrow functions all parse; what does not
+exist is a host. `require('fs')` is not blocked by a denylist — it cannot be
+written, because there is no `require` in the surface and no way to reach a
+module, a file or a process from a parameter. Statement-level code is refused
+too: a parameter is an expression, not a program. Practically, the n8n
+expressions that survive an import are the ones that read data and transform
+it:
 
 ```
 {{ $json.email.trim().toLowerCase() }}
@@ -445,9 +448,10 @@ survive an import unchanged are the ones that read data and transform it:
 {{ $now.plusDays(7).format('yyyy-MM-dd') }}
 ```
 
-Two differences to look for in your own workflows. **Arbitrary JavaScript inside
-`{{ }}` will not parse** — an n8n expression that does real computation between
-the braces has to become a node or a Go Code node. And **`$('Name').item` fails
+Two differences to look for in your own workflows. **A statement will not
+parse**: an n8n expression that assigns, declares a variable or spans several
+statements has to become a node or a Go Code node, even though its operators and
+arrow functions would have parsed. And **`$('Name').item` fails
 loudly rather than guessing**: when the paired-item lineage genuinely cannot be
 established, after a node that changed the item count or merged unrelated
 streams, it reports the reason instead of falling back to the first item, which
