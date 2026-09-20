@@ -3,7 +3,11 @@ package engine_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -2220,5 +2224,123 @@ func TestNestedLoopsIterateIndependently(t *testing.T) {
 	}
 	if got, want := len(nodeRun(t, result, "after").Output[0]), 6; got != want {
 		t.Errorf("the node after the outer loop received %d items, want %d", got, want)
+	}
+}
+
+// TestContinueOnFailSendsEveryItemToARealServer is the reported repro run
+// against a real server and the product's own HTTP node rather than a test
+// executor: three items, the middle one answered with a 500.
+//
+// Before the fix the executor stopped at the failing item, so the third request
+// was never sent, and the runner replaced the whole output with error items —
+// discarding the response the first item had already received.
+func TestContinueOnFailSendsEveryItemToARealServer(t *testing.T) {
+	var (
+		mu   sync.Mutex
+		seen []string
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		path := strings.TrimPrefix(request.URL.Path, "/")
+		mu.Lock()
+		seen = append(seen, path)
+		mu.Unlock()
+		if path == "fail" {
+			http.Error(writer, "boom", http.StatusInternalServerError)
+			return
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(writer, `{"sent":%q}`, path)
+	}))
+	defer server.Close()
+	host := strings.TrimPrefix(server.URL, "http://")
+
+	// The stub is a real local endpoint, which the policy has to name exactly:
+	// the private-address guard stays on for everything else.
+	policy := safehttp.Policy{
+		// The allowlist matches a hostname; the private-endpoint grant names
+		// the exact host:port the stub listens on.
+		AllowedHosts:            []string{"127.0.0.1"},
+		AllowedPrivateEndpoints: []string{host},
+		MaxResponseBytes:        1 << 20,
+		Timeout:                 5 * time.Second,
+	}
+	catalog := testCatalog(t, startType("test.three", "Three"))
+	document := func(settings map[string]any) workflow.Document {
+		return workflow.Document{
+			SchemaVersion: workflow.CurrentSchemaVersion,
+			ID:            "wf_real_http", Name: "Bulk send with one failure",
+			Nodes: []workflow.Node{
+				{ID: "src", Name: "Three", Type: "test.three", TypeVersion: workflow.V(1)},
+				{ID: "send", Name: "Send", Type: "kilasflow.httpRequest", TypeVersion: workflow.V(1),
+					Settings: settings,
+					Parameters: map[string]any{
+						"method": "GET",
+						"url":    map[string]any{"mode": "expression", "value": "http://" + host + "/{{ $json.p }}"},
+					}},
+			},
+			Connections: []workflow.Connection{mainEdge("c1", "src", "main", "send")},
+			Settings:    map[string]any{},
+		}
+	}
+
+	executors := engine.NewRegistry()
+	if err := executors.Register("test.three", engine.ExecutorFunc(
+		func(context.Context, workflow.IRNode, workflow.NodeInput, engine.Request) (workflow.NodeOutput, error) {
+			items := make([]workflow.Item, 0, 3)
+			for _, p := range []string{"ok1", "fail", "ok3"} {
+				items = append(items, workflow.Item{JSON: map[string]any{"p": p}})
+			}
+			return workflow.NodeOutput{items}, nil
+		})); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	if err := nodes.RegisterExecutors(executors, policy, sqlnode.Guard{}, ai.NewLoopRuntime(), nil, nil); err != nil {
+		t.Fatalf("RegisterExecutors() error = %v", err)
+	}
+
+	ir := compileDoc(t, catalog, document(map[string]any{"onError": "continueRegularOutput"}))
+	result, err := engine.NewRunner(executors).Run(context.Background(), ir, engine.Request{Input: workflow.Item{JSON: map[string]any{}}})
+	if err != nil {
+		t.Fatalf("Run() error = %v, want the failure tolerated", err)
+	}
+
+	mu.Lock()
+	requested := append([]string(nil), seen...)
+	mu.Unlock()
+	if got, want := strings.Join(requested, ","), "ok1,fail,ok3"; got != want {
+		t.Errorf("server saw %s, want %s — every item is sent, including the ones after a failure", got, want)
+	}
+
+	send := nodeRun(t, result, "send")
+	items := send.Output[0]
+	if len(items) != 3 {
+		t.Fatalf("Send emitted %d items, want one per input item", len(items))
+	}
+	if items[0].JSON["sent"] != "ok1" || items[2].JSON["sent"] != "ok3" {
+		t.Errorf("the successful responses were not kept: %#v", items)
+	}
+	descriptor, ok := items[1].JSON[engine.ErrorItemKey].(map[string]any)
+	if !ok {
+		t.Fatalf("the failed item = %#v, want an %s descriptor", items[1].JSON, engine.ErrorItemKey)
+	}
+	if message, _ := descriptor["message"].(string); !strings.Contains(message, "500") {
+		t.Errorf("error message = %#v, want the upstream status", descriptor["message"])
+	}
+
+	// The default is still to stop: without onError the same workflow fails on
+	// the first 500 and the third item is never sent, which is what the ticket
+	// reported as the difference from n8n.
+	mu.Lock()
+	seen = nil
+	mu.Unlock()
+	stopping := compileDoc(t, catalog, document(nil))
+	if _, err := engine.NewRunner(executors).Run(context.Background(), stopping, engine.Request{Input: workflow.Item{JSON: map[string]any{}}}); err == nil {
+		t.Fatal("a node without onError tolerated a failure")
+	}
+	mu.Lock()
+	requested = append([]string(nil), seen...)
+	mu.Unlock()
+	if got, want := strings.Join(requested, ","), "ok1,fail"; got != want {
+		t.Errorf("the stopping node sent %s, want %s", got, want)
 	}
 }
