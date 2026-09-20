@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kilaslabs/kilas-flow/internal/engine"
 	"github.com/kilaslabs/kilas-flow/internal/events"
 	"github.com/kilaslabs/kilas-flow/internal/execution"
 	"github.com/kilaslabs/kilas-flow/internal/node"
@@ -859,7 +860,19 @@ func writePage(w http.ResponseWriter, status int, page []byte) {
 }
 
 // respondFromExecution answers from a finished execution.
+//
+// The durable copy of a Respond node's answer is consulted first, and before
+// the status is even looked at: a node that answered the caller did answer,
+// whatever the rest of the graph did afterwards, and the boundary in another
+// process only ever reaches this function — it never sees the node's event,
+// because the cross-process relay carries identifiers rather than data. Reading
+// the answer back off the node's own run is what makes a split api+worker
+// deployment reply with the node's body instead of an empty 200 (BUG-cq4yk3).
 func (handler *Handler) respondFromExecution(w http.ResponseWriter, binding repository.WebhookBinding, record execution.Record) {
+	if response, found := findResponse(record.NodeRuns); found {
+		writeResponse(w, response)
+		return
+	}
 	if record.Status != execution.StatusSucceeded {
 		// A generic body on purpose. The caller is whoever found the URL, and
 		// the specific failure used to be returned here — node names and the
@@ -876,6 +889,29 @@ func (handler *Handler) respondFromExecution(w http.ResponseWriter, binding repo
 		return
 	}
 	handler.respondFromLastNode(w, binding, record)
+}
+
+// findResponse returns the answer a Respond to Webhook node left on its run.
+//
+// It walks the node runs in execution order and takes the first answer, the
+// same choice the live event path makes: with a Respond node on each arm of an
+// IF a graph can legitimately produce two, and a defined answer beats a
+// different one on each request. A node that answered nobody has no response
+// at all, so it is passed over without a special case.
+func findResponse(runs []execution.NodeRun) (nodeResponse, bool) {
+	ordered := append([]execution.NodeRun(nil), runs...)
+	sort.SliceStable(ordered, func(left, right int) bool {
+		return ordered[left].Sequence < ordered[right].Sequence
+	})
+	for _, run := range ordered {
+		if len(run.Response) == 0 {
+			continue
+		}
+		if response, ok := parseResponse(run.Response); ok {
+			return response, true
+		}
+	}
+	return nodeResponse{}, false
 }
 
 // respondFromLastNode answers with the items of the last node that ran.
@@ -953,16 +989,6 @@ func itemJSON(item workflow.Item) map[string]any {
 	return item.JSON
 }
 
-// ResponseEventName is the node event a Respond to Webhook node publishes.
-//
-// The response travels as an event rather than as item data. n8n passes the
-// Respond node's input items through unchanged, and a `$response` field written
-// onto them leaked into every downstream node's `$json` and into the stored
-// execution output — where a "respond and keep going" workflow's next node saw
-// an extra object it never asked for. An event keeps the answer out of the item
-// stream entirely and still reaches the HTTP boundary that is waiting for it.
-const ResponseEventName = "webhook.response"
-
 // nodeResponse is one answer produced by a Respond to Webhook node.
 type nodeResponse struct {
 	statusCode int
@@ -972,7 +998,7 @@ type nodeResponse struct {
 
 // responseFromEvent reads a published response, if this event is one.
 func responseFromEvent(event events.Event) (nodeResponse, bool) {
-	if string(event.Type) != ResponseEventName {
+	if string(event.Type) != engine.ResponseEventName {
 		return nodeResponse{}, false
 	}
 	return parseResponse(event.Data)

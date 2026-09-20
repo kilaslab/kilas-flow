@@ -1,0 +1,23 @@
+-- The HTTP answer a Respond to Webhook node produced, kept with its own run.
+--
+-- A Respond to Webhook node answers the caller itself, and the boundary that
+-- holds the caller's connection learns the answer from a published event. That
+-- works inside one process and only there: the cross-process event relay that
+-- carries execution events between an API process and a worker sends
+-- identifiers alone — an event's data holds a node's whole output, which
+-- exceeds PostgreSQL's ~8000-byte NOTIFY payload — and the woken process
+-- re-reads the durable record it names. So a `responseMode=responseNode`
+-- webhook served by a split api+worker deployment never saw the answer and
+-- replied with an empty 200 (BUG-cq4yk3).
+--
+-- The column is that durable copy. It sits on the node run because the answer
+-- is a fact about one node's execution, it is written by the same row write
+-- that already persists the node's input and output, and a reader can tell
+-- which node answered without re-running anything.
+--
+-- Nullable, and that is the point: every other node run answers nobody, and an
+-- empty value would claim a node produced an empty response. Additive and
+-- unindexed — it is read by the node runs of one execution, which the existing
+-- (tenant, execution) index already covers, and never searched.
+
+ALTER TABLE `execution_node_runs` ADD COLUMN `response` blob;

@@ -605,7 +605,7 @@ func (service *Service) persistTraceRow(ctx context.Context, tenant repository.T
 	now := time.Now().UTC()
 	if _, err := service.executions.CreateNodeRun(ctx, tenant, execution.NodeRun{
 		TenantID: record.TenantID, ExecutionID: record.ID, NodeID: run.NodeID, Attempt: attemptOf(run), RunIndex: run.RunIndex, Sequence: sequence,
-		Status: status, Input: input, Output: output, Error: errorPayload, StartedAt: now, FinishedAt: &now, LeaseOwner: record.LeaseOwner,
+		Status: status, Input: input, Output: output, Error: errorPayload, Response: run.Response, StartedAt: now, FinishedAt: &now, LeaseOwner: record.LeaseOwner,
 	}); err != nil {
 		return fmt.Errorf("persist node %q run: %w", run.NodeID, err)
 	}

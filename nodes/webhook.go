@@ -871,8 +871,11 @@ func executeRespond(ctx context.Context, ir workflow.IRNode, input workflow.Node
 			}
 			// An event rather than item data, so the HTTP boundary can answer
 			// the caller the moment this node runs while the rest of the graph
-			// keeps going.
-			request.Events.Emit(engine.NodeEvent{NodeID: ir.ID, Name: webhook.ResponseEventName, Detail: detail})
+			// keeps going. The runner also captures this event and writes it
+			// with the node's own trace row, which is how a boundary in another
+			// process — one that never sees the event, because the relay
+			// carries identifiers rather than data — still answers correctly.
+			request.Events.Emit(engine.NodeEvent{NodeID: ir.ID, Name: engine.ResponseEventName, Detail: detail})
 		}
 	}
 	return workflow.NodeOutput{out}, nil

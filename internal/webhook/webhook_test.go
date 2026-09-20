@@ -293,6 +293,62 @@ func TestWebhookRespondsFromARespondToWebhookNode(t *testing.T) {
 	}
 }
 
+func TestWebhookAnswersFromTheDurableResponseWhenTheBoundarySeesNoEvent(t *testing.T) {
+	h := newHarness(t)
+	active := h.activate(t, webhookDocument("Responder elsewhere", map[string]any{
+		"path": "reply-durable", "httpMethod": http.MethodPost, "responseMode": "responseNode",
+	}, workflow.Node{
+		ID: "respond", Name: "Respond to Webhook", Type: nodes.RespondNodeType, TypeVersion: workflow.V(1),
+		Parameters: map[string]any{
+			"respondWith":     "json",
+			"responseCode":    float64(201),
+			"responseBody":    `{"ok":true}`,
+			"responseHeaders": map[string]any{"X-Kilas": "yes"},
+		},
+	}))
+
+	// A split api+worker deployment: the graph runs in a worker process and the
+	// caller is held by an API process. The relay between them carries event
+	// identifiers rather than data, so this boundary's broker never sees the
+	// node's response event — a nil broker is exactly that.
+	triggers := webhook.NewRegistry()
+	if err := nodes.RegisterTriggerKinds(triggers); err != nil {
+		t.Fatalf("RegisterTriggerKinds() error = %v", err)
+	}
+	boundary := webhook.NewHandler(h.workflows, h.runner, h.credentials, nil, webhook.Limits{
+		MaxBodyBytes: 512, ResponseTimeout: 5 * time.Second,
+	}).WithTriggers(triggers)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			worked, _ := h.runtime.RunOnce(context.Background())
+			if !worked {
+				time.Sleep(5 * time.Millisecond)
+			}
+		}
+	}()
+
+	recorder := httptest.NewRecorder()
+	boundary.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, h.url(t, active), strings.NewReader(`{}`)))
+	<-done
+
+	// The answer was persisted with the Respond node's own run, so the boundary
+	// that never saw the event still answers with the node's status, body and
+	// headers — not the empty 200 a responseNode run used to get.
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want the node's 201 (body: %s)", recorder.Code, recorder.Body)
+	}
+	if got := recorder.Body.String(); got != `{"ok":true}` {
+		t.Errorf("body = %q, want the node's body", got)
+	}
+	if got := recorder.Header().Get("X-Kilas"); got != "yes" {
+		t.Errorf("X-Kilas = %q, want the node's header", got)
+	}
+}
+
 func TestWebhookAnswersEmptyWhenNoResponseNodeWasReached(t *testing.T) {
 	h := newHarness(t)
 	// Configured to answer from a node, but the graph has none.

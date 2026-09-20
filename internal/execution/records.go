@@ -95,6 +95,17 @@ type NodeRun struct {
 	Error      json.RawMessage `json:"error,omitempty"`
 	StartedAt  time.Time       `json:"startedAt"`
 	FinishedAt *time.Time      `json:"finishedAt,omitempty"`
+	// Response is the HTTP answer this node produced for a caller waiting on
+	// the run — a Respond to Webhook node's status, headers and body.
+	//
+	// It lives on the run rather than in the item stream, because n8n passes a
+	// Respond node's items through unchanged and a `$response` field on them
+	// reached every downstream node's `$json`. It is persisted rather than only
+	// published because the cross-process event relay carries identifiers
+	// alone: a boundary running in another process never sees the event's data,
+	// and without this column a split api+worker deployment answered a
+	// responseNode webhook with an empty 200 (BUG-cq4yk3).
+	Response json.RawMessage `json:"response,omitempty"`
 	// LeaseOwner fences trace writes to the worker claim that produced them.
 	LeaseOwner string `json:"-"`
 }

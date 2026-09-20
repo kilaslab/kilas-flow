@@ -646,6 +646,7 @@ func (service *Service) traceRows(record execution.Record, nodeTypes map[string]
 				TenantID: record.TenantID, ExecutionID: record.ID, NodeID: run.NodeID,
 				Attempt: attemptOf(run), RunIndex: run.RunIndex, Sequence: sequenceNumber,
 				Status: status, Input: input, Output: output, Error: errorPayload,
+				Response:  run.Response,
 				StartedAt: now, FinishedAt: &now, LeaseOwner: record.LeaseOwner,
 			},
 			event: events.Event{
@@ -1334,6 +1335,7 @@ func (service *Service) persistChild(ctx context.Context, tenant repository.Tena
 			TenantID: record.TenantID, ExecutionID: record.ID, NodeID: run.NodeID,
 			Attempt: attemptOf(run), RunIndex: run.RunIndex, Sequence: sequence + 1,
 			Status: status, Input: input, Output: output, Error: errorPayload,
+			Response:  run.Response,
 			StartedAt: now, FinishedAt: &now, LeaseOwner: record.LeaseOwner,
 		})
 	}

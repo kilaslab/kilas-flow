@@ -316,13 +316,18 @@ type executionNodeRunModel struct {
 	// the same run" and run index means "the Nth run", and conflating them
 	// makes a retry inside a loop unrepresentable. Additive and defaulted, so
 	// an existing database still opens.
-	RunIndex   int       `gorm:"not null;default:0;uniqueIndex:uidx_node_runs_attempt,priority:4"`
-	Attempt    int       `gorm:"not null;uniqueIndex:uidx_node_runs_attempt,priority:3"`
-	Sequence   int       `gorm:"not null;uniqueIndex:uidx_node_runs_sequence,priority:2"`
-	Status     string    `gorm:"not null;size:32"`
-	Input      []byte    `gorm:"not null"`
-	Output     []byte    `gorm:"not null"`
-	Error      []byte    `gorm:"not null"`
+	RunIndex int    `gorm:"not null;default:0;uniqueIndex:uidx_node_runs_attempt,priority:4"`
+	Attempt  int    `gorm:"not null;uniqueIndex:uidx_node_runs_attempt,priority:3"`
+	Sequence int    `gorm:"not null;uniqueIndex:uidx_node_runs_sequence,priority:2"`
+	Status   string `gorm:"not null;size:32"`
+	Input    []byte `gorm:"not null"`
+	Output   []byte `gorm:"not null"`
+	Error    []byte `gorm:"not null"`
+	// Response is the HTTP answer a Respond to Webhook node produced for the
+	// caller waiting on the run. Nullable, because the overwhelming majority of
+	// node runs answer nobody: an empty body would claim a node produced an
+	// empty response, which is a different statement (see 000013).
+	Response   []byte
 	StartedAt  time.Time `gorm:"not null"`
 	FinishedAt *time.Time
 	Execution  executionModel `gorm:"foreignKey:ExecutionID;references:ID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT"`

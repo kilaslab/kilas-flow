@@ -956,6 +956,16 @@ func nodeRunModel(tenant TenantScope, nodeRun execution.NodeRun) (executionNodeR
 	if err != nil {
 		return executionNodeRunModel{}, fmt.Errorf("node run error: %w", err)
 	}
+	// A node that answered nobody stores NULL rather than an empty body: the
+	// two are different answers, and only one of them means "this node replied
+	// to the caller".
+	var response []byte
+	if len(nodeRun.Response) > 0 {
+		response, err = payload(nodeRun.Response)
+		if err != nil {
+			return executionNodeRunModel{}, fmt.Errorf("node run response: %w", err)
+		}
+	}
 	return executionNodeRunModel{
 		ID:          nodeRun.ID,
 		TenantID:    tenant.ID,
@@ -968,6 +978,7 @@ func nodeRunModel(tenant TenantScope, nodeRun execution.NodeRun) (executionNodeR
 		Input:       input,
 		Output:      output,
 		Error:       errorPayload,
+		Response:    response,
 		StartedAt:   nodeRun.StartedAt,
 		FinishedAt:  nodeRun.FinishedAt,
 	}, nil
@@ -1201,6 +1212,7 @@ func nodeRunFromModel(model executionNodeRunModel) execution.NodeRun {
 		Input:       append(json.RawMessage(nil), model.Input...),
 		Output:      append(json.RawMessage(nil), model.Output...),
 		Error:       append(json.RawMessage(nil), model.Error...),
+		Response:    append(json.RawMessage(nil), model.Response...),
 		StartedAt:   model.StartedAt,
 		FinishedAt:  model.FinishedAt,
 	}
