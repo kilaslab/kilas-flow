@@ -11,7 +11,7 @@
 	import { createListCredentials } from '$lib/api/generated/credentials/credentials';
 	import { createGetExpressionGrammar, createListNodeTypes } from '$lib/api/generated/nodes/nodes';
 	import { getExecution } from '$lib/api/generated/executions/executions';
-	import { createWorkflowDiagnostics } from '$lib/api/generated/interop/interop';
+	import { workflowDiagnostics } from '$lib/api/generated/interop/interop';
 	import { activateWorkflow, deactivateWorkflow, runWorkflow } from '$lib/api/generated/workflow-lifecycle/workflow-lifecycle';
 	import { createGetWorkflow, getWorkflow, updateWorkflow } from '$lib/api/generated/workflows/workflows';
 	import type { CredentialResource, Definition, ExpressionGrammar, WorkflowDiagnosticsResource, WorkflowDocumentInput, WorkflowResource } from '$lib/api/generated/models';
@@ -104,11 +104,11 @@
 	 * The revision the canvas is showing, which is the revision its import
 	 * report belongs to.
 	 *
-	 * Deliberately the revision the canvas was built from rather than the
-	 * newest one: a save appends a revision nobody imported, and a canvas still
-	 * drawing the imported nodes must not lose the badges that say how each of
-	 * them was translated. A restore or a reload moves `canvasFrom`, and the
-	 * report follows it.
+	 * Deliberately the revision the canvas was built from rather than the newest
+	 * one: a save appends a revision nobody imported, and a canvas still drawing
+	 * the imported nodes must not lose the badges that say how each of them was
+	 * translated. A restore or a reload moves `canvasFrom`, and the report
+	 * follows it.
 	 */
 	const reportSource = $derived.by(() => {
 		const [workflowID, versionID] = (canvasFrom ?? '').split(':');
@@ -119,22 +119,36 @@
 	 * What the import could not carry for that revision, read from the server.
 	 *
 	 * Not remembered from the import response: that response died with the
-	 * dialog, and this is the copy that survives a reload, a different tab and
-	 * a different person opening the workflow (BUG-f9frth).
+	 * dialog, and this is the copy that survives a reload, a different tab and a
+	 * different person opening the workflow (BUG-f9frth).
+	 *
+	 * Read as a plain request rather than through a query-cache entry: the
+	 * answer describes exactly one revision, and a stale one rendered against
+	 * the revision the canvas moved on to would name nodes that are no longer
+	 * there. The token drops an answer that arrived after the canvas moved.
 	 */
-	const importReport = createWorkflowDiagnostics<WorkflowDiagnosticsResource | null>(
-		() => reportSource?.workflowID ?? '',
-		() => ({ versionId: reportSource?.versionID }),
-		() => ({
-			query: {
-				// An empty id would be a request for /workflows//diagnostics; the
-				// report is asked for once the canvas knows what it is showing.
-				enabled: Boolean(reportSource),
-				select: (response) => (response.status === 200 ? response.data : null)
-			}
-		})
-	);
-	const importIssues = $derived(importReport.data?.issues ?? []);
+	let importReport = $state<WorkflowDiagnosticsResource | null>(null);
+	let reportToken = 0;
+	$effect(() => {
+		const source = reportSource;
+		const token = ++reportToken;
+		if (!source) {
+			importReport = null;
+			return;
+		}
+		void workflowDiagnostics(source.workflowID, { versionId: source.versionID })
+			.then((response) => {
+				if (token === reportToken) importReport = response.status === 200 ? response.data : null;
+			})
+			.catch(() => {
+				// The report explains a revision; it is not a precondition for
+				// editing one. A read that fails leaves the canvas exactly as it
+				// was, with no badges and no report to open.
+				if (token === reportToken) importReport = null;
+			});
+	});
+
+	const importIssues = $derived(importReport?.issues ?? []);
 	const importCounts = $derived(summarizeDiagnostics(importIssues));
 	let reportOpen = $state(false);
 
@@ -145,6 +159,7 @@
 		issues: importIssues,
 		openReport: () => (reportOpen = true)
 	}));
+
 	/** The draft the last save carried, kept for the overwrite answer. */
 	let pendingSave = $state<WorkflowDocumentInput | null>(null);
 	let pollingRun = 0;
@@ -459,7 +474,7 @@
 	<p class="min-w-0 max-w-32 flex-1 truncate text-xs font-medium sm:max-w-44">{currentWorkflow?.name ?? 'Loading…'}</p>
 	{#if currentWorkflow}
 		<span class="ml-auto flex shrink-0 items-center gap-1.5">
-			{#if importReport.data?.source}
+			{#if importReport?.source}
 				<!-- The report is reachable for as long as the revision it describes
 				     is on the canvas, and it is the only place the import's verdict
 				     survives: blocking entries mean this workflow will not activate,
@@ -541,6 +556,6 @@
 				onDismissNotice={(key) => (notices = dismissNotice(notices, key))}
 			/>
 		{/key}
-		<ImportReportDrawer bind:open={reportOpen} workflowName={currentWorkflow.name} report={importReport.data ?? null} />
+		<ImportReportDrawer bind:open={reportOpen} workflowName={currentWorkflow.name} report={importReport} />
 	{/if}
 </section>
