@@ -608,3 +608,46 @@ func TestInputAndNamespacesResolveToJSONValues(t *testing.T) {
 		t.Errorf("$('Many') = %s, want the node view without the refusal marker", nodeJSON)
 	}
 }
+
+// TestDelimiterScanUnderstandsNestedLiterals is the JSON-body spelling: the
+// splitter cut the body at the first `}}` without knowing about strings,
+// templates or object literals, so any valid body whose last nested literal
+// ended in `}}` was truncated before the quote-aware parser ever ran — and the
+// user-visible message blamed the expression rather than the delimiter.
+func TestDelimiterScanUnderstandsNestedLiterals(t *testing.T) {
+	t.Parallel()
+
+	for template, want := range map[string]any{
+		// The two spellings the ticket's JSON-body use case needs.
+		"{{ JSON.stringify({a:{b:1}}) }}": `{"a":{"b":1}}`,
+		`{{ JSON.parse('{"a":{"b":1}}') }}`: map[string]any{
+			"a": map[string]any{"b": float64(1)},
+		},
+		"{{ JSON.stringify({body: {text: $json.name}}) }}": `{"body":{"text":"Ada Lovelace"}}`,
+		"{{ {a:{b:{c:1}}}.a.b.c }}":                        float64(1),
+		"{{ JSON.stringify({a:{b:1}, c:[1,{d:2}]}) }}":     `{"a":{"b":1},"c":[1,{"d":2}]}`,
+		// A literal that contains the closer, in each quoting style.
+		"{{ '}}' }}":          "}}",
+		`{{ "}}" }}`:          "}}",
+		"{{ `x}}y` }}":        "x}}y",
+		"{{ 'a}}' + '}}b' }}": "a}}}}b",
+		"{{ `a ${'}'} b` }}":  "a } b",
+		// A closing brace inside a template's interpolation is the
+		// interpolation's, not the expression's.
+		"{{ `v=${ {b:1}.b }` }}": "v=1",
+		// Text after the body is still text.
+		"pre {{ JSON.stringify({a:{b:1}}) }} post": `pre {"a":{"b":1}} post`,
+	} {
+		got := evaluateOne(t, template, parityContext())
+		if !sameValue(got, want) {
+			t.Errorf("Evaluate(%s) = %#v, want %#v", template, got, want)
+		}
+	}
+
+	// A body that really is unterminated still fails, naming the delimiter.
+	if _, err := expression.Evaluate("{{ $json.name }", parityContext()); err == nil {
+		t.Error("an unterminated expression was accepted")
+	} else if !strings.Contains(err.Error(), "}}") {
+		t.Errorf("error = %v, want it to name the missing closing braces", err)
+	}
+}

@@ -296,8 +296,8 @@ func split(template string) ([]segment, error) {
 			segments = append(segments, segment{text: rest[:start]})
 		}
 		remainder := rest[start+2:]
-		end := strings.Index(remainder, "}}")
-		if end < 0 {
+		end, found := closingBraces(remainder)
+		if !found {
 			return nil, fmt.Errorf("expression is missing its closing }}")
 		}
 		segments = append(segments, segment{text: strings.TrimSpace(remainder[:end]), isExpression: true})
@@ -307,6 +307,92 @@ func split(template string) ([]segment, error) {
 		segments = append(segments, segment{text: ""})
 	}
 	return segments, nil
+}
+
+// closingBraces finds where an expression body ends: the index of the `}}` that
+// closes it, or false when the body never closes.
+//
+// Searching for the two characters is wrong, because a body is an expression
+// and `}}` is ordinary text inside a string literal, a template or a nested
+// object. `JSON.parse('{"a":{"b":1}}')` — the spelling a JSON request body
+// needs — was cut in the middle and reported as a syntax error in the
+// expression rather than as a problem with the delimiter.
+//
+// The scan follows the quoting rules the parser does: a quoted or backticked
+// literal is skipped whole, a `${…}` inside a template ends at its own closing
+// brace, and an object brace has to close before the delimiter can.
+func closingBraces(text string) (int, bool) {
+	depth := 0
+	for index := 0; index < len(text); index++ {
+		switch text[index] {
+		case '\'', '"', '`':
+			end, ok := skipLiteral(text, index)
+			if !ok {
+				return 0, false
+			}
+			index = end
+		case '{':
+			depth++
+		case '}':
+			if depth == 0 {
+				if index+1 < len(text) && text[index+1] == '}' {
+					return index, true
+				}
+				continue
+			}
+			depth--
+		}
+	}
+	return 0, false
+}
+
+// skipLiteral returns the index of the closing quote of the string or template
+// literal that starts at the given index, or false when it never closes.
+func skipLiteral(text string, start int) (int, bool) {
+	quote := text[start]
+	for index := start + 1; index < len(text); index++ {
+		switch text[index] {
+		case '\\':
+			index++
+		case quote:
+			return index, true
+		case '$':
+			// A template's interpolation is an expression of its own, with its
+			// own braces and its own literals.
+			if quote == '`' && index+1 < len(text) && text[index+1] == '{' {
+				end, ok := skipInterpolation(text, index+1)
+				if !ok {
+					return 0, false
+				}
+				index = end
+			}
+		}
+	}
+	return 0, false
+}
+
+// skipInterpolation returns the index of the brace that closes the `${` at the
+// given index.
+func skipInterpolation(text string, open int) (int, bool) {
+	depth := 0
+	for index := open; index < len(text); index++ {
+		switch text[index] {
+		case '\'', '"', '`':
+			end, ok := skipLiteral(text, index)
+			if !ok {
+				return 0, false
+			}
+			index = end
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return index, true
+			}
+		}
+	}
+	return 0, false
 }
 
 func anyMap(source map[string]any) map[string]any {
