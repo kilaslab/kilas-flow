@@ -291,3 +291,115 @@ func spaTree() fstest.MapFS {
 		"favicon.svg":                       {Data: []byte("<svg/>")},
 	}
 }
+
+// The dashboard is one origin's own page: anything else that frames it is
+// framing a session-bearing UI it must not see.
+func TestHandlerRefusesToBeFramedOffOrigin(t *testing.T) {
+	handler := newHandler(spaTree(), placeholderHTML, WithFrameAncestors([]string{"https://host.example"}))
+
+	for _, path := range []string{"/", "/app/workflows/wf_1", "/settings/credentials"} {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+
+		if got := rec.Header().Get("Content-Security-Policy"); got != "frame-ancestors 'self'" {
+			t.Errorf("GET %s Content-Security-Policy = %q, want frame-ancestors 'self'", path, got)
+		}
+		if got := rec.Header().Get("X-Frame-Options"); got != "SAMEORIGIN" {
+			t.Errorf("GET %s X-Frame-Options = %q, want SAMEORIGIN", path, got)
+		}
+	}
+}
+
+// /embed/ exists to be framed, but only by the hosts the deployment approved.
+// The legacy header is omitted rather than sent: it cannot name a list, so any
+// value would contradict the policy a browser actually enforces.
+func TestHandlerFramesTheEmbedRouteOnlyForAllowlistedOrigins(t *testing.T) {
+	handler := newHandler(spaTree(), placeholderHTML,
+		WithFrameAncestors([]string{"https://host.example", "HTTPS://Partner.Example/"}))
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/embed/wf_1", nil))
+
+	want := "frame-ancestors 'self' https://host.example https://partner.example"
+	if got := rec.Header().Get("Content-Security-Policy"); got != want {
+		t.Errorf("Content-Security-Policy = %q, want %q", got, want)
+	}
+	if got := rec.Header().Get("X-Frame-Options"); got != "" {
+		t.Errorf("X-Frame-Options = %q, want the header omitted on the embed route", got)
+	}
+	if got := rec.Header().Get("Content-Security-Policy"); strings.Contains(got, "evil.example") {
+		t.Errorf("a disallowed origin reached the policy: %q", got)
+	}
+}
+
+// Nothing is configured on an instance that never embeds, and the embed route
+// must still not be framable by a stranger.
+func TestHandlerWithoutConfiguredOriginsFramesNothing(t *testing.T) {
+	for _, handler := range []http.Handler{
+		newHandler(spaTree(), placeholderHTML),
+		newHandler(spaTree(), placeholderHTML, WithFrameAncestors(nil)),
+		Handler(),
+	} {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/embed/wf_1", nil))
+
+		if got := rec.Header().Get("Content-Security-Policy"); got != "frame-ancestors 'self'" {
+			t.Errorf("Content-Security-Policy = %q, want frame-ancestors 'self'", got)
+		}
+		if got := rec.Header().Get("X-Frame-Options"); got != "" {
+			t.Errorf("X-Frame-Options = %q, want the header omitted on the embed route", got)
+		}
+	}
+}
+
+// A configuration entry that is not an origin is dropped rather than written
+// into the policy, where it would be a source no browser matches or a parse
+// error that discards the directive for the real hosts too.
+func TestHandlerDropsUnusableFrameAncestorEntries(t *testing.T) {
+	handler := newHandler(spaTree(), placeholderHTML,
+		WithFrameAncestors([]string{"", "   ", "not an origin", "ftp://host.example", "javascript:alert(1)", "https://host.example"}))
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/embed/wf_1", nil))
+
+	if got := rec.Header().Get("Content-Security-Policy"); got != "frame-ancestors 'self' https://host.example" {
+		t.Errorf("Content-Security-Policy = %q, want only the usable origin", got)
+	}
+}
+
+// nosniff and the referrer policy belong to every response, not only to the
+// document: a sniffed asset is how an uploaded or served file becomes script,
+// and the referrer is what leaks a workspace path to a third-party asset host.
+func TestHandlerHardensEveryResponse(t *testing.T) {
+	handler := newHandler(spaTree(), placeholderHTML)
+
+	cases := []struct {
+		name   string
+		method string
+		path   string
+	}{
+		{"document", http.MethodGet, "/"},
+		{"hashed asset", http.MethodGet, "/_app/immutable/entry/start.abc.js"},
+		{"vendored bundle", http.MethodGet, "/vendor/scalar.js"},
+		{"placeholder fallback", http.MethodGet, "/deeply/nested/unknown/route"},
+		{"missing asset", http.MethodGet, "/_app/immutable/entry/gone.js"},
+		{"method refusal", http.MethodPost, "/"},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, httptest.NewRequest(testCase.method, testCase.path, nil))
+
+			if got := rec.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+				t.Errorf("X-Content-Type-Options = %q, want nosniff", got)
+			}
+			if got := rec.Header().Get("Referrer-Policy"); got != "strict-origin-when-cross-origin" {
+				t.Errorf("Referrer-Policy = %q", got)
+			}
+			if rec.Header().Get("Content-Security-Policy") == "" {
+				t.Error("no frame-ancestors policy on a response from the web handler")
+			}
+		})
+	}
+}

@@ -16,6 +16,12 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	// Aliased because this file also imports the standard library's "embed",
+	// which is what carries the SPA into the binary. The two are unrelated: the
+	// stdlib package is a compiler directive, this one is the iframe session
+	// allowlist.
+	kembed "github.com/kilaslabs/kilas-flow/internal/embed"
 )
 
 // assets holds the built SPA.
@@ -67,7 +73,56 @@ const (
 	// htmlContentType is what the SPA document and the placeholder are served
 	// as, in both cases with the charset a browser needs to read them.
 	htmlContentType = "text/html; charset=utf-8"
+
+	// embedPrefix is the route family the iframe editor is served from. It is
+	// the one route a foreign page is meant to frame, which is why the framing
+	// policy below is chosen by prefix rather than sent uniformly.
+	embedPrefix = "/embed/"
+
+	// referrerPolicy keeps the workspace's own paths out of the Referer a
+	// third-party asset receives, while still sending the origin to the API's
+	// own hosts (strict-origin-when-cross-origin).
+	referrerPolicy = "strict-origin-when-cross-origin"
 )
+
+// HandlerOption customises the SPA handler at construction.
+type HandlerOption func(*handlerOptions)
+
+// handlerOptions is the hardening configuration the handler is built with.
+//
+// It exists because the only knob that cannot be a constant — which hosts may
+// frame /embed/* — lives in deployment configuration the web package never
+// sees, so the composition root passes it in rather than this package reaching
+// for a global.
+type handlerOptions struct {
+	// frameAncestors are the normalised origins allowed to frame /embed/*,
+	// the deployment's embed allowlist.
+	frameAncestors []string
+}
+
+// WithFrameAncestors lists the host origins allowed to frame the embed route.
+//
+// The dashboard is never frameable by another site, but /embed/ is framable by
+// exactly the hosts the operator approved, and the CSP's frame-ancestors is the
+// only directive that can express that list. X-Frame-Options cannot — it takes
+// one of three fixed values and predates origin lists — so it is omitted on
+// that route rather than sent with a value that would contradict the policy.
+//
+// Origins are normalised through kembed.NormalizeOrigin, which drops anything
+// that is not scheme://host[:port]. Dropping is deliberate: a malformed source
+// written into a CSP is at best a source no browser matches, and at worst a
+// parse error that discards the whole directive and leaves the page unframed by
+// nobody.
+func WithFrameAncestors(origins []string) HandlerOption {
+	return func(options *handlerOptions) {
+		options.frameAncestors = make([]string, 0, len(origins))
+		for _, origin := range origins {
+			if normalized := kembed.NormalizeOrigin(origin); normalized != "" {
+				options.frameAncestors = append(options.frameAncestors, normalized)
+			}
+		}
+	}
+}
 
 // FS returns the embedded SPA rooted at the dist directory.
 func FS() (fs.FS, error) {
@@ -79,7 +134,7 @@ func FS() (fs.FS, error) {
 // Requests for files that exist are served directly; anything else falls back
 // to the SPA document so client-side routes such as /app/workflows/:id survive
 // a hard refresh or a deep link.
-func Handler() http.Handler {
+func Handler(options ...HandlerOption) http.Handler {
 	sub, err := FS()
 	if err != nil {
 		// Only reachable if the embedded tree is malformed, which is a build-time
@@ -87,12 +142,18 @@ func Handler() http.Handler {
 		panic("web: cannot open embedded SPA: " + err.Error())
 	}
 
-	return newHandler(sub, placeholderHTML)
+	return newHandler(sub, placeholderHTML, options...)
 }
 
 // newHandler is Handler with its tree and its placeholder injected, so the
 // tests can drive both states — a built SPA and a fresh clone — without a build.
-func newHandler(sub fs.FS, placeholder []byte) http.Handler {
+func newHandler(sub fs.FS, placeholder []byte, options ...HandlerOption) http.Handler {
+	settings := handlerOptions{}
+	for _, option := range options {
+		option(&settings)
+	}
+	security := newSecurityHeaders(settings)
+
 	spa, _ := loadAsset(sub, indexName)
 	fallback := &asset{
 		body:        placeholder,
@@ -101,6 +162,8 @@ func newHandler(sub fs.FS, placeholder []byte) http.Handler {
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		security.apply(w.Header(), isEmbedPath(r.URL.Path))
+
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			w.Header().Set("Allow", "GET, HEAD")
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -131,6 +194,65 @@ func newHandler(sub fs.FS, placeholder []byte) http.Handler {
 			fallback.serve(w, r, cacheControlFor(indexName))
 		}
 	})
+}
+
+// securityHeaders is the hardening every response from this handler carries.
+//
+// One value is built per handler rather than per request: the policy is a
+// function of configuration that cannot change while the process runs, and
+// rebuilding the same string on every asset request would spend an allocation
+// on the hot path for nothing.
+type securityHeaders struct {
+	// dashboardPolicy and embedPolicy are the frame-ancestors directives the
+	// two route families are served with.
+	dashboardPolicy string
+	embedPolicy     string
+}
+
+// newSecurityHeaders builds the policies for one handler configuration.
+func newSecurityHeaders(settings handlerOptions) securityHeaders {
+	// 'self' is in both lists. On the dashboard it is the whole policy: the
+	// operator's own pages may frame it, and framing it from anywhere else is
+	// what turns a destructive button into a clickjacking target. On the embed
+	// route it lets the dashboard preview the iframe the host page will show,
+	// which is a same-origin frame and needs no allowlist entry.
+	embedPolicy := frameAncestorsSelf
+	if len(settings.frameAncestors) > 0 {
+		embedPolicy += " " + strings.Join(settings.frameAncestors, " ")
+	}
+	return securityHeaders{dashboardPolicy: frameAncestorsSelf, embedPolicy: embedPolicy}
+}
+
+// frameAncestorsSelf is the source list that permits only the page's own
+// origin to frame it.
+const frameAncestorsSelf = "frame-ancestors 'self'"
+
+// apply writes the hardening headers a response is served with.
+//
+// Which framing policy applies depends on the route, and the legacy
+// X-Frame-Options header is sent only where it agrees with the CSP: it cannot
+// express an origin list, so on the embed route it would either be ignored by a
+// browser that honours frame-ancestors or — worse — be honoured by one that
+// does not and refuse the frames the allowlist permits.
+func (headers securityHeaders) apply(header http.Header, embed bool) {
+	header.Set("X-Content-Type-Options", "nosniff")
+	header.Set("Referrer-Policy", referrerPolicy)
+
+	if embed {
+		header.Set("Content-Security-Policy", headers.embedPolicy)
+		return
+	}
+	header.Set("Content-Security-Policy", headers.dashboardPolicy)
+	header.Set("X-Frame-Options", "SAMEORIGIN")
+}
+
+// isEmbedPath reports whether a request path is the iframe editor route.
+//
+// A prefix test rather than a router match because this handler is the SPA's
+// catch-all: every client route arrives here as a path, and only the embed
+// family is framable by another origin.
+func isEmbedPath(urlPath string) bool {
+	return urlPath == strings.TrimSuffix(embedPrefix, "/") || strings.HasPrefix(urlPath, embedPrefix)
 }
 
 // requestName maps a request path to a name inside the embedded tree.
