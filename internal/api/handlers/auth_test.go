@@ -249,6 +249,23 @@ func TestLoginRefusesWhileEveryPasswordSlotIsBusy(t *testing.T) {
 	if elapsed := time.Since(started); elapsed > 5*time.Second {
 		t.Errorf("the refusal took %s, want it bounded", elapsed)
 	}
+
+	// An address with no account still costs a decoy hash, and that hash is
+	// capped by the same slots: refusing it here is what proves the decoy work
+	// is still done rather than skipped once the throttle was added.
+	unknown := loginTestHandler(t, &loginStore{err: repository.ErrNotFound})
+	for slot := 0; slot < maxConcurrentPasswordChecks; slot++ {
+		unknown.passwords <- struct{}{}
+	}
+	defer func() {
+		for slot := 0; slot < maxConcurrentPasswordChecks; slot++ {
+			<-unknown.passwords
+		}
+	}()
+	decoy := loginAttempt(t, unknown, "203.0.113.31:40000", "nobody@example.test", "guess")
+	if status := loginStatus(t, decoy); status != http.StatusServiceUnavailable {
+		t.Errorf("an unknown address with every slot busy = %d, want 503", status)
+	}
 }
 
 // The address has to come from the connection. A caller who could name it in a
