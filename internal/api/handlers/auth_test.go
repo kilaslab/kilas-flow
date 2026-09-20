@@ -61,13 +61,27 @@ func loginTestKey() []byte {
 	return key
 }
 
+// loginTestHandler builds a handler whose sign-in throttle runs on a stopped
+// clock.
+//
+// The throttle refills with wall time, so a test that spends an allowance and
+// then looks for a refusal is asserting on how long its own attempts take
+// unless it says what "now" is. On the loaded machine the landing gates run on,
+// one wrong-password attempt can cost longer than the six seconds a token takes
+// to come back, and the bucket refilled underneath the loop — that is the flake
+// this file used to fail with. Held still, the clock lets the refusal be
+// asserted on the attempt count, which is the limiter's actual contract, and
+// leaves every attempt's real cost out of the result.
 func loginTestHandler(t *testing.T, store repository.AuthRepository) *Auth {
 	t.Helper()
 	issuer, err := auth.NewIssuer(loginTestKey(), time.Hour, nil)
 	if err != nil {
 		t.Fatalf("NewIssuer() error = %v", err)
 	}
-	return NewAuth(store, issuer, nil, nil)
+	stopped := time.Date(2026, 9, 20, 9, 0, 0, 0, time.UTC)
+	limiter := middleware.NewLoginLimiter(middleware.DefaultLoginAttemptsPerMinute).
+		WithClock(func() time.Time { return stopped })
+	return NewAuth(store, issuer, nil, nil).WithLoginLimiter(limiter)
 }
 
 // cheapPasswordHash stores a password at one PBKDF2 iteration.
@@ -125,19 +139,17 @@ func retryAfter(t *testing.T, err error) int {
 	return seconds
 }
 
-// waitForRefusal spends a bucket until the handler refuses an attempt.
+// waitForRefusal spends an allowance until the handler refuses an attempt.
 //
-// What the allowance is, exactly, is proven in internal/api/middleware against
-// a clock the test controls. What the handler tests prove is the wiring — which
-// key gets spent, and what the answer is when a bucket is empty — and the count
-// cannot be asserted from out here: a bucket refills at one token every six
-// seconds, while a slow machine (the race detector, a shared runner) can spend
-// three or four seconds on a single wrong-password attempt. Three allowances is
-// the bound rather than the allowance because one refusal per six seconds
-// cannot outrun a loop that costs about one attempt per second.
+// The handler's limiter runs on a clock this file holds still, so nothing about
+// refill can intrude and the refusal is asserted on the attempt count rather
+// than on how long the attempts take. One allowance is the bound: a spray from
+// one address empties the address bucket on its tenth attempt and is refused on
+// the eleventh, and a run at a single account empties the account's bucket
+// faster still, because a wrong password costs it two tokens.
 func waitForRefusal(t *testing.T, attempt func(i int) error) error {
 	t.Helper()
-	bound := 3 * middleware.DefaultLoginAttemptsPerMinute
+	bound := middleware.DefaultLoginAttemptsPerMinute + 1
 	for i := range bound {
 		err := attempt(i)
 		switch status := loginStatus(t, err); status {
@@ -172,6 +184,35 @@ func TestLoginRefusesASprayFromOneAddress(t *testing.T) {
 	other := loginAttempt(t, handler, "203.0.113.8:40002", "someone@example.test", "guess")
 	if status := loginStatus(t, other); status != http.StatusUnauthorized {
 		t.Errorf("a different address = %d, want the ordinary 401", status)
+	}
+}
+
+// NewAuth builds the sign-in throttle itself rather than leaving it to the
+// caller, because an endpoint this expensive must not be unprotected by an
+// omission. Every other test here replaces that limiter through WithLoginLimiter
+// to drive the bucket it wants, so this is the only one that proves the default
+// the server actually ships: it builds the handler the way the server does and
+// holds that limiter's own clock still, so the refusal is asserted on the
+// attempt count rather than on how long the attempts take.
+func TestLoginRefusesASprayWithTheDefaultLimiter(t *testing.T) {
+	issuer, err := auth.NewIssuer(loginTestKey(), time.Hour, nil)
+	if err != nil {
+		t.Fatalf("NewIssuer() error = %v", err)
+	}
+	// No WithLoginLimiter: whatever NewAuth constructs is what is under test.
+	handler := NewAuth(&loginStore{err: repository.ErrNotFound}, issuer, nil, nil)
+	if handler.limiter == nil {
+		t.Fatal("NewAuth() built no sign-in throttle; a nil one admits every attempt")
+	}
+	stopped := time.Date(2026, 9, 20, 9, 0, 0, 0, time.UTC)
+	handler.limiter.WithClock(func() time.Time { return stopped })
+
+	const attacker = "203.0.113.70:40001"
+	refusal := waitForRefusal(t, func(i int) error {
+		return loginAttempt(t, handler, attacker, "nobody"+strconv.Itoa(i)+"@example.test", "guess")
+	})
+	if retryAfter(t, refusal) < 1 {
+		t.Error("the refusal did not say how long to wait")
 	}
 }
 

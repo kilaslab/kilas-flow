@@ -15,8 +15,7 @@ import (
 // are proven without sleeping.
 func clockedLimiter(perMinute int) (*LoginLimiter, *time.Time) {
 	moment := time.Date(2026, 9, 20, 9, 0, 0, 0, time.UTC)
-	limiter := NewLoginLimiter(perMinute)
-	limiter.now = func() time.Time { return moment }
+	limiter := NewLoginLimiter(perMinute).WithClock(func() time.Time { return moment })
 	return limiter, &moment
 }
 

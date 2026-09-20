@@ -26,6 +26,54 @@ Make the assertion time-independent, e.g. by driving the limiter with an injecte
 
 ## Acceptance criteria
 
-- [ ] The test passes on a loaded machine (reproduce the load first: run it beside the rest of the module's suite) and still fails if the limiter stops refusing.
-- [ ] The limiter's behaviour is unchanged for production paths (`go test -race ./internal/api/... ./internal/api/middleware/...` green).
-- [ ] No test is skipped, deleted or given a longer attempt budget to get green.
+- [x] The test passes on a loaded machine (reproduce the load first: run it beside the rest of the module's suite) and still fails if the limiter stops refusing.
+- [x] The limiter's behaviour is unchanged for production paths (`go test -race ./internal/api/... ./internal/api/middleware/...` green).
+- [x] No test is skipped, deleted or given a longer attempt budget to get green.
+
+## Implementation notes
+
+The test asserted on wall-clock rate: it spent `3 * middleware.DefaultLoginAttemptsPerMinute` attempts and expected a refusal inside that count, so on a loaded box (one decoy hash per attempt, race detector, CPU contention) more than a minute elapsed and the per-minute bucket refilled before the budget ran out. The product was right; the test's premise was not.
+
+Fix: the handler tests now drive a limiter whose clock is held still, so refill cannot intrude and the refusal is asserted on the attempt count — the limiter's actual contract — instead of on how long the attempts take.
+
+- `internal/api/middleware/loginlimit.go`: added `(*LoginLimiter).WithClock(now func() time.Time) *LoginLimiter`, the smallest seam the handler package needs to stop the clock. It mirrors the existing `(*repository.GORMAuthStore).WithClock`; a nil clock is ignored and production never calls it (`NewLoginLimiter` still starts on the system clock), so no production knob or behaviour changed. `Allow`/`Fail`/`Succeed` are untouched.
+- `internal/api/handlers/auth_test.go`: `loginTestHandler` injects `middleware.NewLoginLimiter(DefaultLoginAttemptsPerMinute).WithClock(...)` through the existing `WithLoginLimiter`. `waitForRefusal`'s bound dropped from `3 *` to one allowance `+ 1` (11 attempts) now that refill cannot happen; the comment was rewritten to say why the count is exact. No test was skipped, deleted, or given a longer budget; the bound got tighter.
+- `internal/api/middleware/loginlimit_test.go`: `clockedLimiter` uses the new `WithClock` rather than assigning the unexported field directly.
+
+This also removes the same latent wall-clock dependence from `TestLoginThrottlesByTheConnectedAddress`, which shares `loginTestHandler`.
+
+Verification (all with the machine under four-way parallel landing load; `uptime` showed load averages 35-75 on a 10-core box):
+
+- Reproduced first, unmodified: `go test -race -count=1 -v -run TestLoginRefusesASprayFromOneAddress ./internal/api/handlers/` → `auth_test.go:162: no refusal within 30 attempts`, `--- FAIL ... (134.93s)`.
+- After the fix, same command under the same load → `--- PASS: TestLoginRefusesASprayFromOneAddress (63.54s)`; the log shows ten attempts admitted ~6s apart and the eleventh refused, i.e. the old 30-attempt budget was exactly the wall-clock race.
+- Mutation proof: changed `Allow` to admit an empty bucket (`bucket.tokens >= 0`), reran → `auth_test.go:174: no refusal within 11 attempts`, `--- FAIL ... (93.65s)`; restored the original condition.
+- `gofmt -l` on the three changed files printed nothing.
+- `go build ./...` and `go vet ./...` → clean.
+- `go test -race -count=1 ./internal/api/... ./internal/api/middleware/...` → `ok internal/api 222.6s`, `ok internal/api/handlers 256.1s`, `ok internal/api/middleware 1.7s`.
+- `go test -count=1 ./internal/guardrails/...` → `ok github.com/kilaslab/kilas-flow/internal/guardrails 0.618s`.
+
+### Review round 1 — the default limiter had no proof (this commit)
+
+The targeted review found that after the fix every test in the package built its handler
+through `loginTestHandler`, which injects its own limiter via `WithLoginLimiter`, so nothing
+exercised the throttle `NewAuth` constructs by default. The reviewer verified on a copy that
+`limiter: nil` kept the whole package green, while the pre-change suite caught exactly that
+mutation.
+
+Fix: added `TestLoginRefusesASprayWithTheDefaultLimiter` to `internal/api/handlers/auth_test.go`.
+It builds `NewAuth(...)` with no `WithLoginLimiter`, asserts `handler.limiter` is non-nil, freezes
+that limiter's own clock with `WithClock(func() time.Time { return stopped })`, then runs the
+shared `waitForRefusal` spray from one address — no wall clock, count-based assertion.
+
+Mutation proof on `internal/api/handlers/auth.go` (changed, ran, restored):
+
+- `limiter: nil` → FAIL `auth_test.go:205: NewAuth() built no sign-in throttle; a nil one admits every attempt`.
+- `limiter: middleware.NewLoginLimiter(middleware.DefaultLoginAttemptsPerMinute * 100)` → FAIL `auth_test.go:211: no refusal within 11 attempts`.
+- restored `middleware.NewLoginLimiter(middleware.DefaultLoginAttemptsPerMinute)` → PASS (`ok github.com/kilaslab/kilas-flow/internal/api/handlers`).
+
+Scoped gates for this commit:
+
+- `gofmt -l internal/api/handlers/auth_test.go internal/api/handlers/auth.go` → nothing.
+- `go vet ./...` → clean.
+- `go build ./...` → clean.
+- `go test -race -count=1 ./internal/api/... ./internal/api/middleware/... ./internal/guardrails/...` → all ok.

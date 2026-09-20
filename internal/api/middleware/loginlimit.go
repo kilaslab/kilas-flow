@@ -79,6 +79,19 @@ func NewLoginLimiter(perMinute int) *LoginLimiter {
 	}
 }
 
+// WithClock replaces the limiter's clock.
+//
+// Refill and pruning are both functions of elapsed time, so a test that proves
+// either has to say what "now" is rather than wait for it to pass. A nil clock
+// is ignored, and production never calls this: NewLoginLimiter starts a limiter
+// on the system clock and nothing in the service changes it.
+func (limiter *LoginLimiter) WithClock(now func() time.Time) *LoginLimiter {
+	if now != nil {
+		limiter.now = now
+	}
+	return limiter
+}
+
 // Allow spends one attempt from a key's bucket.
 //
 // It reports whether the attempt may proceed, and when it may not, how long the
