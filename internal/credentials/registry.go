@@ -256,6 +256,15 @@ func ApplyAuthentication(request *http.Request, credentialType Type, fields map[
 			return fmt.Errorf("credential %q holds a template with neither headers nor qs", credentialType.ID)
 		}
 		for _, name := range sortedKeys(headers) {
+			// A header name is a token, not free text. Trimming it and
+			// refusing whitespace, a colon or a line break is the same guard
+			// the single-header placement makes, and it is here because one
+			// template can add several headers to a request whose URL the node
+			// author chose: a name carrying a line break is how a second
+			// header gets smuggled in through the name.
+			if name == "" || name != strings.TrimSpace(name) || strings.ContainsAny(name, " \t\r\n:") {
+				return fmt.Errorf("credential %q holds a headers object with an unusable name %q", credentialType.ID, name)
+			}
 			request.Header.Set(name, headers[name])
 		}
 		if len(query) > 0 {

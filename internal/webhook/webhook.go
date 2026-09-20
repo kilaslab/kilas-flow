@@ -563,6 +563,21 @@ func responseHeaderEntries(value any) map[string]string {
 	return headers
 }
 
+// credentialTypesForAuth is the credential type each inbound mode verifies with.
+//
+// The type is read from the mode rather than from whichever entry the binding's
+// `$credentials` map happens to yield first: the Webhook node offers three
+// credential types and a document may carry more than one, so a first-entry
+// lookup would resolve a different credential on each request — Go randomises
+// map iteration — and refuse legitimate callers intermittently. The node
+// package declares the same mapping for its activation validator; this package
+// cannot import it without depending on node definitions.
+var credentialTypesForAuth = map[string]string{
+	"basicAuth":  "httpBasicAuth",
+	"headerAuth": "httpHeaderAuth",
+	"jwtAuth":    "jwtAuth",
+}
+
 // authenticate applies the binding's configured V1 auth mode.
 func (handler *Handler) authenticate(r *http.Request, binding repository.WebhookBinding) (int, error) {
 	authentication, _ := binding.Parameters["authentication"].(string)
@@ -574,7 +589,8 @@ func (handler *Handler) authenticate(r *http.Request, binding repository.Webhook
 		return http.StatusInternalServerError, errors.New("The webhook authentication mode is not supported.")
 	}
 
-	credentialID := credentialReference(binding)
+	credentialType := credentialTypesForAuth[authentication]
+	credentialID := credentialReference(binding, credentialType)
 	if credentialID == "" || handler.credentials == nil {
 		// A webhook configured to authenticate but unable to is closed, not
 		// open: failing open would silently publish an unprotected endpoint.
@@ -587,7 +603,7 @@ func (handler *Handler) authenticate(r *http.Request, binding repository.Webhook
 
 	switch authentication {
 	case "basicAuth":
-		if record.Type != "httpBasicAuth" {
+		if record.Type != credentialType {
 			return http.StatusInternalServerError, errors.New("This webhook is bound to a credential of the wrong type.")
 		}
 		user, password, ok := r.BasicAuth()
@@ -595,7 +611,7 @@ func (handler *Handler) authenticate(r *http.Request, binding repository.Webhook
 			return http.StatusUnauthorized, errors.New("Basic authentication failed.")
 		}
 	case "headerAuth":
-		if record.Type != "httpHeaderAuth" {
+		if record.Type != credentialType {
 			return http.StatusInternalServerError, errors.New("This webhook is bound to a credential of the wrong type.")
 		}
 		name := strings.TrimSpace(fields["name"])
@@ -603,7 +619,7 @@ func (handler *Handler) authenticate(r *http.Request, binding repository.Webhook
 			return http.StatusUnauthorized, errors.New("Header authentication failed.")
 		}
 	case "jwtAuth":
-		if record.Type != "jwtAuth" {
+		if record.Type != credentialType {
 			return http.StatusInternalServerError, errors.New("This webhook is bound to a credential of the wrong type.")
 		}
 		claims, status, err := verifyJWT(r, fields)
@@ -639,17 +655,17 @@ func (handler *Handler) credentialFields(ctx context.Context, binding repository
 	return fields, nil
 }
 
-func credentialReference(binding repository.WebhookBinding) string {
+// credentialReference is the credential a binding attached for one type.
+//
+// Keyed by the type the auth mode names, never by "whichever entry comes
+// first": see credentialTypesForAuth.
+func credentialReference(binding repository.WebhookBinding, credentialType string) string {
 	credentialsValue, ok := binding.Parameters["$credentials"].(map[string]any)
 	if !ok {
 		return ""
 	}
-	for _, id := range credentialsValue {
-		if text, ok := id.(string); ok && text != "" {
-			return text
-		}
-	}
-	return ""
+	id, _ := credentialsValue[credentialType].(string)
+	return strings.TrimSpace(id)
 }
 
 // equal compares in constant time so a wrong secret cannot be discovered by
@@ -658,12 +674,15 @@ func equal(got, want string) bool {
 	return subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1
 }
 
-// requestPayload builds the trigger item.
-//
-// Headers are redacted here, before the payload is ever handed to the engine,
-// so an inbound Authorization header never reaches an execution record.
 // readDelivery captures everything the HTTP boundary knows about a request,
-// including the exact bytes the client sent.
+// including the exact bytes the client sent, the caller's headers verbatim, and
+// the raw query.
+//
+// The caller's headers are stored with the run rather than redacted here: they
+// are part of what the workflow executed on, so an imported n8n workflow's own
+// `$json.headers['x-api-key']` check has to read the caller's value. What keeps
+// them from reaching anyone else is the read boundary — every record served by
+// the executions API or the live event feed goes through execution.Redact.
 //
 // Those bytes used to be discarded the moment the body was decoded, and the
 // envelope was re-marshalled from the decoded form — so no signature could ever

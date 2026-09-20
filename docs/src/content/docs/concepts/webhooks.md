@@ -25,11 +25,15 @@ Sixteen bytes is far beyond guessable, and an unguessable route is a meaningful
 defence for an endpoint that is very often unauthenticated.
 
 It is minted **per trigger node**, keyed by tenant, workflow and node, on the
-node's first activation — and then reused forever. Reuse is the whole point: a
-route minted per activation would change the public URL every time a workflow was
-deactivated and reactivated, breaking every sender already configured against it.
-The route row therefore outlives the *binding*, which exists only while the
-workflow is active.
+first read of the workflow's addresses — `GET /workflows/{id}/webhooks` — or on
+its first activation, whichever comes first, and then reused forever. Minting on
+a read is what lets a sender be configured before the workflow is ever activated:
+the address is idempotent, and a read writes only the route row, never a binding,
+so reading an address cannot make an inactive workflow answer. Reuse is the whole
+point: a route minted per activation would change the public URL every time a
+workflow was deactivated and reactivated, breaking every sender already
+configured against it. The route row therefore outlives the *binding*, which
+exists only while the workflow is active.
 
 Because the route already carries the tenant implicitly, no tenant identifier
 appears in the URL and the sender learns nothing about the installation from it.
@@ -133,10 +137,29 @@ the sender is told `200` and stops retrying.
 
 ## Authentication on the way in
 
-A trigger may require basic auth or a fixed header, checked against a stored
-[credential](/concepts/credentials/) with a constant-time comparison. There is
-also HMAC signature verification for triggers that declare it, with a missing or
-empty signature counting as a refusal.
+A trigger may require basic auth, a fixed header, or a JSON Web Token, checked
+against a stored [credential](/concepts/credentials/) with a constant-time
+comparison. There is also HMAC signature verification for triggers that declare
+it, with a missing or empty signature counting as a refusal.
+
+The JWT mode (`jwtAuth`) reads a `Bearer` token from `Authorization` and verifies
+it with the key material its credential holds: a shared passphrase for the HS
+algorithms, a PEM public key for RS, PS and ES. The algorithm comes from the
+credential, never from the token's own header — the header is compared against it
+and an algorithm the credential did not name is refused before the token is even
+read, which is what closes algorithm confusion. `exp` and `nbf` are honoured when
+the token carries them, and a token with no `exp` never expires, matching n8n's
+own `jwt.verify`. A verified payload reaches the workflow as `jwtPayload` on the
+item, so an imported workflow reading `$json.jwtPayload.sub` sees who the caller
+is.
+
+The status split is the caller's fault against the endpoint's: a missing, forged
+or expired token is `401`, while a credential that cannot verify anything —
+missing key material, an algorithm this server does not verify, a key type that
+disagrees with the algorithm — is `500`, because the fault is the endpoint's
+configuration rather than the request. The `WWW-Authenticate` challenge is sent
+only for basic auth, since a browser prompt is not how a header or JWT caller
+answers a refusal.
 
 Verification happens in the handler, before an execution exists. A signature
 check belongs there rather than inside the workflow: a request that fails it
@@ -151,11 +174,12 @@ open would silently publish an unprotected endpoint.
 A trigger decides the shape of the item it produces, and three exist. The default
 `envelope` carries `method`, `path`, `headers`, `query`, `body` and
 `contentType`. `n8nCore` matches what n8n's own webhook node emits — `body`,
-`headers`, `params` and `query` — so an imported workflow's expressions resolve
-against the field names they were written for. `params` there is always an empty
-object: n8n's path parameters come from a route pattern, and a KilasFlow route is
-one opaque segment with no pattern behind it. The key is present rather than
-absent so an expression reading it gets an empty object instead of failing.
+`headers`, `params` and `query`, plus `webhookUrl`, `executionMode` and, when the
+trigger verified a JWT, `jwtPayload` — so an imported workflow's expressions
+resolve against the field names they were written for. `params` there is always
+an empty object: n8n's path parameters come from a route pattern, and a KilasFlow
+route is one opaque segment with no pattern behind it. The key is present rather
+than absent so an expression reading it gets an empty object instead of failing.
 `bodyAsItem` makes the parsed body the item itself.
 
 The delivery is recorded exactly as it arrived — headers included — because the

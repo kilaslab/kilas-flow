@@ -121,10 +121,12 @@ func (shape Shape) Apply(delivery Delivery) map[string]any {
 		}
 		// n8n puts the verified token on the item as `jwtPayload`, and an
 		// imported workflow reads it there — `$json.jwtPayload.sub`, usually.
-		// The key is absent, not empty, when no token was verified: a workflow
+		// The key is absent only when no token was verified: a workflow
 		// branching on its presence must see the difference between "no JWT"
-		// and "a JWT with no claims".
-		if len(delivery.Claims) > 0 {
+		// and "a JWT with no claims", and an empty payload is the second. A
+		// length test cannot tell them apart, so this is a presence test —
+		// jwtClaims returns nil exactly when nothing was verified.
+		if delivery.Claims != nil {
 			item["jwtPayload"] = delivery.Claims
 		}
 		return item

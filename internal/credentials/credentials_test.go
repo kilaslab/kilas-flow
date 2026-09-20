@@ -206,6 +206,22 @@ func TestCustomAuthAppliesItsTemplate(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "body") {
 		t.Errorf("a template naming an unsupported key = %v, want an error naming body", err)
 	}
+
+	// A header name is a token, and one template can add several headers to a
+	// request whose URL the node author chose — so an empty name, padding, or a
+	// line break inside the name is refused rather than sent.
+	for name, template := range map[string]string{
+		"empty":        `{"headers":{"":"x"}}`,
+		"padded":       `{"headers":{" X-Api-Key":"x"}}`,
+		"line break":   `{"headers":{"X-Api-Key\r\nX-Injected":"x"}}`,
+		"space inside": `{"headers":{"X Api-Key":"x"}}`,
+		"colon inside": `{"headers":{"X-Api-Key:":"x"}}`,
+	} {
+		request, _ := http.NewRequest(http.MethodGet, "https://api.test/x", nil)
+		if err := credentials.Apply(request, "httpCustomAuth", map[string]string{"json": template}); err == nil {
+			t.Errorf("%s: the header name in %s was accepted", name, template)
+		}
+	}
 }
 
 func TestAllowsHostScopesACredentialToItsDomains(t *testing.T) {

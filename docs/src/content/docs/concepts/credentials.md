@@ -158,14 +158,17 @@ pass on a credential that cannot complete anything.
 
 ## The built-in catalogue
 
-Ten types ship, all declared in one place, and node packs do not add credential
-types today:
+Thirteen types ship, all declared in one place, and node packs do not add
+credential types today:
 
 | ID | For |
 | --- | --- |
 | `httpBasicAuth` | generic basic auth |
 | `httpHeaderAuth` | any fixed-header API — the header name is a field |
 | `httpBearerAuth` | generic bearer token |
+| `httpQueryAuth` | any fixed-query-parameter API — the parameter name is a field |
+| `httpCustomAuth` | n8n's Custom Auth: a JSON template naming several headers and query parameters at once |
+| `jwtAuth` | verifying inbound JSON Web Tokens — a passphrase for HS, a PEM public key for RS, PS and ES |
 | `postgres` | PostgreSQL connections from a workflow |
 | `mysql` | MySQL and MariaDB connections from a workflow |
 | `sqlite` | a SQLite file path |
@@ -174,13 +177,19 @@ types today:
 | `openAiApi` | OpenAI |
 | `openRouterApi` | OpenRouter |
 
-Two details in that table are load-bearing rather than arbitrary. `wahaApi`'s
+Three details in that table are load-bearing rather than arbitrary. `wahaApi`'s
 `baseUrl` is deliberately **not** marked secret, because a declarative pack reads
 it as `{{ $credentials.baseUrl }}` to build every request and `$credentials`
 exposes non-secret fields only — marking it secret would leave the pack with no
-address to call. And `openAiApi`'s field is spelled `apiKey` rather than the
-generic `token` because that is what n8n calls it, and an imported workflow names
-`openAiApi`.
+address to call. `openAiApi`'s field is spelled `apiKey` rather than the generic
+`token` because that is what n8n calls it, and an imported workflow names
+`openAiApi`. And `jwtAuth` reads its key material by the algorithm's family: the
+`secret` field is the shared passphrase an HS token was signed with, `publicKey`
+the PEM key an RS, PS or ES token's signature is checked against, and the key
+type has to agree with the algorithm — a credential that declares a PEM key while
+naming an HMAC algorithm is refused rather than verified against a public key
+used as a shared secret. `privateKey` is kept so an n8n-shaped payload stores
+unchanged; nothing on this server reads it.
 
 Every ID and every field key is byte-identical to what an earlier version of this
 catalogue held, because a stored credential row is keyed by that ID and its

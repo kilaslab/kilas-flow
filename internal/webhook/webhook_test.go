@@ -676,6 +676,74 @@ func TestJWTWebhookRunsForAValidTokenAndRefusesOthers(t *testing.T) {
 	}
 }
 
+// A node carrying more than one credential authenticates with the one its mode
+// names.
+//
+// Ranging the binding's `$credentials` map and taking the first entry made the
+// answer depend on Go's randomised map iteration: with the Webhook node now
+// offering three credential types and a document free to carry more than one,
+// a legitimate caller was refused intermittently — a 500 that no configuration
+// explained. Each attempt re-reads the binding, so the loop is what a
+// first-entry lookup fails on.
+func TestWebhookAuthenticationUsesTheCredentialItsModeNames(t *testing.T) {
+	h := newHarness(t)
+	jwtCredential, err := h.credentials.Create(context.Background(), h.tenant, credentials.Record{
+		Name: "Inbound JWT", Type: "jwtAuth",
+		Fields: map[string]string{"keyType": "passphrase", "secret": "hunter2-secret", "algorithm": "HS256"},
+	})
+	if err != nil {
+		t.Fatalf("Create() credential error = %v", err)
+	}
+	header, err := h.credentials.Create(context.Background(), h.tenant, credentials.Record{
+		Name: "Also attached", Type: "httpHeaderAuth", Fields: map[string]string{"name": "X-Api-Key", "value": "k-1"},
+	})
+	if err != nil {
+		t.Fatalf("Create() credential error = %v", err)
+	}
+
+	document := webhookDocument("Two credentials", map[string]any{
+		"path": "jwt-two", "httpMethod": http.MethodPost, "responseMode": "immediate", "authentication": "jwtAuth",
+	})
+	document.Nodes[0].Credentials = map[string]string{"jwtAuth": jwtCredential.ID, "httpHeaderAuth": header.ID}
+	active := h.activate(t, document)
+
+	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{"sub": "ada"}).SignedString([]byte("hunter2-secret"))
+	if err != nil {
+		t.Fatalf("SignedString() error = %v", err)
+	}
+	for attempt := range 5 {
+		request := httptest.NewRequest(http.MethodPost, h.url(t, active), strings.NewReader(`{}`))
+		request.Header.Set("Authorization", "Bearer "+token)
+		recorder := httptest.NewRecorder()
+		h.handler.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("attempt %d: status = %d, want 200 (body: %s)", attempt, recorder.Code, recorder.Body)
+		}
+	}
+
+	// The other direction: header auth with the same two credentials attached.
+	// A first-entry lookup resolved whichever credential came first, so one of
+	// the two modes had to be answered 500 at random.
+	headerDocument := webhookDocument("Two credentials, header mode", map[string]any{
+		"path": "header-two", "httpMethod": http.MethodPost, "responseMode": "immediate", "authentication": "headerAuth",
+	})
+	headerDocument.Nodes[0].Credentials = map[string]string{"jwtAuth": jwtCredential.ID, "httpHeaderAuth": header.ID}
+	headerActive := h.activate(t, headerDocument)
+	for attempt := range 5 {
+		request := httptest.NewRequest(http.MethodPost, h.url(t, headerActive), strings.NewReader(`{}`))
+		request.Header.Set("X-Api-Key", "k-1")
+		recorder := httptest.NewRecorder()
+		h.handler.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("header mode attempt %d: status = %d, want 200 (body: %s)", attempt, recorder.Code, recorder.Body)
+		}
+	}
+	// A document that attaches a credential of another type and none for its
+	// mode never reaches here: activation refuses it by name
+	// (TestJWTWebhookNeedsACredentialBeforeActivation), and the mode-keyed
+	// lookup keeps that same refusal at the boundary.
+}
+
 // TestWebhookKeepsInboundHeadersForTheRunAndRedactsThemOnRead pins the split
 // Main ruled on (2026-09-20).
 //

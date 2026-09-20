@@ -109,6 +109,39 @@ func TestVerifyJWTRefusesAnalgorithmThisServerCannotVerify(t *testing.T) {
 	}
 }
 
+func TestVerifyJWTRefusesAKeyTypeThatContradictsItsAlgorithm(t *testing.T) {
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("GenerateKey() error = %v", err)
+	}
+	// A credential that declares a PEM key type while naming an HMAC algorithm
+	// would verify HMAC over a public key — material the credential itself
+	// returns as non-secret — so it is refused rather than honoured.
+	hmacToken := signedToken(t, jwt.SigningMethodHS256, []byte("hunter2-secret"), jwt.MapClaims{"sub": "ada"})
+	pemAsSecret := map[string]string{
+		"keyType": "pemKey", "publicKey": pemPublicKey(t, &privateKey.PublicKey), "algorithm": "HS256",
+	}
+	if _, status, err := verifyJWT(requestWithToken(hmacToken), pemAsSecret); err == nil || status != http.StatusInternalServerError {
+		t.Errorf("a PEM key type with HS256 = (%d, %v), want 500", status, err)
+	}
+
+	rsToken := signedToken(t, jwt.SigningMethodRS256, privateKey, jwt.MapClaims{"sub": "ada"})
+	passphraseAsKey := map[string]string{
+		"keyType": "passphrase", "secret": "hunter2-secret",
+		"publicKey": pemPublicKey(t, &privateKey.PublicKey), "algorithm": "RS256",
+	}
+	if _, status, err := verifyJWT(requestWithToken(rsToken), passphraseAsKey); err == nil || status != http.StatusInternalServerError {
+		t.Errorf("a passphrase key type with RS256 = (%d, %v), want 500", status, err)
+	}
+
+	// A payload that predates the field, or one that lost it, keeps working as
+	// a passphrase credential — the field's own default — rather than being
+	// refused for a missing value the type declares as required.
+	if _, _, err := verifyJWT(requestWithToken(hmacToken), map[string]string{"secret": "hunter2-secret", "algorithm": "HS256"}); err != nil {
+		t.Errorf("an HS256 credential with no key type field = %v, want it read as a passphrase", err)
+	}
+}
+
 func TestVerifyJWTVerifiesRSAndPSTokensAgainstTheCredentialsPublicKey(t *testing.T) {
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {

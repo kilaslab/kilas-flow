@@ -76,6 +76,36 @@ func TestShapesProduceTheItemEachTriggerFamilyExpects(t *testing.T) {
 		}
 	})
 
+	t.Run("jwtPayload distinguishes a verified token from none", func(t *testing.T) {
+		// No token was verified: the key is absent, so a workflow branching on
+		// `$json.jwtPayload` reads a caller that presented nothing.
+		anonymous := webhook.ShapeN8NCore.Apply(built)
+		if _, present := anonymous["jwtPayload"]; present {
+			t.Error("n8nCore carries jwtPayload for a delivery with no verified token")
+		}
+
+		// A token that verified but carried no claims is still a verified
+		// caller, and n8n sets the field whenever verification returned an
+		// object — so the empty payload must be visible as one, not as an
+		// unauthenticated delivery.
+		empty := built
+		empty.Claims = map[string]any{}
+		item := webhook.ShapeN8NCore.Apply(empty)
+		claims, present := item["jwtPayload"].(map[string]any)
+		if !present {
+			t.Fatalf("jwtPayload = %#v, want the empty payload present", item["jwtPayload"])
+		}
+		if len(claims) != 0 {
+			t.Errorf("jwtPayload = %#v, want the verified empty payload", claims)
+		}
+
+		signed := built
+		signed.Claims = map[string]any{"sub": "ada"}
+		if claims, _ := webhook.ShapeN8NCore.Apply(signed)["jwtPayload"].(map[string]any); claims["sub"] != "ada" {
+			t.Errorf("jwtPayload = %#v, want the token's subject", claims)
+		}
+	})
+
 	// A route pattern's variables become the item's parameters, which is how
 	// n8n serves `/user/:id` and what KilasFlow answered 404 to.
 	t.Run("path parameters come from the route pattern", func(t *testing.T) {
