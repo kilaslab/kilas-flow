@@ -7,6 +7,12 @@
 	import type { EditorFlowNode } from '$lib/workflow-editor/document';
 	import { getCanvasActions } from '$lib/workflow-editor/canvas-actions';
 	import {
+		DIAGNOSTIC_SEVERITY_LABELS,
+		diagnosticSummaryLabel,
+		getImportDiagnostics,
+		worstSeverity
+	} from '$lib/workflow-editor/import-diagnostics';
+	import {
 		TILE,
 		attachmentPorts,
 		glyphClass,
@@ -67,6 +73,28 @@
 	const chrome = $derived({ selected: Boolean(selected), invalid, runStatus });
 	const border = $derived(nodeChromeBorder(chrome));
 	const shadow = $derived(nodeChromeShadow(chrome));
+
+	// What the import could not carry for this node.
+	//
+	// Read from context rather than from props, the way the canvas actions are:
+	// nodes are rendered by Svelte Flow, so there is no prop path to a tile, and
+	// the report belongs to the revision the host is showing rather than to the
+	// node's own shape. Undefined means the host reads no report — a replay, or
+	// a workflow nobody imported — and then this node has nothing to say.
+	const importReport = getImportDiagnostics();
+	const importIssues = $derived(
+		importReport ? importReport().issues.filter((issue) => issue.nodeId === id) : []
+	);
+	const importSeverity = $derived(worstSeverity(importIssues));
+	// Blocking is the only severity that decides whether the workflow runs, so
+	// the badge carries it as an alarm; lossy and dropped are notes, not faults.
+	const importBadgeClass = $derived(
+		importSeverity === 'blocking'
+			? 'bg-destructive text-destructive-foreground'
+			: importSeverity === 'lossy'
+				? 'bg-warning text-warning-foreground'
+				: 'bg-muted-foreground text-background'
+	);
 </script>
 
 {#if annotation}
@@ -158,6 +186,23 @@
 			>
 				!
 			</span>
+		{/if}
+
+		{#if importSeverity && importIssues.length > 0}
+			<!-- What the import could not carry for this node, which used to be
+			     visible only in the dialog that closed after the import. The badge
+			     is one dot, so the reasons live in the title and the accessible
+			     name and the click reopens the report they came from. -->
+			<button
+				type="button"
+				data-import-diagnostic={importSeverity}
+				class="nodrag absolute -right-1 -top-1 grid h-4 min-w-4 place-items-center rounded-full border-2 border-background px-0.5 text-[0.5rem] font-bold {importBadgeClass}"
+				title={importIssues.map((issue) => `${DIAGNOSTIC_SEVERITY_LABELS[issue.severity]}: ${issue.reason}`).join(' · ')}
+				aria-label={`${diagnosticSummaryLabel(importIssues)} on ${node.name}. Open the import report.`}
+				onclick={() => importReport?.().openReport()}
+			>
+				{importIssues.length}
+			</button>
 		{/if}
 
 		<!-- Name and the one parameter worth reading at a glance. The hub carries its

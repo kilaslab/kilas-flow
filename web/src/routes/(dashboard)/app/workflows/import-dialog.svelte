@@ -36,6 +36,13 @@
 	// Scrolling the dialog back to the top keeps the verdict on screen.
 	let dialogScroll = $state<HTMLElement | null>(null);
 
+	// The webhook addresses are labelled by node name, and the imported
+	// document is the only place those names live: a node id says nothing to
+	// the person who has to paste the URL into another system.
+	const importedNodeNames = $derived(
+		new Map((result?.workflow.latestVersion.document.nodes ?? []).map((node) => [node.id, node.name]))
+	);
+
 	$effect(() => {
 		if (result) dialogScroll?.scrollTo({ top: 0 });
 	});
@@ -152,7 +159,13 @@
 			</Dialog.Description>
 		</Dialog.Header>
 		{#if result}
-			<ImportReport {result} onOpenWorkflow={() => void openWorkflow()} />
+			<ImportReport
+				issues={result.unsupported ?? []}
+				workflowName={result.workflow.name}
+				webhooks={result.webhooks ?? []}
+				nodeNames={importedNodeNames}
+				onOpenWorkflow={() => void openWorkflow()}
+			/>
 			<Dialog.Footer>
 				<Button type="button" variant="outline" onclick={reset}>Import another</Button>
 				<Button type="button" onclick={() => void openWorkflow()}>Open in the editor</Button>

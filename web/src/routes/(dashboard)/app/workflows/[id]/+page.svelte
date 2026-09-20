@@ -11,15 +11,19 @@
 	import { createListCredentials } from '$lib/api/generated/credentials/credentials';
 	import { createGetExpressionGrammar, createListNodeTypes } from '$lib/api/generated/nodes/nodes';
 	import { getExecution } from '$lib/api/generated/executions/executions';
+	import { createWorkflowDiagnostics } from '$lib/api/generated/interop/interop';
 	import { activateWorkflow, deactivateWorkflow, runWorkflow } from '$lib/api/generated/workflow-lifecycle/workflow-lifecycle';
 	import { createGetWorkflow, getWorkflow, updateWorkflow } from '$lib/api/generated/workflows/workflows';
-	import type { CredentialResource, Definition, ExpressionGrammar, WorkflowDocumentInput, WorkflowResource } from '$lib/api/generated/models';
+	import type { CredentialResource, Definition, ExpressionGrammar, WorkflowDiagnosticsResource, WorkflowDocumentInput, WorkflowResource } from '$lib/api/generated/models';
 	import { activationFailure, activationNotices, dismissNotice, type ActivationNoticeView } from '$lib/workflow-editor/activation';
 	import { cacheWorkflow } from '$lib/workflow-editor/workflow-cache';
 	import { setExpressionGrammar } from '$lib/workflow-editor/expression-grammar';
+	import { diagnosticSummaryLabel, summarizeDiagnostics, setImportDiagnostics } from '$lib/workflow-editor/import-diagnostics';
 	import WorkflowEditor, { type RunSelection, type WorkflowHistoryHost } from '$lib/components/workflow-editor/workflow-editor.svelte';
 	import ExportDialog from './export-dialog.svelte';
+	import ImportReportDrawer from '../import-report-drawer.svelte';
 	import { Button } from '$lib/components/ui/button';
+	import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
 	import { validationIssuesFromApiError, withNodeNames, type CanvasValidationIssue } from '$lib/workflow-editor/validation';
 
 	const queryClient = useQueryClient();
@@ -95,6 +99,52 @@
 	 * saved workflow to it.
 	 */
 	let canvasFrom = $state<string | null>(null);
+
+	/**
+	 * The revision the canvas is showing, which is the revision its import
+	 * report belongs to.
+	 *
+	 * Deliberately the revision the canvas was built from rather than the
+	 * newest one: a save appends a revision nobody imported, and a canvas still
+	 * drawing the imported nodes must not lose the badges that say how each of
+	 * them was translated. A restore or a reload moves `canvasFrom`, and the
+	 * report follows it.
+	 */
+	const reportSource = $derived.by(() => {
+		const [workflowID, versionID] = (canvasFrom ?? '').split(':');
+		return workflowID && versionID ? { workflowID, versionID } : null;
+	});
+
+	/**
+	 * What the import could not carry for that revision, read from the server.
+	 *
+	 * Not remembered from the import response: that response died with the
+	 * dialog, and this is the copy that survives a reload, a different tab and
+	 * a different person opening the workflow (BUG-f9frth).
+	 */
+	const importReport = createWorkflowDiagnostics<WorkflowDiagnosticsResource | null>(
+		() => reportSource?.workflowID ?? '',
+		() => ({ versionId: reportSource?.versionID }),
+		() => ({
+			query: {
+				// An empty id would be a request for /workflows//diagnostics; the
+				// report is asked for once the canvas knows what it is showing.
+				enabled: Boolean(reportSource),
+				select: (response) => (response.status === 200 ? response.data : null)
+			}
+		})
+	);
+	const importIssues = $derived(importReport.data?.issues ?? []);
+	const importCounts = $derived(summarizeDiagnostics(importIssues));
+	let reportOpen = $state(false);
+
+	// What a node on the canvas can learn about the report. Nodes are rendered
+	// by Svelte Flow, so context is the only path to a tile — see
+	// `$lib/workflow-editor/import-diagnostics`.
+	setImportDiagnostics(() => ({
+		issues: importIssues,
+		openReport: () => (reportOpen = true)
+	}));
 	/** The draft the last save carried, kept for the overwrite answer. */
 	let pendingSave = $state<WorkflowDocumentInput | null>(null);
 	let pollingRun = 0;
@@ -408,7 +458,24 @@
 	</a>
 	<p class="min-w-0 max-w-32 flex-1 truncate text-xs font-medium sm:max-w-44">{currentWorkflow?.name ?? 'Loading…'}</p>
 	{#if currentWorkflow}
-		<span class="ml-auto shrink-0"><ExportDialog workflowID={currentWorkflow.id} workflowName={currentWorkflow.name} /></span>
+		<span class="ml-auto flex shrink-0 items-center gap-1.5">
+			{#if importReport.data?.source}
+				<!-- The report is reachable for as long as the revision it describes
+				     is on the canvas, and it is the only place the import's verdict
+				     survives: blocking entries mean this workflow will not activate,
+				     which the toolbar says before anything is opened. -->
+				<Button
+					variant={importCounts.blocking > 0 ? 'destructive' : 'outline'}
+					size="sm"
+					title={diagnosticSummaryLabel(importIssues)}
+					onclick={() => (reportOpen = true)}
+				>
+					<TriangleAlert aria-hidden="true" class="size-3.5" />
+					{importIssues.length > 0 ? `Import report · ${importIssues.length}` : 'Imported from n8n'}
+				</Button>
+			{/if}
+			<ExportDialog workflowID={currentWorkflow.id} workflowName={currentWorkflow.name} />
+		</span>
 	{/if}
 {/snippet}
 
@@ -474,5 +541,6 @@
 				onDismissNotice={(key) => (notices = dismissNotice(notices, key))}
 			/>
 		{/key}
+		<ImportReportDrawer bind:open={reportOpen} workflowName={currentWorkflow.name} report={importReport.data ?? null} />
 	{/if}
 </section>

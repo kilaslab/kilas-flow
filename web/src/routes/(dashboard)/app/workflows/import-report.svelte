@@ -2,7 +2,7 @@
 	import Check from '@lucide/svelte/icons/check';
 	import Copy from '@lucide/svelte/icons/copy';
 
-	import type { ImportedWorkflowResource } from '$lib/api/generated/models';
+	import type { ImportIssue, WebhookRouteResource } from '$lib/api/generated/models';
 	import { Button } from '$lib/components/ui/button';
 
 	import DiagnosticsSection from './diagnostics-section.svelte';
@@ -12,21 +12,30 @@
 	 * than a success toast. The diagnostics decide whether the workflow runs
 	 * and the webhook URLs decide whether anything reaches it, so neither
 	 * belongs in something that disappears after four seconds.
+	 *
+	 * It is given what it renders rather than the whole import response,
+	 * because two surfaces show the same report for different reasons: the
+	 * dialog, which still holds the response with its webhook addresses, and
+	 * the editor, which reads the report stored with the revision on screen
+	 * and has no addresses to show and no workflow to open.
 	 */
 	let {
-		result,
-		onOpenWorkflow
+		issues,
+		workflowName,
+		webhooks = null,
+		nodeNames = null,
+		onOpenWorkflow = null
 	}: {
-		result: ImportedWorkflowResource;
-		onOpenWorkflow: () => void;
+		issues: ImportIssue[];
+		workflowName: string;
+		/** Null means the caller has no addresses to show; an empty array means there are none. */
+		webhooks?: WebhookRouteResource[] | null;
+		/** Node names for the addresses' labels, when the caller has a document to read them from. */
+		nodeNames?: Map<string, string> | null;
+		onOpenWorkflow?: (() => void) | null;
 	} = $props();
 
-	const issues = $derived(result.unsupported ?? []);
-	const webhooks = $derived(result.webhooks ?? []);
 	const blocking = $derived(issues.filter((issue) => issue.severity === 'blocking').length);
-	const namesByID = $derived(
-		new Map((result.workflow.latestVersion.document.nodes ?? []).map((node) => [node.id, node.name]))
-	);
 
 	let copiedURL = $state<string | null>(null);
 	let copyFailed = $state(false);
@@ -35,7 +44,7 @@
 	$effect(() => () => clearTimeout(resetTimer));
 
 	function webhookNodeName(nodeID: string): string {
-		return namesByID.get(nodeID) ?? nodeID;
+		return nodeNames?.get(nodeID) ?? nodeID;
 	}
 
 	async function copyURL(url: string) {
@@ -73,54 +82,61 @@
 		</p>
 	{/if}
 
-	<section aria-label="Webhook addresses">
-		<h3 class="text-xs font-semibold">Webhook addresses · {webhooks.length}</h3>
-		<p class="mt-0.5 text-xs leading-5 text-muted-foreground">
-			Every webhook URL changes on import — prefix it with your host and point the sending
-			system at the new address. The old path will not work.
-		</p>
-		{#if webhooks.length === 0}
-			<p class="mt-1.5 rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs leading-5 text-muted-foreground">
-				No triggers in this workflow needed a public address.
+	<!-- Only a caller that has the addresses renders this section. The editor
+	     reads a stored report, which carries none, and saying "no triggers
+	     needed a public address" there would be a claim it cannot make. -->
+	{#if webhooks}
+		<section aria-label="Webhook addresses">
+			<h3 class="text-xs font-semibold">Webhook addresses · {webhooks.length}</h3>
+			<p class="mt-0.5 text-xs leading-5 text-muted-foreground">
+				Every webhook URL changes on import — prefix it with your host and point the sending
+				system at the new address. The old path will not work.
 			</p>
-		{:else}
-			<ul class="mt-1.5 divide-y divide-border overflow-hidden rounded-lg border border-border">
-				{#each webhooks as webhook (`${webhook.nodeId}-${webhook.url}`)}
-					<li class="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2">
-						<span class="min-w-0 flex-1 basis-40">
-							<span class="block truncate text-xs font-medium">{webhookNodeName(webhook.nodeId)}</span>
-							<span class="block truncate font-mono text-[0.6875rem] text-muted-foreground">{webhook.method} · {webhook.path}</span>
-						</span>
-						<code class="min-w-0 flex-1 basis-56 truncate font-mono text-[0.6875rem] text-foreground select-all">{webhook.url}</code>
-						<Button
-							type="button"
-							variant="outline"
-							size="sm"
-							class="h-7 shrink-0 px-2 text-[0.6875rem]"
-							onclick={() => void copyURL(webhook.url)}
-							aria-label={`Copy webhook URL for ${webhookNodeName(webhook.nodeId)}`}
-						>
-							{#if copiedURL === webhook.url && !copyFailed}
-								<Check aria-hidden="true" class="size-3" />Copied
-							{:else}
-								<Copy aria-hidden="true" class="size-3" />Copy URL
-							{/if}
-						</Button>
-					</li>
-				{/each}
-			</ul>
-			{#if copyFailed}
-				<p role="status" class="mt-1.5 text-xs text-muted-foreground">Copying failed in this browser — select the address above and copy it by hand.</p>
+			{#if webhooks.length === 0}
+				<p class="mt-1.5 rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs leading-5 text-muted-foreground">
+					No triggers in this workflow needed a public address.
+				</p>
+			{:else}
+				<ul class="mt-1.5 divide-y divide-border overflow-hidden rounded-lg border border-border">
+					{#each webhooks as webhook (`${webhook.nodeId}-${webhook.url}`)}
+						<li class="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2">
+							<span class="min-w-0 flex-1 basis-40">
+								<span class="block truncate text-xs font-medium">{webhookNodeName(webhook.nodeId)}</span>
+								<span class="block truncate font-mono text-[0.6875rem] text-muted-foreground">{webhook.method} · {webhook.path}</span>
+							</span>
+							<code class="min-w-0 flex-1 basis-56 truncate font-mono text-[0.6875rem] text-foreground select-all">{webhook.url}</code>
+							<Button
+								type="button"
+								variant="outline"
+								size="sm"
+								class="h-7 shrink-0 px-2 text-[0.6875rem]"
+								onclick={() => void copyURL(webhook.url)}
+								aria-label={`Copy webhook URL for ${webhookNodeName(webhook.nodeId)}`}
+							>
+								{#if copiedURL === webhook.url && !copyFailed}
+									<Check aria-hidden="true" class="size-3" />Copied
+								{:else}
+									<Copy aria-hidden="true" class="size-3" />Copy URL
+								{/if}
+							</Button>
+						</li>
+					{/each}
+				</ul>
+				{#if copyFailed}
+					<p role="status" class="mt-1.5 text-xs text-muted-foreground">Copying failed in this browser — select the address above and copy it by hand.</p>
+				{/if}
 			{/if}
-		{/if}
-	</section>
+		</section>
+	{/if}
 
 	<DiagnosticsSection
 		{issues}
 		emptyNote="No issues — everything in this file carried exactly."
 	/>
 
-	<div class="flex justify-end">
-		<Button type="button" size="sm" onclick={onOpenWorkflow}>Open {result.workflow.name} in the editor</Button>
-	</div>
+	{#if onOpenWorkflow}
+		<div class="flex justify-end">
+			<Button type="button" size="sm" onclick={onOpenWorkflow}>Open {workflowName} in the editor</Button>
+		</div>
+	{/if}
 </div>
