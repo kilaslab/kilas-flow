@@ -909,6 +909,14 @@ func normalizeJSON(value any) any {
 			normalized[key] = normalizeJSON(entry)
 		}
 		return normalized
+	case float64:
+		// JSON cannot carry NaN or Infinity, and JavaScript's own encoding of
+		// them is null. Without this the whole execution failed after the
+		// node's side effects with Go's "json: unsupported value: +Inf".
+		if math.IsNaN(typed) || math.IsInf(typed, 0) {
+			return nil
+		}
+		return typed
 	case inputSource:
 		return typed.plain()
 	case envSource:

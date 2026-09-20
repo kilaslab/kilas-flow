@@ -989,3 +989,53 @@ func TestNumbersRenderTheWayJavaScriptRendersThem(t *testing.T) {
 		t.Errorf("a lone number = %#v, want the number itself", got)
 	}
 }
+
+// TestNonFiniteNumbersEncodeAsNull: JSON.stringify(Infinity) failed the whole
+// execution with a Go marshal message ("json: unsupported value: +Inf") after
+// the node's side effects, where JavaScript encodes null — and the new
+// operators are what made those values reachable at all. A bare non-finite
+// value is null in the parameter for the same reason: JSON cannot carry it, and
+// n8n's own stored items carry null.
+func TestNonFiniteNumbersEncodeAsNull(t *testing.T) {
+	t.Parallel()
+
+	for template, want := range map[string]any{
+		"{{ JSON.stringify(1/0) }}":      "null",
+		"{{ JSON.stringify(-1/0) }}":     "null",
+		"{{ JSON.stringify(0/0) }}":      "null",
+		"{{ JSON.stringify({v: 0/0}) }}": `{"v":null}`,
+		"{{ JSON.stringify({v: 1/0}) }}": `{"v":null}`,
+		"{{ JSON.stringify([1/0, 1]) }}": "[null,1]",
+		"{{ {v: 0/0}.toJsonString() }}":  `{"v":null}`,
+		// The text spelling is still JavaScript's.
+		"{{ 1/0 + '' }}":   "Infinity",
+		"{{ 0/0 + '' }}":   "NaN",
+		"{{ `v=${0/0}` }}": "v=NaN",
+	} {
+		got := evaluateOne(t, template, parityContext())
+		if got != want {
+			t.Errorf("Evaluate(%s) = %#v, want %#v", template, got, want)
+		}
+	}
+
+	// A bare non-finite value resolves to null, and stays JSON-encodable, so
+	// the item the node writes can be persisted rather than failing the run.
+	for _, body := range []string{"{{ 1/0 }}", "{{ 0/0 }}", "{{ 1/$json.zero }}", "{{ [$json.zero * 1/0] }}"} {
+		ctx := parityContext()
+		ctx.JSON = map[string]any{"zero": float64(0), "count": float64(42)}
+		resolved, err := expression.Resolve(
+			map[string]any{"x": map[string]any{"mode": "expression", "value": body}}, ctx)
+		if err != nil {
+			t.Errorf("Resolve(%s) error = %v, want a JSON-carryable value", body, err)
+			continue
+		}
+		encoded, err := json.Marshal(resolved)
+		if err != nil {
+			t.Errorf("Resolve(%s) could not be marshalled: %v", body, err)
+			continue
+		}
+		if !strings.Contains(string(encoded), "null") {
+			t.Errorf("Resolve(%s) = %s, want null for a non-finite value", body, encoded)
+		}
+	}
+}
