@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -433,6 +434,14 @@ func registerLists() {
 		return reversed, nil
 	})
 	register("concat", anyArguments, func(receiver any, args []any) (any, error) {
+		if text, ok := receiver.(string); ok {
+			var builder strings.Builder
+			builder.WriteString(text)
+			for _, argument := range args {
+				builder.WriteString(jsString(argument))
+			}
+			return builder.String(), nil
+		}
 		list, err := needList(receiver, "concat")
 		if err != nil {
 			return nil, err
@@ -446,6 +455,19 @@ func registerLists() {
 			joined = append(joined, argument)
 		}
 		return joined, nil
+	})
+	register("sort", noneOrOne, func(receiver any, _ []any) (any, error) {
+		list, err := needList(receiver, "sort")
+		if err != nil {
+			return nil, err
+		}
+		// A comparator argument is a function, which this runtime can call, but
+		// the default JavaScript ordering is what imported workflows rely on.
+		sorted := append([]any{}, list...)
+		sort.SliceStable(sorted, func(left, right int) bool {
+			return jsString(sorted[left]) < jsString(sorted[right])
+		})
+		return sorted, nil
 	})
 	register("first", fixed(0), func(receiver any, _ []any) (any, error) {
 		list, ok := listFrom(receiver)
@@ -630,6 +652,37 @@ func registerDates() {
 			return nil, err
 		}
 		return float64(date.at.UnixMilli()), nil
+	})
+	// toJSON, toUnixInteger and toObject are Luxon's own names for values the
+	// methods above already produce.
+	register("toJSON", fixed(0), func(receiver any, _ []any) (any, error) {
+		date, err := needDate(receiver, "toJSON")
+		if err != nil {
+			return nil, err
+		}
+		return date.String(), nil
+	})
+	register("toUnixInteger", fixed(0), func(receiver any, _ []any) (any, error) {
+		date, err := needDate(receiver, "toUnixInteger")
+		if err != nil {
+			return nil, err
+		}
+		return float64(date.at.Unix()), nil
+	})
+	register("toObject", fixed(0), func(receiver any, _ []any) (any, error) {
+		date, err := needDate(receiver, "toObject")
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{
+			"year":        float64(date.at.Year()),
+			"month":       float64(date.at.Month()),
+			"day":         float64(date.at.Day()),
+			"hour":        float64(date.at.Hour()),
+			"minute":      float64(date.at.Minute()),
+			"second":      float64(date.at.Second()),
+			"millisecond": float64(date.at.Nanosecond() / int(time.Millisecond)),
+		}, nil
 	})
 	register("toJSDate", fixed(0), func(receiver any, _ []any) (any, error) {
 		date, err := needDate(receiver, "toJSDate")

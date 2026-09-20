@@ -476,3 +476,30 @@ func TestAResolvedDateSurvivesJSONEncoding(t *testing.T) {
 		}
 	}
 }
+
+// TestCommonJavaScriptNamesResolve is the other half of parity: a workflow that
+// uses a name JavaScript has should not fail on this runtime because the
+// allowlist was written by hand and missed one.
+func TestCommonJavaScriptNamesResolve(t *testing.T) {
+	t.Parallel()
+
+	for template, want := range map[string]any{
+		"{{ 'a'.concat('b', 1) }}":                             "ab1",
+		"{{ ['b', 'a'].sort() }}":                              []any{"a", "b"},
+		"{{ [1, 2].concat([3], 4) }}":                          []any{float64(1), float64(2), float64(3), float64(4)},
+		"{{ '  x  '.trimStart() }}":                            "x  ",
+		"{{ 'x'.padStart(3, '0') }}":                           "00x",
+		"{{ 'ab'.repeat(2) }}":                                 "abab",
+		"{{ [1, [2, [3]]].flat() }}":                           []any{float64(1), float64(2), []any{float64(3)}},
+		"{{ ['a', 'b'].at(-1) }}":                              "b",
+		"{{ Number.isInteger(2) }}":                            true,
+		"{{ Array.isArray($json.tags) }}":                      true,
+		"{{ Array.from('ab') }}":                               []any{"a", "b"},
+		"{{ 'a=1&b=2'.split('&').map(p => p.split('=')[1]) }}": []any{"1", "2"},
+	} {
+		got := evaluateOne(t, template, parityContext())
+		if !sameValue(got, want) {
+			t.Errorf("Evaluate(%s) = %#v, want %#v", template, got, want)
+		}
+	}
+}
