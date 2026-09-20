@@ -3,15 +3,21 @@ package datastore
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"strings"
 )
 
-// List returns every datastore the tenant owns, in name order, with live
-// columns in definition order. It opens no physical table: the catalogue
+// ListDatastores returns every datastore the tenant owns, in name order, with
+// live columns in definition order. It opens no physical table: the catalogue
 // rows are the whole answer, which is what makes the management list cheap
 // and what the From-list resource locator reads at edit time.
+//
+// Unbounded on purpose, and kept for the locator: it reads the whole catalogue
+// to resolve a name to an id at edit time, in process, for one tenant. The HTTP
+// listing is ListDatastoresPage, which is what a client-facing request uses so
+// it cannot ask for every table a tenant owns (BUG-fv5fer).
 func (e *Engine) ListDatastores(ctx context.Context, tenantID string) ([]Datastore, error) {
 	if e == nil || e.db == nil {
 		return nil, errors.New("datastore: engine is not configured")
@@ -36,6 +42,150 @@ func (e *Engine) ListDatastores(ctx context.Context, tenantID string) ([]Datasto
 		})
 	}
 	return out, nil
+}
+
+// DefaultDatastorePageSize and MaxDatastorePageSize bound the catalogue
+// listing. They are wider than the row-page bounds because a datastore is a
+// management object, not a data row: a tenant with more than five hundred of
+// them has a naming problem the API should not solve by loading all of them.
+const (
+	DefaultDatastorePageSize = 100
+	MaxDatastorePageSize     = 500
+)
+
+// DatastoreQuery is one catalogue listing: the keyset cursor pinning the last
+// (name, id) pair seen, and the page size.
+type DatastoreQuery struct {
+	Cursor string
+	Limit  int
+}
+
+// DatastorePage is one page of datastores in name order with the cursor for the
+// next.
+type DatastorePage struct {
+	Datastores []Datastore
+	NextCursor string
+}
+
+// ListDatastoresPage returns one page of the tenant's datastores, in name
+// order.
+//
+// Pagination is keyset on (name, id): names are not unique — the catalogue
+// enforces no uniqueness on them — so the id tiebreaker is what makes the order
+// total and the cursor exact. A datastore created while a client pages sorts
+// into its own position rather than shifting rows onto a page already read.
+//
+// Columns are read for the whole page in one query rather than one per
+// datastore: the page is bounded at MaxDatastorePageSize, and a per-row read
+// would be a hundred extra round trips through SQLite's single connection to
+// render a list.
+func (e *Engine) ListDatastoresPage(ctx context.Context, tenantID string, q DatastoreQuery) (DatastorePage, error) {
+	if e == nil || e.db == nil {
+		return DatastorePage{}, errors.New("datastore: engine is not configured")
+	}
+
+	limit := q.Limit
+	if limit <= 0 {
+		limit = DefaultDatastorePageSize
+	}
+	if limit > MaxDatastorePageSize {
+		limit = MaxDatastorePageSize
+	}
+
+	query := e.db.WithContext(ctx).Model(&datastoreModel{}).Where("tenant_id = ?", tenantID)
+	if q.Cursor != "" {
+		name, id, err := decodeDatastoreCursor(q.Cursor)
+		if err != nil {
+			return DatastorePage{}, err
+		}
+		query = query.Where("(name > ?) OR (name = ? AND id > ?)", name, name, id)
+	}
+
+	// Read one extra row to learn whether another page exists without a second
+	// COUNT over the same predicate.
+	var rows []datastoreModel
+	if err := query.Order("name ASC, id ASC").Limit(limit + 1).Find(&rows).Error; err != nil {
+		return DatastorePage{}, fmt.Errorf("datastore: list datastores: %w", err)
+	}
+	page := DatastorePage{Datastores: make([]Datastore, 0, limit)}
+	if len(rows) > limit {
+		last := rows[limit-1]
+		page.NextCursor = encodeDatastoreCursor(last.Name, last.ID)
+		rows = rows[:limit]
+	}
+
+	ids := make([]string, 0, len(rows))
+	for _, row := range rows {
+		ids = append(ids, row.ID)
+	}
+	columns, err := e.columnsByDatastore(ctx, ids)
+	if err != nil {
+		return DatastorePage{}, err
+	}
+	for _, row := range rows {
+		page.Datastores = append(page.Datastores, Datastore{
+			ID: row.ID, TenantID: row.TenantID, Name: row.Name,
+			Surrogate: row.Surrogate, Table: PhysicalTableName(e.prefix, row.Surrogate),
+			SchemaVersion: row.SchemaVersion, Columns: columns[row.ID],
+		})
+	}
+	return page, nil
+}
+
+// datastoreCursorPrefix versions the catalogue cursor wire format, so carrying
+// another sort value later is a new version rather than a silent reinterpretation
+// of cursors already in a client's hands.
+const datastoreCursorPrefix = "ds-v1"
+
+// ErrInvalidDatastoreCursor reports a catalogue Listing cursor this engine did
+// not issue. The HTTP layer maps it to a 400, never a 500: a cursor a client
+// invented names no position, and answering with the first page instead would
+// silently repeat rows.
+var ErrInvalidDatastoreCursor = errors.New("datastore: invalid datastore cursor")
+
+func encodeDatastoreCursor(name, id string) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(datastoreCursorPrefix + "\x00" + name + "\x00" + id))
+}
+
+// decodeDatastoreCursor inverts encodeDatastoreCursor. A cursor this engine did
+// not issue is ErrInvalidDatastoreCursor rather than a position, which the API
+// answers as a 400.
+func decodeDatastoreCursor(cursor string) (string, string, error) {
+	decoded, err := base64.RawURLEncoding.DecodeString(cursor)
+	if err != nil {
+		return "", "", fmt.Errorf("%w: datastore cursor is malformed", ErrInvalidDatastoreCursor)
+	}
+	prefix, rest, found := strings.Cut(string(decoded), "\x00")
+	if !found || prefix != datastoreCursorPrefix {
+		return "", "", fmt.Errorf("%w: datastore cursor is malformed", ErrInvalidDatastoreCursor)
+	}
+	name, id, found := strings.Cut(rest, "\x00")
+	if !found || id == "" {
+		return "", "", fmt.Errorf("%w: datastore cursor is malformed", ErrInvalidDatastoreCursor)
+	}
+	return name, id, nil
+}
+
+// columnsByDatastore reads the live columns of every named datastore in one
+// query, in position order, grouped by datastore. A datastore with no columns
+// maps to a nil slice, which is the same empty answer columnsOf gives it.
+func (e *Engine) columnsByDatastore(ctx context.Context, ids []string) (map[string][]ColumnDef, error) {
+	grouped := make(map[string][]ColumnDef, len(ids))
+	if len(ids) == 0 {
+		return grouped, nil
+	}
+	var stored []datastoreColumnModel
+	if err := e.db.WithContext(ctx).
+		Where("datastore_id IN ?", ids).
+		Order("datastore_id ASC, position ASC").
+		Find(&stored).Error; err != nil {
+		return nil, fmt.Errorf("datastore: read columns: %w", err)
+	}
+	for _, col := range stored {
+		grouped[col.DatastoreID] = append(grouped[col.DatastoreID],
+			ColumnDef{Name: col.Name, Type: ColumnType(col.Type), Position: col.Position})
+	}
+	return grouped, nil
 }
 
 // Get returns one datastore with its live columns, or an unknown-datastore
