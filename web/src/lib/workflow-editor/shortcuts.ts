@@ -113,3 +113,27 @@ export function isTypingTarget(target: EventTarget | null): boolean {
 	// A read-only input still owns the keyboard: arrow keys move the caret.
 	return typeof element.closest === 'function' && element.closest('[contenteditable="true"]') !== null;
 }
+
+/**
+ * Whether a focused control owns this keystroke, so the canvas must leave it
+ * alone.
+ *
+ * Typing controls own everything, as above. A focused button or link owns
+ * Enter: it activates on that key, and Enter is also the canvas key that opens
+ * the selected node, so without this the editor swallowed the press — the
+ * properties panel opened instead of the control the user had tabbed to. Space
+ * activates a button too, but the canvas claims no Space, so nothing contends
+ * for it.
+ *
+ * Read through the tag name and roles rather than `instanceof`: same reason as
+ * isTypingTarget, and a control built from a div with role="button" is a button
+ * to the keyboard however it is spelled in markup.
+ */
+export function controlOwnsKey(target: EventTarget | null, key: string): boolean {
+	if (isTypingTarget(target)) return true;
+	if (key !== 'Enter') return false;
+	const element = target as { tagName?: unknown; closest?: (selector: string) => unknown } | null;
+	if (element === null) return false;
+	if (element.tagName === 'BUTTON' || element.tagName === 'A') return true;
+	return typeof element.closest === 'function' && element.closest('[role="button"],[role="link"]') !== null;
+}

@@ -75,7 +75,7 @@
 	} from '$lib/workflow-editor/document';
 	import { copySelection, pasteInto, readClipboard } from '$lib/workflow-editor/clipboard';
 	import { emptyHistory, record as recordHistory, redo as redoHistory, undo as undoHistory, type History as DocumentHistory } from '$lib/workflow-editor/history';
-	import { SHORTCUT_REFERENCE, canvasShortcut, isTypingTarget } from '$lib/workflow-editor/shortcuts';
+	import { SHORTCUT_REFERENCE, canvasShortcut, controlOwnsKey } from '$lib/workflow-editor/shortcuts';
 	import { tidyDocument } from '$lib/workflow-editor/layout';
 	import { mediaQuery } from '$lib/workflow-editor/media.svelte';
 	import { isAnnotation } from '$lib/workflow-editor/node-visual';
@@ -832,13 +832,14 @@
 	 * The canvas keymap.
 	 *
 	 * Bound on the window rather than on the canvas element, because focus
-	 * follows the node the user selected out of the pane. Three guards: the
-	 * keystroke must not belong to a field, no overlay may be open, and focus
-	 * has to be inside this editor — a second editor on the page must not act on
-	 * the first one's keys.
+	 * follows the node the user selected out of the pane. Four guards: the
+	 * keystroke must not belong to a field or to a button or link that
+	 * activates on it, no overlay may be open, and focus has to be inside this
+	 * editor — a second editor on the page must not act on the first one's
+	 * keys.
 	 */
 	function handleShortcut(event: KeyboardEvent) {
-		if (event.defaultPrevented || isTypingTarget(event.target)) return;
+		if (event.defaultPrevented || controlOwnsKey(event.target, event.key)) return;
 		if (renameTarget || overlayOpen) return;
 		const focused = globalThis.document.activeElement;
 		if (focused && focused !== globalThis.document.body && editorSection && !editorSection.contains(focused)) return;

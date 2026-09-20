@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { SHORTCUT_REFERENCE, canvasShortcut, isTypingTarget } from './shortcuts';
+import { SHORTCUT_REFERENCE, canvasShortcut, controlOwnsKey, isTypingTarget } from './shortcuts';
 
 const press = (key: string, modifiers: Partial<{ metaKey: boolean; ctrlKey: boolean; shiftKey: boolean; altKey: boolean }> = {}) => ({
 	key,
@@ -73,5 +73,37 @@ describe('isTypingTarget', () => {
 	it('is false for the canvas itself', () => {
 		expect(isTypingTarget({ tagName: 'DIV' } as unknown as EventTarget)).toBe(false);
 		expect(isTypingTarget(null)).toBe(false);
+	});
+});
+
+describe('controlOwnsKey', () => {
+	it('gives every key to a field the user is typing in', () => {
+		expect(controlOwnsKey({ tagName: 'INPUT' } as unknown as EventTarget, 'Enter')).toBe(true);
+		expect(controlOwnsKey({ tagName: 'TEXTAREA' } as unknown as EventTarget, 's')).toBe(true);
+		expect(controlOwnsKey({ tagName: 'SELECT' } as unknown as EventTarget, 'Enter')).toBe(true);
+	});
+
+	// Enter opens the selected node on the canvas and activates a focused
+	// button or link. Without this the editor took the press the user aimed at
+	// the control.
+	it('gives Enter to the button or link that has focus', () => {
+		expect(controlOwnsKey({ tagName: 'BUTTON' } as unknown as EventTarget, 'Enter')).toBe(true);
+		expect(controlOwnsKey({ tagName: 'A' } as unknown as EventTarget, 'Enter')).toBe(true);
+		// A control built from a div is still a button to the keyboard.
+		expect(
+			controlOwnsKey(
+				{ tagName: 'SPAN', closest: (selector: string) => (selector.includes('role="button"') ? {} : null) } as unknown as EventTarget,
+				'Enter'
+			)
+		).toBe(true);
+	});
+
+	// Only Enter is contended: a button does not own Cmd+S, and the canvas
+	// shortcut for it has to keep working while one has focus.
+	it('leaves the canvas keys a focused button does not own', () => {
+		expect(controlOwnsKey({ tagName: 'BUTTON' } as unknown as EventTarget, 's')).toBe(false);
+		expect(controlOwnsKey({ tagName: 'A' } as unknown as EventTarget, 'z')).toBe(false);
+		expect(controlOwnsKey({ tagName: 'DIV' } as unknown as EventTarget, 'Enter')).toBe(false);
+		expect(controlOwnsKey(null, 'Enter')).toBe(false);
 	});
 });
