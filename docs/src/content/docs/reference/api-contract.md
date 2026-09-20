@@ -38,9 +38,16 @@ Consequences:
 
 ## The operation surface
 
-46 operations, all under `/api/v1`, in nine groups. Paths, HTTP methods, and
-operation ids are **stable**: they change only under a new `/api/vN` path
-(see [Breaking changes](#breaking-changes)).
+The document a server serves holds 72 operations, all under `/api/v1`, in
+eleven groups. The tables below are the workflow-facing core this contract was
+written around — the operations that existed when it was last revised. The
+always-current list is the [generated reference](/reference/api/), which is
+rendered from a real binary's `/api/openapi.json`, and the datastore and
+tenant/account groups are documented there ([/reference/api/datastores/](/reference/api/datastores/),
+[/reference/api/tenants/](/reference/api/tenants/)) rather than duplicated here.
+
+Paths, HTTP methods, and operation ids are **stable**: they change only under a
+new `/api/vN` path (see [Breaking changes](#breaking-changes)).
 
 ### Workflows (13)
 

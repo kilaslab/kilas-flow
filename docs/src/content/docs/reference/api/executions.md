@@ -1,6 +1,6 @@
 ---
 title: Executions
-description: List, inspect, cancel, and follow executions on the event stream. Generated from the live OpenAPI document.
+description: "List, inspect, cancel, and follow executions on the event stream. Generated from the live OpenAPI document."
 sidebar:
   order: 2
 ---
@@ -82,7 +82,7 @@ Embed: Allow with `workflow:read` — ownership is checked in the handler, which
 
 `GET /api/v1/executions/{id}/events`
 
-Live standardized event feed for one execution. Replays retained events after Last-Event-ID, then streams until the execution reaches a terminal state.
+Live standardized event feed for one execution. Replays retained events after Last-Event-ID, then streams until the execution reaches a terminal state. A run that has already finished answers 404 when its record is gone, and otherwise replays its outcome and closes.
 
 Parameters:
 

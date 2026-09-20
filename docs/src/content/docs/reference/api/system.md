@@ -1,8 +1,8 @@
 ---
 title: System
-description: Health and readiness. Generated from the live OpenAPI document.
+description: "Health and readiness. Generated from the live OpenAPI document."
 sidebar:
-  order: 9
+  order: 11
 ---
 
 <!-- Generated from the live OpenAPI document by scripts/generate-api-reference.mjs — do not edit by hand. -->

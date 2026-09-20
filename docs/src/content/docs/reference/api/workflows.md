@@ -1,6 +1,6 @@
 ---
 title: Workflows
-description: Create, read, update, run, activate, and version workflows. Generated from the live OpenAPI document.
+description: "Create, read, update, run, activate, and version workflows. Generated from the live OpenAPI document."
 sidebar:
   order: 1
 ---
@@ -32,7 +32,14 @@ Embed: Deny — listing workflows, minting sessions, schedules, credential write
 
 `GET /api/v1/workflows`
 
-Lists workflows visible to the current tenant.
+Returns one page of workflow summaries, newest first. The next page's cursor is in the X-Next-Cursor response header, empty on the last page.
+
+Parameters:
+
+| Name | In | Required | Type | Description |
+| --- | --- | --- | --- | --- |
+| `limit` | query | no | integer | Maximum workflows to return (default 100) |
+| `cursor` | query | no | string | Opaque cursor from the previous page's X-Next-Cursor header |
 
 Responses:
 
@@ -75,6 +82,7 @@ Parameters:
 | Name | In | Required | Type | Description |
 | --- | --- | --- | --- | --- |
 | `id` | path | yes | string | Workflow identifier |
+| `If-Match` | header | no | string | Latest version ID the editor saved from; a save from a stale revision is refused with 409 |
 
 Request body: `application/json` — `WorkflowDocumentInput` (required)
 

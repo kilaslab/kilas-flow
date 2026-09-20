@@ -17,7 +17,7 @@ When the two disagree, compare versions: every page here states the server versi
 
 ## Operations
 
-46 operations, all under `/api/v1`, in 9 groups. Paths, HTTP methods, and operation ids are stable — see [API contract and stability](/reference/api-contract/).
+72 operations, all under `/api/v1`, in 11 groups. Paths, HTTP methods, and operation ids are stable — see [API contract and stability](/reference/api-contract/).
 
 | Group | Operations | Contents |
 | --- | --- | --- |
@@ -27,11 +27,13 @@ When the two disagree, compare versions: every page here states the server versi
 | [Authentication and keys](/reference/api/auth/) | 7 | Sessions, API keys, and stream tickets. |
 | [Schedules](/reference/api/schedules/) | 4 | Cron-style triggers owned by a workflow. |
 | [Node types](/reference/api/nodes/) | 5 | The node catalogue, icons, load-options, load-schema, and the expression grammar. |
+| [Datastores](/reference/api/datastores/) | 17 | Tenant-owned row stores: tables, columns, rows, and CSV import and export. |
+| [Tenants and accounts](/reference/api/tenants/) | 9 | Operator surface: tenants, their users, and keys minted for another tenant. |
 | [Interop](/reference/api/interop/) | 2 | Import and export workflows across formats. |
 | [Embed](/reference/api/embed/) | 1 | Mint a session that confines an embedded editor to one workflow. |
 | [System](/reference/api/system/) | 2 | Health and readiness. |
 
-Two behaviours are worth knowing before reading any operation page, because they are easy to misread from a signature alone. Running a workflow answers `202` and does not return results — it enqueues an execution, and you follow it on the event stream at `GET /api/v1/executions/{id}/events`. And **no operation requires authentication**; see [Security posture](/operate/security/) for what that means for how you deploy this.
+Two behaviours are worth knowing before reading any operation page, because they are easy to misread from a signature alone. Running a workflow answers `202` and does not return results — it enqueues an execution, and you follow it on the event stream at `GET /api/v1/executions/{id}/events`. This reference was generated from an instance with authentication disabled — `auth.enabled` defaults to `false` — so no operation below requires a credential **on that instance**. With `auth.enabled` set, every operation needs either a Bearer API key (`Authorization: Bearer <key>`) or a session cookie, except health, readiness, login and logout; the document the server serves then declares both schemes. See [Security posture](/operate/security/) for how to decide.
 
 ## Beyond the operation pages
 

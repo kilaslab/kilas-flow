@@ -1,8 +1,8 @@
 ---
 title: Embed
-description: Mint a session that confines an embedded editor to one workflow. Generated from the live OpenAPI document.
+description: "Mint a session that confines an embedded editor to one workflow. Generated from the live OpenAPI document."
 sidebar:
-  order: 8
+  order: 10
 ---
 
 <!-- Generated from the live OpenAPI document by scripts/generate-api-reference.mjs — do not edit by hand. -->
@@ -15,7 +15,7 @@ Mint a session that confines an embedded editor to one workflow.
 
 `POST /api/v1/embed-sessions`
 
-Mints a short-lived, workflow-scoped token for one host origin. The host passes it to the iframe over postMessage.
+Mints a short-lived token for one host origin, scoped to one workflow or one datastore. The host passes it to the iframe over postMessage.
 
 Request body: `application/json` — `EmbedSessionBody` (required)
 

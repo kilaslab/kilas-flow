@@ -1,6 +1,6 @@
 ---
 title: Credentials
-description: Credential types and stored credentials. Reads never return values. Generated from the live OpenAPI document.
+description: "Credential types and stored credentials. Reads never return values. Generated from the live OpenAPI document."
 sidebar:
   order: 3
 ---

@@ -1,6 +1,6 @@
 ---
 title: Schedules
-description: Cron-style triggers owned by a workflow. Generated from the live OpenAPI document.
+description: "Cron-style triggers owned by a workflow. Generated from the live OpenAPI document."
 sidebar:
   order: 5
 ---
@@ -15,7 +15,14 @@ Cron-style triggers owned by a workflow.
 
 `GET /api/v1/schedules`
 
-Returns every cron schedule in the workspace.
+Returns one page of cron schedules, oldest first. The next page's cursor is in the X-Next-Cursor response header, empty on the last page.
+
+Parameters:
+
+| Name | In | Required | Type | Description |
+| --- | --- | --- | --- | --- |
+| `limit` | query | no | integer | Maximum schedules to return (default 100) |
+| `cursor` | query | no | string | Opaque cursor from the previous page's X-Next-Cursor header |
 
 Responses:
 

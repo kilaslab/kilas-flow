@@ -55,6 +55,8 @@ const groups = [
 	{ slug: 'auth', title: 'Authentication and keys', blurb: 'Sessions, API keys, and stream tickets.', operations: ['login', 'logout', 'get-me', 'list-api-keys', 'create-api-key', 'revoke-api-key', 'create-stream-ticket'] },
 	{ slug: 'schedules', title: 'Schedules', blurb: 'Cron-style triggers owned by a workflow.', operations: ['list-schedules', 'create-schedule', 'update-schedule', 'delete-schedule'] },
 	{ slug: 'nodes', title: 'Node types', blurb: 'The node catalogue, icons, load-options, load-schema, and the expression grammar.', operations: ['list-node-types', 'get-node-icon', 'load-node-property-options', 'load-node-property-schema', 'get-expression-grammar'] },
+	{ slug: 'datastores', title: 'Datastores', blurb: 'Tenant-owned row stores: tables, columns, rows, and CSV import and export.', operations: ['list-datastores', 'create-datastore', 'get-datastore', 'rename-datastore', 'delete-datastore', 'add-datastore-column', 'rename-datastore-column', 'delete-datastore-column', 'insert-datastore-row', 'get-datastore-row', 'list-datastore-rows', 'update-datastore-rows', 'upsert-datastore-row', 'delete-datastore-rows', 'clear-datastore', 'import-datastore-rows', 'export-datastore-rows'] },
+	{ slug: 'tenants', title: 'Tenants and accounts', blurb: 'Operator surface: tenants, their users, and keys minted for another tenant.', operations: ['list-tenants', 'create-tenant', 'get-tenant', 'list-tenant-users', 'create-tenant-user', 'disable-tenant-user', 'enable-tenant-user', 'set-tenant-user-password', 'create-tenant-api-key'] },
 	{ slug: 'interop', title: 'Interop', blurb: 'Import and export workflows across formats.', operations: ['import-workflow', 'export-workflow'] },
 	{ slug: 'embed', title: 'Embed', blurb: 'Mint a session that confines an embedded editor to one workflow.', operations: ['create-embed-session'] },
 	{ slug: 'system', title: 'System', blurb: 'Health and readiness.', operations: ['get-health', 'get-ready'] },
@@ -168,7 +170,10 @@ function renderGroupPage(group, version, operations) {
 	const lines = [];
 	lines.push('---');
 	lines.push(`title: ${group.title}`);
-	lines.push(`description: ${group.blurb} Generated from the live OpenAPI document.`);
+	// JSON.stringify rather than a bare interpolation: a blurb is prose and may
+	// contain a colon, and `description: Tenant-owned row stores: tables` is a
+	// YAML parse error that only shows up when the docs site builds.
+	lines.push(`description: ${JSON.stringify(`${group.blurb} Generated from the live OpenAPI document.`)}`);
 	lines.push('sidebar:');
 	lines.push(`  order: ${groups.indexOf(group) + 1}`);
 	lines.push('---');
@@ -185,7 +190,24 @@ function renderGroupPage(group, version, operations) {
 	return lines.join('\n');
 }
 
-function renderOverview(version, title, openapi, total) {
+// authSentence reads the document instead of asserting a fixed posture.
+//
+// This sentence used to say "no operation requires authentication" in every
+// generation, which was true only because the reference is generated from a
+// binary started with auth off — and it stayed true on the page after
+// auth.enabled became a supported deployment, so a reader concluded the API was
+// open by design. The document now carries a root-level `security` requirement
+// exactly when the instance enforces one (see openAPIConfig), so the page can
+// describe the image it was generated from and name the difference.
+function authSentence(document) {
+	const enforced = Array.isArray(document?.security) && document.security.length > 0;
+	if (enforced) {
+		return ('This reference was generated from an instance with authentication enabled: every operation below needs either a Bearer API key (`Authorization: Bearer <key>`) or a session cookie, except `GET /api/v1/health`, `GET /api/v1/ready`, `POST /api/v1/auth/login` and `POST /api/v1/auth/logout`, which are public. The webhook and resume prefixes are outside this document and carry their own credentials. See [Security posture](/operate/security/).');
+	}
+	return ('This reference was generated from an instance with authentication disabled — `auth.enabled` defaults to `false` — so no operation below requires a credential **on that instance**. With `auth.enabled` set, every operation needs either a Bearer API key (`Authorization: Bearer <key>`) or a session cookie, except health, readiness, login and logout; the document the server serves then declares both schemes. See [Security posture](/operate/security/) for how to decide.');
+}
+
+function renderOverview(version, title, openapi, total, document) {
 	const lines = [];
 	lines.push('---');
 	lines.push('title: HTTP API');
@@ -214,7 +236,7 @@ function renderOverview(version, title, openapi, total) {
 		lines.push(`| [${group.title}](/reference/api/${group.slug}/) | ${group.operations.length} | ${group.blurb} |`);
 	}
 	lines.push('');
-	lines.push('Two behaviours are worth knowing before reading any operation page, because they are easy to misread from a signature alone. Running a workflow answers `202` and does not return results — it enqueues an execution, and you follow it on the event stream at `GET /api/v1/executions/{id}/events`. And **no operation requires authentication**; see [Security posture](/operate/security/) for what that means for how you deploy this.');
+	lines.push('Two behaviours are worth knowing before reading any operation page, because they are easy to misread from a signature alone. Running a workflow answers `202` and does not return results — it enqueues an execution, and you follow it on the event stream at `GET /api/v1/executions/{id}/events`. ' + authSentence(document));
 	lines.push('');
 	lines.push('## Beyond the operation pages');
 	lines.push('');
@@ -354,7 +376,7 @@ async function main() {
 		}
 		outputs.set(join(generatedDir, 'errors.md'), renderErrors(version, serverDocument.components?.schemas ?? {}));
 		outputs.set(join(generatedDir, 'events.md'), renderEvents(version, serverDocument.components?.schemas ?? {}));
-		outputs.set(join(docsDir, 'api.md'), renderOverview(version, serverDocument.info?.title ?? 'KilasFlow API', serverDocument.openapi ?? '3.1', byId.size));
+		outputs.set(join(docsDir, 'api.md'), renderOverview(version, serverDocument.info?.title ?? 'KilasFlow API', serverDocument.openapi ?? '3.1', byId.size, serverDocument));
 		const names = [...outputs.keys()].sort();
 		if (!check) {
 			await mkdir(generatedDir, { recursive: true });

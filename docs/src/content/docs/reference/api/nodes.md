@@ -1,6 +1,6 @@
 ---
 title: Node types
-description: The node catalogue, icons, load-options, load-schema, and the expression grammar. Generated from the live OpenAPI document.
+description: "The node catalogue, icons, load-options, load-schema, and the expression grammar. Generated from the live OpenAPI document."
 sidebar:
   order: 6
 ---

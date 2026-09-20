@@ -176,3 +176,13 @@ Files: go.mod, Makefile, Dockerfile, compose.yaml
 - i18n (the finding's largest item) moved to FEAT-15k49d: a message catalog plus plurals plus a locale on the embed
   branding type is a rewrite of the frontend copy layer, not a hygiene commit.
 - Deferred: BUG-341sxn (Go module path rename off kilaslabs — quiet tree required), FEAT-15k49d (i18n).
+
+- API reference regenerated and drift-gated: scripts/generate-api-reference.mjs now maps the datastore (17) and
+  tenant/account (9) operations into two new contract groups, so `make generate-api-reference` succeeds instead of
+  failing with "operations without a contract group" and the datastore API is discoverable at
+  /reference/api/datastores/ (pages autogenerate into the sidebar). The generator's auth sentence is derived from the
+  served document (root `security` present = auth enforced) rather than hard-coded "no operation requires
+  authentication", and generated frontmatter descriptions are JSON-quoted so a blurb containing a colon cannot break the
+  YAML parse. Verified: `make generate-api-reference-check` passes (14 pages fresh, 72 operations) and
+  `cd docs && pnpm build` passes (43 pages, links validated). reference/api-contract.md now states the live count and
+  points at the generated reference for the groups it does not duplicate.
