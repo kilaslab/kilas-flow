@@ -1,0 +1,89 @@
+name: Bug report
+description: Something KilasFlow does that the documentation says it does not, or the reverse.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **A security problem does not belong here.** Disclose it privately
+        through [SECURITY.md](https://github.com/kilaslab/kilas-flow/blob/main/SECURITY.md) —
+        an issue is indexed within minutes and tells everyone running the
+        product what to attack before there is a fix.
+
+        Please search the open issues first. Triage is done by one person, and a
+        duplicate costs more than it looks like.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead. Paste the exact error text or response body when there is one.
+      placeholder: |
+        I activated a workflow with a webhook trigger and POSTed a JSON body to
+        the route. I expected the run to complete; it failed at the HTTP node
+        with "..."
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: The smallest sequence that shows it. If the problem is in the engine, the importer or the editor, a workflow JSON export is the fastest path — it can be attached below.
+      placeholder: |
+        1. Import the attached workflow
+        2. Activate it
+        3. POST {"hello": "world"} to /webhook/<route>
+        4. The run fails with ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The output of `kilasflow -version`, or the image tag if you run the container.
+    validations:
+      required: true
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: How it is deployed
+      options:
+        - Docker Compose image, SQLite
+        - Docker Compose image, PostgreSQL
+        - Docker Compose image, another database
+        - Single binary (make build-all)
+        - Development servers (make dev)
+        - Embedded in a host application
+    validations:
+      required: true
+  - type: dropdown
+    id: auth
+    attributes:
+      label: Is authentication on?
+      description: Whether KILASFLOW_AUTH_ENABLED is set. It is off by default, and it changes what a report means.
+      options:
+        - "Off (the default)"
+        - "On"
+        - "Not sure"
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: |
+        Server output around the failure, or the execution's event stream.
+        Redact credentials, tokens, API keys and webhook routes before pasting —
+        they are secrets even when the instance is only on your laptop.
+      render: shell
+    validations:
+      required: false
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you file
+      options:
+        - label: I searched the open issues for the same problem.
+          required: true
+        - label: This is not a security report — those go to SECURITY.md, privately.
+          required: true

@@ -2,6 +2,10 @@
 
 An embeddable open-source workflow engine for APIs, AI agents, and SaaS products.
 
+[![CI](https://github.com/kilaslab/kilas-flow/actions/workflows/ci.yml/badge.svg)](https://github.com/kilaslab/kilas-flow/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Go](https://img.shields.io/badge/Go-1.27-00ADD8.svg?logo=go&logoColor=white)](go.mod)
+
 **Repository:** https://github.com/kilaslab/kilas-flow
 
 Go-native · single binary · API-first · embeddable · white-label · SQLite by default
@@ -322,6 +326,42 @@ first, and re-activating a webhook trigger puts it back.
 Either way the bot token is a `telegramApi` credential. Its Base URL field is
 normally empty; set it only if you run [Telegram's own local Bot API
 server](https://core.telegram.org/bots/api#using-a-local-bot-api-server).
+
+## Documentation
+
+The documentation site is an Astro Starlight project in `docs/` — `make docs`
+serves it, `make docs-build` builds it and validates every internal link. It has
+no public URL yet, so it is read from the tree:
+
+| Where to start | Path |
+| --- | --- |
+| What KilasFlow is, and what it deliberately is not | [`docs/src/content/docs/start/what-kilasflow-is.md`](docs/src/content/docs/start/what-kilasflow-is.md) |
+| Install, and a first workflow that runs | [`docs/src/content/docs/start/`](docs/src/content/docs/start/) |
+| Execution model, items and lineage, expressions, the node registry | [`docs/src/content/docs/concepts/`](docs/src/content/docs/concepts/) |
+| Embedding the editor, migrating from n8n, authoring nodes | [`docs/src/content/docs/guides/`](docs/src/content/docs/guides/) |
+| Configuration, deployment, upgrades, security | [`docs/src/content/docs/operate/`](docs/src/content/docs/operate/) |
+| API reference, expression grammar, node packs | [`docs/src/content/docs/reference/`](docs/src/content/docs/reference/) |
+
+The API reference under `docs/src/content/docs/reference/api/` is generated from
+the running binary's OpenAPI document by `make generate-api-reference`; CI fails
+if it is stale.
+
+## Community
+
+- **[Contributing](CONTRIBUTING.md)** — setup, the checks a change has to pass,
+  and the commit, test and documentation conventions.
+- **[Code of conduct](CODE_OF_CONDUCT.md)** — Contributor Covenant 3.0, and it
+  applies to issues and pull requests as much as to any other project space.
+- **[Security](SECURITY.md)** — the private disclosure path, what is in scope,
+  and what the project does and does not promise. Never a public issue.
+- **[Changelog](CHANGELOG.md)** — no release tag has been cut yet, so it is a
+  single `[Unreleased]` section.
+- **Where the work is tracked** — Pine tickets in
+  [`.pine/tickets/`](.pine/tickets), committed with the code, so the reasoning
+  and the rejected alternatives behind a change are readable from a clone.
+  [`.pine/roadmap.md`](.pine/roadmap.md) is the plan.
+- **Maintainer** — [@underworld14](https://github.com/underworld14), for the
+  `kilaslab` organization that owns this repository.
 
 ## Design history
 

@@ -1,0 +1,33 @@
+# The formatting baseline every editor should agree on.
+#
+# Deliberately thin: gofmt owns Go and the frontend toolchain owns `web/`,
+# `sdk/`, `docs/` and `e2e/`. This file states only what those tools do not —
+# line endings and the trailing whitespace that otherwise appears silently in a
+# diff — plus the indentation each tree already uses.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.go]
+indent_style = tab
+
+[*.{ts,js,mjs,cjs,svelte}]
+indent_style = tab
+
+[*.{json,yml,yaml}]
+indent_style = space
+indent_size = 2
+
+[*.{md,mdx}]
+indent_style = space
+indent_size = 2
+# Two trailing spaces are Markdown's hard line break, so trimming them here
+# would silently reflow a paragraph.
+trim_trailing_whitespace = false
+
+[Makefile]
+indent_style = tab

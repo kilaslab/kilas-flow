@@ -1,0 +1,78 @@
+# Dependency updates: one grouped pull request per ecosystem per week.
+#
+# Grouping is deliberate. Ungrouped, five manifests produce a stream of
+# single-package pull requests that reviewers learn to ignore, which is worse than
+# no automation at all. Major versions are deliberately left out of the groups —
+# they arrive on their own because each needs a human to read a changelog.
+#
+# `github-actions` matters more here than in most repositories: the workflows pin
+# every action to a commit SHA with the version in a trailing comment, and
+# Dependabot is one of the few tools that understands that convention well enough
+# to keep the pins current.
+version: 2
+
+updates:
+  - package-ecosystem: gomod
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      go:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: npm
+    directory: "/web"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      web:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: npm
+    directory: "/sdk"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      sdk:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: npm
+    directory: "/docs"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      docs:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: npm
+    directory: "/e2e"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      e2e:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]

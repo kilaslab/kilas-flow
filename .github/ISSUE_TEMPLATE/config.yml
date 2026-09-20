@@ -1,0 +1,11 @@
+# The two forms above are the intended entry points: a bug report without a
+# version, a deployment shape and a reproduction costs a round trip to obtain the
+# same information, and a blank issue is where security reports end up.
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/kilaslab/kilas-flow/security/advisories/new
+    about: Private disclosure, visible only to you and the maintainers. Never a public issue.
+  - name: Read the documentation
+    url: https://github.com/kilaslab/kilas-flow/tree/main/docs/src/content/docs
+    about: Install, first workflow, concepts, guides, operations and the API reference. The site is not published yet, so it is read from the tree.

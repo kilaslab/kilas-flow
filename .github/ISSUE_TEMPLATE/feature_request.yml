@@ -1,0 +1,57 @@
+name: Feature request
+description: Something KilasFlow should do and does not.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A request that describes the workflow you are trying to build is much
+        easier to act on than one that describes an implementation. If what you
+        need is an existing n8n workflow running unchanged, say so — that is the
+        current focus, and `.pine/roadmap.md` says where it stands.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do, and what stops you today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like to happen
+      description: The behaviour, not necessarily the implementation.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part of the system
+      options:
+        - Engine / node execution
+        - A built-in node
+        - A node pack (WAHA, Telegram, ...)
+        - REST API
+        - Editor / canvas
+        - Embedding and white-label
+        - Host SDK (@kilasflow/sdk)
+        - n8n import / export
+        - Documentation
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you have considered
+      description: Including what you do today instead. "I run a second service that..." is a useful answer.
+    validations:
+      required: false
+  - type: textarea
+    id: contribution
+    attributes:
+      label: Would you contribute it?
+      description: Not a commitment — it changes how the work gets planned. An accepted request is recorded as a ticket under `.pine/tickets/` and linked back to the issue.
+    validations:
+      required: false
