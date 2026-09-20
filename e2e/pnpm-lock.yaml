@@ -12,8 +12,8 @@ importers:
         specifier: ^1.55.0
         version: 1.63.0
       '@types/node':
-        specifier: ^24.13.3
-        version: 24.13.3
+        specifier: ^26.6.1
+        version: 26.6.1
 
 packages:
 
@@ -22,8 +22,8 @@ packages:
     engines: {node: '>=20'}
     hasBin: true
 
-  '@types/node@24.13.3':
-    resolution: {integrity: sha512-Dh8vAsV36ig5wa9OX4pXvMc9D3Veibfw2wix0CUwYODLD8nkj9UsLjASr49nPg+2eKzxhBV+v7L8pXvT4e639Q==}
+  '@types/node@26.6.1':
+    resolution: {integrity: sha512-VqGJBMCtdhqkBUCcBLvywI0NJ+KLuVzgNnlBUNFOQjqVxzo2lxLUNg1DSey8+u2u6ktswSAxg+s68QLzWHNOuA==}
 
   playwright-core@1.63.0:
     resolution: {integrity: sha512-rYCsBF/M5HjUch52bbtVONEFjv6Xu8sm8h72dNlR5bzIE1fvC/bxgspzkjSfU+MweEMmPM8KJebG6nnyxo5mCg==}
@@ -35,8 +35,8 @@ packages:
     engines: {node: '>=20'}
     hasBin: true
 
-  undici-types@7.18.2:
-    resolution: {integrity: sha512-AsuCzffGHJybSaRrmr5eHr81mwJU3kjw6M+uprWvCXiNeN9SOGwQ3Jn8jb8m3Z6izVgknn1R0FTCEAP2QrLY/w==}
+  undici-types@8.9.0:
+    resolution: {integrity: sha512-KTDyRTYX8sWmKXAikPHHSyc63CRPETMctyjKFupcC6OBLXT3xsN0e9aF7m+mIXutFWpUXuedtowG7iLOzp0kQg==}
 
 snapshots:
 
@@ -44,9 +44,9 @@ snapshots:
     dependencies:
       playwright: 1.63.0
 
-  '@types/node@24.13.3':
+  '@types/node@26.6.1':
     dependencies:
-      undici-types: 7.18.2
+      undici-types: 8.9.0
 
   playwright-core@1.63.0: {}
 
@@ -54,4 +54,4 @@ snapshots:
     dependencies:
       playwright-core: 1.63.0
 
-  undici-types@7.18.2: {}
+  undici-types@8.9.0: {}
