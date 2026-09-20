@@ -69,12 +69,15 @@ API key: `/api/v1/auth/*` signs a person in, `/api/v1/api-keys` mints machine
 keys for the tenant that issued them, and `/api/v1/stream-tickets` mints the
 single-use ticket a browser needs for an event stream, where it cannot set a
 header. An embed session token is accepted in place of either and grants
-strictly less than both. The default is off for a reason rather than out of
-laziness: turning identity on for an installation with no account and no key
-would answer every request with `401` and lock its operator out, so enabling it
-with no signing key refuses to start instead. Until an operator enables it,
-KilasFlow must be deployed behind something that authenticates and must not be
-exposed directly to the internet.
+strictly less than both. The served document says the same: `/api/openapi.json`
+declares the two credentials — a Bearer `apiKey` scheme and a cookie `session`
+scheme — and, when `auth.enabled` is on, requires one of them at the document
+root, with health, readiness, login and logout marked off explicitly. The
+default is off for a reason rather than out of laziness: turning identity on for
+an installation with no account and no key would answer every request with `401`
+and lock its operator out, so enabling it with no signing key refuses to start
+instead. Until an operator enables it, KilasFlow must be deployed behind
+something that authenticates and must not be exposed directly to the internet.
 
 **A tenant is a scope, not an isolation boundary.** Every stored row carries a
 tenant identifier and every repository call takes a tenant scope, and a
