@@ -25,12 +25,14 @@ web/.tmp/
 # Scalar docs bundle, copied from node_modules by web/scripts/vendor-docs.mjs
 web/static/vendor/
 
-# Embedded SPA build output.
-# The placeholder files are committed so `go build` works on a fresh clone
-# before the frontend has ever been built. See internal/web/embed.go.
+# Embedded SPA build output. Everything under it belongs to the frontend build,
+# and the only committed file is the .gitkeep that keeps the directory — and so
+# the go:embed directive — present on a fresh clone. The placeholder page a
+# clone without a build serves lives outside this directory, in
+# internal/web/placeholder/index.html, so no build rewrites a tracked file.
+# See internal/web/embed.go.
 internal/web/dist/*
 !internal/web/dist/.gitkeep
-!internal/web/dist/index.html
 
 # Playwright MCP scratch output (snapshots, console logs, screenshots)
 .playwright-mcp/

@@ -57,11 +57,6 @@ endif
 # developer's shell PATH. Keep the override for a system-managed Air binary.
 AIR         ?= $(GO_BIN)/air
 
-# The frontend build wipes DIST_DIR, but internal/web/embed.go embeds it
-# unconditionally. Without a file in place `go build`, `go vet` and `go test`
-# all fail, so every Go target depends on the placeholder being restored.
-PLACEHOLDER := $(DIST_DIR)/index.html
-
 .DEFAULT_GOAL := help
 
 .PHONY: help
@@ -85,7 +80,7 @@ KILASFLOW_WEB_PORT ?= 5173
 export KILASFLOW_WEB_PORT
 
 .PHONY: dev
-dev: dist-placeholder ## Run backend and frontend with hot reload
+dev: ## Run backend and frontend with hot reload
 	@echo "Go   -> http://127.0.0.1:8080"
 	@echo "Vite -> http://127.0.0.1:$(KILASFLOW_WEB_PORT)   <- open this one"
 	@trap 'kill 0' INT TERM EXIT; \
@@ -95,20 +90,17 @@ dev: dist-placeholder ## Run backend and frontend with hot reload
 		exit 1
 
 .PHONY: dev-api
-dev-api: dist-placeholder ## Run the Go backend with Air
+dev-api: ## Run the Go backend with Air
 	$(AIR)
 
 .PHONY: dev-web
 dev-web: ## Run the SvelteKit dev server
 	cd $(WEB_DIR) && pnpm dev
 
-.PHONY: dist-placeholder
-dist-placeholder:
-	@mkdir -p $(DIST_DIR)
-	@touch $(DIST_DIR)/.gitkeep
-	@test -f $(PLACEHOLDER) || git checkout -- $(PLACEHOLDER) 2>/dev/null \
-		|| printf '<!doctype html><title>KilasFlow</title><p>SPA not built. Run <code>make build-web</code>.</p>\n' > $(PLACEHOLDER)
-
+# The build owns DIST_DIR outright: everything under it is ignored by git, and
+# the only committed file there is the .gitkeep recreated below. Nothing this
+# target writes is tracked, which is what keeps `git describe --dirty` honest
+# and the tree clean after a build.
 .PHONY: build-web
 build-web: ## Build the SPA into the Go embed directory
 	cd $(WEB_DIR) && pnpm build
@@ -118,7 +110,7 @@ build-web: ## Build the SPA into the Go embed directory
 	@touch $(DIST_DIR)/.gitkeep
 
 .PHONY: build
-build: dist-placeholder ## Build the production binary (run build-web first for the real SPA)
+build: ## Build the production binary (run build-web first for the real SPA)
 	CGO_ENABLED=0 $(GO) build \
 		-trimpath \
 		-ldflags="$(LDFLAGS)" \
@@ -129,13 +121,39 @@ build: dist-placeholder ## Build the production binary (run build-web first for 
 .PHONY: build-all
 build-all: build-web build ## Full production build: SPA embedded in the binary
 
+# A build must leave tracked files alone. The regression this guards is real and
+# silent: a committed dist/index.html placeholder was overwritten by build-web,
+# which made the tree dirty before `git describe --dirty` ran and stamped every
+# binary, image and health response "-dirty" on a clean checkout. Untracked
+# output (everything else under DIST_DIR) is ignored on purpose — that is what
+# the frontend build is allowed to write.
+#
+# Runs build-all first, so it needs a tree that is already clean: commit before
+# running it by hand. In CI that is the checkout.
+.PHONY: build-clean-check
+build-clean-check: build-all ## Fail if a build modifies a tracked file
+	@test -z "$$(git status --porcelain --untracked-files=no)" || { \
+		echo "build-clean-check: the build modified tracked files:" >&2; \
+		git status --porcelain --untracked-files=no >&2; \
+		exit 1; \
+	}
+	@echo "build-clean-check: no tracked file changed"
+
 .PHONY: run
 run: build ## Build and run the binary
 	./$(BIN_DIR)/$(APP_NAME)
 
+# The PostgreSQL-gated packages run against the one database named by
+# KILASFLOW_TEST_POSTGRES_DSN, and internal/database's migration tests drop
+# every KilasFlow table on entry. `go test ./...` runs packages in parallel by
+# default, so one package's reset deletes another's schema mid-test — the
+# failures read as "relation executions does not exist" in whichever test lost
+# the race. A DSN therefore turns package parallelism off (see
+# .pine/memory/persistence.md); with no DSN every one of those tests skips and
+# the default is kept.
 .PHONY: test
-test: dist-placeholder ## Run Go tests
-	$(GO) test ./... -race
+test: ## Run Go tests
+	$(GO) test ./... -race $(if $(KILASFLOW_TEST_POSTGRES_DSN),-p 1)
 
 .PHONY: web-test
 web-test: ## Run the frontend test suite
@@ -201,46 +219,44 @@ web-sync:
 	cd $(WEB_DIR) && pnpm exec svelte-kit sync
 
 # Both generators boot a real binary via scripts/openapi-spec.mjs and read its
-# OpenAPI document, which is why they depend on the placeholder: without a file
-# under DIST_DIR the `go build` inside the script fails on the embed directive,
-# and the failure reads as a Go problem rather than a missing SPA.
+# OpenAPI document. The binary they build embeds whatever is in DIST_DIR, which
+# a fresh clone leaves holding only its .gitkeep — the placeholder page the
+# binary then serves comes from internal/web/placeholder, not from there.
 #
 # Make cannot express the `generate:api` spelling the package scripts use — a
 # colon is Make's rule separator — so the targets are hyphenated.
 .PHONY: generate-api
-generate-api: dist-placeholder web-sync ## Regenerate the web API client from a freshly built binary
+generate-api: web-sync ## Regenerate the web API client from a freshly built binary
 	cd $(WEB_DIR) && pnpm generate:api
 
 .PHONY: generate-api-check
-generate-api-check: dist-placeholder web-sync ## Fail if the committed web API client is stale
+generate-api-check: web-sync ## Fail if the committed web API client is stale
 	cd $(WEB_DIR) && pnpm generate:api:check
 
 .PHONY: generate-types
-generate-types: dist-placeholder ## Regenerate the SDK types from a freshly built binary
+generate-types: ## Regenerate the SDK types from a freshly built binary
 	cd $(SDK_DIR) && pnpm generate:types
 
 .PHONY: generate-types-check
-generate-types-check: dist-placeholder ## Fail if the committed SDK types are stale
+generate-types-check: ## Fail if the committed SDK types are stale
 	cd $(SDK_DIR) && pnpm generate:types:check
 
 # The public API reference is generated from the OpenAPI document of a real
 # binary, not written by hand. Like the two targets above this one boots a
-# server via scripts/openapi-spec.mjs, which is why it depends on the
-# placeholder: without a file under DIST_DIR the `go build` inside the script
-# fails on the embed directive. The committed pages live under docs/ but the
-# script itself needs only node and go, so there is no pnpm step here.
+# server via scripts/openapi-spec.mjs. The committed pages live under docs/ but
+# the script itself needs only node and go, so there is no pnpm step here.
 .PHONY: generate-api-reference
-generate-api-reference: dist-placeholder ## Regenerate the docs API reference from a freshly built binary
+generate-api-reference: ## Regenerate the docs API reference from a freshly built binary
 	node scripts/generate-api-reference.mjs
 
 .PHONY: generate-api-reference-check
-generate-api-reference-check: dist-placeholder ## Fail if the committed docs API reference is stale
+generate-api-reference-check: ## Fail if the committed docs API reference is stale
 	node scripts/generate-api-reference.mjs --check
 
 # The configuration reference and the example YAML are generated from the
-# Config structs, not written by hand. Unlike the two targets above this one
-# needs no binary and no placeholder: it reads source and defaults only, so a
-# struct change with no regenerated reference fails the check below.
+# Config structs, not written by hand. Unlike the targets above this one needs
+# no binary: it reads source and defaults only, so a struct change with no
+# regenerated reference fails the check below.
 .PHONY: generate-config-reference
 generate-config-reference: ## Regenerate the configuration reference and config.example.yaml
 	$(GO) run ./scripts/config-reference.go
@@ -250,12 +266,12 @@ generate-config-reference-check: ## Fail if the generated configuration files ar
 	$(GO) run ./scripts/config-reference.go --check
 
 .PHONY: test-cover
-test-cover: dist-placeholder ## Run Go tests with a coverage report
+test-cover: ## Run Go tests with a coverage report
 	$(GO) test ./... -coverprofile=coverage.out
 	$(GO) tool cover -func=coverage.out | tail -1
 
 .PHONY: lint
-lint: dist-placeholder ## Vet Go code and typecheck the frontend
+lint: ## Vet Go code and typecheck the frontend
 	$(GO) vet ./...
 	@test -z "$$(gofmt -l . | grep -v '^$(WEB_DIR)/')" || \
 		{ echo "gofmt needed:"; gofmt -l . | grep -v '^$(WEB_DIR)/'; exit 1; }
@@ -337,7 +353,7 @@ corpus-baseline: ## Rescore the corpus and rewrite BASELINE.md and baseline.json
 # target: it prints either the comparison against baseline.json or the skip
 # line naming the sync command, so the state of the corpus is never inferred.
 .PHONY: corpus-check
-corpus-check: dist-placeholder ## Verify BASELINE.md, or say the corpus is not materialised
+corpus-check: ## Verify BASELINE.md, or say the corpus is not materialised
 	$(GO) test ./internal/interop/n8n/corpus -count=1 -v
 
 .PHONY: smoke-sqlite
@@ -370,7 +386,7 @@ smoke-postgres: ## Prove the Docker image against the temporary Compose PostgreS
 # `make build-all`), so this target only needs the e2e dependencies installed
 # — plus web's, for the SPA build. CI installs both before calling it.
 .PHONY: test-e2e
-test-e2e: dist-placeholder ## Run the Playwright end-to-end suite against a real binary and SPA
+test-e2e: ## Run the Playwright end-to-end suite against a real binary and SPA
 	cd e2e && pnpm test
 
 # On-demand only: single-machine timings with third-party-adjacent variance
@@ -386,5 +402,7 @@ clean: ## Remove build artifacts
 	rm -rf $(BIN_DIR) .tmp coverage.out
 	rm -rf $(WEB_DIR)/build $(WEB_DIR)/.svelte-kit
 	rm -rf $(DOCS_DIR)/dist $(DOCS_DIR)/.astro
+	# The embed directive needs at least one file under DIST_DIR, so the
+	# directory is recreated around its tracked .gitkeep rather than removed.
 	rm -rf $(DIST_DIR)
-	@$(MAKE) --no-print-directory dist-placeholder
+	@mkdir -p $(DIST_DIR) && touch $(DIST_DIR)/.gitkeep

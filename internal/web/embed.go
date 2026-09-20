@@ -4,11 +4,18 @@
 package web
 
 import (
+	"bytes"
+	"compress/gzip"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"io/fs"
+	"mime"
 	"net/http"
 	"path"
+	"strconv"
 	"strings"
+	"sync"
 )
 
 // assets holds the built SPA.
@@ -19,11 +26,48 @@ import (
 // pattern compiles without complaint and produces a binary that serves
 // index.html with no assets behind it.
 //
-// dist/.gitkeep and dist/index.html are committed placeholders so this package
-// compiles on a fresh clone, before the frontend has ever been built.
+// dist/ belongs to the frontend build, and the only file tracked under it is
+// .gitkeep. A tracked index.html placeholder used to sit there too, which meant
+// `make build-web` rewrote a committed file: the working tree went dirty and
+// every build was stamped "-dirty" by `git describe --dirty`. What a fresh
+// clone serves instead is placeholderHTML below, so a bare `go build` still
+// produces a binary that explains itself.
 //
 //go:embed all:dist
 var assets embed.FS
+
+// placeholderHTML is the page served when the SPA has never been built — a
+// fresh clone, or a binary built without `make build-web`. It lives outside
+// dist/ precisely because the frontend build owns that directory.
+//
+//go:embed placeholder/index.html
+var placeholderHTML []byte
+
+const (
+	// indexName is the SPA document, at the root of dist.
+	indexName = "index.html"
+
+	// immutablePrefix is where SvelteKit writes content-addressed assets: the
+	// name of every file below it changes when its content changes, so it can
+	// be cached for a year. That is worth having: the editor's JavaScript is
+	// roughly 770 KB, of which gzip removes about two thirds.
+	immutablePrefix = "_app/"
+
+	// gzipMinBytes is the size below which compressing a file costs more CPU
+	// than it saves on the wire.
+	gzipMinBytes = 1400
+
+	// jsContentType is forced rather than looked up, because the system MIME
+	// database disagrees with itself and with browsers across platforms:
+	// .js resolves to text/javascript on one machine and application/javascript
+	// on the next, and a mismatch is exactly the failure that makes a served
+	// module refuse to execute.
+	jsContentType = "text/javascript; charset=utf-8"
+
+	// htmlContentType is what the SPA document and the placeholder are served
+	// as, in both cases with the charset a browser needs to read them.
+	htmlContentType = "text/html; charset=utf-8"
+)
 
 // FS returns the embedded SPA rooted at the dist directory.
 func FS() (fs.FS, error) {
@@ -33,8 +77,8 @@ func FS() (fs.FS, error) {
 // Handler serves the embedded SPA.
 //
 // Requests for files that exist are served directly; anything else falls back
-// to index.html so client-side routes such as /app/workflows/:id survive a
-// hard refresh or a deep link.
+// to the SPA document so client-side routes such as /app/workflows/:id survive
+// a hard refresh or a deep link.
 func Handler() http.Handler {
 	sub, err := FS()
 	if err != nil {
@@ -43,28 +87,283 @@ func Handler() http.Handler {
 		panic("web: cannot open embedded SPA: " + err.Error())
 	}
 
-	files := http.FileServerFS(sub)
+	return newHandler(sub, placeholderHTML)
+}
+
+// newHandler is Handler with its tree and its placeholder injected, so the
+// tests can drive both states — a built SPA and a fresh clone — without a build.
+func newHandler(sub fs.FS, placeholder []byte) http.Handler {
+	spa, _ := loadAsset(sub, indexName)
+	fallback := &asset{
+		body:        placeholder,
+		contentType: htmlContentType,
+		etag:        etagFor(placeholder),
+	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		name := path.Clean(strings.TrimPrefix(r.URL.Path, "/"))
-
-		if name == "." || name == "/" {
-			name = "index.html"
-		}
-
-		if info, err := fs.Stat(sub, name); err != nil || info.IsDir() {
-			serveIndex(w, r, files)
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			w.Header().Set("Allow", "GET, HEAD")
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 
-		files.ServeHTTP(w, r)
+		name := requestName(r.URL.Path)
+
+		entry, err := loadAsset(sub, name)
+		switch {
+		case err == nil:
+			entry.serve(w, r, cacheControlFor(name))
+
+		// The document itself is absent, so this binary carries no SPA at all.
+		case name == indexName:
+			fallback.serve(w, r, cacheControlFor(indexName))
+
+		// A missing asset is answered as one. Serving the SPA document here — a
+		// 200 text/html for a .js request — is how a stale tab after an upgrade
+		// turns into a MIME error instead of a reload it can recover from.
+		case isAssetPath(name):
+			http.NotFound(w, r)
+
+		case spa != nil:
+			spa.serve(w, r, cacheControlFor(indexName))
+
+		default:
+			fallback.serve(w, r, cacheControlFor(indexName))
+		}
 	})
 }
 
-// serveIndex rewrites the request to the SPA entrypoint without mutating the
-// caller's request.
-func serveIndex(w http.ResponseWriter, r *http.Request, files http.Handler) {
-	clone := r.Clone(r.Context())
-	clone.URL.Path = "/"
-	files.ServeHTTP(w, clone)
+// requestName maps a request path to a name inside the embedded tree.
+//
+// The result cannot escape that tree: path.Clean resolves every "." and ".."
+// component before the leading separator is dropped, so a request for
+// /../../go.mod becomes the bare name "go.mod".
+func requestName(urlPath string) string {
+	name := strings.TrimPrefix(path.Clean("/"+urlPath), "/")
+	if name == "" || name == "." {
+		return indexName
+	}
+	return name
+}
+
+// isAssetPath reports whether a name that is not in the tree is asset-like, and
+// must therefore 404 rather than receive the SPA document. SvelteKit's own
+// assets and vendored bundles are here for their prefixes, everything else for
+// its extension: a client-side route never ends in one.
+func isAssetPath(name string) bool {
+	return strings.HasPrefix(name, immutablePrefix) ||
+		strings.HasPrefix(name, "vendor/") ||
+		path.Ext(name) != ""
+}
+
+// cacheControlFor is the freshness a name is served with.
+func cacheControlFor(name string) string {
+	switch {
+	case name == indexName:
+		// The document names the hashed assets, so it is the one file that must
+		// be revalidated: a tab holding a cached copy after an upgrade would
+		// reference chunks the new binary no longer has. Revalidating costs a
+		// 304 body of a few bytes.
+		return "no-cache"
+
+	case strings.HasPrefix(name, immutablePrefix):
+		return "public, max-age=31536000, immutable"
+
+	default:
+		// favicon.svg, vendor/scalar.js and anything else without a content
+		// hash in its name: worth caching, not worth a year of it.
+		return "public, max-age=3600"
+	}
+}
+
+// asset is one servable file. Everything derived from the bytes — its entity
+// tag and its compressed body — is computed at most once, because the embedded
+// tree is immutable for the life of the process.
+type asset struct {
+	body        []byte
+	contentType string
+	etag        string
+
+	gzipOnce sync.Once
+	gzipped  []byte
+}
+
+// loadAsset reads one name out of the embedded tree. A missing name or a
+// directory is an error, and errors are deliberately not cached: the name comes
+// from the request, so a cache that remembered every miss would be a memory
+// leak with a reachable key.
+func loadAsset(sub fs.FS, name string) (*asset, error) {
+	info, err := fs.Stat(sub, name)
+	if err != nil {
+		return nil, err
+	}
+	if info.IsDir() {
+		return nil, fs.ErrNotExist
+	}
+
+	body, err := fs.ReadFile(sub, name)
+	if err != nil {
+		return nil, err
+	}
+
+	return &asset{
+		body:        body,
+		contentType: contentTypeFor(name, body),
+		etag:        etagFor(body),
+	}, nil
+}
+
+// contentTypeFor resolves a name the way a browser caching a module needs it
+// resolved: the two extensions SvelteKit relies on are pinned, and everything
+// else falls back to the system MIME database and then to sniffing.
+func contentTypeFor(name string, body []byte) string {
+	ext := path.Ext(name)
+	if ext == ".js" || ext == ".mjs" {
+		return jsContentType
+	}
+	if ext == ".html" {
+		return htmlContentType
+	}
+	if byExtension := mime.TypeByExtension(ext); byExtension != "" {
+		return byExtension
+	}
+	return http.DetectContentType(body)
+}
+
+// serve writes the asset, negotiating compression and answering a conditional
+// request without reading the file again.
+func (a *asset) serve(w http.ResponseWriter, r *http.Request, cacheControl string) {
+	header := w.Header()
+	header.Set("Content-Type", a.contentType)
+	header.Set("Cache-Control", cacheControl)
+
+	// Only an asset that could be sent compressed varies by Accept-Encoding.
+	negotiable := len(a.body) >= gzipMinBytes && compressibleType(a.contentType)
+	if negotiable {
+		addVary(header, "Accept-Encoding")
+	}
+
+	body, etag := a.body, a.etag
+	if negotiable && acceptsGzip(r.Header.Get("Accept-Encoding")) {
+		if compressed := a.gzip(); compressed != nil {
+			body = compressed
+			// The tag names the representation rather than the file, because a
+			// validated cache entry and a compressed body have to agree.
+			etag += "-gzip"
+			header.Set("Content-Encoding", "gzip")
+		}
+	}
+	header.Set("ETag", etag)
+
+	if matchesETag(r.Header.Get("If-None-Match"), etag) {
+		header.Del("Content-Length")
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+
+	header.Set("Content-Length", strconv.Itoa(len(body)))
+	if r.Method == http.MethodHead {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	if _, err := w.Write(body); err != nil {
+		// The client hung up — a page being reloaded, most often. There is
+		// nothing to recover and nothing to report.
+		return
+	}
+}
+
+// gzip compresses the body once, keeping the result because the embedded tree
+// never changes. A nil return means the compression failed and the caller
+// serves the file as it is.
+func (a *asset) gzip() []byte {
+	a.gzipOnce.Do(func() {
+		var buf bytes.Buffer
+		writer, err := gzip.NewWriterLevel(&buf, gzip.BestCompression)
+		if err != nil {
+			return
+		}
+		if _, err := writer.Write(a.body); err != nil {
+			return
+		}
+		if err := writer.Close(); err != nil {
+			return
+		}
+		a.gzipped = buf.Bytes()
+	})
+	return a.gzipped
+}
+
+// etagFor is the entity tag of one representation: long enough that a stale
+// entry is never validated against changed bytes, short enough to send on every
+// request.
+func etagFor(body []byte) string {
+	sum := sha256.Sum256(body)
+	return `"` + hex.EncodeToString(sum[:12]) + `"`
+}
+
+// matchesETag reports whether an If-None-Match header names this tag. A weak
+// validator from the client matches a strong one from the server, which is the
+// comparison RFC 9110 asks for.
+func matchesETag(header, etag string) bool {
+	for _, candidate := range strings.Split(header, ",") {
+		candidate = strings.TrimPrefix(strings.TrimSpace(candidate), "W/")
+		if candidate == "*" || candidate == etag {
+			return true
+		}
+	}
+	return false
+}
+
+// acceptsGzip reads the quality values out of Accept-Encoding. Absent header,
+// or an explicit q=0, means no: a client that did not ask does not get it.
+func acceptsGzip(header string) bool {
+	for _, part := range strings.Split(header, ",") {
+		fields := strings.Split(part, ";")
+		encoding := strings.TrimSpace(fields[0])
+		if !strings.EqualFold(encoding, "gzip") && encoding != "*" {
+			continue
+		}
+		for _, parameter := range fields[1:] {
+			name, value, ok := strings.Cut(parameter, "=")
+			if !ok || !strings.EqualFold(strings.TrimSpace(name), "q") {
+				continue
+			}
+			if quality, err := strconv.ParseFloat(strings.TrimSpace(value), 64); err == nil && quality == 0 {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+// compressibleType reports whether compressing a media type is worth trying.
+// Images, fonts and archives are already compressed, and running them through
+// gzip spends CPU to make them slightly larger.
+func compressibleType(contentType string) bool {
+	base, _, _ := strings.Cut(contentType, ";")
+	base = strings.ToLower(strings.TrimSpace(base))
+	if strings.HasPrefix(base, "text/") {
+		return true
+	}
+	switch base {
+	case "application/json", "application/javascript", "application/xml",
+		"application/manifest+json", "image/svg+xml", "application/xhtml+xml":
+		return true
+	}
+	return strings.HasSuffix(base, "+json") || strings.HasSuffix(base, "+xml")
+}
+
+// addVary appends a field to Vary unless it is already there, so a CORS
+// middleware that set the header earlier is added to rather than replaced.
+func addVary(header http.Header, value string) {
+	for _, existing := range header.Values("Vary") {
+		for _, field := range strings.Split(existing, ",") {
+			if strings.EqualFold(strings.TrimSpace(field), value) {
+				return
+			}
+		}
+	}
+	header.Add("Vary", value)
 }

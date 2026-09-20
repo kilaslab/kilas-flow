@@ -182,3 +182,10 @@ Files: devbox.json, Makefile
 - [ ] Adversarial re-verify against live stub/n8n like the Verify phase (no code-only close)
 ## Progress 2026-09-19 (SecurityDx)
 - Status: doing. Research + partial implementation done this session.
+
+## Progress 2026-09-20 (DXOps2)
+- SPA placeholder / dirty build: dist/index.html is no longer tracked (git rm --cached); the placeholder is
+  internal/web/placeholder/index.html, embedded separately and served when dist carries no index.html, so a
+  fresh clone + `go build` explains itself instead of 404ing or serving a blank editor. `make build-web` now
+  only writes gitignored output, so `git describe --dirty` stays clean. Makefile: dist-placeholder target
+  deleted, build-clean-check added.
