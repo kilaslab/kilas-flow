@@ -85,16 +85,21 @@ single binary containing the API and the editor, `make build-all` then
 | `GET /docs` | The API reference, rendered from the OpenAPI document. |
 | `GET /api/openapi.json` | OpenAPI 3.1. Also `.yaml`, and `/api/openapi-3.0.json` / `.yaml` for tools that cannot read 3.1. |
 | `/webhook/{route}` | Inbound workflow triggers. |
+| `/resume/{token}` | Where a suspended execution resumes: a single-use token minted per wait, and what the run's own `$execution.resumeUrl` points at. |
+| `/approve/{token}` | The page a human decides a `Wait` at; it calls the resume URL on their behalf. |
 | `GET /*` | The editor SPA, with history-API fallback. |
 
-Everything else is under `/api/v1` — 35 operations across workflows, executions,
-credentials, schedules, node types, embed sessions and n8n import/export — and
-is deliberately not listed here. This table used to name two of those 35 and
-give no sign that the rest existed, and it described the webhook route as
-returning 501 long after it had stopped doing so — the ordinary fate of a
-hand-maintained index of an API that is still growing. `/docs` and
-`/api/openapi.json` are generated from the same Go types that serve the
-requests, so they cannot drift the way this table did.
+Everything else is under `/api/v1` — 63 operations in 13 tags at this commit,
+across workflows, executions, credentials, schedules, datastores, node types,
+auth, embed sessions and n8n import/export — and is deliberately not listed
+here. This table used to name two operations and give no sign that the rest
+existed, and it described the webhook route as returning 501 long after it had
+stopped doing so — the ordinary fate of a hand-maintained index of an API that is
+still growing. `/docs` and `/api/openapi.json` are generated from the same Go
+types that serve the requests, so they cannot drift the way this table did; ask
+the server for `/api/openapi.json` rather than trusting a count in prose, or run
+`make generate-api-reference` to regenerate
+`docs/src/content/docs/reference/api.md` from a freshly built binary.
 
 ### The webhook route
 
@@ -183,6 +188,8 @@ internal/
   binary/               payload storage for items that refer to files
 
   credentials/          stores and resolves the secrets workflows reference
+  auth/                 sessions, API keys and the principal a request carries
+  datastore/            the workflow-facing data store: columns, rows, filters
   webhook/              maps an inbound request to its workflow and trigger node
   scheduler/            runs cron-triggered workflows
   embed/                issues and validates iframe editor sessions

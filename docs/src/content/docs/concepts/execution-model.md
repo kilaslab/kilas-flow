@@ -86,6 +86,13 @@ validation or execution-record rules by having its own path into the engine.
                               run nodes in topological order
                                  └─ per node: a node_runs row, then an event
                                         │
+                                        ├─ a Wait node suspends ─▶ status=waiting,
+                                        │        worker and lease released
+                                        │             │
+                                        │             └─ resume call, approval
+                                        │                decision or deadline
+                                        │                ─▶ status=queued, continues
+                                        │                   from its checkpoint
                                         ▼
                               status=succeeded | failed | cancelled
                                  └─ terminal event, stream closes
@@ -105,20 +112,33 @@ claims nothing rather than trampling the winner. Eligible means either
 `status = 'queued'`, or `running` (or `cancelling`) with a `lease_expires_at`
 that has already passed.
 
-That second arm is the recovery path. A worker sets its lease to *now plus the
-execution timeout* when it claims, and if the process dies mid-run the row simply
-becomes eligible again once that lease expires, and another worker picks it up.
-Nothing has to notice the crash; the absence of a renewed lease is the signal.
+That second arm is the recovery path. A worker claims its lease for two run
+timeouts — with a floor, so a short timeout does not make the claim shorter than
+a database round trip — and then *renews* it by a heartbeat for as long as the
+worker is alive. That is what makes the lease mean "this worker is still here"
+rather than "this worker was predicted to need this long": a run that is simply
+slower than its timeout, or a trace write that lands after it, keeps its claim
+instead of being reclaimed underneath itself. If the process dies mid-run the row
+becomes eligible again once the renewals stop and the lease expires, and another
+worker picks it up. Nothing has to notice the crash; the absence of a renewed
+lease is the signal.
 
-Recovery has one consequence worth stating plainly. Node runs are written after
-the in-memory graph completes, so a process that died between individual trace
-writes leaves a partial attempt whose `(execution, sequence)` and
-`(execution, node, attempt)` keys would collide with the recovered attempt's.
-`ClaimNext` therefore deletes the abandoned trace when it reclaims an expired
-lease. **A recovered execution re-runs from the beginning.** There is no
-checkpointing and no resume from the last completed node, so a workflow that
-performs non-idempotent side effects can perform them twice if its worker dies
-partway. Nothing in the system prevents that today.
+Recovery has one consequence worth stating plainly. The trace is written in one
+transaction once the graph has completed — a suspension writes the segment its
+run produced before it parked — so a worker that died mid-run leaves either
+nothing or a segment belonging to an attempt that will not continue. `ClaimNext`
+deletes the abandoned trace when it reclaims an expired lease, because the
+recovered attempt restarts its sequence numbering from zero and its rows would
+otherwise match the abandoned ones' keys and be read as duplicates of rows
+describing work the new attempt never did. **A recovered execution re-runs from
+the beginning**, because the checkpoint that would let it continue belongs to a
+suspension and not to a crash; see [the suspension
+section](#suspending-to-storage-and-resuming) below. A workflow that performs
+non-idempotent side effects can therefore perform them twice if its worker dies
+partway. What bounds that is a reclaim count: an execution whose expired lease
+has been handed on twice is settled `failed` with the code `execution.crashed`
+rather than given to a third worker, so a run that kills its own worker ends as
+one failed execution instead of a loop.
 
 Workers poll: `RunOnce` claims and completes at most one execution, and an idle
 worker waits on either a wake signal — which the API sends after queueing — or a
@@ -190,11 +210,84 @@ with a structured error carrying a code: `execution.failed`, or
 
 ### Timeouts and concurrency
 
-`execution.default_timeout` bounds one whole run and defaults to 60 seconds. It
-is also the lease length, which is what ties the two together — a run that
-exceeds its timeout has, by definition, an expired lease.
+`execution.default_timeout` is the budget for one whole run and defaults to 60
+seconds, but it is a budget rather than a cap on how long a workflow may take: a
+workflow can name its own in `settings.executionTimeout` — n8n's own name for it,
+in seconds — and its own value wins, clamped to `execution.max_timeout` when the
+instance sets a ceiling. A negative value is n8n's "no execution timeout" and
+leaves the run bounded only by cancellation, a node's own timeout and the lease;
+a workflow that names nothing still gets the default, so the bound is never
+absent by accident. The lease length is derived from that timeout — twice it,
+with a floor — and then renewed while the worker lives, which is what lets a run
+that takes its whole budget keep its claim.
+
 `execution.max_concurrent` sets the size of the worker pool and defaults to 10.
-Both are read once at startup.
+The instance's default, ceiling and pool size are read once at startup; a
+workflow's own budget is read from its document when the run is claimed.
+
+## Suspending to storage, and resuming
+
+A `Wait` node does not sleep inside the worker. Any pause longer than zero parks
+the execution: the trace produced so far is persisted first, then the wait row is
+written and the lease released in one transaction, the record's status becomes
+`waiting`, and the worker moves on to the next execution. The row holds the mode,
+the node, the deadline, a checkpoint of the exact upstream data the run was
+holding — and a single-use resume token whose SHA-256 is the lookup key, so a
+database dump or a replica discloses no resume capability.
+
+The run is told its own links before it can suspend, so a workflow can compose and
+send them itself: `$execution.resumeUrl` for a machine call and
+`$execution.approvalUrl` for the human page. **The Wait node sends nothing** — the
+workflow has to reference the link (an HTTP node, a Set node, a Webhook node's URL
+field) for anyone to receive it. A waiting execution answers
+`GET /api/v1/executions/{id}` with both links, and with neither once it is no
+longer `waiting`.
+
+A suspension ends one of three ways.
+
+**A deadline the wait carries itself.** `resume: timeInterval` and
+`resume: specificTime` are timer waits: the process arms an exact timer for the
+wait's deadline, and the execution is re-queued and continues from its checkpoint
+with the suspending node's input passed through as its output. The timer is the
+low-latency path; the periodic sweep is the floor under it, which is what settles
+a wait whose process died before its deadline (`execution.wait_sweep_interval`,
+ten seconds by default, and not switchable off).
+
+**A call to the resume URL.** `resume: webhook` parks the execution until
+something posts to `/resume/{token}`; `resume: form` parks it until a human
+decides at `/approve/{token}`, the dashboard page that records the decision and
+calls the same URL on the decider's behalf. An approval resumes the run with one
+item carrying `{approved, respondedAt, decidedBy, note}`, the shape n8n's own
+approval nodes emit, so an imported workflow branches on it unchanged. Both modes
+accept n8n's own limit (`limitWaitTime` with `limitType`, `limitAmount`,
+`limitUnit` or `limitAt`), which turns the wait into a timer that the same call
+can still end early.
+
+**A decision that never arrives.** A call-resumed wait with no limit of its own
+gets 24 hours, and past its deadline it fails the execution with the code
+`wait.expired` — a named failure, with no execution left suspended for ever. A
+wait whose process died is settled by the sweep within one interval of the next
+boot.
+
+A resumed run continues **past** the suspending node rather than re-running it:
+the checkpoint carries the completed nodes' outputs, the suspending node
+completes with the stored resume output, and sequence numbering continues after
+the node runs the suspension already persisted. Cancelling a waiting execution
+completes it as `cancelled` at once, because there is no worker left to observe a
+cancellation request.
+
+Two things a suspension is not. It is **not available inside a sub-workflow**:
+a child runs inline in its caller, so suspending it would snapshot the parent at
+the calling node and re-execute the child's completed nodes on resume, and the
+engine refuses it with that explanation rather than doing it. And it is **not
+what happens when a worker dies** — that path has no checkpoint and re-runs from
+the beginning, as the lease section above says.
+
+A suspension publishes `execution.waiting`, which is deliberately non-terminal:
+`events.Type.Terminal` reports false for it, so a live feed stays open across the
+wait instead of closing and making the client reconnect. The event carries the
+node, the mode and the deadline — never the token and never the payload, both of
+which are run data.
 
 ## What gets recorded
 
@@ -218,12 +311,17 @@ the last `(started_at, id)` pair seen, so an execution created while somebody is
 paging through history cannot shift rows onto a page they have already read. The
 cursor is opaque; treat it as a token to hand back, not a value to construct.
 
-There is **no execution retention or pruning today.** Nothing in the codebase
-removes an execution row. The binary store has a deletion path ready for the
-pruner that will use it, but that pruner does not exist yet, so an execution
-history grows without bound.
+Execution retention exists and is **off by default.** `execution.retention`
+deletes a finished execution — with its node runs and its stored binary payloads
+— once it has been finished for longer than the configured age. A pruner sweeps
+every fifteen minutes in bounded batches, selects by `finished_at` rather than
+`started_at`, and never touches a queued, running, cancelling or still-waiting
+row. Zero, the default, means keep everything, so an installation nobody
+configured keeps growing; that default is deliberate, because an operator who has
+never configured retention must not discover that a new build deleted the history
+they were about to debug.
 
-Workflow *version* history at least has the machinery: `history.retention` and
+Workflow *version* history has its own machinery: `history.retention` and
 `history.max_versions` prune old revisions, and the count bound is applied inside
 the same transaction that created the revision which broke it rather than by a
 sweep that runs later. Both default to zero, meaning unbounded, so they only help
@@ -234,8 +332,9 @@ are protected from pruning: the published version, the newest revision, and any
 version an execution or a webhook binding still points at. The execution pin is
 not a courtesy — `executions.workflow_version_id` is `ON DELETE RESTRICT`, so
 deleting one would fail the whole statement. A workflow whose old revisions are
-all pinned by executions therefore stays above `history.max_versions`
-indefinitely, which is another consequence of executions never being pruned.
+all pinned by executions therefore stays above `history.max_versions` for as long
+as those executions exist — indefinitely on a default install, where nothing
+prunes them.
 
 ## The event stream
 
@@ -278,7 +377,8 @@ agent node uses this to report its model turns and tool calls, which arrive on
 the same stream under eight further names — `ai.model.started`,
 `ai.model.delta`, `ai.model.completed`, `ai.tool.started`, `ai.tool.completed`,
 `ai.tool.failed`, `ai.agent.completed` and `ai.agent.failed`. They are not in the
-`events.Type` constant list, so a client must tolerate an event name it does not
+`events.Type` constant list, and neither is `execution.waiting` from the
+suspension section above, so a client must tolerate an event name it does not
 recognise.
 
 ## Sub-workflows
@@ -302,34 +402,44 @@ a runaway too, and every level of it holds the caller's goroutine.
 
 ## What this model does not do yet
 
-**Executions are not suspended to storage.** A `Wait` node holds its worker for
-the duration. Two limits apply and the smaller one usually bites first: the node
-refuses a wait longer than an hour outright, but the whole run is bounded by
-`execution.default_timeout`, which is **60 seconds** by default — so on a stock
-install a `Wait` of more than a minute ends the execution with
-`execution.timeout` rather than waiting. The hour is the ceiling an operator
-reaches only after raising that timeout. Waiting on an inbound webhook or a form
-submission returns an error rather than parking the execution and resuming it
-later.
+**A suspension has ceilings.** A single wait is refused past seven days: a wait
+that cannot resolve is a leak, so the node fails at composition time with the
+limit named rather than parking an execution nobody will resume. A wait that
+resumes on a call and is never called fails by name — `wait.expired` — at its own
+deadline, which is 24 hours when the node names none. And a wait inside a called
+sub-workflow is refused outright, because a child runs inline in its caller. The
+mechanism these are the edges of is in [Suspending to storage, and
+resuming](#suspending-to-storage-and-resuming).
 
 **Scheduling is single-process.** The cron scheduler claims due rows
 transactionally, so a second instance will not double-fire, but distributed
 scheduling is not designed.
 
-**Recovery is a restart, not a resume.** See the lease section above.
+**Crash recovery is a restart, not a resume.** A reclaimed execution re-runs from
+the beginning rather than from the last completed node, so a non-idempotent node
+can perform its side effect twice; the reclaim cap of two hand-offs stops a
+repeatedly crashing execution from being re-run for ever, settling it `failed`
+instead. See the lease section above.
 
 ## API operations
 
 `POST /workflows/{id}/run`, `GET /executions`, `GET /executions/{id}`,
-`POST /executions/{id}/cancel`, `GET /executions/{id}/events`. See the
-[HTTP API reference](/reference/api/) for the full surface, and a running
-server's own `/docs` for the instance you are talking to.
+`POST /executions/{id}/cancel`, `GET /executions/{id}/events`. A waiting
+execution's `GET` also carries its `resumeUrl` and `approvalUrl` — the
+`/resume/{token}` and `/approve/{token}` paths that live beside `/webhook` rather
+than under the API prefix, and the same links the run can compose for itself as
+`$execution.resumeUrl` and `$execution.approvalUrl`. See the [HTTP API
+reference](/reference/api/) for the full surface, and a running server's own
+`/docs` for the instance you are talking to.
 
 ## Source
 
 `internal/engine/runner.go` (the run loop, branch pruning, loops, retries),
-`internal/engine/service.go` (the worker pool, event publication, sub-workflow
-calls), `internal/repository/executions.go` (`ClaimNext` and the lease),
+`internal/engine/service.go` (the worker pool, the lease heartbeat, the run
+budget, event publication, sub-workflow calls), `internal/engine/wait_service.go`
+(suspension, resume, the wait sweep), `internal/repository/waits.go` (the wait
+row and its checkpoint), `internal/repository/executions.go` (`ClaimNext` and the
+lease), `internal/repository/execution_retention.go` (the execution pruner),
 `internal/workflow/compiler.go` (validation and the IR),
 `internal/execution/records.go` (what is persisted), `internal/events/events.go`
 (the event contract and the broker).

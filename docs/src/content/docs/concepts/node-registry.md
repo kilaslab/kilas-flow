@@ -10,9 +10,12 @@ during composition at startup and is read-only for the rest of the process's
 life, which is what makes compiled graphs and the metadata served to the editor
 deterministic.
 
-Today it holds **39 distinct node types across 46 type-and-version pairs**: 36
-types (41 pairs) compiled into the binary, and 3 types (5 pairs) from the
-declarative packs it ships with.
+Today it holds **49 distinct node types across 56 type-and-version pairs**: 46
+types (51 pairs) compiled into the binary, and 3 types (5 pairs) from the
+declarative packs it ships with. The list of record is
+[`GET /api/v1/node-types`](/reference/api/), which serves one entry per
+type-and-version pair: the numbers here are measured from it, and it is what the
+editor reads.
 
 ## What a definition holds
 
@@ -220,7 +223,7 @@ what it claims.
 
 | Source | Meaning | Status |
 | --- | --- | --- |
-| `builtin` | compiled into this binary | 36 types today |
+| `builtin` | compiled into this binary | 46 types today |
 | `pack` | a declarative node pack | 3 types today |
 | `sidecar` | an implementation running outside this process | the constant exists; nothing registers one |
 
@@ -239,10 +242,12 @@ the first place.
 
 ### What a pack is
 
-A pack is a JSON file, committed to the repository and embedded in the binary. It
-describes resources, operations and properties, and carries enough routing
-metadata for `internal/routing` to build an HTTP request at run time. There is no
-Go in a pack, which is what makes it possible for one to be generated.
+A pack is a JSON manifest. It describes resources, operations and properties, and
+carries enough routing metadata for `internal/routing` to build an HTTP request at
+run time. There is no Go in a pack, which is what makes it possible for one to be
+generated. The manifest is the unit either way; what differs is where it is
+found — embedded in the binary with the packs this repository ships, or loaded
+from a directory `packs.dir` names, with a checksum sidecar beside it.
 
 The three rejected alternatives are recorded in the package and each is
 instructive. Not generated Go: 124 operations of it would drown every future diff
@@ -279,10 +284,16 @@ Three pack types ship today: Telegram, hand-written; and WAHA plus its trigger,
 generated from a vendored OpenAPI document at two API versions each.
 
 :::note
-Packs are loaded from inside the binary. Installing one without a rebuild is not
-possible today, and is the prerequisite for the
-[node authoring guide](/guides/node-authoring/) being useful to anyone outside
-this repository.
+Two packs ship inside the binary, and there is a third install path that needs no
+rebuild: point `packs.dir` at a directory and every pack directory under it is
+loaded at startup through the same `Decode` → `Load` → `Register` path the
+embedded packs take. Each pack directory holds `pack.json` and a `pack.sha256`
+sidecar carrying the manifest's digest, and the loader refuses a missing or
+mismatching checksum rather than loading it — these files become node definitions
+with outbound requests and credential bindings, and a mutable directory on a
+server is a place where a file can change without anyone deciding it should. Any
+failure refuses the boot, naming the pack and the reason; an absent or empty
+directory is a normal silent condition, which is what the default deployment has.
 :::
 
 ## Boot-time checks
