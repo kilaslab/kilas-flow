@@ -241,6 +241,17 @@ var mappings = []mapping{
 		n8nType: "n8n-nodes-base.respondToWebhook", kilasType: "kilasflow.respondToWebhook", kilasVersion: workflow.V(1),
 		exportTypeVersion: 1.1, toKilas: respondToKilas, toN8N: respondToN8N,
 	},
+	// The Form Trigger. Both spellings: the community package published it as
+	// `n8n-nodes-base.formTrigger` before it was folded into core, and an
+	// exported workflow may name either.
+	{
+		n8nType: "n8n-nodes-base.formTrigger", kilasType: FormTriggerType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 2.2, toKilas: formTriggerToKilas, toN8N: formTriggerToN8N,
+	},
+	{
+		n8nType: "@n8n/n8n-nodes-base.formTrigger", kilasType: FormTriggerType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 2.2, toKilas: formTriggerToKilas, toN8N: formTriggerToN8N, importOnly: true,
+	},
 	{
 		n8nType: "n8n-nodes-base.scheduleTrigger", kilasType: "kilasflow.schedule", kilasVersion: workflow.V(1),
 		exportTypeVersion: 1.2, toKilas: scheduleToKilas, toN8N: scheduleToN8N,
@@ -564,6 +575,11 @@ const (
 	ExecuteWorkflowNodeType    = "kilasflow.executeWorkflow"
 	ExecuteWorkflowTriggerType = "kilasflow.executeWorkflowTrigger"
 )
+
+// FormTriggerType is the form trigger's canonical type. Mirrored from
+// nodes.FormTriggerType rather than imported, for the same reason every other
+// type here is; TestMirroredNodeTypesMatchTheNodePack keeps them in step.
+const FormTriggerType = "kilasflow.formTrigger"
 
 const (
 	SwitchNodeType = "kilasflow.switch"

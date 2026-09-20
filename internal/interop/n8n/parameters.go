@@ -1839,6 +1839,169 @@ func toN8NTree(value any) any {
 	}
 }
 
+// formTriggerToKilas maps n8n's Form Trigger onto this server's.
+//
+// The two nodes ask for the same thing in the same shape — a path, a title, a
+// description, an auth mode and a list of fields — so the mapping is mostly a
+// copy. The one structural difference is the field options: n8n keeps each
+// choice in its own `{option}` row, and this server reads a list of strings.
+func formTriggerToKilas(node Node) (map[string]any, []Unsupported) {
+	issues := make([]Unsupported, 0)
+	parameters := map[string]any{
+		"path": strings.Trim(stringParameter(node.Parameters, "path"), "/"),
+	}
+	for _, key := range []string{"formTitle", "formDescription"} {
+		if value := stringParameter(node.Parameters, key); value != "" {
+			parameters[key] = fromN8NValue(value)
+		}
+	}
+	switch responseMode := stringParameter(node.Parameters, "responseMode"); responseMode {
+	case "lastNode", "responseNode":
+		parameters["responseMode"] = responseMode
+	default:
+		// n8n's onReceived, and its absence, both mean "answer as soon as the
+		// form is submitted", which this server calls immediate.
+		parameters["responseMode"] = "immediate"
+	}
+	switch authentication := stringParameter(node.Parameters, "authentication"); authentication {
+	case "basicAuth", "headerAuth":
+		parameters["authentication"] = authentication
+		issues = append(issues, Unsupported{
+			Reason: fmt.Sprintf("this form used n8n %s auth. Attach the matching KilasFlow credential "+
+				"before activating the workflow.", authentication),
+		})
+	default:
+		parameters["authentication"] = "none"
+	}
+
+	if wrapper, ok := node.Parameters["formFields"].(map[string]any); ok {
+		rows, _ := wrapper["values"].([]any)
+		fields := make([]any, 0, len(rows))
+		for index, entry := range rows {
+			row, ok := entry.(map[string]any)
+			if !ok {
+				continue
+			}
+			field := map[string]any{}
+			for _, key := range []string{"fieldLabel", "fieldType", "placeholder"} {
+				if value := stringParameter(row, key); value != "" {
+					field[key] = fromN8NValue(value)
+				}
+			}
+			if required, present := row["requiredField"]; present && required != nil {
+				field["requiredField"] = required
+			}
+			if options, ok := row["fieldOptions"].(map[string]any); ok {
+				if values, ok := options["values"].([]any); ok {
+					choices := make([]any, 0, len(values))
+					for _, choice := range values {
+						option, _ := choice.(map[string]any)
+						if option == nil {
+							continue
+						}
+						if value, present := option["option"]; present && value != nil {
+							choices = append(choices, fromN8NValue(value))
+						}
+					}
+					if len(choices) > 0 {
+						field["fieldOptions"] = map[string]any{"values": choices}
+					}
+				}
+			}
+			if field["fieldType"] == "file" || field["fieldType"] == "fileUpload" {
+				// The node accepts an upload, but the field's own options are
+				// the form's business rather than the importer's.
+				field["fieldType"] = "file"
+			}
+			if len(field) == 0 {
+				issues = append(issues, Unsupported{
+					Severity: SeverityDropped, Field: fmt.Sprintf("formFields.values[%d]", index),
+					Reason: "this form field could not be read and was dropped; add it again before activating",
+				})
+				continue
+			}
+			fields = append(fields, field)
+		}
+		if len(fields) > 0 {
+			parameters["formFields"] = map[string]any{"values": fields}
+		}
+	}
+
+	// n8n's test mode serves the form on a different URL and does not produce a
+	// production webhook; this server has one form endpoint per path.
+	if mode := stringParameter(node.Parameters, "formMode"); mode == "test" {
+		issues = append(issues, Unsupported{
+			Severity: SeverityLossy, Field: "formMode",
+			Reason: "this trigger was in n8n's test mode, which serves the form at a test URL; this " +
+				"server has one form endpoint, so the form answers on its production path",
+		})
+	}
+	if value, present := node.Parameters["appendAttribution"]; present && value != nil {
+		issues = append(issues, Unsupported{
+			Severity: SeverityDropped, Field: "appendAttribution",
+			Reason: "n8n appends an attribution line to the form page; this server's form does not, and " +
+				"the option was not carried",
+		})
+	}
+	return parameters, issues
+}
+
+// formTriggerToN8N writes the trigger back in n8n's shape.
+func formTriggerToN8N(node workflow.Node) (map[string]any, []Lossy) {
+	parameters := map[string]any{
+		"path": stringParameter(node.Parameters, "path"),
+	}
+	for _, key := range []string{"formTitle", "formDescription"} {
+		if value, present := node.Parameters[key]; present && value != nil {
+			parameters[key] = toN8NValue(value)
+		}
+	}
+	responseMode := "onReceived"
+	switch stringParameter(node.Parameters, "responseMode") {
+	case "lastNode":
+		responseMode = "lastNode"
+	case "responseNode":
+		responseMode = "responseNode"
+	}
+	parameters["responseMode"] = responseMode
+	if authentication := stringParameter(node.Parameters, "authentication"); authentication != "" && authentication != "none" {
+		parameters["authentication"] = authentication
+	}
+	if wrapper, ok := node.Parameters["formFields"].(map[string]any); ok {
+		rows, _ := wrapper["values"].([]any)
+		values := make([]any, 0, len(rows))
+		for _, entry := range rows {
+			row, ok := entry.(map[string]any)
+			if !ok {
+				continue
+			}
+			written := map[string]any{}
+			for _, key := range []string{"fieldLabel", "fieldType", "placeholder"} {
+				if value, present := row[key]; present {
+					written[key] = toN8NValue(value)
+				}
+			}
+			if required, present := row["requiredField"]; present {
+				written["requiredField"] = required
+			}
+			if options, ok := row["fieldOptions"].(map[string]any); ok {
+				if choices, ok := options["values"].([]any); ok {
+					entries := make([]any, 0, len(choices))
+					for _, choice := range choices {
+						entries = append(entries, map[string]any{"option": toN8NValue(choice)})
+					}
+					written["fieldOptions"] = map[string]any{"values": entries}
+				}
+			}
+			values = append(values, written)
+		}
+		if len(values) > 0 {
+			parameters["formFields"] = map[string]any{"values": values}
+		}
+	}
+	return parameters, nil
+}
+
 func respondToKilas(node Node) (map[string]any, []Unsupported) {
 	issues := make([]Unsupported, 0)
 	parameters := map[string]any{}

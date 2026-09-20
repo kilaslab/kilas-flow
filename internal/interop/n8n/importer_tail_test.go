@@ -619,3 +619,88 @@ func TestTelegramAdditionalFieldsReachThePack(t *testing.T) {
 		t.Errorf("unsupported = %#v, want sendAndWait blocked", approval.Unsupported)
 	}
 }
+
+// TestFormTriggerMapsOntoTheNativeNode covers the form trigger's fields.
+//
+// n8n keeps each choice of a dropdown in its own `{option}` row and this
+// server reads a list of strings, and the two nodes otherwise ask for the same
+// thing in the same shape.
+func TestFormTriggerMapsOntoTheNativeNode(t *testing.T) {
+	t.Parallel()
+
+	const fixture = `{
+	  "name": "Form",
+	  "nodes": [
+	    {"id":"a","name":"On form submission","type":"n8n-nodes-base.formTrigger","typeVersion":2.2,
+	     "position":[0,0],"parameters":{"path":"signup","formTitle":"Sign up","formDescription":"Tell us",
+	       "responseMode":"lastNode","formFields":{"values":[
+	         {"fieldLabel":"Name","fieldType":"text","requiredField":true,"placeholder":"Ada"},
+	         {"fieldLabel":"Plan","fieldType":"dropdown","fieldOptions":{"values":[
+	           {"option":"free"},{"option":"paid"}]}}]}}}
+	  ],
+	  "connections": {}
+	}`
+
+	result := importFixture(t, fixture)
+	trigger := nodeByName(result.Document, "On form submission")
+	if trigger.Type != "kilasflow.formTrigger" {
+		t.Fatalf("type = %q, want the native form trigger", trigger.Type)
+	}
+	if trigger.Parameters["path"] != "signup" || trigger.Parameters["formTitle"] != "Sign up" ||
+		trigger.Parameters["responseMode"] != "lastNode" {
+		t.Errorf("parameters = %#v, want the path, title and response mode carried", trigger.Parameters)
+	}
+	fields, _ := trigger.Parameters["formFields"].(map[string]any)
+	rows, _ := fields["values"].([]any)
+	if len(rows) != 2 {
+		t.Fatalf("formFields = %#v, want both fields", trigger.Parameters["formFields"])
+	}
+	second, _ := rows[1].(map[string]any)
+	options, _ := second["fieldOptions"].(map[string]any)
+	choices, _ := options["values"].([]any)
+	if len(choices) != 2 || choices[0] != "free" || choices[1] != "paid" {
+		t.Errorf("fieldOptions = %#v, want the choices reduced to a list of strings", second["fieldOptions"])
+	}
+
+	// And back out in n8n's shape.
+	exported, err := n8n.Export(result.Document, registry(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, node := range exported.Document.Nodes {
+		if node.Name != "On form submission" {
+			continue
+		}
+		written, _ := node.Parameters["formFields"].(map[string]any)
+		back, _ := written["values"].([]any)
+		if len(back) != 2 {
+			t.Fatalf("exported formFields = %#v, want both fields", node.Parameters["formFields"])
+		}
+		row, _ := back[1].(map[string]any)
+		opts, _ := row["fieldOptions"].(map[string]any)
+		entries, _ := opts["values"].([]any)
+		first, _ := entries[0].(map[string]any)
+		if first["option"] != "free" {
+			t.Errorf("exported option = %#v, want n8n's {option} row shape", entries[0])
+		}
+	}
+
+	// Test mode has no equivalent and is named rather than ignored.
+	testMode := importFixture(t, `{
+	  "name": "Test form",
+	  "nodes": [
+	    {"id":"a","name":"On form submission","type":"n8n-nodes-base.formTrigger","typeVersion":2.2,
+	     "position":[0,0],"parameters":{"path":"t","formMode":"test","formFields":{"values":[]}}}
+	  ],
+	  "connections": {}
+	}`)
+	named := false
+	for _, issue := range testMode.Unsupported {
+		if issue.Field == "formMode" && issue.Severity == n8n.SeverityLossy {
+			named = true
+		}
+	}
+	if !named {
+		t.Errorf("unsupported = %#v, want the test mode named", testMode.Unsupported)
+	}
+}
