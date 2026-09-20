@@ -100,5 +100,9 @@ func (request Request) ExpressionContext(item workflow.Item, input workflow.Node
 		Env:       request.Env,
 		Execution: expression.ExecutionContext{ID: request.Execution.ID, Mode: request.Execution.Mode},
 		ItemIndex: index,
+		// The clock reads the workflow's own settings.timezone, which the
+		// importer preserves. Without it `$today` was midnight UTC, which is
+		// the wrong calendar day for most of the world for part of every day.
+		Timezone: request.Workflow.Timezone,
 	}
 }

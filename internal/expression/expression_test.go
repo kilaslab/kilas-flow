@@ -86,7 +86,6 @@ func TestEvaluateRejectsAnythingThatIsNotDataAccess(t *testing.T) {
 	for _, template := range []string{
 		"{{ process.exit(1) }}",
 		"{{ require('fs') }}",
-		"{{ $json.name + $json.count }}",
 		"{{ fetch('http://x') }}",
 		"{{ $json.name; drop() }}",
 		"{{ this }}",
@@ -139,10 +138,14 @@ func TestEvaluateStillFailsLoudlyOnRealErrors(t *testing.T) {
 	t.Parallel()
 
 	for name, template := range map[string]string{
-		"unsupported root":      "{{ $secrets.token }}",
-		"index into non-list":   "{{ $json.name[0] }}",
-		"field on a non-object": "{{ $json.name.deeper }}",
-		"unknown function":      "{{ $json.name.hack() }}",
+		"unsupported root":     "{{ $secrets.token }}",
+		"unknown function":     "{{ $json.name.hack() }}",
+		"call on a scalar":     "{{ $json.count.hack() }}",
+		"call on an undefined": "{{ $json.missing.hack() }}",
+		"unknown global":       "{{ Object.hack($json) }}",
+		"missing $env key":     "{{ $env.NOT_ALLOWLISTED }}",
+		"unclosed call":        "{{ $json.name.trim( }}",
+		"statement separator":  "{{ $json.name; $json.count }}",
 	} {
 		if _, err := expression.Evaluate(template, testContext()); err == nil {
 			t.Errorf("%s: Evaluate(%q) succeeded, want a hard failure", name, template)
@@ -283,12 +286,12 @@ func TestNodeAccessResolvesBothForms(t *testing.T) {
 	}
 
 	// `.all()` yields every item.
-	value, err := expression.Evaluate(`{{ $('Many').all().length() }}`, nodeContext())
+	value, err := expression.Evaluate(`{{ $('Many').all().length }}`, nodeContext())
 	if err != nil {
 		t.Fatalf("Evaluate() error = %v", err)
 	}
 	if value != float64(3) {
-		t.Errorf("all().length() = %#v, want 3", value)
+		t.Errorf("all().length = %#v, want 3", value)
 	}
 }
 
@@ -321,12 +324,13 @@ func TestDatesAndWorkflowIdentityResolve(t *testing.T) {
 	t.Parallel()
 
 	for template, want := range map[string]any{
-		`{{ $now.format("2006-01-02") }}`:              "2026-09-05",
-		`{{ $today.format("2006-01-02 15:04") }}`:      "2026-09-05 00:00",
-		`{{ $now.plusDays(7).format("2006-01-02") }}`:  "2026-09-12",
-		`{{ $now.minusDays(5).format("2006-01-02") }}`: "2026-08-31",
-		`{{ $workflow.name }}`:                         "Orders",
-		`{{ $workflow.id }}`:                           "wf_1",
+		`{{ $now.format("yyyy-MM-dd") }}`:                 "2026-09-05",
+		`{{ $today.format("yyyy-MM-dd HH:mm") }}`:         "2026-09-05 00:00",
+		`{{ $now.plusDays(7).format("yyyy-MM-dd") }}`:     "2026-09-12",
+		`{{ $now.minusDays(5).format("yyyy-MM-dd") }}`:    "2026-08-31",
+		`{{ $now.plus({days: 1}).format("yyyy-MM-dd") }}`: "2026-09-06",
+		`{{ $workflow.name }}`:                            "Orders",
+		`{{ $workflow.id }}`:                              "wf_1",
 	} {
 		value, err := expression.Evaluate(template, nodeContext())
 		if err != nil {
@@ -338,14 +342,26 @@ func TestDatesAndWorkflowIdentityResolve(t *testing.T) {
 		}
 	}
 
-	// A bare date stringifies as RFC 3339, which formats readably and compares
-	// correctly against another timestamp in the same zone.
+	// A date in text renders the way n8n renders one: ISO 8601, milliseconds
+	// and an offset. Dropping the milliseconds made every round-tripped
+	// timestamp compare unequal.
 	mixed, err := expression.Evaluate("at {{ $now }}", nodeContext())
 	if err != nil {
 		t.Fatalf("Evaluate() error = %v", err)
 	}
-	if mixed != "at 2026-09-05T14:30:00Z" {
-		t.Errorf("value = %#v, want an RFC 3339 timestamp", mixed)
+	if mixed != "at 2026-09-05T14:30:00.000+00:00" {
+		t.Errorf("value = %#v, want an ISO timestamp with milliseconds and an offset", mixed)
+	}
+
+	// A lone date is a time.Time, which is what the DateTime and IF nodes
+	// accept. The evaluator's own date struct used to escape here and marshal
+	// to "{}" in a Set node.
+	lone, err := expression.Evaluate("{{ $now }}", nodeContext())
+	if err != nil {
+		t.Fatalf("Evaluate() error = %v", err)
+	}
+	if _, isTime := lone.(time.Time); !isTime {
+		t.Errorf("value = %#v (%T), want a time.Time a node can read", lone, lone)
 	}
 }
 
@@ -422,10 +438,10 @@ func TestRootsAndFunctionsAreServedNotDuplicated(t *testing.T) {
 		}
 	}
 	// Every advertised root must actually resolve, or the editor accepts what
-	// the server refuses.
+	// the server refuses. The callable roots are covered separately.
 	for _, root := range roots {
-		if root == "$(" || root == "$fromAI" {
-			continue // These take an argument and are covered above.
+		if expression.IsCallableRoot(root) {
+			continue
 		}
 		if _, err := expression.Evaluate("{{ "+root+" }}", nodeContext()); err != nil {
 			t.Errorf("advertised root %q does not resolve: %v", root, err)

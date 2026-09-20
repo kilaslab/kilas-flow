@@ -2,7 +2,6 @@ package expression
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -21,7 +20,7 @@ type ExecutionContext struct {
 	ApprovalURL string
 }
 
-// Context supplies the approved V1 expression roots. Anything absent here is
+// Context supplies the approved expression roots. Anything absent here is
 // unreachable from a parameter by construction.
 type Context struct {
 	// JSON is the current item, exposed as `$json`.
@@ -37,13 +36,23 @@ type Context struct {
 	// NodeItems is every completed node's output with its `json` wrapper,
 	// backing `$('Name')` and `$node["Name"].json.…`.
 	NodeItems map[string]NodeItem
-	// Workflow is the `$workflow` root.
+	// Workflow is the `$workflow` root, including the timezone the clock reads.
 	Workflow WorkflowContext
 	// ItemIndex is the current item's position, `$itemIndex`.
 	ItemIndex int
+	// RunIndex is which run of the current node this is, `$runIndex`.
+	RunIndex int
+	// Vars is the workflow's static variables, `$vars`. Empty when the runtime
+	// keeps none, which is the current state of the product; the root exists so
+	// a workflow written against n8n fails on a missing *key* rather than on a
+	// missing root.
+	Vars map[string]any
 	// Now fixes the clock for `$now` and `$today`, so one evaluation of a
 	// parameter tree sees a single instant and a test can pin it.
 	Now time.Time
+	// Timezone is the IANA zone the clock reads when Now is not pinned:
+	// the workflow's settings.timezone.
+	Timezone string
 	// AllowFromAI permits `$fromAI`, which is only meaningful in a parameter an
 	// AI agent fills. Anywhere else it is a clear error rather than a value,
 	// or an author will use it in an HTTP URL and get something meaningless.
@@ -150,24 +159,32 @@ func resolveValue(value any, ctx Context) (any, error) {
 // Evaluate resolves `{{ … }}` segments in a template.
 //
 // A template that is exactly one expression returns that value with its type
-// intact, so a number stays a number. A template mixing text and expressions
-// returns a string.
+// intact, so a number stays a number and a date stays a date a node can use. A
+// template mixing text and expressions returns a string.
 func Evaluate(template string, ctx Context) (any, error) {
 	segments, err := split(template)
 	if err != nil {
 		return nil, err
 	}
 	if len(segments) == 1 && segments[0].isExpression {
-		value, err := lookup(segments[0].text, ctx)
+		value, err := evaluate(segments[0].text, ctx)
 		if err != nil {
 			return nil, err
 		}
-		if IsUndefined(value) {
+		switch typed := value.(type) {
+		case undefinedValue:
 			// A lone expression that resolved to nothing is null, which is what
 			// a JSON parameter can actually carry.
 			return nil, nil
+		case dateValue:
+			// A date never escapes as the evaluator's own struct: the Set node
+			// marshalled it to "{}" and the DateTime and IF nodes refused it.
+			// time.Time is what those nodes already accept, and it marshals as
+			// an ISO timestamp with an offset.
+			return typed.at, nil
+		default:
+			return value, nil
 		}
-		return value, nil
 	}
 
 	var builder strings.Builder
@@ -176,7 +193,7 @@ func Evaluate(template string, ctx Context) (any, error) {
 			builder.WriteString(segment.text)
 			continue
 		}
-		value, err := lookup(segment.text, ctx)
+		value, err := evaluate(segment.text, ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -221,419 +238,6 @@ func split(template string) ([]segment, error) {
 	return segments, nil
 }
 
-type accessor struct {
-	name  string
-	index int
-	byKey bool
-	// call marks an accessor that is a function call rather than a field read.
-	// The name is resolved against the closed allowlist at parse time.
-	call bool
-	args []argument
-}
-
-// lookup parses and evaluates one expression body. The grammar is a root
-// followed by field and index accessors; there are no operators, calls, or
-// bare identifiers, so an expression can only read data.
-func lookup(body string, ctx Context) (any, error) {
-	root, accessors, err := parse(body)
-	if err != nil {
-		return nil, err
-	}
-
-	current, err := rootValue(root, ctx)
-	if err != nil {
-		return nil, err
-	}
-	path := root
-	for _, step := range accessors {
-		// Reading through an absent value yields absent rather than erroring,
-		// which is what makes `$json.a.b.c` safe when `a` is optional.
-		if IsUndefined(current) {
-			return Undefined, nil
-		}
-		// `.item` on a node whose lineage is unknown fails here rather than
-		// earlier, so a workflow that never reads it is unaffected.
-		if failure, unavailable := current.(lineageError); unavailable {
-			return nil, fmt.Errorf("%s: %s", path, failure.reason)
-		}
-		if step.call {
-			entry := functions[step.name]
-			value, err := entry.apply(current, step.args)
-			if err != nil {
-				return nil, fmt.Errorf("%s.%s(): %w", path, step.name, err)
-			}
-			path += "." + step.name + "()"
-			current = value
-			continue
-		}
-		if step.byKey {
-			path += "." + step.name
-			object, ok := current.(map[string]any)
-			if !ok {
-				return nil, fmt.Errorf("%s is not an object", path)
-			}
-			current, ok = object[step.name]
-			if !ok {
-				// Absent, not invalid. Every *structural* error below stays a
-				// hard failure — the shape of the expression was wrong — but a
-				// field that simply is not there on this item is the ordinary
-				// case an optional field produces.
-				return Undefined, nil
-			}
-			continue
-		}
-		path += "[" + strconv.Itoa(step.index) + "]"
-		list, ok := current.([]any)
-		if !ok {
-			return nil, fmt.Errorf("%s is not a list", path)
-		}
-		if step.index < 0 || step.index >= len(list) {
-			return nil, fmt.Errorf("%s is out of range", path)
-		}
-		current = list[step.index]
-	}
-	if failure, unavailable := current.(lineageError); unavailable {
-		return nil, fmt.Errorf("%s: %s", path, failure.reason)
-	}
-	return current, nil
-}
-
-// parse reads one expression body into a root and a chain of accessors.
-//
-// The grammar is deliberately not general. A root, then field reads, index
-// reads and calls from a closed allowlist — no operators, no bare identifiers,
-// no arbitrary calls. `require('fs')` is not rejected by a denylist: it cannot
-// be written at all, because a body that does not begin with a supported root
-// never parses.
-func parse(body string) (string, []accessor, error) {
-	body = strings.TrimSpace(body)
-	if body == "" {
-		return "", nil, fmt.Errorf("expression is empty")
-	}
-	if !strings.HasPrefix(body, "$") {
-		return "", nil, fmt.Errorf("expression must start with a supported root such as $json")
-	}
-
-	var root string
-	position := 1
-
-	// `$('Node')` and `$fromAI('name')` take a quoted argument in the root
-	// itself. It stays a special case in the root parser rather than opening
-	// the grammar to general calls, which is the property that keeps an
-	// expression unable to do anything but read data.
-	if position < len(body) && body[position] == '(' {
-		name, next, err := readCallArguments(body, position)
-		if err != nil {
-			return "", nil, err
-		}
-		if len(name) != 1 || name[0].isNumber {
-			return "", nil, fmt.Errorf("$(…) takes one quoted node name")
-		}
-		accessors, err := parseAccessors(body, next)
-		return nodeRootPrefix + name[0].text, accessors, err
-	}
-	for position < len(body) && isNameByte(body[position]) {
-		position++
-	}
-	root = body[:position]
-
-	if root == fromAIRoot {
-		if position >= len(body) || body[position] != '(' {
-			return "", nil, fmt.Errorf("$fromAI needs a quoted parameter name")
-		}
-		args, next, err := readCallArguments(body, position)
-		if err != nil {
-			return "", nil, err
-		}
-		if len(args) == 0 || args[0].isNumber {
-			return "", nil, fmt.Errorf("$fromAI needs a quoted parameter name")
-		}
-		encoded := fromAIRoot + "(" + args[0].text
-		if len(args) > 1 {
-			encoded += "\x00" + args[1].text
-		}
-		accessors, err := parseAccessors(body, next)
-		return encoded, accessors, err
-	}
-
-	accessors, err := parseAccessors(body, position)
-	return root, accessors, err
-}
-
-// parseAccessors reads the field, index and call chain after a root.
-// singleQuoted reads a JavaScript-style '…' string, of any length.
-//
-// strconv.Unquote reads '…' as a Go rune literal, so it accepts 'a' and refuses
-// 'Day of week'. JavaScript makes no such distinction, and the keys that need
-// bracket access at all — a Schedule Trigger's `Day of week`, a header with a
-// dash — are exactly the ones an author writes in single quotes.
-func singleQuoted(text string) (string, bool) {
-	if len(text) < 2 || text[0] != '\'' || text[len(text)-1] != '\'' {
-		return "", false
-	}
-	inner := text[1 : len(text)-1]
-	// An unescaped quote inside means this was never one string.
-	if strings.Contains(strings.ReplaceAll(inner, "\\'", ""), "'") {
-		return "", false
-	}
-	return strings.ReplaceAll(inner, "\\'", "'"), true
-}
-
-func parseAccessors(body string, position int) ([]accessor, error) {
-	accessors := make([]accessor, 0, 4)
-	for position < len(body) {
-		switch body[position] {
-		case '.':
-			position++
-			start := position
-			for position < len(body) && isNameByte(body[position]) {
-				position++
-			}
-			if start == position {
-				return nil, fmt.Errorf("expression has an empty field name")
-			}
-			name := body[start:position]
-			if position < len(body) && body[position] == '(' {
-				entry, known := functions[name]
-				if !known {
-					// Resolved here rather than at run time, so a workflow
-					// naming a function that does not exist fails at save.
-					return nil, fmt.Errorf("expression calls %s(), which is not an allowed function", name)
-				}
-				args, next, err := readCallArguments(body, position)
-				if err != nil {
-					return nil, err
-				}
-				if len(args) != entry.arity {
-					return nil, fmt.Errorf("%s() takes %d argument(s), got %d", name, entry.arity, len(args))
-				}
-				accessors = append(accessors, accessor{name: name, call: true, args: args})
-				position = next
-				continue
-			}
-			accessors = append(accessors, accessor{name: name, byKey: true})
-		case '[':
-			position++
-			end := strings.IndexByte(body[position:], ']')
-			if end < 0 {
-				return nil, fmt.Errorf("expression has an unclosed [")
-			}
-			inner := strings.TrimSpace(body[position : position+end])
-			position += end + 1
-			if quoted, ok := singleQuoted(inner); ok {
-				accessors = append(accessors, accessor{name: quoted, byKey: true})
-				continue
-			}
-			if quoted, err := strconv.Unquote(inner); err == nil {
-				accessors = append(accessors, accessor{name: quoted, byKey: true})
-				continue
-			}
-			index, err := strconv.Atoi(inner)
-			if err != nil {
-				return nil, fmt.Errorf("expression index must be a number or a quoted key")
-			}
-			accessors = append(accessors, accessor{index: index})
-		default:
-			return nil, fmt.Errorf("expression contains unsupported syntax at %q", body[position:])
-		}
-	}
-	return accessors, nil
-}
-
-// readCallArguments reads a parenthesised list of *literals*.
-//
-// Only string and number literals are accepted. Allowing a nested expression
-// would make this a general call expression, and the whole safety property of
-// this grammar is that it is not one.
-func readCallArguments(body string, open int) ([]argument, int, error) {
-	depth := 0
-	end := -1
-	for index := open; index < len(body); index++ {
-		switch body[index] {
-		case '(':
-			depth++
-		case ')':
-			depth--
-			if depth == 0 {
-				end = index
-			}
-		}
-		if end >= 0 {
-			break
-		}
-	}
-	if end < 0 {
-		return nil, 0, fmt.Errorf("expression has an unclosed (")
-	}
-	inner := strings.TrimSpace(body[open+1 : end])
-	if inner == "" {
-		return nil, end + 1, nil
-	}
-
-	var args []argument
-	for _, raw := range splitArguments(inner) {
-		raw = strings.TrimSpace(raw)
-		if unquoted, err := strconv.Unquote(raw); err == nil {
-			args = append(args, argument{text: unquoted})
-			continue
-		}
-		if len(raw) >= 2 && raw[0] == '\'' && raw[len(raw)-1] == '\'' {
-			args = append(args, argument{text: raw[1 : len(raw)-1]})
-			continue
-		}
-		if number, err := strconv.ParseFloat(raw, 64); err == nil {
-			args = append(args, argument{number: number, isNumber: true})
-			continue
-		}
-		return nil, 0, fmt.Errorf("expression argument %q must be a quoted string or a number", raw)
-	}
-	return args, end + 1, nil
-}
-
-// splitArguments splits on commas that are not inside a quoted string.
-func splitArguments(inner string) []string {
-	var parts []string
-	var current strings.Builder
-	var quote byte
-	for index := 0; index < len(inner); index++ {
-		char := inner[index]
-		switch {
-		case quote != 0:
-			current.WriteByte(char)
-			if char == quote && (index == 0 || inner[index-1] != '\\') {
-				quote = 0
-			}
-		case char == '\'' || char == '"':
-			quote = char
-			current.WriteByte(char)
-		case char == ',':
-			parts = append(parts, current.String())
-			current.Reset()
-		default:
-			current.WriteByte(char)
-		}
-	}
-	parts = append(parts, current.String())
-	return parts
-}
-
-func isNameByte(char byte) bool {
-	return char == '_' ||
-		(char >= 'a' && char <= 'z') ||
-		(char >= 'A' && char <= 'Z') ||
-		(char >= '0' && char <= '9')
-}
-
-func rootValue(root string, ctx Context) (any, error) {
-	switch root {
-	case "$json":
-		return anyMap(ctx.JSON), nil
-	case "$input":
-		input := make(map[string]any, len(ctx.Input))
-		for port, items := range ctx.Input {
-			list := make([]any, len(items))
-			for index, item := range items {
-				list[index] = anyMap(item)
-			}
-			input[port] = list
-		}
-		return input, nil
-	case "$node":
-		// Both forms resolve. `$node["X"].json.y` is what every imported n8n
-		// workflow is written as and never worked; `$node["X"].y` is what
-		// KilasFlow's own docs wrongly advertised and what existing workflows
-		// may use. The wrapper carries `json` alongside the bare fields, so
-		// neither breaks — a field genuinely named `json` on an item is the one
-		// ambiguity, and the wrapper wins because that is the n8n meaning.
-		nodes := make(map[string]any, len(ctx.NodeItems))
-		for name, item := range ctx.NodeItems {
-			merged := make(map[string]any, len(item.JSON)+3)
-			for key, value := range item.JSON {
-				merged[key] = value
-			}
-			for key, value := range nodeItemValue(item) {
-				merged[key] = value
-			}
-			nodes[name] = merged
-		}
-		for name, item := range ctx.Nodes {
-			if _, already := nodes[name]; already {
-				continue
-			}
-			nodes[name] = anyMap(item)
-		}
-		return nodes, nil
-	case "$env":
-		env := make(map[string]any, len(ctx.Env))
-		for key, value := range ctx.Env {
-			env[key] = value
-		}
-		return env, nil
-	case "$execution":
-		return map[string]any{"id": ctx.Execution.ID, "mode": ctx.Execution.Mode, "resumeUrl": ctx.Execution.ResumeURL, "approvalUrl": ctx.Execution.ApprovalURL}, nil
-	case "$workflow":
-		return map[string]any{"id": ctx.Workflow.ID, "name": ctx.Workflow.Name, "active": ctx.Workflow.Active}, nil
-	case "$itemIndex":
-		return float64(ctx.ItemIndex), nil
-	case "$parameter":
-		if !ctx.AllowRouting {
-			return nil, fmt.Errorf("expression root %q is only available in a node pack's routing templates", root)
-		}
-		return anyMap(ctx.Parameters), nil
-	case "$value":
-		if !ctx.AllowRouting {
-			return nil, fmt.Errorf("expression root %q is only available in a node pack's routing templates", root)
-		}
-		return ctx.Value, nil
-	case "$credentials":
-		if !ctx.AllowRouting {
-			return nil, fmt.Errorf("expression root %q is only available in a node pack's routing templates", root)
-		}
-		// Only what the caller put here, which is only what the credential type
-		// declared non-secret.
-		fields := make(map[string]any, len(ctx.Credentials))
-		for key, value := range ctx.Credentials {
-			fields[key] = value
-		}
-		return fields, nil
-	case "$now":
-		return dateValue{at: ctx.clock()}, nil
-	case "$today":
-		return dateValue{at: startOfDay(ctx.clock())}, nil
-	default:
-		if strings.HasPrefix(root, nodeRootPrefix) {
-			return nodeRootValue(root, ctx)
-		}
-		if strings.HasPrefix(root, fromAIRoot+"(") {
-			return fromAIValue(root, ctx)
-		}
-		return nil, fmt.Errorf("expression root %q is not supported", root)
-	}
-}
-
-// clock is the instant `$now` and `$today` read. One instant per evaluation, so
-// two expressions in the same parameter tree cannot disagree about the time.
-func (ctx Context) clock() time.Time {
-	if ctx.Now.IsZero() {
-		return time.Now().UTC()
-	}
-	return ctx.Now
-}
-
-// fromAIValue resolves the marker an AI agent fills in.
-func fromAIValue(root string, ctx Context) (any, error) {
-	if !ctx.AllowFromAI {
-		return nil, fmt.Errorf("$fromAI is only available in a parameter an AI agent fills; it has no value here")
-	}
-	encoded := strings.TrimPrefix(root, fromAIRoot+"(")
-	parts := strings.SplitN(encoded, "\x00", 2)
-	request := FromAIRequest{Name: parts[0]}
-	if len(parts) > 1 {
-		request.Description = parts[1]
-	}
-	return request, nil
-}
-
 func anyMap(source map[string]any) map[string]any {
 	if source == nil {
 		return map[string]any{}
@@ -641,25 +245,15 @@ func anyMap(source map[string]any) map[string]any {
 	return source
 }
 
+// stringify renders one expression inside surrounding text.
+//
+// An absent value substitutes as nothing rather than the word "undefined" — a
+// URL with a hole in it is easier to spot than one with "undefined" in it — and
+// everything else follows JavaScript: a list joins with commas, an object is
+// JSON rather than Go's `map[k:v]` syntax.
 func stringify(value any) string {
-	switch typed := value.(type) {
-	case nil:
+	if IsUndefined(value) {
 		return ""
-	case undefinedValue:
-		// An absent field substitutes as nothing, so mixing it into text yields
-		// the text rather than the word "undefined".
-		return ""
-	case dateValue:
-		return typed.String()
-	case string:
-		return typed
-	case bool:
-		return strconv.FormatBool(typed)
-	case float64:
-		return strconv.FormatFloat(typed, 'f', -1, 64)
-	case int:
-		return strconv.Itoa(typed)
-	default:
-		return fmt.Sprintf("%v", typed)
 	}
+	return jsString(value)
 }
