@@ -266,7 +266,74 @@ func csvExportRecord(header []string, row datastore.Row) []string {
 	return record
 }
 
+// csvFormulaLeads reports whether text would be read as a formula rather than
+// as text by Excel, LibreOffice or Sheets.
+//
+// A cell whose first character is =, +, - or @ is parsed as an expression, and
+// TAB and CR are equally dangerous because a spreadsheet strips them during
+// import and then sees the character behind them. Datastore rows are written by
+// webhooks as often as by a person (BUG-fv5fer: a value arriving from an
+// inbound request becomes an active formula the moment an operator opens the
+// export), so the exported sheet — not the stored row — is where the trust
+// boundary sits.
+//
+// The leading single quotes are skipped before the test, which is what makes
+// the escaping below reversible: on the way back in, exactly one quote is
+// stripped from text that csvFormulaLeads accepts, so "'=1+1" (a literal value
+// starting with a quote) and "'=1+1" (the escaped spelling of "=1+1") cannot be
+// confused with one another.
+func csvFormulaLeads(text string) bool {
+	for len(text) > 0 && text[0] == '\'' {
+		text = text[1:]
+	}
+	if text == "" {
+		return false
+	}
+	switch text[0] {
+	case '=', '+', '-', '@', '\t', '\r':
+		return true
+	default:
+		return false
+	}
+}
+
+// csvNeutraliseCell prefixes the OWASP mitigation to any rendered cell a
+// spreadsheet would otherwise evaluate.
+//
+// It runs on the final rendered text rather than inside the string branch, so
+// there is exactly one place the rule lives and no branch can forget it: a
+// negative number renders as "-5" and is escaped the same way a string is. The
+// quote is an Excel text marker, not data — csvUnneutraliseCell removes it
+// again on import — and what the row stores is never touched, because this runs
+// on export only.
+func csvNeutraliseCell(text string) string {
+	if csvFormulaLeads(text) {
+		return "'" + text
+	}
+	return text
+}
+
+// csvUnneutraliseCell reverses csvNeutraliseCell, so a datastore exported and
+// re-imported holds the identical values.
+//
+// Without it the round trip is lossy in the direction that matters: a row
+// holding "=1+1" or "-5" would come back as "'=1+1" or "'-5", and the numeric
+// cell would not even import — "'-5" is not a number, so the whole file would be
+// refused with one issue per negative value.
+func csvUnneutraliseCell(cell string) string {
+	if len(cell) > 1 && cell[0] == '\'' && csvFormulaLeads(cell[1:]) {
+		return cell[1:]
+	}
+	return cell
+}
+
 func csvExportCell(name string, value any) string {
+	return csvNeutraliseCell(csvRenderCell(value))
+}
+
+// csvRenderCell is one value in its column's own spelling: the text of a
+// string, and for everything else the spelling the import path parses back.
+func csvRenderCell(value any) string {
 	if value == nil {
 		return ""
 	}
@@ -403,6 +470,11 @@ func csvDecodeRecord(line int, record, header []string, targets []datastore.Colu
 	values := make(map[string]any, len(header))
 	for index, cell := range record {
 		column := targets[index]
+		// Undo the export's formula neutralisation before anything reads the
+		// cell: the quote is a spreadsheet marker this API wrote, not part of
+		// the value, and a typed column cannot parse its own spelling with the
+		// marker still attached.
+		cell = csvUnneutraliseCell(cell)
 		if column.Type == datastore.ColumnString {
 			if size := len(cell); size > maxValueBytes {
 				return fail(column.Name, fmt.Sprintf("value is %d bytes, past the maximum %d", size, maxValueBytes))
