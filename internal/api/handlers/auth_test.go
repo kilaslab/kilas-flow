@@ -125,6 +125,33 @@ func retryAfter(t *testing.T, err error) int {
 	return seconds
 }
 
+// waitForRefusal spends a bucket until the handler refuses an attempt.
+//
+// What the allowance is, exactly, is proven in internal/api/middleware against
+// a clock the test controls. What the handler tests prove is the wiring — which
+// key gets spent, and what the answer is when a bucket is empty — and the count
+// cannot be asserted from out here: a bucket refills at one token every six
+// seconds, while a slow machine (the race detector, a shared runner) can spend
+// three or four seconds on a single wrong-password attempt. Three allowances is
+// the bound rather than the allowance because one refusal per six seconds
+// cannot outrun a loop that costs about one attempt per second.
+func waitForRefusal(t *testing.T, attempt func(i int) error) error {
+	t.Helper()
+	bound := 3 * middleware.DefaultLoginAttemptsPerMinute
+	for i := range bound {
+		err := attempt(i)
+		switch status := loginStatus(t, err); status {
+		case http.StatusTooManyRequests:
+			return err
+		case http.StatusUnauthorized:
+		default:
+			t.Fatalf("attempt %d = %d, want 401 until the bucket is empty", i, status)
+		}
+	}
+	t.Fatalf("no refusal within %d attempts", bound)
+	return nil
+}
+
 // One address spraying many accounts is the shape of the flood the finding
 // measured: nothing about a single account looks wrong, and the work is spread
 // across addresses that do not exist.
@@ -132,18 +159,10 @@ func TestLoginRefusesASprayFromOneAddress(t *testing.T) {
 	handler := loginTestHandler(t, &loginStore{err: repository.ErrNotFound})
 	const attacker = "203.0.113.7:40001"
 
-	for attempt := 0; attempt < middleware.DefaultLoginAttemptsPerMinute; attempt++ {
-		email := "nobody" + strconv.Itoa(attempt) + "@example.test"
-		if status := loginStatus(t, loginAttempt(t, handler, attacker, email, "guess")); status != http.StatusUnauthorized {
-			t.Fatalf("attempt %d = %d, want 401", attempt, status)
-		}
-	}
-
-	err := loginAttempt(t, handler, attacker, "nobody-again@example.test", "guess")
-	if status := loginStatus(t, err); status != http.StatusTooManyRequests {
-		t.Fatalf("attempt after the allowance = %d, want 429", status)
-	}
-	if retryAfter(t, err) < 1 {
+	refusal := waitForRefusal(t, func(i int) error {
+		return loginAttempt(t, handler, attacker, "nobody"+strconv.Itoa(i)+"@example.test", "guess")
+	})
+	if retryAfter(t, refusal) < 1 {
 		t.Error("the refusal did not say how long to wait")
 	}
 
@@ -164,19 +183,15 @@ func TestLoginRefusesRepeatedGuessesAtOneAccount(t *testing.T) {
 	const victim = "owner@example.test"
 
 	// A wrong password costs two tokens — one for the attempt, one for the
-	// mistake — so an account meets its ceiling after half the allowance.
-	admitted := middleware.DefaultLoginAttemptsPerMinute / 2
-	for attempt := 0; attempt < admitted; attempt++ {
-		address := "198.51.100." + strconv.Itoa(attempt) + ":40000"
-		if status := loginStatus(t, loginAttempt(t, handler, address, victim, "guess")); status != http.StatusUnauthorized {
-			t.Fatalf("attempt %d = %d, want 401", attempt, status)
-		}
+	// mistake — so the account's bucket empties in half the addresses an
+	// address-only throttle would need.
+	refusal := waitForRefusal(t, func(i int) error {
+		return loginAttempt(t, handler, "198.51.100."+strconv.Itoa(i)+":40000", victim, "guess")
+	})
+	if retryAfter(t, refusal) < 1 {
+		t.Error("the refusal did not say how long to wait")
 	}
 
-	throttled := loginAttempt(t, handler, "198.51.100.200:40000", victim, "guess")
-	if status := loginStatus(t, throttled); status != http.StatusTooManyRequests {
-		t.Fatalf("a further address for one account = %d, want 429", status)
-	}
 	// The throttle is the account's, not the whole installation's: another
 	// account from a fresh address is still served.
 	if status := loginStatus(t, loginAttempt(t, handler, "198.51.100.201:40000", "someone-else@example.test", "guess")); status != http.StatusUnauthorized {
