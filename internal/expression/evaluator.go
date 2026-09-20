@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"math/big"
 	"strconv"
 	"strings"
 	"time"
@@ -782,6 +783,48 @@ func jsNumber(value float64) string {
 	default:
 		return strconv.FormatFloat(value, 'g', -1, 64)
 	}
+}
+
+// fixedDecimal renders a number with a fixed number of decimals the way
+// Number.prototype.toFixed does.
+//
+// strconv cannot: it rounds a tie to the even digit, so (2.5).toFixed(0) was
+// "2" where JavaScript gives "3", and every exactly representable half was one
+// unit off in the last digit. JavaScript picks the n-digit decimal nearest the
+// exact value of the float and, when two are equally close, the larger one —
+// with the sign taken off first, so a negative half goes away from zero:
+// (-2.5).toFixed(0) is "-3" while (-0.4).toFixed(0) is "-0". big.Rat holds the
+// float64 exactly, so no tie is decided by a binary approximation.
+func fixedDecimal(value float64, digits int) string {
+	switch {
+	case math.IsNaN(value):
+		return "NaN"
+	case math.IsInf(value, 1):
+		return "Infinity"
+	case math.IsInf(value, -1):
+		return "-Infinity"
+	case math.Abs(value) >= 1e21:
+		// JavaScript has no integer for a magnitude this large and falls back
+		// to ToString.
+		return jsNumber(value)
+	}
+	scaled := new(big.Rat).SetFloat64(math.Abs(value))
+	scale := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(digits)), nil)
+	scaled.Mul(scaled, new(big.Rat).SetInt(scale))
+	scaled.Add(scaled, big.NewRat(1, 2))
+	// The denominator of the sum is positive, so Quo truncates towards zero,
+	// which is the floor of the value the half already nudged upwards.
+	text := new(big.Int).Quo(scaled.Num(), scaled.Denom()).String()
+	if digits > 0 {
+		if len(text) <= digits {
+			text = strings.Repeat("0", digits-len(text)+1) + text
+		}
+		text = text[:len(text)-digits] + "." + text[len(text)-digits:]
+	}
+	if value < 0 {
+		return "-" + text
+	}
+	return text
 }
 
 func describeValue(value any) string {

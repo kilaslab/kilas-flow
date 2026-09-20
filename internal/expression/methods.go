@@ -784,7 +784,7 @@ func registerCommon() {
 		if digits < 0 || digits > 100 {
 			return nil, fmt.Errorf("toFixed() needs a digit count between 0 and 100")
 		}
-		return strconv.FormatFloat(number, 'f', digits, 64), nil
+		return fixedDecimal(number, digits), nil
 	})
 	// toJsonString is n8n's extension: the object as JSON text, which is how a
 	// workflow builds an LLM prompt or an API body out of a value.

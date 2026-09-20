@@ -909,3 +909,43 @@ func TestMathRoundRoundsHalfUp(t *testing.T) {
 		t.Errorf("Math.round(1/0) = %#v, want Infinity", got)
 	}
 }
+
+// TestToFixedRoundsHalfUpAtTheExactDecimal: strconv.FormatFloat rounds ties to
+// even, so every exactly representable half was one unit off in the last digit —
+// (2.5).toFixed(0) was "2" and (0.125).toFixed(2) was "0.12", where JavaScript
+// picks the decimal nearest the exact value and, on a tie, the larger one. The
+// digit a workflow formats into a price or an invoice line was silently wrong.
+func TestToFixedRoundsHalfUpAtTheExactDecimal(t *testing.T) {
+	t.Parallel()
+
+	for template, want := range map[string]any{
+		"{{ (2.5).toFixed(0) }}":    "3",
+		"{{ (0.125).toFixed(2) }}":  "0.13",
+		"{{ (0.375).toFixed(2) }}":  "0.38",
+		"{{ (1.25).toFixed(1) }}":   "1.3",
+		"{{ (0.0625).toFixed(3) }}": "0.063",
+		"{{ (0.5).toFixed(0) }}":    "1",
+		"{{ (-2.5).toFixed(0) }}":   "-3",
+		"{{ (-0.4).toFixed(0) }}":   "-0",
+		"{{ (-0).toFixed(0) }}":     "0",
+		// The rounding is done on the value's exact decimal expansion, so a
+		// value just below a half does not round up.
+		"{{ (2.4999999999999996).toFixed(0) }}": "2",
+		"{{ (0.1 + 0.2).toFixed(2) }}":          "0.30",
+		// The cases that already worked keep working.
+		"{{ $json.count.toFixed(2) }}": "42.00",
+		"{{ (42).toFixed(2) }}":        "42.00",
+		"{{ (1.005).toFixed(2) }}":     "1.00",
+		// Huge and non-finite values follow JavaScript's own spellings.
+		"{{ (1e21).toFixed(2) }}": "1e+21",
+		"{{ (1e20).toFixed(2) }}": "100000000000000000000.00",
+		"{{ (1/0).toFixed(2) }}":  "Infinity",
+		"{{ (-1/0).toFixed(2) }}": "-Infinity",
+		"{{ (0/0).toFixed(2) }}":  "NaN",
+	} {
+		got := evaluateOne(t, template, parityContext())
+		if got != want {
+			t.Errorf("Evaluate(%s) = %#v, want %#v", template, got, want)
+		}
+	}
+}
