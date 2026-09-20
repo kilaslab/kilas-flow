@@ -22,7 +22,10 @@ import (
 //     compiles to SELECT ... FOR UPDATE on PostgreSQL and to nothing at
 //     all on SQLite — the dialector discards it without an error — so
 //     identical Go source would promise two different guarantees. No
-//     datastore write path uses it, and a test pins the absence.
+//     datastore write path uses it, and a test pins the absence. That
+//     describes the row-store write paths: the fleet runner's catalogue
+//     re-read (advance in fleet.go) is the one deliberate FOR UPDATE, on
+//     PostgreSQL only, and it claims no lock on SQLite.
 //   - Upsert is read-then-write in no single transaction: two concurrent
 //     upserts against the same filter may both insert. A counter or a flag
 //     that must not lose writes uses Increment, or a preconditioned write

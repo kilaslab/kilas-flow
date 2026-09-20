@@ -32,6 +32,23 @@ func serverProblem(ctx context.Context, detail string, err error) error {
 	return huma.Error500InternalServerError(detail)
 }
 
+// unavailableProblem is the 503 counterpart of serverProblem: it logs the cause
+// of an unavailable dependency beside the request ID and answers with the
+// generic problem a caller sees.
+//
+// detail is written for the caller and never includes err, for the same reason
+// serverProblem keeps a driver message out of a 500 body: the message can name
+// a table, a host, or a tenant's identifier, and the endpoints that answer 503
+// for an unreachable dependency — readiness above all — are unauthenticated.
+func unavailableProblem(ctx context.Context, detail string, err error) error {
+	slog.ErrorContext(ctx, "request unavailable",
+		slog.String("detail", detail),
+		slog.String("request_id", middleware.RequestIDFrom(ctx)),
+		slog.String("error", err.Error()),
+	)
+	return huma.Error503ServiceUnavailable(detail)
+}
+
 // modulePath is this project's own import prefix, so a type it defines is told
 // apart from one a dependency defines.
 const modulePath = "github.com/kilaslab/kilas-flow"

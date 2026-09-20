@@ -1079,6 +1079,44 @@ export interface NodeStartedEvent {
   workflowId?: string;
 }
 
+/**
+ * Datastores per schema version, keyed by the version number
+ */
+export type ReadyDatastoresSpread = {[key: string]: number};
+
+export interface ReadyDatastores {
+  /** Datastores above the served version: a newer build migrated them and this build refuses them */
+  ahead: number;
+  /** Datastores below the served version: a migration is outstanding */
+  behind: number;
+  /** The datastore schema version this build serves */
+  schemaVersion: number;
+  /** Datastores per schema version, keyed by the version number */
+  spread: ReadyDatastoresSpread;
+}
+
+export interface NotReadyProblem {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** Datastore schema-version spread; the same block the 200 body carries */
+  datastores?: ReadyDatastores;
+  /** A human-readable explanation specific to this occurrence of the problem. */
+  detail?: string;
+  /**
+     * Optional list of individual error details
+     * @nullable
+     */
+  errors?: ErrorDetail[] | null;
+  /** A URI reference that identifies the specific occurrence of the problem. */
+  instance?: string;
+  /** HTTP status code */
+  status?: number;
+  /** A short, human-readable summary of the problem type. This value should not change between occurrences of the error. */
+  title?: string;
+  /** A URI reference to human-readable documentation for the error. */
+  type?: string;
+}
+
 export interface PrincipalResource {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -1111,6 +1149,8 @@ export interface ReadyOutputBody {
   readonly $schema?: string;
   /** Database reachability */
   database: string;
+  /** Datastore schema-version spread; absent when the instance has no datastore store */
+  datastores?: ReadyDatastores;
   /** Why the instance is not ready, when it is not */
   error?: string;
   /** Overall readiness */
@@ -3984,15 +4024,20 @@ export type getReadyResponse200 = {
   status: 200
 }
 
+export type getReadyResponse503 = {
+  data: NotReadyProblem
+  status: 503
+}
+
 export type getReadyResponseDefault = {
   data: ErrorModel
-  status: Exclude<HTTPStatusCodes, 200>
+  status: Exclude<HTTPStatusCodes, 200 | 503>
 }
 
 export type getReadyResponseSuccess = (getReadyResponse200) & {
   headers: Headers;
 };
-export type getReadyResponseError = (getReadyResponseDefault) & {
+export type getReadyResponseError = (getReadyResponse503 | getReadyResponseDefault) & {
   headers: Headers;
 };
 
@@ -4007,7 +4052,7 @@ export const getGetReadyUrl = () => {
 }
 
 /**
- * Reports whether the instance can serve requests. Verifies that the database is reachable. Returns 503 when it is not.
+ * Reports whether the instance can serve requests. Verifies that the database is reachable and that no datastore is waiting on a schema migration; the body carries the datastore schema-version spread, counts only. Returns 503 when either check fails: a migration outstanding carries the same datastores block in the problem document, while an unreachable database — a catalogue that cannot be read — carries none.
  * @summary Readiness probe
  */
 export const getReady = async ( options?: RequestInit): Promise<getReadyResponse> => {

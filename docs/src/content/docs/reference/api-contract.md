@@ -201,6 +201,16 @@ Every non-success response is an RFC 9457 problem document
 `instance`, and `errors`. The shape is stable; the human-readable strings
 inside it are not — never match on `detail` text.
 
+One declared failure carries a member of its own: when a datastore migration is
+outstanding, `GET /api/v1/ready` answers `503` with the same `datastores` block
+its `200` body carries (see [System](/reference/api/system/)). Its two other
+`503`s — an unreachable database, and a fleet status that cannot be read —
+carry no block, because neither state can read the catalogue. The spread a
+monitor needs is therefore readable in exactly the state that reports a
+migration outstanding, instead of only while readiness is green, and without
+parsing `detail`. Extension members are additive, so a consumer that ignores
+unknown members is unaffected.
+
 Workflow compile failure is structured: a `422` whose error details carry a
 `WorkflowValidationIssue` value with `code`, `nodeId`, and `connectionId`,
 so a client can map failures back to graph elements without parsing a

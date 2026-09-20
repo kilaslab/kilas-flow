@@ -9,7 +9,7 @@ sidebar:
 
 > **Generated reference — KilasFlow `0.1.0-dev`.** Produced from the OpenAPI document a real binary serves at `/api/openapi.json`, not hand-written. [Which reference to trust](/reference/api/).
 
-Every non-success response is an RFC 9457 problem document (`application/problem+json`). The shape is stable; the human-readable strings inside it are not — never match on `detail` text. Every operation declares its failures as the `default` response, so the table below applies to the whole API.
+Every non-success response is an RFC 9457 problem document (`application/problem+json`). The shape is stable; the human-readable strings inside it are not — never match on `detail` text. Operations declare their failures as the `default` response, so the table below applies to the whole API; an operation that declares one status of its own (currently `get-ready`, whose `503` carries the fleet spread when a migration is outstanding, as its page describes) serves the same problem fields plus the ones that page names.
 
 Problem fields, as served:
 

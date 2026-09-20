@@ -78,6 +78,20 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
   have already loaded, when the workspace has more runs than fit on one page,
   and again after the tab has been in the background.
 
+### Changed
+
+- Boot now migrates every datastore to the schema version the build serves,
+  after the SQL migrations and before the listener opens, and **refuses to
+  start** when it cannot: a datastore ahead of the build, or behind it with no
+  step to reach it, is named on stderr and the process exits `1` instead of
+  serving requests it would refuse anyway. A datastore an older peer process
+  created behind is picked up by a retry every thirty seconds, without a
+  restart.
+- `GET /api/v1/ready` gained a `datastores` block (schema versions and counts
+  only) and answers `503` while a datastore migration is outstanding. The same
+  block is carried in that `503`'s problem document, so the spread stays
+  machine-readable in the state that reports it.
+
 ### Security
 
 - `SECURITY.md` documents the private disclosure path, and private vulnerability

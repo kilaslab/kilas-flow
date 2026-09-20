@@ -85,7 +85,7 @@ single binary containing the API and the editor, `make build-all` then
 | Path | What it is |
 | --- | --- |
 | `GET /api/v1/health` | Liveness. 200 while the process serves; touches no dependency. |
-| `GET /api/v1/ready` | Readiness. 503 when the database is unreachable. |
+| `GET /api/v1/ready` | Readiness. 503 when the database is unreachable or a datastore migration is outstanding; the `datastores` block reports the schema-version spread, on the 200 and on the migration-outstanding 503. |
 | `GET /docs` | The API reference, rendered from the OpenAPI document. |
 | `GET /api/openapi.json` | OpenAPI 3.1. Also `.yaml`, and `/api/openapi-3.0.json` / `.yaml` for tools that cannot read 3.1. |
 | `/webhook/{route}` | Inbound workflow triggers. |

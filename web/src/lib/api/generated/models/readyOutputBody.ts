@@ -5,12 +5,15 @@
  * Embeddable workflow automation engine. Every operation available in the editor is available here: the canvas is a client of this API, not the owner of workflow state.
  * OpenAPI spec version: 0.1.0-dev
  */
+import type { ReadyDatastores } from './readyDatastores';
 
 export interface ReadyOutputBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   /** Database reachability */
   database: string;
+  /** Datastore schema-version spread; absent when the instance has no datastore store */
+  datastores?: ReadyDatastores;
   /** Why the instance is not ready, when it is not */
   error?: string;
   /** Overall readiness */

@@ -20,6 +20,7 @@ import type {
 import type {
   ErrorModel,
   HealthOutputBody,
+  NotReadyProblem,
   ReadyOutputBody
 } from '../models';
 
@@ -139,15 +140,20 @@ export type getReadyResponse200 = {
   status: 200
 }
 
+export type getReadyResponse503 = {
+  data: NotReadyProblem
+  status: 503
+}
+
 export type getReadyResponseDefault = {
   data: ErrorModel
-  status: Exclude<HTTPStatusCodes, 200>
+  status: Exclude<HTTPStatusCodes, 200 | 503>
 }
 
 export type getReadyResponseSuccess = (getReadyResponse200) & {
   headers: Headers;
 };
-export type getReadyResponseError = (getReadyResponseDefault) & {
+export type getReadyResponseError = (getReadyResponse503 | getReadyResponseDefault) & {
   headers: Headers;
 };
 
@@ -162,7 +168,7 @@ export const getGetReadyUrl = () => {
 }
 
 /**
- * Reports whether the instance can serve requests. Verifies that the database is reachable. Returns 503 when it is not.
+ * Reports whether the instance can serve requests. Verifies that the database is reachable and that no datastore is waiting on a schema migration; the body carries the datastore schema-version spread, counts only. Returns 503 when either check fails: a migration outstanding carries the same datastores block in the problem document, while an unreachable database — a catalogue that cannot be read — carries none.
  * @summary Readiness probe
  */
 export const getReady = async ( options?: Parameters<typeof apiFetch>[1]): Promise<getReadyResponse> => {
@@ -187,7 +193,7 @@ export const getGetReadyQueryKey = () => {
     }
 
 
-export const getGetReadyQueryOptions = <TData = Awaited<ReturnType<typeof getReady>>, TError = ErrorType<ErrorModel>>( options?: { query?:Partial<CreateQueryOptions<Awaited<ReturnType<typeof getReady>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+export const getGetReadyQueryOptions = <TData = Awaited<ReturnType<typeof getReady>>, TError = ErrorType<NotReadyProblem | ErrorModel>>( options?: { query?:Partial<CreateQueryOptions<Awaited<ReturnType<typeof getReady>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -206,14 +212,14 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type GetReadyQueryResult = NonNullable<Awaited<ReturnType<typeof getReady>>>
-export type GetReadyQueryError = ErrorType<ErrorModel>
+export type GetReadyQueryError = ErrorType<NotReadyProblem | ErrorModel>
 
 
 /**
  * @summary Readiness probe
  */
 
-export function createGetReady<TData = Awaited<ReturnType<typeof getReady>>, TError = ErrorType<ErrorModel>>(
+export function createGetReady<TData = Awaited<ReturnType<typeof getReady>>, TError = ErrorType<NotReadyProblem | ErrorModel>>(
   options?: () => { query?:Partial<CreateQueryOptions<Awaited<ReturnType<typeof getReady>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
  , queryClient?: () => QueryClient
  ): CreateQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {

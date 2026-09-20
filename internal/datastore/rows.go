@@ -73,16 +73,19 @@ type UpsertResult struct {
 	Pairs    []DryRunPair
 }
 
-// checkSchemaVersion refuses row operations on a datastore the binary must
-// not serve: ahead of CurrentSchemaVersion (this build is too old, naming
-// both versions) or behind it (the fleet runner has not migrated it yet).
-// Each refusal names both versions; every other datastore keeps serving.
-func checkSchemaVersion(dsID string, version int) error {
-	if version > CurrentSchemaVersion {
-		return fmt.Errorf("datastore: %s is at schema version %d but this build knows version %d", dsID, version, CurrentSchemaVersion)
+// checkSchemaVersion refuses row operations on a datastore the engine must
+// not serve: ahead of the version it serves (this build is too old, naming
+// both versions) or behind it (the fleet migration has not reached it yet).
+// Each refusal names both versions; every other datastore keeps serving. The
+// target is the engine's own schemaVersion, the same value Create stamps and
+// the fleet runner migrates towards, so the three cannot disagree.
+func checkSchemaVersion(dsID string, version, target int) error {
+	if version > target {
+		return fmt.Errorf("datastore: %s is at schema version %d but this build knows version %d", dsID, version, target)
 	}
-	if version < CurrentSchemaVersion {
-		return fmt.Errorf("datastore: %s is at schema version %d, want %d: run the fleet migration first", dsID, version, CurrentSchemaVersion)
+	if version < target {
+		return fmt.Errorf("datastore: %s is at schema version %d, want %d: the datastore fleet migration has not reached it yet (boot runs it; GET /api/v1/ready reports what is outstanding)",
+			dsID, version, target)
 	}
 	return nil
 }
@@ -98,7 +101,7 @@ func (e *Engine) gatedLookup(ctx context.Context, tenantID, dsID string) (*datas
 	if row == nil {
 		return nil, nil, "", fmt.Errorf("datastore: unknown datastore %q", dsID)
 	}
-	if err := checkSchemaVersion(dsID, row.SchemaVersion); err != nil {
+	if err := checkSchemaVersion(dsID, row.SchemaVersion, e.schemaVersion); err != nil {
 		return nil, nil, "", err
 	}
 	return row, cols, PhysicalTableName(e.prefix, row.Surrogate), nil

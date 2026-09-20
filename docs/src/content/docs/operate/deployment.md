@@ -177,7 +177,15 @@ deliberate:
   process is serving and touches no dependency, so a database outage does not
   get the process killed and restarted into the same outage.
 - `GET /api/v1/ready` is readiness. It answers `503` when the database is
-  unreachable — the signal to stop sending traffic.
+  unreachable, and also while a datastore migration is outstanding — a
+  datastore below the schema version this build serves. Its `datastores`
+  block reports the schema-version spread as counts and versions only, and it
+  is served on the `200` body beside `status` and `database` and on the `503`
+  a migration in flight answers, so a monitor reads the spread from a field
+  rather than parsing `detail`. A `503` for an unreachable database carries no
+  block: it cannot read the catalogue. Note
+  that `/ready` is public: the block therefore discloses the installation's
+  total datastore count to anyone who can reach the port.
 
 Note that the `Code` node needs a Go toolchain at run time and the distroless
 image does not have one. The server reports the node as unavailable through

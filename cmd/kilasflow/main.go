@@ -173,6 +173,13 @@ func run() error {
 	}); err != nil {
 		return err
 	}
+	// The datastores this engine serves are migrated before the listener
+	// opens: a datastore this build cannot serve refuses boot the way a
+	// failed schema migration does, and the resume tick behind the pass
+	// clears a straggler an older peer creates during a rolling upgrade.
+	if err := bootDatastoreFleet(ctx, datastoreEngine, log); err != nil {
+		return err
+	}
 	nodeRegistry := node.NewRegistry()
 	if err := nodes.RegisterAll(nodeRegistry); err != nil {
 		return fmt.Errorf("register built-in nodes: %w", err)

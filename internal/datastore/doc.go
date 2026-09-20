@@ -25,7 +25,9 @@
 // these tables at n8n's filter surface, with keyset pagination on the
 // integer id and dry-run pairs computed, never rolled back. fleet.go runs
 // the per-datastore version steps (FEAT-gxppx1), re-reading the work list
-// so mid-run creates are picked up. Schema evolution stays online
+// so mid-run creates are picked up: Engine.MigrateFleet is the entry point
+// the composition root calls at boot, and Engine.FleetStatus reports the
+// fleet's version spread. Schema evolution stays online
 // (FEAT-wkmv5e): add column is one statement per dialect, never a rebuild.
 // The catalogue HTTP API belongs to its own ticket, not this package.
 //

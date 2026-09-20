@@ -25,8 +25,18 @@ curl -fsS http://localhost:8080/api/v1/ready
 ```
 
 ```json
-{"status":"ok","database":"ok"}
+{"status":"ok","database":"ok","datastores":{"schemaVersion":1,"spread":{},"behind":0,"ahead":0}}
 ```
+
+The `datastores` block is absent from the `200` body only on an instance with no
+datastore store: `schemaVersion` is the version this build serves, `spread`
+counts datastores per version, and `behind` counts those still waiting on a
+migration. A `503` that reports a datastore migration outstanding carries the
+block too, so the spread stays readable while readiness refuses; a `503` for an
+unreachable database carries none, because a catalogue that cannot be read has
+no spread to report.
+Every response also carries a `$schema` field pointing at the JSON Schema for
+its body, which the sample above leaves out.
 
 The editor is at **http://localhost:8080/app/workflows**, the API reference the
 running server generates for itself is at **http://localhost:8080/docs**, and

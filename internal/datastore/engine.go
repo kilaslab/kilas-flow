@@ -52,6 +52,16 @@ type Engine struct {
 	// failure.
 	inject      func(stage string) error
 	composeHook func(statement string)
+
+	// schemaVersion is the physical-table shape this engine serves and
+	// creates, and fleetSteps are the steps that move a datastore towards it,
+	// keyed by the version each moves FROM. They are fields rather than
+	// constants at the use site so a test can stand in for a future build;
+	// production never changes them from NewEngine's defaults and nothing
+	// outside the package can set them, so the product still ships exactly
+	// one version.
+	schemaVersion int
+	fleetSteps    map[int]FleetStep
 }
 
 // NewEngine binds the engine to a handle Open built — which carries the
@@ -63,7 +73,10 @@ func NewEngine(db *database.DB, prefix string) (*Engine, error) {
 		return nil, fmt.Errorf("datastore: table prefix %q is %d bytes, past the %d-byte cap that keeps every identifier within PostgreSQL's 63-byte limit",
 			prefix, len(prefix), config.MaxTablePrefixLength)
 	}
-	return &Engine{db: db, prefix: prefix, limits: DefaultLimits()}, nil
+	return &Engine{
+		db: db, prefix: prefix, limits: DefaultLimits(),
+		schemaVersion: CurrentSchemaVersion, fleetSteps: shippedFleetSteps(),
+	}, nil
 }
 
 // dialect reports which DDL shape to compose. The handle only ever carries
@@ -139,7 +152,7 @@ func (e *Engine) Create(ctx context.Context, tenantID, name string, in []ColumnI
 			Name:          name,
 			Surrogate:     surrogate,
 			Table:         PhysicalTableName(e.prefix, surrogate),
-			SchemaVersion: CurrentSchemaVersion,
+			SchemaVersion: e.schemaVersion,
 			Columns:       cols,
 		}
 		err = e.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {

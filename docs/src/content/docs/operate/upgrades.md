@@ -20,6 +20,47 @@ migration is a container that does not start rather than a server running
 against the wrong schema. The Compose overlay orders on the database
 healthcheck for exactly this reason.
 
+## Datastore schema versions
+
+The SQL migrations above version the installation's own tables. A second,
+per-datastore version covers the tables KilasFlow creates *for a tenant*: each
+datastore's row in the `datastores` catalogue carries a `schema_version`, and
+`internal/datastore` ships the steps that move a datastore from one version to
+the next.
+
+- After the SQL migrations, boot runs a pass over the whole fleet and each
+  **step** runs in its own transaction together with the version stamp — one
+  transaction per step per datastore, not per datastore. A run that is killed
+  therefore leaves every datastore fully at the old version or fully at the
+  new one, and the next boot resumes from there.
+- Every process role runs the pass, and two processes booting together apply
+  each step once: the runner re-reads the catalogue row inside the step's
+  transaction under `SELECT ... FOR UPDATE` on PostgreSQL. SQLite takes no
+  row lock — the driver discards it — but a SQLite install is single-process
+  by construction (role validation refuses a split role) on a one-connection
+  pool, so the same re-read is safe there.
+- The listener does not open until the first pass ends. A step failure, a
+  datastore behind the build with no step to reach it, or a datastore **ahead**
+  of the build (a newer binary migrated it) refuses the boot and names the
+  datastore and both versions, exactly the way a failed SQL migration does.
+  Run a build at or above that datastore's version, or restore the backup.
+- After boot the pass repeats every 30 seconds. That is what clears a
+  datastore an older peer process created behind during a rolling deploy,
+  without a restart.
+- `GET /api/v1/ready` reports the spread and answers `503` while a datastore is
+  **behind** — a migration is outstanding — and also when the database is
+  unreachable or the fleet status cannot be read. The spread is in the
+  migration-outstanding `503`'s problem document as well as in the `200` body,
+  so what is outstanding stays machine-readable in the state that reports it;
+  the other two `503`s carry no block, because neither can read the catalogue.
+  A datastore **ahead** is reported in the block but does not fail readiness,
+  so the old replicas keep answering ready during a rolling upgrade while they
+  refuse exactly the datastores the newer build migrated.
+
+The version this build serves is **1**, and no shipped step has been needed
+yet, so today the pass migrates nothing: it exists so that the first bump
+migrates rather than takes every datastore offline.
+
 ## Backup and restore: SQLite
 
 The database is one file (default `./data/kilasflow.db`, `/app/data/` in the
@@ -66,10 +107,14 @@ majors.
    container user before pulling a newer image — an upgrade that cannot write
    its data directory fails exactly like a fresh install that cannot.
 3. Pull or build the new image and start it. Boot applies any pending
-   migrations; watch the first start, because a migration failure stops the
-   container rather than degrading it.
+   migrations, SQL first and then the per-datastore pass, and the listener
+   opens only when both succeed; watch the first start, because a migration
+   failure stops the container rather than degrading it. A datastore the new
+   build cannot reach (no step for its version, or a version ahead of the
+   build) refuses the boot and names it.
 4. Check `/api/v1/ready` before sending traffic: it answers `503` while the
-   database is unreachable.
+   database is unreachable or while a datastore migration is outstanding, and
+   its `datastores` block shows the schema-version spread the instance sees.
 
 A database populated by a build that predates webhook routes can hold webhook
 bindings with no route, which used to answer on their path label. The
