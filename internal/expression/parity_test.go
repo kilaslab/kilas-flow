@@ -800,3 +800,57 @@ func TestStringifyOmitsUndefinedProperties(t *testing.T) {
 		t.Errorf("JSON.stringify($('Many')) = %s, want the refusal marker left out", text)
 	}
 }
+
+// TestSortRunsTheComparatorItAccepts: sort was registered as accepting one
+// argument and then ignored it, so `[10,9,100].sort((a,b) => a-b)` came back
+// `[10,100,9]` — the opposite of what the caller asked for, with no error to
+// notice, and the next node consumed the misordered list as data.
+func TestSortRunsTheComparatorItAccepts(t *testing.T) {
+	t.Parallel()
+
+	ctx := parityContext()
+	ctx.JSON = map[string]any{
+		"objects": []any{
+			map[string]any{"k": "a", "v": float64(2)},
+			map[string]any{"k": "b", "v": float64(1)},
+			map[string]any{"k": "c", "v": float64(1)},
+		},
+	}
+
+	for template, want := range map[string]any{
+		// A comparator decides the order.
+		"{{ [10,9,100].sort((a,b) => a - b) }}":                      []any{float64(9), float64(10), float64(100)},
+		"{{ [10,9,100].sort((a,b) => b - a) }}":                      []any{float64(100), float64(10), float64(9)},
+		"{{ ['bb','a','ccc'].sort((a,b) => a.length - b.length) }}":  []any{"a", "bb", "ccc"},
+		"{{ $json.objects.sort((a,b) => a.v - b.v).map(x => x.k) }}": []any{"b", "c", "a"},
+		// A comparator that is not a function is refused rather than ignored.
+		"{{ [3,1,2].sort(null) }}": []any{float64(1), float64(2), float64(3)},
+		// No comparator keeps JavaScript's default text ordering.
+		"{{ [10,9,100].sort() }}": []any{float64(10), float64(100), float64(9)},
+		"{{ [3,1,2].sort() }}":    []any{float64(1), float64(2), float64(3)},
+		"{{ ['b','a'].sort() }}":  []any{"a", "b"},
+	} {
+		got := evaluateOne(t, template, ctx)
+		if !sameValue(got, want) {
+			t.Errorf("Evaluate(%s) = %#v, want %#v", template, got, want)
+		}
+	}
+
+	// Equal elements keep their input order, which is what JavaScript's sort
+	// guarantees and what a workflow reading two fields in order depends on.
+	stable := evaluateOne(t, "{{ $json.objects.sort((a,b) => a.v - b.v).map(x => x.k) }}", ctx)
+	if !sameValue(stable, []any{"b", "c", "a"}) {
+		t.Errorf("stable sort = %#v, want the equal pair in input order", stable)
+	}
+
+	// A comparator that is not a function is refused, and a comparator that
+	// fails fails the expression rather than sorting some other way.
+	for name, template := range map[string]string{
+		"a text comparator": "{{ [3,1,2].sort('desc') }}",
+		"a failing one":     "{{ [3,1,2].sort((a,b) => a.nope()) }}",
+	} {
+		if _, err := expression.Evaluate(template, ctx); err == nil {
+			t.Errorf("%s: Evaluate(%s) succeeded, want a refusal", name, template)
+		}
+	}
+}

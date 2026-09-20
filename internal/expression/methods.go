@@ -456,17 +456,47 @@ func registerLists() {
 		}
 		return joined, nil
 	})
-	register("sort", noneOrOne, func(receiver any, _ []any) (any, error) {
+	registerE("sort", noneOrOne, func(e *evaluator, receiver any, args []any) (any, error) {
 		list, err := needList(receiver, "sort")
 		if err != nil {
 			return nil, err
 		}
-		// A comparator argument is a function, which this runtime can call, but
-		// the default JavaScript ordering is what imported workflows rely on.
 		sorted := append([]any{}, list...)
+		if len(args) == 0 || isNullish(args[0]) {
+			// With no comparator the order is JavaScript's default: by the text
+			// of each element, which is what an imported workflow expects.
+			sort.SliceStable(sorted, func(left, right int) bool {
+				return jsString(sorted[left]) < jsString(sorted[right])
+			})
+			return sorted, nil
+		}
+		// A comparator is a caller-supplied function, so it runs through the
+		// evaluator and the sign of its result decides the order. Accepting the
+		// argument and then sorting by the default order returned a differently
+		// ordered list that the next node consumed as data.
+		compare, err := needClosure(args[0], "sort")
+		if err != nil {
+			return nil, err
+		}
+		var failure error
 		sort.SliceStable(sorted, func(left, right int) bool {
-			return jsString(sorted[left]) < jsString(sorted[right])
+			if failure != nil {
+				return false
+			}
+			result, err := e.callClosure(compare, []any{sorted[left], sorted[right]})
+			if err != nil {
+				failure = err
+				return false
+			}
+			// A comparator that answers with something that is not a number
+			// orders the pair as equal, which is JavaScript's own reading of
+			// NaN and keeps the sort stable.
+			order, _ := toNumber(result)
+			return order < 0
 		})
+		if failure != nil {
+			return nil, failure
+		}
 		return sorted, nil
 	})
 	register("first", fixed(0), func(receiver any, _ []any) (any, error) {
