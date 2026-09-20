@@ -1080,16 +1080,32 @@ func firstOr(args []any, fallback string) string {
 // FunctionNames is the callable surface, served to the editor so the client
 // does not keep a second copy that drifts from this one.
 func FunctionNames() []string {
+	seen := make(map[string]bool, len(methods)+len(builtins))
 	names := make([]string, 0, len(methods)+len(builtins))
-	for name := range methods {
+	add := func(name string) {
+		if seen[name] {
+			return
+		}
+		seen[name] = true
 		names = append(names, name)
+	}
+	for name := range methods {
+		add(name)
 	}
 	for name := range builtins {
-		names = append(names, name)
+		add(name)
+	}
+	// Namespace members are part of the accepted surface too — JSON.stringify,
+	// Object.keys, Math.max, DateTime.fromISO — so a client that validates
+	// against this list accepts what the server accepts.
+	for _, members := range namespaceFuncs {
+		for name := range members {
+			add(name)
+		}
 	}
 	for _, root := range Roots() {
-		if strings.HasPrefix(root, "$") && IsCallableRoot(root) {
-			names = append(names, root)
+		if IsCallableRoot(root) {
+			add(root)
 		}
 	}
 	return sortedStrings(names)
