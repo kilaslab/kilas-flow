@@ -308,3 +308,4 @@ Files: /Users/izzadev/projects/k-flow/web/src/routes/(dashboard)/app/workflows/+
 - [ ] Empty Workflows state offers only 'New workflow', not n8n import
 - [ ] Long names are truncated with no way to read them: list rows, the editor title (capped at 176px) and report ce
 - [ ] Adversarial re-verify against live stub/n8n like the Verify phase (no code-only close)
+Note: server-side paging exists on workflows/schedules/datastores/api-keys but no page uses it — follow-up filed as FEAT-qdedm0.
