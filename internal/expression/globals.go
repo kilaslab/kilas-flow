@@ -195,7 +195,7 @@ func registerNamespaces() {
 			return nil, err
 		}
 		keys := make([]any, 0, len(object))
-		for _, key := range sortedMapKeys(object) {
+		for _, key := range objectKeys(args[0], object) {
 			keys = append(keys, key)
 		}
 		return keys, nil
@@ -206,7 +206,7 @@ func registerNamespaces() {
 			return nil, err
 		}
 		values := make([]any, 0, len(object))
-		for _, key := range sortedMapKeys(object) {
+		for _, key := range objectKeys(args[0], object) {
 			values = append(values, object[key])
 		}
 		return values, nil
@@ -217,7 +217,7 @@ func registerNamespaces() {
 			return nil, err
 		}
 		entries := make([]any, 0, len(object))
-		for _, key := range sortedMapKeys(object) {
+		for _, key := range objectKeys(args[0], object) {
 			entries = append(entries, []any{key, object[key]})
 		}
 		return entries, nil
@@ -449,6 +449,24 @@ func sortedMapKeys(object map[string]any) []string {
 		keys = append(keys, key)
 	}
 	return sortedStrings(keys)
+}
+
+// objectKeys is the key order Object.keys/values/entries read a receiver in.
+//
+// A list is turned into a map keyed by index by needObject, and those keys are
+// indices: sorting them as text gives [0,1,10,2,…] for a list of eleven, which
+// silently permutes the data a workflow walks. A genuine map keeps the
+// deterministic sorted order — Object.keys on a JSON object has no ordering
+// guarantee in JavaScript at all, and sorted is the stable choice.
+func objectKeys(value any, object map[string]any) []string {
+	if list, isList := value.([]any); isList {
+		keys := make([]string, len(list))
+		for index := range list {
+			keys[index] = strconv.Itoa(index)
+		}
+		return keys
+	}
+	return sortedMapKeys(object)
 }
 
 // checkArity refuses a call that cannot be right before anything runs.

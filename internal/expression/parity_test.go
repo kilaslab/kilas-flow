@@ -2,6 +2,7 @@ package expression_test
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -711,6 +712,48 @@ func TestAbstractEqualityCoercesBooleansAndCollections(t *testing.T) {
 	} {
 		got := evaluateOne(t, template, ctx)
 		if got != want {
+			t.Errorf("Evaluate(%s) = %#v, want %#v", template, got, want)
+		}
+	}
+}
+
+// TestObjectKeysOrderListIndicesNumerically is the silent reordering finding:
+// needObject turns a list into a map keyed by index and the keys were sorted as
+// text, so Object.values of an eleven-element list came back permuted —
+// [0,1,10,2,…] — and Object.entries(...)[10] was entry 9. A workflow that walks
+// rows through one of these reorders its data with no error.
+func TestObjectKeysOrderListIndicesNumerically(t *testing.T) {
+	t.Parallel()
+
+	rows := make([]any, 11)
+	for index := range rows {
+		rows[index] = float64(index)
+	}
+	ctx := parityContext()
+	ctx.JSON = map[string]any{"rows": rows, "profile": map[string]any{"city": "London", "active": true}}
+
+	inOrder := make([]any, 11)
+	keys := make([]any, 11)
+	entries := make([]any, 11)
+	for index := range inOrder {
+		inOrder[index] = float64(index)
+		keys[index] = strconv.Itoa(index)
+		entries[index] = []any{strconv.Itoa(index), float64(index)}
+	}
+
+	for template, want := range map[string]any{
+		"{{ Object.values($json.rows) }}":        inOrder,
+		"{{ Object.keys($json.rows) }}":          keys,
+		"{{ Object.entries($json.rows) }}":       entries,
+		"{{ Object.entries($json.rows)[10] }}":   []any{"10", float64(10)},
+		"{{ Object.values($json.rows)[10] }}":    float64(10),
+		"{{ Object.values($json.rows).length }}": float64(11),
+		// A genuine map still reads in the deterministic sorted order.
+		"{{ Object.keys($json.profile) }}":   []any{"active", "city"},
+		"{{ Object.values($json.profile) }}": []any{true, "London"},
+	} {
+		got := evaluateOne(t, template, ctx)
+		if !sameValue(got, want) {
 			t.Errorf("Evaluate(%s) = %#v, want %#v", template, got, want)
 		}
 	}
