@@ -45,6 +45,14 @@
 //	$now, $today              the current instant and the start of today
 //	$fromAI('name')           a parameter an AI agent fills in
 //
+// A lone `{{ $input }}` is the port map, `{"main": [ … ]}`, which is what a Set
+// node assigns from it; the accessors above resolve on top of that shape.
+// Nothing this package owns ever reaches a parameter: a lone `{{ $now }}` is a
+// time.Time, a namespace such as `{{ JSON }}` is `{}` because every member of
+// one is a function, and a function or a lineage refusal is an error rather
+// than a value. A `{{` inside surrounding text still resolves through the same
+// rules, with a list joining by comma and an object rendered as JSON.
+//
 // # Routing roots
 //
 // Three more roots exist for one caller, the declarative interpreter in
@@ -71,6 +79,11 @@
 // Everything structurally wrong still fails loudly and names the path: an
 // unsupported root, a call to a name that is not on the allowlist, a syntax
 // error, or a read of a value that carries no lineage.
+//
+// An absent value inside a hand-built object is left out of JSON rather than
+// written as null — `JSON.stringify({a: undefined, b: 1})` is `{"b":1}`, as in
+// JavaScript — while an array slot keeps its null and a non-finite number
+// becomes one, because JSON cannot carry NaN or Infinity.
 //
 // # Functions
 //
