@@ -725,6 +725,40 @@ func TestAModelTimeoutAboveTheCeilingIsRefusedRatherThanClamped(t *testing.T) {
 	}
 }
 
+// TestTheRunCeilingErrorNamesTheCeilingAndNotTheNodeTimeout is the fourth
+// message defect: the bound that ends a run is the deployment's ceiling, and the
+// error named the chat model node's Timeout option instead — a knob that cannot
+// raise it, because a node asking for more than the ceiling is refused before it
+// runs. A user reading that message turned a setting that changed nothing.
+func TestTheRunCeilingErrorNamesTheCeilingAndNotTheNodeTimeout(t *testing.T) {
+	t.Parallel()
+
+	// A provider that never answers: the ceiling is the only thing that can
+	// end the run. It is released at the end of the test, because an idle
+	// Go server does not notice the client giving up and httptest.Server
+	// waits for its handlers.
+	release := make(chan struct{})
+	provider := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		<-release
+	}))
+	defer provider.Close()
+	defer close(release)
+
+	ceiling := 300 * time.Millisecond
+	executor := nodes.NewAgentExecutor(ai.NewLoopRuntime(), localPolicy(), nil,
+		nodes.WithModelTimeoutCeiling(ceiling))
+	_, err := runAgentWith(t, executor, agentModelInput(provider.URL)["model"][0], bearerResolver())
+	if err == nil {
+		t.Fatal("Execute() succeeded against a provider that never answers")
+	}
+	if !strings.Contains(err.Error(), ceiling.String()) {
+		t.Errorf("error = %v, want the ceiling %s named as the bound that ended the run", err, ceiling)
+	}
+	if strings.Contains(err.Error(), "Timeout option") {
+		t.Errorf("error = %v, want no mention of the chat model node's Timeout option: that option bounds one request and cannot raise the run ceiling", err)
+	}
+}
+
 // TestAModelCallToAPrivateAddressIsRefused proves the SSRF guard still covers
 // the model path after the client's clock was removed. The address is checked
 // in the dialer, after DNS and immediately before the socket opens, so it holds
@@ -1259,6 +1293,48 @@ func TestAgentDefaultIterationsMatchTheRuntimeBound(t *testing.T) {
 		return
 	}
 	t.Fatal("the agent has no maxIterations parameter")
+}
+
+// TestAParserRunThatHitsTheIterationBoundAnswersWithTheFallback is the first
+// defect: the loop answers a run that cannot converge with a stated fallback
+// instead of failing, but with a parser attached the node then tried to
+// json.Unmarshal that sentence — so a run the runtime had already called a
+// success failed the node with "parser output is not valid JSON".
+func TestAParserRunThatHitsTheIterationBoundAnswersWithTheFallback(t *testing.T) {
+	t.Parallel()
+
+	// A model that asks for the tool again on every turn: nothing but the
+	// iteration bound stops it, so the run ends on the fallback.
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"id":"call_1","type":"function","function":{"name":"calculator","arguments":"{\"expression\":\"1+1\"}"}}]},"finish_reason":"tool_calls"}]}`))
+	}))
+	defer provider.Close()
+
+	input := agentModelInput(provider.URL)
+	input["tools"] = []workflow.Item{{JSON: map[string]any{"$ai": map[string]any{
+		"kind": "calculator", "name": "calculator", "description": "does arithmetic",
+		"nodeName": "Calculator Tool",
+	}}}}
+	input["outputParser"] = []workflow.Item{{JSON: map[string]any{"$ai": map[string]any{
+		"kind": "parser", "name": "Structured Output Parser", "nodeName": "Structured Output Parser",
+		"schema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"total": map[string]any{"type": "number"},
+			},
+			"required": []any{"total"},
+		},
+	}}}}
+
+	output, err := runAgentNode(t, map[string]any{"prompt": "what is 1+1", "maxIterations": 2},
+		input, bearerResolver(), nil)
+	if err != nil {
+		t.Fatalf("Execute() error = %v, want the stated fallback rather than a parse failure", err)
+	}
+	if output[0][0].JSON["output"] != ai.MaxIterationsMessage {
+		t.Fatalf("output = %#v, want %q", output[0][0].JSON["output"], ai.MaxIterationsMessage)
+	}
 }
 
 func TestSystemMessageWinsOverLegacySystemPrompt(t *testing.T) {
@@ -2280,6 +2356,47 @@ func TestChatModelNodeCarriesTheTransportOptions(t *testing.T) {
 	descriptor, _ := output[0][0].JSON["$ai"].(map[string]any)
 	if descriptor["timeout"] != float64(240000) || descriptor["maxRetries"] != float64(4) {
 		t.Fatalf("descriptor = %#v, want the transport options carried", descriptor)
+	}
+}
+
+// TestAnImportedModelsSamplingOptionsReachTheDescriptor is the second defect:
+// n8n stores temperature, topP, maxTokens and the penalties in the `options`
+// collection, the importer writes them back there and marks them consumed — and
+// this node read them from the top level only, so every imported model ran with
+// the provider's defaults while the document said otherwise.
+func TestAnImportedModelsSamplingOptionsReachTheDescriptor(t *testing.T) {
+	t.Parallel()
+
+	executors := engine.NewRegistry()
+	if err := nodes.RegisterExecutors(executors, localPolicy(), sqlGuard(), ai.NewLoopRuntime(), nil, nil); err != nil {
+		t.Fatalf("RegisterExecutors() error = %v", err)
+	}
+	definition, _ := aiRegistry(t).Lookup(nodes.ChatModelNodeType, workflow.V(1))
+	ir := workflow.IRNode{
+		ID: "model", Name: "Local Model", Type: nodes.ChatModelNodeType, TypeVersion: workflow.V(1),
+		// The shape an import produces: the sampling settings live in the
+		// collection and nothing is written to the top level.
+		Parameters: map[string]any{
+			"model": "llama3", "baseUrl": "http://127.0.0.1:11434/v1",
+			"options": map[string]any{
+				"temperature": float64(0.2), "topP": float64(0.9), "maxTokens": float64(256),
+				"frequencyPenalty": float64(0.5), "presencePenalty": float64(-0.25),
+			},
+		},
+		Definition: definition,
+	}
+	output, err := runExecutor(t, executors, nodes.ChatModelExecutorID, ir, workflow.NodeInput{}, engine.Request{})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	descriptor, _ := output[0][0].JSON["$ai"].(map[string]any)
+	for key, want := range map[string]float64{
+		"temperature": 0.2, "topP": 0.9, "maxTokens": 256,
+		"frequencyPenalty": 0.5, "presencePenalty": -0.25,
+	} {
+		if descriptor[key] != want {
+			t.Errorf("descriptor[%q] = %#v, want %v from the options collection", key, descriptor[key], want)
+		}
 	}
 }
 

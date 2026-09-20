@@ -777,10 +777,18 @@ func executeChatModel(ctx context.Context, ir workflow.IRNode, _ workflow.NodeIn
 	// a user asks for when they want deterministic extraction — and the old
 	// `!= 0` guard dropped it, leaving the provider to apply its own default
 	// on the one setting the user had been most explicit about.
+	//
+	// The collection is read first and the top-level fields second, so a
+	// top-level value — the one this node's own form shows — wins. Reading the
+	// collection at all is what an imported model needs: n8n stores the
+	// sampling settings under `options`, the importer writes them back there,
+	// and a node that only looked at the top level ran imported models with
+	// the provider's defaults however the document was configured.
+	options := mapValue(ir.Parameters[modelOptionsKey])
+	copyPresentOptions(descriptor, options, samplingOptionKeys)
 	copyPresentOptions(descriptor, ir.Parameters, samplingOptionKeys)
 	// The transport options stay out of the request body: this server checks
 	// the timeout against the deployment's ceiling and performs the retries.
-	options := mapValue(ir.Parameters[modelOptionsKey])
 	copyPresentOptions(descriptor, options, []string{ModelOptionTimeout, ModelOptionMaxRetries})
 	return workflow.NodeOutput{{{JSON: map[string]any{descriptorKey: descriptor}}}}, nil
 }
@@ -1364,16 +1372,25 @@ func (executor *AgentExecutor) Execute(ctx context.Context, ir workflow.IRNode, 
 		stream.flush()
 		cancel()
 		if err != nil {
-			// A run that hit the ceiling names the setting that would raise
-			// it: the message a user actually needs is which knob to turn.
+			// A run that hit the ceiling names the bound that ended it. The
+			// chat model node's Timeout option was the wrong name: that option
+			// bounds one request, and a node asking for more than the ceiling
+			// is refused before it runs — so pointing at it sent the user to a
+			// setting that cannot raise the bound they had reached.
 			if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
-				return nil, fmt.Errorf("node %q: the agent did not finish within %s; raise the chat model node's Timeout option to allow a slower model: %w", ir.Name, executor.runTimeout(), err)
+				return nil, fmt.Errorf("node %q: the agent did not finish within the deployment's %s model timeout ceiling; that ceiling is a deployment-level bound and no node option raises it: %w", ir.Name, executor.runTimeout(), err)
 			}
 			return nil, fmt.Errorf("node %q: %w", ir.Name, err)
 		}
 
 		outputValue := any(result.Output)
-		if hasParser {
+		// A run that stopped at the iteration bound answered with the stated
+		// fallback, not with the parser's schema, so there is nothing to parse:
+		// unmarshalling that sentence failed the node with "parser output is not
+		// valid JSON" on a run the loop had already decided was a success. The
+		// fallback is returned as it stands, the way a graph without a parser
+		// would return it.
+		if hasParser && !result.MaxIterationsReached {
 			// The loop validated this against the schema; a parse failure
 			// here means a graph bypassed the runner, and failing names it.
 			var parsed any

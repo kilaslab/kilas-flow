@@ -228,6 +228,9 @@ func (LoopRuntime) Run(ctx context.Context, request AgentRequest, sink EventSink
 	// reply with it. The partial conversation is still returned for an
 	// inspector.
 	result.Output = MaxIterationsMessage
+	// The flag travels with the fallback: only the runtime knows the bound was
+	// reached, and the caller must not have to recognise the sentence.
+	result.MaxIterationsReached = true
 	result.Messages = messages
 	remembered = append(remembered, Message{Role: RoleAssistant, Content: result.Output})
 	if err := appendSessionMemory(ctx, request, remembered); err != nil {

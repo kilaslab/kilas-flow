@@ -271,25 +271,45 @@ func TestHTTPRequestDefaultOutputIsTheParsedBodyLikeN8N(t *testing.T) {
 }
 
 // fullResponse is the only way to the envelope, and then it is n8n's shape:
-// lower-case header names and a status message beside the status code.
+// lower-case header names, a status message beside the status code, and the
+// body kept as it was decoded.
+//
+// This test used to pin `body` to the response's raw text. That was the
+// regression: n8n keeps the parsed object under `body`, so `$json.body.<field>`
+// — the expression an imported workflow is written with — resolved to nothing
+// after the envelope was introduced. A textual body goes under the node's
+// output property (`data`) instead, which is where n8n puts it, so both shapes
+// are pinned here.
 func TestHTTPRequestFullResponseMatchesN8NEnvelope(t *testing.T) {
 	t.Parallel()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Trace", "abc")
+		if r.URL.Path == "/text" {
+			w.Header().Set("Content-Type", "text/plain")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte("hello plain text"))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	}))
 	defer server.Close()
 
-	output, err := nodes.NewHTTPExecutor(localPolicy()).Execute(context.Background(), httpNode(map[string]any{
-		"method": "GET", "url": server.URL, "fullResponse": true,
-	}), workflow.NodeInput{}, engine.Request{})
-	if err != nil {
-		t.Fatalf("Execute() error = %v", err)
+	executor := nodes.NewHTTPExecutor(localPolicy())
+	run := func(path string) map[string]any {
+		t.Helper()
+		output, err := executor.Execute(context.Background(), httpNode(map[string]any{
+			"method": "GET", "url": server.URL + path, "fullResponse": true,
+		}), workflow.NodeInput{}, engine.Request{})
+		if err != nil {
+			t.Fatalf("Execute(%s) error = %v", path, err)
+		}
+		return output[0][0].JSON
 	}
-	item := output[0][0].JSON
+
+	item := run("")
 	if item["statusCode"] != float64(http.StatusCreated) {
 		t.Errorf("statusCode = %#v, want 201", item["statusCode"])
 	}
@@ -300,9 +320,22 @@ func TestHTTPRequestFullResponseMatchesN8NEnvelope(t *testing.T) {
 	if headers["x-trace"] != "abc" || headers["content-type"] != "application/json" {
 		t.Errorf("headers = %#v, want lower-case names", headers)
 	}
-	body, _ := item["body"].(string)
-	if body != `{"ok":true}` {
-		t.Errorf("body = %#v, want the response body", item["body"])
+	// The whole point: a workflow reading `$json.body.ok` — or any field of a
+	// JSON response — has to find the parsed object there.
+	body, isObject := item["body"].(map[string]any)
+	if !isObject || body["ok"] != true {
+		t.Errorf("body = %#v, want the parsed response object", item["body"])
+	}
+
+	text := run("/text")
+	if text["body"] != nil {
+		t.Errorf("text body = %#v, want a text response carried under the output property, not `body`", text["body"])
+	}
+	if text["data"] != "hello plain text" {
+		t.Errorf("data = %#v, want the response text", text["data"])
+	}
+	if text["statusCode"] != float64(http.StatusCreated) {
+		t.Errorf("statusCode = %#v, want the status beside the text body", text["statusCode"])
 	}
 }
 

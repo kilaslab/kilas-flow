@@ -244,7 +244,13 @@ func (model *OpenAICompatible) post(ctx context.Context, request ModelRequest, s
 		response, err := model.client.Do(httpRequest)
 		if err != nil {
 			cancel()
-			if request.Timeout > 0 && errors.Is(attemptCtx.Err(), context.DeadlineExceeded) {
+			// The attempt's own deadline is named only when the attempt is
+			// what expired. A caller whose context ended first — the
+			// deployment's run ceiling on an agent node — did not ask for too
+			// little time: naming the request timeout there reported a
+			// duration that had not elapsed and pointed the user at an option
+			// that cannot raise a bound the node does not own.
+			if request.Timeout > 0 && errors.Is(attemptCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
 				lastErr = fmt.Errorf("model request did not answer within %s (raise the model node's Timeout option to allow longer): %w", request.Timeout, err)
 			} else {
 				lastErr = fmt.Errorf("call model: %w", err)

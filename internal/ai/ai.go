@@ -260,11 +260,17 @@ type AgentRequest struct {
 
 // AgentResult is one completed agent run.
 type AgentResult struct {
-	Output     string    `json:"output"`
-	Messages   []Message `json:"messages"`
-	Usage      Usage     `json:"usage"`
-	Iterations int       `json:"iterations"`
-	ToolCalls  int       `json:"toolCalls"`
+	Output   string    `json:"output"`
+	Messages []Message `json:"messages"`
+	Usage    Usage     `json:"usage"`
+	// MaxIterationsReached says Output is the stated fallback rather than a
+	// model's answer. A caller that reads Output as something more specific —
+	// the JSON a structured output parser validated — has to tell the two
+	// apart, and matching the fallback text to find out would break the moment
+	// the wording changed.
+	MaxIterationsReached bool `json:"maxIterationsReached"`
+	Iterations           int  `json:"iterations"`
+	ToolCalls            int  `json:"toolCalls"`
 }
 
 // AgentRuntime runs the tool loop.

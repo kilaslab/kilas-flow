@@ -371,8 +371,10 @@ func (executor *HTTPExecutor) sendOne(ctx context.Context, ir workflow.IRNode, p
 	}
 	if boolValue(parameters["fullResponse"]) {
 		// n8n keeps the envelope beside the file when both were asked for, so
-		// a workflow reading `$json.statusCode` still resolves.
-		item.JSON = responseEnvelope(response, "", truncated)
+		// a workflow reading `$json.statusCode` still resolves. The payload is
+		// deliberately absent from it: a stored file's bytes never enter the
+		// item, and n8n leaves `body` out of this shape for the same reason.
+		item.JSON = responseEnvelope(response, nil, "", truncated)
 	}
 	return []workflow.Item{item}, nil
 }
@@ -392,7 +394,11 @@ func (executor *HTTPExecutor) sendOne(ctx context.Context, ir workflow.IRNode, p
 func decodeItems(response *http.Response, contents []byte, format, contentType string, truncated bool, parameters map[string]any) []workflow.Item {
 	body := decodeBody(contents, format, contentType)
 	if boolValue(parameters["fullResponse"]) {
-		return []workflow.Item{{JSON: responseEnvelope(response, bodyString(contents, body), truncated)}}
+		// The envelope carries the body as it was decoded, not as the text it
+		// arrived as: n8n keeps the parsed object under `body`, and
+		// `$json.body.<field>` is how an imported workflow reads a response.
+		// Stringifying it here broke exactly that expression.
+		return []workflow.Item{{JSON: responseEnvelope(response, body, textValue(parameters["outputPropertyName"], "data"), truncated)}}
 	}
 	if len(bytes.TrimSpace(contents)) == 0 {
 		// A 204, a HEAD response, or an empty body: n8n answers with an empty
@@ -444,12 +450,28 @@ func decodeItems(response *http.Response, contents []byte, format, contentType s
 // expression like `$json.headers['content-type']` is written against. The
 // status message is added because n8n's envelope has one and an imported node
 // reading it would otherwise resolve to nothing.
-func responseEnvelope(response *http.Response, body string, truncated bool) map[string]any {
+//
+// The body keeps the type it was decoded with. A JSON response stays the parsed
+// object under `body`, so `$json.body.<field>` — the expression an imported
+// workflow is written with — resolves. A body read as text goes under the
+// node's output property name (default `data`) instead, which is where n8n puts
+// it, and a nil body — a stored file, whose bytes live in the binary reference
+// beside the envelope — leaves the key out entirely, as n8n does.
+func responseEnvelope(response *http.Response, body any, outputPropertyName string, truncated bool) map[string]any {
 	envelope := map[string]any{
-		"body":          body,
 		"headers":       lowerCaseHeaders(response),
 		"statusCode":    float64(response.StatusCode),
 		"statusMessage": http.StatusText(response.StatusCode),
+	}
+	switch typed := body.(type) {
+	case nil:
+	case string:
+		if outputPropertyName == "" {
+			outputPropertyName = "data"
+		}
+		envelope[outputPropertyName] = typed
+	default:
+		envelope["body"] = typed
 	}
 	if truncated {
 		envelope["truncated"] = true
@@ -475,20 +497,6 @@ func copyObject(object map[string]any) map[string]any {
 		copied[key] = value
 	}
 	return copied
-}
-
-func bodyString(contents []byte, body any) string {
-	if len(contents) == 0 {
-		return ""
-	}
-	if text, ok := body.(string); ok {
-		return text
-	}
-	encoded, err := json.Marshal(body)
-	if err != nil {
-		return string(contents)
-	}
-	return string(encoded)
 }
 
 // storesAFile decides whether a response is attached instead of decoded.
@@ -731,6 +739,14 @@ func responseHeaders(response *http.Response) map[string]any {
 func decodeBody(contents []byte, format, contentType string) any {
 	wantsJSON := format == "json" || (format == "autodetect" && strings.Contains(strings.ToLower(contentType), "json"))
 	if wantsJSON {
+		// An empty body is an empty object, which is what n8n's envelope
+		// carries under `body` for a 204 or a HEAD response: `$json.body` then
+		// answers an object a workflow can index rather than a string. The
+		// default output path never sees this value — it answers an empty body
+		// with `{}` before reading the body at all.
+		if len(bytes.TrimSpace(contents)) == 0 {
+			return map[string]any{}
+		}
 		var decoded any
 		if err := json.Unmarshal(bytes.TrimSpace(contents), &decoded); err == nil {
 			return decoded
