@@ -42,6 +42,7 @@ with its own stable error code:
 | --- | --- |
 | `node.unknown_type` | no such node type is registered |
 | `node.unknown_version` | the type exists, but not at a version this install can resolve |
+| `node.not_available` | the node type exists, but is scoped to other tenants and is not available to this one |
 | `port.unknown` | a connection names a port the node does not have |
 | `port.incompatible` | the two ends speak different connection channels |
 | `port.full` | the port's `maxConnections` is already taken |

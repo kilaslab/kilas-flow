@@ -47,6 +47,15 @@ type Pack struct {
 	DocumentationURL string               `json:"documentationUrl,omitempty"`
 	// CredentialType is the credential this pack authenticates with.
 	CredentialType string `json:"credentialType,omitempty"`
+	// VisibleTo scopes this pack's node type to a set of tenants, by ID. An
+	// absent field means every tenant, which is what every pack did before
+	// this field existed; an empty list is refused, because it would read
+	// either as "nobody" or as "everybody".
+	//
+	// The scope belongs to the node type, not to one version of it: two
+	// versions of the same type must declare the same list, and the operator's
+	// packs.visible_to configuration can replace it at boot.
+	VisibleTo []string `json:"visibleTo,omitempty"`
 	// RequestDefaults are shared by every operation.
 	RequestDefaults routing.Request `json:"requestDefaults"`
 	// Trigger, when set, makes this a webhook trigger node rather than an
@@ -152,6 +161,12 @@ func Load(pack *Pack) (node.Definition, *routing.Node, error) {
 	if pack.Trigger != nil && len(pack.Resources) > 0 {
 		return node.Definition{}, nil, fmt.Errorf("node pack %q is both a trigger and an action node", pack.Type)
 	}
+	// Checked before the trigger/action split so a trigger pack is covered too:
+	// an empty list says neither "nobody" nor "everybody" and an author who
+	// means "everybody" writes nothing at all.
+	if pack.VisibleTo != nil && len(pack.VisibleTo) == 0 {
+		return node.Definition{}, nil, fmt.Errorf("node pack %q declares an empty visibleTo: omit the field to make the node visible to every tenant, or name at least one tenant", pack.Type)
+	}
 
 	definition := node.Definition{
 		Type: pack.Type, Version: pack.Version,
@@ -162,6 +177,9 @@ func Load(pack *Pack) (node.Definition, *routing.Node, error) {
 		Outputs:   []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain, DisplayName: "Output"}},
 		IconColor: pack.IconColor, Subtitle: pack.Subtitle,
 		DocumentationURL: pack.DocumentationURL,
+		// Copied, not aliased: the registry owns what it stores, and a caller
+		// that mutates the Pack afterwards must not change a live scope.
+		VisibleTo: append([]string(nil), pack.VisibleTo...),
 		// A pack does not get to choose its executor. One that could would be
 		// able to claim any binding the server has registered.
 		ExecutorID: routing.ExecutorID,

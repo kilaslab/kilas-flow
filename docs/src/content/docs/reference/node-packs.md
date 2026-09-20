@@ -36,6 +36,7 @@ strict decoder. Required unless marked optional.
 | `subtitle` | no | Template over the node's own parameters only — `{{ $parameter.<key> }}`. Anything else is refused. |
 | `documentationUrl` | no | Link shown in the editor. |
 | `credentialType` | no | Credential type this pack authenticates with, named by string. The operator binds a real credential after installation; the pack never carries one. |
+| `visibleTo` | no | Tenant IDs this pack's node type is visible to. Absent means every tenant; an empty list is refused. See [Tenant-scoped nodes](/guides/tenant-scoped-nodes/). |
 | `requestDefaults` | yes | `baseURL`, plus `headers`/`qs`/`body`/`path` shared by every operation. Templates over non-secret `$credentials` fields. |
 | `trigger` | no | When set, this is a webhook trigger node: events instead of resources, no routing description. |
 | `parameters` | yes | The node's properties, one per key (duplicates refused). |
@@ -86,6 +87,18 @@ operator places it and approves its checksum. Keep the format-versus-code line
 while writing — parameter shapes and routing metadata are interoperability
 facts, implementation source is not.
 
+### Per-tenant visibility
+
+A pack can be scoped to a set of tenants so that only they see or run its node
+type: give the manifest a `visibleTo` array of tenant IDs. The scope belongs to
+the node *type*, so every version of the type shares it, and an absent field
+keeps the type visible to every tenant. An operator can also override the list
+at startup with `packs.visible_to`, which replaces the manifest's set for a
+type and applies to packs embedded in the binary as well as directory packs.
+Editing `pack.json` changes its bytes, so regenerate the `pack.sha256` sidecar
+before restarting. The declaration, the override, and what a scoped-away tenant
+sees are in [Tenant-scoped nodes](/guides/tenant-scoped-nodes/).
+
 ## Troubleshooting
 
 `nodepackgen validate` collects every problem at once with file and JSON path.
@@ -95,7 +108,7 @@ Unknown field — usually `properties` where the schema wants `parameters`, or
 a routing block at the wrong depth:
 
 ```text
-pack.json: $.: unknown field "properties": want one of type, version, displayName, description, category, icon, iconColor, subtitle, documentationUrl, credentialType, requestDefaults, trigger, parameters, resources, generator
+pack.json: $.: unknown field "properties": want one of type, version, displayName, description, category, icon, iconColor, subtitle, documentationUrl, credentialType, visibleTo, requestDefaults, trigger, parameters, resources, generator
 ```
 
 Reserved type namespace — only built-in nodes may use it:

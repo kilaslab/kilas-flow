@@ -605,6 +605,22 @@ type Packs struct {
 	// the pack and the reason.
 	// Env: KILASFLOW_PACKS_DIR. Default: "".
 	Dir string `koanf:"dir"`
+	// VisibleTo overrides which tenants each node type is visible to, as
+	// `"<node type>=<tenant id>"` list entries. The list REPLACES what a pack's
+	// manifest declared for that type, so an operator can widen or narrow a
+	// scope without editing pinned manifest bytes; there is no wildcard.
+	//
+	// It applies to any type a pack registers, embedded or from Dir: one entry
+	// per type, so a WAHA install needs one for pack.waha and one for
+	// pack.wahaTrigger. Types with no entry stay visible to every tenant, and a
+	// built-in can never be scoped. An entry naming a type that is not
+	// registered, or a tenant ID that is not a tenant ID, refuses the boot.
+	//
+	// Give every process the same value. The API role hides an invisible node,
+	// but the worker is the authority: a worker started without this key accepts
+	// and runs what the API would have refused.
+	// Env: KILASFLOW_PACKS_VISIBLE_TO. Default: [].
+	VisibleTo []string `koanf:"visible_to"`
 }
 
 // Log configures structured logging.
@@ -1090,6 +1106,10 @@ func (c Config) Validate() error {
 	}
 
 	if err := c.validateEmbed(); err != nil {
+		return err
+	}
+
+	if err := c.Packs.validateVisibleTo(); err != nil {
 		return err
 	}
 

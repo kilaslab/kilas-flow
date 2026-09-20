@@ -211,6 +211,17 @@ func checkStructure(pack *Pack, filename string) []Issue {
 	if pack.Trigger == nil && len(pack.Resources) == 0 {
 		fail("$.resources", "node pack %q declares neither resources nor a trigger", pack.Type)
 	}
+	// The tenant grammar is node's, not a second copy of it here: the three
+	// places a tenant ID can be written — a manifest, the operator override and
+	// the registry — must agree on what one is.
+	if pack.VisibleTo != nil && len(pack.VisibleTo) == 0 {
+		fail("$.visibleTo", "an empty visibleTo says neither nobody nor everybody: omit the field to keep the node visible to every tenant")
+	}
+	for i, tenant := range pack.VisibleTo {
+		if err := node.CheckTenantID(tenant); err != nil {
+			fail(fmt.Sprintf("$.visibleTo[%d]", i), "%v", err)
+		}
+	}
 	seenResource := map[string]bool{}
 	for i, resource := range pack.Resources {
 		base := fmt.Sprintf("$.resources[%d]", i)
@@ -266,7 +277,7 @@ func checkStructure(pack *Pack, filename string) []Issue {
 }
 
 var (
-	packKeys       = []string{"type", "version", "displayName", "description", "category", "icon", "iconColor", "subtitle", "documentationUrl", "credentialType", "requestDefaults", "trigger", "parameters", "resources", "generator"}
+	packKeys       = []string{"type", "version", "displayName", "description", "category", "icon", "iconColor", "subtitle", "documentationUrl", "credentialType", "visibleTo", "requestDefaults", "trigger", "parameters", "resources", "generator"}
 	resourceKeys   = []string{"name", "description", "operations"}
 	operationKeys  = []string{"name", "description", "method", "url", "sends", "output", "pagination"}
 	parameterKeys  = []string{"key", "label", "description", "kind", "required", "default", "options", "typeOptions", "resources", "operations"}

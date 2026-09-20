@@ -197,7 +197,7 @@ export const getListNodeTypesUrl = () => {
 }
 
 /**
- * Returns the server-defined, versioned node catalogue used by the workflow editor and compiler.
+ * Returns the server-defined, versioned node catalogue used by the workflow editor and compiler, narrowed to the caller's tenant. A node type scoped to other tenants is absent, exactly as if it were not registered; an embed session sees what its own tenant sees.
  * @summary List supported node types
  */
 export const listNodeTypes = async ( options?: Parameters<typeof apiFetch>[1]): Promise<listNodeTypesResponse> => {
@@ -301,7 +301,7 @@ export const getGetNodeIconUrl = (type: string,
 }
 
 /**
- * Returns the artwork a node ships. Only a registered node type that declares a served icon answers; everything else is 404.
+ * Returns the artwork a node ships. Only a registered node type that declares a served icon answers; everything else is 404. A node type the caller's tenant cannot see answers 404 exactly as an unregistered one does.
  * @summary Serve a node's icon
  */
 export const getNodeIcon = async (type: string,
@@ -402,7 +402,7 @@ export const getLoadNodePropertyOptionsUrl = (type: string,) => {
 }
 
 /**
- * Resolves the options for a property whose valid values live on the customer's own service. The loader is taken from the registered definition, never from the request.
+ * Resolves the options for a property whose valid values live on the customer's own service. The loader is taken from the registered definition, never from the request. A node type the caller's tenant cannot see answers 404 exactly as an unregistered one does.
  * @summary Load a property's selectable values
  */
 export const loadNodePropertyOptions = async (type: string,
@@ -502,7 +502,7 @@ export const getLoadNodePropertySchemaUrl = (type: string,) => {
 }
 
 /**
- * Resolves the column list a resource mapper maps onto, with each column's type, required flag and match eligibility. A sibling of load-options rather than a widening of it: an option is {label, value} and a column is not.
+ * Resolves the column list a resource mapper maps onto, with each column's type, required flag and match eligibility. A sibling of load-options rather than a widening of it: an option is {label, value} and a column is not. A node type the caller's tenant cannot see answers 404 exactly as an unregistered one does.
  * @summary Load a resource mapper's columns
  */
 export const loadNodePropertySchema = async (type: string,

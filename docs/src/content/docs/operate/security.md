@@ -140,7 +140,8 @@ and every repository call takes a tenant scope, and the tenant is resolved from
 whatever authenticated the request — an embed session first, then a signed-in
 session or an API key. A row belonging to another tenant does not fail a
 permission check; it does not exist. What a tenant *is*, though, is a row: an
-id, a name and timestamps, with no per-tenant configuration and no per-tenant
-quota, and every tenant's rows share the same tables. With authentication off,
-which is the default, every caller is the operator and every request resolves to
-the one tenant named `default`.
+id, a name and timestamps, with no per-tenant configuration beyond which node
+types it may see (set in the operator's configuration, not stored on the tenant)
+and no per-tenant quota, and every tenant's rows share the same tables. With
+authentication off, which is the default, every caller is the operator and every
+request resolves to the one tenant named `default`.

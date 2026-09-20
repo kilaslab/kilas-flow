@@ -374,7 +374,7 @@ func (service *Service) loadResumeState(ctx context.Context, tenant repository.T
 // Run would have taken. Nodes completed before suspension never execute
 // again — their outputs arrive in the checkpoint, not from a second run.
 func (service *Service) resumeRun(ctx context.Context, record execution.Record, document workflow.Document, stack []string, wait repository.Wait, resume resumeURLs, trace *traceWriter) (Result, error) {
-	ir, err := workflow.Compile(document, service.catalog)
+	ir, err := service.compile(record, document)
 	if err != nil {
 		return Result{}, err
 	}

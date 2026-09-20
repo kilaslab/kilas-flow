@@ -542,7 +542,11 @@ func (handler *Workflows) PublishVersion(ctx context.Context, input *publishVers
 	if err := handler.embedVersionProblem(ctx, input.ID, input.VersionID); err != nil {
 		return nil, err
 	}
-	stored, err := handler.workflows.PublishVersion(ctx, handler.tenant(ctx), input.ID, input.VersionID, handler.catalog, input.reason())
+	// The catalogue is narrowed to the publishing tenant: a revision that
+	// references a node this tenant may not use is refused here, before it
+	// becomes the version production traffic runs.
+	tenant := handler.tenant(ctx)
+	stored, err := handler.workflows.PublishVersion(ctx, tenant, input.ID, input.VersionID, workflow.CatalogFor(handler.catalog, tenant.ID), input.reason())
 	if err != nil {
 		return nil, handler.problem(ctx, err)
 	}
@@ -659,7 +663,7 @@ func (handler *Workflows) Activate(ctx context.Context, input *workflowPathInput
 		return nil, err
 	}
 	tenant := handler.tenant(ctx)
-	stored, err := handler.workflows.Activate(ctx, tenant, input.ID, handler.catalog)
+	stored, err := handler.workflows.Activate(ctx, tenant, input.ID, workflow.CatalogFor(handler.catalog, tenant.ID))
 	if err != nil {
 		return nil, handler.problem(ctx, err)
 	}
@@ -780,7 +784,8 @@ func (handler *Workflows) Run(ctx context.Context, input *runWorkflowInput) (*ex
 		payload = input.Body.Input
 		triggerNodeID = strings.TrimSpace(input.Body.TriggerNodeID)
 	}
-	created, err := handler.executions.QueueManualLatest(ctx, handler.tenant(ctx), input.ID, handler.catalog, triggerNodeID, payload)
+	tenant := handler.tenant(ctx)
+	created, err := handler.executions.QueueManualLatest(ctx, tenant, input.ID, workflow.CatalogFor(handler.catalog, tenant.ID), triggerNodeID, payload)
 	if err != nil {
 		return nil, handler.problem(ctx, err)
 	}

@@ -147,6 +147,7 @@ const (
 	ErrorInvalidTopology  ErrorCode = "workflow.invalid_topology"
 	ErrorUnknownNode      ErrorCode = "node.unknown_type"
 	ErrorUnknownVersion   ErrorCode = "node.unknown_version"
+	ErrorNodeNotAvailable ErrorCode = "node.not_available" // a registered type scoped to other tenants; see RestrictedCatalog
 	ErrorUnknownPort      ErrorCode = "port.unknown"
 	ErrorIncompatiblePort ErrorCode = "port.incompatible"
 	// Named separately from ErrorUnknownPort on purpose: "this port is full",
@@ -224,6 +225,10 @@ func Compile(document Document, catalog Catalog) (IR, error) {
 	}
 	definitions := make(map[string]NodeDefinition, len(document.Nodes))
 	nodes := make(map[string]Node, len(document.Nodes))
+	// refused records the nodes whose type the catalogue would not resolve, so
+	// the connection pass can leave their wires to the issue that explains
+	// them.
+	refused := make(map[string]bool, len(document.Nodes))
 	ir := IR{
 		WorkflowID: document.ID,
 		Name:       document.Name,
@@ -243,7 +248,14 @@ func Compile(document Document, catalog Catalog) (IR, error) {
 		if !found {
 			code := ErrorUnknownNode
 			message := fmt.Sprintf("node type %q version %s is not registered", node.Type, node.TypeVersion)
-			if typedCatalog, known := catalog.(TypeCatalog); known && typedCatalog.HasType(node.Type) {
+			// Restricted is asked first: a type withheld from this tenant is not
+			// visible to it, so HasType is false for it and would otherwise
+			// report it as simply unregistered. The message says nothing about
+			// which tenants the type is scoped to.
+			if restricted, known := catalog.(RestrictedCatalog); known && restricted.Restricted(node.Type) {
+				code = ErrorNodeNotAvailable
+				message = fmt.Sprintf("node type %q is not available to this workspace", node.Type)
+			} else if typedCatalog, known := catalog.(TypeCatalog); known && typedCatalog.HasType(node.Type) {
 				code = ErrorUnknownVersion
 				message = fmt.Sprintf("node type %q does not support version %s", node.Type, node.TypeVersion)
 			}
@@ -251,6 +263,7 @@ func Compile(document Document, catalog Catalog) (IR, error) {
 				Code: code, Path: fmt.Sprintf("/nodes/%d/type", index), NodeID: node.ID,
 				Message: message,
 			})
+			refused[node.ID] = true
 			continue
 		}
 		// A node whose ports depend on its own parameters is resolved here,
@@ -330,6 +343,15 @@ func Compile(document Document, catalog Catalog) (IR, error) {
 		sourceNode, sourceFound := nodes[connection.Source.NodeID]
 		targetNode, targetFound := nodes[connection.Target.NodeID]
 		if !sourceFound || !targetFound {
+			// A node whose type was refused already carries the issue that
+			// explains it — "not available to this workspace" is the sentence
+			// the author has to read. This one sorts before it (connections
+			// come first) and would be read instead, sending them hunting for a
+			// wiring mistake: the endpoints ARE registered, it is the tenant
+			// that may not use one of them.
+			if refused[connection.Source.NodeID] || refused[connection.Target.NodeID] {
+				continue
+			}
 			issues.add(ValidationError{
 				Code: ErrorInvalidTopology, Path: fmt.Sprintf("/connections/%d", index), ConnectionID: connection.ID,
 				Message: "connection must reference registered source and target nodes",

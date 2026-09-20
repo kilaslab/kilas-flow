@@ -482,6 +482,12 @@ versions downward: registering `202409` and `202502` and requesting `202410`
 gets `202409`, which is what lets an imported workflow keep its original
 version.
 
+To ship a pack to one customer rather than every tenant, scope its node type by
+declaring `visibleTo` in the manifest or by giving the operator a
+`packs.visible_to` override — see [Tenant-scoped
+nodes](/guides/tenant-scoped-nodes/) for both, and for what a tenant that is not
+on the list sees.
+
 ## Licence: yours to distribute, theirs to install
 
 A pack you write is your JSON to distribute. What runs on a server is what

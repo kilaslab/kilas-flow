@@ -935,12 +935,21 @@ func (service *Service) run(ctx context.Context, record execution.Record, docume
 	return service.runWithStack(ctx, record, document, []string{record.WorkflowID}, resume, trace)
 }
 
+// compile turns a stored document into a plan under the catalogue the
+// execution's tenant may see. It is the one place the engine compiles, so
+// every path that reaches a run — manual, webhook, schedule, sub-workflow,
+// error workflow, resumed wait — is gated by the same question: may this
+// tenant use these nodes.
+func (service *Service) compile(record execution.Record, document workflow.Document) (workflow.IR, error) {
+	return workflow.Compile(document, workflow.CatalogFor(service.catalog, record.TenantID))
+}
+
 // runWithStack is run with the call chain that reached this execution.
 //
 // A top-level run's stack is just itself; a sub-workflow's carries every
 // workflow above it, which is what lets the next call refuse a cycle by name.
 func (service *Service) runWithStack(ctx context.Context, record execution.Record, document workflow.Document, stack []string, resume resumeURLs, trace *traceWriter) (Result, error) {
-	ir, err := workflow.Compile(document, service.catalog)
+	ir, err := service.compile(record, document)
 	if err != nil {
 		return Result{}, err
 	}

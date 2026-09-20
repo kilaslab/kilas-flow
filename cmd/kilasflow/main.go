@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -293,6 +294,36 @@ func run() error {
 		Executors: executorRegistry, Options: optionLoader,
 	}, cfg.Packs.Dir); err != nil {
 		return fmt.Errorf("load directory node packs: %w", err)
+	}
+
+	// packs.visible_to: the operator's override of what each pack's manifest
+	// declared. It stays AFTER the last node registration — this block belongs
+	// after every embedded and directory pack, and after anything a future
+	// loader registers — because an override naming a type that is not
+	// registered refuses the boot, so a scope applied too early would refuse a
+	// boot that is about to become valid.
+	//
+	// Every process role is given the same value from the same configuration.
+	// The API hides an invisible node, but the worker is the authority: a worker
+	// started without this key would accept and run what the API refused.
+	grants, err := cfg.Packs.VisibilityGrants()
+	if err != nil {
+		return err
+	}
+	if err := nodeRegistry.ApplyVisibility(grants); err != nil {
+		return fmt.Errorf("apply packs.visible_to: %w", err)
+	}
+	// The tenant list, not only a count: a mistyped tenant ID is the one
+	// mistake in this block that is otherwise invisible from the inside, and
+	// this line is where an operator notices it.
+	scopes := nodeRegistry.Scopes()
+	scopedTypes := make([]string, 0, len(scopes))
+	for nodeType := range scopes {
+		scopedTypes = append(scopedTypes, nodeType)
+	}
+	sort.Strings(scopedTypes)
+	for _, nodeType := range scopedTypes {
+		log.Info("node type is scoped to tenants", "type", nodeType, "tenants", scopes[nodeType])
 	}
 
 	// Credentials are optional at boot: an install with no key still runs

@@ -92,7 +92,8 @@ func permits(session embed.Session, r *http.Request) (bool, string) {
 	switch {
 	case path == "/node-types" || strings.HasPrefix(path, "/node-types/"):
 		// The editor cannot render without the node catalogue, and the
-		// catalogue itself carries no tenant data.
+		// catalogue handler narrows itself to the session's tenant, so it
+		// carries only what that tenant may see.
 		//
 		// The load-options endpoint under this prefix does, so it is not
 		// covered by that reasoning: it can reach a customer's service, and an

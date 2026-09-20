@@ -822,6 +822,28 @@ empty directory is a normal silent condition, so the default deployment
 is unchanged. A pack that fails to load refuses the whole boot, naming
 the pack and the reason.
 
+### packs.visible_to
+
+- Type: `string list`
+- Default: `[]`
+- Environment: `KILASFLOW_PACKS_VISIBLE_TO`
+- Required: no
+
+VisibleTo overrides which tenants each node type is visible to, as
+`"<node type>=<tenant id>"` list entries. The list REPLACES what a pack's
+manifest declared for that type, so an operator can widen or narrow a
+scope without editing pinned manifest bytes; there is no wildcard.
+
+It applies to any type a pack registers, embedded or from Dir: one entry
+per type, so a WAHA install needs one for pack.waha and one for
+pack.wahaTrigger. Types with no entry stay visible to every tenant, and a
+built-in can never be scoped. An entry naming a type that is not
+registered, or a tenant ID that is not a tenant ID, refuses the boot.
+
+Give every process the same value. The API role hides an invisible node,
+but the worker is the authority: a worker started without this key accepts
+and runs what the API would have refused.
+
 ## log
 
 Log configures structured logging.

@@ -48,7 +48,10 @@ func (handler *NodeTypes) WithOptionLoading(
 // NodeTypesOutput is a stable, metadata-only node catalogue. Executor bindings
 // are private to the registry and omitted by Definition's JSON representation.
 type NodeTypesOutput struct {
-	Body []node.Definition
+	// The catalogue is assembled per caller, so it is cacheable in the browser
+	// that asked for it and nowhere between here and there.
+	CacheControl string `header:"Cache-Control"`
+	Body         []node.Definition
 }
 
 // NewNodeTypes constructs the node catalogue handler.
@@ -94,7 +97,7 @@ func (handler *NodeTypes) Register(api huma.API) {
 		Method:      http.MethodGet,
 		Path:        "/node-types/{type}/icon",
 		Summary:     "Serve a node's icon",
-		Description: "Returns the artwork a node ships. Only a registered node type that declares a served icon answers; everything else is 404.",
+		Description: "Returns the artwork a node ships. Only a registered node type that declares a served icon answers; everything else is 404. A node type the caller's tenant cannot see answers 404 exactly as an unregistered one does.",
 		Tags:        []string{"Nodes"},
 	}, handler.Icon)
 	huma.Register(api, huma.Operation{
@@ -102,7 +105,7 @@ func (handler *NodeTypes) Register(api huma.API) {
 		Method:      http.MethodPost,
 		Path:        "/node-types/{type}/load-options",
 		Summary:     "Load a property's selectable values",
-		Description: "Resolves the options for a property whose valid values live on the customer's own service. The loader is taken from the registered definition, never from the request.",
+		Description: "Resolves the options for a property whose valid values live on the customer's own service. The loader is taken from the registered definition, never from the request. A node type the caller's tenant cannot see answers 404 exactly as an unregistered one does.",
 		Tags:        []string{"Nodes"},
 	}, handler.LoadOptions)
 	huma.Register(api, huma.Operation{
@@ -110,7 +113,7 @@ func (handler *NodeTypes) Register(api huma.API) {
 		Method:      http.MethodPost,
 		Path:        "/node-types/{type}/load-schema",
 		Summary:     "Load a resource mapper's columns",
-		Description: "Resolves the column list a resource mapper maps onto, with each column's type, required flag and match eligibility. A sibling of load-options rather than a widening of it: an option is {label, value} and a column is not.",
+		Description: "Resolves the column list a resource mapper maps onto, with each column's type, required flag and match eligibility. A sibling of load-options rather than a widening of it: an option is {label, value} and a column is not. A node type the caller's tenant cannot see answers 404 exactly as an unregistered one does.",
 		Tags:        []string{"Nodes"},
 	}, handler.LoadSchema)
 	huma.Register(api, huma.Operation{
@@ -118,30 +121,35 @@ func (handler *NodeTypes) Register(api huma.API) {
 		Method:      http.MethodGet,
 		Path:        "/node-types",
 		Summary:     "List supported node types",
-		Description: "Returns the server-defined, versioned node catalogue used by the workflow editor and compiler.",
+		Description: "Returns the server-defined, versioned node catalogue used by the workflow editor and compiler, narrowed to the caller's tenant. A node type scoped to other tenants is absent, exactly as if it were not registered; an embed session sees what its own tenant sees.",
 		Tags:        []string{"Nodes"},
 	}, handler.List)
 }
 
-// List returns definitions in the registry's stable type/version order.
-func (handler *NodeTypes) List(context.Context, *struct{}) (*NodeTypesOutput, error) {
+// List returns definitions in the registry's stable type/version order,
+// narrowed to what the caller's tenant may use.
+func (handler *NodeTypes) List(ctx context.Context, _ *struct{}) (*NodeTypesOutput, error) {
 	if handler.registry == nil {
 		return nil, huma.Error503ServiceUnavailable("node catalogue unavailable")
 	}
-	definitions := handler.registry.List()
-	if handler.availability == nil {
-		return &NodeTypesOutput{Body: definitions}, nil
-	}
-	// Stamped here rather than stored on the definition: the catalogue is
-	// static and assembled once at startup, while whether a node can run is a
-	// property of this deployment right now.
-	unavailable := handler.availability()
-	for index := range definitions {
-		if reason, blocked := unavailable[definitions[index].Type]; blocked {
-			definitions[index].Unavailable = reason
+	// The catalogue is per tenant now, so it can no longer be served with the
+	// same body to everyone: a node type scoped to other tenants is absent,
+	// exactly as if it were not registered at all.
+	definitions := handler.registry.ListFor(handler.tenants.Resolve(ctx).ID)
+	if handler.availability != nil {
+		// Stamped here rather than stored on the definition: the catalogue is
+		// static and assembled once at startup, while whether a node can run is
+		// a property of this deployment right now.
+		unavailable := handler.availability()
+		for index := range definitions {
+			if reason, blocked := unavailable[definitions[index].Type]; blocked {
+				definitions[index].Unavailable = reason
+			}
 		}
 	}
-	return &NodeTypesOutput{Body: definitions}, nil
+	// Cacheable in the browser that asked for it and nowhere between here and
+	// there: the body depends on who is asking.
+	return &NodeTypesOutput{CacheControl: "private, no-cache", Body: definitions}, nil
 }
 
 // WithAvailability reports which nodes this deployment cannot run.
@@ -208,7 +216,7 @@ func (handler *NodeTypes) LoadOptions(ctx context.Context, input *loadOptionsInp
 		return nil, huma.Error503ServiceUnavailable("the node catalogue is unavailable")
 	}
 
-	declared, err := handler.declaredProperty(input)
+	declared, err := handler.declaredProperty(ctx, input)
 	if err != nil {
 		return nil, err
 	}
@@ -269,8 +277,9 @@ func (handler *NodeTypes) LoadOptions(ctx context.Context, input *loadOptionsInp
 }
 
 // declaredProperty resolves the property a request names, from the registered
-// definition and never from the request.
-func (handler *NodeTypes) declaredProperty(input *loadOptionsInput) (*node.PropertyDefinition, error) {
+// definition and never from the request, under the caller's own view of the
+// catalogue: a type the tenant may not see is treated as unregistered.
+func (handler *NodeTypes) declaredProperty(ctx context.Context, input *loadOptionsInput) (*node.PropertyDefinition, error) {
 	version := workflow.TypeVersion{}
 	if input.Body.Version != "" {
 		parsed, err := workflow.ParseTypeVersion(input.Body.Version)
@@ -279,7 +288,7 @@ func (handler *NodeTypes) declaredProperty(input *loadOptionsInput) (*node.Prope
 		}
 		version = parsed
 	}
-	definition, found := handler.registry.Resolve(input.Type, version)
+	definition, found := handler.registry.ResolveFor(handler.tenants.Resolve(ctx).ID, input.Type, version)
 	if !found {
 		return nil, huma.Error404NotFound("that node type is not registered")
 	}
@@ -394,7 +403,7 @@ func (handler *NodeTypes) LoadSchema(ctx context.Context, input *loadOptionsInpu
 	if handler.registry == nil || handler.options == nil {
 		return nil, huma.Error503ServiceUnavailable("the node catalogue is unavailable")
 	}
-	declared, err := handler.declaredProperty(input)
+	declared, err := handler.declaredProperty(ctx, input)
 	if err != nil {
 		return nil, err
 	}
@@ -453,7 +462,7 @@ type nodeIconOutput struct {
 // registers, so hostile artwork fails to load rather than being rendered safely
 // forever; the response is served inert by these headers; and the editor renders
 // through `<img src>`, which gives the browser's own image sandbox.
-func (handler *NodeTypes) Icon(_ context.Context, input *nodeIconInput) (*nodeIconOutput, error) {
+func (handler *NodeTypes) Icon(ctx context.Context, input *nodeIconInput) (*nodeIconOutput, error) {
 	if handler.registry == nil {
 		return nil, huma.Error503ServiceUnavailable("the node catalogue is unavailable")
 	}
@@ -465,7 +474,10 @@ func (handler *NodeTypes) Icon(_ context.Context, input *nodeIconInput) (*nodeIc
 		}
 		version = parsed
 	}
-	definition, found := handler.registry.Resolve(input.Type, version)
+	// A type the caller's tenant may not see answers exactly as an
+	// unregistered one does: the difference would tell any caller which node
+	// types this deployment runs for somebody else.
+	definition, found := handler.registry.ResolveFor(handler.tenants.Resolve(ctx).ID, input.Type, version)
 	if !found {
 		return nil, huma.Error404NotFound("that node type is not registered")
 	}
@@ -476,6 +488,16 @@ func (handler *NodeTypes) Icon(_ context.Context, input *nodeIconInput) (*nodeIc
 		return nil, huma.Error404NotFound("that node type ships no icon")
 	}
 
+	cacheControl := "public, max-age=86400, immutable"
+	if handler.registry.Scoped(input.Type) {
+		// A scoped type's artwork is served to some tenants only, so it must
+		// not sit in a shared cache for a day. No pack can reach this through
+		// its manifest today — a directory pack carries no icon assets and the
+		// shipped packs use builtin glyphs — so this is only reachable from a
+		// registration made in code, which is exactly how a deployment ships
+		// its own nodes.
+		cacheControl = "private, max-age=86400, immutable"
+	}
 	return &nodeIconOutput{
 		ContentType: icon.MediaType,
 		NoSniff:     "nosniff",
@@ -484,7 +506,7 @@ func (handler *NodeTypes) Icon(_ context.Context, input *nodeIconInput) (*nodeIc
 		CSP: "default-src 'none'; style-src 'unsafe-inline'; sandbox",
 		// Immutable per type and version: a node's artwork does not change
 		// without its version changing.
-		CacheControl: "public, max-age=86400, immutable",
+		CacheControl: cacheControl,
 		Body:         icon.Bytes,
 	}, nil
 }

@@ -95,7 +95,7 @@ function schemaName(schema) {
 function embedVerdict(method, path) {
 	const rest = path.replace(/^\/api\/v1/, '');
 	if (rest === '/node-types' || rest.startsWith('/node-types/')) {
-		return 'Allow with `workflow:read` — the catalogue carries no tenant data. `load-options` is additionally bounded to the session\u2019s workflow by the handler.';
+		return 'Allow with `workflow:read` — the catalogue is narrowed to the session\u2019s own tenant. `load-options` is additionally bounded to the session\u2019s workflow by the handler.';
 	}
 	if (rest === '/credentials' && method === 'GET') {
 		return 'Allow with `workflow:read` — names are needed to render a credential picker; values are never returned.';

@@ -284,7 +284,7 @@ default-deny boundary is part of the public contract:
 
 | Request | Verdict |
 | --- | --- |
-| `GET /node-types/**` (catalogue, icons, load-options, load-schema) | Allow with `workflow:read` — the catalogue carries no tenant data; load-options is additionally bounded to the session's workflow by the handler |
+| `GET /node-types/**` (catalogue, icons, load-options, load-schema) | Allow with `workflow:read` — the catalogue is narrowed to the session's own tenant; load-options is additionally bounded to the session's workflow by the handler |
 | `GET /credentials` (list; values are never returned) | Allow with `workflow:read` — names are needed to render a credential picker |
 | `GET /workflows/{id}` where `{id}` is the session's workflow | Allow with `workflow:read` |
 | `PUT` (and other writes) to the session's workflow, except below | Allow with `workflow:write` |

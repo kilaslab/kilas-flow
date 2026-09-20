@@ -111,6 +111,18 @@ type Definition struct {
 	// declares a hook nobody registered fails at startup rather than at
 	// activation.
 	LifecycleID string `json:"-"`
+	// VisibleTo scopes this node type to a set of tenants. Empty means every
+	// tenant, which is what every definition did before this field existed.
+	//
+	// It is registration input: the registry normalises it (each ID checked,
+	// sorted, de-duplicated) and keeps the result, and the operator's
+	// packs.visible_to configuration can replace it after registration. A scope
+	// belongs to the node TYPE, so every registered version of a type must carry
+	// the same one, and a built-in can never be scoped.
+	//
+	// Tagged json:"-" deliberately: the catalogue is served to every tenant, and
+	// which tenants a node is reserved for is not theirs to read.
+	VisibleTo []string `json:"-"`
 }
 
 // WebhookDeclaration is how a node type says it answers an inbound request.
@@ -233,6 +245,10 @@ type NodeCodex struct {
 // assembled at startup and is read-only once the server begins handling work.
 type Registry struct {
 	definitions map[definitionKey]Definition
+	// scopes indexes the tenants each scoped node type is visible to. It is
+	// created on the first write, so a registry that scopes nothing — the
+	// default — carries no map, and the lookup path pays one length check.
+	scopes map[string]map[string]struct{}
 }
 
 type definitionKey struct {
@@ -294,6 +310,16 @@ func (registry *Registry) register(definition Definition, source Source) error {
 			return fmt.Errorf("node definition %q: %w", definition.Type, err)
 		}
 	}
+	tenants, err := normaliseTenants(definition.VisibleTo)
+	if err != nil {
+		return fmt.Errorf("node definition %q: visibleTo: %w", definition.Type, err)
+	}
+	// The engine names some built-ins (the sub-workflow and error triggers), so
+	// hiding one from a tenant would break that tenant's runs from the inside.
+	if source == SourceBuiltin && len(tenants) > 0 {
+		return fmt.Errorf("node definition %q is built in and cannot be scoped to tenants: built-in nodes are visible to every tenant", definition.Type)
+	}
+	definition.VisibleTo = tenants
 	key := definitionKey{nodeType: definition.Type, version: definition.Version}
 	if existing, exists := registry.definitions[key]; exists {
 		// Refused rather than silently replaced, and naming both sources: a
@@ -302,7 +328,11 @@ func (registry *Registry) register(definition Definition, source Source) error {
 		return fmt.Errorf("node type %q version %s is already registered by a %s node; the %s registration was refused",
 			definition.Type, definition.Version, existing.Source, source)
 	}
+	if err := registry.checkScopeAgrees(definition.Type, definition.Version, tenants); err != nil {
+		return err
+	}
 	registry.definitions[key] = cloneDefinition(definition)
+	registry.indexScope(definition.Type, tenants)
 	return nil
 }
 
@@ -659,6 +689,7 @@ func cloneDefinition(definition Definition) Definition {
 	definition.Parameters = cloneProperties(definition.Parameters)
 	definition.SharedSettings = cloneProperties(definition.SharedSettings)
 	definition.Group = append([]NodeGroup(nil), definition.Group...)
+	definition.VisibleTo = append([]string(nil), definition.VisibleTo...)
 	definition.Credentials = append([]CredentialRequirement(nil), definition.Credentials...)
 	for index := range definition.Credentials {
 		definition.Credentials[index].VisibleWhen =

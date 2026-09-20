@@ -171,7 +171,9 @@ func (handler *Interop) Import(ctx context.Context, input *importWorkflowInput) 
 		return nil, huma.Error422UnprocessableEntity("only the n8n import format is supported")
 	}
 
-	result, err := n8n.Import(input.Body.Workflow, handler.catalog)
+	// The tenant's own view of the catalogue: an import must not preserve a
+	// node type this tenant cannot use as a resolved one.
+	result, err := n8n.Import(input.Body.Workflow, workflow.CatalogFor(handler.catalog, handler.tenants.Resolve(ctx).ID))
 	if err != nil {
 		// A malformed file is the caller's problem and its message names the
 		// exact reason, so it is passed through rather than flattened.
@@ -247,7 +249,7 @@ func (handler *Interop) Export(ctx context.Context, input *exportWorkflowInput) 
 		return nil, huma.Error404NotFound("workflow not found")
 	}
 
-	result, err := n8n.Export(stored.LatestVersion.Document, handler.catalog)
+	result, err := n8n.Export(stored.LatestVersion.Document, workflow.CatalogFor(handler.catalog, handler.tenants.Resolve(ctx).ID))
 	if err != nil {
 		return nil, serverProblem(ctx, "workflow could not be exported", err)
 	}

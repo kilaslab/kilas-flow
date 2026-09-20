@@ -30,6 +30,12 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
   a `403` naming the workflow and the fix. It is off by default, a trigger that
   verifies its own senders counts as authenticated, and the boot log states the
   posture either way.
+- Per-tenant node visibility: a pack can declare the tenants its node type is
+  visible to with a `visibleTo` manifest field, and an operator can override it
+  with `packs.visible_to` (environment: `KILASFLOW_PACKS_VISIBLE_TO`). A node
+  type outside a tenant's set is invisible in `GET /node-types` and its
+  siblings, and compiling or running a document that references it fails with
+  the new diagnostic `node.not_available`, distinct from `node.unknown_type`.
 
 ### Changed
 
@@ -39,9 +45,6 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
   `/webhook/<route>`. Read it with `GET /workflows/{id}/webhooks`, and activate a
   Telegram or WAHA workflow again so the sender is given the new address.
   Bindings that already have a route keep it.
-
-### Changed
-
 - `embed.session_ttl` now sets the default lifetime of an embed session token
   (it was read by nothing); values below one second or above 30 minutes are
   refused at startup.
@@ -49,6 +52,11 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
   sessions that carry no branding of their own (they were read by nothing); the
   default of `branding.name` changed from `KilasFlow` to empty, so existing
   embeds keep the headerless look they have today.
+- `GET /node-types` and its sibling operations (icon, load-options,
+  load-schema) are narrowed to the caller's tenant, embed sessions included, so
+  a node type scoped to other tenants answers exactly as an unregistered one
+  does. The catalogue responds `Cache-Control: private, no-cache` because its
+  body now depends on who is asking.
 
 ### Removed
 

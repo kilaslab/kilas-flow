@@ -85,11 +85,12 @@ request's tenant is now resolved from whatever authenticated it — an embed
 session first, then the signed-in session or the API key. A row belonging to
 another tenant therefore does not fail a permission check; it does not exist.
 What stays thin is what a tenant *is*: an id, a name and timestamps, with no
-per-tenant configuration and no per-tenant quota, all tenants sharing the same
-tables in the same database, so the separation is only ever as good as the
-`WHERE` clause that enforces it. And with authentication off, which is the
-default, every caller is the operator and every request resolves to the one
-tenant named `default`.
+per-tenant configuration beyond which node types it may see (set in the
+operator's configuration, not stored on the tenant) and no per-tenant quota, all
+tenants sharing the same tables in the same database, so the separation is only
+ever as good as the `WHERE` clause that enforces it. And with authentication
+off, which is the default, every caller is the operator and every request
+resolves to the one tenant named `default`.
 
 **Waiting is durable; crashing is not.** A suspended execution resumes from its
 checkpoint, but a worker that dies mid-run is a different path: the reclaimed

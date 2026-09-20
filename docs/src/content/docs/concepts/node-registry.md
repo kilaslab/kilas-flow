@@ -296,6 +296,37 @@ failure refuses the boot, naming the pack and the reason; an absent or empty
 directory is a normal silent condition, which is what the default deployment has.
 :::
 
+## Visibility per tenant
+
+A node type can be scoped to a set of tenants, so that a host shipping its own
+nodes to one customer does not publish them to every tenant of the deployment.
+The scope belongs to the node *type*, not to a `(type, version)` pair: every
+registered version of a type shares one scope, so a workflow written against
+version 1 of a scoped type cannot resolve downward to a version its tenant was
+never given. Registering a second version with a different scope is refused.
+
+`ForTenant(tenantID)` returns a `TenantView` — a read-only narrowing that
+implements `Lookup` and `HasType` and deliberately not the `TenantScoper`
+interface, so a narrowed view can never be widened back. `ListFor` and
+`ResolveFor` are the catalogue's tenant-aware reads. A registry that scopes
+nothing pays one `len(scopes)==0` check on the hot path; a scoping registry pays
+one map lookup by type, so resolution cost is unchanged.
+
+The scope is a composition-time declaration only. A pack sets it with the
+`visibleTo` manifest field; an operator replaces that set with the
+`packs.visible_to` config key. `ApplyVisibility` applies those overrides and is
+called once from `main.go` before the registry is shared, the same contract as
+`Register`; `ScopeTo` is the single-type convenience wrapper it forwards to,
+whose only consumers today are tests. Built-ins can never be scoped, because the
+engine names some of them.
+
+A tenant that may not see a type is told the type does not exist: the catalogue,
+the icon route and the loaders answer exactly as they do for an unregistered
+type, and the compiler reports `node.not_available` only when the tenant's own
+document references it. See [Tenant-scoped
+nodes](/guides/tenant-scoped-nodes/) for the declaration format and the
+operational consequences.
+
 ## Boot-time checks
 
 One invariant is proven at startup rather than discovered later. Every
@@ -308,6 +339,12 @@ error, just an active workflow that is unreachable.
 Two more are enforced at registration rather than by a later sweep: a pack whose
 executor binding is not installed is refused, and a `(type, version)` collision
 is refused with both sources named.
+
+A `packs.visible_to` entry refuses the boot when it is malformed, when it names
+a node type that is not registered, or when it names a built-in, so a typo in
+the key cannot silently scope a type to nobody. A typo in a *tenant ID* is not
+detected against the identity store; the boot log prints each scoped type with
+its tenant list so an operator can eyeball it.
 
 ## API operations
 
@@ -323,6 +360,9 @@ columns. See the [HTTP API reference](/reference/api/).
 
 `internal/node/registry.go` (`Definition`, `Source`, `BuiltinPrefix`,
 `Register`, `RegisterFrom`, `Resolve`, `Lookup`, `validateDefinition`),
+`internal/node/visibility.go` (the scope index, `ListFor`, `ResolveFor`,
+`ForTenant`, `ScopeTo`, `ApplyVisibility`),
+`internal/workflow/catalog_scope.go` (`RestrictedCatalog`, `CatalogFor`),
 `internal/property/property.go` (the closed kind set, `TypeOptions`,
 visibility), `internal/workflow/typeversion.go`, `internal/nodepack/nodepack.go`
 (the pack format), `internal/routing/doc.go` (why routing metadata is data and
