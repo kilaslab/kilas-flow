@@ -1,7 +1,7 @@
 ---
 id: BUG-qmgz2f
 title: 'Frontend perf/a11y: keystroke clones, loader storms, version panel, API drift, ai.* drops'
-status: doing
+status: testing
 priority: medium
 labels:
     - frontend
@@ -10,7 +10,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:10Z"
-updated: "2026-09-20T00:42:07Z"
+updated: "2026-09-20T00:42:08Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -172,3 +172,8 @@ Status: `testing` for the findings that live in this slice's files. Two findings
 - The embed/session-expiry finding is in `web/src/lib/embed/*` and `sdk/src/browser.ts`, owned by FrontendCore2/DXOps2 — not edited here.
 - The dirty check still compares the two documents with `stableJSON` rather than a revision counter: measured as one serialization per edit of a JSON document, which the structural-sharing change below it has already made cheap, and a counter would report "saved" incorrectly after an undo back to the stored revision.
 - The `API drift` / `ai.* drops` phrases in this ticket's title have no matching finding in its body (the only `ai_*` reference is the attachment-edge layout item, fixed under FEAT-jvembs); nothing was found to fix for them.
+
+### Follow-up (FrontendCore3, 2026-09-20)
+- Fixed the pre-existing type error in `src/lib/workflow-editor/credentials.test.ts` that kept `pnpm check` red: the fixture now declares the required `parameters`/`sharedSettings` fields instead of casting a partial object to `Definition` (`8922292`).
+- `cd web && pnpm check` → **0 errors, 0 warnings** across all 1507 files, measured after that fix.
+- The API-client drift fix (`pnpm generate:api` + the five list-page call-site migrations) is in the working tree uncommitted: Main assigned the single regen commit to WebFormsOps3, so it lands from their hand. Measured on this tree: `pnpm generate:api:check` exits 0.
