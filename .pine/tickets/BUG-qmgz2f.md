@@ -1,7 +1,7 @@
 ---
 id: BUG-qmgz2f
 title: 'Frontend perf/a11y: keystroke clones, loader storms, version panel, API drift, ai.* drops'
-status: done
+status: doing
 priority: medium
 labels:
     - frontend
@@ -10,7 +10,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:10Z"
-updated: "2026-09-20T02:04:02Z"
+updated: "2026-09-20T02:53:56Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -628,3 +628,41 @@ Closed by `pine close --evidence` on 2026-09-20.
  web/vite.config.ts                                 |    7 +-
  434 files changed, 67896 insertions(+), 4725 deletions(-)
 ```
+
+## Reopened by review (2026-09-20)
+
+ReviewWeb (b4f2147..HEAD) found two keyboard defects in the editor, both fixed
+in this wave:
+
+- **Enter stolen from a focused control.** `handleShortcut` guarded only with
+  `isTypingTarget`, so with a node selected, Enter on any focused button or link
+  inside the editor was consumed by the canvas: `open-selection` set
+  `propertyPanelOpen` and `preventDefault` cancelled the control's own click.
+  Reproduced live — "Add step" focused, node selected, Enter: no node picker.
+  Fixed by `controlOwnsKey(target, key)` in `web/src/lib/workflow-editor/shortcuts.ts`
+  (typing controls own everything; a focused `button`/`a`/`[role=button]`/`[role=link]`
+  owns Enter, which is the one key the canvas contends for; Space is not
+  contended and stays with the canvas). Verified live: the picker opens, and
+  Enter from the canvas still opens the selected node. Tests:
+  `shortcuts.test.ts`. Commit `47a4d9b`.
+- **The expression suggestion list had no keyboard path** while rendering as
+  `role="listbox"` / `role="option"`. Fixed by `assistKey()` in
+  `web/src/lib/workflow-editor/expression-assist.ts` plus wiring in
+  `property-field.svelte`: `aria-expanded`/`aria-controls`/`aria-activedescendant`
+  on the expression textarea, ArrowDown/ArrowUp moving the highlight (no wrap,
+  clamped when a narrower prefix shrinks the list), Enter inserting the
+  highlighted candidate, Escape dismissing without inserting, a new prefix
+  starting from the top, the highlight scrolled into view, and the option now
+  being the button itself (as in the node picker) rather than a button inside an
+  `li role="option"`. Space, Tab and every other key stay the textarea's.
+  Verified live against a stored `{{ $` parameter: aria-activedescendant
+  0 → 2 on two ArrowDowns, back to 1 on ArrowUp, Enter inserted and closed the
+  list, Escape closed it with the text unchanged, Space still typed a space,
+  and a mouse click still inserts. Tests: `expression-assist.test.ts`
+  (movement, both ends, clamping, accept, dismiss, ignored keys). Commit
+  `696c347`.
+
+Observed and **not** fixed (out of this wave's scope, no ticket): inserting a
+candidate appends it to the typed prefix rather than replacing it, so a prefix
+ending in a bare `$` accepts `$json` as `{{ $$json }}`. The keyboard path calls
+the same insertion the mouse path always did.

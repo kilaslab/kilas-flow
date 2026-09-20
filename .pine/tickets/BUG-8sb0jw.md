@@ -1,7 +1,7 @@
 ---
 id: BUG-8sb0jw
 title: 'Build/CI/release hygiene: red CI, shared PG tests, skipped Playwright, dirty builds, stale client, docs'
-status: done
+status: doing
 priority: medium
 labels:
     - dx
@@ -10,7 +10,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:10Z"
-updated: "2026-09-20T02:03:58Z"
+updated: "2026-09-20T02:54:07Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -693,3 +693,16 @@ Closed by `pine close --evidence` on 2026-09-20.
  web/vite.config.ts                                 |    7 +-
  434 files changed, 59612 insertions(+), 4725 deletions(-)
 ```
+
+## Reopened by review (2026-09-20)
+
+ReviewWeb (b4f2147..HEAD) found one stale command in the documentation of
+record: `docs/src/content/docs/start/install.md` cloned
+`https://github.com/kilaslab/kilas-flow` and then told the reader to
+`cd k-flow` (the project's old name), so the first command of the quickstart
+failed with "no such file or directory".
+
+Fixed and verified against this repository's own remote
+(`git@github.com:kilaslab/kilas-flow.git`): the quickstart now says
+`cd kilas-flow`. No other stale `k-flow` path or clone URL remains in docs/.
+`cd docs && pnpm build` — 43 pages, all internal links valid. Commit `72419f8`.
