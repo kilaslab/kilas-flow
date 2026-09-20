@@ -1,7 +1,7 @@
 ---
 id: BUG-aede06
 title: 'Engine policy: timeouts, timezone, error workflow, live progress, polls, manual triggers'
-status: testing
+status: doing
 priority: medium
 labels:
     - engine
@@ -9,7 +9,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:10Z"
-updated: "2026-09-20T01:21:31Z"
+updated: "2026-09-20T01:24:20Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -303,3 +303,22 @@ go test ./internal/api/ -run 'TestWorkflowAPIRunCanChooseTheTriggerToStartFrom|T
   `web/` half). The API accepts it today; until the button sends it, an editor
   manual run of a multi-trigger workflow keeps the every-trigger default. No
   engine or API work is outstanding for it.
+
+---
+
+## Progress (FrontendCore3, 2026-09-20)
+
+Editor half landed; the request is `POST /workflows/{id}/run` with an optional `triggerNodeId` (server half in `bcd5787`).
+
+### Done (`workflow-editor.svelte`, new `workflow-editor/run-trigger.ts`)
+- `isTriggerNode(node, definitions)` reads the registry's behavioural `trigger` group and never an annotation, so a sticky note (no ports at all) cannot be mistaken for the one node that starts a run.
+- `runTriggerNodeID(nodes, definitions, selected)` returns a trigger id only when the workflow declares **more than one** trigger **and** the user has selected one of them. One trigger, nothing selected, or a non-trigger selected all return `undefined`, which leaves the server's existing "run every trigger" behaviour untouched.
+- `onRun` is now `(selection?: RunSelection) => Promise<void>` with `export type RunSelection = { triggerNodeId?: string }` from the component's module script; `run()` passes the selection. Hosts that ignore the argument keep compiling (0 errors, 0 warnings after the change).
+
+### Scoped proof
+- `cd web && npx vitest run src/lib/workflow-editor` → 31 files, 370 tests, passing (new `run-trigger.test.ts`: multi-trigger pick, single-trigger silence, non-trigger selection, annotation in the selection).
+- `cd web && npx svelte-check --tsconfig ./tsconfig.json` → 0 errors, 0 warnings.
+
+### Handed to the file owners (not edited here)
+- `src/routes/(dashboard)/app/workflows/[id]/+page.svelte` and `src/lib/embed/embed-editor.svelte` (FrontendCore2): pass `selection?.triggerNodeId` into `runWorkflow(id, { triggerNodeId })`. Until that forward lands, the editor computes the trigger and the request stays as it was — the editor half alone cannot change what the server is told.
+- `web/src/lib/api/generated` (WebFormsOps3's regen commit): `RunWorkflowInputBody` needs the new field, which only a regeneration after `bcd5787` produces; the drift check is red until then for that reason alone.

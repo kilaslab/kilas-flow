@@ -8,6 +8,17 @@
 	 * the embed shell cannot mount the panel with different halves of it wired
 	 * up — the two hosts have drifted on error handling once already.
 	 */
+	/**
+	 * What a manual run needs to know beyond the workflow's own id.
+	 *
+	 * A workflow can declare several triggers, and firing all of them is rarely
+	 * what Execute means — for a webhook trigger it is a run with an empty item.
+	 */
+	export type RunSelection = {
+		/** The trigger to start from; omitted runs every trigger, as before. */
+		triggerNodeId?: string;
+	};
+
 	export type WorkflowHistoryHost = {
 		workflowID: string;
 		/** The revision the canvas was loaded from. */
@@ -68,6 +79,7 @@
 	import { tidyDocument } from '$lib/workflow-editor/layout';
 	import { mediaQuery } from '$lib/workflow-editor/media.svelte';
 	import { isAnnotation } from '$lib/workflow-editor/node-visual';
+	import { runTriggerNodeID } from '$lib/workflow-editor/run-trigger';
 	import { canConnect, connectionFromCanvas, resolvedPorts } from '$lib/workflow-editor/ports';
 	import type { CanvasShortcut } from '$lib/workflow-editor/shortcuts';
 	import type { CanvasValidationIssue } from '$lib/workflow-editor/validation';
@@ -144,7 +156,14 @@
 		/** Compile failures a host learned from activate/run, shown beside the save issues. */
 		hostIssues?: CanvasValidationIssue[];
 		onSave: (input: WorkflowDocumentInput) => Promise<void>;
-		onRun: () => Promise<void>;
+		/**
+		 * Queues a manual run of the saved revision.
+		 *
+		 * The options name the trigger to start from, when the workflow declares
+		 * several and the user picked one; a host that ignores them keeps the
+		 * server's "run every trigger" default.
+		 */
+		onRun: (selection?: RunSelection) => Promise<void>;
 		onActivate?: () => Promise<void>;
 		onDeactivate?: () => Promise<void>;
 		onDismissNotice?: (key: string) => void;
@@ -877,7 +896,19 @@
 
 	async function run() {
 		if (hideRun || dirty || running) return;
-		await onRun();
+		await onRun(runSelection());
+	}
+
+	/**
+	 * The trigger this run should start from, or nothing.
+	 *
+	 * Nothing means "the server's default", which is every trigger of the
+	 * workflow — correct for a single-trigger workflow and unchanged from what
+	 * Execute has always done.
+	 */
+	function runSelection(): RunSelection | undefined {
+		const triggerNodeID = runTriggerNodeID(displayed.nodes ?? [], definitions, selectedNodeIDs);
+		return triggerNodeID ? { triggerNodeId: triggerNodeID } : undefined;
 	}
 
 	async function toggleActivation() {
