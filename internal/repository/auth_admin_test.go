@@ -7,7 +7,9 @@ package repository_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/kilaslabs/kilas-flow/internal/auth"
 	"github.com/kilaslabs/kilas-flow/internal/repository"
@@ -376,5 +378,100 @@ func TestMintingAKeyForAnotherTenantIsScopedToThatTenant(t *testing.T) {
 	}
 	if len(operatorKeys) != 0 {
 		t.Errorf("the operator tenant lists %d keys, want 0", len(operatorKeys))
+	}
+}
+
+func TestAPIKeyPagesWalkEveryKeyExactlyOnce(t *testing.T) {
+	store := newAuthStore(t)
+	ctx := context.Background()
+	tenant := repository.TenantScope{ID: repository.DefaultTenantID}
+	// Distinct moments rather than the wall clock, so the tiebreaker on id is
+	// exercised by the ordering rather than by luck.
+	moment := time.Date(2026, 9, 20, 9, 0, 0, 0, time.UTC)
+	store.WithClock(func() time.Time {
+		moment = moment.Add(time.Millisecond)
+		return moment
+	})
+	minted := make([]string, 0, 5)
+	for index := range 5 {
+		key, _, err := store.CreateAPIKey(ctx, tenant, fmt.Sprintf("key-%d", index))
+		if err != nil {
+			t.Fatalf("CreateAPIKey() error = %v", err)
+		}
+		minted = append(minted, key.ID)
+	}
+
+	seen := make([]string, 0, len(minted))
+	cursor := ""
+	for pages := 0; ; pages++ {
+		if pages > len(minted)+1 {
+			t.Fatal("paging did not terminate")
+		}
+		page, err := store.ListAPIKeysPage(ctx, tenant, repository.APIKeyFilter{Limit: 2, Cursor: cursor})
+		if err != nil {
+			t.Fatalf("ListAPIKeysPage() error = %v", err)
+		}
+		if len(page.Keys) > 2 {
+			t.Fatalf("page %d returned %d keys, want at most the limit", pages, len(page.Keys))
+		}
+		for _, key := range page.Keys {
+			seen = append(seen, key.ID)
+		}
+		if page.NextCursor == "" {
+			break
+		}
+		cursor = page.NextCursor
+	}
+
+	// Newest first, and every key exactly once: a cursor that loses the zone of
+	// the row it pins would silently return an empty second page instead.
+	if len(seen) != len(minted) {
+		t.Fatalf("paging returned %d keys, want %d", len(seen), len(minted))
+	}
+	for index, id := range seen {
+		want := minted[len(minted)-1-index]
+		if id != want {
+			t.Fatalf("key %d = %q, want %q (newest first, no repeats)", index, id, want)
+		}
+	}
+}
+
+func TestAPIKeyPagesRefuseACursorTheStoreDidNotIssue(t *testing.T) {
+	store := newAuthStore(t)
+
+	for name, cursor := range map[string]string{
+		"not base64":        "!!!",
+		"no separator":      "bm9zZXBhcmF0b3I",
+		"no identifier":     "MjAyNi0wOS0yMFQwOTowMDowMFoA",
+		"unparsable moment": "bm90LWEtdGltZQBpZA",
+	} {
+		_, err := store.ListAPIKeysPage(context.Background(),
+			repository.TenantScope{ID: repository.DefaultTenantID},
+			repository.APIKeyFilter{Limit: 2, Cursor: cursor})
+		if !errors.Is(err, repository.ErrInvalidCursor) {
+			t.Errorf("cursor %s: error = %v, want ErrInvalidCursor", name, err)
+		}
+	}
+}
+
+func TestAPIKeyPagesNeverCrossTenants(t *testing.T) {
+	store := newAuthStore(t)
+	ctx := context.Background()
+	if _, err := store.CreateTenant(ctx, "acme", "Acme"); err != nil {
+		t.Fatalf("CreateTenant() error = %v", err)
+	}
+	if _, _, err := store.CreateAPIKey(ctx, repository.TenantScope{ID: "acme"}, "acme key"); err != nil {
+		t.Fatalf("CreateAPIKey(acme) error = %v", err)
+	}
+	if _, _, err := store.CreateAPIKey(ctx, repository.TenantScope{ID: repository.DefaultTenantID}, "default key"); err != nil {
+		t.Fatalf("CreateAPIKey(default) error = %v", err)
+	}
+
+	page, err := store.ListAPIKeysPage(ctx, repository.TenantScope{ID: "acme"}, repository.APIKeyFilter{})
+	if err != nil {
+		t.Fatalf("ListAPIKeysPage() error = %v", err)
+	}
+	if len(page.Keys) != 1 || page.Keys[0].TenantID != "acme" {
+		t.Errorf("page = %#v, want acme's one key", page.Keys)
 	}
 }

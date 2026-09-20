@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"strings"
@@ -87,6 +88,31 @@ type TenantSummary struct {
 	UserCount int64
 }
 
+// DefaultAPIKeyPageSize and MaxAPIKeyPageSize bound the key listing.
+//
+// They match the schedules listing rather than being picked separately: a
+// dashboard renders the same number of rows whichever resource it is paging,
+// and one deployed maximum is easier to reason about than one per endpoint.
+const (
+	DefaultAPIKeyPageSize = 100
+	MaxAPIKeyPageSize     = 500
+)
+
+// APIKeyFilter narrows a key listing.
+type APIKeyFilter struct {
+	Limit int
+	// Cursor continues a previous listing. It is opaque to callers; only
+	// ListAPIKeysPage may construct one.
+	Cursor string
+}
+
+// APIKeyPage is one page of a tenant's keys, newest first, with the cursor for
+// the next.
+type APIKeyPage struct {
+	Keys       []APIKey
+	NextCursor string
+}
+
 // AuthRepository is the persistence seam for identity.
 //
 // It is separate from the tenant-scoped repositories because two of its reads
@@ -121,6 +147,9 @@ type AuthRepository interface {
 	// deployment's environment and therefore cannot be invented by the server.
 	EnsureAPIKey(ctx context.Context, tenant TenantScope, label, token string) (APIKey, error)
 	ListAPIKeys(ctx context.Context, tenant TenantScope) ([]APIKey, error)
+	// ListAPIKeysPage is the bounded listing the API serves. ListAPIKeys stays
+	// for the callers that want every key at once.
+	ListAPIKeysPage(ctx context.Context, tenant TenantScope, filter APIKeyFilter) (APIKeyPage, error)
 	RevokeAPIKey(ctx context.Context, tenant TenantScope, id string) (APIKey, error)
 	// AuthenticateAPIKey resolves a presented token to the key that owns it.
 	// The stored hash never leaves this boundary.
@@ -506,6 +535,88 @@ func (store *GORMAuthStore) ListAPIKeys(ctx context.Context, tenant TenantScope)
 		keys = append(keys, apiKeyFromModel(model))
 	}
 	return keys, nil
+}
+
+// ListAPIKeysPage returns one page of a tenant's keys, newest first.
+//
+// The order is the one ListAPIKeys already uses — created_at then id, both
+// descending — so a dashboard that switches between the two see the same rows
+// in the same sequence. The id is the tiebreaker because two keys minted in the
+// same millisecond are otherwise indistinguishable, and a page boundary landing
+// between them would either repeat a row or skip one.
+func (store *GORMAuthStore) ListAPIKeysPage(ctx context.Context, tenant TenantScope, filter APIKeyFilter) (APIKeyPage, error) {
+	if tenant.ID == "" {
+		return APIKeyPage{}, fmt.Errorf("listing API keys needs a tenant")
+	}
+
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = DefaultAPIKeyPageSize
+	}
+	if limit > MaxAPIKeyPageSize {
+		limit = MaxAPIKeyPageSize
+	}
+
+	query := store.db.WithContext(ctx).Model(&apiKeyModel{}).Where("tenant_id = ?", tenant.ID)
+	if filter.Cursor != "" {
+		createdAt, id, err := decodeAPIKeyCursor(filter.Cursor)
+		if err != nil {
+			return APIKeyPage{}, err
+		}
+		query = query.Where("(created_at < ?) OR (created_at = ? AND id < ?)", createdAt, createdAt, id)
+	}
+
+	// One extra row tells us whether another page exists without a second COUNT
+	// over the same predicate.
+	var models []apiKeyModel
+	if err := query.Order("created_at DESC, id DESC").Limit(limit + 1).Find(&models).Error; err != nil {
+		return APIKeyPage{}, fmt.Errorf("list API keys: %w", err)
+	}
+
+	page := APIKeyPage{Keys: make([]APIKey, 0, limit)}
+	if len(models) > limit {
+		last := models[limit-1]
+		page.NextCursor = encodeAPIKeyCursor(last.CreatedAt, last.ID)
+		models = models[:limit]
+	}
+	for _, model := range models {
+		page.Keys = append(page.Keys, apiKeyFromModel(model))
+	}
+	return page, nil
+}
+
+// encodeAPIKeyCursor pins the last (created_at, id) pair seen, keeping the zone
+// the row was read in.
+//
+// Keys are stamped from NewAuthStore's clock, which is UTC, so the zone is UTC
+// today and normalising it would be a no-op — but only by coincidence. The
+// SQLite driver renders a bound time.Time with that value's own offset, so the
+// moment either end of that pair changes, a cursor converted to UTC binds text
+// the column does not hold, matches nothing, and returns an empty second page
+// rather than an error. Carrying the zone makes the bound value the text the
+// column holds, which is what ORDER BY itself compares; the schedule listing
+// documents the same trap from the other side.
+func encodeAPIKeyCursor(createdAt time.Time, id string) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(createdAt.Format(time.RFC3339Nano) + "\x00" + id))
+}
+
+// decodeAPIKeyCursor inverts encodeAPIKeyCursor. A cursor this store did not
+// issue is ErrInvalidCursor, which the API answers as a 400 rather than paging
+// from a position nobody handed out.
+func decodeAPIKeyCursor(cursor string) (time.Time, string, error) {
+	decoded, err := base64.RawURLEncoding.DecodeString(cursor)
+	if err != nil {
+		return time.Time{}, "", fmt.Errorf("%w: API key cursor is malformed", ErrInvalidCursor)
+	}
+	timestamp, id, found := strings.Cut(string(decoded), "\x00")
+	if !found || id == "" {
+		return time.Time{}, "", fmt.Errorf("%w: API key cursor is malformed", ErrInvalidCursor)
+	}
+	createdAt, err := time.Parse(time.RFC3339Nano, timestamp)
+	if err != nil {
+		return time.Time{}, "", fmt.Errorf("%w: API key cursor is malformed", ErrInvalidCursor)
+	}
+	return createdAt, id, nil
 }
 
 // RevokeAPIKey withdraws a key from its own tenant.

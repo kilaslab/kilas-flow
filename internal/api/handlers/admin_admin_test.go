@@ -145,6 +145,11 @@ func (stub *adminTestStore) ListAPIKeys(context.Context, repository.TenantScope)
 	return nil, errors.New("ListAPIKeys is not part of this test")
 }
 
+func (stub *adminTestStore) ListAPIKeysPage(context.Context, repository.TenantScope, repository.APIKeyFilter) (repository.APIKeyPage, error) {
+	stub.calls++
+	return repository.APIKeyPage{}, errors.New("ListAPIKeysPage is not part of this test")
+}
+
 func (stub *adminTestStore) RevokeAPIKey(context.Context, repository.TenantScope, string) (repository.APIKey, error) {
 	stub.calls++
 	return repository.APIKey{}, errors.New("RevokeAPIKey is not part of this test")
