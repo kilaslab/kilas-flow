@@ -2,6 +2,8 @@ package config
 
 import (
 	"bytes"
+	"encoding/json"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -253,5 +255,69 @@ func TestTheOperatorKeyEnvironmentVariableIsNamedByDefault(t *testing.T) {
 	}
 	if cfg.Auth.OperatorKeyEnv != "MY_OPERATOR_KEY" {
 		t.Errorf("OperatorKeyEnv = %q, want the environment's override", cfg.Auth.OperatorKeyEnv)
+	}
+}
+
+// captureStdout collects what the package writes to the process's own stdout,
+// which is the stream the binary's logger is configured to use.
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	read, write, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe() error = %v", err)
+	}
+	previous := os.Stdout
+	os.Stdout = write
+	defer func() { os.Stdout = previous }()
+
+	fn()
+	if err := write.Close(); err != nil {
+		t.Fatalf("close the captured stdout = %v", err)
+	}
+	captured, err := io.ReadAll(read)
+	if err != nil {
+		t.Fatalf("read the captured stdout = %v", err)
+	}
+	_ = read.Close()
+	return string(captured)
+}
+
+func TestTheUnknownKeyWarningFollowsTheConfiguredLogFormat(t *testing.T) {
+	// The warning fires while the configuration is still being read, so the
+	// configured logger does not exist yet — and it used to go through slog's
+	// default handler: text on stderr. A deployment logging JSON to stdout
+	// therefore never saw the one line saying that a security setting had been
+	// ignored, which is the line the warning exists for.
+	t.Setenv("KILASFLOW_LOG_FORMAT", "json")
+	path := filepath.Join(t.TempDir(), "typo.yaml")
+	if err := os.WriteFile(path, []byte("outbound:\n  allowed_private_endpoint:\n    - 127.0.0.1:11434\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	warnings := captureStdout(t, func() {
+		if _, err := Load(path); err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+	})
+
+	// One JSON record per warning, naming the key and the nearest one that
+	// exists: the same fields the text handler carries, in the format the
+	// deployment asked for.
+	lines := strings.Split(strings.TrimSpace(warnings), "\n")
+	if len(lines) != 1 {
+		t.Fatalf("stdout = %q, want one JSON warning", warnings)
+	}
+	var record map[string]any
+	if err := json.Unmarshal([]byte(lines[0]), &record); err != nil {
+		t.Fatalf("the warning is not JSON: %q (%v)", lines[0], err)
+	}
+	if record["msg"] != "configuration key matches nothing and was ignored" {
+		t.Errorf("msg = %v, want the unknown-key warning", record["msg"])
+	}
+	if record["key"] != "outbound.allowed_private_endpoint" {
+		t.Errorf("key = %v, want the misspelled key", record["key"])
+	}
+	if record["did_you_mean"] != "outbound.allowed_private_endpoints" {
+		t.Errorf("did_you_mean = %v, want the key that exists", record["did_you_mean"])
 	}
 }

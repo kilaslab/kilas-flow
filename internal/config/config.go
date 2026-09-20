@@ -6,6 +6,7 @@ package config
 import (
 	"fmt"
 	"log/slog"
+	"os"
 	"reflect"
 	"strings"
 	"time"
@@ -836,15 +837,36 @@ var listPaths = sliceFieldPaths()
 // claims, and the operator is left believing a security setting is in force.
 func warnUnknownKeys(k *koanf.Koanf, path string, fileRead bool) {
 	known := fieldPaths()
+	logger := warningLogger()
 	for _, key := range k.Keys() {
 		if known[key] {
 			continue
 		}
-		slog.Warn("configuration key matches nothing and was ignored",
+		logger.Warn("configuration key matches nothing and was ignored",
 			"key", key,
 			"source", configSource(path, fileRead),
 			"did_you_mean", nearestKey(key, known))
 	}
+}
+
+// warningLogger is the logger a loader warning goes through.
+//
+// The configuration is still being read here, so the logger it configures does
+// not exist yet and the warning used to go through slog's default handler:
+// text on stderr, which is neither the stream nor the format a deployment
+// collects. A JSON pipeline therefore lost the one line saying that a security
+// setting had been ignored — the line it exists to hold.
+//
+// The format is read from the environment because that is the only signal
+// available before the file has been parsed, exactly as the binary's fatal
+// reporter reads it. Everything else keeps the default logger, so an in-process
+// caller — and every test — still reads these warnings from the logger it
+// installed.
+func warningLogger() *slog.Logger {
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("KILASFLOW_LOG_FORMAT")), "json") {
+		return slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	}
+	return slog.Default()
 }
 
 // configSource names where the merged value came from, for a warning's benefit.
