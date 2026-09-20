@@ -224,3 +224,16 @@ Files: devbox.json, Makefile
   ai-agent-ollama model tests and epic proof 1 run without a local Ollama; (c) `kilasflow healthcheck` as a subcommand
   (the finding half implemented by the compose comment correction and the Dockerfile shipping nodepackgen). Until (a)
   and (b) land, `make e2e-skip-budget` keeps every one of those skips named and counted rather than passing silently.
+- Stale web client (finding 9): still red, and it needs two changes in one commit. `make generate-api-check` fails
+  ("Generated API client is stale"); running `pnpm generate:api` succeeds but `cd web && pnpm check` then reports 15
+  errors — the new pagination param types (ListWorkflowsParams, ListApiKeysParams, ListSchedulesParams,
+  ListDatastoresParams) no longer match the SPA's customQuery call sites in schedules/settings/workflows-list pages.
+  Regenerating alone moves the red from the drift job to the lint job, so the regeneration was reverted and the drift
+  step stays red with this note. Handed to the SPA owners (hub broadcast): regenerate + migrate the call sites, then
+  prove both `pnpm check` and `make generate-api-check` green in one commit. The drift steps now run with `if: always()`
+  so this failure and any other stale artifact appear in the same run.
+- Verified green at this commit: `go test ./internal/api/ -run TestOpenAPI|TestPublicOperations` (4 new security-scheme
+  tests, plus the existing document tests), `make generate-api-reference-check` (14 pages fresh, 72 operations),
+  `cd docs && pnpm build` (43 pages, links valid), `make e2e-skip-budget` behaviour against real Playwright JSON
+  reports, `sh scripts/check-coordinates.sh` both ways, and `make build-all` in a clean clone of 8cc62a7 (no tracked
+  file touched, `-version` reports the commit with no `-dirty`, fresh `go build` serves the placeholder page).
