@@ -711,6 +711,23 @@ func (writer *traceWriter) sink(index int, run NodeRun) {
 	writer.service.publish(rows[0].event)
 }
 
+// start publishes a node the runner is about to execute.
+//
+// The other half of live progress, and the half a reader notices: without it a
+// node lights up only when it finishes, so a graph with one slow step looks
+// frozen for as long as that step takes. The event carries no sequence and no
+// data — nothing about the node is known yet beyond that it is running — which
+// is why the reader keys it by node ID.
+func (writer *traceWriter) start(nodeID string) {
+	if writer == nil || nodeID == "" {
+		return
+	}
+	writer.service.publish(events.Event{
+		TenantID: writer.record.TenantID, ExecutionID: writer.record.ID, WorkflowID: writer.record.WorkflowID,
+		NodeID: nodeID, Type: events.NodeStarted, Status: execution.StatusRunning,
+	})
+}
+
 // wrote reports whether the live writer already persisted the row for one
 // sequence. The suspend path asks before it writes a segment the runner has
 // already handed over, so a suspension neither writes the same row twice nor

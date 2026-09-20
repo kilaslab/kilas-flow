@@ -72,6 +72,11 @@ func TestNodeProgressIsDurableAndPublishedBeforeTheRunEnds(t *testing.T) {
 	if !sawNodeEvent(subscription, "manual") {
 		t.Error("the completed trigger was never published on the live feed: a subscriber sees nothing until the run ends")
 	}
+	// The running node is announced before it finishes, which is what lets the
+	// canvas show a spinner on the step a long run is sitting on.
+	if !sawStartedEvent(subscription, "slow") {
+		t.Error("the running node was never announced as started: every node lights up only once it is already done")
+	}
 
 	blocker.unblock()
 	if err := <-done; err != nil {
@@ -102,15 +107,43 @@ func TestNodeProgressIsDurableAndPublishedBeforeTheRunEnds(t *testing.T) {
 	replay := broker.Subscribe(tenant.ID, queued.ID, 0)
 	t.Cleanup(replay.Close)
 	published := map[string]int{}
+	started := map[string]int{}
 	for _, event := range drainEvents(replay) {
 		if event.NodeID == "" {
 			continue
 		}
-		published[event.NodeID]++
+		switch event.Type {
+		case events.NodeStarted:
+			started[event.NodeID]++
+		case events.NodeCompleted, events.NodeFailed:
+			published[event.NodeID]++
+		}
 	}
 	for _, nodeID := range []string{"manual", "slow"} {
 		if got, want := published[nodeID], 1; got != want {
 			t.Errorf("node %q was published %d times, want %d: the terminal flush announced a row the live writer had already published", nodeID, got, want)
+		}
+		if got, want := started[nodeID], 1; got != want {
+			t.Errorf("node %q was announced started %d times, want %d", nodeID, got, want)
+		}
+	}
+}
+
+// sawStartedEvent waits briefly for a node.started event on a live
+// subscription, which has to arrive while the node is still running.
+func sawStartedEvent(subscription *events.Subscription, nodeID string) bool {
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case event, open := <-subscription.Events():
+			if !open {
+				return false
+			}
+			if event.NodeID == nodeID && event.Type == events.NodeStarted {
+				return true
+			}
+		case <-deadline:
+			return false
 		}
 	}
 }

@@ -425,6 +425,7 @@ func (service *Service) newRequest(record execution.Record, document workflow.Do
 	// once the call returns.
 	if trace != nil {
 		request.NodeRunSink = trace.sink
+		request.NodeStartSink = trace.start
 	}
 	return request
 }
