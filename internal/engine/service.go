@@ -307,6 +307,12 @@ func (service *Service) runOnce(ctx context.Context, workerID string) (bool, err
 	if err != nil {
 		return true, err
 	}
+	// Resolved once, before the graph runs: the live writer and the terminal
+	// flush both need each node's type to project its output for the trace.
+	nodeTypes := make(map[string]string, len(document.Nodes))
+	for _, node := range document.Nodes {
+		nodeTypes[node.ID] = node.Type
+	}
 	service.publish(events.Event{
 		TenantID: record.TenantID, ExecutionID: record.ID, WorkflowID: record.WorkflowID,
 		Type: events.ExecutionStarted, Status: execution.StatusRunning,
@@ -331,12 +337,18 @@ func (service *Service) runOnce(ctx context.Context, workerID string) (bool, err
 	stopPoll := make(chan struct{})
 	defer close(stopPoll)
 	go service.pollCancellation(runCtx, cancel, tenant, record.ID, stopPoll)
+	// Live progress: every node row the runner appends is persisted and
+	// published as it happens, so a run that takes minutes is readable while it
+	// runs instead of appearing all at once when it ends. The writer is best
+	// effort by design — the terminal flush below writes the same rows from the
+	// result in memory — so a failure here costs a live update, never a trace.
+	trace := service.newTraceWriter(runCtx, tenant, record, nodeTypes, seqBase)
 	var result Result
 	var runErr error
 	if resumeState != nil {
-		result, runErr = service.resumeRun(runCtx, record, document, []string{record.WorkflowID}, *resumeState, resume)
+		result, runErr = service.resumeRun(runCtx, record, document, []string{record.WorkflowID}, *resumeState, resume, trace)
 	} else {
-		result, runErr = service.run(runCtx, record, document, resume)
+		result, runErr = service.run(runCtx, record, document, resume, trace)
 	}
 	service.activeMu.Lock()
 	delete(service.active, record.ID)
@@ -353,7 +365,7 @@ func (service *Service) runOnce(ctx context.Context, workerID string) (bool, err
 	// persists, the wait row holds the checkpoint, and the worker is free.
 	var suspended *SuspendError
 	if runErr != nil && errors.As(runErr, &suspended) {
-		parked, err := service.suspend(persistCtx, tenant, record, document, result, suspended, seqBase, resume)
+		parked, err := service.suspend(persistCtx, tenant, record, document, result, suspended, seqBase, resume, trace)
 		if err != nil {
 			// An invalid suspension (no mode, no deadline, no checkpoint)
 			// fails the run like any other error rather than parking an
@@ -367,10 +379,6 @@ func (service *Service) runOnce(ctx context.Context, workerID string) (bool, err
 			return true, nil
 		}
 	}
-	nodeTypes := make(map[string]string, len(document.Nodes))
-	for _, node := range document.Nodes {
-		nodeTypes[node.ID] = node.Type
-	}
 	rows, err := service.traceRows(record, nodeTypes, seqBase, result.NodeRuns)
 	if err != nil {
 		return service.failPersist(persistCtx, tenant, record, err)
@@ -381,16 +389,23 @@ func (service *Service) runOnce(ctx context.Context, workerID string) (bool, err
 	// Idempotent by row identity too, so a run whose trace was partly written
 	// before a crash cannot collide with itself here (BUG-hfhzq6).
 	runs := make([]execution.NodeRun, 0, len(rows))
+	announce := make(map[int]events.Event, len(rows))
 	for _, row := range rows {
 		runs = append(runs, row.run)
+		announce[row.run.Sequence] = row.event
 	}
-	if _, err := service.executions.CreateNodeRuns(persistCtx, tenant, runs); err != nil {
+	created, err := service.executions.CreateNodeRuns(persistCtx, tenant, runs)
+	if err != nil {
 		return service.failPersist(persistCtx, tenant, record, fmt.Errorf("persist execution trace: %w", err))
 	}
-	// Published only after the whole trace is durable, so a subscriber can
-	// never observe a state the record does not already carry.
-	for _, row := range rows {
-		service.publish(row.event)
+	// Only the rows this write added are announced: a row the live writer
+	// already persisted — and already published — comes back as a duplicate and
+	// stays silent, so one node is never published twice. Keyed by sequence,
+	// because a repaired run index is not the index the row arrived with.
+	for _, row := range created {
+		if event, known := announce[row.Sequence]; known {
+			service.publish(event)
+		}
 	}
 	finishedAt := time.Now().UTC()
 	if runErr != nil {
@@ -629,6 +644,72 @@ func (service *Service) traceRows(record execution.Record, nodeTypes map[string]
 	return rows, nil
 }
 
+// traceWriter persists a run's node rows while the graph is still running.
+//
+// The runner appends a row per completed node and hands each one over through
+// Request.NodeRunSink as it happens; without a writer those rows reach storage
+// only in the terminal flush, so a run that takes minutes shows nothing at all
+// until it ends and a failure at the end shows nothing even then. The writer
+// writes the row and publishes its event immediately, which is what makes the
+// canvas and the execution page follow a long run.
+//
+// Best effort, deliberately: the terminal flush writes the same rows again from
+// the result in memory, and that write is idempotent by row identity, so a row
+// the writer managed to persist comes back as a duplicate and is not written or
+// published twice, while a row it could not persist (a cancelled run context, a
+// transient database error) is simply written once by the flush. A failure here
+// therefore costs a live update, never the trace.
+type traceWriter struct {
+	service   *Service
+	ctx       context.Context
+	tenant    repository.TenantScope
+	record    execution.Record
+	nodeTypes map[string]string
+	seqBase   int
+	mu        sync.Mutex
+	written   map[int]bool
+}
+
+func (service *Service) newTraceWriter(ctx context.Context, tenant repository.TenantScope, record execution.Record, nodeTypes map[string]string, seqBase int) *traceWriter {
+	return &traceWriter{
+		service: service, ctx: ctx, tenant: tenant, record: record,
+		nodeTypes: nodeTypes, seqBase: seqBase, written: make(map[int]bool),
+	}
+}
+
+// sink persists and publishes one row the runner has just appended.
+func (writer *traceWriter) sink(index int, run NodeRun) {
+	if writer == nil {
+		return
+	}
+	rows, err := writer.service.traceRows(writer.record, writer.nodeTypes, writer.seqBase+index, []NodeRun{run})
+	if err != nil {
+		writer.service.log.Debug("live progress row could not be rendered", "execution", writer.record.ID, "node", run.NodeID, "error", err)
+		return
+	}
+	if _, err := writer.service.executions.CreateNodeRun(writer.ctx, writer.tenant, rows[0].run); err != nil {
+		writer.service.log.Debug("live progress row could not be persisted", "execution", writer.record.ID, "node", run.NodeID, "error", err)
+		return
+	}
+	writer.mu.Lock()
+	writer.written[rows[0].run.Sequence] = true
+	writer.mu.Unlock()
+	writer.service.publish(rows[0].event)
+}
+
+// wrote reports whether the live writer already persisted the row for one
+// sequence. The suspend path asks before it writes a segment the runner has
+// already handed over, so a suspension neither writes the same row twice nor
+// publishes an event a subscriber has seen.
+func (writer *traceWriter) wrote(sequence int) bool {
+	if writer == nil {
+		return false
+	}
+	writer.mu.Lock()
+	defer writer.mu.Unlock()
+	return writer.written[sequence]
+}
+
 // failPersist settles an execution whose trace could not be written.
 //
 // Leaving it running is what made a broken trace expensive instead of visible:
@@ -813,15 +894,15 @@ func (service *Service) Wake() {
 	}
 }
 
-func (service *Service) run(ctx context.Context, record execution.Record, document workflow.Document, resume resumeURLs) (Result, error) {
-	return service.runWithStack(ctx, record, document, []string{record.WorkflowID}, resume)
+func (service *Service) run(ctx context.Context, record execution.Record, document workflow.Document, resume resumeURLs, trace *traceWriter) (Result, error) {
+	return service.runWithStack(ctx, record, document, []string{record.WorkflowID}, resume, trace)
 }
 
 // runWithStack is run with the call chain that reached this execution.
 //
 // A top-level run's stack is just itself; a sub-workflow's carries every
 // workflow above it, which is what lets the next call refuse a cycle by name.
-func (service *Service) runWithStack(ctx context.Context, record execution.Record, document workflow.Document, stack []string, resume resumeURLs) (Result, error) {
+func (service *Service) runWithStack(ctx context.Context, record execution.Record, document workflow.Document, stack []string, resume resumeURLs, trace *traceWriter) (Result, error) {
 	ir, err := workflow.Compile(document, service.catalog)
 	if err != nil {
 		return Result{}, err
@@ -830,7 +911,7 @@ func (service *Service) runWithStack(ctx context.Context, record execution.Recor
 	if err != nil {
 		return Result{}, err
 	}
-	request := service.newRequest(record, document, stack, resume)
+	request := service.newRequest(record, document, stack, resume, trace)
 	request.Input = item
 	request.TriggerNodeID = record.TriggerNodeID
 	// Left nil when this server has no binary storage, so a node can ask
@@ -1034,7 +1115,11 @@ func (service *Service) InvokeWorkflow(ctx context.Context, parent ExecutionCont
 		Type: events.ExecutionStarted, Status: execution.StatusRunning,
 	})
 
-	result, runErr := service.runWithStack(ctx, record, document, append(append([]string(nil), parent.Stack...), target), resumeURLs{})
+	// No live-progress writer for a child: its trace is written by persistChild
+	// with its own sequencing once the call returns, so there is no window to
+	// fill, and publishing a child's nodes onto the parent's live feed from
+	// here would attribute them to the wrong execution.
+	result, runErr := service.runWithStack(ctx, record, document, append(append([]string(nil), parent.Stack...), target), resumeURLs{}, nil)
 	var suspended *SuspendError
 	if runErr != nil && errors.As(runErr, &suspended) {
 		runErr = refuseSuspendInChild(target, suspended)

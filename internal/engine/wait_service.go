@@ -342,7 +342,7 @@ func (service *Service) loadResumeState(ctx context.Context, tenant repository.T
 // suspending node completes with the stored resume output, then the same pass
 // Run would have taken. Nodes completed before suspension never execute
 // again — their outputs arrive in the checkpoint, not from a second run.
-func (service *Service) resumeRun(ctx context.Context, record execution.Record, document workflow.Document, stack []string, wait repository.Wait, resume resumeURLs) (Result, error) {
+func (service *Service) resumeRun(ctx context.Context, record execution.Record, document workflow.Document, stack []string, wait repository.Wait, resume resumeURLs, trace *traceWriter) (Result, error) {
 	ir, err := workflow.Compile(document, service.catalog)
 	if err != nil {
 		return Result{}, err
@@ -355,7 +355,7 @@ func (service *Service) resumeRun(ctx context.Context, record execution.Record, 
 	if err != nil {
 		return Result{}, err
 	}
-	request := service.newRequest(record, document, stack, resume)
+	request := service.newRequest(record, document, stack, resume, trace)
 	// The resumed run starts from the same trigger with the same input: the
 	// checkpoint carries the graph state, the record carries the entry.
 	item, err := inputItem(record.Input)
@@ -401,8 +401,8 @@ func adaptStoredResumeOutput(ir workflow.IR, nodeID string, raw json.RawMessage)
 
 // newRequest builds the runner request runWithStack and resumeRun share,
 // including the execution links a workflow may compose before suspending.
-func (service *Service) newRequest(record execution.Record, document workflow.Document, stack []string, resume resumeURLs) Request {
-	return Request{
+func (service *Service) newRequest(record execution.Record, document workflow.Document, stack []string, resume resumeURLs, trace *traceWriter) Request {
+	request := Request{
 		Execution: ExecutionContext{
 			ID: record.ID, Mode: string(record.Trigger),
 			TenantID: record.TenantID, WorkflowID: record.WorkflowID,
@@ -420,6 +420,13 @@ func (service *Service) newRequest(record execution.Record, document workflow.Do
 			})
 		},
 	}
+	// Live progress for a top-level run. A nil writer (a sub-workflow call)
+	// leaves the sink off, because a child's trace is written by persistChild
+	// once the call returns.
+	if trace != nil {
+		request.NodeRunSink = trace.sink
+	}
+	return request
 }
 
 // workflowTimezoneSetting names the document setting holding a workflow's own
@@ -502,7 +509,7 @@ func validateSuspend(suspended *SuspendError, now time.Time) (time.Time, error) 
 // trigger request until a terminal state; waiting is not terminal
 // (webhook.terminal), so those answer 504 at ResponseTimeout while the
 // execution waits durably.
-func (service *Service) suspend(ctx context.Context, tenant repository.TenantScope, record execution.Record, document workflow.Document, result Result, suspended *SuspendError, seqBase int, resume resumeURLs) (bool, error) {
+func (service *Service) suspend(ctx context.Context, tenant repository.TenantScope, record execution.Record, document workflow.Document, result Result, suspended *SuspendError, seqBase int, resume resumeURLs, trace *traceWriter) (bool, error) {
 	now := time.Now().UTC()
 	expiresAt, err := validateSuspend(suspended, now)
 	if err != nil {
@@ -520,6 +527,12 @@ func (service *Service) suspend(ctx context.Context, tenant repository.TenantSco
 		nodeTypes[node.ID] = node.Type
 	}
 	for index, run := range result.NodeRuns {
+		// Already handed over by the runner and written by the live writer: the
+		// row is in the table and its event has been published, so writing it
+		// here would publish it a second time.
+		if trace.wrote(seqBase + index + 1) {
+			continue
+		}
 		if err := service.persistTraceRow(ctx, tenant, record, nodeTypes, run, seqBase+index+1); err != nil {
 			return true, err
 		}
