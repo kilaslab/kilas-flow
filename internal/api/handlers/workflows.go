@@ -743,6 +743,18 @@ func (handler *Workflows) problem(ctx context.Context, err error) error {
 	if errors.Is(err, repository.ErrNotFound) {
 		return huma.Error404NotFound("workflow not found")
 	}
+	// A webhook path another workflow already claimed is a conflict, not a
+	// server fault: the operator can see which endpoint is taken and change
+	// one of the two paths. Answering 500 sent them to the logs for a mistake
+	// they could have fixed from the response.
+	var conflict *repository.WebhookConflictError
+	if errors.As(err, &conflict) {
+		detail := "another workflow already serves this webhook path: change the path on one of them"
+		if conflict.WorkflowID != "" {
+			detail = "workflow " + conflict.WorkflowID + " already serves this webhook path: change the path on one of them"
+		}
+		return &huma.ErrorModel{Status: http.StatusConflict, Title: "Conflict", Detail: detail}
+	}
 	var validation *workflow.ValidationErrors
 	if errors.As(err, &validation) {
 		return compileProblem(validation)
