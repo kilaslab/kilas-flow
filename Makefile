@@ -5,6 +5,9 @@ SDK_DIR     := sdk
 DOCS_DIR    := docs
 DIST_DIR    := internal/web/dist
 BIN_DIR     := bin
+# The registry spec `make sdk-verify-published` checks. Empty means
+# @kilasflow/sdk@<the version in sdk/package.json>.
+SDK_SPEC    ?=
 VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "0.1.0-dev")
 # Read from the environment for the reason IMAGE_ARGS is: a git ref name may
 # contain a double quote, so `-ldflags="… -X main.version=$(VERSION)"` lets a
@@ -183,6 +186,46 @@ sdk-build: ## Build the host SDK into sdk/dist
 .PHONY: sdk-version-check
 sdk-version-check: ## Fail if the SDK manifest disagrees with its version source
 	node -e 'const fs=require("node:fs");const m=JSON.parse(fs.readFileSync("sdk/package.json","utf8"));const src=fs.readFileSync("sdk/src/version.ts","utf8");const v=(src.match(/export const SDK_VERSION\s*=\s*["\x27]([^"\x27]+)/)||[])[1];let ok=true;if(m.version!==v){console.error("sdk/package.json version ("+m.version+") != SDK_VERSION ("+v+"); bump both together");ok=false}if(m.license!=="Apache-2.0"){console.error("sdk/package.json license ("+m.license+") must be Apache-2.0 to match the repository LICENSE");ok=false}process.exit(ok?0:1)'
+
+# The package as a consumer receives it: pack the tarball, install it into a
+# scratch project outside the repository, typecheck it under `bundler`, `node16`
+# and `nodenext`, and import all three subpaths at runtime. `sdk-check` cannot
+# see this failure: it resolves with `bundler`, so a relative re-export that
+# dropped its `.js` extension stays green there and fails every `node16`
+# consumer with TS2835 — see the two traps in the ticket.
+.PHONY: sdk-package-check
+sdk-package-check: ## Pack the SDK and check the tarball as a consumer receives it
+	cd $(SDK_DIR) && node scripts/check-package.mjs
+
+# The example, run the way its README tells a consumer to run it: pack the SDK,
+# copy examples/host-page into a scratch directory outside the repository,
+# install the tarball there, start a stub KilasFlow and the example's own
+# backend, and drive it over HTTP. The static route is probed with raw `..%2f`
+# requests, which is the only way to see the traversal fetch would normalise.
+.PHONY: sdk-example-check
+sdk-example-check: ## Run the host-page example against the packed SDK
+	cd $(SDK_DIR) && node scripts/check-example.mjs
+
+# The registry half of the same check, for after a release. Expected to fail
+# with npm E404 until the first release is published, which is why Criterion 1
+# is not ticked; SDK_SPEC=@kilasflow/sdk@0.2.0 checks another version.
+.PHONY: sdk-verify-published
+sdk-verify-published: export KILASFLOW_SDK_SPEC = $(SDK_SPEC)
+sdk-verify-published: ## Install @kilasflow/sdk from npm and check it (needs a published release)
+	cd $(SDK_DIR) && node scripts/check-package.mjs --registry "$$KILASFLOW_SDK_SPEC"
+
+# One list, run by a laptop and by the release workflow, so the two cannot
+# diverge. Serial on purpose: `sdk-build` removes `dist` before compiling, so a
+# `-j` run that started the pack first would package a half-written tree.
+.PHONY: sdk-release-check
+sdk-release-check: ## Run every gate a release must pass (see sdk/RELEASING.md)
+	$(MAKE) sdk-check
+	$(MAKE) sdk-test
+	$(MAKE) sdk-build
+	$(MAKE) sdk-version-check
+	$(MAKE) generate-types-check
+	$(MAKE) sdk-package-check
+	$(MAKE) sdk-example-check
 
 # The documentation site. Like the SDK targets above, these assume `pnpm install`
 # has already been run in the directory — `make setup` deliberately installs only
@@ -419,6 +462,7 @@ bench-compare: build ## Run the KilasFlow-vs-n8n runtime benchmark (30 runs/work
 .PHONY: clean
 clean: ## Remove build artifacts
 	rm -rf $(BIN_DIR) .tmp coverage.out
+	rm -rf $(SDK_DIR)/dist $(SDK_DIR)/.tmp
 	rm -rf $(WEB_DIR)/build $(WEB_DIR)/.svelte-kit
 	rm -rf $(DOCS_DIR)/dist $(DOCS_DIR)/.astro
 	# The embed directive needs at least one file under DIST_DIR, so the

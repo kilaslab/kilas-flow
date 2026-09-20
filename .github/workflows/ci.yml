@@ -5,7 +5,7 @@ name: CI
 #   lint            go vet, gofmt, svelte-check, and the web vitest suite
 #   test            go test ./... -race, against real PostgreSQL, MySQL and MariaDB
 #   drift           the committed API client, SDK types, docs reference, and config reference still match the binary
-#   sdk             the host SDK typechecks, tests and compiles
+#   sdk             the host SDK typechecks, tests, compiles, and packs into a tarball a consumer can install
 #   smoke           the binary, the Vite proxy and the distroless image all serve
 #   smoke-postgres  the image against a Compose PostgreSQL (not on pull requests)
 #   e2e             Playwright against a real binary and SPA, one isolated instance per test
@@ -238,15 +238,23 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # Go is needed here after all: operation-coverage.test.mjs reaches
+      # `go build ./cmd/kilasflow` through scripts/dump-openapi.mjs, which only
+      # appeared to pass before because the runner ships a Go toolchain. Pin the
+      # same action the other jobs use so the version comes from go.mod.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
       - uses: ./.github/actions/js-toolchain
 
       - name: Install SDK dependencies
         working-directory: sdk
         run: pnpm install --frozen-lockfile
 
-      # No Go here: these three targets never touch the binary. The SDK check
-      # that does — generate-types-check — lives in the drift job with the Go
-      # toolchain it needs.
+      # `generate-types-check` needs a binary built from this tree too, and it
+      # still lives in the drift job, with the Go toolchain that job already
+      # has.
       - run: make sdk-check
       - run: make sdk-test
       - run: make sdk-build
@@ -254,6 +262,15 @@ jobs:
       # licence: pure file reads, no Go and no binary, so it lives here rather
       # than in the drift job.
       - run: make sdk-version-check
+      # Packs the tarball and checks it the way a consumer receives it:
+      # install into a scratch project, typecheck under bundler, node16 and
+      # nodenext, import all three subpaths. `sdk-check` cannot see a missing
+      # `.js` extension in a relative re-export; this is the gate that can.
+      - run: make sdk-package-check
+      # Runs examples/host-page the way a consumer does: the packed SDK
+      # installed into a copy outside the repository, against a stub
+      # KilasFlow, with raw `..%2f` probes at the example's static route.
+      - run: make sdk-example-check
 
   smoke:
     name: Smoke

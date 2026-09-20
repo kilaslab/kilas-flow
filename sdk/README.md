@@ -43,14 +43,14 @@ const session = await kilasflow.createEmbedSession({
 
 ## Operation surface
 
-One thin, typed method per API operation — all 73 under `/api/v1`, grouped
-here the way the [API contract](../docs/src/content/docs/reference/api-contract.md)
+One thin, typed method per API operation — all 74 under `/api/v1`, grouped
+here the way the [API contract](https://github.com/kilaslab/kilas-flow/blob/main/docs/src/content/docs/reference/api-contract.md)
 groups them. Every method takes an `AbortSignal` last, resolves `Promise<void>`
 for 204 responses, and surfaces failures as `KilasFlowError` (RFC 9457).
 
 | Group | Methods |
 | --- | --- |
-| Workflows | `listWorkflows`, `getWorkflow`, `createWorkflow`, `updateWorkflow`, `deleteWorkflow`, `runWorkflow`, `activateWorkflow`, `deactivateWorkflow`, `listWorkflowVersions`, `getWorkflowVersion`, `publishWorkflowVersion`, `restoreWorkflowVersion`, `listWorkflowPublishEvents`, `getWorkflowDiagnostics` |
+| Workflows | `listWorkflows`, `getWorkflow`, `listWorkflowWebhooks`, `createWorkflow`, `updateWorkflow`, `deleteWorkflow`, `runWorkflow`, `activateWorkflow`, `deactivateWorkflow`, `listWorkflowVersions`, `getWorkflowVersion`, `publishWorkflowVersion`, `restoreWorkflowVersion`, `listWorkflowPublishEvents`, `getWorkflowDiagnostics` |
 | Executions | `listExecutions`, `getExecution`, `cancelExecution`, `executionEventsUrl`, `iterateExecutions` |
 | Credentials | `listCredentialTypes`, `listCredentials`, `createCredential`, `getCredential`, `updateCredential`, `deleteCredential`, `testCredential`, `testCredentialPayload` |
 | Auth and keys | `login`, `logout`, `getMe`, `listApiKeys`, `createApiKey`, `revokeApiKey`, `createStreamTicket` |
@@ -261,25 +261,47 @@ async function fetchTicket(executionId: string): Promise<string> {
 
 ## Install
 
-The package is not on npm yet — `npm view @kilasflow/sdk` answers 404 — so there
-is nothing published to install. Build it from the checkout and depend on the
-directory until the first `sdk-vX.Y.Z` tag is cut:
-
-```sh
-cd sdk && pnpm install && pnpm build     # writes sdk/dist
-pnpm add file:/absolute/path/to/kilas-flow/sdk   # in the host application
-```
-
-Once it is on npm, the install is the one line below, and the version pin
-matters:
-
 ```sh
 npm install @kilasflow/sdk
 ```
 
 Pin the exact version in production. Releases are cut from `sdk-vX.Y.Z` tags
-with npm provenance attested, and every entry in [CHANGELOG.md](./CHANGELOG.md)
-states whether it is additive, a fix, or breaking.
+with npm provenance attested (`npm audit signatures` verifies it), and every
+entry in [CHANGELOG.md](./CHANGELOG.md) states whether it is additive, a fix,
+or breaking.
+
+### Requirements
+
+ESM only — there is no CommonJS build — and three subpaths: `.`, `./server`
+and `./browser`. The package is type-checked in CI under TypeScript 5.9 with
+`moduleResolution` `bundler`, `node16` and `nodenext`; the `node10` setting
+cannot see the subpaths' `exports` entries. At runtime it needs a global
+`fetch`: Node 18 or later, or a current browser (CI runs Node 24).
+
+What the type checker needs depends on the entry point:
+
+- `@kilasflow/sdk/server` on its own references `Headers` and `RequestInit` in
+  `generated/models.d.ts`, so it needs fetch types — either `lib DOM` or
+  `@types/node`. Without either, `tsc` reports TS2304 on those two; with
+  `@types/node` it is clean.
+- The root entry and `@kilasflow/sdk/browser` additionally reference
+  `HTMLElement`, `HTMLIFrameElement` and `Event` in `browser.d.ts`, so they
+  need `lib DOM` even when `@types/node` is present — a root import with
+  `@types/node` still fails with two TS2304.
+
+A Node-only project should import from `@kilasflow/sdk/server`, not the root.
+`skipLibCheck: true` silences all of the above; `make sdk-package-check` runs
+that variant as well.
+
+### Unreleased changes
+
+`main` may be ahead of the latest release. To use what `main` has, build the
+package from a checkout and install the tarball it produces:
+
+```sh
+cd sdk && pnpm install && npm pack --pack-destination <dir>
+npm install <dir>/kilasflow-sdk-X.Y.Z.tgz
+```
 
 ## Versioning
 
@@ -310,4 +332,6 @@ package.
 ## Example
 
 `examples/host-page` is a complete, runnable integration: backend mints a
-session, page mounts the editor, page receives execution events.
+session, page mounts the editor, page receives execution events. Its README
+runs it against a pulled container image and the published package, with no
+checkout of this repository.

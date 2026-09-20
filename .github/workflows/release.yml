@@ -1,14 +1,22 @@
 name: Release
 
-# Publishing the container image for a version tag.
+# Publishing, for the two namespaces of version tag.
 #
 # Push a tag and this runs; nothing else publishes anything, and pushing a tag is
-# the only way to publish. The tag is the input: `make docker-release` is handed
-# `VERSION=<the tag>`, scripts/docker-tags.sh turns it into the three published
-# tags, and the Dockerfile stamps it into main.version — which is also what the
-# `-version` flag prints and what the OpenAPI document reports as info.version.
+# the only way to publish. This file publishes two artefacts:
 #
-# The tag vocabulary, and which one to pin, is documented at the top of
+#   v*      the container image, via scripts/docker-tags.sh and `make docker-release`
+#   sdk-v*  the @kilasflow/sdk package, via the sdk job below
+#
+# The tag is the input: `make docker-release` is handed `VERSION=<the tag>`,
+# scripts/docker-tags.sh turns it into the three published tags, and the
+# Dockerfile stamps it into main.version — which is also what the `-version` flag
+# prints and what the OpenAPI document reports as info.version.
+#
+# The SDK release procedure, including the one-time owner setup and the steps
+# that flip the "not published yet" claims afterwards, is sdk/RELEASING.md.
+#
+# The image tag vocabulary, and which one to pin, is documented at the top of
 # scripts/docker-tags.sh. Short version: pin the exact `vX.Y.Z` tag in production,
 # because the other two move underneath you.
 #
@@ -21,8 +29,8 @@ on:
   push:
     # `v*` releases the container image; `sdk-v*` releases the host SDK. The
     # namespaces are disjoint — `v*` cannot match `sdk-v0.1.0` — so each tag
-    # publishes exactly one artifact, and each job below runs only on its own
-    # namespace. Pushing a tag is the only way to publish anything.
+    # releases exactly one artifact, and the jobs below gate on their own
+    # namespace (`v*` for the image, `sdk-v*` for the SDK).
     tags: ["v*", "sdk-v*"]
 
 # Wider than ci.yml's read-only default, per job rather than at the top, exactly
@@ -33,6 +41,13 @@ permissions:
 jobs:
   image:
     name: Publish image
+    # Only a v* tag publishes the image. Without this, an sdk-v* tag — the SDK
+    # release trigger — started this job too: its scripts/docker-tags.sh rejects
+    # the tag, but that failure sits inside a `$(...)` argument in the
+    # docker-release recipe, so the only thing that stopped the push was buildx
+    # refusing an untagged image. A job holding packages:write and id-token:write
+    # must not run on a tag that is not its own.
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
 
     permissions:
@@ -111,48 +126,77 @@ jobs:
       id-token: write
 
     steps:
+      # No credentials left behind: the publish below authenticates with the
+      # OIDC token and (only until the trusted publisher exists) a step-scoped
+      # secret, never with what checkout leaves in .git/config.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
+      # The SDK tests and `generate-types-check` build ./cmd/kilasflow through
+      # scripts/dump-openapi.mjs, so a Go binary must be present rather than
+      # assumed from the runner's image. Pinned as in ci.yml.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      # `cache: ''` disables the pnpm store cache for a release build: using a
+      # cache written by CI is the one input here that is not the tagged tree,
+      # and a release does not need the speed. ci.yml keeps the default.
       - uses: ./.github/actions/js-toolchain
+        with:
+          cache: ''
 
       - name: Install SDK dependencies
         working-directory: sdk
         run: pnpm install --frozen-lockfile
 
-      # The same gates a laptop runs, in the same order: typecheck, tests
-      # (including the manifest-versus-source agreement), compile. The drift
-      # gate that needs a Go binary already ran in CI on the way to this tag.
+      # Trusted publishing is npm 11.5.1 or later; fail before the build rather
+      # than after it, when the failure would be an unexplained OIDC error.
+      - run: node sdk/scripts/release.mjs npm-version
+
+      # Everything that can be checked without a registry, in one step: the tag
+      # parses, the tag, the manifest and src/version.ts agree, the changelog
+      # entry is labelled, the manifest coordinates are right and sdk/LICENSE
+      # matches the repository's. Its stdout is written to $GITHUB_OUTPUT, so
+      # `dist_tag` below comes from the same place the version was checked. The
+      # tag reaches it through env, never interpolated into the run line: a git
+      # tag may legally contain shell metacharacters.
+      - name: Release facts
+        id: release
+        env:
+          SDK_TAG: ${{ github.ref_name }}
+        run: node sdk/scripts/release.mjs facts "$SDK_TAG" >> "$GITHUB_OUTPUT"
+
+      # The same gates a laptop runs, in the same order, one step per target of
+      # `make sdk-release-check` — release-workflow.test.mjs asserts this list
+      # equals that recipe, so the pipeline and the laptop command cannot drift.
       - run: make sdk-check
       - run: make sdk-test
       - run: make sdk-build
       - run: make sdk-version-check
+      - run: make generate-types-check
+      - run: make sdk-package-check
+      - run: make sdk-example-check
 
-      # The tag is the input, and the package must be it: sdk-v0.1.0
-      # publishes @kilasflow/sdk 0.1.0 and nothing else. Passing the tag
-      # through env rather than interpolating it keeps a tag's legal shell
-      # metacharacters out of the run line, as in the image job above.
-      - name: Tag agrees with the manifest
-        env:
-          SDK_TAG: ${{ github.ref_name }}
-        run: |
-          want="${SDK_TAG#sdk-v}"
-          have="$(node -p "require('./sdk/package.json').version")"
-          if [ "$want" != "$have" ]; then
-            echo "tag $SDK_TAG does not match sdk/package.json version $have; bump both together" >&2
-            exit 1
-          fi
-
-      # No registry login here on purpose: npm already points at the public
-      # registry, and authentication is the OIDC token above, exchanged by
-      # npm for a short-lived grant (trusted publishing), so there is no
-      # long-lived NPM_TOKEN to rotate or leak.
-
-      # Proved before it runs by `npm publish --dry-run` in the proof below:
-      # the packed file list is asserted without touching the registry.
-      - name: Prove the packed file list
-        working-directory: sdk
-        run: npm publish --dry-run --access public
-
+      # With the trusted publisher configured, the OIDC token above is the only
+      # credential, exchanged by npm for a short-lived grant, and the NPM_TOKEN
+      # branch below is dead. It exists only because a trusted publisher cannot
+      # be configured before the package exists (`npm help trust`: "Package must
+      # exist"), so the first release needs a bootstrap credential. See
+      # sdk/RELEASING.md, "One-time owner setup".
+      #
+      # BOOTSTRAP ONLY — delete this step's `env:` and the shell `if` below once
+      # the trusted publisher is configured and the NPM_TOKEN secret is removed.
       - name: Publish @kilasflow/sdk
         working-directory: sdk
-        run: npm publish --provenance --access public
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          DIST_TAG: ${{ steps.release.outputs.dist_tag }}
+        run: |
+          if [ -n "$NPM_TOKEN" ]; then
+            umask 077
+            printf '//registry.npmjs.org/:_authToken=%s\n' "$NPM_TOKEN" > "$RUNNER_TEMP/npmrc"
+            export NPM_CONFIG_USERCONFIG="$RUNNER_TEMP/npmrc"
+          fi
+          npm publish --provenance --access public --tag "$DIST_TAG"

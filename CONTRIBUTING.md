@@ -63,6 +63,9 @@ checks only matter if your change reaches the API surface or the configuration.
 | `make generate-types-check` | the committed SDK types match the served OpenAPI document |
 | `make generate-api-reference-check` | the committed API reference pages match the served document |
 | `make generate-config-reference-check` | the configuration reference and `config.example.yaml` match the `Config` structs |
+| `make sdk-package-check` | the packed SDK installs into a scratch project and typechecks under `bundler`, `node16` and `nodenext` |
+| `make sdk-example-check` | `examples/host-page` runs against the packed SDK: installed into a scratch copy outside the repository, booted against a stub KilasFlow, with raw `..%2f` probes at its static route |
+| `make sdk-release-check` | every gate a release has to pass, in one command (`sdk-check`, `sdk-test`, `sdk-build`, `sdk-version-check`, `generate-types-check`, `sdk-package-check`, `sdk-example-check`) |
 | `make test-e2e` | the Playwright suite, against a real binary and SPA |
 
 The `generate-*-check` targets exist because a hand-maintained copy drifts, and

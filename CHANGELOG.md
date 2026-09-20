@@ -36,6 +36,9 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
   type outside a tenant's set is invisible in `GET /node-types` and its
   siblings, and compiling or running a document that references it fails with
   the new diagnostic `node.not_available`, distinct from `node.unknown_type`.
+- The `@kilasflow/sdk` tarball now ships its `LICENSE` and `CHANGELOG.md`,
+  `make sdk-release-check` proves the package the way a consumer installs it,
+  and the `sdk-vX.Y.Z` release runbook lives in `sdk/RELEASING.md`.
 
 ### Changed
 
@@ -73,3 +76,12 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
   label could run another tenant's workflow. Such rows are backfilled with a
   route by the `webhook_route_backfill` migration, and a label is never a lookup
   key, including for a CORS preflight and for a hosted form page.
+- The `examples/host-page` example served files outside its SDK directory: a
+  `..%2f` request to its static route was joined onto the server's directory and
+  answered, reaching `server.mjs` and — on Linux — `/proc/self/environ`, which
+  holds the host's API key. The route now resolves each request against the
+  installed SDK's `dist/` and answers 404 for anything outside it. A missing
+  `index.html` crashed the same way one branch above it — the page route wrote
+  its 200 before reading the file, so the failed read threw out of an async
+  handler that had nothing left to answer with — and is a 500 that leaves the
+  example serving now.

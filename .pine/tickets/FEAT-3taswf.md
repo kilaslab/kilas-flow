@@ -32,12 +32,12 @@ The example is worth fixing at the same time, because it is the first thing an e
 ## Acceptance criteria
 
 - [ ] `npm install @kilasflow/sdk` in an empty project resolves, and importing all three subpaths type-checks under `moduleResolution: bundler` and under `node16`.
-- [ ] The published tarball contains `dist` and `README.md` and nothing else — no source, no tests, no `.tmp`, no generated intermediate.
-- [ ] `package.json` and `src/version.ts` cannot disagree: a check fails the build when `SDK_VERSION` and the manifest version differ.
-- [ ] The manifest declares `repository`, `homepage`, `bugs` and a licence that matches the repository's, per the decision recorded in V2-p10-4.
+- [x] The published tarball contains `dist` and `README.md` and nothing else — no source, no tests, no `.tmp`, no generated intermediate. Read as `dist` plus `README.md`, `CHANGELOG.md`, `LICENSE` and the manifest (criterion 6 requires the changelog to ship; Apache-2.0 requires the licence text). Proved by `make sdk-package-check`.
+- [x] `package.json` and `src/version.ts` cannot disagree: a check fails the build when `SDK_VERSION` and the manifest version differ. `make sdk-version-check` (already on main) and `sdk/test/version.test.mjs` both fail on drift; re-proved this stage with SDK_VERSION alone changed to 0.1.1.
+- [x] The manifest declares `repository`, `homepage`, `bugs` and a licence that matches the repository's, per the decision recorded in V2-p10-4. All four are in `sdk/package.json`; `sdk/test/release.test.mjs` asserts them under the canonical source read out of `scripts/check-coordinates.sh`, and `scripts/check-coordinates.sh` check 3 fails if any of the three URLs moves; `sdk/LICENSE` now ships byte-identical to the repository `LICENSE`.
 - [ ] Publishing is driven by a git tag through the V2-p10-1 pipeline, with npm provenance attested, and no publish is possible from a working tree that is not that tag.
-- [ ] A `CHANGELOG.md` records each release and states, per entry, whether it is additive, a fix, or breaking, in the vocabulary V2-p10-4 defines.
-- [ ] The Makefile gains SDK targets so building, testing, typechecking and regenerating the package are the same commands on a laptop and in the pipeline.
+- [x] A `CHANGELOG.md` records each release and states, per entry, whether it is additive, a fix, or breaking, in the vocabulary V2-p10-4 defines. `sdk/test/release.test.mjs` (`changelog`) fails on a missing, duplicate, empty or unlabelled entry; this stage reconciled the 0.1.0 entry against the README's operation table group by group and removed a bullet describing a change to something never published.
+- [x] The Makefile gains SDK targets so building, testing, typechecking and regenerating the package are the same commands on a laptop and in the pipeline. `sdk-check`, `sdk-test`, `sdk-build`, `sdk-version-check`, `sdk-package-check`, `sdk-example-check` and the aggregate `sdk-release-check`; `release-workflow.test.mjs` ties `release.yml`'s sdk job to the `sdk-release-check` recipe and ties `ci.yml`'s sdk job to that recipe minus `generate-types-check`, which `ci.yml`'s drift job runs — removing `make sdk-example-check` from either workflow, or `make generate-types-check` from the drift job, fails it. `release.yml` runs all seven targets; `ci.yml` runs six in the sdk job and the seventh, the one that needs a binary built from the tree, in the drift job.
 - [ ] `examples/host-page` runs against a published container image and a published package with no checkout of this repository, and its README says so.
 
 ## Implementation Plan
@@ -794,3 +794,508 @@ Closed `done` with every acceptance criterion unticked, and the deliverable does
 Reopened to `todo` by the board reconciliation ticket `BUG-vzzkg3`. The remaining work is the
 publish itself (and whatever of the manifest criteria is still unmet — the Makefile targets and
 `publishConfig` have since landed).
+
+## Implementation notes
+
+### Stage 1 of 3, 2026-09-20 — package integrity
+
+Stage 1 of the approved 3-stage plan. Nothing was published, tagged or pushed: no
+`npm publish` (not even `--dry-run` is needed by this stage), no `git tag`, no `git push`,
+no `gh` write call. No Go source, SQL, migration, web/ or docs page changed, so the Go
+gates below are sanity checks on an untouched tree.
+
+What changed:
+
+- `sdk/LICENSE` (new) — byte copy of the repository's Apache-2.0 `LICENSE`; `cmp` clean.
+  npm auto-includes a root `LICENSE` only when the package root is the repository root,
+  and this package root is `sdk/`, so without this file the published tarball would carry
+  no licence text.
+- `sdk/package.json` — `files` is `["dist","README.md","CHANGELOG.md","LICENSE"]`; new
+  `clean` script (`node -e` removing `dist`); `build` is now
+  `npm run clean && tsc -p tsconfig.build.json`; `prepack` is `npm run build` (it was a
+  bare `tsc`, which shipped whatever stale files sat in `dist`).
+- `sdk/scripts/lib/release.mjs` (new) — the release rules as pure functions:
+  `readCanonicalSource`, `parseSdkTag`, `distTagFor`, `publishContextProblems`,
+  `changelogProblems`, `packProblems`, `manifestProblems`. No I/O. Stage 2's
+  `scripts/release.mjs` CLI and the tests both call these, so the rules that gate a publish
+  exist once.
+- `sdk/scripts/lib/pack.mjs` (new) — `run()` (promisified `execFile` whose rejection
+  carries stdout and stderr) and `packSdk()`, the single place the SDK is packed.
+- `sdk/scripts/check-package.mjs` (new) — the consumer check. Pack, assert the file list,
+  install into a scratch project outside the repository, typecheck under `bundler`,
+  `node16` and `nodenext`, run a fourth pass under `nodenext` with `lib: ["ES2022"]` and
+  `skipLibCheck: true` (the README's escape hatch, made executable), then import all three
+  subpaths at runtime. Flags: `--tarball <path>` (skip packing, for mutation proofs),
+  `--registry [spec]` (install from the registry; default `@kilasflow/sdk@<manifest
+  version>`, `KILASFLOW_SDK_SPEC` read when the flag is absent), `--keep`. Every phase runs
+  even after an earlier one failed and all failures print before exit 1, so the file-list
+  layer cannot mask the typecheck layer; the install is the only prerequisite and the
+  phases that need it are reported as not run rather than allowed to cascade.
+- `sdk/test/release.test.mjs` (new) — 33 tests over those rules (tag grammar, publish
+  context, changelog vocabulary, tarball allowlist, manifest coordinates, `LICENSE`
+  byte-equality, the example's version pin).
+- `Makefile` — `SDK_SPEC ?=`; `sdk-package-check`; `sdk-verify-published` (target-specific
+  `export KILASFLOW_SDK_SPEC = $(SDK_SPEC)`, recipe reads `"$$KILASFLOW_SDK_SPEC"` — no make
+  variable interpolated into a shell line); `sdk-release-check`, which calls `$(MAKE)` on
+  `sdk-check`, `sdk-test`, `sdk-build`, `sdk-version-check`, `generate-types-check`,
+  `sdk-package-check` in that order (serial on purpose: `sdk-build` removes `dist` first, so
+  a parallel run could pack a half-written tree). `clean` also removes `sdk/dist` and
+  `sdk/.tmp`. Every new target carries a `## ` help string.
+- `scripts/check-coordinates.sh` — check 3: the canonical source under the `repository.url`,
+  `homepage` and `bugs` keys of `sdk/package.json`, matched as fixed strings tied to their
+  JSON keys so a URL under an unrelated key cannot satisfy the check.
+- `.github/workflows/ci.yml` — the `sdk` job gains the pinned `actions/setup-go`
+  (operation-coverage.test.mjs reaches `go build ./cmd/kilasflow` through
+  scripts/dump-openapi.mjs and only passed on the runner's preinstalled Go), the
+  "No Go here" comment is corrected, and the job runs `make sdk-package-check`.
+- `CONTRIBUTING.md` — the checks table gains `make sdk-package-check` and
+  `make sdk-release-check`; it had no SDK rows at all.
+
+Not edited on purpose: `e2e/fixtures/epic-external.ts` (re-checked, see below);
+`sdk/examples/reference-host/*` (its static-route traversal is reported, not fixed here);
+docs pages owned by BUG-vzzkg3.
+
+How it was verified (commands and real outcomes):
+
+1. Failing test first: `cd sdk && pnpm exec vitest run test/release.test.mjs` before
+   `lib/release.mjs` existed → `Error: Cannot find module '../scripts/lib/release.mjs'`,
+   "no tests". After implementing → 33 passed.
+2. Clean build: planted `sdk/dist/stale.js`, then `make sdk-build` → the stale file is gone
+   and `dist` holds exactly the 12 compiled files (`index`, `server`, `browser`, `http`,
+   `version` and `generated/models`, each `.js` + `.d.ts`).
+3. `make sdk-package-check` → exit 0; the printed list is 16 files — `package.json`,
+   `README.md`, `CHANGELOG.md`, `LICENSE` and 12 under `dist/` — with no source, no tests,
+   no `.tmp`, no map, no dotfile. `npm install --offline <tarball>` into the scratch project
+   succeeded (so the package genuinely needs nothing else), all four typechecks passed, and
+   the runtime phase imported all three subpaths and matched `SDK_VERSION` to the installed
+   manifest.
+4. Mutation (a), SDK_VERSION drift: `sdk/src/version.ts` → `0.1.1` while the manifest stays
+   `0.1.0`. `make sdk-version-check` → exit 2,
+   `sdk/package.json version (0.1.0) != SDK_VERSION (0.1.1); bump both together`.
+   `pnpm exec vitest run test/version.test.mjs test/release.test.mjs` → 1 failed,
+   `version.test.mjs` ("SDK_VERSION mirrors the manifest version"). Honest detail:
+   `release.test.mjs` stayed green in that run — it asserts no SDK_VERSION rule, which lives
+   in `version.test.mjs` and `sdk-version-check`. Reverted.
+5. Mutation (b), `rm sdk/LICENSE` → `release.test.mjs` fails on
+   "ships a LICENSE byte-identical to the repository LICENSE", and `sdk-package-check` prints
+   `FAIL tarball file list` / `missing from tarball: LICENSE` while the install and all four
+   typechecks still pass — the two layers fail independently, which is the point of
+   collecting every phase. Reverted (`cp LICENSE sdk/LICENSE`, `cmp` clean).
+6. Mutation (c), `"src"` added to `files` → `sdk-package-check` fails naming all six
+   `src/*.ts` as `unexpected file in tarball`, everything else green. Reverted.
+7. Mutation (d), tarball with `dist/server.d.ts` removed (pack, `tar -xzf`, `rm`,
+   `tar -czf`, all in a temp directory outside the repository) then
+   `node scripts/check-package.mjs --tarball <path>` → 5 failures: the file list names
+   `missing from tarball: dist/server.d.ts`, and all four typechecks fail with TS7016
+   ("Could not find a declaration file for module './server.js'") and TS2305 ("has no
+   exported member 'KilasFlowClient'"), while the runtime import still passes.
+8. Mutation (d2), `dist/server.d.ts` replaced by `export {}` (file list unchanged) → the
+   file list passes and only the typecheck matrix fails, TS2305 in all four passes.
+9. Mutation (e), the ticket's own node16 trap: `export * from './version.js'` changed to
+   `'./version'` in `sdk/src/index.ts`. `make sdk-check` → exit 0 and `make sdk-build` →
+   exit 0 (both resolve with `bundler`, which is exactly the gap), while
+   `make sdk-package-check` fails: TS2835 under `node16` and `nodenext` ("Relative import
+   paths need explicit file extensions in ECMAScript imports … Did you mean './version.js'?"),
+   `bundler` still green, and the runtime import fails with
+   `ERR_MODULE_NOT_FOUND … dist/version`. This is the evidence that the new gate catches what
+   the existing gates cannot. Reverted, and `make sdk-check` / `make sdk-package-check` are
+   green again.
+10. `make sdk-verify-published` → fails today with a real registry answer, so the network was
+    available and this is a true 404 rather than a resolver error:
+    `npm error code E404 … GET https://registry.npmjs.org/@kilasflow%2fsdk - Not found`.
+    The registry half of criterion 1 stays unticked for that reason.
+11. `sh scripts/check-coordinates.sh` → green. With `repository.url` temporarily pointing at
+    another owner → exit 1,
+    `check-coordinates: sdk/package.json repository.url is not git+https://github.com/kilaslab/kilas-flow.git`.
+    Reverted → green.
+12. e2e reconciliation, because `prepack` now runs a cleaning build inside the fixture's
+    `npm pack`. From `/tmp`:
+    `npm pack <abs sdk path> --pack-destination <tmp> --json` → 16 files including
+    `dist/server.js` and `LICENSE` and no `src/` (the fixture's own three assertions).
+    The Playwright proof-4 spec was **not run**: `e2e/node_modules` is not installed in this
+    worktree. Instead the fixture's `scaffoldExternalApp()` — the exact code proof 4 calls —
+    was executed directly (`node --input-type=module -e "… await import('./e2e/fixtures/epic-external.ts')"`,
+    Node 24 strips the types) and passed end to end: pack, the shape assertions,
+    `npm install` of the tarball into a scratch project, and a dynamic import of the
+    installed `dist/server.js` exporting `KilasFlowClient` and `datastoreFilter`.
+13. `make sdk-release-check` → green end to end (sdk-check, sdk-test, sdk-build,
+    sdk-version-check, generate-types-check, sdk-package-check), exit 0.
+14. Go gates on a tree with no Go change: `go vet ./...` exit 0; `go build ./...` exit 0;
+    `go test -race ./internal/guardrails/...` → ok (4.055s), which is also what enforces the
+    no-home-directory-paths rule over tracked `*.mjs`/`*.sh`/`Makefile`/`*.yml`;
+    `gofmt -l` not applicable (no Go file changed). No config change, so
+    `./scripts/...` and the config-reference targets were not run; no API surface change, so
+    `generate-api-check`/`generate-api-reference-check` are unaffected.
+
+Criteria ticked by this stage: 2 (with the reading stated on the criterion line), 3 and 4.
+Still unticked, with reasons: 1 and 8 need a published package (and an image for 8);
+5 needs a real tag run for the provenance attestation, and the `prepublishOnly` guard
+stage 2 adds is a foot-gun guard, not a boundary, because `npm publish <tarball>` runs no
+lifecycle scripts; 6 and 7 are stages 2 and 3 (6 rewrites the CHANGELOG entry, 7's
+release-job parity test is stage 2).
+
+### Stage 2 of 3, 2026-09-20 — release pipeline
+
+Stage 2 of the approved 3-stage plan. Nothing was published, tagged or pushed: no real
+`npm publish` (only `--dry-run`), no `git tag`, no `git push`, no `gh` write call. No Go
+source, SQL, migration, web/ or docs page changed, so the Go gates below are sanity
+checks on an untouched tree.
+
+What changed:
+
+- `sdk/scripts/release.mjs` (new) — the release CLI, ESM, no new runtime dependency:
+  `guard` (refuse a publish whose context is not a push of the matching `sdk-v` tag),
+  `facts <tag>` (every non-registry release rule in one step; prints only `version=` and
+  `dist_tag=` for `$GITHUB_OUTPUT`), `npm-version` (refuse npm older than 11.5.1, before
+  the build rather than as a late OIDC failure). Reads and exits; the rules stay pure
+  functions in `lib/release.mjs`.
+- `sdk/scripts/lib/release.mjs` — one new pure function, `npmSupportsTrustedPublishing`,
+  compared field by field (`11.10.0` is newer than `11.5.1` and sorts before it).
+- `sdk/package.json` — `"prepublishOnly": "node scripts/release.mjs guard"`; `yaml@2.9.0`
+  as a devDependency (ISC; already in `sdk/pnpm-lock.yaml` transitively, lockfile diff is
+  three lines, ships in no artifact — `files` is an allowlist).
+- `sdk/test/release-workflow.test.mjs` (new) — 12 tests that PARSE `release.yml` with
+  `yaml` (its prose comments contain the very tokens asserted) plus the `Makefile`.
+- `sdk/test/release.test.mjs` — 15 more tests: the `npmSupportsTrustedPublishing` table
+  and the CLI as a subprocess (`process.execPath` is spawned directly so the child's env
+  can be exactly set; an "empty environment" that inherited PATH would not be empty).
+- `.github/workflows/release.yml` — header now names both namespaces and points at
+  `sdk/RELEASING.md`; the trigger comment no longer claims each job runs only on its own
+  namespace; the image job gains
+  `if: startsWith(github.ref, 'refs/tags/v')`; the sdk job gains `persist-credentials:
+  false`, pinned `actions/setup-go`, `cache: ''` on the js-toolchain, the `npm-version`
+  and `facts` steps, one step per `sdk-release-check` target, and a publish step whose
+  token lives only in its own env behind a `BOOTSTRAP ONLY` `if`.
+- `.github/actions/js-toolchain/action.yml` — a `cache` input (default `pnpm`) wired into
+  `setup-node`, so a release build restores no cache while CI is unchanged.
+- `sdk/RELEASING.md` (new) — what a release is, the one-time owner setup (bootstrap token
+  requirements, `npm trust`, tag ruleset), the per-release steps, post-publish
+  verification, the post-first-publish flip list, and optional hardening.
+
+The image-job `if` is in scope because this ticket's own `sdk-v*` tag is what started that
+job: its `scripts/docker-tags.sh` rejects the tag, but that failure sits inside a `$(...)`
+argument in the `docker-release` recipe, so only buildx refusing an untagged push stopped
+a push from a job holding `packages: write` and `id-token: write`.
+
+How it was verified (commands and real outcomes):
+
+1. Failing test first: `pnpm exec vitest run test/release-workflow.test.mjs` before the
+   workflow edits → 5 failed for the right reasons (image job had no `if`; publish had no
+   `--tag`; no `NPM_TOKEN` anywhere; the old "Tag agrees with the manifest" step is not a
+   make/CLI step; the job's make list was missing `generate-types-check` and
+   `sdk-package-check`). After the edits → 12 passed.
+2. `pnpm exec vitest run test/release.test.mjs` before `release.mjs` existed → 14 failed
+   (`npmSupportsTrustedPublishing is not a function`; every CLI test: "Cannot find module
+   .../scripts/release.mjs"). After implementing → 48 passed.
+3. Mutation (a), image job `if` deleted → "the image job only runs for v* tags" failed.
+   Reverted.
+4. Mutation (b), a second `npm publish --provenance` added to the image job → "there is
+   exactly one non-dry-run npm publish" failed (and the `--tag` test, because the second
+   publish became the first match). Reverted.
+5. Mutation (c), `run: echo ${{ github.ref_name }}` added to the image job → "the tag
+   reaches shell steps through env, never interpolated into a run line" failed. This is
+   also the parsed-vs-text point: the file's comments name `github.ref_name` and the test
+   still passes, because it reads only `run` values. Reverted.
+6. Mutation (d), `- run: make generate-types-check` deleted from the sdk job → "runs
+   exactly the make targets that sdk-release-check names, in the same order" failed with
+   the five-target list against the Makefile's six. Reverted.
+7. Mutation (e), `guard`'s `if (problems.length > 0) fail(...)` changed to `if (false)` →
+   all five guard tests failed. Reverted.
+8. Mutation (f), the `version !== manifest.version` push removed from `facts` → "facts
+   exits 1 for a tag that is not this version" failed. Reverted.
+9. `cd sdk && pnpm install --frozen-lockfile` → "Lockfile is up to date"; the `yaml`
+   devDependency is consistent.
+10. `node sdk/scripts/release.mjs npm-version` → `npm 11.13.0 supports trusted publishing`.
+11. `make sdk-release-check` → exit 0 end to end (`sdk-check`, `sdk-test`, `sdk-build`,
+    `sdk-version-check`, `generate-types-check`, `sdk-package-check`); the tarball list is
+    16 files and the four typechecks plus the runtime import all pass.
+12. The hook, safely: `cd sdk && npm run prepublishOnly` → exit 1, four reasons and
+    "publishing happens only from the release workflow on a push of the matching sdk-v
+    tag". `npm publish --dry-run` → exit 0, 16 files, "npm warn This command requires you
+    to be logged in ... (dry-run)" (the guard did not change it). Never a real publish.
+13. The bootstrap token branch, locally: with a fake token in a temp userconfig,
+    `NPM_CONFIG_USERCONFIG=<tmp> npm publish --dry-run --ignore-scripts --tag latest` still
+    exits 0 and no longer prints the "requires you to be logged in" warning — so the
+    workflow's `if [ -n "$NPM_TOKEN" ]` block authenticates.
+14. The workflow's `facts` step simulated with `GITHUB_OUTPUT` set → the file holds exactly
+    `version=0.1.0` and `dist_tag=latest`; `sdk-v9.9.9` is refused on stderr.
+15. `ruby -ryaml -e 'ARGV.each{|f| YAML.load_file(f)}'` on `release.yml`, `ci.yml` and
+    `js-toolchain/action.yml` → all three parse.
+16. e2e reconciliation, because `prepack` runs on `npm pack`: from `/tmp`,
+    `npm pack <abs sdk path> --pack-destination <tmp> --json` → 16 files, `dist/server.js`
+    and `dist/index.d.ts` present, no `src/`. (`prepublishOnly` does not run on `npm pack`,
+    so the fixture is unaffected by this stage.) The Playwright proof-4 spec was not run
+    (`e2e/node_modules` is not installed in this worktree); stage 1 executed
+    `scaffoldExternalApp()` directly and this stage changed nothing it calls.
+17. `sh scripts/check-coordinates.sh` → green.
+18. `make sdk-verify-published` → exit 2 with a real registry answer, not a resolver
+    error: `npm error code E404 ... GET https://registry.npmjs.org/@kilasflow%2fsdk - Not
+    found`. Criterion 1 stays unticked for that reason.
+19. Go gates on a tree with no Go change: `go vet ./...` exit 0; `go build ./...` exit 0;
+    `go test -race ./internal/guardrails/...` ok (1.833s) — which is also what enforces the
+    no-home-directory-path rule over the new `*.mjs`/`*.yml`, and the licence boundary over
+    the new `yaml` devDependency. `gofmt -l` not applicable (no Go file changed).
+
+Criteria ticked by this stage: none. The stage adds the pipeline hardening, the guard and
+the release facts, but each criterion's tick is owned elsewhere: criterion 7's
+pipeline-parity proof is now in place (the parity test and the "nothing but make targets
+after install" test pass, and `make sdk-release-check` is green), yet stage 3 appends
+`sdk-example-check` to the same list and ticks 6 and 7 after its own proofs; criteria 1
+and 8 need a published package and image; criterion 5 needs a real tag run, and the guard
+added here is a foot-gun guard, not a boundary — `npm publish <tarball>` runs no lifecycle
+scripts, so the real controls are the registry-side trusted publisher and a tag ruleset,
+both owner-only and both in `sdk/RELEASING.md`. `status` was not touched.
+
+### Stage 3 of 3, 2026-09-20 — shipped prose, the host-page example, and close-out
+
+Stage 3 of the approved 3-stage plan. Nothing was published, tagged or pushed: no
+`npm publish` (only `--dry-run`), no `git tag`, no `git push`, no `gh` write call. No Go
+source, SQL, migration, web/ or docs page changed, so the Go gates below are sanity checks
+on an untouched tree.
+
+What changed:
+
+- `sdk/README.md` — `## Install` rewritten timelessly (leads with
+  `npm install @kilasflow/sdk`, then the pinning and provenance sentence); a
+  `### Requirements` section stating the type requirements per entry point exactly as
+  verified (`/server` needs `lib DOM` or `@types/node`; the root and `/browser` need
+  `lib DOM` even with `@types/node`; `skipLibCheck` silences all of it; a Node-only project
+  imports `/server`); a `### Unreleased changes` section (build main from a checkout and
+  `npm pack`); the relative `../docs/…/api-contract.md` link is now the absolute GitHub URL
+  because the README renders on the npm page; the `## Example` section points at the
+  no-checkout path in `examples/host-page/README.md`. The time-bound "not on npm yet —
+  `npm view` answers 404" paragraph and the `pnpm add file:` recipe are gone: the tarball is
+  immutable and must read correctly on both sides of the first publish.
+- `sdk/CHANGELOG.md` — the 0.1.0 **Additive** bullet reconciled group by group against the
+  README's operation table: it now names datastores, tenants and accounts (the operator
+  surface) and workflow diagnostics, which the package ships and the old bullet omitted.
+  The **Fix** bullet about the manifest licence was removed — it described a change to
+  something never published, and the licence is enforced by tests, not the changelog. Kept
+  minimal for an easy merge with in-flight appends to the same entry.
+- `sdk/examples/host-page/README.md` — rewritten as the published shape first ("no checkout
+  of this repository needed"): `docker run ghcr.io/kilaslab/kilasflow:v0.1.0` with auth on
+  (`KILASFLOW_AUTH_ENABLED`, signing key, operator key shaped `kfa1_<12 hex>_<url-safe
+  base64>`, bootstrap email/password, embed signing key, allowed origin), the authenticated
+  `POST /api/v1/tenants/default/api-keys` mint whose `token` field is the host key (`kfa1_`,
+  not the old `kfa1.` typo), copying the three files out and running `npm install` +
+  `npm start`, the pin sentence, the honest authorization sentence, and a clearly delimited
+  "Before the first release is published" block to delete after the first publish.
+- `sdk/examples/host-page/server.mjs` — the static route's path traversal fixed: the path is
+  parsed with `new URL(request.url, origin).pathname` (which also drops query strings), the
+  decoded remainder is `resolve()`d against a fixed `sdkDist`, anything not under
+  `sdkDist + sep` is a 404, a malformed percent-escape is a 404, and a missing file is a 404
+  instead of a 500 that crashed the process (`ERR_HTTP_HEADERS_SENT`).
+- `sdk/scripts/check-example.mjs` (new) + `make sdk-example-check` — packs the SDK, copies
+  the example into a scratch directory outside the repository, installs the tarball, starts
+  a stub KilasFlow (`node:http`, records the `Authorization` header) and the example
+  backend, and asserts: `/` is 200 and mounts the editor; `dist/browser.js` and `dist/http.js`
+  are served; `POST /api/embed-session` returns a token and the stub saw
+  `Authorization: Bearer <key>`; `/api/stream-ticket` without `executionId` is 400; and the
+  traversal probes are 404, never 200/500, with no API key in the body. Traversal uses raw
+  `node:http` requests because `fetch` normalises `..%2f` before it leaves the process.
+  Children are killed by PID; no name-based kill.
+- `Makefile` — `sdk-example-check`, appended to the `sdk-release-check` recipe.
+- `.github/workflows/release.yml` and `.github/workflows/ci.yml` — `make sdk-example-check`
+  appended to the sdk job in each, in the same order, so the Stage 2 parity test stays green.
+- `CHANGELOG.md` (root) — one `### Added` and one `### Security` bullet under `[Unreleased]`.
+
+How it was verified (commands and real outcomes):
+
+1. Failing test first: `cd sdk && pnpm exec vitest run test/release.test.mjs` → 1 failed,
+   `README.md says "not on npm" about the registry` (the sentence at the old README line
+   264). After the README/CHANGELOG rewrite → 50 passed.
+2. Failing test first for the traversal: `node scripts/check-example.mjs` with the OLD
+   `server.mjs` → phases 1-6 ok, then `FAIL the static route refuses to serve outside the
+   SDK dist directory / socket hang up`. After the fix → all 8 phases ok, exit 0.
+3. The traverse reconstruction against HEAD's `server.mjs`, to record the actual defect:
+   `curl --path-as-is .../dist/..%2f..%2f..%2f..%2fserver.mjs` → **200** and the body was
+   `server.mjs` (`grep -c KilasFlowClient` = 2), and
+   `.../dist/..%2f..%2f..%2fpackage.json` → the process crashed with
+   `ERR_HTTP_HEADERS_SENT` ("Empty reply from server"), because the old route called
+   `writeHead(200)` before `readFile`. Both are 404 with the fix.
+4. `make sdk-release-check` → exit 0 end to end: `sdk-check`, `sdk-test`, `sdk-build`,
+   `sdk-version-check`, `generate-types-check`, `sdk-package-check`, `sdk-example-check`;
+   the tarball list is 16 files and every `check-example` phase is ok.
+5. Mutation, the new workflow step: `- run: make sdk-example-check` deleted from
+   `release.yml` → `release-workflow.test.mjs` failed, `actual` missing `sdk-example-check`
+   against the Makefile's seven targets. Reverted.
+6. Real-binary proof (manual, all processes killed by PID): built
+   `go build -o <tmp>/kilasflow ./cmd/kilasflow`, ran it in an empty temp cwd with
+   `KILASFLOW_SERVER_PORT=18099` and the step-1 environment, minted a default-tenant key with
+   the operator key, copied the example out, installed the packed tarball, and started it:
+   `POST /api/embed-session` returned a `kfe1.` token against the real server,
+   `GET /api/stream-ticket?executionId=abc` answered `execution not found` (so the
+   authenticated request reached the server), `curl --path-as-is` gave **404** for
+   `..%2f..%2f..%2f..%2fserver.mjs`, `..%2f..%2f..%2fpackage.json` and a missing dist file,
+   and a normal `dist/browser.js` still served **200**. The boot log printed the four
+   misleading `configuration key matches nothing and was ignored` WARNs for
+   `auth.operator_key`, `auth.signing_key`, `bootstrap.password` and `embed.signing_key` —
+   a separate config bug (the env names collide with the override scheme), reported not
+   fixed. The published-image half was not run: no image exists.
+7. `make sdk-verify-published` → exit 2 with a real registry answer, not a resolver error:
+   `npm error code E404 … GET https://registry.npmjs.org/@kilasflow%2fsdk - Not found`.
+8. `cd sdk && npm run prepublishOnly` → exit 1 (four reasons; "publishing happens only from
+   the release workflow on a push of the matching sdk-v tag"); `npm publish --dry-run` →
+   exit 0. Never a real publish.
+9. `sh scripts/check-coordinates.sh` → green; `ruby -ryaml -e 'ARGV.each{|f|
+   YAML.load_file(f)}'` on `release.yml`, `ci.yml` and `js-toolchain/action.yml` → all parse.
+10. e2e fixture pack check from `/tmp`: `npm pack <abs sdk path> --pack-destination <tmp>
+    --json` → 16 files, `dist/server.js` present, no `src/`, `LICENSE` present (the fixture's
+    own assertions). The Playwright proof-4 spec was **not run**: `e2e/node_modules` is not
+    installed in this worktree.
+11. Go gates on a tree with no Go change: `gofmt -l` on changed Go files → nothing;
+    `go vet ./...` exit 0; `go build ./...` exit 0; `go test -race ./internal/guardrails/...`
+    → ok. No config change, so `./scripts/...` and the config-reference targets were not run;
+    no API operation/header/schema change, so `generate-api-check`/
+    `generate-api-reference-check` are unaffected (`generate-types-check` ran inside
+    `sdk-release-check`).
+
+Reconciliation recorded (plan step B): the 0.1.0 entry's first **Additive** bullet was
+checked against the README's operation table group by group. Missing and added: Datastores;
+Tenants and accounts (the operator surface, added by BUG-rpkjpy commit 35a32bf); workflow
+diagnostics. Already present: workflows and versions, executions, credentials, API keys
+("Auth and keys"), schedules, node catalogue, interop, embed ("Embed"), system. The removed
+**Fix** bullet described the manifest licence, which is now enforced by
+`release.test.mjs`/`sdk-version-check` rather than announced as a release change.
+
+Criteria ticked by this stage: 6 (changelog vocabulary and the reconciled entry) and 7
+(the Makefile targets and the laptop/pipeline parity, re-proved by the mutation in step 5).
+Criteria 2, 3 and 4 were ticked by stage 1; criterion 2's reading is stated on its line.
+
+Still unticked, with reasons:
+- **1** needs the package to resolve from the public registry: `make sdk-verify-published`
+  answers a real `E404` today, and this run must not publish. The tarball half is proved by
+  `make sdk-package-check` (three resolutions + runtime import).
+- **5** needs a real `sdk-vX.Y.Z` tag run for the provenance attestation; nothing was
+  tagged. The guard added in stage 2 is a foot-gun guard, not a boundary: `npm publish
+  <tarball>` runs no lifecycle scripts. The real controls are the registry-side trusted
+  publisher and a tag ruleset, both owner-only and both in `sdk/RELEASING.md`.
+- **8** needs a published image and package to run against. The README now says the
+  no-checkout commands, and the example is proved to run against the packed tarball and a
+  real binary, but the registry half cannot be exercised without publishing.
+
+Owner-only steps (not done here, listed in `sdk/RELEASING.md`): confirm the `@kilasflow`
+scope, create the bootstrap token, push `sdk-v0.1.0`, configure `npm trust`, lock down and
+delete the secret, add the tag ruleset. The four misleading boot WARNs and the identical
+`..%2f` static-route flaw at `sdk/examples/reference-host/server.mjs:74-76` (not in the
+tarball, no proof harness here) are reported as separate findings, not fixed by this stage.
+`status` was not touched.
+
+### Review round 1 (fixer), 2026-09-20 — nine low findings
+
+The three-lens review of the branch found no high or medium finding and nine low ones, all
+of one family: a shipped or contributor-facing statement that no longer matched the code.
+Two were behavioural — the example's second crash mode and a workflow test that could not
+fail for its own name. All nine are closed in one commit; `status` was not touched and
+nothing was published, tagged or pushed.
+
+1. **The host-page page route crashed on a missing `index.html`**
+   (`sdk/examples/host-page/server.mjs`). The `/` route wrote its 200 before
+   `await readFile`, so a failed read reached a catch that wrote a second set of headers:
+   `ERR_HTTP_HEADERS_SENT` out of an async handler, an unhandled rejection, a dead example
+   and an empty reply instead of a 404/500. It now reads before writing headers, as the
+   static route does, and the catch answers only when `!response.headersSent`.
+   `sdk/scripts/check-example.mjs` gained a step that removes the copied `index.html` and
+   asserts `GET /` answers 500, the child is still alive and `dist/browser.js` still answers
+   200. Proof: with the old handler shape planted back, the check fails
+   (`FAIL GET / with index.html missing…: socket hang up`, 7 ok, exit 1); with the fix it is
+   8/8 ok, exit 0.
+2. **The shipped README undercounted the surface** (`sdk/README.md`): "all 73" → "all 74"
+   and the Workflows row gained `listWorkflowWebhooks`, both read off a fresh
+   `node sdk/scripts/dump-openapi.mjs <tmp>/openapi.json` dump — 56 paths, 74 operations,
+   74 unique operation ids, every path under `/api/v1`.
+3. **`CONTRIBUTING.md`'s `sdk-release-check` row listed six targets**: now the seven, in
+   recipe order, and `make sdk-example-check` has a row of its own describing what it proves.
+4. **`sdk/RELEASING.md` claimed `sdk-verify-published` runs "the same checks" as
+   `sdk-package-check`**. Chose the **narrowing** option rather than making the registry path
+   pack and assert the file list: the sentence now says exactly what runs (four typechecks
+   plus the runtime import) and that the tarball file list — which is asserted against the
+   tarball `npm pack` builds in this tree — is not asserted on the registry path. The
+   registry-side assertion would have been an unverifiable-against-real-npm code path in a
+   release gate that is expected to 404 until the first publish.
+5. **`.github/workflows/ci.yml` sdk-job comment said "nothing here builds one"** two lines
+   under the `setup-go` step added because `make sdk-test` builds and boots the binary. The
+   false clause is deleted; the comment now says only that `generate-types-check` needs a
+   binary built from this tree and lives in the drift job with the Go toolchain that job
+   already has.
+6. **`sdk/test/release-workflow.test.mjs`'s `it('installs dependencies before anything else
+   runs')` could not fail for its own name** — it asserted only that the install step exists,
+   while its sibling slices from `installIndex + 1` and so shrinks instead of failing. It now
+   asserts that no make/release-CLI/publish step precedes the install, sharing one predicate
+   with the sibling so the two are exact complements. Proof: moving `Install SDK dependencies`
+   to the end of `release.yml`'s sdk job fails it with 10 preceding steps listed; before the
+   change that same mutation left the suite green.
+7. **Criterion 7 claimed `release.yml` and `ci.yml` run the same SDK gate list** — false:
+   `ci.yml`'s sdk job runs six of the seven and `generate-types-check` lives in its drift job.
+   Chose the **test** option as well as correcting the sentence: `release-workflow.test.mjs`
+   now also parses `ci.yml` and asserts the sdk job's make steps equal the `sdk-release-check`
+   recipe minus `generate-types-check`, in order, plus that every recipe target is run
+   somewhere in `ci.yml`. Proofs: removing `make sdk-example-check` from the ci sdk job fails
+   both new tests; removing `make generate-types-check` from the drift job fails the second;
+   removing `make sdk-example-check` from `release.yml`'s sdk job fails the release parity
+   test.
+8. **The corrected README claim is now checked rather than merely fixed**: a new assertion in
+   `sdk/test/operation-coverage.test.mjs` requires the shipped README to name every method the
+   coverage map covers and to state that map's size. Proofs: dropping `listWorkflowWebhooks`
+   from the row fails it; putting the total back to 73 fails it.
+9. `CHANGELOG.md`'s `[Unreleased]` security bullet gained the page-route crash (the finding's
+   own family: prose that did not mention the fixed half of the same file).
+
+Gates re-run on this tree, all green:
+
+- `make sdk-release-check` → exit 0; sdk-test `Test Files 8 passed (8)`, `Tests 146 passed
+  (146)`; `tarball file list`, all four typechecks and the runtime import ok; the example
+  check 8/8 ok including the new missing-`index.html` step.
+- `node sdk/scripts/check-example.mjs` (standalone) → 8/8 ok, exit 0.
+- `sh scripts/check-coordinates.sh` → green, exit 0.
+- `go test -count=1 ./internal/guardrails/...` → `ok`, exit 0; `go vet ./...` → exit 0;
+  `gofmt -l` on the changed Go files → nothing (no Go change in this round).
+- Mutation runs listed per finding above: each new assertion was watched fail on the mutation
+  and pass on the restored tree, and every mutated file was restored from a copy taken before
+  the mutation.
+
+### Review round 1 delta (fixer 2), 2026-09-20 — the `headersSent` branch left the request open
+
+The delta review confirmed the nine fixes above and that every new assertion bites, and found
+one low defect in the round's own error path: `if (!response.headersSent)` wrote nothing,
+logged nothing and never ended the response, so a route that threw after its headers were out
+left the request open and the error invisible. A partial revert of the read-before-write order
+— the very bug round 1 fixed — turned that crash into a silent hang: the reviewer planted the
+old order and `node sdk/scripts/check-example.mjs` stalled to its 120 s timeout (exit 124)
+instead of failing in a few seconds, because `rawRequest` had no deadline.
+
+Both halves are fixed, in `sdk/examples/host-page/server.mjs` and `sdk/scripts/check-example.mjs`:
+
+- the `headersSent` branch now logs the error and terminates the response —
+  `console.error(error); response.destroy();`. Headers already sent means no status can be
+  corrected, but the connection must not be left open; the branch returns explicitly so the
+  two cases cannot fall through into each other.
+- `rawRequest` carries a 10 s deadline (`rawRequestTimeoutMs`) that destroys the request and
+  rejects with `no response for <METHOD> <PATH> within <n>ms: the example left it open`, and a
+  request error is reported as `<METHOD> <PATH> failed: <cause>`, so a failure names the
+  request that hung or reset rather than the bare `socket hang up`.
+- the example's stderr is forwarded to the check's stderr as `example: …`, so the error the
+  example logged in that branch sits next to the step that failed instead of being swallowed
+  by the pipe.
+
+Proof, all local: nothing was published, tagged or pushed. Two mutations of the tree, each run
+against a copy of the file taken before the mutation and restored from that copy afterwards:
+
+| plant | before this delta | after |
+| --- | --- | --- |
+| old order (`writeHead` before `readFile`) with the new destroy branch | 120 s harness timeout, exit 124 | `FAIL GET / with index.html missing answers 500 and the example stays up` / `GET / failed: socket hang up`, 12.5 s, exit 1 |
+| old order with `response.destroy()` removed — the true silent hang | hangs, nothing ever answered | `FAIL …` / `no response for GET / within 10000ms: the example left it open`, 23.1 s, exit 1 |
+
+Both planted runs also printed the example's own `ENOENT` trace, which only became visible
+because stderr is now forwarded. Restored tree: `node sdk/scripts/check-example.mjs` 8/8 ok,
+exit 0.
+
+Gates re-run on this tree, all green:
+
+- `make sdk-release-check` → exit 0 (sdk-check, sdk-test, sdk-build, sdk-version-check,
+  generate-types-check, sdk-package-check, sdk-example-check 8/8 ok).
+- `sh scripts/check-coordinates.sh` → green, exit 0.
+- `go test -count=1 ./internal/guardrails/...` → `ok`, exit 0; no Go file was touched, so
+  there was nothing for `gofmt -l` or `go vet` to see.
+
+No acceptance criterion changed state in this round, and `status` was not touched.

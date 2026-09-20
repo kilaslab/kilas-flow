@@ -15,6 +15,9 @@
 #      import of it included.
 #   2. The image and source coordinates in the Makefile are the canonical ones,
 #      so a rewrite cannot quietly point the release pipeline elsewhere.
+#   3. The same source coordinate under the `repository.url`, `homepage` and
+#      `bugs` keys of the published SDK manifest, where it becomes an
+#      irreversible claim on the npm package page.
 #
 # Two things here are deliberate:
 #
@@ -56,6 +59,24 @@ if ! grep -q "IMAGE  *?= *$canonical_image\$" Makefile; then
 fi
 if ! grep -q "SOURCE_URL  *?= *$canonical_source\$" Makefile; then
 	echo "check-coordinates: Makefile SOURCE_URL is not $canonical_source" >&2
+	status=1
+fi
+
+# 3. The SDK manifest, each URL matched together with its JSON key so a URL
+#    under an unrelated key cannot satisfy the check. Fixed strings, not
+#    regexes, because the URL contains dots that would otherwise match
+#    anything. The semantic check is the `manifest` group in
+#    sdk/test/release.test.mjs; this is the cheap one that needs no Node.
+if ! grep -Fq "\"url\": \"git+$canonical_source.git\"" sdk/package.json; then
+	echo "check-coordinates: sdk/package.json repository.url is not git+$canonical_source.git" >&2
+	status=1
+fi
+if ! grep -Fq "\"homepage\": \"$canonical_source#readme\"" sdk/package.json; then
+	echo "check-coordinates: sdk/package.json homepage is not $canonical_source#readme" >&2
+	status=1
+fi
+if ! grep -Fq "\"bugs\": \"$canonical_source/issues\"" sdk/package.json; then
+	echo "check-coordinates: sdk/package.json bugs is not $canonical_source/issues" >&2
 	status=1
 fi
 

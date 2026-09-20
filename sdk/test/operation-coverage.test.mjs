@@ -152,6 +152,25 @@ describe('operation coverage', () => {
 		}
 	});
 
+	/**
+	 * `sdk/README.md` is baked into the immutable tarball, so a total or a
+	 * missing method name there cannot be corrected for a published version:
+	 * the count and the method list are asserted against the coverage map,
+	 * which the test above ties to the live document.
+	 */
+	it('states the same surface in the shipped README', async () => {
+		const readme = await readFile(join(sdkDir, 'README.md'), 'utf8');
+		const methods = Object.values(OPERATION_COVERAGE);
+		const unnamed = methods.filter((method) => !readme.includes(`\`${method}\``));
+		expect(unnamed, `methods the shipped README never names: ${unnamed.join(', ')}`).toEqual([]);
+
+		const stated = readme.match(/all\s+(\d+)\s+under `\/api\/v1`/);
+		expect(stated, 'the README no longer states how many operations the surface covers').not.toBeNull();
+		expect(Number(stated[1]), 'the README states a different total than the coverage map').toBe(
+			Object.keys(OPERATION_COVERAGE).length
+		);
+	});
+
 	// Boots a real binary, so this is the slowest test in the package by far.
 	// That is the point: the document comes from the server, never from a
 	// checked-in copy, so a new handler without a client method fails here.

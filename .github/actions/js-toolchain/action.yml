@@ -4,6 +4,15 @@ description: Install the Node and pnpm versions this repository already pins.
 # Four jobs need Node. Repeating the three steps below in each of them would
 # mean four places to edit when an action is re-pinned, and four chances for
 # them to disagree; this composite keeps the pinned SHAs in one file.
+#
+# `cache` is exposed so the release workflow can turn the pnpm store cache off
+# for a publish: a cache is the one build input that is not the tagged tree, and
+# a release does not need the speed. Everything else keeps the default.
+inputs:
+  cache:
+    description: Passed to actions/setup-node's `cache`; '' disables caching.
+    required: false
+    default: pnpm
 
 runs:
   using: composite
@@ -42,7 +51,7 @@ runs:
     - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
       with:
         node-version: ${{ steps.node-version.outputs.version }}
-        cache: pnpm
+        cache: ${{ inputs.cache }}
         cache-dependency-path: |
           web/pnpm-lock.yaml
           sdk/pnpm-lock.yaml

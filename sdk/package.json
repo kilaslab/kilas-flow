@@ -17,7 +17,7 @@
     "access": "public",
     "provenance": true
   },
-  "files": ["dist", "README.md", "CHANGELOG.md"],
+  "files": ["dist", "README.md", "CHANGELOG.md", "LICENSE"],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -35,15 +35,18 @@
   "scripts": {
     "generate:types": "node scripts/generate-types.mjs",
     "generate:types:check": "node scripts/check-types.mjs",
-    "build": "tsc -p tsconfig.build.json",
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "npm run clean && tsc -p tsconfig.build.json",
     "check": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "prepack": "tsc -p tsconfig.build.json"
+    "prepack": "npm run build",
+    "prepublishOnly": "node scripts/release.mjs guard"
   },
   "devDependencies": {
     "jsdom": "^30.0.1",
     "orval": "^8.27.0",
     "typescript": "5.9.3",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.11",
+    "yaml": "2.9.0"
   }
 }

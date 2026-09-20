@@ -9,9 +9,10 @@ until the server surface it targets is considered stable; see `README.md`.
 
 First published release.
 
-- **Additive**: the full operation surface — workflows and versions, executions,
-  credentials, API keys, schedules, node catalogue, interop, embed sessions,
-  system — across `@kilasflow/sdk`, `@kilasflow/sdk/server` and
+- **Additive**: the full operation surface — workflows and versions (including
+  diagnostics), executions, credentials, API keys, schedules, node catalogue,
+  interop, datastores, tenants and accounts (the operator surface), embed
+  sessions, system — across `@kilasflow/sdk`, `@kilasflow/sdk/server` and
   `@kilasflow/sdk/browser`.
 - **Additive**: `apiKey` on `TransportOptions`, a convenience sending
   `Authorization: Bearer <key>` beside the existing `headers` escape hatch,
@@ -19,5 +20,3 @@ First published release.
 - **Additive**: `tenantClientFactory` for one fixed-credential client per
   tenant, and a single-use stream-ticket handshake in
   `subscribeExecutionEvents` with mint-per-connect reconnect and resume.
-- **Fix**: the manifest licence is Apache-2.0, matching the repository root
-  `LICENSE`.
