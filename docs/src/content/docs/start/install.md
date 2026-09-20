@@ -10,7 +10,7 @@ build touches runs inside a container.
 
 ```sh
 git clone https://github.com/kilaslab/kilas-flow
-cd k-flow
+cd kilas-flow
 
 cp .env.example .env
 printf 'KILASFLOW_ENCRYPTION_KEY=%s\n' "$(openssl rand -base64 32)" >> .env
