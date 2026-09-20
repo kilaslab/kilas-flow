@@ -1495,13 +1495,11 @@ func TestDollarItemFollowsPairedLineagePerItem(t *testing.T) {
 		func(_ context.Context, _ workflow.IRNode, input workflow.NodeInput, request engine.Request) (workflow.NodeOutput, error) {
 			items := make([]workflow.Item, 0, len(input["main"]))
 			for index, item := range input["main"] {
-				ctx := request.ExpressionContext(item, input, index)
-				// What ExpressionContext does for every expression a node
-				// resolves: pair each completed node's items with this one.
-				ctx.NodeItems = engine.PairNodeItems(ctx.NodeItems, item, index)
+				// The real path: ExpressionContext pairs every completed node's
+				// items with this one, which is what a node's own executor does.
 				resolved, err := expression.Resolve(map[string]any{
 					"origin": map[string]any{"mode": "expression", "value": "{{ $('Split Out').item.json.v }}"},
-				}, ctx)
+				}, request.ExpressionContext(item, input, index))
 				if err != nil {
 					return nil, err
 				}

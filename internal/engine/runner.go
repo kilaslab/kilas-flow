@@ -142,6 +142,10 @@ type Request struct {
 	Workflows WorkflowInvoker
 	// Events publishes nested progress from inside a node.
 	Events NodeEventSink
+	// NodeRunSink is called with every trace row the moment it is appended,
+	// with its index in completion order, so a service can persist progress
+	// while the execution is still running. Nil is a no-op.
+	NodeRunSink func(index int, run NodeRun)
 	// NodeOutputs maps a completed node's display name to its first output
 	// item, backing the `$node` expression root. The runner fills it as the
 	// graph progresses, so a node only ever sees nodes that ran before it.
@@ -292,14 +296,13 @@ func NewRunner(executors *Registry) *Runner {
 	return &Runner{executors: executors}
 }
 
-// preparedGraph is the scheduling shape of one compiled run: the live nodes,
-// their edges partitioned both ways, and the loop back edges ordinary
-// scheduling must ignore.
+// preparedGraph is the scheduling shape of one compiled run: the live nodes and
+// their edges partitioned both ways. Both lists are sorted once, here, because
+// the scheduler reads them in the order n8n would.
 type preparedGraph struct {
 	nodes    map[string]workflow.IRNode
 	incoming map[string][]workflow.IREdge
-	outgoing map[string]int
-	loops    map[string]*loopGraph
+	outgoing map[string][]workflow.IREdge
 }
 
 // prepareGraph builds the scheduling shape Run and Resume share from a
@@ -323,8 +326,13 @@ func prepareGraph(ir workflow.IR, triggerNodeID string) (preparedGraph, error) {
 			nodes[node.ID] = node
 		}
 	}
+	if triggerNodeID != "" {
+		if trigger, found := nodes[triggerNodeID]; found && trigger.Disabled {
+			return preparedGraph{}, fmt.Errorf("execution names trigger node %q, which is disabled", triggerNodeID)
+		}
+	}
 	incoming := make(map[string][]workflow.IREdge, len(nodes))
-	outgoing := make(map[string]int, len(nodes))
+	outgoing := make(map[string][]workflow.IREdge, len(nodes))
 	for _, edge := range ir.Edges {
 		if _, sourceLive := active[edge.Source.NodeID]; !sourceLive {
 			continue
@@ -333,13 +341,8 @@ func prepareGraph(ir workflow.IR, triggerNodeID string) (preparedGraph, error) {
 			continue
 		}
 		incoming[edge.Target.NodeID] = append(incoming[edge.Target.NodeID], edge)
-		outgoing[edge.Source.NodeID]++
+		outgoing[edge.Source.NodeID] = append(outgoing[edge.Source.NodeID], edge)
 	}
-
-	// A loop's back edge is the one thing in the graph that points backwards,
-	// and it has to be excluded from ordinary scheduling: a loop node whose
-	// body has not run yet would otherwise be waiting on its own output.
-	loops := findLoops(ir, nodes)
 	for nodeID := range incoming {
 		sort.Slice(incoming[nodeID], func(left, right int) bool {
 			a, b := incoming[nodeID][left], incoming[nodeID][right]
@@ -355,7 +358,29 @@ func prepareGraph(ir workflow.IR, triggerNodeID string) (preparedGraph, error) {
 			return a.ID < b.ID
 		})
 	}
-	return preparedGraph{nodes: nodes, incoming: incoming, outgoing: outgoing, loops: loops}, nil
+	// Outgoing edges are ordered the way n8n schedules them: by output index,
+	// then by where the target sits on the canvas (top to bottom, left to
+	// right), and by node ID only as a tie-breaker. Imported workflows keep
+	// n8n's random UUIDs, so an ID-ordered run visits parallel branches in an
+	// order nobody drew — and a whole branch does not finish before the next
+	// one starts.
+	for nodeID := range outgoing {
+		sort.Slice(outgoing[nodeID], func(left, right int) bool {
+			a, b := outgoing[nodeID][left], outgoing[nodeID][right]
+			if a.SourceOutputIndex != b.SourceOutputIndex {
+				return a.SourceOutputIndex < b.SourceOutputIndex
+			}
+			first, second := nodes[a.Target.NodeID].Position, nodes[b.Target.NodeID].Position
+			if first.Y != second.Y {
+				return first.Y < second.Y
+			}
+			if first.X != second.X {
+				return first.X < second.X
+			}
+			return a.Target.NodeID < b.Target.NodeID
+		})
+	}
+	return preparedGraph{nodes: nodes, incoming: incoming, outgoing: outgoing}, nil
 }
 
 // Run executes every node of one compiled graph exactly once.
@@ -367,269 +392,341 @@ func (runner *Runner) Run(ctx context.Context, ir workflow.IR, request Request) 
 	if err != nil {
 		return Result{}, err
 	}
-	nodes, incoming, outgoing, loops := graph.nodes, graph.incoming, graph.outgoing, graph.loops
-
-	// Outputs are kept per run index rather than one per node: a node inside a
-	// loop or a fan-out produces several distinct runs, and an expression that
-	// reaches back to it has to be able to name which one. The last run is what
-	// scheduling reads, so a single-run graph behaves exactly as before.
-	runs := make(map[string][]workflow.NodeOutput, len(nodes))
-	completed := make(map[string]workflow.NodeOutput, len(nodes))
-	// `$node["Name"]` reads the first item a completed node produced. Building
-	// it here keeps the lookup ordered by actual execution, so a node can never
-	// observe one that has not run yet.
 	// `$workflow` reads the compiled graph's identity: the caller supplies what
 	// only it knows (whether the workflow is active), and the runner fills in
 	// the rest rather than leaving `$workflow.name` empty in every production
 	// run.
 	request.Workflow = workflowContextFor(ir, request.Workflow)
+	state := newRunState(graph, &request)
+	suspended, err := runner.runLoop(ctx, graph, &request, state)
+	if err != nil {
+		return *state.result, err
+	}
+	if suspended != nil {
+		return *state.result, suspended
+	}
+	return *state.result, nil
+}
+
+// pendingInvocation is one invocation the scheduler owes: a node, and the items
+// a single upstream run delivered to it.
+type pendingInvocation struct {
+	nodeID string
+	input  workflow.NodeInput
+}
+
+// runState is the live scheduling state of one pass: what has run, what the run
+// still owes, and the trace being built.
+type runState struct {
+	completed map[string]workflow.NodeOutput
+	runs      map[string][]workflow.NodeOutput
+	result    *Result
+	// pending is the execution stack, newest first. The branch the run is
+	// already on sits on top, which is what makes the order depth-first.
+	pending []pendingInvocation
+}
+
+// newRunState allocates the live state of one pass and seeds the execution
+// stack with every node nothing feeds.
+func newRunState(graph preparedGraph, request *Request) *runState {
+	state := emptyRunState(graph)
+	ensureRequestMaps(request, graph)
+	state.seed(graph)
+	return state
+}
+
+// emptyRunState allocates the live state of one pass without scheduling
+// anything, which is what a resumed run needs: its work comes from the
+// checkpoint.
+func emptyRunState(graph preparedGraph) *runState {
+	return &runState{
+		completed: make(map[string]workflow.NodeOutput, len(graph.nodes)),
+		runs:      make(map[string][]workflow.NodeOutput, len(graph.nodes)),
+		result:    &Result{NodeRuns: make([]NodeRun, 0, len(graph.nodes)), Output: make(map[string]workflow.NodeOutput)},
+	}
+}
+
+// ensureRequestMaps gives the run the expression views and the per-node state
+// every executor expects to find.
+func ensureRequestMaps(request *Request, graph preparedGraph) {
+	// `$node["Name"]` reads the first item a completed node produced. Building
+	// it as the graph progresses keeps the lookup ordered by actual execution,
+	// so a node can never observe one that has not run yet.
 	if request.NodeOutputs == nil {
-		request.NodeOutputs = make(map[string]map[string]any, len(nodes))
+		request.NodeOutputs = make(map[string]map[string]any, len(graph.nodes))
 	}
 	if request.NodeItems == nil {
-		request.NodeItems = make(map[string]expression.NodeItem, len(nodes))
+		request.NodeItems = make(map[string]expression.NodeItem, len(graph.nodes))
 	}
 	if request.NodeState == nil {
-		request.NodeState = make(map[string]map[string]any, len(nodes))
+		request.NodeState = make(map[string]map[string]any, len(graph.nodes))
 	}
-	// Every node gets its own entry up front, because the executor mutates it in
-	// place: a node that replaces its entry would write to a copy the runner
-	// never sees.
-	for nodeID := range nodes {
+	// Every node gets its own state entry up front, because an executor mutates
+	// it in place: a node that replaces its entry would write to a copy the
+	// runner never sees.
+	for nodeID := range graph.nodes {
 		if _, exists := request.NodeState[nodeID]; !exists {
 			request.NodeState[nodeID] = map[string]any{}
 		}
 	}
-	result := Result{NodeRuns: make([]NodeRun, 0, len(nodes)), Output: make(map[string]workflow.NodeOutput)}
-	suspended, err := runner.runLoop(ctx, nodes, incoming, outgoing, loops, &request, completed, runs, &result)
+}
+
+// seed schedules the nodes a run starts from: the ones nothing feeds, in canvas
+// order so the topmost of them runs first.
+//
+// A disabled trigger is not among them. A workflow routinely carries a trigger
+// its author switched off, and starting from it would run the very thing they
+// turned off.
+func (state *runState) seed(graph preparedGraph) {
+	roots := make([]string, 0, 4)
+	for nodeID, node := range graph.nodes {
+		if len(graph.incoming[nodeID]) > 0 || node.Disabled {
+			continue
+		}
+		roots = append(roots, nodeID)
+	}
+	sort.Slice(roots, func(left, right int) bool {
+		first, second := graph.nodes[roots[left]].Position, graph.nodes[roots[right]].Position
+		if first.Y != second.Y {
+			return first.Y < second.Y
+		}
+		if first.X != second.X {
+			return first.X < second.X
+		}
+		return roots[left] < roots[right]
+	})
+	for index := len(roots) - 1; index >= 0; index-- {
+		state.pending = append(state.pending, pendingInvocation{nodeID: roots[index], input: workflow.NodeInput{}})
+	}
+}
+
+// next returns the invocation to run next.
+//
+// The stack is what gives the run n8n's v1 order: a node pushes the branches it
+// feeds, and the topmost of those runs to its end before the next one starts.
+// The fallback below covers the nodes a stack cannot carry — a Merge, whose
+// several item inputs have to be collected from every upstream run before it
+// can run at all — and it only ever picks a node that has never run, so a
+// branch the stack is holding is never overtaken.
+func (state *runState) next(graph preparedGraph) (pendingInvocation, bool, error) {
+	for index := len(state.pending) - 1; index >= 0; index-- {
+		candidate := state.pending[index]
+		if !state.configReady(graph, candidate.nodeID) {
+			continue
+		}
+		state.pending = append(state.pending[:index], state.pending[index+1:]...)
+		return candidate, true, nil
+	}
+	ready := make([]string, 0, len(graph.nodes))
+	for nodeID := range graph.nodes {
+		if _, done := state.completed[nodeID]; done {
+			continue
+		}
+		if !dependenciesComplete(graph.incoming[nodeID], state.completed) {
+			continue
+		}
+		// A node nothing delivered items to is not run: that is what keeps the
+		// untaken arm of an IF from firing. Its inputs are read from what its
+		// upstream runs produced, and an empty stream is not work.
+		if !delivered(graph, nodeID, state.completed) {
+			continue
+		}
+		ready = append(ready, nodeID)
+	}
+	if len(ready) == 0 {
+		return pendingInvocation{}, false, nil
+	}
+	sort.Strings(ready)
+	nodeID := ready[0]
+	input, err := nodeInput(graph.incoming[nodeID], state.completed)
 	if err != nil {
-		return result, err
+		return pendingInvocation{}, false, fmt.Errorf("build node %q input: %w", nodeID, err)
 	}
-	if suspended != nil {
-		return result, suspended
-	}
-	return result, nil
+	return pendingInvocation{nodeID: nodeID, input: input}, true, nil
 }
 
-// runLoop schedules every node the graph still owes. It is the single pass
-// Run and Resume share: Run starts it empty, Resume starts it from a
-// checkpoint. A suspension returns the signal with the checkpoint attached,
-// alongside the runs produced so far; any other error fails the run.
-func (runner *Runner) runLoop(ctx context.Context, nodes map[string]workflow.IRNode, incoming map[string][]workflow.IREdge, outgoing map[string]int, loops map[string]*loopGraph, request *Request, completed map[string]workflow.NodeOutput, runs map[string][]workflow.NodeOutput, result *Result) (*SuspendError, error) {
-	for len(completed) < len(nodes) {
-		// Cancellation floor. A holder in another process learns about
-		// Cancel by polling the row and interrupting this context; the
-		// check here is what turns that interrupt into a stop between
-		// nodes. An executor that ignores its context still finishes its
-		// current node, but the next node never starts: without this, a
-		// cancelled run would execute every remaining node and only be
-		// relabelled cancelled when the terminal write raced the request.
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		ready := make([]string, 0, len(nodes)-len(completed))
-		for nodeID := range nodes {
-			if _, done := completed[nodeID]; done || !dependenciesComplete(schedulingEdges(incoming[nodeID], loops), completed) {
-				continue
-			}
-			if awaitingLoop(incoming[nodeID], loops) {
-				continue
-			}
-			ready = append(ready, nodeID)
-		}
-		if len(ready) == 0 {
-			return nil, fmt.Errorf("compiled workflow graph has no schedulable node")
-		}
-		sort.Strings(ready)
-		nodeID := ready[0]
-		node := nodes[nodeID]
-		input, err := nodeInput(iterationEdges(nodeID, incoming[nodeID], loops), completed)
-		if err != nil {
-			return nil, fmt.Errorf("build node %q input: %w", nodeID, err)
-		}
-
-		// A node whose item channel delivered nothing is not run at all.
-		//
-		// Scheduling used to ask only whether every upstream node had
-		// *completed*, so the untaken arm of an IF still fired one HTTP
-		// request, one model call, one SQL statement and one webhook response —
-		// because every executor reads an empty `main` port as "run once
-		// against an empty $json". That is a cost and security problem as much
-		// as a correctness one.
-		//
-		// Skipping is expressed as an all-empty output written straight into
-		// `completed`, so the cascade downstream falls out of this same rule
-		// instead of needing a second traversal.
-		if !isLive(node, incoming[nodeID], completed) {
-			skipped := make(workflow.NodeOutput, len(node.Definition.Outputs))
-			for index := range skipped {
-				skipped[index] = []workflow.Item{}
-			}
-			completed[nodeID] = skipped
-			runs[nodeID] = append(runs[nodeID], cloneOutput(skipped))
-			// Deliberately not registered in NodeOutputs: `$node["Name"]` must
-			// keep reporting "not set" rather than an empty object, which would
-			// read as a successful lookup of a node that never ran.
-			result.NodeRuns = append(result.NodeRuns, NodeRun{
-				NodeID: nodeID, Input: cloneInput(input), Output: skipped, Skipped: true,
-			})
-			if outgoing[nodeID] == 0 {
-				result.Output[nodeID] = cloneOutput(skipped)
-			}
+// delivered reports whether anything reached a node's item inputs.
+//
+// A node with no item input at all is not gated: a trigger and a sub-node are
+// started by the graph, not by items. A node that declares one is started only
+// when a branch delivered to it, which is the same rule the stack applies when
+// it pushes a branch — the difference is that this one is read from the
+// completed map, so it also covers the convergence nodes the stack leaves
+// alone.
+func delivered(graph preparedGraph, nodeID string, completed map[string]workflow.NodeOutput) bool {
+	ports := itemInputPorts(graph.nodes[nodeID])
+	if ports == 0 {
+		return true
+	}
+	for _, edge := range graph.incoming[nodeID] {
+		if edge.Kind != workflow.ConnectionMain {
 			continue
 		}
+		output := completed[edge.Source.NodeID]
+		if edge.SourceOutputIndex >= 0 && edge.SourceOutputIndex < len(output) && len(output[edge.SourceOutputIndex]) > 0 {
+			return true
+		}
+	}
+	// A node whose item port has no incoming edge at all cannot be delivered
+	// to, and the compiler already refuses that graph; running it keeps the
+	// executors' empty-item substitution reachable rather than changing what a
+	// hand-written document does.
+	for _, edge := range graph.incoming[nodeID] {
+		if edge.Kind == workflow.ConnectionMain {
+			return false
+		}
+	}
+	return true
+}
 
-		executor, found := runner.executors.Lookup(node.Definition.ExecutorID)
+// configReady reports whether a scheduled invocation may run: every typed
+// attachment edge into the node must have delivered, because a chat model, a
+// memory and a tool supply configuration rather than items, and an agent
+// started before its model has run would resolve nothing.
+//
+// Item edges deliberately do not gate this. The invocation already carries the
+// items one branch delivered, which is what makes a node fed by two branches
+// run once for each of them, as n8n does.
+func (state *runState) configReady(graph preparedGraph, nodeID string) bool {
+	for _, edge := range graph.incoming[nodeID] {
+		if edge.Kind == workflow.ConnectionMain {
+			continue
+		}
+		if _, done := state.completed[edge.Source.NodeID]; !done {
+			return false
+		}
+	}
+	return true
+}
+
+// complete records one finished invocation: its trace row, the expression view
+// of the node, and the branches it feeds.
+func (state *runState) complete(graph preparedGraph, node workflow.IRNode, input workflow.NodeInput, output workflow.NodeOutput, run NodeRun, request *Request) {
+	state.completed[node.ID] = output
+	state.runs[node.ID] = append(state.runs[node.ID], cloneOutput(output))
+	run.RunIndex = len(state.runs[node.ID]) - 1
+	run.Output = output
+	if first, ok := firstItem(output); ok {
+		request.NodeOutputs[node.Name] = first
+	}
+	request.NodeItems[node.Name] = nodeItemFor(node, output)
+	state.record(run, request)
+	if len(graph.outgoing[node.ID]) == 0 {
+		state.result.Output[node.ID] = cloneOutput(output)
+	}
+	state.push(graph, node, output)
+}
+
+// record appends one trace row and hands it to the run's progress sink, which
+// is how a running execution is visible before it finishes.
+func (state *runState) record(run NodeRun, request *Request) {
+	state.result.NodeRuns = append(state.result.NodeRuns, run)
+	if request.NodeRunSink == nil {
+		return
+	}
+	request.NodeRunSink(len(state.result.NodeRuns)-1, run)
+}
+
+// push schedules the branches this run feeds.
+//
+// One invocation per target, carrying the items this run delivered on the ports
+// it delivered them on. That is what makes a node fed by two branches run once
+// per branch instead of once with both streams concatenated, and a port that
+// carried nothing delivers nothing, which is how the untaken arm of an IF
+// prunes itself without a second traversal.
+//
+// Children are pushed in reverse, so the stack pops them in canvas order and
+// each branch runs to its end before the next one starts.
+func (state *runState) push(graph preparedGraph, node workflow.IRNode, output workflow.NodeOutput) {
+	byTarget := make(map[string]*pendingInvocation, 2)
+	ordered := make([]*pendingInvocation, 0, 2)
+	for _, edge := range graph.outgoing[node.ID] {
+		if edge.Kind != workflow.ConnectionMain {
+			continue
+		}
+		target := graph.nodes[edge.Target.NodeID]
+		// A node with several item inputs is a convergence point: it needs
+		// every branch's items at once, so it is left to the fallback rather
+		// than started with one side of its input.
+		if itemInputPorts(target) > 1 {
+			continue
+		}
+		items := []workflow.Item{}
+		if edge.SourceOutputIndex >= 0 && edge.SourceOutputIndex < len(output) {
+			items = output[edge.SourceOutputIndex]
+		}
+		if len(items) == 0 && !settingBool(target.Settings, "alwaysOutputData") {
+			// Nothing on this port is nothing to deliver — unless the target
+			// asked for an item regardless, which is what Always Output Data
+			// means.
+			continue
+		}
+		entry, found := byTarget[edge.Target.NodeID]
 		if !found {
-			return nil, fmt.Errorf("node %q executor %q is not registered", nodeID, node.Definition.ExecutorID)
+			entry = &pendingInvocation{nodeID: edge.Target.NodeID, input: workflow.NodeInput{}}
+			byTarget[edge.Target.NodeID] = entry
+			ordered = append(ordered, entry)
 		}
-
-		// The attempt loop. The per-node context is rebuilt each time round,
-		// because its cancel must fire per attempt rather than once for all of
-		// them — a shared deadline would make the second attempt inherit the
-		// first one's remaining time.
-		policy := retryPolicy(node.Settings)
-		var (
-			output      workflow.NodeOutput
-			lastErr     error
-			lastCode    string
-			usedAttempt int
-		)
-		for attempt := 1; attempt <= policy.attempts; attempt++ {
-			usedAttempt = attempt
-			nodeCtx, cancel, timeout, err := nodeContext(ctx, node)
-			if err != nil {
-				result.NodeRuns = append(result.NodeRuns, NodeRun{
-					NodeID: nodeID, Input: cloneInput(input), Error: err, Attempt: attempt, ErrorCode: "config.invalid",
-				})
-				return nil, err
-			}
-			output, err = executor.Execute(nodeCtx, node, cloneInput(input), cloneRequest(*request))
-			cancel()
-			var suspended *SuspendError
-			if err != nil && errors.As(err, &suspended) {
-				// Suspension is neither success nor failure: the run stops
-				// here with no retry and no failure row, and the service
-				// persists the continuation durably.
-				raw, cerr := marshalCheckpoint(snapshotCheckpoint(nodeID, suspended.Mode, input, attempt, completed, runs, request, result))
-				if cerr != nil {
-					return nil, cerr
-				}
-				suspended.NodeID = nodeID
-				suspended.Checkpoint = raw
-				return suspended, nil
-			}
-			if err == nil {
-				// Earlier attempts were already recorded as they failed; this
-				// one is recorded below with its successful output.
-				lastErr, lastCode = nil, ""
-				break
-			}
-			lastErr = err
-			lastCode = "node.failed"
-			if timeout > 0 && errors.Is(nodeCtx.Err(), context.DeadlineExceeded) {
-				lastCode = "node.timeout"
-			} else if timeout == 0 && errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				lastCode = "execution.timeout"
-			}
-			// A failed attempt is a row of its own, so a reader can see that a
-			// node succeeded on its third try rather than only that it
-			// succeeded.
-			if attempt < policy.attempts {
-				result.NodeRuns = append(result.NodeRuns, NodeRun{
-					NodeID: nodeID, Input: cloneInput(input), Error: err, Attempt: attempt, ErrorCode: lastCode,
-				})
-				if !sleepBetweenAttempts(ctx, policy.wait) {
-					// The execution was cancelled while waiting; stop here
-					// rather than burning the remaining attempts.
-					result.NodeRuns = append(result.NodeRuns, NodeRun{
-						NodeID: nodeID, Input: cloneInput(input), Error: ctx.Err(), Attempt: attempt + 1, ErrorCode: "execution.cancelled",
-					})
-					return nil, fmt.Errorf("execute node %q: %w", nodeID, ctx.Err())
-				}
-				continue
-			}
-		}
-
-		if lastErr != nil {
-			if !policy.continueOnFail {
-				result.NodeRuns = append(result.NodeRuns, NodeRun{
-					NodeID: nodeID, Input: cloneInput(input), Error: lastErr, Attempt: usedAttempt, ErrorCode: lastCode,
-				})
-				return nil, fmt.Errorf("execute node %q: %w", nodeID, lastErr)
-			}
-			// Tolerated: the node emits error items rather than aborting, and
-			// the run carries on. The items are *not* the input passed through
-			// — a downstream node has to be able to tell a tolerated failure
-			// from a success.
-			output = errorOutput(node, input, lastErr)
-			result.NodeRuns = append(result.NodeRuns, NodeRun{
-				NodeID: nodeID, Input: cloneInput(input), Output: cloneOutput(output),
-				Error: lastErr, Attempt: usedAttempt, ErrorCode: lastCode,
-			})
-			completed[nodeID] = cloneOutput(output)
-			runs[nodeID] = append(runs[nodeID], cloneOutput(output))
-			if first, ok := firstItem(output); ok {
-				request.NodeOutputs[node.Name] = first
-			}
-			if outgoing[nodeID] == 0 {
-				result.Output[nodeID] = cloneOutput(output)
-			}
-			continue
-		}
-
-		if got, want := len(output), len(node.Definition.Outputs); got != want {
-			return nil, fmt.Errorf("node %q returned %d output streams, want %d", nodeID, got, want)
-		}
-		output = cloneOutput(output)
-		// Provenance the executor did not set is inferred by position, but only
-		// when that inference is actually sound: exactly one incoming item port
-		// and a matching item count. An executor that reorders or filters must
-		// set its own, which is why IF and Merge do.
-		stampProvenance(node, incoming[nodeID], input, output, len(runs[nodeID]))
-		completed[nodeID] = output
-		runs[nodeID] = append(runs[nodeID], cloneOutput(output))
-		if first, ok := firstItem(output); ok {
-			request.NodeOutputs[node.Name] = first
-		}
-		request.NodeItems[node.Name] = nodeItemFor(node, output)
-		result.NodeRuns = append(result.NodeRuns, NodeRun{
-			NodeID: nodeID, Input: cloneInput(input), Output: output,
-			Attempt: usedAttempt, RunIndex: len(runs[nodeID]) - 1,
-		})
-		// A loop that still has work reopens its body so the next batch can run,
-		// and reopens its entry when that body comes back round. Every
-		// iteration keeps its own trace rows, because each run advanced the
-		// node's run index above.
-		reopenLoops(nodeID, node, output, loops, completed)
-		closeIteration(nodeID, incoming, loops, completed)
-		if outgoing[nodeID] == 0 {
-			result.Output[nodeID] = cloneOutput(output)
+		if len(items) > 0 {
+			entry.input[edge.Target.Port] = append(entry.input[edge.Target.Port], cloneItems(items)...)
 		}
 	}
-	return nil, nil
+	for index := len(ordered) - 1; index >= 0; index-- {
+		state.pending = append(state.pending, *ordered[index])
+	}
 }
 
-// snapshotCheckpoint copies the live run state at a suspension. The copies
-// are cheap insurance: the in-memory run ends here, but aliasing its maps
-// into durable storage would corrupt the checkpoint the moment any future
-// change touches them before the marshal.
-func snapshotCheckpoint(nodeID, mode string, input workflow.NodeInput, attempt int, completed map[string]workflow.NodeOutput, runs map[string][]workflow.NodeOutput, request *Request, result *Result) Checkpoint {
+// recordSkips writes a row for every node this run never reached.
+//
+// A node is reached by a branch delivering items to it, so one that nothing
+// delivered to did not run. Recording it as skipped is what keeps the
+// difference between "did not run" and "ran and produced nothing" visible in
+// the trace.
+func (state *runState) recordSkips(graph preparedGraph, request *Request) {
+	skipped := make([]string, 0, len(graph.nodes))
+	for nodeID := range graph.nodes {
+		if _, done := state.completed[nodeID]; done {
+			continue
+		}
+		skipped = append(skipped, nodeID)
+	}
+	sort.Strings(skipped)
+	for _, nodeID := range skipped {
+		node := graph.nodes[nodeID]
+		empty := make(workflow.NodeOutput, len(node.Definition.Outputs))
+		for index := range empty {
+			empty[index] = []workflow.Item{}
+		}
+		state.completed[nodeID] = empty
+		state.runs[nodeID] = append(state.runs[nodeID], cloneOutput(empty))
+		state.record(NodeRun{NodeID: nodeID, Skipped: true, Output: empty}, request)
+		if len(graph.outgoing[nodeID]) == 0 {
+			state.result.Output[nodeID] = cloneOutput(empty)
+		}
+	}
+}
+
+// snapshotCheckpoint copies the live run state at a suspension. The copies are
+// cheap insurance: the in-memory run ends here, but aliasing its maps into
+// durable storage would corrupt the checkpoint the moment any future change
+// touches them before the marshal.
+func snapshotCheckpoint(nodeID, mode string, input workflow.NodeInput, attempt int, state *runState, request *Request) Checkpoint {
 	checkpoint := Checkpoint{
 		SuspendNode: nodeID, SuspendAttempt: attempt, Mode: mode,
 		TriggerNodeID: request.TriggerNodeID,
 		Input:         cloneInput(input),
-		Completed:     make(map[string]workflow.NodeOutput, len(completed)),
-		Runs:          make(map[string][]workflow.NodeOutput, len(runs)),
+		Completed:     make(map[string]workflow.NodeOutput, len(state.completed)),
+		Runs:          make(map[string][]workflow.NodeOutput, len(state.runs)),
 		NodeOutputs:   make(map[string]map[string]any, len(request.NodeOutputs)),
 		NodeItems:     make(map[string]expression.NodeItem, len(request.NodeItems)),
 		NodeState:     cloneNodeState(request.NodeState),
-		Output:        make(map[string]workflow.NodeOutput, len(result.Output)),
+		Output:        make(map[string]workflow.NodeOutput, len(state.result.Output)),
+		Pending:       make([]PendingNode, 0, len(state.pending)),
 	}
-	for id, output := range completed {
+	for id, output := range state.completed {
 		checkpoint.Completed[id] = cloneOutput(output)
 	}
-	for id, outputs := range runs {
+	for id, outputs := range state.runs {
 		restored := make([]workflow.NodeOutput, 0, len(outputs))
 		for _, output := range outputs {
 			restored = append(restored, cloneOutput(output))
@@ -646,8 +743,16 @@ func snapshotCheckpoint(nodeID, mode string, input workflow.NodeInput, attempt i
 	for name, item := range request.NodeItems {
 		checkpoint.NodeItems[name] = item
 	}
-	for id, output := range result.Output {
+	for id, output := range state.result.Output {
 		checkpoint.Output[id] = cloneOutput(output)
+	}
+	// The stack is the work the run still owes. Without it a resumed run would
+	// lose every branch that was waiting behind the one that suspended, and the
+	// branch that continues would look like the whole graph.
+	for _, invocation := range state.pending {
+		checkpoint.Pending = append(checkpoint.Pending, PendingNode{
+			NodeID: invocation.nodeID, Input: cloneInput(invocation.input),
+		})
 	}
 	return checkpoint
 }
@@ -674,15 +779,23 @@ func (runner *Runner) Resume(ctx context.Context, ir workflow.IR, request Reques
 	if _, done := checkpoint.Completed[checkpoint.SuspendNode]; done {
 		return Result{}, fmt.Errorf("suspended node %q already completed", checkpoint.SuspendNode)
 	}
-	if got, want := len(resumeOutput), len(node.Definition.Outputs); got != want {
+	if got, want := len(resumeOutput), expectedPorts(node); got != want {
 		return Result{}, fmt.Errorf("resume output for node %q has %d streams, want %d", checkpoint.SuspendNode, got, want)
 	}
 	request.Workflow = workflowContextFor(ir, request.Workflow)
-	if request.NodeOutputs == nil {
-		request.NodeOutputs = make(map[string]map[string]any, len(checkpoint.NodeOutputs))
+	// Not seeded: a resumed run continues the stack the checkpoint recorded,
+	// and pushing the graph's roots again would run the trigger a second time.
+	state := &runState{
+		completed: make(map[string]workflow.NodeOutput, len(graph.nodes)),
+		runs:      make(map[string][]workflow.NodeOutput, len(graph.nodes)),
+		result:    &Result{NodeRuns: make([]NodeRun, 0, len(graph.nodes)), Output: make(map[string]workflow.NodeOutput)},
 	}
-	if request.NodeItems == nil {
-		request.NodeItems = make(map[string]expression.NodeItem, len(checkpoint.NodeItems))
+	ensureRequestMaps(&request, graph)
+	for id, output := range checkpoint.Completed {
+		state.completed[id] = output
+	}
+	for id, outputs := range checkpoint.Runs {
+		state.runs[id] = outputs
 	}
 	for name, fields := range checkpoint.NodeOutputs {
 		request.NodeOutputs[name] = fields
@@ -692,59 +805,418 @@ func (runner *Runner) Resume(ctx context.Context, ir workflow.IR, request Reques
 	}
 	// Loop state comes back with the run: a loop that suspended inside its body
 	// must resume on the batch it was on, not start again from the first one.
-	if request.NodeState == nil {
-		request.NodeState = make(map[string]map[string]any, len(checkpoint.NodeState))
-	}
-	for id, state := range checkpoint.NodeState {
-		request.NodeState[id] = cloneStateFields(state)
-	}
-	for nodeID := range graph.nodes {
-		if _, exists := request.NodeState[nodeID]; !exists {
-			request.NodeState[nodeID] = map[string]any{}
-		}
-	}
-	completed := checkpoint.Completed
-	runs := checkpoint.Runs
-	result := Result{
-		NodeRuns: make([]NodeRun, 0, len(graph.nodes)),
-		Output:   make(map[string]workflow.NodeOutput, len(checkpoint.Output)),
+	for id, fields := range checkpoint.NodeState {
+		request.NodeState[id] = cloneStateFields(fields)
 	}
 	for id, output := range checkpoint.Output {
-		result.Output[id] = output
+		state.result.Output[id] = output
+	}
+	// The work the suspended run had not reached, restored below the branch the
+	// suspended node is about to continue.
+	for _, invocation := range checkpoint.Pending {
+		state.pending = append(state.pending, pendingInvocation{
+			nodeID: invocation.NodeID, input: cloneInput(invocation.Input),
+		})
 	}
 	// The suspending node completes here, mirroring a normal completion:
-	// provenance, expression state, the trace row, and loop bookkeeping all
+	// provenance, expression state, the trace row, and the branch it feeds all
 	// behave as if the node had just run.
-	nodeID := checkpoint.SuspendNode
-	output := cloneOutput(resumeOutput)
-	stampProvenance(node, graph.incoming[nodeID], checkpoint.Input, output, len(runs[nodeID]))
-	completed[nodeID] = output
-	runs[nodeID] = append(runs[nodeID], cloneOutput(output))
-	if first, ok := firstItem(output); ok {
-		request.NodeOutputs[node.Name] = first
-	}
-	request.NodeItems[node.Name] = nodeItemFor(node, output)
+	output := withErrorPort(node, cloneOutput(resumeOutput))
+	stampProvenance(node, graph.incoming[checkpoint.SuspendNode], checkpoint.Input, output, len(state.runs[checkpoint.SuspendNode]))
 	attempt := checkpoint.SuspendAttempt
 	if attempt < 1 {
 		attempt = 1
 	}
-	result.NodeRuns = append(result.NodeRuns, NodeRun{
-		NodeID: nodeID, Input: cloneInput(checkpoint.Input), Output: output,
-		Attempt: attempt, RunIndex: len(runs[nodeID]) - 1,
-	})
-	reopenLoops(nodeID, node, output, graph.loops, completed)
-	closeIteration(nodeID, graph.incoming, graph.loops, completed)
-	if graph.outgoing[nodeID] == 0 {
-		result.Output[nodeID] = cloneOutput(output)
-	}
-	suspended, err := runner.runLoop(ctx, graph.nodes, graph.incoming, graph.outgoing, graph.loops, &request, completed, runs, &result)
+	state.complete(graph, node, checkpoint.Input, output, NodeRun{
+		NodeID: node.ID, Input: cloneInput(checkpoint.Input), Attempt: attempt,
+	}, &request)
+	suspended, err := runner.runLoop(ctx, graph, &request, state)
 	if err != nil {
-		return result, err
+		return *state.result, err
 	}
 	if suspended != nil {
-		return result, suspended
+		return *state.result, suspended
 	}
-	return result, nil
+	return *state.result, nil
+}
+
+// runLoop schedules every node the graph still owes. It is the single pass
+// Run and Resume share: Run starts it with the graph's roots, Resume starts it
+// from a checkpoint. A suspension returns the signal with the checkpoint
+// attached, alongside the runs produced so far; any other error fails the run.
+func (runner *Runner) runLoop(ctx context.Context, graph preparedGraph, request *Request, state *runState) (*SuspendError, error) {
+	for {
+		// Cancellation floor. A holder in another process learns about
+		// Cancel by polling the row and interrupting this context; the
+		// check here is what turns that interrupt into a stop between
+		// nodes. An executor that ignores its context still finishes its
+		// current node, but the next node never starts: without this, a
+		// cancelled run would execute every remaining node and only be
+		// relabelled cancelled when the terminal write raced the request.
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		invocation, found, err := state.next(graph)
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			break
+		}
+		suspended, err := runner.runNode(ctx, graph, request, state, invocation)
+		if err != nil {
+			return nil, err
+		}
+		if suspended != nil {
+			return suspended, nil
+		}
+	}
+	state.recordSkips(graph, request)
+	return nil, nil
+}
+
+// runNode executes one scheduled invocation.
+func (runner *Runner) runNode(ctx context.Context, graph preparedGraph, request *Request, state *runState, invocation pendingInvocation) (*SuspendError, error) {
+	node := graph.nodes[invocation.nodeID]
+	// A disabled node is never invoked. It passes its first main input through,
+	// which is what n8n does: switching a node off in the middle of a chain
+	// leaves the chain working, with that node's own edit missing.
+	if node.Disabled {
+		state.complete(graph, node, invocation.input, passThrough(node, invocation.input), NodeRun{
+			NodeID: node.ID, Input: cloneInput(invocation.input),
+		}, request)
+		return nil, nil
+	}
+	if _, found := runner.executors.Lookup(node.Definition.ExecutorID); !found {
+		return nil, fmt.Errorf("node %q executor %q is not registered", node.ID, node.Definition.ExecutorID)
+	}
+	policy := retryPolicy(node.Settings)
+	input := invocation.input
+	if settingBool(node.Settings, "executeOnce") {
+		// Execute Once means the node sees the first item, not the batch.
+		input = firstItemOnly(input)
+	}
+
+	// A node that tolerates failures is resolved one item at a time, because
+	// n8n resolves continueOnFail inside the item loop: one failing item must
+	// not discard the items that already succeeded or skip the ones after it.
+	if perItemTolerance(node, policy) && len(input[mainPortName]) > 0 {
+		return runner.runPerItem(ctx, graph, request, state, node, input, policy)
+	}
+
+	output, cause, code, attempt, suspended, err := runner.invoke(ctx, node, input, request, state, policy)
+	if err != nil {
+		return nil, err
+	}
+	if suspended != nil {
+		return suspended, nil
+	}
+	if cause != nil {
+		if policy.onError == errorStop {
+			state.record(NodeRun{NodeID: node.ID, Input: cloneInput(input), Error: cause, Attempt: attempt, ErrorCode: code}, request)
+			return nil, fmt.Errorf("execute node %q: %w", node.ID, cause)
+		}
+		// Tolerated: the node emits error items rather than aborting, and the
+		// run carries on. The items are not the input passed through — a
+		// downstream node has to be able to tell a tolerated failure from a
+		// success.
+		output = toleratedOutput(node, input, cause, policy.onError)
+		state.complete(graph, node, input, output, NodeRun{
+			NodeID: node.ID, Input: cloneInput(input), Error: cause, Attempt: attempt, ErrorCode: code,
+		}, request)
+		return nil, nil
+	}
+
+	if got, want := len(output), expectedPorts(node); got != want {
+		return nil, fmt.Errorf("node %q returned %d output streams, want %d", node.ID, got, want)
+	}
+	output = withErrorPort(node, cloneOutput(output))
+	if settingBool(node.Settings, "alwaysOutputData") {
+		output = withEmptyItem(output)
+	}
+	// Provenance the executor did not set is inferred by position, but only
+	// when that inference is actually sound: exactly one incoming item port
+	// that delivered, and a matching item count. An executor that reorders or
+	// filters must set its own, which is why IF and Merge do.
+	stampProvenance(node, graph.incoming[node.ID], input, output, len(state.runs[node.ID]))
+	state.complete(graph, node, input, output, NodeRun{
+		NodeID: node.ID, Input: cloneInput(input), Attempt: attempt,
+	}, request)
+	return nil, nil
+}
+
+// invoke runs one node invocation with its retry budget.
+//
+// It returns the output on success, or the last cause with the code that
+// classifies it. A suspension is neither: it ends the run with no retry and no
+// failure row, and the caller hands the signal back to the service.
+func (runner *Runner) invoke(ctx context.Context, node workflow.IRNode, input workflow.NodeInput, request *Request, state *runState, policy retry) (workflow.NodeOutput, error, string, int, *SuspendError, error) {
+	executor, _ := runner.executors.Lookup(node.Definition.ExecutorID)
+	var (
+		output  workflow.NodeOutput
+		cause   error
+		code    string
+		attempt int
+	)
+	for attempt = 1; attempt <= policy.attempts; attempt++ {
+		// The per-node context is rebuilt each time round, because its cancel
+		// must fire per attempt rather than once for all of them — a shared
+		// deadline would make the second attempt inherit the first one's
+		// remaining time.
+		nodeCtx, cancel, timeout, err := nodeContext(ctx, node)
+		if err != nil {
+			state.record(NodeRun{NodeID: node.ID, Input: cloneInput(input), Error: err, Attempt: attempt, ErrorCode: "config.invalid"}, request)
+			return nil, nil, "", attempt, nil, err
+		}
+		output, err = executor.Execute(nodeCtx, node, cloneInput(input), cloneRequest(*request))
+		cancel()
+		var suspended *SuspendError
+		if err != nil && errors.As(err, &suspended) {
+			raw, cerr := marshalCheckpoint(snapshotCheckpoint(node.ID, suspended.Mode, input, attempt, state, request))
+			if cerr != nil {
+				return nil, nil, "", attempt, nil, cerr
+			}
+			suspended.NodeID = node.ID
+			suspended.Checkpoint = raw
+			return nil, nil, "", attempt, suspended, nil
+		}
+		if err == nil {
+			return output, nil, "", attempt, nil, nil
+		}
+		cause, code = err, "node.failed"
+		if timeout > 0 && errors.Is(nodeCtx.Err(), context.DeadlineExceeded) {
+			code = "node.timeout"
+		} else if timeout == 0 && errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			code = "execution.timeout"
+		}
+		// A failed attempt is a row of its own, so a reader can see that a node
+		// succeeded on its third try rather than only that it succeeded.
+		if attempt < policy.attempts {
+			state.record(NodeRun{NodeID: node.ID, Input: cloneInput(input), Error: err, Attempt: attempt, ErrorCode: code}, request)
+			if !sleepBetweenAttempts(ctx, policy.wait) {
+				// The execution was cancelled while waiting; stop here rather
+				// than burning the remaining attempts.
+				state.record(NodeRun{NodeID: node.ID, Input: cloneInput(input), Error: ctx.Err(), Attempt: attempt + 1, ErrorCode: "execution.cancelled"}, request)
+				return nil, nil, "", attempt, nil, fmt.Errorf("execute node %q: %w", node.ID, ctx.Err())
+			}
+		}
+	}
+	return output, cause, code, attempt - 1, nil, nil
+}
+
+// runPerItem runs a node once per input item, so a tolerated failure costs the
+// failing item and nothing else.
+func (runner *Runner) runPerItem(ctx context.Context, graph preparedGraph, request *Request, state *runState, node workflow.IRNode, input workflow.NodeInput, policy retry) (*SuspendError, error) {
+	items := input[mainPortName]
+	assembled := make(workflow.NodeOutput, len(node.Definition.Outputs))
+	for index := range assembled {
+		assembled[index] = []workflow.Item{}
+	}
+	errorPort := errorPortIndex(node)
+	var firstCause error
+	failed := 0
+	for position, item := range items {
+		output, cause, _, _, suspended, err := runner.invoke(ctx, node, singleItemInput(input, item), request, state, policy)
+		if err != nil {
+			return nil, err
+		}
+		if suspended != nil {
+			// The items this node has not reached yet are scheduled, so a
+			// resumed run finishes them instead of dropping them.
+			if remaining := items[position+1:]; len(remaining) > 0 {
+				state.pending = append(state.pending, pendingInvocation{
+					nodeID: node.ID, input: singleItemInput(input, remaining...),
+				})
+			}
+			return suspended, nil
+		}
+		if cause != nil {
+			failed++
+			if firstCause == nil {
+				firstCause = cause
+			}
+			failedItem := errorItem(node, item, cause, policy.onError == errorBranch)
+			if errorPort >= 0 && policy.onError == errorBranch {
+				assembled[errorPort] = append(assembled[errorPort], failedItem)
+			} else {
+				assembled[0] = append(assembled[0], failedItem)
+			}
+			continue
+		}
+		mergeOutput(assembled, output)
+	}
+	run := NodeRun{NodeID: node.ID, Input: cloneInput(input), Error: firstCause}
+	if firstCause != nil {
+		run.ErrorCode = "node.partial"
+		if failed == len(items) {
+			run.ErrorCode = "node.failed"
+		}
+	}
+	stampProvenance(node, graph.incoming[node.ID], input, assembled, len(state.runs[node.ID]))
+	state.complete(graph, node, input, assembled, run, request)
+	return nil, nil
+}
+
+// passThrough is what a disabled node emits: its first main input, unchanged.
+func passThrough(node workflow.IRNode, input workflow.NodeInput) workflow.NodeOutput {
+	output := make(workflow.NodeOutput, len(node.Definition.Outputs))
+	for index := range output {
+		output[index] = []workflow.Item{}
+	}
+	if len(output) == 0 {
+		return output
+	}
+	// The first declared item input is the one n8n forwards. A disabled node
+	// with no item input has nothing to pass and simply does not run.
+	for _, port := range node.Definition.Inputs {
+		if port.Kind != workflow.ConnectionMain {
+			continue
+		}
+		output[0] = cloneItems(input[port.Name])
+		break
+	}
+	return output
+}
+
+// singleItemInput is one invocation's input for a single item (or a run of
+// them): the item ports other than the main one are configuration and stay as
+// they are.
+func singleItemInput(input workflow.NodeInput, items ...workflow.Item) workflow.NodeInput {
+	single := make(workflow.NodeInput, len(input))
+	for port, portItems := range input {
+		if port == mainPortName {
+			continue
+		}
+		single[port] = portItems
+	}
+	single[mainPortName] = cloneItems(items)
+	return single
+}
+
+// mergeOutput appends one invocation's streams onto the assembled result, port
+// by port: a node that routes an item to its second port, such as an IF, has to
+// have both ports collected across the items it was given.
+func mergeOutput(assembled workflow.NodeOutput, output workflow.NodeOutput) {
+	for index, port := range output {
+		if index >= len(assembled) {
+			break
+		}
+		assembled[index] = append(assembled[index], port...)
+	}
+}
+
+// withEmptyItem is Always Output Data: a node that produced nothing still hands
+// downstream an item, so the branch does not silently stop.
+func withEmptyItem(output workflow.NodeOutput) workflow.NodeOutput {
+	if len(output) == 0 {
+		return output
+	}
+	for _, port := range output {
+		if len(port) > 0 {
+			return output
+		}
+	}
+	output[0] = []workflow.Item{{JSON: map[string]any{}}}
+	return output
+}
+
+// firstItemOnly is Execute Once: the node sees the first item of its main input
+// rather than the batch.
+func firstItemOnly(input workflow.NodeInput) workflow.NodeInput {
+	items := input[mainPortName]
+	if len(items) <= 1 {
+		return input
+	}
+	truncated := make(workflow.NodeInput, len(input))
+	for port, portItems := range input {
+		truncated[port] = portItems
+	}
+	truncated[mainPortName] = items[:1]
+	return truncated
+}
+
+// errorPortName is the extra output a node that continues on a separate error
+// branch declares. The compiler appends it from the node's own setting, so a
+// workflow with a wired error branch compiles and runs.
+const errorPortName = "error"
+
+// errorPortIndex is where that port sits, or -1 when the node has none.
+func errorPortIndex(node workflow.IRNode) int {
+	if onErrorMode(node.Settings) != errorBranch {
+		return -1
+	}
+	last := len(node.Definition.Outputs) - 1
+	if last >= 0 && node.Definition.Outputs[last].Name == errorPortName {
+		return last
+	}
+	return -1
+}
+
+// expectedPorts is how many streams the executor returns. The error port is the
+// runner's, not the executor's: an executor knows nothing about error routing.
+func expectedPorts(node workflow.IRNode) int {
+	if index := errorPortIndex(node); index >= 0 {
+		return index
+	}
+	return len(node.Definition.Outputs)
+}
+
+// withErrorPort pads a run's output to the declared arity, leaving the error
+// port empty when nothing failed.
+func withErrorPort(node workflow.IRNode, output workflow.NodeOutput) workflow.NodeOutput {
+	index := errorPortIndex(node)
+	if index < 0 || index < len(output) {
+		return output
+	}
+	padded := make(workflow.NodeOutput, index+1)
+	copy(padded, output)
+	for position := len(output); position <= index; position++ {
+		padded[position] = []workflow.Item{}
+	}
+	return padded
+}
+
+// errorItem is one tolerated failure in n8n's shape: the error itself on the
+// main output, and the input item plus the error on the error output, so an
+// imported check such as `{{ $json.error }}` matches and the item keeps its
+// paired-item lineage.
+func errorItem(node workflow.IRNode, item workflow.Item, cause error, withInput bool) workflow.Item {
+	fields := make(map[string]any, len(item.JSON)+1)
+	if withInput {
+		for key, value := range item.JSON {
+			fields[key] = cloneValue(value)
+		}
+	}
+	fields[ErrorItemKey] = map[string]any{
+		"message": cause.Error(),
+		"node":    node.Name,
+	}
+	return workflow.Item{JSON: fields, Binary: item.Binary, Paired: item.Paired}
+}
+
+// toleratedOutput is a node-level tolerated failure: one error item per input
+// item, so downstream item counts and paired-item lineage survive, and a single
+// item when the node had no input to pair against.
+func toleratedOutput(node workflow.IRNode, input workflow.NodeInput, cause error, mode errorMode) workflow.NodeOutput {
+	output := make(workflow.NodeOutput, len(node.Definition.Outputs))
+	for index := range output {
+		output[index] = []workflow.Item{}
+	}
+	items := make([]workflow.Item, 0, len(input[mainPortName]))
+	for _, item := range input[mainPortName] {
+		items = append(items, errorItem(node, item, cause, mode == errorBranch))
+	}
+	if len(items) == 0 {
+		items = []workflow.Item{errorItem(node, workflow.Item{JSON: map[string]any{}}, cause, mode == errorBranch)}
+	}
+	if index := errorPortIndex(node); index >= 0 && mode == errorBranch {
+		output[index] = items
+		return output
+	}
+	if len(output) > 0 {
+		output[0] = items
+	}
+	return output
 }
 
 // firstItem returns the first item of a node's first non-empty output port,
@@ -841,43 +1313,6 @@ func dependenciesComplete(edges []workflow.IREdge, completed map[string]workflow
 	return true
 }
 
-// isLive reports whether a node should actually be invoked.
-//
-// A node with no declared `main` input is a trigger or a sub-node and always
-// runs. Otherwise it runs only when some incoming item edge delivered at least
-// one item on the port it was wired to.
-//
-// Typed attachment edges never gate this. A chat model, a memory and a tool
-// supply configuration rather than items, and an agent with no memory is a
-// perfectly valid agent — gating on them would skip every agent in the product.
-func isLive(node workflow.IRNode, edges []workflow.IREdge, completed map[string]workflow.NodeOutput) bool {
-	var wantsItems bool
-	for _, port := range node.Definition.Inputs {
-		if port.Kind == workflow.ConnectionMain {
-			wantsItems = true
-			break
-		}
-	}
-	if !wantsItems {
-		return true
-	}
-	var itemEdges int
-	for _, edge := range edges {
-		if edge.Kind != workflow.ConnectionMain {
-			continue
-		}
-		itemEdges++
-		output := completed[edge.Source.NodeID]
-		if edge.SourceOutputIndex >= 0 && edge.SourceOutputIndex < len(output) && len(output[edge.SourceOutputIndex]) > 0 {
-			return true
-		}
-	}
-	// A node that declares a main input but has none connected is not pruned:
-	// the compiler already refuses that graph, and the executors' empty-item
-	// substitution stays reachable for a node genuinely wired to nothing.
-	return itemEdges == 0
-}
-
 func nodeInput(edges []workflow.IREdge, completed map[string]workflow.NodeOutput) (workflow.NodeInput, error) {
 	input := make(workflow.NodeInput)
 	for _, edge := range edges {
@@ -906,6 +1341,7 @@ func cloneRequest(request Request) Request {
 		Binaries:      request.Binaries,
 		Credentials:   request.Credentials,
 		Events:        request.Events,
+		NodeRunSink:   request.NodeRunSink,
 		Workflows:     request.Workflows,
 		Env:           make(map[string]string, len(request.Env)),
 		NodeOutputs:   make(map[string]map[string]any, len(request.NodeOutputs)),
@@ -1101,14 +1537,52 @@ func activeNodes(ir workflow.IR, triggerNodeID string) (map[string]struct{}, err
 	return active, nil
 }
 
+// errorMode is how a node handles a failure it could not retry away.
+type errorMode int
+
+const (
+	// errorStop fails the execution. It is the default, and what n8n's
+	// stopWorkflow means.
+	errorStop errorMode = iota
+	// errorRegular passes an error item on the node's own main output and keeps
+	// the run going. It is what legacy continueOnFail and n8n's
+	// continueRegularOutput both mean.
+	errorRegular
+	// errorBranch routes failed items to the node's own error output, so a
+	// workflow can handle them without stopping.
+	errorBranch
+)
+
+// onErrorMode reads the node's error handling.
+//
+// n8n 1.x writes onError; the 0.x UI wrote continueOnFail, and imported
+// documents still carry it. They are the same setting under two names, and the
+// importer maps the old one onto the new, so both are read here.
+func onErrorMode(settings map[string]any) errorMode {
+	if value, ok := settings["onError"].(string); ok {
+		switch value {
+		case "continueRegularOutput":
+			return errorRegular
+		case "continueErrorOutput":
+			return errorBranch
+		case "stopWorkflow":
+			return errorStop
+		}
+	}
+	if settingBool(settings, "continueOnFail") {
+		return errorRegular
+	}
+	return errorStop
+}
+
 // retry is how a node handles its own failure.
 type retry struct {
 	// attempts is the total number of tries, so 1 means no retry at all.
 	attempts int
 	// wait is the delay between attempts.
 	wait time.Duration
-	// continueOnFail tolerates a final failure instead of aborting the run.
-	continueOnFail bool
+	// onError is what happens when every attempt failed.
+	onError errorMode
 }
 
 // defaultRetryWait is used when retryOnFail is on and no delay was given.
@@ -1118,13 +1592,13 @@ type retry struct {
 // failing request into a burst against an upstream that is already struggling.
 const defaultRetryWait = time.Second
 
-// retryPolicy reads the three settings every node declares.
+// retryPolicy reads the settings every node declares.
 //
 // The compiler has already refused an out-of-range value, so this clamps rather
 // than errors: a document that reached the runner has valid settings, and a
 // second error path here would only be reachable if that stopped being true.
 func retryPolicy(settings map[string]any) retry {
-	policy := retry{attempts: 1, wait: 0, continueOnFail: settingBool(settings, "continueOnFail")}
+	policy := retry{attempts: 1, wait: 0, onError: onErrorMode(settings)}
 	if !settingBool(settings, "retryOnFail") {
 		return policy
 	}
@@ -1166,38 +1640,45 @@ func sleepBetweenAttempts(ctx context.Context, wait time.Duration) bool {
 }
 
 // ErrorItemKey is the field a tolerated failure writes on each item it emits.
-const ErrorItemKey = "$error"
-
-// errorOutput is what a node emits when its failure was tolerated.
 //
-// One error item per input item, so downstream item counts and paired-item
-// lineage survive a tolerated failure; a single item when the node had no input
-// to pair against. The input is deliberately not passed through unchanged —
-// a downstream node has to be able to tell a tolerated failure from a success,
-// and identical items would make that impossible.
-func errorOutput(node workflow.IRNode, input workflow.NodeInput, cause error) workflow.NodeOutput {
-	descriptor := map[string]any{
-		"message": cause.Error(),
-		"node":    node.Name,
-	}
-	var items []workflow.Item
-	for _, port := range input {
-		for range port {
-			items = append(items, workflow.Item{JSON: map[string]any{ErrorItemKey: cloneMap(descriptor)}})
+// It is n8n's own name for it. Imported checks read `{{ $json.error }}`, so a
+// descriptor under any other key matches nothing and the branch silently takes
+// the wrong arm.
+const ErrorItemKey = "error"
+
+// mainPortName is the item channel every executor reads its work from. The
+// document spells it, the compiler resolves ports against it, and the runner
+// has to know which of a node's ports carries items when it hands an executor
+// one item at a time.
+const mainPortName = "main"
+
+// itemInputPorts counts the item channels a node declares.
+func itemInputPorts(node workflow.IRNode) int {
+	ports := 0
+	for _, port := range node.Definition.Inputs {
+		if port.Kind == workflow.ConnectionMain {
+			ports++
 		}
 	}
-	if len(items) == 0 {
-		items = []workflow.Item{{JSON: map[string]any{ErrorItemKey: cloneMap(descriptor)}}}
-	}
+	return ports
+}
 
-	output := make(workflow.NodeOutput, len(node.Definition.Outputs))
-	for index := range output {
-		output[index] = []workflow.Item{}
+// perItemTolerance reports whether this node's tolerated failures are resolved
+// one item at a time.
+//
+// n8n resolves continueOnFail inside the node's item loop, so one failing item
+// must not discard the items that already succeeded or skip the ones after it.
+// Resolving it per item is only sound where an item is the unit of work: a
+// single item input, no batching setting, and not a loop entry, whose state
+// machine dispatches batches rather than items.
+func perItemTolerance(node workflow.IRNode, policy retry) bool {
+	if policy.onError == errorStop {
+		return false
 	}
-	if len(output) > 0 {
-		output[0] = items
+	if node.Definition.LoopEntry || settingBool(node.Settings, "executeOnce") {
+		return false
 	}
-	return output
+	return itemInputPorts(node) == 1
 }
 
 // stampProvenance fills in the lineage an executor did not set.
@@ -1210,14 +1691,18 @@ func errorOutput(node workflow.IRNode, input workflow.NodeInput, cause error) wo
 // a confident answer that happens to be wrong, which is the worst failure mode
 // an imported workflow can have.
 func stampProvenance(node workflow.IRNode, edges []workflow.IREdge, input workflow.NodeInput, output workflow.NodeOutput, runIndex int) {
-	var itemPorts int
-	var source workflow.IREdge
+	// Only the ports this invocation actually read count. A node fed by two
+	// branches runs once per branch, each time carrying one branch's items, so
+	// counting the edges instead would mark every item of both runs as lost.
+	var sources []workflow.IREdge
 	for _, edge := range edges {
 		if edge.Kind != workflow.ConnectionMain {
 			continue
 		}
-		itemPorts++
-		source = edge
+		if items, delivered := input[edge.Target.Port]; !delivered || len(items) == 0 {
+			continue
+		}
+		sources = append(sources, edge)
 	}
 
 	for portIndex := range output {
@@ -1227,14 +1712,15 @@ func stampProvenance(node workflow.IRNode, edges []workflow.IREdge, input workfl
 			}
 			// A trigger has no input to descend from, so its items originate
 			// here rather than having lost anything.
-			if itemPorts == 0 {
+			if len(sources) == 0 {
 				output[portIndex][itemIndex].Paired = &workflow.PairedItem{
 					SourceNodeID: node.ID, RunIndex: runIndex, ItemIndex: itemIndex,
 				}
 				continue
 			}
+			source := sources[0]
 			incomingItems := input[source.Target.Port]
-			if itemPorts != 1 || len(incomingItems) != len(output[portIndex]) {
+			if len(sources) != 1 || len(incomingItems) != len(output[portIndex]) {
 				// Several inputs, or a changed item count: the correspondence
 				// is genuinely unknown and saying so is the honest answer.
 				output[portIndex][itemIndex].Paired = &workflow.PairedItem{
@@ -1256,194 +1742,6 @@ func stampProvenance(node workflow.IRNode, edges []workflow.IREdge, input workfl
 			}
 		}
 	}
-}
-
-// loopGraph is what the runner needs to know about one bounded loop.
-type loopGraph struct {
-	// entryID is the loop node itself.
-	entryID string
-	// backEdges are the edges pointing from the body back into the entry.
-	backEdges map[string]bool
-	// body is every node between the entry's `loop` output and the back edge.
-	body map[string]bool
-	// started marks a loop that has dispatched at least one batch, so its
-	// entry now reads from the back edge rather than from upstream.
-	started bool
-	// finished marks a loop that has emitted on `done`. Until it has, the
-	// nodes below `done` must not be scheduled: they would be handed an empty
-	// stream mid-loop, be pruned as an untaken branch, and never run again
-	// once the final batch actually produced something.
-	finished bool
-}
-
-// findLoops locates every bounded loop in a compiled graph.
-//
-// A loop is a node whose definition declares LoopEntry together with the edges
-// that close back onto it and the nodes between. The compiler has already
-// refused any other cycle, so anything found here is a loop somebody declared.
-func findLoops(ir workflow.IR, active map[string]workflow.IRNode) map[string]*loopGraph {
-	loops := map[string]*loopGraph{}
-	for _, node := range ir.Nodes {
-		if !node.Definition.LoopEntry {
-			continue
-		}
-		if _, live := active[node.ID]; !live {
-			continue
-		}
-		loops[node.ID] = &loopGraph{
-			entryID: node.ID, backEdges: map[string]bool{}, body: map[string]bool{},
-		}
-	}
-	if len(loops) == 0 {
-		return loops
-	}
-
-	// The body of a loop is whatever its `loop` output reaches before coming
-	// back. Walking forward from the entry and stopping at the entry is enough:
-	// the compiler guarantees no other cycle exists to wander into.
-	forward := map[string][]workflow.IREdge{}
-	for _, edge := range ir.Edges {
-		forward[edge.Source.NodeID] = append(forward[edge.Source.NodeID], edge)
-	}
-	for entryID, loop := range loops {
-		queue := []string{entryID}
-		seen := map[string]bool{entryID: true}
-		for len(queue) > 0 {
-			current := queue[0]
-			queue = queue[1:]
-			for _, edge := range forward[current] {
-				if edge.Kind != workflow.ConnectionMain {
-					continue
-				}
-				if edge.Target.NodeID == entryID {
-					loop.backEdges[edge.ID] = true
-					continue
-				}
-				if seen[edge.Target.NodeID] {
-					continue
-				}
-				seen[edge.Target.NodeID] = true
-				loop.body[edge.Target.NodeID] = true
-				queue = append(queue, edge.Target.NodeID)
-			}
-		}
-	}
-	return loops
-}
-
-// schedulingEdges hides a loop's back edge until the loop has actually started.
-//
-// Without this a loop node waits forever on its own body, which has not run
-// because the loop node has not dispatched a batch.
-func schedulingEdges(edges []workflow.IREdge, loops map[string]*loopGraph) []workflow.IREdge {
-	if len(loops) == 0 {
-		return edges
-	}
-	filtered := make([]workflow.IREdge, 0, len(edges))
-	for _, edge := range edges {
-		if loop, found := loops[edge.Target.NodeID]; found && loop.backEdges[edge.ID] && !loop.started {
-			continue
-		}
-		filtered = append(filtered, edge)
-	}
-	return filtered
-}
-
-// iterationEdges decides what a loop node reads on re-entry.
-//
-// On the first dispatch it takes its work from upstream. On every later one it
-// reads only the back edge, because the upstream items are still sitting in the
-// completed map and feeding them in again would restart the loop with every
-// iteration.
-func iterationEdges(nodeID string, edges []workflow.IREdge, loops map[string]*loopGraph) []workflow.IREdge {
-	loop, found := loops[nodeID]
-	if !found {
-		return edges
-	}
-	filtered := make([]workflow.IREdge, 0, len(edges))
-	for _, edge := range edges {
-		// Exactly one side of the loop feeds any given dispatch: upstream on
-		// the first, the body on every one after. Taking both would restart the
-		// loop on every iteration, and taking the back edge before the body has
-		// run would read an output that does not exist.
-		if loop.backEdges[edge.ID] == loop.started {
-			filtered = append(filtered, edge)
-		}
-	}
-	return filtered
-}
-
-// reopenLoops clears the completion state of a loop's body once a batch has
-// been dispatched, so the next iteration can run.
-//
-// It is driven by the loop node's own output rather than by a counter the
-// runner keeps: the node says whether it has more work by emitting on `loop`,
-// which keeps the iteration state where it belongs and out of the scheduler.
-func reopenLoops(nodeID string, node workflow.IRNode, output workflow.NodeOutput, loops map[string]*loopGraph, completed map[string]workflow.NodeOutput) {
-	loop, found := loops[nodeID]
-	if !found {
-		return
-	}
-	dispatched := false
-	for index, port := range node.Definition.Outputs {
-		if port.Name == "loop" && index < len(output) && len(output[index]) > 0 {
-			dispatched = true
-		}
-	}
-	if !dispatched {
-		// The loop is finished. Its body keeps whatever state it ended with,
-		// and the nodes below `done` become schedulable and run once.
-		loop.finished = true
-		return
-	}
-	loop.started = true
-	// Only the body is reopened, and only the body. Reopening the entry here
-	// too would deadlock: the entry would then be waiting on a back edge whose
-	// source has just been reopened and cannot run until the entry does.
-	//
-	// The entry is reopened instead when the back edge's source completes,
-	// which is the moment the next batch actually has somewhere to come from.
-	for bodyID := range loop.body {
-		delete(completed, bodyID)
-	}
-}
-
-// closeIteration reopens a loop's entry once its body has come back round.
-//
-// This is the other half of reopenLoops, and the order matters: the body is
-// reopened when a batch is dispatched, and the entry when the body returns.
-// Doing both at once leaves neither able to run.
-func closeIteration(nodeID string, edges map[string][]workflow.IREdge, loops map[string]*loopGraph, completed map[string]workflow.NodeOutput) {
-	for _, loop := range loops {
-		if !loop.started {
-			continue
-		}
-		for _, edge := range edges[loop.entryID] {
-			if loop.backEdges[edge.ID] && edge.Source.NodeID == nodeID {
-				delete(completed, loop.entryID)
-			}
-		}
-	}
-}
-
-// awaitingLoop reports a node fed by a loop's `done` port while that loop is
-// still iterating.
-//
-// Such a node must not be scheduled yet. Its input is empty until the final
-// batch, so scheduling it mid-loop would prune it as an untaken branch — and
-// once pruned it is complete, so it would never run when `done` finally carried
-// the accumulated items.
-func awaitingLoop(edges []workflow.IREdge, loops map[string]*loopGraph) bool {
-	for _, edge := range edges {
-		loop, found := loops[edge.Source.NodeID]
-		if !found || !loop.started || loop.finished {
-			continue
-		}
-		if edge.Source.Port == "done" {
-			return true
-		}
-	}
-	return false
 }
 
 // nodeItemFor exposes one completed node to expressions.

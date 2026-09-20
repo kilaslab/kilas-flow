@@ -70,6 +70,10 @@ type Node struct {
 	Parameters  map[string]any    `json:"parameters,omitempty"`
 	Credentials map[string]string `json:"credentials,omitempty"`
 	Settings    map[string]any    `json:"settings,omitempty"`
+	// Disabled marks a node the author switched off. It is never executed: it
+	// passes its first item input through, which is what n8n does, and a
+	// disabled trigger is never registered or started.
+	Disabled bool `json:"disabled,omitempty"`
 }
 
 // Position is the canvas location owned by the canonical document.

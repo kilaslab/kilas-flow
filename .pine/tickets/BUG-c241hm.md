@@ -1,7 +1,7 @@
 ---
 id: BUG-c241hm
 title: 'Engine scheduling: branch order, fan-in, onError modes, disabled nodes, continue-on-fail'
-status: todo
+status: doing
 priority: high
 labels:
     - engine
@@ -10,7 +10,7 @@ labels:
     - wf-c415e773
 parent: EPIC-cfe7ny
 created: "2026-09-19T12:06:10Z"
-updated: "2026-09-19T12:06:10Z"
+updated: "2026-09-20T00:46:24Z"
 ---
 
 Source: KilasFlow full-review workflow `wf_c415e773-4e1` (Find 14/14 + Verify 14/14 + Critique 1/1). Evidence: live repros against stub/n8n/private instances in `scratchpad/work/<dim>/` (FINDINGS.md, PROGRESS.md) plus journal `wf_c415e773-4e1/journal.jsonl`. Excluded from this epic: 10 verifier-refuted/tracked items (documented bounds, already-open FEAT-1axhdn/FEAT-8mymac halves).
@@ -126,3 +126,11 @@ Existing tickets: FEAT-a6yg3n
 - [ ] Disabled nodes execute: the runtime has no disabled-node concept, so a switched-off node runs and a disabled t
 - [ ] Tolerated-failure items use `$error` instead of n8n's `error`, drop the input item and lose pairedItem
 - [ ] Adversarial re-verify against live stub/n8n like the Verify phase (no code-only close)
+## Progress (EngineFlow 2026-09-20, engine/flow slice) — part 1: scheduling core landed
+
+- Scheduler rewritten to n8n v1 semantics (stack + fan-in per branch). `preparedGraph` now carries outgoing edges sorted by output index then canvas position (top→bottom, left→right, ID only as tie-break); `runState` holds an execution stack; a node pushes one invocation per target carrying the items that branch delivered, so a node fed by two branches runs once per branch, each branch runs to its end before the next starts, and an untaken port delivers nothing (the old `isLive` prune and its cascade are gone — an undelivered node is never pushed and is recorded skipped at the end). The fallback that still runs a never-run node whose upstreams finished is gated on delivery, so an untaken arm cannot fire; it exists for convergence nodes (Merge) that need every branch at once. `findLoops`/`reopenLoops`/`closeIteration`/`iterationEdges`/`awaitingLoop`/`loopGraph`/`isLive` are deleted: a loop's `loop`/`done` ports and its runner-owned state are enough, and nested loops now work by construction.
+- `Checkpoint.Pending` (`PendingNode{nodeID,input}`) carries the stack across a suspension; `Resume` restores it and no longer re-seeds the roots (which would re-run the trigger).
+- `Request.NodeRunSink(index, run)` reports each trace row as it is appended (EngineWaits' incremental persistence). Runner-side node.started/completed events were deliberately NOT added: the live stream must go through the service's `projectTrace` (datastore cells are projected before redaction), and a raw event from the runner would bypass that. Told EngineWaits.
+- Disabled nodes: `workflow.Node.Disabled`/`IRNode.Disabled`; the compiler skips a disabled node's required-parameter/credential/Validate checks (a switched-off Gmail node with a dead credential must not make a workflow unactivatable) and the runner never invokes it — it passes its first main input through, as n8n does. A disabled trigger is not seeded, so it never fires, and naming one as the trigger is refused.
+- onError modes: `stopWorkflow`/`continueRegularOutput`/`continueErrorOutput` (legacy `continueOnFail` maps to continueRegularOutput); the compiler appends the node's own `error` output port for `continueErrorOutput` so a wired error branch compiles; the runner pads the executor's arity, routes failed items to that port (input json + error), and `ErrorItemKey` is now n8n's `error`.
+- Compile-verified in an isolated worktree at HEAD with only these files; `go build ./internal/engine/ ./nodes/ ./internal/workflow/` clean. Two existing test expectations still to update in this ticket's next commit (fan-in per branch for a two-trigger manual run; per-item retry budgets under continueOnFail).

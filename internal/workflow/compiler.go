@@ -123,7 +123,11 @@ type IRNode struct {
 	Parameters  map[string]any
 	Credentials map[string]string
 	Settings    map[string]any
-	Definition  NodeDefinition
+	// Disabled is the author's switch. The runtime never invokes such a node;
+	// it passes its first item input through, and a disabled trigger is never
+	// started.
+	Disabled   bool
+	Definition NodeDefinition
 }
 
 // IREdge is a validated graph edge. SourceOutputIndex resolves a user-facing
@@ -256,6 +260,11 @@ func Compile(document Document, catalog Catalog) (IR, error) {
 			inputs, outputs := definition.PortsFor(node.Parameters, node.TypeVersion)
 			definition.Inputs, definition.Outputs = inputs, outputs
 		}
+		// A node that routes failed items to its own error branch declares a
+		// port for it. The port is the runner's — an executor knows nothing
+		// about error routing — so the compiler adds it here, before any
+		// connection is resolved against the node's ports.
+		definition = withErrorPort(definition, node.Settings)
 		definitions[node.ID] = definition
 		nodes[node.ID] = node
 		ir.Nodes = append(ir.Nodes, IRNode{
@@ -267,8 +276,16 @@ func Compile(document Document, catalog Catalog) (IR, error) {
 			Parameters:  cloneAnyMap(node.Parameters),
 			Credentials: cloneStringMap(node.Credentials),
 			Settings:    cloneAnyMap(node.Settings),
+			Disabled:    node.Disabled,
 			Definition:  cloneNodeDefinition(definition),
 		})
+		// A disabled node is never invoked, so what it would need in order to
+		// run is not a reason to refuse the workflow: n8n imports routinely
+		// carry a switched-off Gmail or HTTP node whose credential is long
+		// gone, and refusing those would make the workflow unactivatable.
+		if node.Disabled {
+			continue
+		}
 		required := definition.RequiredParameters
 		if definition.RequiredFor != nil {
 			// Only the parameters this node's configuration actually shows.
@@ -749,6 +766,13 @@ func validateDocumentTimezone(settings map[string]any) error {
 	if strings.EqualFold(strings.TrimSpace(name), "Local") {
 		return fmt.Errorf("timezone %q depends on where this server runs; name a zone such as UTC or Asia/Jakarta", name)
 	}
+	// n8n's "DEFAULT" is the sentinel for "whatever this instance is set to".
+	// It is a real, resolvable answer rather than a typo, so it is accepted
+	// here and resolved by the runtime; refusing it would leave an already
+	// saved workflow unactivatable.
+	if strings.EqualFold(strings.TrimSpace(name), "DEFAULT") {
+		return nil
+	}
 	if _, err := time.LoadLocation(strings.TrimSpace(name)); err != nil {
 		return fmt.Errorf("timezone %q is not a known IANA zone name", name)
 	}
@@ -784,7 +808,62 @@ func validateSharedSettings(settings map[string]any) []error {
 			problems = append(problems, fmt.Errorf("%s must be between %g and %g, got %g", rule.key, rule.min, rule.max, number))
 		}
 	}
+	if value, present := settings["onError"]; present && value != nil {
+		mode, ok := value.(string)
+		if !ok {
+			problems = append(problems, fmt.Errorf("onError must be one of stopWorkflow, continueRegularOutput or continueErrorOutput"))
+		} else if !knownOnError(mode) {
+			problems = append(problems, fmt.Errorf("onError %q is not one of stopWorkflow, continueRegularOutput or continueErrorOutput", mode))
+		}
+	}
 	return problems
+}
+
+// The three ways a node may handle a failure, spelled as n8n spells them.
+const (
+	OnErrorStop            = "stopWorkflow"
+	OnErrorContinueRegular = "continueRegularOutput"
+	OnErrorContinueBranch  = "continueErrorOutput"
+)
+
+// errorPortName is the extra output a node that continues on a separate error
+// branch declares. It is the runner that fills it; the compiler declares it so
+// a connection from that port is a connection to a real port.
+const errorPortName = "error"
+
+// withErrorPort adds a node's own error output when it routes failed items to
+// one.
+//
+// Without this a workflow with a wired error branch does not compile at all —
+// the connection names a port the node does not declare — which is how 14 of
+// the 100 most-viewed templates became unrunnable on import.
+func withErrorPort(definition NodeDefinition, settings map[string]any) NodeDefinition {
+	if mode, _ := settings["onError"].(string); mode != OnErrorContinueBranch {
+		return definition
+	}
+	for _, port := range definition.Outputs {
+		if port.Name == errorPortName {
+			return definition
+		}
+	}
+	// Copied rather than appended in place: the definition a catalogue handed
+	// out may be shared, and a port added to it would follow the node type
+	// rather than this node.
+	outputs := make([]Port, 0, len(definition.Outputs)+1)
+	outputs = append(outputs, definition.Outputs...)
+	outputs = append(outputs, Port{Name: errorPortName, Kind: ConnectionMain, DisplayName: "Error"})
+	definition.Outputs = outputs
+	return definition
+}
+
+// knownOnError reports whether a node's onError setting names a mode.
+func knownOnError(mode string) bool {
+	switch mode {
+	case OnErrorStop, OnErrorContinueRegular, OnErrorContinueBranch:
+		return true
+	default:
+		return false
+	}
 }
 
 // settingNumber coerces a node setting to a number. Settings arrive from JSON,

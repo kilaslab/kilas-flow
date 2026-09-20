@@ -47,6 +47,18 @@ type Checkpoint struct {
 	// resumed run's final output merges them instead of dropping branches
 	// that finished early.
 	Output map[string]workflow.NodeOutput `json:"output"`
+	// Pending is the work the suspended run had not reached: the branches it
+	// was holding behind the one that suspended. Without it a resumed run
+	// would lose every waiting branch and look as though the branch that
+	// continues were the whole graph.
+	Pending []PendingNode `json:"pending"`
+}
+
+// PendingNode is one scheduled invocation carried across a suspension: the node
+// to run, and the items the branch had delivered to it.
+type PendingNode struct {
+	NodeID string             `json:"nodeId"`
+	Input  workflow.NodeInput `json:"input"`
 }
 
 func marshalCheckpoint(checkpoint Checkpoint) ([]byte, error) {
@@ -83,6 +95,9 @@ func unmarshalCheckpoint(raw []byte) (Checkpoint, error) {
 	}
 	if checkpoint.NodeState == nil {
 		checkpoint.NodeState = map[string]map[string]any{}
+	}
+	if checkpoint.Pending == nil {
+		checkpoint.Pending = []PendingNode{}
 	}
 	if checkpoint.Output == nil {
 		checkpoint.Output = map[string]workflow.NodeOutput{}
