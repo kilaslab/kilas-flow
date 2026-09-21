@@ -36,9 +36,9 @@ There is also a reporting job here that no individual suite can do. The corpus b
 - [ ] The four epic proofs run as one suite, in order, against a published image rather than a locally built binary.
 - [ ] The Telegram proof uses a real bot token: the trigger registers its own webhook on activation, a real message is delivered, an agent answers, and a reply arrives — with the webhook removed on deactivation.
 - [ ] The WAHA proof runs against a real WAHA server, including HMAC verification over the raw body, and covers the two-tenant case with both workflows active at once.
-- [ ] The datastore proof runs against PostgreSQL, including the cross-tenant refusal and the n8n Data Table import.
+- [x] The datastore proof runs against PostgreSQL, including the cross-tenant refusal and the n8n Data Table import.
 - [ ] The external-consumer proof installs the published npm package into a scratch project outside this repository and drives a workflow and a datastore through it.
-- [ ] The suite asserts that no Node.js process runs in or beside the server for any of the four proofs, since that is an explicit epic constraint and not an implementation detail.
+- [x] The suite asserts that no Node.js process runs in or beside the server for any of the four proofs, since that is an explicit epic constraint and not an implementation detail.
 - [ ] The run publishes a report: which proofs passed, the corpus fidelity counts measured against the shipped artefact, and the versions of the image and package under test.
 - [ ] The suite runs on demand and on a schedule rather than on every pull request, and its credential requirements are documented so a second operator can run it.
 
@@ -142,3 +142,127 @@ capstone separately per the ticket's "do not gate merges" rule).
 
 ## Blocked on real credentials (Main, 2026-09-06)
 Hermetic suite green (6 passed + 1 PG skip, twice; full `make test-e2e` 57 passed + 4 honest PG skips). Remaining boxes need operator-owned secrets no agent can mint: a real Telegram bot token, a real WAHA session pair, npm registry publish, plus scheduling/credential-docs scope. Recommend: keep the hermetic file on the per-PR path; grow a real-credential capstone separately when the operator provides them. Status held at doing for that reason, not for lack of code.
+## Implementation notes — stage 1 of 3 (omp-FEAT-5fhj6p, 2026-09-20)
+
+Stage 1 of the critic-corrected plan: reusable proofs behind host/side
+interfaces, the no-Node predicate made whole, the hermetic suite a thin
+caller. Stages 2-3 (the on-demand capstone under `e2e/capstone`, the real
+sides, the schedule) are not started.
+
+What changed:
+- `e2e/scripts/capstone-lib.mjs` (new): the one pure implementation of the
+  process-table logic — `NODE_LIKE`, `baseName`, `isNodeLike`, `parsePsTable`,
+  `descendants` (full subtree, roots included) and `noNodeVerdict`. Exists
+  because the previous check in `epic-external.ts` matched one exact `comm`
+  string and looped over DIRECT children while its comment claimed a subtree
+  check, and because proofs 2 and 3 never called it at all.
+- `e2e/tests/epic-machinery.spec.ts` (new, per-PR path, no server/docker/skip):
+  six tests over that logic, written failing-first (the module did not exist
+  yet — `Cannot find module … capstone-lib.mjs`).
+- `e2e/fixtures/epic-proofs.ts` (new): the four proof bodies moved verbatim
+  behind `EpicHost` / `TelegramSide` / `WahaSide` / `ProofContext`, plus
+  `assertNoNodeOk`, `deliverWahaSigned`, `workflowWebhookRoute` and
+  `waitForMatchingExecution`. No `kind` branches: every environment-specific
+  line is a host or side call. The route now comes from
+  `GET /workflows/{id}/webhooks` rather than a stub-captured body, so the
+  real side works too; `assertNoNodeOk` runs in all four proofs (hermetic
+  coverage grows — it was proofs 1 and 4 only).
+- `e2e/fixtures/epic-hermetic.ts` (new): `binaryHost()` and the stub
+  `stubTelegramSide()` / `stubWahaSide()` — what keeps this file on the per-PR
+  path.
+- `e2e/fixtures/epic-external.ts`: `assertNoNodeBesideServer` rewritten onto
+  the lib (`nodeChildren` -> `nodeProcesses`); the packed client surface typed
+  instead of `any`; `ExternalSource`/`scaffoldExternalSource` seam for the
+  registry mode.
+- `e2e/tests/epic-acceptance.spec.ts`: thin wrappers, same titles, order,
+  `describe.serial`, timeouts and gate strings. Everything else moved out.
+- `.github/workflows/ci.yml`: 3-line "Install SDK dependencies" step in the
+  e2e job. Proof 4 runs `npm pack sdk`, whose prepack is
+  `tsc -p tsconfig.build.json`; verified in this worktree with
+  `sdk/node_modules` moved aside — `sh: tsc: command not found`, npm error
+  127 — so the e2e job was red for an SDK-install reason, not for the code.
+
+Verification:
+- BEFORE: `pnpm exec playwright test tests/epic-acceptance.spec.ts` with a
+  scratch pgvector/pgvector:pg17 (kf-pg-feat-5fhj6p) -> 7 passed (2.0m).
+  All four proofs ran: Ollama up, corpus materialised, PG DSN set.
+- AFTER: same file plus `tests/epic-machinery.spec.ts` -> 13 passed (1.5m).
+  Same 7 epic results, same pass/skip set, plus the 6 new machinery tests.
+- Failing-first: the machinery spec failed with `Cannot find module …`;
+  after implementing the lib, 6 passed.
+- Mutations, each applied and reverted, each failing for the right reason:
+  wrong-secret `401` -> `200` in the shared Telegram proof (`Expected: 200,
+  Received: 401`), `404` -> `200` in the isolation proof (`Expected: 200,
+  Received: 404`), `isNodeLike` forced false (3 machinery tests failed).
+- PG coverage grew: the PostgreSQL test now runs the FULL lifecycle proof
+  (create, columns, rename, workflow write + filtered read, CSV round trip,
+  n8n Data Table import, bound run) and the full isolation proof on Postgres,
+  where before it only wrote and read once.
+- `go test ./internal/guardrails/...` -> ok (0.697s).
+- Full `make test-e2e` (PG DSN set): every touched test passed — 7 epic + 6
+  machinery. The suite as a whole was NOT green on this machine: 89 passed,
+  12 skipped, 4 did not run, and failures in files this change does not touch
+  (pack-editor, n8n-compare, node-coverage, library-import, waha-migration,
+  datastore, ai-agent). `n8n-compare › the executable-node matrix …` fails in
+  isolation too, so it is not load-related and not caused here.
+- `make e2e-skip-budget`: 12 skipped (< 24) and 4 violations, all
+  `skipped with no reason at all` in ai-agent-ollama — the documented
+  local-Ollama cascade artefact (`ollama serve` is up; see .pine/memory/e2e.md).
+  No skip and no violation comes from this change; the new spec adds six
+  passing tests and zero skips.
+
+Criterion 4 is ticked on the strength of the PG run above (lifecycle +
+cross-tenant refusal + n8n Data Table import on a real pgvector PostgreSQL).
+Criterion 6 is ticked because all four proofs now assert the no-Node verdict
+per live server, with the subtree and whole-basename defects fixed and
+covered by tests. The real-credential criteria (1, 2, 3, 5, 7, 8) stay open:
+they need an operator-pushed tag, a publish, a real bot and WAHA session, and
+the capstone stages that stage 2-3 add.
+
+### Stage 2 (the capstone core) — Implementation notes
+
+The stage was interrupted mid-flight (the agent harness hit a provider usage
+limit) and finished by the orchestrator; the machinery spec is green as
+committed.
+
+**What changed**
+
+- `e2e/capstone/epic-capstone.spec.ts` + `e2e/playwright.capstone.config.ts` +
+  `e2e/capstone/global-teardown.ts` (new): the capstone runs the four proofs
+  against a docker IMAGE host on its own Playwright config, with its own results
+  directory (`e2e/capstone-results/`, gitignored) and its own teardown, so the
+  per-PR suite and its skip budget never see it.
+- `e2e/fixtures/epic-image.ts` (new): builds/loads the image, starts the stack
+  (image + PostgreSQL container) on loopback, and asserts the container-side
+  no-Node verdict through `docker top` — including Docker Desktop's table shape,
+  where the node process reports `comm` as `MainThread` rather than `node`.
+  That shape is a real defect the earlier predicate would have missed; the
+  failing-first tests for it live in `epic-machinery.spec.ts`.
+- `e2e/fixtures/epic-config.ts`, `e2e/fixtures/epic-corpus.ts` (new): the
+  capstone's configuration (image reference, sides, credentials from the
+  environment only) and the corpus fidelity check measured through the image
+  API.
+- `e2e/scripts/capstone-lib.mjs` (+371): the process-table parser for both
+  `ps` shapes, the container verdict, the outcome classifier
+  (passed / failed / unavailable / skipped) and the redaction of every secret
+  shape the report could carry.
+- `e2e/scripts/capstone-report.mjs` (new): the report CLI — exit 0 all passed,
+  1 any failed or a missing record, 2 only unavailable — rendering the markdown
+  a skipped proof carries with its reason and recovery command.
+- `Makefile`: `test-e2e-capstone` and `e2e-capstone-report`, the first with a
+  leading `-` on purpose so the verdict is the report step's; `CONTRIBUTING.md`
+  documents both.
+
+**Verification**
+
+| Command | Outcome |
+| --- | --- |
+| `cd e2e && ./node_modules/.bin/playwright test tests/epic-machinery.spec.ts` | 17 passed (7.3s) — parser shapes, container verdict, classification (502 with/without a healthy re-probe, image pull, npm), redaction, report exit codes, registry mode, corpus join |
+| `go build ./...`, `go vet ./...` | clean (no Go file changed) |
+| the per-PR suite | untouched: the capstone lives on its own config and is not in the skip budget |
+
+**Still unticked, with reasons**: AC1/AC2/AC3/AC5/AC7/AC8 need a published image,
+a published npm package or real third-party credentials (Telegram bot token,
+WAHA session) that no agent can mint. AC4 and AC6 are proven. Stage 3 wires the
+real sides, the tunnel and the schedule workflow; what stage 2 proves is that
+the machinery exists, classifies honestly and never leaks a secret.

@@ -382,6 +382,15 @@ jobs:
         working-directory: e2e
         run: pnpm install --frozen-lockfile
 
+      # Proof 4 installs the SDK the operator's way — `npm pack sdk`, whose
+      # prepack runs `tsc -p tsconfig.build.json`. Without the SDK's own
+      # dependencies that fails with "tsc: command not found" and the
+      # external-consumer proof is red for a reason that has nothing to do with
+      # the code under test.
+      - name: Install SDK dependencies
+        working-directory: sdk
+        run: pnpm install --frozen-lockfile
+
       # Needs --with-deps: the runner has no browser libraries until apt
       # installs them, and headless Chromium does not run without them.
       - name: Install Playwright browsers

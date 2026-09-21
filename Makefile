@@ -45,7 +45,7 @@ IMAGE_ARGS  := --build-arg VERSION="$$KILASFLOW_VERSION" \
                --build-arg SOURCE="$$KILASFLOW_SOURCE"
 
 # Every recipe that names an image or a version gets them this way.
-IMAGE_TARGETS := build docker docker-multiarch docker-release docker-sign smoke-docker-published
+IMAGE_TARGETS := build docker docker-multiarch docker-release docker-sign smoke-docker-published test-e2e-capstone e2e-capstone-report
 $(IMAGE_TARGETS): export KILASFLOW_IMAGE = $(IMAGE)
 $(IMAGE_TARGETS): export KILASFLOW_VERSION = $(VERSION)
 $(IMAGE_TARGETS): export KILASFLOW_REVISION = $(REVISION)
@@ -469,6 +469,23 @@ bench-compare: build ## Run the KilasFlow-vs-n8n runtime benchmark (30 runs/work
 .PHONY: bench-test
 bench-test: ## Run the benchmark method's unit tests (no engine, no Docker)
 	node --test e2e/benchmark/*.test.mjs
+
+# The epic acceptance capstone (FEAT-5fhj6p): the four proofs of EPIC-m42s3g
+# against a docker IMAGE, the real Telegram Bot API, a real WAHA server and the
+# npm registry. On demand and on a schedule, never on a pull request — it needs
+# docker, credentials and third-party availability. It lives in e2e/capstone and
+# on its own config, so `test-e2e` and its skip budget never see it.
+#
+# The leading `-` is deliberate: the verdict is the report step's (exit 0/1/2),
+# not Playwright's. A run whose proofs were skipped or unavailable must still
+# reach `e2e-capstone-report`, which is where the reason and the exit code live.
+.PHONY: test-e2e-capstone
+test-e2e-capstone: ## Run the on-demand epic capstone against a docker image
+	-cd e2e && rm -rf capstone-results && pnpm exec playwright test -c playwright.capstone.config.ts
+
+.PHONY: e2e-capstone-report
+e2e-capstone-report: ## Exit 0/1/2 on the last capstone run's verdict
+	node e2e/scripts/capstone-report.mjs
 
 .PHONY: clean
 clean: ## Remove build artifacts

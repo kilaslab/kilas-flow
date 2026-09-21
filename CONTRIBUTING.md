@@ -67,6 +67,8 @@ checks only matter if your change reaches the API surface or the configuration.
 | `make sdk-example-check` | `examples/host-page` runs against the packed SDK: installed into a scratch copy outside the repository, booted against a stub KilasFlow, with raw `..%2f` probes at its static route |
 | `make sdk-release-check` | every gate a release has to pass, in one command (`sdk-check`, `sdk-test`, `sdk-build`, `sdk-version-check`, `generate-types-check`, `sdk-package-check`, `sdk-example-check`) |
 | `make test-e2e` | the Playwright suite, against a real binary and SPA |
+| `make test-e2e-capstone` | the epic acceptance capstone, against a docker image (on demand) |
+| `make e2e-capstone-report` | the capstone's verdict: exit 0 passed, 1 failed, 2 unavailable |
 
 The `generate-*-check` targets exist because a hand-maintained copy drifts, and
 the failure is silent: a client that compiles and calls an endpoint that no

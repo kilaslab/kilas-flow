@@ -21,15 +21,20 @@ export interface StubServer {
 	close: () => Promise<void>;
 }
 
-// A real HTTP server on loopback that a workflow under test reaches through
-// the instance's outbound policy (allowed_hosts plus one
+// A real HTTP server that a workflow under test reaches through the
+// instance's outbound policy (allowed_hosts plus one
 // allowed_private_endpoints entry), instead of the suite hitting the internet.
 // Playwright request interception cannot do this job: it runs in the browser,
 // while a workflow's HTTP node is executed by the Go process.
 //
 // The same server also hosts the embed test's host page, which keeps the host
 // on a different origin than the instance — the realistic cross-origin shape.
-export async function startStub(): Promise<StubServer> {
+//
+// `bindHost` defaults to loopback, which is what the binary host's stub needs.
+// The image host passes 0.0.0.0 because its server reaches the stub as
+// host.docker.internal, an address that is not 127.0.0.1 inside the
+// container's own network namespace.
+export async function startStub({ bindHost = '127.0.0.1' }: { bindHost?: string } = {}): Promise<StubServer> {
 	const requests: StubRequest[] = [];
 	const server: Server = createServer((request: IncomingMessage, response: ServerResponse) => {
 		const chunks: Buffer[] = [];
@@ -52,7 +57,7 @@ export async function startStub(): Promise<StubServer> {
 			response.end(JSON.stringify({ ok: true, method: request.method, path: url.pathname }));
 		});
 	});
-	server.listen(0, '127.0.0.1');
+	server.listen(0, bindHost);
 	await once(server, 'listening');
 	const address = server.address();
 	if (!address || typeof address === 'string') throw new Error('Unable to start the stub server');
