@@ -26,13 +26,14 @@
 	import { Button } from '$lib/components/ui/button';
 	import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
 	import { validationIssuesFromApiError, withNodeNames, type CanvasValidationIssue } from '$lib/workflow-editor/validation';
+	import * as m from '$lib/paraglide/messages.js';
 
 	const queryClient = useQueryClient();
 
 	const workflow = createGetWorkflow<WorkflowResource>(() => page.params.id ?? '', () => ({
 		query: {
 			select: (response) => {
-				if (response.status !== 200) throw new Error('Unexpected workflow response');
+				if (response.status !== 200) throw new Error(m.workflows_unexpected_workflow());
 				return response.data;
 			}
 		}
@@ -40,7 +41,7 @@
 	const nodeTypes = createListNodeTypes<Definition[]>(() => ({
 		query: {
 			select: (response) => {
-				if (response.status !== 200) throw new Error('Unexpected node catalogue response');
+				if (response.status !== 200) throw new Error(m.workflows_unexpected_node_catalogue());
 				return response.data ?? [];
 			}
 		}
@@ -67,7 +68,7 @@
 		try {
 			credentials = await drainPages(async (cursor) => {
 				const response = await listCredentials({ limit: DRAIN_PAGE_LIMIT, cursor: cursor || undefined });
-				if (response.status !== 200) throw new Error('Unexpected credential-list response');
+				if (response.status !== 200) throw new Error(m.workflows_unexpected_credential_list());
 				return readPage({ items: response.data, nextCursor: headerCursor(response.headers) });
 			});
 		} catch {
@@ -225,7 +226,7 @@
 		if (!editorDirty) return;
 		// A full-page teardown is the browser's prompt to own; see below.
 		if (navigation.type === 'leave') return;
-		if (!window.confirm('This workflow has unsaved changes. Leave and discard them?')) navigation.cancel();
+		if (!window.confirm(m.workflows_unsaved_confirm())) navigation.cancel();
 	});
 
 	$effect(() => {
@@ -267,7 +268,7 @@
 		saving = true;
 		try {
 			const response = await getWorkflow(currentWorkflow.id);
-			if (response.status !== 200) throw new Error('Unexpected workflow response');
+			if (response.status !== 200) throw new Error(m.workflows_unexpected_workflow());
 			adoptFromServer(response.data);
 		} catch (error) {
 			saveError = message(error);
@@ -300,7 +301,7 @@
 				// way to say "I know, write mine anyway" to the API.
 				...(options.force ? {} : { baseVersionId: currentWorkflow.latestVersion.id })
 			});
-			if (response.status !== 200) throw new Error('Unexpected workflow-save response');
+			if (response.status !== 200) throw new Error(m.workflows_unexpected_workflow_save());
 			// Adopted in place: the canvas keeps its viewport, its selection and
 			// the open inspector, and the returned document becomes the new
 			// baseline the editor compares its draft against. Recording the
@@ -336,7 +337,7 @@
 		notices = [];
 		try {
 			const response = await activateWorkflow(currentWorkflow.id);
-			if (response.status !== 200) throw new Error('Unexpected workflow-activate response');
+			if (response.status !== 200) throw new Error(m.workflows_unexpected_workflow_activate());
 			noteCanvasRevision(response.data);
 			currentWorkflow = response.data;
 			cacheWorkflow(queryClient, response.data);
@@ -363,7 +364,7 @@
 		activationError = null;
 		try {
 			const response = await deactivateWorkflow(currentWorkflow.id);
-			if (response.status !== 200) throw new Error('Unexpected workflow-deactivate response');
+			if (response.status !== 200) throw new Error(m.workflows_unexpected_workflow_deactivate());
 			noteCanvasRevision(response.data);
 			currentWorkflow = response.data;
 			cacheWorkflow(queryClient, response.data);
@@ -442,9 +443,9 @@
 				currentWorkflow.id,
 				selection?.triggerNodeId ? { triggerNodeId: selection.triggerNodeId } : undefined
 			);
-			if (queued.status !== 202) throw new Error('Unexpected workflow-run response');
+			if (queued.status !== 202) throw new Error(m.workflows_unexpected_workflow_run());
 			lastExecutionId = queued.data.id;
-			runMessage = 'Run queued…';
+			runMessage = m.workflows_run_queued();
 			// The editor used to give up after eighty quarter-second polls, so a
 			// healthy agent or LLM step was reported as a failure at twenty
 			// seconds. A run's own timeout is the runner's business, not the
@@ -454,15 +455,15 @@
 			while (token === pollingRun && Date.now() < deadline) {
 				await new Promise((resolve) => setTimeout(resolve, 1000));
 				const execution = await getExecution(queued.data.id);
-				if (execution.status !== 200) throw new Error('Unexpected execution response');
+				if (execution.status !== 200) throw new Error(m.workflows_unexpected_execution());
 				const status = execution.data.status;
-				runMessage = status === 'succeeded' ? 'Run succeeded.' : `Run ${status}…`;
+				runMessage = status === 'succeeded' ? m.workflows_run_succeeded() : m.workflows_run_status({ status });
 				if (['succeeded', 'failed', 'cancelled'].includes(status)) {
-					if (status !== 'succeeded') runError = typeof execution.data.error === 'object' && execution.data.error && 'message' in execution.data.error ? String(execution.data.error.message) : `Execution ${status}.`;
+					if (status !== 'succeeded') runError = typeof execution.data.error === 'object' && execution.data.error && 'message' in execution.data.error ? String(execution.data.error.message) : m.workflows_execution_status({ status });
 					return;
 				}
 			}
-			if (token === pollingRun) runError = 'This editor stopped watching a run that is still going. Check the execution history for its final state.';
+			if (token === pollingRun) runError = m.workflows_run_watch_stopped();
 		} catch (error) {
 			runError = message(error);
 			// A 422 from the run endpoint names the nodes that blocked it.
@@ -474,14 +475,14 @@
 </script>
 
 <svelte:head>
-	<title>{workflow.data?.name ?? 'Workflow'} · KilasFlow</title>
+	<title>{m.workflows_detail_page_title({ name: workflow.data?.name ?? m.workflows_noun_capitalised() })}</title>
 </svelte:head>
 
 {#snippet breadcrumb()}
-	<a href="/app/workflows" class="grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" aria-label="All workflows">
+	<a href="/app/workflows" class="grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" aria-label={m.workflows_all_workflows()}>
 		<ArrowLeft aria-hidden="true" class="size-3.5" />
 	</a>
-	<p class="min-w-0 max-w-32 flex-1 truncate text-xs font-medium sm:max-w-44">{currentWorkflow?.name ?? 'Loading…'}</p>
+	<p class="min-w-0 max-w-32 flex-1 truncate text-xs font-medium sm:max-w-44">{currentWorkflow?.name ?? m.workflows_loading()}</p>
 	{#if currentWorkflow}
 		<span class="ml-auto flex shrink-0 items-center gap-1.5">
 			{#if importReport?.source}
@@ -496,7 +497,7 @@
 					onclick={() => (reportOpen = true)}
 				>
 					<TriangleAlert aria-hidden="true" class="size-3.5" />
-					{importIssues.length > 0 ? `Import report · ${importIssues.length}` : 'Imported from n8n'}
+					{importIssues.length > 0 ? m.workflows_import_report_count({ count: importIssues.length }) : m.workflows_imported_from_n8n()}
 				</Button>
 			{/if}
 			<ExportDialog workflowID={currentWorkflow.id} workflowName={currentWorkflow.name} />
@@ -506,13 +507,13 @@
 
 <section class="flex h-full min-h-0 flex-col">
 	{#if nodeTypes.isPending || (workflow.isPending && !currentWorkflow)}
-		<div aria-live="polite" class="grid flex-1 place-items-center text-sm text-muted-foreground">Loading workflow editor…</div>
+		<div aria-live="polite" class="grid flex-1 place-items-center text-sm text-muted-foreground">{m.workflows_editor_loading()}</div>
 	{:else if (workflow.isError || nodeTypes.isError) && !currentWorkflow}
 		<div class="grid flex-1 place-items-center p-6">
 			<div class="max-w-lg rounded-lg border border-destructive/25 bg-destructive/5 p-3">
-				<h1 class="font-semibold">Workflow editor could not be loaded</h1>
+				<h1 class="font-semibold">{m.workflows_editor_load_failed()}</h1>
 				<p class="mt-0.5 text-xs leading-5 text-muted-foreground">{message(workflow.isError ? workflow.error : nodeTypes.error)}</p>
-				<Button class="mt-4" variant="outline" onclick={() => { void workflow.refetch(); void nodeTypes.refetch(); }}>Try again</Button>
+				<Button class="mt-4" variant="outline" onclick={() => { void workflow.refetch(); void nodeTypes.refetch(); }}>{m.common_try_again()}</Button>
 			</div>
 		</div>
 	{:else if currentWorkflow}
@@ -522,8 +523,8 @@
 		     unsaved edit inside it — over one 5xx on a window-focus refetch. -->
 		{#if workflow.isError}
 			<div role="alert" class="flex flex-wrap items-center gap-2 border-b border-destructive/25 bg-destructive/5 px-3 py-1.5">
-				<p class="min-w-0 flex-1 text-xs leading-5 text-destructive">This editor may be out of date — the last refresh failed: {message(workflow.error)}</p>
-				<Button variant="outline" size="sm" onclick={() => void workflow.refetch()}>Refresh</Button>
+				<p class="min-w-0 flex-1 text-xs leading-5 text-destructive">{m.workflows_editor_stale({ message: message(workflow.error) })}</p>
+				<Button variant="outline" size="sm" onclick={() => void workflow.refetch()}>{m.workflows_refresh()}</Button>
 			</div>
 		{/if}
 		<!-- The server moved while this canvas was dirty. Adopting it silently
@@ -531,9 +532,9 @@
 		     hide that somebody else is editing. So it is offered. -->
 		{#if newerRevision}
 			<div role="status" class="flex flex-wrap items-center gap-2 border-b border-warning/40 bg-warning/10 px-3 py-1.5">
-				<p class="min-w-0 flex-1 text-xs leading-5">A newer revision ({newerRevision.latestVersion.revision}) was saved elsewhere while you were editing.</p>
-				<Button variant="outline" size="sm" onclick={() => void reloadTheirs()}>Reload theirs</Button>
-				<Button variant="ghost" size="sm" onclick={() => (newerRevision = null)}>Keep mine</Button>
+				<p class="min-w-0 flex-1 text-xs leading-5">{m.workflows_newer_revision({ revision: newerRevision.latestVersion.revision })}</p>
+				<Button variant="outline" size="sm" onclick={() => void reloadTheirs()}>{m.workflows_reload_theirs()}</Button>
+				<Button variant="ghost" size="sm" onclick={() => (newerRevision = null)}>{m.workflows_keep_mine()}</Button>
 			</div>
 		{/if}
 		{#key canvasFrom}

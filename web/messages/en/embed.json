@@ -1,0 +1,16 @@
+{
+	"embed_page_title": "Embedded workflow",
+	"embed_page_title_branded": "{brand} workflow",
+	"embed_waiting": "Waiting for the host application…",
+	"embed_could_not_open": "This editor could not be opened",
+	"embed_no_session": "No embed session was provided.",
+	"embed_not_session_message": "Not an embed session message.",
+	"embed_session_incomplete": "The host sent an incomplete embed session.",
+	"embed_session_other_workflow": "The embed session is for a different workflow.",
+	"embed_host_only": "This editor is only available inside a host application.",
+	"embed_page_unidentified": "The embedding page could not be identified.",
+	"embed_no_session_from_host": "The host did not provide an embed session.",
+	"embed_workflow_load_failed": "This workflow could not be loaded",
+	"embed_loading_workflow": "Loading workflow…",
+	"embed_run_abandoned": "The editor stopped watching a run that is still going."
+}

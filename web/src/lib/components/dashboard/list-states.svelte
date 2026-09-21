@@ -5,6 +5,7 @@
 	import { message } from '$lib/api/http';
 	import { failedBesideRows, listState } from '$lib/dashboard/list-state';
 	import { Button } from '$lib/components/ui/button';
+	import * as m from '$lib/paraglide/messages.js';
 
 	/**
 	 * The loading, failed and empty states of a dashboard list, the frame the
@@ -92,18 +93,18 @@
 		region says it to anyone who cannot.
 	-->
 	<div aria-live="polite" class="overflow-hidden rounded-lg border border-border">
-		<p class="sr-only">Loading {label.toLowerCase()}…</p>
+		<p class="sr-only">{m.common_loading({ label: label.toLowerCase() })}</p>
 		{#each Array(rows) as _}
 			<div class="h-11 animate-pulse border-b border-border bg-muted/50 last:border-0" aria-hidden="true"></div>
 		{/each}
 	</div>
 {:else if state === 'failed'}
 	<div class="max-w-lg rounded-lg border border-destructive/25 bg-destructive/5 p-3">
-		<h2 class="text-sm font-medium">{label} could not be loaded</h2>
+		<h2 class="text-sm font-medium">{m.common_load_failed({ label })}</h2>
 		<p class="mt-0.5 text-xs leading-5 text-muted-foreground">{message(error)}</p>
 		<Button class="mt-2.5" size="sm" variant="outline" onclick={onRetry}>
 			<RefreshCw aria-hidden="true" />
-			Try again
+			{m.common_try_again()}
 		</Button>
 	</div>
 {:else if state === 'empty'}
@@ -126,10 +127,10 @@
 			outweigh the list it is a footnote to.
 		-->
 		<div role="alert" class="mt-4 flex flex-wrap items-center justify-center gap-x-3 gap-y-2">
-			<p class="text-xs text-destructive">{label} may be incomplete. {message(error)}</p>
+			<p class="text-xs text-destructive">{m.common_load_incomplete({ label, message: message(error) })}</p>
 			<Button size="sm" variant="outline" onclick={onRetryMore ?? onRetry}>
 				<RefreshCw aria-hidden="true" />
-				Try again
+				{m.common_try_again()}
 			</Button>
 		</div>
 	{/if}

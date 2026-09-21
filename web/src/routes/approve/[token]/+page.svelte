@@ -2,6 +2,7 @@
 	import { page } from '$app/state';
 
 	import { Button } from '$lib/components/ui/button';
+	import * as m from '$lib/paraglide/messages.js';
 
 	type WaitInfo = {
 		executionId: string;
@@ -43,13 +44,13 @@
 			if (!response.ok || !body || !('executionId' in body)) {
 				refusal = {
 					code: (body as Refusal | null)?.code ?? 'wait.not_found',
-					message: (body as Refusal | null)?.message ?? 'This approval request could not be found.'
+					message: (body as Refusal | null)?.message ?? m.auth_approval_not_found()
 				};
 			} else {
 				info = body;
 			}
 		} catch {
-			refusal = { code: 'wait.unreachable', message: 'The server could not be reached. Try again.' };
+			refusal = { code: 'wait.unreachable', message: m.auth_server_unreachable() };
 		} finally {
 			loading = false;
 		}
@@ -69,13 +70,13 @@
 				const body = (await response.json().catch(() => null)) as Refusal | null;
 				refusal = {
 					code: body?.code ?? 'wait.failed',
-					message: body?.message ?? 'The decision could not be recorded.'
+					message: body?.message ?? m.auth_decision_failed()
 				};
 			} else {
 				done = true;
 			}
 		} catch {
-			refusal = { code: 'wait.unreachable', message: 'The server could not be reached. Try again.' };
+			refusal = { code: 'wait.unreachable', message: m.auth_server_unreachable() };
 		} finally {
 			submitting = false;
 		}
@@ -84,52 +85,52 @@
 	function refusalTitle(code: string): string {
 		switch (code) {
 			case 'wait.answered':
-				return 'Already answered';
+				return m.auth_refusal_answered();
 			case 'wait.expired':
-				return 'Approval expired';
+				return m.auth_refusal_expired();
 			case 'wait.embed_denied':
-				return 'Not available here';
+				return m.auth_refusal_embed_denied();
 			default:
-				return 'Approval not found';
+				return m.auth_refusal_not_found();
 		}
 	}
 </script>
 
 <svelte:head>
-	<title>Approval · KilasFlow</title>
+	<title>{m.auth_approval_page_title()}</title>
 </svelte:head>
 
 <section class="mx-auto grid w-full max-w-xl flex-1 place-items-center p-6">
 	<div class="w-full rounded-xl border border-border bg-card p-6">
-		<p class="text-xs font-medium tracking-wide text-muted-foreground uppercase">KilasFlow approval</p>
+		<p class="text-xs font-medium tracking-wide text-muted-foreground uppercase">{m.auth_approval_eyebrow()}</p>
 		{#if loading}
-			<p aria-live="polite" class="mt-4 text-sm text-muted-foreground">Loading approval…</p>
+			<p aria-live="polite" class="mt-4 text-sm text-muted-foreground">{m.auth_approval_loading()}</p>
 		{:else if done && info}
-			<h1 class="mt-2 text-base font-semibold tracking-tight">Decision recorded</h1>
+			<h1 class="mt-2 text-base font-semibold tracking-tight">{m.auth_decision_recorded()}</h1>
 			<p class="mt-1 text-xs leading-5 text-muted-foreground">
-				Execution <span class="font-mono">{info.executionId}</span> has been resumed. You can close this page.
+				{m.auth_field_execution()} <span class="font-mono">{info.executionId}</span> {m.auth_decision_resumed_tail()}
 			</p>
 		{:else if refusal && !info}
 			<h1 class="mt-2 text-base font-semibold tracking-tight">{refusalTitle(refusal.code)}</h1>
 			<p class="mt-1 text-xs leading-5 text-muted-foreground">{refusal.message}</p>
-			<Button class="mt-4" variant="outline" onclick={() => void load(token)}>Try again</Button>
+			<Button class="mt-4" variant="outline" onclick={() => void load(token)}>{m.common_try_again()}</Button>
 		{:else if info}
-			<h1 class="mt-2 text-base font-semibold tracking-tight">Approval requested</h1>
+			<h1 class="mt-2 text-base font-semibold tracking-tight">{m.auth_approval_requested()}</h1>
 			<dl class="mt-4 grid grid-cols-2 gap-x-6 gap-y-2 text-[0.8125rem]">
 				<div>
-					<dt class="text-xs text-muted-foreground">Execution</dt>
+					<dt class="text-xs text-muted-foreground">{m.auth_field_execution()}</dt>
 					<dd class="mt-0.5 font-mono text-xs">{info.executionId}</dd>
 				</div>
 				<div>
-					<dt class="text-xs text-muted-foreground">Node</dt>
+					<dt class="text-xs text-muted-foreground">{m.auth_field_node()}</dt>
 					<dd class="mt-0.5 font-mono text-xs">{info.nodeId}</dd>
 				</div>
 				<div>
-					<dt class="text-xs text-muted-foreground">Expires</dt>
+					<dt class="text-xs text-muted-foreground">{m.auth_field_expires()}</dt>
 					<dd class="mt-0.5">{new Date(info.expiresAt).toLocaleString()}</dd>
 				</div>
 				<div>
-					<dt class="text-xs text-muted-foreground">Mode</dt>
+					<dt class="text-xs text-muted-foreground">{m.auth_field_mode()}</dt>
 					<dd class="mt-0.5">{info.mode}</dd>
 				</div>
 			</dl>
@@ -140,32 +141,32 @@
 
 			<div class="mt-4 grid gap-3">
 				<label class="grid gap-1 text-xs font-medium text-muted-foreground" for="approval-decided-by">
-					Decided by
+					{m.auth_field_decided_by()}
 					<input
 						id="approval-decided-by"
 						class="h-8 rounded-md border border-input bg-background px-2 text-sm font-normal text-foreground"
 						bind:value={decidedBy}
-						placeholder="Your name"
+						placeholder={m.auth_decided_by_placeholder()}
 						autocomplete="name"
 					/>
 				</label>
 				<label class="grid gap-1 text-xs font-medium text-muted-foreground" for="approval-note">
-					Note
+					{m.auth_field_note()}
 					<textarea
 						id="approval-note"
 						class="min-h-16 rounded-md border border-input bg-background px-2 py-1.5 text-sm font-normal text-foreground"
 						bind:value={note}
-						placeholder="Why this decision (optional)"
+						placeholder={m.auth_note_placeholder()}
 					></textarea>
 				</label>
 			</div>
 
 			<div class="mt-4 flex gap-2">
 				<Button onclick={() => void decide(true)} disabled={submitting}>
-					{submitting ? 'Recording…' : 'Approve'}
+					{submitting ? m.auth_recording() : m.auth_approve()}
 				</Button>
 				<Button variant="outline" onclick={() => void decide(false)} disabled={submitting}>
-					{submitting ? 'Recording…' : 'Reject'}
+					{submitting ? m.auth_recording() : m.auth_reject()}
 				</Button>
 			</div>
 		{/if}

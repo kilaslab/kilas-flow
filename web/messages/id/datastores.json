@@ -1,0 +1,209 @@
+{
+	"datastores_page_title": "Penyimpanan data · KilasFlow",
+	"datastores_subtitle": "Tabel terstruktur yang dapat dibaca dan ditulis oleh alur kerja Anda, di samping alur kerja dan kredensial yang memakainya.",
+	"datastores_new": "Penyimpanan data baru",
+	"datastores_noun": "penyimpanan data",
+	"datastores_column_count": [
+		{
+			"declarations": [
+				"input count",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
+			"match": {
+				"countPlural=one": "{count} kolom",
+				"countPlural=other": "{count} kolom"
+			}
+		}
+	],
+	"datastores_empty_title": "Belum ada penyimpanan data",
+	"datastores_empty_body": "Gunakan penyimpanan data untuk menyimpan hasil eksekusi, berbagi data antar alur kerja, dan melacak metrik untuk evaluasi.",
+	"datastores_rename_title": "Ganti nama penyimpanan data",
+	"datastores_rename_description": "Nama kolom tetap; hanya tabel yang diganti namanya.",
+	"datastores_create_description": "Cukup beri nama — kolom ditambahkan setelahnya.",
+	"datastores_name_label": "Nama",
+	"datastores_name_placeholder": "mis. Skor evaluasi",
+	"datastores_create_submit": "Buat penyimpanan data",
+	"datastores_cancel": "Batal",
+	"datastores_saving": "Menyimpan…",
+	"datastores_delete_title": "Hapus {name}?",
+	"datastores_delete_description": "Tindakan ini menghapus tabel dan seluruh barisnya. Membatalkan tidak mengirim permintaan dan menyisakan penyimpanan data tanpa perubahan.",
+	"datastores_delete_submit": "Hapus penyimpanan data",
+	"datastores_deleting": "Menghapus…",
+	"datastores_error_name_required": "Beri nama penyimpanan data ini.",
+	"datastores_rename_aria": "Ganti nama {name}",
+	"datastores_delete_aria": "Hapus {name}",
+	"datastores_error_list_response": "Respons daftar penyimpanan data tidak terduga",
+	"datastores_error_save_response": "Respons penyimpanan data tidak terduga",
+	"datastores_detail_page_title": "{name} · KilasFlow",
+	"datastores_load_failed": "Penyimpanan data ini tidak dapat dimuat.",
+	"datastores_columns_summary": [
+		{
+			"declarations": [
+				"input count",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
+			"match": {
+				"countPlural=one": "{count} kolom pengguna · 20 baris per halaman",
+				"countPlural=other": "{count} kolom pengguna · 20 baris per halaman"
+			}
+		}
+	],
+	"datastores_import": "Impor",
+	"datastores_export": "Ekspor",
+	"datastores_add_row": "Tambah baris",
+	"datastores_add_column": "Tambah kolom",
+	"datastores_rows_selected": [
+		{
+			"declarations": [
+				"input count",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
+			"match": {
+				"countPlural=one": "{count} baris dipilih",
+				"countPlural=other": "{count} baris dipilih"
+			}
+		}
+	],
+	"datastores_delete_selected": "Hapus yang dipilih",
+	"datastores_clear_selection": "Kosongkan pilihan",
+	"datastores_search_rows": "Cari baris",
+	"datastores_search_placeholder": "Cari kolom teks…",
+	"datastores_rows_on_page": [
+		{
+			"declarations": [
+				"input count",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
+			"match": {
+				"countPlural=one": "{count} baris di halaman ini",
+				"countPlural=other": "{count} baris di halaman ini"
+			}
+		}
+	],
+	"datastores_rows": "Baris",
+	"datastores_rows_caption": "Baris di {name}, urutan id",
+	"datastores_select_all_rows": "Pilih semua baris di halaman ini",
+	"datastores_select_row_aria": "Pilih baris {row}",
+	"datastores_sort_by": "Urutkan menurut {column}",
+	"datastores_sort_by_ascending": "Urutkan menurut {column} menaik",
+	"datastores_sort_by_descending": "Urutkan menurut {column} menurun",
+	"datastores_rename_column_aria": "Ganti nama kolom {column}",
+	"datastores_delete_column_aria": "Hapus kolom {column}",
+	"datastores_edit_cell_aria": "Ubah {column} di baris {row}",
+	"datastores_cell_empty_aria": "{column} kosong",
+	"datastores_cell_readonly_title": "Kolom sistem — hanya baca",
+	"datastores_cell_empty_title": "Kosong — klik untuk mengubah",
+	"datastores_cell_value_title": "{value} — klik untuk mengubah",
+	"datastores_null": "Null",
+	"datastores_load_more": "Muat lebih banyak",
+	"datastores_loading_more": "Memuat…",
+	"datastores_empty_rows_title": "Belum ada baris",
+	"datastores_empty_rows_body": "Tambahkan baris pertama untuk mulai menyimpan data di tabel ini.",
+	"datastores_add_row_description": "Tetapkan nilai untuk setiap kolom. Kosong tetap Null — id baris dan kedua stempel waktu diatur oleh basis data.",
+	"datastores_checked_means_true": "Tercentang berarti true.",
+	"datastores_adding": "Menambahkan…",
+	"datastores_add_column_description": "Sebuah nama dan sebuah tipe. Tidak ada opsi nullability, keunikan, atau nilai bawaan.",
+	"datastores_column_name_placeholder": "mis. skor",
+	"datastores_type_label": "Tipe",
+	"datastores_error_column_name_required": "Beri nama kolom ini.",
+	"datastores_delete_column_title": "Hapus kolom {column}?",
+	"datastores_delete_column_description": "Setiap nilai di kolom ini ikut terhapus. Membatalkan tidak mengirim permintaan dan menyisakan penyimpanan data tanpa perubahan.",
+	"datastores_delete_column_submit": "Hapus kolom",
+	"datastores_delete_rows_title": [
+		{
+			"declarations": [
+				"input count",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
+			"match": {
+				"countPlural=one": "Hapus {count} baris?",
+				"countPlural=other": "Hapus {count} baris?"
+			}
+		}
+	],
+	"datastores_delete_rows_description": "Hanya baris yang dipilih yang dihapus. Membatalkan tidak mengirim permintaan dan menyisakan setiap baris tanpa perubahan.",
+	"datastores_delete_rows_submit": "Hapus baris",
+	"datastores_import_rows_title": "Impor baris",
+	"datastores_export_rows_title": "Ekspor baris",
+	"datastores_import_description": "Unggah file CSV yang headernya menyebut kolom penyimpanan data ini. Setiap record divalidasi sebelum ada baris yang ditulis: file dengan baris yang gagal tidak mengimpor apa pun.",
+	"datastores_export_description": "Unduh baris penyimpanan data ini sebagai file CSV, dalam urutan baris.",
+	"datastores_include_system_columns": "Sertakan kolom sistem",
+	"datastores_system_columns_note": "Menambahkan id, createdAt dan updatedAt di sekitar kolom pengguna. Biarkan nonaktif untuk lembar yang akan diedit dan diimpor ulang; aktifkan untuk cadangan.",
+	"datastores_csv_file_label": "File CSV",
+	"datastores_import_header_note": "Header hanya boleh menyebut kolom pengguna — file yang membawa id, createdAt, updatedAt atau dryRunState ditolak.",
+	"datastores_saved": "{filename} tersimpan.",
+	"datastores_error_choose_file": "Pilih file CSV dulu.",
+	"datastores_upload": "Unggah",
+	"datastores_download": "Unduh",
+	"datastores_uploading": "Mengunggah…",
+	"datastores_downloading": "Mengunduh…",
+	"datastores_blocking_diagnostics_aria": "Diagnostik impor yang menghalangi",
+	"datastores_blocking_heading": "Menghalangi",
+	"datastores_import_refused": "Tidak ada baris yang diimpor. Perbaiki file lalu coba lagi.",
+	"datastores_issue_line": "Baris {line} · {column}",
+	"datastores_close": "Tutup",
+	"datastores_error_datastore_response": "Respons penyimpanan data tidak terduga",
+	"datastores_error_row_list_response": "Respons daftar baris tidak terduga",
+	"datastores_error_row_update_response": "Respons pembaruan baris tidak terduga",
+	"datastores_error_row_insert_response": "Respons penyisipan baris tidak terduga",
+	"datastores_error_row_delete_response": "Respons penghapusan baris tidak terduga",
+	"datastores_error_column_add_response": "Respons penambahan kolom tidak terduga",
+	"datastores_error_column_rename_response": "Respons penggantian nama kolom tidak terduga",
+	"datastores_error_column_delete_response": "Respons penghapusan kolom tidak terduga",
+	"datastores_imported_rows": [
+		{
+			"declarations": [
+				"input rows",
+				"local rowsPlural = rows: plural"
+			],
+			"selectors": [
+				"rowsPlural"
+			],
+			"match": {
+				"rowsPlural=one": "{rows} baris diimpor",
+				"rowsPlural=other": "{rows} baris diimpor"
+			}
+		}
+	],
+	"datastores_imported_rows_with_blanks": [
+		{
+			"declarations": [
+				"input rows",
+				"input blanks",
+				"local rowsPlural = rows: plural",
+				"local blanksPlural = blanks: plural"
+			],
+			"selectors": [
+				"rowsPlural",
+				"blanksPlural"
+			],
+			"match": {
+				"rowsPlural=one, blanksPlural=one": "{rows} baris diimpor, {blanks} baris kosong dilewati",
+				"rowsPlural=one, blanksPlural=other": "{rows} baris diimpor, {blanks} baris kosong dilewati",
+				"rowsPlural=other, blanksPlural=one": "{rows} baris diimpor, {blanks} baris kosong dilewati",
+				"rowsPlural=other, blanksPlural=other": "{rows} baris diimpor, {blanks} baris kosong dilewati"
+			}
+		}
+	],
+	"datastores_column_needs_number": "{column} perlu angka.",
+	"datastores_column_needs_boolean": "{column} perlu true atau false.",
+	"datastores_column_needs_datetime": "{column} perlu tanggal dan waktu.",
+	"datastores_severity_blocking": "Menghalangi",
+	"datastores_severity_lossy": "Berbeda",
+	"datastores_severity_dropped": "Hilang"
+}

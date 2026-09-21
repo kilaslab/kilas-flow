@@ -1,4 +1,6 @@
 import type { WorkflowPublishEventResource, WorkflowVersionSummaryResource } from '$lib/api/generated/models';
+import * as m from '$lib/paraglide/messages.js';
+import type { ConnectionChange, SettingChange } from './history-diff';
 
 /**
  * Reading a workflow's version history.
@@ -24,8 +26,8 @@ export type VersionRole = { label: string; tone: string };
  */
 export function versionRoles(summary: Pick<WorkflowVersionSummaryResource, 'draft' | 'published'>): VersionRole[] {
 	const roles: VersionRole[] = [];
-	if (summary.draft) roles.push({ label: 'Draft', tone: 'bg-primary/15 text-primary border-primary/30' });
-	if (summary.published) roles.push({ label: 'Published', tone: 'bg-success/15 text-success border-success/30' });
+	if (summary.draft) roles.push({ label: m.versions_role_draft(), tone: 'bg-primary/15 text-primary border-primary/30' });
+	if (summary.published) roles.push({ label: m.versions_role_published(), tone: 'bg-success/15 text-success border-success/30' });
 	return roles;
 }
 
@@ -38,7 +40,7 @@ export function versionAuthor(summary: Pick<WorkflowVersionSummaryResource, 'cre
 /** What to call a revision in a sentence, preferring the name a person gave it. */
 export function versionTitle(summary: Pick<WorkflowVersionSummaryResource, 'revision' | 'label'>): string {
 	const label = summary.label?.trim();
-	return label ? label : `Revision ${summary.revision}`;
+	return label ? label : m.versions_revision_title({ revision: summary.revision });
 }
 
 const units: { unit: Intl.RelativeTimeFormatUnit; per: number; limit: number }[] = [
@@ -59,9 +61,9 @@ const units: { unit: Intl.RelativeTimeFormatUnit; per: number; limit: number }[]
  * catch anything.
  */
 export function relativeTime(value: string | null | undefined, options: { now?: Date; locale?: string } = {}): string {
-	if (!value) return '—';
+	if (!value) return m.versions_time_unknown();
 	const then = new Date(value);
-	if (Number.isNaN(then.getTime())) return '—';
+	if (Number.isNaN(then.getTime())) return m.versions_time_unknown();
 
 	const now = options.now ?? new Date();
 	const seconds = Math.round((then.getTime() - now.getTime()) / 1000);
@@ -69,13 +71,13 @@ export function relativeTime(value: string | null | undefined, options: { now?: 
 	// A server clock a few seconds ahead of the browser's would otherwise render
 	// the revision the user just saved as arriving "in 4 seconds", which reads
 	// as a bug in the editor rather than as a clock difference nobody can see.
-	if (magnitude < 45) return 'just now';
+	if (magnitude < 45) return m.versions_time_just_now();
 
 	const format = new Intl.RelativeTimeFormat(options.locale, { numeric: 'auto' });
 	for (const { unit, per, limit } of units) {
 		if (magnitude < limit) return format.format(Math.round(seconds / per), unit);
 	}
-	return 'just now';
+	return m.versions_time_just_now();
 }
 
 /**
@@ -88,16 +90,16 @@ export function relativeTime(value: string | null | undefined, options: { now?: 
  * user's unsaved work from disappearing behind a button they thought was safe.
  */
 export function restoreRefusal(options: { canRestore: boolean; dirty: boolean; isDraft: boolean }): string | null {
-	if (!options.canRestore) return 'This session cannot change this workflow.';
-	if (options.isDraft) return 'This revision is already the draft on the canvas.';
-	if (options.dirty) return 'Save or undo your unsaved changes first — restoring replaces what is on the canvas.';
+	if (!options.canRestore) return m.versions_refusal_cannot_change();
+	if (options.isDraft) return m.versions_refusal_already_draft();
+	if (options.dirty) return m.versions_refusal_unsaved();
 	return null;
 }
 
 /** Why a revision cannot be published, or null when it can. */
 export function publishRefusal(options: { canPublish: boolean; isPublished: boolean }): string | null {
-	if (!options.canPublish) return 'This session cannot publish this workflow.';
-	if (options.isPublished) return 'This revision is already the one serving traffic.';
+	if (!options.canPublish) return m.versions_refusal_cannot_publish();
+	if (options.isPublished) return m.versions_refusal_already_published();
 	return null;
 }
 
@@ -109,25 +111,40 @@ export function publishRefusal(options: { canPublish: boolean; isPublished: bool
  * user needs to know before pressing it is that nothing goes away.
  */
 export function restoreConfirmation(summary: Pick<WorkflowVersionSummaryResource, 'revision' | 'label'>): string {
-	return `${versionTitle(summary)} will be saved as a new revision on top of the history. Nothing is deleted — every revision, including the one on the canvas now, stays in the list.`;
+	return m.versions_restore_confirmation({ title: versionTitle(summary) });
 }
 
 /** The sentence a publish is confirmed with, naming what starts serving traffic. */
 export function publishConfirmation(summary: Pick<WorkflowVersionSummaryResource, 'revision' | 'label'>): string {
-	return `${versionTitle(summary)} will become the version production traffic runs. The revision on the canvas is left alone, and the change is recorded in the publish history.`;
+	return m.versions_publish_confirmation({ title: versionTitle(summary) });
 }
 
 /** One line of the publish timeline, describing what happened to a revision. */
 export function publishEventSentence(event: Pick<WorkflowPublishEventResource, 'action'>, revisionLabel: string): string {
 	switch (event.action) {
 		case 'published':
-			return `${revisionLabel} started serving traffic`;
+			return m.versions_event_published({ revision: revisionLabel });
 		case 'unpublished':
-			return `${revisionLabel} stopped serving traffic`;
+			return m.versions_event_unpublished({ revision: revisionLabel });
 		case 'restored':
-			return `${revisionLabel} was restored onto the canvas`;
+			return m.versions_event_restored({ revision: revisionLabel });
 		default:
-			return `${revisionLabel} changed`;
+			return m.versions_event_changed({ revision: revisionLabel });
+	}
+}
+
+/**
+ * What to call the action a publish event records, for the badge beside its
+ * sentence — the event's own word rather than the sentence it is stated in.
+ */
+export function publishEventActionLabel(event: Pick<WorkflowPublishEventResource, 'action'>): string {
+	switch (event.action) {
+		case 'published':
+			return m.versions_action_published();
+		case 'unpublished':
+			return m.versions_action_unpublished();
+		case 'restored':
+			return m.versions_action_restored();
 	}
 }
 
@@ -152,5 +169,32 @@ export function publishEventTone(event: Pick<WorkflowPublishEventResource, 'acti
  */
 export function eventRevisionLabel(versionID: string, summaries: WorkflowVersionSummaryResource[]): string {
 	const summary = summaries.find((candidate) => candidate.id === versionID);
-	return summary ? versionTitle(summary) : 'A pruned revision';
+	return summary ? versionTitle(summary) : m.versions_pruned_revision();
+}
+
+/**
+ * A connection difference as a sentence: the direction it was added or removed
+ * in, named by the nodes it joins rather than by two identifiers.
+ */
+export function connectionChangeSentence(change: ConnectionChange): string {
+	return change.status === 'added'
+		? m.versions_connection_added({ source: change.sourceName, target: change.targetName })
+		: m.versions_connection_removed({ source: change.sourceName, target: change.targetName });
+}
+
+/**
+ * A settings difference as a sentence: the key read with what happened to it.
+ *
+ * The status is a word the reader has to understand rather than a token, which
+ * is why it is spelled out per arm instead of being interpolated raw.
+ */
+export function settingChangeSentence(change: SettingChange): string {
+	switch (change.status) {
+		case 'added':
+			return m.versions_setting_added({ key: change.key });
+		case 'removed':
+			return m.versions_setting_removed({ key: change.key });
+		case 'changed':
+			return m.versions_setting_changed({ key: change.key });
+	}
 }

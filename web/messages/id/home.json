@@ -1,0 +1,20 @@
+{
+	"home_tagline": "Mesin otomasi alur kerja yang dapat disematkan",
+	"home_status_connected": "Terhubung",
+	"home_status_checking": "Memeriksa",
+	"home_status_disconnected": "Terputus",
+	"home_status_heading": "Status backend",
+	"home_refresh": "Muat ulang",
+	"home_checking": "memeriksa…",
+	"home_health_version": "v{version}",
+	"home_ready_database": "basis data {name}",
+	"home_backend_help": "API tidak merespons. Jalankan backend dengan {api}, atau jalankan kedua proses dengan {dev}.",
+	"home_link_api_reference": "Referensi API",
+	"home_link_openapi_json": "OpenAPI JSON",
+	"home_link_openapi_yaml": "OpenAPI YAML",
+	"home_last_checked": "Terakhir diperiksa {time}.",
+	"home_scaffolding_note": "Hanya kerangka — kanvas alur kerja hadir di Milestone 1.",
+	"home_backend_unreachable": "Backend tidak dapat dihubungi",
+	"home_error_unexpected_health": "Respons health tidak terduga",
+	"home_error_unexpected_readiness": "Respons kesiapan tidak terduga"
+}

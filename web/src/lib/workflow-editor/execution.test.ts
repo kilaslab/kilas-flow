@@ -1,14 +1,17 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import type { Connection, Definition, ExecutionNodeRunResource, Node } from '$lib/api/generated/models';
+import { setLocale } from '$lib/i18n/locale.svelte';
 import {
 	binaryAttachments,
 	edgeItemCounts,
 	executionDurationMs,
 	formatBytes,
 	formatDuration,
+	formatTimestamp,
 	latestNodeRuns,
-	nodeRunStatus
+	nodeRunStatus,
+	statusLabel
 } from './execution';
 
 function nodeRun(overrides: Partial<ExecutionNodeRunResource> & { nodeId: string }): ExecutionNodeRunResource {
@@ -211,5 +214,46 @@ describe('formatBytes', () => {
 		expect(formatBytes(undefined)).toBe('unknown size');
 		expect(formatBytes(-1)).toBe('unknown size');
 		expect(formatBytes(Number.NaN)).toBe('unknown size');
+	});
+});
+
+describe('statusLabel', () => {
+	it('names the statuses a run reports, and capitalises a token no catalog carries', () => {
+		expect(statusLabel('queued')).toBe('Queued');
+		expect(statusLabel('succeeded')).toBe('Succeeded');
+		expect(statusLabel('cancelling')).toBe('Cancelling');
+		// The client-only status of a node the execution never reached.
+		expect(statusLabel('skipped')).toBe('Not reached');
+		// A trigger token is not a status: no catalog carries one, in either
+		// locale, so it keeps the capitalised token.
+		expect(statusLabel('subworkflow')).toBe('Subworkflow');
+	});
+});
+
+describe('the Indonesian catalog', () => {
+	// The locale is process-wide module state, and every other case in this file
+	// reads the base locale, so each one here puts it back.
+	afterEach(() => setLocale('en'));
+
+	it('labels a status in Indonesian and leaves a token the catalog does not carry alone', () => {
+		setLocale('id');
+
+		expect(statusLabel('succeeded')).toBe('Berhasil');
+		expect(statusLabel('failed')).toBe('Gagal');
+		// The client-only status a node that never ran carries.
+		expect(statusLabel('skipped')).toBe('Tidak tercapai');
+		// A server trigger token is not a status: no catalog carries it in either
+		// locale, so it keeps the capitalised token.
+		expect(statusLabel('manual')).toBe('Manual');
+	});
+
+	it('renders durations, sizes and the empty placeholder from the Indonesian catalog', () => {
+		setLocale('id');
+
+		expect(formatDuration(1500)).toBe('1.5 detik');
+		expect(formatDuration(63_000)).toBe('1 menit 3 detik');
+		expect(formatDuration(null)).toBe('—');
+		expect(formatBytes(undefined)).toBe('ukuran tidak diketahui');
+		expect(formatTimestamp(undefined)).toBe('—');
 	});
 });

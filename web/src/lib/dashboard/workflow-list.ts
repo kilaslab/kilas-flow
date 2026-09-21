@@ -7,6 +7,7 @@
  * pages the complete list in memory; it owns the decisions and stays
  * unit-testable without a browser.
  */
+import * as m from '$lib/paraglide/messages.js';
 import type { WorkflowSummary } from '$lib/api/generated/models';
 
 export type WorkflowActiveFilter = 'all' | 'active' | 'draft';
@@ -115,7 +116,7 @@ export function pageWorkflows(filtered: readonly WorkflowRow[], page: number): W
  * Pure so the numbering rule is pinned by test rather than by clicking.
  */
 export function duplicateName(source: string, taken: ReadonlySet<string>): string {
-	const base = `Copy of ${source}`;
+	const base = m.workflows_duplicate_name({ source });
 	if (!taken.has(base)) return base;
 	let suffix = 2;
 	while (taken.has(`${base} (${suffix})`)) suffix += 1;
@@ -130,6 +131,6 @@ export function duplicateName(source: string, taken: ReadonlySet<string>): strin
  * look like the workspace had shrunk; shown-of-total stays true either way.
  */
 export function workflowCountLabel(shown: number, total: number): string {
-	if (shown !== total) return `${shown} of ${total} workflows`;
-	return total === 1 ? '1 workflow' : `${total} workflows`;
+	if (shown !== total) return m.workflows_count_of({ shown, total });
+	return m.workflows_count_of_one({ total });
 }

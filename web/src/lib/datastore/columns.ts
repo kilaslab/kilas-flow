@@ -1,3 +1,4 @@
+import * as m from '$lib/paraglide/messages.js';
 import type { DatastoreColumnResource } from '$lib/api/generated/models';
 
 /**
@@ -80,8 +81,12 @@ export type CellLabelInput = {
  * cell's gesture needs the row it acts on.
  */
 export function cellButtonLabel({ column, system, rowID, text, empty }: CellLabelInput): string {
-	if (system) return empty ? `${column} is empty` : `${column} ${text}`;
-	return `Edit ${column} in row ${rowID}: ${empty ? 'Null' : text}`;
+	// The label carries the cell's visible value, because a name that replaces
+	// it leaves a screen reader unable to hear what the cell holds (WCAG 2.5.3,
+	// Label in Name). The prose comes from the catalog; the value never does.
+	if (system) return empty ? m.datastores_cell_empty_aria({ column }) : `${column} ${text}`;
+	const value = empty ? m.datastores_null() : text;
+	return `${m.datastores_edit_cell_aria({ column, row: String(rowID) })}: ${value}`;
 }
 
 export type CoercedValue = { ok: true; value: unknown } | { ok: false; error: string };
@@ -97,21 +102,23 @@ export function coerceValue(wire: string, column: string, raw: string): CoercedV
 	const text = raw.trim();
 	switch (wire) {
 		case 'number': {
-			if (text === '') return { ok: false, error: `${column} needs a number.` };
+			if (text === '') return { ok: false, error: m.datastores_column_needs_number({ column }) };
 			const parsed = Number(text);
-			if (!Number.isFinite(parsed)) return { ok: false, error: `${column} needs a number.` };
+			if (!Number.isFinite(parsed))
+				return { ok: false, error: m.datastores_column_needs_number({ column }) };
 			return { ok: true, value: parsed };
 		}
 		case 'boolean': {
 			if (/^(true|1|yes)$/i.test(text)) return { ok: true, value: true };
 			if (/^(false|0|no)$/i.test(text)) return { ok: true, value: false };
-			return { ok: false, error: `${column} needs true or false.` };
+			return { ok: false, error: m.datastores_column_needs_boolean({ column }) };
 		}
 		case 'date':
 		case 'datetime': {
-			if (text === '') return { ok: false, error: `${column} needs a date and time.` };
+			if (text === '') return { ok: false, error: m.datastores_column_needs_datetime({ column }) };
 			const parsed = Date.parse(text);
-			if (Number.isNaN(parsed)) return { ok: false, error: `${column} needs a date and time.` };
+			if (Number.isNaN(parsed))
+				return { ok: false, error: m.datastores_column_needs_datetime({ column }) };
 			return { ok: true, value: new Date(parsed).toISOString() };
 		}
 		default:

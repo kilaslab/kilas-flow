@@ -3,6 +3,7 @@
 	import Plus from '@lucide/svelte/icons/plus';
 	import Trash2 from '@lucide/svelte/icons/trash-2';
 
+	import * as m from '$lib/paraglide/messages.js';
 	import { getCanvasActions } from '$lib/workflow-editor/canvas-actions';
 	import type { EditorFlowEdge } from '$lib/workflow-editor/document';
 
@@ -62,7 +63,7 @@
 				<button
 					type="button"
 					class="grid size-6 place-items-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1"
-					aria-label="Insert a step into this connection"
+					aria-label={m.canvas_edge_insert_aria()}
 					onclick={() => actions?.splice(id)}
 				>
 					<Plus aria-hidden="true" class="size-3.5" />
@@ -70,7 +71,7 @@
 				<button
 					type="button"
 					class="grid size-6 place-items-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive focus-visible:outline-2 focus-visible:outline-offset-1"
-					aria-label="Delete this connection"
+					aria-label={m.canvas_edge_delete_aria()}
 					onclick={() => actions?.removeEdge(id)}
 				>
 					<Trash2 aria-hidden="true" class="size-3.5" />

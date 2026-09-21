@@ -58,6 +58,7 @@
 		uploadImport,
 		type CSVImportReport
 	} from '$lib/datastore/transfer';
+	import * as m from '$lib/paraglide/messages.js';
 
 	const PAGE_SIZE = 20;
 
@@ -143,7 +144,7 @@
 		detailFailure = null;
 		try {
 			const response = await getDatastore(datastoreID);
-			if (response.status !== 200) throw new Error('Unexpected datastore response');
+			if (response.status !== 200) throw new Error(m.datastores_error_datastore_response());
 			detail = response.data;
 		} catch (cause) {
 			detailFailure = cause;
@@ -160,7 +161,7 @@
 		allChecked = false;
 		try {
 			const response = await listDatastoreRows(datastoreID, listParams());
-			if (response.status !== 200) throw new Error('Unexpected row-list response');
+			if (response.status !== 200) throw new Error(m.datastores_error_row_list_response());
 			if (!guard.holds(token)) return;
 			rows = readPage(response.data);
 		} catch (cause) {
@@ -259,7 +260,7 @@
 			filter: { type: 'and', filters: [{ columnName: 'id', condition: 'eq', value: Number(targetCell.rowID) }] },
 			values: { [column.name]: next }
 		});
-			if (response.status !== 200) throw new Error('Unexpected row-update response');
+			if (response.status !== 200) throw new Error(m.datastores_error_row_update_response());
 			cancelCellEdit();
 			await load(id);
 		} catch (error) {
@@ -279,7 +280,7 @@
 		failure = null;
 		try {
 			const response = await listDatastoreRows(id, { ...listParams(), cursor: rows.nextCursor });
-			if (response.status !== 200) throw new Error('Unexpected row-list response');
+			if (response.status !== 200) throw new Error(m.datastores_error_row_list_response());
 			if (!guard.holds(token)) return;
 			rows = appendPage(rows, response.data);
 		} catch (cause) {
@@ -324,7 +325,7 @@
 		rowError = null;
 		try {
 			const response = await insertDatastoreRow(id, { values });
-			if (response.status !== 201) throw new Error('Unexpected row-insert response');
+			if (response.status !== 201) throw new Error(m.datastores_error_row_insert_response());
 			rowDialogOpen = false;
 			await load(id);
 		} catch (error) {
@@ -336,7 +337,7 @@
 
 	async function saveColumn() {
 		if (!columnName.trim()) {
-			columnError = 'Give this column a name.';
+			columnError = m.datastores_error_column_name_required();
 			return;
 		}
 		savingColumn = true;
@@ -346,7 +347,7 @@
 				name: columnName.trim(),
 				type: wireType(columnType)
 			});
-			if (response.status !== 200) throw new Error('Unexpected column-add response');
+			if (response.status !== 200) throw new Error(m.datastores_error_column_add_response());
 			columnDialogOpen = false;
 			columnName = '';
 			columnType = COLUMN_TYPES[0];
@@ -377,7 +378,7 @@
 		}
 		try {
 			const response = await renameDatastoreColumn(id, column.name, { name: next });
-			if (response.status !== 200) throw new Error('Unexpected column-rename response');
+			if (response.status !== 200) throw new Error(m.datastores_error_column_rename_response());
 			cancelRename();
 			await refresh();
 		} catch (error) {
@@ -391,7 +392,7 @@
 		headerError = null;
 		try {
 			const response = await deleteDatastoreColumn(id, deletingColumn);
-			if (response.status !== 204) throw new Error('Unexpected column-delete response');
+			if (response.status !== 204) throw new Error(m.datastores_error_column_delete_response());
 			deletingColumn = null;
 			await refresh();
 		} catch (error) {
@@ -416,7 +417,7 @@
 					}))
 				}
 			});
-			if (response.status !== 200) throw new Error('Unexpected row-delete response');
+			if (response.status !== 200) throw new Error(m.datastores_error_row_delete_response());
 			confirmingRows = false;
 			await load(id);
 		} catch (error) {
@@ -454,7 +455,7 @@
 
 	async function runImport() {
 		if (!transferFile) {
-			transferError = 'Choose a CSV file first.';
+			transferError = m.datastores_error_choose_file();
 			return;
 		}
 		transferBusy = true;
@@ -500,7 +501,7 @@
 </script>
 
 <svelte:head>
-	<title>{detail?.name ?? 'Datastore'} · KilasFlow</title>
+	<title>{m.datastores_detail_page_title({ name: detail?.name ?? m.datastores_noun() })}</title>
 </svelte:head>
 
 <section class="mx-auto w-full max-w-5xl">
@@ -508,20 +509,20 @@
 		href="/datastores"
 		class="inline-flex items-center gap-1.5 rounded text-xs text-muted-foreground underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2"
 	>
-		<ArrowLeft aria-hidden="true" class="size-3.5" />Datastores
+		<ArrowLeft aria-hidden="true" class="size-3.5" />{m.nav_datastores()}
 	</a>
 
 	{#if detailLoading}
 		<div aria-live="polite" class="mt-3 overflow-hidden rounded-lg border border-border">
-			<p class="sr-only">Loading datastore…</p>
+			<p class="sr-only">{m.common_loading({ label: m.datastores_noun() })}</p>
 			<div class="h-11 animate-pulse bg-muted/50" aria-hidden="true"></div>
 		</div>
 	{:else if detailFailure || !detail}
 		<div class="mt-3 max-w-lg rounded-lg border border-destructive/25 bg-destructive/5 p-3">
-			<p class="text-xs font-medium text-destructive">This datastore could not be loaded.</p>
+			<p class="text-xs font-medium text-destructive">{m.datastores_load_failed()}</p>
 			<p class="mt-0.5 text-xs leading-5 text-muted-foreground">{message(detailFailure)}</p>
 			<Button class="mt-2.5" size="sm" variant="outline" onclick={() => void loadDetail(id)}>
-				Try again
+				{m.common_try_again()}
 			</Button>
 		</div>
 	{:else}
@@ -529,18 +530,18 @@
 			<div class="max-w-xl">
 				<h1 class="text-base font-semibold tracking-tight">{detail.name}</h1>
 				<p class="text-xs text-muted-foreground">
-					{userColumns.length} user column{userColumns.length === 1 ? '' : 's'} · 20 rows per page
+					{m.datastores_columns_summary({ count: userColumns.length })}
 				</p>
 			</div>
 			<div class="flex flex-wrap gap-2">
 				<Button variant="outline" size="sm" onclick={() => openTransfer('import')}>
-					<Upload aria-hidden="true" />Import
+					<Upload aria-hidden="true" />{m.datastores_import()}
 				</Button>
 				<Button variant="outline" size="sm" onclick={() => openTransfer('export')}>
-					<Download aria-hidden="true" />Export
+					<Download aria-hidden="true" />{m.datastores_export()}
 				</Button>
 				<Button size="sm" onclick={openRowDialog}>
-					<Plus aria-hidden="true" />Add row
+					<Plus aria-hidden="true" />{m.datastores_add_row()}
 				</Button>
 				<Button
 					size="sm"
@@ -552,7 +553,7 @@
 						columnDialogOpen = true;
 					}}
 				>
-					<Plus aria-hidden="true" />Add column
+					<Plus aria-hidden="true" />{m.datastores_add_column()}
 				</Button>
 			</div>
 		</div>
@@ -560,13 +561,13 @@
 		{#if selectedIDs.length > 0}
 			<div class="mt-3 flex flex-wrap items-center gap-3 rounded-lg border border-border bg-muted/40 px-3 py-2">
 				<p class="text-xs text-muted-foreground" role="status">
-					{selectedIDs.length} row{selectedIDs.length === 1 ? '' : 's'} selected
+					{m.datastores_rows_selected({ count: selectedIDs.length })}
 				</p>
 				<Button type="button" size="sm" variant="outline" onclick={() => (confirmingRows = true)}>
-					<Trash2 aria-hidden="true" />Delete selected
+					<Trash2 aria-hidden="true" />{m.datastores_delete_selected()}
 				</Button>
 				<Button type="button" size="sm" variant="ghost" onclick={() => { checkState = {}; allChecked = false; }}>
-					Clear selection
+					{m.datastores_clear_selection()}
 				</Button>
 			</div>
 		{/if}
@@ -577,11 +578,11 @@
 
 		<div class="mt-3">
 			<div class="mb-3 flex flex-wrap items-center gap-2">
-				<label for="datastore-search" class="sr-only">Search rows</label>
+				<label for="datastore-search" class="sr-only">{m.datastores_search_rows()}</label>
 				<Input
 					id="datastore-search"
 					value={search}
-					placeholder="Search text columns…"
+					placeholder={m.datastores_search_placeholder()}
 					class="h-7 max-w-64 text-xs"
 					oninput={(event) => {
 						search = event.currentTarget.value;
@@ -589,12 +590,12 @@
 					}}
 				/>
 				<p class="text-xs text-muted-foreground" role="status">
-					{rows.items.length} row{rows.items.length === 1 ? '' : 's'} on this page
+					{m.datastores_rows_on_page({ count: rows.items.length })}
 				</p>
 				{#if cellError}<p role="alert" class="text-xs text-destructive">{cellError}</p>{/if}
 			</div>
 			<ListStates
-				label="Rows"
+				label={m.datastores_rows()}
 				{loading}
 				failed={failure !== null}
 				error={failure}
@@ -602,17 +603,17 @@
 				onRetry={() => void load(id)}
 				onRetryMore={() => void loadMore()}
 				emptyIcon={Plus}
-				emptyTitle="No rows yet"
-				emptyBody="Add the first row to start persisting data in this table."
+				emptyTitle={m.datastores_empty_rows_title()}
+				emptyBody={m.datastores_empty_rows_body()}
 			>
 				<div class="overflow-hidden rounded-xl border border-border bg-card">
 					<Table.Root class="min-w-[44rem]">
-						<Table.Caption class="sr-only">Rows in {detail.name}, id order</Table.Caption>
+						<Table.Caption class="sr-only">{m.datastores_rows_caption({ name: detail.name })}</Table.Caption>
 						<Table.Header class="[&_th]:h-7 [&_th]:px-3 [&_th]:text-xs [&_th]:uppercase [&_th]:tracking-wide [&_th]:text-muted-foreground">
 							<Table.Row>
 								<Table.Head scope="col" class="w-8">
 									<SyncedCheckbox
-										label="Select all rows on this page"
+										label={m.datastores_select_all_rows()}
 										checked={allChecked}
 										onToggle={(next) => toggleAll(next)}
 									/>
@@ -623,8 +624,10 @@
 											<button
 												type="button"
 												class="rounded font-medium hover:underline focus-visible:outline-2 focus-visible:outline-offset-1"
-												aria-label={`Sort by ${column.name} ${sortColumn === column.name && sortDirection === 'asc' ? 'descending' : 'ascending'}`}
-												title={`Sort by ${column.name}`}
+												aria-label={sortColumn === column.name && sortDirection === 'asc'
+													? m.datastores_sort_by_descending({ column: column.name })
+													: m.datastores_sort_by_ascending({ column: column.name })}
+												title={m.datastores_sort_by({ column: column.name })}
 												onclick={() => toggleSort(column.name)}
 											>
 												{column.name}{sortColumn === column.name ? (sortDirection === 'asc' ? ' ▲' : ' ▼') : ''}
@@ -633,7 +636,7 @@
 												<Input
 													class="h-6 w-32 text-xs normal-case"
 													value={renameValue}
-													aria-label={`Rename column ${column.name}`}
+													aria-label={m.datastores_rename_column_aria({ column: column.name })}
 													oninput={(event) => (renameValue = event.currentTarget.value)}
 													onkeydown={(event) => {
 														if (event.key === 'Enter') void commitRename(column);
@@ -652,7 +655,7 @@
 														variant="ghost"
 														size="icon"
 														class="size-5"
-														aria-label={`Rename column ${column.name}`}
+														aria-label={m.datastores_rename_column_aria({ column: column.name })}
 														onclick={() => startRename(column)}
 													>
 														<Pencil aria-hidden="true" class="size-3" />
@@ -662,7 +665,7 @@
 														variant="ghost"
 														size="icon"
 														class="size-5 text-muted-foreground hover:text-destructive"
-														aria-label={`Delete column ${column.name}`}
+														aria-label={m.datastores_delete_column_aria({ column: column.name })}
 														onclick={() => {
 															headerError = null;
 															deletingColumn = column.name;
@@ -683,7 +686,7 @@
 								<Table.Row>
 									<Table.Cell class="px-3 py-2">
 										<SyncedCheckbox
-											label={`Select row ${rowID}`}
+											label={m.datastores_select_row_aria({ row: rowID })}
 											checked={checkState[rowID] === true}
 											onToggle={(next) => (checkState = { ...checkState, [rowID]: next })}
 										/>
@@ -694,7 +697,7 @@
 											{#if editing}
 												<Input
 													value={cellDraft}
-													aria-label={`Edit ${column.name} in row ${rowID}`}
+													aria-label={m.datastores_edit_cell_aria({ column: column.name, row: rowID })}
 													class="h-6 text-xs"
 													disabled={savingCell}
 													oninput={(event) => (cellDraft = event.currentTarget.value)}
@@ -707,11 +710,11 @@
 													}}
 												/>
 											{:else if isNullCell(row, column)}
-												<button type="button" title={column.system ? 'System column — read-only' : 'Empty — click to edit'} aria-label={cellButtonLabel({ column: column.name, system: column.system, rowID, text: cellText(row, column), empty: isNullCell(row, column) })} class="text-muted-foreground/60 {column.system ? '' : 'hover:underline'}" onclick={() => startCellEdit(rowID, column, row[column.name])} disabled={column.system}>
-													<span>Null</span>
+												<button type="button" title={column.system ? m.datastores_cell_readonly_title() : m.datastores_cell_empty_title()} aria-label={cellButtonLabel({ column: column.name, system: column.system, rowID, text: cellText(row, column), empty: isNullCell(row, column) })} class="text-muted-foreground/60 {column.system ? '' : 'hover:underline'}" onclick={() => startCellEdit(rowID, column, row[column.name])} disabled={column.system}>
+													<span>{m.datastores_null()}</span>
 												</button>
 											{:else}
-												<button type="button" title={column.system ? cellText(row, column) : `${cellText(row, column)} — click to edit`} aria-label={cellButtonLabel({ column: column.name, system: column.system, rowID, text: cellText(row, column), empty: isNullCell(row, column) })} class="max-w-full truncate {column.system ? 'cursor-default' : 'hover:underline'}" onclick={() => startCellEdit(rowID, column, row[column.name])} disabled={column.system}>
+												<button type="button" title={column.system ? cellText(row, column) : m.datastores_cell_value_title({ value: cellText(row, column) })} aria-label={cellButtonLabel({ column: column.name, system: column.system, rowID, text: cellText(row, column), empty: isNullCell(row, column) })} class="max-w-full truncate {column.system ? 'cursor-default' : 'hover:underline'}" onclick={() => startCellEdit(rowID, column, row[column.name])} disabled={column.system}>
 													{cellText(row, column)}
 												</button>
 											{/if}
@@ -725,7 +728,7 @@
 				{#if canLoadMore(rows) && !pagingFailure}
 					<div class="mt-4 flex justify-center">
 						<Button variant="outline" onclick={() => void loadMore()} disabled={loadingMore}>
-							{loadingMore ? 'Loading…' : 'Load more'}
+							{loadingMore ? m.datastores_loading_more() : m.datastores_load_more()}
 						</Button>
 					</div>
 				{/if}
@@ -736,10 +739,9 @@
 	<Dialog.Root bind:open={rowDialogOpen}>
 		<Dialog.Content aria-describedby="datastore-row-description">
 			<Dialog.Header>
-				<Dialog.Title>Add row</Dialog.Title>
+				<Dialog.Title>{m.datastores_add_row()}</Dialog.Title>
 				<Dialog.Description id="datastore-row-description">
-					Set the value for each column. Empty stays Null — the row id and both
-					timestamps are set by the database.
+					{m.datastores_add_row_description()}
 				</Dialog.Description>
 			</Dialog.Header>
 			<form class="grid gap-4" onsubmit={(event) => { event.preventDefault(); void saveRow(); }}>
@@ -756,7 +758,7 @@
 									checked={boolDraft[column.name] ?? false}
 									onToggle={(next) => (boolDraft = { ...boolDraft, [column.name]: next })}
 								/>
-								<span class="text-xs text-muted-foreground">Checked means true.</span>
+								<span class="text-xs text-muted-foreground">{m.datastores_checked_means_true()}</span>
 							</div>
 						{:else if column.type === 'date' || column.type === 'datetime'}
 							<Input
@@ -784,8 +786,8 @@
 				{/each}
 				{#if rowError}<p role="alert" class="text-sm text-destructive">{rowError}</p>{/if}
 				<Dialog.Footer>
-					<Button type="button" variant="outline" onclick={() => (rowDialogOpen = false)} disabled={savingRow}>Cancel</Button>
-					<Button type="submit" disabled={savingRow}>{savingRow ? 'Adding…' : 'Add row'}</Button>
+					<Button type="button" variant="outline" onclick={() => (rowDialogOpen = false)} disabled={savingRow}>{m.datastores_cancel()}</Button>
+					<Button type="submit" disabled={savingRow}>{savingRow ? m.datastores_adding() : m.datastores_add_row()}</Button>
 				</Dialog.Footer>
 			</form>
 		</Dialog.Content>
@@ -794,18 +796,18 @@
 	<Dialog.Root bind:open={columnDialogOpen}>
 		<Dialog.Content aria-describedby="datastore-column-description">
 			<Dialog.Header>
-				<Dialog.Title>Add column</Dialog.Title>
+				<Dialog.Title>{m.datastores_add_column()}</Dialog.Title>
 				<Dialog.Description id="datastore-column-description">
-					A name and a type. Nothing offers nullability, uniqueness, or a default.
+					{m.datastores_add_column_description()}
 				</Dialog.Description>
 			</Dialog.Header>
 			<form class="grid gap-4" onsubmit={(event) => { event.preventDefault(); void saveColumn(); }}>
 				<div class="grid gap-2">
-					<label for="column-name" class="text-sm font-medium">Name</label>
-					<Input id="column-name" bind:value={columnName} placeholder="e.g. score" />
+					<label for="column-name" class="text-sm font-medium">{m.datastores_name_label()}</label>
+					<Input id="column-name" bind:value={columnName} placeholder={m.datastores_column_name_placeholder()} />
 				</div>
 				<div class="grid gap-2">
-					<label for="column-type" class="text-sm font-medium">Type</label>
+					<label for="column-type" class="text-sm font-medium">{m.datastores_type_label()}</label>
 					<select
 						id="column-type"
 						bind:value={columnType}
@@ -818,8 +820,8 @@
 				</div>
 				{#if columnError}<p role="alert" class="text-sm text-destructive">{columnError}</p>{/if}
 				<Dialog.Footer>
-					<Button type="button" variant="outline" onclick={() => (columnDialogOpen = false)} disabled={savingColumn}>Cancel</Button>
-					<Button type="submit" disabled={savingColumn}>{savingColumn ? 'Adding…' : 'Add column'}</Button>
+					<Button type="button" variant="outline" onclick={() => (columnDialogOpen = false)} disabled={savingColumn}>{m.datastores_cancel()}</Button>
+					<Button type="submit" disabled={savingColumn}>{savingColumn ? m.datastores_adding() : m.datastores_add_column()}</Button>
 				</Dialog.Footer>
 			</form>
 		</Dialog.Content>
@@ -828,17 +830,16 @@
 	<Dialog.Root open={deletingColumn !== null} onOpenChange={(open) => { if (!open) deletingColumn = null; }}>
 		<Dialog.Content aria-describedby="column-delete-description">
 			<Dialog.Header>
-				<Dialog.Title>Delete column {deletingColumn}?</Dialog.Title>
+				<Dialog.Title>{m.datastores_delete_column_title({ column: deletingColumn ?? '' })}</Dialog.Title>
 				<Dialog.Description id="column-delete-description">
-					Every value in this column is removed with it. Cancelling sends no
-					request and leaves the datastore untouched.
+					{m.datastores_delete_column_description()}
 				</Dialog.Description>
 			</Dialog.Header>
 			{#if headerError}<p role="alert" class="text-sm text-destructive">{headerError}</p>{/if}
 			<Dialog.Footer>
-				<Button type="button" variant="outline" onclick={() => (deletingColumn = null)} disabled={removingColumn}>Cancel</Button>
+				<Button type="button" variant="outline" onclick={() => (deletingColumn = null)} disabled={removingColumn}>{m.datastores_cancel()}</Button>
 				<Button type="button" variant="destructive" onclick={() => void removeColumn()} disabled={removingColumn}>
-					{removingColumn ? 'Deleting…' : 'Delete column'}
+					{removingColumn ? m.datastores_deleting() : m.datastores_delete_column_submit()}
 				</Button>
 			</Dialog.Footer>
 		</Dialog.Content>
@@ -847,17 +848,16 @@
 	<Dialog.Root bind:open={confirmingRows}>
 		<Dialog.Content aria-describedby="rows-delete-description">
 			<Dialog.Header>
-				<Dialog.Title>Delete {selectedIDs.length} row{selectedIDs.length === 1 ? '' : 's'}?</Dialog.Title>
+				<Dialog.Title>{m.datastores_delete_rows_title({ count: selectedIDs.length })}</Dialog.Title>
 				<Dialog.Description id="rows-delete-description">
-					Only the selected rows are removed. Cancelling sends no request and
-					leaves every row untouched.
+					{m.datastores_delete_rows_description()}
 				</Dialog.Description>
 			</Dialog.Header>
 			{#if headerError}<p role="alert" class="text-sm text-destructive">{headerError}</p>{/if}
 			<Dialog.Footer>
-				<Button type="button" variant="outline" onclick={() => (confirmingRows = false)} disabled={removingRows}>Cancel</Button>
+				<Button type="button" variant="outline" onclick={() => (confirmingRows = false)} disabled={removingRows}>{m.datastores_cancel()}</Button>
 				<Button type="button" variant="destructive" onclick={() => void removeRows()} disabled={removingRows}>
-					{removingRows ? 'Deleting…' : 'Delete rows'}
+					{removingRows ? m.datastores_deleting() : m.datastores_delete_rows_submit()}
 				</Button>
 			</Dialog.Footer>
 		</Dialog.Content>
@@ -866,14 +866,12 @@
 	<Dialog.Root open={transfer !== null} onOpenChange={(open) => { if (!open) transfer = null; }}>
 		<Dialog.Content aria-describedby="transfer-description">
 			<Dialog.Header>
-				<Dialog.Title>{transfer === 'import' ? 'Import rows' : 'Export rows'}</Dialog.Title>
+				<Dialog.Title>{transfer === 'import' ? m.datastores_import_rows_title() : m.datastores_export_rows_title()}</Dialog.Title>
 				<Dialog.Description id="transfer-description">
 					{#if transfer === 'import'}
-						Upload a CSV file whose header names this datastore's columns. Every
-						record is validated before any row is written: a file with a failed
-						row imports nothing.
+						{m.datastores_import_description()}
 					{:else}
-						Download this datastore's rows as a CSV file, in row order.
+						{m.datastores_export_description()}
 					{/if}
 				</Dialog.Description>
 			</Dialog.Header>
@@ -882,17 +880,15 @@
 				<label class="flex cursor-pointer items-start gap-2 text-xs leading-5">
 					<input type="checkbox" bind:checked={includeSystem} class="mt-1" />
 					<span>
-						Include system columns
+						{m.datastores_include_system_columns()}
 						<span class="block text-muted-foreground">
-							Adds <span class="font-mono">id</span>, <span class="font-mono">createdAt</span> and
-							<span class="font-mono">updatedAt</span> around the user columns. Leave it off for a
-							sheet to edit and re-import; turn it on for a backup.
+							{m.datastores_system_columns_note()}
 						</span>
 					</span>
 				</label>
 			{:else}
 				<div class="grid gap-2">
-					<label for="transfer-file" class="text-xs font-medium">CSV file</label>
+					<label for="transfer-file" class="text-xs font-medium">{m.datastores_csv_file_label()}</label>
 					<input
 						id="transfer-file"
 						type="file"
@@ -904,9 +900,7 @@
 						}}
 					/>
 					<p class="text-xs leading-5 text-muted-foreground">
-						The header must name user columns only — a file carrying
-						<span class="font-mono">id</span>, <span class="font-mono">createdAt</span>,
-						<span class="font-mono">updatedAt</span> or <span class="font-mono">dryRunState</span> is refused.
+						{m.datastores_import_header_note()}
 					</p>
 				</div>
 			{/if}
@@ -915,26 +909,26 @@
 				<p role="alert" class="text-xs leading-5 text-destructive">{transferError}</p>
 			{/if}
 			{#if savedFilename}
-				<p role="status" class="text-xs leading-5 text-muted-foreground">Saved {savedFilename}.</p>
+				<p role="status" class="text-xs leading-5 text-muted-foreground">{m.datastores_saved({ filename: savedFilename })}</p>
 			{/if}
 			{#if transferReport}
 				{#if transferReport.failed.length === 0}
 					<p role="status" class="text-xs leading-5 text-muted-foreground">{summarizeReport(transferReport)}</p>
 				{:else}
-					<section aria-label="Blocking import diagnostics" class="grid gap-1.5">
+					<section aria-label={m.datastores_blocking_diagnostics_aria()} class="grid gap-1.5">
 						<div class="flex flex-wrap items-baseline gap-x-2">
 							<h3 class="text-xs font-semibold">
-								Blocking <span class="font-normal text-muted-foreground">· {transferReport.failed.length}</span>
+								{m.datastores_blocking_heading()} <span class="font-normal text-muted-foreground">· {transferReport.failed.length}</span>
 							</h3>
 							<p class="w-full text-xs leading-5 text-muted-foreground">
-								No rows were imported. Fix the file and try again.
+								{m.datastores_import_refused()}
 							</p>
 						</div>
 						<ul class="grid gap-1.5">
 							{#each transferReport.failed as issue (`${issue.line}-${issue.column}`)}
 								<li class="flex flex-wrap items-baseline gap-x-2 rounded-lg border border-border px-3 py-2 text-xs leading-5">
 									<span class="inline-flex items-center rounded-full border border-destructive/30 bg-destructive/10 px-2 py-0.5 text-[0.6875rem] font-medium text-destructive">{severityLabel(issue.severity)}</span>
-									<span class="font-mono text-[0.6875rem] text-muted-foreground">Line {issue.line} · {issue.column}</span>
+									<span class="font-mono text-[0.6875rem] text-muted-foreground">{m.datastores_issue_line({ line: issue.line, column: issue.column })}</span>
 									<span class="w-full text-muted-foreground">{issue.reason}</span>
 								</li>
 							{/each}
@@ -944,14 +938,14 @@
 			{/if}
 
 			<Dialog.Footer>
-				<Button type="button" variant="outline" onclick={() => (transfer = null)}>Close</Button>
+				<Button type="button" variant="outline" onclick={() => (transfer = null)}>{m.datastores_close()}</Button>
 				{#if transfer === 'import'}
 					<Button type="button" onclick={() => void runImport()} disabled={transferBusy || !transferFile}>
-						{transferBusy ? 'Uploading…' : 'Upload'}
+						{transferBusy ? m.datastores_uploading() : m.datastores_upload()}
 					</Button>
 				{:else}
 					<Button type="button" onclick={() => void runExport()} disabled={transferBusy}>
-						{transferBusy ? 'Downloading…' : 'Download'}
+						{transferBusy ? m.datastores_downloading() : m.datastores_download()}
 					</Button>
 				{/if}
 			</Dialog.Footer>

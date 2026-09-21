@@ -1,0 +1,134 @@
+{
+	"editor_aria_label": "Workflow editor",
+	"editor_add_step": "Add step",
+	"editor_undo": "Undo",
+	"editor_undo_title": "Undo (⌘Z)",
+	"editor_redo": "Redo",
+	"editor_redo_title": "Redo (⌘⇧Z)",
+	"editor_tidy_up": "Tidy up",
+	"editor_saving": "Saving…",
+	"editor_running": "Running…",
+	"editor_execute": "Execute",
+	"editor_open_executions": "Open executions",
+	"editor_history": "History",
+	"editor_keyboard_shortcuts": "Keyboard shortcuts",
+	"editor_delete_connection": "Delete connection",
+	"editor_state_inactive": "Inactive",
+	"editor_state_read_only": "Read only",
+	"editor_state_unsaved": "Unsaved changes",
+	"editor_state_saved": "All changes saved",
+	"editor_state_previewing": "Previewing revision {revision}",
+	"editor_save_first_hint": "Save your changes before running or activating this workflow.",
+	"editor_conflict_notice": "This workflow changed elsewhere while you were editing.",
+	"editor_save_mine_anyway": "Save mine anyway",
+	"editor_save_failed": "Save failed: {error}",
+	"editor_dismiss": "Dismiss",
+	"editor_validation_issues_aria": "Workflow validation issues",
+	"editor_issue_node": "(node)",
+	"editor_issue_connection": "(connection)",
+	"editor_run_failed": "Run failed: {error}",
+	"editor_view_execution": "View execution",
+	"editor_previewing_note": "Previewing revision {revision}. Your unsaved draft is untouched.",
+	"editor_select_node_first": "Select a node first.",
+	"editor_nodes_copied": [
+		{
+			"declarations": ["input count", "local countPlural = count: plural"],
+			"selectors": ["countPlural"],
+			"match": {
+				"countPlural=one": "Copied 1 node.",
+				"countPlural=other": "Copied {count} nodes."
+			}
+		}
+	],
+	"editor_clipboard_denied_write": "The browser would not give this page the clipboard.",
+	"editor_clipboard_empty": "Nothing on the clipboard to paste.",
+	"editor_clipboard_denied_read": "The browser would not let this page read the clipboard.",
+	"editor_nodes_pasted": [
+		{
+			"declarations": ["input count", "local countPlural = count: plural"],
+			"selectors": ["countPlural"],
+			"match": {
+				"countPlural=one": "Pasted 1 node",
+				"countPlural=other": "Pasted {count} nodes"
+			}
+		}
+	],
+	"editor_placeholders_to_replace": [
+		{
+			"declarations": ["input count", "local countPlural = count: plural"],
+			"selectors": ["countPlural"],
+			"match": {
+				"countPlural=one": "1 placeholder to replace",
+				"countPlural=other": "{count} placeholders to replace"
+			}
+		}
+	],
+	"editor_connections_not_placed": [
+		{
+			"declarations": ["input count", "local countPlural = count: plural"],
+			"selectors": ["countPlural"],
+			"match": {
+				"countPlural=one": "1 connection not placed",
+				"countPlural=other": "{count} connections not placed"
+			}
+		}
+	],
+	"editor_nodes_duplicated": [
+		{
+			"declarations": ["input count", "local countPlural = count: plural"],
+			"selectors": ["countPlural"],
+			"match": {
+				"countPlural=one": "Duplicated 1 node.",
+				"countPlural=other": "Duplicated {count} nodes."
+			}
+		}
+	],
+	"editor_renamed_taken": "Renamed to “{name}” — that name was taken.",
+	"editor_add_first_step": "Add first workflow step",
+	"editor_empty_title": "Start with a trigger",
+	"editor_empty_body": "Pick what starts this workflow, then add the steps it runs.",
+	"editor_save_to_execute": "Save to execute",
+	"editor_execute_workflow": "Execute workflow",
+	"editor_node_name_label": "Node name",
+	"editor_minimap_aria": "Workflow minimap",
+	"editor_unsupported_node": "Unsupported node",
+	"editor_unknown_node_type": "Unknown node type",
+	"editor_unsupported_body": "Imported from n8n as an unsupported placeholder. Replace this node before activating or running this workflow.",
+	"editor_unsupported_preserved": "Its original configuration is preserved and will round-trip on export.",
+	"editor_unknown_body": "This stored node version is not available in the current registry. Its configuration will be preserved.",
+	"editor_node_details_aria": "{name} details",
+	"editor_node_properties_aria": "{name} properties",
+	"editor_resolved_version": "Stored v{stored} · resolved to v{resolved}",
+	"editor_close_properties_aria": "Close node properties",
+	"editor_close_details_aria": "Close node details",
+	"editor_shortcut_undo": "Undo",
+	"editor_shortcut_redo": "Redo",
+	"editor_shortcut_copy": "Copy selection",
+	"editor_shortcut_paste": "Paste",
+	"editor_shortcut_duplicate": "Duplicate selection",
+	"editor_shortcut_rename": "Rename selected node",
+	"editor_shortcut_open": "Open selected node",
+	"editor_shortcut_select_all": "Select all nodes",
+	"editor_shortcut_save": "Save workflow",
+	"editor_shortcut_add_step": "Add a step",
+	"editor_shortcut_tidy": "Tidy up",
+	"editor_shortcut_fit_view": "Zoom to fit",
+	"editor_shortcut_reset_zoom": "Reset zoom",
+	"editor_shortcut_zoom": "Zoom in / out",
+	"editor_shortcut_help": "Keyboard shortcuts",
+	"editor_activation_notices_aria": "Activation notices",
+	"editor_activation_notices_summary": [
+		{
+			"declarations": ["input count", "local countPlural = count: plural"],
+			"selectors": ["countPlural"],
+			"match": {
+				"countPlural=one": "1 activation notice. The workflow is active, but a trigger still needs something done before it receives anything.",
+				"countPlural=other": "{count} activation notices. The workflow is active, but a trigger still needs something done before it receives anything."
+			}
+		}
+	],
+	"editor_copy_for_node": "for {name}",
+	"editor_clipboard_unavailable": "The clipboard is unavailable here. Select the URL above and copy it by hand.",
+	"editor_dismiss_notice_aria": "Dismiss the activation notice for {name}",
+	"editor_activation_trigger_failed": "A trigger could not register with its service, so the workflow was left inactive — {error}"
+}

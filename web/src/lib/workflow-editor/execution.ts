@@ -1,3 +1,4 @@
+import * as m from '$lib/paraglide/messages.js';
 import type { Connection, Definition, ExecutionNodeRunResource, Node } from '$lib/api/generated/models';
 import { resolveDefinition } from './document';
 
@@ -68,6 +69,14 @@ export function binaryAttachments(output: unknown): Attachment[] {
 	return attachments;
 }
 
+/** The decimal unit ladder, one catalog message per rung, smallest first. */
+const SIZE_UNITS: ((inputs: { value: string | number }) => string)[] = [
+	m.executions_size_kilobytes,
+	m.executions_size_megabytes,
+	m.executions_size_gigabytes,
+	m.executions_size_terabytes
+];
+
 /**
  * A byte count a person can read.
  *
@@ -75,16 +84,15 @@ export function binaryAttachments(output: unknown): Attachment[] {
  * dialog a user has seen reports, and an attachment is a file to them.
  */
 export function formatBytes(size: number | undefined): string {
-	if (size === undefined || !Number.isFinite(size) || size < 0) return 'unknown size';
-	if (size < 1000) return `${size} B`;
-	const units = ['kB', 'MB', 'GB', 'TB'];
+	if (size === undefined || !Number.isFinite(size) || size < 0) return m.executions_size_unknown();
+	if (size < 1000) return m.executions_size_bytes({ value: size });
 	let value = size / 1000;
 	let unit = 0;
-	while (value >= 1000 && unit < units.length - 1) {
+	while (value >= 1000 && unit < SIZE_UNITS.length - 1) {
 		value /= 1000;
 		unit += 1;
 	}
-	return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`;
+	return SIZE_UNITS[unit]({ value: value < 10 ? value.toFixed(1) : Math.round(value) });
 }
 
 /**
@@ -152,19 +160,23 @@ export function executionDurationMs(execution: { startedAt: string; finishedAt?:
 }
 
 export function formatDuration(milliseconds: number | null | undefined): string {
-	if (milliseconds === null || milliseconds === undefined || Number.isNaN(milliseconds)) return '—';
-	if (milliseconds < 1000) return `${Math.round(milliseconds)} ms`;
-	if (milliseconds < 60_000) return `${Math.round(milliseconds / 100) / 10} s`;
+	if (milliseconds === null || milliseconds === undefined || Number.isNaN(milliseconds)) {
+		return m.executions_duration_unknown();
+	}
+	if (milliseconds < 1000) return m.executions_duration_milliseconds({ value: Math.round(milliseconds) });
+	if (milliseconds < 60_000) {
+		return m.executions_duration_seconds({ value: Math.round(milliseconds / 100) / 10 });
+	}
 	const minutes = Math.floor(milliseconds / 60_000);
 	const seconds = Math.round((milliseconds % 60_000) / 1000);
-	return `${minutes} m ${seconds} s`;
+	return m.executions_duration_minutes_seconds({ minutes, seconds });
 }
 
 export function formatTimestamp(value: string | undefined): string {
-	if (!value) return '—';
+	if (!value) return m.executions_timestamp_unknown();
 	const date = new Date(value);
 	return Number.isNaN(date.getTime())
-		? '—'
+		? m.executions_timestamp_unknown()
 		: date.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
@@ -189,10 +201,27 @@ export function statusTone(status: string): string {
 	}
 }
 
+/**
+ * The status labels the catalogs carry, including the client-only `skipped`.
+ *
+ * Declared rather than switched on, so every message keeps a reference the
+ * tree-shaker can see, and a status with no entry (`manual`, `schedule` — the
+ * server's trigger tokens) falls through to the capitalised token below.
+ */
+const STATUS_LABELS: Partial<Record<string, () => string>> = {
+	queued: m.executions_status_queued,
+	running: m.executions_status_running,
+	cancelling: m.executions_status_cancelling,
+	waiting: m.executions_status_waiting,
+	succeeded: m.executions_status_succeeded,
+	failed: m.executions_status_failed,
+	cancelled: m.executions_status_cancelled,
+	skipped: m.executions_status_skipped
+};
+
 /** Human label for a status, including the client-only `skipped`. */
 export function statusLabel(status: string): string {
-	if (status === 'skipped') return 'Not reached';
-	return status.charAt(0).toUpperCase() + status.slice(1);
+	return STATUS_LABELS[status]?.() ?? status.charAt(0).toUpperCase() + status.slice(1);
 }
 
 /**

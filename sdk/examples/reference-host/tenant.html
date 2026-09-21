@@ -49,6 +49,9 @@
 		container: document.getElementById('editor'),
 		baseUrl: session.baseUrl,
 		session,
+		// The tenant's language, not the reader's: this page is the customer's
+		// product, so it decides how the editor it embeds reads.
+		locale: info.locale,
 		onError: (error) => log(`error: ${error.message}`),
 		onEvent: (event) => {
 			log(`editor: ${event.type}`);

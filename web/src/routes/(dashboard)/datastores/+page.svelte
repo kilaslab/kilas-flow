@@ -18,6 +18,7 @@
 	import { Input } from '$lib/components/ui/input';
 	import { DRAIN_PAGE_LIMIT, drainPages, headerCursor, readPage, type CursorPage } from '$lib/dashboard/cursor-page';
 	import { RequestGuard } from '$lib/dashboard/request-guard';
+	import * as m from '$lib/paraglide/messages.js';
 
 	// The listing is paged by the server, so one request is only its first page:
 	// the rows are read to the end before they are shown, or a datastore past it
@@ -30,7 +31,7 @@
 	/** One page of the datastore listing: rows from the body, cursor from the header. */
 	async function fetchDatastorePage(cursor: string): Promise<CursorPage<DatastoreResource>> {
 		const response = await listDatastores({ limit: DRAIN_PAGE_LIMIT, cursor: cursor || undefined });
-		if (response.status !== 200) throw new Error('Unexpected datastore-list response');
+		if (response.status !== 200) throw new Error(m.datastores_error_list_response());
 		return readPage({ items: response.data.items, nextCursor: headerCursor(response.headers) });
 	}
 
@@ -77,7 +78,7 @@
 
 	async function save() {
 		if (!name.trim()) {
-			formError = 'Give this datastore a name.';
+			formError = m.datastores_error_name_required();
 			return;
 		}
 		saving = true;
@@ -88,7 +89,7 @@
 				? await renameDatastore(editing.id, body)
 				: await createDatastore(body);
 			if (response.status !== 200 && response.status !== 201)
-				throw new Error('Unexpected datastore-save response');
+				throw new Error(m.datastores_error_save_response());
 			await loadDatastores();
 			editorOpen = false;
 		} catch (error) {
@@ -115,27 +116,24 @@
 </script>
 
 <svelte:head>
-	<title>Datastores · KilasFlow</title>
+	<title>{m.datastores_page_title()}</title>
 </svelte:head>
 
 <section class="mx-auto w-full max-w-4xl">
 	<div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 		<div class="max-w-xl">
-			<h1 class="text-base font-semibold tracking-tight">Datastores</h1>
-			<p class="text-xs text-muted-foreground">
-				Structured tables your workflows can read and write, beside the workflows and
-				credentials that use them.
-			</p>
+			<h1 class="text-base font-semibold tracking-tight">{m.nav_datastores()}</h1>
+			<p class="text-xs text-muted-foreground">{m.datastores_subtitle()}</p>
 		</div>
 		<Button onclick={openCreate} class="w-full sm:w-auto sm:shrink-0">
 			<Database aria-hidden="true" />
-			New datastore
+			{m.datastores_new()}
 		</Button>
 	</div>
 
 	<div class="mt-4">
 		<ListStates
-			label="Datastores"
+			label={m.nav_datastores()}
 			loading={loading}
 			failed={listFailure !== null}
 			error={listFailure}
@@ -143,11 +141,12 @@
 			rows={2}
 			onRetry={() => void loadDatastores()}
 			emptyIcon={Database}
-			emptyTitle="No datastores yet"
-			emptyBody="Use datastores to persist execution results, share data between workflows, and track metrics for evaluation."
+			emptyTitle={m.datastores_empty_title()}
+			emptyBody={m.datastores_empty_body()}
 		>
-			<ul aria-label="Datastores" class="divide-y divide-border overflow-hidden rounded-lg border border-border">
+			<ul aria-label={m.nav_datastores()} class="divide-y divide-border overflow-hidden rounded-lg border border-border">
 				{#each rows as datastore (datastore.id)}
+					{@const columnCount = (datastore.columns ?? []).length}
 					<li class="flex h-11 items-center gap-3 px-3">
 						<a
 							href={`/datastores/${datastore.id}`}
@@ -156,14 +155,14 @@
 							{datastore.name}
 						</a>
 						<span class="shrink-0 text-xs text-muted-foreground">
-							{(datastore.columns ?? []).length} column{(datastore.columns ?? []).length === 1 ? '' : 's'}
+							{m.datastores_column_count({ count: columnCount })}
 						</span>
 						<Button
 							type="button"
 							variant="ghost"
 							size="icon"
 							class="size-7 shrink-0"
-							aria-label={`Rename ${datastore.name}`}
+							aria-label={m.datastores_rename_aria({ name: datastore.name })}
 							onclick={() => openRename(datastore)}
 						>
 							<Pencil aria-hidden="true" class="size-3.5" />
@@ -173,7 +172,7 @@
 							variant="ghost"
 							size="icon"
 							class="size-7 shrink-0 text-muted-foreground hover:text-destructive"
-							aria-label={`Delete ${datastore.name}`}
+							aria-label={m.datastores_delete_aria({ name: datastore.name })}
 							onclick={() => {
 								formError = null;
 								deleting = datastore;
@@ -190,22 +189,22 @@
 	<Dialog.Root bind:open={editorOpen}>
 		<Dialog.Content aria-describedby="datastore-form-description">
 			<Dialog.Header>
-				<Dialog.Title>{editing ? 'Rename datastore' : 'New datastore'}</Dialog.Title>
+				<Dialog.Title>{editing ? m.datastores_rename_title() : m.datastores_new()}</Dialog.Title>
 				<Dialog.Description id="datastore-form-description">
 					{editing
-						? 'Columns keep their names; only the table is renamed.'
-						: 'A name is all it takes — columns are added afterwards.'}
+						? m.datastores_rename_description()
+						: m.datastores_create_description()}
 				</Dialog.Description>
 			</Dialog.Header>
 			<form class="grid gap-4" onsubmit={(event) => { event.preventDefault(); void save(); }}>
 				<div class="grid gap-2">
-					<label for="datastore-name" class="text-sm font-medium">Name</label>
-					<Input id="datastore-name" bind:value={name} placeholder="e.g. Evaluation scores" />
+					<label for="datastore-name" class="text-sm font-medium">{m.datastores_name_label()}</label>
+					<Input id="datastore-name" bind:value={name} placeholder={m.datastores_name_placeholder()} />
 				</div>
 				{#if formError}<p role="alert" class="text-sm text-destructive">{formError}</p>{/if}
 				<Dialog.Footer>
-					<Button type="button" variant="outline" onclick={() => (editorOpen = false)} disabled={saving}>Cancel</Button>
-					<Button type="submit" disabled={saving}>{saving ? 'Saving…' : editing ? 'Rename datastore' : 'Create datastore'}</Button>
+					<Button type="button" variant="outline" onclick={() => (editorOpen = false)} disabled={saving}>{m.datastores_cancel()}</Button>
+					<Button type="submit" disabled={saving}>{saving ? m.datastores_saving() : editing ? m.datastores_rename_title() : m.datastores_create_submit()}</Button>
 				</Dialog.Footer>
 			</form>
 		</Dialog.Content>
@@ -214,17 +213,16 @@
 	<Dialog.Root open={deleting !== null} onOpenChange={(open) => { if (!open) deleting = null; }}>
 		<Dialog.Content aria-describedby="datastore-delete-description">
 			<Dialog.Header>
-				<Dialog.Title>Delete {deleting?.name ?? 'datastore'}?</Dialog.Title>
+				<Dialog.Title>{m.datastores_delete_title({ name: deleting?.name ?? m.datastores_noun() })}</Dialog.Title>
 				<Dialog.Description id="datastore-delete-description">
-					This removes the table and every row it holds. Cancelling sends no request
-					and leaves the datastore untouched.
+					{m.datastores_delete_description()}
 				</Dialog.Description>
 			</Dialog.Header>
 			{#if formError}<p role="alert" class="text-sm text-destructive">{formError}</p>{/if}
 			<Dialog.Footer>
-				<Button type="button" variant="outline" onclick={() => (deleting = null)} disabled={removing}>Cancel</Button>
+				<Button type="button" variant="outline" onclick={() => (deleting = null)} disabled={removing}>{m.datastores_cancel()}</Button>
 				<Button type="button" variant="destructive" onclick={() => void remove()} disabled={removing}>
-					{removing ? 'Deleting…' : 'Delete datastore'}
+					{removing ? m.datastores_deleting() : m.datastores_delete_submit()}
 				</Button>
 			</Dialog.Footer>
 		</Dialog.Content>

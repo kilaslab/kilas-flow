@@ -7,6 +7,7 @@
 	import XIcon from '@lucide/svelte/icons/x';
 	import { Button } from "$lib/components/ui/button/index.js";
 	import { cn, type WithoutChildrenOrChild } from "$lib/utils.js";
+	import * as m from '$lib/paraglide/messages.js';
 	import SheetOverlay from "./sheet-overlay.svelte";
 	import SheetPortal from "./sheet-portal.svelte";
 	import type { Snippet } from "svelte";
@@ -55,7 +56,7 @@
 				{#snippet child({ props })}
 					<Button variant="ghost" class="absolute top-3 right-3" size="icon-sm" {...props}>
 						<XIcon  />
-						<span class="sr-only">Close</span>
+						<span class="sr-only">{m.common_close()}</span>
 					</Button>
 				{/snippet}
 			</SheetPrimitive.Close>

@@ -12,6 +12,7 @@
 	import type { Definition, ExecutionResource, WorkflowVersionResource } from '$lib/api/generated/models';
 	import { Button } from '$lib/components/ui/button';
 	import ExecutionCanvas from '$lib/components/workflow-editor/execution-canvas.svelte';
+	import * as m from '$lib/paraglide/messages.js';
 	import { applyEvents, executionEvents, isTerminalStatus, latestExecutionStatus } from '$lib/workflow-editor/event-stream.svelte';
 	import {
 		binaryAttachments,
@@ -27,7 +28,7 @@
 	const execution = createGetExecution<ExecutionResource>(() => page.params.id ?? '', () => ({
 		query: {
 			select: (response) => {
-				if (response.status !== 200) throw new Error('Unexpected execution response');
+				if (response.status !== 200) throw new Error(m.executions_unexpected_execution());
 				return response.data;
 			}
 		}
@@ -35,7 +36,7 @@
 	const nodeTypes = createListNodeTypes<Definition[]>(() => ({
 		query: {
 			select: (response) => {
-				if (response.status !== 200) throw new Error('Unexpected node catalogue response');
+				if (response.status !== 200) throw new Error(m.executions_unexpected_node_catalogue());
 				return response.data ?? [];
 			}
 		}
@@ -49,7 +50,7 @@
 			query: {
 				enabled: Boolean(execution.data),
 				select: (response) => {
-					if (response.status !== 200) throw new Error('Unexpected workflow-revision response');
+					if (response.status !== 200) throw new Error(m.executions_unexpected_workflow_revision());
 					return response.data;
 				}
 			}
@@ -66,7 +67,7 @@
 		stopError = null;
 		try {
 			const response = await cancelExecution(execution.data.id);
-			if (response.status !== 202 && response.status !== 200) throw new Error('Unexpected cancel response');
+			if (response.status !== 202 && response.status !== 200) throw new Error(m.executions_unexpected_cancel());
 			await execution.refetch();
 		} catch (error) {
 			stopError = message(error);
@@ -142,7 +143,7 @@
 			if (typeof record.message === 'string' && record.message) return record.message;
 			if (typeof record.code === 'string' && record.code) return record.code;
 		}
-		return 'The run failed.';
+		return m.executions_run_failed();
 	}
 
 	/** The rest of the error record, when it carries more than the title. */
@@ -174,6 +175,11 @@
 		return asJSON(value).length;
 	}
 
+	/** The "(1,234 chars)" note that sits beside Input and Output once a node is picked. */
+	function payloadChars(value: unknown): string {
+		return ` (${m.executions_char_count({ count: payloadSize(value).toLocaleString() })})`;
+	}
+
 	let expandedPayloads = $state<Set<string>>(new Set());
 
 	function payloadExpanded(key: string): boolean {
@@ -186,21 +192,21 @@
 </script>
 
 <svelte:head>
-	<title>{execution.data?.id ?? 'Execution'} · KilasFlow</title>
+	<title>{m.executions_detail_page_title({ name: execution.data?.id ?? m.executions_execution() })}</title>
 </svelte:head>
 
 <section class="mx-auto flex w-full max-w-7xl flex-col gap-3">
 	<div>
-		<Button href="/executions" variant="ghost" size="sm"><ArrowLeft aria-hidden="true" />All executions</Button>
+		<Button href="/executions" variant="ghost" size="sm"><ArrowLeft aria-hidden="true" />{m.executions_all_executions()}</Button>
 	</div>
 
 	{#if execution.isPending}
-		<p aria-live="polite" class="text-sm text-muted-foreground">Loading execution…</p>
+		<p aria-live="polite" class="text-sm text-muted-foreground">{m.executions_loading_execution()}</p>
 	{:else if execution.isError && !execution.data}
 		<div class="max-w-xl rounded-lg border border-destructive/25 bg-destructive/5 p-3">
-			<h1 class="font-medium">Execution could not be loaded</h1>
+			<h1 class="font-medium">{m.common_load_failed({ label: m.executions_execution() })}</h1>
 			<p class="mt-0.5 text-xs leading-5 text-muted-foreground">{message(execution.error)}</p>
-			<Button class="mt-4" variant="outline" onclick={() => void execution.refetch()}>Try again</Button>
+			<Button class="mt-4" variant="outline" onclick={() => void execution.refetch()}>{m.common_try_again()}</Button>
 		</div>
 	{:else if execution.data}
 		<!-- A refetch that fails once the trace is already on screen is a
@@ -208,45 +214,45 @@
 		     error card throws away the only view of the run the user has. -->
 		{#if execution.isError}
 			<div role="alert" class="flex flex-wrap items-center gap-2 rounded-lg border border-destructive/25 bg-destructive/5 p-3">
-				<p class="min-w-0 flex-1 text-xs leading-5 text-destructive">This view may be out of date — the last refresh failed: {message(execution.error)}</p>
-				<Button variant="outline" size="sm" onclick={() => void execution.refetch()}>Refresh</Button>
+				<p class="min-w-0 flex-1 text-xs leading-5 text-destructive">{m.executions_stale_refresh({ message: message(execution.error) })}</p>
+				<Button variant="outline" size="sm" onclick={() => void execution.refetch()}>{m.executions_refresh()}</Button>
 			</div>
 		{/if}
 		<div class="flex flex-wrap items-start justify-between gap-3">
 			<div class="min-w-0">
 				<div class="flex flex-wrap items-center gap-2">
-					<h1 class="text-base font-semibold tracking-tight">Execution</h1>
+					<h1 class="text-base font-semibold tracking-tight">{m.executions_execution()}</h1>
 					<span class={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${statusTone(status)}`}>{statusLabel(status)}</span>
 					{#if live.connected && !live.finished}
 						<span class="inline-flex items-center gap-1.5 text-xs text-muted-foreground" aria-live="polite">
 							<span aria-hidden="true" class="size-1.5 animate-pulse rounded-full bg-primary"></span>
-							Live
+							{m.executions_live()}
 						</span>
 					{/if}
 					{#if stoppable}
 						<Button variant="outline" size="sm" onclick={() => void stop()} disabled={stopping}>
-							{stopping ? 'Stopping…' : 'Stop'}
+							{stopping ? m.executions_stopping() : m.executions_stop()}
 						</Button>
 					{/if}
 				</div>
 				<p class="mt-1 font-mono text-xs text-muted-foreground">{execution.data.id}</p>
 				<p class="mt-1 text-xs">
-					<a class="rounded text-primary underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2" href={`/app/workflows/${execution.data.workflowId}`}>Open workflow</a>
+					<a class="rounded text-primary underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2" href={`/app/workflows/${execution.data.workflowId}`}>{m.executions_open_workflow()}</a>
 					<span class="text-muted-foreground"> · {version.data?.document.name ?? execution.data.workflowId}</span>
 				</p>
-				{#if stopError}<p role="alert" class="mt-1 text-xs text-destructive">Stop failed: {stopError}</p>{/if}
+				{#if stopError}<p role="alert" class="mt-1 text-xs text-destructive">{m.executions_stop_failed({ message: stopError })}</p>{/if}
 			</div>
 			<dl class="grid grid-cols-3 gap-x-6 gap-y-1 text-[0.8125rem]">
 				<div>
-					<dt class="text-xs text-muted-foreground">Started</dt>
+					<dt class="text-xs text-muted-foreground">{m.executions_started()}</dt>
 					<dd class="mt-0.5">{formatTimestamp(execution.data.startedAt)}</dd>
 				</div>
 				<div>
-					<dt class="text-xs text-muted-foreground">Duration</dt>
+					<dt class="text-xs text-muted-foreground">{m.executions_duration()}</dt>
 					<dd class="mt-0.5 tabular-nums">{formatDuration(duration)}</dd>
 				</div>
 				<div>
-					<dt class="text-xs text-muted-foreground">Trigger</dt>
+					<dt class="text-xs text-muted-foreground">{m.executions_trigger()}</dt>
 					<dd class="mt-0.5">{statusLabel(execution.data.trigger)}</dd>
 				</div>
 			</dl>
@@ -255,29 +261,29 @@
 		{#if status === 'waiting'}
 			{#if execution.data.approvalUrl}
 				<div class="rounded-xl border border-violet-500/30 bg-violet-500/5 p-4">
-					<h2 class="text-sm font-medium">Waiting for approval</h2>
+					<h2 class="text-sm font-medium">{m.executions_waiting_approval()}</h2>
 					<p class="mt-0.5 text-xs leading-5 text-muted-foreground">
-						This run is suspended and holds no worker. Open the approval page to record a decision, or stop it below.
+						{m.executions_waiting_approval_body()}
 					</p>
 					<div class="mt-3 flex flex-wrap gap-2">
-						<Button variant="outline" href={execution.data.approvalUrl}>Open approval page</Button>
+						<Button variant="outline" href={execution.data.approvalUrl}>{m.executions_open_approval_page()}</Button>
 						{#if stoppable}
 							<Button variant="outline" onclick={() => void stop()} disabled={stopping}>
-								{stopping ? 'Stopping…' : 'Stop waiting run'}
+								{stopping ? m.executions_stopping() : m.executions_stop_waiting()}
 							</Button>
 						{/if}
 					</div>
 				</div>
 			{:else}
 				<div class="rounded-xl border border-border bg-muted/40 p-4">
-					<h2 class="text-sm font-medium">Waiting — resumes on its own</h2>
+					<h2 class="text-sm font-medium">{m.executions_waiting_resumes()}</h2>
 					<p class="mt-0.5 text-xs leading-5 text-muted-foreground">
-						This is a timer or webhook wait, not an approval: it resumes when its time comes or its webhook arrives. There is no decision to record.
-						{#if stoppable}Stopping it cancels the wait.{/if}
+						{m.executions_waiting_resumes_body()}
+						{#if stoppable}{m.executions_waiting_cancel_note()}{/if}
 					</p>
 					{#if stoppable}
 						<Button class="mt-3" variant="outline" onclick={() => void stop()} disabled={stopping}>
-							{stopping ? 'Stopping…' : 'Stop waiting run'}
+							{stopping ? m.executions_stopping() : m.executions_stop_waiting()}
 						</Button>
 					{/if}
 				</div>
@@ -286,87 +292,87 @@
 
 		{#if execution.data.error}
 			<div role="alert" class="rounded-xl border border-destructive/25 bg-destructive/5 p-4">
-				<h2 class="text-sm font-medium text-destructive">Execution error</h2>
+				<h2 class="text-sm font-medium text-destructive">{m.executions_error_heading()}</h2>
 				<p class="mt-1 text-xs font-medium break-words text-destructive">{errorTitle(execution.data.error)}</p>
 				{#if errorDetail(execution.data.error)}
 					<p class="mt-1 text-xs leading-5 break-words text-muted-foreground">{errorDetail(execution.data.error)}</p>
 				{/if}
 				<details class="mt-2">
-					<summary class="cursor-pointer text-xs text-muted-foreground underline-offset-4 hover:underline">Full error JSON</summary>
+					<summary class="cursor-pointer text-xs text-muted-foreground underline-offset-4 hover:underline">{m.executions_full_error_json()}</summary>
 					<pre class="mt-1.5 max-h-40 overflow-auto rounded-lg bg-background p-3 font-mono text-[0.6875rem] leading-5 break-all whitespace-pre-wrap text-muted-foreground">{asJSON(execution.data.error)}</pre>
 				</details>
-				<Button class="mt-2" variant="outline" size="sm" onclick={() => copyText(asJSON(execution.data.error), 'error')}>Copy error</Button>
-				{#if copied === 'error'}<span class="ml-2 text-xs text-muted-foreground" role="status">Copied.</span>{/if}
+				<Button class="mt-2" variant="outline" size="sm" onclick={() => copyText(asJSON(execution.data.error), 'error')}>{m.executions_copy_error()}</Button>
+				{#if copied === 'error'}<span class="ml-2 text-xs text-muted-foreground" role="status">{m.executions_copied()}</span>{/if}
 			</div>
 		{/if}
 
 		<div class="grid gap-3 lg:grid-cols-[minmax(0,1fr)_22rem]">
 			<div class="h-[26rem] overflow-hidden rounded-lg border border-border lg:h-[calc(100dvh-13rem)] lg:min-h-[26rem]">
 				{#if version.isPending}
-					<p aria-live="polite" class="grid h-full place-items-center text-sm text-muted-foreground">Loading the graph this execution ran…</p>
+					<p aria-live="polite" class="grid h-full place-items-center text-sm text-muted-foreground">{m.executions_loading_graph()}</p>
 				{:else if version.data && nodeTypes.data}
 					<ExecutionCanvas document={version.data.document} definitions={nodeTypes.data} {runs} statuses={nodeStatuses} bind:selectedNodeID />
 				{:else if version.isError || nodeTypes.isError}
 					<div class="grid h-full place-items-center p-6 text-center">
 						<div class="max-w-sm">
 							<p class="text-sm text-muted-foreground">{message(version.isError ? version.error : nodeTypes.error)}</p>
-							<Button class="mt-4" variant="outline" onclick={() => { void version.refetch(); void nodeTypes.refetch(); }}>Try again</Button>
+							<Button class="mt-4" variant="outline" onclick={() => { void version.refetch(); void nodeTypes.refetch(); }}>{m.common_try_again()}</Button>
 						</div>
 					</div>
 				{:else}
-					<p aria-live="polite" class="grid h-full place-items-center text-sm text-muted-foreground">Loading the graph this execution ran…</p>
+					<p aria-live="polite" class="grid h-full place-items-center text-sm text-muted-foreground">{m.executions_loading_graph()}</p>
 				{/if}
 			</div>
 
-			<aside aria-label="Node data" class="min-h-0 overflow-hidden rounded-lg border border-border">
+			<aside aria-label={m.executions_node_data()} class="min-h-0 overflow-hidden rounded-lg border border-border">
 				{#if !selectedNodeID}
-					<p class="grid h-full place-items-center p-6 text-center text-sm leading-6 text-muted-foreground">Select a node on the canvas to inspect the data it received and produced.</p>
+					<p class="grid h-full place-items-center p-6 text-center text-sm leading-6 text-muted-foreground">{m.executions_select_node_hint()}</p>
 				{:else}
 					<div class="flex h-full flex-col">
 						<div class="border-b border-border px-4 py-3">
-							<p class="text-xs font-medium text-muted-foreground">Node</p>
+							<p class="text-xs font-medium text-muted-foreground">{m.executions_node()}</p>
 							<h2 class="mt-0.5 truncate text-base font-semibold">{selectedNode?.name ?? selectedNodeID}</h2>
 							<p class="mt-2">
 								<span class={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${statusTone(selectedStatus)}`}>{statusLabel(selectedStatus)}</span>
 								{#if selectedRun && selectedRun.attempt > 1}
-									<span class="ml-2 text-xs text-muted-foreground">Attempt {selectedRun.attempt}</span>
+									<span class="ml-2 text-xs text-muted-foreground">{m.executions_attempt({ count: selectedRun.attempt })}</span>
 								{/if}
 							</p>
 						</div>
 						<div class="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
 							{#if !selectedRun}
-								<p class="text-sm leading-6 text-muted-foreground">This node was never reached, so the execution recorded no data for it.</p>
+								<p class="text-sm leading-6 text-muted-foreground">{m.executions_node_unreached()}</p>
 							{:else}
 								{#if selectedRun.error}
 									<div>
-										<h3 class="text-sm font-medium text-destructive">Error</h3>
+										<h3 class="text-sm font-medium text-destructive">{m.executions_error()}</h3>
 										<p class="mt-1 text-xs font-medium break-words text-destructive">{errorTitle(selectedRun.error)}</p>
 										{#if errorDetail(selectedRun.error)}
 											<p class="mt-1 text-xs leading-5 break-words text-muted-foreground">{errorDetail(selectedRun.error)}</p>
 										{/if}
 									<details class="mt-1.5">
-										<summary class="cursor-pointer text-xs text-muted-foreground underline-offset-4 hover:underline">Full error JSON</summary>
+										<summary class="cursor-pointer text-xs text-muted-foreground underline-offset-4 hover:underline">{m.executions_full_error_json()}</summary>
 										<pre class="mt-1.5 overflow-x-auto rounded-lg bg-destructive/5 p-3 font-mono text-[0.6875rem] leading-5 break-all whitespace-pre-wrap text-destructive">{asJSON(selectedRun.error)}</pre>
 									</details>
 								</div>
 							{/if}
 							<div>
-								<h3 class="text-sm font-medium">Input {selectedNodeID ? `(${payloadSize(selectedRun.input).toLocaleString()} chars)` : ''}</h3>
+								<h3 class="text-sm font-medium">{m.executions_input()}{selectedNodeID ? payloadChars(selectedRun.input) : ''}</h3>
 								{#if payloadSize(selectedRun.input) > LARGE_PAYLOAD_CHARS && !payloadExpanded(`input:${selectedNodeID}`)}
 									<div class="mt-1.5 rounded-lg border border-border bg-muted/40 p-3">
-										<p class="text-xs leading-5 text-muted-foreground">This payload is {payloadSize(selectedRun.input).toLocaleString()} characters — too large to render without hanging the tab.</p>
-										<Button class="mt-2" variant="outline" size="sm" onclick={() => expandPayload(`input:${selectedNodeID}`)}>Show anyway</Button>
+										<p class="text-xs leading-5 text-muted-foreground">{m.executions_payload_too_large({ count: payloadSize(selectedRun.input).toLocaleString() })}</p>
+										<Button class="mt-2" variant="outline" size="sm" onclick={() => expandPayload(`input:${selectedNodeID}`)}>{m.executions_show_anyway()}</Button>
 									</div>
 								{:else}
 									<pre class="mt-1.5 max-h-96 overflow-auto rounded-lg bg-muted p-3 font-mono text-[0.6875rem] leading-5 break-all whitespace-pre-wrap">{asJSON(selectedRun.input)}</pre>
 								{/if}
 							</div>
 							<div>
-								<h3 class="text-sm font-medium">Output {selectedNodeID ? `(${payloadSize(selectedRun.output).toLocaleString()} chars)` : ''}</h3>
+								<h3 class="text-sm font-medium">{m.executions_output()}{selectedNodeID ? payloadChars(selectedRun.output) : ''}</h3>
 								{#if payloadSize(selectedRun.output) > LARGE_PAYLOAD_CHARS && !payloadExpanded(`output:${selectedNodeID}`)}
 									<div class="mt-1.5 rounded-lg border border-border bg-muted/40 p-3">
-										<p class="text-xs leading-5 text-muted-foreground">This payload is {payloadSize(selectedRun.output).toLocaleString()} characters — too large to render without hanging the tab.</p>
-										<Button class="mt-2" variant="outline" size="sm" onclick={() => expandPayload(`output:${selectedNodeID}`)}>Show anyway</Button>
+										<p class="text-xs leading-5 text-muted-foreground">{m.executions_payload_too_large({ count: payloadSize(selectedRun.output).toLocaleString() })}</p>
+										<Button class="mt-2" variant="outline" size="sm" onclick={() => expandPayload(`output:${selectedNodeID}`)}>{m.executions_show_anyway()}</Button>
 									</div>
 								{:else}
 									<pre class="mt-1.5 max-h-96 overflow-auto rounded-lg bg-muted p-3 font-mono text-[0.6875rem] leading-5 break-all whitespace-pre-wrap">{asJSON(selectedRun.output)}</pre>
@@ -374,7 +380,7 @@
 							</div>
 								{#if attachments.length > 0}
 									<div>
-										<h3 class="text-sm font-medium">Attachments</h3>
+										<h3 class="text-sm font-medium">{m.executions_attachments()}</h3>
 										<ul class="mt-1.5 space-y-1.5">
 											{#each attachments as attachment (`${attachment.port}:${attachment.item}:${attachment.property}`)}
 												<li class="flex items-start gap-2 rounded-lg border border-border px-3 py-2">
@@ -382,13 +388,13 @@
 													<div class="min-w-0">
 														<p class="truncate text-xs font-medium">{attachment.reference.fileName || attachment.property}</p>
 														<p class="mt-0.5 text-xs text-muted-foreground">
-															{attachment.reference.mediaType || 'unknown type'} · {formatBytes(attachment.reference.size)} · item {attachment.item + 1}
+															{attachment.reference.mediaType || m.executions_unknown_media_type()} · {formatBytes(attachment.reference.size)} · {m.executions_attachment_item({ index: attachment.item + 1 })}
 														</p>
 													</div>
 												</li>
 											{/each}
 										</ul>
-										<p class="mt-1.5 text-xs text-muted-foreground">Contents are held by the server and are not shown here.</p>
+										<p class="mt-1.5 text-xs text-muted-foreground">{m.executions_contents_server_held()}</p>
 									</div>
 								{/if}
 								<p class="text-xs text-muted-foreground">

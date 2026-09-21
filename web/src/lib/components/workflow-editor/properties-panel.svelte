@@ -10,6 +10,7 @@
 	import type { PropertyScope } from '$lib/workflow-editor/document';
 	import { credentialTypesFor, requiresCredential } from '$lib/workflow-editor/credentials';
 	import { Button } from '$lib/components/ui/button';
+	import * as m from '$lib/paraglide/messages.js';
 
 	import NodeIcon from './node-icon.svelte';
 	import PropertyField from './property-field.svelte';
@@ -76,10 +77,10 @@
 		credentialTestResult = null;
 		try {
 			const response = await testCredential(credentialID);
-			if (response.status !== 200) throw new Error('Unexpected credential-test response');
+			if (response.status !== 200) throw new Error(m.credentials_error_test());
 			credentialTestResult = { id: credentialID, ok: response.data.ok, detail: response.data.detail ?? '' };
 		} catch (error) {
-			credentialTestResult = { id: credentialID, ok: false, detail: error instanceof Error ? error.message : 'The test could not run.' };
+			credentialTestResult = { id: credentialID, ok: false, detail: error instanceof Error ? error.message : m.properties_error_test_not_run() };
 		} finally {
 			testingCredentialID = null;
 		}
@@ -115,7 +116,7 @@
 			parameters: node.parameters ?? {},
 			credentialId: Object.values(node.credentials ?? {})[0]
 		});
-		if (response.status !== 200) return { options: [], reason: 'These options could not be loaded.' };
+		if (response.status !== 200) return { options: [], reason: m.properties_error_options_unavailable() };
 		return { options: response.data.options ?? [], reason: response.data.reason ?? '' };
 	}
 
@@ -128,7 +129,7 @@
 			parameters: node.parameters ?? {},
 			credentialId: Object.values(node.credentials ?? {})[0]
 		});
-		if (response.status !== 200) return { fields: [], reason: 'These columns could not be loaded.' };
+		if (response.status !== 200) return { fields: [], reason: m.properties_error_columns_unavailable() };
 		return { fields: response.data.fields ?? [], reason: response.data.reason ?? '' };
 	}
 
@@ -143,15 +144,15 @@
 	);
 </script>
 
-<section aria-label={`${node.name} properties`} class="flex h-full min-h-0 flex-col bg-card">
+<section aria-label={m.properties_panel_aria({ name: node.name })} class="flex h-full min-h-0 flex-col bg-card">
 	<div class="flex shrink-0 items-center gap-2 border-b border-border px-2.5 py-2">
-		<NodeIcon {definition} size="md" label={`${definition.category} node`} />
+		<NodeIcon {definition} size="md" label={m.properties_node_icon_label({ category: definition.category })} />
 		<div class="min-w-0 flex-1">
 			{#if onRename && !readOnly}
 				<!-- The title is where n8n renames from, and the name is what
 				     expressions address: an imported node whose name cannot be
 				     changed is a node nothing can safely reference. -->
-				<label class="sr-only" for={`node-name-${node.id}`}>Node name</label>
+				<label class="sr-only" for={`node-name-${node.id}`}>{m.properties_node_name()}</label>
 				<input
 					id={`node-name-${node.id}`}
 					class="w-full truncate rounded border border-transparent bg-transparent text-[0.8125rem] font-semibold leading-tight hover:border-border focus-visible:border-primary focus-visible:outline-none"
@@ -171,15 +172,15 @@
 			<p class="truncate font-mono text-[0.625rem] leading-tight text-muted-foreground">{definition.type}</p>
 		</div>
 		{#if definition.documentationUrl}
-			<a href={definition.documentationUrl} target="_blank" rel="noreferrer" class="shrink-0 rounded-md border border-border px-1.5 py-0.5 text-[0.625rem] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring">Docs</a>
+			<a href={definition.documentationUrl} target="_blank" rel="noreferrer" class="shrink-0 rounded-md border border-border px-1.5 py-0.5 text-[0.625rem] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring">{m.properties_docs()}</a>
 		{/if}
 	</div>
 
-	<div class="flex shrink-0 gap-3 border-b border-border px-2.5" role="tablist" tabindex="-1" aria-label="Node configuration" onkeydown={(event) => {
+	<div class="flex shrink-0 gap-3 border-b border-border px-2.5" role="tablist" tabindex="-1" aria-label={m.properties_node_configuration()} onkeydown={(event) => {
 		if (event.key === 'ArrowRight' || event.key === 'ArrowLeft' || event.key === 'ArrowUp' || event.key === 'ArrowDown') moveTab(event, tab);
 	}}>
-		<button bind:this={tabButtons.parameters} type="button" role="tab" id="node-tab-parameters" aria-controls="node-tabpanel" aria-selected={activeTab === 'parameters'} tabindex={activeTab === 'parameters' ? 0 : -1} class="-mb-px border-b-2 border-transparent py-1.5 text-xs text-muted-foreground transition-colors aria-selected:border-primary aria-selected:font-medium aria-selected:text-foreground" onclick={() => (tab = 'parameters')}>Parameters</button>
-		<button bind:this={tabButtons.settings} type="button" role="tab" id="node-tab-settings" aria-controls="node-tabpanel" aria-selected={activeTab === 'settings'} tabindex={activeTab === 'settings' ? 0 : -1} class="-mb-px border-b-2 border-transparent py-1.5 text-xs text-muted-foreground transition-colors aria-selected:border-primary aria-selected:font-medium aria-selected:text-foreground" onclick={() => (tab = 'settings')}>Settings</button>
+		<button bind:this={tabButtons.parameters} type="button" role="tab" id="node-tab-parameters" aria-controls="node-tabpanel" aria-selected={activeTab === 'parameters'} tabindex={activeTab === 'parameters' ? 0 : -1} class="-mb-px border-b-2 border-transparent py-1.5 text-xs text-muted-foreground transition-colors aria-selected:border-primary aria-selected:font-medium aria-selected:text-foreground" onclick={() => (tab = 'parameters')}>{m.properties_tab_parameters()}</button>
+		<button bind:this={tabButtons.settings} type="button" role="tab" id="node-tab-settings" aria-controls="node-tabpanel" aria-selected={activeTab === 'settings'} tabindex={activeTab === 'settings' ? 0 : -1} class="-mb-px border-b-2 border-transparent py-1.5 text-xs text-muted-foreground transition-colors aria-selected:border-primary aria-selected:font-medium aria-selected:text-foreground" onclick={() => (tab = 'settings')}>{m.nav_settings()}</button>
 	</div>
 
 	<!-- `inert` rather than a pointer-events class: a keyboard user could tab
@@ -189,22 +190,22 @@
 		{#if activeTab === 'parameters' && definition.webhook}
 			{@const pathParam = definition.webhook.pathParameter ? String((node.parameters as Record<string, unknown> | undefined)?.[definition.webhook.pathParameter] ?? '') : definition.webhook.staticPath ?? ''}
 			<div class="grid gap-1.5 rounded-lg border border-border bg-background/40 p-2">
-				<p class="text-[0.6875rem] font-medium uppercase tracking-wider text-muted-foreground">Webhook URL</p>
+				<p class="text-[0.6875rem] font-medium uppercase tracking-wider text-muted-foreground">{m.properties_webhook_url()}</p>
 				{#if pathParam}
 					<code class="truncate rounded border border-border bg-muted/40 px-1.5 py-1 font-mono text-[0.6875rem] select-all" title={`/webhook/${pathParam}`}>{`/webhook/${pathParam}`}</code>
-					<p class="text-[0.625rem] leading-4 text-muted-foreground">The full address is shown after import and on activation. Prefix it with your host when pointing the sender at it.</p>
+					<p class="text-[0.625rem] leading-4 text-muted-foreground">{m.properties_webhook_full_address()}</p>
 				{:else}
-					<p class="text-[0.625rem] leading-4 text-muted-foreground">Set the path below — the public URL is minted from it on activation.</p>
+					<p class="text-[0.625rem] leading-4 text-muted-foreground">{m.properties_webhook_set_path()}</p>
 				{/if}
 			</div>
 		{/if}
 		{#if activeTab === 'parameters' && applicableCredentialTypes.length > 0 && onCredentialChange}
 			<div class="grid gap-1.5 rounded-lg border border-border bg-background/40 p-2">
 				<p class="text-[0.6875rem] font-medium uppercase tracking-wider text-muted-foreground">
-					Credential{#if credentialRequired}<span class="text-destructive" aria-hidden="true">*</span><span class="sr-only"> (required)</span>{/if}
+					{m.properties_credential()}{#if credentialRequired}<span class="text-destructive" aria-hidden="true">*</span><span class="sr-only">{m.properties_credential_required()}</span>{/if}
 				</p>
 				{#if credentialRequired && !Object.keys(node.credentials ?? {}).length}
-					<p class="text-[0.6875rem] leading-4 text-destructive">This node needs a credential before it can run.</p>
+					<p class="text-[0.6875rem] leading-4 text-destructive">{m.properties_credential_needed()}</p>
 				{/if}
 				{#each applicableCredentialTypes as typeID (typeID)}
 					{@const matching = credentials.filter((candidate) => candidate.type === typeID)}
@@ -216,28 +217,28 @@
 							class="h-7 min-w-0 flex-1 rounded-md border border-input bg-background px-1.5 text-xs"
 							onchange={(event) => onCredentialChange?.(typeID, event.currentTarget.value)}
 						>
-							<option value="">None</option>
+							<option value="">{m.properties_credential_none()}</option>
 							{#each matching as candidate (candidate.id)}
 								<option value={candidate.id}>{candidate.name}</option>
 							{/each}
 						</select>
 						{#if selectedCredential(typeID)}
 							<Button variant="outline" size="sm" class="h-7 shrink-0 px-2 text-[0.6875rem]" disabled={testingCredentialID !== null} onclick={() => void testSelectedCredential(typeID)}>
-								{testingCredentialID ? 'Testing…' : 'Test'}
+								{testingCredentialID ? m.credentials_testing() : m.credentials_test()}
 							</Button>
 						{/if}
 					</div>
 					{#if matching.length === 0}
-						<p class="text-[0.625rem] leading-4 text-muted-foreground">No {credentialTypeName(typeID)} credential yet — <button type="button" class="underline underline-offset-2" onclick={() => void goto('/credentials')}>add one under Credentials</button>.</p>
+						<p class="text-[0.625rem] leading-4 text-muted-foreground">{m.properties_no_credential_yet({ type: credentialTypeName(typeID) })}<button type="button" class="underline underline-offset-2" onclick={() => void goto('/credentials')}>{m.properties_add_one_under_credentials()}</button>.</p>
 					{:else if credentialTestResult && credentialTestResult.id === selectedCredential(typeID)}
-						<p role="status" class={`text-[0.625rem] leading-4 ${credentialTestResult.ok ? 'text-success' : 'text-destructive'}`}>{credentialTestResult.ok ? `Connected${credentialTestResult.detail ? ` — ${credentialTestResult.detail}` : ''}` : `Test failed — ${credentialTestResult.detail}`}</p>
+						<p role="status" class={`text-[0.625rem] leading-4 ${credentialTestResult.ok ? 'text-success' : 'text-destructive'}`}>{credentialTestResult.ok ? (credentialTestResult.detail ? m.credentials_test_connected_detail({ detail: credentialTestResult.detail }) : m.credentials_test_connected()) : m.credentials_test_failed({ detail: credentialTestResult.detail })}</p>
 					{/if}
 				{/each}
-				<p class="text-[0.625rem] leading-4 text-muted-foreground">The workflow records only the reference. Secrets stay in credential storage.</p>
+				<p class="text-[0.625rem] leading-4 text-muted-foreground">{m.properties_credential_reference_note()}</p>
 			</div>
 		{/if}
 		{#if visibleProperties.length === 0}
-			<p class="text-xs leading-5 text-muted-foreground">This node has no {activeTab === 'parameters' ? 'parameters' : 'shared settings'} to configure.</p>
+			<p class="text-xs leading-5 text-muted-foreground">{activeTab === 'parameters' ? m.properties_no_parameters_to_configure() : m.properties_no_settings_to_configure()}</p>
 		{:else}
 			{#each visibleProperties as property (property.key)}
 				<PropertyField {property} value={values[property.key] ?? property.default} siblings={values} contextKey={loaderContext} onChange={(value) => onChange(activeTab, property.key, value)} loadOptions={activeTab === 'parameters' ? loadOptions : undefined} loadSchema={activeTab === 'parameters' ? loadSchema : undefined} />
@@ -245,7 +246,7 @@
 		{/if}
 	</div>
 	<footer class="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-0.5 border-t border-border px-2.5 py-1.5 text-[0.625rem] leading-4 text-muted-foreground">
-		<span class="truncate">{definition.displayName} version {definition.version}</span>
+		<span class="truncate">{m.properties_footer_version({ name: definition.displayName, version: definition.version })}</span>
 		{#if definition.description}<span class="min-w-0 flex-1 truncate" title={definition.description}>{definition.description}</span>{/if}
 	</footer>
 </section>

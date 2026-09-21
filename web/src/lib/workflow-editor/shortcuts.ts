@@ -10,6 +10,8 @@
  * knows from a map.
  */
 
+import * as m from '$lib/paraglide/messages.js';
+
 export type CanvasShortcut =
 	| 'undo'
 	| 'redo'
@@ -36,24 +38,41 @@ export type ShortcutEvent = {
 	altKey?: boolean;
 };
 
-/** What the help overlay lists, in the order it is read. */
-export const SHORTCUT_REFERENCE: { keys: string; action: CanvasShortcut; label: string }[] = [
-	{ keys: '⌘Z', action: 'undo', label: 'Undo' },
-	{ keys: '⌘⇧Z', action: 'redo', label: 'Redo' },
-	{ keys: '⌘C', action: 'copy', label: 'Copy selection' },
-	{ keys: '⌘V', action: 'paste', label: 'Paste' },
-	{ keys: '⌘D', action: 'duplicate', label: 'Duplicate selection' },
-	{ keys: 'F2', action: 'rename', label: 'Rename selected node' },
-	{ keys: 'Enter', action: 'open-selection', label: 'Open selected node' },
-	{ keys: '⌘A', action: 'select-all', label: 'Select all nodes' },
-	{ keys: '⌘S', action: 'save', label: 'Save workflow' },
-	{ keys: 'Tab / N', action: 'add-step', label: 'Add a step' },
-	{ keys: '⌘⇧T', action: 'tidy', label: 'Tidy up' },
-	{ keys: '1', action: 'fit-view', label: 'Zoom to fit' },
-	{ keys: '0', action: 'reset-zoom', label: 'Reset zoom' },
-	{ keys: '+ / -', action: 'zoom-in', label: 'Zoom in / out' },
-	{ keys: '?', action: 'help', label: 'Keyboard shortcuts' }
+/**
+ * What the help overlay lists, in the order it is read.
+ *
+ * `label` is a call rather than the sentence itself so the overlay follows a
+ * locale change at runtime — the table is built once at module load, and text
+ * captured at that moment would stay in whatever locale was active then. The
+ * keys stay literals: a key label reads the same in every locale.
+ */
+export const SHORTCUT_REFERENCE: { keys: string; action: CanvasShortcut; label: () => string }[] = [
+	{ keys: '⌘Z', action: 'undo', label: m.editor_shortcut_undo },
+	{ keys: '⌘⇧Z', action: 'redo', label: m.editor_shortcut_redo },
+	{ keys: '⌘C', action: 'copy', label: m.editor_shortcut_copy },
+	{ keys: '⌘V', action: 'paste', label: m.editor_shortcut_paste },
+	{ keys: '⌘D', action: 'duplicate', label: m.editor_shortcut_duplicate },
+	{ keys: 'F2', action: 'rename', label: m.editor_shortcut_rename },
+	{ keys: 'Enter', action: 'open-selection', label: m.editor_shortcut_open },
+	{ keys: '⌘A', action: 'select-all', label: m.editor_shortcut_select_all },
+	{ keys: '⌘S', action: 'save', label: m.editor_shortcut_save },
+	{ keys: 'Tab / N', action: 'add-step', label: m.editor_shortcut_add_step },
+	{ keys: '⌘⇧T', action: 'tidy', label: m.editor_shortcut_tidy },
+	{ keys: '1', action: 'fit-view', label: m.editor_shortcut_fit_view },
+	{ keys: '0', action: 'reset-zoom', label: m.editor_shortcut_reset_zoom },
+	{ keys: '+ / -', action: 'zoom-in', label: m.editor_shortcut_zoom },
+	{ keys: '?', action: 'help', label: m.editor_shortcut_help }
 ];
+
+/**
+ * The keys the canvas deletes a selection with, in the shape Svelte Flow's
+ * `deleteKey` prop takes.
+ *
+ * Deletion itself is Svelte Flow's, but which physical keys mean it on this
+ * canvas belongs with the rest of the keymap — which is here, beside the
+ * reference the help overlay reads.
+ */
+export const CANVAS_DELETE_KEYS: string[] = ['Backspace', 'Delete'];
 
 /**
  * The action a key event asks for, or null for a key the canvas ignores.

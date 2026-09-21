@@ -4,7 +4,7 @@ import { apiFetch, setEmbedToken } from '$lib/api/http';
 import { SCOPE_PUBLISH, acceptEmbedSession, sanitizeBranding, scopeAllows, type EmbedSession } from './session.svelte';
 
 function session(scopes: string[]): EmbedSession {
-	return { token: 't', workflowId: 'wf-1', scopes, branding: {}, origin: 'https://host.example' };
+	return { token: 't', workflowId: 'wf-1', scopes, branding: {}, locale: 'en', origin: 'https://host.example' };
 }
 
 describe('scopeAllows', () => {
@@ -135,6 +135,24 @@ describe('accepting the host session', () => {
 		const accepted = acceptEmbedSession({ type: 'kilasflow:embed-session', token: 'tok', scopes: ['workflow:run'] }, 'wf-9', 'https://host.example');
 
 		expect('session' in accepted && accepted.session.workflowId).toBe('wf-9');
+	});
+
+	it('keeps the locale the host declared', () => {
+		const accepted = acceptEmbedSession({ ...message, locale: 'id' }, 'wf-1', 'https://host.example');
+
+		expect('session' in accepted && accepted.session.locale).toBe('id');
+	});
+
+	it('falls back to the base locale for a locale its catalogs do not carry', () => {
+		// The host's locale is a preference, not an authorization: a tag this
+		// build does not ship, or one of the wrong type, must leave the frame
+		// in the base locale rather than refuse the handshake and show the
+		// host's user an error instead of the editor.
+		for (const declared of [undefined, 'fr', 42, null, {}]) {
+			const accepted = acceptEmbedSession({ ...message, locale: declared }, 'wf-1', 'https://host.example');
+
+			expect('session' in accepted && accepted.session.locale).toBe('en');
+		}
 	});
 
 	it('attaches nothing when the message is refused', () => {

@@ -9,6 +9,9 @@
  */
 
 import { setEmbedToken } from '$lib/api/http';
+import * as m from '$lib/paraglide/messages.js';
+import { baseLocale, isLocale, type Locale } from '$lib/paraglide/runtime.js';
+import { setLocale } from '$lib/i18n/locale.svelte';
 
 export type EmbedBranding = {
 	name?: string;
@@ -23,6 +26,13 @@ export type EmbedSession = {
 	workflowId: string;
 	scopes: string[];
 	branding: EmbedBranding;
+	/**
+	 * The language the host asked its editor to speak, already checked against
+	 * the catalogs this build carries. It is a preference rather than an
+	 * authorization, so an absent or unsupported tag resolves to the base
+	 * locale instead of failing the handshake.
+	 */
+	locale: Locale;
 	origin: string;
 };
 
@@ -86,6 +96,16 @@ export function scopeAllows(session: EmbedSession | null, scope: string): boolea
 }
 
 /**
+ * Why a session message was refused.
+ *
+ * `notSessionMessage` marks a message that was not ours at all — a host page
+ * may post anything — so the handshake keeps waiting for the real one instead
+ * of failing. The rest are genuine refusals of our own message, and `error` is
+ * what the frame shows for them.
+ */
+export type EmbedSessionRefusal = { error: string; notSessionMessage?: true };
+
+/**
  * Accepts the host's session message, or says why it cannot.
  *
  * The token is attached *before* the session is handed back, and that order is
@@ -95,23 +115,31 @@ export function scopeAllows(session: EmbedSession | null, scope: string): boolea
  * `setEmbedToken` looked equivalent and was not — it ran after its children's,
  * so the workflow, node-catalogue and credential requests all went out without
  * the header and the frame answered 401 to every one of them.
+ *
+ * The locale is resolved here rather than trusted: `isLocale` is the generated
+ * runtime's own check against the catalog list, so the frame has one locale
+ * list and no second regex. A host that sends a tag this build does not carry,
+ * or sends something that is not a string at all, gets the base locale — its
+ * language is a preference, not something worth refusing an editor over.
  */
 export function acceptEmbedSession(
 	data: Record<string, unknown> | null,
 	expectedWorkflow: string,
 	origin: string,
 	attachToken: (token: string | null) => void = setEmbedToken
-): { session: EmbedSession } | { error: string } {
-	if (!data || data.type !== MESSAGE_TYPE) return { error: 'Not an embed session message.' };
+): { session: EmbedSession } | EmbedSessionRefusal {
+	if (!data || data.type !== MESSAGE_TYPE) return { error: m.embed_not_session_message(), notSessionMessage: true };
 
 	const token = typeof data.token === 'string' ? data.token : '';
 	const scopes = Array.isArray(data.scopes) ? data.scopes.filter((scope): scope is string => typeof scope === 'string') : [];
-	if (!token || scopes.length === 0) return { error: 'The host sent an incomplete embed session.' };
+	if (!token || scopes.length === 0) return { error: m.embed_session_incomplete() };
 	// The frame is loaded at /embed/:workflowID, so a token for another workflow
 	// is a host mistake worth naming rather than silently letting the server
 	// reject every call.
 	const tokenWorkflow = typeof data.workflowId === 'string' ? data.workflowId : expectedWorkflow;
-	if (tokenWorkflow !== expectedWorkflow) return { error: 'The embed session is for a different workflow.' };
+	if (tokenWorkflow !== expectedWorkflow) return { error: m.embed_session_other_workflow() };
+
+	const locale = isLocale(typeof data.locale === 'string' ? data.locale : '') ? (data.locale as Locale) : baseLocale;
 
 	attachToken(token);
 	return {
@@ -120,6 +148,7 @@ export function acceptEmbedSession(
 			workflowId: expectedWorkflow,
 			scopes,
 			branding: sanitizeBranding(data.branding),
+			locale,
 			origin
 		}
 	};
@@ -141,12 +170,12 @@ export function embedSession(workflowID: () => string) {
 		const expectedOrigin = parentOrigin();
 
 		if (!isFramed()) {
-			error = 'This editor is only available inside a host application.';
+			error = m.embed_host_only();
 			waiting = false;
 			return;
 		}
 		if (!expectedOrigin) {
-			error = 'The embedding page could not be identified.';
+			error = m.embed_page_unidentified();
 			waiting = false;
 			return;
 		}
@@ -161,12 +190,17 @@ export function embedSession(workflowID: () => string) {
 			if ('error' in accepted) {
 				// A message that is not ours leaves the handshake still waiting
 				// for the real one.
-				if (accepted.error === 'Not an embed session message.') return;
+				if (accepted.notSessionMessage) return;
 				error = accepted.error;
 				waiting = false;
 				return;
 			}
 
+			// Before the session is published, for the same reason the token is
+			// attached inside `acceptEmbedSession`: the editor mounts on the
+			// render this session appears in, so a locale applied afterwards
+			// would paint one language and then swap it.
+			setLocale(accepted.session.locale);
 			session = accepted.session;
 			error = null;
 			waiting = false;
@@ -179,7 +213,7 @@ export function embedSession(workflowID: () => string) {
 
 		const timeout = setTimeout(() => {
 			if (!session) {
-				error = 'The host did not provide an embed session.';
+				error = m.embed_no_session_from_host();
 				waiting = false;
 			}
 		}, 10_000);

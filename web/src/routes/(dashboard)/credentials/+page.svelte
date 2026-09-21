@@ -19,6 +19,7 @@
 	import { Input } from '$lib/components/ui/input';
 	import { DRAIN_PAGE_LIMIT, drainPages, headerCursor, readPage, type CursorPage } from '$lib/dashboard/cursor-page';
 	import { RequestGuard } from '$lib/dashboard/request-guard';
+	import * as m from '$lib/paraglide/messages.js';
 
 	// The listing is paged by the server, so one request is only its first
 	// page: the rows are read to the end before they are shown, or a credential
@@ -31,7 +32,7 @@
 	/** One page of the credential listing: rows from the body, cursor from the header. */
 	async function fetchCredentialPage(cursor: string): Promise<CursorPage<CredentialResource>> {
 		const response = await listCredentials({ limit: DRAIN_PAGE_LIMIT, cursor: cursor || undefined });
-		if (response.status !== 200) throw new Error('Unexpected credential-list response');
+		if (response.status !== 200) throw new Error(m.credentials_error_list());
 		return readPage({ items: response.data, nextCursor: headerCursor(response.headers) });
 	}
 
@@ -56,7 +57,7 @@
 	const types = createListCredentialTypes<CredentialTypeResource[]>(() => ({
 		query: {
 			select: (response) => {
-				if (response.status !== 200) throw new Error('Unexpected credential-type response');
+				if (response.status !== 200) throw new Error(m.credentials_error_types());
 				return response.data ?? [];
 			}
 		}
@@ -154,7 +155,7 @@
 
 	async function save() {
 		if (!name.trim()) {
-			formError = 'Give this credential a name.';
+			formError = m.credentials_error_name_required();
 			return;
 		}
 		saving = true;
@@ -167,7 +168,7 @@
 		};
 		try {
 			const response = editing ? await updateCredential(editing.id, body) : await createCredential(body);
-			if (response.status !== 200 && response.status !== 201) throw new Error('Unexpected credential-save response');
+			if (response.status !== 200 && response.status !== 201) throw new Error(m.credentials_error_save());
 			await loadCredentials();
 			editorOpen = false;
 		} catch (error) {
@@ -205,7 +206,7 @@
 		try {
 			const payload = { fields: saveFields(), ...(editing ? { credentialId: editing.id } : {}) };
 			const response = await testCredentialPayload(typeID, payload);
-			if (response.status !== 200) throw new Error('Unexpected credential-test response');
+			if (response.status !== 200) throw new Error(m.credentials_error_test());
 			testResult = { ok: response.data.ok, detail: response.data.detail ?? '' };
 		} catch (error) {
 			testResult = { ok: false, detail: message(error) };
@@ -216,29 +217,29 @@
 </script>
 
 <svelte:head>
-	<title>Credentials · KilasFlow</title>
+	<title>{m.credentials_page_title()}</title>
 </svelte:head>
 
 <section class="mx-auto w-full max-w-4xl">
 	<div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 		<div class="max-w-xl">
-			<h1 class="text-base font-semibold tracking-tight">Credentials</h1>
+			<h1 class="text-base font-semibold tracking-tight">{m.nav_credentials()}</h1>
 			<p class="text-xs text-muted-foreground">
-				Secrets are encrypted before storage and never returned once saved. Scope a credential to the hosts it may be sent to.
+				{m.credentials_description()}
 			</p>
 		</div>
 		<Button onclick={openCreate} disabled={types.isPending} class="w-full sm:w-auto">
 			<KeyRound aria-hidden="true" />
-			New credential
+			{m.credentials_new()}
 		</Button>
 	</div>
 
 	{#if deleteError && !deleteOpen}
-		<p role="alert" class="mt-4 rounded-lg border border-destructive/25 bg-destructive/5 px-3 py-1.5 text-xs text-destructive">Delete failed: {deleteError}</p>
+		<p role="alert" class="mt-4 rounded-lg border border-destructive/25 bg-destructive/5 px-3 py-1.5 text-xs text-destructive">{m.credentials_delete_failed({ message: deleteError })}</p>
 	{/if}
 	<div class="mt-4">
 		<ListStates
-			label="Credentials"
+			label={m.nav_credentials()}
 			loading={loading}
 			failed={listFailure !== null}
 			error={listFailure}
@@ -246,22 +247,22 @@
 			rows={2}
 			onRetry={() => void loadCredentials()}
 			emptyIcon={KeyRound}
-			emptyTitle="No credentials yet"
-			emptyBody="Add one to authenticate HTTP Request nodes without putting a secret in a workflow."
+			emptyTitle={m.credentials_empty_title()}
+			emptyBody={m.credentials_empty_body()}
 		>
-			<ul aria-label="Credentials" class="divide-y divide-border overflow-hidden rounded-lg border border-border">
+			<ul aria-label={m.nav_credentials()} class="divide-y divide-border overflow-hidden rounded-lg border border-border">
 				{#each rows as credential (credential.id)}
 					{@const typeName = (types.data ?? []).find((candidate) => candidate.id === credential.type)?.displayName ?? credential.type}
 					<li class="flex min-h-11 items-center gap-3 px-3 py-1.5">
 						<div class="min-w-0 flex-1">
 							<p class="truncate text-sm font-medium">{credential.name}</p>
-							<p class="truncate text-xs text-muted-foreground" title={`${typeName} · ${(credential.allowedDomains ?? []).length > 0 ? (credential.allowedDomains ?? []).join(', ') : 'Any host'}`}>
+							<p class="truncate text-xs text-muted-foreground" title={`${typeName} · ${(credential.allowedDomains ?? []).length > 0 ? (credential.allowedDomains ?? []).join(', ') : m.credentials_any_host()}`}>
 								{typeName}
-								· {(credential.allowedDomains ?? []).length > 0 ? (credential.allowedDomains ?? []).join(', ') : 'Any host'}
+								· {(credential.allowedDomains ?? []).length > 0 ? (credential.allowedDomains ?? []).join(', ') : m.credentials_any_host()}
 							</p>
 						</div>
-						<Button variant="outline" size="sm" onclick={() => openEdit(credential)}>Edit</Button>
-						<Button variant="ghost" size="sm" aria-label={`Delete ${credential.name}`} onclick={() => askDelete(credential)}>
+						<Button variant="outline" size="sm" onclick={() => openEdit(credential)}>{m.credentials_edit()}</Button>
+						<Button variant="ghost" size="sm" aria-label={m.credentials_delete_aria({ name: credential.name })} onclick={() => askDelete(credential)}>
 							<Trash2 aria-hidden="true" class="size-4 text-destructive" />
 						</Button>
 					</li>
@@ -273,18 +274,18 @@
 	<Dialog.Root bind:open={editorOpen}>
 		<Dialog.Content aria-describedby="credential-form-description">
 			<Dialog.Header>
-				<Dialog.Title>{editing ? 'Edit credential' : 'New credential'}</Dialog.Title>
+				<Dialog.Title>{editing ? m.credentials_edit_title() : m.credentials_new()}</Dialog.Title>
 				<Dialog.Description id="credential-form-description">
-					{editing ? 'Leave a secret field untouched to keep its stored value.' : 'Values are encrypted before they are stored.'}
+					{editing ? m.credentials_form_description_edit() : m.credentials_form_description_new()}
 				</Dialog.Description>
 			</Dialog.Header>
 			<form class="grid gap-4" onsubmit={(event) => { event.preventDefault(); void save(); }}>
 				<div class="grid gap-2">
-					<label for="credential-name" class="text-sm font-medium">Name</label>
-					<Input id="credential-name" bind:value={name} placeholder="e.g. Partner API" />
+					<label for="credential-name" class="text-sm font-medium">{m.credentials_name()}</label>
+					<Input id="credential-name" bind:value={name} placeholder={m.credentials_name_placeholder()} />
 				</div>
 				<div class="grid gap-2">
-					<label for="credential-type" class="text-sm font-medium">Type</label>
+					<label for="credential-type" class="text-sm font-medium">{m.credentials_type()}</label>
 					<select id="credential-type" value={typeID} disabled={Boolean(editing)} onchange={(event) => onTypeChange(event.currentTarget.value)} class="h-7 rounded-md border border-input bg-background px-2 text-xs disabled:opacity-60">
 						{#each types.data ?? [] as candidate (candidate.id)}
 							<option value={candidate.id}>{candidate.displayName}</option>
@@ -301,7 +302,7 @@
 							id={`credential-field-${field.key}`}
 							type={field.secret ? 'password' : 'text'}
 							value={fields[field.key] ?? ''}
-							placeholder={isSecretStored(field) ? 'Stored — type to replace' : field.default ? `Default: ${field.default}` : undefined}
+							placeholder={isSecretStored(field) ? m.credentials_stored_placeholder() : field.default ? m.credentials_default_placeholder({ value: field.default }) : undefined}
 							autocomplete="off"
 							oninput={(event) => {
 								fields = { ...fields, [field.key]: event.currentTarget.value };
@@ -313,18 +314,18 @@
 					</div>
 				{/each}
 				<div class="grid gap-2">
-					<label for="credential-domains" class="text-sm font-medium">Allowed hosts</label>
-					<Input id="credential-domains" bind:value={domains} placeholder="api.partner.test, *.eu.partner.test" />
-					<p class="text-xs leading-5 text-muted-foreground">Comma separated. Leave empty to allow any host.</p>
+					<label for="credential-domains" class="text-sm font-medium">{m.credentials_allowed_hosts()}</label>
+					<Input id="credential-domains" bind:value={domains} placeholder={m.credentials_allowed_hosts_placeholder()} />
+					<p class="text-xs leading-5 text-muted-foreground">{m.credentials_allowed_hosts_hint()}</p>
 				</div>
 				{#if testResult}
-					<p role="status" class={`text-sm ${testResult.ok ? 'text-success' : 'text-destructive'}`}>{testResult.ok ? `Connected${testResult.detail ? ` — ${testResult.detail}` : ''}` : `Test failed — ${testResult.detail}`}</p>
+					<p role="status" class={`text-sm ${testResult.ok ? 'text-success' : 'text-destructive'}`}>{testResult.ok ? (testResult.detail ? m.credentials_test_connected_detail({ detail: testResult.detail }) : m.credentials_test_connected()) : m.credentials_test_failed({ detail: testResult.detail })}</p>
 				{/if}
 				{#if formError}<p role="alert" class="text-sm text-destructive">{formError}</p>{/if}
 				<Dialog.Footer>
-					<Button type="button" variant="outline" onclick={() => void testCurrent()} disabled={saving || testing}>{testing ? 'Testing…' : 'Test'}</Button>
-					<Button type="button" variant="outline" onclick={() => (editorOpen = false)} disabled={saving}>Cancel</Button>
-					<Button type="submit" disabled={saving}>{saving ? 'Saving…' : 'Save credential'}</Button>
+					<Button type="button" variant="outline" onclick={() => void testCurrent()} disabled={saving || testing}>{testing ? m.credentials_testing() : m.credentials_test()}</Button>
+					<Button type="button" variant="outline" onclick={() => (editorOpen = false)} disabled={saving}>{m.credentials_cancel()}</Button>
+					<Button type="submit" disabled={saving}>{saving ? m.credentials_saving() : m.credentials_save()}</Button>
 				</Dialog.Footer>
 			</form>
 		</Dialog.Content>
@@ -333,15 +334,15 @@
 	<Dialog.Root bind:open={deleteOpen}>
 		<Dialog.Content aria-describedby="credential-delete-description">
 			<Dialog.Header>
-				<Dialog.Title>Delete {pendingDelete?.name ?? 'credential'}?</Dialog.Title>
+				<Dialog.Title>{m.credentials_delete_title({ name: pendingDelete?.name ?? m.credentials_delete_unnamed() })}</Dialog.Title>
 				<Dialog.Description id="credential-delete-description">
-					This destroys the encrypted secret. Workflows using it will fail until they are given another credential.
+					{m.credentials_delete_body()}
 				</Dialog.Description>
 			</Dialog.Header>
 			{#if deleteError}<p role="alert" class="text-sm text-destructive">{deleteError}</p>{/if}
 			<Dialog.Footer>
-				<Button type="button" variant="outline" onclick={() => (deleteOpen = false)} disabled={deleting}>Cancel</Button>
-				<Button type="button" variant="destructive" onclick={() => void confirmDelete()} disabled={deleting}>{deleting ? 'Deleting…' : 'Delete'}</Button>
+				<Button type="button" variant="outline" onclick={() => (deleteOpen = false)} disabled={deleting}>{m.credentials_cancel()}</Button>
+				<Button type="button" variant="destructive" onclick={() => void confirmDelete()} disabled={deleting}>{deleting ? m.credentials_deleting() : m.credentials_delete()}</Button>
 			</Dialog.Footer>
 		</Dialog.Content>
 	</Dialog.Root>

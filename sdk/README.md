@@ -249,6 +249,7 @@ const editor = mountWorkflowEditor({
   container: document.getElementById('editor')!,
   baseUrl: 'https://flows.example',
   session, // fetched from your own backend
+  locale: 'id', // the language the editor's own chrome speaks
   onEvent(event) {
     if (event.type === 'execution-started') {
       // The backend minted a ticket for this execution (see below); the
@@ -269,7 +270,9 @@ editor.unmount();
 The mount performs the verified handshake: the editor announces itself, and
 only then is the token posted — to the editor's exact origin, never `'*'`.
 Every message received is checked against `event.origin` and against the frame
-it came from before its payload is read.
+it came from before its payload is read. `locale` rides along in that same
+message: the editor checks it against the catalogs it ships and ignores one it
+does not carry.
 
 ### Watching a run on an authenticated server
 

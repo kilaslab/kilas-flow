@@ -1,0 +1,20 @@
+{
+	"home_tagline": "Embeddable workflow automation engine",
+	"home_status_connected": "Connected",
+	"home_status_checking": "Checking",
+	"home_status_disconnected": "Disconnected",
+	"home_status_heading": "Backend status",
+	"home_refresh": "Refresh",
+	"home_checking": "checking…",
+	"home_health_version": "v{version}",
+	"home_ready_database": "database {name}",
+	"home_backend_help": "The API did not respond. Start the backend with {api}, or run both processes with {dev}.",
+	"home_link_api_reference": "API reference",
+	"home_link_openapi_json": "OpenAPI JSON",
+	"home_link_openapi_yaml": "OpenAPI YAML",
+	"home_last_checked": "Last checked {time}.",
+	"home_scaffolding_note": "Scaffolding only — the workflow canvas arrives in Milestone 1.",
+	"home_backend_unreachable": "Backend unreachable",
+	"home_error_unexpected_health": "Unexpected health response",
+	"home_error_unexpected_readiness": "Unexpected readiness response"
+}

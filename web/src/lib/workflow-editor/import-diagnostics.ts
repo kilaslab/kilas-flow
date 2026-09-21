@@ -1,3 +1,4 @@
+import * as m from '$lib/paraglide/messages.js';
 import { getContext, setContext } from 'svelte';
 
 import type { ImportIssue, ImportIssueSeverity } from '$lib/api/generated/models';
@@ -88,5 +89,5 @@ export function diagnosticSummaryLabel(issues: readonly ImportIssue[]): string {
 	const parts = DIAGNOSTIC_SEVERITIES.filter((severity) => counts[severity] > 0).map(
 		(severity) => `${counts[severity]} ${DIAGNOSTIC_SEVERITY_LABELS[severity].toLowerCase()}`
 	);
-	return `${parts.join(', ')} import ${issues.length === 1 ? 'issue' : 'issues'}`;
+	return `${parts.join(', ')} ${m.workflows_import_issues({ count: issues.length })}`;
 }

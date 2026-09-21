@@ -38,11 +38,13 @@ const forTenant = tenantClientFactory({ baseUrl: kilasflowUrl });
 const tenants = {
 	acme: {
 		label: 'Acme',
+		locale: 'en',
 		apiKey: process.env.TENANT_A_API_KEY,
 		branding: { name: 'Acme Flows', accent: '#0ea5e9' }
 	},
 	birch: {
 		label: 'Birch',
+		locale: 'id',
 		apiKey: process.env.TENANT_B_API_KEY,
 		branding: { name: 'Birch Automations', accent: '#16a34a' }
 	}
@@ -102,11 +104,11 @@ async function serveTenantApi(tenant, action, url, request, response) {
 		response.end(JSON.stringify(body));
 	};
 
-	// What the page needs before it mounts: its label and accent. The accent
-	// is a validated value, never markup — the page sets it as a CSS
+	// What the page needs before it mounts: its label, accent and language.
+	// The accent is a validated value, never markup — the page sets it as a CSS
 	// variable, and the editor renders branding into elements it controls.
 	if (action === 'info' && request.method === 'GET') {
-		return json(200, { label: tenant.label, accent: tenant.branding.accent });
+		return json(200, { label: tenant.label, accent: tenant.branding.accent, locale: tenant.locale });
 	}
 
 	// The page asks its own backend for a session. The token it gets back is

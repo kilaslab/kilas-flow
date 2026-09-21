@@ -1,3 +1,4 @@
+import * as m from '$lib/paraglide/messages.js';
 import { apiDownload, apiFetch } from '$lib/api/http';
 
 /**
@@ -82,11 +83,11 @@ export async function uploadImport(id: string, file: Blob): Promise<CSVImportRep
 export function severityLabel(severity: string): string {
 	switch (severity) {
 		case 'blocking':
-			return 'Blocking';
+			return m.datastores_severity_blocking();
 		case 'lossy':
-			return 'Lossy';
+			return m.datastores_severity_lossy();
 		case 'dropped':
-			return 'Dropped';
+			return m.datastores_severity_dropped();
 		default:
 			return severity;
 	}
@@ -94,9 +95,7 @@ export function severityLabel(severity: string): string {
 
 /** One sentence for a successful import: rows landed, blank lines noted. */
 export function summarizeReport(report: CSVImportReport): string {
-	const rows = `${String(report.inserted)} row${report.inserted === 1 ? '' : 's'} imported`;
-	if (report.skipped > 0) {
-		return `${rows}, ${String(report.skipped)} blank line${report.skipped === 1 ? '' : 's'} skipped`;
-	}
-	return rows;
+	return report.skipped > 0
+		? m.datastores_imported_rows_with_blanks({ rows: report.inserted, blanks: report.skipped })
+		: m.datastores_imported_rows({ rows: report.inserted });
 }

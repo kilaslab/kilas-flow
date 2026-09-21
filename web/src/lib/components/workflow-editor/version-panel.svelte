@@ -12,17 +12,22 @@
 	import { appendPage, canLoadMore, emptyPage, readPage, type CursorPage } from '$lib/dashboard/cursor-page';
 	import * as Sheet from '$lib/components/ui/sheet';
 	import * as Tabs from '$lib/components/ui/tabs';
+	import { currentLocale } from '$lib/i18n/locale.svelte';
+	import * as m from '$lib/paraglide/messages.js';
 	import { diffChangeCount, diffWorkflowDocuments, describeNodeChange } from '$lib/workflow-editor/history-diff';
 	import { validationIssuesFromApiError, type CanvasValidationIssue } from '$lib/workflow-editor/validation';
 	import {
+		connectionChangeSentence,
 		eventRevisionLabel,
 		publishConfirmation,
+		publishEventActionLabel,
 		publishEventSentence,
 		publishEventTone,
 		publishRefusal,
 		relativeTime,
 		restoreConfirmation,
 		restoreRefusal,
+		settingChangeSentence,
 		versionAuthor,
 		versionRoles,
 		versionTitle
@@ -120,8 +125,8 @@
 	const selectedDocument = $derived(preview?.document ?? null);
 	const diff = $derived(selectedDocument ? diffWorkflowDocuments(selectedDocument, draft) : null);
 	const changeCount = $derived(diff ? diffChangeCount(diff) : 0);
-	const restoreBlocked = $derived(selected ? restoreRefusal({ canRestore, dirty, isDraft: selected.id === latestVersionID }) : 'Select a revision first.');
-	const publishBlocked = $derived(selected ? publishRefusal({ canPublish, isPublished: Boolean(selected.published) && active }) : 'Select a revision first.');
+	const restoreBlocked = $derived(selected ? restoreRefusal({ canRestore, dirty, isDraft: selected.id === latestVersionID }) : m.versions_select_revision());
+	const publishBlocked = $derived(selected ? publishRefusal({ canPublish, isPublished: Boolean(selected.published) && active }) : m.versions_select_revision());
 	const servingSummary = $derived(loaded.items.find((summary) => summary.published) ?? null);
 
 	$effect(() => {
@@ -153,7 +158,7 @@
 		listError = null;
 		try {
 			const response = await listWorkflowVersions(workflowID, { limit: 25 });
-			if (response.status !== 200) throw new Error('Unexpected workflow-versions response');
+			if (response.status !== 200) throw new Error(m.versions_unexpected_list_response());
 			if (token !== listRequest) return;
 			loaded = readPage(response.data);
 		} catch (error) {
@@ -171,7 +176,7 @@
 		listError = null;
 		try {
 			const response = await listWorkflowVersions(workflowID, { limit: 25, cursor: loaded.nextCursor });
-			if (response.status !== 200) throw new Error('Unexpected workflow-versions response');
+			if (response.status !== 200) throw new Error(m.versions_unexpected_list_response());
 			loaded = appendPage(loaded, response.data);
 		} catch (error) {
 			listError = message(error);
@@ -185,7 +190,7 @@
 		eventsError = null;
 		try {
 			const response = await listWorkflowPublishEvents(workflowID);
-			if (response.status !== 200) throw new Error('Unexpected publish-events response');
+			if (response.status !== 200) throw new Error(m.versions_unexpected_events_response());
 			events = response.data ?? [];
 		} catch (error) {
 			eventsError = message(error);
@@ -219,7 +224,7 @@
 		loadingDocument = true;
 		try {
 			const response = await getWorkflowVersion(workflowID, summary.id);
-			if (response.status !== 200) throw new Error('Unexpected workflow-version response');
+			if (response.status !== 200) throw new Error(m.versions_unexpected_version_response());
 			// A revision the user has already clicked away from must not land on
 			// the canvas behind them.
 			if (token !== documentRequest) return;
@@ -256,7 +261,7 @@
 		try {
 			if (pending.action === 'restore') {
 				const response = await restoreWorkflowVersion(workflowID, pending.summary.id, body);
-				if (response.status !== 200) throw new Error('Unexpected workflow-restore response');
+				if (response.status !== 200) throw new Error(m.versions_unexpected_restore_response());
 				confirming = null;
 				// The canvas is about to be rebuilt from the appended revision, so
 				// the preview has to be surrendered before the host swaps it out.
@@ -267,7 +272,7 @@
 			}
 
 			const response = await publishWorkflowVersion(workflowID, pending.summary.id, body);
-			if (response.status !== 200) throw new Error('Unexpected workflow-publish response');
+			if (response.status !== 200) throw new Error(m.versions_unexpected_publish_response());
 			confirming = null;
 			onPublished(response.data, pending.summary);
 			await refresh();
@@ -293,7 +298,7 @@
 		onIssues([]);
 		try {
 			const response = await deactivateWorkflow(workflowID);
-			if (response.status !== 200) throw new Error('Unexpected workflow-deactivate response');
+			if (response.status !== 200) throw new Error(m.workflows_unexpected_workflow_deactivate());
 			onUnpublished(response.data);
 			await refresh();
 			if (eventsRequested) await loadEvents();
@@ -313,31 +318,31 @@
 	a panel can never silently discard what the user was looking at.
 -->
 <Sheet.Root bind:open>
-	<Sheet.Content side="right" showOverlay={false} trapFocus={false} preventScroll={false} class="flex w-[min(26rem,92vw)] flex-col gap-0 border-l border-border p-0 sm:max-w-none" aria-label="Version history">
+	<Sheet.Content side="right" showOverlay={false} trapFocus={false} preventScroll={false} class="flex w-[min(26rem,92vw)] flex-col gap-0 border-l border-border p-0 sm:max-w-none" aria-label={m.versions_history_title()}>
 		<Sheet.Header class="shrink-0 gap-1 border-b border-border px-4 py-3 pr-12">
 			<Sheet.Title class="flex items-center gap-2 text-sm">
-				<History aria-hidden="true" class="size-4 text-muted-foreground" />Version history
+				<History aria-hidden="true" class="size-4 text-muted-foreground" />{m.versions_history_title()}
 			</Sheet.Title>
 			<!-- Which revision is live is the fact the whole panel is organised
 			     around, so it is stated once here rather than left to be read off
 			     the badges further down. -->
 			<Sheet.Description class="text-xs">
 				{#if active && servingSummary}
-					{versionTitle(servingSummary)} is serving traffic.
+					{m.versions_serving({ title: versionTitle(servingSummary) })}
 				{:else if active}
-					This workflow is active.
+					{m.versions_workflow_active()}
 				{:else if servingSummary}
-					Nothing is serving — {versionTitle(servingSummary)} was the last published revision.
+					{m.versions_nothing_serving({ title: versionTitle(servingSummary) })}
 				{:else}
-					Nothing has been published yet.
+					{m.versions_nothing_published()}
 				{/if}
 			</Sheet.Description>
 		</Sheet.Header>
 
 		<Tabs.Root bind:value={tab} class="flex min-h-0 flex-1 flex-col">
 			<Tabs.List variant="line" class="shrink-0 gap-3 border-b border-border px-4 py-1.5">
-				<Tabs.Trigger value="versions">Versions</Tabs.Trigger>
-				<Tabs.Trigger value="timeline">Publish timeline</Tabs.Trigger>
+				<Tabs.Trigger value="versions">{m.versions_tab_versions()}</Tabs.Trigger>
+				<Tabs.Trigger value="timeline">{m.versions_tab_timeline()}</Tabs.Trigger>
 			</Tabs.List>
 
 			<Tabs.Content value="versions" class="flex min-h-0 flex-1 flex-col">
@@ -352,25 +357,25 @@
 					>
 						<span aria-hidden="true" class="mt-1.5 size-1.5 shrink-0 rounded-full {dirty ? 'bg-warning' : 'bg-primary'}"></span>
 						<span class="min-w-0 flex-1">
-							<span class="block text-xs font-medium">{dirty ? 'Current changes' : 'Current draft'}</span>
-							<span class="block truncate text-[0.6875rem] text-muted-foreground">{dirty ? 'Unsaved edits on the canvas' : 'Matches the newest saved revision'}</span>
+							<span class="block text-xs font-medium">{dirty ? m.versions_current_changes() : m.versions_current_draft()}</span>
+							<span class="block truncate text-[0.6875rem] text-muted-foreground">{dirty ? m.versions_unsaved_edits() : m.versions_matches_newest()}</span>
 						</span>
 					</button>
 
 					{#if loading}
-						<p class="sr-only" aria-live="polite">Loading version history…</p>
+						<p class="sr-only" aria-live="polite">{m.versions_loading_history()}</p>
 						{#each Array(4) as _, index (index)}
 							<div class="mt-1 h-12 animate-pulse rounded-lg bg-muted/50" aria-hidden="true"></div>
 						{/each}
 					{:else if listError && loaded.items.length === 0}
 						<div role="alert" class="mt-2 rounded-lg border border-destructive/25 bg-destructive/5 p-3">
 							<p class="text-xs text-destructive">{listError}</p>
-							<button type="button" class="mt-2 rounded-md border border-border px-2 py-1 text-xs font-medium hover:bg-muted" onclick={() => void refresh()}>Try again</button>
+							<button type="button" class="mt-2 rounded-md border border-border px-2 py-1 text-xs font-medium hover:bg-muted" onclick={() => void refresh()}>{m.common_try_again()}</button>
 						</div>
 					{:else if loaded.items.length === 0}
-						<p class="mt-3 px-2 text-xs text-muted-foreground">This workflow has no saved revisions yet.</p>
+						<p class="mt-3 px-2 text-xs text-muted-foreground">{m.versions_empty()}</p>
 					{:else}
-						<ul class="mt-1 space-y-0.5" aria-label="Saved revisions">
+						<ul class="mt-1 space-y-0.5" aria-label={m.versions_saved_revisions_aria()}>
 							{#each loaded.items as summary (summary.id)}
 								{@const roles = versionRoles(summary)}
 								{@const author = versionAuthor(summary)}
@@ -390,7 +395,7 @@
 												{/each}
 											</span>
 											<span class="block truncate text-[0.6875rem] text-muted-foreground">
-												{relativeTime(summary.createdAt)}{#if author} · {author}{/if}{#if summary.label} · revision {summary.revision}{/if}
+												{relativeTime(summary.createdAt, { locale: currentLocale() })}{#if author} · {author}{/if}{#if summary.label} · {m.versions_row_revision({ revision: summary.revision })}{/if}
 											</span>
 										</span>
 									</button>
@@ -400,7 +405,7 @@
 
 						{#if canLoadMore(loaded)}
 							<button type="button" class="mt-2 w-full rounded-md border border-border px-2 py-1.5 text-xs font-medium hover:bg-muted disabled:opacity-40" disabled={loadingMore} onclick={() => void loadMore()}>
-								{loadingMore ? 'Loading…' : 'Load older revisions'}
+								{loadingMore ? m.executions_loading() : m.versions_load_older()}
 							</button>
 						{/if}
 						{#if listError && loaded.items.length > 0}
@@ -412,21 +417,25 @@
 				{#if selected}
 					<div class="max-h-[55%] shrink-0 overflow-y-auto border-t border-border bg-card">
 						<div class="px-4 py-3">
-							<h3 class="text-xs font-semibold">Compared with the canvas</h3>
+							<h3 class="text-xs font-semibold">{m.versions_compared_heading()}</h3>
 							{#if loadingDocument}
-								<p class="mt-1 text-xs text-muted-foreground" aria-live="polite">Loading this revision…</p>
+								<p class="mt-1 text-xs text-muted-foreground" aria-live="polite">{m.versions_loading_revision()}</p>
 							{:else if documentError}
 								<p role="alert" class="mt-1 text-xs text-destructive">{documentError}</p>
 							{:else if diff}
 								{#if diff.identical}
-									<p class="mt-1 text-xs text-muted-foreground">Identical to what is on the canvas.</p>
+									<p class="mt-1 text-xs text-muted-foreground">{m.versions_identical()}</p>
 								{:else}
 									<p class="mt-1 text-[0.6875rem] text-muted-foreground">
-										{changeCount === 1 ? '1 difference' : `${changeCount} differences`}{#if diff.cosmeticOnly}, all of them cosmetic — only where nodes sit{/if}.
+										{#if diff.cosmeticOnly}
+											{m.versions_differences_cosmetic({ count: changeCount })}
+										{:else}
+											{m.versions_differences({ count: changeCount })}
+										{/if}
 									</p>
 									<ul class="mt-2 space-y-1 text-xs">
 										{#if diff.name}
-											<li class="flex gap-1.5"><span class="text-muted-foreground">Workflow</span><span>renamed to “{diff.name.after}”</span></li>
+											<li class="flex gap-1.5"><span class="text-muted-foreground">{m.workflows_noun_capitalised()}</span><span>{m.versions_renamed_to({ name: diff.name.after })}</span></li>
 										{/if}
 										{#each diff.nodes as change (change.nodeID)}
 											<li class="flex gap-1.5">
@@ -436,14 +445,14 @@
 										{/each}
 										{#each diff.connections as change (`${change.status}-${change.connectionID}-${change.sourcePort}-${change.targetPort}`)}
 											<li class="flex gap-1.5">
-												<span class="shrink-0 text-muted-foreground">Connection</span>
-												<span>{change.status === 'added' ? 'added' : 'removed'} — {change.sourceName} → {change.targetName}</span>
+												<span class="shrink-0 text-muted-foreground">{m.versions_connection_label()}</span>
+												<span>{connectionChangeSentence(change)}</span>
 											</li>
 										{/each}
 										{#each diff.settings as change (change.key)}
 											<li class="flex gap-1.5">
-												<span class="shrink-0 text-muted-foreground">Setting</span>
-												<span>{change.key} {change.status}</span>
+												<span class="shrink-0 text-muted-foreground">{m.versions_setting_label()}</span>
+												<span>{settingChangeSentence(change)}</span>
 											</li>
 										{/each}
 									</ul>
@@ -462,7 +471,7 @@
 									title={restoreBlocked ?? undefined}
 									onclick={() => ask('restore')}
 								>
-									<RotateCcw aria-hidden="true" class="size-3.5" />Restore
+									<RotateCcw aria-hidden="true" class="size-3.5" />{m.versions_restore()}
 								</button>
 								{#if canPublish}
 									<button
@@ -472,16 +481,16 @@
 										title={publishBlocked ?? undefined}
 										onclick={() => ask('publish')}
 									>
-										<Upload aria-hidden="true" class="size-3.5" />Publish
+										<Upload aria-hidden="true" class="size-3.5" />{m.versions_publish()}
 									</button>
 									{#if selected.published && active}
 										<button type="button" class="inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium text-warning transition-colors hover:bg-warning/10 disabled:opacity-40" disabled={busy} onclick={() => void unpublish()}>
-											Unpublish
+											{m.versions_unpublish()}
 										</button>
 									{/if}
 								{/if}
 								<button type="button" class="inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted" onclick={backToDraft}>
-									Back to draft
+									{m.versions_back_to_draft()}
 								</button>
 							</div>
 							{#if restoreBlocked && selected.id !== latestVersionID}
@@ -494,20 +503,20 @@
 
 			<Tabs.Content value="timeline" class="min-h-0 flex-1 overflow-y-auto p-4">
 				{#if loadingEvents}
-					<p class="text-xs text-muted-foreground" aria-live="polite">Loading publish history…</p>
+					<p class="text-xs text-muted-foreground" aria-live="polite">{m.versions_loading_publish_history()}</p>
 				{:else if eventsError}
 					<p role="alert" class="text-xs text-destructive">{eventsError}</p>
 				{:else if events.length === 0}
-					<p class="text-xs text-muted-foreground">Nothing has been published, unpublished or restored yet.</p>
+					<p class="text-xs text-muted-foreground">{m.versions_timeline_empty()}</p>
 				{:else}
-					<ol class="space-y-2.5" aria-label="Publish history">
+					<ol class="space-y-2.5" aria-label={m.versions_publish_history_aria()}>
 						{#each events as event, index (`${event.createdAt}-${event.versionId}-${index}`)}
 							<li class="flex gap-2">
-								<span class="mt-0.5 inline-flex h-4 shrink-0 items-center rounded-full border px-1.5 text-[0.625rem] font-medium {publishEventTone(event)}">{event.action}</span>
+								<span class="mt-0.5 inline-flex h-4 shrink-0 items-center rounded-full border px-1.5 text-[0.625rem] font-medium {publishEventTone(event)}">{publishEventActionLabel(event)}</span>
 								<span class="min-w-0">
 									<span class="block text-xs">{publishEventSentence(event, eventRevisionLabel(event.versionId, loaded.items))}</span>
 									<span class="block text-[0.6875rem] text-muted-foreground">
-										{relativeTime(event.createdAt)}{#if event.actor} · {event.actor}{/if}{#if event.reason} · {event.reason}{/if}
+										{relativeTime(event.createdAt, { locale: currentLocale() })}{#if event.actor} · {event.actor}{/if}{#if event.reason} · {event.reason}{/if}
 									</span>
 								</span>
 							</li>
@@ -527,7 +536,7 @@
 				role="alertdialog"
 				tabindex="-1"
 				aria-modal="true"
-				aria-label={pending.action === 'restore' ? 'Confirm restore' : 'Confirm publish'}
+				aria-label={pending.action === 'restore' ? m.versions_confirm_restore_aria() : m.versions_confirm_publish_aria()}
 				class="shrink-0 border-t border-border bg-card px-4 py-3"
 				onkeydown={(event) => {
 					if (event.key === 'Escape') {
@@ -536,19 +545,19 @@
 					}
 				}}
 			>
-				<h3 class="text-xs font-semibold">{pending.action === 'restore' ? 'Restore this revision?' : 'Publish this revision?'}</h3>
+				<h3 class="text-xs font-semibold">{pending.action === 'restore' ? m.versions_confirm_restore_title() : m.versions_confirm_publish_title()}</h3>
 				<p class="mt-1 text-[0.6875rem] leading-4 text-muted-foreground">
 					{pending.action === 'restore' ? restoreConfirmation(pending.summary) : publishConfirmation(pending.summary)}
 				</p>
 				<label class="mt-2 block">
-					<span class="text-[0.6875rem] font-medium text-muted-foreground">Reason (optional, kept in the audit trail)</span>
-					<input bind:this={confirmReason} bind:value={reason} maxlength="255" class="mt-1 h-7 w-full rounded-md border border-border bg-background px-2 text-xs focus-visible:outline-2 focus-visible:outline-offset-1" placeholder="Rolling back the pricing change" />
+					<span class="text-[0.6875rem] font-medium text-muted-foreground">{m.versions_reason_label()}</span>
+					<input bind:this={confirmReason} bind:value={reason} maxlength="255" class="mt-1 h-7 w-full rounded-md border border-border bg-background px-2 text-xs focus-visible:outline-2 focus-visible:outline-offset-1" placeholder={m.versions_reason_placeholder()} />
 				</label>
 				<div class="mt-2.5 flex justify-end gap-1.5">
-					<button type="button" class="inline-flex h-7 items-center rounded-md px-2.5 text-xs font-medium text-muted-foreground hover:bg-muted" disabled={busy} onclick={() => (confirming = null)}>Cancel</button>
+					<button type="button" class="inline-flex h-7 items-center rounded-md px-2.5 text-xs font-medium text-muted-foreground hover:bg-muted" disabled={busy} onclick={() => (confirming = null)}>{m.workflows_cancel()}</button>
 					<button type="button" class="inline-flex h-7 items-center gap-1.5 rounded-md bg-primary px-2.5 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40" disabled={busy} onclick={() => void confirm()}>
 						<Check aria-hidden="true" class="size-3.5" />
-						{busy ? 'Working…' : pending.action === 'restore' ? 'Restore' : 'Publish'}
+						{busy ? m.versions_working() : pending.action === 'restore' ? m.versions_restore() : m.versions_publish()}
 					</button>
 				</div>
 			</div>

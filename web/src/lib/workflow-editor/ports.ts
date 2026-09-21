@@ -1,4 +1,5 @@
 import type { Connection, Definition, Node, Port } from '$lib/api/generated/models';
+import * as m from '$lib/paraglide/messages.js';
 import { resolveDefinition } from './document';
 
 // A few node types derive their ports from their own parameters on the server
@@ -195,14 +196,14 @@ function datastoreOutputs(parameters: Node['parameters'], declared: Port[]): Por
 	const operation = parameters?.['operation'];
 	if (operation === 'ifExists') {
 		return [
-			{ name: 'true', displayName: 'Row found', kind: 'main' },
-			{ name: 'false', displayName: 'No row', kind: 'main' }
+			{ name: 'true', displayName: m.canvas_port_row_found(), kind: 'main' },
+			{ name: 'false', displayName: m.canvas_port_no_row(), kind: 'main' }
 		];
 	}
 	if (operation === 'ifNotExists') {
 		return [
-			{ name: 'true', displayName: 'No row', kind: 'main' },
-			{ name: 'false', displayName: 'Row found', kind: 'main' }
+			{ name: 'true', displayName: m.canvas_port_no_row(), kind: 'main' },
+			{ name: 'false', displayName: m.canvas_port_row_found(), kind: 'main' }
 		];
 	}
 	return declared;

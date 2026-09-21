@@ -176,6 +176,15 @@ and only then is the token posted — to the editor's exact origin, never
 `'*'`. A handshake that does not complete in fifteen seconds calls
 `onError`; tearing the iframe down is the host's decision.
 
+**Language.** `mountWorkflowEditor({ locale })` decides which language the
+editor's own chrome renders in, and the frame stamps `<html lang>` from it.
+The tag is checked against the catalogs the editor ships, so one it does not
+carry is ignored and the editor stays in its base locale rather than failing
+the handshake — naming a language the deployment does not have cannot break
+the host's page. It also outranks whatever language a reader previously picked
+on the editor's origin, which matters because the embed frame shares that
+origin with the dashboard.
+
 ### 5. Fire the webhook, observe the execution
 
 The browser never touches the webhook secret. The page calls the

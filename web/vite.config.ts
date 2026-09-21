@@ -1,3 +1,4 @@
+import { paraglideVitePlugin } from '@inlang/paraglide-js';
 import { sveltekit } from '@sveltejs/kit/vite';
 import tailwindcss from '@tailwindcss/vite';
 import { defineConfig } from 'vite';
@@ -22,7 +23,25 @@ const port = Number(process.env.KILASFLOW_WEB_PORT ?? 5173);
 const proxied = ['/api', '/webhook', '/docs', '/resume'];
 
 export default defineConfig({
-	plugins: [tailwindcss(), sveltekit()],
+	// The strategy is deliberately reduced to the base locale: `$lib/i18n`
+	// owns the runtime locale by overriding the generated getLocale, so
+	// paraglide's own detection must not be able to read navigator, a cookie,
+	// a URL pattern or localStorage. With no urlPatterns the generated runtime
+	// needs no URLPattern polyfill either.
+	//
+	// outdir is untracked on purpose — the generated runtime writes its own
+	// `.gitignore` containing `*` — so `i18n:compile` runs before check and
+	// test, and a fresh clone can resolve `$lib/paraglide/*`.
+	plugins: [
+		tailwindcss(),
+		sveltekit(),
+		paraglideVitePlugin({
+			project: './project.inlang',
+			outdir: './src/lib/paraglide',
+			strategy: ['baseLocale'],
+			emitTsDeclarations: true
+		})
+	],
 
 	server: {
 		port,

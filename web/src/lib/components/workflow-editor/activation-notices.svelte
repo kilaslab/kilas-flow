@@ -5,6 +5,7 @@
 	import X from '@lucide/svelte/icons/x';
 
 	import { cn } from '$lib/utils';
+	import * as m from '$lib/paraglide/messages.js';
 	import type { ActivationNoticeView } from '$lib/workflow-editor/activation';
 
 	let {
@@ -58,11 +59,11 @@
 	positioned out of flow, so it costs the editor's toolbar column nothing.
 -->
 <p class="sr-only" aria-live="polite">
-	{notices.length === 0 ? '' : `${notices.length} activation ${notices.length === 1 ? 'notice' : 'notices'}. The workflow is active, but a trigger still needs something done before it receives anything.`}
+	{notices.length === 0 ? '' : m.editor_activation_notices_summary({ count: notices.length })}
 </p>
 {#if notices.length > 0}
 	<section
-		aria-label="Activation notices"
+		aria-label={m.editor_activation_notices_aria()}
 		class={cn('shrink-0 border-b border-warning/30 bg-warning/5', className)}
 		data-testid="activation-notices"
 	>
@@ -90,25 +91,25 @@
 									onclick={() => void copy(notice)}
 								>
 									{#if copiedKey === notice.key && !copyFailed}
-										<Check aria-hidden="true" class="size-3" />Copied
+										<Check aria-hidden="true" class="size-3" />{m.workflows_copied()}
 									{:else}
-										<Copy aria-hidden="true" class="size-3" />Copy URL
+										<Copy aria-hidden="true" class="size-3" />{m.workflows_copy_url()}
 									{/if}
 									<!-- Every notice carries an identical button, so the node is
 									     what tells a screen-reader user which URL they are about
 									     to put on their clipboard. -->
-									<span class="sr-only"> for {notice.nodeName}</span>
+									<span class="sr-only"> {m.editor_copy_for_node({ name: notice.nodeName })}</span>
 								</button>
 							</div>
 							{#if copiedKey === notice.key && copyFailed}
-								<p role="alert" class="mt-1 text-[0.6875rem] text-destructive">The clipboard is unavailable here. Select the URL above and copy it by hand.</p>
+								<p role="alert" class="mt-1 text-[0.6875rem] text-destructive">{m.editor_clipboard_unavailable()}</p>
 							{/if}
 						{/if}
 					</div>
 					<button
 						type="button"
 						class="grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring"
-						aria-label={`Dismiss the activation notice for ${notice.nodeName}`}
+						aria-label={m.editor_dismiss_notice_aria({ name: notice.nodeName })}
 						onclick={() => onDismiss(notice.key)}
 					>
 						<X aria-hidden="true" class="size-3.5" />

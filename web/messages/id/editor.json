@@ -1,0 +1,164 @@
+{
+	"editor_aria_label": "Editor alur kerja",
+	"editor_add_step": "Tambah langkah",
+	"editor_undo": "Urungkan",
+	"editor_undo_title": "Urungkan (⌘Z)",
+	"editor_redo": "Ulangi",
+	"editor_redo_title": "Ulangi (⌘⇧Z)",
+	"editor_tidy_up": "Rapikan",
+	"editor_saving": "Menyimpan…",
+	"editor_running": "Menjalankan…",
+	"editor_execute": "Jalankan",
+	"editor_open_executions": "Buka eksekusi",
+	"editor_history": "Riwayat",
+	"editor_keyboard_shortcuts": "Pintasan papan tik",
+	"editor_delete_connection": "Hapus sambungan",
+	"editor_state_inactive": "Nonaktif",
+	"editor_state_read_only": "Hanya baca",
+	"editor_state_unsaved": "Perubahan belum disimpan",
+	"editor_state_saved": "Semua perubahan tersimpan",
+	"editor_state_previewing": "Pratinjau revisi {revision}",
+	"editor_save_first_hint": "Simpan perubahan Anda sebelum menjalankan atau mengaktifkan alur kerja ini.",
+	"editor_conflict_notice": "Alur kerja ini berubah di tempat lain saat Anda mengedit.",
+	"editor_save_mine_anyway": "Tetap simpan milik saya",
+	"editor_save_failed": "Gagal menyimpan: {error}",
+	"editor_dismiss": "Tutup",
+	"editor_validation_issues_aria": "Masalah validasi alur kerja",
+	"editor_issue_node": "(node)",
+	"editor_issue_connection": "(sambungan)",
+	"editor_run_failed": "Gagal menjalankan: {error}",
+	"editor_view_execution": "Lihat eksekusi",
+	"editor_previewing_note": "Pratinjau revisi {revision}. Draf Anda yang belum disimpan tidak diubah.",
+	"editor_select_node_first": "Pilih node dulu.",
+	"editor_nodes_copied": [
+		{
+			"declarations": [
+				"input count",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
+			"match": {
+				"countPlural=one": "{count} node disalin.",
+				"countPlural=other": "{count} node disalin."
+			}
+		}
+	],
+	"editor_clipboard_denied_write": "Peramban tidak memberikan papan klip kepada halaman ini.",
+	"editor_clipboard_empty": "Tidak ada apa pun di papan klip untuk ditempel.",
+	"editor_clipboard_denied_read": "Peramban tidak mengizinkan halaman ini membaca papan klip.",
+	"editor_nodes_pasted": [
+		{
+			"declarations": [
+				"input count",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
+			"match": {
+				"countPlural=one": "{count} node ditempel",
+				"countPlural=other": "{count} node ditempel"
+			}
+		}
+	],
+	"editor_placeholders_to_replace": [
+		{
+			"declarations": [
+				"input count",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
+			"match": {
+				"countPlural=one": "{count} placeholder untuk diganti",
+				"countPlural=other": "{count} placeholder untuk diganti"
+			}
+		}
+	],
+	"editor_connections_not_placed": [
+		{
+			"declarations": [
+				"input count",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
+			"match": {
+				"countPlural=one": "{count} sambungan tidak ditempatkan",
+				"countPlural=other": "{count} sambungan tidak ditempatkan"
+			}
+		}
+	],
+	"editor_nodes_duplicated": [
+		{
+			"declarations": [
+				"input count",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
+			"match": {
+				"countPlural=one": "{count} node diduplikasi.",
+				"countPlural=other": "{count} node diduplikasi."
+			}
+		}
+	],
+	"editor_renamed_taken": "Diganti nama menjadi “{name}” — nama itu sudah dipakai.",
+	"editor_add_first_step": "Tambah langkah alur kerja pertama",
+	"editor_empty_title": "Mulai dengan pemicu",
+	"editor_empty_body": "Pilih apa yang memulai alur kerja ini, lalu tambahkan langkah yang dijalankannya.",
+	"editor_save_to_execute": "Simpan untuk menjalankan",
+	"editor_execute_workflow": "Jalankan alur kerja",
+	"editor_node_name_label": "Nama node",
+	"editor_minimap_aria": "Peta mini alur kerja",
+	"editor_unsupported_node": "Node tidak didukung",
+	"editor_unknown_node_type": "Tipe node tidak dikenal",
+	"editor_unsupported_body": "Diimpor dari n8n sebagai placeholder yang tidak didukung. Ganti node ini sebelum mengaktifkan atau menjalankan alur kerja ini.",
+	"editor_unsupported_preserved": "Konfigurasi aslinya dipertahankan dan akan kembali utuh saat ekspor.",
+	"editor_unknown_body": "Versi node tersimpan ini tidak tersedia di registri saat ini. Konfigurasinya akan dipertahankan.",
+	"editor_node_details_aria": "Detail {name}",
+	"editor_node_properties_aria": "Properti {name}",
+	"editor_resolved_version": "Tersimpan v{stored} · diselesaikan ke v{resolved}",
+	"editor_close_properties_aria": "Tutup properti node",
+	"editor_close_details_aria": "Tutup detail node",
+	"editor_shortcut_undo": "Urungkan",
+	"editor_shortcut_redo": "Ulangi",
+	"editor_shortcut_copy": "Salin pilihan",
+	"editor_shortcut_paste": "Tempel",
+	"editor_shortcut_duplicate": "Duplikasi pilihan",
+	"editor_shortcut_rename": "Ganti nama node terpilih",
+	"editor_shortcut_open": "Buka node terpilih",
+	"editor_shortcut_select_all": "Pilih semua node",
+	"editor_shortcut_save": "Simpan alur kerja",
+	"editor_shortcut_add_step": "Tambah langkah",
+	"editor_shortcut_tidy": "Rapikan",
+	"editor_shortcut_fit_view": "Sesuaikan tampilan",
+	"editor_shortcut_reset_zoom": "Setel ulang zoom",
+	"editor_shortcut_zoom": "Perbesar / perkecil",
+	"editor_shortcut_help": "Pintasan papan tik",
+	"editor_activation_notices_aria": "Pemberitahuan aktivasi",
+	"editor_activation_notices_summary": [
+		{
+			"declarations": [
+				"input count",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
+			"match": {
+				"countPlural=one": "{count} pemberitahuan aktivasi. Alur kerja aktif, tetapi masih ada yang perlu diselesaikan pada pemicu sebelum ia dapat menerima apa pun.",
+				"countPlural=other": "{count} pemberitahuan aktivasi. Alur kerja aktif, tetapi masih ada yang perlu diselesaikan pada pemicu sebelum ia dapat menerima apa pun."
+			}
+		}
+	],
+	"editor_copy_for_node": "untuk {name}",
+	"editor_clipboard_unavailable": "Papan klip tidak tersedia di sini. Pilih URL di atas dan salin secara manual.",
+	"editor_dismiss_notice_aria": "Tutup pemberitahuan aktivasi untuk {name}",
+	"editor_activation_trigger_failed": "Pemicu tidak dapat mendaftar ke layanannya, sehingga alur kerja dibiarkan nonaktif — {error}"
+}

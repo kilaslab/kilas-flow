@@ -1,0 +1,176 @@
+{
+	"datastores_page_title": "Datastores · KilasFlow",
+	"datastores_subtitle": "Structured tables your workflows can read and write, beside the workflows and credentials that use them.",
+	"datastores_new": "New datastore",
+	"datastores_noun": "datastore",
+	"datastores_column_count": [
+		{
+			"declarations": ["input count", "local countPlural = count: plural"],
+			"selectors": ["countPlural"],
+			"match": {
+				"countPlural=one": "1 column",
+				"countPlural=other": "{count} columns"
+			}
+		}
+	],
+	"datastores_empty_title": "No datastores yet",
+	"datastores_empty_body": "Use datastores to persist execution results, share data between workflows, and track metrics for evaluation.",
+	"datastores_rename_title": "Rename datastore",
+	"datastores_rename_description": "Columns keep their names; only the table is renamed.",
+	"datastores_create_description": "A name is all it takes — columns are added afterwards.",
+	"datastores_name_label": "Name",
+	"datastores_name_placeholder": "e.g. Evaluation scores",
+	"datastores_create_submit": "Create datastore",
+	"datastores_cancel": "Cancel",
+	"datastores_saving": "Saving…",
+	"datastores_delete_title": "Delete {name}?",
+	"datastores_delete_description": "This removes the table and every row it holds. Cancelling sends no request and leaves the datastore untouched.",
+	"datastores_delete_submit": "Delete datastore",
+	"datastores_deleting": "Deleting…",
+	"datastores_error_name_required": "Give this datastore a name.",
+	"datastores_rename_aria": "Rename {name}",
+	"datastores_delete_aria": "Delete {name}",
+	"datastores_error_list_response": "Unexpected datastore-list response",
+	"datastores_error_save_response": "Unexpected datastore-save response",
+	"datastores_detail_page_title": "{name} · KilasFlow",
+	"datastores_load_failed": "This datastore could not be loaded.",
+	"datastores_columns_summary": [
+		{
+			"declarations": ["input count", "local countPlural = count: plural"],
+			"selectors": ["countPlural"],
+			"match": {
+				"countPlural=one": "1 user column · 20 rows per page",
+				"countPlural=other": "{count} user columns · 20 rows per page"
+			}
+		}
+	],
+	"datastores_import": "Import",
+	"datastores_export": "Export",
+	"datastores_add_row": "Add row",
+	"datastores_add_column": "Add column",
+	"datastores_rows_selected": [
+		{
+			"declarations": ["input count", "local countPlural = count: plural"],
+			"selectors": ["countPlural"],
+			"match": {
+				"countPlural=one": "1 row selected",
+				"countPlural=other": "{count} rows selected"
+			}
+		}
+	],
+	"datastores_delete_selected": "Delete selected",
+	"datastores_clear_selection": "Clear selection",
+	"datastores_search_rows": "Search rows",
+	"datastores_search_placeholder": "Search text columns…",
+	"datastores_rows_on_page": [
+		{
+			"declarations": ["input count", "local countPlural = count: plural"],
+			"selectors": ["countPlural"],
+			"match": {
+				"countPlural=one": "1 row on this page",
+				"countPlural=other": "{count} rows on this page"
+			}
+		}
+	],
+	"datastores_rows": "Rows",
+	"datastores_rows_caption": "Rows in {name}, id order",
+	"datastores_select_all_rows": "Select all rows on this page",
+	"datastores_select_row_aria": "Select row {row}",
+	"datastores_sort_by": "Sort by {column}",
+	"datastores_sort_by_ascending": "Sort by {column} ascending",
+	"datastores_sort_by_descending": "Sort by {column} descending",
+	"datastores_rename_column_aria": "Rename column {column}",
+	"datastores_delete_column_aria": "Delete column {column}",
+	"datastores_edit_cell_aria": "Edit {column} in row {row}",
+	"datastores_cell_empty_aria": "{column} is empty",
+	"datastores_cell_readonly_title": "System column — read-only",
+	"datastores_cell_empty_title": "Empty — click to edit",
+	"datastores_cell_value_title": "{value} — click to edit",
+	"datastores_null": "Null",
+	"datastores_load_more": "Load more",
+	"datastores_loading_more": "Loading…",
+	"datastores_empty_rows_title": "No rows yet",
+	"datastores_empty_rows_body": "Add the first row to start persisting data in this table.",
+	"datastores_add_row_description": "Set the value for each column. Empty stays Null — the row id and both timestamps are set by the database.",
+	"datastores_checked_means_true": "Checked means true.",
+	"datastores_adding": "Adding…",
+	"datastores_add_column_description": "A name and a type. Nothing offers nullability, uniqueness, or a default.",
+	"datastores_column_name_placeholder": "e.g. score",
+	"datastores_type_label": "Type",
+	"datastores_error_column_name_required": "Give this column a name.",
+	"datastores_delete_column_title": "Delete column {column}?",
+	"datastores_delete_column_description": "Every value in this column is removed with it. Cancelling sends no request and leaves the datastore untouched.",
+	"datastores_delete_column_submit": "Delete column",
+	"datastores_delete_rows_title": [
+		{
+			"declarations": ["input count", "local countPlural = count: plural"],
+			"selectors": ["countPlural"],
+			"match": {
+				"countPlural=one": "Delete 1 row?",
+				"countPlural=other": "Delete {count} rows?"
+			}
+		}
+	],
+	"datastores_delete_rows_description": "Only the selected rows are removed. Cancelling sends no request and leaves every row untouched.",
+	"datastores_delete_rows_submit": "Delete rows",
+	"datastores_import_rows_title": "Import rows",
+	"datastores_export_rows_title": "Export rows",
+	"datastores_import_description": "Upload a CSV file whose header names this datastore's columns. Every record is validated before any row is written: a file with a failed row imports nothing.",
+	"datastores_export_description": "Download this datastore's rows as a CSV file, in row order.",
+	"datastores_include_system_columns": "Include system columns",
+	"datastores_system_columns_note": "Adds id, createdAt and updatedAt around the user columns. Leave it off for a sheet to edit and re-import; turn it on for a backup.",
+	"datastores_csv_file_label": "CSV file",
+	"datastores_import_header_note": "The header must name user columns only — a file carrying id, createdAt, updatedAt or dryRunState is refused.",
+	"datastores_saved": "Saved {filename}.",
+	"datastores_error_choose_file": "Choose a CSV file first.",
+	"datastores_upload": "Upload",
+	"datastores_download": "Download",
+	"datastores_uploading": "Uploading…",
+	"datastores_downloading": "Downloading…",
+	"datastores_blocking_diagnostics_aria": "Blocking import diagnostics",
+	"datastores_blocking_heading": "Blocking",
+	"datastores_import_refused": "No rows were imported. Fix the file and try again.",
+	"datastores_issue_line": "Line {line} · {column}",
+	"datastores_close": "Close",
+	"datastores_error_datastore_response": "Unexpected datastore response",
+	"datastores_error_row_list_response": "Unexpected row-list response",
+	"datastores_error_row_update_response": "Unexpected row-update response",
+	"datastores_error_row_insert_response": "Unexpected row-insert response",
+	"datastores_error_row_delete_response": "Unexpected row-delete response",
+	"datastores_error_column_add_response": "Unexpected column-add response",
+	"datastores_error_column_rename_response": "Unexpected column-rename response",
+	"datastores_error_column_delete_response": "Unexpected column-delete response",
+	"datastores_imported_rows": [
+		{
+			"declarations": ["input rows", "local rowsPlural = rows: plural"],
+			"selectors": ["rowsPlural"],
+			"match": {
+				"rowsPlural=one": "1 row imported",
+				"rowsPlural=other": "{rows} rows imported"
+			}
+		}
+	],
+	"datastores_imported_rows_with_blanks": [
+		{
+			"declarations": [
+				"input rows",
+				"input blanks",
+				"local rowsPlural = rows: plural",
+				"local blanksPlural = blanks: plural"
+			],
+			"selectors": ["rowsPlural", "blanksPlural"],
+			"match": {
+				"rowsPlural=one, blanksPlural=one": "1 row imported, 1 blank line skipped",
+				"rowsPlural=one, blanksPlural=other": "1 row imported, {blanks} blank lines skipped",
+				"rowsPlural=other, blanksPlural=one": "{rows} rows imported, 1 blank line skipped",
+				"rowsPlural=other, blanksPlural=other": "{rows} rows imported, {blanks} blank lines skipped"
+			}
+		}
+	],
+	"datastores_column_needs_number": "{column} needs a number.",
+	"datastores_column_needs_boolean": "{column} needs true or false.",
+	"datastores_column_needs_datetime": "{column} needs a date and time.",
+	"datastores_severity_blocking": "Blocking",
+	"datastores_severity_lossy": "Lossy",
+	"datastores_severity_dropped": "Dropped"
+}

@@ -1,6 +1,7 @@
 import { MarkerType, type Edge as FlowEdge, type Node as FlowNode } from '@xyflow/svelte';
 
 import type { Connection, Definition, Document, Node as WorkflowNode, WorkflowDocumentInput } from '$lib/api/generated/models';
+import * as m from '$lib/paraglide/messages.js';
 import { isAnnotation } from './node-visual';
 import type { CanvasValidationIssue } from './validation';
 
@@ -428,7 +429,7 @@ function unavailableDefinition(node: WorkflowNode, connections: Connection[]): D
 		category: 'Unavailable',
 		group: ['transform'],
 		source: 'builtin',
-		description: 'This stored node version is not available in the current registry. Its configuration will be preserved.',
+		description: m.canvas_unavailable_node_description(),
 		inputs: portsFromConnections(node.id, connections, 'target'),
 		outputs: portsFromConnections(node.id, connections, 'source'),
 		parameters: [],

@@ -26,6 +26,12 @@ function fakeFrameWindow() {
 	return { postMessage: vi.fn() } as unknown as Window;
 }
 
+/** What the SDK posted to the frame window, in order: [payload, targetOrigin]. */
+function postedTo(frameWindow: Window): [unknown, string][] {
+	const post = frameWindow.postMessage as unknown as { mock: { calls: [unknown, string][] } };
+	return post.mock.calls;
+}
+
 function mount(options: Partial<Parameters<typeof mountWorkflowEditor>[0]> = {}) {
 	const container = document.createElement('div');
 	document.body.appendChild(container);
@@ -78,6 +84,24 @@ describe('mountWorkflowEditor', () => {
 		const [payload, targetOrigin] = (frameWindow.postMessage as unknown as ReturnType<typeof vi.fn>).mock.calls[0]!;
 		expect(payload).toMatchObject({ type: 'kilasflow:embed-session', token: 'kfe1.a.b', workflowId: 'wf-1' });
 		// '*' would hand the token to whatever document occupied the frame.
+		expect(targetOrigin).toBe(EDITOR_ORIGIN);
+		mounted.unmount();
+	});
+
+	it('posts the mount-time locale with the session', () => {
+		const { mounted, frameWindow } = mount({ locale: 'id' });
+
+		window.dispatchEvent(
+			new MessageEvent('message', {
+				origin: EDITOR_ORIGIN,
+				source: frameWindow,
+				data: { type: 'kilasflow:embed-ready', workflowId: 'wf-1' }
+			})
+		);
+
+		const [payload, targetOrigin] = postedTo(frameWindow)[0]!;
+		expect(payload).toMatchObject({ locale: 'id' });
+		// The locale travels with the token, so it must not widen the target.
 		expect(targetOrigin).toBe(EDITOR_ORIGIN);
 		mounted.unmount();
 	});

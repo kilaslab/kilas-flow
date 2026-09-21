@@ -4,6 +4,7 @@
 	import Plus from '@lucide/svelte/icons/plus';
 	import Trash2 from '@lucide/svelte/icons/trash-2';
 
+	import * as m from '$lib/paraglide/messages.js';
 	import type { EditorFlowNode } from '$lib/workflow-editor/document';
 	import { getCanvasActions } from '$lib/workflow-editor/canvas-actions';
 	import {
@@ -139,7 +140,7 @@
 					<button
 						type="button"
 						class="grid size-6 place-items-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring"
-						aria-label={`Rename ${node.name}`}
+						aria-label={m.canvas_node_rename_aria({ name: node.name })}
 						onclick={() => actions?.rename(node.id)}
 					>
 						<Pencil aria-hidden="true" class="size-3.5" />
@@ -147,7 +148,7 @@
 					<button
 						type="button"
 						class="grid size-6 place-items-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring"
-						aria-label={`Delete ${node.name}`}
+						aria-label={m.canvas_node_delete_aria({ name: node.name })}
 						onclick={() => actions?.remove(node.id)}
 					>
 						<Trash2 aria-hidden="true" class="size-3.5" />
@@ -198,7 +199,7 @@
 				data-import-diagnostic={importSeverity}
 				class="nodrag absolute -right-1 -top-1 grid h-4 min-w-4 place-items-center rounded-full border-2 border-background px-0.5 text-[0.5rem] font-bold {importBadgeClass}"
 				title={importIssues.map((issue) => `${DIAGNOSTIC_SEVERITY_LABELS[issue.severity]}: ${issue.reason}`).join(' · ')}
-				aria-label={`${diagnosticSummaryLabel(importIssues)} on ${node.name}. Open the import report.`}
+				aria-label={m.canvas_node_import_badge_aria({ summary: diagnosticSummaryLabel(importIssues), name: node.name })}
 				onclick={() => importReport?.().openReport()}
 			>
 				{importIssues.length}
@@ -213,7 +214,7 @@
 				<p class="truncate text-xs font-semibold leading-tight">{node.name}</p>
 			{/if}
 			{#if capsuleType}
-				<p class="mx-auto mt-0.5 w-fit truncate rounded-full border border-destructive/30 bg-destructive/10 px-1.5 py-px text-[0.625rem] font-medium leading-tight text-destructive" title={`Unsupported node imported from n8n as ${capsuleType}`}>Unsupported</p>
+				<p class="mx-auto mt-0.5 w-fit truncate rounded-full border border-destructive/30 bg-destructive/10 px-1.5 py-px text-[0.625rem] font-medium leading-tight text-destructive" title={m.canvas_node_unsupported_note({ type: capsuleType })}>{m.canvas_node_unsupported()}</p>
 			{/if}
 			{#if subtitle}
 				<p class="truncate pt-0.5 font-mono text-[0.625rem] leading-tight text-muted-foreground">{subtitle}</p>
@@ -226,7 +227,7 @@
 				id={port.name}
 				position={Position.Left}
 				style={`top: ${portOffset(index, mainInputs.length)}`}
-				aria-label={`${node.name} input ${portLabel(port)}`}
+				aria-label={m.canvas_node_input_aria({ name: node.name, port: portLabel(port) })}
 			>
 				<span class="kf-port"></span>
 			</Handle>
@@ -234,7 +235,7 @@
 
 		{#each mainOutputs as port, index (port.name)}
 			{@const top = portOffset(index, mainOutputs.length)}
-			<Handle type="source" id={port.name} position={Position.Right} style={`top: ${top}`} aria-label={`${node.name} output ${portLabel(port)}`}>
+			<Handle type="source" id={port.name} position={Position.Right} style={`top: ${top}`} aria-label={m.canvas_node_output_aria({ name: node.name, port: portLabel(port) })}>
 				<span class="kf-port"></span>
 			</Handle>
 			{#if showOutputLabels}
@@ -250,7 +251,7 @@
 					data-add-step={node.id}
 					class="nodrag absolute -translate-y-1/2 grid size-6 place-items-center rounded-md border border-dashed border-border bg-card text-muted-foreground transition-colors hover:border-[var(--node-accent)] hover:text-[var(--node-accent)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
 					style={`top: ${top}; left: calc(100% + ${showOutputLabels ? '3.25rem' : '1.5rem'})`}
-					aria-label={`Add a step after ${node.name}${showOutputLabels ? ` on ${portLabel(port)}` : ''}`}
+					aria-label={showOutputLabels ? m.canvas_node_add_after_port_aria({ name: node.name, port: portLabel(port) }) : m.canvas_node_add_after_aria({ name: node.name })}
 					onclick={() => actions?.addFrom(node.id, port.name)}
 				>
 					<Plus aria-hidden="true" class="size-3" />
@@ -266,7 +267,11 @@
 				id={port.name}
 				position={Position.Bottom}
 				style={`left: ${left}`}
-				aria-label={`${node.name} ${portLabel(port)} attachment${port.required && empty ? ', required and empty' : ''}`}
+				aria-label={
+					port.required && empty
+						? m.canvas_node_attachment_required_aria({ name: node.name, port: portLabel(port) })
+						: m.canvas_node_attachment_aria({ name: node.name, port: portLabel(port) })
+				}
 			>
 				<span class="kf-port kf-port-attachment"></span>
 			</Handle>
@@ -279,7 +284,7 @@
 					data-add-attachment={node.id}
 					class="nodrag absolute -translate-x-1/2 grid size-5 place-items-center rounded-full border border-dashed border-border bg-card text-muted-foreground transition-colors hover:border-[var(--node-accent)] hover:text-[var(--node-accent)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
 					style={`left: ${left}; top: calc(100% + 1.25rem)`}
-					aria-label={`Add a ${portLabel(port)} to ${node.name}`}
+					aria-label={m.canvas_node_attachment_add_aria({ name: node.name, port: portLabel(port) })}
 					onclick={() => actions?.addAttached(node.id, port.name, port.kind)}
 				>
 					<Plus aria-hidden="true" class="size-2.5" />
@@ -291,7 +296,7 @@
 			<span
 				class="pointer-events-none absolute -translate-x-1/2 max-w-16 truncate font-mono text-[0.625rem] text-muted-foreground"
 				style={`left: ${left}; top: calc(100% + ${row === 0 ? '0.125rem' : '2.5rem'})`}
-				title={`${portLabel(port)}${port.required && empty ? ' (required)' : ''}`}
+				title={port.required && empty ? m.canvas_node_port_required_title({ port: portLabel(port) }) : portLabel(port)}
 			>
 				{portLabel(port)}{#if port.required && empty}<span class="text-destructive" aria-hidden="true"> *</span>{/if}
 			</span>
@@ -303,7 +308,7 @@
 				id={port.name}
 				position={Position.Top}
 				style={`left: ${portOffset(index, attachmentOutputs.length)}`}
-				aria-label={`${node.name} provides ${portLabel(port)}`}
+				aria-label={m.canvas_node_attachment_provides_aria({ name: node.name, port: portLabel(port) })}
 			>
 				<span class="kf-port kf-port-attachment"></span>
 			</Handle>

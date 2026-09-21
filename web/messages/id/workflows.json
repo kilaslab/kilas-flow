@@ -1,0 +1,222 @@
+{
+  "workflows_page_title": "Alur kerja · KilasFlow",
+  "workflows_detail_page_title": "{name} · KilasFlow",
+  "workflows_in_workspace": "{count} di ruang kerja ini",
+  "workflows_subtitle": "Alur otomasi yang disediakan produk Anda",
+  "workflows_new": "Alur kerja baru",
+  "workflows_create_title": "Mulai alur kerja",
+  "workflows_create_description": "Beri nama drafnya sekarang. Langkah pertamanya bisa Anda susun di ruang kerja berikutnya.",
+  "workflows_name_label": "Nama alur kerja",
+  "workflows_name_placeholder": "mis. Memenuhi prospek baru",
+  "workflows_create_submit": "Buat alur kerja",
+  "workflows_creating": "Membuat…",
+  "workflows_cancel": "Batal",
+  "workflows_error_name_required": "Beri nama alur kerja ini untuk melanjutkan.",
+  "workflows_error_name_too_long": "Jaga nama tetap 255 karakter atau kurang.",
+  "workflows_activation_failed": "Gagal mengaktifkan: {message}",
+  "workflows_notices_heading": "{name} aktif, dengan beberapa hal yang masih harus diselesaikan",
+  "workflows_search_label": "Cari",
+  "workflows_search_placeholder": "Cari berdasarkan nama…",
+  "workflows_state_label": "Status",
+  "workflows_state_all": "Semua",
+  "workflows_state_active": "Aktif",
+  "workflows_state_draft": "Draf",
+  "workflows_sort_label": "Urutkan",
+  "workflows_sort_updated": "Terbaru diperbarui",
+  "workflows_sort_created": "Terbaru dibuat",
+  "workflows_sort_name": "Nama",
+  "workflows_selected": "{count} dipilih",
+  "workflows_activate": "Aktifkan",
+  "workflows_deactivate": "Nonaktifkan",
+  "workflows_activating": "Mengaktifkan…",
+  "workflows_deactivating": "Menonaktifkan…",
+  "workflows_delete": "Hapus",
+  "workflows_clear": "Bersihkan",
+  "workflows_and_more": "dan {count} lagi",
+  "workflows_bulk_delete_confirm": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "Hapus {count} alur kerja ({preview})? Tindakan ini tidak dapat dibatalkan.",
+        "countPlural=other": "Hapus {count} alur kerja ({preview})? Tindakan ini tidak dapat dibatalkan."
+      }
+    }
+  ],
+  "workflows_empty_title": "Bangun alur pertama Anda",
+  "workflows_empty_body": "Alur kerja dimulai sebagai draf pribadi, lalu berkembang menjadi otomasi yang dibutuhkan produk Anda.",
+  "workflows_empty_filtered_title": "Tidak ada alur kerja yang cocok",
+  "workflows_empty_filtered_body": "Longgarkan pencarian atau filter di atas, atau bersihkan untuk melihat semuanya lagi.",
+  "workflows_clear_filters": "Bersihkan pencarian dan filter",
+  "workflows_select_all": "Pilih semua alur kerja di halaman ini",
+  "workflows_select_row": "Pilih {name}",
+  "workflows_actions_for": "Tindakan untuk {name}",
+  "workflows_list_status": "{count} alur kerja · halaman {page} dari {pages}",
+  "workflows_page_status": "Halaman {page} dari {pages} · {count} alur kerja",
+  "workflows_previous": "Sebelumnya",
+  "workflows_next": "Berikutnya",
+  "workflows_revision_label": "Revisi",
+  "workflows_revision_abbrev": "r",
+  "workflows_updated_label": "Diperbarui",
+  "workflows_updated_today": "Hari ini",
+  "workflows_updated_yesterday": "Kemarin",
+  "workflows_updated_days_ago": "{count} h lalu",
+  "workflows_loading": "Memuat…",
+  "workflows_refresh": "Muat ulang",
+  "workflows_rename": "Ubah nama",
+  "workflows_renaming": "Mengubah nama…",
+  "workflows_duplicate": "Duplikat",
+  "workflows_duplicate_name": "Salinan dari {source}",
+  "workflows_rename_title": "Ubah nama alur kerja",
+  "workflows_rename_description": "Hanya namanya yang berubah — node dan revisi tetap.",
+  "workflows_delete_title": "Hapus {name}?",
+  "workflows_noun": "alur kerja",
+  "workflows_noun_capitalised": "Alur kerja",
+  "workflows_delete_active_note": "Alur kerja ini aktif — menghapusnya menghentikan pemicunya.",
+  "workflows_delete_description": "Eksekusinya tetap di riwayat. Tindakan ini tidak dapat dibatalkan.",
+  "workflows_deleting": "Menghapus…",
+  "workflows_import_n8n": "Impor n8n",
+  "workflows_import_title": "Impor dari n8n",
+  "workflows_imported_title": "{name} diimpor",
+  "workflows_import_result_description": "Hasil dari berkas ini. Baca laporannya, arahkan ulang webhook, lalu buka alur kerjanya.",
+  "workflows_import_description": "Bawa ekspor alur kerja n8n. Node yang tidak didukung datang sebagai placeholder yang terlihat, bukan pemetaan diam-diam.",
+  "workflows_import_another": "Impor lagi",
+  "workflows_open_in_editor": "Buka di editor",
+  "workflows_export_file": "Berkas ekspor",
+  "workflows_or_paste": "Atau tempel ekspornya",
+  "workflows_paste_disabled": "Menempel dinonaktifkan selama berkas dipilih — bersihkan berkas di atas untuk menempel sebagai gantinya.",
+  "workflows_optional": "(opsional)",
+  "workflows_name_default_placeholder": "Bawaannya nama di dalam berkas",
+  "workflows_importing": "Mengimpor…",
+  "workflows_import_submit": "Impor alur kerja",
+  "workflows_error_file_read": "Berkas itu tidak dapat dibaca. Coba lagi atau tempel ekspornya.",
+  "workflows_error_choose_source": "Pilih berkas ekspor n8n atau tempel di bawah untuk melanjutkan.",
+  "workflows_error_invalid_json_named": "{name} bukan JSON yang valid. Ekspor ulang alur kerja dari n8n lalu coba lagi.",
+  "workflows_error_invalid_json": "Teks itu bukan JSON yang valid. Tempel seluruh ekspor n8n lalu coba lagi.",
+  "workflows_report_blocking": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "Alur kerja ini tidak akan aktif sampai {count} masalah yang menghalangi diperbaiki.",
+        "countPlural=other": "Alur kerja ini tidak akan aktif sampai {count} masalah yang menghalangi diperbaiki."
+      }
+    }
+  ],
+  "workflows_report_blocking_note": "Masing-masing menyebutkan node yang harus dibuka di bawah.",
+  "workflows_report_ok": "Alur kerja ini akan aktif seperti hasil impor.",
+  "workflows_report_ok_note": "Baca entri lossy dan dropped lalu putuskan apakah perbedaannya penting.",
+  "workflows_webhook_addresses": "Alamat webhook",
+  "workflows_webhook_addresses_count": "Alamat webhook · {count}",
+  "workflows_webhook_addresses_note": "Setiap URL webhook berubah saat impor — awali dengan host Anda dan arahkan sistem pengirim ke alamat baru. Jalur lama tidak akan berfungsi.",
+  "workflows_no_webhooks": "Tidak ada pemicu di alur kerja ini yang memerlukan alamat publik.",
+  "workflows_copied": "Tersalin",
+  "workflows_copy_url": "Salin URL",
+  "workflows_copy_webhook_url_for": "Salin URL webhook untuk {name}",
+  "workflows_error_copy": "Penyalinan gagal di peramban ini — pilih alamat di atas dan salin secara manual.",
+  "workflows_open_named_in_editor": "Buka {name} di editor",
+  "workflows_import_empty_note": "Tidak ada masalah — semua di berkas ini terbawa dengan tepat.",
+  "workflows_report_title": "Laporan impor",
+  "workflows_imported_from": "{name} diimpor dari {source} pada {date}.",
+  "workflows_imported_from_no_date": "{name} diimpor dari {source}.",
+  "workflows_import_source_unknown": "alat lain",
+  "workflows_all_workflows": "Semua alur kerja",
+  "workflows_import_report_count": "Laporan impor · {count}",
+  "workflows_imported_from_n8n": "Diimpor dari n8n",
+  "workflows_editor_loading": "Memuat editor alur kerja…",
+  "workflows_editor_load_failed": "Editor alur kerja tidak dapat dimuat",
+  "workflows_editor_stale": "Editor ini mungkin sudah usang — pemuatan ulang terakhir gagal: {message}",
+  "workflows_newer_revision": "Revisi yang lebih baru ({revision}) disimpan di tempat lain saat Anda mengedit.",
+  "workflows_reload_theirs": "Muat ulang milik mereka",
+  "workflows_keep_mine": "Pertahankan milik saya",
+  "workflows_unsaved_confirm": "Alur kerja ini punya perubahan yang belum disimpan. Tinggalkan dan buang?",
+  "workflows_run_queued": "Proses diantrekan…",
+  "workflows_run_succeeded": "Proses berhasil.",
+  "workflows_run_status": "Proses {status}…",
+  "workflows_execution_status": "Eksekusi {status}.",
+  "workflows_run_watch_stopped": "Editor ini berhenti memantau proses yang masih berjalan. Periksa riwayat eksekusi untuk keadaan akhirnya.",
+  "workflows_export_n8n": "Ekspor sebagai n8n JSON",
+  "workflows_export_title": "Ekspor {name} sebagai n8n JSON",
+  "workflows_export_description": "Bentuk alur kerja ini di luar KilasFlow. Baca apa yang tidak terbawa sebelum mengunduh.",
+  "workflows_export_converting": "Mengonversi revisi terbaru…",
+  "workflows_close": "Tutup",
+  "workflows_export_mappings_prefix": "Instansi ini mengumumkan {count} pemetaan tipe node. Daftar langsungnya ikut di setiap respons ekspor di bawah",
+  "workflows_mappings_field": "supportedMappings",
+  "workflows_export_mappings_suffix": "— jika daftar itu dan panduan mana pun berbeda, instansi yang benar.",
+  "workflows_download_n8n": "Unduh n8n JSON",
+  "workflows_export_empty_note": "Tidak ada yang hilang — setiap node dan koneksi di alur kerja ini punya padanan n8n.",
+  "workflows_diagnostics_caption": "Diagnostik impor {heading}",
+  "workflows_diagnostics_label": "Diagnostik {heading}",
+  "workflows_column_severity": "Tingkat",
+  "workflows_column_node": "Node",
+  "workflows_column_source_type": "Tipe sumber",
+  "workflows_column_field": "Bidang",
+  "workflows_column_what_happened": "Apa yang terjadi",
+  "workflows_import_issues": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "masalah impor",
+        "countPlural=other": "masalah impor"
+      }
+    }
+  ],
+  "workflows_severity_blocking": "Menghalangi",
+  "workflows_severity_blocking_meaning": "Alur kerja tidak dapat berjalan seperti hasil impor.",
+  "workflows_severity_blocking_action": "Perbaiki dulu. Alur kerja tidak akan aktif sampai diperbaiki.",
+  "workflows_severity_lossy": "Berbeda",
+  "workflows_severity_lossy_meaning": "Elemennya terbawa, tetapi berbeda.",
+  "workflows_severity_lossy_action": "Baca dan putuskan. Alur kerjanya tetap aktif.",
+  "workflows_severity_dropped": "Hilang",
+  "workflows_severity_dropped_meaning": "Elemennya tidak terbawa sama sekali.",
+  "workflows_severity_dropped_action": "Putuskan apakah Anda memerlukannya.",
+  "workflows_unexpected_workflow_list": "Respons daftar alur kerja tidak terduga",
+  "workflows_unexpected_workflow_create": "Respons pembuatan alur kerja tidak terduga",
+  "workflows_unexpected_workflow": "Respons alur kerja tidak terduga",
+  "workflows_unexpected_workflow_rename": "Respons ubah nama alur kerja tidak terduga",
+  "workflows_unexpected_workflow_duplicate": "Respons duplikasi alur kerja tidak terduga",
+  "workflows_unexpected_workflow_delete": "Respons penghapusan alur kerja tidak terduga",
+  "workflows_unexpected_workflow_activate": "Respons aktivasi alur kerja tidak terduga",
+  "workflows_unexpected_workflow_deactivate": "Respons penonaktifan alur kerja tidak terduga",
+  "workflows_unexpected_bulk_activate": "Respons aktivasi massal tidak terduga",
+  "workflows_unexpected_bulk_deactivate": "Respons penonaktifan massal tidak terduga",
+  "workflows_unexpected_workflow_save": "Respons penyimpanan alur kerja tidak terduga",
+  "workflows_unexpected_workflow_run": "Respons menjalankan alur kerja tidak terduga",
+  "workflows_unexpected_execution": "Respons eksekusi tidak terduga",
+  "workflows_unexpected_node_catalogue": "Respons katalog node tidak terduga",
+  "workflows_unexpected_credential_list": "Respons daftar kredensial tidak terduga",
+  "workflows_unexpected_import": "Respons impor tidak terduga",
+  "workflows_unexpected_export": "Respons ekspor tidak terduga",
+  "workflows_count_of": "{shown} dari {total} workflow",
+  "workflows_count_of_one": [
+    {
+      "declarations": [
+        "input total",
+        "local totalPlural = total: plural"
+      ],
+      "selectors": [
+        "totalPlural"
+      ],
+      "match": {
+        "totalPlural=other": "{total} workflow"
+      }
+    }
+  ],
+  "workflows_page_of": "halaman {page} dari {pages}"
+}

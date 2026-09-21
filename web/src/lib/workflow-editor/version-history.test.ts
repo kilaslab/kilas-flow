@@ -1,14 +1,20 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import type { WorkflowVersionSummaryResource } from '$lib/api/generated/models';
+import { setLocale } from '$lib/i18n/locale.svelte';
+import * as m from '$lib/paraglide/messages.js';
+import type { ConnectionChange } from '$lib/workflow-editor/history-diff';
 import {
+	connectionChangeSentence,
 	eventRevisionLabel,
 	publishConfirmation,
+	publishEventActionLabel,
 	publishEventSentence,
 	publishRefusal,
 	relativeTime,
 	restoreConfirmation,
 	restoreRefusal,
+	settingChangeSentence,
 	versionAuthor,
 	versionRoles,
 	versionTitle
@@ -26,6 +32,17 @@ function summary(overrides: Partial<WorkflowVersionSummaryResource> = {}): Workf
 		...overrides
 	};
 }
+
+/** One connection difference, as `diffWorkflowDocuments` reports it. */
+const connection: ConnectionChange = {
+	connectionID: 'c-1',
+	status: 'added',
+	kind: 'main',
+	sourceName: 'Webhook',
+	targetName: 'Set',
+	sourcePort: 'out',
+	targetPort: 'in'
+};
 
 describe('versionRoles', () => {
 	it('marks the newest revision as the draft', () => {
@@ -187,5 +204,51 @@ describe('eventRevisionLabel', () => {
 		// The audit row deliberately carries no foreign key, so evidence outlives
 		// the version it describes.
 		expect(eventRevisionLabel('v-gone', [summary({ id: 'v-1' })])).toBe('A pruned revision');
+	});
+});
+
+describe('the Indonesian catalog', () => {
+	// Every helper above is a pure function over the catalogs, so switching the
+	// locale is the only thing that proves their sentences are looked up rather
+	// than baked in as English constants with a translation bolted on beside
+	// them. The locale is put back afterwards because the module owns it for the
+	// whole worker.
+	afterEach(() => {
+		setLocale('en');
+	});
+
+	it('renders the confirmations and the timeline from the id catalog', () => {
+		expect(setLocale('id')).toBe(true);
+
+		expect(restoreConfirmation(summary({ revision: 4 }))).toBe(
+			'Revisi 4 akan disimpan sebagai revisi baru di atas riwayat. Tidak ada yang dihapus — setiap revisi, termasuk yang ada di kanvas sekarang, tetap ada di daftar.'
+		);
+		expect(publishConfirmation(summary({ revision: 4, label: 'Rilis stabil' }))).toContain('Rilis stabil akan menjadi versi yang dijalankan trafik produksi.');
+		expect(publishEventSentence({ action: 'published' }, 'Revisi 4')).toBe('Revisi 4 mulai melayani trafik');
+		expect(publishEventActionLabel({ action: 'unpublished' })).toBe('penerbitan dibatalkan');
+	});
+
+	it('pluralises the differences count and names the diff rows through the catalog arms, in both locales', () => {
+		expect(m.versions_differences({ count: 1 })).toBe('1 difference');
+		expect(m.versions_differences({ count: 3 })).toBe('3 differences');
+		expect(m.versions_differences_cosmetic({ count: 3 })).toBe('3 differences, all of them cosmetic — only where nodes sit.');
+		expect(connectionChangeSentence(connection)).toBe('added — Webhook → Set');
+		expect(settingChangeSentence({ key: 'timeout', status: 'changed', before: 1, after: 2 })).toBe('timeout changed');
+
+		expect(setLocale('id')).toBe(true);
+
+		expect(m.versions_differences({ count: 1 })).toBe('1 perbedaan');
+		expect(m.versions_differences_cosmetic({ count: 1 })).toBe('1 perbedaan, semuanya kosmetik — hanya soal posisi node.');
+		expect(connectionChangeSentence(connection)).toBe('ditambahkan — Webhook → Set');
+		expect(settingChangeSentence({ key: 'timeout', status: 'changed', before: 1, after: 2 })).toBe('timeout diubah');
+	});
+
+	it('reads the revision title, the badges and the relative time from the catalog too', () => {
+		expect(setLocale('id')).toBe(true);
+
+		expect(versionTitle(summary({ revision: 12 }))).toBe('Revisi 12');
+		expect(versionRoles(summary({ draft: true, published: true })).map((role) => role.label)).toEqual(['Draf', 'Diterbitkan']);
+		expect(relativeTime('2026-09-05T11:59:40Z', { now: new Date('2026-09-05T12:00:00Z'), locale: 'en-US' })).toBe('baru saja');
+		expect(restoreRefusal({ canRestore: true, dirty: true, isDraft: false })).toMatch(/belum disimpan/);
 	});
 });

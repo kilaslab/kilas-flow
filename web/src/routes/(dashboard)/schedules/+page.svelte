@@ -13,6 +13,7 @@
 	import { Input } from '$lib/components/ui/input';
 	import { DRAIN_PAGE_LIMIT, drainPages, headerCursor, readPage, type CursorPage } from '$lib/dashboard/cursor-page';
 	import { RequestGuard } from '$lib/dashboard/request-guard';
+	import * as m from '$lib/paraglide/messages.js';
 	import { formatTimestamp } from '$lib/workflow-editor/execution';
 
 	// Both lists are paged by the server, so one request is only the first page
@@ -29,14 +30,14 @@
 	/** One page of the schedule listing: rows from the body, cursor from the header. */
 	async function fetchSchedulePage(cursor: string): Promise<CursorPage<ScheduleResource>> {
 		const response = await listSchedules({ limit: DRAIN_PAGE_LIMIT, cursor: cursor || undefined });
-		if (response.status !== 200) throw new Error('Unexpected schedule-list response');
+		if (response.status !== 200) throw new Error(m.schedules_error_list());
 		return readPage({ items: response.data, nextCursor: headerCursor(response.headers) });
 	}
 
 	/** One page of the workflow listing, read only for the names and the picker. */
 	async function fetchWorkflowPage(cursor: string): Promise<CursorPage<WorkflowSummary>> {
 		const response = await listWorkflows({ limit: DRAIN_PAGE_LIMIT, cursor: cursor || undefined });
-		if (response.status !== 200) throw new Error('Unexpected workflow-list response');
+		if (response.status !== 200) throw new Error(m.schedules_error_workflows());
 		return readPage({ items: response.data, nextCursor: headerCursor(response.headers) });
 	}
 
@@ -95,7 +96,7 @@
 	function inactiveWarning(schedule: ScheduleResource): string | null {
 		if (!schedule.active) return null;
 		const workflow = workflows.find((candidate) => candidate.id === schedule.workflowId);
-		if (workflow && !workflow.active) return 'This workflow is not activated, so this schedule will not fire until it is.';
+		if (workflow && !workflow.active) return m.schedules_inactive_warning();
 		return null;
 	}
 
@@ -110,13 +111,13 @@
 
 	async function save() {
 		if (!workflowID) {
-			formError = 'Choose the workflow this schedule runs.';
+			formError = m.schedules_error_choose_workflow();
 			return;
 		}
 		if (!editing) {
 			const workflow = workflows.find((candidate) => candidate.id === workflowID);
 			if (workflow && !workflow.active) {
-				formError = 'That workflow is not activated — activate it first, or the schedule will pause without firing.';
+				formError = m.schedules_error_inactive_workflow();
 				return;
 			}
 		}
@@ -125,7 +126,7 @@
 		try {
 			const body = { workflowId: workflowID, cron: cron.trim(), active };
 			const response = editing ? await updateSchedule(editing.id, body) : await createSchedule(body);
-			if (response.status !== 200 && response.status !== 201) throw new Error('Unexpected schedule-save response');
+			if (response.status !== 200 && response.status !== 201) throw new Error(m.schedules_error_save());
 			await loadSchedules();
 			editorOpen = false;
 		} catch (error) {
@@ -137,7 +138,8 @@
 
 	async function remove(schedule: ScheduleResource) {
 		if (triggerOwned(schedule)) return;
-		if (!confirm(`Delete the schedule ${schedule.cron} for ${workflowNames.get(schedule.workflowId) ?? schedule.workflowId}? It will stop firing.`)) return;
+		const name = workflowNames.get(schedule.workflowId) ?? schedule.workflowId;
+		if (!confirm(m.schedules_confirm_delete({ cron: schedule.cron, name }))) return;
 		try {
 			await deleteSchedule(schedule.id);
 			await loadSchedules();
@@ -148,26 +150,26 @@
 </script>
 
 <svelte:head>
-	<title>Schedules · KilasFlow</title>
+	<title>{m.schedules_page_title()}</title>
 </svelte:head>
 
 <section class="mx-auto w-full max-w-4xl">
 	<div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 		<div class="max-w-xl">
-			<h1 class="text-base font-semibold tracking-tight">Schedules</h1>
+			<h1 class="text-base font-semibold tracking-tight">{m.nav_schedules()}</h1>
 			<p class="text-xs text-muted-foreground">
-				Run an active workflow on a cron expression. Times are evaluated in UTC.
+				{m.schedules_description()}
 			</p>
 		</div>
 		<Button onclick={openCreate} disabled={loading} class="w-full sm:w-auto sm:shrink-0">
 			<CalendarClock aria-hidden="true" />
-			New schedule
+			{m.schedules_new()}
 		</Button>
 	</div>
 
 	<div class="mt-4">
 		<ListStates
-			label="Schedules"
+			label={m.nav_schedules()}
 			loading={loading}
 			failed={listFailure !== null}
 			error={listFailure}
@@ -175,34 +177,33 @@
 			rows={2}
 			onRetry={() => void loadSchedules()}
 			emptyIcon={CalendarClock}
-			emptyTitle="No schedules yet"
-			emptyBody="Add one to run an activated workflow on a recurring cadence."
+			emptyTitle={m.schedules_empty_title()}
+			emptyBody={m.schedules_empty_body()}
 		>
-			<ul aria-label="Schedules" class="divide-y divide-border overflow-hidden rounded-lg border border-border">
+			<ul aria-label={m.nav_schedules()} class="divide-y divide-border overflow-hidden rounded-lg border border-border">
 				{#each rows as schedule (schedule.id)}
 					<li class="flex min-h-11 items-center gap-3 px-3 py-1.5">
 						<div class="min-w-0 flex-1">
 							<p class="truncate text-sm font-medium" title={workflowNames.get(schedule.workflowId) ?? schedule.workflowId}>{workflowNames.get(schedule.workflowId) ?? schedule.workflowId}</p>
-							<p class="truncate text-xs text-muted-foreground" title={`${schedule.cron} · Next ${schedule.nextRunAt ?? '—'} · Last ${schedule.lastRunAt ?? '—'}`}>
+							<p class="truncate text-xs text-muted-foreground" title={`${schedule.cron} ${m.schedules_row_timing({ next: schedule.nextRunAt ?? '—', last: schedule.lastRunAt ?? '—' })}`}>
 								<code class="font-mono">{schedule.cron}</code>
-								· Next {formatTimestamp(schedule.nextRunAt)}
-								· Last {formatTimestamp(schedule.lastRunAt)}
+								{m.schedules_row_timing({ next: formatTimestamp(schedule.nextRunAt), last: formatTimestamp(schedule.lastRunAt) })}
 							</p>
 							{#if triggerOwned(schedule)}
-								<p class="text-[0.625rem] text-muted-foreground">Managed by a Schedule Trigger node — <a class="underline underline-offset-2" href={`/app/workflows/${schedule.workflowId}`}>open in editor</a>.</p>
+								<p class="text-[0.625rem] text-muted-foreground">{m.schedules_trigger_managed()} <a class="underline underline-offset-2" href={`/app/workflows/${schedule.workflowId}`}>{m.schedules_open_in_editor()}</a>.</p>
 							{:else if inactiveWarning(schedule)}
 								<p class="text-[0.625rem] text-warning" role="note">{inactiveWarning(schedule)}</p>
 							{/if}
 						</div>
 						<span class="shrink-0 rounded-full border px-2 py-0.5 text-xs font-medium {schedule.active ? 'border-success/30 bg-success/15 text-success' : 'border-border bg-muted text-muted-foreground'}">
-							{schedule.active ? 'Active' : 'Paused'}
+							{schedule.active ? m.schedules_active() : m.schedules_paused()}
 						</span>
 						{#if triggerOwned(schedule)}
-							<Button variant="outline" size="sm" disabled title="Managed by a Schedule Trigger node — edit it on the canvas">Edit</Button>
-							<Button variant="ghost" size="sm" disabled title="Managed by a Schedule Trigger node — delete it on the canvas" aria-label={`Delete schedule ${schedule.cron}`}><Trash2 aria-hidden="true" class="size-4 text-destructive" /></Button>
+							<Button variant="outline" size="sm" disabled title={m.schedules_trigger_edit_title()}>{m.schedules_edit()}</Button>
+							<Button variant="ghost" size="sm" disabled title={m.schedules_trigger_delete_title()} aria-label={m.schedules_delete_aria({ cron: schedule.cron })}><Trash2 aria-hidden="true" class="size-4 text-destructive" /></Button>
 						{:else}
-							<Button variant="outline" size="sm" onclick={() => openEdit(schedule)}>Edit</Button>
-							<Button variant="ghost" size="sm" aria-label={`Delete schedule ${schedule.cron}`} onclick={() => void remove(schedule)}>
+							<Button variant="outline" size="sm" onclick={() => openEdit(schedule)}>{m.schedules_edit()}</Button>
+							<Button variant="ghost" size="sm" aria-label={m.schedules_delete_aria({ cron: schedule.cron })} onclick={() => void remove(schedule)}>
 								<Trash2 aria-hidden="true" class="size-4 text-destructive" />
 							</Button>
 						{/if}
@@ -214,33 +215,33 @@
 	<Dialog.Root bind:open={editorOpen}>
 		<Dialog.Content aria-describedby="schedule-form-description">
 			<Dialog.Header>
-				<Dialog.Title>{editing ? 'Edit schedule' : 'New schedule'}</Dialog.Title>
+				<Dialog.Title>{editing ? m.schedules_edit_title() : m.schedules_new()}</Dialog.Title>
 				<Dialog.Description id="schedule-form-description">
-					The workflow must be activated before a schedule can start it.
+					{m.schedules_form_description()}
 				</Dialog.Description>
 			</Dialog.Header>
 			<form class="grid gap-4" onsubmit={(event) => { event.preventDefault(); void save(); }}>
 				<div class="grid gap-2">
-					<label for="schedule-workflow" class="text-sm font-medium">Workflow</label>
+					<label for="schedule-workflow" class="text-sm font-medium">{m.schedules_field_workflow()}</label>
 					<select id="schedule-workflow" bind:value={workflowID} disabled={Boolean(editing)} class="h-7 rounded-md border border-input bg-background px-2 text-xs disabled:opacity-60">
 						{#each workflows as workflow (workflow.id)}
-							<option value={workflow.id}>{workflow.name}{workflow.active ? '' : ' (not activated)'}</option>
+							<option value={workflow.id}>{workflow.active ? workflow.name : m.schedules_option_not_activated({ name: workflow.name })}</option>
 						{/each}
 					</select>
 				</div>
 				<div class="grid gap-2">
-					<label for="schedule-cron" class="text-sm font-medium">Cron expression</label>
+					<label for="schedule-cron" class="text-sm font-medium">{m.schedules_field_cron()}</label>
 					<Input id="schedule-cron" bind:value={cron} spellcheck={false} class="font-mono" />
-					<p class="text-xs leading-5 text-muted-foreground">Five fields, UTC. For example <code class="font-mono">0 9 * * 1-5</code> is weekdays at 09:00.</p>
+					<p class="text-xs leading-5 text-muted-foreground">{m.schedules_cron_hint_prefix()} <code class="font-mono">0 9 * * 1-5</code> {m.schedules_cron_hint_suffix()}</p>
 				</div>
 				<label class="flex h-7 items-center gap-2 rounded-md border border-input px-2 text-xs">
 					<input type="checkbox" bind:checked={active} />
-					<span>Active</span>
+					<span>{m.schedules_active()}</span>
 				</label>
 				{#if formError}<p role="alert" class="text-sm text-destructive">{formError}</p>{/if}
 				<Dialog.Footer>
-					<Button type="button" variant="outline" onclick={() => (editorOpen = false)} disabled={saving}>Cancel</Button>
-					<Button type="submit" disabled={saving}>{saving ? 'Saving…' : 'Save schedule'}</Button>
+					<Button type="button" variant="outline" onclick={() => (editorOpen = false)} disabled={saving}>{m.schedules_cancel()}</Button>
+					<Button type="submit" disabled={saving}>{saving ? m.schedules_saving() : m.schedules_save()}</Button>
 				</Dialog.Footer>
 			</form>
 		</Dialog.Content>

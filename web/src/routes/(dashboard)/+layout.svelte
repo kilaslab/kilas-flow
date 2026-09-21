@@ -10,8 +10,11 @@
 	import { getMe, logout } from '$lib/api/generated/auth/auth';
 	import type { PrincipalResource } from '$lib/api/generated/models';
 	import DashboardNav from '$lib/components/dashboard/dashboard-nav.svelte';
+	import LocaleSwitcher from '$lib/components/dashboard/locale-switcher.svelte';
 	import { Button } from '$lib/components/ui/button';
 	import * as Sheet from '$lib/components/ui/sheet';
+	import { sectionForPath, sectionLabel } from '$lib/dashboard/nav-sections';
+	import * as m from '$lib/paraglide/messages.js';
 	let { children } = $props();
 	let principal = $state<PrincipalResource | null>(null);
 	let mobileNavOpen = $state(false);
@@ -56,14 +59,9 @@
 		}
 	}
 
-	const sectionTitle = $derived.by(() => {
-		if (page.url.pathname.startsWith('/executions')) return 'Executions';
-		if (page.url.pathname.startsWith('/schedules')) return 'Schedules';
-		if (page.url.pathname.startsWith('/credentials')) return 'Credentials';
-		if (page.url.pathname.startsWith('/datastores')) return 'Datastores';
-		if (page.url.pathname.startsWith('/settings')) return 'Settings';
-		return 'Workflows';
-	});
+	// The header title and the sidebar read one registration, so a section can
+	// no longer be named in the rail and titled as something else here.
+	const sectionTitle = $derived(sectionLabel(sectionForPath(page.url.pathname)));
 	const editorRoute = $derived(/^\/app\/workflows\/[^/]+$/.test(page.url.pathname));
 </script>
 
@@ -97,8 +95,8 @@
 				type="button"
 				onclick={toggleSidebar}
 				aria-expanded={!sidebarCollapsed}
-				aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-				title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+				aria-label={sidebarCollapsed ? m.common_expand_sidebar() : m.common_collapse_sidebar()}
+				title={sidebarCollapsed ? m.common_expand_sidebar() : m.common_collapse_sidebar()}
 				class="grid size-7 place-items-center rounded-md text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sidebar-ring"
 			>
 				{#if sidebarCollapsed}
@@ -111,6 +109,9 @@
 		<div class="flex-1 {sidebarCollapsed ? 'px-1.5' : 'px-2'} py-2">
 			<DashboardNav collapsed={sidebarCollapsed} />
 		</div>
+		<div class="border-t border-sidebar-border {sidebarCollapsed ? 'px-1.5' : 'px-2'} py-2">
+			<LocaleSwitcher />
+		</div>
 	</aside>
 
 	<section class="min-w-0">
@@ -118,12 +119,12 @@
 			<Sheet.Root bind:open={mobileNavOpen}>
 				<Sheet.Trigger>
 					{#snippet child({ props })}
-						<Button {...props} variant="ghost" size="icon" class="lg:hidden" aria-label="Open workspace navigation">
+						<Button {...props} variant="ghost" size="icon" class="lg:hidden" aria-label={m.common_open_workspace_navigation()}>
 							<Menu aria-hidden="true" />
 						</Button>
 					{/snippet}
 				</Sheet.Trigger>
-				<Sheet.Content side="left" class="w-[min(19rem,86vw)] p-0" aria-label="Workspace navigation">
+				<Sheet.Content side="left" class="w-[min(19rem,86vw)] p-0" aria-label={m.common_workspace_navigation()}>
 					<div class="flex h-11 items-center border-b border-border px-3">
 						<a href="/app/workflows" class="flex items-center gap-2 rounded-md focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring">
 							<span aria-hidden="true" class="grid size-5 place-items-center rounded bg-primary text-[0.625rem] font-bold tracking-tight text-primary-foreground">K</span>
@@ -133,6 +134,9 @@
 					<div class="px-2 py-2">
 						<DashboardNav onNavigate={() => (mobileNavOpen = false)} />
 					</div>
+					<div class="border-t border-border px-2 py-2">
+						<LocaleSwitcher />
+					</div>
 				</Sheet.Content>
 			</Sheet.Root>
 
@@ -140,10 +144,10 @@
 				<p class="truncate text-[0.8125rem] font-semibold tracking-tight">{sectionTitle}</p>
 			</div>
 			{#if principal}
-				<span class="hidden max-w-44 truncate text-xs text-muted-foreground sm:inline" title={principal.email ?? principal.name ?? principal.label ?? 'Signed in'}>{principal.email ?? principal.name ?? principal.label ?? 'Signed in'}</span>
+				<span class="hidden max-w-44 truncate text-xs text-muted-foreground sm:inline" title={principal.email ?? principal.name ?? principal.label ?? m.common_signed_in()}>{principal.email ?? principal.name ?? principal.label ?? m.common_signed_in()}</span>
 				<Button variant="ghost" size="sm" class="h-7 shrink-0 px-2 text-xs" onclick={() => void signOut()}>
 					<LogOut aria-hidden="true" class="size-3.5" />
-					Sign out
+					{m.common_sign_out()}
 				</Button>
 			{/if}
 		</header>

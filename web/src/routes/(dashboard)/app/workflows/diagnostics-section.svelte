@@ -1,5 +1,6 @@
 <script lang="ts">
 	import * as Table from '$lib/components/ui/table';
+	import * as m from '$lib/paraglide/messages.js';
 
 	/**
 	 * One import or export diagnostic, normalised so both envelopes render
@@ -25,29 +26,30 @@
 	} = $props();
 
 	// Blocking first: it decides whether the workflow runs, the other two
-	// decide how closely. The words match the migration guide, which defines
-	// this vocabulary once for both the screen and the page.
+	// decide how closely. The label and its two sentences are message
+	// references rather than strings so that a locale switch reaches them;
+	// the vocabulary still matches the migration guide's.
 	const order = ['blocking', 'lossy', 'dropped'] as const;
 	const meta: Record<
 		(typeof order)[number],
-		{ heading: string; meaning: string; action: string; badge: string }
+		{ heading: () => string; meaning: () => string; action: () => string; badge: string }
 	> = {
 		blocking: {
-			heading: 'Blocking',
-			meaning: 'The workflow cannot run as imported.',
-			action: 'Fix it. The workflow will not activate until you do.',
+			heading: m.workflows_severity_blocking,
+			meaning: m.workflows_severity_blocking_meaning,
+			action: m.workflows_severity_blocking_action,
 			badge: 'border-destructive/30 bg-destructive/10 text-destructive'
 		},
 		lossy: {
-			heading: 'Lossy',
-			meaning: 'The element was carried, but differently.',
-			action: 'Read it and decide. The workflow will activate.',
+			heading: m.workflows_severity_lossy,
+			meaning: m.workflows_severity_lossy_meaning,
+			action: m.workflows_severity_lossy_action,
 			badge: 'border-warning/40 bg-warning/10 text-warning'
 		},
 		dropped: {
-			heading: 'Dropped',
-			meaning: 'The element was not carried at all.',
-			action: 'Decide whether you need it.',
+			heading: m.workflows_severity_dropped,
+			meaning: m.workflows_severity_dropped_meaning,
+			action: m.workflows_severity_dropped_action,
 			badge: 'border-border bg-muted text-muted-foreground'
 		}
 	};
@@ -59,7 +61,7 @@
 	);
 
 	function nodeLabel(row: DiagnosticRow): string {
-		return row.nodeName || row.nodeId || 'Workflow';
+		return row.nodeName || row.nodeId || m.workflows_noun_capitalised();
 	}
 
 	function typeLabel(row: DiagnosticRow): string {
@@ -76,31 +78,31 @@
 	<div class="grid gap-4">
 		{#each groups as group (group.severity)}
 			{@const info = meta[group.severity]}
-			<section aria-label={`${info.heading} diagnostics`}>
+			<section aria-label={m.workflows_diagnostics_label({ heading: info.heading() })}>
 				<div class="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
 					<h3 class="text-xs font-semibold">
-						{info.heading}
+						{info.heading()}
 						<span class="font-normal text-muted-foreground">· {group.rows.length}</span>
 					</h3>
 					<p class="w-full text-xs leading-5 text-muted-foreground">
-						{info.meaning}
-						{info.action}
+						{info.meaning()}
+						{info.action()}
 					</p>
 				</div>
 				<div class="mt-1.5 overflow-x-auto rounded-lg border border-border">
 					<Table.Root class="min-w-[36rem]">
-						<Table.Caption class="sr-only">{info.heading} import diagnostics</Table.Caption>
+						<Table.Caption class="sr-only">{m.workflows_diagnostics_caption({ heading: info.heading() })}</Table.Caption>
 						<Table.Header class="[&_th]:h-7 [&_th]:px-3 [&_th]:text-xs [&_th]:uppercase [&_th]:tracking-wide [&_th]:text-muted-foreground">
 							<Table.Row>
-								<Table.Head scope="col">Severity</Table.Head>
-								<Table.Head scope="col">Node</Table.Head>
-								<Table.Head scope="col">Source type</Table.Head>
-								<Table.Head scope="col">Field</Table.Head>
-								<Table.Head scope="col">What happened</Table.Head>
+								<Table.Head scope="col">{m.workflows_column_severity()}</Table.Head>
+								<Table.Head scope="col">{m.workflows_column_node()}</Table.Head>
+								<Table.Head scope="col">{m.workflows_column_source_type()}</Table.Head>
+								<Table.Head scope="col">{m.workflows_column_field()}</Table.Head>
+								<Table.Head scope="col">{m.workflows_column_what_happened()}</Table.Head>
 							</Table.Row>
 						</Table.Header>
 						<Table.Body>
-							{#each group.rows as row, index (`${group.severity}-${row.nodeId ?? row.nodeName ?? 'workflow'}-${row.field ?? ''}-${index}`)}
+							{#each group.rows as row, index (`${group.severity}-${row.nodeId ?? row.nodeName ?? ''}-${row.field ?? ''}-${index}`)}
 								<Table.Row>
 									<Table.Cell class="whitespace-nowrap px-3 py-2">
 										<span class={`inline-flex items-center rounded-full border px-2 py-0.5 text-[0.6875rem] font-medium ${info.badge}`}>{row.severity}</span>

@@ -1,0 +1,16 @@
+{
+	"embed_page_title": "Alur kerja tersemat",
+	"embed_page_title_branded": "Alur kerja {brand}",
+	"embed_waiting": "Menunggu aplikasi host…",
+	"embed_could_not_open": "Editor ini tidak dapat dibuka",
+	"embed_no_session": "Tidak ada sesi sematan yang diberikan.",
+	"embed_not_session_message": "Bukan pesan sesi sematan.",
+	"embed_session_incomplete": "Host mengirim sesi sematan yang tidak lengkap.",
+	"embed_session_other_workflow": "Sesi sematan ini untuk alur kerja yang berbeda.",
+	"embed_host_only": "Editor ini hanya tersedia di dalam aplikasi host.",
+	"embed_page_unidentified": "Halaman penyemat tidak dapat dikenali.",
+	"embed_no_session_from_host": "Host tidak memberikan sesi sematan.",
+	"embed_workflow_load_failed": "Alur kerja ini tidak dapat dimuat",
+	"embed_loading_workflow": "Memuat alur kerja…",
+	"embed_run_abandoned": "Editor berhenti memantau eksekusi yang masih berjalan."
+}

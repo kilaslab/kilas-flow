@@ -1,0 +1,27 @@
+{
+	"common_save": "Save",
+	"common_try_again": "Try again",
+	"common_sign_out": "Sign out",
+	"common_signed_in": "Signed in",
+	"common_language": "Language",
+	"common_expand_sidebar": "Expand sidebar",
+	"common_collapse_sidebar": "Collapse sidebar",
+	"common_open_workspace_navigation": "Open workspace navigation",
+	"common_workspace_navigation": "Workspace navigation",
+	"common_loading": "Loading {label}…",
+	"common_load_failed": "{label} could not be loaded",
+	"common_load_incomplete": "{label} may be incomplete. {message}",
+	"common_item_count": [
+		{
+			"declarations": ["input count", "local countPlural = count: plural"],
+			"selectors": ["countPlural"],
+			"match": {
+				"countPlural=one": "1 item",
+				"countPlural=other": "{count} items"
+			}
+		}
+	],
+	"common_request_failed": "The request could not be completed.",
+	"common_list_cursor_stalled": "The list cursor stopped advancing before the last page",
+	"common_close": "Close"
+}

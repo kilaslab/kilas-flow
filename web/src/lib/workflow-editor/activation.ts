@@ -1,5 +1,6 @@
 import type { ActivationNotice, Node } from '$lib/api/generated/models';
 import { ApiError, message } from '$lib/api/http';
+import * as m from '$lib/paraglide/messages.js';
 
 /**
  * Reading the activation answer.
@@ -102,7 +103,7 @@ export function copyableURL(text: string): string | null {
  */
 export function activationFailure(error: unknown): string {
 	if (error instanceof ApiError && error.status === 502) {
-		return `A trigger could not register with its service, so the workflow was left inactive — ${message(error)}`;
+		return m.editor_activation_trigger_failed({ error: message(error) });
 	}
 	return message(error);
 }

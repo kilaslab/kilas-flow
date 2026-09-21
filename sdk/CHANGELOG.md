@@ -14,6 +14,11 @@ until the server surface it targets is considered stable; see `README.md`.
   and answers with the counts it removed, per table. It needs the operator
   credential, it is irreversible, and it is idempotent: send it again until it
   reports zeros.
+- **Additive**: `locale` on `MountOptions` — the language tag the embedded
+  editor renders its own chrome in, posted with the session in the handshake.
+  The editor validates it against the catalog list it ships and ignores a tag
+  it does not carry, so an unknown locale leaves the editor in its base locale
+  rather than failing the handshake.
 
 ## 0.1.0
 

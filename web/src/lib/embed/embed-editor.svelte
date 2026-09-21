@@ -4,6 +4,7 @@
 	import { useQueryClient } from '@tanstack/svelte-query';
 
 	import { message } from '$lib/api/http';
+	import * as m from '$lib/paraglide/messages.js';
 	import { listCredentials } from '$lib/api/generated/credentials/credentials';
 	import { createListNodeTypes } from '$lib/api/generated/nodes/nodes';
 	import { getExecution } from '$lib/api/generated/executions/executions';
@@ -38,7 +39,7 @@
 	const workflow = createGetWorkflow<WorkflowResource>(() => session.workflowId, () => ({
 		query: {
 			select: (response) => {
-				if (response.status !== 200) throw new Error('Unexpected workflow response');
+				if (response.status !== 200) throw new Error(m.workflows_unexpected_workflow());
 				return response.data;
 			}
 		}
@@ -56,7 +57,7 @@
 		try {
 			credentials = await drainPages(async (cursor) => {
 				const response = await listCredentials({ limit: DRAIN_PAGE_LIMIT, cursor: cursor || undefined });
-				if (response.status !== 200) throw new Error('Unexpected credential-list response');
+				if (response.status !== 200) throw new Error(m.workflows_unexpected_credential_list());
 				return readPage({ items: response.data, nextCursor: headerCursor(response.headers) });
 			});
 		} catch {
@@ -131,7 +132,7 @@
 		saving = true;
 		try {
 			const response = await getWorkflow(currentWorkflow.id);
-			if (response.status !== 200) throw new Error('Unexpected workflow response');
+			if (response.status !== 200) throw new Error(m.workflows_unexpected_workflow());
 			adoptFromServer(response.data);
 		} catch (error) {
 			saveError = message(error);
@@ -160,7 +161,7 @@
 				...document,
 				...(options.force ? {} : { baseVersionId: currentWorkflow.latestVersion.id })
 			});
-			if (response.status !== 200) throw new Error('Unexpected workflow-save response');
+			if (response.status !== 200) throw new Error(m.workflows_unexpected_workflow_save());
 			currentWorkflow = response.data;
 			cacheWorkflow(queryClient, response.data);
 			notifyHost('workflow-saved', { revision: response.data.latestVersion.revision });
@@ -222,9 +223,9 @@
 				currentWorkflow.id,
 				selection?.triggerNodeId ? { triggerNodeId: selection.triggerNodeId } : undefined
 			);
-			if (queued.status !== 202) throw new Error('Unexpected workflow-run response');
+			if (queued.status !== 202) throw new Error(m.workflows_unexpected_workflow_run());
 			lastExecutionId = queued.data.id;
-			runMessage = 'Run queued…';
+			runMessage = m.workflows_run_queued();
 			notifyHost('execution-started', { executionId: queued.data.id });
 			// The host decides how long its user waits; the editor only stops
 			// watching a run that is still going after half an hour, and says so
@@ -233,16 +234,16 @@
 			while (token === pollingRun && Date.now() < deadline) {
 				await new Promise((resolve) => setTimeout(resolve, 1000));
 				const execution = await getExecution(queued.data.id);
-				if (execution.status !== 200) throw new Error('Unexpected execution response');
+				if (execution.status !== 200) throw new Error(m.workflows_unexpected_execution());
 				const status = execution.data.status;
-				runMessage = status === 'succeeded' ? 'Run succeeded.' : `Run ${status}…`;
+				runMessage = status === 'succeeded' ? m.workflows_run_succeeded() : m.workflows_run_status({ status });
 				if (['succeeded', 'failed', 'cancelled'].includes(status)) {
-					if (status !== 'succeeded') runError = `Execution ${status}.`;
+					if (status !== 'succeeded') runError = m.workflows_execution_status({ status });
 					notifyHost('execution-finished', { executionId: queued.data.id, status });
 					return;
 				}
 			}
-			if (token === pollingRun) runError = 'The editor stopped watching a run that is still going.';
+			if (token === pollingRun) runError = m.embed_run_abandoned();
 		} catch (error) {
 			runError = message(error);
 			runIssues = withNodeNames(validationIssuesFromApiError(error), currentWorkflow.latestVersion.document.nodes);
@@ -261,7 +262,7 @@
 			<span class="truncate text-[0.8125rem] font-semibold tracking-tight">{branding.name}</span>
 		{/if}
 		{#if !canWrite}
-			<span class="ml-auto rounded-full border border-border bg-muted px-2 py-0.5 text-xs text-muted-foreground">Read only</span>
+			<span class="ml-auto rounded-full border border-border bg-muted px-2 py-0.5 text-xs text-muted-foreground">{m.editor_state_read_only()}</span>
 		{/if}
 	</div>
 {/if}
@@ -269,27 +270,27 @@
 {#if (workflow.isError || nodeTypes.isError) && !currentWorkflow}
 	<div class="grid flex-1 place-items-center p-6">
 		<div role="alert" class="max-w-md rounded-xl border border-destructive/25 bg-destructive/5 p-5 text-center">
-			<h1 class="font-semibold">This workflow could not be loaded</h1>
+			<h1 class="font-semibold">{m.embed_workflow_load_failed()}</h1>
 			<p class="mt-1 text-sm leading-6 text-muted-foreground">{message(workflow.isError ? workflow.error : nodeTypes.error)}</p>
 		</div>
 	</div>
 {:else if nodeTypes.isPending || (workflow.isPending && !currentWorkflow)}
-	<div aria-live="polite" class="grid flex-1 place-items-center text-sm text-muted-foreground">Loading workflow…</div>
+	<div aria-live="polite" class="grid flex-1 place-items-center text-sm text-muted-foreground">{m.embed_loading_workflow()}</div>
 {:else if currentWorkflow}
 	<!-- An embed token that expires turns the next background refetch into a
 	     401. That is a refresh failure, not a reason to unmount the editor the
 	     host's user is working in. -->
 	{#if workflow.isError}
 		<div role="alert" class="flex flex-wrap items-center gap-2 border-b border-destructive/25 bg-destructive/5 px-3 py-1.5">
-			<p class="min-w-0 flex-1 text-xs leading-5 text-destructive">This editor may be out of date — the last refresh failed: {message(workflow.error)}</p>
-			<Button variant="outline" size="sm" onclick={() => void workflow.refetch()}>Refresh</Button>
+			<p class="min-w-0 flex-1 text-xs leading-5 text-destructive">{m.workflows_editor_stale({ message: message(workflow.error) })}</p>
+			<Button variant="outline" size="sm" onclick={() => void workflow.refetch()}>{m.workflows_refresh()}</Button>
 		</div>
 	{/if}
 	{#if newerRevision}
 		<div role="status" class="flex flex-wrap items-center gap-2 border-b border-warning/40 bg-warning/10 px-3 py-1.5">
-			<p class="min-w-0 flex-1 text-xs leading-5">A newer revision ({newerRevision.latestVersion.revision}) was saved elsewhere while you were editing.</p>
-			<Button variant="outline" size="sm" onclick={() => void reloadTheirs()}>Reload theirs</Button>
-			<Button variant="ghost" size="sm" onclick={() => (newerRevision = null)}>Keep mine</Button>
+			<p class="min-w-0 flex-1 text-xs leading-5">{m.workflows_newer_revision({ revision: newerRevision.latestVersion.revision })}</p>
+			<Button variant="outline" size="sm" onclick={() => void reloadTheirs()}>{m.workflows_reload_theirs()}</Button>
+			<Button variant="ghost" size="sm" onclick={() => (newerRevision = null)}>{m.workflows_keep_mine()}</Button>
 		</div>
 	{/if}
 	{#key canvasFrom}

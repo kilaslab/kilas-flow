@@ -40,6 +40,7 @@
 	} from '$lib/dashboard/execution-list';
 	import { failedBesideRows } from '$lib/dashboard/list-state';
 	import { RequestGuard } from '$lib/dashboard/request-guard';
+	import * as m from '$lib/paraglide/messages.js';
 	import { formatDuration, formatTimestamp, statusLabel, statusTone } from '$lib/workflow-editor/execution';
 
 	// Names, the filter's options and the "deleted" badge all come from the
@@ -54,7 +55,7 @@
 	/** One page of the workflow listing, read only for its names and ids. */
 	async function fetchWorkflowPage(cursor: string): Promise<CursorPage<WorkflowSummary>> {
 		const response = await listWorkflows({ limit: DRAIN_PAGE_LIMIT, cursor: cursor || undefined });
-		if (response.status !== 200) throw new Error('Unexpected workflow-list response');
+		if (response.status !== 200) throw new Error(m.executions_unexpected_workflow_list());
 		return readPage({ items: response.data, nextCursor: headerCursor(response.headers) });
 	}
 
@@ -186,7 +187,7 @@
 			const response = await listExecutions(
 				buildListExecutionsParams({ status: activeStatus, workflowId: activeWorkflow })
 			);
-			if (response.status !== 200) throw new Error('Unexpected execution-list response');
+			if (response.status !== 200) throw new Error(m.executions_unexpected_execution_list());
 			if (!guard.holds(token)) return;
 			page = readPage(response.data);
 		} catch (cause) {
@@ -212,7 +213,7 @@
 			const response = await listExecutions(
 				buildListExecutionsParams({ status: activeStatus, workflowId: activeWorkflow })
 			);
-			if (response.status !== 200) throw new Error('Unexpected execution-list response');
+			if (response.status !== 200) throw new Error(m.executions_unexpected_execution_list());
 			if (!guard.holds(token)) return;
 			// `page` is read here, when the response resolves, not before the
 			// await: a Load more that finished meanwhile is part of the list
@@ -248,7 +249,7 @@
 			const response = await listExecutions(
 				buildListExecutionsParams({ status, workflowId: workflowID }, asked)
 			);
-			if (response.status !== 200) throw new Error('Unexpected execution-list response');
+			if (response.status !== 200) throw new Error(m.executions_unexpected_execution_list());
 			if (!guard.holds(token)) return;
 			// Drop the page instead of splicing it on when the cursor moved:
 			// appending it anyway would leave a hole the user never sees.
@@ -271,7 +272,7 @@
 		stopError = null;
 		try {
 			const response = await cancelExecution(item.id);
-			if (response.status !== 202 && response.status !== 200) throw new Error('Unexpected cancel response');
+			if (response.status !== 202 && response.status !== 200) throw new Error(m.executions_unexpected_cancel());
 			await load(status, workflowID);
 		} catch (error) {
 			stopError = message(error);
@@ -290,44 +291,44 @@
 <svelte:document onvisibilitychange={() => (tabHidden = document.hidden)} />
 
 <svelte:head>
-	<title>Executions · KilasFlow</title>
+	<title>{m.executions_page_title()}</title>
 </svelte:head>
 
 <section class="mx-auto w-full max-w-5xl">
 	<div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 		<div class="max-w-xl">
-			<h1 class="text-base font-semibold tracking-tight">Executions</h1>
-			<p class="text-xs text-muted-foreground">Every run your workspace has recorded, newest first. Open one to replay its graph.</p>
+			<h1 class="text-base font-semibold tracking-tight">{m.nav_executions()}</h1>
+			<p class="text-xs text-muted-foreground">{m.executions_list_description()}</p>
 		</div>
 		<div class="flex shrink-0 items-center gap-2">
 			<label class="inline-flex h-9 cursor-pointer items-center gap-2 rounded-md border border-border px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted has-checked:text-foreground">
 				<input type="checkbox" bind:checked={autoRefresh} class="size-3.5 accent-primary" />
-				Auto-refresh
+				{m.executions_auto_refresh()}
 			</label>
 			<Button variant="outline" onclick={() => void load(status, workflowID)} disabled={loading}>
 				<RefreshCw aria-hidden="true" />
-				Refresh
+				{m.executions_refresh()}
 			</Button>
 		</div>
 	</div>
 	{#if stopError}
-		<p role="alert" class="mt-4 rounded-lg border border-destructive/25 bg-destructive/5 px-3 py-1.5 text-xs text-destructive">Stop failed: {stopError}</p>
+		<p role="alert" class="mt-4 rounded-lg border border-destructive/25 bg-destructive/5 px-3 py-1.5 text-xs text-destructive">{m.executions_stop_failed({ message: stopError })}</p>
 	{/if}
 
 	<div class="mt-6 flex flex-wrap items-end gap-3">
 		<div class="grid gap-1">
-			<label for="execution-status" class="text-xs font-medium text-muted-foreground">Status</label>
+			<label for="execution-status" class="text-xs font-medium text-muted-foreground">{m.executions_status()}</label>
 			<select id="execution-status" bind:value={status} class="h-7 min-w-36 rounded-md border border-input bg-background px-1.5 text-xs">
-				<option value="">All statuses</option>
+				<option value="">{m.executions_all_statuses()}</option>
 				{#each EXECUTION_STATUSES as option (option)}
 					<option value={option}>{statusLabel(option)}</option>
 				{/each}
 			</select>
 		</div>
 		<div class="grid gap-1">
-			<label for="execution-workflow" class="text-xs font-medium text-muted-foreground">Workflow</label>
+			<label for="execution-workflow" class="text-xs font-medium text-muted-foreground">{m.executions_workflow()}</label>
 			<select id="execution-workflow" bind:value={workflowID} class="h-7 min-w-44 max-w-64 rounded-md border border-input bg-background px-1.5 text-xs">
-				<option value="">All workflows</option>
+				<option value="">{m.executions_all_workflows()}</option>
 				{#each workflowFilterOptions as workflow (workflow.id)}
 					<option value={workflow.id}>{workflow.name}</option>
 				{/each}
@@ -335,18 +336,18 @@
 		</div>
 		{#if workflowRows.length > 8}
 			<div class="grid gap-1">
-				<label for="execution-workflow-search" class="text-xs font-medium text-muted-foreground">Find workflow</label>
-				<input id="execution-workflow-search" type="search" bind:value={workflowSearch} placeholder="Type to narrow…" class="h-7 w-44 rounded-md border border-input bg-background px-2 text-xs" />
+				<label for="execution-workflow-search" class="text-xs font-medium text-muted-foreground">{m.executions_find_workflow()}</label>
+				<input id="execution-workflow-search" type="search" bind:value={workflowSearch} placeholder={m.executions_type_to_narrow()} class="h-7 w-44 rounded-md border border-input bg-background px-2 text-xs" />
 			</div>
 		{/if}
 		{#if filtersActive}
-			<Button variant="ghost" size="sm" onclick={clearFilters}>Clear filters</Button>
+			<Button variant="ghost" size="sm" onclick={clearFilters}>{m.executions_clear_filters()}</Button>
 		{/if}
 	</div>
 
 	<div class="mt-6">
 		<ListStates
-			label="Executions"
+			label={m.nav_executions()}
 			{loading}
 			failed={failure !== null}
 			error={failure}
@@ -354,12 +355,12 @@
 			onRetry={() => void load(status, workflowID)}
 			onRetryMore={() => void loadMore()}
 			emptyIcon={Activity}
-			emptyTitle={filtersActive ? 'No executions match these filters' : 'No executions yet'}
-			emptyBody={filtersActive ? 'Loosen the filters above, or clear them to see everything again.' : 'Run a workflow from its editor and its history will appear here.'}
+			emptyTitle={filtersActive ? m.executions_empty_filtered_title() : m.executions_empty_title()}
+			emptyBody={filtersActive ? m.executions_empty_filtered_body() : m.executions_empty_body()}
 		>
 			{#snippet emptyAction()}
 				{#if filtersActive}
-					<Button class="mt-3" size="sm" variant="outline" onclick={clearFilters}>Clear filters</Button>
+					<Button class="mt-3" size="sm" variant="outline" onclick={clearFilters}>{m.executions_clear_filters()}</Button>
 				{/if}
 			{/snippet}
 			<!-- A plain paragraph, not role=status: with auto-refresh on, a live
@@ -367,16 +368,16 @@
 			<p class="mb-2 text-xs text-muted-foreground">{executionListSummary({ count: page.items.length, hasMore: canLoadMore(page), filtered: filtersActive })}</p>
 			<div class="overflow-hidden rounded-xl border border-border bg-card">
 				<Table.Root class="min-w-[48rem]">
-					<Table.Caption class="sr-only">Workflow executions, newest first</Table.Caption>
+					<Table.Caption class="sr-only">{m.executions_table_caption()}</Table.Caption>
 					<Table.Header class="[&_th]:h-7 [&_th]:px-3 [&_th]:text-xs [&_th]:uppercase [&_th]:tracking-wide [&_th]:text-muted-foreground">
 						<Table.Row>
-							<Table.Head scope="col">Status</Table.Head>
-							<Table.Head scope="col">Workflow</Table.Head>
-							<Table.Head scope="col">Started</Table.Head>
-							<Table.Head scope="col">Duration</Table.Head>
-							<Table.Head scope="col">Trigger</Table.Head>
-							<Table.Head scope="col">Execution</Table.Head>
-							<Table.Head scope="col"><span class="sr-only">Actions</span></Table.Head>
+							<Table.Head scope="col">{m.executions_status()}</Table.Head>
+							<Table.Head scope="col">{m.executions_workflow()}</Table.Head>
+							<Table.Head scope="col">{m.executions_started()}</Table.Head>
+							<Table.Head scope="col">{m.executions_duration()}</Table.Head>
+							<Table.Head scope="col">{m.executions_trigger()}</Table.Head>
+							<Table.Head scope="col">{m.executions_execution()}</Table.Head>
+							<Table.Head scope="col"><span class="sr-only">{m.executions_actions()}</span></Table.Head>
 						</Table.Row>
 					</Table.Header>
 					<Table.Body>
@@ -388,7 +389,7 @@
 								<Table.Cell class="max-w-56 truncate px-3 py-2" title={workflowNames.get(item.workflowId) ?? item.workflowId}>
 									{workflowNames.get(item.workflowId) ?? item.workflowId}
 									{#if isDeletedWorkflow(item.workflowId, workflowsLoaded, workflowNames)}
-										<span class="ml-1 rounded border border-border bg-muted px-1 py-px text-[0.625rem] font-medium text-muted-foreground">deleted</span>
+										<span class="ml-1 rounded border border-border bg-muted px-1 py-px text-[0.625rem] font-medium text-muted-foreground">{m.executions_deleted()}</span>
 									{/if}
 								</Table.Cell>
 								<Table.Cell class="px-3 py-2 text-muted-foreground">{formatTimestamp(item.startedAt)}</Table.Cell>
@@ -401,9 +402,9 @@
 								</Table.Cell>
 								<Table.Cell class="px-3 py-2 text-right">
 									{#if isStoppableStatus(item.status)}
-										<Button variant="ghost" size="sm" class="h-7 px-2 text-[0.6875rem]" disabled={stoppingID !== null} onclick={() => void stop(item)} aria-label={`Stop execution ${item.id}`}>
+										<Button variant="ghost" size="sm" class="h-7 px-2 text-[0.6875rem]" disabled={stoppingID !== null} onclick={() => void stop(item)} aria-label={m.executions_stop_execution({ id: item.id })}>
 											<Square aria-hidden="true" class="size-3" />
-											{stoppingID === item.id ? 'Stopping…' : 'Stop'}
+											{stoppingID === item.id ? m.executions_stopping() : m.executions_stop()}
 										</Button>
 									{/if}
 								</Table.Cell>
@@ -414,7 +415,7 @@
 			</div>
 			{#if canLoadMore(page) && !pagingFailure}
 				<div class="mt-4 flex justify-center">
-					<Button variant="outline" onclick={() => void loadMore()} disabled={loadingMore}>{loadingMore ? 'Loading…' : 'Load more'}</Button>
+					<Button variant="outline" onclick={() => void loadMore()} disabled={loadingMore}>{loadingMore ? m.executions_loading() : m.executions_load_more()}</Button>
 				</div>
 			{/if}
 		</ListStates>

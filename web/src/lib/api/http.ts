@@ -1,3 +1,5 @@
+import * as m from '$lib/paraglide/messages.js';
+
 /**
  * The only HTTP transport used by generated API clients.
  *
@@ -191,5 +193,5 @@ async function readProblem(response: Response): Promise<ProblemDetail | undefine
  */
 export function message(error: unknown): string {
 	if (error instanceof ApiError) return `${error.status} — ${error.message}`;
-	return error instanceof Error ? error.message : 'The request could not be completed.';
+	return error instanceof Error ? error.message : m.common_request_failed();
 }

@@ -1,37 +1,45 @@
 <script lang="ts">
+	import type { Component } from 'svelte';
 	import { page } from '$app/state';
-import Activity from '@lucide/svelte/icons/activity';
-import CalendarClock from '@lucide/svelte/icons/calendar-clock';
-import Database from '@lucide/svelte/icons/database';
-import GitBranch from '@lucide/svelte/icons/git-branch';
-import KeyRound from '@lucide/svelte/icons/key-round';
-import Settings from '@lucide/svelte/icons/settings';
+	import Activity from '@lucide/svelte/icons/activity';
+	import CalendarClock from '@lucide/svelte/icons/calendar-clock';
+	import Database from '@lucide/svelte/icons/database';
+	import GitBranch from '@lucide/svelte/icons/git-branch';
+	import KeyRound from '@lucide/svelte/icons/key-round';
+	import Settings from '@lucide/svelte/icons/settings';
+
+	import * as m from '$lib/paraglide/messages.js';
+	import { dashboardSections, sectionLabel, type SectionKey } from '$lib/dashboard/nav-sections';
 
 	let { onNavigate, collapsed = false }: { onNavigate?: () => void; collapsed?: boolean } = $props();
 
-	const items = [
-		{ href: '/app/workflows', label: 'Workflows', icon: GitBranch },
-		{ href: '/executions', label: 'Executions', icon: Activity },
-		{ href: '/schedules', label: 'Schedules', icon: CalendarClock },
-		{ href: '/credentials', label: 'Credentials', icon: KeyRound },
-		{ href: '/datastores', label: 'Datastores', icon: Database },
-		{ href: '/settings', label: 'Settings', icon: Settings }
-	];
+	// Icons are components, so they stay beside the markup that renders them.
+	// Everything a reader sees — the hrefs and the labels — comes from the
+	// section registration above, which the header title reads too.
+	const ICONS: Record<SectionKey, Component> = {
+		workflows: GitBranch,
+		executions: Activity,
+		schedules: CalendarClock,
+		credentials: KeyRound,
+		datastores: Database,
+		settings: Settings
+	};
 
-	function active(path: string): boolean {
-		return page.url.pathname === path || page.url.pathname.startsWith(`${path}/`);
+	function active(href: string): boolean {
+		return page.url.pathname === href || page.url.pathname.startsWith(`${href}/`);
 	}
 </script>
 
-<nav aria-label="Workspace navigation" class="grid gap-0.5">
-	{#each items as item (item.href)}
-		{@const current = active(item.href)}
-		{@const Icon = item.icon}
+<nav aria-label={m.common_workspace_navigation()} class="grid gap-0.5">
+	{#each dashboardSections as section (section.href)}
+		{@const current = active(section.href)}
+		{@const Icon = ICONS[section.key]}
+		{@const label = sectionLabel(section.key)}
 		<a
-			href={item.href}
+			href={section.href}
 			aria-current={current ? 'page' : undefined}
-			aria-label={collapsed ? item.label : undefined}
-			title={collapsed ? item.label : undefined}
+			aria-label={collapsed ? label : undefined}
+			title={collapsed ? label : undefined}
 			onclick={onNavigate}
 			class="group flex h-8 items-center rounded-md text-[0.8125rem] font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring {collapsed
 				? 'justify-center px-0'
@@ -44,7 +52,7 @@ import Settings from '@lucide/svelte/icons/settings';
 		>
 			<Icon aria-hidden="true" class={collapsed ? 'size-4' : 'size-3.5'} />
 			{#if !collapsed}
-				{item.label}
+				{label}
 			{/if}
 		</a>
 	{/each}

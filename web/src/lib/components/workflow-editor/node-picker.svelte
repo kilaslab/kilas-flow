@@ -4,6 +4,7 @@
 	import X from '@lucide/svelte/icons/x';
 
 	import type { Definition } from '$lib/api/generated/models';
+	import * as m from '$lib/paraglide/messages.js';
 
 	import { catalogEntries, searchCatalog } from '$lib/workflow-editor/catalog';
 
@@ -164,29 +165,29 @@
 		<div bind:this={dialogElement} class="relative flex max-h-[min(30rem,calc(100dvh-2rem))] w-full max-w-md flex-col overflow-hidden rounded-xl border border-border bg-popover shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="node-picker-title" tabindex="-1" onkeydown={handleKeydown}>
 			<div class="flex items-center gap-2 border-b border-border px-2.5 py-2">
 				<Search aria-hidden="true" class="size-4 shrink-0 text-muted-foreground" />
-				<label class="sr-only" for="node-picker-search">Search registered node types</label>
+				<label class="sr-only" for="node-picker-search">{m.canvas_picker_search_label()}</label>
 				<input
 					id="node-picker-search"
 					bind:this={searchInput}
 					bind:value={query}
 					class="h-6 min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
-					placeholder={triggersOnly ? 'Search triggers' : providesKind ? `Search ${providesKind} nodes` : 'Search nodes'}
+					placeholder={triggersOnly ? m.canvas_picker_search_triggers() : providesKind ? m.canvas_picker_search_kind({ kind: providesKind }) : m.canvas_picker_search_placeholder()}
 					role="combobox"
 					aria-expanded="true"
 					aria-controls="node-picker-list"
 					aria-autocomplete="list"
 					aria-activedescendant={active?.id}
 				/>
-				<h2 id="node-picker-title" class="sr-only">{triggersOnly ? 'Choose a trigger' : connecting ? 'Add a connected step' : 'Add a step'}</h2>
-				<button type="button" class="grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-1" aria-label="Close node picker" onclick={close}>
+				<h2 id="node-picker-title" class="sr-only">{triggersOnly ? m.canvas_picker_title_trigger() : connecting ? m.canvas_picker_title_connected() : m.canvas_picker_title()}</h2>
+				<button type="button" class="grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-1" aria-label={m.canvas_picker_close_aria()} onclick={close}>
 					<X aria-hidden="true" class="size-3.5" />
 				</button>
 			</div>
 
-			<div id="node-picker-list" role="listbox" aria-label="Registered node types" class="min-h-0 flex-1 overflow-y-auto p-1">
+			<div id="node-picker-list" role="listbox" aria-label={m.canvas_picker_list_aria()} class="min-h-0 flex-1 overflow-y-auto p-1">
 				{#if rows.flat.length === 0}
 					<p class="px-3 py-10 text-center text-xs text-muted-foreground">
-						{#if query.trim()}No registered node matches “{query}”.{:else}No node here can follow that port.{/if}
+						{#if query.trim()}{m.canvas_picker_no_match({ query })}{:else}{m.canvas_picker_no_candidates()}{/if}
 					</p>
 				{:else}
 					{#each rows.groups as group (group.category)}
@@ -218,7 +219,7 @@
 			</div>
 
 			<p class="shrink-0 border-t border-border px-2.5 py-1.5 text-[0.625rem] text-muted-foreground">
-				{rows.flat.length} of {catalog.length} nodes · one row per node type, always the latest version · ↑↓ then Enter
+				{m.canvas_picker_footer({ shown: rows.flat.length, total: catalog.length })}
 			</p>
 		</div>
 	</div>

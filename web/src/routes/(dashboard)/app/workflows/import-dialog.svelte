@@ -9,6 +9,7 @@
 	import * as Dialog from '$lib/components/ui/dialog';
 	import { Input } from '$lib/components/ui/input';
 	import { Textarea } from '$lib/components/ui/textarea';
+	import * as m from '$lib/paraglide/messages.js';
 
 	import ImportReport from './import-report.svelte';
 
@@ -78,7 +79,7 @@
 		} catch {
 			fileName = null;
 			fileText = null;
-			error = 'That file could not be read. Try again or paste the export instead.';
+			error = m.workflows_error_file_read();
 		}
 	}
 
@@ -92,7 +93,7 @@
 	async function submitImport() {
 		const raw = fileText ?? pasted;
 		if (!raw.trim()) {
-			error = 'Choose an n8n export file or paste one below to continue.';
+			error = m.workflows_error_choose_source();
 			return;
 		}
 		let document: unknown;
@@ -102,8 +103,8 @@
 			// Syntax only: whether the parsed value *is* an n8n workflow is
 			// the importer's call, answered as a 422 with the exact reason.
 			error = fileName
-				? `${fileName} is not valid JSON. Export the workflow from n8n again and retry.`
-				: 'That text is not valid JSON. Paste the whole n8n export and retry.';
+				? m.workflows_error_invalid_json_named({ name: fileName })
+				: m.workflows_error_invalid_json();
 			return;
 		}
 		importing = true;
@@ -115,7 +116,7 @@
 				workflow: document,
 				...(trimmedName ? { name: trimmedName } : {})
 			});
-			if (response.status !== 201) throw new Error('Unexpected import response');
+			if (response.status !== 201) throw new Error(m.workflows_unexpected_import());
 			result = response.data;
 			onImported();
 		} catch (thrown) {
@@ -139,7 +140,7 @@
 		{#snippet child({ props })}
 			<Button {...props} variant="outline" size="sm">
 				<Upload aria-hidden="true" />
-				Import n8n
+				{m.workflows_import_n8n()}
 			</Button>
 		{/snippet}
 	</Dialog.Trigger>
@@ -149,12 +150,12 @@
 		class={result ? 'max-h-[85vh] overflow-y-auto sm:max-w-3xl' : 'max-h-[85vh] overflow-y-auto sm:max-w-lg'}
 	>
 		<Dialog.Header>
-			<Dialog.Title>{result ? `Imported ${result.workflow.name}` : 'Import from n8n'}</Dialog.Title>
+			<Dialog.Title>{result ? m.workflows_imported_title({ name: result.workflow.name }) : m.workflows_import_title()}</Dialog.Title>
 			<Dialog.Description id="import-n8n-description">
 				{#if result}
-					What the file became. Read the report, re-point any webhooks, then open the workflow.
+					{m.workflows_import_result_description()}
 				{:else}
-					Bring an n8n workflow export. Unsupported nodes arrive as visible placeholders, never silent remaps.
+					{m.workflows_import_description()}
 				{/if}
 			</Dialog.Description>
 		</Dialog.Header>
@@ -167,8 +168,8 @@
 				onOpenWorkflow={() => void openWorkflow()}
 			/>
 			<Dialog.Footer>
-				<Button type="button" variant="outline" onclick={reset}>Import another</Button>
-				<Button type="button" onclick={() => void openWorkflow()}>Open in the editor</Button>
+				<Button type="button" variant="outline" onclick={reset}>{m.workflows_import_another()}</Button>
+				<Button type="button" onclick={() => void openWorkflow()}>{m.workflows_open_in_editor()}</Button>
 			</Dialog.Footer>
 		{:else}
 			<form
@@ -179,7 +180,7 @@
 				}}
 			>
 				<div class="grid gap-2">
-					<label for="import-file" class="text-sm font-medium">Export file</label>
+					<label for="import-file" class="text-sm font-medium">{m.workflows_export_file()}</label>
 					<Input
 						id="import-file"
 						type="file"
@@ -191,12 +192,12 @@
 					{#if fileName}
 						<p id="import-file-name" class="flex items-center gap-2 text-xs text-muted-foreground">
 							<span class="min-w-0 flex-1 truncate font-mono">{fileName}</span>
-							<Button type="button" variant="ghost" size="sm" class="h-6 shrink-0 px-2 text-xs" onclick={clearFile}>Clear</Button>
+							<Button type="button" variant="ghost" size="sm" class="h-6 shrink-0 px-2 text-xs" onclick={clearFile}>{m.workflows_clear()}</Button>
 						</p>
 					{/if}
 				</div>
 				<div class="grid gap-2">
-					<label for="import-paste" class="text-sm font-medium">Or paste the export</label>
+					<label for="import-paste" class="text-sm font-medium">{m.workflows_or_paste()}</label>
 					<Textarea
 						id="import-paste"
 						bind:value={pasted}
@@ -206,19 +207,19 @@
 						disabled={fileText !== null}
 					/>
 					{#if fileText !== null}
-						<p class="text-xs text-muted-foreground">Pasting is disabled while a file is chosen — clear the file above to paste instead.</p>
+						<p class="text-xs text-muted-foreground">{m.workflows_paste_disabled()}</p>
 					{/if}
 				</div>
 				<div class="grid gap-2">
-					<label for="import-name" class="text-sm font-medium">Workflow name <span class="font-normal text-muted-foreground">(optional)</span></label>
-					<Input id="import-name" bind:value={name} placeholder="Defaults to the name in the file" />
+					<label for="import-name" class="text-sm font-medium">{m.workflows_name_label()} <span class="font-normal text-muted-foreground">{m.workflows_optional()}</span></label>
+					<Input id="import-name" bind:value={name} placeholder={m.workflows_name_default_placeholder()} />
 				</div>
 				{#if error}
 					<p role="alert" class="text-sm text-destructive">{error}</p>
 				{/if}
 				<Dialog.Footer>
-					<Button type="button" variant="outline" onclick={() => (open = false)} disabled={importing}>Cancel</Button>
-					<Button type="submit" disabled={importing}>{importing ? 'Importing…' : 'Import workflow'}</Button>
+					<Button type="button" variant="outline" onclick={() => (open = false)} disabled={importing}>{m.workflows_cancel()}</Button>
+					<Button type="submit" disabled={importing}>{importing ? m.workflows_importing() : m.workflows_import_submit()}</Button>
 				</Dialog.Footer>
 			</form>
 		{/if}

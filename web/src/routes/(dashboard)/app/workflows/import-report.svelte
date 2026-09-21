@@ -4,6 +4,7 @@
 
 	import type { ImportIssue, WebhookRouteResource } from '$lib/api/generated/models';
 	import { Button } from '$lib/components/ui/button';
+	import * as m from '$lib/paraglide/messages.js';
 
 	import DiagnosticsSection from './diagnostics-section.svelte';
 
@@ -72,13 +73,13 @@
 	     can be activated as imported. Everything below is the evidence. -->
 	{#if blocking > 0}
 		<p role="alert" class="rounded-lg border border-destructive/25 bg-destructive/5 px-3 py-2 text-xs leading-5">
-			<span class="font-semibold text-destructive">This workflow will not activate until the {blocking} blocking {blocking === 1 ? 'issue is' : 'issues are'} fixed.</span>
-			<span class="text-muted-foreground"> Each one names the node to open below.</span>
+			<span class="font-semibold text-destructive">{m.workflows_report_blocking({ count: blocking })}</span>
+			<span class="text-muted-foreground">{' '}{m.workflows_report_blocking_note()}</span>
 		</p>
 	{:else}
 		<p role="status" class="rounded-lg border border-success/25 bg-success/5 px-3 py-2 text-xs leading-5">
-			<span class="font-semibold text-success">This workflow will activate as imported.</span>
-			<span class="text-muted-foreground"> Read the lossy and dropped entries and decide whether the differences matter.</span>
+			<span class="font-semibold text-success">{m.workflows_report_ok()}</span>
+			<span class="text-muted-foreground">{' '}{m.workflows_report_ok_note()}</span>
 		</p>
 	{/if}
 
@@ -86,15 +87,14 @@
 	     reads a stored report, which carries none, and saying "no triggers
 	     needed a public address" there would be a claim it cannot make. -->
 	{#if webhooks}
-		<section aria-label="Webhook addresses">
-			<h3 class="text-xs font-semibold">Webhook addresses · {webhooks.length}</h3>
+		<section aria-label={m.workflows_webhook_addresses()}>
+			<h3 class="text-xs font-semibold">{m.workflows_webhook_addresses_count({ count: webhooks.length })}</h3>
 			<p class="mt-0.5 text-xs leading-5 text-muted-foreground">
-				Every webhook URL changes on import — prefix it with your host and point the sending
-				system at the new address. The old path will not work.
+				{m.workflows_webhook_addresses_note()}
 			</p>
 			{#if webhooks.length === 0}
 				<p class="mt-1.5 rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs leading-5 text-muted-foreground">
-					No triggers in this workflow needed a public address.
+					{m.workflows_no_webhooks()}
 				</p>
 			{:else}
 				<ul class="mt-1.5 divide-y divide-border overflow-hidden rounded-lg border border-border">
@@ -111,19 +111,19 @@
 								size="sm"
 								class="h-7 shrink-0 px-2 text-[0.6875rem]"
 								onclick={() => void copyURL(webhook.url)}
-								aria-label={`Copy webhook URL for ${webhookNodeName(webhook.nodeId)}`}
+								aria-label={m.workflows_copy_webhook_url_for({ name: webhookNodeName(webhook.nodeId) })}
 							>
 								{#if copiedURL === webhook.url && !copyFailed}
-									<Check aria-hidden="true" class="size-3" />Copied
+									<Check aria-hidden="true" class="size-3" />{m.workflows_copied()}
 								{:else}
-									<Copy aria-hidden="true" class="size-3" />Copy URL
+									<Copy aria-hidden="true" class="size-3" />{m.workflows_copy_url()}
 								{/if}
 							</Button>
 						</li>
 					{/each}
 				</ul>
 				{#if copyFailed}
-					<p role="status" class="mt-1.5 text-xs text-muted-foreground">Copying failed in this browser — select the address above and copy it by hand.</p>
+					<p role="status" class="mt-1.5 text-xs text-muted-foreground">{m.workflows_error_copy()}</p>
 				{/if}
 			{/if}
 		</section>
@@ -131,12 +131,12 @@
 
 	<DiagnosticsSection
 		{issues}
-		emptyNote="No issues — everything in this file carried exactly."
+		emptyNote={m.workflows_import_empty_note()}
 	/>
 
 	{#if onOpenWorkflow}
 		<div class="flex justify-end">
-			<Button type="button" size="sm" onclick={onOpenWorkflow}>Open {workflowName} in the editor</Button>
+			<Button type="button" size="sm" onclick={onOpenWorkflow}>{m.workflows_open_named_in_editor({ name: workflowName })}</Button>
 		</div>
 	{/if}
 </div>

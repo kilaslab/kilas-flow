@@ -1,0 +1,223 @@
+{
+  "workflows_page_title": "Workflows · KilasFlow",
+  "workflows_detail_page_title": "{name} · KilasFlow",
+  "workflows_in_workspace": "{count} in this workspace",
+  "workflows_subtitle": "Automation flows your product exposes",
+  "workflows_new": "New workflow",
+  "workflows_create_title": "Start a workflow",
+  "workflows_create_description": "Name the draft now. You can build its first step in the workspace next.",
+  "workflows_name_label": "Workflow name",
+  "workflows_name_placeholder": "e.g. Qualify a new lead",
+  "workflows_create_submit": "Create workflow",
+  "workflows_creating": "Creating…",
+  "workflows_cancel": "Cancel",
+  "workflows_error_name_required": "Give this workflow a name to continue.",
+  "workflows_error_name_too_long": "Keep the name to 255 characters or fewer.",
+  "workflows_activation_failed": "Activation failed: {message}",
+  "workflows_notices_heading": "{name} is active, with something still to do",
+  "workflows_search_label": "Search",
+  "workflows_search_placeholder": "Search by name…",
+  "workflows_state_label": "State",
+  "workflows_state_all": "All",
+  "workflows_state_active": "Active",
+  "workflows_state_draft": "Draft",
+  "workflows_sort_label": "Sort",
+  "workflows_sort_updated": "Recently updated",
+  "workflows_sort_created": "Recently created",
+  "workflows_sort_name": "Name",
+  "workflows_selected": "{count} selected",
+  "workflows_activate": "Activate",
+  "workflows_deactivate": "Deactivate",
+  "workflows_activating": "Activating…",
+  "workflows_deactivating": "Deactivating…",
+  "workflows_delete": "Delete",
+  "workflows_clear": "Clear",
+  "workflows_and_more": "and {count} more",
+  "workflows_bulk_delete_confirm": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "Delete 1 workflow ({preview})? This cannot be undone.",
+        "countPlural=other": "Delete {count} workflows ({preview})? This cannot be undone."
+      }
+    }
+  ],
+  "workflows_empty_title": "Build your first flow",
+  "workflows_empty_body": "A workflow starts as a private draft, then grows into the automation your product needs.",
+  "workflows_empty_filtered_title": "No workflows match",
+  "workflows_empty_filtered_body": "Loosen the search or filter above, or clear it to see everything again.",
+  "workflows_clear_filters": "Clear search and filters",
+  "workflows_select_all": "Select all workflows on this page",
+  "workflows_select_row": "Select {name}",
+  "workflows_actions_for": "Actions for {name}",
+  "workflows_list_status": "{count} workflows · page {page} of {pages}",
+  "workflows_page_status": "Page {page} of {pages} · {count} workflows",
+  "workflows_previous": "Previous",
+  "workflows_next": "Next",
+  "workflows_revision_label": "Revision",
+  "workflows_revision_abbrev": "r",
+  "workflows_updated_label": "Updated",
+  "workflows_updated_today": "Today",
+  "workflows_updated_yesterday": "Yesterday",
+  "workflows_updated_days_ago": "{count}d ago",
+  "workflows_loading": "Loading…",
+  "workflows_refresh": "Refresh",
+  "workflows_rename": "Rename",
+  "workflows_renaming": "Renaming…",
+  "workflows_duplicate": "Duplicate",
+  "workflows_duplicate_name": "Copy of {source}",
+  "workflows_rename_title": "Rename workflow",
+  "workflows_rename_description": "The name is the only thing that changes — nodes and revisions stay.",
+  "workflows_delete_title": "Delete {name}?",
+  "workflows_noun": "workflow",
+  "workflows_noun_capitalised": "Workflow",
+  "workflows_delete_active_note": "This workflow is active — deleting it stops its triggers.",
+  "workflows_delete_description": "Its executions stay in history. This cannot be undone.",
+  "workflows_deleting": "Deleting…",
+  "workflows_import_n8n": "Import n8n",
+  "workflows_import_title": "Import from n8n",
+  "workflows_imported_title": "Imported {name}",
+  "workflows_import_result_description": "What the file became. Read the report, re-point any webhooks, then open the workflow.",
+  "workflows_import_description": "Bring an n8n workflow export. Unsupported nodes arrive as visible placeholders, never silent remaps.",
+  "workflows_import_another": "Import another",
+  "workflows_open_in_editor": "Open in the editor",
+  "workflows_export_file": "Export file",
+  "workflows_or_paste": "Or paste the export",
+  "workflows_paste_disabled": "Pasting is disabled while a file is chosen — clear the file above to paste instead.",
+  "workflows_optional": "(optional)",
+  "workflows_name_default_placeholder": "Defaults to the name in the file",
+  "workflows_importing": "Importing…",
+  "workflows_import_submit": "Import workflow",
+  "workflows_error_file_read": "That file could not be read. Try again or paste the export instead.",
+  "workflows_error_choose_source": "Choose an n8n export file or paste one below to continue.",
+  "workflows_error_invalid_json_named": "{name} is not valid JSON. Export the workflow from n8n again and retry.",
+  "workflows_error_invalid_json": "That text is not valid JSON. Paste the whole n8n export and retry.",
+  "workflows_report_blocking": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "This workflow will not activate until the {count} blocking issue is fixed.",
+        "countPlural=other": "This workflow will not activate until the {count} blocking issues are fixed."
+      }
+    }
+  ],
+  "workflows_report_blocking_note": "Each one names the node to open below.",
+  "workflows_report_ok": "This workflow will activate as imported.",
+  "workflows_report_ok_note": "Read the lossy and dropped entries and decide whether the differences matter.",
+  "workflows_webhook_addresses": "Webhook addresses",
+  "workflows_webhook_addresses_count": "Webhook addresses · {count}",
+  "workflows_webhook_addresses_note": "Every webhook URL changes on import — prefix it with your host and point the sending system at the new address. The old path will not work.",
+  "workflows_no_webhooks": "No triggers in this workflow needed a public address.",
+  "workflows_copied": "Copied",
+  "workflows_copy_url": "Copy URL",
+  "workflows_copy_webhook_url_for": "Copy webhook URL for {name}",
+  "workflows_error_copy": "Copying failed in this browser — select the address above and copy it by hand.",
+  "workflows_open_named_in_editor": "Open {name} in the editor",
+  "workflows_import_empty_note": "No issues — everything in this file carried exactly.",
+  "workflows_report_title": "Import report",
+  "workflows_imported_from": "{name} was imported from {source} on {date}.",
+  "workflows_imported_from_no_date": "{name} was imported from {source}.",
+  "workflows_import_source_unknown": "another tool",
+  "workflows_all_workflows": "All workflows",
+  "workflows_import_report_count": "Import report · {count}",
+  "workflows_imported_from_n8n": "Imported from n8n",
+  "workflows_editor_loading": "Loading workflow editor…",
+  "workflows_editor_load_failed": "Workflow editor could not be loaded",
+  "workflows_editor_stale": "This editor may be out of date — the last refresh failed: {message}",
+  "workflows_newer_revision": "A newer revision ({revision}) was saved elsewhere while you were editing.",
+  "workflows_reload_theirs": "Reload theirs",
+  "workflows_keep_mine": "Keep mine",
+  "workflows_unsaved_confirm": "This workflow has unsaved changes. Leave and discard them?",
+  "workflows_run_queued": "Run queued…",
+  "workflows_run_succeeded": "Run succeeded.",
+  "workflows_run_status": "Run {status}…",
+  "workflows_execution_status": "Execution {status}.",
+  "workflows_run_watch_stopped": "This editor stopped watching a run that is still going. Check the execution history for its final state.",
+  "workflows_export_n8n": "Export as n8n JSON",
+  "workflows_export_title": "Export {name} as n8n JSON",
+  "workflows_export_description": "What this workflow becomes outside KilasFlow. Read what does not carry before downloading.",
+  "workflows_export_converting": "Converting the latest revision…",
+  "workflows_close": "Close",
+  "workflows_export_mappings_prefix": "This instance advertises {count} node-type mappings. The live list travels with every export response under",
+  "workflows_mappings_field": "supportedMappings",
+  "workflows_export_mappings_suffix": "— if that list and any guide disagree, the instance is right.",
+  "workflows_download_n8n": "Download n8n JSON",
+  "workflows_export_empty_note": "Nothing was lost — every node and connection in this workflow has an n8n equivalent.",
+  "workflows_diagnostics_caption": "{heading} import diagnostics",
+  "workflows_diagnostics_label": "{heading} diagnostics",
+  "workflows_column_severity": "Severity",
+  "workflows_column_node": "Node",
+  "workflows_column_source_type": "Source type",
+  "workflows_column_field": "Field",
+  "workflows_column_what_happened": "What happened",
+  "workflows_import_issues": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "import issue",
+        "countPlural=other": "import issues"
+      }
+    }
+  ],
+  "workflows_severity_blocking": "Blocking",
+  "workflows_severity_blocking_meaning": "The workflow cannot run as imported.",
+  "workflows_severity_blocking_action": "Fix it. The workflow will not activate until you do.",
+  "workflows_severity_lossy": "Lossy",
+  "workflows_severity_lossy_meaning": "The element was carried, but differently.",
+  "workflows_severity_lossy_action": "Read it and decide. The workflow will activate.",
+  "workflows_severity_dropped": "Dropped",
+  "workflows_severity_dropped_meaning": "The element was not carried at all.",
+  "workflows_severity_dropped_action": "Decide whether you need it.",
+  "workflows_unexpected_workflow_list": "Unexpected workflow-list response",
+  "workflows_unexpected_workflow_create": "Unexpected workflow-create response",
+  "workflows_unexpected_workflow": "Unexpected workflow response",
+  "workflows_unexpected_workflow_rename": "Unexpected workflow-rename response",
+  "workflows_unexpected_workflow_duplicate": "Unexpected workflow-duplicate response",
+  "workflows_unexpected_workflow_delete": "Unexpected workflow-delete response",
+  "workflows_unexpected_workflow_activate": "Unexpected workflow-activate response",
+  "workflows_unexpected_workflow_deactivate": "Unexpected workflow-deactivate response",
+  "workflows_unexpected_bulk_activate": "Unexpected bulk activate response",
+  "workflows_unexpected_bulk_deactivate": "Unexpected bulk deactivate response",
+  "workflows_unexpected_workflow_save": "Unexpected workflow-save response",
+  "workflows_unexpected_workflow_run": "Unexpected workflow-run response",
+  "workflows_unexpected_execution": "Unexpected execution response",
+  "workflows_unexpected_node_catalogue": "Unexpected node catalogue response",
+  "workflows_unexpected_credential_list": "Unexpected credential-list response",
+  "workflows_unexpected_import": "Unexpected import response",
+  "workflows_unexpected_export": "Unexpected export response",
+  "workflows_count_of": "{shown} of {total} workflows",
+  "workflows_count_of_one": [
+    {
+      "declarations": [
+        "input total",
+        "local totalPlural = total: plural"
+      ],
+      "selectors": [
+        "totalPlural"
+      ],
+      "match": {
+        "totalPlural=one": "1 workflow",
+        "totalPlural=other": "{total} workflows"
+      }
+    }
+  ],
+  "workflows_page_of": "page {page} of {pages}"
+}

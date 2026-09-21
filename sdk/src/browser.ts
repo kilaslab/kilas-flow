@@ -32,6 +32,16 @@ export interface MountOptions {
 	session: EmbedSessionHandle;
 	/** Workflow to open. Defaults to the one the session was minted for. */
 	workflowId?: string;
+	/**
+	 * Language tag for the editor's chrome, e.g. `'id'`.
+	 *
+	 * The editor validates it against the catalog list it ships and ignores a
+	 * tag it does not carry — an unknown locale is never an error, because the
+	 * host's language is a preference rather than an authorization. When it is
+	 * given, it also outranks any language the reader previously chose on the
+	 * editor's own origin: the host decides how its page reads.
+	 */
+	locale?: string;
 	title?: string;
 	className?: string;
 	/** Called for every message the editor sends back. */
@@ -121,7 +131,8 @@ export function mountWorkflowEditor(options: MountOptions): MountedEditor {
 					token: session.token,
 					workflowId,
 					scopes: session.scopes,
-					branding: session.branding ?? {}
+					branding: session.branding ?? {},
+					locale: options.locale
 				},
 				// Explicit target origin. '*' would hand the token to whatever
 				// document happened to occupy the frame.

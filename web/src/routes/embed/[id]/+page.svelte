@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
 
+	import * as m from '$lib/paraglide/messages.js';
 	import EmbedEditor from '$lib/embed/embed-editor.svelte';
 	import { embedSession } from '$lib/embed/session.svelte';
 
@@ -8,13 +9,15 @@
 	// The session module attaches the token the moment it accepts the host's
 	// message, before `session` is readable, and clears it when the frame is
 	// torn down. That is deliberately not an effect here: an effect runs after
-	// its children's, and the editor's first queries go out from those.
+	// its children's, and the editor's first queries go out from those. The
+	// locale arrives the same way — the module applies it before publishing
+	// the session — so the copy below is already in the host's language.
 	const embed = embedSession(() => workflowID);
 	const branding = $derived(embed.session?.branding ?? {});
 </script>
 
 <svelte:head>
-	<title>{branding.name ? `${branding.name} workflow` : 'Embedded workflow'}</title>
+	<title>{branding.name ? m.embed_page_title_branded({ brand: branding.name }) : m.embed_page_title()}</title>
 	<!-- An embedded editor must never be indexed or linked out of its host. -->
 	<meta name="robots" content="noindex, nofollow" />
 </svelte:head>
@@ -32,13 +35,13 @@
 >
 	{#if embed.waiting}
 		<div aria-live="polite" class="grid flex-1 place-items-center text-sm text-muted-foreground">
-			Waiting for the host application…
+			{m.embed_waiting()}
 		</div>
 	{:else if embed.error || !embed.session}
 		<div class="grid flex-1 place-items-center p-6">
 			<div role="alert" class="max-w-md rounded-xl border border-destructive/25 bg-destructive/5 p-5 text-center">
-				<h1 class="font-semibold">This editor could not be opened</h1>
-				<p class="mt-1 text-sm leading-6 text-muted-foreground">{embed.error ?? 'No embed session was provided.'}</p>
+				<h1 class="font-semibold">{m.embed_could_not_open()}</h1>
+				<p class="mt-1 text-sm leading-6 text-muted-foreground">{embed.error ?? m.embed_no_session()}</p>
 			</div>
 		</div>
 	{:else}

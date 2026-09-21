@@ -89,12 +89,13 @@ var server = query.get('server');
 var workflowId = query.get('workflow');
 var token = query.get('token');
 var scopes = (query.get('scopes') || '').split(',').filter(Boolean);
+var locale = query.get('locale');
 var frame = document.getElementById('e2e-frame');
 window.addEventListener('message', function (event) {
 	window.__e2eEvents.push({ origin: event.origin, type: event.data && event.data.type });
 	if (event.data && event.data.type === 'kilasflow:embed-ready') {
 		event.source.postMessage(
-			{ type: 'kilasflow:embed-session', token: token, workflowId: workflowId, scopes: scopes, branding: {} },
+			{ type: 'kilasflow:embed-session', token: token, workflowId: workflowId, scopes: scopes, branding: {}, locale: locale },
 			event.origin
 		);
 	}

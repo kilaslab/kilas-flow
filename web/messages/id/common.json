@@ -1,0 +1,27 @@
+{
+	"common_save": "Simpan",
+	"common_try_again": "Coba lagi",
+	"common_sign_out": "Keluar",
+	"common_signed_in": "Sudah masuk",
+	"common_language": "Bahasa",
+	"common_expand_sidebar": "Perluas bilah sisi",
+	"common_collapse_sidebar": "Ciutkan bilah sisi",
+	"common_open_workspace_navigation": "Buka navigasi ruang kerja",
+	"common_workspace_navigation": "Navigasi ruang kerja",
+	"common_loading": "Memuat {label}…",
+	"common_load_failed": "{label} tidak dapat dimuat",
+	"common_load_incomplete": "{label} mungkin tidak lengkap. {message}",
+	"common_item_count": [
+		{
+			"declarations": ["input count", "local countPlural = count: plural"],
+			"selectors": ["countPlural"],
+			"match": {
+				"countPlural=one": "{count} item",
+				"countPlural=other": "{count} item"
+			}
+		}
+	],
+	"common_request_failed": "Permintaan tidak dapat diselesaikan.",
+	"common_list_cursor_stalled": "Kursor daftar berhenti maju sebelum halaman terakhir",
+	"common_close": "Tutup"
+}

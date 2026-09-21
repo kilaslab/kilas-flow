@@ -1,3 +1,5 @@
+import * as m from '$lib/paraglide/messages.js';
+
 /**
  * Two ways to read a paged listing.
  *
@@ -79,7 +81,7 @@ export async function drainPages<T>(
 		items.push(...page.items);
 		if (page.nextCursor === '') return items;
 		if (requested.has(page.nextCursor)) {
-			throw new Error('The list cursor stopped advancing before the last page');
+			throw new Error(m.common_list_cursor_stalled());
 		}
 		cursor = page.nextCursor;
 	}

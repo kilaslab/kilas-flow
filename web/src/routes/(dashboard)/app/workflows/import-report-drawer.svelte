@@ -3,6 +3,7 @@
 
 	import type { WorkflowDiagnosticsResource } from '$lib/api/generated/models';
 	import * as Sheet from '$lib/components/ui/sheet';
+	import * as m from '$lib/paraglide/messages.js';
 
 	import ImportReport from './import-report.svelte';
 
@@ -33,20 +34,20 @@
 	<Sheet.Content
 		side="right"
 		class="flex w-[min(30rem,94vw)] flex-col gap-0 border-l border-border p-0 sm:max-w-none"
-		aria-label="Import report"
+		aria-label={m.workflows_report_title()}
 	>
 		<Sheet.Header class="shrink-0 gap-1 border-b border-border px-4 py-3 pr-12">
 			<Sheet.Title class="flex items-center gap-2 text-sm">
-				<FileWarning aria-hidden="true" class="size-4 text-muted-foreground" />Import report
+				<FileWarning aria-hidden="true" class="size-4 text-muted-foreground" />{m.workflows_report_title()}
 			</Sheet.Title>
 			<!-- Which revision this is about, and when it happened: the report is
 			     stored with one revision, so naming it is what stops a reader
 			     assuming it describes the draft they are looking at now. -->
 			<Sheet.Description class="text-xs">
 				{#if importedAt}
-					{workflowName} was imported from {report?.source ?? 'another tool'} on {importedAt}.
+					{m.workflows_imported_from({ name: workflowName, source: report?.source ?? m.workflows_import_source_unknown(), date: importedAt })}
 				{:else}
-					{workflowName} was imported from {report?.source ?? 'another tool'}.
+					{m.workflows_imported_from_no_date({ name: workflowName, source: report?.source ?? m.workflows_import_source_unknown() })}
 				{/if}
 			</Sheet.Description>
 		</Sheet.Header>

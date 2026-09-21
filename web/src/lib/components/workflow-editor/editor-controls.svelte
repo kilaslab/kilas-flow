@@ -4,6 +4,8 @@
 	import { ControlButton, Controls, useSvelteFlow } from '@xyflow/svelte';
 	import WandSparkles from '@lucide/svelte/icons/wand-sparkles';
 
+	import * as m from '$lib/paraglide/messages.js';
+
 	/**
 	 * Canvas chrome that lives *inside* SvelteFlow so tidy can fit the view
 	 * afterwards. Parent owns the document mutation; this only triggers it and
@@ -32,8 +34,8 @@
 		{#if !locked}
 			<ControlButton
 				type="button"
-				title="Tidy up"
-				aria-label="Tidy up"
+				title={m.canvas_tidy()}
+				aria-label={m.canvas_tidy()}
 				data-testid="tidy-up"
 				onclick={() => void tidyUp()}
 			>
