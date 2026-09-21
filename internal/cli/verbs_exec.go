@@ -44,6 +44,13 @@ func execVerbs() []Verb {
 			Human:     humanExecution,
 		},
 		{
+			Path:      "exec retry",
+			Operation: "retry-execution",
+			Summary:   "start a fresh execution of the same workflow, input and trigger as one that finished",
+			Run:       runExecRetry,
+			Human:     humanExecution,
+		},
+		{
 			Path:      "exec trace",
 			Operation: "stream-execution-events",
 			Summary:   "collect an execution's events into one envelope, stopping at its outcome",
@@ -174,6 +181,36 @@ func runExecCancel(ctx *Context, args []string) error {
 	}
 
 	return ctx.readResource(http.MethodPost, "/executions/"+url.PathEscape(id)+"/cancel", nil, id)
+}
+
+// runExecRetry starts a fresh execution from a finished one.
+//
+// It is not a guarded verb: a retry spends a run rather than publishing or
+// destroying anything, and the server refuses one that is still running with
+// 409 — which the exit contract maps to exit 5, "re-read, then decide".
+func runExecRetry(ctx *Context, args []string) error {
+	id, err := requireOneID(args, "execution id")
+	if err != nil {
+		return err
+	}
+
+	// No body: the operation reads the workflow, the input and the trigger from
+	// the execution it copies, and anything sent here would be ignored.
+	resp, err := ctx.Client.Do(ctx.Ctx, http.MethodPost,
+		apiPath("/executions/"+url.PathEscape(id)+"/retry"), nil, nil, nil)
+	if err != nil {
+		return err
+	}
+
+	ctx.Data = jsonOrText(resp.Body)
+	// The new execution's own id, so a --quiet caller pipes the run it just
+	// started rather than the one it retried.
+	ctx.Primary = locationID(resp.Header.Get("Location"))
+	if ctx.Primary == "" {
+		ctx.Primary = fieldValue(resp.Body, "id")
+	}
+
+	return nil
 }
 
 // tracePayload is one collected trace.

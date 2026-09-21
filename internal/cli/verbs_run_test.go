@@ -312,3 +312,80 @@ func TestRunNeedsAWorkflowId(t *testing.T) {
 		t.Fatalf("a missing id sent %d requests, want none", len(api.calls))
 	}
 }
+
+func TestRunWithRevisionPinsTheRevisionInTheBody(t *testing.T) {
+	api := newRecordingAPI(map[string]http.HandlerFunc{
+		apiPrefix + "/workflows/wf_1/run": jsonBody(http.StatusAccepted, executionResource("exec_1", "queued")),
+	})
+	srv := stubAPI(t, api.routesFor(t))
+
+	code, _, stdout, stderr := runCLI(t, Env{
+		Args:   []string{"run", "wf_1", "--revision", "wfv_2", "--url", srv.URL, "--json"},
+		Getenv: homeEnv(t.TempDir(), nil),
+	})
+	if code != ExitOK {
+		t.Fatalf("exit = %d, want %d (stdout=%q stderr=%q)", code, ExitOK, stdout, stderr)
+	}
+
+	call := api.last(t)
+	if call.Method != http.MethodPost || call.Path != apiPrefix+"/workflows/wf_1/run" {
+		t.Fatalf("call = %+v, want POST %s/workflows/wf_1/run", call, apiPrefix)
+	}
+
+	var sent struct {
+		WorkflowVersionID string `json:"workflowVersionId"`
+	}
+	if err := json.Unmarshal([]byte(call.Body), &sent); err != nil {
+		t.Fatalf("the body is not the run request: %v (%q)", err, call.Body)
+	}
+	if sent.WorkflowVersionID != "wfv_2" {
+		t.Fatalf("body = %q, want workflowVersionId wfv_2", call.Body)
+	}
+}
+
+func TestRunWithRevisionAndInputCarriesBoth(t *testing.T) {
+	api := newRecordingAPI(map[string]http.HandlerFunc{
+		apiPrefix + "/workflows/wf_1/run": jsonBody(http.StatusAccepted, executionResource("exec_1", "queued")),
+	})
+	srv := stubAPI(t, api.routesFor(t))
+
+	code, _, stdout, stderr := runCLI(t, Env{
+		Args: []string{"run", "wf_1", "--revision", "wfv_2", "--input", `{"n":1}`,
+			"--url", srv.URL, "--json"},
+		Getenv: homeEnv(t.TempDir(), nil),
+	})
+	if code != ExitOK {
+		t.Fatalf("exit = %d, want %d (stdout=%q stderr=%q)", code, ExitOK, stdout, stderr)
+	}
+
+	call := api.last(t)
+	var sent struct {
+		Input             json.RawMessage `json:"input"`
+		WorkflowVersionID string          `json:"workflowVersionId"`
+	}
+	if err := json.Unmarshal([]byte(call.Body), &sent); err != nil {
+		t.Fatalf("the body is not the run request: %v (%q)", err, call.Body)
+	}
+	if string(sent.Input) != `{"n":1}` || sent.WorkflowVersionID != "wfv_2" {
+		t.Fatalf("body = %q, want the input and the revision", call.Body)
+	}
+}
+
+func TestRunWithoutRevisionSendsNoRevisionField(t *testing.T) {
+	api := newRecordingAPI(map[string]http.HandlerFunc{
+		apiPrefix + "/workflows/wf_1/run": jsonBody(http.StatusAccepted, executionResource("exec_1", "queued")),
+	})
+	srv := stubAPI(t, api.routesFor(t))
+
+	code, _, stdout, stderr := runCLI(t, Env{
+		Args:   []string{"run", "wf_1", "--input", `{"n":1}`, "--url", srv.URL, "--json"},
+		Getenv: homeEnv(t.TempDir(), nil),
+	})
+	if code != ExitOK {
+		t.Fatalf("exit = %d, want %d (stdout=%q stderr=%q)", code, ExitOK, stdout, stderr)
+	}
+
+	if call := api.last(t); strings.Contains(call.Body, "workflowVersionId") {
+		t.Fatalf("body = %q, want no revision field when --revision was not given", call.Body)
+	}
+}

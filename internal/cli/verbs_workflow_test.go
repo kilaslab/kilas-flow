@@ -423,3 +423,168 @@ func TestWorkflowVerbsCarryAServerRefusalUnchanged(t *testing.T) {
 		t.Fatalf("the problem document was not carried verbatim: %s", problem)
 	}
 }
+
+func TestWorkflowValidateReadsTheDocumentFromStdinAndPrintsTheVerdict(t *testing.T) {
+	api := newRecordingAPI(map[string]http.HandlerFunc{
+		apiPrefix + "/workflows/validate": jsonBody(http.StatusOK,
+			`{"valid":true,"diagnostics":[]}`),
+	})
+	srv := stubAPI(t, api.routesFor(t))
+
+	document := `{"schemaVersion":1,"name":"Orders","nodes":[],"connections":[],"settings":{}}`
+
+	code, _, stdout, stderr := runCLI(t, Env{
+		Args:   []string{"workflow", "validate", "--file", "-", "--url", srv.URL, "--quiet"},
+		Stdin:  strings.NewReader(document),
+		Getenv: homeEnv(t.TempDir(), nil),
+	})
+	if code != ExitOK {
+		t.Fatalf("exit = %d, want %d (stdout=%q stderr=%q)", code, ExitOK, stdout, stderr)
+	}
+
+	call := api.last(t)
+	if call.Method != http.MethodPost || call.Path != apiPrefix+"/workflows/validate" {
+		t.Fatalf("call = %+v, want POST %s/workflows/validate", call, apiPrefix)
+	}
+	if call.Body != document {
+		t.Fatalf("body = %q, want the document unchanged (%q)", call.Body, document)
+	}
+	// The verdict is what a pipeline branches on, so --quiet prints it.
+	if stdout != "true\n" {
+		t.Fatalf("stdout = %q, want the verdict", stdout)
+	}
+}
+
+func TestWorkflowValidateReportsDiagnosticsWithoutFailing(t *testing.T) {
+	// The diagnostics are the import path's own resource, so the reason is
+	// under `reason` and the node is under `nodeId`.
+	api := newRecordingAPI(map[string]http.HandlerFunc{
+		apiPrefix + "/workflows/validate": jsonBody(http.StatusOK,
+			`{"valid":false,"diagnostics":[{"severity":"blocking","nodeId":"n1","field":"parameters.url","reason":"unknown node type"}]}`),
+	})
+	srv := stubAPI(t, api.routesFor(t))
+
+	code, _, stdout, stderr := runCLI(t, Env{
+		Args:   []string{"workflow", "validate", "--file", "-", "--url", srv.URL, "--json"},
+		Stdin:  strings.NewReader(`{"schemaVersion":1,"name":"x","nodes":[],"connections":[],"settings":{}}`),
+		Getenv: homeEnv(t.TempDir(), nil),
+	})
+	// An invalid document is an answer, not a failure: the operation is 200
+	// with the verdict, so the verb exits 0 and carries the diagnostics.
+	if code != ExitOK {
+		t.Fatalf("exit = %d, want %d (stdout=%q stderr=%q)", code, ExitOK, stdout, stderr)
+	}
+
+	doc := envelope(t, stdout)
+	data, _ := doc["data"].(map[string]any)
+	if data["valid"] != false {
+		t.Fatalf("data.valid = %v, want false", data["valid"])
+	}
+	diagnostics, _ := data["diagnostics"].([]any)
+	if len(diagnostics) != 1 {
+		t.Fatalf("data.diagnostics = %v, want the one diagnostic", data["diagnostics"])
+	}
+	// The resource is a passthrough: the API's own keys arrive unchanged.
+	diagnostic, _ := diagnostics[0].(map[string]any)
+	if diagnostic["severity"] != "blocking" || diagnostic["reason"] != "unknown node type" {
+		t.Fatalf("diagnostic = %v, want the server's own keys and text", diagnostic)
+	}
+	if diagnostic["nodeId"] != "n1" || diagnostic["field"] != "parameters.url" {
+		t.Fatalf("diagnostic = %v, want the node and field the server named", diagnostic)
+	}
+	if meta, _ := doc["meta"].(map[string]any); meta["operation"] != "validate-workflow-document" {
+		t.Fatalf("meta.operation = %v, want validate-workflow-document", meta["operation"])
+	}
+}
+
+func TestWorkflowValidateWithoutAFileIsAUsageError(t *testing.T) {
+	api := newRecordingAPI(nil)
+	srv := stubAPI(t, api.routesFor(t))
+
+	code, _, stdout, stderr := runCLI(t, Env{
+		Args:   []string{"workflow", "validate", "--url", srv.URL, "--json"},
+		Getenv: homeEnv(t.TempDir(), nil),
+	})
+	if code != ExitUsage {
+		t.Fatalf("exit = %d, want %d (stdout=%q stderr=%q)", code, ExitUsage, stdout, stderr)
+	}
+	if len(api.calls) != 0 {
+		t.Fatalf("a missing document sent %d requests, want none", len(api.calls))
+	}
+}
+
+func TestWorkflowDuplicatePostsTheNameAndPrintsTheNewId(t *testing.T) {
+	api := newRecordingAPI(map[string]http.HandlerFunc{
+		apiPrefix + "/workflows/wf_1/duplicate": func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Location", apiPrefix+"/workflows/wf_copy")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = io.WriteString(w, workflowBody)
+		},
+	})
+	srv := stubAPI(t, api.routesFor(t))
+
+	code, _, stdout, stderr := runCLI(t, Env{
+		Args:   []string{"workflow", "duplicate", "wf_1", "--name", "Orders (copy)", "--url", srv.URL, "--quiet"},
+		Getenv: homeEnv(t.TempDir(), nil),
+	})
+	if code != ExitOK {
+		t.Fatalf("exit = %d, want %d (stdout=%q stderr=%q)", code, ExitOK, stdout, stderr)
+	}
+
+	call := api.last(t)
+	if call.Method != http.MethodPost || call.Path != apiPrefix+"/workflows/wf_1/duplicate" {
+		t.Fatalf("call = %+v, want POST %s/workflows/wf_1/duplicate", call, apiPrefix)
+	}
+	var sent struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal([]byte(call.Body), &sent); err != nil {
+		t.Fatalf("the body is not the duplicate request: %v (%q)", err, call.Body)
+	}
+	if sent.Name != "Orders (copy)" {
+		t.Fatalf("body = %q, want the copy's name", call.Body)
+	}
+	if stdout != "wf_copy\n" {
+		t.Fatalf("stdout = %q, want the id from the Location header", stdout)
+	}
+}
+
+func TestWorkflowDuplicateWithoutANameSendsNoBody(t *testing.T) {
+	api := newRecordingAPI(map[string]http.HandlerFunc{
+		apiPrefix + "/workflows/wf_1/duplicate": jsonBody(http.StatusCreated, workflowBody),
+	})
+	srv := stubAPI(t, api.routesFor(t))
+
+	code, _, stdout, stderr := runCLI(t, Env{
+		Args:   []string{"workflow", "duplicate", "wf_1", "--url", srv.URL, "--json"},
+		Getenv: homeEnv(t.TempDir(), nil),
+	})
+	if code != ExitOK {
+		t.Fatalf("exit = %d, want %d (stdout=%q stderr=%q)", code, ExitOK, stdout, stderr)
+	}
+
+	if call := api.last(t); call.Body != "" {
+		t.Fatalf("body = %q, want an absent body so the server derives the name", call.Body)
+	}
+}
+
+func TestWorkflowDuplicateOnAMissingWorkflowExitsNotFound(t *testing.T) {
+	srv := stubAPI(t, map[string]http.HandlerFunc{
+		apiPrefix + "/workflows/wf_missing/duplicate": problemBody(http.StatusNotFound,
+			`{"title":"Not Found","status":404,"detail":"workflow not found"}`),
+	})
+
+	code, _, stdout, stderr := runCLI(t, Env{
+		Args:   []string{"workflow", "duplicate", "wf_missing", "--url", srv.URL, "--json"},
+		Getenv: homeEnv(t.TempDir(), nil),
+	})
+	if code != ExitNotFound {
+		t.Fatalf("exit = %d, want %d (stdout=%q stderr=%q)", code, ExitNotFound, stdout, stderr)
+	}
+
+	failure, _ := envelope(t, stdout)["error"].(map[string]any)
+	if failure["code"] != "not_found" || failure["status"] != float64(404) {
+		t.Fatalf("error = %v, want not_found carrying the status", failure)
+	}
+}

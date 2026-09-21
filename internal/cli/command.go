@@ -70,6 +70,7 @@ func registry() []Verb {
 	verbs = append(verbs, workflowVerbs()...)
 	verbs = append(verbs, runVerbs()...)
 	verbs = append(verbs, execVerbs()...)
+	verbs = append(verbs, debugVerbs()...)
 	verbs = append(verbs, nodeVerbs()...)
 	verbs = append(verbs, credentialVerbs()...)
 	verbs = append(verbs, datastoreVerbs()...)

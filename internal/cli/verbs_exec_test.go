@@ -434,3 +434,68 @@ func TestExecVerbsNeedAnExecutionId(t *testing.T) {
 		t.Fatalf("a missing id sent %d requests, want none", len(api.calls))
 	}
 }
+
+func TestExecRetryPostsAndReportsTheNewExecution(t *testing.T) {
+	// The operation answers 201 with the new execution resource and sets no
+	// Location header, so the id a --quiet caller reads comes from the body.
+	api := newRecordingAPI(map[string]http.HandlerFunc{
+		apiPrefix + "/executions/exec_1/retry": jsonBody(http.StatusCreated, executionResource("exec_2", "queued")),
+	})
+	srv := stubAPI(t, api.routesFor(t))
+
+	code, _, stdout, stderr := runCLI(t, Env{
+		Args:   []string{"exec", "retry", "exec_1", "--url", srv.URL, "--quiet"},
+		Getenv: homeEnv(t.TempDir(), nil),
+	})
+	if code != ExitOK {
+		t.Fatalf("exit = %d, want %d (stdout=%q stderr=%q)", code, ExitOK, stdout, stderr)
+	}
+
+	call := api.last(t)
+	if call.Method != http.MethodPost || call.Path != apiPrefix+"/executions/exec_1/retry" {
+		t.Fatalf("call = %+v, want POST %s/executions/exec_1/retry", call, apiPrefix)
+	}
+	if call.Body != "" {
+		t.Fatalf("body = %q, want none: the operation copies the execution it reads", call.Body)
+	}
+	if stdout != "exec_2\n" {
+		t.Fatalf("stdout = %q, want the new execution id", stdout)
+	}
+}
+
+func TestExecRetryOnARunningExecutionExitsConflict(t *testing.T) {
+	api := newRecordingAPI(map[string]http.HandlerFunc{
+		apiPrefix + "/executions/exec_1/retry": problemBody(http.StatusConflict,
+			`{"title":"Conflict","status":409,"detail":"execution is still running"}`),
+	})
+	srv := stubAPI(t, api.routesFor(t))
+
+	code, _, stdout, stderr := runCLI(t, Env{
+		Args:   []string{"exec", "retry", "exec_1", "--url", srv.URL, "--json"},
+		Getenv: homeEnv(t.TempDir(), nil),
+	})
+	if code != ExitConflict {
+		t.Fatalf("exit = %d, want %d (stdout=%q stderr=%q)", code, ExitConflict, stdout, stderr)
+	}
+
+	failure, _ := envelope(t, stdout)["error"].(map[string]any)
+	if failure["code"] != "conflict" || failure["status"] != float64(409) {
+		t.Fatalf("error = %v, want conflict carrying the status", failure)
+	}
+}
+
+func TestExecRetryNeedsAnExecutionId(t *testing.T) {
+	api := newRecordingAPI(nil)
+	srv := stubAPI(t, api.routesFor(t))
+
+	code, _, stdout, stderr := runCLI(t, Env{
+		Args:   []string{"exec", "retry", "--url", srv.URL, "--json"},
+		Getenv: homeEnv(t.TempDir(), nil),
+	})
+	if code != ExitUsage {
+		t.Fatalf("exit = %d, want %d (stdout=%q stderr=%q)", code, ExitUsage, stdout, stderr)
+	}
+	if len(api.calls) != 0 {
+		t.Fatalf("a missing id sent %d requests, want none", len(api.calls))
+	}
+}

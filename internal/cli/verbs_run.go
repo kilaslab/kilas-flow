@@ -53,6 +53,7 @@ type runFlags struct {
 	input     string
 	inputFile string
 	trigger   string
+	revision  string
 	wait      bool
 	poll      time.Duration
 }
@@ -67,6 +68,7 @@ func registerRunFlags(fs *flag.FlagSet) any {
 	fs.StringVar(&flags.input, "input", "", "manual-run input as JSON, or @<file>")
 	fs.StringVar(&flags.inputFile, "input-file", "", "read the input from a file, or - for stdin")
 	fs.StringVar(&flags.trigger, "trigger", "", "trigger node to start from; omit to run every trigger")
+	fs.StringVar(&flags.revision, "revision", "", "run a pinned revision of the workflow instead of the active one")
 	fs.BoolVar(&flags.wait, "wait", false, "watch the run until it reaches a terminal state")
 	fs.DurationVar(&flags.poll, "poll", runPollDefault, "how often to read a waited-for execution back")
 
@@ -207,16 +209,18 @@ func (f *runFlags) request(ctx *Context) ([]byte, error) {
 	}
 
 	trigger := strings.TrimSpace(f.trigger)
-	if len(input) == 0 && trigger == "" {
+	revision := strings.TrimSpace(f.revision)
+	if len(input) == 0 && trigger == "" && revision == "" {
 		// Nothing to say: the API reads an absent body as "every trigger, no
-		// input", which is what a bare `run` means.
+		// input, the active revision", which is what a bare `run` means.
 		return nil, nil
 	}
 
 	body := struct {
-		Input         json.RawMessage `json:"input,omitempty"`
-		TriggerNodeID string          `json:"triggerNodeId,omitempty"`
-	}{Input: input, TriggerNodeID: trigger}
+		Input             json.RawMessage `json:"input,omitempty"`
+		TriggerNodeID     string          `json:"triggerNodeId,omitempty"`
+		WorkflowVersionID string          `json:"workflowVersionId,omitempty"`
+	}{Input: input, TriggerNodeID: trigger, WorkflowVersionID: revision}
 
 	encoded, err := json.Marshal(body)
 	if err != nil {

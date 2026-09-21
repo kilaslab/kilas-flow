@@ -26,8 +26,12 @@ import (
 // requireAuthority), because publishing an endpoint and destroying a workflow
 // are the tenant's own decisions rather than a scoped key's.
 //
-// Deliberately absent: update, restore, import, duplicate and validate. They
-// have no verb yet, and `kilasflow api <operation-id>` reaches them today.
+// `validate` and `duplicate` are ordinary verbs rather than guarded ones: one
+// answers a question about a document the caller already holds and saves
+// nothing, and the other copies a workflow the caller can already read.
+//
+// Deliberately absent: update, restore and import. They have no verb yet, and
+// `kilasflow api <operation-id>` reaches them today.
 func workflowVerbs() []Verb {
 	return []Verb{
 		{
@@ -51,6 +55,22 @@ func workflowVerbs() []Verb {
 			Summary:   "create a workflow from a canonical document (`--file <path>|-`)",
 			Flags:     registerCreateFlags,
 			Run:       runWorkflowCreate,
+			Human:     humanWorkflowResource,
+		},
+		{
+			Path:      "workflow validate",
+			Operation: "validate-workflow-document",
+			Summary:   "check a draft document the way the API would, saving nothing (`--file <path>|-`)",
+			Flags:     registerValidateFlags,
+			Run:       runWorkflowValidate,
+			Human:     humanWorkflowValidation,
+		},
+		{
+			Path:      "workflow duplicate",
+			Operation: "duplicate-workflow",
+			Summary:   "copy a workflow (`--name <name>` to rename the copy)",
+			Flags:     registerDuplicateFlags,
+			Run:       runWorkflowDuplicate,
 			Human:     humanWorkflowResource,
 		},
 		{
@@ -162,6 +182,32 @@ func registerCreateFlags(fs *flag.FlagSet) any {
 	return flags
 }
 
+// validateFlags carry the draft document to validate.
+type validateFlags struct {
+	file string
+}
+
+// registerValidateFlags attaches --file.
+func registerValidateFlags(fs *flag.FlagSet) any {
+	flags := &validateFlags{}
+	fs.StringVar(&flags.file, "file", "", "workflow document to validate: a path, or - for stdin")
+
+	return flags
+}
+
+// duplicateFlags carry the name the copy should take.
+type duplicateFlags struct {
+	name string
+}
+
+// registerDuplicateFlags attaches --name.
+func registerDuplicateFlags(fs *flag.FlagSet) any {
+	flags := &duplicateFlags{}
+	fs.StringVar(&flags.name, "name", "", "name for the copy; omit to let the server derive one")
+
+	return flags
+}
+
 // exportFlags carry the one query the export operation accepts.
 type exportFlags struct {
 	format string
@@ -256,6 +302,95 @@ func runWorkflowCreate(ctx *Context, args []string) error {
 	// The identifier a caller pipes onward comes from the Location header the
 	// API sets, so --quiet prints the same id the API named rather than a
 	// field the CLI happened to find in the body.
+	ctx.Primary = locationID(resp.Header.Get("Location"))
+	if ctx.Primary == "" {
+		ctx.Primary = fieldValue(resp.Body, "id")
+	}
+
+	return nil
+}
+
+// runWorkflowValidate checks a draft document without saving it.
+//
+// The document is sent unchanged, the way `workflow create` sends one, and is
+// checked for being JSON before it is sent for the same reason: the API would
+// answer a malformed body with 422, which the exit contract maps to "fix the
+// invocation" anyway.
+//
+// A document the API reports as invalid is an answer, not a failure: the
+// operation is 200 with valid:false and the diagnostics, so the verb exits 0
+// and --quiet prints the verdict, which is what a pipeline branches on.
+func runWorkflowValidate(ctx *Context, args []string) error {
+	if err := refusePositional(args, "workflow validate"); err != nil {
+		return err
+	}
+
+	flags, ok := ctx.VerbFlags.(*validateFlags)
+	if !ok {
+		return usageError("the workflow validate verb was registered without its flags")
+	}
+	if strings.TrimSpace(flags.file) == "" {
+		return usageError("no document: pass --file <path>, or --file - to read it from stdin")
+	}
+
+	document, err := readDocument(flags.file, ctx.Env.Stdin)
+	if err != nil {
+		return err
+	}
+
+	resp, err := ctx.Client.Do(ctx.Ctx, http.MethodPost, apiPath("/workflows/validate"), nil, nil, document)
+	if err != nil {
+		return err
+	}
+
+	ctx.Data = jsonOrText(resp.Body)
+	// The verdict is what a pipeline branches on, so it is what --quiet prints:
+	// the document is already on the command line, and the diagnostics are in
+	// the payload.
+	ctx.Primary = strconv.FormatBool(workflowValidity(resp.Body))
+
+	return nil
+}
+
+// runWorkflowDuplicate copies a workflow.
+//
+// It is not guarded: the copy is a new workflow in the caller's own tenant, so
+// it publishes nothing and destroys nothing, and a key that may create a
+// workflow may copy one.
+func runWorkflowDuplicate(ctx *Context, args []string) error {
+	id, err := requireOneID(args, "workflow id")
+	if err != nil {
+		return err
+	}
+
+	flags, ok := ctx.VerbFlags.(*duplicateFlags)
+	if !ok {
+		return usageError("the workflow duplicate verb was registered without its flags")
+	}
+
+	// A copy with no name of its own is "let the server derive one", and an
+	// absent body is how the run verb says the same kind of thing: nothing to
+	// say is not the same as an empty thing to say.
+	var body []byte
+	if name := strings.TrimSpace(flags.name); name != "" {
+		encoded, err := json.Marshal(struct {
+			Name string `json:"name"`
+		}{Name: name})
+		if err != nil {
+			return usageError("could not render the duplicate request: %v", err)
+		}
+		body = encoded
+	}
+
+	resp, err := ctx.Client.Do(ctx.Ctx, http.MethodPost,
+		apiPath("/workflows/"+url.PathEscape(id)+"/duplicate"), nil, nil, body)
+	if err != nil {
+		return err
+	}
+
+	ctx.Data = jsonOrText(resp.Body)
+	// The copy's own id is what a --quiet caller pipes onward: it comes from
+	// the Location header the API set for the 201, like `workflow create`.
 	ctx.Primary = locationID(resp.Header.Get("Location"))
 	if ctx.Primary == "" {
 		ctx.Primary = fieldValue(resp.Body, "id")
@@ -714,6 +849,61 @@ func humanWorkflowResource(w io.Writer, data any) {
 		{"latest", resource.LatestVersion.ID + " (revision " + strconv.Itoa(resource.LatestVersion.Revision) + ")"},
 		{"updated", resource.UpdatedAt},
 	})
+}
+
+// workflowValidity reads the validate operation's verdict.
+func workflowValidity(body []byte) bool {
+	var verdict struct {
+		Valid bool `json:"valid"`
+	}
+	if err := json.Unmarshal(body, &verdict); err != nil {
+		return false
+	}
+
+	return verdict.Valid
+}
+
+// humanWorkflowValidation prints the verdict and then every diagnostic, because
+// the reason to run the verb by hand is to read them.
+func humanWorkflowValidation(w io.Writer, data any) {
+	raw, ok := data.(json.RawMessage)
+	if !ok {
+		printJSONValue(w, data)
+
+		return
+	}
+
+	var report struct {
+		Valid       bool `json:"valid"`
+		Diagnostics []struct {
+			Severity string `json:"severity"`
+			NodeID   string `json:"nodeId"`
+			Field    string `json:"field"`
+			Reason   string `json:"reason"`
+		} `json:"diagnostics"`
+	}
+	if err := json.Unmarshal(raw, &report); err != nil {
+		printJSONValue(w, data)
+
+		return
+	}
+
+	printKV(w, [][2]string{
+		{"valid", strconv.FormatBool(report.Valid)},
+		{"diagnostics", strconv.Itoa(len(report.Diagnostics))},
+	})
+	for _, diagnostic := range report.Diagnostics {
+		// The diagnostic is the import path's own resource, so the reason is
+		// under `reason` and the text is carried, never reworded here.
+		line := diagnostic.Severity + ": " + diagnostic.Reason
+		switch {
+		case diagnostic.NodeID != "":
+			line = diagnostic.NodeID + ": " + line
+		case diagnostic.Field != "":
+			line = diagnostic.Field + ": " + line
+		}
+		fmt.Fprintln(w, line)
+	}
 }
 
 // humanResourceResource prints a resource this phase has no shape for.

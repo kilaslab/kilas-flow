@@ -66,6 +66,8 @@ token outright — see [Guardrails](#guardrails).
 | `kilasflow workflow list` | `list-workflows` | available |
 | `kilasflow workflow get` | `get-workflow` | available |
 | `kilasflow workflow create` | `create-workflow` | available |
+| `kilasflow workflow validate` | `validate-workflow-document` | available |
+| `kilasflow workflow duplicate` | `duplicate-workflow` | available |
 | `kilasflow workflow versions` | `list-workflow-versions` | available |
 | `kilasflow workflow get-version` | `get-workflow-version` | available |
 | `kilasflow workflow publish-events` | `list-workflow-publish-events` | available |
@@ -80,6 +82,8 @@ token outright — see [Guardrails](#guardrails).
 | `kilasflow exec trace` | `stream-execution-events` | available |
 | `kilasflow exec tail` | `stream-execution-events` | available |
 | `kilasflow exec cancel` | `cancel-execution` | available |
+| `kilasflow exec retry` | `retry-execution` | available |
+| `kilasflow debug eval` | `eval-expression` | available |
 | `kilasflow node list` | `list-node-types` | available |
 | `kilasflow node describe` | `list-node-types` (the catalogue, reduced to one entry) | available |
 | `kilasflow node options` | `load-node-property-options` | available |
@@ -126,7 +130,7 @@ Two things the design's tree lists are deliberately absent:
   `kilasflow api list-workflow-webhooks`.
 
 The mutating verbs that have no command of their own — `workflow
-update|restore|import|duplicate|validate`, `schedule create|update|delete`, the
+update|restore|import`, `schedule create|update|delete`, the
 datastore row writes, `tenant create`, `create-tenant-user`, `revoke-api-key` —
 are reachable the same way. A verb is added when a caller has to reach for the
 operation often enough that naming it is worth the surface; until then the
@@ -255,6 +259,9 @@ should be one request.
 kilasflow workflow list --limit 20 --json
 kilasflow workflow get wf_01J8ZP
 kilasflow workflow create --file workflow.json --quiet   # the new id
+kilasflow workflow validate --file patch.json            # exit 0, then read data.valid
+kilasflow workflow validate --file - --quiet < patch.json  # true / false
+kilasflow workflow duplicate wf_01J8ZP --name "Orders (copy)" --quiet  # the copy's id
 kilasflow workflow versions wf_01J8ZP --cursor cur_2
 kilasflow workflow get-version wf_01J8ZP wfv_01J8ZP
 kilasflow workflow publish-events wf_01J8ZP
@@ -271,9 +278,25 @@ kilasflow workflow delete wf_01J8ZP --yes
   agent loop page every listing the same way.
 - `workflow create --file <path>|-` sends the document **unchanged**. A document
   that is not valid JSON is refused with exit 2 before a request is made.
+- `workflow validate --file <path>|-` sends the same draft document and saves
+  nothing. `data` is `{valid, diagnostics}` where each diagnostic is the import
+  path's own resource — `{severity, nodeId?, nodeName?, field?, type?,
+  typeVersion?, reason}`, with `severity: "blocking"` and the explanation under
+  `reason` — carried unchanged, so a client renders the dry run's findings the
+  way it renders an import report. **A document that does not validate is an
+  answer, not a failure**: the operation is `200` with `valid:false`, so the
+  verb exits 0 and `--quiet` prints the verdict (`true`/`false`), which is what
+  a pipeline branches on. The exit codes reserved for authority and for absence
+  still apply — a `403` exits 3, a `404` exits 4.
+- `workflow duplicate <id>` copies a workflow. `--name <name>` names the copy;
+  without it the server derives one and the request carries no body. The answer
+  is the copy's own resource (`201`), and `--quiet` prints the copy's id, taken
+  from the `Location` header the API set. It is not guarded: a copy publishes
+  nothing and destroys nothing.
 - `--quiet` on a listing prints one id per line; on `workflow create` it prints
-  the id the API named in its `Location` header; on `activate`, `deactivate` and
-  `delete` it prints the workflow id.
+  the id the API named in its `Location` header; on `workflow validate` the
+  verdict; on `workflow duplicate` the copy's id; on `activate`, `deactivate`
+  and `delete` the workflow id.
 - `workflow diagnostics` wraps an operation the contract page does not list
   (`GET /workflows/{id}/diagnostics`); the generated reference does.
 - **`activate`, `deactivate` and `delete` are guarded.** Activating compiles the
@@ -282,8 +305,8 @@ kilasflow workflow delete wf_01J8ZP --yes
   needs `--yes`, and each refuses a scoped agent token outright — see
   [Guardrails](#guardrails). `delete` answers 204, so its `data` is
   `{id, status}` rather than a resource.
-- Deliberately absent: `update`, `restore`, `import`, `duplicate`, `validate`.
-  Every one of them is reachable today through `kilasflow api <operation-id>`.
+- Deliberately absent: `update`, `restore`, `import`. Every one of them is
+  reachable today through `kilasflow api <operation-id>`.
 
 ## `kilasflow run`
 
@@ -292,10 +315,15 @@ Starts a run, and optionally waits for it.
 ```bash
 kilasflow run wf_01J8ZP --input '{"n":1}' --trigger manual
 kilasflow run wf_01J8ZP --input-file payload.json --wait --quiet   # the execution id
+kilasflow run wf_01J8ZP --revision wfv_01J8ZP                     # a pinned revision
 ```
 
-- The body is `{"input": <json>, "triggerNodeId": <node>}`, and either half may
-  be omitted; a bare `run` starts every trigger with no input.
+- The body is `{"input": <json>, "triggerNodeId": <node>, "workflowVersionId":
+  <revision>}`, and every field may be omitted; a bare `run` starts every
+  trigger, with no input, on the workflow's active revision.
+- `--revision <versionId>` pins the run to one revision instead of the active
+  one, so a caller can run a document it just validated before making it active.
+  Read the id from `workflow versions`.
 - Without `--wait`, `data` is the execution request the server accepted (202).
 - With `--wait`, the run is read back every `--poll` (default 500 ms) until it
   reaches a terminal state. The deadline is `--timeout` when the caller passes
@@ -323,6 +351,7 @@ Execution history and the live feed.
 kilasflow exec list --workflow wf_01J8ZP --status failed --limit 10
 kilasflow exec get exec_01K7
 kilasflow exec cancel exec_01K7
+kilasflow exec retry exec_01K7 --quiet            # the new execution id
 kilasflow exec trace exec_01K7 --json
 kilasflow exec tail exec_01K7
 ```
@@ -333,6 +362,11 @@ kilasflow exec tail exec_01K7
   destroying anything, and it answers 202 because the server accepted the
   request, not because the run stopped. Read the execution back to see what
   happened.
+- `exec retry <executionId>` starts a fresh execution of the same workflow, with
+  the same input and the same trigger, from a finished one. It sends **no body**
+  — the operation copies the execution it reads — and answers `201` with the new
+  execution, whose id `--quiet` prints. A retry of an execution that is still
+  running is a `409`, which exits 5 (`conflict`): re-read, then decide.
 - `exec trace` collects the feed into one envelope:
   `{executionId, events: [{id, event, data}], terminal, lastEventId}`. It stops
   at the run's outcome rather than waiting for the server to close the stream,
@@ -349,6 +383,35 @@ kilasflow exec tail exec_01K7
   no deadline and follows the run to its end.
 - Both stream verbs are bounded on purpose. A feed for a live run never closes
   on its own, and an agent that cannot set a deadline on it cannot use it.
+
+## `kilasflow debug`
+
+Answering a question about a run without starting another one.
+
+```bash
+kilasflow debug eval '$json.n + 1' --execution exec_01K7
+kilasflow debug eval '$node["HTTP Request"].body.id' --execution exec_01K7 --node "HTTP Request"
+kilasflow debug eval '$json.n' --execution exec_01K7 --quiet   # the value alone
+```
+
+- `debug eval <expression> --execution <id>` evaluates one expression against the
+  execution's stored context: the node outputs the trace view already shows,
+  rebuilt by the server with the evaluator the runtime already uses for workflow
+  documents. It answers `{value, type}` — one value, not a re-run, and nothing is
+  saved or executed. `--node <nodeId>` narrows the context to one node's output.
+- **`--execution` is required, and is not defaulted to the newest run.** The
+  route makes the execution the context source, so guessing which run the caller
+  meant would answer a question nobody asked; the verb refuses with exit 2 and
+  names `exec list` for finding an id. `--node` is the only optional narrowing.
+- The verb is **not** guarded and carries no guardrail refusal of its own: it
+  reads one execution the caller can already read (`exec get`), so its authority
+  is exactly the scope the server asks for. A refusal is the server's to make —
+  a `403` exits 3 (`scope_denied`), and another tenant's execution is a `404`
+  that exits 4, the same as any other execution read.
+- `--quiet` prints the value as compact JSON, so
+  `kilasflow debug eval '$json.n' --execution exec_1 --quiet` is usable in a
+  pipeline; the type stays in the envelope, because `1` and `"1"` are the same
+  question answered two ways.
 
 ## `kilasflow node`
 
@@ -612,10 +675,11 @@ A real one, from this build against a local server:
   problem document the server sent back — the one place a credential could
   reach the envelope from outside the CLI is redacted before it is carried.
 
-`--quiet` prints only the primary identifier — an id, a status — for shell
-pipelines. It never turns JSON mode *on*, and `--json` alongside it wins. A
-listing prints one id per line, so `kilasflow workflow list --quiet | while read
-wf; do …` is a loop over what exists.
+`--quiet` prints only the primary result — an id, a status, or a verb's own
+verdict (a validation's `true`/`false`, an evaluated expression's value) — for
+shell pipelines. It never turns JSON mode *on*, and `--json` alongside it wins.
+A listing prints one id per line, so `kilasflow workflow list --quiet | while
+read wf; do …` is a loop over what exists.
 
 ```bash
 $ kilasflow health --quiet
