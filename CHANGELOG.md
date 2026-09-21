@@ -40,6 +40,40 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
   artifact built against an older host contract is rebuilt rather than loaded.
   Setting `code.cache_dir` to an empty value keeps every cache in memory, exactly
   as before.
+- Scoped agent tokens: `POST /api/v1/api-keys` accepts `scopes`, `workflowId` and
+  `expiresAt`, so an agent gets a key that can do one family of things —
+  `workflow:read|write|run`, `datastore:read|write` — optionally bound to a
+  single workflow and with an expiry. `GET /auth/me` reports all three. One
+  middleware arm beside the embed gate refuses a scoped key the operations a
+  person keeps: activation and publishing, deletion, import, `/tenants`, key
+  management, embed sessions, credential mutation, datastore schema work,
+  approvals, and everything no arm names. A key bound to one workflow reads
+  another as `404`, so it cannot probe for ids it does not hold; a tenant-wide
+  key and a browser session are unaffected.
+
+- Fourteen guarded verbs — `workflow activate|deactivate|delete`, `credential
+  create|update|delete`, `datastore create|rename|delete|clear|columns …`,
+  `tenant delete` — behind two gates: `--yes` is consent and a tenant-wide key
+  is authority, so a scoped agent token is refused with `scope_denied` whatever
+  the flag says, and neither gate sends a request when it refuses.
+
+- The debug primitives an agent's loop was missing: `workflow validate --file`
+  (compile a document without saving it), `workflow duplicate`,
+  `exec retry`, `run --revision` (pin a revision) and `debug eval`
+  (evaluate an expression against one execution's stored node outputs, read-only,
+  under the runtime's own evaluator and environment allowlist).
+
+- Every workflow revision and publish event now records who made it —
+  `actorKind`, `actorLabel`, `actorKeyId`, exposed on both listings — and the
+  `X-KilasFlow-Skills-Used` header a CLI sends on mutating calls is stored as
+  `actorMeta`, so the skills that actually get used are measurable.
+
+- `kilasflow mcp serve`: an MCP server over stdio whose tools are generated from
+  the command tree — one per verb, its flags as the tool's properties, and
+  `confirm: true` on the guarded ones. A tool call becomes the same invocation
+  the CLI dispatches, so the adapter can never describe a capability the CLI does
+  not have.
+
 - `kilasflow skills list|show|install|check|export`: the agent skills bundle
   ships **inside the binary** and these five verbs read it, install it into a
   harness directory (`--target claude|codex|agents|dir:<path>`, `--scope
