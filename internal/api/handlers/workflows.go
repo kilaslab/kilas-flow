@@ -860,13 +860,16 @@ func (handler *Workflows) Run(ctx context.Context, input *runWorkflowInput) (*ru
 	// returns the recorded outcome without running this.
 	queue := func(ctx context.Context) (idempotency.Response, error) {
 		tenant := handler.tenant(ctx)
-		catalog := workflow.CatalogFor(handler.catalog, tenant.ID)
 		var created execution.Record
 		var err error
+		// The catalogue is narrowed at the call site rather than into a local
+		// first: the guardrail that holds every queue path to a tenant-scoped
+		// catalogue reads the argument, and a variable it cannot follow would
+		// be an obligation it cannot check.
 		if versionID == "" {
-			created, err = handler.executions.QueueManualLatest(ctx, tenant, input.ID, catalog, triggerNodeID, payload)
+			created, err = handler.executions.QueueManualLatest(ctx, tenant, input.ID, workflow.CatalogFor(handler.catalog, tenant.ID), triggerNodeID, payload)
 		} else {
-			created, err = handler.executions.QueueManualVersion(ctx, tenant, input.ID, versionID, catalog, triggerNodeID, payload)
+			created, err = handler.executions.QueueManualVersion(ctx, tenant, input.ID, versionID, workflow.CatalogFor(handler.catalog, tenant.ID), triggerNodeID, payload)
 		}
 		if err != nil {
 			return idempotency.Response{}, err
