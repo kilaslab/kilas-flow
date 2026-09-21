@@ -23,6 +23,8 @@ import type {
 
 import type {
   ErrorModel,
+  EvalExpressionInputBody,
+  EvalExpressionResource,
   ExecutionListResource,
   ExecutionRequestResource,
   ExecutionResource,
@@ -33,6 +35,33 @@ import type {
 
 import { apiFetch } from '../../http';
 import type { ErrorType } from '../../http';
+
+// https://stackoverflow.com/questions/49579094/typescript-conditional-types-filter-out-readonly-properties-pick-only-requir/49579497#49579497
+type IfEquals<X, Y, A = X, B = never> = (<T>() => T extends X ? 1 : 2) extends <
+T,
+>() => T extends Y ? 1 : 2
+? A
+: B;
+
+type WritableKeys<T> = {
+[P in keyof T]-?: IfEquals<
+  { [Q in P]: T[P] },
+  { -readonly [Q in P]: T[P] },
+  P
+>;
+}[keyof T];
+
+type UnionToIntersection<U> =
+  (U extends any ? (k: U)=>void : never) extends ((k: infer I)=>void) ? I : never;
+type DistributeReadOnlyOverUnions<T> = T extends any ? NonReadonly<T> : never;
+
+type Writable<T> = Pick<T, WritableKeys<T>>;
+type NonReadonly<T> = [T] extends [UnionToIntersection<T>] ? {
+  [P in keyof Writable<T>]: T[P] extends object
+    ? NonReadonly<NonNullable<T[P]>>
+    : T[P];
+} : DistributeReadOnlyOverUnions<T>;
+
 
 export type HTTPStatusCode1xx = 100 | 101 | 102 | 103;
 export type HTTPStatusCode2xx = 200 | 201 | 202 | 203 | 204 | 205 | 206 | 207;
@@ -338,6 +367,106 @@ export const createCancelExecution = <TError = ErrorType<ErrorModel>,
       > => {
       return createMutation(() => ({ ...getCancelExecutionMutationOptions(options?.()) }), queryClient);
     }
+    export type evalExpressionResponse200 = {
+  data: EvalExpressionResource
+  status: 200
+}
+
+export type evalExpressionResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type evalExpressionResponseSuccess = (evalExpressionResponse200) & {
+  headers: Headers;
+};
+export type evalExpressionResponseError = (evalExpressionResponseDefault) & {
+  headers: Headers;
+};
+
+export type evalExpressionResponse = (evalExpressionResponseSuccess | evalExpressionResponseError)
+
+export const getEvalExpressionUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/executions/${id}/eval`
+}
+
+/**
+ * Evaluates one expression against the node outputs an execution's trace already stores, under the budget a node of that revision is given, and answers the value and its JSON shape. Nothing is written and nothing runs: this reads what a field held while the workflow ran. The grammar is the one every workflow document is already evaluated with, and $env is the runtime's allowlist rather than the process environment.
+ * @summary Evaluate an expression against an execution
+ */
+export const evalExpression = async (id: string,
+    evalExpressionInputBody: NonReadonly<EvalExpressionInputBody>, options?: Parameters<typeof apiFetch>[1]): Promise<evalExpressionResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Array.isArray(h)) return Object.fromEntries(h);
+    return h;
+  };
+return apiFetch<evalExpressionResponse>(getEvalExpressionUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(evalExpressionInputBody)
+  }
+);}
+
+
+
+
+
+export const getEvalExpressionMutationKey = () => ['evalExpression'] as const;
+
+export const getEvalExpressionMutationOptions = <TError = ErrorType<ErrorModel>,
+    TContext = unknown>(options?: { mutation?:CreateMutationOptions<Awaited<ReturnType<typeof evalExpression>>, TError,EvalExpressionMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}
+): CreateMutationOptions<Awaited<ReturnType<typeof evalExpression>>, TError,EvalExpressionMutationVariables, TContext> => {
+
+const mutationKey = getEvalExpressionMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof evalExpression>>, EvalExpressionMutationVariables> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  evalExpression(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type EvalExpressionMutationResult = NonNullable<Awaited<ReturnType<typeof evalExpression>>>
+    export type EvalExpressionMutationBody = NonReadonly<EvalExpressionInputBody>
+    export type EvalExpressionMutationError = ErrorType<ErrorModel>
+    export type EvalExpressionMutationVariables = {id: string;data: NonReadonly<EvalExpressionInputBody>}
+
+    /**
+ * @summary Evaluate an expression against an execution
+ */
+export const createEvalExpression = <TError = ErrorType<ErrorModel>,
+    TContext = unknown>(options?: () => { mutation?:CreateMutationOptions<Awaited<ReturnType<typeof evalExpression>>, TError,EvalExpressionMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: () => QueryClient): CreateMutationResult<
+        Awaited<ReturnType<typeof evalExpression>>,
+        TError,
+        EvalExpressionMutationVariables,
+        TContext
+      > => {
+      return createMutation(() => ({ ...getEvalExpressionMutationOptions(options?.()) }), queryClient);
+    }
     export type streamExecutionEventsResponse200 = {
   data: StreamExecutionEvents200Item[]
   status: 200
@@ -447,3 +576,96 @@ export function createStreamExecutionEvents<TData = Awaited<ReturnType<typeof st
 
 
 
+export type retryExecutionResponse201 = {
+  data: ExecutionResource
+  status: 201
+}
+
+export type retryExecutionResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 201>
+}
+
+export type retryExecutionResponseSuccess = (retryExecutionResponse201) & {
+  headers: Headers;
+};
+export type retryExecutionResponseError = (retryExecutionResponseDefault) & {
+  headers: Headers;
+};
+
+export type retryExecutionResponse = (retryExecutionResponseSuccess | retryExecutionResponseError)
+
+export const getRetryExecutionUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/executions/${id}/retry`
+}
+
+/**
+ * Starts a new execution from a finished one's workflow, revision and input — the revision that ran, not the workflow's newest. An execution that is still queued or running is refused with 409, and so is one waiting on an approval: retrying it would run the same input beside itself.
+ * @summary Retry a finished execution
+ */
+export const retryExecution = async (id: string, options?: Parameters<typeof apiFetch>[1]): Promise<retryExecutionResponse> => {
+
+  return apiFetch<retryExecutionResponse>(getRetryExecutionUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getRetryExecutionMutationKey = () => ['retryExecution'] as const;
+
+export const getRetryExecutionMutationOptions = <TError = ErrorType<ErrorModel>,
+    TContext = unknown>(options?: { mutation?:CreateMutationOptions<Awaited<ReturnType<typeof retryExecution>>, TError,RetryExecutionMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}
+): CreateMutationOptions<Awaited<ReturnType<typeof retryExecution>>, TError,RetryExecutionMutationVariables, TContext> => {
+
+const mutationKey = getRetryExecutionMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof retryExecution>>, RetryExecutionMutationVariables> = (props) => {
+          const {id} = props ?? {};
+
+          return  retryExecution(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RetryExecutionMutationResult = NonNullable<Awaited<ReturnType<typeof retryExecution>>>
+
+    export type RetryExecutionMutationError = ErrorType<ErrorModel>
+    export type RetryExecutionMutationVariables = {id: string}
+
+    /**
+ * @summary Retry a finished execution
+ */
+export const createRetryExecution = <TError = ErrorType<ErrorModel>,
+    TContext = unknown>(options?: () => { mutation?:CreateMutationOptions<Awaited<ReturnType<typeof retryExecution>>, TError,RetryExecutionMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: () => QueryClient): CreateMutationResult<
+        Awaited<ReturnType<typeof retryExecution>>,
+        TError,
+        RetryExecutionMutationVariables,
+        TContext
+      > => {
+      return createMutation(() => ({ ...getRetryExecutionMutationOptions(options?.()) }), queryClient);
+    }

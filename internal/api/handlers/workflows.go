@@ -261,6 +261,10 @@ type runWorkflowInput struct {
 		// item shape. Empty runs every trigger, which is what a single-trigger
 		// workflow has always done.
 		TriggerNodeID string `json:"triggerNodeId,omitempty" doc:"Trigger node this manual run starts from. Omit to run every trigger."`
+		// WorkflowVersionID pins the revision to run instead of the newest one,
+		// so an agent can reproduce a run against the exact graph it was
+		// reading. A version that is not this workflow's reads as 404.
+		WorkflowVersionID string `json:"workflowVersionId,omitempty" doc:"Revision to run. Omit to run the workflow's latest revision."`
 	}
 }
 
@@ -426,8 +430,23 @@ func (handler *Workflows) Register(api huma.API) {
 	}, handler.Deactivate)
 	huma.Register(api, huma.Operation{
 		OperationID: "run-workflow", Method: http.MethodPost, Path: "/workflows/{id}/run", DefaultStatus: http.StatusAccepted,
-		Summary: "Queue a manual workflow run", Description: "Validates and queues the latest saved revision without requiring activation. Body.triggerNodeId selects the trigger to start from; omit it to run every trigger, and a node that cannot start a run is refused with 422. Send Idempotency-Key to make a retry safe: " + idempotencyKeyDoc, Tags: []string{"Workflow lifecycle"},
+		Summary: "Queue a manual workflow run", Description: "Validates and queues a saved revision without requiring activation. Body.workflowVersionId pins the revision to run; omit it to run the latest. Body.triggerNodeId selects the trigger to start from; omit it to run every trigger, and a node that cannot start a run is refused with 422. Send Idempotency-Key to make a retry safe: " + idempotencyKeyDoc, Tags: []string{"Workflow lifecycle"},
 	}, handler.Run)
+	huma.Register(api, huma.Operation{
+		OperationID: "validate-workflow-document", Method: http.MethodPost, Path: "/workflows/validate",
+		Summary: "Validate a workflow document",
+		Description: "Compiles the supplied document with the same compiler activation uses and answers the diagnostics, " +
+			"saving nothing. The catalogue is narrowed to the caller's tenant, so a document that references a node this " +
+			"workspace may not use says so here rather than at activation.",
+		Tags: []string{"Workflows"},
+	}, handler.ValidateDocument)
+	huma.Register(api, huma.Operation{
+		OperationID: "duplicate-workflow", Method: http.MethodPost, Path: "/workflows/{id}/duplicate", DefaultStatus: http.StatusCreated,
+		Summary: "Duplicate a workflow",
+		Description: "Copies a workflow's latest revision into a new workflow of the same tenant, named after the source " +
+			"with (copy) after it unless the request names one.",
+		Tags: []string{"Workflows"},
+	}, handler.Duplicate)
 }
 
 // Create creates a first immutable draft snapshot with a server-owned ID.
@@ -820,20 +839,35 @@ func (handler *Workflows) Run(ctx context.Context, input *runWorkflowInput) (*ru
 	if err := handler.available(true); err != nil {
 		return nil, err
 	}
-	if err := handler.embedStoredProblem(ctx, input.ID); err != nil {
-		return nil, err
-	}
 	var payload json.RawMessage
-	triggerNodeID := ""
+	triggerNodeID, versionID := "", ""
 	if input.Body != nil {
 		payload = input.Body.Input
 		triggerNodeID = strings.TrimSpace(input.Body.TriggerNodeID)
+		versionID = strings.TrimSpace(input.Body.WorkflowVersionID)
+	}
+	// The confinement check is about the document this call would execute, so
+	// it follows the revision the call names: a pinned run is checked against
+	// that revision, an ordinary one against the latest.
+	if versionID == "" {
+		if err := handler.embedStoredProblem(ctx, input.ID); err != nil {
+			return nil, err
+		}
+	} else if err := handler.embedVersionProblem(ctx, input.ID, versionID); err != nil {
+		return nil, err
 	}
 	// queue is the side effect, and it wakes a worker exactly once: a replay
 	// returns the recorded outcome without running this.
 	queue := func(ctx context.Context) (idempotency.Response, error) {
 		tenant := handler.tenant(ctx)
-		created, err := handler.executions.QueueManualLatest(ctx, tenant, input.ID, workflow.CatalogFor(handler.catalog, tenant.ID), triggerNodeID, payload)
+		catalog := workflow.CatalogFor(handler.catalog, tenant.ID)
+		var created execution.Record
+		var err error
+		if versionID == "" {
+			created, err = handler.executions.QueueManualLatest(ctx, tenant, input.ID, catalog, triggerNodeID, payload)
+		} else {
+			created, err = handler.executions.QueueManualVersion(ctx, tenant, input.ID, versionID, catalog, triggerNodeID, payload)
+		}
 		if err != nil {
 			return idempotency.Response{}, err
 		}
@@ -863,9 +897,10 @@ func (handler *Workflows) Run(ctx context.Context, input *runWorkflowInput) (*ru
 		Operation: "run-workflow",
 		Target:    input.ID,
 		Body: struct {
-			Input         json.RawMessage `json:"input"`
-			TriggerNodeID string          `json:"triggerNodeId"`
-		}{Input: payload, TriggerNodeID: triggerNodeID},
+			Input             json.RawMessage `json:"input"`
+			TriggerNodeID     string          `json:"triggerNodeId"`
+			WorkflowVersionID string          `json:"workflowVersionId"`
+		}{Input: payload, TriggerNodeID: triggerNodeID, WorkflowVersionID: versionID},
 	}, queue)
 	if err != nil {
 		if problem, ok := idempotencyProblem(ctx, err); ok {

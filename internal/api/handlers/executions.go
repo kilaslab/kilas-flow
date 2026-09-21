@@ -18,6 +18,7 @@ import (
 	"github.com/kilaslab/kilas-flow/internal/events"
 	"github.com/kilaslab/kilas-flow/internal/execution"
 	"github.com/kilaslab/kilas-flow/internal/repository"
+	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
 
 // ExecutionController is the narrow runtime service surface exposed to HTTP.
@@ -133,6 +134,15 @@ type Executions struct {
 	history    repository.ExecutionRepository
 	events     *events.Broker
 	tenants    TenantResolver
+	// catalog is the node catalogue a retry compiles its revision against,
+	// narrowed to the caller's tenant. Required for a retry, because a retry
+	// runs a stored graph and only the catalogue answers whether this tenant
+	// may still run it.
+	catalog workflow.Catalog
+	// workflows reads the revision an execution ran, so an evaluation can name
+	// nodes the way the workflow's own expressions do. Optional: without it an
+	// evaluation addresses nodes by the ids the trace shows.
+	workflows WorkflowVersionReader
 	// api is the surface this handler registered on, kept so an operation
 	// middleware can write the same RFC 9457 problem body every other
 	// endpoint does. huma hands the API to Register and to nothing else, and a
@@ -185,11 +195,15 @@ type ExecutionListResource struct {
 }
 
 // NewExecutions constructs the execution control and history handler.
-func NewExecutions(controller ExecutionController, history repository.ExecutionRepository, broker *events.Broker, tenants TenantResolver) *Executions {
+//
+// The catalogue is passed for the one operation that queues work — a retry —
+// because queueing a stored graph means compiling it under the caller's
+// tenant's node visibility, the same question `run` answers.
+func NewExecutions(controller ExecutionController, history repository.ExecutionRepository, broker *events.Broker, tenants TenantResolver, catalog workflow.Catalog) *Executions {
 	if tenants == nil {
 		tenants = defaultTenantResolver{}
 	}
-	return &Executions{controller: controller, history: history, events: broker, tenants: tenants}
+	return &Executions{controller: controller, history: history, events: broker, tenants: tenants, catalog: catalog}
 }
 
 // Register wires execution history reads and the controls that need the live
@@ -208,6 +222,24 @@ func (handler *Executions) Register(api huma.API) {
 		OperationID: "cancel-execution", Method: http.MethodPost, Path: "/executions/{id}/cancel", DefaultStatus: http.StatusAccepted,
 		Summary: "Cancel a workflow execution", Description: "Requests cancellation of queued or running work.", Tags: []string{"Executions"},
 	}, handler.Cancel)
+	huma.Register(api, huma.Operation{
+		OperationID: "retry-execution", Method: http.MethodPost, Path: "/executions/{id}/retry", DefaultStatus: http.StatusCreated,
+		Summary: "Retry a finished execution",
+		Description: "Starts a new execution from a finished one's workflow, revision and input — the revision that ran, " +
+			"not the workflow's newest. An execution that is still queued or running is refused with 409, and so is one " +
+			"waiting on an approval: retrying it would run the same input beside itself.",
+		Tags: []string{"Executions"},
+	}, handler.Retry)
+	huma.Register(api, huma.Operation{
+		OperationID: "eval-expression", Method: http.MethodPost, Path: "/executions/{id}/eval",
+		Summary: "Evaluate an expression against an execution",
+		Description: "Evaluates one expression against the node outputs an execution's trace already stores, under the " +
+			"budget a node of that revision is given, and answers the value and its JSON shape. Nothing is written " +
+			"and nothing runs: this reads what a field held while the workflow ran. The grammar is the one every " +
+			"workflow document is already evaluated with, and $env is the runtime's allowlist rather than the " +
+			"process environment.",
+		Tags: []string{"Executions"},
+	}, handler.EvalExpression)
 
 	operation := huma.Operation{
 		OperationID: "stream-execution-events", Method: http.MethodGet, Path: "/executions/{id}/events",

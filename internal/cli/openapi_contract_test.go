@@ -35,7 +35,7 @@ const contractPagePath = "docs/src/content/docs/reference/api-contract.md"
 // contractRowCount is how many operations the page promises. It is asserted
 // rather than derived: a parser that silently matches nothing would otherwise
 // make the walk pass by walking no rows at all.
-const contractRowCount = 47
+const contractRowCount = 51
 
 // Synthetic path parameters, so every row resolves. A placeholder the row does
 // not carry is ignored; an id that names no existing resource still proves the

@@ -121,6 +121,10 @@ func TestAScopedKeyReachesWhatItsScopesName(t *testing.T) {
 		{"describes itself", http.MethodGet, "/api/v1/auth/me", reader, 0, ""},
 		{"lists workflows", http.MethodGet, "/api/v1/workflows", reader, 0, ""},
 		{"reads a workflow", http.MethodGet, "/api/v1/workflows/wf_1", reader, 0, ""},
+		// The dry run is a read of the catalogue: it compiles a document the
+		// caller supplies and saves nothing, so the verb that answers "would
+		// this run" must not need a write scope.
+		{"validates a document", http.MethodPost, "/api/v1/workflows/validate", reader, 0, ""},
 		{"reads a revision", http.MethodGet, "/api/v1/workflows/wf_1/versions/ver_1", reader, 0, ""},
 		{"reads publish events", http.MethodGet, "/api/v1/workflows/wf_1/publish-events", reader, 0, ""},
 		{"exports a workflow", http.MethodGet, "/api/v1/workflows/wf_1/export", reader, 0, ""},
@@ -132,8 +136,16 @@ func TestAScopedKeyReachesWhatItsScopesName(t *testing.T) {
 		{"lists executions", http.MethodGet, "/api/v1/executions", reader, 0, ""},
 		{"reads an execution", http.MethodGet, "/api/v1/executions/ex_1", reader, 0, ""},
 		{"streams an execution", http.MethodGet, "/api/v1/executions/ex_1/events", reader, 0, ""},
+		// Evaluating an expression re-reads what the trace already returned to
+		// this caller, so it is a read. Retrying it is work, and is asserted
+		// below to need the run scope.
+		{"evaluates against an execution", http.MethodPost, "/api/v1/executions/ex_1/eval", reader, 0, ""},
+		{"retries an execution", http.MethodPost, "/api/v1/executions/ex_1/retry", runner, 0, ""},
 		{"creates a workflow", http.MethodPost, "/api/v1/workflows", writer, 0, ""},
 		{"updates a workflow", http.MethodPut, "/api/v1/workflows/wf_1", writer, 0, ""},
+		// A copy is a create, so it needs the scope a create needs — and only
+		// that: unlike import it copies a workflow the key can already read.
+		{"duplicates a workflow", http.MethodPost, "/api/v1/workflows/wf_1/duplicate", writer, 0, ""},
 		{"restores a revision", http.MethodPost, "/api/v1/workflows/wf_1/versions/ver_1/restore", writer, 0, ""},
 		{"lists schedules", http.MethodGet, "/api/v1/schedules", reader, 0, ""},
 		{"creates a schedule", http.MethodPost, "/api/v1/schedules", writer, 0, ""},
@@ -153,6 +165,16 @@ func TestAScopedKeyReachesWhatItsScopesName(t *testing.T) {
 		{"read cannot create a workflow", http.MethodPost, "/api/v1/workflows", reader, http.StatusForbidden, "is read-only"},
 		{"read cannot run", http.MethodPost, "/api/v1/workflows/wf_1/run", reader, http.StatusForbidden, "cannot run workflows"},
 		{"write cannot run", http.MethodPost, "/api/v1/workflows/wf_1/run", writer, http.StatusForbidden, "cannot run workflows"},
+		// Retrying is starting a run, so it is held to the run scope rather
+		// than to the read the rest of the executions prefix takes.
+		{"read cannot retry", http.MethodPost, "/api/v1/executions/ex_1/retry", reader, http.StatusForbidden, "cannot run workflows"},
+		{"write cannot retry", http.MethodPost, "/api/v1/executions/ex_1/retry", writer, http.StatusForbidden, "cannot run workflows"},
+		// A copy is a new workflow, so it is the write scope or nothing.
+		{"read cannot duplicate", http.MethodPost, "/api/v1/workflows/wf_1/duplicate", reader, http.StatusForbidden, "is read-only"},
+		// A datastore scope reaches no workflow at all, which is how the
+		// dry run and the evaluator are still refusals rather than reads.
+		{"a datastore scope cannot validate", http.MethodPost, "/api/v1/workflows/validate", datastoreReader, http.StatusForbidden, "cannot read"},
+		{"a datastore scope cannot evaluate", http.MethodPost, "/api/v1/executions/ex_1/eval", datastoreReader, http.StatusForbidden, "cannot read executions"},
 		{"a workflow scope reaches no datastore", http.MethodGet, "/api/v1/datastores/ds_1/rows", reader, http.StatusForbidden, "cannot read"},
 		{"a datastore scope reaches no workflow", http.MethodGet, "/api/v1/workflows/wf_1", datastoreReader, http.StatusForbidden, "cannot read"},
 		{"a datastore read cannot write rows", http.MethodPost, "/api/v1/datastores/ds_1/rows", datastoreReader, http.StatusForbidden, "is read-only"},
@@ -176,6 +198,11 @@ func TestAWorkflowBoundKeyReadsAnotherWorkflowAsMissing(t *testing.T) {
 		{"reads another workflow as missing", http.MethodGet, "/api/v1/workflows/wf_2", bound, http.StatusNotFound, "Workflow not found"},
 		{"updates another workflow as missing", http.MethodPut, "/api/v1/workflows/wf_2", bound, http.StatusNotFound, "Workflow not found"},
 		{"runs another workflow as missing", http.MethodPost, "/api/v1/workflows/wf_2/run", bound, http.StatusNotFound, "Workflow not found"},
+		{"duplicates another workflow as missing", http.MethodPost, "/api/v1/workflows/wf_2/duplicate", bound, http.StatusNotFound, "Workflow not found"},
+		// A bound token may read and run the one workflow it names, and may
+		// not bring a sibling into existence — a copy is outside its subject in
+		// exactly the way an import is.
+		{"cannot duplicate its own workflow", http.MethodPost, "/api/v1/workflows/wf_1/duplicate", bound, http.StatusForbidden, "cannot duplicate workflows"},
 		{"lists its own executions", http.MethodGet, "/api/v1/executions?workflowId=wf_1", bound, 0, ""},
 		{"cannot list another workflow's executions", http.MethodGet, "/api/v1/executions?workflowId=wf_2", bound, http.StatusForbidden, "must list executions of its own workflow"},
 		{"cannot list every execution", http.MethodGet, "/api/v1/executions", bound, http.StatusForbidden, "must list executions of its own workflow"},

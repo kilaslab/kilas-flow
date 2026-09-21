@@ -6,13 +6,12 @@
  * OpenAPI spec version: 0.1.0-dev
  */
 
-export interface RunWorkflowInputBody {
+export interface DuplicateWorkflowInputBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /** Optional manual-run input JSON */
-  input?: unknown;
-  /** Trigger node this manual run starts from. Omit to run every trigger. */
-  triggerNodeId?: string;
-  /** Revision to run. Omit to run the workflow's latest revision. */
-  workflowVersionId?: string;
+  /**
+     * Name for the copy; defaults to the source name followed by (copy)
+     * @maxLength 255
+     */
+  name?: string;
 }

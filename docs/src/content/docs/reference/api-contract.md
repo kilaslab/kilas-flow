@@ -38,7 +38,7 @@ Consequences:
 
 ## The operation surface
 
-The document a server serves holds 76 operations, all under `/api/v1`, in
+The document a server serves holds 80 operations, all under `/api/v1`, in
 eleven groups. The tables below are the workflow-facing core this contract was
 written around — the operations that existed when it was last revised. The
 always-current list is the [generated reference](/reference/api/), which is
@@ -49,17 +49,19 @@ tenant/account groups are documented there ([/reference/api/datastores/](/refere
 Paths, HTTP methods, and operation ids are **stable**: they change only under a
 new `/api/vN` path (see [Breaking changes](#breaking-changes)).
 
-### Workflows (14)
+### Workflows (16)
 
 | Method | Path | Operation id |
 | --- | --- | --- |
 | POST | `/workflows` | `create-workflow` |
+| POST | `/workflows/validate` | `validate-workflow-document` |
 | GET | `/workflows` | `list-workflows` |
 | GET | `/workflows/{id}` | `get-workflow` |
 | GET | `/workflows/{id}/webhooks` | `list-workflow-webhooks` |
 | PUT | `/workflows/{id}` | `update-workflow` |
 | DELETE | `/workflows/{id}` | `delete-workflow` |
 | POST | `/workflows/{id}/run` | `run-workflow` |
+| POST | `/workflows/{id}/duplicate` | `duplicate-workflow` |
 | POST | `/workflows/{id}/activate` | `activate-workflow` |
 | POST | `/workflows/{id}/deactivate` | `deactivate-workflow` |
 | GET | `/workflows/{id}/versions` | `list-workflow-versions` |
@@ -68,13 +70,15 @@ new `/api/vN` path (see [Breaking changes](#breaking-changes)).
 | POST | `/workflows/{id}/versions/{versionId}/restore` | `restore-workflow-version` |
 | GET | `/workflows/{id}/publish-events` | `list-workflow-publish-events` |
 
-### Executions (4)
+### Executions (6)
 
 | Method | Path | Operation id |
 | --- | --- | --- |
 | GET | `/executions` | `list-executions` |
 | GET | `/executions/{id}` | `get-execution` |
 | POST | `/executions/{id}/cancel` | `cancel-execution` |
+| POST | `/executions/{id}/retry` | `retry-execution` |
+| POST | `/executions/{id}/eval` | `eval-expression` |
 | GET | `/executions/{id}/events` | `stream-execution-events` |
 
 ### Credentials (8)

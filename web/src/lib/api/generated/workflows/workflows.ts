@@ -22,9 +22,11 @@ import type {
 } from '@tanstack/svelte-query';
 
 import type {
+  DuplicateWorkflowInputBody,
   ErrorModel,
   ListWorkflowVersionsParams,
   ListWorkflowsParams,
+  ValidateWorkflowResource,
   WebhookRouteResource,
   WorkflowDocumentInput,
   WorkflowResource,
@@ -276,6 +278,105 @@ export const createCreateWorkflow = <TError = ErrorType<ErrorModel>,
         TContext
       > => {
       return createMutation(() => ({ ...getCreateWorkflowMutationOptions(options?.()) }), queryClient);
+    }
+    export type validateWorkflowDocumentResponse200 = {
+  data: ValidateWorkflowResource
+  status: 200
+}
+
+export type validateWorkflowDocumentResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type validateWorkflowDocumentResponseSuccess = (validateWorkflowDocumentResponse200) & {
+  headers: Headers;
+};
+export type validateWorkflowDocumentResponseError = (validateWorkflowDocumentResponseDefault) & {
+  headers: Headers;
+};
+
+export type validateWorkflowDocumentResponse = (validateWorkflowDocumentResponseSuccess | validateWorkflowDocumentResponseError)
+
+export const getValidateWorkflowDocumentUrl = () => {
+
+
+
+
+  return `/api/v1/workflows/validate`
+}
+
+/**
+ * Compiles the supplied document with the same compiler activation uses and answers the diagnostics, saving nothing. The catalogue is narrowed to the caller's tenant, so a document that references a node this workspace may not use says so here rather than at activation.
+ * @summary Validate a workflow document
+ */
+export const validateWorkflowDocument = async (workflowDocumentInput: NonReadonly<WorkflowDocumentInput>, options?: Parameters<typeof apiFetch>[1]): Promise<validateWorkflowDocumentResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Array.isArray(h)) return Object.fromEntries(h);
+    return h;
+  };
+return apiFetch<validateWorkflowDocumentResponse>(getValidateWorkflowDocumentUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(workflowDocumentInput)
+  }
+);}
+
+
+
+
+
+export const getValidateWorkflowDocumentMutationKey = () => ['validateWorkflowDocument'] as const;
+
+export const getValidateWorkflowDocumentMutationOptions = <TError = ErrorType<ErrorModel>,
+    TContext = unknown>(options?: { mutation?:CreateMutationOptions<Awaited<ReturnType<typeof validateWorkflowDocument>>, TError,ValidateWorkflowDocumentMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}
+): CreateMutationOptions<Awaited<ReturnType<typeof validateWorkflowDocument>>, TError,ValidateWorkflowDocumentMutationVariables, TContext> => {
+
+const mutationKey = getValidateWorkflowDocumentMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof validateWorkflowDocument>>, ValidateWorkflowDocumentMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  validateWorkflowDocument(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ValidateWorkflowDocumentMutationResult = NonNullable<Awaited<ReturnType<typeof validateWorkflowDocument>>>
+    export type ValidateWorkflowDocumentMutationBody = NonReadonly<WorkflowDocumentInput>
+    export type ValidateWorkflowDocumentMutationError = ErrorType<ErrorModel>
+    export type ValidateWorkflowDocumentMutationVariables = {data: NonReadonly<WorkflowDocumentInput>}
+
+    /**
+ * @summary Validate a workflow document
+ */
+export const createValidateWorkflowDocument = <TError = ErrorType<ErrorModel>,
+    TContext = unknown>(options?: () => { mutation?:CreateMutationOptions<Awaited<ReturnType<typeof validateWorkflowDocument>>, TError,ValidateWorkflowDocumentMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: () => QueryClient): CreateMutationResult<
+        Awaited<ReturnType<typeof validateWorkflowDocument>>,
+        TError,
+        ValidateWorkflowDocumentMutationVariables,
+        TContext
+      > => {
+      return createMutation(() => ({ ...getValidateWorkflowDocumentMutationOptions(options?.()) }), queryClient);
     }
     export type deleteWorkflowResponse204 = {
   data: void
@@ -565,6 +666,106 @@ export const createUpdateWorkflow = <TError = ErrorType<ErrorModel>,
         TContext
       > => {
       return createMutation(() => ({ ...getUpdateWorkflowMutationOptions(options?.()) }), queryClient);
+    }
+    export type duplicateWorkflowResponse201 = {
+  data: WorkflowResource
+  status: 201
+}
+
+export type duplicateWorkflowResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 201>
+}
+
+export type duplicateWorkflowResponseSuccess = (duplicateWorkflowResponse201) & {
+  headers: Headers;
+};
+export type duplicateWorkflowResponseError = (duplicateWorkflowResponseDefault) & {
+  headers: Headers;
+};
+
+export type duplicateWorkflowResponse = (duplicateWorkflowResponseSuccess | duplicateWorkflowResponseError)
+
+export const getDuplicateWorkflowUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/workflows/${id}/duplicate`
+}
+
+/**
+ * Copies a workflow's latest revision into a new workflow of the same tenant, named after the source with (copy) after it unless the request names one.
+ * @summary Duplicate a workflow
+ */
+export const duplicateWorkflow = async (id: string,
+    duplicateWorkflowInputBody?: NonReadonly<DuplicateWorkflowInputBody>, options?: Parameters<typeof apiFetch>[1]): Promise<duplicateWorkflowResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Array.isArray(h)) return Object.fromEntries(h);
+    return h;
+  };
+return apiFetch<duplicateWorkflowResponse>(getDuplicateWorkflowUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(duplicateWorkflowInputBody)
+  }
+);}
+
+
+
+
+
+export const getDuplicateWorkflowMutationKey = () => ['duplicateWorkflow'] as const;
+
+export const getDuplicateWorkflowMutationOptions = <TError = ErrorType<ErrorModel>,
+    TContext = unknown>(options?: { mutation?:CreateMutationOptions<Awaited<ReturnType<typeof duplicateWorkflow>>, TError,DuplicateWorkflowMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}
+): CreateMutationOptions<Awaited<ReturnType<typeof duplicateWorkflow>>, TError,DuplicateWorkflowMutationVariables, TContext> => {
+
+const mutationKey = getDuplicateWorkflowMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof duplicateWorkflow>>, DuplicateWorkflowMutationVariables> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  duplicateWorkflow(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DuplicateWorkflowMutationResult = NonNullable<Awaited<ReturnType<typeof duplicateWorkflow>>>
+    export type DuplicateWorkflowMutationBody = NonReadonly<DuplicateWorkflowInputBody> | undefined
+    export type DuplicateWorkflowMutationError = ErrorType<ErrorModel>
+    export type DuplicateWorkflowMutationVariables = {id: string;data?: NonReadonly<DuplicateWorkflowInputBody>}
+
+    /**
+ * @summary Duplicate a workflow
+ */
+export const createDuplicateWorkflow = <TError = ErrorType<ErrorModel>,
+    TContext = unknown>(options?: () => { mutation?:CreateMutationOptions<Awaited<ReturnType<typeof duplicateWorkflow>>, TError,DuplicateWorkflowMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: () => QueryClient): CreateMutationResult<
+        Awaited<ReturnType<typeof duplicateWorkflow>>,
+        TError,
+        DuplicateWorkflowMutationVariables,
+        TContext
+      > => {
+      return createMutation(() => ({ ...getDuplicateWorkflowMutationOptions(options?.()) }), queryClient);
     }
     export type listWorkflowVersionsResponse200 = {
   data: WorkflowVersionListResource

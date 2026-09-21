@@ -584,6 +584,16 @@ export interface DeleteRowsOutputBody {
   rows: DeleteRowsOutputBodyRowsItem[] | null;
 }
 
+export interface DuplicateWorkflowInputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+     * Name for the copy; defaults to the source name followed by (copy)
+     * @maxLength 255
+     */
+  name?: string;
+}
+
 export interface EmbedSessionBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -647,6 +657,43 @@ export interface ErrorModel {
   title?: string;
   /** A URI reference to human-readable documentation for the error. */
   type?: string;
+}
+
+export interface EvalExpressionInputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+     * The expression to evaluate. A template carrying {{ }} delimiters is evaluated exactly as a document parameter is; without them the whole text is taken as the expression body.
+     * @minLength 1
+     * @maxLength 4096
+     */
+  expression: string;
+  /** The node whose stored output and input the expression reads as $json and $input. Omit it to read the run through $node alone. */
+  nodeId?: string;
+}
+
+/**
+ * The JSON shape the value has
+ */
+export type EvalExpressionResourceType = typeof EvalExpressionResourceType[keyof typeof EvalExpressionResourceType];
+
+
+export const EvalExpressionResourceType = {
+  string: 'string',
+  number: 'number',
+  boolean: 'boolean',
+  array: 'array',
+  object: 'object',
+  null: 'null',
+} as const;
+
+export interface EvalExpressionResource {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** The JSON shape the value has */
+  type: EvalExpressionResourceType;
+  /** The evaluated result */
+  value: unknown;
 }
 
 export interface ExecutionCancelledEvent {
@@ -1263,6 +1310,8 @@ export interface RunWorkflowInputBody {
   input?: unknown;
   /** Trigger node this manual run starts from. Omit to run every trigger. */
   triggerNodeId?: string;
+  /** Revision to run. Omit to run the workflow's latest revision. */
+  workflowVersionId?: string;
 }
 
 export interface ScheduleBody {
@@ -1410,6 +1459,18 @@ export interface UpsertRowOutputBody {
   matched: number;
   /** @nullable */
   rows: UpsertRowOutputBodyRowsItem[] | null;
+}
+
+export interface ValidateWorkflowResource {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+     * What the compiler refused, stated as the import report states it: severity blocking, the node where one is named, and the reason
+     * @nullable
+     */
+  diagnostics: ImportIssue[] | null;
+  /** True when the document compiles and would run */
+  valid: boolean;
 }
 
 export interface WorkflowDiagnosticsResource {
@@ -3818,6 +3879,64 @@ export const cancelExecution = async (id: string, options?: RequestInit): Promis
 
 
 
+export type evalExpressionResponse200 = {
+  data: EvalExpressionResource
+  status: 200
+}
+
+export type evalExpressionResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type evalExpressionResponseSuccess = (evalExpressionResponse200) & {
+  headers: Headers;
+};
+export type evalExpressionResponseError = (evalExpressionResponseDefault) & {
+  headers: Headers;
+};
+
+export type evalExpressionResponse = (evalExpressionResponseSuccess | evalExpressionResponseError)
+
+export const getEvalExpressionUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/executions/${id}/eval`
+}
+
+/**
+ * Evaluates one expression against the node outputs an execution's trace already stores, under the budget a node of that revision is given, and answers the value and its JSON shape. Nothing is written and nothing runs: this reads what a field held while the workflow ran. The grammar is the one every workflow document is already evaluated with, and $env is the runtime's allowlist rather than the process environment.
+ * @summary Evaluate an expression against an execution
+ */
+export const evalExpression = async (id: string,
+    evalExpressionInputBody: NonReadonly<EvalExpressionInputBody>, options?: RequestInit): Promise<evalExpressionResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Array.isArray(h)) return Object.fromEntries(h);
+    return h;
+  };
+const res = await fetch(getEvalExpressionUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(evalExpressionInputBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: evalExpressionResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as evalExpressionResponse
+}
+
+
+
 export type streamExecutionEventsResponse200 = {
   data: StreamExecutionEvents200Item[]
   status: 200
@@ -3874,6 +3993,57 @@ export const streamExecutionEvents = async (id: string,
 
   const data: streamExecutionEventsResponse['data'] = body ? (contentType.includes('json') ? JSON.parse(body) : body) : {}
   return { data, status: res.status, headers: res.headers } as streamExecutionEventsResponse
+}
+
+
+
+export type retryExecutionResponse201 = {
+  data: ExecutionResource
+  status: 201
+}
+
+export type retryExecutionResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 201>
+}
+
+export type retryExecutionResponseSuccess = (retryExecutionResponse201) & {
+  headers: Headers;
+};
+export type retryExecutionResponseError = (retryExecutionResponseDefault) & {
+  headers: Headers;
+};
+
+export type retryExecutionResponse = (retryExecutionResponseSuccess | retryExecutionResponseError)
+
+export const getRetryExecutionUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/executions/${id}/retry`
+}
+
+/**
+ * Starts a new execution from a finished one's workflow, revision and input — the revision that ran, not the workflow's newest. An execution that is still queued or running is refused with 409, and so is one waiting on an approval: retrying it would run the same input beside itself.
+ * @summary Retry a finished execution
+ */
+export const retryExecution = async (id: string, options?: RequestInit): Promise<retryExecutionResponse> => {
+
+  const res = await fetch(getRetryExecutionUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: retryExecutionResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as retryExecutionResponse
 }
 
 
@@ -5259,6 +5429,63 @@ const res = await fetch(getImportWorkflowUrl(),
 
 
 
+export type validateWorkflowDocumentResponse200 = {
+  data: ValidateWorkflowResource
+  status: 200
+}
+
+export type validateWorkflowDocumentResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type validateWorkflowDocumentResponseSuccess = (validateWorkflowDocumentResponse200) & {
+  headers: Headers;
+};
+export type validateWorkflowDocumentResponseError = (validateWorkflowDocumentResponseDefault) & {
+  headers: Headers;
+};
+
+export type validateWorkflowDocumentResponse = (validateWorkflowDocumentResponseSuccess | validateWorkflowDocumentResponseError)
+
+export const getValidateWorkflowDocumentUrl = () => {
+
+
+
+
+  return `/api/v1/workflows/validate`
+}
+
+/**
+ * Compiles the supplied document with the same compiler activation uses and answers the diagnostics, saving nothing. The catalogue is narrowed to the caller's tenant, so a document that references a node this workspace may not use says so here rather than at activation.
+ * @summary Validate a workflow document
+ */
+export const validateWorkflowDocument = async (workflowDocumentInput: NonReadonly<WorkflowDocumentInput>, options?: RequestInit): Promise<validateWorkflowDocumentResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Array.isArray(h)) return Object.fromEntries(h);
+    return h;
+  };
+const res = await fetch(getValidateWorkflowDocumentUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(workflowDocumentInput)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: validateWorkflowDocumentResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as validateWorkflowDocumentResponse
+}
+
+
+
 export type deleteWorkflowResponse204 = {
   data: void
   status: 204
@@ -5581,6 +5808,64 @@ export const workflowDiagnostics = async (id: string,
 
 
 
+export type duplicateWorkflowResponse201 = {
+  data: WorkflowResource
+  status: 201
+}
+
+export type duplicateWorkflowResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 201>
+}
+
+export type duplicateWorkflowResponseSuccess = (duplicateWorkflowResponse201) & {
+  headers: Headers;
+};
+export type duplicateWorkflowResponseError = (duplicateWorkflowResponseDefault) & {
+  headers: Headers;
+};
+
+export type duplicateWorkflowResponse = (duplicateWorkflowResponseSuccess | duplicateWorkflowResponseError)
+
+export const getDuplicateWorkflowUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/workflows/${id}/duplicate`
+}
+
+/**
+ * Copies a workflow's latest revision into a new workflow of the same tenant, named after the source with (copy) after it unless the request names one.
+ * @summary Duplicate a workflow
+ */
+export const duplicateWorkflow = async (id: string,
+    duplicateWorkflowInputBody?: NonReadonly<DuplicateWorkflowInputBody>, options?: RequestInit): Promise<duplicateWorkflowResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Array.isArray(h)) return Object.fromEntries(h);
+    return h;
+  };
+const res = await fetch(getDuplicateWorkflowUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(duplicateWorkflowInputBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: duplicateWorkflowResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as duplicateWorkflowResponse
+}
+
+
+
 export type exportWorkflowResponse200 = {
   data: ExportedWorkflowResource
   status: 200
@@ -5720,7 +6005,7 @@ export const getRunWorkflowUrl = (id: string,) => {
 }
 
 /**
- * Validates and queues the latest saved revision without requiring activation. Body.triggerNodeId selects the trigger to start from; omit it to run every trigger, and a node that cannot start a run is refused with 422. Send Idempotency-Key to make a retry safe: 1-255 printable ASCII characters. A retry carrying the same key and the same request is answered with the first request's outcome and repeats no side effect, marked with Idempotent-Replayed: true. The same key with a different request or resource is refused with 409. Keys are per tenant and are remembered for idempotency.retention. An empty header means no idempotency.
+ * Validates and queues a saved revision without requiring activation. Body.workflowVersionId pins the revision to run; omit it to run the latest. Body.triggerNodeId selects the trigger to start from; omit it to run every trigger, and a node that cannot start a run is refused with 422. Send Idempotency-Key to make a retry safe: 1-255 printable ASCII characters. A retry carrying the same key and the same request is answered with the first request's outcome and repeats no side effect, marked with Idempotent-Replayed: true. The same key with a different request or resource is refused with 409. Keys are per tenant and are remembered for idempotency.retention. An empty header means no idempotency.
  * @summary Queue a manual workflow run
  */
 export const runWorkflow = async (id: string,

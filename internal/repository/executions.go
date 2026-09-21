@@ -22,6 +22,10 @@ import (
 type ExecutionRepository interface {
 	Create(context.Context, TenantScope, execution.Record) (execution.Record, error)
 	QueueManualLatest(context.Context, TenantScope, string, workflow.Catalog, string, json.RawMessage) (execution.Record, error)
+	// QueueManualVersion is the same manual run pinned to one named revision
+	// instead of the newest one, so a caller can run a revision history has
+	// moved past — `run --revision`, and the retry of a finished execution.
+	QueueManualVersion(context.Context, TenantScope, string, string, workflow.Catalog, string, json.RawMessage) (execution.Record, error)
 	QueueTriggered(context.Context, TenantScope, string, string, execution.Trigger, string, json.RawMessage) (execution.Record, error)
 	Get(context.Context, TenantScope, string) (execution.Record, error)
 	List(context.Context, TenantScope, ExecutionFilter) (ExecutionPage, error)
@@ -110,6 +114,46 @@ func NewExecutionStore(db *gorm.DB) *GORMExecutionStore {
 // start a run is refused while the caller is still there to read why instead of
 // being discovered by a worker as a run that did the wrong thing.
 func (store *GORMExecutionStore) QueueManualLatest(ctx context.Context, tenant TenantScope, workflowID string, catalog workflow.Catalog, triggerNodeID string, input json.RawMessage) (execution.Record, error) {
+	// The revision is deliberately unnamed: queueManual resolves the workflow's
+	// latest one inside its own transaction.
+	return store.queueManual(ctx, tenant, workflowID, "", catalog, triggerNodeID, input)
+}
+
+// QueueManualVersion validates one named revision and persists a queued manual
+// execution pinned to it.
+//
+// It is the same run as QueueManualLatest with the revision chosen rather than
+// resolved, sharing that call's transaction, catalogue check and start-node
+// check: a second body here would be a second place for "may this tenant run
+// this graph" to be answered, and the two would drift.
+//
+// A version that is not this workflow's, or not this tenant's, reads as
+// missing rather than as forbidden — the caller learns nothing about a revision
+// it did not name.
+func (store *GORMExecutionStore) QueueManualVersion(ctx context.Context, tenant TenantScope, workflowID, versionID string, catalog workflow.Catalog, triggerNodeID string, input json.RawMessage) (execution.Record, error) {
+	if strings.TrimSpace(versionID) == "" {
+		return execution.Record{}, fmt.Errorf("workflow version ID is required")
+	}
+	return store.queueManual(ctx, tenant, workflowID, versionID, catalog, triggerNodeID, input)
+}
+
+// queueManual is the one manual-run body: it holds the workflow row lock, pins
+// the revision the run will execute, compiles it under the caller's catalogue
+// and persists the queued execution.
+//
+// Keeping those actions in one transaction prevents a concurrent draft save
+// from making the queued execution point at a revision that was already
+// superseded when it persisted. An empty versionID means "the workflow's latest
+// revision", which is what a manual run means; a named one is only accepted
+// when it belongs to this workflow under this tenant.
+//
+// triggerNodeID names the trigger this run starts from, for a workflow that
+// declares several. Empty is the documented default: every root runs, which is
+// what a manual run of a single-trigger workflow has always meant. A named node
+// is checked against the revision being pinned here, so a choice that cannot
+// start a run is refused while the caller is still there to read why instead of
+// being discovered by a worker as a run that did the wrong thing.
+func (store *GORMExecutionStore) queueManual(ctx context.Context, tenant TenantScope, workflowID, versionID string, catalog workflow.Catalog, triggerNodeID string, input json.RawMessage) (execution.Record, error) {
 	if err := tenant.validate(); err != nil {
 		return execution.Record{}, err
 	}
@@ -139,9 +183,18 @@ func (store *GORMExecutionStore) QueueManualLatest(ctx context.Context, tenant T
 		}
 
 		var version workflowVersionModel
-		if err := tx.Where("tenant_id = ? AND workflow_id = ? AND revision = ?", tenant.ID, workflowID, parent.LatestRevision).
-			First(&version).Error; err != nil {
-			return mapNotFound(err, "workflow version")
+		if versionID == "" {
+			if err := tx.Where("tenant_id = ? AND workflow_id = ? AND revision = ?", tenant.ID, workflowID, parent.LatestRevision).
+				First(&version).Error; err != nil {
+				return mapNotFound(err, "workflow version")
+			}
+		} else {
+			if err := tx.Where("tenant_id = ? AND id = ?", tenant.ID, versionID).First(&version).Error; err != nil {
+				return mapNotFound(err, "workflow version")
+			}
+			if version.WorkflowID != parent.ID {
+				return fmt.Errorf("%w: workflow version", ErrNotFound)
+			}
 		}
 		storedVersion, err := versionFromModel(version)
 		if err != nil {

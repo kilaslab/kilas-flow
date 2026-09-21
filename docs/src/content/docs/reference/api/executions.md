@@ -1,6 +1,6 @@
 ---
 title: Executions
-description: "List, inspect, cancel, and follow executions on the event stream. Generated from the live OpenAPI document."
+description: "List, inspect, cancel, retry, and follow executions on the event stream. Generated from the live OpenAPI document."
 sidebar:
   order: 2
 ---
@@ -9,7 +9,7 @@ sidebar:
 
 > **Generated reference — KilasFlow `0.1.0-dev`.** Produced from the OpenAPI document a real binary serves at `/api/openapi.json`, not hand-written. [Which reference to trust](/reference/api/).
 
-List, inspect, cancel, and follow executions on the event stream.
+List, inspect, cancel, retry, and follow executions on the event stream.
 
 ## List workflow executions (`list-executions`)
 
@@ -74,6 +74,50 @@ Responses:
 | Status | Description | Body |
 | --- | --- | --- |
 | `202` | Accepted | `application/json` — `ExecutionRequestResource` |
+| `default` | Error | `application/problem+json` |
+
+Embed: Allow with `workflow:read` — ownership is checked in the handler, which alone can know which workflow an execution belongs to.
+
+## Retry a finished execution (`retry-execution`)
+
+`POST /api/v1/executions/{id}/retry`
+
+Starts a new execution from a finished one's workflow, revision and input — the revision that ran, not the workflow's newest. An execution that is still queued or running is refused with 409, and so is one waiting on an approval: retrying it would run the same input beside itself.
+
+Parameters:
+
+| Name | In | Required | Type | Description |
+| --- | --- | --- | --- | --- |
+| `id` | path | yes | string | Execution identifier |
+
+Responses:
+
+| Status | Description | Body |
+| --- | --- | --- |
+| `201` | Created | `application/json` — `ExecutionResource` |
+| `default` | Error | `application/problem+json` |
+
+Embed: Allow with `workflow:read` — ownership is checked in the handler, which alone can know which workflow an execution belongs to.
+
+## Evaluate an expression against an execution (`eval-expression`)
+
+`POST /api/v1/executions/{id}/eval`
+
+Evaluates one expression against the node outputs an execution's trace already stores, under the budget a node of that revision is given, and answers the value and its JSON shape. Nothing is written and nothing runs: this reads what a field held while the workflow ran. The grammar is the one every workflow document is already evaluated with, and $env is the runtime's allowlist rather than the process environment.
+
+Parameters:
+
+| Name | In | Required | Type | Description |
+| --- | --- | --- | --- | --- |
+| `id` | path | yes | string | Execution identifier |
+
+Request body: `application/json` — `EvalExpressionInputBody` (required)
+
+Responses:
+
+| Status | Description | Body |
+| --- | --- | --- |
+| `200` | OK | `application/json` — `EvalExpressionResource` |
 | `default` | Error | `application/problem+json` |
 
 Embed: Allow with `workflow:read` — ownership is checked in the handler, which alone can know which workflow an execution belongs to.

@@ -191,6 +191,15 @@ func permits(subject subject, r *http.Request) (int, string) {
 		// single-workflow authority and outside a scoped key's list (§3.2).
 		return http.StatusForbidden, subject.Denial("cannot import workflows")
 
+	case path == "/workflows/validate":
+		// A dry run: it compiles a document the caller supplies and saves
+		// nothing, so it is a read of the catalogue rather than a write of a
+		// workflow. It is matched before the prefix arm below, where "validate"
+		// would otherwise be read as a workflow id and the request refused as a
+		// write — which is how a scoped key that may read the catalogue would
+		// lose the one verb that answers "would this run".
+		return refused(subject, subject.Allows(embed.ScopeRead), "cannot read")
+
 	case path == "/workflows":
 		// Listing the tenant's workflows is only meaningful for a credential
 		// that is not confined to one. An embed session always is, and so is a
@@ -220,6 +229,16 @@ func permits(subject subject, r *http.Request) (int, string) {
 		switch {
 		case action == "run":
 			return refused(subject, subject.Allows(embed.ScopeRun), "cannot run workflows")
+		case action == "duplicate":
+			// A copy is a *new* workflow, which is outside any session's
+			// single-workflow authority and outside a bound key's: neither may
+			// bring a workflow into existence, exactly as neither may import
+			// one. A key that is not bound may, with the write scope every
+			// other create needs.
+			if subject.Kind() != kindKey || bound != "" {
+				return http.StatusForbidden, subject.Denial("cannot duplicate workflows")
+			}
+			return refused(subject, subject.Allows(embed.ScopeWrite), "is read-only")
 		case action == "activate" || action == "deactivate":
 			// Activation publishes a webhook endpoint for the whole
 			// deployment; that is an owner action, not an embed one.
@@ -253,6 +272,15 @@ func permits(subject subject, r *http.Request) (int, string) {
 		// Which workflow a single execution belongs to is only knowable by
 		// loading it, so the ownership check lives in the handler. This gate
 		// covers the scope; ownsExecution covers the identity.
+		//
+		// One action is not a read: a retry queues a run of the execution's own
+		// revision, which is work, and it is held to the scope that work needs
+		// rather than to the read the rest of this prefix takes. Evaluating an
+		// expression stays a read — it is the same data `GET
+		// /executions/{id}` returns, re-read.
+		if _, action, _ := strings.Cut(strings.TrimPrefix(path, "/executions/"), "/"); action == "retry" {
+			return refused(subject, subject.Allows(embed.ScopeRun), "cannot run workflows")
+		}
 		return refused(subject, subject.Allows(embed.ScopeRead), "cannot read executions")
 
 	case path == "/datastores":

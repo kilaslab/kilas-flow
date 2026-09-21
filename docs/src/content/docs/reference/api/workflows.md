@@ -34,6 +34,23 @@ Responses:
 
 Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
 
+## Validate a workflow document (`validate-workflow-document`)
+
+`POST /api/v1/workflows/validate`
+
+Compiles the supplied document with the same compiler activation uses and answers the diagnostics, saving nothing. The catalogue is narrowed to the caller's tenant, so a document that references a node this workspace may not use says so here rather than at activation.
+
+Request body: `application/json` — `WorkflowDocumentInput` (required)
+
+Responses:
+
+| Status | Description | Body |
+| --- | --- | --- |
+| `200` | OK | `application/json` — `ValidateWorkflowResource` |
+| `default` | Error | `application/problem+json` |
+
+Embed: Allow with `workflow:write` — on the session’s workflow only.
+
 ## List workflows (`list-workflows`)
 
 `GET /api/v1/workflows`
@@ -148,7 +165,7 @@ Embed: Deny — an embed session cannot delete a workflow.
 
 `POST /api/v1/workflows/{id}/run`
 
-Validates and queues the latest saved revision without requiring activation. Body.triggerNodeId selects the trigger to start from; omit it to run every trigger, and a node that cannot start a run is refused with 422. Send Idempotency-Key to make a retry safe: 1-255 printable ASCII characters. A retry carrying the same key and the same request is answered with the first request's outcome and repeats no side effect, marked with Idempotent-Replayed: true. The same key with a different request or resource is refused with 409. Keys are per tenant and are remembered for idempotency.retention. An empty header means no idempotency.
+Validates and queues a saved revision without requiring activation. Body.workflowVersionId pins the revision to run; omit it to run the latest. Body.triggerNodeId selects the trigger to start from; omit it to run every trigger, and a node that cannot start a run is refused with 422. Send Idempotency-Key to make a retry safe: 1-255 printable ASCII characters. A retry carrying the same key and the same request is answered with the first request's outcome and repeats no side effect, marked with Idempotent-Replayed: true. The same key with a different request or resource is refused with 409. Keys are per tenant and are remembered for idempotency.retention. An empty header means no idempotency.
 
 Parameters:
 
@@ -167,6 +184,30 @@ Responses:
 | `default` | Error | `application/problem+json` |
 
 Embed: Allow with `workflow:run` — on the session’s workflow only.
+
+## Duplicate a workflow (`duplicate-workflow`)
+
+`POST /api/v1/workflows/{id}/duplicate`
+
+Copies a workflow's latest revision into a new workflow of the same tenant, named after the source with (copy) after it unless the request names one.
+
+Parameters:
+
+| Name | In | Required | Type | Description |
+| --- | --- | --- | --- | --- |
+| `id` | path | yes | string | Workflow identifier |
+| `X-KilasFlow-Skills-Used` | header | no | string | Comma-separated names of the skills an agent used to make this call, recorded on the revision it creates |
+
+Request body: `application/json` — `DuplicateWorkflowInputBody`
+
+Responses:
+
+| Status | Description | Body |
+| --- | --- | --- |
+| `201` | Created | `application/json` — `WorkflowResource` |
+| `default` | Error | `application/problem+json` |
+
+Embed: Allow with `workflow:write` — on the session’s workflow only.
 
 ## Activate latest workflow revision (`activate-workflow`)
 
