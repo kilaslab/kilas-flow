@@ -60,6 +60,13 @@ type Credentials struct {
 	// inFlight holds the tests currently running, keyed by tenant and subject,
 	// so a client cannot fan a loop of concurrent probes out of one instance.
 	inFlight sync.Map
+	// oauthSigningKey HMAC-signs the Connect popup's state. Empty disables start.
+	oauthSigningKey    []byte
+	oauthPublicURL     string
+	oauthHTTP          *http.Client
+	oauthTokenURL      string
+	googleClientID     string
+	googleClientSecret string
 }
 
 // WithHTTPPolicy sets the egress policy credential tests run under.
@@ -178,6 +185,20 @@ func (handler *Credentials) Register(api huma.API) {
 		OperationID: "delete-credential", Method: http.MethodDelete, Path: "/credentials/{id}", DefaultStatus: http.StatusNoContent,
 		Summary: "Delete a credential", Description: "Permanently removes a stored credential.", Tags: []string{"Credentials"},
 	}, handler.Delete)
+	handler.registerOAuth(api)
+}
+
+// WithOAuth configures the Google Connect popup. signingKey HMAC-protects
+// state; publicURL is the exact registered redirect origin; tokenURL is empty
+// in production (Google's token endpoint) and an httptest URL in tests.
+func (handler *Credentials) WithOAuth(signingKey []byte, publicURL, clientID, clientSecret, tokenURL string, client *http.Client) *Credentials {
+	handler.oauthSigningKey = signingKey
+	handler.oauthPublicURL = strings.TrimRight(strings.TrimSpace(publicURL), "/")
+	handler.googleClientID = clientID
+	handler.googleClientSecret = clientSecret
+	handler.oauthTokenURL = tokenURL
+	handler.oauthHTTP = client
+	return handler
 }
 
 // ListTypes returns the credential catalogue.
@@ -251,16 +272,18 @@ func (handler *Credentials) Create(ctx context.Context, input *createCredentialI
 	if err := rejectSQLiteScope(input.Body.Type, input.Body.AllowedDomains); err != nil {
 		return nil, err
 	}
-	record, err := handler.store.Create(ctx, handler.tenants.Resolve(ctx), credentials.Record{
+	record := credentials.Record{
 		Name: input.Body.Name, Type: input.Body.Type,
 		Fields: input.Body.Fields, AllowedDomains: input.Body.AllowedDomains,
-	})
+	}
+	credentials.ApplyGoogleDefaults(&record)
+	created, err := handler.store.Create(ctx, handler.tenants.Resolve(ctx), record)
 	if err != nil {
 		return nil, handler.problem(ctx, err)
 	}
 	return &createdCredentialOutput{
-		Status: http.StatusCreated, Location: "/api/v1/credentials/" + record.ID,
-		Body: credentialResource(record),
+		Status: http.StatusCreated, Location: "/api/v1/credentials/" + created.ID,
+		Body: credentialResource(created),
 	}, nil
 }
 
@@ -295,10 +318,15 @@ func (handler *Credentials) Update(ctx context.Context, input *updateCredentialI
 	if err := rejectSQLiteScope(credentialType, input.Body.AllowedDomains); err != nil {
 		return nil, err
 	}
-	record, err := handler.store.Update(ctx, handler.tenants.Resolve(ctx), input.ID, credentials.Record{
+	update := credentials.Record{
 		Name: input.Body.Name, Type: input.Body.Type,
 		Fields: input.Body.Fields, AllowedDomains: input.Body.AllowedDomains,
-	})
+	}
+	if update.Type == "" {
+		update.Type = credentialType
+	}
+	credentials.ApplyGoogleDefaults(&update)
+	record, err := handler.store.Update(ctx, handler.tenants.Resolve(ctx), input.ID, update)
 	if err != nil {
 		return nil, handler.problem(ctx, err)
 	}

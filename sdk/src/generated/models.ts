@@ -1224,6 +1224,13 @@ export interface NotReadyProblem {
   type?: string;
 }
 
+export interface OauthStartResource {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** Google authorization URL. Open it with window.open, never in an iframe. */
+  authorizeUrl: string;
+}
+
 export interface PrincipalResource {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -2590,6 +2597,57 @@ const res = await fetch(getUpdateCredentialUrl(id),
 
   const data: updateCredentialResponse['data'] = body ? JSON.parse(body) : {}
   return { data, status: res.status, headers: res.headers } as updateCredentialResponse
+}
+
+
+
+export type startCredentialOauthResponse200 = {
+  data: OauthStartResource
+  status: 200
+}
+
+export type startCredentialOauthResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type startCredentialOauthResponseSuccess = (startCredentialOauthResponse200) & {
+  headers: Headers;
+};
+export type startCredentialOauthResponseError = (startCredentialOauthResponseDefault) & {
+  headers: Headers;
+};
+
+export type startCredentialOauthResponse = (startCredentialOauthResponseSuccess | startCredentialOauthResponseError)
+
+export const getStartCredentialOauthUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/credentials/${id}/oauth/start`
+}
+
+/**
+ * Returns the Google authorization URL for this credential. Open it in a popup (window.open), not an iframe: Google blocks OAuth inside frames.
+ * @summary Start Google OAuth
+ */
+export const startCredentialOauth = async (id: string, options?: RequestInit): Promise<startCredentialOauthResponse> => {
+
+  const res = await fetch(getStartCredentialOauthUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: startCredentialOauthResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as startCredentialOauthResponse
 }
 
 

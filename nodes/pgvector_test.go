@@ -59,8 +59,8 @@ func TestVectorNodesRefuseWithoutTheTier(t *testing.T) {
 	// tier's answer for this install. Validate is pure, so it is asked
 	// directly rather than through a registration the wiring owns.
 	embeddings := nodes.EmbeddingsNode(reason)
-	if err := embeddings.Validate(workflow.Node{Parameters: map[string]any{"model": "text-embedding-3-small"}}); err == nil || !strings.Contains(err.Error(), "pgvector") {
-		t.Fatalf("embeddings validate on sqlite = %v, want the install message", err)
+	if err := embeddings.Validate(workflow.Node{Parameters: map[string]any{"model": "text-embedding-3-small"}, Credentials: map[string]string{"openAiApi": "c"}}); err != nil {
+		t.Fatalf("embeddings validate on sqlite = %v, want nil now that embeddings do not need pgvector", err)
 	}
 	store := nodes.VectorStoreNode(reason)
 	if err := store.Validate(workflow.Node{Parameters: map[string]any{"operation": "search", "collection": "docs"}}); err == nil || !strings.Contains(err.Error(), "pgvector") {
@@ -98,20 +98,15 @@ func TestVectorStoreValidateChecksStaticConfiguration(t *testing.T) {
 	}
 }
 
-func TestEmbeddingsValidateRequiresAModelAndACredential(t *testing.T) {
+func TestEmbeddingsValidateRequiresAModel(t *testing.T) {
 	t.Parallel()
 
 	definition := nodes.EmbeddingsNode("")
 	if err := definition.Validate(workflow.Node{Parameters: map[string]any{}}); err == nil {
 		t.Fatal("validate without a model = nil, want an error")
 	}
-	node := workflow.Node{Parameters: map[string]any{"model": "text-embedding-3-small"}}
-	if err := definition.Validate(node); err == nil {
-		t.Fatal("validate without a credential = nil, want an error")
-	}
-	node.Credentials = map[string]string{"openAiApi": "cred-emb"}
-	if err := definition.Validate(node); err != nil {
-		t.Fatalf("validate = %v, want nil", err)
+	if err := definition.Validate(workflow.Node{Parameters: map[string]any{"model": "text-embedding-3-small"}}); err != nil {
+		t.Fatalf("validate = %v, want nil (the credential is checked when the node embeds)", err)
 	}
 }
 
@@ -193,8 +188,8 @@ func TestEmbeddingsExecutorCallsTheProviderThroughThePolicy(t *testing.T) {
 	if gotModel != "text-embedding-3-small" {
 		t.Errorf("model = %q, want text-embedding-3-small", gotModel)
 	}
-	if len(output) != 1 || len(output[0]) != 2 {
-		t.Fatalf("Execute produced %d streams of %d items, want one stream of two", len(output), len(output[0]))
+	if len(output) != 2 || len(output[0]) != 2 {
+		t.Fatalf("Execute produced %d streams of %d items, want two streams and two main items", len(output), len(output[0]))
 	}
 	first := output[0][0].JSON["embedding"]
 	embedding, ok := first.([]float64)

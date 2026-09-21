@@ -870,6 +870,33 @@ Give every process the same value. The API role hides an invisible node,
 but the worker is the authority: a worker started without this key accepts
 and runs what the API would have refused.
 
+## google
+
+Google holds the optional platform Google Cloud OAuth client. Tenants can
+still paste their own client id and secret on a credential; empty fields
+here mean Connect only works when the credential itself carries a client.
+
+### google.client_id
+
+- Type: `string`
+- Default: `''`
+- Environment: `KILASFLOW_GOOGLE_CLIENT_ID`
+- Required: no
+
+ClientID is the platform Google Cloud OAuth client id. Empty means every
+tenant must supply their own on the credential.
+
+### google.client_secret_env
+
+- Type: `string`
+- Default: `'KILASFLOW_GOOGLE_CLIENT_SECRET'`
+- Environment: `KILASFLOW_GOOGLE_CLIENT_SECRET_ENV`
+- Required: no
+
+ClientSecretEnv names the environment variable holding the platform
+Google Cloud OAuth client secret. The secret itself is never read from
+the config file.
+
 ## log
 
 Log configures structured logging.

@@ -316,6 +316,8 @@ func TestEveryStoredCredentialTypeStillResolves(t *testing.T) {
 		"telegramApi":    {"accessToken", "baseUrl"},
 		"openAiApi":      {"apiKey"},
 		"openRouterApi":  {"apiKey"},
+		"googleDriveOAuth2Api": {"clientId", "clientSecret", "access_token", "refresh_token", "expiry", "scope"},
+		"gmailOAuth2":          {"clientId", "clientSecret", "access_token", "refresh_token", "expiry", "scope"},
 	}
 
 	registry := credentials.NewRegistry()

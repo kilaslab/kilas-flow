@@ -35,10 +35,14 @@ func assertActorBackfill(t *testing.T, db *DB) {
 	}
 	seedPreActorRows(t, db)
 
-	// Roll back this migration alone, so the rows keep their legacy labels and
-	// lose only the columns being tested.
+	// Roll the actor migration back so the rows keep their legacy labels and
+	// lose only the columns being tested. Anything newer has to come off first
+	// because Rollback reverts the newest applied version.
 	if err := Rollback(db, discardLogger()); err != nil {
-		t.Fatalf("Rollback: %v", err)
+		t.Fatalf("Rollback poll_cursors: %v", err)
+	}
+	if err := Rollback(db, discardLogger()); err != nil {
+		t.Fatalf("Rollback workflow_actor: %v", err)
 	}
 	for _, column := range []string{"actor_kind", "actor_label", "actor_key_id", "actor_meta"} {
 		if db.Migrator().HasColumn("workflow_versions", column) {

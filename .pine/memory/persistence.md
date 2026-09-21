@@ -1,6 +1,6 @@
 ---
 topic: persistence
-updated: 2026-09-05T19:36:03Z
+updated: 2026-09-21T13:40:19Z
 ---
 
 # persistence
@@ -12,3 +12,4 @@ updated: 2026-09-05T19:36:03Z
 - 2026-09-05: The PostgreSQL-gated tests are not safe to run with parallel packages: internal/database's openPostgres drops every KilasFlow table on entry, while internal/repository's eachDriver expects the schema to stay put, and 'go test ./...' runs those packages concurrently against one KILASFLOW_TEST_POSTGRES_DSN. Seen as 'relation "executions" does not exist' seconds after psql's \dt had listed it. Run the PostgreSQL gate with 'go test ./... -p 1', or give each package its own database.
 - 2026-09-05: GORM's First() appends an ORDER BY on the primary key to whatever Order the caller already set, so ClaimNext's real statement ends '...ORDER BY started_at ASC, id ASC, "executions"."id" LIMIT 1'. Any EXPLAIN captured as evidence must use that spelling — a plan proved for a statement the server never receives proves nothing.
 - 2026-09-05: A driver-derived config value must be computed in config.Load after the file and environment layers merge, never in Default(): koanf cannot tell a default of 1 apart from a file that says 1, so a number in Default() can never follow another key. Database.PoolSize does this — zero on max_open_conns/max_idle_conns means 'derive', and database.Open routes through it too because SetMaxOpenConns(0) means unlimited, not unset.
+- 2026-09-21: prefixStatement only rewrites quoted table and index names. Unquoted CREATE TABLE poll_cursors is skipped, so table_prefix never applies and TestPurgeHonoursTheTablePrefix fails looking for kflow_poll_cursors. Quote identifiers in new migrations (backticks SQLite, double quotes Postgres). (cites: migrations/sqlite/000020_poll_cursors.up.sql, internal/database)

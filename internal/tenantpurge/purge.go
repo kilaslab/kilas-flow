@@ -188,7 +188,7 @@ func (s *Service) steps() []step {
 		{name: "stop-triggers", run: s.stopTriggers},
 		{
 			name:   "triggers",
-			tables: []string{"schedules", "webhook_deliveries", "webhook_routes", "webhook_bindings"},
+			tables: []string{"poll_cursors", "schedules", "webhook_deliveries", "webhook_routes", "webhook_bindings"},
 			run: func(ctx context.Context, tenant repository.TenantScope, _ *Result) (map[string]int64, error) {
 				return s.rows.PurgeTriggers(ctx, tenant)
 			},

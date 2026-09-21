@@ -503,6 +503,42 @@ var mappings = []mapping{
 		n8nType: "@n8n/n8n-nodes-langchain.mcpClientTool", kilasType: "kilasflow.mcpClientTool", kilasVersion: workflow.V(1),
 		exportTypeVersion: 1.2, toKilas: mcpClientToolToKilas, toN8N: mcpClientToolToN8N,
 	},
+	{
+		n8nType: "@n8n/n8n-nodes-langchain.embeddingsOpenAi", kilasType: EmbeddingsNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1.2, toKilas: embeddingsOpenAiToKilas, toN8N: packToN8N,
+	},
+	{
+		n8nType: "@n8n/n8n-nodes-langchain.vectorStorePGVector", kilasType: VectorStorePGVectorNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1.3, toKilas: packToKilas, toN8N: packToN8N,
+	},
+	{
+		n8nType: "@n8n/n8n-nodes-langchain.documentDefaultDataLoader", kilasType: DocumentLoaderNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1.1, toKilas: packToKilas, toN8N: packToN8N,
+	},
+	{
+		n8nType: "@n8n/n8n-nodes-langchain.textSplitterRecursiveCharacterTextSplitter", kilasType: TextSplitterNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1, toKilas: packToKilas, toN8N: packToN8N,
+	},
+	{
+		n8nType: "n8n-nodes-base.extractFromFile", kilasType: ExtractFromFileNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1, toKilas: extractFromFileToKilas, toN8N: packToN8N,
+	},
+	{
+		n8nType: "n8n-nodes-base.googleDrive", kilasType: GoogleDriveNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 3, toKilas: packToKilas, toN8N: packToN8N,
+	},
+	{
+		n8nType: "n8n-nodes-base.googleDriveTrigger", kilasType: GoogleDriveTriggerNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1, toKilas: packToKilas, toN8N: packToN8N,
+	},
+	{
+		n8nType: "n8n-nodes-base.gmail", kilasType: GmailNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 2.1, toKilas: packToKilas, toN8N: packToN8N,
+	},
+	{
+		n8nType: "n8n-nodes-base.gmailTrigger", kilasType: GmailTriggerNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1.2, toKilas: packToKilas, toN8N: packToN8N,
+	},
 	// The OpenAI-compatible providers. Each publishes an endpoint that speaks
 	// OpenAI's protocol, so the native node is the same one in every case and
 	// only the base URL differs.
@@ -613,6 +649,18 @@ const FormTriggerType = "kilasflow.formTrigger"
 // ChatTriggerNodeType is the editor chat start, mirrored from
 // nodes.ChatTriggerNodeType. Hosted chat is not mapped; the node itself is.
 const ChatTriggerNodeType = "kilasflow.chatTrigger"
+
+const (
+	EmbeddingsNodeType           = "kilasflow.embeddings"
+	VectorStorePGVectorNodeType  = "kilasflow.vectorStorePGVector"
+	DocumentLoaderNodeType       = "kilasflow.documentLoader"
+	TextSplitterNodeType         = "kilasflow.textSplitter"
+	ExtractFromFileNodeType      = "kilasflow.extractFromFile"
+	GoogleDriveNodeType          = "kilasflow.googleDrive"
+	GoogleDriveTriggerNodeType   = "kilasflow.googleDriveTrigger"
+	GmailNodeType                = "kilasflow.gmail"
+	GmailTriggerNodeType         = "kilasflow.gmailTrigger"
+)
 
 // The error-workflow pair's canonical types, mirrored from
 // nodes.ErrorTriggerNodeType and nodes.StopAndErrorNodeType.

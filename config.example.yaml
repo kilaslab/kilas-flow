@@ -400,6 +400,17 @@ packs:
   # Env: KILASFLOW_PACKS_VISIBLE_TO
   visible_to: []
 
+google:
+  # ClientID is the platform Google Cloud OAuth client id. Empty means every
+  # tenant must supply their own on the credential.
+  # Env: KILASFLOW_GOOGLE_CLIENT_ID
+  client_id: ''
+  # ClientSecretEnv names the environment variable holding the platform
+  # Google Cloud OAuth client secret. The secret itself is never read from
+  # the config file.
+  # Env: KILASFLOW_GOOGLE_CLIENT_SECRET_ENV
+  client_secret_env: 'KILASFLOW_GOOGLE_CLIENT_SECRET'
+
 log:
   # Level is one of debug, info, warn or error. Unknown values fall back to
   # info rather than refusing to start.

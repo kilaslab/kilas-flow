@@ -35,6 +35,7 @@ import (
 	"github.com/kilaslab/kilas-flow/internal/loadoptions"
 	"github.com/kilaslab/kilas-flow/internal/node"
 	"github.com/kilaslab/kilas-flow/internal/nodepack"
+	"github.com/kilaslab/kilas-flow/internal/poller"
 	"github.com/kilaslab/kilas-flow/internal/repository"
 	"github.com/kilaslab/kilas-flow/internal/routing"
 	"github.com/kilaslab/kilas-flow/internal/runcode"
@@ -414,6 +415,7 @@ func run(args []string) error {
 	// That holds only when no manager is configured: a manager that is named
 	// but unreachable refuses startup, because a transient network error
 	// silently disabling every credential is worse than not starting.
+	var oauthSigningKey []byte
 	var credentialStore *repository.GORMCredentialStore
 	key, keyErr := masterKey(ctx, cfg)
 	switch {
@@ -424,12 +426,18 @@ func run(args []string) error {
 	case keyErr != nil:
 		return fmt.Errorf("credential encryption key: %w", keyErr)
 	default:
+		oauthSigningKey = append([]byte(nil), key...)
 		cipher, err := credentials.NewCipher(key)
 		if err != nil {
 			return err
 		}
 		credentialStore = repository.NewCredentialStore(db.DB, cipher)
 	}
+	oauthHTTP := safehttp.NewClient(outboundPolicy(cfg.Outbound))
+	credentialsRepo := repository.NewRefreshingCredentialStore(
+		credentialStore, oauthHTTP, "",
+		cfg.Google.ClientID, strings.TrimSpace(os.Getenv(cfg.Google.ClientSecretEnv)),
+	)
 
 	// Embedding is opt-in: with no signing key the endpoints report that
 	// clearly and the middleware refuses every token, rather than the editor
@@ -503,6 +511,7 @@ func run(args []string) error {
 		WithSchedules(
 			scheduler.DefaultTimezone(scheduler.Extract(nodes.ScheduleType), cfg.Execution.DefaultTimezone),
 			scheduler.Next).
+		WithPolls(nodes.ExtractPolls).
 		WithRetention(repository.RetentionPolicy{
 			MaxAge:      cfg.History.Retention,
 			MaxVersions: cfg.History.MaxVersions,
@@ -613,7 +622,7 @@ func run(args []string) error {
 		Events:      eventBroker,
 		Catalog:     nodeRegistry,
 		Runner:      engine.NewRunner(executorRegistry),
-		Credentials: credentialStore,
+		Credentials: credentialsRepo,
 		// Named so a called workflow starts from its sub-workflow trigger and
 		// not from a webhook or schedule it also happens to carry.
 		SubworkflowTriggerType: nodes.ExecuteWorkflowTriggerType,
@@ -643,7 +652,7 @@ func run(args []string) error {
 	if err != nil {
 		return fmt.Errorf("configure execution runtime: %w", err)
 	}
-	webhookHandler := startWebhookHandler(role, cfg, workflows, runtime, credentialStore, eventBroker, webhookTriggers, log)
+	webhookHandler := startWebhookHandler(role, cfg, workflows, runtime, credentialsRepo, eventBroker, webhookTriggers, log)
 
 	// Telegram's development delivery mode. The supervisor's context is the
 	// server's, not an activation request's: a poller cancelled when its HTTP
@@ -709,6 +718,30 @@ func run(args []string) error {
 			return fmt.Errorf("configure scheduler: %w", err)
 		}
 		cronService.Start(ctx)
+		pollService, pollErr := poller.New(poller.Options{
+			Cursors:  repository.NewPollCursorStore(db.DB),
+			Versions: workflows,
+			Handlers: map[string]poller.Handler{
+				nodes.GmailTriggerNodeType:       nodes.NewGmailPoller(outboundPolicy(cfg.Outbound)),
+				nodes.GoogleDriveTriggerNodeType: nodes.NewGoogleDrivePoller(outboundPolicy(cfg.Outbound)),
+			},
+			Queue: func(ctx context.Context, tenantID, workflowID, versionID, triggerNodeID string, payload json.RawMessage) error {
+				_, err := runtime.QueuePolled(ctx, tenantID, workflowID, versionID, triggerNodeID, payload)
+				return err
+			},
+			Request: func(tenantID string) engine.Request {
+				return engine.Request{
+					Credentials: engine.NewTenantCredentials(credentialsRepo, repository.TenantScope{ID: tenantID}),
+					Execution:   engine.ExecutionContext{TenantID: tenantID},
+				}
+			},
+			WorkerID: resolveWorkerID(*workerIDOverride),
+			Logger:   log,
+		})
+		if pollErr != nil {
+			return fmt.Errorf("configure poller: %w", pollErr)
+		}
+		pollService.Start(ctx)
 	}
 	// Retention runs beside the scheduler: both sweep on their own clocks, prune
 	// idempotently, and refuse to start when retention is off — so sweeping the
@@ -736,7 +769,7 @@ func run(args []string) error {
 	triggerCoordinator := webhook.NewCoordinator(
 		webhookLifecycles, workflows, outboundPolicy(cfg.Outbound),
 		func(tenantID string) engine.CredentialResolver {
-			return engine.NewTenantCredentials(credentialStore, repository.TenantScope{ID: tenantID})
+			return engine.NewTenantCredentials(credentialsRepo, repository.TenantScope{ID: tenantID})
 		},
 		cfg.Server.PublicURL, log,
 	)
@@ -779,10 +812,10 @@ func run(args []string) error {
 		Datastores:   datastoreEngine,
 		Schedules:    schedules,
 		Webhook:      webhookHandler,
-		Credentials:  credentialStore,
+		Credentials:  credentialsRepo,
 		OptionLoader: optionLoader,
 		CredentialResolverFor: func(tenant repository.TenantScope) loadoptions.CredentialResolver {
-			return credentialLookup{store: credentialStore, tenant: tenant}
+			return credentialLookup{store: credentialsRepo, tenant: tenant}
 		},
 		TriggerCoordinator:  triggerCoordinator,
 		Events:              eventBroker,
@@ -799,6 +832,8 @@ func run(args []string) error {
 		Idempotency:         idempotencyService,
 		TenantPurger:        tenantPurger,
 		Version:             version,
+		OAuthSigningKey:     oauthSigningKey,
+		OAuthHTTP:           oauthHTTP,
 	})
 
 	// The HTTP surface drains first, then the workers: a request in flight may
@@ -1380,7 +1415,7 @@ func parseLevel(level string) slog.Level {
 // loading. It is scoped at construction so a request naming another tenant's
 // credential resolves to nothing rather than to a secret.
 type credentialLookup struct {
-	store  *repository.GORMCredentialStore
+	store  repository.CredentialRepository
 	tenant repository.TenantScope
 }
 

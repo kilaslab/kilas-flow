@@ -1,6 +1,6 @@
 ---
 topic: n8n-reference
-updated: 2026-09-05T07:04:05Z
+updated: 2026-09-21T13:40:19Z
 ---
 
 # n8n-reference
@@ -9,3 +9,4 @@ updated: 2026-09-05T07:04:05Z
 - 2026-09-05: The n8n reference checkout at /Users/izzadev/projects/mitrachat/n8n is read-only specification material and is NEVER a build input: no Makefile target, go:generate, go:embed, test or script may read a path under it. Read it to learn the interchange format, then reimplement in Go in this repo. It is widened to 13 cone patterns (2102 files at n8n 2.34.0 / 40dfa42) covering nodes-langchain, core/src/nodes-loader, cli community-packages, node-cli and eslint-plugin-community-nodes. (cites: .pine/memory/n8n-reference.md)
 - 2026-09-05: Sparse-checkout patterns in the n8n reference are cone-mode, so a pattern must name a DIRECTORY; a file path is accepted silently and matches nothing. Three such dead patterns existed (ParameterInput.vue, ParameterInputList.vue, app/components/canvas) and were deleted rather than replaced — the NDV parameter components live under features/ndv/parameters/components/ and the canvas under features/workflows/canvas, both already materialised. After any sparse-checkout change, assert every pattern resolves to at least one file. (cites: .pine/memory/n8n-reference.md)
 - 2026-09-05: The WAHA OpenAPI documents are vendored byte-for-byte at third_party/waha/ (openapi-202409.json, openapi-202502.json) with the upstream MIT LICENSE and PROVENANCE.md beside them. They are the only third-party bytes in this repository. The node-pack generator must read these vendored files, never a live WAHA server: operation and resource names in real customer workflow JSON are a pure function of these exact bytes, and the two files differ in indentation (spaces vs tabs) which must not be normalised. (cites: third_party/waha/PROVENANCE.md)
+- 2026-09-21: Cluster AI sub-nodes (embeddings with mode=cluster, like chat models) must PortsFor Inputs:nil. The compiler requires an incoming main edge whenever Inputs include main, so an imported embeddingsOpenAi with only ai_embedding out otherwise fails compile. Cluster Execute must emit one stream matching that PortsFor, not the native sequential two-port output. (cites: nodes/pgvector.go, internal/workflow/compiler.go)

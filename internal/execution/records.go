@@ -35,6 +35,8 @@ const (
 	TriggerManual   Trigger = "manual"
 	TriggerWebhook  Trigger = "webhook"
 	TriggerSchedule Trigger = "schedule"
+	// TriggerPoll is a run a leased Gmail or Drive poll started.
+	TriggerPoll Trigger = "poll"
 	// TriggerSubworkflow is a run another workflow started.
 	//
 	// Its own value rather than reusing manual: a sub-workflow run has a parent

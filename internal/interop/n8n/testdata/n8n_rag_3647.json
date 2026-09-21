@@ -1,0 +1,25 @@
+{
+  "_source": "hand-authored KilasFlow fixture. Shape of n8n template 3647 (Drive search/download/move into PGVector). Not an n8n.io export.",
+  "name": "RAG Drive PGVector",
+  "nodes": [
+    {"id":"m","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}},
+    {"id":"d","name":"Google Drive","type":"n8n-nodes-base.googleDrive","typeVersion":3,"position":[220,0],"parameters":{"resource":"fileFolder","operation":"search","queryString":"mimeType = 'application/pdf'"},"credentials":{"googleDriveOAuth2Api":{"id":"drive","name":"Drive"}}},
+    {"id":"dl","name":"Download","type":"n8n-nodes-base.googleDrive","typeVersion":3,"position":[440,0],"parameters":{"operation":"download"},"credentials":{"googleDriveOAuth2Api":{"id":"drive","name":"Drive"}}},
+    {"id":"x","name":"Extract from File","type":"n8n-nodes-base.extractFromFile","typeVersion":1,"position":[660,0],"parameters":{"operation":"pdf"}},
+    {"id":"l","name":"Default Data Loader","type":"@n8n/n8n-nodes-langchain.documentDefaultDataLoader","typeVersion":1.1,"position":[880,80],"parameters":{}},
+    {"id":"s","name":"Recursive Character Text Splitter","type":"@n8n/n8n-nodes-langchain.textSplitterRecursiveCharacterTextSplitter","typeVersion":1,"position":[880,220],"parameters":{"chunkSize":1000,"chunkOverlap":200}},
+    {"id":"e","name":"Embeddings OpenAI","type":"@n8n/n8n-nodes-langchain.embeddingsOpenAi","typeVersion":1.2,"position":[1100,220],"parameters":{"model":"text-embedding-3-small"},"credentials":{"openAiApi":{"id":"openai","name":"OpenAI"}}},
+    {"id":"v","name":"Postgres PGVector Store","type":"@n8n/n8n-nodes-langchain.vectorStorePGVector","typeVersion":1.3,"position":[1100,0],"parameters":{"mode":"insert","tableName":"documents"},"credentials":{"postgres":{"id":"pg","name":"Postgres"}}},
+    {"id":"mv","name":"Move","type":"n8n-nodes-base.googleDrive","typeVersion":3,"position":[1320,0],"parameters":{"operation":"move","folderId":"processed"},"credentials":{"googleDriveOAuth2Api":{"id":"drive","name":"Drive"}}}
+  ],
+  "connections": {
+    "Manual": {"main": [[{"node":"Google Drive","type":"main","index":0}]]},
+    "Google Drive": {"main": [[{"node":"Download","type":"main","index":0}]]},
+    "Download": {"main": [[{"node":"Extract from File","type":"main","index":0}]]},
+    "Extract from File": {"main": [[{"node":"Default Data Loader","type":"main","index":0}]]},
+    "Recursive Character Text Splitter": {"ai_textSplitter": [[{"node":"Default Data Loader","type":"ai_textSplitter","index":0}]]},
+    "Default Data Loader": {"ai_document": [[{"node":"Postgres PGVector Store","type":"ai_document","index":0}]]},
+    "Embeddings OpenAI": {"ai_embedding": [[{"node":"Postgres PGVector Store","type":"ai_embedding","index":0}]]},
+    "Postgres PGVector Store": {"main": [[{"node":"Move","type":"main","index":0}]]}
+  }
+}

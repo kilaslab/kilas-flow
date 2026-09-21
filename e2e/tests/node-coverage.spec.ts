@@ -55,6 +55,8 @@ const RUN_COVERAGE = [
 	'kilasflow.executeWorkflow@1',
 	'kilasflow.executeWorkflowTrigger@1',
 	'kilasflow.datastore@1',
+	'kilasflow.documentLoader@1',
+	'kilasflow.textSplitter@1',
 	// The error pair and the hosted form are exercised end-to-end by
 	// fixtures/error-form-nodes.ts, called from the test below.
 	'kilasflow.errorTrigger@1',
@@ -89,6 +91,12 @@ const VALIDATION_COVERAGE = [
 	'kilasflow.mcpClientTool@1',
 	'kilasflow.embeddings@1',
 	'kilasflow.vectorStore@1',
+	'kilasflow.vectorStorePGVector@1',
+	'kilasflow.extractFromFile@1',
+	'kilasflow.googleDrive@1',
+	'kilasflow.googleDriveTrigger@1',
+	'kilasflow.gmail@1',
+	'kilasflow.gmailTrigger@1',
 	'kilasflow.datastoreTool@1',
 	'kilasflow.postgres@1',
 	'kilasflow.postgres@2',
@@ -887,11 +895,7 @@ test('datastore rows insert and read back headless', async ({ server }) => {
 	expect(nodeRun(record, 'read').output.datastore).toMatchObject({ rows: 1 });
 });
 
-test('embeddings and vector store refuse without pgvector', async ({ server }) => {
-	// The harness runs on SQLite, where both nodes refuse by design with the
-	// install message instead of a run-time failure: they need PostgreSQL
-	// with the pgvector extension. Availability is checked before any other
-	// parameter, so ordinary configurations exercise the refusal path.
+test('embeddings refuse without text; the internal vector store still needs pgvector', async ({ server }) => {
 	const embeddingsId = await createWorkflow(
 		server.baseURL,
 		'Coverage Embeddings',
@@ -900,7 +904,7 @@ test('embeddings and vector store refuse without pgvector', async ({ server }) =
 	);
 	const embeddingsAttempt = await startRun(server.baseURL, embeddingsId);
 	expect(embeddingsAttempt.status).toBe(422);
-	expect(errorText(embeddingsAttempt.body)).toContain('pgvector');
+	expect(errorText(embeddingsAttempt.body)).toContain('no text to embed');
 
 	const storeId = await createWorkflow(
 		server.baseURL,
@@ -911,6 +915,69 @@ test('embeddings and vector store refuse without pgvector', async ({ server }) =
 	const storeAttempt = await startRun(server.baseURL, storeId);
 	expect(storeAttempt.status).toBe(422);
 	expect(errorText(storeAttempt.body)).toContain('pgvector');
+});
+
+test('document loader and text splitter run as a cluster', async ({ server }) => {
+	const workflowId = await createWorkflow(
+		server.baseURL,
+		'Coverage RAG Cluster',
+		[
+			manual(),
+			node('in', 'Set', 'kilasflow.set', 1, { assignments: { text: 'hello rag documents' } }),
+			node('split', 'Splitter', 'kilasflow.textSplitter', 1, { chunkSize: 40, chunkOverlap: 4 }),
+			node('load', 'Loader', 'kilasflow.documentLoader', 1, { textField: 'text' })
+		],
+		[
+			conn('c1', 'manual', 'main', 'in', 'main'),
+			conn('c2', 'in', 'main', 'load', 'main'),
+			conn('c3', 'split', 'splitter', 'load', 'splitter', 'ai_textSplitter')
+		]
+	);
+	const record = await runToSuccess(server.baseURL, workflowId);
+	expect(itemJson(record, 'load').text).toContain('hello rag');
+});
+
+test('extract from file, customer pgvector and google nodes fail closed without their inputs', async ({ server }) => {
+	const extractId = await createWorkflow(
+		server.baseURL,
+		'Coverage Extract',
+		[manual(), node('extract', 'Extract', 'kilasflow.extractFromFile', 1, { operation: 'text' })],
+		[conn('c1', 'manual', 'main', 'extract', 'main')]
+	);
+	const extractAttempt = await startRun(server.baseURL, extractId);
+	expect(extractAttempt.status).toBe(422);
+	expect(errorText(extractAttempt.body)).toMatch(/binary property|binary storage/i);
+
+	const pgId = await createWorkflow(
+		server.baseURL,
+		'Coverage PGVector',
+		[manual(), node('store', 'PGVector', 'kilasflow.vectorStorePGVector', 1, { tableName: 'documents' })],
+		[conn('c1', 'manual', 'main', 'store', 'main')]
+	);
+	const pgAttempt = await startRun(server.baseURL, pgId);
+	expect(pgAttempt.status).toBe(422);
+	expect(errorText(pgAttempt.body)).toContain('postgres');
+
+	const remotes: Array<{ type: string; credential: string }> = [
+		{ type: 'kilasflow.googleDrive', credential: 'googleDriveOAuth2Api' },
+		{ type: 'kilasflow.googleDriveTrigger', credential: 'googleDriveOAuth2Api' },
+		{ type: 'kilasflow.gmail', credential: 'gmailOAuth2' },
+		{ type: 'kilasflow.gmailTrigger', credential: 'gmailOAuth2' }
+	];
+	for (const remote of remotes) {
+		const isTrigger = remote.type.endsWith('Trigger');
+		const workflowId = await createWorkflow(
+			server.baseURL,
+			`Coverage ${remote.type}`,
+			isTrigger
+				? [node('node', 'Google', remote.type, 1, {})]
+				: [manual(), node('node', 'Google', remote.type, 1, { operation: 'search' })],
+			isTrigger ? [] : [conn('c1', 'manual', 'main', 'node', 'main')]
+		);
+		const attempt = await startRun(server.baseURL, workflowId);
+		expect(attempt.status).toBe(422);
+		expect(errorText(attempt.body)).toContain(`requires a ${remote.credential} credential`);
+	}
 });
 
 test('remote database nodes fail closed without their credential', async ({ server }) => {

@@ -27,6 +27,7 @@ import type {
   CredentialTypeResource,
   ErrorModel,
   ListCredentialsParams,
+  OauthStartResource,
   TestCredentialResource,
   TestPayloadBody
 } from '../models';
@@ -759,6 +760,99 @@ export const createUpdateCredential = <TError = ErrorType<ErrorModel>,
         TContext
       > => {
       return createMutation(() => ({ ...getUpdateCredentialMutationOptions(options?.()) }), queryClient);
+    }
+    export type startCredentialOauthResponse200 = {
+  data: OauthStartResource
+  status: 200
+}
+
+export type startCredentialOauthResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type startCredentialOauthResponseSuccess = (startCredentialOauthResponse200) & {
+  headers: Headers;
+};
+export type startCredentialOauthResponseError = (startCredentialOauthResponseDefault) & {
+  headers: Headers;
+};
+
+export type startCredentialOauthResponse = (startCredentialOauthResponseSuccess | startCredentialOauthResponseError)
+
+export const getStartCredentialOauthUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/credentials/${id}/oauth/start`
+}
+
+/**
+ * Returns the Google authorization URL for this credential. Open it in a popup (window.open), not an iframe: Google blocks OAuth inside frames.
+ * @summary Start Google OAuth
+ */
+export const startCredentialOauth = async (id: string, options?: Parameters<typeof apiFetch>[1]): Promise<startCredentialOauthResponse> => {
+
+  return apiFetch<startCredentialOauthResponse>(getStartCredentialOauthUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getStartCredentialOauthMutationKey = () => ['startCredentialOauth'] as const;
+
+export const getStartCredentialOauthMutationOptions = <TError = ErrorType<ErrorModel>,
+    TContext = unknown>(options?: { mutation?:CreateMutationOptions<Awaited<ReturnType<typeof startCredentialOauth>>, TError,StartCredentialOauthMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}
+): CreateMutationOptions<Awaited<ReturnType<typeof startCredentialOauth>>, TError,StartCredentialOauthMutationVariables, TContext> => {
+
+const mutationKey = getStartCredentialOauthMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof startCredentialOauth>>, StartCredentialOauthMutationVariables> = (props) => {
+          const {id} = props ?? {};
+
+          return  startCredentialOauth(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type StartCredentialOauthMutationResult = NonNullable<Awaited<ReturnType<typeof startCredentialOauth>>>
+
+    export type StartCredentialOauthMutationError = ErrorType<ErrorModel>
+    export type StartCredentialOauthMutationVariables = {id: string}
+
+    /**
+ * @summary Start Google OAuth
+ */
+export const createStartCredentialOauth = <TError = ErrorType<ErrorModel>,
+    TContext = unknown>(options?: () => { mutation?:CreateMutationOptions<Awaited<ReturnType<typeof startCredentialOauth>>, TError,StartCredentialOauthMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: () => QueryClient): CreateMutationResult<
+        Awaited<ReturnType<typeof startCredentialOauth>>,
+        TError,
+        StartCredentialOauthMutationVariables,
+        TContext
+      > => {
+      return createMutation(() => ({ ...getStartCredentialOauthMutationOptions(options?.()) }), queryClient);
     }
     export type testCredentialResponse200 = {
   data: TestCredentialResource

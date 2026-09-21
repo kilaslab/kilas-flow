@@ -111,6 +111,7 @@ export * from './nodeParameters';
 export * from './nodeSettings';
 export * from './nodeStartedEvent';
 export * from './notReadyProblem';
+export * from './oauthStartResource';
 export * from './option';
 export * from './optionsLoader';
 export * from './port';

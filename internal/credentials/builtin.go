@@ -241,6 +241,12 @@ func RegisterAll(registry *Registry) error {
 			// credential that cannot complete anything.
 			Test: &TestRequest{URL: "https://openrouter.ai/api/v1/key"},
 		},
+		googleOAuthType("googleDriveOAuth2Api", "Google Drive OAuth2",
+			"Connects to Google Drive. Client ID and secret can be from your Google Cloud project or the platform app.",
+			"https://www.googleapis.com/auth/drive"),
+		googleOAuthType("gmailOAuth2", "Gmail OAuth2",
+			"Connects to Gmail. Client ID and secret can be from your Google Cloud project or the platform app.",
+			"https://www.googleapis.com/auth/gmail.modify"),
 		{
 			ID: "sqlite", DisplayName: "SQLite file",
 			Description: "Opens a SQLite file on the server. The path must be given explicitly and cannot be KilasFlow's own database.",

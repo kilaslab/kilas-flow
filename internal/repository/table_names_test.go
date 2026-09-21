@@ -50,3 +50,14 @@ func TestTableNamesSurviveTheNamerRoundTrip(t *testing.T) {
 		})
 	}
 }
+
+func TestPollCursorsTableNameSurvivesTheNamerRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	if got := (pollCursorModel{}).TableName(schema.NamingStrategy{}); got != "poll_cursors" {
+		t.Fatalf("empty prefix: TableName = %q, want poll_cursors", got)
+	}
+	if got := (pollCursorModel{}).TableName(schema.NamingStrategy{TablePrefix: "kflow_"}); got != "kflow_poll_cursors" {
+		t.Fatalf("kflow_ prefix: TableName = %q, want kflow_poll_cursors", got)
+	}
+}

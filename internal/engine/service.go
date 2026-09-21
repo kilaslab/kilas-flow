@@ -1033,6 +1033,18 @@ func (service *Service) QueueScheduled(ctx context.Context, tenantID, workflowID
 	return record, nil
 }
 
+// QueuePolled persists a queued execution for one Gmail or Drive poll item.
+func (service *Service) QueuePolled(ctx context.Context, tenantID, workflowID, versionID, triggerNodeID string, payload json.RawMessage) (execution.Record, error) {
+	record, err := service.executions.QueueTriggered(ctx,
+		repository.TenantScope{ID: tenantID}, workflowID, versionID,
+		execution.TriggerPoll, triggerNodeID, payload)
+	if err != nil {
+		return execution.Record{}, err
+	}
+	service.Wake()
+	return record, nil
+}
+
 // Cancel requests durable cancellation, interrupts the matching in-process
 // worker immediately when it is currently running on this instance, and
 // relays the interrupt to the process holding the lease when it runs

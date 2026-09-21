@@ -56,6 +56,7 @@ type Config struct {
 	Credential  Credential   `koanf:"credential"`
 	Binary      Binary       `koanf:"binary"`
 	Packs       Packs        `koanf:"packs"`
+	Google      Google       `koanf:"google"`
 	Log         Log          `koanf:"log"`
 	Sidecar     Sidecar      `koanf:"sidecar"`
 	Code        Code         `koanf:"code"`
@@ -263,6 +264,22 @@ type Security struct {
 	// Env: KILASFLOW_SECURITY_ENCRYPTION_KEY_ENV.
 	// Default: "KILASFLOW_ENCRYPTION_KEY".
 	EncryptionKeyEnv string `koanf:"encryption_key_env"`
+}
+
+// Google holds the optional platform Google Cloud OAuth client. Tenants can
+// still paste their own client id and secret on a credential; empty fields
+// here mean Connect only works when the credential itself carries a client.
+type Google struct {
+	// ClientID is the platform Google Cloud OAuth client id. Empty means every
+	// tenant must supply their own on the credential.
+	// Env: KILASFLOW_GOOGLE_CLIENT_ID. Default: "".
+	ClientID string `koanf:"client_id"`
+	// ClientSecretEnv names the environment variable holding the platform
+	// Google Cloud OAuth client secret. The secret itself is never read from
+	// the config file.
+	// Env: KILASFLOW_GOOGLE_CLIENT_SECRET_ENV.
+	// Default: "KILASFLOW_GOOGLE_CLIENT_SECRET".
+	ClientSecretEnv string `koanf:"client_secret_env"`
 }
 
 // Secrets sources the credential master key from an external secrets manager
@@ -807,6 +824,9 @@ func Default() Config {
 		},
 		Security: Security{
 			EncryptionKeyEnv: "KILASFLOW_ENCRYPTION_KEY",
+		},
+		Google: Google{
+			ClientSecretEnv: "KILASFLOW_GOOGLE_CLIENT_SECRET",
 		},
 		Auth: Auth{
 			Enabled:       false,

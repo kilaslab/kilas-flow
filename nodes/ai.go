@@ -23,6 +23,7 @@ import (
 	"github.com/kilaslab/kilas-flow/internal/node"
 	"github.com/kilaslab/kilas-flow/internal/property"
 	"github.com/kilaslab/kilas-flow/internal/safehttp"
+	"github.com/kilaslab/kilas-flow/internal/sqlnode"
 	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
 
@@ -1047,6 +1048,9 @@ type AgentExecutor struct {
 	// tenant's table. Nil refuses the tool with the install message rather
 	// than dereferencing, the way the data-table node does.
 	datastore DatastoreStore
+	vectors   VectorStore
+	embedder  *EmbeddingsExecutor
+	sqlGuard  sqlnode.Guard
 }
 
 // modelBackend binds a deployment's outbound policy for model calls. Both the
@@ -1222,6 +1226,23 @@ func WithModelTimeoutCeiling(ceiling time.Duration) AgentOption {
 func WithDatastoreStore(store DatastoreStore) AgentOption {
 	return func(executor *AgentExecutor) {
 		executor.datastore = store
+	}
+}
+
+// WithAgentVectorStore hands retrieve-as-tool the install's internal store
+// and the embeddings client used to embed the agent's query.
+func WithAgentVectorStore(store VectorStore, embedder *EmbeddingsExecutor) AgentOption {
+	return func(executor *AgentExecutor) {
+		executor.vectors = store
+		executor.embedder = embedder
+	}
+}
+
+// WithAgentSQLGuard is the same database guard SQL nodes use, so a customer
+// PGVector tool cannot open KilasFlow's own database.
+func WithAgentSQLGuard(guard sqlnode.Guard) AgentOption {
+	return func(executor *AgentExecutor) {
+		executor.sqlGuard = guard
 	}
 }
 
@@ -2090,6 +2111,7 @@ const (
 	toolKindCalculator = "calculator"
 	toolKindMCP        = "mcp"
 	toolKindDatastore  = "datastore"
+	toolKindVectorStore = "vectorStore"
 )
 
 // toolNameProperty is the optional override for the name the model calls,
@@ -2866,6 +2888,8 @@ func (executor *AgentExecutor) toolFrom(ir workflow.IRNode, descriptor map[strin
 		return executor.calculatorToolFrom(ir, descriptor, request)
 	case toolKindDatastore:
 		return executor.datastoreToolFrom(ir, descriptor, request)
+	case toolKindVectorStore:
+		return executor.vectorStoreToolFrom(ir, descriptor, request)
 	case toolKindMCP:
 		return executor.mcpToolFrom(ir, descriptor, request)
 	default:
@@ -2907,6 +2931,121 @@ func (executor *AgentExecutor) calculatorToolFrom(ir workflow.IRNode, descriptor
 		agentNode:   ir.Name,
 		request:     request,
 	}, nil
+}
+
+func (executor *AgentExecutor) vectorStoreToolFrom(ir workflow.IRNode, descriptor map[string]any, request engine.Request) (ai.Tool, error) {
+	name := textValue(descriptor["name"], "")
+	if name == "" {
+		return nil, fmt.Errorf("node %q: a connected tool has no name", ir.Name)
+	}
+	nodeName := textValue(descriptor["nodeName"], name)
+	if executor.vectors == nil && textValue(descriptor["backend"], "internal") == "internal" {
+		return nil, fmt.Errorf("node %q: tool %q needs the vector store, which is not available on this install", ir.Name, nodeName)
+	}
+	topK := int(numberValue(descriptor["topK"]))
+	if topK <= 0 {
+		topK = DefaultVectorTopK
+	}
+	embeddings, _ := descriptor["embeddings"].(map[string]any)
+	filter, _ := descriptor["metadataFilter"].(map[string]any)
+	return &vectorStoreTool{
+		name:        name,
+		description: textValue(descriptor["description"], ""),
+		nodeName:    nodeName,
+		agentNode:   ir.Name,
+		tenant:      strings.TrimSpace(request.Execution.TenantID),
+		collection:  textValue(descriptor["collection"], ""),
+		backend:    textValue(descriptor["backend"], "internal"),
+		topK:        topK,
+		filter:      filter,
+		embeddings:  embeddings,
+		request:     request,
+		store:       executor.vectors,
+		embedder:    executor.embedder,
+		sqlGuard:    executor.sqlGuard,
+		tableName:   textValue(descriptor["tableName"], ""),
+		idColumn:    textValue(descriptor["idColumn"], "id"),
+		contentColumn: textValue(descriptor["contentColumn"], "text"),
+		metadataColumn: textValue(descriptor["metadataColumn"], "metadata"),
+		embeddingColumn: textValue(descriptor["embeddingColumn"], "embedding"),
+		credentialID: textValue(descriptor["credentialId"], ""),
+	}, nil
+}
+
+type vectorStoreTool struct {
+	name, description, nodeName, agentNode, tenant, collection, backend string
+	topK                                                                int
+	filter, embeddings                                                  map[string]any
+	request                                                             engine.Request
+	store                                                               VectorStore
+	embedder                                                            *EmbeddingsExecutor
+	sqlGuard                                                            sqlnode.Guard
+	tableName, idColumn, contentColumn, metadataColumn, embeddingColumn, credentialID string
+}
+
+func (tool *vectorStoreTool) Definition() ai.ToolDefinition {
+	return ai.ToolDefinition{
+		Name:        tool.name,
+		Description: tool.description,
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"query": map[string]any{
+					"type":        "string",
+					"description": "The search query to retrieve relevant documents for.",
+				},
+			},
+			"required": []string{"query"},
+		},
+	}
+}
+
+func (tool *vectorStoreTool) Invoke(ctx context.Context, arguments json.RawMessage) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	var args struct {
+		Query string `json:"query"`
+	}
+	if len(bytes.TrimSpace(arguments)) > 0 {
+		if err := json.Unmarshal(arguments, &args); err != nil {
+			return "", fmt.Errorf("node %q: tool %q: invalid arguments: %w", tool.agentNode, tool.name, err)
+		}
+	}
+	query := strings.TrimSpace(args.Query)
+	if query == "" {
+		return "", fmt.Errorf("node %q: tool %q: query is required", tool.agentNode, tool.name)
+	}
+	if tool.embedder == nil || tool.embeddings == nil {
+		return "", fmt.Errorf("node %q: tool %q: connect an Embeddings sub-node", tool.agentNode, tool.name)
+	}
+	vectors, err := tool.embedder.EmbedFromDescriptor(ctx, tool.agentNode, tool.embeddings, tool.request, []string{query})
+	if err != nil {
+		return "", err
+	}
+	var matches []VectorMatch
+	if tool.backend == "postgres" {
+		matches, err = searchCustomerPGVector(ctx, tool, vectors[0])
+	} else {
+		if tool.store == nil {
+			return "", fmt.Errorf("node %q: tool %q: the vector store is not configured on this install", tool.agentNode, tool.name)
+		}
+		matches, err = tool.store.Search(ctx, tool.tenant, tool.collection, vectors[0], tool.topK, tool.filter)
+	}
+	if err != nil {
+		return "", fmt.Errorf("node %q: tool %q: %w", tool.agentNode, tool.name, err)
+	}
+	encoded := make([]any, 0, len(matches))
+	for _, match := range matches {
+		encoded = append(encoded, map[string]any{
+			"id": match.ID, "text": match.Content, "metadata": match.Metadata, "distance": match.Distance,
+		})
+	}
+	payload, err := json.Marshal(map[string]any{"matches": encoded})
+	if err != nil {
+		return "", fmt.Errorf("encode tool result: %w", err)
+	}
+	return string(payload), nil
 }
 
 // datastoreToolFrom wraps a datastore tool descriptor as a callable tool. The

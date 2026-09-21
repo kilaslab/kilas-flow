@@ -84,6 +84,7 @@ func TestAScopedKeyIsRefusedTheOperationsOfSectionThreeTwo(t *testing.T) {
 		{"cannot update a credential", http.MethodPut, "/api/v1/credentials/cred_1", full, http.StatusForbidden, "cannot manage credentials"},
 		{"cannot delete a credential", http.MethodDelete, "/api/v1/credentials/cred_1", full, http.StatusForbidden, "cannot manage credentials"},
 		{"cannot test a credential", http.MethodPost, "/api/v1/credentials/cred_1/test", full, http.StatusForbidden, "cannot manage credentials"},
+		{"cannot start google oauth", http.MethodPost, "/api/v1/credentials/cred_1/oauth/start", full, http.StatusForbidden, "cannot manage credentials"},
 		{"cannot validate a credential payload", http.MethodPost, "/api/v1/credential-types/slack/test", full, http.StatusForbidden, "cannot manage credentials"},
 		// Datastore schema work: rows are data, columns and tables are shape.
 		{"cannot create a datastore", http.MethodPost, "/api/v1/datastores", full, http.StatusForbidden, "cannot manage datastores"},

@@ -7,9 +7,10 @@ sidebar:
 
 `DELETE /api/v1/tenants/{id}` removes one customer and everything kilasflow holds
 for it: executions and the payload files they wrote, workflows and their
-published versions, credentials and secret bindings, schedules, webhook
-deliveries, routes and bindings, datastores together with the physical tables
-behind them, vector rows, accounts and API keys, and finally the tenant row.
+published versions, credentials and secret bindings, schedules, leased poll
+cursors, webhook deliveries, routes and bindings, datastores together with the
+physical tables behind them, vector rows, accounts and API keys, and finally
+the tenant row.
 
 It is **irreversible**. There is no export-before-delete, no soft delete, and no
 window in which the rows are still there: the only way to recover is a database
@@ -29,7 +30,7 @@ filesystem has no transaction to join.
 | --- | --- | --- |
 | `lock-out` | `api_keys`, `users` (an update, nothing is deleted) | The tenant cannot write while its own rows are going. A deletion that fails leaves it locked out, which is the safe direction. |
 | `stop-triggers` | — | The coordinator on this process asks every remote service to forget the tenant's registrations, and its hooks resolve the tenant's credentials, so those credentials have to still exist. |
-| `triggers` | `schedules`, `webhook_deliveries`, `webhook_routes`, `webhook_bindings` | Intake is closed. A webhook arriving after this would queue an execution that the definitions step could then not delete, because `workflow_versions` refuses to lose its executions. |
+| `triggers` | `poll_cursors`, `schedules`, `webhook_deliveries`, `webhook_routes`, `webhook_bindings` | Intake is closed. A webhook arriving after this would queue an execution that the definitions step could then not delete, because `workflow_versions` refuses to lose its executions. Leased Gmail and Drive poll cursors go with the other intake rows so a replica cannot emit into a tenant that is being deleted. |
 | `binaries` | — | A filesystem has no transaction to join, so it is a step of its own, and the payload directory goes before the rows that name its payloads. |
 | `runs` | `execution_node_runs`, `execution_waits`, `executions`, `idempotency_keys` | Waits are deleted before executions: `execution_waits.execution_id` is `ON DELETE RESTRICT`, so the other order fails the whole transaction for any tenant with a suspended run — the ordinary case for a deletion request. |
 | `definitions` | `secret_bindings`, `credentials`, `workflow_versions`, `workflow_publish_events`, `workflows` | Versions before workflows (also `RESTRICT`). Workflows are hard-deleted, not soft-deleted. |
@@ -111,6 +112,7 @@ operation refuses every caller, exactly like any other operator route.
     "execution_waits": 1,
     "executions": 6,
     "idempotency_keys": 2,
+    "poll_cursors": 1,
     "schedules": 1,
     "secret_bindings": 1,
     "tenants": 1,

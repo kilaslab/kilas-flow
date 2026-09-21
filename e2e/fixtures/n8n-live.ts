@@ -106,6 +106,9 @@ export const STUB_EXECUTED = [
 	'kilasflow.executeWorkflow@1',
 	'kilasflow.executeWorkflowTrigger@1',
 	'kilasflow.datastore@1',
+	'kilasflow.chatTrigger@1',
+	'kilasflow.documentLoader@1',
+	'kilasflow.textSplitter@1',
 	// The error pair and the hosted form are exercised end-to-end by
 	// fixtures/error-form-nodes.ts, which n8n-compare.spec.ts calls below.
 	'kilasflow.errorTrigger@1',
@@ -137,6 +140,12 @@ export const EDITOR_VALIDATED = [
 	'kilasflow.mcpClientTool@1',
 	'kilasflow.embeddings@1',
 	'kilasflow.vectorStore@1',
+	'kilasflow.vectorStorePGVector@1',
+	'kilasflow.extractFromFile@1',
+	'kilasflow.googleDrive@1',
+	'kilasflow.googleDriveTrigger@1',
+	'kilasflow.gmail@1',
+	'kilasflow.gmailTrigger@1',
 	'kilasflow.datastoreTool@1',
 	'kilasflow.postgres@1',
 	'kilasflow.postgres@2',

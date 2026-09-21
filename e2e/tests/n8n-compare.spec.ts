@@ -779,20 +779,25 @@ test('the editor-validated tier refuses with user-facing diagnostics', async ({ 
 		expect(errorText(subAttempt.body)).toContain(sub.message);
 	}
 
-	for (const refused of [
-		{ name: 'Embeddings', type: 'kilasflow.embeddings', parameters: { model: 'text-embedding-3-small' } },
-		{ name: 'Vector Store', type: 'kilasflow.vectorStore', parameters: { operation: 'insert', collection: 'compare' } }
-	]) {
-		const refusedId = await createWorkflow(
-			server.baseURL,
-			`Compare ${refused.name}`,
-			[manual(), node('node', refused.name, refused.type, 1, refused.parameters)],
-			[conn('c1', 'manual', 'main', 'node', 'main')]
-		);
-		const refusedAttempt = await startRun(server.baseURL, refusedId);
-		expect(refusedAttempt.status).toBe(422);
-		expect(errorText(refusedAttempt.body)).toContain('pgvector');
-	}
+	const embeddingsId = await createWorkflow(
+		server.baseURL,
+		'Compare Embeddings',
+		[manual(), node('node', 'Embeddings', 'kilasflow.embeddings', 1, { model: 'text-embedding-3-small' })],
+		[conn('c1', 'manual', 'main', 'node', 'main')]
+	);
+	const embeddingsAttempt = await startRun(server.baseURL, embeddingsId);
+	expect(embeddingsAttempt.status).toBe(422);
+	expect(errorText(embeddingsAttempt.body)).toContain('no text to embed');
+
+	const storeId = await createWorkflow(
+		server.baseURL,
+		'Compare Vector Store',
+		[manual(), node('node', 'Vector Store', 'kilasflow.vectorStore', 1, { operation: 'insert', collection: 'compare' })],
+		[conn('c1', 'manual', 'main', 'node', 'main')]
+	);
+	const storeAttempt = await startRun(server.baseURL, storeId);
+	expect(storeAttempt.status).toBe(422);
+	expect(errorText(storeAttempt.body)).toContain('pgvector');
 
 	for (const remote of [
 		{ type: 'kilasflow.postgres', version: 1, credential: 'postgres' },
@@ -805,6 +810,26 @@ test('the editor-validated tier refuses with user-facing diagnostics', async ({ 
 			`Compare ${remote.type} ${remote.version}`,
 			[manual(), node('db', 'Database', remote.type, remote.version, { operation: 'query', statement: 'SELECT 1' })],
 			[conn('c1', 'manual', 'main', 'db', 'main')]
+		);
+		const remoteAttempt = await startRun(server.baseURL, remoteId);
+		expect(remoteAttempt.status).toBe(422);
+		expect(errorText(remoteAttempt.body)).toContain(`requires a ${remote.credential} credential`);
+	}
+
+	for (const remote of [
+		{ type: 'kilasflow.googleDrive', credential: 'googleDriveOAuth2Api' },
+		{ type: 'kilasflow.googleDriveTrigger', credential: 'googleDriveOAuth2Api' },
+		{ type: 'kilasflow.gmail', credential: 'gmailOAuth2' },
+		{ type: 'kilasflow.gmailTrigger', credential: 'gmailOAuth2' }
+	]) {
+		const isTrigger = remote.type.endsWith('Trigger');
+		const remoteId = await createWorkflow(
+			server.baseURL,
+			`Compare ${remote.type}`,
+			isTrigger
+				? [node('node', 'Google', remote.type, 1, {})]
+				: [manual(), node('node', 'Google', remote.type, 1, { operation: 'search' })],
+			isTrigger ? [] : [conn('c1', 'manual', 'main', 'node', 'main')]
 		);
 		const remoteAttempt = await startRun(server.baseURL, remoteId);
 		expect(remoteAttempt.status).toBe(422);

@@ -215,8 +215,11 @@ with it.
 `GET /api/v1/credential-types` lists the catalogue and each type's fields.
 `POST /api/v1/credential-types/{type}/test` tests a payload before it is saved.
 `GET`, `POST`, `PUT` and `DELETE` on `/api/v1/credentials` manage stored
-credentials, and `POST /api/v1/credentials/{id}/test` tests a stored one. See the
-[HTTP API reference](/reference/api/).
+credentials, and `POST /api/v1/credentials/{id}/test` tests a stored one.
+`POST /api/v1/credentials/{id}/oauth/start` returns a Google authorization URL
+for the Connect popup (`window.open`, never an iframe). The browser lands on
+`/oauth/callback`, which stores the tokens and posts a message to the opener.
+See the [HTTP API reference](/reference/api/).
 
 An [embed session](/concepts/tenancy-and-embedding/) may read the credential
 list — an editor has to offer a picker — and may do nothing else with
@@ -227,6 +230,6 @@ credentials.
 `internal/credentials/credentials.go` (`Split`, `Cipher`, `AllowsHost`,
 `KeyFromEnvironment`), `internal/credentials/registry.go` (`Placement`,
 `Authentication`, `ApplyAuthentication`, `RunTest`),
-`internal/credentials/builtin.go` (the ten types),
+`internal/credentials/builtin.go` (the built-in types, including Google Drive and Gmail OAuth2),
 `internal/repository/credentials.go` (the storage split and `Resolve`),
 `internal/engine/authenticate.go` (the domain check on the run path).

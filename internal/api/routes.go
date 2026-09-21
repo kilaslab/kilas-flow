@@ -2,6 +2,8 @@ package api
 
 import (
 	"net/http"
+	"os"
+	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/go-chi/chi/v5"
@@ -47,10 +49,23 @@ func registerRoutes(router *chi.Mux, api huma.API, deps Deps) {
 		WithTriggers(deps.TriggerCoordinator).WithSessionMemory(deps.SessionMemory).WithIdempotency(deps.Idempotency).Register(v1)
 	handlers.NewExecutions(deps.ExecutionController, deps.Executions, deps.Events, deps.Tenants, deps.NodeRegistry).
 		WithWorkflowVersions(deps.Workflows).Register(v1)
-	handlers.NewCredentials(deps.Credentials, deps.Tenants).
+	credentials := handlers.NewCredentials(deps.Credentials, deps.Tenants).
 		WithHTTPPolicy(credentialTestPolicy(deps)).
 		WithDatabaseGuard(deps.DatabaseGuard).
-		WithTestTimeout(deps.Config.Credential.TestTimeout).Register(v1)
+		WithTestTimeout(deps.Config.Credential.TestTimeout)
+	googleSecret := ""
+	if env := strings.TrimSpace(deps.Config.Google.ClientSecretEnv); env != "" {
+		googleSecret = strings.TrimSpace(os.Getenv(env))
+	}
+	credentials.WithOAuth(
+		deps.OAuthSigningKey,
+		deps.Config.Server.PublicURL,
+		deps.Config.Google.ClientID,
+		googleSecret,
+		deps.OAuthTokenURL,
+		deps.OAuthHTTP,
+	)
+	credentials.Register(v1)
 	handlers.NewSchedules(deps.Schedules, deps.Tenants).Register(v1)
 	handlers.NewDatastores(deps.Datastores, deps.Tenants).WithIdempotency(deps.Idempotency).Register(v1)
 	handlers.NewEmbedSessions(deps.EmbedIssuer, deps.Workflows, deps.Tenants).WithDatastores(deps.Datastores).Register(v1)
@@ -74,6 +89,8 @@ func registerRoutes(router *chi.Mux, api huma.API, deps Deps) {
 	resumeHandler := handlers.NewResume(deps.ResumeService, deps.Tenants).Handler()
 	router.Handle(handlers.ResumePrefix, resumeHandler)
 	router.Handle(handlers.ResumePrefix+"/*", resumeHandler)
+
+	router.Handle(handlers.OAuthCallbackPath, credentials.OAuthCallback())
 
 	// Last, because it reads the document every registration above wrote into:
 	// the public operations have to be marked after they exist, and the SPA route

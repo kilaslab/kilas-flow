@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
 	import KeyRound from '@lucide/svelte/icons/key-round';
 	import Trash2 from '@lucide/svelte/icons/trash-2';
 
@@ -10,7 +10,8 @@
 		deleteCredential,
 		listCredentials,
 		testCredentialPayload,
-		updateCredential
+		updateCredential,
+		startCredentialOauth
 	} from '$lib/api/generated/credentials/credentials';
 	import type { CredentialResource, CredentialTypeResource } from '$lib/api/generated/models';
 	import ListStates from '$lib/components/dashboard/list-states.svelte';
@@ -78,6 +79,20 @@
 	let deleteError = $state<string | null>(null);
 	let testResult = $state<{ ok: boolean; detail: string } | null>(null);
 	let testing = $state(false);
+	let connecting = $state(false);
+	let connectResult = $state<{ ok: boolean; detail: string } | null>(null);
+	let stopConnectListen: (() => void) | null = null;
+
+	function stopConnectListener() {
+		if (!stopConnectListen) return;
+		stopConnectListen();
+		stopConnectListen = null;
+	}
+
+	onDestroy(stopConnectListener);
+
+	const GOOGLE_TYPES = new Set(['googleDriveOAuth2Api', 'gmailOAuth2']);
+	const GOOGLE_HIDDEN_FIELDS = new Set(['access_token', 'refresh_token', 'expiry']);
 
 	const definition = $derived((types.data ?? []).find((candidate) => candidate.id === typeID) ?? null);
 
@@ -108,6 +123,7 @@
 		typeID = next;
 		if (!editing) fields = defaultsFor(next);
 		testResult = null;
+		connectResult = null;
 	}
 
 	function saveFields(): Record<string, string> {
@@ -134,6 +150,7 @@
 		domains = '';
 		formError = null;
 		deleteError = null;
+		connectResult = null;
 		editorOpen = true;
 	}
 
@@ -150,31 +167,89 @@
 		domains = (credential.allowedDomains ?? []).join(', ');
 		formError = null;
 		deleteError = null;
+		connectResult = null;
 		editorOpen = true;
 	}
 
-	async function save() {
-		if (!name.trim()) {
-			formError = m.credentials_error_name_required();
-			return;
-		}
-		saving = true;
-		formError = null;
-		const body = {
+	function credentialBody() {
+		return {
 			name: name.trim(),
 			type: typeID,
 			fields: saveFields(),
 			allowedDomains: domains.split(',').map((entry) => entry.trim()).filter(Boolean)
 		};
+	}
+
+	async function persist(): Promise<CredentialResource | null> {
+		if (!name.trim()) {
+			formError = m.credentials_error_name_required();
+			return null;
+		}
+		saving = true;
+		formError = null;
 		try {
-			const response = editing ? await updateCredential(editing.id, body) : await createCredential(body);
-			if (response.status !== 200 && response.status !== 201) throw new Error(m.credentials_error_save());
+			if (editing) {
+				const response = await updateCredential(editing.id, credentialBody());
+				if (response.status !== 200) throw new Error(m.credentials_error_save());
+				editing = response.data;
+				await loadCredentials();
+				return response.data;
+			}
+			const response = await createCredential(credentialBody());
+			if (response.status !== 201) throw new Error(m.credentials_error_save());
+			editing = response.data;
 			await loadCredentials();
-			editorOpen = false;
+			return response.data;
 		} catch (error) {
 			formError = message(error);
+			return null;
 		} finally {
 			saving = false;
+		}
+	}
+
+	async function save() {
+		const stored = await persist();
+		if (stored) editorOpen = false;
+	}
+
+	async function connectGoogle() {
+		stopConnectListener();
+		connecting = true;
+		connectResult = null;
+		formError = null;
+		try {
+			const stored = editing ?? (await persist());
+			if (!stored) return;
+			const response = await startCredentialOauth(stored.id);
+			if (response.status !== 200) throw new Error(m.credentials_error_connect());
+			const popup = window.open(response.data.authorizeUrl, 'kilasflow-oauth', 'popup=yes,width=480,height=720');
+			if (!popup) {
+				connectResult = { ok: false, detail: m.credentials_error_popup() };
+				return;
+			}
+			const onMessage = (event: MessageEvent) => {
+				if (event.origin !== window.location.origin) return;
+				const payload = event.data as { source?: string; ok?: boolean; error?: string } | null;
+				if (!payload || payload.source !== 'kilasflow-oauth') return;
+				stopConnectListener();
+				connectResult = payload.ok
+					? { ok: true, detail: '' }
+					: { ok: false, detail: payload.error ?? '' };
+				void loadCredentials();
+			};
+			const timer = window.setInterval(() => {
+				if (popup.closed) stopConnectListener();
+			}, 400);
+			window.addEventListener('message', onMessage);
+			stopConnectListen = () => {
+				window.removeEventListener('message', onMessage);
+				window.clearInterval(timer);
+			};
+		} catch (error) {
+			connectResult = { ok: false, detail: message(error) };
+		} finally {
+			connecting = false;
 		}
 	}
 
@@ -293,7 +368,7 @@
 					</select>
 					{#if definition?.description}<p class="text-xs leading-5 text-muted-foreground">{definition.description}</p>{/if}
 				</div>
-				{#each definition?.fields ?? [] as field (field.key)}
+				{#each (definition?.fields ?? []).filter((field) => !(GOOGLE_TYPES.has(typeID) && GOOGLE_HIDDEN_FIELDS.has(field.key))) as field (field.key)}
 					<div class="grid gap-2">
 						<label for={`credential-field-${field.key}`} class="text-sm font-medium">
 							{field.label}{#if field.required}<span aria-hidden="true" class="text-destructive"> *</span>{/if}
@@ -313,6 +388,9 @@
 						{#if field.description}<p class="text-xs leading-5 text-muted-foreground">{field.description}</p>{/if}
 					</div>
 				{/each}
+				{#if GOOGLE_TYPES.has(typeID)}
+					<p class="text-xs leading-5 text-muted-foreground">{m.credentials_connect_hint()}</p>
+				{/if}
 				<div class="grid gap-2">
 					<label for="credential-domains" class="text-sm font-medium">{m.credentials_allowed_hosts()}</label>
 					<Input id="credential-domains" bind:value={domains} placeholder={m.credentials_allowed_hosts_placeholder()} />
@@ -321,8 +399,14 @@
 				{#if testResult}
 					<p role="status" class={`text-sm ${testResult.ok ? 'text-success' : 'text-destructive'}`}>{testResult.ok ? (testResult.detail ? m.credentials_test_connected_detail({ detail: testResult.detail }) : m.credentials_test_connected()) : m.credentials_test_failed({ detail: testResult.detail })}</p>
 				{/if}
+				{#if connectResult}
+					<p role="status" class={`text-sm ${connectResult.ok ? 'text-success' : 'text-destructive'}`}>{connectResult.ok ? m.credentials_connect_ok() : m.credentials_connect_failed({ detail: connectResult.detail })}</p>
+				{/if}
 				{#if formError}<p role="alert" class="text-sm text-destructive">{formError}</p>{/if}
 				<Dialog.Footer>
+					{#if GOOGLE_TYPES.has(typeID)}
+						<Button type="button" variant="outline" onclick={() => void connectGoogle()} disabled={saving || connecting}>{connecting ? m.credentials_connecting() : m.credentials_connect()}</Button>
+					{/if}
 					<Button type="button" variant="outline" onclick={() => void testCurrent()} disabled={saving || testing}>{testing ? m.credentials_testing() : m.credentials_test()}</Button>
 					<Button type="button" variant="outline" onclick={() => (editorOpen = false)} disabled={saving}>{m.credentials_cancel()}</Button>
 					<Button type="submit" disabled={saving}>{saving ? m.credentials_saving() : m.credentials_save()}</Button>

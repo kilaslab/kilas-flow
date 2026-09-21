@@ -3679,6 +3679,41 @@ func stickyToN8N(node workflow.Node) (map[string]any, []Lossy) {
 	return parameters, nil
 }
 
+func embeddingsOpenAiToKilas(node Node) (map[string]any, []Unsupported) {
+	converted, _ := packToKilas(node)
+	if converted == nil {
+		converted = map[string]any{}
+	}
+	converted["mode"] = "cluster"
+	if name := locatorName(node.Parameters["model"]); name != "" {
+		converted["model"] = name
+	}
+	if options, ok := node.Parameters["options"].(map[string]any); ok {
+		if raw, present := options["baseURL"]; present {
+			if base := strings.TrimSpace(fmt.Sprint(raw)); base != "" && base != "<nil>" {
+				converted["baseUrl"] = base
+			}
+		}
+	}
+	return converted, nil
+}
+
+func extractFromFileToKilas(node Node) (map[string]any, []Unsupported) {
+	converted, issues := packToKilas(node)
+	if converted == nil {
+		converted = map[string]any{}
+	}
+	switch strings.ToLower(strings.TrimSpace(fmt.Sprint(converted["operation"]))) {
+	case "pdf", "extractfrompdf":
+		converted["operation"] = "pdf"
+	case "text", "fromfile", "extractfromfile":
+		converted["operation"] = "text"
+	case "json", "extractfromjson":
+		converted["operation"] = "json"
+	}
+	return converted, issues
+}
+
 // packToKilas carries a generated pack's parameters through unchanged.
 //
 // A pack node's parameter *names* are the ones the package it mirrors chose —

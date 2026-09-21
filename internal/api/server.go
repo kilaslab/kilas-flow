@@ -45,6 +45,9 @@ const (
 	// clicking it may hold nothing but the link, and it is listed here because
 	// the Vite dev proxy mirrors this block.
 	ResumePrefix = "/resume"
+	// OAuthPrefix is the Google Connect popup callback. It is listed here
+	// because the Vite dev proxy mirrors this block.
+	OAuthPrefix = "/oauth"
 )
 
 // Deps are the collaborators a Server needs, passed by the caller rather than
@@ -129,6 +132,12 @@ type Deps struct {
 	// than delete the tenant row and orphan every row pointing at it.
 	TenantPurger handlers.TenantPurger
 	Version      string
+	// OAuthSigningKey HMAC-signs Google Connect state. Empty disables Connect.
+	OAuthSigningKey []byte
+	// OAuthTokenURL overrides Google's token endpoint in tests.
+	OAuthTokenURL string
+	// OAuthHTTP is the client used to exchange and refresh Google tokens.
+	OAuthHTTP *http.Client
 }
 
 // Server owns the HTTP listener and the route tree.

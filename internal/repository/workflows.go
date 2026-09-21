@@ -85,6 +85,9 @@ type GORMWorkflowStore struct {
 	// schedule-driven workflow activated cleanly and then never ran.
 	schedules ScheduleExtractor
 	next      func(string, time.Time) (time.Time, error)
+	// polls extracts leased poll triggers from a document so activating a
+	// Gmail or Drive trigger starts ticking it.
+	polls PollExtractor
 	// subworkflows extracts the workflows a document calls, so activation can
 	// refuse a caller whose target is not live. Nil leaves the check off.
 	subworkflows SubworkflowExtractor
@@ -153,6 +156,13 @@ func (store *GORMWorkflowStore) WithSchedules(extract ScheduleExtractor, next fu
 	}
 	store.schedules = extract
 	store.next = next
+	return store
+}
+
+// WithPolls returns a store that keeps leased poll cursor rows in step with
+// activation. Nil leaves Gmail/Drive triggers activating without ever ticking.
+func (store *GORMWorkflowStore) WithPolls(extract PollExtractor) *GORMWorkflowStore {
+	store.polls = extract
 	return store
 }
 
@@ -490,6 +500,11 @@ func (store *GORMWorkflowStore) publish(ctx context.Context, tenant TenantScope,
 				return err
 			}
 		}
+		if store.polls != nil {
+			if err := syncPolls(tx, tenant.ID, model.ID, store.polls(storedVersion.Document)); err != nil {
+				return err
+			}
+		}
 		return appendPublishEvent(tx, tenant, model.ID, version.ID, workflow.PublishActionPublished, ActorFrom(ctx), reason)
 	})
 	if err != nil {
@@ -587,6 +602,11 @@ func (store *GORMWorkflowStore) Deactivate(ctx context.Context, tenant TenantSco
 					return err
 				}
 				if err := removeSchedules(tx, tenant.ID, workflowID, store.schedules(active)); err != nil {
+					return err
+				}
+			}
+			if store.polls != nil {
+				if err := removePolls(tx, tenant.ID, workflowID); err != nil {
 					return err
 				}
 			}

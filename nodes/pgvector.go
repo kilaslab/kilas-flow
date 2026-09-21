@@ -618,24 +618,28 @@ func (store *PostgresVectorStore) Delete(ctx context.Context, tenant, collection
 
 // EmbeddingsNode builds the embeddings definition.
 //
-// unavailable is VectorUnavailableReason's answer for this install: non-empty
-// leaves the node failing configuration validation with the install message,
-// so a SQLite install says what to install rather than running a node whose
-// vectors would have nowhere to go.
+// unavailable is ignored: embeddings call an OpenAI-compatible HTTP API and
+// do not need the install's pgvector. The argument is kept so existing call
+// sites that pass VectorUnavailableReason keep compiling.
 func EmbeddingsNode(unavailable string) node.Definition {
+	_ = unavailable
 	return node.Definition{
 		Type:        EmbeddingsNodeType,
 		Version:     workflow.V(1),
 		Credentials: []node.CredentialRequirement{{Type: OpenAICredentialType}, {Type: OpenRouterCredentialType}, {Type: BearerCredentialType}},
 		DisplayName: "Embeddings",
-		Description: "Turns text into embedding vectors through an OpenAI-compatible embeddings API.",
+		Description: "Turns text into embedding vectors through an OpenAI-compatible embeddings API. Connected as a cluster sub-node it emits a descriptor the Vector Store calls; connected on main it still embeds each item's text.",
 		Category:    "AI",
 		Group:       []node.NodeGroup{node.GroupTransform},
 		Icon:        &node.NodeIcon{Light: "builtin:brain"},
 		IconColor:   "#a855f7",
 		Subtitle:    "{{ $parameter.model }}",
 		Inputs:      mainInput(),
-		Outputs:     mainOutput(),
+		Outputs: []workflow.Port{
+			{Name: "main", Kind: workflow.ConnectionMain},
+			{Name: "embedding", Kind: workflow.ConnectionEmbedding},
+		},
+		PortsFor: embeddingsPortsFor,
 		Parameters: []node.PropertyDefinition{
 			{
 				Key: "model", Label: "Model", Kind: node.PropertyString, Required: true,
@@ -644,7 +648,7 @@ func EmbeddingsNode(unavailable string) node.Definition {
 			},
 			{
 				Key: "baseUrl", Label: "Base URL", Kind: node.PropertyString, Default: DefaultEmbeddingsBaseURL,
-				Description: "Change this only to reach the provider through a gateway or a proxy.",
+				Description: "Change this only to reach the provider through a gateway or a proxy. Any OpenAI-compatible /embeddings endpoint works.",
 			},
 			{
 				Key: "timeout", Label: "Timeout (ms)", Kind: node.PropertyNumber, Default: float64(60000),
@@ -653,27 +657,16 @@ func EmbeddingsNode(unavailable string) node.Definition {
 		},
 		SharedSettings: sharedSettings(),
 		ExecutorID:     EmbeddingsExecutorID,
-		Validate:       validateEmbeddings(unavailable),
+		Validate:       validateEmbeddings,
+		Codex:          &node.NodeCodex{Categories: []string{"AI"}, Subcategories: map[string][]string{"AI": {"Embeddings"}}},
 	}
 }
 
-// validateEmbeddings checks the static configuration plus availability: on an
-// install without the vector tier the node fails here, with the message
-// saying what to install, rather than at the first run.
-func validateEmbeddings(unavailable string) workflow.ConfigValidator {
-	return func(n workflow.Node) error {
-		if strings.TrimSpace(unavailable) != "" {
-			return fmt.Errorf("%s", unavailable)
-		}
-		if strings.TrimSpace(textValue(n.Parameters["model"], "")) == "" {
-			return fmt.Errorf("model is required")
-		}
-		credential := embeddingsCredentialID(n.Credentials)
-		if credential == "" {
-			return fmt.Errorf("an openAiApi, openRouterApi or httpBearerAuth credential holding the API key is required")
-		}
-		return nil
+func validateEmbeddings(n workflow.Node) error {
+	if strings.TrimSpace(textValue(n.Parameters["model"], "")) == "" {
+		return fmt.Errorf("model is required")
 	}
+	return nil
 }
 
 // embeddingsCredentialID names the first embeddings credential the node
@@ -702,7 +695,17 @@ func VectorStoreNode(unavailable string) node.Definition {
 		Subtitle:    "{{ $parameter.operation }} {{ $parameter.collection }}",
 		Inputs:      mainInput(),
 		Outputs:     mainOutput(),
+		PortsFor:    vectorStorePortsFor,
 		Parameters: []node.PropertyDefinition{
+			{
+				Key: "mode", Label: "Mode", Kind: node.PropertyOptions,
+				Description: "n8n cluster mode. Leave empty on native sequential graphs that use Operation.",
+				Options: []node.PropertyOption{
+					{Label: "Insert Documents", Value: VectorModeInsert},
+					{Label: "Get Many", Value: VectorModeGetMany},
+					{Label: "Retrieve as Tool", Value: VectorModeRetrieveAsTool},
+				},
+			},
 			{
 				Key: "operation", Label: "Operation", Kind: node.PropertyOptions, Required: true,
 				Default: VectorOperationInsert,
@@ -711,6 +714,18 @@ func VectorStoreNode(unavailable string) node.Definition {
 					{Label: "Similarity Search", Value: VectorOperationSearch},
 					{Label: "Delete Documents", Value: VectorOperationDelete},
 				},
+			},
+			{
+				Key: "toolName", Label: "Tool name", Kind: node.PropertyString,
+				Description: "Name the agent calls when mode is retrieve-as-tool.",
+			},
+			{
+				Key: "toolDescription", Label: "Tool description", Kind: node.PropertyString,
+				Description: "What the vector store tool retrieves, written for the model.",
+			},
+			{
+				Key: "topK", Label: "Top K", Kind: node.PropertyNumber, Default: float64(DefaultVectorTopK),
+				Description: "How many matches a similarity search or retrieve-as-tool call returns.",
 			},
 			{
 				Key: "collection", Label: "Collection", Kind: node.PropertyString, Required: true,
@@ -732,10 +747,6 @@ func VectorStoreNode(unavailable string) node.Definition {
 					{Label: "IVFFlat", Value: VectorIndexIVFFlat},
 				},
 				Description: "Recorded when the collection is created. Both exist for every distance from the migration, so either choice is indexed.",
-			},
-			{
-				Key: "topK", Label: "Top K", Kind: node.PropertyNumber, Default: float64(DefaultVectorTopK),
-				Description: "How many matches a similarity search returns.",
 			},
 			{
 				Key: "queryVector", Label: "Query Vector", Kind: node.PropertyJSON,
@@ -762,11 +773,13 @@ func validateVectorStore(unavailable string) workflow.ConfigValidator {
 		if strings.TrimSpace(unavailable) != "" {
 			return fmt.Errorf("%s", unavailable)
 		}
-		operation := textValue(n.Parameters["operation"], VectorOperationInsert)
-		switch operation {
-		case VectorOperationInsert, VectorOperationSearch, VectorOperationDelete:
+		mode := vectorStoreModeOf(n.Parameters)
+		switch mode {
+		case VectorModeInsert, VectorModeGetMany, VectorModeRetrieveAsTool, VectorOperationDelete:
 		default:
-			return fmt.Errorf("operation must be %q, %q or %q", VectorOperationInsert, VectorOperationSearch, VectorOperationDelete)
+			return fmt.Errorf("operation must be %q, %q or %q, or mode %q, %q or %q",
+				VectorOperationInsert, VectorOperationSearch, VectorOperationDelete,
+				VectorModeInsert, VectorModeGetMany, VectorModeRetrieveAsTool)
 		}
 		if strings.TrimSpace(textValue(n.Parameters["collection"], "")) == "" {
 			return fmt.Errorf("collection is required")
@@ -810,15 +823,13 @@ func (executor *EmbeddingsExecutor) Execute(ctx context.Context, ir workflow.IRN
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if executor.store == nil {
-		return nil, fmt.Errorf("node %q: the vector store is not configured on this install", ir.Name)
-	}
-	if err := executor.store.CheckAvailable(ctx); err != nil {
-		return nil, fmt.Errorf("node %q: %w", ir.Name, err)
+	descriptor := embeddingsDescriptorItem(ir)
+	if strings.EqualFold(strings.TrimSpace(textValue(ir.Parameters["mode"], "")), EmbeddingsModeCluster) {
+		return workflow.NodeOutput{[]workflow.Item{descriptor}}, nil
 	}
 	items := input["main"]
 	if len(items) == 0 {
-		return nil, fmt.Errorf("node %q: at least one input item carrying text is required", ir.Name)
+		return workflow.NodeOutput{[]workflow.Item{}, []workflow.Item{descriptor}}, nil
 	}
 	texts := make([]string, 0, len(items))
 	for index, item := range items {
@@ -882,7 +893,7 @@ func (executor *EmbeddingsExecutor) Execute(ctx context.Context, ir workflow.IRN
 		json["model"] = model
 		output = append(output, workflow.Item{JSON: json})
 	}
-	return workflow.NodeOutput{output}, nil
+	return workflow.NodeOutput{output, []workflow.Item{descriptor}}, nil
 }
 
 // embeddingsTimeout reads the node's own timeout in milliseconds. Refused
@@ -958,6 +969,59 @@ func (executor *EmbeddingsExecutor) embed(ctx context.Context, baseURL, apiKey, 
 	return embeddings, nil
 }
 
+// EmbedFromDescriptor calls the embeddings API using a cluster sub-node's
+// $ai descriptor, so a Vector Store or retrieve-as-tool can embed without
+// the embeddings node itself processing main items.
+func (executor *EmbeddingsExecutor) EmbedFromDescriptor(ctx context.Context, nodeName string, descriptor map[string]any, request engine.Request, texts []string) ([][]float64, error) {
+	if executor == nil {
+		return nil, fmt.Errorf("node %q: embeddings are not configured on this install", nodeName)
+	}
+	if len(texts) == 0 {
+		return nil, fmt.Errorf("node %q: at least one text is required to embed", nodeName)
+	}
+	credentialID := textValue(descriptor["credentialId"], "")
+	if credentialID == "" {
+		return nil, fmt.Errorf("node %q: an embeddings credential is required", nodeName)
+	}
+	if request.Credentials == nil {
+		return nil, fmt.Errorf("node %q: credentials are not available in this runtime", nodeName)
+	}
+	secret, err := request.Credentials.ResolveCredential(ctx, credentialID)
+	if err != nil {
+		return nil, fmt.Errorf("node %q: %w", nodeName, err)
+	}
+	apiKeyField, usable := modelAPIKeyFields[secret.Type]
+	if !usable {
+		return nil, fmt.Errorf("node %q: credential %q is a %s credential, which no embeddings model can authenticate with",
+			nodeName, secret.Name, secret.Type)
+	}
+	baseURL := textValue(descriptor["baseUrl"], DefaultEmbeddingsBaseURL)
+	target, err := url.Parse(strings.TrimSuffix(strings.TrimSpace(baseURL), "/"))
+	if err != nil || strings.TrimSpace(baseURL) == "" {
+		return nil, fmt.Errorf("node %q: the embeddings base URL is not a valid URL", nodeName)
+	}
+	if err := executor.policy.CheckURL(target); err != nil {
+		return nil, fmt.Errorf("node %q: %w", nodeName, err)
+	}
+	if !secret.AllowsHost(target.Host) {
+		return nil, fmt.Errorf("node %q: credential %q is not allowed for host %q",
+			nodeName, secret.Name, target.Hostname())
+	}
+	model := textValue(descriptor["model"], DefaultEmbeddingsModel)
+	if strings.TrimSpace(model) == "" {
+		return nil, fmt.Errorf("node %q: model is required", nodeName)
+	}
+	timeout := 60 * time.Second
+	if milliseconds := numberValue(descriptor["timeout"]); milliseconds > 0 {
+		timeout = time.Duration(milliseconds) * time.Millisecond
+	}
+	embeddings, err := executor.embed(ctx, target.String(), secret.Fields[apiKeyField], model, texts, timeout)
+	if err != nil {
+		return nil, fmt.Errorf("node %q: %w", nodeName, err)
+	}
+	return embeddings, nil
+}
+
 // cloneItemJSON copies one item's document so the embedding annotates the
 // item without aliasing the input the runner still holds.
 func cloneItemJSON(document map[string]any) (map[string]any, error) {
@@ -980,12 +1044,21 @@ func cloneItemJSON(document map[string]any) (map[string]any, error) {
 // execution, never from a parameter: one tenant's collection name can never
 // address another tenant's rows even when the names match.
 type VectorStoreExecutor struct {
-	store VectorStore
+	store    VectorStore
+	embedder *EmbeddingsExecutor
 }
 
 // NewVectorStoreExecutor binds the executor to the install's vector store.
 func NewVectorStoreExecutor(store VectorStore) *VectorStoreExecutor {
 	return &VectorStoreExecutor{store: store}
+}
+
+// WithEmbedder lets cluster insert and retrieve-as-tool call the embeddings API.
+func (executor *VectorStoreExecutor) WithEmbedder(embedder *EmbeddingsExecutor) *VectorStoreExecutor {
+	if executor != nil {
+		executor.embedder = embedder
+	}
+	return executor
 }
 
 // Execute implements engine.Executor.
@@ -1007,12 +1080,13 @@ func (executor *VectorStoreExecutor) Execute(ctx context.Context, ir workflow.IR
 	if collection == "" {
 		return nil, fmt.Errorf("node %q: collection is required", ir.Name)
 	}
-	operation := textValue(ir.Parameters["operation"], VectorOperationInsert)
-	switch operation {
-	case VectorOperationInsert:
-		return executor.executeInsert(ctx, ir, tenant, collection, input)
-	case VectorOperationSearch:
-		return executor.executeSearch(ctx, ir, tenant, collection)
+	switch vectorStoreModeOf(ir.Parameters) {
+	case VectorModeInsert:
+		return executor.executeInsert(ctx, ir, tenant, collection, input, request)
+	case VectorModeGetMany:
+		return executor.executeSearch(ctx, ir, tenant, collection, input, request)
+	case VectorModeRetrieveAsTool:
+		return executor.executeRetrieveAsTool(ir, collection, input)
 	case VectorOperationDelete:
 		return executor.executeDelete(ctx, ir, tenant, collection)
 	default:
@@ -1023,31 +1097,36 @@ func (executor *VectorStoreExecutor) Execute(ctx context.Context, ir workflow.IR
 // executeInsert embeds every input item's text alongside its vector. The
 // vector travels in the item — written there by the Embeddings node — so the
 // two nodes chain without an intermediate store of their own.
-func (executor *VectorStoreExecutor) executeInsert(ctx context.Context, ir workflow.IRNode, tenant, collection string, input workflow.NodeInput) (workflow.NodeOutput, error) {
-	items := input["main"]
-	if len(items) == 0 {
+func (executor *VectorStoreExecutor) executeInsert(ctx context.Context, ir workflow.IRNode, tenant, collection string, input workflow.NodeInput, request engine.Request) (workflow.NodeOutput, error) {
+	drafts := documentsFromItems(input["document"])
+	if len(drafts) == 0 {
+		drafts = documentsFromItems(input["main"])
+	}
+	if len(drafts) == 0 {
 		return nil, fmt.Errorf("node %q: at least one input item carrying text and an embedding is required", ir.Name)
 	}
-	documents := make([]VectorDocument, 0, len(items))
-	output := make([]workflow.Item, 0, len(items))
-	for index, item := range items {
-		content, _ := item.JSON["text"].(string)
-		if content == "" {
-			content, _ = item.JSON["content"].(string)
+	if descriptor := embeddingsDescriptorOf(input["embedding"]); descriptor != nil {
+		texts := make([]string, 0, len(drafts))
+		for _, draft := range drafts {
+			texts = append(texts, draft.Content)
 		}
-		if strings.TrimSpace(content) == "" {
+		vectors, err := executor.embedder.EmbedFromDescriptor(ctx, ir.Name, descriptor, request, texts)
+		if err != nil {
+			return nil, err
+		}
+		for index := range drafts {
+			drafts[index].Embedding = vectors[index]
+		}
+	}
+	documents := make([]VectorDocument, 0, len(drafts))
+	for index, draft := range drafts {
+		if strings.TrimSpace(draft.Content) == "" {
 			return nil, fmt.Errorf("node %q: item %d carries no text to store", ir.Name, index+1)
 		}
-		embedding, err := vectorNumbers(item.JSON["embedding"])
-		if err != nil || len(embedding) == 0 {
+		if len(draft.Embedding) == 0 {
 			return nil, fmt.Errorf("node %q: item %d carries no embedding vector", ir.Name, index+1)
 		}
-		metadata, err := vectorObject(item.JSON["metadata"])
-		if err != nil {
-			return nil, fmt.Errorf("node %q: item %d carries metadata that is not a JSON object", ir.Name, index+1)
-		}
-		id, _ := item.JSON["id"].(string)
-		id = strings.TrimSpace(id)
+		id := draft.ID
 		if id == "" {
 			var err error
 			id, err = workflow.NewID("vecdoc")
@@ -1055,7 +1134,7 @@ func (executor *VectorStoreExecutor) executeInsert(ctx context.Context, ir workf
 				return nil, fmt.Errorf("node %q: %w", ir.Name, err)
 			}
 		}
-		documents = append(documents, VectorDocument{ID: id, Content: content, Embedding: embedding, Metadata: metadata})
+		documents = append(documents, VectorDocument{ID: id, Content: draft.Content, Embedding: draft.Embedding, Metadata: draft.Metadata})
 	}
 	dimension := len(documents[0].Embedding)
 	distance := textValue(ir.Parameters["distance"], VectorDistanceCosine)
@@ -1066,17 +1145,39 @@ func (executor *VectorStoreExecutor) executeInsert(ctx context.Context, ir workf
 	if err := executor.store.Insert(ctx, tenant, collection, documents); err != nil {
 		return nil, fmt.Errorf("node %q: %w", ir.Name, err)
 	}
-	for _, document := range documents {
-		output = append(output, workflow.Item{JSON: map[string]any{"id": document.ID, "collection": collection}})
+	output := make([]workflow.Item, 0, len(documents))
+	seen := map[string]struct{}{}
+	for index, document := range documents {
+		output = appendUniqueInsertOutput(output, seen, vectorInsertOutput(drafts[index], document.ID, "collection", collection))
 	}
 	return workflow.NodeOutput{output}, nil
 }
 
-// executeSearch runs one similarity query from the node's own parameters and
-// emits one item carrying its matches.
-func (executor *VectorStoreExecutor) executeSearch(ctx context.Context, ir workflow.IRNode, tenant, collection string) (workflow.NodeOutput, error) {
+func (executor *VectorStoreExecutor) executeSearch(ctx context.Context, ir workflow.IRNode, tenant, collection string, input workflow.NodeInput, request engine.Request) (workflow.NodeOutput, error) {
 	query, err := vectorNumbers(ir.Parameters["queryVector"])
 	if err != nil || len(query) == 0 {
+		if drafts := documentsFromItems(input["main"]); len(drafts) > 0 && len(drafts[0].Embedding) > 0 {
+			query = drafts[0].Embedding
+		}
+	}
+	if len(query) == 0 {
+		queryText := strings.TrimSpace(textValue(ir.Parameters["query"], ""))
+		if queryText == "" {
+			if items := input["main"]; len(items) > 0 {
+				queryText = documentText(items[0].JSON, "text")
+			}
+		}
+		if queryText != "" {
+			if descriptor := embeddingsDescriptorOf(input["embedding"]); descriptor != nil {
+				vectors, embedErr := executor.embedder.EmbedFromDescriptor(ctx, ir.Name, descriptor, request, []string{queryText})
+				if embedErr != nil {
+					return nil, embedErr
+				}
+				query = vectors[0]
+			}
+		}
+	}
+	if len(query) == 0 {
 		return nil, fmt.Errorf("node %q: queryVector must be a JSON array of numbers, for example {{ $json.embedding }} from an Embeddings node", ir.Name)
 	}
 	topK := int(numberValue(ir.Parameters["topK"]))
@@ -1098,6 +1199,38 @@ func (executor *VectorStoreExecutor) executeSearch(ctx context.Context, ir workf
 		})
 	}
 	return workflow.NodeOutput{{{JSON: map[string]any{"collection": collection, "matches": encoded}}}}, nil
+}
+
+func (executor *VectorStoreExecutor) executeRetrieveAsTool(ir workflow.IRNode, collection string, input workflow.NodeInput) (workflow.NodeOutput, error) {
+	name := strings.TrimSpace(textValue(ir.Parameters["toolName"], ""))
+	if name == "" {
+		name = workflow.NormalizeToolName(ir.Name)
+	}
+	description := strings.TrimSpace(textValue(ir.Parameters["toolDescription"], ""))
+	if description == "" {
+		description = "Retrieve relevant documents from the " + collection + " vector store."
+	}
+	topK := int(numberValue(ir.Parameters["topK"]))
+	if topK <= 0 {
+		topK = DefaultVectorTopK
+	}
+	descriptor := map[string]any{
+		"kind":        toolKindVectorStore,
+		"name":        name,
+		"description": description,
+		"nodeName":    ir.Name,
+		"backend":     "internal",
+		"collection":  collection,
+		"topK":        topK,
+		"distance":    textValue(ir.Parameters["distance"], VectorDistanceCosine),
+	}
+	if embeddings := embeddingsDescriptorOf(input["embedding"]); embeddings != nil {
+		descriptor["embeddings"] = embeddings
+	}
+	if filter, err := vectorObject(ir.Parameters["metadataFilter"]); err == nil && filter != nil {
+		descriptor["metadataFilter"] = filter
+	}
+	return workflow.NodeOutput{[]workflow.Item{{JSON: map[string]any{descriptorKey: descriptor}}}}, nil
 }
 
 // executeDelete removes the named documents and reports how many went.
@@ -1229,8 +1362,5 @@ func vectorObject(raw any) (map[string]any, error) {
 // than inside it because the verdict is a deployment fact main computes
 // from its database handle, not a constant the catalogue can state.
 func RegisterVectorNodes(registry *node.Registry, unavailable string) error {
-	if err := registry.Register(EmbeddingsNode(unavailable)); err != nil {
-		return err
-	}
 	return registry.Register(VectorStoreNode(unavailable))
 }

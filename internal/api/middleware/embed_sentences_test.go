@@ -21,6 +21,7 @@ func TestEmbedSentencesAreUnchangedByTheSharedTable(t *testing.T) {
 		{http.MethodGet, "/api/v1/credential-types", "This embed session cannot use this endpoint."},
 		{http.MethodPost, "/api/v1/credential-types/slack/test", "This embed session cannot use this endpoint."},
 		{http.MethodPost, "/api/v1/credentials/cred_1/test", "This embed session cannot manage credentials."},
+		{http.MethodPost, "/api/v1/credentials/cred_1/oauth/start", "This embed session cannot manage credentials."},
 		{http.MethodGet, "/api/v1/workflows/wf_2", "This embed session is scoped to a different workflow."},
 		{http.MethodPost, "/api/v1/workflows/wf_1/activate", "This embed session cannot change activation."},
 		{http.MethodGet, "/api/v1/datastores", "This embed session cannot manage datastores."},

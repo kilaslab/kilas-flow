@@ -20,7 +20,7 @@ const backend = process.env.KILASFLOW_BACKEND_URL ?? 'http://127.0.0.1:8080';
 // KILASFLOW_WEB_PORT when 5173 is taken by another project.
 const port = Number(process.env.KILASFLOW_WEB_PORT ?? 5173);
 
-const proxied = ['/api', '/webhook', '/docs', '/resume'];
+const proxied = ['/api', '/webhook', '/docs', '/resume', '/oauth'];
 
 export default defineConfig({
 	// The strategy is deliberately reduced to the base locale: `$lib/i18n`

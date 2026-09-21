@@ -235,9 +235,10 @@ func (c seedCatalog) HasType(nodeType string) bool {
 func seedNodeCatalog() seedCatalog {
 	main := workflow.Port{Name: "main", Kind: workflow.ConnectionMain}
 	return seedCatalog{
-		"kilasflow.manual":   {Type: "kilasflow.manual", Version: workflow.V(1), Outputs: []workflow.Port{main}},
-		"kilasflow.webhook":  {Type: "kilasflow.webhook", Version: workflow.V(1), Outputs: []workflow.Port{main}},
-		"kilasflow.schedule": {Type: "kilasflow.schedule", Version: workflow.V(1), Outputs: []workflow.Port{main}},
+		"kilasflow.manual":       {Type: "kilasflow.manual", Version: workflow.V(1), Outputs: []workflow.Port{main}},
+		"kilasflow.webhook":      {Type: "kilasflow.webhook", Version: workflow.V(1), Outputs: []workflow.Port{main}},
+		"kilasflow.schedule":     {Type: "kilasflow.schedule", Version: workflow.V(1), Outputs: []workflow.Port{main}},
+		"kilasflow.gmailTrigger": {Type: "kilasflow.gmailTrigger", Version: workflow.V(1), Outputs: []workflow.Port{main}},
 	}
 }
 
@@ -278,6 +279,19 @@ func seedNext(_ string, after time.Time) (time.Time, error) {
 	return after.Add(time.Hour), nil
 }
 
+func seedPolls(document workflow.Document) []repository.PollTrigger {
+	triggers := make([]repository.PollTrigger, 0, 1)
+	for _, node := range document.Nodes {
+		if node.Type != "kilasflow.gmailTrigger" && node.Type != "kilasflow.googleDriveTrigger" {
+			continue
+		}
+		triggers = append(triggers, repository.PollTrigger{
+			NodeID: node.ID, NodeType: node.Type, Interval: time.Minute,
+		})
+	}
+	return triggers
+}
+
 func seedDocument(tenantID, workflowID, name string) workflow.Document {
 	return workflow.Document{
 		SchemaVersion: workflow.CurrentSchemaVersion,
@@ -289,6 +303,8 @@ func seedDocument(tenantID, workflowID, name string) workflow.Document {
 				Parameters: map[string]any{"path": "purge-" + tenantID, "httpMethod": "POST"}},
 			{ID: "cron", Name: "Schedule", Type: "kilasflow.schedule", TypeVersion: workflow.V(1),
 				Parameters: map[string]any{"cron": "0 * * * *"}},
+			{ID: "gmail", Name: "Gmail Trigger", Type: "kilasflow.gmailTrigger", TypeVersion: workflow.V(1),
+				Credentials: map[string]string{"gmailOAuth2": "seed-gmail"}},
 		},
 		Connections: []workflow.Connection{},
 		Settings:    map[string]any{},
@@ -343,7 +359,8 @@ func newPurgeEnv(t *testing.T, db *database.DB, prefix string) *purgeEnv {
 		auth:       repository.NewAuthStore(db.DB),
 		workflows: repository.NewWorkflowStore(db.DB).
 			WithWebhooks(seedWebhooks).
-			WithSchedules(seedSchedules, seedNext),
+			WithSchedules(seedSchedules, seedNext).
+			WithPolls(seedPolls),
 		executions:  repository.NewExecutionStore(db.DB),
 		secrets:     repository.NewCredentialStore(db.DB, cipher),
 		engine:      engine,

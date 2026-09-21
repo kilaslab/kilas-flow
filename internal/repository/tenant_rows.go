@@ -100,18 +100,19 @@ func (purger *GORMTenantPurger) ActiveTriggerWorkflows(ctx context.Context, tena
 	return workflowIDs, nil
 }
 
-// PurgeTriggers deletes the rows that feed a tenant work: its cron schedules,
-// the deliveries it has already claimed, the routes it answers on and the
-// bindings that make those routes live.
+// PurgeTriggers deletes the rows that feed a tenant work: leased poll cursors,
+// its cron schedules, the deliveries it has already claimed, the routes it
+// answers on and the bindings that make those routes live.
 //
 // It runs before anything else is deleted, not after the executions are gone.
 // A webhook arriving while a purge is in progress queues an execution against
 // a workflow version that is about to be deleted, and the definitions step
 // then fails on a foreign key — for a busy tenant, on most first attempts.
-// None of these four tables is referenced by a foreign key, so they are safe
+// None of these tables is referenced by a foreign key, so they are safe
 // to remove first.
 func (purger *GORMTenantPurger) PurgeTriggers(ctx context.Context, tenant TenantScope) (map[string]int64, error) {
 	return purger.purge(ctx, tenant, []purgeStep{
+		{table: "poll_cursors", model: &pollCursorModel{}},
 		{table: "schedules", model: &scheduleModel{}},
 		{table: "webhook_deliveries", model: &webhookDeliveryModel{}},
 		{table: "webhook_routes", model: &webhookRouteModel{}},

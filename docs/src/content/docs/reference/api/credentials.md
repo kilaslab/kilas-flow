@@ -173,3 +173,28 @@ Responses:
 | `default` | Error | `application/problem+json` |
 
 Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+
+## Start Google OAuth (`start-credential-oauth`)
+
+`POST /api/v1/credentials/{id}/oauth/start`
+
+Returns the Google authorization URL for this credential. Open it in a popup (window.open), not an iframe: Google blocks OAuth inside frames.
+
+Parameters:
+
+| Name | In | Required | Type | Description |
+| --- | --- | --- | --- | --- |
+| `id` | path | yes | string | Credential identifier |
+| `Origin` | header | no | string |  |
+| `Referer` | header | no | string |  |
+| `Host` | header | no | string |  |
+| `X-Forwarded-Proto` | header | no | string |  |
+
+Responses:
+
+| Status | Description | Body |
+| --- | --- | --- |
+| `200` | OK | `application/json` — `OauthStartResource` |
+| `default` | Error | `application/problem+json` |
+
+Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.

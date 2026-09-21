@@ -38,7 +38,7 @@ Consequences:
 
 ## The operation surface
 
-The document a server serves holds 80 operations, all under `/api/v1`, in
+The document a server serves holds 81 operations, all under `/api/v1`, in
 eleven groups. The tables below are the workflow-facing core this contract was
 written around — the operations that existed when it was last revised. The
 always-current list is the [generated reference](/reference/api/), which is
@@ -81,7 +81,7 @@ new `/api/vN` path (see [Breaking changes](#breaking-changes)).
 | POST | `/executions/{id}/eval` | `eval-expression` |
 | GET | `/executions/{id}/events` | `stream-execution-events` |
 
-### Credentials (8)
+### Credentials (9)
 
 | Method | Path | Operation id |
 | --- | --- | --- |
@@ -93,6 +93,7 @@ new `/api/vN` path (see [Breaking changes](#breaking-changes)).
 | PUT | `/credentials/{id}` | `update-credential` |
 | DELETE | `/credentials/{id}` | `delete-credential` |
 | POST | `/credentials/{id}/test` | `test-credential` |
+| POST | `/credentials/{id}/oauth/start` | `start-credential-oauth` |
 
 Credential reads never return values — only names and metadata. That absence
 is part of the contract, not an omission.

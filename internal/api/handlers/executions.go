@@ -600,7 +600,7 @@ func parseExecutionStatus(value string) (execution.Status, bool) {
 
 func parseExecutionTrigger(value string) (execution.Trigger, bool) {
 	switch trigger := execution.Trigger(value); trigger {
-	case execution.TriggerManual, execution.TriggerWebhook, execution.TriggerSchedule, execution.TriggerSubworkflow:
+	case execution.TriggerManual, execution.TriggerWebhook, execution.TriggerSchedule, execution.TriggerPoll, execution.TriggerSubworkflow:
 		return trigger, true
 	default:
 		return "", false

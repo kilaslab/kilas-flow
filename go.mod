@@ -17,6 +17,7 @@ require (
 	github.com/knadh/koanf/providers/file v1.2.1
 	github.com/knadh/koanf/providers/structs v1.0.1
 	github.com/knadh/koanf/v2 v2.3.6
+	github.com/ledongthuc/pdf v0.0.0-20260907135840-6c8c28e0e8a0
 	github.com/microsoft/agent-framework-go v0.1.0
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/tetratelabs/wazero v1.9.0

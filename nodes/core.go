@@ -50,6 +50,15 @@ func RegisterAll(registry *node.Registry) error {
 		workflowToolNode(),
 		outputParserNode(),
 		mcpClientToolNode(),
+		documentLoaderNode(),
+		textSplitterNode(),
+		embeddingsNode(),
+		extractFromFileNode(),
+		vectorStorePGVectorNode(),
+		googleDriveNode(),
+		googleDriveTrigger(),
+		gmailNode(),
+		gmailTrigger(),
 		codeNode(),
 		stickyNoteNode(),
 		loopNode(),
@@ -99,6 +108,10 @@ func manualTrigger() node.Definition {
 		SharedSettings: sharedSettings(),
 		ExecutorID:     "core.manual",
 	}
+}
+
+func embeddingsNode() node.Definition {
+	return EmbeddingsNode("")
 }
 
 func setNode() node.Definition {
