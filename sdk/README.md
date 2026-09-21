@@ -43,7 +43,7 @@ const session = await kilasflow.createEmbedSession({
 
 ## Operation surface
 
-One thin, typed method per API operation — all 76 under `/api/v1`, grouped
+One thin, typed method per API operation — all 80 under `/api/v1`, grouped
 here the way the [API contract](https://github.com/kilaslab/kilas-flow/blob/main/docs/src/content/docs/reference/api-contract.md)
 groups them. Every method takes an `AbortSignal` last, resolves `Promise<void>`
 for 204 responses, and surfaces failures as `KilasFlowError` (RFC 9457) — except
@@ -52,8 +52,8 @@ the three writes that can be retried safely, which take an
 
 | Group | Methods |
 | --- | --- |
-| Workflows | `listWorkflows`, `getWorkflow`, `listWorkflowWebhooks`, `createWorkflow`, `updateWorkflow`, `deleteWorkflow`, `runWorkflow`, `activateWorkflow`, `deactivateWorkflow`, `listWorkflowVersions`, `getWorkflowVersion`, `publishWorkflowVersion`, `restoreWorkflowVersion`, `listWorkflowPublishEvents`, `getWorkflowDiagnostics` |
-| Executions | `listExecutions`, `getExecution`, `cancelExecution`, `executionEventsUrl`, `iterateExecutions` |
+| Workflows | `listWorkflows`, `getWorkflow`, `listWorkflowWebhooks`, `createWorkflow`, `updateWorkflow`, `deleteWorkflow`, `runWorkflow`, `activateWorkflow`, `deactivateWorkflow`, `listWorkflowVersions`, `getWorkflowVersion`, `publishWorkflowVersion`, `restoreWorkflowVersion`, `listWorkflowPublishEvents`, `getWorkflowDiagnostics`, `validateWorkflowDocument`, `duplicateWorkflow` |
+| Executions | `listExecutions`, `getExecution`, `cancelExecution`, `retryExecution`, `evalExpression`, `executionEventsUrl`, `iterateExecutions` |
 | Credentials | `listCredentialTypes`, `listCredentials`, `createCredential`, `getCredential`, `updateCredential`, `deleteCredential`, `testCredential`, `testCredentialPayload` |
 | Auth and keys | `login`, `logout`, `getMe`, `listApiKeys`, `createApiKey`, `revokeApiKey`, `createStreamTicket` |
 | Schedules | `listSchedules`, `createSchedule`, `updateSchedule`, `deleteSchedule` |

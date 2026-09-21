@@ -74,7 +74,9 @@ import type {
 	WorkflowResource,
 	WorkflowSummary,
 	WorkflowVersionListResource,
-	WorkflowVersionResource
+	WorkflowVersionResource,
+	ValidateWorkflowResource,
+	EvalExpressionResource
 } from './generated/models.js';
 
 export type { TransportOptions } from './http.js';
@@ -264,6 +266,23 @@ export interface IdempotentWriteOptions {
 	signal?: AbortSignal;
 }
 
+/**
+ * Options for a manual run: the idempotency key every retryable write takes,
+ * and the revision to run.
+ *
+ * A run pinned to a revision is the same request with one more body field, so
+ * it is the same method rather than a second one — and the field is named
+ * `workflowVersionId` the way the API names it, not "revision", so a caller
+ * reading both does not have to translate.
+ */
+export interface RunWorkflowOptions extends IdempotentWriteOptions {
+	/**
+	 * Runs this revision instead of the active one. A revision that is not
+	 * this workflow's reads as missing (404) rather than being ignored.
+	 */
+	workflowVersionId?: string;
+}
+
 /** What the server accepts as a key: 1-255 printable ASCII, no spaces. */
 const IDEMPOTENCY_KEY_PATTERN = /^[\x21-\x7e]{1,255}$/;
 
@@ -445,13 +464,48 @@ export class KilasFlowClient {
 	async runWorkflow(
 		workflowId: string,
 		input?: unknown,
-		options?: AbortSignal | IdempotentWriteOptions
+		options?: AbortSignal | RunWorkflowOptions
 	): Promise<{ id: string; status: string }> {
 		const { signal, headers } = idempotentWrite(options, 'runWorkflow');
+		const body: { input?: unknown; workflowVersionId?: string } = {};
+		if (input !== undefined) body.input = input;
+		// Duck-typed like the options above: a bare AbortSignal is what this
+		// method took before either option existed, and it still works.
+		if (options !== undefined && typeof options === 'object' && 'workflowVersionId' in options) {
+			const revision = options.workflowVersionId;
+			if (revision !== undefined && revision !== '') body.workflowVersionId = revision;
+		}
 		return this.#transport.request('POST', `/workflows/${encodeURIComponent(workflowId)}/run`, {
-			body: input === undefined ? {} : { input },
+			body,
 			signal,
 			headers
+		});
+	}
+
+	/**
+	 * Compiles a document without saving it.
+	 *
+	 * The same compiler activation runs, so the diagnostics are the ones a
+	 * save would have refused on — which is what makes this the check an
+	 * agent runs before it writes anything. Nothing is stored, and an invalid
+	 * document is a successful answer carrying `valid: false`.
+	 */
+	validateWorkflowDocument(document: WorkflowDocumentInput, signal?: AbortSignal): Promise<ValidateWorkflowResource> {
+		return this.#transport.request('POST', '/workflows/validate', { body: document, signal });
+	}
+
+	/**
+	 * Copies a workflow's newest revision into a new workflow under the same
+	 * tenant, named `<name> (copy)` unless one is given.
+	 */
+	duplicateWorkflow(
+		workflowId: string,
+		options: { name?: string } = {},
+		signal?: AbortSignal
+	): Promise<WorkflowResource> {
+		return this.#transport.request('POST', `/workflows/${encodeURIComponent(workflowId)}/duplicate`, {
+			body: options.name === undefined ? undefined : { name: options.name },
+			signal
 		});
 	}
 
@@ -467,6 +521,36 @@ export class KilasFlowClient {
 
 	cancelExecution(executionId: string, signal?: AbortSignal): Promise<{ id: string; status: string }> {
 		return this.#transport.request('POST', `/executions/${encodeURIComponent(executionId)}/cancel`, { signal });
+	}
+
+	/**
+	 * Queues a finished execution again, carrying its workflow, its revision
+	 * and its input — the same queue path a manual run takes, with the
+	 * revision named instead of resolved. An execution that is still queued,
+	 * running or waiting is refused with 409.
+	 */
+	retryExecution(executionId: string, signal?: AbortSignal): Promise<ExecutionResource> {
+		return this.#transport.request('POST', `/executions/${encodeURIComponent(executionId)}/retry`, { signal });
+	}
+
+	/**
+	 * Evaluates one expression against a finished execution's stored node
+	 * outputs, exactly as the runtime would have evaluated it during the run.
+	 *
+	 * Read-only: nothing is written and the workflow is not run again, so this
+	 * is the cheap way to ask what a field held at a node. `nodeId` narrows
+	 * the context to one node's output.
+	 */
+	evalExpression(
+		executionId: string,
+		expression: string,
+		options: { nodeId?: string } = {},
+		signal?: AbortSignal
+	): Promise<EvalExpressionResource> {
+		return this.#transport.request('POST', `/executions/${encodeURIComponent(executionId)}/eval`, {
+			body: { expression, nodeId: options.nodeId },
+			signal
+		});
 	}
 
 	/** Absolute URL of an execution's live event stream. */
