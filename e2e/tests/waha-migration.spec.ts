@@ -132,7 +132,10 @@ test('the migrated workflow opens in the editor with icons, parameter panels, an
 	const template = await loadTemplateOrSkip();
 
 	await page.goto(`${server.baseURL}/app/workflows`);
-	await page.getByRole('button', { name: 'Import n8n' }).click();
+	// Two triggers carry this name on an empty workspace — the header's and the
+	// empty state's — so the name alone is ambiguous; this is the header's, the
+	// same one library-import.spec.ts drives.
+	await page.getByRole('button', { name: 'Import n8n' }).first().click();
 	await expect(page.getByRole('dialog')).toContainText('Import from n8n');
 	await page.locator('#import-paste').fill(JSON.stringify(template));
 	await page.locator('#import-name').fill('WAHA Chatting (editor)');

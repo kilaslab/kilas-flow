@@ -53,13 +53,12 @@ test('a pack node is picked from the node picker and saved', async ({ page, stub
 		});
 		await openWorkflow(page, server.baseURL, workflow.id);
 
-		// The installed pack is offered by the picker, under its category,
-		// from this workspace's server registry.
+		// The installed pack is offered by the picker's registry listbox.
 		await page.getByRole('button', { name: 'Add step' }).click();
 		const dialog = page.getByRole('dialog');
-		await expect(page.getByText(/from this workspace’s server registry/)).toBeVisible();
+		await expect(dialog.getByRole('listbox', { name: 'Registered node types' })).toBeVisible();
 		await page.locator('#node-picker-search').fill('E2E Hello');
-		await dialog.getByRole('button', { name: /E2E Hello/ }).click();
+		await dialog.getByRole('option', { name: /E2E Hello/ }).click();
 
 		await expect(canvasNode(page, 'E2E Hello')).toBeVisible();
 
@@ -117,19 +116,23 @@ test('a pack node is configured through the cascade and credential picker, saved
 		await expect(panel).not.toContainText('This node needs a credential before it can run.');
 
 		// The generated cascade, driven through the panel: resource first,
-		// then the operation it narrows to.
-		await panel.locator('#property-resource').selectOption('message');
-		await expect(panel.locator('#property-operation option[value="sendMessage"]')).toBeAttached();
-		await panel.locator('#property-operation').selectOption('sendMessage');
-		await panel.locator('#property-chatId').fill('e2e-chat');
-		await panel.locator('#property-text').fill('hello packs');
+		// then the operation it narrows to. Property controls are addressed by
+		// role and accessible name because their ids are per-instance now
+		// (`property-${id}`), so a fixed `#property-resource` no longer exists.
+		const resource = panel.getByRole('combobox', { name: 'Resource', exact: true });
+		const operation = panel.getByRole('combobox', { name: 'Operation', exact: true });
+		await resource.selectOption('message');
+		await expect(operation.locator('option[value="sendMessage"]')).toBeAttached();
+		await operation.selectOption('sendMessage');
+		await panel.getByRole('textbox', { name: 'Chat ID', exact: true }).fill('e2e-chat');
+		await panel.getByRole('textbox', { name: 'Text', exact: true }).fill('hello packs');
 
 		const save = page.getByRole('button', { name: 'Save', exact: true });
 		await expect(save).toBeEnabled();
 		await save.click();
 		await expect(save).toBeDisabled();
 
-		await page.getByRole('button', { name: 'Run', exact: true }).click();
+		await page.getByRole('button', { name: 'Execute', exact: true }).click();
 		await expect
 			.poll(() => stub.requests.find((request) => request.method === 'POST' && request.path === '/sendMessage')?.body ?? '', {
 				message: 'the editor run reaches the stub through the pack node',
@@ -174,11 +177,17 @@ test('the cascade narrows operations to the selected resource in the editor', as
 		const panel = page.locator('section[aria-label="Acme Send properties"]');
 		await expect(panel).toBeVisible();
 
-		const operation = panel.locator('#property-operation');
+		const operation = panel.getByRole('combobox', { name: 'Operation', exact: true });
 		await expect(operation.locator('option[value="send"]')).toBeAttached();
-		await panel.locator('#property-resource').selectOption('mailbox');
-		await expect(operation.locator('option')).toHaveCount(1);
-		await expect(operation.locator('option[value="list"]')).toBeAttached();
+		await panel.getByRole('combobox', { name: 'Resource', exact: true }).selectOption('mailbox');
+		// The settled state, not the loader's pre-response window: the resource
+		// change makes the loader fetch the mailbox operations, and the saved
+		// operation ("send") — not one of them — stays selectable as its own
+		// option rather than being silently read back as the first one
+		// (property-field.svelte renders an out-of-list value that way). A
+		// count asserted before the loader answers passes on the stale list and
+		// then fails once it arrives.
+		await expect(operation.locator('option')).toHaveText(['send', 'list']);
 		await operation.selectOption('list');
 
 		const save = page.getByRole('button', { name: 'Save', exact: true });

@@ -1,4 +1,5 @@
 import { test, expect } from '../fixtures';
+import { exerciseErrorWorkflow, exerciseFormTrigger } from '../fixtures/error-form-nodes';
 import { readExecutionEvents, waitForExecution } from '../helpers/seed';
 
 // Node-type coverage: every entry the server advertises on GET
@@ -53,6 +54,11 @@ const RUN_COVERAGE = [
 	'kilasflow.executeWorkflow@1',
 	'kilasflow.executeWorkflowTrigger@1',
 	'kilasflow.datastore@1',
+	// The error pair and the hosted form are exercised end-to-end by
+	// fixtures/error-form-nodes.ts, called from the test below.
+	'kilasflow.errorTrigger@1',
+	'kilasflow.stopAndError@1',
+	'kilasflow.formTrigger@1',
 	'pack.telegram@1',
 	'pack.waha@202409',
 	'pack.waha@202502',
@@ -411,9 +417,20 @@ test('http, sqlite, code, calculator, date-time and wait run against the stub', 
 	const httpRecord = await waitForExecution(server.baseURL, httpStarted.body.id);
 	expect(httpRecord.status).toBe('succeeded');
 	const answered = itemJson(httpRecord, 'http');
-	expect(answered.statusCode).toBe(200);
-	expect(answered.body).toMatchObject({ ok: true, method: 'POST', path: '/echo' });
+	// n8n's default output: the parsed response body is the item, not an envelope.
+	expect(answered).toMatchObject({ ok: true, method: 'POST', path: '/echo' });
 	expect(stub.requests.some((request) => request.path === '/echo')).toBe(true);
+	// fullResponse asks for n8n's envelope instead: status, lower-case headers and
+	// the parsed body under `body`.
+	const envelopeId = await createWorkflow(
+		server.baseURL,
+		'Coverage HTTP Envelope',
+		[manual(), node('http', 'Call stub', 'kilasflow.httpRequest', 1, { method: 'POST', url: stub.url('/echo'), fullResponse: true })],
+		[conn('c1', 'manual', 'main', 'http', 'main')]
+	);
+	const enveloped = itemJson(await runToSuccess(server.baseURL, envelopeId), 'http');
+	expect(enveloped).toMatchObject({ statusCode: 200, statusMessage: 'OK', body: { ok: true, method: 'POST', path: '/echo' } });
+	expect(enveloped.headers['content-type']).toContain('application/json');
 	// The live feed observed to its terminal event, not assumed from the poll.
 	const events = await readExecutionEvents(server.baseURL, httpStarted.body.id);
 	expect(events.map((event) => event.type)).toContain('execution.completed');
@@ -548,6 +565,11 @@ test('trigger nodes fire on a manual run', async ({ server, stub }) => {
 		const wahaTriggerRecord = await runToSuccess(server.baseURL, wahaTriggerId);
 		expect(nodeRun(wahaTriggerRecord, 'trigger').status).toBe('succeeded');
 	}
+});
+
+test('the error workflow pair and the hosted form run against the binary', async ({ server }) => {
+	await exerciseErrorWorkflow(server.baseURL, 'Coverage');
+	await exerciseFormTrigger(server.baseURL, 'Coverage');
 });
 
 test('a loop iterates its body and collects on done', async ({ server }) => {
@@ -713,7 +735,9 @@ test('the agent cluster fails closed without wiring or credentials', async ({ se
 	expect(chainAttempt.status).toBe(422);
 	expect(errorText(chainAttempt.body)).toContain('requires a connection on port "Chat Model"');
 
-	// A wired chat model without its key names the credential, not the run failure.
+	// A wired chat model needs no key: an endpoint that needs none is the normal
+	// case, so the run is accepted and the request leaves without an
+	// Authorization header, while an attached httpBearerAuth credential is applied.
 	const bearerModelId = await createWorkflow(
 		server.baseURL,
 		'Coverage Model Key',
@@ -724,9 +748,29 @@ test('the agent cluster fails closed without wiring or credentials', async ({ se
 		],
 		[conn('c1', 'manual', 'main', 'agent', 'main'), conn('c2', 'model', 'model', 'agent', 'model', 'ai_languageModel')]
 	);
-	const bearerAttempt = await startRun(server.baseURL, bearerModelId);
-	expect(bearerAttempt.status).toBe(422);
-	expect(errorText(bearerAttempt.body)).toContain('an httpBearerAuth credential holding the API key is required');
+	const keylessAttempt = await startRun(server.baseURL, bearerModelId);
+	expect(keylessAttempt.status).toBe(202);
+	await waitForExecution(server.baseURL, keylessAttempt.body.id);
+	const keylessCall = stub.requests.find((request) => request.method === 'POST' && request.path === '/chat/completions');
+	expect(keylessCall, 'the keyless model call reached the stub').toBeDefined();
+	expect(keylessCall!.headers.authorization).toBeUndefined();
+
+	const keyId = await createCredential(server.baseURL, 'Coverage Model Key', 'httpBearerAuth', { token: 'coverage-key' });
+	const keyedModelId = await createWorkflow(
+		server.baseURL,
+		'Coverage Model Keyed',
+		[
+			manual(),
+			node('model', 'Model', 'kilasflow.chatModel', 1, { model: 'coverage-stub', baseUrl: stub.origin }, { httpBearerAuth: keyId }),
+			node('agent', 'Agent', 'kilasflow.agent', 1, { prompt: 'hi' })
+		],
+		[conn('c1', 'manual', 'main', 'agent', 'main'), conn('c2', 'model', 'model', 'agent', 'model', 'ai_languageModel')]
+	);
+	const keyedAttempt = await startRun(server.baseURL, keyedModelId);
+	expect(keyedAttempt.status).toBe(202);
+	await waitForExecution(server.baseURL, keyedAttempt.body.id);
+	const keyedCalls = stub.requests.filter((request) => request.method === 'POST' && request.path === '/chat/completions');
+	expect(keyedCalls.map((request) => request.headers.authorization)).toEqual([undefined, 'Bearer coverage-key']);
 
 	// Each provider model names its own credential type when none is attached.
 	const providers: Array<{ type: string; credential: string }> = [

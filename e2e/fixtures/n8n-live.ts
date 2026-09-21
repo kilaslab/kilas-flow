@@ -106,6 +106,11 @@ export const STUB_EXECUTED = [
 	'kilasflow.executeWorkflow@1',
 	'kilasflow.executeWorkflowTrigger@1',
 	'kilasflow.datastore@1',
+	// The error pair and the hosted form are exercised end-to-end by
+	// fixtures/error-form-nodes.ts, which n8n-compare.spec.ts calls below.
+	'kilasflow.errorTrigger@1',
+	'kilasflow.stopAndError@1',
+	'kilasflow.formTrigger@1',
 	'pack.telegram@1',
 	'pack.waha@202409',
 	'pack.waha@202502',

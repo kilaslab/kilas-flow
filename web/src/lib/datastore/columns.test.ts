@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
 	COLUMN_TYPES,
+	cellButtonLabel,
 	coerceValue,
 	displayType,
 	gridColumns,
@@ -93,5 +94,45 @@ describe('coerceValue', () => {
 
 	it('passes strings through untouched', () => {
 		expect(coerceValue('string', 'title', '  hello  ')).toEqual({ ok: true, value: '  hello  ' });
+	});
+});
+
+describe('cellButtonLabel', () => {
+	it("an editable cell's name carries the value it shows", () => {
+		expect(
+			cellButtonLabel({ column: 'email', system: false, rowID: '1', text: 'a@b.co', empty: false })
+		).toBe('Edit email in row 1: a@b.co');
+	});
+
+	it('an editable empty cell names its column and row and says Null', () => {
+		expect(
+			cellButtonLabel({ column: 'email', system: false, rowID: '1', text: '', empty: true })
+		).toBe('Edit email in row 1: Null');
+	});
+
+	it('a system cell names the column and its value, and says so when empty', () => {
+		expect(
+			cellButtonLabel({
+				column: 'createdAt',
+				system: true,
+				rowID: '1',
+				text: 'Sep 20, 03:16:51 PM',
+				empty: false
+			})
+		).toBe('createdAt Sep 20, 03:16:51 PM');
+		expect(
+			cellButtonLabel({ column: 'id', system: true, rowID: '1', text: '', empty: true })
+		).toBe('id is empty');
+	});
+
+	it('the name of a cell a user can act on always contains the text it shows', () => {
+		// Anything the grid renders is a value a user may need to read or
+		// speak, so it survives into the name - including text that happens to
+		// look like the name itself.
+		for (const text of ['  padded  ', 'ada lovelace', 'x'.repeat(80), 'Edit email in row 1']) {
+			expect(
+				cellButtonLabel({ column: 'email', system: false, rowID: '7', text, empty: false })
+			).toContain(text);
+		}
 	});
 });

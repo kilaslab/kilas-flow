@@ -62,6 +62,28 @@ export function gridColumns(userColumns: DatastoreColumnResource[]): GridColumn[
 	];
 }
 
+export type CellLabelInput = {
+	column: string;
+	system: boolean;
+	rowID: string;
+	text: string;
+	empty: boolean;
+};
+
+/**
+ * The accessible name of a grid cell's button.
+ *
+ * It must contain the text the button shows (WCAG 2.5.3 Label in Name), so a
+ * screen reader hears the value and voice control can speak it: df6c87c named
+ * every editable cell `Edit <column> in row <id>` and the value disappeared
+ * from the accessibility tree. The row is still named because an editable
+ * cell's gesture needs the row it acts on.
+ */
+export function cellButtonLabel({ column, system, rowID, text, empty }: CellLabelInput): string {
+	if (system) return empty ? `${column} is empty` : `${column} ${text}`;
+	return `Edit ${column} in row ${rowID}: ${empty ? 'Null' : text}`;
+}
+
 export type CoercedValue = { ok: true; value: unknown } | { ok: false; error: string };
 
 /**

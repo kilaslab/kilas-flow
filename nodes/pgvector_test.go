@@ -236,7 +236,7 @@ func TestEmbeddingsExecutorRefusesAPrivateProviderUnderTheDefaultPolicy(t *testi
 // shared one: the migration runner refuses to create a second prefixed schema
 // beside bare tables, so reusing the shared database would either fail or
 // disturb the packages that own it.
-func openVectorPostgres(t *testing.T) *nodes.PostgresVectorStore {
+func openVectorPostgres(t *testing.T) (*nodes.PostgresVectorStore, *sql.DB) {
 	t.Helper()
 	dsn := os.Getenv("KILASFLOW_TEST_POSTGRES_DSN")
 	if dsn == "" {
@@ -274,6 +274,26 @@ func openVectorPostgres(t *testing.T) *nodes.PostgresVectorStore {
 		t.Fatalf("open throwaway database: %v", err)
 	}
 	t.Cleanup(func() { _ = handle.Close() })
+	raw, err := handle.DB.DB()
+	if err != nil {
+		t.Fatalf("unwrap sql.DB: %v", err)
+	}
+	// The extension is per-database, not per-server. The probe above asks
+	// pg_available_extensions, which only says the server carries pgvector's
+	// binaries; the migration runner gates 000006 on pg_extension, which it
+	// asks of the database being migrated — and this one is a fresh clone of
+	// template1, so it has none. Without this the migration is recorded as
+	// skipped and every table it owns is missing.
+	//
+	// Installed here rather than in the migration on purpose: the migration
+	// keeps failing loudly for a shared database whose owner has not run
+	// CREATE EXTENSION vector, because CREATE EXTENSION needs a privilege a
+	// shared-database role very often does not have. A test harness owns its
+	// throwaway database and can grant itself the extension; an operator's
+	// workflow cannot.
+	if _, err := raw.ExecContext(ctx, `CREATE EXTENSION IF NOT EXISTS vector`); err != nil {
+		t.Fatalf("install pgvector in the throwaway database: %v", err)
+	}
 	if err := database.Migrate(handle, slog.New(slog.NewTextHandler(io.Discard, nil))); err != nil {
 		t.Fatalf("migrate throwaway database: %v", err)
 	}
@@ -283,15 +303,11 @@ func openVectorPostgres(t *testing.T) *nodes.PostgresVectorStore {
 	if err := database.Migrate(handle, slog.New(slog.NewTextHandler(io.Discard, nil))); err != nil {
 		t.Fatalf("migrate throwaway database again: %v", err)
 	}
-	raw, err := handle.DB.DB()
-	if err != nil {
-		t.Fatalf("unwrap sql.DB: %v", err)
-	}
-	return nodes.NewPostgresVectorStore(raw, "kvtest_")
+	return nodes.NewPostgresVectorStore(raw, "kvtest_"), raw
 }
 
 func TestVectorStoreRoundTripOnPostgres(t *testing.T) {
-	store := openVectorPostgres(t)
+	store, _ := openVectorPostgres(t)
 	ctx := context.Background()
 	tenant := "tenant-vector"
 
@@ -371,7 +387,7 @@ func TestVectorStoreRoundTripOnPostgres(t *testing.T) {
 }
 
 func TestVectorSearchUsesTheANNIndex(t *testing.T) {
-	store := openVectorPostgres(t)
+	store, raw := openVectorPostgres(t)
 	ctx := context.Background()
 	tenant := "tenant-vector"
 
@@ -392,6 +408,14 @@ func TestVectorSearchUsesTheANNIndex(t *testing.T) {
 	}
 	if err := store.Insert(ctx, tenant, "indexed", documents); err != nil {
 		t.Fatalf("Insert = %v", err)
+	}
+	// The planner needs statistics to price the ANN scan against the tenant
+	// btree plus a sort: with no ANALYZE it estimates one matching row from
+	// the lookup index and serves the query from there, which is what the
+	// plan asserted below would then see. Autovacuum would get there
+	// eventually; a test cannot wait for it.
+	if _, err := raw.ExecContext(ctx, `ANALYZE `+`kvtest_vector_documents_384`); err != nil {
+		t.Fatalf("analyze the vector table: %v", err)
 	}
 	plan, err := store.ExplainSearch(ctx, tenant, "indexed", unitVector(384, 0), 4)
 	if err != nil {
@@ -433,7 +457,7 @@ func TestVectorMigrationRerunsOnSQLite(t *testing.T) {
 }
 
 func TestVectorStoreExecutorOnPostgres(t *testing.T) {
-	store := openVectorPostgres(t)
+	store, _ := openVectorPostgres(t)
 	ctx := context.Background()
 	executor := nodes.NewVectorStoreExecutor(store)
 

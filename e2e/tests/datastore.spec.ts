@@ -151,7 +151,7 @@ test('the editor grid shows the rows a workflow wrote', async ({ page, server })
 	await expect(page.getByRole('columnheader', { name: /email/ })).toBeVisible();
 	await expect(page.getByRole('columnheader', { name: /score/ })).toBeVisible();
 	await expect(page.getByRole('cell', { name: email })).toBeVisible();
-	await expect(page.getByRole('cell', { name: '87' })).toBeVisible();
+	await expect(page.getByRole('cell', { name: /^Edit score in row \d+: 87$/ })).toBeVisible();
 });
 
 test('rows import from an n8n-style CSV export and re-export byte-identical', async ({

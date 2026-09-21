@@ -291,7 +291,11 @@ test('unsupported-node sample arrives as a capsule and refuses activation', asyn
 test('a sampled workflow opens in the editor with icons and no capsule', async ({ page, server }) => {
 	const exported = await loadLibraryExport('webhook-echo');
 	await page.goto(`${server.baseURL}/app/workflows`);
-	await page.getByRole('button', { name: 'Import n8n' }).click();
+	// An empty workspace renders a second "Import n8n" trigger in its empty
+	// state beside the header's (workflows/+page.svelte, both branches), so the
+	// name alone matches two buttons; this is the header's, first in document
+	// order and the one a workspace with workflows offers too.
+	await page.getByRole('button', { name: 'Import n8n' }).first().click();
 	await expect(page.getByRole('dialog')).toContainText('Import from n8n');
 	await page.locator('#import-paste').fill(JSON.stringify(exported));
 	await page.locator('#import-name').fill('Library Webhook (editor)');

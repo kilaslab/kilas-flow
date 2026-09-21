@@ -607,6 +607,25 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 			}
 		}}></textarea>
 		{#if jsonError}<p id={`property-${fieldID}-json-error`} role="alert" class="text-[0.6875rem] leading-4 text-destructive">{jsonError}</p>{/if}
+	{:else if property.kind === 'options'}
+		<!-- A property whose valid values are declared (or fetched) is a
+		     choice, not free text: 40cc8db dropped this branch, so every one
+		     of them fell through to the text input below and the customer
+		     could type a value the node would refuse. The value is carried
+		     even when it is not in the list — a saved node, a loader still
+		     pending, or a loader that failed must not render as the first
+		     option and read back as a silent change. -->
+		<select id={`property-${fieldID}`} value={stringValue} class="h-7 rounded-md border border-input bg-background px-1.5 text-xs" onchange={(event) => onChange(event.currentTarget.value)}>
+			{#if stringValue !== '' && !selectableOptions.some((option) => option.value === stringValue)}
+				<option value={stringValue}>{stringValue}</option>
+			{/if}
+			{#each selectableOptions as option (option.value)}
+				<option value={option.value}>{option.label}</option>
+			{/each}
+		</select>
+		{#if loadState.reason}
+			<p class="text-[0.6875rem] leading-4 text-muted-foreground">{loadState.reason}</p>
+		{/if}
 	{:else if property.kind === 'multiOptions'}
 		<div class="grid gap-1 rounded-md border border-input p-1.5">
 			{#each property.options ?? [] as option (option.value)}

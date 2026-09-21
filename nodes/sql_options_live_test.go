@@ -218,8 +218,19 @@ func TestUnderIndependentlyAnItemThatNeverResolvesIsStillJustThatItem(t *testing
 			resolver := liveCredential(t, live.env, live.credential)
 			executor := newV2Executor(t, live.credential)
 
-			// The first item's JSON has no `bound` object to reach into, so
-			// its expression does not resolve. The second item's does.
+			// The first item's `bound` is a string, so reading `.inner` off
+			// it is undefined and calling a method on that undefined is a
+			// structural error: the item's expression does not resolve. The
+			// second item's does, to "ok".
+			//
+			// A method call rather than a plain member read on purpose. Since
+			// the n8n-parity expression engine a missing path is undefined, not
+			// an error — reading an optional field off a value that turned out
+			// to be a string must not stop the run — so `$json.bound.inner`
+			// alone resolves to an empty value and this item would never reach
+			// the case under test. Only a structurally wrong expression still
+			// fails to resolve.
+			//
 			// The expression is in the bound values, not in the SQL: SQL text
 			// built from an expression is refused outright, and rightly —
 			// this test only needs an expression that fails to resolve for one
@@ -227,7 +238,7 @@ func TestUnderIndependentlyAnItemThatNeverResolvesIsStillJustThatItem(t *testing
 			ir := v2Node(t, live.nodeType, live.credential, map[string]any{
 				"operation":       "executeQuery",
 				"query":           "SELECT " + bindOne(live.dialect) + castTo(live.dialect) + " AS answer",
-				"queryParameters": map[string]any{"mode": "expression", "value": `["{{ $json.bound.inner }}"]`},
+				"queryParameters": map[string]any{"mode": "expression", "value": `["{{ $json.bound.inner.trim() }}"]`},
 				"options":         map[string]any{"queryBatching": "independently"},
 			})
 			output, err := executor.Execute(context.Background(), ir, workflow.NodeInput{"main": {

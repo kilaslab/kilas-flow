@@ -42,6 +42,7 @@
 	import { RequestGuard } from '$lib/dashboard/request-guard';
 	import {
 		COLUMN_TYPES,
+		cellButtonLabel,
 		coerceValue,
 		displayType,
 		gridColumns,
@@ -706,11 +707,11 @@
 													}}
 												/>
 											{:else if isNullCell(row, column)}
-												<button type="button" title={column.system ? 'System column — read-only' : 'Empty — click to edit'} aria-label={column.system ? `${column.name} is empty` : `Edit ${column.name} in row ${rowID}`} class="text-muted-foreground/60 {column.system ? '' : 'hover:underline'}" onclick={() => startCellEdit(rowID, column, row[column.name])} disabled={column.system}>
+												<button type="button" title={column.system ? 'System column — read-only' : 'Empty — click to edit'} aria-label={cellButtonLabel({ column: column.name, system: column.system, rowID, text: cellText(row, column), empty: isNullCell(row, column) })} class="text-muted-foreground/60 {column.system ? '' : 'hover:underline'}" onclick={() => startCellEdit(rowID, column, row[column.name])} disabled={column.system}>
 													<span>Null</span>
 												</button>
 											{:else}
-												<button type="button" title={column.system ? cellText(row, column) : `${cellText(row, column)} — click to edit`} aria-label={column.system ? `${column.name} ${cellText(row, column)}` : `Edit ${column.name} in row ${rowID}`} class="max-w-full truncate {column.system ? 'cursor-default' : 'hover:underline'}" onclick={() => startCellEdit(rowID, column, row[column.name])} disabled={column.system}>
+												<button type="button" title={column.system ? cellText(row, column) : `${cellText(row, column)} — click to edit`} aria-label={cellButtonLabel({ column: column.name, system: column.system, rowID, text: cellText(row, column), empty: isNullCell(row, column) })} class="max-w-full truncate {column.system ? 'cursor-default' : 'hover:underline'}" onclick={() => startCellEdit(rowID, column, row[column.name])} disabled={column.system}>
 													{cellText(row, column)}
 												</button>
 											{/if}
