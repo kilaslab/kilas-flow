@@ -59,6 +59,17 @@ jobs:
 
       - run: make lint
 
+      # The skills bundle is a shipped artifact like the SDK: the binary embeds
+      # it and installs it into a harness directory. `make skills-check` runs the
+      # four drift gates of design §5.7 against the command tree, the operation
+      # ids, the node catalogue and the expression grammar, then installs the
+      # binary's own bundle into a scratch directory and checks that copy back —
+      # the half no test can prove, because it needs the assembled binary. It
+      # lives in this job rather than the Go test one for that reason: the gates
+      # still run in `go test ./...`, and this is the job that already builds.
+      - name: Skills bundle
+        run: make skills-check
+
       # Pure grep over a file list, no toolchain: every published coordinate
       # (image, source label, docs, SDK metadata) must name the repository's real
       # owner. See scripts/check-coordinates.sh.

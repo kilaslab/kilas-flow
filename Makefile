@@ -341,6 +341,29 @@ generate-skills-command-reference: ## Regenerate the router skill's command refe
 generate-skills-command-reference-check: ## Fail if the router skill's command reference is stale
 	$(GO) run ./scripts/skills-command-reference --check
 
+# The bundle's own gate, and the design's G5. Two halves, because the drift it
+# guards has two shapes.
+#
+# The round trip is the half only a real binary can prove: an installation is
+# written by the binary's own embedded bundle and read back by `skills check`,
+# so a bundle that installs differently from the way it is checked — or a check
+# that compares the wrong directory — fails here and nowhere else. It runs in a
+# scratch directory outside the checkout, because a check against `.agents/skills`
+# would report whatever a developer's last install left there.
+#
+# The test half is G1–G4, which are ordinary tests so they cannot be skipped by
+# forgetting a target (design §5.7). They run here as well as in `go test ./...`
+# because this target is the one command a review and a session run: a skill
+# naming a verb the binary does not implement has to fail `make skills-check`,
+# and `skills check` alone cannot see that — it compares bytes, and bytes that
+# were written from the bundle always match it.
+.PHONY: skills-check
+skills-check: build ## Fail if the bundle has drifted from the product or an install disagrees with this binary
+	$(GO) test -count=1 ./internal/skills/...
+	@scratch=$$(mktemp -d) && trap 'rm -rf "$$scratch"' EXIT INT TERM; \
+		./$(BIN_DIR)/$(APP_NAME) skills install --target "dir:$$scratch" >/dev/null && \
+		./$(BIN_DIR)/$(APP_NAME) skills check --target "dir:$$scratch"
+
 .PHONY: test-cover
 test-cover: ## Run Go tests with a coverage report
 	$(GO) test ./... -coverprofile=coverage.out
