@@ -191,3 +191,9 @@ Note that the `Code` node needs a Go toolchain at run time and the distroless
 image does not have one. The server reports the node as unavailable through
 the node catalogue rather than failing at execution time, so the editor can
 say so.
+
+For the same reason in reverse, the opt-in JavaScript sidecar needs Node 24 in
+the image and the operator's community packages installed beside the binary:
+the catalogue is read from them at boot, so **every** process role that boots
+with `sidecar.enabled` must carry both. See
+[JavaScript sidecar](/operate/javascript-sidecar/).

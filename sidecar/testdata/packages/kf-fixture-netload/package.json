@@ -1,0 +1,12 @@
+{
+  "name": "kf-fixture-netload",
+  "version": "1.0.0",
+  "description": "KilasFlow sidecar test fixture: a node file that reaches for the network while it is being loaded",
+  "license": "MIT",
+  "n8n": {
+    "n8nNodesApiVersion": 1,
+    "nodes": [
+      "dist/nodes/Net/Net.node.js"
+    ]
+  }
+}

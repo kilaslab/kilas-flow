@@ -225,7 +225,7 @@ what it claims.
 | --- | --- | --- |
 | `builtin` | compiled into this binary | 46 types today |
 | `pack` | a declarative node pack | 3 types today |
-| `sidecar` | an implementation running outside this process | the constant exists; nothing registers one |
+| `sidecar` | an implementation running outside this process | registered at boot when `sidecar.enabled` is true; see [JavaScript sidecar](/operate/javascript-sidecar/) |
 
 `Register` adds a built-in. `RegisterFrom` adds a pack or a sidecar and
 **refuses** `builtin` outright. There is exactly one namespacing rule and it is

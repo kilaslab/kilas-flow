@@ -25,6 +25,11 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 
 - Open-source project files: `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`,
   `SECURITY.md`, this changelog, GitHub issue forms and a pull request template.
+- Opt-in JavaScript sidecar (`sidecar.enabled`): operators can load programmatic
+  community n8n packages and run their `execute()` in per-tenant Node processes,
+  through the same egress policy as native nodes. Off by default; see the
+  [JavaScript sidecar](/operate/javascript-sidecar/) page for the runtime image,
+  the trust model and what it does not protect.
 
 - `webhook.require_auth` (environment: `KILASFLOW_WEBHOOK_REQUIRE_AUTH`) refuses
   a delivery to any webhook trigger that does not authenticate its callers, with

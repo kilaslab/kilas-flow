@@ -1,0 +1,13 @@
+{
+  "name": "kf-fixture-unsupported",
+  "version": "1.0.0",
+  "description": "KilasFlow sidecar test fixture: shapes the converter must exclude rather than half-map",
+  "license": "MIT",
+  "n8n": {
+    "n8nNodesApiVersion": 1,
+    "nodes": [
+      "dist/nodes/Distinct/Distinct.node.js",
+      "dist/nodes/Trigger/Trigger.node.js"
+    ]
+  }
+}

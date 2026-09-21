@@ -344,6 +344,11 @@ func (credentialType Type) Definition() Definition {
 // while call sites are threaded to an explicit registry. It is built once and
 // never mutated afterwards, which is the property the package-level map could
 // not offer: a map is writable by anything that can see it.
+//
+// Default is that registry itself — a *Registry, not a copy, and its map is
+// not synchronised. Composition may extend it once at boot (a community
+// package's credential types register here before any goroutine reads it), and
+// nothing may write to it afterwards.
 var defaultRegistry = func() *Registry {
 	registry := NewRegistry()
 	if err := RegisterAll(registry); err != nil {

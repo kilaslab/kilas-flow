@@ -274,7 +274,7 @@ func TestOversizeFrameFailsTheRun(t *testing.T) {
 		if _, err := reader.next(); err != nil {
 			return
 		}
-		_ = writeFrame(conn, terminalFrame{Type: frameResult, ID: "x", Items: []Item{{JSON: map[string]any{"blob": strings.Repeat("b", 2<<20)}}}})
+		_ = writeFrame(conn, terminalFrame{Type: frameResult, ID: "x", Items: []Item{{JSON: map[string]any{"blob": strings.Repeat("b", 5<<20)}}}})
 	}), testLimits())
 	defer pool.Close()
 

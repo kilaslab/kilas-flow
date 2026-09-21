@@ -409,3 +409,64 @@ log:
   # pipelines.
   # Env: KILASFLOW_LOG_FORMAT
   format: 'text'
+
+sidecar:
+  # Enabled turns the sidecar on. When it is on, every process that boots
+  # with it on needs a Node binary and the packages below at startup,
+  # because the node catalogue is read from them at boot.
+  # Env: KILASFLOW_SIDECAR_ENABLED
+  enabled: false
+  # NodePath is the operator-installed Node 24 LTS binary. Empty searches
+  # PATH, which is what a development machine wants and what a container
+  # without one should set explicitly.
+  # Env: KILASFLOW_SIDECAR_NODE_PATH
+  node_path: ''
+  # PackagesDir holds the installed packages: either an npm --prefix
+  # directory containing node_modules/, or one directory per flat package.
+  # It is required when the sidecar is enabled.
+  # Env: KILASFLOW_SIDECAR_PACKAGES_DIR
+  packages_dir: ''
+  # Packages is the allowlist of package names to load. Transitive
+  # dependencies and packages not named here are never loaded by the runner.
+  # It must name at least one package when the sidecar is enabled.
+  # Env: KILASFLOW_SIDECAR_PACKAGES
+  packages: []
+  # RuntimeDir holds the extracted runner and one socket directory per
+  # process. It must be writable and on a local filesystem.
+  # Env: KILASFLOW_SIDECAR_RUNTIME_DIR
+  runtime_dir: './data/sidecar'
+  # Wrapper is an argv prefix the child runs under, for an isolation tool
+  # such as a sandbox launcher or setpriv. KilasFlow does not inspect what it
+  # isolates, so it is the deployment's own boundary rather than a guarantee
+  # this build makes. A wrapper argument containing a comma cannot be set
+  # from the environment; use the YAML file for one.
+  # Env: KILASFLOW_SIDECAR_WRAPPER
+  wrapper: []
+  # Timeout bounds one node run on a warm process.
+  # Env: KILASFLOW_SIDECAR_TIMEOUT
+  timeout: 30s
+  # SpawnTimeout bounds a cold start: listening, forking, and the child's
+  # dial-back.
+  # Env: KILASFLOW_SIDECAR_SPAWN_TIMEOUT
+  spawn_timeout: 15s
+  # IdleTimeout is how long a tenant's process stays warm between runs
+  # before the pool reaps it, and so also how long decrypted credentials can
+  # linger in its memory after the last run.
+  # Env: KILASFLOW_SIDECAR_IDLE_TIMEOUT
+  idle_timeout: 5m0s
+  # MaxHeapMB is the child's JavaScript heap ceiling. It is a heap bound,
+  # not a resident-memory one: Buffer and native allocations live outside
+  # V8's old space, which is why MaxRSSMB exists as a second bound.
+  # Env: KILASFLOW_SIDECAR_MAX_HEAP_MB
+  max_heap_mb: 256
+  # MaxRSSMB is the resident-set ceiling the host watchdog enforces by
+  # polling the child. Zero disables the watchdog; the container limit stays
+  # the hard backstop either way.
+  # Env: KILASFLOW_SIDECAR_MAX_RSS_MB
+  max_rss_mb: 512
+  # MaxProcesses caps how many tenant processes the pool holds at once.
+  # Env: KILASFLOW_SIDECAR_MAX_PROCESSES
+  max_processes: 16
+  # MaxOutputBytes caps the decoded result payload one run may return.
+  # Env: KILASFLOW_SIDECAR_MAX_OUTPUT_BYTES
+  max_output_bytes: 4194304

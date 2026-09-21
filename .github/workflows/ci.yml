@@ -154,11 +154,21 @@ jobs:
       # these packages share the one database, and internal/database's migration
       # tests drop every table. See the comment on the test target in the
       # Makefile.
+      #
+      # Node 24 comes from the js-toolchain composite, which pins the version in
+      # devbox.json: the sidecar's real-Node tests run `node` from PATH, and
+      # ubuntu-latest's default Node may predate the stable --permission flag
+      # they depend on. KILASFLOW_TEST_REQUIRE_NODE turns their "no Node"
+      # skip into a failure, so a missing Node is a red check rather than a
+      # green run that skipped every sidecar test.
+      - uses: ./.github/actions/js-toolchain
+
       - name: Go tests
         env:
           KILASFLOW_TEST_POSTGRES_DSN: postgres://kilas:hunter2@127.0.0.1:5432/kilasflow?sslmode=disable
           KILASFLOW_TEST_MYSQL_DSN: mysql://kilas:hunter2@127.0.0.1:3306/kilasflow
           KILASFLOW_TEST_MARIADB_DSN: mysql://kilas:hunter2@127.0.0.1:3307/kilasflow
+          KILASFLOW_TEST_REQUIRE_NODE: "1"
         run: make test
 
       # This step exists to say out loud that the corpus baseline is NOT

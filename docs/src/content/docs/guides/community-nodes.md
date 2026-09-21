@@ -58,10 +58,13 @@ names the concrete gaps.
 
 ## Path two: the JavaScript sidecar
 
-`sidecar/` is the host side of this boundary, written and tested as a
-library. Programmatic community nodes — the ones with a real `execute()` a
-declarative pack cannot replicate — are designed to run in Node.js processes
-outside the server binary. Host and sidecar speak NDJSON over a Unix socket;
+`sidecar/` is the host side of this boundary, and the server now wires it.
+Programmatic community nodes — the ones with a real `execute()` a declarative
+pack cannot replicate — run in Node.js processes outside the server binary,
+and an operator turns that on with the `sidecar` configuration section
+(disabled by default; see [the JavaScript
+sidecar](/operate/javascript-sidecar/) for what to install). Host and sidecar
+speak NDJSON over a Unix socket;
 the child's stdout and stderr are diagnostics only and never parsed, so a
 package that prints a startup banner cannot corrupt a message. The protocol is
 clean-room: no community package, framework, or type definition crosses into
@@ -83,8 +86,13 @@ Three rules govern the boundary, and each is implemented in the package:
   with a named diagnostic. The rest of the execution and the host process are
   intact.
 
-The **wiring is not shipped**: no production code imports the package, so an
-operator cannot turn the sidecar on. See below.
+The operator surface exists: a community package is loaded through its
+`package.json` `n8n` manifest, its nodes appear in the catalogue tagged
+`sidecar` (distinct from `builtin` and `pack`), and their outbound HTTP goes
+through the same egress policy a native node's does — the credential's allowed
+domains, the redirect chain and the response cap included. It is off until the
+`sidecar` section enables it, and it needs a Node binary the operator
+supplies.
 
 ## What is not shipped yet
 
@@ -103,21 +111,21 @@ checked against this tree:
   data. This has to be added before a pack can do more than reshape its items.
 - **Nothing runs a pack.** No production code builds a `runcode.Artifact` from
   a pack, and the only consumers of `pkg/sdk` are its own example and tests.
-- **Nothing runs the sidecar.** `github.com/kilaslab/kilas-flow/sidecar` is
-  imported only by its own package and tests. There is no `sidecar` section in
-  `internal/config/config.go` or `config.example.yaml`, no `engine.Executor`
-  adapter for it, and `node.SourceSidecar` has no `RegisterFrom` call site
-  outside a registry test.
+- **The sidecar is not in the default image.** The runtime image stays a
+  single `CGO_ENABLED=0` Go binary on distroless. Enabling the sidecar means
+  running an image with Node in it and installing the packages yourself; a
+  deployment that does not enable it is unchanged.
 
-This page therefore documents the author-side pack contract and the sidecar
-library's boundary, not a capability an operator can enable. It will grow the
-operator-facing sections when the host halves land.
+The pack path above is an author-side contract today, not an operator path.
+The sidecar path is an operator path now — off by default, documented in
+[the JavaScript sidecar](/operate/javascript-sidecar/).
 
 ## What the deployment looks like
 
 The runtime image today is a single `CGO_ENABLED=0` Go binary on distroless,
-and that stays the default. Neither community path is wired, so nothing in a
-deployment changes on their account. The pack install path that does exist
+and that stays the default. The WASM pack path is not wired, so it changes
+nothing in a deployment; the sidecar path is wired and off by default, so it
+changes nothing either until an operator enables it. The pack install path that does exist
 today is the declarative one: a directory of `pack.json` manifests loaded at
 composition through `packs.dir`, with a `pack.sha256` checksum pinning each
 manifest, and it has no `.wasm` story.

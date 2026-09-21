@@ -30,13 +30,13 @@ Shipping a sidecar also ends the single-binary promise. The runtime image today 
 
 ## Acceptance criteria
 
-- [ ] The licence position is recorded in `.pine/memory/licensing.md` before implementation starts, and states explicitly whether the sidecar is distributed by KilasFlow, installed by the operator, or built clean-room.
-- [ ] A programmatic community node package installed by an operator loads through its `package.json` `n8n` manifest (`n8nNodesApiVersion`, `nodes`, `credentials`) and appears in the node catalogue tagged `sidecar`, distinct from `builtin` and `pack`.
-- [ ] Host and sidecar speak NDJSON over a Unix domain socket. Nothing the protocol depends on is ever read from the child's stdout or stderr; a package that prints a startup banner does not corrupt a single message.
-- [ ] One sidecar process serves exactly one tenant, and a test proves a second tenant's execution never reaches a process holding the first tenant's decrypted credentials.
-- [ ] A sidecar that crashes, hangs, or exceeds its memory or wall-clock limit fails that node run with a diagnostic and leaves the rest of the execution and the host process intact.
-- [ ] Outbound HTTP from a community node is subject to the same SSRF policy and per-credential domain scoping as a native node, or the node is refused — the boundary is never silently wider than `internal/safehttp`.
-- [ ] The image and deployment consequences are documented: what the runtime image becomes, what an operator installs, and what a deployment that declines the sidecar loses.
+- [x] The licence position is recorded in `.pine/memory/licensing.md` before implementation starts, and states explicitly whether the sidecar is distributed by KilasFlow, installed by the operator, or built clean-room.
+- [x] A programmatic community node package installed by an operator loads through its `package.json` `n8n` manifest (`n8nNodesApiVersion`, `nodes`, `credentials`) and appears in the node catalogue tagged `sidecar`, distinct from `builtin` and `pack`.
+- [x] Host and sidecar speak NDJSON over a Unix domain socket. Nothing the protocol depends on is ever read from the child's stdout or stderr; a package that prints a startup banner does not corrupt a single message.
+- [x] One sidecar process serves exactly one tenant, and a test proves a second tenant's execution never reaches a process holding the first tenant's decrypted credentials.
+- [x] A sidecar that crashes, hangs, or exceeds its memory or wall-clock limit fails that node run with a diagnostic and leaves the rest of the execution and the host process intact.
+- [x] Outbound HTTP from a community node is subject to the same SSRF policy and per-credential domain scoping as a native node, or the node is refused — the boundary is never silently wider than `internal/safehttp`.
+- [x] The image and deployment consequences are documented: what the runtime image becomes, what an operator installs, and what a deployment that declines the sidecar loses.
 
 ## Implementation Plan
 
@@ -900,3 +900,440 @@ it:
 
 Reopened to `todo` by `BUG-vzzkg3`. The licence position in `.pine/memory/licensing.md` is the
 first criterion and is the decision that gates the rest.
+
+## Implementation notes
+
+### Stage 1 of 4 — process boundary (commit `worktree-omp-FEAT-7cg0cd`)
+
+Scope: `sidecar/` only, Go, no JS runner yet. The other three stages are not started.
+
+**What changed.** The pool's process boundary was hardened before any product wiring:
+
+- `sidecar/process.go` (new): `ProcessSpec` + `NewProcessSpawn`. Listen-before-start (the listener exists before the child runs, so a child that dials immediately cannot lose the race); an explicit environment allowlist (`LANG`, `TZ` — the credential master key and database DSN never cross); Node's permission model (`--permission` plus one `--allow-fs-read` grant per allowed path, no other `--allow-*`); script and read paths resolved through `filepath.EvalSymlinks` before the grant is built (Node refuses to start when a granted path traverses a symlink); process group (`Setpgid`), `WaitDelay`, a `Diagnose` that classifies the wait status (SIGABRT → `sidecar-memory-limit`, SIGKILL → container-memory diagnostic, exit N → status N), and `CheckNode` (Node ≥ 24). `DefaultSpawn` is now a thin `NewProcessSpawn` wrapper.
+- `sidecar/procattr_unix.go` / `procattr_other.go`, `memory*.go`: the unix-only process-group/kill/exit-classification and the RSS watchdog (Linux `/proc/<pid>/statm`, macOS `ps -o rss=`), so `GOOS=windows go build ./sidecar/` still compiles.
+- `sidecar/sidecar.go`: 1-slot per-tenant semaphore honouring its own context; single-flight cold start; identity-aware `evictProc` (a stale run holding a dead P1 can no longer evict a healthy P2); atomic `lastUsed` set at run start and end; `CloseIdle` snapshots candidates under the pool lock and never waits on a process while holding it, skipping busy processes; context cancel/deadline mapped to `sidecar-cancelled` / `sidecar-timeout` with `CallError.Unwrap`; `MaxProcesses` evicts LRU-idle then waits min(ctx, SpawnTimeout) before `sidecar-busy`; `payloadBytes` charges items **and** outputs; `NewPool` raises `MaxFrameBytes` above `MaxOutputBytes` so the output bound is reachable; host calls served sequentially with `MaxHostCalls`; new codes `sidecar-memory-limit`, `sidecar-cancelled`, `sidecar-busy`; child-controlled strings truncated (message 2 KiB, frame type 64 B).
+- `sidecar/protocol.go`: `NodeVersion`, `ParamsByItem`, `Credentials`, `Context` on execute; `Binary`/`PairedItem` on `Item`; `Outputs`/`Catalogue` on the terminal frame; `Result.Outputs`; `HostHandler` with the `http.request` / `http.response` / `http.error` frames.
+- `sidecar/discover.go` (new): `Discover` runs a process in the describe role (empty tenant, unreachable from `Execute`) and caps the catalogue at `MaxCatalogueBytes`.
+- `sidecar/logwriter.go` (new): line-splitting, per-line truncation, a per-process budget and one "output truncated" line, always draining (`return len(p), nil`).
+- `sidecar/sidecartest/sidecartest.go` (new): `Node(t)` skips with a named reason when Node is absent/too old, and fails instead when `KILASFLOW_TEST_REQUIRE_NODE=1`.
+- `sidecar/fixture/*.js` (new, node builtins only): `env`, `perm`, `forged`, `hang`, `crash`, `heap`, `rss`, `dial`.
+- `sidecar/doc.go`: protocol, host calls, multi-output, the env/permission posture, the limits, and the honest statement that the JS guard and Node's permission model are defence in depth, not a sandbox against malicious code.
+
+**Verified.**
+
+- `go test -race -count=1 ./sidecar/...` → `ok ...sidecar 13.116s` (macOS, Node v24.16.0).
+- `gofmt -l sidecar/` → empty; `go vet ./...` → clean; `go build ./...` → clean.
+- `go test -count=1 ./internal/guardrails/...` → `ok` (after `git add sidecar/`, since guardrails scan `git ls-files`).
+- `GOOS=windows go build ./sidecar/` → ok; `GOOS=linux go vet ./sidecar/...` → ok.
+- Linux lane: `docker run --rm -v "$PWD":/src -w /src kf-7cg0cd-linux go test -race -count=1 ./sidecar/...` → `ok ...sidecar 7.572s`. Image is `golang:1.27-bookworm` plus `node:24-bookworm-slim`'s `node` binary (Node v24.20.0); this is the only lane that exercises the `/proc/statm` watchdog, the `Setpgid` group kill and `WaitDelay`. (Node 24.20 behaves the same as the verified 24.16; the plan's "only 24.16 verified" note is superseded for 24.20.)
+- Node absent: `env PATH="$(dirname "$(command -v go)"):/usr/bin:/bin" go test -count=1 ./sidecar/...` → `ok`, the ten real-Node tests `SKIP` with "node is not on PATH; install Node 24…". With `KILASFLOW_TEST_REQUIRE_NODE=1` the same command FAILs those ten tests with the same message, so CI cannot skip silently.
+
+**Mutation matrix (evidence the new recorder is stronger than the old test).** Each mutation was applied to `sidecar.go`, the tests run, and the file reverted to green.
+
+| Mutation | `TestSecondTenantNeverReachesFirstTenantsProcess` (old) | new (a) `TestEachProcessOnlyEverSeesItsOwnTenantsBytes` | new (b) concurrent (c) evicted (d) exact |
+|---|---|---|---|
+| M1: key `pool.procs` by a constant in `procFor` | FAIL — `spawns = 1, want 2` | FAIL — `spawns = 1, want 2` | (b) FAIL `spawns=1 want 8`; (c) FAIL; (d) FAIL |
+| M2: warm hit returns the most recently spawned process | PASS (each tenant runs once) | FAIL — `process started for "tenant-b" received a frame carrying tenant "tenant-a"` and `received tenant-a's secret` | (b) FAIL; (c),(d) PASS |
+
+M1 alone does not show the new recorder is stronger because the old test also fails on its own `spawns==2` assertion; M2 is the discriminating case: the old test's self-reported `frame.Tenant` looks correct while the per-process recorder sees the misroute.
+
+**Pre-fix failures reproduced for the pool defects** (mutations reverted to green afterwards): removing single-flight → `TestConcurrentColdStartsForOneTenantSpawnOnce` FAILs `spawns = 25, want 1` and `TestConcurrentTenantsNeverCrossProcesses` FAILs `spawns = 11, want 8`; restoring tenant-keyed eviction → `TestEvictIsIdentityAware` FAILs (`evicting a stale process removed the healthy replacement from the pool`).
+
+**Deviations.**
+- `TestOversizeFrameFailsTheRun`'s payload was raised from 2 MiB to 5 MiB: `NewPool` now raises `MaxFrameBytes` to sit above `MaxOutputBytes` (required so the 4 MiB output bound is reachable), so 2 MiB no longer exceeds the frame bound. The assertion and the property it pins are unchanged.
+- `TestFixtureEchoRunsHeadless` now discovers Node through `sidecartest.Node` so `KILASFLOW_TEST_REQUIRE_NODE=1` fails it instead of skipping; no assertion changed.
+- `TestChildEnvironmentIsAllowlisted` tolerates exactly `__CF_USER_TEXT_ENCODING` on darwin only, the one key the OS injects even with an empty `Env`.
+
+**Not done (later stages).** No `runner.cjs`, no manifest/package loading, no `internal/sidecarnode`, no `nodes/` adapter, no safehttp egress proxy, no config key, no `main.go` wiring, no `node.SourceSidecar` registration, no docs/CHANGELOG/CI, no migration (000020 stays unused). Acceptance criteria 2, 6 and 7 are therefore still unticked. Host calls are served when a `HostHandler` is supplied, which is the seam Stage 3's safehttp proxy plugs into; until then the default denies.
+
+### Stage 2 of 4 — clean-room runner and community-package fixtures (commit `worktree-omp-FEAT-7cg0cd`)
+
+Scope: `sidecar/` only — the embedded runner, the fixture packages and the tests. No config, no
+`main.go`, no `nodes/`, no `internal/sidecarnode`; those are stages 3 and 4.
+
+**What changed.**
+
+- `sidecar/runner/runner.cjs` (new, 967 lines): the clean-room runner, embedded with
+  `//go:embed`. Node built-ins only (`node:net`, `node:fs`, `node:path`), no dependency of its own,
+  written from the protocol in `sidecar/protocol.go` and the usage shape of the owner's own MIT
+  package. Startup order is dial (before hardening, so the host socket exists) → install the guard
+  → load packages → serve frames. `socket.on('close')` exits 0, so an idle orphan cannot outlive
+  the host.
+  - **Guard**: replaces `net.Socket.prototype.connect`, `net.connect`/`createConnection`,
+    `net.Server.prototype.listen`, every function on `dns`, `dns.promises` and both `Resolver`
+    prototypes, `dgram.createSocket` and `dgram.Socket.prototype.{send,connect,bind}`, and
+    `fetch`/`WebSocket`/`EventSource`, and replaces `process.kill`/`process._kill` so any pid other
+    than its own is refused. Every attempt is recorded; a run in which anything was recorded fails
+    with `network-refused` or `process-refused` **even when the package swallowed the exception**.
+  - **Manifest loading**: `n8nNodesApiVersion` must be 1; every `nodes`/`credentials` path must
+    stay inside the package both lexically and after `realpath` (so a symlink cannot escape);
+    a file that fails to load is a *file* error that excludes only that node
+    (`missing-module` names the module and says to install the peer dependency), while a manifest
+    defect, a missing directory, an `ERR_ACCESS_DENIED`, an `ERR_DLOPEN_DISABLED` or a network
+    attempt during load is *fatal* and refuses the package. Classes are picked by file basename
+    (`Foo.node.js` → `Foo`), instantiated, and keyed by `(description.name, version)` — including
+    one name at several versions; a duplicate pair is excluded with a named error.
+  - **Execute**: `getInputData`, `getNodeParameter` (per-item via `paramsByItem`, dotted paths,
+    throw or fallback), `getCredentials`, `getNode`, `getWorkflow`, `getExecutionId`, `getMode`,
+    `getTimezone`, `continueOnFail`, `logger`, and `helpers.{httpRequest,returnJsonArray,constructExecutionMetaData}`.
+    Unimplemented members throw `KF_UNSUPPORTED` naming themselves (through a Proxy that exempts
+    symbols and `then`/`toJSON`/`inspect` probes, so awaiting or logging the surface cannot throw);
+    `httpRequestWithAuthentication`/`requestWithAuthentication`/`request` are named explicitly.
+    `httpRequest` forwards `method/url/headers/qs/body/json/timeout/returnFullResponse/ignoreHttpStatusErrors`
+    to the host as an `http.request` host call and throws `KF_UNSUPPORTED` naming **any** other
+    option (`auth`, `proxy`, `skipSslCertificateValidation`, `encoding`, `form`, …) instead of
+    ignoring it. Output is normalised to `[[{json,pairedItem?}]]`; an input or output item carrying
+    binary data is refused. A frame whose tenant is not this process's is refused (defence in
+    depth), as is an unknown `(name, version)` pair, with a message saying the packages on disk may
+    have changed since boot.
+- `sidecar/runner.go` (new): `RunnerContent` (bytes + digest), `ExtractRunner(runtimeDir)`
+  (content-addressed `runner-<sha256[:12]>.cjs`, dir 0700, file 0600, temp+rename, idempotent,
+  symlink-resolved), `RunnerConfig`, `RunnerSpawn` (role from the tenant; argv carries
+  `--role/--tenant/--socket/--packages-dir/--package=…`; `ReadPaths` is the resolved packages
+  directory) and `failingSpawn` for a configuration that cannot work.
+- `sidecar/sidecartest/sidecartest.go`: `PackagesDir(t)` (runtime.Caller, like the fixture test).
+- `sidecar/testdata/packages/` (new, flat, no `node_modules/` because `.gitignore` ignores it):
+  `kf-fixture-nodes` (Greet with every property shape incl. a hidden property and an
+  options-with-`loadOptionsMethod` field, Relay using `helpers.httpRequest` exactly as the owner's
+  nodes do, `FixtureApi` credential with `apiKey`/`baseUrl`), `kf-fixture-versions` (one node name
+  at versions 1 and 2 in two files, plus a file requiring the absent peer `kf-absent-peer`),
+  `kf-fixture-hostile` (19 modes: the seven network routes with and without a swallow, `signal`,
+  `child-process`, `addon`, `fs-outside`, `env`, `crash`, `hang`, `heap`, `buffer`, and the three
+  unsupported-shape probes), `kf-fixture-badload`, `kf-fixture-netload`, `kf-fixture-badmanifest`
+  (api version 2, `../escape.js`, and a symlink escaping into the sibling fixture package),
+  `kf-fixture-unsupported` (trigger node, `ai_tool` input, `resourceLocator`, numeric option values,
+  unknown credential type). Every manifest is hand-written CommonJS in the shape `tsc` emits and
+  declares **no** dependency block.
+- `sidecar/runner_test.go` (new, 22 tests): the plan's list, plus the extraction, the unusable-config
+  diagnostics, the runtime-directory plumbing, the crash/hang/heap/buffer table and a gated
+  `TestOwnersCommunityPackageLoads`. The http helper is exercised against a Go fake `HostHandler` —
+  safehttp is stage 3's.
+
+**Verified** (Node v24.16.0 on macOS unless stated):
+
+- `go test -race -count=1 ./sidecar/...` → `ok … sidecar 19.3s`.
+- Linux/glibc lane, `docker run --rm -v "$PWD":/src -w /src kf-7cg0cd-linux go test -race -count=1 ./sidecar/...`
+  → `ok … sidecar 12.7s` (Node v24.20.0; exercises the `/proc/statm` watchdog and the darwin/linux
+  poll interval difference).
+- `gofmt -l sidecar/` → empty; `go vet ./sidecar/...` → clean; `go vet ./...` → clean;
+  `go build ./...` → clean; `GOOS=windows go build ./sidecar/` and `GOOS=linux go vet ./sidecar/...` → clean.
+- `node --check sidecar/runner/runner.cjs` → clean.
+- `go test -count=1 ./internal/guardrails/...` → `ok` (run after `git add sidecar/`, because the
+  licence scan reads `git ls-files`). No new dependency, Go or npm: the runner is stdlib-only
+  JavaScript, the fixtures declare no dependency block, and the symlink fixture is committed as a
+  symlink (mode 120000).
+- Node absent: `env PATH="$(dirname "$(command -v go)"):/usr/bin:/bin" go test -count=1 ./sidecar/...`
+  → `ok`, every real-Node test SKIPs with "node is not on PATH; install Node 24 to run the sidecar
+  tests". With `KILASFLOW_TEST_REQUIRE_NODE=1` the same command FAILs (26 failures) with the same
+  message, so CI cannot skip silently.
+
+**Mutation evidence** (each mutation applied to `runner.cjs`/`runner.go`, tests run, file reverted and re-run green):
+
+| Mutation | Test | Result |
+|---|---|---|
+| M-A: `installNetworkGuard()` commented out | `TestDirectNetworkAttemptFailsTheRunEvenWhenSwallowed` | FAIL — `error = <nil>, want *CallError`: with no guard the package really opens the socket and the run "succeeds" |
+| M-B: file-level load failure marked `fatal` | `TestPerFileLoadFailureExcludesOnlyThatNode` | FAIL — `Severity:fatal, want a file-severity missing-module` |
+| M-C: manifest `n8nNodesApiVersion` check disabled | `TestManifestApiVersionAndPathEscapeAreRefused` | FAIL — `no "manifest-api-version" error among [path-escape symlink-escape]` |
+| M-D: `RuntimeDir` dropped from the `ProcessSpec` | `TestRunnerSpawnPutsTheSocketInTheRuntimeDir` | FAIL — socket landed in `/var/folders/…/T/kflow-sidecar-…` instead of the configured directory |
+
+**Independent proof against the real compiled package** (plan stage 2 D). Source read-only from the
+owner's package, copied to the scratchpad and compiled there with
+`tsc --noCheck --skipLibCheck --module commonjs --target es2022 --moduleResolution node10 --esModuleInterop --outDir dist`
+(typescript 5.9.3 installed in the scratchpad; nothing of it enters this repository). Then:
+`KILASFLOW_TEST_COMMUNITY_PACKAGES_DIR=/tmp/kf7cg0cd-scratch/community go test -count=1 -run TestOwnersCommunityPackageLoads ./sidecar/`
+→ PASS. The catalogue it produced:
+
+```
+package n8n-nodes-mitrachat@0.2.0: 9 nodes, 1 credentials, 1 errors
+  node mitraChatAgent v1 … v2, mitraChatContact v1 … v2, mitraChatConversation v1,
+       mitraChatToolResponse v1, mitraChatSendMessage v1, mitraChatSendTyping v1   (execute=true)
+  node mitraChatProviderTrigger v1 execute=false unsupported=[webhook] group=[trigger]
+  credential mitraChatApi (MitraChat API) fields=apiKey,baseUrl
+  error[file] missing-module dist/nodes/MitraChatWebhookTrigger/MitraChatWebhookTrigger.node.js:
+       this file needs the module "n8n-workflow", which is not installed: the operator must
+       install the package's peer dependency beside it
+```
+
+That is 8 convertible definitions and 2 exclusions (the trigger-group file and the file whose peer
+is missing) — the plan's prediction, reached without any fixture written by the same hand as the
+runner. `mitraChatAgent` and `mitraChatContact` each appear at v1 and v2 under one name, exactly as
+C11 described.
+
+**Black-box re-run of C15** (never reading or copying any of it): inside the local n8n image,
+`docker run --rm --entrypoint node -w /usr/local/lib/node_modules/n8n docker.n8n.io/n8nio/n8n:latest
+--permission --allow-fs-read=/usr/local/lib/node_modules -e "…require('n8n-workflow')…"` →
+`loaded n8n-workflow ok; exports: 422`, `native addons in require cache: 0`, and a follow-up
+`require('isolated-vm')` fails with `ERR_ACCESS_DENIED` (fs read outside the grant), so
+`n8n-workflow` does not dlopen an addon at require time. The grant has to cover the resolved pnpm
+store path *and* the package's top-level symlink, the same symlink lesson as C7a.
+
+**Deviations.**
+
+- The hostile fixture's signal mode calls `process.kill(victimPid, 'SIGTERM')` on a victim the *test*
+  starts (and asserts is still alive) rather than `process.ppid`: a real signal attempt with real
+  evidence, without a test that kills the harness if the guard is broken.
+- The `heap` mode allocates arrays of short strings, not `'x'.repeat(65536)` blobs: measured,
+  a 256 MB array of `String.repeat` blobs does **not** abort under `--max-old-space-size=64`,
+  while the array form does (SIGABRT, exit 134 → `sidecar-memory-limit`).
+- The `buffer` mode holds 192 MB across ~2 s instead of allocating and returning: the RSS watchdog
+  polls every 250 ms on darwin and 200 ms on linux, so a fast allocation can finish between two
+  samples (it did, intermittently, before this change).
+- `kf-fixture-badmanifest` carries all three manifest defects at once and the runner reports all
+  three (`manifest-api-version`, `path-escape`, `symlink-escape`) in one pass, instead of three
+  near-identical packages.
+- `--role` is parsed and logged, but what enforces describe-versus-run is the tenant: a describe
+  process is started with an empty tenant, so `Pool.Execute` can never route a run to it and the
+  runner refuses any execute frame whose tenant is not its own.
+
+**What this stage does and does not prove for the acceptance criteria.** Criterion 2's loading
+clause is proven end to end — an operator-installed package loads through its `n8n` manifest and the
+catalogue carries its nodes and credentials, including the real package above — but the criterion
+also requires those nodes to appear in the *node catalogue tagged `sidecar`*, which needs
+`sidecarnode.Load`/`RegisterFrom` and is stage 3, so criterion 2 stays unticked. Criterion 6's clause
+about outbound HTTP is partly proven: the runner can only reach HTTP through the host-call channel,
+and every direct route fails the run; the SSRF policy, the per-credential domain scoping and the
+refusal of a package that reaches the network another way are `internal/safehttp`'s (stage 3), so
+criterion 6 stays unticked too. Criteria 4 and 5 gain evidence (a banner plus a *forged* protocol
+frame on stdout still cannot desynchronise the socket; crash/hang/heap/buffer fail only that run
+through the runner rather than through a bare script) and stay ticked.
+
+**Not done (later stages).** No `internal/sidecarnode`, no `nodes/` executor adapter, no safehttp
+egress proxy, no config section, no `main.go` wiring, no `node.SourceSidecar` registration, no
+docs/CHANGELOG/CI, no migration (000020 stays unused).
+
+### Stage 3 of 4 — conversion, `source=sidecar` registration, the executor adapter and the safehttp egress proxy (commit `worktree-omp-FEAT-7cg0cd`)
+
+Scope: `internal/sidecarnode` (new), `nodes/sidecar.go` and `nodes/sidecar_egress.go` (new), one test in
+`internal/api`, the `defaultRegistry` comment in `internal/credentials/registry.go`, and two additive
+changes in `sidecar/` (a coded host-call refusal). **No config, no `main.go`, no docs, no CHANGELOG, no
+CI, no Dockerfile, no migration** — those are stage 4.
+
+**What changed.**
+
+- `internal/sidecarnode/catalogue.go` (new): the package/nodes/credentials/errors shapes the runner's
+  `describe` answer carries, plus `ExecutorID = "sidecar.node"` and the severity split (`file` vs
+  `fatal`).
+- `internal/sidecarnode/convert.go` (new): `Convert(pkg) ([]Converted, []credentials.Type, []Exclusion, error)`.
+  Type is `sidecar.<slug(package)>.<slug(nodeName)>` (both halves slugged so the type is a safe URL path
+  segment for `/node-types/{type}/icon`); group mapped onto the closed set with a trigger **excluded**;
+  exactly one main input and ≥1 main output required; the port name `error` is reserved and refused;
+  property kinds string/number/boolean/options/multiOptions/json/dateTime/notice/collection/
+  fixedCollection map across, `options` with a `loadOptionsMethod` becomes a **string** with a note
+  saying why, `'={{ … }}'` defaults become the `{mode:"expression",…}` marker, `displayOptions.show|hide`
+  becomes `property.Visibility` (sorted keys, `@version` passed through for the registry to validate),
+  hidden properties go to `NodeRef.HiddenDefaults` instead of the editor; every other shape (resource
+  locator, mapper, filter, non-string option values, non-main connections, a parameter named after a
+  shared setting, an unknown credential type, no `execute()`) is an exclusion with a named reason. Each
+  built definition is trial-registered into a scratch `node.NewRegistry()` so the registry's **own**
+  message is the exclusion reason.
+- `internal/sidecarnode/load.go` (new): `Load(ctx, LoadDeps{Spawn, Limits, Definitions, Credentials,
+  SharedSettings, Log}) (*Index, error)`. Per-file load errors become exclusions (Warn-logged, and the
+  caller can read them from `Index.Exclusions()`), a `fatal` package error refuses the boot, and only a
+  real-catalogue collision (same type+version, or a credential type already registered) fails —
+  naming both packages. `Index` maps `(type, version)` to a `NodeRef` (package, dispatch name, dispatch
+  version, hidden defaults, declared credential types) and deliberately does not copy the property list.
+- `nodes/sidecar.go` (new): `SidecarExecutorID` (=`sidecarnode.ExecutorID`), the `SidecarRunner`
+  interface (`*sidecar.Pool`), `NewSidecarExecutor(runner, index, catalog, policy, log)`,
+  `RegisterSidecarExecutor(...)` (by the `nodes/routing.go` pattern, not in `RegisterExecutors`) and
+  `SidecarSharedSettings()` (the one-line wrapper over `sharedSettings()` that stage 4 hands to `Load`).
+  `Execute` refuses an unindexed node and a tenantless run before anything is sent, refuses binary input
+  and output items, fills defaults **then** resolves expressions **then** drops parameters the node does
+  not currently show, resolves only the credential types the node declares (skipping blank IDs, sorted,
+  type-checked), sends `ParamsByItem` aligned with the items plus the run context, and maps the answer
+  onto `len(Outputs)` minus the error port the engine owns (extra non-empty streams refused, missing
+  streams padded empty, `Paired` left nil for the engine's positional inference). Child errors are
+  rebuilt with every credential value of ≥4 characters scrubbed, keeping the `*CallError` type; a run
+  whose context ended returns `ctx.Err()`.
+- `nodes/sidecar_egress.go` (new): the `HostHandler` over **one** `safehttp.NewClient(policy)` built at
+  construction: parse → `policy.CheckURL` (before the dial) → every held credential's `AllowsHost(host)`
+  → `safehttp.WithCredentialScope` with the same conjunction so a redirect outside the scope stops the
+  chain → `min(policy.Timeout, timeoutMs)` under the run's context → `policy.ReadBody` with a truncation
+  answered as code `response-too-large` → hop-by-hop request headers stripped → response headers
+  lower-cased, one string per name. Refusals are logged at Warn with the tenant and the node.
+- `sidecar/protocol.go` + `sidecar/sidecar.go` (additive): `HostCallCoder` (an error that names its own
+  `http.error` code, defaulting to `http-error`), so the size limit is a code the package can act on
+  rather than a sentence. No existing behaviour or assertion changed.
+- `internal/credentials/registry.go`: the `defaultRegistry` comment now says `Default()` is a
+  `*Registry` singleton whose map is unsynchronised, and that composition may extend it once at boot
+  before any goroutine reads it.
+- Tests, all new: `internal/sidecarnode/convert_test.go` (mapping, the exclusion table by shape, type-ID
+  safety, credential secrecy, shared-setting collision, reserved error port, dry-run refusal,
+  versioned/multi-version nodes), `internal/sidecarnode/load_test.go` (per-file vs fatal policy, both
+  collision kinds, missing catalogues, exact `Index.Get`, and the real-Node
+  `TestLoadRegistersSidecarSourceAndCredentialTypes`), `nodes/sidecar_test.go` (marshalling, the
+  parameter pipeline, the adapter-level two-tenant isolation proof with a per-process recorder and
+  exactly two processes, undeclared credentials, binary, scrubbing, no tenant, output mapping, the
+  error-port arithmetic, the context error), `nodes/sidecar_egress_internal_test.go` (handler-level
+  policy: the credential intersection, redirect scope, hop-by-hop stripping, the response cap, the
+  host allowlist, unusable URLs, refusal scrubbing), `nodes/sidecar_egress_test.go` (the real runner and
+  the Relay fixture through an `httptest` server granted by `AllowedPrivateEndpoints`),
+  `nodes/sidecar_engine_test.go` (the engine-level proofs), `internal/api/node_types_sidecar_test.go`.
+
+**Verified** (Node v24.16.0 on macOS unless stated).
+
+- `go test -race -count=1 ./sidecar/... ./internal/sidecarnode/... ./nodes/... ./internal/credentials/...`
+  → `ok` (sidecar 21.3s, sidecarnode 2.1s, nodes 280.8s, credentials 1.7s).
+- `go test -race -count=1 ./internal/api/` → `ok … 66.3s`.
+- `go test -count=1 ./internal/guardrails/...` → `ok` (after `git add`, the scan reads `git ls-files`).
+- `test -z "$(gofmt -l . | grep -v '^web/')"` → prints nothing; `go vet ./...` → clean; `go build ./...` → clean;
+  `GOOS=windows go build ./sidecar/ ./internal/sidecarnode/` → clean; `GOOS=linux go vet ./sidecar/... ./nodes/...` → clean.
+- Linux/glibc lane (`kf-7cg0cd-linux` = golang:1.27-bookworm + node 24, Node v24.20.0):
+  `docker run --rm -v "$PWD":/src -w /src kf-7cg0cd-linux go test -race -count=1 ./sidecar/... ./internal/sidecarnode/... ./nodes/...`
+  → `ok` (sidecar 17.4s, sidecarnode 1.2s, nodes 213.2s) — this is the lane that exercises the
+  `/proc` watchdog and the group kill as CI will.
+- Node off PATH (`env PATH="$(dirname "$(command -v go)"):/usr/bin:/bin"`): every real-Node test SKIPs
+  with "node is not on PATH; install Node 24 to run the sidecar tests" — including the new
+  `TestLoadRegistersSidecarSourceAndCredentialTypes`, `TestEgress*`, `TestSidecarCrash*`,
+  `TestSidecarErrorBranch*`, `TestHungNode*`, `TestEveryLoaded*`, while the pure-Go tests (the
+  handler-level egress tests among them) still PASS. With `KILASFLOW_TEST_REQUIRE_NODE=1` the same
+  command FAILs those tests with the same message, so CI cannot skip silently.
+- Wide run `go test -race -count=1 ./...` → all packages of this change green; four failures elsewhere,
+  all load-sensitive and none in a package this stage touched:
+  `internal/engine TestExpiredWaitsResolveOnTheirOwnDeadline` (passes alone: `ok … 3.0s` — and main's own
+  tip is `BUG-w8h3km`, "the wait-service tests flake under load"),
+  `internal/api/handlers TestLoginRefusesASprayFromOneAddress` (passes alone: `ok … 51.0s`,
+  `auth_test.go:162: no refusal within 30 attempts` in the loaded run),
+  `internal/runcode` (package timeout at 600s under load; on a clean detached checkout of main the same
+  package passes alone in 61s), and
+  `pkg/sdk TestExamplePackRunsUnderWazero` (`code exceeded its 10s time limit`) — **reproduced on a clean
+  detached checkout of main** (`/private/tmp/kf-wave1/main-check` @ 72d0200:
+  `--- FAIL: TestExamplePackRunsUnderWazero (115.20s) … code exceeded its 10s time limit`), so it is
+  environmental (wazero JIT under `-race` on a loaded machine), not this change.
+
+**Mutation evidence** (each mutation applied to the new code, the named test run, the file restored from
+a copy and the suite re-run green):
+
+| Mutation | Test | Result |
+|---|---|---|
+| MA: `nodes/sidecar.go` — visibility filter disabled | `TestExecutorDropsNonVisibleParameters` | FAIL — `attachmentFilename = "stale.txt", want a parameter the node does not show dropped` |
+| MB: `nodes/sidecar.go` — `sidecarExpectedPorts` always returns the declared arity | `TestExecutorReturnsNoErrorPortStream` | FAIL — `output streams = 3, want 2: the error port is the runner's` |
+| MC: `internal/sidecarnode/convert.go` — shared-setting key check disabled | `TestConvertExcludesAParameterThatCollidesWithASharedSetting` | FAIL — `Convert() registered 1 definitions for a node whose parameter collides with a shared setting` |
+| MD: `internal/sidecarnode/load.go` — `fatal` treated as a file error | `TestLoadRefusesAPackageWithAFatalError` | FAIL — `Load() error = nil, want the package refused` |
+| ME: `nodes/sidecar.go` — declared-credential check disabled | `TestExecutorRefusesUndeclaredCredentialTypes` | FAIL — `credential "cred-2" does not exist, want it to name the type the node does not declare` |
+
+**Deviations and honest limits.**
+
+- The plan's credential bullet says `credentials.Type{… ExecutorID: ExecutorID}`; `credentials.Type`
+  has no `ExecutorID` field (credential types are pure data — only `node.Definition.ExecutorID` exists),
+  so nothing is set there. The node definitions carry `sidecarnode.ExecutorID`.
+- `Convert` slugs the **node name** as well as the package name. The plan only slugged the package; a
+  package whose description name is not an identifier would otherwise produce a type the icon route
+  cannot address (`TestTypeIDIsURLSafeAndNeverInTheBuiltinNamespace`).
+- The plan's `fmt.Errorf("node %q: %w", ir.Name, callErr)` is implemented as a **scrubbed copy** of the
+  `*CallError` (Detail and ChildMessage scrubbed) wrapped with `%w`: wrapping the original would leave
+  the unscrubbed text reachable through `Unwrap`, which is the one thing the scrubbing exists to stop.
+- Two additive lines in `sidecar/` (a `HostCallCoder` interface and the pool honouring it) were needed
+  to carry `response-too-large` as a code instead of the generic `http-error`; the plan listed no
+  `sidecar/` change for this stage. Stage 2's tests are unchanged and still green.
+- What v1 does not map, all presentation: a node's icon, subtitle, codex, and a credential class's
+  `documentationUrl`. Documented on `Convert`.
+- Honest limit, unchanged from stage 2: the JS guard and Node's permission model are defence in depth,
+  not a sandbox against malicious code; and all allowlisted packages share one tenant process, so one
+  package can read another's inputs for the same tenant.
+
+**What this stage does and does not prove for the acceptance criteria.** Criterion 2 is ticked: a package
+on disk loads through its `n8n` manifest, its nodes register with `Source == sidecar`, and
+`GET /api/v1/node-types` serves them beside `builtin` and `pack` entries. Criterion 6 is ticked: a
+community node's outbound HTTP is issued by the host through one `safehttp` client under the deployment's
+policy, the credential's `AllowedDomains` and the same conjunction on redirects, and every direct network
+route already fails the run in the runner. Criterion 7 (docs) stays unticked — that is stage 4, which
+also owes the config section, the composition-root wiring, `config.example.yaml`, the regenerated
+configuration reference, the new operate page, the CHANGELOG bullet and the CI/Docker recipe.
+
+### Stage 4 of 4 — product wiring: config, composition root, availability, docs, CI and a Linux Docker recipe
+
+**What changed.**
+
+- `internal/config/config.go`: a `Sidecar` section (one word, so `KILASFLOW_SIDECAR_*` maps to
+  `sidecar.*`) on `Config` after `Packs`. Defaults equal `sidecar.DefaultLimits` (a test pins them).
+  `validateSidecar` runs only when `enabled`: `packages_dir`, `runtime_dir` and at least one package are
+  required, every package name must match the npm grammar (refuses `..`, absolute paths and any
+  separator), durations and output are positive, `max_heap_mb >= 16`, `max_processes >= 1`,
+  `max_rss_mb >= 0` (0 disables the watchdog, as documented), and a non-unix host is refused at boot.
+- `config.example.yaml` and `docs/src/content/docs/operate/configuration-reference.md`: REGENERATED
+  with `make generate-config-reference`, never hand-edited.
+- `cmd/kilasflow/sidecar.go` (new): `setupSidecar` returns `(nil, nil)` when disabled — no Node probe,
+  no runtime directory, no process. Enabled: probe Node ≥ 24, `Abs`+`EvalSymlinks` the packages
+  directory (Node's permission model refuses a grant that traverses a symlink), extract the runner,
+  build the pool from the limits, run `sidecarnode.Load` (a fatal package error or a real collision
+  refuses the boot naming the package; per-file failures are Warns), register the sidecar executor,
+  sweep idle processes every `max(idle/4, 10s)`, and expose `Close` and `EvictTenant` (the latter for
+  FEAT-fpqvwx's purge path). `Availability()` is the cheap surface: a `stat` of the resolved node path
+  plus a TTL-cached (30 s) `CheckNode` verdict, so a catalogue request never spawns `node --version`.
+- `cmd/kilasflow/main.go`: one call after `nodepack.LoadDir` (before the registry is shared and before
+  anything reads `credentials.Default()`, which the community credential types extend), a
+  `defer sidecarRuntime.Close()` that runs after `runtime.Drain`, and `NodeAvailability: availability`
+  merging the Code-node report with the sidecar report.
+- `sidecar/process.go`: a child that never dialled back now carries its exit status via `classifyExit`
+  and points at the sidecar log lines above it [C26].
+- `sidecar/runner.go` + `sidecar/logwriter.go` (additive): `RunnerConfig.Wrapper` passes the
+  documented `sidecar.wrapper` argv through to `ProcessSpec.Wrapper`; `logWriter` gained a mutex,
+  because a pool shares one `NewLogWriter` across every child and os/exec copies each child's streams
+  on its own goroutine, so `Write` is called concurrently.
+- Docs: new `operate/javascript-sidecar.md` (sidebar order 6) with the image/deployment consequences,
+  the trust model and an explicit not-a-boundary list, the failure-code table and the Docker recipe;
+  the `sidecar` row in `concepts/node-registry.md`; a caveat section in
+  `concepts/safety-boundaries.md`; a paragraph in `operate/deployment.md`; a CHANGELOG bullet.
+- CI: `- uses: ./.github/actions/js-toolchain` before the Go tests step (Node 24 from `devbox.json`)
+  and `KILASFLOW_TEST_REQUIRE_NODE: "1"` in that step's env.
+
+**Verified.**
+
+- `KILASFLOW_TEST_REQUIRE_NODE=1 go test -race -count=1 ./sidecar/... ./internal/sidecarnode/... ./nodes/... ./internal/config/... ./cmd/kilasflow/...`
+  → ok (sidecar 32.6 s, sidecarnode 2.2 s, nodes 345.8 s, config 2.2 s, cmd/kilasflow 7.6 s) — the
+  real-Node tests ran rather than skipped.
+- Linux/glibc lane (`kf-7cg0cd-linux`, Node v24.20.0):
+  `docker run --rm -v "$PWD":/src -w /src kf-7cg0cd-linux go test -race -count=1 ./sidecar/... ./internal/sidecarnode/... ./nodes/...`
+  → ok (28.2 s / 1.3 s / 306.6 s) — the `/proc` watchdog, group kill and `WaitDelay` as CI runs them.
+- `go vet ./...` and `go build ./...` clean; `gofmt -l .` (minus `web/`) prints nothing;
+  `GOOS=windows go build ./sidecar/ ./internal/sidecarnode/` clean;
+  `GOOS=linux go vet ./sidecar/... ./nodes/... ./cmd/kilasflow/...` clean.
+- Node off PATH (`env PATH="$(dirname "$(command -v go)"):/usr/bin:/bin"`): every real-Node test SKIPs
+  with "node is not on PATH; install Node 24 to run the sidecar tests", the pure-Go tests still pass;
+  with `KILASFLOW_TEST_REQUIRE_NODE=1` the same command FAILs. Same behaviour for the new
+  `cmd/kilasflow` tests.
+- `make generate-config-reference && make generate-config-reference-check` green; `go test ./scripts/...`
+  green; `make coordinates-check` green; `make docs-build` → "All internal links are valid" (44 pages).
+- Docker recipe (built by hand, not in CI; it is documented in the new page): cross-compiled
+  `CGO_ENABLED=0 GOOS=linux GOARCH=arm64`, `FROM node:24-slim`, the binary, `kf-fixture-nodes` under
+  `/opt/sidecar/node_modules`, a writable data dir, non-root. Booted:
+  `JavaScript sidecar started node=v24.21.0 packages=[kf-fixture-nodes] nodes=2 excluded=0`, then
+  `http server listening`; `GET /api/v1/node-types` returned 61 definitions, 2 with
+  `source=sidecar` (`sidecar.kf-fixture-nodes.fixtureGreet@1`, `…fixtureRelay@1`). Booted with
+  `KILASFLOW_SIDECAR_ENABLED=false`: no sidecar log line, a `/proc` scan found no `node` process, and
+  the catalogue returned 59 definitions with 0 sidecar entries. Both containers were removed.
+- The CI step itself cannot be exercised locally (GitHub-hosted runner); the first CI run is its test.
+
+**Mutation evidence (stage 4).**
+
+| Mutation | Test | Result |
+|---|---|---|
+| M-4a: `setupSidecar` ignores `enabled` | `TestSetupSidecarDisabledChangesNothing` | FAIL — `sidecar.packages_dir: no packages directory is configured` |
+| M-4b: `nodeStatus` probes instead of trusting the cached verdict | `TestSidecarAvailabilityReportsAnOutageWithoutSpawningPerRequest` | FAIL — `checkNode ran 10 times behind the cached verdict, want 0` |
+| M-4c: the `logWriter` mutex removed | `TestLogWriterIsSafeForConcurrentChildren` (`-race`) | FAIL — `WARNING: DATA RACE` in `logWriter.Write` |
+
+**Pre-existing flake, not this change.** The wider scoped run produced one `internal/engine` failure,
+`TestResumeOfAPerItemSuspendProcessesEveryItem` (`approval request has expired: the deadline is in the
+past`), a wall-clock wait deadline. It passes alone (`ok … 2.5 s`) and 3× on a clean archive of `main`
+(`5328524`, `git archive` into `/tmp`, `go test -race -count=3`) — the load-sensitive wait-service
+flake already on the board (BUG-w8h3km).
+
+**Deviations and honest limits.**
+
+- Three additive `sidecar/` fixes were needed that the plan's stage-4 file list did not name:
+  `RunnerConfig.Wrapper` (the documented `sidecar.wrapper` key was otherwise accepted and silently
+  dropped), the spawn exit status [C26], and the log-writer mutex (the pool shares one writer).
+- `Validate` also requires `runtime_dir` non-empty when enabled (not in the plan's list): an empty
+  value would have extracted the runner into the process working directory.
+- The wide `go test -race -count=1 ./...` was started but did not finish before hand-off; every package
+  this change touches, plus every package in the plan's gate list, passes above (one pre-existing
+  `internal/engine` flake dismissed, above).
+- **Sentences for BUG-vzzkg3's pages** (not edited here): in
+  `docs/src/content/docs/guides/community-nodes.md`, "Deny by default" says "until that proxy exists, a
+  node that reaches past the boundary has its run refused" — the proxy now exists, so it should say the
+  HTTP is proxied back through `internal/safehttp` with per-credential `allowedDomains` and only the
+  other routes rest on the guard; "What the deployment looks like" names `sidecar/` and
+  `fixture/echo.js` as the host reference, which is now understated (`sidecar/runner/runner.cjs`,
+  `internal/sidecarnode`, `nodes/sidecar.go`, the `sidecar.*` keys, and a link to the new
+  `operate/javascript-sidecar.md`); the "Three rules" list could note that all allowlisted packages
+  share one process per tenant. `concepts/tenancy-and-embedding.md` has no stale sentence.

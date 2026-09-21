@@ -1,0 +1,13 @@
+{
+  "name": "kf-fixture-hostile",
+  "version": "1.0.0",
+  "description": "KilasFlow sidecar test fixture: a package that tries to leave the sidecar",
+  "license": "MIT",
+  "n8n": {
+    "n8nNodesApiVersion": 1,
+    "nodes": [
+      "dist/nodes/Hostile/Hostile.node.js",
+      "dist/nodes/Noisy/Noisy.node.js"
+    ]
+  }
+}

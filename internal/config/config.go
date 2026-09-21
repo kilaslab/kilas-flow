@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"os"
 	"reflect"
+	"regexp"
+	"runtime"
 	"strings"
 	"time"
 
@@ -55,6 +57,7 @@ type Config struct {
 	Binary      Binary       `koanf:"binary"`
 	Packs       Packs        `koanf:"packs"`
 	Log         Log          `koanf:"log"`
+	Sidecar     Sidecar      `koanf:"sidecar"`
 }
 
 // Server holds HTTP listener settings.
@@ -652,6 +655,78 @@ type Packs struct {
 	VisibleTo []string `koanf:"visible_to"`
 }
 
+// Sidecar configures the opt-in JavaScript sidecar that runs programmatic
+// community nodes: a real execute() a declarative pack cannot replicate.
+//
+// It is off by default, and off is byte-for-byte the deployment this section
+// did not change: no Node process, no runtime directory, and Node is never
+// looked for on PATH.
+//
+// The section name is one word for the same reason Binary is: envKeyToPath
+// treats the first underscore as the section separator, so a two-word section
+// could never be set from the environment.
+type Sidecar struct {
+	// Enabled turns the sidecar on. When it is on, every process that boots
+	// with it on needs a Node binary and the packages below at startup,
+	// because the node catalogue is read from them at boot.
+	// Env: KILASFLOW_SIDECAR_ENABLED. Default: false.
+	Enabled bool `koanf:"enabled"`
+	// NodePath is the operator-installed Node 24 LTS binary. Empty searches
+	// PATH, which is what a development machine wants and what a container
+	// without one should set explicitly.
+	// Env: KILASFLOW_SIDECAR_NODE_PATH. Default: "" meaning node from PATH.
+	NodePath string `koanf:"node_path"`
+	// PackagesDir holds the installed packages: either an npm --prefix
+	// directory containing node_modules/, or one directory per flat package.
+	// It is required when the sidecar is enabled.
+	// Env: KILASFLOW_SIDECAR_PACKAGES_DIR. Default: "".
+	PackagesDir string `koanf:"packages_dir"`
+	// Packages is the allowlist of package names to load. Transitive
+	// dependencies and packages not named here are never loaded by the runner.
+	// It must name at least one package when the sidecar is enabled.
+	// Env: KILASFLOW_SIDECAR_PACKAGES (comma-separated). Default: empty.
+	Packages []string `koanf:"packages"`
+	// RuntimeDir holds the extracted runner and one socket directory per
+	// process. It must be writable and on a local filesystem.
+	// Env: KILASFLOW_SIDECAR_RUNTIME_DIR. Default: "./data/sidecar".
+	RuntimeDir string `koanf:"runtime_dir"`
+	// Wrapper is an argv prefix the child runs under, for an isolation tool
+	// such as a sandbox launcher or setpriv. KilasFlow does not inspect what it
+	// isolates, so it is the deployment's own boundary rather than a guarantee
+	// this build makes. A wrapper argument containing a comma cannot be set
+	// from the environment; use the YAML file for one.
+	// Env: KILASFLOW_SIDECAR_WRAPPER (comma-separated). Default: empty.
+	Wrapper []string `koanf:"wrapper"`
+	// Timeout bounds one node run on a warm process.
+	// Env: KILASFLOW_SIDECAR_TIMEOUT. Default: 30s.
+	Timeout time.Duration `koanf:"timeout"`
+	// SpawnTimeout bounds a cold start: listening, forking, and the child's
+	// dial-back.
+	// Env: KILASFLOW_SIDECAR_SPAWN_TIMEOUT. Default: 15s.
+	SpawnTimeout time.Duration `koanf:"spawn_timeout"`
+	// IdleTimeout is how long a tenant's process stays warm between runs
+	// before the pool reaps it, and so also how long decrypted credentials can
+	// linger in its memory after the last run.
+	// Env: KILASFLOW_SIDECAR_IDLE_TIMEOUT. Default: 5m.
+	IdleTimeout time.Duration `koanf:"idle_timeout"`
+	// MaxHeapMB is the child's JavaScript heap ceiling. It is a heap bound,
+	// not a resident-memory one: Buffer and native allocations live outside
+	// V8's old space, which is why MaxRSSMB exists as a second bound.
+	// Env: KILASFLOW_SIDECAR_MAX_HEAP_MB. Default: 256.
+	MaxHeapMB int `koanf:"max_heap_mb"`
+	// MaxRSSMB is the resident-set ceiling the host watchdog enforces by
+	// polling the child. Zero disables the watchdog; the container limit stays
+	// the hard backstop either way.
+	// Env: KILASFLOW_SIDECAR_MAX_RSS_MB. Default: 512.
+	MaxRSSMB int `koanf:"max_rss_mb"`
+	// MaxProcesses caps how many tenant processes the pool holds at once.
+	// Env: KILASFLOW_SIDECAR_MAX_PROCESSES. Default: 16.
+	MaxProcesses int `koanf:"max_processes"`
+	// MaxOutputBytes caps the decoded result payload one run may return.
+	// Env: KILASFLOW_SIDECAR_MAX_OUTPUT_BYTES. Default: 4194304 (4 MiB).
+	MaxOutputBytes int64 `koanf:"max_output_bytes"`
+}
+
 // Log configures structured logging.
 type Log struct {
 	// Level is one of debug, info, warn or error. Unknown values fall back to
@@ -781,6 +856,24 @@ func Default() Config {
 			// Empty disables directory loading: the default deployment runs
 			// the embedded packs only, exactly as before.
 			Dir: "",
+		},
+		Sidecar: Sidecar{
+			// Off by default, and every field below is the value used when an
+			// operator turns it on without overriding the limits.
+			Enabled:     false,
+			RuntimeDir:  "./data/sidecar",
+			PackagesDir: "",
+			NodePath:    "",
+			// Kept equal to sidecar.DefaultLimits, which a test pins. The
+			// numbers are conservative because the code across the socket is
+			// third party.
+			Timeout:        30 * time.Second,
+			SpawnTimeout:   15 * time.Second,
+			IdleTimeout:    5 * time.Minute,
+			MaxHeapMB:      256,
+			MaxRSSMB:       512,
+			MaxProcesses:   16,
+			MaxOutputBytes: 4 << 20,
 		},
 		Log: Log{
 			Level:  "info",
@@ -1160,6 +1253,84 @@ func (c Config) Validate() error {
 		return err
 	}
 
+	if err := validateSidecar(c.Sidecar); err != nil {
+		return err
+	}
+	return nil
+}
+
+// sidecarHostIsUnix reports whether this build can run the sidecar at all. It
+// is a variable so a test can prove the refusal without being on Windows.
+var sidecarHostIsUnix = runtime.GOOS != "windows"
+
+// sidecarPackageName is the npm name grammar: a lower-case name with an
+// optional @scope/ prefix. Every path segment has to begin with a letter or a
+// digit, which is what refuses "..", an absolute path and any name carrying a
+// separator — so a package list can never walk out of the packages directory.
+var sidecarPackageName = regexp.MustCompile(`^(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*$`)
+
+// npmPackageNameMax is npm's own length limit for a package name, scope
+// included.
+const npmPackageNameMax = 214
+
+// validateSidecar refuses a sidecar configuration that cannot work. It runs
+// only when the sidecar is enabled: a declined sidecar is a deployment where
+// none of these values is read, so a stray value there must not refuse a boot.
+func validateSidecar(cfg Sidecar) error {
+	if !cfg.Enabled {
+		return nil
+	}
+	if !sidecarHostIsUnix {
+		return fmt.Errorf("sidecar.enabled is not supported on %s: the JavaScript sidecar needs a unix host", runtime.GOOS)
+	}
+	if strings.TrimSpace(cfg.PackagesDir) == "" {
+		return fmt.Errorf("sidecar.packages_dir is required when sidecar.enabled is true")
+	}
+	if strings.TrimSpace(cfg.RuntimeDir) == "" {
+		return fmt.Errorf("sidecar.runtime_dir is required when sidecar.enabled is true")
+	}
+	if len(cfg.Packages) == 0 {
+		return fmt.Errorf("sidecar.packages must name at least one package when sidecar.enabled is true")
+	}
+	for index, name := range cfg.Packages {
+		if err := validateSidecarPackageName(name); err != nil {
+			return fmt.Errorf("sidecar.packages[%d]: %w", index, err)
+		}
+	}
+	if cfg.Timeout <= 0 {
+		return fmt.Errorf("sidecar.timeout %s must be positive", cfg.Timeout)
+	}
+	if cfg.SpawnTimeout <= 0 {
+		return fmt.Errorf("sidecar.spawn_timeout %s must be positive", cfg.SpawnTimeout)
+	}
+	if cfg.IdleTimeout <= 0 {
+		return fmt.Errorf("sidecar.idle_timeout %s must be positive", cfg.IdleTimeout)
+	}
+	if cfg.MaxHeapMB < 16 {
+		return fmt.Errorf("sidecar.max_heap_mb %d must be at least 16", cfg.MaxHeapMB)
+	}
+	// Zero is allowed and documented: it turns the host-side RSS watchdog off
+	// rather than making the bound zero, which would kill every run.
+	if cfg.MaxRSSMB < 0 {
+		return fmt.Errorf("sidecar.max_rss_mb %d must not be negative", cfg.MaxRSSMB)
+	}
+	if cfg.MaxProcesses < 1 {
+		return fmt.Errorf("sidecar.max_processes %d must be at least 1", cfg.MaxProcesses)
+	}
+	if cfg.MaxOutputBytes <= 0 {
+		return fmt.Errorf("sidecar.max_output_bytes %d must be positive", cfg.MaxOutputBytes)
+	}
+	return nil
+}
+
+// validateSidecarPackageName refuses anything outside the npm name grammar.
+func validateSidecarPackageName(name string) error {
+	if len(name) > npmPackageNameMax {
+		return fmt.Errorf("%q is longer than npm's %d-character limit", name, npmPackageNameMax)
+	}
+	if !sidecarPackageName.MatchString(name) {
+		return fmt.Errorf("%q is not an npm package name", name)
+	}
 	return nil
 }
 

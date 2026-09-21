@@ -1,0 +1,1 @@
+../../../kf-fixture-nodes/dist/credentials/FixtureApi.credentials.js

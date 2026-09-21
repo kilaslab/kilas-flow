@@ -1,0 +1,14 @@
+{
+  "name": "kf-fixture-versions",
+  "version": "0.2.0",
+  "description": "KilasFlow sidecar test fixture: one node name in two versions, and a node file whose peer is missing",
+  "license": "MIT",
+  "n8n": {
+    "n8nNodesApiVersion": 1,
+    "nodes": [
+      "dist/nodes/Foo.node.js",
+      "dist/nodes/v2/FooV2.node.js",
+      "dist/nodes/Trigger/Trigger.node.js"
+    ]
+  }
+}

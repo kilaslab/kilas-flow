@@ -1,0 +1,17 @@
+{
+  "name": "kf-fixture-nodes",
+  "version": "1.4.0",
+  "description": "KilasFlow sidecar test fixture: a small programmatic community node package",
+  "license": "MIT",
+  "main": "dist/index.js",
+  "n8n": {
+    "n8nNodesApiVersion": 1,
+    "nodes": [
+      "dist/nodes/Greet/Greet.node.js",
+      "dist/nodes/Relay/Relay.node.js"
+    ],
+    "credentials": [
+      "dist/credentials/FixtureApi.credentials.js"
+    ]
+  }
+}

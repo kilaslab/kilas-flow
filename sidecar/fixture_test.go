@@ -2,13 +2,14 @@ package sidecar
 
 import (
 	"context"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/kilaslab/kilas-flow/sidecar/sidecartest"
 )
 
 // lockedWriter serialises concurrent child transcripts into one buffer.
@@ -36,9 +37,7 @@ func (writer *lockedWriter) String() string {
 // node's missing toolchain — a deployment without Node gets the no-sidecar
 // diagnostic instead of a failure.
 func TestFixtureEchoRunsHeadless(t *testing.T) {
-	if _, err := exec.LookPath("node"); err != nil {
-		t.Skip("node is not on PATH; the fixture cannot run headless here")
-	}
+	node := sidecartest.Node(t)
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("runtime.Caller refused to say where this test lives")
@@ -49,7 +48,7 @@ func TestFixtureEchoRunsHeadless(t *testing.T) {
 	limits := DefaultLimits()
 	limits.Timeout = 15 * time.Second
 	limits.SpawnTimeout = 15 * time.Second
-	pool := NewPool(DefaultSpawn(script, 128, diagnostics), limits)
+	pool := NewPool(NewProcessSpawn(ProcessSpec{NodePath: node, Script: script, HeapMB: 128, Diag: diagnostics}), limits)
 	defer pool.Close()
 
 	first, err := pool.Execute(context.Background(), Request{

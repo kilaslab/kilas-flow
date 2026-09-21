@@ -893,3 +893,153 @@ info rather than refusing to start.
 
 Format is "text" for local reading or "json" for production log
 pipelines.
+
+## sidecar
+
+Sidecar configures the opt-in JavaScript sidecar that runs programmatic
+community nodes: a real execute() a declarative pack cannot replicate.
+
+It is off by default, and off is byte-for-byte the deployment this section
+did not change: no Node process, no runtime directory, and Node is never
+looked for on PATH.
+
+The section name is one word for the same reason Binary is: envKeyToPath
+treats the first underscore as the section separator, so a two-word section
+could never be set from the environment.
+
+### sidecar.enabled
+
+- Type: `bool`
+- Default: `false`
+- Environment: `KILASFLOW_SIDECAR_ENABLED`
+- Required: no
+
+Enabled turns the sidecar on. When it is on, every process that boots
+with it on needs a Node binary and the packages below at startup,
+because the node catalogue is read from them at boot.
+
+### sidecar.node_path
+
+- Type: `string`
+- Default: `''`
+- Environment: `KILASFLOW_SIDECAR_NODE_PATH`
+- Required: no
+
+NodePath is the operator-installed Node 24 LTS binary. Empty searches
+PATH, which is what a development machine wants and what a container
+without one should set explicitly.
+
+### sidecar.packages_dir
+
+- Type: `string`
+- Default: `''`
+- Environment: `KILASFLOW_SIDECAR_PACKAGES_DIR`
+- Required: no
+
+PackagesDir holds the installed packages: either an npm --prefix
+directory containing node_modules/, or one directory per flat package.
+It is required when the sidecar is enabled.
+
+### sidecar.packages
+
+- Type: `string list`
+- Default: `[]`
+- Environment: `KILASFLOW_SIDECAR_PACKAGES`
+- Required: no
+
+Packages is the allowlist of package names to load. Transitive
+dependencies and packages not named here are never loaded by the runner.
+It must name at least one package when the sidecar is enabled.
+
+### sidecar.runtime_dir
+
+- Type: `string`
+- Default: `'./data/sidecar'`
+- Environment: `KILASFLOW_SIDECAR_RUNTIME_DIR`
+- Required: no
+
+RuntimeDir holds the extracted runner and one socket directory per
+process. It must be writable and on a local filesystem.
+
+### sidecar.wrapper
+
+- Type: `string list`
+- Default: `[]`
+- Environment: `KILASFLOW_SIDECAR_WRAPPER`
+- Required: no
+
+Wrapper is an argv prefix the child runs under, for an isolation tool
+such as a sandbox launcher or setpriv. KilasFlow does not inspect what it
+isolates, so it is the deployment's own boundary rather than a guarantee
+this build makes. A wrapper argument containing a comma cannot be set
+from the environment; use the YAML file for one.
+
+### sidecar.timeout
+
+- Type: `duration`
+- Default: `30s`
+- Environment: `KILASFLOW_SIDECAR_TIMEOUT`
+- Required: no
+
+Timeout bounds one node run on a warm process.
+
+### sidecar.spawn_timeout
+
+- Type: `duration`
+- Default: `15s`
+- Environment: `KILASFLOW_SIDECAR_SPAWN_TIMEOUT`
+- Required: no
+
+SpawnTimeout bounds a cold start: listening, forking, and the child's
+dial-back.
+
+### sidecar.idle_timeout
+
+- Type: `duration`
+- Default: `5m0s`
+- Environment: `KILASFLOW_SIDECAR_IDLE_TIMEOUT`
+- Required: no
+
+IdleTimeout is how long a tenant's process stays warm between runs
+before the pool reaps it, and so also how long decrypted credentials can
+linger in its memory after the last run.
+
+### sidecar.max_heap_mb
+
+- Type: `integer`
+- Default: `256`
+- Environment: `KILASFLOW_SIDECAR_MAX_HEAP_MB`
+- Required: no
+
+MaxHeapMB is the child's JavaScript heap ceiling. It is a heap bound,
+not a resident-memory one: Buffer and native allocations live outside
+V8's old space, which is why MaxRSSMB exists as a second bound.
+
+### sidecar.max_rss_mb
+
+- Type: `integer`
+- Default: `512`
+- Environment: `KILASFLOW_SIDECAR_MAX_RSS_MB`
+- Required: no
+
+MaxRSSMB is the resident-set ceiling the host watchdog enforces by
+polling the child. Zero disables the watchdog; the container limit stays
+the hard backstop either way.
+
+### sidecar.max_processes
+
+- Type: `integer`
+- Default: `16`
+- Environment: `KILASFLOW_SIDECAR_MAX_PROCESSES`
+- Required: no
+
+MaxProcesses caps how many tenant processes the pool holds at once.
+
+### sidecar.max_output_bytes
+
+- Type: `integer (bytes)`
+- Default: `4194304`
+- Environment: `KILASFLOW_SIDECAR_MAX_OUTPUT_BYTES`
+- Required: no
+
+MaxOutputBytes caps the decoded result payload one run may return.

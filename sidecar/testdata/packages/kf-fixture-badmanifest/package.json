@@ -1,0 +1,16 @@
+{
+  "name": "kf-fixture-badmanifest",
+  "version": "1.0.0",
+  "description": "KilasFlow sidecar test fixture: a manifest that must be refused whole",
+  "license": "MIT",
+  "n8n": {
+    "n8nNodesApiVersion": 2,
+    "nodes": [
+      "dist/nodes/Ok/Ok.node.js",
+      "../escape.js"
+    ],
+    "credentials": [
+      "dist/credentials/Escape.credentials.js"
+    ]
+  }
+}

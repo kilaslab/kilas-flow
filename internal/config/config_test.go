@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/kilaslab/kilas-flow/internal/sqlnode"
+	"github.com/kilaslab/kilas-flow/sidecar"
 )
 
 // TestMain drops any KILASFLOW_* variable the caller's environment is carrying
@@ -601,5 +602,206 @@ func TestIdempotencyRetentionIsBounded(t *testing.T) {
 				t.Errorf("Validate() error = %v for %s, want none", err, retention)
 			}
 		})
+	}
+}
+
+// The sidecar is the most expensive thing on the roadmap and buys the least
+// coverage, so it must cost a deployment nothing until it is asked for.
+func TestSidecarIsDisabledByDefault(t *testing.T) {
+	cfg, err := Load(filepath.Join(t.TempDir(), "absent.yaml"))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Sidecar.Enabled {
+		t.Error("Sidecar.Enabled defaults to true: a stock install would need Node and would start a process")
+	}
+	if cfg.Sidecar.RuntimeDir != "./data/sidecar" {
+		t.Errorf("Sidecar.RuntimeDir = %q, want ./data/sidecar", cfg.Sidecar.RuntimeDir)
+	}
+	if len(cfg.Sidecar.Packages) != 0 || len(cfg.Sidecar.Wrapper) != 0 {
+		t.Errorf("Sidecar allowlists default to %v / %v, want empty", cfg.Sidecar.Packages, cfg.Sidecar.Wrapper)
+	}
+}
+
+// Two packages state the same numbers: sidecar so a pool built from a zero
+// value still bounds something, and here so an operator reading the
+// configuration sees what they are. This is what keeps them one number.
+func TestTheSidecarLimitsMatchTheNodePackage(t *testing.T) {
+	limits := sidecar.DefaultLimits()
+	cfg := Default().Sidecar
+	checks := []struct {
+		name string
+		got  any
+		want any
+	}{
+		{"Timeout", cfg.Timeout, limits.Timeout},
+		{"SpawnTimeout", cfg.SpawnTimeout, limits.SpawnTimeout},
+		{"IdleTimeout", cfg.IdleTimeout, limits.IdleTimeout},
+		{"MaxHeapMB", cfg.MaxHeapMB, limits.NodeMaxHeapMB},
+		{"MaxRSSMB", cfg.MaxRSSMB, limits.MaxRSSMB},
+		{"MaxProcesses", cfg.MaxProcesses, limits.MaxProcesses},
+		{"MaxOutputBytes", cfg.MaxOutputBytes, limits.MaxOutputBytes},
+	}
+	for _, check := range checks {
+		if check.got != check.want {
+			t.Errorf("Sidecar.%s = %v, want sidecar's %v", check.name, check.got, check.want)
+		}
+	}
+}
+
+func TestSidecarKeysAreReachableFromYAMLAndTheEnvironment(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "kilasflow.yaml")
+	body := strings.Join([]string{
+		"sidecar:",
+		"  enabled: true",
+		"  node_path: /opt/node/bin/node",
+		"  packages_dir: /opt/sidecar",
+		"  packages:",
+		"    - kf-fixture-nodes",
+		"    - '@scope/pkg'",
+		"  wrapper:",
+		"    - /usr/bin/setpriv",
+		"    - --no-new-privs",
+		"  timeout: 45s",
+		"  spawn_timeout: 20s",
+		"  idle_timeout: 2m",
+		"  max_heap_mb: 128",
+		"  max_rss_mb: 256",
+		"  max_processes: 4",
+		"  max_output_bytes: 1048576",
+		"",
+	}, "\n")
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !cfg.Sidecar.Enabled {
+		t.Fatal("Sidecar.Enabled from YAML = false, want true")
+	}
+	if got, want := cfg.Sidecar.NodePath, "/opt/node/bin/node"; got != want {
+		t.Errorf("NodePath = %q, want %q", got, want)
+	}
+	if got, want := cfg.Sidecar.PackagesDir, "/opt/sidecar"; got != want {
+		t.Errorf("PackagesDir = %q, want %q", got, want)
+	}
+	if got := cfg.Sidecar.Packages; len(got) != 2 || got[0] != "kf-fixture-nodes" || got[1] != "@scope/pkg" {
+		t.Errorf("Packages = %v, want both entries", got)
+	}
+	if got := cfg.Sidecar.Wrapper; len(got) != 2 || got[0] != "/usr/bin/setpriv" {
+		t.Errorf("Wrapper = %v, want both entries", got)
+	}
+	if got, want := cfg.Sidecar.Timeout, 45*time.Second; got != want {
+		t.Errorf("Timeout = %s, want %s", got, want)
+	}
+	if got, want := cfg.Sidecar.MaxOutputBytes, int64(1<<20); got != want {
+		t.Errorf("MaxOutputBytes = %d, want %d", got, want)
+	}
+
+	// The section is one word for exactly this reason: envKeyToPath treats the
+	// first underscore as the section separator, so a section named side_car
+	// could never be overridden at all. Lists are split on commas because that
+	// is the only form a container with no mounted file can use.
+	t.Setenv("KILASFLOW_SIDECAR_ENABLED", "true")
+	t.Setenv("KILASFLOW_SIDECAR_PACKAGES_DIR", "/srv/pkgs")
+	t.Setenv("KILASFLOW_SIDECAR_PACKAGES", "kf-fixture-nodes,kf-fixture-versions")
+	t.Setenv("KILASFLOW_SIDECAR_WRAPPER", "/usr/bin/bwrap,/usr/bin/setpriv")
+	t.Setenv("KILASFLOW_SIDECAR_TIMEOUT", "10s")
+	t.Setenv("KILASFLOW_SIDECAR_MAX_PROCESSES", "3")
+
+	cfg, err = Load(filepath.Join(t.TempDir(), "absent.yaml"))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got := cfg.Sidecar.Packages; len(got) != 2 || got[1] != "kf-fixture-versions" {
+		t.Errorf("Packages from the environment = %v, want both entries (comma split)", got)
+	}
+	if got := cfg.Sidecar.Wrapper; len(got) != 2 {
+		t.Errorf("Wrapper from the environment = %v, want both entries (comma split)", got)
+	}
+	if got, want := cfg.Sidecar.Timeout, 10*time.Second; got != want {
+		t.Errorf("Timeout from the environment = %s, want %s", got, want)
+	}
+	if got, want := cfg.Sidecar.MaxProcesses, 3; got != want {
+		t.Errorf("MaxProcesses from the environment = %d, want %d", got, want)
+	}
+}
+
+func TestValidateRejectsBadSidecarConfig(t *testing.T) {
+	valid := func() Sidecar {
+		return Sidecar{
+			Enabled:        true,
+			NodePath:       "",
+			PackagesDir:    "/opt/sidecar",
+			Packages:       []string{"kf-fixture-nodes"},
+			RuntimeDir:     "./data/sidecar",
+			Timeout:        30 * time.Second,
+			SpawnTimeout:   15 * time.Second,
+			IdleTimeout:    5 * time.Minute,
+			MaxHeapMB:      256,
+			MaxRSSMB:       512,
+			MaxProcesses:   16,
+			MaxOutputBytes: 4 << 20,
+		}
+	}
+
+	cases := []struct {
+		name    string
+		mutate  func(*Sidecar)
+		wantSub string
+	}{
+		{"no packages directory", func(c *Sidecar) { c.PackagesDir = "  " }, "packages_dir is required"},
+		{"no runtime directory", func(c *Sidecar) { c.RuntimeDir = "" }, "runtime_dir is required"},
+		{"no packages", func(c *Sidecar) { c.Packages = nil }, "at least one package"},
+		{"parent traversal", func(c *Sidecar) { c.Packages = []string{"../escape"} }, "not an npm package name"},
+		{"absolute path", func(c *Sidecar) { c.Packages = []string{"/etc/passwd"} }, "not an npm package name"},
+		{"uppercase", func(c *Sidecar) { c.Packages = []string{"Bad"} }, "not an npm package name"},
+		{"bad scope", func(c *Sidecar) { c.Packages = []string{"@scope/"} }, "not an npm package name"},
+		{"zero timeout", func(c *Sidecar) { c.Timeout = 0 }, "timeout"},
+		{"negative spawn timeout", func(c *Sidecar) { c.SpawnTimeout = -time.Second }, "spawn_timeout"},
+		{"zero idle", func(c *Sidecar) { c.IdleTimeout = 0 }, "idle_timeout"},
+		{"tiny heap", func(c *Sidecar) { c.MaxHeapMB = 8 }, "max_heap_mb"},
+		{"no processes", func(c *Sidecar) { c.MaxProcesses = 0 }, "max_processes"},
+		{"zero output", func(c *Sidecar) { c.MaxOutputBytes = 0 }, "max_output_bytes"},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := Default()
+			cfg.Sidecar = valid()
+			test.mutate(&cfg.Sidecar)
+			err := cfg.Validate()
+			if err == nil {
+				t.Fatalf("Validate() = nil, want a refusal naming %q", test.wantSub)
+			}
+			if !strings.Contains(err.Error(), test.wantSub) {
+				t.Errorf("Validate() error = %q, want it to mention %q", err, test.wantSub)
+			}
+		})
+	}
+
+	// A disabled sidecar is never read, so a stray value in its section must
+	// not refuse a boot.
+	off := Default()
+	off.Sidecar = valid()
+	off.Sidecar.Packages = nil
+	off.Sidecar.Enabled = false
+	if err := off.Validate(); err != nil {
+		t.Errorf("Validate() refused a disabled sidecar: %v", err)
+	}
+
+	// A non-unix host cannot run the sidecar at all, and saying so at boot is
+	// better than a workflow discovering it. Injected because the test cannot
+	// be run on Windows.
+	restore := sidecarHostIsUnix
+	sidecarHostIsUnix = false
+	t.Cleanup(func() { sidecarHostIsUnix = restore })
+	strict := Default()
+	strict.Sidecar = valid()
+	err := strict.Validate()
+	if err == nil || !strings.Contains(err.Error(), "unix host") {
+		t.Errorf("Validate() on a non-unix host = %v, want it refused at boot", err)
 	}
 }

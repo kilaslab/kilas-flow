@@ -354,6 +354,35 @@ func run(args []string) error {
 		log.Info("node type is scoped to tenants", "type", nodeType, "tenants", scopes[nodeType])
 	}
 
+	// The JavaScript sidecar is opt-in and off by default. It is loaded here,
+	// before the registry is shared and before anything reads
+	// credentials.Default(), because a community package's credential types
+	// register into that global catalogue. A declined sidecar returns nil and
+	// changes nothing: no Node process, no runtime directory, no node on PATH.
+	sidecarRuntime, err := setupSidecar(ctx, cfg.Sidecar, sidecarDeps{
+		Definitions: nodeRegistry,
+		Executors:   executorRegistry,
+		Credentials: credentials.Default(),
+		Policy:      outboundPolicy(cfg.Outbound),
+		Log:         log,
+	})
+	if err != nil {
+		return err
+	}
+	if sidecarRuntime != nil {
+		// Children die after the workers have drained: this defer runs when
+		// run() returns, after runtime.Drain below.
+		defer sidecarRuntime.Close()
+	}
+
+	// What this deployment cannot run, for the node catalogue to stamp on the
+	// way out. The sidecar report is appended only when it was booted, so a
+	// declined sidecar leaves the Code-node answer exactly as it was.
+	availability := nodeAvailability(codeCompiler)
+	if sidecarRuntime != nil {
+		availability = mergeAvailability(availability, sidecarRuntime.Availability)
+	}
+
 	// Credentials are optional at boot: an install with no key still runs
 	// workflows, and only credential operations report that it is unconfigured.
 	// Failing startup instead would make the key mandatory for every user.
@@ -738,7 +767,7 @@ func run(args []string) error {
 		AuthIssuer:          authIssuer,
 		ExecutionController: runtime,
 		ResumeService:       runtime,
-		NodeAvailability:    nodeAvailability(codeCompiler),
+		NodeAvailability:    availability,
 		HTTPPolicy:          outboundPolicy(cfg.Outbound),
 		DatabaseGuard:       sqlGuard,
 		SessionMemory:       agentMemory,

@@ -123,6 +123,21 @@ credential can be applied. It is a narrowing on top of the policy above, never a
 replacement: a credential permitted to reach `example.com` still cannot reach it
 if the deployment's outbound policy refuses the resolved address.
 
+### The JavaScript sidecar (opt-in)
+
+The claim above — *every* outbound request a node makes goes through
+`internal/safehttp` — holds for a community node's HTTP: it is proxied back to
+the host and issued through the same client, under the deployment's policy and
+the conjunction of every credential's `allowedDomains`.
+
+Its *other* routes rest on a defence-in-depth guard rather than that client. A
+package can only open a socket, resolve a name, send a datagram or call `fetch`
+through a JavaScript guard and Node's permission model; any direct attempt fails
+the run, even if the package swallowed the error. Those are seat belts, not a
+sandbox against malicious code, and the [sidecar page](/operate/javascript-sidecar/)
+states exactly what they do not stop. For a hard boundary, use `sidecar.wrapper`
+or the container network policy.
+
 ## Databases
 
 There are two separate protections here and the structural one matters more.
