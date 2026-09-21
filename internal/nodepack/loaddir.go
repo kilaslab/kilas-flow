@@ -33,9 +33,12 @@ import (
 	"path/filepath"
 	"strings"
 
+	"context"
+
 	"github.com/kilaslab/kilas-flow/internal/loadoptions"
 	"github.com/kilaslab/kilas-flow/internal/node"
 	"github.com/kilaslab/kilas-flow/internal/routing"
+	"github.com/kilaslab/kilas-flow/internal/wasmpack"
 	"github.com/kilaslab/kilas-flow/internal/webhook"
 )
 
@@ -64,6 +67,20 @@ type DirDeps struct {
 	Lifecycles  *webhook.LifecycleRegistry
 	Executors   ExecutorSet
 	Options     *loadoptions.Resolver
+	// Modules is where a module pack's bytes are audited and made reachable.
+	// Nil refuses a module pack rather than registering a node nothing can run.
+	Modules ModuleRegistrar
+	// Context bounds the audit of a module pack. Nil is a background context:
+	// the loader runs at boot, where there is nothing to cancel.
+	Context context.Context
+}
+
+// ModuleRegistrar audits a module pack's bytes and makes them reachable.
+//
+// It is the one thing the loader needs from the pack runtime, and it is an
+// interface so the loader can be tested without a WebAssembly toolchain.
+type ModuleRegistrar interface {
+	Add(ctx context.Context, spec wasmpack.Spec) error
 }
 
 // LoadDir installs every pack found in dir, at composition, before the
@@ -116,6 +133,12 @@ func loadPackDir(deps DirDeps, dir, name string) error {
 	if err != nil {
 		return fmt.Errorf("load node pack %q: %s: %w", name, manifestPath, err)
 	}
+	if pack.Module != nil {
+		if err := registerModule(deps, dir, name, pack); err != nil {
+			return err
+		}
+		return nil
+	}
 	if err := Register(deps.Definitions, deps.Routes, deps.Executors, deps.Options, pack); err != nil {
 		return fmt.Errorf("load node pack %q: %w", name, err)
 	}
@@ -150,6 +173,69 @@ func checkPackDigest(dir, name string, manifest []byte) error {
 	if sum := sha256.Sum256(manifest); string(sum[:]) != string(want) {
 		return fmt.Errorf("load node pack %q: %s no longer matches its recorded digest: regenerate it or restore the approved manifest",
 			name, ManifestName)
+	}
+	return nil
+}
+
+// registerModule installs one module pack: it reads the module the manifest
+// names, checks it against the digest the manifest pins, hands it to the pack
+// runtime for its audit, and only then registers the node.
+//
+// The order matters. A module whose bytes do not match its digest, or whose
+// imports reach a capability its manifest did not declare, refuses the boot
+// naming the pack — nothing is registered, so no workflow can reference a node
+// that would fail at run time.
+func registerModule(deps DirDeps, dir, name string, pack *Pack) error {
+	if deps.Modules == nil {
+		return fmt.Errorf("load node pack %q: this server has no WebAssembly pack runtime, so a module pack cannot be loaded", name)
+	}
+	modulePath := filepath.Join(dir, name, pack.Module.File)
+	module, err := os.ReadFile(modulePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("load node pack %q: the manifest names module %q, which is not in the pack directory", name, pack.Module.File)
+		}
+		return fmt.Errorf("load node pack %q: read %s: %w", name, modulePath, err)
+	}
+	if !strings.EqualFold(digestOf(module), strings.TrimSpace(pack.Module.SHA256)) {
+		return fmt.Errorf("load node pack %q: %s does not match the sha256 its manifest pins: the module was changed after it was approved", name, pack.Module.File)
+	}
+	if issues := checkModule(pack, defaultCredentialLookup); len(issues) > 0 {
+		return fmt.Errorf("load node pack %q: %s", name, issues[0].Message)
+	}
+	limits, err := pack.Module.limits()
+	if err != nil {
+		return fmt.Errorf("load node pack %q: %w", name, err)
+	}
+	caps, err := pack.Module.capabilities()
+	if err != nil {
+		return fmt.Errorf("load node pack %q: %w", name, err)
+	}
+	outputs := make([]string, 0, len(pack.Module.outputs()))
+	for _, output := range pack.Module.outputs() {
+		outputs = append(outputs, strings.TrimSpace(output.Name))
+	}
+	ctx := deps.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	mode := wasmpack.ModeItem
+	if pack.Module.mode() == "batch" {
+		mode = wasmpack.ModeBatch
+	}
+	if err := deps.Modules.Add(ctx, wasmpack.Spec{
+		Type: pack.Type, Version: pack.Version,
+		Module: module, Digest: strings.TrimSpace(pack.Module.SHA256),
+		Mode: mode, Caps: caps, Limits: limits, Outputs: outputs,
+	}); err != nil {
+		return fmt.Errorf("load node pack %q: %w", name, err)
+	}
+	definition, _, err := Load(pack)
+	if err != nil {
+		return fmt.Errorf("load node pack %q: %w", name, err)
+	}
+	if err := deps.Definitions.RegisterFrom(node.SourcePack, definition); err != nil {
+		return fmt.Errorf("load node pack %q: %w", name, err)
 	}
 	return nil
 }

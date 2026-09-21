@@ -34,11 +34,11 @@ The technology choices are settled. wazero directly, because it is already the d
 - [x] A shared `wazero.CompilationCache` spans executions, and a test shows the second run of an unchanged artifact does not recompile the module.
 - [x] Compiled artifacts survive a process restart, and the persistent cache keys on `RuntimeVersion` so an artifact built against a previous host ABI is rebuilt rather than loaded.
 - [x] The Code node behaves honestly in the shipped image: either the image gains a working compile path, or the node reports a user-facing diagnostic naming exactly what the operator must provide. `internal/runcode/doc.go` no longer describes this as open.
-- [ ] A guest module receives capabilities only through an explicit host module — outbound HTTP, named credential access, binary read and write — and a pack that declares none is granted none.
-- [ ] Every host call is policed on the host side: outbound HTTP goes through `internal/safehttp` with the same SSRF policy and per-credential domain scoping as the HTTP node, and a credential a pack did not declare is not resolvable.
-- [ ] A pack distributed as `.wasm` modules plus a manifest registers node definitions tagged `pack`, carrying parameters, ports and validation, and its nodes run inside a workflow indistinguishably from built-ins.
+- [x] A guest module receives capabilities only through an explicit host module — outbound HTTP, named credential access, binary read and write — and a pack that declares none is granted none. (Stage 3 built the host module from the ABI table in `pkg/sdk`; the audit refuses an import the manifest does not declare — `TestTheAuditRefusesAModuleThatReachesPastItsDeclaration`, `TestTheRegistryRefusesAModuleThatReachesPastItsDeclaration` — and stage 4's `TestAModulePackThatReachesPastItsManifestRefusesTheBoot` proves the loader refuses it and registers nothing.)
+- [x] Every host call is policed on the host side: outbound HTTP goes through `internal/safehttp` with the same SSRF policy and per-credential domain scoping as the HTTP node, and a credential a pack did not declare is not resolvable. (`internal/wasmpack/hostcalls_http.go` and `hostcalls_credentials.go`, pinned by the hostcall tests: the policy, the credential's allowed domains, the redirect chain and the response cap; `Capabilities.GrantedCredential` refuses a type the manifest did not declare.)
+- [x] A pack distributed as `.wasm` modules plus a manifest registers node definitions tagged `pack`, carrying parameters, ports and validation, and its nodes run inside a workflow indistinguishably from built-ins. (Stage 4: `TestAModulePackFromDiskRunsThroughTheInstalledExecutor` loads a pack directory with a real wasip1 module, asserts `definition.Source == node.SourcePack` and runs the node through the executor the composition root installs, with no test double in between.)
 - [x] Per-call limits are enforced — wall clock, linear memory, output bytes, and the number of host calls — and exceeding any of them fails that node run with a named error, never the process.
-- [ ] `pkg/sdk` publishes the guest-side Go module a pack author imports, with an example pack built by hand under `GOOS=wasip1 GOARCH=wasm` and the build output recorded on this ticket.
+- [x] `pkg/sdk` publishes the guest-side Go module a pack author imports, with an example pack built by hand under `GOOS=wasip1 GOARCH=wasm` and the build output recorded on this ticket. (`pkg/sdk` is the module; `pkg/sdk/example/echo` and `pkg/sdk/example/fetch` are the examples; stage 3's notes record the commands and the sha256 of both builds.)
 
 ## Implementation Plan
 
@@ -1260,3 +1260,63 @@ through one package-level `ModuleCache` closed in `TestMain`)
 `wasi_snapshot_preview1.*`; fetch imports `wasi_snapshot_preview1.*` plus
 `kilasflow_v1.http_request`, `kilasflow_v1.credential_field`, `kilasflow_v1.result_len`,
 `kilasflow_v1.result_read`.
+
+Stage 4 of 4 (the pack format, the loader's module kind, the executor and the
+wiring). One commit.
+
+**What changed**
+
+- `internal/nodepack/module.go` (new): the module manifest — `file`, `sha256`,
+  `abi`, `mode`, `outputs`, `capabilities`, `credentials`, `limits` — and
+  `checkModule`, the one function both the tool and the loader validate with, so
+  a manifest the tool accepts is one the server accepts. The rules: exactly one
+  of resources/trigger/module; a bare `.wasm` filename; a pinned digest; the ABI
+  must equal the SDK's; `item` or `batch`; at most 16 unique lowerCamelCase
+  ports; capabilities from `http`/`binary.read`/`binary.write`; every credential
+  type registered **and** signing an HTTP request; limits at or below the
+  ceilings; no resource/operation scoping on parameters and no
+  `requestDefaults`, because a module makes its own requests.
+- `internal/nodepack/nodepack.go`: `Pack.Module`; `loadModule` builds the
+  definition — pack executor, declared ports, credential requirements — and
+  returns no routing description; `Register` refuses a module pack outside the
+  loader, because the bytes live beside the manifest.
+- `internal/nodepack/loaddir.go`: `DirDeps.Modules` (the pack runtime) and
+  `DirDeps.Context`; `registerModule` reads the module, checks it against the
+  pinned digest, hands it to the runtime's audit, and only then registers the
+  node — a module that fails the audit refuses the boot naming the pack and
+  registers nothing.
+- `internal/nodepack/validate.go`: the module keys are strict-decoded with their
+  paths, `Validate` reports every module problem at once rather than the first,
+  and the trigger stub now covers the pack executor so the tool can validate a
+  module pack's binding.
+- `internal/wasmpack/spec.go`, `registry.go`, `executor.go` (new):
+  `ExecutorID = "core.packModule"`, `Spec`, `Registry` (audit on `Add`, refuse a
+  duplicate `{type,version}`, `Lookup`, `Types`) and the executor — item mode
+  invokes once per item with that item's resolved parameters, batch mode once
+  for the batch; one list of items lands on the first port, a list per port
+  lands on the declared ports, more ports than declared is refused, and an empty
+  answer is a failure rather than an empty success.
+- `cmd/kilasflow/main.go`: the registry and the executor are built once, the
+  executor is installed under `wasmpack.ExecutorID`, and the loader gets both.
+- Docs: `reference/node-packs.md` documents the module manifest, the three pack
+  kinds and what the loader does with a module; `guides/community-nodes.md` now
+  says the WASM host side ships and lists what is still missing (build tooling,
+  declared-property conveniences, whole-numbered versions on the ABI).
+
+**Verification**
+
+| Command | Outcome |
+| --- | --- |
+| `go test -count=1 ./internal/nodepack/ ./internal/wasmpack/` | ok — manifest rules, loader integration, registry audit, executor port mapping |
+| `go test -count=1 -race ./internal/wasmpack/... ./internal/nodepack/... ./cmd/kilasflow/... ./internal/guardrails/...` | ok |
+| `go test -count=1 ./...` | ok (whole module) |
+| `make docs-build` | 49 pages, all internal links valid |
+| `go run ./cmd/nodepackgen validate <a broken module pack>` | every module problem reported at once, each with its JSON path |
+
+The end-to-end proof is `TestAModulePackFromDiskRunsThroughTheInstalledExecutor`:
+a pack directory with a real wasip1 module is loaded, its node registers with
+`Source == pack`, and the item the module wrote comes out of the node — with no
+test double between the loader and the runtime. Its sibling,
+`TestAModulePackThatReachesPastItsManifestRefusesTheBoot`, proves a module that
+imports a host function its manifest does not grant refuses the boot and
+registers nothing.

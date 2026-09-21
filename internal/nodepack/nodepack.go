@@ -31,6 +31,7 @@ import (
 	"github.com/kilaslab/kilas-flow/internal/node"
 	"github.com/kilaslab/kilas-flow/internal/property"
 	"github.com/kilaslab/kilas-flow/internal/routing"
+	"github.com/kilaslab/kilas-flow/internal/wasmpack"
 	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
 
@@ -73,6 +74,11 @@ type Pack struct {
 	// Generator records where this file came from, so a reviewer can tell a
 	// regeneration from a hand edit.
 	Generator Provenance `json:"generator"`
+	// Module, when set, makes this a WebAssembly pack: the manifest names a
+	// wasip1 module beside it and declares what that module may do. It is the
+	// third kind of pack beside a resource pack and a trigger pack, and the
+	// only one whose behaviour is code this repository did not write.
+	Module *Module `json:"module,omitempty"`
 }
 
 // Provenance is how a pack file says where it came from.
@@ -155,8 +161,11 @@ func Load(pack *Pack) (node.Definition, *routing.Node, error) {
 	if strings.TrimSpace(pack.Type) == "" || strings.TrimSpace(pack.DisplayName) == "" {
 		return node.Definition{}, nil, fmt.Errorf("a node pack needs a type and a display name")
 	}
+	if pack.Module != nil {
+		return loadModule(pack)
+	}
 	if pack.Trigger == nil && len(pack.Resources) == 0 {
-		return node.Definition{}, nil, fmt.Errorf("node pack %q declares neither resources nor a trigger", pack.Type)
+		return node.Definition{}, nil, fmt.Errorf("node pack %q declares neither resources, a trigger nor a module", pack.Type)
 	}
 	if pack.Trigger != nil && len(pack.Resources) > 0 {
 		return node.Definition{}, nil, fmt.Errorf("node pack %q is both a trigger and an action node", pack.Type)
@@ -425,6 +434,12 @@ func OperationsLoader(pack *Pack) loadoptions.InternalLoader {
 // comment described it as a startup check, a reader trusted that, and the
 // check they went looking for was not there to find.
 func Register(definitions *node.Registry, routes *routing.Registry, executors ExecutorSet, options *loadoptions.Resolver, pack *Pack) error {
+	if pack.Module != nil {
+		// A module pack's bytes live beside its manifest, and only the loader
+		// that reads a directory has them. Registering one from a bare
+		// manifest would install a node whose module nobody read.
+		return fmt.Errorf("node pack %q: module packs load only from a pack directory", pack.Type)
+	}
 	definition, description, err := Load(pack)
 	if err != nil {
 		return err
@@ -447,4 +462,85 @@ func Register(definitions *node.Registry, routes *routing.Registry, executors Ex
 		}
 	}
 	return definitions.RegisterFrom(node.SourcePack, definition)
+}
+
+// loadModule builds the definition of a WebAssembly pack.
+//
+// A module pack is a node like any other on the canvas — it has parameters,
+// inputs and the outputs its manifest declares — and what differs is who runs
+// it: the pack executor, which is the only executor that can run a module and
+// the only one a module pack may name. The manifest's declarations arrive here
+// as the node's own: the credential types it may use become credential
+// requirements the compiler checks, and its limits travel with the definition
+// so the executor applies exactly what the operator approved.
+func loadModule(pack *Pack) (node.Definition, *routing.Node, error) {
+	module := pack.Module
+	if issues := checkModule(pack, defaultCredentialLookup); len(issues) > 0 {
+		return node.Definition{}, nil, fmt.Errorf("node pack %q: %s", pack.Type, issues[0].Message)
+	}
+	limits, err := module.limits()
+	if err != nil {
+		return node.Definition{}, nil, fmt.Errorf("node pack %q: %w", pack.Type, err)
+	}
+	caps, err := module.capabilities()
+	if err != nil {
+		return node.Definition{}, nil, fmt.Errorf("node pack %q: %w", pack.Type, err)
+	}
+
+	outputs := make([]workflow.Port, 0, len(module.outputs()))
+	for _, output := range module.outputs() {
+		name := strings.TrimSpace(output.Name)
+		display := output.DisplayName
+		if strings.TrimSpace(display) == "" {
+			display = name
+		}
+		outputs = append(outputs, workflow.Port{Name: name, Kind: workflow.ConnectionMain, DisplayName: display})
+	}
+
+	parameters := make([]property.PropertyDefinition, 0, len(pack.Parameters))
+	for _, parameter := range pack.Parameters {
+		definition, err := parameter.definition()
+		if err != nil {
+			return node.Definition{}, nil, fmt.Errorf("node pack %q: %w", pack.Type, err)
+		}
+		parameters = append(parameters, definition)
+	}
+
+	requirements := make([]node.CredentialRequirement, 0, len(module.credentials())+1)
+	seen := map[string]bool{}
+	for _, credential := range module.credentials() {
+		if seen[credential.Type] {
+			continue
+		}
+		seen[credential.Type] = true
+		requirements = append(requirements, node.CredentialRequirement{Type: credential.Type, Required: credential.Required})
+	}
+	if pack.CredentialType != "" && !seen[pack.CredentialType] {
+		requirements = append(requirements, node.CredentialRequirement{Type: pack.CredentialType, Required: true})
+	}
+
+	definition := node.Definition{
+		Type: pack.Type, Version: pack.Version,
+		DisplayName: pack.DisplayName, Description: pack.Description,
+		Category:   pack.Category,
+		Group:      []node.NodeGroup{node.GroupTransform},
+		Inputs:     []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain, DisplayName: "Input"}},
+		Outputs:    outputs,
+		Parameters: parameters,
+		IconColor:  pack.IconColor, Subtitle: pack.Subtitle,
+		DocumentationURL: pack.DocumentationURL,
+		VisibleTo:        append([]string(nil), pack.VisibleTo...),
+		Credentials:      requirements,
+		// The pack executor, and no other: a module pack cannot name its own
+		// executor any more than a declarative pack can.
+		ExecutorID: wasmpack.ExecutorID,
+	}
+	if pack.Icon != "" {
+		definition.Icon = &node.NodeIcon{Light: pack.Icon}
+	}
+	// A module pack has no routing node: it makes its own requests through the
+	// host, so there is no declarative request for the interpreter to run.
+	_ = caps
+	_ = limits
+	return definition, nil, nil
 }

@@ -42,6 +42,7 @@ import (
 	"github.com/kilaslab/kilas-flow/internal/scheduler"
 	"github.com/kilaslab/kilas-flow/internal/sqlnode"
 	"github.com/kilaslab/kilas-flow/internal/tenantpurge"
+	"github.com/kilaslab/kilas-flow/internal/wasmpack"
 	"github.com/kilaslab/kilas-flow/internal/webhook"
 	"github.com/kilaslab/kilas-flow/nodes"
 	"github.com/kilaslab/kilas-flow/packs/telegram"
@@ -325,10 +326,25 @@ func run(args []string) error {
 	// Load → Register path as the embedded packs above. An empty or absent
 	// directory is silent; any pack failure refuses the boot, naming the pack
 	// and the reason rather than serving a half-registered catalogue.
+	// Module packs are the third kind: a wasip1 module beside its manifest,
+	// audited before it is reachable. The registry holds what the loader
+	// approves, and the executor that runs them is installed here rather than
+	// by the pack, so a pack cannot name its own binding. The translation cache
+	// is the one the Code node already uses, so a module is translated once per
+	// process rather than once per run.
+	modulePacks := wasmpack.NewRegistry(moduleCache)
+	if err := executorRegistry.Register(wasmpack.ExecutorID,
+		wasmpack.NewExecutor(modulePacks, nodeRegistry, wasmpack.HostDeps{
+			Policy:  outboundPolicy(cfg.Outbound),
+			Modules: moduleCache,
+		})); err != nil {
+		return fmt.Errorf("register the module pack executor: %w", err)
+	}
 	if err := nodepack.LoadDir(nodepack.DirDeps{
 		Definitions: nodeRegistry, Routes: routes, Triggers: packTriggers,
 		Deliveries: webhookTriggers, Lifecycles: webhookLifecycles,
 		Executors: executorRegistry, Options: optionLoader,
+		Modules: modulePacks, Context: ctx,
 	}, cfg.Packs.Dir); err != nil {
 		return fmt.Errorf("load directory node packs: %w", err)
 	}

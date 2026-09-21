@@ -25,6 +25,7 @@ import (
 	"github.com/kilaslab/kilas-flow/internal/node"
 	"github.com/kilaslab/kilas-flow/internal/property"
 	"github.com/kilaslab/kilas-flow/internal/routing"
+	"github.com/kilaslab/kilas-flow/internal/wasmpack"
 	"github.com/kilaslab/kilas-flow/internal/webhook"
 	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
@@ -54,6 +55,19 @@ func Validate(pack *Pack, filename string) []Issue {
 		return []Issue{{File: filename, Path: "$", Message: "a node pack is required"}}
 	}
 	issues := checkStructure(pack, filename)
+	// A module pack's own rules are reported in full rather than one at a
+	// time: the tool exists so an author fixes every problem in one pass, and
+	// Load — which has to return one error — would report only the first.
+	if pack.Module != nil {
+		for _, issue := range checkModule(pack, defaultCredentialLookup) {
+			issue.File = filename
+			issues = append(issues, issue)
+		}
+		if len(issues) > 0 {
+			return issues
+		}
+		return issues
+	}
 	definition, description, err := Load(pack)
 	_ = description
 	if err != nil {
@@ -171,6 +185,13 @@ func registerThrowaway(pack *Pack) error {
 	if err := executors.Register(TriggerExecutorID, stub); err != nil {
 		return err
 	}
+	// A module pack is bound to the pack executor, which the tool cannot
+	// install without compiling a module: the stub stands in for it, so the
+	// binding check passes and the manifest's own rules are what validation
+	// reports.
+	if err := executors.Register(wasmpack.ExecutorID, stub); err != nil {
+		return err
+	}
 	if err := Register(definitions, routes, executors, nil, pack); err != nil {
 		return err
 	}
@@ -209,7 +230,7 @@ func checkStructure(pack *Pack, filename string) []Issue {
 		fail("$.trigger", "node pack %q is both a trigger and an action node", pack.Type)
 	}
 	if pack.Trigger == nil && len(pack.Resources) == 0 {
-		fail("$.resources", "node pack %q declares neither resources nor a trigger", pack.Type)
+		fail("$.resources", "node pack %q declares neither resources, a trigger nor a module: a pack is one of the three", pack.Type)
 	}
 	// The tenant grammar is node's, not a second copy of it here: the three
 	// places a tenant ID can be written — a manifest, the operator override and
@@ -277,7 +298,11 @@ func checkStructure(pack *Pack, filename string) []Issue {
 }
 
 var (
-	packKeys       = []string{"type", "version", "displayName", "description", "category", "icon", "iconColor", "subtitle", "documentationUrl", "credentialType", "visibleTo", "requestDefaults", "trigger", "parameters", "resources", "generator"}
+	packKeys       = []string{"type", "version", "displayName", "description", "category", "icon", "iconColor", "subtitle", "documentationUrl", "credentialType", "visibleTo", "requestDefaults", "trigger", "parameters", "resources", "generator", "module"}
+	moduleKeys     = []string{"file", "sha256", "abi", "mode", "outputs", "capabilities", "credentials", "limits"}
+	moduleOutKeys  = []string{"name", "displayName"}
+	moduleCredKeys = []string{"type", "required"}
+	moduleLimKeys  = []string{"timeoutSeconds", "memoryPages", "maxOutputBytes", "maxHostCalls"}
 	resourceKeys   = []string{"name", "description", "operations"}
 	operationKeys  = []string{"name", "description", "method", "url", "sends", "output", "pagination"}
 	parameterKeys  = []string{"key", "label", "description", "kind", "required", "default", "options", "typeOptions", "resources", "operations"}
@@ -309,6 +334,21 @@ func checkUnknownFields(raw map[string]json.RawMessage, filename string) []Issue
 	}
 	if blob, ok := raw["generator"]; ok {
 		failUnknown(blob, provenanceKeys, "$.generator", filename, &issues)
+	}
+	if blob, ok := raw["module"]; ok {
+		failUnknown(blob, moduleKeys, "$.module", filename, &issues)
+		var module map[string]json.RawMessage
+		if err := json.Unmarshal(blob, &module); err == nil {
+			if outputs, ok := module["outputs"]; ok {
+				failUnknownList(outputs, moduleOutKeys, "$.module.outputs", filename, &issues)
+			}
+			if credentials, ok := module["credentials"]; ok {
+				failUnknownList(credentials, moduleCredKeys, "$.module.credentials", filename, &issues)
+			}
+			if limits, ok := module["limits"]; ok {
+				failUnknown(limits, moduleLimKeys, "$.module.limits", filename, &issues)
+			}
+		}
 	}
 	if blob, ok := raw["trigger"]; ok {
 		var trigger Trigger
@@ -400,6 +440,18 @@ func failUnknownMap(object map[string]json.RawMessage, known []string, path, fil
 			*issues = append(*issues, Issue{File: filename, Path: path,
 				Message: fmt.Sprintf("unknown field %q: want one of %s", key, strings.Join(known, ", "))})
 		}
+	}
+}
+
+// failUnknownList checks every entry of a JSON array of objects against one
+// key list, reporting the index each unknown field sits at.
+func failUnknownList(blob json.RawMessage, known []string, path, filename string, issues *[]Issue) {
+	var entries []json.RawMessage
+	if err := json.Unmarshal(blob, &entries); err != nil {
+		return
+	}
+	for index, entry := range entries {
+		failUnknown(entry, known, fmt.Sprintf("%s[%d]", path, index), filename, issues)
 	}
 }
 

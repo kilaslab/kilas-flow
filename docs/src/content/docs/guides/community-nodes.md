@@ -52,9 +52,13 @@ host module. A pack therefore cannot call an API, read a credential, or reach
 anything beyond the items it was handed. That is deliberate for the Code node,
 and it is exactly the property the pack path would have to extend on purpose.
 
-The **host side is not shipped**: nothing loads a `.wasm` pack, so no operator
-can install one or run its nodes. [What is not shipped yet](#what-is-not-shipped-yet)
-names the concrete gaps.
+The **host side ships now**: a pack directory whose manifest carries a `module`
+object is loaded, audited and run, so an operator can install one and use its
+node like any other. The manifest, the limits, the capabilities and the
+credential rules are in [the pack format reference](/reference/node-packs/#module-packs);
+what is still missing is the build tooling that would compile a guest for you
+and the declared-property conveniences a native node has — the gaps are listed
+under [What is not shipped yet](#what-is-not-shipped-yet).
 
 ## Path two: the JavaScript sidecar
 
@@ -99,18 +103,20 @@ supplies.
 Neither community path is an operator path today. Each statement below was
 checked against this tree:
 
-- **The pack loader has no module kind.** `internal/nodepack.Pack` has no
-  module or artifact field, and `internal/nodepack/loaddir.go` describes WASM
-  packs as future work — "the WASM packs of FEAT-48hreg reuse this loader by
-  adding a module kind beside the manifest". The directory pack that does ship
-  is a `pack.json` manifest plus a `pack.sha256` checksum, and carries no
-  `.wasm`.
-- **The guest gets no host functions.** Nothing in `internal/runcode` grants
-  the module a host interface (there is no host module anywhere in the
-  package), so a pack cannot call an API, resolve a credential, or read binary
-  data. This has to be added before a pack can do more than reshape its items.
-- **Nothing runs a pack.** No production code builds a `runcode.Artifact` from
-  a pack, and the only consumers of `pkg/sdk` are its own example and tests.
+- **A module pack is a directory you build yourself.** There is no tooling that
+  compiles a guest for you: you build the `.wasm` with
+  `GOOS=wasip1 GOARCH=wasm CGO_ENABLED=0 go build`, pin its digest in the
+  manifest, and install the directory. `nodepackgen validate` checks the
+  manifest, not the build.
+- **The module's properties are the manifest's.** A module pack declares its
+  parameters like any pack, but it cannot register load-options, dynamic
+  property kinds or a custom editor surface the way a built-in node can: the
+  node's shape is what its manifest says, and the module sees resolved
+  parameters.
+- **The ABI carries whole-numbered versions only.** A node type version such as
+  `4.2` is legal in the format but not on the pack ABI, which carries an
+  integer; a module pack at a fractional version is refused rather than
+  truncated.
 - **The sidecar is not in the default image.** The runtime image stays a
   single `CGO_ENABLED=0` Go binary on distroless. Enabling the sidecar means
   running an image with Node in it and installing the packages yourself; a
