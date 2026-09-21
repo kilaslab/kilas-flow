@@ -70,6 +70,25 @@ describe('workflow editor document helpers', () => {
 		});
 	});
 
+	it('copies an expression-marker default onto a freshly placed node', () => {
+		const agent: Definition = {
+			...set,
+			type: 'kilasflow.agent',
+			displayName: 'AI Agent',
+			parameters: [
+				{
+					key: 'prompt',
+					label: 'Prompt',
+					kind: 'string',
+					required: true,
+					default: { mode: 'expression', value: '{{ $json.chatInput }}' }
+				}
+			]
+		};
+		const node = createWorkflowNode(agent, { x: 0, y: 0 }, () => 'agent-1');
+		expect(node.parameters?.prompt).toEqual({ mode: 'expression', value: '{{ $json.chatInput }}' });
+	});
+
 	it('allocates a client node ID when a picker does not supply one', () => {
 		const node = createWorkflowNode(manual, { x: 0, y: 0 });
 

@@ -39,6 +39,41 @@ export function manualWorkflowDocument(name: string): Record<string, unknown> {
 	};
 }
 
+export function chatWorkflowDocument(name: string): Record<string, unknown> {
+	return {
+		schemaVersion: 1,
+		name,
+		nodes: [
+			{
+				id: 'chat',
+				name: 'When chat message received',
+				type: 'kilasflow.chatTrigger',
+				typeVersion: 1,
+				position: { x: 0, y: 0 }
+			},
+			{
+				id: 'set',
+				name: 'Reply',
+				type: 'kilasflow.set',
+				typeVersion: 1,
+				position: { x: 240, y: 0 },
+				parameters: {
+					assignments: { output: { mode: 'expression', value: '{{ $json.chatInput }}' } }
+				}
+			}
+		],
+		connections: [
+			{
+				id: 'c1',
+				kind: 'main',
+				source: { nodeId: 'chat', port: 'main' },
+				target: { nodeId: 'set', port: 'main' }
+			}
+		],
+		settings: {}
+	};
+}
+
 // A manual trigger driving one HTTP node. The workflow under test calls the
 // local stub through the outbound policy; the suite never touches the internet.
 export function httpWorkflowDocument(name: string, url: string): Record<string, unknown> {

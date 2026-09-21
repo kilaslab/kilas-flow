@@ -464,6 +464,14 @@ var mappings = []mapping{
 		exportTypeVersion: 1.9, toKilas: chainToKilas, toN8N: chainToN8N,
 	},
 	{
+		// Editor-only in this slice: hosted chat, embed widgets, CORS and
+		// public auth are dropped rather than run. All published 1.x versions
+		// land here so a 1.1 corpus node and a 1.4 export are not placeholders.
+		n8nType: "@n8n/n8n-nodes-langchain.chatTrigger", kilasType: ChatTriggerNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1.1, publishedVersions: []float64{1, 1.1, 1.2, 1.3, 1.4},
+		toKilas: chatTriggerToKilas, toN8N: chatTriggerToN8N,
+	},
+	{
 		n8nType: "@n8n/n8n-nodes-langchain.lmChatOpenAi", kilasType: "kilasflow.lmChatOpenAi", kilasVersion: workflow.V(1),
 		// 1.2 rather than the published 1.3: 1.3 switches to OpenAI's Responses
 		// API, which is a different wire protocol, and 1.2 is the highest
@@ -601,6 +609,10 @@ const (
 // nodes.FormTriggerType rather than imported, for the same reason every other
 // type here is; TestMirroredNodeTypesMatchTheNodePack keeps them in step.
 const FormTriggerType = "kilasflow.formTrigger"
+
+// ChatTriggerNodeType is the editor chat start, mirrored from
+// nodes.ChatTriggerNodeType. Hosted chat is not mapped; the node itself is.
+const ChatTriggerNodeType = "kilasflow.chatTrigger"
 
 // The error-workflow pair's canonical types, mirrored from
 // nodes.ErrorTriggerNodeType and nodes.StopAndErrorNodeType.

@@ -45,7 +45,7 @@ func TestTriggerGroupIsBehaviouralNotACategoryLabel(t *testing.T) {
 			}
 		}
 	}
-	for _, want := range []string{"kilasflow.manual", "kilasflow.webhook", "kilasflow.schedule"} {
+	for _, want := range []string{"kilasflow.manual", "kilasflow.webhook", "kilasflow.schedule", "kilasflow.chatTrigger"} {
 		if !triggers[want] {
 			t.Errorf("%s is not in the trigger group", want)
 		}

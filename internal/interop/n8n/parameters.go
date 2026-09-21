@@ -2176,6 +2176,38 @@ func errorTriggerToN8N(node workflow.Node) (map[string]any, []Lossy) {
 	return map[string]any{}, nil
 }
 
+// chatTriggerToKilas maps n8n's Chat Trigger onto this server's editor-only
+// node. Type and name cross; hosted-page, embed, auth, CORS, file upload and
+// the rest of the widget configuration do not — they would imply a public
+// endpoint this slice does not serve.
+func chatTriggerToKilas(node Node) (map[string]any, []Unsupported) {
+	issues := make([]Unsupported, 0)
+	reason := "KilasFlow's chat trigger is editor-only; hosted chat, embed, auth, CORS, and file upload were not carried"
+	for _, key := range sortedKeys(node.Parameters) {
+		if key == "options" {
+			options, _ := node.Parameters["options"].(map[string]any)
+			if len(options) > 0 {
+				for _, inner := range sortedKeys(options) {
+					issues = append(issues, Unsupported{
+						Severity: SeverityDropped, Field: "options." + inner, Reason: reason,
+					})
+				}
+				continue
+			}
+		}
+		issues = append(issues, Unsupported{
+			Severity: SeverityDropped, Field: key, Reason: reason,
+		})
+	}
+	return map[string]any{}, issues
+}
+
+func chatTriggerToN8N(_ workflow.Node) (map[string]any, []Lossy) {
+	// public false is n8n's editor-only chat. Exporting true would turn a
+	// round-trip into a hosted page this server does not serve.
+	return map[string]any{"public": false}, nil
+}
+
 // stopAndErrorToKilas maps n8n's Stop and Error onto this server's.
 //
 // n8n keeps the error in one of three shapes behind `errorObject`: a plain

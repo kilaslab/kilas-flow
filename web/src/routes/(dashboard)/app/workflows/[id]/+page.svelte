@@ -14,7 +14,7 @@
 	import { workflowDiagnostics } from '$lib/api/generated/interop/interop';
 	import { activateWorkflow, deactivateWorkflow, runWorkflow } from '$lib/api/generated/workflow-lifecycle/workflow-lifecycle';
 	import { createGetWorkflow, getWorkflow, updateWorkflow } from '$lib/api/generated/workflows/workflows';
-	import type { CredentialResource, Definition, ExpressionGrammar, WorkflowDiagnosticsResource, WorkflowDocumentInput, WorkflowResource } from '$lib/api/generated/models';
+	import type { CredentialResource, Definition, ExecutionResource, ExpressionGrammar, WorkflowDiagnosticsResource, WorkflowDocumentInput, WorkflowResource } from '$lib/api/generated/models';
 	import { DRAIN_PAGE_LIMIT, drainPages, headerCursor, readPage } from '$lib/dashboard/cursor-page';
 	import { activationFailure, activationNotices, dismissNotice, type ActivationNoticeView } from '$lib/workflow-editor/activation';
 	import { cacheWorkflow } from '$lib/workflow-editor/workflow-cache';
@@ -427,7 +427,7 @@
 		activationError = null;
 	}
 
-	async function run(selection?: RunSelection) {
+	async function run(selection?: RunSelection): Promise<ExecutionResource | undefined> {
 		if (!currentWorkflow) return;
 		running = true;
 		runError = null;
@@ -439,10 +439,16 @@
 			// Naming the trigger is what keeps Execute from firing every trigger of
 			// a multi-trigger workflow: the editor sends one only when the user
 			// picked it, and the server runs every trigger when none is named.
-			const queued = await runWorkflow(
-				currentWorkflow.id,
-				selection?.triggerNodeId ? { triggerNodeId: selection.triggerNodeId } : undefined
-			);
+			// Chat sends the same endpoint with the message payload so Agent
+			// expressions see `$json.chatInput`.
+			const body =
+				selection?.triggerNodeId || selection?.input !== undefined
+					? {
+							...(selection.triggerNodeId ? { triggerNodeId: selection.triggerNodeId } : {}),
+							...(selection.input !== undefined ? { input: selection.input } : {})
+						}
+					: undefined;
+			const queued = await runWorkflow(currentWorkflow.id, body);
 			if (queued.status !== 202) throw new Error(m.workflows_unexpected_workflow_run());
 			lastExecutionId = queued.data.id;
 			runMessage = m.workflows_run_queued();
@@ -460,14 +466,18 @@
 				runMessage = status === 'succeeded' ? m.workflows_run_succeeded() : m.workflows_run_status({ status });
 				if (['succeeded', 'failed', 'cancelled'].includes(status)) {
 					if (status !== 'succeeded') runError = typeof execution.data.error === 'object' && execution.data.error && 'message' in execution.data.error ? String(execution.data.error.message) : m.workflows_execution_status({ status });
-					return;
+					return execution.data;
 				}
 			}
-			if (token === pollingRun) runError = m.workflows_run_watch_stopped();
+			if (token === pollingRun) {
+				runError = m.workflows_run_watch_stopped();
+				throw new Error(runError);
+			}
 		} catch (error) {
 			runError = message(error);
 			// A 422 from the run endpoint names the nodes that blocked it.
 			runIssues = withNodeNames(validationIssuesFromApiError(error), currentWorkflow.latestVersion.document.nodes);
+			throw error;
 		} finally {
 			if (token === pollingRun) running = false;
 		}

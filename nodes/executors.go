@@ -32,6 +32,7 @@ func RegisterExecutors(registry *engine.Registry, httpPolicy safehttp.Policy, da
 	}
 	for id, executor := range map[string]engine.Executor{
 		"core.manual":                    engine.ExecutorFunc(executeManual),
+		ChatTriggerExecutorID:            engine.ExecutorFunc(executeChatTrigger),
 		DatastoreExecutorID:              datastoreExecutorOf(settings),
 		DatastoreToolExecutorID:          datastoreToolExecutorOf(settings),
 		"core.set":                       engine.ExecutorFunc(executeSet),

@@ -711,6 +711,7 @@ func TestSupportedMappingsAreAdvertisedExplicitly(t *testing.T) {
 		"@n8n/n8n-nodes-base.formTrigger ↔ kilasflow.formTrigger",
 		"@n8n/n8n-nodes-langchain.agent ↔ kilasflow.agent",
 		"@n8n/n8n-nodes-langchain.chainLlm ↔ kilasflow.chainLlm",
+		"@n8n/n8n-nodes-langchain.chatTrigger ↔ kilasflow.chatTrigger",
 		"@n8n/n8n-nodes-langchain.lmChatDeepSeek ↔ kilasflow.chatModel",
 		"@n8n/n8n-nodes-langchain.lmChatGoogleGemini ↔ kilasflow.chatModel",
 		"@n8n/n8n-nodes-langchain.lmChatGroq ↔ kilasflow.chatModel",
@@ -836,6 +837,7 @@ func TestMirroredNodeTypesMatchTheNodePack(t *testing.T) {
 	for name, pair := range map[string][2]string{
 		"unsupported": {n8n.UnsupportedNodeType, nodes.UnsupportedNodeType},
 		"sticky note": {n8n.StickyNoteNodeType, nodes.StickyNoteNodeType},
+		"chat trigger": {n8n.ChatTriggerNodeType, nodes.ChatTriggerNodeType},
 	} {
 		if pair[0] != pair[1] {
 			t.Errorf("%s node type: adapter has %q, node pack has %q", name, pair[0], pair[1])
@@ -3474,6 +3476,61 @@ func TestTheClusterMappingMatchesWhatTheReferenceWasRecordedAsSaying(t *testing.
 		}
 		if len(entry.PublishedVersions) == 0 {
 			t.Errorf("%s has no recorded published versions, so an export cannot know what n8n accepts", nodeType)
+		}
+	}
+}
+
+func TestChatTriggerImportsEveryPublishedVersionAndExportsEditorOnly(t *testing.T) {
+	t.Parallel()
+
+	for _, version := range []string{"1.1", "1.4"} {
+		fixture := fmt.Sprintf(`{
+		  "name": "Chat %s",
+		  "nodes": [
+		    {"id":"c","name":"When chat message received","type":"@n8n/n8n-nodes-langchain.chatTrigger","typeVersion":%s,"position":[0,0],
+		     "parameters":{"public":true,"mode":"hostedChat","initialMessages":"Hi","availableInChat":true,
+		       "options":{"allowedOrigins":"*","responseMode":"lastNode"}}}
+		  ],
+		  "connections": {}
+		}`, version, version)
+		result := importFixture(t, fixture)
+		node := nodeByName(result.Document, "When chat message received")
+		if node.Type != n8n.ChatTriggerNodeType {
+			t.Fatalf("version %s imported as %q, want %s (unsupported would mean the mapping missed this typeVersion)",
+				version, node.Type, n8n.ChatTriggerNodeType)
+		}
+		dropped := map[string]bool{}
+		for _, issue := range result.Unsupported {
+			if issue.Severity == n8n.SeverityDropped {
+				dropped[issue.Field] = true
+			}
+			if issue.Severity == n8n.SeverityBlocking && issue.NodeName == "When chat message received" {
+				t.Errorf("version %s blocking issue %q: %s", version, issue.Field, issue.Reason)
+			}
+		}
+		for _, field := range []string{"public", "mode", "initialMessages", "availableInChat", "options.allowedOrigins", "options.responseMode"} {
+			if !dropped[field] {
+				t.Errorf("version %s did not drop %q: %#v", version, field, result.Unsupported)
+			}
+		}
+
+		document := result.Document
+		document.ID = "wf_chat"
+		exported, err := n8n.Export(document, registry(t))
+		if err != nil {
+			t.Fatalf("Export() version %s error = %v", version, err)
+		}
+		var chat n8n.Node
+		for _, candidate := range exported.Document.Nodes {
+			if candidate.Name == "When chat message received" {
+				chat = candidate
+			}
+		}
+		if chat.Type != "@n8n/n8n-nodes-langchain.chatTrigger" {
+			t.Errorf("exported type = %q, want n8n's chatTrigger", chat.Type)
+		}
+		if chat.Parameters["public"] != false {
+			t.Errorf("exported public = %#v, want false so a round-trip stays editor-only", chat.Parameters["public"])
 		}
 	}
 }

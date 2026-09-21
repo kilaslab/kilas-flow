@@ -10,7 +10,7 @@
 	import { getExecution } from '$lib/api/generated/executions/executions';
 	import { runWorkflow } from '$lib/api/generated/workflow-lifecycle/workflow-lifecycle';
 	import { createGetWorkflow, getWorkflow, updateWorkflow } from '$lib/api/generated/workflows/workflows';
-	import type { CredentialResource, Definition, WorkflowDocumentInput, WorkflowResource } from '$lib/api/generated/models';
+	import type { CredentialResource, Definition, ExecutionResource, WorkflowDocumentInput, WorkflowResource } from '$lib/api/generated/models';
 	import { Button } from '$lib/components/ui/button';
 	import WorkflowEditor, { type RunSelection, type WorkflowHistoryHost } from '$lib/components/workflow-editor/workflow-editor.svelte';
 	import { SCOPE_PUBLISH, scopeAllows, type EmbedSession } from './session.svelte';
@@ -210,7 +210,7 @@
 			: null
 	);
 
-	async function run(selection?: RunSelection) {
+	async function run(selection?: RunSelection): Promise<ExecutionResource | undefined> {
 		if (!currentWorkflow || !canRun) return;
 		running = true;
 		runError = null;
@@ -219,10 +219,15 @@
 		const token = ++pollingRun;
 		try {
 			// Same rule as the dashboard: a named trigger runs that subgraph only.
-			const queued = await runWorkflow(
-				currentWorkflow.id,
-				selection?.triggerNodeId ? { triggerNodeId: selection.triggerNodeId } : undefined
-			);
+			// Chat sends the message payload on the same endpoint.
+			const body =
+				selection?.triggerNodeId || selection?.input !== undefined
+					? {
+							...(selection.triggerNodeId ? { triggerNodeId: selection.triggerNodeId } : {}),
+							...(selection.input !== undefined ? { input: selection.input } : {})
+						}
+					: undefined;
+			const queued = await runWorkflow(currentWorkflow.id, body);
 			if (queued.status !== 202) throw new Error(m.workflows_unexpected_workflow_run());
 			lastExecutionId = queued.data.id;
 			runMessage = m.workflows_run_queued();
@@ -240,13 +245,17 @@
 				if (['succeeded', 'failed', 'cancelled'].includes(status)) {
 					if (status !== 'succeeded') runError = m.workflows_execution_status({ status });
 					notifyHost('execution-finished', { executionId: queued.data.id, status });
-					return;
+					return execution.data;
 				}
 			}
-			if (token === pollingRun) runError = m.embed_run_abandoned();
+			if (token === pollingRun) {
+				runError = m.embed_run_abandoned();
+				throw new Error(runError);
+			}
 		} catch (error) {
 			runError = message(error);
 			runIssues = withNodeNames(validationIssuesFromApiError(error), currentWorkflow.latestVersion.document.nodes);
+			throw error;
 		} finally {
 			if (token === pollingRun) running = false;
 		}

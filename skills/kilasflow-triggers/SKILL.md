@@ -1,6 +1,6 @@
 ---
 name: kilasflow-triggers
-description: Use when a workflow has to be started by something other than you — an inbound HTTP request, a hosted form, a cron schedule, a manual run or another workflow — or when an activated workflow receives nothing. Triggers on "webhook", "trigger", "schedule", "form", "activation".
+description: Use when a workflow has to be started by something other than you — an inbound HTTP request, a hosted form, a cron schedule, a chat message in the editor, a manual run or another workflow — or when an activated workflow receives nothing. Triggers on "webhook", "trigger", "schedule", "form", "chat", "activation".
 kilasflow_skills_version: 1
 kilasflow_commands:
   - kilasflow run
@@ -22,6 +22,7 @@ kilasflow_operations:
   - deactivate-workflow
 kilasflow_nodes:
   - kilasflow.manual
+  - kilasflow.chatTrigger
   - kilasflow.webhook
   - kilasflow.formTrigger
   - kilasflow.schedule
@@ -46,8 +47,9 @@ kilasflow_not_shipped:
 
 ## Strong defaults
 
-- Five kinds start a run, and all five write the same queued execution row through the same durable queue (docs/src/content/docs/concepts/execution-model.md):
+- Kinds that start a run all write the same queued execution row through the same durable queue (docs/src/content/docs/concepts/execution-model.md):
   - `kilasflow.manual` — the editor or a manual run; the root a bare `kilasflow run` starts from.
+  - `kilasflow.chatTrigger` — a message from the editor Chat panel (`action`, `sessionId`, `chatInput`). Execute never fires it with an empty item; on a chat-only graph it opens the panel instead. Hosted chat pages are not shipped.
   - `kilasflow.webhook` — an inbound HTTP request on one of the methods the node declares (`httpMethod`, or `multipleMethods` with `httpMethods`).
   - `kilasflow.formTrigger` — a hosted page at the workflow's own URL that is a GET, plus the POST its submission is.
   - `kilasflow.schedule` — cron, from the node's Trigger Rules intervals or the legacy `cron` parameter.

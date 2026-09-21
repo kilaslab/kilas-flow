@@ -431,8 +431,13 @@ func memoryNode() node.Definition {
 				Description: "Take the session key from the incoming item, or define it with an expression.",
 			},
 			{
-				Key: "sessionKey", Label: "Session Key", Kind: node.PropertyString, Default: "{{ $json.sessionId }}",
+				Key: "sessionKey", Label: "Session Key", Kind: node.PropertyString,
 				Description: "Identifies the conversation. Supports expressions, for example {{ $json.sessionId }}.",
+				// Copied onto a freshly placed Memory node. A plain string with
+				// `{{ … }}` is not an expression — see BUG-rjd6fm — so every
+				// editor-built conversation would share one bucket. Imported
+				// and saved keys are unchanged.
+				Default: map[string]any{"mode": "expression", "value": "{{ $json.sessionId }}"},
 			},
 			{
 				Key: "sessionId", Label: "Session ID (legacy)", Kind: node.PropertyString,
@@ -522,6 +527,12 @@ func agentNode() node.Definition {
 			{
 				Key: "prompt", Label: "Prompt", Kind: node.PropertyString, Required: true,
 				Description: "The user turn for this run. Supports expressions.",
+				// Copied onto a freshly placed Agent. A plain string with
+				// `{{ … }}` is not an expression in this runtime — see
+				// BUG-rjd6fm — so the default is the marker createWorkflowNode
+				// already copies verbatim. Saved and imported Agents that
+				// already set prompt are unchanged.
+				Default: map[string]any{"mode": "expression", "value": "{{ $json.chatInput }}"},
 			},
 			{
 				Key: "systemMessage", Label: "System message", Kind: node.PropertyString,

@@ -236,6 +236,55 @@ func TestCompileRejectsEmptyGraphAsInvalidTopology(t *testing.T) {
 	}
 }
 
+func TestCompileRejectsASecondChatTrigger(t *testing.T) {
+	registry := node.NewRegistry()
+	if err := nodes.RegisterAll(registry); err != nil {
+		t.Fatalf("RegisterAll() error = %v", err)
+	}
+
+	_, err := workflow.Compile(workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_chat_two",
+		Name:          "Two chats",
+		Nodes: []workflow.Node{
+			{ID: "chat-1", Name: "Chat 1", Type: "kilasflow.chatTrigger", TypeVersion: workflow.V(1)},
+			{ID: "chat-2", Name: "Chat 2", Type: "kilasflow.chatTrigger", TypeVersion: workflow.V(1)},
+		},
+		Connections: []workflow.Connection{},
+		Settings:    map[string]any{},
+	}, registry)
+
+	var validationErrors *workflow.ValidationErrors
+	if !errors.As(err, &validationErrors) {
+		t.Fatalf("Compile() error = %v, want ValidationErrors", err)
+	}
+	if !containsValidationCode(validationErrors.Issues, workflow.ErrorInvalidTopology) {
+		t.Errorf("validation issues = %#v, want %q", validationErrors.Issues, workflow.ErrorInvalidTopology)
+	}
+	found := false
+	for _, issue := range validationErrors.Issues {
+		if issue.NodeID == "chat-2" && strings.Contains(issue.Message, "only one When chat message received") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("validation issues = %#v, want the second chat trigger named", validationErrors.Issues)
+	}
+
+	if _, err := workflow.Compile(workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_chat_one",
+		Name:          "One chat",
+		Nodes: []workflow.Node{
+			{ID: "chat", Name: "Chat", Type: "kilasflow.chatTrigger", TypeVersion: workflow.V(1)},
+		},
+		Connections: []workflow.Connection{},
+		Settings:    map[string]any{},
+	}, registry); err != nil {
+		t.Errorf("Compile(one chat trigger) error = %v, want success", err)
+	}
+}
+
 func TestCompileRejectsNodeDisconnectedFromTheManualTrigger(t *testing.T) {
 	document := workflow.Document{
 		SchemaVersion: workflow.CurrentSchemaVersion,

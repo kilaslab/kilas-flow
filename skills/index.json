@@ -380,7 +380,7 @@
     },
     {
       "name": "kilasflow-triggers",
-      "description": "Use when a workflow has to be started by something other than you — an inbound HTTP request, a hosted form, a cron schedule, a manual run or another workflow — or when an activated workflow receives nothing. Triggers on \"webhook\", \"trigger\", \"schedule\", \"form\", \"activation\".",
+      "description": "Use when a workflow has to be started by something other than you — an inbound HTTP request, a hosted form, a cron schedule, a chat message in the editor, a manual run or another workflow — or when an activated workflow receives nothing. Triggers on \"webhook\", \"trigger\", \"schedule\", \"form\", \"chat\", \"activation\".",
       "path": "skills/kilasflow-triggers/SKILL.md",
       "commands": [
         "kilasflow api",
@@ -403,6 +403,7 @@
         "run-workflow"
       ],
       "nodes": [
+        "kilasflow.chatTrigger",
         "kilasflow.errorTrigger",
         "kilasflow.executeWorkflow",
         "kilasflow.executeWorkflowTrigger",

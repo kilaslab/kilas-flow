@@ -416,6 +416,7 @@ func Compile(document Document, catalog Catalog) (IR, error) {
 			})
 		}
 		validateExecutableTopology(ir, issues)
+		validateChatTriggerUniqueness(ir, issues)
 		validatePortCardinality(ir, issues)
 		validateAgentToolNames(ir, issues)
 	}
@@ -449,6 +450,28 @@ func producesItems(ports []Port) bool {
 		}
 	}
 	return false
+}
+
+// chatTriggerNodeType is the editor chat start. The compiler, not the node's
+// own Validate, refuses a second copy: Validate sees one node, and n8n's
+// maxNodes: 1 is a graph rule.
+const chatTriggerNodeType = "kilasflow.chatTrigger"
+
+func validateChatTriggerUniqueness(ir IR, issues *ValidationErrors) {
+	seen := 0
+	for index, node := range ir.Nodes {
+		if node.Type != chatTriggerNodeType {
+			continue
+		}
+		seen++
+		if seen < 2 {
+			continue
+		}
+		issues.add(ValidationError{
+			Code: ErrorInvalidTopology, Path: fmt.Sprintf("/nodes/%d", index), NodeID: node.ID,
+			Message: "a workflow may contain only one When chat message received node",
+		})
+	}
 }
 
 func validateExecutableTopology(ir IR, issues *ValidationErrors) {

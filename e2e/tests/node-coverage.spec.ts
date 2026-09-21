@@ -27,6 +27,7 @@ import { readExecutionEvents, waitForExecution } from '../helpers/seed';
 // Every catalogue entry this suite runs to success, as "type@version".
 const RUN_COVERAGE = [
 	'kilasflow.manual@1',
+	'kilasflow.chatTrigger@1',
 	'kilasflow.set@1',
 	'kilasflow.if@1',
 	'kilasflow.merge@1',
@@ -546,6 +547,31 @@ test('trigger nodes fire on a manual run', async ({ server, stub }) => {
 	);
 	const subTriggerRecord = await runToSuccess(server.baseURL, subTriggerId);
 	expect(itemJson(subTriggerRecord, 'out')).toMatchObject({ v: 'sub-trigger-ok' });
+
+	const chatId = await createWorkflow(
+		server.baseURL,
+		'Coverage Chat Trigger',
+		[node('chat', 'When chat message received', 'kilasflow.chatTrigger'), setter('out', 'chat-ok')],
+		[conn('c1', 'chat', 'main', 'out', 'main')]
+	);
+	const chatStarted = await fetch(`${server.baseURL}/api/v1/workflows/${chatId}/run`, {
+		method: 'POST',
+		headers: { 'content-type': 'application/json' },
+		body: JSON.stringify({
+			triggerNodeId: 'chat',
+			input: { action: 'sendMessage', sessionId: 'coverage-session', chatInput: 'hello coverage' }
+		})
+	});
+	expect(chatStarted.status).toBe(202);
+	const chatQueued = await chatStarted.json();
+	const chatRecord = await waitForExecution(server.baseURL, chatQueued.id);
+	expect(chatRecord.status).toBe('succeeded');
+	expect(itemJson(chatRecord, 'chat')).toMatchObject({
+		action: 'sendMessage',
+		sessionId: 'coverage-session',
+		chatInput: 'hello coverage'
+	});
+	expect(itemJson(chatRecord, 'out')).toMatchObject({ v: 'chat-ok' });
 
 	// WAHA triggers expose one port per event; on a manual run the trigger
 	// itself succeeds and the run completes.

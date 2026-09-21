@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { Definition, Node as WorkflowNode } from '$lib/api/generated/models';
 
-import { isTriggerNode, runTriggerNodeID } from './run-trigger';
+import { executeIntent, isTriggerNode, runTriggerNodeID } from './run-trigger';
 
 const trigger: Definition = {
 	type: 'pack.webhook',
@@ -18,6 +18,7 @@ const trigger: Definition = {
 };
 
 const schedule: Definition = { ...trigger, type: 'kilasflow.schedule', displayName: 'Schedule' };
+const chat: Definition = { ...trigger, type: 'kilasflow.chatTrigger', displayName: 'When chat message received' };
 const set: Definition = { ...trigger, type: 'kilasflow.set', displayName: 'Set', group: ['transform'], inputs: [{ name: 'main', kind: 'main' }] };
 const note: Definition = {
 	...trigger,
@@ -27,7 +28,7 @@ const note: Definition = {
 	group: ['organization']
 };
 
-const definitions = [trigger, schedule, set, note];
+const definitions = [trigger, schedule, chat, set, note];
 
 function node(id: string, type: string): WorkflowNode {
 	return { id, name: id, type, typeVersion: 1, position: { x: 0, y: 0 } };
@@ -71,5 +72,37 @@ describe('runTriggerNodeID', () => {
 		const nodes = [node('hook', 'pack.webhook'), node('nightly', 'kilasflow.schedule'), node('note', 'kilasflow.stickyNote')];
 		expect(runTriggerNodeID(nodes, definitions, ['note'])).toBeUndefined();
 		expect(runTriggerNodeID(nodes, definitions, ['note', 'nightly'])).toBe('nightly');
+	});
+});
+
+describe('executeIntent', () => {
+	it('opens chat instead of running when the only trigger is chat', () => {
+		const nodes = [node('chat', 'kilasflow.chatTrigger'), node('work', 'kilasflow.set')];
+		expect(executeIntent(nodes, definitions, [])).toEqual({ action: 'open-chat' });
+		expect(executeIntent(nodes, definitions, ['chat'])).toEqual({ action: 'open-chat' });
+	});
+
+	it('never omits triggerNodeId when a chat trigger shares the canvas', () => {
+		const nodes = [node('chat', 'kilasflow.chatTrigger'), node('hook', 'pack.webhook'), node('work', 'kilasflow.set')];
+		expect(executeIntent(nodes, definitions, [])).toEqual({ action: 'run', triggerNodeId: 'hook' });
+		expect(executeIntent(nodes, definitions, ['chat'])).toEqual({ action: 'run', triggerNodeId: 'hook' });
+		expect(executeIntent(nodes, definitions, ['hook'])).toEqual({ action: 'run', triggerNodeId: 'hook' });
+	});
+
+	it('picks the selected non-chat trigger among several', () => {
+		const nodes = [
+			node('chat', 'kilasflow.chatTrigger'),
+			node('hook', 'pack.webhook'),
+			node('nightly', 'kilasflow.schedule')
+		];
+		expect(executeIntent(nodes, definitions, ['nightly'])).toEqual({ action: 'run', triggerNodeId: 'nightly' });
+	});
+
+	it('leaves a workflow with no chat trigger on the existing Execute path', () => {
+		const several = [node('hook', 'pack.webhook'), node('nightly', 'kilasflow.schedule')];
+		expect(executeIntent(several, definitions, [])).toEqual({ action: 'run', triggerNodeId: undefined });
+		expect(executeIntent(several, definitions, ['hook'])).toEqual({ action: 'run', triggerNodeId: 'hook' });
+		const single = [node('hook', 'pack.webhook'), node('work', 'kilasflow.set')];
+		expect(executeIntent(single, definitions, ['hook'])).toEqual({ action: 'run', triggerNodeId: undefined });
 	});
 });

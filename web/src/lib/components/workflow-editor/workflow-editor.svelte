@@ -17,6 +17,8 @@
 	export type RunSelection = {
 		/** The trigger to start from; omitted runs every trigger, as before. */
 		triggerNodeId?: string;
+		/** Item the named trigger emits. The Chat panel sends `{action, sessionId, chatInput}`. */
+		input?: unknown;
 	};
 
 	export type WorkflowHistoryHost = {
@@ -40,6 +42,7 @@
 	import Redo2 from '@lucide/svelte/icons/redo-2';
 	import Undo2 from '@lucide/svelte/icons/undo-2';
 	import Activity from '@lucide/svelte/icons/activity';
+	import MessageCircle from '@lucide/svelte/icons/message-circle';
 	import Play from '@lucide/svelte/icons/play';
 	import Plus from '@lucide/svelte/icons/plus';
 	import Power from '@lucide/svelte/icons/power';
@@ -50,7 +53,7 @@
 	import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
 	import X from '@lucide/svelte/icons/x';
 
-	import type { CredentialResource, Definition, Document, Node as WorkflowNode, WorkflowDocumentInput } from '$lib/api/generated/models';
+	import type { CredentialResource, Definition, Document, ExecutionResource, Node as WorkflowNode, WorkflowDocumentInput } from '$lib/api/generated/models';
 	import * as m from '$lib/paraglide/messages.js';
 	import type { ActivationNoticeView } from '$lib/workflow-editor/activation';
 	import { setCanvasActions } from '$lib/workflow-editor/canvas-actions';
@@ -80,12 +83,14 @@
 	import { tidyDocument } from '$lib/workflow-editor/layout';
 	import { mediaQuery } from '$lib/workflow-editor/media.svelte';
 	import { isAnnotation } from '$lib/workflow-editor/node-visual';
-	import { runTriggerNodeID } from '$lib/workflow-editor/run-trigger';
+	import { chatTriggerIn, type ChatSendPayload } from '$lib/workflow-editor/chat';
+	import { executeIntent } from '$lib/workflow-editor/run-trigger';
 	import { canConnect, connectionFromCanvas, resolvedPorts } from '$lib/workflow-editor/ports';
 	import type { CanvasShortcut } from '$lib/workflow-editor/shortcuts';
 	import type { CanvasValidationIssue } from '$lib/workflow-editor/validation';
 
 	import ActivationNotices from './activation-notices.svelte';
+	import CanvasChatPanel from './canvas-chat-panel.svelte';
 	import EditorControls from './editor-controls.svelte';
 	import CanvasBridge, { type CanvasFlow } from './canvas-bridge.svelte';
 	import CanvasEdge from './canvas-edge.svelte';
@@ -162,9 +167,10 @@
 		 *
 		 * The options name the trigger to start from, when the workflow declares
 		 * several and the user picked one; a host that ignores them keeps the
-		 * server's "run every trigger" default.
+		 * server's "run every trigger" default. Chat sends the trigger plus the
+		 * message payload and uses the returned execution for the reply.
 		 */
-		onRun: (selection?: RunSelection) => Promise<void>;
+		onRun: (selection?: RunSelection) => Promise<ExecutionResource | void>;
 		onActivate?: () => Promise<void>;
 		onDeactivate?: () => Promise<void>;
 		onDismissNotice?: (key: string) => void;
@@ -306,6 +312,12 @@
 	// *saved* revision: activating here would publish something other than what
 	// the user is looking at. Deactivating is never ambiguous that way.
 	const activationBlockedByDirty = $derived(!active && dirty);
+	const chatTrigger = $derived(chatTriggerIn(displayed.nodes ?? []));
+	const showChat = $derived(Boolean(chatTrigger) && !hideRun && !previewing);
+	let chatOpen = $state(false);
+	$effect(() => {
+		if (!showChat) chatOpen = false;
+	});
 	const selectedNode = $derived((displayed.nodes ?? []).find((node) => node.id === selectedNodeID) ?? null);
 	const selectedDefinition = $derived(
 		selectedNode ? (resolveDefinition(selectedNode.type, selectedNode.typeVersion, definitions) ?? null) : null
@@ -947,20 +959,29 @@
 	}
 
 	async function run() {
-		if (hideRun || dirty || running) return;
-		await onRun(runSelection());
+		if (hideRun || dirty || running || previewing) return;
+		const intent = executeIntent(displayed.nodes ?? [], definitions, selectedNodeIDs);
+		if (intent.action === 'open-chat') {
+			chatOpen = true;
+			return;
+		}
+		try {
+			await onRun(intent.triggerNodeId ? { triggerNodeId: intent.triggerNodeId } : undefined);
+		} catch {
+			// The host records runError; Execute must not become an unhandled rejection.
+		}
 	}
 
-	/**
-	 * The trigger this run should start from, or nothing.
-	 *
-	 * Nothing means "the server's default", which is every trigger of the
-	 * workflow — correct for a single-trigger workflow and unchanged from what
-	 * Execute has always done.
-	 */
-	function runSelection(): RunSelection | undefined {
-		const triggerNodeID = runTriggerNodeID(displayed.nodes ?? [], definitions, selectedNodeIDs);
-		return triggerNodeID ? { triggerNodeId: triggerNodeID } : undefined;
+	async function sendChat(payload: ChatSendPayload): Promise<ExecutionResource> {
+		const trigger = chatTrigger;
+		if (!trigger) {
+			throw new Error(m.editor_chat_send_failed({ error: m.editor_chat_last_node() }));
+		}
+		const execution = await onRun({ triggerNodeId: trigger.id, input: payload });
+		if (!execution) {
+			throw new Error(m.editor_chat_send_failed({ error: m.workflows_run_watch_stopped() }));
+		}
+		return execution;
 	}
 
 	async function toggleActivation() {
@@ -1202,6 +1223,33 @@
 					{/if}
 				{/if}
 			</SvelteFlow>
+
+			{#if showChat && chatTrigger}
+				<div class="pointer-events-none absolute bottom-4 left-4 z-20">
+					<!-- Kept mounted while the trigger is on the canvas so sessionId
+					     and history survive Close. New chat is what rotates the id. -->
+					<div class="pointer-events-auto {chatOpen ? '' : 'hidden'}">
+						<CanvasChatPanel
+							triggerNodeId={chatTrigger.id}
+							disabled={dirty || running}
+							onClose={() => (chatOpen = false)}
+							onSend={sendChat}
+						/>
+					</div>
+					{#if !chatOpen}
+						<button
+							type="button"
+							data-testid="workflow-chat-button"
+							class="pointer-events-auto inline-flex h-10 items-center gap-2 rounded-full border border-border bg-card px-4 text-sm font-semibold text-foreground shadow-lg shadow-black/20 transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2"
+							onclick={() => (chatOpen = true)}
+							aria-label={m.editor_chat_open()}
+						>
+							<MessageCircle aria-hidden="true" class="size-4" />
+							{m.editor_chat()}
+						</button>
+					{/if}
+				</div>
+			{/if}
 
 			{#if !hideRun && (displayed.nodes?.length ?? 0) > 0}
 				<!-- n8n-style bottom-center execute affordance; same guards as toolbar Run.

@@ -17,6 +17,7 @@ import (
 func RegisterAll(registry *node.Registry) error {
 	for _, definition := range []node.Definition{
 		manualTrigger(),
+		chatTrigger(),
 		setNode(),
 		ifNode(),
 		mergeNode(),
