@@ -80,26 +80,20 @@ function runId(env: Record<string, string | undefined>): string {
 // is actionable rather than a diagnosis with no next step.
 const REHEARSAL = 'KILASFLOW_CAPSTONE_IMAGE=kilasflow:latest KILASFLOW_CAPSTONE_PULL=0 KILASFLOW_CAPSTONE_SDK_SPEC=tarball make test-e2e-capstone e2e-capstone-report';
 
-function readCapstoneImage(env: Record<string, string | undefined>): string {
-	const explicit = trimmed(env.KILASFLOW_CAPSTONE_IMAGE);
-	if (explicit) return explicit;
-	// The Makefile's image targets export KILASFLOW_IMAGE and KILASFLOW_VERSION
-	// through the target-specific export pattern (never interpolated into a
-	// recipe), so `make test-e2e-capstone` names the same image `make docker`
-	// just built without anybody restating it. With no environment at all the
-	// default is the published coordinate the criterion names.
-	const image = trimmed(env.KILASFLOW_IMAGE);
-	const version = trimmed(env.KILASFLOW_VERSION);
-	if (image && version) return `${image}:${version}`;
-	return 'ghcr.io/kilaslab/kilasflow:latest';
-}
-
 /**
  * Reads the capstone configuration. Pure: the only state it touches is the
  * object handed in, which defaults to process.env.
  */
 export function readCapstoneConfig(env: Record<string, string | undefined> = process.env): CapstoneConfig {
-	const image = readCapstoneImage(env);
+	// The image under test is named in exactly one place, and the default is the
+	// published coordinate. It deliberately does NOT fall back to the Makefile's
+	// KILASFLOW_IMAGE/KILASFLOW_VERSION: those carry `git describe --always`, and
+	// scripts/docker-tags.sh publishes only vX.Y.Z, vX.Y and latest — a
+	// commit-derived tag is an image that can never be pulled, so a run that
+	// inherited it would report "artefact missing" for a reason nobody could act
+	// on. A rehearsal names its local tag explicitly (see REHEARSAL above); a
+	// release run names the version tag it published.
+	const image = trimmed(env.KILASFLOW_CAPSTONE_IMAGE) ?? 'ghcr.io/kilaslab/kilasflow:latest';
 	const pull = trimmed(env.KILASFLOW_CAPSTONE_PULL) !== '0';
 	const sdkSpec = trimmed(env.KILASFLOW_CAPSTONE_SDK_SPEC) ?? '@kilasflow/sdk@latest';
 	const config: CapstoneConfig = {

@@ -69,6 +69,7 @@ checks only matter if your change reaches the API surface or the configuration.
 | `make test-e2e` | the Playwright suite, against a real binary and SPA |
 | `make test-e2e-capstone` | the epic acceptance capstone, against a docker image (on demand) |
 | `make e2e-capstone-report` | the capstone's verdict: exit 0 passed, 1 failed, 2 unavailable |
+| `make e2e-capstone-scheduled` | the same verdict as `.github/workflows/capstone.yml` reads it: an unavailable third party does not fail the run |
 
 The `generate-*-check` targets exist because a hand-maintained copy drifts, and
 the failure is silent: a client that compiles and calls an endpoint that no

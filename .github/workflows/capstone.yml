@@ -1,0 +1,127 @@
+name: Capstone
+
+# The epic acceptance capstone (FEAT-5fhj6p): the four proofs of EPIC-m42s3g
+# against a docker image, the real Telegram Bot API, a real WAHA server and the
+# published npm package.
+#
+# It is deliberately not in ci.yml and never runs on a pull request. It needs
+# docker, operator-owned credentials and third-party availability, so a failure
+# here is at least as likely to be somebody else's outage as a regression; the
+# epic's delivery rules ask for it to be gated that way, and ci.yml keeps
+# hermetic per-PR coverage of the same proof bodies (one implementation, two
+# arrangements — see e2e/fixtures/epic-proofs.ts).
+#
+# What the schedule buys is that the rarely-run suite cannot rot: this is the
+# only job that re-measures the corpus, the published image and the published
+# package against the artefact that ships instead of against the working tree.
+#
+# Reading a run. `make e2e-capstone-scheduled` exits 0 when every proof passed
+# or explained itself, 1 when an assertion disagreed, and 0 when nothing
+# disagreed but an artefact or a third party was missing — an unavailable run is
+# not a regression, and a red arrow nobody can act on is one people stop
+# reading. The verdict, with each proof's outcome, its reason and its recovery
+# command, is written to the run's summary page; the full markdown and JSON are
+# printed by `make e2e-capstone-report`.
+#
+# Credentials. Every secret below is documented, with its owner and the proof it
+# enables, in docs/src/content/docs/operate/acceptance-capstone.md — and a test
+# in e2e/tests/epic-machinery.spec.ts fails when a knob the suite reads is not
+# named there. An unset secret is not an error: the proof that needs it reports
+# `skipped` with the recovery command instead of pretending.
+#
+# Until the image and the package are published, and the real Telegram and WAHA
+# sides exist, the expected verdict is `failed` with cause `artefact-missing`:
+# the artefacts under test do not exist yet. That is the epic's remaining work
+# showing up as a red arrow rather than as silence, and the report names the
+# proof (`artefacts - image identity`), the artefact and the tag that publishes
+# it. An unavailable third party is the case this job deliberately does not go
+# red for.
+
+on:
+  schedule:
+    # Weekly, off the hour: GitHub queues scheduled runs at the top of the hour
+    # and delays are longest there. Monday morning so the week starts with the
+    # answer to "does the shipped artefact still work".
+    - cron: '23 5 * * 1'
+  # The operator's path for a rehearsal against a specific tag, or for a run
+  # after supplying a credential. See the operator page for the full procedure.
+  workflow_dispatch:
+    inputs:
+      image:
+        description: Image under test (empty = the default published coordinate)
+        required: false
+        default: ''
+      sdk_spec:
+        description: npm spec proof 4 installs (empty = @kilasflow/sdk@latest; `tarball` packs ./sdk)
+        required: false
+        default: ''
+
+# Read-only: this job pulls an image, installs a package and writes a report. It
+# publishes nothing, so it needs no more than the default.
+permissions:
+  contents: read
+
+# A scheduled run and a dispatched run should not fight over the same real
+# Telegram bot and WAHA session, so one at a time; a new dispatch supersedes a
+# queued run rather than queueing behind it.
+concurrency:
+  group: capstone
+  cancel-in-progress: false
+
+jobs:
+  capstone:
+    name: Epic acceptance capstone
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: ./.github/actions/js-toolchain
+
+      # Unlike the per-PR e2e job this one does not install web/ or run a Go
+      # build: `global-setup` is absent from playwright.capstone.config.ts on
+      # purpose, because the artefact under test is the image, which the first
+      # test pulls and proves the identity of.
+      - name: Install e2e dependencies
+        working-directory: e2e
+        run: pnpm install --frozen-lockfile
+
+      # Only the `tarball` dispatch input needs this: proof 4's `npm pack sdk`
+      # runs the SDK's prepack build, and without the SDK's own dependencies
+      # that fails with "tsc: command not found" — a red proof for a reason that
+      # has nothing to do with the product.
+      - name: Install SDK dependencies
+        working-directory: sdk
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        working-directory: e2e
+        run: pnpm exec playwright install --with-deps chromium
+
+      # The leading `-` inside the target is what lets a skipped or unavailable
+      # proof reach the report step, which owns the verdict.
+      - name: Capstone
+        run: make test-e2e-capstone
+        env:
+          # Empty means "use the default", which readCapstoneConfig() resolves to
+          # the published coordinate. Inputs reach the shell through env rather
+          # than through `${{ }}` interpolated into the run line, so a value can
+          # never become part of a command.
+          KILASFLOW_CAPSTONE_IMAGE: ${{ inputs.image }}
+          KILASFLOW_CAPSTONE_SDK_SPEC: ${{ inputs.sdk_spec }}
+          KILASFLOW_CAPSTONE_TELEGRAM_BOT_TOKEN: ${{ secrets.KILASFLOW_CAPSTONE_TELEGRAM_BOT_TOKEN }}
+          KILASFLOW_CAPSTONE_TELEGRAM_CHAT_ID: ${{ secrets.KILASFLOW_CAPSTONE_TELEGRAM_CHAT_ID }}
+          KILASFLOW_CAPSTONE_OPENROUTER_API_KEY: ${{ secrets.KILASFLOW_CAPSTONE_OPENROUTER_API_KEY }}
+          KILASFLOW_CAPSTONE_MODEL: ${{ secrets.KILASFLOW_CAPSTONE_MODEL }}
+          KILASFLOW_CAPSTONE_WAHA_URL: ${{ secrets.KILASFLOW_CAPSTONE_WAHA_URL }}
+          KILASFLOW_CAPSTONE_WAHA_API_KEY: ${{ secrets.KILASFLOW_CAPSTONE_WAHA_API_KEY }}
+          KILASFLOW_CAPSTONE_WAHA_SESSION_A: ${{ secrets.KILASFLOW_CAPSTONE_WAHA_SESSION_A }}
+          KILASFLOW_CAPSTONE_WAHA_SESSION_B: ${{ secrets.KILASFLOW_CAPSTONE_WAHA_SESSION_B }}
+
+      # The verdict, and the only step whose status is the run's: exit 1 fails
+      # here, an unavailable run annotates and passes. Always, because a run
+      # whose Playwright half died is exactly the run that most needs its
+      # report — a missing record is a failure the report can still name.
+      - name: Verdict
+        if: always()
+        run: make e2e-capstone-scheduled

@@ -12,13 +12,14 @@ import { test, expect } from '@playwright/test';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { once } from 'node:events';
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { scaffoldExternalSource } from '../fixtures/epic-external';
+import { readCapstoneConfig } from '../fixtures/epic-config';
 import {
 	classifyFailure,
 	classifyNpmError,
@@ -406,6 +407,85 @@ test('corpus: names match the Go loader and join baseline.json rows', async () =
 	const control = corpusName('control-datatable.json', 'kilasflow');
 	expect(baseline.scores.some((row) => row.name === control.name)).toBe(true);
 	expect(baseline.scores.every((row) => row.name.includes('/'))).toBe(true);
+});
+
+// The configuration module is pure so this can be a test rather than a docker
+// run — and it needs to be, because both halves of it fail quietly. An image
+// default that is not a published coordinate makes every proof report "artefact
+// missing"; a credential gate that is stuck closed skips a proof that could
+// have run, and one stuck open claims a run that never happened.
+test('capstone config: the image default is a published coordinate and the credential gates name what is missing', () => {
+	// A commit-derived tag is never published: scripts/docker-tags.sh emits only
+	// vX.Y.Z, vX.Y and latest. The Makefile used to export the release
+	// coordinates into these targets, which made the default image
+	// `ghcr.io/kilaslab/kilasflow:<sha>` and could never be pulled.
+	expect(readCapstoneConfig({}).image).toBe('ghcr.io/kilaslab/kilasflow:latest');
+	expect(
+		readCapstoneConfig({ KILASFLOW_IMAGE: 'ghcr.io/kilaslab/kilasflow', KILASFLOW_VERSION: '2fb3786-dirty' }).image
+	).toBe('ghcr.io/kilaslab/kilasflow:latest');
+	// The one knob that names an image does, and it is the whole coordinate.
+	expect(readCapstoneConfig({ KILASFLOW_CAPSTONE_IMAGE: 'kilasflow:latest' }).image).toBe('kilasflow:latest');
+
+	// Nothing configured: both credential-gated proofs say which variables are
+	// missing, so the skip is actionable rather than a diagnosis.
+	const bare = readCapstoneConfig({});
+	expect(bare.missing('01-proof1-telegram')?.reason).toContain('KILASFLOW_CAPSTONE_TELEGRAM_BOT_TOKEN');
+	expect(bare.missing('01-proof1-telegram')?.reason).toContain('KILASFLOW_CAPSTONE_OPENROUTER_API_KEY');
+	expect(bare.missing('02-proof2-waha')?.reason).toContain('KILASFLOW_CAPSTONE_WAHA_SESSION_B');
+	expect(bare.missing('03-proof3-datastore')).toBeNull();
+
+	// Everything present: no gate is left closed over a proof that could run.
+	const complete = readCapstoneConfig({
+		KILASFLOW_CAPSTONE_TELEGRAM_BOT_TOKEN: '123456:AA-token',
+		KILASFLOW_CAPSTONE_TELEGRAM_CHAT_ID: '774411',
+		KILASFLOW_CAPSTONE_OPENROUTER_API_KEY: 'sk-or-key',
+		KILASFLOW_CAPSTONE_MODEL: 'anthropic/claude-sonnet-4',
+		KILASFLOW_CAPSTONE_WAHA_URL: 'https://waha.example',
+		KILASFLOW_CAPSTONE_WAHA_API_KEY: 'waha-key',
+		KILASFLOW_CAPSTONE_WAHA_SESSION_A: 'tenant-a',
+		KILASFLOW_CAPSTONE_WAHA_SESSION_B: 'tenant-b'
+	});
+	expect(complete.missing('01-proof1-telegram')).toBeNull();
+	expect(complete.missing('02-proof2-waha')).toBeNull();
+});
+
+// Where the capstone's knobs are read: the suite itself, the Make targets an
+// operator calls, and the workflow that runs it on a schedule.
+const CAPSTONE_SOURCE_ROOTS = ['e2e/capstone', 'e2e/fixtures', 'e2e/scripts', 'e2e/tests', '.github/workflows'];
+const CAPSTONE_SOURCE_FILES = ['Makefile'];
+const CAPSTONE_SOURCE_EXTENSIONS = ['.ts', '.mjs', '.yml', '.yaml'];
+const CAPSTONE_VARIABLE = /KILASFLOW_CAPSTONE_[A-Z0-9_]+/g;
+
+async function capstoneSourceText(): Promise<string> {
+	const texts: string[] = [];
+	for (const file of CAPSTONE_SOURCE_FILES) texts.push(await readFile(resolve(repoRoot, file), 'utf-8'));
+	for (const root of CAPSTONE_SOURCE_ROOTS) {
+		const entries = await readdir(resolve(repoRoot, root), { recursive: true, withFileTypes: true });
+		for (const entry of entries) {
+			if (!entry.isFile()) continue;
+			if (!CAPSTONE_SOURCE_EXTENSIONS.some((extension) => entry.name.endsWith(extension))) continue;
+			texts.push(await readFile(join(entry.parentPath, entry.name), 'utf-8'));
+		}
+	}
+	return texts.join('\n');
+}
+
+// The operator page is the contract for a second operator — see
+// docs/src/content/docs/operate/acceptance-capstone.md. A knob the suite reads
+// but the page does not name is a credential nobody can supply, and a name the
+// page carries that the suite no longer reads sends its reader to a variable
+// that does nothing; epic-config.ts states this rule, and this is the test that
+// enforces it in both directions.
+test('docs coverage: the operator page names exactly the capstone knobs the suite reads', async () => {
+	const page = await readFile(
+		resolve(repoRoot, 'docs', 'src', 'content', 'docs', 'operate', 'acceptance-capstone.md'),
+		'utf-8'
+	);
+	const read = new Set((await capstoneSourceText()).match(CAPSTONE_VARIABLE) ?? []);
+	const documented = new Set(page.match(CAPSTONE_VARIABLE) ?? []);
+	expect(read.size, 'the scan found the suite at all').toBeGreaterThan(0);
+	expect([...read].filter((name) => !documented.has(name))).toEqual([]);
+	expect([...documented].filter((name) => !read.has(name))).toEqual([]);
 });
 
 // The registry path of proof 4, exercised without ever publishing: a fake npm

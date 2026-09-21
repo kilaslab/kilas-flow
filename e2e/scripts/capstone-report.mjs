@@ -14,6 +14,13 @@
 //   2  nothing failed, but at least one proof was unavailable (a third party
 //      was down, which is not a regression signal)
 //
+// `--unavailable-ok` is the schedule's opinion of that last case and nothing
+// else: the verdict written into the report is unchanged, and the process exits
+// 0 with the reason printed. A weekly run that goes red because somebody else's
+// API was down is a run people learn to ignore, which is worse than no schedule.
+// Exit 1 stays fatal in both modes — an assertion disagreement is the signal
+// this suite exists for.
+//
 // Nothing from the environment reaches the report unredacted: credentials, the
 // bearer values a service echoed and the webhook routes (a capability in their
 // own right) are rewritten before a byte is written or printed.
@@ -115,6 +122,7 @@ function verdictFor(records, exitCode) {
 
 async function main() {
 	const secrets = secretsFromEnv();
+	const unavailableOk = process.argv.includes('--unavailable-ok');
 	const records = await loadRecords();
 	const crashed = await crashedWithoutRecord();
 
@@ -217,6 +225,14 @@ async function main() {
 				.join(', ') || 'none'}) — report at e2e/capstone-results/report.md`
 	);
 	process.exitCode = exitCode;
+	// The verdict above is unchanged; only the status this process returns is.
+	// A caller that treats an outage as a failure passes no flag.
+	if (exitCode === 2 && unavailableOk) {
+		console.log(
+			'capstone unavailable: nothing disagreed, but an artefact or a third party was missing — exiting 0 (--unavailable-ok)'
+		);
+		process.exitCode = 0;
+	}
 }
 
 await main();

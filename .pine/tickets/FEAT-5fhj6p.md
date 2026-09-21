@@ -16,7 +16,7 @@ deps:
 parent: EPIC-m42s3g
 phase: p11
 created: "2026-09-05T12:06:43Z"
-updated: "2026-09-06T06:58:47Z"
+updated: "2026-09-21T02:00:00Z"
 ---
 
 ## Scope
@@ -266,3 +266,140 @@ a published npm package or real third-party credentials (Telegram bot token,
 WAHA session) that no agent can mint. AC4 and AC6 are proven. Stage 3 wires the
 real sides, the tunnel and the schedule workflow; what stage 2 proves is that
 the machinery exists, classifies honestly and never leaks a secret.
+
+## Verification pass — the eight criteria, measured on the current tree (2026-09-21)
+
+Everything below was run on `main`@`2fb3786` in a scratch worktree
+(`git worktree add --detach /tmp/wt-FEAT-5fhj6p main`), against a real
+PostgreSQL 17 (`pgvector/pgvector:pg17`, container `kf-pg-feat-5fhj6p`,
+127.0.0.1:32771), the materialised `.corpus`, and the pinned local model
+(`gemma4:12b-mlx`). Every row is observed output, not a claim. Two defects were
+found and fixed; the fixes are the commit this section belongs to.
+
+### Criterion → status → evidence
+
+1. **Four proofs as one suite, in order, against a published image** — *partial,
+   blocked*. The suite, the order and the image host exist and run; the image
+   is not published and proofs 1–2 have no real side yet.
+   `KILASFLOW_CAPSTONE_IMAGE=kilasflow:latest KILASFLOW_CAPSTONE_PULL=0 KILASFLOW_CAPSTONE_SDK_SPEC=tarball make test-e2e-capstone e2e-capstone-report`
+   → `5 passed, 2 skipped` (Playwright) / `capstone skipped: 7 proofs (5 passed, 2 skipped) — report at e2e/capstone-results/report.md`, exit 0.
+   Proofs 1 and 2 skip with `the real Telegram/OpenRouter/WAHA sides are not
+   implemented yet (stage 2 ships the capstone core)` — they skip even when the
+   credentials are present, so this is stage-3 code, not only a credential gap.
+   The published half needs `ghcr.io/kilaslab/kilasflow` to exist:
+   `docker manifest inspect ghcr.io/kilaslab/kilasflow:latest` → `denied`.
+2. **Telegram proof with a real bot token** — *blocked on credentials*.
+   `readCapstoneConfig({}).missing('01-proof1-telegram')` names what is absent:
+   `KILASFLOW_CAPSTONE_TELEGRAM_BOT_TOKEN`, `KILASFLOW_CAPSTONE_TELEGRAM_CHAT_ID`,
+   `KILASFLOW_CAPSTONE_OPENROUTER_API_KEY`, `KILASFLOW_CAPSTONE_MODEL`. With all
+   four set and stage 3 landed, `make test-e2e-capstone` is the proving command.
+   A bot token can only come from @BotFather under the owner's Telegram account.
+3. **WAHA proof against a real server, two tenants, HMAC over the raw body** —
+   *blocked on credentials*. Same command, credentials
+   `KILASFLOW_CAPSTONE_WAHA_URL`, `KILASFLOW_CAPSTONE_WAHA_API_KEY`,
+   `KILASFLOW_CAPSTONE_WAHA_SESSION_A`, `KILASFLOW_CAPSTONE_WAHA_SESSION_B`
+   (two paired sessions on an operator-hosted server). The stub arrangement
+   proves the path today: hermetic proof 2 passed (`7 passed` below).
+4. **Datastore proof on PostgreSQL, cross-tenant refusal, n8n Data Table
+   import** — *ticked, re-proven here*.
+   `KILASFLOW_TEST_POSTGRES_DSN=… playwright test tests/epic-acceptance.spec.ts`
+   → `7 passed (31.9s)`, including `proof 3 — the datastore path holds on postgres`
+   (full lifecycle + isolation, not a single write/read). Against the image:
+   `capstone proof 3 - datastore on PostgreSQL` and `proof 3 - a second tenant
+   reads nothing` both `passed` on a container-side database.
+5. **External consumer installs the published npm package** — *blocked on
+   publication*. `npm view @kilasflow/sdk version` → `E404 Not Found`. The
+   registry code path is proven without publishing (machinery test
+   `registry mode …` installs from a fake registry serving the real
+   `npm pack ./sdk` bytes). Once published, the proving command is
+   `KILASFLOW_CAPSTONE_SDK_SPEC=@kilasflow/sdk@latest make test-e2e-capstone`;
+   today proof 4 runs against `tarball` and passes.
+6. **No Node.js process in or beside the server, for all four proofs** —
+   *ticked, re-proven here*. All four proof bodies call `assertNoNodeOk`
+   (`epic-proofs.ts` lines 422, 518–519, 598, 663–664, 837). Container-side
+   evidence from the report: `checked: no Node-like process across 5 process
+   table(s) (docker:kilasflow.capstone.run=…)`.
+7. **The run publishes a report: proofs, corpus fidelity against the shipped
+   artefact, image and package versions** — *mechanism proven, box left unticked*.
+   Observed report: verdict table per proof, `image kilasflow:latest
+   (sha256:051bc11a…)`, `image version 2fb3786, revision 2fb37865a36d…`,
+   `architecture arm64`, `entrypoint ["/app/kilasflow"]`, `health version
+   2fb3786`, `sdk 0.1.0 integrity sha512-JZYjhqJd…`, `corpus coverage 40/40,
+   tiers imported 40, activatable 15, runnable 5, blocked 10` with
+   `drift []` against `internal/interop/n8n/corpus/baseline.json`. What is not
+   proven is the word *shipped*: the artefact measured was built locally by the
+   Dockerfile (`make docker`), because nothing is published. Not ticked for that
+   conjunct alone.
+8. **On demand and on a schedule, not on every pull request, with documented
+   credentials** — *three of four observed, box left unticked*. On demand: the
+   Makefile targets above, run. Not per-PR: `playwright.capstone.config.ts` has
+   `testDir: './capstone'` and `playwright.config.ts` has `testDir: './tests'`,
+   and the hermetic run did not pick the capstone up. Documented:
+   `docs/src/content/docs/operate/acceptance-capstone.md` (credential table with
+   an owner per row), enforced by a new test that fails when the suite reads a
+   `KILASFLOW_CAPSTONE_*` variable the page does not name (mutation-checked:
+   renaming `KILASFLOW_CAPSTONE_PG_IMAGE` on the page fails it, naming it wrong
+   in both places passes it). Schedule: `.github/workflows/capstone.yml`, new in
+   this commit, YAML-validated and structurally checked — but a `schedule`
+   trigger only fires on the default branch, so it cannot have fired before this
+   lands. That is the only unobserved part of the criterion.
+
+### Defects found and fixed (this commit)
+
+- **The default image under test was a coordinate that can never be pulled.**
+  `IMAGE_TARGETS` gave `make test-e2e-capstone` the release exports, so with no
+  environment the image resolved to `ghcr.io/kilaslab/kilasflow:2fb3786-dirty`
+  (observed: `docker pull ghcr.io/kilaslab/kilasflow:2fb3786-dirty:` in the
+  artefacts record) while `scripts/docker-tags.sh` publishes only `vX.Y.Z`,
+  `vX.Y` and `latest`. Every unconfigured run — including the scheduled one —
+  would have reported `artefact-missing` for a tag nobody could create.
+  Fixed by dropping the two capstone targets from `IMAGE_TARGETS` and removing
+  the `KILASFLOW_IMAGE`/`KILASFLOW_VERSION` fallback from `readCapstoneImage`.
+  After the fix, `make test-e2e-capstone` with no environment names
+  `ghcr.io/kilaslab/kilasflow:latest` (observed in the record), and a new
+  machinery test asserts that a commit-derived tag cannot leak back in.
+- **A promise the code made and nothing kept.** `epic-config.ts` states its
+  variable list "is the documentation contract: the stage 3 docs-coverage guard
+  test fails when the suite reads a `KILASFLOW_CAPSTONE_` variable the operator
+  page does not name", and the module's purity comment promises the machinery
+  tests exercise its defaulting and missing reasons. Neither test existed. Both
+  exist now (`docs coverage …`, `capstone config …`), and both were
+  mutation-checked in the failing direction.
+
+### Availability versus assertion failure
+
+The design already distinguished the two and it is now demonstrated, not just
+asserted. Same suite, same command, three states:
+
+| run | observed | verdict | exit |
+| --- | --- | --- | --- |
+| rehearsal, local image | `5 passed, 2 skipped` | `skipped` | 0 |
+| `KILASFLOW_CAPSTONE_IMAGE=registry.invalid/kilaslab/kilasflow:latest` | `7 unavailable`, cause transport | `unavailable` | 2 (`make e2e-capstone-scheduled` → 0) |
+| no environment (published image absent) | `7 failed`, cause `artefact-missing` | `failed` | 1 |
+
+`--unavailable-ok` (the new `make e2e-capstone-scheduled`) changes only the
+process status for the middle row, never the verdict in the report; an
+assertion failure still fails. `.github/workflows/capstone.yml` reads its verdict
+that way, so an outage does not go red and a missing artefact does.
+
+### Credential set and owner
+
+Named in full, with the proof each one enables, in
+`docs/src/content/docs/operate/acceptance-capstone.md`. The short version: every
+row is **project owner** territory — a Telegram bot token from @BotFather, the
+chat that started it, the OpenRouter key and model id, an operator-hosted WAHA
+server with its API key and two paired sessions; plus two that are pipeline
+rather than secret (`NPM_TOKEN` for the `@kilasflow` scope in the release
+workflow, and a `v*` tag to publish the image). No agent can mint any of them,
+and none of them is faked: each proof reports `skipped` with the missing
+variable named and a recovery command.
+
+### Left for main
+
+- Tick 7 and 8 after the first scheduled fire and the first published
+  `make test-e2e-capstone`, if the orchestrator wants them ticked at all.
+- Stage 3 (the real Telegram/WAHA sides, the tunnel) is what AC1/AC2/AC3 need
+  beyond credentials; it is not started and is not a verification finding.
+- Pre-existing and unrelated: `make e2e-skip-budget` reports 4 violations in
+  `ai-agent-ollama` (`skipped with no reason at all`) on a machine where the
+  local Ollama cascade fires. Unchanged by this pass and not caused by it.

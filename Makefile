@@ -45,7 +45,15 @@ IMAGE_ARGS  := --build-arg VERSION="$$KILASFLOW_VERSION" \
                --build-arg SOURCE="$$KILASFLOW_SOURCE"
 
 # Every recipe that names an image or a version gets them this way.
-IMAGE_TARGETS := build docker docker-multiarch docker-release docker-sign smoke-docker-published test-e2e-capstone e2e-capstone-report
+#
+# The capstone targets are deliberately NOT in this list. They export a
+# commit-derived `KILASFLOW_VERSION` (`git describe --always`), and
+# scripts/docker-tags.sh only ever publishes `vX.Y.Z`, `vX.Y` and `latest` — so
+# inheriting the release coordinates made the default image under test
+# `ghcr.io/kilaslab/kilasflow:<sha>`, a tag that can never be pulled. The
+# capstone names its image itself: the published `latest` by default, whatever
+# `KILASFLOW_CAPSTONE_IMAGE` says otherwise.
+IMAGE_TARGETS := build docker docker-multiarch docker-release docker-sign smoke-docker-published
 $(IMAGE_TARGETS): export KILASFLOW_IMAGE = $(IMAGE)
 $(IMAGE_TARGETS): export KILASFLOW_VERSION = $(VERSION)
 $(IMAGE_TARGETS): export KILASFLOW_REVISION = $(REVISION)
@@ -497,6 +505,14 @@ test-e2e-capstone: ## Run the on-demand epic capstone against a docker image
 .PHONY: e2e-capstone-report
 e2e-capstone-report: ## Exit 0/1/2 on the last capstone run's verdict
 	node e2e/scripts/capstone-report.mjs
+
+# The same verdict, read the way .github/workflows/capstone.yml reads it: an
+# unavailable third party does not fail a scheduled run, because a red arrow
+# nobody can act on is a red arrow people stop reading. An assertion failure —
+# exit 1 — still does. The verdict in the report is unchanged either way.
+.PHONY: e2e-capstone-scheduled
+e2e-capstone-scheduled: ## The capstone's verdict with availability treated as success
+	node e2e/scripts/capstone-report.mjs --unavailable-ok
 
 .PHONY: clean
 clean: ## Remove build artifacts
