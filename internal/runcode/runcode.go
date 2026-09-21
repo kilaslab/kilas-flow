@@ -1,16 +1,3 @@
-// Package runcode compiles and executes user-supplied Go for the Code node.
-//
-// User code never runs in the kilasflow process. Source is compiled once to a
-// `GOOS=wasip1 GOARCH=wasm` module, cached by source hash, and executed under
-// wazero with no filesystem, no network, no process access, and no
-// environment — only stdin and stdout.
-//
-// Compilation and execution are deliberately separate concerns. Compiling Go
-// needs the full toolchain, which cannot ship inside the distroless single
-// binary; execution needs only the embedded wazero runtime, which can. A
-// deployment that has no compiler still runs previously built artifacts and
-// reports a clear status for source that has never been built, instead of
-// failing every workflow that contains a Code node.
 package runcode
 
 import (
@@ -29,8 +16,6 @@ import (
 	"time"
 
 	"github.com/tetratelabs/wazero"
-	"github.com/tetratelabs/wazero/imports/wasi_snapshot_preview1"
-	"github.com/tetratelabs/wazero/sys"
 )
 
 // RuntimeVersion changes whenever the compilation or execution contract does.
@@ -57,6 +42,13 @@ type Limits struct {
 	MemoryPages uint32
 	// MaxOutputBytes bounds what the module may write back.
 	MaxOutputBytes int64
+	// MaxHostCalls bounds how many times the module may call into the host.
+	//
+	// It bounds the work the host would do on the module's behalf — an HTTP
+	// request, a credential, a read of someone's data — so it is the budget a
+	// pack's capabilities are measured in. It has no effect on a module that
+	// cannot reach the host at all, which is the Code node.
+	MaxHostCalls int
 }
 
 // DefaultLimits are conservative because the code is user supplied.
@@ -65,7 +57,27 @@ func DefaultLimits() Limits {
 		Timeout:        10 * time.Second,
 		MemoryPages:    256, // 16 MiB
 		MaxOutputBytes: 4 << 20,
+		MaxHostCalls:   100,
 	}
+}
+
+// orDefault fills what a caller left zero from the product's defaults, so a
+// zero field means "the shipped value" rather than "unbounded".
+func (limits Limits) orDefault() Limits {
+	defaults := DefaultLimits()
+	if limits.Timeout <= 0 {
+		limits.Timeout = defaults.Timeout
+	}
+	if limits.MemoryPages == 0 {
+		limits.MemoryPages = defaults.MemoryPages
+	}
+	if limits.MaxOutputBytes <= 0 {
+		limits.MaxOutputBytes = defaults.MaxOutputBytes
+	}
+	if limits.MaxHostCalls <= 0 {
+		limits.MaxHostCalls = defaults.MaxHostCalls
+	}
+	return limits
 }
 
 // SourceHash is the stable identity of one piece of user code.
@@ -180,6 +192,13 @@ type ToolchainCompiler struct {
 	GoBinary string
 	// Timeout bounds a build, which can hang on a pathological input.
 	Timeout time.Duration
+	// CacheDir is where the toolchain keeps its build cache (GOCACHE).
+	//
+	// A deployment that runs with a read-only root filesystem has one writable
+	// place: the data volume the code cache sits on. Empty leaves GOCACHE to
+	// the Go toolchain's own default, and the process environment wins over
+	// this either way, so an operator who set GOCACHE is never overridden.
+	CacheDir string
 }
 
 var _ Compiler = (*ToolchainCompiler)(nil)
@@ -191,12 +210,38 @@ func NewToolchainCompiler() *ToolchainCompiler {
 
 // Available reports whether the toolchain can be found.
 func (compiler *ToolchainCompiler) Available() bool {
-	binary := compiler.GoBinary
-	if binary == "" {
-		binary = "go"
-	}
-	_, err := exec.LookPath(binary)
+	_, err := exec.LookPath(compiler.binaryName())
 	return err == nil
+}
+
+// buildEnv is the environment one build runs with.
+//
+// It is the process environment plus the four decisions that make a Code node
+// build safe and reproducible, plus the build cache when the deployment gave
+// the code cache a directory: a read-only root filesystem leaves the
+// toolchain's default cache unwritable, and pointing GOCACHE at a writable
+// volume is what lets such a deployment compile at all. A GOCACHE that is
+// already in the process environment wins, because an operator who set one has
+// a warm cache somewhere deliberate.
+//
+// The configured directory is resolved to an absolute path here because the go
+// command refuses a relative GOCACHE outright ("build cache is required, but
+// could not be located: GOCACHE is not an absolute path") — and the default
+// code.cache_dir is relative, exactly like the default database path beside it.
+func (compiler *ToolchainCompiler) buildEnv() []string {
+	env := append(os.Environ(),
+		"GOOS=wasip1", "GOARCH=wasm",
+		"CGO_ENABLED=0",
+		// No module downloads: user code compiles against the standard library
+		// only, so a build cannot reach the network either.
+		"GOFLAGS=-mod=mod", "GOPROXY=off", "GONOSUMDB=*", "GONOSUMCHECK=1", "GOWORK=off",
+	)
+	if compiler != nil && compiler.CacheDir != "" && os.Getenv("GOCACHE") == "" {
+		if absolute, err := filepath.Abs(compiler.CacheDir); err == nil {
+			env = append(env, "GOCACHE="+absolute)
+		}
+	}
+	return env
 }
 
 // Compile builds source into a wasip1 module.
@@ -233,19 +278,9 @@ func (compiler *ToolchainCompiler) Compile(ctx context.Context, source string) (
 	defer cancel()
 
 	output := filepath.Join(directory, "module.wasm")
-	binary := compiler.GoBinary
-	if binary == "" {
-		binary = "go"
-	}
-	command := exec.CommandContext(buildCtx, binary, "build", "-trimpath", "-o", output, ".")
+	command := exec.CommandContext(buildCtx, compiler.binaryName(), "build", "-trimpath", "-o", output, ".")
 	command.Dir = directory
-	command.Env = append(os.Environ(),
-		"GOOS=wasip1", "GOARCH=wasm",
-		"CGO_ENABLED=0",
-		// No module downloads: user code compiles against the standard library
-		// only, so a build cannot reach the network either.
-		"GOFLAGS=-mod=mod", "GOPROXY=off", "GONOSUMDB=*", "GONOSUMCHECK=1", "GOWORK=off",
-	)
+	command.Env = compiler.buildEnv()
 	var stderr bytes.Buffer
 	command.Stderr = &stderr
 	if err := command.Run(); err != nil {
@@ -403,16 +438,7 @@ func NewRunner(compiler Compiler, cache Cache, modules *ModuleCache, limits Limi
 	if cache == nil {
 		cache = NewMemoryCache()
 	}
-	if limits.Timeout <= 0 {
-		limits.Timeout = DefaultLimits().Timeout
-	}
-	if limits.MemoryPages == 0 {
-		limits.MemoryPages = DefaultLimits().MemoryPages
-	}
-	if limits.MaxOutputBytes <= 0 {
-		limits.MaxOutputBytes = DefaultLimits().MaxOutputBytes
-	}
-	return &Runner{compiler: compiler, cache: cache, modules: modules, limits: limits}
+	return &Runner{compiler: compiler, cache: cache, modules: modules, limits: limits.orDefault()}
 }
 
 // Artifact returns the compiled module for source, compiling it only when the
@@ -450,17 +476,17 @@ func (runner *Runner) Run(ctx context.Context, source string, items []Item) (Res
 	return runner.Execute(ctx, artifact, items)
 }
 
-// Execute runs one compiled artifact.
+// Execute runs one compiled artifact against items.
 //
 // The module is instantiated with WASI's standard streams and nothing else: no
 // preopened directory, no environment, no clock beyond WASI's, and no host
 // functions. There is therefore no capability through which user code could
 // reach the filesystem, the network, another process, or KilasFlow's own
-// database.
+// database — the Code node is the sandbox with no host binding at all, which
+// is why Sandbox is the seam and this is the node's contract on top of it.
 //
-// Every execution gets its own runtime, closed when it returns, so one module
-// instance can never observe or outlive another. Only the translated machine
-// code is shared, through the module cache, and that is immutable.
+// Everything between the module and the host lives in Sandbox; what is left
+// here is the item batch: one JSON document in, one out.
 func (runner *Runner) Execute(ctx context.Context, artifact Artifact, items []Item) (Result, error) {
 	if len(artifact.Module) == 0 {
 		return Result{}, ErrNotCompiled
@@ -476,107 +502,17 @@ func (runner *Runner) Execute(ctx context.Context, artifact Artifact, items []It
 		return Result{}, fmt.Errorf("encode items: %w", err)
 	}
 
-	config := wazero.NewRuntimeConfig().
-		WithCloseOnContextDone(true).
-		WithMemoryLimitPages(runner.limits.MemoryPages)
-	if runner.modules != nil {
-		config = config.WithCompilationCache(runner.modules.compilation)
-	}
-
-	// Preparing the sandbox and translating the module run under the caller's
-	// context, not the user's time limit, because they are KilasFlow's work and
-	// not the user's program running. Charging them to the limit meant a Code
-	// node whose body returns immediately could still be told it "exceeded its
-	// 10s time limit" — every host where translating a multi-megabyte wasip1
-	// module is slow spent the user's whole budget before reaching their first
-	// instruction, and under the race detector one translation alone takes
-	// longer than the product's default limit. The caller's context still bounds
-	// this, so a translation that never finished could not hang a workflow.
-	runtime := wazero.NewRuntimeWithConfig(ctx, config)
-	defer runtime.Close(context.Background())
-
-	if _, err := wasi_snapshot_preview1.Instantiate(ctx, runtime); err != nil {
-		return Result{}, fmt.Errorf("prepare sandbox: %w", err)
-	}
-
-	compiled, err := runtime.CompileModule(ctx, artifact.Module)
+	outcome, err := runner.Sandbox(ctx, artifact.Module, Call{Stdin: input, Limits: runner.limits})
+	result := Result{Stderr: outcome.Stderr}
 	if err != nil {
-		if ctx.Err() != nil {
-			return Result{}, ctx.Err()
-		}
-		// Reaching here means a stored artifact is not a module this runtime can
-		// load, which is a build or a cache that has gone wrong rather than
-		// anything the user wrote.
-		return Result{}, &ExecutionError{Detail: sanitizeRuntimeError(err)}
-	}
-	// compiled is deliberately not closed: closing it deletes the translation
-	// from the shared cache, which is the one thing the cache exists to keep.
-	// Closing the runtime releases this execution's instance either way, and
-	// when there is no shared cache that also releases the translation with it.
-
-	stdout := &limitedWriter{limit: runner.limits.MaxOutputBytes}
-	stderr := &limitedWriter{limit: 64 << 10}
-	moduleConfig := wazero.NewModuleConfig().
-		WithStdin(bytes.NewReader(input)).
-		WithStdout(stdout).
-		WithStderr(stderr).
-		WithName("").
-		// No WithFS, no WithEnv, no WithArgs: the module gets streams and
-		// nothing else.
-		WithSysNanotime().
-		WithSysWalltime()
-
-	// The limit starts here, where the user's program does.
-	runCtx, cancel := context.WithTimeout(ctx, runner.limits.Timeout)
-	defer cancel()
-
-	_, err = runtime.InstantiateModule(runCtx, compiled, moduleConfig)
-	result := Result{Stderr: strings.TrimSpace(stderr.String())}
-
-	if err != nil {
-		var exit *sys.ExitError
-		if errors.As(err, &exit) {
-			// wazero reports a deadline or a cancellation as a reserved exit
-			// code rather than a context error, so those are separated from a
-			// genuine non-zero exit before anything else is decided.
-			switch exit.ExitCode() {
-			case sys.ExitCodeDeadlineExceeded:
-				return result, &ExecutionError{Detail: fmt.Sprintf("code exceeded its %s time limit", runner.limits.Timeout)}
-			case sys.ExitCodeContextCanceled:
-				if ctx.Err() != nil {
-					return result, ctx.Err()
-				}
-				return result, &ExecutionError{Detail: "code was cancelled"}
-			}
-			if exit.ExitCode() != 0 {
-				// A non-zero exit is user code reporting failure, which it does
-				// by writing a structured error before exiting.
-				if failure := decodeFailure(stdout.Bytes()); failure != "" {
-					return result, &ExecutionError{Detail: failure}
-				}
-				return result, &ExecutionError{Detail: fmt.Sprintf("code exited with status %d", exit.ExitCode())}
-			}
-		}
-		if ctx.Err() != nil {
-			return result, ctx.Err()
-		}
-		if runCtx.Err() != nil {
-			return result, &ExecutionError{Detail: fmt.Sprintf("code exceeded its %s time limit", runner.limits.Timeout)}
-		}
-		if stdout.Truncated() {
-			return result, &ExecutionError{Detail: "code produced more output than the limit allows"}
-		}
-		return result, &ExecutionError{Detail: sanitizeRuntimeError(err)}
-	}
-	if stdout.Truncated() {
-		return result, &ExecutionError{Detail: "code produced more output than the limit allows"}
+		return result, err
 	}
 
 	var payload struct {
 		Items []Item `json:"items"`
 		Error string `json:"error"`
 	}
-	if err := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &payload); err != nil {
+	if err := json.Unmarshal(bytes.TrimSpace(outcome.Stdout), &payload); err != nil {
 		return result, &ExecutionError{Detail: "code did not produce a decodable result"}
 	}
 	if payload.Error != "" {
@@ -590,9 +526,18 @@ func (runner *Runner) Execute(ctx context.Context, artifact Artifact, items []It
 }
 
 // ExecutionError is a user-facing failure from inside the sandbox.
+//
+// Detail is the sentence a user reads; Cause is the named failure behind it —
+// one of ErrTimeLimit, ErrMemoryLimit, ErrOutputLimit or ErrHostCallLimit —
+// when the failure was a limit rather than the program itself. Keeping both is
+// what lets a caller report the same message as before while answering
+// errors.Is for the limit that caused it.
 type ExecutionError struct {
 	Detail string
+	Cause  error
 }
+
+func (err *ExecutionError) Unwrap() error { return err.Cause }
 
 func (err *ExecutionError) Error() string { return err.Detail }
 

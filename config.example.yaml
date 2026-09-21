@@ -470,3 +470,29 @@ sidecar:
   # MaxOutputBytes caps the decoded result payload one run may return.
   # Env: KILASFLOW_SIDECAR_MAX_OUTPUT_BYTES
   max_output_bytes: 4194304
+
+code:
+  # GoBinary is the go command used to compile Code nodes. It is looked up
+  # on PATH when it is not an absolute path.
+  # Env: KILASFLOW_CODE_GO_BINARY
+  go_binary: 'go'
+  # CacheDir holds compiled artifacts, wazero's translations of them and the
+  # toolchain's own build cache. It defaults to a directory inside the data
+  # volume, so a container deployment persists all three without extra
+  # mounts.
+  #
+  # Empty keeps every cache in memory, which is what the deployment got
+  # before this key existed: compilation is repeated after a restart and
+  # every build needs the toolchain again.
+  # Env: KILASFLOW_CODE_CACHE_DIR
+  cache_dir: './data/codecache'
+  # CacheMaxBytes bounds the artifact and translation directories together.
+  # Zero means unbounded.
+  #
+  # Translations are evicted before artifacts, because a translation is
+  # rebuilt from the artifact it belongs to while an artifact needs a Go
+  # toolchain that this deployment may not have. The default is generous for
+  # the same reason: a deployment with no toolchain cannot afford to lose
+  # the artifacts, so eviction is a last resort rather than housekeeping.
+  # Env: KILASFLOW_CODE_CACHE_MAX_BYTES
+  cache_max_bytes: 2147483648

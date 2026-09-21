@@ -31,13 +31,13 @@ The technology choices are settled. wazero directly, because it is already the d
 
 ## Acceptance criteria
 
-- [ ] A shared `wazero.CompilationCache` spans executions, and a test shows the second run of an unchanged artifact does not recompile the module.
-- [ ] Compiled artifacts survive a process restart, and the persistent cache keys on `RuntimeVersion` so an artifact built against a previous host ABI is rebuilt rather than loaded.
-- [ ] The Code node behaves honestly in the shipped image: either the image gains a working compile path, or the node reports a user-facing diagnostic naming exactly what the operator must provide. `internal/runcode/doc.go` no longer describes this as open.
+- [x] A shared `wazero.CompilationCache` spans executions, and a test shows the second run of an unchanged artifact does not recompile the module.
+- [x] Compiled artifacts survive a process restart, and the persistent cache keys on `RuntimeVersion` so an artifact built against a previous host ABI is rebuilt rather than loaded.
+- [x] The Code node behaves honestly in the shipped image: either the image gains a working compile path, or the node reports a user-facing diagnostic naming exactly what the operator must provide. `internal/runcode/doc.go` no longer describes this as open.
 - [ ] A guest module receives capabilities only through an explicit host module — outbound HTTP, named credential access, binary read and write — and a pack that declares none is granted none.
 - [ ] Every host call is policed on the host side: outbound HTTP goes through `internal/safehttp` with the same SSRF policy and per-credential domain scoping as the HTTP node, and a credential a pack did not declare is not resolvable.
 - [ ] A pack distributed as `.wasm` modules plus a manifest registers node definitions tagged `pack`, carrying parameters, ports and validation, and its nodes run inside a workflow indistinguishably from built-ins.
-- [ ] Per-call limits are enforced — wall clock, linear memory, output bytes, and the number of host calls — and exceeding any of them fails that node run with a named error, never the process.
+- [x] Per-call limits are enforced — wall clock, linear memory, output bytes, and the number of host calls — and exceeding any of them fails that node run with a named error, never the process.
 - [ ] `pkg/sdk` publishes the guest-side Go module a pack author imports, with an example pack built by hand under `GOOS=wasip1 GOARCH=wasm` and the build output recorded on this ticket.
 
 ## Implementation Plan
@@ -908,3 +908,355 @@ Closed `done` with every acceptance criterion unticked. The guest half shipped (
 Reopened to `todo` by `BUG-vzzkg3`. Note the ticket's own p10 amendment: the install path is
 owned by `FEAT-czbzs6` (done), so this work builds on the directory loader rather than
 inventing a second one.
+
+## Implementation notes
+
+Stage 1 of 4 (prerequisites 1-3: persistent artifact and translation caches keyed on
+`RuntimeVersion`, a deterministic no-recompile proof, and an honest Code-node diagnostic).
+RuntimeVersion stays `wasip1-v1`: this stage changes where caches live, not what the Code node's
+guest sees. No migration, no OpenAPI, no web and no TypeScript-SDK change; no new dependency
+(wazero v1.9.0, Apache-2.0, already in go.mod).
+
+**What changed**
+
+- `internal/wasmtest` (new): `MinimalModule(stdout)` assembles a ~150-byte WASI command module by
+  hand, so the cache, limit and diagnostic tests need no Go toolchain. Stages 2-4 reuse it.
+- `internal/runcode/persist.go` (new): `DiskCache` (`artifacts/<version>/<hash>.wasm` + `.json`,
+  0o600 files, 0700 dirs, temp+rename, meta written last), `NewPersistentModuleCache`
+  (`translations/<version>/` handed to `wazero.NewCompilationCacheWithDir`), `PruneStaleVersions`
+  and `GoBuildDir`. Hashes are validated against `^[0-9a-f]{64}$` before becoming file names. A
+  corrupt, truncated or lying entry (digest, size, `runtimeVersion`, `hash`) is deleted and read as
+  a miss. Budget: 0 = unbounded, otherwise translations evicted oldest-first before artifacts, down
+  to 90%; `Get` touches the module's mtime so eviction is roughly LRU.
+- `internal/runcode/diagnostic.go` (new): `MinimumGoVersion` ("1.24"), `UnavailableMessage`,
+  `UnavailableReporter`/`WhyUnavailable`/`DescribeUnavailable`. One explanation is used by the node
+  catalogue, the run-time error and the editor's status.
+- `internal/runcode/runcode.go`: the duplicate package comment is gone (`doc.go` is the only package
+  doc, extended with "The operator recipe" and "Persistence"); `ToolchainCompiler` gains `CacheDir`,
+  and `buildEnv` points `GOCACHE` at it — resolved to an absolute path, because the go command
+  refuses a relative GOCACHE and `code.cache_dir` defaults to a relative one.
+- `internal/config`: new single-word `code` section — `go_binary` ("go"), `cache_dir`
+  ("./data/codecache", empty = memory only), `cache_max_bytes` (2 GiB, 0 = unbounded, negative
+  refused by `Validate`). `config.example.yaml` and the configuration reference were regenerated.
+- `nodes`: `WithCodeCaches(artifacts, modules)` + `NewCodeExecutorWith` + `codeExecutorOf`, so the
+  deployment's caches reach every Code node (one per process, as before, but now shareable and
+  durable).
+- `cmd/kilasflow/main.go`: `buildCodeCompiler` (the two keys that reach the toolchain) and
+  `buildCodeCaches` (prune stale versions, open both caches, warn and fall back to memory on any
+  error, never refuse the boot), wired into `RegisterExecutors`.
+- Docs: `safety-boundaries.md` and `operate/deployment.md` state the recipe, the three `code.*`
+  keys and the fact that the cache directory holds native machine code and must stay private;
+  `CHANGELOG.md` has the `[Unreleased]` entries.
+
+**New tests** (all in the touched packages, all passing): `internal/wasmtest` (the module family
+through wazero), `internal/runcode/persist_test.go` (12 tests: no-recompile probe with a fresh-cache
+control, translations surviving a restart by mtime, per-version keying, artifact round-trip, older
+version refused, no rebuild across a runner restart, corrupt entry removed, non-hex hash refused,
+8-goroutine Put/Get under `-race`, budget order and cap, zero budget, prune),
+`internal/runcode/diagnostic_test.go` + `diagnostic_internal_test.go` (the message names what to
+provide and carries no machine path; the build environment points GOCACHE at an absolute path and
+never overrides an operator's own), `nodes/code_test.go`
+(`TestCodeNodeWithoutACompilerNamesWhatToProvide`, `TestRegisterExecutorsUsesTheSuppliedCodeCaches`
+— the supplied artifact cache is consulted and the supplied translation cache writes into the
+deployment's directory), `cmd/kilasflow/main_test.go` (availability text, persistence across two
+`buildCodeCaches` calls, fallback when the directory is unusable, compiler wiring),
+`internal/config/config_test.go` (defaults, YAML + environment reachability, negative budget).
+Every persistence test calls `t.Setenv("PATH","")` and is serial, so "needs no toolchain" is proven
+inside the test that claims it.
+
+**Commands run (outcomes)**
+
+- `gofmt -l cmd internal nodes pkg scripts` — clean; `go build ./...` — clean; `go vet ./...` — clean.
+- `go test -race ./internal/wasmtest/... ./internal/config/... ./scripts/...` — ok.
+- `go test -race -timeout 25m ./internal/runcode/... ./nodes/... ./cmd/kilasflow/... ./internal/guardrails/...` — see the stage report; the toolchain-dependent tests in `internal/runcode` rebuild a Go guest per case and are slow on a loaded machine, so they were also run scoped during development (all passing), including the two new deterministic probes.
+- `make generate-config-reference` then `go run ./scripts/config-reference.go --check` — clean.
+- Docker (recorded below), against the image built from this branch by `make docker`.
+
+**Docker proof, run for real** (image `kilasflow:latest`, digest
+`sha256:44fd74bda4e7e815f6e8fc18c2e1da07a3041950a18082a9f4bec3ebeda7298f` built from this tree;
+one data directory reused across all three containers, removed afterwards):
+
+1. No toolchain. `GET /api/v1/node-types` reports `kilasflow.code` with
+   `unavailable: "This deployment cannot compile Code nodes: it looked for the Go toolchain by
+   running \"go\" and found no toolchain there. ... point KILASFLOW_CODE_GO_BINARY — the
+   code.go_binary configuration key — at its go binary, or put the toolchain's bin directory on the
+   PATH of the kilasflow process. ..."`. A manual run of a Code workflow fails with
+   `node "Code": This deployment cannot compile Code nodes: ...` — the same text, run-time.
+2. Toolchain mounted read-only (`-v <go1.27.1 toolchain>:/usr/local/go:ro -e
+   KILASFLOW_CODE_GO_BINARY=/usr/local/go/bin/go`): the catalogue reports no unavailable node, and
+   the same workflow succeeds, the Code node emitting `{"n":1,"ok":true}`. The data volume then
+   holds `codecache/artifacts/wasip1-v1/<hash>.wasm` + `.json`,
+   `codecache/translations/wasip1-v1/wazero-v1.9.0-arm64-linux/<hex>` and `codecache/go-build/`
+   (GOCACHE).
+3. Restart on the same data volume **without** the toolchain: the catalogue again reports the node
+   unavailable, and the same Code node still succeeds from the cached artifact — the module's mtime
+   was touched by the cache read and the artifact was not rebuilt. This is the end-to-end proof that
+   a compiled artifact survives a restart on a deployment that can no longer compile.
+
+The first run of step 2 failed with `code did not compile: build cache is required, but could not be
+located: GOCACHE is not an absolute path`, because `code.cache_dir` defaults to a relative path and
+the go command refuses a relative GOCACHE. Fixed in `ToolchainCompiler.buildEnv` (absolute
+resolution) and pinned by a test; the proof was re-run against a rebuilt image, which is how the
+defect was found.
+
+Stage 2 of 4 (named per-call limit errors, the Sandbox/HostBinding seam, the `wasmtest` assembler
+and `ModuleCache.Inspect`). Nothing here registers a node and nothing here knows about packs: it is
+verified by calling `runcode` directly. `RuntimeVersion` stays `wasip1-v1` — the Code node's guest
+sees exactly what it saw in stage 1. No new dependency (wazero v1.9.0, Apache-2.0, already in
+go.mod), no config key, no migration, no OpenAPI/web/TypeScript-SDK surface.
+
+**What changed**
+
+- `internal/runcode/errors.go` (new): `ErrTimeLimit`, `ErrMemoryLimit`, `ErrOutputLimit`,
+  `ErrHostCallLimit`. `ExecutionError` gains `Cause error` + `Unwrap()`, so `errors.Is` answers
+  "which limit" while `errors.As(*ExecutionError)` and every existing message stay byte-identical
+  (every existing literal is keyed, so the field is additive). `nodes/code.go` already wraps the
+  runner's error with `%w`, so a node run answers `errors.Is` for the same sentinels.
+- `internal/runcode/sandbox.go` (new): `Call{Stdin, Limits, Host, Subject}`, `Outcome{Stdout,
+  Stderr}`, `HostBinding.Install(ctx, rt, *CallState)` and `CallState.Enter`/`Used`. The body of
+  `Runner.Execute` moved here as `Runner.Sandbox` unchanged apart from per-call limits, the host
+  binding (installed after WASI and before `CompileModule`) and classification; `Execute` is now
+  the version check, `json.Marshal`, `Sandbox` and decoding the `{items,error}` payload.
+  Classification order, as specified: cancellation as before; `ExitCodeDeadlineExceeded`/`runCtx`
+  expiry -> `ErrTimeLimit`; the tripped `CallState` or exit code `0xC0DE0001` -> `ErrHostCallLimit`;
+  a structured `{"error"}` on stdout -> a plain `ExecutionError`; otherwise a non-zero exit whose
+  stderr carries `fatal error: out of memory` / `runtime: out of memory` -> `ErrMemoryLimit`; a
+  compile refusal containing `over limit of` -> `ErrMemoryLimit` stating the CONFIGURED limit
+  (`this module cannot start inside the 32-page (2 MiB) memory limit`); truncated stdout ->
+  `ErrOutputLimit`. `executeHostCallLimit` is 0xC0DE0001 and stops the guest from inside the host
+  function via `module.CloseWithExitCode` — the only handle the host has on a running call.
+- `Limits` gains `MaxHostCalls` (default 100) and the four "a zero field means the shipped default"
+  fills collapse into one `Limits.orDefault`, used by `NewRunner` and by `Sandbox`.
+- `internal/wasmtest`: an assembler — `Build(imports, startBody, memPages, data)` plus
+  `I32Const/Call/Drop/Loop/Br/If/Unreachable` and `ExpectResult(index, want)`
+  (`call; i32.const want; i32.ne; if; unreachable; end`), with the byte-level layout documented in
+  one place on `Build`. `MinimalModule` is now expressed through `Build`.
+- `internal/runcode/inspect.go` (new): `(*ModuleCache).Inspect(ctx, module, memoryPages)` ->
+  `Inspection{Imports []Import; Exports []string}`. Imports come from `ImportedFunctions()` via
+  `FunctionDefinition.Import()` — NOT `ModuleName()`/`Name()`, which are empty for the WASI imports
+  of a Go guest; exports merge `ExportedFunctions()` and `ExportedMemories()` and are sorted. The
+  compile runs in a throwaway runtime over the shared translation cache, so an audit warms the
+  translation a first run would pay for, and the `CompiledModule` is never closed (closing one
+  evicts its translation — `.pine/memory/code-node.md`).
+- `internal/runcode/doc.go`: new "# Capabilities" and "# Limits" sections; the old blanket "no host
+  functions at all" sentence now says "none of the sandbox's own", because `Sandbox` can install a
+  call's binding.
+- `CHANGELOG.md`: one `[Unreleased] / Changed` entry for the user-visible wording (a memory failure
+  used to surface as the Go runtime's own `fatal error: out of memory` or "exited with status 2").
+
+**Tests** (all in the two packages touched; each new toolchain-free test calls
+`t.Setenv("PATH", "")`, so none of them can be reaching for a Go toolchain)
+
+- `internal/runcode/sandbox_test.go` (new): `TestALimitFailureIsNamedAndNeverTheProcess` (wall clock
+  via a hand-built `loop br 0` module and output bytes via `MinimalModule`; asserts `errors.Is`, the
+  message, that each failure is still an `ExecutionError`, that the bytes written before the output
+  limit come back, and that the process and the runner both survive — a normal call follows),
+  `TestAHostCallBudgetStopsTheModule` (a hand-built guest that calls `kilasflow_v1.ping` forever;
+  the host does its work exactly `MaxHostCalls` times and not once more, `Used()` counts the refused
+  call, and a single call under the default budget succeeds), and
+  `TestASandboxWithNoHostBindingCannotImportAHostFunction` (no binding -> a capability failure
+  naming `kilasflow_v1`, never a limit), `TestAModuleThatCannotStartInsideTheMemoryLimitIsNamed`
+  (a 40-page module under a 32-page limit, toolchain-free; the message states `32-page (2 MiB)`),
+  `TestTheMemoryLimitIsNamed` (toolchain: an 8 MiB allocation under 6 MiB).
+- `internal/runcode/inspect_test.go` (new): imports and exports of a hand-built module; the WASI
+  imports of a real Go guest by name (logged, not counted: 19 of them on Go 1.27.1); the warm
+  translation cache observed as a file wazero wrote after `Inspect`; a module refused for not
+  fitting the audit's memory limit.
+- `internal/wasmtest/wasmtest_test.go`: `Build` with an empty start body, `If`/`Unreachable`
+  (both branches), `Loop`/`Br` stopped by the context, and `ExpectResult` answering exactly,
+  differently and by sign.
+- Tightened (not widened): `TestMemoryPressureIsDeniedRatherThanExhaustingTheHost` and the tight
+  half of `TestASharedTranslationDoesNotCarryAMemoryLimitWithIt` no longer assert only `err != nil`.
+  Both now run at 96 pages and go through `requireAllocationDenial`, which requires
+  `errors.Is(err, ErrMemoryLimit)` **and** the guest's own out-of-memory report on stderr — the
+  second half is what stops the case being satisfied by a module refused before it starts.
+
+**Corrections to the plan's measured facts** (re-measured here, Go 1.27.1 darwin/arm64)
+
+- A trivial wasip1 guest declares **50 pages** (3 MiB) of initial memory, not 36: with 48 pages
+  wazero answers `section memory: min 50 pages (3 Mi) over limit of 48 pages (3 Mi)`. The plan's
+  "change the allocation-denial cases to 48 pages" would therefore have replaced one vacuous test
+  with another — a start-up refusal that still answers `errors.Is(ErrMemoryLimit)` — which is why
+  the cases run at 96 pages and why `requireAllocationDenial` exists.
+- The same guest imports **19** `wasi_snapshot_preview1` functions, not 16; the inspect test
+  asserts names rather than a count.
+- Confirmed as the plan measured: a host function calling `module.CloseWithExitCode(ctx,
+  0xC0DE0001)` stops the guest and `InstantiateModule` returns exactly that exit code;
+  `FunctionDefinition.Import()` is the only accessor that names the imported module; `CompileModule`
+  succeeds with imports unresolved, which is what makes a load-time audit possible.
+- Not in the plan, and a repository-wide finding: wazero v1.9.0's `internal/version.GetWazeroVersion`
+  writes its package-level version cache without synchronization, so two runtimes created at the
+  same moment are a data race inside the dependency (`internal/engine/wazevo.NewEngine` ->
+  `NewRuntimeWithConfig`). It fires whenever the first two runtime creations of a process overlap —
+  in a test, that means two parallel tests that each build a runtime. The new `wasmtest` cases were
+  written with `t.Parallel()` first, which is how it was found, and are now deliberately serial with
+  the reason recorded in the file. This is worth a wazero upgrade or a follow-up ticket; the race is
+  benign in effect (a stale or torn version string only names a translation-cache directory) but it
+  makes `go test -race` unusable for any package that creates runtimes concurrently.
+
+**Commands run (outcomes)**
+
+- `gofmt -l internal/runcode internal/wasmtest` — prints nothing.
+- `go build ./...` — clean; `go vet ./...` — clean.
+- `go test -race -count=1 -timeout 35m ./internal/runcode/...` — `ok ... 991.755s`, exit 0 (the
+  machine is heavily loaded and the toolchain-dependent cases rebuild a Go guest each, so this is
+  the long pole; the two tracked flakes, BUG-fng4m2 and BUG-w8h3km, are in other packages and were
+  not touched).
+- `go test -race -count=1 ./internal/wasmtest/...` — `ok ... 1.831s` (it was the wasmtest race below
+  that this run was fixing).
+- `go test -race -count=1 -timeout 40m ./internal/runcode/... ./internal/wasmtest/...
+  ./internal/guardrails/...` — all three `ok` (runcode 1173.111s, wasmtest 2.117s, guardrails 1.501s), exit 0
+- Scoped while developing: the five new toolchain-free tests in one run; the three memory tests
+  (`TestMemoryPressureIsDenied…`, `TestASharedTranslationDoesNotCarry…`, `TestTheMemoryLimitIsNamed`)
+  at 96 pages, all passing on the running guest's own out-of-memory report.
+
+**A gate stage 1 left red, fixed here**
+
+`go test ./internal/guardrails/...` failed on the tree stage 1 committed:
+`TestReferenceCheckoutIsNeverABuildInput` flagged `internal/runcode/diagnostic_test.go` for
+containing `"/home/"` and `"/Users/"` — the two literals the guardrail hunts for in every build
+input, and that its own file builds from fragments for exactly that reason. The assertion those
+literals belong to (the unavailable-toolchain message carries no machine path) is unchanged; the
+paths are now assembled from fragments at run time, with the reason written beside them. This is a
+stage-1 defect in this ticket's own footprint, not a flake: nothing else in the tree changed.
+
+Stage 3 of 4 (the one-definition ABI in `pkg/sdk`, the engine credential seam, and the
+capability-gated host module). Nothing here registers a node and nothing here knows about packs:
+the host module is verified by calling it directly from `internal/wasmpack` tests. `RuntimeVersion`
+stays `wasip1-v1` — the Code node's guest contract and WASI surface are unchanged, and the host
+module exists only for packs; a pack's ABI version is the manifest's `abi` field, checked at load
+in stage 4. No new dependency (wazero v1.9.0, Apache-2.0, already in go.mod), no config key, no
+migration, no OpenAPI/web/TypeScript-SDK surface, no CHANGELOG entry (nothing user-visible ships
+until stage 4 wires the loader).
+
+**What changed**
+
+- `pkg/sdk/abi.go` (new): the one definition of the ABI. `HostModule = "kilasflow_v1"`,
+  `ABIVersion = "v1"`, the five capability constants, `Functions` — six rows
+  (`http_request`, `credential_field`, `binary_read`, `binary_write`, `result_len`, `result_read`),
+  each with its capability and its i32 parameter names — the two result slots, the six negative
+  return codes (`ErrInvalid` … `ErrNotFound`) with `ErrorCodeName`, and the shared wire types
+  (`HTTPRequest`, `HTTPResponse`, `BinaryRef`, `BinaryWrite`, `HostError`, `NodeInfo`, `Envelope`).
+  `//go:generate go run ./internal/abigen/cmd -o host_wasip1.go`.
+- `pkg/sdk/host_wasip1.go` (new, generated): one body-less `//go:wasmimport kilasflow_v1 <name>`
+  declaration per table row, i32 parameters and one i32 result. `TestGeneratedGuestBindingsAreCurrent`
+  fails if it is stale.
+- `pkg/sdk/internal/abigen` (new): `Render([]sdk.Function)` plus the `cmd` that writes the file.
+- `pkg/sdk/guest_wasip1.go` (new): the pointer-and-length convention and the six slice-level
+  adapters. The capability functions call the imports **directly** (no function value, no interface
+  in a variable), which is what lets the Go linker drop the imports a pack never reaches.
+- `pkg/sdk/host_other.go` (new, `!wasip1`): the same six adapters against a `Host` interface
+  (`sdk.SetHost(fake)`), so a pack author can unit-test logic on any machine; with no fake installed
+  they answer `ErrNoHost`. This is the only place the interface exists — the wasip1 build has none.
+- `pkg/sdk/capabilities.go` (new): `HTTP`, `CredentialField`, `ReadBinary`, `WriteBinary` and the
+  `errors.Is` sentinels (`ErrDeniedError`, `ErrBlockedError`, …) that a `*HostError` matches.
+- `pkg/sdk/call.go` (new): `Call`, `HandleCall`, `MainCall`, `MainPorts`, and `decodeCall`, which
+  accepts **both** the invocation envelope and the legacy bare item array.
+- `pkg/sdk/sdk.go`: `Item` gains `Binary map[string]BinaryRef`; `Handle` now goes through
+  `decodeCall`, so a legacy-contract pack (example/echo) also runs when the executor hands it the
+  envelope — it sees items only. `Version` stays `v1` and its comment now says the envelope is
+  covered by `ABIVersion` instead.
+- `pkg/sdk/example/fetch/main.go` (new): the capability example — `url` and `credential` parameters,
+  `CredentialField(credential, "baseUrl")` (tolerating `ErrNotFoundError`), then `HTTP` with the
+  credential named. `sdk.MainCall`.
+- `internal/engine/authenticate.go`: `ResolveAttachedCredential(ctx, ir, type)` (lookup **by type**,
+  reporting `found=false` without consulting the resolver) and `AuthenticateAs(ctx, ir, type, req)`
+  (the pack seam: refuses a type the node did not attach, then applies the credential). `Authenticate`
+  and `ResolveNodeCredential` now share `applyResolved` (the `AllowsHost` check, the redirect scope
+  and `credentials.Apply`) and `resolveCredential` (the type check), so there is still exactly one
+  copy of each — the file's own comment at :21-23 forbids a second.
+- `internal/wasmpack` (new package): `caps.go` (`Capabilities.Granted`/`GrantedFunctions`/`Names`,
+  with `result_*` granted whenever anything is), `limits.go` (30 s / 512 pages / 8 MiB / 100 host
+  calls by default; ceilings 10 min / 4096 pages / 64 MiB / 10000; `Validate`), `audit.go`
+  (`Audit` → `Report{Declared, Imported, Exports}`, every import must be WASI or this ABI and must be
+  granted, credential types must be HTTP-capable), `host.go` (`Host`, `HostDeps{Policy, Modules}`,
+  `Invocation`, `Effects`, `Invoke`, the per-run `binding`, `Install`, the `hostCalls` table, the
+  bounds-checked `readGuest`/`writeGuest`, `result_len`/`result_read`, `decodeStrict`) and
+  `hostcalls_http.go` / `hostcalls_credentials.go` / `hostcalls_binary.go`.
+- The host module is registered per run, from the ABI table, and **not at all** when the manifest
+  declares nothing. `Invoke` runs through `runcode.Sandbox` with the pack's limits, so wall clock,
+  memory, output and host-call limits are the ones stage 2 named.
+
+**Host-side policing (criterion 4), each with a test**
+
+- `policy.CheckURL` before the request is built, then the dialer's address check (unchanged
+  `safehttp`), and the credential is applied by `Request.AuthenticateAs` — the same seam the HTTP
+  node uses — so the domain scope is checked before a byte is sent and rides on the request context
+  for the redirect chain.
+- A credential type the manifest did not declare is refused **before** the resolver is called
+  (call count asserted 0); a declared type the node did not attach is refused; a type that cannot
+  authenticate HTTP (a database credential) is refused at audit time, so it is structurally out of
+  reach.
+- Hop-by-hop and identity headers (`Host`, `Content-Length`, `Transfer-Encoding`, `Connection`,
+  `Upgrade`, `Te`, `Trailer`, `Proxy-*`) are refused before the request is built; the method is
+  allowlisted; the URL, metadata, body, name and payload sizes are capped; the request is bounded by
+  the smallest of the pack's `timeoutMs`, the policy timeout and the run's wall clock.
+- Every guest number is untrusted: `readGuest` checks the length against its cap **before** reading,
+  and the pointer and length against the module's own memory, so an out-of-range pointer, a length of
+  `0xFFFFFFFF` and a pointer-plus-length that wraps all end as a refusal; `result_read` bounds-checks
+  the destination the same way. `readGuest` copies, so the guest cannot rewrite bytes under the host.
+- `Request.Binaries` is an interface and is nil in a runtime with no store: both payload calls
+  refuse with a named `HostError` rather than panicking.
+- `binary_read` reaches only the payloads the input items carry plus what this run wrote; the store
+  is not consulted for anything else (asserted by read count).
+
+**Tests** (new; the toolchain-free ones are hand-built `wasmtest` modules, the rest drive one Go
+probe guest, `internal/wasmpack/testdata/probe/main.go`, built once per test binary and translated
+through one package-level `ModuleCache` closed in `TestMain`)
+
+- `pkg/sdk`: generated-bindings-current, ABI table well-formed, fake-host round trip for all four
+  capability functions, `*HostError` code + message through `errors.Is`/`errors.As`, no-host
+  refusals, envelope-tolerant `Handle`, `HandleCall` parameters/ports/binary refs, an older `abi`
+  refused, empty ports normalised, plus the existing echo test untouched.
+- `internal/wasmpack`: ABI/host-module parity (names, arity, i32 in and out), per-capability
+  granting, no-declaration → no host module, audit refusals (ungranted function naming the missing
+  capability, unknown module/function, non-command module, over-limit memory, non-HTTP credential
+  type, uncompilable bytes), pointer/length/overflow refusals, oversized arguments, the slot
+  protocol including offsets and out-of-range slots, the host-call limit, nil binary store, payload
+  reachability, and the probe-driven set: SSRF policy (allowed endpoint works, a **different**
+  loopback port refused — `AllowPrivateNetworks` is never set), metadata address blocked, forbidden
+  headers, redirects (handed back, and a scoped credential stops the chain without leaking), response
+  bounded by the policy, slow upstream cut off by the wall clock (`ErrTimeLimit` in ~0.3 s against a
+  5 s server), undeclared credential unresolvable (resolver calls 0), unattached credential refused,
+  domain scope applied (server saw 0 requests), the host applies the secret while the pack's stdout
+  never contains it, a secret field refused, payload write/read round trip, and the memory limit
+  named with the configured page count.
+- `internal/engine/authenticate_test.go` (existing file, extended): `AuthenticateAs` applies only the
+  named credential of two attached, refuses a type the node does not carry (resolver calls 0),
+  honours `AllowedDomains` and attaches the scope for redirects. Existing tests unchanged.
+
+**Corrections to the plan's measured facts** (re-measured here, Go 1.27.1 darwin/arm64)
+
+- example/fetch imports `http_request`, `credential_field`, `result_len`, `result_read` — not
+  "http_request plus result_len/result_read only" as the plan's stage-3 note says, because the plan's
+  own instruction for the example has it read the credential's `baseUrl` through `CredentialField`.
+  The test asserts the set the example actually reaches, which is the stronger statement.
+- example/echo imports no `kilasflow_v1` function at all and 17 `wasi_snapshot_preview1` functions;
+  stage 2 measured 19 for a different program, so the count is program-dependent and the tests assert
+  names, never counts.
+- Two packages cannot share one directory, so the generator's main is
+  `pkg/sdk/internal/abigen/cmd/main.go` (package `abigen` beside it holds `Render`).
+- The pointer/length adapters need a wasip1-only home of their own (`pkg/sdk/guest_wasip1.go`):
+  `host_wasip1.go` is generated and `host_other.go` is the native build, and mixing hand-written
+  wasip1 code into the generated file would have made the generator's output unreviewable.
+- `Invocation` carries `Module`, `Caps` and `Limits` directly rather than through the plan's `Spec`
+  grouping: the pack format that owns that grouping is stage 4's, and inventing it now would have
+  meant guessing its shape.
+- The host's own share of the wall clock starts at the run's **first host call**, not at `Invoke`,
+  for the reason stage 2 already fixed for the sandbox: translating and instantiating a wasip1 module
+  is the host's work and must not be charged to the pack's budget (under `-race` a translation alone
+  outlasts the default limit). A request blocked in the host is released by that clock and the run is
+  reported as `ErrTimeLimit`, which the slow-upstream test pins at ~0.3 s.
+
+**Build output recorded (criterion 7)** — `go version go1.27.1 darwin/arm64`, commands
+`GOOS=wasip1 GOARCH=wasm CGO_ENABLED=0 go build -o <file> ./pkg/sdk/example/echo|fetch`
+
+```
+4,523,689 bytes  echo.wasm   sha256 c00b60b48459007f2189ef5557e2cdc1f42ee87d52d4e572fcbe9dd14d130bdd
+4,551,047 bytes  fetch.wasm  sha256 e1e9d2b22602aff21279e8b8a054db59adcbaa73523ded4c860a221b912ed816
+```
+
+`ModuleCache.Inspect` (via `TestAPackImportsOnlyWhatItReaches`, logged): echo imports only
+`wasi_snapshot_preview1.*`; fetch imports `wasi_snapshot_preview1.*` plus
+`kilasflow_v1.http_request`, `kilasflow_v1.credential_field`, `kilasflow_v1.result_len`,
+`kilasflow_v1.result_read`.

@@ -62,7 +62,7 @@ func RegisterExecutors(registry *engine.Registry, httpPolicy safehttp.Policy, da
 		EmbeddingsExecutorID:             NewEmbeddingsExecutor(httpPolicy, settings.vectorStore),
 		VectorStoreExecutorID:            NewVectorStoreExecutor(settings.vectorStore),
 		MCPClientToolExecutorID:          NewMCPClientToolExecutor(httpPolicy),
-		CodeExecutorID:                   NewCodeExecutor(codeCompiler, runcode.NewMemoryCache(), runcode.DefaultLimits()),
+		CodeExecutorID:                   codeExecutorOf(codeCompiler, settings),
 		LoopExecutorID:                   engine.ExecutorFunc(executeLoop),
 		StickyNoteExecutorID:             engine.ExecutorFunc(executeStickyNote),
 		TelegramTriggerExecutorID:        NewTelegramTriggerExecutor(NewTelegramFileClient(httpPolicy)),
@@ -109,6 +109,32 @@ type executorSettings struct {
 	// datastoreEngine backs the data-table node. Nil leaves the executor
 	// refusing every run with the install message rather than dereferencing.
 	datastoreEngine *datastore.Engine
+	// codeArtifacts and codeModules are the Code node's caches: the compiled
+	// Go artifacts and the machine code wazero translated them into. Both
+	// default to per-process memory caches when a deployment does not supply
+	// them, which is what this package did before they were configurable.
+	codeArtifacts runcode.Cache
+	codeModules   *runcode.ModuleCache
+}
+
+// WithCodeCaches hands the Code node the caches the deployment built.
+//
+// They are the difference between a restart costing a recompilation and
+// costing nothing: the artifact cache is what survived the toolchain the
+// deployment may no longer have, and the module cache is what stops wazero
+// translating the same module once per item. Both are optional, and an
+// executor built without them behaves exactly as it did before this option
+// existed.
+func WithCodeCaches(artifacts runcode.Cache, modules *runcode.ModuleCache) ExecutorOption {
+	return func(settings *executorSettings) {
+		settings.codeArtifacts = artifacts
+		settings.codeModules = modules
+	}
+}
+
+// codeExecutorOf binds the Code node's executor to the deployment's caches.
+func codeExecutorOf(compiler runcode.Compiler, settings executorSettings) *CodeExecutor {
+	return NewCodeExecutorWith(compiler, settings.codeArtifacts, settings.codeModules, runcode.DefaultLimits())
 }
 
 // WithDatastoreEngine hands the data-table node its row store. Without it

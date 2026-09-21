@@ -58,6 +58,7 @@ type Config struct {
 	Packs       Packs        `koanf:"packs"`
 	Log         Log          `koanf:"log"`
 	Sidecar     Sidecar      `koanf:"sidecar"`
+	Code        Code         `koanf:"code"`
 }
 
 // Server holds HTTP listener settings.
@@ -727,6 +728,42 @@ type Sidecar struct {
 	MaxOutputBytes int64 `koanf:"max_output_bytes"`
 }
 
+// Code configures the Go Code node: which toolchain compiles it, and where
+// the work it does is kept.
+//
+// The section is one word because envKeyToPath treats the first underscore as
+// the section separator, so code.cache_dir is reachable as
+// KILASFLOW_CODE_CACHE_DIR while a two-word section could never be set from
+// the environment at all.
+type Code struct {
+	// GoBinary is the go command used to compile Code nodes. It is looked up
+	// on PATH when it is not an absolute path.
+	// Env: KILASFLOW_CODE_GO_BINARY. Default: "go".
+	GoBinary string `koanf:"go_binary"`
+
+	// CacheDir holds compiled artifacts, wazero's translations of them and the
+	// toolchain's own build cache. It defaults to a directory inside the data
+	// volume, so a container deployment persists all three without extra
+	// mounts.
+	//
+	// Empty keeps every cache in memory, which is what the deployment got
+	// before this key existed: compilation is repeated after a restart and
+	// every build needs the toolchain again.
+	// Env: KILASFLOW_CODE_CACHE_DIR. Default: "./data/codecache".
+	CacheDir string `koanf:"cache_dir"`
+
+	// CacheMaxBytes bounds the artifact and translation directories together.
+	// Zero means unbounded.
+	//
+	// Translations are evicted before artifacts, because a translation is
+	// rebuilt from the artifact it belongs to while an artifact needs a Go
+	// toolchain that this deployment may not have. The default is generous for
+	// the same reason: a deployment with no toolchain cannot afford to lose
+	// the artifacts, so eviction is a last resort rather than housekeeping.
+	// Env: KILASFLOW_CODE_CACHE_MAX_BYTES. Default: 2147483648 (2 GiB).
+	CacheMaxBytes int64 `koanf:"cache_max_bytes"`
+}
+
 // Log configures structured logging.
 type Log struct {
 	// Level is one of debug, info, warn or error. Unknown values fall back to
@@ -874,6 +911,18 @@ func Default() Config {
 			MaxRSSMB:       512,
 			MaxProcesses:   16,
 			MaxOutputBytes: 4 << 20,
+		},
+		Code: Code{
+			// The go command on PATH, which is what a self-hosted install and
+			// a development machine have; the distroless image has neither,
+			// and the diagnostic tells its operator to point this somewhere.
+			GoBinary: "go",
+			// Inside the data volume the Dockerfile already declares, so the
+			// caches survive a container restart with nothing extra mounted.
+			CacheDir: "./data/codecache",
+			// 2 GiB. Generous on purpose: eviction can force a rebuild that a
+			// deployment without a toolchain cannot perform at all.
+			CacheMaxBytes: 2147483648,
 		},
 		Log: Log{
 			Level:  "info",
@@ -1196,6 +1245,13 @@ func (c Config) Validate() error {
 	}
 	if c.Datastore.MaxValueBytes <= 0 {
 		return fmt.Errorf("datastore.max_value_bytes %d must be positive", c.Datastore.MaxValueBytes)
+	}
+
+	// A negative budget is not a smaller budget: it would evict every artifact
+	// the moment it was written, including the one the operator's toolchain
+	// just produced. Zero is the documented way to say unbounded.
+	if c.Code.CacheMaxBytes < 0 {
+		return fmt.Errorf("code.cache_max_bytes %d must not be negative", c.Code.CacheMaxBytes)
 	}
 
 	// Caught here rather than at the first login, because an instance that

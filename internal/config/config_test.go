@@ -805,3 +805,84 @@ func TestValidateRejectsBadSidecarConfig(t *testing.T) {
 		t.Errorf("Validate() on a non-unix host = %v, want it refused at boot", err)
 	}
 }
+
+// The Code node's three keys are the difference between "install a toolchain
+// correctly" being an instruction an operator can follow in a shell-less image
+// and being a riddle. They are pinned here as defaults so a later change to
+// one of them is a decision rather than an accident.
+func TestTheCodeDefaultsAreTheDocumentedOnes(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := Load(filepath.Join(t.TempDir(), "absent.yaml"))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Code.GoBinary != "go" {
+		t.Errorf("Code.GoBinary = %q, want the go command on PATH", cfg.Code.GoBinary)
+	}
+	if cfg.Code.CacheDir != "./data/codecache" {
+		t.Errorf("Code.CacheDir = %q, want a directory inside the data volume", cfg.Code.CacheDir)
+	}
+	if cfg.Code.CacheMaxBytes != 2147483648 {
+		t.Errorf("Code.CacheMaxBytes = %d, want 2 GiB", cfg.Code.CacheMaxBytes)
+	}
+}
+
+func TestTheCodeKeysAreReachableFromYAMLAndTheEnvironment(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "kilasflow.yaml")
+	body := "code:\n  go_binary: /opt/golang/bin/go\n  cache_dir: /srv/codecache\n  cache_max_bytes: 1048576\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Code.GoBinary != "/opt/golang/bin/go" {
+		t.Errorf("Code.GoBinary from YAML = %q", cfg.Code.GoBinary)
+	}
+	if cfg.Code.CacheDir != "/srv/codecache" {
+		t.Errorf("Code.CacheDir from YAML = %q", cfg.Code.CacheDir)
+	}
+	if cfg.Code.CacheMaxBytes != 1048576 {
+		t.Errorf("Code.CacheMaxBytes from YAML = %d", cfg.Code.CacheMaxBytes)
+	}
+
+	// The section is one word so that envKeyToPath's first-underscore rule
+	// reaches code.cache_dir, which is the whole reason it is not code_node.
+	t.Setenv("KILASFLOW_CODE_GO_BINARY", "/usr/local/go/bin/go")
+	t.Setenv("KILASFLOW_CODE_CACHE_DIR", "/var/lib/kilasflow/codecache")
+	t.Setenv("KILASFLOW_CODE_CACHE_MAX_BYTES", "0")
+
+	cfg, err = Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Code.GoBinary != "/usr/local/go/bin/go" {
+		t.Errorf("Code.GoBinary = %q, want the environment's path", cfg.Code.GoBinary)
+	}
+	if cfg.Code.CacheDir != "/var/lib/kilasflow/codecache" {
+		t.Errorf("Code.CacheDir = %q, want the environment's path", cfg.Code.CacheDir)
+	}
+	if cfg.Code.CacheMaxBytes != 0 {
+		t.Errorf("Code.CacheMaxBytes = %d, want an explicit zero meaning unbounded", cfg.Code.CacheMaxBytes)
+	}
+}
+
+// A negative budget is not a smaller budget: it would mean the cache evicts
+// everything it ever writes, including the artifact the operator's toolchain
+// just produced.
+func TestValidateRejectsANegativeCodeCacheBudget(t *testing.T) {
+	t.Parallel()
+
+	cfg := Default()
+	cfg.Code.CacheMaxBytes = -1
+	if err := cfg.Validate(); err == nil {
+		t.Error("Validate() accepted a negative code.cache_max_bytes")
+	}
+	cfg.Code.CacheMaxBytes = 0
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("Validate() rejected a zero code.cache_max_bytes: %v", err)
+	}
+}

@@ -30,6 +30,34 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
   through the same egress policy as native nodes. Off by default; see the
   [JavaScript sidecar](/operate/javascript-sidecar/) page for the runtime image,
   the trust model and what it does not protect.
+- `code.go_binary`, `code.cache_dir` and `code.cache_max_bytes` configure the Go
+  Code node: which `go` command compiles it, where compiled artifacts and
+  wazero's translations of them are kept, and how much disk they may use. The
+  cache directory defaults to `./data/codecache`, inside the data volume the
+  container image already persists, so a Code node's compiled artifact survives a
+  restart — which matters most on a deployment with no toolchain, where a lost
+  artifact cannot be rebuilt. Both caches are keyed on the runtime version, so an
+  artifact built against an older host contract is rebuilt rather than loaded.
+  Setting `code.cache_dir` to an empty value keeps every cache in memory, exactly
+  as before.
+
+### Changed
+
+- The Code node's deployment diagnostic now names what an operator has to
+  provide — the minimum Go version, the exact binary that was looked for, and the
+  two ways to provide it (`KILASFLOW_CODE_GO_BINARY` / `code.go_binary`, or the
+  toolchain's `bin` directory on `PATH`) — instead of saying only that no
+  compiler was found. The same text is used by the node catalogue, the error a
+  Code node run returns and the editor's compilation status.
+- A Code node that hits one of its limits now says which one it hit. Running out
+  of memory inside the sandbox used to surface as the Go runtime's own
+  `fatal error: out of memory` (or as a bare "exited with status 2"); it now
+  reads `code ran out of memory inside its 256-page (16 MiB) memory limit`, and
+  a code body whose compiled module declares more memory than the deployment's
+  limit allows is refused with `this module cannot start inside the
+  N-page (N MiB) memory limit` before it runs. Each of the four limits — wall
+  clock, linear memory, output bytes and host calls — is a named error a caller
+  can test for rather than a message to read.
 
 - `webhook.require_auth` (environment: `KILASFLOW_WEBHOOK_REQUIRE_AUTH`) refuses
   a delivery to any webhook trigger that does not authenticate its callers, with

@@ -214,15 +214,33 @@ parameters — each applied only if strictly smaller — and can never raise the
 
 There are three separate costs in running a Code node and only one of them is
 charged to the user's time limit: the toolchain build (cached by source hash),
-wazero's translation of the module to machine code (cached per process), and the
-user's program actually running. Only the third is bounded by the time limit. If
-a Code node ever reports a limit for work that plainly does not take that long,
-something has crept back inside that timer.
+wazero's translation of the module to machine code (cached per process, and
+across restarts when `code.cache_dir` is set), and the user's program actually
+running. Only the third is bounded by the time limit. If a Code node ever
+reports a limit for work that plainly does not take that long, something has
+crept back inside that timer.
 
 **A deployment may not be able to run Code nodes at all.** The Go toolchain is
 not in the distroless image. That is reported through the node catalogue's
 `unavailable` field so the editor says so before a workflow is saved, rather than
 being discovered when the workflow runs.
+
+The message names what to provide, because there is no way to install a package
+in a shell-less image. A toolchain is roughly 270MB; mount one and point the
+server at it with `code.go_binary` (`KILASFLOW_CODE_GO_BINARY`), or put its `bin`
+directory on the process's `PATH`. Code nodes whose source was already compiled
+keep running from the artifact cache either way, so losing the toolchain costs
+new code, not the workflows already in use. A node pack is different: it ships as
+WebAssembly its author already compiled, so it needs no toolchain at all.
+
+Three keys describe the caches, all under `code.`: `go_binary` (default `go`),
+`cache_dir` (default `./data/codecache`, inside the data volume) and
+`cache_max_bytes` (default 2 GiB, `0` unbounded). A compiled artifact, wazero's
+translation of it and the toolchain's build cache all live under `cache_dir`, and
+all of them are keyed on the runtime version, so an artifact built against an
+older host contract is rebuilt rather than loaded. Those directories hold native
+machine code the server executes, so they must be writable only by the kilasflow
+user; setting `cache_dir` to an empty value keeps every cache in memory instead.
 
 ## Expressions
 

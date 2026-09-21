@@ -1043,3 +1043,55 @@ MaxProcesses caps how many tenant processes the pool holds at once.
 - Required: no
 
 MaxOutputBytes caps the decoded result payload one run may return.
+
+## code
+
+Code configures the Go Code node: which toolchain compiles it, and where
+the work it does is kept.
+
+The section is one word because envKeyToPath treats the first underscore as
+the section separator, so code.cache_dir is reachable as
+KILASFLOW_CODE_CACHE_DIR while a two-word section could never be set from
+the environment at all.
+
+### code.go_binary
+
+- Type: `string`
+- Default: `'go'`
+- Environment: `KILASFLOW_CODE_GO_BINARY`
+- Required: no
+
+GoBinary is the go command used to compile Code nodes. It is looked up
+on PATH when it is not an absolute path.
+
+### code.cache_dir
+
+- Type: `string`
+- Default: `'./data/codecache'`
+- Environment: `KILASFLOW_CODE_CACHE_DIR`
+- Required: no
+
+CacheDir holds compiled artifacts, wazero's translations of them and the
+toolchain's own build cache. It defaults to a directory inside the data
+volume, so a container deployment persists all three without extra
+mounts.
+
+Empty keeps every cache in memory, which is what the deployment got
+before this key existed: compilation is repeated after a restart and
+every build needs the toolchain again.
+
+### code.cache_max_bytes
+
+- Type: `integer (bytes)`
+- Default: `2147483648`
+- Environment: `KILASFLOW_CODE_CACHE_MAX_BYTES`
+- Required: no
+
+CacheMaxBytes bounds the artifact and translation directories together.
+Zero means unbounded.
+
+Translations are evicted before artifacts, because a translation is
+rebuilt from the artifact it belongs to while an artifact needs a Go
+toolchain that this deployment may not have. The default is generous for
+the same reason: a deployment with no toolchain cannot afford to lose
+the artifacts, so eviction is a last resort rather than housekeeping.

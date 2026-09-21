@@ -2,13 +2,18 @@ package nodes_test
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/kilaslab/kilas-flow/internal/engine"
 	"github.com/kilaslab/kilas-flow/internal/node"
 	"github.com/kilaslab/kilas-flow/internal/runcode"
+	"github.com/kilaslab/kilas-flow/internal/safehttp"
+	"github.com/kilaslab/kilas-flow/internal/sqlnode"
+	"github.com/kilaslab/kilas-flow/internal/wasmtest"
 	"github.com/kilaslab/kilas-flow/internal/workflow"
 	"github.com/kilaslab/kilas-flow/nodes"
 )
@@ -302,5 +307,131 @@ func TestTheGoCodeNodeRunsOncePerItemWhenAsked(t *testing.T) {
 				t.Errorf("item 1 gained a binary it never had: %#v", output[0][1].Binary)
 			}
 		})
+	}
+}
+
+// A deployment that cannot compile still has to be told exactly what is
+// missing, in both places an operator or a user sees it: the error a Code node
+// run returns, and the status the editor shows. The defaults — "install Go" —
+// are not actionable in a shell-less image.
+func TestCodeNodeWithoutACompilerNamesWhatToProvide(t *testing.T) {
+	t.Parallel()
+
+	executor := nodes.NewCodeExecutor(nil, runcode.NewMemoryCache(), runcode.DefaultLimits())
+	_, err := executor.Execute(context.Background(), codeIR(t, map[string]any{"code": "return items, nil"}),
+		workflow.NodeInput{}, engine.Request{})
+	if err == nil {
+		t.Fatal("a node with no compiler reported success")
+	}
+	for _, wanted := range []string{"cannot compile Code nodes", runcode.MinimumGoVersion, "KILASFLOW_CODE_GO_BINARY", "code.go_binary", "PATH"} {
+		if !strings.Contains(err.Error(), wanted) {
+			t.Errorf("Execute() error = %v, want it to name %q", err, wanted)
+		}
+	}
+
+	status := executor.Status(context.Background(), "return items, nil")
+	if status.Compiled {
+		t.Error("Status() reported a compiled artifact with no compiler and an empty cache")
+	}
+	if !strings.Contains(status.Error, "cannot compile Code nodes") || !strings.Contains(status.Error, "KILASFLOW_CODE_GO_BINARY") {
+		t.Errorf("Status().Error = %q, want the same explanation the run gives", status.Error)
+	}
+}
+
+// seededCache is an artifact cache with one artifact in it, so a Code node can
+// run a prebuilt module with no toolchain anywhere.
+type seededCache struct {
+	artifacts map[string]runcode.Artifact
+
+	mu    sync.Mutex
+	gets  []string
+	stats int
+}
+
+func (cache *seededCache) Get(hash string) (runcode.Artifact, bool) {
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	cache.gets = append(cache.gets, hash)
+	artifact, found := cache.artifacts[hash]
+	return artifact, found
+}
+
+func (cache *seededCache) Put(artifact runcode.Artifact) {
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	cache.stats++
+	if cache.artifacts == nil {
+		cache.artifacts = map[string]runcode.Artifact{}
+	}
+	cache.artifacts[artifact.Hash] = artifact
+}
+
+func (cache *seededCache) lookedUp() []string {
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	return append([]string(nil), cache.gets...)
+}
+
+// The caches a deployment builds are the ones its Code nodes use. Both halves
+// are checked here, because each is a separate way to get this wrong: an
+// executor that kept its own artifact cache would rebuild source the operator
+// had already compiled, and one that kept its own translation cache would
+// throw away wazero's machine code that the deployment paid for — which is
+// observable, because the supplied cache writes translations under the
+// directory the deployment nominated.
+func TestRegisterExecutorsUsesTheSuppliedCodeCaches(t *testing.T) {
+	const source = "return items, nil"
+	module := wasmtest.MinimalModule("{\"items\":[]}\n")
+	cache := &seededCache{artifacts: map[string]runcode.Artifact{
+		runcode.SourceHash(source): {
+			Hash:           runcode.SourceHash(source),
+			RuntimeVersion: runcode.RuntimeVersion,
+			Module:         module,
+			CompiledAt:     time.Now().UTC(),
+		},
+	}}
+
+	dir := t.TempDir()
+	modules, err := runcode.NewPersistentModuleCache(dir, runcode.RuntimeVersion)
+	if err != nil {
+		t.Fatalf("NewPersistentModuleCache() error = %v", err)
+	}
+	defer modules.Close(context.Background())
+
+	registry := engine.NewRegistry()
+	if err := nodes.RegisterExecutors(registry, safehttp.DefaultPolicy(), sqlnode.Guard{}, nil, nil, nil,
+		nodes.WithCodeCaches(cache, modules)); err != nil {
+		t.Fatalf("RegisterExecutors() error = %v", err)
+	}
+	registered, found := registry.Lookup(nodes.CodeExecutorID)
+	if !found {
+		t.Fatal("the Code executor is not registered")
+	}
+	executor, ok := registered.(*nodes.CodeExecutor)
+	if !ok {
+		t.Fatalf("the Code executor is %T", registered)
+	}
+
+	output, err := executor.Execute(context.Background(), codeIR(t, map[string]any{"code": source}),
+		workflow.NodeInput{"main": {{JSON: map[string]any{"n": float64(1)}}}}, engine.Request{})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if len(output[0]) != 0 {
+		t.Errorf("Execute() returned %#v, want the module's empty item list", output[0])
+	}
+	if len(cache.lookedUp()) == 0 {
+		t.Error("the deployment's artifact cache was never consulted")
+	}
+	if cache.stats != 0 {
+		t.Errorf("the executor stored %d artifacts it was not given", cache.stats)
+	}
+
+	translations, err := filepath.Glob(filepath.Join(dir, "translations", runcode.RuntimeVersion, "*", "*"))
+	if err != nil {
+		t.Fatalf("glob translations: %v", err)
+	}
+	if len(translations) == 0 {
+		t.Skip("wazero wrote no translation files on this platform, so the shared module cache cannot be observed here")
 	}
 }

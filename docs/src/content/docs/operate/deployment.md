@@ -197,3 +197,18 @@ the image and the operator's community packages installed beside the binary:
 the catalogue is read from them at boot, so **every** process role that boots
 with `sidecar.enabled` must carry both. See
 [JavaScript sidecar](/operate/javascript-sidecar/).
+Note that the `Code` node needs a Go toolchain at run time to compile source it
+has not seen before, and the distroless image does not have one. The server
+reports the node as unavailable through the node catalogue rather than failing
+at execution time, and the message names what to provide: mount a toolchain and
+set `code.go_binary` (`KILASFLOW_CODE_GO_BINARY`) to its `go` binary, or put its
+`bin` directory on the process's `PATH`. Nothing else is needed — the build runs
+with the network disabled against the standard library only.
+
+`code.cache_dir` (default `./data/codecache`, inside the data volume) is where a
+compiled artifact and wazero's translation of it are kept, so a restart reuses
+them instead of rebuilding; `code.cache_max_bytes` bounds that directory (default
+2 GiB, `0` unbounded). Those files are native machine code the server executes,
+so the directory must stay writable only by the kilasflow user. An empty
+`code.cache_dir` keeps every cache in memory, which is what a deployment with no
+writable volume should use.

@@ -228,9 +228,6 @@ func run(args []string) error {
 		return fmt.Errorf("register vector nodes: %w", err)
 	}
 	executorRegistry := engine.NewRegistry()
-	// The Go toolchain is not in the distroless image, so this is absent on a
-	// default install. That is reported through the node catalogue rather than
-	// discovered when a workflow runs — see internal/runcode/doc.go.
 	// Built once, before anything that needs it, so a DSN the guard cannot
 	// resolve stops the boot rather than reaching three call sites that would
 	// each have to decide what to do about it.
@@ -243,7 +240,18 @@ func run(args []string) error {
 	// so allow_private_networks: true permits a private database and false
 	// refuses it.
 	sqlGuard.Policy = outboundPolicy(cfg.Outbound)
-	codeCompiler := runcode.NewToolchainCompiler()
+	// The Go toolchain is not in the distroless image, so a default install
+	// cannot compile a Code node. That is reported through the node catalogue,
+	// with what the operator must provide, rather than discovered when a
+	// workflow runs — see internal/runcode/doc.go.
+	codeCompiler := buildCodeCompiler(cfg.Code)
+	// The Code node's caches default to memory. A configured directory makes
+	// both the compiled artifacts and wazero's translations survive a restart,
+	// which matters most on the deployment that cannot compile its way back:
+	// with no toolchain, an evicted artifact is gone for good. An unusable
+	// directory warns and falls back rather than refusing to boot, because a
+	// cache is an optimisation and a broken one must not be an outage.
+	codeArtifacts, moduleCache := buildCodeCaches(cfg.Code, log)
 	// One tenant's chat volume is another tenant's memory pressure, so each
 	// tenant keeps a bounded number of conversations and the least-recently-
 	// touched session is evicted first. A deployment-level knob for this
@@ -257,7 +265,8 @@ func run(args []string) error {
 	if err := nodes.RegisterExecutors(executorRegistry, outboundPolicy(cfg.Outbound), sqlGuard,
 		ai.NewLoopRuntime(), agentMemory, codeCompiler,
 		nodes.WithDatabaseCeiling(databaseCeiling(cfg.SQL)), nodes.WithVectorStore(vectorStore),
-		nodes.WithDatastoreEngine(datastoreEngine)); err != nil {
+		nodes.WithDatastoreEngine(datastoreEngine),
+		nodes.WithCodeCaches(codeArtifacts, moduleCache)); err != nil {
 		return fmt.Errorf("register built-in executors: %w", err)
 	}
 	// Declarative node packs run on one interpreter rather than shipping Go.
@@ -1165,6 +1174,60 @@ func databaseGuard(cfg config.Database) (sqlnode.Guard, error) {
 	return sqlnode.Guard{InternalPaths: []string{path}}, nil
 }
 
+// buildCodeCompiler wires the two Code keys that reach the toolchain.
+//
+// GoBinary is what an operator points at a toolchain they mounted themselves,
+// which is the only way to give the distroless image one without putting a
+// compiler in the image. CacheDir is the Go build cache, kept beside the
+// artifact cache so that a read-only root filesystem with one writable data
+// volume can still build.
+func buildCodeCompiler(cfg config.Code) *runcode.ToolchainCompiler {
+	compiler := runcode.NewToolchainCompiler()
+	if cfg.GoBinary != "" {
+		compiler.GoBinary = cfg.GoBinary
+	}
+	if cfg.CacheDir != "" {
+		compiler.CacheDir = runcode.GoBuildDir(cfg.CacheDir)
+	}
+	return compiler
+}
+
+// buildCodeCaches opens the Code node's caches, or the in-memory ones when the
+// deployment did not configure a directory.
+//
+// Every failure here is a warning, never a failed boot. What the caches buy is
+// speed and survival across a restart; refusing to start because a cache
+// directory is unwritable would turn an optimisation into an outage, and the
+// server has a perfectly good in-memory behaviour to fall back on.
+func buildCodeCaches(cfg config.Code, log *slog.Logger) (runcode.Cache, *runcode.ModuleCache) {
+	if cfg.CacheDir == "" {
+		return runcode.NewMemoryCache(), runcode.NewModuleCache()
+	}
+	// Translations from an older runtime version can never be loaded by this
+	// one, so they are removed at boot rather than counted against a budget
+	// for the rest of the installation's life.
+	if removed, err := runcode.PruneStaleVersions(cfg.CacheDir, runcode.RuntimeVersion); err != nil {
+		log.Warn("could not prune Code caches from older host versions", "dir", cfg.CacheDir, "error", err)
+	} else if len(removed) > 0 {
+		log.Info("pruned Code caches from older host versions", "dir", cfg.CacheDir, "removed", len(removed))
+	}
+
+	artifacts, err := runcode.NewDiskCache(cfg.CacheDir, runcode.RuntimeVersion, cfg.CacheMaxBytes)
+	if err != nil {
+		log.Warn("the Code cache directory is unusable, so Code caches are in memory only",
+			"key", "code.cache_dir", "dir", cfg.CacheDir, "error", err)
+		return runcode.NewMemoryCache(), runcode.NewModuleCache()
+	}
+	modules, err := runcode.NewPersistentModuleCache(cfg.CacheDir, runcode.RuntimeVersion)
+	if err != nil {
+		log.Warn("the Code translation cache could not be opened, so Code caches are in memory only",
+			"key", "code.cache_dir", "dir", cfg.CacheDir, "error", err)
+		return runcode.NewMemoryCache(), runcode.NewModuleCache()
+	}
+	artifacts.OnError(func(err error) { log.Warn("Code cache", "error", err) })
+	return artifacts, modules
+}
+
 // nodeAvailability reports the nodes this deployment cannot run.
 //
 // Only the Code node, for now, and only because compiling Go needs a toolchain
@@ -1176,10 +1239,9 @@ func nodeAvailability(compiler runcode.Compiler) func() map[string]string {
 		if compiler != nil && compiler.Available() {
 			return nil
 		}
-		return map[string]string{
-			nodes.CodeNodeType: "This deployment has no Go compiler, so Code nodes cannot be built. " +
-				"Use the native nodes instead, or run an image that carries the Go toolchain.",
-		}
+		// One explanation, written once in internal/runcode, so the catalogue,
+		// the run-time error and the editor's status cannot drift apart.
+		return map[string]string{nodes.CodeNodeType: runcode.DescribeUnavailable(compiler)}
 	}
 }
 

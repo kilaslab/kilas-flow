@@ -92,10 +92,27 @@ type CodeExecutor struct {
 
 // NewCodeExecutor builds the Code node's executor.
 func NewCodeExecutor(compiler runcode.Compiler, cache runcode.Cache, limits runcode.Limits) *CodeExecutor {
+	return NewCodeExecutorWith(compiler, cache, nil, limits)
+}
+
+// NewCodeExecutorWith builds the Code node's executor with the deployment's
+// caches.
+//
+// A nil cache of either kind is replaced rather than dereferenced, so this is
+// the same executor NewCodeExecutor builds when a deployment has nothing
+// durable to offer. The module cache is the one that is passed in from
+// outside in preference to a fresh one: it has to outlive the per-call runners
+// and it has to be the same object across every Code node in the process, or
+// translated machine code is thrown away between two nodes running the same
+// source.
+func NewCodeExecutorWith(compiler runcode.Compiler, cache runcode.Cache, modules *runcode.ModuleCache, limits runcode.Limits) *CodeExecutor {
 	if cache == nil {
 		cache = runcode.NewMemoryCache()
 	}
-	return &CodeExecutor{compiler: compiler, cache: cache, modules: runcode.NewModuleCache(), limits: limits}
+	if modules == nil {
+		modules = runcode.NewModuleCache()
+	}
+	return &CodeExecutor{compiler: compiler, cache: cache, modules: modules, limits: limits}
 }
 
 // Execute runs the node's code once over all incoming items.
@@ -172,9 +189,10 @@ func (executor *CodeExecutor) call(ctx context.Context, ir workflow.IRNode, runn
 	result, err := runner.Run(ctx, source, items)
 	if err != nil {
 		// A compiler that is not installed is a deployment problem, not the
-		// user's code being wrong, so it is reported as such.
+		// user's code being wrong, so it is reported as such — with what the
+		// operator has to provide, since that is the only thing that fixes it.
 		if errors.Is(err, runcode.ErrCompilerUnavailable) {
-			return nil, fmt.Errorf("node %q: this deployment cannot compile Code nodes", ir.Name)
+			return nil, fmt.Errorf("node %q: %s", ir.Name, runcode.DescribeUnavailable(executor.compiler))
 		}
 		return nil, fmt.Errorf("node %q: %w", ir.Name, err)
 	}
@@ -233,7 +251,7 @@ func (executor *CodeExecutor) Status(ctx context.Context, source string) Compila
 			status.Compiled = true
 			return status
 		}
-		status.Error = runcode.ErrCompilerUnavailable.Error()
+		status.Error = runcode.DescribeUnavailable(executor.compiler)
 		return status
 	}
 

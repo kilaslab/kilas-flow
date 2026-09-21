@@ -403,13 +403,12 @@ func TestASharedTranslationDoesNotCarryAMemoryLimitWithIt(t *testing.T) {
 	}
 
 	tight := runcode.DefaultLimits()
-	tight.MemoryPages = 32 // 2 MiB
+	tight.MemoryPages = allocationDenialPages
 	// Same source, so the same artifact and the same translation, reached
 	// through the same module cache the runner above filled.
-	if _, err := runcode.NewRunner(compiler, artifacts, modules, tight).
-		Run(context.Background(), source, nil); err == nil {
-		t.Fatal("a module allocated 8 MiB inside a 2 MiB limit")
-	}
+	result, err = runcode.NewRunner(compiler, artifacts, modules, tight).
+		Run(context.Background(), source, nil)
+	requireAllocationDenial(t, result, err)
 }
 
 func TestExecutionStopsWhenCancelled(t *testing.T) {
@@ -440,20 +439,22 @@ func TestExecutionStopsWhenCancelled(t *testing.T) {
 func TestMemoryPressureIsDeniedRatherThanExhaustingTheHost(t *testing.T) {
 	compiler := requireToolchain(t)
 	limits := runcode.DefaultLimits()
-	limits.MemoryPages = 32 // 2 MiB
+	// Clear of the guest's own declared minimum so the module starts, and far
+	// below the 4 GiB it tries to allocate: requireAllocationDenial is what
+	// proves the failure was the allocation rather than a refusal at start-up.
+	limits.MemoryPages = allocationDenialPages
 	runner := runcode.NewRunner(compiler, runcode.NewMemoryCache(), sharedModules(t), limits)
 
-	_, err := runner.Run(context.Background(), `
+	result, err := runner.Run(context.Background(), `
 	blocks := make([][]byte, 0, 4096)
 	for i := 0; i < 4096; i++ {
 		blocks = append(blocks, make([]byte, 1<<20))
 	}
 	return []Item{{JSON: map[string]any{"blocks": len(blocks)}}}, nil
 `, nil)
-	// Allocating 4 GiB inside a 2 MiB limit must fail the module, not the host.
-	if err == nil {
-		t.Fatal("a module allocated far past its memory limit")
-	}
+	// Allocating 4 GiB inside a 3 MiB limit must fail the module, not the host,
+	// and must be named as the memory limit that denied it.
+	requireAllocationDenial(t, result, err)
 }
 
 func TestUserCodeErrorIsReportedStructurally(t *testing.T) {

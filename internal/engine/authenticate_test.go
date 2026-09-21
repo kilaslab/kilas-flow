@@ -2,6 +2,7 @@ package engine_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -132,4 +133,133 @@ func localHostPort(t *testing.T, rawURL string) string {
 		t.Fatalf("parsing %q failed: %v", rawURL, err)
 	}
 	return "localhost:" + parsed.URL.Port()
+}
+
+// countingCredentials resolves by ID and counts what it was asked for, so a
+// test can prove a refusal happened before the secret was ever looked up.
+type countingCredentials struct {
+	byID  map[string]engine.Credential
+	calls int
+}
+
+func (resolver *countingCredentials) ResolveCredential(_ context.Context, credentialID string) (engine.Credential, error) {
+	resolver.calls++
+	credential, found := resolver.byID[credentialID]
+	if !found {
+		return engine.Credential{}, errors.New("no credential " + credentialID)
+	}
+	return credential, nil
+}
+
+// twoCredentialNode attaches one credential of each of two types, which is what
+// the type-keyed lookup exists for.
+func twoCredentialNode() workflow.IRNode {
+	return workflow.IRNode{Name: "Fetch", Credentials: map[string]string{
+		"httpHeaderAuth": "cred_header",
+		"httpBearerAuth": "cred_bearer",
+	}}
+}
+
+func twoCredentialResolver() *countingCredentials {
+	return &countingCredentials{byID: map[string]engine.Credential{
+		"cred_header": {
+			ID: "cred_header", Name: "Header key", Type: "httpHeaderAuth",
+			Fields: map[string]string{"name": "X-Api-Key", "value": "header-secret"},
+		},
+		"cred_bearer": {
+			ID: "cred_bearer", Name: "Bearer token", Type: "httpBearerAuth",
+			Fields: map[string]string{"token": "bearer-secret"},
+		},
+	}}
+}
+
+// TestAuthenticateAsAppliesOnlyTheNamedCredential is the pack seam's core
+// promise: a pack names a credential type and the host applies that one, not
+// whichever credential the node happened to attach first.
+func TestAuthenticateAsAppliesOnlyTheNamedCredential(t *testing.T) {
+	t.Parallel()
+
+	resolver := twoCredentialResolver()
+	request := engine.Request{Credentials: resolver}
+	httpRequest, err := http.NewRequest(http.MethodGet, "https://api.example.test/v1/items", nil)
+	if err != nil {
+		t.Fatalf("building the request failed: %v", err)
+	}
+	if err := request.AuthenticateAs(context.Background(), twoCredentialNode(), "httpBearerAuth", httpRequest); err != nil {
+		t.Fatalf("AuthenticateAs() error = %v", err)
+	}
+	if got := httpRequest.Header.Get("Authorization"); got != "Bearer bearer-secret" {
+		t.Errorf("Authorization = %q, want the named credential's", got)
+	}
+	if got := httpRequest.Header.Get("X-Api-Key"); got != "" {
+		t.Errorf("X-Api-Key = %q, want the credential that was not named left alone", got)
+	}
+	if resolver.calls != 1 {
+		t.Errorf("the resolver was called %d times, want once for the named credential", resolver.calls)
+	}
+}
+
+// TestAuthenticateAsRefusesATypeThatIsNotAttached proves naming a credential
+// the node does not carry is a refusal, not a request sent anonymously.
+func TestAuthenticateAsRefusesATypeThatIsNotAttached(t *testing.T) {
+	t.Parallel()
+
+	resolver := twoCredentialResolver()
+	request := engine.Request{Credentials: resolver}
+	node := workflow.IRNode{Name: "Fetch", Credentials: map[string]string{"httpHeaderAuth": "cred_header"}}
+	httpRequest, err := http.NewRequest(http.MethodGet, "https://api.example.test/v1/items", nil)
+	if err != nil {
+		t.Fatalf("building the request failed: %v", err)
+	}
+	if err := request.AuthenticateAs(context.Background(), node, "httpBearerAuth", httpRequest); err == nil {
+		t.Fatal("AuthenticateAs() applied a credential type the node does not carry")
+	}
+	if resolver.calls != 0 {
+		t.Errorf("the resolver was called %d times, want none: the type is not attached", resolver.calls)
+	}
+	if len(httpRequest.Header) != 0 {
+		t.Errorf("headers = %v, want a request with nothing applied", httpRequest.Header)
+	}
+}
+
+// TestAuthenticateAsHonoursTheCredentialDomainScope proves the domain bound
+// applies to the named credential exactly as it does to Authenticate's: the
+// secret is not applied to a host AllowedDomains never named, and the scope
+// rides on the request for the redirect chain.
+func TestAuthenticateAsHonoursTheCredentialDomainScope(t *testing.T) {
+	t.Parallel()
+
+	resolver := twoCredentialResolver()
+	resolver.byID["cred_bearer"] = engine.Credential{
+		ID: "cred_bearer", Name: "Bearer token", Type: "httpBearerAuth",
+		Fields:         map[string]string{"token": "bearer-secret"},
+		AllowedDomains: []string{"api.example.test"},
+	}
+	request := engine.Request{Credentials: resolver}
+
+	refused, err := http.NewRequest(http.MethodGet, "https://evil.example.test/v1/items", nil)
+	if err != nil {
+		t.Fatalf("building the request failed: %v", err)
+	}
+	if err := request.AuthenticateAs(context.Background(), twoCredentialNode(), "httpBearerAuth", refused); err == nil {
+		t.Fatal("AuthenticateAs() applied the credential to a host outside AllowedDomains")
+	}
+	if got := refused.Header.Get("Authorization"); got != "" {
+		t.Errorf("Authorization = %q, want no secret on a refused host", got)
+	}
+
+	allowed, err := http.NewRequest(http.MethodGet, "https://api.example.test/v1/items", nil)
+	if err != nil {
+		t.Fatalf("building the request failed: %v", err)
+	}
+	if err := request.AuthenticateAs(context.Background(), twoCredentialNode(), "httpBearerAuth", allowed); err != nil {
+		t.Fatalf("AuthenticateAs() error = %v", err)
+	}
+	scope, carried := safehttp.CredentialScopeFrom(allowed.Context())
+	if !carried {
+		t.Fatal("no credential scope on the request context: a redirect would carry the secret to any host")
+	}
+	if !scope.AllowsHost("api.example.test:443") || scope.AllowsHost("evil.example.test") {
+		t.Error("the scope does not match the credential's AllowedDomains")
+	}
 }

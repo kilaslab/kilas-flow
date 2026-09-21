@@ -27,6 +27,56 @@ func (request Request) Authenticate(ctx context.Context, ir workflow.IRNode, htt
 	if err != nil || !found {
 		return err
 	}
+	return applyResolved(ir, resolved, httpRequest)
+}
+
+// AuthenticateAs resolves the credential of one named type that the node
+// attached and applies it to an outbound request.
+//
+// It is the seam a node pack authenticates through. A pack names the
+// credential *type* it wants and the host does the rest: the pack never sees a
+// secret, cannot name a credential the node did not attach, and cannot skip the
+// domain scope, because all three are decided here.
+//
+// Unlike Authenticate, naming a type the node did not attach is an error rather
+// than a silent no-op: the caller asked for a credential, and sending the
+// request anonymously instead would be the opposite of what it asked for.
+func (request Request) AuthenticateAs(ctx context.Context, ir workflow.IRNode, credentialType string, httpRequest *http.Request) error {
+	resolved, found, err := request.ResolveAttachedCredential(ctx, ir, credentialType)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return fmt.Errorf("node %q: no %s credential is attached to it", ir.Name, credentialType)
+	}
+	return applyResolved(ir, resolved, httpRequest)
+}
+
+// ResolveAttachedCredential resolves the credential of one named type that the
+// node attached. It reports found=false when the node attached none of that
+// type, and does not consult the resolver in that case.
+//
+// The lookup is by type rather than by position because a node may attach
+// several credentials — an HTTP request that signs with one and reports to
+// another — and a caller that names one must get that one.
+func (request Request) ResolveAttachedCredential(ctx context.Context, ir workflow.IRNode, credentialType string) (Credential, bool, error) {
+	if strings.TrimSpace(credentialType) == "" {
+		return Credential{}, false, nil
+	}
+	credentialID := strings.TrimSpace(ir.Credentials[credentialType])
+	if credentialID == "" {
+		return Credential{}, false, nil
+	}
+	return request.resolveCredential(ctx, ir, credentialType, credentialID)
+}
+
+// applyResolved is the one place a resolved credential is bound to a request.
+//
+// Ownership, type and domain scope are all checked before the secret touches
+// the request, so a workflow cannot point a credential at an arbitrary host.
+// It is a free function rather than a method because it needs nothing from the
+// request: what it needs is the credential and the URL.
+func applyResolved(ir workflow.IRNode, resolved Credential, httpRequest *http.Request) error {
 	if !resolved.AllowsHost(httpRequest.URL.Host) {
 		return fmt.Errorf("node %q: credential %q is not allowed for host %q", ir.Name, resolved.Name, httpRequest.URL.Hostname())
 	}
@@ -80,17 +130,31 @@ func (request Request) ResolveNodeCredential(ctx context.Context, ir workflow.IR
 	if credentialID == "" {
 		return Credential{}, "", false, nil
 	}
+	resolved, found, err := request.resolveCredential(ctx, ir, credentialType, credentialID)
+	if err != nil || !found {
+		return Credential{}, "", false, err
+	}
+	return resolved, credentialType, true, nil
+}
+
+// resolveCredential resolves one credential by ID and checks it is of the type
+// the node declared for it.
+//
+// The type check is the half that stops a node from being pointed at a
+// credential of another kind — a database credential where an HTTP one was
+// expected — and it lives here so every lookup path applies it.
+func (request Request) resolveCredential(ctx context.Context, ir workflow.IRNode, credentialType, credentialID string) (Credential, bool, error) {
 	if request.Credentials == nil {
-		return Credential{}, "", false, fmt.Errorf("node %q: credentials are not available in this runtime", ir.Name)
+		return Credential{}, false, fmt.Errorf("node %q: credentials are not available in this runtime", ir.Name)
 	}
 	resolved, err := request.Credentials.ResolveCredential(ctx, credentialID)
 	if err != nil {
-		return Credential{}, "", false, fmt.Errorf("node %q: %w", ir.Name, err)
+		return Credential{}, false, fmt.Errorf("node %q: %w", ir.Name, err)
 	}
 	if credentialType != "" && resolved.Type != credentialType {
-		return Credential{}, "", false, fmt.Errorf("node %q: credential %q is a %s credential, not %s", ir.Name, resolved.Name, resolved.Type, credentialType)
+		return Credential{}, false, fmt.Errorf("node %q: credential %q is a %s credential, not %s", ir.Name, resolved.Name, resolved.Type, credentialType)
 	}
-	return resolved, credentialType, true, nil
+	return resolved, true, nil
 }
 
 // ExpressionContext assembles the approved roots for one item.
