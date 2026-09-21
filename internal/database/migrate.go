@@ -179,7 +179,7 @@ func migrateFS(db *DB, fsys fs.FS, log *slog.Logger) error {
 			continue
 		}
 		if vectorSkipped[pending.version] {
-			if err := recordSkippedVersion(db.DB, dialect, pending); err != nil {
+			if err := recordVersionUnlessClaimed(db.DB, dialect, pending); err != nil {
 				return fmt.Errorf("record skipped vector migration %s: %w", pending.label(), err)
 			}
 			log.Warn("skipped a vector migration: PostgreSQL has no pgvector extension; vector nodes will refuse until CREATE EXTENSION vector runs",
@@ -263,6 +263,9 @@ func apply(db *DB, dialect string, pending migration, prefix string, names map[s
 // instead would mean CREATE TABLE over live data on the first upgrade in the
 // field, which fails at best and is why this case is detected rather than left
 // to the CREATE TABLE to discover.
+//
+// The row is recorded without insisting on it, because two starters can both
+// decide to adopt the same schema: see recordVersionUnlessClaimed.
 func adoptExistingSchema(db *DB, baseline migration, log *slog.Logger) (bool, error) {
 	tables := baseline.createdTables()
 	if len(tables) == 0 {
@@ -273,7 +276,7 @@ func adoptExistingSchema(db *DB, baseline migration, log *slog.Logger) (bool, er
 		if !db.Migrator().HasTable(prefix + table) {
 			continue
 		}
-		if err := recordVersion(db.DB, db.Dialector.Name(), baseline); err != nil {
+		if err := recordVersionUnlessClaimed(db.DB, db.Dialector.Name(), baseline); err != nil {
 			return false, fmt.Errorf("adopt existing schema as migration %s: %w", baseline.label(), err)
 		}
 		log.Info("adopted an existing schema as the migration baseline", "version", baseline.version, "table", prefix+table)
@@ -289,29 +292,32 @@ func recordVersion(tx *gorm.DB, dialect string, applied migration) error {
 	).Error
 }
 
-// recordSkippedVersion records a migration this boot decided not to run.
+// recordVersionUnlessClaimed records a version row whose DDL this process did
+// not run: an adopted schema's baseline, or a migration skipped because
+// PostgreSQL has no pgvector extension.
 //
-// The insert has to survive losing a race, because two processes started
-// together make the same decision about the same migration and only one of them
-// can insert the row. `apply` handles that collision by re-reading the table
-// after the error, which works there because its insert is also the claim that
-// keeps the DDL from running twice and the loser has something to wait for. A
-// skipped migration has no DDL behind it and nothing to wait for, so the
-// conflict is declared in the statement instead and the loser carries on. That
-// is what the constants below spell per dialect: SQLite's INSERT OR IGNORE and
-// PostgreSQL's ON CONFLICT DO NOTHING.
+// Both are decisions taken from a read of the version table, so two processes
+// started together make the same one and only one of them can insert the row.
+// Neither has DDL behind it and therefore nothing to wait for, so the conflict
+// is declared in the statement instead and the loser carries on. That is what
+// the statement below spells per dialect: SQLite's INSERT OR IGNORE and
+// PostgreSQL's ON CONFLICT DO NOTHING. `apply` cannot use this shape — its
+// insert is also the claim that keeps its own DDL from running twice, so it
+// re-reads the table after the error instead — but it absorbs the same
+// collision.
 //
-// Only the version row is tolerant, never the migration: a skipped migration is
-// still recorded exactly once, and a database whose owner later installs the
-// extension converges on the next boot that finds it already there.
-func recordSkippedVersion(db *gorm.DB, dialect string, skipped migration) error {
+// Only the version row is tolerant, never the migration: an adopted baseline
+// runs no DDL either way, a skipped migration is still recorded exactly once,
+// and a database whose owner later installs the extension converges on the next
+// boot that finds it already there.
+func recordVersionUnlessClaimed(db *gorm.DB, dialect string, recorded migration) error {
 	statement := "INSERT OR IGNORE INTO " + quoteIdentifier(dialect, schemaMigrationsTable) +
 		" (version, name, applied_at) VALUES (?, ?, ?)"
 	if dialect == "postgres" {
 		statement = "INSERT INTO " + quoteIdentifier(dialect, schemaMigrationsTable) +
 			" (version, name, applied_at) VALUES (?, ?, ?) ON CONFLICT (version) DO NOTHING"
 	}
-	return db.Exec(statement, skipped.version, skipped.name, time.Now().UTC()).Error
+	return db.Exec(statement, recorded.version, recorded.name, time.Now().UTC()).Error
 }
 
 func ensureVersionTable(db *DB, dialect string) error {

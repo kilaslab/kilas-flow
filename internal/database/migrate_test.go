@@ -658,6 +658,64 @@ func TestConcurrentPostgresStartsApplyTheBaselineExactlyOnce(t *testing.T) {
 	assertBaselineSchema(t, first)
 }
 
+// The adoption half of the same race, with the interleaving fixed rather than
+// raced: a starter that decided to adopt an existing schema from a read taken
+// before another starter recorded the baseline must report the schema as
+// adopted, not fail on the version table's primary key. Fixed here so the
+// loser's path is exercised on every run instead of only on a loaded machine —
+// and so both dialects' tolerant insert (SQLite's INSERT OR IGNORE and
+// PostgreSQL's ON CONFLICT DO NOTHING) is exercised without waiting for the
+// concurrent cases above to lose the race.
+func TestAStarterThatLostTheAdoptionRaceAdoptsRatherThanFails(t *testing.T) {
+	assertALostAdoptionRaceAdopts(t, freshSQLite(t))
+}
+
+func TestAStarterThatLostTheAdoptionRaceAdoptsRatherThanFailsOnPostgres(t *testing.T) {
+	assertALostAdoptionRaceAdopts(t, openPostgres(t))
+}
+
+func assertALostAdoptionRaceAdopts(t *testing.T, db *DB) {
+	t.Helper()
+	dialect := db.Dialector.Name()
+	buildLegacySchema(t, db)
+	if err := ensureVersionTable(db, dialect); err != nil {
+		t.Fatalf("ensureVersionTable: %v", err)
+	}
+
+	all, err := loadMigrations(migrations.FS, dialect)
+	if err != nil {
+		t.Fatalf("loadMigrations: %v", err)
+	}
+
+	adopted, err := adoptExistingSchema(db, all[0], discardLogger())
+	if err != nil {
+		t.Fatalf("the starter that won the adoption race: %v", err)
+	}
+	if !adopted {
+		t.Fatal("the starter that won the adoption race did not adopt the schema")
+	}
+
+	// The loser's decision was made from a read of schema_migrations taken
+	// before that insert committed, and that read is the whole of its state:
+	// adoption never consults the table itself.
+	adopted, err = adoptExistingSchema(db, all[0], discardLogger())
+	if err != nil {
+		t.Errorf("the starter that lost the adoption race: %v", err)
+	}
+	if !adopted {
+		t.Error("the starter that lost the adoption race reported the schema as not adopted")
+	}
+
+	var applications int64
+	count := "SELECT COUNT(*) FROM " + quoteIdentifier(dialect, schemaMigrationsTable) + " WHERE version = 1"
+	if err := db.Raw(count).Scan(&applications).Error; err != nil {
+		t.Fatalf("count applied migrations: %v", err)
+	}
+	if applications != 1 {
+		t.Errorf("schema_migrations rows for version 1 = %d, want 1", applications)
+	}
+}
+
 // An operator who downgrades the binary but not the database gets a refusal
 // naming both versions, rather than a server that runs against a schema it does
 // not understand.
@@ -810,7 +868,7 @@ func TestVectorGateDetectionIsStatementBased(t *testing.T) {
 
 // A SQLite run with only a vector migration pending records it as skipped
 // rather than failing: the skip path is dialect-independent in shape, and
-// this exercises recordSkippedVersion + WARN without needing a live
+// this exercises recordVersionUnlessClaimed + WARN without needing a live
 // PostgreSQL.
 func TestVectorSkipRecordsVersionWithoutRunningDDL(t *testing.T) {
 	db := freshSQLite(t)
@@ -820,14 +878,14 @@ func TestVectorSkipRecordsVersionWithoutRunningDDL(t *testing.T) {
 	if err := ensureVersionTable(db, db.Dialector.Name()); err != nil {
 		t.Fatalf("ensureVersionTable: %v", err)
 	}
-	if err := recordSkippedVersion(db.DB, db.Dialector.Name(), pending); err != nil {
-		t.Fatalf("recordSkippedVersion: %v", err)
+	if err := recordVersionUnlessClaimed(db.DB, db.Dialector.Name(), pending); err != nil {
+		t.Fatalf("recordVersionUnlessClaimed: %v", err)
 	}
 	// The second record stands in for the loser of a race between two processes
 	// starting together, which decided to skip the same migration: it has to be
 	// a no-op rather than the duplicate-key failure a plain insert produced —
 	// the failure the concurrent PostgreSQL case reproduces (BUG-rpkjpy).
-	if err := recordSkippedVersion(db.DB, db.Dialector.Name(), pending); err != nil {
+	if err := recordVersionUnlessClaimed(db.DB, db.Dialector.Name(), pending); err != nil {
 		t.Fatalf("recording the same skip twice: %v", err)
 	}
 	applied, err := appliedVersions(db)
