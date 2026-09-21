@@ -218,3 +218,34 @@ describe('system', () => {
 		]);
 	});
 });
+
+describe('tenant deletion', () => {
+	it('targets the documented endpoint and returns the typed removal counts', async () => {
+		const { calls, fetchImpl } = recordingFetch({
+			body: {
+				tenantId: 'acme',
+				tenantRemoved: true,
+				removed: { workflows: 2, tenants: 1, schedules: 0 },
+				datastoreTables: 1,
+				binaries: { executions: 1, files: 3, bytes: 4096 }
+			}
+		});
+
+		// A tenant id is a path segment, not a path: the id reaches the server
+		// exactly as it was given, so a slash cannot name the tenant next door.
+		const deletion = await client(fetchImpl).deleteTenant('acme/../globex');
+
+		expect(calls.map((call) => `${call.init.method} ${pathOf(call)}`)).toEqual([
+			'DELETE /api/v1/tenants/acme%2F..%2Fglobex'
+		]);
+		// The counts are what makes a deletion verifiable, so the typed result
+		// has to be the server's document rather than an opaque body.
+		expect(deletion).toEqual({
+			tenantId: 'acme',
+			tenantRemoved: true,
+			removed: { workflows: 2, tenants: 1, schedules: 0 },
+			datastoreTables: 1,
+			binaries: { executions: 1, files: 3, bytes: 4096 }
+		});
+	});
+});

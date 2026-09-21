@@ -35,16 +35,37 @@ func openHandle(t *testing.T, driver, dsn, prefix string) *database.DB {
 // testDriver is one dialect the engine tests run against. SQLite always
 // runs; PostgreSQL joins when KILASFLOW_TEST_POSTGRES_DSN names a live
 // server, the same gate the database package uses.
+//
+// driver and dsn are what open passes to database.Open, exposed because a
+// test that needs a second connection to the same database — the concurrent
+// writer a purge can race — has to open it without the migration re-arm
+// open does, which drops the tables the first handle seeded.
 type testDriver struct {
-	name string
-	open func(t *testing.T, prefix string) (*database.DB, *Engine)
+	name   string
+	driver string
+	dsn    func(t *testing.T) string
+	open   func(t *testing.T, prefix string) (*database.DB, *Engine)
 }
 
 func testDrivers() []testDriver {
+	// One file per test: t.TempDir hands out a fresh directory on every
+	// call, and a test that needs a second handle on the same database —
+	// the concurrent writer a purge can race — asks for the dsn twice.
+	paths := map[string]string{}
+	sqliteDSN := func(t *testing.T) string {
+		path, ok := paths[t.Name()]
+		if !ok {
+			path = filepath.Join(t.TempDir(), "datastore.db")
+			paths[t.Name()] = path
+		}
+		return path
+	}
 	drivers := []testDriver{{
-		name: "sqlite",
+		name:   "sqlite",
+		driver: "sqlite",
+		dsn:    sqliteDSN,
 		open: func(t *testing.T, prefix string) (*database.DB, *Engine) {
-			db := openHandle(t, "sqlite", filepath.Join(t.TempDir(), "datastore.db"), prefix)
+			db := openHandle(t, "sqlite", sqliteDSN(t), prefix)
 			if err := database.Migrate(db, discardLogger()); err != nil {
 				t.Fatalf("Migrate sqlite: %v", err)
 			}
@@ -57,22 +78,32 @@ func testDrivers() []testDriver {
 	}}
 	if os.Getenv("KILASFLOW_TEST_POSTGRES_DSN") != "" {
 		drivers = append(drivers, testDriver{
-			name: "postgres",
+			name:   "postgres",
+			driver: "postgres",
+			dsn:    func(*testing.T) string { return os.Getenv("KILASFLOW_TEST_POSTGRES_DSN") },
 			open: func(t *testing.T, prefix string) (*database.DB, *Engine) {
 				db := openHandle(t, "postgres", os.Getenv("KILASFLOW_TEST_POSTGRES_DSN"), prefix)
 				// The server is shared between runs, so reset this
-				// prefix's catalogue and re-run only 000005: earlier
-				// versions stay applied and are never rebuilt. On a
-				// fresh server there is no version history yet, so the
-				// re-arm is skipped rather than failed.
+				// prefix's catalogue and re-run the migrations that
+				// build it: earlier versions stay applied and are never
+				// rebuilt. On a fresh server there is no version history
+				// yet, so the re-arm is skipped rather than failed.
+				//
+				// By name, never by number. The datastore_columns table
+				// is created by one migration and gains its tenant
+				// column in another, so both have to be re-armed — and a
+				// numeric test would re-arm whichever migration happened
+				// to hold that number after a renumber, leaving a
+				// datastore_columns without tenant_id under an applied
+				// tenant migration.
 				for _, table := range []string{prefix + "datastores", prefix + "datastore_columns"} {
 					if err := db.Exec(`DROP TABLE IF EXISTS "` + table + `" CASCADE`).Error; err != nil {
 						t.Fatalf("drop leftover %s: %v", table, err)
 					}
 				}
 				if db.Migrator().HasTable("schema_migrations") {
-					if err := db.Exec(`DELETE FROM "schema_migrations" WHERE version = 5`).Error; err != nil {
-						t.Fatalf("re-arm 000005: %v", err)
+					if err := db.Exec(`DELETE FROM "schema_migrations" WHERE name IN ('datastores', 'datastore_columns_tenant')`).Error; err != nil {
+						t.Fatalf("re-arm the datastore migrations: %v", err)
 					}
 				}
 				if err := database.Migrate(db, discardLogger()); err != nil {

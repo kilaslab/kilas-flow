@@ -38,9 +38,16 @@ func (datastoreModel) TableName(namer schema.Namer) string {
 // user columns of one datastore in definition order. Position is the
 // explicit integer the ticket asks for, so column order survives drivers
 // that return catalogue rows in any order they like.
+//
+// TenantID repeats the owning datastore's tenant on the row itself. The
+// catalogue used to be safe only because every read came after a tenant-scoped
+// lookup of the datastore; carrying the tenant here means a column read that
+// forgets that lookup still cannot cross tenants, and a tenant purge can delete
+// the columns by tenant rather than by a list of ids.
 type datastoreColumnModel struct {
 	ID          uint   `gorm:"primaryKey;autoIncrement"`
-	DatastoreID string `gorm:"not null;size:64;index:idx_datastore_columns_datastore,priority:1;uniqueIndex:uidx_datastore_columns_datastore_name,priority:1"`
+	TenantID    string `gorm:"not null;size:64;default:'';index:idx_datastore_columns_tenant,priority:1"`
+	DatastoreID string `gorm:"not null;size:64;index:idx_datastore_columns_datastore,priority:1;uniqueIndex:uidx_datastore_columns_datastore_name,priority:1;index:idx_datastore_columns_tenant,priority:2"`
 	Name        string `gorm:"not null;size:255;uniqueIndex:uidx_datastore_columns_datastore_name,priority:2"`
 	Type        string `gorm:"not null;size:16"`
 	Position    int    `gorm:"not null;default:0"`

@@ -168,6 +168,7 @@ func (e *Engine) Create(ctx context.Context, tenantID, name string, in []ColumnI
 			}
 			for _, col := range cols {
 				if err := tx.Create(&datastoreColumnModel{
+					TenantID:    tenantID,
 					DatastoreID: ds.ID,
 					Name:        col.Name,
 					Type:        string(col.Type),
@@ -209,7 +210,7 @@ func (e *Engine) Drop(ctx context.Context, tenantID, id string) error {
 	}
 	table := PhysicalTableName(e.prefix, row.Surrogate)
 	return e.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("datastore_id = ?", id).Delete(&datastoreColumnModel{}).Error; err != nil {
+		if err := tx.Where("tenant_id = ? AND datastore_id = ?", tenantID, id).Delete(&datastoreColumnModel{}).Error; err != nil {
 			return err
 		}
 		if err := tx.Where("tenant_id = ? AND id = ?", tenantID, id).Delete(&datastoreModel{}).Error; err != nil {
@@ -249,6 +250,7 @@ func (e *Engine) AddColumn(ctx context.Context, tenantID, id string, in ColumnIn
 	table := PhysicalTableName(e.prefix, row.Surrogate)
 	return e.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(&datastoreColumnModel{
+			TenantID:    tenantID,
 			DatastoreID: id,
 			Name:        added.Name,
 			Type:        string(added.Type),
@@ -305,7 +307,7 @@ func (e *Engine) RenameColumn(ctx context.Context, tenantID, id, oldName, newNam
 	table := PhysicalTableName(e.prefix, row.Surrogate)
 	return e.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Model(&datastoreColumnModel{}).
-			Where("datastore_id = ? AND name = ?", id, target.Name).
+			Where("tenant_id = ? AND datastore_id = ? AND name = ?", tenantID, id, target.Name).
 			Update("name", newName).Error; err != nil {
 			return err
 		}
@@ -346,7 +348,7 @@ func (e *Engine) DropColumn(ctx context.Context, tenantID, id, name string) erro
 	}
 	table := PhysicalTableName(e.prefix, row.Surrogate)
 	return e.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("datastore_id = ? AND name = ?", id, target.Name).Delete(&datastoreColumnModel{}).Error; err != nil {
+		if err := tx.Where("tenant_id = ? AND datastore_id = ? AND name = ?", tenantID, id, target.Name).Delete(&datastoreColumnModel{}).Error; err != nil {
 			return err
 		}
 		statement := "ALTER TABLE " + quoteIdent(e.dialect(), table) +
@@ -385,7 +387,7 @@ func (e *Engine) lookup(ctx context.Context, tenantID, id string) (*datastoreMod
 		return nil, nil, err
 	}
 	var stored []datastoreColumnModel
-	if err := e.db.WithContext(ctx).Where("datastore_id = ?", id).Order("position").Find(&stored).Error; err != nil {
+	if err := e.db.WithContext(ctx).Where("datastore_id = ? AND tenant_id = ?", id, tenantID).Order("position").Find(&stored).Error; err != nil {
 		return nil, nil, err
 	}
 	cols := make([]ColumnDef, 0, len(stored))

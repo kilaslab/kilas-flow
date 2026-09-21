@@ -31,7 +31,7 @@ func (e *Engine) ListDatastores(ctx context.Context, tenantID string) ([]Datasto
 	}
 	out := make([]Datastore, 0, len(rows))
 	for _, row := range rows {
-		cols, err := e.columnsOf(ctx, row.ID)
+		cols, err := e.columnsOf(ctx, row.TenantID, row.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -118,7 +118,7 @@ func (e *Engine) ListDatastoresPage(ctx context.Context, tenantID string, q Data
 	for _, row := range rows {
 		ids = append(ids, row.ID)
 	}
-	columns, err := e.columnsByDatastore(ctx, ids)
+	columns, err := e.columnsByDatastore(ctx, tenantID, ids)
 	if err != nil {
 		return DatastorePage{}, err
 	}
@@ -169,14 +169,14 @@ func decodeDatastoreCursor(cursor string) (string, string, error) {
 // columnsByDatastore reads the live columns of every named datastore in one
 // query, in position order, grouped by datastore. A datastore with no columns
 // maps to a nil slice, which is the same empty answer columnsOf gives it.
-func (e *Engine) columnsByDatastore(ctx context.Context, ids []string) (map[string][]ColumnDef, error) {
+func (e *Engine) columnsByDatastore(ctx context.Context, tenantID string, ids []string) (map[string][]ColumnDef, error) {
 	grouped := make(map[string][]ColumnDef, len(ids))
 	if len(ids) == 0 {
 		return grouped, nil
 	}
 	var stored []datastoreColumnModel
 	if err := e.db.WithContext(ctx).
-		Where("datastore_id IN ?", ids).
+		Where("datastore_id IN ? AND tenant_id = ?", ids, tenantID).
 		Order("datastore_id ASC, position ASC").
 		Find(&stored).Error; err != nil {
 		return nil, fmt.Errorf("datastore: read columns: %w", err)
@@ -239,10 +239,14 @@ func (e *Engine) RenameDatastore(ctx context.Context, tenantID, id, name string)
 }
 
 // columnsOf reads one datastore's live columns in position order.
-func (e *Engine) columnsOf(ctx context.Context, id string) ([]ColumnDef, error) {
+//
+// Scoped by the tenant as well as the datastore, so a catalogue row that names
+// a datastore its tenant does not own is invisible here rather than rendered as
+// one of that datastore's columns.
+func (e *Engine) columnsOf(ctx context.Context, tenantID, id string) ([]ColumnDef, error) {
 	var stored []datastoreColumnModel
 	if err := e.db.WithContext(ctx).
-		Where("datastore_id = ?", id).
+		Where("datastore_id = ? AND tenant_id = ?", id, tenantID).
 		Order("position ASC").
 		Find(&stored).Error; err != nil {
 		return nil, fmt.Errorf("datastore: read columns of %s: %w", id, err)

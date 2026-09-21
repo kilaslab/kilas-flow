@@ -56,6 +56,7 @@ import type {
 	ScheduleResource,
 	SetUserPasswordInputBody,
 	StreamTicketResource,
+	TenantDeletionResource,
 	TenantResource,
 	TestCredentialResource,
 	TestPayloadBody,
@@ -585,6 +586,26 @@ export class KilasFlowClient {
 	/** Reads one tenant, such as the resource a create answered with. */
 	getTenant(tenantId: string, signal?: AbortSignal): Promise<TenantResource> {
 		return this.#transport.request('GET', `/tenants/${encodeURIComponent(tenantId)}`, { signal });
+	}
+
+	/**
+	 * Deletes a tenant and everything it owns — executions and their payload
+	 * files, workflows and versions, credentials, schedules, webhook
+	 * deliveries, datastores and their physical tables, accounts, keys, and
+	 * finally the tenant row — and answers with what was removed, per table.
+	 * This is irreversible, and it needs the operator credential: a customer's
+	 * key is refused like any other non-operator principal.
+	 *
+	 * The call is idempotent. Repeating it converges, so a deletion is
+	 * confirmed by sending it again and reading zeros, and an interrupted one
+	 * is resumed the same way. A tenant large enough can outlast this client's
+	 * default `timeoutMs` (30s) or a proxy's idle timeout; the server keeps
+	 * going when the request is abandoned, so a timed-out call is repeated
+	 * rather than reported as a failure. A host that wants one call to wait can
+	 * raise `timeoutMs` on the client.
+	 */
+	deleteTenant(tenantId: string, signal?: AbortSignal): Promise<TenantDeletionResource> {
+		return this.#transport.request('DELETE', `/tenants/${encodeURIComponent(tenantId)}`, { signal });
 	}
 
 	/**

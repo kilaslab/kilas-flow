@@ -65,6 +65,54 @@ func TestPurgeTenantRemovesOnlyThatTenantTrace(t *testing.T) {
 	})
 }
 
+// A tenant with a suspended run is the ordinary case for a deletion request:
+// approval waits can sit for days. execution_waits.execution_id is ON DELETE
+// RESTRICT, so purging the executions first fails the whole transaction and
+// the tenant is never deleted at all.
+func TestPurgeTenantRemovesWaitsBeforeExecutions(t *testing.T) {
+	eachDriver(t, func(t *testing.T, db *database.DB) {
+		ctx := context.Background()
+		tenant, store, record := queueAndClaimWaitFixture(t, db, "drv-purge-wait-a", "purge_wait_wf_a")
+		suspendWaitFixture(t, store, tenant, record, time.Now().UTC().Add(time.Hour))
+
+		purged, err := store.PurgeTenant(ctx, tenant)
+		if err != nil {
+			t.Fatalf("PurgeTenant() with a suspended run error = %v", err)
+		}
+		if purged.Executions != 1 || purged.NodeRuns != 2 || purged.Waits != 1 {
+			t.Errorf("PurgeTenant() = %+v, want 1 execution, 2 node runs and 1 wait", purged)
+		}
+		for table, count := range rawTenantCounts(t, db, tenant.ID,
+			"execution_waits", "executions", "execution_node_runs") {
+			if count != 0 {
+				t.Errorf("%s holds %d of the purged tenant's rows, want 0", table, count)
+			}
+		}
+
+		// The retry converges, waits included.
+		again, err := store.PurgeTenant(ctx, tenant)
+		if err != nil || again.Waits != 0 || again.Executions != 0 {
+			t.Errorf("PurgeTenant(retry) = (%+v, %v), want zero", again, err)
+		}
+	})
+}
+
+// rawTenantCounts counts the tenant's rows in each named table with raw SQL,
+// so the assertion is about what is actually stored rather than about what a
+// store method reports.
+func rawTenantCounts(t *testing.T, db *database.DB, tenantID string, tables ...string) map[string]int64 {
+	t.Helper()
+	counts := make(map[string]int64, len(tables))
+	for _, table := range tables {
+		var count int64
+		if err := db.Raw("SELECT COUNT(*) FROM "+table+" WHERE tenant_id = ?", tenantID).Scan(&count).Error; err != nil {
+			t.Fatalf("count %s rows: %v", table, err)
+		}
+		counts[table] = count
+	}
+	return counts
+}
+
 func purgeFixtureExecution(t *testing.T, ctx context.Context, executions *repository.GORMExecutionStore, workflows *repository.GORMWorkflowStore, tenant repository.TenantScope, wfID, cell string) execution.Record {
 	t.Helper()
 	saved, err := workflows.SaveDraft(ctx, tenant, workflow.Document{

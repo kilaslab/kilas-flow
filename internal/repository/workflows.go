@@ -20,17 +20,29 @@ import (
 const DefaultTenantID = "default"
 
 // TenantScope scopes the repository operations that act for a tenant, not
-// every operation. Claiming (ClaimNext, ClaimDue), routing (Resolve,
-// ClaimDelivery, RecordDeliveryExecution), history-wide pruning
-// (PruneAllVersions) and the lookups that run before any tenant is known
-// (EnsureTenant, GetTenant, FindUserForLogin, AuthenticateAPIKey, CountUsers)
-// take none. A query that forgets the tenant is a bug, but it still compiles.
+// every operation. Claiming (ClaimNext, ClaimDue), routing (Resolve),
+// history-wide pruning (PruneAllVersions) and the lookups that run before any
+// tenant is known (EnsureTenant, GetTenant, FindUserForLogin,
+// AuthenticateAPIKey, CountUsers) take none. A query that forgets the tenant is
+// a bug, but it still compiles.
+//
+// ClaimDelivery and RecordDeliveryExecution are the exception among the routing
+// operations: an inbound request has no session, but the delivery it records
+// belongs to the tenant that owns the route, so both take that tenant as an
+// explicit argument.
 type TenantScope struct {
 	ID string
 }
 
 // ErrNotFound is returned without exposing an ORM or cross-tenant distinction.
 var ErrNotFound = errors.New("repository record not found")
+
+// ErrTenantRequired reports an operation that names no tenant. The schema
+// keeps a DEFAULT on the tenant columns so a legacy install can migrate, which
+// means an insert that forgets the tenant would succeed and leave a row no
+// tenant purge could ever reach; refusing the empty tenant in Go is what keeps
+// that from happening.
+var ErrTenantRequired = errors.New("repository: tenant id is required")
 
 // ErrInvalidCursor reports a pagination cursor the caller did not receive from
 // a previous listing. Callers translate it into a 400, never a 500.

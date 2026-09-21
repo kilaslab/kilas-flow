@@ -70,6 +70,7 @@ func TestFleetRunPicksUpDatastoresCreatedMidRun(t *testing.T) {
 				return err
 			}
 			if err := tx.Create(&datastoreColumnModel{
+				TenantID:    "tenant-1",
 				DatastoreID: bID,
 				Name:        "title", Type: "string", Position: 0,
 			}).Error; err != nil {

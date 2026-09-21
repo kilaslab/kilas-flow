@@ -58,10 +58,12 @@ type WebhookRepository interface {
 	// it will use — a CORS preflight — needs to be answered.
 	ResolveRoute(ctx context.Context, route string) ([]WebhookBinding, error)
 	// ClaimDelivery dedupes a retried delivery. It returns the execution that
-	// owns the identifier and whether this caller won the claim.
-	ClaimDelivery(ctx context.Context, route, deliveryID, executionID string, window time.Duration) (string, bool, error)
+	// owns the identifier and whether this caller won the claim. The tenant is
+	// the one that owns the route, and every row it writes and reads is
+	// scoped by it.
+	ClaimDelivery(ctx context.Context, tenantID, route, deliveryID, executionID string, window time.Duration) (string, bool, error)
 	// RecordDeliveryExecution attaches the queued execution to that claim.
-	RecordDeliveryExecution(ctx context.Context, route, deliveryID, executionID string) error
+	RecordDeliveryExecution(ctx context.Context, tenantID, route, deliveryID, executionID string) error
 }
 
 var _ WebhookRepository = (*GORMWorkflowStore)(nil)
@@ -389,12 +391,28 @@ const DefaultDeliveryWindow = 5 * time.Minute
 //
 // A claim that loses returns the execution the winner queued, so the duplicate
 // can be answered with the same outcome instead of running the workflow again.
-func (store *GORMWorkflowStore) ClaimDelivery(ctx context.Context, route, deliveryID, executionID string, window time.Duration) (string, bool, error) {
+//
+// Every row it writes, clears and reads carries the tenant that owns the route,
+// so the purge can delete a tenant's claims by tenant and no caller can reach
+// another tenant's claim by naming route and delivery id alone. The dedupe key
+// itself stays (route, delivery_id): a route is globally unique and is what a
+// sender addresses, so the tenant is not part of what a retry collides on.
+//
+// The one consequence is a legacy path label two tenants happen to share
+// (000011 made path non-unique). The loser's insert violates the unique index,
+// its tenant-filtered read finds no row it owns, and ClaimDelivery returns an
+// error — so the webhook handler runs the delivery rather than answering with
+// the other tenant's execution. Dedupe fails open on that label and never
+// crosses tenants, which is the safe half of the trade.
+func (store *GORMWorkflowStore) ClaimDelivery(ctx context.Context, tenantID, route, deliveryID, executionID string, window time.Duration) (string, bool, error) {
 	if route == "" || deliveryID == "" {
 		// Nothing to dedupe on. A delivery with no identifier is never
 		// collapsed with another, because the only alternative — hashing the
 		// body — would treat two genuinely identical messages as one.
 		return "", true, nil
+	}
+	if tenantID == "" {
+		return "", false, ErrTenantRequired
 	}
 	if window <= 0 {
 		window = DefaultDeliveryWindow
@@ -405,13 +423,14 @@ func (store *GORMWorkflowStore) ClaimDelivery(ctx context.Context, route, delive
 	// index from rejecting a legitimate later delivery with the same
 	// identifier.
 	if err := store.db.WithContext(ctx).
-		Where("route = ? AND delivery_id = ? AND expires_at < ?", route, deliveryID, now).
+		Where("tenant_id = ? AND route = ? AND delivery_id = ? AND expires_at < ?", tenantID, route, deliveryID, now).
 		Delete(&webhookDeliveryModel{}).Error; err != nil {
 		return "", false, fmt.Errorf("clear expired delivery: %w", err)
 	}
 
 	claim := webhookDeliveryModel{
-		Route: route, DeliveryID: deliveryID, ExecutionID: executionID,
+		TenantID: tenantID,
+		Route:    route, DeliveryID: deliveryID, ExecutionID: executionID,
 		ExpiresAt: now.Add(window), CreatedAt: now,
 	}
 	if err := store.db.WithContext(ctx).Create(&claim).Error; err == nil {
@@ -420,7 +439,7 @@ func (store *GORMWorkflowStore) ClaimDelivery(ctx context.Context, route, delive
 
 	var existing webhookDeliveryModel
 	if err := store.db.WithContext(ctx).
-		Where("route = ? AND delivery_id = ?", route, deliveryID).
+		Where("tenant_id = ? AND route = ? AND delivery_id = ?", tenantID, route, deliveryID).
 		First(&existing).Error; err != nil {
 		return "", false, fmt.Errorf("read existing delivery: %w", err)
 	}
@@ -429,12 +448,20 @@ func (store *GORMWorkflowStore) ClaimDelivery(ctx context.Context, route, delive
 
 // RecordDeliveryExecution attaches the queued execution to a claim taken before
 // that execution existed.
-func (store *GORMWorkflowStore) RecordDeliveryExecution(ctx context.Context, route, deliveryID, executionID string) error {
+//
+// The update is scoped by the tenant as well as by route and delivery id, so a
+// caller that names another tenant's claim writes nothing and reports success:
+// there is no row of its own to update, which is the same no-op an unknown
+// claim already is.
+func (store *GORMWorkflowStore) RecordDeliveryExecution(ctx context.Context, tenantID, route, deliveryID, executionID string) error {
 	if route == "" || deliveryID == "" || executionID == "" {
 		return nil
 	}
+	if tenantID == "" {
+		return ErrTenantRequired
+	}
 	return store.db.WithContext(ctx).Model(&webhookDeliveryModel{}).
-		Where("route = ? AND delivery_id = ?", route, deliveryID).
+		Where("tenant_id = ? AND route = ? AND delivery_id = ?", tenantID, route, deliveryID).
 		Update("execution_id", executionID).Error
 }
 

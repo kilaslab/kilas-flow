@@ -60,7 +60,7 @@ the three writes that can be retried safely, which take an
 | Node catalogue | `listNodeTypes`, `nodeIconUrl`, `loadNodePropertyOptions`, `loadNodePropertySchema`, `getExpressionGrammar` |
 | Interop | `importWorkflow`, `exportWorkflow` |
 | Datastores | `listDatastores`, `createDatastore`, `getDatastore`, `renameDatastore`, `deleteDatastore`, `clearDatastore`, `addDatastoreColumn`, `renameDatastoreColumn`, `deleteDatastoreColumn`, `listDatastoreRows`, `getDatastoreRow`, `insertDatastoreRow`, `updateDatastoreRows`, `deleteDatastoreRows`, `upsertDatastoreRow`, `iterateDatastoreRows`, `exportDatastoreRows`, `importDatastoreRows`, `datastoreFilter`, `paginateCursor` |
-| Tenants and accounts | `listTenants`, `createTenant`, `getTenant`, `listTenantUsers`, `createTenantUser`, `disableTenantUser`, `enableTenantUser`, `setTenantUserPassword`, `createTenantApiKey` |
+| Tenants and accounts | `listTenants`, `createTenant`, `getTenant`, `deleteTenant`, `listTenantUsers`, `createTenantUser`, `disableTenantUser`, `enableTenantUser`, `setTenantUserPassword`, `createTenantApiKey` |
 | Embed | `createEmbedSession` |
 | System | `getHealth`, `getReady` |
 

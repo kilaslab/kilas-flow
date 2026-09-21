@@ -5,6 +5,16 @@ unaffected), a **fix** (behavior brought in line with what was documented), or
 **breaking** (an existing caller must change). The package stays on `0.x`
 until the server surface it targets is considered stable; see `README.md`.
 
+## Unreleased
+
+- **Additive**: `deleteTenant`, covering `DELETE /api/v1/tenants/{id}`. It
+  deletes a customer and everything it owns — executions and their payload
+  files, workflows and versions, credentials, schedules, webhook deliveries,
+  datastores and their physical tables, accounts, keys, and the tenant row —
+  and answers with the counts it removed, per table. It needs the operator
+  credential, it is irreversible, and it is idempotent: send it again until it
+  reports zeros.
+
 ## 0.1.0
 
 First published release.

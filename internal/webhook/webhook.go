@@ -218,7 +218,7 @@ func (handler *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// succeeds could otherwise send fifteen WhatsApp replies.
 	deliveryID := deliveryIdentifier(r, binding)
 	if deliveryID != "" {
-		owner, claimed, err := handler.bindings.ClaimDelivery(r.Context(), binding.Route, deliveryID, "", handler.limits.DeliveryWindow)
+		owner, claimed, err := handler.bindings.ClaimDelivery(r.Context(), binding.TenantID, binding.Route, deliveryID, "", handler.limits.DeliveryWindow)
 		if err == nil && !claimed {
 			handler.answerDuplicate(w, r, binding, owner)
 			return
@@ -231,7 +231,7 @@ func (handler *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// concurrent retries could not both pass it. Now that there is an
 		// execution to point at, record it — a later duplicate can then be
 		// answered with the original's outcome rather than a bare accept.
-		_ = handler.bindings.RecordDeliveryExecution(r.Context(), binding.Route, deliveryID, record.ID)
+		_ = handler.bindings.RecordDeliveryExecution(r.Context(), binding.TenantID, binding.Route, deliveryID, record.ID)
 	}
 	if err != nil {
 		// Logged rather than only answered: the caller gets a generic 500 on

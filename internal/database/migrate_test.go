@@ -743,6 +743,22 @@ func TestMigratingAfterARollbackRebuildsTheSchema(t *testing.T) {
 	}
 
 	assertBaselineSchema(t, db)
+	assertTenantColumns(t, db)
+}
+
+func TestMigratingAfterAPostgresRollbackRebuildsTheSchema(t *testing.T) {
+	db := openPostgres(t)
+	if err := Migrate(db, discardLogger()); err != nil {
+		t.Fatalf("first Migrate: %v", err)
+	}
+	rollbackAll(t, db)
+
+	if err := Migrate(db, discardLogger()); err != nil {
+		t.Fatalf("Migrate after Rollback: %v", err)
+	}
+
+	assertBaselineSchema(t, db)
+	assertTenantColumns(t, db)
 }
 
 // A migration that fails partway must leave neither half a schema nor a version

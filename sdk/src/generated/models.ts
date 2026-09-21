@@ -132,6 +132,15 @@ export interface Assignment {
   value?: unknown;
 }
 
+export interface BinaryRemoval {
+  /** Total size of the files removed */
+  bytes: number;
+  /** Payload directories removed, one per execution */
+  executions: number;
+  /** Files removed below those directories */
+  files: number;
+}
+
 export interface Branding {
   accent?: string;
   hideRun?: boolean;
@@ -1241,6 +1250,26 @@ export interface StreamTicketResource {
   expiresAt: string;
   /** Spend as the ticket query parameter on the events endpoint */
   ticket: string;
+}
+
+/**
+ * Rows removed per table; every covered table appears, including those found empty
+ */
+export type TenantDeletionResourceRemoved = {[key: string]: number};
+
+export interface TenantDeletionResource {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** Payload files and bytes removed from disk */
+  binaries: BinaryRemoval;
+  /** Physical datastore tables dropped, which are not rows in a covered table */
+  datastoreTables: number;
+  /** Rows removed per table; every covered table appears, including those found empty */
+  removed: TenantDeletionResourceRemoved;
+  /** The tenant this deletion removed */
+  tenantId: string;
+  /** Whether the tenant's own row was deleted by this call */
+  tenantRemoved: boolean;
 }
 
 export interface TestCredentialResource {
@@ -4460,6 +4489,57 @@ const res = await fetch(getCreateTenantUrl(),
 
   const data: createTenantResponse['data'] = body ? JSON.parse(body) : {}
   return { data, status: res.status, headers: res.headers } as createTenantResponse
+}
+
+
+
+export type deleteTenantResponse200 = {
+  data: TenantDeletionResource
+  status: 200
+}
+
+export type deleteTenantResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type deleteTenantResponseSuccess = (deleteTenantResponse200) & {
+  headers: Headers;
+};
+export type deleteTenantResponseError = (deleteTenantResponseDefault) & {
+  headers: Headers;
+};
+
+export type deleteTenantResponse = (deleteTenantResponseSuccess | deleteTenantResponseError)
+
+export const getDeleteTenantUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/tenants/${id}`
+}
+
+/**
+ * Deletes a customer: its executions and their payload files, workflows and their versions, credentials and secret bindings, schedules, webhook deliveries and routes, datastores and their physical tables, vector rows, accounts, keys and finally the tenant row itself. This is irreversible, and it is reserved for the operator credential: a customer's key is refused like any other non-operator principal. The call is idempotent — repeat it until every count is zero and tenantRemoved is false, which is also how a deletion that a client timeout interrupted is resumed. An unknown id answers 200 with zero counts rather than 404: a deletion means "remove everything keyed to this id", and that has to clean up rows an earlier partial deletion or a stale embed session left behind. The operator's own tenant is refused with 409, because deleting it deletes the credential the caller is using. The tenant's keys and accounts are locked out first, so nothing can write while its rows are going, and a deletion that fails leaves it locked out — the safe direction. A failure names the step it stopped in and the same request resumes from there; the deletion also runs on past the client's own timeout, so a caller that gives up early should send the request again rather than assume it stopped. Requires the operator credential: an API key scoped to the operator tenant. Any other principal, a customer's key or any session, is refused.
+ * @summary Delete a tenant and everything it owns
+ */
+export const deleteTenant = async (id: string, options?: RequestInit): Promise<deleteTenantResponse> => {
+
+  const res = await fetch(getDeleteTenantUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: deleteTenantResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as deleteTenantResponse
 }
 
 

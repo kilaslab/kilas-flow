@@ -39,7 +39,7 @@ func registerRoutes(router *chi.Mux, api huma.API, deps Deps) {
 	// API prefix instead of a TenantResolver, because a resolver would answer
 	// "which tenant is this request for" when the whole point of these
 	// operations is that the operator names a different one.
-	handlers.NewAdmin(deps.AuthStore, APIPrefix).Register(v1)
+	handlers.NewAdmin(deps.AuthStore, APIPrefix).WithTenantPurger(deps.TenantPurger).Register(v1)
 	handlers.NewNodeTypes(deps.NodeRegistry).
 		WithOptionLoading(deps.Tenants, deps.OptionLoader, deps.CredentialResolverFor).
 		WithAvailability(deps.NodeAvailability).Register(v1)

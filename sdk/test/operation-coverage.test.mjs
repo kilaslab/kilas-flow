@@ -105,6 +105,9 @@ const OPERATION_COVERAGE = {
 	'list-tenants': 'listTenants',
 	'create-tenant': 'createTenant',
 	'get-tenant': 'getTenant',
+	// The one operation here that is irreversible, and the only one a caller
+	// confirms by repeating it: it reports zero counts once nothing is left.
+	'delete-tenant': 'deleteTenant',
 	'create-tenant-api-key': 'createTenantApiKey',
 	'list-tenant-users': 'listTenantUsers',
 	'create-tenant-user': 'createTenantUser',

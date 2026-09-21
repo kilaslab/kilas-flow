@@ -41,6 +41,7 @@ import (
 	"github.com/kilaslab/kilas-flow/internal/safehttp"
 	"github.com/kilaslab/kilas-flow/internal/scheduler"
 	"github.com/kilaslab/kilas-flow/internal/sqlnode"
+	"github.com/kilaslab/kilas-flow/internal/tenantpurge"
 	"github.com/kilaslab/kilas-flow/internal/webhook"
 	"github.com/kilaslab/kilas-flow/nodes"
 	"github.com/kilaslab/kilas-flow/packs/telegram"
@@ -673,6 +674,47 @@ func run(args []string) error {
 		<-ctx.Done()
 		return nil
 	}
+	// The trigger coordinator is built here rather than inline in the Deps
+	// literal below because two collaborators need it: the workflow handler
+	// activates and deactivates through it, and a tenant deletion stops a
+	// tenant's triggers through the same coordinator, so the hooks it resolves
+	// are the ones the activation registered.
+	triggerCoordinator := webhook.NewCoordinator(
+		webhookLifecycles, workflows, outboundPolicy(cfg.Outbound),
+		func(tenantID string) engine.CredentialResolver {
+			return engine.NewTenantCredentials(credentialStore, repository.TenantScope{ID: tenantID})
+		},
+		cfg.Server.PublicURL, log,
+	)
+	// The tenant purge is the one place that deletes across every store, so it
+	// is assembled from their own purge boundaries rather than reached through
+	// a repository. Binaries, sessions and triggers are optional in the Deps
+	// sense: a process without payload storage, without sessions or without
+	// inbound triggers skips those steps instead of failing them.
+	tenantPurger, err := tenantpurge.New(tenantpurge.Deps{
+		Logger:     log,
+		Runs:       executions,
+		Rows:       repository.NewTenantPurger(db.DB),
+		Datastores: datastoreEngine,
+		Binaries:   binaries,
+		Sessions:   agentMemory,
+		Triggers:   triggerCoordinator,
+		// The same catalogue read the workflow handler's lifecycleIDs does, so
+		// stopping a trigger resolves the hook its activation used.
+		TriggerLifecycles: func() map[string]string {
+			declared := map[string]string{}
+			for _, definition := range nodeRegistry.List() {
+				if definition.LifecycleID != "" {
+					declared[definition.Type] = definition.LifecycleID
+				}
+			}
+			return declared
+		},
+		Protected: []string{repository.OperatorTenantID},
+	})
+	if err != nil {
+		return fmt.Errorf("configure tenant purge: %w", err)
+	}
 	server := api.NewServer(api.Deps{
 		Config:       cfg,
 		Logger:       log,
@@ -688,13 +730,7 @@ func run(args []string) error {
 		CredentialResolverFor: func(tenant repository.TenantScope) loadoptions.CredentialResolver {
 			return credentialLookup{store: credentialStore, tenant: tenant}
 		},
-		TriggerCoordinator: webhook.NewCoordinator(
-			webhookLifecycles, workflows, outboundPolicy(cfg.Outbound),
-			func(tenantID string) engine.CredentialResolver {
-				return engine.NewTenantCredentials(credentialStore, repository.TenantScope{ID: tenantID})
-			},
-			cfg.Server.PublicURL, log,
-		),
+		TriggerCoordinator:  triggerCoordinator,
 		Events:              eventBroker,
 		EmbedIssuer:         embedIssuer,
 		Tenants:             handlers.NewPrincipalTenants(fallbackTenant(cfg.Auth)),
@@ -707,6 +743,7 @@ func run(args []string) error {
 		DatabaseGuard:       sqlGuard,
 		SessionMemory:       agentMemory,
 		Idempotency:         idempotencyService,
+		TenantPurger:        tenantPurger,
 		Version:             version,
 	})
 

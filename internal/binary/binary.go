@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -42,6 +43,21 @@ type Store interface {
 	Get(scope Scope, id string) (io.ReadCloser, workflow.BinaryRef, error)
 	// DeleteExecution removes everything one execution wrote.
 	DeleteExecution(scope Scope) error
+	// DeleteTenant removes every payload one tenant owns, and only those.
+	DeleteTenant(tenantID string) (TenantResult, error)
+}
+
+// TenantResult names what deleting one tenant's payloads removed. It is
+// evidence for a deletion request, which is honoured only when the caller can
+// see that it was.
+type TenantResult struct {
+	// Executions is how many top-level directories the tenant had, one per
+	// execution that ever stored a payload.
+	Executions int
+	// Files and Bytes are the regular files below them. Bytes is what a disk
+	// actually gives back, which is the number an operator asks about.
+	Files int
+	Bytes int64
 }
 
 // Scope is whose payload this is.
@@ -175,6 +191,107 @@ func (store *FileStore) DeleteExecution(scope Scope) error {
 
 func (store *FileStore) directory(scope Scope) string {
 	return filepath.Join(store.root, scope.TenantID, scope.ExecutionID)
+}
+
+// DeleteTenant removes every payload one tenant owns.
+//
+// The tenant's payloads are exactly the directory named after it, because Put
+// composes <root>/<tenant>/<execution>/<payload> and never creates anything
+// else. What that makes easy to get wrong is the locating: the tenant id is
+// matched against the entries the root actually holds rather than joined onto
+// the root, because safeSegment allows uppercase and the filesystem this
+// product is most often developed on is case-insensitive, so a join would let
+// "ACME" remove tenant acme's payloads while every row naming acme survives in
+// the database.
+//
+// The counts are taken before the removal, without following symlinks: a link
+// at <root>/<tenant> is removed as the link it is and whatever it points at is
+// left alone, which is the only reading of "delete this tenant's payloads"
+// that cannot escape the store.
+func (store *FileStore) DeleteTenant(tenantID string) (TenantResult, error) {
+	if strings.TrimSpace(tenantID) == "" {
+		// Not an empty directory but the root itself: filepath.Join(root, "")
+		// is root, and removing it would take every tenant's payloads with it.
+		return TenantResult{}, errors.New("binary: a tenant id is required to delete payloads")
+	}
+	if !safeSegment.MatchString(tenantID) {
+		// Put refuses an id that fails this predicate, so no payload can exist
+		// under a directory name that would fail it either. Nothing to remove,
+		// and no path is ever composed from an id that was never a segment.
+		return TenantResult{}, nil
+	}
+
+	entries, err := os.ReadDir(store.root)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return TenantResult{}, nil
+		}
+		return TenantResult{}, fmt.Errorf("read binary store root: %w", err)
+	}
+	var matched string
+	for _, entry := range entries {
+		if entry.Name() == tenantID {
+			matched = entry.Name()
+			break
+		}
+	}
+	if matched == "" {
+		// A tenant with nothing on disk purges to zero rather than failing, so
+		// a retried deletion converges.
+		return TenantResult{}, nil
+	}
+
+	path := filepath.Join(store.root, matched)
+	var result TenantResult
+	if info, err := os.Lstat(path); err != nil {
+		return TenantResult{}, fmt.Errorf("inspect binary payload directory: %w", err)
+	} else if info.IsDir() {
+		counted, err := store.measure(path)
+		if err != nil {
+			return TenantResult{}, err
+		}
+		result = counted
+	}
+	if err := os.RemoveAll(path); err != nil {
+		return TenantResult{}, fmt.Errorf("remove binary payloads: %w", err)
+	}
+	return result, nil
+}
+
+// measure counts one tenant directory: one top-level entry per execution, and
+// the regular files and bytes below them.
+//
+// WalkDir reports a symlink as the link rather than descending into it, so a
+// payload directory that was replaced by a link to somewhere else is removed
+// without being counted — and, more to the point, without being read.
+func (store *FileStore) measure(directory string) (TenantResult, error) {
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		return TenantResult{}, fmt.Errorf("read binary payload directory: %w", err)
+	}
+	result := TenantResult{Executions: len(entries)}
+	err = filepath.WalkDir(directory, func(_ string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		result.Files++
+		result.Bytes += info.Size()
+		return nil
+	})
+	if err != nil {
+		return TenantResult{}, fmt.Errorf("measure binary payloads: %w", err)
+	}
+	return result, nil
 }
 
 // Scoped binds a store to one execution, which is the shape an executor sees.

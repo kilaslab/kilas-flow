@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/kilaslab/kilas-flow/internal/auth"
 	"github.com/kilaslab/kilas-flow/internal/repository"
+	"github.com/kilaslab/kilas-flow/internal/tenantpurge"
 )
 
 // TenantResource is one customer as the operator sees it.
@@ -63,6 +65,29 @@ type Admin struct {
 	// group's own prefix, so the alternative would be a second copy of the
 	// version string that could drift from the first.
 	prefix string
+	// purger deletes a whole tenant. It is a field rather than a store method
+	// because a deletion is not one write: it spans every store this process
+	// has, so the composition root hands the handler the one collaborator that
+	// owns the order. Nil leaves the delete operation answering 503.
+	purger TenantPurger
+}
+
+// TenantPurger deletes one tenant and everything it owns.
+//
+// *tenantpurge.Service implements it. The handler names only the two things it
+// needs from that package — the call and its result — so the surface does not
+// depend on how the order is implemented.
+type TenantPurger interface {
+	Purge(ctx context.Context, tenantID string) (tenantpurge.Result, error)
+}
+
+// WithTenantPurger attaches the deletion the operator surface drives.
+//
+// A deployment that passes none is not broken: every other operation here
+// still works, and DELETE answers 503 saying deletion is not configured.
+func (handler *Admin) WithTenantPurger(purger TenantPurger) *Admin {
+	handler.purger = purger
+	return handler
 }
 
 // NewAdmin builds the operator handler.
@@ -86,6 +111,46 @@ type getTenantInput struct {
 
 type getTenantOutput struct {
 	Body TenantResource
+}
+
+// BinaryRemoval is what a deletion removed from the payload filesystem.
+//
+// It is a named type rather than an anonymous struct so the generated schema
+// has a stable name: an inline object becomes a page-local `anonymous` schema
+// the SDK cannot hand a caller, and the payload counts are exactly what an
+// operator wants to keep in a deletion record.
+type BinaryRemoval struct {
+	Executions int   `json:"executions" doc:"Payload directories removed, one per execution"`
+	Files      int   `json:"files" doc:"Files removed below those directories"`
+	Bytes      int64 `json:"bytes" doc:"Total size of the files removed"`
+}
+
+// TenantDeletionResource is the evidence a deletion leaves behind: what was
+// removed, and whether the tenant row itself went with it.
+//
+// A count is reported for every table the purge covers, including the ones this
+// request found empty, so a caller can tell "there was nothing left" from "this
+// table is not covered" — which is the difference between a deletion that is
+// finished and one that only looks finished.
+type TenantDeletionResource struct {
+	TenantID string `json:"tenantId" doc:"The tenant this deletion removed"`
+	// TenantRemoved is false on a repeat call: the rows are gone, including the
+	// tenant's own, and repeating the request until this is false while every
+	// count is zero is how a caller confirms a completed deletion.
+	TenantRemoved bool `json:"tenantRemoved" doc:"Whether the tenant's own row was deleted by this call"`
+	// Removed is keyed by table name. It is never null: an empty object is what
+	// a caller iterating the result needs.
+	Removed         map[string]int64 `json:"removed" doc:"Rows removed per table; every covered table appears, including those found empty"`
+	DatastoreTables int              `json:"datastoreTables" doc:"Physical datastore tables dropped, which are not rows in a covered table"`
+	Binaries        BinaryRemoval    `json:"binaries" doc:"Payload files and bytes removed from disk"`
+}
+
+type deleteTenantInput struct {
+	ID string `path:"id" minLength:"1" maxLength:"64" doc:"Tenant ID"`
+}
+
+type deleteTenantOutput struct {
+	Body TenantDeletionResource
 }
 
 type createTenantInput struct {
@@ -222,6 +287,28 @@ func (handler *Admin) Register(api huma.API) {
 	}, handler.GetTenant)
 
 	huma.Register(api, huma.Operation{
+		OperationID: "delete-tenant", Method: http.MethodDelete, Path: "/tenants/{id}",
+		Summary: "Delete a tenant and everything it owns",
+		Description: "Deletes a customer: its executions and their payload files, workflows and " +
+			"their versions, credentials and secret bindings, schedules, webhook deliveries and " +
+			"routes, datastores and their physical tables, vector rows, accounts, keys and finally " +
+			"the tenant row itself. This is irreversible, and it is reserved for the operator " +
+			"credential: a customer's key is refused like any other non-operator principal. " +
+			"The call is idempotent — repeat it until every count is zero and tenantRemoved is " +
+			"false, which is also how a deletion that a client timeout interrupted is resumed. " +
+			"An unknown id answers 200 with zero counts rather than 404: a deletion means \"remove " +
+			"everything keyed to this id\", and that has to clean up rows an earlier partial " +
+			"deletion or a stale embed session left behind. The operator's own tenant is refused " +
+			"with 409, because deleting it deletes the credential the caller is using. The " +
+			"tenant's keys and accounts are locked out first, so nothing can write while its rows " +
+			"are going, and a deletion that fails leaves it locked out — the safe direction. A " +
+			"failure names the step it stopped in and the same request resumes from there; the " +
+			"deletion also runs on past the client's own timeout, so a caller that gives up " +
+			"early should send the request again rather than assume it stopped. " + operatorNote,
+		Tags: []string{"Admin"},
+	}, handler.DeleteTenant)
+
+	huma.Register(api, huma.Operation{
 		OperationID: "list-tenant-users", Method: http.MethodGet, Path: "/tenants/{id}/users",
 		Summary:     "List a tenant's accounts",
 		Description: "Reads one tenant's accounts. No password hash is ever included. " + operatorNote,
@@ -334,6 +421,73 @@ func (handler *Admin) GetTenant(ctx context.Context, input *getTenantInput) (*ge
 		return nil, err
 	}
 	return &getTenantOutput{Body: tenantResource(summary)}, nil
+}
+
+// DeleteTenant removes a tenant and everything it owns, and answers with what
+// was removed.
+//
+// The refusals come before anything is deleted, in the only order that makes
+// them mean something: the principal first, so a customer's key cannot start a
+// deletion and learn from the answer what exists; then the wiring, so an
+// install that has no purge says so instead of deleting the tenant row and
+// orphaning every other table.
+//
+// The purge runs on a context detached from the request's. There is no server
+// write timeout to run out — the composition root configures none — but the
+// SDK's default request timeout is 30 seconds and proxies cut connections, and
+// a cancelled context would cancel the in-flight DELETE of a tenant's biggest
+// table. Every retry would then abort in the same place and the deletion would
+// never converge, which is the opposite of what this operation promises. The
+// request's own context still carries the request id, so the failure is logged
+// against the request the caller actually made.
+func (handler *Admin) DeleteTenant(ctx context.Context, input *deleteTenantInput) (*deleteTenantOutput, error) {
+	if err := operatorOnly(ctx); err != nil {
+		return nil, err
+	}
+	if handler.purger == nil {
+		return nil, huma.Error503ServiceUnavailable("tenant deletion is not configured on this instance")
+	}
+
+	result, err := handler.purger.Purge(context.WithoutCancel(ctx), input.ID)
+	if err != nil {
+		switch {
+		case errors.Is(err, tenantpurge.ErrTenantRequired):
+			return nil, huma.Error422UnprocessableEntity("a tenant ID is required")
+		case errors.Is(err, tenantpurge.ErrProtectedTenant):
+			return nil, huma.Error409Conflict("the operator tenant cannot be deleted")
+		}
+		var step *tenantpurge.StepError
+		if errors.As(err, &step) {
+			return nil, serverProblem(ctx, "tenant deletion did not finish at step "+
+				step.Step+"; repeat the request to resume", err)
+		}
+		return nil, serverProblem(ctx, "could not delete the tenant", err)
+	}
+
+	removed := result.Removed
+	if removed == nil {
+		// The resource promises a map, and a nil one marshals as null, which
+		// makes "nothing was removed" unreadable rather than empty.
+		removed = map[string]int64{}
+	}
+	principal, _ := auth.PrincipalFrom(ctx)
+	slog.InfoContext(ctx, "tenant deleted",
+		"tenant", result.TenantID,
+		"principal_key", principal.KeyID,
+		"removed", removed,
+		"datastore_tables", result.DatastoreTables,
+	)
+	return &deleteTenantOutput{Body: TenantDeletionResource{
+		TenantID:        result.TenantID,
+		TenantRemoved:   removed["tenants"] > 0,
+		Removed:         removed,
+		DatastoreTables: result.DatastoreTables,
+		Binaries: BinaryRemoval{
+			Executions: result.Binaries.Executions,
+			Files:      result.Binaries.Files,
+			Bytes:      result.Binaries.Bytes,
+		},
+	}}, nil
 }
 
 // ListTenantUsers reads one tenant's accounts.

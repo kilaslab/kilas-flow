@@ -7,10 +7,13 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -21,8 +24,10 @@ import (
 
 	"github.com/kilaslab/kilas-flow/internal/api/middleware"
 	"github.com/kilaslab/kilas-flow/internal/auth"
+	"github.com/kilaslab/kilas-flow/internal/binary"
 	"github.com/kilaslab/kilas-flow/internal/embed"
 	"github.com/kilaslab/kilas-flow/internal/repository"
+	"github.com/kilaslab/kilas-flow/internal/tenantpurge"
 )
 
 // adminTestPrefix is where the operator routes are mounted in these tests. It
@@ -160,6 +165,39 @@ func (stub *adminTestStore) AuthenticateAPIKey(context.Context, string) (reposit
 	return repository.APIKey{}, errors.New("AuthenticateAPIKey is not part of this test")
 }
 
+// adminTestPurger answers the delete without a database. It carries the shared
+// call counter, because a deleted tenant never touches the identity store: a
+// request that reached the handler shows up as a purge, and one refused before
+// it shows up as neither.
+type adminTestPurger struct {
+	store *adminTestStore
+	// tenant and liveCtx are what Purge saw, so a test can prove the tenant id
+	// travelled intact and that the request's own deadline was detached from
+	// the deletion.
+	tenant  string
+	liveCtx bool
+	result  tenantpurge.Result
+	err     error
+}
+
+func (purger *adminTestPurger) Purge(ctx context.Context, tenantID string) (tenantpurge.Result, error) {
+	purger.store.calls++
+	purger.tenant = tenantID
+	purger.liveCtx = ctx.Err() == nil
+	return purger.result, purger.err
+}
+
+// adminHandler builds the operator handler with a purge attached, which is what
+// the composition root does: the delete operation is registered either way and
+// answers 503 without one, so the tests that exercise the whole surface have to
+// wire it the way a deployment does.
+func adminHandler(store *adminTestStore) *Admin {
+	return NewAdmin(store, adminTestPrefix).WithTenantPurger(&adminTestPurger{
+		store:  store,
+		result: tenantpurge.Result{TenantID: "acme", Removed: map[string]int64{"tenants": 1}},
+	})
+}
+
 // adminOperation is one admin route, wrapped so a test can exercise every one
 // of them without an HTTP layer in the way. method, path and body are what the
 // route takes over HTTP, so the embed test drives the real paths with requests
@@ -193,6 +231,13 @@ func adminOperations(handler *Admin) []adminOperation {
 			name: "GET /tenants/{id}", method: http.MethodGet, path: adminTestPrefix + "/tenants/acme",
 			call: func(ctx context.Context) error {
 				_, err := handler.GetTenant(ctx, &getTenantInput{ID: "acme"})
+				return err
+			},
+		},
+		{
+			name: "DELETE /tenants/{id}", method: http.MethodDelete, path: adminTestPrefix + "/tenants/acme",
+			call: func(ctx context.Context) error {
+				_, err := handler.DeleteTenant(ctx, &deleteTenantInput{ID: "acme"})
 				return err
 			},
 		},
@@ -308,7 +353,7 @@ func TestAdminRoutesRefuseANonOperatorPrincipal(t *testing.T) {
 
 	for _, principal := range principals {
 		principal.store = &adminTestStore{}
-		operations := adminOperations(NewAdmin(principal.store, adminTestPrefix))
+		operations := adminOperations(adminHandler(principal.store))
 		if len(operations) == 0 {
 			t.Fatal("no operations to exercise")
 		}
@@ -336,7 +381,7 @@ func TestAdminRoutesRefuseANonOperatorPrincipal(t *testing.T) {
 // which is what makes the refusal attributable: with that identity the handler
 // would have answered normally, so a 403 that never touched the store can only
 // have come from permits().
-func adminTestStack(t *testing.T, store repository.AuthRepository) (http.Handler, string) {
+func adminTestStack(t *testing.T, store *adminTestStore) (http.Handler, string) {
 	t.Helper()
 	issuer, err := embed.NewIssuer([]byte("0123456789abcdef0123456789abcdef"),
 		[]string{"https://host.example"}, nil)
@@ -363,7 +408,7 @@ func adminTestStack(t *testing.T, store repository.AuthRepository) (http.Handler
 	})
 	router.Use(middleware.EmbedAuth(issuer))
 	api := humachi.New(router, huma.DefaultConfig("KilasFlow API", "0.0.0-test"))
-	NewAdmin(store, adminTestPrefix).Register(huma.NewGroup(api, adminTestPrefix))
+	adminHandler(store).Register(huma.NewGroup(api, adminTestPrefix))
 	return router, token
 }
 
@@ -384,7 +429,7 @@ func TestAdminRoutesRefuseEmbedSessionsBeforeTheHandlerRuns(t *testing.T) {
 	store := &adminTestStore{}
 	stack, token := adminTestStack(t, store)
 
-	for _, operation := range adminOperations(NewAdmin(store, adminTestPrefix)) {
+	for _, operation := range adminOperations(adminHandler(store)) {
 		// Control first: without the embed token the same request reaches the
 		// handler and touches the store, so the 403 below is the embed layer's
 		// rather than a missing route, a validation failure, or this package's
@@ -575,5 +620,215 @@ func TestAdminReplacingAPasswordStoresAHash(t *testing.T) {
 	}
 	if !auth.MatchPassword("reset-password", store.storedHash) {
 		t.Error("the reset did not store a hash of the new password")
+	}
+}
+
+// detailOf reports the problem detail a handler error carries, which is the
+// part of a failure a caller actually reads.
+func detailOf(t *testing.T, err error) string {
+	t.Helper()
+	var model *huma.ErrorModel
+	if !errors.As(err, &model) {
+		t.Fatalf("error = %v (%T), want a huma error carrying a detail", err, err)
+	}
+	return model.Detail
+}
+
+func TestAdminOperatorDeletesATenantAndSeesWhatWasRemoved(t *testing.T) {
+	store := &adminTestStore{}
+	purger := &adminTestPurger{
+		store: store,
+		result: tenantpurge.Result{
+			TenantID: "acme",
+			Removed: map[string]int64{
+				"executions": 4, "workflows": 2, "tenants": 1, "webhook_deliveries": 3,
+				// A covered table the purge found empty still has to be named,
+				// so the caller can tell "nothing was there" from "not covered".
+				"schedules": 0,
+			},
+			DatastoreTables: 2,
+			Binaries:        binary.TenantResult{Executions: 1, Files: 3, Bytes: 4096},
+		},
+	}
+	handler := NewAdmin(store, adminTestPrefix).WithTenantPurger(purger)
+
+	out, err := handler.DeleteTenant(adminOperatorContext(), &deleteTenantInput{ID: "acme"})
+	if err != nil {
+		t.Fatalf("DeleteTenant() error = %v", err)
+	}
+	if purger.tenant != "acme" {
+		t.Errorf("Purge() was asked for tenant %q, want acme", purger.tenant)
+	}
+	if out.Body.TenantID != "acme" {
+		t.Errorf("TenantID = %q, want acme", out.Body.TenantID)
+	}
+	if !out.Body.TenantRemoved {
+		t.Error("TenantRemoved = false, want true for a tenant whose row was deleted")
+	}
+	if !slices.Equal([]string{"executions", "schedules", "tenants", "webhook_deliveries", "workflows"}, sortedKeys(out.Body.Removed)) {
+		t.Errorf("Removed = %v, want every table the purge reported", out.Body.Removed)
+	}
+	if out.Body.Removed["schedules"] != 0 {
+		t.Errorf("Removed[schedules] = %d, want the zero the purge reported", out.Body.Removed["schedules"])
+	}
+	if out.Body.DatastoreTables != 2 {
+		t.Errorf("DatastoreTables = %d, want 2", out.Body.DatastoreTables)
+	}
+	wantBinaries := BinaryRemoval{Executions: 1, Files: 3, Bytes: 4096}
+	if out.Body.Binaries != wantBinaries {
+		t.Errorf("Binaries = %+v, want %+v", out.Body.Binaries, wantBinaries)
+	}
+
+	// A retry of a tenant that is already gone reports no tenant row, which is
+	// how a caller knows the deletion finished.
+	store.calls = 0
+	retry := &adminTestPurger{store: store, result: tenantpurge.Result{
+		TenantID: "acme", Removed: map[string]int64{"tenants": 0, "workflows": 0},
+	}}
+	retried, err := NewAdmin(store, adminTestPrefix).WithTenantPurger(retry).
+		DeleteTenant(adminOperatorContext(), &deleteTenantInput{ID: "acme"})
+	if err != nil {
+		t.Fatalf("second DeleteTenant() error = %v", err)
+	}
+	if retried.Body.TenantRemoved {
+		t.Error("TenantRemoved = true on a retry, want false: the row was already gone")
+	}
+
+	// "removed" is an object even when there is nothing to report: null would
+	// make a client's iteration fail rather than answer zero tables.
+	bare, err := NewAdmin(store, adminTestPrefix).
+		WithTenantPurger(&adminTestPurger{store: store, result: tenantpurge.Result{TenantID: "acme"}}).
+		DeleteTenant(adminOperatorContext(), &deleteTenantInput{ID: "acme"})
+	if err != nil {
+		t.Fatalf("DeleteTenant() with no removals error = %v", err)
+	}
+	encoded, err := json.Marshal(bare.Body)
+	if err != nil {
+		t.Fatalf("marshal the deletion resource: %v", err)
+	}
+	if !strings.Contains(string(encoded), `"removed":{}`) {
+		t.Errorf("the deletion resource marshalled as %s, want an empty removed object rather than null", encoded)
+	}
+}
+
+// sortedKeys keeps the map assertion above readable and order-independent.
+func sortedKeys(counts map[string]int64) []string {
+	keys := make([]string, 0, len(counts))
+	for key := range counts {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func TestAdminDeleteRefusesTheOperatorTenantWith409(t *testing.T) {
+	store := &adminTestStore{}
+	purger := &adminTestPurger{
+		store: store,
+		err:   fmt.Errorf("%w: operator", tenantpurge.ErrProtectedTenant),
+	}
+	handler := NewAdmin(store, adminTestPrefix).WithTenantPurger(purger)
+
+	_, err := handler.DeleteTenant(adminOperatorContext(), &deleteTenantInput{ID: repository.OperatorTenantID})
+	if err == nil {
+		t.Fatal("DeleteTenant() deleted the operator tenant")
+	}
+	if status := statusOf(t, err); status != http.StatusConflict {
+		t.Errorf("DeleteTenant() of the operator tenant = %d, want 409", status)
+	}
+}
+
+func TestAdminDeleteRefusesAnEmptyTenantWith422(t *testing.T) {
+	store := &adminTestStore{}
+	// The trailing spaces are the case the path validation cannot catch: "   "
+	// is a non-empty path segment, and only the purge's trim sees that it names
+	// no tenant.
+	purger := &adminTestPurger{store: store, err: tenantpurge.ErrTenantRequired}
+	handler := NewAdmin(store, adminTestPrefix).WithTenantPurger(purger)
+
+	_, err := handler.DeleteTenant(adminOperatorContext(), &deleteTenantInput{ID: "   "})
+	if err == nil {
+		t.Fatal("DeleteTenant() accepted an id that names no tenant")
+	}
+	if status := statusOf(t, err); status != http.StatusUnprocessableEntity {
+		t.Errorf("DeleteTenant() with a blank id = %d, want 422", status)
+	}
+}
+
+func TestAdminDeleteAnswers503WithoutAPurger(t *testing.T) {
+	store := &adminTestStore{}
+	// A handler with no purge is what an install wired by a composition root
+	// that has no datastore engine looks like. It says so rather than deleting
+	// the tenant row and orphaning everything the purge would have reached.
+	handler := NewAdmin(store, adminTestPrefix)
+
+	_, err := handler.DeleteTenant(adminOperatorContext(), &deleteTenantInput{ID: "acme"})
+	if err == nil {
+		t.Fatal("DeleteTenant() without a purger succeeded")
+	}
+	if status := statusOf(t, err); status != http.StatusServiceUnavailable {
+		t.Errorf("DeleteTenant() without a purger = %d, want 503", status)
+	}
+	if store.calls != 0 {
+		t.Errorf("DeleteTenant() without a purger reached the store %d time(s)", store.calls)
+	}
+}
+
+func TestAdminDeleteFailureNamesTheStepAndLeaksNoDriverText(t *testing.T) {
+	store := &adminTestStore{}
+	purger := &adminTestPurger{
+		store: store,
+		err: &tenantpurge.StepError{
+			Step: "runs",
+			Err:  errors.New("SQLITE_CONSTRAINT: no such table: main.execution_waits"),
+		},
+	}
+	handler := NewAdmin(store, adminTestPrefix).WithTenantPurger(purger)
+
+	_, err := handler.DeleteTenant(adminOperatorContext(), &deleteTenantInput{ID: "acme"})
+	if err == nil {
+		t.Fatal("DeleteTenant() reported success for a failed purge")
+	}
+	if status := statusOf(t, err); status != http.StatusInternalServerError {
+		t.Errorf("DeleteTenant() after a failed step = %d, want 500", status)
+	}
+	detail := detailOf(t, err)
+	if !strings.Contains(detail, "runs") {
+		t.Errorf("detail = %q, want it to name the step the purge stopped in", detail)
+	}
+	if !strings.Contains(detail, "repeat the request") {
+		t.Errorf("detail = %q, want it to say the request can be repeated to resume", detail)
+	}
+	for _, leak := range []string{"SQLITE_CONSTRAINT", "execution_waits", "no such table"} {
+		if strings.Contains(detail, leak) {
+			t.Errorf("detail = %q, want no driver text such as %q in the response", detail, leak)
+		}
+	}
+}
+
+func TestAdminDeleteContinuesAfterTheRequestContextIsCancelled(t *testing.T) {
+	store := &adminTestStore{}
+	purger := &adminTestPurger{
+		store:  store,
+		result: tenantpurge.Result{TenantID: "acme", Removed: map[string]int64{"tenants": 1}},
+	}
+	handler := NewAdmin(store, adminTestPrefix).WithTenantPurger(purger)
+
+	// The client gave up — a proxy cut the connection, or the SDK's default
+	// 30s timeout fired on a tenant big enough to outlast it. The purge must
+	// still run to completion, because a cancelled context would abort the
+	// in-flight DELETE statement and every retry would abort in the same place.
+	ctx, cancel := context.WithCancel(adminOperatorContext())
+	cancel()
+
+	out, err := handler.DeleteTenant(ctx, &deleteTenantInput{ID: "acme"})
+	if err != nil {
+		t.Fatalf("DeleteTenant() with a cancelled request context error = %v", err)
+	}
+	if !purger.liveCtx {
+		t.Error("Purge() saw a cancelled context, want the deletion detached from the request's deadline")
+	}
+	if out.Body.TenantRemoved != true {
+		t.Errorf("TenantRemoved = %v, want the completed result", out.Body.TenantRemoved)
 	}
 }

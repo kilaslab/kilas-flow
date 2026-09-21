@@ -70,11 +70,26 @@ func eachDriver(t *testing.T, run func(t *testing.T, db *database.DB)) {
 		// invisible until a test tried to count what was in the table.
 		t.Cleanup(func() {
 			db.Exec(`DELETE FROM idempotency_keys WHERE tenant_id LIKE 'drv-%'`)
+			db.Exec(`DELETE FROM webhook_deliveries WHERE tenant_id LIKE 'drv-%'`)
+			db.Exec(`DELETE FROM webhook_routes WHERE tenant_id LIKE 'drv-%'`)
+			db.Exec(`DELETE FROM webhook_bindings WHERE tenant_id LIKE 'drv-%'`)
+			db.Exec(`DELETE FROM schedules WHERE tenant_id LIKE 'drv-%'`)
+			// Waits before executions: execution_waits.execution_id is
+			// ON DELETE RESTRICT, so a leftover wait would silently keep its
+			// execution and every node run below it alive for the next run.
+			db.Exec(`DELETE FROM execution_waits WHERE tenant_id LIKE 'drv-%'`)
 			db.Exec(`DELETE FROM execution_node_runs WHERE tenant_id LIKE 'drv-%'`)
 			db.Exec(`DELETE FROM executions WHERE tenant_id LIKE 'drv-%'`)
 			db.Exec(`DELETE FROM workflow_publish_events WHERE tenant_id LIKE 'drv-%'`)
 			db.Exec(`DELETE FROM workflow_versions WHERE tenant_id LIKE 'drv-%'`)
 			db.Exec(`DELETE FROM workflows WHERE tenant_id LIKE 'drv-%'`)
+			db.Exec(`DELETE FROM secret_bindings WHERE tenant_id LIKE 'drv-%'`)
+			db.Exec(`DELETE FROM credentials WHERE tenant_id LIKE 'drv-%'`)
+			// Identity last, and keys and users before the tenant they
+			// reference: both are ON DELETE RESTRICT.
+			db.Exec(`DELETE FROM api_keys WHERE tenant_id LIKE 'drv-%'`)
+			db.Exec(`DELETE FROM users WHERE tenant_id LIKE 'drv-%'`)
+			db.Exec(`DELETE FROM tenants WHERE id LIKE 'drv-%'`)
 		})
 		run(t, db)
 	})

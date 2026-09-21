@@ -30,6 +30,7 @@ import type {
   ListTenantUsersOutputBody,
   ListTenantsOutputBody,
   SetUserPasswordInputBody,
+  TenantDeletionResource,
   TenantResource,
   UserResource
 } from '../models';
@@ -270,6 +271,99 @@ export const createCreateTenant = <TError = ErrorType<ErrorModel>,
         TContext
       > => {
       return createMutation(() => ({ ...getCreateTenantMutationOptions(options?.()) }), queryClient);
+    }
+    export type deleteTenantResponse200 = {
+  data: TenantDeletionResource
+  status: 200
+}
+
+export type deleteTenantResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type deleteTenantResponseSuccess = (deleteTenantResponse200) & {
+  headers: Headers;
+};
+export type deleteTenantResponseError = (deleteTenantResponseDefault) & {
+  headers: Headers;
+};
+
+export type deleteTenantResponse = (deleteTenantResponseSuccess | deleteTenantResponseError)
+
+export const getDeleteTenantUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/tenants/${id}`
+}
+
+/**
+ * Deletes a customer: its executions and their payload files, workflows and their versions, credentials and secret bindings, schedules, webhook deliveries and routes, datastores and their physical tables, vector rows, accounts, keys and finally the tenant row itself. This is irreversible, and it is reserved for the operator credential: a customer's key is refused like any other non-operator principal. The call is idempotent — repeat it until every count is zero and tenantRemoved is false, which is also how a deletion that a client timeout interrupted is resumed. An unknown id answers 200 with zero counts rather than 404: a deletion means "remove everything keyed to this id", and that has to clean up rows an earlier partial deletion or a stale embed session left behind. The operator's own tenant is refused with 409, because deleting it deletes the credential the caller is using. The tenant's keys and accounts are locked out first, so nothing can write while its rows are going, and a deletion that fails leaves it locked out — the safe direction. A failure names the step it stopped in and the same request resumes from there; the deletion also runs on past the client's own timeout, so a caller that gives up early should send the request again rather than assume it stopped. Requires the operator credential: an API key scoped to the operator tenant. Any other principal, a customer's key or any session, is refused.
+ * @summary Delete a tenant and everything it owns
+ */
+export const deleteTenant = async (id: string, options?: Parameters<typeof apiFetch>[1]): Promise<deleteTenantResponse> => {
+
+  return apiFetch<deleteTenantResponse>(getDeleteTenantUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getDeleteTenantMutationKey = () => ['deleteTenant'] as const;
+
+export const getDeleteTenantMutationOptions = <TError = ErrorType<ErrorModel>,
+    TContext = unknown>(options?: { mutation?:CreateMutationOptions<Awaited<ReturnType<typeof deleteTenant>>, TError,DeleteTenantMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}
+): CreateMutationOptions<Awaited<ReturnType<typeof deleteTenant>>, TError,DeleteTenantMutationVariables, TContext> => {
+
+const mutationKey = getDeleteTenantMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteTenant>>, DeleteTenantMutationVariables> = (props) => {
+          const {id} = props ?? {};
+
+          return  deleteTenant(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteTenantMutationResult = NonNullable<Awaited<ReturnType<typeof deleteTenant>>>
+
+    export type DeleteTenantMutationError = ErrorType<ErrorModel>
+    export type DeleteTenantMutationVariables = {id: string}
+
+    /**
+ * @summary Delete a tenant and everything it owns
+ */
+export const createDeleteTenant = <TError = ErrorType<ErrorModel>,
+    TContext = unknown>(options?: () => { mutation?:CreateMutationOptions<Awaited<ReturnType<typeof deleteTenant>>, TError,DeleteTenantMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: () => QueryClient): CreateMutationResult<
+        Awaited<ReturnType<typeof deleteTenant>>,
+        TError,
+        DeleteTenantMutationVariables,
+        TContext
+      > => {
+      return createMutation(() => ({ ...getDeleteTenantMutationOptions(options?.()) }), queryClient);
     }
     export type getTenantResponse200 = {
   data: TenantResource

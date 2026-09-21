@@ -123,7 +123,12 @@ type Deps struct {
 	// answer 503 rather than silently unprotected: the caller sent the key
 	// believing its retry was safe.
 	Idempotency *idempotency.Service
-	Version     string
+	// TenantPurger deletes one tenant and everything it owns, behind the
+	// operator surface's DELETE /tenants/{id}. Nil leaves that one operation
+	// answering 503: a composition root that has no purge must say so rather
+	// than delete the tenant row and orphan every row pointing at it.
+	TenantPurger handlers.TenantPurger
+	Version      string
 }
 
 // Server owns the HTTP listener and the route tree.

@@ -101,9 +101,17 @@ func (webhookRouteModel) TableName(namer schema.Namer) string {
 // WAHA retries a failed delivery fifteen times at two-second intervals and
 // identifies each logical delivery with a header, so a slow workflow that
 // eventually succeeds could send fifteen WhatsApp replies.
+//
+// TenantID is the tenant that owns the route the delivery arrived on. It is
+// not part of the dedupe key — the unique index stays (route, delivery_id),
+// because a route is globally unique and is what the sender addresses — but it
+// is what a tenant purge deletes by and what every read of a claim filters on,
+// so that no caller can reach another tenant's claim by route and delivery id
+// alone.
 type webhookDeliveryModel struct {
-	ID    uint   `gorm:"primaryKey;autoIncrement"`
-	Route string `gorm:"not null;size:64;uniqueIndex:uidx_webhook_deliveries,priority:1"`
+	ID       uint   `gorm:"primaryKey;autoIncrement"`
+	TenantID string `gorm:"not null;size:64;default:'';index:idx_webhook_deliveries_tenant"`
+	Route    string `gorm:"not null;size:64;uniqueIndex:uidx_webhook_deliveries,priority:1"`
 	// DeliveryID is the sender's own identifier for this delivery, scoped by
 	// route so two senders cannot collide.
 	DeliveryID  string    `gorm:"not null;size:128;uniqueIndex:uidx_webhook_deliveries,priority:2"`

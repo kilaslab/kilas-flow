@@ -55,6 +55,13 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
   `idempotency.retention`, and `Retry-After` on the in-flight 409. The host SDK
   exposes it as `idempotencyKey` on `runWorkflow`, `insertDatastoreRow` and
   `upsertDatastoreRow`.
+- `DELETE /api/v1/tenants/{id}` on the operator surface: deletes a customer and
+  everything it owns — executions and their payload files, workflows and
+  versions, credentials, schedules, webhook deliveries, datastores with their
+  physical tables, vector rows, accounts and keys — and answers with the counts
+  it removed, per table. It is irreversible, needs the operator credential, and
+  is idempotent: repeat it until it reports zeros. See
+  [Tenant deletion](docs/src/content/docs/operate/tenant-deletion.md).
 
 ### Changed
 
@@ -107,23 +114,11 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
   only) and answers `503` while a datastore migration is outstanding. The same
   block is carried in that `503`'s problem document, so the spread stays
   machine-readable in the state that reports it.
-
-### Security
-
-- `SECURITY.md` documents the private disclosure path, and private vulnerability
-  reporting is enabled on the repository.
-- An inbound webhook is matched by method and route only. A binding with no
-  minted route used to be found by its `path` label, which two tenants may hold
-  at once and which no request identifies a tenant by, so a caller who named a
-  label could run another tenant's workflow. Such rows are backfilled with a
-  route by the `webhook_route_backfill` migration, and a label is never a lookup
-  key, including for a CORS preflight and for a hosted form page.
-- The `examples/host-page` example served files outside its SDK directory: a
-  `..%2f` request to its static route was joined onto the server's directory and
-  answered, reaching `server.mjs` and — on Linux — `/proc/self/environ`, which
-  holds the host's API key. The route now resolves each request against the
-  installed SDK's `dist/` and answers 404 for anything outside it. A missing
-  `index.html` crashed the same way one branch above it — the page route wrote
-  its 200 before reading the file, so the failed read threw out of an async
-  handler that had nothing left to answer with — and is a 500 that leaves the
-  example serving now.
+=======
+- `DELETE /api/v1/tenants/{id}` on the operator surface: deletes a customer and
+  everything it owns — executions and their payload files, workflows and
+  versions, credentials, schedules, webhook deliveries, datastores with their
+  physical tables, vector rows, accounts and keys — and answers with the counts
+  it removed, per table. It is irreversible, needs the operator credential, and
+  is idempotent: repeat it until it reports zeros. See
+  [Tenant deletion](docs/src/content/docs/operate/tenant-deletion.md).
