@@ -34,8 +34,9 @@
 // Growth is bounded (FEAT-k9dwgn): limits.go refuses past per-tenant,
 // per-table, per-row and per-value ceilings and reports observable usage,
 // while isolation.go purges a tenant's tables outright. Concurrent writers
-// meet in concurrency.go — single-statement atomicity, an atomic increment
-// and updatedAt-compared writes — and trace.go projects datastore node-run
-// traces to counts and identifiers, so cells never reach redaction or the
-// live stream through that path.
+// meet in concurrency.go — single-statement atomicity, an atomic increment,
+// updatedAt-compared writes and the per-row strictly increasing stamp — and
+// upsert_id.go adds the one-statement id-addressed upsert; trace.go projects
+// datastore node-run traces to counts and identifiers, so cells never reach
+// redaction or the live stream through that path.
 package datastore

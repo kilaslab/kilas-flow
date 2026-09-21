@@ -228,3 +228,31 @@ func TestMintDatastoreSessionThroughTheAPI(t *testing.T) {
 		})
 	}
 }
+
+// A datastore session is bound to one datastore. The increment endpoint is
+// the newest write under /rows, and the confinement rule is the handler's:
+// naming another datastore reads as unknown, exactly as an unknown id does,
+// so the session learns nothing about a table it does not own.
+func TestDatastoreSessionCannotIncrementAnotherDatastore(t *testing.T) {
+	issuer := embedIssuer(t)
+	handler := newDatastoreEmbedAPI(t, "tenant-a", issuer)
+	mine := createDatastoreWithColumns(t, handler, "Mine", [2]string{"n", "number"})
+	other := createDatastoreWithColumns(t, handler, "Other", [2]string{"n", "number"})
+	insertRow(t, handler, other.ID, map[string]any{"n": 1})
+	token := datastoreToken(t, issuer, mine.ID, embed.ScopeDatastoreWrite)
+
+	got := embedRequest(t, handler, token, http.MethodPost, "/api/v1/datastores/"+other.ID+"/rows/increment",
+		map[string]any{"column": "n", "amount": 1, "filter": map[string]any{
+			"type":    "and",
+			"filters": []any{map[string]any{"columnName": "n", "condition": "eq", "value": 1}},
+		}})
+	if got.Code != http.StatusNotFound {
+		t.Fatalf("increment on another datastore = %d, want 404 (body: %s)", got.Code, got.Body)
+	}
+	rows := requestJSON[struct {
+		Items []rowResource `json:"items"`
+	}](t, handler, http.MethodGet, "/api/v1/datastores/"+other.ID+"/rows?limit=100", nil, http.StatusOK)
+	if len(rows.Items) != 1 || rows.Items[0]["n"] != 1.0 {
+		t.Fatalf("rows = %+v, want the other table untouched at n 1", rows.Items)
+	}
+}

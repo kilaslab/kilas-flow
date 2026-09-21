@@ -38,7 +38,7 @@ Consequences:
 
 ## The operation surface
 
-The document a server serves holds 75 operations, all under `/api/v1`, in
+The document a server serves holds 76 operations, all under `/api/v1`, in
 eleven groups. The tables below are the workflow-facing core this contract was
 written around — the operations that existed when it was last revised. The
 always-current list is the [generated reference](/reference/api/), which is

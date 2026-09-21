@@ -103,6 +103,28 @@ docker run --rm --network "${project}_default" \
 	golang:1.27-alpine \
 	go test ./internal/repository -run 'Driver|Retention' -count=1
 
+# The datastore row store on PostgreSQL. Its single-statement promises are
+# exactly the shapes the two drivers can disagree about — RETURNING, an
+# ON CONFLICT over a CAST-typed SELECT, and the millisecond updatedAt
+# predicate an optimistic precondition compares against — so they run against
+# the real server and not only against SQLite.
+docker run --rm --network "${project}_default" \
+	-v "$repo_dir:/src:ro" -w /src \
+	-e 'KILASFLOW_TEST_POSTGRES_DSN=postgres://kilasflow:kilasflow@postgres:5432/kilasflow?sslmode=disable' \
+	golang:1.27-alpine \
+	go test ./internal/datastore -count=1
+
+# The execution-level half of the same proof: real workflow executions claimed
+# by the shipped worker pool, each incrementing one row through the Data table
+# node, so the counter lands on the number of runs. PostgreSQL is the driver
+# whose pool is wider than one connection, which is where a lost write would
+# show up first.
+docker run --rm --network "${project}_default" \
+	-v "$repo_dir:/src:ro" -w /src \
+	-e 'KILASFLOW_TEST_POSTGRES_DSN=postgres://kilasflow:kilasflow@postgres:5432/kilasflow?sslmode=disable' \
+	golang:1.27-alpine \
+	go test ./internal/engine -run 'TenConcurrentExecutions|HundredExecutions' -count=1
+
 docker run -d --name "$app_container" --network "${project}_default" -p 127.0.0.1::8080 \
 	-e KILASFLOW_DATABASE_DRIVER=postgres \
 	-e 'KILASFLOW_DATABASE_DSN=postgres://kilasflow:kilasflow@postgres:5432/kilasflow?sslmode=disable' \

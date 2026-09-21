@@ -38,3 +38,8 @@ First published release.
   `retryAfterSeconds`, the in-flight 409's retry hint.
 - **Fix**: the manifest licence is Apache-2.0, matching the repository root
   `LICENSE`.
+- **Additive**: `incrementDatastoreRows`, the atomic counter write. It adds an
+  amount to a number column on every row matching the filter in one statement —
+  atomic per row on SQLite and PostgreSQL alike — and resolves the rows as that
+  statement left them, where a read-then-`updateDatastoreRows` loses a write to
+  a concurrent caller.

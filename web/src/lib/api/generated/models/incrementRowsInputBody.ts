@@ -6,15 +6,17 @@
  * OpenAPI spec version: 0.1.0-dev
  */
 import type { Filter } from './filter';
-import type { UpdateRowsInputBodyValues } from './updateRowsInputBodyValues';
 
-export interface UpdateRowsInputBody {
+export interface IncrementRowsInputBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /** Rows to update; an empty filter is refused */
+  /** Added to the column in one statement; negative subtracts; absent means 1 */
+  amount?: number;
+  /**
+     * The number column to add to
+     * @minLength 1
+     */
+  column: string;
+  /** Rows to increment; an empty filter is refused */
   filter: Filter;
-  /** A row's updatedAt exactly as a previous read returned it; when present the filter must match exactly one row and the write lands only if that row is unchanged */
-  ifUpdatedAt?: string;
-  /** Columns to set */
-  values: UpdateRowsInputBodyValues;
 }

@@ -28,6 +28,8 @@ import type {
   ErrorModel,
   ExportDatastoreRowsParams,
   GetDatastoreRow200,
+  IncrementRowsInputBody,
+  IncrementRowsOutputBody,
   InsertDatastoreRow201,
   InsertRowInputBody,
   ListDatastoreRowsParams,
@@ -108,7 +110,7 @@ export const getDeleteDatastoreRowsUrl = (id: string,) => {
 }
 
 /**
- * Removes every row matching the filter. An empty filter is refused and removes nothing. One statement, atomic per row on both drivers: the last writer wins and no row lock is taken.
+ * Removes every row matching the filter. An empty filter is refused and removes nothing. One statement, atomic per row on both drivers: the last writer wins and no row lock is taken. Pass ifUpdatedAt — a row's updatedAt exactly as a previous read returned it — to make the delete conditional: the filter must then match exactly one row and the delete lands only if the row is unchanged. A stale stamp answers 409 with the row's current updatedAt in errors[0].value, so the caller retries against the new stamp without a second read.
  * @summary Delete rows
  */
 export const deleteDatastoreRows = async (id: string,
@@ -417,7 +419,7 @@ export const getUpdateDatastoreRowsUrl = (id: string,) => {
 }
 
 /**
- * Sets columns on every row matching the filter. One statement, atomic per row on both drivers: concurrent writers never interleave inside a row and the last writer wins; no row lock is taken.
+ * Sets columns on every row matching the filter. One statement, atomic per row on both drivers: concurrent writers never interleave inside a row and the last writer wins; no row lock is taken. Pass ifUpdatedAt — a row's updatedAt exactly as a previous read returned it — to make the write conditional: the filter must then match exactly one row and the write lands only if the row is unchanged. A stale stamp answers 409 with the row's current updatedAt in errors[0].value, so the caller retries against the new stamp without a second read.
  * @summary Update rows
  */
 export const updateDatastoreRows = async (id: string,
@@ -698,6 +700,106 @@ export const createImportDatastoreRows = <TError = ErrorType<ErrorModel>,
       > => {
       return createMutation(() => ({ ...getImportDatastoreRowsMutationOptions(options?.()) }), queryClient);
     }
+    export type incrementDatastoreRowsResponse200 = {
+  data: IncrementRowsOutputBody
+  status: 200
+}
+
+export type incrementDatastoreRowsResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type incrementDatastoreRowsResponseSuccess = (incrementDatastoreRowsResponse200) & {
+  headers: Headers;
+};
+export type incrementDatastoreRowsResponseError = (incrementDatastoreRowsResponseDefault) & {
+  headers: Headers;
+};
+
+export type incrementDatastoreRowsResponse = (incrementDatastoreRowsResponseSuccess | incrementDatastoreRowsResponseError)
+
+export const getIncrementDatastoreRowsUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/datastores/${id}/rows/increment`
+}
+
+/**
+ * Adds amount (default 1, may be negative) to a number column on every matching row in one statement, atomic per row on both drivers, and returns each row as that statement left it. A NULL cell counts as zero. Concurrent increments never lose a write.
+ * @summary Increment rows
+ */
+export const incrementDatastoreRows = async (id: string,
+    incrementRowsInputBody: NonReadonly<IncrementRowsInputBody>, options?: Parameters<typeof apiFetch>[1]): Promise<incrementDatastoreRowsResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Array.isArray(h)) return Object.fromEntries(h);
+    return h;
+  };
+return apiFetch<incrementDatastoreRowsResponse>(getIncrementDatastoreRowsUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(incrementRowsInputBody)
+  }
+);}
+
+
+
+
+
+export const getIncrementDatastoreRowsMutationKey = () => ['incrementDatastoreRows'] as const;
+
+export const getIncrementDatastoreRowsMutationOptions = <TError = ErrorType<ErrorModel>,
+    TContext = unknown>(options?: { mutation?:CreateMutationOptions<Awaited<ReturnType<typeof incrementDatastoreRows>>, TError,IncrementDatastoreRowsMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}
+): CreateMutationOptions<Awaited<ReturnType<typeof incrementDatastoreRows>>, TError,IncrementDatastoreRowsMutationVariables, TContext> => {
+
+const mutationKey = getIncrementDatastoreRowsMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof incrementDatastoreRows>>, IncrementDatastoreRowsMutationVariables> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  incrementDatastoreRows(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type IncrementDatastoreRowsMutationResult = NonNullable<Awaited<ReturnType<typeof incrementDatastoreRows>>>
+    export type IncrementDatastoreRowsMutationBody = NonReadonly<IncrementRowsInputBody>
+    export type IncrementDatastoreRowsMutationError = ErrorType<ErrorModel>
+    export type IncrementDatastoreRowsMutationVariables = {id: string;data: NonReadonly<IncrementRowsInputBody>}
+
+    /**
+ * @summary Increment rows
+ */
+export const createIncrementDatastoreRows = <TError = ErrorType<ErrorModel>,
+    TContext = unknown>(options?: () => { mutation?:CreateMutationOptions<Awaited<ReturnType<typeof incrementDatastoreRows>>, TError,IncrementDatastoreRowsMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: () => QueryClient): CreateMutationResult<
+        Awaited<ReturnType<typeof incrementDatastoreRows>>,
+        TError,
+        IncrementDatastoreRowsMutationVariables,
+        TContext
+      > => {
+      return createMutation(() => ({ ...getIncrementDatastoreRowsMutationOptions(options?.()) }), queryClient);
+    }
     export type upsertDatastoreRowResponse200 = {
   data: UpsertRowOutputBody
   status: 200
@@ -726,7 +828,7 @@ export const getUpsertDatastoreRowUrl = (id: string,) => {
 }
 
 /**
- * Updates every row matching the filter, or inserts one row when nothing matches. Read-then-write in no single transaction: two concurrent upserts against the same filter may both insert, so a counter that must not lose writes uses increment instead. Send Idempotency-Key to make a retry safe: 1-255 printable ASCII characters. A retry carrying the same key and the same request is answered with the first request's outcome and repeats no side effect, marked with Idempotent-Replayed: true. The same key with a different request or resource is refused with 409. Keys are per tenant and are remembered for idempotency.retention. An empty header means no idempotency.
+ * Updates every row matching the filter, or inserts one row when nothing matches. When the filter is exactly one condition, id equals a value between 1 and 9007199254740991, this is a single INSERT ... ON CONFLICT statement on both drivers: it never inserts the same id twice and a missing id is created at exactly that id. Matched on any other column it is read-then-write in no single transaction, so two concurrent upserts against the same filter may both insert. A counter or flag that must not lose writes uses increment. Send Idempotency-Key to make a retry safe: 1-255 printable ASCII characters. A retry carrying the same key and the same request is answered with the first request's outcome and repeats no side effect, marked with Idempotent-Replayed: true. The same key with a different request or resource is refused with 409. Keys are per tenant and are remembered for idempotency.retention. An empty header means no idempotency.
  * @summary Upsert rows
  */
 export const upsertDatastoreRow = async (id: string,

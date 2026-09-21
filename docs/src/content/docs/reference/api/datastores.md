@@ -261,7 +261,7 @@ Embed: Deny — listing workflows, minting sessions, schedules, credential write
 
 `PUT /api/v1/datastores/{id}/rows`
 
-Sets columns on every row matching the filter. One statement, atomic per row on both drivers: concurrent writers never interleave inside a row and the last writer wins; no row lock is taken.
+Sets columns on every row matching the filter. One statement, atomic per row on both drivers: concurrent writers never interleave inside a row and the last writer wins; no row lock is taken. Pass ifUpdatedAt — a row's updatedAt exactly as a previous read returned it — to make the write conditional: the filter must then match exactly one row and the write lands only if the row is unchanged. A stale stamp answers 409 with the row's current updatedAt in errors[0].value, so the caller retries against the new stamp without a second read.
 
 Parameters:
 
@@ -284,7 +284,7 @@ Embed: Deny — listing workflows, minting sessions, schedules, credential write
 
 `POST /api/v1/datastores/{id}/rows/upsert`
 
-Updates every row matching the filter, or inserts one row when nothing matches. Read-then-write in no single transaction: two concurrent upserts against the same filter may both insert, so a counter that must not lose writes uses increment instead. Send Idempotency-Key to make a retry safe: 1-255 printable ASCII characters. A retry carrying the same key and the same request is answered with the first request's outcome and repeats no side effect, marked with Idempotent-Replayed: true. The same key with a different request or resource is refused with 409. Keys are per tenant and are remembered for idempotency.retention. An empty header means no idempotency.
+Updates every row matching the filter, or inserts one row when nothing matches. When the filter is exactly one condition, id equals a value between 1 and 9007199254740991, this is a single INSERT ... ON CONFLICT statement on both drivers: it never inserts the same id twice and a missing id is created at exactly that id. Matched on any other column it is read-then-write in no single transaction, so two concurrent upserts against the same filter may both insert. A counter or flag that must not lose writes uses increment. Send Idempotency-Key to make a retry safe: 1-255 printable ASCII characters. A retry carrying the same key and the same request is answered with the first request's outcome and repeats no side effect, marked with Idempotent-Replayed: true. The same key with a different request or resource is refused with 409. Keys are per tenant and are remembered for idempotency.retention. An empty header means no idempotency.
 
 Parameters:
 
@@ -304,11 +304,34 @@ Responses:
 
 Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
 
+## Increment rows (`increment-datastore-rows`)
+
+`POST /api/v1/datastores/{id}/rows/increment`
+
+Adds amount (default 1, may be negative) to a number column on every matching row in one statement, atomic per row on both drivers, and returns each row as that statement left it. A NULL cell counts as zero. Concurrent increments never lose a write.
+
+Parameters:
+
+| Name | In | Required | Type | Description |
+| --- | --- | --- | --- | --- |
+| `id` | path | yes | string | Datastore identifier |
+
+Request body: `application/json` — `IncrementRowsInputBody` (required)
+
+Responses:
+
+| Status | Description | Body |
+| --- | --- | --- |
+| `200` | OK | `application/json` — `IncrementRowsOutputBody` |
+| `default` | Error | `application/problem+json` |
+
+Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+
 ## Delete rows (`delete-datastore-rows`)
 
 `DELETE /api/v1/datastores/{id}/rows`
 
-Removes every row matching the filter. An empty filter is refused and removes nothing. One statement, atomic per row on both drivers: the last writer wins and no row lock is taken.
+Removes every row matching the filter. An empty filter is refused and removes nothing. One statement, atomic per row on both drivers: the last writer wins and no row lock is taken. Pass ifUpdatedAt — a row's updatedAt exactly as a previous read returned it — to make the delete conditional: the filter must then match exactly one row and the delete lands only if the row is unchanged. A stale stamp answers 409 with the row's current updatedAt in errors[0].value, so the caller retries against the new stamp without a second read.
 
 Parameters:
 

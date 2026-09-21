@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -18,6 +19,26 @@ import (
 //     never interleave inside a row: the last writer wins the row, and no
 //     write is silently half-applied. The semantics are identical on SQLite
 //     and PostgreSQL by construction, not by configuration.
+//   - An id-addressed upsert is one statement too: INSERT ... SELECT ...
+//     WHERE ... ON CONFLICT (id) DO UPDATE ... RETURNING. The id is the
+//     auto-increment primary key, so ON CONFLICT needs no new constraint and
+//     two concurrent upserts of the same id insert once. The SELECT's WHERE
+//     clause is mandatory — SQLite's parser needs it to tell ON CONFLICT
+//     from a join — and doubles as the row-limit gate.
+//   - Insert is one statement — INSERT ... RETURNING with the full read
+//     projection — and returns the row that call wrote, scanned from the
+//     statement's own RETURNING output rather than re-selected. The SQLite
+//     readback used to be a second checkout running SELECT
+//     last_insert_rowid(), which is per-connection state.
+//   - Filtered Update and Delete write in one statement, but the rows they
+//     return are read before and after it, so under contention those rows
+//     can show a neighbour's write. Insert, Increment and an id-addressed
+//     upsert return the statement's own images.
+//   - Upsert matched on any other column is read-then-write in no single
+//     transaction: two concurrent upserts against the same filter may both
+//     insert. A counter or a flag that must not lose writes uses Increment,
+//     or a preconditioned write with a retry, never a read-modify-write
+//     through Get and Update.
 //   - Nothing here takes a row lock, on either driver. GORM's clause.Locking
 //     compiles to SELECT ... FOR UPDATE on PostgreSQL and to nothing at
 //     all on SQLite — the dialector discards it without an error — so
@@ -26,13 +47,15 @@ import (
 //     describes the row-store write paths: the fleet runner's catalogue
 //     re-read (advance in fleet.go) is the one deliberate FOR UPDATE, on
 //     PostgreSQL only, and it claims no lock on SQLite.
-//   - Upsert is read-then-write in no single transaction: two concurrent
-//     upserts against the same filter may both insert. A counter or a flag
-//     that must not lose writes uses Increment, or a preconditioned write
-//     with a retry, never a read-modify-write through Get and Update.
 //   - Limit checks are advisory under races: two inserts may both pass the
 //     row probe. The probe keeps the common case bounded; exactness under
 //     contention belongs to the statements, not the checks.
+//
+// updatedAt is strictly increasing per row: every write takes the greater of
+// the wall clock and one millisecond past the row's current stamp, so two
+// writes never share a stamp. That is what makes "untouched since I read it"
+// a sound question, and it is why a row can run slightly ahead of the wall
+// clock during a sustained burst of writes to it.
 //
 // A preconditioned write is compare-and-swap on updatedAt, the column every
 // physical table already carries: the write lands only if the row is
@@ -40,7 +63,11 @@ import (
 // ClaimNext trusts. The precondition is single-row on purpose — bulk
 // conditional writes have no sane partial-application story — so a filter
 // matching anything but one row is an error, and matching nothing is the
-// same empty result an unconditional write returns.
+// same empty result an unconditional write returns. The predicate is
+// `id = ? AND updatedAt = ?`: the id the pre-read approved, not the caller's
+// filter, so the statement can touch at most that one row however many rows
+// the filter matches by the time it runs, and any affected-count but 1 is an
+// error rather than a quiet "nothing matched".
 
 // ErrPreconditionConflict is matched with errors.Is when a preconditioned
 // write loses to a concurrent one. The row is left exactly as the winner
@@ -65,10 +92,15 @@ func (e *PreconditionError) Unwrap() error { return ErrPreconditionConflict }
 
 // Increment adds delta to a number column on every row matching the filter,
 // in one statement. NULL counts as zero, so incrementing an empty cell
-// starts the counter at delta. The statement is atomic per row on both
-// drivers: ten concurrent increments land ten times, which the concurrent
-// test pins. After-images come from the ids matched before the write, so
-// the result names exactly the rows this call touched.
+// starts the counter at delta. A non-number column is refused by the same
+// binding check every other value goes through — canonicalValues coerces the
+// delta against the catalogue first, so a string, boolean or date column
+// never reaches SQL — and that refusal is the single documented path. The
+// statement is atomic per row on both drivers: ten concurrent increments land
+// ten times, which the concurrent test pins. RETURNING makes the result each
+// statement's own post-image, so a racing writer's later value can never come
+// back instead of the caller's own; the rows are sorted by id because
+// RETURNING order is not defined.
 func (e *Engine) Increment(ctx context.Context, tenantID, dsID string, filter *Filter, column string, delta float64) (*UpdateResult, error) {
 	_, cols, table, err := e.gatedLookup(ctx, tenantID, dsID)
 	if err != nil {
@@ -82,50 +114,41 @@ func (e *Engine) Increment(ctx context.Context, tenantID, dsID string, filter *F
 	var coerced any
 	for name, coerced = range bound {
 	}
-	definition := columnDefinition(cols, name)
-	if definition.Type != ColumnNumber {
-		return nil, fmt.Errorf("datastore: increment needs a number column, %q is %s", name, definition.Type)
-	}
 	dialect := e.dialect()
-	before, err := e.matchIDsAndRows(ctx, dialect, table, cols, filter)
+	clause, filterArgs, err := buildFilterClause(dialect, cols, filter)
 	if err != nil {
 		return nil, err
-	}
-	if len(before) == 0 {
-		return &UpdateResult{}, nil
-	}
-	ids := make([]int64, 0, len(before))
-	holders := make([]string, 0, len(before))
-	args := []any{coerced}
-	for _, row := range before {
-		id := row["id"].(int64)
-		ids = append(ids, id)
-		holders = append(holders, "?")
-		args = append(args, id)
 	}
 	statement := "UPDATE " + quoteIdent(dialect, table) +
 		" SET " + quoteIdent(dialect, name) + " = COALESCE(" + quoteIdent(dialect, name) + ",0)+?" +
-		", " + quoteIdent(dialect, "updatedAt") + " = " + stampNow(dialect) +
-		" WHERE " + quoteIdent(dialect, "id") + " IN (" + strings.Join(holders, ",") + ")"
+		", " + quoteIdent(dialect, "updatedAt") + " = " + stampNow(dialect, table) +
+		clause + " RETURNING " + quotedProjection(dialect, cols)
 	e.emit(statement)
-	res := e.db.WithContext(ctx).Exec(statement, args...)
-	if res.Error != nil {
-		return nil, fmt.Errorf("datastore: increment rows: %w", res.Error)
+	sqlRows, err := e.db.WithContext(ctx).Raw(statement, append([]any{coerced}, filterArgs...)...).Rows()
+	if err != nil {
+		return nil, fmt.Errorf("datastore: increment rows: %w", err)
 	}
-	after, err := e.rowsByIDs(ctx, dialect, table, cols, ids)
+	rows, err := scanRows(sqlRows, cols)
 	if err != nil {
 		return nil, err
 	}
-	return &UpdateResult{Matched: res.RowsAffected, Rows: after}, nil
+	sort.Slice(rows, func(i, j int) bool { return rows[i]["id"].(int64) < rows[j]["id"].(int64) })
+	if rows == nil {
+		rows = []Row{}
+	}
+	return &UpdateResult{Matched: int64(len(rows)), Rows: rows}, nil
 }
 
 // UpdateWithPrecondition sets the given columns on the single row matching
 // the filter, but only if its updatedAt still equals expectedUpdatedAt —
-// the stamp a previous read returned. A concurrent write moves the stamp,
-// the predicate matches nothing, and the caller gets a PreconditionError
-// carrying the current stamp instead of an overwrite. A concurrently
-// deleted row is the same empty result an unconditional update returns:
-// there is nothing to be stale about.
+// the stamp a previous read returned. The write is addressed by the approved
+// row's id, not by the caller's filter, so a second row that matches the
+// filter when the statement runs cannot be caught by it: at most one row is
+// ever touched, whatever the filter matches now. A concurrent write moves the
+// stamp, the predicate matches nothing, and the caller gets a
+// PreconditionError carrying the current stamp instead of an overwrite. A
+// concurrently deleted row is the same empty result an unconditional update
+// returns: there is nothing to be stale about.
 func (e *Engine) UpdateWithPrecondition(ctx context.Context, tenantID, dsID string, filter *Filter, values map[string]any, expectedUpdatedAt time.Time) (*UpdateResult, error) {
 	_, cols, table, err := e.gatedLookup(ctx, tenantID, dsID)
 	if err != nil {
@@ -152,6 +175,7 @@ func (e *Engine) UpdateWithPrecondition(ctx context.Context, tenantID, dsID stri
 	if len(before) != 1 {
 		return nil, fmt.Errorf("datastore: preconditioned update needs exactly one matching row, got %d", len(before))
 	}
+	approvedID := before[0]["id"].(int64)
 	set := make([]string, 0, len(bound)+1)
 	var args []any
 	for _, col := range cols {
@@ -162,41 +186,46 @@ func (e *Engine) UpdateWithPrecondition(ctx context.Context, tenantID, dsID stri
 		set = append(set, quoteIdent(dialect, col.Name)+" = ?")
 		args = append(args, value)
 	}
-	set = append(set, quoteIdent(dialect, "updatedAt")+" = "+stampNow(dialect))
-	clause, filterArgs, err := buildFilterClause(dialect, cols, filter)
-	if err != nil {
-		return nil, err
-	}
-	condition, stamp := preconditionPredicate(clause, dialect, expectedUpdatedAt)
+	set = append(set, quoteIdent(dialect, "updatedAt")+" = "+stampNow(dialect, table))
+	condition, stamp := preconditionPredicate(dialect, approvedID, expectedUpdatedAt)
 	statement := "UPDATE " + quoteIdent(dialect, table) + " SET " + strings.Join(set, ",") + condition
 	e.emit(statement)
-	res := e.db.WithContext(ctx).Exec(statement, append(append(args, filterArgs...), stamp)...)
+	res := e.db.WithContext(ctx).Exec(statement, append(args, approvedID, stamp)...)
 	if res.Error != nil {
 		return nil, fmt.Errorf("datastore: preconditioned update: %w", res.Error)
 	}
-	if res.RowsAffected == 1 {
-		after, err := e.rowsByIDs(ctx, dialect, table, cols, []int64{before[0]["id"].(int64)})
+	switch {
+	case res.RowsAffected == 1:
+		after, err := e.rowsByIDs(ctx, dialect, table, cols, []int64{approvedID})
 		if err != nil {
 			return nil, err
 		}
 		return &UpdateResult{Matched: 1, Rows: after}, nil
+	case res.RowsAffected == 0:
+		// The approved row is gone, or its stamp moved under us: reading it
+		// back by id tells the two apart without a second round trip from
+		// the caller.
+		current, err := e.rowsByIDs(ctx, dialect, table, cols, []int64{approvedID})
+		if err != nil {
+			return nil, err
+		}
+		if len(current) == 0 {
+			return &UpdateResult{}, nil
+		}
+		return nil, &PreconditionError{DatastoreID: dsID, Expected: expectedUpdatedAt, Current: latestUpdatedAt(current)}
+	default:
+		// The statement is addressed by the primary key, so this count is
+		// impossible; refuse it loudly rather than report a write that
+		// touched other rows as "nothing matched".
+		return nil, fmt.Errorf("datastore: preconditioned update affected %d rows, want exactly the approved one", res.RowsAffected)
 	}
-	// The predicate matched nothing: either the row moved under us or it is
-	// gone. A re-read tells the two apart without a second round trip from
-	// the caller.
-	current, err := e.matchIDsAndRows(ctx, dialect, table, cols, filter)
-	if err != nil {
-		return nil, err
-	}
-	if len(current) == 0 {
-		return &UpdateResult{}, nil
-	}
-	return nil, &PreconditionError{DatastoreID: dsID, Expected: expectedUpdatedAt, Current: latestUpdatedAt(current)}
 }
 
 // DeleteWithPrecondition removes the single row matching the filter, but
-// only if its updatedAt still equals expectedUpdatedAt. Stale and missing
-// behave exactly as the update variant documents.
+// only if its updatedAt still equals expectedUpdatedAt. The statement is
+// addressed by the approved row's id, exactly as the update variant is, so
+// no other row the filter matches can be deleted. Stale and missing behave
+// exactly as the update variant documents.
 func (e *Engine) DeleteWithPrecondition(ctx context.Context, tenantID, dsID string, filter *Filter, expectedUpdatedAt time.Time) (*DeleteResult, error) {
 	_, cols, table, err := e.gatedLookup(ctx, tenantID, dsID)
 	if err != nil {
@@ -213,28 +242,29 @@ func (e *Engine) DeleteWithPrecondition(ctx context.Context, tenantID, dsID stri
 	if len(before) != 1 {
 		return nil, fmt.Errorf("datastore: preconditioned delete needs exactly one matching row, got %d", len(before))
 	}
-	clause, filterArgs, err := buildFilterClause(dialect, cols, filter)
-	if err != nil {
-		return nil, err
-	}
-	condition, stamp := preconditionPredicate(clause, dialect, expectedUpdatedAt)
+	approvedID := before[0]["id"].(int64)
+	condition, stamp := preconditionPredicate(dialect, approvedID, expectedUpdatedAt)
 	statement := "DELETE FROM " + quoteIdent(dialect, table) + condition
 	e.emit(statement)
-	res := e.db.WithContext(ctx).Exec(statement, append(filterArgs, stamp)...)
+	res := e.db.WithContext(ctx).Exec(statement, approvedID, stamp)
 	if res.Error != nil {
 		return nil, fmt.Errorf("datastore: preconditioned delete: %w", res.Error)
 	}
-	if res.RowsAffected == 1 {
+	switch {
+	case res.RowsAffected == 1:
 		return &DeleteResult{Deleted: 1, Rows: before}, nil
+	case res.RowsAffected == 0:
+		current, err := e.rowsByIDs(ctx, dialect, table, cols, []int64{approvedID})
+		if err != nil {
+			return nil, err
+		}
+		if len(current) == 0 {
+			return &DeleteResult{}, nil
+		}
+		return nil, &PreconditionError{DatastoreID: dsID, Expected: expectedUpdatedAt, Current: latestUpdatedAt(current)}
+	default:
+		return nil, fmt.Errorf("datastore: preconditioned delete affected %d rows, want exactly the approved one", res.RowsAffected)
 	}
-	current, err := e.matchIDsAndRows(ctx, dialect, table, cols, filter)
-	if err != nil {
-		return nil, err
-	}
-	if len(current) == 0 {
-		return &DeleteResult{}, nil
-	}
-	return nil, &PreconditionError{DatastoreID: dsID, Expected: expectedUpdatedAt, Current: latestUpdatedAt(current)}
 }
 
 // latestUpdatedAt is the newest stamp across re-read rows: what a refused
@@ -250,15 +280,19 @@ func latestUpdatedAt(rows []Row) time.Time {
 	return latest.UTC()
 }
 
-// preconditionPredicate extends a filter clause with the updatedAt
-// predicate, returning the fragment (starting with WHERE or AND) and the
-// stamp text to bind. The comparison runs at the storage resolution on both
-// drivers: binding a Go time.Time directly compares differently-formatted
-// text on SQLite — where updatedAt is second-precision CURRENT_TIMESTAMP
-// text — and matches nothing even for the stamp a read just returned.
-// Pass back a stamp a read returned rather than time.Now: anything finer
-// than the storage resolution cannot have come from the store.
-func preconditionPredicate(clause, dialect string, expected time.Time) (string, string) {
+// preconditionPredicate is the WHERE clause of a preconditioned write: the id
+// of the row the pre-read approved, ANDed with the updatedAt
+// compare-and-swap. The statement is addressed by that id rather than by the
+// caller's filter, so however many rows the filter matches when the statement
+// runs, at most the approved one can be touched; the filter's single-row rule
+// stays a pre-flight check. It returns the clause and the stamp text to bind.
+// The comparison runs at the storage resolution on both drivers: binding a Go
+// time.Time directly compares differently-formatted text on SQLite — where
+// updatedAt is second-precision CURRENT_TIMESTAMP text — and matches nothing
+// even for the stamp a read just returned. Pass back a stamp a read returned
+// rather than time.Now: anything finer than the storage resolution cannot
+// have come from the store.
+func preconditionPredicate(dialect string, id int64, expected time.Time) (string, string) {
 	column := quoteIdent(dialect, "updatedAt")
 	var predicate, stamp string
 	if dialect == "postgres" {
@@ -268,20 +302,5 @@ func preconditionPredicate(clause, dialect string, expected time.Time) (string, 
 		predicate = "strftime('%Y-%m-%d %H:%M:%f'," + column + ") = ?"
 		stamp = expected.UTC().Format("2006-01-02 15:04:05.000")
 	}
-	if clause == "" {
-		return " WHERE " + predicate, stamp
-	}
-	return clause + " AND " + predicate, stamp
-}
-
-// columnDefinition returns the catalogue entry for a canonical name the
-// caller already resolved. It is only called with names canonicalValues
-// returned, so the fallthrough is unreachable rather than an error.
-func columnDefinition(cols []ColumnDef, name string) ColumnDef {
-	for _, col := range cols {
-		if col.Name == name {
-			return col
-		}
-	}
-	return ColumnDef{Name: name}
+	return " WHERE " + quoteIdent(dialect, "id") + " = ? AND " + predicate, stamp
 }

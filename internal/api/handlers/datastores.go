@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 
@@ -177,6 +179,10 @@ type updateRowsInput struct {
 	Body struct {
 		Filter datastore.Filter `json:"filter" doc:"Rows to update; an empty filter is refused"`
 		Values map[string]any   `json:"values" doc:"Columns to set"`
+		// IfUpdatedAt makes the write conditional. It is the stamp a
+		// previous read returned, so it is optional: without it the write
+		// is unconditional and the last writer wins.
+		IfUpdatedAt *time.Time `json:"ifUpdatedAt,omitempty" doc:"A row's updatedAt exactly as a previous read returned it; when present the filter must match exactly one row and the write lands only if that row is unchanged"`
 	}
 }
 
@@ -190,7 +196,8 @@ type updateRowsOutput struct {
 type deleteRowsInput struct {
 	ID   string `path:"id" minLength:"1" doc:"Datastore identifier"`
 	Body struct {
-		Filter datastore.Filter `json:"filter" doc:"Rows to delete; an empty filter is refused and removes nothing"`
+		Filter      datastore.Filter `json:"filter" doc:"Rows to delete; an empty filter is refused and removes nothing"`
+		IfUpdatedAt *time.Time       `json:"ifUpdatedAt,omitempty" doc:"A row's updatedAt exactly as a previous read returned it; when present the filter must match exactly one row and the delete lands only if that row is unchanged"`
 	}
 }
 
@@ -219,6 +226,25 @@ type upsertRowOutput struct {
 		Inserted bool            `json:"inserted"`
 		Matched  int64           `json:"matched"`
 		Rows     []datastore.Row `json:"rows"`
+	}
+}
+
+// incrementRowsInput is the atomic counter write. Amount is a pointer so an
+// explicit zero stays a zero: huma's `default` tag would rewrite any zero
+// value to the default, silently turning "add nothing" into "add one".
+type incrementRowsInput struct {
+	ID   string `path:"id" minLength:"1" doc:"Datastore identifier"`
+	Body struct {
+		Filter datastore.Filter `json:"filter" doc:"Rows to increment; an empty filter is refused"`
+		Column string           `json:"column" minLength:"1" doc:"The number column to add to"`
+		Amount *float64         `json:"amount,omitempty" doc:"Added to the column in one statement; negative subtracts; absent means 1"`
+	}
+}
+
+type incrementRowsOutput struct {
+	Body struct {
+		Matched int64           `json:"matched"`
+		Rows    []datastore.Row `json:"rows"`
 	}
 }
 
@@ -276,16 +302,20 @@ func (handler *Datastores) Register(api huma.API) {
 	}, handler.GetRow)
 	huma.Register(api, huma.Operation{
 		OperationID: "update-datastore-rows", Method: http.MethodPut, Path: "/datastores/{id}/rows",
-		Summary: "Update rows", Description: "Sets columns on every row matching the filter. One statement, atomic per row on both drivers: concurrent writers never interleave inside a row and the last writer wins; no row lock is taken.", Tags: []string{"Datastore rows"},
+		Summary: "Update rows", Description: "Sets columns on every row matching the filter. One statement, atomic per row on both drivers: concurrent writers never interleave inside a row and the last writer wins; no row lock is taken. Pass ifUpdatedAt — a row's updatedAt exactly as a previous read returned it — to make the write conditional: the filter must then match exactly one row and the write lands only if the row is unchanged. A stale stamp answers 409 with the row's current updatedAt in errors[0].value, so the caller retries against the new stamp without a second read.", Tags: []string{"Datastore rows"},
 	}, handler.UpdateRows)
 	huma.Register(api, huma.Operation{
 		OperationID: "delete-datastore-rows", Method: http.MethodDelete, Path: "/datastores/{id}/rows",
-		Summary: "Delete rows", Description: "Removes every row matching the filter. An empty filter is refused and removes nothing. One statement, atomic per row on both drivers: the last writer wins and no row lock is taken.", Tags: []string{"Datastore rows"},
+		Summary: "Delete rows", Description: "Removes every row matching the filter. An empty filter is refused and removes nothing. One statement, atomic per row on both drivers: the last writer wins and no row lock is taken. Pass ifUpdatedAt — a row's updatedAt exactly as a previous read returned it — to make the delete conditional: the filter must then match exactly one row and the delete lands only if the row is unchanged. A stale stamp answers 409 with the row's current updatedAt in errors[0].value, so the caller retries against the new stamp without a second read.", Tags: []string{"Datastore rows"},
 	}, handler.DeleteRows)
 	huma.Register(api, huma.Operation{
 		OperationID: "upsert-datastore-row", Method: http.MethodPost, Path: "/datastores/{id}/rows/upsert",
-		Summary: "Upsert rows", Description: "Updates every row matching the filter, or inserts one row when nothing matches. Read-then-write in no single transaction: two concurrent upserts against the same filter may both insert, so a counter that must not lose writes uses increment instead. Send Idempotency-Key to make a retry safe: " + idempotencyKeyDoc, Tags: []string{"Datastore rows"},
+		Summary: "Upsert rows", Description: "Updates every row matching the filter, or inserts one row when nothing matches. When the filter is exactly one condition, id equals a value between 1 and 9007199254740991, this is a single INSERT ... ON CONFLICT statement on both drivers: it never inserts the same id twice and a missing id is created at exactly that id. Matched on any other column it is read-then-write in no single transaction, so two concurrent upserts against the same filter may both insert. A counter or flag that must not lose writes uses increment. Send Idempotency-Key to make a retry safe: " + idempotencyKeyDoc, Tags: []string{"Datastore rows"},
 	}, handler.UpsertRow)
+	huma.Register(api, huma.Operation{
+		OperationID: "increment-datastore-rows", Method: http.MethodPost, Path: "/datastores/{id}/rows/increment",
+		Summary: "Increment rows", Description: "Adds amount (default 1, may be negative) to a number column on every matching row in one statement, atomic per row on both drivers, and returns each row as that statement left it. A NULL cell counts as zero. Concurrent increments never lose a write.", Tags: []string{"Datastore rows"},
+	}, handler.IncrementRows)
 	handler.registerDatastoreTransfer(api)
 }
 
@@ -562,7 +592,10 @@ func (handler *Datastores) GetRow(ctx context.Context, input *rowPathInput) (*ro
 	return &rowOutput{Body: row}, nil
 }
 
-// UpdateRows sets columns on every row matching the filter.
+// UpdateRows sets columns on every row matching the filter. An ifUpdatedAt
+// stamp turns the write into compare-and-swap on that row's updatedAt: the
+// stamp came from a read, so a row that moved under the caller is refused
+// with a 409 rather than overwritten.
 func (handler *Datastores) UpdateRows(ctx context.Context, input *updateRowsInput) (*updateRowsOutput, error) {
 	if handler.store == nil {
 		return nil, huma.Error503ServiceUnavailable("datastore storage unavailable")
@@ -573,7 +606,14 @@ func (handler *Datastores) UpdateRows(ctx context.Context, input *updateRowsInpu
 	if err := refuseEmptyFilter(&input.Body.Filter); err != nil {
 		return nil, err
 	}
-	result, err := handler.store.Update(ctx, handler.tenants.Resolve(ctx).ID, input.ID, &input.Body.Filter, input.Body.Values, false)
+	tenant := handler.tenants.Resolve(ctx).ID
+	var result *datastore.UpdateResult
+	var err error
+	if input.Body.IfUpdatedAt != nil {
+		result, err = handler.store.UpdateWithPrecondition(ctx, tenant, input.ID, &input.Body.Filter, input.Body.Values, *input.Body.IfUpdatedAt)
+	} else {
+		result, err = handler.store.Update(ctx, tenant, input.ID, &input.Body.Filter, input.Body.Values, false)
+	}
 	if err != nil {
 		return nil, handler.problem(ctx, err)
 	}
@@ -586,7 +626,8 @@ func (handler *Datastores) UpdateRows(ctx context.Context, input *updateRowsInpu
 	return out, nil
 }
 
-// DeleteRows removes every row matching the filter.
+// DeleteRows removes every row matching the filter. An ifUpdatedAt stamp
+// makes it conditional in exactly the shape UpdateRows documents.
 func (handler *Datastores) DeleteRows(ctx context.Context, input *deleteRowsInput) (*deleteRowsOutput, error) {
 	if handler.store == nil {
 		return nil, huma.Error503ServiceUnavailable("datastore storage unavailable")
@@ -597,7 +638,14 @@ func (handler *Datastores) DeleteRows(ctx context.Context, input *deleteRowsInpu
 	if err := refuseEmptyFilter(&input.Body.Filter); err != nil {
 		return nil, err
 	}
-	result, err := handler.store.Delete(ctx, handler.tenants.Resolve(ctx).ID, input.ID, &input.Body.Filter, false)
+	tenant := handler.tenants.Resolve(ctx).ID
+	var result *datastore.DeleteResult
+	var err error
+	if input.Body.IfUpdatedAt != nil {
+		result, err = handler.store.DeleteWithPrecondition(ctx, tenant, input.ID, &input.Body.Filter, *input.Body.IfUpdatedAt)
+	} else {
+		result, err = handler.store.Delete(ctx, tenant, input.ID, &input.Body.Filter, false)
+	}
 	if err != nil {
 		return nil, handler.problem(ctx, err)
 	}
@@ -686,6 +734,38 @@ func (handler *Datastores) UpsertRow(ctx context.Context, input *upsertRowInput)
 	return out, nil
 }
 
+// IncrementRows adds to a number column on every row matching the filter, in
+// one statement. It is the write a counter or a flag uses: the value it
+// returns is the one its own statement produced, so a concurrent writer's
+// later value never comes back instead and no increment is lost.
+func (handler *Datastores) IncrementRows(ctx context.Context, input *incrementRowsInput) (*incrementRowsOutput, error) {
+	if handler.store == nil {
+		return nil, huma.Error503ServiceUnavailable("datastore storage unavailable")
+	}
+	if err := handler.ownsDatastore(ctx, input.ID); err != nil {
+		return nil, err
+	}
+	if err := refuseEmptyFilter(&input.Body.Filter); err != nil {
+		return nil, err
+	}
+	amount := 1.0
+	if input.Body.Amount != nil {
+		amount = *input.Body.Amount
+	}
+	result, err := handler.store.Increment(ctx, handler.tenants.Resolve(ctx).ID, input.ID,
+		&input.Body.Filter, input.Body.Column, amount)
+	if err != nil {
+		return nil, handler.problem(ctx, err)
+	}
+	out := &incrementRowsOutput{}
+	out.Body.Matched = result.Matched
+	out.Body.Rows = result.Rows
+	if out.Body.Rows == nil {
+		out.Body.Rows = []datastore.Row{}
+	}
+	return out, nil
+}
+
 // refuseEmptyFilter closes the trap the ticket names: Go decodes an absent
 // filters key and an explicit [] to the same nil slice, so guarding on the
 // compiled predicate's emptiness is the only check that refuses both {} and
@@ -742,6 +822,24 @@ func queryValue(raw string) any {
 func (handler *Datastores) problem(ctx context.Context, err error) error {
 	if datastore.IsUnknown(err) {
 		return huma.Error404NotFound("datastore not found")
+	}
+	// A refused precondition is a conflict, not a caller mistake: the row
+	// moved after the caller read it. The current stamp rides in the detail
+	// body's errors[0].value so the caller retries without a second read —
+	// this branch sits first so nothing else can claim the error.
+	var conflict *datastore.PreconditionError
+	if errors.As(err, &conflict) {
+		now := conflict.Current.UTC().Format(time.RFC3339Nano)
+		return &huma.ErrorModel{
+			Status: http.StatusConflict,
+			Title:  "Conflict",
+			Detail: fmt.Sprintf("this row changed since it was read (updatedAt is now %s): re-read or retry against the new stamp", now),
+			Errors: []*huma.ErrorDetail{{
+				Message:  "updatedAt no longer matches ifUpdatedAt",
+				Location: "body.ifUpdatedAt",
+				Value:    now,
+			}},
+		}
 	}
 	if errors.Is(err, datastore.ErrRowNotFound) {
 		return huma.Error404NotFound("row not found")

@@ -33,12 +33,15 @@ const (
 	datastoreResourceTable = "table"
 )
 
-// Datastore row operations: the seven Row Actions of design-refs shot 26.
+// Datastore row operations: the seven Row Actions of design-refs shot 26,
+// plus Increment, which n8n has no equivalent for and which exists because a
+// counter that must not lose writes cannot be built from Get and Update.
 const (
 	DatastoreOperationInsert      = "insert"
 	DatastoreOperationGet         = "get"
 	DatastoreOperationUpdate      = "update"
 	DatastoreOperationUpsert      = "upsert"
+	DatastoreOperationIncrement   = "increment"
 	DatastoreOperationDelete      = "delete"
 	DatastoreOperationIfExists    = "ifExists"
 	DatastoreOperationIfNotExists = "ifNotExists"
@@ -69,7 +72,7 @@ func datastoreNode() node.Definition {
 		Type:        DatastoreNodeType,
 		Version:     DatastoreVersion,
 		DisplayName: "Data table",
-		Description: "Stores rows in a KilasFlow data table: insert, read, update, upsert and delete without holding a database credential. A filtered update, delete or clear is one statement, atomic per row on both drivers, so concurrent writers never interleave inside a row and the last writer wins; nothing takes a row lock. Upsert is read-then-write in no single transaction, so two concurrent upserts against the same filter may both insert: a counter or flag that must not lose writes uses increment, or a preconditioned write with a retry, never Get followed by Update.",
+		Description: "Stores rows in a KilasFlow data table: insert, read, update, upsert, increment and delete without holding a database credential. A filtered update, delete or clear writes in one statement, atomic per row on both drivers: concurrent writers never interleave inside a row, the last writer wins, and nothing takes a row lock. Upsert matched on the id column is one statement (created at exactly that id, never inserted twice); upsert matched on any other column is read-then-write in no single transaction, so two concurrent upserts against the same filter may both insert. A counter or flag that must not lose writes uses Increment, which adds to a number column in one statement and returns the new value, never Get followed by Update.",
 		Category:    "Datastore",
 		Group:       []node.NodeGroup{node.GroupInput},
 		Icon:        &node.NodeIcon{Light: "builtin:table"},
@@ -92,6 +95,7 @@ func datastoreNode() node.Definition {
 					{Label: "Row: Get", Value: DatastoreOperationGet},
 					{Label: "Row: Update", Value: DatastoreOperationUpdate},
 					{Label: "Row: Upsert", Value: DatastoreOperationUpsert},
+					{Label: "Row: Increment", Value: DatastoreOperationIncrement},
 					{Label: "Row: Delete", Value: DatastoreOperationDelete},
 					{Label: "Row: If Exists", Value: DatastoreOperationIfExists},
 					{Label: "Row: If Not Exists", Value: DatastoreOperationIfNotExists},
@@ -135,6 +139,16 @@ func datastoreNode() node.Definition {
 				VisibleWhen: datastoreShownFor(DatastoreOperationInsert, DatastoreOperationUpdate, DatastoreOperationUpsert),
 			},
 			{
+				Key: "counterColumn", Label: "Column", Kind: node.PropertyString, Required: true,
+				Description: "The number column to add to. A column name, never an expression.",
+				VisibleWhen: datastoreShownFor(DatastoreOperationIncrement),
+			},
+			{
+				Key: "amount", Label: "Amount", Kind: node.PropertyNumber, Default: 1,
+				Description: "Added in one statement; negative subtracts; an empty cell counts as zero.",
+				VisibleWhen: datastoreShownFor(DatastoreOperationIncrement),
+			},
+			{
 				Key: "match", Label: "Must Match", Kind: node.PropertyOptions, Default: "any",
 				Description: "Whether any or all of the conditions must hold for a row to match.",
 				Options: []node.PropertyOption{
@@ -142,7 +156,7 @@ func datastoreNode() node.Definition {
 					{Label: "All Conditions", Value: "all"},
 				},
 				VisibleWhen: datastoreShownFor(DatastoreOperationGet, DatastoreOperationUpdate,
-					DatastoreOperationUpsert, DatastoreOperationDelete,
+					DatastoreOperationUpsert, DatastoreOperationIncrement, DatastoreOperationDelete,
 					DatastoreOperationIfExists, DatastoreOperationIfNotExists),
 			},
 			{
@@ -170,7 +184,7 @@ func datastoreNode() node.Definition {
 					},
 				}},
 				VisibleWhen: datastoreShownFor(DatastoreOperationGet, DatastoreOperationUpdate,
-					DatastoreOperationUpsert, DatastoreOperationDelete,
+					DatastoreOperationUpsert, DatastoreOperationIncrement, DatastoreOperationDelete,
 					DatastoreOperationIfExists, DatastoreOperationIfNotExists),
 			},
 			{
@@ -227,8 +241,8 @@ func datastorePortsFor(parameters map[string]any, _ workflow.TypeVersion) ([]wor
 var datastoreRowOperations = map[string]bool{
 	DatastoreOperationInsert: true, DatastoreOperationGet: true,
 	DatastoreOperationUpdate: true, DatastoreOperationUpsert: true,
-	DatastoreOperationDelete: true, DatastoreOperationIfExists: true,
-	DatastoreOperationIfNotExists: true,
+	DatastoreOperationIncrement: true, DatastoreOperationDelete: true,
+	DatastoreOperationIfExists: true, DatastoreOperationIfNotExists: true,
 }
 
 // datastoreTableOperations are the operations that act on tables.
@@ -242,8 +256,9 @@ var datastoreTableOperations = map[string]bool{
 // panel.
 var datastoreFilterOperations = map[string]bool{
 	DatastoreOperationGet: true, DatastoreOperationUpdate: true,
-	DatastoreOperationUpsert: true, DatastoreOperationDelete: true,
-	DatastoreOperationIfExists: true, DatastoreOperationIfNotExists: true,
+	DatastoreOperationUpsert: true, DatastoreOperationIncrement: true,
+	DatastoreOperationDelete: true, DatastoreOperationIfExists: true,
+	DatastoreOperationIfNotExists: true,
 }
 
 // datastoreMatchingOperations need at least one condition: without one the
@@ -252,8 +267,8 @@ var datastoreFilterOperations = map[string]bool{
 // is what Return All and the per-row limit are for.
 var datastoreMatchingOperations = map[string]bool{
 	DatastoreOperationUpdate: true, DatastoreOperationUpsert: true,
-	DatastoreOperationDelete: true, DatastoreOperationIfExists: true,
-	DatastoreOperationIfNotExists: true,
+	DatastoreOperationIncrement: true, DatastoreOperationDelete: true,
+	DatastoreOperationIfExists: true, DatastoreOperationIfNotExists: true,
 }
 
 func validateDatastoreConfiguration(n workflow.Node) error {
@@ -295,6 +310,13 @@ func validateDatastoreConfiguration(n workflow.Node) error {
 		if strings.TrimSpace(textParameter(n.Parameters, "name")) == "" {
 			return fmt.Errorf("%s needs a name", operation)
 		}
+	case DatastoreOperationIncrement:
+		// The store refuses a non-number column at run time; a missing
+		// column name is refused here, where the operator can still see
+		// which parameter is unset.
+		if strings.TrimSpace(textParameter(n.Parameters, "counterColumn")) == "" {
+			return fmt.Errorf("%s needs a column to add to", operation)
+		}
 	}
 	if datastoreMatchingOperations[operation] {
 		conditions, err := datastoreFilterRows(n.Parameters["filters"])
@@ -309,11 +331,12 @@ func validateDatastoreConfiguration(n workflow.Node) error {
 }
 
 // refuseDatastoreColumnExpressions refuses expression markers in column-name
-// slots: every filter condition's keyName, a mapper value that is itself a
-// marker (its keys would then come from the incoming item), and matching
-// column entries. Values stay expression-capable — that is what binding is
-// for — and the engine re-checks every resolved name against the catalogue
-// before it is quoted, so a literal that names no column still fails.
+// slots: every filter condition's keyName, the increment's counterColumn, a
+// mapper value that is itself a marker (its keys would then come from the
+// incoming item), and matching column entries. Values stay
+// expression-capable — that is what binding is for — and the engine
+// re-checks every resolved name against the catalogue before it is quoted,
+// so a literal that names no column still fails.
 func refuseDatastoreColumnExpressions(parameters map[string]any) error {
 	filters, present := parameters["filters"]
 	if present && filters != nil && expression.IsExpression(filters) {
@@ -323,6 +346,11 @@ func refuseDatastoreColumnExpressions(parameters map[string]any) error {
 	}
 	if _, err := datastoreFilterRows(filters); err != nil {
 		return err
+	}
+	if counter, present := parameters["counterColumn"]; present && counter != nil && expression.IsExpression(counter) {
+		return fmt.Errorf("counterColumn is built from an expression, and a column name cannot be one: " +
+			"an expression here resolves the column name from the incoming item, so a value " +
+			"arriving from a webhook would choose which column this writes")
 	}
 	columns, present := parameters["columns"]
 	if present && columns != nil && expression.IsExpression(columns) {
@@ -664,6 +692,31 @@ func (executor *DatastoreExecutor) runRow(ctx context.Context, tenant, operation
 			return nil, err
 		}
 		result, err := executor.store.Upsert(ctx, tenant, id, filter, values, false)
+		if err != nil {
+			return nil, err
+		}
+		return emit(result.Rows), nil
+	case DatastoreOperationIncrement:
+		filter, err := datastoreItemFilter(parameters)
+		if err != nil {
+			return nil, err
+		}
+		if err := refuseEmptyNodeFilter(filter); err != nil {
+			return nil, err
+		}
+		column := strings.TrimSpace(textValue(parameters["counterColumn"], ""))
+		if column == "" {
+			return nil, fmt.Errorf("increment needs a column to add to")
+		}
+		amount, err := datastoreIncrementAmount(parameters)
+		if err != nil {
+			return nil, err
+		}
+		incrementer, ok := executor.store.(DatastoreIncrementer)
+		if !ok {
+			return nil, fmt.Errorf("increment is not available on this store")
+		}
+		result, err := incrementer.Increment(ctx, tenant, id, filter, column, amount)
 		if err != nil {
 			return nil, err
 		}

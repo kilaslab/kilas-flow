@@ -5958,6 +5958,17 @@ func dataTableToN8NParams(node workflow.Node, tool bool) (map[string]any, []Loss
 	parameters["resource"] = resource
 	operation := stringParameter(node.Parameters, "operation")
 	if resource == "row" {
+		// An operation n8n has no equivalent for — Increment is the one
+		// today — leaves as an insert, which changes what the workflow
+		// does rather than what it looks like. It is reported as blocking:
+		// a counter exported as an append must be replaced, not run.
+		if _, known := datastoreRowOperationsToN8N[operation]; operation != "" && !known {
+			lossy = append(lossy, Lossy{
+				Severity: SeverityBlocking, Field: "operation",
+				Reason: fmt.Sprintf("KilasFlow's %s has no n8n Data Table equivalent and was exported as insert: "+
+					"replace the node before importing into n8n", operation),
+			})
+		}
 		operation = defaultString(datastoreRowOperationsToN8N[operation], "insert")
 	} else {
 		operation = defaultString(datastoreTableOperationsToN8N[operation], "create")

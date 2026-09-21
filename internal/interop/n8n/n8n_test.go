@@ -4425,3 +4425,58 @@ func TestDatastoreTypeMatchesTheNodePack(t *testing.T) {
 		t.Errorf("adapter mirrors %q, node pack registers %q", n8n.DatastoreNodeType, nodes.DatastoreNodeType)
 	}
 }
+
+// TestDatastoreIncrementExportsWithABlockingDiagnostic proves the export
+// says what it did with an operation n8n has no equivalent for. Increment is
+// KilasFlow-only, so the node cannot be carried as itself; it used to leave
+// silently as an insert, which would turn a counter into an append the
+// moment the workflow ran in n8n.
+func TestDatastoreIncrementExportsWithABlockingDiagnostic(t *testing.T) {
+	t.Parallel()
+	document := workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_increment", Name: "Increment",
+		Nodes: []workflow.Node{
+			{ID: "a", Name: "Manual", Type: "kilasflow.manual", TypeVersion: workflow.V(1)},
+			{ID: "b", Name: "Counter", Type: nodes.DatastoreNodeType, TypeVersion: workflow.V(1),
+				Parameters: map[string]any{
+					"resource": "row", "operation": nodes.DatastoreOperationIncrement,
+					"dataTableId":   "datastore_1",
+					"counterColumn": "score", "amount": 2.0,
+					"filters": map[string]any{"conditions": []any{map[string]any{
+						"keyName": "title", "condition": "eq", "keyValue": "counter",
+					}}},
+				}},
+		},
+		Connections: []workflow.Connection{{
+			ID: "c1", Kind: workflow.ConnectionMain,
+			Source: workflow.Endpoint{NodeID: "a", Port: "main"},
+			Target: workflow.Endpoint{NodeID: "b", Port: "main"},
+		}},
+		Settings: map[string]any{},
+	}
+
+	exported, err := n8n.Export(document, registry(t))
+	if err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+	byName := map[string]map[string]any{}
+	for _, node := range exported.Document.Nodes {
+		byName[node.Name] = node.Parameters
+	}
+	if byName["Counter"]["operation"] != "insert" {
+		t.Fatalf("increment exported as %#v, want the insert fallback it reports", byName["Counter"])
+	}
+	var reported bool
+	for _, issue := range exported.Lossy {
+		if issue.Field != "operation" || issue.Severity != n8n.SeverityBlocking {
+			continue
+		}
+		if strings.Contains(issue.Reason, "increment") && strings.Contains(issue.Reason, "exported as insert") {
+			reported = true
+		}
+	}
+	if !reported {
+		t.Fatalf("export diagnostics = %#v, want a blocking one on operation naming increment", exported.Lossy)
+	}
+}

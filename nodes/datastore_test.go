@@ -678,3 +678,180 @@ func TestDatastoreIfExistsBranchRunsOnItsSecondPort(t *testing.T) {
 		t.Fatalf("true-port run = %+v, want it skipped when no row matched", run)
 	}
 }
+
+// --- Increment (FEAT-1axhdn) ------------------------------------------------
+
+// datastoreIncrementParams is the Increment operation's own parameter set:
+// the table, one condition and the counter column, any of which a case may
+// override to prove the refusal.
+func datastoreIncrementParams(id string, extra map[string]any) map[string]any {
+	parameters := map[string]any{}
+	for key, value := range extra {
+		parameters[key] = value
+	}
+	if _, given := parameters["filters"]; !given {
+		parameters["filters"] = datastoreConditions(map[string]any{
+			"keyName": "title", "condition": "eq", "keyValue": "counter",
+		})
+	}
+	if _, given := parameters["counterColumn"]; !given {
+		parameters["counterColumn"] = "score"
+	}
+	return datastoreRowParams(id, nodes.DatastoreOperationIncrement, parameters)
+}
+
+// compileDatastoreDocument runs the node's save-time validation through the
+// real compiler, the way a document saved from the canvas is.
+func compileDatastoreDocument(t *testing.T, parameters map[string]any) error {
+	t.Helper()
+	registry := node.NewRegistry()
+	if err := nodes.RegisterAll(registry); err != nil {
+		t.Fatalf("RegisterAll() error = %v", err)
+	}
+	document := workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_ds", Name: "Datastore",
+		Nodes: []workflow.Node{
+			{ID: "manual", Name: "Manual", Type: "kilasflow.manual", TypeVersion: workflow.V(1)},
+			{ID: "ds", Name: "Data table", Type: nodes.DatastoreNodeType, TypeVersion: workflow.V(1),
+				Parameters: parameters},
+		},
+		Connections: []workflow.Connection{{
+			ID: "c1", Kind: workflow.ConnectionMain,
+			Source: workflow.Endpoint{NodeID: "manual", Port: "main"},
+			Target: workflow.Endpoint{NodeID: "ds", Port: "main"},
+		}},
+		Settings: map[string]any{},
+	}
+	_, err := workflow.Compile(document, registry)
+	return err
+}
+
+func TestDatastoreIncrementNodeAddsAndReturnsTheNewValue(t *testing.T) {
+	t.Parallel()
+	store := datastoreEngine(t)
+	id := datastoreTable(t, store, "Counters")
+	// score is left NULL, which is the state a counter column starts in.
+	runDatastore(t, store, datastoreNode(t, datastoreRowParams(id, nodes.DatastoreOperationInsert, map[string]any{
+		"columns": datastoreManualColumns(map[string]any{"title": "counter"}),
+	}), nil), workflow.NodeInput{})
+
+	added := runDatastore(t, store, datastoreNode(t, datastoreIncrementParams(id, map[string]any{"amount": 2}), nil),
+		workflow.NodeInput{})
+	if len(added[0]) != 1 {
+		t.Fatalf("increment output = %+v, want the one row it wrote", added)
+	}
+	if added[0][0].JSON["score"] != 2.0 {
+		t.Fatalf("score = %v, want the empty cell to start at the delta 2", added[0][0].JSON["score"])
+	}
+
+	// A missing amount is one, and the row keeps moving.
+	defaulted := runDatastore(t, store, datastoreNode(t, datastoreIncrementParams(id, nil), nil), workflow.NodeInput{})
+	if len(defaulted[0]) != 1 || defaulted[0][0].JSON["score"] != 3.0 {
+		t.Fatalf("increment without an amount = %+v, want score 3", defaulted)
+	}
+
+	// A string column cannot be added to, and the refusal is the caller's.
+	executor := nodes.NewDatastoreExecutor(store)
+	_, err := executor.Execute(context.Background(),
+		datastoreNode(t, datastoreIncrementParams(id, map[string]any{"counterColumn": "title"}), nil),
+		workflow.NodeInput{}, datastoreRequest())
+	if err == nil || !strings.Contains(err.Error(), `"title" is a string`) {
+		t.Fatalf("incrementing a string column = %v, want a refusal naming the column and its type", err)
+	}
+
+	// A filter matching nothing writes nothing, like update.
+	empty := runDatastore(t, store, datastoreNode(t, datastoreIncrementParams(id, map[string]any{
+		"filters": datastoreConditions(map[string]any{
+			"keyName": "title", "condition": "eq", "keyValue": "absent",
+		}),
+	}), nil), workflow.NodeInput{})
+	if len(empty[0]) != 0 {
+		t.Fatalf("increment with no match = %+v, want no items", empty)
+	}
+}
+
+func TestDatastoreIncrementValidation(t *testing.T) {
+	t.Parallel()
+	store := datastoreEngine(t)
+	id := datastoreTable(t, store, "Guarded")
+	marker := map[string]any{"mode": "expression", "value": "{{ $json.column }}"}
+
+	cases := []struct {
+		name       string
+		parameters map[string]any
+		refusal    string
+	}{
+		{"no table", datastoreRowParams("", nodes.DatastoreOperationIncrement, map[string]any{
+			"counterColumn": "score",
+			"filters": datastoreConditions(map[string]any{
+				"keyName": "title", "condition": "eq", "keyValue": "counter",
+			}),
+		}), "needs a data table"},
+		{"no condition", datastoreIncrementParams(id, map[string]any{
+			"filters": datastoreConditions(),
+		}), "at least one condition"},
+		{"no counter column", datastoreIncrementParams(id, map[string]any{
+			"counterColumn": "",
+		}), "column to add to"},
+		{"expression counter column", datastoreIncrementParams(id, map[string]any{
+			"counterColumn": marker,
+		}), "counterColumn"},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			if err := compileDatastoreDocument(t, test.parameters); err == nil || !strings.Contains(err.Error(), test.refusal) {
+				t.Fatalf("Compile() = %v, want a refusal containing %q", err, test.refusal)
+			}
+			executor := nodes.NewDatastoreExecutor(store)
+			ir := datastoreNode(t, test.parameters, nil)
+			if test.name == "no table" {
+				// The run-time path resolves the locator per item; an unset
+				// one is the same refusal the compiler gives.
+				ir.Parameters["dataTableId"] = nil
+			}
+			_, err := executor.Execute(context.Background(), ir, workflow.NodeInput{"main": []workflow.Item{
+				{JSON: map[string]any{"column": "score"}},
+			}}, datastoreRequest())
+			if err == nil || !strings.Contains(err.Error(), test.refusal) {
+				t.Fatalf("Execute() = %v, want a refusal containing %q", err, test.refusal)
+			}
+		})
+	}
+	rows, err := store.List(context.Background(), "tenant-a", id, datastore.RowQuery{ReturnAll: true})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(rows.Rows) != 0 {
+		t.Fatalf("rows = %+v, want every refused run to commit nothing", rows.Rows)
+	}
+}
+
+func TestDatastoreNodeDescriptionStatesItsConcurrency(t *testing.T) {
+	t.Parallel()
+	registry := node.NewRegistry()
+	if err := nodes.RegisterAll(registry); err != nil {
+		t.Fatalf("RegisterAll() error = %v", err)
+	}
+	definition, found := registry.Resolve(nodes.DatastoreNodeType, workflow.V(1))
+	if !found {
+		t.Fatalf("node type %q is not registered", nodes.DatastoreNodeType)
+	}
+	// The description is the node's promise to whoever reads the canvas, so
+	// every sentence it states about concurrency is checked here: the
+	// operations it offers, the atomicity it claims, the upsert split, and
+	// the increment it points counters at.
+	for _, phrase := range []string{
+		"insert, read, update, upsert, increment and delete",
+		"A filtered update, delete or clear writes in one statement, atomic per row on both drivers",
+		"nothing takes a row lock",
+		"Upsert matched on the id column is one statement",
+		"upsert matched on any other column is read-then-write in no single transaction",
+		"uses Increment, which adds to a number column in one statement and returns the new value",
+		"never Get followed by Update",
+	} {
+		if !strings.Contains(definition.Description, phrase) {
+			t.Errorf("datastore description lacks %q: %s", phrase, definition.Description)
+		}
+	}
+}

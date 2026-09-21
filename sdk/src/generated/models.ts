@@ -545,6 +545,8 @@ export interface DeleteRowsInputBody {
   readonly $schema?: string;
   /** Rows to delete; an empty filter is refused and removes nothing */
   filter: Filter;
+  /** A row's updatedAt exactly as a previous read returned it; when present the filter must match exactly one row and the delete lands only if that row is unchanged */
+  ifUpdatedAt?: string;
 }
 
 export type DeleteRowsOutputBodyRowsItem = {[key: string]: unknown};
@@ -895,6 +897,30 @@ export interface ImportedWorkflowResource {
   /** @nullable */
   webhooks: WebhookRouteResource[] | null;
   workflow: WorkflowResource;
+}
+
+export interface IncrementRowsInputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** Added to the column in one statement; negative subtracts; absent means 1 */
+  amount?: number;
+  /**
+     * The number column to add to
+     * @minLength 1
+     */
+  column: string;
+  /** Rows to increment; an empty filter is refused */
+  filter: Filter;
+}
+
+export type IncrementRowsOutputBodyRowsItem = {[key: string]: unknown};
+
+export interface IncrementRowsOutputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  matched: number;
+  /** @nullable */
+  rows: IncrementRowsOutputBodyRowsItem[] | null;
 }
 
 /**
@@ -1311,6 +1337,8 @@ export interface UpdateRowsInputBody {
   readonly $schema?: string;
   /** Rows to update; an empty filter is refused */
   filter: Filter;
+  /** A row's updatedAt exactly as a previous read returned it; when present the filter must match exactly one row and the write lands only if that row is unchanged */
+  ifUpdatedAt?: string;
   /** Columns to set */
   values: UpdateRowsInputBodyValues;
 }
@@ -3008,7 +3036,7 @@ export const getDeleteDatastoreRowsUrl = (id: string,) => {
 }
 
 /**
- * Removes every row matching the filter. An empty filter is refused and removes nothing. One statement, atomic per row on both drivers: the last writer wins and no row lock is taken.
+ * Removes every row matching the filter. An empty filter is refused and removes nothing. One statement, atomic per row on both drivers: the last writer wins and no row lock is taken. Pass ifUpdatedAt — a row's updatedAt exactly as a previous read returned it — to make the delete conditional: the filter must then match exactly one row and the delete lands only if the row is unchanged. A stale stamp answers 409 with the row's current updatedAt in errors[0].value, so the caller retries against the new stamp without a second read.
  * @summary Delete rows
  */
 export const deleteDatastoreRows = async (id: string,
@@ -3184,7 +3212,7 @@ export const getUpdateDatastoreRowsUrl = (id: string,) => {
 }
 
 /**
- * Sets columns on every row matching the filter. One statement, atomic per row on both drivers: concurrent writers never interleave inside a row and the last writer wins; no row lock is taken.
+ * Sets columns on every row matching the filter. One statement, atomic per row on both drivers: concurrent writers never interleave inside a row and the last writer wins; no row lock is taken. Pass ifUpdatedAt — a row's updatedAt exactly as a previous read returned it — to make the write conditional: the filter must then match exactly one row and the write lands only if the row is unchanged. A stale stamp answers 409 with the row's current updatedAt in errors[0].value, so the caller retries against the new stamp without a second read.
  * @summary Update rows
  */
 export const updateDatastoreRows = async (id: string,
@@ -3331,6 +3359,64 @@ const res = await fetch(getImportDatastoreRowsUrl(id),
 
 
 
+export type incrementDatastoreRowsResponse200 = {
+  data: IncrementRowsOutputBody
+  status: 200
+}
+
+export type incrementDatastoreRowsResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type incrementDatastoreRowsResponseSuccess = (incrementDatastoreRowsResponse200) & {
+  headers: Headers;
+};
+export type incrementDatastoreRowsResponseError = (incrementDatastoreRowsResponseDefault) & {
+  headers: Headers;
+};
+
+export type incrementDatastoreRowsResponse = (incrementDatastoreRowsResponseSuccess | incrementDatastoreRowsResponseError)
+
+export const getIncrementDatastoreRowsUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/datastores/${id}/rows/increment`
+}
+
+/**
+ * Adds amount (default 1, may be negative) to a number column on every matching row in one statement, atomic per row on both drivers, and returns each row as that statement left it. A NULL cell counts as zero. Concurrent increments never lose a write.
+ * @summary Increment rows
+ */
+export const incrementDatastoreRows = async (id: string,
+    incrementRowsInputBody: NonReadonly<IncrementRowsInputBody>, options?: RequestInit): Promise<incrementDatastoreRowsResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Array.isArray(h)) return Object.fromEntries(h);
+    return h;
+  };
+const res = await fetch(getIncrementDatastoreRowsUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(incrementRowsInputBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: incrementDatastoreRowsResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as incrementDatastoreRowsResponse
+}
+
+
+
 export type upsertDatastoreRowResponse200 = {
   data: UpsertRowOutputBody
   status: 200
@@ -3359,7 +3445,7 @@ export const getUpsertDatastoreRowUrl = (id: string,) => {
 }
 
 /**
- * Updates every row matching the filter, or inserts one row when nothing matches. Read-then-write in no single transaction: two concurrent upserts against the same filter may both insert, so a counter that must not lose writes uses increment instead. Send Idempotency-Key to make a retry safe: 1-255 printable ASCII characters. A retry carrying the same key and the same request is answered with the first request's outcome and repeats no side effect, marked with Idempotent-Replayed: true. The same key with a different request or resource is refused with 409. Keys are per tenant and are remembered for idempotency.retention. An empty header means no idempotency.
+ * Updates every row matching the filter, or inserts one row when nothing matches. When the filter is exactly one condition, id equals a value between 1 and 9007199254740991, this is a single INSERT ... ON CONFLICT statement on both drivers: it never inserts the same id twice and a missing id is created at exactly that id. Matched on any other column it is read-then-write in no single transaction, so two concurrent upserts against the same filter may both insert. A counter or flag that must not lose writes uses increment. Send Idempotency-Key to make a retry safe: 1-255 printable ASCII characters. A retry carrying the same key and the same request is answered with the first request's outcome and repeats no side effect, marked with Idempotent-Replayed: true. The same key with a different request or resource is refused with 409. Keys are per tenant and are remembered for idempotency.retention. An empty header means no idempotency.
  * @summary Upsert rows
  */
 export const upsertDatastoreRow = async (id: string,

@@ -39,6 +39,8 @@ import type {
 	HealthOutputBody,
 	ImportedWorkflowResource,
 	ImportWorkflowInputBody,
+	IncrementRowsInputBody,
+	IncrementRowsOutputBody,
 	InsertDatastoreRow201,
 	InsertRowInputBody,
 	ListAPIKeysOutputBody,
@@ -961,6 +963,31 @@ export class KilasFlowClient {
 			body: { filter, values },
 			signal,
 			headers
+		});
+	}
+
+	/**
+	 * Adds to a number column on every row matching the filter, in one
+	 * statement, and resolves the rows as that statement left them. This is
+	 * the counter write: {@link updateDatastoreRows} reads the row and then
+	 * writes it, so two concurrent callers lose a write, while the server's
+	 * increment is atomic per row and hands each caller its own value. The
+	 * amount defaults to 1 and may be negative; an empty cell counts as
+	 * zero. The filter is required and refused client-side when empty, like
+	 * every other row write.
+	 */
+	async incrementDatastoreRows(
+		datastoreId: string,
+		filter: Filter,
+		column: string,
+		amount = 1,
+		signal?: AbortSignal
+	): Promise<IncrementRowsOutputBody> {
+		requireRowFilter(filter, 'incrementDatastoreRows');
+		const body: IncrementRowsInputBody = { filter, column, amount };
+		return this.#transport.request('POST', `/datastores/${encodeURIComponent(datastoreId)}/rows/increment`, {
+			body,
+			signal
 		});
 	}
 

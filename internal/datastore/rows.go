@@ -17,9 +17,10 @@ import (
 // output shape. Every write resolves its columns against the catalogue
 // before composing SQL, and every value binds as a ? placeholder.
 //
-// Upsert atomicity and row locking belong to a later ticket and the code
-// says so where it matters: upsert here is read-then-write, not an atomic
-// merge.
+// Upsert is one statement when the filter addresses a row by id
+// (INSERT ... ON CONFLICT (id) DO UPDATE); every other filter stays
+// read-then-write. No path takes a row lock: see concurrency.go for the
+// rules.
 
 // Row is one datastore row: the system id, createdAt and updatedAt plus one
 // entry per live user column. Values are normalised on read — numbers as
@@ -118,6 +119,17 @@ func projectColumns(cols []ColumnDef) []string {
 	}
 	names = append(names, "createdAt", "updatedAt")
 	return names
+}
+
+// quotedProjection is projectColumns quoted for the dialect: the read list
+// every SELECT-like statement returns.
+func quotedProjection(dialect string, cols []ColumnDef) string {
+	names := projectColumns(cols)
+	quoted := make([]string, 0, len(names))
+	for _, name := range names {
+		quoted = append(quoted, quoteIdent(dialect, name))
+	}
+	return strings.Join(quoted, ",")
 }
 
 // coerceColumnValue maps a caller-supplied value to the driver's bind type
@@ -439,12 +451,7 @@ func boolOf(v any) any {
 // selectProjection runs a SELECT over the explicit column list and returns
 // normalised rows.
 func (e *Engine) selectProjection(ctx context.Context, dialect, table string, cols []ColumnDef, suffix string, args ...any) ([]Row, error) {
-	names := projectColumns(cols)
-	quoted := make([]string, len(names))
-	for i, name := range names {
-		quoted[i] = quoteIdent(dialect, name)
-	}
-	statement := "SELECT " + strings.Join(quoted, ",") + " FROM " + quoteIdent(dialect, table) + suffix
+	statement := "SELECT " + quotedProjection(dialect, cols) + " FROM " + quoteIdent(dialect, table) + suffix
 	e.emit(statement)
 	sqlRows, err := e.db.WithContext(ctx).Raw(statement, args...).Rows()
 	if err != nil {
@@ -493,22 +500,28 @@ func (e *Engine) Insert(ctx context.Context, tenantID, dsID string, values map[s
 	} else {
 		statement += " DEFAULT VALUES"
 	}
-	var id int64
-	if dialect == "postgres" {
-		e.emit(statement + " RETURNING " + quoteIdent(dialect, "id"))
-		if err := e.db.WithContext(ctx).Raw(statement+" RETURNING "+quoteIdent(dialect, "id"), args...).Scan(&id).Error; err != nil {
-			return nil, fmt.Errorf("datastore: insert row: %w", err)
-		}
-	} else {
-		e.emit(statement)
-		if err := e.db.WithContext(ctx).Exec(statement, args...).Error; err != nil {
-			return nil, fmt.Errorf("datastore: insert row: %w", err)
-		}
-		if err := e.db.WithContext(ctx).Raw("SELECT last_insert_rowid()").Scan(&id).Error; err != nil {
-			return nil, fmt.Errorf("datastore: read inserted id: %w", err)
-		}
+	// RETURNING carries the whole read projection, not just the id, and the
+	// row is scanned from that output: the readback must be the row this call
+	// wrote. The SQLite path used to follow the INSERT with a second checkout
+	// running SELECT last_insert_rowid() (per-connection state, so another
+	// worker's INSERT could win the race between the two checkouts), and the
+	// id-only form still re-selected the row afterwards, which left the same
+	// gap open for the row's values: a neighbour's write landing between the
+	// INSERT and that SELECT came back as the inserted row.
+	statement += " RETURNING " + quotedProjection(dialect, cols)
+	e.emit(statement)
+	sqlRows, err := e.db.WithContext(ctx).Raw(statement, args...).Rows()
+	if err != nil {
+		return nil, fmt.Errorf("datastore: insert row: %w", err)
 	}
-	return e.Get(ctx, tenantID, dsID, id)
+	rows, err := scanRows(sqlRows, cols)
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return nil, fmt.Errorf("datastore: insert row: the statement returned no row")
+	}
+	return rows[0], nil
 }
 
 // Get returns one row by id.
@@ -599,17 +612,26 @@ func (e *Engine) matchIDsAndRows(ctx context.Context, dialect, table string, col
 		clause+" ORDER BY "+quoteIdent(dialect, "id")+" ASC", args...)
 }
 
-// stampNow is the updatedAt bump writers apply on update: database-set, per
-// dialect, so the engine never formats a timestamp into SQL text. SQLite
-// resolves to milliseconds rather than CURRENT_TIMESTAMP's whole seconds:
-// a stamp that moves once per second cannot tell two writes in the same
-// second apart, which would make every optimistic precondition accept a
-// stale write it should refuse.
-func stampNow(dialect string) string {
+// stampNow is the updatedAt bump writers apply on write: database-set, per
+// dialect, and strictly increasing per row. SQLite resolves to milliseconds
+// rather than CURRENT_TIMESTAMP's whole seconds, and both dialects take the
+// greater of the wall clock and one millisecond past the row's current
+// stamp. A stamp that can repeat cannot tell two writes in one millisecond
+// apart, which would let an optimistic precondition accept a stale write and
+// let a compare-and-swap retry loop lose updates. The cost is that under a
+// sustained burst above about a thousand writes a second to one row,
+// updatedAt runs ahead of the wall clock by the length of the burst. The
+// column is qualified with the table name because ON CONFLICT DO UPDATE sees
+// both the target row and excluded, and an unqualified updatedAt is
+// ambiguous there on PostgreSQL (SQLSTATE 42702).
+func stampNow(dialect, table string) string {
+	column := quoteIdent(dialect, table) + "." + quoteIdent(dialect, "updatedAt")
 	if dialect == "postgres" {
-		return "now()"
+		return "GREATEST(now(), " + column + " + interval '1 millisecond')"
 	}
-	return "STRFTIME('%Y-%m-%d %H:%M:%f','now')"
+	now := "STRFTIME('%Y-%m-%d %H:%M:%f','now')"
+	next := "COALESCE(STRFTIME('%Y-%m-%d %H:%M:%f', " + column + ", '+0.001 seconds'), " + now + ")"
+	return "MAX(" + now + ", " + next + ")"
 }
 
 // Update sets the given columns on every row matching the filter. With
@@ -667,7 +689,7 @@ func (e *Engine) Update(ctx context.Context, tenantID, dsID string, filter *Filt
 		set = append(set, quoteIdent(dialect, col.Name)+" = ?")
 		args = append(args, value)
 	}
-	set = append(set, quoteIdent(dialect, "updatedAt")+" = "+stampNow(dialect))
+	set = append(set, quoteIdent(dialect, "updatedAt")+" = "+stampNow(dialect, table))
 	clause, filterArgs, err := buildFilterClause(dialect, cols, filter)
 	if err != nil {
 		return nil, err
@@ -735,12 +757,17 @@ func (e *Engine) Delete(ctx context.Context, tenantID, dsID string, filter *Filt
 // an explicitly supplied value. With dryRun nothing is written: an update
 // returns before/after pairs, an insert returns one pair with a nil Before.
 //
-// Upsert atomicity and row locking belong to a later ticket: this is
-// read-then-write inside no single transaction, so two concurrent upserts
-// with the same filter may both insert.
+// A filter addressing exactly one row by id (one `id eq N` condition,
+// 1 <= N <= 2^53-1) takes the single-statement path in upsert_id.go, so two
+// concurrent upserts of the same id cannot both insert. Every other filter
+// is read-then-write inside no single transaction, so two concurrent upserts
+// against the same filter may both insert.
 func (e *Engine) Upsert(ctx context.Context, tenantID, dsID string, filter *Filter, values map[string]any, dryRun bool) (*UpsertResult, error) {
 	if filter == nil || len(filter.Conditions) == 0 {
 		return nil, fmt.Errorf("datastore: upsert needs a filter with at least one condition")
+	}
+	if id, ok := idAddressed(filter); ok && len(values) > 0 {
+		return e.UpsertByID(ctx, tenantID, dsID, id, values, dryRun)
 	}
 	_, cols, table, err := e.gatedLookup(ctx, tenantID, dsID)
 	if err != nil {

@@ -64,6 +64,8 @@ func TestCrossTenantAccessRefused(t *testing.T) {
 			refusals["Usage"] = err
 			_, err = eng.Increment(ctx, attacker, foreign, filter, "score", 1)
 			refusals["Increment"] = err
+			_, err = eng.UpsertByID(ctx, attacker, foreign, id, map[string]any{"score": 1.0}, false)
+			refusals["UpsertByID"] = err
 			stamp := inserted["updatedAt"].(time.Time)
 			_, err = eng.UpdateWithPrecondition(ctx, attacker, foreign, filter, map[string]any{"score": 1.0}, stamp)
 			refusals["UpdateWithPrecondition"] = err

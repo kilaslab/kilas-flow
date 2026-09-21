@@ -74,7 +74,7 @@ func decodeReady(t *testing.T, rec *httptest.ResponseRecorder) (readyBody, map[s
 	return body, raw
 }
 
-func decodeProblem(t *testing.T, rec *httptest.ResponseRecorder) string {
+func decodeProblemDetail(t *testing.T, rec *httptest.ResponseRecorder) string {
 	t.Helper()
 
 	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/problem+json") {
@@ -158,7 +158,7 @@ func TestReadyIsNotReadyWhileADatastoreMigrationIsOutstanding(t *testing.T) {
 		t.Fatalf("status = %d, want 503 while a datastore is behind (body: %s)", rec.Code, rec.Body)
 	}
 
-	detail := decodeProblem(t, rec)
+	detail := decodeProblemDetail(t, rec)
 	if !strings.Contains(detail, "migration outstanding") || !strings.Contains(detail, "behind") {
 		t.Errorf("detail = %q, want it to say a migration is outstanding and a datastore is behind", detail)
 	}
@@ -208,7 +208,7 @@ func TestReadyNotReadyCarriesTheDatastoreSpreadInTheProblem(t *testing.T) {
 
 	// The problem shape is unchanged: same media type, title, status, and the
 	// human-readable detail a person reads.
-	if detail := decodeProblem(t, rec); !strings.Contains(detail, "migration outstanding") {
+	if detail := decodeProblemDetail(t, rec); !strings.Contains(detail, "migration outstanding") {
 		t.Errorf("detail = %q, want it to say a migration is outstanding", detail)
 	}
 
@@ -316,7 +316,7 @@ func TestReadyDatabaseUnreachableServesNoDriverTextAndNoSpread(t *testing.T) {
 	}
 
 	// The human sentence a person reads is unchanged.
-	if detail := decodeProblem(t, rec); detail != "database unreachable" {
+	if detail := decodeProblemDetail(t, rec); detail != "database unreachable" {
 		t.Errorf("detail = %q, want the generic database unreachable", detail)
 	}
 
@@ -348,7 +348,7 @@ func TestReadyIsNotReadyWhenTheCatalogueCannotBeRead(t *testing.T) {
 		t.Fatalf("status = %d, want 503 when the fleet cannot be read (body: %s)", rec.Code, rec.Body)
 	}
 
-	detail := decodeProblem(t, rec)
+	detail := decodeProblemDetail(t, rec)
 	if detail != "datastore fleet status unavailable" {
 		t.Errorf("detail = %q, want the generic datastore fleet status unavailable", detail)
 	}

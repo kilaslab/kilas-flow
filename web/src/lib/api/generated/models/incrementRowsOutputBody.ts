@@ -5,13 +5,12 @@
  * Embeddable workflow automation engine. Every operation available in the editor is available here: the canvas is a client of this API, not the owner of workflow state.
  * OpenAPI spec version: 0.1.0-dev
  */
-import type { Filter } from './filter';
+import type { IncrementRowsOutputBodyRowsItem } from './incrementRowsOutputBodyRowsItem';
 
-export interface DeleteRowsInputBody {
+export interface IncrementRowsOutputBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /** Rows to delete; an empty filter is refused and removes nothing */
-  filter: Filter;
-  /** A row's updatedAt exactly as a previous read returned it; when present the filter must match exactly one row and the delete lands only if that row is unchanged */
-  ifUpdatedAt?: string;
+  matched: number;
+  /** @nullable */
+  rows: IncrementRowsOutputBodyRowsItem[] | null;
 }

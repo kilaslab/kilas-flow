@@ -322,11 +322,13 @@ describe('filtered row writes', () => {
 		await sdk.updateDatastoreRows('datastore_1', filter, { tier: 'pro' });
 		await sdk.deleteDatastoreRows('datastore_1', filter);
 		await sdk.upsertDatastoreRow('datastore_1', filter, { email: 'ada@example.com', tier: 'pro' });
+		await sdk.incrementDatastoreRows('datastore_1', filter, 'attempts', 2);
 
 		expect(calls.map((call) => `${call.init.method} ${new URL(call.url).pathname}`)).toEqual([
 			'PUT /api/v1/datastores/datastore_1/rows',
 			'DELETE /api/v1/datastores/datastore_1/rows',
-			'POST /api/v1/datastores/datastore_1/rows/upsert'
+			'POST /api/v1/datastores/datastore_1/rows/upsert',
+			'POST /api/v1/datastores/datastore_1/rows/increment'
 		]);
 		expect(JSON.parse(String(calls[0]!.init.body))).toEqual({
 			filter: { type: 'and', filters: [{ columnName: 'email', condition: 'eq', value: 'ada@example.com' }] },
@@ -334,6 +336,24 @@ describe('filtered row writes', () => {
 		});
 		expect(JSON.parse(String(calls[1]!.init.body))).toEqual({
 			filter: { type: 'and', filters: [{ columnName: 'email', condition: 'eq', value: 'ada@example.com' }] }
+		});
+		expect(JSON.parse(String(calls[3]!.init.body))).toEqual({
+			filter: { type: 'and', filters: [{ columnName: 'email', condition: 'eq', value: 'ada@example.com' }] },
+			column: 'attempts',
+			amount: 2
+		});
+	});
+
+	it('increments by one when no amount is given', async () => {
+		const { calls, fetchImpl } = recordingFetch({ body: {} });
+		const filter = datastoreFilter('and', [{ columnName: 'id', condition: 'eq', value: 7 }]);
+
+		await client(fetchImpl).incrementDatastoreRows('datastore_1', filter, 'attempts');
+
+		expect(JSON.parse(String(calls[0]!.init.body))).toEqual({
+			filter: { type: 'and', filters: [{ columnName: 'id', condition: 'eq', value: 7 }] },
+			column: 'attempts',
+			amount: 1
 		});
 	});
 
@@ -350,6 +370,7 @@ describe('filtered row writes', () => {
 			await expect(sdk.updateDatastoreRows('datastore_1', filter, { tier: 'pro' })).rejects.toThrow(/at least one condition/);
 			await expect(sdk.deleteDatastoreRows('datastore_1', filter)).rejects.toThrow(/at least one condition/);
 			await expect(sdk.upsertDatastoreRow('datastore_1', filter, { tier: 'pro' })).rejects.toThrow(/at least one condition/);
+			await expect(sdk.incrementDatastoreRows('datastore_1', filter, 'attempts')).rejects.toThrow(/at least one condition/);
 		}
 		expect(calls).toHaveLength(0);
 	});

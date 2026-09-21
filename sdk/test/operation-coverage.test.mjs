@@ -95,6 +95,7 @@ const OPERATION_COVERAGE = {
 	'update-datastore-rows': 'updateDatastoreRows',
 	'delete-datastore-rows': 'deleteDatastoreRows',
 	'upsert-datastore-row': 'upsertDatastoreRow',
+	'increment-datastore-rows': 'incrementDatastoreRows',
 	'export-datastore-rows': 'exportDatastoreRows',
 	'import-datastore-rows': 'importDatastoreRows',
 	'get-health': 'getHealth',

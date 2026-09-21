@@ -28,6 +28,19 @@ func openHandle(t *testing.T, driver, dsn, prefix string) *database.DB {
 	if err != nil {
 		t.Fatalf("Open %s: %v", driver, err)
 	}
+	// Test-only opt-in: database.Open pins SQLite to one connection in
+	// production, which serialises every statement and hides races. The
+	// hook lets the concurrency suite run at a real pool width; CI never
+	// sets it and production pinning is untouched.
+	if driver == "sqlite" {
+		if raw := os.Getenv("KILASFLOW_TEST_SQLITE_POOL"); raw != "" {
+			width, convErr := strconv.Atoi(raw)
+			if convErr != nil || width <= 0 {
+				t.Fatalf("KILASFLOW_TEST_SQLITE_POOL=%q is not a positive integer", raw)
+			}
+			widenSQLitePool(t, db, width)
+		}
+	}
 	t.Cleanup(func() { _ = db.Close() })
 	return db
 }
