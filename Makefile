@@ -327,6 +327,20 @@ generate-skills-index: ## Regenerate skills/index.json from the bundle frontmatt
 generate-skills-index-check: ## Fail if skills/index.json is stale
 	$(GO) run ./scripts/skills-index --check
 
+# The router skill's compact command reference is the one part of the bundle that
+# is a product fact rather than prose: it is rendered from the binary's own
+# command tree (`kilasflow help --json`) by scripts/skills-command-reference, so
+# the surface an agent reads in turn one cannot name a verb the binary does not
+# implement. The generator builds and runs the CLI itself, so this needs the Go
+# toolchain and nothing else.
+.PHONY: generate-skills-command-reference
+generate-skills-command-reference: ## Regenerate the router skill's command reference from the CLI's command tree
+	$(GO) run ./scripts/skills-command-reference
+
+.PHONY: generate-skills-command-reference-check
+generate-skills-command-reference-check: ## Fail if the router skill's command reference is stale
+	$(GO) run ./scripts/skills-command-reference --check
+
 .PHONY: test-cover
 test-cover: ## Run Go tests with a coverage report
 	$(GO) test ./... -coverprofile=coverage.out

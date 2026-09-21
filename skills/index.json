@@ -469,6 +469,47 @@
         "references/NAMING_AND_DESCRIPTIONS.md",
         "references/VALIDATION_CHECKLIST.md"
       ]
+    },
+    {
+      "name": "using-kilasflow-skills",
+      "description": "Use when starting a KilasFlow session, and before any workflow, node, trigger, credential, datastore, run or debugging work, whenever a verb, an operation id or a skill has to be chosen. Triggers on \"kilasflow\", \"workflow\", \"node\", \"run\", \"trigger\", \"credential\", \"datastore\", \"activate\", \"debug\".",
+      "path": "skills/using-kilasflow-skills/SKILL.md",
+      "commands": [
+        "kilasflow api",
+        "kilasflow context",
+        "kilasflow credential list",
+        "kilasflow datastore rows",
+        "kilasflow exec get",
+        "kilasflow exec trace",
+        "kilasflow node describe",
+        "kilasflow node list",
+        "kilasflow node options",
+        "kilasflow run",
+        "kilasflow workflow create",
+        "kilasflow workflow get",
+        "kilasflow workflow list"
+      ],
+      "operations": [
+        "activate-workflow",
+        "create-credential",
+        "delete-workflow",
+        "get-execution",
+        "get-workflow",
+        "import-workflow",
+        "list-node-types",
+        "load-node-property-options",
+        "run-workflow",
+        "stream-execution-events",
+        "upsert-datastore-row"
+      ],
+      "nodes": [],
+      "expressionRoots": [],
+      "notShipped": [
+        "No --skills-used flag: no mutating verb records which skills a session used, so adoption is not measurable from a command",
+        "No guarded verbs: activation, deletion, import and the other writes without a verb are reached as kilasflow api with an operation id, and there is no --yes guard to lean on",
+        "No skills verbs: list, show, install, check and export do not exist yet, so this bundle is read from the checkout under skills/"
+      ],
+      "references": []
     }
   ]
 }
