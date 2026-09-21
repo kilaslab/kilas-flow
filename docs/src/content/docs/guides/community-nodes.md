@@ -1,6 +1,6 @@
 ---
 title: Community nodes
-description: The two paths for third-party nodes — native WASM packs and the JavaScript sidecar — and the two SDKs, which are not each other.
+description: The two paths for third-party nodes — native WASM packs and the JavaScript sidecar — and the two SDKs, which are not each other. Neither host half ships yet; this page says exactly what exists and what does not.
 ---
 
 ## Two SDKs, different audiences
@@ -13,16 +13,20 @@ other:
 |---|---|---|
 | Import | `github.com/kilaslab/kilas-flow/pkg/sdk` (Go, the module path in `go.mod`) | `@kilasflow/sdk` (npm, TypeScript — not published yet, see the [SDK README](https://github.com/kilaslab/kilas-flow/blob/main/sdk/README.md)) |
 | Audience | Node **authors** shipping a pack | Developers **embedding** KilasFlow in a host app |
-| Runs | Inside the WASM sandbox, one function per call | Outside the server, against its HTTP API |
+| Runs | Inside a WASM module, one function per call — the author side is written, but no host loads packs yet | Outside the server, against its HTTP API |
 | Ships in | The pack author's `.wasm` module | The host application's `node_modules` |
 
 If you are writing a node, you want the left column. If you are driving
 workflows from your own product, you want the right one.
 
+The guest SDK is a real package with a real example, described below. The
+host half that would load a pack and run it is not built — see
+[What is not shipped yet](#what-is-not-shipped-yet).
+
 ## Path one: native packs on WebAssembly
 
-A pack author imports `pkg/sdk`, writes a run function over workflow items,
-and builds a `wasip1` module:
+The **author side** of this path exists. A pack author imports `pkg/sdk`,
+writes a run function over workflow items, and builds a `wasip1` module:
 
 ```sh
 GOOS=wasip1 GOARCH=wasm CGO_ENABLED=0 go build -o pack.wasm ./...
@@ -34,54 +38,95 @@ func run(items []sdk.Item) ([]sdk.Item, error) { /* ... */ }
 func main() { sdk.Main(run) }
 ```
 
-The contract is the Code node's batch contract: items arrive as one JSON
-document on stdin, one envelope document leaves on stdout. The module needs
-nothing beyond WASI's standard streams, which is what keeps the capability
-surface auditable — a pack that declares no host capabilities is granted
-none. An example pack proving the path lives at `pkg/sdk/example/echo` in
-the repository.
+The package is implemented, not a placeholder. `Main` reads one JSON document
+from stdin, calls `run`, and writes one envelope document to stdout; `Handle`
+is the same step as pure bytes-in/bytes-out, so a pack's logic is unit-testable
+without a sandbox. The contract is the Code node's batch contract, and the
+hand-built example pack proving the path lives at `pkg/sdk/example/echo`.
 
-Per-call limits are enforced on the host side — wall clock, linear memory,
-output bytes — and exceeding one fails that node run with a named error,
-never the process. The pack format (manifest plus `.wasm` modules, checksum
-pinning, composition-time install) is owned by the pack loader; this page
-covers only the author's side of it.
+What keeps the capability surface auditable is that the guest has nothing but
+WASI's standard streams. `internal/runcode` instantiates
+`wasi_snapshot_preview1` and a module config carrying stdin, stdout, stderr
+and the system clocks — no filesystem, no environment, no arguments, and no
+host module. A pack therefore cannot call an API, read a credential, or reach
+anything beyond the items it was handed. That is deliberate for the Code node,
+and it is exactly the property the pack path would have to extend on purpose.
+
+The **host side is not shipped**: nothing loads a `.wasm` pack, so no operator
+can install one or run its nodes. [What is not shipped yet](#what-is-not-shipped-yet)
+names the concrete gaps.
 
 ## Path two: the JavaScript sidecar
 
-Programmatic community nodes — the ones with a real `execute()` a
-declarative pack cannot replicate — run in Node.js processes outside the
-server binary. Host and sidecar speak NDJSON over a Unix socket; the child's
-stdout and stderr are diagnostics only and never parsed, so a package that
-prints a startup banner cannot corrupt a message. The protocol is clean-room:
-no community package, framework, or type definition crosses into this
-repository.
+`sidecar/` is the host side of this boundary, written and tested as a
+library. Programmatic community nodes — the ones with a real `execute()` a
+declarative pack cannot replicate — are designed to run in Node.js processes
+outside the server binary. Host and sidecar speak NDJSON over a Unix socket;
+the child's stdout and stderr are diagnostics only and never parsed, so a
+package that prints a startup banner cannot corrupt a message. The protocol is
+clean-room: no community package, framework, or type definition crosses into
+this repository.
 
-Three rules govern the boundary:
+Three rules govern the boundary, and each is implemented in the package:
 
-- **One process per tenant.** Decrypted secrets cross the socket into
-  third-party JavaScript, and process isolation is the only isolation left
-  once they do. A run for tenant B never reaches a process started for
-  tenant A.
-- **Deny by default.** Outbound HTTP from a community node must be proxied
-  back through the host's egress policy; until that proxy exists, a node
-  that reaches past the boundary has its run refused rather than silently
-  widened.
+- **One process per tenant.** `Pool` is keyed by tenant: a process started for
+  tenant A is unreachable from a request for tenant B by construction. Decrypted
+  secrets cross the socket into third-party JavaScript, and process isolation is
+  the only isolation left once they do.
+- **Deny by default.** A child frame the protocol does not expect is a host
+  call, and no host call is served at this layer: the first one fails the run.
+  Outbound HTTP from a community node must eventually be proxied back through
+  the host's egress policy, and until that proxy exists the boundary refuses
+  rather than silently widening.
 - **Node failure, not engine failure.** A sidecar that crashes, hangs, or
-  exceeds its memory, wall-clock, output, or host-call limit fails that node
-  run with a diagnostic naming the cause. The rest of the execution and the
-  host process are intact.
+  exceeds its memory, wall-clock, output, or frame limits fails that node run
+  with a named diagnostic. The rest of the execution and the host process are
+  intact.
+
+The **wiring is not shipped**: no production code imports the package, so an
+operator cannot turn the sidecar on. See below.
+
+## What is not shipped yet
+
+Neither community path is an operator path today. Each statement below was
+checked against this tree:
+
+- **The pack loader has no module kind.** `internal/nodepack.Pack` has no
+  module or artifact field, and `internal/nodepack/loaddir.go` describes WASM
+  packs as future work — "the WASM packs of FEAT-48hreg reuse this loader by
+  adding a module kind beside the manifest". The directory pack that does ship
+  is a `pack.json` manifest plus a `pack.sha256` checksum, and carries no
+  `.wasm`.
+- **The guest gets no host functions.** Nothing in `internal/runcode` grants
+  the module a host interface (there is no host module anywhere in the
+  package), so a pack cannot call an API, resolve a credential, or read binary
+  data. This has to be added before a pack can do more than reshape its items.
+- **Nothing runs a pack.** No production code builds a `runcode.Artifact` from
+  a pack, and the only consumers of `pkg/sdk` are its own example and tests.
+- **Nothing runs the sidecar.** `github.com/kilaslab/kilas-flow/sidecar` is
+  imported only by its own package and tests. There is no `sidecar` section in
+  `internal/config/config.go` or `config.example.yaml`, no `engine.Executor`
+  adapter for it, and `node.SourceSidecar` has no `RegisterFrom` call site
+  outside a registry test.
+
+This page therefore documents the author-side pack contract and the sidecar
+library's boundary, not a capability an operator can enable. It will grow the
+operator-facing sections when the host halves land.
 
 ## What the deployment looks like
 
 The runtime image today is a single `CGO_ENABLED=0` Go binary on distroless,
-and that stays the default: without a sidecar configured, sidecar-tagged
-runs fail with a diagnostic naming what the operator must install, and
-everything else is unchanged. Enabling the sidecar ends the single-binary
-promise for that deployment — a second image or stage carrying Node 24 LTS
-and the operator's chosen packages — which is why it is opt-in. The host
-reference is `sidecar/` in the repository: protocol, per-tenant pool,
-limits, and the `fixture/echo.js` node that proves the path headless.
+and that stays the default. Neither community path is wired, so nothing in a
+deployment changes on their account. The pack install path that does exist
+today is the declarative one: a directory of `pack.json` manifests loaded at
+composition through `packs.dir`, with a `pack.sha256` checksum pinning each
+manifest, and it has no `.wasm` story.
+
+Wiring the sidecar would end the single-binary promise for that deployment — a
+second image or stage carrying Node 24 LTS and the operator's chosen packages
+— which is why it is opt-in by design. The host reference for that work is
+`sidecar/` in the repository: protocol, per-tenant pool, limits, and the
+`fixture/echo.js` node that proves the path headless.
 
 ## Licence position
 

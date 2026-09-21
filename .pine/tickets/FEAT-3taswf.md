@@ -1385,3 +1385,21 @@ Closed by `pine close --evidence` on 2026-09-20.
  web/vite.config.ts                                 |    7 +-
  1279 files changed, 271994 insertions(+), 6466 deletions(-)
 ```
+
+## Re-scoped 2026-09-20
+
+Re-closed `done` by the landing commit `5658304`, which also removed the reopened note. The
+tick/untick state is honest about what shipped — the manifest metadata, the changelog, the
+version-agreement check and the Makefile SDK targets are on `main` and proved — but three
+criteria are still unproven and the deliverable the title names does not exist:
+
+- criterion 1, `npm install @kilasflow/sdk` resolves: `npm view @kilasflow/sdk version` answers
+  `E404 Not Found` and `git tag` is empty.
+- criterion 5, publishing driven by a git tag with provenance: `release.yml`'s sdk job exists and
+  is tied to `sdk-release-check`, but it has never run, and npm provenance can only be attested
+  by a publish from that workflow.
+- criterion 8, `examples/host-page` against a published container image and a published package.
+
+These three cannot be proved inside this repository: publishing is outward-facing, and this
+workspace forbids a push, a tag and an npm publish. They are the owner's to run, or belong to a
+follow-up ticket that owns the release.

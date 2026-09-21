@@ -267,13 +267,17 @@ and timestamps, and `users` and `api_keys` reference it with an
 `ON DELETE RESTRICT` foreign key so an identity cannot outlive its tenant. There
 is no per-tenant configuration and no per-tenant quota.
 
-**Nothing creates a tenant through the API.** No operation exists for it. A
-tenant comes into existence in one of three ways: the identity migration seeded
-`default` plus every distinct tenant already present in `workflows` and
-`credentials`; `auth.bootstrap_tenant` is ensured on every boot; or an operator
-inserts a row. Workflow and credential rows, by contrast, will happily carry any
-tenant string, because those tables predate the `tenants` table and do not
-reference it.
+**A tenant is created through the operator API.** `POST /api/v1/tenants` adds one, answers
+`201` with a `Location` header, and answers `409` if the ID is already taken, so a mistyped
+create is never mistaken for a successful one. `POST /api/v1/tenants/{id}/users` creates the
+tenant's first account and `POST /api/v1/tenants/{id}/api-keys` mints a key on its behalf, which
+is what makes a new tenant usable without a raw insert. Every one of those operations requires
+the operator credential — an API key scoped to the operator tenant; a customer's key and any
+session are refused. Three older paths still exist: the identity migration seeded `default` plus
+every distinct tenant already present in `workflows` and `credentials`; `auth.bootstrap_tenant`
+is ensured on every boot; or an operator inserts a row directly. Workflow and credential rows, by
+contrast, will happily carry any tenant string, because those tables predate the `tenants` table
+and do not reference it.
 
 **With authentication off, there is effectively one tenant**, named `default`,
 because that is what the fallback resolves to. A deployment that wants real
@@ -291,7 +295,11 @@ a repository method is never given a way to run unscoped, and there is no
 `POST /api/v1/auth/logout` and `GET /api/v1/auth/me` cover the dashboard session;
 `GET`, `POST` and `DELETE` on `/api/v1/api-keys` manage machine credentials; and
 `POST /api/v1/stream-tickets` mints the single-use ticket a browser needs for the
-event stream. See the [HTTP API reference](/reference/api/), and the
+event stream. The operator surface provisions tenants: `GET` and `POST` on
+`/api/v1/tenants`, `GET` and `POST` on `/api/v1/tenants/{id}/users` plus the
+disable, enable and password operations under `/api/v1/tenants/{id}/users/{userId}/`,
+and `POST /api/v1/tenants/{id}/api-keys`. See the [tenant reference](/reference/api/tenants/)
+for the full surface, the [HTTP API reference](/reference/api/), and the
 [embedding guide](/guides/embedding/) for a worked integration.
 
 ## Source
@@ -301,5 +309,6 @@ event stream. See the [HTTP API reference](/reference/api/), and the
 (`permits` and its default-deny arm), `internal/auth/` (`Principal`, sessions,
 tickets, API keys), `internal/api/middleware/auth.go` (the gate and the public
 operations), `internal/api/handlers/tenants.go` (the resolver's precedence),
-`internal/repository/workflows.go` (`TenantScope`), `sdk/src/browser.ts`
+`internal/api/handlers/admin.go` (the operator provisioning surface and its
+`operatorOnly` gate), `internal/repository/workflows.go` (`TenantScope`), `sdk/src/browser.ts`
 (`mountWorkflowEditor` and the handshake).
