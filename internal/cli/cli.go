@@ -93,9 +93,9 @@ func Run(env Env) (code int, handled bool) {
 // run executes one invocation against an explicit verb list.
 //
 // Production only ever passes the registry; the parameter exists because the
-// guard's tests need a verb that is guarded, and no phase-1 verb is (every
-// `guarded` mark in design §4.2 is phase 2 or blocked), so the primitive is
-// proven against a fixture rather than against a verb the binary does not have.
+// guard's tests drive the --yes refusal against a fixture registered inside the
+// test, which keeps that contract provable without depending on a verb whose own
+// operation would have to answer.
 func run(verbs []Verb, env Env) (code int, handled bool) {
 	if !claimedByCLI(env.Args) {
 		return ExitOK, false
@@ -168,6 +168,16 @@ func run(verbs []Verb, env Env) (code int, handled bool) {
 	started := client.now()
 	runErr := clientErr
 	if runErr == nil {
+		// The second half of the guard, and it is here rather than beside
+		// requireConfirmation because answering it needs a request: consent is
+		// checked first, so a missing --yes still sends nothing at all, and
+		// only an invocation that is already going to talk to the server pays
+		// for the identity read. A scoped token is refused before the verb's
+		// own operation, so it never reaches the mutation the server would
+		// answer with 403.
+		runErr = requireAuthority(ctx, verb)
+	}
+	if runErr == nil {
 		runErr = verb.Run(ctx, positional)
 	}
 	duration := client.now().Sub(started)
@@ -217,6 +227,51 @@ func buildClient(ctx *Context) (*Client, error) {
 	client.BaseURL = root
 
 	return client, nil
+}
+
+// requireAuthority refuses a guarded verb whose credential is an agent token.
+//
+// Design §4.7 gives a guarded verb two gates, and they are different
+// questions. --yes is the caller's *consent*: a run without it is refused
+// before anything is sent, because consent is never inferred. This is the
+// caller's *authority*: a guarded operation reaches beyond the tenant's own
+// data — it publishes an endpoint, destroys one, or stores a secret every
+// workflow can use — so only the tenant-wide key that owns the tenant may do
+// it, and a scoped agent token is refused here whatever the flags say. It is
+// the same refusal the server would send as a 403, moved in front of the
+// operation so the caller learns it before a mutation is attempted, and it
+// carries the same error code, `scope_denied`, because that is what an agent
+// reads as "drop this step".
+//
+// The question is answered by the identity resource the CLI already has a verb
+// for: `auth whoami` reads /auth/me, whose `scopes` list is the key's scope
+// binding. A tenant-wide key carries none — NULL scopes is the legacy key the
+// design leaves untouched — so a non-empty list is exactly "this is an agent
+// token". The read goes through whoamiWith, on the invocation's own credential.
+//
+// An invocation with no server URL is left alone: the verb refuses that one
+// itself with a usage error naming every way to configure a URL, and a probe
+// against an empty base URL would report a network failure for what is the
+// caller's missing configuration.
+func requireAuthority(ctx *Context, verb Verb) error {
+	if !verb.Guarded || ctx.Client == nil || ctx.Client.BaseURL == "" {
+		return nil
+	}
+
+	who, err := whoamiWith(ctx, ctx.Client.Token)
+	if err != nil {
+		return err
+	}
+	if !who.Scoped() {
+		return nil
+	}
+
+	return &ExitError{
+		Code:    ExitRefused,
+		ErrCode: scopeDeniedCode,
+		Message: verb.Path + " " + verb.Refusal + "; this needs a tenant-wide key: " +
+			"a scoped agent token may not do it, and --yes is consent, not authority",
+	}
 }
 
 // newClient builds a client whose requests are bounded by --timeout.

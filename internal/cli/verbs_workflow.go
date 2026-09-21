@@ -12,8 +12,8 @@ import (
 	"strings"
 )
 
-// workflowVerbs are the workflow verbs this phase owns: the read surface plus
-// `create`.
+// workflowVerbs are the workflow verbs this phase owns: the read surface,
+// `create`, and the three guarded lifecycle verbs.
 //
 // The paths are the stable ones documented in the API contract, not a lookup in
 // the served document: `workflow get` is one request, and an agent that has to
@@ -21,10 +21,13 @@ import (
 // hatch's flexibility on every call. `kilasflow api <operation-id>` remains the
 // verb that resolves against the running server.
 //
-// Deliberately absent: update, restore, import, duplicate, validate, activate,
-// deactivate and delete. Activation and deletion are guarded verbs and belong to
-// phase 2, where a scoped token exists to refuse them; the rest have no verb
-// yet, and `kilasflow api <operation-id>` reaches them today.
+// activate, deactivate and delete are the design's guarded verbs: each refuses
+// without --yes, and each refuses a scoped agent token outright (see
+// requireAuthority), because publishing an endpoint and destroying a workflow
+// are the tenant's own decisions rather than a scoped key's.
+//
+// Deliberately absent: update, restore, import, duplicate and validate. They
+// have no verb yet, and `kilasflow api <operation-id>` reaches them today.
 func workflowVerbs() []Verb {
 	return []Verb{
 		{
@@ -87,6 +90,33 @@ func workflowVerbs() []Verb {
 			Flags:     registerDiagnosticsFlags,
 			Run:       runWorkflowDiagnostics,
 			Human:     humanResourceResource,
+		},
+		{
+			Path:      "workflow activate",
+			Operation: "activate-workflow",
+			Summary:   "activate a workflow's latest revision, publishing its endpoint (guarded)",
+			Guarded:   true,
+			Refusal:   "publishes a public endpoint",
+			Run:       runWorkflowActivate,
+			Human:     humanWorkflowResource,
+		},
+		{
+			Path:      "workflow deactivate",
+			Operation: "deactivate-workflow",
+			Summary:   "take a workflow's published endpoint offline (guarded)",
+			Guarded:   true,
+			Refusal:   "takes a public endpoint offline",
+			Run:       runWorkflowDeactivate,
+			Human:     humanWorkflowResource,
+		},
+		{
+			Path:      "workflow delete",
+			Operation: "delete-workflow",
+			Summary:   "delete a workflow, retaining its audit trail (guarded)",
+			Guarded:   true,
+			Refusal:   "deletes a workflow",
+			Run:       runWorkflowDelete,
+			Human:     humanDeletion,
 		},
 	}
 }
@@ -320,6 +350,42 @@ func runWorkflowDiagnostics(ctx *Context, args []string) error {
 	return ctx.readResource(http.MethodGet, "/workflows/"+url.PathEscape(id)+"/diagnostics", query, id)
 }
 
+// runWorkflowActivate compiles the workflow's latest revision and pins it as
+// the active one, which is what publishes its endpoint.
+//
+// No body: the operation reads the workflow and its newest revision from the
+// server, and a document sent here would be ignored.
+func runWorkflowActivate(ctx *Context, args []string) error {
+	id, err := requireOneID(args, "workflow id")
+	if err != nil {
+		return err
+	}
+
+	return ctx.readResource(http.MethodPost, "/workflows/"+url.PathEscape(id)+"/activate", nil, id)
+}
+
+// runWorkflowDeactivate takes the workflow's endpoint offline. It keeps the
+// active revision on record, which is what makes activating again cheap.
+func runWorkflowDeactivate(ctx *Context, args []string) error {
+	id, err := requireOneID(args, "workflow id")
+	if err != nil {
+		return err
+	}
+
+	return ctx.readResource(http.MethodPost, "/workflows/"+url.PathEscape(id)+"/deactivate", nil, id)
+}
+
+// runWorkflowDelete soft-deletes a workflow. The API keeps the audit evidence,
+// so "deleted" here means "no longer reachable", not "the rows are gone".
+func runWorkflowDelete(ctx *Context, args []string) error {
+	id, err := requireOneID(args, "workflow id")
+	if err != nil {
+		return err
+	}
+
+	return ctx.deleteResource("/workflows/"+url.PathEscape(id), id)
+}
+
 // readResource performs one read whose response is the payload, and records the
 // identifier a --quiet caller would print.
 func (ctx *Context) readResource(method, path string, query url.Values, primary string) error {
@@ -467,6 +533,60 @@ func pageQuery(ctx *Context) url.Values {
 	return flags.query()
 }
 
+// writeResource performs one write whose body the caller built and whose
+// response carries the resource it wrote, and records the identifier a --quiet
+// caller would print.
+func (ctx *Context) writeResource(method, path string, body []byte, primary string) error {
+	resp, err := ctx.Client.Do(ctx.Ctx, method, apiPath(path), nil, nil, body)
+	if err != nil {
+		return err
+	}
+
+	ctx.Data = jsonOrText(resp.Body)
+	ctx.Primary = primary
+
+	return nil
+}
+
+// deleteResource performs one DELETE and records what it removed.
+//
+// A delete answers 204 with no body, so there is no payload to carry: the
+// identifier is echoed back because it is what a --quiet caller reads, and the
+// status is there because the server's own "it is gone" is the only evidence a
+// deletion leaves in the envelope.
+func (ctx *Context) deleteResource(path, primary string) error {
+	resp, err := ctx.Client.Do(ctx.Ctx, http.MethodDelete, apiPath(path), nil, nil, nil)
+	if err != nil {
+		return err
+	}
+
+	ctx.Data = deletionResult{ID: primary, Status: resp.Status}
+	ctx.Primary = primary
+
+	return nil
+}
+
+// deletionResult is what a verb reports after a DELETE that answered 204.
+type deletionResult struct {
+	ID     string `json:"id"`
+	Status int    `json:"status"`
+}
+
+// humanDeletion prints what was removed.
+func humanDeletion(w io.Writer, data any) {
+	result, ok := data.(deletionResult)
+	if !ok {
+		printJSONValue(w, data)
+
+		return
+	}
+
+	printKV(w, [][2]string{
+		{"deleted", result.ID},
+		{"status", strconv.Itoa(result.Status)},
+	})
+}
+
 // requireOneID returns the single identifier a verb needs.
 //
 // An empty identifier is refused rather than sent: `/workflows/` is not a
@@ -505,6 +625,33 @@ func requireTwoIDs(args []string, first, second string) (string, string, error) 
 	}
 
 	return args[0], args[1], nil
+}
+
+// requireThreeIDs returns the three names a verb needs, in order. It is the
+// same rule requireTwoIDs applies, one argument further: renaming a column
+// names the datastore, the column and what it becomes, and every one of them is
+// refused if it is missing rather than sent empty.
+func requireThreeIDs(args []string, first, second, third string) (string, string, string, error) {
+	if len(args) < 3 {
+		missing := third
+		if len(args) == 0 {
+			missing = first
+		} else if len(args) == 1 {
+			missing = second
+		}
+
+		return "", "", "", usageError("no %s: pass the %s, the %s and the %s as arguments", missing, first, second, third)
+	}
+	if len(args) > 3 {
+		return "", "", "", usageError("three names at a time; got %q, %q, %q and %q", args[0], args[1], args[2], args[3])
+	}
+	for index, what := range []string{first, second, third} {
+		if strings.TrimSpace(args[index]) == "" {
+			return "", "", "", usageError("the %s must not be empty", what)
+		}
+	}
+
+	return args[0], args[1], args[2], nil
 }
 
 // humanResourceList renders a listing as a table of the fields named, falling

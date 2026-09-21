@@ -17,8 +17,10 @@ const (
 	ExitFailure = 1
 	// ExitUsage means the invocation itself was wrong.
 	ExitUsage = 2
-	// ExitRefused means the caller's authority was refused: a 403, a 401, or a
-	// guarded verb without --yes. Error codes tell the three apart.
+	// ExitRefused means the caller's authority was refused: a 403 or 401 from
+	// the server, or a guarded verb refused by the CLI's own gates — without
+	// --yes, or by a scoped token that may not do it. Error codes tell those
+	// apart.
 	ExitRefused = 3
 	// ExitNotFound means the resource does not exist for this tenant.
 	ExitNotFound = 4
@@ -76,6 +78,16 @@ func outputWriteError(format string, args ...any) *ExitError {
 	return &ExitError{Code: ExitFailure, ErrCode: "output_error", Message: fmt.Sprintf(format, args...)}
 }
 
+// scopeDeniedCode is the error.code a refusal by authority carries.
+//
+// Two things produce it: the server's 403, mapped by exitForStatus, and the
+// CLI's own authority gate, which refuses a guarded verb for a scoped agent
+// token before the operation is attempted (see requireAuthority). They share
+// the name because they mean the same thing to a caller — "I may not do this,
+// however I ask" — and the same exit code, 3, that the confirmation refusal
+// uses.
+const scopeDeniedCode = "scope_denied"
+
 // exitForStatus maps an HTTP status onto the exit code and error code contract.
 //
 // 400 and 422 both mean "fix the invocation"; 401 and 403 both mean "you may
@@ -91,7 +103,7 @@ func exitForStatus(status int) (int, string) {
 	case http.StatusUnauthorized:
 		return ExitRefused, "unauthenticated"
 	case http.StatusForbidden:
-		return ExitRefused, "scope_denied"
+		return ExitRefused, scopeDeniedCode
 	case http.StatusNotFound:
 		return ExitNotFound, "not_found"
 	case http.StatusConflict:

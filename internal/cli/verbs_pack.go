@@ -11,7 +11,7 @@ import (
 	"github.com/kilaslab/kilas-flow/internal/nodepack"
 )
 
-// packVerbs are the pack verbs: `pack validate` is the only one in phase 1.
+// packVerbs are the pack verbs: `pack validate` is the only one.
 //
 // It is local — no HTTP, no server, Operation "" — because a pack is a file on
 // the machine the command runs on and the check an author needs before
@@ -20,7 +20,10 @@ import (
 // validator runs the real loader and the real registration against throwaway
 // registries.
 //
-// Deliberately absent: `pack install` (guarded, phase 2).
+// Deliberately absent: `pack install`. Design §4.2 marks it guarded, but the
+// pack surface is a local loader with **no server operation behind it**, so
+// there is nothing for a verb to drive: a guarded verb's two gates — --yes and
+// a tenant-wide key — protect a server operation, and an install has none.
 func packVerbs() []Verb {
 	return []Verb{
 		{

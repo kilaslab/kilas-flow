@@ -182,56 +182,73 @@ func TestServeVerbSignalsTheServerPath(t *testing.T) {
 	}
 }
 
-// TestPhaseOneCommandTree pins the whole phase-1 tree: exactly these verbs,
-// each with the operation id it drives.
+// TestPhaseOneCommandTree pins the tree this binary ships: the phase-1 verbs and
+// the guarded phase-2 additions of FEAT-m4d2y1, each with the operation id it
+// drives.
 //
 // It is the complete assertion the stage-3 test deliberately deferred, and it
 // is what makes the "one verb per operation" rule checkable: a verb renamed, a
 // verb registered with the wrong operation, or a verb the phase was supposed to
 // have and does not, fails here. The presence of `serve` is asserted too — it
 // is the server path, not a CLI verb, but it is registered so `help` lists it
-// and an unknown-word check cannot mistake it for a typo.
+// and an unknown-word check cannot mistake it for a typo. The guarded half of
+// the tree is also pinned by guardedInvocations in guard_test.go, which is what
+// checks the Guarded mark itself.
 func TestPhaseOneCommandTree(t *testing.T) {
 	want := map[string]string{
-		"serve":                   "",
-		"version":                 "",
-		"health":                  "get-health",
-		"ready":                   "get-ready",
-		"help":                    "",
-		"context":                 "",
-		"api":                     "",
-		"auth login":              "",
-		"auth logout":             "",
-		"auth whoami":             "get-me",
-		"workflow list":           "list-workflows",
-		"workflow get":            "get-workflow",
-		"workflow create":         "create-workflow",
-		"workflow versions":       "list-workflow-versions",
-		"workflow get-version":    "get-workflow-version",
-		"workflow publish-events": "list-workflow-publish-events",
-		"workflow export":         "export-workflow",
-		"workflow diagnostics":    "workflow-diagnostics",
-		"run":                     "run-workflow",
-		"exec list":               "list-executions",
-		"exec get":                "get-execution",
-		"exec trace":              "stream-execution-events",
-		"exec tail":               "stream-execution-events",
-		"exec cancel":             "cancel-execution",
-		"node list":               "list-node-types",
-		"node describe":           "list-node-types",
-		"node options":            "load-node-property-options",
-		"credential list":         "list-credentials",
-		"credential get":          "get-credential",
-		"credential test":         "test-credential",
-		"datastore list":          "list-datastores",
-		"datastore get":           "get-datastore",
-		"datastore rows":          "list-datastore-rows",
-		"datastore export":        "export-datastore-rows",
-		"schedule list":           "list-schedules",
-		"tenant list":             "list-tenants",
-		"tenant get":              "get-tenant",
-		"tenant users":            "list-tenant-users",
-		"pack validate":           "",
+		"serve":                    "",
+		"version":                  "",
+		"health":                   "get-health",
+		"ready":                    "get-ready",
+		"help":                     "",
+		"context":                  "",
+		"api":                      "",
+		"auth login":               "",
+		"auth logout":              "",
+		"auth whoami":              "get-me",
+		"workflow list":            "list-workflows",
+		"workflow get":             "get-workflow",
+		"workflow create":          "create-workflow",
+		"workflow versions":        "list-workflow-versions",
+		"workflow get-version":     "get-workflow-version",
+		"workflow publish-events":  "list-workflow-publish-events",
+		"workflow export":          "export-workflow",
+		"workflow diagnostics":     "workflow-diagnostics",
+		"workflow activate":        "activate-workflow",
+		"workflow deactivate":      "deactivate-workflow",
+		"workflow delete":          "delete-workflow",
+		"run":                      "run-workflow",
+		"exec list":                "list-executions",
+		"exec get":                 "get-execution",
+		"exec trace":               "stream-execution-events",
+		"exec tail":                "stream-execution-events",
+		"exec cancel":              "cancel-execution",
+		"node list":                "list-node-types",
+		"node describe":            "list-node-types",
+		"node options":             "load-node-property-options",
+		"credential list":          "list-credentials",
+		"credential get":           "get-credential",
+		"credential test":          "test-credential",
+		"credential create":        "create-credential",
+		"credential update":        "update-credential",
+		"credential delete":        "delete-credential",
+		"datastore list":           "list-datastores",
+		"datastore get":            "get-datastore",
+		"datastore rows":           "list-datastore-rows",
+		"datastore export":         "export-datastore-rows",
+		"datastore create":         "create-datastore",
+		"datastore rename":         "rename-datastore",
+		"datastore delete":         "delete-datastore",
+		"datastore clear":          "clear-datastore",
+		"datastore columns add":    "add-datastore-column",
+		"datastore columns rename": "rename-datastore-column",
+		"datastore columns drop":   "delete-datastore-column",
+		"schedule list":            "list-schedules",
+		"tenant list":              "list-tenants",
+		"tenant get":               "get-tenant",
+		"tenant users":             "list-tenant-users",
+		"tenant delete":            "delete-tenant",
+		"pack validate":            "",
 	}
 
 	// local are the verbs whose Operation names no API call: they either need

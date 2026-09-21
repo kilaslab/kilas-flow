@@ -46,12 +46,11 @@ invocation that starts with a flag (`-config`, `-version`, `-role`, `-h`) or
 that names no verb belongs to the server, and a CLI verb never parses the
 server's flags.
 
-## Command tree (phase 1)
+## Command tree
 
-Every row below exists in the binary, and the state column says so: it is kept
-because a later phase adds rows (`workflow activate`, `pack install`, the
-guarded verbs) and a reader has to be able to tell what is there from what is
-planned.
+Every row below exists in the binary, and the state column says so. A row
+marked *guarded* refuses to run without `--yes` **and** refuses a scoped agent
+token outright — see [Guardrails](#guardrails).
 
 | Verb | Operation id | State |
 | --- | --- | --- |
@@ -72,6 +71,9 @@ planned.
 | `kilasflow workflow publish-events` | `list-workflow-publish-events` | available |
 | `kilasflow workflow export` | `export-workflow` | available |
 | `kilasflow workflow diagnostics` | `workflow-diagnostics` | available |
+| `kilasflow workflow activate` | `activate-workflow` | available, *guarded* |
+| `kilasflow workflow deactivate` | `deactivate-workflow` | available, *guarded* |
+| `kilasflow workflow delete` | `delete-workflow` | available, *guarded* |
 | `kilasflow run` | `run-workflow` | available |
 | `kilasflow exec list` | `list-executions` | available |
 | `kilasflow exec get` | `get-execution` | available |
@@ -84,28 +86,39 @@ planned.
 | `kilasflow credential list` | `list-credentials` | available |
 | `kilasflow credential get` | `get-credential` | available |
 | `kilasflow credential test` | `test-credential` | available |
+| `kilasflow credential create` | `create-credential` | available, *guarded* |
+| `kilasflow credential update` | `update-credential` | available, *guarded* |
+| `kilasflow credential delete` | `delete-credential` | available, *guarded* |
 | `kilasflow datastore list` | `list-datastores` | available |
 | `kilasflow datastore get` | `get-datastore` | available |
 | `kilasflow datastore rows` | `list-datastore-rows` | available |
 | `kilasflow datastore export` | `export-datastore-rows` | available |
+| `kilasflow datastore create` | `create-datastore` | available, *guarded* |
+| `kilasflow datastore rename` | `rename-datastore` | available, *guarded* |
+| `kilasflow datastore delete` | `delete-datastore` | available, *guarded* |
+| `kilasflow datastore clear` | `clear-datastore` | available, *guarded* |
+| `kilasflow datastore columns add` | `add-datastore-column` | available, *guarded* |
+| `kilasflow datastore columns rename` | `rename-datastore-column` | available, *guarded* |
+| `kilasflow datastore columns drop` | `delete-datastore-column` | available, *guarded* |
 | `kilasflow schedule list` | `list-schedules` | available |
 | `kilasflow tenant list` | `list-tenants` | available |
 | `kilasflow tenant get` | `get-tenant` | available |
 | `kilasflow tenant users` | `list-tenant-users` | available |
+| `kilasflow tenant delete` | `delete-tenant` | available, *guarded* (operator credential) |
 | `kilasflow pack validate` | — (local; runs the pack loader) | available |
 
-Three things the design's tree lists are deliberately absent from this phase:
+Two things the design's tree lists are deliberately absent:
 
-- `kilasflow workflow activate|deactivate|delete` — *guarded*, and phase 2's,
-  where a scoped agent token exists to refuse them.
 - `kilasflow tenant api-keys` and `kilasflow pack install` — writes (minting a
-  credential for another tenant, and installing code), so they belong with the
-  guarded verbs in phase 2.
+  credential for another tenant, and installing code). The mint is reachable
+  through `kilasflow api create-tenant-api-key`; `pack install` has **no server
+  operation behind it at all** — the pack surface is a local loader — so there
+  is nothing for a verb to drive, guarded or not.
 - `kilasflow embed session create`, `kilasflow node icons|grammar`,
   `kilasflow credential types`, `kilasflow schedule create|update|delete`,
-  `kilasflow tenant create` — no phase-1 verb. There is a useful operation
-  behind each one and no caller that reaches for it often enough to justify a
-  name, so `kilasflow api <operation-id>` is the answer rather than a release.
+  `kilasflow tenant create` — no verb. There is a useful operation behind each
+  one and no caller that reaches for it often enough to justify a name, so
+  `kilasflow api <operation-id>` is the answer rather than a release.
   `kilasflow webhook list` is the one entry blocked on another ticket
   (`FEAT-77rveq`): the operation it would wrap (`GET /workflows/{id}/webhooks`,
   `list-workflow-webhooks`) is served today and is reachable through
@@ -113,11 +126,10 @@ Three things the design's tree lists are deliberately absent from this phase:
 
 The mutating verbs that have no command of their own — `workflow
 update|restore|import|duplicate|validate`, `schedule create|update|delete`, the
-datastore row writes, `tenant create|delete`, `create-tenant-api-key`,
-`create-tenant-user`, `revoke-api-key`, `pack install` — are reachable the same
-way. A verb is added when a caller has to reach for the operation often enough
-that naming it is worth the surface; until then the escape hatch is the answer,
-not a release.
+datastore row writes, `tenant create`, `create-tenant-user`, `revoke-api-key` —
+are reachable the same way. A verb is added when a caller has to reach for the
+operation often enough that naming it is worth the surface; until then the
+escape hatch is the answer, not a release.
 
 ## The escape hatch: `kilasflow api <operation-id>`
 
@@ -233,9 +245,10 @@ kilasflow auth logout                                   # remove the token, keep
 
 ## `kilasflow workflow`
 
-The read surface, plus `create`. Each verb addresses the stable path documented
-in the [API contract](/reference/api/) rather than resolving it from
-`/api/openapi.json` at call time: `workflow get` should be one request.
+The read surface, plus `create` and the guarded lifecycle verbs. Each verb
+addresses the stable path documented in the [API contract](/reference/api/)
+rather than resolving it from `/api/openapi.json` at call time: `workflow get`
+should be one request.
 
 ```bash
 kilasflow workflow list --limit 20 --json
@@ -246,6 +259,9 @@ kilasflow workflow get-version wf_01J8ZP wfv_01J8ZP
 kilasflow workflow publish-events wf_01J8ZP
 kilasflow workflow export wf_01J8ZP --format n8n
 kilasflow workflow diagnostics wf_01J8ZP --version-id wfv_01J8ZP
+kilasflow workflow activate wf_01J8ZP --yes      # publishes the endpoint
+kilasflow workflow deactivate wf_01J8ZP --yes
+kilasflow workflow delete wf_01J8ZP --yes
 ```
 
 - A listing's payload is `{items, count, nextCursor}`. The API is not uniform —
@@ -255,13 +271,18 @@ kilasflow workflow diagnostics wf_01J8ZP --version-id wfv_01J8ZP
 - `workflow create --file <path>|-` sends the document **unchanged**. A document
   that is not valid JSON is refused with exit 2 before a request is made.
 - `--quiet` on a listing prints one id per line; on `workflow create` it prints
-  the id the API named in its `Location` header.
+  the id the API named in its `Location` header; on `activate`, `deactivate` and
+  `delete` it prints the workflow id.
 - `workflow diagnostics` wraps an operation the contract page does not list
   (`GET /workflows/{id}/diagnostics`); the generated reference does.
-- Deliberately absent: `update`, `restore`, `import`, `duplicate`, `validate`,
-  `activate`, `deactivate`, `delete`. Activation and deletion are guarded and
-  belong to phase 2; every one of them is reachable today through
-  `kilasflow api <operation-id>`.
+- **`activate`, `deactivate` and `delete` are guarded.** Activating compiles the
+  latest revision and pins it as active, which is what publishes a public
+  endpoint; deactivating takes it offline; deleting destroys the workflow. Each
+  needs `--yes`, and each refuses a scoped agent token outright — see
+  [Guardrails](#guardrails). `delete` answers 204, so its `data` is
+  `{id, status}` rather than a resource.
+- Deliberately absent: `update`, `restore`, `import`, `duplicate`, `validate`.
+  Every one of them is reachable today through `kilasflow api <operation-id>`.
 
 ## `kilasflow run`
 
@@ -362,6 +383,9 @@ kilasflow node options httpRequest --property channel --credential cred_1
 kilasflow credential list --limit 20
 kilasflow credential get cred_01J8ZP
 kilasflow credential test cred_01J8ZP --quiet   # true / false
+kilasflow credential create --file smtp.json --yes --quiet   # the new id
+kilasflow credential update cred_01J8ZP --file smtp.json --yes
+kilasflow credential delete cred_01J8ZP --yes
 ```
 
 - No secret value is ever returned: the API's read projections leave it out, and
@@ -371,9 +395,18 @@ kilasflow credential test cred_01J8ZP --quiet   # true / false
   (`ok`, `detail`, `untestable`, and which fields came from storage rather than
   from the request); `--quiet` prints the API's own boolean, so
   `kilasflow credential test cred_1 --quiet && …` is a real branch.
-- Deliberately absent: `create`, `update`, `delete` (phase 2, guarded) and
-  `types` (the catalogue is reachable through `kilasflow api
-  list-credential-types`).
+- `create` and `update` take `--file <path>|-` and send the document
+  **unchanged**, the way `workflow create` does: the fields a credential type
+  declares are the server's, so a body that is not valid JSON is refused with
+  exit 2 before a request is made, and the verb never has to know a type's
+  shape. A field sent as the redaction placeholder keeps the stored secret.
+- **`create`, `update` and `delete` are guarded**: a credential is a secret every
+  workflow in the tenant can reach, so storing, replacing and removing one needs
+  `--yes` and a tenant-wide key — see [Guardrails](#guardrails). `delete`
+  answers 204, so its `data` is `{id, status}`.
+- Deliberately absent: `types` (the catalogue is reachable through
+  `kilasflow api list-credential-types`, and `kilasflow api
+  test-credential-payload` tests an unsaved one).
 
 ## `kilasflow datastore`
 
@@ -383,6 +416,13 @@ kilasflow datastore get ds_01J8ZP
 kilasflow datastore rows ds_01J8ZP --limit 50 --cursor cur_2
 kilasflow datastore export ds_01J8ZP > rows.csv
 kilasflow datastore export ds_01J8ZP --out rows.csv --json
+kilasflow datastore create orders --yes --quiet          # the new id
+kilasflow datastore rename ds_01J8ZP orders-2026 --yes
+kilasflow datastore columns add ds_01J8ZP note --type string --yes
+kilasflow datastore columns rename ds_01J8ZP note memo --yes
+kilasflow datastore columns drop ds_01J8ZP memo --yes
+kilasflow datastore clear ds_01J8ZP --yes                # reports the rows removed
+kilasflow datastore delete ds_01J8ZP --yes
 ```
 
 - `datastore rows` reads one page of a datastore's rows. The API's row filter
@@ -393,9 +433,19 @@ kilasflow datastore export ds_01J8ZP --out rows.csv --json
   default is the streaming form: `--out -` is what you get without the flag, so
   `> rows.csv` works, and `--out <path>` writes the file `0600` and reports
   `{path, bytes}`. The path is `GET /datastores/{id}/rows/export`.
-- Row writes, `create`, `rename`, `delete`, `columns` and `clear` have no verb:
-  the writes are phase 2's, and the rest are reachable through
-  `kilasflow api <operation-id>`.
+- **`create`, `rename`, `delete`, `clear` and the three column verbs are
+  guarded.** They are the schema half of the surface, and a data table is what
+  every workflow in the tenant reads and writes: each needs `--yes` and a
+  tenant-wide key — see [Guardrails](#guardrails).
+- `create` takes the name as its argument, because the API's own description of
+  the operation is that columns are added afterwards. `columns add` takes the
+  column name and `--type string|number|boolean|date`; `columns rename` takes
+  the datastore, the column and the new name; `columns drop` takes the datastore
+  and the column. `delete` and `columns drop` answer 204, so their `data` is
+  `{id, status}`; `clear` reports the rows it removed as `{deleted}`.
+- Row writes (`insert`, `update`, `upsert`, `delete`, `increment`, and the CSV
+  import) have no verb: they are row data rather than the tenant's schema, and
+  they are reachable through `kilasflow api <operation-id>`.
 
 ## `kilasflow schedule`
 
@@ -417,6 +467,7 @@ credential** — an API key scoped to the operator tenant.
 kilasflow tenant list
 kilasflow tenant get acme
 kilasflow tenant users acme
+kilasflow tenant delete acme --yes          # irreversible, operator only
 ```
 
 - The server is what enforces the operator requirement: the verb sends the
@@ -425,12 +476,21 @@ kilasflow tenant users acme
   quietly filtered listing.
 - `tenant users` returns accounts without any password hash; the API's own
   projection has nowhere to put one.
-- Deliberately absent: `tenant create` (a write, phase 2) and `tenant api-keys`.
-  The only key operation under a tenant is `create-tenant-api-key`, which mints a
-  credential for someone else — an operator action, not something to hand an
-  agent as an ergonomic verb. `kilasflow api create-tenant-api-key` reaches it,
-  and listing the caller's own keys is a different operation
-  (`kilasflow api list-api-keys`, `GET /api-keys`).
+- **`tenant delete` is guarded** on top of the operator requirement: it deletes
+  the tenant and everything it owns — executions and their payload files,
+  workflows and their revisions, credentials, schedules, datastores and their
+  physical tables, accounts and keys — so it needs `--yes`, and a scoped agent
+  token is refused before the deletion is attempted. It is idempotent and
+  answers with what it removed rather than 204: `data` is
+  `{tenantId, tenantRemoved, removed, datastoreTables, binaries}`, and repeating
+  the call until every count is zero and `tenantRemoved` is false is how a
+  client that lost the first answer confirms the deletion finished.
+- Deliberately absent: `tenant create` (a write no guarded verb needs yet) and
+  `tenant api-keys`. The only key operation under a tenant is
+  `create-tenant-api-key`, which mints a credential for someone else — an
+  operator action, not something to hand an agent as an ergonomic verb.
+  `kilasflow api create-tenant-api-key` reaches it, and listing the caller's own
+  keys is a different operation (`kilasflow api list-api-keys`, `GET /api-keys`).
 
 ## `kilasflow pack validate`
 
@@ -455,7 +515,9 @@ kilasflow pack validate ./packs/telegram/pack.json --json
   `error.code = "invalid_pack"`, so a pipeline that installs a pack stops. The
   complete list travels under `error.detail.issues`, because the one-line message
   can only name the first.
-- Deliberately absent: `pack install` (guarded, phase 2).
+- Deliberately absent: `pack install`. The design marks it guarded, but the pack
+  surface is a **local loader with no server operation behind it**, so there is
+  nothing for a verb to drive and nothing for the guard to protect.
 
 ## Output contract
 
@@ -517,7 +579,7 @@ whether to fix the call, stop and ask, wait, or report.
 | 0 | success | continue |
 | 1 | error (5xx, network, unexpected shape) | report, do not retry blindly |
 | 2 | usage error | fix the invocation |
-| 3 | **refused by authority** (`403`, `401`, or a guarded verb without `--yes`) | do not retry; ask the user or drop the step |
+| 3 | **refused by authority** (`403`, `401`, a guarded verb without `--yes`, or a guarded verb on a scoped token) | do not retry; ask the user or drop the step |
 | 4 | not found (`404`) | the resource does not exist for this tenant |
 | 5 | conflict (`409`) — optimistic concurrency, idempotency mismatch | re-read, then decide |
 | 6 | not ready (`503`, or `429`) — migrations outstanding, subsystem unconfigured, throttled | wait, then retry |
@@ -531,7 +593,7 @@ refusals share it and are told apart by `error.code`:
 
 | `error.code` | Means |
 | --- | --- |
-| `scope_denied` | a `403`: this credential may not do this |
+| `scope_denied` | a `403`, or a guarded verb called with a scoped agent token: this credential may not do this, whatever the flags |
 | `unauthenticated` | a `401`: no usable credential was presented |
 | `confirmation_required` | a guarded verb was called without `--yes` |
 
@@ -608,21 +670,38 @@ the thing the caller is reading.
 ## Guardrails
 
 A *guarded* verb does something that reaches beyond the caller: activating a
-workflow publishes a public endpoint; deleting one destroys it. Guarded verbs
-refuse to run without `--yes`, exiting 3 with
+workflow publishes a public endpoint; deleting one destroys it; storing a
+credential hands every workflow in the tenant a secret. Guarded verbs have **two
+gates**, and they answer different questions.
+
+**Consent: `--yes`.** A guarded verb refuses to run without it, exiting 3 with
 `error.code = "confirmation_required"` and a message naming what the verb does.
+Consent is never inferred — not from `--json`, not from `--quiet`, not from
+stdout being a pipe rather than a terminal. Automation that means it says so, and
+an agent passes `--yes` only on an explicit instruction from the user, never
+because the call failed once.
 
-**No verb in this phase is guarded.** Every operation the design marks guarded —
-`workflow activate|deactivate|delete`, `credential create|update|delete`,
-`datastore delete`, `pack install`, `tenant delete` — belongs to phase 2 or is
-blocked on another ticket, so `--yes` is accepted by every verb today and has no
-effect. The contract above is what those verbs will follow, and it is written
-down now because an agent's instructions have to be able to promise it. The
-primitive itself is implemented and proven: `--yes` is parsed, an unguarded verb
-ignores it, and a verb marked guarded refuses without it — the guard's own tests
-exercise that refusal against a verb registered inside the test, so the day
-phase 2 marks the first real verb, the contract is already the behaviour.
+**Authority: a tenant-wide key.** A guarded verb also refuses a **scoped agent
+token**, whatever the flags say, exiting 3 with `error.code = "scope_denied"`
+and a message naming what the verb would do and what would be allowed to do it.
+`--yes` is the caller's consent, not their authority: a key minted for one
+workflow cannot publish a public endpoint by being confirmed twice. The check is
+the `scopes` list on the caller's own identity (`auth whoami` / `GET
+/api/v1/auth/me`) — a tenant-wide key carries none — and it is made **before**
+the verb's operation, so a scoped token never reaches a mutation the server
+would then have to refuse.
 
-`--yes` is never implied by `--json`, by `--quiet`, or by stdout not being a
-terminal. Automation that means it says so, and an agent passes `--yes` only
-on an explicit instruction from the user — never because the call failed once.
+The order of the two matters in one direction: without `--yes` nothing is sent
+at all, not even the identity read, because a refusal about consent costs the
+caller nothing. With `--yes` on a scoped token, the answer is
+`confirmation_required`'s sibling `scope_denied`: the caller can confirm all it
+likes and it will still be refused, so the code it gets back is the one that
+means "drop this step".
+
+Every guarded verb carries its refusal sentence in the verb registry, and
+`kilasflow help` marks each of them `[requires --yes]`. As of this build they
+are: `workflow activate|deactivate|delete`,
+`credential create|update|delete`, `datastore create|rename|delete|columns
+add|columns rename|columns drop|clear`, and `tenant delete`. `pack install` also
+carries the mark in the design but has no server operation behind it — the pack
+surface is a local loader — so there is nothing for a verb to guard yet.
