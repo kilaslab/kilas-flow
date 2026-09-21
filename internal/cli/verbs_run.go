@@ -41,6 +41,7 @@ func runVerbs() []Verb {
 			Path:      "run",
 			Operation: "run-workflow",
 			Summary:   "start a workflow run (`--wait` to watch it finish)",
+			Args:      []Arg{arg("workflow id")},
 			Flags:     registerRunFlags,
 			Run:       runWorkflow,
 			Human:     humanExecution,

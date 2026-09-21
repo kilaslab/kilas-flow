@@ -19,6 +19,13 @@ type Verb struct {
 	Operation string
 	Guarded   bool
 	Refusal   string
+	// Args names the verb's positional arguments, in the order it takes them,
+	// using the verb's own name for each ("workflow id", the way its usage
+	// error says it). It is the command tree's declaration of its own shape:
+	// the MCP adapter publishes each one as a named property of the tool, and a
+	// test drives every verb with none of its declared arguments to prove the
+	// declaration matches what the verb's own code demands.
+	Args []Arg
 	// Flags registers verb-specific flags on the FlagSet and returns whatever
 	// the verb's Run needs to read them.
 	Flags func(*flag.FlagSet) any
@@ -29,6 +36,24 @@ type Verb struct {
 	// JSON.
 	Human func(io.Writer, any)
 }
+
+// Arg is one positional argument in a verb's own order.
+type Arg struct {
+	// Name is what the verb calls the argument in its usage errors, and the
+	// name the MCP adapter derives the property name from.
+	Name string
+	// Optional marks an argument the verb accepts but does not require,
+	// because a flag answers the same question: the escape hatch's operation
+	// id, which `--list` replaces.
+	Optional bool
+}
+
+// arg names a positional argument the verb insists on.
+func arg(name string) Arg { return Arg{Name: name} }
+
+// optionalArg names a positional argument the verb accepts but does not
+// require.
+func optionalArg(name string) Arg { return Arg{Name: name, Optional: true} }
 
 // ServeVerb is the explicit spelling of the server path, `kilasflow serve`. The
 // server is the binary's default meaning, not a CLI command: the word is
@@ -78,6 +103,7 @@ func registry() []Verb {
 	verbs = append(verbs, tenantVerbs()...)
 	verbs = append(verbs, packVerbs()...)
 	verbs = append(verbs, skillsVerbs()...)
+	verbs = append(verbs, mcpVerbs()...)
 
 	return verbs
 }

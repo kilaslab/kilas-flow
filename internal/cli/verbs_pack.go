@@ -29,6 +29,7 @@ func packVerbs() []Verb {
 		{
 			Path:    "pack validate",
 			Summary: "check a pack directory or a pack.json the way the server would load it",
+			Args:    []Arg{arg("pack directory or pack.json")},
 			Run:     runPackValidate,
 			Human:   humanPackValidation,
 		},

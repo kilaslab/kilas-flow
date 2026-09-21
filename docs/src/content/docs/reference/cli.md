@@ -21,9 +21,9 @@ Two rules keep it honest:
   no operation that returns a single node and reading a 90-entry catalogue to
   answer "what does httpRequest take?" is the wrong shape for an agent's context.
   The verbs that are local rather than remote — `version`, `help`, `context`,
-  `api <operation-id>`, `auth login`, `auth logout`, `pack validate` and the five
-  `skills` verbs — either need no server or reach several operations, and each
-  says so in its own section below.
+  `api <operation-id>`, `auth login`, `auth logout`, `pack validate`, the five
+  `skills` verbs and `mcp serve` — either need no server or reach several
+  operations, and each says so in its own section below.
 - **`kflow` is not an alias.** The stale `bin/kflow` binary was a build of the
   server under an older name. It was deleted rather than kept as a second
   entry point, so there is one name to document and one to remember.
@@ -111,6 +111,7 @@ token outright — see [Guardrails](#guardrails).
 | `kilasflow tenant delete` | `delete-tenant` | available, *guarded* (operator credential) |
 | `kilasflow pack validate` | — (local; runs the pack loader) | available |
 | `kilasflow skills list` \| `show` \| `install` \| `check` \| `export` | — (local; the bundle embedded in the binary) | available |
+| `kilasflow mcp serve` | — (local; publishes the command tree as MCP tools on stdin/stdout) | available |
 
 Two things the design's tree lists are deliberately absent:
 
@@ -638,6 +639,62 @@ kilasflow skills export --format tar --out kilasflow-skills.tar
   that installs from a checkout or the network, which would be a second source of
   truth for a bundle whose whole point is that the binary is the source.
 
+## `kilasflow mcp serve`
+
+The Model Context Protocol adapter. It publishes this binary's command tree as
+MCP **tools** over stdio, so a harness that speaks MCP drives exactly the verbs a
+shell drives. It is a verb of this binary rather than a second executable, so the
+shipped image carries one command.
+
+```bash
+kilasflow mcp serve --url http://127.0.0.1:8080 --token "$KILASFLOW_TOKEN"
+```
+
+- **One tool per verb**, named after the verb's path with spaces replaced by
+  underscores (`workflow_get`, `datastore_columns_rename`). A tool's
+  `inputSchema` is generated from the verb's own metadata, never from a second
+  list: the flags its `Flags` function registers become properties — so a flag
+  added to a verb appears in the schema without this page being edited — and the
+  positional arguments the verb declares (`workflow id`, `revision id`) become
+  required properties.
+- **A call is a CLI invocation.** The arguments are turned back into argv and
+  dispatched through the same `Verb` the CLI dispatches, so the same guard, the
+  same configuration chain and the same envelope apply. The result is that
+  envelope verbatim in one text block, with `isError` set when the command
+  failed: a `404` arrives as `error.code = "not_found"`, not as a protocol
+  error.
+- **Guarded verbs take `confirm: true`** where the CLI takes `--yes`, and only
+  there. Without it the call is refused by the same guard — the result carries
+  `error.code = "confirmation_required"` and **nothing is sent**, not even the
+  identity read. The adapter passes `--yes` only when `confirm` is true, and it
+  never infers consent.
+- **The server's configuration is the tool call's configuration.** `--url`,
+  `--token`, `--config` and `KILASFLOW_URL`/`KILASFLOW_TOKEN` are resolved once,
+  when `mcp serve` starts, and every tool call inherits what was resolved; none
+  of them is a tool property, so a credential never travels through a client's
+  transcript. `--timeout` is the deadline for one tool call.
+- **stdin belongs to the protocol.** `--file -` and `--body -` read standard
+  input, and on `mcp serve` that stream is the transport: a call asking for `-`
+  is refused with a message naming the way out rather than swallowing the next
+  request.
+- **Descriptions come from the bundle.** A tool's description is the verb's own
+  summary, plus its refusal sentence when it is guarded, plus the name of the
+  skill in `skills/index.json` that teaches it — so the adapter cannot describe a
+  capability the CLI does not have, and a renamed skill shows up in the tool list
+  without anything here being edited.
+- **What it speaks**: the `initialize` handshake and `tools/list`, `tools/call`
+  and `ping`, over newline-delimited JSON-RPC on stdin and stdout. The protocol
+  revisions it supports are the handshake ones — `2025-11-25`, `2025-06-18` and
+  `2025-03-26` — which describe tools identically; a client asking for one of
+  them has its own version echoed back, and anything else is answered with the
+  newest. The modern `initialize`-less revisions (`2026-07-28` and later) are out
+  of scope here.
+- **Deliberately not shipped**: the streamable HTTP transport, which design §6
+  puts after stdio; `resources`, `prompts`, sampling and elicitation, which the
+  adapter answers with `method not found` rather than declaring capabilities it
+  does not implement; and the two verbs that are this process's own server modes
+  (`serve` and `mcp serve`), which are not published as tools.
+
 ## Output contract
 
 One JSON envelope per invocation, on stdout, when `--json` is passed **or**
@@ -767,7 +824,7 @@ The token is a secret and is treated as one:
 
 ## The exceptions to "always one envelope"
 
-Five verbs write bytes rather than an envelope, because buffering them would
+Six verbs write bytes rather than an envelope, because buffering them would
 defeat the point:
 
 - `kilasflow exec tail` emits **NDJSON**: one event object per line
@@ -792,6 +849,11 @@ defeat the point:
   `data.content`, and `--quiet` prints its path. It is the one streamed verb
   whose stream is silent by default rather than on a flag, and it is here because
   the alternative writes JSON into a file named `.md`.
+- `kilasflow mcp serve` writes **JSON-RPC frames**, because stdout is the
+  protocol's transport: a client reads one message per line and nothing else
+  may appear there. The adapter's own diagnostics go to stderr, and so does a
+  failure — a frame stream with an envelope appended to it would be a stream the
+  client can no longer parse.
 
 Each is documented here and in the verb's own `--help`. For a streamed
 invocation a failure is reported on **stderr** and in the exit code rather than

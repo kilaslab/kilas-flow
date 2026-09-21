@@ -43,6 +43,7 @@ func skillsVerbs() []Verb {
 		{
 			Path:    "skills show",
 			Summary: "print one skill's SKILL.md, or one of its reference files (`--reference <file>`)",
+			Args:    []Arg{arg("skill name")},
 			Flags:   registerSkillsShowFlags,
 			Run:     runSkillsShow,
 		},

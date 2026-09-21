@@ -33,6 +33,7 @@ func debugVerbs() []Verb {
 			Path:      "debug eval",
 			Operation: "eval-expression",
 			Summary:   "evaluate an expression against an execution's stored node outputs (`--execution <id>`, `--node <nodeId>`)",
+			Args:      []Arg{arg("expression")},
 			Flags:     registerEvalFlags,
 			Run:       runDebugEval,
 			Human:     humanEvalResult,

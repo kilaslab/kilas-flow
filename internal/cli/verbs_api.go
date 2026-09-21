@@ -23,6 +23,7 @@ func apiVerbs() []Verb {
 		{
 			Path:    "api",
 			Summary: "call any operation the running server serves, by operation id (`--list` to enumerate)",
+			Args:    []Arg{optionalArg("operation id")},
 			Flags:   registerAPIFlags,
 			Run:     runAPI,
 			Human:   humanAPIResult,

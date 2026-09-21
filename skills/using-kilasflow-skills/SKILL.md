@@ -141,6 +141,8 @@ kilasflow auth whoami               get-me                             print the
 kilasflow workflow list             list-workflows                     list workflows, newest first (--limit, --cursor)
 kilasflow workflow get              get-workflow                       read one workflow by id
 kilasflow workflow create           create-workflow                    create a workflow from a canonical document (--file <path>|-)
+kilasflow workflow validate         validate-workflow-document         check a draft document the way the API would, saving nothing (--file <path>|-)
+kilasflow workflow duplicate        duplicate-workflow                 copy a workflow (--name <name> to rename the copy)
 kilasflow workflow versions         list-workflow-versions             list a workflow's revisions (--limit, --cursor)
 kilasflow workflow get-version      get-workflow-version               read one revision of a workflow, with its document
 kilasflow workflow publish-events   list-workflow-publish-events       read a workflow's publish audit trail
@@ -153,8 +155,10 @@ kilasflow run                       run-workflow                       start a w
 kilasflow exec list                 list-executions                    list executions, newest first (--workflow, --status, --trigger, --limit, --cursor)
 kilasflow exec get                  get-execution                      read one execution, with its node-run trace
 kilasflow exec cancel               cancel-execution                   request cancellation of a queued or running execution
+kilasflow exec retry                retry-execution                    start a fresh execution of the same workflow, input and trigger as one that finished
 kilasflow exec trace                stream-execution-events            collect an execution's events into one envelope, stopping at its outcome
 kilasflow exec tail                 stream-execution-events            stream an execution's events as they arrive (one object per line; the documented exception)
+kilasflow debug eval                eval-expression                    evaluate an expression against an execution's stored node outputs (--execution <id>, --node <nodeId>)
 kilasflow node list                 list-node-types                    list the node catalogue the server will run
 kilasflow node describe             list-node-types                    print one node type's definition from the catalogue
 kilasflow node options              load-node-property-options         load a property's selectable values from the service that owns them (--property, --version, --mode, --credential)
@@ -186,6 +190,7 @@ kilasflow skills show               local                              print one
 kilasflow skills install            local                              install the bundle into a harness directory (--target, --scope, --force, --dry-run)
 kilasflow skills check              local                              compare an installed bundle with this binary's and exit non-zero on drift
 kilasflow skills export             local                              write the bundle as the harness index (--format json) or a tarball (--format tar)
+kilasflow mcp serve                 local                              serve the Model Context Protocol on stdin and stdout, one tool per verb
 ```
 <!-- /generated:command-reference -->
 

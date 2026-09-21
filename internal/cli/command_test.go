@@ -194,6 +194,11 @@ func TestServeVerbSignalsTheServerPath(t *testing.T) {
 // and an unknown-word check cannot mistake it for a typo. The guarded half of
 // the tree is also pinned by guardedInvocations in guard_test.go, which is what
 // checks the Guarded mark itself.
+//
+// `mcp serve` is the same kind of entry as `serve`: the MCP adapter's own mode,
+// registered so the shipped binary carries one command (FEAT-yxwyav). It drives
+// the verbs rather than naming an operation, which is why it is in local with
+// serve.
 func TestPhaseOneCommandTree(t *testing.T) {
 	want := map[string]string{
 		"serve":                    "",
@@ -258,6 +263,7 @@ func TestPhaseOneCommandTree(t *testing.T) {
 		"skills install":           "",
 		"skills check":             "",
 		"skills export":            "",
+		"mcp serve":                "",
 	}
 
 	// local are the verbs whose Operation names no API call: they either need
@@ -268,6 +274,9 @@ func TestPhaseOneCommandTree(t *testing.T) {
 		"api": true, "auth login": true, "auth logout": true, "pack validate": true,
 		"skills list": true, "skills show": true, "skills install": true,
 		"skills check": true, "skills export": true,
+		// The MCP adapter is the process's own mode, like serve: it drives the
+		// verbs rather than being one of the operations they name.
+		"mcp serve": true,
 	}
 
 	registered := make(map[string]Verb, len(want))
