@@ -1,7 +1,7 @@
 ---
 id: FEAT-x5qqpm
 title: 'Agent skills bundle v1: the domain skills, generated index, honest ''Not shipped yet'' sections'
-status: todo
+status: doing
 priority: medium
 labels:
     - agent
@@ -11,7 +11,7 @@ deps:
 parent: EPIC-r0yg5q
 phase: p1
 created: "2026-09-20T07:47:52Z"
-updated: "2026-09-20T07:47:52Z"
+updated: "2026-09-21T00:56:45Z"
 ---
 
 ## Scope
