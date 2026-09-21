@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -40,24 +41,58 @@ type VersionPage struct {
 // actorContextKey carries the identity a write should be attributed to.
 type actorContextKey struct{}
 
+// The two kinds an audit row records. They name the authentication path rather
+// than a role, because that is the fact the row can be trusted to carry: a
+// person signed in, or an API key presented itself.
+const (
+	ActorKindUser = "user"
+	ActorKindKey  = "key"
+)
+
+// Actor is the identity a workflow write is attributed to.
+//
+// Every field is optional on purpose. An installation with authentication
+// disabled resolves no principal at all, and a write with no actor is recorded
+// as having none: an audit trail that names whoever was convenient is worth
+// less than one that says nothing rather than a name nobody chose.
+type Actor struct {
+	// Kind is ActorKindUser for a signed-in person and ActorKindKey for an API
+	// key. Empty means the caller was not identified.
+	Kind string
+	// Label is the person's email or the key's name.
+	Label string
+	// KeyID is the key's identifier. It is empty for a session, which has no
+	// key, and it is what still names the actor when two keys share a label.
+	KeyID string
+	// Meta is what the caller reported using to make the write, today the
+	// skills an agent listed in X-KilasFlow-Skills-Used. It is stored as JSON
+	// on the revision the write creates.
+	Meta []string
+}
+
+// empty reports whether anything at all is known about the caller.
+func (actor Actor) empty() bool {
+	return actor.Kind == "" && actor.Label == "" && actor.KeyID == "" && len(actor.Meta) == 0
+}
+
 // WithActor tags a context with the identity responsible for a write.
 //
 // It is a context value rather than a parameter on every method because the
-// main API has no authentication yet: today nothing populates it, and when
-// V2-p8-1 lands, auth sets it once at the request boundary instead of
-// threading an actor through signatures that would otherwise all have to
-// change at once.
-func WithActor(ctx context.Context, actor string) context.Context {
-	if actor == "" {
+// actor is a property of the request, not of the operation: the API sets it
+// once at the boundary, and the append paths read it, instead of every
+// signature between them carrying a parameter that most callers would pass
+// empty.
+func WithActor(ctx context.Context, actor Actor) context.Context {
+	if actor.empty() {
 		return ctx
 	}
 	return context.WithValue(ctx, actorContextKey{}, actor)
 }
 
-// ActorFrom returns the identity a write is attributed to, or empty when the
-// caller is genuinely unknown.
-func ActorFrom(ctx context.Context) string {
-	actor, _ := ctx.Value(actorContextKey{}).(string)
+// ActorFrom returns the identity a write is attributed to, or the zero Actor
+// when the caller is genuinely unknown.
+func ActorFrom(ctx context.Context) Actor {
+	actor, _ := ctx.Value(actorContextKey{}).(Actor)
 	return actor
 }
 
@@ -147,6 +182,16 @@ func versionSummary(model workflowVersionModel, latestRevision int, publishedID 
 	if model.CreatedBy != nil {
 		summary.CreatedBy = *model.CreatedBy
 	}
+	if model.ActorKind != nil {
+		summary.ActorKind = *model.ActorKind
+	}
+	if model.ActorLabel != nil {
+		summary.ActorLabel = *model.ActorLabel
+	}
+	if model.ActorKeyID != nil {
+		summary.ActorKeyID = *model.ActorKeyID
+	}
+	summary.ActorMeta = decodeActorMeta(model.ActorMeta)
 	return summary
 }
 
@@ -225,8 +270,12 @@ func (store *GORMWorkflowStore) RestoreVersion(ctx context.Context, tenant Tenan
 //
 // diagnostics is the import report the revision was created with, and is nil
 // for every writer that is not an import.
-func appendVersion(tx *gorm.DB, tenant TenantScope, model workflowModel, definition []byte, document workflow.Document, diagnostics []byte, label *string, actor string) (workflowVersionModel, error) {
+func appendVersion(tx *gorm.DB, tenant TenantScope, model workflowModel, definition []byte, document workflow.Document, diagnostics []byte, label *string, actor Actor) (workflowVersionModel, error) {
 	versionID, err := workflow.NewID("wfv")
+	if err != nil {
+		return workflowVersionModel{}, err
+	}
+	meta, err := encodeActorMeta(actor.Meta)
 	if err != nil {
 		return workflowVersionModel{}, err
 	}
@@ -243,14 +292,52 @@ func appendVersion(tx *gorm.DB, tenant TenantScope, model workflowModel, definit
 		// by an importer when they were restored by hand.
 		Diagnostics: diagnostics,
 		Label:       label,
+		ActorMeta:   meta,
 	}
-	if actor != "" {
-		version.CreatedBy = &actor
+	if actor.Kind != "" {
+		version.ActorKind = &actor.Kind
+	}
+	if actor.Label != "" {
+		version.ActorLabel = &actor.Label
+		// CreatedBy is the label a client already reads under its own name. It
+		// is written beside ActorLabel rather than instead of it so an existing
+		// consumer of the history listing keeps working unchanged.
+		version.CreatedBy = &actor.Label
+	}
+	if actor.KeyID != "" {
+		version.ActorKeyID = &actor.KeyID
 	}
 	if err := tx.Create(&version).Error; err != nil {
 		return workflowVersionModel{}, fmt.Errorf("create workflow version: %w", err)
 	}
 	return version, nil
+}
+
+// encodeActorMeta renders what a caller reported about a write as the JSON the
+// column stores, and nil when it reported nothing at all.
+func encodeActorMeta(meta []string) ([]byte, error) {
+	if len(meta) == 0 {
+		return nil, nil
+	}
+	encoded, err := json.Marshal(meta)
+	if err != nil {
+		return nil, fmt.Errorf("encode actor meta: %w", err)
+	}
+	return encoded, nil
+}
+
+// decodeActorMeta reads that JSON back, and answers nothing for a column that
+// holds nothing or holds something this build cannot read: a listing is not the
+// place to fail because one row's meta was written by a different version.
+func decodeActorMeta(encoded []byte) []string {
+	if len(encoded) == 0 {
+		return nil
+	}
+	var meta []string
+	if err := json.Unmarshal(encoded, &meta); err != nil {
+		return nil
+	}
+	return meta
 }
 
 // ListPublishEvents returns a workflow's publish audit trail, newest first.
@@ -273,16 +360,18 @@ func (store *GORMWorkflowStore) ListPublishEvents(ctx context.Context, tenant Te
 		events = append(events, workflow.PublishEvent{
 			WorkflowID: model.WorkflowID, VersionID: model.VersionID,
 			Action: workflow.PublishAction(model.Action), Actor: model.Actor,
+			ActorKind: model.ActorKind, ActorLabel: model.ActorLabel, ActorKeyID: model.ActorKeyID,
 			Reason: model.Reason, CreatedAt: model.CreatedAt,
 		})
 	}
 	return events, nil
 }
 
-func appendPublishEvent(tx *gorm.DB, tenant TenantScope, workflowID, versionID string, action workflow.PublishAction, actor, reason string) error {
+func appendPublishEvent(tx *gorm.DB, tenant TenantScope, workflowID, versionID string, action workflow.PublishAction, actor Actor, reason string) error {
 	event := workflowPublishEventModel{
 		TenantID: tenant.ID, WorkflowID: workflowID, VersionID: versionID,
-		Action: string(action), Actor: actor, Reason: reason,
+		Action: string(action), Actor: actor.Label, Reason: reason,
+		ActorKind: actor.Kind, ActorLabel: actor.Label, ActorKeyID: actor.KeyID,
 		CreatedAt: time.Now().UTC(),
 	}
 	if err := tx.Create(&event).Error; err != nil {

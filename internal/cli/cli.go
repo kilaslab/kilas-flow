@@ -277,15 +277,24 @@ func requireAuthority(ctx *Context, verb Verb) error {
 // newClient builds a client whose requests are bounded by --timeout.
 func newClient(flags *GlobalFlags, base, token string) *Client {
 	timeout := defaultTimeout
+	skills := []string(nil)
 	if flags != nil && flags.Timeout > 0 {
 		timeout = flags.Timeout
 	}
+	if flags != nil {
+		for _, name := range strings.Split(flags.SkillsUsed, ",") {
+			if trimmed := strings.TrimSpace(name); trimmed != "" {
+				skills = append(skills, trimmed)
+			}
+		}
+	}
 
 	return &Client{
-		BaseURL: strings.TrimRight(base, "/"),
-		Token:   token,
-		HTTP:    &http.Client{Timeout: timeout},
-		Now:     time.Now,
+		BaseURL:    strings.TrimRight(base, "/"),
+		Token:      token,
+		HTTP:       &http.Client{Timeout: timeout},
+		Now:        time.Now,
+		SkillsUsed: skills,
 	}
 }
 

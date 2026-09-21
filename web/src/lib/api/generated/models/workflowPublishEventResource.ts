@@ -6,11 +6,18 @@
  * OpenAPI spec version: 0.1.0-dev
  */
 import type { WorkflowPublishEventResourceAction } from './workflowPublishEventResourceAction';
+import type { WorkflowPublishEventResourceActorKind } from './workflowPublishEventResourceActorKind';
 
 export interface WorkflowPublishEventResource {
   action: WorkflowPublishEventResourceAction;
   /** Who acted, where the actor is known */
   actor?: string;
+  /** Identifier of the API key that acted. Absent for a session. */
+  actorKeyId?: string;
+  /** What kind of caller acted: user for a signed-in person, key for an API key. Absent when the publish predates attribution or arrived unauthenticated. */
+  actorKind?: WorkflowPublishEventResourceActorKind;
+  /** The actor's email address or API key name, where one is known */
+  actorLabel?: string;
   createdAt: string;
   reason?: string;
   /** For a restore, the revision that was restored from */

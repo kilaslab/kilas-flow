@@ -10,6 +10,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"github.com/kilaslab/kilas-flow/internal/auth"
 	"github.com/kilaslab/kilas-flow/internal/execution"
 	"github.com/kilaslab/kilas-flow/internal/idempotency"
 	"github.com/kilaslab/kilas-flow/internal/node"
@@ -145,7 +146,10 @@ func (input workflowDocumentInput) document(id string) workflow.Document {
 }
 
 type createWorkflowInput struct {
-	Body workflowDocumentInput
+	// SkillsUsed is what the caller reported using to make this write. It is
+	// recorded on the revision it creates.
+	SkillsUsed string `header:"X-KilasFlow-Skills-Used" doc:"Comma-separated names of the skills an agent used to make this call, recorded on the revision it creates"`
+	Body       workflowDocumentInput
 }
 
 type workflowPathInput struct {
@@ -171,6 +175,10 @@ type WorkflowVersionSummaryResource struct {
 	SchemaVersion int       `json:"schemaVersion"`
 	Label         string    `json:"label,omitempty" doc:"What a person called this revision, when one was named"`
 	CreatedBy     string    `json:"createdBy,omitempty" doc:"Who saved this revision, where the author is known"`
+	ActorKind     string    `json:"actorKind,omitempty" enum:"user,key" doc:"What kind of caller saved this revision: user for a signed-in person, key for an API key. Absent when the write predates attribution or arrived unauthenticated."`
+	ActorLabel    string    `json:"actorLabel,omitempty" doc:"The actor's email address or API key name, where one is known"`
+	ActorKeyID    string    `json:"actorKeyId,omitempty" doc:"Identifier of the API key that saved this revision, so a reused key name still names the key that acted. Absent for a session."`
+	ActorMeta     []string  `json:"actorMeta,omitempty" doc:"What the caller reported using to make the write, from the X-KilasFlow-Skills-Used header"`
 	CreatedAt     time.Time `json:"createdAt"`
 	Draft         bool      `json:"draft" doc:"True for the newest revision, the one an editor is working on"`
 	Published     bool      `json:"published" doc:"True for the revision production traffic runs. Stated by the server so a client never infers publication by comparing identifiers."`
@@ -188,6 +196,9 @@ type WorkflowPublishEventResource struct {
 	VersionID  string    `json:"versionId" doc:"For a restore, the revision that was restored from"`
 	Action     string    `json:"action" enum:"published,unpublished,restored"`
 	Actor      string    `json:"actor,omitempty" doc:"Who acted, where the actor is known"`
+	ActorKind  string    `json:"actorKind,omitempty" enum:"user,key" doc:"What kind of caller acted: user for a signed-in person, key for an API key. Absent when the publish predates attribution or arrived unauthenticated."`
+	ActorLabel string    `json:"actorLabel,omitempty" doc:"The actor's email address or API key name, where one is known"`
+	ActorKeyID string    `json:"actorKeyId,omitempty" doc:"Identifier of the API key that acted. Absent for a session."`
 	Reason     string    `json:"reason,omitempty"`
 	CreatedAt  time.Time `json:"createdAt"`
 }
@@ -212,7 +223,11 @@ type workflowPublishEventListOutput struct {
 type publishVersionInput struct {
 	ID        string `path:"id" minLength:"1" doc:"Workflow identifier"`
 	VersionID string `path:"versionId" minLength:"1" doc:"Workflow revision identifier"`
-	Body      *struct {
+	// SkillsUsed is what the caller reported using to make this write. A
+	// publish writes no revision, so it is recorded on the revision a restore
+	// creates and ignored by the publish itself.
+	SkillsUsed string `header:"X-KilasFlow-Skills-Used" doc:"Comma-separated names of the skills an agent used to make this call, recorded on the revision it creates"`
+	Body       *struct {
 		Reason string `json:"reason,omitempty" maxLength:"255" doc:"Why this revision was published or restored, recorded in the audit trail"`
 	}
 }
@@ -227,7 +242,10 @@ func (input publishVersionInput) reason() string {
 type updateWorkflowInput struct {
 	ID      string `path:"id" minLength:"1" doc:"Workflow identifier"`
 	IfMatch string `header:"If-Match" doc:"Latest version ID the editor saved from; a save from a stale revision is refused with 409"`
-	Body    workflowDocumentInput
+	// SkillsUsed is what the caller reported using to make this write. It is
+	// recorded on the revision it creates.
+	SkillsUsed string `header:"X-KilasFlow-Skills-Used" doc:"Comma-separated names of the skills an agent used to make this call, recorded on the revision it creates"`
+	Body       workflowDocumentInput
 }
 
 type runWorkflowInput struct {
@@ -421,7 +439,7 @@ func (handler *Workflows) Create(ctx context.Context, input *createWorkflowInput
 	if err := workflow.ValidateDraftWithServerID(document); err != nil {
 		return nil, draftProblem(err)
 	}
-	stored, err := handler.workflows.SaveDraft(ctx, handler.tenant(ctx), document)
+	stored, err := handler.workflows.SaveDraft(audited(ctx, input.SkillsUsed), handler.tenant(ctx), document)
 	if err != nil {
 		return nil, handler.problem(ctx, err)
 	}
@@ -546,6 +564,8 @@ func (handler *Workflows) ListVersions(ctx context.Context, input *listWorkflowV
 		resource.Items = append(resource.Items, WorkflowVersionSummaryResource{
 			ID: summary.ID, WorkflowID: summary.WorkflowID, Revision: summary.Revision,
 			SchemaVersion: summary.SchemaVersion, Label: summary.Label, CreatedBy: summary.CreatedBy,
+			ActorKind: summary.ActorKind, ActorLabel: summary.ActorLabel, ActorKeyID: summary.ActorKeyID,
+			ActorMeta: summary.ActorMeta,
 			CreatedAt: summary.CreatedAt, Draft: summary.Draft, Published: summary.Published,
 		})
 	}
@@ -565,7 +585,7 @@ func (handler *Workflows) PublishVersion(ctx context.Context, input *publishVers
 	// references a node this tenant may not use is refused here, before it
 	// becomes the version production traffic runs.
 	tenant := handler.tenant(ctx)
-	stored, err := handler.workflows.PublishVersion(ctx, tenant, input.ID, input.VersionID, workflow.CatalogFor(handler.catalog, tenant.ID), input.reason())
+	stored, err := handler.workflows.PublishVersion(audited(ctx, input.SkillsUsed), tenant, input.ID, input.VersionID, workflow.CatalogFor(handler.catalog, tenant.ID), input.reason())
 	if err != nil {
 		return nil, handler.problem(ctx, err)
 	}
@@ -580,7 +600,7 @@ func (handler *Workflows) RestoreVersion(ctx context.Context, input *publishVers
 	if err := handler.embedVersionProblem(ctx, input.ID, input.VersionID); err != nil {
 		return nil, err
 	}
-	stored, err := handler.workflows.RestoreVersion(ctx, handler.tenant(ctx), input.ID, input.VersionID, input.reason())
+	stored, err := handler.workflows.RestoreVersion(audited(ctx, input.SkillsUsed), handler.tenant(ctx), input.ID, input.VersionID, input.reason())
 	if err != nil {
 		return nil, handler.problem(ctx, err)
 	}
@@ -600,7 +620,8 @@ func (handler *Workflows) ListPublishEvents(ctx context.Context, input *workflow
 	for _, event := range events {
 		items = append(items, WorkflowPublishEventResource{
 			WorkflowID: event.WorkflowID, VersionID: event.VersionID, Action: string(event.Action),
-			Actor: event.Actor, Reason: event.Reason, CreatedAt: event.CreatedAt,
+			Actor: event.Actor, ActorKind: event.ActorKind, ActorLabel: event.ActorLabel, ActorKeyID: event.ActorKeyID,
+			Reason: event.Reason, CreatedAt: event.CreatedAt,
 		})
 	}
 	return &workflowPublishEventListOutput{Body: items}, nil
@@ -638,7 +659,7 @@ func (handler *Workflows) Update(ctx context.Context, input *updateWorkflowInput
 	if err := workflow.ValidateDraft(document); err != nil {
 		return nil, draftProblem(err)
 	}
-	saved, err := handler.workflows.SaveDraft(ctx, handler.tenant(ctx), document)
+	saved, err := handler.workflows.SaveDraft(audited(ctx, input.SkillsUsed), handler.tenant(ctx), document)
 	if err != nil {
 		return nil, handler.problem(ctx, err)
 	}
@@ -682,7 +703,8 @@ func (handler *Workflows) Activate(ctx context.Context, input *workflowPathInput
 		return nil, err
 	}
 	tenant := handler.tenant(ctx)
-	stored, err := handler.workflows.Activate(ctx, tenant, input.ID, workflow.CatalogFor(handler.catalog, tenant.ID))
+	auditedCtx := audited(ctx, "")
+	stored, err := handler.workflows.Activate(auditedCtx, tenant, input.ID, workflow.CatalogFor(handler.catalog, tenant.ID))
 	if err != nil {
 		return nil, handler.problem(ctx, err)
 	}
@@ -698,7 +720,7 @@ func (handler *Workflows) Activate(ctx context.Context, input *workflowPathInput
 		if err != nil {
 			// Half-registered is worse than inactive, because the user believes
 			// the workflow is listening.
-			if _, deactivateErr := handler.workflows.Deactivate(ctx, tenant, stored.ID); deactivateErr != nil {
+			if _, deactivateErr := handler.workflows.Deactivate(auditedCtx, tenant, stored.ID); deactivateErr != nil {
 				return nil, huma.Error500InternalServerError(
 					"a trigger could not register and the workflow could not be rolled back", err)
 			}
@@ -753,7 +775,7 @@ func (handler *Workflows) Deactivate(ctx context.Context, input *workflowPathInp
 	if handler.triggers != nil {
 		handler.triggers.Deactivated(ctx, tenant.ID, input.ID, handler.lifecycleIDs())
 	}
-	stored, err := handler.workflows.Deactivate(ctx, tenant, input.ID)
+	stored, err := handler.workflows.Deactivate(audited(ctx, ""), tenant, input.ID)
 	if err != nil {
 		return nil, handler.problem(ctx, err)
 	}
@@ -860,6 +882,41 @@ func (handler *Workflows) Run(ctx context.Context, input *runWorkflowInput) (*ru
 
 func (handler *Workflows) tenant(ctx context.Context) repository.TenantScope {
 	return handler.tenants.Resolve(ctx)
+}
+
+// skillsUsedHeader is where an agent reports which skills informed a write.
+//
+// The header is the KilasFlow analogue of the n8n pack's skillsUsed argument:
+// it is how an installation learns which skills actually get used, so it is
+// read at the only boundary that has the request and stored on the revision the
+// call creates.
+const skillsUsedHeader = "X-KilasFlow-Skills-Used"
+
+// audited returns ctx carrying the identity the write it precedes is attributed
+// to: the request's principal, plus whatever the caller reported using.
+//
+// It is one function rather than a line in every handler so the vocabulary —
+// which authentication path becomes which actor kind — has exactly one
+// definition, and so an installation with authentication disabled records the
+// same nothing everywhere rather than a different guess per verb.
+func audited(ctx context.Context, skillsUsed string) context.Context {
+	actor := repository.Actor{}
+	if principal, found := auth.PrincipalFrom(ctx); found {
+		actor.Label = principal.Label
+		actor.KeyID = principal.KeyID
+		switch principal.Kind {
+		case auth.KindAPIKey:
+			actor.Kind = repository.ActorKindKey
+		case auth.KindSession:
+			actor.Kind = repository.ActorKindUser
+		}
+	}
+	for _, name := range strings.Split(skillsUsed, ",") {
+		if trimmed := strings.TrimSpace(name); trimmed != "" {
+			actor.Meta = append(actor.Meta, trimmed)
+		}
+	}
+	return repository.WithActor(ctx, actor)
 }
 
 func (handler *Workflows) available(needsExecution bool) error {

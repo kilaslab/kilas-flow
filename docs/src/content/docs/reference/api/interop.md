@@ -17,6 +17,12 @@ Import and export workflows across formats.
 
 Translates n8n workflow JSON into a KilasFlow draft. Unsupported nodes are imported as visible placeholders that block activation rather than being dropped or silently remapped.
 
+Parameters:
+
+| Name | In | Required | Type | Description |
+| --- | --- | --- | --- | --- |
+| `X-KilasFlow-Skills-Used` | header | no | string | Comma-separated names of the skills an agent used to make this call, recorded on the revision it creates |
+
 Request body: `application/json` — `ImportWorkflowInputBody` (required)
 
 Responses:

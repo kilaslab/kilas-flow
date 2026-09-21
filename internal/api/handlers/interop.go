@@ -101,7 +101,10 @@ func NewInterop(workflows repository.WorkflowRepository, catalog workflow.Catalo
 }
 
 type importWorkflowInput struct {
-	Body struct {
+	// SkillsUsed is what the caller reported using to make this write, recorded
+	// on the revision the import creates.
+	SkillsUsed string `header:"X-KilasFlow-Skills-Used" doc:"Comma-separated names of the skills an agent used to make this call, recorded on the revision it creates"`
+	Body       struct {
 		Format string `json:"format,omitempty" doc:"Only \"n8n\" is supported"`
 		// Workflow is the n8n export, passed through untouched. It is never
 		// executed — only translated into canonical nodes.
@@ -208,7 +211,7 @@ func (handler *Interop) Import(ctx context.Context, input *importWorkflowInput) 
 		// named rather than quietly degraded.
 		return nil, huma.Error503ServiceUnavailable("workflow storage cannot record import diagnostics")
 	}
-	stored, err := store.SaveDraftWithDiagnostics(ctx, handler.tenants.Resolve(ctx), result.Document, report)
+	stored, err := store.SaveDraftWithDiagnostics(audited(ctx, input.SkillsUsed), handler.tenants.Resolve(ctx), result.Document, report)
 	if err != nil {
 		return nil, huma.Error422UnprocessableEntity(err.Error())
 	}

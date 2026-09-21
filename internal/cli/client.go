@@ -17,6 +17,12 @@ import (
 // HTML error page cannot flood an agent's context.
 const maxErrorBodyBytes = 4096
 
+// skillsUsedHeader is the wire name for the skills a caller consulted before a
+// write. It is written out here rather than imported because the CLI depends on
+// no internal package: the header is a contract with the server, and the server
+// names it on its own side of the same contract.
+const skillsUsedHeader = "X-KilasFlow-Skills-Used"
+
 // Client talks to one server. Every verb reaches the API through it, and it is
 // the only place a token is attached to a request, so it is also the only
 // place that has to be careful about printing one.
@@ -29,6 +35,11 @@ type Client struct {
 	Verbose io.Writer
 	// Now is injectable so the envelope's duration is testable.
 	Now func() time.Time
+	// SkillsUsed names the skills an agent consulted to make a write. It is
+	// sent on mutating requests only, as X-KilasFlow-Skills-Used, and the
+	// server records it on the revision the call creates: it is how an
+	// installation learns which skills actually get used.
+	SkillsUsed []string
 	// operations is the served operation index, read once per client. A client
 	// is one invocation, so two invocations never share an index and a server
 	// upgraded in between is never described by a stale copy.
@@ -173,11 +184,27 @@ func (c *Client) buildRequest(ctx context.Context, method, path string, query ur
 			req.Header.Add(name, value)
 		}
 	}
+	// Only on a write: the header says what informed a change, and a read
+	// changes nothing. Sending it on a GET would put a claim in the server's
+	// log that nothing recorded.
+	if len(c.SkillsUsed) > 0 && header.Get(skillsUsedHeader) == "" && mutating(method) {
+		req.Header.Set(skillsUsedHeader, strings.Join(c.SkillsUsed, ","))
+	}
 	if c.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.Token)
 	}
 
 	return req, target, nil
+}
+
+// mutating reports whether a method changes something on the server.
+func mutating(method string) bool {
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return false
+	default:
+		return true
+	}
 }
 
 // networkError is the failure a request that never produced a response has.

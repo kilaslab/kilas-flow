@@ -5,8 +5,20 @@
  * Embeddable workflow automation engine. Every operation available in the editor is available here: the canvas is a client of this API, not the owner of workflow state.
  * OpenAPI spec version: 0.1.0-dev
  */
+import type { WorkflowVersionSummaryResourceActorKind } from './workflowVersionSummaryResourceActorKind';
 
 export interface WorkflowVersionSummaryResource {
+  /** Identifier of the API key that saved this revision, so a reused key name still names the key that acted. Absent for a session. */
+  actorKeyId?: string;
+  /** What kind of caller saved this revision: user for a signed-in person, key for an API key. Absent when the write predates attribution or arrived unauthenticated. */
+  actorKind?: WorkflowVersionSummaryResourceActorKind;
+  /** The actor's email address or API key name, where one is known */
+  actorLabel?: string;
+  /**
+     * What the caller reported using to make the write, from the X-KilasFlow-Skills-Used header
+     * @nullable
+     */
+  actorMeta?: string[] | null;
   createdAt: string;
   /** Who saved this revision, where the author is known */
   createdBy?: string;

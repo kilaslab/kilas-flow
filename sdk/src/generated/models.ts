@@ -1449,10 +1449,27 @@ export const WorkflowPublishEventResourceAction = {
   restored: 'restored',
 } as const;
 
+/**
+ * What kind of caller acted: user for a signed-in person, key for an API key. Absent when the publish predates attribution or arrived unauthenticated.
+ */
+export type WorkflowPublishEventResourceActorKind = typeof WorkflowPublishEventResourceActorKind[keyof typeof WorkflowPublishEventResourceActorKind];
+
+
+export const WorkflowPublishEventResourceActorKind = {
+  user: 'user',
+  key: 'key',
+} as const;
+
 export interface WorkflowPublishEventResource {
   action: WorkflowPublishEventResourceAction;
   /** Who acted, where the actor is known */
   actor?: string;
+  /** Identifier of the API key that acted. Absent for a session. */
+  actorKeyId?: string;
+  /** What kind of caller acted: user for a signed-in person, key for an API key. Absent when the publish predates attribution or arrived unauthenticated. */
+  actorKind?: WorkflowPublishEventResourceActorKind;
+  /** The actor's email address or API key name, where one is known */
+  actorLabel?: string;
   createdAt: string;
   reason?: string;
   /** For a restore, the revision that was restored from */
@@ -1485,7 +1502,29 @@ export interface WorkflowSummary {
   updatedAt: string;
 }
 
+/**
+ * What kind of caller saved this revision: user for a signed-in person, key for an API key. Absent when the write predates attribution or arrived unauthenticated.
+ */
+export type WorkflowVersionSummaryResourceActorKind = typeof WorkflowVersionSummaryResourceActorKind[keyof typeof WorkflowVersionSummaryResourceActorKind];
+
+
+export const WorkflowVersionSummaryResourceActorKind = {
+  user: 'user',
+  key: 'key',
+} as const;
+
 export interface WorkflowVersionSummaryResource {
+  /** Identifier of the API key that saved this revision, so a reused key name still names the key that acted. Absent for a session. */
+  actorKeyId?: string;
+  /** What kind of caller saved this revision: user for a signed-in person, key for an API key. Absent when the write predates attribution or arrived unauthenticated. */
+  actorKind?: WorkflowVersionSummaryResourceActorKind;
+  /** The actor's email address or API key name, where one is known */
+  actorLabel?: string;
+  /**
+     * What the caller reported using to make the write, from the X-KilasFlow-Skills-Used header
+     * @nullable
+     */
+  actorMeta?: string[] | null;
   createdAt: string;
   /** Who saved this revision, where the author is known */
   createdBy?: string;

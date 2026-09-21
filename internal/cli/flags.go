@@ -25,6 +25,9 @@ type GlobalFlags struct {
 	TokenFile string
 	Config    string
 	Timeout   time.Duration
+	// SkillsUsed names the skills an agent consulted to make this call. It is
+	// sent on mutating requests only; see Client.SkillsUsed.
+	SkillsUsed string
 
 	// provided records which flags the caller actually set, so an explicitly
 	// empty --url can mean "talk to nothing" rather than "use the default".
@@ -47,6 +50,7 @@ func registerGlobalFlags(fs *flag.FlagSet) *GlobalFlags {
 	fs.StringVar(&flags.TokenFile, "token-file", "", "file holding the API token")
 	fs.StringVar(&flags.Config, "config", "", "path to the CLI configuration file")
 	fs.DurationVar(&flags.Timeout, "timeout", defaultTimeout, "deadline for one command")
+	fs.StringVar(&flags.SkillsUsed, "skills-used", "", "comma-separated skills an agent consulted, recorded on the revision a mutating command writes")
 
 	return flags
 }

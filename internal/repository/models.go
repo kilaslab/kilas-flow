@@ -242,8 +242,22 @@ type workflowVersionModel struct {
 	// the author of most writes is genuinely unknowable. A NOT NULL column
 	// would force this code to invent an author, and an invented author in an
 	// audit trail is worse than an absent one.
-	Label     *string       `gorm:"size:255"`
-	CreatedBy *string       `gorm:"size:64"`
+	Label     *string `gorm:"size:255"`
+	CreatedBy *string `gorm:"size:64"`
+	// ActorKind, ActorLabel and ActorKeyID are who wrote the revision: 'user'
+	// for a signed-in person, 'key' for an API key, with the key's name and its
+	// identifier beside it. All three are nullable for the same reason Label
+	// and CreatedBy are — a revision written before an actor was recorded has
+	// no actor, and NULL is that answer rather than a guessed 'user'.
+	ActorKind  *string `gorm:"size:16"`
+	ActorLabel *string `gorm:"size:255"`
+	ActorKeyID *string `gorm:"size:64"`
+	// ActorMeta is what the caller said it used to make this write, today the
+	// skills an agent listed in X-KilasFlow-Skills-Used, stored as JSON. It is
+	// nullable like Diagnostics and for the same reason: a revision nobody
+	// reported anything about is a different claim from one that reported
+	// nothing.
+	ActorMeta []byte
 	CreatedAt time.Time     `gorm:"not null"`
 	Workflow  workflowModel `gorm:"foreignKey:WorkflowID;references:ID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT"`
 }
@@ -273,9 +287,18 @@ type workflowPublishEventModel struct {
 	// Actor and Reason are empty rather than null when unknown: an audit row is
 	// always written, and a caller that supplied neither should still leave the
 	// trace that something happened.
-	Actor     string    `gorm:"not null;size:64;default:''"`
-	Reason    string    `gorm:"not null;size:255;default:''"`
-	CreatedAt time.Time `gorm:"not null;index:idx_workflow_publish_events_workflow,priority:3"`
+	Actor  string `gorm:"not null;size:64;default:''"`
+	Reason string `gorm:"not null;size:255;default:''"`
+	// ActorKind, ActorLabel and ActorKeyID are who acted, in the same
+	// vocabulary workflow_versions uses: 'user' for a signed-in person, 'key'
+	// for an API key, and the key's own identifier so a reused label still
+	// names the key that acted. Empty rather than null when unknown, exactly as
+	// Actor is, because an unpublish nobody is named for is still a fact worth
+	// recording.
+	ActorKind  string    `gorm:"not null;size:16;default:''"`
+	ActorLabel string    `gorm:"not null;size:255;default:''"`
+	ActorKeyID string    `gorm:"not null;size:64;default:''"`
+	CreatedAt  time.Time `gorm:"not null;index:idx_workflow_publish_events_workflow,priority:3"`
 }
 
 func (workflowPublishEventModel) TableName(namer schema.Namer) string {

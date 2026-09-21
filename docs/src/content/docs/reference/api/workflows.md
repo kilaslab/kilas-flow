@@ -17,6 +17,12 @@ Create, read, update, run, activate, and version workflows.
 
 Creates revision 1 of a canonical workflow document.
 
+Parameters:
+
+| Name | In | Required | Type | Description |
+| --- | --- | --- | --- | --- |
+| `X-KilasFlow-Skills-Used` | header | no | string | Comma-separated names of the skills an agent used to make this call, recorded on the revision it creates |
+
 Request body: `application/json` — `WorkflowDocumentInput` (required)
 
 Responses:
@@ -104,6 +110,7 @@ Parameters:
 | --- | --- | --- | --- | --- |
 | `id` | path | yes | string | Workflow identifier |
 | `If-Match` | header | no | string | Latest version ID the editor saved from; a save from a stale revision is refused with 409 |
+| `X-KilasFlow-Skills-Used` | header | no | string | Comma-separated names of the skills an agent used to make this call, recorded on the revision it creates |
 
 Request body: `application/json` — `WorkflowDocumentInput` (required)
 
@@ -260,6 +267,7 @@ Parameters:
 | --- | --- | --- | --- | --- |
 | `id` | path | yes | string | Workflow identifier |
 | `versionId` | path | yes | string | Workflow revision identifier |
+| `X-KilasFlow-Skills-Used` | header | no | string | Comma-separated names of the skills an agent used to make this call, recorded on the revision it creates |
 
 Request body: `application/json` — `PublishVersionInputBody`
 
@@ -284,6 +292,7 @@ Parameters:
 | --- | --- | --- | --- | --- |
 | `id` | path | yes | string | Workflow identifier |
 | `versionId` | path | yes | string | Workflow revision identifier |
+| `X-KilasFlow-Skills-Used` | header | no | string | Comma-separated names of the skills an agent used to make this call, recorded on the revision it creates |
 
 Request body: `application/json` — `PublishVersionInputBody`
 

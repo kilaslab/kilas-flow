@@ -41,6 +41,17 @@ type VersionSummary struct {
 	Label     string    `json:"label,omitempty"`
 	CreatedBy string    `json:"createdBy,omitempty"`
 	CreatedAt time.Time `json:"createdAt"`
+	// ActorKind, ActorLabel and ActorKeyID are who wrote this revision: "user"
+	// for a signed-in person, "key" for an API key. They are absent rather than
+	// empty when the write predates attribution or arrived unauthenticated —
+	// "unknown" is not a kind, and a listing that named one would be inventing
+	// the very fact an audit trail exists to carry.
+	ActorKind  string `json:"actorKind,omitempty"`
+	ActorLabel string `json:"actorLabel,omitempty"`
+	ActorKeyID string `json:"actorKeyId,omitempty"`
+	// ActorMeta is what the caller reported using to make the write, today the
+	// skills an agent listed in X-KilasFlow-Skills-Used.
+	ActorMeta []string `json:"actorMeta,omitempty"`
 	// Draft and Published are two flags rather than one role enum because a
 	// version is routinely both — publishing the latest revision is the common
 	// case — and a single field would have to drop one of the two answers. The
@@ -73,6 +84,12 @@ type PublishEvent struct {
 	VersionID  string        `json:"versionId"`
 	Action     PublishAction `json:"action"`
 	Actor      string        `json:"actor,omitempty"`
-	Reason     string        `json:"reason,omitempty"`
-	CreatedAt  time.Time     `json:"createdAt"`
+	// ActorKind, ActorLabel and ActorKeyID are who acted, in the same
+	// vocabulary the revision listing uses. Absent when the publish predates
+	// attribution, which is a different answer from an actor nobody named.
+	ActorKind  string    `json:"actorKind,omitempty"`
+	ActorLabel string    `json:"actorLabel,omitempty"`
+	ActorKeyID string    `json:"actorKeyId,omitempty"`
+	Reason     string    `json:"reason,omitempty"`
+	CreatedAt  time.Time `json:"createdAt"`
 }

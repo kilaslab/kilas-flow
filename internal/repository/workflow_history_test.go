@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -337,7 +338,9 @@ func TestEveryPublishUnpublishAndRestoreLeavesAnAuditRow(t *testing.T) {
 	db := newHistoryDB(t)
 	store := repository.NewWorkflowStore(db.DB)
 	tenant := repository.TenantScope{ID: "tenant-a"}
-	ctx := repository.WithActor(context.Background(), "ada@example.com")
+	ctx := repository.WithActor(context.Background(), repository.Actor{
+		Kind: repository.ActorKindKey, Label: "ci-agent", KeyID: "key_ci",
+	})
 	saved := saveRevisions(t, store, tenant, 2)
 
 	if _, err := store.Activate(ctx, tenant, "wf_history", historyCatalog()); err != nil {
@@ -368,8 +371,19 @@ func TestEveryPublishUnpublishAndRestoreLeavesAnAuditRow(t *testing.T) {
 		if got := events[position].Action; got != want {
 			t.Errorf("audit row %d action = %q, want %q", position, got, want)
 		}
-		if got := events[position].Actor; got != "ada@example.com" {
+		if got := events[position].Actor; got != "ci-agent" {
 			t.Errorf("audit row %d actor = %q, want the request's actor", position, got)
+		}
+		// The kind and the key are what make the row attributable: a label
+		// alone names whoever reused it.
+		if got := events[position].ActorKind; got != repository.ActorKindKey {
+			t.Errorf("audit row %d actor kind = %q, want %q", position, got, repository.ActorKindKey)
+		}
+		if got := events[position].ActorLabel; got != "ci-agent" {
+			t.Errorf("audit row %d actor label = %q, want the key's name", position, got)
+		}
+		if got := events[position].ActorKeyID; got != "key_ci" {
+			t.Errorf("audit row %d actor key id = %q, want the key that acted", position, got)
 		}
 	}
 	if got, want := events[0].Reason, "undoing"; got != want {
@@ -398,9 +412,21 @@ func TestAnUnknownAuthorIsRecordedAsAbsentRatherThanInvented(t *testing.T) {
 	if got := page.Versions[0].CreatedBy; got != "" {
 		t.Errorf("author of an unauthenticated save = %q, want empty", got)
 	}
+	// "Nobody was recorded" is not a kind. A row that named one would claim an
+	// attribution the write never had.
+	if got := page.Versions[0].ActorKind; got != "" {
+		t.Errorf("actor kind of an unauthenticated save = %q, want empty", got)
+	}
+	if got := page.Versions[0].ActorLabel; got != "" {
+		t.Errorf("actor label of an unauthenticated save = %q, want empty", got)
+	}
+	if got := page.Versions[0].ActorKeyID; got != "" {
+		t.Errorf("actor key id of an unauthenticated save = %q, want empty", got)
+	}
 
-	authored, err := store.SaveDraft(repository.WithActor(context.Background(), "grace@example.com"),
-		tenant, historyDocument("Authored"))
+	authored, err := store.SaveDraft(repository.WithActor(context.Background(), repository.Actor{
+		Kind: repository.ActorKindUser, Label: "grace@example.com",
+	}), tenant, historyDocument("Authored"))
 	if err != nil {
 		t.Fatalf("SaveDraft(authored) error = %v", err)
 	}
@@ -413,6 +439,74 @@ func TestAnUnknownAuthorIsRecordedAsAbsentRatherThanInvented(t *testing.T) {
 	}
 	if got, want := page.Versions[0].CreatedBy, "grace@example.com"; got != want {
 		t.Errorf("author of an attributed save = %q, want %q", got, want)
+	}
+	if got, want := page.Versions[0].ActorKind, repository.ActorKindUser; got != want {
+		t.Errorf("actor kind of a session's save = %q, want %q", got, want)
+	}
+	if got, want := page.Versions[0].ActorLabel, "grace@example.com"; got != want {
+		t.Errorf("actor label of a session's save = %q, want %q", got, want)
+	}
+	// A session presents no key, so the column stays empty rather than naming
+	// whatever key happened to be last.
+	if got := page.Versions[0].ActorKeyID; got != "" {
+		t.Errorf("actor key id of a session's save = %q, want empty", got)
+	}
+}
+
+// The listing is where the attribution is read, so the four columns have to
+// survive the round trip from the principal that wrote the revision to the row
+// a reader sees.
+func TestARevisionRecordsTheKeyThatWroteItAndTheSkillsItReported(t *testing.T) {
+	db := newHistoryDB(t)
+	store := repository.NewWorkflowStore(db.DB)
+	tenant := repository.TenantScope{ID: "tenant-a"}
+	ctx := repository.WithActor(context.Background(), repository.Actor{
+		Kind: repository.ActorKindKey, Label: "ci-agent", KeyID: "key_ci",
+		Meta: []string{"kilasflow-debugging", "kilasflow-expressions"},
+	})
+
+	saved, err := store.SaveDraft(ctx, tenant, historyDocument("Written by an agent"))
+	if err != nil {
+		t.Fatalf("SaveDraft() error = %v", err)
+	}
+
+	page, err := store.ListVersions(ctx, tenant, "wf_history", repository.VersionFilter{})
+	if err != nil {
+		t.Fatalf("ListVersions() error = %v", err)
+	}
+	if got, want := page.Versions[0].ID, saved.LatestVersion.ID; got != want {
+		t.Fatalf("newest version = %q, want %q", got, want)
+	}
+	if got, want := page.Versions[0].ActorKind, repository.ActorKindKey; got != want {
+		t.Errorf("actor kind of a key's save = %q, want %q", got, want)
+	}
+	if got, want := page.Versions[0].ActorLabel, "ci-agent"; got != want {
+		t.Errorf("actor label of a key's save = %q, want %q", got, want)
+	}
+	if got, want := page.Versions[0].ActorKeyID, "key_ci"; got != want {
+		t.Errorf("actor key id of a key's save = %q, want %q", got, want)
+	}
+	if got, want := strings.Join(page.Versions[0].ActorMeta, ","), "kilasflow-debugging,kilasflow-expressions"; got != want {
+		t.Errorf("actor meta of a reported save = %q, want %q", got, want)
+	}
+
+	// A write that reported nothing carries no meta at all, which is a
+	// different answer from one that reported an empty list.
+	plain, err := store.SaveDraft(repository.WithActor(context.Background(), repository.Actor{
+		Kind: repository.ActorKindUser, Label: "ada@example.com",
+	}), tenant, historyDocument("Written by a person"))
+	if err != nil {
+		t.Fatalf("SaveDraft(plain) error = %v", err)
+	}
+	page, err = store.ListVersions(ctx, tenant, "wf_history", repository.VersionFilter{})
+	if err != nil {
+		t.Fatalf("ListVersions() error = %v", err)
+	}
+	if got, want := page.Versions[0].ID, plain.LatestVersion.ID; got != want {
+		t.Fatalf("newest version = %q, want %q", got, want)
+	}
+	if got := page.Versions[0].ActorMeta; len(got) != 0 {
+		t.Errorf("actor meta of a save that reported nothing = %v, want none", got)
 	}
 }
 
