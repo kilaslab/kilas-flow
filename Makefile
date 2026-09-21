@@ -308,6 +308,17 @@ generate-config-reference: ## Regenerate the configuration reference and config.
 generate-config-reference-check: ## Fail if the generated configuration files are stale
 	$(GO) run ./scripts/config-reference.go --check
 
+# skills/index.json is the bundle's index: rendered from the SKILL.md
+# frontmatter, never hand-written, and refused when the bundle breaks one of its
+# own rules. Like the configuration reference above it needs no binary.
+.PHONY: generate-skills-index
+generate-skills-index: ## Regenerate skills/index.json from the bundle frontmatter
+	$(GO) run ./scripts/skills-index
+
+.PHONY: generate-skills-index-check
+generate-skills-index-check: ## Fail if skills/index.json is stale
+	$(GO) run ./scripts/skills-index --check
+
 .PHONY: test-cover
 test-cover: ## Run Go tests with a coverage report
 	$(GO) test ./... -coverprofile=coverage.out

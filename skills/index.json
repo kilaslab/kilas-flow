@@ -1,0 +1,52 @@
+{
+  "skillsVersion": 1,
+  "generatedBy": "go run ./scripts/skills-index",
+  "skills": [
+    {
+      "name": "kilasflow-workflow-lifecycle",
+      "description": "Use when creating, editing, publishing, activating, versioning or restoring a workflow, or when a workflow will not save, run or behave as expected. Triggers on \"workflow\", \"publish\", \"activate\", \"version\", \"restore\", \"save\".",
+      "path": "skills/kilasflow-workflow-lifecycle/SKILL.md",
+      "commands": [
+        "kilasflow api",
+        "kilasflow context",
+        "kilasflow exec get",
+        "kilasflow exec list",
+        "kilasflow run",
+        "kilasflow workflow create",
+        "kilasflow workflow diagnostics",
+        "kilasflow workflow export",
+        "kilasflow workflow get",
+        "kilasflow workflow get-version",
+        "kilasflow workflow list",
+        "kilasflow workflow publish-events",
+        "kilasflow workflow versions"
+      ],
+      "operations": [
+        "activate-workflow",
+        "create-workflow",
+        "deactivate-workflow",
+        "export-workflow",
+        "get-workflow",
+        "get-workflow-version",
+        "import-workflow",
+        "list-workflow-publish-events",
+        "list-workflow-versions",
+        "list-workflows",
+        "restore-workflow-version",
+        "run-workflow",
+        "update-workflow",
+        "workflow-diagnostics"
+      ],
+      "nodes": [],
+      "expressionRoots": [],
+      "notShipped": [
+        "Idempotent runs: a retry is a second execution",
+        "Workflow update, import and restore from the CLI (no verb yet; use the escape hatch)"
+      ],
+      "references": [
+        "references/NAMING_AND_DESCRIPTIONS.md",
+        "references/VALIDATION_CHECKLIST.md"
+      ]
+    }
+  ]
+}

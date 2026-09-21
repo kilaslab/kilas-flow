@@ -3,6 +3,7 @@ package api_test
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/kilaslab/kilas-flow/internal/api"
@@ -122,8 +123,18 @@ func TestCORSHeadersStayInsideTheAPIPrefix(t *testing.T) {
 		if got := recorder.Header().Get("Access-Control-Allow-Origin"); got != "" {
 			t.Errorf("%s: Access-Control-Allow-Origin = %q, want none outside %s", path, got, api.APIPrefix)
 		}
-		if got := recorder.Header().Get("Vary"); got != "" {
-			t.Errorf("%s: Vary = %q, want no CORS headers at all", path, got)
+		// The CORS layer's own markers, not every header a response may carry:
+		// the SPA answers a compressible asset with `Vary: Accept-Encoding`,
+		// which says nothing about cross-origin access. What must not appear
+		// outside the prefix is any header a browser reads as permission or as
+		// a CORS-varying cache key.
+		for _, header := range []string{"Access-Control-Allow-Credentials", "Access-Control-Expose-Headers", "Access-Control-Allow-Headers", "Access-Control-Allow-Methods"} {
+			if got := recorder.Header().Get(header); got != "" {
+				t.Errorf("%s: %s = %q, want no CORS headers outside %s", path, header, got, api.APIPrefix)
+			}
+		}
+		if got := recorder.Header().Get("Vary"); strings.Contains(got, "Origin") {
+			t.Errorf("%s: Vary = %q names Origin, want the CORS layer to vary nothing outside %s", path, got, api.APIPrefix)
 		}
 	}
 
