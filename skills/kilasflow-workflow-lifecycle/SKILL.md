@@ -34,8 +34,9 @@ kilasflow_operations:
 kilasflow_nodes: []
 kilasflow_expression_roots: []
 kilasflow_not_shipped:
-  - 'Idempotent runs: a retry is a second execution'
-  - 'Workflow update, import and restore from the CLI (no verb yet; use the escape hatch)'
+  - 'No activation verb: activation and deactivation are the activate-workflow and deactivate-workflow operations through the escape hatch'
+  - 'No workflow update, import or restore verb: those operations are served and reached through the escape hatch'
+  - 'No idempotency flag: the server honours Idempotency-Key on a run and on a row write, but no verb carries the key yet'
 ---
 
 ## Non-negotiables
@@ -57,6 +58,7 @@ kilasflow_not_shipped:
 - Publish audit and diagnostics are reads: `kilasflow workflow publish-events <workflowId>` (`list-workflow-publish-events`) records published, unpublished and restored acts, and `kilasflow workflow diagnostics <workflowId>` (`workflow-diagnostics`) returns the import report stored with a revision.
 - Export with `kilasflow workflow export <workflowId> --format n8n` (`export-workflow`), which reports what could not be carried; import through the escape hatch with `kilasflow api import-workflow --body @wf.json` (`import-workflow`).
 - To watch what a workflow did after running it: `kilasflow run <workflowId> --wait` (`run-workflow`, `--input` for manual input), then `kilasflow exec list --workflow <workflowId>` (`list-executions`) to find the run and `kilasflow exec get <executionId>` (`get-execution`) for its trace.
+- A retry is safe only when it carries a key. The server honours `Idempotency-Key` on `run-workflow` and on a datastore row write: a repeat with the same key and the same request is answered with the first request's outcome, marked `Idempotent-Replayed: true`, and repeats no side effect. No verb carries the key yet, so a retry-safe run is `kilasflow api run-workflow --path id=<workflowId> --header Idempotency-Key=<key> --body @input.json`; the same key with a different request is refused `409`. Without a key, a retry is a second execution.
 
 ## Decision tree
 
@@ -91,8 +93,9 @@ what are you doing?
 
 ## Not shipped yet
 
-- Idempotent runs: a retry is a second execution — running the same workflow twice performs every side effect twice. There is no idempotency key on a manual run yet, so treat a re-run as a new execution and make the workflow's own steps safe to repeat.
-- Workflow update, import and restore from the CLI (no verb yet; use the escape hatch) — `update-workflow`, `import-workflow` and `restore-workflow-version` are all served, but no verb exposes them. Reach them through `kilasflow api` with `--path` and `--body`. There is also no separate validation verb: validation happens on save, and executability is proved by activation or by a run.
+- No activation verb: activation and deactivation are the activate-workflow and deactivate-workflow operations through the escape hatch — `kilasflow workflow create` and friends exist, but there is no `workflow activate`, `workflow deactivate` or `workflow delete`, so activation is `kilasflow api activate-workflow --path id=<workflowId>` and rollback is `kilasflow api deactivate-workflow --path id=<workflowId>`. There is no `--yes` guard to lean on either, so ask the user before you activate.
+- No workflow update, import or restore verb: those operations are served and reached through the escape hatch — `update-workflow`, `import-workflow` and `restore-workflow-version` are all served and reachable with `kilasflow api <operation-id>`, `--path` and `--body @file.json`. There is also no separate validate verb: validation happens on save, and executability is proved by activation or by a run. `workflow duplicate` and `run --revision` do not exist either; duplicate by reading a version and creating a new workflow from it.
+- No idempotency flag: the server honours Idempotency-Key on a run and on a row write, but no verb carries the key yet — `kilasflow run` has no key flag, so a retry-safe run goes through `kilasflow api run-workflow --path id=<workflowId> --header Idempotency-Key=<key> --body @input.json`. The same key with a different request is refused `409`; a replayed answer is marked `Idempotent-Replayed: true`.
 
 ## Anti-patterns
 

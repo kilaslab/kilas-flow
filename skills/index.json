@@ -3,6 +3,427 @@
   "generatedBy": "go run ./scripts/skills-index",
   "skills": [
     {
+      "name": "kilasflow-credentials",
+      "description": "Use when a workflow needs an API key, token, password or a database connection, when a stored credential must be listed, inspected, tested or replaced, or when a new agent key must be minted. Triggers on \"credential\", \"secret\", \"token\", \"auth\", \"api key\".",
+      "path": "skills/kilasflow-credentials/SKILL.md",
+      "commands": [
+        "kilasflow api",
+        "kilasflow credential get",
+        "kilasflow credential list",
+        "kilasflow credential test",
+        "kilasflow workflow get"
+      ],
+      "operations": [
+        "create-api-key",
+        "create-credential",
+        "delete-credential",
+        "get-credential",
+        "get-workflow",
+        "list-api-keys",
+        "list-credential-types",
+        "list-credentials",
+        "revoke-api-key",
+        "test-credential",
+        "test-credential-payload",
+        "update-credential"
+      ],
+      "nodes": [
+        "kilasflow.httpRequest"
+      ],
+      "expressionRoots": [],
+      "notShipped": [
+        "No guarded write verbs: credential create, update and delete, datastore create, rename, delete, columns and clear, schedule create, update and delete, pack install, and tenant create and delete have no verbs yet",
+        "No tenant api-keys verb: create-api-key, list-api-keys and revoke-api-key are served and reached through the escape hatch"
+      ],
+      "references": [
+        "references/CREDENTIAL_TYPES.md"
+      ]
+    },
+    {
+      "name": "kilasflow-datastore",
+      "description": "Use when reading or writing a KilasFlow data table, listing datastores or their columns, filtering which rows a call acts on, or moving rows as CSV. Triggers on \"datastore\", \"table\", \"columns\", \"rows\", \"filter\", \"CSV\", \"limits\".",
+      "path": "skills/kilasflow-datastore/SKILL.md",
+      "commands": [
+        "kilasflow api",
+        "kilasflow context",
+        "kilasflow datastore export",
+        "kilasflow datastore get",
+        "kilasflow datastore list",
+        "kilasflow datastore rows"
+      ],
+      "operations": [
+        "add-datastore-column",
+        "clear-datastore",
+        "create-datastore",
+        "delete-datastore",
+        "delete-datastore-column",
+        "delete-datastore-rows",
+        "export-datastore-rows",
+        "get-datastore",
+        "get-datastore-row",
+        "import-datastore-rows",
+        "increment-datastore-rows",
+        "insert-datastore-row",
+        "list-datastore-rows",
+        "list-datastores",
+        "rename-datastore",
+        "rename-datastore-column",
+        "update-datastore-rows",
+        "upsert-datastore-row"
+      ],
+      "nodes": [
+        "kilasflow.datastore",
+        "kilasflow.datastoreTool"
+      ],
+      "expressionRoots": [
+        "$json"
+      ],
+      "notShipped": [
+        "No guarded write verbs: credential create, update and delete, datastore create, rename, delete, columns and clear, schedule create, update and delete, pack install, and tenant create and delete have no verbs yet",
+        "No idempotency flag: the server honours Idempotency-Key on a run and on a row write, but no verb carries the key yet",
+        "No storage substitution for the datastore: one database serves every tenant, and there is no interface a host implements"
+      ],
+      "references": [
+        "references/FILTERS.md"
+      ]
+    },
+    {
+      "name": "kilasflow-debugging",
+      "description": "Use when a workflow run failed, produced the wrong output, or never started, and when you need to find which node was at fault before changing anything. Triggers on \"failed\", \"error\", \"wrong output\", \"debug\", \"trace\".",
+      "path": "skills/kilasflow-debugging/SKILL.md",
+      "commands": [
+        "kilasflow api",
+        "kilasflow context",
+        "kilasflow exec cancel",
+        "kilasflow exec get",
+        "kilasflow exec list",
+        "kilasflow exec tail",
+        "kilasflow exec trace",
+        "kilasflow run",
+        "kilasflow workflow diagnostics",
+        "kilasflow workflow get",
+        "kilasflow workflow get-version"
+      ],
+      "operations": [
+        "cancel-execution",
+        "get-execution",
+        "get-workflow",
+        "get-workflow-version",
+        "list-executions",
+        "run-workflow",
+        "stream-execution-events",
+        "workflow-diagnostics"
+      ],
+      "nodes": [
+        "kilasflow.errorTrigger",
+        "kilasflow.stopAndError"
+      ],
+      "expressionRoots": [
+        "$json"
+      ],
+      "notShipped": [
+        "No server-side expression evaluation: debug eval is not shipped, so an expression is proved by a run and read back from the trace",
+        "No single-node retry verb: exec retry is not shipped, so a failed node is retried by running the workflow again"
+      ],
+      "references": [
+        "references/TRACE_READING.md"
+      ]
+    },
+    {
+      "name": "kilasflow-embedding",
+      "description": "Use when a host SaaS integrates KilasFlow — minting embed sessions for the iframe editor, mapping customers onto tenants, provisioning tenant users and keys, white-labelling the editor, or deleting a tenant. Triggers on \"embed\", \"tenant\", \"iframe\", \"API key\", \"branding\", \"multi-tenant\".",
+      "path": "skills/kilasflow-embedding/SKILL.md",
+      "commands": [
+        "kilasflow api",
+        "kilasflow auth whoami",
+        "kilasflow context",
+        "kilasflow tenant get",
+        "kilasflow tenant list",
+        "kilasflow tenant users"
+      ],
+      "operations": [
+        "create-api-key",
+        "create-embed-session",
+        "create-stream-ticket",
+        "create-tenant",
+        "create-tenant-api-key",
+        "create-tenant-user",
+        "delete-tenant",
+        "disable-tenant-user",
+        "enable-tenant-user",
+        "get-me",
+        "get-tenant",
+        "list-api-keys",
+        "list-tenant-users",
+        "list-tenants",
+        "revoke-api-key",
+        "set-tenant-user-password",
+        "stream-execution-events"
+      ],
+      "nodes": [],
+      "expressionRoots": [],
+      "notShipped": [
+        "No Go library: embedding is the embed session handshake, the iframe editor and the tenant-realm reads, never an import",
+        "No embed verb: create-embed-session and create-stream-ticket are served and reached through the escape hatch",
+        "No guarded write verbs: credential create, update and delete, datastore create, rename, delete, columns and clear, schedule create, update and delete, pack install, and tenant create and delete have no verbs yet",
+        "No tenant api-keys verb: create-api-key, list-api-keys and revoke-api-key are served and reached through the escape hatch"
+      ],
+      "references": [
+        "references/EMBED_HANDSHAKE.md",
+        "references/SESSION_AUTHORITY.md"
+      ]
+    },
+    {
+      "name": "kilasflow-error-handling",
+      "description": "Use when a run failed, when a failure must be caught, retried, alerted on or answered to an HTTP caller, or when a graph stops on purpose. Triggers on \"error\", \"failed\", \"retry\", \"timeout\", \"error workflow\", \"respond\".",
+      "path": "skills/kilasflow-error-handling/SKILL.md",
+      "commands": [
+        "kilasflow api",
+        "kilasflow exec get",
+        "kilasflow exec trace",
+        "kilasflow run",
+        "kilasflow workflow get"
+      ],
+      "operations": [
+        "activate-workflow",
+        "get-execution",
+        "get-workflow",
+        "run-workflow",
+        "stream-execution-events",
+        "update-workflow"
+      ],
+      "nodes": [
+        "kilasflow.errorTrigger",
+        "kilasflow.respondToWebhook",
+        "kilasflow.stopAndError"
+      ],
+      "expressionRoots": [
+        "$json"
+      ],
+      "notShipped": [
+        "No single-node retry verb: exec retry is not shipped, so a failed node is retried by running the workflow again"
+      ],
+      "references": []
+    },
+    {
+      "name": "kilasflow-expressions",
+      "description": "Use when a node parameter must read or transform a value from the data flowing through a workflow, or when an expression was refused, resolved to null, or read a field from the wrong item. Triggers on \"{{ }}\", \"$json\", \"$node\", \"$now\", Luxon, \"expression error\".",
+      "path": "skills/kilasflow-expressions/SKILL.md",
+      "commands": [
+        "kilasflow api",
+        "kilasflow exec get",
+        "kilasflow exec trace",
+        "kilasflow node describe",
+        "kilasflow run"
+      ],
+      "operations": [
+        "get-execution",
+        "get-expression-grammar",
+        "list-node-types",
+        "run-workflow",
+        "stream-execution-events"
+      ],
+      "nodes": [
+        "kilasflow.code",
+        "kilasflow.set"
+      ],
+      "expressionRoots": [
+        "$(",
+        "$env",
+        "$execution",
+        "$fromAI",
+        "$input",
+        "$items",
+        "$json",
+        "$node",
+        "$now",
+        "$today"
+      ],
+      "notShipped": [
+        "No server-side expression evaluation: debug eval is not shipped, so an expression is proved by a run and read back from the trace"
+      ],
+      "references": [
+        "references/EXPRESSION_ROOTS.md"
+      ]
+    },
+    {
+      "name": "kilasflow-import-export",
+      "description": "Use when migrating n8n workflows into KilasFlow, exporting a workflow back to n8n JSON, or reading the unsupported and Lossy[] report a translation produced. Triggers on \"n8n\", \"migration\", \"import\", \"export\", \"lossy\", \"diagnostics\".",
+      "path": "skills/kilasflow-import-export/SKILL.md",
+      "commands": [
+        "kilasflow api",
+        "kilasflow workflow diagnostics",
+        "kilasflow workflow export",
+        "kilasflow workflow get",
+        "kilasflow workflow versions"
+      ],
+      "operations": [
+        "export-workflow",
+        "get-workflow",
+        "import-workflow",
+        "list-workflow-versions",
+        "workflow-diagnostics"
+      ],
+      "nodes": [
+        "kilasflow.code",
+        "kilasflow.foreignCode",
+        "kilasflow.unsupported"
+      ],
+      "expressionRoots": [
+        "$json"
+      ],
+      "notShipped": [
+        "No workflow update, import or restore verb: those operations are served and reached through the escape hatch"
+      ],
+      "references": [
+        "references/MAPPING_LIMITS.md"
+      ]
+    },
+    {
+      "name": "kilasflow-node-configuration",
+      "description": "Use when configuring or reading a node's parameters and shared settings, or when a parameter is missing, hidden, refused or not the one you meant. Triggers on \"node describe\", \"node options\", \"parameter\", \"load options\", \"resourceMapper\", \"config.invalid\".",
+      "path": "skills/kilasflow-node-configuration/SKILL.md",
+      "commands": [
+        "kilasflow api",
+        "kilasflow node describe",
+        "kilasflow node list",
+        "kilasflow node options",
+        "kilasflow run",
+        "kilasflow workflow get"
+      ],
+      "operations": [
+        "get-node-icon",
+        "list-node-types",
+        "load-node-property-options",
+        "load-node-property-schema",
+        "run-workflow"
+      ],
+      "nodes": [
+        "kilasflow.code",
+        "kilasflow.httpRequest",
+        "kilasflow.merge",
+        "kilasflow.set",
+        "kilasflow.switch"
+      ],
+      "expressionRoots": [],
+      "notShipped": [],
+      "references": [
+        "references/LOAD_OPTIONS.md",
+        "references/PROPERTY_KINDS.md"
+      ]
+    },
+    {
+      "name": "kilasflow-node-packs",
+      "description": "Use when authoring, validating or installing a node pack, whether a declarative manifest, a WebAssembly module pack or a JavaScript sidecar community node, or when a pack's node type must be visible to one customer only. Triggers on \"pack\", \"pack.json\", \"WASM\", \"sidecar\", \"visibleTo\".",
+      "path": "skills/kilasflow-node-packs/SKILL.md",
+      "commands": [
+        "kilasflow api",
+        "kilasflow node describe",
+        "kilasflow node list",
+        "kilasflow node options",
+        "kilasflow pack validate"
+      ],
+      "operations": [
+        "get-node-icon",
+        "list-node-types",
+        "load-node-property-options"
+      ],
+      "nodes": [
+        "kilasflow.unsupported"
+      ],
+      "expressionRoots": [],
+      "notShipped": [
+        "No pack install verb: a pack directory is loaded from the configured paths at boot, and pack validate is the only pack verb"
+      ],
+      "references": [
+        "references/MODULE_AND_SIDECAR.md",
+        "references/PACK_FORMAT.md"
+      ]
+    },
+    {
+      "name": "kilasflow-operations",
+      "description": "Use when operating an installation rather than a workflow — roles, readiness, migrations, backups, restores, upgrade order, the operator credential, or offboarding a tenant. Triggers on \"deploy\", \"upgrade\", \"migrate\", \"migration\", \"backup\", \"restore\", \"ready\", \"health\", \"tenant\", \"operator key\", \"offboard\".",
+      "path": "skills/kilasflow-operations/SKILL.md",
+      "commands": [
+        "kilasflow api",
+        "kilasflow auth whoami",
+        "kilasflow context",
+        "kilasflow health",
+        "kilasflow ready",
+        "kilasflow tenant get",
+        "kilasflow tenant list",
+        "kilasflow tenant users",
+        "kilasflow version"
+      ],
+      "operations": [
+        "create-api-key",
+        "delete-tenant",
+        "get-health",
+        "get-me",
+        "get-ready",
+        "get-tenant",
+        "list-api-keys",
+        "list-tenant-users",
+        "list-tenants",
+        "revoke-api-key"
+      ],
+      "nodes": [],
+      "expressionRoots": [],
+      "notShipped": [
+        "No guarded write verbs: credential create, update and delete, datastore create, rename, delete, columns and clear, schedule create, update and delete, pack install, and tenant create and delete have no verbs yet",
+        "No skills verbs: kilasflow skills list, show, install, check and export do not ship in this bundle yet",
+        "No tenant api-keys verb: create-api-key, list-api-keys and revoke-api-key are served and reached through the escape hatch"
+      ],
+      "references": [
+        "references/UPGRADE_ORDER.md"
+      ]
+    },
+    {
+      "name": "kilasflow-triggers",
+      "description": "Use when a workflow has to be started by something other than you — an inbound HTTP request, a hosted form, a cron schedule, a manual run or another workflow — or when an activated workflow receives nothing. Triggers on \"webhook\", \"trigger\", \"schedule\", \"form\", \"activation\".",
+      "path": "skills/kilasflow-triggers/SKILL.md",
+      "commands": [
+        "kilasflow api",
+        "kilasflow exec get",
+        "kilasflow exec list",
+        "kilasflow run",
+        "kilasflow schedule list",
+        "kilasflow workflow get",
+        "kilasflow workflow publish-events"
+      ],
+      "operations": [
+        "activate-workflow",
+        "deactivate-workflow",
+        "get-execution",
+        "get-workflow",
+        "list-executions",
+        "list-schedules",
+        "list-workflow-publish-events",
+        "list-workflow-webhooks",
+        "run-workflow"
+      ],
+      "nodes": [
+        "kilasflow.errorTrigger",
+        "kilasflow.executeWorkflow",
+        "kilasflow.executeWorkflowTrigger",
+        "kilasflow.formTrigger",
+        "kilasflow.manual",
+        "kilasflow.respondToWebhook",
+        "kilasflow.schedule",
+        "kilasflow.webhook"
+      ],
+      "expressionRoots": [],
+      "notShipped": [
+        "No activation verb: activation and deactivation are the activate-workflow and deactivate-workflow operations through the escape hatch",
+        "No guarded write verbs: credential create, update and delete, datastore create, rename, delete, columns and clear, schedule create, update and delete, pack install, and tenant create and delete have no verbs yet",
+        "No idempotency flag: the server honours Idempotency-Key on a run and on a row write, but no verb carries the key yet",
+        "No webhook discovery verb: the list-workflow-webhooks operation is served, but no verb lists the webhook URLs of a workflow yet"
+      ],
+      "references": [
+        "references/WEBHOOK_DELIVERY.md"
+      ]
+    },
+    {
       "name": "kilasflow-workflow-lifecycle",
       "description": "Use when creating, editing, publishing, activating, versioning or restoring a workflow, or when a workflow will not save, run or behave as expected. Triggers on \"workflow\", \"publish\", \"activate\", \"version\", \"restore\", \"save\".",
       "path": "skills/kilasflow-workflow-lifecycle/SKILL.md",
@@ -40,8 +461,9 @@
       "nodes": [],
       "expressionRoots": [],
       "notShipped": [
-        "Idempotent runs: a retry is a second execution",
-        "Workflow update, import and restore from the CLI (no verb yet; use the escape hatch)"
+        "No activation verb: activation and deactivation are the activate-workflow and deactivate-workflow operations through the escape hatch",
+        "No idempotency flag: the server honours Idempotency-Key on a run and on a row write, but no verb carries the key yet",
+        "No workflow update, import or restore verb: those operations are served and reached through the escape hatch"
       ],
       "references": [
         "references/NAMING_AND_DESCRIPTIONS.md",
