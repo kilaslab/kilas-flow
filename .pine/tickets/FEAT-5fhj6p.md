@@ -1,7 +1,7 @@
 ---
 id: FEAT-5fhj6p
 title: Run the epic acceptance scenario as an executable suite
-status: doing
+status: blocked
 priority: high
 labels:
     - e2e
@@ -16,7 +16,7 @@ deps:
 parent: EPIC-m42s3g
 phase: p11
 created: "2026-09-05T12:06:43Z"
-updated: "2026-09-21T02:00:00Z"
+updated: "2026-09-21T02:00:47Z"
 ---
 
 ## Scope
@@ -67,6 +67,29 @@ One thing to decide: what happens when a proof fails because a third party is do
 - `README.md` — the Telegram tunnel walkthrough, `server.public_url`, and the secret-token scheme.
 - `.pine/roadmap.md` — "Open items for the owner", the credentials this suite formalises.
 - `scripts/smoke-postgres.sh` — the PostgreSQL topology the datastore proof runs on.
+
+## Why this ticket is blocked, and on what
+
+The suite is delivered and verified for everything that runs without a third party; five of the
+eight criteria need artefacts or credentials this repository cannot mint. Measured on the
+current tree (2026-09-21), the blocking facts are:
+
+- `docker manifest inspect ghcr.io/kilaslab/kilasflow:latest` is denied: the image under test
+  is not published, so criteria 1 and 7's "shipped artefact" half cannot be measured. The
+  capstone targets no longer invent a commit-derived tag (that defect is fixed), so with no
+  published image the run reports the proofs unavailable and exits 2.
+- `npm view @kilasflow/sdk version` answers E404: the external-consumer proof (criterion 5)
+  cannot install a published package. The registry code path is proven against a local
+  tarball instead.
+- Criteria 2 and 3 need a real Telegram bot token and a real WAHA server; the credential table
+  in `docs/src/content/docs/operate/acceptance-capstone.md` names every variable and its owner.
+- Criterion 8's schedule is wired (`.github/workflows/capstone.yml`, weekly) but has not fired
+  yet: a `schedule:` trigger only runs on the default branch.
+
+Unblocking is a publish and a credential handover, not more code: tag a release so the image
+and the npm package exist, then export the capstone variables and run
+`make test-e2e-capstone e2e-capstone-report`. The ticket's own verification section records
+each criterion's status, the command that would prove it, and the result observed today.
 
 ## E2E progress (EpicSuite, 2026-09-06)
 
