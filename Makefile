@@ -453,11 +453,22 @@ e2e-skip-budget: ## Fail if the e2e suite skipped more than its recorded budget
 
 # On-demand only: single-machine timings with third-party-adjacent variance
 # make it a bad merge gate and a good investigation tool. FEAT-8mymac.
-# Without N8N_EMAIL/N8N_PASSWORD the n8n half records an honest skip and the
-# KilasFlow half still runs (preliminary, never a comparison).
+# The default BENCH_N8N=managed starts the pinned throwaway n8n container,
+# creates its owner account with an in-memory password, measures both engines
+# and removes the container; BENCH_N8N=off measures the KilasFlow half alone
+# and publishes it as PRELIMINARY. Never a PR gate.
 .PHONY: bench-compare
 bench-compare: build ## Run the KilasFlow-vs-n8n runtime benchmark (30 runs/workflow)
 	node e2e/benchmark/run.mjs
+
+# The benchmark's own unit tests: the ABBA schedule, the variance bounds, the
+# bootstrap interval, full-body equivalence and the summariser. Node builtins
+# only — no engine, no Docker, no network — so it is fast enough to run on
+# demand. Deliberately not wired into CI, for the same reason bench-compare
+# is not: it is a method check, not a product gate.
+.PHONY: bench-test
+bench-test: ## Run the benchmark method's unit tests (no engine, no Docker)
+	node --test e2e/benchmark/*.test.mjs
 
 .PHONY: clean
 clean: ## Remove build artifacts

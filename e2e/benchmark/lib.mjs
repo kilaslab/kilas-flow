@@ -1,49 +1,66 @@
 /**
- * Shared benchmark plumbing for FEAT-8mymac.
+ * Shared benchmark plumbing for FEAT-8mymac (method version 2).
  *
  * What this owns: booting a real kilasflow binary against a fresh temp
  * database (same composition as e2e/helpers/server.ts), the single loopback
- * bench server (stub API + deterministic tool + byte-transparent /v1 proxy to
- * the local Ollama), the timed-run loop, statistics, and environment capture.
+ * bench server (deterministic stub API, deterministic tool, and a
+ * byte-transparent proxy to the local Ollama for both the OpenAI-compatible
+ * /v1/* paths and Ollama's own /api/* paths), the pre-registered run plan,
+ * statistics and environment capture.
  *
- * What this does not own: product code (nothing outside e2e/benchmark/),
- * secrets (n8n creds live in n8n.mjs and come from env only), or merge gates
- * (make bench-compare is on-demand only, never CI).
+ * What this does not own: product code (nothing outside e2e/benchmark/), the
+ * measurement rules (method.mjs), secrets (never in a file, see RULES), or
+ * merge gates (make bench-test is a local target, never CI).
  */
 
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { once } from 'node:events';
 import { createWriteStream } from 'node:fs';
-import { mkdtemp } from 'node:fs/promises';
-import {
-	createServer,
-	request as proxyRequest,
-} from 'node:http';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { createServer, request as proxyRequest } from 'node:http';
 import net from 'node:net';
-import { tmpdir } from 'node:os';
+import { loadavg, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
+import { BLOCK_SIZE } from './method.mjs';
+import { stubResponse } from './workflows.mjs';
+
 const execFileAsync = promisify(execFile);
 const REPO_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
-export const RUNS_DEFAULT = 30;
+export const RUNS_FLOOR = 30;
 export const WARMUP_DEFAULT = 5;
 
-/** Floor: the ticket contract is N>=30 per engine per workflow. */
-export function runCount() {
-	const raw = Number(process.env.BENCH_RUNS ?? RUNS_DEFAULT);
-	if (!Number.isInteger(raw) || raw < RUNS_DEFAULT) return RUNS_DEFAULT;
-	return raw;
-}
-
-export function warmupCount() {
-	const raw = Number(process.env.BENCH_WARMUP ?? WARMUP_DEFAULT);
-	if (!Number.isInteger(raw) || raw < 0) return WARMUP_DEFAULT;
-	return raw;
+/**
+ * The pre-registered run plan.
+ *
+ * Non-smoke floors the run count at the ticket's N>=30 and rounds it up to a
+ * whole number of blocks, because the ABBA schedule swaps on block boundaries.
+ * BENCH_SMOKE=1 is the harness's own smoke test: four samples per engine, two
+ * per block, one discarded warm-up, and a default output directory under the
+ * OS temp dir so a smoke run writes nothing into the repository.
+ */
+export function benchPlan(env = process.env) {
+	if (env.BENCH_SMOKE === '1') {
+		return {
+			runs: 4,
+			block: 2,
+			warmup: 1,
+			smoke: true,
+			outDir: env.BENCH_OUT_DIR || join(tmpdir(), `kilasflow-bench-smoke-${process.pid}`),
+		};
+	}
+	const block = BLOCK_SIZE;
+	let runs = Number(env.BENCH_RUNS ?? RUNS_FLOOR);
+	if (!Number.isInteger(runs) || runs < RUNS_FLOOR) runs = RUNS_FLOOR;
+	runs = Math.ceil(runs / block) * block;
+	let warmup = Number(env.BENCH_WARMUP ?? WARMUP_DEFAULT);
+	if (!Number.isInteger(warmup) || warmup < 0) warmup = WARMUP_DEFAULT;
+	return { runs, block, warmup, smoke: false, outDir: env.BENCH_OUT_DIR || null };
 }
 
 /** Plain REST client against the KilasFlow API (auth off in bench instances). */
@@ -74,82 +91,111 @@ async function freePort() {
 	return port;
 }
 
+/** Ollama's own paths, proxied next to /v1/*. None collides with the stub's exact paths. */
+const OLLAMA_NATIVE_PATHS = ['/api/chat', '/api/generate', '/api/tags', '/api/show', '/api/version', '/api/ps'];
+
+/** How a gateway hit is attributed. Mirrors method.mjs's rules for gatewayOverhead. */
+export function classifyHit(path) {
+	if (typeof path !== 'string') return 'other';
+	if (path === '/api/users' || path === '/api/orders' || path === '/api/echo') return 'stub';
+	if (path.startsWith('/tool/')) return 'tool';
+	if (path.startsWith('/v1/') || OLLAMA_NATIVE_PATHS.includes(path)) return 'model';
+	return 'other';
+}
+
+/** Every hit recorded after `index`, in arrival order, each with its own durMs. */
+export function hitsSince(hits, index) {
+	return hits.slice(Math.max(0, index));
+}
+
 /**
- * The single loopback server the bench instance admits through its one
- * allowed_private_endpoints entry (allow_private_networks stays off).
+ * The single server both engines admit as their one loopback dependency.
  *
- * One endpoint covers three loopback dependencies because the koanf env
- * mapping carries one value per variable:
- *   /api/*      — deterministic stub API for the HTTP benchmark workflows
- *   /tool/*     — deterministic tool endpoints for the agent benchmark
- *   /v1/*       — byte-transparent proxy to the real local Ollama (every
- *                 model byte comes from Ollama; Node only forwards)
+ * KilasFlow reaches it at 127.0.0.1 (its one allowed_private_endpoints entry,
+ * with allow_private_networks left off); n8n reaches it at
+ * host.docker.internal, because the container's loopback is its own. The stub
+ * answers are shared with the fixtures' expectations (workflows.mjs), so the
+ * expected body cannot drift from the served body.
  */
-export async function startBenchServer(ollamaBaseURL) {
+export async function startBenchServer(ollamaBaseURL, options = {}) {
+	const bindHost = options.bindHost ?? process.env.BENCH_BIND_HOST ?? '127.0.0.1';
 	const ollama = new URL(ollamaBaseURL);
 	const ollamaHost = ollama.hostname;
 	const ollamaPort = Number(ollama.port || (ollama.protocol === 'https:' ? 443 : 80));
 	const hits = [];
 
 	const server = createServer((incoming, outgoing) => {
+		const received = performance.now();
 		const chunks = [];
 		incoming.on('data', (chunk) => chunks.push(chunk));
 		incoming.on('end', () => {
 			const body = Buffer.concat(chunks);
 			const url = new URL(incoming.url ?? '/', 'http://127.0.0.1');
-			hits.push({ method: incoming.method ?? 'GET', path: url.pathname, at: Date.now() });
-			if (url.pathname === '/v1/models' || url.pathname.startsWith('/v1/')) {
+			const path = url.pathname;
+			const record = () => {
+				hits.push({ method: incoming.method ?? 'GET', path, at: Date.now(), durMs: performance.now() - received });
+			};
+			if (path.startsWith('/v1/') || OLLAMA_NATIVE_PATHS.includes(path)) {
 				const proxy = proxyRequest(
 					{
 						host: ollamaHost,
 						port: ollamaPort,
 						method: incoming.method,
-						path: url.pathname + url.search,
+						path: path + url.search,
 						headers: { ...incoming.headers, host: `${ollamaHost}:${ollamaPort}` },
 					},
 					(proxyRes) => {
+						// durMs is "request received to response finished", and
+						// "finished" is the LAST byte, not the first: Ollama streams
+						// its tokens, so recording at header time would report the
+						// time to first byte and charge the engine with the model's
+						// whole token stream as its own overhead.
+						let recorded = false;
+						const recordOnce = () => {
+							if (recorded) return;
+							recorded = true;
+							record();
+						};
+						proxyRes.once('end', recordOnce);
+						proxyRes.once('error', recordOnce);
+						outgoing.once('close', recordOnce);
 						outgoing.writeHead(proxyRes.statusCode ?? 502, proxyRes.headers);
 						proxyRes.pipe(outgoing);
 					},
 				);
 				proxy.on('error', () => {
+					record();
 					outgoing.writeHead(502, { 'content-type': 'application/json' });
 					outgoing.end(JSON.stringify({ ok: false, error: 'bench-server: ollama unreachable' }));
 				});
 				proxy.end(body);
 				return;
 			}
-			if (url.pathname.startsWith('/tool/weather/')) {
-				const city = decodeURIComponent(url.pathname.slice('/tool/weather/'.length));
-				outgoing.writeHead(200, { 'content-type': 'application/json' });
-				outgoing.end(JSON.stringify({ city, tempC: 19 }));
+			const stub = stubResponse(path);
+			record();
+			if (!stub) {
+				outgoing.writeHead(404, { 'content-type': 'application/json' });
+				outgoing.end(JSON.stringify({ ok: false, error: `unknown bench path ${path}` }));
 				return;
 			}
-			if (url.pathname === '/api/users' || url.pathname === '/api/orders') {
-				const kind = url.pathname === '/api/users' ? 'user' : 'order';
-				const rows = Array.from({ length: 25 }, (_, i) => ({ id: i + 1, kind, name: `${kind}-${i + 1}` }));
-				outgoing.writeHead(200, { 'content-type': 'application/json' });
-				outgoing.end(JSON.stringify({ rows }));
-				return;
-			}
-			if (url.pathname === '/api/echo') {
-				outgoing.writeHead(200, { 'content-type': 'application/json' });
-				outgoing.end(JSON.stringify({ ok: true, method: incoming.method, path: url.pathname }));
-				return;
-			}
-			outgoing.writeHead(404, { 'content-type': 'application/json' });
-			outgoing.end(JSON.stringify({ ok: false, error: `unknown bench path ${url.pathname}` }));
+			outgoing.writeHead(stub.status, { 'content-type': 'application/json' });
+			outgoing.end(JSON.stringify(stub.body));
 		});
 	});
-	server.listen(0, '127.0.0.1');
+	server.listen(0, bindHost);
 	await once(server, 'listening');
 	const address = server.address();
 	if (!address || typeof address === 'string') throw new Error('bench: bench server failed to start');
 	const port = address.port;
-	const origin = `http://127.0.0.1:${port}`;
+	const originFor = (host) => `http://${host}:${port}`;
+	const origin = originFor('127.0.0.1');
 	let closed = false;
 	return {
 		origin,
+		port,
+		bindHost,
+		originFor,
+		/** KilasFlow's one allowed private endpoint, as the deployment config wants it. */
 		endpoint: `127.0.0.1:${port}`,
 		modelBaseURL: `${origin}/v1`,
 		hits,
@@ -224,11 +270,14 @@ export async function startKilasFlow(benchEndpoint) {
 			child.kill('SIGTERM');
 			const exited = await Promise.race([once(child, 'exit'), new Promise((r) => setTimeout(() => r('timeout'), 10_000))]);
 			if (exited === 'timeout') child.kill('SIGKILL');
+			// The temp database, its WAL files and the log are this run's only
+			// local footprint; leave none of them behind.
+			await rm(dataDir, { recursive: true, force: true }).catch(() => undefined);
 		},
 	};
 }
 
-/** Sampled peak RSS (KiB) of a process, via ps. Documented as sampled. */
+/** Sampled peak RSS (KiB) of a process, via ps. Documented as sampled, not traced. */
 export async function sampleRssKib(pid) {
 	try {
 		const { stdout } = await execFileAsync('ps', ['-p', String(pid), '-o', 'rss=']);
@@ -237,63 +286,6 @@ export async function sampleRssKib(pid) {
 	} catch {
 		return null;
 	}
-}
-
-/**
- * Runs one benchmark workflow N times, sequentially and isolated (no
- * parallel cross-workflow runs — the caller sequences workflows).
- *
- * setup(baseURL) creates the workflow and returns { workflowId, trigger }.
- * trigger(run) starts one run and returns { id, wait() } where wait()
- * resolves to the terminal execution record.
- */
-export async function measureWorkflow({ baseURL, pid, key, setup, runs, warmup, maxAttempts = 3 }) {
-	const { workflowId, trigger } = await setup(baseURL);
-
-	const execOne = async () => {
-		const t0 = performance.now();
-		const started = await trigger(baseURL, workflowId);
-		const record = await started.wait();
-		const t1 = performance.now();
-		const rss = await sampleRssKib(pid);
-		if (record.status !== 'succeeded') {
-			throw new Error(`bench: ${key}: run ended ${record.status}: ${JSON.stringify(record.error ?? record).slice(0, 500)}`);
-		}
-		let serverMs = null;
-		if (record.startedAt && record.finishedAt) {
-			serverMs = new Date(record.finishedAt).getTime() - new Date(record.startedAt).getTime();
-		}
-		return { clientMs: t1 - t0, serverMs, rssKib: rss };
-	};
-
-	// Timed slots retry transient failures (model long-tail, GC pause) up to
-	// maxAttempts; every extra attempt is counted in retriedRuns so a second
-	// operator sees the flakiness instead of a cleaned number. A slot that
-	// fails every attempt aborts the benchmark: a persistent failure is a
-	// red run, not a slow one.
-	const execSlot = async (discard) => {
-		let attempts = 0;
-		for (;;) {
-			attempts++;
-			try {
-				return { sample: await execOne(), retried: attempts - 1 };
-			} catch (error) {
-				if (discard || attempts >= maxAttempts) throw error;
-			}
-		}
-	};
-
-	for (let i = 0; i < warmup; i++) await execSlot(true); // JIT/GC/cold-cache, discarded
-	const samples = [];
-	let peakRssKib = 0;
-	let retriedRuns = 0;
-	for (let i = 0; i < runs; i++) {
-		const { sample, retried } = await execSlot(false);
-		retriedRuns += retried;
-		samples.push({ clientMs: sample.clientMs, serverMs: sample.serverMs });
-		if (sample.rssKib !== null && sample.rssKib > peakRssKib) peakRssKib = sample.rssKib;
-	}
-	return { workflowId, runs: samples, peakRssKib, retriedRuns };
 }
 
 /** Polls one execution to a terminal status. Status-observed, never a sleep. */
@@ -308,18 +300,22 @@ export async function waitForExecution(baseURL, executionId, timeoutMs = 120_000
 	}
 }
 
-/** Manual-run trigger: POST /workflows/:id/run with an optional input. */
-export function manualTrigger(input) {
-	return async (baseURL, workflowId) => {
-		const response = await fetch(`${baseURL}/api/v1/workflows/${workflowId}/run`, {
-			method: 'POST',
-			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify(input === undefined ? {} : { input }),
-		});
-		if (response.status !== 202) throw new Error(`run: status ${response.status} (body: ${await response.text()})`);
-		const started = await response.json();
-		return { id: started.id, wait: () => waitForExecution(baseURL, started.id) };
-	};
+/**
+ * Every execution record for a workflow, newest first, following the API's
+ * cursor so a row with more than one page is still complete.
+ */
+export async function executionRecords(baseURL, workflowId, maxPages = 10) {
+	const items = [];
+	let cursor = '';
+	for (let page = 0; page < maxPages; page++) {
+		const query = `/executions?workflowId=${encodeURIComponent(workflowId)}&limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
+		const body = await api(baseURL, 'GET', query);
+		const batch = body.items ?? [];
+		items.push(...batch);
+		cursor = body.nextCursor ?? '';
+		if (!cursor) break;
+	}
+	return items;
 }
 
 /** Descriptive stats over an array of numbers. */
@@ -330,6 +326,8 @@ export function stats(values) {
 	const max = xs[n - 1];
 	const mean = xs.reduce((a, b) => a + b, 0) / n;
 	const variance = xs.reduce((a, b) => a + (b - mean) ** 2, 0) / n;
+	// Nearest-rank percentile: p95 of 30 samples is the 29th value, which the
+	// summary states as a limit rather than implying an interpolated quantile.
 	const quantile = (q) => xs[Math.min(n - 1, Math.ceil(q * n) - 1)];
 	return {
 		n,
@@ -346,54 +344,151 @@ function round2(value) {
 	return value === null || value === undefined ? null : Math.round(value * 100) / 100;
 }
 
-function sysctl(key) {
-	return execFileAsync('sysctl', ['-n', key])
-		.then(({ stdout }) => stdout.trim())
-		.catch(() => null);
+async function command(file, args) {
+	try {
+		const { stdout } = await execFileAsync(file, args);
+		return stdout.trim();
+	} catch {
+		return null;
+	}
 }
 
-/** Machine spec + versions + date, recorded into every raw result file. */
-export async function environment() {
-	const { stdout: uname } = await execFileAsync('uname', ['-smr']).catch(() => ({ stdout: 'unknown' }));
-	const [model, memBytes, ncpu] = await Promise.all([
-		sysctl('hw.model'),
-		sysctl('hw.memsize'),
-		sysctl('hw.ncpu'),
+/** 1-minute load average, rounded, for the quiet-machine banner. */
+export function loadAverage() {
+	const [one, five, fifteen] = loadavg();
+	return [round2(one), round2(five), round2(fifteen)];
+}
+
+/**
+ * Machine spec, versions and conditions, recorded into every raw file.
+ *
+ * This machine is a laptop that also runs a dozen parallel builds, so power
+ * source, thermal state and the load average are part of the measurement, not
+ * decoration: a number produced under throttle or load is not comparable with
+ * one produced on an idle machine.
+ */
+export async function environment({ ollamaOrigin, model } = {}) {
+	const [chip, model_, memBytes, ncpu, uname, macos, power, therm, docker, kilasflowVersion, dirty, ollama] = await Promise.all([
+		command('sysctl', ['-n', 'machdep.cpu.brand_string']),
+		command('sysctl', ['-n', 'hw.model']),
+		command('sysctl', ['-n', 'hw.memsize']),
+		command('sysctl', ['-n', 'hw.ncpu']),
+		command('uname', ['-smr']),
+		command('sw_vers', ['-productVersion']),
+		command('pmset', ['-g', 'batt']),
+		command('pmset', ['-g', 'therm']),
+		dockerFacts(),
+		command(join(REPO_DIR, 'bin', 'kilasflow'), ['-version']),
+		gitDirty(),
+		ollamaFacts(ollamaOrigin, model),
 	]);
-	let kilasflowVersion = 'unknown';
-	try {
-		const { stdout } = await execFileAsync(join(REPO_DIR, 'bin', 'kilasflow'), ['-version']);
-		kilasflowVersion = stdout.trim().split('\n')[0];
-	} catch {
-		// Recorded as unknown; the commit below still pins the build.
-	}
-	let commit = 'unknown';
-	try {
-		commit = (await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: REPO_DIR })).stdout.trim();
-	} catch {
-		// Non-git checkout (tarball repro): version above still pins it.
-	}
 	return {
 		date: new Date().toISOString(),
 		machine: {
-			uname: uname.trim(),
-			model: model ?? 'unknown',
+			chip: chip ?? 'unknown',
+			model: model_ ?? 'unknown',
+			uname: uname ?? 'unknown',
+			macos: macos ?? 'unknown',
 			cpuCount: ncpu !== null ? Number(ncpu) : 'unknown',
 			memBytes: memBytes !== null ? Number(memBytes) : 'unknown',
 		},
-		kilasflow: { version: kilasflowVersion, commit },
+		kilasflow: { version: (kilasflowVersion ?? 'unknown').split('\n')[0], commit: await gitCommit(), dirty },
 		node: process.version,
+		loadAverage: { before: loadAverage(), after: null },
+		power: { source: power ? power.split('\n')[0] : 'unknown' },
+		thermal: thermalState(therm),
+		docker,
+		ollama,
 	};
+}
+
+/** 100 means no thermal throttle; anything less is recorded verbatim. */
+function thermalState(raw) {
+	if (!raw) return { state: 'unknown' };
+	const limit = /CPU_Speed_Limit\s*=\s*(\d+)/.exec(raw);
+	if (!limit) return { state: raw.split('\n')[0] || 'unknown' };
+	return { state: Number(limit[1]) >= 100 ? 'nominal' : `throttled (CPU_Speed_Limit ${limit[1]})`, cpuSpeedLimit: Number(limit[1]) };
+}
+
+/** Tolerant of Docker being absent: the KilasFlow half still runs. */
+async function dockerFacts() {
+	const version = await command('docker', ['version', '--format', '{{.Server.Version}}']);
+	if (!version) return { available: false, reason: 'docker CLI or daemon unavailable' };
+	const info = await command('docker', ['info', '--format', '{{.OperatingSystem}}|{{.NCPU}}|{{.MemTotal}}']);
+	const [os, cpus, memBytes] = (info ?? '').split('|');
+	return {
+		available: true,
+		serverVersion: version,
+		os: os || 'unknown',
+		cpuCount: cpus ? Number(cpus) : 'unknown',
+		memBytes: memBytes ? Number(memBytes) : 'unknown',
+	};
+}
+
+/** Ollama version and the digest of the model under test, read through the gateway. */
+async function ollamaFacts(origin, model) {
+	if (!origin) return { version: null, model: model ?? null, digest: null };
+	try {
+		const version = await fetch(`${origin}/api/version`, { signal: AbortSignal.timeout(10_000) });
+		const tags = await fetch(`${origin}/api/tags`, { signal: AbortSignal.timeout(10_000) });
+		const versionBody = version.ok ? await version.json() : null;
+		const tagsBody = tags.ok ? await tags.json() : null;
+		const entry = (tagsBody?.models ?? []).find((candidate) => candidate.name === model || candidate.model === model);
+		return { version: versionBody?.version ?? null, model: model ?? null, digest: entry?.digest ?? null };
+	} catch (error) {
+		return { version: null, model: model ?? null, digest: null, error: String(error).slice(0, 200) };
+	}
+}
+
+async function gitCommit() {
+	const out = await command('git', ['rev-parse', 'HEAD']);
+	return out ?? 'unknown';
+}
+
+/**
+ * Whether the tracked tree differs from the recorded commit, ignoring the
+ * benchmark's own output directory and the ticket notes: those are written by
+ * the harness and by the operator, not part of the binary under test.
+ */
+async function gitDirty() {
+	const out = await command('git', ['status', '--porcelain']);
+	if (out === null) return null;
+	const relevant = out
+		.split('\n')
+		.filter((line) => line.trim() !== '')
+		.filter((line) => {
+			const path = line.slice(3).trim();
+			return !path.startsWith('e2e/benchmark/') && !path.startsWith('.pine/');
+		});
+	return relevant.length > 0;
+}
+
+/**
+ * Trivial-handler latency of an engine's own health endpoint.
+ *
+ * This is the hop probe: n8n is reached through OrbStack's published-port proxy
+ * while native KilasFlow is not, so this quantifies the floor that difference
+ * puts under every n8n row, separately from anything the workflow does.
+ */
+export async function probeHealth(url, n = 30) {
+	const samples = [];
+	for (let i = 0; i < n; i++) {
+		const started = performance.now();
+		const res = await fetch(url);
+		await res.text();
+		samples.push(performance.now() - started);
+	}
+	return stats(samples);
 }
 
 /** Direct latency probe of the bench server (engine overhead excluded). */
 export async function probeStubLatency(origin, n = 30) {
 	const samples = [];
 	for (let i = 0; i < n; i++) {
-		const t0 = performance.now();
+		const started = performance.now();
 		const res = await fetch(`${origin}/api/echo`);
 		await res.text();
-		samples.push(performance.now() - t0);
+		samples.push(performance.now() - started);
 	}
 	return stats(samples);
 }
