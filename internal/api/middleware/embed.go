@@ -56,8 +56,8 @@ func EmbedAuth(verifier EmbedVerifier) func(http.Handler) http.Handler {
 				deny(w, http.StatusForbidden, "This embed session is not allowed from that origin.")
 				return
 			}
-			if allowed, reason := permits(session, r); !allowed {
-				deny(w, http.StatusForbidden, reason)
+			if status, detail := permits(sessionSubject{session: session}, r); status != 0 {
+				deny(w, status, detail)
 				return
 			}
 			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), embedContextKey{}, session)))
@@ -78,143 +78,6 @@ func embedToken(r *http.Request) string {
 		}
 	}
 	return ""
-}
-
-// permits decides whether one request is inside a session's authority.
-//
-// The rule is deliberately about *what the request targets*, not about which
-// handler will run: an embed session is confined to one subject — a workflow
-// and its executions, or a datastore and its rows — and everything else is
-// refused by default rather than enumerated as forbidden.
-func permits(session embed.Session, r *http.Request) (bool, string) {
-	path := strings.TrimPrefix(r.URL.Path, "/api/v1")
-
-	switch {
-	case path == "/node-types" || strings.HasPrefix(path, "/node-types/"):
-		// The editor cannot render without the node catalogue, and the
-		// catalogue handler narrows itself to the session's tenant, so it
-		// carries only what that tenant may see.
-		//
-		// The load-options endpoint under this prefix does, so it is not
-		// covered by that reasoning: it can reach a customer's service, and an
-		// internal loader reads this process's own state. The handler bounds it
-		// by the session's WorkflowID rather than only its tenant, because
-		// nothing here checks a workflow — see LoadOptions.
-		return session.Allows(embed.ScopeRead), "This embed session cannot read."
-
-	case path == "/credentials" && r.Method == http.MethodGet:
-		// Credential *names* are needed to render a node's credential picker.
-		// Values are never returned by this endpoint.
-		return session.Allows(embed.ScopeRead), "This embed session cannot read."
-
-	case path == "/workflows/import":
-		// Importing creates a *new* workflow, which is outside any session's
-		// single-workflow authority.
-		return false, "An embed session cannot import workflows."
-
-	case strings.HasPrefix(path, "/workflows/"):
-		rest := strings.TrimPrefix(path, "/workflows/")
-		workflowID, action, _ := strings.Cut(rest, "/")
-		if workflowID != session.WorkflowID {
-			return false, "This embed session is scoped to a different workflow."
-		}
-		switch {
-		case action == "run":
-			return session.Allows(embed.ScopeRun), "This embed session cannot run workflows."
-		case action == "activate" || action == "deactivate":
-			// Activation publishes a webhook endpoint for the whole
-			// deployment; that is an owner action, not an embed one.
-			return false, "An embed session cannot change activation."
-		case r.Method == http.MethodGet:
-			return session.Allows(embed.ScopeRead), "This embed session cannot read."
-		case r.Method == http.MethodDelete:
-			return false, "An embed session cannot delete a workflow."
-		default:
-			return session.Allows(embed.ScopeWrite), "This embed session is read-only."
-		}
-
-	case path == "/executions":
-		// A listing must be narrowed to this session's own workflow. Without
-		// this, an embedded editor could page through every execution in the
-		// tenant, including workflows it was never granted.
-		if !session.Allows(embed.ScopeRead) {
-			return false, "This embed session cannot read executions."
-		}
-		if r.URL.Query().Get("workflowId") != session.WorkflowID {
-			return false, "An embed session must list executions of its own workflow."
-		}
-		return true, ""
-
-	case strings.HasPrefix(path, "/executions/"):
-		// Which workflow a single execution belongs to is only knowable by
-		// loading it, so the ownership check lives in the handler. This gate
-		// covers the scope; ownsExecution covers the identity.
-		return session.Allows(embed.ScopeRead), "This embed session cannot read executions."
-
-	case path == "/datastores":
-		// An embed session is bound to one datastore: listing every table in
-		// the tenant would leak sibling names, and creating one is schema
-		// work — the datastore equivalent of the workflow import refused
-		// above.
-		return false, "An embed session cannot manage datastores."
-
-	case strings.HasPrefix(path, "/datastores/"):
-		rest := strings.TrimPrefix(path, "/datastores/")
-		if rest == "" {
-			return false, "An embed session cannot use this endpoint."
-		}
-		// The session's datastore identity is checked in the handler, not
-		// here: a request naming another datastore must read as unknown
-		// (404) rather than as forbidden (403), so this gate covers only
-		// the scope and ownsDatastore covers the identity.
-		datastoreID, remainder, _ := strings.Cut(rest, "/")
-		if datastoreID == "" {
-			return false, "An embed session cannot use this endpoint."
-		}
-		action, _, _ := strings.Cut(remainder, "/")
-		switch {
-		case action == "":
-			// Reading one table's definition is data-plane; renaming or
-			// dropping it is schema work, refused like import and
-			// activation above.
-			if r.Method == http.MethodGet {
-				return session.Allows(embed.ScopeDatastoreRead), "This embed session cannot read."
-			}
-			return false, "An embed session cannot manage datastores."
-		case action == "clear" || action == "columns":
-			// Clearing every row and editing columns reshape the table
-			// itself, not its contents.
-			return false, "An embed session cannot manage datastores."
-		case action == "rows":
-			// Row reads, the single-row read, the CSV export, the filtered
-			// update and delete, the upsert, and the CSV import all address
-			// contents under one datastore id, so the method alone decides
-			// the family: GET reads, the mutating verbs write.
-			if r.Method == http.MethodGet {
-				return session.Allows(embed.ScopeDatastoreRead), "This embed session cannot read."
-			}
-			switch r.Method {
-			case http.MethodPost, http.MethodPut, http.MethodDelete:
-				return session.Allows(embed.ScopeDatastoreWrite), "This embed session is read-only."
-			default:
-				return false, "An embed session cannot use this endpoint."
-			}
-		default:
-			return false, "An embed session cannot use this endpoint."
-		}
-
-	case path == "/resume" || strings.HasPrefix(path, "/resume/"):
-		// Approval resume is never available to embedded sessions: resuming
-		// someone else's approval from inside a host page is the
-		// confused-deputy shape the session restriction exists to stop. The
-		// resume handler and the service repeat this denial in depth, so a
-		// denied call never consumes its token either way.
-		return false, "An embed session cannot answer an approval."
-	default:
-		// Listing every workflow, minting another session, managing schedules
-		// or credentials: none of that belongs to an embedded editor.
-		return false, "An embed session cannot use this endpoint."
-	}
 }
 
 func deny(w http.ResponseWriter, status int, detail string) {

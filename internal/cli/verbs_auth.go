@@ -213,7 +213,18 @@ type identity struct {
 	Label    string `json:"label,omitempty"`
 	KeyID    string `json:"keyId,omitempty"`
 	UserID   string `json:"userId,omitempty"`
+	// The three fields that say what this credential may do. A tenant-wide
+	// key carries none of them, which is exactly what a guarded verb reads
+	// before it refuses: the scope list is the difference between a key that
+	// may activate a workflow and one that may not.
+	Scopes     []string `json:"scopes,omitempty"`
+	WorkflowID string   `json:"workflowId,omitempty"`
+	ExpiresAt  string   `json:"expiresAt,omitempty"`
 }
+
+// Scoped reports whether this credential is an agent token rather than the
+// tenant's own key. It is the one question the guarded verbs turn on.
+func (who identity) Scoped() bool { return len(who.Scopes) > 0 }
 
 // decodeIdentity reads a principal resource.
 func decodeIdentity(body []byte) (identity, error) {
@@ -279,11 +290,25 @@ func humanIdentity(w io.Writer, data any) {
 		return
 	}
 
-	printKV(w, [][2]string{
+	rows := [][2]string{
 		{"tenant", principal.TenantID},
 		{"kind", principal.Kind},
 		{"label", principal.Label},
 		{"key", principal.KeyID},
 		{"user", principal.UserID},
-	})
+	}
+	// Printed only when they exist: an empty "scopes" line on a tenant-wide
+	// key would read as a key with no authority rather than as one with all
+	// of it.
+	if principal.Scoped() {
+		rows = append(rows, [2]string{"scopes", strings.Join(principal.Scopes, ", ")})
+	}
+	if principal.WorkflowID != "" {
+		rows = append(rows, [2]string{"bound to", principal.WorkflowID})
+	}
+	if principal.ExpiresAt != "" {
+		rows = append(rows, [2]string{"expires", principal.ExpiresAt})
+	}
+
+	printKV(w, rows)
 }

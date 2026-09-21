@@ -56,6 +56,13 @@ type PrincipalResource struct {
 	Name     string `json:"name,omitempty"`
 	KeyID    string `json:"keyId,omitempty" doc:"Set for a machine caller"`
 	Label    string `json:"label,omitempty" doc:"The key's name, for a machine caller"`
+	// The three fields that make an agent token describe itself: what it may
+	// do, which workflow it is bound to, and when it stops working. `kilasflow
+	// auth whoami` prints them, and the CLI reads them before a guarded verb
+	// rather than guessing from a refusal.
+	Scopes     []string   `json:"scopes,omitempty" doc:"Absent on a tenant-wide key; present on an agent token"`
+	WorkflowID string     `json:"workflowId,omitempty" doc:"Set when a scoped key is bound to one workflow"`
+	ExpiresAt  *time.Time `json:"expiresAt,omitempty" doc:"Absent when the key does not expire"`
 }
 
 // APIKeyResource describes a stored key. It can never carry the secret,
@@ -469,11 +476,15 @@ func (handler *Auth) Me(ctx context.Context, _ *struct{}) (*meOutput, error) {
 	resource := PrincipalResource{
 		TenantID: principal.TenantID, Kind: string(principal.Kind),
 		UserID: principal.UserID, KeyID: principal.KeyID,
+		WorkflowID: principal.WorkflowID, ExpiresAt: principal.ExpiresAt,
 	}
 	if principal.Kind == auth.KindSession {
 		resource.Email = principal.Label
 	} else {
 		resource.Label = principal.Label
+	}
+	for _, scope := range principal.Scopes {
+		resource.Scopes = append(resource.Scopes, string(scope))
 	}
 	return &meOutput{Body: resource}, nil
 }

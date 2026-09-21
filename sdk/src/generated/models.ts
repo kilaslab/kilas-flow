@@ -1181,6 +1181,8 @@ export interface PrincipalResource {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   email?: string;
+  /** Absent when the key does not expire */
+  expiresAt?: string;
   /** Set for a machine caller */
   keyId?: string;
   /** api_key or session */
@@ -1188,10 +1190,17 @@ export interface PrincipalResource {
   /** The key's name, for a machine caller */
   label?: string;
   name?: string;
+  /**
+     * Absent on a tenant-wide key; present on an agent token
+     * @nullable
+     */
+  scopes?: string[] | null;
   /** Tenant every request from this caller is scoped to */
   tenantId: string;
   /** Set for a signed-in person */
   userId?: string;
+  /** Set when a scoped key is bound to one workflow */
+  workflowId?: string;
 }
 
 export interface PublishVersionInputBody {

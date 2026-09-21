@@ -77,8 +77,8 @@ func TestPermitsAdmitsDatastoreRoutesOnlyWithTheMatchingScope(t *testing.T) {
 		t.Run(route.name, func(t *testing.T) {
 			t.Parallel()
 			request := httptest.NewRequest(route.method, route.path, nil)
-			if allowed, _ := permits(route.session, request); allowed != route.want {
-				t.Errorf("%s %s allowed = %v, want %v", route.method, route.path, allowed, route.want)
+			if status, _ := permits(sessionSubject{session: route.session}, request); (status == 0) != route.want {
+				t.Errorf("%s %s allowed = %v, want %v", route.method, route.path, status == 0, route.want)
 			}
 		})
 	}
@@ -114,8 +114,8 @@ func TestPermitsKeepsTheTwoFamiliesApart(t *testing.T) {
 		t.Run(route.name, func(t *testing.T) {
 			t.Parallel()
 			request := httptest.NewRequest(route.method, route.path, nil)
-			if allowed, _ := permits(route.session, request); allowed != route.want {
-				t.Errorf("%s %s allowed = %v, want %v", route.method, route.path, allowed, route.want)
+			if status, _ := permits(sessionSubject{session: route.session}, request); (status == 0) != route.want {
+				t.Errorf("%s %s allowed = %v, want %v", route.method, route.path, status == 0, route.want)
 			}
 		})
 	}

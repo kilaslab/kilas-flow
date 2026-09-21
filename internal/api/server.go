@@ -187,6 +187,12 @@ func NewServer(deps Deps) *Server {
 		embedVerifier = deps.EmbedIssuer
 	}
 	router.Use(middleware.EmbedAuth(embedVerifier))
+	// The other credential that is narrowed rather than trusted whole, in the
+	// same chain position because it answers the same question about the same
+	// path shapes: a scoped API key is confined to its scope list and its
+	// workflow binding, while a session, a tenant-wide key and an
+	// unauthenticated request pass through untouched.
+	router.Use(middleware.ScopeAuth())
 
 	api := humachi.New(router, openAPIConfig(deps))
 
