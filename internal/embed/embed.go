@@ -365,7 +365,7 @@ func (issuer *Issuer) Issue(request Request) (Session, string, error) {
 	if !issuer.OriginAllowed(request.Origin) {
 		return Session{}, "", fmt.Errorf("origin %q is not in this deployment's embed allowlist", request.Origin)
 	}
-	scopes, err := normalizeScopes(request.Scopes)
+	scopes, err := NormalizeScopes(request.Scopes)
 	if err != nil {
 		return Session{}, "", err
 	}
@@ -430,7 +430,11 @@ func scopesMatchSubject(scopes []Scope, workflow bool) error {
 	return nil
 }
 
-func normalizeScopes(scopes []Scope) ([]Scope, error) {
+// NormalizeScopes validates and canonicalises a scope list against the one
+// vocabulary this product has: an agent token and an embed session are refused
+// and accepted by the same rule, so a scope that works in one works in the
+// other.
+func NormalizeScopes(scopes []Scope) ([]Scope, error) {
 	if len(scopes) == 0 {
 		// A session with no scopes could do nothing, so an empty request is a
 		// mistake rather than a read-only default.

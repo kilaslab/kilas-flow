@@ -14,8 +14,11 @@
 package auth
 
 import (
+	"time"
+
 	"context"
 	"errors"
+	"github.com/kilaslab/kilas-flow/internal/embed"
 )
 
 // ErrUnauthenticated reports a credential that must not be honoured.
@@ -51,7 +54,24 @@ type Principal struct {
 	// Label is the key's name or the user's email, for log lines only. It is
 	// never used to make an authorization decision.
 	Label string
+	// Scopes is what a scoped key may do. Empty is the legacy tenant-wide key,
+	// which is the authority every key had before scopes existed.
+	//
+	// It is carried on the principal rather than looked up per request because
+	// the enforcement arm and the handlers must answer the same question: what
+	// may this caller do, not who is it.
+	Scopes []embed.Scope
+	// WorkflowID narrows a scoped key to one workflow. Empty is every workflow
+	// the tenant owns.
+	WorkflowID string
+	// ExpiresAt is when the key stops working, carried so a handler that mints
+	// or audits can see it without a second read.
+	ExpiresAt *time.Time
 }
+
+// Scoped reports whether the caller is an agent token rather than the tenant's
+// own key. It is the one question the refusals turn on.
+func (principal Principal) Scoped() bool { return len(principal.Scopes) > 0 }
 
 type contextKey struct{}
 

@@ -132,10 +132,15 @@ func (stub *adminTestStore) CountUsers(context.Context) (int64, error) {
 }
 
 func (stub *adminTestStore) CreateAPIKey(_ context.Context, tenant repository.TenantScope, label string) (repository.APIKey, string, error) {
+	return stub.CreateScopedAPIKey(context.Background(), tenant, label, nil, "", nil)
+}
+
+func (stub *adminTestStore) CreateScopedAPIKey(_ context.Context, tenant repository.TenantScope, label string, scopes []embed.Scope, workflowID string, expiresAt *time.Time) (repository.APIKey, string, error) {
 	stub.calls++
 	key := repository.APIKey{
 		ID: "key_1", TenantID: tenant.ID, Prefix: "00112233aabb",
 		Label: label, CreatedAt: time.Now().UTC(),
+		Scopes: scopes, WorkflowID: workflowID, ExpiresAt: expiresAt,
 	}
 	return key, "kfa1_" + key.Prefix + "_secret", nil
 }

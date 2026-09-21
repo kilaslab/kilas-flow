@@ -12,6 +12,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/kilaslab/kilas-flow/internal/auth"
+	"github.com/kilaslab/kilas-flow/internal/embed"
 	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
 
@@ -50,6 +51,23 @@ type APIKey struct {
 	CreatedAt  time.Time
 	LastUsedAt *time.Time
 	RevokedAt  *time.Time
+	// Scopes is what this key may do. Nil is the legacy tenant-wide key, which
+	// is not the same as an empty list: a key with no scopes at all has full
+	// authority, and a key whose list is empty is one nobody can mint.
+	Scopes []embed.Scope
+	// WorkflowID narrows the key to one workflow. Empty is every workflow.
+	WorkflowID string
+	// ExpiresAt is when the key stops working. Nil is no expiry.
+	ExpiresAt *time.Time
+}
+
+// Scoped reports whether this key carries a scope list, which is what makes it
+// an agent token rather than the tenant's own key.
+func (key APIKey) Scoped() bool { return len(key.Scopes) > 0 }
+
+// Expired reports whether the key has passed its expiry at the given moment.
+func (key APIKey) Expired(now time.Time) bool {
+	return key.ExpiresAt != nil && !now.Before(*key.ExpiresAt)
 }
 
 // Revoked reports whether the key has been withdrawn.
@@ -142,6 +160,10 @@ type AuthRepository interface {
 	SetUserPassword(ctx context.Context, tenant TenantScope, userID, passwordHash string) (User, error)
 	CountUsers(ctx context.Context) (int64, error)
 	CreateAPIKey(ctx context.Context, tenant TenantScope, label string) (APIKey, string, error)
+	// CreateScopedAPIKey mints a key with a scope list, an optional workflow
+	// binding and an optional expiry. Nil scopes is the tenant-wide key
+	// CreateAPIKey mints, so the two are one implementation.
+	CreateScopedAPIKey(ctx context.Context, tenant TenantScope, label string, scopes []embed.Scope, workflowID string, expiresAt *time.Time) (APIKey, string, error)
 	// EnsureAPIKey adopts a token the caller supplies rather than minting one.
 	// It exists for the operator credential, whose value lives in the
 	// deployment's environment and therefore cannot be invented by the server.
@@ -447,8 +469,26 @@ func (store *GORMAuthStore) FindUserForLogin(ctx context.Context, email string) 
 // listing, no read, and no later handler can reach a value that only exists
 // here.
 func (store *GORMAuthStore) CreateAPIKey(ctx context.Context, tenant TenantScope, label string) (APIKey, string, error) {
+	return store.CreateScopedAPIKey(ctx, tenant, label, nil, "", nil)
+}
+
+// CreateScopedAPIKey mints a key with the authority its caller asked for.
+//
+// Nil scopes is the legacy tenant-wide key, and that is deliberate rather than
+// an oversight: the two shapes are the same row, and the difference between
+// them is the one column this call writes. A non-empty scope list is
+// normalised here as well as at the API, so a repository caller cannot store a
+// scope the product does not have.
+func (store *GORMAuthStore) CreateScopedAPIKey(ctx context.Context, tenant TenantScope, label string, scopes []embed.Scope, workflowID string, expiresAt *time.Time) (APIKey, string, error) {
 	if tenant.ID == "" {
 		return APIKey{}, "", fmt.Errorf("an API key needs a tenant")
+	}
+	normalized, err := embed.NormalizeScopes(scopes)
+	if err != nil && len(scopes) > 0 {
+		return APIKey{}, "", fmt.Errorf("create API key: %w", err)
+	}
+	if len(scopes) == 0 {
+		normalized = nil
 	}
 	minted, err := auth.MintKey()
 	if err != nil {
@@ -461,6 +501,10 @@ func (store *GORMAuthStore) CreateAPIKey(ctx context.Context, tenant TenantScope
 	model := apiKeyModel{
 		ID: id, TenantID: tenant.ID, Prefix: minted.Prefix, SecretHash: minted.Hash,
 		Label: strings.TrimSpace(label), CreatedAt: store.now(),
+		Scopes: formatScopes(normalized), ExpiresAt: expiresAt,
+	}
+	if bound := strings.TrimSpace(workflowID); bound != "" {
+		model.WorkflowID = &bound
 	}
 	if err := store.db.WithContext(ctx).Omit("Tenant").Create(&model).Error; err != nil {
 		return APIKey{}, "", fmt.Errorf("create API key: %w", err)
@@ -711,8 +755,53 @@ func userFromModel(model userModel, withHash bool) User {
 }
 
 func apiKeyFromModel(model apiKeyModel) APIKey {
-	return APIKey{
+	key := APIKey{
 		ID: model.ID, TenantID: model.TenantID, Prefix: model.Prefix, Label: model.Label,
 		CreatedAt: model.CreatedAt, LastUsedAt: model.LastUsedAt, RevokedAt: model.RevokedAt,
 	}
+	if model.Scopes != nil {
+		key.Scopes = parseScopes(*model.Scopes)
+	}
+	if model.WorkflowID != nil {
+		key.WorkflowID = *model.WorkflowID
+	}
+	key.ExpiresAt = model.ExpiresAt
+	return key
+}
+
+// formatScopes renders a scope list for the one text column it lives in.
+//
+// Comma-separated rather than JSON because the vocabulary is a closed set of
+// identifiers that cannot contain a comma, and because an operator reading a
+// row should not have to parse brackets to see what a key may do.
+func formatScopes(scopes []embed.Scope) *string {
+	if len(scopes) == 0 {
+		return nil
+	}
+	parts := make([]string, 0, len(scopes))
+	for _, scope := range scopes {
+		parts = append(parts, string(scope))
+	}
+	joined := strings.Join(parts, ",")
+	return &joined
+}
+
+// parseScopes reads that column back, ignoring anything that is not a scope
+// this build knows: a row written by a future version must not hand a key an
+// authority this one cannot reason about.
+func parseScopes(recorded string) []embed.Scope {
+	scopes := []embed.Scope{}
+	for _, field := range strings.Split(recorded, ",") {
+		scope := embed.Scope(strings.TrimSpace(field))
+		if scope == "" {
+			continue
+		}
+		if normalized, err := embed.NormalizeScopes([]embed.Scope{scope}); err == nil && len(normalized) == 1 {
+			scopes = append(scopes, normalized[0])
+		}
+	}
+	if len(scopes) == 0 {
+		return nil
+	}
+	return scopes
 }

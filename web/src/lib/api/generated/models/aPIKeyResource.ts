@@ -10,6 +10,7 @@ export interface APIKeyResource {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   createdAt: string;
+  expiresAt?: string;
   id: string;
   label: string;
   /** Accurate to about a minute */
@@ -17,4 +18,11 @@ export interface APIKeyResource {
   /** Public handle, enough to recognise a key in a log */
   prefix: string;
   revokedAt?: string;
+  /**
+     * Absent on a tenant-wide key; present on an agent token
+     * @nullable
+     */
+  scopes?: string[] | null;
+  /** Set when a scoped key is bound to one workflow */
+  workflowId?: string;
 }

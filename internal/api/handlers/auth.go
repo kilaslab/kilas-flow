@@ -6,12 +6,14 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/kilaslab/kilas-flow/internal/api/middleware"
 	"github.com/kilaslab/kilas-flow/internal/auth"
+	"github.com/kilaslab/kilas-flow/internal/embed"
 	"github.com/kilaslab/kilas-flow/internal/repository"
 )
 
@@ -65,6 +67,9 @@ type APIKeyResource struct {
 	CreatedAt  time.Time  `json:"createdAt"`
 	LastUsedAt *time.Time `json:"lastUsedAt,omitempty" doc:"Accurate to about a minute"`
 	RevokedAt  *time.Time `json:"revokedAt,omitempty"`
+	Scopes     []string   `json:"scopes,omitempty" doc:"Absent on a tenant-wide key; present on an agent token"`
+	WorkflowID string     `json:"workflowId,omitempty" doc:"Set when a scoped key is bound to one workflow"`
+	ExpiresAt  *time.Time `json:"expiresAt,omitempty"`
 }
 
 // CreatedAPIKeyResource is the one response that carries a key's secret.
@@ -73,6 +78,10 @@ type CreatedAPIKeyResource struct {
 	Prefix    string    `json:"prefix"`
 	Label     string    `json:"label"`
 	CreatedAt time.Time `json:"createdAt"`
+	Scopes    []string  `json:"scopes,omitempty" doc:"Absent on a tenant-wide key; present on an agent token"`
+	// WorkflowID is the workflow a scoped key is bound to, empty for none.
+	WorkflowID string     `json:"workflowId,omitempty"`
+	ExpiresAt  *time.Time `json:"expiresAt,omitempty"`
 	// Token is the whole credential. This is the only time it exists anywhere
 	// but the caller's hands: the server stores a hash and cannot reproduce it,
 	// so a caller who loses it has to mint another.
@@ -189,6 +198,15 @@ type listAPIKeysOutput struct {
 type createAPIKeyInput struct {
 	Body struct {
 		Label string `json:"label" maxLength:"255" doc:"How this key will be recognised later"`
+		// Scopes makes this an agent token: the list of permissions it holds,
+		// in the same vocabulary an embed session uses. Omitted is the legacy
+		// tenant-wide key.
+		Scopes []string `json:"scopes,omitempty" maxItems:"8" doc:"workflow:read, workflow:write, workflow:run, datastore:read, datastore:write. Omit for a tenant-wide key."`
+		// WorkflowID narrows the key to one workflow. Only meaningful with
+		// scopes: a tenant-wide key is not narrowed.
+		WorkflowID string `json:"workflowId,omitempty" doc:"Narrows a scoped key to one workflow"`
+		// ExpiresAt retires the key at a moment the minter chose.
+		ExpiresAt *time.Time `json:"expiresAt,omitempty" doc:"When the key stops working. Omit for no expiry."`
 	}
 }
 
@@ -490,18 +508,45 @@ func (handler *Auth) CreateKey(ctx context.Context, input *createAPIKeyInput) (*
 	if handler.store == nil {
 		return nil, huma.Error503ServiceUnavailable("authentication is not configured on this instance")
 	}
+	// A scoped key may never mint another key: minting is how authority is
+	// handed out, and an agent that could do it would escalate past the list it
+	// was given. The refusal is the same shape the enforcement arm answers
+	// with, so a caller sees one vocabulary for one rule.
+	if principal, found := auth.PrincipalFrom(ctx); found && principal.Scoped() {
+		return nil, huma.Error403Forbidden("scope_denied: a scoped key cannot mint another key")
+	}
+	scopes := make([]embed.Scope, 0, len(input.Body.Scopes))
+	for _, scope := range input.Body.Scopes {
+		scopes = append(scopes, embed.Scope(strings.TrimSpace(scope)))
+	}
+	normalized, err := embed.NormalizeScopes(scopes)
+	if err != nil {
+		if len(scopes) > 0 {
+			return nil, huma.Error422UnprocessableEntity(err.Error())
+		}
+		normalized = nil
+	}
+	workflowID := strings.TrimSpace(input.Body.WorkflowID)
+	if workflowID != "" && len(normalized) == 0 {
+		return nil, huma.Error422UnprocessableEntity("a workflow binding needs scopes: a tenant-wide key is not narrowed")
+	}
+	if input.Body.ExpiresAt != nil && !input.Body.ExpiresAt.After(time.Now()) {
+		return nil, huma.Error422UnprocessableEntity("expiresAt is in the past, so the key would never work")
+	}
 	tenant := handler.tenants.Resolve(ctx)
-	key, token, err := handler.store.CreateAPIKey(ctx, tenant, input.Body.Label)
+	key, token, err := handler.store.CreateScopedAPIKey(ctx, tenant, input.Body.Label, normalized, workflowID, input.Body.ExpiresAt)
 	if err != nil {
 		return nil, serverProblem(ctx, "could not create the API key", err)
 	}
-	return &createAPIKeyOutput{
-		Status: http.StatusCreated,
-		Body: CreatedAPIKeyResource{
-			ID: key.ID, Prefix: key.Prefix, Label: key.Label,
-			CreatedAt: key.CreatedAt, Token: token,
-		},
-	}, nil
+	body := CreatedAPIKeyResource{
+		ID: key.ID, Prefix: key.Prefix, Label: key.Label,
+		CreatedAt: key.CreatedAt, Token: token,
+		WorkflowID: key.WorkflowID, ExpiresAt: key.ExpiresAt,
+	}
+	for _, scope := range key.Scopes {
+		body.Scopes = append(body.Scopes, string(scope))
+	}
+	return &createAPIKeyOutput{Status: http.StatusCreated, Body: body}, nil
 }
 
 // RevokeKey withdraws a key belonging to the calling tenant.
@@ -568,8 +613,13 @@ func (handler *Auth) cookie(value string, maxAge int) http.Cookie {
 }
 
 func apiKeyResource(key repository.APIKey) APIKeyResource {
-	return APIKeyResource{
-		ID: key.ID, Prefix: key.Prefix, Label: key.Label,
-		CreatedAt: key.CreatedAt, LastUsedAt: key.LastUsedAt, RevokedAt: key.RevokedAt,
+	resource := APIKeyResource{
+		ID: key.ID, Prefix: key.Prefix, Label: key.Label, CreatedAt: key.CreatedAt,
+		LastUsedAt: key.LastUsedAt, RevokedAt: key.RevokedAt,
+		WorkflowID: key.WorkflowID, ExpiresAt: key.ExpiresAt,
 	}
+	for _, scope := range key.Scopes {
+		resource.Scopes = append(resource.Scopes, string(scope))
+	}
+	return resource
 }

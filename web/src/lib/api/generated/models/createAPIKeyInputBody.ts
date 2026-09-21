@@ -9,9 +9,19 @@
 export interface CreateAPIKeyInputBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  /** When the key stops working. Omit for no expiry. */
+  expiresAt?: string;
   /**
      * How this key will be recognised later
      * @maxLength 255
      */
   label: string;
+  /**
+     * workflow:read, workflow:write, workflow:run, datastore:read, datastore:write. Omit for a tenant-wide key.
+     * @maxItems 8
+     * @nullable
+     */
+  scopes?: string[] | null;
+  /** Narrows a scoped key to one workflow */
+  workflowId?: string;
 }

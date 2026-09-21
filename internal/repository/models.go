@@ -416,6 +416,16 @@ type apiKeyModel struct {
 	// RevokedAt disables a key without deleting the row, so an audit of what
 	// that key did still has something to name.
 	RevokedAt *time.Time
+	// Scopes narrows a key to a list of permissions, comma-separated, in the
+	// same vocabulary an embed session uses. NULL is the legacy tenant-wide
+	// key: every key minted before scopes existed keeps exactly the authority
+	// it had, which is what makes this migration safe on a live deployment.
+	Scopes *string `gorm:"size:255"`
+	// WorkflowID narrows a key to one workflow, the way an embed session is
+	// narrowed to one document. NULL is every workflow the tenant owns.
+	WorkflowID *string `gorm:"size:64"`
+	// ExpiresAt retires a key at a moment the minter chose. NULL is no expiry.
+	ExpiresAt *time.Time
 	Tenant    tenantModel `gorm:"foreignKey:TenantID;references:ID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT"`
 }
 

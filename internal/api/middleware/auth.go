@@ -185,8 +185,14 @@ func (opts AuthOptions) resolve(r *http.Request, operation, cookieName string, a
 		if err != nil {
 			return auth.Principal{}, false
 		}
+		if key.Expired(time.Now()) {
+			// An expired key is refused the way a revoked one is: the store
+			// answered for it, and this is the one place that knows the clock.
+			return auth.Principal{}, false
+		}
 		return auth.Principal{
 			TenantID: key.TenantID, KeyID: key.ID, Kind: auth.KindAPIKey, Label: key.Label,
+			Scopes: key.Scopes, WorkflowID: key.WorkflowID, ExpiresAt: key.ExpiresAt,
 		}, true
 	}
 

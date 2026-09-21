@@ -10,9 +10,16 @@ export interface CreatedAPIKeyResource {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   createdAt: string;
+  expiresAt?: string;
   id: string;
   label: string;
   prefix: string;
+  /**
+     * Absent on a tenant-wide key; present on an agent token
+     * @nullable
+     */
+  scopes?: string[] | null;
   /** The full key. Shown once and never again. */
   token: string;
+  workflowId?: string;
 }
