@@ -151,7 +151,10 @@ func permits(subject subject, r *http.Request) (int, string) {
 		// needs the type catalogue — and the payload validator that goes with
 		// it spends a live call against the customer's service, so it is part
 		// of credential mutation rather than of reading.
-		if subject.Kind() != kindKey || r.Method != http.MethodGet {
+		if subject.Kind() != kindKey {
+			return http.StatusForbidden, subject.Denial("cannot use this endpoint")
+		}
+		if r.Method != http.MethodGet {
 			return http.StatusForbidden, subject.Denial("cannot manage credentials")
 		}
 		return refused(subject, subject.Allows(embed.ScopeRead), "cannot read")
@@ -173,7 +176,12 @@ func permits(subject subject, r *http.Request) (int, string) {
 		// key reaches this arm: an embed session is refused the whole prefix by
 		// the kind check, the way the default arm refused it before scopes
 		// existed.
-		if subject.Kind() != kindKey || strings.HasSuffix(path, "/test") {
+		if subject.Kind() != kindKey {
+			// An embed session was refused this prefix before scopes existed,
+			// and keeps the sentence the default arm gave it.
+			return http.StatusForbidden, subject.Denial("cannot use this endpoint")
+		}
+		if strings.HasSuffix(path, "/test") {
 			return http.StatusForbidden, subject.Denial("cannot manage credentials")
 		}
 		return refused(subject, subject.Allows(embed.ScopeRead), "cannot read")
