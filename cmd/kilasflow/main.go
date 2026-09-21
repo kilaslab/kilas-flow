@@ -31,6 +31,7 @@ import (
 	"github.com/kilaslab/kilas-flow/internal/embed"
 	"github.com/kilaslab/kilas-flow/internal/engine"
 	"github.com/kilaslab/kilas-flow/internal/events"
+	"github.com/kilaslab/kilas-flow/internal/idempotency"
 	"github.com/kilaslab/kilas-flow/internal/loadoptions"
 	"github.com/kilaslab/kilas-flow/internal/node"
 	"github.com/kilaslab/kilas-flow/internal/nodepack"
@@ -423,6 +424,16 @@ func run(args []string) error {
 	}
 
 	executions := repository.NewExecutionStore(db.DB)
+	// Request idempotency over the same database. The keys are durable rather
+	// than an in-process map, so a retry that lands on another replica still
+	// replays the first outcome.
+	idempotencyService, err := idempotency.NewService(repository.NewIdempotencyStore(db.DB), idempotency.Options{
+		Retention: cfg.Idempotency.Retention,
+		Log:       log,
+	})
+	if err != nil {
+		return fmt.Errorf("configure idempotency: %w", err)
+	}
 	// Injecting the extractor keeps node-type knowledge out of persistence
 	// while still letting webhook bindings be synced inside the activation
 	// transaction.
@@ -649,6 +660,11 @@ func run(args []string) error {
 	// same database from several processes is safe rather than coordinated.
 	startHistorySweeper(ctx, cfg.History, workflows, log)
 	startExecutionPruner(ctx, cfg.Execution, executions, runtime.DiscardBinaries, log)
+	// Expired keys cost disk, not correctness: the claim enforces expiry too.
+	// Stop waits for the sweep in flight and runs before the database close
+	// registered above, because defers unwind in reverse.
+	idempotencySweeper := startIdempotencySweeper(ctx, role, idempotencyService, log)
+	defer idempotencySweeper.Stop()
 
 	// A worker-only process has no listener: it runs until SIGINT/SIGTERM
 	// rather than exiting while its workers still hold leases.
@@ -690,6 +706,7 @@ func run(args []string) error {
 		HTTPPolicy:          outboundPolicy(cfg.Outbound),
 		DatabaseGuard:       sqlGuard,
 		SessionMemory:       agentMemory,
+		Idempotency:         idempotencyService,
 		Version:             version,
 	})
 
@@ -893,6 +910,27 @@ func startHistorySweeper(ctx context.Context, cfg config.History, store *reposit
 // enough that an installation with retention off pays nothing and one with it
 // on pays a bounded index scan four times an hour.
 const executionSweepInterval = 15 * time.Minute
+
+// idempotencySweepInterval is how often expired idempotency keys are deleted.
+//
+// A variable rather than a constant only so the wiring test can watch a sweep
+// land instead of waiting ten minutes for the production interval; nothing in
+// the composition root writes it.
+var idempotencySweepInterval = idempotency.DefaultSweepInterval
+
+// startIdempotencySweeper deletes expired idempotency keys for the roles that
+// serve the API.
+//
+// Only the API roles need it: the keys are written by HTTP handlers, and a
+// worker process never claims one. The helper returns a nil Sweeper for a
+// worker — and for a service the composition root could not build — and Stop
+// tolerates a nil receiver, so the shutdown path has no conditional.
+func startIdempotencySweeper(ctx context.Context, role processRole, service *idempotency.Service, log *slog.Logger) *idempotency.Sweeper {
+	if !role.runsAPI() || service == nil {
+		return nil
+	}
+	return idempotency.StartSweeper(ctx, service, idempotencySweepInterval, log)
+}
 
 // startExecutionPruner enforces the age bound on execution history.
 //

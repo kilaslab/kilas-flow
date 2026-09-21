@@ -88,7 +88,7 @@ func TestCORSReflectsAnAllowlistedOrigin(t *testing.T) {
 	if got := recorder.Header().Get("Vary"); got != "Origin" {
 		t.Errorf("Vary = %q, want Origin so a shared cache cannot serve a headerless answer", got)
 	}
-	if got := recorder.Header().Get("Access-Control-Expose-Headers"); got != "X-Request-ID, X-Next-Cursor" {
+	if got := recorder.Header().Get("Access-Control-Expose-Headers"); got != "X-Request-ID, X-Next-Cursor, Idempotent-Replayed, Retry-After" {
 		t.Errorf("Access-Control-Expose-Headers = %q", got)
 	}
 	if got := recorder.Header().Get("Access-Control-Allow-Headers"); got != corsDefaultHeaders {

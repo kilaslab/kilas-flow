@@ -46,7 +46,9 @@ const session = await kilasflow.createEmbedSession({
 One thin, typed method per API operation — all 74 under `/api/v1`, grouped
 here the way the [API contract](https://github.com/kilaslab/kilas-flow/blob/main/docs/src/content/docs/reference/api-contract.md)
 groups them. Every method takes an `AbortSignal` last, resolves `Promise<void>`
-for 204 responses, and surfaces failures as `KilasFlowError` (RFC 9457).
+for 204 responses, and surfaces failures as `KilasFlowError` (RFC 9457) — except
+the three writes that can be retried safely, which take an
+`IdempotentWriteOptions` object instead ([Retrying safely](#retrying-safely)).
 
 | Group | Methods |
 | --- | --- |
@@ -75,6 +77,36 @@ an `Authorization` header) and `nodeIconUrl` for artwork served with an inert
 content policy and a long immutable cache lifetime. `importWorkflow` takes the
 n8n document as `unknown` inside a typed envelope — it is untrusted input —
 while its diagnostics and minted webhook URLs are fully typed.
+
+### Retrying safely
+
+`runWorkflow`, `insertDatastoreRow` and `upsertDatastoreRow` take an
+`IdempotentWriteOptions` object where the signal goes, so a retry after a
+timeout repeats no side effect:
+
+```ts
+// One key per logical operation, persisted *before* the first attempt. A key
+// generated per attempt would protect nothing.
+const key = crypto.randomUUID();
+await storeOperationKey(key);
+
+const execution = await kilasflow.runWorkflow(workflow.id, { rows: 3 }, { idempotencyKey: key });
+
+// The retry carries the SAME key, so it returns the first execution — the same
+// record and id — instead of queueing a second run.
+const again = await kilasflow.runWorkflow(workflow.id, { rows: 3 }, { idempotencyKey: key });
+```
+
+A key is unique per logical operation, never a constant: keys are shared by
+every credential of the tenant, so one constant would make unrelated writes
+collide. The same key with a different request is refused with a 409 whose
+`problem.errors[0].value.code` is `idempotency_key_reused`. A 409 with
+`idempotency_key_in_flight` means the first request is still running: wait
+`error.retryAfterSeconds` and retry with the same key. The SDK generates no
+keys and does not surface `Idempotent-Replayed` — it returns the body, and a
+host that persisted its key before the first attempt needs no marker to be
+correct. The whole contract is in
+[Idempotent requests](../docs/src/content/docs/guides/idempotency.md).
 
 ## Datastores: embed reads versus backend management
 

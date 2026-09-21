@@ -11,6 +11,7 @@ import (
 
 	"github.com/kilaslab/kilas-flow/internal/api/middleware"
 	"github.com/kilaslab/kilas-flow/internal/datastore"
+	"github.com/kilaslab/kilas-flow/internal/idempotency"
 )
 
 // Datastores is the REST surface over the row store: tables, columns and
@@ -22,6 +23,10 @@ import (
 type Datastores struct {
 	store   *datastore.Engine
 	tenants TenantResolver
+	// idempotency makes a retried row write replay instead of writing twice.
+	// Optional: a nil service refuses a request that carries an
+	// Idempotency-Key rather than writing unprotected.
+	idempotency *idempotency.Service
 }
 
 // NewDatastores constructs the datastore handler.
@@ -124,8 +129,11 @@ type clearedDatastoreOutput struct {
 }
 
 type insertRowInput struct {
-	ID   string `path:"id" minLength:"1" doc:"Datastore identifier"`
-	Body struct {
+	ID string `path:"id" minLength:"1" doc:"Datastore identifier"`
+	// IdempotencyKey is the caller's retry key. Absent and empty are the same
+	// thing to the framework, and both mean no idempotency.
+	IdempotencyKey string `header:"Idempotency-Key" minLength:"1" maxLength:"255" pattern:"^[!-~]+$" doc:"1-255 printable ASCII characters. A retry carrying the same key and the same request is answered with the first request's outcome and repeats no side effect, marked with Idempotent-Replayed: true. The same key with a different request or resource is refused with 409. Keys are per tenant and are remembered for idempotency.retention. An empty header means no idempotency."`
+	Body           struct {
 		Values map[string]any `json:"values" doc:"User column values keyed by column name"`
 	}
 }
@@ -133,6 +141,8 @@ type insertRowInput struct {
 type createdRowOutput struct {
 	Status   int    `status:"201"`
 	Location string `header:"Location"`
+	// Replayed is empty on a first response, and huma omits an empty header.
+	Replayed string `header:"Idempotent-Replayed" doc:"true when this response replays an earlier request with the same Idempotency-Key"`
 	Body     datastore.Row
 }
 
@@ -192,15 +202,20 @@ type deleteRowsOutput struct {
 }
 
 type upsertRowInput struct {
-	ID   string `path:"id" minLength:"1" doc:"Datastore identifier"`
-	Body struct {
+	ID string `path:"id" minLength:"1" doc:"Datastore identifier"`
+	// IdempotencyKey is the caller's retry key. Absent and empty are the same
+	// thing to the framework, and both mean no idempotency.
+	IdempotencyKey string `header:"Idempotency-Key" minLength:"1" maxLength:"255" pattern:"^[!-~]+$" doc:"1-255 printable ASCII characters. A retry carrying the same key and the same request is answered with the first request's outcome and repeats no side effect, marked with Idempotent-Replayed: true. The same key with a different request or resource is refused with 409. Keys are per tenant and are remembered for idempotency.retention. An empty header means no idempotency."`
+	Body           struct {
 		Filter datastore.Filter `json:"filter" doc:"Rows to match; on no match one row is inserted"`
 		Values map[string]any   `json:"values" doc:"Columns to set or to insert with"`
 	}
 }
 
 type upsertRowOutput struct {
-	Body struct {
+	// Replayed is empty on a first response, and huma omits an empty header.
+	Replayed string `header:"Idempotent-Replayed" doc:"true when this response replays an earlier request with the same Idempotency-Key"`
+	Body     struct {
 		Inserted bool            `json:"inserted"`
 		Matched  int64           `json:"matched"`
 		Rows     []datastore.Row `json:"rows"`
@@ -253,7 +268,7 @@ func (handler *Datastores) Register(api huma.API) {
 	}, handler.ListRows)
 	huma.Register(api, huma.Operation{
 		OperationID: "insert-datastore-row", Method: http.MethodPost, Path: "/datastores/{id}/rows", DefaultStatus: http.StatusCreated,
-		Summary: "Insert a row", Description: "Writes one row and reads it back.", Tags: []string{"Datastore rows"},
+		Summary: "Insert a row", Description: "Writes one row and reads it back. Send Idempotency-Key to make a retry safe: " + idempotencyKeyDoc, Tags: []string{"Datastore rows"},
 	}, handler.InsertRow)
 	huma.Register(api, huma.Operation{
 		OperationID: "get-datastore-row", Method: http.MethodGet, Path: "/datastores/{id}/rows/{rowId}",
@@ -269,7 +284,7 @@ func (handler *Datastores) Register(api huma.API) {
 	}, handler.DeleteRows)
 	huma.Register(api, huma.Operation{
 		OperationID: "upsert-datastore-row", Method: http.MethodPost, Path: "/datastores/{id}/rows/upsert",
-		Summary: "Upsert rows", Description: "Updates every row matching the filter, or inserts one row when nothing matches. Read-then-write in no single transaction: two concurrent upserts against the same filter may both insert, so a counter that must not lose writes uses increment instead.", Tags: []string{"Datastore rows"},
+		Summary: "Upsert rows", Description: "Updates every row matching the filter, or inserts one row when nothing matches. Read-then-write in no single transaction: two concurrent upserts against the same filter may both insert, so a counter that must not lose writes uses increment instead. Send Idempotency-Key to make a retry safe: " + idempotencyKeyDoc, Tags: []string{"Datastore rows"},
 	}, handler.UpsertRow)
 	handler.registerDatastoreTransfer(api)
 }
@@ -414,6 +429,11 @@ func (handler *Datastores) DropColumn(ctx context.Context, input *datastoreColum
 }
 
 // InsertRow writes one row and reads it back.
+//
+// A caller that sends Idempotency-Key gets the first insert's row and location
+// back instead of a second row. The recorded form is the row, and above the
+// recorded-outcome cap it is just the id, which is all a replay needs to answer
+// with the same location.
 func (handler *Datastores) InsertRow(ctx context.Context, input *insertRowInput) (*createdRowOutput, error) {
 	if handler.store == nil {
 		return nil, huma.Error503ServiceUnavailable("datastore storage unavailable")
@@ -421,16 +441,83 @@ func (handler *Datastores) InsertRow(ctx context.Context, input *insertRowInput)
 	if err := handler.ownsDatastore(ctx, input.ID); err != nil {
 		return nil, err
 	}
-	row, err := handler.store.Insert(ctx, handler.tenants.Resolve(ctx).ID, input.ID, input.Body.Values)
+	values := input.Body.Values
+	if values == nil {
+		// An absent values map and an empty one are the same request, and must
+		// hash the same or a retry would be refused as a conflict.
+		values = map[string]any{}
+	}
+	tenantID := handler.tenants.Resolve(ctx).ID
+	insert := func(ctx context.Context) (idempotency.Response, error) {
+		row, err := handler.store.Insert(ctx, tenantID, input.ID, values)
+		if err != nil {
+			return idempotency.Response{}, err
+		}
+		return idempotency.Response{
+			Status:  http.StatusCreated,
+			Body:    row,
+			Compact: datastore.Row{"id": row["id"]},
+		}, nil
+	}
+
+	if input.IdempotencyKey == "" {
+		response, err := insert(ctx)
+		if err != nil {
+			return nil, handler.problem(ctx, err)
+		}
+		row := response.Body.(datastore.Row)
+		return &createdRowOutput{Status: response.Status, Location: rowLocation(input.ID, row), Body: row}, nil
+	}
+	if handler.idempotency == nil {
+		return nil, idempotencyUnavailable()
+	}
+	result, err := handler.idempotency.Do(ctx, tenantID, input.IdempotencyKey, idempotency.Request{
+		Operation: "insert-datastore-row",
+		Target:    input.ID,
+		Body: struct {
+			Values map[string]any `json:"values"`
+		}{Values: values},
+	}, insert)
 	if err != nil {
+		if problem, ok := idempotencyProblem(ctx, err); ok {
+			return nil, problem
+		}
 		return nil, handler.problem(ctx, err)
 	}
-	id, _ := row["id"].(int64)
+	var row datastore.Row
+	if err := result.Outcome.Decode(&row); err != nil {
+		return nil, serverProblem(ctx, "the recorded row outcome could not be read", err)
+	}
 	return &createdRowOutput{
-		Status:   http.StatusCreated,
-		Location: "/api/v1/datastores/" + input.ID + "/rows/" + strconv.FormatInt(id, 10),
+		Status:   result.Outcome.Status,
+		Replayed: replayedHeader(result.Replayed),
+		Location: rowLocation(input.ID, row),
 		Body:     row,
 	}, nil
+}
+
+// rowLocation is the row's own address, rebuilt from the decoded row because a
+// replay reads its outcome back as JSON, where an id is a float64.
+func rowLocation(datastoreID string, row datastore.Row) string {
+	return "/api/v1/datastores/" + datastoreID + "/rows/" + strconv.FormatInt(rowIDOf(row), 10)
+}
+
+// rowIDOf reads a row's id in any of the shapes it arrives in: an int64 from
+// the engine, a float64 from JSON decoding, or a json.Number when a decoder
+// was configured to keep the text.
+func rowIDOf(row datastore.Row) int64 {
+	switch id := row["id"].(type) {
+	case int64:
+		return id
+	case float64:
+		return int64(id)
+	case json.Number:
+		value, err := id.Int64()
+		if err == nil {
+			return value
+		}
+	}
+	return 0
 }
 
 // ListRows returns one page of rows in id order.
@@ -525,6 +612,11 @@ func (handler *Datastores) DeleteRows(ctx context.Context, input *deleteRowsInpu
 
 // UpsertRow updates every row matching the filter, or inserts one row when
 // nothing matches.
+//
+// A caller that sends Idempotency-Key gets the first call's outcome back
+// instead of a second upsert. That is observable: a keyless repeat of an
+// inserting upsert reports the update branch, while the replay still reports
+// the insert it recorded.
 func (handler *Datastores) UpsertRow(ctx context.Context, input *upsertRowInput) (*upsertRowOutput, error) {
 	if handler.store == nil {
 		return nil, huma.Error503ServiceUnavailable("datastore storage unavailable")
@@ -535,21 +627,62 @@ func (handler *Datastores) UpsertRow(ctx context.Context, input *upsertRowInput)
 	if err := refuseEmptyFilter(&input.Body.Filter); err != nil {
 		return nil, err
 	}
-	result, err := handler.store.Upsert(ctx, handler.tenants.Resolve(ctx).ID, input.ID, &input.Body.Filter, input.Body.Values, false)
+	values := input.Body.Values
+	if values == nil {
+		values = map[string]any{}
+	}
+	tenantID := handler.tenants.Resolve(ctx).ID
+
+	out := &upsertRowOutput{}
+	upsert := func(ctx context.Context) (idempotency.Response, error) {
+		result, err := handler.store.Upsert(ctx, tenantID, input.ID, &input.Body.Filter, values, false)
+		if err != nil {
+			return idempotency.Response{}, err
+		}
+		matched := int64(len(result.Rows))
+		if result.Inserted {
+			matched = 0
+		}
+		out.Body.Inserted = result.Inserted
+		out.Body.Matched = matched
+		out.Body.Rows = result.Rows
+		if out.Body.Rows == nil {
+			out.Body.Rows = []datastore.Row{}
+		}
+		// Above the recorded-outcome cap the counts and an empty row list are
+		// still a faithful replay: what the caller can act on is that the
+		// upsert inserted rather than updated.
+		compact := map[string]any{"inserted": result.Inserted, "matched": matched, "rows": []datastore.Row{}}
+		return idempotency.Response{Status: http.StatusOK, Body: out.Body, Compact: compact}, nil
+	}
+
+	if input.IdempotencyKey == "" {
+		if _, err := upsert(ctx); err != nil {
+			return nil, handler.problem(ctx, err)
+		}
+		return out, nil
+	}
+	if handler.idempotency == nil {
+		return nil, idempotencyUnavailable()
+	}
+	result, err := handler.idempotency.Do(ctx, tenantID, input.IdempotencyKey, idempotency.Request{
+		Operation: "upsert-datastore-row",
+		Target:    input.ID,
+		Body: struct {
+			Filter datastore.Filter `json:"filter"`
+			Values map[string]any   `json:"values"`
+		}{Filter: input.Body.Filter, Values: values},
+	}, upsert)
 	if err != nil {
+		if problem, ok := idempotencyProblem(ctx, err); ok {
+			return nil, problem
+		}
 		return nil, handler.problem(ctx, err)
 	}
-	out := &upsertRowOutput{}
-	out.Body.Inserted = result.Inserted
-	out.Body.Rows = result.Rows
-	if out.Body.Rows == nil {
-		out.Body.Rows = []datastore.Row{}
-	} else {
-		out.Body.Matched = int64(len(result.Rows))
-		if result.Inserted {
-			out.Body.Matched = 0
-		}
+	if err := json.Unmarshal(result.Outcome.Body, &out.Body); err != nil {
+		return nil, serverProblem(ctx, "the recorded upsert outcome could not be read", err)
 	}
+	out.Replayed = replayedHeader(result.Replayed)
 	return out, nil
 }
 
@@ -661,4 +794,12 @@ func datastoreResource(definition datastore.Datastore) DatastoreResource {
 type datastoreColumnPathInput struct {
 	ID   string `path:"id" minLength:"1" doc:"Datastore identifier"`
 	Name string `path:"name" minLength:"1" doc:"Column name"`
+}
+
+// WithIdempotency attaches the request idempotency service. Without it a row
+// write that carries an Idempotency-Key is refused rather than written
+// unprotected.
+func (handler *Datastores) WithIdempotency(service *idempotency.Service) *Datastores {
+	handler.idempotency = service
+	return handler
 }

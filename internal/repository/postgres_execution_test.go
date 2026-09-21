@@ -69,6 +69,7 @@ func eachDriver(t *testing.T, run func(t *testing.T, db *database.DB)) {
 		// failed on the executions foreign key, and the leftovers were
 		// invisible until a test tried to count what was in the table.
 		t.Cleanup(func() {
+			db.Exec(`DELETE FROM idempotency_keys WHERE tenant_id LIKE 'drv-%'`)
 			db.Exec(`DELETE FROM execution_node_runs WHERE tenant_id LIKE 'drv-%'`)
 			db.Exec(`DELETE FROM executions WHERE tenant_id LIKE 'drv-%'`)
 			db.Exec(`DELETE FROM workflow_publish_events WHERE tenant_id LIKE 'drv-%'`)

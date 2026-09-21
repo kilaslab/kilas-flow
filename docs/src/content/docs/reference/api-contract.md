@@ -218,6 +218,23 @@ message. Draft validation failure is likewise a `422` with a `body`-located
 detail. The `code` vocabulary grows additively; unknown codes MUST be
 rendered generically, keyed off `nodeId` when present.
 
+## Idempotency
+
+Three operations — `run-workflow`, `insert-datastore-row` and
+`upsert-datastore-row` — accept an optional `Idempotency-Key` request header.
+The header, the `Idempotent-Replayed` and `Retry-After` response headers, the
+two `409` conflict codes (`idempotency_key_reused`, `idempotency_key_in_flight`,
+carried as `errors[0].value.code`) and the retention config key
+(`idempotency.retention`) are **stable** contract. Adding an optional request
+header is additive under the rules above; withdrawing the header, renaming a
+code, or changing what a replay returns is breaking.
+
+The guarantees and, just as importantly, the gaps — a failed request frees its
+key, a run is not crash-atomic, the in-flight lease is two minutes — are written
+out in [Idempotent requests](/guides/idempotency/). A consumer should read that
+page before relying on the header, because it is the only place the boundaries
+are stated.
+
 ## Events
 
 `GET /api/v1/executions/{id}/events` is a server-sent event stream with nine

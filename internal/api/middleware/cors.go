@@ -23,9 +23,14 @@ const (
 	corsDefaultHeaders = "Authorization, Content-Type, X-KilasFlow-Embed, Last-Event-ID"
 
 	// corsExposedHeaders are the response headers a cross-origin script may
-	// read. Both are deliberately not sensitive: the request ID correlates a
-	// failure with a log line, and the next cursor is the pagination position.
-	corsExposedHeaders = "X-Request-ID, X-Next-Cursor"
+	// read. None is sensitive: the request ID correlates a failure with a log
+	// line, the next cursor is the pagination position, Idempotent-Replayed
+	// says a retry was answered from a record, and Retry-After says how long an
+	// in-flight refusal asks the caller to wait. The last two are not
+	// CORS-safelisted, so a browser host or embed page could not read either
+	// without this — which would make the documented in-flight retry
+	// unactionable.
+	corsExposedHeaders = "X-Request-ID, X-Next-Cursor, Idempotent-Replayed, Retry-After"
 
 	// corsMaxAge is how long a browser may cache the preflight result. Ten
 	// minutes keeps a busy embed page from re-preflighting every request while

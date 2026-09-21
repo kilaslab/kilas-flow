@@ -37,23 +37,24 @@ const EnvPrefix = "KILASFLOW_"
 // these structs by scripts/config-reference.go — edit the comments here and
 // regenerate, never the outputs by hand.
 type Config struct {
-	Server     Server       `koanf:"server"`
-	Database   Database     `koanf:"database"`
-	Datastore  Datastore    `koanf:"datastore"`
-	Security   Security     `koanf:"security"`
-	Secrets    Secrets      `koanf:"secrets"`
-	Auth       Auth         `koanf:"auth"`
-	Outbound   OutboundHTTP `koanf:"outbound"`
-	Webhook    Webhook      `koanf:"webhook"`
-	Embed      Embed        `koanf:"embed"`
-	Branding   Branding     `koanf:"branding"`
-	Execution  Execution    `koanf:"execution"`
-	History    History      `koanf:"history"`
-	SQL        SQLNodes     `koanf:"sql"`
-	Credential Credential   `koanf:"credential"`
-	Binary     Binary       `koanf:"binary"`
-	Packs      Packs        `koanf:"packs"`
-	Log        Log          `koanf:"log"`
+	Server      Server       `koanf:"server"`
+	Database    Database     `koanf:"database"`
+	Datastore   Datastore    `koanf:"datastore"`
+	Security    Security     `koanf:"security"`
+	Secrets     Secrets      `koanf:"secrets"`
+	Auth        Auth         `koanf:"auth"`
+	Outbound    OutboundHTTP `koanf:"outbound"`
+	Webhook     Webhook      `koanf:"webhook"`
+	Embed       Embed        `koanf:"embed"`
+	Branding    Branding     `koanf:"branding"`
+	Execution   Execution    `koanf:"execution"`
+	History     History      `koanf:"history"`
+	Idempotency Idempotency  `koanf:"idempotency"`
+	SQL         SQLNodes     `koanf:"sql"`
+	Credential  Credential   `koanf:"credential"`
+	Binary      Binary       `koanf:"binary"`
+	Packs       Packs        `koanf:"packs"`
+	Log         Log          `koanf:"log"`
 }
 
 // Server holds HTTP listener settings.
@@ -528,6 +529,34 @@ type History struct {
 	MaxVersions int `koanf:"max_versions"`
 }
 
+// Idempotency bounds how long a request's Idempotency-Key is remembered.
+//
+// The section name is one word for the same reason History, Outbound and
+// Binary are: envKeyToPath treats the first underscore as the section
+// separator, so a two-word section could never be set from the environment.
+type Idempotency struct {
+	// Retention is how long a completed request's key is remembered. Within
+	// it, a retry carrying the same key from the same tenant is answered with
+	// the first request's outcome and repeats no side effect; a key past its
+	// retention behaves as never seen and the request runs again. Bounded to
+	// between 1m and 720h.
+	//
+	// If you set execution.retention (default 0, keep everything, so there is
+	// nothing to align with by default), keep this at or below it: a replay of
+	// a run whose execution has been pruned returns an id that no longer
+	// resolves.
+	// Env: KILASFLOW_IDEMPOTENCY_RETENTION. Default: 24h.
+	Retention time.Duration `koanf:"retention"`
+}
+
+// The bounds idempotency.retention is validated against. A retention under a
+// minute would expire a key before a retrying client could plausibly use it,
+// and one over thirty days is a ledger rather than a retry guard.
+const (
+	MinIdempotencyRetention = time.Minute
+	MaxIdempotencyRetention = 30 * 24 * time.Hour
+)
+
 // SQLNodes bounds what a workflow document may ask a database node for.
 //
 // This is not KilasFlow's own database — that is Database above. It bounds the
@@ -719,6 +748,14 @@ func Default() Config {
 			// anyone should get by not reading the configuration reference.
 			Retention:   0,
 			MaxVersions: 0,
+		},
+		Idempotency: Idempotency{
+			// On by default, unlike the retention bounds above: a retried
+			// request that runs twice is a duplicate the customer did not ask
+			// for, and the guarantee is worth more than the day of keys it
+			// costs. A day covers the retry a client makes after an outage;
+			// it is not meant to be a ledger.
+			Retention: 24 * time.Hour,
 		},
 		SQL: SQLNodes{
 			// Both sit well above the node defaults (10,000 rows, 30 seconds):
@@ -1034,6 +1071,16 @@ func (c Config) Validate() error {
 	// typo until the database refuses the connection nobody budgeted for.
 	if c.Database.MaxOpenConns < 0 || c.Database.MaxIdleConns < 0 {
 		return fmt.Errorf("database.max_open_conns and database.max_idle_conns must not be negative")
+	}
+
+	// A retention under a minute would expire a key before a retrying client
+	// could plausibly use it, and one over thirty days turns the retry guard
+	// into a ledger. Zero is included in the refusal: idempotency that never
+	// replays is indistinguishable from having none, which is not what an
+	// operator setting the key to zero meant to ask for.
+	if c.Idempotency.Retention < MinIdempotencyRetention || c.Idempotency.Retention > MaxIdempotencyRetention {
+		return fmt.Errorf("idempotency.retention %s must be between %s and %s",
+			c.Idempotency.Retention, MinIdempotencyRetention, MaxIdempotencyRetention)
 	}
 
 	// A negative retention puts the prune cutoff in the future, and every

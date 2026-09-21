@@ -44,14 +44,14 @@ func registerRoutes(router *chi.Mux, api huma.API, deps Deps) {
 		WithOptionLoading(deps.Tenants, deps.OptionLoader, deps.CredentialResolverFor).
 		WithAvailability(deps.NodeAvailability).Register(v1)
 	handlers.NewWorkflows(deps.Workflows, deps.Executions, deps.NodeRegistry, deps.Tenants, deps.ExecutionController).
-		WithTriggers(deps.TriggerCoordinator).WithSessionMemory(deps.SessionMemory).Register(v1)
+		WithTriggers(deps.TriggerCoordinator).WithSessionMemory(deps.SessionMemory).WithIdempotency(deps.Idempotency).Register(v1)
 	handlers.NewExecutions(deps.ExecutionController, deps.Executions, deps.Events, deps.Tenants).Register(v1)
 	handlers.NewCredentials(deps.Credentials, deps.Tenants).
 		WithHTTPPolicy(credentialTestPolicy(deps)).
 		WithDatabaseGuard(deps.DatabaseGuard).
 		WithTestTimeout(deps.Config.Credential.TestTimeout).Register(v1)
 	handlers.NewSchedules(deps.Schedules, deps.Tenants).Register(v1)
-	handlers.NewDatastores(deps.Datastores, deps.Tenants).Register(v1)
+	handlers.NewDatastores(deps.Datastores, deps.Tenants).WithIdempotency(deps.Idempotency).Register(v1)
 	handlers.NewEmbedSessions(deps.EmbedIssuer, deps.Workflows, deps.Tenants).WithDatastores(deps.Datastores).Register(v1)
 	handlers.NewInterop(deps.Workflows, deps.NodeRegistry, deps.Tenants).Register(v1)
 

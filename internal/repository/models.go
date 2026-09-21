@@ -35,6 +35,7 @@ func Models() []any {
 		&webhookRouteModel{},
 		&webhookDeliveryModel{},
 		&scheduleModel{},
+		&idempotencyKeyModel{},
 	}
 }
 

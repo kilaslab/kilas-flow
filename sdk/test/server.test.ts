@@ -599,3 +599,111 @@ describe('errors', () => {
 		expect(otherTenant).toBeInstanceOf(KilasFlowError);
 	});
 });
+
+describe('idempotency keys', () => {
+	/** The 409 body both conflict codes share; only `value.code` differs. */
+	const conflict = (code: string) => ({
+		title: 'Conflict',
+		status: 409,
+		detail: 'this Idempotency-Key was already used for a different request; send a new key for a new request',
+		errors: [{ message: 'the key is in use', location: 'header.Idempotency-Key', value: { code } }]
+	});
+	const filter = datastoreFilter('and', [{ columnName: 'email', condition: 'eq', value: 'ada@example.com' }]);
+	/** A key the server refuses and will not silently drop. */
+	const unusableKeys = ['', ' ', 'has space', 'kunci-ñ', 'k'.repeat(256)];
+
+	it('sends the key on runWorkflow and leaves an absent key absent', async () => {
+		const { calls, fetchImpl } = recordingFetch({ body: { id: 'exec_1', status: 'queued' } });
+		const host = new KilasFlowClient({ baseUrl: 'https://flows.example', fetch: fetchImpl, apiKey: 'kfa1.acme.secret' });
+
+		await host.runWorkflow('workflow_1', { rows: 3 }, { idempotencyKey: 'op-1234' });
+		await host.runWorkflow('workflow_1', { rows: 3 });
+
+		const keyed = new Headers(calls[0]!.init.headers);
+		expect(keyed.get('Idempotency-Key')).toBe('op-1234');
+		expect(new Headers(calls[1]!.init.headers).get('Idempotency-Key')).toBeNull();
+		// A per-request header is added beside the configured ones, and the
+		// defaults a request already carried, never instead of them.
+		expect(keyed.get('Authorization')).toBe('Bearer kfa1.acme.secret');
+		expect(keyed.get('Content-Type')).toBe('application/json');
+	});
+
+	it('still takes an AbortSignal where the options object goes', async () => {
+		const { calls, fetchImpl } = recordingFetch({ body: { id: 'exec_1', status: 'queued' } });
+		const controller = new AbortController();
+
+		await client(fetchImpl).runWorkflow('workflow_1', {}, controller.signal);
+
+		// The caller's own signal still reaches the request rather than being
+		// mistaken for an options object and dropped.
+		const signal = calls[0]!.init.signal as AbortSignal;
+		controller.abort();
+		expect(signal.aborted).toBe(true);
+	});
+
+	it('sends the key on both datastore write methods', async () => {
+		const { calls, fetchImpl } = recordingFetch({ body: {} });
+		const sdk = client(fetchImpl);
+
+		await sdk.insertDatastoreRow('datastore_1', { email: 'ada@example.com' }, { idempotencyKey: 'insert-1' });
+		await sdk.upsertDatastoreRow('datastore_1', filter, { tier: 'pro' }, { idempotencyKey: 'k'.repeat(255) });
+
+		expect(new Headers(calls[0]!.init.headers).get('Idempotency-Key')).toBe('insert-1');
+		// 255 printable characters is the boundary the server accepts.
+		expect(new Headers(calls[1]!.init.headers).get('Idempotency-Key')).toBe('k'.repeat(255));
+	});
+
+	it('refuses an unusable key before calling fetch', async () => {
+		const { calls, fetchImpl } = recordingFetch({ body: {} });
+		const sdk = client(fetchImpl);
+
+		// An empty or malformed key is refused, never dropped: sending no
+		// header would look like idempotency to the caller and give none.
+		for (const idempotencyKey of unusableKeys) {
+			await expect(sdk.runWorkflow('workflow_1', {}, { idempotencyKey })).rejects.toThrow(/Idempotency-Key/);
+			await expect(sdk.insertDatastoreRow('datastore_1', { email: 'ada@example.com' }, { idempotencyKey })).rejects.toThrow(
+				/Idempotency-Key/
+			);
+			await expect(sdk.upsertDatastoreRow('datastore_1', filter, { tier: 'pro' }, { idempotencyKey })).rejects.toThrow(
+				/Idempotency-Key/
+			);
+		}
+		expect(calls).toHaveLength(0);
+	});
+
+	it('surfaces Retry-After from an in-flight 409 and nothing from a reused key', async () => {
+		const inFlight = recordingFetch({ status: 409, body: conflict('idempotency_key_in_flight'), headers: { 'Retry-After': '3' } });
+		const reused = recordingFetch({ status: 409, body: conflict('idempotency_key_reused') });
+
+		const wait = (await client(inFlight.fetchImpl)
+			.runWorkflow('workflow_1', {}, { idempotencyKey: 'op-1' })
+			.catch((caught: unknown) => caught)) as KilasFlowError;
+		const giveUp = (await client(reused.fetchImpl)
+			.runWorkflow('workflow_1', {}, { idempotencyKey: 'op-1' })
+			.catch((caught: unknown) => caught)) as KilasFlowError;
+
+		// The guide tells a host to wait and retry with the same key, which
+		// it can only obey if the header survives into the error.
+		expect(wait).toBeInstanceOf(KilasFlowError);
+		expect(wait.status).toBe(409);
+		expect(wait.problem?.errors?.[0]?.value).toMatchObject({ code: 'idempotency_key_in_flight' });
+		expect(wait.retryAfterSeconds).toBe(3);
+		// Only a new key helps a reused one, so there is no hint to wait on.
+		expect(giveUp.retryAfterSeconds).toBeUndefined();
+	});
+
+	it('treats a Retry-After that is not delta-seconds as no hint', async () => {
+		const dated = recordingFetch({
+			status: 409,
+			body: conflict('idempotency_key_in_flight'),
+			headers: { 'Retry-After': 'Wed, 21 Oct 2026 07:28:00 GMT' }
+		});
+
+		const error = (await client(dated.fetchImpl)
+			.runWorkflow('workflow_1', {}, { idempotencyKey: 'op-1' })
+			.catch((caught: unknown) => caught)) as KilasFlowError;
+
+		// An HTTP-date would need the caller's clock; the SDK does not guess.
+		expect(error.retryAfterSeconds).toBeUndefined();
+	});
+});

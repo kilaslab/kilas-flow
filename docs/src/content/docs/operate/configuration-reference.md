@@ -704,6 +704,32 @@ Retention drops versions older than this. Zero keeps every age.
 MaxVersions keeps only the newest N revisions of one workflow. Zero keeps
 every count.
 
+## idempotency
+
+Idempotency bounds how long a request's Idempotency-Key is remembered.
+
+The section name is one word for the same reason History, Outbound and
+Binary are: envKeyToPath treats the first underscore as the section
+separator, so a two-word section could never be set from the environment.
+
+### idempotency.retention
+
+- Type: `duration`
+- Default: `24h0m0s`
+- Environment: `KILASFLOW_IDEMPOTENCY_RETENTION`
+- Required: no
+
+Retention is how long a completed request's key is remembered. Within
+it, a retry carrying the same key from the same tenant is answered with
+the first request's outcome and repeats no side effect; a key past its
+retention behaves as never seen and the request runs again. Bounded to
+between 1m and 720h.
+
+If you set execution.retention (default 0, keep everything, so there is
+nothing to align with by default), keep this at or below it: a replay of
+a run whose execution has been pruned returns an id that no longer
+resolves.
+
 ## sql
 
 SQLNodes bounds what a workflow document may ask a database node for.

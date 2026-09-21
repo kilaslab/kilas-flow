@@ -19,12 +19,22 @@ export interface ProblemDetail {
 export class KilasFlowError extends Error {
 	readonly status: number;
 	readonly problem: ProblemDetail | undefined;
+	/**
+	 * Whole seconds the server asked the caller to wait before retrying, read
+	 * from `Retry-After` on a 409.
+	 *
+	 * Undefined when the response carried no hint, or carried one as an
+	 * HTTP-date: resolving a date would need the caller's clock, and the
+	 * server always sends delta-seconds.
+	 */
+	readonly retryAfterSeconds: number | undefined;
 
-	constructor(status: number, message: string, problem?: ProblemDetail) {
+	constructor(status: number, message: string, problem?: ProblemDetail, retryAfterSeconds?: number) {
 		super(message);
 		this.name = 'KilasFlowError';
 		this.status = status;
 		this.problem = problem;
+		this.retryAfterSeconds = retryAfterSeconds;
 	}
 }
 
@@ -118,6 +128,13 @@ export class Transport {
 			body?: unknown;
 			query?: Record<string, string | number | boolean | string[] | undefined>;
 			signal?: AbortSignal;
+			/**
+			 * Headers for this request only, added after the transport's own
+			 * — the configured headers, `Accept` and `Content-Type` all stay
+			 * unless an entry here names one of them deliberately. The
+			 * `Idempotency-Key` header travels this way.
+			 */
+			headers?: Record<string, string>;
 			/** Overrides the Accept header. The CSV export asks for text/csv. */
 			accept?: string;
 			/**
@@ -133,6 +150,7 @@ export class Transport {
 		const headers = new Headers(this.#headers);
 		headers.set('Accept', options.accept ?? 'application/json');
 		if (options.body !== undefined) headers.set('Content-Type', options.contentType ?? 'application/json');
+		for (const [name, value] of Object.entries(options.headers ?? {})) headers.set(name, value);
 
 		// A caller's own signal and the SDK's timeout both have to abort the
 		// request, so they are combined rather than one replacing the other.
@@ -170,5 +188,18 @@ async function problemFrom(response: Response): Promise<KilasFlowError> {
 	} catch {
 		// A non-JSON error body is still an error; the status carries it.
 	}
-	return new KilasFlowError(response.status, detail, problem);
+	return new KilasFlowError(response.status, detail, problem, retryAfterSeconds(response));
+}
+
+/**
+ * `Retry-After` as whole seconds, or undefined for anything else.
+ *
+ * The header is either delta-seconds or an HTTP-date. The server sends
+ * delta-seconds, and a date would have to be resolved against the caller's
+ * clock here — so a date is reported as no hint rather than guessed at.
+ */
+function retryAfterSeconds(response: Response): number | undefined {
+	const raw = response.headers.get('Retry-After')?.trim();
+	if (raw === undefined || !/^\d+$/.test(raw)) return undefined;
+	return Number(raw);
 }

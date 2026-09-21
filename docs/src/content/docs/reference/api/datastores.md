@@ -188,13 +188,14 @@ Embed: Deny — listing workflows, minting sessions, schedules, credential write
 
 `POST /api/v1/datastores/{id}/rows`
 
-Writes one row and reads it back.
+Writes one row and reads it back. Send Idempotency-Key to make a retry safe: 1-255 printable ASCII characters. A retry carrying the same key and the same request is answered with the first request's outcome and repeats no side effect, marked with Idempotent-Replayed: true. The same key with a different request or resource is refused with 409. Keys are per tenant and are remembered for idempotency.retention. An empty header means no idempotency.
 
 Parameters:
 
 | Name | In | Required | Type | Description |
 | --- | --- | --- | --- | --- |
 | `id` | path | yes | string | Datastore identifier |
+| `Idempotency-Key` | header | no | string | 1-255 printable ASCII characters. A retry carrying the same key and the same request is answered with the first request's outcome and repeats no side effect, marked with Idempotent-Replayed: true. The same key with a different request or resource is refused with 409. Keys are per tenant and are remembered for idempotency.retention. An empty header means no idempotency. |
 
 Request body: `application/json` — `InsertRowInputBody` (required)
 
@@ -283,13 +284,14 @@ Embed: Deny — listing workflows, minting sessions, schedules, credential write
 
 `POST /api/v1/datastores/{id}/rows/upsert`
 
-Updates every row matching the filter, or inserts one row when nothing matches. Read-then-write in no single transaction: two concurrent upserts against the same filter may both insert, so a counter that must not lose writes uses increment instead.
+Updates every row matching the filter, or inserts one row when nothing matches. Read-then-write in no single transaction: two concurrent upserts against the same filter may both insert, so a counter that must not lose writes uses increment instead. Send Idempotency-Key to make a retry safe: 1-255 printable ASCII characters. A retry carrying the same key and the same request is answered with the first request's outcome and repeats no side effect, marked with Idempotent-Replayed: true. The same key with a different request or resource is refused with 409. Keys are per tenant and are remembered for idempotency.retention. An empty header means no idempotency.
 
 Parameters:
 
 | Name | In | Required | Type | Description |
 | --- | --- | --- | --- | --- |
 | `id` | path | yes | string | Datastore identifier |
+| `Idempotency-Key` | header | no | string | 1-255 printable ASCII characters. A retry carrying the same key and the same request is answered with the first request's outcome and repeats no side effect, marked with Idempotent-Replayed: true. The same key with a different request or resource is refused with 409. Keys are per tenant and are remembered for idempotency.retention. An empty header means no idempotency. |
 
 Request body: `application/json` — `UpsertRowInputBody` (required)
 

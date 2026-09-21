@@ -283,6 +283,17 @@ function renderErrors(version, schemas) {
 	lines.push('## Workflow validation issues');
 	lines.push('');
 	lines.push('Workflow compile failure is structured: a `422` whose error details carry a `WorkflowValidationIssue` value with `code`, `nodeId`, and `connectionId`, so a client can map failures back to graph elements without parsing a message. Draft validation failure is likewise a `422` with a `body`-located detail. The `code` vocabulary grows additively; unknown codes must be rendered generically, keyed off `nodeId` when present. See `WorkflowValidationIssue` in `internal/api/handlers/workflows.go` for the source of this contract.');
+	lines.push('');
+	lines.push('## Idempotency conflicts');
+	lines.push('');
+	lines.push('The operations that accept an `Idempotency-Key` request header — `run-workflow`, `insert-datastore-row` and `upsert-datastore-row` — answer a reuse with a `409` whose error detail carries a typed `value.code`:');
+	lines.push('');
+	lines.push('| `value.code` | Meaning | What to do |');
+	lines.push('| --- | --- | --- |');
+	lines.push('| `idempotency_key_reused` | The key was first used for a different request or resource. | Send a new key for the new request. |');
+	lines.push('| `idempotency_key_in_flight` | The first request with this key is still running. | Retry after the seconds named in the `Retry-After` response header; the key frees when that request finishes or its two-minute lease expires. |');
+	lines.push('');
+	lines.push('A retry that matches the first request is answered from the recorded outcome with the `Idempotent-Replayed: true` response header and repeats no side effect; the header is absent on a first response. Above a 1 MiB recorded outcome the replay carries the durable identity instead of the full body: an inserted row replays its `Location` from the row id, and an upsert replays its `inserted` and `matched` counts with an empty `rows` list. Keys are per tenant and expire after `idempotency.retention`.');
 	return lines.join('\n') + '\n';
 }
 

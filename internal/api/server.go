@@ -24,6 +24,7 @@ import (
 	"github.com/kilaslab/kilas-flow/internal/datastore"
 	"github.com/kilaslab/kilas-flow/internal/embed"
 	"github.com/kilaslab/kilas-flow/internal/events"
+	"github.com/kilaslab/kilas-flow/internal/idempotency"
 	"github.com/kilaslab/kilas-flow/internal/loadoptions"
 	"github.com/kilaslab/kilas-flow/internal/node"
 	"github.com/kilaslab/kilas-flow/internal/repository"
@@ -117,7 +118,12 @@ type Deps struct {
 	// drops its sessions through it. Nil leaves deletion removing only the
 	// workflow, with conversations ageing out under retention instead.
 	SessionMemory handlers.SessionForgetter
-	Version       string
+	// Idempotency makes a retried request replay its first outcome instead of
+	// repeating the side effect. Nil makes a request carrying Idempotency-Key
+	// answer 503 rather than silently unprotected: the caller sent the key
+	// believing its retry was safe.
+	Idempotency *idempotency.Service
+	Version     string
 }
 
 // Server owns the HTTP listener and the route tree.

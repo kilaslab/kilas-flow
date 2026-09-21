@@ -31,6 +31,7 @@ func TestTableNamesSurviveTheNamerRoundTrip(t *testing.T) {
 		"webhook_routes":          webhookRouteModel{}.TableName,
 		"webhook_deliveries":      webhookDeliveryModel{}.TableName,
 		"schedules":               scheduleModel{}.TableName,
+		"idempotency_keys":        idempotencyKeyModel{}.TableName,
 	}
 
 	if len(models) != len(Models()) {

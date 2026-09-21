@@ -521,3 +521,85 @@ func TestAPrivateEndpointAllowanceIsEmptyByDefaultAndReachableFromConfiguration(
 		t.Errorf("AllowedPrivateEndpoints = %v, want the environment's single entry", got)
 	}
 }
+
+// An operator who has never configured idempotency still gets it, and for a
+// day: long enough that a client retrying across a weekend outage is answered
+// from the record, short enough that the table is not a permanent ledger.
+func TestIdempotencyRetentionDefaultsToADay(t *testing.T) {
+	cfg, err := Load(filepath.Join(t.TempDir(), "absent.yaml"))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Idempotency.Retention != 24*time.Hour {
+		t.Errorf("Idempotency.Retention = %s, want 24h", cfg.Idempotency.Retention)
+	}
+	if Default().Idempotency.Retention != cfg.Idempotency.Retention {
+		t.Errorf("Default() and Load() disagree on the retention: %s vs %s", Default().Idempotency.Retention, cfg.Idempotency.Retention)
+	}
+}
+
+func TestIdempotencyRetentionIsReachableFromYAMLAndTheEnvironment(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "kilasflow.yaml")
+	if err := os.WriteFile(path, []byte("idempotency:\n  retention: 6h\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Idempotency.Retention != 6*time.Hour {
+		t.Errorf("Idempotency.Retention from YAML = %s, want 6h", cfg.Idempotency.Retention)
+	}
+
+	// The section is one word for the same reason History and Outbound are:
+	// envKeyToPath treats the first underscore as the section separator.
+	t.Setenv("KILASFLOW_IDEMPOTENCY_RETENTION", "48h")
+	cfg, err = Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Idempotency.Retention != 48*time.Hour {
+		t.Errorf("Idempotency.Retention = %s, want the environment's 48h", cfg.Idempotency.Retention)
+	}
+}
+
+// The retention is bounded on both sides. Zero or negative would expire every
+// key the moment it is recorded, which is idempotency that never replays; an
+// unbounded top would let one typo turn the table into a ledger nobody prunes.
+func TestIdempotencyRetentionIsBounded(t *testing.T) {
+	refused := map[string]time.Duration{
+		"zero":         0,
+		"negative":     -time.Hour,
+		"under a min":  30 * time.Second,
+		"over 30 days": 721 * time.Hour,
+	}
+	for name, retention := range refused {
+		t.Run("refuses "+name, func(t *testing.T) {
+			cfg := Default()
+			cfg.Idempotency.Retention = retention
+			err := cfg.Validate()
+			if err == nil {
+				t.Fatalf("Validate() = nil for %s, want an error", retention)
+			}
+			if !strings.Contains(err.Error(), "idempotency.retention") {
+				t.Errorf("Validate() error = %q, want it to name idempotency.retention", err)
+			}
+		})
+	}
+
+	accepted := map[string]time.Duration{
+		"one minute":  time.Minute,
+		"one day":     24 * time.Hour,
+		"thirty days": 720 * time.Hour,
+	}
+	for name, retention := range accepted {
+		t.Run("accepts "+name, func(t *testing.T) {
+			cfg := Default()
+			cfg.Idempotency.Retention = retention
+			if err := cfg.Validate(); err != nil {
+				t.Errorf("Validate() error = %v for %s, want none", err, retention)
+			}
+		})
+	}
+}

@@ -47,6 +47,14 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
   the exit code says whether to fix the call, ask the user, wait or report — a
   refused scope is its own code, and a guarded verb refuses without `--yes`.
   `make smoke-cli` proves the tree against a booted server.
+- Idempotent execution requests and datastore writes: an `Idempotency-Key`
+  header on `POST /api/v1/workflows/{id}/run`, `POST /api/v1/datastores/{id}/rows`
+  and `POST /api/v1/datastores/{id}/rows/upsert` makes a retry return the first
+  request's outcome instead of repeating its side effect, with durable
+  tenant-scoped keys in a new `idempotency_keys` table, retention set by
+  `idempotency.retention`, and `Retry-After` on the in-flight 409. The host SDK
+  exposes it as `idempotencyKey` on `runWorkflow`, `insertDatastoreRow` and
+  `upsertDatastoreRow`.
 
 ### Changed
 

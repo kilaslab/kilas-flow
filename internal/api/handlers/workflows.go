@@ -11,6 +11,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/kilaslab/kilas-flow/internal/execution"
+	"github.com/kilaslab/kilas-flow/internal/idempotency"
 	"github.com/kilaslab/kilas-flow/internal/node"
 	"github.com/kilaslab/kilas-flow/internal/repository"
 	"github.com/kilaslab/kilas-flow/internal/webhook"
@@ -44,6 +45,10 @@ type Workflows struct {
 	// Optional: without it deletion still removes the workflow, and the
 	// conversations age out under retention instead.
 	sessions SessionForgetter
+	// idempotency makes a retried run replay instead of queueing a second
+	// execution. Optional: a nil service refuses a request that carries an
+	// Idempotency-Key rather than running it unprotected.
+	idempotency *idempotency.Service
 }
 
 // SessionForgetter drops a workflow's retained agent conversations. It is a
@@ -226,8 +231,11 @@ type updateWorkflowInput struct {
 }
 
 type runWorkflowInput struct {
-	ID   string `path:"id" minLength:"1" doc:"Workflow identifier"`
-	Body *struct {
+	ID string `path:"id" minLength:"1" doc:"Workflow identifier"`
+	// IdempotencyKey is the caller's retry key. Absent and empty are the same
+	// thing to the framework, and both mean no idempotency.
+	IdempotencyKey string `header:"Idempotency-Key" minLength:"1" maxLength:"255" pattern:"^[!-~]+$" doc:"1-255 printable ASCII characters. A retry carrying the same key and the same request is answered with the first request's outcome and repeats no side effect, marked with Idempotent-Replayed: true. The same key with a different request or resource is refused with 409. Keys are per tenant and are remembered for idempotency.retention. An empty header means no idempotency."`
+	Body           *struct {
 		Input json.RawMessage `json:"input,omitempty" doc:"Optional manual-run input JSON"`
 		// TriggerNodeID picks which trigger the run starts from. A workflow
 		// that declares several — a webhook beside a nightly schedule is the
@@ -270,6 +278,17 @@ type deletedWorkflowOutput struct {
 type executionRequestOutput struct {
 	Status int `status:"202"`
 	Body   ExecutionRequestResource
+}
+
+// runWorkflowOutput is the manual run's response. It is a type of its own
+// rather than executionRequestOutput because cancellation shares that type and
+// has no idempotency key, so it must not advertise the replay header.
+type runWorkflowOutput struct {
+	Status int `status:"202"`
+	// Replayed is empty on a first response, and huma omits an empty header, so
+	// the marker is present exactly when the response came from a record.
+	Replayed string `header:"Idempotent-Replayed" doc:"true when this response replays an earlier request with the same Idempotency-Key"`
+	Body     ExecutionRequestResource
 }
 
 // ExecutionNodeRunResource is the externally inspectable trace of one node
@@ -389,7 +408,7 @@ func (handler *Workflows) Register(api huma.API) {
 	}, handler.Deactivate)
 	huma.Register(api, huma.Operation{
 		OperationID: "run-workflow", Method: http.MethodPost, Path: "/workflows/{id}/run", DefaultStatus: http.StatusAccepted,
-		Summary: "Queue a manual workflow run", Description: "Validates and queues the latest saved revision without requiring activation. Body.triggerNodeId selects the trigger to start from; omit it to run every trigger, and a node that cannot start a run is refused with 422.", Tags: []string{"Workflow lifecycle"},
+		Summary: "Queue a manual workflow run", Description: "Validates and queues the latest saved revision without requiring activation. Body.triggerNodeId selects the trigger to start from; omit it to run every trigger, and a node that cannot start a run is refused with 422. Send Idempotency-Key to make a retry safe: " + idempotencyKeyDoc, Tags: []string{"Workflow lifecycle"},
 	}, handler.Run)
 }
 
@@ -771,7 +790,11 @@ func (handler *Workflows) lifecycleIDs() map[string]string {
 // same item, which sends duplicate writes and hands trigger-shaped expressions
 // the wrong payload; and the run is refused by name when the node cannot start
 // one.
-func (handler *Workflows) Run(ctx context.Context, input *runWorkflowInput) (*executionRequestOutput, error) {
+//
+// A caller that sends Idempotency-Key gets the first request's outcome back
+// instead of a second queued run. The confinement check runs before the key is
+// read, so a replay is held to the same rules as the request it replays.
+func (handler *Workflows) Run(ctx context.Context, input *runWorkflowInput) (*runWorkflowOutput, error) {
 	if err := handler.available(true); err != nil {
 		return nil, err
 	}
@@ -784,15 +807,55 @@ func (handler *Workflows) Run(ctx context.Context, input *runWorkflowInput) (*ex
 		payload = input.Body.Input
 		triggerNodeID = strings.TrimSpace(input.Body.TriggerNodeID)
 	}
-	tenant := handler.tenant(ctx)
-	created, err := handler.executions.QueueManualLatest(ctx, tenant, input.ID, workflow.CatalogFor(handler.catalog, tenant.ID), triggerNodeID, payload)
+	// queue is the side effect, and it wakes a worker exactly once: a replay
+	// returns the recorded outcome without running this.
+	queue := func(ctx context.Context) (idempotency.Response, error) {
+		tenant := handler.tenant(ctx)
+		created, err := handler.executions.QueueManualLatest(ctx, tenant, input.ID, workflow.CatalogFor(handler.catalog, tenant.ID), triggerNodeID, payload)
+		if err != nil {
+			return idempotency.Response{}, err
+		}
+		if handler.waker != nil {
+			handler.waker.Wake()
+		}
+		resource := executionRequestResource(created)
+		// The recorded form drops the input echo. It is the durable identity a
+		// replay needs, and keeping a copy of the caller's payload in a second
+		// table would outlive execution.retention.
+		replay := resource
+		replay.Input = nil
+		return idempotency.Response{Status: http.StatusAccepted, Body: resource, Record: replay}, nil
+	}
+
+	if input.IdempotencyKey == "" {
+		response, err := queue(ctx)
+		if err != nil {
+			return nil, handler.problem(ctx, err)
+		}
+		return &runWorkflowOutput{Status: response.Status, Body: response.Body.(ExecutionRequestResource)}, nil
+	}
+	if handler.idempotency == nil {
+		return nil, idempotencyUnavailable()
+	}
+	result, err := handler.idempotency.Do(ctx, handler.tenant(ctx).ID, input.IdempotencyKey, idempotency.Request{
+		Operation: "run-workflow",
+		Target:    input.ID,
+		Body: struct {
+			Input         json.RawMessage `json:"input"`
+			TriggerNodeID string          `json:"triggerNodeId"`
+		}{Input: payload, TriggerNodeID: triggerNodeID},
+	}, queue)
 	if err != nil {
+		if problem, ok := idempotencyProblem(ctx, err); ok {
+			return nil, problem
+		}
 		return nil, handler.problem(ctx, err)
 	}
-	if handler.waker != nil {
-		handler.waker.Wake()
+	var resource ExecutionRequestResource
+	if err := result.Outcome.Decode(&resource); err != nil {
+		return nil, serverProblem(ctx, "the recorded run outcome could not be read", err)
 	}
-	return &executionRequestOutput{Status: http.StatusAccepted, Body: executionRequestResource(created)}, nil
+	return &runWorkflowOutput{Status: result.Outcome.Status, Replayed: replayedHeader(result.Replayed), Body: resource}, nil
 }
 
 func (handler *Workflows) tenant(ctx context.Context) repository.TenantScope {
@@ -946,5 +1009,13 @@ func (handler *Workflows) WithSessionMemory(sessions SessionForgetter) *Workflow
 // WithTriggers attaches the lifecycle coordinator.
 func (handler *Workflows) WithTriggers(coordinator TriggerCoordinator) *Workflows {
 	handler.triggers = coordinator
+	return handler
+}
+
+// WithIdempotency attaches the request idempotency service. Without it a
+// request that carries an Idempotency-Key is refused rather than run
+// unprotected.
+func (handler *Workflows) WithIdempotency(service *idempotency.Service) *Workflows {
+	handler.idempotency = service
 	return handler
 }

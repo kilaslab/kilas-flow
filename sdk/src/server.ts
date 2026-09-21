@@ -228,6 +228,73 @@ function requireRowFilter(filter: Filter, operation: string): void {
 		);
 	}
 }
+
+/**
+ * The longest key the `Idempotency-Key` header accepts: 255 characters, the
+ * column width the server stores it in.
+ */
+export const MAX_IDEMPOTENCY_KEY_LENGTH = 255;
+
+/**
+ * Options for the writes that can be made idempotent: a manual run and the
+ * two datastore row writes.
+ *
+ * The methods also take a bare `AbortSignal` where these options go, which is
+ * what they took before keys existed. The two are told apart by shape rather
+ * than by position, so an existing caller keeps working unchanged.
+ */
+export interface IdempotentWriteOptions {
+	/**
+	 * Value for the `Idempotency-Key` header, so a retry after a timeout is
+	 * answered with the first request's outcome instead of a second side
+	 * effect.
+	 *
+	 * One key per logical operation — a fresh UUID persisted *before* the
+	 * first attempt — never a constant: keys are per tenant, so a constant
+	 * makes two unrelated writes collide, and a retry under the same key is
+	 * only a retry while the operation is the same one. A response that
+	 * carried `Idempotent-Replayed: true` is that first outcome; the SDK
+	 * returns the body and leaves the marker on the wire.
+	 */
+	idempotencyKey?: string;
+	/** Aborts a request that takes too long. */
+	signal?: AbortSignal;
+}
+
+/** What the server accepts as a key: 1-255 printable ASCII, no spaces. */
+const IDEMPOTENCY_KEY_PATTERN = /^[\x21-\x7e]{1,255}$/;
+
+/**
+ * Splits a write method's last argument into the signal and headers a request
+ * carries, refusing a key the server would refuse.
+ *
+ * An unusable key throws rather than being dropped: sending no header would
+ * look like idempotency to the caller while delivering none. The methods are
+ * async so that throw becomes a rejection, matching `createEmbedSession`.
+ */
+function idempotentWrite(
+	options: AbortSignal | IdempotentWriteOptions | undefined,
+	operation: string
+): { signal: AbortSignal | undefined; headers: Record<string, string> | undefined } {
+	// Duck-typed, not `instanceof`: a host may hand the SDK a signal from
+	// another realm (a worker, a test double) and the contract it needs is
+	// the signal's shape, not its constructor.
+	const isSignal = (value: unknown): value is AbortSignal =>
+		typeof value === 'object' &&
+		value !== null &&
+		'aborted' in value &&
+		typeof (value as AbortSignal).addEventListener === 'function';
+	if (options === undefined || isSignal(options)) return { signal: options, headers: undefined };
+
+	const key = options.idempotencyKey;
+	if (key === undefined) return { signal: options.signal, headers: undefined };
+	if (!IDEMPOTENCY_KEY_PATTERN.test(key)) {
+		throw new Error(
+			`${operation} idempotencyKey is sent as the Idempotency-Key header, which must be 1-${MAX_IDEMPOTENCY_KEY_LENGTH} printable ASCII characters without spaces`
+		);
+	}
+	return { signal: options.signal, headers: { 'Idempotency-Key': key } };
+}
 /**
  * The host-facing client.
  *
@@ -362,11 +429,26 @@ export class KilasFlowClient {
 		return this.#transport.request('POST', `/workflows/${encodeURIComponent(workflowId)}/deactivate`, { signal });
 	}
 
-	/** Queues a manual run and returns immediately with the execution record. */
-	runWorkflow(workflowId: string, input?: unknown, signal?: AbortSignal): Promise<{ id: string; status: string }> {
+	/**
+	 * Queues a manual run and returns immediately with the execution record.
+	 *
+	 * With an `idempotencyKey`, a retry that carries the same key and the
+	 * same input is answered with the first execution record instead of a
+	 * second run — see {@link IdempotentWriteOptions} and the guide at
+	 * `/guides/idempotency/`.
+	 */
+	// Async so a refused key rejects rather than throwing synchronously: a
+	// caller awaits this, and a sync throw would escape their .catch().
+	async runWorkflow(
+		workflowId: string,
+		input?: unknown,
+		options?: AbortSignal | IdempotentWriteOptions
+	): Promise<{ id: string; status: string }> {
+		const { signal, headers } = idempotentWrite(options, 'runWorkflow');
 		return this.#transport.request('POST', `/workflows/${encodeURIComponent(workflowId)}/run`, {
 			body: input === undefined ? {} : { input },
-			signal
+			signal,
+			headers
 		});
 	}
 
@@ -841,17 +923,23 @@ export class KilasFlowClient {
 	 * Updates every row matching the filter, or inserts one row from the
 	 * values when nothing matches. Reports which of the two happened through
 	 * `inserted`, with the affected rows either way.
+	 *
+	 * With an `idempotencyKey`, a retry is answered with this first outcome —
+	 * `inserted` stays what the first attempt reported — instead of matching
+	 * rows a second time. See {@link IdempotentWriteOptions}.
 	 */
 	async upsertDatastoreRow(
 		datastoreId: string,
 		filter: Filter,
 		values: UpsertRowInputBody['values'],
-		signal?: AbortSignal
+		options?: AbortSignal | IdempotentWriteOptions
 	): Promise<UpsertRowOutputBody> {
 		requireRowFilter(filter, 'upsertDatastoreRow');
+		const { signal, headers } = idempotentWrite(options, 'upsertDatastoreRow');
 		return this.#transport.request('POST', `/datastores/${encodeURIComponent(datastoreId)}/rows/upsert`, {
 			body: { filter, values },
-			signal
+			signal,
+			headers
 		});
 	}
 
@@ -925,15 +1013,24 @@ export class KilasFlowClient {
 		);
 	}
 
-	/** Writes one row and reads it back. Values are keyed by column name. */
-	insertDatastoreRow(
+	/**
+	 * Writes one row and reads it back. Values are keyed by column name.
+	 *
+	 * With an `idempotencyKey`, a retry that carries the same key and the
+	 * same values is answered with the first row — same id, same `Location` —
+	 * instead of inserting a second one. See {@link IdempotentWriteOptions}.
+	 */
+	// Async so a refused key rejects rather than throwing synchronously.
+	async insertDatastoreRow(
 		datastoreId: string,
 		values: InsertRowInputBody['values'],
-		signal?: AbortSignal
+		options?: AbortSignal | IdempotentWriteOptions
 	): Promise<InsertDatastoreRow201> {
+		const { signal, headers } = idempotentWrite(options, 'insertDatastoreRow');
 		return this.#transport.request('POST', `/datastores/${encodeURIComponent(datastoreId)}/rows`, {
 			body: { values },
-			signal
+			signal,
+			headers
 		});
 	}
 

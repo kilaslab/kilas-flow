@@ -70,8 +70,8 @@ func TestCORSReflectsAnAllowlistedOriginOnTheStreamRequest(t *testing.T) {
 	if got := recorder.Header().Get("Vary"); got != "Origin" {
 		t.Errorf("Vary = %q, want Origin", got)
 	}
-	if got := recorder.Header().Get("Access-Control-Expose-Headers"); got != "X-Request-ID, X-Next-Cursor" {
-		t.Errorf("Access-Control-Expose-Headers = %q, want the pagination and request-id headers readable", got)
+	if got := recorder.Header().Get("Access-Control-Expose-Headers"); got != "X-Request-ID, X-Next-Cursor, Idempotent-Replayed, Retry-After" {
+		t.Errorf("Access-Control-Expose-Headers = %q, want the pagination, request-id, replay and retry headers readable", got)
 	}
 }
 

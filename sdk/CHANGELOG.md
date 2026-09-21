@@ -20,3 +20,11 @@ First published release.
 - **Additive**: `tenantClientFactory` for one fixed-credential client per
   tenant, and a single-use stream-ticket handshake in
   `subscribeExecutionEvents` with mint-per-connect reconnect and resume.
+- **Additive**: `idempotencyKey` on `runWorkflow`, `insertDatastoreRow` and
+  `upsertDatastoreRow` — one key per logical operation, sent as
+  `Idempotency-Key` so a retry is answered with the first outcome instead of a
+  second side effect. Those three methods take an `IdempotentWriteOptions`
+  object or, as before, a bare `AbortSignal`. `KilasFlowError` gains
+  `retryAfterSeconds`, the in-flight 409's retry hint.
+- **Fix**: the manifest licence is Apache-2.0, matching the repository root
+  `LICENSE`.

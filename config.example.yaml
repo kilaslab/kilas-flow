@@ -325,6 +325,20 @@ history:
   # Env: KILASFLOW_HISTORY_MAX_VERSIONS
   max_versions: 0
 
+idempotency:
+  # Retention is how long a completed request's key is remembered. Within
+  # it, a retry carrying the same key from the same tenant is answered with
+  # the first request's outcome and repeats no side effect; a key past its
+  # retention behaves as never seen and the request runs again. Bounded to
+  # between 1m and 720h.
+  #
+  # If you set execution.retention (default 0, keep everything, so there is
+  # nothing to align with by default), keep this at or below it: a replay of
+  # a run whose execution has been pruned returns an id that no longer
+  # resolves.
+  # Env: KILASFLOW_IDEMPOTENCY_RETENTION
+  retention: 24h0m0s
+
 sql:
   # MaxRows is the largest row buffer a node may ask for. Zero falls back to
   # sqlnode's own ceiling rather than meaning unbounded.
