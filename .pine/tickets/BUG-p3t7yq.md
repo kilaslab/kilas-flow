@@ -1,13 +1,13 @@
 ---
 id: BUG-p3t7yq
 title: The concurrent-migration-start test flakes under load with "duplicated key not allowed"
-status: doing
+status: done
 priority: high
 labels:
     - ci
     - testing
 created: "2026-09-20T21:40:00Z"
-updated: "2026-09-20T21:40:00Z"
+updated: "2026-09-21T00:32:42Z"
 ---
 
 ## Problem
@@ -97,4 +97,116 @@ keep every assertion they had.
 - `gofmt -l` on both changed files: clean. `go build ./...` and `go vet ./...`: clean.
 - `go test -race -count=1 ./internal/guardrails/...` -> ok.
 
+## Work Evidence
 
+Closed by `pine close --evidence` on 2026-09-21.
+
+- Base: `acb3f6e0` (last commit at or before ticket created 2026-09-20)
+- Commits (2):
+  - `3fd05e24` — BUG-p3t7yq: adopt an existing schema without insisting on the version row
+  - `9a6c81bb` — chore(pine): open BUG-p3t7yq — the concurrent-migration-start test flakes under load
+- Files changed (base → working tree):
+
+```
+ .pine/tickets/BUG-p3t7yq.md                        |   76 +-
+ .pine/tickets/BUG-vzzkg3.md                        |  558 +++++++++-
+ .pine/tickets/FEAT-3taswf.md                       |   18 +
+ .pine/tickets/FEAT-fpqvwx.md                       |  893 +++++++++++++++-
+ .pine/tickets/FEAT-hj8pyx.md                       |  714 ++++++++++++-
+ CHANGELOG.md                                       |   43 +-
+ cmd/kilasflow/idempotency_test.go                  |  225 ++++
+ cmd/kilasflow/main.go                              |   89 +-
+ config.example.yaml                                |   14 +
+ .../content/docs/concepts/tenancy-and-embedding.md |   27 +-
+ docs/src/content/docs/guides/community-nodes.md    |  131 ++-
+ docs/src/content/docs/guides/idempotency.md        |  197 ++++
+ .../docs/operate/configuration-reference.md        |   26 +
+ docs/src/content/docs/operate/tenant-deletion.md   |  194 ++++
+ docs/src/content/docs/reference/api-contract.md    |   19 +-
+ docs/src/content/docs/reference/api.md             |    4 +-
+ docs/src/content/docs/reference/api/datastores.md  |    6 +-
+ docs/src/content/docs/reference/api/errors.md      |   11 +
+ docs/src/content/docs/reference/api/tenants.md     |   21 +
+ docs/src/content/docs/reference/api/workflows.md   |    3 +-
+ internal/api/cors_test.go                          |    4 +-
+ internal/api/handlers/admin.go                     |  154 +++
+ internal/api/handlers/admin_admin_test.go          |  263 ++++-
+ internal/api/handlers/datastores.go                |  183 +++-
+ internal/api/handlers/idempotency.go               |  115 ++
+ internal/api/handlers/workflows.go                 |   89 +-
+ internal/api/idempotency_test.go                   | 1004 ++++++++++++++++++
+ internal/api/middleware/cors.go                    |   11 +-
+ internal/api/middleware/cors_test.go               |    2 +-
+ internal/api/routes.go                             |    6 +-
+ internal/api/server.go                             |   13 +-
+ internal/api/tenant_delete_test.go                 |  386 +++++++
+ internal/binary/binary.go                          |  117 ++
+ internal/binary/binary_test.go                     |  217 ++++
+ internal/config/config.go                          |   81 +-
+ internal/config/config_test.go                     |   82 ++
+ internal/database/migrate.go                       |   40 +-
+ internal/database/migrate_test.go                  |   83 +-
+ internal/database/tenant_columns_test.go           |  309 ++++++
+ internal/datastore/catalogue.go                    |   16 +-
+ internal/datastore/column_tenant_test.go           |  152 +++
+ internal/datastore/engine.go                       |   10 +-
+ internal/datastore/engine_test.go                  |   53 +-
+ internal/datastore/isolation.go                    |   96 +-
+ internal/datastore/isolation_test.go               |  243 ++++-
+ internal/datastore/migrate_test.go                 |    1 +
+ internal/datastore/model.go                        |    9 +-
+ internal/idempotency/hash.go                       |   64 ++
+ internal/idempotency/hash_test.go                  |  142 +++
+ internal/idempotency/idempotency.go                |  432 ++++++++
+ internal/idempotency/idempotency_test.go           | 1120 ++++++++++++++++++++
+ internal/idempotency/sweeper.go                    |   94 ++
+ internal/idempotency/sweeper_test.go               |  146 +++
+ internal/repository/idempotency.go                 |  360 +++++++
+ internal/repository/idempotency_test.go            |  615 +++++++++++
+ internal/repository/models.go                      |   13 +-
+ internal/repository/postgres_execution_test.go     |   16 +
+ internal/repository/table_names_test.go            |    1 +
+ internal/repository/tenant_purge.go                |   48 +-
+ internal/repository/tenant_purge_test.go           |   48 +
+ internal/repository/tenant_rows.go                 |  283 +++++
+ internal/repository/tenant_rows_test.go            |  420 ++++++++
+ internal/repository/webhooks.go                    |   45 +-
+ internal/repository/webhooks_delivery_test.go      |  147 +++
+ internal/repository/workflows.go                   |   22 +-
+ internal/tenantpurge/completeness_test.go          |  368 +++++++
+ internal/tenantpurge/doc.go                        |  120 +++
+ internal/tenantpurge/docs_test.go                  |  115 ++
+ internal/tenantpurge/harness_test.go               |  614 +++++++++++
+ internal/tenantpurge/purge.go                      |  412 +++++++
+ internal/tenantpurge/purge_test.go                 |  507 +++++++++
+ internal/webhook/webhook.go                        |    4 +-
+ .../postgres/000015_idempotency_keys.down.sql      |    6 +
+ migrations/postgres/000015_idempotency_keys.up.sql |   49 +
+ .../000016_webhook_deliveries_tenant.down.sql      |   14 +
+ .../000016_webhook_deliveries_tenant.up.sql        |   52 +
+ .../000017_datastore_columns_tenant.down.sql       |   14 +
+ .../000017_datastore_columns_tenant.up.sql         |   39 +
+ migrations/sqlite/000015_idempotency_keys.down.sql |    6 +
+ migrations/sqlite/000015_idempotency_keys.up.sql   |   48 +
+ .../000016_webhook_deliveries_tenant.down.sql      |   13 +
+ .../sqlite/000016_webhook_deliveries_tenant.up.sql |   52 +
+ .../000017_datastore_columns_tenant.down.sql       |   12 +
+ .../sqlite/000017_datastore_columns_tenant.up.sql  |   38 +
+ scripts/generate-api-reference.mjs                 |   13 +-
+ sdk/CHANGELOG.md                                   |   18 +
+ sdk/README.md                                      |   36 +-
+ sdk/src/generated/models.ts                        |   86 +-
+ sdk/src/http.ts                                    |   35 +-
+ sdk/src/server.ts                                  |  136 ++-
+ sdk/test/operation-coverage.test.mjs               |    3 +
+ sdk/test/operations.test.ts                        |   31 +
+ sdk/test/server.test.ts                            |  108 ++
+ web/src/lib/api/generated/admin/admin.ts           |   94 ++
+ .../api/generated/datastore-rows/datastore-rows.ts |    4 +-
+ web/src/lib/api/generated/models/binaryRemoval.ts  |   16 +
+ web/src/lib/api/generated/models/index.ts          |    3 +
+ .../api/generated/models/tenantDeletionResource.ts |   24 +
+ .../models/tenantDeletionResourceRemoved.ts        |   12 +
+ .../workflow-lifecycle/workflow-lifecycle.ts       |    2 +-
+ 100 files changed, 13842 insertions(+), 286 deletions(-)
+```
