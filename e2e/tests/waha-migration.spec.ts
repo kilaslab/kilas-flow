@@ -48,11 +48,14 @@ async function loadTemplateOrSkip(): Promise<Record<string, unknown>> {
 // The template's expected diagnostics, pinned so a regression that starts
 // dropping a field is caught rather than absorbed. Every WAHA node maps to
 // the generated pack, every flow node maps to a builtin, and sticky notes
-// carry as annotations — so nothing blocks activation. The five dropped
+// carry as annotations — so nothing blocks activation. The four dropped
 // entries are the instance-local residue n8n cannot carry: its per-node
 // webhook identity, its minted route (replaced by the opaque address in
-// `webhooks`), the Switch error mode, workflow settings, and instance
-// metadata.
+// `webhooks`), workflow settings, and instance metadata. The Switch's error
+// mode is NOT among them: `onError` crosses onto the canonical node's settings
+// (errorHandlingSettings in internal/interop/n8n), so the importer reports
+// nothing for it — a diagnostic that says a setting was dropped when it
+// crossed intact is worse than none.
 function expectChattingDiagnostics(imported: { unsupported: unknown[]; webhooks: unknown[] }): void {
 	const issues = imported.unsupported as Array<{
 		severity: string;
@@ -67,7 +70,6 @@ function expectChattingDiagnostics(imported: { unsupported: unknown[]; webhooks:
 	).toEqual([
 		['dropped', 'WAHA Trigger', 'webhookId'],
 		['dropped', 'WAHA Trigger', 'path'],
-		['dropped', 'Switch', 'onError'],
 		['dropped', '', 'settings'],
 		['dropped', '', 'meta']
 	]);
