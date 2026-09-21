@@ -13,8 +13,11 @@
 package skills
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -175,6 +178,28 @@ func Parse(name string, data []byte) (Skill, error) {
 	}, nil
 }
 
+// DeclaredVersion reads the kilasflow_skills_version one SKILL.md declares.
+//
+// Parse refuses a stamp that is not this binary's version, because a bundle
+// declaring a foreign version is a bundle that does not belong to this build —
+// and that refusal is exactly the answer a drift check cannot use. A drift
+// check has to *report* the version the installed copy declares ("is 0, want
+// 1"), which is the message Parse builds and then throws away. So this reads
+// the number and leaves the comparison to the caller, and Parse keeps refusing.
+func DeclaredVersion(data []byte) (int, error) {
+	frontmatter, _, err := SplitFrontmatter(data)
+	if err != nil {
+		return 0, err
+	}
+
+	decoded, err := yaml.Parser().Unmarshal(frontmatter)
+	if err != nil {
+		return 0, fmt.Errorf("parse the frontmatter: %w", err)
+	}
+
+	return intField("SKILL.md", decoded, "kilasflow_skills_version")
+}
+
 // LoadDir reads every skill under root — the bundle directory, skills/ — in
 // name order.
 //
@@ -187,6 +212,29 @@ func LoadDir(root string) ([]Skill, error) {
 		return nil, fmt.Errorf("read the bundle directory %s: %w", root, err)
 	}
 
+	return loadSkills(os.DirFS(root), entries)
+}
+
+// loadFS reads the bundle at the root of fsys, in name order: the embedded
+// tree, where the bundle is the whole filesystem and nothing sits above it.
+func loadFS(fsys fs.FS) ([]Skill, error) {
+	entries, err := fs.ReadDir(fsys, ".")
+	if err != nil {
+		return nil, fmt.Errorf("read the embedded skills bundle: %w", err)
+	}
+
+	return loadSkills(fsys, entries)
+}
+
+// loadSkills reads every skill directory among entries of fsys, in name order.
+//
+// The directory entries come from the caller because the two trees report a
+// directory error differently — a checkout names the path a person typed, the
+// embedded bundle names itself — while everything below that is one read
+// against an fs.FS either way. That is what lets the verbs read the bundle the
+// binary carries with the same loader the repository's tests read with, so a
+// verb cannot accept a bundle the checker refuses.
+func loadSkills(fsys fs.FS, entries []fs.DirEntry) ([]Skill, error) {
 	loaded := make([]Skill, 0, len(entries))
 	for _, entry := range entries {
 		if !entry.IsDir() {
@@ -194,7 +242,7 @@ func LoadDir(root string) ([]Skill, error) {
 		}
 
 		name := entry.Name()
-		data, err := os.ReadFile(filepath.Join(root, name, "SKILL.md"))
+		data, err := fs.ReadFile(fsys, path.Join(name, "SKILL.md"))
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", bundlePath(name), err)
 		}
@@ -203,7 +251,7 @@ func LoadDir(root string) ([]Skill, error) {
 			return nil, err
 		}
 
-		references, text, err := loadReferences(filepath.Join(root, name, "references"))
+		references, text, err := loadReferences(fsys, path.Join(name, "references"))
 		if err != nil {
 			return nil, err
 		}
@@ -213,7 +261,7 @@ func LoadDir(root string) ([]Skill, error) {
 		loaded = append(loaded, skill)
 	}
 	if len(loaded) == 0 {
-		return nil, fmt.Errorf("no skill directories under %s", root)
+		return nil, errors.New("the bundle holds no skill directories")
 	}
 
 	sort.Slice(loaded, func(left, right int) bool { return loaded[left].Name < loaded[right].Name })
@@ -254,9 +302,9 @@ func bundlePath(name string) string {
 // A file in references/ that is not markdown is refused rather than ignored:
 // the references rule compares the body's table against what is on disk, and a
 // file the loader skips would make that comparison quietly wrong.
-func loadReferences(dir string) ([]string, map[string]string, error) {
-	entries, err := os.ReadDir(dir)
-	if os.IsNotExist(err) {
+func loadReferences(fsys fs.FS, dir string) ([]string, map[string]string, error) {
+	entries, err := fs.ReadDir(fsys, dir)
+	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil, nil
 	}
 	if err != nil {
@@ -267,14 +315,14 @@ func loadReferences(dir string) ([]string, map[string]string, error) {
 	text := make(map[string]string, len(entries))
 	for _, entry := range entries {
 		if entry.IsDir() {
-			return nil, nil, fmt.Errorf("%s is a directory; reference files are markdown files beside SKILL.md", filepath.Join(dir, entry.Name()))
+			return nil, nil, fmt.Errorf("%s is a directory; reference files are markdown files beside SKILL.md", path.Join(dir, entry.Name()))
 		}
 		if !strings.HasSuffix(entry.Name(), ".md") {
-			return nil, nil, fmt.Errorf("%s is not a markdown reference file; reference files end in .md", filepath.Join(dir, entry.Name()))
+			return nil, nil, fmt.Errorf("%s is not a markdown reference file; reference files end in .md", path.Join(dir, entry.Name()))
 		}
 
-		name := filepath.ToSlash(filepath.Join("references", entry.Name()))
-		contents, err := os.ReadFile(filepath.Join(dir, entry.Name()))
+		name := path.Join("references", entry.Name())
+		contents, err := fs.ReadFile(fsys, path.Join(dir, entry.Name()))
 		if err != nil {
 			return nil, nil, fmt.Errorf("read %s: %w", name, err)
 		}

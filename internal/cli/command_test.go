@@ -249,6 +249,11 @@ func TestPhaseOneCommandTree(t *testing.T) {
 		"tenant users":             "list-tenant-users",
 		"tenant delete":            "delete-tenant",
 		"pack validate":            "",
+		"skills list":              "",
+		"skills show":              "",
+		"skills install":           "",
+		"skills check":             "",
+		"skills export":            "",
 	}
 
 	// local are the verbs whose Operation names no API call: they either need
@@ -257,6 +262,8 @@ func TestPhaseOneCommandTree(t *testing.T) {
 	local := map[string]bool{
 		"serve": true, "version": true, "help": true, "context": true,
 		"api": true, "auth login": true, "auth logout": true, "pack validate": true,
+		"skills list": true, "skills show": true, "skills install": true,
+		"skills check": true, "skills export": true,
 	}
 
 	registered := make(map[string]Verb, len(want))

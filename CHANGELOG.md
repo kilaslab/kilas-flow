@@ -40,6 +40,14 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
   artifact built against an older host contract is rebuilt rather than loaded.
   Setting `code.cache_dir` to an empty value keeps every cache in memory, exactly
   as before.
+- `kilasflow skills list|show|install|check|export`: the agent skills bundle
+  ships **inside the binary** and these five verbs read it, install it into a
+  harness directory (`--target claude|codex|agents|dir:<path>`, `--scope
+  project|user`, project by default), compare an installed copy with the binary's
+  and exit non-zero on drift, and export it as the harness index or a
+  deterministic tarball. They are local: no server, no credential, and no
+  checkout — which is what makes them work from the distroless image. See
+  [`kilasflow skills`](/reference/cli/#kilasflow-skills).
 
 ### Changed
 

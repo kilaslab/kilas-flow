@@ -21,9 +21,9 @@ Two rules keep it honest:
   no operation that returns a single node and reading a 90-entry catalogue to
   answer "what does httpRequest take?" is the wrong shape for an agent's context.
   The verbs that are local rather than remote — `version`, `help`, `context`,
-  `api <operation-id>`, `auth login`, `auth logout` and `pack validate` — either
-  need no server or reach several operations, and each says so in its own section
-  below.
+  `api <operation-id>`, `auth login`, `auth logout`, `pack validate` and the five
+  `skills` verbs — either need no server or reach several operations, and each
+  says so in its own section below.
 - **`kflow` is not an alias.** The stale `bin/kflow` binary was a build of the
   server under an older name. It was deleted rather than kept as a second
   entry point, so there is one name to document and one to remember.
@@ -106,6 +106,7 @@ token outright — see [Guardrails](#guardrails).
 | `kilasflow tenant users` | `list-tenant-users` | available |
 | `kilasflow tenant delete` | `delete-tenant` | available, *guarded* (operator credential) |
 | `kilasflow pack validate` | — (local; runs the pack loader) | available |
+| `kilasflow skills list` \| `show` \| `install` \| `check` \| `export` | — (local; the bundle embedded in the binary) | available |
 
 Two things the design's tree lists are deliberately absent:
 
@@ -519,6 +520,61 @@ kilasflow pack validate ./packs/telegram/pack.json --json
   surface is a **local loader with no server operation behind it**, so there is
   nothing for a verb to drive and nothing for the guard to protect.
 
+## `kilasflow skills`
+
+The bundle of agent skills — the always-on router plus one skill per domain —
+travels **inside the binary**, embedded at build time the way the SPA is. These
+five verbs are therefore local: no server, no credential, no checkout, and no
+filesystem access beyond the directory an install writes into. That is what
+makes them work from the distroless image, where there is nothing to read but
+`/app/kilasflow`.
+
+```bash
+kilasflow skills list                      # names, versions, triggers
+kilasflow skills show kilasflow-triggers   # the SKILL.md itself
+kilasflow skills show kilasflow-triggers --reference WEBHOOK_DELIVERY.md
+kilasflow skills install                   # ./.agents/skills, project scope
+kilasflow skills install --target claude --scope user
+kilasflow skills check
+kilasflow skills export --format tar --out kilasflow-skills.tar
+```
+
+- `install` takes `--target claude|codex|agents|dir:<path>` and `--scope
+  project|user`. **Project scope is the default** and resolves under the
+  checkout; user scope resolves under `HOME`. A relative `dir:<path>` resolves
+  under the scope root as well, and an absolute one is taken as given. The
+  default destination is `./.agents/skills`, the generic harness directory this
+  repository keeps the pine skill in.
+- What an install writes is one directory per skill — `SKILL.md` and its
+  `references/*.md` — plus the generated `index.json` at the root: byte for byte
+  the files the binary carries, `0644` under `0755` directories, because the
+  bundle is published documentation rather than tenant data.
+- A file that is already identical counts as installed rather than as work, so
+  re-running the verb is idempotent. A file that **differs** stops the install
+  with `error.code = "install_conflict"` (exit 5) and the edit left intact: a
+  bundle that is half this build's and half yours is the one state nothing can
+  describe afterwards. `--force` is what replaces it, and `--dry-run` reports
+  where the bundle would go and writes nothing.
+- `check` compares an installed bundle with the binary's — every file byte for
+  byte, and each installed `SKILL.md`'s `kilasflow_skills_version` stamp — and
+  exits **1** with `error.code = "skills_drift"` when they differ, naming the
+  file and both versions. Drift is what tells a caller to re-install rather than
+  to re-read, so it is a failure with a code and not a warning. The whole list
+  travels under `error.detail.issues`, each with a `kind` of `missing`,
+  `unreadable`, `version`, `content` or `extra` — the last one for a skill
+  directory the binary does not ship, which is the one drift a byte comparison
+  cannot see. Nothing is ever repaired: a check that updated silently is a check
+  whose answer nobody can trust.
+- `export --format json` (the default) writes the index a harness reads without
+  parsing markdown, and `--format tar` writes the whole bundle as one
+  deterministic archive — path order, no timestamps, no owner — so two exports
+  of one binary are byte-identical and a tarball can be cached or checksummed.
+  `--out -` (the default) streams it.
+- Deliberately absent: a `cursor` target, because naming that directory is that
+  harness's business and `dir:<path>` already covers it. Also absent: any verb
+  that installs from a checkout or the network, which would be a second source of
+  truth for a bundle whose whole point is that the binary is the source.
+
 ## Output contract
 
 One JSON envelope per invocation, on stdout, when `--json` is passed **or**
@@ -607,7 +663,8 @@ invocation was right and the write it asked for was refused: exit 1, as a full
 disk or a read-only mount is not a mistake in the call) and `error` (a local
 failure that is not an HTTP result). That is the generic vocabulary, not a
 closed set: a verb that can name a failure only it can produce raises its own
-code — `execution_failed`, `invalid_pack`, `stream_closed`, `timeout` — and
+code — `execution_failed`, `invalid_pack`, `stream_closed`, `timeout`,
+`skills_drift`, `install_conflict`, `bundle_unreadable` — and
 documents it in that verb's section above.
 
 ## Configuration and token handling
@@ -646,7 +703,7 @@ The token is a secret and is treated as one:
 
 ## The exceptions to "always one envelope"
 
-Three verbs write bytes rather than an envelope, because buffering them would
+Five verbs write bytes rather than an envelope, because buffering them would
 defeat the point:
 
 - `kilasflow exec tail` emits **NDJSON**: one event object per line
@@ -657,10 +714,20 @@ defeat the point:
 - `kilasflow datastore export` writes **raw CSV** to stdout, because the point is
   to pipe the bytes somewhere else. `--out -` is the default; `--out <path>`
   writes a file and reports `{path, bytes}` in the envelope instead.
+- `kilasflow skills export` writes **the index or the tarball**, the same way and
+  for the same reason: `--out -` is the default, and `--out <path>` reports
+  `{format, path, bytes, skills}` in the envelope.
 - `kilasflow api <operation-id> --out -` writes the operation's response body to
   stdout **byte for byte**, whatever its media type: the escape hatch is what an
   agent uses for an operation no verb wraps, and its output has to be as
   unfiltered as the API's own.
+- `kilasflow skills show` writes **the document** — `SKILL.md`, frontmatter
+  included, or one reference file — on a pipe as well as on a terminal, so
+  `kilasflow skills show kilasflow-triggers > SKILL.md` lifts one file out of the
+  binary. `--json` asks for the envelope instead, with the document in
+  `data.content`, and `--quiet` prints its path. It is the one streamed verb
+  whose stream is silent by default rather than on a flag, and it is here because
+  the alternative writes JSON into a file named `.md`.
 
 Each is documented here and in the verb's own `--help`. For a streamed
 invocation a failure is reported on **stderr** and in the exit code rather than

@@ -181,6 +181,11 @@ kilasflow tenant get                get-tenant                         read one 
 kilasflow tenant users              list-tenant-users                  list a tenant's accounts, without any password hash (operator credential)
 kilasflow tenant delete             delete-tenant [guarded]            delete a tenant and everything it owns (operator credential, guarded)
 kilasflow pack validate             local                              check a pack directory or a pack.json the way the server would load it
+kilasflow skills list               local                              list the skills this binary ships, with the situation each one is for
+kilasflow skills show               local                              print one skill's SKILL.md, or one of its reference files (--reference <file>)
+kilasflow skills install            local                              install the bundle into a harness directory (--target, --scope, --force, --dry-run)
+kilasflow skills check              local                              compare an installed bundle with this binary's and exit non-zero on drift
+kilasflow skills export             local                              write the bundle as the harness index (--format json) or a tarball (--format tar)
 ```
 <!-- /generated:command-reference -->
 

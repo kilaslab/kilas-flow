@@ -76,6 +76,7 @@ func registry() []Verb {
 	verbs = append(verbs, scheduleVerbs()...)
 	verbs = append(verbs, tenantVerbs()...)
 	verbs = append(verbs, packVerbs()...)
+	verbs = append(verbs, skillsVerbs()...)
 
 	return verbs
 }
