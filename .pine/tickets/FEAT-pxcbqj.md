@@ -44,8 +44,14 @@ See EPIC-tjnr1z, *Plan → Phase 4*.
   `jsrun.Engine`: the server passes a `jsworker.Pool`; tests, the corpus and
   any caller that configures nothing get an in-process `jsrun.Runner`.
 - **Binary size (linux, `-trimpath -ldflags='-s -w'`, against main 018af94,
-  before the crypto and Intl lanes):** amd64 +6.71 MB, arm64 +6.36 MB. The
-  budget is +7 MB, so measure again once the lanes land.
+  the same embedded SPA in both):** before the crypto and Intl lanes, amd64
+  +6.71 MB and arm64 +6.36 MB; with everything, amd64 **+7.47 MB** and arm64
+  **+7.08 MB**, past the epic's +7 MB budget by 0.47 and 0.08 MB. goja is
+  1.76 MB of it, and golang.org/x/text/collate 1.24 MB, which goja itself
+  imports for localeCompare; the lanes added about 0.76 MB (the Intl tables
+  and zone data, crypto, the tighter guards). Compressing the ~312 KB of
+  embedded JavaScript would recover about 0.2 MB, not enough on amd64, so
+  the overrun is reported to the owner rather than traded for a feature.
 
 # Related Files
 

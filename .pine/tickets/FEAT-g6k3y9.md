@@ -23,34 +23,53 @@ kills and replaces. The in-process guards stay, as defence in depth that turns
 the common cases into a readable RangeError instead of a killed worker.
 
 # Acceptance Criteria
-- [ ] `jsrun.Runner.Run` is `Prepare` (in the parent: encode the input, check
+- [x] `jsrun.Runner.Run` is `Prepare` (in the parent: encode the input, check
       its cap, build the snapshot; compiles and runs nothing) plus `Execute`
       (on a fresh VM). A `Job`, a `Result` and every jsrun error cross a pipe
       and keep their meaning: `errors.Is` on each sentinel, and the
       ScriptError, SyntaxError and UnsupportedError fields.
-- [ ] `internal/jsworker`: a pool of at most `javascript_max_concurrent`
+- [x] `internal/jsworker`: a pool of at most `javascript_max_concurrent`
       workers, started on demand and reused; a two-way framed protocol so
       `$('Node')` and item pairing are answered by the parent while the code
       runs.
-- [ ] A worker that overruns a wall-clock backstop past the time limit is
+- [x] A worker that overruns a wall-clock backstop past the time limit is
       killed and the run fails with the time-limit sentence; one that dies
       mid-run fails the run with a named error (memory when the runtime said
       so), and the next run gets a fresh worker.
-- [ ] Cancelling the execution kills the worker running it.
-- [ ] Linux: each worker has an address-space rlimit, `oom_score_adj` 1000 and
+- [x] Cancelling the execution kills the worker running it.
+- [x] Linux: each worker has an address-space rlimit, `oom_score_adj` 1000 and
       a parent-death signal. Everywhere: a minimal environment (none of the
       server's secrets), and it exits when its stdin closes.
-- [ ] `cmd/kilasflow` runs as a worker when started as one, before reading
+- [x] `cmd/kilasflow` runs as a worker when started as one, before reading
       config, and the server uses the pool. Tests and the corpus keep the
       in-process runner.
-- [ ] Guardrail: `internal/jsworker` does not import goja; jsrun still
+- [x] Guardrail: `internal/jsworker` does not import goja; jsrun still
       imports no os, os/exec or syscall.
-- [ ] Docs: the execution model and configuration reference describe the
+- [x] Docs: the execution model and configuration reference describe the
       workers.
 
 # Implementation Plan
 
 # Notes
+
+- **7ea2814.** The pool, the protocol, the Linux limits and the server
+  wiring. Smoke-tested on the built binary: one worker served both runs of a
+  workflow, about 32 MB resident, three environment variables, gone after
+  shutdown.
+- **Security review (2026-09-23), fixed in 129e344.** The lineage and file
+  references crossed to the worker uncounted by the input cap (an author could
+  cost the server hundreds of MiB), and the server trusted a worker's result.
+  Now only file IDs and the item count cross, the whole job header counts
+  against the cap, results come back as the JSON the code returned and are
+  decoded and checked in the server (output and console caps, files), every
+  frame carries the job's nonce, and a dead worker is reported by what
+  actually happened. The server keeps no compiled program, and a compiler
+  panic fails the body. On Linux the server is undumpable and workers run
+  with no_new_privs from /proc/self/exe, with a 3 GiB address-space
+  baseline.
+- **Not a privilege boundary.** Workers run as the server's user; the docs say
+  so. FEAT-21h6xp would make them one (their own user, namespaces, seccomp,
+  per-tenant workers).
 
 # Related Files
 
