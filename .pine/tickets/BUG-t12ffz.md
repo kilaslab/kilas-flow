@@ -107,6 +107,26 @@ Proof: `go test ./nodes/ ./internal/ai/ ./internal/interop/n8n/` → ok. The cov
 - `TestDatastoreToolValidation`, for the operator, match and splice cases;
 - `TestFromAICallsSplicedIntoCodeFindsOnlyCallsSharingASegment`.
 
+## Progress — Lane E, review fix round 2 (2026-09-23)
+
+Structural fix: on the write path, the model's values reach expressions as data and never as source. It replaces round 1's heuristics, which the re-review broke with a lookup-table literal, a `JSON.parse` literal, adjacent segments, and one key declared with two types.
+
+- **Evaluator** (`internal/expression`). The new, additive `Context.FromAIArguments` makes `$fromAI('key', …)` return the agent's argument as a value, or the call's default. A missing required key is an error naming it. With it nil, today's `AllowFromAI` / `FromAIRequest` behaviour is unchanged. `$fromAI` now takes n8n's fourth argument, the default.
+- **Write path** (`nodes/datastore.go`):
+  - `invokeWrite` no longer runs `SubstituteFromAI` into expression markers. They stay exactly as the author wrote them.
+  - Only plain strings have their `$fromAI` filled (`datastoreToolPlainFromAI`); nothing evaluates a plain string.
+  - The arguments reach the step executor through an unexported `DatastoreExecutor.fromAIArguments`, which is set on the expression context it resolves with. This is the least invasive route: no change to `engine.Request` or any other executor.
+  - The declared-type check stays. So does the json check that refuses a `mode:"expression"` map.
+  - The `{{`/`}}` refusal, `datastoreToolValueIsTemplate` and `ai.FromAICallsSplicedIntoCode` are removed.
+- **Deterministic schema.** The new `ai.CheckFromAIConsistent` refuses a `$fromAI` key declared with a different type, description or default, at save and at descriptor build.
+- **Scope of the rules.** The authority refusals (operator, match, keyName, matchingColumns) and every `$fromAI` rule now bind writes only. A get tool's parameters are never filled from the model.
+- **Unchanged:** `SubstituteFromAI` and the HTTP and Workflow tools. Their structural fix is the separate ticket.
+
+Proof:
+- `go test ./nodes/ ./internal/ai/ ./internal/expression/ ./internal/interop/n8n/ ./internal/engine/` → ok.
+- `TestDatastoreToolNeverEvaluatesAModelValueAsAnExpression` runs every probe from both reviews. Each stored value is the model's literal text, or the call is refused. None of them stores an evaluated result.
+- `TestDatastoreToolRefusesAKeyDeclaredTwoWaysWhenBuilt`, `TestFromAIArgumentsAreDataTheExpressionComputesWith` and `TestCheckFromAIConsistentRefusesAKeyDeclaredTwoWays` also pass.
+
 # Attachments
 
 ## Work Evidence

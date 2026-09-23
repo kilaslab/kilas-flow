@@ -58,6 +58,18 @@ type Context struct {
 	// AI agent fills. Anywhere else it is a clear error rather than a value,
 	// or an author will use it in an HTTP URL and get something meaningless.
 	AllowFromAI bool
+	// FromAIArguments is what an AI agent supplied for the one tool call this
+	// parameter tree serves. When it is set, `$fromAI('key', …)` evaluates to
+	// that argument — a value the expression computes with, never text the
+	// evaluator parses — or to the call's own default when the agent left the
+	// key out; a key with neither is an error naming it. Nil keeps AllowFromAI
+	// deciding, as before.
+	//
+	// It exists so a tool that writes can hand the agent's arguments to an
+	// author's expression without splicing them into its source: spliced text
+	// runs as code, and `$execution`, `$env` and every upstream node's output
+	// are one argument away.
+	FromAIArguments map[string]any
 
 	// --- Declarative routing ------------------------------------------------
 	//

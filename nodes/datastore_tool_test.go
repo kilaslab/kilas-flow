@@ -534,16 +534,30 @@ func TestDatastoreToolValidation(t *testing.T) {
 			t.Errorf("a $fromAI call in match (%#v) was accepted", match)
 		}
 	}
-	// A string the model supplies is never spliced into expression code,
-	// where it would run as code; a number or boolean, checked as one, may be.
-	spliced := datastoreManualColumns(map[string]any{"title": datastoreToolFromAI(`$fromAI('title').toUpperCase()`)})
-	if err := validate(bound(map[string]any{"operation": "insert", "columns": spliced})); err == nil ||
-		!strings.Contains(err.Error(), "title") {
-		t.Errorf("Validate(a string $fromAI spliced into code) = %v, want it refused naming the call", err)
+	// Any expression may use a model value, because the value arrives as data;
+	// what a write may not do is declare one key two ways, which would make
+	// the schema — and the type the argument is checked against — a coin toss.
+	spliced := datastoreManualColumns(map[string]any{"title": datastoreToolFromAI(`String($fromAI('title')).toUpperCase()`)})
+	if err := validate(bound(map[string]any{"operation": "insert", "columns": spliced})); err != nil {
+		t.Errorf("Validate(a $fromAI inside a larger expression) = %v, want success", err)
 	}
-	scaled := datastoreManualColumns(map[string]any{"score": datastoreToolFromAI(`$fromAI('score', 'the score', 'number') * 100`)})
-	if err := validate(bound(map[string]any{"operation": "insert", "columns": scaled})); err != nil {
-		t.Errorf("Validate(a number $fromAI in arithmetic) = %v, want success", err)
+	twoWays := datastoreManualColumns(map[string]any{
+		"score": datastoreToolFromAI(`$fromAI('x', 'x', 'number') + ''`),
+		"title": datastoreToolFromAI(`$fromAI('x', 'x')`),
+	})
+	if err := validate(bound(map[string]any{"operation": "insert", "columns": twoWays})); err == nil || !strings.Contains(err.Error(), `"x"`) {
+		t.Errorf("Validate(one key declared with two types) = %v, want it refused naming the key", err)
+	}
+	// None of the write rules touch a get tool: its parameters are never
+	// filled from the model, so what they say about $fromAI decides nothing.
+	for _, parameters := range []map[string]any{
+		bound(map[string]any{"operation": "get", "columns": twoWays}),
+		bound(map[string]any{"operation": "get", "match": "$fromAI('match')"}),
+		bound(map[string]any{"operation": "get", "filters": datastoreConditions(map[string]any{"keyName": "title", "condition": "$fromAI('op')", "keyValue": "x"})}),
+	} {
+		if err := validate(parameters); err != nil {
+			t.Errorf("Validate(get with ignored $fromAI) = %v, want success", err)
+		}
 	}
 	// A $fromAI call that cannot build a schema is named at save time.
 	broken := datastoreManualColumns(map[string]any{"score": datastoreToolFromAI(`$fromAI('score', 'the score', 'integer')`)})
@@ -1386,14 +1400,19 @@ func TestDatastoreToolRefusesAModelChosenOperatorOrMatchWhenBuilt(t *testing.T) 
 func TestDatastoreToolNeverEvaluatesAModelValueAsAnExpression(t *testing.T) {
 	t.Parallel()
 
-	// The review's probes. The model's value is data: a marker in its place,
-	// or template braces inside a template, must never reach the expression
-	// evaluator — where $execution, $env and every upstream node's output
-	// would resolve into the row and back to the model.
+	// Every probe from both reviews. The model's value reaches the evaluator
+	// as data — an expression computes with it, and never reads it as source —
+	// so what is stored is the model's own text, or the call is refused. It is
+	// never an evaluated result: no execution id, no 42.
+	template := func(value string) map[string]any {
+		return map[string]any{"mode": "expression", "value": value}
+	}
 	cases := []struct {
 		name      string
 		columns   map[string]any
 		arguments string
+		// stored is the name column's exact value, or empty for a refusal.
+		stored string
 	}{
 		{
 			name:      "a marker where a string belongs",
@@ -1401,21 +1420,53 @@ func TestDatastoreToolNeverEvaluatesAModelValueAsAnExpression(t *testing.T) {
 			arguments: `{"name":{"mode":"expression","value":"{{ $execution.id }}|{{ 6*7 }}"}}`,
 		},
 		{
-			name: "braces inside a template",
-			columns: map[string]any{"name": map[string]any{
-				"mode": "expression", "value": "Customer {{ $fromAI('name', 'the customer name') }}",
-			}},
-			arguments: `{"name":"{{ $execution.id }}"}`,
-		},
-		{
-			name:      "a closing brace alone",
-			columns:   map[string]any{"name": datastoreToolFromAI(`$fromAI('name', 'the customer name')`)},
-			arguments: `{"name":"Joko }} Widodo"}`,
-		},
-		{
-			name:      "a marker nested in a json value",
+			name:      "a marker in a json value",
 			columns:   map[string]any{"name": datastoreToolFromAI(`$fromAI('name', 'the customer', 'json')`)},
-			arguments: `{"name":{"first":"Joko","last":{"mode":"expression","value":"$execution.id"}}}`,
+			arguments: `{"name":{"first":"Joko","last":{"mode":"expression","value":"{{ $execution.id }}"}}}`,
+		},
+		{
+			name:      "braces as the whole value",
+			columns:   map[string]any{"name": datastoreToolFromAI(`$fromAI('name', 'the customer name')`)},
+			arguments: `{"name":"{{ $execution.id }}"}`,
+			stored:    "{{ $execution.id }}",
+		},
+		{
+			name:      "braces inside a template",
+			columns:   map[string]any{"name": template("Customer {{ $fromAI('name', 'the customer name') }}")},
+			arguments: `{"name":"{{ $execution.id }}"}`,
+			stored:    "Customer {{ $execution.id }}",
+		},
+		{
+			name:      "code inside a method call",
+			columns:   map[string]any{"name": datastoreToolFromAI(`String($fromAI('name', 'the customer name')).toUpperCase()`)},
+			arguments: `{"name":"$execution.id"}`,
+			stored:    "$EXECUTION.ID",
+		},
+		{
+			name: "code inside a lookup table",
+			columns: map[string]any{"name": datastoreToolFromAI(
+				`String(({ gold: { pct: 20 }, silver: { pct: 10 }})[$fromAI('tier', 'the tier')])`)},
+			arguments: `{"tier":"'gold'].pct + $execution.id + [0"}`,
+			stored:    "undefined",
+		},
+		{
+			name: "code after a JSON.parse literal",
+			columns: map[string]any{"name": datastoreToolFromAI(
+				`JSON.parse('{"a":{"b":"Customer "}}').a.b + $fromAI('name', 'the customer name')`)},
+			arguments: `{"name":"$execution.id + '|' + 6*7"}`,
+			stored:    "Customer $execution.id + '|' + 6*7",
+		},
+		{
+			name:      "braces reassembled across adjacent segments",
+			columns:   map[string]any{"name": template("{{ $fromAI('a') }}{{ $fromAI('b') }}{{ $fromAI('c') }}")},
+			arguments: `{"a":"x{","b":"{ $execution.id }","c":"}"}`,
+			stored:    "x{{ $execution.id }}",
+		},
+		{
+			name:      "braces through a plain string",
+			columns:   map[string]any{"name": "$fromAI('name', 'the customer name')"},
+			arguments: `{"name":"{{ $execution.id }}"}`,
+			stored:    "{{ $execution.id }}",
 		},
 		{
 			name:      "a string where a number belongs",
@@ -1436,23 +1487,56 @@ func TestDatastoreToolNeverEvaluatesAModelValueAsAnExpression(t *testing.T) {
 				"columns": datastoreManualColumns(testCase.columns),
 			})), "tenant-a")
 			events, _ := runDatastoreToolAgent(t, store, descriptor, testCase.arguments)
+			rows := store.rowsOf("tenant-a", "ds_customers")
+			for _, row := range rows {
+				encoded, _ := json.Marshal(row)
+				if strings.Contains(string(encoded), "exec-1") || strings.Contains(string(encoded), "42") {
+					t.Fatalf("row %s holds an evaluated result", encoded)
+				}
+			}
 			failure, failed := datastoreToolEvent(events, ai.EventToolFailed)
-			if !failed {
-				t.Fatal("the call was accepted; a model value must never be evaluated or written as an expression")
+			if testCase.stored == "" {
+				if !failed {
+					t.Fatal("the call was accepted, want it refused")
+				}
+				if strings.Contains(failure, "execution") {
+					t.Errorf("tool failure = %s, want the argument named and its value never echoed", failure)
+				}
+				if len(rows) != 3 {
+					t.Errorf("row count = %d, want 3: nothing is written", len(rows))
+				}
+				return
 			}
-			if strings.Contains(failure, "execution") || strings.Contains(failure, "Widodo") {
-				t.Errorf("tool failure = %s, want the argument named and its value never echoed", failure)
+			if failed {
+				t.Fatalf("the insert failed: %s", failure)
 			}
-			if !strings.Contains(failure, `name`) && !strings.Contains(failure, `plan`) {
-				t.Errorf("tool failure = %s, want it naming the argument", failure)
+			if len(rows) != 4 {
+				t.Fatalf("row count = %d, want 4", len(rows))
 			}
-			if _, completed := datastoreToolEvent(events, ai.EventToolCompleted); completed {
-				t.Error("a refused call also completed")
-			}
-			if rows := store.rowsOf("tenant-a", "ds_customers"); len(rows) != 3 {
-				t.Errorf("row count = %d, want 3: nothing is written", len(rows))
+			if rows[3]["name"] != testCase.stored {
+				t.Errorf("stored name = %#v, want the model's text %q, never evaluated", rows[3]["name"], testCase.stored)
 			}
 		})
+	}
+}
+
+func TestDatastoreToolRefusesAKeyDeclaredTwoWaysWhenBuilt(t *testing.T) {
+	t.Parallel()
+
+	// The review's probe: one key as a number in one column and a string in
+	// another. ExtractFromAI keeps whichever map order reaches last, so the
+	// schema and the type check flipped between runs.
+	store := datastoreToolCustomers()
+	ir := datastoreToolIR(t, "add_customer", datastoreToolParams("insert", map[string]any{
+		"columns": datastoreManualColumns(map[string]any{
+			"plan": datastoreToolFromAI(`$fromAI('x', 'x', 'number') + ''`),
+			"name": datastoreToolFromAI(`$fromAI('x', 'x')`),
+		}),
+	}))
+	if _, err := nodes.NewDatastoreToolExecutor(store).Execute(context.Background(), ir, workflow.NodeInput{}, engine.Request{
+		Execution: engine.ExecutionContext{ID: "exec-1", TenantID: "tenant-a", WorkflowID: "wf_tool"},
+	}); err == nil || !strings.Contains(err.Error(), `"x"`) {
+		t.Errorf("Execute(one key declared two ways) = %v, want it refused naming the key", err)
 	}
 }
 

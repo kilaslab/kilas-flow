@@ -285,6 +285,9 @@ func resolveRoot(name string, ctx Context) (any, error) {
 func callRoot(name string, ctx Context, args []any) (any, error) {
 	switch name {
 	case fromAIRoot:
+		if ctx.FromAIArguments != nil {
+			return fromAIArgument(ctx.FromAIArguments, args)
+		}
 		if !ctx.AllowFromAI {
 			return nil, fmt.Errorf("$fromAI is only available in a parameter an AI agent fills; it has no value here")
 		}
@@ -304,6 +307,23 @@ func callRoot(name string, ctx Context, args []any) (any, error) {
 	default:
 		return nil, fmt.Errorf("expression root %q is not supported", name)
 	}
+}
+
+// fromAIArgument reads one agent-supplied argument for
+// `$fromAI(key, description, type, default)`. The value is returned as the
+// agent sent it, so whatever it spells stays data.
+func fromAIArgument(arguments map[string]any, args []any) (any, error) {
+	if len(args) == 0 {
+		return nil, fmt.Errorf("$fromAI needs a parameter name")
+	}
+	key := jsString(args[0])
+	if value, present := arguments[key]; present && value != nil {
+		return value, nil
+	}
+	if len(args) > 3 && !isNullish(args[3]) {
+		return args[3], nil
+	}
+	return nil, fmt.Errorf("tool argument %q was not supplied and $fromAI(%q, …) declares no default", key, key)
 }
 
 // nodeRootValue resolves the `$('Name')` form.

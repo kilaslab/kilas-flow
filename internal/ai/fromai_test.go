@@ -138,38 +138,39 @@ func containsString(values []string, want string) bool {
 	return false
 }
 
-func TestFromAICallsSplicedIntoCodeFindsOnlyCallsSharingASegment(t *testing.T) {
+func TestCheckFromAIConsistentRefusesAKeyDeclaredTwoWays(t *testing.T) {
 	t.Parallel()
 
 	marker := func(template string) map[string]any {
 		return map[string]any{"mode": "expression", "value": template}
 	}
-	parameters := map[string]any{
-		// Alone in their segments: each is replaced by its value outright.
-		"sole":     marker("{{ $fromAI('sole') }}"),
-		"text":     marker("Customer {{ $fromAI('text') }} from {{ $fromAI('city') }}"),
-		"plain":    "$fromAI('plain') is a plain string, never evaluated",
-		"noMarker": "{{ $fromAI('noMarker').toUpperCase() }}",
-		// Sharing a segment with other code: the value is spliced into it.
-		"nested": map[string]any{"upper": marker("{{ $fromAI('upper').toUpperCase() }}")},
-		"list":   []any{marker("{{ $fromAI('scaled', 'a number', 'number') * 100 }}")},
-		"pair":   marker("{{ $fromAI('first') + $fromAI('second') }}"),
-	}
-	calls, err := ai.FromAICallsSplicedIntoCode(parameters)
-	if err != nil {
-		t.Fatalf("FromAICallsSplicedIntoCode() error = %v", err)
-	}
-	found := map[string]string{}
-	for _, call := range calls {
-		found[call.Key] = call.Type
-	}
-	want := map[string]string{"upper": "string", "scaled": "number", "first": "string", "second": "string"}
-	if len(found) != len(want) {
-		t.Fatalf("spliced calls = %v, want exactly %v", found, want)
-	}
-	for key, kind := range want {
-		if found[key] != kind {
-			t.Errorf("spliced call %q = %q, want %q", key, found[key], kind)
+	// ExtractFromAI keeps one declaration per key, and which one depends on
+	// map order: two that differ make the schema, and the type the argument is
+	// checked against, change from run to run.
+	for name, parameters := range map[string]map[string]any{
+		"type": {
+			"plan": marker("{{ $fromAI('x', 'x', 'number') + '' }}"),
+			"name": marker("{{ $fromAI('x', 'x') }}"),
+		},
+		"description": {
+			"a": marker("{{ $fromAI('x', 'the name') }}"),
+			"b": marker("{{ $fromAI('x', 'the city') }}"),
+		},
+		"default": {
+			"a": marker("{{ $fromAI('x', 'x', 'string', 'free') }}"),
+			"b": []any{marker("{{ $fromAI('x', 'x') }}")},
+		},
+	} {
+		if err := ai.CheckFromAIConsistent(parameters); err == nil || !strings.Contains(err.Error(), `"x"`) {
+			t.Errorf("%s: CheckFromAIConsistent() = %v, want the key named", name, err)
 		}
+	}
+	same := map[string]any{
+		"a": marker("{{ $fromAI('x', 'the name') }}"),
+		"b": map[string]any{"c": "$fromAI('x', 'the name')"},
+		"d": marker("{{ $fromAI('y', 'y', 'number', 3) }}"),
+	}
+	if err := ai.CheckFromAIConsistent(same); err != nil {
+		t.Errorf("CheckFromAIConsistent(one declaration repeated) = %v, want success", err)
 	}
 }

@@ -433,6 +433,10 @@ type DatastoreStore interface {
 // DatastoreExecutor runs the data-table operation set against the row store.
 type DatastoreExecutor struct {
 	store DatastoreStore
+	// fromAIArguments is set only when a data table tool runs a write through
+	// this executor: the agent's arguments, which the parameters' expressions
+	// read through $fromAI as values. Nil for the step node.
+	fromAIArguments map[string]any
 }
 
 // NewDatastoreExecutor builds the data-table executor. A nil store refuses
@@ -477,7 +481,9 @@ func (executor *DatastoreExecutor) Execute(ctx context.Context, ir workflow.IRNo
 		}, Paired: &workflow.PairedItem{SourceNodeID: ir.ID, SourcePort: "main", ItemIndex: index}}
 	}
 	for index, item := range items {
-		parameters, err := expression.Resolve(ir.Parameters, expressionContext(item, input, request, index))
+		scope := expressionContext(item, input, request, index)
+		scope.FromAIArguments = executor.fromAIArguments
+		parameters, err := expression.Resolve(ir.Parameters, scope)
 		if err != nil {
 			if !continueOnFail {
 				return nil, fmt.Errorf("node %q: item %d: %w", ir.Name, index+1, err)
@@ -1051,10 +1057,7 @@ func validateDatastoreToolConfiguration(n workflow.Node) error {
 	if expression.IsExpression(locator.Value) {
 		return fmt.Errorf("a datastore tool needs a fixed data table, not an expression")
 	}
-	if err := checkDatastoreToolOperation(n.Parameters); err != nil {
-		return err
-	}
-	return validateToolFromAI(n)
+	return checkDatastoreToolOperation(n.Parameters)
 }
 
 // checkDatastoreToolOperation holds a tool to what it performs. It runs at
@@ -1074,21 +1077,19 @@ func checkDatastoreToolOperation(parameters map[string]any) error {
 		return fmt.Errorf("a datastore tool that runs %s needs the values it writes: map at least one column, "+
 			"with $fromAI for what the model supplies; to read rows, set the operation to Get", operation)
 	}
-	if err := refuseDatastoreToolModelChoices(parameters); err != nil {
-		return err
-	}
-	// A string or json argument written into the middle of expression code
-	// runs as code: {{ $fromAI('name').toUpperCase() }} evaluates whatever
-	// the model spells, $execution and $env included. A number or boolean is
-	// checked as one before it is substituted, so it renders as a literal.
-	spliced, err := ai.FromAICallsSplicedIntoCode(parameters)
-	if err != nil {
-		return err
-	}
-	for _, call := range spliced {
-		if call.Type == "string" || call.Type == "json" {
-			return fmt.Errorf("$fromAI(%q, …) shares its {{ }} with other code, so the model's text would run as part of that expression: "+
-				"give it a {{ }} of its own", call.Key)
+	// The $fromAI rules bind only a write. A read's parameters are never
+	// filled from the model — the read schema is its own — so what they say
+	// about $fromAI decides nothing, and refusing it there would only break a
+	// tool that has always worked.
+	if operation != DatastoreOperationGet {
+		if err := refuseDatastoreToolModelChoices(parameters); err != nil {
+			return err
+		}
+		if _, err := ai.ExtractFromAI(parameters); err != nil {
+			return err
+		}
+		if err := ai.CheckFromAIConsistent(parameters); err != nil {
+			return err
 		}
 	}
 	// The step node's own rules for the operation the tool performs — a
@@ -1186,9 +1187,6 @@ func (executor *DatastoreToolExecutor) Execute(ctx context.Context, ir workflow.
 		return nil, fmt.Errorf("node %q: a datastore tool needs a fixed data table, not an expression", ir.Name)
 	}
 	if err := checkDatastoreToolOperation(ir.Parameters); err != nil {
-		return nil, fmt.Errorf("node %q: %w", ir.Name, err)
-	}
-	if _, err := ai.ExtractFromAI(ir.Parameters); err != nil {
 		return nil, fmt.Errorf("node %q: %w", ir.Name, err)
 	}
 	id, err := datastoreToolID(ctx, executor.store, tenant, locator)
@@ -1500,17 +1498,18 @@ func (tool *datastoreTool) Invoke(ctx context.Context, arguments json.RawMessage
 // tool inherits the mapper, the condition rules and the whole-table refusal
 // rather than reimplementing any of them.
 //
-// Four things are fixed before the model's arguments reach it. Only the keys
-// the parameters declare through $fromAI cross — the schema is closed, and a
-// provider that ignores it cannot widen what an automatic mapping writes. Each
-// of those is checked as data before it is substituted, because the step
-// executor evaluates the parameters it is handed: see
-// checkDatastoreToolArgument. The substitution goes into a copy, never into
-// the tool's own template, for the reason httpRequestTool's does: a template
-// overwritten by the first call repeats that call forever. And the table is
-// pinned to the one the descriptor resolved, by id, so the table the schema
-// describes is the table written — a rename between build and call cannot
-// move it, and no argument can.
+// The model's arguments are data from end to end. Only the keys the
+// parameters declare through $fromAI cross, each checked against its declared
+// type (checkDatastoreToolArgument). An expression in the parameters is never
+// rewritten with them: it is evaluated as the author wrote it, with the
+// arguments in its context, where $fromAI returns each as a value the
+// expression computes with — so an argument that spells `$execution.id` or
+// `{{ … }}` is stored as that text, never run. Only a plain string, which
+// nothing evaluates, has its $fromAI filled in place. The parameters are a
+// copy, never the tool's own template, and the table is pinned to the one the
+// descriptor resolved, by id, so the table the schema describes is the table
+// written — a rename between build and call cannot move it, and no argument
+// can.
 //
 // A failure returns as a tool error, never as a result the model could read
 // as success.
@@ -1525,33 +1524,39 @@ func (tool *datastoreTool) invokeWrite(ctx context.Context, arguments json.RawMe
 	if err != nil {
 		return "", fmt.Errorf("node %q: tool %q: %w", tool.agentNode, tool.name, err)
 	}
-	declared := make(map[string]any, len(calls))
+	// Each declared key: what the model supplied, checked, or else the
+	// call's own default — the default the schema advertised, parsed once, the
+	// same way for an expression and a plain string. A key with neither is
+	// refused by name where it is read.
+	fromAI := make(map[string]any, len(calls))
 	for _, call := range calls {
-		value, present := supplied[call.Key]
-		if !present || value == nil {
-			// Absent, so the call's default applies or the substitution
-			// below refuses it by name.
+		if value, present := supplied[call.Key]; present && value != nil {
+			if err := checkDatastoreToolArgument(call, value); err != nil {
+				return "", fmt.Errorf("node %q: tool %q: %w", tool.agentNode, tool.name, err)
+			}
+			fromAI[call.Key] = value
 			continue
 		}
-		if err := checkDatastoreToolArgument(call, value); err != nil {
-			return "", fmt.Errorf("node %q: tool %q: %w", tool.agentNode, tool.name, err)
+		if call.HasDefault {
+			fromAI[call.Key] = call.Default
 		}
-		declared[call.Key] = value
 	}
-	parameters, err := ai.SubstituteFromAI(tool.parameters, declared)
+	filled, err := datastoreToolPlainFromAI(tool.parameters, fromAI)
 	if err != nil {
 		return "", fmt.Errorf("node %q: tool %q: %w", tool.agentNode, tool.name, err)
 	}
-	// The item an automatic mapping writes is the columns' own $fromAI calls,
-	// with their defaults — never a key that only a condition declares, which
-	// would write the condition's value onto every row it matched.
+	parameters, _ := filled.(map[string]any)
+	if parameters == nil {
+		parameters = map[string]any{}
+	}
+	// The item an automatic mapping writes is the columns' own $fromAI calls
+	// — never a key that only a condition declares, which would write the
+	// condition's value onto every row it matched.
 	columnCalls, _ := ai.ExtractFromAI(map[string]any{"columns": tool.parameters["columns"]})
 	item := make(map[string]any, len(columnCalls))
 	for _, call := range columnCalls {
-		if value, present := declared[call.Key]; present {
+		if value, present := fromAI[call.Key]; present {
 			item[call.Key] = value
-		} else if call.HasDefault {
-			item[call.Key] = call.Default
 		}
 	}
 	parameters["resource"] = datastoreResourceRow
@@ -1565,7 +1570,8 @@ func (tool *datastoreTool) invokeWrite(ctx context.Context, arguments json.RawMe
 			Outputs: mainOutput(), ExecutorID: DatastoreExecutorID,
 		},
 	}
-	output, err := NewDatastoreExecutor(tool.store).Execute(ctx, node, workflow.NodeInput{"main": {{JSON: item}}}, tool.request)
+	executor := &DatastoreExecutor{store: tool.store, fromAIArguments: fromAI}
+	output, err := executor.Execute(ctx, node, workflow.NodeInput{"main": {{JSON: item}}}, tool.request)
 	if err != nil {
 		return "", fmt.Errorf("node %q: tool %q: %w", tool.agentNode, tool.name, err)
 	}
@@ -1593,18 +1599,57 @@ func (tool *datastoreTool) invokeWrite(ctx context.Context, arguments json.RawMe
 	return string(encoded), nil
 }
 
-// checkDatastoreToolArgument holds one model-supplied argument to what its
-// $fromAI call declared, before it is substituted into the parameters.
+// datastoreToolPlainFromAI fills the $fromAI calls in the parameters' plain
+// strings and leaves every expression marker exactly as the author wrote it.
 //
-// It has to be done here because the step executor resolves every expression
-// in the parameters it runs, and after substitution nothing tells the model's
-// value from the author's template. A value that is itself an expression
-// marker, or that carries {{ or }} into a template around it, would be
-// evaluated — $execution, the operator's $env allowlist, every upstream node's
-// output — written into the row and echoed back to the model. So a string
-// argument must be a string, a number a number, a boolean a boolean; a json
-// argument may be any shape except one holding an expression marker; and no
-// string anywhere in the value may hold template braces. The refusal names the
+// A plain string is data — nothing evaluates it — so the model's value can be
+// written into it, which is how a column set to the bare text
+// $fromAI('name') has always been filled. An expression is the author's code,
+// and the model's value never becomes part of its source: the step executor
+// evaluates it with the arguments in its context instead. The result is a
+// copy; the tool's own template is never written to.
+func datastoreToolPlainFromAI(value any, arguments map[string]any) (any, error) {
+	switch typed := value.(type) {
+	case string:
+		filled, err := ai.SubstituteFromAI(map[string]any{"text": typed}, arguments)
+		if err != nil {
+			return nil, err
+		}
+		return filled["text"], nil
+	case map[string]any:
+		if expression.IsExpression(typed) {
+			return typed, nil
+		}
+		copied := make(map[string]any, len(typed))
+		for key, nested := range typed {
+			filled, err := datastoreToolPlainFromAI(nested, arguments)
+			if err != nil {
+				return nil, err
+			}
+			copied[key] = filled
+		}
+		return copied, nil
+	case []any:
+		copied := make([]any, len(typed))
+		for index, nested := range typed {
+			filled, err := datastoreToolPlainFromAI(nested, arguments)
+			if err != nil {
+				return nil, err
+			}
+			copied[index] = filled
+		}
+		return copied, nil
+	default:
+		return value, nil
+	}
+}
+
+// checkDatastoreToolArgument holds one model-supplied argument to the type its
+// $fromAI call declared, so the value a write stores is the kind the schema
+// promised: a string argument must be a string, a number a number, a boolean
+// a boolean. A json argument may be any shape except one holding an
+// expression marker — a plain string can carry one whole into the parameter
+// tree, where the step executor would evaluate it. The refusal names the
 // argument and never repeats its value.
 func checkDatastoreToolArgument(call ai.FromAIArgument, value any) error {
 	switch call.Type {
@@ -1620,32 +1665,30 @@ func checkDatastoreToolArgument(call ai.FromAIArgument, value any) error {
 		if _, ok := value.(bool); !ok {
 			return fmt.Errorf("tool argument %q must be true or false", call.Key)
 		}
-	}
-	if datastoreToolValueIsTemplate(value) {
-		return fmt.Errorf("tool argument %q holds an expression or template braces ({{ or }}), "+
-			"which a data table tool never accepts: the value is written as data, so send it without them", call.Key)
+	case "json":
+		if datastoreToolHoldsMarker(value) {
+			return fmt.Errorf("tool argument %q holds an expression marker, which a data table tool never accepts", call.Key)
+		}
 	}
 	return nil
 }
 
-// datastoreToolValueIsTemplate reports whether a value, at any depth, is or
-// holds an expression marker, or a string with template braces in it.
-func datastoreToolValueIsTemplate(value any) bool {
+// datastoreToolHoldsMarker reports whether a value, at any depth, is or holds
+// an expression marker.
+func datastoreToolHoldsMarker(value any) bool {
 	switch typed := value.(type) {
-	case string:
-		return strings.Contains(typed, "{{") || strings.Contains(typed, "}}")
 	case map[string]any:
 		if mode, _ := typed["mode"].(string); mode == "expression" {
 			return true
 		}
 		for _, nested := range typed {
-			if datastoreToolValueIsTemplate(nested) {
+			if datastoreToolHoldsMarker(nested) {
 				return true
 			}
 		}
 	case []any:
 		for _, nested := range typed {
-			if datastoreToolValueIsTemplate(nested) {
+			if datastoreToolHoldsMarker(nested) {
 				return true
 			}
 		}
