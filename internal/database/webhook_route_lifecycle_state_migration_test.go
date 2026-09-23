@@ -5,41 +5,11 @@ import (
 	"fmt"
 	"testing"
 	"time"
-
-	"github.com/kilaslab/kilas-flow/migrations"
 )
 
 // lifecycleStateMigration is looked up by its name and never by its number,
 // for the reason backfillMigration gives.
 const lifecycleStateMigration = "webhook_route_lifecycle_state"
-
-// rollBackBelow reverts migrations, newest first, until the one named is no
-// longer applied. By name rather than by a count of calls: a count is right
-// only until the next migration lands, and then it stops one short and the
-// test goes on to read a schema it did not mean to.
-func rollBackBelow(t *testing.T, db *DB, name string) {
-	t.Helper()
-	target := versionNamed(t, db.Dialector.Name(), name)
-	all, err := loadMigrations(migrations.FS, db.Dialector.Name())
-	if err != nil {
-		t.Fatalf("loadMigrations: %v", err)
-	}
-	// Bounded by the number of migrations, so a Rollback that stops making
-	// progress fails here instead of hanging the suite.
-	for range len(all) + 1 {
-		applied, err := appliedVersions(db)
-		if err != nil {
-			t.Fatalf("appliedVersions: %v", err)
-		}
-		if highestVersion(applied) < target {
-			return
-		}
-		if err := Rollback(db, discardLogger()); err != nil {
-			t.Fatalf("Rollback towards %s: %v", name, err)
-		}
-	}
-	t.Fatalf("rolling back %d times left %s applied", len(all)+1, name)
-}
 
 // A route keeps what its trigger's registration answered with, sealed, in a
 // column of its own. The column is nullable because every route minted before
