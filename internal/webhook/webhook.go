@@ -141,6 +141,16 @@ func (handler *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// An inactive, deleted, or never-activated workflow has no binding, and
 		// a wrong method has none either. Answering both the same way keeps the
 		// endpoint from confirming which workflows exist.
+		//
+		// A route that is there and could not be read is answered the same way,
+		// so the sender learns nothing more — but it is a fault, not a stranger
+		// guessing, and the operator is told: after a key rotation, a route
+		// whose registration kept a secret cannot open it, and would otherwise
+		// 404 with no trace. The route is logged, never the rest of the path.
+		if !errors.Is(err, repository.ErrNotFound) {
+			route, _, _ := strings.Cut(path, "/")
+			handler.logger.Error("a webhook delivery could not be routed", "route", route, "error", err)
+		}
 		problem(w, http.StatusNotFound, "No active workflow is bound to this webhook.")
 		return
 	}
@@ -332,23 +342,34 @@ func (handler *Handler) admit(w http.ResponseWriter, r *http.Request, binding re
 // `/webhook/<id>/user/:id` endpoints work — so an exact lookup is tried first
 // and the route is then matched against the node's own path pattern.
 func (handler *Handler) resolveBinding(ctx context.Context, method, path string) (repository.WebhookBinding, map[string]any, error) {
-	if binding, err := handler.bindings.Resolve(ctx, method, path); err == nil {
+	binding, err := handler.bindings.Resolve(ctx, method, path)
+	if err == nil {
 		return binding, nil, nil
+	}
+	// Only a path nothing is bound on falls through to the pattern match. Any
+	// other failure belongs to the route that was found, and trying a shorter
+	// path would only hide it behind "no binding".
+	if !errors.Is(err, repository.ErrNotFound) {
+		return repository.WebhookBinding{}, nil, err
 	}
 	route, rest, found := strings.Cut(path, "/")
 	if !found || strings.TrimSpace(rest) == "" {
-		return repository.WebhookBinding{}, nil, errors.New("no binding for this path")
+		return repository.WebhookBinding{}, nil, errNoBinding
 	}
-	binding, err := handler.bindings.Resolve(ctx, method, route)
+	binding, err = handler.bindings.Resolve(ctx, method, route)
 	if err != nil {
 		return repository.WebhookBinding{}, nil, err
 	}
 	params, matched := matchPathParams(binding.Path, strings.Split(rest, "/"))
 	if !matched {
-		return repository.WebhookBinding{}, nil, fmt.Errorf("no binding for this path")
+		return repository.WebhookBinding{}, nil, errNoBinding
 	}
 	return binding, params, nil
 }
+
+// errNoBinding is a path nothing answers on. It is a not-found like the
+// repository's, which is what tells it apart from a route that failed.
+var errNoBinding = fmt.Errorf("%w: no binding for this path", repository.ErrNotFound)
 
 // matchPathParams maps trailing request segments onto a route pattern.
 //

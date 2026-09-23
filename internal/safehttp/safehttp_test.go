@@ -490,3 +490,23 @@ func mustHostname(t *testing.T, rawURL string) string {
 	}
 	return parsed.Hostname()
 }
+
+// TestPathSegmentKeepsAValueInsideOneSegment: a value written into a URL path
+// is data, and a slash, a question mark or a percent sign in it must not become
+// structure — each would change which endpoint a request carrying a credential
+// reaches.
+func TestPathSegmentKeepsAValueInsideOneSegment(t *testing.T) {
+	t.Parallel()
+
+	for value, want := range map[string]string{
+		"sales":           "sales",
+		"a/b":             "a%2Fb",
+		"../../admin?x=1": "..%2F..%2Fadmin%3Fx=1",
+		"50% off":         "50%25%20off",
+		"#fragment":       "%23fragment",
+	} {
+		if got := safehttp.PathSegment(value); got != want {
+			t.Errorf("PathSegment(%q) = %q, want %q", value, got, want)
+		}
+	}
+}

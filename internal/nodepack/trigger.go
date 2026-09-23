@@ -68,6 +68,12 @@ type TriggerHMAC struct {
 	// empty secret means the node is not configured for verification, which is
 	// a different thing from a failed check.
 	SecretParameter string `json:"secretParameter"`
+	// SecretCapture names, instead, a value the lifecycle's `set` captured: the
+	// secret a service generated when the webhook was registered, and signs
+	// every delivery with from then on. While the node's registration is on,
+	// nothing captured yet refuses every delivery; with it off, nothing is ever
+	// captured, and that is the same as no secret configured.
+	SecretCapture string `json:"secretCapture,omitempty"`
 }
 
 // TriggerLifecycle describes optional auto-registration.
@@ -82,6 +88,20 @@ type TriggerLifecycle struct {
 	Check            *webhook.RequestDescriptor `json:"check,omitempty"`
 	Set              *webhook.RequestDescriptor `json:"set,omitempty"`
 	Remove           *webhook.RequestDescriptor `json:"remove,omitempty"`
+}
+
+// requests is the lifecycle as the descriptor form that performs it.
+func (lifecycle *TriggerLifecycle) requests() webhook.RequestLifecycle {
+	return webhook.RequestLifecycle{Check: lifecycle.Check, Set: lifecycle.Set, Remove: lifecycle.Remove}
+}
+
+// captures reports whether the lifecycle's `set` keeps a value under key.
+func (lifecycle *TriggerLifecycle) captures(key string) bool {
+	if lifecycle == nil || lifecycle.Set == nil {
+		return false
+	}
+	_, captured := lifecycle.Set.Capture[key]
+	return captured
 }
 
 type registryKey struct {
@@ -175,8 +195,25 @@ func (trigger *Trigger) validate() error {
 	if trigger.Webhook == nil {
 		return fmt.Errorf("a trigger needs a webhook declaration, or activation binds no route")
 	}
-	if trigger.HMAC != nil && trigger.HMAC.Algorithm != "sha512" {
+	if trigger.Lifecycle != nil {
+		if err := trigger.Lifecycle.requests().Validate(); err != nil {
+			return err
+		}
+	}
+	if trigger.HMAC == nil {
+		return nil
+	}
+	if trigger.HMAC.Algorithm != "sha512" {
 		return fmt.Errorf("hmac algorithm %q is not implemented; use sha512", trigger.HMAC.Algorithm)
+	}
+	if trigger.HMAC.SecretParameter != "" && trigger.HMAC.SecretCapture != "" {
+		return fmt.Errorf("hmac names both a secretParameter and a secretCapture: a delivery is verified with one secret")
+	}
+	// A secret nothing captures is never there: the node would refuse every
+	// delivery while its registration is on, and accept every one unsigned
+	// while it is off — a pack that looks verified and never is.
+	if trigger.HMAC.SecretCapture != "" && !trigger.Lifecycle.captures(trigger.HMAC.SecretCapture) {
+		return fmt.Errorf("hmac.secretCapture is %q, which the lifecycle's set does not capture", trigger.HMAC.SecretCapture)
 	}
 	return nil
 }
@@ -369,11 +406,21 @@ func (trigger *Trigger) TriggerKind() webhook.TriggerKind {
 	// would make importing a working workflow produce a broken one. A node that
 	// *does* carry a secret is then held to it strictly — a missing or
 	// malformed signature is a refusal, never a pass.
+	//
+	// A captured secret is the exception, while the node's registration is
+	// on. Such a node will be signed for, and its secret is absent only in a
+	// window — before its registration has answered, or after a remove cleared
+	// it while the workflow stayed active — in which accepting unsigned
+	// deliveries would let anybody who has the URL inject events. So it
+	// refuses them until the secret is there.
 	kind.Verify = func(delivery webhook.Delivery) error {
-		if trigger.secretOf(delivery) == "" {
-			return nil
+		if trigger.secretOf(delivery) != "" {
+			return verify(delivery)
 		}
-		return verify(delivery)
+		if trigger.awaitsCapturedSecret(delivery) {
+			return fmt.Errorf("this endpoint is signed with a secret its registration has not provided yet, so no delivery can be verified")
+		}
+		return nil
 	}
 	// The verifier above skips itself when the node holds no secret, so it
 	// authenticates a delivery only while one is configured. Without this a
@@ -386,7 +433,23 @@ func (trigger *Trigger) TriggerKind() webhook.TriggerKind {
 	return kind
 }
 
+// awaitsCapturedSecret reports whether a delivery's node verifies with a
+// captured secret and has its registration on — so a secret is coming, and
+// its absence is a refusal rather than "not configured". The same test the
+// lifecycle gate applies, so the two cannot disagree about a node.
+func (trigger *Trigger) awaitsCapturedSecret(delivery webhook.Delivery) bool {
+	return trigger.HMAC.SecretCapture != "" && trigger.Lifecycle != nil &&
+		webhook.LifecycleEnabled(delivery.Binding.Parameters, trigger.Lifecycle.EnabledParameter)
+}
+
+// secretOf is the secret a delivery is verified with: the value the
+// registration captured, when the trigger names one, and otherwise the node's
+// parameter. Never the parameter as a fallback for a capture — a tenant's
+// parameter is not the secret the service signs with.
 func (trigger *Trigger) secretOf(delivery webhook.Delivery) string {
+	if trigger.HMAC.SecretCapture != "" {
+		return strings.TrimSpace(delivery.Binding.Captured[trigger.HMAC.SecretCapture])
+	}
 	secret, _ := delivery.Binding.Parameters[trigger.HMAC.SecretParameter].(string)
 	return strings.TrimSpace(secret)
 }
@@ -423,9 +486,7 @@ func RegisterTrigger(
 	if trigger.Lifecycle == nil {
 		return nil
 	}
-	hook := webhook.RequestLifecycle{
-		Check: trigger.Lifecycle.Check, Set: trigger.Lifecycle.Set, Remove: trigger.Lifecycle.Remove,
-	}
+	hook := trigger.Lifecycle.requests()
 	// Opt-in: the hook does nothing unless the node turned it on. Registering a
 	// webhook writes to a customer's own instance, which is not a thing
 	// importing and activating a workflow should do silently.

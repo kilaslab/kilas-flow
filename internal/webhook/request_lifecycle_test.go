@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"reflect"
 	"strings"
 	"sync"
@@ -392,6 +393,24 @@ func TestRequestLifecycleToleratesASessionWithNoList(t *testing.T) {
 	}
 }
 
+// TestRequestLifecycleReadsASessionPathWrittenWithoutALeadingSlash: the
+// session path is relative to the credential's base URL, so a template that
+// leaves out the leading slash still names a path, and the session in it is
+// still inside that path rather than refused as though it were a host.
+func TestRequestLifecycleReadsASessionPathWrittenWithoutALeadingSlash(t *testing.T) {
+	t.Parallel()
+
+	stub, server := newListStub(t, `{"name":"sales"}`)
+	lifecycle := listLifecycle()
+	lifecycle.Session = "api/sessions/{{ .Parameter.session }}"
+	if _, err := lifecycle.CheckExists(context.Background(), listContext(server.URL, "abc123", nil)); err != nil {
+		t.Fatalf("CheckExists() error = %v", err)
+	}
+	if calls := stub.recorded(); len(calls) != 1 || calls[0].path != "/api/sessions/sales" {
+		t.Fatalf("calls = %#v, want one read of /api/sessions/sales", calls)
+	}
+}
+
 // TestRequestLifecycleRefusesToOverwriteWhatItCannotRead: a document this code
 // does not understand is a document it does not get to rewrite. Failing the
 // activation is recoverable; deleting somebody's settings is not.
@@ -407,5 +426,261 @@ func TestRequestLifecycleRefusesToOverwriteWhatItCannotRead(t *testing.T) {
 		if call.method != http.MethodGet {
 			t.Fatalf("calls = %#v, want reads only", stub.recorded())
 		}
+	}
+}
+
+// descriptorCall is one request a descriptor lifecycle made, as the service
+// received it. The target is kept escaped, because an escaped slash and a real
+// one are exactly the difference these tests are about.
+type descriptorCall struct {
+	method string
+	target string
+	body   string
+}
+
+// descriptorStub is a service a descriptor lifecycle registers with. It
+// answers every request with the same body — an empty object unless a test
+// chose another — and records what it was sent.
+type descriptorStub struct {
+	mu     sync.Mutex
+	calls  []descriptorCall
+	answer string
+}
+
+func newDescriptorStub(t *testing.T) (*descriptorStub, *httptest.Server) {
+	t.Helper()
+	stub := &descriptorStub{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		raw, _ := io.ReadAll(request.Body)
+		stub.mu.Lock()
+		stub.calls = append(stub.calls, descriptorCall{
+			method: request.Method, target: request.RequestURI, body: string(raw),
+		})
+		answer := stub.answer
+		stub.mu.Unlock()
+
+		if answer == "" {
+			answer = `{}`
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, answer)
+	}))
+	t.Cleanup(server.Close)
+	return stub, server
+}
+
+// answerWith is the body the stub answers every later request with.
+func (stub *descriptorStub) answerWith(body string) {
+	stub.mu.Lock()
+	defer stub.mu.Unlock()
+	stub.answer = body
+}
+
+func (stub *descriptorStub) recorded() []descriptorCall {
+	stub.mu.Lock()
+	defer stub.mu.Unlock()
+	return append([]descriptorCall(nil), stub.calls...)
+}
+
+// descriptorContext is a trigger configured with parameters, whose credential's
+// base URL is the stub.
+//
+// The stub is admitted by its exact endpoint rather than by opening private
+// networks, so the egress policy these requests pass is the one a deployment
+// runs with.
+func descriptorContext(t *testing.T, stubURL string, parameters map[string]any) webhook.LifecycleContext {
+	t.Helper()
+	endpoint, err := url.Parse(stubURL)
+	if err != nil {
+		t.Fatalf("parse stub URL error = %v", err)
+	}
+	declared := map[string]any{"$credentials": map[string]any{"wahaApi": "cred-1"}}
+	for key, value := range parameters {
+		declared[key] = value
+	}
+	policy := safehttp.DefaultPolicy()
+	policy.AllowedPrivateEndpoints = []string{endpoint.Host}
+	return webhook.LifecycleContext{
+		TenantID: "tenant-a", WorkflowID: "wf_1",
+		Binding: repository.WebhookBinding{
+			NodeID: "trigger", NodeType: "pack.stubTrigger", Route: "abc123", Parameters: declared,
+		},
+		PublicURL:   "https://flows.example.test/webhook/abc123",
+		HTTP:        policy,
+		Credentials: listCredential{baseURL: stubURL, apiKey: "k-stub"},
+	}
+}
+
+// onlyCall is the one request the lifecycle made, and fails when it made any
+// other number.
+func (stub *descriptorStub) onlyCall(t *testing.T) descriptorCall {
+	t.Helper()
+	calls := stub.recorded()
+	if len(calls) != 1 {
+		t.Fatalf("calls = %#v, want exactly one", calls)
+	}
+	return calls[0]
+}
+
+// TestRequestLifecycleKeepsAJSONBodyParameterInsideItsString: a node parameter
+// is a tenant's text, and a quote or a brace in it has to stay text. Substituted
+// raw, the value below closes its string and writes keys of its own into a
+// request the service trusts, because it carries the tenant's key.
+func TestRequestLifecycleKeepsAJSONBodyParameterInsideItsString(t *testing.T) {
+	t.Parallel()
+
+	stub, server := newDescriptorStub(t)
+	injected := `sales", "admin": true, "nested": {"x": "}"}, "y": "`
+	lifecycle := webhook.RequestLifecycle{Set: &webhook.RequestDescriptor{
+		Method: http.MethodPost, URL: "{{ .baseUrl }}/api/webhooks", CredentialType: "wahaApi",
+		Body: `{"url": "{{ .PublicURL }}", "session": "{{ .Parameter.session }}"}`,
+	}}
+	if err := lifecycle.Create(context.Background(), descriptorContext(t, server.URL, map[string]any{"session": injected})); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	want := map[string]any{"url": "https://flows.example.test/webhook/abc123", "session": injected}
+	if got := decodedObject(t, stub.onlyCall(t).body); !reflect.DeepEqual(got, want) {
+		t.Fatalf("body = %s, want the session kept inside its own string:\n%s", mustEncode(t, got), mustEncode(t, want))
+	}
+}
+
+// TestRequestLifecycleKeepsAURLParameterInsideItsSegment: the request carries
+// the tenant's credential, so a parameter that could add a path segment or a
+// query would send that credential to an endpoint the pack never named. The
+// base URL is the credential's and is written as it is: it is an address by
+// design.
+func TestRequestLifecycleKeepsAURLParameterInsideItsSegment(t *testing.T) {
+	t.Parallel()
+
+	for name, testCase := range map[string]struct {
+		url     string
+		session string
+		want    string
+	}{
+		"in the path": {url: "{{ .baseUrl }}/api/sessions/{{ .Parameter.session }}/webhooks",
+			session: "../../admin?drop=all", want: "/api/sessions/..%2F..%2Fadmin%3Fdrop=all/webhooks"},
+		"in the query": {url: "{{ .baseUrl }}/api/webhooks?session={{ .Parameter.session }}",
+			session: "sales&drop=all", want: "/api/webhooks?session=sales%26drop%3Dall"},
+		// The value that would change the host in the authority is only text
+		// once the path has begun.
+		"right after the authority": {url: "{{ .baseUrl }}/{{ .Parameter.session }}/webhooks",
+			session: "@evil.example:1", want: "/@evil.example:1/webhooks"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			stub, server := newDescriptorStub(t)
+			lifecycle := webhook.RequestLifecycle{Set: &webhook.RequestDescriptor{
+				Method: http.MethodPut, URL: testCase.url, CredentialType: "wahaApi",
+			}}
+			if err := lifecycle.Create(context.Background(), descriptorContext(t, server.URL, map[string]any{"session": testCase.session})); err != nil {
+				t.Fatalf("Create() error = %v", err)
+			}
+			if got := stub.onlyCall(t).target; got != testCase.want {
+				t.Fatalf("request target = %q, want %q", got, testCase.want)
+			}
+		})
+	}
+}
+
+// TestRequestLifecycleRendersStructuredParametersAsJSON: a multi-select of
+// events or a collection of conditions is a list or an object, and a service
+// registering them wants them as JSON. ParameterJSON is each parameter already
+// encoded; outside a string it is the value itself, and inside one it is the
+// JSON text as a string, which is still only a string.
+func TestRequestLifecycleRendersStructuredParametersAsJSON(t *testing.T) {
+	t.Parallel()
+
+	stub, server := newDescriptorStub(t)
+	events := []any{"message", "session.status"}
+	filter := map[string]any{"chatId": "123@c.us", "fromMe": false, "labels": []any{"vip"}}
+	lifecycle := webhook.RequestLifecycle{Set: &webhook.RequestDescriptor{
+		Method: http.MethodPost, URL: "{{ .baseUrl }}/api/webhooks", CredentialType: "wahaApi",
+		Body: `{
+			"events": {{ .ParameterJSON.events }},
+			"filter": {{ .ParameterJSON.filter }},
+			"filterText": "{{ .ParameterJSON.filter }}",
+			"enabled": {{ .Parameter.enabled }},
+			"session": "{{ .Parameter.session }}"
+		}`,
+	}}
+	parameters := map[string]any{"events": events, "filter": filter, "enabled": true, "session": "sales"}
+	if err := lifecycle.Create(context.Background(), descriptorContext(t, server.URL, parameters)); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	want := map[string]any{
+		"events":     events,
+		"filter":     filter,
+		"filterText": `{"chatId":"123@c.us","fromMe":false,"labels":["vip"]}`,
+		"enabled":    true,
+		"session":    "sales",
+	}
+	if got := decodedObject(t, stub.onlyCall(t).body); !reflect.DeepEqual(got, want) {
+		t.Fatalf("body = %s, want the parameters as JSON:\n%s", mustEncode(t, got), mustEncode(t, want))
+	}
+}
+
+// TestRequestLifecycleRefusesARequestItCannotRenderSafely: where a value cannot
+// be written into its place without changing what the request says, the
+// request is not sent at all. A lifecycle that fails activation is a message
+// the user can act on; one that sends the tenant's key somewhere else is not.
+func TestRequestLifecycleRefusesARequestItCannotRenderSafely(t *testing.T) {
+	t.Parallel()
+
+	for name, testCase := range map[string]struct {
+		descriptor webhook.RequestDescriptor
+		session    string
+		want       string
+	}{
+		"a line break in a header": {
+			descriptor: webhook.RequestDescriptor{URL: "{{ .baseUrl }}/api/webhooks",
+				Headers: map[string]string{"X-Session": "{{ .Parameter.session }}"}},
+			session: "sales\r\nX-Injected: yes", want: "line break",
+		},
+		"an at sign where the host ends": {
+			descriptor: webhook.RequestDescriptor{URL: "{{ .baseUrl }}{{ .Parameter.session }}/api/webhooks"},
+			session:    "@evil.example", want: "before its path",
+		},
+		"an at sign in the port": {
+			descriptor: webhook.RequestDescriptor{URL: "http://api.example.test:{{ .Parameter.session }}/api/webhooks"},
+			session:    "@evil.example", want: "before its path",
+		},
+		"a dot segment in the path": {
+			descriptor: webhook.RequestDescriptor{URL: "{{ .baseUrl }}/api/sessions/{{ .Parameter.session }}"},
+			session:    "..", want: "another endpoint",
+		},
+		"a value outside a string that is not one JSON value": {
+			descriptor: webhook.RequestDescriptor{URL: "{{ .baseUrl }}/api/webhooks",
+				Body: `{"count": {{ .Parameter.session }}}`},
+			session: `1, "admin": true`, want: "not a JSON value",
+		},
+		"a placeholder its template escapes": {
+			descriptor: webhook.RequestDescriptor{URL: "{{ .baseUrl }}/api/webhooks",
+				Body: `{"session": "\{{ .Parameter.session }}"}`},
+			session: `", "admin": true, "x": "`, want: "backslash",
+		},
+		"a body that is not JSON once rendered": {
+			descriptor: webhook.RequestDescriptor{URL: "{{ .baseUrl }}/api/webhooks",
+				Body: `{"session": "{{ .Parameter.session }}"`},
+			session: "sales", want: "not valid JSON",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			stub, server := newDescriptorStub(t)
+			descriptor := testCase.descriptor
+			descriptor.CredentialType = "wahaApi"
+			lifecycle := webhook.RequestLifecycle{Set: &descriptor}
+			err := lifecycle.Create(context.Background(), descriptorContext(t, server.URL, map[string]any{"session": testCase.session}))
+			if err == nil || !strings.Contains(err.Error(), testCase.want) {
+				t.Fatalf("Create() error = %v, want a refusal mentioning %q", err, testCase.want)
+			}
+			if calls := stub.recorded(); len(calls) != 0 {
+				t.Fatalf("calls = %#v, want nothing sent", calls)
+			}
+		})
 	}
 }

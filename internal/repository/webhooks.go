@@ -33,6 +33,10 @@ type WebhookBinding struct {
 	// boundary can authenticate and choose a response mode without recompiling
 	// the document on every request.
 	Parameters map[string]any
+	// Captured is what the trigger's registration kept from its service's
+	// answer, opened. Only Resolve fills it: a delivery is where a captured
+	// value is read, as the secret its signature is checked with.
+	Captured map[string]string
 }
 
 // WebhookTrigger describes one webhook node found in a document. The workflow
@@ -105,7 +109,19 @@ func (store *GORMWorkflowStore) Resolve(ctx context.Context, method, route strin
 		First(&model).Error; err != nil {
 		return WebhookBinding{}, mapNotFound(err, "webhook binding")
 	}
-	return bindingFromModel(model)
+	binding, err := bindingFromModel(model)
+	if err != nil {
+		return WebhookBinding{}, err
+	}
+	// State that is there and cannot be opened fails the lookup rather than
+	// leaving the values out. A trigger verified by a captured secret would
+	// read no secret, and a trigger with no secret accepts every delivery.
+	captured, err := store.lifecycleState(ctx, model.TenantID, model.Route)
+	if err != nil {
+		return WebhookBinding{}, err
+	}
+	binding.Captured = captured
+	return binding, nil
 }
 
 // ResolveRoute returns every binding for one route, across methods.

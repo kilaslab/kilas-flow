@@ -417,6 +417,7 @@ func run(args []string) error {
 	// silently disabling every credential is worse than not starting.
 	var oauthSigningKey []byte
 	var credentialStore *repository.GORMCredentialStore
+	var credentialCipher *credentials.Cipher
 	key, keyErr := masterKey(ctx, cfg)
 	switch {
 	case errors.Is(keyErr, credentials.ErrNoKey):
@@ -432,6 +433,7 @@ func run(args []string) error {
 			return err
 		}
 		credentialStore = repository.NewCredentialStore(db.DB, cipher)
+		credentialCipher = cipher
 	}
 	oauthHTTP := safehttp.NewClient(outboundPolicy(cfg.Outbound))
 	credentialsRepo := repository.NewRefreshingCredentialStore(
@@ -773,6 +775,17 @@ func run(args []string) error {
 		},
 		cfg.Server.PublicURL, log,
 	)
+	// What a trigger's registration captures — a subscription id, the secret a
+	// service signs with — is kept on its route, sealed with the credential
+	// cipher, and the webhook boundary reads it back when a delivery is
+	// verified. Set here, before the listener opens, on the store both of them
+	// already hold. With no key there is no state at all, and a trigger that
+	// captures is refused before it registers rather than after, when the id it
+	// could not keep would leave a registration nothing can remove.
+	workflows.WithLifecycleState(credentialCipher)
+	if credentialCipher != nil {
+		triggerCoordinator.WithState(workflows)
+	}
 	// The tenant purge is the one place that deletes across every store, so it
 	// is assembled from their own purge boundaries rather than reached through
 	// a repository. Binaries, sessions and triggers are optional in the Deps

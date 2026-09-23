@@ -30,6 +30,24 @@ type LifecycleContext struct {
 	// Credentials resolves this workflow's tenant's secrets and no others.
 	Credentials engine.CredentialResolver
 	Logger      *slog.Logger
+	// State keeps what this route's registration answered with, for the calls
+	// that come after it. Nil when the server has nowhere to keep it, and then
+	// a trigger that captures refuses to register.
+	State LifecycleStateStore
+}
+
+// LifecycleStateStore is one route's lifecycle state: the values a `set`
+// captured from its answer.
+//
+// It lives on the route rather than the binding because bindings are deleted
+// and re-inserted on every activation and deleted on deactivation, and the
+// subscription a registration made outlives both: the `remove` that runs on
+// deactivation, and the `check` that runs when the workflow is activated again,
+// are both addressed by it.
+type LifecycleStateStore interface {
+	Load(context.Context) (map[string]string, error)
+	Save(context.Context, map[string]string) error
+	Clear(context.Context) error
 }
 
 // TriggerLifecycle registers and unregisters a trigger with a remote service.
@@ -120,6 +138,7 @@ func VerifyLifecycleBindings(declared []string, registry *LifecycleRegistry) err
 type Coordinator struct {
 	hooks       *LifecycleRegistry
 	routes      repository.WebhookRouteReader
+	states      repository.WebhookRouteStateStore
 	policy      safehttp.Policy
 	credentials func(tenantID string) engine.CredentialResolver
 	baseURL     string
@@ -132,6 +151,14 @@ func NewCoordinator(hooks *LifecycleRegistry, routes repository.WebhookRouteRead
 		logger = slog.Default()
 	}
 	return &Coordinator{hooks: hooks, routes: routes, policy: policy, credentials: credentials, baseURL: baseURL, logger: logger}
+}
+
+// WithState gives each hook its route's lifecycle state to keep captured
+// values in. Without it a hook is given none, and a trigger that captures is
+// refused before it registers rather than after.
+func (coordinator *Coordinator) WithState(states repository.WebhookRouteStateStore) *Coordinator {
+	coordinator.states = states
+	return coordinator
 }
 
 // Activated registers every declaring trigger with its remote service.
@@ -169,7 +196,10 @@ func (coordinator *Coordinator) Activated(ctx context.Context, tenantID, workflo
 			continue
 		}
 		if err := hook.Create(ctx, context); err != nil {
-			return nil, fmt.Errorf("trigger %q could not register with its service (%s): %w", binding.NodeID, lifecycle, err)
+			// "Did not finish" rather than "could not": the service may have
+			// accepted the registration before something after it failed, and
+			// the error says which.
+			return nil, fmt.Errorf("trigger %q did not finish registering with its service (%s): %w", binding.NodeID, lifecycle, err)
 		}
 	}
 	return notices, nil
@@ -220,13 +250,40 @@ func (coordinator *Coordinator) contextFor(tenantID, workflowID string, binding 
 	if coordinator.credentials != nil {
 		resolver = coordinator.credentials(tenantID)
 	}
+	var state LifecycleStateStore
+	if coordinator.states != nil {
+		state = routeState{
+			store: coordinator.states, tenant: repository.TenantScope{ID: tenantID}, route: binding.Route,
+		}
+	}
 	return LifecycleContext{
 		TenantID: tenantID, WorkflowID: workflowID, Binding: binding,
 		PublicURL:   coordinator.baseURL + "/webhook/" + binding.Route,
 		HTTP:        coordinator.policy,
 		Credentials: resolver,
 		Logger:      coordinator.logger,
+		State:       state,
 	}
+}
+
+// routeState is the state store narrowed to one tenant's route, so a hook can
+// reach its own route's values and no other's.
+type routeState struct {
+	store  repository.WebhookRouteStateStore
+	tenant repository.TenantScope
+	route  string
+}
+
+func (state routeState) Load(ctx context.Context) (map[string]string, error) {
+	return state.store.LifecycleState(ctx, state.tenant, state.route)
+}
+
+func (state routeState) Save(ctx context.Context, values map[string]string) error {
+	return state.store.SaveLifecycleState(ctx, state.tenant, state.route, values)
+}
+
+func (state routeState) Clear(ctx context.Context) error {
+	return state.store.ClearLifecycleState(ctx, state.tenant, state.route)
 }
 
 // Notice is something activation could not do and the user now has to.
@@ -264,10 +321,21 @@ var _ TriggerLifecycle = GatedLifecycle{}
 var _ NoticeSource = GatedLifecycle{}
 
 func (gated GatedLifecycle) enabled(lifecycleContext LifecycleContext) bool {
-	if gated.EnabledParameter == "" {
+	return LifecycleEnabled(lifecycleContext.Binding.Parameters, gated.EnabledParameter)
+}
+
+// LifecycleEnabled reports whether a node turned its registration on: always
+// when the lifecycle names no enabling parameter, and otherwise when that
+// boolean parameter is true.
+//
+// One answer for every reader. The HMAC check asks the same question — a node
+// that registers is a node its service will sign for — and a second spelling
+// of it could disagree about a node, and let it through unsigned.
+func LifecycleEnabled(parameters map[string]any, enabledParameter string) bool {
+	if enabledParameter == "" {
 		return true
 	}
-	on, _ := lifecycleContext.Binding.Parameters[gated.EnabledParameter].(bool)
+	on, _ := parameters[enabledParameter].(bool)
 	return on
 }
 
