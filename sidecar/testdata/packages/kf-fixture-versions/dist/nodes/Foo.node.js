@@ -1,7 +1,7 @@
 'use strict';
 
 // Version 1 of a node that shares its name with a version 2 in another file,
-// the way the owner's package ships mitraChatAgent and mitraChatContact at
+// the way the owner's package ships two of its nodes at
 // versions 1 and 2 under one name. The runner keys its class table by
 // (name, version) and dispatches on both.
 

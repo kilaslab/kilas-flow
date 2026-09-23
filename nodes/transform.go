@@ -282,7 +282,7 @@ func sortNode() node.Definition {
 					{Label: "Simple", Value: "simple"},
 					{Label: "Random", Value: "random"},
 				},
-				Description: "n8n also offers a JavaScript comparator. KilasFlow does not run JavaScript, so that mode is refused at import rather than approximated.",
+				Description: "n8n also offers a JavaScript comparator. This node does not run one, so that mode is refused at import rather than approximated; a Code (JavaScript) node can sort any way JavaScript can.",
 			},
 			{
 				Key: "sortFieldsUI", Label: "Fields to Sort By", Kind: node.PropertyString,

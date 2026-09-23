@@ -49,7 +49,7 @@ One decision remains: whether the memory entry also names the clean-room questio
 
 - Roadmap plan, p0 section, entry V2-p0-3: `.pine/roadmap.md`.
 - `.pine/roadmap.md` — the "Licence posture" row of the locked-decisions table.
-- Reference checkout `/Users/izzadev/projects/mitrachat/n8n` at `40dfa42` (n8n 2.34.0): `LICENSE.md` (Sustainable Use License v1.0 plus the `.ee` carve-out), `LICENSE_EE.md`, and the `license` field of `packages/{workflow,core,nodes-base,cli}/package.json` and `packages/@n8n/{nodes-langchain,node-cli,eslint-plugin-community-nodes}/package.json`.
+- Reference checkout `$KILASFLOW_N8N_REFERENCE` at `40dfa42` (n8n 2.34.0): `LICENSE.md` (Sustainable Use License v1.0 plus the `.ee` carve-out), `LICENSE_EE.md`, and the `license` field of `packages/{workflow,core,nodes-base,cli}/package.json` and `packages/@n8n/{nodes-langchain,node-cli,eslint-plugin-community-nodes}/package.json`.
 - `github.com/devlikeapro/n8n-nodes-waha` — MIT, version 2025.2.9. `github.com/devlikeapro/waha-n8n-templates` — no licence file, `license: null`.
 - This repository: root `LICENSE` (Apache-2.0), `.gitignore` (the `design-refs/` exclusion and its comment), `.pine/MEMORY.md`, `AGENTS.md` learnings rules.
 - Sibling tickets: the reference-checkout and vendoring ticket in this phase, and the deferred JS sidecar ticket in p8.

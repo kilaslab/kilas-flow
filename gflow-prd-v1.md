@@ -75,12 +75,12 @@ The AI agent execution loop is delegated to an external battle-tested agent fram
 
 # 2. Product Vision
 
-The product should allow a SaaS such as MitraChat or another application to create and manage workflows through REST APIs and open the workflow editor inside the host application.
+The product should allow a host SaaS application to create and manage workflows through REST APIs and open the workflow editor inside the host application.
 
 Example:
 
 ```text
-MitraChat
+Host SaaS
    |
    | POST /api/v1/workflows
    v
@@ -88,7 +88,7 @@ gflow
    |
    | workflow_id
    v
-MitraChat UI
+Host SaaS UI
    |
    | iframe
    v
@@ -241,7 +241,7 @@ V1 does not need to provide:
 ```text
                          +--------------------------+
                          |      Host SaaS App       |
-                         | MitraChat / CRM / etc.   |
+                         | Host SaaS / CRM / etc.   |
                          +------------+-------------+
                                       |
                              REST API | iframe

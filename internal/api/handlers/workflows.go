@@ -327,7 +327,10 @@ type ExecutionNodeRunResource struct {
 	// Response is the HTTP answer a Respond to Webhook node produced for a
 	// waiting caller, persisted with the run so an inspector — or a boundary in
 	// another process — can read what the caller received.
-	Response   json.RawMessage `json:"response,omitempty"`
+	Response json.RawMessage `json:"response,omitempty"`
+	// Console is what the node's code printed, persisted with the run so an
+	// execution read later, or from another process, still shows it.
+	Console    json.RawMessage `json:"console,omitempty" doc:"What a Code node's code printed: {lines: [{level, text, at}], truncated}. level is log, info, warn, error or debug; truncated is true when output past the node's console limit was dropped. Absent when the node printed nothing."`
 	StartedAt  time.Time       `json:"startedAt"`
 	FinishedAt *time.Time      `json:"finishedAt,omitempty"`
 }
@@ -1077,7 +1080,7 @@ func executionResource(record execution.Record) ExecutionResource {
 			NodeID: nodeRun.NodeID, Attempt: nodeRun.Attempt, RunIndex: nodeRun.RunIndex, Sequence: nodeRun.Sequence,
 			Status: nodeRun.Status, Input: execution.Redact(nodeRun.Input),
 			Output: execution.Redact(nodeRun.Output), Error: execution.Redact(nodeRun.Error),
-			Response:  execution.Redact(nodeRun.Response),
+			Response: execution.Redact(nodeRun.Response), Console: execution.Redact(nodeRun.Console),
 			StartedAt: nodeRun.StartedAt, FinishedAt: nodeRun.FinishedAt,
 		})
 	}

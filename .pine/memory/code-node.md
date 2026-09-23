@@ -1,6 +1,6 @@
 # The Code node compatibility decision
 
-**Decided in FEAT-8qyfh1. Do not relitigate it in a later ticket.**
+**Decided in FEAT-8qyfh1. Do not relitigate it in a later ticket.** The owner reopened it once, on 2026-09-23, for JavaScript only: see the dated entry at the end of this section and EPIC-tjnr1z.
 
 An imported JavaScript or Python Code node is **refused, never translated**. It
 becomes `kilasflow.foreignCode`, a first-class placeholder that keeps the
@@ -39,6 +39,17 @@ does not buy more cheaply.
 The rule that follows: a user must never discover at run time that their
 deployment cannot compile.
 - 2026-09-05: Code node compatibility: imported JS/Python Code nodes are refused as kilasflow.foreignCode, never translated; the Go toolchain lives behind runcode.Compiler and availability is reported through the node catalogue.
+- 2026-09-23: Owner approved (EPIC-tjnr1z): imported n8n JavaScript Code nodes are to RUN on an embedded pure-Go JS engine (goja, modernc.org/quickjs fallback) instead of being refused as foreignCode. JS is executed as JS and never translated to Go. Python Code nodes stay refused. This supersedes only the 'refused' half of the FEAT-8qyfh1 decision recorded above.
+- 2026-09-23: How the supersession is scoped (EPIC-tjnr1z, P0).
+  - JavaScript is **executed as JavaScript, or refused**. There is still no third option and no translation.
+  - Everything that still cannot run goes through one sentence template: `jsrun.Refusal(subject, alternative)`, which renders "this node's code <subject>, which this server does not run. <alternative>". `unsupportedScript` delegates to it. That covers Python, `\p{…}` regexes, the `v`/`d` flags, async generators, `import`/`export`, unlisted `require`, `this.getCredentials`, and a disabled runtime. The Python wording stays byte-identical.
+  - The "refused, never translated" paragraphs above now describe Python and unsupported JS constructs only.
+- 2026-09-23: **The JS runtime's clock is charged per VM entry.**
+  - VM entries before the first user statement are free: prelude, libraries the analyser asked for, input `JSON.parse`, and the wrapper factory.
+  - Every VM entry after it is charged: the body, promise jobs, result normalisation, and `JSON.stringify` of the result, because user `toJSON`, getters and Proxy traps run inside those.
+  - Go-side work between entries is free.
+  - Per-item mode spends one pausable budget across all its items.
+  - This is BUG-9s3htg's rule restated for goja. Do not "simplify" it into one wall-clock deadline.
 
 # The Code node's time limit covers the user's program only
 
@@ -72,3 +83,17 @@ Two consequences worth keeping:
   correctly isolated. `TestASharedTranslationDoesNotCarryAMemoryLimitWithIt`
   pins that. Never close a `CompiledModule` that came from a shared cache —
   closing it evicts the translation the cache exists to hold.
+
+# goja's hazards, and the guards jsrun keeps against them
+
+**Found by the P1 security review (2026-09-23). Keep the guards whatever the goja version.**
+
+- **A Go stack overflow is fatal, and goja's parser and compiler recurse on nesting with no limit of their own.** 300,000 nested brackets killed the whole process, and a crash at `Analyze` happens at save or import time. jsrun therefore checks every body before goja sees it:
+  - `MaxSourceBytes` (128 KiB) bounds the length, and so how deep anything can nest while it parses.
+  - Arrow functions are counted in the raw text, where the count can only err high. Nested arrows parse in quadratic time.
+  - The tree's depth is capped at 1000, checked before compile. Nested blocks compile in quadratic time.
+  - Constant-expression depth is capped at 16. goja's `constant()` is not memoised, so `0 || 0 || …` 40 deep, which is 147 bytes, compiles in exponential time.
+  - Parsing and compiling cannot be interrupted, so they run under a process-wide semaphore of GOMAXPROCS.
+- **goja cannot interrupt one built-in call, and the watchdog can only interrupt.** `[...Array(2**26).keys()]`, `Array.from({length: 2**26})`, `.fill`, `new Uint8Array(2**30)` and `'x'.repeat(2**28)` each held seconds and gigabytes past every limit. `runtime.js` `boundAllocations` wraps every `Array.prototype` method, `Array.from`, `apply`/`construct`, `repeat`/`pad*` and the typed-array and ArrayBuffer constructors with per-call caps (`MaxElementsPerCall` and its siblings). Any new built-in that allocates from a number (Buffer.alloc, in P3) needs the same guard.
+- **A panic on any goroutine other than the VM's is outside `guard`.** Every goroutine that runs host code (see `hostCall`) must recover its own panics.
+- **A destructuring parameter list makes goja panic on a direct `eval()`** in a nested function. The wrapper uses plain positional parameters.

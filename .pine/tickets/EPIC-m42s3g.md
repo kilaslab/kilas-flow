@@ -37,7 +37,7 @@ Make a customer's existing n8n workflows import into KilasFlow and actually run,
 
 ## Why the roadmap is ordered this way
 
-Research across the KilasFlow source, a local n8n 2.34.0 reference checkout, the owner's own published `n8n-nodes-mitrachat` package and official documentation overturned four assumptions the obvious plan would have rested on.
+Research across the KilasFlow source, a local n8n 2.34.0 reference checkout, the owner's own published community node package and official documentation overturned four assumptions the obvious plan would have rested on.
 
 - **WAHA needs no JavaScript.** `@devlikeapro/n8n-nodes-waha`'s action node has no `execute()` at all. It is 124 OpenAPI-derived operations of declarative `routing` metadata generated from WAHA's own MIT `openapi.json`, so a Go routing interpreter plus a generated node pack replicates the whole package with the single binary intact.
 - **A JS sidecar would run 0.46% of what n8n users run.** Across the 100 most-viewed n8n.io templates (2,377 node instances): 1,894 `n8n-nodes-base`, 472 `@n8n/n8n-nodes-langchain`, 11 third-party `n8n-nodes-*`.

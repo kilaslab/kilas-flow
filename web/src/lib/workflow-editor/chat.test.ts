@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { ExecutionResource } from '$lib/api/generated/models';
 
-import { chatReplyFromExecution, chatTriggerIn, CHAT_TRIGGER_TYPE } from './chat';
+import { chatHasMemory, chatReplyFromExecution, chatTriggerIn, CHAT_TRIGGER_TYPE } from './chat';
 
 function execution(partial: Partial<ExecutionResource>): ExecutionResource {
 	return {
@@ -114,5 +114,57 @@ describe('chatTriggerIn', () => {
 	it('finds the chat trigger by type, ignoring canvas selection', () => {
 		expect(chatTriggerIn([{ id: 'a', type: 'kilasflow.manual' }, { id: 'c', type: CHAT_TRIGGER_TYPE }])?.id).toBe('c');
 		expect(chatTriggerIn([{ id: 'a', type: 'kilasflow.manual' }])).toBeUndefined();
+	});
+});
+
+describe('chatReplyFromExecution failures', () => {
+	const providerError =
+		'model turn 1: model request failed with status 404: {"error":{"message":"model \'no-such-model\' not found","type":"not_found_error","param":null,"code":null}}';
+
+	it('names the failed node and lifts the provider message out of its JSON', () => {
+		const reply = chatReplyFromExecution(
+			execution({
+				status: 'failed',
+				error: { message: `execute node "agent": node "AI Agent": ${providerError}` },
+				nodeRuns: [
+					{ nodeId: 'chat', status: 'succeeded', sequence: 0, attempt: 1, runIndex: 0, startedAt: '' },
+					{ nodeId: 'agent', status: 'failed', sequence: 1, attempt: 1, runIndex: 0, startedAt: '', error: { message: `node "AI Agent": ${providerError}` } }
+				]
+			}),
+			'chat',
+			[{ id: 'agent', name: 'AI Agent' }]
+		);
+		expect(reply).toEqual({
+			kind: 'error',
+			node: 'AI Agent',
+			text: "model 'no-such-model' not found",
+			detail: 'model turn 1: model request failed with status 404'
+		});
+	});
+
+	it('strips the engine prefixes from a plain error', () => {
+		const reply = chatReplyFromExecution(
+			execution({
+				status: 'failed',
+				error: { message: 'execute node "set": node "Format": cannot read toUpperCase() of undefined' },
+				nodeRuns: [{ nodeId: 'set', status: 'failed', sequence: 1, attempt: 1, runIndex: 0, startedAt: '' }]
+			}),
+			'chat',
+			[{ id: 'set', name: 'Format' }]
+		);
+		expect(reply).toEqual({ kind: 'error', node: 'Format', text: 'cannot read toUpperCase() of undefined' });
+	});
+});
+
+describe('chatHasMemory', () => {
+	it('is true only when a memory sub-node is wired to something', () => {
+		const nodes = [
+			{ id: 'agent', type: 'kilasflow.agent' },
+			{ id: 'mem', type: 'kilasflow.memoryBuffer' }
+		];
+		const wired = [{ id: 'c1', kind: 'ai_memory', source: { nodeId: 'mem', port: 'memory' }, target: { nodeId: 'agent', port: 'memory' } }];
+		expect(chatHasMemory(nodes, wired)).toBe(true);
+		expect(chatHasMemory(nodes, [])).toBe(false);
+		expect(chatHasMemory([{ id: 'agent', type: 'kilasflow.agent' }], [])).toBe(false);
 	});
 });

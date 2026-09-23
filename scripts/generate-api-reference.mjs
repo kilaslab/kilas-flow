@@ -62,7 +62,7 @@ const groups = [
 	{ slug: 'system', title: 'System', blurb: 'Health and readiness.', operations: ['get-health', 'get-ready'] },
 ];
 
-// The nine SSE event names, with the Go types huma registers for them. The run
+// The SSE event names, with the Go types huma registers for them. The run
 // asserts every one is present in the live document as a named schema.
 const sseEvents = [
 	{ name: 'execution.started', schema: 'ExecutionStartedEvent', terminal: false },
@@ -73,7 +73,19 @@ const sseEvents = [
 	{ name: 'node.output', schema: 'NodeOutputEvent', terminal: false },
 	{ name: 'node.completed', schema: 'NodeCompletedEvent', terminal: false },
 	{ name: 'node.failed', schema: 'NodeFailedEvent', terminal: false },
+	{ name: 'execution.waiting', schema: 'ExecutionWaitingEvent', terminal: false },
 	{ name: 'workflow.saved', schema: 'WorkflowSavedEvent', terminal: false },
+	{ name: 'webhook.response', schema: 'WebhookResponseEvent', terminal: false },
+	{ name: 'code.console', schema: 'CodeConsoleEvent', terminal: false },
+	{ name: 'ai.model.started', schema: 'AIModelStartedEvent', terminal: false },
+	{ name: 'ai.model.delta', schema: 'AIModelDeltaEvent', terminal: false },
+	{ name: 'ai.model.completed', schema: 'AIModelCompletedEvent', terminal: false },
+	{ name: 'ai.tool.started', schema: 'AIToolStartedEvent', terminal: false },
+	{ name: 'ai.tool.completed', schema: 'AIToolCompletedEvent', terminal: false },
+	{ name: 'ai.tool.failed', schema: 'AIToolFailedEvent', terminal: false },
+	{ name: 'ai.agent.completed', schema: 'AIAgentCompletedEvent', terminal: false },
+	{ name: 'ai.agent.failed', schema: 'AIAgentFailedEvent', terminal: false },
+	{ name: 'execution.event', schema: 'OtherEvent', terminal: false },
 ];
 
 function oneLine(text) {
@@ -241,7 +253,7 @@ function renderOverview(version, title, openapi, total, document) {
 	lines.push('## Beyond the operation pages');
 	lines.push('');
 	lines.push('- [Errors](/reference/api/errors/) — every non-success response is an RFC 9457 problem document, and workflow compile failures carry a structured `WorkflowValidationIssue`.');
-	lines.push('- [Events](/reference/api/events/) — the nine server-sent event types and the `Last-Event-ID` resume behaviour, which an OpenAPI document describes the endpoint of but not the vocabulary carried over it.');
+	lines.push('- [Events](/reference/api/events/) — the server-sent event types and the `Last-Event-ID` resume behaviour, which an OpenAPI document describes the endpoint of but not the vocabulary carried over it.');
 	lines.push('- [Webhooks](/reference/api/webhooks/) — the inbound `/webhook/{route}` surface, whose behaviour is defined by the trigger node rather than by a route definition.');
 	lines.push('- [API contract and stability](/reference/api-contract/) — what `/api/v1` promises, what it explicitly does not, and how to tell whether an upgrade will break you.');
 	return lines.join('\n') + '\n';
@@ -306,7 +318,7 @@ function renderEvents(version, schemas) {
 	const lines = [];
 	lines.push('---');
 	lines.push('title: Events');
-	lines.push('description: The nine server-sent event types an execution emits, and how to resume the stream.');
+	lines.push('description: The server-sent event types an execution emits, and how to resume the stream.');
 	lines.push('sidebar:');
 	lines.push('  order: 11');
 	lines.push('---');
@@ -328,7 +340,19 @@ function renderEvents(version, schemas) {
 		'node.output': 'A node emitted an intermediate output.',
 		'node.completed': 'A node finished successfully.',
 		'node.failed': 'A node finished with an error.',
+		'execution.waiting': 'The run suspended at a Wait and is parked until it resumes.',
 		'workflow.saved': 'The workflow document changed under a running execution.',
+		'webhook.response': 'A Respond to Webhook node answered the caller.',
+		'code.console': 'A Code node\'s code printed. `data.lines` carries each line\'s `level` (log, info, warn, error or debug), `text` and `at`; `data.truncated` is true when output past the node\'s console limit was dropped. The same lines are kept on the node run as `console`.',
+		'ai.model.started': 'An AI node sent one request to its model. `data` names the model and the tool-loop iteration.',
+		'ai.model.delta': 'Streamed model output. `data.delta` is the next chunk of text, coalesced to about four updates per second.',
+		'ai.model.completed': 'One model request finished. `data.usage` carries token counts when the provider reports them.',
+		'ai.tool.started': 'An agent called a tool. `data.tool` names it and `data.detail` carries the redacted arguments.',
+		'ai.tool.completed': 'A tool call returned. `data.detail` carries the redacted result.',
+		'ai.tool.failed': 'A tool call failed. `data.error` says why; the agent sees the error and may retry.',
+		'ai.agent.completed': 'An agent produced its final answer.',
+		'ai.agent.failed': 'An agent run ended with an error.',
+		'execution.event': 'Any event type added after this client was built. The payload\'s `type` carries its real name; ignore what you do not recognise.',
 	};
 	for (const event of sseEvents) {
 		lines.push(`| \`${event.name}\` | ${event.terminal ? 'yes' : 'no'} | ${meanings[event.name]} |`);

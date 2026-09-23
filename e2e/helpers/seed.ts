@@ -127,6 +127,18 @@ export async function listSchedules(baseURL: string): Promise<any[]> {
 	return api(baseURL, 'GET', '/schedules');
 }
 
+// The n8n JSON a workflow exports as: `workflow` is the n8n document itself,
+// `lossy` what it could not carry.
+export async function exportN8nWorkflow(baseURL: string, workflowId: string): Promise<{ workflow: any; lossy: unknown[] }> {
+	return api(baseURL, 'GET', `/workflows/${workflowId}/export?format=n8n`);
+}
+
+// Every execution id of one workflow, newest first.
+export async function listExecutionIds(baseURL: string, workflowId: string): Promise<string[]> {
+	const page = await api(baseURL, 'GET', `/executions?workflowId=${encodeURIComponent(workflowId)}&limit=100`);
+	return (page.items as Array<{ id: string }>).map((item) => item.id);
+}
+
 export async function runWorkflow(baseURL: string, workflowId: string, input?: unknown): Promise<string> {
 	const body = input === undefined ? {} : { input };
 	const run = await api(baseURL, 'POST', `/workflows/${workflowId}/run`, body, 202);
@@ -206,4 +218,19 @@ export async function createEmbedSession(
 		{ workflowId: session.workflowId, scopes: ['workflow:read', 'workflow:write', 'workflow:run'], origin: session.origin },
 		201
 	);
+}
+
+// A chat workflow the server refuses to run: its HTTP node has no URL. The
+// canvas saves it as a draft; the run endpoint answers 422 naming the node.
+export function blockedChatWorkflowDocument(name: string): Record<string, unknown> {
+	return {
+		schemaVersion: 1,
+		name,
+		nodes: [
+			{ id: 'chat', name: 'When chat message received', type: 'kilasflow.chatTrigger', typeVersion: 1, position: { x: 0, y: 0 } },
+			{ id: 'call', name: 'Call CRM', type: 'kilasflow.httpRequest', typeVersion: 1, position: { x: 240, y: 0 }, parameters: {} }
+		],
+		connections: [{ id: 'c1', kind: 'main', source: { nodeId: 'chat', port: 'main' }, target: { nodeId: 'call', port: 'main' } }],
+		settings: {}
+	};
 }

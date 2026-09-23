@@ -1,6 +1,6 @@
 ---
 title: Events
-description: The nine server-sent event types an execution emits, and how to resume the stream.
+description: The server-sent event types an execution emits, and how to resume the stream.
 sidebar:
   order: 11
 ---
@@ -21,7 +21,19 @@ sidebar:
 | `node.output` | no | A node emitted an intermediate output. |
 | `node.completed` | no | A node finished successfully. |
 | `node.failed` | no | A node finished with an error. |
+| `execution.waiting` | no | The run suspended at a Wait and is parked until it resumes. |
 | `workflow.saved` | no | The workflow document changed under a running execution. |
+| `webhook.response` | no | A Respond to Webhook node answered the caller. |
+| `code.console` | no | A Code node's code printed. `data.lines` carries each line's `level` (log, info, warn, error or debug), `text` and `at`; `data.truncated` is true when output past the node's console limit was dropped. The same lines are kept on the node run as `console`. |
+| `ai.model.started` | no | An AI node sent one request to its model. `data` names the model and the tool-loop iteration. |
+| `ai.model.delta` | no | Streamed model output. `data.delta` is the next chunk of text, coalesced to about four updates per second. |
+| `ai.model.completed` | no | One model request finished. `data.usage` carries token counts when the provider reports them. |
+| `ai.tool.started` | no | An agent called a tool. `data.tool` names it and `data.detail` carries the redacted arguments. |
+| `ai.tool.completed` | no | A tool call returned. `data.detail` carries the redacted result. |
+| `ai.tool.failed` | no | A tool call failed. `data.error` says why; the agent sees the error and may retry. |
+| `ai.agent.completed` | no | An agent produced its final answer. |
+| `ai.agent.failed` | no | An agent run ended with an error. |
+| `execution.event` | no | Any event type added after this client was built. The payload's `type` carries its real name; ignore what you do not recognise. |
 
 Every event shares one shape, as served:
 

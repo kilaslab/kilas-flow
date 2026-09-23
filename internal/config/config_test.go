@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kilaslab/kilas-flow/internal/jsrun"
 	"github.com/kilaslab/kilas-flow/internal/sqlnode"
 	"github.com/kilaslab/kilas-flow/sidecar"
 )
@@ -884,5 +885,109 @@ func TestValidateRejectsANegativeCodeCacheBudget(t *testing.T) {
 	cfg.Code.CacheMaxBytes = 0
 	if err := cfg.Validate(); err != nil {
 		t.Errorf("Validate() rejected a zero code.cache_max_bytes: %v", err)
+	}
+}
+
+// TestExecutionDefaultTimeoutIsTwoMinutesAndConfigurable: one minute ended AI
+// agent runs on local and reasoning models long before they answered. The
+// owner set the stock budget to two minutes; a deployment still sets its own.
+func TestExecutionDefaultTimeoutIsTwoMinutesAndConfigurable(t *testing.T) {
+	cfg, err := Load(filepath.Join(t.TempDir(), "absent.yaml"))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Execution.DefaultTimeout != 2*time.Minute {
+		t.Errorf("Execution.DefaultTimeout = %s, want 2m0s", cfg.Execution.DefaultTimeout)
+	}
+
+	t.Setenv("KILASFLOW_EXECUTION_DEFAULT_TIMEOUT", "5m")
+	cfg, err = Load(filepath.Join(t.TempDir(), "absent.yaml"))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Execution.DefaultTimeout != 5*time.Minute {
+		t.Errorf("Execution.DefaultTimeout from the environment = %s, want 5m0s", cfg.Execution.DefaultTimeout)
+	}
+}
+
+// The config's JavaScript defaults are the runtime's own, so a deployment that
+// sets nothing runs with exactly the limits the runtime's tests prove.
+func TestTheJavaScriptLimitsMatchTheRuntime(t *testing.T) {
+	limits := jsrun.DefaultLimits()
+	cfg := Default().Code
+	if !cfg.JavaScriptEnabled {
+		t.Error("Code.JavaScriptEnabled = false by default; the engine is linked in, so it is on")
+	}
+	checks := []struct {
+		name      string
+		got, want any
+	}{
+		{"JavaScriptTimeout", cfg.JavaScriptTimeout, limits.Timeout},
+		{"JavaScriptMaxInputBytes", cfg.JavaScriptMaxInputBytes, limits.MaxInputBytes},
+		{"JavaScriptMaxOutputBytes", cfg.JavaScriptMaxOutputBytes, limits.MaxOutputBytes},
+		{"JavaScriptMaxConsoleBytes", cfg.JavaScriptMaxConsoleBytes, limits.MaxConsoleBytes},
+	}
+	for _, check := range checks {
+		if check.got != check.want {
+			t.Errorf("Code.%s = %v, want the runtime's %v", check.name, check.got, check.want)
+		}
+	}
+}
+
+func TestJavaScriptSettingsAreReachableFromTheEnvironment(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "kilasflow.yaml")
+	body := "code:\n  javascript_enabled: false\n  javascript_timeout: 30s\n  javascript_max_concurrent: 4\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Code.JavaScriptEnabled || cfg.Code.JavaScriptTimeout != 30*time.Second || cfg.Code.JavaScriptMaxConcurrent != 4 {
+		t.Errorf("from YAML: %+v", cfg.Code)
+	}
+
+	// The keys are flat because envKeyToPath splits on the first underscore:
+	// code.javascript_timeout is reachable, a nested code.javascript.timeout
+	// would not be.
+	t.Setenv("KILASFLOW_CODE_JAVASCRIPT_ENABLED", "false")
+	t.Setenv("KILASFLOW_CODE_JAVASCRIPT_TIMEOUT", "2s")
+	t.Setenv("KILASFLOW_CODE_JAVASCRIPT_HEAP_CEILING_MB", "512")
+	t.Setenv("KILASFLOW_CODE_JAVASCRIPT_MAX_OUTPUT_BYTES", "1048576")
+	cfg, err = Load(filepath.Join(t.TempDir(), "absent.yaml"))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Code.JavaScriptEnabled {
+		t.Error("JavaScriptEnabled from the environment = true, want false")
+	}
+	if cfg.Code.JavaScriptTimeout != 2*time.Second || cfg.Code.JavaScriptHeapCeilingMB != 512 || cfg.Code.JavaScriptMaxOutputBytes != 1<<20 {
+		t.Errorf("from the environment: timeout %s, heap ceiling %d, output %d",
+			cfg.Code.JavaScriptTimeout, cfg.Code.JavaScriptHeapCeilingMB, cfg.Code.JavaScriptMaxOutputBytes)
+	}
+}
+
+func TestJavaScriptLimitsMustBePositive(t *testing.T) {
+	cases := []struct {
+		name    string
+		mutate  func(*Code)
+		wantSub string
+	}{
+		{"zero timeout", func(c *Code) { c.JavaScriptTimeout = 0 }, "code.javascript_timeout"},
+		{"timeout past the ceiling", func(c *Code) { c.JavaScriptTimeout = 6 * time.Minute }, "at most 5m0s"},
+		{"zero input cap", func(c *Code) { c.JavaScriptMaxInputBytes = 0 }, "code.javascript_max_input_bytes"},
+		{"negative output cap", func(c *Code) { c.JavaScriptMaxOutputBytes = -1 }, "code.javascript_max_output_bytes"},
+		{"zero console cap", func(c *Code) { c.JavaScriptMaxConsoleBytes = 0 }, "code.javascript_max_console_bytes"},
+		{"negative concurrency", func(c *Code) { c.JavaScriptMaxConcurrent = -1 }, "code.javascript_max_concurrent"},
+		{"negative heap ceiling", func(c *Code) { c.JavaScriptHeapCeilingMB = -1 }, "code.javascript_heap_ceiling_mb"},
+	}
+	for _, tc := range cases {
+		cfg := Default()
+		tc.mutate(&cfg.Code)
+		err := cfg.Validate()
+		if err == nil || !strings.Contains(err.Error(), tc.wantSub) {
+			t.Errorf("%s: Validate() error = %v, want it to name %q", tc.name, err, tc.wantSub)
+		}
 	}
 }

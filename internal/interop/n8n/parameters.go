@@ -2,12 +2,14 @@ package n8n
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 
+	"github.com/kilaslab/kilas-flow/internal/jsrun"
 	"github.com/kilaslab/kilas-flow/internal/property"
 	"github.com/kilaslab/kilas-flow/internal/scheduler"
 	"github.com/kilaslab/kilas-flow/internal/sqlbuild"
@@ -3140,41 +3142,65 @@ func waitToN8N(node workflow.Node) (map[string]any, []Lossy) {
 
 // --- Code -------------------------------------------------------------------
 
-// unsupportedScript is the one refusal every JavaScript escape hatch produces.
+// unsupportedScript is the one refusal for code this server will not run.
+// subject completes "this node's code …": "is written in Python", or "is a
+// JavaScript sort comparator".
 //
-// One function, so a Code node, a Sort comparator and whatever comes next all
-// say the same thing in the same words and carry the same severity. Three
-// wordings for one situation is how a user concludes the three are different
-// problems.
+// It is jsrun.Refusal, so a Python Code node, a JavaScript construct the
+// engine cannot run faithfully, a Sort comparator, the node's own validation
+// and a run all say the same thing in the same words. Three wordings for one
+// situation is how a user concludes the three are different problems.
 //
 // Blocking, always. A script this server cannot run is not a detail that was
 // lost in translation; it is work the workflow was relying on that will not
 // happen, and a workflow that activates without it produces plausible output
 // with a hole in it.
-func unsupportedScript(field, language, alternative string) Unsupported {
+func unsupportedScript(field, subject, alternative string) Unsupported {
 	return Unsupported{
 		Severity: SeverityBlocking, Field: field,
-		Reason: fmt.Sprintf("this node's code is written in %s, which this server does not run. %s",
-			language, alternative),
+		Reason: jsrun.Refusal(subject, alternative),
 	}
 }
 
-// codeToKilas keeps an imported Code node's source rather than discarding it.
+// codeKilasType routes an n8n Code node by its language: JavaScript, which is
+// also what a Code node without one is (typeVersion 1 has no language), runs
+// as a Code (JavaScript) node; anything else is kept as the placeholder.
+func codeKilasType(node Node) string {
+	if codeIsJavaScript(stringParameter(node.Parameters, "language")) {
+		return JSCodeNodeType
+	}
+	return ForeignCodeNodeType
+}
+
+func codeIsJavaScript(language string) bool {
+	switch strings.ToLower(strings.TrimSpace(language)) {
+	case "", "javascript":
+		return true
+	}
+	return false
+}
+
+// codeToKilas carries an imported Code node over.
 //
-// The alternative — translating JavaScript to Go — is a compiler project with
-// no correct stopping point, and the failure mode is the worst one available:
-// a body that translates into Go which compiles and computes something else.
-// So the node is refused, and refused *well*: the source is kept and visible,
-// the language is kept, and the diagnostic names the native node that most
-// likely replaces it.
+// JavaScript is copied exactly as it arrived and runs as JavaScript; nothing
+// is translated. The import flags only what the engine cannot run faithfully,
+// found by the same analysis the node's validation and a run use, so the
+// importer and the editor say the same thing.
+//
+// Python is kept rather than discarded, and refused *well*: the source is
+// kept and visible, the language is kept, and the diagnostic names the native
+// node that most likely replaces it. Translating it into anything else would
+// be a compiler project whose failure mode is code that runs and computes
+// something else.
 func codeToKilas(node Node) (map[string]any, []Unsupported) {
 	language := stringParameter(node.Parameters, "language")
-	if language == "" {
-		language = "javaScript"
+	if codeIsJavaScript(language) {
+		return javaScriptCodeToKilas(node)
 	}
-	source := stringParameter(node.Parameters, "jsCode")
+	// The refusal points at the field that holds the code.
+	field, source := "pythonCode", stringParameter(node.Parameters, "pythonCode")
 	if source == "" {
-		source = stringParameter(node.Parameters, "pythonCode")
+		field, source = "jsCode", stringParameter(node.Parameters, "jsCode")
 	}
 	suggestion := nodes.SuggestReplacement(source)
 
@@ -3189,7 +3215,30 @@ func codeToKilas(node Node) (map[string]any, []Unsupported) {
 	if value, present := node.Parameters["pythonCode"]; present {
 		parameters["pythonCode"] = fromN8NValue(value)
 	}
-	return parameters, []Unsupported{unsupportedScript("jsCode", codeLanguageName(language), suggestion)}
+	return parameters, []Unsupported{unsupportedScript(field, "is written in "+codeLanguageName(language), suggestion)}
+}
+
+// javaScriptCodeToKilas copies a JavaScript Code node's parameters under
+// n8n's own names. The source is taken raw, not read as a possible
+// expression, so it exports back byte for byte.
+func javaScriptCodeToKilas(node Node) (map[string]any, []Unsupported) {
+	source, _ := node.Parameters["jsCode"].(string)
+	mode := defaultString(stringParameter(node.Parameters, "mode"), "runOnceForAllItems")
+	parameters := map[string]any{"mode": mode, "jsCode": source}
+	if language, present := node.Parameters["language"]; present {
+		parameters["language"] = language
+	}
+	_, err := jsrun.Analyze(source, jsrun.Mode(mode))
+	if err == nil {
+		return parameters, nil
+	}
+	var refused *jsrun.UnsupportedError
+	if errors.As(err, &refused) {
+		return parameters, []Unsupported{{Severity: SeverityBlocking, Field: "jsCode", Reason: refused.Error()}}
+	}
+	// Code that does not parse would fail at its first run just the same;
+	// saying so now is the same answer, sooner.
+	return parameters, []Unsupported{{Severity: SeverityBlocking, Field: "jsCode", Reason: "this node's code does not parse: " + err.Error()}}
 }
 
 func codeToN8N(node workflow.Node) (map[string]any, []Lossy) {
@@ -4214,16 +4263,17 @@ func splitOutToN8N(node workflow.Node) (map[string]any, []Lossy) {
 
 // sortToKilas carries a field sort and refuses a JavaScript comparator.
 //
-// n8n's third mode is a JS comparator, which this product has no runtime for.
-// Approximating it would sort by something the author did not write, so it is
-// named instead — through unsupportedScript, which is the one refusal every
-// JavaScript escape hatch in this importer produces.
+// n8n's third mode is a JS comparator. JavaScript runs in the Code node, not
+// inside this one, and approximating the comparator would sort by something
+// the author did not write, so it is named instead — through
+// unsupportedScript, which is the one refusal every JavaScript escape hatch in
+// this importer produces.
 func sortToKilas(node Node) (map[string]any, []Unsupported) {
 	issues := make([]Unsupported, 0)
 	mode := defaultString(stringParameter(node.Parameters, "type"), "simple")
 	if mode == "code" {
-		return map[string]any{"type": "simple"}, append(issues, unsupportedScript("type", "JavaScript",
-			"Set the fields to sort by on this node before running the workflow."))
+		return map[string]any{"type": "simple"}, append(issues, unsupportedScript("type", "is a JavaScript sort comparator",
+			"Set the fields to sort by on this node, or sort in a Code (JavaScript) node before it."))
 	}
 
 	converted := map[string]any{"type": mode}

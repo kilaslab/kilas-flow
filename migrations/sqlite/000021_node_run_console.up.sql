@@ -1,0 +1,21 @@
+-- What a Code node's code printed, kept with its own run.
+--
+-- A Code node's console.log, console.warn and the rest are published as a live
+-- `code.console` event while the node runs. That event reaches only the
+-- subscribers of the process that ran the node: the cross-process event relay
+-- carries identifiers alone, and an execution opened after it finished never
+-- saw the event at all. So the output is captured by the runner and written
+-- with the node's own trace row, the same way a Respond to Webhook node's
+-- answer is (000013).
+--
+-- The value is the console detail whole — its lines, each with a level, text
+-- and time, and whether output past the node's console limit was dropped. It
+-- is written once by the row write that persists the node's input and output
+-- and read back whole by the execution detail page, never queried into.
+--
+-- Nullable, and that is the point: nearly every node run prints nothing, and
+-- an empty value would claim the node printed an empty console. Additive and
+-- unindexed — it is read by the node runs of one execution, which the existing
+-- (tenant, execution) index already covers, and never searched.
+
+ALTER TABLE `execution_node_runs` ADD COLUMN `console` blob;

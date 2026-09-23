@@ -19,8 +19,10 @@ export function chatTriggerIn<T extends { type: string }>(nodes: T[] | undefined
 
 export type ChatReply =
 	| { kind: 'reply'; text: string }
-	| { kind: 'error'; text: string }
+	| { kind: 'error'; text: string; node?: string; detail?: string }
 	| { kind: 'missing'; nodeId: string };
+
+type NamedNode = { id?: string | null; name?: string | null };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
 	if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -72,17 +74,81 @@ function errorMessage(error: unknown): string | null {
 }
 
 /**
+ * A failed run, worded for the person chatting.
+ *
+ * The engine's message is built for logs: `execute node "agent": node "AI
+ * Agent": model turn 1: … 404: {"error":{"message":"model 'x' not found"}}`.
+ * The panel names the node once, puts the provider's own sentence first, and
+ * keeps the step that failed as a quieter detail line.
+ */
+function chatFailure(execution: ExecutionResource, nodes: NamedNode[]): ChatReply {
+	const failedRun = [...(execution.nodeRuns ?? [])]
+		.sort((a, b) => (b.sequence ?? 0) - (a.sequence ?? 0))
+		.find((run) => run.status === 'failed');
+	const raw = errorMessage(execution.error) ?? errorMessage(failedRun?.error) ?? `The run ${execution.status}.`;
+
+	let message = raw.replace(/^execute node "[^"]*":\s*/, '');
+	let node: string | undefined;
+	const named = /^node "([^"]+)":\s*/.exec(message);
+	if (named) {
+		node = named[1];
+		message = message.slice(named[0].length);
+	}
+	if (!node && failedRun) {
+		node = nodes.find((candidate) => candidate.id === failedRun.nodeId)?.name ?? undefined;
+	}
+
+	const reply: ChatReply = { kind: 'error', text: message };
+	const embedded = /^(.*?):\s*(\{[\s\S]*\})\s*$/.exec(message);
+	if (embedded) {
+		const provider = providerMessage(embedded[2]);
+		if (provider) {
+			reply.text = provider;
+			reply.detail = embedded[1];
+		}
+	}
+	if (node) reply.node = node;
+	return reply;
+}
+
+/** The human sentence inside a provider's JSON error body, if there is one. */
+function providerMessage(body: string): string | null {
+	try {
+		const parsed = JSON.parse(body) as unknown;
+		const record = asRecord(parsed);
+		const nested = asRecord(record?.error);
+		return errorMessage(nested) ?? errorMessage(record) ?? (typeof record?.error === 'string' ? record.error : null);
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Whether the conversation is remembered at all: a memory sub-node wired into
+ * the graph. Without one every message starts fresh, and saying otherwise —
+ * or warning about an in-process memory that isn't there — misleads.
+ */
+export function chatHasMemory(
+	nodes: { id?: string | null; type: string }[] | null | undefined,
+	connections: { kind: string; source: { nodeId: string } }[] | null | undefined
+): boolean {
+	const memoryIDs = new Set((nodes ?? []).filter((node) => node.type === 'kilasflow.memoryBuffer' && node.id).map((node) => node.id));
+	return (connections ?? []).some((connection) => connection.kind === 'ai_memory' && memoryIDs.has(connection.source.nodeId));
+}
+
+/**
  * The chat widget's reply: walk back succeeded node runs, skip the trigger and
  * skipped nodes, then read `output` and `text` from the item JSON. n8n's own
  * last-node rule fails when the chain ends on Set/HTTP/datastore; walking
  * back is what still finds the Agent or Chain that actually answered.
  */
-export function chatReplyFromExecution(execution: ExecutionResource, chatTriggerNodeId: string): ChatReply {
+export function chatReplyFromExecution(
+	execution: ExecutionResource,
+	chatTriggerNodeId: string,
+	nodes: NamedNode[] = []
+): ChatReply {
 	if (execution.status === 'failed' || execution.status === 'cancelled') {
-		return {
-			kind: 'error',
-			text: errorMessage(execution.error) ?? `The run ${execution.status}.`
-		};
+		return chatFailure(execution, nodes);
 	}
 
 	const runs = [...(execution.nodeRuns ?? [])].sort((a, b) => (b.sequence ?? 0) - (a.sequence ?? 0));

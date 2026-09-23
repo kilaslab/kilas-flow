@@ -1019,6 +1019,15 @@ func nodeRunModel(tenant TenantScope, nodeRun execution.NodeRun) (executionNodeR
 			return executionNodeRunModel{}, fmt.Errorf("node run response: %w", err)
 		}
 	}
+	// Console output is stored the same way: NULL for a node that printed
+	// nothing, never an empty console it did not print.
+	var console []byte
+	if len(nodeRun.Console) > 0 {
+		console, err = payload(nodeRun.Console)
+		if err != nil {
+			return executionNodeRunModel{}, fmt.Errorf("node run console: %w", err)
+		}
+	}
 	return executionNodeRunModel{
 		ID:          nodeRun.ID,
 		TenantID:    tenant.ID,
@@ -1032,6 +1041,7 @@ func nodeRunModel(tenant TenantScope, nodeRun execution.NodeRun) (executionNodeR
 		Output:      output,
 		Error:       errorPayload,
 		Response:    response,
+		Console:     console,
 		StartedAt:   nodeRun.StartedAt,
 		FinishedAt:  nodeRun.FinishedAt,
 	}, nil
@@ -1266,6 +1276,7 @@ func nodeRunFromModel(model executionNodeRunModel) execution.NodeRun {
 		Output:      append(json.RawMessage(nil), model.Output...),
 		Error:       append(json.RawMessage(nil), model.Error...),
 		Response:    append(json.RawMessage(nil), model.Response...),
+		Console:     append(json.RawMessage(nil), model.Console...),
 		StartedAt:   model.StartedAt,
 		FinishedAt:  model.FinishedAt,
 	}

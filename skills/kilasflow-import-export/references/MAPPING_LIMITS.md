@@ -20,7 +20,7 @@ lists are the same vocabulary in opposite directions: `ImportIssue` and
 
 | Severity | Means | What to do |
 | --- | --- | --- |
-| `blocking` | the workflow cannot run as imported | fix it: the node is a placeholder or a foreign Code node |
+| `blocking` | the workflow cannot run as imported | fix it: the node is a placeholder, a Python Code node, or JavaScript the runtime refuses |
 | `lossy` | the element was carried, but differently | read it and decide; the workflow still activates |
 | `dropped` | the element was not carried at all | decide whether you needed it — nothing about it survived |
 
@@ -49,19 +49,44 @@ nodes/unsupported.go):
 The honest answer for most of these is an HTTP Request node against the same
 API, since that is what the missing node was doing.
 
-## What has no equivalent: the Code node
+## The Code node: JavaScript runs, Python does not
 
-An n8n Code node is JavaScript or Python, neither of which runs here, and it is
-not translated — a one-line `items.map(…)` translates cleanly and the next body
-translates into something that compiles and computes something else. It becomes
-`kilasflow.foreignCode`, a distinct type from the generic placeholder: it keeps
-your source verbatim in `jsCode` or `pythonCode`, refuses to compile, and names
-a likely replacement based on what the body does — a `.reduce(` points at
-Aggregate or Summarize, a `.sort(` at Sort, a `fetch(` at HTTP Request. Your two
-ways forward are the native nodes (Filter, Switch, Set, Sort, Aggregate, Split
-Out, Summarize, Remove Duplicates) or rewriting the body in `kilasflow.code`,
-the Go Code node that compiles to WebAssembly and runs under a time and memory
-limit (nodes/jscode.go, docs/src/content/docs/guides/n8n-migration.md).
+The n8n Code node maps by its `language` parameter (`codeKilasType` in
+internal/interop/n8n/parameters.go). Neither language is translated — a one-line
+`items.map(…)` translates cleanly and the next body translates into something
+that compiles and computes something else.
+
+**JavaScript** — `language: "javaScript"`, or no `language`, which is what the
+first Code node version wrote — imports as `kilasflow.jsCode`, Code
+(JavaScript), and runs as written on an engine linked into the binary, in worker
+processes apart from the server; no Node.js is involved. `mode` and `jsCode` are
+copied as the raw string, byte for byte, never read as an expression, and export
+back unchanged. It is blocking only when the body uses something the runtime
+cannot run faithfully, named with its line in one sentence — "this node's code
+uses an async generator (line 12), which this server does not run. Rewrite that
+part of the code, or do the same work with native nodes." The refused
+constructs: async generators, `for await`, `import`/`export`, the regex flags
+`v` and `d`, `\p{…}` property escapes under `u`, `this.helpers` and
+`this.getCredentials`, `$getWorkflowStaticData`, and `require()` of a module
+outside lodash, luxon, crypto, util, buffer and url; `$jmespath`, `$prevNode`,
+`$secrets` and `$evaluateExpression` fail by name when reached
+(internal/jsrun/analyze.go, internal/jsrun/js/runtime.js). Binary crosses as
+metadata only, and the time limit counts the code's own running time
+(docs/src/content/docs/guides/n8n-migration.md).
+
+**Python** becomes `kilasflow.foreignCode`, a distinct type from the generic
+placeholder: it keeps your source verbatim in `pythonCode`, refuses to compile —
+"this node's code is written in Python, which this server does not run." — and
+names a likely replacement based on what the body does: a `.reduce(` points at
+Aggregate or Summarize, a `.sort(` at Sort, a `fetch(` at HTTP Request. Your ways
+forward are the native nodes (Filter, Switch, Set, Sort, Aggregate, Split Out,
+Summarize, Remove Duplicates), the body rewritten in `kilasflow.jsCode`, or in
+`kilasflow.code`, the Go Code node that compiles to WebAssembly and runs under a
+time and memory limit (nodes/jscode.go).
+
+A workflow imported before JavaScript ran kept its JavaScript Code nodes as
+`kilasflow.foreignCode`; those run now as `kilasflow.jsCode` does, without
+importing again.
 
 ## Document-level elements
 
@@ -125,13 +150,15 @@ the same, so `{{ $json.email.trim() }}` and `$node["Fetch user"].json.name`
 survive (internal/expression/expression.go). Two differences decide what
 imports: an n8n expression that assigns, declares a variable or spans several
 statements does not parse here — a parameter is an expression, not a program —
-so it must become a node or a Go Code node, and `$('Name').item` fails loudly
+so it must become a node or a Code node, and `$('Name').item` fails loudly
 rather than guessing when the paired-item lineage cannot be established
 (docs/src/content/docs/guides/n8n-migration.md).
 
 ## Limits worth planning around
 
-- **The Code node does not run**, in either language.
+- **A Python Code node does not run**, and a JavaScript one runs on an
+  interpreter rather than V8: tight loops are slower, dates format in English,
+  and binary is metadata only.
 - **Anything outside the mapping list imports as a placeholder** that blocks
   activation. Import and read your diagnostics rather than guessing from a
   table: the subset is a measured claim, and `supportedMappings[]` on an export

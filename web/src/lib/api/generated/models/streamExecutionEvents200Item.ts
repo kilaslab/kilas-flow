@@ -5,6 +5,15 @@
  * Embeddable workflow automation engine. Every operation available in the editor is available here: the canvas is a client of this API, not the owner of workflow state.
  * OpenAPI spec version: 0.1.0-dev
  */
+import type { AIAgentCompletedEvent } from './aIAgentCompletedEvent';
+import type { AIAgentFailedEvent } from './aIAgentFailedEvent';
+import type { AIModelCompletedEvent } from './aIModelCompletedEvent';
+import type { AIModelDeltaEvent } from './aIModelDeltaEvent';
+import type { AIModelStartedEvent } from './aIModelStartedEvent';
+import type { AIToolCompletedEvent } from './aIToolCompletedEvent';
+import type { AIToolFailedEvent } from './aIToolFailedEvent';
+import type { AIToolStartedEvent } from './aIToolStartedEvent';
+import type { CodeConsoleEvent } from './codeConsoleEvent';
 import type { ExecutionCancelledEvent } from './executionCancelledEvent';
 import type { ExecutionCompletedEvent } from './executionCompletedEvent';
 import type { ExecutionFailedEvent } from './executionFailedEvent';
@@ -14,9 +23,83 @@ import type { NodeCompletedEvent } from './nodeCompletedEvent';
 import type { NodeFailedEvent } from './nodeFailedEvent';
 import type { NodeOutputEvent } from './nodeOutputEvent';
 import type { NodeStartedEvent } from './nodeStartedEvent';
+import type { OtherEvent } from './otherEvent';
+import type { WebhookResponseEvent } from './webhookResponseEvent';
 import type { WorkflowSavedEvent } from './workflowSavedEvent';
 
 export type StreamExecutionEvents200Item = {
+  data: AIAgentCompletedEvent;
+  /** The event name. */
+  event: 'ai.agent.completed';
+  /** The event ID. */
+  id?: number;
+  /** The retry time in milliseconds. */
+  retry?: number;
+} | {
+  data: AIAgentFailedEvent;
+  /** The event name. */
+  event: 'ai.agent.failed';
+  /** The event ID. */
+  id?: number;
+  /** The retry time in milliseconds. */
+  retry?: number;
+} | {
+  data: AIModelCompletedEvent;
+  /** The event name. */
+  event: 'ai.model.completed';
+  /** The event ID. */
+  id?: number;
+  /** The retry time in milliseconds. */
+  retry?: number;
+} | {
+  data: AIModelDeltaEvent;
+  /** The event name. */
+  event: 'ai.model.delta';
+  /** The event ID. */
+  id?: number;
+  /** The retry time in milliseconds. */
+  retry?: number;
+} | {
+  data: AIModelStartedEvent;
+  /** The event name. */
+  event: 'ai.model.started';
+  /** The event ID. */
+  id?: number;
+  /** The retry time in milliseconds. */
+  retry?: number;
+} | {
+  data: AIToolCompletedEvent;
+  /** The event name. */
+  event: 'ai.tool.completed';
+  /** The event ID. */
+  id?: number;
+  /** The retry time in milliseconds. */
+  retry?: number;
+} | {
+  data: AIToolFailedEvent;
+  /** The event name. */
+  event: 'ai.tool.failed';
+  /** The event ID. */
+  id?: number;
+  /** The retry time in milliseconds. */
+  retry?: number;
+} | {
+  data: AIToolStartedEvent;
+  /** The event name. */
+  event: 'ai.tool.started';
+  /** The event ID. */
+  id?: number;
+  /** The retry time in milliseconds. */
+  retry?: number;
+} | {
+  data: CodeConsoleEvent;
+  /** The event name. */
+  event: 'code.console';
+  /** The event ID. */
+  id?: number;
+  /** The retry time in milliseconds. */
+  retry?: number;
+} | {
   data: ExecutionCancelledEvent;
   /** The event name. */
   event: 'execution.cancelled';
@@ -28,6 +111,14 @@ export type StreamExecutionEvents200Item = {
   data: ExecutionCompletedEvent;
   /** The event name. */
   event: 'execution.completed';
+  /** The event ID. */
+  id?: number;
+  /** The retry time in milliseconds. */
+  retry?: number;
+} | {
+  data: OtherEvent;
+  /** The event name. */
+  event: 'execution.event';
   /** The event ID. */
   id?: number;
   /** The retry time in milliseconds. */
@@ -84,6 +175,14 @@ export type StreamExecutionEvents200Item = {
   data: NodeStartedEvent;
   /** The event name. */
   event: 'node.started';
+  /** The event ID. */
+  id?: number;
+  /** The retry time in milliseconds. */
+  retry?: number;
+} | {
+  data: WebhookResponseEvent;
+  /** The event name. */
+  event: 'webhook.response';
   /** The event ID. */
   id?: number;
   /** The retry time in milliseconds. */

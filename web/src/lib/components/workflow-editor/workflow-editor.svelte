@@ -1,5 +1,6 @@
 <script lang="ts" module>
 	import type { WorkflowResource, WorkflowVersionSummaryResource } from '$lib/api/generated/models';
+	import type { ExecutionEvent } from '$lib/workflow-editor/event-stream.svelte';
 
 	/**
 	 * Everything the version panel needs, as one prop.
@@ -19,6 +20,12 @@
 		triggerNodeId?: string;
 		/** Item the named trigger emits. The Chat panel sends `{action, sessionId, chatInput}`. */
 		input?: unknown;
+		/**
+		 * Live events of the queued run, for a host that can stream them. The
+		 * Chat panel uses them to show the reply being written and the tools
+		 * being called; a host that cannot stream simply never calls it.
+		 */
+		onEvent?: (event: ExecutionEvent) => void;
 	};
 
 	export type WorkflowHistoryHost = {
@@ -83,7 +90,7 @@
 	import { tidyDocument } from '$lib/workflow-editor/layout';
 	import { mediaQuery } from '$lib/workflow-editor/media.svelte';
 	import { isAnnotation } from '$lib/workflow-editor/node-visual';
-	import { chatTriggerIn, type ChatSendPayload } from '$lib/workflow-editor/chat';
+	import { chatHasMemory, chatTriggerIn, type ChatSendPayload } from '$lib/workflow-editor/chat';
 	import { executeIntent } from '$lib/workflow-editor/run-trigger';
 	import { canConnect, connectionFromCanvas, resolvedPorts } from '$lib/workflow-editor/ports';
 	import type { CanvasShortcut } from '$lib/workflow-editor/shortcuts';
@@ -590,6 +597,14 @@
 		// Every selected node is kept, not just the first: collapsing a group
 		// drag to one node made a following Delete remove only that one.
 		const ids = selectedNodes.map((node) => node.id);
+		// A selection this editor set itself reaches the canvas one projection
+		// later, and Svelte Flow may report the array from before it in between.
+		// Adopting that stale report is what made clicking an issue select its
+		// node and immediately deselect it again.
+		if (pendingSelection) {
+			if (!sameSelection(ids, pendingSelection)) return;
+			pendingSelection = null;
+		}
 		if (!sameSelection(ids, selectedNodeIDs)) selectedNodeIDs = ids;
 		// The primary selection is the held array's first, not the reported
 		// one's: while the set is unchanged, the held order is what the state
@@ -669,7 +684,23 @@
 		replaceDraft(updateNodeCredential(draft, selectedNode.id, typeID, credentialID));
 	}
 
+	/**
+	 * The selection the editor asked for and the canvas has not confirmed yet.
+	 * Plain, not $state: it guards a callback and must not become a dependency.
+	 * It lapses on its own after a moment so a canvas that never re-reports can
+	 * never swallow the user's next click.
+	 */
+	let pendingSelection: string[] | null = null;
+
+	function selectFromEditor(ids: string[]) {
+		pendingSelection = ids;
+		setTimeout(() => {
+			if (pendingSelection === ids) pendingSelection = null;
+		}, 250);
+	}
+
 	function focusValidationIssue(issue: CanvasValidationIssue) {
+		selectFromEditor(issue.nodeID ? [issue.nodeID] : []);
 		selectedNodeIDs = issue.nodeID ? [issue.nodeID] : [];
 		selectedNodeID = issue.nodeID ?? null;
 		selectedEdgeID = issue.connectionID ?? null;
@@ -972,12 +1003,22 @@
 		}
 	}
 
-	async function sendChat(payload: ChatSendPayload): Promise<ExecutionResource> {
+	const chatNodes = $derived((displayed.nodes ?? []).map((node) => ({ id: node.id, name: node.name })));
+	const chatMemory = $derived(chatHasMemory(displayed.nodes, displayed.connections));
+
+	async function sendChat(payload: ChatSendPayload, onEvent: (event: ExecutionEvent) => void): Promise<ExecutionResource> {
 		const trigger = chatTrigger;
 		if (!trigger) {
 			throw new Error(m.editor_chat_send_failed({ error: m.editor_chat_last_node() }));
 		}
-		const execution = await onRun({ triggerNodeId: trigger.id, input: payload });
+		// The chat tests what is on the canvas, as n8n's does: unsaved edits are
+		// saved first rather than silently chatting with the previous revision.
+		if (dirty) {
+			await save();
+			await tick();
+			if (dirty) throw new Error(m.editor_chat_save_failed());
+		}
+		const execution = await onRun({ triggerNodeId: trigger.id, input: payload, onEvent });
 		if (!execution) {
 			throw new Error(m.editor_chat_send_failed({ error: m.workflows_run_watch_stopped() }));
 		}
@@ -1231,9 +1272,14 @@
 					<div class="pointer-events-auto {chatOpen ? '' : 'hidden'}">
 						<CanvasChatPanel
 							triggerNodeId={chatTrigger.id}
-							disabled={dirty || running}
+							open={chatOpen}
+							nodes={chatNodes}
+							hasMemory={chatMemory}
+							{dirty}
+							busy={running}
 							onClose={() => (chatOpen = false)}
 							onSend={sendChat}
+							onFocusIssue={focusValidationIssue}
 						/>
 					</div>
 					{#if !chatOpen}

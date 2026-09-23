@@ -2537,3 +2537,62 @@ func parserDescriptor(t *testing.T, schema string) workflow.Item {
 	}
 	return output[0][0]
 }
+
+// TestARunEndedByTheExecutionTimeoutDoesNotBlameTheModelCeiling: the run's
+// own context carries the execution's deadline — two minutes by default, far
+// under the ten-minute model ceiling. When that deadline is what ended the
+// agent, naming the ceiling sent the user to a bound nothing had reached.
+func TestARunEndedByTheExecutionTimeoutDoesNotBlameTheModelCeiling(t *testing.T) {
+	t.Parallel()
+
+	release := make(chan struct{})
+	provider := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		<-release
+	}))
+	defer provider.Close()
+	defer close(release)
+
+	executor := nodes.NewAgentExecutor(ai.NewLoopRuntime(), localPolicy(), nil)
+	definition, _ := aiRegistry(t).Lookup(nodes.AgentNodeType, workflow.V(1))
+	ir := workflow.IRNode{
+		ID: "agent", Name: "AI Agent", Type: nodes.AgentNodeType, TypeVersion: workflow.V(1),
+		Parameters: map[string]any{"prompt": "Extract the total."}, Definition: definition,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	_, err := executor.Execute(ctx, ir, workflow.NodeInput{
+		"main":  {{JSON: map[string]any{}}},
+		"model": {agentModelInput(provider.URL)["model"][0]},
+	}, engine.Request{Credentials: bearerResolver()})
+	if err == nil {
+		t.Fatal("Execute() succeeded against a provider that never answers")
+	}
+	if strings.Contains(err.Error(), "model timeout ceiling") {
+		t.Errorf("error = %v, want no mention of the model ceiling: the execution's own deadline ended the run", err)
+	}
+	if !strings.Contains(err.Error(), "executionTimeout") {
+		t.Errorf("error = %v, want it to name the workflow setting that raises the execution's time limit", err)
+	}
+}
+
+// TestAChatModelStreamsByDefaultAsItsDefinitionSays: the node declares "Stream
+// output" on by default, and the editor shows it on, but an imported or
+// untouched node carries no `stream` key at all — and reading that as false
+// made every such node non-streaming. The run must follow the definition.
+func TestAChatModelStreamsByDefaultAsItsDefinitionSays(t *testing.T) {
+	t.Parallel()
+
+	item := runProviderModel(t, nodes.ChatModelNodeType, nodes.ChatModelExecutorID, nodes.BearerCredentialType,
+		map[string]any{"model": "m", "baseUrl": "http://127.0.0.1:1/v1"}, bearerResolver())
+	descriptor, _ := item.JSON["$ai"].(map[string]any)
+	if descriptor["stream"] != true {
+		t.Fatalf("descriptor stream = %#v, want true when the node never set it", descriptor["stream"])
+	}
+
+	item = runProviderModel(t, nodes.ChatModelNodeType, nodes.ChatModelExecutorID, nodes.BearerCredentialType,
+		map[string]any{"model": "m", "baseUrl": "http://127.0.0.1:1/v1", "stream": false}, bearerResolver())
+	descriptor, _ = item.JSON["$ai"].(map[string]any)
+	if descriptor["stream"] != false {
+		t.Fatalf("descriptor stream = %#v, want false when the node turned it off", descriptor["stream"])
+	}
+}

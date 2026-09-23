@@ -21,9 +21,10 @@ fix, and reading that list is the actual work of migrating.
 
 The advertised subset is a hand-written list rather than a pattern match,
 because an interoperability claim is only meaningful if the exact set is
-written down and testable. Thirty-seven pairs are advertised today, covering
-thirty-five distinct KilasFlow node types — two n8n type strings map onto each
-WAHA node, for reasons given below.
+written down and testable. Sixty-eight pairs are advertised today, from
+sixty-seven n8n node types onto fifty-seven KilasFlow node types — two n8n type
+strings map onto each WAHA node, for reasons given below, and the n8n Code node
+maps onto one of two KilasFlow nodes depending on its language.
 
 :::note[Get the list from your own instance rather than from this page]
 Every export response carries the live list in its `supportedMappings` field,
@@ -138,10 +139,14 @@ which is the direction KilasFlow already uses.
 
 | n8n node type | KilasFlow node type |
 | --- | --- |
-| `n8n-nodes-base.code` | `kilasflow.foreignCode` |
+| `n8n-nodes-base.code` (JavaScript) | `kilasflow.jsCode` |
+| `n8n-nodes-base.code` (Python) | `kilasflow.foreignCode` |
 
-This one is in the table and still does not run, which is why it has its own
-section: see [The Code node](#the-code-node) below.
+The language decides. A JavaScript Code node — `language: "javaScript"`, or no
+`language` at all, which is what n8n's first Code node version wrote — imports
+as Code (JavaScript) and runs. A Python one imports as the Code placeholder and
+does not. Both export back as n8n's Code node. This node has its own section:
+see [The Code node](#the-code-node) below.
 
 ### Two things about this table worth knowing
 
@@ -187,28 +192,36 @@ cannot have a variable port count, and a node's real arity is only knowable from
 the connections around it. A placeholder standing in for a five-output Switch
 gets the eight-port member, and all five branches survive.
 
-### The Code node
+### Python Code nodes
 
-An n8n Code node is JavaScript or Python. KilasFlow does not run either, and it
-does not translate them: translating JavaScript to Go is a compiler project with
-no correct stopping point, where a one-line `items.map(…)` translates cleanly
-and the next body translates into Go that compiles and computes something else.
-Silently different is the outcome this codebase refuses everywhere.
+KilasFlow runs no Python, and it does not translate it: translating one language
+into another is a compiler project with no correct stopping point, where a
+one-line comprehension translates cleanly and the next body translates into code
+that runs and computes something else. Silently different is the outcome this
+codebase refuses everywhere.
 
-So an imported Code node becomes `kilasflow.foreignCode` — a distinct type
-rather than the generic placeholder, because the two are different problems.
-An unsupported node type is something the product has not built; a Code node is
-something it has deliberately not built, the source is right there, and what you
-need is to be told which native node now does the same job. The node keeps your
-source verbatim in `jsCode` or `pythonCode`, refuses to compile, and the
-diagnostic names a likely replacement based on what the body does — a
-`.reduce(` gets pointed at Aggregate or Summarize, a `.sort(` at Sort, a
+So a Python Code node becomes `kilasflow.foreignCode` — a distinct type rather
+than the generic placeholder, because the two are different problems. An
+unsupported node type is something the product has not built; a Python Code node
+is something it deliberately does not run, the source is right there, and what
+you need is to be told which node now does the same job. The node keeps your
+source verbatim in `pythonCode`, refuses to compile, and the blocking diagnostic
+says so in one sentence — *this node's code is written in Python, which this
+server does not run* — followed by a likely replacement based on what the body
+does: a `.reduce(` gets pointed at Aggregate or Summarize, a `.sort(` at Sort, a
 `fetch(` at HTTP Request, and anything unrecognised gets the general list.
 
-Your two ways forward are the native nodes — Filter, Switch, Set, Sort,
-Aggregate, Split Out, Summarize, Remove Duplicates — or rewriting the body in
-KilasFlow's own Go Code node (`kilasflow.code`), which compiles Go to WebAssembly
+Your ways forward are the native nodes — Filter, Switch, Set, Sort, Aggregate,
+Split Out, Summarize, Remove Duplicates — or the body rewritten for one of the
+Code nodes that run: Code (JavaScript), described [below](#the-code-node), or
+KilasFlow's Go Code node (`kilasflow.code`), which compiles Go to WebAssembly
 and runs it under a time and memory limit.
+
+A JavaScript Code node can block an import too, when its body uses something
+the JavaScript runtime cannot run faithfully. That is the same sentence with a
+different subject — *this node's code uses an async generator (line 12), which
+this server does not run* — and [the Code node](#the-code-node) section lists
+every such construct.
 
 ### Document-level elements
 
@@ -251,7 +264,7 @@ and moved on".
 
 | Severity | Meaning | What to do |
 | --- | --- | --- |
-| `blocking` | The workflow cannot run as imported. | Fix it. The workflow will not activate until you do. This is an unsupported node type, a Code node, a credential that must be re-bound, an unavailable `typeVersion`, or a parameter the mapped node genuinely cannot express. |
+| `blocking` | The workflow cannot run as imported. | Fix it. The workflow will not activate until you do. This is an unsupported node type, a Python Code node or JavaScript that uses something the runtime refuses, a credential that must be re-bound, an unavailable `typeVersion`, or a parameter the mapped node genuinely cannot express. |
 | `lossy` | The element was carried, but differently. | Read it and decide. The workflow will activate. Whether the difference matters is a judgement only you can make — a query replacement split into three bound values is fine if the values had no commas in them and wrong if they did. |
 | `dropped` | The element was not carried at all. | Decide whether you need it. Nothing about it survived, and calling it lossy would imply a setting was applied in some reduced form when it was ignored entirely. A dropped `webhookId` means this installation minted its own binding for the node. |
 
@@ -480,12 +493,149 @@ it:
 
 Two differences to look for in your own workflows. **A statement will not
 parse**: an n8n expression that assigns, declares a variable or spans several
-statements has to become a node or a Go Code node, even though its operators and
+statements has to become a node or a Code node, even though its operators and
 arrow functions would have parsed. And **`$('Name').item` fails
 loudly rather than guessing**: when the paired-item lineage genuinely cannot be
 established, after a node that changed the item count or merged unrelated
 streams, it reports the reason instead of falling back to the first item, which
 is an answer that is correct only when every node processed exactly one item.
+
+## The Code node
+
+An n8n Code node written in JavaScript imports as **Code (JavaScript)**
+(`kilasflow.jsCode`) and runs. It is not translated and no Node.js is involved:
+the body runs as written on [goja](https://github.com/dop251/goja), an
+ECMAScript engine written in Go and linked into the KilasFlow binary, in a
+worker process the server starts from its own executable. The node can also be
+added from the palette, so new JavaScript is written the same way.
+
+**The source crosses byte for byte.** `mode` and `jsCode` are copied as n8n
+wrote them — line endings, tabs, trailing spaces and non-ASCII included — and a
+`{{ }}` inside the code is code, never an expression. Exporting the node gives
+the same source back. Workflows imported before JavaScript ran kept their Code
+nodes as the `kilasflow.foreignCode` placeholder; a JavaScript body there now
+runs exactly as a Code (JavaScript) node does, without importing again.
+
+### What the code sees
+
+The node keeps n8n's two modes and n8n's names for them. The body is the body
+of an async function, so `await` works, and what it returns becomes the node's
+items.
+
+| Mode | The code gets | It returns |
+| --- | --- | --- |
+| Run once for all items (`runOnceForAllItems`, the default) | `items`, `$input.all()`, `$input.first()`, `$input.last()` | a list of items; a single object is taken as one item |
+| Run once for each item (`runOnceForEachItem`) | `$json`, `$itemIndex`, `$input.item`, called once per item | one item, or `null` to drop it; a list is refused |
+
+An item is `{ json: { … } }`, and a plain object returned where an item belongs
+becomes that item's `json`. A root the mode does not have — `$json` in the
+all-items mode, `items` in the per-item one — is undefined, as in n8n, so
+`typeof items` is safe; using one anyway fails with a message saying what to
+use instead.
+
+The rest of n8n's Code-node globals are there, reading the same data an
+[expression](#expressions) reads:
+
+- `$('Name')` and `$node['Name']` read a node that ran earlier: `.first()`,
+  `.last()`, `.all()`, `.item`, `.itemMatching(index)` and `.params`. `.item`
+  follows the paired-item lineage and fails with the reason when it cannot be
+  established, as it does in an expression.
+- `$workflow`, `$execution` (`id`, `mode`, `resumeUrl`), `$runIndex`,
+  `$nodeVersion`, and `$env`, which holds only the variables an expression's
+  `$env` holds. `$vars` is an empty object: KilasFlow has no variables for it
+  to read.
+- `$now` and `$today`, and Luxon's `DateTime`, `Duration` and `Interval`,
+  default to the workflow's time zone.
+- `console.log`, `info`, `warn`, `error` and `debug`. What the code prints is
+  kept with the node's run — shown under **Console** on the execution page, and
+  streamed live as the `code.console` event — including when the code then
+  fails, which is usually when you need it.
+- `Buffer`, `URL`, `URLSearchParams`, `TextEncoder`, `TextDecoder`, `atob`,
+  `btoa`, `structuredClone`, `queueMicrotask`, and timers that end with the run.
+- `require()` returns the modules the runtime ships: `lodash`, `luxon`,
+  `crypto`, `util`, `buffer` and `url`. There is no npm and no way to add a
+  package, and no module reaches a file, the network or a process.
+
+A returned item keeps its lineage the way n8n decides it: an explicit
+`pairedItem` wins; an item the code was given and returned, in whatever order,
+keeps its own; anything else is paired by position.
+
+### What is refused, and when
+
+Some JavaScript the engine would run differently from V8 — or not at all — and
+running it anyway would mean a workflow that succeeds with the wrong answer. So
+each such construct is refused by name, in the same sentence a Python node
+gets:
+
+> this node's code uses the regular-expression flag "v" (line 3), which this
+> server does not run. Rewrite that part of the code, or do the same work with
+> native nodes.
+
+Most are found by reading the code — at import, as a blocking diagnostic, and
+again when the workflow is saved — so a workflow that uses one never activates:
+
+- an async generator, `for await`, and `import` or `export` (use `require()`);
+- the regular-expression flags `v` and `d`, and `\p{…}` property escapes under
+  the `u` flag, which the engine accepts and then matches nothing with — a
+  pattern built at run time is checked when it is built;
+- `this.helpers` (`httpRequest` and the binary helpers) and
+  `this.getCredentials`: use an HTTP Request node before or after the Code node;
+- `$getWorkflowStaticData`;
+- `require()` of any module not in the list above.
+
+The rest fail by name the moment the code reaches them: `$jmespath`,
+`$evaluateExpression`, `$prevNode`, `$input.params`, `$input.context`,
+`$secrets`, `$execution.customData`, and `$('Name').all()` for a branch or a
+run other than the first.
+
+A body longer than 128 KiB, nested more than a thousand levels deep, or holding
+a constant expression that would take the engine seconds to fold, or a BigInt
+constant of more than a million bits, is refused the same way, because reading
+it safely matters more than running it.
+
+Reading the code is not compiling it, so the few mistakes only a compiler sees
+— a `let` declared twice in one scope, a `break` outside a loop — are reported
+when the node runs, as a `SyntaxError` with its line, not when it is saved.
+
+### Differences from n8n worth knowing
+
+- **It is an interpreter.** goja has no JIT, so a tight loop over many items
+  runs many times slower than on V8. Workflows that shape data run at ordinary
+  speed; a body that is mostly arithmetic in a loop is better done by native
+  nodes or the Go Code node.
+- **Dates format in English.** Luxon and `Intl` format dates with English
+  names only, and asking for another locale's date format is a named error
+  rather than English passed off as that locale. Numbers format in the locale
+  you ask for.
+- **Binary data is metadata.** An item's `binary` entries carry `id`,
+  `fileName`, `mimeType`, `fileExtension` and `fileSize`, never the bytes, so
+  code that reads `binary.data.data` fails instead of reading nothing. An item
+  keeps a file only when the code returns it, as in n8n, and the code can pass
+  on or rename a file it was given but not name one it was not.
+- **The time limit counts the code's own running time.** Starting the engine,
+  loading a library and handling the input and output are not counted. The
+  deployment sets the ceiling (`code.javascript_timeout`, 10 seconds by
+  default), and the node's **Time limit** can lower it, never raise it.
+- **Memory is bounded per worker.** A script whose heap passes the worker's
+  ceiling (`code.javascript_heap_ceiling_mb`, 1 GiB by default) is stopped with
+  a memory-limit error. The input, the returned items and the console output
+  have their own caps, and each is a named error rather than a truncation.
+- **Runaway recursion cannot be caught.** V8 throws a `RangeError` the code can
+  catch; here, calling deeper than the limit ends the run with a named error.
+- **Continuing on failure works as n8n's does, without splitting the
+  batch.** Other nodes that continue on failure are run once per item so one
+  bad item fails alone. The Code node always sees its whole batch, so an
+  all-items body that sums its items sums all of them, and a throw there fails
+  the batch, as in n8n. In **Run Once for Each Item** mode the node goes on
+  past an item whose code threw or returned something that is not an item:
+  that item goes to the error output (or on as an error item in its place,
+  under *Continue*), and the other items pass through.
+- **A promise that can never settle is an error, not a hang.** Code that
+  awaits something nothing will ever resolve fails at once with a message
+  saying so, rather than waiting out the time limit.
+
+Python is the one Code-node language that does not run; see
+[Python Code nodes](#python-code-nodes).
 
 ## The database nodes
 
@@ -667,7 +817,7 @@ workflows will fail. Twenty-four of the 26 failures are a credential nobody
 created or n8n's own test scaffolding. What the number is good for is the thing
 a number is normally bad for: it is a measurement this project publishes about
 itself, including the parts that look bad, so that when the mapping table says
-51 types you have some reason to believe it.
+67 types you have some reason to believe it.
 
 :::note[Why you cannot see the fixtures]
 The corpus is measured, never committed. n8n's fixtures are under
@@ -687,8 +837,10 @@ enforces that on every run rather than trusting anyone to remember it.
 
 ## Current limits worth planning around
 
-- **The Code node does not run**, in either language.
-- **The node subset is 51 n8n node types**, mapped onto 41 KilasFlow node types
+- **A Python Code node does not run**, and a JavaScript one runs on an
+  interpreter rather than V8, with the differences listed under
+  [the Code node](#the-code-node).
+- **The node subset is 67 n8n node types**, mapped onto 57 KilasFlow node types
   — `internal/interop/n8n/n8n.go` is the list of record, and the tables above
   name the ones you are most likely to meet. Anything outside it imports as a
   placeholder that blocks activation. If your workflows lean on integrations

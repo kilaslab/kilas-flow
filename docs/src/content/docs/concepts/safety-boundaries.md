@@ -11,7 +11,7 @@ can reach and what stops it, so you can answer that question without reading the
 source.
 
 It is deliberately one page rather than one per package. The boundaries are a
-single idea implemented in four places, and reading them apart is how you miss
+single idea implemented in several places, and reading them apart is how you miss
 that two of them do not talk to each other.
 
 ## Outbound HTTP
@@ -184,7 +184,7 @@ limits default to 10,000 rows and 30 seconds. A node asking for more than the
 ceiling is quietly clamped to it and told which values were clamped, rather than
 failing — the workflow still runs, bounded.
 
-## The Code node
+## The Go Code node
 
 A Code node's Go source is compiled to a WebAssembly module and run under
 [wazero](https://wazero.io) **with no host functions at all**.
@@ -241,6 +241,99 @@ all of them are keyed on the runtime version, so an artifact built against an
 older host contract is rebuilt rather than loaded. Those directories hold native
 machine code the server executes, so they must be writable only by the kilasflow
 user; setting `cache_dir` to an empty value keeps every cache in memory instead.
+
+## The JavaScript Code node
+
+Code (JavaScript) runs n8n-style JavaScript on [goja](https://github.com/dop251/goja),
+an ECMAScript engine written in Go and linked into the binary. No Node.js is
+involved and nothing is installed beside the server.
+
+**What the code can reach is what the Go behind its globals can reach, and that
+is nothing outside its own run.** The engine has no host API of its own: every
+global a script sees — `$input`, `$('Name')`, `console`, `require()` and the
+modules it returns — is a function KilasFlow wrote, and `internal/jsrun`, the
+package they live in, may not import anything that opens a file, a socket or a
+process. A test in `internal/guardrails` enforces that on every run, rather than
+a review having to notice. `require()` answers from a fixed list — `lodash`,
+`luxon`, `crypto`, `util`, `buffer`, `url` — and there is no npm. `$env` holds
+the same `KILASFLOW_WORKFLOW_ENV_` allowlist an expression sees, and a file on an
+item crosses as its metadata, never its bytes.
+
+**Code is read before it runs.** Constructs the engine would run differently
+from V8, and bodies too large or too deeply nested to parse safely, are refused
+by name when the workflow is saved or imported, so a workflow that uses one
+never activates. The [migration guide](/guides/n8n-migration/#the-code-node)
+lists them.
+
+| Bound | Default | Key |
+| --- | --- | --- |
+| The program's own running time | 10 s | `code.javascript_timeout` (at most 5 m) |
+| Input, as JSON | 32 MiB | `code.javascript_max_input_bytes` |
+| Returned items, as JSON | 16 MiB | `code.javascript_max_output_bytes` |
+| Console output kept | 64 KiB | `code.javascript_max_console_bytes` |
+| Live heap, per worker | 1 GiB | `code.javascript_heap_ceiling_mb` |
+| Scripts running at once | one per CPU | `code.javascript_max_concurrent` |
+
+A node may **tighten** the time limit through its own **Time limit** parameter
+and can never raise it. The time limit charges the user's program only —
+starting the engine, loading a library and handling the input and output are not
+counted — so a limit reported for work that plainly does not take that long
+means something has crept inside that clock. `code.javascript_enabled: false`
+turns the node off: it is greyed out in the editor and every run is refused,
+naming the key.
+
+### Worker processes
+
+goja cannot interrupt a single built-in call, and a built-in can be asked to
+allocate or loop as far as a number tells it: `'x'.repeat(2**30)` is one call.
+The runtime refuses the known cases up front with a `RangeError`, but a list of
+known cases is a denylist, and a denylist cannot promise it is complete. So no
+script runs in the server process. Each runs in a **worker**: the kilasflow
+binary itself, started again by the server, holding one script at a time on a
+fresh engine.
+
+- The server keeps at most `code.javascript_max_concurrent` workers, starts
+  them when a script needs one, reuses them, retires one that has been idle for
+  five minutes, and replaces each after a thousand runs.
+- The server prepares every job itself — the input is encoded and checked
+  against its cap before a worker sees it — and nothing is run in the server.
+  Validation parses a node's code there, and compiles it only to see that it
+  compiles. While a script runs, the worker asks the server for what the code
+  reads from other nodes, over the same pipes.
+- The server trusts a worker only as far as its code could go. Every message
+  of a job carries that job's nonce. The input's lineage and file references
+  never leave the server: a worker hands back the code's results as the JSON
+  the code returned, and the server decodes them itself, checking the output
+  and console caps and every file a result names. A worker that breaks any of
+  this fails its run with an engine fault and is never used again.
+- A worker still running at twice its time limit plus five seconds is stuck in
+  something its own clock cannot stop. The server kills it, and the run fails
+  with the time-limit error. Cancelling an execution kills the worker running
+  it.
+- A worker that dies mid-run fails that run with the memory-limit error when it
+  ran out of memory or was killed by the kernel, and with an engine fault
+  naming its exit otherwise, which the server logs with the start and the end
+  of what the worker wrote to stderr. The next run gets a fresh worker; the
+  server is not involved.
+- A worker's environment holds only the marker that makes it one,
+  `GOMAXPROCS`, `GOMEMLIMIT`, `GOTRACEBACK`, and the server's `TZ` and
+  `ZONEINFO` if set — none of the server's configuration or secrets. It starts
+  in `/` and exits when the server closes its stdin.
+- On Linux, each worker also has an address-space limit of four times its heap
+  ceiling plus 3 GiB, which turns an allocation no watchdog could stop into the
+  worker failing to allocate; sets its `oom_score_adj` to 1000, so the kernel
+  chooses a worker before the server when memory runs out; runs with
+  `no_new_privs`; and is killed by the kernel if the server dies, even from
+  inside a built-in that never reads its stdin again. The server makes itself
+  undumpable, so its environment cannot be read through `/proc` by another
+  process of its user, a worker included, and it leaves no core dump.
+
+What the workers are not is a privilege boundary. They run as the same user as
+the server, with the same filesystem and network view; what keeps a script from
+reading a file is that the engine exposes nothing that opens one, and what the
+process boundary adds is that exhausting memory or a core costs a worker rather
+than every workflow on the server. Code that escaped the engine itself would not
+be contained by the process around it.
 
 ## Expressions
 
@@ -309,7 +402,7 @@ of hours costs a row rather than a slot and the pool of
 `execution.max_concurrent` (10 by default) stays free for other runs. What is
 bounded is the suspension: seven days at most, and a call-resumed wait that nobody
 answers fails by name at its own deadline. A run's own budget is still
-`execution.default_timeout` (60 s) unless the workflow names its own
+`execution.default_timeout` (2 minutes) unless the workflow names its own
 `settings.executionTimeout`.
 
 **Anyone who can write a workflow can exfiltrate any credential in their

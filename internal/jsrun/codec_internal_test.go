@@ -1,0 +1,55 @@
+package jsrun
+
+import (
+	"bytes"
+	"testing"
+)
+
+// Each encoding round-trips, and matches what Node's Buffer produces for the
+// same input.
+func TestTheCodecMatchesNodesEncodings(t *testing.T) {
+	cases := []struct {
+		encoding, text string
+		bytes          []byte
+	}{
+		{"utf8", "héllo 😀", []byte("héllo 😀")},
+		{"UTF-8", "a", []byte("a")},
+		{"hex", "00ff10", []byte{0x00, 0xff, 0x10}},
+		{"base64", "aGk/Pz4+", []byte("hi??>>")},
+		{"base64url", "aGk_Pz4-", []byte("hi??>>")},
+		{"latin1", "éÿ", []byte{0xe9, 0xff}},
+		{"binary", "A", []byte{0x41}},
+		{"utf16le", "hé", []byte{0x68, 0x00, 0xe9, 0x00}},
+	}
+	for _, check := range cases {
+		decoded, err := decodeString(check.text, check.encoding)
+		if err != nil || !bytes.Equal(decoded, check.bytes) {
+			t.Errorf("decode %q as %s = %v, %v; want %v", check.text, check.encoding, decoded, err, check.bytes)
+		}
+		encoded, err := encodeBytes(check.bytes, check.encoding)
+		if err != nil || encoded != check.text {
+			t.Errorf("encode %v as %s = %q, %v; want %q", check.bytes, check.encoding, encoded, err, check.text)
+		}
+	}
+	// Node is lenient on input: hex stops at the first bad pair, base64 skips
+	// what is not base64 and reads unpadded input, and ascii keeps seven bits.
+	lenient := []struct {
+		encoding, text string
+		bytes          []byte
+	}{
+		{"hex", "0102zz03", []byte{1, 2}},
+		{"base64", "aG k=\n", []byte("hi")},
+		{"base64", "aGk", []byte("hi")},
+	}
+	for _, check := range lenient {
+		if decoded, _ := decodeString(check.text, check.encoding); !bytes.Equal(decoded, check.bytes) {
+			t.Errorf("decode %q as %s = %v, want %v", check.text, check.encoding, decoded, check.bytes)
+		}
+	}
+	if text, _ := encodeBytes([]byte{0xc1}, "ascii"); text != "A" {
+		t.Errorf("ascii keeps seven bits: got %q", text)
+	}
+	if _, err := decodeString("x", "klingon"); err == nil {
+		t.Error("an unknown encoding was accepted")
+	}
+}

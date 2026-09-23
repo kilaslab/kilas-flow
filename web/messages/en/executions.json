@@ -61,6 +61,8 @@
 	"executions_attachment_item": "item {index}",
 	"executions_unknown_media_type": "unknown type",
 	"executions_contents_server_held": "Contents are held by the server and are not shown here.",
+	"executions_console": "Console",
+	"executions_console_truncated": "Output past the node's console limit was dropped.",
 	"executions_unexpected_workflow_list": "Unexpected workflow-list response",
 	"executions_unexpected_execution_list": "Unexpected execution-list response",
 	"executions_unexpected_cancel": "Unexpected cancel response",

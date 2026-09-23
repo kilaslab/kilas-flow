@@ -13,6 +13,38 @@ export type ExecutionEvent = {
 	data?: unknown;
 };
 
+/**
+ * Every event name the execution stream sends.
+ *
+ * The server names each frame, and `EventSource` only delivers a named frame
+ * to a listener for that name, so a name missing here is silently never seen.
+ * `execution.event` is the server's fallback name for a type registered after
+ * this client was built; its payload still carries the real `type`.
+ */
+export const EXECUTION_EVENT_NAMES = [
+	'execution.started',
+	'execution.completed',
+	'execution.failed',
+	'execution.cancelled',
+	'execution.waiting',
+	'node.started',
+	'node.output',
+	'node.completed',
+	'node.failed',
+	'workflow.saved',
+	'webhook.response',
+	'code.console',
+	'ai.model.started',
+	'ai.model.delta',
+	'ai.model.completed',
+	'ai.tool.started',
+	'ai.tool.completed',
+	'ai.tool.failed',
+	'ai.agent.completed',
+	'ai.agent.failed',
+	'execution.event'
+] as const;
+
 const TERMINAL = new Set(['execution.completed', 'execution.failed', 'execution.cancelled']);
 
 export function isTerminal(type: string): boolean {
@@ -85,18 +117,7 @@ export function executionEvents(executionID: () => string, live: () => boolean =
 		source.addEventListener('open', onOpen);
 		// The server names each event, so there is no default `message` type to
 		// listen on; every known name routes to the same handler.
-		for (const name of [
-			'execution.started',
-			'execution.completed',
-			'execution.failed',
-			'execution.cancelled',
-			'execution.waiting',
-			'node.started',
-			'node.output',
-			'node.completed',
-			'node.failed',
-			'workflow.saved'
-		]) {
+		for (const name of EXECUTION_EVENT_NAMES) {
 			source.addEventListener(name, onMessage as EventListener);
 		}
 		source.addEventListener('error', () => (connected = false));

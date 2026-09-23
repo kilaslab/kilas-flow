@@ -164,6 +164,12 @@ type mapping struct {
 	toKilas func(node Node) (map[string]any, []Unsupported)
 	// toN8N translates back. A nil translator exports no parameters.
 	toN8N func(node workflow.Node) (map[string]any, []Lossy)
+	// kilasTypeFor picks the target type from a variant selector in the source
+	// node, for an n8n type that becomes one of two KilasFlow types: n8n's Code
+	// node is JavaScript or Python, and only JavaScript runs. Nil means
+	// kilasType. It is read on import only; export finds a node by its own
+	// type, so each target has an entry of its own.
+	kilasTypeFor func(node Node) string
 	// refuseKilas names why a source node must not import as this mapping's
 	// target, or empty when it may. It exists for mappings whose source
 	// carries a variant selector this server does not implement: importing
@@ -336,11 +342,16 @@ var mappings = []mapping{
 		exportTypeVersion: 2, toKilas: removeDuplicatesToKilas, toN8N: removeDuplicatesToN8N,
 	},
 
-	// Code. Refused rather than translated, but refused as a first-class node:
-	// see codeToKilas for why translating is the worse of the two.
+	// Code. JavaScript runs, as JavaScript, on the embedded engine; Python is
+	// kept as a first-class placeholder that refuses to run. The second entry
+	// exists so that placeholder exports back as the n8n node it came from.
+	{
+		n8nType: "n8n-nodes-base.code", kilasType: JSCodeNodeType, kilasVersion: workflow.V(1),
+		kilasTypeFor: codeKilasType, exportTypeVersion: 2, toKilas: codeToKilas, toN8N: codeToN8N,
+	},
 	{
 		n8nType: "n8n-nodes-base.code", kilasType: ForeignCodeNodeType, kilasVersion: workflow.V(1),
-		exportTypeVersion: 2, toKilas: codeToKilas, toN8N: codeToN8N,
+		exportTypeVersion: 2, toN8N: codeToN8N, exportOnly: true,
 	},
 
 	// Workflow composition. Every corpus workflow that factored shared logic
@@ -632,8 +643,12 @@ const (
 	WaitNodeType     = "kilasflow.wait"
 )
 
-// ForeignCodeNodeType holds an imported Code node this runtime cannot run.
-const ForeignCodeNodeType = "kilasflow.foreignCode"
+// The Code node's two targets: JavaScript, which runs, and the placeholder a
+// Python Code node becomes.
+const (
+	JSCodeNodeType      = "kilasflow.jsCode"
+	ForeignCodeNodeType = "kilasflow.foreignCode"
+)
 
 // The workflow-composition family's node types.
 const (
@@ -835,6 +850,9 @@ func Import(payload []byte, catalog workflow.Catalog) (ImportResult, error) {
 		}
 
 		converted.Type = entry.kilasType
+		if entry.kilasTypeFor != nil {
+			converted.Type = entry.kilasTypeFor(node)
+		}
 		// n8n's own typeVersion is preserved rather than replaced with the
 		// mapping's target. KilasFlow's node versions mirror n8n's, so keeping
 		// the source version means an imported node lands on the right

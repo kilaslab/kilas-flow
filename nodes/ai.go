@@ -869,7 +869,10 @@ func modelDescriptorFor(ir workflow.IRNode, credentialID, credentialType, modelN
 		// The type, so the agent knows which field of the resolved credential
 		// holds the key without guessing at field names.
 		"credentialType": credentialType,
-		"stream":         boolValue(ir.Parameters["stream"]),
+		// Absent means the definition's default, which is on: the editor shows
+		// "Stream output" enabled for a node that never set the key, and an
+		// untouched or imported node must run the way it is shown.
+		"stream": boolOr(ir.Parameters, "stream", true),
 	}
 }
 
@@ -1409,6 +1412,14 @@ func (executor *AgentExecutor) Execute(ctx context.Context, ir workflow.IRNode, 
 			// bounds one request, and a node asking for more than the ceiling
 			// is refused before it runs — so pointing at it sent the user to a
 			// setting that cannot raise the bound they had reached.
+			//
+			// runCtx inherits the execution's own deadline, which is usually
+			// much shorter than the ceiling, so an expired runCtx alone does not
+			// say which bound fired. Only when the caller's context is still
+			// alive was it the ceiling.
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return nil, fmt.Errorf("node %q: the workflow's execution time limit ended the agent before it finished; raise the workflow's executionTimeout setting (or the deployment's execution.default_timeout) to allow longer runs: %w", ir.Name, err)
+			}
 			if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
 				return nil, fmt.Errorf("node %q: the agent did not finish within the deployment's %s model timeout ceiling; that ceiling is a deployment-level bound and no node option raises it: %w", ir.Name, executor.runTimeout(), err)
 			}
@@ -2106,11 +2117,11 @@ func descriptorsFrom(items []workflow.Item) []map[string]any {
 // Tool descriptor kinds. The HTTP tool predates the family and its
 // descriptors carry "tool"; the newer tools name themselves.
 const (
-	toolKindHTTP       = "tool"
-	toolKindWorkflow   = "workflow"
-	toolKindCalculator = "calculator"
-	toolKindMCP        = "mcp"
-	toolKindDatastore  = "datastore"
+	toolKindHTTP        = "tool"
+	toolKindWorkflow    = "workflow"
+	toolKindCalculator  = "calculator"
+	toolKindMCP         = "mcp"
+	toolKindDatastore   = "datastore"
 	toolKindVectorStore = "vectorStore"
 )
 
@@ -2949,37 +2960,37 @@ func (executor *AgentExecutor) vectorStoreToolFrom(ir workflow.IRNode, descripto
 	embeddings, _ := descriptor["embeddings"].(map[string]any)
 	filter, _ := descriptor["metadataFilter"].(map[string]any)
 	return &vectorStoreTool{
-		name:        name,
-		description: textValue(descriptor["description"], ""),
-		nodeName:    nodeName,
-		agentNode:   ir.Name,
-		tenant:      strings.TrimSpace(request.Execution.TenantID),
-		collection:  textValue(descriptor["collection"], ""),
-		backend:    textValue(descriptor["backend"], "internal"),
-		topK:        topK,
-		filter:      filter,
-		embeddings:  embeddings,
-		request:     request,
-		store:       executor.vectors,
-		embedder:    executor.embedder,
-		sqlGuard:    executor.sqlGuard,
-		tableName:   textValue(descriptor["tableName"], ""),
-		idColumn:    textValue(descriptor["idColumn"], "id"),
-		contentColumn: textValue(descriptor["contentColumn"], "text"),
-		metadataColumn: textValue(descriptor["metadataColumn"], "metadata"),
+		name:            name,
+		description:     textValue(descriptor["description"], ""),
+		nodeName:        nodeName,
+		agentNode:       ir.Name,
+		tenant:          strings.TrimSpace(request.Execution.TenantID),
+		collection:      textValue(descriptor["collection"], ""),
+		backend:         textValue(descriptor["backend"], "internal"),
+		topK:            topK,
+		filter:          filter,
+		embeddings:      embeddings,
+		request:         request,
+		store:           executor.vectors,
+		embedder:        executor.embedder,
+		sqlGuard:        executor.sqlGuard,
+		tableName:       textValue(descriptor["tableName"], ""),
+		idColumn:        textValue(descriptor["idColumn"], "id"),
+		contentColumn:   textValue(descriptor["contentColumn"], "text"),
+		metadataColumn:  textValue(descriptor["metadataColumn"], "metadata"),
 		embeddingColumn: textValue(descriptor["embeddingColumn"], "embedding"),
-		credentialID: textValue(descriptor["credentialId"], ""),
+		credentialID:    textValue(descriptor["credentialId"], ""),
 	}, nil
 }
 
 type vectorStoreTool struct {
-	name, description, nodeName, agentNode, tenant, collection, backend string
-	topK                                                                int
-	filter, embeddings                                                  map[string]any
-	request                                                             engine.Request
-	store                                                               VectorStore
-	embedder                                                            *EmbeddingsExecutor
-	sqlGuard                                                            sqlnode.Guard
+	name, description, nodeName, agentNode, tenant, collection, backend               string
+	topK                                                                              int
+	filter, embeddings                                                                map[string]any
+	request                                                                           engine.Request
+	store                                                                             VectorStore
+	embedder                                                                          *EmbeddingsExecutor
+	sqlGuard                                                                          sqlnode.Guard
 	tableName, idColumn, contentColumn, metadataColumn, embeddingColumn, credentialID string
 }
 

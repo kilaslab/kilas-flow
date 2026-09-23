@@ -23,6 +23,16 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 
 ### Added
 
+- The canvas Chat panel renders replies as markdown (lists, emphasis, code,
+  links), streams the reply while the model writes it, shows each tool call as
+  a collapsible step, and links every reply to its execution. Markup in a reply
+  is shown as text, never rendered. A run refused by validation lists each
+  blocking issue by node name, and clicking one opens that node. Sending from a
+  canvas with unsaved edits saves them first.
+- The execution event stream names every event it sends: `execution.waiting`,
+  `webhook.response` and the eight `ai.*` progress events are now named frames,
+  and a type a client does not know yet arrives as `execution.event` with its
+  real name in `type`.
 - Open-source project files: `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`,
   `SECURITY.md`, this changelog, GitHub issue forms and a pull request template.
 - Opt-in JavaScript sidecar (`sidecar.enabled`): operators can load programmatic
@@ -85,6 +95,14 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 
 ### Changed
 
+- `execution.default_timeout` defaults to 2 minutes instead of 1. An AI agent on
+  a local or reasoning model routinely needs longer than a minute. Set
+  `execution.default_timeout` (`KILASFLOW_EXECUTION_DEFAULT_TIMEOUT`) or a
+  workflow's own `executionTimeout` to change it.
+- A streamed model request is bounded by silence rather than by total length:
+  the node's Timeout option (or the outbound default) now limits the wait for
+  the first byte and every pause between chunks, so a reasoning model that
+  streams for minutes is no longer cut off mid-answer.
 - The Code node's deployment diagnostic now names what an operator has to
   provide — the minimum Go version, the exact binary that was looked for, and the
   two ways to provide it (`KILASFLOW_CODE_GO_BINARY` / `code.go_binary`, or the
@@ -226,6 +244,13 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 
 ### Fixed
 
+- A chat model node that never set "Stream output" now streams, as the editor
+  already showed. An absent `stream` key used to mean off.
+- An agent ended by the workflow's own execution timeout says so, and names
+  `executionTimeout` and `execution.default_timeout`, instead of blaming the
+  deployment's ten-minute model ceiling.
+- Clicking a validation issue in the editor opens the node it names. Svelte
+  Flow's stale selection report used to deselect it again at once.
 - Datastore: `Insert` on SQLite read its id back with a second connection
   running `SELECT last_insert_rowid()`, which is per-connection state, so a
   concurrent insert could return another writer's row. Both drivers now use

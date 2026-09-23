@@ -733,6 +733,7 @@ func TestSupportedMappingsAreAdvertisedExplicitly(t *testing.T) {
 		"@n8n/n8n-nodes-langchain.vectorStorePGVector ↔ kilasflow.vectorStorePGVector",
 		"n8n-nodes-base.aggregate ↔ kilasflow.aggregate",
 		"n8n-nodes-base.code ↔ kilasflow.foreignCode",
+		"n8n-nodes-base.code ↔ kilasflow.jsCode",
 		"n8n-nodes-base.dataTable ↔ kilasflow.datastore",
 		"n8n-nodes-base.dataTableTool ↔ kilasflow.datastoreTool",
 		"n8n-nodes-base.dateTime ↔ kilasflow.dateTime",
@@ -856,6 +857,8 @@ func TestMirroredNodeTypesMatchTheNodePack(t *testing.T) {
 		"google drive trigger": {n8n.GoogleDriveTriggerNodeType, nodes.GoogleDriveTriggerNodeType},
 		"gmail": {n8n.GmailNodeType, nodes.GmailNodeType},
 		"gmail trigger": {n8n.GmailTriggerNodeType, nodes.GmailTriggerNodeType},
+		"javascript code": {n8n.JSCodeNodeType, nodes.JSCodeNodeType},
+		"foreign code": {n8n.ForeignCodeNodeType, nodes.ForeignCodeNodeType},
 	} {
 		if pair[0] != pair[1] {
 			t.Errorf("%s node type: adapter has %q, node pack has %q", name, pair[0], pair[1])
@@ -2798,46 +2801,47 @@ func TestARespondNodeCarriesItsWholeRespondWithSet(t *testing.T) {
 	}
 }
 
-func TestAnImportedCodeNodeIsAFirstClassRefusalRatherThanThePlaceholder(t *testing.T) {
+func TestAPythonCodeNodeIsAFirstClassRefusalRatherThanThePlaceholder(t *testing.T) {
 	t.Parallel()
 
 	const fixture = `{
 	  "name": "Scripted",
 	  "nodes": [
 	    {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}},
-	    {"id":"b","name":"Filter in JS","type":"n8n-nodes-base.code","typeVersion":2,"position":[220,0],
-	     "parameters":{"mode":"runOnceForAllItems","jsCode":"return items.filter(i => i.json.ok);"}}
+	    {"id":"b","name":"Filter in Python","type":"n8n-nodes-base.code","typeVersion":2,"position":[220,0],
+	     "parameters":{"language":"python","mode":"runOnceForAllItems","pythonCode":"return [i for i in _input.all() if i.json.ok]"}}
 	  ],
-	  "connections": {"Manual": {"main": [[{"node":"Filter in JS","type":"main","index":0}]]}}
+	  "connections": {"Manual": {"main": [[{"node":"Filter in Python","type":"main","index":0}]]}}
 	}`
 
 	result := importFixture(t, fixture)
-	code := nodeByName(result.Document, "Filter in JS")
+	code := nodeByName(result.Document, "Filter in Python")
 	// Not the generic unsupported placeholder: an unsupported node type is
-	// something this product has not built, and a Code node is something it
-	// deliberately has not. The two need different answers.
+	// something this product has not built, and a Python Code node is
+	// something it deliberately does not run. The two need different answers.
 	if code.Type != n8n.ForeignCodeNodeType {
 		t.Fatalf("code node = %q, want the dedicated placeholder", code.Type)
 	}
-	if code.Parameters["jsCode"] != "return items.filter(i => i.json.ok);" {
-		t.Errorf("jsCode = %#v, want the original source kept", code.Parameters["jsCode"])
+	if code.Parameters["pythonCode"] != "return [i for i in _input.all() if i.json.ok]" {
+		t.Errorf("pythonCode = %#v, want the original source kept", code.Parameters["pythonCode"])
 	}
-	if code.Parameters["mode"] != "runOnceForAllItems" || code.Parameters["language"] != "javaScript" {
+	if code.Parameters["mode"] != "runOnceForAllItems" || code.Parameters["language"] != "python" {
 		t.Errorf("parameters = %#v, want the mode and language kept", code.Parameters)
 	}
 
-	// One blocking issue, naming the node and the replacement.
+	// One blocking issue, naming the node and the language, in the one
+	// refusal sentence.
 	named := false
 	for _, issue := range result.Unsupported {
 		if issue.Severity != n8n.SeverityBlocking {
 			continue
 		}
-		if issue.NodeName == "Filter in JS" && strings.Contains(issue.Reason, "Filter node") {
+		if issue.NodeName == "Filter in Python" && strings.HasPrefix(issue.Reason, "this node's code is written in Python, which this server does not run. ") {
 			named = true
 		}
 	}
 	if !named {
-		t.Errorf("unsupported = %#v, want the Code node named with its replacement", result.Unsupported)
+		t.Errorf("unsupported = %#v, want the Code node refused because it is Python", result.Unsupported)
 	}
 
 	// A round trip must not cost a user their source.
@@ -2846,14 +2850,14 @@ func TestAnImportedCodeNodeIsAFirstClassRefusalRatherThanThePlaceholder(t *testi
 		t.Fatalf("Export() error = %v", err)
 	}
 	for _, node := range exported.Document.Nodes {
-		if node.Name != "Filter in JS" {
+		if node.Name != "Filter in Python" {
 			continue
 		}
 		if node.Type != "n8n-nodes-base.code" {
 			t.Errorf("exported type = %q, want the n8n Code node", node.Type)
 		}
-		if node.Parameters["jsCode"] != "return items.filter(i => i.json.ok);" {
-			t.Errorf("exported jsCode = %#v, want the source returned unchanged", node.Parameters["jsCode"])
+		if node.Parameters["pythonCode"] != "return [i for i in _input.all() if i.json.ok]" || node.Parameters["language"] != "python" {
+			t.Errorf("exported parameters = %#v, want the source and language returned unchanged", node.Parameters)
 		}
 	}
 }
@@ -2863,12 +2867,14 @@ func TestEveryJavaScriptEscapeHatchRefusesInTheSameWords(t *testing.T) {
 
 	// One mechanism, one wording, one severity. Three wordings for one
 	// situation is how a user concludes the three are different problems.
+	// JavaScript runs now, so the Code node here uses the one construct goja
+	// cannot run faithfully.
 	const fixture = `{
 	  "name": "Two hatches",
 	  "nodes": [
 	    {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}},
 	    {"id":"b","name":"Code","type":"n8n-nodes-base.code","typeVersion":2,"position":[220,0],
-	     "parameters":{"jsCode":"return items;"}},
+	     "parameters":{"jsCode":"return [{ json: { letter: /\\p{L}/u.test('é') } }];"}},
 	    {"id":"c","name":"Sort","type":"n8n-nodes-base.sort","typeVersion":1,"position":[440,0],
 	     "parameters":{"type":"code","code":"return a.json.n - b.json.n;"}}
 	  ],

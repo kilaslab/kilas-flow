@@ -225,6 +225,7 @@
       ],
       "nodes": [
         "kilasflow.code",
+        "kilasflow.jsCode",
         "kilasflow.set"
       ],
       "expressionRoots": [
@@ -267,6 +268,7 @@
       "nodes": [
         "kilasflow.code",
         "kilasflow.foreignCode",
+        "kilasflow.jsCode",
         "kilasflow.unsupported"
       ],
       "expressionRoots": [

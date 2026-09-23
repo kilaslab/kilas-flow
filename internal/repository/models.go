@@ -361,7 +361,11 @@ type executionNodeRunModel struct {
 	// caller waiting on the run. Nullable, because the overwhelming majority of
 	// node runs answer nobody: an empty body would claim a node produced an
 	// empty response, which is a different statement (see 000013).
-	Response   []byte
+	Response []byte
+	// Console is what a Code node's code printed while it ran. Nullable for
+	// the same reason as Response: nearly every node run prints nothing, and
+	// an empty value would claim it printed an empty console (see 000021).
+	Console    []byte
 	StartedAt  time.Time `gorm:"not null"`
 	FinishedAt *time.Time
 	Execution  executionModel `gorm:"foreignKey:ExecutionID;references:ID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT"`

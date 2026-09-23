@@ -96,6 +96,7 @@
 	// what an attachment *is* — name, type, size — and never tries to render
 	// one. There is nothing to render: the API serves the reference only.
 	const attachments = $derived(binaryAttachments(selectedRun?.output));
+	const printed = $derived(nodeConsole(selectedRun?.console));
 	const selectedNode = $derived(
 		selectedNodeID ? ((version.data?.document.nodes ?? []).find((node) => node.id === selectedNodeID) ?? null) : null
 	);
@@ -153,6 +154,42 @@
 		const extras = Object.entries(record).filter(([key, value]) => key !== 'message' && typeof value !== 'object' && value !== undefined && value !== null && String(value) !== '');
 		if (extras.length === 0) return null;
 		return extras.map(([key, value]) => `${key}: ${String(value)}`).join(' · ');
+	}
+
+	type ConsoleLine = { level: string; text: string; at?: string };
+
+	/**
+	 * What a node's code printed, or null when it printed nothing.
+	 *
+	 * The API types the field as unknown, so the shape is read rather than
+	 * assumed: a line with no text is dropped, and a missing level reads as log.
+	 */
+	function nodeConsole(value: unknown): { lines: ConsoleLine[]; truncated: boolean } | null {
+		if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
+		const record = value as Record<string, unknown>;
+		const lines: ConsoleLine[] = [];
+		for (const line of Array.isArray(record.lines) ? record.lines : []) {
+			if (line === null || typeof line !== 'object') continue;
+			const { level, text, at } = line as Record<string, unknown>;
+			if (typeof text !== 'string') continue;
+			lines.push({ level: typeof level === 'string' && level ? level : 'log', text, at: typeof at === 'string' ? at : undefined });
+		}
+		const truncated = record.truncated === true;
+		return lines.length > 0 || truncated ? { lines, truncated } : null;
+	}
+
+	/** warn and error stand out from ordinary output; debug recedes. */
+	function consoleTone(level: string): string {
+		switch (level) {
+			case 'error':
+				return 'text-destructive';
+			case 'warn':
+				return 'text-warning';
+			case 'debug':
+				return 'text-muted-foreground';
+			default:
+				return '';
+		}
 	}
 
 	let copied = $state<string | null>(null);
@@ -354,6 +391,24 @@
 										<summary class="cursor-pointer text-xs text-muted-foreground underline-offset-4 hover:underline">{m.executions_full_error_json()}</summary>
 										<pre class="mt-1.5 overflow-x-auto rounded-lg bg-destructive/5 p-3 font-mono text-[0.6875rem] leading-5 break-all whitespace-pre-wrap text-destructive">{asJSON(selectedRun.error)}</pre>
 									</details>
+								</div>
+							{/if}
+							{#if printed}
+								<div>
+									<h3 class="text-sm font-medium">{m.executions_console()}</h3>
+									{#if printed.lines.length > 0}
+										<ol class="mt-1.5 max-h-72 overflow-auto rounded-lg bg-muted p-3 font-mono text-[0.6875rem] leading-5">
+											{#each printed.lines as line, index (index)}
+												<li class={`flex gap-2 ${consoleTone(line.level)}`} title={line.at ? formatTimestamp(line.at) : undefined}>
+													<span class="w-10 shrink-0 opacity-70 select-none">{line.level}</span>
+													<span class="min-w-0 break-all whitespace-pre-wrap">{line.text}</span>
+												</li>
+											{/each}
+										</ol>
+									{/if}
+									{#if printed.truncated}
+										<p class="mt-1.5 text-xs text-muted-foreground">{m.executions_console_truncated()}</p>
+									{/if}
 								</div>
 							{/if}
 							<div>

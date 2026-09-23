@@ -41,6 +41,7 @@ const RUN_COVERAGE = [
 	'kilasflow.schedule@1',
 	'kilasflow.sqlite@1',
 	'kilasflow.code@1',
+	'kilasflow.jsCode@1',
 	'kilasflow.calculator@1',
 	'kilasflow.stickyNote@1',
 	'kilasflow.loop@1',
@@ -470,6 +471,23 @@ test('http, sqlite, code, calculator, date-time and wait run against the stub', 
 	const codeRecord = await runToSuccess(server.baseURL, codeId);
 	expect(itemJson(codeRecord, 'code')).toMatchObject({ v: 'x' });
 
+	// Code (JavaScript) runs n8n-style JavaScript in a worker process and
+	// returns the items it built. tests/js-code.spec.ts wires it to the rest.
+	const jsCodeId = await createWorkflow(
+		server.baseURL,
+		'Coverage JavaScript Code',
+		[
+			manual(),
+			setter('in', 'x'),
+			node('js', 'JS', 'kilasflow.jsCode', 1, {
+				mode: 'runOnceForAllItems',
+				jsCode: 'return items.map((item) => ({ json: { ...item.json, upper: item.json.v.toUpperCase() } }))'
+			})
+		],
+		[conn('c1', 'manual', 'main', 'in', 'main'), conn('c2', 'in', 'main', 'js', 'main')]
+	);
+	expect(itemJson(await runToSuccess(server.baseURL, jsCodeId), 'js')).toMatchObject({ v: 'x', upper: 'X' });
+
 	// Calculator evaluates its expression per item with no network involved.
 	const calcId = await createWorkflow(
 		server.baseURL,
@@ -724,16 +742,17 @@ test('pack action nodes reach the stub through the outbound policy', async ({ se
 });
 
 test('import capsules save but refuse to run', async ({ server }) => {
-	// Foreign code is kept for porting and can never run here.
+	// Python foreign code is kept for porting and can never run here.
+	// (JavaScript foreign code runs now: tests/js-code.spec.ts covers it.)
 	const foreignId = await createWorkflow(
 		server.baseURL,
 		'Coverage Foreign',
-		[manual(), node('code', 'Foreign', 'kilasflow.foreignCode', 1, { language: 'javaScript', jsCode: 'return items' })],
+		[manual(), node('code', 'Foreign', 'kilasflow.foreignCode', 1, { language: 'python', pythonCode: 'return _input.all()' })],
 		[conn('c1', 'manual', 'main', 'code', 'main')]
 	);
 	const foreignAttempt = await startRun(server.baseURL, foreignId);
 	expect(foreignAttempt.status).toBe(422);
-	expect(errorText(foreignAttempt.body)).toContain('which this server does not run');
+	expect(errorText(foreignAttempt.body)).toContain("this node's code is written in Python, which this server does not run.");
 
 	// The unsupported capsule refuses at every registered arity.
 	for (const arity of [1, 2, 4, 8]) {

@@ -195,6 +195,7 @@ func (request Request) ExpressionContext(item workflow.Item, input workflow.Node
 			ApprovalURL: request.Execution.ApprovalURL,
 		},
 		ItemIndex: index,
+		RunIndex:  request.RunIndex,
 		// The clock reads the workflow's own settings.timezone, which the
 		// importer preserves. Without it `$today` was midnight UTC, which is
 		// the wrong calendar day for most of the world for part of every day.
