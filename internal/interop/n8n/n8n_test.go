@@ -4462,10 +4462,12 @@ func TestDataTableToolImportsItsWritesAndBlocksTheRest(t *testing.T) {
 
 // TestDataTableToolWriteNeverImportsAnUnreportedStructureExpression proves an
 // imported tool that writes arrives either with its structure literal — so its
-// save accepts it — or with a blocking diagnostic on the slot that is not. An
-// n8n operator or match written as an expression arrives as a literal with its
-// own diagnostic; a structure slot that stays an expression is blocking, and a
-// slot the importer already blocks is not reported twice.
+// save accepts it — or with a blocking diagnostic on every slot that is not.
+// An n8n operator written as an expression arrives as a literal with its own
+// diagnostic, and so does a match, as the narrower "all" and blocking; a
+// structure slot that stays an expression is blocking, and a slot the
+// importer already blocks is not reported twice. The table name, which no
+// tool reads, is dropped rather than carried.
 func TestDataTableToolWriteNeverImportsAnUnreportedStructureExpression(t *testing.T) {
 	t.Parallel()
 	catalogue := registry(t)
@@ -4497,9 +4499,26 @@ func TestDataTableToolWriteNeverImportsAnUnreportedStructureExpression(t *testin
 		}
 		return count
 	}
+	// Whatever else a fixture tests, no structure slot of the imported tool
+	// may be an expression without a blocking diagnostic on its field.
+	everySlotReported := func(t *testing.T, result n8n.ImportResult) {
+		t.Helper()
+		tool := nodeByName(result.Document, "Customers")
+		for _, path := range nodes.DatastoreToolStructureExpressions(tool.Parameters) {
+			field := path
+			if end := strings.IndexAny(path, ".["); end >= 0 {
+				field = path[:end]
+			}
+			if blockingOn(result.Unsupported, field) == 0 {
+				t.Errorf("%s is an expression with no blocking diagnostic on %s: %#v", path, field, result.Unsupported)
+			}
+		}
+	}
 
-	// The operator and match the model chose in n8n arrive as literals, and
-	// the tool saves.
+	// The operator the model chose in n8n arrives as a literal, and the tool
+	// saves. The match arrives as "all", the narrower of the two: on a write
+	// the wider "any" would touch rows the author may never have meant, so it
+	// is blocking rather than lossy.
 	result := importFixture(t, fixture(`,
 	  "filters": {"conditions": [{"keyName": "name", "condition": "={{ $fromAI('op') }}", "keyValue": "={{ $fromAI('who') }}"}]},
 	  "match": "={{ $fromAI('match') }}"`))
@@ -4510,34 +4529,158 @@ func TestDataTableToolWriteNeverImportsAnUnreportedStructureExpression(t *testin
 	if err := definition.Validate(tool); err != nil {
 		t.Errorf("Validate(imported tool) = %v, want the literal structure to save", err)
 	}
-	for _, field := range []string{"filters", "match"} {
-		if !slices.ContainsFunc(result.Unsupported, func(issue n8n.Unsupported) bool { return issue.Field == field }) {
-			t.Errorf("no diagnostic on %s, whose expression was replaced by a literal: %#v", field, result.Unsupported)
-		}
+	if !slices.ContainsFunc(result.Unsupported, func(issue n8n.Unsupported) bool { return issue.Field == "filters" }) {
+		t.Errorf("no diagnostic on filters, whose expression was replaced by a literal: %#v", result.Unsupported)
 	}
+	if got := stringParameter(tool.Parameters, "match"); got != "all" {
+		t.Errorf("a write tool's match expression imported as %q, want all", got)
+	}
+	if got := blockingOn(result.Unsupported, "match"); got != 1 {
+		t.Errorf("blocking diagnostics on match = %d, want 1: %#v", got, result.Unsupported)
+	}
+	everySlotReported(t, result)
 
-	// A structure slot the importer carries as an expression is blocking.
+	// The table name is a table operation's, and a tool performs none: it is
+	// dropped, literal or expression, and says so without blocking.
 	result = importFixture(t, fixture(`,
 	  "filters": {"conditions": [{"keyName": "name", "condition": "eq", "keyValue": "={{ $fromAI('who') }}"}]},
 	  "name": "={{ $json.table }}"`))
-	if got := blockingOn(result.Unsupported, "name"); got != 1 {
-		t.Errorf("blocking diagnostics on name = %d, want 1: %#v", got, result.Unsupported)
+	tool = nodeByName(result.Document, "Customers")
+	if _, carried := tool.Parameters["name"]; carried {
+		t.Errorf("the tool carried name = %#v, want it dropped", tool.Parameters["name"])
 	}
-	if err := definition.Validate(nodeByName(result.Document, "Customers")); err == nil {
-		t.Error("the imported tool with an expression name saved, want the blocking slot refused")
+	if !slices.ContainsFunc(result.Unsupported, func(issue n8n.Unsupported) bool {
+		return issue.Field == "name" && issue.Severity == n8n.SeverityDropped
+	}) || blockingOn(result.Unsupported, "name") != 0 {
+		t.Errorf("name diagnostics = %#v, want one dropped and none blocking", result.Unsupported)
+	}
+	if err := definition.Validate(tool); err != nil {
+		t.Errorf("Validate(imported tool) = %v, want it to save once the name is dropped", err)
+	}
+	everySlotReported(t, result)
+
+	// Several slots at once. One the importer already blocks is reported once,
+	// and an expression in another field is not hidden behind it.
+	for _, extra := range []string{
+		`, "filters": {"conditions": [{"keyName": "={{ $json.column }}", "condition": "eq", "keyValue": "={{ $fromAI('who') }}"}]}`,
+		`, "filters": {"conditions": [{"keyName": "={{ $json.column }}", "condition": "eq", "keyValue": "={{ $fromAI('who') }}"}]},
+		   "name": "={{ $json.table }}"`,
+		`, "filters": "={{ $json.filters }}", "name": "={{ $json.table }}"`,
+	} {
+		result = importFixture(t, fixture(extra))
+		if got := blockingOn(result.Unsupported, "filters"); got != 1 {
+			t.Errorf("%s: blocking diagnostics on filters = %d, want 1: %#v", extra, got, result.Unsupported)
+		}
+		everySlotReported(t, result)
 	}
 
-	// One the importer already blocks is reported once.
-	result = importFixture(t, fixture(`,
-	  "filters": {"conditions": [{"keyName": "={{ $json.column }}", "condition": "eq", "keyValue": "={{ $fromAI('who') }}"}]}`))
-	if got := blockingOn(result.Unsupported, "filters"); got != 1 {
-		t.Errorf("blocking diagnostics on filters = %d, want 1: %#v", got, result.Unsupported)
+	// A read is never held to the write's rule, and its match is unchanged.
+	get := strings.Replace(fixture(`, "name": "={{ $json.table }}", "match": "={{ $fromAI('match') }}"`),
+		`"operation": "update"`, `"operation": "get"`, 1)
+	result = importFixture(t, get)
+	for _, field := range []string{"name", "match"} {
+		if got := blockingOn(result.Unsupported, field); got != 0 {
+			t.Errorf("blocking diagnostics on a get tool's %s = %d, want 0: %#v", field, got, result.Unsupported)
+		}
+	}
+	if match, carried := nodeByName(result.Document, "Customers").Parameters["match"]; carried {
+		t.Errorf("a get tool's match expression imported as %#v, want the default any", match)
+	}
+}
+
+// TestDataTableToolWritesImportAMatchExpressionAsAll proves every write a
+// tool performs — update, upsert and delete — takes the narrower reading of a
+// match it cannot carry, while the step node keeps the lossy "any" it always
+// had.
+func TestDataTableToolWritesImportAMatchExpressionAsAll(t *testing.T) {
+	t.Parallel()
+	fixture := func(nodeType, operation string) string {
+		return fmt.Sprintf(`{
+		  "name": "Table match",
+		  "nodes": [
+		    {"id":"c","name":"Customers","type":%q,"typeVersion":1,"position":[220,180],"parameters":{
+		      "resource": "row", "operation": %q,
+		      "dataTableId": {"mode":"id","value":"dt_1","cachedResultName":"T","__rl":true},
+		      "toolDescription": "Works on customers.",
+		      "columns": {"mappingMode": "defineBelow", "value": {"plan": "={{ $fromAI('plan', 'the plan') }}"}},
+		      "filters": {"conditions": [{"keyName": "name", "condition": "eq", "keyValue": "={{ $fromAI('who') }}"}]},
+		      "match": "={{ $fromAI('match') }}"
+		    }}
+		  ],
+		  "connections": {}
+		}`, nodeType, operation)
+	}
+	matchIssue := func(issues []n8n.Unsupported) *n8n.Unsupported {
+		for index := range issues {
+			if issues[index].Field == "match" {
+				return &issues[index]
+			}
+		}
+		return nil
 	}
 
-	// A read is never held to the write's rule.
-	result = importFixture(t, strings.Replace(fixture(`, "name": "={{ $json.table }}"`), `"operation": "update"`, `"operation": "get"`, 1))
-	if got := blockingOn(result.Unsupported, "name"); got != 0 {
-		t.Errorf("blocking diagnostics on a get tool's name = %d, want 0: %#v", got, result.Unsupported)
+	for _, operation := range []string{"update", "upsert", "deleteRows"} {
+		result := importFixture(t, fixture("n8n-nodes-base.dataTableTool", operation))
+		node := nodeByName(result.Document, "Customers")
+		if got := stringParameter(node.Parameters, "match"); got != "all" {
+			t.Errorf("tool %s: match imported as %q, want all", operation, got)
+		}
+		if issue := matchIssue(result.Unsupported); issue == nil || issue.Severity != n8n.SeverityBlocking ||
+			!strings.Contains(issue.Reason, "all") {
+			t.Errorf("tool %s: match diagnostic = %#v, want it blocking and naming all", operation, issue)
+		}
+
+		result = importFixture(t, strings.Replace(fixture("n8n-nodes-base.dataTable", operation), `"toolDescription": "Works on customers.",`, "", 1))
+		node = nodeByName(result.Document, "Customers")
+		if match, carried := node.Parameters["match"]; carried {
+			t.Errorf("step node %s: match imported as %#v, want the default any", operation, match)
+		}
+		if issue := matchIssue(result.Unsupported); issue == nil || issue.Severity != n8n.SeverityLossy {
+			t.Errorf("step node %s: match diagnostic = %#v, want it lossy as before", operation, issue)
+		}
+	}
+}
+
+// TestDataTableToolStructureNetReportsEverySlotOutsideABlockedField drives the
+// importer's safety net directly, with parameters no n8n node imports into
+// today: several structure slots left as expressions, one of them in a field
+// the importer has already blocked. Each slot outside that field is reported,
+// each as its own blocking diagnostic, and the blocked field is not reported
+// again.
+func TestDataTableToolStructureNetReportsEverySlotOutsideABlockedField(t *testing.T) {
+	t.Parallel()
+	expression := func(body string) map[string]any {
+		return map[string]any{"mode": "expression", "value": body}
+	}
+	parameters := map[string]any{
+		"resource": "row", "operation": "update",
+		"columns": map[string]any{
+			"mappingMode":     expression("$json.mode"),
+			"matchingColumns": []any{expression("$json.column")},
+			"value":           map[string]any{"plan": expression("$fromAI('plan')")},
+		},
+		"filters": map[string]any{"conditions": []any{map[string]any{
+			"keyName": expression("$json.column"), "condition": "eq", "keyValue": "x",
+		}}},
+		"match": expression("$json.match"),
+	}
+	already := []n8n.Unsupported{{Severity: n8n.SeverityBlocking, Field: "filters", Reason: "the column is an expression"}}
+
+	reported := n8n.DataTableToolStructureIssuesForTest(parameters, already)
+	var got []string
+	for _, issue := range reported {
+		if issue.Severity != n8n.SeverityBlocking {
+			t.Errorf("%s reported as %s, want blocking", issue.Field, issue.Severity)
+		}
+		got = append(got, issue.Field+": "+issue.Reason[strings.Index(issue.Reason, "its ")+4:strings.Index(issue.Reason, " is an expression")])
+	}
+	want := []string{
+		"columns: columns.mappingMode",
+		"columns: columns.matchingColumns[0]",
+		"match: match",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("reported = %q, want %q", got, want)
 	}
 }
 

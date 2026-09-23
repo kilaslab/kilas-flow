@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -5668,7 +5667,19 @@ func dataTableParams(node Node, tool bool) (map[string]any, []Unsupported) {
 	}
 
 	if name := node.Parameters["name"]; name != nil && name != "" {
-		parameters["name"] = fromN8NValue(name)
+		if tool {
+			// The name is what a table operation creates or renames to, and a
+			// tool performs none: it is hidden for row operations, so a
+			// diagnostic pointing at it would point at nothing the author
+			// can see, and carried it would change nothing the tool does.
+			issues = append(issues, Unsupported{
+				Severity: SeverityDropped, Field: "name",
+				Reason: "this tool carried a table name, which only creating or renaming a table reads, and a data table tool does neither. " +
+					"It was dropped.",
+			})
+		} else {
+			parameters["name"] = fromN8NValue(name)
+		}
 	}
 	if columns, present := node.Parameters["columns"]; present && columns != nil {
 		carried, columnIssues := dataTableColumnsToKilas(columns)
@@ -5693,6 +5704,20 @@ func dataTableParams(node Node, tool bool) (map[string]any, []Unsupported) {
 			parameters["match"] = match
 		}
 	default:
+		if tool && (mapped == "update" || mapped == "upsert" || mapped == "delete") {
+			// A tool's write takes its structure literally, and typically this
+			// is the model's choice of any or all. Of the two, all touches the
+			// fewer rows, so a write whose match cannot be carried narrows to
+			// it rather than widening to any, and is blocking: which rows a
+			// write touches is for the author to confirm.
+			parameters["match"] = "all"
+			issues = append(issues, Unsupported{
+				Severity: SeverityBlocking, Field: "match",
+				Reason: fmt.Sprintf("this tool writes, and it matched rows with %q, which this server's data table tool does not take on a write. "+
+					"It was imported matching all conditions, the narrower of the two: set Must Match before activating.", match),
+			})
+			break
+		}
 		issues = append(issues, Unsupported{
 			Severity: SeverityLossy, Field: "match",
 			Reason: fmt.Sprintf("this node matched rows with %q, which this server does not implement. "+
@@ -6028,22 +6053,7 @@ func dataTableToolToKilas(node Node) (map[string]any, []Unsupported) {
 	// already blocking; any other slot carried as an expression is blocking
 	// too, rather than an import that looks clean and that save refuses.
 	if nodes.DatastoreToolOperation(parameters) != "get" {
-		if path := nodes.DatastoreToolStructureExpression(parameters); path != "" {
-			field := path
-			if end := strings.IndexAny(path, ".["); end >= 0 {
-				field = path[:end]
-			}
-			if !slices.ContainsFunc(issues, func(issue Unsupported) bool {
-				return issue.Field == field && issue.Severity == SeverityBlocking
-			}) {
-				issues = append(issues, Unsupported{
-					Severity: SeverityBlocking, Field: field,
-					Reason: fmt.Sprintf("this tool writes, and its %s is an expression. This server's data table tool takes "+
-						"the structure of a write literally, with expressions only in a mapped column's value or a condition's value: "+
-						"write it as a fixed value before activating.", path),
-				})
-			}
-		}
+		issues = append(issues, dataTableToolStructureIssues(parameters, issues)...)
 	}
 
 	// n8n has no tool-name parameter at all: the name a model calls is derived
@@ -6062,6 +6072,39 @@ func dataTableToolToKilas(node Node) (map[string]any, []Unsupported) {
 		parameters["toolDescription"] = fromN8NValue(description)
 	}
 	return parameters, issues
+}
+
+// dataTableToolStructureIssues is one blocking diagnostic for every structure
+// slot of a writing tool that is still an expression, except in a field the
+// importer has already blocked: that field's own diagnostic already stops the
+// tool and says why. Every slot is reported, not the first, because a slot
+// behind one the author is already fixing would otherwise surface only when
+// save refused it, one refusal at a time — or, behind an already-blocked
+// field, not in the import at all.
+func dataTableToolStructureIssues(parameters map[string]any, issues []Unsupported) []Unsupported {
+	blocked := map[string]bool{}
+	for _, issue := range issues {
+		if issue.Severity == SeverityBlocking {
+			blocked[issue.Field] = true
+		}
+	}
+	reported := make([]Unsupported, 0)
+	for _, path := range nodes.DatastoreToolStructureExpressions(parameters) {
+		field := path
+		if end := strings.IndexAny(path, ".["); end >= 0 {
+			field = path[:end]
+		}
+		if blocked[field] {
+			continue
+		}
+		reported = append(reported, Unsupported{
+			Severity: SeverityBlocking, Field: field,
+			Reason: fmt.Sprintf("this tool writes, and its %s is an expression. This server's data table tool takes "+
+				"the structure of a write literally, with expressions only in a mapped column's value or a condition's value: "+
+				"write it as a fixed value before activating.", path),
+		})
+	}
+	return reported
 }
 
 // dataTableToN8N writes a datastore node back out as n8n's Data Table node.

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -1889,6 +1890,49 @@ func TestDatastoreToolWriteTakesItsStructureLiterally(t *testing.T) {
 		}); err == nil {
 			t.Errorf("Execute(%v) built the tool, want it refused", parameters)
 		}
+	}
+}
+
+// TestDatastoreToolStructureExpressionsNamesEverySlot proves the list the n8n
+// importer reports from names every structure slot that is an expression, in
+// the order the save rule meets them, and leaves the value slots out: the
+// first it names is the one the save refusal names.
+func TestDatastoreToolStructureExpressionsNamesEverySlot(t *testing.T) {
+	t.Parallel()
+	marker := func(template string) map[string]any {
+		return map[string]any{"mode": "expression", "value": template}
+	}
+	parameters := datastoreToolParams("update", map[string]any{
+		"columns": map[string]any{
+			"mappingMode":     marker(`{{ $json.mode }}`),
+			"matchingColumns": []any{"name", marker(`{{ $json.column }}`)},
+			"value":           map[string]any{"plan": datastoreToolFromAI(`$fromAI('plan', 'the plan')`)},
+		},
+		"filters": datastoreConditions(
+			map[string]any{"keyName": "name", "condition": marker(`{{ $json.op }}`), "keyValue": marker(`{{ $json.who }}`)},
+			map[string]any{"keyName": marker(`{{ $json.column }}`), "condition": "eq", "keyValue": "x"},
+		),
+		"match": marker(`{{ $json.match }}`),
+	})
+
+	got := nodes.DatastoreToolStructureExpressions(parameters)
+	want := []string{
+		"columns.mappingMode",
+		"columns.matchingColumns[1]",
+		"filters.conditions[0].condition",
+		"filters.conditions[1].keyName",
+		"match",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("DatastoreToolStructureExpressions() = %q, want %q", got, want)
+	}
+	if first := nodes.DatastoreToolStructureExpression(parameters); first != want[0] {
+		t.Errorf("DatastoreToolStructureExpression() = %q, want the first of the list, %q", first, want[0])
+	}
+	if got := nodes.DatastoreToolStructureExpressions(datastoreToolParams("update", map[string]any{
+		"columns": map[string]any{"mappingMode": "defineBelow", "value": map[string]any{"plan": marker(`{{ $json.plan }}`)}},
+	})); len(got) != 0 {
+		t.Errorf("value slots alone = %q, want nothing named", got)
 	}
 }
 

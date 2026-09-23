@@ -1131,6 +1131,22 @@ func checkDatastoreToolOperation(parameters map[string]any) error {
 // Exported for the n8n adapter, which reports such a slot as blocking rather
 // than importing a tool its save would refuse.
 func DatastoreToolStructureExpression(parameters map[string]any) string {
+	if paths := DatastoreToolStructureExpressions(parameters); len(paths) > 0 {
+		return paths[0]
+	}
+	return ""
+}
+
+// DatastoreToolStructureExpressions names every structure slot
+// DatastoreToolStructureExpression would refuse, in the order it meets them,
+// so the first is the one a save refusal names. A map whose mode is expression
+// is named whole and not walked into.
+//
+// Exported for the n8n adapter, which reports every such slot rather than the
+// first: a slot hidden behind one the author already has to fix would still be
+// refused at save, one refusal at a time.
+func DatastoreToolStructureExpressions(parameters map[string]any) []string {
+	var paths []string
 	for _, key := range sortedParameterKeys(parameters) {
 		var valueSlot func(segments []any) bool
 		switch key {
@@ -1151,11 +1167,9 @@ func DatastoreToolStructureExpression(parameters map[string]any) string {
 		default:
 			valueSlot = func([]any) bool { return false }
 		}
-		if path := datastoreToolExpressionOutside(parameters[key], key, nil, valueSlot); path != "" {
-			return path
-		}
+		paths = datastoreToolExpressionsOutside(parameters[key], key, nil, valueSlot, paths)
 	}
-	return ""
+	return paths
 }
 
 // datastoreToolSegment returns one path segment — a map key as a string, a
@@ -1167,35 +1181,31 @@ func datastoreToolSegment(segments []any, index int) any {
 	return nil
 }
 
-// datastoreToolExpressionOutside walks one parameter for an expression
-// marker, skipping the subtrees valueSlot allows, and returns the path of the
-// first one it meets. Any map whose mode is expression counts, whatever its
-// value holds: a structure slot is written literally, so there is nothing an
-// expression-shaped map there could legitimately be.
-func datastoreToolExpressionOutside(value any, path string, segments []any, valueSlot func([]any) bool) string {
+// datastoreToolExpressionsOutside walks one parameter for expression
+// markers, skipping the subtrees valueSlot allows, and appends the path of
+// each one it meets to found, in walk order. Any map whose mode is expression
+// counts, whatever its value holds: a structure slot is written literally, so
+// there is nothing an expression-shaped map there could legitimately be.
+func datastoreToolExpressionsOutside(value any, path string, segments []any, valueSlot func([]any) bool, found []string) []string {
 	if valueSlot(segments) {
-		return ""
+		return found
 	}
 	switch typed := value.(type) {
 	case map[string]any:
 		if mode, _ := typed["mode"].(string); mode == "expression" {
-			return path
+			return append(found, path)
 		}
 		for _, key := range sortedParameterKeys(typed) {
 			nested := append(segments[:len(segments):len(segments)], key)
-			if found := datastoreToolExpressionOutside(typed[key], path+"."+key, nested, valueSlot); found != "" {
-				return found
-			}
+			found = datastoreToolExpressionsOutside(typed[key], path+"."+key, nested, valueSlot, found)
 		}
 	case []any:
 		for index, entry := range typed {
 			nested := append(segments[:len(segments):len(segments)], index)
-			if found := datastoreToolExpressionOutside(entry, fmt.Sprintf("%s[%d]", path, index), nested, valueSlot); found != "" {
-				return found
-			}
+			found = datastoreToolExpressionsOutside(entry, fmt.Sprintf("%s[%d]", path, index), nested, valueSlot, found)
 		}
 	}
-	return ""
+	return found
 }
 
 // refuseDatastoreToolStructureFromAI holds a write to one rule: the model

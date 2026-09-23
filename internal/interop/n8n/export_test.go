@@ -23,3 +23,10 @@ func N8NConditionNamesForTest() []string {
 	sort.Strings(names)
 	return names
 }
+
+// DataTableToolStructureIssuesForTest exposes the importer's structure safety
+// net, so a test can hand it parameters no n8n node imports into today: the
+// net exists for the slot a future importer change leaves an expression.
+func DataTableToolStructureIssuesForTest(parameters map[string]any, issues []Unsupported) []Unsupported {
+	return dataTableToolStructureIssues(parameters, issues)
+}
