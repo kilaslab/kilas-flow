@@ -150,6 +150,90 @@ exactly — the thirteen connection channel names are spelled as n8n spells them
 sentinel — because a document has to survive a round trip through this server
 unchanged.
 
+## The API reference page is self-hosted
+
+`/docs` is rendered by `internal/api/docs.go` rather than by Huma's built-in
+endpoint, because every built-in renderer loads its JavaScript from unpkg. The
+Scalar bundle is copied out of `node_modules` into the frontend build by
+`web/scripts/vendor-docs.mjs` (on install and before every build), and a strict
+`Content-Security-Policy` on the response blocks the webfont and registry calls
+Scalar still attempts at runtime.
+
+The result is a documentation page that makes **zero external requests** — it
+works air-gapped, and an embedding customer's traffic never reaches a third
+party. `TestDocsUIHasNoExternalDependencies` guards the page; the CSP guards the
+runtime. The cost is the size of the bundle `vendor-docs.mjs` reports, about
+3.6 MB of the binary. A binary built without a frontend build serves a fallback
+page pointing at the raw specification rather than a blank screen.
+
+## Package map
+
+The concept pages name the packages they draw on; this is the same tree read
+top-down, for a contributor looking for where something lives.
+
+```
+cmd/kilasflow/          entrypoint; wiring only
+cmd/nodepackgen/        generates a node pack from an OpenAPI document
+internal/
+  api/                  HTTP transport, routes, generated OpenAPI, docs page
+  api/handlers/         the operations under /api/v1
+  api/middleware/       request identity, access logging, panic recovery
+  config/               layered configuration
+  database/             GORM setup for SQLite and PostgreSQL
+  repository/           persistence interfaces and their GORM implementations
+  web/                  embeds and serves the built SPA
+
+  workflow/             the canonical workflow document: shape, validation, versions
+  node/                 the node contract and the registry
+  property/             the description language for a configurable field
+  engine/               executes a compiled workflow graph
+  execution/            a run and its per-node runs
+  events/               the execution event contract and the in-process broker
+  expression/           evaluates the `{{ … }}` templates a parameter may carry
+  conditions/           the filter language IF, Filter and Switch share
+  datetime/             the one place instants become text and text becomes instants
+  binary/               payload storage for items that refer to files
+
+  credentials/          stores and resolves the secrets workflows reference
+  auth/                 sessions, API keys and the principal a request carries
+  datastore/            the workflow-facing data store: columns, rows, filters
+  webhook/              maps an inbound request to its workflow and trigger node
+  scheduler/            runs cron-triggered workflows
+  embed/                issues and validates iframe editor sessions
+  safehttp/             outbound clients that refuse to reach internal infrastructure
+
+  routing/              interprets declarative node metadata as an HTTP request
+  nodepack/             the on-disk format of a generated node pack
+  wasmpack/             community node packs compiled to WebAssembly
+  sidecarnode/          programmatic community nodes run in the JavaScript sidecar
+  loadoptions/          resolves a property's selectable values at edit time
+  sqlbuild/             turns a described operation into a bound SQL statement
+  sqlnode/              connects workflows to databases the user configures
+  runcode/              compiles and executes user-supplied Go for the Code node
+  ai/                   agent contracts and the built-in tool loop
+  interop/n8n/          converts between n8n workflow JSON and our document
+  cli/                  the agent CLI verbs the binary serves besides `serve`
+  mcp/                  the Model Context Protocol adapter over those verbs
+  guardrails/           checks for invariants no single package owns
+
+nodes/                  the built-in node definitions and executors
+packs/                  declarative node packs — WAHA and GOWA (generated), Telegram (hand-written)
+sidecar/                the JavaScript sidecar process for community nodes
+third_party/            vendored upstream specs the packs are generated from
+sdk/                    @kilasflow/sdk, the TypeScript host SDK
+skills/                 the agent skills bundle embedded in the binary
+schemas/                the published workflow JSON Schema
+web/                    SvelteKit SPA (the editor)
+docs/                   this documentation site
+e2e/                    Playwright suites against a real binary
+```
+
+`internal/ai/maf/` is the one package allowed to import Microsoft Agent Framework
+for Go, so the churn of a preview-stage dependency stays in a single place. It
+holds a spike `ai.AgentRuntime` over that framework, and nothing wires it in yet.
+The runtime that actually serves the AI nodes is `ai.LoopRuntime`, a
+deterministic tool loop behind the same interface.
+
 ## Where to go next
 
 [The execution model](/concepts/execution-model/) is the page to read first: it

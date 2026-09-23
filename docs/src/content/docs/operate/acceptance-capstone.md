@@ -112,7 +112,8 @@ capstone's configuration is the only place these names are read.
 
 Two notes that shape the Telegram proof. `setWebhook` requires a publicly
 reachable HTTPS URL, so the server under test has to be reachable from the
-internet; the README's `cloudflared`/`ngrok` tunnel walkthrough is the supported
+internet; the `cloudflared`/`ngrok` tunnel walkthrough in
+[Webhooks](/concepts/webhooks/#receiving-telegram-updates-on-a-laptop) is the supported
 way to do that, and the suite uses it rather than inventing a second approach.
 And a real WAHA server delivers `session.status` and `message.ack` events as
 well as messages, which is why the suite waits for an execution whose trigger

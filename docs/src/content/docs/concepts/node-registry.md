@@ -10,8 +10,9 @@ during composition at startup and is read-only for the rest of the process's
 life, which is what makes compiled graphs and the metadata served to the editor
 deterministic.
 
-Today it holds **49 distinct node types across 56 type-and-version pairs**: 46
-types (51 pairs) compiled into the binary, and 3 types (5 pairs) from the
+When last measured (2026-09-23) it held **61 distinct node types across 68
+type-and-version pairs**: 58 types (63 pairs) compiled into the binary, counting
+the `kilasflow.unsupported` import placeholder, and 3 types (5 pairs) from the
 declarative packs it ships with. The list of record is
 [`GET /api/v1/node-types`](/reference/api/), which serves one entry per
 type-and-version pair: the numbers here are measured from it, and it is what the

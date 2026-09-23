@@ -84,6 +84,24 @@ about.
 `make test-e2e` needs `pnpm install` in `e2e/` and a built binary. It is slow and
 CI runs it on your pull request, so it is not part of the local loop.
 
+### Production smoke checks
+
+| Command | What it proves |
+| --- | --- |
+| `make smoke-sqlite` | the embedded binary against a fresh temporary SQLite database |
+| `make smoke-dev` | the Vite development proxy against a temporary Go server |
+| `make smoke-docker` | the non-root Docker image with a temporary persisted SQLite bind mount |
+| `make smoke-postgres` | the Docker image against a temporary Compose PostgreSQL service |
+
+Each one is independent and cleans up only its own temporary directory,
+container and Compose project. Each verifies that one origin serves liveness,
+readiness, OpenAPI and the SPA fallback. The Docker checks need a running Docker
+daemon. `smoke-postgres` starts a disposable PostgreSQL service rather than
+touching a developer database, and verifies the GORM AutoMigrate probe against it
+before starting KilasFlow. By default the Docker checks rebuild
+`kilasflow:latest`; set `KILASFLOW_SMOKE_SKIP_BUILD=1` only when rerunning a
+diagnostic against the already-built image.
+
 ## Tests
 
 Test behaviour, boundaries and error paths. A test that restates the
@@ -114,6 +132,10 @@ cleanup.
 - **Frontend**: relative URLs only — `fetch('/api/v1/workflows')`, never an
   absolute origin. Production serves the API and the SPA from one origin, and an
   embedded editor is mounted on whichever origin the host chooses.
+- **`internal/web/embed.go` uses `//go:embed all:dist`.** Without the `all:`
+  prefix `go:embed` skips SvelteKit's `_app/` directory: the binary still
+  compiles and serves `index.html`, unstyled and inert.
+  `TestEmbedIncludesUnderscoreAndDotPaths` guards it.
 - **Replace, don't shim.** When a path changes, every caller moves in the same
   change: no aliases, no re-exports, no deprecated wrappers.
 - Comments explain why something is the way it is, above all where the obvious
