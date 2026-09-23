@@ -137,3 +137,39 @@ func containsString(values []string, want string) bool {
 	}
 	return false
 }
+
+func TestFromAICallsSplicedIntoCodeFindsOnlyCallsSharingASegment(t *testing.T) {
+	t.Parallel()
+
+	marker := func(template string) map[string]any {
+		return map[string]any{"mode": "expression", "value": template}
+	}
+	parameters := map[string]any{
+		// Alone in their segments: each is replaced by its value outright.
+		"sole":     marker("{{ $fromAI('sole') }}"),
+		"text":     marker("Customer {{ $fromAI('text') }} from {{ $fromAI('city') }}"),
+		"plain":    "$fromAI('plain') is a plain string, never evaluated",
+		"noMarker": "{{ $fromAI('noMarker').toUpperCase() }}",
+		// Sharing a segment with other code: the value is spliced into it.
+		"nested": map[string]any{"upper": marker("{{ $fromAI('upper').toUpperCase() }}")},
+		"list":   []any{marker("{{ $fromAI('scaled', 'a number', 'number') * 100 }}")},
+		"pair":   marker("{{ $fromAI('first') + $fromAI('second') }}"),
+	}
+	calls, err := ai.FromAICallsSplicedIntoCode(parameters)
+	if err != nil {
+		t.Fatalf("FromAICallsSplicedIntoCode() error = %v", err)
+	}
+	found := map[string]string{}
+	for _, call := range calls {
+		found[call.Key] = call.Type
+	}
+	want := map[string]string{"upper": "string", "scaled": "number", "first": "string", "second": "string"}
+	if len(found) != len(want) {
+		t.Fatalf("spliced calls = %v, want exactly %v", found, want)
+	}
+	for key, kind := range want {
+		if found[key] != kind {
+			t.Errorf("spliced call %q = %q, want %q", key, found[key], kind)
+		}
+	}
+}

@@ -520,6 +520,31 @@ func TestDatastoreToolValidation(t *testing.T) {
 	if err := validate(bound(map[string]any{"operation": "upsert", "filters": byTitle, "columns": matchingFromAI})); err == nil {
 		t.Error("a $fromAI call in a matching column was accepted")
 	}
+	// Nor is the operator or the match: either lets the model widen a delete
+	// to the whole table — neq a name nobody has, or any beside a condition
+	// every row meets. Plain strings and expression markers alike.
+	for _, operator := range []any{"$fromAI('op')", datastoreToolFromAI(`$fromAI('op')`)} {
+		fromAIOperator := datastoreConditions(map[string]any{"keyName": "title", "condition": operator, "keyValue": "x"})
+		if err := validate(bound(map[string]any{"operation": "delete", "filters": fromAIOperator})); err == nil {
+			t.Errorf("a $fromAI call in a condition's operator (%#v) was accepted", operator)
+		}
+	}
+	for _, match := range []any{"$fromAI('match')", datastoreToolFromAI(`$fromAI('match')`)} {
+		if err := validate(bound(map[string]any{"operation": "delete", "filters": byTitle, "match": match})); err == nil {
+			t.Errorf("a $fromAI call in match (%#v) was accepted", match)
+		}
+	}
+	// A string the model supplies is never spliced into expression code,
+	// where it would run as code; a number or boolean, checked as one, may be.
+	spliced := datastoreManualColumns(map[string]any{"title": datastoreToolFromAI(`$fromAI('title').toUpperCase()`)})
+	if err := validate(bound(map[string]any{"operation": "insert", "columns": spliced})); err == nil ||
+		!strings.Contains(err.Error(), "title") {
+		t.Errorf("Validate(a string $fromAI spliced into code) = %v, want it refused naming the call", err)
+	}
+	scaled := datastoreManualColumns(map[string]any{"score": datastoreToolFromAI(`$fromAI('score', 'the score', 'number') * 100`)})
+	if err := validate(bound(map[string]any{"operation": "insert", "columns": scaled})); err != nil {
+		t.Errorf("Validate(a number $fromAI in arithmetic) = %v, want success", err)
+	}
 	// A $fromAI call that cannot build a schema is named at save time.
 	broken := datastoreManualColumns(map[string]any{"score": datastoreToolFromAI(`$fromAI('score', 'the score', 'integer')`)})
 	if err := validate(bound(map[string]any{"operation": "insert", "columns": broken})); err == nil {
@@ -1321,5 +1346,162 @@ func TestDatastoreToolRefusesAWriteWithNothingToWrite(t *testing.T) {
 		}); err == nil {
 			t.Errorf("Execute(%s with nothing to write) succeeded, want it refused", operation)
 		}
+	}
+}
+
+func TestDatastoreToolRefusesAModelChosenOperatorOrMatchWhenBuilt(t *testing.T) {
+	t.Parallel()
+
+	// The review's probes: a delete whose operator the model sets to neq, and
+	// one whose match it sets to any beside a condition every row meets, each
+	// emptied the table. The backstop refuses them where a document that
+	// skipped validation meets the executor.
+	store := datastoreToolCustomers()
+	for name, parameters := range map[string]map[string]any{
+		"operator": datastoreToolParams("delete", map[string]any{
+			"filters": datastoreConditions(map[string]any{
+				"keyName": "name", "condition": "$fromAI('op')", "keyValue": datastoreToolFromAI(`$fromAI('name')`),
+			}),
+		}),
+		"match": datastoreToolParams("delete", map[string]any{
+			"match": "$fromAI('match')",
+			"filters": datastoreConditions(
+				map[string]any{"keyName": "name", "condition": "eq", "keyValue": datastoreToolFromAI(`$fromAI('name')`)},
+				map[string]any{"keyName": "plan", "condition": "neq", "keyValue": "enterprise"},
+			),
+		}),
+	} {
+		ir := datastoreToolIR(t, "remove_customer", parameters)
+		if _, err := nodes.NewDatastoreToolExecutor(store).Execute(context.Background(), ir, workflow.NodeInput{}, engine.Request{
+			Execution: engine.ExecutionContext{ID: "exec-1", TenantID: "tenant-a", WorkflowID: "wf_tool"},
+		}); err == nil {
+			t.Errorf("a delete whose %s the model chooses was built, want it refused", name)
+		}
+	}
+	if rows := store.rowsOf("tenant-a", "ds_customers"); len(rows) != 3 {
+		t.Errorf("row count = %d, want 3", len(rows))
+	}
+}
+
+func TestDatastoreToolNeverEvaluatesAModelValueAsAnExpression(t *testing.T) {
+	t.Parallel()
+
+	// The review's probes. The model's value is data: a marker in its place,
+	// or template braces inside a template, must never reach the expression
+	// evaluator — where $execution, $env and every upstream node's output
+	// would resolve into the row and back to the model.
+	cases := []struct {
+		name      string
+		columns   map[string]any
+		arguments string
+	}{
+		{
+			name:      "a marker where a string belongs",
+			columns:   map[string]any{"name": datastoreToolFromAI(`$fromAI('name', 'the customer name')`)},
+			arguments: `{"name":{"mode":"expression","value":"{{ $execution.id }}|{{ 6*7 }}"}}`,
+		},
+		{
+			name: "braces inside a template",
+			columns: map[string]any{"name": map[string]any{
+				"mode": "expression", "value": "Customer {{ $fromAI('name', 'the customer name') }}",
+			}},
+			arguments: `{"name":"{{ $execution.id }}"}`,
+		},
+		{
+			name:      "a closing brace alone",
+			columns:   map[string]any{"name": datastoreToolFromAI(`$fromAI('name', 'the customer name')`)},
+			arguments: `{"name":"Joko }} Widodo"}`,
+		},
+		{
+			name:      "a marker nested in a json value",
+			columns:   map[string]any{"name": datastoreToolFromAI(`$fromAI('name', 'the customer', 'json')`)},
+			arguments: `{"name":{"first":"Joko","last":{"mode":"expression","value":"$execution.id"}}}`,
+		},
+		{
+			name:      "a string where a number belongs",
+			columns:   map[string]any{"plan": datastoreToolFromAI(`$fromAI('plan', 'the plan code', 'number')`)},
+			arguments: `{"plan":"7"}`,
+		},
+		{
+			name:      "an object where a boolean belongs",
+			columns:   map[string]any{"plan": datastoreToolFromAI(`$fromAI('plan', 'whether it is paid', 'boolean')`)},
+			arguments: `{"plan":{"mode":"expression","value":"true"}}`,
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			store := datastoreToolCustomers()
+			descriptor := datastoreToolDescriptor(t, store, datastoreToolIR(t, "add_customer", datastoreToolParams("insert", map[string]any{
+				"columns": datastoreManualColumns(testCase.columns),
+			})), "tenant-a")
+			events, _ := runDatastoreToolAgent(t, store, descriptor, testCase.arguments)
+			failure, failed := datastoreToolEvent(events, ai.EventToolFailed)
+			if !failed {
+				t.Fatal("the call was accepted; a model value must never be evaluated or written as an expression")
+			}
+			if strings.Contains(failure, "execution") || strings.Contains(failure, "Widodo") {
+				t.Errorf("tool failure = %s, want the argument named and its value never echoed", failure)
+			}
+			if !strings.Contains(failure, `name`) && !strings.Contains(failure, `plan`) {
+				t.Errorf("tool failure = %s, want it naming the argument", failure)
+			}
+			if _, completed := datastoreToolEvent(events, ai.EventToolCompleted); completed {
+				t.Error("a refused call also completed")
+			}
+			if rows := store.rowsOf("tenant-a", "ds_customers"); len(rows) != 3 {
+				t.Errorf("row count = %d, want 3: nothing is written", len(rows))
+			}
+		})
+	}
+}
+
+func TestDatastoreToolAutoMapsOnlyTheColumnsItDeclares(t *testing.T) {
+	t.Parallel()
+
+	autoMapped := func(values map[string]any) map[string]any {
+		return map[string]any{"mappingMode": "autoMapInputData", "value": values}
+	}
+
+	// A key the condition declares is the condition's, not a column's: the
+	// city a customer must not be in stays out of the rows the update writes.
+	store := datastoreToolCustomers()
+	update := datastoreToolDescriptor(t, store, datastoreToolIR(t, "upgrade_elsewhere", datastoreToolParams("update", map[string]any{
+		"filters": datastoreConditions(map[string]any{
+			"keyName": "city", "condition": "neq", "keyValue": datastoreToolFromAI(`$fromAI('city', 'the city to leave alone')`),
+		}),
+		"columns": autoMapped(map[string]any{"plan": datastoreToolFromAI(`$fromAI('plan', 'the new plan')`)}),
+	})), "tenant-a")
+	events, _ := runDatastoreToolAgent(t, store, update, `{"city":"Jakarta","plan":"enterprise"}`)
+	if failure, failed := datastoreToolEvent(events, ai.EventToolFailed); failed {
+		t.Fatalf("the update failed: %s", failure)
+	}
+	cities := map[string]any{}
+	for _, row := range store.rowsOf("tenant-a", "ds_customers") {
+		cities[fmt.Sprint(row["name"])] = row["city"]
+		if row["name"] != "Budi" && row["plan"] != "enterprise" {
+			t.Errorf("row %#v was not upgraded", row)
+		}
+	}
+	if cities["Sari"] != "Bandung" || cities["Andi"] != "Surabaya" || cities["Budi"] != "Jakarta" {
+		t.Errorf("cities = %v, want the condition's value never written onto the matched rows", cities)
+	}
+
+	// A column the model left out takes its $fromAI default, as it would under
+	// a manual mapping.
+	store = datastoreToolCustomers()
+	insert := datastoreToolDescriptor(t, store, datastoreToolIR(t, "add_customer", datastoreToolParams("insert", map[string]any{
+		"columns": autoMapped(map[string]any{
+			"name": datastoreToolFromAI(`$fromAI('name', 'the customer name')`),
+			"plan": datastoreToolFromAI(`$fromAI('plan', 'the plan', 'string', 'free')`),
+		}),
+	})), "tenant-a")
+	events, _ = runDatastoreToolAgent(t, store, insert, `{"name":"Rina"}`)
+	if failure, failed := datastoreToolEvent(events, ai.EventToolFailed); failed {
+		t.Fatalf("the insert failed: %s", failure)
+	}
+	rows := store.rowsOf("tenant-a", "ds_customers")
+	if len(rows) != 4 || rows[3]["name"] != "Rina" || rows[3]["plan"] != "free" {
+		t.Errorf("rows = %#v, want Rina inserted on the default plan", rows)
 	}
 }

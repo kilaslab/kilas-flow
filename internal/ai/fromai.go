@@ -494,6 +494,79 @@ func renderFromAISegments(source string, arguments map[string]any) (string, erro
 	return rendered.String(), nil
 }
 
+// FromAICallsSplicedIntoCode returns every $fromAI call in an expression
+// template that shares its {{ }} segment with other code, such as
+// {{ $fromAI('name').toUpperCase() }}.
+//
+// SubstituteFromAI writes such a call's value into the segment's source text
+// and leaves the braces for the evaluator, so a string value there runs as
+// code: a model that answers `$execution.id` gets it evaluated. A call alone in
+// its segment is replaced by its value outright, and a call in a plain string
+// is never evaluated, so neither is returned. A caller that writes the model's
+// values anywhere decides which of these it can accept; a number or boolean
+// renders as a literal, a string renders as whatever it spells.
+func FromAICallsSplicedIntoCode(parameters map[string]any) ([]FromAIArgument, error) {
+	var spliced []FromAIArgument
+	if err := collectSplicedFromAI(parameters, &spliced); err != nil {
+		return nil, err
+	}
+	return spliced, nil
+}
+
+func collectSplicedFromAI(value any, spliced *[]FromAIArgument) error {
+	switch typed := value.(type) {
+	case map[string]any:
+		if mode, _ := typed["mode"].(string); mode == "expression" {
+			if template, ok := typed["value"].(string); ok {
+				return splicedFromAIInTemplate(template, spliced)
+			}
+		}
+		for _, nested := range typed {
+			if err := collectSplicedFromAI(nested, spliced); err != nil {
+				return err
+			}
+		}
+	case []any:
+		for _, nested := range typed {
+			if err := collectSplicedFromAI(nested, spliced); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// splicedFromAIInTemplate walks a template's {{ }} segments the way
+// renderFromAISegments does, so it finds exactly the calls that rendering
+// would splice.
+func splicedFromAIInTemplate(template string, spliced *[]FromAIArgument) error {
+	cursor := 0
+	for cursor < len(template) {
+		open := strings.Index(template[cursor:], "{{")
+		if open < 0 {
+			return nil
+		}
+		open += cursor
+		close := strings.Index(template[open+2:], "}}")
+		if close < 0 {
+			return nil
+		}
+		close += open + 2
+		inner := template[open+2 : close]
+		calls, err := scanFromAICalls(inner)
+		if err != nil {
+			return err
+		}
+		if len(calls) > 0 && (len(calls) > 1 || !isBareCall(inner, calls[0])) {
+			for _, call := range calls {
+				*spliced = append(*spliced, call.Argument)
+			}
+		}
+		cursor = close + 2
+	}
+	return nil
+}
+
 // isBareCall reports whether a segment's whole content is one call.
 func isBareCall(inner string, call fromAICall) bool {
 	return strings.TrimSpace(inner[:call.Start]) == "" && strings.TrimSpace(inner[call.End:]) == ""

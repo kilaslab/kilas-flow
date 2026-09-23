@@ -91,6 +91,22 @@ Proof:
 - `go test ./internal/interop/n8n/ -run 'TestDataTableTool'` → ok. This covers an insert import, blocked operations, the auto-mapped insert, and the export.
 - `go test ./...` and `go vet ./...` → ok. `make generate-skills-index-check` and `make generate-skills-command-reference-check` → up to date.
 
+## Progress — Lane E, review fix round 1 (2026-09-23)
+
+The review found that a model could reach the expression evaluator, or widen a write, through the tool. All of it is closed in `nodes/datastore.go`:
+
+- **Model values are data.** `invokeWrite` checks each supplied argument against its `$fromAI` type before substitution (`checkDatastoreToolArgument`): a string must be a string, a number a number, a boolean a boolean. It refuses any value holding an `{"mode":"expression"}` marker or `{{`/`}}` at any depth. The error names the argument and never echoes its value.
+- **No splicing into code.** Save and descriptor build refuse a string or json `$fromAI` that shares its `{{ }}` with other code, such as `{{ $fromAI('name').toUpperCase() }}`. Found with the new `ai.FromAICallsSplicedIntoCode`, because the model's text would run as code there. The structural fix in the shared `SubstituteFromAI` is a separate ticket.
+- **No model-chosen filter shape.** `refuseDatastoreToolModelChoices` refuses `$fromAI` in a condition's operator, in `match`, in `keyName` and in `matchingColumns`. It uses `ai.ExtractFromAI`, so a plain string and a marker are both caught. Before this, a model could set `neq` or `any` and empty the table.
+- **Auto-map writes only its columns.** The auto-mapped item is built from the calls under `columns` only, with their defaults, so a condition's key is never written onto the rows it matched.
+
+Proof: `go test ./nodes/ ./internal/ai/ ./internal/interop/n8n/` → ok. The covering tests are:
+- `TestDatastoreToolNeverEvaluatesAModelValueAsAnExpression`, covering both review probes plus type mismatches and nested markers;
+- `TestDatastoreToolRefusesAModelChosenOperatorOrMatchWhenBuilt`;
+- `TestDatastoreToolAutoMapsOnlyTheColumnsItDeclares`;
+- `TestDatastoreToolValidation`, for the operator, match and splice cases;
+- `TestFromAICallsSplicedIntoCodeFindsOnlyCallsSharingASegment`.
+
 # Attachments
 
 ## Work Evidence
