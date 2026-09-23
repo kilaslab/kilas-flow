@@ -251,7 +251,8 @@ event types. These names are **stable**:
 
 AI nodes add nested progress under `ai.model.started`, `ai.model.delta`,
 `ai.model.completed`, `ai.tool.started`, `ai.tool.completed`, `ai.tool.failed`,
-`ai.agent.completed` and `ai.agent.failed`. Their names are stable, and their
+`ai.agent.completed` and `ai.agent.failed`. A JavaScript Code node adds
+`code.console`, carrying what its code printed. Their names are stable, and their
 `data` is informational rather than authoritative state. A type added after a
 client was built arrives under `execution.event`, with its real name in `type`.
 The [Events reference](/reference/api/events/) lists every name.

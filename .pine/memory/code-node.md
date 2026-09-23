@@ -83,3 +83,17 @@ Two consequences worth keeping:
   correctly isolated. `TestASharedTranslationDoesNotCarryAMemoryLimitWithIt`
   pins that. Never close a `CompiledModule` that came from a shared cache —
   closing it evicts the translation the cache exists to hold.
+
+# goja's hazards, and the guards jsrun keeps against them
+
+**Found by the P1 security review (2026-09-23). Keep the guards whatever the goja version.**
+
+- **A Go stack overflow is fatal, and goja's parser and compiler recurse on nesting with no limit of their own.** 300,000 nested brackets killed the whole process, and a crash at `Analyze` happens at save or import time. jsrun therefore checks every body before goja sees it:
+  - `MaxSourceBytes` (128 KiB) bounds the length, and so how deep anything can nest while it parses.
+  - Arrow functions are counted in the raw text, where the count can only err high. Nested arrows parse in quadratic time.
+  - The tree's depth is capped at 1000, checked before compile. Nested blocks compile in quadratic time.
+  - Constant-expression depth is capped at 16. goja's `constant()` is not memoised, so `0 || 0 || …` 40 deep, which is 147 bytes, compiles in exponential time.
+  - Parsing and compiling cannot be interrupted, so they run under a process-wide semaphore of GOMAXPROCS.
+- **goja cannot interrupt one built-in call, and the watchdog can only interrupt.** `[...Array(2**26).keys()]`, `Array.from({length: 2**26})`, `.fill`, `new Uint8Array(2**30)` and `'x'.repeat(2**28)` each held seconds and gigabytes past every limit. `runtime.js` `boundAllocations` wraps every `Array.prototype` method, `Array.from`, `apply`/`construct`, `repeat`/`pad*` and the typed-array and ArrayBuffer constructors with per-call caps (`MaxElementsPerCall` and its siblings). Any new built-in that allocates from a number (Buffer.alloc, in P3) needs the same guard.
+- **A panic on any goroutine other than the VM's is outside `guard`.** Every goroutine that runs host code (see `hostCall`) must recover its own panics.
+- **A destructuring parameter list makes goja panic on a direct `eval()`** in a nested function. The wrapper uses plain positional parameters.

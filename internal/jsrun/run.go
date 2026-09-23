@@ -1,7 +1,6 @@
 package jsrun
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -17,12 +16,15 @@ import (
 //
 //  1. Setup: the body is compiled (or found in the cache), the input is
 //     encoded and checked against its cap before any VM exists, a fresh VM
-//     is created, the libraries the body uses are loaded and the input is
-//     parsed inside it.
+//     is created, the libraries the body uses are loaded, the input is parsed
+//     inside it and the roots are installed.
 //  2. The user's code: the call, every promise job it waits on, and turning
 //     its result into JSON.
 //  3. Decoding that JSON into items, in Go.
-func (runner *Runner) Run(ctx context.Context, task Task) (Result, error) {
+//
+// The result carries what the code printed even when the run fails, because
+// that is usually how its author finds out why.
+func (runner *Runner) Run(ctx context.Context, task Task) (result Result, err error) {
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}
@@ -36,9 +38,13 @@ func (runner *Runner) Run(ctx context.Context, task Task) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	if int64(len(input)) > limits.MaxInputBytes {
+	state, err := json.Marshal(task.Roots.snapshot())
+	if err != nil {
+		return Result{}, fmt.Errorf("the node's context cannot be handed to code: %w", err)
+	}
+	if size := int64(len(input) + len(state)); size > limits.MaxInputBytes {
 		return Result{}, named(ErrInputLimit, fmt.Sprintf(
-			"the node's input is %s as JSON, more than the %s code may be given", byteSize(int64(len(input))), byteSize(limits.MaxInputBytes)))
+			"the node's input is %s as JSON, more than the %s code may be given", byteSize(size), byteSize(limits.MaxInputBytes)))
 	}
 
 	if err := runner.acquire(ctx); err != nil {
@@ -57,8 +63,23 @@ func (runner *Runner) Run(ctx context.Context, task Task) (Result, error) {
 	if runner.testHost != nil {
 		runner.testHost(v)
 	}
+	printed := &console{limit: limits.MaxConsoleBytes}
+	defer func() { result.Console, result.ConsoleTruncated = printed.lines, printed.truncated }()
 
-	// Setup. Nothing here is charged, and nothing here runs user code.
+	// Setup. Nothing here is charged, and nothing here runs user code. The
+	// libraries load after the roots are installed, so they use the bounded
+	// built-ins too.
+	function, err := v.body(ready)
+	if err != nil {
+		return Result{}, err
+	}
+	parsed, err := v.parse(input)
+	if err != nil {
+		return Result{}, err
+	}
+	if err := v.install(string(state), parsed, mode, hostFor(task.Roots, printed)); err != nil {
+		return Result{}, err
+	}
 	for _, lib := range librariesFor(ready.analysis, runner.forcedLibrary) {
 		compiled, err := lib.program()
 		if err != nil {
@@ -68,35 +89,23 @@ func (runner *Runner) Run(ctx context.Context, task Task) (Result, error) {
 			return Result{}, err
 		}
 	}
-	function, err := v.body(ready)
-	if err != nil {
-		return Result{}, err
-	}
-	parsed, err := v.parse(input)
-	if err != nil {
-		return Result{}, err
-	}
 	clock := newClock(limits.Timeout, func() { v.interrupt(timedOut(limits.Timeout)) })
+	call := invocation{
+		v: v, clock: clock, function: function, mode: mode, count: len(task.Items),
+		limits: limits, decode: newDecoder(task.Items),
+	}
 
 	if mode == ModeAllItems {
-		items, _, err := runner.charged(ctx, v, clock, function, mode, map[string]any{"items": parsed}, limits.MaxOutputBytes, limits)
+		items, _, err := call.run(ctx, 0, limits.MaxOutputBytes)
 		return Result{Items: items, UserTime: clock.spent()}, err
-	}
-
-	// The per-item values are read before any user code has run, so no
-	// accessor a script defines can run between items, off the clock.
-	perItem := make([]value, len(task.Items))
-	for index := range perItem {
-		perItem[index] = v.element(v.index(parsed, index), "json")
 	}
 	var out []workflow.Item
 	remaining := limits.MaxOutputBytes
-	for index := range perItem {
+	for index := range task.Items {
 		if index > 0 && runner.betweenItems != nil {
 			runner.betweenItems()
 		}
-		roots := map[string]any{"$json": perItem[index], "$itemIndex": index}
-		items, size, err := runner.charged(ctx, v, clock, function, mode, roots, remaining, limits)
+		items, size, err := call.run(ctx, index, remaining)
 		if err != nil {
 			return Result{Items: out, UserTime: clock.spent()}, forItem(err, index)
 		}
@@ -106,24 +115,65 @@ func (runner *Runner) Run(ctx context.Context, task Task) (Result, error) {
 	return Result{Items: out, UserTime: clock.spent()}, nil
 }
 
-// charged is one call of the user's code with the clock running around it.
-// It reports the result's size as JSON, which is what the output limit
-// measures.
-func (runner *Runner) charged(ctx context.Context, v *vm, clock *clock, function value, mode Mode, roots map[string]any, maxOutput int64, limits Limits) ([]workflow.Item, int64, error) {
-	clock.start()
-	text, err := v.invoke(ctx, function, mode, roots, maxOutput)
-	exhausted := clock.stop()
+// hostFor is what the roots ask the server for while the code runs.
+func hostFor(roots Roots, printed *console) host {
+	return host{
+		node: func(name string) (string, bool) {
+			if roots.Node == nil {
+				return "", false
+			}
+			view, ok := roots.Node(name)
+			if !ok {
+				return "", false
+			}
+			if view.Items == nil {
+				view.Items = []map[string]any{}
+			}
+			encoded, err := json.Marshal(view)
+			if err != nil {
+				return "", false
+			}
+			return string(encoded), true
+		},
+		pair: func(name string, index int) (int, string) {
+			if roots.Pair == nil {
+				return -1, "item lineage is not available here"
+			}
+			return roots.Pair(name, index)
+		},
+		console: printed.write,
+	}
+}
+
+// invocation is one call of the user's code, with the clock running around
+// exactly the part that runs it.
+type invocation struct {
+	v        *vm
+	clock    *clock
+	function value
+	mode     Mode
+	count    int
+	limits   Limits
+	decode   *decoder
+}
+
+// run calls the code for one item (or all of them), and reports the result's
+// size as JSON, which is what the output limit measures.
+func (call invocation) run(ctx context.Context, index int, maxOutput int64) ([]workflow.Item, int64, error) {
+	call.clock.start()
+	text, err := call.v.invoke(ctx, call.function, call.mode, index, call.count, maxOutput)
+	exhausted := call.clock.stop()
 	if err == nil && exhausted {
-		err = timedOut(limits.Timeout)
+		err = timedOut(call.limits.Timeout)
 	}
 	if err != nil {
 		return nil, 0, err
 	}
 	size := int64(len(text))
 	if size > maxOutput {
-		return nil, 0, named(ErrOutputLimit, fmt.Sprintf("code produced more output than the %s limit allows", byteSize(limits.MaxOutputBytes)))
+		return nil, 0, named(ErrOutputLimit, fmt.Sprintf("code produced more output than the %s limit allows", byteSize(call.limits.MaxOutputBytes)))
 	}
-	items, err := decodeItems(text)
+	items, err := call.decode.decode(text, call.mode == ModeEachItem)
 	return items, size, err
 }
 
@@ -151,40 +201,3 @@ func (runner *Runner) acquire(ctx context.Context) error {
 }
 
 func (runner *Runner) release() { <-runner.slots }
-
-// wireItem is an item as it crosses into and out of the VM.
-type wireItem struct {
-	JSON map[string]any `json:"json"`
-}
-
-func encodeItems(items []workflow.Item) (string, error) {
-	wire := make([]wireItem, len(items))
-	for index, item := range items {
-		wire[index].JSON = item.JSON
-		if wire[index].JSON == nil {
-			wire[index].JSON = map[string]any{}
-		}
-	}
-	var buffer bytes.Buffer
-	encoder := json.NewEncoder(&buffer)
-	encoder.SetEscapeHTML(false)
-	if err := encoder.Encode(wire); err != nil {
-		return "", fmt.Errorf("the node's input cannot be handed to code: %w", err)
-	}
-	return buffer.String(), nil
-}
-
-func decodeItems(text string) ([]workflow.Item, error) {
-	var wire []wireItem
-	if err := json.Unmarshal([]byte(text), &wire); err != nil {
-		return nil, fmt.Errorf("jsrun: decoding the code's result: %w", err)
-	}
-	items := make([]workflow.Item, len(wire))
-	for index, item := range wire {
-		items[index].JSON = item.JSON
-		if items[index].JSON == nil {
-			items[index].JSON = map[string]any{}
-		}
-	}
-	return items, nil
-}

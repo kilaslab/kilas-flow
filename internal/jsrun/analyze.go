@@ -27,6 +27,49 @@ type Analysis struct {
 	Unsupported []Unsupported
 }
 
+// The bounds on a body's shape, checked before goja does anything costly.
+//
+// goja's parser and compiler recurse on nesting with no limit of their own,
+// and a Go stack overflow is fatal: it cannot be recovered, so it would take
+// the server down, not just one run. Some nesting is also quadratic: 20,000
+// nested arrow functions take seconds to parse, and 30,000 nested blocks
+// seconds to compile, all of it outside any time limit. Real code comes
+// nowhere near these bounds; the largest Code node among the 500 most-viewed
+// n8n templates is under 30 KiB.
+const (
+	// MaxSourceBytes bounds a body's length, which bounds how deep anything in
+	// it can nest while it is parsed.
+	MaxSourceBytes = 128 << 10
+	// maxArrowFunctions bounds arrow functions, which are nested without
+	// brackets and parse in quadratic time. Counted in the raw text, where
+	// the count can only err high, so it cannot be dodged.
+	maxArrowFunctions = 1000
+	// maxNesting bounds the depth of the parsed tree, checked before it is
+	// compiled.
+	maxNesting = 1000
+	// maxFoldDepth bounds an expression made only of literals and operators.
+	// goja folds such an expression while compiling, re-evaluating the left
+	// side of every ||, && and ?? at every level, which doubles the work per
+	// level: 40 levels of `0 || 0` would hold a core for hours, and 147 bytes
+	// spell them. Real constant expressions are a handful of levels deep.
+	maxFoldDepth = 16
+)
+
+// checkSourceSize refuses a body too large to parse safely.
+func checkSourceSize(source string) error {
+	var found []Unsupported
+	if len(source) > MaxSourceBytes {
+		found = append(found, Unsupported{Subject: fmt.Sprintf("is longer than %s", byteSize(MaxSourceBytes))})
+	}
+	if strings.Count(source, "=>") > maxArrowFunctions {
+		found = append(found, Unsupported{Subject: fmt.Sprintf("has more than %d arrow functions", maxArrowFunctions)})
+	}
+	if len(found) > 0 {
+		return &UnsupportedError{Found: found}
+	}
+	return nil
+}
+
 // shippedModules are the modules require() can return. There is no npm and no
 // module directory, so this list is the whole of it.
 var shippedModules = map[string]bool{"crypto": true, "lodash": true, "luxon": true, "util": true}
@@ -181,8 +224,8 @@ func checkShape(program *ast.Program, w wrapped) (*ast.FunctionLiteral, error) {
 
 // inspect walks the body and records what it uses.
 func inspect(body *ast.FunctionLiteral, w wrapped) Analysis {
-	walker := &inspector{w: w, requires: map[string]bool{}, seen: map[Unsupported]bool{}}
-	walker.walk(reflect.ValueOf(body.Body), true)
+	walker := &inspector{w: w, requires: map[string]bool{}, seen: map[Unsupported]bool{}, folds: map[ast.Expression]int{}}
+	walker.walk(reflect.ValueOf(body.Body), true, 0)
 	for name := range walker.requires {
 		walker.analysis.Requires = append(walker.analysis.Requires, name)
 	}
@@ -200,25 +243,38 @@ type inspector struct {
 	analysis Analysis
 	requires map[string]bool
 	seen     map[Unsupported]bool
+	tooDeep  bool
+	// folds memoises foldDepth, so a chain is measured once however many of
+	// its nodes the walk visits.
+	folds map[ast.Expression]int
 }
 
 // walk descends through AST values. bodyThis reports whether `this` here is
 // the body's own `this`: a nested function or class has its own, an arrow
-// function shares its parent's.
-func (in *inspector) walk(value reflect.Value, bodyThis bool) {
+// function shares its parent's. depth counts nodes above this one, and a tree
+// deeper than maxNesting is refused, and not descended any further, so the
+// walk itself stays shallow.
+func (in *inspector) walk(value reflect.Value, bodyThis bool, depth int) {
 	switch value.Kind() {
 	case reflect.Interface:
 		if !value.IsNil() {
-			in.walk(value.Elem(), bodyThis)
+			in.walk(value.Elem(), bodyThis, depth)
 		}
 	case reflect.Pointer:
 		if value.IsNil() || value.Type().Elem().PkgPath() != astPackage {
 			return
 		}
 		if node, ok := value.Interface().(ast.Node); ok {
+			if depth++; depth > maxNesting {
+				if !in.tooDeep {
+					in.tooDeep = true
+					in.refuse(fmt.Sprintf("nests more than %d levels deep", maxNesting), node.Idx0())
+				}
+				return
+			}
 			bodyThis = in.visit(node, bodyThis)
 		}
-		in.walk(value.Elem(), bodyThis)
+		in.walk(value.Elem(), bodyThis, depth)
 	case reflect.Struct:
 		if value.Type().PkgPath() != astPackage {
 			return
@@ -229,11 +285,11 @@ func (in *inspector) walk(value reflect.Value, bodyThis bool) {
 			if !field.IsExported() || field.Name == "DeclarationList" {
 				continue
 			}
-			in.walk(value.Field(index), bodyThis)
+			in.walk(value.Field(index), bodyThis, depth)
 		}
 	case reflect.Slice:
 		for index := 0; index < value.Len(); index++ {
-			in.walk(value.Index(index), bodyThis)
+			in.walk(value.Index(index), bodyThis, depth)
 		}
 	}
 }
@@ -269,8 +325,41 @@ func (in *inspector) visit(node ast.Node, bodyThis bool) bool {
 		if luxonNames[string(node.Name)] {
 			in.analysis.UsesLuxon = true
 		}
+	case *ast.BinaryExpression, *ast.UnaryExpression:
+		if in.foldDepth(node.(ast.Expression)) > maxFoldDepth {
+			in.refuse(fmt.Sprintf("has a constant expression nested more than %d levels deep", maxFoldDepth), node.Idx0())
+		}
 	}
 	return bodyThis
+}
+
+// foldDepth is how deep an expression goja would fold at compile time goes:
+// the depth of the literal-and-operator tree whose left sides are constant,
+// or -1 when it is not constant at all.
+func (in *inspector) foldDepth(expression ast.Expression) int {
+	if depth, ok := in.folds[expression]; ok {
+		return depth
+	}
+	depth := -1
+	switch node := expression.(type) {
+	case *ast.NumberLiteral, *ast.StringLiteral, *ast.BooleanLiteral, *ast.NullLiteral:
+		depth = 1
+	case *ast.UnaryExpression:
+		if operand := in.foldDepth(node.Operand); operand > 0 {
+			depth = operand + 1
+		}
+	case *ast.BinaryExpression:
+		// goja folds an operator whose left side is constant, whatever its
+		// right side turns out to be.
+		if left := in.foldDepth(node.Left); left > 0 {
+			depth = left + 1
+			if right := in.foldDepth(node.Right); right+1 > depth {
+				depth = right + 1
+			}
+		}
+	}
+	in.folds[expression] = depth
+	return depth
 }
 
 func isIdentifier(expression ast.Expression, name string) bool {

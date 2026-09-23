@@ -138,12 +138,15 @@ type vm struct {
 	rt     *goja.Runtime
 	limits Limits
 	w      wrapped
-	this   *goja.Object
 
 	jsonParse goja.Callable
 	normalise goja.Callable
 	stringify goja.Callable
 	describe  goja.Callable
+	// installRoots builds the roots; run is what it returns, the one
+	// function the user's code is called through.
+	installRoots goja.Callable
+	run          goja.Callable
 
 	// jobs carries completions of asynchronous host work back to the VM's
 	// goroutine, which is the only one allowed to settle a promise.
@@ -182,7 +185,7 @@ func newVM(limits Limits) (*vm, error) {
 	rt.SetMaxCallStackSize(limits.MaxCallDepth)
 	hostCtx, stopHost := context.WithCancel(context.Background())
 	v := &vm{
-		rt: rt, limits: limits, this: rt.NewObject(),
+		rt: rt, limits: limits,
 		jobs: make(chan func() error, 64), hostCtx: hostCtx, stopHost: stopHost,
 		done: make(chan struct{}), wake: make(chan struct{}),
 	}
@@ -197,7 +200,9 @@ func newVM(limits Limits) (*vm, error) {
 		return nil, fmt.Errorf("installing the runtime helpers: %w", err)
 	}
 	helperObject := helpers.ToObject(rt)
-	for name, target := range map[string]*goja.Callable{"normalise": &v.normalise, "stringify": &v.stringify, "describe": &v.describe} {
+	for name, target := range map[string]*goja.Callable{
+		"normalise": &v.normalise, "stringify": &v.stringify, "describe": &v.describe, "install": &v.installRoots,
+	} {
 		if *target, err = callable(helperObject.Get(name)); err != nil {
 			return nil, err
 		}
@@ -280,32 +285,47 @@ func (v *vm) parse(text string) (parsed value, err error) {
 	return parsed, err
 }
 
-// element reads parent[key] from an object this package built, never one
-// the script can have given accessors to.
-func (v *vm) element(parent value, key string) value {
-	return value{parent.v.ToObject(v.rt).Get(key)}
-}
-
-func (v *vm) index(parent value, position int) value {
-	return v.element(parent, strconv.Itoa(position))
-}
-
-// arguments lines up the roots in the order the wrapper declares them for
-// mode. A root with no value is undefined.
-func (v *vm) arguments(mode Mode, fields map[string]any) []goja.Value {
-	names := modeRoots[mode.orDefault()]
-	arguments := make([]goja.Value, len(names))
-	for index, name := range names {
-		switch field := fields[name].(type) {
-		case nil:
-			arguments[index] = goja.Undefined()
-		case value:
-			arguments[index] = field.v
-		default:
-			arguments[index] = v.rt.ToValue(field)
+// install builds the Code node's roots over the parsed input. It runs
+// trusted code only, before any user code, and is not charged. The host
+// callbacks are handed to the runtime's closure, not set as globals, so a
+// script can reach them only through the roots that use them.
+func (v *vm) install(state string, input value, mode Mode, h host) error {
+	return guard(func() error {
+		snapshot, err := v.jsonParse(goja.Undefined(), v.rt.ToValue(state))
+		if err != nil {
+			return v.fail(err)
 		}
-	}
-	return arguments
+		callbacks := v.rt.NewObject()
+		for name, function := range map[string]func(goja.FunctionCall) goja.Value{
+			"node": func(call goja.FunctionCall) goja.Value {
+				text, ok := h.node(call.Argument(0).String())
+				if !ok {
+					return goja.Null()
+				}
+				return v.rt.ToValue(text)
+			},
+			"pair": func(call goja.FunctionCall) goja.Value {
+				index, reason := h.pair(call.Argument(0).String(), int(call.Argument(1).ToInteger()))
+				if index < 0 {
+					return v.rt.ToValue(reason)
+				}
+				return v.rt.ToValue(index)
+			},
+			"console": func(call goja.FunctionCall) goja.Value {
+				return v.rt.ToValue(h.console(call.Argument(0).String(), call.Argument(1).String()))
+			},
+		} {
+			if err := callbacks.Set(name, function); err != nil {
+				return err
+			}
+		}
+		api, err := v.installRoots(goja.Undefined(), snapshot, input.v, v.rt.ToValue(mode.orDefault() == ModeEachItem), callbacks)
+		if err != nil {
+			return v.fail(err)
+		}
+		v.run, err = callable(api.ToObject(v.rt).Get("run"))
+		return err
+	})
 }
 
 // guard runs one entry into the VM, turning a panic into an error. goja
@@ -321,16 +341,13 @@ func guard(entry func() error) (err error) {
 	return entry()
 }
 
-// invoke is one charged call: it runs the user's code, waits for it, and
-// turns the result into JSON. Everything in it can run user code, which is
-// why the caller's clock is running around all of it.
-func (v *vm) invoke(ctx context.Context, function value, mode Mode, roots map[string]any, maxOutput int64) (text string, err error) {
+// invoke is one charged call: it runs the user's code for one item (or all
+// of them), waits for it, and turns the result into JSON. Everything in it
+// can run user code, which is why the caller's clock is running around all
+// of it.
+func (v *vm) invoke(ctx context.Context, function value, mode Mode, index, count int, maxOutput int64) (text string, err error) {
 	err = guard(func() error {
-		call, err := callable(function.v)
-		if err != nil {
-			return err
-		}
-		returned, err := call(v.this, v.arguments(mode, roots)...)
+		returned, err := v.run(goja.Undefined(), function.v, v.rt.ToValue(index))
 		if err != nil {
 			return v.fail(err)
 		}
@@ -338,7 +355,8 @@ func (v *vm) invoke(ctx context.Context, function value, mode Mode, roots map[st
 		if err != nil {
 			return err
 		}
-		items, err := v.normalise(goja.Undefined(), settled, v.rt.ToValue(mode.orDefault() == ModeEachItem))
+		eachItem := mode.orDefault() == ModeEachItem
+		items, err := v.normalise(goja.Undefined(), settled, v.rt.ToValue(eachItem), v.rt.ToValue(index), v.rt.ToValue(count))
 		if err != nil {
 			return v.fail(err)
 		}
@@ -401,7 +419,7 @@ func (v *vm) bindAsync(name string, fn func(context.Context, []any) (any, error)
 		promise, resolve, reject := v.rt.NewPromise()
 		v.pending++
 		go func() {
-			result, err := fn(v.hostCtx, arguments)
+			result, err := hostCall(v.hostCtx, fn, arguments)
 			job := func() error {
 				if err != nil {
 					return reject(v.rt.NewGoError(err))
@@ -419,6 +437,19 @@ func (v *vm) bindAsync(name string, fn func(context.Context, []any) (any, error)
 		}()
 		return v.rt.ToValue(promise)
 	})
+}
+
+// hostCall runs one asynchronous host function on its own goroutine. A panic
+// there is outside every guard on the VM's goroutine and would end the
+// process, so it is turned into the call's error, which rejects the promise
+// the script is waiting on.
+func hostCall(ctx context.Context, fn func(context.Context, []any) (any, error), arguments []any) (result any, err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			result, err = nil, fmt.Errorf("the host call failed (%v); this is a fault in the server, not in the code", recovered)
+		}
+	}()
+	return fn(ctx, arguments)
 }
 
 // countHostCall charges one host call, and stops the script when the budget

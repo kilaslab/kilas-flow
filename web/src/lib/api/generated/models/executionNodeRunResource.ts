@@ -8,6 +8,8 @@
 
 export interface ExecutionNodeRunResource {
   attempt: number;
+  /** What a Code node's code printed: {lines: [{level, text, at}], truncated}. level is log, info, warn, error or debug; truncated is true when output past the node's console limit was dropped. Absent when the node printed nothing. */
+  console?: unknown;
   error?: unknown;
   finishedAt?: string;
   input?: unknown;

@@ -104,6 +104,23 @@ func (limits Limits) tighten(requested Limits) Limits {
 	return limits
 }
 
+// Per-call bounds on the built-ins that allocate or loop as far as a number
+// tells them to. goja cannot interrupt one built-in call, so without these a
+// single line such as `new Uint8Array(2**30)` or `[...Array(2**26).keys()]`
+// could take the server's memory, or a core, long past any limit. Each is far
+// beyond what a Code node's items need: the node's own input is capped at 32
+// MiB.
+const (
+	// MaxElementsPerCall bounds the length an array method, Array.from or an
+	// argument list may walk.
+	MaxElementsPerCall = 1 << 23
+	// MaxCharactersPerCall bounds the string repeat, padStart and padEnd may
+	// build.
+	MaxCharactersPerCall = 1 << 25
+	// MaxBytesPerCall bounds the size of a typed array or ArrayBuffer.
+	MaxBytesPerCall = 1 << 26
+)
+
 // DefaultHeapCeiling is the live-heap size at which the watchdog stops every
 // running script, when the deployment names none. The server computes a
 // better one from GOMEMLIMIT when that is set.
@@ -127,13 +144,23 @@ type Task struct {
 	Source string
 	Mode   Mode
 	Items  []workflow.Item
+	// Roots are the rest of what the code's globals read.
+	Roots Roots
 	// Limits tightens the runner's ceiling for this task; zero fields keep it.
 	Limits Limits
 }
 
 // Result is what one run produced.
 type Result struct {
+	// Items are the returned items. An item that descends from an input item
+	// carries that item's origin in Paired; one with no known source leaves
+	// Paired nil for the runner to infer.
 	Items []workflow.Item
+	// Console is what the code printed, up to the console limit, and
+	// ConsoleTruncated reports that more was dropped. Both are set when the
+	// run fails too.
+	Console          []ConsoleLine
+	ConsoleTruncated bool
 	// UserTime is the time charged to the user's program, which is what the
 	// time limit is measured against.
 	UserTime time.Duration

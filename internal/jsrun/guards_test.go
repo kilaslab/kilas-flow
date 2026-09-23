@@ -1,0 +1,118 @@
+package jsrun_test
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/kilaslab/kilas-flow/internal/jsrun"
+)
+
+// goja folds a chain of constant ||, && and ?? at compile time, re-evaluating
+// the left side at every level. 40 levels would hold a core for hours, off the
+// clock and at save time, and they fit in 147 bytes.
+func TestAConstantChainThatFoldsExponentiallyIsRefused(t *testing.T) {
+	for _, operator := range []string{"||0", "&&1", "??0"} {
+		source := "return [{ json: { x: 0" + strings.Repeat(operator, 40) + " } }]"
+		start := time.Now()
+		_, err := jsrun.Analyze(source, jsrun.ModeAllItems)
+		if !errors.Is(err, jsrun.ErrUnsupported) || !strings.Contains(err.Error(), "constant expression nested more than") {
+			t.Errorf("%q chain: Analyze() error = %v, want it refused", operator, err)
+		}
+		if elapsed := time.Since(start); elapsed > time.Second {
+			t.Errorf("%q chain: refusing took %v", operator, elapsed)
+		}
+	}
+	// A chain over a variable folds nothing, and real code writes long ones.
+	accepted(t, "const x = $input.first().json.kind\nreturn [{ json: { match: x === 'a' || x === 'b' || x === 'c' || x === 'd' || x === 'e' || x === 'f' || x === 'g' || x === 'h' || x === 'i' || x === 'j' || x === 'k' || x === 'l' || x === 'm' || x === 'n' || x === 'o' || x === 'p' || x === 'q' || x === 'r' } }]")
+	accepted(t, "return [{ json: { week: 1000 * 60 * 60 * 24 * 7 } }]")
+}
+
+// A host function runs on its own goroutine, outside every guard on the VM's.
+// A panic there must reject the call, not end the server.
+func TestAPanickingHostCallFailsTheRunNotTheServer(t *testing.T) {
+	runner := newRunner()
+	runner.BindAsyncForTest("fragile", func(context.Context, []any) (any, error) {
+		panic("a bug in a capability")
+	})
+	_, err := runner.Run(context.Background(), jsrun.Task{Source: "await fragile()\nreturn []"})
+	if err == nil || !strings.Contains(err.Error(), "the host call failed (a bug in a capability)") {
+		t.Fatalf("Run() error = %v, want the panic turned into a failed call", err)
+	}
+	result, err := runner.Run(context.Background(), jsrun.Task{Source: "try { await fragile() } catch (error) { return [{ json: { caught: error.message.includes('host call failed') } }] }"})
+	if err != nil || result.Items[0].JSON["caught"] != true {
+		t.Fatalf("Run() = %#v, %v; want the code able to catch it", result.Items, err)
+	}
+}
+
+// A single built-in call runs to completion whatever the clock or the
+// watchdog say, so the ones that allocate or loop as far as a number tells
+// them refuse a huge number up front. Each of these took seconds and
+// gigabytes before.
+func TestBuiltinsThatAllocateFromANumberAreBounded(t *testing.T) {
+	for _, source := range []string{
+		"return [{ json: { n: [...Array(2**26).keys()].length } }]",
+		"return [{ json: { n: Array.from({ length: 2**26 }).length } }]",
+		"return [{ json: { n: new Array(2**26).fill(0).length } }]",
+		"return [{ json: { n: Array(2**28).join('x').length } }]",
+		"return [{ json: { n: Array.prototype.indexOf.call({ length: 2**50 }, 1) } }]",
+		"return [{ json: { n: Math.max.apply(null, { length: 2**30 }) } }]",
+		"return [{ json: { n: new Uint8Array(2**30).length } }]",
+		"return [{ json: { n: new ArrayBuffer(2**30).byteLength } }]",
+		"return [{ json: { n: new Float64Array({ length: 2**28 }).length } }]",
+		"return [{ json: { n: 'x'.repeat(2**28).length } }]",
+		"return [{ json: { n: ''.padStart(2**28).length } }]",
+	} {
+		start := time.Now()
+		_, err := runAll(t, newRunner(), source, nil)
+		if err == nil || !strings.Contains(err.Error(), "RangeError") || !strings.Contains(err.Error(), "one call may handle here") {
+			t.Errorf("%q: Run() error = %v, want a RangeError naming the bound", source, err)
+		}
+		if elapsed := time.Since(start); elapsed > 2*time.Second {
+			t.Errorf("%q: refusing took %v", source, elapsed)
+		}
+	}
+}
+
+// Stringifying a deeply nested array recursed natively with a quadratic cycle
+// check: 500,000 levels ran 80 seconds past a 10 second limit. The array
+// methods are the code's own calls now, so the depth counts against the
+// call-depth limit instead.
+func TestDeeplyNestedArraysCannotHoldTheCPU(t *testing.T) {
+	start := time.Now()
+	_, err := runAll(t, newRunner(), "let nested = []\nfor (let i = 0; i < 5e5; i++) nested = [nested]\nreturn [{ json: { text: String(nested) } }]", nil)
+	if !errors.Is(err, jsrun.ErrCallDepth) {
+		t.Fatalf("Run() error = %v, want the call-depth limit", err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("the run took %v", elapsed)
+	}
+}
+
+func TestOrdinaryArrayAndStringWorkIsUnaffected(t *testing.T) {
+	result := mustRun(t, newRunner(), jsrun.Task{Source: strings.Join([]string{
+		"const list = [3, 1, 2]",
+		"const sorted = [...list].sort((a, b) => a - b)",
+		"const doubled = list.map(n => n * 2).filter(n => n > 2)",
+		"const bytes = new Uint8Array([1, 2, 3])",
+		"const buffer = new ArrayBuffer(8)",
+		"const from = Array.from(new Set([1, 1, 2]))",
+		"return [{ json: {",
+		"  sorted: sorted.join(','), doubled, from, total: list.reduce((a, b) => a + b, 0),",
+		"  padded: '7'.padStart(3, '0'), repeated: 'ab'.repeat(3), max: Math.max.apply(null, list),",
+		"  bytes: bytes.length, buffer: buffer.byteLength, typed: bytes instanceof Uint8Array, isArray: Array.isArray(list),",
+		"  name: Array.prototype.map.name, spread: [...'héllo'].length, text: String([1, [2, 3]]),",
+		"} }]",
+	}, "\n")})
+	got := result.Items[0].JSON
+	for key, want := range map[string]any{
+		"sorted": "1,2,3", "total": float64(6), "padded": "007", "repeated": "ababab", "max": float64(3),
+		"bytes": float64(3), "buffer": float64(8), "typed": true, "isArray": true, "name": "map", "spread": float64(5), "text": "1,2,3",
+	} {
+		if got[key] != want {
+			t.Errorf("%s = %#v, want %#v", key, got[key], want)
+		}
+	}
+}

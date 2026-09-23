@@ -24,6 +24,7 @@ sidebar:
 | `execution.waiting` | no | The run suspended at a Wait and is parked until it resumes. |
 | `workflow.saved` | no | The workflow document changed under a running execution. |
 | `webhook.response` | no | A Respond to Webhook node answered the caller. |
+| `code.console` | no | A Code node's code printed. `data.lines` carries each line's `level` (log, info, warn, error or debug), `text` and `at`; `data.truncated` is true when output past the node's console limit was dropped. The same lines are kept on the node run as `console`. |
 | `ai.model.started` | no | An AI node sent one request to its model. `data` names the model and the tool-loop iteration. |
 | `ai.model.delta` | no | Streamed model output. `data.delta` is the next chunk of text, coalesced to about four updates per second. |
 | `ai.model.completed` | no | One model request finished. `data.usage` carries token counts when the provider reports them. |

@@ -27,6 +27,7 @@ func TestEveryPublishedEventNameIsRegistered(t *testing.T) {
 		events.NodeFailed,
 		events.WorkflowSaved,
 		events.Type(engine.ResponseEventName),
+		events.Type(engine.ConsoleEventName),
 		events.Type(ai.EventModelStarted),
 		events.Type(ai.EventModelDelta),
 		events.Type(ai.EventModelCompleted),

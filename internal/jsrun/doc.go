@@ -42,9 +42,31 @@
 // # Memory
 //
 // goja keeps JavaScript objects on the Go heap and has no per-VM accounting,
-// so memory is bounded in layers: the input and output are capped, the number
-// of concurrent scripts is capped, and a process-wide watchdog stops every
-// running script with ErrMemoryLimit once the live heap passes a ceiling. The
-// scripts fail and the server survives. The worst case is the ceiling plus one
-// allocation made by a single built-in, which the watchdog cannot interrupt.
+// so memory is bounded in layers:
+//
+//   - the input and output are capped, and so is the number of scripts
+//     running at once;
+//   - a process-wide watchdog stops every running script with ErrMemoryLimit
+//     once the live heap passes a ceiling, and the server survives;
+//   - built-ins that allocate or loop as far as a number tells them refuse a
+//     huge one up front: the array methods, Array.from, argument lists, typed
+//     arrays, repeat and padding (MaxElementsPerCall and its siblings).
+//
+// goja cannot interrupt one built-in call, and the watchdog can only
+// interrupt, so between samples one call can still grow the heap. The worst
+// case is the ceiling plus, for each script running at once, one call's
+// growth. The per-call bounds keep that to around a hundred MiB for the
+// built-ins that allocate from a number. A built-in that works over data the
+// script already holds, such as split or JSON.stringify, grows it by a small
+// factor of what the ceiling already allowed. Deployments should set
+// GOMEMLIMIT and a container memory limit with that multiplier in mind.
+//
+// # Source
+//
+// goja's parser and compiler recurse on nesting and fold constants with no
+// limits of their own, and a Go stack overflow is fatal to the whole process.
+// A body is therefore bounded before goja sees it: its length, its arrow
+// functions, the depth of its tree and of its constant expressions (see
+// MaxSourceBytes). Parsing and compiling, which cannot be interrupted, run at
+// most GOMAXPROCS at a time.
 package jsrun

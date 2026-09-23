@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"testing"
 	"time"
+
+	"github.com/kilaslab/kilas-flow/migrations"
 )
 
 // The actor columns are new, so the rows that predate them have no value in
@@ -37,12 +39,27 @@ func assertActorBackfill(t *testing.T, db *DB) {
 
 	// Roll the actor migration back so the rows keep their legacy labels and
 	// lose only the columns being tested. Anything newer has to come off first
-	// because Rollback reverts the newest applied version.
-	if err := Rollback(db, discardLogger()); err != nil {
-		t.Fatalf("Rollback poll_cursors: %v", err)
+	// because Rollback reverts the newest applied version, so this rolls back
+	// by name rather than by count: a later migration must not quietly leave
+	// the actor columns in place.
+	actor := versionNamed(t, db.Dialector.Name(), "workflow_actor")
+	all, err := loadMigrations(migrations.FS, db.Dialector.Name())
+	if err != nil {
+		t.Fatalf("loadMigrations: %v", err)
 	}
-	if err := Rollback(db, discardLogger()); err != nil {
-		t.Fatalf("Rollback workflow_actor: %v", err)
+	// Bounded by the number of migrations, so a Rollback that stops making
+	// progress fails here instead of hanging the suite.
+	for range all {
+		applied, err := appliedVersions(db)
+		if err != nil {
+			t.Fatalf("appliedVersions: %v", err)
+		}
+		if highestVersion(applied) < actor {
+			break
+		}
+		if err := Rollback(db, discardLogger()); err != nil {
+			t.Fatalf("Rollback down to workflow_actor: %v", err)
+		}
 	}
 	for _, column := range []string{"actor_kind", "actor_label", "actor_key_id", "actor_meta"} {
 		if db.Migrator().HasColumn("workflow_versions", column) {

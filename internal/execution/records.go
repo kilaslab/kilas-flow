@@ -108,6 +108,13 @@ type NodeRun struct {
 	// and without this column a split api+worker deployment answered a
 	// responseNode webhook with an empty 200 (BUG-cq4yk3).
 	Response json.RawMessage `json:"response,omitempty"`
+	// Console is what the node's code printed — a Code node's console lines,
+	// with a flag for output past its console limit that was dropped.
+	//
+	// It is persisted with the trace row for the same reason Response is: the
+	// live event reaches only this process's subscribers, and an execution
+	// read later, or from another process, still has to show it.
+	Console json.RawMessage `json:"console,omitempty"`
 	// LeaseOwner fences trace writes to the worker claim that produced them.
 	LeaseOwner string `json:"-"`
 }

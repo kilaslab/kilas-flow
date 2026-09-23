@@ -510,3 +510,16 @@ func BenchmarkAllItems10(b *testing.B)   { benchmarkRun(b, jsrun.ModeAllItems, 1
 func BenchmarkAllItems1000(b *testing.B) { benchmarkRun(b, jsrun.ModeAllItems, 1000) }
 func BenchmarkEachItem10(b *testing.B)   { benchmarkRun(b, jsrun.ModeEachItem, 10) }
 func BenchmarkEachItem1000(b *testing.B) { benchmarkRun(b, jsrun.ModeEachItem, 1000) }
+
+// The early stop in stringify counts a lower bound, so output that fits is
+// never refused because its size was overestimated: 3,000 small items come
+// to about 90 KB of JSON, under a 100 KB limit.
+func TestOutputUnderTheCapIsNeverRefusedByTheEstimate(t *testing.T) {
+	result, err := newRunner().Run(context.Background(), jsrun.Task{
+		Source: "return Array.from({ length: 3000 }, () => ({ json: { a: 1, b: 2, c: 3 } }))",
+		Limits: jsrun.Limits{MaxOutputBytes: 100_000},
+	})
+	if err != nil || len(result.Items) != 3000 {
+		t.Fatalf("Run() = %d items, %v; want all 3000 under the limit", len(result.Items), err)
+	}
+}

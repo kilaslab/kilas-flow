@@ -5,8 +5,16 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"runtime"
 	"sync"
 )
+
+// compileSlots bounds how many bodies are parsed and compiled at once across
+// the process. Neither can be interrupted, and both run for the importer and
+// for validation as well as for a run, so without a bound a burst of hostile
+// bodies could hold every core; with it, they hold at most as many as the
+// scripts themselves may.
+var compileSlots = make(chan struct{}, runtime.GOMAXPROCS(0))
 
 // prepared is a body ready to run: analysed, and compiled when it can run.
 type prepared struct {
@@ -58,6 +66,11 @@ func (cache *programCache) prepare(source string, mode Mode) (*prepared, error) 
 	if hit := cache.get(key); hit != nil {
 		return hit, nil
 	}
+	if err := checkSourceSize(source); err != nil {
+		return nil, err
+	}
+	compileSlots <- struct{}{}
+	defer func() { <-compileSlots }()
 	w := wrap(source, mode)
 	parsed, err := parseWrapped(w)
 	if err != nil {

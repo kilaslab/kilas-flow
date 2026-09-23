@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/kilaslab/kilas-flow/internal/jsrun"
 )
@@ -141,3 +142,29 @@ func TestNonASCIICodeIsNotMistakenForAnEscape(t *testing.T) {
 }
 
 func jsTask(source string) jsrun.Task { return jsrun.Task{Source: source} }
+
+// goja's parser and compiler recurse on nesting with no limit of their own,
+// and a Go stack overflow cannot be recovered, so a body built to nest deeply
+// would take the server down at save time. Some nesting is also quadratic to
+// parse or compile. Such bodies are refused before goja does anything costly.
+func TestOversizedOrDeeplyNestedCodeIsRefusedBeforeItCanHurtTheServer(t *testing.T) {
+	for name, check := range map[string]struct {
+		source, subject string
+	}{
+		"too long":    {strings.Repeat("x = 1\n", jsrun.MaxSourceBytes/6+1), "is longer than 128 KiB"},
+		"arrow chain": {"return " + strings.Repeat("a=>", 1001) + "1", "has more than 1000 arrow functions"},
+		// Parentheses leave no trace in the tree, so their depth is bounded by
+		// the length cap instead; a nested literal keeps its depth.
+		"array nesting": {"return " + strings.Repeat("[", 5000) + strings.Repeat("]", 5000), "nests more than 1000 levels deep"},
+		"block nesting": {strings.Repeat("{", 20000) + strings.Repeat("}", 20000) + "\nreturn []", "nests more than 1000 levels deep"},
+	} {
+		start := time.Now()
+		_, err := analyze(t, check.source)
+		if !errors.Is(err, jsrun.ErrUnsupported) || !strings.Contains(err.Error(), check.subject) {
+			t.Errorf("%s: Analyze() error = %v, want it refused because it %s", name, err, check.subject)
+		}
+		if elapsed := time.Since(start); elapsed > time.Second {
+			t.Errorf("%s: refusing took %v; it must happen before the costly work", name, elapsed)
+		}
+	}
+}

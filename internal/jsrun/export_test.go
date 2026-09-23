@@ -5,7 +5,19 @@ import (
 	"time"
 
 	"github.com/dlclark/regexp2/v2"
+	"github.com/dop251/goja"
 )
+
+// BareGlobalsForTest lists the globals of an untouched goja VM, so a test can
+// name exactly what the runtime adds.
+func BareGlobalsForTest() []string {
+	names, _ := goja.New().RunString("Object.getOwnPropertyNames(globalThis)")
+	var out []string
+	for _, name := range names.Export().([]any) {
+		out = append(out, name.(string))
+	}
+	return out
+}
 
 // BindAsyncForTest installs an asynchronous host function in every VM the
 // runner creates, the way a node hands the runtime a capability.
