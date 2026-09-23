@@ -12,6 +12,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
+	"github.com/kilaslab/kilas-flow/internal/credentials"
 	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
 
@@ -94,6 +95,9 @@ type GORMWorkflowStore struct {
 	// retention bounds how much history survives. The zero value keeps
 	// everything, which is what an installation that never configured this gets.
 	retention RetentionPolicy
+	// lifecycleCipher seals what a trigger's registration captured. Nil keeps
+	// nothing, since a captured value may be a secret.
+	lifecycleCipher *credentials.Cipher
 }
 
 var _ WorkflowRepository = (*GORMWorkflowStore)(nil)

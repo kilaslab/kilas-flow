@@ -3,9 +3,13 @@ package webhook_test
 import (
 	"context"
 	"errors"
+	"net/url"
+	"reflect"
 	"strings"
+	"sync"
 	"testing"
 
+	"github.com/kilaslab/kilas-flow/internal/engine"
 	"github.com/kilaslab/kilas-flow/internal/node"
 	"github.com/kilaslab/kilas-flow/internal/repository"
 	"github.com/kilaslab/kilas-flow/internal/safehttp"
@@ -137,6 +141,116 @@ func TestATeardownFailureDoesNotBlockDeactivation(t *testing.T) {
 	coordinator(t, hook, bindings).Deactivated(context.Background(), "tenant-a", "wf_1", declared)
 	if hook.deletes != 1 {
 		t.Errorf("Delete ran %d times, want once", hook.deletes)
+	}
+}
+
+// routeStates stands in for the route store's lifecycle state, kept by tenant
+// and route.
+type routeStates struct {
+	mu     sync.Mutex
+	values map[string]map[string]string
+}
+
+func (states *routeStates) LifecycleState(_ context.Context, tenant repository.TenantScope, route string) (map[string]string, error) {
+	states.mu.Lock()
+	defer states.mu.Unlock()
+	return states.values[tenant.ID+"/"+route], nil
+}
+
+func (states *routeStates) SaveLifecycleState(_ context.Context, tenant repository.TenantScope, route string, values map[string]string) error {
+	states.mu.Lock()
+	defer states.mu.Unlock()
+	if states.values == nil {
+		states.values = map[string]map[string]string{}
+	}
+	states.values[tenant.ID+"/"+route] = values
+	return nil
+}
+
+func (states *routeStates) ClearLifecycleState(_ context.Context, tenant repository.TenantScope, route string) error {
+	states.mu.Lock()
+	defer states.mu.Unlock()
+	delete(states.values, tenant.ID+"/"+route)
+	return nil
+}
+
+func (states *routeStates) of(tenantID, route string) map[string]string {
+	states.mu.Lock()
+	defer states.mu.Unlock()
+	return states.values[tenantID+"/"+route]
+}
+
+// capturingCoordinator runs one lifecycle against the descriptor stub, keeping
+// its state in states.
+func capturingCoordinator(t *testing.T, hook webhook.TriggerLifecycle, stubURL string, states *routeStates) *webhook.Coordinator {
+	t.Helper()
+	registry := webhook.NewLifecycleRegistry()
+	if err := registry.Register("test.lifecycle", hook); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	endpoint, err := url.Parse(stubURL)
+	if err != nil {
+		t.Fatalf("parse stub URL error = %v", err)
+	}
+	policy := safehttp.DefaultPolicy()
+	policy.AllowedPrivateEndpoints = []string{endpoint.Host}
+	bindings := []repository.WebhookBinding{{
+		NodeID: "trigger", NodeType: "pack.stubTrigger", Route: "abc123",
+		Parameters: map[string]any{"$credentials": map[string]any{"wahaApi": "cred-1"}},
+	}}
+	return webhook.NewCoordinator(registry, routeReader{bindings: bindings}, policy,
+		func(string) engine.CredentialResolver { return listCredential{baseURL: stubURL, apiKey: "k-stub"} },
+		"https://flows.example.test", nil).WithState(states)
+}
+
+// TestCapturedValuesOutliveActivationUntilTheirRegistrationIsRemoved: the
+// subscription a registration made is still there after a deactivation that
+// could not remove it, so the check on the next activation finds it by the id
+// that was kept, rather than registering a second one. A remove that succeeds
+// takes the id with it, and the activation after that registers anew.
+func TestCapturedValuesOutliveActivationUntilTheirRegistrationIsRemoved(t *testing.T) {
+	stub, server := newDescriptorStub(t)
+	stub.answerWith(`{"data": {"id": "sub-1"}}`)
+	states := &routeStates{}
+	declared := map[string]string{"pack.stubTrigger": "test.lifecycle"}
+	ctx := context.Background()
+	full := subscriptionLifecycle(map[string]string{"id": "data.id"})
+	keepOnly := full
+	keepOnly.Remove = nil
+
+	unremovable := capturingCoordinator(t, keepOnly, server.URL, states)
+	if _, err := unremovable.Activated(ctx, "tenant-a", "wf_1", declared); err != nil {
+		t.Fatalf("Activated() error = %v", err)
+	}
+	unremovable.Deactivated(ctx, "tenant-a", "wf_1", declared)
+	if got := states.of("tenant-a", "abc123"); !reflect.DeepEqual(got, map[string]string{"id": "sub-1"}) {
+		t.Fatalf("state after deactivation = %#v, want the subscription id kept on the route", got)
+	}
+	if _, err := unremovable.Activated(ctx, "tenant-a", "wf_1", declared); err != nil {
+		t.Fatalf("second Activated() error = %v", err)
+	}
+
+	removable := capturingCoordinator(t, full, server.URL, states)
+	removable.Deactivated(ctx, "tenant-a", "wf_1", declared)
+	if got := states.of("tenant-a", "abc123"); got != nil {
+		t.Fatalf("state after removal = %#v, want nothing", got)
+	}
+	if _, err := removable.Activated(ctx, "tenant-a", "wf_1", declared); err != nil {
+		t.Fatalf("third Activated() error = %v", err)
+	}
+
+	var sent []string
+	for _, call := range stub.recorded() {
+		sent = append(sent, call.method+" "+call.target)
+	}
+	want := []string{
+		"POST /api/subscriptions",
+		"GET /api/subscriptions/sub-1",
+		"DELETE /api/subscriptions/sub-1",
+		"POST /api/subscriptions",
+	}
+	if !reflect.DeepEqual(sent, want) {
+		t.Fatalf("requests = %q, want %q", sent, want)
 	}
 }
 

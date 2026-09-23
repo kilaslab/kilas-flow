@@ -439,10 +439,12 @@ type descriptorCall struct {
 }
 
 // descriptorStub is a service a descriptor lifecycle registers with. It
-// answers every request with an empty object and records what it was sent.
+// answers every request with the same body — an empty object unless a test
+// chose another — and records what it was sent.
 type descriptorStub struct {
-	mu    sync.Mutex
-	calls []descriptorCall
+	mu     sync.Mutex
+	calls  []descriptorCall
+	answer string
 }
 
 func newDescriptorStub(t *testing.T) (*descriptorStub, *httptest.Server) {
@@ -454,13 +456,24 @@ func newDescriptorStub(t *testing.T) (*descriptorStub, *httptest.Server) {
 		stub.calls = append(stub.calls, descriptorCall{
 			method: request.Method, target: request.RequestURI, body: string(raw),
 		})
+		answer := stub.answer
 		stub.mu.Unlock()
 
+		if answer == "" {
+			answer = `{}`
+		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{}`)
+		_, _ = io.WriteString(w, answer)
 	}))
 	t.Cleanup(server.Close)
 	return stub, server
+}
+
+// answerWith is the body the stub answers every later request with.
+func (stub *descriptorStub) answerWith(body string) {
+	stub.mu.Lock()
+	defer stub.mu.Unlock()
+	stub.answer = body
 }
 
 func (stub *descriptorStub) recorded() []descriptorCall {

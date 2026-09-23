@@ -89,6 +89,11 @@ type webhookRouteModel struct {
 	NodeID     string `gorm:"not null;size:64;uniqueIndex:uidx_webhook_routes_node,priority:3"`
 	Route      string `gorm:"not null;size:64;uniqueIndex"`
 	CreatedAt  time.Time
+	// LifecycleState is what the trigger's registration answered with — a
+	// subscription id, a secret the service signs with — sealed with the
+	// credential cipher. It is here rather than on the binding for the same
+	// reason the route is: the registration outlives activation.
+	LifecycleState []byte
 }
 
 func (webhookRouteModel) TableName(namer schema.Namer) string {

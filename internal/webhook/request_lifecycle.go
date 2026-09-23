@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -37,9 +39,18 @@ type RequestDescriptor struct {
 	Body string `json:"body,omitempty"`
 	// CredentialType names the credential whose fields the templates may read.
 	CredentialType string `json:"credentialType,omitempty"`
-	// SuccessJSONPath, when set, must be truthy in the response for a
-	// CheckExists call to report the webhook already registered.
+	// SuccessJSONPath, when set, is a dotted path into the JSON response that
+	// must hold this route's URL for a CheckExists call to report the webhook
+	// already registered.
 	SuccessJSONPath string `json:"successJsonPath,omitempty"`
+	// Capture keeps values from the JSON response, by key: each path is where
+	// the response holds one, dotted, such as `data.id`. It is how a service
+	// that names the subscription it made, or generates the secret it will sign
+	// with, is heard: it says so once, in the answer to the registration. The
+	// values are kept on the route, sealed, and `check` and `remove` templates
+	// read them as {{ .Captured.<key> }}. Only `set` may declare it, and a
+	// response without one of its paths fails the registration.
+	Capture map[string]string `json:"capture,omitempty"`
 }
 
 // RequestLifecycle implements TriggerLifecycle from descriptors alone.
@@ -51,6 +62,44 @@ type RequestLifecycle struct {
 
 var _ TriggerLifecycle = RequestLifecycle{}
 
+// capturedFamily is the field family a kept value is templated under.
+const capturedFamily = "Captured"
+
+// captureKey is what a captured value may be called: a name a placeholder can
+// spell, so every key a pack declares is one its templates can read.
+var captureKey = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
+
+// Validate refuses a lifecycle that declares what it can never do.
+//
+// Only `set` captures. `check` and `remove` are addressed by what `set` kept,
+// and a value they captured would replace the id they were addressed by with
+// whatever they happened to answer. A key has to be one a template can name,
+// and a path has to name something, or the value is kept for nothing.
+func (lifecycle RequestLifecycle) Validate() error {
+	for _, other := range []struct {
+		name       string
+		descriptor *RequestDescriptor
+	}{{"check", lifecycle.Check}, {"remove", lifecycle.Remove}} {
+		if other.descriptor != nil && len(other.descriptor.Capture) > 0 {
+			return fmt.Errorf("lifecycle %s declares capture, which only set may: %s reads what set kept as {{ .Captured.<key> }}",
+				other.name, other.name)
+		}
+	}
+	if lifecycle.Set == nil {
+		return nil
+	}
+	for _, key := range slices.Sorted(maps.Keys(lifecycle.Set.Capture)) {
+		path := lifecycle.Set.Capture[key]
+		if !captureKey.MatchString(key) {
+			return fmt.Errorf("lifecycle set captures a value as %q: a key is letters, digits and underscores, so a template can name it", key)
+		}
+		if strings.TrimSpace(path) == "" || slices.Contains(strings.Split(path, "."), "") {
+			return fmt.Errorf("lifecycle set captures %s from %q, which names no value: a path is dotted keys, such as data.id", key, path)
+		}
+	}
+	return nil
+}
+
 // CheckExists reports whether the remote service already points at this route.
 // With no descriptor it reports false, so Create runs — re-registering an
 // identical webhook is harmless, while skipping registration is not.
@@ -58,18 +107,27 @@ func (lifecycle RequestLifecycle) CheckExists(ctx context.Context, lifecycleCont
 	if lifecycle.Check == nil {
 		return false, nil
 	}
-	body, err := lifecycle.send(ctx, lifecycle.Check, lifecycleContext)
+	captured, err := loadCaptured(ctx, lifecycleContext)
+	if err != nil {
+		return false, err
+	}
+	if needsUncaptured(lifecycle.Check, captured) {
+		// Addressed by a value no registration kept: there is no registration
+		// of this route's to find. It is not registered, so Create runs.
+		return false, nil
+	}
+	body, err := lifecycle.send(ctx, lifecycle.Check, lifecycleContext, captured)
 	if err != nil {
 		return false, err
 	}
 	if lifecycle.Check.SuccessJSONPath == "" {
 		return true, nil
 	}
-	var decoded map[string]any
-	if err := json.Unmarshal(body, &decoded); err != nil {
+	document, err := decodeAnswer(body)
+	if err != nil {
 		return false, nil
 	}
-	value, present := decoded[lifecycle.Check.SuccessJSONPath]
+	value, present := jsonPathValue(document, lifecycle.Check.SuccessJSONPath)
 	if !present {
 		return false, nil
 	}
@@ -79,28 +137,180 @@ func (lifecycle RequestLifecycle) CheckExists(ctx context.Context, lifecycleCont
 	return strings.Contains(fmt.Sprint(value), lifecycleContext.Binding.Route), nil
 }
 
-// Create registers the webhook.
+// Create registers the webhook, and keeps what the answer was asked to yield.
+//
+// A trigger that captures is refused before anything is sent when there is
+// nowhere to keep the values: the registration it would make is one whose id
+// nobody has, which nothing can ever remove.
 func (lifecycle RequestLifecycle) Create(ctx context.Context, lifecycleContext LifecycleContext) error {
 	if lifecycle.Set == nil {
 		return nil
 	}
-	_, err := lifecycle.send(ctx, lifecycle.Set, lifecycleContext)
-	return err
+	capture := lifecycle.Set.Capture
+	if len(capture) > 0 && lifecycleContext.State == nil {
+		return fmt.Errorf("this trigger keeps values from its service's answer, and this server has nowhere to keep them: lifecycle state is sealed with the credential encryption key, which is not configured")
+	}
+	body, err := lifecycle.send(ctx, lifecycle.Set, lifecycleContext, nil)
+	if err != nil {
+		return err
+	}
+	if len(capture) == 0 {
+		return nil
+	}
+	captured, err := captureFrom(body, capture)
+	if err != nil {
+		return err
+	}
+	if err := lifecycleContext.State.Save(ctx, captured); err != nil {
+		return fmt.Errorf("keep the values the service answered with: %w", err)
+	}
+	return nil
 }
 
-// Delete unregisters it.
+// Delete unregisters it, and forgets what its registration kept once it is
+// gone.
 func (lifecycle RequestLifecycle) Delete(ctx context.Context, lifecycleContext LifecycleContext) error {
 	if lifecycle.Remove == nil {
 		return nil
 	}
-	_, err := lifecycle.send(ctx, lifecycle.Remove, lifecycleContext)
-	return err
+	captured, err := loadCaptured(ctx, lifecycleContext)
+	if err != nil {
+		return err
+	}
+	if needsUncaptured(lifecycle.Remove, captured) {
+		// Addressed by a value no registration kept: nothing this server
+		// registered is there to remove.
+		return nil
+	}
+	if _, err := lifecycle.send(ctx, lifecycle.Remove, lifecycleContext, captured); err != nil {
+		// Kept on a failure, so the next deactivation can still address it.
+		return err
+	}
+	if len(captured) == 0 {
+		return nil
+	}
+	// Kept past the removal, they would address the next check at a
+	// registration that no longer exists.
+	return lifecycleContext.State.Clear(ctx)
 }
 
-func (lifecycle RequestLifecycle) send(ctx context.Context, descriptor *RequestDescriptor, lifecycleContext LifecycleContext) ([]byte, error) {
+// loadCaptured reads what this route's registration kept. A context with no
+// state has kept nothing.
+func loadCaptured(ctx context.Context, lifecycleContext LifecycleContext) (map[string]string, error) {
+	if lifecycleContext.State == nil {
+		return nil, nil
+	}
+	captured, err := lifecycleContext.State.Load(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("read what this trigger's registration kept: %w", err)
+	}
+	return captured, nil
+}
+
+// needsUncaptured reports whether a descriptor's templates name a captured
+// value that was not kept.
+//
+// Sent anyway, the placeholder would stay in the request as its own text — a
+// DELETE of a subscription literally named `{{ .Captured.id }}`.
+func needsUncaptured(descriptor *RequestDescriptor, captured map[string]string) bool {
+	templates := append([]string{descriptor.URL, descriptor.Body}, slices.Collect(maps.Values(descriptor.Headers))...)
+	for _, template := range templates {
+		for _, match := range reference.FindAllStringSubmatch(template, -1) {
+			key, isCaptured := strings.CutPrefix(match[1], capturedFamily+".")
+			if _, kept := captured[key]; isCaptured && !kept {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// captureFrom reads each captured value out of a response.
+//
+// All or nothing: an answer missing one is refused whole, because the pack
+// declared it for a reason — a `remove` addressed by an id that was never kept
+// can never run. A value is non-empty text, a number or a boolean. Empty text
+// is missing: an empty id written into `/subscriptions/{{ .Captured.id }}`
+// addresses the whole collection. A number keeps the digits it was sent with,
+// since an id read as a float comes back rounded and names another
+// subscription. The answer itself is never quoted in an error: it may carry
+// the very secret being captured.
+func captureFrom(body []byte, capture map[string]string) (map[string]string, error) {
+	document, decodeErr := decodeAnswer(body)
+	captured := make(map[string]string, len(capture))
+	for _, key := range slices.Sorted(maps.Keys(capture)) {
+		path := capture[key]
+		if decodeErr != nil {
+			return nil, fmt.Errorf("the service did not answer with JSON, so there is no %s to keep as %s", path, key)
+		}
+		value, present := jsonPathValue(document, path)
+		text, scalar := scalarText(value)
+		switch {
+		case !present || value == nil || (scalar && strings.TrimSpace(text) == ""):
+			return nil, fmt.Errorf("the service's answer has no %s to keep as %s", path, key)
+		case !scalar:
+			return nil, fmt.Errorf("the service's answer holds an object or a list at %s, not a value to keep as %s", path, key)
+		}
+		captured[key] = text
+	}
+	return captured, nil
+}
+
+// decodeAnswer decodes a JSON response, keeping every number as its text.
+func decodeAnswer(body []byte) (any, error) {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.UseNumber()
+	var document any
+	if err := decoder.Decode(&document); err != nil {
+		return nil, err
+	}
+	return document, nil
+}
+
+// jsonPathValue walks a dotted path through a response's objects.
+//
+// The one reader for both paths a descriptor declares, the success path a
+// check reads and each value a set captures, so the two cannot disagree about
+// what `data.id` names.
+func jsonPathValue(document any, path string) (any, bool) {
+	current := document
+	for _, segment := range strings.Split(path, ".") {
+		object, isObject := current.(map[string]any)
+		if !isObject {
+			return nil, false
+		}
+		value, present := object[segment]
+		if !present {
+			return nil, false
+		}
+		current = value
+	}
+	return current, true
+}
+
+// scalarText is a captured value as the text a template writes.
+func scalarText(value any) (string, bool) {
+	switch typed := value.(type) {
+	case string:
+		return typed, true
+	case json.Number:
+		return typed.String(), true
+	case bool:
+		return strconv.FormatBool(typed), true
+	default:
+		return "", false
+	}
+}
+
+// send renders one descriptor and performs it. The values a registration kept
+// are there as Captured.<key>.
+func (lifecycle RequestLifecycle) send(ctx context.Context, descriptor *RequestDescriptor, lifecycleContext LifecycleContext, captured map[string]string) ([]byte, error) {
 	fields, credential, err := lifecycleFields(ctx, descriptor.CredentialType, lifecycleContext)
 	if err != nil {
 		return nil, err
+	}
+	for key, value := range captured {
+		fields[capturedFamily+"."+key] = value
 	}
 	method := strings.ToUpper(descriptor.Method)
 	if method == "" {
@@ -228,15 +438,17 @@ func call(ctx context.Context, lifecycleContext LifecycleContext, credential eng
 var reference = regexp.MustCompile(`\{\{\s*\.([A-Za-z0-9_.]+)\s*\}\}`)
 
 // dataFamilies are the field families whose values are data rather than
-// addresses: the node's parameters, as text and as JSON. A tenant wrote them,
-// so wherever one lands in a URL it is escaped to stay in its place.
+// addresses: the node's parameters, as text and as JSON, and the values a
+// registration's answer was captured for. A tenant wrote the first and a remote
+// service the second, so wherever one lands in a URL it is escaped to stay in
+// its place.
 //
 // Families rather than one prefix, so that another kind of data is escaped by
 // being listed here, not by every place that writes a URL learning a new
 // prefix. PublicURL, Route and the credential's fields are in no family: they
 // are what the request is built on, and a credential's base URL is an address
 // by design, which escaping would break.
-var dataFamilies = map[string]bool{"Parameter": true, "ParameterJSON": true}
+var dataFamilies = map[string]bool{"Parameter": true, "ParameterJSON": true, capturedFamily: true}
 
 // isData reports whether a field's value is data, by its family: the name
 // before the first dot.
@@ -364,8 +576,10 @@ func substituteBody(template string, fields map[string]string) (string, error) {
 			return jsonText(value), nil
 		case json.Valid([]byte(value)):
 			return value, nil
-		default:
+		case strings.HasPrefix(key, "Parameter."):
 			return "", fmt.Errorf("%s stands outside a string in the body and is not a JSON value: quote it, or use ParameterJSON", key)
+		default:
+			return "", fmt.Errorf("%s stands outside a string in the body and is not a JSON value: quote it", key)
 		}
 	})
 	if err != nil {
