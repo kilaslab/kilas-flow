@@ -11,6 +11,16 @@ import (
 	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
 
+func nodeRuns(result engine.Result, id string) []engine.NodeRun {
+	var runs []engine.NodeRun
+	for _, run := range result.NodeRuns {
+		if run.NodeID == id {
+			runs = append(runs, run)
+		}
+	}
+	return runs
+}
+
 // A whole-batch node that runs its items one at a time and reports which
 // failed is resolved per item when it continues on failure, as n8n resolves
 // its item loop, and stops at the first failure when it does not.
@@ -19,11 +29,14 @@ func TestAWholeBatchNodeReportingItemOutcomesContinuesPastTheFailedItem(t *testi
 		definition := stepType("test.step", "Step")
 		definition.WholeBatch = true
 		catalog := testCatalog(t, startType("test.start", "Start"), definition)
+		// Retry on Fail too: a tolerated item failure is the node's answer,
+		// and never retried.
 		ir := compileDoc(t, catalog, workflow.Document{
 			SchemaVersion: workflow.CurrentSchemaVersion, ID: "wf_outcomes", Name: "Outcomes",
 			Nodes: []workflow.Node{
 				{ID: "start", Name: "Start", Type: "test.start", TypeVersion: workflow.V(1)},
-				{ID: "each", Name: "Each", Type: "test.step", TypeVersion: workflow.V(1), Settings: map[string]any{"onError": onError}},
+				{ID: "each", Name: "Each", Type: "test.step", TypeVersion: workflow.V(1), Settings: map[string]any{
+					"onError": onError, "retryOnFail": true, "maxTries": float64(3), "waitBetweenTries": float64(0)}},
 			},
 			Connections: []workflow.Connection{mainEdge("c1", "start", "main", "each")},
 			Settings:    map[string]any{},
@@ -43,8 +56,9 @@ func TestAWholeBatchNodeReportingItemOutcomesContinuesPastTheFailedItem(t *testi
 		})
 		result, err := engine.NewRunner(executors).Run(context.Background(), ir, engine.Request{Input: workflow.Item{JSON: map[string]any{}}})
 		if onError == "stopWorkflow" {
-			if err == nil || !strings.Contains(err.Error(), "item 1 broke") || fmt.Sprint(tolerated) != "[false]" {
-				t.Errorf("stop: Run() error = %v, tolerated %v; want the first item's failure, untolerated", err, tolerated)
+			// A node that stops on failure retries as any node does.
+			if err == nil || !strings.Contains(err.Error(), "item 1 broke") || fmt.Sprint(tolerated) != "[false false false]" {
+				t.Errorf("stop: Run() error = %v, tolerated %v; want the first item's failure after three untolerated tries", err, tolerated)
 			}
 			continue
 		}
@@ -74,6 +88,9 @@ func TestAWholeBatchNodeReportingItemOutcomesContinuesPastTheFailedItem(t *testi
 			"continueErrorOutput":   "0,2 | error:item 1 broke",
 			"continueRegularOutput": "0,error:item 1 broke,2",
 		}[onError]
+		if rows := len(nodeRuns(result, "each")); rows != 1 {
+			t.Errorf("%s: %d rows for the node, want one", onError, rows)
+		}
 		if got := strings.Join(ports, " | "); got != want || code != "node.partial" || fmt.Sprint(tolerated) != "[true]" {
 			t.Errorf("%s: ports %q (code %q, tolerated %v), want %q, node.partial, one tolerant call", onError, got, code, tolerated, want)
 		}

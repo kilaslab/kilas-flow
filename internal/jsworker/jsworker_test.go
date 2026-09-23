@@ -9,9 +9,11 @@ import (
 	"os/exec"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -300,6 +302,34 @@ func TestAWorkerStuckPastItsDeadlineIsKilledAndReplaced(t *testing.T) {
 	}
 	if starts := pool.starts.Load(); starts != 2 {
 		t.Fatalf("%d workers started, want the killed one replaced", starts)
+	}
+}
+
+// A stop signal reaches the workers as well as the server when it goes to the
+// whole process group, as systemd and a terminal send it. The server drains;
+// a worker must not die under the run it is finishing.
+func TestAWorkerRidesOutAStopSignalMeantForTheServer(t *testing.T) {
+	pool := newTestPool(t, Options{})
+	done := make(chan error, 1)
+	go func() {
+		_, err := pool.Run(context.Background(), jsrun.Task{Source: "await new Promise((resolve) => setTimeout(resolve, 300))\nreturn items"})
+		done <- err
+	}()
+	// The worker is this test's only child; pgrep finds it without reaching
+	// into the pool.
+	time.Sleep(100 * time.Millisecond)
+	children, err := exec.Command("pgrep", "-P", strconv.Itoa(os.Getpid())).Output()
+	if err != nil || len(strings.Fields(string(children))) != 1 {
+		t.Fatalf("pgrep = %q, %v; want the one worker", children, err)
+	}
+	pid, _ := strconv.Atoi(strings.TrimSpace(string(children)))
+	for _, stop := range []syscall.Signal{syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP} {
+		if err := syscall.Kill(pid, stop); err != nil {
+			t.Fatalf("kill -%v error = %v", stop, err)
+		}
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("Run() error = %v, want the run to finish", err)
 	}
 }
 

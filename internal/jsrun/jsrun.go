@@ -122,8 +122,8 @@ const (
 )
 
 // DefaultHeapCeiling is the live-heap size at which the watchdog stops every
-// running script, when the deployment names none. The server computes a
-// better one from GOMEMLIMIT when that is set.
+// running script, when the deployment names none. In the server each worker
+// process has its own (code.javascript_heap_ceiling_mb).
 const DefaultHeapCeiling = 1 << 30
 
 // Options configure a Runner for the whole deployment.

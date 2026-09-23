@@ -1,6 +1,8 @@
-// Package jsrun runs the JavaScript of an n8n Code node inside the server
-// process, on goja, a pure-Go ECMAScript engine. No Node.js process is
-// involved at any point.
+// Package jsrun runs the JavaScript of an n8n Code node on goja, a pure-Go
+// ECMAScript engine. No Node.js process is involved at any point. The server
+// runs it in worker processes (internal/jsworker): it prepares a job here and
+// decodes its result here, and a worker executes it; tests and tools run all
+// three steps in one process with Runner.Run.
 //
 // A body runs as JavaScript or is refused; it is never translated into
 // anything else. What cannot run faithfully is found before it runs, by
@@ -47,7 +49,7 @@
 //   - the input and output are capped, and so is the number of scripts
 //     running at once;
 //   - a process-wide watchdog stops every running script with ErrMemoryLimit
-//     once the live heap passes a ceiling, and the server survives;
+//     once the live heap passes a ceiling, and the process survives;
 //   - built-ins that allocate or loop as far as a number tells them refuse a
 //     huge one up front: the array methods, Array.from, argument lists, typed
 //     arrays, repeat and padding (MaxElementsPerCall and its siblings).
@@ -58,8 +60,9 @@
 // growth. The per-call bounds keep that to around a hundred MiB for the
 // built-ins that allocate from a number. A built-in that works over data the
 // script already holds, such as split or JSON.stringify, grows it by a small
-// factor of what the ceiling already allowed. Deployments should set
-// GOMEMLIMIT and a container memory limit with that multiplier in mind.
+// factor of what the ceiling already allowed. In the server that process is a
+// worker, whose address-space limit and deadline the pool enforces, so what
+// one call can still do costs a worker, not the server.
 //
 // # Source
 //
@@ -67,6 +70,8 @@
 // limits of their own, and a Go stack overflow is fatal to the whole process.
 // A body is therefore bounded before goja sees it: its length, its arrow
 // functions, the depth of its tree and of its constant expressions (see
-// MaxSourceBytes). Parsing and compiling, which cannot be interrupted, run at
-// most GOMAXPROCS at a time.
+// MaxSourceBytes), and the size of the BigInt constants goja would work out.
+// Parsing and compiling, which cannot be interrupted, run at most GOMAXPROCS
+// at a time. Analyze, which the server runs to validate and import a body,
+// parses and inspects it without compiling it.
 package jsrun

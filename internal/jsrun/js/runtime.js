@@ -16,6 +16,7 @@
   var defineProperty = Object.defineProperty;
   var ownKeys = Object.keys;
   var ErrorType = Error;
+  var ReferenceErrorType = ReferenceError;
   var DateType = Date;
   var MapType = Map;
   var SetType = Set;
@@ -152,7 +153,10 @@
 
   function normalise(result, eachItem, index, count) {
     if (eachItem) {
-      if (result === undefined || result === null) {
+      // n8n drops an item whose code returns null: `return $json.ok ? $json :
+      // null` filters. Returning nothing at all is still a mistake.
+      if (result === null) return [];
+      if (result === undefined) {
         throw new InvalidReturn('the code returned ' + kindOf(result) + '; when it runs once for each item it must return one object');
       }
       if (isArray(result)) {
@@ -221,7 +225,9 @@
     if (thrown instanceof InvalidReturn) return { kind: 'invalid', message: String(thrown.message) };
     try {
       if (thrown instanceof ErrorType) {
-        return { kind: 'error', name: String(thrown.name), message: String(thrown.message), stack: String(thrown.stack) };
+        var message = String(thrown.message);
+        if (thrown instanceof ReferenceErrorType) message = withAdvice(thrown, message);
+        return { kind: 'error', name: String(thrown.name), message: message, stack: String(thrown.stack) };
       }
       return { kind: 'value', message: String(thrown) };
     } catch (_) {
@@ -1318,12 +1324,21 @@
   }
 
   // unavailable is a global that fails with its own name when it is read.
+  // otherMode says what to use instead of a root that belongs to the other
+  // mode. The roots are left undefined, as in n8n, so `typeof items` is
+  // 'undefined' in per-item code; only an uncaught "is not defined" for one of
+  // them is told what to use instead.
+  var otherMode = {};
+
   function unavailable(name, message) {
-    defineProperty(global, name, {
-      get: function () { throw new ReferenceError(message); },
-      set: function (value) { define(name, value); },
-      configurable: true, enumerable: false,
-    });
+    otherMode[name] = message;
+  }
+
+  // withAdvice is a thrown ReferenceError for another mode's root, reworded
+  // to say what to use instead.
+  function withAdvice(thrown, message) {
+    var match = /^(\$?\w+) is not defined$/.exec(message);
+    return match !== null && apply(hasOwnProperty, otherMode, [match[1]]) ? otherMode[match[1]] : message;
   }
 
   // install builds the Code node's roots over this execution's input, and
@@ -1341,6 +1356,15 @@
       last: function () { return input[input.length - 1]; },
     };
     defineProperty(inputRoot, 'item', { get: function () { return input[current]; }, enumerable: true });
+    // Both describe the node before this one, which the runner cannot name,
+    // as with $prevNode: its settings, and whether a Loop Over Items node has
+    // items left. They refuse by name rather than read as undefined.
+    ['params', 'context'].forEach(function (name) {
+      defineProperty(inputRoot, name, {
+        get: function () { throw new Error(refusal('uses $input.' + name, snapshot.advice)); },
+        enumerable: false,
+      });
+    });
 
     // Other nodes are fetched from the host when the code first names them,
     // so a body that never reads another node never pays for its data.

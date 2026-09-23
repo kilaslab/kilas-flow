@@ -113,6 +113,8 @@ func TestUnavailableRootsFailWithTheirName(t *testing.T) {
 	for source, subject := range map[string]string{
 		"return [{ json: { value: $jmespath({}, 'a') } }]":                                    "uses $jmespath",
 		"return [{ json: { value: $prevNode.name } }]":                                        "uses $prevNode",
+		"return [{ json: { value: $input.params.operation } }]":                               "uses $input.params",
+		"return [{ json: { value: $input.context.noItemsLeft } }]":                            "uses $input.context",
 		"return [{ json: { value: $execution.customData } }]":                                 "uses $execution.customData",
 		"return [{ json: { value: $secrets.vault } }]":                                        "uses $secrets",
 		"return [{ json: { value: globalThis['$getWorkflow' + 'StaticData']('global') } }]":   "uses $getWorkflowStaticData",
@@ -158,15 +160,30 @@ func TestTheSandboxExposesExactlyTheseGlobals(t *testing.T) {
 		"DateTime", "Duration", "Info", "Interval", "Intl", "Settings", "console", "crypto", "require",
 		"Buffer", "DOMException", "TextDecoder", "TextEncoder", "URL", "URLSearchParams", "atob", "btoa", "queueMicrotask", "structuredClone",
 		"setTimeout", "setInterval", "setImmediate", "clearTimeout", "clearInterval", "clearImmediate"}
-	for mode, own := range map[jsrun.Mode][]string{
-		jsrun.ModeAllItems: {"$itemIndex", "$json"},
-		jsrun.ModeEachItem: {"items"},
-	} {
-		want := append(slices.Clone(shared), own...)
+	// The other mode's roots are not globals at all, as in n8n.
+	for _, mode := range []jsrun.Mode{jsrun.ModeAllItems, jsrun.ModeEachItem} {
+		want := slices.Clone(shared)
 		slices.Sort(want)
 		if got := added(mode); !slices.Equal(got, want) {
 			t.Errorf("%s: the runtime adds %v, want exactly %v", mode, got, want)
 		}
+	}
+}
+
+// A root that belongs to the other mode is undefined, as in n8n, so code
+// written for both modes can ask `typeof`; using one uncaught says what to
+// use instead.
+func TestTheOtherModesRootsAreUndefinedAndSayWhatToUseInstead(t *testing.T) {
+	each := mustRun(t, newRunner(), jsrun.Task{Mode: jsrun.ModeEachItem, Items: numbered(1),
+		Source: "return { json: { items: typeof items, json: typeof $json } }"})
+	all := mustRun(t, newRunner(), jsrun.Task{Items: numbered(1),
+		Source: "return [{ json: { json: typeof $json, index: typeof $itemIndex, items: typeof items } }]"})
+	if got := fmt.Sprint(each.Items[0].JSON, all.Items[0].JSON); got != "map[items:undefined json:object] map[index:undefined items:object json:undefined]" {
+		t.Fatalf("typeof = %s", got)
+	}
+	_, err := runTask(t, jsrun.Task{Mode: jsrun.ModeEachItem, Items: numbered(1), Source: "return { json: { n: items.length } }"})
+	if err == nil || !strings.Contains(err.Error(), "ReferenceError: items is only available when the code runs once for all items; use $input.item or $json") {
+		t.Fatalf("Run() error = %v, want the advice", err)
 	}
 }
 
@@ -190,6 +207,19 @@ func TestPerItemModeRefusesAnArray(t *testing.T) {
 	_, err := runTask(t, jsrun.Task{Source: "return [$json]", Mode: jsrun.ModeEachItem, Items: numbered(2)})
 	if !errors.Is(err, jsrun.ErrInvalidReturn) || !strings.Contains(err.Error(), "must return one object [for item 0]") {
 		t.Fatalf("Run() error = %v, want the list refused for item 0", err)
+	}
+}
+
+// n8n drops an item whose per-item code returns null, which is how a Code
+// node filters; returning nothing at all is still refused.
+func TestReturningNullInPerItemModeDropsTheItem(t *testing.T) {
+	result := mustRun(t, newRunner(), jsrun.Task{Source: "return $itemIndex % 2 ? null : $json", Mode: jsrun.ModeEachItem, Items: numbered(4)})
+	if len(result.Items) != 2 {
+		t.Fatalf("items = %#v, want the two even ones", result.Items)
+	}
+	_, err := runTask(t, jsrun.Task{Source: "if ($itemIndex === 1) return\nreturn $json", Mode: jsrun.ModeEachItem, Items: numbered(2)})
+	if !errors.Is(err, jsrun.ErrInvalidReturn) || !strings.Contains(err.Error(), "[for item 1]") {
+		t.Fatalf("Run() error = %v, want undefined refused for item 1", err)
 	}
 }
 

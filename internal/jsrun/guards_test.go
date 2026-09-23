@@ -48,6 +48,42 @@ func TestAConstantChainThatFoldsExponentiallyIsRefused(t *testing.T) {
 	}
 }
 
+// goja works out constant BigInt arithmetic while compiling, with no limit
+// on the size of the numbers, in setup that nothing interrupts: one line
+// could take gigabytes or hours. Such a constant is refused, quickly, and a
+// real one is not. Analyze never compiles, so validating in the server works
+// nothing out at all.
+func TestAHugeBigIntConstantIsRefusedWithoutWorkingItOut(t *testing.T) {
+	for _, expression := range []string{
+		"1n << 68719476736n",
+		"3n ** 3000000000n",
+		"'' + (1n << 20000000n)",
+		"(-(2n ** 64n)) ** 100000n",
+		"(1n << 900000n) * (1n << 900000n)",
+		"0n || 7n ** 99999999n",
+	} {
+		start := time.Now()
+		_, err := jsrun.Analyze("const x = "+expression+"\nreturn items", jsrun.ModeAllItems)
+		if !errors.Is(err, jsrun.ErrUnsupported) || !strings.Contains(err.Error(), "BigInt constant too large") {
+			t.Errorf("%s: Analyze() error = %v, want it refused", expression, err)
+		}
+		if elapsed := time.Since(start); elapsed > time.Second {
+			t.Errorf("%s: refusing took %v", expression, elapsed)
+		}
+	}
+	for _, expression := range []string{"2n ** 64n", "(1n << 256n) - 1n", "12345678901234567890n * 98765432109876543210n", "-1n >> 3n"} {
+		accepted(t, "const x = "+expression+"\nreturn [{ json: { x: String(x) } }]")
+	}
+	// Without compiling, Analyze accepts what only the compiler rejects; the
+	// run reports it.
+	accepted(t, "let twice = 1\nlet twice = 2\nreturn items")
+	_, err := newRunner().Run(context.Background(), jsrun.Task{Source: "let twice = 1\nlet twice = 2\nreturn items"})
+	var syntax *jsrun.SyntaxError
+	if !errors.As(err, &syntax) {
+		t.Fatalf("Run() error = %v, want the compiler's SyntaxError", err)
+	}
+}
+
 // goja passes a constructor's new.target on to every plain call made inside
 // it. The stand-ins for RegExp and the typed arrays still tell a call from a
 // construction, so a class that calls RegExp() in its constructor gets a

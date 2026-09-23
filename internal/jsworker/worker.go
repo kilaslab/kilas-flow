@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"github.com/kilaslab/kilas-flow/internal/jsrun"
 )
@@ -33,6 +35,11 @@ const (
 // returns the process's exit code: 0 when the server closed the pipe, 2 when
 // the stream broke.
 func Serve(in io.Reader, out io.Writer) int {
+	// A stop signal is the server's to act on. systemd, a terminal's Ctrl-C
+	// and a process group send it to the workers too, and a worker that died
+	// of it would fail the run the server is still draining. A worker ends
+	// when the server closes its stdin, and on Linux when the server dies.
+	signal.Ignore(os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	reader := bufio.NewReaderSize(in, 64<<10)
 	writer := bufio.NewWriterSize(out, 64<<10)
 	hello, _, err := readFrame(reader, maxServerHeader, maxServerBlob)

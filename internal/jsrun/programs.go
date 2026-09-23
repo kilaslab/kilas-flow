@@ -49,7 +49,7 @@ var sharedPrograms = newProgramCache(512, true)
 
 // sharedAnalyses keeps what Analyze found, for validation and the importer,
 // which read a body again at every save and every execution. It holds no
-// compiled program: Analyze compiles a body only to see that it compiles.
+// compiled program: Analyze does not compile.
 var sharedAnalyses = newProgramCache(4096, false)
 
 func newProgramCache(limit int, compiled bool) *programCache {
@@ -92,14 +92,22 @@ func (cache *programCache) prepare(source string, mode Mode) (*prepared, error) 
 	if len(analysis.Unsupported) > 0 {
 		return &prepared{analysis: analysis, wrapped: w}, &UnsupportedError{Found: analysis.Unsupported}
 	}
+	ready := &prepared{analysis: analysis, wrapped: w}
+	if !cache.compiled {
+		// Analyze parses and inspects; it never compiles. goja works out
+		// constant expressions while compiling, in setup that nothing
+		// interrupts, so a body is compiled only where it is to run: in a
+		// worker, where the pool's deadline and the address-space limit hold.
+		// The few mistakes only the compiler sees (a `let` declared twice)
+		// are reported when the node runs.
+		cache.put(key, ready)
+		return ready, nil
+	}
 	compiled, err := compileProgram(parsed, w)
 	if err != nil {
 		return nil, err
 	}
-	ready := &prepared{analysis: analysis, wrapped: w}
-	if cache.compiled {
-		ready.program = compiled
-	}
+	ready.program = compiled
 	cache.put(key, ready)
 	return ready, nil
 }

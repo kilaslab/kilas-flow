@@ -64,6 +64,52 @@ func TestASkippedDeliveryDoesNotCountAsARun(t *testing.T) {
 	}
 }
 
+// A resumed run counts on from the checkpoint's executed runs. A checkpoint
+// written before they were counted has only the runs, skipped deliveries
+// included, which is what the count was read from then.
+func TestAResumedRunCountsOnFromTheCheckpoint(t *testing.T) {
+	catalog := testCatalog(t, startType("test.start", "Start"), stepType("test.step", "Step"))
+	ir := compileDoc(t, catalog, workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion, ID: "wf_resume", Name: "Resume",
+		Nodes: []workflow.Node{
+			{ID: "start", Name: "Start", Type: "test.start", TypeVersion: workflow.V(1)},
+			{ID: "wait", Name: "Wait", Type: "test.step", TypeVersion: workflow.V(1), Position: workflow.Position{X: 200}},
+			{ID: "count", Name: "Count", Type: "test.step", TypeVersion: workflow.V(1), Position: workflow.Position{X: 400}},
+		},
+		Connections: []workflow.Connection{mainEdge("c1", "start", "main", "wait"), mainEdge("c2", "wait", "main", "count")},
+		Settings:    map[string]any{},
+	})
+	item := workflow.Item{JSON: map[string]any{}}
+	ran := workflow.NodeOutput{{item}}
+	for _, executions := range []map[string]int{{"count": 1}, nil} {
+		var seen []int
+		executors := threeItemStart(t, "test.step", func(_ context.Context, node workflow.IRNode, input workflow.NodeInput, request engine.Request) (workflow.NodeOutput, error) {
+			if node.ID == "count" {
+				seen = append(seen, request.RunIndex)
+			}
+			return workflow.NodeOutput{input["main"]}, nil
+		})
+		checkpoint := engine.Checkpoint{
+			SuspendNode: "wait", SuspendAttempt: 1,
+			Input:     workflow.NodeInput{"main": {item}},
+			Completed: map[string]workflow.NodeOutput{"start": ran},
+			// Count ran once, and a skipped branch delivered to it once.
+			Runs:       map[string][]workflow.NodeOutput{"start": {ran}, "count": {ran, {{}}}},
+			Executions: executions,
+		}
+		if _, err := engine.NewRunner(executors).Resume(context.Background(), ir, engine.Request{}, checkpoint, ran); err != nil {
+			t.Fatalf("Resume() error = %v", err)
+		}
+		want := "[1]"
+		if executions == nil {
+			want = "[2]"
+		}
+		if got := fmt.Sprint(seen); got != want {
+			t.Errorf("executions %v: the resumed node ran with run index %s, want %s", executions, got, want)
+		}
+	}
+}
+
 // Each attempt of a retried node has its own row, and its own console lines.
 func TestEachRetryKeepsWhatItPrinted(t *testing.T) {
 	catalog := testCatalog(t, startType("test.start", "Start"), stepType("test.step", "Step"))

@@ -42,8 +42,8 @@ const defaultJSCode = "// The items this node receives are in `items`. Change th
 
 // jsCodeNode runs JavaScript the way n8n's Code node does: the same modes,
 // the same globals, the same return shapes, so an imported node runs as
-// written. It runs inside the server, on an embedded engine, and never in a
-// Node.js process.
+// written. It runs on an embedded engine, in the server's own worker
+// processes, and never in a Node.js process.
 //
 // Its parameters carry n8n's own names, so importing one is a copy and
 // exporting it back gives the source byte for byte.
@@ -52,7 +52,7 @@ func jsCodeNode() node.Definition {
 		Type:        JSCodeNodeType,
 		Version:     workflow.V(1),
 		DisplayName: JSCodeDisplayName,
-		Description: "Runs JavaScript over the node's items, with n8n's Code-node globals, inside the server.",
+		Description: "Runs JavaScript over the node's items, with n8n's Code-node globals, on the server's own engine; no Node.js.",
 		Category:    "Core",
 		Group:       []node.NodeGroup{node.GroupTransform},
 		Icon:        &node.NodeIcon{Light: "builtin:code"},

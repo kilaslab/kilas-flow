@@ -525,12 +525,13 @@ items.
 | Mode | The code gets | It returns |
 | --- | --- | --- |
 | Run once for all items (`runOnceForAllItems`, the default) | `items`, `$input.all()`, `$input.first()`, `$input.last()` | a list of items; a single object is taken as one item |
-| Run once for each item (`runOnceForEachItem`) | `$json`, `$itemIndex`, `$input.item`, called once per item | one item; a list is refused |
+| Run once for each item (`runOnceForEachItem`) | `$json`, `$itemIndex`, `$input.item`, called once per item | one item, or `null` to drop it; a list is refused |
 
 An item is `{ json: { … } }`, and a plain object returned where an item belongs
 becomes that item's `json`. A root the mode does not have — `$json` in the
-all-items mode, `items` in the per-item one — fails with its own name rather
-than reading as `undefined`.
+all-items mode, `items` in the per-item one — is undefined, as in n8n, so
+`typeof items` is safe; using one anyway fails with a message saying what to
+use instead.
 
 The rest of n8n's Code-node globals are there, reading the same data an
 [expression](#expressions) reads:
@@ -583,12 +584,18 @@ again when the workflow is saved — so a workflow that uses one never activates
 - `require()` of any module not in the list above.
 
 The rest fail by name the moment the code reaches them: `$jmespath`,
-`$evaluateExpression`, `$prevNode`, `$secrets`, `$execution.customData`, and
-`$('Name').all()` for a branch or a run other than the first.
+`$evaluateExpression`, `$prevNode`, `$input.params`, `$input.context`,
+`$secrets`, `$execution.customData`, and `$('Name').all()` for a branch or a
+run other than the first.
 
 A body longer than 128 KiB, nested more than a thousand levels deep, or holding
-a constant expression that would take the engine seconds to fold is refused the
-same way, because reading it safely matters more than running it.
+a constant expression that would take the engine seconds to fold, or a BigInt
+constant of more than a million bits, is refused the same way, because reading
+it safely matters more than running it.
+
+Reading the code is not compiling it, so the few mistakes only a compiler sees
+— a `let` declared twice in one scope, a `break` outside a loop — are reported
+when the node runs, as a `SyntaxError` with its line, not when it is saved.
 
 ### Differences from n8n worth knowing
 

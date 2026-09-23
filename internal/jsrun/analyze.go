@@ -2,6 +2,8 @@ package jsrun
 
 import (
 	"fmt"
+	"math"
+	"math/big"
 	"reflect"
 	"sort"
 	"strings"
@@ -59,6 +61,12 @@ const (
 	// worst expressions it admits (18 levels of `0 || 0`, or 11 with an
 	// arithmetic operator between each) compile in a few milliseconds.
 	maxFoldCost = 1 << 21
+	// maxBigIntBits bounds a constant BigInt expression goja would work out
+	// while compiling. BigInt arithmetic has no size limit, and a folded one
+	// runs in setup, which nothing interrupts: `1n << 68719476736n` is an
+	// 8 GiB allocation and `3n ** 3000000000n` hours of a core. A million
+	// bits is a 300,000-digit number, far past any real constant.
+	maxBigIntBits = 1 << 20
 )
 
 // checkSourceSize refuses a body too large to parse safely.
@@ -332,8 +340,12 @@ func (in *inspector) visit(node ast.Node, bodyThis bool) bool {
 			in.analysis.UsesLuxon = true
 		}
 	case *ast.BinaryExpression, *ast.UnaryExpression:
-		if cost := in.foldCost(node.(ast.Expression)); cost.ask+cost.emit > maxFoldCost {
+		cost := in.foldCost(node.(ast.Expression))
+		if cost.ask+cost.emit > maxFoldCost {
 			in.refuse("has a constant expression too deeply nested to compile", node.Idx0())
+		}
+		if cost.bigBits > maxBigIntBits {
+			in.refuse(fmt.Sprintf("has a BigInt constant too large to work out (more than %d bits)", maxBigIntBits), node.Idx0())
 		}
 	}
 	return bodyThis
@@ -345,6 +357,10 @@ func (in *inspector) visit(node ast.Node, bodyThis bool) bool {
 type fold struct {
 	constant  bool
 	ask, emit float64
+	// bigBits bounds the bit length of a constant BigInt value, and
+	// bigMagnitude its size, for an expression goja works out while
+	// compiling; both are 0 when the expression is no BigInt constant.
+	bigBits, bigMagnitude float64
 }
 
 // foldCost follows goja's compiler (compiler_expr.go) over the expressions it
@@ -359,11 +375,20 @@ func (in *inspector) foldCost(expression ast.Expression) fold {
 	}
 	cost := fold{ask: 1, emit: 1}
 	switch node := expression.(type) {
-	case *ast.NumberLiteral, *ast.StringLiteral, *ast.BooleanLiteral, *ast.NullLiteral:
+	case *ast.NumberLiteral:
+		cost.constant = true
+		if value, ok := node.Value.(*big.Int); ok {
+			cost.bigBits = float64(max(value.BitLen(), 1))
+			cost.bigMagnitude, _ = new(big.Float).SetInt(new(big.Int).Abs(value)).Float64()
+		}
+	case *ast.StringLiteral, *ast.BooleanLiteral, *ast.NullLiteral:
 		cost.constant = true
 	case *ast.UnaryExpression:
 		operand := in.foldCost(node.Operand)
 		cost = fold{constant: operand.constant, ask: operand.ask, emit: operand.ask + operand.emit + 1}
+		if operand.bigBits > 0 && (node.Operator == token.MINUS || node.Operator == token.BITWISE_NOT) {
+			cost.bigBits, cost.bigMagnitude = operand.bigBits+1, operand.bigMagnitude+1
+		}
 	case *ast.BinaryExpression:
 		left, right := in.foldCost(node.Left), in.foldCost(node.Right)
 		cost.emit = left.ask + left.emit + right.ask + right.emit + 1
@@ -374,15 +399,42 @@ func (in *inspector) foldCost(expression ast.Expression) fold {
 			if left.constant {
 				cost.ask += left.emit + right.ask
 			}
+			// The value is one side or the other.
+			cost.bigBits, cost.bigMagnitude = max(left.bigBits, right.bigBits), max(left.bigMagnitude, right.bigMagnitude)
 		default:
 			cost.constant, cost.ask = left.constant && right.constant, left.ask
 			if left.constant {
 				cost.ask += right.ask
 			}
+			if left.bigBits > 0 && right.bigBits > 0 {
+				cost.bigBits, cost.bigMagnitude = bigBound(node.Operator, left, right)
+			}
 		}
 	}
 	in.folds[expression] = cost
 	return cost
+}
+
+// bigBound bounds the bits and the size of a BigInt operation on two
+// constant BigInt operands, from theirs. A shift by a negative amount shifts
+// the other way, so a shift's bound takes the amount's size either way.
+// Comparisons give no BigInt.
+func bigBound(operator token.Token, left, right fold) (bits, magnitude float64) {
+	switch operator {
+	case token.PLUS, token.MINUS:
+		return max(left.bigBits, right.bigBits) + 1, left.bigMagnitude + right.bigMagnitude
+	case token.MULTIPLY:
+		return left.bigBits + right.bigBits, left.bigMagnitude * right.bigMagnitude
+	case token.SLASH, token.REMAINDER:
+		return left.bigBits, left.bigMagnitude
+	case token.EXPONENT:
+		return left.bigBits * right.bigMagnitude, math.Pow(left.bigMagnitude, right.bigMagnitude)
+	case token.SHIFT_LEFT, token.SHIFT_RIGHT, token.UNSIGNED_SHIFT_RIGHT:
+		return left.bigBits + right.bigMagnitude, left.bigMagnitude * math.Pow(2, right.bigMagnitude)
+	case token.AND, token.OR, token.EXCLUSIVE_OR:
+		return max(left.bigBits, right.bigBits), 2 * max(left.bigMagnitude, right.bigMagnitude)
+	}
+	return 0, 0
 }
 
 func isIdentifier(expression ast.Expression, name string) bool {

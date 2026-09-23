@@ -27,6 +27,13 @@
   var min = Math.min;
   var max = Math.max;
   var floor = Math.floor;
+  var isArray = Array.isArray;
+  var toPrimitive = Symbol.toPrimitive;
+  var getOwnPropertyNames = Object.getOwnPropertyNames;
+  var getOwnPropertySymbols = Object.getOwnPropertySymbols;
+  var getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+  var getPrototypeOf = Object.getPrototypeOf;
+  var setPrototypeOf = Object.setPrototypeOf;
 
   var encodings = {
     'utf8': 1, 'utf-8': 1, 'hex': 1, 'base64': 1, 'base64url': 1, 'latin1': 1, 'binary': 1,
@@ -72,10 +79,38 @@
     return min(index, length);
   }
 
-  method(Buffer, 'from', function (value, encodingOrOffset, length) {
+  // from reads an object the way Node's Buffer.from does: its valueOf once,
+  // then its length or a {type: 'Buffer', data} shape, then its
+  // Symbol.toPrimitive. An array-like's bytes are copied here, in the code's
+  // own loop, where the clock and the watchdog reach, so goja_nodejs never
+  // sees the code's object: it would allocate as far as a length says and
+  // loop over it in one uninterruptible call.
+  method(Buffer, 'from', function from(value, encodingOrOffset, length) {
     if (typeof value === 'string') return decoded(value, encodingOrOffset);
     if (value !== null && typeof value === 'object' && !(value instanceof ArrayBufferType) && !isView(value)) {
-      bytesAllowed(kit.lengthOf(value));
+      var valueOf = value.valueOf && value.valueOf();
+      if (valueOf != null && valueOf !== value && (typeof valueOf === 'string' || typeof valueOf === 'object')) {
+        return from(valueOf, encodingOrOffset, length);
+      }
+      var source;
+      if (value.length !== undefined) source = value;
+      else if (value.type === 'Buffer' && isArray(value.data)) source = value.data;
+      if (source === undefined) {
+        if (typeof value[toPrimitive] === 'function') {
+          var primitive = value[toPrimitive]('string');
+          if (typeof primitive === 'string') return decoded(primitive, encodingOrOffset);
+        }
+        var named = value.constructor && typeof value.constructor.name === 'string' ? value.constructor.name : 'Object';
+        var invalid = new TypeError('The first argument must be of type string or an instance of Buffer, ArrayBuffer, or Array or an Array-like Object. Received an instance of ' + named);
+        invalid.code = 'ERR_INVALID_ARG_TYPE';
+        throw invalid;
+      }
+      if (typeof source.length !== 'number') return apply(nativeAlloc, Buffer, [0]);
+      var size = kit.lengthOf(source);
+      bytesAllowed(size);
+      var bytes = new Uint8ArrayType(size);
+      for (var index = 0; index < size; index++) bytes[index] = source[index];
+      return apply(nativeFrom, Buffer, [bytes]);
     }
     return apply(nativeFrom, Buffer, arguments);
   });
@@ -239,5 +274,23 @@
     return apply(proto.indexOf, this, [value, byteOffset, encoding]) !== -1;
   });
 
-  return { Buffer: Buffer, kMaxLength: kit.caps.bytes, constants: { MAX_LENGTH: kit.caps.bytes } };
+  // The constructor Node deprecated, Buffer(x) and new Buffer(x), is alloc for
+  // a number and from for anything else, in Node as here, so it goes through
+  // their bounds; goja_nodejs's own would allocate as far as an array-like's
+  // length says. It keeps Buffer's statics, prototype and [[Prototype]], so
+  // instanceof, Buffer.isBuffer and the rest behave as before.
+  function BufferStandIn(value, encodingOrOffset, length) {
+    if (typeof value === 'number') return Buffer.alloc(value);
+    return Buffer.from(value, encodingOrOffset, length);
+  }
+  getOwnPropertyNames(Buffer).concat(getOwnPropertySymbols(Buffer)).forEach(function (key) {
+    if (key === 'length' || key === 'name' || key === 'caller' || key === 'arguments') return;
+    defineProperty(BufferStandIn, key, getOwnPropertyDescriptor(Buffer, key));
+  });
+  defineProperty(BufferStandIn, 'name', { value: 'Buffer' });
+  setPrototypeOf(BufferStandIn, getPrototypeOf(Buffer));
+  defineProperty(proto, 'constructor', { value: BufferStandIn, writable: true, configurable: true, enumerable: false });
+  kit.define('Buffer', BufferStandIn);
+
+  return { Buffer: BufferStandIn, kMaxLength: kit.caps.bytes, constants: { MAX_LENGTH: kit.caps.bytes } };
 })

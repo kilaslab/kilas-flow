@@ -526,7 +526,9 @@ func (v *vm) await(ctx context.Context, returned goja.Value) (goja.Value, error)
 
 // bindAsync installs a global host function that returns a promise. fn runs
 // on its own goroutine with a context that ends with the VM; its result is
-// handed back through jobs.
+// handed back through jobs. Nothing the Code node ships uses it yet: it is
+// the seam this.helpers.httpRequest will use (FEAT-x9gq0s), which in the
+// server must also cross the worker protocol as a question, as $('Node') does.
 func (v *vm) bindAsync(name string, fn func(context.Context, []any) (any, error)) error {
 	return v.rt.Set(name, func(call goja.FunctionCall) goja.Value {
 		if !v.countHostCall() {

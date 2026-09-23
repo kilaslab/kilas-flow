@@ -167,7 +167,10 @@ func (capture *responseCapture) sink(next NodeEventSink) NodeEventSink {
 
 // takeConsole is consoleOutput, after which the capture starts empty again:
 // a failed attempt's row keeps its own lines, and the next attempt's row
-// starts with none of them.
+// starts with none of them. runPerItem shares one capture across its items,
+// so a node split per item that printed and retried would move the earlier
+// items' lines onto the failed attempt's row; only whole-batch nodes print
+// today.
 func (capture *responseCapture) takeConsole() json.RawMessage {
 	output := capture.consoleOutput()
 	if capture != nil {
@@ -1205,8 +1208,9 @@ func (runner *Runner) invoke(ctx context.Context, node workflow.IRNode, input wo
 			return nil, nil, "", attempt, nil, err
 		}
 		execution := cloneRequest(*request)
-		// The run this invocation belongs to, which `$runIndex` reads. It is
-		// the index the trace row will get once the run completes.
+		// How many times the node has run in this execution, which `$runIndex`
+		// reads. The trace row's own RunIndex also counts the deliveries a
+		// skipped branch recorded, so the two differ after a skip.
 		execution.RunIndex = state.executions[node.ID]
 		execution.TolerateItemFailures = policy.onError != errorStop
 		// The node's events are wrapped so an answer it produces is captured
@@ -1225,6 +1229,13 @@ func (runner *Runner) invoke(ctx context.Context, node workflow.IRNode, input wo
 			return output, nil, "", attempt, nil, nil
 		}
 		cause, code = err, "node.failed"
+		// Items that failed while the node continues on failure are its
+		// answer, not a failed attempt: n8n catches them inside its item loop
+		// and never retries the node for them.
+		var outcomes ItemOutcomes
+		if policy.onError != errorStop && errors.As(err, &outcomes) {
+			return output, cause, code, attempt, nil, nil
+		}
 		if timeout > 0 && errors.Is(nodeCtx.Err(), context.DeadlineExceeded) {
 			code = "node.timeout"
 		} else if timeout == 0 && errors.Is(ctx.Err(), context.DeadlineExceeded) {
