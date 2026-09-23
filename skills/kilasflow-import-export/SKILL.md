@@ -16,6 +16,7 @@ kilasflow_operations:
   - list-workflow-versions
 kilasflow_nodes:
   - kilasflow.unsupported
+  - kilasflow.jsCode
   - kilasflow.foreignCode
   - kilasflow.code
 kilasflow_expression_roots:
@@ -28,7 +29,7 @@ kilasflow_not_shipped:
 
 1. Read the report before you trust the translation. An import answers with `unsupported[]` and a *blocking* issue means the workflow cannot run as imported; the same report is stored with the revision it created, so it is still there tomorrow (internal/api/handlers/interop.go).
 2. Read the draft back. `kilasflow workflow get <workflowId>` (`get-workflow`) is what says what is stored; an import is a save through the ordinary draft path, with the same validation and the same revision history as any other save (internal/api/handlers/interop.go).
-3. Never activate or run an imported workflow as a way of testing it. A node the importer could not map becomes `kilasflow.unsupported` and an n8n Code node becomes `kilasflow.foreignCode`; both refuse to compile, so the only thing a run proves is what the diagnostics already said (internal/interop/n8n/n8n.go, nodes/unsupported.go, nodes/jscode.go).
+3. Never activate or run an imported workflow as a way of testing it. A node the importer could not map becomes `kilasflow.unsupported` and a Python n8n Code node becomes `kilasflow.foreignCode`; both refuse to compile, so the only thing a run proves is what the diagnostics already said (internal/interop/n8n/n8n.go, nodes/unsupported.go, nodes/jscode.go).
 4. Export sends the latest revision, not the draft you are editing. `kilasflow workflow export <workflowId> --format n8n` (`export-workflow`) converts the stored latest revision; an unsaved editor change is not in the file (internal/api/handlers/interop.go, `Export`).
 
 ## Strong defaults
@@ -40,7 +41,9 @@ kilasflow_not_shipped:
 - Read `supportedMappings[]` from an export instead of recalling a table: it is the advertised subset, `n8n-nodes-base.x ↔ kilasflow.y`, written down and tested rather than derived (`SupportedMappings` in internal/interop/n8n/n8n.go).
 - Read every issue by its severity: `blocking` (the workflow cannot run as imported), `lossy` (carried differently, the workflow still activates) and `dropped` (not carried at all) (`IssueSeverity` in internal/interop/n8n/n8n.go). references/MAPPING_LIMITS.md says what each severity costs you.
 - Assume a node type outside the mapping table is a placeholder, not an import failure: it imports as `kilasflow.unsupported` at one of four arities, keeps the whole source node in a capsule, renders where the original node was, and exports back as the node it came from (internal/interop/n8n/n8n.go).
-- Treat an imported Code node as work to do, not data lost: it becomes `kilasflow.foreignCode`, keeps `jsCode` or `pythonCode` verbatim, never translates, and names a replacement — the native nodes, or `kilasflow.code`, the Go Code node that does run under a time and memory limit (nodes/jscode.go, nodes/code.go, docs/src/content/docs/guides/n8n-migration.md).
+- Expect a JavaScript Code node to run: it imports as `kilasflow.jsCode` (Code (JavaScript)) with `mode` and `jsCode` copied byte for byte, runs as written on an engine linked into the binary — never translated, no Node.js — and exports back unchanged. Only a construct the runtime cannot run faithfully blocks it, in one sentence: "this node's code … , which this server does not run" (internal/interop/n8n/parameters.go, internal/jsrun/analyze.go, nodes/jscode.go).
+- Treat a Python Code node as work to do, not data lost: it becomes `kilasflow.foreignCode`, keeps `pythonCode` verbatim, never translates, and names a replacement — the native nodes, `kilasflow.jsCode`, or `kilasflow.code`, the Go Code node (nodes/jscode.go, nodes/code.go, docs/src/content/docs/guides/n8n-migration.md).
+- Read a JavaScript refusal as a line to rewrite, not a node to replace: it names the construct and its line — an async generator, `for await`, `import`, the regex flags `v` and `d`, `\p{…}` under `u`, `this.helpers`, `$getWorkflowStaticData`, or a `require()` of a module outside lodash, luxon, crypto, util, buffer and url (internal/jsrun/analyze.go, internal/jsrun/modules.go).
 - Expressions cross differently in one place: n8n marks an expression with a leading `=`, KilasFlow marks one with `{"mode":"expression","value":"…"}`, and the `{{ … }}` interpolation inside is the same, so `{{ $json.userId }}` survives the trip (internal/expression/expression.go, docs/src/content/docs/guides/n8n-migration.md).
 - Fix a blocking issue at its node, then re-run the workflow, then export again: replacing the placeholder is the fix, and the report is what says whether the replacement was complete (internal/interop/n8n/n8n.go).
 
@@ -68,7 +71,8 @@ what are you doing?
 |
 +-- it will not activate or run
 |     -> a blocking issue survived: replace every kilasflow.unsupported
-|        placeholder and every kilasflow.foreignCode Code node
+|        placeholder and every Python kilasflow.foreignCode node, and
+|        rewrite the lines a JavaScript refusal names
 |
 +-- the export reports a lossy node
       -> references/MAPPING_LIMITS.md: severity, cause and what survives
@@ -82,8 +86,9 @@ what are you doing?
 
 - "The POST returned 201, so the workflow is ready" → 201 means the draft saved, and the nodes named as blocking make it un-runnable → read `unsupported[]`, then the stored report with `kilasflow workflow diagnostics <workflowId>`.
 - "The report is empty in the editor, so the import was clean" → the report belongs to a revision, and the newest revision of a workflow somebody has since edited carries none → read the revision the import created, by `--version-id` from `kilasflow workflow versions`.
-- "The Code node will be translated" → it is carried verbatim and never translated, so the workflow cannot compile → replace it with the native node the diagnostic names, or rewrite the body in `kilasflow.code`.
-- "I'll just activate it and see" → an unsupported placeholder and a foreign Code node refuse compilation, and activation also publishes a public endpoint → fix the blocking issues first, then run the workflow and read its trace.
+- "The Code node will be translated" → it is carried verbatim and never translated: JavaScript runs as written, and Python cannot compile → for Python, use the native node the diagnostic names or rewrite the body in `kilasflow.jsCode` or `kilasflow.code`.
+- "It is JavaScript, so any npm package will load" → `require()` answers only lodash, luxon, crypto, util, buffer and url, and anything else is a blocking refusal at import → do that work with a native node, or with the shipped modules.
+- "I'll just activate it and see" → an unsupported placeholder and a Python Code node refuse compilation, and activation also publishes a public endpoint → fix the blocking issues first, then run the workflow and read its trace.
 - "It exported, so n8n will run it" → a KilasFlow-only node goes out under its own type, which n8n refuses, and credential references are not exported at all → reattach credentials in n8n and replace the unrecognised nodes there.
 - "The mapping table in the docs is the answer" → the subset is a claim the server can state for itself, and it changes as mappings land → read `supportedMappings[]` from the export in front of you.
 - "Rounding to a pinned typeVersion is harmless" → the exporter writes the version whose parameter shape it translated, and a node authored at another version comes back with that difference → read the lossy entry, and check the node in n8n after the file lands.
