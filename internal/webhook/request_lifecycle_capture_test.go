@@ -1,7 +1,10 @@
 package webhook_test
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"log/slog"
 	"net/http"
 	"reflect"
 	"strings"
@@ -52,6 +55,31 @@ func (state *memoryState) kept() map[string]string {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 	return state.values
+}
+
+// unsavableState is a route's state that cannot be written.
+type unsavableState struct{ memoryState }
+
+func (*unsavableState) Save(context.Context, map[string]string) error {
+	return errors.New("the database is read-only")
+}
+
+// lockedBuffer is a log destination a test can read back.
+type lockedBuffer struct {
+	mu     sync.Mutex
+	buffer bytes.Buffer
+}
+
+func (locked *lockedBuffer) Write(p []byte) (int, error) {
+	locked.mu.Lock()
+	defer locked.mu.Unlock()
+	return locked.buffer.Write(p)
+}
+
+func (locked *lockedBuffer) String() string {
+	locked.mu.Lock()
+	defer locked.mu.Unlock()
+	return locked.buffer.String()
 }
 
 // subscriptionLifecycle registers with a service that answers with a
@@ -203,8 +231,88 @@ func TestRequestLifecycleFailsARegistrationWhoseAnswerLacksACapture(t *testing.T
 			if err == nil || !strings.Contains(err.Error(), "data.id") {
 				t.Fatalf("Create() error = %v, want a failure naming data.id", err)
 			}
+			// The answer may carry the very secret being captured, and an
+			// activation error is shown to the user and written to logs.
+			if strings.Contains(err.Error(), "whsec_1") {
+				t.Fatalf("Create() error = %v, want the answer's values left out of it", err)
+			}
 			if state.saves != 0 {
 				t.Fatalf("kept = %#v, want nothing kept from an answer that lacked a capture", state.kept())
+			}
+		})
+	}
+}
+
+// TestRequestLifecycleSaysARegistrationItCouldNotKeepWasMade: by the time the
+// answer is read the service has already accepted the registration, so a
+// failure to capture from it or to keep what was captured is not "could not
+// register". The registration is removed again when what was captured is
+// enough to address the remove; when it is not, the error and the log say it
+// may need removing by hand, naming the route and never a value.
+func TestRequestLifecycleSaysARegistrationItCouldNotKeepWasMade(t *testing.T) {
+	t.Parallel()
+
+	for name, testCase := range map[string]struct {
+		answer  string
+		state   webhook.LifecycleStateStore
+		removed bool
+		want    string
+	}{
+		"a value remove does not need is missing": {
+			answer: `{"data": {"id": "sub-1"}}`, state: &memoryState{}, removed: true,
+			want: "has no data.secret",
+		},
+		"the values cannot be kept": {
+			answer: `{"data": {"id": "sub-1", "secret": "whsec_1"}}`, state: &unsavableState{}, removed: true,
+			want: "read-only",
+		},
+		"a value remove needs is missing": {
+			answer: `{"data": {"secret": "whsec_1"}}`, state: &memoryState{}, removed: false,
+			want: "has no data.id",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			stub, server := newDescriptorStub(t)
+			stub.answerWith(testCase.answer)
+			logs := &lockedBuffer{}
+			lifecycleContext := descriptorContext(t, server.URL, nil)
+			lifecycleContext.State = testCase.state
+			lifecycleContext.Logger = slog.New(slog.NewTextHandler(logs, nil))
+			lifecycle := subscriptionLifecycle(map[string]string{"id": "data.id", "secret": "data.secret"})
+
+			err := lifecycle.Create(context.Background(), lifecycleContext)
+			if err == nil || !strings.Contains(err.Error(), "the service accepted the registration") || !strings.Contains(err.Error(), testCase.want) {
+				t.Fatalf("Create() error = %v, want it to say the registration was accepted and that %q", err, testCase.want)
+			}
+			var sent []string
+			for _, call := range stub.recorded() {
+				sent = append(sent, call.method+" "+call.target)
+			}
+			want := []string{"POST /api/subscriptions"}
+			if testCase.removed {
+				want = append(want, "DELETE /api/subscriptions/sub-1")
+				if !strings.Contains(err.Error(), "removed again") {
+					t.Errorf("Create() error = %v, want it to say the registration was removed again", err)
+				}
+			} else if !strings.Contains(err.Error(), "may need removing by hand") {
+				t.Errorf("Create() error = %v, want it to say the registration may need removing by hand", err)
+			}
+			if !reflect.DeepEqual(sent, want) {
+				t.Fatalf("requests = %q, want %q", sent, want)
+			}
+
+			logged := logs.String()
+			for _, named := range []string{"level=WARN", "tenant=tenant-a", "workflow=wf_1", "node=trigger", "route=abc123"} {
+				if !strings.Contains(logged, named) {
+					t.Errorf("log = %q, want it to carry %s", logged, named)
+				}
+			}
+			for _, value := range []string{"whsec_1", "sub-1"} {
+				if strings.Contains(logged, value) {
+					t.Errorf("log = %q, want no captured value in it", logged)
+				}
 			}
 		})
 	}

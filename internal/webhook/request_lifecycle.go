@@ -75,14 +75,35 @@ var captureKey = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
 // and a value they captured would replace the id they were addressed by with
 // whatever they happened to answer. A key has to be one a template can name,
 // and a path has to name something, or the value is kept for nothing.
+//
+// And every captured value a template reads has to be one `set` keeps. A
+// `check` or `remove` naming anything else is never sent, since it would be
+// sent with the placeholder's own text in it; and `set` runs before anything
+// is captured, so a value it names is never there.
 func (lifecycle RequestLifecycle) Validate() error {
+	var captured map[string]string
+	if lifecycle.Set != nil {
+		captured = lifecycle.Set.Capture
+		if keys := capturedReferences(lifecycle.Set); len(keys) > 0 {
+			return fmt.Errorf("lifecycle set reads %s.%s, and set runs before anything is captured: it keeps what its own answer holds with capture",
+				capturedFamily, keys[0])
+		}
+	}
 	for _, other := range []struct {
 		name       string
 		descriptor *RequestDescriptor
 	}{{"check", lifecycle.Check}, {"remove", lifecycle.Remove}} {
-		if other.descriptor != nil && len(other.descriptor.Capture) > 0 {
+		if other.descriptor == nil {
+			continue
+		}
+		if len(other.descriptor.Capture) > 0 {
 			return fmt.Errorf("lifecycle %s declares capture, which only set may: %s reads what set kept as {{ .Captured.<key> }}",
 				other.name, other.name)
+		}
+		for _, key := range capturedReferences(other.descriptor) {
+			if _, kept := captured[key]; !kept {
+				return fmt.Errorf("lifecycle %s reads %s.%s, which set does not capture", other.name, capturedFamily, key)
+			}
 		}
 	}
 	if lifecycle.Set == nil {
@@ -158,13 +179,41 @@ func (lifecycle RequestLifecycle) Create(ctx context.Context, lifecycleContext L
 		return nil
 	}
 	captured, err := captureFrom(body, capture)
-	if err != nil {
-		return err
+	if err == nil {
+		if saveErr := lifecycleContext.State.Save(ctx, captured); saveErr != nil {
+			err = fmt.Errorf("its values could not be kept: %w", saveErr)
+		}
 	}
-	if err := lifecycleContext.State.Save(ctx, captured); err != nil {
-		return fmt.Errorf("keep the values the service answered with: %w", err)
+	if err != nil {
+		return lifecycle.unkept(ctx, lifecycleContext, captured, err)
 	}
 	return nil
+}
+
+// unkept answers for a registration the service accepted and this server
+// could not keep what it answered with.
+//
+// It is not "could not register": the service now holds a registration that
+// delivers to this route. It is removed again when what was captured is enough
+// to address the remove, and otherwise the error and the log say it may need
+// removing by hand. The log names the tenant, workflow, node and route, never
+// a value: what was captured may be the secret.
+func (lifecycle RequestLifecycle) unkept(ctx context.Context, lifecycleContext LifecycleContext, captured map[string]string, problem error) error {
+	removed := false
+	if lifecycle.Remove != nil && !needsUncaptured(lifecycle.Remove, captured) {
+		_, removeErr := lifecycle.send(ctx, lifecycle.Remove, lifecycleContext, captured)
+		removed = removeErr == nil
+	}
+	if logger := lifecycleContext.Logger; logger != nil {
+		logger.Warn("a trigger's service accepted its registration, and what it answered with could not be kept",
+			"tenant", lifecycleContext.TenantID, "workflow", lifecycleContext.WorkflowID,
+			"node", lifecycleContext.Binding.NodeID, "route", lifecycleContext.Binding.Route,
+			"removed", removed, "error", problem)
+	}
+	if removed {
+		return fmt.Errorf("the service accepted the registration, but %w, so it was removed again", problem)
+	}
+	return fmt.Errorf("the service accepted the registration, but %w; it may need removing by hand", problem)
 }
 
 // Delete unregisters it, and forgets what its registration kept once it is
@@ -213,47 +262,70 @@ func loadCaptured(ctx context.Context, lifecycleContext LifecycleContext) (map[s
 // Sent anyway, the placeholder would stay in the request as its own text — a
 // DELETE of a subscription literally named `{{ .Captured.id }}`.
 func needsUncaptured(descriptor *RequestDescriptor, captured map[string]string) bool {
-	templates := append([]string{descriptor.URL, descriptor.Body}, slices.Collect(maps.Values(descriptor.Headers))...)
-	for _, template := range templates {
-		for _, match := range reference.FindAllStringSubmatch(template, -1) {
-			key, isCaptured := strings.CutPrefix(match[1], capturedFamily+".")
-			if _, kept := captured[key]; isCaptured && !kept {
-				return true
-			}
+	for _, key := range capturedReferences(descriptor) {
+		if _, kept := captured[key]; !kept {
+			return true
 		}
 	}
 	return false
+}
+
+// capturedReferences lists the captured keys a descriptor's templates read, in
+// the order they are written: the URL, the headers by name, then the body.
+func capturedReferences(descriptor *RequestDescriptor) []string {
+	templates := []string{descriptor.URL}
+	for _, name := range slices.Sorted(maps.Keys(descriptor.Headers)) {
+		templates = append(templates, descriptor.Headers[name])
+	}
+	templates = append(templates, descriptor.Body)
+	var keys []string
+	for _, template := range templates {
+		for _, match := range reference.FindAllStringSubmatch(template, -1) {
+			if key, isCaptured := strings.CutPrefix(match[1], capturedFamily+"."); isCaptured {
+				keys = append(keys, key)
+			}
+		}
+	}
+	return keys
 }
 
 // captureFrom reads each captured value out of a response.
 //
 // All or nothing: an answer missing one is refused whole, because the pack
 // declared it for a reason — a `remove` addressed by an id that was never kept
-// can never run. A value is non-empty text, a number or a boolean. Empty text
-// is missing: an empty id written into `/subscriptions/{{ .Captured.id }}`
-// addresses the whole collection. A number keeps the digits it was sent with,
-// since an id read as a float comes back rounded and names another
-// subscription. The answer itself is never quoted in an error: it may carry
-// the very secret being captured.
+// can never run. What could be read is still returned beside the error, which
+// is what lets a registration nobody will keep be removed again. A value is
+// non-empty text, a number or a boolean. Empty text is missing: an empty id
+// written into `/subscriptions/{{ .Captured.id }}` addresses the whole
+// collection. A number keeps the digits it was sent with, since an id read as
+// a float comes back rounded and names another subscription. The answer itself
+// is never quoted in an error: it may carry the very secret being captured.
 func captureFrom(body []byte, capture map[string]string) (map[string]string, error) {
 	document, decodeErr := decodeAnswer(body)
 	captured := make(map[string]string, len(capture))
+	var failure error
+	fail := func(err error) {
+		if failure == nil {
+			failure = err
+		}
+	}
 	for _, key := range slices.Sorted(maps.Keys(capture)) {
 		path := capture[key]
 		if decodeErr != nil {
-			return nil, fmt.Errorf("the service did not answer with JSON, so there is no %s to keep as %s", path, key)
+			return captured, fmt.Errorf("its answer is not JSON, so it has no %s to keep as %s", path, key)
 		}
 		value, present := jsonPathValue(document, path)
 		text, scalar := scalarText(value)
 		switch {
 		case !present || value == nil || (scalar && strings.TrimSpace(text) == ""):
-			return nil, fmt.Errorf("the service's answer has no %s to keep as %s", path, key)
+			fail(fmt.Errorf("its answer has no %s to keep as %s", path, key))
 		case !scalar:
-			return nil, fmt.Errorf("the service's answer holds an object or a list at %s, not a value to keep as %s", path, key)
+			fail(fmt.Errorf("its answer holds an object or a list at %s, not a value to keep as %s", path, key))
+		default:
+			captured[key] = text
 		}
-		captured[key] = text
 	}
-	return captured, nil
+	return captured, failure
 }
 
 // decodeAnswer decodes a JSON response, keeping every number as its text.

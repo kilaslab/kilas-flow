@@ -80,6 +80,18 @@ func TestAManifestCapturesOnlyFromSetAndOnlyWhatItCanName(t *testing.T) {
 			lifecycle: `{"id": "x", "set": {"method": "POST", "url": "{{ .baseUrl }}/x", "capture": {"sub-id": "data.id"}}}`,
 			signature: "null", want: "letters, digits and underscores",
 		},
+		"check naming a value set never captures": {
+			lifecycle: strings.Replace(subscriptionLifecycleJSON, `/subscriptions/{{ .Captured.id }}"}`, `/subscriptions/{{ .Captured.subscription }}"}`, 1),
+			signature: "null", want: "which set does not capture",
+		},
+		"remove naming a value with nothing captured at all": {
+			lifecycle: `{"id": "x", "remove": {"method": "DELETE", "url": "{{ .baseUrl }}/x/{{ .Captured.id }}"}}`,
+			signature: "null", want: "which set does not capture",
+		},
+		"set naming a captured value": {
+			lifecycle: `{"id": "x", "set": {"method": "POST", "url": "{{ .baseUrl }}/x", "headers": {"X-Id": "{{ .Captured.id }}"}, "capture": {"id": "data.id"}}}`,
+			signature: "null", want: "set reads Captured.id",
+		},
 		"a secret nothing captures": {
 			lifecycle: subscriptionLifecycleJSON,
 			signature: `{"header": "X-Signature", "algorithm": "sha512", "secretCapture": "token"}`,
@@ -106,6 +118,19 @@ func TestAManifestCapturesOnlyFromSetAndOnlyWhatItCanName(t *testing.T) {
 	}
 }
 
+// capturedSecretTrigger verifies with the secret its registration captures,
+// and registers only when enabledParameter is on, or always when it is empty.
+func capturedSecretTrigger(enabledParameter string) *nodepack.Trigger {
+	return &nodepack.Trigger{
+		HMAC: &nodepack.TriggerHMAC{Header: "X-Signature", Algorithm: "sha512", SecretCapture: "secret"},
+		Lifecycle: &nodepack.TriggerLifecycle{
+			ID: "subscription.webhook", EnabledParameter: enabledParameter,
+			Set: &webhook.RequestDescriptor{Method: http.MethodPost, URL: "{{ .baseUrl }}/subscriptions",
+				Capture: map[string]string{"id": "data.id", "secret": "data.secret"}},
+		},
+	}
+}
+
 // A service that generates the secret it signs with says what it is once, in
 // the answer to the registration. The trigger then verifies every delivery with
 // the value that answer was captured for, exactly as it would with a secret the
@@ -114,10 +139,7 @@ func TestAManifestCapturesOnlyFromSetAndOnlyWhatItCanName(t *testing.T) {
 func TestAnHMACSecretCanBeAValueTheRegistrationCaptured(t *testing.T) {
 	t.Parallel()
 
-	trigger := &nodepack.Trigger{
-		HMAC: &nodepack.TriggerHMAC{Header: "X-Signature", Algorithm: "sha512", SecretCapture: "secret"},
-	}
-	kind := trigger.TriggerKind()
+	kind := capturedSecretTrigger("autoRegister").TriggerKind()
 	body := []byte(`{"event":"message"}`)
 	sign := func(secret string) string {
 		mac := hmac.New(sha512.New, []byte(secret))
@@ -132,7 +154,7 @@ func TestAnHMACSecretCanBeAValueTheRegistrationCaptured(t *testing.T) {
 		return webhook.Delivery{
 			Request: request, RawBody: body,
 			Binding: repository.WebhookBinding{
-				Parameters: map[string]any{"secret": "a-parameter-is-not-the-secret"},
+				Parameters: map[string]any{"secret": "a-parameter-is-not-the-secret", "autoRegister": true},
 				Captured:   captured,
 			},
 		}
@@ -154,14 +176,46 @@ func TestAnHMACSecretCanBeAValueTheRegistrationCaptured(t *testing.T) {
 			t.Errorf("a delivery %s was accepted", name)
 		}
 	}
+}
 
-	// Nothing captured yet — the registration is off, or has not run — is the
-	// same as a node with no secret configured: not verified, and not counted
-	// as authenticating.
-	if kind.Verifies(delivery(nil, "")) {
-		t.Error("a trigger with nothing captured counted as authenticating its senders")
-	}
-	if err := kind.Verify(delivery(nil, "")); err != nil {
-		t.Errorf("a trigger with nothing captured refused a delivery: %v", err)
+// A node whose registration is on is a node that will be signed for, so until
+// its secret is there — the registration has not run yet, or its remove has
+// cleared it and the workflow stayed active — there is nothing to verify with
+// and every delivery is refused. Accepting them would make the window before
+// and after registration a window in which anybody can inject events. A node
+// that turned registration off never captures a secret, and is treated as a
+// node with none configured: not verified, and not counted as authenticating.
+func TestACapturedSecretNotYetKeptRefusesDeliveriesOnlyWhileRegistrationIsOn(t *testing.T) {
+	t.Parallel()
+
+	for name, testCase := range map[string]struct {
+		enabledParameter string
+		parameters       map[string]any
+		refused          bool
+	}{
+		"registration on":            {enabledParameter: "autoRegister", parameters: map[string]any{"autoRegister": true}, refused: true},
+		"registration always on":     {enabledParameter: "", parameters: map[string]any{}, refused: true},
+		"registration off":           {enabledParameter: "autoRegister", parameters: map[string]any{"autoRegister": false}, refused: false},
+		"registration never enabled": {enabledParameter: "autoRegister", parameters: map[string]any{}, refused: false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			kind := capturedSecretTrigger(testCase.enabledParameter).TriggerKind()
+			delivery := webhook.Delivery{
+				Request: httptest.NewRequest(http.MethodPost, "/webhook/abc", nil), RawBody: []byte(`{"event":"message"}`),
+				Binding: repository.WebhookBinding{Parameters: testCase.parameters},
+			}
+			if kind.Verifies(delivery) {
+				t.Error("a trigger with nothing captured counted as authenticating its senders")
+			}
+			err := kind.Verify(delivery)
+			if testCase.refused && err == nil {
+				t.Fatal("an unsigned delivery was accepted while the node waits for its secret")
+			}
+			if !testCase.refused && err != nil {
+				t.Fatalf("a node with registration off refused a delivery: %v", err)
+			}
+		})
 	}
 }

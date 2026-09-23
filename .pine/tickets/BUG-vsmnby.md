@@ -91,6 +91,12 @@ Tests:
   - `TestAnHMACSecretCanBeAValueTheRegistrationCaptured`.
 - `internal/database/webhook_route_lifecycle_state_migration_test.go`: `TestTheRouteLifecycleStateColumnComesAndGoesWithItsMigrationOn{SQLite,Postgres}`. `workflow_actor_migration_test.go` now rolls back by migration name (`rollBackBelow`).
 - `go test ./...` passes. The Postgres-gated suites for `database`, `repository`, `tenantpurge` and `datastore` pass against pgvector/pg17.
+- **Review fix, round 1:**
+  - A node verified by a captured secret refuses every delivery while its registration is on and nothing is captured yet. Only a node with registration off counts as "not configured". This is `webhook.LifecycleEnabled`, which the gate uses too.
+  - A route whose state cannot be opened still answers 404, and the server now logs an error naming the route: `resolveBinding` stops falling through on errors other than not-found.
+  - When the service accepted a registration but its answer could not be captured or kept, the error now says so, and a Warn is logged. The registration is removed again when what was captured is enough to address the `remove`.
+  - `Validate` refuses a `check` or `remove` that reads a `Captured` key `set` does not capture, and a `set` that reads any.
+  - Tests: `TestACapturedSecretNotYetKeptRefusesDeliveriesOnlyWhileRegistrationIsOn`, `TestADeliveryWhoseRouteStateCannotBeOpenedIsRefusedAndLogged`, `TestRequestLifecycleSaysARegistrationItCouldNotKeepWasMade`, the new validation cases, and a check that the error never quotes the answer.
 
 # Notes
 

@@ -196,7 +196,10 @@ func (coordinator *Coordinator) Activated(ctx context.Context, tenantID, workflo
 			continue
 		}
 		if err := hook.Create(ctx, context); err != nil {
-			return nil, fmt.Errorf("trigger %q could not register with its service (%s): %w", binding.NodeID, lifecycle, err)
+			// "Did not finish" rather than "could not": the service may have
+			// accepted the registration before something after it failed, and
+			// the error says which.
+			return nil, fmt.Errorf("trigger %q did not finish registering with its service (%s): %w", binding.NodeID, lifecycle, err)
 		}
 	}
 	return notices, nil
@@ -318,10 +321,21 @@ var _ TriggerLifecycle = GatedLifecycle{}
 var _ NoticeSource = GatedLifecycle{}
 
 func (gated GatedLifecycle) enabled(lifecycleContext LifecycleContext) bool {
-	if gated.EnabledParameter == "" {
+	return LifecycleEnabled(lifecycleContext.Binding.Parameters, gated.EnabledParameter)
+}
+
+// LifecycleEnabled reports whether a node turned its registration on: always
+// when the lifecycle names no enabling parameter, and otherwise when that
+// boolean parameter is true.
+//
+// One answer for every reader. The HMAC check asks the same question — a node
+// that registers is a node its service will sign for — and a second spelling
+// of it could disagree about a node, and let it through unsigned.
+func LifecycleEnabled(parameters map[string]any, enabledParameter string) bool {
+	if enabledParameter == "" {
 		return true
 	}
-	on, _ := lifecycleContext.Binding.Parameters[gated.EnabledParameter].(bool)
+	on, _ := parameters[enabledParameter].(bool)
 	return on
 }
 
