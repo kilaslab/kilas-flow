@@ -1,7 +1,7 @@
 ---
 id: FEAT-rkj8ry
 title: 'JS Code runtime P0: decision record, vendored Luxon/lodash, guardrails'
-status: todo
+status: doing
 priority: high
 labels:
     - code-node
@@ -9,7 +9,7 @@ labels:
 parent: EPIC-tjnr1z
 phase: p0
 created: "2026-09-23T01:33:22Z"
-updated: "2026-09-23T01:33:22Z"
+updated: "2026-09-23T04:23:14Z"
 ---
 
 # Description

@@ -65,6 +65,10 @@ sdk/node_modules/
 .corpus/
 .corpus-cache/
 .corpus-private/
+# Code-node bodies taken from public n8n templates for the JavaScript runtime's
+# compatibility scoreboard (EPIC-tjnr1z P7). They are user content, so only
+# their digests are committed, never the bodies.
+internal/jsrun/corpus/fixtures/
 
 # Agent worktrees are checkouts of this repository, not content of it.
 .claude/worktrees/

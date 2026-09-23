@@ -40,6 +40,16 @@ The rule that follows: a user must never discover at run time that their
 deployment cannot compile.
 - 2026-09-05: Code node compatibility: imported JS/Python Code nodes are refused as kilasflow.foreignCode, never translated; the Go toolchain lives behind runcode.Compiler and availability is reported through the node catalogue.
 - 2026-09-23: Owner approved (EPIC-tjnr1z): imported n8n JavaScript Code nodes are to RUN on an embedded pure-Go JS engine (goja, modernc.org/quickjs fallback) instead of being refused as foreignCode. JS is executed as JS and never translated to Go. Python Code nodes stay refused. This supersedes only the 'refused' half of the FEAT-8qyfh1 decision recorded above.
+- 2026-09-23: How the supersession is scoped (EPIC-tjnr1z, P0).
+  - JavaScript is **executed as JavaScript, or refused**. There is still no third option and no translation.
+  - Everything that still cannot run goes through one sentence template: `jsrun.Refusal(subject, alternative)`, which renders "this node's code <subject>, which this server does not run. <alternative>". `unsupportedScript` delegates to it. That covers Python, `\p{…}` regexes, the `v`/`d` flags, async generators, `import`/`export`, unlisted `require`, `this.getCredentials`, and a disabled runtime. The Python wording stays byte-identical.
+  - The "refused, never translated" paragraphs above now describe Python and unsupported JS constructs only.
+- 2026-09-23: **The JS runtime's clock is charged per VM entry.**
+  - VM entries before the first user statement are free: prelude, libraries the analyser asked for, input `JSON.parse`, and the wrapper factory.
+  - Every VM entry after it is charged: the body, promise jobs, result normalisation, and `JSON.stringify` of the result, because user `toJSON`, getters and Proxy traps run inside those.
+  - Go-side work between entries is free.
+  - Per-item mode spends one pausable budget across all its items.
+  - This is BUG-9s3htg's rule restated for goja. Do not "simplify" it into one wall-clock deadline.
 
 # The Code node's time limit covers the user's program only
 

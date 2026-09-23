@@ -24,9 +24,9 @@ Child of EPIC-tjnr1z. The full design, including the code shapes, file layout an
 # Acceptance Criteria
 - [ ] `n8n-nodes-base.code` with JavaScript (or no language) imports as `kilasflow.jsCode` with no blocking issue, and exports back byte-identical
 - [ ] Existing `foreignCode` nodes with `language: javaScript` run without re-import
-- [ ] Python is still refused with the same sentence, and the catalogue stamps foreignCode as `unavailable`
-- [ ] An AST-based analyser refuses `\p{}`, the `v` flag, async generators, `import`/`export`, unlisted `require` and `this.getCredentials`, at import and at validate, with one sentence
-- [ ] `kilasflow.jsCode` is stamped unavailable only when `code.javascript.enabled=false`
+- [ ] Python is still refused with the same sentence. foreignCode is not stamped `unavailable`, because its JavaScript form now runs (EPIC amendment 13)
+- [ ] The analyser refuses `\p{}`, the `v`/`d` flags, async generators, `import`/`export`, unlisted `require` and `this.getCredentials`, at import and at validate, through the `jsrun.Refusal` template
+- [ ] `kilasflow.jsCode` is stamped unavailable only when `code.javascript_enabled=false`, and it can be added from the palette
 
 # Implementation Plan
 
