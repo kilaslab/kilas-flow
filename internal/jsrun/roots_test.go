@@ -151,7 +151,11 @@ func TestTheSandboxExposesExactlyTheseGlobals(t *testing.T) {
 		slices.Sort(names)
 		return names
 	}
-	shared := []string{"$", "$env", "$evaluateExpression", "$execution", "$getWorkflowStaticData", "$jmespath", "$node", "$nodeVersion", "$prevNode", "$runIndex", "$secrets", "$vars", "$workflow", "console", "crypto", "require",
+	// Intl is new too: goja has none, and the runtime provides it. The Luxon
+	// globals are there whether or not the code names Luxon; the library
+	// itself loads only when one is first read.
+	shared := []string{"$", "$env", "$evaluateExpression", "$execution", "$getWorkflowStaticData", "$jmespath", "$node", "$nodeVersion", "$now", "$prevNode", "$runIndex", "$secrets", "$today", "$vars", "$workflow",
+		"DateTime", "Duration", "Info", "Interval", "Intl", "Settings", "console", "crypto", "require",
 		"Buffer", "DOMException", "TextDecoder", "TextEncoder", "URL", "URLSearchParams", "atob", "btoa", "queueMicrotask", "structuredClone",
 		"setTimeout", "setInterval", "setImmediate", "clearTimeout", "clearInterval", "clearImmediate"}
 	for mode, own := range map[jsrun.Mode][]string{
