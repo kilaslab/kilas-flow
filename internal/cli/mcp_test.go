@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -138,49 +139,10 @@ func checkMCPTool(t *testing.T, tool *mcpTool) {
 
 	// A call that sets every property maps back onto the verb: the positionals
 	// in the order the verb takes them, and each flag as its own command-line
-	// spelling.
-	arguments := make(map[string]any, len(properties))
-	for _, argument := range tool.args {
-		arguments[argument.property] = "value-" + argument.property
-	}
-	for _, flag := range tool.flags {
-		arguments[flag.property] = mcpSampleValue(flag)
-	}
-	if tool.verb.Guarded {
-		arguments[mcpConfirmProperty] = true
-	}
-
-	argv, err := tool.argv(arguments, nil)
-	if err != nil {
-		t.Fatalf("argv(%v): %v", arguments, err)
-	}
-
-	want := strings.Fields(tool.verb.Path)
-	for _, argument := range tool.args {
-		want = append(want, arguments[argument.property].(string))
-	}
-	for _, flag := range tool.flags {
-		fragment, err := flag.argv(arguments[flag.property])
-		if err != nil {
-			t.Fatalf("--%s: %v", flag.name, err)
-		}
-		want = append(want, fragment...)
-	}
-	if tool.verb.Guarded {
-		want = append(want, "--yes")
-	}
-
-	if strings.Join(argv, " ") != strings.Join(want, " ") {
-		t.Errorf("argv = %v, want %v", argv, want)
-	}
-
-	// The command line the tool builds is one the CLI's own parser resolves to
-	// the same verb, which is what makes the tool a mapping rather than a
-	// second entry point.
-	verb, _, ok := splitVerb(registry(), argv)
-	if !ok || verb.Path != tool.verb.Path {
-		t.Errorf("argv %v resolves to %q (%v), want %q", argv, verb.Path, ok, tool.verb.Path)
-	}
+	// spelling. Run it with both true and false, because a boolean flag is the
+	// one kind where those two spellings differ (a bare --flag versus none).
+	checkMCPToolArgv(t, tool, true)
+	checkMCPToolArgv(t, tool, false)
 
 	// A missing required argument is refused rather than sent as an empty
 	// string, and an unknown property is refused rather than ignored.
@@ -196,6 +158,91 @@ func checkMCPTool(t *testing.T, tool *mcpTool) {
 	}
 	if _, err := tool.argv(map[string]any{"nonsense": true}, nil); err == nil {
 		t.Error("a call with an unknown property was accepted")
+	}
+}
+
+// checkMCPToolArgv proves the argv a tool call builds is one the CLI's own
+// parser reads back the way the caller meant, rather than checking it against
+// a second call to flag.argv: that comparison is circular, because a bug in
+// flag.argv would corrupt both sides of it the same way (which is exactly how
+// the "--wait true" bug survived it). Feeding the generated argv through the
+// real FlagSet cli.go itself builds — registerGlobalFlags plus verb.Flags,
+// parsed with parseFlags — is the only check that exercises the parser an
+// agent's call actually goes through.
+func checkMCPToolArgv(t *testing.T, tool *mcpTool, boolSample bool) {
+	t.Helper()
+
+	arguments := make(map[string]any, len(tool.args)+len(tool.flags)+1)
+	for _, argument := range tool.args {
+		arguments[argument.property] = "value-" + argument.property
+	}
+	for _, flag := range tool.flags {
+		arguments[flag.property] = mcpSampleValue(flag, boolSample)
+	}
+	if tool.verb.Guarded {
+		arguments[mcpConfirmProperty] = true
+	}
+
+	argv, err := tool.argv(arguments, nil)
+	if err != nil {
+		t.Fatalf("argv(%v): %v", arguments, err)
+	}
+
+	// The command line the tool builds is one the CLI's own parser resolves to
+	// the same verb, which is what makes the tool a mapping rather than a
+	// second entry point.
+	verb, rest, ok := splitVerb(registry(), argv)
+	if !ok || verb.Path != tool.verb.Path {
+		t.Fatalf("argv %v resolves to %q (%v), want %q", argv, verb.Path, ok, tool.verb.Path)
+	}
+
+	fs := flag.NewFlagSet(verb.Path, flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	globals := registerGlobalFlags(fs)
+	if verb.Flags != nil {
+		verb.Flags(fs)
+	}
+
+	positional, err := parseFlags(fs, globals, rest)
+	if err != nil {
+		t.Fatalf("argv %v did not parse: %v", argv, err)
+	}
+
+	wantPositional := make([]string, 0, len(tool.args))
+	for _, argument := range tool.args {
+		wantPositional = append(wantPositional, arguments[argument.property].(string))
+	}
+	if strings.Join(positional, " ") != strings.Join(wantPositional, " ") {
+		t.Errorf("argv %v parsed to positionals %v, want %v", argv, positional, wantPositional)
+	}
+
+	if tool.verb.Guarded && !globals.Yes {
+		t.Errorf("argv %v did not parse --yes", argv)
+	}
+
+	// Every boolean flag holds the sample value the caller gave it — the
+	// assertion that catches "--wait true", where Go's flag package leaves
+	// "true" as a stray positional and the flag itself keeps its default.
+	for _, mf := range tool.flags {
+		if mf.kind != mcpFlagBool {
+			continue
+		}
+
+		registered := fs.Lookup(mf.name)
+		if registered == nil {
+			t.Fatalf("the real FlagSet has no --%s", mf.name)
+		}
+		getter, ok := registered.Value.(flag.Getter)
+		if !ok {
+			t.Fatalf("--%s is not a flag.Getter", mf.name)
+		}
+		held, ok := getter.Get().(bool)
+		if !ok {
+			t.Fatalf("--%s parsed as %T, want bool", mf.name, getter.Get())
+		}
+		if held != boolSample {
+			t.Errorf("argv %v left --%s at %v, want %v", argv, mf.name, held, boolSample)
+		}
 	}
 }
 
@@ -217,16 +264,23 @@ func toolKnows(tool *mcpTool, property string) bool {
 }
 
 // mcpSampleValue is a value of the kind a flag takes, for the mapping test.
-func mcpSampleValue(flag mcpFlag) any {
+// boolValue is the sample a boolean flag carries, so the caller can drive the
+// round trip with both true and false.
+func mcpSampleValue(flag mcpFlag, boolValue bool) any {
 	switch flag.kind {
 	case mcpFlagBool:
-		return true
+		return boolValue
 	case mcpFlagInteger:
 		return float64(3)
 	case mcpFlagNumber:
 		return 1.5
 	case mcpFlagList:
 		return []any{"first=1", "second=2"}
+	case mcpFlagDuration:
+		// A schema-valid string that time.ParseDuration also accepts, since the
+		// round trip now parses the generated argv with the real FlagSet rather
+		// than only rendering it.
+		return "45s"
 	default:
 		return "sample-" + flag.name
 	}
@@ -315,6 +369,10 @@ func TestMCPServeAnswersARealClient(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(w, `[{"id":"wf_1","name":"Orders","active":false}]`)
 		},
+		// The document `api --list` reads to enumerate operations.
+		operationsPath: jsonBody(http.StatusOK, `{"paths":{"/api/v1/workflows":{"get":{"operationId":"list-workflows"}}}}`),
+		// What `run` posts to, for the boolean-argument live check below.
+		apiPrefix + "/workflows/wf_1/run": jsonBody(http.StatusOK, `{"id":"exec_1","workflowId":"wf_1","status":"running"}`),
 	})
 
 	session := startMCPServe(t, srv.URL)
@@ -423,6 +481,35 @@ func TestMCPServeAnswersARealClient(t *testing.T) {
 	})
 	if failure, _ := invalid["error"].(map[string]any); failure == nil {
 		t.Fatalf("an unknown argument was accepted: %v", invalid)
+	}
+
+	// A boolean argument reaches its flag, in both directions: `--wait true`,
+	// the spelling the adapter used to emit, is not a flag Go's own parser
+	// accepts, so any of these calls failing is that regression back.
+	runCall := session.call("run", map[string]any{"workflow_id": "wf_1", "wait": false})
+	if runCall.isError {
+		t.Fatalf("run with wait:false failed: %q", runCall.text)
+	}
+	if doc := envelope(t, runCall.text); doc["ok"] != true {
+		t.Errorf("run with wait:false: ok = %v, want true (text=%q)", doc["ok"], runCall.text)
+	}
+
+	apiCall := session.call("api", map[string]any{"list": true})
+	if apiCall.isError {
+		t.Fatalf("api with list:true failed: %q", apiCall.text)
+	}
+	if doc := envelope(t, apiCall.text); doc["ok"] != true {
+		t.Errorf("api with list:true: ok = %v, want true (text=%q)", doc["ok"], apiCall.text)
+	} else if data, _ := doc["data"].(map[string]any); data["count"] != float64(1) {
+		t.Errorf("api with list:true: data.count = %v, want 1 (text=%q)", data["count"], apiCall.text)
+	}
+
+	installCall := session.call("skills_install", map[string]any{"dry_run": true, "target": "dir:" + t.TempDir()})
+	if installCall.isError {
+		t.Fatalf("skills_install with dry_run:true failed: %q", installCall.text)
+	}
+	if doc := envelope(t, installCall.text); doc["ok"] != true {
+		t.Errorf("skills_install with dry_run:true: ok = %v, want true (text=%q)", doc["ok"], installCall.text)
 	}
 
 	if session.stop() != ExitOK {

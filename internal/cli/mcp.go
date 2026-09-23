@@ -674,7 +674,10 @@ func (f mcpFlag) argv(value any) ([]string, error) {
 			return nil, mcp.BadParamsf("--%s takes true or false", f.name)
 		}
 
-		return []string{"--" + f.name, strconv.FormatBool(held)}, nil
+		// Go's flag package never takes the next token as a boolean's value —
+		// "--wait true" leaves "true" as a stray positional and the flag at its
+		// default — so a boolean must be spelled as one "--name=value" token.
+		return []string{"--" + f.name + "=" + strconv.FormatBool(held)}, nil
 	case mcpFlagInteger:
 		held, ok := mcpWholeNumber(value)
 		if !ok {
