@@ -72,7 +72,7 @@ func checkSourceSize(source string) error {
 
 // shippedModules are the modules require() can return. There is no npm and no
 // module directory, so this list is the whole of it.
-var shippedModules = map[string]bool{"crypto": true, "lodash": true, "luxon": true, "util": true}
+var shippedModules = shippedModuleNames()
 
 // luxonNames are the identifiers that mean a body uses Luxon. Loading it when
 // it is not needed costs nothing but a few milliseconds of setup, which is

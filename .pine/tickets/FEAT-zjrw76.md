@@ -1,7 +1,7 @@
 ---
 id: FEAT-zjrw76
 title: 'JS Code runtime P3: Luxon, IntlLite, require allowlist, crypto, Buffer and web-API shims'
-status: todo
+status: doing
 priority: high
 labels:
     - code-node
@@ -11,7 +11,7 @@ deps:
 parent: EPIC-tjnr1z
 phase: p3
 created: "2026-09-23T01:33:22Z"
-updated: "2026-09-23T01:33:22Z"
+updated: "2026-09-23T05:34:44Z"
 ---
 
 # Description

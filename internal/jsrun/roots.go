@@ -18,6 +18,9 @@ type Roots struct {
 	RunIndex int
 	// NodeVersion is the node's type version, backing $nodeVersion.
 	NodeVersion float64
+	// Timezone is the workflow's time zone, which DateTime, $now and $today
+	// default to, as in n8n. Empty means UTC.
+	Timezone string
 	// Node returns a node that ran earlier in this execution, by name,
 	// backing $('Name') and $node['Name']. Nil means no node has run.
 	Node func(name string) (NodeView, bool)
@@ -71,6 +74,15 @@ type snapshot struct {
 	NodeVersion float64           `json:"nodeVersion"`
 	Advice      string            `json:"advice"`
 	Caps        callCaps          `json:"caps"`
+	// Timezone is the workflow's zone, which Luxon and $now use.
+	Timezone string `json:"timezone"`
+	// Modules is moduleOrder; Requirable maps require() names to modules;
+	// Libraries lists the libraries require() may load, and Preload the ones
+	// to load before the code runs.
+	Modules    []string          `json:"modules"`
+	Requirable map[string]string `json:"requirable"`
+	Libraries  []string          `json:"libraries"`
+	Preload    []string          `json:"preload"`
 }
 
 // callCaps carries the per-call bounds into the VM.
@@ -80,7 +92,7 @@ type callCaps struct {
 	Bytes      int `json:"bytes"`
 }
 
-func (roots Roots) snapshot() snapshot {
+func (roots Roots) snapshot(preload []string) snapshot {
 	env := roots.Env
 	if env == nil {
 		env = map[string]string{}
@@ -95,6 +107,8 @@ func (roots Roots) snapshot() snapshot {
 		// none, and an expression sees the same empty object.
 		Vars:     map[string]any{},
 		RunIndex: roots.RunIndex, NodeVersion: version, Advice: UnsupportedAdvice,
-		Caps: callCaps{Elements: MaxElementsPerCall, Characters: MaxCharactersPerCall, Bytes: MaxBytesPerCall},
+		Caps:     callCaps{Elements: MaxElementsPerCall, Characters: MaxCharactersPerCall, Bytes: MaxBytesPerCall},
+		Timezone: roots.Timezone, Modules: moduleOrder, Requirable: requirable,
+		Libraries: libraryNames(), Preload: preload,
 	}
 }

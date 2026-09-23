@@ -38,7 +38,7 @@ func (runner *Runner) Run(ctx context.Context, task Task) (result Result, err er
 	if err != nil {
 		return Result{}, err
 	}
-	state, err := json.Marshal(task.Roots.snapshot())
+	state, err := json.Marshal(task.Roots.snapshot(librariesFor(ready.analysis, runner.forcedLibrary)))
 	if err != nil {
 		return Result{}, fmt.Errorf("the node's context cannot be handed to code: %w", err)
 	}
@@ -67,8 +67,8 @@ func (runner *Runner) Run(ctx context.Context, task Task) (result Result, err er
 	defer func() { result.Console, result.ConsoleTruncated = printed.lines, printed.truncated }()
 
 	// Setup. Nothing here is charged, and nothing here runs user code. The
-	// libraries load after the roots are installed, so they use the bounded
-	// built-ins too.
+	// roots, the modules and the libraries the body uses are installed in one
+	// step, after the built-ins are bounded, so they use the bounded ones too.
 	function, err := v.body(ready)
 	if err != nil {
 		return Result{}, err
@@ -79,15 +79,6 @@ func (runner *Runner) Run(ctx context.Context, task Task) (result Result, err er
 	}
 	if err := v.install(string(state), parsed, mode, hostFor(task.Roots, printed)); err != nil {
 		return Result{}, err
-	}
-	for _, lib := range librariesFor(ready.analysis, runner.forcedLibrary) {
-		compiled, err := lib.program()
-		if err != nil {
-			return Result{}, err
-		}
-		if err := v.load(compiled); err != nil {
-			return Result{}, err
-		}
 	}
 	clock := newClock(limits.Timeout, func() { v.interrupt(timedOut(limits.Timeout)) })
 	call := invocation{

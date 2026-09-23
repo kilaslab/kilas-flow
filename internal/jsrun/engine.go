@@ -147,6 +147,9 @@ type vm struct {
 	// function the user's code is called through.
 	installRoots goja.Callable
 	run          goja.Callable
+	// errorTypes are the error constructors, captured before any user code,
+	// that natives throw through.
+	errorTypes map[string]goja.Value
 
 	// jobs carries completions of asynchronous host work back to the VM's
 	// goroutine, which is the only one allowed to settle a promise.
@@ -190,7 +193,11 @@ func newVM(limits Limits) (*vm, error) {
 		done: make(chan struct{}), wake: make(chan struct{}),
 	}
 	// Captured before any other code runs, so a script that replaces
-	// JSON.parse cannot reach the runner's own parsing.
+	// JSON.parse or an error constructor cannot reach the runner's own.
+	v.errorTypes = map[string]goja.Value{}
+	for _, name := range []string{"Error", "TypeError", "RangeError"} {
+		v.errorTypes[name] = rt.Get(name)
+	}
 	jsonObject := rt.Get("JSON").ToObject(rt)
 	if v.jsonParse, err = callable(jsonObject.Get("parse")); err != nil {
 		return nil, err
@@ -314,18 +321,117 @@ func (v *vm) install(state string, input value, mode Mode, h host) error {
 			"console": func(call goja.FunctionCall) goja.Value {
 				return v.rt.ToValue(h.console(call.Argument(0).String(), call.Argument(1).String()))
 			},
+			"native":  v.callNative,
+			"library": v.loadLibrary,
 		} {
 			if err := callbacks.Set(name, function); err != nil {
 				return err
 			}
 		}
-		api, err := v.installRoots(goja.Undefined(), snapshot, input.v, v.rt.ToValue(mode.orDefault() == ModeEachItem), callbacks)
+		factories := v.rt.NewObject()
+		for _, name := range moduleOrder {
+			compiled, err := moduleProgram(name)
+			if err != nil {
+				return err
+			}
+			factory, err := v.rt.RunProgram(compiled.compiled)
+			if err != nil {
+				return v.fail(err)
+			}
+			if err := factories.Set(name, factory); err != nil {
+				return err
+			}
+		}
+		api, err := v.installRoots(goja.Undefined(), snapshot, input.v, v.rt.ToValue(mode.orDefault() == ModeEachItem), callbacks, factories)
 		if err != nil {
 			return v.fail(err)
 		}
 		v.run, err = callable(api.ToObject(v.rt).Get("run"))
 		return err
 	})
+}
+
+// callNative runs a Go native for a module: native(name, ...args).
+func (v *vm) callNative(call goja.FunctionCall) goja.Value {
+	name := call.Argument(0).String()
+	fn, ok := natives[name]
+	if !ok {
+		panic(v.rt.NewTypeError("jsrun: no native named " + name))
+	}
+	arguments := make([]any, 0, len(call.Arguments))
+	for _, argument := range call.Arguments[1:] {
+		arguments = append(arguments, exportNative(argument))
+	}
+	result, err := fn(arguments)
+	if err != nil {
+		panic(v.jsError(err))
+	}
+	converted, err := v.toJS(result)
+	if err != nil {
+		panic(v.jsError(err))
+	}
+	return converted
+}
+
+// exportNative turns a JavaScript value into a native's plain argument.
+// Typed arrays and ArrayBuffers arrive as bytes.
+func exportNative(value goja.Value) any {
+	if value == nil || goja.IsUndefined(value) || goja.IsNull(value) {
+		return nil
+	}
+	switch exported := value.Export().(type) {
+	case goja.ArrayBuffer:
+		return exported.Bytes()
+	case []byte:
+		return exported
+	default:
+		return exported
+	}
+}
+
+// jsError is the JavaScript error a native's error is thrown as.
+func (v *vm) jsError(err error) goja.Value {
+	name, message := "Error", err.Error()
+	var named *nativeError
+	if errors.As(err, &named) {
+		name, message = named.name, named.message
+	}
+	constructor, ok := v.errorTypes[name]
+	if !ok {
+		constructor = v.errorTypes["Error"]
+	}
+	thrown, failure := v.rt.New(constructor, v.rt.ToValue(message))
+	if failure != nil {
+		return v.rt.NewGoError(err)
+	}
+	return thrown
+}
+
+// loadLibrary runs a vendored library in the VM and returns what it exports.
+// It is called before the code runs for the libraries the analysis saw, and
+// from require() for any other, where it is charged like the rest of the
+// code's work.
+func (v *vm) loadLibrary(call goja.FunctionCall) goja.Value {
+	lib, ok := libraries[call.Argument(0).String()]
+	if !ok {
+		return goja.Undefined()
+	}
+	compiled, err := lib.program()
+	if err != nil {
+		panic(v.jsError(err))
+	}
+	exported, err := v.rt.RunProgram(compiled.compiled)
+	if err != nil {
+		// An interrupt or a stack overflow stays uncatchable; anything else
+		// becomes an error the code can see.
+		var interrupted *goja.InterruptedError
+		var overflow *goja.StackOverflowError
+		if errors.As(err, &interrupted) || errors.As(err, &overflow) {
+			panic(err)
+		}
+		panic(v.jsError(err))
+	}
+	return exported
 }
 
 // guard runs one entry into the VM, turning a panic into an error. goja
@@ -472,6 +578,8 @@ func (v *vm) toJS(result any) (goja.Value, error) {
 		return goja.Undefined(), nil
 	case string, bool, int, int64, float64:
 		return v.rt.ToValue(result), nil
+	case []byte:
+		return v.rt.ToValue(v.rt.NewArrayBuffer(result)), nil
 	}
 	encoded, err := json.Marshal(result)
 	if err != nil {

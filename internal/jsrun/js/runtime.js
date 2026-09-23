@@ -197,6 +197,7 @@
   // inspect renders a value for the console, in the spirit of Node's
   // util.inspect: bounded depth, long lists shortened, cycles marked.
   function inspect(value, depth, seen) {
+    if (depth === undefined) depth = 4;
     switch (typeof value) {
       case 'string': return seen ? quote(value) : value;
       case 'number': return (value === 0 && 1 / value < 0) ? '-0' : String(value);
@@ -421,7 +422,7 @@
 
   // install builds the Code node's roots over this execution's input, and
   // returns the one function the runner calls the user's code through.
-  function install(snapshot, input, eachItem, host) {
+  function install(snapshot, input, eachItem, host, factories) {
     var current = 0;
     for (var index = 0; index < input.length; index++) {
       remember(input[index], index);
@@ -581,6 +582,47 @@
       helpers[name] = function () { throw new Error(refusal('uses this.helpers.' + name, snapshot.advice)); };
     });
     var self = { helpers: helpers };
+
+    // The runtime's own modules run now, before any user code, each seeing
+    // the globals the ones before it defined.
+    var libraries = new Map();
+    function library(name) {
+      if (!libraries.has(name)) libraries.set(name, host.library(name));
+      return libraries.get(name);
+    }
+    var kit = {
+      native: host.native,
+      define: define,
+      apply: apply,
+      refusal: function (subject) { return refusal(subject, snapshot.advice); },
+      inspect: function (value, depth) { return inspect(value, depth, []); },
+      format: format,
+      lengthOf: lengthOf,
+      tooLarge: tooLarge,
+      caps: snapshot.caps,
+      library: library,
+      snapshot: snapshot,
+      global: global,
+    };
+    var shipped = {};
+    snapshot.modules.forEach(function (name) {
+      var exported = factories[name](kit);
+      if (exported !== undefined) shipped[name] = exported;
+    });
+
+    // require answers for the shipped modules and libraries only; there is no
+    // npm and no module directory to look anything else up in.
+    define('require', function require(request) {
+      var name = String(request);
+      if (name.slice(0, 5) === 'node:') name = name.slice(5);
+      var module = snapshot.requirable[name];
+      if (module !== undefined) return shipped[module];
+      if (snapshot.libraries.indexOf(name) >= 0) return library(name);
+      throw new Error(refusal('requires the module "' + name + '"', snapshot.advice));
+    });
+    // Libraries the analysis saw used are loaded now, where it costs the
+    // code nothing, rather than on first use.
+    snapshot.preload.forEach(library);
 
     return {
       run: function (body, itemIndex) {

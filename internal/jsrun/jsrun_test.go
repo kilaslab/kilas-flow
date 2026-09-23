@@ -188,7 +188,7 @@ func TestTheTimeLimitIsNotSpentOnSetup(t *testing.T) {
 	runner := jsrun.NewRunner(jsrun.Options{Limits: jsrun.Limits{Timeout: 50 * time.Millisecond}})
 	runner.PreloadForTest("lodash")
 	for run := range 3 {
-		result, err := runAll(t, runner, "return [{ json: { chunks: _.chunk([1, 2, 3, 4, 5], 2).length } }]", numbered(200))
+		result, err := runAll(t, runner, "const _ = require('lodash')\nreturn [{ json: { chunks: _.chunk([1, 2, 3, 4, 5], 2).length } }]", numbered(200))
 		if err != nil {
 			t.Fatalf("run %d: Run() error = %v", run, err)
 		}
