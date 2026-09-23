@@ -1067,10 +1067,12 @@ func TestTheRegisteredTriggerDeclaresABoundLifecycle(t *testing.T) {
 	}
 }
 
-// sessionCall is one request a stub session saw.
+// sessionCall is one request a stub session saw. The target is the request
+// line's own, still escaped, so an escaped slash is told apart from a real one.
 type sessionCall struct {
 	method string
 	path   string
+	target string
 	apiKey string
 }
 
@@ -1092,7 +1094,9 @@ func newSessionStub(t *testing.T, document string) (*sessionStub, *httptest.Serv
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw, _ := io.ReadAll(r.Body)
 		stub.mu.Lock()
-		stub.calls = append(stub.calls, sessionCall{method: r.Method, path: r.URL.Path, apiKey: r.Header.Get("X-Api-Key")})
+		stub.calls = append(stub.calls, sessionCall{
+			method: r.Method, path: r.URL.Path, target: r.RequestURI, apiKey: r.Header.Get("X-Api-Key"),
+		})
 		if r.Method == http.MethodPut {
 			stub.document = string(raw)
 		}
@@ -1412,6 +1416,53 @@ func TestASecondWorkflowOnTheSameSessionDoesNotEvictTheFirst(t *testing.T) {
 	if entries := stub.webhooks(t); len(entries) != 3 {
 		t.Fatalf("session webhooks = %#v, want three entries", entries)
 	}
+}
+
+// TestASessionNameCannotMoveTheRegistrationToAnotherEndpoint: the session is
+// the tenant's text, and every request built from it carries the tenant's WAHA
+// API key. Substituted raw, a session of `../../admin?key=` sent the read and
+// the write of the session document, key and all, to another endpoint of the
+// same WAHA.
+func TestASessionNameCannotMoveTheRegistrationToAnotherEndpoint(t *testing.T) {
+	t.Parallel()
+
+	t.Run("a path and a query stay inside the segment", func(t *testing.T) {
+		t.Parallel()
+
+		stub, server := newSessionStub(t, configuredSession)
+		set := install(t, safehttp.DefaultPolicy())
+		binding := bindingFor("abc123", true, map[string]any{"session": "../../admin?key="})
+		if _, err := coordinator(t, set, binding, stubCredential{baseURL: server.URL}).Activated(context.Background(), "tenant-a", "wf_1", declaredLifecycle(t)); err != nil {
+			t.Fatalf("Activated() error = %v", err)
+		}
+
+		calls := stub.recorded()
+		if stub.writes() != 1 {
+			t.Fatalf("calls = %#v, want the session read and written once", calls)
+		}
+		for _, call := range calls {
+			if call.target != "/api/sessions/..%2F..%2Fadmin%3Fkey=" {
+				t.Fatalf("%s target = %q, want the whole session name inside one escaped segment", call.method, call.target)
+			}
+		}
+	})
+
+	// A dot segment has nothing to escape: `..` is `..` escaped, and a proxy in
+	// front of WAHA resolves it. So it is refused before anything is sent.
+	t.Run("a dot segment is refused", func(t *testing.T) {
+		t.Parallel()
+
+		stub, server := newSessionStub(t, configuredSession)
+		set := install(t, safehttp.DefaultPolicy())
+		binding := bindingFor("abc123", true, map[string]any{"session": ".."})
+		_, err := coordinator(t, set, binding, stubCredential{baseURL: server.URL}).Activated(context.Background(), "tenant-a", "wf_1", declaredLifecycle(t))
+		if err == nil || !strings.Contains(err.Error(), "another endpoint") {
+			t.Fatalf("Activated() error = %v, want the session refused", err)
+		}
+		if calls := stub.recorded(); len(calls) != 0 {
+			t.Fatalf("calls = %#v, want nothing sent", calls)
+		}
+	})
 }
 
 // The binding comes from the definition the pack registered, not from a node

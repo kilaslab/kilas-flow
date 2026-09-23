@@ -317,7 +317,7 @@ func (request Request) target() (*url.URL, error) {
 // workflow author or from item data, so it is not the pack's to trust.
 func substitutePath(target string, values map[string]any) string {
 	for name, value := range values {
-		target = strings.ReplaceAll(target, "{"+name+"}", url.PathEscape(stringOf(value)))
+		target = strings.ReplaceAll(target, "{"+name+"}", safehttp.PathSegment(stringOf(value)))
 	}
 	return target
 }
