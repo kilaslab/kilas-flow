@@ -93,6 +93,16 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
   checkout — which is what makes them work from the distroless image. See
   [`kilasflow skills`](/reference/cli/#kilasflow-skills).
 
+- Pack-trigger lifecycle templates can send a structured parameter (a list or
+  an object) as JSON through `{{ .ParameterJSON.<key> }}`, and a `set` request
+  can `capture` values from its JSON answer (`capture: {key: "data.id"}`) for
+  its `check` and `remove` to read as `{{ .Captured.<key> }}`. Captured values
+  are sealed at rest with the credential encryption key, in a new
+  `webhook_routes.lifecycle_state` column (migration 000023), and nothing is
+  kept without that key. A trigger's HMAC check can take its secret from a
+  captured value (`secretCapture`); such a trigger refuses deliveries until the
+  secret has been kept.
+
 ### Changed
 
 - `execution.default_timeout` defaults to 2 minutes instead of 1. An AI agent on
@@ -178,17 +188,6 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
   `INSERT ... ON CONFLICT (id) DO UPDATE` statement on both drivers. It creates a
   missing row at exactly that id and never inserts the same id twice. Explicit
   ids are bounded to 1..9007199254740991.
-
-- Pack-trigger lifecycle templates can send a structured parameter (a list or
-  an object) as JSON through `{{ .ParameterJSON.<key> }}`, and a `set` request
-  can `capture` values from its JSON answer (`capture: {key: "data.id"}`) for
-  its `check` and `remove` to read as `{{ .Captured.<key> }}`. Captured values
-  are sealed at rest with the credential encryption key, in a new
-  `webhook_routes.lifecycle_state` column (migration 000023), and nothing is
-  kept without that key. A trigger's HMAC check can take its secret from a
-  captured value (`secretCapture`); such a trigger refuses deliveries until the
-  secret has been kept.
-
 
 ### Changed
 

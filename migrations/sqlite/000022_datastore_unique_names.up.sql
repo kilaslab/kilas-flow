@@ -30,14 +30,18 @@
 -- each name keeps it — by created_at, then by id so a tie still has one answer —
 -- because that is the one a workflow written against the name most likely
 -- meant. Every other gets its own id appended, " (datastore_…)", which is unique
--- by construction and tells its owner which table it is. From here on the name
--- resolves to the table that kept it and to no other; a workflow that meant one
--- of the renamed tables finds it under its new name, from the list or by id.
+-- by construction and tells its owner which table it is. The id goes after the
+-- name trimmed of the same whitespace the grouping strips: a legacy "Tags "
+-- would otherwise become "Tags  (datastore_…)", and a legacy "\tTags" a name
+-- that starts with a tab, neither of which the engine would ever write. From
+-- here on the name resolves to the table that kept it and to no other; a
+-- workflow that meant one of the renamed tables finds it under its new name,
+-- from the list or by id.
 --
 -- Table and index names are quoted so database.table_prefix rewrites them.
 
 UPDATE `datastores`
-    SET `name` = `name` || ' (' || `id` || ')'
+    SET `name` = trim(`name`, ' ' || char(9) || char(10) || char(11) || char(12) || char(13)) || ' (' || `id` || ')'
     WHERE `id` IN (
         SELECT `id` FROM (
             SELECT `id`, ROW_NUMBER() OVER (

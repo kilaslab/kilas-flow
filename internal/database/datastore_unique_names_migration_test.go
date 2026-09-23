@@ -126,10 +126,12 @@ func assertUniqueNamesMigration(t *testing.T, db *DB) {
 		"datastore_alone":        "Alone",
 		"datastore_long_a":       long,
 		"datastore_long_b":       longRenamed,
-		"datastore_tags_old":     "Tags",
-		"datastore_tags_space":   "Tags  (datastore_tags_space)",
-		"datastore_tags_tab":     "\tTAGS (datastore_tags_tab)",
-		"datastore_tags_line":    " tags\r\n (datastore_tags_line)",
+		// A renamed name is built from the trimmed one, so the spaces the
+		// grouping set aside are not carried into it.
+		"datastore_tags_old":   "Tags",
+		"datastore_tags_space": "Tags (datastore_tags_space)",
+		"datastore_tags_tab":   "TAGS (datastore_tags_tab)",
+		"datastore_tags_line":  "tags (datastore_tags_line)",
 	}
 	got := datastoreNames(t, db)
 	for id, name := range want {
