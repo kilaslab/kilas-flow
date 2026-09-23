@@ -1,4 +1,5 @@
--- A data table's name is unique within its tenant, compared without case.
+-- A data table's name is unique within its tenant, compared without case and
+-- without the spaces around it.
 --
 -- A name is how the By-Name locator addresses a table, and the locator has
 -- always compared names without regard to case. Nothing stopped a tenant from
@@ -11,9 +12,17 @@
 -- The engine checks the rule before every create and rename, in Go, and that
 -- check is the authority: Go folds case the same way on every install, while
 -- lower() here folds by the database's locale. The index is the backstop for
--- two writers that pass the check at the same moment, and it has to be built
--- over the same expression the duplicates below are grouped by, or a pair the
--- grouping missed would stop the index from being created at all.
+-- two writers that pass the check at the same moment.
+--
+-- The duplicates below are grouped the way the engine compares names: trimmed
+-- of the whitespace strings.TrimSpace strips from ASCII (space, tab, line feed,
+-- vertical tab, form feed, carriage return) as well as folded. Grouped by case
+-- alone, a legacy "Leads" and "Leads " would both keep their names, and every
+-- By-Name reference to either would then be refused as ambiguous. The index
+-- stays on lower(name), which the engine never needs trimmed because it trims
+-- every name it writes. Two names the index calls the same are the same by the
+-- grouping too, so no pair the index would refuse survives to stop it being
+-- created.
 --
 -- The duplicates a database already holds are renamed rather than refused or
 -- deleted: the tables and their rows are the tenant's, and a migration that
@@ -36,7 +45,8 @@ UPDATE "datastores"
     WHERE "id" IN (
         SELECT "id" FROM (
             SELECT "id", ROW_NUMBER() OVER (
-                PARTITION BY "tenant_id", lower("name")
+                PARTITION BY "tenant_id",
+                    lower(btrim("name", ' ' || chr(9) || chr(10) || chr(11) || chr(12) || chr(13)))
                 ORDER BY "created_at", "id"
             ) AS "seniority"
             FROM "datastores"

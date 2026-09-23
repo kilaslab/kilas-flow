@@ -93,6 +93,15 @@ func assertUniqueNamesMigration(t *testing.T, db *DB) {
 		// A name already at the column's width still takes the whole suffix.
 		{"datastore_long_a", "tenant-a", long, base},
 		{"datastore_long_b", "tenant-a", long, base.Add(time.Hour)},
+		// The engine's rule ignores the spaces around a name as well as its
+		// case, so a legacy "Tags " is the same name as "Tags", and so is one
+		// behind a tab or before a line break. Grouped by case alone they
+		// would all keep their names, and every By-Name reference to them
+		// would then be refused as ambiguous.
+		{"datastore_tags_old", "tenant-a", "Tags", base},
+		{"datastore_tags_space", "tenant-a", "Tags ", base.Add(time.Hour)},
+		{"datastore_tags_tab", "tenant-a", "\tTAGS", base.Add(2 * time.Hour)},
+		{"datastore_tags_line", "tenant-a", " tags\r\n", base.Add(3 * time.Hour)},
 	}
 	seedDatastoreNames(t, db, seeds...)
 
@@ -117,11 +126,26 @@ func assertUniqueNamesMigration(t *testing.T, db *DB) {
 		"datastore_alone":        "Alone",
 		"datastore_long_a":       long,
 		"datastore_long_b":       longRenamed,
+		"datastore_tags_old":     "Tags",
+		"datastore_tags_space":   "Tags  (datastore_tags_space)",
+		"datastore_tags_tab":     "\tTAGS (datastore_tags_tab)",
+		"datastore_tags_line":    " tags\r\n (datastore_tags_line)",
 	}
 	got := datastoreNames(t, db)
 	for id, name := range want {
 		if got[id] != name {
 			t.Errorf("%s is named %q after the migration, want %q", id, got[id], name)
+		}
+	}
+	// What the migration leaves has to pass the engine's own rule, the one
+	// ResolveByName refuses an ambiguous name by: no two of a tenant's names
+	// the same once their surrounding spaces and case are set aside.
+	for id, name := range got {
+		for other, otherName := range got {
+			if id < other && seedTenant(seeds, id) == seedTenant(seeds, other) &&
+				strings.EqualFold(strings.TrimSpace(name), strings.TrimSpace(otherName)) {
+				t.Errorf("%s (%q) and %s (%q) still share a name by the engine's rule", id, name, other, otherName)
+			}
 		}
 	}
 
@@ -152,6 +176,16 @@ func seedDatastoreNames(t *testing.T, db *DB, seeds ...namedDatastore) {
 			t.Fatalf("seed %s: %v", seed.id, err)
 		}
 	}
+}
+
+// seedTenant is the tenant the seed with the given id was written for.
+func seedTenant(seeds []namedDatastore, id string) string {
+	for _, seed := range seeds {
+		if seed.id == id {
+			return seed.tenant
+		}
+	}
+	return ""
 }
 
 // datastoreNames reads every catalogue row's name back by id.

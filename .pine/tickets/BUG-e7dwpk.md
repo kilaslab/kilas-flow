@@ -66,6 +66,11 @@ Proof:
 - `go test ./internal/loadoptions/ -run TestDatastoreListLabelsTellTablesThatShareANameApart` → ok
 - `go test ./...` → ok (SQLite). With `KILASFLOW_TEST_POSTGRES_DSN` set against a throwaway pgvector/pg17 container, these packages → ok: database, datastore, tenantpurge, api/..., loadoptions, nodes, embed, repository, cmd/kilasflow and cli.
 
+## Progress — final review fixes (2026-09-23)
+
+- **Migration 000021 groups duplicates the way the engine compares names.** It partitioned by `lower(name)`, but `sameName` also trims, so a legacy "Leads" beside "Leads " both kept their names and every By-Name reference to them was refused as ambiguous. Both dialects now partition by the lowered name trimmed of the ASCII whitespace `strings.TrimSpace` strips (space, `\t`, `\n`, `\v`, `\f`, `\r`): SQLite `trim(name, ' ' || char(9) || … || char(13))`, PostgreSQL `btrim(name, ' ' || chr(9) || … || chr(13))`. The oldest per group still keeps its name; the rename and PostgreSQL's `varchar(255)` cut are unchanged. The unique index stays on `lower(name)`: the grouping is coarser, so nothing it leaves can stop the index. `Create` and `RenameDatastore` already trim every name they write, so the catalogue needs no change.
+- Proof: `TestDuplicateDatastoreNamesAreRenamedBeforeTheyAreMadeUniqueOn{SQLite,Postgres}` seeds "Tags", "Tags ", "\tTAGS" and " tags\r\n" and checks the three younger ones are renamed and that no two of a tenant's names are the same by the engine's rule. Red on both drivers before the change, green after.
+
 # Attachments
 
 ## Work Evidence
