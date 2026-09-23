@@ -1079,7 +1079,8 @@ MaxOutputBytes caps the decoded result payload one run may return.
 
 Code configures the two Code nodes. The Go Code node needs a toolchain and
 a place to keep what it builds. The JavaScript Code node runs on an engine
-linked into the server and needs only its limits.
+linked into the binary, in worker processes the server starts from its own
+executable, and needs only its limits.
 
 The section is one word because envKeyToPath treats the first underscore as
 the section separator, so code.cache_dir is reachable as
@@ -1138,9 +1139,9 @@ the artifacts, so eviction is a last resort rather than housekeeping.
 - Required: no
 
 JavaScriptEnabled runs JavaScript Code nodes, including the ones
-imported from n8n, on the engine inside the server. Turned off, the
-node is greyed out in the editor and every run is refused, naming this
-key. No Node.js process is involved either way.
+imported from n8n, on the engine linked into the binary. Turned off,
+the node is greyed out in the editor and every run is refused, naming
+this key. No Node.js process is involved either way.
 
 ### code.javascript_timeout
 

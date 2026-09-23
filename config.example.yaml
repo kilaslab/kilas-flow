@@ -512,9 +512,9 @@ code:
   # Env: KILASFLOW_CODE_CACHE_MAX_BYTES
   cache_max_bytes: 2147483648
   # JavaScriptEnabled runs JavaScript Code nodes, including the ones
-  # imported from n8n, on the engine inside the server. Turned off, the
-  # node is greyed out in the editor and every run is refused, naming this
-  # key. No Node.js process is involved either way.
+  # imported from n8n, on the engine linked into the binary. Turned off,
+  # the node is greyed out in the editor and every run is refused, naming
+  # this key. No Node.js process is involved either way.
   # Env: KILASFLOW_CODE_JAVASCRIPT_ENABLED
   javascript_enabled: true
   # JavaScriptTimeout bounds the user's own program in one JavaScript Code

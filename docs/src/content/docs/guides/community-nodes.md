@@ -147,8 +147,8 @@ second image or stage carrying Node 24 LTS and the operator's chosen packages
 The sidecar is operator-installed, never KilasFlow-distributed. KilasFlow
 ships no Node.js runtime, no dependency tree, and no community package;
 the operator installs Node and the packages they choose. (The Code node's
-JavaScript runs on an embedded engine inside the server, and never in the
-sidecar.) Nothing in the
+JavaScript runs on an engine linked into the binary, in worker processes the
+server starts from its own executable, and never in the sidecar.) Nothing in the
 protocol derives from Sustainable-Use-Licensed code, and the repository's
 licence boundary (see `.pine/memory/licensing.md`) holds: no foreign source
 in the tree, no foreign package in any manifest, no foreign bytes in any

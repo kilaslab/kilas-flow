@@ -210,6 +210,8 @@ internal/
   sqlbuild/             turns a described operation into a bound SQL statement
   sqlnode/              connects workflows to databases the user configures
   runcode/              compiles and executes user-supplied Go for the Code node
+  jsrun/                runs Code-node JavaScript on an embedded engine, with n8n's globals
+  jsworker/             the worker processes that JavaScript runs in, apart from the server
   ai/                   agent contracts and the built-in tool loop
   interop/n8n/          converts between n8n workflow JSON and our document
   cli/                  the agent CLI verbs the binary serves besides `serve`
@@ -219,7 +221,7 @@ internal/
 nodes/                  the built-in node definitions and executors
 packs/                  declarative node packs — WAHA and GOWA (generated), Telegram (hand-written)
 sidecar/                the JavaScript sidecar process for community nodes
-third_party/            vendored upstream specs the packs are generated from
+third_party/            vendored upstream specs the packs are generated from, and the Code node's JS libraries
 sdk/                    @kilasflow/sdk, the TypeScript host SDK
 skills/                 the agent skills bundle embedded in the binary
 schemas/                the published workflow JSON Schema

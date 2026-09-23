@@ -197,6 +197,17 @@ the image and the operator's community packages installed beside the binary:
 the catalogue is read from them at boot, so **every** process role that boots
 with `sidecar.enabled` must carry both. See
 [JavaScript sidecar](/operate/javascript-sidecar/).
+
+The Code (JavaScript) node needs nothing in the image: its engine is linked into
+the binary. It runs each script in a worker process the server starts from its
+own executable, so `ps` shows the kilasflow binary more than once, and a
+process that runs workflows needs room for them. Budget up to
+`code.javascript_max_concurrent` workers (one per CPU by default) on top of the
+server, each idling at a few tens of MiB and allowed a live heap up to
+`code.javascript_heap_ceiling_mb` (1 GiB by default) while it runs. On Linux a
+worker tells the kernel to kill it first when memory runs out, so an undersized
+container loses a script rather than the server. See
+[safety boundaries](/concepts/safety-boundaries/#worker-processes).
 Note that the `Code` node needs a Go toolchain at run time to compile source it
 has not seen before, and the distroless image does not have one. The server
 reports the node as unavailable through the node catalogue rather than failing
