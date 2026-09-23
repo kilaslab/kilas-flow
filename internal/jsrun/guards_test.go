@@ -31,7 +31,7 @@ func TestAConstantChainThatFoldsExponentiallyIsRefused(t *testing.T) {
 	// Other operators fold in polynomial time, so literals joined with + are
 	// ordinary code however many there are.
 	accepted(t, "const query = 'SELECT '"+strings.Repeat(" +\n  'column, '", 60)+" + 'id FROM t'\nreturn [{ json: { query } }]")
-	accepted(t, "return [{ json: { n: -(-(-(-(1" + strings.Repeat(" + 1", 40) + ")))) } }]")
+	accepted(t, "return [{ json: { n: -(-(-(-(1"+strings.Repeat(" + 1", 40)+")))) } }]")
 	// Arithmetic between the levels does not hide the chain.
 	for _, source := range []string{
 		"return [{ json: { x: 0" + strings.Repeat("||0)+0", 20) + " } }]",

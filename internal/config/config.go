@@ -803,16 +803,18 @@ type Code struct {
 	JavaScriptTimeout time.Duration `koanf:"javascript_timeout"`
 
 	// JavaScriptMaxConcurrent bounds how many JavaScript Code nodes run at
-	// once across the server; more wait their turn. Zero means one per CPU.
+	// once across the server, and so how many worker processes run them;
+	// more wait their turn. Zero means one per CPU.
 	// Env: KILASFLOW_CODE_JAVASCRIPT_MAX_CONCURRENT. Default: 0.
 	JavaScriptMaxConcurrent int `koanf:"javascript_max_concurrent"`
 
-	// JavaScriptHeapCeilingMB is the server's live heap, in MiB, at which every
-	// running JavaScript Code node is stopped with a memory-limit error. The
-	// engine keeps scripts on the server's own heap, so this is the guard that
-	// keeps a runaway script from taking the server down with it. Zero means
-	// half of GOMEMLIMIT when that is set, and 1024 otherwise; setting
-	// GOMEMLIMIT to the container's memory is the recommended deployment.
+	// JavaScriptHeapCeilingMB is one worker process's live heap, in MiB, at
+	// which its JavaScript Code node is stopped with a memory-limit error.
+	// Scripts run in workers apart from the server, so a runaway script costs
+	// a worker, never the server; on Linux a worker that outgrows this in one
+	// step is stopped by an address-space limit of four times it plus 1 GiB,
+	// or by the kernel, which is asked to choose workers first. Budget up to
+	// javascript_max_concurrent workers of this size. Zero means 1024.
 	// Env: KILASFLOW_CODE_JAVASCRIPT_HEAP_CEILING_MB. Default: 0.
 	JavaScriptHeapCeilingMB int64 `koanf:"javascript_heap_ceiling_mb"`
 

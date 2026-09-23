@@ -62,6 +62,26 @@ func timedOut(limit time.Duration) error {
 	return named(ErrTimeLimit, fmt.Sprintf("code exceeded its %s time limit", limit))
 }
 
+// outOfMemory is the one memory-limit failure.
+func outOfMemory(ceiling uint64) error {
+	return named(ErrMemoryLimit, fmt.Sprintf(
+		"code was stopped because the server's memory for scripts reached its %s ceiling", byteSize(int64(ceiling))))
+}
+
+// TimeLimitError, MemoryLimitError and EngineFaultError are the failures a
+// worker pool reports when it had to stop a worker process itself, in the
+// words the runtime uses when it stops a script.
+func TimeLimitError(limit time.Duration) error { return timedOut(limit) }
+
+// MemoryLimitError: see TimeLimitError.
+func MemoryLimitError(ceiling uint64) error { return outOfMemory(ceiling) }
+
+// EngineFaultError: see TimeLimitError. detail says what happened to the
+// engine.
+func EngineFaultError(detail string) error {
+	return named(ErrEngineFault, fmt.Sprintf("the JavaScript engine failed while running this code (%s); this is a fault in the server, not in the code", detail))
+}
+
 // ScriptError is an error the user's code threw, located in the user's own
 // coordinates: line 1 is the first line of the code as written in the node.
 type ScriptError struct {

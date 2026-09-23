@@ -8,26 +8,29 @@ package jsrun
 // Nodes are reached through functions rather than copied in, because a body
 // that never names another node should not pay to serialise every node that
 // ran before it.
+//
+// The data fields cross into a worker process with a Job; the functions stay
+// with the server, which answers them through a Host.
 type Roots struct {
-	Workflow  WorkflowInfo
-	Execution ExecutionInfo
+	Workflow  WorkflowInfo  `json:"workflow"`
+	Execution ExecutionInfo `json:"execution"`
 	// Env is the allowlisted environment, backing $env.
-	Env map[string]string
+	Env map[string]string `json:"env,omitempty"`
 	// RunIndex is the Nth time this node runs in the execution, backing
 	// $runIndex.
-	RunIndex int
+	RunIndex int `json:"runIndex"`
 	// NodeVersion is the node's type version, backing $nodeVersion.
-	NodeVersion float64
+	NodeVersion float64 `json:"nodeVersion"`
 	// Timezone is the workflow's time zone, which DateTime, $now and $today
 	// default to, as in n8n. Empty means UTC.
-	Timezone string
+	Timezone string `json:"timezone,omitempty"`
 	// Node returns a node that ran earlier in this execution, by name,
 	// backing $('Name') and $node['Name']. Nil means no node has run.
-	Node func(name string) (NodeView, bool)
+	Node func(name string) (NodeView, bool) `json:"-"`
 	// Pair answers which item of the named node the input item at index
 	// descends from: an index into that node's Items, or -1 and the reason
 	// there is none. It backs $('Name').item and .itemMatching(index).
-	Pair func(name string, index int) (int, string)
+	Pair func(name string, index int) (int, string) `json:"-"`
 }
 
 // WorkflowInfo backs $workflow.
@@ -51,6 +54,15 @@ type NodeView struct {
 	Items []map[string]any `json:"items"`
 	// Params are the node's own parameters, backing .params.
 	Params map[string]any `json:"params"`
+}
+
+// Host answers what a job's code asks of the server while it runs. In a
+// worker process its answers come over the pipe from the server.
+type Host struct {
+	// Node returns a node's NodeView as JSON, or false when it has not run.
+	Node func(name string) (string, bool)
+	// Pair is Roots.Pair.
+	Pair func(name string, index int) (int, string)
 }
 
 // host is what the roots call back into the server for while the code runs.

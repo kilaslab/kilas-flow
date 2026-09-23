@@ -147,6 +147,18 @@ func runtimeReachRules() []importRule {
 					underPath(importPath, moduleImportPath+"sidecar") || underPath(importPath, moduleImportPath+"internal/sidecarnode")
 			},
 		},
+		{
+			// Starting worker processes is the worker package's job, so it may
+			// use os, os/exec and syscall. A worker runs tenant code, so the
+			// package still reaches no network and no host subsystem: a
+			// capability a script needs reaches it as a question the server
+			// answers over the worker's pipes.
+			name:   "the JavaScript worker package reaches no network or host subsystem",
+			covers: func(relative string) bool { return strings.HasPrefix(relative, "internal/jsworker/") },
+			forbids: func(importPath string) bool {
+				return underPath(importPath, "net") || hostSubsystems(importPath)
+			},
+		},
 	}
 }
 
@@ -184,7 +196,7 @@ func outsideRuntimeRules() []importRule {
 func reportViolations(t *testing.T, violations []importViolation) {
 	t.Helper()
 	for _, violation := range violations {
-		t.Errorf("%s.\n\tThe runtime runs tenant code in the server process; give it a Go function from the node package instead of an import.", violation)
+		t.Errorf("%s.\n\tThe runtime runs tenant code; give it a Go function from the node package instead of an import.", violation)
 	}
 }
 

@@ -447,7 +447,7 @@ func (v *vm) loadLibrary(call goja.FunctionCall) goja.Value {
 func guard(entry func() error) (err error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			err = named(ErrEngineFault, fmt.Sprintf("the JavaScript engine failed while running this code (%v); this is a fault in the server, not in the code", recovered))
+			err = EngineFaultError(fmt.Sprint(recovered))
 		}
 	}()
 	return entry()

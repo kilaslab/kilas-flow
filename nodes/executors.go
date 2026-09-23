@@ -128,14 +128,16 @@ type executorSettings struct {
 	codeArtifacts runcode.Cache
 	codeModules   *runcode.ModuleCache
 	// jsRunner runs the JavaScript Code node, and jsDisabled is why a
-	// deployment turned it off. A nil runner means the shipped defaults.
-	jsRunner   *jsrun.Runner
+	// deployment turned it off. A nil runner means the shipped defaults, in
+	// this process.
+	jsRunner   jsrun.Engine
 	jsDisabled string
 }
 
 // WithJSRunner hands the JavaScript Code node the deployment's runtime, with
-// the limits the operator configured.
-func WithJSRunner(runner *jsrun.Runner) ExecutorOption {
+// the limits the operator configured: the server's worker pool, or a
+// jsrun.Runner in this process.
+func WithJSRunner(runner jsrun.Engine) ExecutorOption {
 	return func(settings *executorSettings) { settings.jsRunner = runner }
 }
 
@@ -148,7 +150,7 @@ func WithoutJavaScript(reason string) ExecutorOption {
 // jsCodeExecutorOf binds the JavaScript Code node to the deployment's
 // runtime, or to one with the shipped limits when it names none.
 func jsCodeExecutorOf(settings executorSettings) *JSCodeExecutor {
-	runner := settings.jsRunner
+	var runner jsrun.Engine = settings.jsRunner
 	if runner == nil {
 		runner = defaultJSRunner()
 	}

@@ -107,15 +107,16 @@ func validateJSCodeConfiguration(n workflow.Node) error {
 
 // JSCodeExecutor runs Code (JavaScript) nodes on the deployment's runtime.
 type JSCodeExecutor struct {
-	runner *jsrun.Runner
+	runner jsrun.Engine
 	// disabled is why the deployment turned JavaScript off; empty when it
 	// runs.
 	disabled string
 }
 
 // defaultJSRunner is the runtime a caller that configures none gets, with
-// the shipped limits. One per process, since a runner bounds concurrency
-// across everything it runs.
+// the shipped limits, in this process. One per process, since a runner
+// bounds concurrency across everything it runs. The server configures a
+// worker pool instead (internal/jsworker); tests and tools use this.
 var defaultJSRunner = sync.OnceValue(func() *jsrun.Runner { return jsrun.NewRunner(jsrun.Options{}) })
 
 // Execute runs the node's code over its input. What the code printed is

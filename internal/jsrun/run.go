@@ -9,14 +9,54 @@ import (
 	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
 
-// Run executes one node's code over its input items.
+// Run executes one node's code over its input items, in this process: it is
+// Prepare followed by Execute.
+func (runner *Runner) Run(ctx context.Context, task Task) (Result, error) {
+	job, host, err := runner.Prepare(task)
+	if err != nil {
+		return Result{}, err
+	}
+	return runner.Execute(ctx, job, host)
+}
+
+// Prepare turns a task into a job, which holds only data and so can cross
+// into a worker process, and the host that answers what the job's code asks
+// of the server while it runs. The input is encoded here, once, and checked
+// against its cap before any VM exists. Prepare compiles and runs nothing.
+func (runner *Runner) Prepare(task Task) (Job, Host, error) {
+	limits := runner.limits.tighten(task.Limits)
+	input, err := encodeItems(task.Items)
+	if err != nil {
+		return Job{}, Host{}, err
+	}
+	state, err := json.Marshal(task.Roots.snapshot(nil))
+	if err != nil {
+		return Job{}, Host{}, fmt.Errorf("the node's context cannot be handed to code: %w", err)
+	}
+	if size := int64(len(input) + len(state)); size > limits.MaxInputBytes {
+		return Job{}, Host{}, named(ErrInputLimit, fmt.Sprintf(
+			"the node's input is %s as JSON, more than the %s code may be given", byteSize(size), byteSize(limits.MaxInputBytes)))
+	}
+	job := Job{
+		Source: task.Source, Mode: task.Mode.orDefault(), Limits: limits, Input: input, Roots: task.Roots,
+		Origins: make([]*workflow.PairedItem, len(task.Items)), Files: map[string]workflow.BinaryRef{},
+	}
+	for index, item := range task.Items {
+		job.Origins[index] = item.Paired
+		for _, ref := range item.Binary {
+			job.Files[ref.ID] = ref
+		}
+	}
+	return job, hostFor(task.Roots), nil
+}
+
+// Execute runs a prepared job on a fresh VM.
 //
 // The work falls in three parts, and only the middle one is charged to the
 // time limit:
 //
-//  1. Setup: the body is compiled (or found in the cache), the input is
-//     encoded and checked against its cap before any VM exists, a fresh VM
-//     is created, the libraries the body uses are loaded, the input is parsed
+//  1. Setup: the body is compiled (or found in the cache), a fresh VM is
+//     created, the libraries the body uses are loaded, the input is parsed
 //     inside it and the roots are installed.
 //  2. The user's code: the call, every promise job it waits on, and turning
 //     its result into JSON.
@@ -24,27 +64,19 @@ import (
 //
 // The result carries what the code printed even when the run fails, because
 // that is usually how its author finds out why.
-func (runner *Runner) Run(ctx context.Context, task Task) (result Result, err error) {
+func (runner *Runner) Execute(ctx context.Context, job Job, answers Host) (result Result, err error) {
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}
-	mode := task.Mode.orDefault()
-	limits := runner.limits.tighten(task.Limits)
-	ready, err := sharedPrograms.prepare(task.Source, mode)
+	mode := job.Mode.orDefault()
+	limits := runner.limits.tighten(job.Limits)
+	ready, err := sharedPrograms.prepare(job.Source, mode)
 	if err != nil {
 		return Result{}, err
 	}
-	input, err := encodeItems(task.Items)
-	if err != nil {
-		return Result{}, err
-	}
-	state, err := json.Marshal(task.Roots.snapshot(librariesFor(ready.analysis, runner.forcedLibrary)))
+	state, err := json.Marshal(job.Roots.snapshot(librariesFor(ready.analysis, runner.forcedLibrary)))
 	if err != nil {
 		return Result{}, fmt.Errorf("the node's context cannot be handed to code: %w", err)
-	}
-	if size := int64(len(input) + len(state)); size > limits.MaxInputBytes {
-		return Result{}, named(ErrInputLimit, fmt.Sprintf(
-			"the node's input is %s as JSON, more than the %s code may be given", byteSize(size), byteSize(limits.MaxInputBytes)))
 	}
 
 	if err := runner.acquire(ctx); err != nil {
@@ -73,17 +105,17 @@ func (runner *Runner) Run(ctx context.Context, task Task) (result Result, err er
 	if err != nil {
 		return Result{}, err
 	}
-	parsed, err := v.parse(input)
+	parsed, err := v.parse(job.Input)
 	if err != nil {
 		return Result{}, err
 	}
-	if err := v.install(string(state), parsed, mode, hostFor(task.Roots, printed)); err != nil {
+	if err := v.install(string(state), parsed, mode, host{node: answers.Node, pair: answers.Pair, console: printed.write}); err != nil {
 		return Result{}, err
 	}
 	clock := newClock(limits.Timeout, func() { v.interrupt(timedOut(limits.Timeout)) })
 	call := invocation{
-		v: v, clock: clock, function: function, mode: mode, count: len(task.Items),
-		limits: limits, decode: newDecoder(task.Items),
+		v: v, clock: clock, function: function, mode: mode, count: len(job.Origins),
+		limits: limits, decode: &decoder{origins: job.Origins, files: job.Files},
 	}
 
 	if mode == ModeAllItems {
@@ -92,7 +124,7 @@ func (runner *Runner) Run(ctx context.Context, task Task) (result Result, err er
 	}
 	var out []workflow.Item
 	remaining := limits.MaxOutputBytes
-	for index := range task.Items {
+	for index := range job.Origins {
 		if index > 0 && runner.betweenItems != nil {
 			runner.betweenItems()
 		}
@@ -106,10 +138,10 @@ func (runner *Runner) Run(ctx context.Context, task Task) (result Result, err er
 	return Result{Items: out, UserTime: clock.spent()}, nil
 }
 
-// hostFor is what the roots ask the server for while the code runs.
-func hostFor(roots Roots, printed *console) host {
-	return host{
-		node: func(name string) (string, bool) {
+// hostFor answers what the code asks of the server, from the roots.
+func hostFor(roots Roots) Host {
+	return Host{
+		Node: func(name string) (string, bool) {
 			if roots.Node == nil {
 				return "", false
 			}
@@ -126,13 +158,12 @@ func hostFor(roots Roots, printed *console) host {
 			}
 			return string(encoded), true
 		},
-		pair: func(name string, index int) (int, string) {
+		Pair: func(name string, index int) (int, string) {
 			if roots.Pair == nil {
 				return -1, "item lineage is not available here"
 			}
 			return roots.Pair(name, index)
 		},
-		console: printed.write,
 	}
 }
 

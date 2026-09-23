@@ -1,7 +1,6 @@
 package jsrun
 
 import (
-	"fmt"
 	"runtime"
 	"runtime/metrics"
 	"sync"
@@ -112,8 +111,7 @@ func (w *watchdog) tick() (collect bool) {
 		entry.fired = true
 		w.draining++
 		w.collect = true
-		entry.interrupt(named(ErrMemoryLimit, fmt.Sprintf(
-			"code was stopped because the server's memory for scripts reached its %s ceiling", byteSize(int64(entry.ceiling)))))
+		entry.interrupt(outOfMemory(entry.ceiling))
 	}
 	return false
 }

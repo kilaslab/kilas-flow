@@ -64,20 +64,11 @@ func encodeItems(items []workflow.Item) (string, error) {
 // decoder turns returned items back into workflow items, against the input
 // they may descend from.
 type decoder struct {
-	input []workflow.Item
+	// origins are the input items' own origins, by index.
+	origins []*workflow.PairedItem
 	// files are the input's files by ID. A returned item may pass one on; it
 	// may not name a file it was never given.
 	files map[string]workflow.BinaryRef
-}
-
-func newDecoder(input []workflow.Item) *decoder {
-	files := map[string]workflow.BinaryRef{}
-	for _, item := range input {
-		for _, ref := range item.Binary {
-			files[ref.ID] = ref
-		}
-	}
-	return &decoder{input: input, files: files}
 }
 
 func (d *decoder) decode(text string, eachItem bool) ([]workflow.Item, error) {
@@ -147,10 +138,10 @@ func (d *decoder) paired(raw json.RawMessage) *workflow.PairedItem {
 		return &workflow.PairedItem{Lost: true}
 	}
 	var index int
-	if json.Unmarshal(raw, &index) != nil || index < 0 || index >= len(d.input) {
+	if json.Unmarshal(raw, &index) != nil || index < 0 || index >= len(d.origins) {
 		return nil
 	}
-	origin := d.input[index].Paired
+	origin := d.origins[index]
 	if origin == nil {
 		return nil
 	}
