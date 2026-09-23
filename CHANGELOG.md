@@ -179,6 +179,16 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
   missing row at exactly that id and never inserts the same id twice. Explicit
   ids are bounded to 1..9007199254740991.
 
+- Pack-trigger lifecycle templates can send a structured parameter (a list or
+  an object) as JSON through `{{ .ParameterJSON.<key> }}`, and a `set` request
+  can `capture` values from its JSON answer (`capture: {key: "data.id"}`) for
+  its `check` and `remove` to read as `{{ .Captured.<key> }}`. Captured values
+  are sealed at rest with the credential encryption key, in a new
+  `webhook_routes.lifecycle_state` column (migration 000022), and nothing is
+  kept without that key. A trigger's HMAC check can take its secret from a
+  captured value (`secretCapture`); such a trigger refuses deliveries until the
+  secret has been kept.
+
 
 ### Changed
 
@@ -235,6 +245,46 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
   is idempotent: repeat it until it reports zeros. See
   [Tenant deletion](docs/src/content/docs/operate/tenant-deletion.md).
 
+- A data table's name is unique within its tenant, compared without regard to
+  case or to the spaces around it, the way n8n keeps names unique within a
+  project. Creating or renaming onto a taken name answers `409` naming the
+  table that holds it, and a By Name reference that more than one table would
+  answer is refused rather than resolved to whichever the catalogue listed
+  first. Migration 000021 renames the duplicates a database already holds: the
+  oldest table of each name keeps it, and every other becomes
+  `<name> (<id>)`. A workflow that addressed one of the renamed tables By Name
+  now reaches the oldest table of that name instead, so point it at the new
+  name or at the id. The "From list" picker tells tables that share a name
+  apart by the end of their id.
+
+- A Data table Tool performs the operation it is set to — get, insert,
+  update, upsert or delete — where before it only ever read. An Insert with
+  nothing to write still reads, which keeps every tool built before writes
+  existed reading; an Update or Upsert with nothing to write is refused. On a
+  tool that writes, the model supplies values only: a `$fromAI` call or an
+  expression may sit in a mapped column's value or a condition's value, and the
+  rest of the write (which column a condition reads, its operator, any or all,
+  the mapping) is written literally and refused at save if it is not. An n8n
+  Data Table Tool imports with its write operation. A match it cannot carry
+  imports as "all" and blocking, and the table name, which no tool reads, is
+  dropped.
+
+- `kilasflow api <operation>` and the MCP `api` tool ask for the same
+  confirmation a guarded verb does when the operation id names one it wraps —
+  `--yes` on the command line, `confirm: true` over MCP — and the same
+  tenant-wide key. Without it nothing is sent. The MCP `api` tool is annotated
+  as destructive.
+
+- A cron that can never fire (`0 0 31 2 *`) is refused with `422`, on a
+  schedule and on activating a workflow whose Schedule Trigger carries one. A
+  schedule already stored with one is deactivated at the next tick instead of
+  firing on every tick, and no longer holds up the others.
+
+- `server.public_url` now also decides the origin the embedded editor's own
+  saves and runs carry. Set it whenever KilasFlow sits behind a proxy that
+  rewrites `Host`, or those requests answer `403`, and for any deployment that
+  browsers reach but the internet does not.
+
 
 ### Removed
 
@@ -267,3 +317,58 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 - Auto-refresh on the executions list now keeps working, and keeps the runs you
   have already loaded, when the workspace has more runs than fit on one page,
   and again after the tab has been in the background.
+
+- An embedded editor saves and runs from a host page on another origin. Its
+  requests carry KilasFlow's own origin, which used to be refused with `403`;
+  they now pass when the frame names the host the session was minted for.
+
+- Guarded CLI verbs and MCP `confirm: true` calls work with auth off, the
+  default, where every one used to fail with `401`. The CLI confirms that auth
+  is off from the server's OpenAPI document, so a wrong credential on a server
+  with auth on is still refused.
+
+- A Wait inside Loop Over Items resumes on every batch. The second batch used to
+  fail with "suspended node already completed"; a resume that is refused now
+  marks the Wait failed instead of leaving every node green.
+
+- `$('Node').item` resolves through a node that changed the item count and on
+  both branches of an error output or a continue-on-fail failure. Behind an IF,
+  Set, Merge or a loop that follows such a node, where the pairing is not
+  recorded exactly, it is refused rather than guessed from a position, and a
+  sub-workflow's items no longer carry the child run's pairing back into the
+  caller.
+
+- Deleting an active workflow unregisters its triggers with the remote service,
+  the way deactivating one does.
+
+- Boolean arguments to MCP tools (`run.wait`, `api.list`,
+  `skills_install.dry_run`) reach their flags, both true and false.
+
+- Searching a data table's rows no longer starts an endless request loop, and
+  switching between data tables no longer fetches twice or shows the previous
+  one while the next loads.
+
+- A timestamp that was never set shows as "—" rather than as "Jan 1".
+
+
+### Security
+
+- A refused request's problem document no longer echoes the request back. A
+  missing or unexpected property, or a body that does not parse, used to answer
+  with the whole body, a credential's secrets included; on an operation that
+  carries a secret (credentials, login, users and API keys) no value is echoed
+  at all. The CLI and the MCP tool results also redact whatever an older server
+  or a proxy still echoes, and `--verbose` no longer prints a credential's
+  secret from the request body it traces.
+
+- Another page that frames the embedded editor and hands it a host's token is
+  refused on every request the frame makes, reads included: the frame names the
+  host it completed the handshake with, and a request naming any other is
+  refused.
+
+- Pack-trigger lifecycle templates escape each value for where it lands: a
+  path segment or a query value in a URL, a string in a JSON body. A value that
+  would stand before a URL's path, a header value with a line break, a dot
+  segment or a body that is not valid JSON is refused, and nothing is sent. A
+  session name could previously move a WAHA registration, with the tenant's API
+  key, to another endpoint.
