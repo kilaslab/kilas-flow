@@ -15,10 +15,14 @@ import (
 
 // Injection stages for Engine.inject, the test seam that proves the single
 // transaction holds: failing StageCatalogue must leave no physical table,
-// failing StageDDL must leave no catalogue row.
+// failing StageDDL must leave no catalogue row. StageName runs after a create
+// or rename has found its name free and before it writes the name, which is
+// the window a second writer of the same name races through; a test lands that
+// writer there to prove the unique index's refusal still reads as a taken name.
 const (
 	StageCatalogue = "catalogue"
 	StageDDL       = "ddl"
+	StageName      = "name"
 )
 
 // Datastore is the definition the engine created: the public id, the owner,
@@ -113,13 +117,15 @@ func newPublicID() (string, error) {
 }
 
 // Create writes the catalogue rows first and issues the CREATE TABLE
-// second, in one transaction. A surrogate collision retries the whole
+// second, in one transaction. A name another of the tenant's tables holds is
+// refused with a *NameTakenError. A surrogate collision retries the whole
 // operation with a fresh surrogate; anything else aborts and leaves
 // neither a row nor a table.
 func (e *Engine) Create(ctx context.Context, tenantID, name string, in []ColumnInput) (*Datastore, error) {
 	if tenantID == "" {
 		return nil, errors.New("datastore: tenant id is required")
 	}
+	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil, errors.New("datastore: name is required")
 	}
@@ -156,6 +162,12 @@ func (e *Engine) Create(ctx context.Context, tenantID, name string, in []ColumnI
 			Columns:       cols,
 		}
 		err = e.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			if err := nameHolder(tx, tenantID, "", name); err != nil {
+				return err
+			}
+			if err := e.fail(StageName); err != nil {
+				return err
+			}
 			row := datastoreModel{
 				ID:            ds.ID,
 				TenantID:      ds.TenantID,
@@ -191,6 +203,16 @@ func (e *Engine) Create(ctx context.Context, tenantID, name string, in []ColumnI
 			return ds, nil
 		}
 		if !errors.Is(err, gorm.ErrDuplicatedKey) {
+			return nil, err
+		}
+		// Three unique keys can refuse the insert, and only two are worth a
+		// retry. The id and the surrogate are random, so a fresh pair
+		// succeeds; the name is not, and a name the index holds taken — a
+		// writer took it after the check above, or the database folds it
+		// where Go does not — would refuse every retry too. Asking the index's
+		// own question tells the two apart: the transaction is over, so
+		// another writer's name is committed and visible.
+		if err := indexedNameHolder(e.db.WithContext(ctx), tenantID, "", name); err != nil {
 			return nil, err
 		}
 	}

@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"gorm.io/gorm"
 )
 
 // ListDatastores returns every datastore the tenant owns, in name order, with
@@ -70,10 +72,11 @@ type DatastorePage struct {
 // ListDatastoresPage returns one page of the tenant's datastores, in name
 // order.
 //
-// Pagination is keyset on (name, id): names are not unique — the catalogue
-// enforces no uniqueness on them — so the id tiebreaker is what makes the order
-// total and the cursor exact. A datastore created while a client pages sorts
-// into its own position rather than shifting rows onto a page already read.
+// Pagination is keyset on (name, id). A name is unique within its tenant, but
+// the id tiebreaker keeps the order total and the cursor exact without leaning
+// on that, so no change to which names the catalogue accepts can make a cursor
+// skip or repeat a row. A datastore created while a client pages sorts into its
+// own position rather than shifting rows onto a page already read.
 //
 // Columns are read for the whole page in one query rather than one per
 // datastore: the page is bounded at MaxDatastorePageSize, and a per-row read
@@ -215,11 +218,16 @@ func (e *Engine) GetDatastore(ctx context.Context, tenantID, id string) (*Datast
 // table-level update the management API exposes: n8n surfaces this operation
 // as Rename a data table, and a generic update would suggest columns can be
 // rewritten through it when they each have their own endpoint.
+//
+// A name another of the tenant's tables holds is refused with a
+// *NameTakenError, by the same rule Create applies; the table's own name in
+// another case is not another table's, and is allowed.
 func (e *Engine) RenameDatastore(ctx context.Context, tenantID, id, name string) error {
 	if e == nil || e.db == nil {
 		return errors.New("datastore: engine is not configured")
 	}
-	if strings.TrimSpace(name) == "" {
+	name = strings.TrimSpace(name)
+	if name == "" {
 		return errors.New("datastore: name is required")
 	}
 	row, _, err := e.lookup(ctx, tenantID, id)
@@ -229,13 +237,29 @@ func (e *Engine) RenameDatastore(ctx context.Context, tenantID, id, name string)
 	if row == nil {
 		return fmt.Errorf("datastore: unknown datastore %q", id)
 	}
-	if err := e.db.WithContext(ctx).
-		Model(&datastoreModel{}).
-		Where("tenant_id = ? AND id = ?", tenantID, id).
-		Update("name", name).Error; err != nil {
-		return fmt.Errorf("datastore: rename %s: %w", id, err)
+	err = e.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := nameHolder(tx, tenantID, id, name); err != nil {
+			return err
+		}
+		if err := e.fail(StageName); err != nil {
+			return err
+		}
+		return tx.Model(&datastoreModel{}).
+			Where("tenant_id = ? AND id = ?", tenantID, id).
+			Update("name", name).Error
+	})
+	if errors.Is(err, gorm.ErrDuplicatedKey) {
+		// The only unique key a rename writes is the name: a writer took it
+		// after the check, or the database folds it where Go does not. Asking
+		// the index's own question is what names the table in the way.
+		if recheck := indexedNameHolder(e.db.WithContext(ctx), tenantID, id, name); recheck != nil {
+			return recheck
+		}
 	}
-	return nil
+	if err == nil || errors.Is(err, ErrNameTaken) {
+		return err
+	}
+	return fmt.Errorf("datastore: rename %s: %w", id, err)
 }
 
 // columnsOf reads one datastore's live columns in position order.

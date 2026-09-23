@@ -43,6 +43,41 @@ func TestDatastoreListLoaderIsTenantScopedAndHiddenFromEmbed(t *testing.T) {
 	}
 }
 
+// Two tables whose names differ only in case read as one label in the From-list
+// picker, and choosing between them was a guess. Such a pair can still exist —
+// SQLite's index folds ASCII only — so each label that shares its name is told
+// apart by the tail of its id, the part a UUIDv7 does not share with a table
+// made the same minute. A name nothing else holds keeps its plain label.
+func TestDatastoreListLabelsTellTablesThatShareANameApart(t *testing.T) {
+	t.Parallel()
+
+	resolver := loadoptions.NewResolver(safehttp.DefaultPolicy(), time.Minute)
+	if err := resolver.RegisterInternal(loadoptions.DatastoreListLoader, loadoptions.Datastores(
+		func(context.Context, string) ([]loadoptions.DatastoreOption, error) {
+			return []loadoptions.DatastoreOption{
+				{ID: "datastore_01a0cc80-b966-713c-a365-273d1111aaaa", Name: "Ärger"},
+				{ID: "datastore_01a0cc80-b966-713c-a365-273d2222bbbb", Name: "ärger"},
+				{ID: "datastore_01a0cc80-b966-713c-a365-273d3333cccc", Name: "Metrics"},
+			}, nil
+		})); err != nil {
+		t.Fatalf("RegisterInternal() error = %v", err)
+	}
+	loader := property.OptionsLoader{Source: property.LoaderInternal, Name: loadoptions.DatastoreListLoader}
+	result, err := resolver.Load(context.Background(), loader, loadoptions.Scope{TenantID: "t1"}, "", nil)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	want := []string{"Ärger · 1111aaaa", "ärger · 2222bbbb", "Metrics"}
+	if len(result.Options) != len(want) {
+		t.Fatalf("options = %+v, want %d", result.Options, len(want))
+	}
+	for index, label := range want {
+		if result.Options[index].Label != label {
+			t.Errorf("option %d label = %q, want %q", index, result.Options[index].Label, label)
+		}
+	}
+}
+
 func TestDatastoreSchemaLoaderNeedsATable(t *testing.T) {
 	t.Parallel()
 

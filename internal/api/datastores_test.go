@@ -115,6 +115,35 @@ func TestDatastoreRenameChangesTheNameAndNothingElse(t *testing.T) {
 	}
 }
 
+// A name another data table holds, in any case, is a conflict with that table
+// rather than a mistake in the request, and the create and rename dialogs show
+// the detail as it is: it has to name the table in the way, which for a clash
+// of case alone is not the name that was typed.
+func TestADuplicateDatastoreNameIsAConflictNamingTheTableInTheWay(t *testing.T) {
+	handler, _ := newDatastoreAPI(t, "tenant-a")
+	createDatastore(t, handler, "Leads")
+	const want = "A data table named “Leads” already exists"
+
+	for _, name := range []string{"Leads", "leads"} {
+		recorder := doJSON(t, handler, http.MethodPost, "/api/v1/datastores", map[string]any{"name": name})
+		if recorder.Code != http.StatusConflict {
+			t.Fatalf("creating %q = %d, want 409 (body: %s)", name, recorder.Code, recorder.Body)
+		}
+		if got := decodeProblem(t, recorder).Detail; got != want {
+			t.Errorf("creating %q: detail = %q, want %q", name, got, want)
+		}
+	}
+
+	other := createDatastore(t, handler, "Other")
+	recorder := doJSON(t, handler, http.MethodPut, "/api/v1/datastores/"+other.ID, map[string]any{"name": "LEADS"})
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("renaming onto LEADS = %d, want 409 (body: %s)", recorder.Code, recorder.Body)
+	}
+	if got := decodeProblem(t, recorder).Detail; got != want {
+		t.Errorf("renaming onto LEADS: detail = %q, want %q", got, want)
+	}
+}
+
 func TestAnotherTenantsDatastoreReadsAsUnknown(t *testing.T) {
 	db := func(t *testing.T) (*database.DB, *datastore.Engine) {
 		t.Helper()

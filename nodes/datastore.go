@@ -779,7 +779,9 @@ func (executor *DatastoreExecutor) runBranch(ctx context.Context, tenant, operat
 
 // datastoreID resolves the locator to a catalogue id. From-list and By-ID
 // already carry it; By-Name resolves through the tenant's own list, so one
-// tenant's name can never address another tenant's table.
+// tenant's name can never address another tenant's table, and through
+// datastore.ResolveByName, so a name two tables share is refused rather than
+// taken to mean whichever the list returned first.
 func (executor *DatastoreExecutor) datastoreID(ctx context.Context, tenant string, parameters map[string]any) (string, error) {
 	locator, ok := property.ReadLocator(parameters["dataTableId"])
 	if !ok || strings.TrimSpace(fmt.Sprint(locator.Value)) == "" {
@@ -788,17 +790,11 @@ func (executor *DatastoreExecutor) datastoreID(ctx context.Context, tenant strin
 	if !strings.EqualFold(locator.Mode, "name") {
 		return fmt.Sprint(locator.Value), nil
 	}
-	want := fmt.Sprint(locator.Value)
 	definitions, err := executor.store.ListDatastores(ctx, tenant)
 	if err != nil {
 		return "", err
 	}
-	for _, definition := range definitions {
-		if strings.EqualFold(definition.Name, want) {
-			return definition.ID, nil
-		}
-	}
-	return "", fmt.Errorf("datastore: unknown datastore %q", want)
+	return datastore.ResolveByName(definitions, fmt.Sprint(locator.Value))
 }
 
 // datastoreValues builds one row's write from the mapper and the incoming
@@ -1028,23 +1024,18 @@ func (executor *DatastoreToolExecutor) Execute(ctx context.Context, ir workflow.
 
 // datastoreToolID resolves the locator to a catalogue id. By-Name resolves
 // through the tenant's own list, so one tenant's name can never address
-// another tenant's table; By-ID is checked against the tenant by the store
+// another tenant's table, and through datastore.ResolveByName, so a name two
+// tables share is refused; By-ID is checked against the tenant by the store
 // itself on the next call.
 func datastoreToolID(ctx context.Context, store DatastoreStore, tenant string, locator property.Locator) (string, error) {
 	if !strings.EqualFold(strings.TrimSpace(fmt.Sprint(locator.Mode)), "name") {
 		return fmt.Sprint(locator.Value), nil
 	}
-	want := fmt.Sprint(locator.Value)
 	definitions, err := store.ListDatastores(ctx, tenant)
 	if err != nil {
 		return "", err
 	}
-	for _, definition := range definitions {
-		if strings.EqualFold(definition.Name, want) {
-			return definition.ID, nil
-		}
-	}
-	return "", fmt.Errorf("datastore: unknown datastore %q", want)
+	return datastore.ResolveByName(definitions, fmt.Sprint(locator.Value))
 }
 
 // datastoreStoreOf binds the executor, keeping a typed-nil engine from

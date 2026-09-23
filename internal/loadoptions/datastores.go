@@ -2,9 +2,11 @@ package loadoptions
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
+	"github.com/kilaslab/kilas-flow/internal/datastore"
 	"github.com/kilaslab/kilas-flow/internal/property"
 )
 
@@ -63,12 +65,39 @@ func Datastores(list func(ctx context.Context, tenantID string) ([]DatastoreOpti
 		if err != nil {
 			return Result{}, fmt.Errorf("the datastore list could not be read")
 		}
+		// A name the By-Name locator would refuse as shared is one the picker
+		// must not show twice: such a pair survives the unique index where the
+		// database folds case less than Go does, and this list is where its
+		// owner tells the two apart. Asked of the resolver itself, so the label
+		// and the locator can never disagree about which names are the same;
+		// quadratic, over one tenant's catalogue, which the datastore limit
+		// bounds.
+		listed := make([]datastore.Datastore, 0, len(found))
+		for _, candidate := range found {
+			listed = append(listed, datastore.Datastore{ID: candidate.ID, Name: candidate.Name})
+		}
 		options := make([]Option, 0, len(found))
 		for _, candidate := range found {
-			options = append(options, Option{Label: candidate.Name, Value: candidate.ID})
+			label := candidate.Name
+			if _, err := datastore.ResolveByName(listed, candidate.Name); errors.Is(err, datastore.ErrAmbiguousName) {
+				label += " · " + shortDatastoreID(candidate.ID)
+			}
+			options = append(options, Option{Label: label, Value: candidate.ID})
 		}
 		return Result{Options: options}, nil
 	}
+}
+
+// shortDatastoreID is the tail of a datastore id, which is enough to tell two
+// tables apart in a label. The tail rather than the head: an id is a UUIDv7,
+// whose leading characters are its creation time, so two tables made the same
+// minute share them.
+func shortDatastoreID(id string) string {
+	const width = 8
+	if len(id) <= width {
+		return id
+	}
+	return id[len(id)-width:]
 }
 
 // DatastoreColumns answers the datastore mapper's column list. The reference

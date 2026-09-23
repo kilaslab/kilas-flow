@@ -104,18 +104,19 @@ func testDrivers() []testDriver {
 				//
 				// By name, never by number. The datastore_columns table
 				// is created by one migration and gains its tenant
-				// column in another, so both have to be re-armed — and a
-				// numeric test would re-arm whichever migration happened
-				// to hold that number after a renumber, leaving a
-				// datastore_columns without tenant_id under an applied
-				// tenant migration.
+				// column in another, and the datastores table gains its
+				// unique name index in a third, so all three have to be
+				// re-armed — and a numeric test would re-arm whichever
+				// migration happened to hold that number after a
+				// renumber, leaving a datastore_columns without tenant_id
+				// under an applied tenant migration.
 				for _, table := range []string{prefix + "datastores", prefix + "datastore_columns"} {
 					if err := db.Exec(`DROP TABLE IF EXISTS "` + table + `" CASCADE`).Error; err != nil {
 						t.Fatalf("drop leftover %s: %v", table, err)
 					}
 				}
 				if db.Migrator().HasTable("schema_migrations") {
-					if err := db.Exec(`DELETE FROM "schema_migrations" WHERE name IN ('datastores', 'datastore_columns_tenant')`).Error; err != nil {
+					if err := db.Exec(`DELETE FROM "schema_migrations" WHERE name IN ('datastores', 'datastore_columns_tenant', 'datastore_unique_names')`).Error; err != nil {
 						t.Fatalf("re-arm the datastore migrations: %v", err)
 					}
 				}

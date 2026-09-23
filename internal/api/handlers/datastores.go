@@ -841,6 +841,13 @@ func (handler *Datastores) problem(ctx context.Context, err error) error {
 			}},
 		}
 	}
+	// A taken name conflicts with the table that holds it, and the detail names
+	// that table: the create and rename dialogs show it as written, and for a
+	// clash of case alone the holder's name is not the one that was typed.
+	var taken *datastore.NameTakenError
+	if errors.As(err, &taken) {
+		return huma.Error409Conflict(fmt.Sprintf("A data table named “%s” already exists", taken.Name))
+	}
 	if errors.Is(err, datastore.ErrRowNotFound) {
 		return huma.Error404NotFound("row not found")
 	}

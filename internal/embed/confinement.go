@@ -64,18 +64,6 @@ func (confinement Confinement) AllowsDatastoreID(id string) bool {
 	return false
 }
 
-// AllowsDatastoreName reports whether the confinement names a data table's
-// name, matching the way the executor resolves a By-Name locator: the tenant's
-// own list, compared without regard to case.
-func (confinement Confinement) AllowsDatastoreName(name string) bool {
-	for _, datastore := range confinement.Datastores {
-		if datastore.Name != "" && strings.EqualFold(datastore.Name, name) {
-			return true
-		}
-	}
-	return false
-}
-
 // AllowsWorkflow reports whether the confinement names a workflow id.
 func (confinement Confinement) AllowsWorkflow(id string) bool {
 	return containsExact(confinement.Workflows, id)
