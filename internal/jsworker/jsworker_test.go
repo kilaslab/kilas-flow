@@ -34,6 +34,10 @@ func TestMain(m *testing.M) {
 				fmt.Fprintln(os.Stderr, "fatal error: runtime: out of memory")
 				os.Exit(2)
 			}))
+		case "exit3":
+			os.Exit(fakeWorker(func() { os.Exit(3) }))
+		case "stale", "unknownfile", "flood":
+			os.Exit(lyingWorker(os.Getenv(testModeVariable)))
 		default:
 			os.Exit(Serve(os.Stdin, os.Stdout))
 		}
@@ -52,6 +56,38 @@ func fakeWorker(then func()) int {
 		return 2
 	}
 	then()
+	return 0
+}
+
+// lyingWorker answers its one job with a done frame a real worker would never
+// write: for another job, naming a file its input did not have, or printing
+// far past the console cap.
+func lyingWorker(mode string) int {
+	reader, writer := bufio.NewReader(os.Stdin), bufio.NewWriter(os.Stdout)
+	if _, _, err := readFrame(reader, maxServerHeader, maxServerBlob); err != nil {
+		return 2
+	}
+	run, _, err := readFrame(reader, maxServerHeader, maxServerBlob)
+	if err != nil {
+		return 2
+	}
+	output := `[{"json":{"ok":true},"binary":{},"paired":null}]`
+	done := message{Type: typeDone, Nonce: run.Nonce, Executed: &jsrun.Executed{}}
+	switch mode {
+	case "stale":
+		done.Nonce = "not-this-job"
+	case "unknownfile":
+		output = `[{"json":{},"binary":{"data":{"id":"bin_someone_elses"}},"paired":null}]`
+	case "flood":
+		for index := range 2000 {
+			done.Executed.Console = append(done.Executed.Console, jsrun.ConsoleLine{Level: "log", Text: fmt.Sprintf("%04d %s", index, strings.Repeat("x", 1000))})
+		}
+	}
+	done.OutputSizes = []int{len(output)}
+	if err := writeFrame(writer, done, output); err != nil {
+		return 2
+	}
+	time.Sleep(time.Hour)
 	return 0
 }
 
@@ -197,6 +233,42 @@ func TestItemOutcomesCrossTheProcessBoundaryIntact(t *testing.T) {
 	}
 }
 
+// A worker is trusted only as far as its code could go: a frame for another
+// job, a file its input did not have and a console past its cap are all
+// caught in the server, and none is taken for the job's result.
+func TestTheServerTrustsAWorkerOnlyAsFarAsItsCodeCouldGo(t *testing.T) {
+	pool := newTestPool(t, Options{Limits: jsrun.Limits{MaxConsoleBytes: 4 << 10}})
+	task := jsrun.Task{Source: "return items", Items: items("a")}
+
+	pool.mode.Store("stale")
+	if _, err := pool.Run(context.Background(), task); !errors.Is(err, jsrun.ErrEngineFault) || !strings.Contains(err.Error(), "broke the protocol: a done frame for another job") {
+		t.Errorf("stale frame: Run() error = %v, want the protocol breach named", err)
+	}
+	pool.mode.Store("unknownfile")
+	if _, err := pool.Run(context.Background(), task); !errors.Is(err, jsrun.ErrEngineFault) || !strings.Contains(err.Error(), "naming a file this node was not given") {
+		t.Errorf("unknown file: Run() error = %v, want it refused", err)
+	}
+	pool.mode.Store("flood")
+	result, err := pool.Run(context.Background(), task)
+	if err != nil || !result.ConsoleTruncated || len(result.Console) > 5 {
+		t.Errorf("flood: Run() = %d console lines (truncated %v), %v; want the server's own cap", len(result.Console), result.ConsoleTruncated, err)
+	}
+	if starts := pool.starts.Load(); starts != 3 {
+		t.Errorf("%d workers started, want none trusted again after lying", starts)
+	}
+}
+
+// A worker that dies says why in the runtime's words, and only the words
+// that are true: its exit status, not a memory limit it never reached.
+func TestAWorkerThatDiesIsReportedByItsExit(t *testing.T) {
+	pool := newTestPool(t, Options{})
+	pool.mode.Store("exit3")
+	_, err := pool.Run(context.Background(), jsrun.Task{Source: "return items"})
+	if !errors.Is(err, jsrun.ErrEngineFault) || errors.Is(err, jsrun.ErrMemoryLimit) || !strings.Contains(err.Error(), "exit status 3") {
+		t.Fatalf("Run() error = %v, want the exit status", err)
+	}
+}
+
 func TestAWorkerIsReusedAcrossJobs(t *testing.T) {
 	pool := newTestPool(t, Options{})
 	for range 3 {
@@ -323,7 +395,7 @@ func TestAWorkersEnvironmentHoldsNoneOfTheServers(t *testing.T) {
 	}
 	for _, entry := range env {
 		name, _, _ := strings.Cut(entry, "=")
-		if !slices.Contains([]string{markerVariable, "GOMAXPROCS", "GOMEMLIMIT", "TZ", "ZONEINFO"}, name) {
+		if !slices.Contains([]string{markerVariable, "GOMAXPROCS", "GOMEMLIMIT", "GOTRACEBACK", "TZ", "ZONEINFO"}, name) {
 			t.Errorf("a worker is given %s", name)
 		}
 	}
@@ -339,7 +411,8 @@ func TestAFrameLargerThanItsLimitIsRefusedBeforeItIsRead(t *testing.T) {
 		t.Fatal(err)
 	}
 	reader := bufio.NewReader(strings.NewReader(buffer.String()))
-	if _, _, err := readFrame(reader, 1<<20, 10); !errors.Is(err, errFrameTooLarge) {
+	var violation *protocolError
+	if _, _, err := readFrame(reader, 1<<20, 10); !errors.As(err, &violation) {
 		t.Fatalf("readFrame() error = %v, want the frame refused", err)
 	}
 }

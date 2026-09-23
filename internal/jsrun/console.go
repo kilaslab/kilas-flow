@@ -27,7 +27,10 @@ type console struct {
 }
 
 // write keeps one line and reports whether there is room for more.
-func (c *console) write(level, text string) bool {
+func (c *console) write(level, text string) bool { return c.add(level, text, time.Now()) }
+
+// add keeps one line printed at a given time.
+func (c *console) add(level, text string, at time.Time) bool {
 	if c.truncated {
 		return false
 	}
@@ -37,14 +40,14 @@ func (c *console) write(level, text string) bool {
 	size := int64(len(text)) + 1
 	if c.used+size > c.limit {
 		if room := c.limit - c.used - 1; room > 0 {
-			c.lines = append(c.lines, ConsoleLine{Level: level, Text: truncateText(text, room), At: time.Now()})
+			c.lines = append(c.lines, ConsoleLine{Level: level, Text: truncateText(text, room), At: at})
 		}
 		c.used = c.limit
 		c.truncated = true
 		return false
 	}
 	c.used += size
-	c.lines = append(c.lines, ConsoleLine{Level: level, Text: text, At: time.Now()})
+	c.lines = append(c.lines, ConsoleLine{Level: level, Text: text, At: at})
 	return true
 }
 

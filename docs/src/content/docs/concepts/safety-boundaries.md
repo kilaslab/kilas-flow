@@ -296,32 +296,44 @@ fresh engine.
   them when a script needs one, reuses them, retires one that has been idle for
   five minutes, and replaces each after a thousand runs.
 - The server prepares every job itself — the input is encoded and checked
-  against its cap before a worker sees it — and nothing is compiled or run in
-  the server. While a script runs, the worker asks the server for what the code
+  against its cap before a worker sees it — and nothing is run in the server.
+  Validation parses a node's code there, and compiles it only to see that it
+  compiles. While a script runs, the worker asks the server for what the code
   reads from other nodes, over the same pipes.
+- The server trusts a worker only as far as its code could go. Every message
+  of a job carries that job's nonce. The input's lineage and file references
+  never leave the server: a worker hands back the code's results as the JSON
+  the code returned, and the server decodes them itself, checking the output
+  and console caps and every file a result names. A worker that breaks any of
+  this fails its run with an engine fault and is never used again.
 - A worker still running at twice its time limit plus five seconds is stuck in
   something its own clock cannot stop. The server kills it, and the run fails
   with the time-limit error. Cancelling an execution kills the worker running
   it.
 - A worker that dies mid-run fails that run with the memory-limit error when it
   ran out of memory or was killed by the kernel, and with an engine fault
-  otherwise, which the server logs with the end of what the worker wrote to
-  stderr. The next run gets a fresh worker; the server is not involved.
-- A worker's environment holds only the marker that makes it one, `GOMAXPROCS`,
-  `GOMEMLIMIT`, and the server's `TZ` and `ZONEINFO` if set — none of the
-  server's configuration or secrets. It exits when the server closes its stdin.
+  naming its exit otherwise, which the server logs with the start and the end
+  of what the worker wrote to stderr. The next run gets a fresh worker; the
+  server is not involved.
+- A worker's environment holds only the marker that makes it one,
+  `GOMAXPROCS`, `GOMEMLIMIT`, `GOTRACEBACK`, and the server's `TZ` and
+  `ZONEINFO` if set — none of the server's configuration or secrets. It starts
+  in `/` and exits when the server closes its stdin.
 - On Linux, each worker also has an address-space limit of four times its heap
-  ceiling plus 1 GiB, which turns an allocation no watchdog could stop into the
+  ceiling plus 3 GiB, which turns an allocation no watchdog could stop into the
   worker failing to allocate; sets its `oom_score_adj` to 1000, so the kernel
-  chooses a worker before the server when memory runs out; and is killed by the
-  kernel if the server dies, even from inside a built-in that never reads its
-  stdin again.
+  chooses a worker before the server when memory runs out; runs with
+  `no_new_privs`; and is killed by the kernel if the server dies, even from
+  inside a built-in that never reads its stdin again. The server makes itself
+  undumpable, so its environment cannot be read through `/proc` by another
+  process of its user, a worker included, and it leaves no core dump.
 
-What the workers are not is a container. They run as the same user as the
-server, with the same filesystem view; what keeps a script from reading a file
-is that nothing it can call opens one, and what the process boundary adds is
-that exhausting memory or a core costs a worker rather than every workflow on
-the server.
+What the workers are not is a privilege boundary. They run as the same user as
+the server, with the same filesystem and network view; what keeps a script from
+reading a file is that the engine exposes nothing that opens one, and what the
+process boundary adds is that exhausting memory or a core costs a worker rather
+than every workflow on the server. Code that escaped the engine itself would not
+be contained by the process around it.
 
 ## Expressions
 

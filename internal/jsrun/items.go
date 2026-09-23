@@ -78,10 +78,7 @@ func (d *decoder) decode(text string, eachItem bool) ([]workflow.Item, error) {
 	}
 	items := make([]workflow.Item, len(wire))
 	for index, returned := range wire {
-		where := fmt.Sprintf("item %d", index)
-		if eachItem {
-			where = "the returned value"
-		}
+		where := whereReturned(index, eachItem)
 		items[index].JSON = returned.JSON
 		if items[index].JSON == nil {
 			items[index].JSON = map[string]any{}
@@ -96,23 +93,70 @@ func (d *decoder) decode(text string, eachItem bool) ([]workflow.Item, error) {
 	return items, nil
 }
 
-// binary checks each returned file against the input's files. Binary is
-// passed on only when the code returns it, as n8n does; the Go Code node's
-// positional carry-over does not apply here.
+// checkFiles refuses a result that passes on a file the node was not given.
+// It runs where the code ran, after each call, so a per-item run stops (or,
+// continuing on failure, fails) at the item that returned it; decoding in the
+// server checks again. Most results carry no file at all, which the text
+// shows without decoding it: the runtime writes a returned item's binary as
+// a non-empty object only when there is one.
+func checkFiles(text string, known map[string]bool, eachItem bool) error {
+	if !strings.Contains(text, `"binary":{"`) {
+		return nil
+	}
+	var wire []struct {
+		Binary map[string]json.RawMessage `json:"binary"`
+	}
+	if err := json.Unmarshal([]byte(text), &wire); err != nil {
+		return fmt.Errorf("jsrun: decoding the code's result: %w", err)
+	}
+	for index, returned := range wire {
+		for property, raw := range returned.Binary {
+			if _, err := fileOf(raw, known, whereReturned(index, eachItem), property); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// fileOf reads one returned binary entry, which may only name a file the
+// node was given.
+func fileOf(raw json.RawMessage, known map[string]bool, where, property string) (wireBinary, error) {
+	var file wireBinary
+	if json.Unmarshal(raw, &file) != nil || file.ID == "" {
+		return file, named(ErrInvalidReturn, fmt.Sprintf("%s has a binary %q that is not a file reference; binary entries can only pass on files the node was given", where, property))
+	}
+	if !known[file.ID] {
+		return file, named(ErrInvalidReturn, fmt.Sprintf("%s has a binary %q naming a file this node was not given", where, property))
+	}
+	return file, nil
+}
+
+func whereReturned(index int, eachItem bool) string {
+	if eachItem {
+		return "the returned value"
+	}
+	return fmt.Sprintf("item %d", index)
+}
+
+// binary maps each returned file onto the input's. Binary is passed on only
+// when the code returns it, as n8n does; the Go Code node's positional
+// carry-over does not apply here.
 func (d *decoder) binary(returned map[string]json.RawMessage, where string) (map[string]workflow.BinaryRef, error) {
 	if len(returned) == 0 {
 		return nil, nil
 	}
+	known := make(map[string]bool, len(d.files))
+	for id := range d.files {
+		known[id] = true
+	}
 	refs := make(map[string]workflow.BinaryRef, len(returned))
 	for property, raw := range returned {
-		var file wireBinary
-		if json.Unmarshal(raw, &file) != nil || file.ID == "" {
-			return nil, named(ErrInvalidReturn, fmt.Sprintf("%s has a binary %q that is not a file reference; binary entries can only pass on files the node was given", where, property))
+		file, err := fileOf(raw, known, where, property)
+		if err != nil {
+			return nil, err
 		}
-		ref, known := d.files[file.ID]
-		if !known {
-			return nil, named(ErrInvalidReturn, fmt.Sprintf("%s has a binary %q naming a file this node was not given", where, property))
-		}
+		ref := d.files[file.ID]
 		// The name and type are metadata the code may change; the bytes and
 		// their size stay the file's own.
 		if file.FileName != "" {

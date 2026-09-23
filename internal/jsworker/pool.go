@@ -3,6 +3,8 @@ package jsworker
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -111,6 +113,7 @@ func New(options Options) *Pool {
 		concurrent = runtime.GOMAXPROCS(0)
 	}
 	pool.slots = make(chan struct{}, concurrent)
+	protectServer()
 	// The server's own runner only prepares jobs: it encodes the input and
 	// checks the caps. It never compiles or runs code.
 	pool.preparer = jsrun.NewRunner(jsrun.Options{Limits: options.Limits, MaxConcurrent: 1, HeapCeiling: pool.heapCeiling})
@@ -219,7 +222,7 @@ type worker struct {
 	inFile  *os.File
 	out     *bufio.Reader
 	outFile *os.File
-	stderr  *tail
+	stderr  *stderrLog
 	// exited closes when the process has been reaped; state is set before.
 	exited chan struct{}
 	state  *os.ProcessState
@@ -235,6 +238,10 @@ func (pool *Pool) start() (*worker, error) {
 	if cmd.Env == nil {
 		cmd.Env = workerEnvironment(pool.heapCeiling)
 	}
+	if cmd.Dir == "" {
+		// Nothing a worker does is relative to the server's directory.
+		cmd.Dir = "/"
+	}
 	stdinRead, stdinWrite, err := os.Pipe()
 	if err != nil {
 		return nil, err
@@ -245,7 +252,7 @@ func (pool *Pool) start() (*worker, error) {
 		stdinWrite.Close()
 		return nil, err
 	}
-	stderr := &tail{limit: 8 << 10}
+	stderr := &stderrLog{limit: 4 << 10}
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdinRead, stdoutWrite, stderr
 	prepareCommand(cmd)
 	err = startCommand(cmd)
@@ -294,9 +301,9 @@ func (w *worker) stop() {
 }
 
 // How one job on a worker ended. Whichever of the job finishing, its
-// deadline and its cancellation claims the attempt first decides, so a
-// deadline that fires as the result arrives cannot also kill the worker for
-// the next job.
+// deadline, its cancellation and its breaking claims the attempt first
+// decides, so a deadline that fires as the result arrives cannot also kill
+// the worker for the next job.
 const (
 	attemptRunning int32 = iota
 	attemptFinished
@@ -304,6 +311,11 @@ const (
 	attemptCancelled
 	attemptBroken
 )
+
+// maxNodeQuestions bounds the distinct nodes one job may ask about. The
+// runtime asks once per name, and a workflow has far fewer nodes; a worker
+// asking more is not running the runtime.
+const maxNodeQuestions = 4096
 
 func (pool *Pool) run(ctx context.Context, w *worker, job jsrun.Job, host jsrun.Host) (jsrun.Result, error) {
 	var state atomic.Int32
@@ -316,91 +328,163 @@ func (pool *Pool) run(ctx context.Context, w *worker, job jsrun.Job, host jsrun.
 	deadline := time.AfterFunc(2*job.Limits.Timeout+pool.grace, func() { kill(attemptPastDeadline) })
 	defer deadline.Stop()
 	defer context.AfterFunc(ctx, func() { kill(attemptCancelled) })()
+	nonce := newNonce()
 
-	failed := func(cause error) (jsrun.Result, error) {
-		w.healthy = false
-		claim(attemptBroken)
-		_ = w.cmd.Process.Kill()
-		<-w.exited
-		switch state.Load() {
-		case attemptPastDeadline:
-			pool.logger.Warn("a JavaScript worker was killed past its job's deadline", "timeLimit", job.Limits.Timeout)
-			return jsrun.Result{}, jsrun.TimeLimitError(job.Limits.Timeout)
-		case attemptCancelled:
-			return jsrun.Result{}, context.Cause(ctx)
-		}
-		status, stderr := w.state.String(), w.stderr.String()
-		pool.logger.Warn("a JavaScript worker died while running code", "status", status, "cause", cause, "stderr", stderr)
-		if ranOutOfMemory(status, stderr) {
-			return jsrun.Result{}, jsrun.MemoryLimitError(pool.heapCeiling)
-		}
-		return jsrun.Result{}, jsrun.EngineFaultError("its worker process " + status)
+	if err := writeFrame(w.in, message{Type: typeRun, Nonce: nonce, Job: &job}, job.Input); err != nil {
+		return pool.failed(ctx, w, job, &state, err)
 	}
-
-	if err := writeFrame(w.in, message{Type: typeRun, Job: &job}, job.Input); err != nil {
-		return failed(err)
-	}
-	// What a worker writes is bounded by the job's own output caps; anything
-	// larger is a broken worker, not a result.
-	headerLimit := 4*job.Limits.MaxOutputBytes + 8*job.Limits.MaxConsoleBytes + 16<<20
+	// What a worker may write is bounded by the job's own caps: its results
+	// travel as the blob, exactly as large as the output cap measured, and
+	// the header holds what it printed and the items that failed.
+	headerLimit := 2*job.Limits.MaxOutputBytes + 16*job.Limits.MaxConsoleBytes + 1<<20
+	views := map[string]answer{}
 	for {
-		m, _, err := readFrame(w.out, headerLimit, 0)
+		m, blob, err := readFrame(w.out, headerLimit, job.Limits.MaxOutputBytes)
+		if err == nil && m.Nonce != nonce {
+			err = protocolViolation("a %s frame for another job", m.Type)
+		}
 		if err != nil {
-			return failed(err)
+			return pool.failed(ctx, w, job, &state, err)
 		}
 		switch m.Type {
 		case typeCall:
-			reply, blob := pool.answer(host, m)
-			if err := writeFrame(w.in, reply, blob); err != nil {
-				return failed(err)
+			reply, view, err := pool.answer(host, m, views)
+			if err == nil {
+				err = writeFrame(w.in, reply, view)
+			}
+			if err != nil {
+				return pool.failed(ctx, w, job, &state, err)
 			}
 		case typeDone:
-			w.runs++
-			if !claim(attemptFinished) {
-				// Killed as the result arrived; the result is still whole.
-				w.healthy = false
+			executed, err := outputsOf(m, blob)
+			if err != nil {
+				return pool.failed(ctx, w, job, &state, err)
 			}
-			var result jsrun.Result
-			if m.Result != nil {
-				result = *m.Result
+			w.runs++
+			if !claim(attemptFinished) || w.out.Buffered() > 0 {
+				// Killed as the result arrived, or it wrote past its result:
+				// the result is whole, the worker is not to be trusted again.
+				w.healthy = false
 			}
 			runErr := m.Error.Decode()
-			// A heap that hit its ceiling, or an engine that faulted, starts
-			// the next job in a fresh process.
-			if errors.Is(runErr, jsrun.ErrMemoryLimit) || errors.Is(runErr, jsrun.ErrEngineFault) {
+			result, err := job.Finish(executed, runErr)
+			// A heap that hit its ceiling, an engine that faulted or a result
+			// that did not add up starts the next job in a fresh process.
+			if errors.Is(err, jsrun.ErrMemoryLimit) || errors.Is(err, jsrun.ErrEngineFault) {
 				w.healthy = false
 			}
-			return result, runErr
+			return result, err
 		default:
-			return failed(fmt.Errorf("jsworker: unexpected %q frame", m.Type))
+			return pool.failed(ctx, w, job, &state, protocolViolation("a %q frame during a job", m.Type))
 		}
 	}
 }
 
-// answer asks the engine what the code asked of it. A panic there is the
+// outputsOf cuts a done frame's blob into the results it carries.
+func outputsOf(m message, blob []byte) (jsrun.Executed, error) {
+	if m.Executed == nil {
+		return jsrun.Executed{}, protocolViolation("a done frame with no result")
+	}
+	executed := *m.Executed
+	executed.Outputs = make([]string, 0, len(m.OutputSizes))
+	rest := blob
+	for _, size := range m.OutputSizes {
+		if size < 0 || size > len(rest) {
+			return jsrun.Executed{}, protocolViolation("results that do not add up to what was sent")
+		}
+		executed.Outputs = append(executed.Outputs, string(rest[:size]))
+		rest = rest[size:]
+	}
+	if len(rest) > 0 {
+		return jsrun.Executed{}, protocolViolation("results that do not add up to what was sent")
+	}
+	return executed, nil
+}
+
+// failed ends a job whose worker broke off, and says why in the words the
+// runtime uses: the time limit when the deadline killed it, the cancellation
+// when the execution was cancelled, the memory limit when it ran out of
+// memory, and an engine fault otherwise, naming a broken protocol or the
+// worker's exit.
+func (pool *Pool) failed(ctx context.Context, w *worker, job jsrun.Job, state *atomic.Int32, cause error) (jsrun.Result, error) {
+	w.healthy = false
+	var violation *protocolError
+	protocol := errors.As(cause, &violation)
+	stoppedByUs := false
+	if state.CompareAndSwap(attemptRunning, attemptBroken) {
+		if !protocol {
+			// It closed its end, which it does by exiting: let it finish, so
+			// its exit status says why.
+			select {
+			case <-w.exited:
+			case <-time.After(2 * time.Second):
+			}
+		}
+		if w.alive() {
+			stoppedByUs = true
+			_ = w.cmd.Process.Kill()
+		}
+	}
+	<-w.exited
+	switch state.Load() {
+	case attemptPastDeadline:
+		pool.logger.Warn("a JavaScript worker was killed past its job's deadline", "timeLimit", job.Limits.Timeout)
+		return jsrun.Result{}, jsrun.TimeLimitError(job.Limits.Timeout)
+	case attemptCancelled:
+		return jsrun.Result{}, context.Cause(ctx)
+	}
+	status, stderr := w.state.String(), w.stderr.String()
+	pool.logger.Warn("a JavaScript worker broke off a job", "status", status, "cause", cause, "stderr", stderr)
+	switch {
+	case protocol:
+		return jsrun.Result{}, jsrun.EngineFaultError("its worker process broke the protocol: " + violation.reason)
+	case stoppedByUs:
+		return jsrun.Result{}, jsrun.EngineFaultError("its worker process stopped answering")
+	case ranOutOfMemory(status, stderr):
+		return jsrun.Result{}, jsrun.MemoryLimitError(pool.heapCeiling)
+	}
+	return jsrun.Result{}, jsrun.EngineFaultError("its worker process " + status)
+}
+
+// answer is what the server told a job about one node.
+type answer struct {
+	view  string
+	found bool
+}
+
+// answer asks the engine what the code asked of it. A node's view is built
+// once per job, however often it is asked for. A panic in the engine is the
 // server's fault; the code sees no answer, and the server goes on.
-func (pool *Pool) answer(host jsrun.Host, question message) (reply message, blob string) {
-	reply = message{Type: typeReply}
+func (pool *Pool) answer(host jsrun.Host, question message, views map[string]answer) (reply message, blob string, err error) {
+	reply = message{Type: typeReply, Nonce: question.Nonce}
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			pool.logger.Error("answering a JavaScript worker panicked", "method", question.Method, "panic", recovered)
-			reply, blob = message{Type: typeReply, Index: -1, Reason: "item lineage is not available here"}, ""
+			reply, blob = message{Type: typeReply, Nonce: question.Nonce, Index: -1, Reason: "item lineage is not available here"}, ""
 		}
 	}()
 	switch question.Method {
 	case "node":
-		if host.Node != nil {
-			if view, ok := host.Node(question.Name); ok {
-				reply.Found, blob = true, view
+		known, asked := views[question.Name]
+		if !asked {
+			if len(views) >= maxNodeQuestions {
+				return reply, "", protocolViolation("questions about more than %d nodes", maxNodeQuestions)
 			}
+			if host.Node != nil {
+				known.view, known.found = host.Node(question.Name)
+			}
+			views[question.Name] = known
 		}
+		reply.Found, blob = known.found, known.view
 	case "pair":
 		reply.Index, reply.Reason = -1, "item lineage is not available here"
 		if host.Pair != nil {
 			reply.Index, reply.Reason = host.Pair(question.Name, question.Index)
 		}
+	default:
+		return reply, "", protocolViolation("a question %q", question.Method)
 	}
-	return reply, blob
+	return reply, blob, nil
 }
 
 // ranOutOfMemory reads a dead worker's last words: Go's own out-of-memory
@@ -413,30 +497,29 @@ func ranOutOfMemory(status, stderr string) bool {
 
 // addressSpace is a worker's address-space limit: generous next to its heap
 // ceiling, since the watchdog stops scripts that grow step by step, and there
-// only for the single allocation no watchdog can stop.
-func addressSpace(heapCeiling uint64) uint64 { return 4*heapCeiling + 1<<30 }
+// only for the single allocation no watchdog can stop. An idle worker already
+// reserves well over a gigabyte of address space, hence the baseline.
+func addressSpace(heapCeiling uint64) uint64 { return 4*heapCeiling + 3<<30 }
 
 // defaultCommand runs this binary as a worker.
 func defaultCommand(heapCeiling uint64) *exec.Cmd {
-	executable, err := os.Executable()
-	if err != nil {
-		executable = os.Args[0]
-	}
-	cmd := exec.Command(executable)
+	cmd := exec.Command(selfExecutable())
 	cmd.Env = workerEnvironment(heapCeiling)
 	return cmd
 }
 
 // workerEnvironment is everything a worker is told about its surroundings:
-// the marker that makes it one, how hard its runtime may work, and the time
-// zone settings that decide what `new Date()` shows, as they do in the
-// server. None of the server's configuration or secrets.
+// the marker that makes it one, how hard its runtime may work, that a crash
+// prints its reason without a dump of every goroutine, and the time zone
+// settings that decide what `new Date()` shows, as they do in the server.
+// None of the server's configuration or secrets.
 func workerEnvironment(heapCeiling uint64) []string {
 	env := []string{
 		markerVariable + "=1",
 		// One script and its garbage collector.
 		"GOMAXPROCS=2",
 		fmt.Sprintf("GOMEMLIMIT=%d", heapCeiling+heapCeiling/2),
+		"GOTRACEBACK=none",
 	}
 	for _, name := range []string{"TZ", "ZONEINFO"} {
 		if value, ok := os.LookupEnv(name); ok {
@@ -446,27 +529,49 @@ func workerEnvironment(heapCeiling uint64) []string {
 	return env
 }
 
-// tail keeps the end of what a worker wrote to stderr.
-type tail struct {
+func newNonce() string {
+	var nonce [16]byte
+	_, _ = rand.Read(nonce[:])
+	return hex.EncodeToString(nonce[:])
+}
+
+// stderrLog keeps the start and the end of what a worker wrote to stderr:
+// Go writes why it died first, and a stack after it.
+type stderrLog struct {
 	mu    sync.Mutex
 	limit int
-	data  []byte
+	head  []byte
+	tail  []byte
+	cut   bool
 }
 
-var _ io.Writer = (*tail)(nil)
+var _ io.Writer = (*stderrLog)(nil)
 
-func (t *tail) Write(p []byte) (int, error) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.data = append(t.data, p...)
-	if extra := len(t.data) - t.limit; extra > 0 {
-		t.data = append(t.data[:0], t.data[extra:]...)
+func (log *stderrLog) Write(p []byte) (int, error) {
+	log.mu.Lock()
+	defer log.mu.Unlock()
+	written := len(p)
+	if room := log.limit - len(log.head); room > 0 {
+		take := min(room, len(p))
+		log.head = append(log.head, p[:take]...)
+		p = p[take:]
 	}
-	return len(p), nil
+	if len(p) > 0 {
+		log.tail = append(log.tail, p...)
+		if extra := len(log.tail) - log.limit; extra > 0 {
+			log.tail = append(log.tail[:0], log.tail[extra:]...)
+			log.cut = true
+		}
+	}
+	return written, nil
 }
 
-func (t *tail) String() string {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return strings.TrimSpace(string(t.data))
+func (log *stderrLog) String() string {
+	log.mu.Lock()
+	defer log.mu.Unlock()
+	separator := ""
+	if log.cut {
+		separator = "\n…\n"
+	}
+	return strings.TrimSpace(string(log.head) + separator + string(log.tail))
 }

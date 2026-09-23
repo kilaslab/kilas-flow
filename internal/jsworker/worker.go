@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/kilaslab/kilas-flow/internal/jsrun"
 )
@@ -19,8 +20,9 @@ const markerVariable = "KILASFLOW_JS_WORKER"
 // cmd/kilasflow asks before anything else.
 func IsWorker() bool { return os.Getenv(markerVariable) == "1" }
 
-// A worker trusts the server, so these limits only keep a corrupt stream
-// from allocating without end.
+// A worker trusts the server, so these limits only keep a corrupt stream from
+// allocating without end. A blob may be larger when the deployment's input
+// cap is.
 const (
 	maxServerHeader = 256 << 20
 	maxServerBlob   = 1 << 30
@@ -39,8 +41,9 @@ func Serve(in io.Reader, out io.Writer) int {
 	}
 	limitSelf(hello.AddressSpace)
 	runner := jsrun.NewRunner(jsrun.Options{Limits: *hello.Limits, MaxConcurrent: 1, HeapCeiling: hello.HeapCeiling})
+	blobLimit := max(int64(maxServerBlob), 2*runner.Limits().MaxInputBytes)
 	for {
-		request, input, err := readFrame(reader, maxServerHeader, maxServerBlob)
+		request, input, err := readFrame(reader, maxServerHeader, blobLimit)
 		if errors.Is(err, io.EOF) {
 			return 0
 		}
@@ -49,19 +52,23 @@ func Serve(in io.Reader, out io.Writer) int {
 		}
 		job := *request.Job
 		job.Input = string(input)
-		ask := asker{reader: reader, writer: writer}
-		result, runErr := runner.Execute(context.Background(), job, ask.host())
+		ask := asker{reader: reader, writer: writer, nonce: request.Nonce, blobLimit: blobLimit}
+		executed, runErr := runner.Execute(context.Background(), job, ask.host())
 		if ask.err != nil {
 			return broken("the server stopped answering", ask.err)
 		}
-		if err := writeFrame(writer, message{Type: typeDone, Result: &result, Error: jsrun.EncodeError(runErr)}, ""); err != nil {
+		sizes := make([]int, len(executed.Outputs))
+		for index, text := range executed.Outputs {
+			sizes[index] = len(text)
+		}
+		done := message{Type: typeDone, Nonce: request.Nonce, Executed: &executed, OutputSizes: sizes, Error: jsrun.EncodeError(runErr)}
+		if err := writeFrame(writer, done, strings.Join(executed.Outputs, "")); err != nil {
 			return broken("writing a result", err)
 		}
 	}
 }
 
-// broken reports why the stream failed on stderr, which the pool keeps the
-// end of for its log.
+// broken reports why the stream failed on stderr, which the pool logs.
 func broken(what string, err error) int {
 	fmt.Fprintf(os.Stderr, "kilasflow js worker: %s: %v\n", what, err)
 	return 2
@@ -70,8 +77,10 @@ func broken(what string, err error) int {
 // asker answers the code's questions by asking the server. It is used only
 // on the VM's goroutine, one question at a time, so the pipes need no lock.
 type asker struct {
-	reader *bufio.Reader
-	writer *bufio.Writer
+	reader    *bufio.Reader
+	writer    *bufio.Writer
+	nonce     string
+	blobLimit int64
 	// err is the first failure to reach the server. The job still finishes,
 	// seeing no answer, and the worker exits after it.
 	err error
@@ -81,12 +90,12 @@ func (a *asker) ask(question message) (message, []byte, bool) {
 	if a.err != nil {
 		return message{}, nil, false
 	}
-	question.Type = typeCall
+	question.Type, question.Nonce = typeCall, a.nonce
 	if err := writeFrame(a.writer, question, ""); err != nil {
 		a.err = err
 		return message{}, nil, false
 	}
-	reply, blob, err := readFrame(a.reader, maxServerHeader, maxServerBlob)
+	reply, blob, err := readFrame(a.reader, maxServerHeader, a.blobLimit)
 	if err == nil && reply.Type != typeReply {
 		err = fmt.Errorf("expected a reply, got %q", reply.Type)
 	}

@@ -96,7 +96,7 @@ var luxonNames = map[string]bool{
 // *UnsupportedError (errors.Is ErrUnsupported) for a refused construct. The
 // Analysis is returned alongside an UnsupportedError.
 func Analyze(source string, mode Mode) (Analysis, error) {
-	prepared, err := sharedPrograms.prepare(source, mode)
+	prepared, err := sharedAnalyses.prepare(source, mode)
 	if prepared == nil {
 		return Analysis{}, err
 	}

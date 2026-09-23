@@ -27,12 +27,15 @@ type prepared struct {
 // program holds no VM state, so one entry serves every execution of that
 // body, across tenants.
 type programCache struct {
-	mu      sync.Mutex
-	limit   int
-	entries map[string]*list.Element
-	order   *list.List
-	hits    int
-	misses  int
+	// compiled says whether the cache keeps compiled programs, or only what
+	// the analysis found.
+	compiled bool
+	mu       sync.Mutex
+	limit    int
+	entries  map[string]*list.Element
+	order    *list.List
+	hits     int
+	misses   int
 }
 
 type cacheEntry struct {
@@ -40,12 +43,17 @@ type cacheEntry struct {
 	prepared *prepared
 }
 
-// sharedPrograms is the process's one cache. Analyze and every runner share
-// it, so validating a body at save time compiles it for its first run.
-var sharedPrograms = newProgramCache(512)
+// sharedPrograms keeps the compiled bodies the process runs. A server whose
+// scripts run in workers compiles nothing into it: its workers do.
+var sharedPrograms = newProgramCache(512, true)
 
-func newProgramCache(limit int) *programCache {
-	return &programCache{limit: limit, entries: map[string]*list.Element{}, order: list.New()}
+// sharedAnalyses keeps what Analyze found, for validation and the importer,
+// which read a body again at every save and every execution. It holds no
+// compiled program: Analyze compiles a body only to see that it compiles.
+var sharedAnalyses = newProgramCache(4096, false)
+
+func newProgramCache(limit int, compiled bool) *programCache {
+	return &programCache{compiled: compiled, limit: limit, entries: map[string]*list.Element{}, order: list.New()}
 }
 
 // programKey names one compiled body. The match timeout is part of it
@@ -88,7 +96,10 @@ func (cache *programCache) prepare(source string, mode Mode) (*prepared, error) 
 	if err != nil {
 		return nil, err
 	}
-	ready := &prepared{program: compiled, analysis: analysis, wrapped: w}
+	ready := &prepared{analysis: analysis, wrapped: w}
+	if cache.compiled {
+		ready.program = compiled
+	}
 	cache.put(key, ready)
 	return ready, nil
 }

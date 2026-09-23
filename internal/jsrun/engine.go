@@ -74,7 +74,15 @@ type program struct {
 
 // compileProgram compiles a parsed body. Sloppy mode, because user code
 // assigns undeclared variables as often as not.
-func compileProgram(parsed *ast.Program, w wrapped) (*program, error) {
+func compileProgram(parsed *ast.Program, w wrapped) (_ *program, err error) {
+	// goja re-panics whatever panics inside its compiler that is not a
+	// syntax error. That is the engine's fault, and it fails this body, never
+	// the process.
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = EngineFaultError(fmt.Sprintf("compiling: %v", recovered))
+		}
+	}()
 	matchTimeout.RLock()
 	compiled, err := goja.CompileAST(parsed, false)
 	matchTimeout.RUnlock()

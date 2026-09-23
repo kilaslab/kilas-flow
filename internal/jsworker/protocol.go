@@ -8,19 +8,23 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 
 	"github.com/kilaslab/kilas-flow/internal/jsrun"
 )
 
 // A frame is the protocol's unit: a JSON header and a raw blob, each
 // length-prefixed. The blob carries what is big and already encoded, such as
-// a job's input or a node's items, so it is never escaped into a JSON string.
+// a job's input, a node's items or the code's results, so it is never escaped
+// into a JSON string.
 //
 // The server writes hello once, then one run per job. While the job runs the
 // worker may write call, which the server answers with reply, and it ends the
-// job with done.
+// job with done. Every frame of a job carries the job's nonce, so a frame
+// left over from another job is refused rather than taken for this one's.
 type message struct {
-	Type string `json:"type"`
+	Type  string `json:"type"`
+	Nonce string `json:"nonce,omitempty"`
 
 	// hello: the deployment's ceiling, which every job is tightened to; the
 	// live heap at which the worker's watchdog stops a script; and the
@@ -42,9 +46,11 @@ type message struct {
 	Found  bool   `json:"found,omitempty"`
 	Reason string `json:"reason,omitempty"`
 
-	// done: what the job produced, and how it failed.
-	Result *jsrun.Result    `json:"result,omitempty"`
-	Error  *jsrun.WireError `json:"error,omitempty"`
+	// done: what the job produced, whose results are the blob, cut at
+	// OutputSizes, and how it failed.
+	Executed    *jsrun.Executed  `json:"executed,omitempty"`
+	OutputSizes []int            `json:"outputSizes,omitempty"`
+	Error       *jsrun.WireError `json:"error,omitempty"`
 }
 
 const (
@@ -55,9 +61,16 @@ const (
 	typeDone  = "done"
 )
 
-// errFrameTooLarge reports a length prefix past what the reader allows, which
-// only a broken or hostile peer writes.
-var errFrameTooLarge = errors.New("jsworker: frame larger than allowed")
+// protocolError is a peer that broke the protocol: a frame too large, one
+// that does not decode, or one out of turn. Only a broken or hostile peer
+// writes one.
+type protocolError struct{ reason string }
+
+func (e *protocolError) Error() string { return "jsworker: " + e.reason }
+
+func protocolViolation(format string, args ...any) error {
+	return &protocolError{reason: fmt.Sprintf(format, args...)}
+}
 
 func writeFrame(w *bufio.Writer, m message, blob string) error {
 	var header bytes.Buffer
@@ -65,6 +78,9 @@ func writeFrame(w *bufio.Writer, m message, blob string) error {
 	encoder.SetEscapeHTML(false)
 	if err := encoder.Encode(m); err != nil {
 		return fmt.Errorf("jsworker: encoding a %s frame: %w", m.Type, err)
+	}
+	if header.Len() > math.MaxUint32 || len(blob) > math.MaxUint32 {
+		return fmt.Errorf("jsworker: a %s frame is too large to send", m.Type)
 	}
 	var prefix [8]byte
 	binary.BigEndian.PutUint32(prefix[:4], uint32(header.Len()))
@@ -91,7 +107,7 @@ func readFrame(r *bufio.Reader, headerLimit, blobLimit int64) (message, []byte, 
 	}
 	headerSize, blobSize := int64(binary.BigEndian.Uint32(prefix[:4])), int64(binary.BigEndian.Uint32(prefix[4:]))
 	if headerSize > headerLimit || blobSize > blobLimit {
-		return message{}, nil, errFrameTooLarge
+		return message{}, nil, protocolViolation("a frame of %d+%d bytes, past the %d+%d allowed", headerSize, blobSize, headerLimit, blobLimit)
 	}
 	header := make([]byte, headerSize)
 	if _, err := io.ReadFull(r, header); err != nil {
@@ -103,7 +119,7 @@ func readFrame(r *bufio.Reader, headerLimit, blobLimit int64) (message, []byte, 
 	}
 	var m message
 	if err := json.Unmarshal(header, &m); err != nil {
-		return message{}, nil, fmt.Errorf("jsworker: decoding a frame: %w", err)
+		return message{}, nil, protocolViolation("a frame that does not decode: %v", err)
 	}
 	return m, blob, nil
 }

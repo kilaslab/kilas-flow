@@ -3,6 +3,7 @@ package jsrun
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
@@ -29,12 +30,41 @@ type Job struct {
 	Input string `json:"-"`
 	// Roots are the roots' data; their functions stay with the Host.
 	Roots Roots `json:"roots"`
-	// Origins are the input items' origins by index, and Files the input's
-	// files by ID: what decoding the result needs from the input items.
-	Origins []*workflow.PairedItem        `json:"origins"`
-	Files   map[string]workflow.BinaryRef `json:"files,omitempty"`
+	// FileIDs are the IDs of the input's files, the only ones a returned item
+	// may pass on.
+	FileIDs []string `json:"fileIds,omitempty"`
 	// ContinueOnItemError is Task.ContinueOnItemError.
 	ContinueOnItemError bool `json:"continueOnItemError,omitempty"`
+	// Origins are the input items' origins by index, and Files the input's
+	// files by ID: what Finish decodes the result against. They never leave
+	// the process that prepared the job; a worker sees only the count.
+	Origins []*workflow.PairedItem        `json:"-"`
+	Files   map[string]workflow.BinaryRef `json:"-"`
+	// Count is how many input items the job has, for a worker, which has no
+	// Origins.
+	Count int `json:"count"`
+}
+
+// Executed is what Execute produced, before Finish decodes it: the code's
+// results as the JSON it returned, which is exactly what the output limit
+// measured, and what it printed.
+type Executed struct {
+	// Outputs are the JSON results of the code's calls, in order: one in
+	// all-items mode, one per item in per-item mode, "" for an item that
+	// failed when the job went on past failed items. They are the bulk of a
+	// result, so they travel beside the rest rather than inside it.
+	Outputs []string `json:"-"`
+	// Failures are the items that failed when the job went on past them.
+	Failures         []ItemFailure `json:"failures,omitempty"`
+	Console          []ConsoleLine `json:"console,omitempty"`
+	ConsoleTruncated bool          `json:"consoleTruncated,omitempty"`
+	UserTime         time.Duration `json:"userTime"`
+}
+
+// ItemFailure is one item that failed in a job that went on past it.
+type ItemFailure struct {
+	Index int        `json:"index"`
+	Error *WireError `json:"error"`
 }
 
 // WireError is a run's failure as it crosses from a worker process: enough
@@ -42,10 +72,12 @@ type Job struct {
 // the same way. Kind says which fields are set.
 type WireError struct {
 	// Kind is "limit" (a LimitError, Cause naming its sentinel), "script",
-	// "syntax", "unsupported", "canceled", "deadline" or "other".
+	// "syntax", "unsupported" or "other". A cancellation is never among
+	// them: only the server's own context cancels a run.
 	Kind string `json:"kind"`
-	// Text is the whole error's text, which a wrapped error may extend.
-	Text  string `json:"text"`
+	// Text is the whole error's text when a wrapped error extends it, and
+	// always for "other"; otherwise the kind's fields say it.
+	Text  string `json:"text,omitempty"`
 	Cause string `json:"cause,omitempty"`
 	// Detail is a LimitError's own text.
 	Detail string `json:"detail,omitempty"`
@@ -86,15 +118,14 @@ func EncodeError(err error) *WireError {
 	case errors.As(err, &limit):
 		wire.Kind, wire.Detail = "limit", limit.Detail
 		wire.Cause = sentinelName(limit.Cause)
-	case errors.Is(err, context.Canceled):
-		wire.Kind = "canceled"
-	case errors.Is(err, context.DeadlineExceeded):
-		wire.Kind = "deadline"
 	default:
 		// A sentinel wrapped some other way still crosses as one.
 		if name := sentinelName(err); name != "" {
 			wire.Kind, wire.Detail, wire.Cause = "limit", err.Error(), name
 		}
+	}
+	if inner := wire.inner(); inner != nil && inner.Error() == wire.Text {
+		wire.Text = ""
 	}
 	return wire
 }
@@ -105,34 +136,37 @@ func (wire *WireError) Decode() error {
 	if wire == nil {
 		return nil
 	}
-	var inner error
-	switch wire.Kind {
-	case "script":
-		if wire.Script != nil {
-			inner = wire.Script
-		}
-	case "syntax":
-		if wire.Syntax != nil {
-			inner = wire.Syntax
-		}
-	case "unsupported":
-		if len(wire.Unsupported) > 0 {
-			inner = &UnsupportedError{Found: wire.Unsupported}
-		}
-	case "limit":
-		inner = &LimitError{Detail: wire.Detail, Cause: sentinelByName(wire.Cause)}
-	case "canceled":
-		inner = context.Canceled
-	case "deadline":
-		inner = context.DeadlineExceeded
-	}
-	if inner == nil {
+	inner := wire.inner()
+	switch {
+	case inner == nil:
 		return errors.New(wire.Text)
-	}
-	if inner.Error() == wire.Text {
+	case wire.Text == "" || inner.Error() == wire.Text:
 		return inner
 	}
 	return &wrappedError{text: wire.Text, inner: inner}
+}
+
+// inner is the error the kind's fields describe, or nil for "other".
+func (wire *WireError) inner() error {
+	switch wire.Kind {
+	case "script":
+		if wire.Script != nil {
+			script := *wire.Script
+			return &script
+		}
+	case "syntax":
+		if wire.Syntax != nil {
+			syntax := *wire.Syntax
+			return &syntax
+		}
+	case "unsupported":
+		if len(wire.Unsupported) > 0 {
+			return &UnsupportedError{Found: wire.Unsupported}
+		}
+	case "limit":
+		return &LimitError{Detail: wire.Detail, Cause: sentinelByName(wire.Cause)}
+	}
+	return nil
 }
 
 func sentinelName(err error) string {
