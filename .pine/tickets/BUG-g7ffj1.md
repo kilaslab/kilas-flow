@@ -1,13 +1,13 @@
 ---
 id: BUG-g7ffj1
 title: Impossible cron (e.g. '0 0 31 2 *') is accepted and fires every 15 s; zero times shown as 'Jan 1, 07:07:12'
-status: todo
+status: doing
 priority: high
 labels:
     - scheduler
 parent: EPIC-8rbys7
 created: "2026-09-23T01:34:44Z"
-updated: "2026-09-23T01:34:44Z"
+updated: "2026-09-23T04:34:04Z"
 ---
 
 # Description
@@ -31,9 +31,23 @@ Reject a cron with no future occurrence ("never fires"). Never store or show a z
 Saving succeeds and the API returns `"nextRunAt":"0001-01-01T00:00:00Z"`. The workflow then runs on every scheduler tick: executions at 01:14:20 and 01:14:35, and on the second repro at 01:15:35, 01:15:50 and 01:16:05 (trigger=schedule). The list shows "Next Jan 1, 07:07:12 AM", which is year 1 rendered with the +07:07:12 LMT offset. After any edit, the zero `lastRunAt` also renders as "Last Jan 1, 07:07:12 AM".
 
 # Acceptance Criteria
-- [ ] A cron with no future occurrence is refused with 422 "this cron never fires" in the API and the UI
-- [ ] The zero time is never stored (NULL instead) and never shown as a date ("—")
-- [ ] A regression test with `0 0 31 2 *` asserts no executions
+- [x] A cron with no future occurrence is refused with 422 "this cron never fires" in the API and the UI
+- [x] The zero time is never stored (NULL instead) and never shown as a date ("—")
+- [x] A regression test with `0 0 31 2 *` asserts no executions
+
+# Progress
+
+`scheduler.Next` now refuses a zero candidate (robfig/cron's answer for a date that never exists) with `ErrNeverFires`, "this cron never fires" — on both the plain and the DST-guarded path, now one shared check. `scheduler.Validate` delegates to `Next(expr, time.Now().UTC())`, so an inactive schedule's impossible cron is refused too, not just an active one's. `ErrNeverFires` lives in `internal/repository` (not `scheduler`, which imports `repository`) so `ClaimDue` can recognise it without an import cycle; `scheduler.ErrNeverFires` is an alias of the same value for callers in that package.
+
+`ClaimDue` now repairs rather than fires a row whose stored due time is zero, or whose cron turns out to have no occurrence after it (`next()` returns `ErrNeverFires`): `active=false, next_run_at=NULL`, skip, continue — no migration needed, and a bad row no longer aborts the whole claim transaction for every other schedule.
+
+`Workflows.problem` maps a `syncSchedules` `ErrNeverFires` (hit when activating a workflow whose Schedule Trigger node carries an impossible cron) to 422 instead of the previous 500.
+
+`formatTimestamp` (web) treats a year-1 timestamp as absent ("—"), and the schedules list row's tooltip now goes through `formatTimestamp` instead of concatenating the raw ISO strings.
+
+Tests: `internal/scheduler/scheduler_test.go` — `TestNextRefusesACronWithNoFutureOccurrence` (both Next paths), `TestValidateRejectsUnusableExpressions` extended with `0 0 31 2 *`, `TestTickRepairsAnImpossibleCronRatherThanFiringItAndDoesNotBlockOthers` (a zero-due-time row and a non-zero-due-time row for the same impossible cron, plus a healthy schedule that must still fire). `internal/api/schedules_test.go` — `TestCreatingAScheduleWithAnImpossibleCronIsRefused` (POST /api/v1/schedules, active and inactive, both 422; RED reproduced the ticket's exact `"nextRunAt":"0001-01-01T00:00:00Z"`). `web/src/lib/workflow-editor/execution.test.ts` — `describe('formatTimestamp', ...)` (RED reproduced the ticket's exact `"Jan 1, 07:07:12 AM"`).
+
+All green: `go build ./...`, `go vet ./...`, `go test ./internal/scheduler/... ./internal/repository/... ./internal/api/...`, `cd web && pnpm check && pnpm test` (627 tests).
 
 # Implementation Plan
 

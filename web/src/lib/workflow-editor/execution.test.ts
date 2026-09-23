@@ -217,6 +217,25 @@ describe('formatBytes', () => {
 	});
 });
 
+describe('formatTimestamp', () => {
+	it('reads a real timestamp as a locale date and time', () => {
+		expect(formatTimestamp('2026-09-05T01:02:03Z')).not.toBe('—');
+	});
+
+	it('says so when the timestamp is missing or unparsable, rather than showing a date', () => {
+		expect(formatTimestamp(undefined)).toBe('—');
+		expect(formatTimestamp('not a date')).toBe('—');
+	});
+
+	// "0001-01-01T00:00:00Z" is robfig/cron's zero time, which an impossible
+	// cron used to have stored as lastRunAt/nextRunAt and rendered as "Jan 1,
+	// 07:07:12" (BUG-g7ffj1). It is not a run that happened, so it reads the
+	// same as no timestamp at all.
+	it('treats the zero time as absent rather than a real date in year 1', () => {
+		expect(formatTimestamp('0001-01-01T00:00:00Z')).toBe('—');
+	});
+});
+
 describe('statusLabel', () => {
 	it('names the statuses a run reports, and capitalises a token no catalog carries', () => {
 		expect(statusLabel('queued')).toBe('Queued');

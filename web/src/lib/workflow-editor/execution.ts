@@ -175,9 +175,13 @@ export function formatDuration(milliseconds: number | null | undefined): string 
 export function formatTimestamp(value: string | undefined): string {
 	if (!value) return m.executions_timestamp_unknown();
 	const date = new Date(value);
-	return Number.isNaN(date.getTime())
-		? m.executions_timestamp_unknown()
-		: date.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+	// Year 1 is robfig/cron's zero time, not a real run: an impossible cron
+	// used to have it stored as lastRunAt/nextRunAt and shown as "Jan 1,
+	// 07:07:12" (BUG-g7ffj1). It reads the same as no timestamp at all.
+	if (Number.isNaN(date.getTime()) || date.getUTCFullYear() <= 1) {
+		return m.executions_timestamp_unknown();
+	}
+	return date.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
 /** Tailwind classes per status, so list rows and canvas badges agree. */

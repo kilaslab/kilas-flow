@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -12,6 +13,14 @@ import (
 
 	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
+
+// ErrNeverFires reports a cron expression with no future occurrence — a
+// calendar date that never exists, such as "0 0 31 2 *" (February 31st).
+// robfig/cron searches five years ahead before giving up and returns the zero
+// time rather than an error, and it lives here (not in the scheduler package,
+// which imports this one) so ClaimDue can tell it apart from a genuine
+// failure without an import cycle.
+var ErrNeverFires = errors.New("this cron never fires")
 
 // Schedule is one cron schedule bound to a workflow.
 type Schedule struct {
@@ -316,6 +325,17 @@ func (store *GORMScheduleStore) ClaimDue(ctx context.Context, now time.Time, nex
 				continue
 			}
 			dueAt := *model.NextRunAt
+			if dueAt.IsZero() {
+				// A row written before Next refused an impossible cron: the
+				// zero time always satisfied "due", which is how BUG-g7ffj1
+				// fired on every tick. Repairing it here needs no migration —
+				// the next claim to see the row fixes it.
+				if err := tx.Model(&scheduleModel{}).Where("id = ?", model.ID).
+					Updates(map[string]any{"active": false, "next_run_at": nil, "updated_at": now}).Error; err != nil {
+					return fmt.Errorf("deactivate schedule %q with a zero due time: %w", model.ID, err)
+				}
+				continue
+			}
 			// The zone is applied here rather than stored in the expression,
 			// so `0 9 * * *` still reads back as the user wrote it while
 			// meaning nine in the morning where they are.
@@ -324,6 +344,18 @@ func (store *GORMScheduleStore) ClaimDue(ctx context.Context, now time.Time, nex
 				spec = "TZ=" + model.Timezone + " " + spec
 			}
 			following, err := next(spec, dueAt)
+			if errors.Is(err, ErrNeverFires) {
+				// The cron matched dueAt but has no occurrence after it — the
+				// same "never fires" fact Next now refuses at save time, just
+				// discovered late for a row that predates that refusal. One
+				// bad row must not abort every other schedule's claim, so it
+				// is repaired and skipped rather than returned as an error.
+				if err := tx.Model(&scheduleModel{}).Where("id = ?", model.ID).
+					Updates(map[string]any{"active": false, "next_run_at": nil, "updated_at": now}).Error; err != nil {
+					return fmt.Errorf("deactivate schedule %q that will never fire again: %w", model.ID, err)
+				}
+				continue
+			}
 			if err != nil {
 				return fmt.Errorf("schedule %q cron: %w", model.ID, err)
 			}
