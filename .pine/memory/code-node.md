@@ -1,6 +1,6 @@
 # The Code node compatibility decision
 
-**Decided in FEAT-8qyfh1. Do not relitigate it in a later ticket.**
+**Decided in FEAT-8qyfh1. Do not relitigate it in a later ticket.** The owner reopened it once, on 2026-09-23, for JavaScript only: see the dated entry at the end of this section and EPIC-tjnr1z.
 
 An imported JavaScript or Python Code node is **refused, never translated**. It
 becomes `kilasflow.foreignCode`, a first-class placeholder that keeps the
@@ -39,6 +39,7 @@ does not buy more cheaply.
 The rule that follows: a user must never discover at run time that their
 deployment cannot compile.
 - 2026-09-05: Code node compatibility: imported JS/Python Code nodes are refused as kilasflow.foreignCode, never translated; the Go toolchain lives behind runcode.Compiler and availability is reported through the node catalogue.
+- 2026-09-23: Owner approved (EPIC-tjnr1z): imported n8n JavaScript Code nodes are to RUN on an embedded pure-Go JS engine (goja, modernc.org/quickjs fallback) instead of being refused as foreignCode. JS is executed as JS and never translated to Go. Python Code nodes stay refused. This supersedes only the 'refused' half of the FEAT-8qyfh1 decision recorded above.
 
 # The Code node's time limit covers the user's program only
 
