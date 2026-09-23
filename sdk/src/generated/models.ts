@@ -315,6 +315,23 @@ export interface ClearedDatastoreOutputBody {
   deleted: number;
 }
 
+export interface CodeConsoleEvent {
+  at: string;
+  /** Redacted, type-specific detail */
+  data?: unknown;
+  executionId: string;
+  /**
+     * Monotonic per execution; send back as Last-Event-ID to resume
+     * @minimum 0
+     */
+  id: number;
+  nodeId?: string;
+  sequence?: number;
+  status?: string;
+  type: string;
+  workflowId?: string;
+}
+
 export interface Condition {
   key: string;
   operator?: string;
@@ -910,6 +927,8 @@ export interface ExecutionListResource {
 
 export interface ExecutionNodeRunResource {
   attempt: number;
+  /** What a Code node's code printed: {lines: [{level, text, at}], truncated}. level is log, info, warn, error or debug; truncated is true when output past the node's console limit was dropped. Absent when the node printed nothing. */
+  console?: unknown;
   error?: unknown;
   finishedAt?: string;
   input?: unknown;
@@ -1961,6 +1980,14 @@ export type StreamExecutionEvents200Item = {
   data: AIToolStartedEvent;
   /** The event name. */
   event: 'ai.tool.started';
+  /** The event ID. */
+  id?: number;
+  /** The retry time in milliseconds. */
+  retry?: number;
+} | {
+  data: CodeConsoleEvent;
+  /** The event name. */
+  event: 'code.console';
   /** The event ID. */
   id?: number;
   /** The retry time in milliseconds. */

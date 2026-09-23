@@ -1,7 +1,7 @@
 ---
 id: EPIC-tjnr1z
 title: Run n8n JavaScript Code nodes in-process on an embedded Go JS engine (goja)
-status: todo
+status: doing
 priority: high
 labels:
     - code-node
@@ -9,7 +9,7 @@ labels:
     - n8n
     - parity
 created: "2026-09-23T01:32:49Z"
-updated: "2026-09-23T01:32:49Z"
+updated: "2026-09-23T04:23:14Z"
 ---
 
 # Description
@@ -195,6 +195,89 @@ FEAT-8qyfh1 (`.pine/memory/code-node.md`) chose between two options: *refuse* an
   - Limits are fields the node can only tighten.
   - Caches are keyed by source hash.
   - **The time limit covers the user's program only** (BUG-9s3htg). VM creation, prelude and library setup (Luxon and lodash `Program`s, preloaded when static analysis sees them referenced), parsing the input JSON, and decoding the output are all outside `Limits.Timeout`. The clock starts at the first user statement and stops when its promise settles. The suite runs under `-race` with the shipped defaults, so a slow host cannot make a trivial body "exceed" its limit.
+
+# Implementation amendments (2026-09-23)
+
+A check against the real code and the goja source (`v0.0.0-20260917113740`) changed parts of the plan below. **Where this section and a phase disagree, this section wins.**
+
+1. **Config keys are flat.** `envKeyToPath` splits on the first underscore, and the reference generator cannot describe nested structs. The keys are:
+   - `code.javascript_enabled`
+   - `code.javascript_timeout`
+   - `code.javascript_max_concurrent`
+   - `code.javascript_heap_ceiling_mb`
+   - `code.javascript_max_input_bytes`
+   - `code.javascript_max_output_bytes`
+   - `code.javascript_max_console_bytes`
+
+   The env names stay `KILASFLOW_CODE_JAVASCRIPT_*`. `allow_modules` is dropped: `Validate` and the importer cannot see config, and without npm nothing could be added. The `require` allowlist is fixed.
+2. **The engine seam, precisely.**
+   - The goja runtime, `goja_nodejs/*` and `regexp2/v2` are imported only by `internal/jsrun/engine*.go`.
+   - The syntax-only packages (`goja/{ast,parser,file,token,unistring}`) are imported only by `engine*.go` and `analyze*.go`.
+   - Nothing outside `internal/jsrun` imports the `dop251` modules.
+3. **Security: source maps.** goja's parser calls `os.ReadFile` on a trailing `//# sourceMappingURL=` comment, and runtime `eval` and `new Function` do the same. Every parse uses `parser.WithDisableSourceMaps`, and every VM gets `SetParserOptions(parser.WithDisableSourceMaps)`.
+4. **The regexp2 timeout must be at least the user-time ceiling.** goja turns a match timeout into "no match" (`regexp.go:327,350`), so a short timeout silently changes results. With the invariant, a timeout can only land after the interrupt, and the interrupt aborts first. The worst-case overrun is therefore about the ceiling. `code.javascript_timeout` is capped at 5m.
+5. **Errors.** The body is an async function, so user throws arrive as promise rejections, not `*goja.Exception`. `errors.go` maps:
+   - parser `ErrorList`;
+   - `CompilerSyntaxError`;
+   - rejection values, by parsing the `Code:L:C` stack;
+   - `InterruptedError`.
+
+   `ErrCallDepth` is added, because goja's stack overflow cannot be caught.
+6. **Wrapper escape.** A body that closes the wrapper's brackets is refused: the analyser checks the shape of the wrapped AST.
+   - **Clock rule:** VM entries before the first user statement are free. Every later VM entry is charged, including normalisation and `JSON.stringify` of the result. Go-side work between entries is free.
+   - The clock is a pausable budget shared across the items of per-item mode.
+7. **The analyser is `internal/jsrun/analyze.go` and lands in P1.** It parses the *wrapped* text. It also refuses `this.helpers.*` and `$getWorkflowStaticData` until P5, and refuses the `d` regex flag, which goja also rejects.
+8. **Roots.**
+   - `Request.RunIndex` is added, which fixes `$runIndex` in expressions too.
+   - `$vars` is `{}`.
+   - `$jmespath`, `$prevNode`, and `.all(branch, run)` beyond `.all()`/`.all(0)` are **named errors**, matching expressions, so there is no JMESPath dependency.
+   - `$now`/`$today` land in P3 with Luxon.
+9. **Per-item roots** are one shared snapshot per execution, plus `{index, paired}` per item. `engine.PairedIndexes` is factored out of `pairNodeItem`.
+10. **Binary** crosses as `{id, fileName, mimeType, fileExtension, fileSize}` with no `data` field. It is dropped unless returned, as in n8n, and a returned id must come from this node's input.
+11. **Lineage precedence:**
+    1. an explicit `pairedItem`;
+    2. object identity (a prelude `WeakMap`, so `items[i] === $input.all()[i]`);
+    3. positional inference.
+12. **`WholeBatch`** on the node definition stops `perItemTolerance` from splitting a Code node into one-item calls under continueOnFail.
+13. **No `foreignCode` unavailable stamp.** JS foreignCode now runs, and Python is refused by the import issue and by `Validate`. Only `jsCode` is stamped, and only when disabled.
+14. **One refusal template:** `jsrun.Refusal(subject, alternative)` gives "this node's code %s, which this server does not run. %s". The Python sentence stays byte-identical. The JS "native node" hint is dropped, since there is no non-blocking severity.
+15. **P1 acceptance changes.**
+    - "VM reusable after an interrupt" is dropped, because VMs are never reused.
+    - The 50 ms Luxon-body test moves to P3; P1 proves the rule with lodash.
+16. **Watchdog.** It reads `/memory/classes/heap/objects:bytes`, gives each registration its own ceiling, and runs a GC after firing. The default ceiling is computed in `cmd/kilasflow` from `GOMEMLIMIT`.
+17. **Console persists from P2**, as planned:
+    - `NodeRun.Console` and migration 000021;
+    - the API field and a typed `code.console` event;
+    - a Console section on the execution detail page.
+
+    The editor's live tab stays in P5.
+18. **`kilasflow.jsCode` can be added from the palette**, not only by import.
+19. **Buffer and URL come from `goja_nodejs`** (MIT, same author), with a registry loader that always refuses. Small polyfills fill the Buffer gaps.
+
+# Progress (2026-09-23)
+
+P0–P4 are done (FEAT-rkj8ry, FEAT-7q13t6, FEAT-yxhgeh, FEAT-zjrw76,
+FEAT-pxcbqj): imported and new JavaScript Code nodes run, on goja, with
+Node's crypto, Buffer, URL, web globals, timers, Intl, Luxon and lodash, and
+console output kept with each node run. Beyond the plan:
+
+- **Worker processes (FEAT-g6k3y9).** The owner chose process isolation over
+  a documented residual risk: goja cannot interrupt one built-in call, so the
+  in-process bounds are a denylist. Every script runs in a pool of the
+  kilasflow binary's own worker processes; the server prepares a job and
+  decodes its result, and trusts a worker only as far as its code could go.
+  They are a resource boundary, not a privilege boundary (FEAT-21h6xp).
+- **Per-item continue-on-failure** runs as n8n's item loop does: the failed
+  item alone goes to the error output, without splitting the batch.
+- **The binary grew 7.47 MB (amd64) / 7.08 MB (arm64)**, past the +7 MB
+  criterion below; goja's own x/text/collate is 1.24 MB of it. Reported to
+  the owner (FEAT-pxcbqj notes).
+- **Follow-ups filed:** FEAT-21h6xp (workers as a privilege boundary),
+  FEAT-9we7kw (en-CA and en-GB dates), BUG-548bk9 (unhandled rejections),
+  BUG-14gp8r (pairing after a fan-out and a reorder), BUG-fthahg (engine-wide
+  error-item and $('X') differences from n8n).
+
+P5–P8 follow.
 
 # Plan
 
@@ -401,14 +484,14 @@ Each phase below is a child ticket of this epic.
 - [ ] `make build` still produces a `CGO_ENABLED=0` static binary for linux/amd64 and linux/arm64. The distroless image is unchanged apart from the binary. The binary grows by no more than 7 MB.
 - [ ] An imported `n8n-nodes-base.code` with `language: javaScript` (or no language) becomes `kilasflow.jsCode` with **no blocking import issue**, activates and runs. Exporting it gives `n8n-nodes-base.code` with `jsCode` byte-identical to the import.
 - [ ] Previously imported `kilasflow.foreignCode` nodes with `language: javaScript` run without re-import.
-- [ ] Python Code nodes are still refused, through `unsupportedScript`, with the same sentence as before, and the catalogue stamps `kilasflow.foreignCode` as `unavailable`.
+- [ ] Python Code nodes are still refused, through `unsupportedScript`, with the same sentence as before. (Amendment 13: the catalogue does not stamp `kilasflow.foreignCode`, because its JavaScript form now runs.)
 - [ ] Both modes behave as documented:
   - all-items mode sees `items` and `$input.all()`, `.first()` and `.last()`;
   - per-item mode sees `$json`, `$input.item` and `$itemIndex`;
   - user code may redeclare any root (`const items = $input.all()`);
   - return normalisation wraps plain objects;
   - invalid returns are named errors.
-- [ ] `$('Node').first()`, `.last()`, `.all()`, `.item`, `.itemMatching()` and `.params`, plus `$node`, `$workflow`, `$execution` (`id`, `mode`, `resumeUrl`), `$env`, `$vars`, `$now`, `$today` and `$jmespath` all return the same data an expression sees for the same item.
+- [ ] `$('Node').first()`, `.last()`, `.all()`, `.item`, `.itemMatching()` and `.params`, plus `$node`, `$workflow`, `$execution` (`id`, `mode`, `resumeUrl`), `$env`, `$vars`, `$now` and `$today` all return the same data an expression sees for the same item. `$jmespath` is a named error, as it is in expressions (amendment 8).
 - [ ] Top-level `await`, a returned Promise, and `this.helpers.httpRequest` all work, and HTTP goes through the tenant's egress policy and is counted against `MaxHostCalls`.
 - [ ] `console.log` output is captured into the node run (persisted and live), capped at `MaxConsoleBytes`, and visible in the editor.
 - [ ] Luxon: every probe in the spike's `LuxonProbes`, plus DST-transition cases, matches the committed Node goldens. `DateTime` defaults to the workflow timezone.

@@ -13,6 +13,7 @@ import type { AIModelStartedEvent } from './aIModelStartedEvent';
 import type { AIToolCompletedEvent } from './aIToolCompletedEvent';
 import type { AIToolFailedEvent } from './aIToolFailedEvent';
 import type { AIToolStartedEvent } from './aIToolStartedEvent';
+import type { CodeConsoleEvent } from './codeConsoleEvent';
 import type { ExecutionCancelledEvent } from './executionCancelledEvent';
 import type { ExecutionCompletedEvent } from './executionCompletedEvent';
 import type { ExecutionFailedEvent } from './executionFailedEvent';
@@ -86,6 +87,14 @@ export type StreamExecutionEvents200Item = {
   data: AIToolStartedEvent;
   /** The event name. */
   event: 'ai.tool.started';
+  /** The event ID. */
+  id?: number;
+  /** The retry time in milliseconds. */
+  retry?: number;
+} | {
+  data: CodeConsoleEvent;
+  /** The event name. */
+  event: 'code.console';
   /** The event ID. */
   id?: number;
   /** The retry time in milliseconds. */

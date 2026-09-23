@@ -1,0 +1,10 @@
+{
+	"meta": {"recordedWith":"node 24.16.0, icu 78.3, cldr 48.0, tz 2026b","luxon":"3.7.2 (third_party/luxon/luxon.min.js)","note":"Recorded by scripts/js-parity/record.mjs. CI compares against this file and never runs Node."},
+	"probes": [
+		{"name":"the default order","zone":"","code":"return ['b', 'A', 'a', 'B', 'ä', 'z', 'Z', '10', '9', '2', 'é', 'e', 'E', '_x', ' y', 'ß', 'ss'].sort((x, y) => x.localeCompare(y))","want":[" y","_x","10","2","9","a","A","ä","b","B","e","E","é","ss","ß","z","Z"]},
+		{"name":"numeric","zone":"","code":"const items = ['item10', 'item9', 'item1', 'Item2', 'item02']\nreturn [items.slice().sort((x, y) => x.localeCompare(y, undefined, { numeric: true })), items.slice().sort((x, y) => x.localeCompare(y)), 'a10'.localeCompare('a9', 'en', { numeric: true }), 'a10'.localeCompare('a9')]","want":[["item1","item02","Item2","item9","item10"],["item02","item1","item10","Item2","item9"],1,-1]},
+		{"name":"sensitivity","zone":"","code":"const pairs = [['a', 'A'], ['a', 'á'], ['a', 'b'], ['a', 'a'], ['résumé', 'RESUME'], ['Å', 'a']]\nreturn ['base', 'accent', 'case', 'variant'].map(sensitivity => pairs.map(([x, y]) => x.localeCompare(y, 'en', { sensitivity })))","want":[[0,0,-1,0,0,0],[0,-1,-1,0,1,1],[-1,0,-1,0,-1,1],[-1,-1,-1,0,1,1]]},
+		{"name":"locale tailorings","zone":"","code":"return [['ä', 'z', 'de'], ['ä', 'z', 'sv'], ['ch', 'h', 'cs'], ['ñ', 'o', 'es'], ['ı', 'i', 'tr'], ['aa', 'z', 'da']].map(([x, y, locale]) => x.localeCompare(y, locale))","want":[-1,1,1,-1,-1,1]},
+		{"name":"numeric with sensitivity","zone":"","code":"return ['File 10.txt', 'file 9.txt', 'FILE 9.TXT'].sort((x, y) => x.localeCompare(y, 'en', { numeric: true, sensitivity: 'base' }))","want":["file 9.txt","FILE 9.TXT","File 10.txt"]}
+	]
+}

@@ -385,9 +385,11 @@ and therefore carries no state a consumer may treat as authoritative. The AI
 agent node uses this to report its model turns and tool calls, which arrive on
 the same stream under eight further names — `ai.model.started`,
 `ai.model.delta`, `ai.model.completed`, `ai.tool.started`, `ai.tool.completed`,
-`ai.tool.failed`, `ai.agent.completed` and `ai.agent.failed`. Together with
-`execution.waiting` from the suspension section above and `webhook.response`,
-each of them reaches the stream as a named frame, so an `EventSource` listener
+`ai.tool.failed`, `ai.agent.completed` and `ai.agent.failed`. A JavaScript Code
+node reports what its code printed as `code.console`, which is also kept on the
+node's run record. Together with `execution.waiting` from the suspension section
+above and `webhook.response`, each of them reaches the stream as a named frame,
+so an `EventSource` listener
 for the name receives it. A name added later, before a client knows it, is sent
 under the fallback name `execution.event`, with its real name in the payload's
 `type`. Nothing is ever sent unnamed, and a client must still tolerate a name it

@@ -21,6 +21,9 @@ export interface E2EServerOptions {
 export interface E2EServer {
 	baseURL: string;
 	port: number;
+	// pid is the kilasflow process's own id, so a test can inspect the
+	// processes it starts, such as its JavaScript workers.
+	pid: number;
 	dataDir: string;
 	logPath: string;
 	close: () => Promise<void>;
@@ -86,6 +89,7 @@ export async function startServer(options: E2EServerOptions = {}): Promise<E2ESe
 	return {
 		baseURL,
 		port,
+		pid: child.pid ?? 0,
 		dataDir,
 		logPath,
 		close: async () => {

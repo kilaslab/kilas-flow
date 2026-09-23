@@ -18,7 +18,12 @@ type Definition struct {
 	Version workflow.TypeVersion `json:"version"`
 	// LoopEntry marks a node a back edge may close onto, so the compiler can
 	// accept a bounded loop without learning a node type by name.
-	LoopEntry      bool                     `json:"loopEntry,omitempty"`
+	LoopEntry bool `json:"loopEntry,omitempty"`
+	// WholeBatch marks a node that must see all of its input at once, such as
+	// a Code node whose body sums or groups its items. The runner then never
+	// splits it into one-item calls, not even to tolerate a failure item by
+	// item: a failure fails the whole call, which onError handles as usual.
+	WholeBatch     bool                     `json:"-"`
 	DisplayName    string                   `json:"displayName"`
 	Description    string                   `json:"description,omitempty"`
 	Category       string                   `json:"category"`
@@ -443,6 +448,7 @@ func (registry *Registry) Lookup(nodeType string, version workflow.TypeVersion) 
 		Type:               definition.Type,
 		Version:            definition.Version,
 		LoopEntry:          definition.LoopEntry,
+		WholeBatch:         definition.WholeBatch,
 		Inputs:             append([]workflow.Port(nil), definition.Inputs...),
 		Outputs:            append([]workflow.Port(nil), definition.Outputs...),
 		RequiredParameters: requiredParameters(definition.Parameters),

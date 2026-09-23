@@ -33,6 +33,7 @@ export const EXECUTION_EVENT_NAMES = [
 	'node.failed',
 	'workflow.saved',
 	'webhook.response',
+	'code.console',
 	'ai.model.started',
 	'ai.model.delta',
 	'ai.model.completed',

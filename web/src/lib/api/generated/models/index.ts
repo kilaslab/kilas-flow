@@ -21,6 +21,7 @@ export * from './assignment';
 export * from './binaryRemoval';
 export * from './branding';
 export * from './clearedDatastoreOutputBody';
+export * from './codeConsoleEvent';
 export * from './condition';
 export * from './connection';
 export * from './createAPIKeyInputBody';

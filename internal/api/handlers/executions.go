@@ -61,6 +61,7 @@ type (
 	NodeFailedEvent         ExecutionEvent
 	WorkflowSavedEvent      ExecutionEvent
 	WebhookResponseEvent    ExecutionEvent
+	CodeConsoleEvent        ExecutionEvent
 	AIModelStartedEvent     ExecutionEvent
 	AIModelDeltaEvent       ExecutionEvent
 	AIModelCompletedEvent   ExecutionEvent
@@ -109,6 +110,8 @@ func typedEvent(event ExecutionEvent, eventType events.Type) any {
 		return WorkflowSavedEvent(event)
 	case events.Type(engine.ResponseEventName):
 		return WebhookResponseEvent(event)
+	case events.Type(engine.ConsoleEventName):
+		return CodeConsoleEvent(event)
 	case events.Type(ai.EventModelStarted):
 		return AIModelStartedEvent(event)
 	case events.Type(ai.EventModelDelta):
@@ -148,6 +151,7 @@ func executionEventSchemas() map[string]any {
 		string(events.NodeFailed):            NodeFailedEvent{},
 		string(events.WorkflowSaved):         WorkflowSavedEvent{},
 		engine.ResponseEventName:             WebhookResponseEvent{},
+		engine.ConsoleEventName:              CodeConsoleEvent{},
 		string(ai.EventModelStarted):         AIModelStartedEvent{},
 		string(ai.EventModelDelta):           AIModelDeltaEvent{},
 		string(ai.EventModelCompleted):       AIModelCompletedEvent{},

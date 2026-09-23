@@ -1,7 +1,8 @@
 # WAHA OpenAPI documents — provenance
 
-These two OpenAPI documents are the **only third-party bytes vendored into this
-repository**. They are the exact inputs the published WAHA node pack was
+These two OpenAPI documents are vendored third-party bytes, on the closed list in
+`.pine/memory/licensing.md` (alongside `third_party/luxon/` and
+`third_party/lodash/`). They are the exact inputs the published WAHA node pack was
 generated from, which is why the generator in this project must read *these*
 files rather than a specification pulled fresh from a live WAHA server: the
 resource and operation names that appear in real customer workflow JSON are a

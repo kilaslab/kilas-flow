@@ -1082,13 +1082,17 @@ MaxOutputBytes caps the decoded result payload one run may return.
 
 ## code
 
-Code configures the Go Code node: which toolchain compiles it, and where
-the work it does is kept.
+Code configures the two Code nodes. The Go Code node needs a toolchain and
+a place to keep what it builds. The JavaScript Code node runs on an engine
+linked into the binary, in worker processes the server starts from its own
+executable, and needs only its limits.
 
 The section is one word because envKeyToPath treats the first underscore as
 the section separator, so code.cache_dir is reachable as
 KILASFLOW_CODE_CACHE_DIR while a two-word section could never be set from
-the environment at all.
+the environment at all. The JavaScript keys are flat for the same reason:
+code.javascript_timeout is KILASFLOW_CODE_JAVASCRIPT_TIMEOUT, where a
+nested code.javascript.timeout could not be reached from the environment.
 
 ### code.go_binary
 
@@ -1131,3 +1135,84 @@ rebuilt from the artifact it belongs to while an artifact needs a Go
 toolchain that this deployment may not have. The default is generous for
 the same reason: a deployment with no toolchain cannot afford to lose
 the artifacts, so eviction is a last resort rather than housekeeping.
+
+### code.javascript_enabled
+
+- Type: `bool`
+- Default: `true`
+- Environment: `KILASFLOW_CODE_JAVASCRIPT_ENABLED`
+- Required: no
+
+JavaScriptEnabled runs JavaScript Code nodes, including the ones
+imported from n8n, on the engine linked into the binary. Turned off,
+the node is greyed out in the editor and every run is refused, naming
+this key. No Node.js process is involved either way.
+
+### code.javascript_timeout
+
+- Type: `duration`
+- Default: `10s`
+- Environment: `KILASFLOW_CODE_JAVASCRIPT_TIMEOUT`
+- Required: no
+
+JavaScriptTimeout bounds the user's own program in one JavaScript Code
+node run. Setting up the engine, loading a library and handling the
+input and output are not counted. A node's own time limit may lower it,
+never raise it. At most 5m, because a backtracking regular expression
+can overrun its limit by up to this long.
+
+### code.javascript_max_concurrent
+
+- Type: `integer`
+- Default: `0`
+- Environment: `KILASFLOW_CODE_JAVASCRIPT_MAX_CONCURRENT`
+- Required: no
+
+JavaScriptMaxConcurrent bounds how many JavaScript Code nodes run at
+once across the server, and so how many worker processes run them;
+more wait their turn. Zero means one per CPU.
+
+### code.javascript_heap_ceiling_mb
+
+- Type: `integer`
+- Default: `0`
+- Environment: `KILASFLOW_CODE_JAVASCRIPT_HEAP_CEILING_MB`
+- Required: no
+
+JavaScriptHeapCeilingMB is one worker process's live heap, in MiB, at
+which its JavaScript Code node is stopped with a memory-limit error.
+Scripts run in workers apart from the server, so a runaway script costs
+a worker, never the server; on Linux a worker that outgrows this in one
+step is stopped by an address-space limit of four times it plus 1 GiB,
+or by the kernel, which is asked to choose workers first. Budget up to
+javascript_max_concurrent workers of this size. Zero means 1024.
+
+### code.javascript_max_input_bytes
+
+- Type: `integer (bytes)`
+- Default: `33554432`
+- Environment: `KILASFLOW_CODE_JAVASCRIPT_MAX_INPUT_BYTES`
+- Required: no
+
+JavaScriptMaxInputBytes bounds a JavaScript Code node's input, as JSON.
+Larger input is refused before the engine is involved at all.
+
+### code.javascript_max_output_bytes
+
+- Type: `integer (bytes)`
+- Default: `16777216`
+- Environment: `KILASFLOW_CODE_JAVASCRIPT_MAX_OUTPUT_BYTES`
+- Required: no
+
+JavaScriptMaxOutputBytes bounds the items one JavaScript Code node run
+returns, as JSON.
+
+### code.javascript_max_console_bytes
+
+- Type: `integer (bytes)`
+- Default: `65536`
+- Environment: `KILASFLOW_CODE_JAVASCRIPT_MAX_CONSOLE_BYTES`
+- Required: no
+
+JavaScriptMaxConsoleBytes bounds the console output one JavaScript Code
+node run keeps. Output past it is dropped, with a marker saying so.

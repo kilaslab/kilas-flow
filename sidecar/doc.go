@@ -10,7 +10,7 @@
 // # Licence position
 //
 // The sidecar is operator-installed, never KilasFlow-distributed. KilasFlow
-// ships no JavaScript runtime, no node_modules tree, and no community package:
+// ships no Node.js runtime, no node_modules tree, and no community package:
 // the operator installs Node 24 LTS and the packages they choose, and points
 // the deployment at a script. The protocol below is clean-room — NDJSON
 // frames over a Unix socket, described here from scratch — so nothing in this

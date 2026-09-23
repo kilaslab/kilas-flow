@@ -184,7 +184,7 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
   can `capture` values from its JSON answer (`capture: {key: "data.id"}`) for
   its `check` and `remove` to read as `{{ .Captured.<key> }}`. Captured values
   are sealed at rest with the credential encryption key, in a new
-  `webhook_routes.lifecycle_state` column (migration 000022), and nothing is
+  `webhook_routes.lifecycle_state` column (migration 000023), and nothing is
   kept without that key. A trigger's HMAC check can take its secret from a
   captured value (`secretCapture`); such a trigger refuses deliveries until the
   secret has been kept.
@@ -250,7 +250,7 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
   project. Creating or renaming onto a taken name answers `409` naming the
   table that holds it, and a By Name reference that more than one table would
   answer is refused rather than resolved to whichever the catalogue listed
-  first. Migration 000021 renames the duplicates a database already holds: the
+  first. Migration 000022 renames the duplicates a database already holds: the
   oldest table of each name keeps it, and every other becomes
   `<name> (<id>)`. A workflow that addressed one of the renamed tables By Name
   now reaches the oldest table of that name instead, so point it at the new

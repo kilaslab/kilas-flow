@@ -53,6 +53,18 @@ describe('catalogEntries', () => {
 		expect(types).toContain('kilasflow.set');
 	});
 
+	it('offers the JavaScript Code node, unless the deployment turned JavaScript off', () => {
+		// The imported placeholder stays out of the picker; new JavaScript is
+		// written in the node that runs it.
+		const jsCode: Definition = { ...base, type: 'kilasflow.jsCode', displayName: 'Code (JavaScript)' };
+		const placeholder: Definition = { ...base, type: 'kilasflow.foreignCode', displayName: 'Code (JavaScript or Python)' };
+
+		expect(catalogEntries([jsCode, placeholder]).map((definition) => definition.type)).toEqual(['kilasflow.jsCode']);
+		expect(
+			catalogEntries([{ ...jsCode, unavailable: "this node's code is written in JavaScript, which this server does not run." }])
+		).toEqual([]);
+	});
+
 	it('filters by behaviour and by the port a context needs', () => {
 		expect(catalogEntries(catalog, { triggersOnly: true }).map((definition) => definition.type)).toEqual(['pack.telegramTrigger']);
 		expect(catalogEntries(catalog, { providesKind: 'ai_languageModel' }).map((definition) => definition.type)).toEqual(['kilasflow.chatModel']);

@@ -407,6 +407,22 @@ test('http, sqlite, code, calculator, date-time and wait run against the stub', 
 	);
 	expect(itemJson(await runToSuccess(server.baseURL, codeId), 'code')).toMatchObject({ v: 'x' });
 
+	// n8n's Code node runs as written: the same JavaScript, the same globals.
+	const jsCodeId = await createWorkflow(
+		server.baseURL,
+		'Compare JavaScript Code',
+		[
+			manual(),
+			setter('in', 'x'),
+			node('js', 'JS', 'kilasflow.jsCode', 1, {
+				mode: 'runOnceForEachItem',
+				jsCode: 'return { json: { ...$json, index: $itemIndex, upper: $json.v.toUpperCase() } }'
+			})
+		],
+		[conn('c1', 'manual', 'main', 'in', 'main'), conn('c2', 'in', 'main', 'js', 'main')]
+	);
+	expect(itemJson(await runToSuccess(server.baseURL, jsCodeId), 'js')).toMatchObject({ v: 'x', index: 0, upper: 'X' });
+
 	const calcId = await createWorkflow(
 		server.baseURL,
 		'Compare Calculator',
@@ -669,15 +685,17 @@ test('a postgres node asks for its credential in the picker instead of crashing'
 });
 
 test('the editor-validated tier refuses with user-facing diagnostics', async ({ server, stub }) => {
+	// Python is the foreign code this server refuses; JavaScript runs (see
+	// tests/js-code.spec.ts).
 	const foreignId = await createWorkflow(
 		server.baseURL,
 		'Compare Foreign',
-		[manual(), node('code', 'Foreign', 'kilasflow.foreignCode', 1, { language: 'javaScript', jsCode: 'return items' })],
+		[manual(), node('code', 'Foreign', 'kilasflow.foreignCode', 1, { language: 'python', pythonCode: 'return _input.all()' })],
 		[conn('c1', 'manual', 'main', 'code', 'main')]
 	);
 	const foreignAttempt = await startRun(server.baseURL, foreignId);
 	expect(foreignAttempt.status).toBe(422);
-	expect(errorText(foreignAttempt.body)).toContain('which this server does not run');
+	expect(errorText(foreignAttempt.body)).toContain("this node's code is written in Python, which this server does not run.");
 
 	for (const arity of [1, 2, 4, 8]) {
 		const unsupportedId = await createWorkflow(

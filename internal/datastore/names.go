@@ -20,7 +20,7 @@ import (
 // The rule is Go's strings.EqualFold rather than the database's lower(): SQLite
 // folds ASCII only and PostgreSQL folds by its locale, so the database cannot be
 // the authority on both drivers. The unique index on (tenant_id, lower(name))
-// that migration 000021 adds is the backstop for two writers that pass the
+// that migration 000022 adds is the backstop for two writers that pass the
 // check at once, not the check itself.
 
 // ErrNameTaken reports a create or rename onto a name another data table of the

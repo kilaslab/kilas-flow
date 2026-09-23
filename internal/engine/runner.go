@@ -94,6 +94,28 @@ type NodeEvent struct {
 // identifiers alone — a node's data can exceed PostgreSQL's NOTIFY payload cap.
 const ResponseEventName = "webhook.response"
 
+// ConsoleEventName is the nested event under which a Code node hands over what
+// its code printed. Like a response it is captured while the node runs and
+// written with the node's own trace row, so an execution read later, or from
+// another process, still shows it.
+const ConsoleEventName = "code.console"
+
+// ConsoleLine is one line a node's code printed.
+type ConsoleLine struct {
+	// Level is log, info, warn, error or debug.
+	Level string    `json:"level"`
+	Text  string    `json:"text"`
+	At    time.Time `json:"at"`
+}
+
+// ConsoleDetail is a ConsoleEventName event's detail, and the shape of
+// NodeRun.Console.
+type ConsoleDetail struct {
+	Lines []ConsoleLine `json:"lines"`
+	// Truncated reports that output past the node's console limit was dropped.
+	Truncated bool `json:"truncated,omitempty"`
+}
+
 // NodeEventSink receives nested node events. It must never block the run: an
 // implementation that cannot keep up drops rather than stalls, because event
 // delivery is never allowed to gate execution.
@@ -114,8 +136,14 @@ func (sink NodeEventSink) Emit(event NodeEvent) {
 // live broker, the row reaches every other process, and a split api+worker
 // deployment has only the latter. The first answer wins, matching the boundary,
 // which answers the caller from the first response the execution produced.
+//
+// It collects console output the same way, from every console event the node
+// emits: a node resolved one item at a time emits one per item, and the trace
+// row shows them all, in order.
 type responseCapture struct {
 	response json.RawMessage
+	console  ConsoleDetail
+	printed  bool
 }
 
 // sink returns the event sink the executor is handed: it records the answer and
@@ -125,8 +153,43 @@ func (capture *responseCapture) sink(next NodeEventSink) NodeEventSink {
 		if event.Name == ResponseEventName && len(event.Detail) > 0 && capture.response == nil {
 			capture.response = append(json.RawMessage(nil), event.Detail...)
 		}
+		if event.Name == ConsoleEventName && len(event.Detail) > 0 {
+			var detail ConsoleDetail
+			if json.Unmarshal(event.Detail, &detail) == nil {
+				capture.console.Lines = append(capture.console.Lines, detail.Lines...)
+				capture.console.Truncated = capture.console.Truncated || detail.Truncated
+				capture.printed = true
+			}
+		}
 		next.Emit(event)
 	}
+}
+
+// takeConsole is consoleOutput, after which the capture starts empty again:
+// a failed attempt's row keeps its own lines, and the next attempt's row
+// starts with none of them. runPerItem shares one capture across its items,
+// so a node split per item that printed and retried would move the earlier
+// items' lines onto the failed attempt's row; only whole-batch nodes print
+// today.
+func (capture *responseCapture) takeConsole() json.RawMessage {
+	output := capture.consoleOutput()
+	if capture != nil {
+		capture.console, capture.printed = ConsoleDetail{}, false
+	}
+	return output
+}
+
+// consoleOutput is the console detail for the node's trace row, or nil when
+// the node printed nothing.
+func (capture *responseCapture) consoleOutput() json.RawMessage {
+	if capture == nil || !capture.printed {
+		return nil
+	}
+	encoded, err := json.Marshal(capture.console)
+	if err != nil {
+		return nil
+	}
+	return encoded
 }
 
 // CredentialResolver hands an executor the decrypted fields of a credential
@@ -217,6 +280,16 @@ type Request struct {
 	// names a trigger carries the user's choice here instead, so a workflow
 	// that declares several runs the one they picked rather than all of them.
 	TriggerNodeID string
+	// RunIndex is the Nth time the node being executed runs in this
+	// execution, counting from zero, backing `$runIndex`. The runner sets it
+	// per invocation.
+	RunIndex int
+	// TolerateItemFailures reports that the node's failures are tolerated
+	// (its onError is not stop). A whole-batch node that runs its items one
+	// at a time then runs every item and reports which failed as
+	// ItemOutcomes, rather than stopping at the first failure. The runner
+	// sets it per invocation.
+	TolerateItemFailures bool
 }
 
 // BinaryStore is the slice of the payload store an executor may use.
@@ -320,6 +393,9 @@ type NodeRun struct {
 	// be persisted with the run. It is what a boundary in another process
 	// answers from — the live relay carries identifiers, not data.
 	Response json.RawMessage
+	// Console is what the node's code printed, a ConsoleDetail captured from
+	// its ConsoleEventName events. Nil when it printed nothing.
+	Console json.RawMessage
 }
 
 // Result contains node data in execution order and outputs of graph leaves.
@@ -468,7 +544,11 @@ type pendingInvocation struct {
 type runState struct {
 	completed map[string]workflow.NodeOutput
 	runs      map[string][]workflow.NodeOutput
-	result    *Result
+	// executions counts each node's runs that actually executed, which is
+	// what `$runIndex` reads. runs cannot say: it also records the
+	// deliveries a branch skipped.
+	executions map[string]int
+	result     *Result
 	// pending is the execution stack, newest first. The branch the run is
 	// already on sits on top, which is what makes the order depth-first.
 	pending []pendingInvocation
@@ -488,9 +568,10 @@ func newRunState(graph preparedGraph, request *Request) *runState {
 // checkpoint.
 func emptyRunState(graph preparedGraph) *runState {
 	return &runState{
-		completed: make(map[string]workflow.NodeOutput, len(graph.nodes)),
-		runs:      make(map[string][]workflow.NodeOutput, len(graph.nodes)),
-		result:    &Result{NodeRuns: make([]NodeRun, 0, len(graph.nodes)), Output: make(map[string]workflow.NodeOutput)},
+		completed:  make(map[string]workflow.NodeOutput, len(graph.nodes)),
+		runs:       make(map[string][]workflow.NodeOutput, len(graph.nodes)),
+		executions: make(map[string]int, len(graph.nodes)),
+		result:     &Result{NodeRuns: make([]NodeRun, 0, len(graph.nodes)), Output: make(map[string]workflow.NodeOutput)},
 	}
 }
 
@@ -683,6 +764,7 @@ func (state *runState) configReady(graph preparedGraph, nodeID string) bool {
 func (state *runState) complete(graph preparedGraph, node workflow.IRNode, input workflow.NodeInput, output workflow.NodeOutput, run NodeRun, request *Request) {
 	state.completed[node.ID] = output
 	state.runs[node.ID] = append(state.runs[node.ID], cloneOutput(output))
+	state.executions[node.ID]++
 	run.RunIndex = len(state.runs[node.ID]) - 1
 	run.Output = output
 	if first, ok := firstItem(output); ok {
@@ -810,6 +892,7 @@ func snapshotCheckpoint(nodeID, mode string, input workflow.NodeInput, attempt i
 		Input:         cloneInput(input),
 		Completed:     make(map[string]workflow.NodeOutput, len(state.completed)),
 		Runs:          make(map[string][]workflow.NodeOutput, len(state.runs)),
+		Executions:    make(map[string]int, len(state.executions)),
 		NodeOutputs:   make(map[string]map[string]any, len(request.NodeOutputs)),
 		NodeItems:     make(map[string]expression.NodeItem, len(request.NodeItems)),
 		NodeState:     cloneNodeState(request.NodeState),
@@ -818,6 +901,9 @@ func snapshotCheckpoint(nodeID, mode string, input workflow.NodeInput, attempt i
 	}
 	for id, output := range state.completed {
 		checkpoint.Completed[id] = cloneOutput(output)
+	}
+	for id, count := range state.executions {
+		checkpoint.Executions[id] = count
 	}
 	for id, outputs := range state.runs {
 		restored := make([]workflow.NodeOutput, 0, len(outputs))
@@ -900,9 +986,10 @@ func (runner *Runner) Resume(ctx context.Context, ir workflow.IR, request Reques
 	// Not seeded: a resumed run continues the stack the checkpoint recorded,
 	// and pushing the graph's roots again would run the trigger a second time.
 	state := &runState{
-		completed: make(map[string]workflow.NodeOutput, len(graph.nodes)),
-		runs:      make(map[string][]workflow.NodeOutput, len(graph.nodes)),
-		result:    &Result{NodeRuns: make([]NodeRun, 0, len(graph.nodes)), Output: make(map[string]workflow.NodeOutput)},
+		completed:  make(map[string]workflow.NodeOutput, len(graph.nodes)),
+		runs:       make(map[string][]workflow.NodeOutput, len(graph.nodes)),
+		executions: make(map[string]int, len(graph.nodes)),
+		result:     &Result{NodeRuns: make([]NodeRun, 0, len(graph.nodes)), Output: make(map[string]workflow.NodeOutput)},
 	}
 	ensureRequestMaps(&request, graph)
 	for id, output := range checkpoint.Completed {
@@ -910,6 +997,14 @@ func (runner *Runner) Resume(ctx context.Context, ir workflow.IR, request Reques
 	}
 	for id, outputs := range checkpoint.Runs {
 		state.runs[id] = outputs
+		// A checkpoint written before executions were counted has only the
+		// runs, which is what the count was read from then.
+		if checkpoint.Executions == nil {
+			state.executions[id] = len(outputs)
+		}
+	}
+	for id, count := range checkpoint.Executions {
+		state.executions[id] = count
 	}
 	for name, fields := range checkpoint.NodeOutputs {
 		request.NodeOutputs[name] = fields
@@ -1057,8 +1152,25 @@ func (runner *Runner) runNode(ctx context.Context, graph preparedGraph, request 
 		return suspendWithCheckpoint(suspended, node.ID, input, attempt, state, request)
 	}
 	if cause != nil {
+		// A whole-batch node that ran its items one at a time and says which
+		// failed continues past them, as n8n does inside its item loop.
+		if outcomes, ok := toleratedOutcomes(cause, policy, input); ok {
+			// Stamped item by item as it is assembled, as runPerItem stamps.
+			sources := lineageSources(graph.incoming[node.ID], input)
+			assembled := state.assembleOutcomes(node, sources, input, outcomes, policy.onError)
+			run := NodeRun{NodeID: node.ID, Input: cloneInput(input), Error: outcomes.first(), Attempt: attempt, ErrorCode: "node.partial",
+				Response: capture.response, Console: capture.consoleOutput()}
+			if outcomes.failed() == len(outcomes) {
+				run.ErrorCode = "node.failed"
+			}
+			state.complete(graph, node, input, assembled, run, request)
+			return nil, nil
+		}
 		if policy.onError == errorStop {
-			state.record(NodeRun{NodeID: node.ID, Input: cloneInput(input), Error: cause, Attempt: attempt, ErrorCode: code}, request)
+			// The console is kept on a failure too: what the code printed
+			// before it failed is usually how its author finds out why.
+			state.record(NodeRun{NodeID: node.ID, Input: cloneInput(input), Error: cause, Attempt: attempt, ErrorCode: code,
+				Console: capture.consoleOutput()}, request)
 			return nil, fmt.Errorf("execute node %q: %w", node.ID, cause)
 		}
 		// Tolerated: the node emits error items rather than aborting, and the
@@ -1071,7 +1183,7 @@ func (runner *Runner) runNode(ctx context.Context, graph preparedGraph, request 
 		state.stampProvenance(node, graph.incoming[node.ID], input, output)
 		state.complete(graph, node, input, output, NodeRun{
 			NodeID: node.ID, Input: cloneInput(input), Error: cause, Attempt: attempt, ErrorCode: code,
-			Response: capture.response,
+			Response: capture.response, Console: capture.consoleOutput(),
 		}, request)
 		return nil, nil
 	}
@@ -1090,7 +1202,7 @@ func (runner *Runner) runNode(ctx context.Context, graph preparedGraph, request 
 	state.stampProvenance(node, graph.incoming[node.ID], input, output)
 	state.complete(graph, node, input, output, NodeRun{
 		NodeID: node.ID, Input: cloneInput(input), Attempt: attempt,
-		Response: capture.response,
+		Response: capture.response, Console: capture.consoleOutput(),
 	}, request)
 	return nil, nil
 }
@@ -1124,6 +1236,11 @@ func (runner *Runner) invoke(ctx context.Context, node workflow.IRNode, input wo
 			return nil, nil, "", attempt, nil, err
 		}
 		execution := cloneRequest(*request)
+		// How many times the node has run in this execution, which `$runIndex`
+		// reads. The trace row's own RunIndex also counts the deliveries a
+		// skipped branch recorded, so the two differ after a skip.
+		execution.RunIndex = state.executions[node.ID]
+		execution.TolerateItemFailures = policy.onError != errorStop
 		// The node's events are wrapped so an answer it produces is captured
 		// for its trace row. A nil capture (a caller that wants none) leaves
 		// the sink exactly as it was.
@@ -1140,6 +1257,13 @@ func (runner *Runner) invoke(ctx context.Context, node workflow.IRNode, input wo
 			return output, nil, "", attempt, nil, nil
 		}
 		cause, code = err, "node.failed"
+		// Items that failed while the node continues on failure are its
+		// answer, not a failed attempt: n8n catches them inside its item loop
+		// and never retries the node for them.
+		var outcomes ItemOutcomes
+		if policy.onError != errorStop && errors.As(err, &outcomes) {
+			return output, cause, code, attempt, nil, nil
+		}
 		if timeout > 0 && errors.Is(nodeCtx.Err(), context.DeadlineExceeded) {
 			code = "node.timeout"
 		} else if timeout == 0 && errors.Is(ctx.Err(), context.DeadlineExceeded) {
@@ -1148,7 +1272,9 @@ func (runner *Runner) invoke(ctx context.Context, node workflow.IRNode, input wo
 		// A failed attempt is a row of its own, so a reader can see that a node
 		// succeeded on its third try rather than only that it succeeded.
 		if attempt < policy.attempts {
-			state.record(NodeRun{NodeID: node.ID, Input: cloneInput(input), Error: err, Attempt: attempt, ErrorCode: code}, request)
+			// Each attempt's row keeps what that attempt printed.
+			state.record(NodeRun{NodeID: node.ID, Input: cloneInput(input), Error: err, Attempt: attempt, ErrorCode: code,
+				Console: capture.takeConsole()}, request)
 			if !sleepBetweenAttempts(ctx, policy.wait) {
 				// The execution was cancelled while waiting; stop here rather
 				// than burning the remaining attempts.
@@ -1217,7 +1343,7 @@ func (runner *Runner) runPerItem(ctx context.Context, graph preparedGraph, reque
 		}
 		state.stampPerItem(node, sources, item, assembled, before)
 	}
-	run := NodeRun{NodeID: node.ID, Input: cloneInput(input), Error: firstCause, Response: capture.response}
+	run := NodeRun{NodeID: node.ID, Input: cloneInput(input), Error: firstCause, Response: capture.response, Console: capture.consoleOutput()}
 	if firstCause != nil {
 		run.ErrorCode = "node.partial"
 		if failed == len(items) {
@@ -1890,7 +2016,10 @@ func perItemTolerance(node workflow.IRNode, policy retry) bool {
 	if policy.onError == errorStop {
 		return false
 	}
-	if node.Definition.LoopEntry || settingBool(node.Settings, "executeOnce") {
+	// A whole-batch node's items are one input: split into one-item calls, a
+	// Code node that sums its items would sum one at a time and return a
+	// plausible wrong answer for every item.
+	if node.Definition.LoopEntry || node.Definition.WholeBatch || settingBool(node.Settings, "executeOnce") {
 		return false
 	}
 	return itemInputPorts(node) == 1
@@ -2123,27 +2252,41 @@ func PairNodeItems(items map[string]expression.NodeItem, current workflow.Item, 
 
 func pairNodeItem(name string, item expression.NodeItem, key string, origin *workflow.PairedItem, itemIndex int) expression.NodeItem {
 	item.Paired, item.LineageReason = nil, ""
-	if position, named := namedItemPosition(item, origin); named {
-		item.Paired = item.Items[position]
+	index, reason := pairIndex(name, item, key, origin, itemIndex)
+	if index < 0 {
+		item.LineageReason = reason
 		return item
+	}
+	item.Paired = item.Items[index]
+	return item
+}
+
+// PairedIndex answers which of a node's items the item being processed
+// descends from: an index into item.Items, or -1 and the reason there is no
+// single one. It is PairNodeItems for one node, answering with a position, so
+// the JavaScript Code node pairs `$('X').item` by exactly the rules an
+// expression does.
+func PairedIndex(name string, item expression.NodeItem, current workflow.Item, itemIndex int) (int, string) {
+	return pairIndex(name, item, originKeyOf(current.Paired), current.Paired, itemIndex)
+}
+
+func pairIndex(name string, item expression.NodeItem, key string, origin *workflow.PairedItem, itemIndex int) (int, string) {
+	if position, named := namedItemPosition(item, origin); named {
+		return position, ""
 	}
 	if len(item.Items) == 0 {
-		item.LineageReason = fmt.Sprintf("node %q produced no items", name)
-		return item
+		return -1, fmt.Sprintf("node %q produced no items", name)
 	}
 	if len(item.Items) == 1 {
-		item.Paired = item.Items[0]
-		return item
+		return 0, ""
 	}
 	if key == "" {
 		// The item being processed records no origin of its own: an executor
 		// built it from scratch, or its correspondence was already lost.
 		if origin != nil && origin.Lost {
-			item.LineageReason = "the item being processed lost its lineage upstream, so there is no single item to pair with"
-			return item
+			return -1, "the item being processed lost its lineage upstream, so there is no single item to pair with"
 		}
-		item.LineageReason = "the item being processed did not record where it came from"
-		return item
+		return -1, "the item being processed did not record where it came from"
 	}
 
 	match, matches := -1, 0
@@ -2163,26 +2306,21 @@ func pairNodeItem(name string, item expression.NodeItem, key string, origin *wor
 	}
 	switch {
 	case matches == 1:
-		item.Paired = item.Items[match]
-		return item
+		return match, ""
 	case matches > 1, matches == 0 && unknown == 0:
 		// A fan-out gave several of X's items the same origin, or the positions
 		// of the run are the only correspondence left. Position is the answer
 		// n8n uses for a same-order chain; outside the run it is not an answer
 		// at all.
 		if itemIndex >= 0 && itemIndex < len(item.Items) {
-			item.Paired = item.Items[itemIndex]
-			return item
+			return itemIndex, ""
 		}
 		if matches > 1 {
-			item.LineageReason = fmt.Sprintf("node %q produced several items paired with this one; use .all(), .first() or .last() to choose one", name)
-			return item
+			return -1, fmt.Sprintf("node %q produced several items paired with this one; use .all(), .first() or .last() to choose one", name)
 		}
-		item.LineageReason = fmt.Sprintf("no item of node %q descends from the item being processed; use .all(), .first() or .last()", name)
-		return item
+		return -1, fmt.Sprintf("no item of node %q descends from the item being processed; use .all(), .first() or .last()", name)
 	default:
-		item.LineageReason = fmt.Sprintf("node %q changed the item correspondence, so there is no single item to pair with", name)
-		return item
+		return -1, fmt.Sprintf("node %q changed the item correspondence, so there is no single item to pair with", name)
 	}
 }
 

@@ -32,6 +32,8 @@ import (
 	"github.com/kilaslab/kilas-flow/internal/engine"
 	"github.com/kilaslab/kilas-flow/internal/events"
 	"github.com/kilaslab/kilas-flow/internal/idempotency"
+	"github.com/kilaslab/kilas-flow/internal/jsrun"
+	"github.com/kilaslab/kilas-flow/internal/jsworker"
 	"github.com/kilaslab/kilas-flow/internal/loadoptions"
 	"github.com/kilaslab/kilas-flow/internal/node"
 	"github.com/kilaslab/kilas-flow/internal/nodepack"
@@ -54,6 +56,14 @@ import (
 var version = "0.1.0-dev"
 
 func main() {
+	// A JavaScript worker is this binary started again by the server's pool,
+	// with its own marker in an environment that holds nothing else. It reads
+	// no flags and no configuration, and serves jobs on stdin until the
+	// server closes it.
+	if jsworker.IsWorker() {
+		os.Exit(jsworker.Serve(os.Stdin, os.Stdout))
+	}
+
 	// `kilasflow` with no subcommand, or with only flags, still serves: the
 	// container entrypoint and every Compose file depend on it. CLI verbs never
 	// parse the server's flags; when the CLI does not claim the invocation it
@@ -254,6 +264,10 @@ func run(args []string) error {
 	// directory warns and falls back rather than refusing to boot, because a
 	// cache is an optimisation and a broken one must not be an outage.
 	codeArtifacts, moduleCache := buildCodeCaches(cfg.Code, log)
+	// Workers are killed when run() returns, after the executions using them
+	// have drained.
+	javaScript, closeJavaScript := javaScriptRuntime(cfg.Code, log)
+	defer closeJavaScript()
 	// One tenant's chat volume is another tenant's memory pressure, so each
 	// tenant keeps a bounded number of conversations and the least-recently-
 	// touched session is evicted first. A deployment-level knob for this
@@ -268,7 +282,8 @@ func run(args []string) error {
 		ai.NewLoopRuntime(), agentMemory, codeCompiler,
 		nodes.WithDatabaseCeiling(databaseCeiling(cfg.SQL)), nodes.WithVectorStore(vectorStore),
 		nodes.WithDatastoreEngine(datastoreEngine),
-		nodes.WithCodeCaches(codeArtifacts, moduleCache)); err != nil {
+		nodes.WithCodeCaches(codeArtifacts, moduleCache),
+		javaScript); err != nil {
 		return fmt.Errorf("register built-in executors: %w", err)
 	}
 	// Declarative node packs run on one interpreter rather than shipping Go.
@@ -404,7 +419,7 @@ func run(args []string) error {
 	// What this deployment cannot run, for the node catalogue to stamp on the
 	// way out. The sidecar report is appended only when it was booted, so a
 	// declined sidecar leaves the Code-node answer exactly as it was.
-	availability := nodeAvailability(codeCompiler)
+	availability := mergeAvailability(nodeAvailability(codeCompiler), javaScriptAvailability(cfg.Code))
 	if sidecarRuntime != nil {
 		availability = mergeAvailability(availability, sidecarRuntime.Availability)
 	}
@@ -1307,6 +1322,51 @@ func nodeAvailability(compiler runcode.Compiler) func() map[string]string {
 		// One explanation, written once in internal/runcode, so the catalogue,
 		// the run-time error and the editor's status cannot drift apart.
 		return map[string]string{nodes.CodeNodeType: runcode.DescribeUnavailable(compiler)}
+	}
+}
+
+// javaScriptRuntime hands the JavaScript Code node its runtime, built from
+// the code.javascript_* keys: a pool of worker processes, so a script that
+// runs away inside one built-in call costs a worker and never the server. It
+// turns the node off when the operator did. close stops the workers.
+func javaScriptRuntime(cfg config.Code, log *slog.Logger) (option nodes.ExecutorOption, close func()) {
+	if !cfg.JavaScriptEnabled {
+		return nodes.WithoutJavaScript(nodes.JavaScriptDisabled), func() {}
+	}
+	pool := jsworker.New(jsworker.Options{
+		Limits: jsrun.Limits{
+			Timeout:         cfg.JavaScriptTimeout,
+			MaxInputBytes:   cfg.JavaScriptMaxInputBytes,
+			MaxOutputBytes:  cfg.JavaScriptMaxOutputBytes,
+			MaxConsoleBytes: cfg.JavaScriptMaxConsoleBytes,
+		},
+		MaxConcurrent: cfg.JavaScriptMaxConcurrent,
+		HeapCeiling:   javaScriptHeapCeiling(cfg.JavaScriptHeapCeilingMB),
+		Logger:        log.With("component", "javascript-workers"),
+	})
+	return nodes.WithJSRunner(pool), pool.Close
+}
+
+// javaScriptHeapCeiling is the live heap at which one worker's script is
+// stopped: the configured size, else the runtime's default. Each worker is
+// its own process, so the ceiling is per worker, and a worker that exceeds
+// it in one step is stopped by its address-space limit or the kernel instead.
+func javaScriptHeapCeiling(configuredMB int) uint64 {
+	if configuredMB > 0 {
+		return uint64(configuredMB) << 20
+	}
+	return jsrun.DefaultHeapCeiling
+}
+
+// javaScriptAvailability reports the JavaScript Code node unavailable only
+// when the operator turned it off: the engine is linked into the binary, so
+// there is nothing else a deployment could lack.
+func javaScriptAvailability(cfg config.Code) func() map[string]string {
+	if cfg.JavaScriptEnabled {
+		return nil
+	}
+	return func() map[string]string {
+		return map[string]string{nodes.JSCodeNodeType: nodes.JavaScriptDisabled}
 	}
 }
 
