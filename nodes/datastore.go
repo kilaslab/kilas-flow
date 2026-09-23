@@ -1078,11 +1078,15 @@ func checkDatastoreToolOperation(parameters map[string]any) error {
 		return fmt.Errorf("a datastore tool that runs %s needs the values it writes: map at least one column, "+
 			"with $fromAI for what the model supplies; to read rows, set the operation to Get", operation)
 	}
-	// The $fromAI rules bind only a write. A read's parameters are never
-	// filled from the model — the read schema is its own — so what they say
-	// about $fromAI decides nothing, and refusing it there would only break a
-	// tool that has always worked.
+	// The literal-structure and $fromAI rules bind only a write. A read's
+	// parameters are never filled from the model nor evaluated — the read
+	// schema is its own — so what they say decides nothing, and refusing it
+	// there would only break a tool that has always worked.
 	if operation != DatastoreOperationGet {
+		if path := DatastoreToolStructureExpression(parameters); path != "" {
+			return fmt.Errorf("%s is an expression, and a data table tool that writes has its structure written literally: "+
+				"only a mapped column's value (columns.value.<column>) or a condition's keyValue may be an expression", path)
+		}
 		if err := refuseDatastoreToolStructureFromAI(parameters); err != nil {
 			return err
 		}
@@ -1107,6 +1111,93 @@ func checkDatastoreToolOperation(parameters map[string]any) error {
 	return validateDatastoreConfiguration(workflow.Node{Parameters: resolved})
 }
 
+// DatastoreToolStructureExpression names the first expression in a writing
+// tool's parameters that sits outside the slots a write may compute, or ""
+// when there is none. Those slots are a mapped column's value
+// (columns.value.<column>) and a condition's keyValue, whatever they hold, and
+// the tool's own name and description, which the write never reads.
+//
+// Everything else is the write's structure — which column a condition reads,
+// its operator, any or all, the mapping and its mode, the matching columns,
+// the options — and an expression there is evaluated with the model's
+// arguments in scope. $json and $input are those arguments, and a spelling
+// such as ($fromAI)('v') is a call no scanner can be trusted to see, so a
+// structure slot that computes anything lets the model choose which rows a
+// write touches: turn eq into neq, name the column, flip manual mapping to
+// automatic. Refusing every expression there, rather than every expression
+// that mentions the model, is the only rule no spelling gets around. Keys are
+// walked in sorted order, so the same slot is named on every run.
+//
+// Exported for the n8n adapter, which reports such a slot as blocking rather
+// than importing a tool its save would refuse.
+func DatastoreToolStructureExpression(parameters map[string]any) string {
+	for _, key := range sortedParameterKeys(parameters) {
+		var valueSlot func(segments []any) bool
+		switch key {
+		case "toolName", "toolDescription":
+			continue
+		case "columns":
+			// columns.value.<column>: the value one mapped column receives.
+			valueSlot = func(segments []any) bool {
+				_, column := datastoreToolSegment(segments, 1).(string)
+				return len(segments) == 2 && segments[0] == "value" && column
+			}
+		case "filters":
+			// filters.conditions[i].keyValue: the value one condition compares.
+			valueSlot = func(segments []any) bool {
+				_, row := datastoreToolSegment(segments, 1).(int)
+				return len(segments) == 3 && segments[0] == "conditions" && row && segments[2] == "keyValue"
+			}
+		default:
+			valueSlot = func([]any) bool { return false }
+		}
+		if path := datastoreToolExpressionOutside(parameters[key], key, nil, valueSlot); path != "" {
+			return path
+		}
+	}
+	return ""
+}
+
+// datastoreToolSegment returns one path segment — a map key as a string, a
+// list index as an int — or nil past the end.
+func datastoreToolSegment(segments []any, index int) any {
+	if index < len(segments) {
+		return segments[index]
+	}
+	return nil
+}
+
+// datastoreToolExpressionOutside walks one parameter for an expression
+// marker, skipping the subtrees valueSlot allows, and returns the path of the
+// first one it meets. Any map whose mode is expression counts, whatever its
+// value holds: a structure slot is written literally, so there is nothing an
+// expression-shaped map there could legitimately be.
+func datastoreToolExpressionOutside(value any, path string, segments []any, valueSlot func([]any) bool) string {
+	if valueSlot(segments) {
+		return ""
+	}
+	switch typed := value.(type) {
+	case map[string]any:
+		if mode, _ := typed["mode"].(string); mode == "expression" {
+			return path
+		}
+		for _, key := range sortedParameterKeys(typed) {
+			nested := append(segments[:len(segments):len(segments)], key)
+			if found := datastoreToolExpressionOutside(typed[key], path+"."+key, nested, valueSlot); found != "" {
+				return found
+			}
+		}
+	case []any:
+		for index, entry := range typed {
+			nested := append(segments[:len(segments):len(segments)], index)
+			if found := datastoreToolExpressionOutside(entry, fmt.Sprintf("%s[%d]", path, index), nested, valueSlot); found != "" {
+				return found
+			}
+		}
+	}
+	return ""
+}
+
 // refuseDatastoreToolStructureFromAI holds a write to one rule: the model
 // supplies values, never structure. A $fromAI call may sit only inside the
 // value of one mapped column (columns.value.<column>) or inside a condition's
@@ -1116,7 +1207,9 @@ func checkDatastoreToolOperation(parameters map[string]any) error {
 // whole condition row or a whole mapping — and each of those can empty or
 // rewrite the table. The search is ai.ExtractFromAI over each subtree, which
 // finds a call in a plain string and inside a marker alike; a call it cannot
-// even parse counts as one.
+// even parse counts as one. An expression outside the value slots is refused
+// before this, whatever it calls (DatastoreToolStructureExpression), so what
+// this adds is the plain string — which is filled, never evaluated.
 func refuseDatastoreToolStructureFromAI(parameters map[string]any) error {
 	callsFromAI := func(value any) bool {
 		calls, err := ai.ExtractFromAI(map[string]any{"slot": value})
@@ -1228,12 +1321,12 @@ func checkDatastoreToolFilled(template, filled any, path string) error {
 		if len(object) != len(typed) {
 			return fmt.Errorf("%s changed its keys once the model's values were filled in", path)
 		}
-		for key, nested := range typed {
+		for _, key := range sortedParameterKeys(typed) {
 			value, present := object[key]
 			if !present {
 				return fmt.Errorf("%s changed its keys once the model's values were filled in", path)
 			}
-			if err := checkDatastoreToolFilled(nested, value, path+"."+key); err != nil {
+			if err := checkDatastoreToolFilled(typed[key], value, path+"."+key); err != nil {
 				return err
 			}
 		}

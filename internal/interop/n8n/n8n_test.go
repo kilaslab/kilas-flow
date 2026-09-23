@@ -4460,6 +4460,87 @@ func TestDataTableToolImportsItsWritesAndBlocksTheRest(t *testing.T) {
 	}
 }
 
+// TestDataTableToolWriteNeverImportsAnUnreportedStructureExpression proves an
+// imported tool that writes arrives either with its structure literal — so its
+// save accepts it — or with a blocking diagnostic on the slot that is not. An
+// n8n operator or match written as an expression arrives as a literal with its
+// own diagnostic; a structure slot that stays an expression is blocking, and a
+// slot the importer already blocks is not reported twice.
+func TestDataTableToolWriteNeverImportsAnUnreportedStructureExpression(t *testing.T) {
+	t.Parallel()
+	catalogue := registry(t)
+	definition, found := catalogue.Lookup("kilasflow.datastoreTool", workflow.V(1))
+	if !found {
+		t.Fatal("kilasflow.datastoreTool is not registered")
+	}
+	fixture := func(extra string) string {
+		return fmt.Sprintf(`{
+		  "name": "Table tool structure",
+		  "nodes": [
+		    {"id":"b","name":"Agent","type":"@n8n/n8n-nodes-langchain.agent","typeVersion":3.1,"position":[220,0],"parameters":{}},
+		    {"id":"c","name":"Customers","type":"n8n-nodes-base.dataTableTool","typeVersion":1,"position":[220,180],"parameters":{
+		      "resource": "row", "operation": "update",
+		      "dataTableId": {"mode":"id","value":"dt_1","cachedResultName":"T","__rl":true},
+		      "toolDescription": "Works on customers.",
+		      "columns": {"mappingMode": "defineBelow", "value": {"plan": "={{ $fromAI('plan', 'the plan') }}"}}%s
+		    }}
+		  ],
+		  "connections": {"Customers": {"ai_tool": [[{"node":"Agent","type":"ai_tool","index":0}]]}}
+		}`, extra)
+	}
+	blockingOn := func(issues []n8n.Unsupported, field string) int {
+		count := 0
+		for _, issue := range issues {
+			if issue.Field == field && issue.Severity == n8n.SeverityBlocking {
+				count++
+			}
+		}
+		return count
+	}
+
+	// The operator and match the model chose in n8n arrive as literals, and
+	// the tool saves.
+	result := importFixture(t, fixture(`,
+	  "filters": {"conditions": [{"keyName": "name", "condition": "={{ $fromAI('op') }}", "keyValue": "={{ $fromAI('who') }}"}]},
+	  "match": "={{ $fromAI('match') }}"`))
+	tool := nodeByName(result.Document, "Customers")
+	if path := nodes.DatastoreToolStructureExpression(tool.Parameters); path != "" {
+		t.Errorf("an n8n operator or match expression imported as an expression at %s", path)
+	}
+	if err := definition.Validate(tool); err != nil {
+		t.Errorf("Validate(imported tool) = %v, want the literal structure to save", err)
+	}
+	for _, field := range []string{"filters", "match"} {
+		if !slices.ContainsFunc(result.Unsupported, func(issue n8n.Unsupported) bool { return issue.Field == field }) {
+			t.Errorf("no diagnostic on %s, whose expression was replaced by a literal: %#v", field, result.Unsupported)
+		}
+	}
+
+	// A structure slot the importer carries as an expression is blocking.
+	result = importFixture(t, fixture(`,
+	  "filters": {"conditions": [{"keyName": "name", "condition": "eq", "keyValue": "={{ $fromAI('who') }}"}]},
+	  "name": "={{ $json.table }}"`))
+	if got := blockingOn(result.Unsupported, "name"); got != 1 {
+		t.Errorf("blocking diagnostics on name = %d, want 1: %#v", got, result.Unsupported)
+	}
+	if err := definition.Validate(nodeByName(result.Document, "Customers")); err == nil {
+		t.Error("the imported tool with an expression name saved, want the blocking slot refused")
+	}
+
+	// One the importer already blocks is reported once.
+	result = importFixture(t, fixture(`,
+	  "filters": {"conditions": [{"keyName": "={{ $json.column }}", "condition": "eq", "keyValue": "={{ $fromAI('who') }}"}]}`))
+	if got := blockingOn(result.Unsupported, "filters"); got != 1 {
+		t.Errorf("blocking diagnostics on filters = %d, want 1: %#v", got, result.Unsupported)
+	}
+
+	// A read is never held to the write's rule.
+	result = importFixture(t, strings.Replace(fixture(`, "name": "={{ $json.table }}"`), `"operation": "update"`, `"operation": "get"`, 1))
+	if got := blockingOn(result.Unsupported, "name"); got != 0 {
+		t.Errorf("blocking diagnostics on a get tool's name = %d, want 0: %#v", got, result.Unsupported)
+	}
+}
+
 // TestDataTableToolExportsTheOperationItPerforms proves a tool leaves as what
 // it does on this server: one naming no operation, and an insert with nothing
 // to write, both read here, and n8n would run either as an insert.

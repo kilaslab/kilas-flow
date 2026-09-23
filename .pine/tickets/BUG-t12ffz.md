@@ -143,6 +143,10 @@ One rule instead of per-slot patches: on a write, the model supplies values, nev
 
 Proof: `go test ./nodes/ ./internal/ai/ ./internal/expression/ ./internal/interop/n8n/ ./internal/engine/` → ok. The covering tests are `TestDatastoreToolModelSuppliesValuesNeverStructure`, `TestDatastoreToolRefusesAFilledValueThatBecomesAnExpression`, `TestDatastoreToolStoresAJsonColumnValueAsData`, `TestDatastoreToolNullDefaultIsTheSameInBothForms`, and `TestFromAIArgumentsAreDataTheExpressionComputesWith` (null case).
 
+## Progress — Lane E, review fix round 4 (2026-09-23)
+
+On a tool that writes, the structure is written literally. `nodes.DatastoreToolStructureExpression` refuses any expression marker, at any depth, outside `columns.value.<column>`, a condition's `keyValue`, `toolName` and `toolDescription`, whether or not it mentions `$fromAI`. It runs at save and at descriptor build, and names the path. This closes the operator, row, match and mapping-mode choices reached through `$json`, `$input` and `($fromAI)('v')`, which previously updated or deleted every row. The plain-string `$fromAI` placement rule stays. `checkDatastoreToolFilled` walks keys in sorted order. The n8n importer blocks a write tool that would carry such an expression (in practice `name`); an n8n operator or match expression already arrives as a literal with its diagnostic. `SKILL.md` notes that the author's operator is final. Proof: `TestDatastoreToolWriteTakesItsStructureLiterally`, `TestDatastoreToolWithLiteralStructureStillWrites`, `TestDatastoreToolNamesTheSameFilledValueOnEveryRun`, `TestDataTableToolWriteNeverImportsAnUnreportedStructureExpression`; `go test ./...` → ok.
+
 # Attachments
 
 ## Work Evidence

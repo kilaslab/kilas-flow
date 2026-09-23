@@ -1763,3 +1763,239 @@ func TestDatastoreToolNullDefaultIsTheSameInBothForms(t *testing.T) {
 		}
 	}
 }
+
+func TestDatastoreToolWriteTakesItsStructureLiterally(t *testing.T) {
+	t.Parallel()
+
+	// On a tool that writes, only a mapped column's value and a condition's
+	// keyValue may be expressions. Anything else computed would let the model
+	// shape the write without spelling $fromAI at all: $json and $input are
+	// the model's arguments, and ($fromAI)('v') is a call no scanner sees.
+	// Each case is the review's probe or its sibling; each was built, called
+	// and allowed to rewrite or empty the table. Now each is refused at save
+	// and again where the tool is built, and nothing is written.
+	marker := func(template string) map[string]any {
+		return map[string]any{"mode": "expression", "value": template}
+	}
+	plan := datastoreManualColumns(map[string]any{"plan": datastoreToolFromAI(`$fromAI('plan', 'the plan')`)})
+	byName := func(condition any) map[string]any {
+		return datastoreConditions(map[string]any{"keyName": "name", "condition": condition, "keyValue": "nobody"})
+	}
+	cases := []struct {
+		name       string
+		parameters map[string]any
+		arguments  string
+		path       string
+	}{
+		{"an operator read from $json", datastoreToolParams("update", map[string]any{
+			"columns": plan, "filters": byName(marker(`{{ $json.plan }}`)),
+		}), `{"plan":"neq"}`, "filters.conditions[0].condition"},
+		{"a whole row read from $json", datastoreToolParams("update", map[string]any{
+			"columns": datastoreManualColumns(map[string]any{
+				"city": datastoreToolFromAI(`$fromAI('city', 'the city')`),
+				"plan": datastoreToolFromAI(`$fromAI('plan', 'the plan')`),
+			}),
+			"filters": map[string]any{"conditions": []any{
+				marker(`{{ ({ keyName: $json.city, condition: 'neq', keyValue: 'nobody' }) }}`),
+			}},
+		}), `{"city":"name","plan":"hacked"}`, "filters.conditions[0]"},
+		{"an operator read from $input", datastoreToolParams("update", map[string]any{
+			"columns": plan, "filters": byName(marker(`{{ $input.first().json.plan }}`)),
+		}), `{"plan":"neq"}`, "filters.conditions[0].condition"},
+		{"the mapping mode read from $json", datastoreToolParams("insert", map[string]any{
+			"columns": map[string]any{"mappingMode": marker(`{{ $json.plan }}`), "value": map[string]any{"city": "$fromAI('plan', 'p')"}},
+		}), `{"plan":"autoMapInputData"}`, "columns.mappingMode"},
+		{"an operator through ($fromAI)", datastoreToolParams("delete", map[string]any{
+			"filters": datastoreConditions(map[string]any{
+				"keyName": "name", "condition": marker(`{{ ($fromAI)('v') }}`), "keyValue": datastoreToolFromAI(`$fromAI('v', 'who')`),
+			}),
+		}), `{"v":"neq"}`, "filters.conditions[0].condition"},
+		{"the whole mapping through ($fromAI)", datastoreToolParams("upsert", map[string]any{
+			"filters": datastoreConditions(map[string]any{"keyName": "name", "condition": "eq", "keyValue": "$fromAI('v', 'who')"}),
+			"columns": map[string]any{"mappingMode": "defineBelow", "value": marker(`{{ ({ [($fromAI)('v')]: 'owned' }) }}`)},
+		}), `{"v":"plan"}`, "columns.value"},
+		{"match read from $json", datastoreToolParams("update", map[string]any{
+			"columns": plan,
+			"filters": datastoreConditions(
+				map[string]any{"keyName": "name", "condition": "eq", "keyValue": "Budi"},
+				map[string]any{"keyName": "name", "condition": "neq", "keyValue": "Budi"},
+			),
+			"match": marker(`{{ $json.plan === 'free' ? 'all' : 'any' }}`),
+		}), `{"plan":"hacked"}`, "match"},
+		{"an operator the author computes", datastoreToolParams("delete", map[string]any{
+			"filters": datastoreConditions(map[string]any{"keyName": "name", "condition": marker(`{{ 'eq' }}`), "keyValue": "$fromAI('v', 'who')"}),
+		}), `{"v":"Budi"}`, "filters.conditions[0].condition"},
+		{"a column name read from $json", datastoreToolParams("update", map[string]any{
+			"columns": plan, "filters": datastoreConditions(map[string]any{"keyName": marker(`{{ $json.plan }}`), "condition": "eq", "keyValue": "x"}),
+		}), `{"plan":"city"}`, "filters.conditions[0].keyName"},
+		{"the conditions list read from $json", datastoreToolParams("update", map[string]any{
+			"columns": plan, "filters": map[string]any{"conditions": marker(`{{ [] }}`)},
+		}), `{"plan":"hacked"}`, "filters.conditions"},
+		{"the filters panel read from $json", datastoreToolParams("update", map[string]any{
+			"columns": plan, "filters": marker(`{{ ({ conditions: [] }) }}`),
+		}), `{"plan":"hacked"}`, "filters"},
+		{"a matching column read from $json", datastoreToolParams("upsert", map[string]any{
+			"filters": datastoreConditions(map[string]any{"keyName": "name", "condition": "eq", "keyValue": "Budi"}),
+			"columns": map[string]any{
+				"mappingMode": "defineBelow", "matchingColumns": []any{marker(`{{ $json.plan }}`)},
+				"value": map[string]any{"plan": datastoreToolFromAI(`$fromAI('plan', 'the plan')`)},
+			},
+		}), `{"plan":"name"}`, "columns.matchingColumns[0]"},
+		{"an option read from $json", datastoreToolParams("insert", map[string]any{
+			"columns": plan, "options": map[string]any{"dryRun": marker(`{{ $json.plan === 'x' }}`)},
+		}), `{"plan":"x"}`, "options.dryRun"},
+	}
+	original := datastoreToolCustomers().rowsOf("tenant-a", "ds_customers")
+	for _, tc := range cases {
+		store := datastoreToolCustomers()
+		ir := datastoreToolIR(t, "tool", tc.parameters)
+		err := ir.Definition.Validate(workflow.Node{Parameters: tc.parameters})
+		if err == nil || !strings.Contains(err.Error(), tc.path) || !strings.Contains(err.Error(), "written literally") {
+			t.Errorf("%s: Validate() = %v, want it refused naming %s and asking for literal structure", tc.name, err, tc.path)
+		}
+		_, err = nodes.NewDatastoreToolExecutor(store).Execute(context.Background(), ir, workflow.NodeInput{}, engine.Request{
+			Execution: engine.ExecutionContext{ID: "exec-1", TenantID: "tenant-a", WorkflowID: "wf_tool"},
+		})
+		if err == nil {
+			// The probe as the review ran it: built, then called with the
+			// model's arguments.
+			events, _ := runDatastoreToolAgent(t, store, datastoreToolDescriptor(t, store, ir, "tenant-a"), tc.arguments)
+			failure, failed := datastoreToolEvent(events, ai.EventToolFailed)
+			t.Errorf("%s: the tool was built, want it refused (the call failed=%v %s)", tc.name, failed, failure)
+		} else if !strings.Contains(err.Error(), tc.path) {
+			t.Errorf("%s: Execute() = %v, want it refused naming %s", tc.name, err, tc.path)
+		}
+		if rows := store.rowsOf("tenant-a", "ds_customers"); fmt.Sprint(rows) != fmt.Sprint(original) {
+			t.Errorf("%s: rows = %v, want them untouched", tc.name, rows)
+		}
+	}
+
+	// The operation, the resource and the table were already refused as
+	// expressions; they stay refused.
+	for _, parameters := range []map[string]any{
+		datastoreToolParams("", map[string]any{"operation": marker(`{{ $json.plan }}`), "columns": plan}),
+		datastoreToolParams("insert", map[string]any{"resource": marker(`{{ 'row' }}`), "columns": plan}),
+		datastoreToolParams("insert", map[string]any{
+			"dataTableId": map[string]any{"__rl": true, "mode": "id", "value": marker(`{{ 'ds_customers' }}`)}, "columns": plan,
+		}),
+	} {
+		store := datastoreToolCustomers()
+		ir := datastoreToolIR(t, "tool", parameters)
+		if err := ir.Definition.Validate(workflow.Node{Parameters: parameters}); err == nil {
+			t.Errorf("Validate(%v) = nil, want it refused", parameters)
+		}
+		if _, err := nodes.NewDatastoreToolExecutor(store).Execute(context.Background(), ir, workflow.NodeInput{}, engine.Request{
+			Execution: engine.ExecutionContext{ID: "exec-1", TenantID: "tenant-a", WorkflowID: "wf_tool"},
+		}); err == nil {
+			t.Errorf("Execute(%v) built the tool, want it refused", parameters)
+		}
+	}
+}
+
+func TestDatastoreToolWithLiteralStructureStillWrites(t *testing.T) {
+	t.Parallel()
+
+	// The value slots keep everything an expression can do — the model's
+	// values, several calls in one template, and $json, which is reading the
+	// model's arguments as values — and the author's literal structure is
+	// what decides which rows a write touches.
+	cases := []struct {
+		name       string
+		parameters map[string]any
+		arguments  string
+		want       func([]datastore.Row) string
+	}{
+		{"an insert with column values in both forms and one reading $json", datastoreToolParams("insert", map[string]any{
+			"columns": datastoreManualColumns(map[string]any{
+				"name": datastoreToolFromAI(`$fromAI('name', 'the name')`),
+				"city": "$fromAI('city', 'the city')",
+				"plan": datastoreToolFromAI(`$json.city === 'Medan' ? 'pro' : 'free'`),
+			}),
+		}), `{"name":"Rina","city":"Medan"}`, func(rows []datastore.Row) string {
+			if len(rows) != 4 || rows[3]["name"] != "Rina" || rows[3]["city"] != "Medan" || rows[3]["plan"] != "pro" {
+				return "want Rina from Medan on pro added"
+			}
+			return ""
+		}},
+		{"an update by a fixed column and operator, its value an expression", datastoreToolParams("update", map[string]any{
+			"columns": datastoreManualColumns(map[string]any{"plan": datastoreToolFromAI(`$fromAI('plan', 'the plan')`)}),
+			"filters": datastoreConditions(map[string]any{"keyName": "name", "condition": "eq", "keyValue": datastoreToolFromAI(`$fromAI('who', 'who')`)}),
+		}), `{"who":"Sari","plan":"enterprise"}`, func(rows []datastore.Row) string {
+			if len(rows) != 3 || rows[0]["plan"] != "pro" || rows[1]["plan"] != "enterprise" || rows[2]["plan"] != "pro" {
+				return "want only Sari on enterprise"
+			}
+			return ""
+		}},
+		{"a delete by a fixed column and operator, its value a plain string", datastoreToolParams("delete", map[string]any{
+			"filters": datastoreConditions(map[string]any{"keyName": "name", "condition": "eq", "keyValue": "$fromAI('who', 'who')"}),
+		}), `{"who":"Andi"}`, func(rows []datastore.Row) string {
+			if len(rows) != 2 || rows[0]["name"] != "Budi" || rows[1]["name"] != "Sari" {
+				return "want only Andi deleted"
+			}
+			return ""
+		}},
+		{"an upsert matching all conditions, literally", datastoreToolParams("upsert", map[string]any{
+			"columns": datastoreManualColumns(map[string]any{
+				"name": datastoreToolFromAI(`$fromAI('name', 'the name', 'string')`),
+				"plan": datastoreToolFromAI(`$fromAI('plan', 'the plan', 'string')`),
+			}),
+			"filters": datastoreConditions(map[string]any{"keyName": "name", "condition": "eq", "keyValue": datastoreToolFromAI(`$fromAI('name', 'the name', 'string')`)}),
+			"match":   "all",
+		}), `{"name":"Budi","plan":"enterprise"}`, func(rows []datastore.Row) string {
+			if len(rows) != 3 || rows[0]["plan"] != "enterprise" || rows[1]["plan"] != "free" || rows[2]["plan"] != "pro" {
+				return "want only Budi on enterprise"
+			}
+			return ""
+		}},
+		{"an insert whose value is template text with two calls", datastoreToolParams("insert", map[string]any{
+			"columns": datastoreManualColumns(map[string]any{
+				"name": map[string]any{"mode": "expression", "value": `{{ $fromAI('first', 'f') }} {{ $fromAI('last', 'l') }}`},
+			}),
+		}), `{"first":"Rina","last":"W"}`, func(rows []datastore.Row) string {
+			if len(rows) != 4 || rows[3]["name"] != "Rina W" {
+				return "want Rina W added"
+			}
+			return ""
+		}},
+	}
+	for _, tc := range cases {
+		store := datastoreToolCustomers()
+		ir := datastoreToolIR(t, "tool", tc.parameters)
+		if err := ir.Definition.Validate(workflow.Node{Parameters: tc.parameters}); err != nil {
+			t.Errorf("%s: Validate() = %v, want success", tc.name, err)
+			continue
+		}
+		events, _ := runDatastoreToolAgent(t, store, datastoreToolDescriptor(t, store, ir, "tenant-a"), tc.arguments)
+		if failure, failed := datastoreToolEvent(events, ai.EventToolFailed); failed {
+			t.Errorf("%s: the write failed: %s", tc.name, failure)
+			continue
+		}
+		rows := store.rowsOf("tenant-a", "ds_customers")
+		if problem := tc.want(rows); problem != "" {
+			t.Errorf("%s: rows = %v, %s", tc.name, rows, problem)
+		}
+	}
+}
+
+func TestDatastoreToolNamesTheSameFilledValueOnEveryRun(t *testing.T) {
+	t.Parallel()
+
+	// Two column values that each become a marker once filled: the refusal
+	// names the first in key order on every run, never whichever a map
+	// happened to yield first.
+	shaped := map[string]any{"mode": "$fromAI('m', 'm')", "value": "$fromAI('v', 'v')"}
+	store := datastoreToolCustomers()
+	descriptor := datastoreToolDescriptor(t, store, datastoreToolIR(t, "add_customer", datastoreToolParams("insert", map[string]any{
+		"columns": datastoreManualColumns(map[string]any{"city": shaped, "name": shaped}),
+	})), "tenant-a")
+	for run := 0; run < 16; run++ {
+		events, _ := runDatastoreToolAgent(t, store, descriptor, `{"m":"expression","v":"{{ $execution.id }}"}`)
+		failure, failed := datastoreToolEvent(events, ai.EventToolFailed)
+		if !failed || !strings.Contains(failure, "columns.value.city") {
+			t.Fatalf("run %d: tool failure = %s (failed %v), want it to name columns.value.city", run, failure, failed)
+		}
+	}
+	if rows := store.rowsOf("tenant-a", "ds_customers"); len(rows) != 3 {
+		t.Errorf("row count = %d, want 3", len(rows))
+	}
+}

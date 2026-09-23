@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -6018,6 +6019,31 @@ func dataTableToolToKilas(node Node) (map[string]any, []Unsupported) {
 			Reason: "this tool inserts without mapping any column, and this server's data table tool reads rows " +
 				"when an insert has nothing to write. Map each column, with $fromAI for what the model supplies, before activating.",
 		})
+	}
+
+	// A tool that writes has its structure written literally here: only a
+	// mapped column's value and a condition's value may be expressions. The
+	// operator and match already arrive as literals with their own
+	// diagnostics, and a column name or a whole panel as an expression is
+	// already blocking; any other slot carried as an expression is blocking
+	// too, rather than an import that looks clean and that save refuses.
+	if nodes.DatastoreToolOperation(parameters) != "get" {
+		if path := nodes.DatastoreToolStructureExpression(parameters); path != "" {
+			field := path
+			if end := strings.IndexAny(path, ".["); end >= 0 {
+				field = path[:end]
+			}
+			if !slices.ContainsFunc(issues, func(issue Unsupported) bool {
+				return issue.Field == field && issue.Severity == SeverityBlocking
+			}) {
+				issues = append(issues, Unsupported{
+					Severity: SeverityBlocking, Field: field,
+					Reason: fmt.Sprintf("this tool writes, and its %s is an expression. This server's data table tool takes "+
+						"the structure of a write literally, with expressions only in a mapped column's value or a condition's value: "+
+						"write it as a fixed value before activating.", path),
+				})
+			}
+		}
 	}
 
 	// n8n has no tool-name parameter at all: the name a model calls is derived
