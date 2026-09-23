@@ -2731,3 +2731,404 @@ func TestDollarItemResolvesThroughHttpAndALoop(t *testing.T) {
 		}
 	}
 }
+
+// lineageAuditRun runs the lineage workflow the n8n-parity audit reported
+// (BUG-zf4pnj): a Code-style node that turns the one trigger item into one item
+// per path, an HTTP Request per item against a local stub that fails the path
+// "fail", and a Set node on each output of the HTTP node reading
+// `$('Two urls').item`. The error branch is wired only when the HTTP node has
+// one.
+//
+// It returns what each Set node read back, by node ID, in output order.
+func lineageAuditRun(t *testing.T, httpSettings map[string]any, paths ...string) map[string][]any {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path == "/fail" {
+			http.Error(writer, "boom", http.StatusInternalServerError)
+			return
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(writer, `{"path":%q}`, request.URL.Path)
+	}))
+	t.Cleanup(server.Close)
+	host := strings.TrimPrefix(server.URL, "http://")
+
+	readBack := func(id, name string) workflow.Node {
+		return workflow.Node{ID: id, Name: name, Type: "kilasflow.set", TypeVersion: workflow.V(1),
+			Parameters: map[string]any{"assignments": map[string]any{
+				"fromTwoUrls": map[string]any{"mode": "expression", "value": "{{ $('Two urls').item.json.u }}"},
+			}}}
+	}
+	document := workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_lineage_audit", Name: "Code then HTTP then Set",
+		Nodes: []workflow.Node{
+			{ID: "manual", Name: "Manual", Type: "kilasflow.manual", TypeVersion: workflow.V(1)},
+			{ID: "two-urls", Name: "Two urls", Type: "test.twoUrls", TypeVersion: workflow.V(1)},
+			{ID: "http", Name: "HTTP Request", Type: "kilasflow.httpRequest", TypeVersion: workflow.V(1),
+				Settings: httpSettings,
+				Parameters: map[string]any{
+					"method": "GET",
+					"url":    map[string]any{"mode": "expression", "value": "http://" + host + "/{{ $json.u }}"},
+				}},
+			readBack("after-regular", "After regular"),
+		},
+		Connections: []workflow.Connection{
+			mainEdge("c1", "manual", "main", "two-urls"),
+			mainEdge("c2", "two-urls", "main", "http"),
+			mainEdge("c3", "http", "main", "after-regular"),
+		},
+		Settings: map[string]any{},
+	}
+	if httpSettings["onError"] == "continueErrorOutput" {
+		document.Nodes = append(document.Nodes, readBack("after-error", "After error"))
+		document.Connections = append(document.Connections, mainEdge("c4", "http", "error", "after-error"))
+	}
+	ir := compileDoc(t, testCatalog(t, stepType("test.twoUrls", "Two urls")), document)
+
+	executors := engine.NewRegistry()
+	// One item in, one per path out: the item count changes, so the runner
+	// rightly records these items' own lineage as lost.
+	if err := executors.Register("test.twoUrls", engine.ExecutorFunc(
+		func(context.Context, workflow.IRNode, workflow.NodeInput, engine.Request) (workflow.NodeOutput, error) {
+			items := make([]workflow.Item, 0, len(paths))
+			for _, path := range paths {
+				items = append(items, workflow.Item{JSON: map[string]any{"u": path}})
+			}
+			return workflow.NodeOutput{items}, nil
+		})); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	if err := nodes.RegisterExecutors(executors, safehttp.Policy{
+		AllowedHosts:            []string{"127.0.0.1"},
+		AllowedPrivateEndpoints: []string{host},
+		MaxResponseBytes:        1 << 20,
+		Timeout:                 5 * time.Second,
+	}, sqlnode.Guard{}, ai.NewLoopRuntime(), nil, nil); err != nil {
+		t.Fatalf("RegisterExecutors() error = %v", err)
+	}
+
+	result, err := engine.NewRunner(executors).Run(context.Background(), ir, engine.Request{
+		Input: workflow.Item{JSON: map[string]any{}},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	written := map[string][]any{}
+	for _, run := range result.NodeRuns {
+		if run.NodeID != "after-regular" && run.NodeID != "after-error" {
+			continue
+		}
+		for _, port := range run.Output {
+			for _, item := range port {
+				written[run.NodeID] = append(written[run.NodeID], item.JSON["fromTwoUrls"])
+			}
+		}
+	}
+	return written
+}
+
+// TestDollarItemReachesACodeNodesItemThroughHttp is the audit's workflow k.
+//
+// The Code node changed the item count, so its own items have no lineage — but
+// every HTTP item names the Code item it was made from, which is all
+// `$('Two urls').item` needs. Comparing origins alone could not see that, and
+// failed with "changed the item correspondence".
+func TestDollarItemReachesACodeNodesItemThroughHttp(t *testing.T) {
+	written := lineageAuditRun(t, nil, "a", "b", "c")
+	if got, want := fmt.Sprint(written["after-regular"]), "[a b c]"; got != want {
+		t.Errorf("After regular read %s from $('Two urls').item, want %s", got, want)
+	}
+}
+
+// TestDollarItemResolvesOnBothBranchesOfAnErrorOutput is the audit's workflow
+// i: an HTTP node that routes its failures to an error output, and both
+// branches reading `$('Two urls').item`.
+//
+// Every item on both outputs used to be stamped lost, because the node's
+// output was stamped once as a whole, and neither output has as many items as
+// the node was given.
+func TestDollarItemResolvesOnBothBranchesOfAnErrorOutput(t *testing.T) {
+	written := lineageAuditRun(t, map[string]any{"onError": "continueErrorOutput"}, "a", "fail", "c")
+	if got, want := fmt.Sprint(written["after-regular"]), "[a c]"; got != want {
+		t.Errorf("the success branch read %s from $('Two urls').item, want %s", got, want)
+	}
+	if got, want := fmt.Sprint(written["after-error"]), "[fail]"; got != want {
+		t.Errorf("the error branch read %s from $('Two urls').item, want %s", got, want)
+	}
+}
+
+// TestDollarItemResolvesAfterAContinueOnFailFailure is the audit's workflow j:
+// the failed item continues on the regular output, and it pairs with the item
+// that failed exactly as the items that succeeded pair with theirs.
+func TestDollarItemResolvesAfterAContinueOnFailFailure(t *testing.T) {
+	written := lineageAuditRun(t, map[string]any{"onError": "continueRegularOutput"}, "a", "fail", "c")
+	if got, want := fmt.Sprint(written["after-regular"]), "[a fail c]"; got != want {
+		t.Errorf("After regular read %s from $('Two urls').item, want %s", got, want)
+	}
+}
+
+// TestDollarItemResolvesAfterANodeLevelFailure covers the tolerated failure
+// that is not resolved item by item. Execute Once runs the node against the
+// first item as a whole, so its error item is built for the whole node — and it
+// has to pair with that item as much as a per-item one does.
+func TestDollarItemResolvesAfterANodeLevelFailure(t *testing.T) {
+	written := lineageAuditRun(t, map[string]any{"onError": "continueErrorOutput", "executeOnce": true}, "fail", "b")
+	if got, want := fmt.Sprint(written["after-error"]), "[fail]"; got != want {
+		t.Errorf("the error branch read %s from $('Two urls').item, want %s", got, want)
+	}
+}
+
+// TestDollarItemPairsWithTheRunThatDeliveredTheItem covers the run half of the
+// pointer an item takes when its own lineage is lost.
+//
+// A loop runs once per batch and once more to hand on `done`, while the node
+// after it runs once. Recording that node's own run index in the pointer named
+// the loop's first run rather than the one that delivered the items, so
+// `$('Loop').item` found nothing to pair with.
+func TestDollarItemPairsWithTheRunThatDeliveredTheItem(t *testing.T) {
+	catalog := testCatalog(t, stepType("test.fanOut", "Fan out"), stepType("test.pass", "Pass"),
+		stepType("test.fresh", "Fresh"), stepType("test.probe", "Probe"))
+	ir := compileDoc(t, catalog, workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_lineage_runs", Name: "Read the loop after it is done",
+		Nodes: []workflow.Node{
+			{ID: "manual", Name: "Manual", Type: "kilasflow.manual", TypeVersion: workflow.V(1)},
+			{ID: "fan", Name: "Fan", Type: "test.fanOut", TypeVersion: workflow.V(1)},
+			{ID: "loop", Name: "Loop", Type: nodes.LoopNodeType, TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"batchSize": float64(1), "maxIterations": float64(10)}},
+			{ID: "body", Name: "Body", Type: "test.pass", TypeVersion: workflow.V(1)},
+			{ID: "after", Name: "After", Type: "test.fresh", TypeVersion: workflow.V(1)},
+			{ID: "probe", Name: "Probe", Type: "test.probe", TypeVersion: workflow.V(1)},
+		},
+		Connections: []workflow.Connection{
+			mainEdge("c1", "manual", "main", "fan"),
+			mainEdge("c2", "fan", "main", "loop"),
+			mainEdge("c3", "loop", "loop", "body"),
+			mainEdge("c4", "body", "main", "loop"),
+			mainEdge("c5", "loop", "done", "after"),
+			mainEdge("c6", "after", "main", "probe"),
+		},
+		Settings: map[string]any{},
+	})
+
+	executors := engine.NewRegistry()
+	register := func(typeID string, execute engine.ExecutorFunc) {
+		t.Helper()
+		if err := executors.Register(typeID, execute); err != nil {
+			t.Fatalf("Register(%s) error = %v", typeID, err)
+		}
+	}
+	// One item in, three out: these items' own lineage is lost.
+	register("test.fanOut", func(context.Context, workflow.IRNode, workflow.NodeInput, engine.Request) (workflow.NodeOutput, error) {
+		return workflow.NodeOutput{{{JSON: map[string]any{"u": "x0"}}, {JSON: map[string]any{"u": "x1"}}, {JSON: map[string]any{"u": "x2"}}}}, nil
+	})
+	// The body hands its batch back untouched, lineage included, so what the
+	// loop collects on done still has none.
+	register("test.pass", func(_ context.Context, _ workflow.IRNode, input workflow.NodeInput, _ engine.Request) (workflow.NodeOutput, error) {
+		return workflow.NodeOutput{input["main"]}, nil
+	})
+	// After builds new items and leaves their lineage to the runner.
+	register("test.fresh", func(_ context.Context, _ workflow.IRNode, input workflow.NodeInput, _ engine.Request) (workflow.NodeOutput, error) {
+		items := make([]workflow.Item, 0, len(input["main"]))
+		for index := range input["main"] {
+			items = append(items, workflow.Item{JSON: map[string]any{"n": index}})
+		}
+		return workflow.NodeOutput{items}, nil
+	})
+	var read []string
+	register("test.probe", func(_ context.Context, _ workflow.IRNode, input workflow.NodeInput, request engine.Request) (workflow.NodeOutput, error) {
+		for index, item := range input["main"] {
+			resolved, err := expression.Resolve(map[string]any{
+				"u": map[string]any{"mode": "expression", "value": "{{ $('Loop').item.json.u }}"},
+			}, request.ExpressionContext(item, input, index))
+			if err != nil {
+				return nil, err
+			}
+			read = append(read, fmt.Sprint(resolved["u"]))
+		}
+		return workflow.NodeOutput{input["main"]}, nil
+	})
+	if err := nodes.RegisterExecutors(executors, safehttp.DefaultPolicy(), sqlnode.Guard{}, ai.NewLoopRuntime(), nil, nil); err != nil {
+		t.Fatalf("RegisterExecutors() error = %v", err)
+	}
+
+	if _, err := engine.NewRunner(executors).Run(context.Background(), ir, engine.Request{
+		Input: workflow.Item{JSON: map[string]any{}},
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got, want := strings.Join(read, ","), "x0,x1,x2"; got != want {
+		t.Errorf("$('Loop').item read %s after the loop, want %s", got, want)
+	}
+}
+
+// TestDollarItemRefusesAnEarlierRunRatherThanReadingTheLatest covers a branch
+// the stack holds back while the loop it hangs off runs again.
+//
+// Per batch changes the item count on every batch, and Side hangs off it after
+// the edge back to the loop, so the Side invocations of every batch wait until
+// the loop is done. By then Per batch's latest run is the last batch's. An item
+// has to keep naming the run it came from: taking the latest run instead would
+// pair the first two batches' items with the last batch's, a confident wrong
+// answer where the honest one is that an earlier run's items are no longer
+// there to read. Head keeps Per batch off the loop's port, so the loop's final,
+// empty dispatch skips Head rather than recording one more run of Per batch.
+func TestDollarItemRefusesAnEarlierRunRatherThanReadingTheLatest(t *testing.T) {
+	catalog := testCatalog(t, startType("test.start", "Start"), stepType("test.perBatch", "Per batch"),
+		stepType("test.pass", "Pass"), stepType("test.copy", "Copy"), stepType("test.probe", "Probe"))
+	ir := compileDoc(t, catalog, workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_lineage_held_branch", Name: "A branch held behind a loop",
+		Nodes: []workflow.Node{
+			{ID: "start", Name: "Start", Type: "test.start", TypeVersion: workflow.V(1)},
+			{ID: "loop", Name: "Loop", Type: nodes.LoopNodeType, TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"batchSize": float64(1), "maxIterations": float64(10)}},
+			{ID: "head", Name: "Head", Type: "test.pass", TypeVersion: workflow.V(1)},
+			{ID: "per-batch", Name: "Per batch", Type: "test.perBatch", TypeVersion: workflow.V(1)},
+			{ID: "back", Name: "Back", Type: "test.pass", TypeVersion: workflow.V(1)},
+			{ID: "side", Name: "Side", Type: "test.copy", TypeVersion: workflow.V(1)},
+			{ID: "probe", Name: "Probe", Type: "test.probe", TypeVersion: workflow.V(1)},
+		},
+		Connections: []workflow.Connection{
+			mainEdge("c1", "start", "main", "loop"),
+			mainEdge("c2", "loop", "loop", "head"),
+			mainEdge("c3", "head", "main", "per-batch"),
+			mainEdge("c4", "per-batch", "main", "back"),
+			mainEdge("c5", "per-batch", "main", "side"),
+			mainEdge("c6", "back", "main", "loop"),
+			mainEdge("c7", "side", "main", "probe"),
+		},
+		Settings: map[string]any{},
+	})
+
+	executors := engine.NewRegistry()
+	register := func(typeID string, execute engine.ExecutorFunc) {
+		t.Helper()
+		if err := executors.Register(typeID, execute); err != nil {
+			t.Fatalf("Register(%s) error = %v", typeID, err)
+		}
+	}
+	register("test.start", func(context.Context, workflow.IRNode, workflow.NodeInput, engine.Request) (workflow.NodeOutput, error) {
+		return workflow.NodeOutput{{{JSON: map[string]any{"b": "b0"}}, {JSON: map[string]any{"b": "b1"}}, {JSON: map[string]any{"b": "b2"}}}}, nil
+	})
+	// Two items from the batch's one, so their own lineage is lost.
+	register("test.perBatch", func(_ context.Context, _ workflow.IRNode, input workflow.NodeInput, _ engine.Request) (workflow.NodeOutput, error) {
+		batch, _ := input["main"][0].JSON["b"].(string)
+		return workflow.NodeOutput{{{JSON: map[string]any{"u": batch + "-0"}}, {JSON: map[string]any{"u": batch + "-1"}}}}, nil
+	})
+	register("test.pass", func(_ context.Context, _ workflow.IRNode, input workflow.NodeInput, _ engine.Request) (workflow.NodeOutput, error) {
+		return workflow.NodeOutput{input["main"]}, nil
+	})
+	// Side copies the fields and leaves the lineage to the runner, so the probe
+	// can tell what each item should pair with.
+	register("test.copy", func(_ context.Context, _ workflow.IRNode, input workflow.NodeInput, _ engine.Request) (workflow.NodeOutput, error) {
+		items := make([]workflow.Item, 0, len(input["main"]))
+		for _, item := range input["main"] {
+			items = append(items, workflow.Item{JSON: item.JSON})
+		}
+		return workflow.NodeOutput{items}, nil
+	})
+	var paired, refused int
+	var wrong []string
+	register("test.probe", func(_ context.Context, _ workflow.IRNode, input workflow.NodeInput, request engine.Request) (workflow.NodeOutput, error) {
+		for index, item := range input["main"] {
+			resolved, err := expression.Resolve(map[string]any{
+				"u": map[string]any{"mode": "expression", "value": "{{ $('Per batch').item.json.u }}"},
+			}, request.ExpressionContext(item, input, index))
+			switch {
+			case err != nil:
+				refused++
+			case resolved["u"] == item.JSON["u"]:
+				paired++
+			default:
+				wrong = append(wrong, fmt.Sprintf("%v read %v", item.JSON["u"], resolved["u"]))
+			}
+		}
+		return workflow.NodeOutput{input["main"]}, nil
+	})
+	if err := nodes.RegisterExecutors(executors, safehttp.DefaultPolicy(), sqlnode.Guard{}, ai.NewLoopRuntime(), nil, nil); err != nil {
+		t.Fatalf("RegisterExecutors() error = %v", err)
+	}
+
+	if _, err := engine.NewRunner(executors).Run(context.Background(), ir, engine.Request{
+		Input: workflow.Item{JSON: map[string]any{}},
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(wrong) > 0 {
+		t.Errorf("$('Per batch').item paired items with another batch's: %s", strings.Join(wrong, "; "))
+	}
+	// The last batch's Side still runs against the run it came from, and the
+	// two before it are refused rather than guessed.
+	if paired != 2 || refused != 4 {
+		t.Errorf("paired %d and refused %d items, want the last batch's 2 paired and the other 4 refused", paired, refused)
+	}
+}
+
+// TestDollarItemDoesNotReadAnInputPositionAsAnOutputPosition guards the
+// shortcut `.item` takes when an item's origin names the referenced node.
+//
+// Split Out stamps an item whose incoming lineage was lost with its own name
+// and the position of the item it split, which is a position in its input, not
+// in its output. Reading it as an output position would pair all four items
+// with the first two; the origin comparison pairs each with itself.
+func TestDollarItemDoesNotReadAnInputPositionAsAnOutputPosition(t *testing.T) {
+	catalog := testCatalog(t, stepType("test.fanOut", "Fan out"), stepType("test.probe", "Probe"))
+	ir := compileDoc(t, catalog, workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_split_positions", Name: "Split after a count change",
+		Nodes: []workflow.Node{
+			{ID: "manual", Name: "Manual", Type: "kilasflow.manual", TypeVersion: workflow.V(1)},
+			{ID: "fan", Name: "Fan", Type: "test.fanOut", TypeVersion: workflow.V(1)},
+			{ID: "split", Name: "Split Out", Type: nodes.SplitOutNodeType, TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"fieldToSplitOut": "list"}},
+			{ID: "probe", Name: "Probe", Type: "test.probe", TypeVersion: workflow.V(1)},
+		},
+		Connections: []workflow.Connection{
+			mainEdge("c1", "manual", "main", "fan"),
+			mainEdge("c2", "fan", "main", "split"),
+			mainEdge("c3", "split", "main", "probe"),
+		},
+		Settings: map[string]any{},
+	})
+
+	executors := engine.NewRegistry()
+	if err := executors.Register("test.fanOut", engine.ExecutorFunc(
+		func(context.Context, workflow.IRNode, workflow.NodeInput, engine.Request) (workflow.NodeOutput, error) {
+			return workflow.NodeOutput{{
+				{JSON: map[string]any{"list": []any{map[string]any{"v": "a"}, map[string]any{"v": "b"}}}},
+				{JSON: map[string]any{"list": []any{map[string]any{"v": "c"}, map[string]any{"v": "d"}}}},
+			}}, nil
+		})); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	var read []string
+	if err := executors.Register("test.probe", engine.ExecutorFunc(
+		func(_ context.Context, _ workflow.IRNode, input workflow.NodeInput, request engine.Request) (workflow.NodeOutput, error) {
+			for index, item := range input["main"] {
+				resolved, err := expression.Resolve(map[string]any{
+					"v": map[string]any{"mode": "expression", "value": "{{ $('Split Out').item.json.v }}"},
+				}, request.ExpressionContext(item, input, index))
+				if err != nil {
+					return nil, err
+				}
+				read = append(read, fmt.Sprint(resolved["v"]))
+			}
+			return workflow.NodeOutput{input["main"]}, nil
+		})); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	if err := nodes.RegisterExecutors(executors, safehttp.DefaultPolicy(), sqlnode.Guard{}, ai.NewLoopRuntime(), nil, nil); err != nil {
+		t.Fatalf("RegisterExecutors() error = %v", err)
+	}
+
+	if _, err := engine.NewRunner(executors).Run(context.Background(), ir, engine.Request{
+		Input: workflow.Item{JSON: map[string]any{}},
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got, want := strings.Join(read, ","), "a,b,c,d"; got != want {
+		t.Errorf("$('Split Out').item read %s, want each item paired with itself (%s)", got, want)
+	}
+}
