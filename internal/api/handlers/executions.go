@@ -13,6 +13,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/sse"
+	"github.com/kilaslab/kilas-flow/internal/ai"
 	"github.com/kilaslab/kilas-flow/internal/api/middleware"
 	"github.com/kilaslab/kilas-flow/internal/engine"
 	"github.com/kilaslab/kilas-flow/internal/events"
@@ -59,7 +60,22 @@ type (
 	NodeCompletedEvent      ExecutionEvent
 	NodeFailedEvent         ExecutionEvent
 	WorkflowSavedEvent      ExecutionEvent
+	WebhookResponseEvent    ExecutionEvent
+	AIModelStartedEvent     ExecutionEvent
+	AIModelDeltaEvent       ExecutionEvent
+	AIModelCompletedEvent   ExecutionEvent
+	AIToolStartedEvent      ExecutionEvent
+	AIToolCompletedEvent    ExecutionEvent
+	AIToolFailedEvent       ExecutionEvent
+	AIAgentCompletedEvent   ExecutionEvent
+	AIAgentFailedEvent      ExecutionEvent
+	OtherEvent              ExecutionEvent
 )
+
+// OtherEventName is the frame a name with no registration of its own goes out
+// under. The event's own name stays in the payload's `type`, so a client that
+// listens for it can still tell events apart, and nothing is sent unnamed.
+const OtherEventName = "execution.event"
 
 // typedEvent converts one event into the Go type bound to its name.
 //
@@ -91,8 +107,26 @@ func typedEvent(event ExecutionEvent, eventType events.Type) any {
 		return NodeFailedEvent(event)
 	case events.WorkflowSaved:
 		return WorkflowSavedEvent(event)
+	case events.Type(engine.ResponseEventName):
+		return WebhookResponseEvent(event)
+	case events.Type(ai.EventModelStarted):
+		return AIModelStartedEvent(event)
+	case events.Type(ai.EventModelDelta):
+		return AIModelDeltaEvent(event)
+	case events.Type(ai.EventModelCompleted):
+		return AIModelCompletedEvent(event)
+	case events.Type(ai.EventToolStarted):
+		return AIToolStartedEvent(event)
+	case events.Type(ai.EventToolCompleted):
+		return AIToolCompletedEvent(event)
+	case events.Type(ai.EventToolFailed):
+		return AIToolFailedEvent(event)
+	case events.Type(ai.EventAgentCompleted):
+		return AIAgentCompletedEvent(event)
+	case events.Type(ai.EventAgentFailed):
+		return AIAgentFailedEvent(event)
 	default:
-		return event
+		return OtherEvent(event)
 	}
 }
 
@@ -113,6 +147,16 @@ func executionEventSchemas() map[string]any {
 		string(events.NodeCompleted):         NodeCompletedEvent{},
 		string(events.NodeFailed):            NodeFailedEvent{},
 		string(events.WorkflowSaved):         WorkflowSavedEvent{},
+		engine.ResponseEventName:             WebhookResponseEvent{},
+		string(ai.EventModelStarted):         AIModelStartedEvent{},
+		string(ai.EventModelDelta):           AIModelDeltaEvent{},
+		string(ai.EventModelCompleted):       AIModelCompletedEvent{},
+		string(ai.EventToolStarted):          AIToolStartedEvent{},
+		string(ai.EventToolCompleted):        AIToolCompletedEvent{},
+		string(ai.EventToolFailed):           AIToolFailedEvent{},
+		string(ai.EventAgentCompleted):       AIAgentCompletedEvent{},
+		string(ai.EventAgentFailed):          AIAgentFailedEvent{},
+		OtherEventName:                       OtherEvent{},
 	}
 }
 

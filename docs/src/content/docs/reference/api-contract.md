@@ -242,12 +242,19 @@ are stated.
 
 ## Events
 
-`GET /api/v1/executions/{id}/events` is a server-sent event stream with nine
-named event types. The names are **stable**:
+`GET /api/v1/executions/{id}/events` is a server-sent event stream of named
+event types. These names are **stable**:
 
 `execution.started`, `execution.completed`, `execution.failed`,
-`execution.cancelled`, `node.started`, `node.output`, `node.completed`,
-`node.failed`, `workflow.saved`.
+`execution.cancelled`, `execution.waiting`, `node.started`, `node.output`,
+`node.completed`, `node.failed`, `workflow.saved`, `webhook.response`.
+
+AI nodes add nested progress under `ai.model.started`, `ai.model.delta`,
+`ai.model.completed`, `ai.tool.started`, `ai.tool.completed`, `ai.tool.failed`,
+`ai.agent.completed` and `ai.agent.failed`. Their names are stable, and their
+`data` is informational rather than authoritative state. A type added after a
+client was built arrives under `execution.event`, with its real name in `type`.
+The [Events reference](/reference/api/events/) lists every name.
 
 Delivery promises: each event carries a monotonic numeric `id`; a
 reconnecting client resends it as `Last-Event-ID` (or `?from=` where a header

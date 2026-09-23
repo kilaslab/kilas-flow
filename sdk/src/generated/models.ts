@@ -32,6 +32,142 @@ type NonReadonly<T> = [T] extends [UnionToIntersection<T>] ? {
     : T[P];
 } : DistributeReadOnlyOverUnions<T>;
 
+export interface AIAgentCompletedEvent {
+  at: string;
+  /** Redacted, type-specific detail */
+  data?: unknown;
+  executionId: string;
+  /**
+     * Monotonic per execution; send back as Last-Event-ID to resume
+     * @minimum 0
+     */
+  id: number;
+  nodeId?: string;
+  sequence?: number;
+  status?: string;
+  type: string;
+  workflowId?: string;
+}
+
+export interface AIAgentFailedEvent {
+  at: string;
+  /** Redacted, type-specific detail */
+  data?: unknown;
+  executionId: string;
+  /**
+     * Monotonic per execution; send back as Last-Event-ID to resume
+     * @minimum 0
+     */
+  id: number;
+  nodeId?: string;
+  sequence?: number;
+  status?: string;
+  type: string;
+  workflowId?: string;
+}
+
+export interface AIModelCompletedEvent {
+  at: string;
+  /** Redacted, type-specific detail */
+  data?: unknown;
+  executionId: string;
+  /**
+     * Monotonic per execution; send back as Last-Event-ID to resume
+     * @minimum 0
+     */
+  id: number;
+  nodeId?: string;
+  sequence?: number;
+  status?: string;
+  type: string;
+  workflowId?: string;
+}
+
+export interface AIModelDeltaEvent {
+  at: string;
+  /** Redacted, type-specific detail */
+  data?: unknown;
+  executionId: string;
+  /**
+     * Monotonic per execution; send back as Last-Event-ID to resume
+     * @minimum 0
+     */
+  id: number;
+  nodeId?: string;
+  sequence?: number;
+  status?: string;
+  type: string;
+  workflowId?: string;
+}
+
+export interface AIModelStartedEvent {
+  at: string;
+  /** Redacted, type-specific detail */
+  data?: unknown;
+  executionId: string;
+  /**
+     * Monotonic per execution; send back as Last-Event-ID to resume
+     * @minimum 0
+     */
+  id: number;
+  nodeId?: string;
+  sequence?: number;
+  status?: string;
+  type: string;
+  workflowId?: string;
+}
+
+export interface AIToolCompletedEvent {
+  at: string;
+  /** Redacted, type-specific detail */
+  data?: unknown;
+  executionId: string;
+  /**
+     * Monotonic per execution; send back as Last-Event-ID to resume
+     * @minimum 0
+     */
+  id: number;
+  nodeId?: string;
+  sequence?: number;
+  status?: string;
+  type: string;
+  workflowId?: string;
+}
+
+export interface AIToolFailedEvent {
+  at: string;
+  /** Redacted, type-specific detail */
+  data?: unknown;
+  executionId: string;
+  /**
+     * Monotonic per execution; send back as Last-Event-ID to resume
+     * @minimum 0
+     */
+  id: number;
+  nodeId?: string;
+  sequence?: number;
+  status?: string;
+  type: string;
+  workflowId?: string;
+}
+
+export interface AIToolStartedEvent {
+  at: string;
+  /** Redacted, type-specific detail */
+  data?: unknown;
+  executionId: string;
+  /**
+     * Monotonic per execution; send back as Last-Event-ID to resume
+     * @minimum 0
+     */
+  id: number;
+  nodeId?: string;
+  sequence?: number;
+  status?: string;
+  type: string;
+  workflowId?: string;
+}
+
 export interface APIKeyResource {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -1231,6 +1367,23 @@ export interface OauthStartResource {
   authorizeUrl: string;
 }
 
+export interface OtherEvent {
+  at: string;
+  /** Redacted, type-specific detail */
+  data?: unknown;
+  executionId: string;
+  /**
+     * Monotonic per execution; send back as Last-Event-ID to resume
+     * @minimum 0
+     */
+  id: number;
+  nodeId?: string;
+  sequence?: number;
+  status?: string;
+  type: string;
+  workflowId?: string;
+}
+
 export interface PrincipalResource {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -1478,6 +1631,23 @@ export interface ValidateWorkflowResource {
   diagnostics: ImportIssue[] | null;
   /** True when the document compiles and would run */
   valid: boolean;
+}
+
+export interface WebhookResponseEvent {
+  at: string;
+  /** Redacted, type-specific detail */
+  data?: unknown;
+  executionId: string;
+  /**
+     * Monotonic per execution; send back as Last-Event-ID to resume
+     * @minimum 0
+     */
+  id: number;
+  nodeId?: string;
+  sequence?: number;
+  status?: string;
+  type: string;
+  workflowId?: string;
 }
 
 export interface WorkflowDiagnosticsResource {
@@ -1732,6 +1902,70 @@ from?: number;
 };
 
 export type StreamExecutionEvents200Item = {
+  data: AIAgentCompletedEvent;
+  /** The event name. */
+  event: 'ai.agent.completed';
+  /** The event ID. */
+  id?: number;
+  /** The retry time in milliseconds. */
+  retry?: number;
+} | {
+  data: AIAgentFailedEvent;
+  /** The event name. */
+  event: 'ai.agent.failed';
+  /** The event ID. */
+  id?: number;
+  /** The retry time in milliseconds. */
+  retry?: number;
+} | {
+  data: AIModelCompletedEvent;
+  /** The event name. */
+  event: 'ai.model.completed';
+  /** The event ID. */
+  id?: number;
+  /** The retry time in milliseconds. */
+  retry?: number;
+} | {
+  data: AIModelDeltaEvent;
+  /** The event name. */
+  event: 'ai.model.delta';
+  /** The event ID. */
+  id?: number;
+  /** The retry time in milliseconds. */
+  retry?: number;
+} | {
+  data: AIModelStartedEvent;
+  /** The event name. */
+  event: 'ai.model.started';
+  /** The event ID. */
+  id?: number;
+  /** The retry time in milliseconds. */
+  retry?: number;
+} | {
+  data: AIToolCompletedEvent;
+  /** The event name. */
+  event: 'ai.tool.completed';
+  /** The event ID. */
+  id?: number;
+  /** The retry time in milliseconds. */
+  retry?: number;
+} | {
+  data: AIToolFailedEvent;
+  /** The event name. */
+  event: 'ai.tool.failed';
+  /** The event ID. */
+  id?: number;
+  /** The retry time in milliseconds. */
+  retry?: number;
+} | {
+  data: AIToolStartedEvent;
+  /** The event name. */
+  event: 'ai.tool.started';
+  /** The event ID. */
+  id?: number;
+  /** The retry time in milliseconds. */
+  retry?: number;
+} | {
   data: ExecutionCancelledEvent;
   /** The event name. */
   event: 'execution.cancelled';
@@ -1743,6 +1977,14 @@ export type StreamExecutionEvents200Item = {
   data: ExecutionCompletedEvent;
   /** The event name. */
   event: 'execution.completed';
+  /** The event ID. */
+  id?: number;
+  /** The retry time in milliseconds. */
+  retry?: number;
+} | {
+  data: OtherEvent;
+  /** The event name. */
+  event: 'execution.event';
   /** The event ID. */
   id?: number;
   /** The retry time in milliseconds. */
@@ -1799,6 +2041,14 @@ export type StreamExecutionEvents200Item = {
   data: NodeStartedEvent;
   /** The event name. */
   event: 'node.started';
+  /** The event ID. */
+  id?: number;
+  /** The retry time in milliseconds. */
+  retry?: number;
+} | {
+  data: WebhookResponseEvent;
+  /** The event name. */
+  event: 'webhook.response';
   /** The event ID. */
   id?: number;
   /** The retry time in milliseconds. */
