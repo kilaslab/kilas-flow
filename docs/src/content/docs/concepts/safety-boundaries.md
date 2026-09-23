@@ -309,7 +309,7 @@ of hours costs a row rather than a slot and the pool of
 `execution.max_concurrent` (10 by default) stays free for other runs. What is
 bounded is the suspension: seven days at most, and a call-resumed wait that nobody
 answers fails by name at its own deadline. A run's own budget is still
-`execution.default_timeout` (60 s) unless the workflow names its own
+`execution.default_timeout` (2 minutes) unless the workflow names its own
 `settings.executionTimeout`.
 
 **Anyone who can write a workflow can exfiltrate any credential in their

@@ -886,3 +886,25 @@ func TestValidateRejectsANegativeCodeCacheBudget(t *testing.T) {
 		t.Errorf("Validate() rejected a zero code.cache_max_bytes: %v", err)
 	}
 }
+
+// TestExecutionDefaultTimeoutIsTwoMinutesAndConfigurable: one minute ended AI
+// agent runs on local and reasoning models long before they answered. The
+// owner set the stock budget to two minutes; a deployment still sets its own.
+func TestExecutionDefaultTimeoutIsTwoMinutesAndConfigurable(t *testing.T) {
+	cfg, err := Load(filepath.Join(t.TempDir(), "absent.yaml"))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Execution.DefaultTimeout != 2*time.Minute {
+		t.Errorf("Execution.DefaultTimeout = %s, want 2m0s", cfg.Execution.DefaultTimeout)
+	}
+
+	t.Setenv("KILASFLOW_EXECUTION_DEFAULT_TIMEOUT", "5m")
+	cfg, err = Load(filepath.Join(t.TempDir(), "absent.yaml"))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Execution.DefaultTimeout != 5*time.Minute {
+		t.Errorf("Execution.DefaultTimeout from the environment = %s, want 5m0s", cfg.Execution.DefaultTimeout)
+	}
+}

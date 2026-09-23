@@ -28,7 +28,7 @@
 //
 // Timeout interplay, stated once because two ceilings look like one: the
 // in-process wait node (nodes/wait.go MaxWaitDuration, one hour) holds a
-// worker for the whole pause, so execution.default_timeout — 60s stock —
+// worker for the whole pause, so execution.default_timeout — two minutes stock —
 // usually binds first and the run times out. A suspending wait releases the
 // worker, so neither ceiling binds it; the ticket's ExpiresAt is its only
 // deadline. The integrator should keep short waits in process (n8n holds

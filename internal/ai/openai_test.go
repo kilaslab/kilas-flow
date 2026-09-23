@@ -475,3 +475,69 @@ func textValue(value any) string {
 	text, _ := value.(string)
 	return text
 }
+
+// TestAStreamThatKeepsTalkingOutlivesItsRequestTimeout: a reasoning model
+// streams for a long time before its answer — gemma4 on Ollama sends its first
+// frame in half a second and its first content after eighty. The request
+// timeout bounds silence, not length, so a stream that keeps sending frames is
+// never cut off mid-answer.
+func TestAStreamThatKeepsTalkingOutlivesItsRequestTimeout(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher := w.(http.Flusher)
+		// Six frames 40ms apart: 240ms in all, against a 100ms timeout.
+		for range 5 {
+			_, _ = w.Write([]byte(`data: {"choices":[{"delta":{"reasoning":"hmm"}}]}` + "\n\n"))
+			flusher.Flush()
+			time.Sleep(40 * time.Millisecond)
+		}
+		_, _ = w.Write([]byte(`data: {"choices":[{"delta":{"content":"done"},"finish_reason":"stop"}]}` + "\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer server.Close()
+
+	response, err := ai.NewOpenAICompatible(server.Client(), server.URL, "sk-test").
+		Stream(context.Background(), ai.ModelRequest{
+			Model: "m", Messages: []ai.Message{{Role: ai.RoleUser, Content: "x"}}, Timeout: 100 * time.Millisecond,
+		}, func(string) {})
+	if err != nil {
+		t.Fatalf("Stream() error = %v, want a stream that kept sending frames to finish", err)
+	}
+	if response.Message.Content != "done" {
+		t.Fatalf("content = %q, want the answer that followed the long reasoning", response.Message.Content)
+	}
+}
+
+// TestAStreamThatGoesSilentFailsNamingTheSetting: silence past the timeout
+// still ends the request, and says which option allows a longer pause.
+func TestAStreamThatGoesSilentFailsNamingTheSetting(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(`data: {"choices":[{"delta":{"content":"par"}}]}` + "\n\n"))
+		w.(http.Flusher).Flush()
+		select {
+		case <-r.Context().Done():
+		case <-time.After(2 * time.Second):
+		}
+	}))
+	defer server.Close()
+
+	start := time.Now()
+	_, err := ai.NewOpenAICompatible(server.Client(), server.URL, "sk-test").
+		Stream(context.Background(), ai.ModelRequest{
+			Model: "m", Messages: []ai.Message{{Role: ai.RoleUser, Content: "x"}}, Timeout: 100 * time.Millisecond,
+		}, func(string) {})
+	if err == nil {
+		t.Fatal("Stream() succeeded although the stream went silent past its timeout")
+	}
+	if !strings.Contains(err.Error(), "Timeout option") {
+		t.Errorf("error = %v, want it to name the setting that allows a longer pause", err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("a silent stream took %s to fail, want about its 100ms timeout", elapsed)
+	}
+}

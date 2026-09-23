@@ -211,8 +211,8 @@ with a structured error carrying a code: `execution.failed`, or
 
 ### Timeouts and concurrency
 
-`execution.default_timeout` is the budget for one whole run and defaults to 60
-seconds, but it is a budget rather than a cap on how long a workflow may take: a
+`execution.default_timeout` is the budget for one whole run and defaults to two
+minutes, but it is a budget rather than a cap on how long a workflow may take: a
 workflow can name its own in `settings.executionTimeout` — n8n's own name for it,
 in seconds — and its own value wins, clamped to `execution.max_timeout` when the
 instance sets a ceiling. A negative value is n8n's "no execution timeout" and
@@ -385,10 +385,13 @@ and therefore carries no state a consumer may treat as authoritative. The AI
 agent node uses this to report its model turns and tool calls, which arrive on
 the same stream under eight further names — `ai.model.started`,
 `ai.model.delta`, `ai.model.completed`, `ai.tool.started`, `ai.tool.completed`,
-`ai.tool.failed`, `ai.agent.completed` and `ai.agent.failed`. They are not in the
-`events.Type` constant list, and neither is `execution.waiting` from the
-suspension section above, so a client must tolerate an event name it does not
-recognise.
+`ai.tool.failed`, `ai.agent.completed` and `ai.agent.failed`. Together with
+`execution.waiting` from the suspension section above and `webhook.response`,
+each of them reaches the stream as a named frame, so an `EventSource` listener
+for the name receives it. A name added later, before a client knows it, is sent
+under the fallback name `execution.event`, with its real name in the payload's
+`type`. Nothing is ever sent unnamed, and a client must still tolerate a name it
+does not recognise.
 
 ## Sub-workflows
 

@@ -223,10 +223,23 @@ func (model *OpenAICompatible) post(ctx context.Context, request ModelRequest, s
 		// option is meant: a slow answer is this request's problem, not the
 		// conversation's. The deadline is released when the body is closed,
 		// so a streamed answer is not cut off by the call returning.
+		//
+		// A streamed answer is bounded by silence rather than by length. A
+		// reasoning model streams its thinking for a long time before the
+		// first word of the answer — gemma4 on Ollama sends a frame within a
+		// second and content only after eighty — and a total deadline cut
+		// such a stream off while it was plainly alive. The same duration
+		// still bounds the wait for the first byte and every pause after it.
 		attemptCtx := ctx
 		cancel := context.CancelFunc(func() {})
+		var idle *idleDeadline
 		if request.Timeout > 0 {
-			attemptCtx, cancel = context.WithTimeout(ctx, request.Timeout)
+			if stream {
+				idle = newIdleDeadline(ctx, request.Timeout)
+				attemptCtx, cancel = idle.ctx, idle.stop
+			} else {
+				attemptCtx, cancel = context.WithTimeout(ctx, request.Timeout)
+			}
 		}
 		httpRequest, err := http.NewRequestWithContext(attemptCtx, http.MethodPost, model.baseURL+"/chat/completions", bytes.NewReader(encoded))
 		if err != nil {
@@ -250,7 +263,7 @@ func (model *OpenAICompatible) post(ctx context.Context, request ModelRequest, s
 			// little time: naming the request timeout there reported a
 			// duration that had not elapsed and pointed the user at an option
 			// that cannot raise a bound the node does not own.
-			if request.Timeout > 0 && errors.Is(attemptCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
+			if request.Timeout > 0 && (errors.Is(attemptCtx.Err(), context.DeadlineExceeded) || idle.expired()) && ctx.Err() == nil {
 				lastErr = fmt.Errorf("model request did not answer within %s (raise the model node's Timeout option to allow longer): %w", request.Timeout, err)
 			} else {
 				lastErr = fmt.Errorf("call model: %w", err)
@@ -278,7 +291,11 @@ func (model *OpenAICompatible) post(ctx context.Context, request ModelRequest, s
 			continue
 		}
 		if request.Timeout > 0 {
-			response.Body = cancelOnClose{ReadCloser: response.Body, cancel: cancel}
+			body := response.Body
+			if idle != nil {
+				body = idle.watch(body)
+			}
+			response.Body = cancelOnClose{ReadCloser: body, cancel: cancel}
 		} else {
 			cancel()
 		}
@@ -529,4 +546,58 @@ func (usage wireUsage) toUsage() Usage {
 		PromptTokens: usage.PromptTokens, CompletionTokens: usage.CompletionTokens,
 		TotalTokens: usage.TotalTokens,
 	}
+}
+
+// idleDeadline cancels a streamed request once it has been silent for its
+// window: before the response starts, and between any two reads after it.
+type idleDeadline struct {
+	ctx    context.Context
+	cancel context.CancelCauseFunc
+	window time.Duration
+	timer  *time.Timer
+}
+
+// errStreamSilent is the cause an idle deadline cancels with, so an expiry can
+// be told apart from the caller's own context ending.
+var errStreamSilent = errors.New("model stream was silent past its request timeout")
+
+func newIdleDeadline(parent context.Context, window time.Duration) *idleDeadline {
+	ctx, cancel := context.WithCancelCause(parent)
+	deadline := &idleDeadline{ctx: ctx, cancel: cancel, window: window}
+	deadline.timer = time.AfterFunc(window, func() { cancel(errStreamSilent) })
+	return deadline
+}
+
+// expired reports whether silence, rather than anything else, ended the
+// request. A nil deadline never expires, so callers need not guard it.
+func (deadline *idleDeadline) expired() bool {
+	return deadline != nil && errors.Is(context.Cause(deadline.ctx), errStreamSilent)
+}
+
+func (deadline *idleDeadline) stop() {
+	deadline.timer.Stop()
+	deadline.cancel(nil)
+}
+
+// watch wraps a response body so every read that returns data restarts the
+// silence window. Releasing the deadline is cancelOnClose's job, as it is for a
+// plain request.
+func (deadline *idleDeadline) watch(body io.ReadCloser) io.ReadCloser {
+	return &idleBody{ReadCloser: body, deadline: deadline}
+}
+
+type idleBody struct {
+	io.ReadCloser
+	deadline *idleDeadline
+}
+
+func (body *idleBody) Read(buffer []byte) (int, error) {
+	n, err := body.ReadCloser.Read(buffer)
+	if n > 0 {
+		body.deadline.timer.Reset(body.deadline.window)
+	}
+	if err != nil && body.deadline.expired() {
+		err = fmt.Errorf("model stream was silent for %s (raise the model node's Timeout option to allow a longer pause): %w", body.deadline.window, err)
+	}
+	return n, err
 }

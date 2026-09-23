@@ -496,8 +496,12 @@ type Execution struct {
 	// raises the pool with it; SQLite always runs on one connection.
 	// Env: KILASFLOW_EXECUTION_MAX_CONCURRENT. Default: 10.
 	MaxConcurrent int `koanf:"max_concurrent"`
-	// DefaultTimeout bounds one workflow run end to end.
-	// Env: KILASFLOW_EXECUTION_DEFAULT_TIMEOUT. Default: 60s.
+	// DefaultTimeout bounds one workflow run end to end, for a workflow that
+	// names no executionTimeout of its own. Two minutes rather than one: an
+	// AI agent on a local or reasoning model routinely spends longer than a
+	// minute before it answers, and a stock budget that ends such runs makes
+	// the default install look broken.
+	// Env: KILASFLOW_EXECUTION_DEFAULT_TIMEOUT. Default: 2m.
 	DefaultTimeout time.Duration `koanf:"default_timeout"`
 	// Retention deletes an execution once it has been finished for longer than
 	// this, along with its node runs and its stored binary payloads.
@@ -863,7 +867,7 @@ func Default() Config {
 		Branding: Branding{},
 		Execution: Execution{
 			MaxConcurrent:  10,
-			DefaultTimeout: 60 * time.Second,
+			DefaultTimeout: 2 * time.Minute,
 			// Keep every execution. See the field.
 			Retention: 0,
 			// Frequent enough that a wait whose process died is settled soon
