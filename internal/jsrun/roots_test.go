@@ -220,6 +220,21 @@ func TestReturnedInputItemsKeepTheirOwnLineage(t *testing.T) {
 	}
 }
 
+// Items built from nothing descend from the node's only input item when there
+// was just one, which is n8n's own rule for an output without pairedItem. A
+// Code node that turns one item into several is the common case: downstream,
+// `$('Code').item` must still find the item each one came from.
+func TestItemsBuiltFromASingleInputItemDescendFromIt(t *testing.T) {
+	result := mustRun(t, newRunner(), jsrun.Task{Source: "return [1, 2, 3].map(n => ({ json: { n } }))", Items: lineageItems(1)})
+	if got := pairedIndexes(result.Items); got != "0,0,0" {
+		t.Fatalf("lineage = %s, want every item paired with the one input item", got)
+	}
+	result = mustRun(t, newRunner(), jsrun.Task{Source: "return [1, 2, 3].map(n => ({ json: { n } }))", Items: lineageItems(2)})
+	if got := pairedIndexes(result.Items); got != "-,-,-" {
+		t.Fatalf("lineage = %s, want no guess when there were several input items", got)
+	}
+}
+
 func TestPerItemOutputPairsWithItsItem(t *testing.T) {
 	result := mustRun(t, newRunner(), jsrun.Task{Source: "return { json: { n: $json.n } }", Mode: jsrun.ModeEachItem, Items: lineageItems(3)})
 	if got := pairedIndexes(result.Items); got != "0,1,2" {

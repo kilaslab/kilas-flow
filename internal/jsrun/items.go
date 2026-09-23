@@ -132,6 +132,13 @@ func (d *decoder) binary(returned map[string]json.RawMessage, where string) (map
 // item with no known source is left for the runner to infer.
 func (d *decoder) paired(raw json.RawMessage) *workflow.PairedItem {
 	if len(raw) == 0 || string(raw) == "null" {
+		// An item built from nothing descends from the node's only input item
+		// when there was just one: n8n's own rule for an output without
+		// pairedItem. Without it, a Code node that turns one item into several
+		// leaves every one of them lost, and `$('Code').item` fails downstream.
+		if len(d.origins) == 1 {
+			return d.inherit(0)
+		}
 		return nil
 	}
 	if string(raw) == `"lost"` {
@@ -141,6 +148,12 @@ func (d *decoder) paired(raw json.RawMessage) *workflow.PairedItem {
 	if json.Unmarshal(raw, &index) != nil || index < 0 || index >= len(d.origins) {
 		return nil
 	}
+	return d.inherit(index)
+}
+
+// inherit is the origin input item index carries, copied, or nil when it
+// carries none.
+func (d *decoder) inherit(index int) *workflow.PairedItem {
 	origin := d.origins[index]
 	if origin == nil {
 		return nil
