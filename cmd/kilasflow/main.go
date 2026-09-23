@@ -1337,7 +1337,7 @@ func javaScriptRuntime(cfg config.Code, log *slog.Logger) (option nodes.Executor
 // stopped: the configured size, else the runtime's default. Each worker is
 // its own process, so the ceiling is per worker, and a worker that exceeds
 // it in one step is stopped by its address-space limit or the kernel instead.
-func javaScriptHeapCeiling(configuredMB int64) uint64 {
+func javaScriptHeapCeiling(configuredMB int) uint64 {
 	if configuredMB > 0 {
 		return uint64(configuredMB) << 20
 	}

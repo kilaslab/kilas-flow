@@ -1169,7 +1169,7 @@ more wait their turn. Zero means one per CPU.
 
 ### code.javascript_heap_ceiling_mb
 
-- Type: `integer (bytes)`
+- Type: `integer`
 - Default: `0`
 - Environment: `KILASFLOW_CODE_JAVASCRIPT_HEAP_CEILING_MB`
 - Required: no

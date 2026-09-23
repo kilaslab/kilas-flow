@@ -3197,9 +3197,10 @@ func codeToKilas(node Node) (map[string]any, []Unsupported) {
 	if codeIsJavaScript(language) {
 		return javaScriptCodeToKilas(node)
 	}
-	source := stringParameter(node.Parameters, "jsCode")
+	// The refusal points at the field that holds the code.
+	field, source := "pythonCode", stringParameter(node.Parameters, "pythonCode")
 	if source == "" {
-		source = stringParameter(node.Parameters, "pythonCode")
+		field, source = "jsCode", stringParameter(node.Parameters, "jsCode")
 	}
 	suggestion := nodes.SuggestReplacement(source)
 
@@ -3214,7 +3215,7 @@ func codeToKilas(node Node) (map[string]any, []Unsupported) {
 	if value, present := node.Parameters["pythonCode"]; present {
 		parameters["pythonCode"] = fromN8NValue(value)
 	}
-	return parameters, []Unsupported{unsupportedScript("jsCode", "is written in "+codeLanguageName(language), suggestion)}
+	return parameters, []Unsupported{unsupportedScript(field, "is written in "+codeLanguageName(language), suggestion)}
 }
 
 // javaScriptCodeToKilas copies a JavaScript Code node's parameters under

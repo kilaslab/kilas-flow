@@ -817,7 +817,7 @@ type Code struct {
 	// or by the kernel, which is asked to choose workers first. Budget up to
 	// javascript_max_concurrent workers of this size. Zero means 1024.
 	// Env: KILASFLOW_CODE_JAVASCRIPT_HEAP_CEILING_MB. Default: 0.
-	JavaScriptHeapCeilingMB int64 `koanf:"javascript_heap_ceiling_mb"`
+	JavaScriptHeapCeilingMB int `koanf:"javascript_heap_ceiling_mb"`
 
 	// JavaScriptMaxInputBytes bounds a JavaScript Code node's input, as JSON.
 	// Larger input is refused before the engine is involved at all.
@@ -1362,7 +1362,7 @@ func (c Config) Validate() error {
 		return fmt.Errorf("code.javascript_max_concurrent %d must not be negative; zero means one per CPU", c.Code.JavaScriptMaxConcurrent)
 	}
 	if c.Code.JavaScriptHeapCeilingMB < 0 {
-		return fmt.Errorf("code.javascript_heap_ceiling_mb %d must not be negative; zero derives it from GOMEMLIMIT", c.Code.JavaScriptHeapCeilingMB)
+		return fmt.Errorf("code.javascript_heap_ceiling_mb %d must not be negative; zero means 1024", c.Code.JavaScriptHeapCeilingMB)
 	}
 
 	// Caught here rather than at the first login, because an instance that
