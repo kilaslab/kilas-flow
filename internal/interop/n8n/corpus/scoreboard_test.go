@@ -84,13 +84,17 @@ type score struct {
 	// or database call the corpus deliberately refuses — rather than an engine
 	// failure. It is a property of the measurement, not of the workflow.
 	Blocked bool `json:"blocked,omitempty"`
-	// CodeOnly marks a workflow whose only blocking issue is a Code node.
+	// CodeOnly marks a workflow whose only blocking issue is a Code node the
+	// server refuses to run: one written in Python, or JavaScript that uses a
+	// construct the runtime cannot run faithfully. A JavaScript Code node that
+	// uses neither imports as Code (JavaScript) and blocks nothing.
 	//
 	// Worth separating because it is a different kind of gap. Every other
-	// blocker is something this product has not built; a Code node is something
-	// it deliberately has not built, and the fix is the user replacing it with
-	// native nodes rather than this repository shipping anything. Counting the
-	// two together makes the roadmap look further from done than it is.
+	// blocker is something this product has not built; a refused Code node is
+	// something it deliberately does not run, and the fix is the user rewriting
+	// that code, or replacing it with native nodes, rather than this repository
+	// shipping anything. Counting the two together makes the roadmap look
+	// further from done than it is.
 	CodeOnly    bool   `json:"codeOnly,omitempty"`
 	Unsupported int    `json:"unsupported"`
 	Reason      string `json:"reason,omitempty"`
@@ -105,8 +109,9 @@ type baseline struct {
 	// Blocked counts fixtures that compiled and began running but were stopped
 	// by the offline policy. See the note on score.Blocked.
 	Blocked int `json:"blocked"`
-	// CodeOnly counts fixtures that would activate if their Code nodes were
-	// replaced. See the note on score.CodeOnly for why it is counted apart.
+	// CodeOnly counts fixtures that would activate if their refused Code nodes
+	// were rewritten. See the note on score.CodeOnly for why it is counted
+	// apart.
 	CodeOnly  int            `json:"codeOnly"`
 	NodeTypes map[string]int `json:"nodeTypeInventory"`
 	Scores    []score        `json:"scores"`
@@ -234,7 +239,9 @@ func scoreFixture(t *testing.T, fixture corpus.Fixture, catalog workflow.Catalog
 }
 
 // blockedOnlyByCode reports a workflow whose every blocking issue is a Code
-// node, and which has at least one.
+// node the server refuses to run, and which has at least one. Every such
+// refusal — Python, or a JavaScript construct — is the one sentence
+// jsrun.Refusal writes, so its fixed words are what identify it.
 //
 // Lossy and dropped issues are ignored on purpose: they do not stop a workflow
 // activating, so they have no bearing on what is blocking it.

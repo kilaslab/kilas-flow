@@ -50,7 +50,7 @@ Two things set it apart:
 | Storage and queue | SQLite or PostgreSQL; the queue is a table | SQLite or PostgreSQL, plus Redis for queue mode |
 | Embedding | Built in: iframe sessions, tenants, branding | Enterprise "embed" licence |
 | Nodes | About 60 built-in types (core, AI, HTTP, SQL, Google, Telegram, WhatsApp/WAHA). Anything else goes through HTTP Request or a community node pack | Hundreds of built-in integrations |
-| Code node | Go, compiled to WebAssembly (needs a Go toolchain or a compiler service). Imported JavaScript/Python Code nodes are kept but don't run yet | JavaScript and Python |
+| Code node | JavaScript, on an engine linked into the binary (no Node.js), with n8n's Code-node globals, so imported JavaScript Code nodes run as written; and Go, compiled to WebAssembly (needs a Go toolchain or a compiler service). Imported Python Code nodes are kept but don't run | JavaScript and Python |
 
 The catalogue is still growing. `GET /api/v1/node-types` on a running server is
 the list of record, and the [n8n migration guide](docs/src/content/docs/guides/n8n-migration.md)
