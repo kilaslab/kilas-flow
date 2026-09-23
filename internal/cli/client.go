@@ -44,6 +44,11 @@ type Client struct {
 	// is one invocation, so two invocations never share an index and a server
 	// upgraded in between is never described by a stale copy.
 	operations map[string]Operation
+	// authEnabled is read from the same document as operations, at the same
+	// time: whether the OpenAPI document declares a root `security`
+	// requirement, which server.go sets only when auth is on. It is valid
+	// exactly when operations is non-nil.
+	authEnabled bool
 }
 
 // Response is the successful half of an HTTP round trip.

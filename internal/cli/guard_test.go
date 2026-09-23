@@ -345,6 +345,22 @@ const identityWithoutScopes = `{"tenantId":"acme","kind":"api_key","keyId":"key_
 // which is what the authority gate turns on.
 const identityWithScopes = `{"tenantId":"acme","kind":"api_key","keyId":"key_2","scopes":["workflow:read"]}`
 
+// authOff401 is the problem document Auth.Me sends when the middleware stored
+// no principal — auth off, every credential, the same shape server-side
+// (handlers/auth.go) and it is also what auth-on sends for a bad credential.
+const authOff401 = `{"title":"Unauthorized","status":401,"detail":"this request is not authenticated"}`
+
+// openAPIWithoutSecurity is the document a server publishes with auth off: no
+// root `security` requirement (server.go only attaches one when auth is on).
+// It needs at least one operation, or indexOperations refuses it as empty.
+const openAPIWithoutSecurity = `{"paths":{"/api/v1/health":{"get":{"operationId":"get-health"}}}}`
+
+// openAPIWithSecurity is the same document with auth on: a root `security`
+// requirement is what confirms a bare 401 was a bad credential, not an
+// auth-disabled instance.
+const openAPIWithSecurity = `{"paths":{"/api/v1/health":{"get":{"operationId":"get-health"}}},` +
+	`"security":[{"apiKey":[]}]}`
+
 // TestGuardedVerbSetMatchesTheRegistryAndTheServer is the registry-level gate:
 // each guarded verb carries the operation the design's tree names, and the
 // running server serves that operation — the same check TestPhaseOneCommandTree
@@ -517,12 +533,134 @@ func TestGuardedVerbWithATenantWideKeyReachesTheServer(t *testing.T) {
 	}
 }
 
-// mutatingCalls drops the identity read, which is the one request a guarded verb
-// makes before the operation it was asked for.
+// TestGuardedVerbWithAuthOffReachesTheServer: with auth off — the default —
+// /auth/me has no principal to describe and answers 401 for every credential,
+// the same 401 Auth.Me sends when the middleware stored none. That 401 alone
+// is ambiguous (BUG-y38bss's follow-up: it is also what auth-on answers to a
+// bad credential), so requireAuthority confirms it against the OpenAPI
+// document; here that document declares no root security requirement, which is
+// the confirmation, so the authority gate lets the operation through and the
+// verb's own response decides, exactly as it would with a tenant-wide key.
+func TestGuardedVerbWithAuthOffReachesTheServer(t *testing.T) {
+	want := guardedInvocations(t)
+	guardedRegistryVerbs(t, want)
+
+	for _, path := range sortedGuardedPaths(want) {
+		invocation := want[path]
+
+		t.Run(path, func(t *testing.T) {
+			api := newRecordingAPI(map[string]http.HandlerFunc{
+				apiPrefix + "/auth/me": problemBody(http.StatusUnauthorized, authOff401),
+				operationsPath:         jsonBody(http.StatusOK, openAPIWithoutSecurity),
+				"/":                    jsonBody(http.StatusOK, `{"id":"ok_1","name":"ok"}`),
+			})
+			srv := stubAPI(t, api.routesFor(t))
+
+			args := append(strings.Fields(path), invocation.args...)
+			args = append(args, "--yes", "--url", srv.URL, "--json")
+
+			code, handled, stdout, stderr := runCLI(t, Env{Args: args, Getenv: homeEnv(t.TempDir(), nil)})
+			if !handled {
+				t.Fatalf("the verb fell through to the server path (stdout=%q stderr=%q)", stdout, stderr)
+			}
+			if code != ExitOK {
+				t.Fatalf("exit = %d, want %d (stdout=%q stderr=%q)", code, ExitOK, stdout, stderr)
+			}
+
+			if doc := envelope(t, stdout); doc["ok"] != true {
+				t.Fatalf("ok = %v, want true", doc["ok"])
+			}
+
+			calls := mutatingCalls(api.calls)
+			if len(calls) != 1 {
+				t.Fatalf("the verb made %d requests beyond the identity and document reads: %+v, want one", len(calls), calls)
+			}
+			if calls[0].Method != invocation.method || calls[0].Path != invocation.path {
+				t.Fatalf("the verb sent %s %s, want %s %s", calls[0].Method, calls[0].Path, invocation.method, invocation.path)
+			}
+		})
+	}
+}
+
+// TestGuardedVerbKeepsThe401WhenAuthIsOn: the same bare 401 from /auth/me, but
+// this server's OpenAPI document declares a root security requirement — auth
+// is on, so the 401 was a bad credential, and requireAuthority must not treat
+// it as "auth is off". The refusal is the original 401, and the operation
+// itself is never reached: a confirmed "auth is off" is required, not merely a
+// plausible one.
+func TestGuardedVerbKeepsThe401WhenAuthIsOn(t *testing.T) {
+	invocation := guardedInvocations(t)["workflow activate"]
+
+	api := newRecordingAPI(map[string]http.HandlerFunc{
+		apiPrefix + "/auth/me": problemBody(http.StatusUnauthorized, authOff401),
+		operationsPath:         jsonBody(http.StatusOK, openAPIWithSecurity),
+		"/":                    jsonBody(http.StatusOK, `{"id":"should-not-happen"}`),
+	})
+	srv := stubAPI(t, api.routesFor(t))
+
+	args := append(strings.Fields("workflow activate"), invocation.args...)
+	args = append(args, "--yes", "--url", srv.URL, "--json")
+
+	code, handled, stdout, stderr := runCLI(t, Env{Args: args, Getenv: homeEnv(t.TempDir(), nil)})
+	if !handled {
+		t.Fatalf("the verb fell through to the server path (stdout=%q stderr=%q)", stdout, stderr)
+	}
+	if code != ExitRefused {
+		t.Fatalf("exit = %d, want %d (stdout=%q stderr=%q)", code, ExitRefused, stdout, stderr)
+	}
+
+	doc := envelope(t, stdout)
+	if failure := envelopeFailure(doc); failure != "unauthenticated" {
+		t.Fatalf("error.code = %q, want %q", failure, "unauthenticated")
+	}
+
+	if calls := mutatingCalls(api.calls); len(calls) != 0 {
+		t.Fatalf("the refusal sent %d request(s) beyond the identity and document reads: %+v, want none", len(calls), calls)
+	}
+}
+
+// TestGuardedVerbKeepsThe401WhenTheDocumentCannotBeConfirmed: the OpenAPI
+// document itself fails to answer. Without a confirmed "auth is off", the gate
+// fails closed and keeps the original 401 rather than guessing.
+func TestGuardedVerbKeepsThe401WhenTheDocumentCannotBeConfirmed(t *testing.T) {
+	invocation := guardedInvocations(t)["workflow activate"]
+
+	api := newRecordingAPI(map[string]http.HandlerFunc{
+		apiPrefix + "/auth/me": problemBody(http.StatusUnauthorized, authOff401),
+		operationsPath:         problemBody(http.StatusInternalServerError, `{"title":"error","status":500}`),
+		"/":                    jsonBody(http.StatusOK, `{"id":"should-not-happen"}`),
+	})
+	srv := stubAPI(t, api.routesFor(t))
+
+	args := append(strings.Fields("workflow activate"), invocation.args...)
+	args = append(args, "--yes", "--url", srv.URL, "--json")
+
+	code, handled, stdout, stderr := runCLI(t, Env{Args: args, Getenv: homeEnv(t.TempDir(), nil)})
+	if !handled {
+		t.Fatalf("the verb fell through to the server path (stdout=%q stderr=%q)", stdout, stderr)
+	}
+	if code != ExitRefused {
+		t.Fatalf("exit = %d, want %d (stdout=%q stderr=%q)", code, ExitRefused, stdout, stderr)
+	}
+
+	doc := envelope(t, stdout)
+	if failure := envelopeFailure(doc); failure != "unauthenticated" {
+		t.Fatalf("error.code = %q, want %q", failure, "unauthenticated")
+	}
+
+	if calls := mutatingCalls(api.calls); len(calls) != 0 {
+		t.Fatalf("the refusal sent %d request(s) beyond the identity and document reads: %+v, want none", len(calls), calls)
+	}
+}
+
+// mutatingCalls drops the identity read and the OpenAPI document read, which
+// are the requests a guarded verb makes before the operation it was asked for:
+// the identity read always, and the document read only when the identity read
+// came back 401 and requireAuthority went to confirm whether auth is off.
 func mutatingCalls(calls []recordedCall) []recordedCall {
 	out := make([]recordedCall, 0, len(calls))
 	for _, call := range calls {
-		if call.Method == http.MethodGet && call.Path == apiPrefix+"/auth/me" {
+		if call.Method == http.MethodGet && (call.Path == apiPrefix+"/auth/me" || call.Path == operationsPath) {
 			continue
 		}
 		out = append(out, call)

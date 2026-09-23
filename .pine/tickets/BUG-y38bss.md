@@ -1,7 +1,7 @@
 ---
 id: BUG-y38bss
 title: Every guarded CLI verb and MCP confirm:true call fails with 401 when auth is off (the default)
-status: todo
+status: doing
 priority: high
 labels:
     - cli
@@ -9,7 +9,7 @@ labels:
     - auth
 parent: EPIC-8rbys7
 created: "2026-09-23T03:06:00Z"
-updated: "2026-09-23T03:06:00Z"
+updated: "2026-09-23T04:22:36Z"
 ---
 
 # Description
@@ -33,9 +33,25 @@ With auth off there is no scoped token to refuse, so the authority check should 
 Every one exits 3 with `{"code":"unauthenticated","message":"this request is not authenticated","status":401}`. `--verbose` shows the only request sent is `> GET /api/v1/auth/me` / `< 401`. The operation itself would have succeeded: `curl -X POST …/workflows/<id>/activate` → 200, and `kilasflow api activate-workflow` → ok.
 
 # Acceptance Criteria
-- [ ] With auth off, the authority pre-check passes, and a guarded verb runs once `--yes` (or MCP `confirm: true`) is given
-- [ ] With auth on, scoped-token checks are unchanged
-- [ ] A test runs activate/delete/credential create against an auth-off server through both the CLI and MCP
+- [x] With auth off, the authority pre-check passes, and a guarded verb runs once `--yes` (or MCP `confirm: true`) is given
+- [x] With auth on, scoped-token checks are unchanged
+- [x] A test runs activate/delete/credential create against an auth-off server through both the CLI and MCP
+
+# Progress
+
+`requireAuthority` (internal/cli/cli.go) no longer takes a 401 from `/auth/me` at its word: a 401 is ambiguous by itself (auth-off has no principal to describe and answers 401 for every credential, but auth-on answers the same way to a bad credential), so a first pass that returned `nil` on any "unauthenticated" 401 would fail the gate open for a scoped agent token whose credential happened to be wrong. An automated security review caught this during implementation; the fix now confirms "auth is off" against the server's OpenAPI document rather than inferring it.
+
+- `Client.AuthEnabled` (internal/cli/openapi.go) reads whether the document declares a root `security` requirement — server.go attaches one only when `Auth.Enabled` is true, pinned by `TestOpenAPIDeclaresNoRequirementWhenAuthIsDisabled` / `TestOpenAPIDeclaresBothCredentialsWhenAuthIsEnabled` in internal/api/openapi_security_test.go. It shares `Client.Operations`'s fetch and per-invocation cache (`indexOperations` now also returns the flag), so confirming this costs one extra GET to the already-public `/api/openapi.json`, only on the 401 path.
+- `requireAuthority`: whoami 401 -> call `AuthEnabled`; no requirement and no read error -> let the operation through (`nil`); a requirement, or a document that could not be read, -> the original 401 stands (fail closed). Any other whoami error is unchanged. A valid identity's scoped-token refusal is untouched.
+
+Tests (internal/cli):
+- `TestGuardedVerbWithAuthOffReachesTheServer` — every `guardedInvocations` row, `/auth/me` 401 + an OpenAPI document with no root security, reaches the server with `--yes`.
+- `TestGuardedVerbKeepsThe401WhenAuthIsOn` — same 401, but the document declares a root security requirement: refused with the original `unauthenticated` 401, nothing beyond the identity and document reads is sent.
+- `TestGuardedVerbKeepsThe401WhenTheDocumentCannotBeConfirmed` — the document read itself fails (500): refused the same way (fail closed).
+- `TestMCPGuardedToolRunsWithAuthOff` — the MCP `confirm: true` path through the same auth-off shape.
+- `TestGuardedVerbRefusesAScopedTokenEvenWithYes`, `TestGuardedVerbWithATenantWideKeyReachesTheServer`, `TestMCPGuardedToolsRequireConfirmation` (existing, auth-on scoped-token paths) pass unchanged.
+
+`go build ./...`, `go vet ./...`, `go test ./internal/cli/... -count=1`, and `go test ./internal/api/... -run TestOpenAPI` all pass.
 
 # Implementation Plan
 

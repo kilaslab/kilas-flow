@@ -47,7 +47,8 @@ type Operation struct {
 // The index is cached on the client, which is one invocation: `--list` and the
 // resolved call that follows it read the document once, and two invocations
 // never share it, so a server upgraded between them is never described by a
-// stale copy.
+// stale copy. AuthEnabled shares the same fetch and cache, so a caller that
+// needs both pays for the document once.
 func (c *Client) Operations(ctx context.Context) (map[string]Operation, error) {
 	if c.operations != nil {
 		return c.operations, nil
@@ -61,13 +62,29 @@ func (c *Client) Operations(ctx context.Context) (map[string]Operation, error) {
 		return nil, err
 	}
 
-	index, err := indexOperations(resp.Body)
+	index, authEnabled, err := indexOperations(resp.Body)
 	if err != nil {
 		return nil, err
 	}
 	c.operations = index
+	c.authEnabled = authEnabled
 
 	return index, nil
+}
+
+// AuthEnabled reports whether the running server enforces authentication, read
+// from the OpenAPI document's root `security` requirement: server.go attaches
+// one only when auth is on (TestOpenAPIDeclaresNoRequirementWhenAuthIsDisabled
+// pins the omission when it is off). The document is served without a
+// credential, so this is safe to call before any identity is known — which is
+// exactly why requireAuthority uses it to tell "auth is off" from "the
+// credential is merely bad" once a 401 has already made the two look alike.
+func (c *Client) AuthEnabled(ctx context.Context) (bool, error) {
+	if _, err := c.Operations(ctx); err != nil {
+		return false, err
+	}
+
+	return c.authEnabled, nil
 }
 
 // documentPaths is the part of the served document the index is built from:
@@ -76,17 +93,20 @@ type documentPaths map[string]map[string]struct {
 	OperationID string `json:"operationId"`
 }
 
-// indexOperations turns a served document into the id -> operation index.
+// indexOperations turns a served document into the id -> operation index, and
+// reports whether the document declares a root `security` requirement — the
+// signal AuthEnabled reads.
 //
 // An id is unique by specification, and huma refuses to register a duplicate,
 // so a document that carries one is not a document this CLI can act on: the
 // error is raised rather than resolved by picking an arbitrary method.
-func indexOperations(document []byte) (map[string]Operation, error) {
+func indexOperations(document []byte) (map[string]Operation, bool, error) {
 	var doc struct {
-		Paths documentPaths `json:"paths"`
+		Paths    documentPaths         `json:"paths"`
+		Security []map[string][]string `json:"security"`
 	}
 	if err := json.Unmarshal(document, &doc); err != nil {
-		return nil, &ExitError{
+		return nil, false, &ExitError{
 			Code:    ExitFailure,
 			ErrCode: "error",
 			Message: fmt.Sprintf("%s is not a readable OpenAPI document: %v", operationsPath, err),
@@ -101,7 +121,7 @@ func indexOperations(document []byte) (map[string]Operation, error) {
 				continue
 			}
 			if existing, duplicate := index[entry.OperationID]; duplicate {
-				return nil, &ExitError{
+				return nil, false, &ExitError{
 					Code:    ExitFailure,
 					ErrCode: "error",
 					Message: fmt.Sprintf("%s declares %q twice (%s and %s %s)",
@@ -113,14 +133,14 @@ func indexOperations(document []byte) (map[string]Operation, error) {
 	}
 
 	if len(index) == 0 {
-		return nil, &ExitError{
+		return nil, false, &ExitError{
 			Code:    ExitFailure,
 			ErrCode: "error",
 			Message: fmt.Sprintf("%s declares no operations", operationsPath),
 		}
 	}
 
-	return index, nil
+	return index, len(doc.Security) > 0, nil
 }
 
 // sortedOperations lists the index's ids in a stable order, so `api --list` is

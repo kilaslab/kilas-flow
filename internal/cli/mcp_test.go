@@ -357,6 +357,40 @@ func TestMCPGuardedToolsRequireConfirmation(t *testing.T) {
 	})
 }
 
+// TestMCPGuardedToolRunsWithAuthOff: MCP runs the same run() path a CLI
+// invocation does, so the auth-off confirmation TestGuardedVerbWithAuthOffReachesTheServer
+// proves for the CLI (BUG-y38bss's follow-up: a bare 401 from /auth/me is
+// confirmed against the OpenAPI document's root security requirement before
+// it is trusted) covers `confirm: true` too. /auth/me answers 401 and the
+// document declares no security requirement, so the confirmed call reaches
+// the server.
+func TestMCPGuardedToolRunsWithAuthOff(t *testing.T) {
+	srv, api := mcpStub(t, map[string]http.HandlerFunc{
+		apiPrefix + "/auth/me": problemBody(http.StatusUnauthorized, authOff401),
+		operationsPath:         jsonBody(http.StatusOK, openAPIWithoutSecurity),
+		"/":                    jsonBody(http.StatusOK, `{"id":"wf_1","name":"Orders","active":true}`),
+	})
+
+	session := startMCPServe(t, srv.URL)
+	session.initialize()
+
+	answer := session.call("workflow_activate", map[string]any{"workflow_id": "wf_1", "confirm": true})
+	if answer.isError {
+		t.Fatalf("the confirmed call failed: %q", answer.text)
+	}
+	if doc := envelope(t, answer.text); doc["ok"] != true {
+		t.Fatalf("ok = %v, want true (text=%q)", doc["ok"], answer.text)
+	}
+
+	calls := mutatingCalls(api.calls)
+	if len(calls) != 1 {
+		t.Fatalf("the confirmed call made %d mutating requests, want one: %+v", len(calls), api.calls)
+	}
+	if calls[0].Method != http.MethodPost || calls[0].Path != apiPrefix+"/workflows/wf_1/activate" {
+		t.Fatalf("the confirmed call sent %s %s, want POST %s", calls[0].Method, calls[0].Path, apiPrefix+"/workflows/wf_1/activate")
+	}
+}
+
 // TestMCPServeAnswersARealClient drives the adapter over real pipes with real
 // JSON-RPC frames, the way a harness does: initialize, the initialized
 // notification, a read-only call, and a listing.

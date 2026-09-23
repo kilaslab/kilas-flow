@@ -253,6 +253,21 @@ func buildClient(ctx *Context) (*Client, error) {
 // itself with a usage error naming every way to configure a URL, and a probe
 // against an empty base URL would report a network failure for what is the
 // caller's missing configuration.
+//
+// With auth off — the default — /auth/me has no principal to describe and
+// answers 401 for every credential, the same way runContext treats it
+// (context.go). But a bare 401 is ambiguous by itself: auth-on answers the
+// same way to a bad credential, and trusting the ambiguous signal would fail
+// this gate open for exactly the caller it exists to refuse. So a 401 here is
+// not taken at its word; it is confirmed against the server's OpenAPI
+// document, which carries a root `security` requirement if and only if auth is
+// on (server.go, pinned by TestOpenAPIDeclaresNoRequirementWhenAuthIsDisabled)
+// and is itself served without a credential. No requirement means there really
+// is no scoped token to refuse, and the operation's own response decides — with
+// auth on and a bad token, that operation answers 401 itself. A requirement, or
+// a document this call could not read, is answered the safe way: only a
+// confirmed "auth is off" lets the operation through, so the original 401
+// stands.
 func requireAuthority(ctx *Context, verb Verb) error {
 	if !verb.Guarded || ctx.Client == nil || ctx.Client.BaseURL == "" {
 		return nil
@@ -260,6 +275,13 @@ func requireAuthority(ctx *Context, verb Verb) error {
 
 	who, err := whoamiWith(ctx, ctx.Client.Token)
 	if err != nil {
+		var failure *ExitError
+		if errors.As(err, &failure) && failure.ErrCode == "unauthenticated" {
+			if authEnabled, probeErr := ctx.Client.AuthEnabled(ctx.Ctx); probeErr == nil && !authEnabled {
+				return nil
+			}
+		}
+
 		return err
 	}
 	if !who.Scoped() {
