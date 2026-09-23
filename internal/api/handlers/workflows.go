@@ -990,6 +990,13 @@ func (handler *Workflows) problem(ctx context.Context, err error) error {
 	if errors.As(err, &validation) {
 		return compileProblem(validation)
 	}
+	// A Schedule Trigger whose cron never fires is a document the caller wrote,
+	// not a server fault: syncSchedules discovers it mid-activation, inside the
+	// same transaction that would otherwise just pin the new revision, but the
+	// answer belongs with every other "fix your cron" refusal at 422.
+	if errors.Is(err, repository.ErrNeverFires) {
+		return huma.Error422UnprocessableEntity(err.Error())
+	}
 	return serverProblem(ctx, "workflow operation failed", err)
 }
 

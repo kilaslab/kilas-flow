@@ -13,6 +13,7 @@ import {
 	getDatastore,
 	importCsv,
 	importN8nWorkflow,
+	insertRow,
 	listDatastores,
 	listRows,
 	manualColumns,
@@ -373,4 +374,106 @@ test('a datastore is renamed through the editor and by the node', async ({ page,
 
 	const afterNode: DatastoreResource = await getDatastore(server.baseURL, store.id);
 	expect(afterNode.name).toBe(finalName);
+});
+
+test('typing into row search is debounced and never loops (BUG-rytwy7)', async ({ page, server }) => {
+	const name = uniqueName('E2E Search Loop');
+	const store = await createDatastore(server.baseURL, name);
+	await addColumn(server.baseURL, store.id, 'email', 'string');
+	await addColumn(server.baseURL, store.id, 'score', 'number');
+	await insertRow(server.baseURL, store.id, { email: 'user@example.com', score: 1 });
+	await insertRow(server.baseURL, store.id, { email: 'another@example.com', score: 2 });
+
+	// Counted for the whole scenario, mount included: a healthy mount issues
+	// exactly one detail request and one rows request, and a settled search
+	// change adds exactly one more rows request. A regression here doesn't
+	// add a handful of extra requests, it never stops (BUG-rytwy7 measured
+	// 2,642 requests/s), so any bound at all is enough to tell the two apart.
+	const detailPath = `/api/v1/datastores/${store.id}`;
+	const rowsPath = `/api/v1/datastores/${store.id}/rows`;
+	const detailRequests: string[] = [];
+	const rowsRequests: string[] = [];
+	page.on('request', (request) => {
+		if (request.method() !== 'GET') return;
+		const path = new URL(request.url()).pathname;
+		if (path === detailPath) detailRequests.push(request.url());
+		else if (path === rowsPath) rowsRequests.push(request.url());
+	});
+
+	await page.goto(`${server.baseURL}/datastores/${store.id}`);
+	await expect(page.getByRole('heading', { name })).toBeVisible();
+	await expect(page.getByRole('cell', { name: 'user@example.com' })).toBeVisible();
+
+	const search = page.locator('#datastore-search');
+	await search.click();
+	await search.pressSequentially('u');
+	// Real wall-clock time, not a fake timer: this is exactly what the bug
+	// report observed over — a page left alone with a settled keystroke. No
+	// assertion here reads a rate or a duration, only a bounded count.
+	await page.waitForTimeout(2000);
+
+	expect(rowsRequests.length, `rows requests: ${JSON.stringify(rowsRequests)}`).toBeLessThanOrEqual(2);
+	expect(detailRequests.length, `detail requests: ${JSON.stringify(detailRequests)}`).toBe(1);
+	await expect(search).toHaveValue('u');
+	await expect(search).toBeFocused();
+});
+
+test('a client-side navigation between two datastores loads the new one once and drops the old one (BUG-rytwy7)', async ({
+	page,
+	server
+}) => {
+	const nameA = uniqueName('E2E Switch A');
+	const storeA = await createDatastore(server.baseURL, nameA);
+	await addColumn(server.baseURL, storeA.id, 'email', 'string');
+	await insertRow(server.baseURL, storeA.id, { email: 'a-switch@example.com' });
+
+	const nameB = uniqueName('E2E Switch B');
+	const storeB = await createDatastore(server.baseURL, nameB);
+	await addColumn(server.baseURL, storeB.id, 'email', 'string');
+	await insertRow(server.baseURL, storeB.id, { email: 'b-switch@example.com' });
+
+	await page.goto(`${server.baseURL}/datastores/${storeA.id}`);
+	await expect(page.getByRole('heading', { name: nameA })).toBeVisible();
+	await expect(page.getByRole('cell', { name: 'a-switch@example.com' })).toBeVisible();
+
+	// Only requests for B's rows, from here on: this isolates the switch
+	// itself from the mount already covered by the test above.
+	const rowsPathB = `/api/v1/datastores/${storeB.id}/rows`;
+	const rowsRequestsB: string[] = [];
+	page.on('request', (request) => {
+		if (request.method() === 'GET' && new URL(request.url()).pathname === rowsPathB) {
+			rowsRequestsB.push(request.url());
+		}
+	});
+
+	// A -> B directly, not through the /datastores list: going through the
+	// list would destroy and recreate [id]/+page.svelte, which never
+	// exercised the bug (SvelteKit reuses that one component instance
+	// across a route that only changes `id`, e.g. an app-level "next
+	// datastore" link or an edited address bar). page.goto() is a hard
+	// reload and would miss it the same way, so this clicks a plain in-app
+	// link instead, which stays on SvelteKit's client router.
+	await page.evaluate((href) => {
+		const link = document.createElement('a');
+		link.href = href;
+		link.id = 'e2e-direct-nav';
+		link.textContent = 'switch to the other datastore';
+		link.style.cssText = 'position:fixed;top:0;left:0;z-index:9999;';
+		document.body.appendChild(link);
+	}, `/datastores/${storeB.id}`);
+	await page.click('#e2e-direct-nav');
+
+	await expect(page.getByRole('heading', { name: nameB })).toBeVisible();
+	await expect(page.getByRole('cell', { name: 'b-switch@example.com' })).toBeVisible();
+	// A's name is never shown once B has loaded — not even a flash while B
+	// was still in flight, since the reused instance must not go on
+	// rendering A's stale `detail` after `id` has already changed.
+	await expect(page.getByRole('heading', { name: nameA })).toHaveCount(0);
+
+	// The debounced search effect used to key its "already ran" guard off a
+	// one-shot flag, so it queued a second, redundant load 250 ms after the
+	// id-effect's own immediate one. Waiting past that window and counting
+	// is what catches it.
+	await page.waitForTimeout(500);
+	expect(rowsRequestsB.length, `rows requests for B: ${JSON.stringify(rowsRequestsB)}`).toBe(1);
 });

@@ -185,7 +185,7 @@
 					<li class="flex min-h-11 items-center gap-3 px-3 py-1.5">
 						<div class="min-w-0 flex-1">
 							<p class="truncate text-sm font-medium" title={workflowNames.get(schedule.workflowId) ?? schedule.workflowId}>{workflowNames.get(schedule.workflowId) ?? schedule.workflowId}</p>
-							<p class="truncate text-xs text-muted-foreground" title={`${schedule.cron} ${m.schedules_row_timing({ next: schedule.nextRunAt ?? '—', last: schedule.lastRunAt ?? '—' })}`}>
+							<p class="truncate text-xs text-muted-foreground" title={`${schedule.cron} ${m.schedules_row_timing({ next: formatTimestamp(schedule.nextRunAt), last: formatTimestamp(schedule.lastRunAt) })}`}>
 								<code class="font-mono">{schedule.cron}</code>
 								{m.schedules_row_timing({ next: formatTimestamp(schedule.nextRunAt), last: formatTimestamp(schedule.lastRunAt) })}
 							</p>

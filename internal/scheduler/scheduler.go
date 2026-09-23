@@ -27,6 +27,12 @@ import (
 // meaning at all for a stored schedule.
 var parser = cron.NewParser(cron.SecondOptional | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
 
+// ErrNeverFires reports a cron expression with no future occurrence, such as
+// "0 0 31 2 *" (February 31st never exists). It is repository.ErrNeverFires
+// under this name because ClaimDue, which cannot import this package without
+// a cycle, needs to recognise it too.
+var ErrNeverFires = repository.ErrNeverFires
+
 // TickResolution is how often due schedules are looked for by default.
 //
 // A schedule finer than this cannot fire more often than this. Rather than
@@ -115,18 +121,27 @@ func Next(expression string, after time.Time) (time.Time, error) {
 		return time.Time{}, fmt.Errorf("invalid cron expression: %w", err)
 	}
 	candidate := schedule.Next(after)
-	if !pinnedToAnHour(expression) {
-		return candidate.UTC(), nil
+	if pinnedToAnHour(expression) {
+		// The comparison has to happen in the schedule's own zone. Both
+		// instants are UTC by the time they reach here, and in UTC the
+		// repeated hour is two perfectly ordinary times an hour apart — the
+		// collision only exists on a clock in the zone the schedule was
+		// written for.
+		zone := zoneOf(expression)
+		// At most a handful: the repeat is one DST shift wide, so one skip
+		// always suffices. The bound is there so a pathological expression
+		// cannot spin.
+		for attempt := 0; attempt < 4 && sameWallClock(after, candidate, zone); attempt++ {
+			candidate = schedule.Next(candidate)
+		}
 	}
-	// The comparison has to happen in the schedule's own zone. Both instants
-	// are UTC by the time they reach here, and in UTC the repeated hour is two
-	// perfectly ordinary times an hour apart — the collision only exists on a
-	// clock in the zone the schedule was written for.
-	zone := zoneOf(expression)
-	// At most a handful: the repeat is one DST shift wide, so one skip always
-	// suffices. The bound is there so a pathological expression cannot spin.
-	for attempt := 0; attempt < 4 && sameWallClock(after, candidate, zone); attempt++ {
-		candidate = schedule.Next(candidate)
+	// robfig/cron searches five years ahead before giving up, and answers
+	// with the zero time rather than an error. Treating that zero as a real
+	// due time is what made an impossible cron — a calendar date that never
+	// exists — fire on every scheduler tick instead of being refused
+	// (BUG-g7ffj1).
+	if candidate.IsZero() {
+		return time.Time{}, ErrNeverFires
 	}
 	return candidate.UTC(), nil
 }
@@ -204,12 +219,16 @@ func InZone(expression, zone string) string {
 }
 
 // Validate reports whether a cron expression is usable.
+//
+// It calls Next rather than only parsing, so an expression that parses but
+// never actually fires — "0 0 31 2 *" is syntactically fine and semantically
+// impossible — is refused here too. That is what makes the check reach an
+// inactive schedule: handlers/schedules.go's nextRun skips Next for those,
+// since an inactive schedule has no due time to compute, but it always calls
+// Validate.
 func Validate(expression string) error {
-	_, err := parser.Parse(expression)
-	if err != nil {
-		return fmt.Errorf("invalid cron expression: %w", err)
-	}
-	return nil
+	_, err := Next(expression, time.Now().UTC())
+	return err
 }
 
 // Tick claims and queues everything due at the current clock time.

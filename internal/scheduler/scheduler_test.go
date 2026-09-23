@@ -3,6 +3,7 @@ package scheduler_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"path/filepath"
@@ -71,7 +72,10 @@ func TestNextComputesTheFollowingFireTimeInUTC(t *testing.T) {
 func TestValidateRejectsUnusableExpressions(t *testing.T) {
 	t.Parallel()
 
-	for _, expression := range []string{"", "not cron", "* * * *", "99 * * * *", "@every 1s"} {
+	// "0 0 31 2 *" parses fine — February 31st is a syntactically ordinary
+	// date — but never occurs on any calendar, so it belongs beside the
+	// syntax errors: both are expressions Validate must refuse.
+	for _, expression := range []string{"", "not cron", "* * * *", "99 * * * *", "@every 1s", "0 0 31 2 *"} {
 		if err := scheduler.Validate(expression); err == nil {
 			t.Errorf("Validate(%q) accepted an unusable expression", expression)
 		}
@@ -79,6 +83,25 @@ func TestValidateRejectsUnusableExpressions(t *testing.T) {
 	for _, expression := range []string{"0 * * * *", "*/15 * * * *", "0 9 * * 1-5"} {
 		if err := scheduler.Validate(expression); err != nil {
 			t.Errorf("Validate(%q) = %v, want accepted", expression, err)
+		}
+	}
+}
+
+// TestNextRefusesACronWithNoFutureOccurrence is BUG-g7ffj1: robfig/cron
+// searches five years ahead before giving up on a date that never exists —
+// February 31st among them — and returns the zero time rather than an error.
+// Treating that zero as a real due time is what made an impossible cron fire
+// on every scheduler tick.
+func TestNextRefusesACronWithNoFutureOccurrence(t *testing.T) {
+	t.Parallel()
+
+	after := time.Date(2026, 9, 5, 10, 30, 0, 0, time.UTC)
+	for _, expression := range []string{
+		"0 0 31 2 *",   // a specific hour: through the DST-guarded path
+		"*/5 * 31 2 *", // every five minutes: through the plain path
+	} {
+		if _, err := scheduler.Next(expression, after); !errors.Is(err, scheduler.ErrNeverFires) {
+			t.Errorf("Next(%q) error = %v, want ErrNeverFires", expression, err)
 		}
 	}
 }
@@ -209,6 +232,64 @@ func TestTickDeactivatesAScheduleWhoseWorkflowIsNoLongerActive(t *testing.T) {
 	schedules, _ := store.List(context.Background(), tenant)
 	if schedules[0].Active || schedules[0].NextRunAt != nil {
 		t.Errorf("schedule = %#v, want it deactivated with no due time", schedules[0])
+	}
+}
+
+// TestTickRepairsAnImpossibleCronRatherThanFiringItAndDoesNotBlockOthers is
+// BUG-g7ffj1's regression test at the claim level. Two rows simulate the ways
+// an unfireable schedule reaches ClaimDue: one with the zero time a pre-fix
+// Next used to store as nextRunAt, and one whose stored due time is real but
+// whose cron — "0 0 31 2 *", February 31st — has no occurrence after it. A
+// next() error used to abort the whole claim transaction, so this also proves
+// a bad row cannot stop a healthy schedule beside it from firing.
+func TestTickRepairsAnImpossibleCronRatherThanFiringItAndDoesNotBlockOthers(t *testing.T) {
+	setup := newScheduleFixture(t)
+	store, tenant, active := setup.schedules, setup.tenant, setup.workflow
+
+	start := time.Date(2026, 9, 5, 10, 0, 0, 0, time.UTC)
+
+	zero := time.Time{}
+	if _, err := store.Create(context.Background(), tenant, repository.Schedule{
+		WorkflowID: active.ID, NodeID: "never-zero", Cron: "0 0 31 2 *", Active: true, NextRunAt: &zero,
+	}); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	stale := start.Add(-time.Minute)
+	if _, err := store.Create(context.Background(), tenant, repository.Schedule{
+		WorkflowID: active.ID, NodeID: "never-stale", Cron: "0 0 31 2 *", Active: true, NextRunAt: &stale,
+	}); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	if _, err := store.Create(context.Background(), tenant, repository.Schedule{
+		WorkflowID: active.ID, NodeID: "healthy", Cron: "0 * * * *", Active: true, NextRunAt: &start,
+	}); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	var runs []queuedRun
+	service := newService(t, store, &fixedClock{now: start}, &runs)
+
+	queued, err := service.Tick(context.Background())
+	if err != nil {
+		t.Fatalf("Tick() error = %v, want the impossible crons repaired rather than the tick aborted", err)
+	}
+	if queued != 1 || len(runs) != 1 || runs[0].triggerNodeID != "healthy" {
+		t.Fatalf("Tick() queued %#v, want exactly the healthy schedule", runs)
+	}
+
+	schedules, err := store.List(context.Background(), tenant)
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	for _, row := range schedules {
+		if row.NodeID == "healthy" {
+			continue
+		}
+		if row.Active || row.NextRunAt != nil {
+			t.Errorf("schedule %q = %#v, want it deactivated with no due time", row.NodeID, row)
+		}
 	}
 }
 

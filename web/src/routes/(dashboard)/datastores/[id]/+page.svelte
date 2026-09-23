@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
+
 	import { page } from '$app/state';
 	import ArrowLeft from '@lucide/svelte/icons/arrow-left';
 	import Download from '@lucide/svelte/icons/download';
@@ -132,15 +134,61 @@
 		allChecked = pageIDs.length > 0 && pageIDs.every((rowID) => checkState[rowID] === true);
 	});
 
+	// Keyed on `id` alone. `loadDetail` and `load` read `detail`, `search` and
+	// `userColumns` themselves, and `load`'s own dependency (`listParams`)
+	// only shows up once a search is typed — so tracking those reads here
+	// turned every `loadDetail` response into a re-run of this same effect,
+	// which called `load` again, forever (BUG-rytwy7). `untrack` keeps their
+	// reads out of this effect's dependency set; this is the pattern at
+	// executions/[id]/+page.svelte:119-127.
+	//
+	// SvelteKit reuses this component instance across a param-only
+	// navigation (there is no `{#key id}` wrapper), so an `id` change runs
+	// this effect again on the *same* `detail`/`search` state the previous
+	// table left behind. Without resetting them, `detailLoading` was already
+	// false and `detail` still held the old resource, so the previous
+	// table's name and columns stayed on screen — skeleton skipped — until
+	// the new detail response landed, and a leftover search term could go on
+	// filtering a table it was never typed against. Resetting both here
+	// makes an `id` change look like a fresh visit.
 	$effect(() => {
-		if (id) {
-			void loadDetail(id);
-			void load(id);
+		const current = id;
+		detail = null;
+		search = '';
+		untrack(() => {
+			void loadDetail(current);
+			void load(current);
+		});
+	});
+
+	// Debounced search: settles 250 ms after the last change to `search`
+	// before firing one row query. Tracks the id the debounce last saw
+	// rather than a one-shot "have I ever run" flag, because the effect
+	// above reuses this component across an `id` change and already issues
+	// its own immediate `load` for the new id — a one-shot flag would only
+	// skip the very first mount, so every later `id` change queued this
+	// effect's 250 ms timer as a second, redundant fetch on top of that
+	// immediate one.
+	let lastSearchID: string | null = null;
+	$effect(() => {
+		const current = id;
+		void search;
+		if (lastSearchID !== current) {
+			lastSearchID = current;
+			return;
 		}
+		const timer = setTimeout(() => {
+			untrack(() => void load(current));
+		}, 250);
+		return () => clearTimeout(timer);
 	});
 
 	async function loadDetail(datastoreID: string) {
-		detailLoading = true;
+		// A refetch (column add/rename/delete, "Try again") never flips this:
+		// only the first load, while `detail` is still null, shows the
+		// skeleton. Flipping it unconditionally used to unmount the whole
+		// body — search box included — on every background refresh.
+		if (detail === null) detailLoading = true;
 		detailFailure = null;
 		try {
 			const response = await getDatastore(datastoreID);
@@ -584,10 +632,7 @@
 					value={search}
 					placeholder={m.datastores_search_placeholder()}
 					class="h-7 max-w-64 text-xs"
-					oninput={(event) => {
-						search = event.currentTarget.value;
-						void load(id);
-					}}
+					oninput={(event) => (search = event.currentTarget.value)}
 				/>
 				<p class="text-xs text-muted-foreground" role="status">
 					{m.datastores_rows_on_page({ count: rows.items.length })}
