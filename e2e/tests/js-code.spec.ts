@@ -182,6 +182,45 @@ const RUNTIME_CASES: RuntimeCase[] = [
 		expect: { date: 0, tag: true, untouched: 1 }
 	},
 	{
+		name: "Node's crypto",
+		source:
+			"const crypto = require('crypto')\nconst key = crypto.createHash('sha256').update('k').digest()\nconst iv = Buffer.alloc(12, 1)\n" +
+			"const cipher = crypto.createCipheriv('aes-256-gcm', key, iv)\nconst sealed = Buffer.concat([cipher.update('secret', 'utf8'), cipher.final()])\n" +
+			"const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv)\ndecipher.setAuthTag(cipher.getAuthTag())\n" +
+			"return [{ json: { sha: crypto.createHash('sha256').update('abc').digest('hex'), hmac: crypto.createHmac('sha256', 'key').update('The quick brown fox jumps over the lazy dog').digest('base64'), " +
+			"uuid: /^[0-9a-f-]{36}$/.test(crypto.randomUUID()), opened: decipher.update(sealed, undefined, 'utf8') + decipher.final('utf8'), web: typeof globalThis.crypto.getRandomValues } }]",
+		expect: {
+			sha: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
+			hmac: '97yD9DBThCSxMpjmqm+xQ+9NWaFJRhdZl0edvC0aPNg=',
+			uuid: true,
+			opened: 'secret',
+			web: 'function'
+		}
+	},
+	{
+		name: 'Luxon and $now',
+		source:
+			"const { DateTime } = require('luxon')\n" +
+			"return [{ json: { dst: DateTime.fromISO('2026-03-08T01:30:00', { zone: 'America/New_York' }).plus({ hours: 1 }).toISO(), " +
+			"parsed: DateTime.fromFormat('23/09/2026', 'dd/MM/yyyy', { zone: 'UTC' }).toISODate(), " +
+			"shown: DateTime.fromISO('2026-09-23T15:04:00Z', { zone: 'Asia/Jakarta' }).toFormat('cccc d LLLL yyyy HH:mm ZZZZ'), " +
+			'now: $now.isValid && $today.hour === 0, same: DateTime === require(\'luxon\').DateTime } }]',
+		expect: {
+			dst: '2026-03-08T03:30:00.000-04:00',
+			parsed: '2026-09-23',
+			shown: 'Wednesday 23 September 2026 22:04 GMT+7',
+			now: true,
+			same: true
+		}
+	},
+	{
+		name: 'Intl and locale formatting',
+		source:
+			"return [{ json: { eur: new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format(1234.5), en: (1234567.891).toLocaleString('en-US'), " +
+			"date: new Date(Date.UTC(2026, 8, 23, 15, 4)).toLocaleString('en-US', { timeZone: 'Asia/Jakarta' }) } }]",
+		expect: { eur: '1.234,50 €', en: '1,234,567.891', date: '9/23/2026, 10:04:00 PM' }
+	},
+	{
 		name: 'workflow and execution roots',
 		source: "return [{ json: { workflow: $workflow.name, execution: typeof $execution.id, runIndex: $runIndex, input: $input.first().json.from } }]",
 		expect: { workflow: 'JS Runtime Case', execution: 'string', runIndex: 0, input: 'the run request' }
