@@ -472,6 +472,43 @@ func TestMCPAPIToolRequiresConfirmationForAGuardedOperation(t *testing.T) {
 	})
 }
 
+// TestMCPToolResultNeverCarriesAnEchoedSecret: a tool result is the envelope's
+// text, and it lands in the agent's transcript, so a server that echoes a
+// refused credential back must lose the secret before the harness sees it.
+func TestMCPToolResultNeverCarriesAnEchoedSecret(t *testing.T) {
+	const secret = "TOPSECRET-123"
+	echoed := `{"name":"x","type":"httpBearerAuth","secret":{"token":"` + secret + `"}}`
+
+	srv, _ := mcpStub(t, map[string]http.HandlerFunc{
+		apiPrefix + "/auth/me": jsonBody(http.StatusOK, identityWithoutScopes),
+		operationsPath: jsonBody(http.StatusOK, servedDocument(
+			[3]string{http.MethodPost, "/api/v1/credentials", "create-credential"},
+		)),
+		"/api/v1/credentials": problemBody(http.StatusUnprocessableEntity,
+			`{"title":"Unprocessable Entity","status":422,"detail":"validation failed","errors":[`+
+				`{"message":"expected required property fields to be present","location":"body","value":`+echoed+`},`+
+				`{"message":"unexpected property","location":"body.secret","value":`+echoed+`}]}`),
+	})
+
+	session := startMCPServe(t, srv.URL)
+	session.initialize()
+
+	answer := session.call("api", map[string]any{
+		"operation_id": "create-credential",
+		"body":         echoed,
+		"confirm":      true,
+	})
+	if !answer.isError {
+		t.Fatalf("isError = %v, want true (text=%q)", answer.isError, answer.text)
+	}
+	if strings.Contains(answer.text, secret) {
+		t.Fatalf("the tool result carried the secret: %q", answer.text)
+	}
+	if !strings.Contains(answer.text, "expected required property fields") {
+		t.Fatalf("the tool result lost the problem itself: %q", answer.text)
+	}
+}
+
 // TestMCPServeAnswersARealClient drives the adapter over real pipes with real
 // JSON-RPC frames, the way a harness does: initialize, the initialized
 // notification, a read-only call, and a listing.

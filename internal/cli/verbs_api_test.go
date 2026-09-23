@@ -797,6 +797,124 @@ func TestAPICarriesAServerRefusalVerbatim(t *testing.T) {
 	}
 }
 
+// TestAPINeverCarriesAnEchoedSecretInTheProblem is the CLI half of BUG-2z8geh.
+// A server from before the fix, or a proxy in front of one, answers a refused
+// body by echoing it, and the envelope is copied into terminals, CI logs and
+// agent transcripts. So the problem is redacted before it is carried: a
+// whole-body echo loses its value, and any other value loses the fields a
+// secret travels under. The values a server builds on purpose — a compile
+// refusal's codes, an idempotency conflict's — are what the caller reads next,
+// so they come through intact.
+func TestAPINeverCarriesAnEchoedSecretInTheProblem(t *testing.T) {
+	const secret = "TOPSECRET-123"
+
+	valueDropped := func(t *testing.T, issue map[string]any) {
+		t.Helper()
+		if value, present := issue["value"]; present {
+			t.Fatalf("a whole-body echo kept its value: %v", value)
+		}
+		if issue["message"] == nil || issue["location"] != "body" {
+			t.Fatalf("the issue lost more than its value: %v", issue)
+		}
+	}
+	valueIntact := func(want string) func(t *testing.T, issue map[string]any) {
+		return func(t *testing.T, issue map[string]any) {
+			t.Helper()
+			var expected any
+			if err := json.Unmarshal([]byte(want), &expected); err != nil {
+				t.Fatalf("fixture: %v", err)
+			}
+			if !jsonEqual(t, expected, issue["value"]) {
+				t.Fatalf("value = %v, want %s intact", issue["value"], want)
+			}
+		}
+	}
+
+	for _, testCase := range []struct {
+		name  string
+		issue string
+		check func(t *testing.T, issue map[string]any)
+	}{
+		{
+			name: "a whole credential echoed at the body",
+			issue: `{"message":"expected required property fields to be present","location":"body",` +
+				`"value":{"name":"x","type":"httpBearerAuth","secret":{"token":"` + secret + `"}}}`,
+			check: valueDropped,
+		},
+		{
+			name: "a raw body echoed after a parse failure",
+			issue: `{"message":"unexpected end of JSON input","location":"body",` +
+				`"value":"{\"name\":\"x\",\"type\":\"httpBearerAuth\",\"fields\":{\"sessionKey\":\"` + secret + `\"}"}`,
+			check: valueDropped,
+		},
+		{
+			name: "a field-level object carrying secret-named keys",
+			issue: `{"message":"unexpected property","location":"body.data","value":{"name":"X-Api-Key",` +
+				`"value":"` + secret + `","Token":"` + secret + `","fields":{"sessionKey":"` + secret + `"},` +
+				`"nested":{"PASSWORD":"` + secret + `","api_key":"` + secret + `","kept":"yes"}}}`,
+			check: func(t *testing.T, issue map[string]any) {
+				t.Helper()
+				value, _ := issue["value"].(map[string]any)
+				nested, _ := value["nested"].(map[string]any)
+				for _, redacted := range []any{value["value"], value["Token"], value["fields"], nested["PASSWORD"], nested["api_key"]} {
+					if redacted != "[redacted]" {
+						t.Fatalf("a secret-named key survived: %v", value)
+					}
+				}
+				if value["name"] != "X-Api-Key" || nested["kept"] != "yes" {
+					t.Fatalf("a key that names no secret was redacted too: %v", value)
+				}
+			},
+		},
+		{
+			name: "a compile refusal's codes",
+			issue: `{"message":"a connection's target is not in the graph","location":"body/connections/0",` +
+				`"value":{"code":"node.invalid_topology","nodeId":"work","connectionId":"c1"}}`,
+			check: valueIntact(`{"code":"node.invalid_topology","nodeId":"work","connectionId":"c1"}`),
+		},
+		{
+			name: "an idempotency conflict's code",
+			issue: `{"message":"this Idempotency-Key was already used","location":"header.Idempotency-Key",` +
+				`"value":{"code":"idempotency_key_reused"}}`,
+			check: valueIntact(`{"code":"idempotency_key_reused"}`),
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			api := newRecordingAPI(map[string]http.HandlerFunc{
+				apiPrefix + "/auth/me": jsonBody(http.StatusOK, identityWithoutScopes),
+				operationsPath: jsonBody(http.StatusOK, servedDocument(
+					[3]string{http.MethodPost, "/api/v1/credentials", "create-credential"},
+				)),
+				"/api/v1/credentials": problemBody(http.StatusUnprocessableEntity,
+					`{"title":"Unprocessable Entity","status":422,"detail":"validation failed","errors":[`+testCase.issue+`]}`),
+			})
+			srv := stubAPI(t, api.routesFor(t))
+
+			code, _, stdout, stderr := runCLI(t, Env{
+				Args: []string{"api", "create-credential", "--yes", "--url", srv.URL, "--json",
+					"--body", `{"name":"x","type":"httpBearerAuth","secret":{"token":"` + secret + `"}}`},
+				Getenv: homeEnv(t.TempDir(), nil),
+			})
+			if code == ExitOK {
+				t.Fatalf("exit = %d, want a failure (stdout=%q)", code, stdout)
+			}
+			if strings.Contains(stdout, secret) || strings.Contains(stderr, secret) {
+				t.Fatalf("the envelope carried the secret (stdout=%q stderr=%q)", stdout, stderr)
+			}
+
+			failure, _ := envelope(t, stdout)["error"].(map[string]any)
+			detail, _ := failure["detail"].(map[string]any)
+			problem, _ := detail["problem"].(map[string]any)
+			issues, _ := problem["errors"].([]any)
+			if len(issues) != 1 {
+				t.Fatalf("problem = %v, want its one issue carried", problem)
+			}
+			issue, _ := issues[0].(map[string]any)
+			testCase.check(t, issue)
+		})
+	}
+}
+
 func TestAPIListAndAnOperationIdAreMutuallyExclusive(t *testing.T) {
 	srv := stubAPI(t, map[string]http.HandlerFunc{
 		operationsPath: jsonBody(http.StatusOK, servedDocument(

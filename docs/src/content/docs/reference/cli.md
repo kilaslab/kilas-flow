@@ -732,13 +732,19 @@ A real one, from this build against a local server:
 
 - `data` is the operation's response body, unmodified. When it is an object,
   the API's own fields are what a caller reads — the CLI does not rename them.
-- `error.detail.problem` carries an RFC 9457 problem document verbatim, the way
-  the JavaScript SDK's `sdk/src/http.ts` already surfaces it. A non-JSON error
-  body (a proxy's HTML page, say) goes under `error.detail.body`, truncated to
-  4 KiB. `error.detail.execution` carries the record of a run that failed under
-  `run --wait`, which is the one failure that is about the caller's work rather
-  than about the call. `error.detail.issues` carries every problem `pack
-  validate` found, because its one-line message can only name the first.
+- `error.detail.problem` carries an RFC 9457 problem document as the server
+  sent it, the way the JavaScript SDK's `sdk/src/http.ts` already surfaces it,
+  less anything that could be a secret. An `errors[]` value at the location
+  `body` is dropped, because that is where an older server echoed a refused
+  body back whole, and a field named like a credential — `token`, `password`,
+  `fields`, and `value` inside an error's own value — reads `[redacted]`. A
+  compile refusal's codes and an idempotency conflict's come through whole. A
+  non-JSON error body (a proxy's HTML page, say) goes under
+  `error.detail.body`, truncated to 4 KiB. `error.detail.execution` carries the
+  record of a run that failed under `run --wait`, which is the one failure that
+  is about the caller's work rather than about the call. `error.detail.issues`
+  carries every problem `pack validate` found, because its one-line message can
+  only name the first.
 - `meta.operation` is the operation id, or the verb path for a local verb, so a
   log line can be traced back to the API call it came from.
 - Nothing but the envelope goes to stdout in JSON mode. `--verbose` traces

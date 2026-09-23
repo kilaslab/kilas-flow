@@ -244,22 +244,56 @@ func (c *Client) errorFor(method, path string, resp *http.Response, raw []byte) 
 	return failure
 }
 
-// redactProblem removes the client's own credential from a problem document.
+// redactProblem removes secrets from a problem document before it is carried.
 //
-// The server does not echo a credential, but a proxy or a future handler might,
-// and an error envelope is copied into logs and transcripts: the token has to
-// be gone before it is carried, not after.
+// An error envelope is copied into terminals, CI logs and agent transcripts, so
+// whatever the server put in the problem has to be safe there. The current
+// server keeps request values out of its validation problems, but one from
+// before that fix echoes a refused body back — the whole object for a missing
+// or unexpected property, the raw bytes for a body that did not parse — and a
+// proxy or a future handler might echo the client's own token.
+//
+// Every errors[] value at the location "body" is therefore dropped whatever
+// its type, because that is where both whole-body echoes land. Any other value
+// is kept, because it is what the caller reads next — a compile refusal's
+// codes, an idempotency conflict's — and only its secret-named fields are
+// redacted. The document is decoded with UseNumber so every value that
+// survives is carried exactly as the server wrote it.
 func (c *Client) redactProblem(problem json.RawMessage) json.RawMessage {
-	if c.Token == "" || !bytes.Contains(problem, []byte(c.Token)) {
-		return problem
-	}
+	decoder := json.NewDecoder(bytes.NewReader(problem))
+	decoder.UseNumber()
 
 	var decoded any
-	if err := json.Unmarshal(problem, &decoded); err != nil {
+	if err := decoder.Decode(&decoded); err != nil {
 		return problem
 	}
 
-	encoded, err := json.Marshal(c.redactToken(redactValue(decoded)))
+	if document, ok := decoded.(map[string]any); ok {
+		if issues, ok := document["errors"].([]any); ok {
+			for _, entry := range issues {
+				issue, ok := entry.(map[string]any)
+				if !ok {
+					continue
+				}
+				value, present := issue["value"]
+				if !present {
+					continue
+				}
+				if issue["location"] == "body" {
+					delete(issue, "value")
+					continue
+				}
+				issue["value"] = redactKeys(value, errorValueKeys)
+			}
+		}
+	}
+
+	redacted := redactKeys(decoded, problemKeys)
+	if c.Token != "" {
+		redacted = c.redactToken(redacted)
+	}
+
+	encoded, err := json.Marshal(redacted)
 	if err != nil {
 		return problem
 	}
@@ -374,24 +408,54 @@ func redactJSON(body []byte) []byte {
 	return encoded
 }
 
+// problemKeys are the field names redacted anywhere in a problem document:
+// every credential key, and fields, which is the object a credential's secrets
+// are sent in.
+var problemKeys = withKeys(credentialKeys, "fields")
+
+// errorValueKeys are the field names redacted inside one errors[] value. It
+// adds value, which is where a header credential keeps its secret. It is not
+// in problemKeys because every errors[] entry has a value key of its own, and
+// matching that one would redact the compile codes a caller needs whole.
+var errorValueKeys = withKeys(problemKeys, "value")
+
+// withKeys is base plus extra, with base left as it was.
+func withKeys(base map[string]bool, extra ...string) map[string]bool {
+	keys := make(map[string]bool, len(base)+len(extra))
+	for key := range base {
+		keys[key] = true
+	}
+	for _, key := range extra {
+		keys[normalizeKey(key)] = true
+	}
+
+	return keys
+}
+
 // redactValue walks a decoded JSON value, replacing credential values.
 func redactValue(value any) any {
+	return redactKeys(value, credentialKeys)
+}
+
+// redactKeys walks a decoded JSON value, replacing the value of every field
+// whose normalised name is in keys, at any depth.
+func redactKeys(value any, keys map[string]bool) any {
 	switch typed := value.(type) {
 	case map[string]any:
 		out := make(map[string]any, len(typed))
 		for key, inner := range typed {
-			if credentialKeys[normalizeKey(key)] {
+			if keys[normalizeKey(key)] {
 				out[key] = "[redacted]"
 				continue
 			}
-			out[key] = redactValue(inner)
+			out[key] = redactKeys(inner, keys)
 		}
 
 		return out
 	case []any:
 		out := make([]any, len(typed))
 		for i, inner := range typed {
-			out[i] = redactValue(inner)
+			out[i] = redactKeys(inner, keys)
 		}
 
 		return out

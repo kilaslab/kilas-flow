@@ -34,7 +34,7 @@ Exit 2, and `error.detail.problem.errors[].value` holds the entire body, `"value
 
 # Acceptance Criteria
 - [x] Problem documents never echo body values for secret-bearing operations (credentials, auth, API keys)
-- [ ] The CLI also redacts `fields`, `token`, `password` and `value` before printing, as defence in depth
+- [x] The CLI also redacts `fields`, `token`, `password` and `value` before printing, as defence in depth
 - [x] A test posts an invalid credential and asserts the secret does not appear in the response
 
 # Implementation Plan
@@ -75,3 +75,28 @@ pins that an unmarked operation still names the refused field's own value.
 All three failed with the leak before the fix and pass after; the full
 `internal/api/...` suites pass, and `make generate-api-reference-check`
 reports no drift (Metadata is not part of the document).
+
+CLI side (defence in depth against a server from before the fix, or a proxy).
+`redactProblem` in `internal/cli/client.go` now always decodes the problem
+(with `UseNumber`, so surviving values are carried exactly). An `errors[]`
+value at the location exactly `body` is dropped whatever its type: that is
+where huma put both the whole object and the raw body string. Any other
+`errors[]` value is kept but key-redacted at any depth with the credential
+keys plus `fields` and `value`, and the rest of the document with the
+credential keys plus `fields`. The client's own token is still redacted
+wherever it appears. Neither server-built problem an agent is told to read
+uses location `body`: compile issues are `body` + a non-empty JSON pointer
+(every `ValidationError` carries a `Path`), and idempotency uses
+`header.Idempotency-Key`. So their `{code,nodeId,connectionId}` and `{code}`
+values come through whole.
+
+Tests: `TestAPINeverCarriesAnEchoedSecretInTheProblem`
+(`internal/cli/verbs_api_test.go`) drives `api create-credential` and reads
+the printed envelope. A whole credential and a raw body at `body` lose their
+value, a field-level object loses `value`/`Token`/`fields`/`PASSWORD`/`api_key`
+but keeps its other keys, and a compile issue and an idempotency code stay
+intact. `TestMCPToolResultNeverCarriesAnEchoedSecret`
+(`internal/cli/mcp_test.go`) asserts the same through an MCP tool result.
+The leak cases failed before the change and pass after.
+`TestProblemDocumentsAreRedactedBeforeTheyAreCarried` still passes. The CLI
+reference's envelope section no longer says the problem is carried verbatim.
