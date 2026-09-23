@@ -16,6 +16,7 @@ kilasflow_operations:
   - stream-execution-events
 kilasflow_nodes:
   - kilasflow.code
+  - kilasflow.jsCode
   - kilasflow.set
 kilasflow_expression_roots:
   - $json
@@ -50,7 +51,7 @@ kilasflow_not_shipped:
 - Dates: `$now` and `$today` are one instant for the whole evaluation of a parameter tree, read in the workflow's `settings.timezone` and falling back to UTC, so `$today` is the local calendar day (internal/expression/roots.go, `clock` and `location`). `format` and `toFormat` take Luxon tokens — `yyyy-MM-dd`, `d. MMM. y` — not Go's reference layout, and the getters `.year`, `.hour`, `.weekday` read like properties (internal/expression/luxon.go; docs/src/content/docs/reference/expression-grammar.md, "Format tokens").
 - `$fromAI('name')` is a marker an AI agent fills, valid only inside a parameter an agent fills; anywhere else it is an error rather than a value (internal/expression/roots.go, `callRoot`).
 - Shaping many fields is the `kilasflow.set` node's job: its assignment collection holds `{name, type, value}` rows whose values are expressions, so one node replaces a pile of repeated expressions (nodes/core.go, `setNode`; internal/property/property.go, `Assignment`).
-- Reach for `kilasflow.code` last. A parameter expression is evaluated by the runtime as the node runs, once per item (nodes/http.go:253), while a Code node is a WebAssembly program compiled on demand under a time and memory limit (nodes/code.go, `CodeExecutor`), and it is `Unavailable` on a deployment with no toolchain (docs/src/content/docs/concepts/node-registry.md, "Unavailable").
+- Reach for a Code node last, `kilasflow.code` or `kilasflow.jsCode`. A parameter expression is evaluated by the runtime as the node runs, once per item (nodes/http.go:253), while the Go Code node is a WebAssembly program compiled on demand under a time and memory limit (nodes/code.go, `CodeExecutor`), and it is `Unavailable` on a deployment with no toolchain (docs/src/content/docs/concepts/node-registry.md, "Unavailable"); the JavaScript Code node runs a script in a worker process (nodes/jscode.go). Either hides the transformation inside a body the document and the trace do not show.
 - `$execution.id` and `$execution.mode` name the run, which is what lets an outgoing body carry a per-run identifier (internal/expression/roots.go, `resolveRoot`).
 - When an expression fails, read the node run rather than guessing: `kilasflow exec trace <executionId>` (`stream-execution-events`) shows the live feed and names the failing node, and `kilasflow exec get <executionId>` (`get-execution`) carries each node run's error payload as `{code, message}` — the message is the one the evaluator produced, such as `expression root "$foo" is not supported` (internal/engine/service.go, `structuredError`).
 
@@ -95,7 +96,7 @@ what should the parameter read?
 
 ## Anti-patterns
 
-- "I'll write a Code node to pull one field out" → a compiled sandbox program, a build step and a toolchain dependency for a single read that the parameter language already does → write the parameter as an expression; keep `kilasflow.code` for loops and aggregation.
+- "I'll write a Code node to pull one field out" → a compiled sandbox program, a build step and a toolchain dependency for a single read that the parameter language already does → write the parameter as an expression; keep a Code node (`kilasflow.jsCode` or `kilasflow.code`) for loops and aggregation.
 - "`$node['X'].json` is the first item of X" → on a multi-item flow that silently repeats one row → it is the item corresponding to the current one; ask for a specific one with `$('X').first()`, `.last()` or `.all()`.
 - "`$('X').item` gave me a refusal" → the named node emitted several items or lost provenance, and the message names which → `.first()`, `.last()` or `.all()`; do not reach for the first item by reflex.
 - "My expression returned null" → a missing path is undefined by design, not a bug → check the field name against the item; a crash instead means a structural fault: an unsupported root, an unknown callable, a node that never ran, or a value whose lineage is unknown.

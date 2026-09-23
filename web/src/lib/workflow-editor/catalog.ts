@@ -4,10 +4,12 @@ import type { Definition } from '$lib/api/generated/models';
  * Node types the registry carries only so an import stays visible.
  *
  * `kilasflow.unsupported` is the placeholder an unmappable imported node
- * becomes and `kilasflow.foreignCode` holds an imported Code node. Both refuse
- * at compile time by construction, so adding one from the picker can only
- * produce a workflow that cannot be activated — which is exactly what the
- * picker must not offer.
+ * becomes and `kilasflow.foreignCode` holds an imported Python Code node. Both
+ * refuse at compile time by construction, so adding one from the picker can
+ * only produce a workflow that cannot be activated — which is exactly what the
+ * picker must not offer. (A JavaScript body in `kilasflow.foreignCode`, from a
+ * workflow imported before JavaScript ran, does run; new JavaScript is written
+ * in `kilasflow.jsCode`, which the picker offers.)
  *
  * Named here rather than in the payload because the catalogue has no flag for
  * it yet; when the registry can mark a definition import-only, this list is

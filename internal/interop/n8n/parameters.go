@@ -3143,6 +3143,8 @@ func waitToN8N(node workflow.Node) (map[string]any, []Lossy) {
 // --- Code -------------------------------------------------------------------
 
 // unsupportedScript is the one refusal for code this server will not run.
+// subject completes "this node's code …": "is written in Python", or "is a
+// JavaScript sort comparator".
 //
 // It is jsrun.Refusal, so a Python Code node, a JavaScript construct the
 // engine cannot run faithfully, a Sort comparator, the node's own validation
@@ -3153,10 +3155,10 @@ func waitToN8N(node workflow.Node) (map[string]any, []Lossy) {
 // lost in translation; it is work the workflow was relying on that will not
 // happen, and a workflow that activates without it produces plausible output
 // with a hole in it.
-func unsupportedScript(field, language, alternative string) Unsupported {
+func unsupportedScript(field, subject, alternative string) Unsupported {
 	return Unsupported{
 		Severity: SeverityBlocking, Field: field,
-		Reason: jsrun.Refusal("is written in "+language, alternative),
+		Reason: jsrun.Refusal(subject, alternative),
 	}
 }
 
@@ -3212,7 +3214,7 @@ func codeToKilas(node Node) (map[string]any, []Unsupported) {
 	if value, present := node.Parameters["pythonCode"]; present {
 		parameters["pythonCode"] = fromN8NValue(value)
 	}
-	return parameters, []Unsupported{unsupportedScript("jsCode", codeLanguageName(language), suggestion)}
+	return parameters, []Unsupported{unsupportedScript("jsCode", "is written in "+codeLanguageName(language), suggestion)}
 }
 
 // javaScriptCodeToKilas copies a JavaScript Code node's parameters under
@@ -4260,16 +4262,17 @@ func splitOutToN8N(node workflow.Node) (map[string]any, []Lossy) {
 
 // sortToKilas carries a field sort and refuses a JavaScript comparator.
 //
-// n8n's third mode is a JS comparator, which this product has no runtime for.
-// Approximating it would sort by something the author did not write, so it is
-// named instead — through unsupportedScript, which is the one refusal every
-// JavaScript escape hatch in this importer produces.
+// n8n's third mode is a JS comparator. JavaScript runs in the Code node, not
+// inside this one, and approximating the comparator would sort by something
+// the author did not write, so it is named instead — through
+// unsupportedScript, which is the one refusal every JavaScript escape hatch in
+// this importer produces.
 func sortToKilas(node Node) (map[string]any, []Unsupported) {
 	issues := make([]Unsupported, 0)
 	mode := defaultString(stringParameter(node.Parameters, "type"), "simple")
 	if mode == "code" {
-		return map[string]any{"type": "simple"}, append(issues, unsupportedScript("type", "JavaScript",
-			"Set the fields to sort by on this node before running the workflow."))
+		return map[string]any{"type": "simple"}, append(issues, unsupportedScript("type", "is a JavaScript sort comparator",
+			"Set the fields to sort by on this node, or sort in a Code (JavaScript) node before it."))
 	}
 
 	converted := map[string]any{"type": mode}
