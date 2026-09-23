@@ -74,6 +74,8 @@ RED: k and j failed with `node "Two urls" changed the item correspondence`. i an
 
 `kilasflow debug eval … "{{ $('Two urls').item.json.u }}"` is unchanged. Debug eval has no current item to pair with, so it still answers `node "Two urls" produced 3 items; use .all(), .first() or .last() to choose one`.
 
+Review fix (2026-09-23): the pointer fallback took the source's latest run whenever the incoming item did not carry the source's own lost stamp, so behind IF, Set, Filter or a loop a branch held behind a loop read another batch's item silently. `pointerInto` now writes that pointer only when the source's latest run holds the item at that port and position with the very stamp the incoming item carries. Otherwise the item is stamped lost. `NodeItem.PortLengths` bounds a position to its own port. Tests: `TestDollarItemBehindARoutingNodeNeverReadsAnotherBatch` (RED: `b1-0 read b2-0; b1-1 read b2-1; b0-0 read b2-0; b0-1 read b2-1`; now 2 paired, 4 refused, 0 wrong) and `TestDollarItemStaysWithinThePortItsOriginNames` (RED: a pointer past `true` read `false-0`).
+
 # Attachments
 
 ## Work Evidence

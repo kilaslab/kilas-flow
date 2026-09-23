@@ -1976,28 +1976,57 @@ func (state *runState) lineageOf(node workflow.IRNode, sources []workflow.IREdge
 		inherited := *origin
 		return &inherited
 	}
-	return state.pointerInto(sources[0], *from, position)
+	if pointer := state.pointerInto(sources[0], *from, position); pointer != nil {
+		return pointer
+	}
+	// No item of the delivering node can be named with certainty, which is a
+	// lost correspondence like any other.
+	return &workflow.PairedItem{SourceNodeID: node.ID, RunIndex: runIndex, ItemIndex: index, Lost: true}
 }
 
-// pointerInto names the item of the delivering node that an incoming item is,
-// for an incoming item with no origin of its own to pass on.
+// pointerInto names the item of the delivering node X that an incoming item
+// is, for an incoming item with no origin of its own to pass on, or returns nil
+// when that item cannot be named with certainty.
 //
 // That pointer is what `$('X').item` reads when X's own items have no lineage,
 // so it names X's run, not the run of the node stamping it: the two differ
 // whenever they ran a different number of times, as a loop and the node after
-// its done port do. A lost stamp X wrote on its own item records X's run and
-// position exactly, wherever the item has travelled since. Any other item sits
-// at its position in X's latest run, which is the run that delivered it when
-// the branch runs straight after X.
+// its done port do. A pointer that named the wrong run would pair the item
+// with another run's item, silently, so it is only written when the run is
+// established:
+//
+//   - A lost stamp X wrote on its own item records X's run and position
+//     exactly, wherever the item has travelled since.
+//   - Otherwise the item is taken to be X's item at the same position of X's
+//     latest run, but only when that item carries the very stamp the incoming
+//     one does. A node that hands items on with the lineage they arrived with
+//     — IF, Set, Filter, a loop — leaves a stamp naming whichever node lost it
+//     upstream, and that stamp names one item of one run. A branch the stack
+//     held back while X ran again, or the remaining items of a per-item run
+//     that suspended, fail the comparison, and are left lost.
 func (state *runState) pointerInto(source workflow.IREdge, incoming workflow.Item, position int) *workflow.PairedItem {
-	pointer := &workflow.PairedItem{
+	own := incoming.Paired
+	if own != nil && own.Lost && own.SourceNodeID == source.Source.NodeID {
+		return &workflow.PairedItem{
+			SourceNodeID: source.Source.NodeID, SourcePort: source.Source.Port,
+			RunIndex: own.RunIndex, ItemIndex: own.ItemIndex,
+		}
+	}
+	runs := state.runs[source.Source.NodeID]
+	if len(runs) == 0 || own == nil {
+		return nil
+	}
+	latest, port := runs[len(runs)-1], source.SourceOutputIndex
+	if port < 0 || port >= len(latest) || position < 0 || position >= len(latest[port]) {
+		return nil
+	}
+	if there := latest[port][position].Paired; there == nil || *there != *own {
+		return nil
+	}
+	return &workflow.PairedItem{
 		SourceNodeID: source.Source.NodeID, SourcePort: source.Source.Port,
-		RunIndex: max(len(state.runs[source.Source.NodeID])-1, 0), ItemIndex: position,
+		RunIndex: len(runs) - 1, ItemIndex: position,
 	}
-	if own := incoming.Paired; own != nil && own.Lost && own.SourceNodeID == source.Source.NodeID {
-		pointer.RunIndex, pointer.ItemIndex = own.RunIndex, own.ItemIndex
-	}
-	return pointer
 }
 
 // lineageSources is the item edges an invocation actually read.
@@ -2039,8 +2068,11 @@ func nodeItemFor(node workflow.IRNode, output workflow.NodeOutput, runIndex int)
 		if portIndex < len(node.Definition.Outputs) {
 			if item.PortOffsets == nil {
 				item.PortOffsets = make(map[string]int, len(output))
+				item.PortLengths = make(map[string]int, len(output))
 			}
-			item.PortOffsets[node.Definition.Outputs[portIndex].Name] = len(item.Items)
+			name := node.Definition.Outputs[portIndex].Name
+			item.PortOffsets[name] = len(item.Items)
+			item.PortLengths[name] = len(port)
 		}
 		for _, entry := range port {
 			item.Items = append(item.Items, entry.JSON)
@@ -2189,8 +2221,11 @@ func namedItemPosition(item expression.NodeItem, origin *workflow.PairedItem) (i
 	if origin.SourceNodeID != item.NodeID || origin.RunIndex != item.RunIndex {
 		return 0, false
 	}
+	// Bounded by its own port: the ports sit end to end in Items, and an index
+	// past the end of one would read the next one's items.
 	offset, named := item.PortOffsets[origin.SourcePort]
-	if !named || origin.ItemIndex < 0 {
+	length, counted := item.PortLengths[origin.SourcePort]
+	if !named || !counted || origin.ItemIndex < 0 || origin.ItemIndex >= length {
 		return 0, false
 	}
 	position := offset + origin.ItemIndex

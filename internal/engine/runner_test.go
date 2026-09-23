@@ -3066,6 +3066,135 @@ func TestDollarItemRefusesAnEarlierRunRatherThanReadingTheLatest(t *testing.T) {
 	}
 }
 
+// TestDollarItemBehindARoutingNodeNeverReadsAnotherBatch is the held branch of
+// the test above, with a real IF between Per batch and its fan-out.
+//
+// IF hands its items on with the lineage they arrived with, so what reaches
+// Side carries Per batch's stamp rather than one naming IF, and IF's own run
+// and position have to be worked out. Taking IF's latest run paired every
+// earlier batch's items with the last batch's, silently. Refusing an item
+// whose run cannot be established is the acceptable answer; reading another
+// batch's is not.
+func TestDollarItemBehindARoutingNodeNeverReadsAnotherBatch(t *testing.T) {
+	catalog := testCatalog(t, startType("test.start", "Start"), stepType("test.perBatch", "Per batch"),
+		stepType("test.pass", "Pass"), stepType("test.copy", "Copy"), stepType("test.probe", "Probe"))
+	always := []any{map[string]any{"field": "keep", "operator": "equals", "value": "yes"}}
+	ir := compileDoc(t, catalog, workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_lineage_held_if", Name: "A branch held behind a loop, after an IF",
+		Nodes: []workflow.Node{
+			{ID: "start", Name: "Start", Type: "test.start", TypeVersion: workflow.V(1)},
+			{ID: "loop", Name: "Loop", Type: nodes.LoopNodeType, TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"batchSize": float64(1), "maxIterations": float64(10)}},
+			{ID: "head", Name: "Head", Type: "test.pass", TypeVersion: workflow.V(1)},
+			{ID: "per-batch", Name: "Per batch", Type: "test.perBatch", TypeVersion: workflow.V(1)},
+			{ID: "if", Name: "IF", Type: "kilasflow.if", TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"conditions": always}},
+			{ID: "back", Name: "Back", Type: "test.pass", TypeVersion: workflow.V(1)},
+			{ID: "side", Name: "Side", Type: "test.copy", TypeVersion: workflow.V(1)},
+			{ID: "probe", Name: "Probe", Type: "test.probe", TypeVersion: workflow.V(1)},
+		},
+		Connections: []workflow.Connection{
+			mainEdge("c1", "start", "main", "loop"),
+			mainEdge("c2", "loop", "loop", "head"),
+			mainEdge("c3", "head", "main", "per-batch"),
+			mainEdge("c4", "per-batch", "main", "if"),
+			mainEdge("c5", "if", "true", "back"),
+			mainEdge("c6", "if", "true", "side"),
+			mainEdge("c7", "back", "main", "loop"),
+			mainEdge("c8", "side", "main", "probe"),
+		},
+		Settings: map[string]any{},
+	})
+
+	executors := engine.NewRegistry()
+	register := func(typeID string, execute engine.ExecutorFunc) {
+		t.Helper()
+		if err := executors.Register(typeID, execute); err != nil {
+			t.Fatalf("Register(%s) error = %v", typeID, err)
+		}
+	}
+	register("test.start", func(context.Context, workflow.IRNode, workflow.NodeInput, engine.Request) (workflow.NodeOutput, error) {
+		return workflow.NodeOutput{{{JSON: map[string]any{"b": "b0"}}, {JSON: map[string]any{"b": "b1"}}, {JSON: map[string]any{"b": "b2"}}}}, nil
+	})
+	// Two items from the batch's one, so their own lineage is lost.
+	register("test.perBatch", func(_ context.Context, _ workflow.IRNode, input workflow.NodeInput, _ engine.Request) (workflow.NodeOutput, error) {
+		batch, _ := input["main"][0].JSON["b"].(string)
+		return workflow.NodeOutput{{
+			{JSON: map[string]any{"u": batch + "-0", "keep": "yes"}},
+			{JSON: map[string]any{"u": batch + "-1", "keep": "yes"}},
+		}}, nil
+	})
+	register("test.pass", func(_ context.Context, _ workflow.IRNode, input workflow.NodeInput, _ engine.Request) (workflow.NodeOutput, error) {
+		return workflow.NodeOutput{input["main"]}, nil
+	})
+	register("test.copy", func(_ context.Context, _ workflow.IRNode, input workflow.NodeInput, _ engine.Request) (workflow.NodeOutput, error) {
+		items := make([]workflow.Item, 0, len(input["main"]))
+		for _, item := range input["main"] {
+			items = append(items, workflow.Item{JSON: item.JSON})
+		}
+		return workflow.NodeOutput{items}, nil
+	})
+	var paired, refused int
+	var wrong []string
+	register("test.probe", func(_ context.Context, _ workflow.IRNode, input workflow.NodeInput, request engine.Request) (workflow.NodeOutput, error) {
+		for index, item := range input["main"] {
+			resolved, err := expression.Resolve(map[string]any{
+				"u": map[string]any{"mode": "expression", "value": "{{ $('IF').item.json.u }}"},
+			}, request.ExpressionContext(item, input, index))
+			switch {
+			case err != nil:
+				refused++
+			case resolved["u"] == item.JSON["u"]:
+				paired++
+			default:
+				wrong = append(wrong, fmt.Sprintf("%v read %v", item.JSON["u"], resolved["u"]))
+			}
+		}
+		return workflow.NodeOutput{input["main"]}, nil
+	})
+	if err := nodes.RegisterExecutors(executors, safehttp.DefaultPolicy(), sqlnode.Guard{}, ai.NewLoopRuntime(), nil, nil); err != nil {
+		t.Fatalf("RegisterExecutors() error = %v", err)
+	}
+
+	if _, err := engine.NewRunner(executors).Run(context.Background(), ir, engine.Request{
+		Input: workflow.Item{JSON: map[string]any{}},
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(wrong) > 0 {
+		t.Errorf("$('IF').item paired items with another batch's: %s", strings.Join(wrong, "; "))
+	}
+	if paired+refused != 6 {
+		t.Errorf("the probe saw %d items, want the 6 the three batches produced", paired+refused)
+	}
+}
+
+// TestDollarItemStaysWithinThePortItsOriginNames covers the bound on a pointer
+// into a node with several ports. The ports' items sit end to end, so an item
+// index past the end of its own port would land on the next port's items.
+func TestDollarItemStaysWithinThePortItsOriginNames(t *testing.T) {
+	items := map[string]expression.NodeItem{
+		"IF": {
+			NodeID: "if", RunIndex: 0,
+			PortOffsets: map[string]int{"true": 0, "false": 1},
+			PortLengths: map[string]int{"true": 1, "false": 2},
+			Items:       []map[string]any{{"side": "true-0"}, {"side": "false-0"}, {"side": "false-1"}},
+			ItemOrigins: []string{"", "", ""},
+		},
+	}
+	pointsAt := func(port string, index int) workflow.Item {
+		return workflow.Item{JSON: map[string]any{}, Paired: &workflow.PairedItem{SourceNodeID: "if", SourcePort: port, ItemIndex: index}}
+	}
+
+	if got := engine.PairNodeItems(items, pointsAt("false", 1), 0)["IF"].Paired; got == nil || got["side"] != "false-1" {
+		t.Errorf("a pointer at false[1] paired with %#v, want false-1", got)
+	}
+	if got := engine.PairNodeItems(items, pointsAt("true", 1), 0)["IF"].Paired; got != nil {
+		t.Errorf("a pointer past the end of true paired with %#v, want a refusal", got)
+	}
+}
+
 // TestDollarItemDoesNotReadAnInputPositionAsAnOutputPosition guards the
 // shortcut `.item` takes when an item's origin names the referenced node.
 //
