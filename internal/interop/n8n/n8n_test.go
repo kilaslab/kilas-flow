@@ -4377,6 +4377,124 @@ func TestDataTableToolImportsBesideAnAgent(t *testing.T) {
 	}
 }
 
+// TestDataTableToolImportsItsWritesAndBlocksTheRest proves the tool's own
+// operation crosses. Insert, update, upsert and deleteRows arrive as the writes
+// this server's tool performs, with nothing said about the operation; the
+// row-exists branches and every table operation are blocking and arrive as a
+// read; and an insert that maps no column — which this server's tool would
+// answer with a read — is blocking rather than silently reading.
+func TestDataTableToolImportsItsWritesAndBlocksTheRest(t *testing.T) {
+	t.Parallel()
+	fixture := func(resource, operation, extra string) string {
+		return fmt.Sprintf(`{
+		  "name": "Table tool ops",
+		  "nodes": [
+		    {"id":"b","name":"Agent","type":"@n8n/n8n-nodes-langchain.agent","typeVersion":3.1,"position":[220,0],"parameters":{}},
+		    {"id":"c","name":"Customers","type":"n8n-nodes-base.dataTableTool","typeVersion":1,"position":[220,180],"parameters":{
+		      "resource": %q, "operation": %q,
+		      "dataTableId": {"mode":"id","value":"dt_1","cachedResultName":"T","__rl":true},
+		      "toolDescription": "Works on customers."%s
+		    }}
+		  ],
+		  "connections": {"Customers": {"ai_tool": [[{"node":"Agent","type":"ai_tool","index":0}]]}}
+		}`, resource, operation, extra)
+	}
+	const mapped = `, "columns": {"mappingMode": "defineBelow", "value": {"name": "={{ $fromAI('name', 'the customer') }}"}}`
+	const filtered = `, "filters": {"conditions": [{"keyName": "name", "condition": "eq", "keyValue": "={{ $fromAI('who') }}"}]}`
+	operationIssue := func(issues []n8n.Unsupported) *n8n.Unsupported {
+		for index := range issues {
+			if issues[index].Field == "operation" {
+				return &issues[index]
+			}
+		}
+		return nil
+	}
+
+	for _, row := range []struct{ n8nOperation, want, extra string }{
+		{"insert", "insert", mapped},
+		{"update", "update", mapped + filtered},
+		{"upsert", "upsert", mapped + filtered},
+		{"deleteRows", "delete", filtered},
+		{"get", "get", ""},
+	} {
+		result := importFixture(t, fixture("row", row.n8nOperation, row.extra))
+		tool := nodeByName(result.Document, "Customers")
+		if got := stringParameter(tool.Parameters, "operation"); got != row.want {
+			t.Errorf("%s imported as %q, want %q", row.n8nOperation, got, row.want)
+		}
+		if issue := operationIssue(result.Unsupported); issue != nil {
+			t.Errorf("%s: unexpected operation diagnostic %#v", row.n8nOperation, *issue)
+		}
+		for _, issue := range result.Unsupported {
+			if issue.Field == "columns" {
+				t.Errorf("%s: unexpected columns diagnostic %#v", row.n8nOperation, issue)
+			}
+		}
+	}
+
+	for _, row := range []struct{ resource, n8nOperation string }{
+		{"row", "rowExists"}, {"row", "rowNotExists"},
+		{"table", "create"}, {"table", "list"}, {"table", "clear"}, {"table", "update"}, {"table", "delete"},
+	} {
+		result := importFixture(t, fixture(row.resource, row.n8nOperation, ""))
+		tool := nodeByName(result.Document, "Customers")
+		issue := operationIssue(result.Unsupported)
+		if issue == nil || issue.Severity != n8n.SeverityBlocking || !strings.Contains(issue.Reason, row.n8nOperation) {
+			t.Errorf("%s/%s: operation diagnostic = %#v, want it blocking and named", row.resource, row.n8nOperation, issue)
+		}
+		if stringParameter(tool.Parameters, "resource") != "row" || stringParameter(tool.Parameters, "operation") != "get" {
+			t.Errorf("%s/%s imported as %s/%s, want the read it cannot be mistaken for a write as", row.resource, row.n8nOperation,
+				stringParameter(tool.Parameters, "resource"), stringParameter(tool.Parameters, "operation"))
+		}
+	}
+
+	result := importFixture(t, fixture("row", "insert", `, "columns": {"mappingMode": "autoMapInputData", "value": {}}`))
+	var blocked bool
+	for _, issue := range result.Unsupported {
+		if issue.Field == "columns" && issue.Severity == n8n.SeverityBlocking && strings.Contains(issue.Reason, "reads rows") {
+			blocked = true
+		}
+	}
+	if !blocked {
+		t.Errorf("an insert tool that maps no column imported without a blocking diagnostic: %#v", result.Unsupported)
+	}
+}
+
+// TestDataTableToolExportsTheOperationItPerforms proves a tool leaves as what
+// it does on this server: one naming no operation, and an insert with nothing
+// to write, both read here, and n8n would run either as an insert.
+func TestDataTableToolExportsTheOperationItPerforms(t *testing.T) {
+	t.Parallel()
+	tool := func(name string, extra map[string]any) workflow.Node {
+		parameters := map[string]any{
+			"toolDescription": "Works on customers.", "resource": "row",
+			"dataTableId": map[string]any{"__rl": true, "mode": "id", "value": "ds_1"},
+		}
+		for key, value := range extra {
+			parameters[key] = value
+		}
+		return workflow.Node{ID: name, Name: name, Type: "kilasflow.datastoreTool", TypeVersion: workflow.V(1), Parameters: parameters}
+	}
+	document := workflow.Document{Nodes: []workflow.Node{
+		tool("Unnamed", nil),
+		tool("Legacy", map[string]any{"operation": "insert"}),
+		tool("Writer", map[string]any{"operation": "insert", "columns": map[string]any{
+			"mappingMode": "defineBelow",
+			"value":       map[string]any{"name": map[string]any{"mode": "expression", "value": "{{ $fromAI('name') }}"}},
+		}}),
+	}}
+	exported, err := n8n.Export(document, registry(t))
+	if err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+	want := map[string]string{"Unnamed": "get", "Legacy": "get", "Writer": "insert"}
+	for _, node := range exported.Document.Nodes {
+		if got := node.Parameters["operation"]; got != want[node.Name] {
+			t.Errorf("%s exported operation %v, want %s", node.Name, got, want[node.Name])
+		}
+	}
+}
+
 // TestDataTableRoundTripPreservesOperationsAndConnections proves an imported
 // Data Table workflow goes back to n8n with its operations under n8n's names
 // — rename included — and with every connection that touched it intact. The

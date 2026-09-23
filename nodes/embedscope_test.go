@@ -149,9 +149,32 @@ func TestEmbedScopeIssuesBoundsTheDataTableToolNode(t *testing.T) {
 		t.Fatal("an agent tool bound to a sibling table was allowed")
 	}
 	allowed := embed.Confinement{Datastores: []embed.DatastoreRef{{ID: "ds_sibling"}}}
-	// A tool is read-only, so the table binding is the whole of its authority.
 	if issues := EmbedScopeIssues(document, allowed); len(issues) != 0 {
 		t.Fatalf("issues = %v, want none inside the confinement", issues)
+	}
+
+	// The tool writes as the step node does, so it answers to the same
+	// operation check: a row write inside the confinement is allowed, and a
+	// table operation is refused whatever the confinement names.
+	for _, operation := range []string{DatastoreOperationInsert, DatastoreOperationUpdate, DatastoreOperationDelete} {
+		writer := workflow.Document{Nodes: []workflow.Node{
+			embedTestNode(DatastoreToolNodeType, "tool", map[string]any{
+				"operation": operation, "dataTableId": embedTestLocator("id", "ds_sibling"),
+			}),
+		}}
+		if issues := EmbedScopeIssues(writer, allowed); len(issues) != 0 {
+			t.Errorf("issues = %v, want a %s tool inside the confinement allowed", issues, operation)
+		}
+	}
+	for _, operation := range []string{DatastoreOperationClearTable, DatastoreOperationDeleteTable, DatastoreOperationListTables} {
+		manager := workflow.Document{Nodes: []workflow.Node{
+			embedTestNode(DatastoreToolNodeType, "tool", map[string]any{
+				"operation": operation, "dataTableId": embedTestLocator("id", "ds_sibling"),
+			}),
+		}}
+		if issues := EmbedScopeIssues(manager, allowed); len(issues) == 0 {
+			t.Errorf("a tool performing the table operation %q was allowed for an embed session", operation)
+		}
 	}
 }
 

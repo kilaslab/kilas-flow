@@ -929,22 +929,114 @@ const (
 	datastoreToolMaxBytes     = 256 * 1024
 )
 
+// datastoreToolLegacyInsertHint is the rule an editor-built tool from before
+// writes existed depends on, said where the editor shows it.
+const datastoreToolLegacyInsertHint = "An Insert with no column values reads rows instead; set Operation to Get to make that explicit, or map columns to write."
+
+// datastoreToolOperations are the row operations a tool performs: the read,
+// and the four writes a model drives through $fromAI. Increment and the two
+// branches stay on the step node — a counter a model bumps by guessing is a
+// lost update, and a tool has one output, never a fork — and a tool never
+// manages tables.
+var datastoreToolOperations = map[string]bool{
+	DatastoreOperationGet: true, DatastoreOperationInsert: true,
+	DatastoreOperationUpdate: true, DatastoreOperationUpsert: true,
+	DatastoreOperationDelete: true,
+}
+
 // datastoreToolNode exposes the data table as an agent tool, derived from
 // the ordinary node rather than re-declared: same parameters, same locator,
-// differing only in ports, tool naming, and picker filing.
+// differing only in ports, tool naming, picker filing, and the operations a
+// tool performs.
 func datastoreToolNode() node.Definition {
-	definition := toolVariantOf(datastoreNode(), DatastoreToolNodeType, "Data table Tool", "Reads rows from a KilasFlow data table for an AI Agent.", DatastoreToolExecutorID)
+	definition := toolVariantOf(datastoreNode(), DatastoreToolNodeType, "Data table Tool",
+		"Reads and writes rows in a KilasFlow data table for an AI Agent. "+datastoreToolLegacyInsertHint, DatastoreToolExecutorID)
 	// The branch operations' second output belongs to the step node: a tool
 	// emits one descriptor on one port, never a fork.
 	definition.PortsFor = nil
+	definition.Parameters = datastoreToolParameters(definition.Parameters)
 	definition.Validate = validateDatastoreToolConfiguration
 	return definition
 }
 
-// validateDatastoreToolConfiguration checks the tool's own binding. The tool
-// is read-only: it binds one table and answers filtered reads, so the step
-// node's resource and operation stay on the step and the tool ignores them
-// rather than carrying a second operation list to drift apart.
+// datastoreToolParameters narrows the inherited resource and operation to
+// what a tool performs, and defaults the operation to get.
+//
+// The default is get, not the step node's insert: a tool that names no
+// operation has always read, and honouring insert there would turn every such
+// tool into a writer on its next run. Each narrowed property is a fresh value
+// with its own option slice, so nothing here can reach back into the step
+// node's definition.
+func datastoreToolParameters(inherited []node.PropertyDefinition) []node.PropertyDefinition {
+	parameters := make([]node.PropertyDefinition, 0, len(inherited)+1)
+	for _, declared := range inherited {
+		switch declared.Key {
+		case "resource":
+			declared.Options = []node.PropertyOption{{Label: "Row", Value: datastoreResourceRow}}
+		case "operation":
+			options := make([]node.PropertyOption, 0, len(datastoreToolOperations))
+			for _, option := range declared.Options {
+				if datastoreToolOperations[option.Value] {
+					options = append(options, option)
+				}
+			}
+			declared.Options = options
+			declared.Default = DatastoreOperationGet
+			declared.Description = "What the tool does with its table. Get reads rows; the writes take their values from $fromAI. " +
+				datastoreToolLegacyInsertHint
+			parameters = append(parameters, declared, node.PropertyDefinition{
+				Key: "legacyInsertNotice", Label: "An Insert with nothing to write reads", Kind: node.PropertyNotice,
+				Description: datastoreToolLegacyInsertHint,
+				VisibleWhen: datastoreShownFor(DatastoreOperationInsert),
+			})
+			continue
+		}
+		parameters = append(parameters, declared)
+	}
+	return parameters
+}
+
+// DatastoreToolOperation is the operation a datastore tool with these
+// parameters performs, which is not always the one it stores.
+//
+// Legacy compatibility, and the one place it is decided: an Insert that
+// declares nothing to write reads, exactly as the tool did before it wrote
+// anything. Every tool dropped on the canvas until writes existed was stored
+// with the step node's default operation, insert, and was used as a read —
+// its author could not have meant an insert, because the tool never inserted,
+// and an insert that writes nothing is never what anyone means. Turning those
+// into writers would insert an empty row on every call and take away the read
+// the agent was built around. Update and upsert get no such reading: nobody
+// reached either by default, so one that writes nothing is refused instead.
+//
+// Exported for the n8n adapter, which must know which imported tools this
+// rule would turn into reads.
+func DatastoreToolOperation(parameters map[string]any) string {
+	operation := strings.TrimSpace(textValue(parameters["operation"], DatastoreOperationGet))
+	if operation == DatastoreOperationInsert && !datastoreToolWritesValues(parameters) {
+		return DatastoreOperationGet
+	}
+	return operation
+}
+
+// datastoreToolWritesValues reports whether a tool declares something to
+// write: a column value mapped by hand, or a $fromAI call in the mapping for
+// the model to fill. A mapped column left empty declares nothing, the way the
+// mapper's own required-column check reads it.
+func datastoreToolWritesValues(parameters map[string]any) bool {
+	if mapping, ok := property.ReadMapping(parameters["columns"]); ok && mapping.Mode == property.MappingManual {
+		for _, value := range mapping.Values {
+			if value != nil && value != "" {
+				return true
+			}
+		}
+	}
+	calls, err := ai.ExtractFromAI(map[string]any{"columns": parameters["columns"]})
+	return err == nil && len(calls) > 0
+}
+
+// validateDatastoreToolConfiguration checks the tool's own binding and then
+// the operation it performs, by the step node's own rules.
 func validateDatastoreToolConfiguration(n workflow.Node) error {
 	if err := validateToolNameAndDescription(n); err != nil {
 		return err
@@ -959,14 +1051,81 @@ func validateDatastoreToolConfiguration(n workflow.Node) error {
 	if expression.IsExpression(locator.Value) {
 		return fmt.Errorf("a datastore tool needs a fixed data table, not an expression")
 	}
+	if err := checkDatastoreToolOperation(n.Parameters); err != nil {
+		return err
+	}
+	return validateToolFromAI(n)
+}
+
+// checkDatastoreToolOperation holds a tool to what it performs. It runs at
+// save and again when the tool is built, because a document can reach the
+// executor without passing validation: an import, a direct repository write,
+// a workflow saved before the rule existed.
+func checkDatastoreToolOperation(parameters map[string]any) error {
+	if resource := textValue(parameters["resource"], datastoreResourceRow); resource != datastoreResourceRow {
+		return fmt.Errorf("a datastore tool acts on rows; resource %q is not one it supports", resource)
+	}
+	stored := strings.TrimSpace(textValue(parameters["operation"], DatastoreOperationGet))
+	if !datastoreToolOperations[stored] {
+		return fmt.Errorf("a datastore tool gets, inserts, updates, upserts or deletes rows; operation %q is not one of them", stored)
+	}
+	operation := DatastoreToolOperation(parameters)
+	if (operation == DatastoreOperationUpdate || operation == DatastoreOperationUpsert) && !datastoreToolWritesValues(parameters) {
+		return fmt.Errorf("a datastore tool that runs %s needs the values it writes: map at least one column, "+
+			"with $fromAI for what the model supplies; to read rows, set the operation to Get", operation)
+	}
+	if err := refuseDatastoreToolFromAIColumns(parameters); err != nil {
+		return err
+	}
+	// The step node's own rules for the operation the tool performs — a
+	// matching write needs a condition, column names are literal — so the
+	// tool and the step can never disagree about what is a valid write. The
+	// copy carries the resolved operation: the step node's missing-operation
+	// default is insert, which is exactly what a tool must not inherit.
+	resolved := make(map[string]any, len(parameters)+2)
+	for key, value := range parameters {
+		resolved[key] = value
+	}
+	resolved["resource"] = datastoreResourceRow
+	resolved["operation"] = operation
+	return validateDatastoreConfiguration(workflow.Node{Parameters: resolved})
+}
+
+// refuseDatastoreToolFromAIColumns refuses a $fromAI call where a column name
+// goes: a condition's keyName, or a matching column. Column names are
+// literal-only on the step node, and the check that enforces it sees only
+// expression markers — a bare $fromAI in a plain string is not one, yet the
+// tool would substitute the model's argument into it, letting the model choose
+// which column a delete filters on.
+func refuseDatastoreToolFromAIColumns(parameters map[string]any) error {
+	names := func(value string) bool {
+		return strings.Contains(strings.ToLower(value), "$fromai")
+	}
+	conditions, err := datastoreFilterRows(parameters["filters"])
+	if err != nil {
+		return err
+	}
+	for index, condition := range conditions {
+		if names(condition.KeyName) {
+			return fmt.Errorf("filters.conditions[%d].keyName calls $fromAI, and a column name is never the model's to choose", index)
+		}
+	}
+	if mapping, ok := property.ReadMapping(parameters["columns"]); ok {
+		for _, column := range mapping.MatchingColumns {
+			if names(column) {
+				return fmt.Errorf("columns.matchingColumns calls $fromAI, and a column name is never the model's to choose")
+			}
+		}
+	}
 	return nil
 }
 
 // DatastoreToolExecutor emits the descriptor that exposes one data table to
-// an AI Agent. The descriptor carries the table id and its frozen column
-// list — never rows, and no secret, since the store needs no credential.
-// That item is persisted in the execution record and streamed to the live
-// feed, which is why only the identifier travels.
+// an AI Agent. The descriptor carries the table id, its frozen column list,
+// the operation the tool performs and the node's parameters — never rows,
+// and no secret, since the store needs no credential. That item is persisted
+// in the execution record and streamed to the live feed, which is why the
+// table travels as its identifier and never as its contents.
 type DatastoreToolExecutor struct {
 	store DatastoreStore
 }
@@ -999,6 +1158,12 @@ func (executor *DatastoreToolExecutor) Execute(ctx context.Context, ir workflow.
 	if expression.IsExpression(locator.Value) {
 		return nil, fmt.Errorf("node %q: a datastore tool needs a fixed data table, not an expression", ir.Name)
 	}
+	if err := checkDatastoreToolOperation(ir.Parameters); err != nil {
+		return nil, fmt.Errorf("node %q: %w", ir.Name, err)
+	}
+	if _, err := ai.ExtractFromAI(ir.Parameters); err != nil {
+		return nil, fmt.Errorf("node %q: %w", ir.Name, err)
+	}
 	id, err := datastoreToolID(ctx, executor.store, tenant, locator)
 	if err != nil {
 		return nil, fmt.Errorf("node %q: %w", ir.Name, err)
@@ -1011,6 +1176,12 @@ func (executor *DatastoreToolExecutor) Execute(ctx context.Context, ir workflow.
 	for _, column := range definition.Columns {
 		columns = append(columns, map[string]any{"name": column.Name, "type": string(column.Type)})
 	}
+	// The parameters travel as the workflow tool's do: a write substitutes
+	// the model's $fromAI arguments into them and runs the step executor.
+	parameters := make(map[string]any, len(ir.Parameters))
+	for key, value := range ir.Parameters {
+		parameters[key] = value
+	}
 	return workflow.NodeOutput{{{JSON: map[string]any{descriptorKey: map[string]any{
 		"kind":          toolKindDatastore,
 		"name":          toolNameFor(ir),
@@ -1019,6 +1190,8 @@ func (executor *DatastoreToolExecutor) Execute(ctx context.Context, ir workflow.
 		"datastoreId":   definition.ID,
 		"datastoreName": definition.Name,
 		"columns":       columns,
+		"operation":     DatastoreToolOperation(ir.Parameters),
+		"parameters":    parameters,
 	}}}}}, nil
 }
 
@@ -1084,9 +1257,9 @@ func datastoreToolColumns(value any) []datastoreToolColumn {
 	return columns
 }
 
-// datastoreTool reads rows of its bound table for the model. The table is
-// fixed at construction: the schema carries no datastore identifier, and
-// Invoke takes none, so an argument naming another table changes nothing.
+// datastoreTool reads or writes rows of its bound table for the model. The
+// table is fixed at construction: the schema carries no datastore identifier,
+// and Invoke takes none, so an argument naming another table changes nothing.
 type datastoreTool struct {
 	name          string
 	description   string
@@ -1097,6 +1270,17 @@ type datastoreTool struct {
 	datastoreName string
 	columns       []datastoreToolColumn
 	store         DatastoreStore
+	// operation is what the tool performs: get, or one of the writes.
+	operation string
+	// parameters is the node's own configuration, the template a write
+	// substitutes the model's $fromAI arguments into. Never written to.
+	parameters map[string]any
+	request    engine.Request
+}
+
+// writes reports whether the tool performs a write rather than the read.
+func (tool *datastoreTool) writes() bool {
+	return tool.operation != DatastoreOperationGet
 }
 
 // datastoreToolOperators is the fixed vocabulary a filter condition may use,
@@ -1106,15 +1290,15 @@ var datastoreToolOperators = []string{"eq", "neq", "like", "ilike", "gt", "gte",
 // Definition describes the tool to the model.
 //
 // Unlike httpRequestTool's open input object — one untyped property the model
-// fills wholesale — this schema is closed: every structural choice is an
+// fills wholesale — the read schema is closed: every structural choice is an
 // enum over the bound table's own columns and the fixed operator vocabulary,
 // and only the compared values are free. The schema is a hint a provider may
 // ignore, so Invoke re-checks every column and operator before any statement
 // is built.
 func (tool *datastoreTool) Definition() ai.ToolDefinition {
-	names := make([]string, 0, len(tool.columns))
-	for _, column := range tool.columns {
-		names = append(names, column.Name)
+	names := tool.columnNames()
+	if tool.writes() {
+		return tool.writeDefinition(names)
 	}
 	description := tool.description
 	if tool.datastoreName != "" {
@@ -1167,6 +1351,35 @@ func (tool *datastoreTool) Definition() ai.ToolDefinition {
 	}
 }
 
+// writeDefinition describes a write. The schema is derived rather than
+// hand-written, as httpRequestTool's is: every $fromAI call in the parameters
+// contributes a typed property carrying its description, and nothing else is
+// offered. It is closed like the read schema — a write whose parameters call
+// $fromAI nowhere takes no arguments at all — and Invoke enforces the same
+// closure, since a provider may ignore the schema.
+func (tool *datastoreTool) writeDefinition(names []string) ai.ToolDefinition {
+	parameters := map[string]any{"type": "object", "properties": map[string]any{}}
+	if calls, err := ai.ExtractFromAI(tool.parameters); err == nil && len(calls) > 0 {
+		parameters = ai.FromAISchema(calls)
+	}
+	parameters["additionalProperties"] = false
+	description := tool.description
+	if tool.datastoreName != "" {
+		table := strconv.Quote(tool.datastoreName) + " data table (columns: " + strings.Join(names, ", ") + ")"
+		switch tool.operation {
+		case DatastoreOperationInsert:
+			description += " Inserts one row into the " + table + "."
+		case DatastoreOperationUpdate:
+			description += " Updates the matching rows of the " + table + "."
+		case DatastoreOperationUpsert:
+			description += " Updates the matching rows of the " + table + ", or inserts one when none match."
+		case DatastoreOperationDelete:
+			description += " Deletes the matching rows from the " + table + "."
+		}
+	}
+	return ai.ToolDefinition{Name: tool.name, Description: description, Parameters: parameters}
+}
+
 // datastoreToolArgs is one tool call's arguments. Unknown fields — including
 // a datastore identifier, which the schema never declares — decode to
 // nothing: the call always reads the bound table.
@@ -1183,13 +1396,17 @@ type datastoreToolCallCond struct {
 	Value      any    `json:"value"`
 }
 
-// Invoke runs one filtered read against the bound table and returns the rows
+// Invoke runs the tool's operation against the bound table: a write goes to
+// invokeWrite, and the read below runs one filtered read and returns the rows
 // as data. A row whose contents read as an instruction is returned as data
 // like any other value: it widens neither the schema nor what the next call
 // accepts, because neither is ever derived from row contents.
 func (tool *datastoreTool) Invoke(ctx context.Context, arguments json.RawMessage) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
+	}
+	if tool.writes() {
+		return tool.invokeWrite(ctx, arguments)
 	}
 	var args datastoreToolArgs
 	if len(bytes.TrimSpace(arguments)) > 0 {
@@ -1248,6 +1465,82 @@ func (tool *datastoreTool) Invoke(ctx context.Context, arguments json.RawMessage
 	}
 	if len(encoded) > datastoreToolMaxBytes {
 		return "", fmt.Errorf("node %q: tool %q: the result is %d bytes, past the %d-byte cap: narrow the filter or lower the limit", tool.agentNode, tool.name, len(encoded), datastoreToolMaxBytes)
+	}
+	return string(encoded), nil
+}
+
+// invokeWrite runs one write through the step node's own executor, so the
+// tool inherits the mapper, the condition rules and the whole-table refusal
+// rather than reimplementing any of them.
+//
+// Three things are fixed before the model's arguments reach it. Only the keys
+// the parameters declare through $fromAI cross — the schema is closed, and a
+// provider that ignores it cannot widen what an automatic mapping writes. The
+// substitution goes into a copy, never into the tool's own template, for the
+// reason httpRequestTool's does: a template overwritten by the first call
+// repeats that call forever. And the table is pinned to the one the
+// descriptor resolved, by id, so the table the schema describes is the table
+// written — a rename between build and call cannot move it, and no argument
+// can.
+//
+// A failure returns as a tool error, never as a result the model could read
+// as success.
+func (tool *datastoreTool) invokeWrite(ctx context.Context, arguments json.RawMessage) (string, error) {
+	supplied := map[string]any{}
+	if len(bytes.TrimSpace(arguments)) > 0 {
+		if err := json.Unmarshal(arguments, &supplied); err != nil {
+			return "", fmt.Errorf("node %q: tool %q: invalid arguments: %w", tool.agentNode, tool.name, err)
+		}
+	}
+	calls, err := ai.ExtractFromAI(tool.parameters)
+	if err != nil {
+		return "", fmt.Errorf("node %q: tool %q: %w", tool.agentNode, tool.name, err)
+	}
+	declared := make(map[string]any, len(calls))
+	for _, call := range calls {
+		if value, present := supplied[call.Key]; present {
+			declared[call.Key] = value
+		}
+	}
+	parameters, err := ai.SubstituteFromAI(tool.parameters, declared)
+	if err != nil {
+		return "", fmt.Errorf("node %q: tool %q: %w", tool.agentNode, tool.name, err)
+	}
+	parameters["resource"] = datastoreResourceRow
+	parameters["operation"] = tool.operation
+	parameters["dataTableId"] = property.WriteLocator(property.Locator{Mode: "id", Value: tool.datastoreID})
+	node := workflow.IRNode{
+		ID: tool.agentNode + ":" + tool.name, Name: tool.nodeName,
+		Type: DatastoreNodeType, TypeVersion: DatastoreVersion, Parameters: parameters,
+		Definition: workflow.NodeDefinition{
+			Type: DatastoreNodeType, Version: DatastoreVersion,
+			Outputs: mainOutput(), ExecutorID: DatastoreExecutorID,
+		},
+	}
+	output, err := NewDatastoreExecutor(tool.store).Execute(ctx, node, workflow.NodeInput{"main": {{JSON: declared}}}, tool.request)
+	if err != nil {
+		return "", fmt.Errorf("node %q: tool %q: %w", tool.agentNode, tool.name, err)
+	}
+	rows := make([]any, 0)
+	if len(output) > 0 {
+		for _, item := range output[0] {
+			rows = append(rows, item.JSON)
+		}
+	}
+	result := map[string]any{"operation": tool.operation, "affected": len(rows), "rows": rows, "truncated": false}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		return "", fmt.Errorf("node %q: tool %q: encode tool result: %w", tool.agentNode, tool.name, err)
+	}
+	if len(encoded) > datastoreToolMaxBytes {
+		// The write has committed, so the cap cannot be a failure the way it
+		// is for a read: that would tell the model its write did not happen.
+		// The count stays and the rows go.
+		result["rows"] = []any{}
+		result["truncated"] = true
+		if encoded, err = json.Marshal(result); err != nil {
+			return "", fmt.Errorf("node %q: tool %q: encode tool result: %w", tool.agentNode, tool.name, err)
+		}
 	}
 	return string(encoded), nil
 }

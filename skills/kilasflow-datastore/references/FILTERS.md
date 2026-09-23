@@ -2,7 +2,7 @@
 
 A filter is what says which rows a read, update, delete, upsert or increment
 acts on. It is one grammar everywhere: the management API's read, the node's
-conditions panel and the read-only agent tool all compile to it
+conditions panel and the agent tool's reads all compile to it
 (internal/datastore/filter.go).
 
 ## The two shapes

@@ -80,13 +80,11 @@ func EmbedScopeIssues(document workflow.Document, confinement embed.Confinement)
 			}
 		}
 		switch node.Type {
-		case DatastoreNodeType:
+		case DatastoreNodeType, DatastoreToolNodeType:
+			// The agent tool writes as the step node does — insert, update,
+			// upsert and delete — so it answers to the same two checks: no
+			// table operation, and one table inside the confinement.
 			issues = append(issues, datastoreOperationIssues(node)...)
-			issues = append(issues, datastoreTargetIssues(node, confinement)...)
-		case DatastoreToolNodeType:
-			// An agent tool binds one table and answers filtered reads. It has
-			// no operation of its own — reads are the whole of it — so only the
-			// table it names has to be inside the confinement.
 			issues = append(issues, datastoreTargetIssues(node, confinement)...)
 		}
 	}

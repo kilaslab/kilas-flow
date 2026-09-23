@@ -3060,8 +3060,10 @@ func (tool *vectorStoreTool) Invoke(ctx context.Context, arguments json.RawMessa
 }
 
 // datastoreToolFrom wraps a datastore tool descriptor as a callable tool. The
-// call reads through the deployment's own row store scoped to the execution's
-// tenant, so it inherits tenant isolation rather than reimplementing it.
+// call reads or writes through the deployment's own row store scoped to the
+// execution's tenant, so it inherits tenant isolation rather than
+// reimplementing it. A descriptor that names no operation reads, as every
+// descriptor did before the tool wrote.
 func (executor *AgentExecutor) datastoreToolFrom(ir workflow.IRNode, descriptor map[string]any, request engine.Request) (ai.Tool, error) {
 	name := textValue(descriptor["name"], "")
 	if name == "" {
@@ -3083,6 +3085,15 @@ func (executor *AgentExecutor) datastoreToolFrom(ir workflow.IRNode, descriptor 
 	if len(columns) == 0 {
 		return nil, fmt.Errorf("node %q: tool %q carries no columns", ir.Name, nodeName)
 	}
+	operation := textValue(descriptor["operation"], DatastoreOperationGet)
+	if !datastoreToolOperations[operation] {
+		return nil, fmt.Errorf("node %q: tool %q carries operation %q, which a datastore tool does not perform", ir.Name, nodeName, operation)
+	}
+	parameters, _ := descriptor["parameters"].(map[string]any)
+	if operation != DatastoreOperationGet && parameters == nil {
+		// A write without its template has nothing to say what it writes.
+		return nil, fmt.Errorf("node %q: tool %q runs %s but carries no parameters", ir.Name, nodeName, operation)
+	}
 	return &datastoreTool{
 		name:          name,
 		description:   textValue(descriptor["description"], ""),
@@ -3093,6 +3104,9 @@ func (executor *AgentExecutor) datastoreToolFrom(ir workflow.IRNode, descriptor 
 		datastoreName: textValue(descriptor["datastoreName"], ""),
 		columns:       columns,
 		store:         executor.datastore,
+		operation:     operation,
+		parameters:    parameters,
+		request:       request,
 	}, nil
 }
 
