@@ -252,11 +252,14 @@ until somebody deliberately permits it.
   so its saves and runs carry KilasFlow's own origin. Those pass only
   with the `X-KilasFlow-Embed-Parent` header the frame sets from the
   host origin it verified during the handshake, and only when that is
-  the origin the token was minted for, so another page that frames the
-  editor cannot spend your token. A request with no `Origin` header at
-  all skips the per-request check: browsers leave it off same-origin
-  reads, which is how the editor loads, and a non-browser client can
-  leave it off anything.
+  the origin the token was minted for. The frame sends that header on
+  every request, its reads included, and a header naming any other
+  origin is refused whether or not the request carries an `Origin`, so
+  an editor that another page frames and hands your token can neither
+  read, save nor run with it. A request with neither an `Origin` nor an
+  `X-KilasFlow-Embed-Parent` header skips the per-request check:
+  browsers leave `Origin` off same-origin reads, and a non-browser
+  client can leave both off anything.
 - **Minutes, not hours.** Fifteen by default (an operator changes the
   default with `embed.session_ttl`), thirty maximum; a longer request is
   clamped, not refused. The setting is a default, not a ceiling: a host
@@ -409,6 +412,11 @@ datastore the backend provisioned.
   `Host` and scheme (TLS or `X-Forwarded-Proto`), so a rewritten `Host`
   makes every save and run answer 403 "This embed session is not allowed
   from that origin." while loading still works.
+- `KILASFLOW_SERVER_PUBLIC_URL` also set for any deployment that browsers
+  reach but the internet does not. With it empty, KilasFlow takes its own
+  origin from the request's `Host`, and a page that rebinds its own
+  domain name to KilasFlow's private address sends that domain as `Host`,
+  so its own requests read as the editor's.
 - One `kfa1_…` key per customer, stored as hashes server-side, shown in
   full exactly once at creation. Rotate by minting the new key, building
   a new client with it, and directing new work at the new client;

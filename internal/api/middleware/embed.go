@@ -71,9 +71,17 @@ func EmbedAuth(verifier EmbedVerifier, publicURL string) func(http.Handler) http
 // originPermitted says whether a request may spend this session from where it
 // was sent.
 //
-// A request with no Origin passes, because a browser omits it on a same-origin
-// GET and the editor's reads are exactly that. The host page the session was
-// minted for passes by its own origin.
+// A request that names a parent the session was not minted for is refused
+// before anything else is asked. Only the editor frame sends
+// X-KilasFlow-Embed-Parent, and it sends it on every request, its reads
+// included; the dashboard, an event stream and a non-browser client never do.
+// A read carries no Origin, so without this another allowlisted page that
+// framed the editor and handed it this host's token could read whatever the
+// token reads, even though it could not save or run.
+//
+// A request with no Origin otherwise passes, because a browser omits it on a
+// same-origin GET and the editor's reads are exactly that. The host page the
+// session was minted for passes by its own origin.
 //
 // The editor iframe is the third caller, and the awkward one. It is served by
 // this instance, so its saves and runs carry this instance's origin and not the
@@ -90,6 +98,9 @@ func EmbedAuth(verifier EmbedVerifier, publicURL string) func(http.Handler) http
 // Browsers send that header only to secure origins, so it is checked when
 // present and never required.
 func originPermitted(r *http.Request, session embed.Session, publicURL string) bool {
+	if parents := r.Header.Values("X-KilasFlow-Embed-Parent"); len(parents) > 0 && !session.MatchesOrigin(parents[0]) {
+		return false
+	}
 	origin := r.Header.Get("Origin")
 	if origin == "" || session.MatchesOrigin(origin) {
 		return true

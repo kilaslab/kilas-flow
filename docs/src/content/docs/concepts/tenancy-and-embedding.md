@@ -172,16 +172,20 @@ serves it, so its saves and runs carry KilasFlow's own origin and not the host's
 `server.public_url` when that is set, otherwise the request's scheme and `Host`.
 That origin passes only when the frame's `X-KilasFlow-Embed-Parent` header names
 the session's origin. The frame sets the header from the `event.origin` of the
-session message it accepted, which the browser vouches for. So a different page
-that frames the editor and hands it a token minted for another host is refused,
-the same as any foreign page. When the browser sends `Sec-Fetch-Site`, it must
-say `same-origin`. Browsers send that header only to secure origins, so it is
-never required.
+session message it accepted, which the browser vouches for, and sends it on every
+request, its reads included. A request whose header names any origin but the
+session's is refused before its `Origin` is looked at. So a different page that
+frames the editor and hands it a token minted for another host is refused on
+every request the frame makes, reads as well as saves and runs, the same as any
+foreign page. When the browser sends `Sec-Fetch-Site`, it must say `same-origin`.
+Browsers send that header only to secure origins, so it is never required.
 
-One caveat worth knowing: a request that sends **no** `Origin` header skips the
-per-request check. A browser leaves it off a same-origin read, which is how the
-editor loads its workflow. It does not leave it off a cross-origin request, but
-a non-browser client can.
+One caveat worth knowing: a request that sends **neither** an `Origin` nor an
+`X-KilasFlow-Embed-Parent` header skips the per-request check. A browser leaves
+`Origin` off a same-origin read, which is how the editor loads its workflow, and
+the editor's reads pass on the parent they name. A browser does not leave
+`Origin` off a cross-origin request, but a non-browser client can leave off
+both.
 
 ### The handshake
 

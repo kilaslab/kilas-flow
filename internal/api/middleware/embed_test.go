@@ -156,6 +156,12 @@ func TestEmbedAuthAdmitsTheEditorsOwnOriginOnlyForTheSessionsHost(t *testing.T) 
 		want      bool
 	}{
 		{"no origin, as a same-origin read sends", "", map[string]string{}, true},
+		// The frame names its parent on every request, reads included, and a
+		// read carries no Origin: another allowlisted page framing the editor
+		// with the host's token is refused on the parent alone.
+		{"no origin from a frame another page completed the handshake with", "", map[string]string{parent: "https://other.example"}, false},
+		{"no origin from a frame the host completed the handshake with", "", map[string]string{parent: host}, true},
+		{"no origin from a frame naming an unparseable parent", "", map[string]string{parent: "null"}, false},
 		{"the host page itself", "", map[string]string{"Origin": host}, true},
 		{"a foreign page", "", map[string]string{"Origin": "https://evil.example"}, false},
 		{"the editor naming the host", "", map[string]string{"Origin": editor, parent: host}, true},
@@ -171,30 +177,34 @@ func TestEmbedAuthAdmitsTheEditorsOwnOriginOnlyForTheSessionsHost(t *testing.T) 
 		{"the public URL's origin", "https://flows.example/kilasflow/", map[string]string{"Origin": "https://flows.example", parent: host}, true},
 		{"the request's own host once a public URL is set", "https://flows.example", map[string]string{"Origin": editor, parent: host}, false},
 	} {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-			reached := false
-			handler := EmbedAuth(verifier, test.publicURL)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				reached = true
-				w.WriteHeader(http.StatusOK)
-			}))
-			request := httptest.NewRequest(http.MethodPut, "/api/v1/workflows/wf_1", nil)
-			request.Header.Set("X-KilasFlow-Embed", "kfe1.token")
-			for name, value := range test.headers {
-				request.Header.Set(name, value)
-			}
-			recorder := httptest.NewRecorder()
-			handler.ServeHTTP(recorder, request)
+		// The origin rule does not depend on the method, so every row is sent
+		// as a read and as a write.
+		for _, method := range []string{http.MethodGet, http.MethodPut} {
+			t.Run(test.name+" ("+method+")", func(t *testing.T) {
+				t.Parallel()
+				reached := false
+				handler := EmbedAuth(verifier, test.publicURL)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					reached = true
+					w.WriteHeader(http.StatusOK)
+				}))
+				request := httptest.NewRequest(method, "/api/v1/workflows/wf_1", nil)
+				request.Header.Set("X-KilasFlow-Embed", "kfe1.token")
+				for name, value := range test.headers {
+					request.Header.Set(name, value)
+				}
+				recorder := httptest.NewRecorder()
+				handler.ServeHTTP(recorder, request)
 
-			if reached != test.want {
-				t.Fatalf("reached = %v, want %v (status %d, body %s)", reached, test.want, recorder.Code, recorder.Body)
-			}
-			// A refusal reads exactly as it always has: a host page that
-			// matches on the sentence must not break.
-			if !test.want && (recorder.Code != http.StatusForbidden ||
-				!strings.Contains(recorder.Body.String(), `"This embed session is not allowed from that origin."`)) {
-				t.Errorf("refusal = %d %s, want 403 with the origin sentence", recorder.Code, recorder.Body)
-			}
-		})
+				if reached != test.want {
+					t.Fatalf("reached = %v, want %v (status %d, body %s)", reached, test.want, recorder.Code, recorder.Body)
+				}
+				// A refusal reads exactly as it always has: a host page that
+				// matches on the sentence must not break.
+				if !test.want && (recorder.Code != http.StatusForbidden ||
+					!strings.Contains(recorder.Body.String(), `"This embed session is not allowed from that origin."`)) {
+					t.Errorf("refusal = %d %s, want 403 with the origin sentence", recorder.Code, recorder.Body)
+				}
+			})
+		}
 	}
 }
