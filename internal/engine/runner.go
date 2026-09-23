@@ -281,6 +281,12 @@ type Request struct {
 	// execution, counting from zero, backing `$runIndex`. The runner sets it
 	// per invocation.
 	RunIndex int
+	// TolerateItemFailures reports that the node's failures are tolerated
+	// (its onError is not stop). A whole-batch node that runs its items one
+	// at a time then runs every item and reports which failed as
+	// ItemOutcomes, rather than stopping at the first failure. The runner
+	// sets it per invocation.
+	TolerateItemFailures bool
 }
 
 // BinaryStore is the slice of the payload store an executor may use.
@@ -1119,6 +1125,19 @@ func (runner *Runner) runNode(ctx context.Context, graph preparedGraph, request 
 		return suspendWithCheckpoint(suspended, node.ID, input, attempt, state, request)
 	}
 	if cause != nil {
+		// A whole-batch node that ran its items one at a time and says which
+		// failed continues past them, as n8n does inside its item loop.
+		if outcomes, ok := toleratedOutcomes(cause, policy, input); ok {
+			assembled := assembleOutcomes(node, input, outcomes, policy.onError)
+			run := NodeRun{NodeID: node.ID, Input: cloneInput(input), Error: outcomes.first(), Attempt: attempt, ErrorCode: "node.partial",
+				Response: capture.response, Console: capture.consoleOutput()}
+			if outcomes.failed() == len(outcomes) {
+				run.ErrorCode = "node.failed"
+			}
+			stampProvenance(node, graph.incoming[node.ID], input, assembled, len(state.runs[node.ID]))
+			state.complete(graph, node, input, assembled, run, request)
+			return nil, nil
+		}
 		if policy.onError == errorStop {
 			// The console is kept on a failure too: what the code printed
 			// before it failed is usually how its author finds out why.
@@ -1189,6 +1208,7 @@ func (runner *Runner) invoke(ctx context.Context, node workflow.IRNode, input wo
 		// The run this invocation belongs to, which `$runIndex` reads. It is
 		// the index the trace row will get once the run completes.
 		execution.RunIndex = state.executions[node.ID]
+		execution.TolerateItemFailures = policy.onError != errorStop
 		// The node's events are wrapped so an answer it produces is captured
 		// for its trace row. A nil capture (a caller that wants none) leaves
 		// the sink exactly as it was.

@@ -172,6 +172,31 @@ func TestAWorkerFailsExactlyAsTheRuntimeDoesInProcess(t *testing.T) {
 	}
 }
 
+// A per-item run that went on past a failed item reports every item's
+// outcome, across the pipe as in process.
+func TestItemOutcomesCrossTheProcessBoundaryIntact(t *testing.T) {
+	pool := newTestPool(t, Options{})
+	task := jsrun.Task{
+		Mode: jsrun.ModeEachItem, Items: items("a", "b", "c"), ContinueOnItemError: true,
+		Source: "if ($json.name === 'b') throw new RangeError('no b')\nreturn { json: { upper: $json.name.toUpperCase() } }",
+	}
+	want, err := jsrun.NewRunner(jsrun.Options{}).Run(context.Background(), task)
+	if err != nil {
+		t.Fatalf("in process: %v", err)
+	}
+	got, err := pool.Run(context.Background(), task)
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(got.Outcomes) != 3 || !reflect.DeepEqual(got.Outcomes, want.Outcomes) {
+		t.Fatalf("outcomes = %#v, in process %#v", got.Outcomes, want.Outcomes)
+	}
+	var script *jsrun.ScriptError
+	if !errors.As(got.Outcomes[1].Err(), &script) || script.ItemIndex != 1 || got.Outcomes[2].Items[0].JSON["upper"] != "C" {
+		t.Fatalf("outcomes = %#v", got.Outcomes)
+	}
+}
+
 func TestAWorkerIsReusedAcrossJobs(t *testing.T) {
 	pool := newTestPool(t, Options{})
 	for range 3 {

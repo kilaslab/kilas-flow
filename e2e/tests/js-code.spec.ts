@@ -384,12 +384,11 @@ test('lineage survives a Code node that filters, reorders and rebuilds items', a
 	]);
 });
 
-// A Code node is one call over its whole batch, in KilasFlow as for n8n's
-// all-items mode, so when its code throws under an onError setting the node
-// fails as a whole: every input item goes to the error output (or on as an
-// error item). n8n's per-item mode instead continues the other items; that
-// divergence is documented with the node.
-test('a throwing item fails the node onto its error output, naming its line and item, and keeps what it printed', async ({ page, server }) => {
+// Under an onError setting, per-item mode goes on past the item that threw, as
+// n8n's item loop does: that item goes to the error output (or on as an error
+// item in its place) and the others pass through. All-items mode is one call
+// over the whole batch, so there the node fails as a whole, as in n8n.
+test('a throwing item goes to the error output alone, naming its line and item, and keeps what it printed', async ({ page, server }) => {
 	const emit = "return [{ json: { raw: '{\"n\":1}' } }, { json: { raw: '{broken' } }, { json: { raw: '{\"n\":3}' } }]";
 	const parse = "console.log('parsing item', $itemIndex, $json.raw)\nconst parsed = JSON.parse($json.raw)\nreturn { json: { n: parsed.n } }";
 
@@ -407,14 +406,29 @@ test('a throwing item fails the node onto its error output, naming its line and 
 	);
 	const record = await runToSuccess(server.baseURL, branchId);
 	const failed = items(record, 'failed');
-	expect(failed.map((item) => item.raw)).toEqual(['{"n":1}', '{broken', '{"n":3}']);
-	for (const item of failed) {
-		expect(item.why).toContain('SyntaxError');
-		expect(item.why).toContain('[line 2, for item 1]');
-	}
-	expect(nodeRun(record, 'ok').status).toBe('skipped');
-	// The lines printed before the throw are kept with the node's run.
-	expect(consoleTexts(record, 'parse')).toEqual(['parsing item 0 {"n":1}', 'parsing item 1 {broken']);
+	expect(failed.map((item) => item.raw)).toEqual(['{broken']);
+	expect(failed[0].why).toContain('SyntaxError');
+	expect(failed[0].why).toContain('[line 2, for item 1]');
+	expect(items(record, 'ok').map((item) => item.n)).toEqual([1, 3]);
+	// Every item ran, and what each printed is kept with the node's run.
+	expect(consoleTexts(record, 'parse')).toEqual(['parsing item 0 {"n":1}', 'parsing item 1 {broken', 'parsing item 2 {"n":3}']);
+
+	// All-items mode is one call over the batch: a throw fails every item.
+	const wholeId = await createWorkflow(
+		server.baseURL,
+		'JS Error Whole Batch',
+		[
+			manual(),
+			js('emit', 'Emit', emit),
+			js('parse', 'Parse', 'return items.map((item) => ({ json: JSON.parse(item.json.raw) }))', { settings: { onError: 'continueErrorOutput' } }),
+			node('ok', 'Parsed', 'kilasflow.noOp'),
+			node('failed', 'Failed', 'kilasflow.set', { assignments: { raw: expression('{{ $json.raw }}') } })
+		],
+		[...chain('manual', 'emit', 'parse'), conn('ok', 'parse', 'ok'), conn('err', 'parse', 'failed', 'error')]
+	);
+	const whole = await runToSuccess(server.baseURL, wholeId);
+	expect(items(whole, 'failed').map((item) => item.raw)).toEqual(['{"n":1}', '{broken', '{"n":3}']);
+	expect(nodeRun(whole, 'ok').status).toBe('skipped');
 
 	// continueRegularOutput passes the error items on the main output instead.
 	const regularId = await createWorkflow(
@@ -430,7 +444,7 @@ test('a throwing item fails the node onto its error output, naming its line and 
 	);
 	const regular = await runToSuccess(server.baseURL, regularId);
 	expect(items(regular, 'after')).toHaveLength(3);
-	expect(items(regular, 'after')[0].why).toContain('[line 2, for item 1]');
+	expect(items(regular, 'after')[1].why).toContain('[line 2, for item 1]');
 
 	// The execution page shows the node's console beside its data.
 	await page.goto(`${server.baseURL}/executions/${record.id}`);
@@ -441,6 +455,7 @@ test('a throwing item fails the node onto its error output, naming its line and 
 	await expect(inspector.getByRole('heading', { name: 'Console' })).toBeVisible();
 	await expect(inspector).toContainText('parsing item 0 {"n":1}');
 	await expect(inspector).toContainText('parsing item 1 {broken');
+	await expect(inspector).toContainText('parsing item 2 {"n":3}');
 });
 
 test('a script past its time limit fails its run, and the next run is served', async ({ server }) => {

@@ -33,6 +33,8 @@ type Job struct {
 	// files by ID: what decoding the result needs from the input items.
 	Origins []*workflow.PairedItem        `json:"origins"`
 	Files   map[string]workflow.BinaryRef `json:"files,omitempty"`
+	// ContinueOnItemError is Task.ContinueOnItemError.
+	ContinueOnItemError bool `json:"continueOnItemError,omitempty"`
 }
 
 // WireError is a run's failure as it crosses from a worker process: enough

@@ -136,22 +136,47 @@ func (executor *JSCodeExecutor) Execute(ctx context.Context, ir workflow.IRNode,
 		// deployment's ceiling and never raise it.
 		limits.Timeout = time.Duration(seconds * float64(time.Second))
 	}
+	mode := jsrun.Mode(textParameter(ir.Parameters, "mode"))
 	result, err := executor.runner.Run(ctx, jsrun.Task{
 		Source: source,
-		Mode:   jsrun.Mode(textParameter(ir.Parameters, "mode")),
+		Mode:   mode,
 		Items:  input["main"],
 		Roots:  jsRootsOf(ir, input, request),
 		Limits: limits,
+		// A node that continues on failure goes on past a failed item in
+		// per-item mode, as n8n does; the runner routes the failed ones.
+		ContinueOnItemError: request.TolerateItemFailures && mode == jsrun.ModeEachItem,
 	})
 	emitConsole(request, ir, result)
 	if err != nil {
 		return nil, fmt.Errorf("node %q: %w", ir.Name, err)
+	}
+	if outcomes := failedItemOutcomes(ir, result.Outcomes); outcomes != nil {
+		return nil, outcomes
 	}
 	items := result.Items
 	if items == nil {
 		items = []workflow.Item{}
 	}
 	return workflow.NodeOutput{items}, nil
+}
+
+// failedItemOutcomes turns the per-item outcomes of a run that went on past
+// failed items into the runner's, or nil when no item failed.
+func failedItemOutcomes(ir workflow.IRNode, outcomes []jsrun.ItemOutcome) engine.ItemOutcomes {
+	failed := false
+	converted := make(engine.ItemOutcomes, len(outcomes))
+	for index, outcome := range outcomes {
+		converted[index].Items = outcome.Items
+		if err := outcome.Err(); err != nil {
+			converted[index].Err = fmt.Errorf("node %q: %w", ir.Name, err)
+			failed = true
+		}
+	}
+	if !failed {
+		return nil
+	}
+	return converted
 }
 
 // emitConsole hands what the code printed to the runner, which keeps it with

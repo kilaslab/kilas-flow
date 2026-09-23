@@ -615,11 +615,14 @@ same way, because reading it safely matters more than running it.
   have their own caps, and each is a named error rather than a truncation.
 - **Runaway recursion cannot be caught.** V8 throws a `RangeError` the code can
   catch; here, calling deeper than the limit ends the run with a named error.
-- **The node sees its whole batch even when it continues on failure.** The
-  error-handling settings that split other nodes into one call per item, so
-  that one bad item fails alone, leave the Code node's batch whole: an
-  all-items body that sums its items sums all of them, and a failure is the
-  batch's.
+- **Continuing on failure works as n8n's does, without splitting the
+  batch.** Other nodes that continue on failure are run once per item so one
+  bad item fails alone. The Code node always sees its whole batch, so an
+  all-items body that sums its items sums all of them, and a throw there fails
+  the batch, as in n8n. In **Run Once for Each Item** mode the node goes on
+  past an item whose code threw or returned something that is not an item:
+  that item goes to the error output (or on as an error item in its place,
+  under *Continue*), and the other items pass through.
 - **A promise that can never settle is an error, not a hang.** Code that
   awaits something nothing will ever resolve fails at once with a message
   saying so, rather than waiting out the time limit.

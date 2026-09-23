@@ -148,6 +148,12 @@ type Task struct {
 	Roots Roots
 	// Limits tightens the runner's ceiling for this task; zero fields keep it.
 	Limits Limits
+	// ContinueOnItemError makes "Run once for each item" go on past an item
+	// whose code threw or returned something that is not an item, as n8n
+	// does when the node continues on failure, and report every item's
+	// outcome in Result.Outcomes. A limit (time, memory, output) still ends
+	// the whole run.
+	ContinueOnItemError bool
 }
 
 // Result is what one run produced.
@@ -164,7 +170,22 @@ type Result struct {
 	// UserTime is the time charged to the user's program, which is what the
 	// time limit is measured against.
 	UserTime time.Duration
+	// Outcomes are every input item's outcome, in order, when the task asked
+	// to continue past failed items in "Run once for each item" mode. Items
+	// then holds only what the items that succeeded returned.
+	Outcomes []ItemOutcome `json:",omitempty"`
 }
+
+// ItemOutcome is one input item's result in "Run once for each item" mode.
+type ItemOutcome struct {
+	// Items are what the item's code returned.
+	Items []workflow.Item `json:"items,omitempty"`
+	// Error is why it failed, or nil; Err decodes it.
+	Error *WireError `json:"error,omitempty"`
+}
+
+// Err is why the item failed, or nil.
+func (outcome ItemOutcome) Err() error { return outcome.Error.Decode() }
 
 // Runner runs Code-node JavaScript. It is safe for concurrent use; one per
 // deployment is the intended shape.

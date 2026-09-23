@@ -129,6 +129,47 @@ func TestValidateRefusesUnsupportedConstructsWithoutRunning(t *testing.T) {
 	}
 }
 
+// In per-item mode a node that continues on failure goes on past the item
+// that failed, as n8n's item loop does, and reports each item's outcome; one
+// that does not stops at that item, and the items after it never run.
+func TestPerItemModeGoesOnPastAFailedItemOnlyWhenTheNodeContinuesOnFailure(t *testing.T) {
+	code := jsNode(nodes.JSCodeNodeType, map[string]any{
+		"mode":   nodes.CodeModeEachItem,
+		"jsCode": "console.log('item', $itemIndex, 'of', $input.all().length)\nif ($json.n === 2) JSON.parse('{')\nreturn { json: { doubled: $json.n * 2 } }",
+	})
+	var lines []string
+	request := engine.Request{TolerateItemFailures: true, Events: func(event engine.NodeEvent) {
+		var detail engine.ConsoleDetail
+		_ = json.Unmarshal(event.Detail, &detail)
+		for _, line := range detail.Lines {
+			lines = append(lines, line.Text)
+		}
+	}}
+	output, err := jsExecutor(t, nodes.JSCodeExecutorID).Execute(context.Background(), code, threeItems(), request)
+	var outcomes engine.ItemOutcomes
+	if output != nil || !errors.As(err, &outcomes) || len(outcomes) != 3 {
+		t.Fatalf("Execute() = %#v, %v; want three item outcomes", output, err)
+	}
+	if outcomes[0].Err != nil || outcomes[0].Items[0].JSON["doubled"] != float64(2) || outcomes[2].Items[0].JSON["doubled"] != float64(6) {
+		t.Errorf("outcomes 0 and 2 = %#v, %#v; want them doubled", outcomes[0], outcomes[2])
+	}
+	var script *jsrun.ScriptError
+	if !errors.As(outcomes[1].Err, &script) || script.Name != "SyntaxError" || !strings.Contains(outcomes[1].Err.Error(), `node "Code": `) ||
+		!strings.Contains(outcomes[1].Err.Error(), "[line 2, for item 1]") {
+		t.Errorf("outcome 1 = %v, want the parse error on line 2 for item 1", outcomes[1].Err)
+	}
+	if strings.Join(lines, "|") != "item 0 of 3|item 1 of 3|item 2 of 3" {
+		t.Errorf("console = %q, want every item to have run seeing the whole batch", lines)
+	}
+
+	lines = nil
+	request.TolerateItemFailures = false
+	_, err = jsExecutor(t, nodes.JSCodeExecutorID).Execute(context.Background(), code, threeItems(), request)
+	if !errors.As(err, &script) || errors.As(err, &outcomes) || strings.Join(lines, "|") != "item 0 of 3|item 1 of 3" {
+		t.Fatalf("Execute() error = %v, console %q; want the run to stop at item 1", err, lines)
+	}
+}
+
 // What the code printed before it failed is usually how its author finds out
 // why, so it is handed over on a failure too.
 func TestConsoleIsEmittedEvenWhenTheCodeFails(t *testing.T) {

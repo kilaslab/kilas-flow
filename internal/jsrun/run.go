@@ -40,6 +40,7 @@ func (runner *Runner) Prepare(task Task) (Job, Host, error) {
 	job := Job{
 		Source: task.Source, Mode: task.Mode.orDefault(), Limits: limits, Input: input, Roots: task.Roots,
 		Origins: make([]*workflow.PairedItem, len(task.Items)), Files: map[string]workflow.BinaryRef{},
+		ContinueOnItemError: task.ContinueOnItemError,
 	}
 	for index, item := range task.Items {
 		job.Origins[index] = item.Paired
@@ -123,6 +124,7 @@ func (runner *Runner) Execute(ctx context.Context, job Job, answers Host) (resul
 		return Result{Items: items, UserTime: clock.spent()}, err
 	}
 	var out []workflow.Item
+	var outcomes []ItemOutcome
 	remaining := limits.MaxOutputBytes
 	for index := range job.Origins {
 		if index > 0 && runner.betweenItems != nil {
@@ -130,12 +132,28 @@ func (runner *Runner) Execute(ctx context.Context, job Job, answers Host) (resul
 		}
 		items, size, err := call.run(ctx, index, remaining)
 		if err != nil {
-			return Result{Items: out, UserTime: clock.spent()}, forItem(err, index)
+			err = forItem(err, index)
+			if job.ContinueOnItemError && itemScoped(err) {
+				outcomes = append(outcomes, ItemOutcome{Error: EncodeError(err)})
+				continue
+			}
+			return Result{Items: out, UserTime: clock.spent()}, err
 		}
 		out = append(out, items...)
+		if job.ContinueOnItemError {
+			outcomes = append(outcomes, ItemOutcome{Items: items})
+		}
 		remaining -= size
 	}
-	return Result{Items: out, UserTime: clock.spent()}, nil
+	return Result{Items: out, UserTime: clock.spent(), Outcomes: outcomes}, nil
+}
+
+// itemScoped reports a failure that belongs to one item: what its code threw,
+// or a value that is not an item. The VM is left as a successful item leaves
+// it, so the next item can run. Everything else ends the run.
+func itemScoped(err error) bool {
+	var script *ScriptError
+	return errors.As(err, &script) || errors.Is(err, ErrInvalidReturn)
 }
 
 // hostFor answers what the code asks of the server, from the roots.
