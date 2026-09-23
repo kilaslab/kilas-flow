@@ -65,4 +65,19 @@ fixed).
 - internal/jsrun/items.go (`decoder.paired`)
 - e2e/tests/js-code.spec.ts
 
+## Progress 2026-09-23 (checked after main merged into stabilise)
+
+Still reproduces, unchanged, after the merge that brought stabilise's lineage
+work (BUG-zf4pnj) together with the Code node (`9af3a81`). With `test.fail`
+removed, the js-code.spec.ts lineage case reads `o1, o2, o3` for `o2, o4, o1`:
+the same positional answer, not a refusal. So `test.fail` stays.
+
+Why BUG-zf4pnj does not reach it: its exact pointer (`namedItemPosition`, now
+the first rule in `pairIndex`) is followed only for an item of X that had no
+origin of its own, which is where the runner writes a pointer. Split Out's
+items inherit their input's origin, so all four share one, and `pairIndex`
+falls through to the `matches > 1` positional fallback that this ticket is
+about. The fix is still to walk the lineage node by node, or to record each
+item's position in the node that delivered it.
+
 # Attachments
