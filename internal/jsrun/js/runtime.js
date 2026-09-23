@@ -32,6 +32,17 @@
   var StringType = String;
   var SymbolType = Symbol;
   var getPrototypeOf = Object.getPrototypeOf;
+
+  // constructing tells a `new` call from a plain one, for a stand-in that
+  // behaves differently in each. new.target alone cannot: goja passes a
+  // constructor's new.target on to every plain call made inside it, so
+  // `RegExp(p)` called from a constructor looks constructed. A genuine
+  // construct call's receiver is the object being built, whose prototype is
+  // new.target's.
+  function constructing(receiver, target) {
+    return target !== undefined && receiver !== null && (typeof receiver === 'object' || typeof receiver === 'function') &&
+      getPrototypeOf(receiver) === target.prototype;
+  }
   var getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
   var hasOwnProperty = Object.prototype.hasOwnProperty;
   var functionToString = Function.prototype.toString;
@@ -1066,7 +1077,7 @@
     if (typeof original !== 'function') return undefined;
     function checked() {
       var args = check(arguments);
-      if (new.target === undefined) return apply(original, this, args);
+      if (!constructing(this, new.target)) return apply(original, this, args);
       return reflectConstruct(original, args, new.target === checked ? original : new.target);
     }
     adopt(checked, original, name, statics);
@@ -1440,7 +1451,7 @@
     // Proxy on the right of instanceof.
     function RegExpGuard(pattern, flags) {
       checkPattern(pattern, flags);
-      if (new.target === undefined) return RegExpType(pattern, flags);
+      if (!constructing(this, new.target)) return RegExpType(pattern, flags);
       return construct(RegExpType, [pattern, flags], new.target === RegExpGuard ? RegExpType : new.target);
     }
     adopt(RegExpGuard, RegExpType, 'RegExp', []);

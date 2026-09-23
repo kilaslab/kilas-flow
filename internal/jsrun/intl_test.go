@@ -106,9 +106,7 @@ var refusedProbes = map[string]string{}
 // `new RegExp(…)` by new.target, builds a broken RegExp when a constructor
 // calls RegExp() plainly. Luxon's format parser does exactly that, so
 // DateTime.fromFormat fails until the guard also checks its receiver.
-var frameworkDefects = map[string]string{
-	"parsing with fromFormat": "TypeError: Value is not an object: undefined",
-}
+var frameworkDefects = map[string]string{}
 
 // checkProbes runs recorded probes, grouped by zone in batches, and compares
 // each answer with Node's.

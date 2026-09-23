@@ -48,6 +48,24 @@ func TestAConstantChainThatFoldsExponentiallyIsRefused(t *testing.T) {
 	}
 }
 
+// goja passes a constructor's new.target on to every plain call made inside
+// it. The stand-ins for RegExp and the typed arrays still tell a call from a
+// construction, so a class that calls RegExp() in its constructor gets a
+// regular expression, as Luxon's format parser does.
+func TestAConstructorCallingRegExpPlainlyGetsARegularExpression(t *testing.T) {
+	result, err := runAll(t, newRunner(), "class Parser { constructor() { this.re = RegExp('a+', 'g') } }\n"+
+		"class Word extends RegExp {}\n"+
+		"const parser = new Parser()\n"+
+		"return [{ json: { match: 'caaab'.match(parser.re)[0], isRegExp: parser.re instanceof RegExp, word: new Word('x') instanceof Word, source: new Word('x').source } }]", nil)
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	got := result.Items[0].JSON
+	if got["match"] != "aaa" || got["isRegExp"] != true || got["word"] != true || got["source"] != "x" {
+		t.Fatalf("got %#v", got)
+	}
+}
+
 // A host function runs on its own goroutine, outside every guard on the VM's.
 // A panic there must reject the call, not end the server.
 func TestAPanickingHostCallFailsTheRunNotTheServer(t *testing.T) {
