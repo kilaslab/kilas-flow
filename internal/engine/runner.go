@@ -688,7 +688,7 @@ func (state *runState) complete(graph preparedGraph, node workflow.IRNode, input
 	if first, ok := firstItem(output); ok {
 		request.NodeOutputs[node.Name] = first
 	}
-	request.NodeItems[node.Name] = nodeItemFor(node, output)
+	request.NodeItems[node.Name] = nodeItemFor(node, output, run.RunIndex)
 	state.record(run, request)
 	if len(graph.outgoing[node.ID]) == 0 {
 		state.result.Output[node.ID] = cloneOutput(output)
@@ -805,7 +805,7 @@ func (state *runState) recordSkips(graph preparedGraph, request *Request) {
 // touches them before the marshal.
 func snapshotCheckpoint(nodeID, mode string, input workflow.NodeInput, attempt int, state *runState, request *Request) Checkpoint {
 	checkpoint := Checkpoint{
-		SuspendNode: nodeID, SuspendAttempt: attempt, Mode: mode,
+		SuspendNode: nodeID, SuspendAttempt: attempt, SuspendRun: len(state.runs[nodeID]), Mode: mode,
 		TriggerNodeID: request.TriggerNodeID,
 		Input:         cloneInput(input),
 		Completed:     make(map[string]workflow.NodeOutput, len(state.completed)),
@@ -886,11 +886,15 @@ func (runner *Runner) Resume(ctx context.Context, ir workflow.IR, request Reques
 	if !found {
 		return Result{}, fmt.Errorf("suspended node %q is not in the compiled graph", checkpoint.SuspendNode)
 	}
-	if _, done := checkpoint.Completed[checkpoint.SuspendNode]; done {
-		return Result{}, fmt.Errorf("suspended node %q already completed", checkpoint.SuspendNode)
+	// Keyed by run, not by node: a wait inside a loop has completed runs from
+	// every batch before the one it suspended on, and refusing on those failed
+	// the throttle pattern on its second batch. Only a completed run at the
+	// index the suspension interrupted means this resume would run it twice.
+	if len(checkpoint.Runs[checkpoint.SuspendNode]) > checkpoint.SuspendRun {
+		return failedResume(checkpoint, fmt.Errorf("suspended node %q already completed", checkpoint.SuspendNode))
 	}
 	if got, want := len(resumeOutput), expectedPorts(node); got != want {
-		return Result{}, fmt.Errorf("resume output for node %q has %d streams, want %d", checkpoint.SuspendNode, got, want)
+		return failedResume(checkpoint, fmt.Errorf("resume output for node %q has %d streams, want %d", checkpoint.SuspendNode, got, want))
 	}
 	request.Workflow = workflowContextFor(ir, request.Workflow)
 	// Not seeded: a resumed run continues the stack the checkpoint recorded,
@@ -932,7 +936,7 @@ func (runner *Runner) Resume(ctx context.Context, ir workflow.IR, request Reques
 	// provenance, expression state, the trace row, and the branch it feeds all
 	// behave as if the node had just run.
 	output := withErrorPort(node, cloneOutput(resumeOutput))
-	stampProvenance(node, graph.incoming[checkpoint.SuspendNode], checkpoint.Input, output, len(state.runs[checkpoint.SuspendNode]))
+	state.stampProvenance(node, graph.incoming[checkpoint.SuspendNode], checkpoint.Input, output)
 	attempt := checkpoint.SuspendAttempt
 	if attempt < 1 {
 		attempt = 1
@@ -948,6 +952,26 @@ func (runner *Runner) Resume(ctx context.Context, ir workflow.IR, request Reques
 		return *state.result, suspended
 	}
 	return *state.result, nil
+}
+
+// failedResume is the result of a resume refused at the node it was to
+// continue: that node's failed run, carrying the refusal.
+//
+// The service writes a failed run's rows before it fails the execution, so the
+// row is what makes the replay mark the node the run stopped on. Without it a
+// refused resume failed the execution with every node it had reached shown as
+// succeeded, the wait included, and an error that pointed at nothing a reader
+// could open. The run index is the one the resume would have completed.
+func failedResume(checkpoint Checkpoint, cause error) (Result, error) {
+	attempt := checkpoint.SuspendAttempt
+	if attempt < 1 {
+		attempt = 1
+	}
+	run := NodeRun{
+		NodeID: checkpoint.SuspendNode, Input: cloneInput(checkpoint.Input), Error: cause,
+		Attempt: attempt, RunIndex: len(checkpoint.Runs[checkpoint.SuspendNode]), ErrorCode: "node.failed",
+	}
+	return Result{NodeRuns: []NodeRun{run}, Output: map[string]workflow.NodeOutput{}}, cause
 }
 
 // runLoop schedules every node the graph still owes. It is the single pass
@@ -1042,6 +1066,9 @@ func (runner *Runner) runNode(ctx context.Context, graph preparedGraph, request 
 		// downstream node has to be able to tell a tolerated failure from a
 		// success.
 		output = toleratedOutput(node, input, cause, policy.onError)
+		// Stamped exactly as a success would have been: each error item stands
+		// for the input item that failed, and pairs with it.
+		state.stampProvenance(node, graph.incoming[node.ID], input, output)
 		state.complete(graph, node, input, output, NodeRun{
 			NodeID: node.ID, Input: cloneInput(input), Error: cause, Attempt: attempt, ErrorCode: code,
 			Response: capture.response,
@@ -1060,7 +1087,7 @@ func (runner *Runner) runNode(ctx context.Context, graph preparedGraph, request 
 	// when that inference is actually sound: exactly one incoming item port
 	// that delivered, and a matching item count. An executor that reorders or
 	// filters must set its own, which is why IF and Merge do.
-	stampProvenance(node, graph.incoming[node.ID], input, output, len(state.runs[node.ID]))
+	state.stampProvenance(node, graph.incoming[node.ID], input, output)
 	state.complete(graph, node, input, output, NodeRun{
 		NodeID: node.ID, Input: cloneInput(input), Attempt: attempt,
 		Response: capture.response,
@@ -1142,6 +1169,7 @@ func (runner *Runner) runPerItem(ctx context.Context, graph preparedGraph, reque
 		assembled[index] = []workflow.Item{}
 	}
 	errorPort := errorPortIndex(node)
+	sources := lineageSources(graph.incoming[node.ID], input)
 	var firstCause error
 	failed := 0
 	// One capture for the whole node, so a Respond node resolved item by item
@@ -1149,6 +1177,13 @@ func (runner *Runner) runPerItem(ctx context.Context, graph preparedGraph, reque
 	// answers from.
 	capture := &responseCapture{}
 	for position, item := range items {
+		// Where this item's output will start on each port, so what it adds
+		// is stamped against this item alone.
+		before := make([]int, len(assembled))
+		for index, port := range assembled {
+			before[index] = len(port)
+		}
+
 		itemInput := singleItemInput(input, item)
 		output, cause, _, attempt, suspended, err := runner.invoke(ctx, node, itemInput, request, state, policy, capture)
 		if err != nil {
@@ -1177,9 +1212,10 @@ func (runner *Runner) runPerItem(ctx context.Context, graph preparedGraph, reque
 			} else {
 				assembled[0] = append(assembled[0], failedItem)
 			}
-			continue
+		} else {
+			mergeOutput(assembled, output)
 		}
-		mergeOutput(assembled, output)
+		state.stampPerItem(node, sources, item, assembled, before)
 	}
 	run := NodeRun{NodeID: node.ID, Input: cloneInput(input), Error: firstCause, Response: capture.response}
 	if firstCause != nil {
@@ -1188,7 +1224,6 @@ func (runner *Runner) runPerItem(ctx context.Context, graph preparedGraph, reque
 			run.ErrorCode = "node.failed"
 		}
 	}
-	stampProvenance(node, graph.incoming[node.ID], input, assembled, len(state.runs[node.ID]))
 	state.complete(graph, node, input, assembled, run, request)
 	return nil, nil
 }
@@ -1353,8 +1388,12 @@ func withErrorPort(node workflow.IRNode, output workflow.NodeOutput) workflow.No
 
 // errorItem is one tolerated failure in n8n's shape: the error itself on the
 // main output, and the input item plus the error on the error output, so an
-// imported check such as `{{ $json.error }}` matches and the item keeps its
-// paired-item lineage.
+// imported check such as `{{ $json.error }}` matches.
+//
+// Its lineage is left to the runner, which stamps it exactly as it stamps the
+// item that would have succeeded in its place. Copying the input item's own
+// stamp carried a lost one along, which said the error item had no lineage
+// when it descends from exactly one item: the one that failed.
 func errorItem(node workflow.IRNode, item workflow.Item, cause error, withInput bool) workflow.Item {
 	fields := make(map[string]any, len(item.JSON)+1)
 	if withInput {
@@ -1366,7 +1405,7 @@ func errorItem(node workflow.IRNode, item workflow.Item, cause error, withInput 
 		"message": cause.Error(),
 		"node":    node.Name,
 	}
-	return workflow.Item{JSON: fields, Binary: item.Binary, Paired: item.Paired}
+	return workflow.Item{JSON: fields, Binary: item.Binary}
 }
 
 // toleratedOutput is a node-level tolerated failure: one error item per input
@@ -1866,10 +1905,119 @@ func perItemTolerance(node workflow.IRNode, policy retry) bool {
 // aggregates must set its own provenance, because guessing there would produce
 // a confident answer that happens to be wrong, which is the worst failure mode
 // an imported workflow can have.
-func stampProvenance(node workflow.IRNode, edges []workflow.IREdge, input workflow.NodeInput, output workflow.NodeOutput, runIndex int) {
-	// Only the ports this invocation actually read count. A node fed by two
-	// branches runs once per branch, each time carrying one branch's items, so
-	// counting the edges instead would mark every item of both runs as lost.
+func (state *runState) stampProvenance(node workflow.IRNode, edges []workflow.IREdge, input workflow.NodeInput, output workflow.NodeOutput) {
+	sources := lineageSources(edges, input)
+	for portIndex := range output {
+		// One in, one out, same count: the item at position N descends from
+		// the item at position N.
+		var incoming []workflow.Item
+		oneToOne := false
+		if len(sources) == 1 {
+			incoming = input[sources[0].Target.Port]
+			oneToOne = len(incoming) == len(output[portIndex])
+		}
+		for itemIndex := range output[portIndex] {
+			if output[portIndex][itemIndex].Paired != nil {
+				continue // The executor knew better.
+			}
+			var from *workflow.Item
+			if oneToOne {
+				from = &incoming[itemIndex]
+			}
+			output[portIndex][itemIndex].Paired = state.lineageOf(node, sources, itemIndex, from)
+		}
+	}
+}
+
+// stampPerItem fills in the lineage of what one per-item invocation added to
+// the assembled output, which starts at before on each port.
+//
+// The invocation consumed exactly one item, so whatever it produced descends
+// from that item: a port it gave one item to pairs that item with it, and a
+// port it gave several to changed the count like any other node. Stamping the
+// assembled output once instead compared the node's whole input with each
+// port, and a node with an error output never has as many items on either port
+// as it was given — so every item on both was marked lost.
+func (state *runState) stampPerItem(node workflow.IRNode, sources []workflow.IREdge, item workflow.Item, assembled workflow.NodeOutput, before []int) {
+	for portIndex := range assembled {
+		added := assembled[portIndex][before[portIndex]:]
+		var from *workflow.Item
+		if len(added) == 1 {
+			from = &item
+		}
+		for offset := range added {
+			if added[offset].Paired != nil {
+				continue // The executor knew better.
+			}
+			added[offset].Paired = state.lineageOf(node, sources, before[portIndex]+offset, from)
+		}
+	}
+}
+
+// lineageOf is the lineage of an output item its executor left unset: the item
+// at index of its own port, made from the incoming item from, or from nil when
+// no single incoming item made it.
+func (state *runState) lineageOf(node workflow.IRNode, sources []workflow.IREdge, index int, from *workflow.Item) *workflow.PairedItem {
+	runIndex := len(state.runs[node.ID])
+	// A trigger has no input to descend from, so its items originate here
+	// rather than having lost anything.
+	if len(sources) == 0 {
+		return &workflow.PairedItem{SourceNodeID: node.ID, RunIndex: runIndex, ItemIndex: index}
+	}
+	if len(sources) != 1 || from == nil {
+		// Several inputs, or a changed item count: the correspondence is
+		// genuinely unknown and saying so is the honest answer.
+		return &workflow.PairedItem{SourceNodeID: node.ID, RunIndex: runIndex, ItemIndex: index, Lost: true}
+	}
+	// The item inherits the origin its incoming item already carried rather
+	// than pointing at the node that delivered it.
+	if origin := from.Paired; origin != nil && !origin.Lost {
+		inherited := *origin
+		return &inherited
+	}
+	if pointer := pointerInto(sources[0], *from); pointer != nil {
+		return pointer
+	}
+	// The incoming item's lineage was lost further upstream and nothing on it
+	// names the item of the node that delivered it, so this item's is lost too.
+	return &workflow.PairedItem{SourceNodeID: node.ID, RunIndex: runIndex, ItemIndex: index, Lost: true}
+}
+
+// pointerInto names the item of the delivering node X that an incoming item
+// is, or returns nil.
+//
+// It names one only when the incoming item carries a lost stamp naming X. Only
+// the runner writes lost stamps (lineageOf, above), and it writes X's on X's
+// own output items with X's run and each item's index on its port, so that
+// stamp is X's item exactly, wherever the item has travelled since. The
+// pointer takes X's run from it, not the run of the node stamping it: the two
+// differ whenever they ran a different number of times, as a branch the stack
+// held behind a loop does.
+//
+// Any other incoming item — one IF, Set, Merge or a loop handed on with the
+// stamp it arrived with, naming whichever node lost it upstream — records
+// neither X's run nor where it sat in X's output, so it gets nil and is
+// stamped lost. Working out its place from its position in this invocation
+// paired items with another batch's or another run's, silently; the exact
+// answer needs the delivering run and position recorded when the items are
+// delivered.
+func pointerInto(source workflow.IREdge, incoming workflow.Item) *workflow.PairedItem {
+	own := incoming.Paired
+	if own == nil || !own.Lost || own.SourceNodeID != source.Source.NodeID {
+		return nil
+	}
+	return &workflow.PairedItem{
+		SourceNodeID: source.Source.NodeID, SourcePort: source.Source.Port,
+		RunIndex: own.RunIndex, ItemIndex: own.ItemIndex,
+	}
+}
+
+// lineageSources is the item edges an invocation actually read.
+//
+// Only the ports that delivered count. A node fed by two branches runs once per
+// branch, each time carrying one branch's items, so counting the edges instead
+// would mark every item of both runs as lost.
+func lineageSources(edges []workflow.IREdge, input workflow.NodeInput) []workflow.IREdge {
 	var sources []workflow.IREdge
 	for _, edge := range edges {
 		if edge.Kind != workflow.ConnectionMain {
@@ -1880,44 +2028,7 @@ func stampProvenance(node workflow.IRNode, edges []workflow.IREdge, input workfl
 		}
 		sources = append(sources, edge)
 	}
-
-	for portIndex := range output {
-		for itemIndex := range output[portIndex] {
-			if output[portIndex][itemIndex].Paired != nil {
-				continue // The executor knew better.
-			}
-			// A trigger has no input to descend from, so its items originate
-			// here rather than having lost anything.
-			if len(sources) == 0 {
-				output[portIndex][itemIndex].Paired = &workflow.PairedItem{
-					SourceNodeID: node.ID, RunIndex: runIndex, ItemIndex: itemIndex,
-				}
-				continue
-			}
-			source := sources[0]
-			incomingItems := input[source.Target.Port]
-			if len(sources) != 1 || len(incomingItems) != len(output[portIndex]) {
-				// Several inputs, or a changed item count: the correspondence
-				// is genuinely unknown and saying so is the honest answer.
-				output[portIndex][itemIndex].Paired = &workflow.PairedItem{
-					SourceNodeID: node.ID, RunIndex: runIndex, ItemIndex: itemIndex, Lost: true,
-				}
-				continue
-			}
-			// One in, one out, same count: the item at position N descends from
-			// the item at position N, and it inherits the origin that item
-			// already carried rather than pointing at this node.
-			if origin := incomingItems[itemIndex].Paired; origin != nil && !origin.Lost {
-				inherited := *origin
-				output[portIndex][itemIndex].Paired = &inherited
-				continue
-			}
-			output[portIndex][itemIndex].Paired = &workflow.PairedItem{
-				SourceNodeID: source.Source.NodeID, SourcePort: source.Source.Port,
-				RunIndex: runIndex, ItemIndex: itemIndex,
-			}
-		}
-	}
+	return sources
 }
 
 // nodeItemFor exposes one completed node to expressions.
@@ -1927,12 +2038,25 @@ func stampProvenance(node workflow.IRNode, edges []workflow.IREdge, input workfl
 // here. Which item is "the" paired one depends on the item being processed,
 // which this function has never seen; PairNodeItems makes that choice per
 // evaluation.
-func nodeItemFor(node workflow.IRNode, output workflow.NodeOutput) expression.NodeItem {
+func nodeItemFor(node workflow.IRNode, output workflow.NodeOutput, runIndex int) expression.NodeItem {
 	item := expression.NodeItem{
 		// The node's own configuration, which `$('X').params` reads.
 		Parameters: cloneMap(node.Parameters),
+		NodeID:     node.ID,
+		RunIndex:   runIndex,
 	}
-	for _, port := range output {
+	for portIndex, port := range output {
+		// A port is named by the definition, and an origin names the port
+		// rather than its position, because that is what an edge carries.
+		if portIndex < len(node.Definition.Outputs) {
+			if item.PortOffsets == nil {
+				item.PortOffsets = make(map[string]int, len(output))
+				item.PortLengths = make(map[string]int, len(output))
+			}
+			name := node.Definition.Outputs[portIndex].Name
+			item.PortOffsets[name] = len(item.Items)
+			item.PortLengths[name] = len(port)
+		}
 		for _, entry := range port {
 			item.Items = append(item.Items, entry.JSON)
 			item.ItemOrigins = append(item.ItemOrigins, originKeyOf(entry.Paired))
@@ -1959,21 +2083,26 @@ func nodeItemFor(node workflow.IRNode, output workflow.NodeOutput) expression.No
 //
 // n8n's `$('X').item` is the item of X that the current item descends from,
 // found by following paired-item lineage. Every item the runner produces is
-// stamped with the origin it descends from, so the correspondence is an
+// stamped with the origin it descends from, so the correspondence is mostly an
 // equality of two origin names: the current item's, and each of X's items'.
 //
-// Four answers, in order, because they are increasingly weaker:
+// Five answers, in order, because they are increasingly weaker:
 //
-//  1. A unique item of X descends from the same origin as this one. That is the
+//  1. The current item's origin names X's own item — X, its run, the port and
+//     the position — because X's items had no origin to pass on. That item is
+//     the answer, and it is the only way to reach a node that changed the item
+//     count, such as a Code node that made three items from one: its items
+//     have no origin, so comparing origins could never find one of them.
+//  2. A unique item of X descends from the same origin as this one. That is the
 //     answer, and it covers a one-to-one chain where each item carries its own
 //     origin (A -> Set -> B over three items).
-//  2. A node that produced exactly one item is unambiguous whatever the
+//  3. A node that produced exactly one item is unambiguous whatever the
 //     lineage says: every single-item reference has always resolved to it.
-//  3. The origin is shared by several of X's items — a fan-out, as after Split
+//  4. The origin is shared by several of X's items — a fan-out, as after Split
 //     Out — and the current item sits at position N of its own run, so X's item
 //     at position N is the one it descends from. This is the positional
 //     correspondence n8n relies on for a same-order chain.
-//  4. Otherwise the correspondence is genuinely unknown and saying so beats
+//  5. Otherwise the correspondence is genuinely unknown and saying so beats
 //     guessing: a confident wrong item is the failure mode this exists to
 //     prevent.
 //
@@ -1994,6 +2123,10 @@ func PairNodeItems(items map[string]expression.NodeItem, current workflow.Item, 
 
 func pairNodeItem(name string, item expression.NodeItem, key string, origin *workflow.PairedItem, itemIndex int) expression.NodeItem {
 	item.Paired, item.LineageReason = nil, ""
+	if position, named := namedItemPosition(item, origin); named {
+		item.Paired = item.Items[position]
+		return item
+	}
 	if len(item.Items) == 0 {
 		item.LineageReason = fmt.Sprintf("node %q produced no items", name)
 		return item
@@ -2051,6 +2184,38 @@ func pairNodeItem(name string, item expression.NodeItem, key string, origin *wor
 		item.LineageReason = fmt.Sprintf("node %q changed the item correspondence, so there is no single item to pair with", name)
 		return item
 	}
+}
+
+// namedItemPosition finds the item of X that an origin names directly: the
+// pointer the runner stamps on an item made from one of X's items when that
+// item had no origin of its own to pass on.
+//
+// It is read only where it can be a pointer. The origin has to name X's run as
+// well as X, because an item of an earlier run is not in Items; and X's item at
+// that position has to have no origin of its own, because that is the only item
+// a pointer is ever written for. An origin that names X for any other reason —
+// Split Out stamping its own name with the position of the item it split, which
+// is a position in its input rather than its output — is left to the origin
+// comparison.
+func namedItemPosition(item expression.NodeItem, origin *workflow.PairedItem) (int, bool) {
+	if origin == nil || origin.Lost || item.NodeID == "" {
+		return 0, false
+	}
+	if origin.SourceNodeID != item.NodeID || origin.RunIndex != item.RunIndex {
+		return 0, false
+	}
+	// Bounded by its own port: the ports sit end to end in Items, and an index
+	// past the end of one would read the next one's items.
+	offset, named := item.PortOffsets[origin.SourcePort]
+	length, counted := item.PortLengths[origin.SourcePort]
+	if !named || !counted || origin.ItemIndex < 0 || origin.ItemIndex >= length {
+		return 0, false
+	}
+	position := offset + origin.ItemIndex
+	if position >= len(item.Items) || position >= len(item.ItemOrigins) || item.ItemOrigins[position] != "" {
+		return 0, false
+	}
+	return position, true
 }
 
 // originKeyOf names the origin an item descends from, in the exact form the

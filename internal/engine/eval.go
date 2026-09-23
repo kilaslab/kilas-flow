@@ -192,7 +192,7 @@ func (service *Service) traceExpressionContext(record execution.Record, document
 		// what fills `Items`, the item origins `.item` is paired by and the
 		// lineage refusal a multi-item node explains itself with. A second
 		// builder here would be a second reader of the same semantics.
-		entry := nodeItemFor(workflow.IRNode{ID: run.NodeID, Name: key(run.NodeID)}, output)
+		entry := nodeItemFor(workflow.IRNode{ID: run.NodeID, Name: key(run.NodeID)}, output, run.RunIndex)
 		if len(entry.Items) == 0 {
 			continue
 		}

@@ -37,6 +37,17 @@ type NodeItem struct {
 	// can pair the current item with this node's items without re-deriving the
 	// format.
 	ItemOrigins []string
+	// NodeID and RunIndex name the run Items came from, and PortOffsets and
+	// PortLengths are where each output port's items start in Items and how
+	// many there are. Together they let the runtime read an item whose origin
+	// names this node's own item directly, which is the only answer left when
+	// this node's own items have no lineage — a Code node that changed the
+	// item count. All four are zero in a checkpoint written before they
+	// existed, and zero never matches.
+	NodeID      string
+	RunIndex    int
+	PortOffsets map[string]int
+	PortLengths map[string]int
 	// Paired is the item on this node that the current item descends from,
 	// backing `.item` and the `.json` read. Nil when lineage could not be
 	// established.
