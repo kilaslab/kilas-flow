@@ -21,11 +21,11 @@ var moduleSources embed.FS
 
 // moduleOrder is the order modules run in; each sees the globals the ones
 // before it defined.
-var moduleOrder = []string{"util", "buffer", "web", "timers", "url"}
+var moduleOrder = []string{"util", "buffer", "crypto", "web", "timers", "url"}
 
 // requirable maps a name require() accepts to the module that answers it.
 // lodash and luxon are libraries, loaded on first use rather than always.
-var requirable = map[string]string{"util": "util", "buffer": "buffer", "url": "url"}
+var requirable = map[string]string{"util": "util", "buffer": "buffer", "crypto": "crypto", "url": "url"}
 
 var compiledModules = struct {
 	sync.Mutex

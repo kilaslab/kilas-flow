@@ -5,6 +5,9 @@ go 1.27
 require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/danielgtaylor/huma/v2 v2.39.1
+	github.com/dlclark/regexp2/v2 v2.5.2
+	github.com/dop251/goja v0.0.0-20260917113740-793a2a65c13b
+	github.com/dop251/goja_nodejs v0.0.0-20260918173711-b481721df8a2
 	github.com/glebarez/go-sqlite v1.21.2
 	github.com/glebarez/sqlite v1.11.0
 	github.com/go-chi/chi/v5 v5.3.2
@@ -21,6 +24,7 @@ require (
 	github.com/microsoft/agent-framework-go v0.1.0
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/tetratelabs/wazero v1.9.0
+	golang.org/x/crypto v0.55.0
 	gorm.io/driver/postgres v1.6.2
 	gorm.io/gorm v1.31.2
 )
@@ -28,10 +32,7 @@ require (
 require (
 	filippo.io/edwards25519 v1.1.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
-	github.com/dlclark/regexp2/v2 v2.5.2 // indirect
 	github.com/dop251/base64dec v0.0.0-20231022112746-c6c9f9a96217 // indirect
-	github.com/dop251/goja v0.0.0-20260917113740-793a2a65c13b // indirect
-	github.com/dop251/goja_nodejs v0.0.0-20260918173711-b481721df8a2 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/fatih/structs v1.1.0 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
