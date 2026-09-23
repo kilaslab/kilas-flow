@@ -2,6 +2,7 @@ package engine_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -3135,7 +3136,8 @@ func TestDollarItemBehindARoutingNodeNeverReadsAnotherBatch(t *testing.T) {
 		}
 		return workflow.NodeOutput{items}, nil
 	})
-	var paired, refused int
+	var paired []string
+	var refused int
 	var wrong []string
 	register("test.probe", func(_ context.Context, _ workflow.IRNode, input workflow.NodeInput, request engine.Request) (workflow.NodeOutput, error) {
 		for index, item := range input["main"] {
@@ -3146,7 +3148,7 @@ func TestDollarItemBehindARoutingNodeNeverReadsAnotherBatch(t *testing.T) {
 			case err != nil:
 				refused++
 			case resolved["u"] == item.JSON["u"]:
-				paired++
+				paired = append(paired, fmt.Sprint(resolved["u"]))
 			default:
 				wrong = append(wrong, fmt.Sprintf("%v read %v", item.JSON["u"], resolved["u"]))
 			}
@@ -3165,8 +3167,199 @@ func TestDollarItemBehindARoutingNodeNeverReadsAnotherBatch(t *testing.T) {
 	if len(wrong) > 0 {
 		t.Errorf("$('IF').item paired items with another batch's: %s", strings.Join(wrong, "; "))
 	}
-	if paired+refused != 6 {
-		t.Errorf("the probe saw %d items, want the 6 the three batches produced", paired+refused)
+	// The last batch's Side runs straight after IF's last run, which is the
+	// run it came from, so it still pairs; the two held behind it are refused.
+	if got, want := strings.Join(paired, ","), "b2-0,b2-1"; got != want || refused != 4 {
+		t.Errorf("paired %s and refused %d items, want %s paired and the other 4 refused", got, refused, want)
+	}
+}
+
+// approvalProbe is the executors of a workflow whose per-item Approve node
+// suspends on every item: Start, a Fan that turns one item into x0 and x1 (so
+// their own lineage is lost), Approve, and a Probe that records what expression
+// reads after each approval, or "refused".
+func approvalProbe(t *testing.T, expressionText string) (*engine.Registry, *[]string) {
+	t.Helper()
+	executors := engine.NewRegistry()
+	register := func(typeID string, execute engine.ExecutorFunc) {
+		t.Helper()
+		if err := executors.Register(typeID, execute); err != nil {
+			t.Fatalf("Register(%s) error = %v", typeID, err)
+		}
+	}
+	register("test.start", func(context.Context, workflow.IRNode, workflow.NodeInput, engine.Request) (workflow.NodeOutput, error) {
+		return workflow.NodeOutput{{{JSON: map[string]any{}}}}, nil
+	})
+	register("test.fanOut", func(context.Context, workflow.IRNode, workflow.NodeInput, engine.Request) (workflow.NodeOutput, error) {
+		return workflow.NodeOutput{{{JSON: map[string]any{"u": "x0"}}, {JSON: map[string]any{"u": "x1"}}}}, nil
+	})
+	register("test.approve", func(context.Context, workflow.IRNode, workflow.NodeInput, engine.Request) (workflow.NodeOutput, error) {
+		return nil, &engine.SuspendError{Mode: "approval"}
+	})
+	reads := &[]string{}
+	register("test.probe", func(_ context.Context, _ workflow.IRNode, input workflow.NodeInput, request engine.Request) (workflow.NodeOutput, error) {
+		for index, item := range input["main"] {
+			resolved, err := expression.Resolve(map[string]any{
+				"read": map[string]any{"mode": "expression", "value": expressionText},
+			}, request.ExpressionContext(item, input, index))
+			if err != nil {
+				*reads = append(*reads, "refused")
+				continue
+			}
+			*reads = append(*reads, fmt.Sprint(resolved["read"]))
+		}
+		return workflow.NodeOutput{input["main"]}, nil
+	})
+	if err := nodes.RegisterExecutors(executors, safehttp.DefaultPolicy(), sqlnode.Guard{}, ai.NewLoopRuntime(), nil, nil); err != nil {
+		t.Fatalf("RegisterExecutors() error = %v", err)
+	}
+	return executors, reads
+}
+
+// approveEveryItem runs a workflow whose per-item approval suspends on every
+// item it is given, and resumes each suspension the way an approval does: with
+// an answer that carries no lineage, so the runner stamps it against the one
+// item the checkpoint holds, at position 0. It returns the items approved, in
+// order.
+func approveEveryItem(t *testing.T, runner *engine.Runner, ir workflow.IR) []workflow.Item {
+	t.Helper()
+	request := engine.Request{Input: workflow.Item{JSON: map[string]any{}}}
+	_, err := runner.Run(context.Background(), ir, request)
+	var approved []workflow.Item
+	for {
+		var suspended *engine.SuspendError
+		if !errors.As(err, &suspended) {
+			if err != nil {
+				t.Fatalf("run error = %v", err)
+			}
+			return approved
+		}
+		if len(approved) == 10 {
+			t.Fatal("the run was still suspending after 10 approvals")
+		}
+		var checkpoint engine.Checkpoint
+		if decodeErr := json.Unmarshal(suspended.Checkpoint, &checkpoint); decodeErr != nil {
+			t.Fatalf("decode checkpoint: %v", decodeErr)
+		}
+		approved = append(approved, checkpoint.Input["main"][0])
+		_, err = runner.Resume(context.Background(), ir, request, checkpoint,
+			workflow.NodeOutput{{{JSON: map[string]any{"approved": true}}}})
+	}
+}
+
+// TestDollarItemRefusesAStampTwoItemsOfOnePortShare covers a run that holds
+// the same stamp twice.
+//
+// Set hands on the lineage it was given, so after Set A and Set B the Merge
+// holds each of Fan's lost stamps twice: A-x0 and B-x0 share one. Each
+// approved item comes back on its own, at position 0 of the checkpoint, and
+// Merge's item at position 0 carries B-x0's stamp as well — which does not make
+// it B-x0's item. A stamp two items share names neither of them, so the only
+// acceptable answers are the right item or a refusal.
+func TestDollarItemRefusesAStampTwoItemsOfOnePortShare(t *testing.T) {
+	catalog := testCatalog(t, startType("test.start", "Start"), stepType("test.fanOut", "Fan"),
+		stepType("test.approve", "Approve"), stepType("test.probe", "Probe"))
+	into := func(id, source, target, port string) workflow.Connection {
+		return workflow.Connection{ID: id, Kind: workflow.ConnectionMain,
+			Source: workflow.Endpoint{NodeID: source, Port: "main"},
+			Target: workflow.Endpoint{NodeID: target, Port: port}}
+	}
+	ir := compileDoc(t, catalog, workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_lineage_shared_stamp", Name: "Two items of Merge share a stamp",
+		Nodes: []workflow.Node{
+			{ID: "start", Name: "Start", Type: "test.start", TypeVersion: workflow.V(1)},
+			{ID: "fan", Name: "Fan", Type: "test.fanOut", TypeVersion: workflow.V(1)},
+			{ID: "a", Name: "Set A", Type: "kilasflow.set", TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"assignments": map[string]any{"side": "A"}}},
+			{ID: "b", Name: "Set B", Type: "kilasflow.set", TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"assignments": map[string]any{"side": "B"}}},
+			{ID: "merge", Name: "Merge", Type: "kilasflow.merge", TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"mode": "append"}},
+			{ID: "approve", Name: "Approve", Type: "test.approve", TypeVersion: workflow.V(1),
+				Settings: map[string]any{"onError": "continueRegularOutput"}},
+			{ID: "probe", Name: "Probe", Type: "test.probe", TypeVersion: workflow.V(1)},
+		},
+		Connections: []workflow.Connection{
+			into("c1", "start", "fan", "main"),
+			into("c2", "fan", "a", "main"),
+			into("c3", "fan", "b", "main"),
+			into("c4", "a", "merge", "input1"),
+			into("c5", "b", "merge", "input2"),
+			into("c6", "merge", "approve", "main"),
+			into("c7", "approve", "probe", "main"),
+		},
+		Settings: map[string]any{},
+	})
+	executors, reads := approvalProbe(t, "{{ $('Merge').item.json.side }}-{{ $('Merge').item.json.u }}")
+
+	approved := approveEveryItem(t, engine.NewRunner(executors), ir)
+	if len(approved) != 4 || len(*reads) != 4 {
+		t.Fatalf("approved %d items and probed %d, want Merge's 4 each approved and probed once", len(approved), len(*reads))
+	}
+	for index, item := range approved {
+		want := fmt.Sprint(item.JSON["side"], "-", item.JSON["u"])
+		if read := (*reads)[index]; read != "refused" && read != want {
+			t.Errorf("approved %s, and $('Merge').item read %s", want, read)
+		}
+	}
+}
+
+// TestDollarItemPairsWithinThePortTheItemCameFrom covers the same shared stamp
+// split across two ports.
+//
+// IF routes Set A's items to true and Set B's to false, so each of Fan's stamps
+// sits once on each port. The edge an item arrived on names its port, and only
+// that port's items can be the one it is, so a stamp that is unique on its own
+// port is an answer: B-x0 pairs with IF's B-x0. B-x1 comes back at position 0,
+// where IF's false port holds B-x0, and is refused.
+func TestDollarItemPairsWithinThePortTheItemCameFrom(t *testing.T) {
+	catalog := testCatalog(t, startType("test.start", "Start"), stepType("test.fanOut", "Fan"),
+		stepType("test.approve", "Approve"), stepType("test.probe", "Probe"))
+	into := func(id, source, sourcePort, target, port string) workflow.Connection {
+		return workflow.Connection{ID: id, Kind: workflow.ConnectionMain,
+			Source: workflow.Endpoint{NodeID: source, Port: sourcePort},
+			Target: workflow.Endpoint{NodeID: target, Port: port}}
+	}
+	ir := compileDoc(t, catalog, workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_lineage_shared_across_ports", Name: "A shared stamp on two ports",
+		Nodes: []workflow.Node{
+			{ID: "start", Name: "Start", Type: "test.start", TypeVersion: workflow.V(1)},
+			{ID: "fan", Name: "Fan", Type: "test.fanOut", TypeVersion: workflow.V(1)},
+			{ID: "a", Name: "Set A", Type: "kilasflow.set", TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"assignments": map[string]any{"side": "A"}}},
+			{ID: "b", Name: "Set B", Type: "kilasflow.set", TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"assignments": map[string]any{"side": "B"}}},
+			{ID: "merge", Name: "Merge", Type: "kilasflow.merge", TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"mode": "append"}},
+			{ID: "if", Name: "IF", Type: "kilasflow.if", TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"conditions": []any{map[string]any{"field": "side", "operator": "equals", "value": "A"}}}},
+			{ID: "approve", Name: "Approve", Type: "test.approve", TypeVersion: workflow.V(1),
+				Settings: map[string]any{"onError": "continueRegularOutput"}},
+			{ID: "probe", Name: "Probe", Type: "test.probe", TypeVersion: workflow.V(1)},
+		},
+		Connections: []workflow.Connection{
+			into("c1", "start", "main", "fan", "main"),
+			into("c2", "fan", "main", "a", "main"),
+			into("c3", "fan", "main", "b", "main"),
+			into("c4", "a", "main", "merge", "input1"),
+			into("c5", "b", "main", "merge", "input2"),
+			into("c6", "merge", "main", "if", "main"),
+			into("c7", "if", "false", "approve", "main"),
+			into("c8", "approve", "main", "probe", "main"),
+		},
+		Settings: map[string]any{},
+	})
+	executors, reads := approvalProbe(t, "{{ $('IF').item.json.side }}-{{ $('IF').item.json.u }}")
+
+	approved := approveEveryItem(t, engine.NewRunner(executors), ir)
+	var got []string
+	for index, item := range approved {
+		got = append(got, fmt.Sprint(item.JSON["side"], "-", item.JSON["u"], " read ", (*reads)[index]))
+	}
+	if got, want := strings.Join(got, "; "), "B-x0 read B-x0; B-x1 read refused"; got != want {
+		t.Errorf("approvals: %s, want %s", got, want)
 	}
 }
 

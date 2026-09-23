@@ -76,6 +76,8 @@ RED: k and j failed with `node "Two urls" changed the item correspondence`. i an
 
 Review fix (2026-09-23): the pointer fallback took the source's latest run whenever the incoming item did not carry the source's own lost stamp, so behind IF, Set, Filter or a loop a branch held behind a loop read another batch's item silently. `pointerInto` now writes that pointer only when the source's latest run holds the item at that port and position with the very stamp the incoming item carries. Otherwise the item is stamped lost. `NodeItem.PortLengths` bounds a position to its own port. Tests: `TestDollarItemBehindARoutingNodeNeverReadsAnotherBatch` (RED: `b1-0 read b2-0; b1-1 read b2-1; b0-0 read b2-0; b0-1 read b2-1`; now 2 paired, 4 refused, 0 wrong) and `TestDollarItemStaysWithinThePortItsOriginNames` (RED: a pointer past `true` read `false-0`).
 
+Review fix 2 (2026-09-23): a single run can hold one stamp twice. Set A and Set B copy one item's lineage into a Merge, so a per-item approval resumed on B-x0 at position 0 matched Merge[0] (A-x0). `pointerInto` now also refuses when any other item on the port the item arrived on carries the same stamp. Other ports are not searched, because the edge fixes the port. Tests: `TestDollarItemRefusesAStampTwoItemsOfOnePortShare` (RED: `approved B-x0, and $('Merge').item read A-x0`; now all 4 refused, 0 wrong) and `TestDollarItemPairsWithinThePortTheItemCameFrom` (the same stamp on IF's two ports: B-x0 pairs and B-x1 is refused; searching every port would refuse B-x0). `TestDollarItemBehindARoutingNodeNeverReadsAnotherBatch` now also asserts `b2-0,b2-1` paired and 4 refused.
+
 # Attachments
 
 ## Work Evidence

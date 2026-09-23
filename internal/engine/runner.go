@@ -1997,13 +1997,17 @@ func (state *runState) lineageOf(node workflow.IRNode, sources []workflow.IREdge
 //
 //   - A lost stamp X wrote on its own item records X's run and position
 //     exactly, wherever the item has travelled since.
-//   - Otherwise the item is taken to be X's item at the same position of X's
-//     latest run, but only when that item carries the very stamp the incoming
-//     one does. A node that hands items on with the lineage they arrived with
-//     — IF, Set, Filter, a loop — leaves a stamp naming whichever node lost it
-//     upstream, and that stamp names one item of one run. A branch the stack
-//     held back while X ran again, or the remaining items of a per-item run
-//     that suspended, fail the comparison, and are left lost.
+//   - Otherwise the item arrived with a stamp X handed on unchanged, as IF,
+//     Set, Filter, Merge and a loop do, naming whichever node lost it
+//     upstream. It is taken to be X's item at the same position of X's latest
+//     run only when that item carries the very same stamp and no other item
+//     on that port does. Both are checked, not assumed: a branch the stack
+//     held back while X ran again, or the item a per-item run resumed on its
+//     own at position 0, sits at a position whose item has another stamp;
+//     and a stamp two items share — Set A and Set B copying one item's
+//     lineage into a Merge — names neither of them. Anything else is left
+//     lost. Only the port the item arrived on is searched, because the edge
+//     names it and no other port's item can be the one it is.
 func (state *runState) pointerInto(source workflow.IREdge, incoming workflow.Item, position int) *workflow.PairedItem {
 	own := incoming.Paired
 	if own != nil && own.Lost && own.SourceNodeID == source.Source.NodeID {
@@ -2022,6 +2026,11 @@ func (state *runState) pointerInto(source workflow.IREdge, incoming workflow.Ite
 	}
 	if there := latest[port][position].Paired; there == nil || *there != *own {
 		return nil
+	}
+	for other, candidate := range latest[port] {
+		if other != position && candidate.Paired != nil && *candidate.Paired == *own {
+			return nil
+		}
 	}
 	return &workflow.PairedItem{
 		SourceNodeID: source.Source.NodeID, SourcePort: source.Source.Port,
