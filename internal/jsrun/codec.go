@@ -23,6 +23,13 @@ func init() {
 		}
 		return decodeString(text, encoding)
 	})
+	registerNative("codec.validUTF8", func(args []any) (any, error) {
+		data, err := argBytes(args, 0, "the bytes")
+		if err != nil {
+			return nil, err
+		}
+		return utf8.Valid(data), nil
+	})
 	registerNative("codec.encode", func(args []any) (any, error) {
 		data, err := argBytes(args, 0, "the bytes")
 		if err != nil {

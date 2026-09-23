@@ -601,6 +601,7 @@
       tooLarge: tooLarge,
       caps: snapshot.caps,
       library: library,
+      timers: { start: host.timerStart, cancel: host.timerCancel },
       snapshot: snapshot,
       global: global,
     };

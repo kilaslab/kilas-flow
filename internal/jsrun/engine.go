@@ -150,6 +150,8 @@ type vm struct {
 	// errorTypes are the error constructors, captured before any user code,
 	// that natives throw through.
 	errorTypes map[string]goja.Value
+	// timers are the armed timers, by the id the timers module gave them.
+	timers map[int64]*timerEntry
 
 	// jobs carries completions of asynchronous host work back to the VM's
 	// goroutine, which is the only one allowed to settle a promise.
@@ -188,7 +190,7 @@ func newVM(limits Limits) (*vm, error) {
 	rt.SetMaxCallStackSize(limits.MaxCallDepth)
 	hostCtx, stopHost := context.WithCancel(context.Background())
 	v := &vm{
-		rt: rt, limits: limits,
+		rt: rt, limits: limits, timers: map[int64]*timerEntry{},
 		jobs: make(chan func() error, 64), hostCtx: hostCtx, stopHost: stopHost,
 		done: make(chan struct{}), wake: make(chan struct{}),
 	}
@@ -202,6 +204,7 @@ func newVM(limits Limits) (*vm, error) {
 	if v.jsonParse, err = callable(jsonObject.Get("parse")); err != nil {
 		return nil, err
 	}
+	enableNodeGlobals(rt)
 	helpers, err := rt.RunProgram(kit.compiled)
 	if err != nil {
 		return nil, fmt.Errorf("installing the runtime helpers: %w", err)
@@ -252,6 +255,7 @@ func (v *vm) stopReason() error {
 func (v *vm) close() {
 	close(v.done)
 	v.stopHost()
+	v.stopTimers()
 }
 
 // load runs a trusted program: a library or KilasFlow's own setup.
@@ -321,8 +325,10 @@ func (v *vm) install(state string, input value, mode Mode, h host) error {
 			"console": func(call goja.FunctionCall) goja.Value {
 				return v.rt.ToValue(h.console(call.Argument(0).String(), call.Argument(1).String()))
 			},
-			"native":  v.callNative,
-			"library": v.loadLibrary,
+			"native":      v.callNative,
+			"library":     v.loadLibrary,
+			"timerStart":  v.timerStart,
+			"timerCancel": v.timerCancel,
 		} {
 			if err := callbacks.Set(name, function); err != nil {
 				return err
