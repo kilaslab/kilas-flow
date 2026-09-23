@@ -1,14 +1,14 @@
 ---
 id: BUG-d2t3kp
 title: Deleting an active workflow leaves its trigger registered with the remote service
-status: doing
+status: done
 priority: high
 labels:
     - webhooks
     - lifecycle
 parent: EPIC-7c3ry9
 created: "2026-09-23T05:21:31Z"
-updated: "2026-09-23T05:21:44Z"
+updated: "2026-09-23T05:23:27Z"
 ---
 
 # Description
@@ -52,3 +52,19 @@ Tests (`internal/api/handlers/workflows_delete_test.go`):
 `go test ./internal/api/... ./internal/webhook/...` passes. `go vet ./internal/api/... ./internal/webhook/...` and `go build ./...` are clean.
 
 Not re-tested here: that a successful `remove` clears the route's captured lifecycle state. That is `Coordinator.Deactivated`'s own behaviour, already covered by `internal/webhook/lifecycle_test.go`'s `TestCapturedValuesOutliveActivationUntilTheirRegistrationIsRemoved`, and reusing it at the handler level would mean duplicating that test's HTTP-stub and catalog wiring for no new coverage — this fix only makes `Delete` reach the same `Coordinator.Deactivated` call `Deactivate` already exercised.
+
+## Work Evidence
+
+Closed by `pine close --evidence` on 2026-09-23.
+
+- Base: `906ac77e` (last commit at or before ticket created 2026-09-23)
+- Commits (1):
+  - `c3cf620e` — BUG-d2t3kp: deleting an active workflow unregisters its trigger before it disappears
+- Files changed (base → working tree):
+
+```
+ .pine/tickets/BUG-d2t3kp.md                    | 54 +++++++++++++++++
+ internal/api/handlers/workflows.go             | 15 +++++
+ internal/api/handlers/workflows_delete_test.go | 81 ++++++++++++++++++++++++--
+ 3 files changed, 145 insertions(+), 5 deletions(-)
+```
