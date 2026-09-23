@@ -820,13 +820,24 @@ func queryValue(raw string) any {
 }
 
 func (handler *Datastores) problem(ctx context.Context, err error) error {
+	// A taken name conflicts with the table that holds it, and the detail names
+	// that table: the create and rename dialogs show it as written, and for a
+	// clash of case alone the holder's name is not the one that was typed. It
+	// is matched before IsUnknown, which reads the error's text: this error's
+	// text carries the name the tenant chose, and a name that says "unknown
+	// datastore" is still a name another table holds, not a missing table.
+	var taken *datastore.NameTakenError
+	if errors.As(err, &taken) {
+		return huma.Error409Conflict(fmt.Sprintf("A data table named “%s” already exists", taken.Name))
+	}
 	if datastore.IsUnknown(err) {
 		return huma.Error404NotFound("datastore not found")
 	}
 	// A refused precondition is a conflict, not a caller mistake: the row
 	// moved after the caller read it. The current stamp rides in the detail
 	// body's errors[0].value so the caller retries without a second read —
-	// this branch sits first so nothing else can claim the error.
+	// this branch sits ahead of the general mappings below so none of them
+	// can claim the error.
 	var conflict *datastore.PreconditionError
 	if errors.As(err, &conflict) {
 		now := conflict.Current.UTC().Format(time.RFC3339Nano)
@@ -840,13 +851,6 @@ func (handler *Datastores) problem(ctx context.Context, err error) error {
 				Value:    now,
 			}},
 		}
-	}
-	// A taken name conflicts with the table that holds it, and the detail names
-	// that table: the create and rename dialogs show it as written, and for a
-	// clash of case alone the holder's name is not the one that was typed.
-	var taken *datastore.NameTakenError
-	if errors.As(err, &taken) {
-		return huma.Error409Conflict(fmt.Sprintf("A data table named “%s” already exists", taken.Name))
 	}
 	if errors.Is(err, datastore.ErrRowNotFound) {
 		return huma.Error404NotFound("row not found")

@@ -144,6 +144,34 @@ func TestADuplicateDatastoreNameIsAConflictNamingTheTableInTheWay(t *testing.T) 
 	}
 }
 
+// The taken-name refusal carries the name the tenant chose, and a name is the
+// tenant's to choose: one that happens to say "unknown datastore" is still a
+// name another table holds, so creating or renaming onto it is a conflict and
+// never the 404 that phrase stands for elsewhere.
+func TestATakenNameThatSaysUnknownDatastoreIsStillAConflict(t *testing.T) {
+	handler, _ := newDatastoreAPI(t, "tenant-a")
+	const name = "Rows from an unknown datastore"
+	createDatastore(t, handler, name)
+	const want = "A data table named “" + name + "” already exists"
+
+	recorder := doJSON(t, handler, http.MethodPost, "/api/v1/datastores", map[string]any{"name": name})
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("creating %q again = %d, want 409 (body: %s)", name, recorder.Code, recorder.Body)
+	}
+	if got := decodeProblem(t, recorder).Detail; got != want {
+		t.Errorf("creating %q again: detail = %q, want %q", name, got, want)
+	}
+
+	other := createDatastore(t, handler, "Other")
+	recorder = doJSON(t, handler, http.MethodPut, "/api/v1/datastores/"+other.ID, map[string]any{"name": "ROWS FROM AN UNKNOWN DATASTORE"})
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("renaming onto %q = %d, want 409 (body: %s)", name, recorder.Code, recorder.Body)
+	}
+	if got := decodeProblem(t, recorder).Detail; got != want {
+		t.Errorf("renaming onto %q: detail = %q, want %q", name, got, want)
+	}
+}
+
 func TestAnotherTenantsDatastoreReadsAsUnknown(t *testing.T) {
 	db := func(t *testing.T) (*database.DB, *datastore.Engine) {
 		t.Helper()
