@@ -254,11 +254,16 @@ func (c *Client) errorFor(method, path string, resp *http.Response, raw []byte) 
 // proxy or a future handler might echo the client's own token.
 //
 // Every errors[] value at the location "body" is therefore dropped whatever
-// its type, because that is where both whole-body echoes land. Any other value
-// is kept, because it is what the caller reads next — a compile refusal's
-// codes, an idempotency conflict's — and only its secret-named fields are
-// redacted. The document is decoded with UseNumber so every value that
-// survives is carried exactly as the server wrote it.
+// its type: that is where a missing property's whole body and an unparsed
+// body's raw bytes land. An object or array at "body.<prop>" is dropped too,
+// because huma reports an unexpected property at its own path with the object
+// that holds it as the value, which for a top-level typo is the whole body. A
+// value below the body by JSON pointer ("body/…") is kept: it is where a
+// compile refusal puts its codes, an object the server built rather than one
+// it echoed. Any other value is kept, because it is what the caller reads next
+// — those codes, an idempotency conflict's, a stale row's stamp — and only its
+// secret-named fields are redacted. The document is decoded with UseNumber so
+// every value that survives is carried exactly as the server wrote it.
 func (c *Client) redactProblem(problem json.RawMessage) json.RawMessage {
 	decoder := json.NewDecoder(bytes.NewReader(problem))
 	decoder.UseNumber()
@@ -279,7 +284,7 @@ func (c *Client) redactProblem(problem json.RawMessage) json.RawMessage {
 				if !present {
 					continue
 				}
-				if issue["location"] == "body" {
+				if echoesBody(issue["location"], value) {
 					delete(issue, "value")
 					continue
 				}
@@ -299,6 +304,27 @@ func (c *Client) redactProblem(problem json.RawMessage) json.RawMessage {
 	}
 
 	return encoded
+}
+
+// echoesBody reports whether one errors[] value is where a server echoes the
+// request body back: anything at "body", and an object or array at
+// "body.<prop>". A scalar below the body is a single field's value, which is
+// redacted by its name like every other value, and "body/…" is the JSON-pointer
+// form a compile refusal's own codes are placed at.
+func echoesBody(location, value any) bool {
+	at, _ := location.(string)
+	if at == "body" {
+		return true
+	}
+	if !strings.HasPrefix(at, "body.") {
+		return false
+	}
+	switch value.(type) {
+	case map[string]any, []any:
+		return true
+	default:
+		return false
+	}
 }
 
 // redactToken replaces the credential wherever it appears in a decoded JSON
@@ -387,8 +413,16 @@ var credentialKeys = map[string]bool{
 	"credential":    true,
 }
 
-// redactJSON replaces credential values in a JSON document. A body that is not
-// JSON is returned unchanged, because there is nothing to redact it by.
+// redactJSON replaces credential values in a request body before --verbose
+// traces it. A body that is not JSON is returned unchanged, because there is
+// nothing to redact it by.
+//
+// It redacts by the keys an errors[] value is redacted by, not by the bare
+// credential keys: a credential is created and replaced with its secrets under
+// fields, in names no key list can anticipate (clientSecret, accessToken,
+// refreshToken), and a header credential keeps its secret under value. The
+// trace is for reading what was sent, and the shape of a body with those
+// values redacted still shows that.
 func redactJSON(body []byte) []byte {
 	trimmed := bytes.TrimSpace(body)
 	if len(trimmed) == 0 {
@@ -400,7 +434,7 @@ func redactJSON(body []byte) []byte {
 		return body
 	}
 
-	encoded, err := json.Marshal(redactValue(decoded))
+	encoded, err := json.Marshal(redactKeys(decoded, errorValueKeys))
 	if err != nil {
 		return body
 	}
@@ -430,11 +464,6 @@ func withKeys(base map[string]bool, extra ...string) map[string]bool {
 	}
 
 	return keys
-}
-
-// redactValue walks a decoded JSON value, replacing credential values.
-func redactValue(value any) any {
-	return redactKeys(value, credentialKeys)
 }
 
 // redactKeys walks a decoded JSON value, replacing the value of every field

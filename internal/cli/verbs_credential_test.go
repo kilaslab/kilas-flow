@@ -117,3 +117,74 @@ func TestCredentialTestPostsTheProbeAndReportsTheVerdict(t *testing.T) {
 		t.Fatalf("--quiet printed %q, want the verdict", stdout)
 	}
 }
+
+// TestVerboseTraceNeverPrintsACredentialSecret: --verbose promises a trace
+// with credentials redacted, and the body a credential is created or replaced
+// with is nothing but its secrets. A header credential keeps its secret under
+// fields.value and an OAuth2 one under names no credential-key list anticipates
+// (clientSecret, accessToken, refreshToken), so the trace redacts a request
+// body by the keys a problem document is redacted by: fields as a whole, and
+// value.
+func TestVerboseTraceNeverPrintsACredentialSecret(t *testing.T) {
+	secrets := []string{"HEADER-SECRET-1", "CLIENT-SECRET-2", "ACCESS-TOKEN-3", "REFRESH-TOKEN-4"}
+	header := `{"name":"Search","type":"httpHeaderAuth","fields":{"name":"X-Api-Key","value":"HEADER-SECRET-1"}}`
+	oauth := `{"name":"Mail","type":"oAuth2Api","fields":{"clientId":"client-1","clientSecret":"CLIENT-SECRET-2",` +
+		`"accessToken":"ACCESS-TOKEN-3","refreshToken":"REFRESH-TOKEN-4"}}`
+
+	for _, testCase := range []struct {
+		name string
+		args func(t *testing.T) []string
+		want string
+	}{
+		{
+			name: "credential create with a header credential",
+			args: func(t *testing.T) []string {
+				return []string{"credential", "create", "--file", fileAt(t, header, 0o600)}
+			},
+			want: "httpHeaderAuth",
+		},
+		{
+			name: "credential update with an OAuth2 credential",
+			args: func(t *testing.T) []string {
+				return []string{"credential", "update", "cred_1", "--file", fileAt(t, oauth, 0o600)}
+			},
+			want: "oAuth2Api",
+		},
+		{
+			name: "api create-credential with a header credential",
+			args: func(*testing.T) []string { return []string{"api", "create-credential", "--body", header} },
+			want: "httpHeaderAuth",
+		},
+		{
+			name: "api create-credential with an OAuth2 credential",
+			args: func(*testing.T) []string { return []string{"api", "create-credential", "--body", oauth} },
+			want: "oAuth2Api",
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			api := newRecordingAPI(map[string]http.HandlerFunc{
+				apiPrefix + "/auth/me": jsonBody(http.StatusOK, identityWithoutScopes),
+				operationsPath: jsonBody(http.StatusOK, servedDocument(
+					[3]string{http.MethodPost, "/api/v1/credentials", "create-credential"},
+				)),
+				apiPrefix + "/credentials":        jsonBody(http.StatusCreated, `{"id":"cred_1","name":"ok"}`),
+				apiPrefix + "/credentials/cred_1": jsonBody(http.StatusOK, `{"id":"cred_1","name":"ok"}`),
+			})
+			srv := stubAPI(t, api.routesFor(t))
+
+			args := append(testCase.args(t), "--yes", "--verbose", "--url", srv.URL, "--json")
+			code, _, stdout, stderr := runCLI(t, Env{Args: args, Getenv: homeEnv(t.TempDir(), nil)})
+			if code != ExitOK {
+				t.Fatalf("exit = %d, want %d (stdout=%q stderr=%q)", code, ExitOK, stdout, stderr)
+			}
+			if !strings.Contains(stderr, "> body ") || !strings.Contains(stderr, testCase.want) {
+				t.Fatalf("the trace did not show the redacted body: %q", stderr)
+			}
+			for _, secret := range secrets {
+				if strings.Contains(stderr, secret) || strings.Contains(stdout, secret) {
+					t.Fatalf("the trace printed %s (stderr=%q)", secret, stderr)
+				}
+			}
+		})
+	}
+}

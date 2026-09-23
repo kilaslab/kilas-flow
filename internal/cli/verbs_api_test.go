@@ -801,22 +801,26 @@ func TestAPICarriesAServerRefusalVerbatim(t *testing.T) {
 // A server from before the fix, or a proxy in front of one, answers a refused
 // body by echoing it, and the envelope is copied into terminals, CI logs and
 // agent transcripts. So the problem is redacted before it is carried: a
-// whole-body echo loses its value, and any other value loses the fields a
-// secret travels under. The values a server builds on purpose — a compile
-// refusal's codes, an idempotency conflict's — are what the caller reads next,
-// so they come through intact.
+// whole-body echo loses its value — at "body" for a missing property or a body
+// that did not parse, at "body.<prop>" for an unexpected one — and any other
+// value loses the fields a secret travels under. The values a server builds on
+// purpose — a compile refusal's codes, an idempotency conflict's — are what
+// the caller reads next, so they come through intact.
 func TestAPINeverCarriesAnEchoedSecretInTheProblem(t *testing.T) {
 	const secret = "TOPSECRET-123"
 
-	valueDropped := func(t *testing.T, issue map[string]any) {
-		t.Helper()
-		if value, present := issue["value"]; present {
-			t.Fatalf("a whole-body echo kept its value: %v", value)
-		}
-		if issue["message"] == nil || issue["location"] != "body" {
-			t.Fatalf("the issue lost more than its value: %v", issue)
+	valueDroppedAt := func(location string) func(t *testing.T, issue map[string]any) {
+		return func(t *testing.T, issue map[string]any) {
+			t.Helper()
+			if value, present := issue["value"]; present {
+				t.Fatalf("a whole-body echo kept its value: %v", value)
+			}
+			if issue["message"] == nil || issue["location"] != location {
+				t.Fatalf("the issue lost more than its value: %v", issue)
+			}
 		}
 	}
+	valueDropped := valueDroppedAt("body")
 	valueIntact := func(want string) func(t *testing.T, issue map[string]any) {
 		return func(t *testing.T, issue map[string]any) {
 			t.Helper()
@@ -848,8 +852,28 @@ func TestAPINeverCarriesAnEchoedSecretInTheProblem(t *testing.T) {
 			check: valueDropped,
 		},
 		{
-			name: "a field-level object carrying secret-named keys",
-			issue: `{"message":"unexpected property","location":"body.data","value":{"name":"X-Api-Key",` +
+			// huma reports an unexpected property at its own path and the
+			// object that holds it as the value, so a typo at the top of a
+			// credential echoes the whole credential — here with its secrets
+			// under the misspelt key, which names no secret.
+			name: "a whole credential echoed at a misspelt property",
+			issue: `{"message":"unexpected property","location":"body.feilds",` +
+				`"value":{"name":"x","type":"oAuth2Api","feilds":{"clientSecret":"` + secret + `"}}}`,
+			check: valueDroppedAt("body.feilds"),
+		},
+		{
+			name: "a whole credential echoed at an unexpected property beside its fields",
+			issue: `{"message":"unexpected property","location":"body.allowedDomain",` +
+				`"value":{"name":"x","type":"oAuth2Api","allowedDomain":["api.example.com"],` +
+				`"fields":{"clientId":"client-1","clientSecret":"` + secret + `"}}}`,
+			check: valueDroppedAt("body.allowedDomain"),
+		},
+		{
+			// An object the server places below the body by JSON pointer, as a
+			// compile refusal does, is kept, so what could be a secret in it is
+			// redacted by name.
+			name: "an object below the body carrying secret-named keys",
+			issue: `{"message":"invalid parameters","location":"body/nodes/0/parameters","value":{"name":"X-Api-Key",` +
 				`"value":"` + secret + `","Token":"` + secret + `","fields":{"sessionKey":"` + secret + `"},` +
 				`"nested":{"PASSWORD":"` + secret + `","api_key":"` + secret + `","kept":"yes"}}}`,
 			check: func(t *testing.T, issue map[string]any) {

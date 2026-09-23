@@ -186,7 +186,7 @@ kilasflow api export-datastore-rows --path id=ds_1 --out rows.csv
   read that makes the refusal possible.
 - **A guarded operation is guarded by id, not only by name.** If the operation
   id names one of the operations a guarded verb wraps (`activate-workflow`,
-  `delete-workflow`, `create/update/delete-credential`,
+  `deactivate-workflow`, `delete-workflow`, `create/update/delete-credential`,
   `create/rename/delete/clear-datastore`, the column operations,
   `delete-tenant`), `api` asks for the same `--yes` and the same tenant-wide
   key that verb would, before `/api/openapi.json` is even read: without
@@ -735,24 +735,30 @@ A real one, from this build against a local server:
 - `error.detail.problem` carries an RFC 9457 problem document as the server
   sent it, the way the JavaScript SDK's `sdk/src/http.ts` already surfaces it,
   less anything that could be a secret. An `errors[]` value at the location
-  `body` is dropped, because that is where an older server echoed a refused
-  body back whole, and a field named like a credential — `token`, `password`,
-  `fields`, and `value` inside an error's own value — reads `[redacted]`. A
-  compile refusal's codes and an idempotency conflict's come through whole. A
-  non-JSON error body (a proxy's HTML page, say) goes under
-  `error.detail.body`, truncated to 4 KiB. `error.detail.execution` carries the
-  record of a run that failed under `run --wait`, which is the one failure that
-  is about the caller's work rather than about the call. `error.detail.issues`
-  carries every problem `pack validate` found, because its one-line message can
-  only name the first.
+  `body` is dropped, and so is an object or array at `body.<property>`,
+  because that is where an older server echoed a refused body back whole: at
+  `body` for a missing property or a body that did not parse, and at the
+  property's own path for an unexpected one. Any other value is kept, and a
+  field named like a credential — `token`, `password`, `fields`, and `value`
+  inside an error's own value — reads `[redacted]`. A compile refusal's codes
+  (at `body/<pointer>`), an idempotency conflict's and a stale row's stamp
+  come through whole. A non-JSON error body (a proxy's HTML page, say) goes
+  under `error.detail.body`, truncated to 4 KiB. `error.detail.execution`
+  carries the record of a run that failed under `run --wait`, which is the one
+  failure that is about the caller's work rather than about the call.
+  `error.detail.issues` carries every problem `pack validate` found, because
+  its one-line message can only name the first.
 - `meta.operation` is the operation id, or the verb path for a local verb, so a
   log line can be traced back to the API call it came from.
 - Nothing but the envelope goes to stdout in JSON mode. `--verbose` traces
   requests (`> GET <url>`, `< 200 <n> bytes`) to **stderr**, with
-  `Authorization` and any credential field redacted. A token is never printed:
-  not in a trace, not in an error message that quotes a URL, and not in a
-  problem document the server sent back — the one place a credential could
-  reach the envelope from outside the CLI is redacted before it is carried.
+  `Authorization` and any credential field redacted: a request body is traced
+  with `fields`, `value` and every field named like a credential reading
+  `[redacted]`, so `credential create --verbose` shows the shape of what was
+  sent and none of its secrets. A token is never printed: not in a trace, not
+  in an error message that quotes a URL, and not in a problem document the
+  server sent back — the one place a credential could reach the envelope from
+  outside the CLI is redacted before it is carried.
 
 `--quiet` prints only the primary result — an id, a status, or a verb's own
 verdict (a validation's `true`/`false`, an evaluated expression's value) — for

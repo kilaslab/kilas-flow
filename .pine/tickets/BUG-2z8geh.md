@@ -101,6 +101,11 @@ The leak cases failed before the change and pass after.
 `TestProblemDocumentsAreRedactedBeforeTheyAreCarried` still passes. The CLI
 reference's envelope section no longer says the problem is carried verbatim.
 
+## Progress — final review fixes (2026-09-23)
+
+- **`--verbose` never prints a credential's secret.** The request trace redacted a body by the bare credential keys only, so `credential create/update --verbose` and `api create-credential --verbose` printed `fields.value`, `clientSecret`, `accessToken` and `refreshToken` to stderr, against the flag's "credentials redacted". `redactJSON` now redacts by `errorValueKeys` (the credential keys plus `fields` and `value`), the set an `errors[]` value is redacted by. Proof: `TestVerboseTraceNeverPrintsACredentialSecret` (`internal/cli/verbs_credential_test.go`) drives `credential create`, `credential update` and `api create-credential` with a header and an OAuth2 body under `--verbose` and finds no secret on either stream; red before, green after.
+- **A whole-body echo at `body.<prop>` is dropped.** huma v2.39.1 reports an unexpected property at `body.<prop>` with the whole surrounding object as the value, so a top-level typo echoed the whole credential past the rule that only dropped `body`. `redactProblem` now drops any value at `body` (as before) and an object or array at `body.<prop>` (`echoesBody`); scalars there keep the key-based treatment. The `body/…` prefix was deliberately left out: compile refusals put their `{code,nodeId,connectionId}` objects at `body/<pointer>`, so dropping objects there would lose the codes an agent reads next. The idempotency code (`header.…`) and the datastore stamp (a scalar at `body.ifUpdatedAt`) are untouched. The unrealistic `body.data` case in `TestAPINeverCarriesAnEchoedSecretInTheProblem` became a whole credential at `body.feilds` (secret under the misspelt key, which leaked before) and at `body.allowedDomain` (secret under `fields`); the key-based case moved to `body/nodes/0/parameters`, where objects are still kept. The comment and `reference/cli.md` say the same, and the guarded-by-id list there now names `deactivate-workflow`.
+
 ## Work Evidence
 
 Closed by `pine close --evidence` on 2026-09-23.
