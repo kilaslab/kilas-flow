@@ -141,7 +141,9 @@ func registerBuiltins() {
 		}
 		return e.ctx.input().all(), nil
 	})
-	define("$fromAI", arity{min: 1, max: 3}, func(e *evaluator, args []any) (any, error) {
+	// Four arguments, as n8n spells it: key, description, type, default. The
+	// last is only read when the agent's arguments are in the context.
+	define("$fromAI", arity{min: 1, max: 4}, func(e *evaluator, args []any) (any, error) {
 		return callRoot("$fromAI", e.ctx, args)
 	})
 	define("$jmespath", arity{min: 1, max: 2}, func(*evaluator, []any) (any, error) {

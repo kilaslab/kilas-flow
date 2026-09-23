@@ -1,10 +1,12 @@
 package nodes
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
 
+	"github.com/kilaslab/kilas-flow/internal/datastore"
 	"github.com/kilaslab/kilas-flow/internal/embed"
 	"github.com/kilaslab/kilas-flow/internal/property"
 	"github.com/kilaslab/kilas-flow/internal/workflow"
@@ -78,13 +80,11 @@ func EmbedScopeIssues(document workflow.Document, confinement embed.Confinement)
 			}
 		}
 		switch node.Type {
-		case DatastoreNodeType:
+		case DatastoreNodeType, DatastoreToolNodeType:
+			// The agent tool writes as the step node does — insert, update,
+			// upsert and delete — so it answers to the same two checks: no
+			// table operation, and one table inside the confinement.
 			issues = append(issues, datastoreOperationIssues(node)...)
-			issues = append(issues, datastoreTargetIssues(node, confinement)...)
-		case DatastoreToolNodeType:
-			// An agent tool binds one table and answers filtered reads. It has
-			// no operation of its own — reads are the whole of it — so only the
-			// table it names has to be inside the confinement.
 			issues = append(issues, datastoreTargetIssues(node, confinement)...)
 		}
 	}
@@ -136,7 +136,7 @@ func datastoreTargetIssues(node workflow.Node, confinement embed.Confinement) []
 	// locator is resolved against the tenant's live list, so its name is what
 	// has to be allowed; every other mode carries the catalogue id already.
 	if strings.EqualFold(locator.Mode, "name") {
-		if !confinement.AllowsDatastoreName(target) {
+		if !grantsDatastoreName(confinement, target) {
 			return []string{fmt.Sprintf(
 				"node %s addresses the data table named %q, which this embed session was not granted",
 				embedNodeLabel(node), target)}
@@ -149,6 +149,28 @@ func datastoreTargetIssues(node workflow.Node, confinement embed.Confinement) []
 			embedNodeLabel(node), target)}
 	}
 	return nil
+}
+
+// grantsDatastoreName reports whether the confinement grants a By-Name target.
+//
+// The grants are compared by datastore.ResolveByName, the rule a run resolves
+// the name by, so the check and the run cannot disagree about which names are
+// the same. The check lives here rather than on embed.Confinement because the
+// resolver's package already depends on that one.
+//
+// A name two grants share is still granted. Each grant that matches would allow
+// the name on its own, so allowing it widens nothing, and refusing it would
+// refuse a name the owner's own published document used. Whether the name
+// picks out one table is a different question — the run's — and it is asked
+// against the tenant's live list, where a name two tables share is refused.
+func grantsDatastoreName(confinement embed.Confinement, name string) bool {
+	granted := make([]datastore.Datastore, 0, len(confinement.Datastores))
+	for _, ref := range confinement.Datastores {
+		// A grant by id carries no name, and an empty name matches nothing.
+		granted = append(granted, datastore.Datastore{ID: ref.ID, Name: ref.Name})
+	}
+	_, err := datastore.ResolveByName(granted, name)
+	return err == nil || errors.Is(err, datastore.ErrAmbiguousName)
 }
 
 // subworkflowConfinementIssues bounds one node that calls a workflow.

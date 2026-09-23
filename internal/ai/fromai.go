@@ -3,6 +3,7 @@ package ai
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strconv"
 	"strings"
 )
@@ -52,6 +53,35 @@ func ExtractFromAI(parameters map[string]any) ([]FromAIArgument, error) {
 		ordered = append(ordered, argument)
 	}
 	return ordered, nil
+}
+
+// CheckFromAIConsistent refuses a key declared more than once in different
+// ways — another type, description or default.
+//
+// ExtractFromAI keeps one declaration per key, and which one depends on the
+// order a map is walked in, which Go randomises: a key that is a number in one
+// parameter and a string in another is offered to the model as either, and
+// checked as either, from one run to the next. Repeating one declaration
+// exactly is fine; that is how a value used twice is written.
+func CheckFromAIConsistent(parameters map[string]any) error {
+	var collected []FromAIArgument
+	if err := collectFromAI(parameters, &collected); err != nil {
+		return err
+	}
+	first := make(map[string]FromAIArgument, len(collected))
+	for _, argument := range collected {
+		declared, seen := first[argument.Key]
+		if !seen {
+			first[argument.Key] = argument
+			continue
+		}
+		if declared.Type != argument.Type || declared.Description != argument.Description ||
+			declared.HasDefault != argument.HasDefault || !reflect.DeepEqual(declared.Default, argument.Default) {
+			return fmt.Errorf("$fromAI(%q, …) is declared more than once with a different type, description or default: "+
+				"declare it the same way everywhere, so the model is offered one schema", argument.Key)
+		}
+	}
+	return nil
 }
 
 func collectFromAI(value any, collected *[]FromAIArgument) error {

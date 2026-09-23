@@ -91,6 +91,37 @@ func TestEmbedScopeIssuesMatchesADataTableByIdAndByName(t *testing.T) {
 	}
 }
 
+// A By-Name grant is compared by datastore.ResolveByName, the rule a run
+// resolves the name by, so the check and the run cannot disagree about which
+// names are the same. A name two grants share is still granted — each grant
+// would allow it alone, so allowing it widens nothing — and whether the name
+// picks out one table is the run's question, asked against the tenant's live
+// list, where a name two tables share is refused.
+func TestEmbedScopeIssuesComparesGrantedNamesTheWayARunResolvesThem(t *testing.T) {
+	byName := func(name string) workflow.Document {
+		return workflow.Document{Nodes: []workflow.Node{
+			embedTestNode(DatastoreNodeType, "rows", map[string]any{
+				"resource": "row", "operation": DatastoreOperationGet, "dataTableId": embedTestLocator("name", name),
+			}),
+		}}
+	}
+
+	shared := embed.Confinement{Datastores: []embed.DatastoreRef{{Name: "Leads"}, {Name: "leads"}}}
+	for _, name := range []string{"LEADS", "  leads "} {
+		if issues := EmbedScopeIssues(byName(name), shared); len(issues) != 0 {
+			t.Errorf("the name %q, which two grants carry, was refused: %v", name, issues)
+		}
+	}
+	if issues := EmbedScopeIssues(byName("Leads"), embed.Confinement{}); len(issues) == 0 {
+		t.Error("an empty confinement granted a name")
+	}
+	// A grant by id is a different reference, not a name to compare against.
+	idOnly := embed.Confinement{Datastores: []embed.DatastoreRef{{ID: "Leads"}}}
+	if issues := EmbedScopeIssues(byName("Leads"), idOnly); len(issues) == 0 {
+		t.Error("a grant by id granted a name that happens to spell the id")
+	}
+}
+
 func TestEmbedScopeIssuesRefusesAnExpressionWhereATargetIsRequired(t *testing.T) {
 	// The value is only knowable at run time, and a check that cannot see the
 	// target cannot bound it.
@@ -118,9 +149,32 @@ func TestEmbedScopeIssuesBoundsTheDataTableToolNode(t *testing.T) {
 		t.Fatal("an agent tool bound to a sibling table was allowed")
 	}
 	allowed := embed.Confinement{Datastores: []embed.DatastoreRef{{ID: "ds_sibling"}}}
-	// A tool is read-only, so the table binding is the whole of its authority.
 	if issues := EmbedScopeIssues(document, allowed); len(issues) != 0 {
 		t.Fatalf("issues = %v, want none inside the confinement", issues)
+	}
+
+	// The tool writes as the step node does, so it answers to the same
+	// operation check: a row write inside the confinement is allowed, and a
+	// table operation is refused whatever the confinement names.
+	for _, operation := range []string{DatastoreOperationInsert, DatastoreOperationUpdate, DatastoreOperationDelete} {
+		writer := workflow.Document{Nodes: []workflow.Node{
+			embedTestNode(DatastoreToolNodeType, "tool", map[string]any{
+				"operation": operation, "dataTableId": embedTestLocator("id", "ds_sibling"),
+			}),
+		}}
+		if issues := EmbedScopeIssues(writer, allowed); len(issues) != 0 {
+			t.Errorf("issues = %v, want a %s tool inside the confinement allowed", issues, operation)
+		}
+	}
+	for _, operation := range []string{DatastoreOperationClearTable, DatastoreOperationDeleteTable, DatastoreOperationListTables} {
+		manager := workflow.Document{Nodes: []workflow.Node{
+			embedTestNode(DatastoreToolNodeType, "tool", map[string]any{
+				"operation": operation, "dataTableId": embedTestLocator("id", "ds_sibling"),
+			}),
+		}}
+		if issues := EmbedScopeIssues(manager, allowed); len(issues) == 0 {
+			t.Errorf("a tool performing the table operation %q was allowed for an embed session", operation)
+		}
 	}
 }
 

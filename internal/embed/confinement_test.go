@@ -86,7 +86,9 @@ func TestAConfinementWithoutEntriesAllowsNothing(t *testing.T) {
 	if confinement.AllowsCredential("cred_1") {
 		t.Error("an empty confinement allowed a credential")
 	}
-	if confinement.AllowsDatastoreID("ds_1") || confinement.AllowsDatastoreName("Metrics") {
+	// The name half is checked where a run resolves names, and pinned there
+	// (nodes.TestEmbedScopeIssuesComparesGrantedNamesTheWayARunResolvesThem).
+	if confinement.AllowsDatastoreID("ds_1") {
 		t.Error("an empty confinement allowed a data table")
 	}
 	if confinement.AllowsWorkflow("wf_1") {
@@ -99,12 +101,12 @@ func TestAConfinementWithoutEntriesAllowsNothing(t *testing.T) {
 	}
 }
 
-func TestAConfinementMatchesNamesWithoutCase(t *testing.T) {
+// A name is compared where a run resolves names, by the same resolver (see
+// nodes.EmbedScopeIssues); the confinement itself answers for ids, and a name
+// never stands in for one.
+func TestAConfinementNeverMatchesANameAsAnId(t *testing.T) {
 	confinement := Confinement{Datastores: []DatastoreRef{{ID: "ds_1", Name: "Metrics"}}}
-	if !confinement.AllowsDatastoreName("metrics") {
-		t.Error("a By-Name locator resolves without regard to case, so the check must compare the same way")
-	}
-	if confinement.AllowsDatastoreName("") || confinement.AllowsDatastoreID("") {
+	if confinement.AllowsDatastoreID("") {
 		t.Error("a blank table was allowed")
 	}
 	// An entry that carries only a name never matches an id and the reverse:

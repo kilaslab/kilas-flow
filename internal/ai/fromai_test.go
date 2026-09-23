@@ -137,3 +137,40 @@ func containsString(values []string, want string) bool {
 	}
 	return false
 }
+
+func TestCheckFromAIConsistentRefusesAKeyDeclaredTwoWays(t *testing.T) {
+	t.Parallel()
+
+	marker := func(template string) map[string]any {
+		return map[string]any{"mode": "expression", "value": template}
+	}
+	// ExtractFromAI keeps one declaration per key, and which one depends on
+	// map order: two that differ make the schema, and the type the argument is
+	// checked against, change from run to run.
+	for name, parameters := range map[string]map[string]any{
+		"type": {
+			"plan": marker("{{ $fromAI('x', 'x', 'number') + '' }}"),
+			"name": marker("{{ $fromAI('x', 'x') }}"),
+		},
+		"description": {
+			"a": marker("{{ $fromAI('x', 'the name') }}"),
+			"b": marker("{{ $fromAI('x', 'the city') }}"),
+		},
+		"default": {
+			"a": marker("{{ $fromAI('x', 'x', 'string', 'free') }}"),
+			"b": []any{marker("{{ $fromAI('x', 'x') }}")},
+		},
+	} {
+		if err := ai.CheckFromAIConsistent(parameters); err == nil || !strings.Contains(err.Error(), `"x"`) {
+			t.Errorf("%s: CheckFromAIConsistent() = %v, want the key named", name, err)
+		}
+	}
+	same := map[string]any{
+		"a": marker("{{ $fromAI('x', 'the name') }}"),
+		"b": map[string]any{"c": "$fromAI('x', 'the name')"},
+		"d": marker("{{ $fromAI('y', 'y', 'number', 3) }}"),
+	}
+	if err := ai.CheckFromAIConsistent(same); err != nil {
+		t.Errorf("CheckFromAIConsistent(one declaration repeated) = %v, want success", err)
+	}
+}

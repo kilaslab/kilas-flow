@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -5544,6 +5545,12 @@ var dataTableTableOperations = map[string]string{
 	"update": "rename", "delete": "deleteTable",
 }
 
+// dataTableToolOperations are the operations this server's data table tool
+// performs, in this server's names.
+var dataTableToolOperations = map[string]bool{
+	"get": true, "insert": true, "update": true, "upsert": true, "delete": true,
+}
+
 // datastoreRowOperationsToN8N is the inverse of dataTableRowOperations.
 var datastoreRowOperationsToN8N = map[string]string{
 	"insert": "insert", "get": "get", "update": "update", "upsert": "upsert",
@@ -5591,7 +5598,6 @@ func dataTableParams(node Node, tool bool) (map[string]any, []Unsupported) {
 		})
 		resource = "row"
 	}
-	parameters["resource"] = resource
 
 	operation := stringParameter(node.Parameters, "operation")
 	mapped := ""
@@ -5600,9 +5606,14 @@ func dataTableParams(node Node, tool bool) (map[string]any, []Unsupported) {
 	} else {
 		mapped = dataTableTableOperations[operation]
 	}
-	if mapped == "" {
+	switch {
+	case mapped == "":
 		fallback := "insert"
-		if resource == "table" {
+		if tool {
+			// A tool falls back to its own default, the read: a blocked tool
+			// that is activated anyway must not be the one that writes.
+			resource, fallback = "row", "get"
+		} else if resource == "table" {
 			fallback = "create"
 		}
 		issues = append(issues, Unsupported{
@@ -5611,7 +5622,19 @@ func dataTableParams(node Node, tool bool) (map[string]any, []Unsupported) {
 				"It was imported as %q: set the operation before activating.", operation, fallback),
 		})
 		mapped = fallback
+	case tool && !dataTableToolOperations[mapped]:
+		// This server's tool gets, inserts, updates, upserts and deletes rows.
+		// The row-exists branches fork, which a tool's one output cannot, and a
+		// tool never manages tables — so any of those arrives as a read.
+		issues = append(issues, Unsupported{
+			Severity: SeverityBlocking, Field: "operation",
+			Reason: fmt.Sprintf("this tool ran the %s operation %q, which this server's data table tool does not perform: "+
+				"it gets, inserts, updates, upserts or deletes rows. It was imported as a get: set the operation before activating.",
+				resource, operation),
+		})
+		resource, mapped = "row", "get"
 	}
+	parameters["resource"] = resource
 	parameters["operation"] = mapped
 
 	// Only create and list run without a table. Every other operation names
@@ -5985,6 +6008,44 @@ func dataTableFiltersToKilas(value any) (map[string]any, []Unsupported) {
 func dataTableToolToKilas(node Node) (map[string]any, []Unsupported) {
 	parameters, issues := dataTableParams(node, true)
 
+	// This server's tool answers an insert that declares nothing to write
+	// with a read — the rule that keeps tools built before writes existed
+	// reading. An n8n insert tool that maps no column, typically one mapping
+	// automatically from the agent's input, would arrive as that read, so it
+	// is blocking rather than a silent change of what the tool does.
+	if parameters["operation"] == "insert" && nodes.DatastoreToolOperation(parameters) != "insert" {
+		issues = append(issues, Unsupported{
+			Severity: SeverityBlocking, Field: "columns",
+			Reason: "this tool inserts without mapping any column, and this server's data table tool reads rows " +
+				"when an insert has nothing to write. Map each column, with $fromAI for what the model supplies, before activating.",
+		})
+	}
+
+	// A tool that writes has its structure written literally here: only a
+	// mapped column's value and a condition's value may be expressions. The
+	// operator and match already arrive as literals with their own
+	// diagnostics, and a column name or a whole panel as an expression is
+	// already blocking; any other slot carried as an expression is blocking
+	// too, rather than an import that looks clean and that save refuses.
+	if nodes.DatastoreToolOperation(parameters) != "get" {
+		if path := nodes.DatastoreToolStructureExpression(parameters); path != "" {
+			field := path
+			if end := strings.IndexAny(path, ".["); end >= 0 {
+				field = path[:end]
+			}
+			if !slices.ContainsFunc(issues, func(issue Unsupported) bool {
+				return issue.Field == field && issue.Severity == SeverityBlocking
+			}) {
+				issues = append(issues, Unsupported{
+					Severity: SeverityBlocking, Field: field,
+					Reason: fmt.Sprintf("this tool writes, and its %s is an expression. This server's data table tool takes "+
+						"the structure of a write literally, with expressions only in a mapped column's value or a condition's value: "+
+						"write it as a fixed value before activating.", path),
+				})
+			}
+		}
+	}
+
 	// n8n has no tool-name parameter at all: the name a model calls is derived
 	// from the node's own canvas name. Deriving it the same way is what keeps
 	// an imported system prompt that named the tool still naming the same
@@ -6024,6 +6085,12 @@ func dataTableToN8NParams(node workflow.Node, tool bool) (map[string]any, []Loss
 	}
 	parameters["resource"] = resource
 	operation := stringParameter(node.Parameters, "operation")
+	if tool && resource == "row" {
+		// The tool leaves as what it does here, which is not always what it
+		// stores: one naming no operation, or an insert with nothing to
+		// write, reads — and n8n would run either as an insert.
+		operation = nodes.DatastoreToolOperation(node.Parameters)
+	}
 	if resource == "row" {
 		// An operation n8n has no equivalent for — Increment is the one
 		// today — leaves as an insert, which changes what the workflow

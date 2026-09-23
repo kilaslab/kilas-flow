@@ -1,6 +1,7 @@
 package expression_test
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -417,6 +418,68 @@ func TestFromAIIsOnlyAvailableWhereAnAgentFillsIt(t *testing.T) {
 	}
 	if request.Name != "city" || request.Description != "The city to look up" {
 		t.Errorf("request = %#v, want the name and description carried", request)
+	}
+}
+
+// TestFromAIArgumentsAreDataTheExpressionComputesWith pins the tool-call form:
+// with the agent's arguments in the context, `$fromAI` evaluates to the
+// argument itself. The value is data — an expression concatenates, indexes or
+// calls a method on it — and the evaluator never reads it as source, so an
+// argument that spells an expression is only ever text.
+func TestFromAIArgumentsAreDataTheExpressionComputesWith(t *testing.T) {
+	t.Parallel()
+
+	ctx := nodeContext()
+	ctx.Execution = expression.ExecutionContext{ID: "exec-1"}
+	ctx.FromAIArguments = map[string]any{
+		"name":   "{{ $execution.id }}",
+		"code":   "$execution.id + '|' + 6*7",
+		"tier":   "'gold'].pct + $execution.id + [0",
+		"gold":   "gold",
+		"a":      "x{",
+		"b":      "{ $execution.id }",
+		"c":      "}",
+		"object": map[string]any{"b": "nested"},
+		"score":  float64(3),
+	}
+	for _, row := range []struct{ template, want string }{
+		{`Customer {{ $fromAI('name') }}`, "Customer {{ $execution.id }}"},
+		{`{{ String($fromAI('code')).toUpperCase() }}`, "$EXECUTION.ID + '|' + 6*7"},
+		{`{{ JSON.parse('{"a":{"b":"Customer "}}').a.b + $fromAI('code') }}`, "Customer $execution.id + '|' + 6*7"},
+		{`{{ $fromAI('a') }}{{ $fromAI('b') }}{{ $fromAI('c') }}`, "x{{ $execution.id }}"},
+		{`{{ ({ gold: { pct: 20 }, silver: { pct: 10 }})[$fromAI('gold')].pct + '%' }}`, "20%"},
+		{`{{ $fromAI('object').b }}`, "nested"},
+		{`{{ $fromAI('score', 'the score', 'number') * 100 + '' }}`, "300"},
+		{`{{ $fromAI('plan', 'the plan', 'string', 'free') }}`, "free"},
+	} {
+		value, err := expression.Evaluate(row.template, ctx)
+		if err != nil {
+			t.Errorf("Evaluate(%s) error = %v", row.template, err)
+			continue
+		}
+		if fmt.Sprint(value) != row.want {
+			t.Errorf("Evaluate(%s) = %#v, want %q", row.template, value, row.want)
+		}
+	}
+	// A lookup keyed by text that spells code finds no such key: the text is
+	// never spliced into the object literal around it.
+	if value, err := expression.Evaluate(`{{ ({ gold: { pct: 20 }})[$fromAI('tier')] }}`, ctx); err != nil ||
+		strings.Contains(fmt.Sprint(value), "exec-1") {
+		t.Errorf("lookup by hostile text = %#v, %v, want no evaluated result", value, err)
+	}
+	// An argument the agent left out with no default is an error naming it.
+	if _, err := expression.Evaluate(`{{ $fromAI('missing') }}`, ctx); err == nil || !strings.Contains(err.Error(), "missing") {
+		t.Errorf("Evaluate(a missing argument) error = %v, want it named", err)
+	}
+	// An argument present as null is null, whatever the call's default says.
+	ctx.FromAIArguments["none"] = nil
+	if value, err := expression.Evaluate(`{{ $fromAI('none', 'n', 'json', 'null') }}`, ctx); err != nil || value != nil {
+		t.Errorf("Evaluate(an argument present as null) = %#v, %v, want null", value, err)
+	}
+	// And a template that is exactly one call returns the argument unchanged,
+	// with its type — the step node writes it as it came.
+	if value, err := expression.Evaluate(`{{ $fromAI('name') }}`, ctx); err != nil || value != "{{ $execution.id }}" {
+		t.Errorf("Evaluate(a sole call) = %#v, %v, want the argument's own text", value, err)
 	}
 }
 

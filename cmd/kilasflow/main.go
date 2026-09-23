@@ -567,20 +567,21 @@ func run(args []string) error {
 				if !datastore.IsUnknown(err) {
 					return nil, err
 				}
+				// Not an id, so a name the operator typed: resolved by the
+				// one rule a run resolves it by, so the mapper never offers
+				// the columns of a table a shared name does not pick out.
 				definitions, listErr := datastoreEngine.ListDatastores(ctx, tenantID)
 				if listErr != nil {
 					return nil, listErr
 				}
-				found := false
-				for _, candidate := range definitions {
-					if strings.EqualFold(candidate.Name, ref) {
-						definition = &candidate
-						found = true
-						break
-					}
+				id, resolveErr := datastore.ResolveByName(definitions, ref)
+				if resolveErr != nil {
+					return nil, resolveErr
 				}
-				if !found {
-					return nil, err
+				for index := range definitions {
+					if definitions[index].ID == id {
+						definition = &definitions[index]
+					}
 				}
 			}
 			columns := make([]loadoptions.DatastoreColumn, 0, len(definition.Columns))
