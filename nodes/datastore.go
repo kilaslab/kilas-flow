@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -1082,7 +1083,7 @@ func checkDatastoreToolOperation(parameters map[string]any) error {
 	// about $fromAI decides nothing, and refusing it there would only break a
 	// tool that has always worked.
 	if operation != DatastoreOperationGet {
-		if err := refuseDatastoreToolModelChoices(parameters); err != nil {
+		if err := refuseDatastoreToolStructureFromAI(parameters); err != nil {
 			return err
 		}
 		if _, err := ai.ExtractFromAI(parameters); err != nil {
@@ -1106,43 +1107,149 @@ func checkDatastoreToolOperation(parameters map[string]any) error {
 	return validateDatastoreConfiguration(workflow.Node{Parameters: resolved})
 }
 
-// refuseDatastoreToolModelChoices refuses a $fromAI call in any slot that
-// decides which rows a write touches rather than what it writes: a
-// condition's column (keyName) and operator (condition), the match, and a
-// matching column. Each of those is the author's. A model that chooses the
-// column picks what a delete filters on; one that chooses the operator turns
-// "name eq x" into "name neq nobody"; one that chooses the match turns "all"
-// into "any" beside a condition every row meets — and each of the last two
-// empties the table. The step node's checks cannot see this: they refuse
-// expression markers in column slots only, a bare $fromAI in a plain string is
-// not a marker at all, and a non-string operator reads as equals. So every
-// slot is searched with ai.ExtractFromAI, which finds a call in a plain string
-// and inside a marker alike; a call it cannot even parse is refused too.
-func refuseDatastoreToolModelChoices(parameters map[string]any) error {
+// refuseDatastoreToolStructureFromAI holds a write to one rule: the model
+// supplies values, never structure. A $fromAI call may sit only inside the
+// value of one mapped column (columns.value.<column>) or inside a condition's
+// value (filters.conditions[i].keyValue), in a plain string or an expression
+// alike. Anywhere else it would let the model shape the write itself — pick
+// the column a delete filters on, turn eq into neq or all into any, hand in a
+// whole condition row or a whole mapping — and each of those can empty or
+// rewrite the table. The search is ai.ExtractFromAI over each subtree, which
+// finds a call in a plain string and inside a marker alike; a call it cannot
+// even parse counts as one.
+func refuseDatastoreToolStructureFromAI(parameters map[string]any) error {
 	callsFromAI := func(value any) bool {
 		calls, err := ai.ExtractFromAI(map[string]any{"slot": value})
 		return err != nil || len(calls) > 0
 	}
-	if callsFromAI(parameters["match"]) {
-		return fmt.Errorf("match calls $fromAI, and whether any or all conditions must hold is never the model's to choose")
+	refuse := func(path string) error {
+		return fmt.Errorf("%s calls $fromAI, and on a write the model supplies values — a mapped column's value "+
+			"or a condition's value — never the shape of the write", path)
 	}
-	if filters, ok := parameters["filters"].(map[string]any); ok {
-		rows, _ := filters["conditions"].([]any)
-		for index, entry := range rows {
-			row, _ := entry.(map[string]any)
-			if callsFromAI(row["keyName"]) {
-				return fmt.Errorf("filters.conditions[%d].keyName calls $fromAI, and a column name is never the model's to choose", index)
+	// plain is a map the author wrote as structure, rather than a marker
+	// whose result would be.
+	plain := func(value any) (map[string]any, bool) {
+		object, ok := value.(map[string]any)
+		return object, ok && !expression.IsExpression(object)
+	}
+	for _, key := range sortedParameterKeys(parameters) {
+		value := parameters[key]
+		switch key {
+		case "columns":
+			columns, ok := plain(value)
+			if !ok {
+				if callsFromAI(value) {
+					return refuse("columns")
+				}
+				continue
 			}
-			if callsFromAI(row["condition"]) {
-				return fmt.Errorf("filters.conditions[%d].condition calls $fromAI, and an operator is never the model's to choose", index)
+			for _, field := range sortedParameterKeys(columns) {
+				if field != "value" {
+					if callsFromAI(columns[field]) {
+						return refuse("columns." + field)
+					}
+					continue
+				}
+				// Each mapped column's value is the model's to fill; the
+				// mapping around them is not.
+				if _, ok := plain(columns[field]); !ok && callsFromAI(columns[field]) {
+					return refuse("columns.value")
+				}
+			}
+		case "filters":
+			filters, ok := plain(value)
+			if !ok {
+				if callsFromAI(value) {
+					return refuse("filters")
+				}
+				continue
+			}
+			for _, field := range sortedParameterKeys(filters) {
+				rows, isList := filters[field].([]any)
+				if field != "conditions" || !isList {
+					if callsFromAI(filters[field]) {
+						return refuse("filters." + field)
+					}
+					continue
+				}
+				for index, entry := range rows {
+					row, ok := plain(entry)
+					if !ok {
+						if callsFromAI(entry) {
+							return refuse(fmt.Sprintf("filters.conditions[%d]", index))
+						}
+						continue
+					}
+					for _, slot := range sortedParameterKeys(row) {
+						if slot != "keyValue" && callsFromAI(row[slot]) {
+							return refuse(fmt.Sprintf("filters.conditions[%d].%s", index, slot))
+						}
+					}
+				}
+			}
+		default:
+			if callsFromAI(value) {
+				return refuse(key)
 			}
 		}
 	}
-	if mapping, ok := property.ReadMapping(parameters["columns"]); ok {
-		for _, column := range mapping.MatchingColumns {
-			if callsFromAI(column) {
-				return fmt.Errorf("columns.matchingColumns calls $fromAI, and a column name is never the model's to choose")
+	return nil
+}
+
+// sortedParameterKeys orders a map's keys, so a refusal names the same slot
+// on every run.
+func sortedParameterKeys(parameters map[string]any) []string {
+	keys := make([]string, 0, len(parameters))
+	for key := range parameters {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// checkDatastoreToolFilled refuses a filled parameter tree whose shape the
+// model changed. Filling a plain string can only put a value where the string
+// was, so a marker, or a map with other keys, where the author's template had
+// neither is the model's doing — a column value like
+// {"mode": "$fromAI('m')", "value": "$fromAI('v')"} filled with "expression"
+// and a template would otherwise be evaluated as one. The value a whole-call
+// json argument fills in is checked for markers at any depth, for the same
+// reason.
+func checkDatastoreToolFilled(template, filled any, path string) error {
+	if !expression.IsExpression(template) && expression.IsExpression(filled) {
+		return fmt.Errorf("%s became an expression once the model's values were filled in, and a data table tool never evaluates one the author did not write", path)
+	}
+	switch typed := template.(type) {
+	case map[string]any:
+		if expression.IsExpression(typed) {
+			return nil
+		}
+		object, _ := filled.(map[string]any)
+		if len(object) != len(typed) {
+			return fmt.Errorf("%s changed its keys once the model's values were filled in", path)
+		}
+		for key, nested := range typed {
+			value, present := object[key]
+			if !present {
+				return fmt.Errorf("%s changed its keys once the model's values were filled in", path)
 			}
+			if err := checkDatastoreToolFilled(nested, value, path+"."+key); err != nil {
+				return err
+			}
+		}
+	case []any:
+		list, _ := filled.([]any)
+		if len(list) != len(typed) {
+			return fmt.Errorf("%s changed its length once the model's values were filled in", path)
+		}
+		for index, nested := range typed {
+			if err := checkDatastoreToolFilled(nested, list[index], fmt.Sprintf("%s[%d]", path, index)); err != nil {
+				return err
+			}
+		}
+	default:
+		if datastoreToolHoldsMarker(filled) {
+			return fmt.Errorf("%s became an expression once the model's values were filled in, and a data table tool never evaluates one the author did not write", path)
 		}
 	}
 	return nil
@@ -1543,6 +1650,9 @@ func (tool *datastoreTool) invokeWrite(ctx context.Context, arguments json.RawMe
 	}
 	filled, err := datastoreToolPlainFromAI(tool.parameters, fromAI)
 	if err != nil {
+		return "", fmt.Errorf("node %q: tool %q: %w", tool.agentNode, tool.name, err)
+	}
+	if err := checkDatastoreToolFilled(tool.parameters, filled, "parameters"); err != nil {
 		return "", fmt.Errorf("node %q: tool %q: %w", tool.agentNode, tool.name, err)
 	}
 	parameters, _ := filled.(map[string]any)

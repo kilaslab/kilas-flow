@@ -127,6 +127,22 @@ Proof:
 - `TestDatastoreToolNeverEvaluatesAModelValueAsAnExpression` runs every probe from both reviews. Each stored value is the model's literal text, or the call is refused. None of them stores an evaluated result.
 - `TestDatastoreToolRefusesAKeyDeclaredTwoWaysWhenBuilt`, `TestFromAIArgumentsAreDataTheExpressionComputesWith` and `TestCheckFromAIConsistentRefusesAKeyDeclaredTwoWays` also pass.
 
+## Progress — Lane E, review fix round 3 (2026-09-23)
+
+One rule instead of per-slot patches: on a write, the model supplies values, never structure.
+
+- **Where `$fromAI` may appear** (`refuseDatastoreToolStructureFromAI`, which replaces `refuseDatastoreToolModelChoices`, at save and at descriptor build, writes only): only inside one mapped column's value (`columns.value.<column>`) or a condition's `keyValue`, in plain or expression form. It is refused anywhere else, including:
+  - a whole condition row, which covers both review probes (a row choosing its operator or its column) and the sole-json row;
+  - the conditions list or the whole filters panel;
+  - `match`, `keyName`, `condition`;
+  - the whole `columns.value`, the mapping mode, `matchingColumns`;
+  - any other parameter.
+- **Filled shape check** (`checkDatastoreToolFilled`, defence in depth): after plain strings are filled, the call is refused if a value became an expression marker where the author's template was not one, at any depth. It is also refused if a map's keys or a list's length changed, or if a whole-call json value holds a marker. Before this, the probe column value `{"mode":"$fromAI('m')","value":"$fromAI('v')"}` stored "exec-1".
+- **Json column values:** a json argument alone as a column's value is stored as that column's data and never read back as a mapping or conditions. Confirmed by a test in both forms.
+- **Null default:** a json `null` default resolves to null in an expression and in a plain string alike. The evaluator's `fromAIArgument` now treats a key present as null as null.
+
+Proof: `go test ./nodes/ ./internal/ai/ ./internal/expression/ ./internal/interop/n8n/ ./internal/engine/` → ok. The covering tests are `TestDatastoreToolModelSuppliesValuesNeverStructure`, `TestDatastoreToolRefusesAFilledValueThatBecomesAnExpression`, `TestDatastoreToolStoresAJsonColumnValueAsData`, `TestDatastoreToolNullDefaultIsTheSameInBothForms`, and `TestFromAIArgumentsAreDataTheExpressionComputesWith` (null case).
+
 # Attachments
 
 ## Work Evidence

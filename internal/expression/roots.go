@@ -311,13 +311,16 @@ func callRoot(name string, ctx Context, args []any) (any, error) {
 
 // fromAIArgument reads one agent-supplied argument for
 // `$fromAI(key, description, type, default)`. The value is returned as the
-// agent sent it, so whatever it spells stays data.
+// agent sent it, so whatever it spells stays data. A key present as null is
+// null: the caller has already decided that is the argument's value, and
+// reading past it to the fourth argument's source text would turn a json
+// default of null into the string "null".
 func fromAIArgument(arguments map[string]any, args []any) (any, error) {
 	if len(args) == 0 {
 		return nil, fmt.Errorf("$fromAI needs a parameter name")
 	}
 	key := jsString(args[0])
-	if value, present := arguments[key]; present && value != nil {
+	if value, present := arguments[key]; present {
 		return value, nil
 	}
 	if len(args) > 3 && !isNullish(args[3]) {

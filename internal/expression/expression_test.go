@@ -471,6 +471,11 @@ func TestFromAIArgumentsAreDataTheExpressionComputesWith(t *testing.T) {
 	if _, err := expression.Evaluate(`{{ $fromAI('missing') }}`, ctx); err == nil || !strings.Contains(err.Error(), "missing") {
 		t.Errorf("Evaluate(a missing argument) error = %v, want it named", err)
 	}
+	// An argument present as null is null, whatever the call's default says.
+	ctx.FromAIArguments["none"] = nil
+	if value, err := expression.Evaluate(`{{ $fromAI('none', 'n', 'json', 'null') }}`, ctx); err != nil || value != nil {
+		t.Errorf("Evaluate(an argument present as null) = %#v, %v, want null", value, err)
+	}
 	// And a template that is exactly one call returns the argument unchanged,
 	// with its type — the step node writes it as it came.
 	if value, err := expression.Evaluate(`{{ $fromAI('name') }}`, ctx); err != nil || value != "{{ $execution.id }}" {
