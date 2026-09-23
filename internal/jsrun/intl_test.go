@@ -458,6 +458,25 @@ func TestNumbersFormatInAnyCLDRLocale(t *testing.T) {
 	}
 }
 
+// The replaced locale methods look like the built-ins they replace: the same
+// name, length and property attributes, as Node reports them.
+func TestTheLocaleMethodsKeepTheirShape(t *testing.T) {
+	result := mustRun(t, newRunner(), jsrun.Task{Source: strings.Join([]string{
+		"const shape = (owner, key) => { const d = Object.getOwnPropertyDescriptor(owner, key); return [d.value.name, d.value.length, d.writable, d.enumerable, d.configurable].join(',') }",
+		"return [{ json: {",
+		"  methods: [shape(Number.prototype, 'toLocaleString'), shape(Date.prototype, 'toLocaleString'), shape(Date.prototype, 'toLocaleDateString'), shape(Date.prototype, 'toLocaleTimeString'), shape(String.prototype, 'localeCompare'), shape(BigInt.prototype, 'toLocaleString')].join(' '),",
+		"  intl: [Intl.DateTimeFormat.length, Intl.NumberFormat.length, Intl.DateTimeFormat.name, Object.prototype.toString.call(Intl), Object.prototype.toString.call(new Intl.NumberFormat()), Intl.DateTimeFormat.prototype.formatToParts.length, Intl.NumberFormat.prototype.formatToParts.length].join(' '),",
+		"} }]",
+	}, "\n")})
+	got := result.Items[0].JSON
+	if want := "toLocaleString,0,true,false,true toLocaleString,0,true,false,true toLocaleDateString,0,true,false,true toLocaleTimeString,0,true,false,true localeCompare,1,true,false,true toLocaleString,0,true,false,true"; got["methods"] != want {
+		t.Errorf("methods = %v, want %v", got["methods"], want)
+	}
+	if want := "0 0 DateTimeFormat [object Intl] [object Intl.NumberFormat] 1 1"; got["intl"] != want {
+		t.Errorf("Intl = %v, want %v", got["intl"], want)
+	}
+}
+
 // errorOf runs a body that must fail and returns its error.
 func errorOf(t *testing.T, source string) error {
 	t.Helper()
