@@ -55,16 +55,19 @@ Not re-tested here: that a successful `remove` clears the route's captured lifec
 
 ## Work Evidence
 
-Closed by `pine close --evidence` on 2026-09-23.
+Closed by `pine close --evidence` on 2026-09-23. Rewritten on 2026-09-23 to list only this ticket's own commits (`git log --grep "BUG-d2t3kp" 2f8e9b1..5830b4e`) and the files exactly those commits changed.
 
-- Base: `906ac77e` (last commit at or before ticket created 2026-09-23)
-- Commits (1):
+- Range: `2f8e9b1..5830b4e`
+- Commits (2):
+  - `90f72480` — chore(pine): close BUG-d2t3kp with its landing evidence
   - `c3cf620e` — BUG-d2t3kp: deleting an active workflow unregisters its trigger before it disappears
-- Files changed (base → working tree):
+- Merged by (1):
+  - `2f29af5e` — merge: pack-trigger lifecycle templates escape every value, capture what registration answers, and a deleted workflow unregisters its trigger (BUG-vsmnby, BUG-d2t3kp)
+- Files changed by those commits (merge commits excluded):
 
 ```
- .pine/tickets/BUG-d2t3kp.md                    | 54 +++++++++++++++++
+ .pine/tickets/BUG-d2t3kp.md                    | 74 +++++++++++++++++++++++-
  internal/api/handlers/workflows.go             | 15 +++++
  internal/api/handlers/workflows_delete_test.go | 81 ++++++++++++++++++++++++--
- 3 files changed, 145 insertions(+), 5 deletions(-)
+ 3 files changed, 163 insertions(+), 7 deletions(-)
 ```
