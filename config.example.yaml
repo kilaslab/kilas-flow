@@ -511,3 +511,40 @@ code:
   # the artifacts, so eviction is a last resort rather than housekeeping.
   # Env: KILASFLOW_CODE_CACHE_MAX_BYTES
   cache_max_bytes: 2147483648
+  # JavaScriptEnabled runs JavaScript Code nodes, including the ones
+  # imported from n8n, on the engine inside the server. Turned off, the
+  # node is greyed out in the editor and every run is refused, naming this
+  # key. No Node.js process is involved either way.
+  # Env: KILASFLOW_CODE_JAVASCRIPT_ENABLED
+  javascript_enabled: true
+  # JavaScriptTimeout bounds the user's own program in one JavaScript Code
+  # node run. Setting up the engine, loading a library and handling the
+  # input and output are not counted. A node's own time limit may lower it,
+  # never raise it. At most 5m, because a backtracking regular expression
+  # can overrun its limit by up to this long.
+  # Env: KILASFLOW_CODE_JAVASCRIPT_TIMEOUT
+  javascript_timeout: 10s
+  # JavaScriptMaxConcurrent bounds how many JavaScript Code nodes run at
+  # once across the server; more wait their turn. Zero means one per CPU.
+  # Env: KILASFLOW_CODE_JAVASCRIPT_MAX_CONCURRENT
+  javascript_max_concurrent: 0
+  # JavaScriptHeapCeilingMB is the server's live heap, in MiB, at which every
+  # running JavaScript Code node is stopped with a memory-limit error. The
+  # engine keeps scripts on the server's own heap, so this is the guard that
+  # keeps a runaway script from taking the server down with it. Zero means
+  # half of GOMEMLIMIT when that is set, and 1024 otherwise; setting
+  # GOMEMLIMIT to the container's memory is the recommended deployment.
+  # Env: KILASFLOW_CODE_JAVASCRIPT_HEAP_CEILING_MB
+  javascript_heap_ceiling_mb: 0
+  # JavaScriptMaxInputBytes bounds a JavaScript Code node's input, as JSON.
+  # Larger input is refused before the engine is involved at all.
+  # Env: KILASFLOW_CODE_JAVASCRIPT_MAX_INPUT_BYTES
+  javascript_max_input_bytes: 33554432
+  # JavaScriptMaxOutputBytes bounds the items one JavaScript Code node run
+  # returns, as JSON.
+  # Env: KILASFLOW_CODE_JAVASCRIPT_MAX_OUTPUT_BYTES
+  javascript_max_output_bytes: 16777216
+  # JavaScriptMaxConsoleBytes bounds the console output one JavaScript Code
+  # node run keeps. Output past it is dropped, with a marker saying so.
+  # Env: KILASFLOW_CODE_JAVASCRIPT_MAX_CONSOLE_BYTES
+  javascript_max_console_bytes: 65536

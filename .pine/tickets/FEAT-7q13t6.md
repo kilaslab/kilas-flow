@@ -1,7 +1,7 @@
 ---
 id: FEAT-7q13t6
 title: 'JS Code runtime P1: internal/jsrun core — goja engine seam, limits, interrupts, watchdog, error mapping'
-status: todo
+status: doing
 priority: high
 labels:
     - code-node
@@ -11,7 +11,7 @@ deps:
 parent: EPIC-tjnr1z
 phase: p1
 created: "2026-09-23T01:33:22Z"
-updated: "2026-09-23T01:33:22Z"
+updated: "2026-09-23T04:27:44Z"
 ---
 
 # Description
@@ -36,6 +36,21 @@ Child of EPIC-tjnr1z. The full design, including the code shapes, file layout an
 See EPIC-tjnr1z, *Plan → Phase 1*.
 
 # Notes
+
+**2026-09-23: implemented.** What the build found beyond the epic's amendments:
+
+- **goja bug: destructuring parameters and direct `eval`.** A direct `eval()` in a function nested inside one with a destructuring parameter list panics inside goja ("index out of range"). The wrapper therefore takes the roots as plain positional parameters (`wrapperVersion` jsrun-2).
+- **Every VM entry is guarded.** goja re-panics anything it does not recognise as a JavaScript error, and without a guard that crashed the test process. `guard` in `engine.go` turns such a panic into `ErrEngineFault`: one run fails and the server survives.
+- **How the regex timeout is set.** `coverTimeLimit` only ever raises `regexp2.DefaultMatchTimeout`, to `limit + limit/10 + 100ms`. It runs at `init`, for the default 10 s, and again in every `NewRunner`. The current timeout is part of the program cache key and of the library cache key, because goja compiles a regex literal when it compiles the program. A test that lowers it must build its runner first, since `NewRunner` raises it again.
+- **Watchdog.** When the heap passes the ceiling, it stops every script that is running, because goja cannot attribute memory to a VM. It then waits for those scripts to be released, collects once, and only then samples again. That way the garbage of a script it just stopped cannot kill the next one.
+- **Per-item roots** are read from the parsed input before any user code runs. Between items, nothing touches an object the script can reach, so no accessor can run off the clock.
+- **Benchmarks** (M4, no race; each includes a fresh VM):
+
+  | Mode | 10 items | 1000 items |
+  |---|---|---|
+  | All items | 0.10 ms | 4.0 ms |
+  | Each item | 0.09 ms | 7.5 ms |
+- **Binary size.** Nothing links jsrun until P4 wires the node, so the size delta is measured at P4.
 
 # Related Files
 

@@ -749,13 +749,16 @@ type Sidecar struct {
 	MaxOutputBytes int64 `koanf:"max_output_bytes"`
 }
 
-// Code configures the Go Code node: which toolchain compiles it, and where
-// the work it does is kept.
+// Code configures the two Code nodes. The Go Code node needs a toolchain and
+// a place to keep what it builds. The JavaScript Code node runs on an engine
+// linked into the server and needs only its limits.
 //
 // The section is one word because envKeyToPath treats the first underscore as
 // the section separator, so code.cache_dir is reachable as
 // KILASFLOW_CODE_CACHE_DIR while a two-word section could never be set from
-// the environment at all.
+// the environment at all. The JavaScript keys are flat for the same reason:
+// code.javascript_timeout is KILASFLOW_CODE_JAVASCRIPT_TIMEOUT, where a
+// nested code.javascript.timeout could not be reached from the environment.
 type Code struct {
 	// GoBinary is the go command used to compile Code nodes. It is looked up
 	// on PATH when it is not an absolute path.
@@ -783,7 +786,56 @@ type Code struct {
 	// the artifacts, so eviction is a last resort rather than housekeeping.
 	// Env: KILASFLOW_CODE_CACHE_MAX_BYTES. Default: 2147483648 (2 GiB).
 	CacheMaxBytes int64 `koanf:"cache_max_bytes"`
+
+	// JavaScriptEnabled runs JavaScript Code nodes, including the ones
+	// imported from n8n, on the engine inside the server. Turned off, the
+	// node is greyed out in the editor and every run is refused, naming this
+	// key. No Node.js process is involved either way.
+	// Env: KILASFLOW_CODE_JAVASCRIPT_ENABLED. Default: true.
+	JavaScriptEnabled bool `koanf:"javascript_enabled"`
+
+	// JavaScriptTimeout bounds the user's own program in one JavaScript Code
+	// node run. Setting up the engine, loading a library and handling the
+	// input and output are not counted. A node's own time limit may lower it,
+	// never raise it. At most 5m, because a backtracking regular expression
+	// can overrun its limit by up to this long.
+	// Env: KILASFLOW_CODE_JAVASCRIPT_TIMEOUT. Default: 10s.
+	JavaScriptTimeout time.Duration `koanf:"javascript_timeout"`
+
+	// JavaScriptMaxConcurrent bounds how many JavaScript Code nodes run at
+	// once across the server; more wait their turn. Zero means one per CPU.
+	// Env: KILASFLOW_CODE_JAVASCRIPT_MAX_CONCURRENT. Default: 0.
+	JavaScriptMaxConcurrent int `koanf:"javascript_max_concurrent"`
+
+	// JavaScriptHeapCeilingMB is the server's live heap, in MiB, at which every
+	// running JavaScript Code node is stopped with a memory-limit error. The
+	// engine keeps scripts on the server's own heap, so this is the guard that
+	// keeps a runaway script from taking the server down with it. Zero means
+	// half of GOMEMLIMIT when that is set, and 1024 otherwise; setting
+	// GOMEMLIMIT to the container's memory is the recommended deployment.
+	// Env: KILASFLOW_CODE_JAVASCRIPT_HEAP_CEILING_MB. Default: 0.
+	JavaScriptHeapCeilingMB int64 `koanf:"javascript_heap_ceiling_mb"`
+
+	// JavaScriptMaxInputBytes bounds a JavaScript Code node's input, as JSON.
+	// Larger input is refused before the engine is involved at all.
+	// Env: KILASFLOW_CODE_JAVASCRIPT_MAX_INPUT_BYTES. Default: 33554432 (32 MiB).
+	JavaScriptMaxInputBytes int64 `koanf:"javascript_max_input_bytes"`
+
+	// JavaScriptMaxOutputBytes bounds the items one JavaScript Code node run
+	// returns, as JSON.
+	// Env: KILASFLOW_CODE_JAVASCRIPT_MAX_OUTPUT_BYTES. Default: 16777216 (16 MiB).
+	JavaScriptMaxOutputBytes int64 `koanf:"javascript_max_output_bytes"`
+
+	// JavaScriptMaxConsoleBytes bounds the console output one JavaScript Code
+	// node run keeps. Output past it is dropped, with a marker saying so.
+	// Env: KILASFLOW_CODE_JAVASCRIPT_MAX_CONSOLE_BYTES. Default: 65536 (64 KiB).
+	JavaScriptMaxConsoleBytes int64 `koanf:"javascript_max_console_bytes"`
 }
+
+// MaxJavaScriptTimeout is the highest code.javascript_timeout accepted. A
+// backtracking regular expression can overrun a script's limit by about this
+// long, so the ceiling is kept to minutes.
+const MaxJavaScriptTimeout = 5 * time.Minute
 
 // Log configures structured logging.
 type Log struct {
@@ -947,6 +999,13 @@ func Default() Config {
 			// 2 GiB. Generous on purpose: eviction can force a rebuild that a
 			// deployment without a toolchain cannot perform at all.
 			CacheMaxBytes: 2147483648,
+			// The engine is linked into the binary, so there is nothing to
+			// install; the limits match jsrun.DefaultLimits.
+			JavaScriptEnabled:         true,
+			JavaScriptTimeout:         10 * time.Second,
+			JavaScriptMaxInputBytes:   32 << 20,
+			JavaScriptMaxOutputBytes:  16 << 20,
+			JavaScriptMaxConsoleBytes: 64 << 10,
 		},
 		Log: Log{
 			Level:  "info",
@@ -1276,6 +1335,31 @@ func (c Config) Validate() error {
 	// just produced. Zero is the documented way to say unbounded.
 	if c.Code.CacheMaxBytes < 0 {
 		return fmt.Errorf("code.cache_max_bytes %d must not be negative", c.Code.CacheMaxBytes)
+	}
+
+	// A JavaScript limit of zero or less would read as "no limit" to anyone
+	// but the runtime, which treats it as the default; saying so here is
+	// clearer than either.
+	if c.Code.JavaScriptTimeout <= 0 || c.Code.JavaScriptTimeout > MaxJavaScriptTimeout {
+		return fmt.Errorf("code.javascript_timeout %s must be positive and at most %s", c.Code.JavaScriptTimeout, MaxJavaScriptTimeout)
+	}
+	for _, limit := range []struct {
+		key   string
+		value int64
+	}{
+		{"code.javascript_max_input_bytes", c.Code.JavaScriptMaxInputBytes},
+		{"code.javascript_max_output_bytes", c.Code.JavaScriptMaxOutputBytes},
+		{"code.javascript_max_console_bytes", c.Code.JavaScriptMaxConsoleBytes},
+	} {
+		if limit.value <= 0 {
+			return fmt.Errorf("%s %d must be positive", limit.key, limit.value)
+		}
+	}
+	if c.Code.JavaScriptMaxConcurrent < 0 {
+		return fmt.Errorf("code.javascript_max_concurrent %d must not be negative; zero means one per CPU", c.Code.JavaScriptMaxConcurrent)
+	}
+	if c.Code.JavaScriptHeapCeilingMB < 0 {
+		return fmt.Errorf("code.javascript_heap_ceiling_mb %d must not be negative; zero derives it from GOMEMLIMIT", c.Code.JavaScriptHeapCeilingMB)
 	}
 
 	// Caught here rather than at the first login, because an instance that

@@ -1,0 +1,387 @@
+package jsrun
+
+import (
+	"fmt"
+	"reflect"
+	"sort"
+	"strings"
+	"unicode"
+
+	"github.com/dop251/goja/ast"
+	"github.com/dop251/goja/file"
+	"github.com/dop251/goja/parser"
+)
+
+// Analysis is what a body uses, found without running it.
+type Analysis struct {
+	// Requires lists the modules the body names in a literal require(),
+	// with any "node:" prefix removed, sorted.
+	Requires []string
+	// DynamicRequire reports a require() whose argument is not a literal,
+	// which can only be checked when it runs.
+	DynamicRequire bool
+	// UsesLuxon reports any reference to Luxon, so the library can be loaded
+	// before the clock starts instead of on first use.
+	UsesLuxon bool
+	// Unsupported lists every construct the runtime refuses.
+	Unsupported []Unsupported
+}
+
+// shippedModules are the modules require() can return. There is no npm and no
+// module directory, so this list is the whole of it.
+var shippedModules = map[string]bool{"crypto": true, "lodash": true, "luxon": true, "util": true}
+
+// luxonNames are the identifiers that mean a body uses Luxon. Loading it when
+// it is not needed costs nothing but a few milliseconds of setup, which is
+// not charged, so the list errs on the generous side.
+var luxonNames = map[string]bool{
+	"DateTime": true, "Duration": true, "Interval": true, "Info": true, "Settings": true,
+	"luxon": true, "$now": true, "$today": true,
+}
+
+// Analyze reports what a Code node's JavaScript uses, and refuses what the
+// runtime cannot run faithfully, without running any of it. It is what the
+// importer and the node's validation call, so both say what a run would.
+//
+// The error is a *SyntaxError for code that does not parse, and an
+// *UnsupportedError (errors.Is ErrUnsupported) for a refused construct. The
+// Analysis is returned alongside an UnsupportedError.
+func Analyze(source string, mode Mode) (Analysis, error) {
+	prepared, err := sharedPrograms.prepare(source, mode)
+	if prepared == nil {
+		return Analysis{}, err
+	}
+	return prepared.analysis, err
+}
+
+// parseWrapped parses the wrapped body. Source maps are never loaded: goja's
+// parser would otherwise read a file named by a trailing sourceMappingURL
+// comment, and a script could name /dev/zero.
+func parseWrapped(w wrapped) (*ast.Program, error) {
+	program, err := parser.ParseFile(nil, sourceName, w.text, 0, parser.WithDisableSourceMaps)
+	if err != nil {
+		return nil, classifyParseError(err, w)
+	}
+	return program, nil
+}
+
+// classifyParseError tells a construct the engine does not support apart
+// from a plain mistake. goja reports both as "unexpected token", but a user
+// who wrote `for await` has written valid JavaScript and deserves to be told
+// it is the runtime that refuses it.
+func classifyParseError(err error, w wrapped) error {
+	list, ok := err.(parser.ErrorList)
+	if !ok || len(list) == 0 {
+		return &SyntaxError{Message: err.Error()}
+	}
+	first := list[0]
+	line := w.userLine(first.Position.Line)
+	if subject := unsupportedAt(w.text, offsetOf(w.text, first.Position.Line, first.Position.Column), first.Message); subject != "" {
+		return &UnsupportedError{Found: []Unsupported{{Subject: subject, Line: line}}}
+	}
+	return &SyntaxError{Message: first.Message, Line: line, Column: first.Position.Column}
+}
+
+// offsetOf turns a 1-based line and column into a byte offset.
+func offsetOf(text string, line, column int) int {
+	offset := 0
+	for current := 1; current < line; current++ {
+		next := strings.IndexByte(text[offset:], '\n')
+		if next < 0 {
+			return len(text)
+		}
+		offset += next + 1
+	}
+	offset += column - 1
+	if offset > len(text) {
+		return len(text)
+	}
+	return offset
+}
+
+// unsupportedAt names the unsupported construct a parse error points at, or
+// answers "" for an ordinary syntax error.
+func unsupportedAt(text string, offset int, message string) string {
+	rest := text[offset:]
+	before := strings.TrimRightFunc(text[:offset], unicode.IsSpace)
+	switch {
+	case strings.HasPrefix(rest, "await") && endsWithWord(strings.TrimSuffix(before, "("), "for"):
+		return "uses for await"
+	case strings.Contains(message, "reserved word") && (startsWithWord(rest, "import") || startsWithWord(rest, "export")):
+		return "uses import or export (use require() instead)"
+	case strings.HasPrefix(rest, "*") && endsWithWord(before, "async"),
+		strings.HasSuffix(before, "*") && endsWithWord(strings.TrimSuffix(before, "*"), "async"):
+		// goja points at the star of `async *method()`, or at the name after it.
+		return "uses an async generator"
+	}
+	return ""
+}
+
+func endsWithWord(text, word string) bool {
+	text = strings.TrimRightFunc(text, unicode.IsSpace)
+	if !strings.HasSuffix(text, word) {
+		return false
+	}
+	head := text[:len(text)-len(word)]
+	return head == "" || !isIdentifierByte(head[len(head)-1])
+}
+
+func startsWithWord(text, word string) bool {
+	return strings.HasPrefix(text, word) && (len(text) == len(word) || !isIdentifierByte(text[len(word)]))
+}
+
+func isIdentifierByte(b byte) bool {
+	return b == '_' || b == '$' || b >= '0' && b <= '9' || b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z'
+}
+
+// escapesWrapper is the failure for code that closes the function it runs in.
+// Such code would run part of itself during setup, outside its time limit.
+func escapesWrapper(line int) error {
+	return &SyntaxError{Message: "the code closes the function it runs in; remove the extra closing brackets", Line: line}
+}
+
+// checkShape proves the parsed program is exactly the wrapper around the
+// user's body: one statement, the wrapper function, whose body function
+// opens and closes at the braces the wrapper wrote. Code that balances its
+// own brackets to close the wrapper early and reopen it has a different
+// shape, whatever it looks like as text.
+func checkShape(program *ast.Program, w wrapped) (*ast.FunctionLiteral, error) {
+	if len(program.Body) != 1 {
+		return nil, escapesWrapper(0)
+	}
+	statement, ok := program.Body[0].(*ast.ExpressionStatement)
+	if !ok {
+		return nil, escapesWrapper(0)
+	}
+	outer, ok := statement.Expression.(*ast.FunctionLiteral)
+	if !ok || outer.Body == nil || int(outer.Body.RightBrace) != w.outerClose+1 || len(outer.Body.List) != 1 {
+		return nil, escapesWrapper(0)
+	}
+	ret, ok := outer.Body.List[0].(*ast.ReturnStatement)
+	if !ok {
+		return nil, escapesWrapper(0)
+	}
+	call, ok := ret.Argument.(*ast.CallExpression)
+	if !ok {
+		return nil, escapesWrapper(0)
+	}
+	member, ok := call.Callee.(*ast.DotExpression)
+	if !ok {
+		return nil, escapesWrapper(0)
+	}
+	body, ok := member.Left.(*ast.FunctionLiteral)
+	if !ok || !body.Async || body.Body == nil || int(body.Body.LeftBrace) != w.open+1 {
+		return nil, escapesWrapper(0)
+	}
+	if int(body.Body.RightBrace) != w.close+1 {
+		return nil, escapesWrapper(w.lineAt(int(body.Body.RightBrace) - 1))
+	}
+	return body, nil
+}
+
+// inspect walks the body and records what it uses.
+func inspect(body *ast.FunctionLiteral, w wrapped) Analysis {
+	walker := &inspector{w: w, requires: map[string]bool{}, seen: map[Unsupported]bool{}}
+	walker.walk(reflect.ValueOf(body.Body), true)
+	for name := range walker.requires {
+		walker.analysis.Requires = append(walker.analysis.Requires, name)
+	}
+	sort.Strings(walker.analysis.Requires)
+	return walker.analysis
+}
+
+var astPackage = reflect.TypeOf(ast.Program{}).PkgPath()
+
+// inspector walks goja's AST by reflection, because the package has no
+// visitor, and a hand-written switch over every node type would silently
+// stop descending into a node type added in a later goja.
+type inspector struct {
+	w        wrapped
+	analysis Analysis
+	requires map[string]bool
+	seen     map[Unsupported]bool
+}
+
+// walk descends through AST values. bodyThis reports whether `this` here is
+// the body's own `this`: a nested function or class has its own, an arrow
+// function shares its parent's.
+func (in *inspector) walk(value reflect.Value, bodyThis bool) {
+	switch value.Kind() {
+	case reflect.Interface:
+		if !value.IsNil() {
+			in.walk(value.Elem(), bodyThis)
+		}
+	case reflect.Pointer:
+		if value.IsNil() || value.Type().Elem().PkgPath() != astPackage {
+			return
+		}
+		if node, ok := value.Interface().(ast.Node); ok {
+			bodyThis = in.visit(node, bodyThis)
+		}
+		in.walk(value.Elem(), bodyThis)
+	case reflect.Struct:
+		if value.Type().PkgPath() != astPackage {
+			return
+		}
+		for index := 0; index < value.NumField(); index++ {
+			field := value.Type().Field(index)
+			// DeclarationList repeats declarations already in the body.
+			if !field.IsExported() || field.Name == "DeclarationList" {
+				continue
+			}
+			in.walk(value.Field(index), bodyThis)
+		}
+	case reflect.Slice:
+		for index := 0; index < value.Len(); index++ {
+			in.walk(value.Index(index), bodyThis)
+		}
+	}
+}
+
+// visit records one node and answers whether `this` below it is still the
+// body's.
+func (in *inspector) visit(node ast.Node, bodyThis bool) bool {
+	switch node := node.(type) {
+	case *ast.FunctionLiteral:
+		if node.Async && node.Generator {
+			in.refuse("uses an async generator", node.Idx0())
+		}
+		return false
+	case *ast.ClassLiteral:
+		return false
+	case *ast.RegExpLiteral:
+		in.regexp(node.Pattern, node.Flags, node.Idx0())
+	case *ast.CallExpression:
+		in.call(node.Callee, node.ArgumentList, node.Idx0())
+	case *ast.NewExpression:
+		if isIdentifier(node.Callee, "RegExp") {
+			in.regexpConstructor(node.ArgumentList, node.Idx0())
+		}
+	case *ast.DotExpression:
+		if bodyThis && isThis(node.Left) {
+			in.thisMember(string(node.Identifier.Name), node.Idx0())
+		}
+	case *ast.BracketExpression:
+		if literal, ok := node.Member.(*ast.StringLiteral); ok && bodyThis && isThis(node.Left) {
+			in.thisMember(string(literal.Value), node.Idx0())
+		}
+	case *ast.Identifier:
+		if luxonNames[string(node.Name)] {
+			in.analysis.UsesLuxon = true
+		}
+	}
+	return bodyThis
+}
+
+func isIdentifier(expression ast.Expression, name string) bool {
+	identifier, ok := expression.(*ast.Identifier)
+	return ok && string(identifier.Name) == name
+}
+
+func isThis(expression ast.Expression) bool {
+	_, ok := expression.(*ast.ThisExpression)
+	return ok
+}
+
+func (in *inspector) call(callee ast.Expression, arguments []ast.Expression, at file.Idx) {
+	identifier, ok := callee.(*ast.Identifier)
+	if !ok {
+		return
+	}
+	switch string(identifier.Name) {
+	case "require":
+		in.require(arguments, at)
+	case "RegExp":
+		in.regexpConstructor(arguments, at)
+	case "$getWorkflowStaticData":
+		in.refuse("uses $getWorkflowStaticData", at)
+	}
+}
+
+func (in *inspector) require(arguments []ast.Expression, at file.Idx) {
+	if len(arguments) == 0 {
+		return
+	}
+	literal, ok := arguments[0].(*ast.StringLiteral)
+	if !ok {
+		in.analysis.DynamicRequire = true
+		return
+	}
+	name := strings.TrimPrefix(string(literal.Value), "node:")
+	in.requires[name] = true
+	if name == "luxon" {
+		in.analysis.UsesLuxon = true
+	}
+	if !shippedModules[name] {
+		in.refuse(fmt.Sprintf("requires the module %q", name), at)
+	}
+}
+
+// thisMember checks `this.<name>` on the body's own `this`. Credentials are
+// never reachable from a Code node, as in n8n.
+func (in *inspector) thisMember(name string, at file.Idx) {
+	switch name {
+	case "getCredentials":
+		in.refuse("calls this.getCredentials", at)
+	case "helpers":
+		in.refuse("uses this.helpers", at)
+	}
+}
+
+func (in *inspector) regexpConstructor(arguments []ast.Expression, at file.Idx) {
+	if len(arguments) == 0 {
+		return
+	}
+	pattern, ok := arguments[0].(*ast.StringLiteral)
+	if !ok {
+		return // Checked when it runs.
+	}
+	flags := ""
+	if len(arguments) > 1 {
+		literal, ok := arguments[1].(*ast.StringLiteral)
+		if !ok {
+			return
+		}
+		flags = string(literal.Value)
+	}
+	in.regexp(string(pattern.Value), flags, at)
+}
+
+// regexp refuses what goja's regular expressions cannot do faithfully. A
+// \p{…} property escape under the u flag is the dangerous one: goja accepts
+// it and matches nothing, so the code runs and computes something else.
+func (in *inspector) regexp(pattern, flags string, at file.Idx) {
+	for _, flag := range "vd" {
+		if strings.ContainsRune(flags, flag) {
+			in.refuse(fmt.Sprintf("uses the regular-expression flag %q", flag), at)
+		}
+	}
+	if strings.ContainsRune(flags, 'u') && hasPropertyEscape(pattern) {
+		in.refuse(`uses a regular expression with \p{…} property escapes`, at)
+	}
+}
+
+// hasPropertyEscape finds \p{ or \P{ in a pattern, skipping escaped
+// backslashes, so /\\p{x}/ (a backslash, then "p{x}") is not a hit.
+func hasPropertyEscape(pattern string) bool {
+	for index := 0; index < len(pattern); index++ {
+		if pattern[index] != '\\' || index+1 >= len(pattern) {
+			continue
+		}
+		next := pattern[index+1]
+		if (next == 'p' || next == 'P') && index+2 < len(pattern) && pattern[index+2] == '{' {
+			return true
+		}
+		index++
+	}
+	return false
+}
+
+func (in *inspector) refuse(subject string, at file.Idx) {
+	found := Unsupported{Subject: subject, Line: in.w.lineAt(int(at) - 1)}
+	if in.seen[found] {
+		return
+	}
+	in.seen[found] = true
+	in.analysis.Unsupported = append(in.analysis.Unsupported, found)
+}
