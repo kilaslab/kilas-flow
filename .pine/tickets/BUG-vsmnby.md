@@ -38,9 +38,15 @@ Criteria 1, 2 and 4 pass. Capture (criterion 3) is part 2, and the ticket closes
 - **Structured parameters**: `lifecycleFields` keeps the scalar `Parameter.<key>` fields and adds `ParameterJSON.<key>` for every parameter, lists and objects included.
 - **Live WAHA injection fixed**: `WebhookListLifecycle.open` now renders the session path through `substituteURL`. A session of `../../admin?key=` used to send the GET and the PUT, with the tenant's API key, to `/api/sessions/../../admin?key=`.
 - **Shared helper**: `safehttp.PathSegment`, which `routing.substitutePath` now uses too. Its behaviour there is unchanged.
+- **Review fix, the authority**: a data field that would stand before the URL's path begins (scheme, userinfo, host or port) is now refused, and the error names the field but not the value. `PathEscape` leaves `@` and `:` alone, so `{{ .baseUrl }}{{ .Parameter.x }}` or `https://host:{{ .Parameter.port }}/…` with `@evil.example` sent the credentialed request to `evil.example`. `WebhookListLifecycle.open` now adds a missing leading slash to the session template before rendering, so a relative session path still renders as a path.
 
 Tests:
-- `internal/webhook/request_lifecycle_test.go`: `TestRequestLifecycleKeepsAJSONBodyParameterInsideItsString`, `…KeepsAURLParameterInsideItsSegment`, `…RendersStructuredParametersAsJSON` and `…RefusesARequestItCannotRenderSafely` (CRLF header, dot segment, a bare non-JSON value, an escaped placeholder, an invalid body).
+- `internal/webhook/request_lifecycle_test.go`:
+  - `TestRequestLifecycleKeepsAJSONBodyParameterInsideItsString`;
+  - `…KeepsAURLParameterInsideItsSegment`, which covers the path, the query, and the value right after the authority;
+  - `…RendersStructuredParametersAsJSON`;
+  - `…RefusesARequestItCannotRenderSafely`, which covers a CRLF header, `@evil.example` where the host ends, `@evil.example` in the port, a dot segment, a bare non-JSON value, an escaped placeholder and an invalid body;
+  - `…ReadsASessionPathWrittenWithoutALeadingSlash`.
 - `packs/waha/waha_test.go`: `TestASessionNameCannotMoveTheRegistrationToAnotherEndpoint`.
 - `internal/safehttp/safehttp_test.go`: `TestPathSegmentKeepsAValueInsideOneSegment`.
 - Every package that depends on `internal/routing`, `internal/webhook` or `internal/safehttp` passes: 31 packages, `go test`.

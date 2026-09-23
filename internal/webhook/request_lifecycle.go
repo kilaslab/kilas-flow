@@ -295,12 +295,21 @@ func substitute(template string, fields map[string]string) string {
 	return rendered
 }
 
+// pathStarted matches a URL that has reached its path: a scheme, an authority
+// and the slash that ends it, or a path that starts with a single slash.
+var pathStarted = regexp.MustCompile(`^(?:[A-Za-z][A-Za-z0-9+.-]*://[^/]*/|/(?:[^/]|$))`)
+
 // substituteURL renders a URL template.
 //
 // A data field is escaped for where it lands: as a path segment, or as a query
 // value once the URL has a `?`. Everything else is written as it is, because it
-// is the address being built on. A segment of dots is refused rather than
-// escaped, since `..` escaped is still `..`, and a proxy in front of the
+// is the address being built on.
+//
+// Two places are refused rather than escaped. Before the path begins, a value
+// would be part of the scheme or the authority, and no escaping keeps it out
+// of the host: `@` and `:` are legal in a path segment, and `@evil.example`
+// written after a host turns that host into a user name. And a segment of dots
+// is refused, since `..` escaped is still `..`, and a proxy in front of the
 // service resolves it to the parent path.
 func substituteURL(template string, fields map[string]string) (string, error) {
 	return expand(template, fields, func(rendered, key, value string) (string, error) {
@@ -309,6 +318,8 @@ func substituteURL(template string, fields map[string]string) (string, error) {
 			return value, nil
 		case strings.Contains(rendered, "?"):
 			return url.QueryEscape(value), nil
+		case !pathStarted.MatchString(rendered):
+			return "", fmt.Errorf("%s stands in the URL before its path begins, where it could change the host the request goes to", key)
 		case value == "." || value == "..":
 			return "", fmt.Errorf("%s is %q, which in a URL path would call another endpoint", key, value)
 		default:
@@ -545,12 +556,17 @@ func (lifecycle WebhookListLifecycle) open(ctx context.Context, lifecycleContext
 	// Escaped, like any URL a lifecycle builds. Both requests to this path carry
 	// the tenant's API key, and a session of `../../x?y=` written raw would take
 	// the key, and a write of the session document, to another endpoint.
-	path, err := substituteURL(lifecycle.Session, fields)
+	//
+	// The slash goes on before rendering rather than after: the template is a
+	// path below the base URL, and rendered as one, a session at its start is
+	// in the path rather than refused as though it stood in the host.
+	template := lifecycle.Session
+	if !strings.HasPrefix(template, "/") {
+		template = "/" + template
+	}
+	path, err := substituteURL(template, fields)
 	if err != nil {
 		return nil, mergeTarget{}, err
-	}
-	if !strings.HasPrefix(path, "/") {
-		path = "/" + path
 	}
 	session := mergeTarget{fields: fields, credential: credential, target: base + path}
 	body, err := call(ctx, lifecycleContext, credential, http.MethodGet, session.target, nil, "")

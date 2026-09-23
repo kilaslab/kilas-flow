@@ -393,6 +393,24 @@ func TestRequestLifecycleToleratesASessionWithNoList(t *testing.T) {
 	}
 }
 
+// TestRequestLifecycleReadsASessionPathWrittenWithoutALeadingSlash: the
+// session path is relative to the credential's base URL, so a template that
+// leaves out the leading slash still names a path, and the session in it is
+// still inside that path rather than refused as though it were a host.
+func TestRequestLifecycleReadsASessionPathWrittenWithoutALeadingSlash(t *testing.T) {
+	t.Parallel()
+
+	stub, server := newListStub(t, `{"name":"sales"}`)
+	lifecycle := listLifecycle()
+	lifecycle.Session = "api/sessions/{{ .Parameter.session }}"
+	if _, err := lifecycle.CheckExists(context.Background(), listContext(server.URL, "abc123", nil)); err != nil {
+		t.Fatalf("CheckExists() error = %v", err)
+	}
+	if calls := stub.recorded(); len(calls) != 1 || calls[0].path != "/api/sessions/sales" {
+		t.Fatalf("calls = %#v, want one read of /api/sessions/sales", calls)
+	}
+}
+
 // TestRequestLifecycleRefusesToOverwriteWhatItCannotRead: a document this code
 // does not understand is a document it does not get to rewrite. Failing the
 // activation is recoverable; deleting somebody's settings is not.
@@ -531,6 +549,10 @@ func TestRequestLifecycleKeepsAURLParameterInsideItsSegment(t *testing.T) {
 			session: "../../admin?drop=all", want: "/api/sessions/..%2F..%2Fadmin%3Fdrop=all/webhooks"},
 		"in the query": {url: "{{ .baseUrl }}/api/webhooks?session={{ .Parameter.session }}",
 			session: "sales&drop=all", want: "/api/webhooks?session=sales%26drop%3Dall"},
+		// The value that would change the host in the authority is only text
+		// once the path has begun.
+		"right after the authority": {url: "{{ .baseUrl }}/{{ .Parameter.session }}/webhooks",
+			session: "@evil.example:1", want: "/@evil.example:1/webhooks"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -603,6 +625,14 @@ func TestRequestLifecycleRefusesARequestItCannotRenderSafely(t *testing.T) {
 			descriptor: webhook.RequestDescriptor{URL: "{{ .baseUrl }}/api/webhooks",
 				Headers: map[string]string{"X-Session": "{{ .Parameter.session }}"}},
 			session: "sales\r\nX-Injected: yes", want: "line break",
+		},
+		"an at sign where the host ends": {
+			descriptor: webhook.RequestDescriptor{URL: "{{ .baseUrl }}{{ .Parameter.session }}/api/webhooks"},
+			session:    "@evil.example", want: "before its path",
+		},
+		"an at sign in the port": {
+			descriptor: webhook.RequestDescriptor{URL: "http://api.example.test:{{ .Parameter.session }}/api/webhooks"},
+			session:    "@evil.example", want: "before its path",
 		},
 		"a dot segment in the path": {
 			descriptor: webhook.RequestDescriptor{URL: "{{ .baseUrl }}/api/sessions/{{ .Parameter.session }}"},
