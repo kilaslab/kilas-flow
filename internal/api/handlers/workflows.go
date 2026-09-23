@@ -703,6 +703,21 @@ func (handler *Workflows) Delete(ctx context.Context, input *workflowPathInput) 
 		return nil, err
 	}
 	tenant := handler.tenant(ctx)
+	// An active workflow's trigger is told to unregister before the delete
+	// drops its bindings, exactly as Deactivate does: the hook needs the route
+	// to tell the service which registration to remove. Deactivated never
+	// returns an error — a failure is logged by the coordinator and never
+	// blocks the request, because a user deleting a workflow must not be stuck
+	// because somebody else's service is down.
+	if handler.triggers != nil {
+		stored, err := handler.workflows.Get(ctx, tenant, input.ID)
+		if err != nil {
+			return nil, handler.problem(ctx, err)
+		}
+		if stored.Active {
+			handler.triggers.Deactivated(ctx, tenant.ID, input.ID, handler.lifecycleIDs())
+		}
+	}
 	if err := handler.workflows.Delete(ctx, tenant, input.ID); err != nil {
 		return nil, handler.problem(ctx, err)
 	}
