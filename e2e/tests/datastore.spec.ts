@@ -13,6 +13,7 @@ import {
 	getDatastore,
 	importCsv,
 	importN8nWorkflow,
+	insertRow,
 	listDatastores,
 	listRows,
 	manualColumns,
@@ -373,4 +374,46 @@ test('a datastore is renamed through the editor and by the node', async ({ page,
 
 	const afterNode: DatastoreResource = await getDatastore(server.baseURL, store.id);
 	expect(afterNode.name).toBe(finalName);
+});
+
+test('typing into row search is debounced and never loops (BUG-rytwy7)', async ({ page, server }) => {
+	const name = uniqueName('E2E Search Loop');
+	const store = await createDatastore(server.baseURL, name);
+	await addColumn(server.baseURL, store.id, 'email', 'string');
+	await addColumn(server.baseURL, store.id, 'score', 'number');
+	await insertRow(server.baseURL, store.id, { email: 'user@example.com', score: 1 });
+	await insertRow(server.baseURL, store.id, { email: 'another@example.com', score: 2 });
+
+	// Counted for the whole scenario, mount included: a healthy mount issues
+	// exactly one detail request and one rows request, and a settled search
+	// change adds exactly one more rows request. A regression here doesn't
+	// add a handful of extra requests, it never stops (BUG-rytwy7 measured
+	// 2,642 requests/s), so any bound at all is enough to tell the two apart.
+	const detailPath = `/api/v1/datastores/${store.id}`;
+	const rowsPath = `/api/v1/datastores/${store.id}/rows`;
+	const detailRequests: string[] = [];
+	const rowsRequests: string[] = [];
+	page.on('request', (request) => {
+		if (request.method() !== 'GET') return;
+		const path = new URL(request.url()).pathname;
+		if (path === detailPath) detailRequests.push(request.url());
+		else if (path === rowsPath) rowsRequests.push(request.url());
+	});
+
+	await page.goto(`${server.baseURL}/datastores/${store.id}`);
+	await expect(page.getByRole('heading', { name })).toBeVisible();
+	await expect(page.getByRole('cell', { name: 'user@example.com' })).toBeVisible();
+
+	const search = page.locator('#datastore-search');
+	await search.click();
+	await search.pressSequentially('u');
+	// Real wall-clock time, not a fake timer: this is exactly what the bug
+	// report observed over — a page left alone with a settled keystroke. No
+	// assertion here reads a rate or a duration, only a bounded count.
+	await page.waitForTimeout(2000);
+
+	expect(rowsRequests.length, `rows requests: ${JSON.stringify(rowsRequests)}`).toBeLessThanOrEqual(2);
+	expect(detailRequests.length, `detail requests: ${JSON.stringify(detailRequests)}`).toBe(1);
+	await expect(search).toHaveValue('u');
+	await expect(search).toBeFocused();
 });

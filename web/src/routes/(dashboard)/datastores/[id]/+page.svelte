@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
+
 	import { page } from '$app/state';
 	import ArrowLeft from '@lucide/svelte/icons/arrow-left';
 	import Download from '@lucide/svelte/icons/download';
@@ -132,15 +134,45 @@
 		allChecked = pageIDs.length > 0 && pageIDs.every((rowID) => checkState[rowID] === true);
 	});
 
+	// Keyed on `id` alone. `loadDetail` and `load` read `detail`, `search` and
+	// `userColumns` themselves, and `load`'s own dependency (`listParams`)
+	// only shows up once a search is typed — so tracking those reads here
+	// turned every `loadDetail` response into a re-run of this same effect,
+	// which called `load` again, forever (BUG-rytwy7). `untrack` keeps their
+	// reads out of this effect's dependency set; this is the pattern at
+	// executions/[id]/+page.svelte:119-127.
 	$effect(() => {
-		if (id) {
-			void loadDetail(id);
-			void load(id);
+		const current = id;
+		untrack(() => {
+			void loadDetail(current);
+			void load(current);
+		});
+	});
+
+	// Debounced search: settles 250 ms after the last change to `search` (or
+	// `id`) before firing one row query. The first run is a mount, already
+	// covered by the effect above, so it's skipped rather than queuing a
+	// second, redundant fetch.
+	let searchEffectRan = false;
+	$effect(() => {
+		const current = id;
+		void search;
+		if (!searchEffectRan) {
+			searchEffectRan = true;
+			return;
 		}
+		const timer = setTimeout(() => {
+			untrack(() => void load(current));
+		}, 250);
+		return () => clearTimeout(timer);
 	});
 
 	async function loadDetail(datastoreID: string) {
-		detailLoading = true;
+		// A refetch (column add/rename/delete, "Try again") never flips this:
+		// only the first load, while `detail` is still null, shows the
+		// skeleton. Flipping it unconditionally used to unmount the whole
+		// body — search box included — on every background refresh.
+		if (detail === null) detailLoading = true;
 		detailFailure = null;
 		try {
 			const response = await getDatastore(datastoreID);
@@ -584,10 +616,7 @@
 					value={search}
 					placeholder={m.datastores_search_placeholder()}
 					class="h-7 max-w-64 text-xs"
-					oninput={(event) => {
-						search = event.currentTarget.value;
-						void load(id);
-					}}
+					oninput={(event) => (search = event.currentTarget.value)}
 				/>
 				<p class="text-xs text-muted-foreground" role="status">
 					{m.datastores_rows_on_page({ count: rows.items.length })}
