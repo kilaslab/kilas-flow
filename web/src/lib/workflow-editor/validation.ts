@@ -48,7 +48,10 @@ export function validationIssuesFromApiError(error: unknown): CanvasValidationIs
  * is not something a user can match to a tile on the canvas. The id is kept
  * when no node resolves it, because an unrecognised id is still evidence.
  */
-export function withNodeNames(issues: CanvasValidationIssue[], nodes: Node[] | null | undefined): CanvasValidationIssue[] {
+export function withNodeNames(
+	issues: CanvasValidationIssue[],
+	nodes: Pick<Node, 'id' | 'name'>[] | null | undefined
+): CanvasValidationIssue[] {
 	if (!nodes || nodes.length === 0) return issues;
 	const nameByID = new Map(nodes.filter((node) => node.id).map((node) => [node.id, node.name]));
 	return issues.map((issue) => {

@@ -13,6 +13,7 @@
 	import { getExecution } from '$lib/api/generated/executions/executions';
 	import { workflowDiagnostics } from '$lib/api/generated/interop/interop';
 	import { activateWorkflow, deactivateWorkflow, runWorkflow } from '$lib/api/generated/workflow-lifecycle/workflow-lifecycle';
+	import { watchExecutionEvents } from '$lib/workflow-editor/execution-watch';
 	import { createGetWorkflow, getWorkflow, updateWorkflow } from '$lib/api/generated/workflows/workflows';
 	import type { CredentialResource, Definition, ExecutionResource, ExpressionGrammar, WorkflowDiagnosticsResource, WorkflowDocumentInput, WorkflowResource } from '$lib/api/generated/models';
 	import { DRAIN_PAGE_LIMIT, drainPages, headerCursor, readPage } from '$lib/dashboard/cursor-page';
@@ -427,6 +428,8 @@
 		activationError = null;
 	}
 
+	const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
 	async function run(selection?: RunSelection): Promise<ExecutionResource | undefined> {
 		if (!currentWorkflow) return;
 		running = true;
@@ -458,16 +461,31 @@
 			// toolbar's: the ceiling here is only a stop for a poll that is
 			// never coming back.
 			const deadline = Date.now() + 30 * 60 * 1000;
-			while (token === pollingRun && Date.now() < deadline) {
-				await new Promise((resolve) => setTimeout(resolve, 1000));
-				const execution = await getExecution(queued.data.id);
-				if (execution.status !== 200) throw new Error(m.workflows_unexpected_execution());
-				const status = execution.data.status;
-				runMessage = status === 'succeeded' ? m.workflows_run_succeeded() : m.workflows_run_status({ status });
-				if (['succeeded', 'failed', 'cancelled'].includes(status)) {
-					if (status !== 'succeeded') runError = typeof execution.data.error === 'object' && execution.data.error && 'message' in execution.data.error ? String(execution.data.error.message) : m.workflows_execution_status({ status });
-					return execution.data;
+			// The live stream ends the wait the moment the run does, instead of up
+			// to a poll later, and feeds the Chat panel its progress. The poll
+			// stays as the fallback and as the source of truth.
+			const watch = watchExecutionEvents(queued.data.id, (event) => selection?.onEvent?.(event));
+			let streamEnded = false;
+			const ended = watch.terminal.then(() => {
+				streamEnded = true;
+			});
+			try {
+				while (token === pollingRun && Date.now() < deadline) {
+					// Once the stream has said the run ended, the trace may lag its
+					// own event by a commit: poll briefly rather than race a promise
+					// that is already settled, which would spin.
+					await (streamEnded ? sleep(250) : Promise.race([sleep(1000), ended]));
+					const execution = await getExecution(queued.data.id);
+					if (execution.status !== 200) throw new Error(m.workflows_unexpected_execution());
+					const status = execution.data.status;
+					runMessage = status === 'succeeded' ? m.workflows_run_succeeded() : m.workflows_run_status({ status });
+					if (['succeeded', 'failed', 'cancelled'].includes(status)) {
+						if (status !== 'succeeded') runError = typeof execution.data.error === 'object' && execution.data.error && 'message' in execution.data.error ? String(execution.data.error.message) : m.workflows_execution_status({ status });
+						return execution.data;
+					}
 				}
+			} finally {
+				watch.close();
 			}
 			if (token === pollingRun) {
 				runError = m.workflows_run_watch_stopped();

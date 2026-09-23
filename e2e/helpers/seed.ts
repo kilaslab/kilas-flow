@@ -207,3 +207,18 @@ export async function createEmbedSession(
 		201
 	);
 }
+
+// A chat workflow the server refuses to run: its HTTP node has no URL. The
+// canvas saves it as a draft; the run endpoint answers 422 naming the node.
+export function blockedChatWorkflowDocument(name: string): Record<string, unknown> {
+	return {
+		schemaVersion: 1,
+		name,
+		nodes: [
+			{ id: 'chat', name: 'When chat message received', type: 'kilasflow.chatTrigger', typeVersion: 1, position: { x: 0, y: 0 } },
+			{ id: 'call', name: 'Call CRM', type: 'kilasflow.httpRequest', typeVersion: 1, position: { x: 240, y: 0 }, parameters: {} }
+		],
+		connections: [{ id: 'c1', kind: 'main', source: { nodeId: 'chat', port: 'main' }, target: { nodeId: 'call', port: 'main' } }],
+		settings: {}
+	};
+}
