@@ -9,7 +9,7 @@ import (
 	"github.com/kilaslab/kilas-flow/nodes"
 )
 
-func TestAnImportedCodeNodeKeepsItsSourceAndRefusesToRun(t *testing.T) {
+func TestAnImportedCodeNodeKeepsItsSourceAndRefusesPython(t *testing.T) {
 	t.Parallel()
 
 	registry := node.NewRegistry()
@@ -32,24 +32,20 @@ func TestAnImportedCodeNodeKeepsItsSourceAndRefusesToRun(t *testing.T) {
 		}
 	}
 
-	// Blocking, like the generic placeholder: a Code node that quietly passed
-	// its items through would let the workflow run, produce plausible output,
-	// and be missing whatever the code was there to do.
+	// Python is blocking, like the generic placeholder: a Code node that
+	// quietly passed its items through would let the workflow run, produce
+	// plausible output, and be missing whatever the code was there to do.
 	for name, testCase := range map[string]struct {
 		parameters map[string]any
-		wantIn     []string
+		want       string
 	}{
-		"javascript names the language and the replacement": {
-			parameters: map[string]any{"language": "javaScript", "jsCode": "return items.filter(i => i.json.ok);"},
-			wantIn:     []string{"JavaScript", "Filter node"},
+		"python names the language and the replacement": {
+			parameters: map[string]any{"language": "python", "pythonCode": "return [i for i in items if i.json.ok]"},
+			want:       "this node's code is written in Python, which this server does not run. Replace it with the native nodes",
 		},
-		"python is not called JavaScript": {
-			parameters: map[string]any{"language": "python", "pythonCode": "return items"},
-			wantIn:     []string{"Python"},
-		},
-		"an unrecognised body still gets an answer": {
-			parameters: map[string]any{"language": "javaScript", "jsCode": "doSomethingUnusual();"},
-			wantIn:     []string{"JavaScript", "Go Code node"},
+		"python recognised by its body names the native node": {
+			parameters: map[string]any{"language": "python", "pythonCode": "items.sort(key=lambda i: i.json.n)\nreturn items"},
+			want:       "this node's code is written in Python, which this server does not run. A Sort node does this without code.",
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -57,15 +53,16 @@ func TestAnImportedCodeNodeKeepsItsSourceAndRefusesToRun(t *testing.T) {
 				ID: "n1", Name: "Code", Type: nodes.ForeignCodeNodeType, TypeVersion: workflow.V(1),
 				Parameters: testCase.parameters,
 			})
-			if err == nil {
-				t.Fatal("an imported Code node was accepted")
-			}
-			for _, want := range testCase.wantIn {
-				if !strings.Contains(err.Error(), want) {
-					t.Errorf("error = %v, want it to mention %q", err, want)
-				}
+			if err == nil || !strings.HasPrefix(err.Error(), testCase.want) {
+				t.Fatalf("error = %v, want it to start %q", err, testCase.want)
 			}
 		})
+	}
+
+	// JavaScript kept as the placeholder, by an import from before the
+	// runtime, validates like a Code (JavaScript) node: it runs.
+	if err := definition.Validate(workflow.Node{Parameters: map[string]any{"language": "javaScript", "jsCode": "return items;"}}); err != nil {
+		t.Fatalf("JavaScript in the placeholder: Validate() = %v, want it accepted", err)
 	}
 }
 

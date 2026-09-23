@@ -18,7 +18,7 @@ func TestAConstantChainThatFoldsExponentiallyIsRefused(t *testing.T) {
 		source := "return [{ json: { x: 0" + strings.Repeat(operator, 40) + " } }]"
 		start := time.Now()
 		_, err := jsrun.Analyze(source, jsrun.ModeAllItems)
-		if !errors.Is(err, jsrun.ErrUnsupported) || !strings.Contains(err.Error(), "constant expression nested more than") {
+		if !errors.Is(err, jsrun.ErrUnsupported) || !strings.Contains(err.Error(), "constant expression too deeply nested to compile") {
 			t.Errorf("%q chain: Analyze() error = %v, want it refused", operator, err)
 		}
 		if elapsed := time.Since(start); elapsed > time.Second {
@@ -28,6 +28,24 @@ func TestAConstantChainThatFoldsExponentiallyIsRefused(t *testing.T) {
 	// A chain over a variable folds nothing, and real code writes long ones.
 	accepted(t, "const x = $input.first().json.kind\nreturn [{ json: { match: x === 'a' || x === 'b' || x === 'c' || x === 'd' || x === 'e' || x === 'f' || x === 'g' || x === 'h' || x === 'i' || x === 'j' || x === 'k' || x === 'l' || x === 'm' || x === 'n' || x === 'o' || x === 'p' || x === 'q' || x === 'r' } }]")
 	accepted(t, "return [{ json: { week: 1000 * 60 * 60 * 24 * 7 } }]")
+	// Other operators fold in polynomial time, so literals joined with + are
+	// ordinary code however many there are.
+	accepted(t, "const query = 'SELECT '"+strings.Repeat(" +\n  'column, '", 60)+" + 'id FROM t'\nreturn [{ json: { query } }]")
+	accepted(t, "return [{ json: { n: -(-(-(-(1" + strings.Repeat(" + 1", 40) + ")))) } }]")
+	// Arithmetic between the levels does not hide the chain.
+	for _, source := range []string{
+		"return [{ json: { x: 0" + strings.Repeat("||0)+0", 20) + " } }]",
+		"return [{ json: { x: 1" + strings.Repeat("||a", 40) + " } }]",
+	} {
+		source = strings.Replace(source, "x: ", "x: "+strings.Repeat("(", strings.Count(source, ")")), 1)
+		start := time.Now()
+		if _, err := jsrun.Analyze(source, jsrun.ModeAllItems); !errors.Is(err, jsrun.ErrUnsupported) {
+			t.Errorf("Analyze(%.60q…) error = %v, want it refused", source, err)
+		}
+		if elapsed := time.Since(start); elapsed > time.Second {
+			t.Errorf("refusing took %v", elapsed)
+		}
+	}
 }
 
 // A host function runs on its own goroutine, outside every guard on the VM's.

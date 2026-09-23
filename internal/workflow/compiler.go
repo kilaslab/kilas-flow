@@ -72,6 +72,9 @@ type NodeDefinition struct {
 	// without the compiler learning a string. A general cycle stays rejected:
 	// only an edge whose target is one of these is allowed to point backwards.
 	LoopEntry bool
+	// WholeBatch marks a node the runner must never split into one-item
+	// calls; see node.Definition.
+	WholeBatch bool
 }
 
 // ConfigValidator validates a node's server-owned configuration during
@@ -706,6 +709,7 @@ func cloneNodeDefinition(definition NodeDefinition) NodeDefinition {
 		Type:                definition.Type,
 		Version:             definition.Version,
 		LoopEntry:           definition.LoopEntry,
+		WholeBatch:          definition.WholeBatch,
 		Inputs:              append([]Port(nil), definition.Inputs...),
 		Outputs:             append([]Port(nil), definition.Outputs...),
 		RequiredParameters:  append([]string(nil), definition.RequiredParameters...),

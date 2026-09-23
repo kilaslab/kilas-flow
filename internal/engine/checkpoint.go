@@ -32,11 +32,14 @@ type Checkpoint struct {
 	// Input is what the suspending node was about to run against. Stored so
 	// the resumed run records the same input and timer resumes can pass it
 	// through unchanged.
-	Input       workflow.NodeInput               `json:"input"`
-	Completed   map[string]workflow.NodeOutput   `json:"completed"`
-	Runs        map[string][]workflow.NodeOutput `json:"runs"`
-	NodeOutputs map[string]map[string]any        `json:"nodeOutputs"`
-	NodeItems   map[string]expression.NodeItem   `json:"nodeItems"`
+	Input     workflow.NodeInput               `json:"input"`
+	Completed map[string]workflow.NodeOutput   `json:"completed"`
+	Runs      map[string][]workflow.NodeOutput `json:"runs"`
+	// Executions counts each node's executed runs, for `$runIndex`. Nil in a
+	// checkpoint written before it existed.
+	Executions  map[string]int                 `json:"executions,omitempty"`
+	NodeOutputs map[string]map[string]any      `json:"nodeOutputs"`
+	NodeItems   map[string]expression.NodeItem `json:"nodeItems"`
 	// NodeState is the per-execution memory a node keeps between its own
 	// invocations, keyed by node ID. A loop's cursor belongs here rather than
 	// on the items it dispatches: a body node that replaces an item's fields

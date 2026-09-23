@@ -11,8 +11,10 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"math"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"syscall"
@@ -32,6 +34,7 @@ import (
 	"github.com/kilaslab/kilas-flow/internal/engine"
 	"github.com/kilaslab/kilas-flow/internal/events"
 	"github.com/kilaslab/kilas-flow/internal/idempotency"
+	"github.com/kilaslab/kilas-flow/internal/jsrun"
 	"github.com/kilaslab/kilas-flow/internal/loadoptions"
 	"github.com/kilaslab/kilas-flow/internal/node"
 	"github.com/kilaslab/kilas-flow/internal/nodepack"
@@ -268,7 +271,8 @@ func run(args []string) error {
 		ai.NewLoopRuntime(), agentMemory, codeCompiler,
 		nodes.WithDatabaseCeiling(databaseCeiling(cfg.SQL)), nodes.WithVectorStore(vectorStore),
 		nodes.WithDatastoreEngine(datastoreEngine),
-		nodes.WithCodeCaches(codeArtifacts, moduleCache)); err != nil {
+		nodes.WithCodeCaches(codeArtifacts, moduleCache),
+		javaScriptOption(cfg.Code)); err != nil {
 		return fmt.Errorf("register built-in executors: %w", err)
 	}
 	// Declarative node packs run on one interpreter rather than shipping Go.
@@ -404,7 +408,7 @@ func run(args []string) error {
 	// What this deployment cannot run, for the node catalogue to stamp on the
 	// way out. The sidecar report is appended only when it was booted, so a
 	// declined sidecar leaves the Code-node answer exactly as it was.
-	availability := nodeAvailability(codeCompiler)
+	availability := mergeAvailability(nodeAvailability(codeCompiler), javaScriptAvailability(cfg.Code))
 	if sidecarRuntime != nil {
 		availability = mergeAvailability(availability, sidecarRuntime.Availability)
 	}
@@ -1293,6 +1297,50 @@ func nodeAvailability(compiler runcode.Compiler) func() map[string]string {
 		// One explanation, written once in internal/runcode, so the catalogue,
 		// the run-time error and the editor's status cannot drift apart.
 		return map[string]string{nodes.CodeNodeType: runcode.DescribeUnavailable(compiler)}
+	}
+}
+
+// javaScriptOption hands the JavaScript Code node its runtime, built from the
+// code.javascript_* keys, or turns the node off when the operator did.
+func javaScriptOption(cfg config.Code) nodes.ExecutorOption {
+	if !cfg.JavaScriptEnabled {
+		return nodes.WithoutJavaScript(nodes.JavaScriptDisabled)
+	}
+	return nodes.WithJSRunner(jsrun.NewRunner(jsrun.Options{
+		Limits: jsrun.Limits{
+			Timeout:         cfg.JavaScriptTimeout,
+			MaxInputBytes:   cfg.JavaScriptMaxInputBytes,
+			MaxOutputBytes:  cfg.JavaScriptMaxOutputBytes,
+			MaxConsoleBytes: cfg.JavaScriptMaxConsoleBytes,
+		},
+		MaxConcurrent: cfg.JavaScriptMaxConcurrent,
+		HeapCeiling:   javaScriptHeapCeiling(cfg.JavaScriptHeapCeilingMB),
+	}))
+}
+
+// javaScriptHeapCeiling is the live heap at which running scripts are
+// stopped: the configured size, else half of GOMEMLIMIT when the deployment
+// set one, else the runtime's default. Half, because the rest of the server
+// shares the same heap and must keep running when the scripts are stopped.
+func javaScriptHeapCeiling(configuredMB int64) uint64 {
+	if configuredMB > 0 {
+		return uint64(configuredMB) << 20
+	}
+	if limit := debug.SetMemoryLimit(-1); limit > 0 && limit < math.MaxInt64 {
+		return uint64(limit / 2)
+	}
+	return jsrun.DefaultHeapCeiling
+}
+
+// javaScriptAvailability reports the JavaScript Code node unavailable only
+// when the operator turned it off: the engine is linked into the binary, so
+// there is nothing else a deployment could lack.
+func javaScriptAvailability(cfg config.Code) func() map[string]string {
+	if cfg.JavaScriptEnabled {
+		return nil
+	}
+	return func() map[string]string {
+		return map[string]string{nodes.JSCodeNodeType: nodes.JavaScriptDisabled}
 	}
 }
 

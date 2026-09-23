@@ -79,6 +79,7 @@ func RegisterAll(registry *node.Registry) error {
 		executeWorkflowNode(),
 		executeWorkflowTrigger(),
 		foreignCodeNode(),
+		jsCodeNode(),
 	} {
 		if err := registry.Register(definition); err != nil {
 			return err

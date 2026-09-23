@@ -165,6 +165,17 @@ func (capture *responseCapture) sink(next NodeEventSink) NodeEventSink {
 	}
 }
 
+// takeConsole is consoleOutput, after which the capture starts empty again:
+// a failed attempt's row keeps its own lines, and the next attempt's row
+// starts with none of them.
+func (capture *responseCapture) takeConsole() json.RawMessage {
+	output := capture.consoleOutput()
+	if capture != nil {
+		capture.console, capture.printed = ConsoleDetail{}, false
+	}
+	return output
+}
+
 // consoleOutput is the console detail for the node's trace row, or nil when
 // the node printed nothing.
 func (capture *responseCapture) consoleOutput() json.RawMessage {
@@ -524,7 +535,11 @@ type pendingInvocation struct {
 type runState struct {
 	completed map[string]workflow.NodeOutput
 	runs      map[string][]workflow.NodeOutput
-	result    *Result
+	// executions counts each node's runs that actually executed, which is
+	// what `$runIndex` reads. runs cannot say: it also records the
+	// deliveries a branch skipped.
+	executions map[string]int
+	result     *Result
 	// pending is the execution stack, newest first. The branch the run is
 	// already on sits on top, which is what makes the order depth-first.
 	pending []pendingInvocation
@@ -544,9 +559,10 @@ func newRunState(graph preparedGraph, request *Request) *runState {
 // checkpoint.
 func emptyRunState(graph preparedGraph) *runState {
 	return &runState{
-		completed: make(map[string]workflow.NodeOutput, len(graph.nodes)),
-		runs:      make(map[string][]workflow.NodeOutput, len(graph.nodes)),
-		result:    &Result{NodeRuns: make([]NodeRun, 0, len(graph.nodes)), Output: make(map[string]workflow.NodeOutput)},
+		completed:  make(map[string]workflow.NodeOutput, len(graph.nodes)),
+		runs:       make(map[string][]workflow.NodeOutput, len(graph.nodes)),
+		executions: make(map[string]int, len(graph.nodes)),
+		result:     &Result{NodeRuns: make([]NodeRun, 0, len(graph.nodes)), Output: make(map[string]workflow.NodeOutput)},
 	}
 }
 
@@ -739,6 +755,7 @@ func (state *runState) configReady(graph preparedGraph, nodeID string) bool {
 func (state *runState) complete(graph preparedGraph, node workflow.IRNode, input workflow.NodeInput, output workflow.NodeOutput, run NodeRun, request *Request) {
 	state.completed[node.ID] = output
 	state.runs[node.ID] = append(state.runs[node.ID], cloneOutput(output))
+	state.executions[node.ID]++
 	run.RunIndex = len(state.runs[node.ID]) - 1
 	run.Output = output
 	if first, ok := firstItem(output); ok {
@@ -866,6 +883,7 @@ func snapshotCheckpoint(nodeID, mode string, input workflow.NodeInput, attempt i
 		Input:         cloneInput(input),
 		Completed:     make(map[string]workflow.NodeOutput, len(state.completed)),
 		Runs:          make(map[string][]workflow.NodeOutput, len(state.runs)),
+		Executions:    make(map[string]int, len(state.executions)),
 		NodeOutputs:   make(map[string]map[string]any, len(request.NodeOutputs)),
 		NodeItems:     make(map[string]expression.NodeItem, len(request.NodeItems)),
 		NodeState:     cloneNodeState(request.NodeState),
@@ -874,6 +892,9 @@ func snapshotCheckpoint(nodeID, mode string, input workflow.NodeInput, attempt i
 	}
 	for id, output := range state.completed {
 		checkpoint.Completed[id] = cloneOutput(output)
+	}
+	for id, count := range state.executions {
+		checkpoint.Executions[id] = count
 	}
 	for id, outputs := range state.runs {
 		restored := make([]workflow.NodeOutput, 0, len(outputs))
@@ -952,9 +973,10 @@ func (runner *Runner) Resume(ctx context.Context, ir workflow.IR, request Reques
 	// Not seeded: a resumed run continues the stack the checkpoint recorded,
 	// and pushing the graph's roots again would run the trigger a second time.
 	state := &runState{
-		completed: make(map[string]workflow.NodeOutput, len(graph.nodes)),
-		runs:      make(map[string][]workflow.NodeOutput, len(graph.nodes)),
-		result:    &Result{NodeRuns: make([]NodeRun, 0, len(graph.nodes)), Output: make(map[string]workflow.NodeOutput)},
+		completed:  make(map[string]workflow.NodeOutput, len(graph.nodes)),
+		runs:       make(map[string][]workflow.NodeOutput, len(graph.nodes)),
+		executions: make(map[string]int, len(graph.nodes)),
+		result:     &Result{NodeRuns: make([]NodeRun, 0, len(graph.nodes)), Output: make(map[string]workflow.NodeOutput)},
 	}
 	ensureRequestMaps(&request, graph)
 	for id, output := range checkpoint.Completed {
@@ -962,6 +984,14 @@ func (runner *Runner) Resume(ctx context.Context, ir workflow.IR, request Reques
 	}
 	for id, outputs := range checkpoint.Runs {
 		state.runs[id] = outputs
+		// A checkpoint written before executions were counted has only the
+		// runs, which is what the count was read from then.
+		if checkpoint.Executions == nil {
+			state.executions[id] = len(outputs)
+		}
+	}
+	for id, count := range checkpoint.Executions {
+		state.executions[id] = count
 	}
 	for name, fields := range checkpoint.NodeOutputs {
 		request.NodeOutputs[name] = fields
@@ -1158,7 +1188,7 @@ func (runner *Runner) invoke(ctx context.Context, node workflow.IRNode, input wo
 		execution := cloneRequest(*request)
 		// The run this invocation belongs to, which `$runIndex` reads. It is
 		// the index the trace row will get once the run completes.
-		execution.RunIndex = len(state.runs[node.ID])
+		execution.RunIndex = state.executions[node.ID]
 		// The node's events are wrapped so an answer it produces is captured
 		// for its trace row. A nil capture (a caller that wants none) leaves
 		// the sink exactly as it was.
@@ -1183,7 +1213,9 @@ func (runner *Runner) invoke(ctx context.Context, node workflow.IRNode, input wo
 		// A failed attempt is a row of its own, so a reader can see that a node
 		// succeeded on its third try rather than only that it succeeded.
 		if attempt < policy.attempts {
-			state.record(NodeRun{NodeID: node.ID, Input: cloneInput(input), Error: err, Attempt: attempt, ErrorCode: code}, request)
+			// Each attempt's row keeps what that attempt printed.
+			state.record(NodeRun{NodeID: node.ID, Input: cloneInput(input), Error: err, Attempt: attempt, ErrorCode: code,
+				Console: capture.takeConsole()}, request)
 			if !sleepBetweenAttempts(ctx, policy.wait) {
 				// The execution was cancelled while waiting; stop here rather
 				// than burning the remaining attempts.
@@ -1913,7 +1945,10 @@ func perItemTolerance(node workflow.IRNode, policy retry) bool {
 	if policy.onError == errorStop {
 		return false
 	}
-	if node.Definition.LoopEntry || settingBool(node.Settings, "executeOnce") {
+	// A whole-batch node's items are one input: split into one-item calls, a
+	// Code node that sums its items would sum one at a time and return a
+	// plausible wrong answer for every item.
+	if node.Definition.LoopEntry || node.Definition.WholeBatch || settingBool(node.Settings, "executeOnce") {
 		return false
 	}
 	return itemInputPorts(node) == 1

@@ -12,6 +12,7 @@ import (
 	"github.com/kilaslab/kilas-flow/internal/datastore"
 	"github.com/kilaslab/kilas-flow/internal/engine"
 	"github.com/kilaslab/kilas-flow/internal/expression"
+	"github.com/kilaslab/kilas-flow/internal/jsrun"
 	"github.com/kilaslab/kilas-flow/internal/property"
 	"github.com/kilaslab/kilas-flow/internal/runcode"
 	"github.com/kilaslab/kilas-flow/internal/safehttp"
@@ -30,6 +31,7 @@ func RegisterExecutors(registry *engine.Registry, httpPolicy safehttp.Policy, da
 	for _, option := range options {
 		option(&settings)
 	}
+	javaScript := jsCodeExecutorOf(settings)
 	for id, executor := range map[string]engine.Executor{
 		"core.manual":                    engine.ExecutorFunc(executeManual),
 		ChatTriggerExecutorID:            engine.ExecutorFunc(executeChatTrigger),
@@ -88,7 +90,8 @@ func RegisterExecutors(registry *engine.Registry, httpPolicy safehttp.Policy, da
 		WaitExecutorID:                   engine.ExecutorFunc(executeWait),
 		ExecuteWorkflowExecutorID:        engine.ExecutorFunc(executeExecuteWorkflow),
 		ExecuteWorkflowTriggerExecutorID: engine.ExecutorFunc(executeExecuteWorkflowTrigger),
-		ForeignCodeExecutorID:            engine.ExecutorFunc(executeForeignCode),
+		JSCodeExecutorID:                 javaScript,
+		ForeignCodeExecutorID:            foreignCodeExecutor{javaScript: javaScript},
 		UnsupportedExecutorID:            engine.ExecutorFunc(executeUnsupported),
 	} {
 		if err := registry.Register(id, executor); err != nil {
@@ -124,6 +127,32 @@ type executorSettings struct {
 	// them, which is what this package did before they were configurable.
 	codeArtifacts runcode.Cache
 	codeModules   *runcode.ModuleCache
+	// jsRunner runs the JavaScript Code node, and jsDisabled is why a
+	// deployment turned it off. A nil runner means the shipped defaults.
+	jsRunner   *jsrun.Runner
+	jsDisabled string
+}
+
+// WithJSRunner hands the JavaScript Code node the deployment's runtime, with
+// the limits the operator configured.
+func WithJSRunner(runner *jsrun.Runner) ExecutorOption {
+	return func(settings *executorSettings) { settings.jsRunner = runner }
+}
+
+// WithoutJavaScript turns the JavaScript Code node off: every run refuses
+// with reason, which the node catalogue also shows.
+func WithoutJavaScript(reason string) ExecutorOption {
+	return func(settings *executorSettings) { settings.jsDisabled = reason }
+}
+
+// jsCodeExecutorOf binds the JavaScript Code node to the deployment's
+// runtime, or to one with the shipped limits when it names none.
+func jsCodeExecutorOf(settings executorSettings) *JSCodeExecutor {
+	runner := settings.jsRunner
+	if runner == nil {
+		runner = defaultJSRunner()
+	}
+	return &JSCodeExecutor{runner: runner, disabled: settings.jsDisabled}
 }
 
 // WithCodeCaches hands the Code node the caches the deployment built.

@@ -1,7 +1,7 @@
 ---
 id: FEAT-pxcbqj
 title: 'JS Code runtime P4: kilasflow.jsCode node, executor, importer mapping, catalogue availability'
-status: todo
+status: doing
 priority: high
 labels:
     - code-node
@@ -12,7 +12,7 @@ deps:
 parent: EPIC-tjnr1z
 phase: p4
 created: "2026-09-23T01:33:22Z"
-updated: "2026-09-23T01:33:22Z"
+updated: "2026-09-23T05:48:30Z"
 ---
 
 # Description

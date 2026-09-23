@@ -10,6 +10,7 @@ import (
 	"github.com/dop251/goja/ast"
 	"github.com/dop251/goja/file"
 	"github.com/dop251/goja/parser"
+	"github.com/dop251/goja/token"
 )
 
 // Analysis is what a body uses, found without running it.
@@ -47,12 +48,17 @@ const (
 	// maxNesting bounds the depth of the parsed tree, checked before it is
 	// compiled.
 	maxNesting = 1000
-	// maxFoldDepth bounds an expression made only of literals and operators.
-	// goja folds such an expression while compiling, re-evaluating the left
-	// side of every ||, && and ?? at every level, which doubles the work per
-	// level: 40 levels of `0 || 0` would hold a core for hours, and 147 bytes
-	// spell them. Real constant expressions are a handful of levels deep.
-	maxFoldDepth = 16
+	// maxFoldCost bounds the work goja does folding one constant expression
+	// while it compiles, in the units foldCost counts. A
+	// ||, && or ?? with a constant left side evaluates that side once to ask
+	// whether the operator is constant and again to emit it, and an operator
+	// above it asks and emits in turn, so the work multiplies per level: 40
+	// levels of `0 || 0` would hold a core for hours, and 147 bytes spell
+	// them. Literals joined by other operators fold in polynomial time, so a
+	// query built from hundreds of string literals stays far below it. The
+	// worst expressions it admits (18 levels of `0 || 0`, or 11 with an
+	// arithmetic operator between each) compile in a few milliseconds.
+	maxFoldCost = 1 << 21
 )
 
 // checkSourceSize refuses a body too large to parse safely.
@@ -224,7 +230,7 @@ func checkShape(program *ast.Program, w wrapped) (*ast.FunctionLiteral, error) {
 
 // inspect walks the body and records what it uses.
 func inspect(body *ast.FunctionLiteral, w wrapped) Analysis {
-	walker := &inspector{w: w, requires: map[string]bool{}, seen: map[Unsupported]bool{}, folds: map[ast.Expression]int{}}
+	walker := &inspector{w: w, requires: map[string]bool{}, seen: map[Unsupported]bool{}, folds: map[ast.Expression]fold{}}
 	walker.walk(reflect.ValueOf(body.Body), true, 0)
 	for name := range walker.requires {
 		walker.analysis.Requires = append(walker.analysis.Requires, name)
@@ -244,9 +250,9 @@ type inspector struct {
 	requires map[string]bool
 	seen     map[Unsupported]bool
 	tooDeep  bool
-	// folds memoises foldDepth, so a chain is measured once however many of
+	// folds memoises foldCost, so a chain is measured once however many of
 	// its nodes the walk visits.
-	folds map[ast.Expression]int
+	folds map[ast.Expression]fold
 }
 
 // walk descends through AST values. bodyThis reports whether `this` here is
@@ -326,40 +332,57 @@ func (in *inspector) visit(node ast.Node, bodyThis bool) bool {
 			in.analysis.UsesLuxon = true
 		}
 	case *ast.BinaryExpression, *ast.UnaryExpression:
-		if in.foldDepth(node.(ast.Expression)) > maxFoldDepth {
-			in.refuse(fmt.Sprintf("has a constant expression nested more than %d levels deep", maxFoldDepth), node.Idx0())
+		if cost := in.foldCost(node.(ast.Expression)); cost.ask+cost.emit > maxFoldCost {
+			in.refuse("has a constant expression too deeply nested to compile", node.Idx0())
 		}
 	}
 	return bodyThis
 }
 
-// foldDepth is how deep an expression goja would fold at compile time goes:
-// the depth of the literal-and-operator tree whose left sides are constant,
-// or -1 when it is not constant at all.
-func (in *inspector) foldDepth(expression ast.Expression) int {
-	if depth, ok := in.folds[expression]; ok {
-		return depth
+// fold is what goja's compiler does with one expression: whether it calls it
+// constant, what asking that costs (its constant() method), and what
+// emitting it costs. Compiling an expression costs ask + emit.
+type fold struct {
+	constant  bool
+	ask, emit float64
+}
+
+// foldCost follows goja's compiler (compiler_expr.go) over the expressions it
+// folds, erring towards cost: a logical operator whose left side is constant
+// counts as constant, whatever its right side, since goja evaluates that left
+// side before it knows. Anything else is one unit that goja never folds
+// through; its own parts are measured where the walk reaches them. The sums
+// are floats so a hostile expression reaches +Inf rather than wrapping.
+func (in *inspector) foldCost(expression ast.Expression) fold {
+	if cost, ok := in.folds[expression]; ok {
+		return cost
 	}
-	depth := -1
+	cost := fold{ask: 1, emit: 1}
 	switch node := expression.(type) {
 	case *ast.NumberLiteral, *ast.StringLiteral, *ast.BooleanLiteral, *ast.NullLiteral:
-		depth = 1
+		cost.constant = true
 	case *ast.UnaryExpression:
-		if operand := in.foldDepth(node.Operand); operand > 0 {
-			depth = operand + 1
-		}
+		operand := in.foldCost(node.Operand)
+		cost = fold{constant: operand.constant, ask: operand.ask, emit: operand.ask + operand.emit + 1}
 	case *ast.BinaryExpression:
-		// goja folds an operator whose left side is constant, whatever its
-		// right side turns out to be.
-		if left := in.foldDepth(node.Left); left > 0 {
-			depth = left + 1
-			if right := in.foldDepth(node.Right); right+1 > depth {
-				depth = right + 1
+		left, right := in.foldCost(node.Left), in.foldCost(node.Right)
+		cost.emit = left.ask + left.emit + right.ask + right.emit + 1
+		switch node.Operator {
+		case token.LOGICAL_OR, token.LOGICAL_AND, token.COALESCE:
+			// Asking evaluates a constant left side, then asks the right.
+			cost.constant, cost.ask = left.constant, left.ask
+			if left.constant {
+				cost.ask += left.emit + right.ask
+			}
+		default:
+			cost.constant, cost.ask = left.constant && right.constant, left.ask
+			if left.constant {
+				cost.ask += right.ask
 			}
 		}
 	}
-	in.folds[expression] = depth
-	return depth
+	in.folds[expression] = cost
+	return cost
 }
 
 func isIdentifier(expression ast.Expression, name string) bool {
