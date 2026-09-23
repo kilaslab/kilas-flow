@@ -254,6 +254,31 @@ A check against the real code and the goja source (`v0.0.0-20260917113740`) chan
 18. **`kilasflow.jsCode` can be added from the palette**, not only by import.
 19. **Buffer and URL come from `goja_nodejs`** (MIT, same author), with a registry loader that always refuses. Small polyfills fill the Buffer gaps.
 
+# Progress (2026-09-23)
+
+P0–P4 are done (FEAT-rkj8ry, FEAT-7q13t6, FEAT-yxhgeh, FEAT-zjrw76,
+FEAT-pxcbqj): imported and new JavaScript Code nodes run, on goja, with
+Node's crypto, Buffer, URL, web globals, timers, Intl, Luxon and lodash, and
+console output kept with each node run. Beyond the plan:
+
+- **Worker processes (FEAT-g6k3y9).** The owner chose process isolation over
+  a documented residual risk: goja cannot interrupt one built-in call, so the
+  in-process bounds are a denylist. Every script runs in a pool of the
+  kilasflow binary's own worker processes; the server prepares a job and
+  decodes its result, and trusts a worker only as far as its code could go.
+  They are a resource boundary, not a privilege boundary (FEAT-21h6xp).
+- **Per-item continue-on-failure** runs as n8n's item loop does: the failed
+  item alone goes to the error output, without splitting the batch.
+- **The binary grew 7.47 MB (amd64) / 7.08 MB (arm64)**, past the +7 MB
+  criterion below; goja's own x/text/collate is 1.24 MB of it. Reported to
+  the owner (FEAT-pxcbqj notes).
+- **Follow-ups filed:** FEAT-21h6xp (workers as a privilege boundary),
+  FEAT-9we7kw (en-CA and en-GB dates), BUG-548bk9 (unhandled rejections),
+  BUG-14gp8r (pairing after a fan-out and a reorder), BUG-fthahg (engine-wide
+  error-item and $('X') differences from n8n).
+
+P5–P8 follow.
+
 # Plan
 
 Each phase below is a child ticket of this epic.
