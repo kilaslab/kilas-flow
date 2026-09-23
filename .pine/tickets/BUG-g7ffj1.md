@@ -49,6 +49,8 @@ Tests: `internal/scheduler/scheduler_test.go` — `TestNextRefusesACronWithNoFut
 
 All green: `go build ./...`, `go vet ./...`, `go test ./internal/scheduler/... ./internal/repository/... ./internal/api/...`, `cd web && pnpm check && pnpm test` (627 tests).
 
+**Fix round 1 (review finding):** `ClaimDue`'s three deactivate-and-continue sites (orphaned workflow, zero due time, `ErrNeverFires`) had triplicated the `Updates(map[string]any{"active": false, "next_run_at": nil, "updated_at": now})` call. Replaced with one `deactivate(scheduleID string) error` closure declared inside the transaction, called from all three sites; each site keeps its own error-wrap message and its own comment explaining why it deactivates. No behaviour change — `go test ./internal/repository/ ./internal/scheduler/` and `go vet` on both stay green.
+
 # Implementation Plan
 
 In Next, return an error when candidate.IsZero() and answer 422 "this cron never fires". Store NULL instead of the zero time for last and next run, and treat year 1 as absent in formatTimestamp.

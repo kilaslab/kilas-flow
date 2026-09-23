@@ -313,13 +313,22 @@ func (store *GORMScheduleStore) ClaimDue(ctx context.Context, now time.Time, nex
 			Order("next_run_at ASC, id ASC").Find(&models).Error; err != nil {
 			return fmt.Errorf("find due schedules: %w", err)
 		}
+		// deactivate clears a schedule's due time so it stops being claimed.
+		// Three unrelated discoveries all end here: the workflow it belongs to
+		// is gone, its stored due time is the zero value, or its cron has no
+		// occurrence left to compute. Each caller keeps its own wrap message,
+		// since the three are different findings even though the repair is
+		// identical.
+		deactivate := func(scheduleID string) error {
+			return tx.Model(&scheduleModel{}).Where("id = ?", scheduleID).
+				Updates(map[string]any{"active": false, "next_run_at": nil, "updated_at": now}).Error
+		}
 		for _, model := range models {
 			var parent workflowModel
 			if err := tx.Where("tenant_id = ? AND id = ? AND active = ?", model.TenantID, model.WorkflowID, true).First(&parent).Error; err != nil {
 				// The workflow was deactivated or deleted. Deactivate the
 				// schedule rather than retrying a run that can never succeed.
-				if err := tx.Model(&scheduleModel{}).Where("id = ?", model.ID).
-					Updates(map[string]any{"active": false, "next_run_at": nil, "updated_at": now}).Error; err != nil {
+				if err := deactivate(model.ID); err != nil {
 					return fmt.Errorf("deactivate orphaned schedule: %w", err)
 				}
 				continue
@@ -330,8 +339,7 @@ func (store *GORMScheduleStore) ClaimDue(ctx context.Context, now time.Time, nex
 				// zero time always satisfied "due", which is how BUG-g7ffj1
 				// fired on every tick. Repairing it here needs no migration —
 				// the next claim to see the row fixes it.
-				if err := tx.Model(&scheduleModel{}).Where("id = ?", model.ID).
-					Updates(map[string]any{"active": false, "next_run_at": nil, "updated_at": now}).Error; err != nil {
+				if err := deactivate(model.ID); err != nil {
 					return fmt.Errorf("deactivate schedule %q with a zero due time: %w", model.ID, err)
 				}
 				continue
@@ -350,8 +358,7 @@ func (store *GORMScheduleStore) ClaimDue(ctx context.Context, now time.Time, nex
 				// discovered late for a row that predates that refusal. One
 				// bad row must not abort every other schedule's claim, so it
 				// is repaired and skipped rather than returned as an error.
-				if err := tx.Model(&scheduleModel{}).Where("id = ?", model.ID).
-					Updates(map[string]any{"active": false, "next_run_at": nil, "updated_at": now}).Error; err != nil {
+				if err := deactivate(model.ID); err != nil {
 					return fmt.Errorf("deactivate schedule %q that will never fire again: %w", model.ID, err)
 				}
 				continue
