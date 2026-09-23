@@ -319,20 +319,21 @@
       'minimumIntegerDigits', 'minimumFractionDigits', 'maximumFractionDigits', 'minimumSignificantDigits', 'maximumSignificantDigits',
       'useGrouping', 'notation', 'compactDisplay', 'signDisplay', 'roundingIncrement', 'roundingMode', 'roundingPriority', 'trailingZeroDisplay'];
 
-    // mathematicalValue is ToIntlMathematicalValue: BigInts and strings are
-    // formatted exactly, anything else as a Number.
-    function mathematicalValue(value) {
-      if (typeof value === 'bigint') return StringType(value);
-      if (typeof value === 'string') return value;
+    // formatNumber reads its value as ToIntlMathematicalValue does: BigInts
+    // and strings are formatted exactly, anything else as a Number.
+    function primitiveOf(value) {
       if (typeof value === 'object' && value !== null) {
         var primitive = value.valueOf();
-        if (typeof primitive === 'bigint' || typeof primitive === 'string') return mathematicalValue(primitive);
+        if (typeof primitive === 'bigint' || typeof primitive === 'string') return primitive;
       }
-      return NumberType(value);
+      return value;
     }
 
     function formatNumber(state, value, asParts) {
-      return native('intl.formatNumber', state.locales, state.record, mathematicalValue(value), asParts);
+      value = primitiveOf(value);
+      var isBigInt = typeof value === 'bigint';
+      var exact = isBigInt ? StringType(value) : typeof value === 'string' ? value : NumberType(value);
+      return native('intl.formatNumber', state.locales, state.record, exact, asParts, isBigInt);
     }
 
     function NumberFormat(locales, options) {

@@ -2289,9 +2289,6 @@ var decimalLiteral = regexp.MustCompile(`^([+-]?)(?:(\d+)(?:\.(\d*))?|\.(\d+))(?
 // underflowing to zero, which is where Node's own reading of it lands.
 func decimalOfString(text string) decimal {
 	trimmed := strings.TrimSpace(text)
-	if len(trimmed) > 1000 {
-		return decimal{nan: true}
-	}
 	if trimmed == "" {
 		return decimal{}
 	}
@@ -2899,6 +2896,11 @@ func currencySymbol(tag language.Tag, key, display, code string) string {
 	return symbol
 }
 
+// maxNumberText bounds the digits one call formats. A string with more digits
+// than a double's range is infinity anyway; a BigInt this long is 30 KB of
+// output.
+const maxNumberText = 10000
+
 func nativeFormatNumber(args []any) (any, error) {
 	options, err := readNumberOptions(args)
 	if err != nil {
@@ -2911,12 +2913,20 @@ func nativeFormatNumber(args []any) (any, error) {
 	case int64:
 		value = decimalOfFloat(float64(input))
 	case string:
-		value = decimalOfString(input)
+		// A string is read as ECMA-402 reads it; a BigInt, passed as its
+		// digits, is exact however long, as in Node.
+		if len(input) > maxNumberText {
+			return nil, rangeError("a number written in %d characters is more than the %d one call may format here", len(input), maxNumberText)
+		}
+		if isBigInt, _ := argument(args, 4).(bool); isBigInt {
+			value = decimal{negative: strings.HasPrefix(input, "-"), digits: []byte(strings.TrimPrefix(input, "-"))}
+			value.exponent = len(value.digits)
+			value.trim()
+		} else {
+			value = decimalOfString(input)
+		}
 	default:
 		return nil, typeError("the value to format must be a number or a string")
-	}
-	if !value.nan && !value.inf && (value.exponent > 400 || value.exponent < -400) {
-		return nil, rangeError("a number of %d digits is more than one call may format here", value.exponent)
 	}
 	parts, err := options.numberParts(value)
 	if err != nil {
