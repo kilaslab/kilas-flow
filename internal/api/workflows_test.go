@@ -399,6 +399,13 @@ func newWorkflowAPI(t *testing.T) (http.Handler, *repository.GORMWorkflowStore, 
 // uses rather than a parallel stack.
 func newWorkflowAPIWithEmbed(t *testing.T, issuer *embed.Issuer) (http.Handler, string, *repository.GORMExecutionStore) {
 	t.Helper()
+	return newWorkflowAPIWithEmbedConfig(t, issuer, config.Config{})
+}
+
+// newWorkflowAPIWithEmbedConfig is newWorkflowAPIWithEmbed on a configuration
+// of the caller's; the zero value is replaced by the defaults, as everywhere.
+func newWorkflowAPIWithEmbedConfig(t *testing.T, issuer *embed.Issuer, cfg config.Config) (http.Handler, string, *repository.GORMExecutionStore) {
+	t.Helper()
 	db, err := database.Open(context.Background(), config.Database{
 		Driver: "sqlite",
 		DSN:    filepath.Join(t.TempDir(), "embed.db"),
@@ -435,6 +442,7 @@ func newWorkflowAPIWithEmbed(t *testing.T, issuer *embed.Issuer) (http.Handler, 
 		t.Fatalf("NewService() error = %v", err)
 	}
 	handler := newTestServer(t, api.Deps{
+		Config:              cfg,
 		DB:                  db,
 		NodeRegistry:        registry,
 		Workflows:           repository.NewWorkflowStore(db.DB).WithWebhooks(webhook.Extract(registry, nodes.WebhookPath)),

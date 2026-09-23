@@ -195,7 +195,7 @@ func TestResumeDeniedToEmbedSessionsBeforeConsuming(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Issue() error = %v", err)
 	}
-	stack := middleware.EmbedAuth(issuer)(handler)
+	stack := middleware.EmbedAuth(issuer, "")(handler)
 	request := httptest.NewRequest(http.MethodPost, "/resume/token-1", strings.NewReader(`{"approved":true}`))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("X-KilasFlow-Embed", token)

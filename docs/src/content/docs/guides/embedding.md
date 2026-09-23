@@ -248,9 +248,15 @@ until somebody deliberately permits it.
   match: trusting "anything under this domain" is the loophole a
   subdomain takeover walks through. The origin is re-checked on every
   request, not only at mint, so a host serving from two domains lists
-  both — and a request with no `Origin` header at all skips the
-  per-request check, which is fine for browsers (they always send it)
-  and worth knowing for anything else.
+  both. The editor iframe is the one other caller: KilasFlow serves it,
+  so its saves and runs carry KilasFlow's own origin. Those pass only
+  with the `X-KilasFlow-Embed-Parent` header the frame sets from the
+  host origin it verified during the handshake, and only when that is
+  the origin the token was minted for, so another page that frames the
+  editor cannot spend your token. A request with no `Origin` header at
+  all skips the per-request check: browsers leave it off same-origin
+  reads, which is how the editor loads, and a non-browser client can
+  leave it off anything.
 - **Minutes, not hours.** Fifteen by default (an operator changes the
   default with `embed.session_ttl`), thirty maximum; a longer request is
   clamped, not refused. The setting is a default, not a ceiling: a host
@@ -396,6 +402,13 @@ datastore the backend provisioned.
 - `KILASFLOW_EMBED_ALLOWED_ORIGINS` listing every origin that frames
   the editor, exactly — empty fails closed, and same-app-different-domain
   needs every domain listed.
+- `KILASFLOW_SERVER_PUBLIC_URL` set to the address browsers load
+  KilasFlow from, whenever KilasFlow sits behind a proxy that rewrites
+  `Host`. The editor iframe's saves and runs carry that origin. With the
+  setting empty, KilasFlow works out its own origin from the request's
+  `Host` and scheme (TLS or `X-Forwarded-Proto`), so a rewritten `Host`
+  makes every save and run answer 403 "This embed session is not allowed
+  from that origin." while loading still works.
 - One `kfa1_…` key per customer, stored as hashes server-side, shown in
   full exactly once at creation. Rotate by minting the new key, building
   a new client with it, and directing new work at the new client;

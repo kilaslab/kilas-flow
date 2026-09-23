@@ -12,6 +12,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/kilaslab/kilas-flow/internal/credentials"
+	"github.com/kilaslab/kilas-flow/internal/embed"
 	"github.com/kilaslab/kilas-flow/internal/repository"
 )
 
@@ -107,19 +108,11 @@ func (handler *Credentials) googleClient(typeID string, fields map[string]string
 	return clientID, clientSecret, nil
 }
 
+// oauthRedirectURL is built on the same answer to "where is this instance?"
+// that the embed origin check uses, so the two cannot drift apart. It keeps
+// the public URL's path: Google compares the redirect URI byte for byte.
 func (handler *Credentials) oauthRedirectURL(proto, host string, tls bool) string {
-	if public := strings.TrimRight(strings.TrimSpace(handler.oauthPublicURL), "/"); public != "" {
-		return public + OAuthCallbackPath
-	}
-	scheme := "http"
-	if strings.EqualFold(strings.TrimSpace(proto), "https") || tls {
-		scheme = "https"
-	}
-	host = strings.TrimSpace(host)
-	if host == "" {
-		host = "localhost"
-	}
-	return scheme + "://" + host + OAuthCallbackPath
+	return embed.SelfURL(handler.oauthPublicURL, proto, host, tls) + OAuthCallbackPath
 }
 
 func originOf(raw string) string {

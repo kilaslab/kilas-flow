@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"regexp"
 	"sort"
@@ -219,6 +220,34 @@ func NormalizeOrigin(raw string) string {
 		return ""
 	}
 	return scheme + "://" + strings.ToLower(target.Host)
+}
+
+// SelfURL is the base URL a browser reaches this instance at, without a
+// trailing slash.
+//
+// server.public_url answers it when set, path and all. Otherwise it is built
+// from the request: https when the connection is TLS or a proxy says so in
+// X-Forwarded-Proto, and the Host the request arrived with. A proxy that
+// rewrites Host makes that guess wrong, which is why public_url wins.
+func SelfURL(publicURL, forwardedProto, host string, tls bool) string {
+	if public := strings.TrimRight(strings.TrimSpace(publicURL), "/"); public != "" {
+		return public
+	}
+	scheme := "http"
+	if strings.EqualFold(strings.TrimSpace(forwardedProto), "https") || tls {
+		scheme = "https"
+	}
+	host = strings.TrimSpace(host)
+	if host == "" {
+		host = "localhost"
+	}
+	return scheme + "://" + host
+}
+
+// SelfOrigin is SelfURL for this request, reduced to a normalized origin: the
+// origin the editor iframe this instance serves sends on its own requests.
+func SelfOrigin(r *http.Request, publicURL string) string {
+	return NormalizeOrigin(SelfURL(publicURL, r.Header.Get("X-Forwarded-Proto"), r.Host, r.TLS != nil))
 }
 
 // Issuer mints and verifies embed tokens.

@@ -126,7 +126,7 @@ export function acceptEmbedSession(
 	data: Record<string, unknown> | null,
 	expectedWorkflow: string,
 	origin: string,
-	attachToken: (token: string | null) => void = setEmbedToken
+	attachToken: (token: string | null, parent: string | null) => void = setEmbedToken
 ): { session: EmbedSession } | EmbedSessionRefusal {
 	if (!data || data.type !== MESSAGE_TYPE) return { error: m.embed_not_session_message(), notSessionMessage: true };
 
@@ -141,7 +141,9 @@ export function acceptEmbedSession(
 
 	const locale = isLocale(typeof data.locale === 'string' ? data.locale : '') ? (data.locale as Locale) : baseLocale;
 
-	attachToken(token);
+	// The parent goes with it: the frame's writes carry KilasFlow's origin, and
+	// the server accepts that only alongside the host this frame verified.
+	attachToken(token, origin);
 	return {
 		session: {
 			token,
