@@ -1452,6 +1452,14 @@ func itemsJSON(items []workflow.Item) []any {
 // Execute Workflow node's own documentation says a sub-workflow should end in
 // one branch. Making that a rule enforced here would refuse graphs that are
 // perfectly valid and simply return more than the caller expected.
+//
+// The items leave their lineage behind. A stamp names a node of the child's run
+// by ID, and IDs are unique only within one workflow: Duplicate keeps them, and
+// an import or a hand-written document reuses readable ones. Handed back, a
+// stamp the child wrote under "fan" was read as naming the caller's own "fan",
+// and `$('X').item` then paired with whichever of X's items sat at the child's
+// index. With no lineage of their own, the items are stamped by the caller's
+// runner as the call node's output, which is what they are in the caller.
 func terminalItems(output map[string]workflow.NodeOutput) []workflow.Item {
 	names := make([]string, 0, len(output))
 	for name := range output {
@@ -1463,7 +1471,11 @@ func terminalItems(output map[string]workflow.NodeOutput) []workflow.Item {
 	items := make([]workflow.Item, 0, 8)
 	for _, name := range names {
 		for _, port := range output[name] {
-			items = append(items, port...)
+			for _, item := range port {
+				// A copy, so the child's recorded output keeps its own lineage.
+				item.Paired = nil
+				items = append(items, item)
+			}
 		}
 	}
 	return items
