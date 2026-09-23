@@ -21,11 +21,13 @@ var moduleSources embed.FS
 
 // moduleOrder is the order modules run in; each sees the globals the ones
 // before it defined.
-var moduleOrder = []string{"util"}
+var moduleOrder = []string{"util", "intl", "luxon"}
 
 // requirable maps a name require() accepts to the module that answers it.
-// lodash and luxon are libraries, loaded on first use rather than always.
-var requirable = map[string]string{"util": "util"}
+// lodash is a library, loaded on first use rather than always. Luxon is a
+// library too, but its module answers for it, so require('luxon') gives the
+// instance configured with the workflow's zone however it came to be loaded.
+var requirable = map[string]string{"util": "util", "luxon": "luxon"}
 
 var compiledModules = struct {
 	sync.Mutex

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/kilaslab/kilas-flow/third_party/lodash"
+	"github.com/kilaslab/kilas-flow/third_party/luxon"
 )
 
 // library is a vendored bundle a body can use. It is compiled once per
@@ -23,6 +24,7 @@ type library struct {
 
 var libraries = map[string]library{
 	"lodash": {name: "lodash", source: func() string { return lodash.Source }, exportExpression: "_.noConflict()"},
+	"luxon":  {name: "luxon", source: func() string { return luxon.Source }, exportExpression: "luxon"},
 }
 
 func libraryNames() []string {

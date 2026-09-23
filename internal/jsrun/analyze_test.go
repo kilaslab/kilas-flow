@@ -87,9 +87,9 @@ func TestForAwaitAndModulesAreRefusedByNameNotAsSyntaxErrors(t *testing.T) {
 func TestRequireOfAModuleNotShippedIsRefused(t *testing.T) {
 	refusedFor(t, "const fs = require('fs')\nreturn []", `requires the module "fs"`)
 	refusedFor(t, "const transcript = require('youtube-transcript')\nreturn []", `requires the module "youtube-transcript"`)
-	analysis := accepted(t, "const util = require('node:util')\nconst _ = require('lodash')\nreturn []")
-	if strings.Join(analysis.Requires, ",") != "lodash,util" {
-		t.Fatalf("analysis = %#v, want the two shipped modules", analysis)
+	analysis := accepted(t, "const util = require('node:util')\nconst _ = require('lodash')\nconst { DateTime } = require('luxon')\nreturn []")
+	if strings.Join(analysis.Requires, ",") != "lodash,luxon,util" {
+		t.Fatalf("analysis = %#v, want the three shipped modules", analysis)
 	}
 	if !accepted(t, "const name = 'lodash'\nconst module = require(name)\nreturn []").DynamicRequire {
 		t.Fatal("a require() of a variable was not reported as dynamic")
@@ -114,6 +114,7 @@ func TestLuxonIsNoticedWhereverTheCodeNamesIt(t *testing.T) {
 	for _, source := range []string{
 		"return [{ json: { at: DateTime.now().toISO() } }]",
 		"return [{ json: { at: $now.toISO() } }]",
+		"const { DateTime } = require('luxon')\nreturn [{ json: { at: DateTime.now().toISO() } }]",
 	} {
 		if !accepted(t, source).UsesLuxon {
 			t.Errorf("%q: UsesLuxon = false", source)

@@ -87,6 +87,30 @@ func TestTheCodeRootsMatchWhatAnExpressionSees(t *testing.T) {
 	}
 }
 
+// The workflow's time zone is the Code node's too: $now, Luxon's DateTime and
+// Date's locale formatting all read the zone an expression's $now reads.
+func TestTheCodeRunsInTheWorkflowsTimezone(t *testing.T) {
+	request, input := rootsRequest()
+	request.Workflow.Timezone = "Asia/Jakarta"
+	roots := jsRootsOf(workflow.IRNode{Name: "Code"}, input, request)
+	if roots.Timezone != "Asia/Jakarta" {
+		t.Fatalf("Timezone = %q, want the workflow's", roots.Timezone)
+	}
+	result, err := jsrun.NewRunner(jsrun.Options{}).Run(context.Background(), jsrun.Task{
+		Source: "return [{ json: { now: $now.zoneName, local: DateTime.local(2026, 1, 1).toISO(), date: new Date(Date.UTC(2026, 0, 1)).toLocaleString() } }]",
+		Items:  input["main"], Roots: roots,
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	got := result.Items[0].JSON
+	for key, want := range map[string]string{"now": "Asia/Jakarta", "local": "2026-01-01T00:00:00.000+07:00", "date": "1/1/2026, 7:00:00 AM"} {
+		if got[key] != want {
+			t.Errorf("%s = %v, want %s", key, got[key], want)
+		}
+	}
+}
+
 func TestANodeThatHasNotRunIsNamed(t *testing.T) {
 	request, input := rootsRequest()
 	roots := jsRootsOf(workflow.IRNode{Name: "Code"}, input, request)

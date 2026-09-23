@@ -23,6 +23,9 @@ func jsRootsOf(ir workflow.IRNode, input workflow.NodeInput, request engine.Requ
 		Env:         request.Env,
 		RunIndex:    request.RunIndex,
 		NodeVersion: ir.TypeVersion.Float(),
+		// The workflow's settings.timezone, which $now and $today read in an
+		// expression too; Luxon and the Intl date formatting default to it.
+		Timezone: request.Workflow.Timezone,
 		Node: func(name string) (jsrun.NodeView, bool) {
 			node, ok := request.NodeItems[name]
 			if !ok {
