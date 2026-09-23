@@ -844,18 +844,18 @@ func TestMirroredNodeTypesMatchTheNodePack(t *testing.T) {
 	t.Parallel()
 
 	for name, pair := range map[string][2]string{
-		"unsupported": {n8n.UnsupportedNodeType, nodes.UnsupportedNodeType},
-		"sticky note": {n8n.StickyNoteNodeType, nodes.StickyNoteNodeType},
-		"chat trigger": {n8n.ChatTriggerNodeType, nodes.ChatTriggerNodeType},
-		"embeddings": {n8n.EmbeddingsNodeType, nodes.EmbeddingsNodeType},
-		"pgvector store": {n8n.VectorStorePGVectorNodeType, nodes.VectorStorePGVectorNodeType},
-		"document loader": {n8n.DocumentLoaderNodeType, nodes.DocumentLoaderNodeType},
-		"text splitter": {n8n.TextSplitterNodeType, nodes.TextSplitterNodeType},
-		"extract from file": {n8n.ExtractFromFileNodeType, nodes.ExtractFromFileNodeType},
-		"google drive": {n8n.GoogleDriveNodeType, nodes.GoogleDriveNodeType},
+		"unsupported":          {n8n.UnsupportedNodeType, nodes.UnsupportedNodeType},
+		"sticky note":          {n8n.StickyNoteNodeType, nodes.StickyNoteNodeType},
+		"chat trigger":         {n8n.ChatTriggerNodeType, nodes.ChatTriggerNodeType},
+		"embeddings":           {n8n.EmbeddingsNodeType, nodes.EmbeddingsNodeType},
+		"pgvector store":       {n8n.VectorStorePGVectorNodeType, nodes.VectorStorePGVectorNodeType},
+		"document loader":      {n8n.DocumentLoaderNodeType, nodes.DocumentLoaderNodeType},
+		"text splitter":        {n8n.TextSplitterNodeType, nodes.TextSplitterNodeType},
+		"extract from file":    {n8n.ExtractFromFileNodeType, nodes.ExtractFromFileNodeType},
+		"google drive":         {n8n.GoogleDriveNodeType, nodes.GoogleDriveNodeType},
 		"google drive trigger": {n8n.GoogleDriveTriggerNodeType, nodes.GoogleDriveTriggerNodeType},
-		"gmail": {n8n.GmailNodeType, nodes.GmailNodeType},
-		"gmail trigger": {n8n.GmailTriggerNodeType, nodes.GmailTriggerNodeType},
+		"gmail":                {n8n.GmailNodeType, nodes.GmailNodeType},
+		"gmail trigger":        {n8n.GmailTriggerNodeType, nodes.GmailTriggerNodeType},
 	} {
 		if pair[0] != pair[1] {
 			t.Errorf("%s node type: adapter has %q, node pack has %q", name, pair[0], pair[1])

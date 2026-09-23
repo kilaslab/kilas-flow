@@ -651,15 +651,15 @@ const FormTriggerType = "kilasflow.formTrigger"
 const ChatTriggerNodeType = "kilasflow.chatTrigger"
 
 const (
-	EmbeddingsNodeType           = "kilasflow.embeddings"
-	VectorStorePGVectorNodeType  = "kilasflow.vectorStorePGVector"
-	DocumentLoaderNodeType       = "kilasflow.documentLoader"
-	TextSplitterNodeType         = "kilasflow.textSplitter"
-	ExtractFromFileNodeType      = "kilasflow.extractFromFile"
-	GoogleDriveNodeType          = "kilasflow.googleDrive"
-	GoogleDriveTriggerNodeType   = "kilasflow.googleDriveTrigger"
-	GmailNodeType                = "kilasflow.gmail"
-	GmailTriggerNodeType         = "kilasflow.gmailTrigger"
+	EmbeddingsNodeType          = "kilasflow.embeddings"
+	VectorStorePGVectorNodeType = "kilasflow.vectorStorePGVector"
+	DocumentLoaderNodeType      = "kilasflow.documentLoader"
+	TextSplitterNodeType        = "kilasflow.textSplitter"
+	ExtractFromFileNodeType     = "kilasflow.extractFromFile"
+	GoogleDriveNodeType         = "kilasflow.googleDrive"
+	GoogleDriveTriggerNodeType  = "kilasflow.googleDriveTrigger"
+	GmailNodeType               = "kilasflow.gmail"
+	GmailTriggerNodeType        = "kilasflow.gmailTrigger"
 )
 
 // The error-workflow pair's canonical types, mirrored from
