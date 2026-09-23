@@ -34,6 +34,19 @@ See EPIC-tjnr1z, *Plan → Phase 4*.
 
 # Notes
 
+- **2026-09-23, b527da2.** The node, executor, importer route, WholeBatch and
+  server wiring. FEAT-yxhgeh's review fixes rode along: `$runIndex` counts
+  executed runs, not skipped deliveries (checkpoints carry the count); each
+  retried attempt keeps its own console lines; the constant-fold guard models
+  goja's cost instead of counting depth.
+- **Worker processes (FEAT-g6k3y9, 7ea2814).** The owner chose process
+  isolation over a documented residual risk. The executor runs on a
+  `jsrun.Engine`: the server passes a `jsworker.Pool`; tests, the corpus and
+  any caller that configures nothing get an in-process `jsrun.Runner`.
+- **Binary size (linux, `-trimpath -ldflags='-s -w'`, against main 018af94,
+  before the crypto and Intl lanes):** amd64 +6.71 MB, arm64 +6.36 MB. The
+  budget is +7 MB, so measure again once the lanes land.
+
 # Related Files
 
 # Attachments
