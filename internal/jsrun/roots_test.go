@@ -151,7 +151,7 @@ func TestTheSandboxExposesExactlyTheseGlobals(t *testing.T) {
 		slices.Sort(names)
 		return names
 	}
-	shared := []string{"$", "$env", "$evaluateExpression", "$execution", "$getWorkflowStaticData", "$jmespath", "$node", "$nodeVersion", "$prevNode", "$runIndex", "$secrets", "$vars", "$workflow", "console", "require"}
+	shared := []string{"$", "$env", "$evaluateExpression", "$execution", "$getWorkflowStaticData", "$jmespath", "$node", "$nodeVersion", "$prevNode", "$runIndex", "$secrets", "$vars", "$workflow", "console", "crypto", "require"}
 	for mode, own := range map[jsrun.Mode][]string{
 		jsrun.ModeAllItems: {"$itemIndex", "$json"},
 		jsrun.ModeEachItem: {"items"},
