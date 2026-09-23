@@ -60,9 +60,11 @@ func (executor *waitPassthrough) Execute(_ context.Context, _ workflow.IRNode, i
 	return workflow.NodeOutput{items}, nil
 }
 
-// waitSuspender suspends on its first call and passes through after that —
-// though in practice the resumed run never calls it again: the runner
-// completes the suspending node from the stored resume output.
+// waitSuspender suspends on every call, as a real wait node does. The resumed
+// run never calls it for the invocation that waited — the runner completes the
+// suspending node from the stored resume output — so it runs again only when
+// the node is reached again: the next batch of a loop, or the next item of a
+// node resolved one item at a time.
 type waitSuspender struct {
 	calls     *int
 	requests  *[]engine.Request
@@ -74,6 +76,11 @@ type waitSuspender struct {
 	// clock and mints its deadline earlier would spend the margin on the run
 	// prefix before the suspension rather than on the deadline.
 	expiresAfter time.Duration
+	// now is the clock expiresAfter counts from, the wall clock when nil. A
+	// test that owns the service's clock passes the same one, so every
+	// deadline is ahead of the clock the suspension is validated against —
+	// including the ones minted after the test has moved that clock on.
+	now func() time.Time
 }
 
 func (executor *waitSuspender) Execute(_ context.Context, _ workflow.IRNode, _ workflow.NodeInput, request engine.Request) (workflow.NodeOutput, error) {
@@ -81,7 +88,11 @@ func (executor *waitSuspender) Execute(_ context.Context, _ workflow.IRNode, _ w
 	*executor.requests = append(*executor.requests, request)
 	expiresAt := executor.expiresAt
 	if executor.expiresAfter > 0 {
-		expiresAt = time.Now().Add(executor.expiresAfter)
+		now := time.Now
+		if executor.now != nil {
+			now = executor.now
+		}
+		expiresAt = now().Add(executor.expiresAfter)
 	}
 	return nil, &engine.SuspendError{Mode: executor.mode, ExpiresAt: expiresAt}
 }
@@ -724,6 +735,479 @@ func TestResumeOfAPerItemSuspendProcessesEveryItem(t *testing.T) {
 	}
 	if holdCalls != 3 {
 		t.Errorf("the waiting node ran %d times, want one per item: %d", holdCalls, doneCalls)
+	}
+}
+
+// waitRegisterNumbered registers test.items, a source of count items numbered
+// from 1, so an item anywhere downstream can be traced back to its batch.
+func waitRegisterNumbered(t *testing.T, catalog *node.Registry, executors *engine.Registry, count int) {
+	t.Helper()
+	source := engine.ExecutorFunc(func(context.Context, workflow.IRNode, workflow.NodeInput, engine.Request) (workflow.NodeOutput, error) {
+		items := make([]workflow.Item, 0, count)
+		for n := 1; n <= count; n++ {
+			items = append(items, workflow.Item{JSON: map[string]any{"n": float64(n)}})
+		}
+		return workflow.NodeOutput{items}, nil
+	})
+	if err := executors.Register("test.items", source); err != nil {
+		t.Fatalf("Register(source) error = %v", err)
+	}
+	if err := catalog.Register(waitTestDefinition("test.items", "test.items")); err != nil {
+		t.Fatalf("Register(source) error = %v", err)
+	}
+}
+
+// waitLoopProbe is what the throttle loop's nodes after the wait saw: the body
+// once per batch, and the done branch once with everything the loop collected.
+type waitLoopProbe struct {
+	bodyCalls  int
+	bodyInputs []workflow.NodeInput
+	doneCalls  int
+	doneInputs []workflow.NodeInput
+}
+
+// waitSaveLoop saves the throttle pattern over count numbered items: a Loop
+// Over Items of batch size 1 whose body is hold, the wait, then body, back to
+// the loop, with done below the loop's done port. hold is the wait's executor;
+// the probe observes the nodes after it.
+func waitSaveLoop(t *testing.T, ctx context.Context, db *database.DB, catalog *node.Registry, executors *engine.Registry, tenant repository.TenantScope, hold engine.Executor, count int) (string, *waitLoopProbe) {
+	t.Helper()
+	probe := &waitLoopProbe{}
+	waitRegisterNumbered(t, catalog, executors, count)
+	for id, executor := range map[string]engine.Executor{
+		"test.hold":        hold,
+		"test.body":        &waitPassthrough{calls: &probe.bodyCalls, inputs: &probe.bodyInputs},
+		"test.passthrough": &waitPassthrough{calls: &probe.doneCalls, inputs: &probe.doneInputs},
+	} {
+		if err := executors.Register(id, executor); err != nil {
+			t.Fatalf("Register(%q) error = %v", id, err)
+		}
+	}
+	if err := catalog.Register(waitTestDefinition("test.body", "test.body")); err != nil {
+		t.Fatalf("Register(body) error = %v", err)
+	}
+	link := func(id, source, target, port string) workflow.Connection {
+		return workflow.Connection{ID: id, Kind: workflow.ConnectionMain,
+			Source: workflow.Endpoint{NodeID: source, Port: port},
+			Target: workflow.Endpoint{NodeID: target, Port: "main"}}
+	}
+	saved, err := repository.NewWorkflowStore(db.DB).SaveDraft(ctx, tenant, workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_throttle_loop", Name: "Throttled loop",
+		Nodes: []workflow.Node{
+			{ID: "manual", Name: "Manual", Type: "kilasflow.manual", TypeVersion: workflow.V(1)},
+			{ID: "items", Name: "Items", Type: "test.items", TypeVersion: workflow.V(1)},
+			{ID: "loop", Name: "Loop", Type: nodes.LoopNodeType, TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"batchSize": float64(1), "maxIterations": float64(10)}},
+			{ID: "hold", Name: "Hold", Type: "test.hold", TypeVersion: workflow.V(1)},
+			{ID: "body", Name: "Body", Type: "test.body", TypeVersion: workflow.V(1)},
+			{ID: "done", Name: "Done", Type: "test.done", TypeVersion: workflow.V(1)},
+		},
+		Connections: []workflow.Connection{
+			link("c1", "manual", "items", "main"),
+			link("c2", "items", "loop", "main"),
+			link("c3", "loop", "hold", "loop"),
+			link("c4", "hold", "body", "main"),
+			link("c5", "body", "loop", "main"),
+			link("c6", "loop", "done", "done"),
+		},
+		Settings: map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("SaveDraft() error = %v", err)
+	}
+	return saved.ID, probe
+}
+
+// waitFireDeadline fires the wake-up the last suspension armed, with the test's
+// clock moved to its deadline first, which is how a timer wait's own deadline
+// requeues its execution.
+func waitFireDeadline(t *testing.T, clock *waitClock, timers *waitTimerStub, want time.Duration) {
+	t.Helper()
+	fire := timers.release()
+	if fire == nil {
+		t.Fatal("the suspension armed no wake-up")
+	}
+	if got := timers.armed(); got != want {
+		t.Fatalf("the suspension armed a %s wake-up, want its %s deadline", got, want)
+	}
+	clock.Advance(want)
+	fire()
+}
+
+// waitEveryItemOnce checks that items 1 to count, and nothing else, reached a
+// node exactly once each across the inputs it was called with.
+func waitEveryItemOnce(t *testing.T, inputs []workflow.NodeInput, count int) {
+	t.Helper()
+	seen := map[float64]int{}
+	for _, input := range inputs {
+		for _, item := range input["main"] {
+			number, ok := item.JSON["n"].(float64)
+			if !ok {
+				t.Fatalf("a node after the wait saw %v, want a numbered item", item.JSON)
+			}
+			seen[number]++
+		}
+	}
+	for n := 1; n <= count; n++ {
+		if seen[float64(n)] != 1 {
+			t.Errorf("item %d arrived %d times, want exactly once; the node saw %v", n, seen[float64(n)], seen)
+		}
+	}
+	if len(seen) != count {
+		t.Errorf("the node saw items %v, want 1 to %d", seen, count)
+	}
+}
+
+// TestATimerWaitInsideALoopProcessesEveryBatch is the finding that the throttle
+// pattern, Loop Over Items then a timed Wait then back to the loop, failed on
+// its second batch with `suspended node "hold" already completed`.
+//
+// A resume was refused whenever the checkpoint held a completed run of the
+// node that suspended, and a wait inside a loop holds one from every batch
+// before the one it is waiting on. Only the first wait could ever resume. The
+// approval-mode loop test passed regardless, because its fake waited once and
+// passed every later batch straight through; a real Wait waits on every
+// batch, which is what the wait here does.
+func TestATimerWaitInsideALoopProcessesEveryBatch(t *testing.T) {
+	ctx, db, store, catalog, executors, tenant := waitTestSetup(t)
+
+	// A two-second interval wait on every batch. The deadline is minted when
+	// the node runs, from the clock the service validates and sweeps against,
+	// so moving that clock is what ends each wait.
+	clock := newWaitClock()
+	timers := &waitTimerStub{}
+	var holdCalls int
+	hold := &waitSuspender{calls: &holdCalls, requests: &[]engine.Request{},
+		mode: engine.WaitModeInterval, expiresAfter: 2 * time.Second, now: clock.Now}
+	workflowID, probe := waitSaveLoop(t, ctx, db, catalog, executors, tenant, hold, 5)
+
+	queued, err := store.QueueManualLatest(ctx, tenant, workflowID, catalog, "", json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("QueueManualLatest() error = %v", err)
+	}
+	worker := waitTestServiceWithClock(t, store, catalog, executors, "worker-0", clock, timers)
+	if worked, err := worker.RunOnce(ctx); err != nil || !worked {
+		t.Fatalf("RunOnce(first batch) = (%v, %v), want (true, nil)", worked, err)
+	}
+	for batch := 1; batch <= 5; batch++ {
+		waiting, err := store.Get(ctx, tenant, queued.ID)
+		if err != nil {
+			t.Fatalf("Get(batch %d) error = %v", batch, err)
+		}
+		if waiting.Status != execution.StatusWaiting {
+			t.Fatalf("batch %d: status = %q, want waiting at the wait inside the loop (error %s)",
+				batch, waiting.Status, waiting.Error)
+		}
+		if holdCalls != batch {
+			t.Fatalf("batch %d: the wait ran %d times, want once for each batch reached", batch, holdCalls)
+		}
+		waitFireDeadline(t, clock, timers, 2*time.Second)
+		awaitExecutionStatus(t, store, tenant, queued.ID, execution.StatusQueued)
+		// A fresh worker for every batch, so neither the loop's cursor nor the
+		// wait's earlier runs can have survived in process memory.
+		worker = waitTestServiceWithClock(t, store, catalog, executors, fmt.Sprintf("worker-%d", batch), clock, timers)
+		if worked, err := worker.RunOnce(ctx); err != nil || !worked {
+			t.Fatalf("RunOnce(resume batch %d) = (%v, %v), want (true, nil)", batch, worked, err)
+		}
+	}
+
+	finished, err := store.Get(ctx, tenant, queued.ID)
+	if err != nil {
+		t.Fatalf("Get(finished) error = %v", err)
+	}
+	if finished.Status != execution.StatusSucceeded {
+		t.Fatalf("status = %q, want succeeded once every batch has waited (error %s)", finished.Status, finished.Error)
+	}
+	if probe.bodyCalls != 5 {
+		t.Errorf("the body ran %d times, want once per batch", probe.bodyCalls)
+	}
+	if probe.doneCalls != 1 {
+		t.Fatalf("the done branch ran %d times, want once", probe.doneCalls)
+	}
+	// A timer wait passes its item through, so the done branch can say which
+	// batches made it round the loop.
+	waitEveryItemOnce(t, probe.doneInputs, 5)
+	// The trace holds one succeeded run of the wait per batch, each under its
+	// own run index, which is what the replay draws. The loop's last pass hands
+	// its body an empty stream, and the pruned row that leaves is not a batch.
+	runIndexes := map[int]int{}
+	for _, run := range finished.NodeRuns {
+		if run.NodeID != "hold" || run.Status == execution.StatusSkipped {
+			continue
+		}
+		if run.Status != execution.StatusSucceeded {
+			t.Errorf("wait run %d status = %q, want succeeded", run.RunIndex, run.Status)
+		}
+		runIndexes[run.RunIndex]++
+	}
+	for index := 0; index < 5; index++ {
+		if runIndexes[index] != 1 {
+			t.Errorf("the trace holds %d runs of the wait at run index %d, want one per batch: %v",
+				runIndexes[index], index, runIndexes)
+		}
+	}
+	if len(runIndexes) != 5 {
+		t.Errorf("the trace holds runs of the wait at run indexes %v, want 0 to 4", runIndexes)
+	}
+}
+
+// TestAnApprovalWaitInsideALoopProcessesEveryBatch is the same finding for a
+// wait resumed by a decision. The loop test above it resumes a wait that asks
+// once; this one asks on every batch, as a real Wait on form submission does.
+func TestAnApprovalWaitInsideALoopProcessesEveryBatch(t *testing.T) {
+	ctx, db, store, catalog, executors, tenant := waitTestSetup(t)
+
+	var holdCalls int
+	hold := &waitSuspender{calls: &holdCalls, requests: &[]engine.Request{}, mode: engine.WaitModeApproval}
+	workflowID, probe := waitSaveLoop(t, ctx, db, catalog, executors, tenant, hold, 3)
+
+	queued, err := store.QueueManualLatest(ctx, tenant, workflowID, catalog, "", json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("QueueManualLatest() error = %v", err)
+	}
+	worker := waitTestService(t, store, catalog, executors, "worker-0")
+	if worked, err := worker.RunOnce(ctx); err != nil || !worked {
+		t.Fatalf("RunOnce(first batch) = (%v, %v), want (true, nil)", worked, err)
+	}
+	for batch := 1; batch <= 3; batch++ {
+		waiting, err := store.Get(ctx, tenant, queued.ID)
+		if err != nil {
+			t.Fatalf("Get(batch %d) error = %v", batch, err)
+		}
+		if waiting.Status != execution.StatusWaiting {
+			t.Fatalf("batch %d: status = %q, want waiting for a decision (error %s)", batch, waiting.Status, waiting.Error)
+		}
+		if holdCalls != batch {
+			t.Fatalf("batch %d: the wait ran %d times, want once for each batch reached", batch, holdCalls)
+		}
+		wait, err := store.FindActiveWait(ctx, tenant, queued.ID)
+		if err != nil {
+			t.Fatalf("FindActiveWait(batch %d) error = %v", batch, err)
+		}
+		if _, _, err := worker.ResumeApproval(ctx, tenant.ID, wait.ResumeToken, engine.ApprovalDecision{
+			Approved: true, DecidedBy: "tester", RespondedAt: time.Now().UTC(), Note: fmt.Sprintf("batch %d", batch),
+		}, false); err != nil {
+			t.Fatalf("ResumeApproval(batch %d) error = %v", batch, err)
+		}
+		worker = waitTestService(t, store, catalog, executors, fmt.Sprintf("worker-%d", batch))
+		if worked, err := worker.RunOnce(ctx); err != nil || !worked {
+			t.Fatalf("RunOnce(resume batch %d) = (%v, %v), want (true, nil)", batch, worked, err)
+		}
+	}
+
+	finished, err := store.Get(ctx, tenant, queued.ID)
+	if err != nil {
+		t.Fatalf("Get(finished) error = %v", err)
+	}
+	if finished.Status != execution.StatusSucceeded {
+		t.Fatalf("status = %q, want succeeded once every batch is decided (error %s)", finished.Status, finished.Error)
+	}
+	if probe.bodyCalls != 3 {
+		t.Errorf("the body ran %d times, want once per batch", probe.bodyCalls)
+	}
+	if probe.doneCalls != 1 {
+		t.Fatalf("the done branch ran %d times, want once", probe.doneCalls)
+	}
+	// An approval replaces the item with its decision, so what the done branch
+	// can prove is that every batch returned one.
+	if got := len(probe.doneInputs[0]["main"]); got != 3 {
+		t.Errorf("done carried %d decisions, want one per batch", got)
+	}
+}
+
+// TestAPerItemWaitThatSuspendsOnTwoItemsProcessesBoth is the same refusal
+// without a loop. A node resolved one item at a time that waits on each item
+// has completed a run, the first item's, by the time it suspends on the
+// second, and that completed run alone was enough to refuse the resume.
+func TestAPerItemWaitThatSuspendsOnTwoItemsProcessesBoth(t *testing.T) {
+	ctx, db, store, catalog, executors, tenant := waitTestSetup(t)
+
+	clock := newWaitClock()
+	timers := &waitTimerStub{}
+	var holdCalls int
+	hold := &waitSuspender{calls: &holdCalls, requests: &[]engine.Request{},
+		mode: engine.WaitModeInterval, expiresAfter: 2 * time.Second, now: clock.Now}
+	var doneCalls int
+	var doneInputs []workflow.NodeInput
+	waitRegisterFakes(t, executors, hold, &doneCalls, &doneInputs)
+	waitRegisterNumbered(t, catalog, executors, 2)
+
+	link := func(id, source, target string) workflow.Connection {
+		return workflow.Connection{ID: id, Kind: workflow.ConnectionMain,
+			Source: workflow.Endpoint{NodeID: source, Port: "main"},
+			Target: workflow.Endpoint{NodeID: target, Port: "main"}}
+	}
+	saved, err := repository.NewWorkflowStore(db.DB).SaveDraft(ctx, tenant, workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_per_item_waits", Name: "Per-item waits",
+		Nodes: []workflow.Node{
+			{ID: "manual", Name: "Manual", Type: "kilasflow.manual", TypeVersion: workflow.V(1)},
+			{ID: "items", Name: "Items", Type: "test.items", TypeVersion: workflow.V(1)},
+			// Tolerating the failure is what resolves this node one item at a
+			// time, so it waits once per item rather than once per batch.
+			{ID: "hold", Name: "Hold", Type: "test.hold", TypeVersion: workflow.V(1),
+				Settings: map[string]any{"onError": "continueRegularOutput"}},
+			{ID: "done", Name: "Done", Type: "test.done", TypeVersion: workflow.V(1)},
+		},
+		Connections: []workflow.Connection{
+			link("c1", "manual", "items"),
+			link("c2", "items", "hold"),
+			link("c3", "hold", "done"),
+		},
+		Settings: map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("SaveDraft() error = %v", err)
+	}
+
+	queued, err := store.QueueManualLatest(ctx, tenant, saved.ID, catalog, "", json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("QueueManualLatest() error = %v", err)
+	}
+	worker := waitTestServiceWithClock(t, store, catalog, executors, "worker-0", clock, timers)
+	if worked, err := worker.RunOnce(ctx); err != nil || !worked {
+		t.Fatalf("RunOnce(first item) = (%v, %v), want (true, nil)", worked, err)
+	}
+	for item := 1; item <= 2; item++ {
+		waiting, err := store.Get(ctx, tenant, queued.ID)
+		if err != nil {
+			t.Fatalf("Get(item %d) error = %v", item, err)
+		}
+		if waiting.Status != execution.StatusWaiting {
+			t.Fatalf("item %d: status = %q, want waiting at the per-item wait (error %s)", item, waiting.Status, waiting.Error)
+		}
+		if holdCalls != item {
+			t.Fatalf("item %d: the wait ran %d times, want once for each item reached", item, holdCalls)
+		}
+		waitFireDeadline(t, clock, timers, 2*time.Second)
+		awaitExecutionStatus(t, store, tenant, queued.ID, execution.StatusQueued)
+		worker = waitTestServiceWithClock(t, store, catalog, executors, fmt.Sprintf("worker-%d", item), clock, timers)
+		if worked, err := worker.RunOnce(ctx); err != nil || !worked {
+			t.Fatalf("RunOnce(resume item %d) = (%v, %v), want (true, nil)", item, worked, err)
+		}
+	}
+
+	finished, err := store.Get(ctx, tenant, queued.ID)
+	if err != nil {
+		t.Fatalf("Get(finished) error = %v", err)
+	}
+	if finished.Status != execution.StatusSucceeded {
+		t.Fatalf("status = %q, want succeeded once both items have waited (error %s)", finished.Status, finished.Error)
+	}
+	waitEveryItemOnce(t, doneInputs, 2)
+}
+
+// TestAResumeThatFailsRecordsAFailedRunOnTheWait is the other half of the
+// finding: the refused resume failed the execution and recorded nothing, so
+// the replay showed every node green, the wait included, under a failed run
+// whose error pointed at no node a reader could open.
+//
+// A checkpoint written before checkpoints carried the run they interrupted is
+// the case that still refuses: past the first batch it cannot say whether the
+// wait's last completed run is the one it suspended. It fails as it always
+// did, but now on the wait, as a failed run the replay marks.
+func TestAResumeThatFailsRecordsAFailedRunOnTheWait(t *testing.T) {
+	ctx, db, store, catalog, executors, tenant := waitTestSetup(t)
+
+	var holdCalls int
+	hold := &waitSuspender{calls: &holdCalls, requests: &[]engine.Request{}, mode: engine.WaitModeApproval}
+	workflowID, _ := waitSaveLoop(t, ctx, db, catalog, executors, tenant, hold, 3)
+
+	queued, err := store.QueueManualLatest(ctx, tenant, workflowID, catalog, "", json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("QueueManualLatest() error = %v", err)
+	}
+	approve := func(worker *engine.Service, batch int) repository.Wait {
+		t.Helper()
+		wait, err := store.FindActiveWait(ctx, tenant, queued.ID)
+		if err != nil {
+			t.Fatalf("FindActiveWait(batch %d) error = %v", batch, err)
+		}
+		if _, _, err := worker.ResumeApproval(ctx, tenant.ID, wait.ResumeToken, engine.ApprovalDecision{
+			Approved: true, DecidedBy: "tester", RespondedAt: time.Now().UTC(),
+		}, false); err != nil {
+			t.Fatalf("ResumeApproval(batch %d) error = %v", batch, err)
+		}
+		return wait
+	}
+	worker := waitTestService(t, store, catalog, executors, "worker-0")
+	if worked, err := worker.RunOnce(ctx); err != nil || !worked {
+		t.Fatalf("RunOnce(first batch) = (%v, %v), want (true, nil)", worked, err)
+	}
+	approve(worker, 1)
+	worker = waitTestService(t, store, catalog, executors, "worker-1")
+	if worked, err := worker.RunOnce(ctx); err != nil || !worked {
+		t.Fatalf("RunOnce(second batch) = (%v, %v), want (true, nil)", worked, err)
+	}
+	waiting, err := store.Get(ctx, tenant, queued.ID)
+	if err != nil {
+		t.Fatalf("Get(second batch) error = %v", err)
+	}
+	if waiting.Status != execution.StatusWaiting {
+		t.Fatalf("status = %q, want waiting on the second batch (error %s)", waiting.Status, waiting.Error)
+	}
+
+	// The second batch's checkpoint, rewritten the way a release before this
+	// field wrote it: no record of the run the suspension interrupted.
+	wait, err := store.FindActiveWait(ctx, tenant, queued.ID)
+	if err != nil {
+		t.Fatalf("FindActiveWait() error = %v", err)
+	}
+	var legacy map[string]any
+	if err := json.Unmarshal(wait.Checkpoint, &legacy); err != nil {
+		t.Fatalf("decode checkpoint: %v", err)
+	}
+	if _, recorded := legacy["suspendRun"]; !recorded {
+		t.Fatalf("the checkpoint records no suspended run: %s", wait.Checkpoint)
+	}
+	delete(legacy, "suspendRun")
+	rewritten, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatalf("encode checkpoint: %v", err)
+	}
+	if err := db.DB.Exec(`UPDATE "execution_waits" SET "checkpoint" = ? WHERE "id" = ?`, rewritten, wait.ID).Error; err != nil {
+		t.Fatalf("rewrite checkpoint: %v", err)
+	}
+	approve(worker, 2)
+	worker = waitTestService(t, store, catalog, executors, "worker-2")
+	if worked, err := worker.RunOnce(ctx); err != nil || !worked {
+		t.Fatalf("RunOnce(refused resume) = (%v, %v), want (true, nil)", worked, err)
+	}
+
+	failed, err := store.Get(ctx, tenant, queued.ID)
+	if err != nil {
+		t.Fatalf("Get(failed) error = %v", err)
+	}
+	if failed.Status != execution.StatusFailed {
+		t.Fatalf("status = %q, want failed on the refused resume (error %s)", failed.Status, failed.Error)
+	}
+	if !strings.Contains(string(failed.Error), "already completed") {
+		t.Errorf("execution error = %s, want the refusal", failed.Error)
+	}
+	var failedRuns []execution.NodeRun
+	for _, run := range failed.NodeRuns {
+		if run.Status == execution.StatusFailed {
+			failedRuns = append(failedRuns, run)
+		}
+	}
+	if len(failedRuns) != 1 {
+		t.Fatalf("the trace holds %d failed runs, want the wait's alone", len(failedRuns))
+	}
+	run := failedRuns[0]
+	if run.NodeID != "hold" || run.RunIndex != 1 || run.Attempt != 1 {
+		t.Errorf("failed run = node %q, run index %d, attempt %d; want the wait's second run, first attempt",
+			run.NodeID, run.RunIndex, run.Attempt)
+	}
+	if !strings.Contains(string(run.Error), `suspended node \"hold\" already completed`) {
+		t.Errorf("failed run error = %s, want the refusal", run.Error)
+	}
+	// Nothing ran after the refusal: the failed wait is the end of the trace.
+	if last := failed.NodeRuns[len(failed.NodeRuns)-1]; last.Sequence != run.Sequence {
+		t.Errorf("the trace ends on node %q, want the failed wait", last.NodeID)
+	}
+	if holdCalls != 2 {
+		t.Errorf("the wait ran %d times, want the two batches before the refusal", holdCalls)
 	}
 }
 

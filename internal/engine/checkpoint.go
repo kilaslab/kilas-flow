@@ -26,9 +26,17 @@ type Checkpoint struct {
 	// SuspendAttempt is the attempt the suspension interrupted, so the
 	// resumed run's trace row keeps the attempt sequence without colliding
 	// with failures recorded before the suspend.
-	SuspendAttempt int    `json:"suspendAttempt"`
-	Mode           string `json:"mode"`
-	TriggerNodeID  string `json:"triggerNodeId"`
+	SuspendAttempt int `json:"suspendAttempt"`
+	// SuspendRun is the run the suspension interrupted: how many runs of
+	// SuspendNode had completed when it suspended. A node inside a loop, or
+	// one resolved item by item, has completed runs from the batches and items
+	// before this one, so a completed run of the node is not a reason to
+	// refuse the resume; only a completed run at this index is. Checkpoints
+	// written before the field existed read 0, which is exact for the first
+	// suspension of a node and refuses every later one, as they always did.
+	SuspendRun    int    `json:"suspendRun"`
+	Mode          string `json:"mode"`
+	TriggerNodeID string `json:"triggerNodeId"`
 	// Input is what the suspending node was about to run against. Stored so
 	// the resumed run records the same input and timer resumes can pass it
 	// through unchanged.

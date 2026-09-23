@@ -805,7 +805,7 @@ func (state *runState) recordSkips(graph preparedGraph, request *Request) {
 // touches them before the marshal.
 func snapshotCheckpoint(nodeID, mode string, input workflow.NodeInput, attempt int, state *runState, request *Request) Checkpoint {
 	checkpoint := Checkpoint{
-		SuspendNode: nodeID, SuspendAttempt: attempt, Mode: mode,
+		SuspendNode: nodeID, SuspendAttempt: attempt, SuspendRun: len(state.runs[nodeID]), Mode: mode,
 		TriggerNodeID: request.TriggerNodeID,
 		Input:         cloneInput(input),
 		Completed:     make(map[string]workflow.NodeOutput, len(state.completed)),
@@ -886,11 +886,15 @@ func (runner *Runner) Resume(ctx context.Context, ir workflow.IR, request Reques
 	if !found {
 		return Result{}, fmt.Errorf("suspended node %q is not in the compiled graph", checkpoint.SuspendNode)
 	}
-	if _, done := checkpoint.Completed[checkpoint.SuspendNode]; done {
-		return Result{}, fmt.Errorf("suspended node %q already completed", checkpoint.SuspendNode)
+	// Keyed by run, not by node: a wait inside a loop has completed runs from
+	// every batch before the one it suspended on, and refusing on those failed
+	// the throttle pattern on its second batch. Only a completed run at the
+	// index the suspension interrupted means this resume would run it twice.
+	if len(checkpoint.Runs[checkpoint.SuspendNode]) > checkpoint.SuspendRun {
+		return failedResume(checkpoint, fmt.Errorf("suspended node %q already completed", checkpoint.SuspendNode))
 	}
 	if got, want := len(resumeOutput), expectedPorts(node); got != want {
-		return Result{}, fmt.Errorf("resume output for node %q has %d streams, want %d", checkpoint.SuspendNode, got, want)
+		return failedResume(checkpoint, fmt.Errorf("resume output for node %q has %d streams, want %d", checkpoint.SuspendNode, got, want))
 	}
 	request.Workflow = workflowContextFor(ir, request.Workflow)
 	// Not seeded: a resumed run continues the stack the checkpoint recorded,
@@ -948,6 +952,26 @@ func (runner *Runner) Resume(ctx context.Context, ir workflow.IR, request Reques
 		return *state.result, suspended
 	}
 	return *state.result, nil
+}
+
+// failedResume is the result of a resume refused at the node it was to
+// continue: that node's failed run, carrying the refusal.
+//
+// The service writes a failed run's rows before it fails the execution, so the
+// row is what makes the replay mark the node the run stopped on. Without it a
+// refused resume failed the execution with every node it had reached shown as
+// succeeded, the wait included, and an error that pointed at nothing a reader
+// could open. The run index is the one the resume would have completed.
+func failedResume(checkpoint Checkpoint, cause error) (Result, error) {
+	attempt := checkpoint.SuspendAttempt
+	if attempt < 1 {
+		attempt = 1
+	}
+	run := NodeRun{
+		NodeID: checkpoint.SuspendNode, Input: cloneInput(checkpoint.Input), Error: cause,
+		Attempt: attempt, RunIndex: len(checkpoint.Runs[checkpoint.SuspendNode]), ErrorCode: "node.failed",
+	}
+	return Result{NodeRuns: []NodeRun{run}, Output: map[string]workflow.NodeOutput{}}, cause
 }
 
 // runLoop schedules every node the graph still owes. It is the single pass
