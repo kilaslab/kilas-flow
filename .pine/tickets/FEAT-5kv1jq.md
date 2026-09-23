@@ -17,9 +17,9 @@ updated: "2026-09-05T05:03:04Z"
 
 `requestPayload` in `internal/webhook/webhook.go:210-250` builds one item shape for every inbound delivery, regardless of which trigger node is bound to the path: `{method, path, headers, query, body}`. The body is decoded into an `any`, then the whole map is re-marshalled (webhook.go:232-245), so the bytes that actually arrived on the wire are gone by the time anything else can look at them. `executeWebhook` (nodes/webhook.go:210-218) then hands `request.Input` through unchanged, so `$json` at the top of a workflow is always that five-key envelope.
 
-Two problems follow. First, no imported trigger sees the shape it expects. n8n's webhook context exposes `getBodyData`, `getHeaderData`, `getParamsData` and `getQueryData` (`packages/workflow/src/interfaces.ts:1463-1547` in the reference checkout), and n8n's core Webhook node emits `{body, headers, params, query}` — a different set of keys, with the path parameters n8n extracts and KilasFlow does not. A real third-party trigger differs further still: the owner's own `MitraChatWebhookTrigger` returns `{event, eventId, occurredAt, …}` at `$json` top level, and WAHA templates read their envelope at `$json` top level too. Every one of these workflows breaks on import because `$json.event` is `undefined` when the event is actually at `$json.body.event`.
+Two problems follow. First, no imported trigger sees the shape it expects. n8n's webhook context exposes `getBodyData`, `getHeaderData`, `getParamsData` and `getQueryData` (`packages/workflow/src/interfaces.ts:1463-1547` in the reference checkout), and n8n's core Webhook node emits `{body, headers, params, query}` — a different set of keys, with the path parameters n8n extracts and KilasFlow does not. A real third-party trigger differs further still: the owner's own `<package>WebhookTrigger` returns `{event, eventId, occurredAt, …}` at `$json` top level, and WAHA templates read their envelope at `$json` top level too. Every one of these workflows breaks on import because `$json.event` is `undefined` when the event is actually at `$json.body.event`.
 
-Second, no signature can ever be verified. Both WAHA's `X-Webhook-Hmac` (sha512 over the raw body) and the owner's own trigger require the exact bytes: `MitraChatWebhookTrigger.node.ts:150-167` reads `this.getRequestObject().rawBody` and warns loudly when it has to fall back to `JSON.stringify(bodyData)`, precisely because a re-marshalled body does not hash to the same value. KilasFlow has no equivalent of `rawBody` at all, so HMAC verification is not merely unimplemented — it is impossible.
+Second, no signature can ever be verified. Both WAHA's `X-Webhook-Hmac` (sha512 over the raw body) and the owner's own trigger require the exact bytes: `<package>WebhookTrigger.node.ts:150-167` reads `this.getRequestObject().rawBody` and warns loudly when it has to fall back to `JSON.stringify(bodyData)`, precisely because a re-marshalled body does not hash to the same value. KilasFlow has no equivalent of `rawBody` at all, so HMAC verification is not merely unimplemented — it is impossible.
 
 ## Acceptance criteria
 
@@ -50,8 +50,8 @@ The traps. `strings.Trim(strings.TrimPrefix(r.URL.Path, "/webhook"), "/")` (webh
 - `internal/webhook/webhook.go` — `requestPayload`, `ServeHTTP`, `Extract`.
 - `nodes/webhook.go` — `executeWebhook`, the webhook trigger definition.
 - `internal/repository/webhooks.go`, `internal/repository/models.go` — `WebhookBinding`, `WebhookTrigger`, `webhookBindingModel`.
-- Reference checkout: `/Users/izzadev/projects/mitrachat/n8n/packages/workflow/src/interfaces.ts` — `IWebhookFunctions` (`getBodyData`, `getHeaderData`, `getParamsData`, `getQueryData`).
-- Reference package: `/Users/izzadev/projects/mitrachat/mitrachat-orpc-input-fix/packages/n8n-nodes-mitrachat/nodes/MitraChatWebhookTrigger/MitraChatWebhookTrigger.node.ts` — raw-body HMAC verification and the top-level item shape it returns.
+- Reference checkout: `$KILASFLOW_N8N_REFERENCE/packages/workflow/src/interfaces.ts` — `IWebhookFunctions` (`getBodyData`, `getHeaderData`, `getParamsData`, `getQueryData`).
+- Reference package: `<owner-community-package>/nodes/<package>WebhookTrigger/<package>WebhookTrigger.node.ts` — raw-body HMAC verification and the top-level item shape it returns.
 
 ## Outcome
 

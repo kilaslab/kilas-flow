@@ -51,7 +51,7 @@ One design decision remains open. Sub-nodes could stay ordinary scheduled nodes 
 
 - Roadmap plan, p5 section, entry V2-p5-1: `.pine/roadmap.md`.
 - `.pine/roadmap.md` — p2 entry V2-p2-8.
-- `/Users/izzadev/projects/mitrachat/n8n/packages/workflow/src/interfaces.ts` — `NodeConnectionTypes` (13 values) and `INodeInputConfiguration`.
+- `$KILASFLOW_N8N_REFERENCE/packages/workflow/src/interfaces.ts` — `NodeConnectionTypes` (13 values) and `INodeInputConfiguration`.
 - `internal/workflow/document.go` (`ConnectionKind`, `knownConnectionKind`), `internal/workflow/compiler.go` (`Port`, `validateExecutableTopology`), `nodes/ai.go`, `web/src/lib/workflow-editor/ports.ts`.
 - Local n8n UI reference: `design-refs/n8n-v2/INDEX.md` entry 02 — a real cluster node: one agent with Chat Model*, Memory and Tool slots and four sub-nodes attached. Captured from a local n8n 2.33.7 instance; gitignored, never vendored.
 

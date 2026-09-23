@@ -51,7 +51,7 @@ One decision to make. `systemPrompt` can stay as a permanent alias for `systemMe
 
 ## Progress — AIClusterParity 2026-09-06
 
-Reference grounded in /Users/izzadev/projects/mitrachat/n8n (2.34.0, read-only): ToolsAgent `commonOptions` (systemMessage default 'You are a helpful assistant', maxIterations 10, returnIntermediateSteps false, passthroughBinaryImages true, enableStreaming in options collection, batching via getBatchingOptionFields) and design-refs/n8n-v2 entry 03. No code copied.
+Reference grounded in $KILASFLOW_N8N_REFERENCE (2.34.0, read-only): ToolsAgent `commonOptions` (systemMessage default 'You are a helpful assistant', maxIterations 10, returnIntermediateSteps false, passthroughBinaryImages true, enableStreaming in options collection, batching via getBatchingOptionFields) and design-refs/n8n-v2 entry 03. No code copied.
 
 Done (all in owned files):
 - `agentNode()` now declares `systemMessage` (+ `systemPrompt` kept as a permanent alias, message wins), `maxIterations` default 10, `returnIntermediateSteps` (false), `passthroughBinaryImages` (true), `enableStreaming` (false; OR-ed with the model descriptor's stream flag so existing graphs behave identically). The ticket's "streaming" is n8n's `enableStreaming` key.

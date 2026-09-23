@@ -15,7 +15,7 @@ body. No product code is written while executing this plan.
 ### What research changed about the original idea
 
 Three parallel research workflows (24 agents: KilasFlow source, the local n8n 2.34.0
-reference checkout, the owner's own published `n8n-nodes-mitrachat` package, and official
+reference checkout, the owner's own published community node package, and official
 docs) overturned four assumptions:
 
 1. **WAHA needs no JavaScript.** `@devlikeapro/n8n-nodes-waha`'s action node has **no
@@ -82,7 +82,7 @@ a Send Message reply.
 ## p0 — Reference and guardrails
 
 **V2-p0-1 · Widen the n8n reference checkout and vendor the WAHA spec.**
-`/Users/izzadev/projects/mitrachat/n8n` is a real but narrowed clone of n8n 2.34.0
+`$KILASFLOW_N8N_REFERENCE` is a real but narrowed clone of n8n 2.34.0
 (`--depth 1 --filter=blob:none` + cone sparse checkout, 911 of 26,341 files). Widen in
 place — no re-clone, a few MB:
 `git -C … sparse-checkout add packages/@n8n/nodes-langchain packages/core/src/nodes-loader
@@ -1168,7 +1168,7 @@ execution evidence — with no Node.js process anywhere.
   cheap — a catalogue write plus a lazy coercion pass — so it is a genuine differentiator
   rather than the migration nightmare it is under physical tables. Currently planned as
   supported, unlike n8n.
-- Four defects were found in the owner's own `n8n-nodes-mitrachat` package while reading it
+- Four defects were found in the owner's own community node package while reading it
   as reference — most seriously, `credentials.signingSecret` is read by two nodes but never
-  declared, so `MitraChatWebhookTrigger` throws a 500 on every request. Out of scope here, but
+  declared, so `<package>WebhookTrigger` throws a 500 on every request. Out of scope here, but
   worth its own ticket in that repo.

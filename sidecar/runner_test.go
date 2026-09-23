@@ -1012,12 +1012,15 @@ func TestHostilePackageCrashAndHangFailOnlyThatRun(t *testing.T) {
 // written by the same hand as the runner, so a package compiled from a real
 // TypeScript source is loaded here as well. Point
 // KILASFLOW_TEST_COMMUNITY_PACKAGES_DIR at a directory holding the compiled
-// package (built outside this repository) to run it; without it the test skips
-// and says so.
+// package (built outside this repository) and name it in
+// KILASFLOW_TEST_COMMUNITY_PACKAGE to run it; without both the test skips and
+// says so. The package is named by the environment rather than here, so the
+// repository does not depend on any one host product's package.
 func TestOwnersCommunityPackageLoads(t *testing.T) {
 	packagesDir := os.Getenv("KILASFLOW_TEST_COMMUNITY_PACKAGES_DIR")
-	if packagesDir == "" {
-		t.Skip("set KILASFLOW_TEST_COMMUNITY_PACKAGES_DIR to a directory holding a compiled community package to run this")
+	packageName := os.Getenv("KILASFLOW_TEST_COMMUNITY_PACKAGE")
+	if packagesDir == "" || packageName == "" {
+		t.Skip("set KILASFLOW_TEST_COMMUNITY_PACKAGES_DIR to a directory holding a compiled community package, and KILASFLOW_TEST_COMMUNITY_PACKAGE to its npm name, to run this")
 	}
 	node := sidecartest.Node(t)
 	runnerPath, err := ExtractRunner(t.TempDir())
@@ -1028,7 +1031,7 @@ func TestOwnersCommunityPackageLoads(t *testing.T) {
 		NodePath:    node,
 		RunnerPath:  runnerPath,
 		PackagesDir: packagesDir,
-		Packages:    []string{"n8n-nodes-mitrachat"},
+		Packages:    []string{packageName},
 	})
 	raw, err := Discover(context.Background(), spawn, runnerLimits())
 	if err != nil {
@@ -1038,7 +1041,7 @@ func TestOwnersCommunityPackageLoads(t *testing.T) {
 	if err := json.Unmarshal(raw, &cat); err != nil {
 		t.Fatalf("unmarshalling catalogue: %v", err)
 	}
-	pkg := packageNamed(t, cat, "n8n-nodes-mitrachat")
+	pkg := packageNamed(t, cat, packageName)
 
 	convertible := 0
 	for _, entry := range pkg.Nodes {

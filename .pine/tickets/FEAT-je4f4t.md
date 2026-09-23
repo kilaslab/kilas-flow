@@ -40,7 +40,7 @@ Three things are missing. There is no Workflow Tool, so an agent cannot call ano
 
 Do the expression work first, in `internal/expression`, because both the schema builder and the argument substitution depend on it and p1-10 owns the grammar it lands in. Extraction is a separate pass from evaluation: walk the parameter map, collect the calls, build the schema; then at invoke time bind the model's arguments and evaluate normally.
 
-Two details from n8n's own implementation are worth copying exactly, and both are in `/Users/izzadev/projects/mitrachat/n8n/packages/workflow/src/from-ai-parse-utils.ts`. Its `extractFromAICalls` is a character-by-character parser rather than a regex, because arguments contain quotes, escapes and nested parentheses that a regex will get wrong on real workflows. And its detection pattern is case-insensitive (`/\$fromAI\s*\(\s*/gi`), so `$fromai` written by a user in an imported workflow must also match — read the file, do not copy it.
+Two details from n8n's own implementation are worth copying exactly, and both are in `$KILASFLOW_N8N_REFERENCE/packages/workflow/src/from-ai-parse-utils.ts`. Its `extractFromAICalls` is a character-by-character parser rather than a regex, because arguments contain quotes, escapes and nested parentheses that a regex will get wrong on real workflows. And its detection pattern is case-insensitive (`/\$fromAI\s*\(\s*/gi`), so `$fromai` written by a user in an imported workflow must also match — read the file, do not copy it.
 
 Then `nodes/ai.go`. Generalise `httpToolFrom` so a tool descriptor names the executor to run rather than hardcoding `HTTPExecutorID`; the descriptor already carries `nodeName`, `parameters` and `credentials`, so most of what a general wrapper needs is present.
 
@@ -52,7 +52,7 @@ One decision. The synthesised tool variant can be a separate node type in the ca
 
 - Roadmap plan, p5 section, entry V2-p5-6: `.pine/roadmap.md`.
 - `.pine/roadmap.md` — p1 entry V2-p1-10 (expression engine v2) and p2 entry V2-p2-7.
-- `/Users/izzadev/projects/mitrachat/n8n/packages/workflow/src/from-ai-parse-utils.ts` (`extractFromAICalls`, `FromAIArgument`), `constants.ts` (`FROM_AI_AUTO_GENERATED_MARKER`), `interfaces.ts` (`usableAsTool`, `UsableAsToolDescription`).
+- `$KILASFLOW_N8N_REFERENCE/packages/workflow/src/from-ai-parse-utils.ts` (`extractFromAICalls`, `FromAIArgument`), `constants.ts` (`FROM_AI_AUTO_GENERATED_MARKER`), `interfaces.ts` (`usableAsTool`, `UsableAsToolDescription`).
 - `nodes/ai.go` (`httpToolNode`, `executeHTTPTool`, `httpToolFrom`, `httpRequestTool`), `internal/expression/expression.go`, `internal/node/registry.go`, `internal/api/handlers/nodes.go`.
 - Local n8n UI reference: `design-refs/n8n-v2/INDEX.md` entries 07, 10 — an HTTP Request Tool attached to an agent, and how a tool-capable node is re-listed under Other Tools. Captured from a local n8n 2.33.7 instance; gitignored, never vendored.
 

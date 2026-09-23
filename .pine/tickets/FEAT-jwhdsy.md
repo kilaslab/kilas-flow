@@ -88,7 +88,7 @@ Every one of these nodes must return exactly one item stream per declared output
 - `.pine/roadmap.md` — the p4 "data shaping" family; entry V2-p2-2 (property kinds); entry V2-p3-8 (binary data storage).
 - PRD `gflow-prd-v1.md` §22 Workflow Data Model, §23 Node Registry, §24 Native V1 Nodes.
 - Verified in this repository: `nodes/core.go` (`setNode`), `nodes/executors.go` (`executeSet`, `validateSetConfiguration`), `internal/interop/n8n/parameters.go` (`setToKilas`, `setToN8N`), `internal/interop/n8n/n8n.go` (`mappings`), `internal/node/registry.go` (`PropertyKind` has six values), `internal/api/handlers/nodes.go`, `nodes/unsupported.go`.
-- n8n 2.34.0 reference checkout (read-only, outside this repo): `/Users/izzadev/projects/mitrachat/n8n/packages/nodes-base/nodes/Set/v2/SetV2.node.ts` and `.../nodes/Set/test/`. The transform nodes ship from `nodes/Transform/{Aggregate,Sort,SplitOut,Summarize,Limit,RemoveDuplicates}` per that package's `package.json`; `n8n-nodes-base.splitOut` is confirmed as a type string in the checkout, and the rest must be confirmed against the widened checkout from p0-1 before the mapping table is written.
+- n8n 2.34.0 reference checkout (read-only, outside this repo): `$KILASFLOW_N8N_REFERENCE/packages/nodes-base/nodes/Set/v2/SetV2.node.ts` and `.../nodes/Set/test/`. The transform nodes ship from `nodes/Transform/{Aggregate,Sort,SplitOut,Summarize,Limit,RemoveDuplicates}` per that package's `package.json`; `n8n-nodes-base.splitOut` is confirmed as a type string in the checkout, and the rest must be confirmed against the widened checkout from p0-1 before the mapping table is written.
 
 ## Work Evidence
 
