@@ -40,20 +40,38 @@ export interface ApiFetchOptions extends Omit<RequestInit, 'body'> {
 }
 
 let embedToken: string | null = null;
+let embedParent: string | null = null;
 
 /**
- * Sets the embed token attached to every subsequent API request.
+ * Sets the embed token attached to every subsequent API request, and the
+ * origin of the host page it was handed over by.
  *
  * The embedded editor calls this once the host's postMessage handshake has
  * completed; the internal dashboard never calls it, so its requests are
  * unaffected.
+ *
+ * The parent rides along as X-KilasFlow-Embed-Parent. The frame is served by
+ * KilasFlow, so its writes carry KilasFlow's origin rather than the host's,
+ * and the server admits that origin only for the host the token was minted
+ * for. The frame alone knows which host that is, from the browser-verified
+ * `event.origin` of the session message, so the two are set and cleared
+ * together.
  */
-export function setEmbedToken(token: string | null): void {
+export function setEmbedToken(token: string | null, parent: string | null = null): void {
 	embedToken = token;
+	embedParent = token ? parent : null;
 }
 
 function currentEmbedToken(): string | null {
 	return embedToken;
+}
+
+/** Attaches the embed session's headers, unless the caller named a token itself. */
+function attachEmbedHeaders(headers: Headers): void {
+	const token = currentEmbedToken();
+	if (!token || headers.has('X-KilasFlow-Embed')) return;
+	headers.set('X-KilasFlow-Embed', token);
+	if (embedParent) headers.set('X-KilasFlow-Embed-Parent', embedParent);
 }
 
 /**
@@ -71,10 +89,7 @@ export async function apiFetch<T>(url: string, options: ApiFetchOptions = {}): P
 	// An embedded editor has no session cookie, so its token rides on every
 	// request. Attaching it here rather than at each call site means a
 	// generated client cannot accidentally omit it.
-	const embedToken = currentEmbedToken();
-	if (embedToken && !requestHeaders.has('X-KilasFlow-Embed')) {
-		requestHeaders.set('X-KilasFlow-Embed', embedToken);
-	}
+	attachEmbedHeaders(requestHeaders);
 
 	if (jsonBody && !requestHeaders.has('Content-Type')) {
 		requestHeaders.set('Content-Type', 'application/json');
@@ -132,10 +147,7 @@ export async function apiDownload(url: string, headers?: HeadersInit): Promise<A
 
 	const requestHeaders = new Headers(headers);
 	requestHeaders.set('Accept', requestHeaders.get('Accept') ?? 'text/csv');
-	const token = currentEmbedToken();
-	if (token && !requestHeaders.has('X-KilasFlow-Embed')) {
-		requestHeaders.set('X-KilasFlow-Embed', token);
-	}
+	attachEmbedHeaders(requestHeaders);
 
 	const response = await fetch(url, { headers: requestHeaders });
 

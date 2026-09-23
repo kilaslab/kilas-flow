@@ -2,6 +2,8 @@ package embed_test
 
 import (
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -280,6 +282,64 @@ func TestNormalizeOriginRejectsNonHTTPSchemes(t *testing.T) {
 	}
 	if got := embed.NormalizeOrigin("HTTPS://Host.Example:443"); got != "https://host.example:443" {
 		t.Errorf("NormalizeOrigin() = %q, want it lowercased", got)
+	}
+}
+
+// The editor iframe is served by this instance, so its writes carry this
+// instance's own origin. server.public_url names it when set, and then it is
+// the only answer: a proxy that rewrites Host would otherwise make the origin
+// the browser actually sent look foreign. Without one, the scheme comes from
+// TLS or the proxy's X-Forwarded-Proto and the host from the request.
+func TestSelfOriginIsThePublicURLOrTheRequestsOwnSchemeAndHost(t *testing.T) {
+	t.Parallel()
+
+	plain := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+	secure := httptest.NewRequest(http.MethodGet, "https://example.com/api/v1/health", nil)
+	proxied := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+	proxied.Header.Set("X-Forwarded-Proto", "HTTPS")
+	mixedCase := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+	mixedCase.Host = "Flows.Example:8443"
+
+	for _, test := range []struct {
+		name      string
+		request   *http.Request
+		publicURL string
+		want      string
+	}{
+		{"plain http takes the request's host", plain, "", "http://example.com"},
+		{"TLS makes it https", secure, "", "https://example.com"},
+		{"a proxy's forwarded scheme makes it https", proxied, "", "https://example.com"},
+		{"the host is normalised like any origin", mixedCase, "", "http://flows.example:8443"},
+		{"the public URL wins, reduced to its origin", plain, "https://Flows.Example/kilasflow/", "https://flows.example"},
+		{"the public URL wins over a forwarded scheme", proxied, "http://flows.example:8080", "http://flows.example:8080"},
+	} {
+		if got := embed.SelfOrigin(test.request, test.publicURL); got != test.want {
+			t.Errorf("%s: SelfOrigin() = %q, want %q", test.name, got, test.want)
+		}
+	}
+}
+
+// SelfURL is what SelfOrigin is reduced from, and what an OAuth redirect is
+// built on. It keeps a public URL's path, because a redirect registered under a
+// path prefix must come back to that prefix.
+func TestSelfURLKeepsThePublicURLsPathAndFallsBackToLocalhost(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name                   string
+		publicURL, proto, host string
+		tls                    bool
+		want                   string
+	}{
+		{"public URL, trailing slash trimmed", " https://flows.example/kilasflow/ ", "", "ignored.example", false, "https://flows.example/kilasflow"},
+		{"plain http", "", "", "example.com", false, "http://example.com"},
+		{"TLS", "", "", "example.com", true, "https://example.com"},
+		{"forwarded https", "", "https", "example.com", false, "https://example.com"},
+		{"no host at all", "", "", "", false, "http://localhost"},
+	} {
+		if got := embed.SelfURL(test.publicURL, test.proto, test.host, test.tls); got != test.want {
+			t.Errorf("%s: SelfURL() = %q, want %q", test.name, got, test.want)
+		}
 	}
 }
 

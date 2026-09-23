@@ -3,6 +3,7 @@ package middleware
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/kilaslab/kilas-flow/internal/embed"
@@ -116,6 +117,83 @@ func TestPermitsKeepsTheTwoFamiliesApart(t *testing.T) {
 			request := httptest.NewRequest(route.method, route.path, nil)
 			if status, _ := permits(sessionSubject{session: route.session}, request); (status == 0) != route.want {
 				t.Errorf("%s %s allowed = %v, want %v", route.method, route.path, status == 0, route.want)
+			}
+		})
+	}
+}
+
+// fixedVerifier accepts every token as one session, so the origin rule can be
+// exercised without minting.
+type fixedVerifier struct{ session embed.Session }
+
+func (verifier fixedVerifier) Verify(string) (embed.Session, error) {
+	return verifier.session, nil
+}
+
+// The per-request origin rule, branch by branch. httptest gives every request
+// host example.com over plain HTTP, so without a public URL the editor's own
+// origin is http://example.com.
+//
+// The editor iframe is served by KilasFlow, so its writes carry KilasFlow's
+// origin rather than the host's. That origin passes only with the parent the
+// frame verified during the handshake, and only when that parent is the host
+// the session was minted for: any allowlisted page can frame the editor, and a
+// bare "it came from KilasFlow" would let one of them spend another's token.
+func TestEmbedAuthAdmitsTheEditorsOwnOriginOnlyForTheSessionsHost(t *testing.T) {
+	t.Parallel()
+
+	const (
+		host   = "https://host.example"
+		editor = "http://example.com"
+		parent = "X-KilasFlow-Embed-Parent"
+	)
+	verifier := fixedVerifier{session: workflowSession(embed.ScopeRead, embed.ScopeWrite, embed.ScopeRun)}
+
+	for _, test := range []struct {
+		name      string
+		publicURL string
+		headers   map[string]string
+		want      bool
+	}{
+		{"no origin, as a same-origin read sends", "", map[string]string{}, true},
+		{"the host page itself", "", map[string]string{"Origin": host}, true},
+		{"a foreign page", "", map[string]string{"Origin": "https://evil.example"}, false},
+		{"the editor naming the host", "", map[string]string{"Origin": editor, parent: host}, true},
+		{"the editor naming the host in a secure context", "", map[string]string{"Origin": editor, parent: host, "Sec-Fetch-Site": "same-origin"}, true},
+		{"the editor naming another parent", "", map[string]string{"Origin": editor, parent: "https://other.example"}, false},
+		{"the editor naming no parent", "", map[string]string{"Origin": editor}, false},
+		{"the editor naming an unparseable parent", "", map[string]string{"Origin": editor, parent: "null"}, false},
+		{"the editor's origin on a cross-site fetch", "", map[string]string{"Origin": editor, parent: host, "Sec-Fetch-Site": "cross-site"}, false},
+		{"the editor's origin on a same-site fetch", "", map[string]string{"Origin": editor, parent: host, "Sec-Fetch-Site": "same-site"}, false},
+		{"a foreign page naming the host as its parent", "", map[string]string{"Origin": "https://evil.example", parent: host}, false},
+		{"the editor behind a proxy that terminates TLS", "", map[string]string{"Origin": "https://example.com", parent: host, "X-Forwarded-Proto": "https"}, true},
+		{"plain http where the proxy says https", "", map[string]string{"Origin": editor, parent: host, "X-Forwarded-Proto": "https"}, false},
+		{"the public URL's origin", "https://flows.example/kilasflow/", map[string]string{"Origin": "https://flows.example", parent: host}, true},
+		{"the request's own host once a public URL is set", "https://flows.example", map[string]string{"Origin": editor, parent: host}, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			reached := false
+			handler := EmbedAuth(verifier, test.publicURL)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				reached = true
+				w.WriteHeader(http.StatusOK)
+			}))
+			request := httptest.NewRequest(http.MethodPut, "/api/v1/workflows/wf_1", nil)
+			request.Header.Set("X-KilasFlow-Embed", "kfe1.token")
+			for name, value := range test.headers {
+				request.Header.Set(name, value)
+			}
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, request)
+
+			if reached != test.want {
+				t.Fatalf("reached = %v, want %v (status %d, body %s)", reached, test.want, recorder.Code, recorder.Body)
+			}
+			// A refusal reads exactly as it always has: a host page that
+			// matches on the sentence must not break.
+			if !test.want && (recorder.Code != http.StatusForbidden ||
+				!strings.Contains(recorder.Body.String(), `"This embed session is not allowed from that origin."`)) {
+				t.Errorf("refusal = %d %s, want 403 with the origin sentence", recorder.Code, recorder.Body)
 			}
 		})
 	}

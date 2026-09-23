@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { apiFetch, setEmbedToken } from '$lib/api/http';
+import { apiDownload, apiFetch, setEmbedToken } from '$lib/api/http';
 import { SCOPE_PUBLISH, acceptEmbedSession, sanitizeBranding, scopeAllows, type EmbedSession } from './session.svelte';
 
 function session(scopes: string[]): EmbedSession {
@@ -131,6 +131,50 @@ describe('accepting the host session', () => {
 		expect(sent[0]?.get('X-KilasFlow-Embed')).toBe('tok-123');
 	});
 
+	// The frame is served by KilasFlow, so its writes carry KilasFlow's origin
+	// rather than the host's, and the server needs to know which host the frame
+	// is working for before it lets them spend a token minted for one. The
+	// frame is the only party that knows: the origin it passes here is the
+	// browser-verified `event.origin` of the session message.
+	it('names the verified parent beside the token, on requests and downloads alike', async () => {
+		const sent: Headers[] = [];
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (_url: string, init?: RequestInit) => {
+				sent.push(new Headers(init?.headers));
+				return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
+			})
+		);
+
+		acceptEmbedSession(message, 'wf-1', 'https://host.example');
+		await apiFetch('/api/v1/workflows/wf-1', { method: 'PUT', body: {} });
+		await apiDownload('/api/v1/datastores/ds-1/rows/export');
+
+		for (const headers of sent) {
+			expect(headers.get('X-KilasFlow-Embed')).toBe('tok-123');
+			expect(headers.get('X-KilasFlow-Embed-Parent')).toBe('https://host.example');
+		}
+		expect(sent).toHaveLength(2);
+	});
+
+	it('forgets the parent with the token when the frame goes away', async () => {
+		const sent: Headers[] = [];
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (_url: string, init?: RequestInit) => {
+				sent.push(new Headers(init?.headers));
+				return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
+			})
+		);
+
+		acceptEmbedSession(message, 'wf-1', 'https://host.example');
+		setEmbedToken(null);
+		await apiFetch('/api/v1/workflows/wf-1');
+
+		expect(sent[0]?.has('X-KilasFlow-Embed')).toBe(false);
+		expect(sent[0]?.has('X-KilasFlow-Embed-Parent')).toBe(false);
+	});
+
 	it('accepts a session that names no workflow of its own', () => {
 		const accepted = acceptEmbedSession({ type: 'kilasflow:embed-session', token: 'tok', scopes: ['workflow:run'] }, 'wf-9', 'https://host.example');
 
@@ -175,6 +219,7 @@ describe('accepting the host session', () => {
 		);
 		return apiFetch('/api/v1/workflows/wf-1').then(() => {
 			expect(sent[0]?.has('X-KilasFlow-Embed')).toBe(false);
+			expect(sent[0]?.has('X-KilasFlow-Embed-Parent')).toBe(false);
 		});
 	});
 });

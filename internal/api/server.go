@@ -196,7 +196,8 @@ func NewServer(deps Deps) *Server {
 	if deps.EmbedIssuer != nil {
 		embedVerifier = deps.EmbedIssuer
 	}
-	router.Use(middleware.EmbedAuth(embedVerifier))
+	// public_url names the editor iframe's own origin, which its writes carry.
+	router.Use(middleware.EmbedAuth(embedVerifier, deps.Config.Server.PublicURL))
 	// The other credential that is narrowed rather than trusted whole, in the
 	// same chain position because it answers the same question about the same
 	// path shapes: a scoped API key is confined to its scope list and its

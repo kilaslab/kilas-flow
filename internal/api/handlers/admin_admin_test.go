@@ -411,7 +411,7 @@ func adminTestStack(t *testing.T, store *adminTestStore) (http.Handler, string) 
 			})))
 		})
 	})
-	router.Use(middleware.EmbedAuth(issuer))
+	router.Use(middleware.EmbedAuth(issuer, ""))
 	api := humachi.New(router, huma.DefaultConfig("KilasFlow API", "0.0.0-test"))
 	adminHandler(store).Register(huma.NewGroup(api, adminTestPrefix))
 	return router, token

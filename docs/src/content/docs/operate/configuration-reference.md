@@ -77,6 +77,11 @@ a proxy or a tunnel binds one address and is reached at another.
 Empty disables self-registration rather than guessing, because a bot
 registered against a wrong address receives nothing and reports success.
 
+It is also the origin the embedded editor is served from, which its own
+saves and runs carry. Empty takes that from the request's scheme and
+Host, so behind a proxy that rewrites Host an embedded editor cannot
+save or run until this is set.
+
 ## database
 
 Database selects and configures the internal persistence backend.

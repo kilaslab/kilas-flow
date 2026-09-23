@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/kilaslab/kilas-flow/internal/api"
+	"github.com/kilaslab/kilas-flow/internal/config"
 	"github.com/kilaslab/kilas-flow/internal/embed"
 	"github.com/kilaslab/kilas-flow/internal/execution"
 	"github.com/kilaslab/kilas-flow/internal/repository"
@@ -33,6 +34,13 @@ func embedIssuer(t *testing.T) *embed.Issuer {
 
 func embedRequest(t *testing.T, handler http.Handler, token, method, path string, body any) *httptest.ResponseRecorder {
 	t.Helper()
+	return embedRequestWith(t, handler, token, method, path, body, map[string]string{"Origin": hostOrigin})
+}
+
+// embedRequestWith is embedRequest with the browser-set headers named by the
+// caller rather than fixed to the host page's origin.
+func embedRequestWith(t *testing.T, handler http.Handler, token, method, path string, body any, headers map[string]string) *httptest.ResponseRecorder {
+	t.Helper()
 	var reader *bytes.Reader
 	if body != nil {
 		encoded, err := json.Marshal(body)
@@ -45,7 +53,9 @@ func embedRequest(t *testing.T, handler http.Handler, token, method, path string
 	}
 	request := httptest.NewRequest(method, path, reader)
 	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Origin", hostOrigin)
+	for name, value := range headers {
+		request.Header.Set(name, value)
+	}
 	if token != "" {
 		request.Header.Set("X-KilasFlow-Embed", token)
 	}
@@ -241,6 +251,100 @@ func TestAnEmbedTokenIsRejectedFromAnotherOrigin(t *testing.T) {
 
 	if recorder.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403 from a different origin (body: %s)", recorder.Code, recorder.Body)
+	}
+}
+
+// editorOrigin is the origin of every request httptest builds, host example.com
+// over plain HTTP, and so the origin an editor iframe served by the test server
+// would send on its writes.
+const editorOrigin = "http://example.com"
+
+// editorToken mints the session a host normally hands its editor: every
+// workflow scope, for hostOrigin.
+func editorToken(t *testing.T, issuer *embed.Issuer, workflowID string) string {
+	t.Helper()
+	_, token, err := issuer.Issue(embed.Request{
+		TenantID: "standalone", WorkflowID: workflowID,
+		Scopes: []embed.Scope{embed.ScopeRead, embed.ScopeWrite, embed.ScopeRun}, Origin: hostOrigin,
+	})
+	if err != nil {
+		t.Fatalf("Issue() error = %v", err)
+	}
+	return token
+}
+
+// The editor iframe is served by KilasFlow, so its saves and runs carry
+// KilasFlow's own origin rather than the host page's. They are accepted when
+// the frame also names the parent it completed the handshake with and that
+// parent is the host the token was minted for. A browser in a secure context
+// adds Sec-Fetch-Site: same-origin, which is consistent with that and passes.
+func TestTheEditorFrameSavesAndRunsFromItsOwnOrigin(t *testing.T) {
+	handler, issuer, workflowID := embedServer(t)
+	token := editorToken(t, issuer, workflowID)
+
+	for name, headers := range map[string]map[string]string{
+		"plain http":     {"Origin": editorOrigin, "X-KilasFlow-Embed-Parent": hostOrigin},
+		"secure context": {"Origin": editorOrigin, "X-KilasFlow-Embed-Parent": hostOrigin, "Sec-Fetch-Site": "same-origin"},
+	} {
+		if got := embedRequestWith(t, handler, token, http.MethodPut, "/api/v1/workflows/"+workflowID,
+			workflowDraft(validManualWorkflow("Saved from the frame")), headers); got.Code != http.StatusOK {
+			t.Errorf("%s: save status = %d, want 200 (body: %s)", name, got.Code, got.Body)
+		}
+		if got := embedRequestWith(t, handler, token, http.MethodPost, "/api/v1/workflows/"+workflowID+"/run", nil, headers); got.Code != http.StatusAccepted {
+			t.Errorf("%s: run status = %d, want 202 (body: %s)", name, got.Code, got.Body)
+		}
+	}
+}
+
+// KilasFlow's own origin is not a pass by itself. Any page on the embed
+// allowlist can frame the editor, so a frame whose parent is not the token's
+// host, or that names no parent at all, is refused the way a foreign page is.
+// A request claiming the editor's origin while the browser reports a
+// cross-site fetch did not come from the editor, whatever it says its parent is.
+func TestTheEditorFrameIsRefusedUnlessItsParentIsTheSessionsHost(t *testing.T) {
+	handler, issuer, workflowID := embedServer(t)
+	token := editorToken(t, issuer, workflowID)
+
+	for name, headers := range map[string]map[string]string{
+		"another parent":                 {"Origin": editorOrigin, "X-KilasFlow-Embed-Parent": "https://other.example"},
+		"no parent":                      {"Origin": editorOrigin},
+		"a cross-site fetch":             {"Origin": editorOrigin, "X-KilasFlow-Embed-Parent": hostOrigin, "Sec-Fetch-Site": "cross-site"},
+		"a foreign page naming the host": {"Origin": "https://evil.example", "X-KilasFlow-Embed-Parent": hostOrigin},
+	} {
+		save := embedRequestWith(t, handler, token, http.MethodPut, "/api/v1/workflows/"+workflowID,
+			workflowDraft(validManualWorkflow("Refused")), headers)
+		if save.Code != http.StatusForbidden {
+			t.Errorf("%s: save status = %d, want 403 (body: %s)", name, save.Code, save.Body)
+		}
+		if !strings.Contains(save.Body.String(), "This embed session is not allowed from that origin.") {
+			t.Errorf("%s: save body = %s, want the origin refusal", name, save.Body)
+		}
+		if got := embedRequestWith(t, handler, token, http.MethodPost, "/api/v1/workflows/"+workflowID+"/run", nil, headers); got.Code != http.StatusForbidden {
+			t.Errorf("%s: run status = %d, want 403 (body: %s)", name, got.Code, got.Body)
+		}
+	}
+}
+
+// Behind a proxy that rewrites Host, the request's own host is not the address
+// the browser loaded the editor from, so server.public_url names it instead.
+// Once it is set it is the only editor origin: the host a request happened to
+// arrive with no longer counts.
+func TestTheEditorFramesOriginIsThePublicURLWhenOneIsSet(t *testing.T) {
+	cfg := config.Default()
+	cfg.Server.PublicURL = "https://flows.example"
+	issuer := embedIssuer(t)
+	handler, workflowID, _ := newWorkflowAPIWithEmbedConfig(t, issuer, cfg)
+	token := editorToken(t, issuer, workflowID)
+
+	if got := embedRequestWith(t, handler, token, http.MethodPut, "/api/v1/workflows/"+workflowID,
+		workflowDraft(validManualWorkflow("Saved behind a proxy")),
+		map[string]string{"Origin": "https://flows.example", "X-KilasFlow-Embed-Parent": hostOrigin}); got.Code != http.StatusOK {
+		t.Errorf("public_url origin: save status = %d, want 200 (body: %s)", got.Code, got.Body)
+	}
+	if got := embedRequestWith(t, handler, token, http.MethodPut, "/api/v1/workflows/"+workflowID,
+		workflowDraft(validManualWorkflow("Refused behind a proxy")),
+		map[string]string{"Origin": editorOrigin, "X-KilasFlow-Embed-Parent": hostOrigin}); got.Code != http.StatusForbidden {
+		t.Errorf("request host origin: save status = %d, want 403 (body: %s)", got.Code, got.Body)
 	}
 }
 
