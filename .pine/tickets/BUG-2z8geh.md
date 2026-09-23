@@ -1,7 +1,7 @@
 ---
 id: BUG-2z8geh
 title: 422 validation errors echo the whole request body, including credential secrets, into the response/envelope
-status: todo
+status: doing
 priority: high
 labels:
     - cli
@@ -9,7 +9,7 @@ labels:
     - api
 parent: EPIC-8rbys7
 created: "2026-09-23T03:06:00Z"
-updated: "2026-09-23T03:06:00Z"
+updated: "2026-09-23T04:47:38Z"
 ---
 
 # Description
@@ -33,9 +33,9 @@ The problem document never echoes body values for secret-bearing operations, or 
 Exit 2, and `error.detail.problem.errors[].value` holds the entire body, `"value":"s3cr3t-cli-skills"` / `"TOPSECRET-123"` included, twice per response. It lands in the agent's transcript and in MCP tool results, while the credentials skill's non-negotiable 1 says a secret "never appears in … chat". A field-level error (`allowedDomains` wrong type) echoes only that field. The leak is when the location is `body`.
 
 # Acceptance Criteria
-- [ ] Problem documents never echo body values for secret-bearing operations (credentials, auth, API keys)
+- [x] Problem documents never echo body values for secret-bearing operations (credentials, auth, API keys)
 - [ ] The CLI also redacts `fields`, `token`, `password` and `value` before printing, as defence in depth
-- [ ] A test posts an invalid credential and asserts the secret does not appear in the response
+- [x] A test posts an invalid credential and asserts the secret does not appear in the response
 
 # Implementation Plan
 
@@ -50,3 +50,28 @@ Related (from the audit): none
 cs/leak1.json, cs/b-cred-out.json (first attempt, in the transcript).
 
 # Attachments
+
+## Progress
+
+API side. `internal/api/problems.go` wraps `huma.NewErrorWithContext` once per
+process (`installProblemRedaction`, a `sync.Once`, called first thing in
+`NewServer`), which is the constructor huma uses for a validation or parse
+failure. Each detail's value is dropped when its location is `body` (the raw
+bytes of a body that does not parse), when it is an object or a list (huma's
+missing- and unexpected-property errors carry the whole surrounding object),
+or always on an operation registered with `Metadata["sensitiveBody"] = true`
+(`handlers.SensitiveBodyKey`): create-credential, update-credential,
+test-credential-payload, login, create-tenant-user, set-tenant-user-password,
+create-api-key and create-tenant-api-key. Messages and locations are kept.
+Problems a handler builds itself (compile issues, idempotency, the datastore
+conflict) never pass through that constructor and keep their values.
+
+Tests in `internal/api/problems_test.go`:
+`TestAnInvalidCredentialIsNeverEchoedIntoTheProblem` posts the audit's two
+bodies and a malformed-JSON body and asserts neither secret is anywhere in
+the response; `TestASecretBearingOperationEchoesNoValueAtAll` sends a scalar
+secret to each marked operation; `TestAProblemKeepsAFieldsValueButNeverTheWholeBody`
+pins that an unmarked operation still names the refused field's own value.
+All three failed with the leak before the fix and pass after; the full
+`internal/api/...` suites pass, and `make generate-api-reference-check`
+reports no drift (Metadata is not part of the document).

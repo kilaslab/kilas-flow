@@ -322,7 +322,8 @@ func (handler *Admin) Register(api huma.API) {
 		Description: "Creates a dashboard account that can sign in immediately. This is the path " +
 			"that used to be reachable only through the one-time bootstrap or a raw insert. " +
 			operatorNote,
-		Tags: []string{"Admin"},
+		Tags:     []string{"Admin"},
+		Metadata: sensitiveBody(),
 	}, handler.CreateTenantUser)
 
 	huma.Register(api, huma.Operation{
@@ -350,7 +351,8 @@ func (handler *Admin) Register(api huma.API) {
 		Description: "Sets a new password. This is the operator's reset: the old password stops " +
 			"working at once, and sessions minted under it are cut loose by the account's " +
 			"password version. " + operatorNote,
-		Tags: []string{"Admin"},
+		Tags:     []string{"Admin"},
+		Metadata: sensitiveBody(),
 	}, handler.SetTenantUserPassword)
 
 	huma.Register(api, huma.Operation{
@@ -360,7 +362,8 @@ func (handler *Admin) Register(api huma.API) {
 		Description: "Mints a key on another tenant's behalf. The existing /api-keys endpoint can " +
 			"only mint for the caller, so without this a new tenant could be created and then " +
 			"never used. The token is returned exactly once and is never listed. " + operatorNote,
-		Tags: []string{"Admin"},
+		Tags:     []string{"Admin"},
+		Metadata: sensitiveBody(),
 	}, handler.CreateTenantAPIKey)
 }
 

@@ -150,6 +150,7 @@ type Server struct {
 
 // NewServer builds the router and the underlying http.Server.
 func NewServer(deps Deps) *Server {
+	installProblemRedaction()
 	router := chi.NewMux()
 
 	router.Use(middleware.RequestID)

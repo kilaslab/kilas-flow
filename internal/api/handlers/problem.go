@@ -49,6 +49,22 @@ func unavailableProblem(ctx context.Context, detail string, err error) error {
 	return huma.Error503ServiceUnavailable(detail)
 }
 
+// SensitiveBodyKey is the operation Metadata key that marks a request body as
+// secret-bearing: a credential's fields, a password, a key being minted.
+//
+// huma answers a body it refuses by echoing values back in the problem
+// document, and on these operations any value may be the secret itself — a
+// password one character too long comes back whole. The API package reads the
+// mark when it builds a validation problem and drops every value from it.
+const SensitiveBodyKey = "sensitiveBody"
+
+// sensitiveBody is the Metadata a secret-bearing operation registers with. It
+// is a fresh map per call rather than one shared value, so nothing that later
+// writes into one operation's Metadata can mark or unmark another.
+func sensitiveBody() map[string]any {
+	return map[string]any{SensitiveBodyKey: true}
+}
+
 // modulePath is this project's own import prefix, so a type it defines is told
 // apart from one a dependency defines.
 const modulePath = "github.com/kilaslab/kilas-flow"

@@ -159,6 +159,7 @@ func (handler *Credentials) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "create-credential", Method: http.MethodPost, Path: "/credentials", DefaultStatus: http.StatusCreated,
 		Summary: "Create a credential", Description: "Stores an encrypted credential payload.", Tags: []string{"Credentials"},
+		Metadata: sensitiveBody(),
 	}, handler.Create)
 	huma.Register(api, huma.Operation{
 		OperationID: "get-credential", Method: http.MethodGet, Path: "/credentials/{id}",
@@ -167,6 +168,7 @@ func (handler *Credentials) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "update-credential", Method: http.MethodPut, Path: "/credentials/{id}",
 		Summary: "Update a credential", Description: "Replaces name, scope, and any field sent with a new value.", Tags: []string{"Credentials"},
+		Metadata: sensitiveBody(),
 	}, handler.Update)
 	huma.Register(api, huma.Operation{
 		OperationID: "test-credential", Method: http.MethodPost, Path: "/credentials/{id}/test",
@@ -179,7 +181,8 @@ func (handler *Credentials) Register(api huma.API) {
 		Summary: "Test an unsaved credential",
 		Description: "Runs a credential type's probe against a payload that has not been saved. " +
 			"Send credentialId alongside the redaction placeholder to test an edit against stored secrets.",
-		Tags: []string{"Credentials"},
+		Tags:     []string{"Credentials"},
+		Metadata: sensitiveBody(),
 	}, handler.TestPayload)
 	huma.Register(api, huma.Operation{
 		OperationID: "delete-credential", Method: http.MethodDelete, Path: "/credentials/{id}", DefaultStatus: http.StatusNoContent,

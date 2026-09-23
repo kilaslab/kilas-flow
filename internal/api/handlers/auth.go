@@ -263,6 +263,7 @@ func (handler *Auth) Register(api huma.API) {
 			"The cookie is HttpOnly, so the browser can never read it back.",
 		Tags:        []string{"Auth"},
 		Middlewares: loginAddress,
+		Metadata:    sensitiveBody(),
 	}, handler.Login)
 
 	huma.Register(api, huma.Operation{
@@ -294,7 +295,8 @@ func (handler *Auth) Register(api huma.API) {
 		Summary:       "Create an API key",
 		Description: "Mints a key scoped to the calling tenant and returns it in full exactly once. " +
 			"The server keeps only a hash and cannot show it again.",
-		Tags: []string{"Auth"},
+		Tags:     []string{"Auth"},
+		Metadata: sensitiveBody(),
 	}, handler.CreateKey)
 
 	huma.Register(api, huma.Operation{
