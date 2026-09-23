@@ -141,24 +141,40 @@
 	// which called `load` again, forever (BUG-rytwy7). `untrack` keeps their
 	// reads out of this effect's dependency set; this is the pattern at
 	// executions/[id]/+page.svelte:119-127.
+	//
+	// SvelteKit reuses this component instance across a param-only
+	// navigation (there is no `{#key id}` wrapper), so an `id` change runs
+	// this effect again on the *same* `detail`/`search` state the previous
+	// table left behind. Without resetting them, `detailLoading` was already
+	// false and `detail` still held the old resource, so the previous
+	// table's name and columns stayed on screen — skeleton skipped — until
+	// the new detail response landed, and a leftover search term could go on
+	// filtering a table it was never typed against. Resetting both here
+	// makes an `id` change look like a fresh visit.
 	$effect(() => {
 		const current = id;
+		detail = null;
+		search = '';
 		untrack(() => {
 			void loadDetail(current);
 			void load(current);
 		});
 	});
 
-	// Debounced search: settles 250 ms after the last change to `search` (or
-	// `id`) before firing one row query. The first run is a mount, already
-	// covered by the effect above, so it's skipped rather than queuing a
-	// second, redundant fetch.
-	let searchEffectRan = false;
+	// Debounced search: settles 250 ms after the last change to `search`
+	// before firing one row query. Tracks the id the debounce last saw
+	// rather than a one-shot "have I ever run" flag, because the effect
+	// above reuses this component across an `id` change and already issues
+	// its own immediate `load` for the new id — a one-shot flag would only
+	// skip the very first mount, so every later `id` change queued this
+	// effect's 250 ms timer as a second, redundant fetch on top of that
+	// immediate one.
+	let lastSearchID: string | null = null;
 	$effect(() => {
 		const current = id;
 		void search;
-		if (!searchEffectRan) {
-			searchEffectRan = true;
+		if (lastSearchID !== current) {
+			lastSearchID = current;
 			return;
 		}
 		const timer = setTimeout(() => {

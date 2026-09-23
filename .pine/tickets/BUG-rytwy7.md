@@ -51,6 +51,36 @@ Proven by a new Playwright test, `e2e/tests/datastore.spec.ts` — "typing into 
 - GREEN: against the fixed component, `pnpm exec playwright test tests/datastore.spec.ts` — 9 passed, including this test.
 - Also verified: `cd web && pnpm check` (0 errors) and `cd web && pnpm test` (624 passed).
 
+### Fix round 1
+
+Review found the round-1 fix's debounced-search guard (`searchEffectRan`, a one-shot boolean) only
+ever skipped the very first mount. SvelteKit reuses the `[id]/+page.svelte` instance across a
+param-only navigation (no `{#key id}` wrapper), so on every later `id` change the debounced effect
+still queued its own 250 ms `load(newID)` on top of the id-effect's immediate one — a second,
+redundant fetch per table switch. Separately, `detail` was never reset on an `id` change, so with
+`detailLoading` already `false` from the previous table, the skeleton was skipped and the old
+table's name/columns could show until the new `loadDetail` response landed.
+
+Fixed in the same file:
+- The debounce guard is now `lastSearchID: string | null`, compared against the current `id` on
+  every run, rather than a one-shot flag — an `id` change updates it and skips scheduling a timer
+  (the id-effect already loads), while a same-`id` search change still debounces normally.
+- The id-effect now resets `detail = null` and `search = ''` before its untracked loads, so a
+  datastore switch always re-shows the skeleton and never carries a stale search term into a table
+  it was never typed against.
+
+Covered by a new Playwright test — `e2e/tests/datastore.spec.ts`, "a client-side navigation between
+two datastores loads the new one once and drops the old one (BUG-rytwy7)": seeds two datastores,
+loads the first, then performs a genuine client-side navigation to the second (clicking an injected
+in-app `<a>`, since `page.goto()` is a hard reload and going through the `/datastores` list would
+destroy and recreate the component instead of reusing it — neither reaches the reused-instance
+path). Asserts the second table's name/row show, the first table's name is gone, and exactly one
+GET to the second table's `/rows` endpoint was made.
+- RED (against the round-1 fix, temporarily restored via `git show HEAD:...`): 2 GET requests to
+  the second table's `/rows` — the immediate load plus the redundant debounced one.
+- GREEN (fixed): `cd e2e && pnpm exec playwright test tests/datastore.spec.ts` — 10 passed.
+- Also verified: `cd web && pnpm check` (0 errors) and `cd web && pnpm test` (624 passed).
+
 # Implementation Plan
 
 Key the effect on `id` only (wrap the loads in `untrack`). Run the search through its own debounced effect that calls load(), and don't flip detailLoading on a refetch.
