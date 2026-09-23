@@ -1215,7 +1215,7 @@ func (runner *Runner) runPerItem(ctx context.Context, graph preparedGraph, reque
 		} else {
 			mergeOutput(assembled, output)
 		}
-		state.stampPerItem(node, sources, item, position, assembled, before)
+		state.stampPerItem(node, sources, item, assembled, before)
 	}
 	run := NodeRun{NodeID: node.ID, Input: cloneInput(input), Error: firstCause, Response: capture.response}
 	if firstCause != nil {
@@ -1924,7 +1924,7 @@ func (state *runState) stampProvenance(node workflow.IRNode, edges []workflow.IR
 			if oneToOne {
 				from = &incoming[itemIndex]
 			}
-			output[portIndex][itemIndex].Paired = state.lineageOf(node, sources, itemIndex, from, itemIndex)
+			output[portIndex][itemIndex].Paired = state.lineageOf(node, sources, itemIndex, from)
 		}
 	}
 }
@@ -1938,7 +1938,7 @@ func (state *runState) stampProvenance(node workflow.IRNode, edges []workflow.IR
 // assembled output once instead compared the node's whole input with each
 // port, and a node with an error output never has as many items on either port
 // as it was given — so every item on both was marked lost.
-func (state *runState) stampPerItem(node workflow.IRNode, sources []workflow.IREdge, item workflow.Item, position int, assembled workflow.NodeOutput, before []int) {
+func (state *runState) stampPerItem(node workflow.IRNode, sources []workflow.IREdge, item workflow.Item, assembled workflow.NodeOutput, before []int) {
 	for portIndex := range assembled {
 		added := assembled[portIndex][before[portIndex]:]
 		var from *workflow.Item
@@ -1949,16 +1949,15 @@ func (state *runState) stampPerItem(node workflow.IRNode, sources []workflow.IRE
 			if added[offset].Paired != nil {
 				continue // The executor knew better.
 			}
-			added[offset].Paired = state.lineageOf(node, sources, before[portIndex]+offset, from, position)
+			added[offset].Paired = state.lineageOf(node, sources, before[portIndex]+offset, from)
 		}
 	}
 }
 
 // lineageOf is the lineage of an output item its executor left unset: the item
-// at index of its own port, made from the incoming item from, which sat at
-// position of the port that delivered it. from is nil when no single incoming
-// item made it.
-func (state *runState) lineageOf(node workflow.IRNode, sources []workflow.IREdge, index int, from *workflow.Item, position int) *workflow.PairedItem {
+// at index of its own port, made from the incoming item from, or from nil when
+// no single incoming item made it.
+func (state *runState) lineageOf(node workflow.IRNode, sources []workflow.IREdge, index int, from *workflow.Item) *workflow.PairedItem {
 	runIndex := len(state.runs[node.ID])
 	// A trigger has no input to descend from, so its items originate here
 	// rather than having lost anything.
@@ -1976,65 +1975,40 @@ func (state *runState) lineageOf(node workflow.IRNode, sources []workflow.IREdge
 		inherited := *origin
 		return &inherited
 	}
-	if pointer := state.pointerInto(sources[0], *from, position); pointer != nil {
+	if pointer := pointerInto(sources[0], *from); pointer != nil {
 		return pointer
 	}
-	// No item of the delivering node can be named with certainty, which is a
-	// lost correspondence like any other.
+	// The incoming item's lineage was lost further upstream and nothing on it
+	// names the item of the node that delivered it, so this item's is lost too.
 	return &workflow.PairedItem{SourceNodeID: node.ID, RunIndex: runIndex, ItemIndex: index, Lost: true}
 }
 
 // pointerInto names the item of the delivering node X that an incoming item
-// is, for an incoming item with no origin of its own to pass on, or returns nil
-// when that item cannot be named with certainty.
+// is, or returns nil.
 //
-// That pointer is what `$('X').item` reads when X's own items have no lineage,
-// so it names X's run, not the run of the node stamping it: the two differ
-// whenever they ran a different number of times, as a loop and the node after
-// its done port do. A pointer that named the wrong run would pair the item
-// with another run's item, silently, so it is only written when the run is
-// established:
+// It names one only when the incoming item carries a lost stamp naming X. Only
+// the runner writes lost stamps (lineageOf, above), and it writes X's on X's
+// own output items with X's run and each item's index on its port, so that
+// stamp is X's item exactly, wherever the item has travelled since. The
+// pointer takes X's run from it, not the run of the node stamping it: the two
+// differ whenever they ran a different number of times, as a branch the stack
+// held behind a loop does.
 //
-//   - A lost stamp X wrote on its own item records X's run and position
-//     exactly, wherever the item has travelled since.
-//   - Otherwise the item arrived with a stamp X handed on unchanged, as IF,
-//     Set, Filter, Merge and a loop do, naming whichever node lost it
-//     upstream. It is taken to be X's item at the same position of X's latest
-//     run only when that item carries the very same stamp and no other item
-//     on that port does. Both are checked, not assumed: a branch the stack
-//     held back while X ran again, or the item a per-item run resumed on its
-//     own at position 0, sits at a position whose item has another stamp;
-//     and a stamp two items share — Set A and Set B copying one item's
-//     lineage into a Merge — names neither of them. Anything else is left
-//     lost. Only the port the item arrived on is searched, because the edge
-//     names it and no other port's item can be the one it is.
-func (state *runState) pointerInto(source workflow.IREdge, incoming workflow.Item, position int) *workflow.PairedItem {
+// Any other incoming item — one IF, Set, Merge or a loop handed on with the
+// stamp it arrived with, naming whichever node lost it upstream — records
+// neither X's run nor where it sat in X's output, so it gets nil and is
+// stamped lost. Working out its place from its position in this invocation
+// paired items with another batch's or another run's, silently; the exact
+// answer needs the delivering run and position recorded when the items are
+// delivered.
+func pointerInto(source workflow.IREdge, incoming workflow.Item) *workflow.PairedItem {
 	own := incoming.Paired
-	if own != nil && own.Lost && own.SourceNodeID == source.Source.NodeID {
-		return &workflow.PairedItem{
-			SourceNodeID: source.Source.NodeID, SourcePort: source.Source.Port,
-			RunIndex: own.RunIndex, ItemIndex: own.ItemIndex,
-		}
-	}
-	runs := state.runs[source.Source.NodeID]
-	if len(runs) == 0 || own == nil {
+	if own == nil || !own.Lost || own.SourceNodeID != source.Source.NodeID {
 		return nil
-	}
-	latest, port := runs[len(runs)-1], source.SourceOutputIndex
-	if port < 0 || port >= len(latest) || position < 0 || position >= len(latest[port]) {
-		return nil
-	}
-	if there := latest[port][position].Paired; there == nil || *there != *own {
-		return nil
-	}
-	for other, candidate := range latest[port] {
-		if other != position && candidate.Paired != nil && *candidate.Paired == *own {
-			return nil
-		}
 	}
 	return &workflow.PairedItem{
 		SourceNodeID: source.Source.NodeID, SourcePort: source.Source.Port,
-		RunIndex: len(runs) - 1, ItemIndex: position,
+		RunIndex: own.RunIndex, ItemIndex: own.ItemIndex,
 	}
 }
 

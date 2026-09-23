@@ -2880,26 +2880,85 @@ func TestDollarItemResolvesAfterANodeLevelFailure(t *testing.T) {
 	}
 }
 
-// TestDollarItemPairsWithTheRunThatDeliveredTheItem covers the run half of the
-// pointer an item takes when its own lineage is lost.
+// pairingTally is what a probe saw of `$('X').item`: the items it paired with
+// themselves, how many it refused, and each item it paired with another one.
+type pairingTally struct {
+	paired  []string
+	refused int
+	wrong   []string
+}
+
+// tallyProbe evaluates expressionText for each item it is given and compares
+// the answer with label of the item itself. The items reaching it are copies of
+// the referenced node's items, so the right pairing reads its own label back.
+func tallyProbe(expressionText string, label func(workflow.Item) string, tally *pairingTally) engine.ExecutorFunc {
+	return func(_ context.Context, _ workflow.IRNode, input workflow.NodeInput, request engine.Request) (workflow.NodeOutput, error) {
+		for index, item := range input["main"] {
+			resolved, err := expression.Resolve(map[string]any{
+				"read": map[string]any{"mode": "expression", "value": expressionText},
+			}, request.ExpressionContext(item, input, index))
+			own := label(item)
+			switch {
+			case err != nil:
+				tally.refused++
+			case fmt.Sprint(resolved["read"]) == own:
+				tally.paired = append(tally.paired, own)
+			default:
+				tally.wrong = append(tally.wrong, fmt.Sprintf("%s read %v", own, resolved["read"]))
+			}
+		}
+		return workflow.NodeOutput{input["main"]}, nil
+	}
+}
+
+// copyWithoutLineage builds a new item from each one it is given, copying the
+// fields and leaving the lineage to the runner, the way most nodes do.
+func copyWithoutLineage(_ context.Context, _ workflow.IRNode, input workflow.NodeInput, _ engine.Request) (workflow.NodeOutput, error) {
+	items := make([]workflow.Item, 0, len(input["main"]))
+	for _, item := range input["main"] {
+		items = append(items, workflow.Item{JSON: item.JSON})
+	}
+	return workflow.NodeOutput{items}, nil
+}
+
+// withExecutors is a registry of the product's executors plus the test ones
+// given.
+func withExecutors(t *testing.T, executors map[string]engine.ExecutorFunc) *engine.Registry {
+	t.Helper()
+	registry := engine.NewRegistry()
+	for typeID, execute := range executors {
+		if err := registry.Register(typeID, execute); err != nil {
+			t.Fatalf("Register(%s) error = %v", typeID, err)
+		}
+	}
+	if err := nodes.RegisterExecutors(registry, safehttp.DefaultPolicy(), sqlnode.Guard{}, ai.NewLoopRuntime(), nil, nil); err != nil {
+		t.Fatalf("RegisterExecutors() error = %v", err)
+	}
+	return registry
+}
+
+// TestDollarItemAfterALoopIsRefusedRatherThanGuessed covers a loop that hands
+// its items on with the lineage they arrived with.
 //
-// A loop runs once per batch and once more to hand on `done`, while the node
-// after it runs once. Recording that node's own run index in the pointer named
-// the loop's first run rather than the one that delivered the items, so
-// `$('Loop').item` found nothing to pair with.
-func TestDollarItemPairsWithTheRunThatDeliveredTheItem(t *testing.T) {
+// Fan changed the item count, so its items carry lost stamps naming Fan, and
+// the loop passes them through to done unchanged. Nothing on the items that
+// reach After names the loop's run or where they sat in its output, so
+// `$('Loop').item` is refused. The positions happen to line up here, but
+// taking them on trust paired a held branch with another batch's items; the
+// exact answer needs the delivering run recorded when the items are delivered.
+func TestDollarItemAfterALoopIsRefusedRatherThanGuessed(t *testing.T) {
 	catalog := testCatalog(t, stepType("test.fanOut", "Fan out"), stepType("test.pass", "Pass"),
-		stepType("test.fresh", "Fresh"), stepType("test.probe", "Probe"))
+		stepType("test.copy", "Copy"), stepType("test.probe", "Probe"))
 	ir := compileDoc(t, catalog, workflow.Document{
 		SchemaVersion: workflow.CurrentSchemaVersion,
-		ID:            "wf_lineage_runs", Name: "Read the loop after it is done",
+		ID:            "wf_lineage_after_loop", Name: "Read the loop after it is done",
 		Nodes: []workflow.Node{
 			{ID: "manual", Name: "Manual", Type: "kilasflow.manual", TypeVersion: workflow.V(1)},
 			{ID: "fan", Name: "Fan", Type: "test.fanOut", TypeVersion: workflow.V(1)},
 			{ID: "loop", Name: "Loop", Type: nodes.LoopNodeType, TypeVersion: workflow.V(1),
 				Parameters: map[string]any{"batchSize": float64(1), "maxIterations": float64(10)}},
 			{ID: "body", Name: "Body", Type: "test.pass", TypeVersion: workflow.V(1)},
-			{ID: "after", Name: "After", Type: "test.fresh", TypeVersion: workflow.V(1)},
+			{ID: "after", Name: "After", Type: "test.copy", TypeVersion: workflow.V(1)},
 			{ID: "probe", Name: "Probe", Type: "test.probe", TypeVersion: workflow.V(1)},
 		},
 		Connections: []workflow.Connection{
@@ -2913,54 +2972,25 @@ func TestDollarItemPairsWithTheRunThatDeliveredTheItem(t *testing.T) {
 		Settings: map[string]any{},
 	})
 
-	executors := engine.NewRegistry()
-	register := func(typeID string, execute engine.ExecutorFunc) {
-		t.Helper()
-		if err := executors.Register(typeID, execute); err != nil {
-			t.Fatalf("Register(%s) error = %v", typeID, err)
-		}
-	}
-	// One item in, three out: these items' own lineage is lost.
-	register("test.fanOut", func(context.Context, workflow.IRNode, workflow.NodeInput, engine.Request) (workflow.NodeOutput, error) {
-		return workflow.NodeOutput{{{JSON: map[string]any{"u": "x0"}}, {JSON: map[string]any{"u": "x1"}}, {JSON: map[string]any{"u": "x2"}}}}, nil
+	var tally pairingTally
+	executors := withExecutors(t, map[string]engine.ExecutorFunc{
+		"test.fanOut": func(context.Context, workflow.IRNode, workflow.NodeInput, engine.Request) (workflow.NodeOutput, error) {
+			return workflow.NodeOutput{{{JSON: map[string]any{"u": "x0"}}, {JSON: map[string]any{"u": "x1"}}, {JSON: map[string]any{"u": "x2"}}}}, nil
+		},
+		"test.pass": func(_ context.Context, _ workflow.IRNode, input workflow.NodeInput, _ engine.Request) (workflow.NodeOutput, error) {
+			return workflow.NodeOutput{input["main"]}, nil
+		},
+		"test.copy":  copyWithoutLineage,
+		"test.probe": tallyProbe("{{ $('Loop').item.json.u }}", func(item workflow.Item) string { return fmt.Sprint(item.JSON["u"]) }, &tally),
 	})
-	// The body hands its batch back untouched, lineage included, so what the
-	// loop collects on done still has none.
-	register("test.pass", func(_ context.Context, _ workflow.IRNode, input workflow.NodeInput, _ engine.Request) (workflow.NodeOutput, error) {
-		return workflow.NodeOutput{input["main"]}, nil
-	})
-	// After builds new items and leaves their lineage to the runner.
-	register("test.fresh", func(_ context.Context, _ workflow.IRNode, input workflow.NodeInput, _ engine.Request) (workflow.NodeOutput, error) {
-		items := make([]workflow.Item, 0, len(input["main"]))
-		for index := range input["main"] {
-			items = append(items, workflow.Item{JSON: map[string]any{"n": index}})
-		}
-		return workflow.NodeOutput{items}, nil
-	})
-	var read []string
-	register("test.probe", func(_ context.Context, _ workflow.IRNode, input workflow.NodeInput, request engine.Request) (workflow.NodeOutput, error) {
-		for index, item := range input["main"] {
-			resolved, err := expression.Resolve(map[string]any{
-				"u": map[string]any{"mode": "expression", "value": "{{ $('Loop').item.json.u }}"},
-			}, request.ExpressionContext(item, input, index))
-			if err != nil {
-				return nil, err
-			}
-			read = append(read, fmt.Sprint(resolved["u"]))
-		}
-		return workflow.NodeOutput{input["main"]}, nil
-	})
-	if err := nodes.RegisterExecutors(executors, safehttp.DefaultPolicy(), sqlnode.Guard{}, ai.NewLoopRuntime(), nil, nil); err != nil {
-		t.Fatalf("RegisterExecutors() error = %v", err)
-	}
 
 	if _, err := engine.NewRunner(executors).Run(context.Background(), ir, engine.Request{
 		Input: workflow.Item{JSON: map[string]any{}},
 	}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if got, want := strings.Join(read, ","), "x0,x1,x2"; got != want {
-		t.Errorf("$('Loop').item read %s after the loop, want %s", got, want)
+	if len(tally.wrong) > 0 || len(tally.paired) > 0 || tally.refused != 3 {
+		t.Errorf("$('Loop').item: paired %v, refused %d, wrong %v; want all 3 refused", tally.paired, tally.refused, tally.wrong)
 	}
 }
 
@@ -3071,11 +3101,11 @@ func TestDollarItemRefusesAnEarlierRunRatherThanReadingTheLatest(t *testing.T) {
 // the test above, with a real IF between Per batch and its fan-out.
 //
 // IF hands its items on with the lineage they arrived with, so what reaches
-// Side carries Per batch's stamp rather than one naming IF, and IF's own run
-// and position have to be worked out. Taking IF's latest run paired every
-// earlier batch's items with the last batch's, silently. Refusing an item
-// whose run cannot be established is the acceptable answer; reading another
-// batch's is not.
+// Side carries Per batch's stamp rather than one naming IF, and records neither
+// IF's run nor the item's place in it. Taking IF's latest run paired every
+// earlier batch's items with the last batch's, silently. Every item is
+// refused instead — the last batch's too, whose place a guess would have got
+// right: refusing is acceptable, reading another batch's item is not.
 func TestDollarItemBehindARoutingNodeNeverReadsAnotherBatch(t *testing.T) {
 	catalog := testCatalog(t, startType("test.start", "Start"), stepType("test.perBatch", "Per batch"),
 		stepType("test.pass", "Pass"), stepType("test.copy", "Copy"), stepType("test.probe", "Probe"))
@@ -3167,10 +3197,8 @@ func TestDollarItemBehindARoutingNodeNeverReadsAnotherBatch(t *testing.T) {
 	if len(wrong) > 0 {
 		t.Errorf("$('IF').item paired items with another batch's: %s", strings.Join(wrong, "; "))
 	}
-	// The last batch's Side runs straight after IF's last run, which is the
-	// run it came from, so it still pairs; the two held behind it are refused.
-	if got, want := strings.Join(paired, ","), "b2-0,b2-1"; got != want || refused != 4 {
-		t.Errorf("paired %s and refused %d items, want %s paired and the other 4 refused", got, refused, want)
+	if len(paired) > 0 || refused != 6 {
+		t.Errorf("paired %v and refused %d items, want all 6 refused", paired, refused)
 	}
 }
 
@@ -3305,15 +3333,14 @@ func TestDollarItemRefusesAStampTwoItemsOfOnePortShare(t *testing.T) {
 	}
 }
 
-// TestDollarItemPairsWithinThePortTheItemCameFrom covers the same shared stamp
-// split across two ports.
+// TestDollarItemRefusesAStampSharedAcrossTwoPorts covers the same shared
+// stamp split across two ports.
 //
 // IF routes Set A's items to true and Set B's to false, so each of Fan's stamps
-// sits once on each port. The edge an item arrived on names its port, and only
-// that port's items can be the one it is, so a stamp that is unique on its own
-// port is an answer: B-x0 pairs with IF's B-x0. B-x1 comes back at position 0,
-// where IF's false port holds B-x0, and is refused.
-func TestDollarItemPairsWithinThePortTheItemCameFrom(t *testing.T) {
+// sits once on each port, and each approved item comes back on its own at
+// position 0. The stamp names Fan, not IF, so nothing on the item says which of
+// IF's items it is: both are refused rather than read by position.
+func TestDollarItemRefusesAStampSharedAcrossTwoPorts(t *testing.T) {
 	catalog := testCatalog(t, startType("test.start", "Start"), stepType("test.fanOut", "Fan"),
 		stepType("test.approve", "Approve"), stepType("test.probe", "Probe"))
 	into := func(id, source, sourcePort, target, port string) workflow.Connection {
@@ -3358,8 +3385,226 @@ func TestDollarItemPairsWithinThePortTheItemCameFrom(t *testing.T) {
 	for index, item := range approved {
 		got = append(got, fmt.Sprint(item.JSON["side"], "-", item.JSON["u"], " read ", (*reads)[index]))
 	}
-	if got, want := strings.Join(got, "; "), "B-x0 read B-x0; B-x1 read refused"; got != want {
+	if got, want := strings.Join(got, "; "), "B-x0 read refused; B-x1 read refused"; got != want {
 		t.Errorf("approvals: %s, want %s", got, want)
+	}
+}
+
+// TestDollarItemRefusesAStampTwoRunsShare covers the same stamps at the same
+// positions in two runs of one node.
+//
+// Merge appends Set A's and Set B's copies of Fan's two items, and the loop
+// hands them to IF two at a time, so IF's first run holds A-x0 and A-x1 and its
+// second B-x0 and B-x1, with the same two stamps in the same places. Side's
+// first batch is held behind the loop until IF's second run is done, and a
+// stamp unique on the latest run's port matched the wrong run's item.
+func TestDollarItemRefusesAStampTwoRunsShare(t *testing.T) {
+	catalog := testCatalog(t, startType("test.start", "Start"), stepType("test.fanOut", "Fan"),
+		stepType("test.copy", "Copy"), stepType("test.probe", "Probe"))
+	into := func(id, source, sourcePort, target, port string) workflow.Connection {
+		return workflow.Connection{ID: id, Kind: workflow.ConnectionMain,
+			Source: workflow.Endpoint{NodeID: source, Port: sourcePort},
+			Target: workflow.Endpoint{NodeID: target, Port: port}}
+	}
+	set := func(id, name, field, value string) workflow.Node {
+		return workflow.Node{ID: id, Name: name, Type: "kilasflow.set", TypeVersion: workflow.V(1),
+			Parameters: map[string]any{"assignments": map[string]any{field: value}}}
+	}
+	ir := compileDoc(t, catalog, workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_lineage_shared_across_runs", Name: "A stamp two runs share",
+		Nodes: []workflow.Node{
+			{ID: "start", Name: "Start", Type: "test.start", TypeVersion: workflow.V(1)},
+			{ID: "fan", Name: "Fan", Type: "test.fanOut", TypeVersion: workflow.V(1)},
+			set("a", "Set A", "side", "A"),
+			set("b", "Set B", "side", "B"),
+			{ID: "merge", Name: "Merge", Type: "kilasflow.merge", TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"mode": "append"}},
+			{ID: "loop", Name: "Loop", Type: nodes.LoopNodeType, TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"batchSize": float64(2), "maxIterations": float64(10)}},
+			set("head", "Head", "h", "1"),
+			{ID: "if", Name: "IF", Type: "kilasflow.if", TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"conditions": []any{map[string]any{"field": "keep", "operator": "equals", "value": "yes"}}}},
+			set("back", "Back", "k", "1"),
+			{ID: "side", Name: "Side", Type: "test.copy", TypeVersion: workflow.V(1)},
+			{ID: "probe", Name: "Probe", Type: "test.probe", TypeVersion: workflow.V(1)},
+		},
+		Connections: []workflow.Connection{
+			into("c1", "start", "main", "fan", "main"),
+			into("c2", "fan", "main", "a", "main"),
+			into("c3", "fan", "main", "b", "main"),
+			into("c4", "a", "main", "merge", "input1"),
+			into("c5", "b", "main", "merge", "input2"),
+			into("c6", "merge", "main", "loop", "main"),
+			into("c7", "loop", "loop", "head", "main"),
+			into("c8", "head", "main", "if", "main"),
+			into("c9", "if", "true", "back", "main"),
+			into("c10", "if", "true", "side", "main"),
+			into("c11", "back", "main", "loop", "main"),
+			into("c12", "side", "main", "probe", "main"),
+		},
+		Settings: map[string]any{},
+	})
+
+	var tally pairingTally
+	executors := withExecutors(t, map[string]engine.ExecutorFunc{
+		"test.start": func(context.Context, workflow.IRNode, workflow.NodeInput, engine.Request) (workflow.NodeOutput, error) {
+			return workflow.NodeOutput{{{JSON: map[string]any{}}}}, nil
+		},
+		"test.fanOut": func(context.Context, workflow.IRNode, workflow.NodeInput, engine.Request) (workflow.NodeOutput, error) {
+			return workflow.NodeOutput{{{JSON: map[string]any{"u": "x0", "keep": "yes"}}, {JSON: map[string]any{"u": "x1", "keep": "yes"}}}}, nil
+		},
+		"test.copy": copyWithoutLineage,
+		"test.probe": tallyProbe("{{ $('IF').item.json.side }}-{{ $('IF').item.json.u }}", func(item workflow.Item) string {
+			return fmt.Sprint(item.JSON["side"], "-", item.JSON["u"])
+		}, &tally),
+	})
+
+	if _, err := engine.NewRunner(executors).Run(context.Background(), ir, engine.Request{
+		Input: workflow.Item{JSON: map[string]any{}},
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(tally.wrong) > 0 {
+		t.Errorf("$('IF').item read another run's item: %s", strings.Join(tally.wrong, "; "))
+	}
+	if seen := len(tally.paired) + tally.refused; seen != 4 {
+		t.Errorf("the probe saw %d items, want Merge's 4", seen)
+	}
+}
+
+// TestDollarItemOffTheLoopPortNeverReadsAnotherBatch is the held branch hung
+// straight off the loop port: Back returns each batch to the loop before Side
+// runs, so Side's batches all wait until the loop is done.
+func TestDollarItemOffTheLoopPortNeverReadsAnotherBatch(t *testing.T) {
+	catalog := testCatalog(t, stepType("test.fanOut", "Fan out"), stepType("test.pass", "Pass"),
+		stepType("test.copy", "Copy"), stepType("test.probe", "Probe"))
+	ir := compileDoc(t, catalog, workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_lineage_held_loop_port", Name: "A branch held off the loop port",
+		Nodes: []workflow.Node{
+			{ID: "manual", Name: "Manual", Type: "kilasflow.manual", TypeVersion: workflow.V(1)},
+			{ID: "fan", Name: "Fan", Type: "test.fanOut", TypeVersion: workflow.V(1)},
+			{ID: "loop", Name: "Loop", Type: nodes.LoopNodeType, TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"batchSize": float64(1), "maxIterations": float64(10)}},
+			{ID: "back", Name: "Back", Type: "test.pass", TypeVersion: workflow.V(1)},
+			{ID: "side", Name: "Side", Type: "test.copy", TypeVersion: workflow.V(1)},
+			{ID: "probe", Name: "Probe", Type: "test.probe", TypeVersion: workflow.V(1)},
+		},
+		Connections: []workflow.Connection{
+			mainEdge("c1", "manual", "main", "fan"),
+			mainEdge("c2", "fan", "main", "loop"),
+			mainEdge("c3", "loop", "loop", "back"),
+			mainEdge("c4", "loop", "loop", "side"),
+			mainEdge("c5", "back", "main", "loop"),
+			mainEdge("c6", "side", "main", "probe"),
+		},
+		Settings: map[string]any{},
+	})
+
+	var tally pairingTally
+	executors := withExecutors(t, map[string]engine.ExecutorFunc{
+		"test.fanOut": func(context.Context, workflow.IRNode, workflow.NodeInput, engine.Request) (workflow.NodeOutput, error) {
+			return workflow.NodeOutput{{{JSON: map[string]any{"u": "x0"}}, {JSON: map[string]any{"u": "x1"}}, {JSON: map[string]any{"u": "x2"}}}}, nil
+		},
+		"test.pass": func(_ context.Context, _ workflow.IRNode, input workflow.NodeInput, _ engine.Request) (workflow.NodeOutput, error) {
+			return workflow.NodeOutput{input["main"]}, nil
+		},
+		"test.copy":  copyWithoutLineage,
+		"test.probe": tallyProbe("{{ $('Loop').item.json.u }}", func(item workflow.Item) string { return fmt.Sprint(item.JSON["u"]) }, &tally),
+	})
+
+	if _, err := engine.NewRunner(executors).Run(context.Background(), ir, engine.Request{
+		Input: workflow.Item{JSON: map[string]any{}},
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(tally.wrong) > 0 {
+		t.Errorf("$('Loop').item paired items with another batch's: %s", strings.Join(tally.wrong, "; "))
+	}
+	if seen := len(tally.paired) + tally.refused; seen != 3 {
+		t.Errorf("the probe saw %d items, want the 3 batches'", seen)
+	}
+}
+
+// TestDollarItemNeverMisreadsAcrossManyItems is the review's scale shape: Fan
+// changes the count to thousands of items, IF hands them on, and Copy builds a
+// new item from each. Stamping Copy's items used to search IF's whole port
+// once per item; each is now decided from the item alone. The assertion is
+// about answers, never time: none may pair with another item.
+func TestDollarItemNeverMisreadsAcrossManyItems(t *testing.T) {
+	const size = 1000
+	catalog := testCatalog(t, startType("test.start", "Start"), stepType("test.fanOut", "Fan"),
+		stepType("test.copy", "Copy"), stepType("test.probe", "Probe"))
+	ir := compileDoc(t, catalog, workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_lineage_many_items", Name: "Many items through an IF",
+		Nodes: []workflow.Node{
+			{ID: "start", Name: "Start", Type: "test.start", TypeVersion: workflow.V(1)},
+			{ID: "fan", Name: "Fan", Type: "test.fanOut", TypeVersion: workflow.V(1)},
+			{ID: "if", Name: "IF", Type: "kilasflow.if", TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"conditions": []any{map[string]any{"field": "keep", "operator": "equals", "value": "yes"}}}},
+			{ID: "copy", Name: "Copy", Type: "test.copy", TypeVersion: workflow.V(1)},
+			{ID: "probe", Name: "Probe", Type: "test.probe", TypeVersion: workflow.V(1)},
+		},
+		Connections: []workflow.Connection{
+			mainEdge("c1", "start", "main", "fan"),
+			mainEdge("c2", "fan", "main", "if"),
+			mainEdge("c3", "if", "true", "copy"),
+			mainEdge("c4", "copy", "main", "probe"),
+		},
+		Settings: map[string]any{},
+	})
+
+	var tally pairingTally
+	executors := withExecutors(t, map[string]engine.ExecutorFunc{
+		"test.start": func(context.Context, workflow.IRNode, workflow.NodeInput, engine.Request) (workflow.NodeOutput, error) {
+			return workflow.NodeOutput{{{JSON: map[string]any{}}}}, nil
+		},
+		"test.fanOut": func(context.Context, workflow.IRNode, workflow.NodeInput, engine.Request) (workflow.NodeOutput, error) {
+			items := make([]workflow.Item, size)
+			for index := range items {
+				items[index] = workflow.Item{JSON: map[string]any{"u": fmt.Sprint(index), "keep": "yes"}}
+			}
+			return workflow.NodeOutput{items}, nil
+		},
+		"test.copy":  copyWithoutLineage,
+		"test.probe": tallyProbe("{{ $('IF').item.json.u }}", func(item workflow.Item) string { return fmt.Sprint(item.JSON["u"]) }, &tally),
+	})
+
+	if _, err := engine.NewRunner(executors).Run(context.Background(), ir, engine.Request{
+		Input: workflow.Item{JSON: map[string]any{}},
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(tally.wrong) > 0 {
+		t.Errorf("$('IF').item paired %d items with another item, the first: %s", len(tally.wrong), tally.wrong[0])
+	}
+	if seen := len(tally.paired) + tally.refused; seen != size {
+		t.Errorf("the probe saw %d items, want %d", seen, size)
+	}
+}
+
+// TestDollarItemIgnoresNodeItemsFromOlderCheckpoints covers a run resumed from
+// a checkpoint written before a node's run and ports were recorded, or before
+// their lengths were. A pointer can never be read against those, whatever it
+// names.
+func TestDollarItemIgnoresNodeItemsFromOlderCheckpoints(t *testing.T) {
+	for name, raw := range map[string]string{
+		"no run or ports": `{"Items":[{"u":"a"},{"u":"b"}],"ItemOrigins":["",""]}`,
+		"no port lengths": `{"Items":[{"u":"a"},{"u":"b"}],"ItemOrigins":["",""],"NodeID":"x","RunIndex":0,"PortOffsets":{"main":0}}`,
+		"null maps":       `{"Items":[{"u":"a"},{"u":"b"}],"ItemOrigins":["",""],"NodeID":"x","PortOffsets":null,"PortLengths":null}`,
+	} {
+		var item expression.NodeItem
+		if err := json.Unmarshal([]byte(raw), &item); err != nil {
+			t.Fatalf("%s: decode: %v", name, err)
+		}
+		for _, index := range []int{-1, 0, 1, 5} {
+			current := workflow.Item{JSON: map[string]any{}, Paired: &workflow.PairedItem{SourceNodeID: "x", SourcePort: "main", ItemIndex: index}}
+			if got := engine.PairNodeItems(map[string]expression.NodeItem{"X": item}, current, 0)["X"].Paired; got != nil {
+				t.Errorf("%s: a pointer at %d paired with %v, want a refusal", name, index, got)
+			}
+		}
 	}
 }
 
