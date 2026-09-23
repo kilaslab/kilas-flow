@@ -127,6 +127,18 @@ export async function listSchedules(baseURL: string): Promise<any[]> {
 	return api(baseURL, 'GET', '/schedules');
 }
 
+// The n8n JSON a workflow exports as: `workflow` is the n8n document itself,
+// `lossy` what it could not carry.
+export async function exportN8nWorkflow(baseURL: string, workflowId: string): Promise<{ workflow: any; lossy: unknown[] }> {
+	return api(baseURL, 'GET', `/workflows/${workflowId}/export?format=n8n`);
+}
+
+// Every execution id of one workflow, newest first.
+export async function listExecutionIds(baseURL: string, workflowId: string): Promise<string[]> {
+	const page = await api(baseURL, 'GET', `/executions?workflowId=${encodeURIComponent(workflowId)}&limit=100`);
+	return (page.items as Array<{ id: string }>).map((item) => item.id);
+}
+
 export async function runWorkflow(baseURL: string, workflowId: string, input?: unknown): Promise<string> {
 	const body = input === undefined ? {} : { input };
 	const run = await api(baseURL, 'POST', `/workflows/${workflowId}/run`, body, 202);

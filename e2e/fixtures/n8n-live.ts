@@ -92,6 +92,7 @@ export const STUB_EXECUTED = [
 	'kilasflow.schedule@1',
 	'kilasflow.sqlite@1',
 	'kilasflow.code@1',
+	'kilasflow.jsCode@1',
 	'kilasflow.calculator@1',
 	'kilasflow.stickyNote@1',
 	'kilasflow.loop@1',
