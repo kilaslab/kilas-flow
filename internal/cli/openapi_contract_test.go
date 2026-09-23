@@ -276,10 +276,14 @@ func TestAPIEscapeHatchWalksTheContract(t *testing.T) {
 
 	// Every row is then driven through the CLI: the id resolves (never the
 	// usage refusal), the envelope names the operation that was called, and the
-	// answer came from the API rather than from the SPA.
+	// answer came from the API rather than from the SPA. `--yes` is always
+	// passed: BUG-r1m83f made the escape hatch ask a guarded row's own
+	// confirmation gate, exactly as the verb it wraps would, so a row this
+	// walk drives without it would be refused before the request and never
+	// reach the server this test is about. An unguarded row ignores the flag.
 	for _, row := range rows {
 		t.Run(row.ID, func(t *testing.T) {
-			args := append([]string{"api", row.ID, "--url", srv.URL, "--json"}, contractPathArgs()...)
+			args := append([]string{"api", row.ID, "--yes", "--url", srv.URL, "--json"}, contractPathArgs()...)
 			code, handled, stdout, stderr := runCLI(t, Env{Args: args, TTY: true})
 			if !handled {
 				t.Fatalf("`api %s` fell through to the server path", row.ID)

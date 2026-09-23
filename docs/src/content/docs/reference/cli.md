@@ -184,9 +184,18 @@ kilasflow api export-datastore-rows --path id=ds_1 --out rows.csv
   which answers `200 text/html`, so a status code cannot tell a wrong path from
   a right one. The only request such a refusal makes is the `/api/openapi.json`
   read that makes the refusal possible.
-- The escape hatch is a **naming** bypass, never an authority bypass: it sends
-  the configured credential, adds and removes no scope, and carries a `403`
-  through as exit 3 (`scope_denied`) exactly like a named verb.
+- **A guarded operation is guarded by id, not only by name.** If the operation
+  id names one of the operations a guarded verb wraps (`activate-workflow`,
+  `delete-workflow`, `create/update/delete-credential`,
+  `create/rename/delete/clear-datastore`, the column operations,
+  `delete-tenant`), `api` asks for the same `--yes` and the same tenant-wide
+  key that verb would, before `/api/openapi.json` is even read: without
+  `--yes` the call is refused with exit 3 (`confirmation_required`) and sends
+  nothing at all, and `--yes` on a scoped agent token is still refused with
+  `scope_denied`. The escape hatch is a **naming** bypass, never a consent or
+  an authority bypass: it sends the configured credential, adds and removes no
+  scope, and carries a `403` through as exit 3 (`scope_denied`) exactly like a
+  named verb.
 
 ## `kilasflow context`
 
@@ -668,6 +677,13 @@ kilasflow mcp serve --url http://127.0.0.1:8080 --token "$KILASFLOW_TOKEN"
   `error.code = "confirmation_required"` and **nothing is sent**, not even the
   identity read. The adapter passes `--yes` only when `confirm` is true, and it
   never infers consent.
+- **`api` also takes `confirm`.** It is not itself a guarded tool — most
+  operations it reaches need none — but an `operation_id` that a guarded tool
+  wraps asks `api`'s own `confirm` for the same consent that tool would need,
+  checked once the id is resolved, before `/api/openapi.json` is read. `api`
+  and every guarded tool carry `annotations.destructiveHint: true`
+  (the MCP `2026-07-28` schema); `api` always does, because which operation a
+  call reaches is not known until the call is made.
 - **The server's configuration is the tool call's configuration.** `--url`,
   `--token`, `--config` and `KILASFLOW_URL`/`KILASFLOW_TOKEN` are resolved once,
   when `mcp serve` starts, and every tool call inherits what was resolved; none
@@ -898,3 +914,9 @@ are: `workflow activate|deactivate|delete`,
 add|columns rename|columns drop|clear`, and `tenant delete`. `pack install` also
 carries the mark in the design but has no server operation behind it — the pack
 surface is a local loader — so there is nothing for a verb to guard yet.
+
+Both gates apply through [the escape hatch](#the-escape-hatch-kilasflow-api-operation-id)
+too: an operation id that a guarded verb wraps is guarded whichever name
+reaches it, so `kilasflow api delete-workflow` asks for the same `--yes` and
+the same tenant-wide key `kilasflow workflow delete` would, and the MCP `api`
+tool asks for the same `confirm`.

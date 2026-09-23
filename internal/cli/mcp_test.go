@@ -110,11 +110,13 @@ func checkMCPTool(t *testing.T, tool *mcpTool) {
 	}
 
 	// Every property is one the dispatcher consumes, and the guarded property
-	// is on guarded verbs only.
+	// is on guarded verbs — and on the escape hatch, whose confirm answers for
+	// whichever operation id it resolves to (BUG-r1m83f) rather than for the
+	// tool itself.
 	for property := range properties {
 		if property == mcpConfirmProperty {
-			if !tool.verb.Guarded {
-				t.Errorf("tool %q carries confirm, but %q is not guarded", tool.name, tool.verb.Path)
+			if !tool.verb.Guarded && tool.verb.Path != apiVerbPath {
+				t.Errorf("tool %q carries confirm, but %q is neither guarded nor the escape hatch", tool.name, tool.verb.Path)
 			}
 
 			continue
@@ -135,6 +137,24 @@ func checkMCPTool(t *testing.T, tool *mcpTool) {
 		if !strings.Contains(tool.descriptor().Description, tool.verb.Refusal) {
 			t.Errorf("tool %q does not say what it does: %q", tool.name, tool.descriptor().Description)
 		}
+	}
+	if tool.verb.Path == apiVerbPath {
+		if _, published := properties[mcpConfirmProperty]; !published {
+			t.Errorf("the escape hatch tool %q does not publish %s", tool.name, mcpConfirmProperty)
+		}
+	}
+
+	// A guarded tool and the escape hatch are both annotated destructive, per
+	// the MCP 2026-07-28 `annotations` shape: a client's auto-approval policy
+	// has to see the escape hatch as reaching the same operations the named
+	// tools do. Every other tool carries no annotations yet (FEAT-0hdfzd).
+	wantDestructive := tool.verb.Guarded || tool.verb.Path == apiVerbPath
+	annotations := tool.descriptor().Annotations
+	switch {
+	case wantDestructive && (annotations == nil || annotations.DestructiveHint == nil || !*annotations.DestructiveHint):
+		t.Errorf("tool %q is guarded or the escape hatch but is not annotated destructive: %+v", tool.name, annotations)
+	case !wantDestructive && annotations != nil:
+		t.Errorf("tool %q carries annotations %+v, want none", tool.name, annotations)
 	}
 
 	// A call that sets every property maps back onto the verb: the positionals
@@ -179,7 +199,7 @@ func checkMCPToolArgv(t *testing.T, tool *mcpTool, boolSample bool) {
 	for _, flag := range tool.flags {
 		arguments[flag.property] = mcpSampleValue(flag, boolSample)
 	}
-	if tool.verb.Guarded {
+	if tool.verb.Guarded || tool.verb.Path == apiVerbPath {
 		arguments[mcpConfirmProperty] = true
 	}
 
@@ -216,7 +236,7 @@ func checkMCPToolArgv(t *testing.T, tool *mcpTool, boolSample bool) {
 		t.Errorf("argv %v parsed to positionals %v, want %v", argv, positional, wantPositional)
 	}
 
-	if tool.verb.Guarded && !globals.Yes {
+	if (tool.verb.Guarded || tool.verb.Path == apiVerbPath) && !globals.Yes {
 		t.Errorf("argv %v did not parse --yes", argv)
 	}
 
@@ -389,6 +409,67 @@ func TestMCPGuardedToolRunsWithAuthOff(t *testing.T) {
 	if calls[0].Method != http.MethodPost || calls[0].Path != apiPrefix+"/workflows/wf_1/activate" {
 		t.Fatalf("the confirmed call sent %s %s, want POST %s", calls[0].Method, calls[0].Path, apiPrefix+"/workflows/wf_1/activate")
 	}
+}
+
+// TestMCPAPIToolRequiresConfirmationForAGuardedOperation is the MCP half of
+// BUG-r1m83f: the escape hatch tool reaches the same guarded operations the
+// named tools do, so a call whose operation_id is one of them needs the same
+// `confirm` the named tool would need — and gets a destructiveHint annotation
+// because the id is not known until the call is made.
+func TestMCPAPIToolRequiresConfirmationForAGuardedOperation(t *testing.T) {
+	srv, api := mcpStub(t, map[string]http.HandlerFunc{
+		apiPrefix + "/auth/me": jsonBody(http.StatusOK, identityWithoutScopes),
+		operationsPath: jsonBody(http.StatusOK, servedDocument(
+			[3]string{http.MethodPost, "/api/v1/workflows/{id}/activate", "activate-workflow"},
+		)),
+		"/api/v1/workflows/wf_1/activate": jsonBody(http.StatusOK, `{"id":"wf_1","name":"Orders","active":true}`),
+	})
+
+	t.Run("without confirm", func(t *testing.T) {
+		session := startMCPServe(t, srv.URL)
+		session.initialize()
+
+		answer := session.call("api", map[string]any{
+			"operation_id": "activate-workflow",
+			"path":         []any{"id=wf_1"},
+		})
+		if !answer.isError {
+			t.Fatalf("isError = %v, want true (text=%q)", answer.isError, answer.text)
+		}
+
+		doc := envelope(t, answer.text)
+		if failure := envelopeFailure(doc); failure != confirmationCode {
+			t.Fatalf("error.code = %q, want %q (text=%q)", failure, confirmationCode, answer.text)
+		}
+		if !strings.Contains(answer.text, "activate-workflow") || !strings.Contains(answer.text, "--yes") {
+			t.Errorf("the refusal does not name the operation or say how to confirm: %q", answer.text)
+		}
+		if len(api.calls) != 0 {
+			t.Fatalf("the refusal sent %d request(s): %+v, want none", len(api.calls), api.calls)
+		}
+	})
+
+	t.Run("with confirm", func(t *testing.T) {
+		session := startMCPServe(t, srv.URL)
+		session.initialize()
+
+		answer := session.call("api", map[string]any{
+			"operation_id": "activate-workflow",
+			"path":         []any{"id=wf_1"},
+			"confirm":      true,
+		})
+		if answer.isError {
+			t.Fatalf("the confirmed call failed: %q", answer.text)
+		}
+		if doc := envelope(t, answer.text); doc["ok"] != true {
+			t.Fatalf("ok = %v, want true (text=%q)", doc["ok"], answer.text)
+		}
+
+		calls := mutatingCalls(api.calls)
+		if len(calls) != 1 || calls[0].Method != http.MethodPost || calls[0].Path != apiPrefix+"/workflows/wf_1/activate" {
+			t.Fatalf("the confirmed call sent %+v, want exactly one POST %s", calls, apiPrefix+"/workflows/wf_1/activate")
+		}
+	})
 }
 
 // TestMCPServeAnswersARealClient drives the adapter over real pipes with real

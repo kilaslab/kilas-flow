@@ -80,10 +80,34 @@ type Info struct {
 
 // Tool is one callable tool as tools/list reports it.
 type Tool struct {
-	Name        string         `json:"name"`
-	Title       string         `json:"title,omitempty"`
-	Description string         `json:"description,omitempty"`
-	InputSchema map[string]any `json:"inputSchema"`
+	Name        string           `json:"name"`
+	Title       string           `json:"title,omitempty"`
+	Description string           `json:"description,omitempty"`
+	InputSchema map[string]any   `json:"inputSchema"`
+	Annotations *ToolAnnotations `json:"annotations,omitempty"`
+}
+
+// ToolAnnotations are the optional behavioural hints a tool publishes about
+// itself, per the MCP 2026-07-28 schema's `annotations` object. Every field is
+// advisory: a client may use one to warn a caller or to gate an auto-approval
+// policy, and none of them changes what a call actually does — that is decided
+// by the tool's own answer, the same way it always was.
+type ToolAnnotations struct {
+	// Title is a human-readable name for the tool, distinct from Tool.Name.
+	Title string `json:"title,omitempty"`
+	// ReadOnlyHint marks a tool that does not modify its environment.
+	ReadOnlyHint *bool `json:"readOnlyHint,omitempty"`
+	// DestructiveHint marks a tool that may perform destructive updates. It is
+	// meaningful only when ReadOnlyHint is false or unset.
+	DestructiveHint *bool `json:"destructiveHint,omitempty"`
+	// IdempotentHint marks a tool where calling it repeatedly with the same
+	// arguments has no additional effect beyond the first call. It is
+	// meaningful only when ReadOnlyHint is false or unset.
+	IdempotentHint *bool `json:"idempotentHint,omitempty"`
+	// OpenWorldHint marks a tool that may interact with an "open world" of
+	// external entities, such as the web, rather than a closed, enumerable
+	// domain.
+	OpenWorldHint *bool `json:"openWorldHint,omitempty"`
 }
 
 // Content is one content block of a tool result. Only text is used: a tool

@@ -4,8 +4,12 @@
 // Design §6 is the contract, and it is short: tools map to CLI verbs, a tool's
 // description comes from the verb's own summary and from the skills bundle, and
 // a guarded verb becomes a tool that needs `confirm: true` where the CLI needs
-// `--yes`. Everything below follows from the command tree being the only
-// definition of what this binary can do:
+// `--yes`. The escape hatch (`api`) is the one exception that proves it: it is
+// not itself guarded, but an operation id a guarded verb wraps asks its own
+// tool for `confirm: true` exactly the same way (BUG-r1m83f), so `api` also
+// publishes the property and is always annotated destructive — the id is not
+// known until the call is made. Everything below follows from the command tree
+// being the only definition of what this binary can do:
 //
 //   - one tool per verb, named after the verb's path, generated once at startup;
 //   - a tool's properties are the verb's own flags — read back out of the
@@ -378,7 +382,8 @@ func mcpToolFor(verb Verb, globals map[string]bool, skillNames []string) (*mcpTo
 		properties[flag.property] = flag.schema()
 	}
 
-	if verb.Guarded {
+	switch {
+	case verb.Guarded:
 		// Not required: the CLI's own guard is what refuses a call without
 		// consent, and it has to be reachable for that refusal to be the one
 		// an agent sees.
@@ -386,6 +391,17 @@ func mcpToolFor(verb Verb, globals map[string]bool, skillNames []string) (*mcpTo
 			"type": "boolean",
 			"description": "confirms what the verb does — " + verb.Refusal + ". The same consent `--yes` carries: " +
 				"pass it only on an explicit instruction from the user.",
+		}
+	case verb.Path == apiVerbPath:
+		// The escape hatch is not itself guarded — most operations it reaches
+		// need no confirmation — but an operation id that a guarded verb
+		// wraps asks this tool's own confirm for the same consent that
+		// verb's tool would (BUG-r1m83f), checked once the id is resolved.
+		properties[mcpConfirmProperty] = map[string]any{
+			"type": "boolean",
+			"description": "confirms an operation id that a guarded verb wraps, exactly as that verb's own tool " +
+				"would need confirm: true. The same consent `--yes` carries: pass it only on an explicit " +
+				"instruction from the user. Ignored for an operation id nothing guards.",
 		}
 	}
 
@@ -562,17 +578,32 @@ func (t *mcpTool) descriptor() mcp.Tool {
 	if t.verb.Guarded {
 		description = append(description, "Guarded: "+sentence(t.verb.Refusal))
 	}
+	if t.verb.Path == apiVerbPath {
+		description = append(description, "Destructive: an operation id that a guarded verb wraps needs "+
+			"confirm: true, exactly as that verb's own tool would.")
+	}
 	if len(t.skills) == 1 {
 		description = append(description, "KilasFlow skill: "+t.skills[0]+".")
 	} else if len(t.skills) > 1 {
 		description = append(description, "KilasFlow skills: "+strings.Join(t.skills, ", ")+".")
 	}
 
-	return mcp.Tool{
+	tool := mcp.Tool{
 		Name:        t.name,
 		Description: strings.Join(description, " "),
 		InputSchema: t.schema,
 	}
+
+	// A guarded verb and the escape hatch both reach an operation that
+	// publishes, destroys or stores something a user has to decide — the
+	// escape hatch always, because the operation id is not known until the
+	// call is made. Every other tool's annotations are left to FEAT-0hdfzd.
+	if t.verb.Guarded || t.verb.Path == apiVerbPath {
+		destructive := true
+		tool.Annotations = &mcp.ToolAnnotations{DestructiveHint: &destructive}
+	}
+
+	return tool
 }
 
 // sentence ends a summary or a refusal the way a description reads: the tree's

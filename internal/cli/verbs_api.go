@@ -11,23 +11,59 @@ import (
 	"strings"
 )
 
+// apiVerbPath is the escape hatch's own path, spelled once so the MCP adapter
+// can recognise it without repeating the literal.
+const apiVerbPath = "api"
+
 // apiVerbs is the generic escape hatch: one verb that reaches every operation
 // the running server serves by its operation id.
 //
 // It exists so the surface is complete on day one and so an operation nobody
 // wrote a verb for is reachable without waiting for a release. It is a naming
-// bypass, never an authority bypass: the request carries exactly the configured
-// credential, and a refusal from the server is carried through unchanged.
+// bypass, never a consent or an authority bypass: an operation id that a
+// guarded verb wraps asks runAPI for the same `--yes` and the same
+// tenant-wide key that verb would (BUG-r1m83f) before anything is sent, and
+// every other operation carries exactly the configured credential, with a
+// refusal from the server carried through unchanged.
 func apiVerbs() []Verb {
 	return []Verb{
 		{
-			Path:    "api",
+			Path:    apiVerbPath,
 			Summary: "call any operation the running server serves, by operation id (`--list` to enumerate)",
 			Args:    []Arg{optionalArg("operation id")},
 			Flags:   registerAPIFlags,
 			Run:     runAPI,
 			Human:   humanAPIResult,
 		},
+	}
+}
+
+// guardedByOperation indexes the guarded verbs by the operation id each one
+// wraps, so the escape hatch can ask for the same confirmation and the same
+// authority a named verb would, even though it reaches the operation by id
+// rather than by name.
+func guardedByOperation() map[string]Verb {
+	byOperation := make(map[string]Verb)
+	for _, verb := range registry() {
+		if verb.Guarded && verb.Operation != "" {
+			byOperation[verb.Operation] = verb
+		}
+	}
+
+	return byOperation
+}
+
+// apiGuardVerb adapts a guarded verb's metadata to the escape hatch: the
+// refusal has to name the operation id the caller typed — what `api --list`
+// would show — rather than the verb's own argument shape, which the escape
+// hatch does not have. Naming the verb it wraps ("activate-workflow is
+// `workflow activate`") is what tells the caller there is a shorter,
+// better-typed way to ask for the same thing.
+func apiGuardVerb(id string, wrapped Verb) Verb {
+	return Verb{
+		Path:    id,
+		Guarded: true,
+		Refusal: "is `" + wrapped.Path + "`",
 	}
 }
 
@@ -102,6 +138,23 @@ func runAPI(ctx *Context, args []string) error {
 		}
 		if len(args) > 1 {
 			return usageError("one operation id at a time; got %q and %q", args[0], args[1])
+		}
+	}
+
+	// An operation id a guarded verb wraps is guarded whichever name reached
+	// it: ask for the same confirmation and the same authority that verb
+	// would, before the document is read, so a refusal here — like a refusal
+	// from a named verb — sends nothing at all. `--list` never resolves an id
+	// and stays unguarded.
+	if !flags.list {
+		if wrapped, guarded := guardedByOperation()[args[0]]; guarded {
+			guard := apiGuardVerb(args[0], wrapped)
+			if err := requireConfirmation(guard, ctx.Flags.Yes, ctx.Env); err != nil {
+				return err
+			}
+			if err := requireAuthority(ctx, guard); err != nil {
+				return err
+			}
 		}
 	}
 

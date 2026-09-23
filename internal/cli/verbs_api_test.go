@@ -651,6 +651,120 @@ func TestAPILeftoverPathParametersAreIgnored(t *testing.T) {
 	}
 }
 
+// TestAPIRefusesGuardedOperationsWithoutConfirmation is BUG-r1m83f's own gate:
+// the escape hatch reaches every operation a guarded verb wraps by its
+// operation id rather than its name, so the id has to be checked against the
+// same guarded set — every one of them is refused before a request, exactly as
+// the verb it wraps would be (TestGuardedVerbWithoutYesSendsNothing).
+func TestAPIRefusesGuardedOperationsWithoutConfirmation(t *testing.T) {
+	want := guardedInvocations(t)
+
+	for path, invocation := range want {
+		t.Run(path, func(t *testing.T) {
+			transport := &countingTransport{}
+			client := &Client{BaseURL: "http://server.test", HTTP: &http.Client{Transport: transport}}
+
+			code, stdout, stderr := driveVerb(t, verbByPath(t, "api"), client,
+				"api", invocation.operation, "--json")
+			if code != ExitRefused {
+				t.Fatalf("exit = %d, want %d (stdout=%q stderr=%q)", code, ExitRefused, stdout, stderr)
+			}
+
+			doc := envelope(t, stdout)
+			if failure := envelopeFailure(doc); failure != confirmationCode {
+				t.Fatalf("error.code = %q, want %q", failure, confirmationCode)
+			}
+			message, _ := doc["error"].(map[string]any)["message"].(string)
+			if !strings.Contains(message, invocation.operation) {
+				t.Errorf("error.message %q does not name the refused operation id", message)
+			}
+			if !strings.Contains(message, "--yes") {
+				t.Errorf("error.message %q does not say how to confirm", message)
+			}
+
+			if got := transport.requests.Load(); got != 0 {
+				t.Fatalf("requests = %d, want none: the refusal needs no server, not even the index read", got)
+			}
+		})
+	}
+}
+
+// TestAPIRefusesAScopedTokenForAGuardedOperationEvenWithYes is the escape
+// hatch's own authority gate: `--yes` is consent, not authority, and a scoped
+// agent token is refused whichever name reaches the operation.
+func TestAPIRefusesAScopedTokenForAGuardedOperationEvenWithYes(t *testing.T) {
+	invocation := guardedInvocations(t)["workflow activate"]
+
+	api := newRecordingAPI(map[string]http.HandlerFunc{
+		apiPrefix + "/auth/me": jsonBody(http.StatusOK, identityWithScopes),
+		"/":                    jsonBody(http.StatusOK, `{"id":"should-not-happen"}`),
+	})
+	srv := stubAPI(t, api.routesFor(t))
+
+	code, handled, stdout, stderr := runCLI(t, Env{
+		Args:   []string{"api", invocation.operation, "--yes", "--url", srv.URL, "--json"},
+		Getenv: homeEnv(t.TempDir(), nil),
+	})
+	if !handled {
+		t.Fatalf("api fell through to the server path (stdout=%q stderr=%q)", stdout, stderr)
+	}
+	if code != ExitRefused {
+		t.Fatalf("exit = %d, want %d (stdout=%q stderr=%q)", code, ExitRefused, stdout, stderr)
+	}
+
+	doc := envelope(t, stdout)
+	if failure := envelopeFailure(doc); failure != scopeDeniedCode {
+		t.Fatalf("error.code = %q, want %q", failure, scopeDeniedCode)
+	}
+	message, _ := doc["error"].(map[string]any)["message"].(string)
+	if !strings.Contains(message, "tenant-wide key") {
+		t.Errorf("error.message %q does not say what would be allowed", message)
+	}
+
+	if len(api.calls) != 1 || api.calls[0].Method != http.MethodGet || api.calls[0].Path != apiPrefix+"/auth/me" {
+		t.Fatalf("the refusal sent %+v, want exactly the identity read", api.calls)
+	}
+}
+
+// TestAPIConfirmedGuardedOperationReachesTheStub is the other half: with
+// `--yes` and a tenant-wide key, every guarded operation id runs through the
+// escape hatch exactly as it would through the verb it wraps, and the call
+// that leaves the CLI is the operation itself.
+func TestAPIConfirmedGuardedOperationReachesTheStub(t *testing.T) {
+	want := guardedInvocations(t)
+
+	for path, invocation := range want {
+		t.Run(path, func(t *testing.T) {
+			const escapeHatchPath = "/api/v1/escape-hatch"
+
+			api := newRecordingAPI(map[string]http.HandlerFunc{
+				apiPrefix + "/auth/me": jsonBody(http.StatusOK, identityWithoutScopes),
+				operationsPath: jsonBody(http.StatusOK, servedDocument(
+					[3]string{invocation.method, escapeHatchPath, invocation.operation},
+				)),
+				escapeHatchPath: jsonBody(http.StatusOK, `{"id":"ok_1"}`),
+			})
+			srv := stubAPI(t, api.routesFor(t))
+
+			code, handled, stdout, stderr := runCLI(t, Env{
+				Args:   []string{"api", invocation.operation, "--yes", "--url", srv.URL, "--json"},
+				Getenv: homeEnv(t.TempDir(), nil),
+			})
+			if !handled {
+				t.Fatalf("api fell through to the server path (stdout=%q stderr=%q)", stdout, stderr)
+			}
+			if code != ExitOK {
+				t.Fatalf("exit = %d, want %d (stdout=%q stderr=%q)", code, ExitOK, stdout, stderr)
+			}
+
+			calls := mutatingCalls(api.calls)
+			if len(calls) != 1 || calls[0].Method != invocation.method || calls[0].Path != escapeHatchPath {
+				t.Fatalf("the call reached %+v, want exactly one %s %s", calls, invocation.method, escapeHatchPath)
+			}
+		})
+	}
+}
+
 func TestAPICarriesAServerRefusalVerbatim(t *testing.T) {
 	const problem = `{"title":"Forbidden","status":403,"detail":"this key may not run workflows"}`
 
