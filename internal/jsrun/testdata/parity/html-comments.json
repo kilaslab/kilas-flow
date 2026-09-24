@@ -1,0 +1,37 @@
+{
+	"meta": {"recordedWith":"node 24.16.0, v8 13.6.233.17-node.49","note":"Recorded by scripts/js-parity/record-engine.mjs. CI compares against this file and never runs Node."},
+	"probes": [
+		{"name":"the ticket: an opening line and a closing line","code":"<!-- an HTML-style comment left in pasted code\nreturn [{ json: { ok: true } }]\n--> and one closing it","want":[{"ok":true}]},
+		{"name":"<!-- after code ends the line","code":"const a = 1 <!-- the rest of this line is a comment\nreturn [{ json: { a } }]","want":[{"a":1}]},
+		{"name":"x<!--y is x followed by a comment, not x < !--y","code":"let y = 5\nconst a = 3<!--y\nreturn [{ json: { a, y } }]","want":[{"a":3,"y":5}]},
+		{"name":"--> after spaces and tabs starts a comment","code":"const a = 1\n  \t--> a closing comment\nreturn [{ json: { a } }]","want":[{"a":1}]},
+		{"name":"--> after a one-line block comment starts a comment","code":"const a = 1\n/* first */ /* second */ --> a closing comment\nreturn [{ json: { a } }]","want":[{"a":1}]},
+		{"name":"--> after a block comment that spans lines starts a comment","code":"const a = 1\n/* a comment\n over two lines */ --> a closing comment\nreturn [{ json: { a } }]","want":[{"a":1}]},
+		{"name":"--> on the body's first line starts a comment","code":"--> the first line\nreturn [{ json: { ok: 1 } }]","want":[{"ok":1}]},
+		{"name":"--> after \\r\\n starts a comment","code":"const a = 1\r\n--> a closing comment\r\nreturn [{ json: { a } }]","want":[{"a":1}]},
+		{"name":"i-->0 in the middle of a line is a decrement and a comparison","code":"let i = 3\nlet n = 0\nwhile (i-->0) n++\nreturn [{ json: { i, n } }]","want":[{"i":-1,"n":3}]},
+		{"name":"--> after code on its line is a decrement and a comparison","code":"let i = 3\nconst more = i --> 1\nreturn [{ json: { i, more } }]","want":[{"i":2,"more":true}]},
+		{"name":"<!-- and --> inside strings","code":"return [{ json: { single: '<!-- not a comment', double: \"--> nor this\", escaped: '\\'<!--' } }]","want":[{"single":"<!-- not a comment","double":"--> nor this","escaped":"'<!--"}]},
+		{"name":"<!-- and --> inside a template literal","code":"return [{ json: { t: `<!-- one\n--> two` } }]","want":[{"t":"<!-- one\n--> two"}]},
+		{"name":"<!-- inside a template's ${} is a comment","code":"const t = `a${ 1 <!-- the rest of the line\n}b`\nreturn [{ json: { t } }]","want":[{"t":"a1b"}]},
+		{"name":"a nested template inside ${} keeps its <!--","code":"const t = `a${ `<!--${ 2 }` }b`\nreturn [{ json: { t } }]","want":[{"t":"a<!--2b"}]},
+		{"name":"<!-- and --> inside regular expressions","code":"return [{ json: { open: /<!--/.test('x<!--'), close: /-->/.source, klass: /[<!--]/.test('!') } }]","want":[{"open":true,"close":"-->","klass":true}]},
+		{"name":"a regular expression after `if (…)` keeps its <!--","code":"let hit = false\nif (true) /x<!--/.test('x<!--') && (hit = true)\nreturn [{ json: { hit } }]","want":[{"hit":true}]},
+		{"name":"a regular expression on its own line after a block keeps its -->","code":"let hit = false\n{ }\n/-->/.test('-->') && (hit = true)\nreturn [{ json: { hit } }]","want":[{"hit":true}]},
+		{"name":"division followed by <!--","code":"const a = 4, b = 2, g = 1\nconst q = a / b <!-- / g\nreturn [{ json: { q } }]","want":[{"q":2}]},
+		{"name":"<!-- and --> inside line and block comments","code":"// <!-- a line comment\n/* <!--\n--> */ const a = 1\nreturn [{ json: { a } }]","want":[{"a":1}]},
+		{"name":"<!-- ends at a line separator","code":"let b = 0\nconst a = 1 <!-- a comment  b = 2\nreturn [{ json: { a, b } }]","want":[{"a":1,"b":2}]},
+		{"name":"<!-- comments out a closing brace","code":"let a = 0\nif (true) { <!-- }\n a = 1 }\nreturn [{ json: { a } }]","want":[{"a":1}]},
+		{"name":"<!-- in a strict body","code":"'use strict'\n<!-- a comment\nreturn [{ json: { ok: 1 } }]","want":[{"ok":1}]},
+		{"name":"<!-- inside a function keeps the function's source","code":"function f() {\n  <!-- inside\n  return 1\n}\nreturn [{ json: { source: f.toString(), value: f() } }]","want":[{"source":"function f() {\n  <!-- inside\n  return 1\n}","value":1}]},
+		{"name":"a comment that eats what an array needs is a syntax error","code":"const a = [1, <!-- 2]\nreturn [{ json: { a } }]","error":"SyntaxError"},
+		{"name":"a regular expression after a labelled block keeps its <!--","code":"let hit = false\nblock: {}\n/<!--/.test('<!--') && (hit = true)\nreturn [{ json: { hit } }]","want":[{"hit":true}]},
+		{"name":"a regular expression after a case block keeps its <!--","code":"let hit = false\nswitch (1) { case 1: {}\n/<!--/.test('<!--') && (hit = true) }\nreturn [{ json: { hit } }]","want":[{"hit":true}]},
+		{"name":"an object as a property value, divided, then <!--","code":"const o = { a: {} / 2 <!-- a comment\n}\nreturn [{ json: { a: String(o.a) } }]","want":[{"a":"NaN"}]},
+		{"name":"an object in a conditional, divided, then <!--","code":"const t = true ? {} / 2 <!-- a comment\n: 0\nreturn [{ json: { t: String(t) } }]","want":[{"t":"NaN"}]},
+		{"name":"an object after ?? then <!--","code":"const t = null ?? {} / 2 <!-- a comment\nreturn [{ json: { t: String(t) } }]","want":[{"t":"NaN"}]},
+		{"name":"<<!-- is a shift, then !--y","code":"let y = 5\nconst a = 1 <<!--y\nreturn [{ json: { a, y } }]","want":[{"a":1,"y":4}]},
+		{"name":"a regular expression with escaped slashes keeps its <!--","code":"return [{ json: { hit: /\\/\\/<!--/.test('//<!--') } }]","want":[{"hit":true}]},
+		{"name":"-- > with a space is not a comment","code":"let i = 3\n-- > 1\nreturn [{ json: { i } }]","error":"SyntaxError"}
+	]
+}

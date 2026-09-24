@@ -61,6 +61,10 @@ type diffAnswer struct {
 type errShape struct {
 	Name    string `json:"name"`
 	Message string `json:"message"`
+	// words is what the error says, as "Name: message" without the place
+	// jsrun adds, for comparing the wording with Node's. It is set on
+	// jsrun's side only.
+	words string
 }
 
 // Verdicts.
@@ -122,7 +126,7 @@ func TestJSDiff(t *testing.T) {
 
 	theirs := runNode(t, node, cases)
 	counts := map[string]int{}
-	consoleDiffers := 0
+	consoleDiffers, sameWords := 0, 0
 	for _, testCase := range cases {
 		verdict, detail := compare(ours[testCase.Key], theirs[testCase.Key])
 		if testCase.ParseOnly {
@@ -132,6 +136,9 @@ func TestJSDiff(t *testing.T) {
 			}
 		}
 		counts[verdict]++
+		if verdict == verdictBothFailed && ours[testCase.Key].Error.words == theirs[testCase.Key].Error.Name+": "+theirs[testCase.Key].Error.Message {
+			sameWords++
+		}
 		if verdict == verdictSame && !reflect.DeepEqual(ours[testCase.Key].Console, theirs[testCase.Key].Console) {
 			consoleDiffers++
 			t.Logf("%s: the same output, but it printed differently: %s", testCase.Key, firstDifference("console", ours[testCase.Key].Console, theirs[testCase.Key].Console))
@@ -155,6 +162,7 @@ func TestJSDiff(t *testing.T) {
 		fmt.Fprintf(&summary, "  %-30s %d\n", verdict, counts[verdict])
 	}
 	fmt.Fprintf(&summary, "  %-30s %d (of the same)\n", "console printed differently", consoleDiffers)
+	fmt.Fprintf(&summary, "  %-30s %d (of both failed)\n", "worded as Node words it", sameWords)
 	t.Log("\n" + summary.String())
 }
 
@@ -169,9 +177,10 @@ func runOurs(runner *jsrun.Runner, current body) diffAnswer {
 		answer.Console = append(answer.Console, line.Level+": "+line.Text)
 	}
 	if err != nil {
-		answer.Error = &errShape{Message: err.Error()}
+		answer.Error = &errShape{Message: err.Error(), words: err.Error()}
 		if script, ok := err.(*jsrun.ScriptError); ok {
 			answer.Error.Name = script.Name
+			answer.Error.words = script.Name + ": " + script.Message
 		}
 		return answer
 	}

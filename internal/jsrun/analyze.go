@@ -119,13 +119,41 @@ func Analyze(source string, mode Mode) (Analysis, error) {
 // parseWrapped parses the wrapped body. Source maps are never loaded: goja's
 // parser would otherwise read a file named by a trailing sourceMappingURL
 // comment, and a script could name /dev/zero.
+//
+// A body that could hold an HTML-like comment is parsed with its comments
+// blanked (see analyze_html.go). The blanked text is the same length, line
+// for line, so everything goja reports is in the user's coordinates, and
+// checkShape still proves the parsed body is exactly the wrapper's.
 func parseWrapped(w wrapped) (*ast.Program, error) {
-	program, err := parser.ParseFile(nil, sourceName, w.text, 0, parser.WithDisableSourceMaps)
+	text, body := w.text, w.body()
+	candidate := mayHoldHTMLComment(body)
+	var scan htmlScan
+	if candidate {
+		scan = htmlComments(body)
+		text = w.text[:w.bodyStart()] + scan.blanked + w.text[w.bodyStart()+len(body):]
+	}
+	program, err := parser.ParseFile(nil, sourceName, text, 0, parser.WithDisableSourceMaps)
 	if err != nil {
-		return nil, classifyParseError(err, w)
+		read := w
+		read.text = text
+		return nil, classifyParseError(err, read)
+	}
+	if candidate {
+		if !checkHTMLComments(program, scan, w.bodyStart()) {
+			return nil, &UnsupportedError{Found: []Unsupported{{Subject: htmlCommentRefusal, Line: firstHTMLCommentLine(body)}}}
+		}
+		if scan.comments > 0 {
+			restoreSources(program, text, w.text)
+		}
 	}
 	return program, nil
 }
+
+// htmlCommentRefusal is the refusal for a body holding a `<!--` or `-->`
+// whose surrounding code the lexer read differently from goja's parser. The
+// body may hold no comment at all (a `<!--` in a string), so the refusal
+// names the code around it, not a comment.
+const htmlCommentRefusal = "has code around a <!-- or --> that this server cannot read unambiguously"
 
 // classifyParseError tells a construct the engine does not support apart
 // from a plain mistake. goja reports both as "unexpected token", but a user

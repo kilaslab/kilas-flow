@@ -4,7 +4,7 @@ import "strings"
 
 // wrapperVersion names the wrapper's shape. It is part of every compiled
 // program's cache key, so changing the wrapper cannot run a stale program.
-const wrapperVersion = "jsrun-2"
+const wrapperVersion = "jsrun-3"
 
 // sourceName is the file name the user's code has in stack traces and
 // positions. Frames under any other name belong to the runtime or a library.
@@ -21,6 +21,10 @@ const sourceName = "Code"
 // They are plain positional parameters. A destructuring parameter list makes
 // goja panic on a direct eval() inside the body, which is a goja bug the
 // wrapper steps around.
+//
+// The compiled wrapper has one parameter more than its text: the runtime's
+// reword, added to the parsed tree under a name no source can spell (see
+// instrumentCatches), and passed last by runtime.js.
 //
 // A comparator sees the all-items roots: n8n hands its comparator the whole
 // list as `items`.
@@ -73,6 +77,12 @@ func wrap(source string, mode Mode) wrapped {
 		lines:      strings.Count(source, "\n") + 1,
 	}
 }
+
+// bodyStart is the offset of the user's code in the wrapped text.
+func (w wrapped) bodyStart() int { return w.open + 2 }
+
+// body is the user's code as the wrapper holds it.
+func (w wrapped) body() string { return w.text[w.bodyStart() : w.close-1] }
 
 // userLine turns a line of the wrapped text into the user's line. A position
 // on the trailer is reported at the code's last line, and one on the prelude
