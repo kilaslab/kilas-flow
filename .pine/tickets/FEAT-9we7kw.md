@@ -39,6 +39,20 @@ en-US.
       expressed by this runtime's matcher without wrongly affecting other,
       correct shapes, so nativeDateTimeFormat refuses them by name instead
       of silently answering differently from Node. See Notes.
+      **Fix round 2 (2026-09-24)**: an independent review's exhaustive
+      probes found round 1's own refusals were mis-scoped in both
+      directions — under-scoped (en-GB `shortOffset`, not just
+      `longOffset`, and more second widths, were silently wrong outside
+      round 1's narrow sweep) and over-scoped (the h24 refusal had no
+      locale check, wrongly refusing en-US/en-CA where Node already
+      matched, and refused zone-present shapes that also already matched).
+      Both refusals corrected and re-scoped to exactly what differs; a
+      pre-existing, previously-undiscovered `-u-hc-h12`/`-u-hc-h11`
+      hour-padding bug (distinct from the already-correct
+      `hourCycle`/`hour12` option forms) also fixed. Every shape in the
+      reviewer's own probes (p2/p3/p4/p6/p8, up to 24,000 combinations
+      each) now matches Node or refuses by name — 0 silent diffs. See
+      Notes.
 - [x] `new Date(...).toLocaleDateString('en-CA')` gives YYYY-MM-DD.
 - [x] Every other date locale still refuses by name (including other
       English regions like en-AU, en-NZ, and `en-Latn-GB`/`en-Latn-CA`,
@@ -304,6 +318,114 @@ clean, `go test ./...` (full repo, all green), `go test -race
 tests (all green, ~45–55s), `node scripts/js-parity/record.mjs --check`
 clean. Binary size: 39,370,946 → 39,404,402 bytes (+33,456 bytes, +0.085%);
 cumulative from the pre-feature baseline: +68,640 bytes (+0.17%).
+
+## Fix round 2 (2026-09-24)
+
+A second independent review (Node 24, an exhaustive-sweep probe harness:
+p2/p3/p4/p6/p8, ~24,000–66,000 option combinations per probe across up to
+12 locale×zone pairs) confirmed zone names, en-Latn resolution and Luxon
+(round 1's fixes) hold, and found round 1's own two refusals were each
+wrong in a different way — one under-scoped (missed real silent-diff
+shapes), the others over-scoped (refused shapes that actually match Node).
+Findings and fixes, each verified 0-diff against the reviewer's own probes:
+
+1. **[Important] en-GB `timeZoneName: 'shortOffset'`/`'longOffset'` was
+   silently wrong beyond the one shape round 1's refusal named.** Round 1
+   refused only `longOffset` + hour + minute + `second:'numeric'` exactly.
+   The reviewer's p2 (full hour×minute×second×fractionalSecondDigits×
+   timeZoneName×hourCycle sweep, 4 zones) found 520 more silently-wrong
+   combinations: `shortOffset` breaks too (not just `longOffset`) whenever
+   the *effective* second is 'numeric' width — including when
+   `fractionalSecondDigits` implies a numeric-width second with no
+   explicit `second` option (`forMatching`'s own auto-add rule); and
+   `longOffset` breaks at *either* second width, not just 'numeric',
+   whenever a second is present at all. No anchor can express either width
+   without also, and wrongly, padding a case that already matches Node
+   (round 1 already tried and reverted one for `longOffset` alone; this
+   round's wider evidence rules the same out for `shortOffset`). Widened
+   the refusal to both offset styles with their respective width
+   conditions, precisely scoped to the shapes p2/p3/p8 showed actually
+   differ (a `'2-digit'` hour is never wrong — it already renders at width
+   2 regardless of which anchor wins — so it stays outside the refusal).
+2. **[Important] The h24 refusal had silently regressed en-US/en-CA.**
+   Round 1's h24 tie-break refusal (hour+second, no minute) had no locale
+   check, refusing en-US and en-CA too — but their output was already
+   correct: a width-mismatch side effect between the requested 'k' and the
+   'H' anchor these two locales fall back to happens to break the tie the
+   same way Node does, so nothing there was ever wrong. Only en-GB is
+   wrong (it alone has genuine 'k'-lettered anchors — an exact match with
+   no penalty — so its tie genuinely ties and table order wins it the
+   opposite way from Node). Scoped the refusal to `locale.tag == "en-GB"`.
+3. **[Minor] The h24 and longOffset refusals each also over-refused a
+   shape that matches Node.** The h24 refusal caught
+   `{hour,second,timeZoneName}` under h24 too, even though a zone joining
+   the request changes which anchor wins outright (e.g. an "Hv" anchor
+   covers hour+zone, decisively beating any hour-only/second-only
+   candidate) and is correct on every locale including en-GB — added
+   `!has(zone)` to the condition. Verified directly against Node that
+   weekday/day presence does *not* similarly rescue the bug (only zone
+   presence does). The longOffset-class refusal (see finding 1) is now
+   narrowed by construction to only the effective-second-width conditions
+   that actually differ, confirmed by p3 (en-GB, hour∈{numeric,2-digit})
+   showing zero `hour:'2-digit'` refusals among its 16.
+4. **[Important, pre-existing, not previously found] `-u-hc-h12`/
+   `-u-hc-h11` locale-extension forms over-padded the hour under
+   `timeStyle`.** `en-GB-u-hc-h12`/`en-GB-u-hc-h11` with any `timeStyle`
+   (± `dateStyle`) printed "05:07 pm"/"05:07:09 pm UTC" where Node prints
+   "5:07 pm"/"5:07:09 pm UTC" — but the *option* forms
+   (`hourCycle:'h12'`/`hour12:true`/`hourCycle:'h11'`) were already
+   correct and printed the padded form Node actually gives them. Verified
+   directly against Node that the two paths genuinely render differently
+   despite identical `resolvedOptions()` output: an hourCycle picked by
+   the locale's own `-u-hc-` extension asks for the hour the plain
+   'numeric' way (width 1, letting the locale's own quirky/lockedIn data
+   decide the final width, same as a real 'numeric' request would); an
+   explicit `hourCycle`/`hour12` *option* keeps `timeStyle`'s own width,
+   which belongs to the locale's *default* cycle (en-GB: h23, width 2) and
+   Node keeps that width even once `hourCycle:'h12'` asks for 12-hour.
+   Fixed by threading a `cycleFromExtension` bool from
+   `nativeDateTimeFormat`'s cycle-resolution switch into `stylePattern`,
+   resetting the rebuilt hour skeleton to width 1 only on that path,
+   leaving the explicit-option path's inherited width untouched. First
+   attempt (unconditionally resetting the width) fixed the extension path
+   but broke the explicit-option path — caught by re-running p6 after the
+   change, which is what surfaced the `resolvedOptions()`-identical/
+   render-different distinction in the first place.
+5. **[Minor] Doc nits.** `intl.go:~1233` said the skeleton keys are "its
+   VALUE column, i.e. the second string" of each `{"key","value"}` pair —
+   backwards; they are the *first* string (the key). `intl.go:~1284` had a
+   stray curly quote in "hourCycle: 'h24”s separate,". Fixing it with a
+   literal `''` (two straight quotes) turned out to reintroduce the same
+   curly quote on the next `gofmt` — this doc comment sits directly above
+   a top-level `var` and gofmt's doc-comment formatter (Go 1.19+)
+   canonicalises prose quotes, and collapses two *adjacent* straight
+   single quotes (an unspaced closing-quote-then-possessive-'s) into one
+   curly character. Reworded to avoid the adjacent-quote construct instead
+   of fighting gofmt's formatting.
+6. **[Optional, cheap, done] `supportedLocalesOf(['en-Latn-GB','en-Latn'])`
+   returned `[]`** though both format as `"en"` (Node lists them, per fix
+   round 1's script-subtag fix to `resolveDateLocale`). Widened
+   `intl.js`'s `supportedLocalesOf` regex to also match
+   `en-Latn(-US|-CA|-GB)?`.
+
+`dateSweepRefusal` in `internal/jsrun/intl_test.go` rewritten to mirror
+both corrected conditions exactly (locale-scoped h24 minus zone; both
+offset styles with their respective effective-second-width checks) —
+verified it, not a hand-picked subset, is what makes
+`TestTheDateOptionSweepMatchesNode` pass.
+
+**Fix round 2 verification**: `go build ./...`, `go vet ./...`, `gofmt -l`
+clean, `go test ./...` (full repo, all green), `go test -race
+./internal/jsrun/...` on the Intl/Luxon-related tests (all green, ~11s),
+`node scripts/js-parity/record.mjs --check` clean (no drift — the
+refusal-based fix needed no sweep extension). The reviewer's own probes,
+re-run after all changes: p2 (24,000 combos) 0 diff/584 refused, p3 (120)
+0 diff/16 refused (none a `hour:'2-digit'` shape), p4 (27) 0 diff/8
+refused (en-GB only), p6 (73) 0 diff/0 refused, p8 (12 locale×zone files,
+8,774 combos each) 0 diff in every file, 540 refused per en-GB file and 0
+per en-US/en-CA file. Binary size: 39,506,354 → 39,522,866 bytes (+16,512
+bytes, +0.042%); cumulative from the pre-feature baseline: +85,152 bytes
+(+0.216%).
 
 # Related Files
 

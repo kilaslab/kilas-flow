@@ -424,7 +424,12 @@
         return native('intl.locales', localeList(locales)).filter(check);
       };
     }
-    var english = /^en(-US|-CA|-GB)?(-u-|$)/;
+    // en-Latn(-US|-CA|-GB)? is included too: an explicit "Latn" script
+    // subtag still resolves to a locale this runtime formats (see
+    // resolveDateLocale), just always "en" regardless of the region — so
+    // it belongs here the same way "en-GB" does, unlike a region outside
+    // US/CA/GB (with or without "Latn"), which resolveDateLocale refuses.
+    var english = /^en(-US|-CA|-GB|-Latn(-US|-CA|-GB)?)?(-u-|$)/;
     defineMethods(DateTimeFormat, { supportedLocalesOf: supportedLocalesOf(function (tag) { return english.test(tag); }) });
     defineMethods(NumberFormat, { supportedLocalesOf: supportedLocalesOf(function () { return true; }) });
 

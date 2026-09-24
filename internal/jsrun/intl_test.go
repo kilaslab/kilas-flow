@@ -184,23 +184,28 @@ func TestDatesMatchTheRecordedNodeGoldens(t *testing.T) {
 // (internal/jsrun/intl.go) is expected to refuse options with, in locale,
 // or "" if the runtime is expected to answer like Node instead. It mirrors
 // the two refusal conditions there exactly (by field shape, not by listing
-// every affected option combination — hourCycle: 'h24' alone reaches 53 of
-// the sweep's combinations), so this test fails loudly, naming the
+// every affected option combination — hourCycle: 'h24' alone reaches many
+// of the sweep's combinations), so this test fails loudly, naming the
 // combination, the moment either condition's shape or wording drifts from
 // the code it is meant to track:
 //
-//   - hourCycle: 'h24' ("k") has its own tie-break, independent of every
-//     other cycle, for which field becomes primary when a request has no
-//     anchor and needs one appended: Node's "9 (hour: 17)" for an
-//     hour+second request with no minute is the opposite of "17 (second:
-//     9)", which every other cycle gives for that same request. Not a
-//     per-field width rule adjust() can express — refused by name for
-//     every locale, since the tie-break is not locale-specific.
-//   - en-GB's hour+minute+seconds pads the hour once a zone joins, except
-//     timeZoneName: 'longOffset' with 'numeric' (not '2-digit') seconds,
-//     which keeps it padded unlike every other zone style at that width.
-//     No anchor can express that one width without also, and wrongly,
-//     padding 'short'/'long'/'shortOffset' at the same width (tried and
+//   - en-GB's hourCycle: 'h24' ("k") has its own tie-break for which field
+//     becomes primary when an hour+second request (no minute, no zone) has
+//     no anchor and needs one appended: Node's "9 (hour: 17)" is the
+//     opposite of "17 (second: 9)", which every other locale (and en-GB
+//     itself once a zone joins the request) gives for that same shape. Not
+//     a per-field width rule adjust() can express, and not a bug outside
+//     en-GB — en-US/en-CA already match Node here (fix round 2, finding 2)
+//     — so this is refused by name only for en-GB, and only without a zone
+//     (fix round 2, finding 3).
+//   - en-GB's hour+minute+seconds pads a 'numeric' (not '2-digit') hour
+//     once an offset zone (timeZoneName: 'shortOffset'/'longOffset') joins.
+//     'shortOffset' breaks only when the effective second is 'numeric'
+//     width (an explicit second: 'numeric', or fractionalSecondDigits
+//     implying one with no explicit second — see forMatching's auto-add).
+//     'longOffset' breaks at either second width, whenever a second is
+//     present at all. No anchor can express either width without also,
+//     and wrongly, padding a case that already matches Node (tried and
 //     reverted — see the comment on en-GB's "Hmm"/"Hmmss" entries) —
 //     refused by name instead.
 func dateSweepRefusal(locale string, options map[string]any) string {
@@ -208,11 +213,20 @@ func dateSweepRefusal(locale string, options map[string]any) string {
 	_, minute := options["minute"]
 	_, second := options["second"]
 	_, fraction := options["fractionalSecondDigits"]
-	if options["hourCycle"] == "h24" && hour && !minute && (second || fraction) {
-		return "hourCycle h24, an hour and a second but no minute is not supported"
+	_, zone := options["timeZoneName"]
+	if locale == "en-GB" && options["hourCycle"] == "h24" && hour && !minute && !zone && (second || fraction) {
+		return "en-GB with hourCycle h24, an hour and a second but no minute is not supported"
 	}
-	if locale == "en-GB" && hour && minute && second && options["second"] == "numeric" && options["timeZoneName"] == "longOffset" {
-		return "timeZoneName 'longOffset', an hour, a minute and 'numeric' seconds is not supported"
+	if locale == "en-GB" && options["hour"] == "numeric" && minute && (second || fraction) {
+		effectiveSecondWidth1 := options["second"] == "numeric" || (!second && fraction)
+		switch options["timeZoneName"] {
+		case "shortOffset":
+			if effectiveSecondWidth1 {
+				return "en-GB with timeZoneName 'shortOffset', an hour, a minute and a second is not supported"
+			}
+		case "longOffset":
+			return "en-GB with timeZoneName 'longOffset', an hour, a minute and a second is not supported"
+		}
 	}
 	return ""
 }

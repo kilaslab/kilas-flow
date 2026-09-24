@@ -1230,8 +1230,8 @@ var enUS = sync.OnceValue(func() *dateLocale {
 // against Node to pin down, and automating their *discovery* would mean
 // automating that reasoning, not just re-running a fixed recipe).
 //
-//  1. Start from en-US's own 47 skeleton keys (its VALUE column, i.e. the
-//     second string of each {"key", "value"} pair below enUS) — every
+//  1. Start from en-US's own 47 skeleton keys (its KEY column, i.e. the
+//     first string of each {"key", "value"} pair below enUS) — every
 //     other English locale this runtime knows uses the same key set,
 //     because the keys are UTS #35 skeletons the pattern generator
 //     (bestPattern/adjust, below) matches against, not CLDR-locale-specific
@@ -1275,14 +1275,13 @@ var enUS = sync.OnceValue(func() *dateLocale {
 //     answered differently from Node and testing narrower and narrower
 //     variants until the exact triggering width combination was isolated.
 //     Not every such gap has a clean anchor: en-GB's timeZoneName:
-//     'longOffset' with an hour, a minute and 'numeric' (not '2-digit')
-//     seconds needed a dedicated anchor tried and reverted — the
-//     matcher's width metric (widthOf) put an "OOOO"-keyed entry
-//     numerically closer to a bare "z"/"O" request than the existing
-//     "v"-keyed one was, so it wrongly won those too. nativeDateTimeFormat
-//     refuses that one shape by name instead (see its dateSweepRefusal-
-//     matching comment), as it does hourCycle: 'h24”s separate,
-//     unrelated tie-break gap.
+//     'shortOffset'/'longOffset' with an hour, a minute and a second
+//     needed a dedicated anchor tried and reverted — the matcher's width
+//     metric (widthOf) put an "OOOO"-keyed entry numerically closer to a
+//     bare "z"/"O" request than the existing "v"-keyed one was, so it
+//     wrongly won those too. nativeDateTimeFormat refuses those shapes by
+//     name instead (see its dateSweepRefusal-matching comment), as it
+//     does for hourCycle: 'h24', a separate, unrelated tie-break gap.
 //  6. Verify the whole table against Node's real output before trusting
 //     it: internal/jsrun/intl_test.go's TestTheDateOptionSweepMatchesNode
 //     sweeps every component-option combination record.mjs's optionSets()
@@ -1842,6 +1841,11 @@ func nativeDateTimeFormat(args []any) (any, error) {
 	// en-GB).
 	cycle := options.hourCycle
 	extensionCycle := unicodeExtension(tag, "hc")
+	// cycleFromExtension is whether the locale's own -u-hc- extension, not
+	// an explicit hourCycle/hour12 option, is what picked cycle — see
+	// stylePattern, which renders a dateStyle/timeStyle request's hour
+	// differently depending on it (verified against Node directly).
+	cycleFromExtension := options.hour12 == nil && cycle == "" && extensionCycle != ""
 	switch {
 	case options.hour12 != nil && *options.hour12:
 		cycle = "h12"
@@ -1869,37 +1873,63 @@ func nativeDateTimeFormat(args []any) (any, error) {
 		if options.required == "time" && options.dateStyle != "" && options.timeStyle == "" {
 			return nil, typeError("Invalid option : dateStyle")
 		}
-		tokens = locale.stylePattern(options.dateStyle, options.timeStyle, cycle)
+		tokens = locale.stylePattern(options.dateStyle, options.timeStyle, cycle, cycleFromExtension)
 	} else {
 		requestedSkeleton, err := optionsSkeleton(&options, cycle)
 		if err != nil {
 			return nil, err
 		}
 		// hourCycle 'h24' ("k") has its own tie-break for which field
-		// becomes primary when a request has no anchor and needs one
-		// appended — Node makes it "9 (hour: 17)" for hour+second with no
-		// minute, the opposite of "17 (second: 9)" every other hour
-		// cycle gives the same request. That tie-break is not a per-field
-		// width rule adjust() can express (see FEAT-9we7kw's ticket
-		// notes); refuse by name rather than risk the wrong field ending
-		// up first, which "17 (second: 9)" — a value Node would also
-		// print, just for a different request — would never surface as
-		// obviously wrong.
-		if requestedSkeleton.char[fieldHour] == 'k' && requestedSkeleton.has(fieldHour) && !requestedSkeleton.has(fieldMinute) &&
+		// becomes primary when hour+second (no minute) has no anchor and
+		// needs one appended: Node makes it "9 (hour: 17)", the opposite
+		// of "17 (second: 9)" every other hour cycle gives that same
+		// request. That is not a per-field width rule adjust() can
+		// express — it comes from a width-mismatch side effect between
+		// the requested 'k' and the "H"/"h" anchor every OTHER locale
+		// falls back to (a small but nonzero distance penalty that just
+		// happens to break the tie the same way Node's real algorithm
+		// does), which is exactly why the bug is en-GB-only: en-GB alone
+		// has genuine 'k'-lettered anchors ("k"/"km"/… below), an EXACT
+		// match with no penalty, so its tie genuinely ties and table
+		// order (hour sorts before second) wins it the wrong way. A zone
+		// joining the request changes the winning candidate outright
+		// (e.g. "Hv" covers hour+zone, missing only second, decisively
+		// closer than any hour-only or second-only candidate) and is
+		// correct on every locale including en-GB — do not refuse it.
+		if locale.tag == "en-GB" && requestedSkeleton.char[fieldHour] == 'k' && requestedSkeleton.has(fieldHour) &&
+			!requestedSkeleton.has(fieldMinute) && !requestedSkeleton.has(fieldZone) &&
 			(requestedSkeleton.has(fieldSecond) || requestedSkeleton.has(fieldFraction)) {
-			return nil, rangeError("date formatting with hourCycle h24, an hour and a second but no minute is not supported")
+			return nil, rangeError("date formatting in en-GB with hourCycle h24, an hour and a second but no minute is not supported")
 		}
-		// en-GB's hour+minute+seconds pads the hour once a zone joins —
-		// except for timeZoneName: 'longOffset' with 'numeric' (not
-		// '2-digit') seconds specifically, which keeps it padded, unlike
-		// every other zone style at that same width (see the comment on
-		// en-GB's "Hmm"/"Hmmss" entries above). No anchor can express that
-		// one width without also, and wrongly, padding 'short'/'long'/
-		// 'shortOffset' at the same width — refuse by name.
-		if locale.tag == "en-GB" && requestedSkeleton.has(fieldHour) && requestedSkeleton.has(fieldMinute) &&
-			requestedSkeleton.char[fieldSecond] == 's' && requestedSkeleton.size[fieldSecond] == 1 &&
-			requestedSkeleton.char[fieldZone] == 'O' && requestedSkeleton.size[fieldZone] == 4 {
-			return nil, rangeError("date formatting in en-GB with timeZoneName 'longOffset', an hour, a minute and 'numeric' seconds is not supported")
+		// en-GB's hour+minute+seconds pads the hour once an offset zone
+		// (timeZoneName: 'shortOffset'/'longOffset') joins, but only for
+		// a 'numeric' (not '2-digit') hour — a '2-digit' hour already
+		// renders at width 2 regardless of which anchor wins, so it is
+		// never wrong. The two offset styles differ from each other: a
+		// 'numeric' effective second (explicit, or implied by
+		// fractionalSecondDigits with no explicit second — see
+		// forMatching) breaks 'shortOffset' too; 'longOffset' breaks at
+		// EITHER second width, whenever a second is present at all. No
+		// anchor can express either width without also, and wrongly,
+		// padding a case that already matches Node (tried and reverted
+		// for 'longOffset' alone in fix round 1; the wider evidence here
+		// rules out anchors for 'shortOffset' the same way) — refused by
+		// name instead, precisely scoped to what fix round 2's probes (p2,
+		// p3, p8) found actually differs.
+		if locale.tag == "en-GB" && requestedSkeleton.has(fieldHour) && requestedSkeleton.size[fieldHour] == 1 &&
+			requestedSkeleton.has(fieldMinute) && requestedSkeleton.char[fieldZone] == 'O' {
+			effectiveSecond, effectiveSecondWidth := requestedSkeleton.has(fieldSecond), requestedSkeleton.size[fieldSecond]
+			if !effectiveSecond && requestedSkeleton.has(fieldFraction) {
+				effectiveSecond, effectiveSecondWidth = true, 1 // forMatching's own auto-add
+			}
+			longOffset := requestedSkeleton.size[fieldZone] == 4
+			if effectiveSecond && (longOffset || effectiveSecondWidth == 1) {
+				style := "'shortOffset'"
+				if longOffset {
+					style = "'longOffset'"
+				}
+				return nil, rangeError("date formatting in en-GB with timeZoneName %s, an hour, a minute and a second is not supported", style)
+			}
 		}
 		tokens = locale.bestPattern(requestedSkeleton)
 		if requestedSkeleton.has(fieldHour) {
@@ -2007,7 +2037,7 @@ func optionsSkeleton(options *dateTimeOptions, cycle string) (skeleton, error) {
 // en-CA, h23 for en-GB); an hour cycle other than that default rebuilds the
 // time through the generator instead, as V8 does, so en-US h23 gives
 // "HH:mm" and drops the AM/PM, and en-GB h12 gives "hh:mm a" and gains it.
-func (locale *dateLocale) stylePattern(dateStyle, timeStyle, cycle string) []patternToken {
+func (locale *dateLocale) stylePattern(dateStyle, timeStyle, cycle string, cycleFromExtension bool) []patternToken {
 	var date, clock []patternToken
 	if dateStyle != "" {
 		date = parsePattern(locale.dateStyles[styleIndex[dateStyle]])
@@ -2017,6 +2047,23 @@ func (locale *dateLocale) stylePattern(dateStyle, timeStyle, cycle string) []pat
 		if cycle != locale.defaultHourCycle {
 			s := skeletonOfTokens(clock)
 			s.char[fieldHour] = map[string]byte{"h11": 'K', "h12": 'h', "h23": 'H', "h24": 'k'}[cycle]
+			// A cycle named by the locale's own -u-hc- extension (as
+			// opposed to an explicit hourCycle/hour12 option — verified
+			// directly against Node, which renders the two differently
+			// despite reporting the identical resolvedOptions() otherwise)
+			// asks for the hour the plain way ('numeric', width 1), the
+			// locale's own data (adjust()'s quirky/lockedIn) deciding the
+			// final width from there, same as a real 'numeric' request
+			// would. An explicit option keeps this rebuilt request at
+			// locale.timeStyles' own width, which belongs to the locale's
+			// *default* cycle and can disagree — en-GB's default is h23,
+			// whose "HH" is width 2, and Node keeps that width 2 even
+			// once hourCycle: 'h12' asks for the 12-hour cycle
+			// ("05:07:09 pm", not "5:07:09 pm"); only the -u-hc- form
+			// unpads it.
+			if cycleFromExtension {
+				s.size[fieldHour] = 1
+			}
 			s.char[fieldDayPeriod], s.size[fieldDayPeriod] = 0, 0
 			clock = withHourCycle(locale.bestPattern(s), cycle)
 		}
