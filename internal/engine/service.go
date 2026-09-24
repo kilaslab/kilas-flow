@@ -59,6 +59,15 @@ type ExecutionStore interface {
 	ListExpiredWaits(context.Context, time.Time, int) ([]repository.Wait, error)
 }
 
+// StaticDataStore keeps each workflow's static data: the JSON document
+// n8n's $getWorkflowStaticData reads and writes, which a workflow keeps from
+// one run to the next.
+type StaticDataStore interface {
+	// LoadStaticData returns the workflow's document, or nil when it has none.
+	LoadStaticData(context.Context, repository.TenantScope, string) (json.RawMessage, error)
+	SaveStaticData(context.Context, repository.TenantScope, string, json.RawMessage) error
+}
+
 // CredentialStore resolves a stored credential for the tenant that owns the
 // running execution.
 type CredentialStore interface {
@@ -74,6 +83,9 @@ type ServiceDeps struct {
 	Catalog     workflow.Catalog
 	Runner      *Runner
 	Credentials CredentialStore
+	// StaticData keeps each workflow's static data between runs. Nil keeps
+	// it only for the length of one execution.
+	StaticData StaticDataStore
 	// Events receives standardized execution events. It is optional: delivery
 	// must never be a prerequisite for durable persistence or for a run to
 	// succeed, so a nil broker simply publishes nothing.
@@ -156,6 +168,7 @@ type Service struct {
 	catalog                workflow.Catalog
 	runner                 *Runner
 	credentials            CredentialStore
+	staticData             StaticDataStore
 	events                 *events.Broker
 	environment            map[string]string
 	workerID               string
@@ -217,6 +230,7 @@ func NewService(deps ServiceDeps) (*Service, error) {
 		catalog:                deps.Catalog,
 		runner:                 deps.Runner,
 		credentials:            deps.Credentials,
+		staticData:             deps.StaticData,
 		events:                 deps.Events,
 		environment:            environment,
 		workerID:               deps.WorkerID,
@@ -440,6 +454,7 @@ func (service *Service) runOnce(ctx context.Context, workerID string) (bool, err
 		if updateErr != nil {
 			return true, updateErr
 		}
+		service.saveStaticData(persistCtx, updated, result.StaticData)
 		terminal := events.ExecutionFailed
 		if updated.Status == execution.StatusCancelled {
 			terminal = events.ExecutionCancelled
@@ -473,6 +488,9 @@ func (service *Service) runOnce(ctx context.Context, workerID string) (bool, err
 	if err != nil {
 		return true, err
 	}
+	// After the status settles, so a run cancelled as it finished saves
+	// nothing.
+	service.saveStaticData(persistCtx, updated, result.StaticData)
 	terminal := events.ExecutionCompleted
 	if updated.Status == execution.StatusCancelled {
 		terminal = events.ExecutionCancelled
@@ -1398,6 +1416,7 @@ func (service *Service) persistChild(ctx context.Context, tenant repository.Tena
 	if err != nil {
 		return err
 	}
+	service.saveStaticData(ctx, updated, result.StaticData)
 	terminal := events.ExecutionCompleted
 	switch updated.Status {
 	case execution.StatusFailed:
@@ -1511,4 +1530,42 @@ func (service *Service) runBudget(ctx context.Context, document workflow.Documen
 		budget = service.maxTimeout
 	}
 	return context.WithTimeout(ctx, budget)
+}
+
+// staticDataFor is an execution's handle on its workflow's static data,
+// loaded from the store the first time a node asks for it.
+func (service *Service) staticDataFor(record execution.Record) *StaticData {
+	if service.staticData == nil {
+		return NewStaticData(nil)
+	}
+	tenant := repository.TenantScope{ID: record.TenantID}
+	return NewStaticData(func(ctx context.Context) (json.RawMessage, error) {
+		return service.staticData.LoadStaticData(ctx, tenant, record.WorkflowID)
+	})
+}
+
+// saveStaticData keeps what an execution left in its workflow's static data,
+// by n8n's rule: whenever the execution ends, or parks at a Wait, having
+// changed it, whether it succeeded or failed; never for a cancelled run; and
+// never for a manual run, which is how a workflow is tested from the editor.
+// record is the execution as it was just settled, so its status is the one
+// the store holds. A sub-workflow's own run is not a manual one, whoever
+// started its caller, and a retry runs under its original's trigger. A save
+// that fails is logged: the execution it belongs to has already settled.
+func (service *Service) saveStaticData(ctx context.Context, record execution.Record, data *StaticData) {
+	if service.staticData == nil || data == nil || record.Trigger == execution.TriggerManual {
+		return
+	}
+	switch record.Status {
+	case execution.StatusSucceeded, execution.StatusFailed, execution.StatusWaiting:
+	default:
+		return
+	}
+	document, changed := data.Changed()
+	if !changed {
+		return
+	}
+	if err := service.staticData.SaveStaticData(ctx, repository.TenantScope{ID: record.TenantID}, record.WorkflowID, document); err != nil {
+		service.log.Error("the workflow static data could not be saved", "workflowId", record.WorkflowID, "executionId", record.ID, "error", err)
+	}
 }

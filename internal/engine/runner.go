@@ -290,6 +290,10 @@ type Request struct {
 	// ItemOutcomes, rather than stopping at the first failure. The runner
 	// sets it per invocation.
 	TolerateItemFailures bool
+	// StaticData is the workflow's static data for this execution, shared by
+	// every node that reads it. The runner gives a request without one an
+	// empty handle that lives as long as the run.
+	StaticData *StaticData
 }
 
 // BinaryStore is the slice of the payload store an executor may use.
@@ -402,6 +406,9 @@ type NodeRun struct {
 type Result struct {
 	NodeRuns []NodeRun
 	Output   map[string]workflow.NodeOutput
+	// StaticData is the run's handle on the workflow's static data, which
+	// the service saves when the run qualifies.
+	StaticData *StaticData
 }
 
 // Runner schedules a compiled DAG. Nodes inside one execution run in stable
@@ -559,6 +566,7 @@ type runState struct {
 func newRunState(graph preparedGraph, request *Request) *runState {
 	state := emptyRunState(graph)
 	ensureRequestMaps(request, graph)
+	state.result.StaticData = request.StaticData
 	state.seed(graph)
 	return state
 }
@@ -586,6 +594,9 @@ func ensureRequestMaps(request *Request, graph preparedGraph) {
 	}
 	if request.NodeItems == nil {
 		request.NodeItems = make(map[string]expression.NodeItem, len(graph.nodes))
+	}
+	if request.StaticData == nil {
+		request.StaticData = NewStaticData(nil)
 	}
 	if request.NodeState == nil {
 		request.NodeState = make(map[string]map[string]any, len(graph.nodes))
@@ -995,6 +1006,7 @@ func (runner *Runner) Resume(ctx context.Context, ir workflow.IR, request Reques
 		result:     &Result{NodeRuns: make([]NodeRun, 0, len(graph.nodes)), Output: make(map[string]workflow.NodeOutput)},
 	}
 	ensureRequestMaps(&request, graph)
+	state.result.StaticData = request.StaticData
 	for id, output := range checkpoint.Completed {
 		state.completed[id] = output
 	}
@@ -1687,10 +1699,13 @@ func cloneRequest(request Request) Request {
 		NodeRunSink:   request.NodeRunSink,
 		NodeStartSink: request.NodeStartSink,
 		Workflows:     request.Workflows,
-		Env:           make(map[string]string, len(request.Env)),
-		NodeOutputs:   make(map[string]map[string]any, len(request.NodeOutputs)),
-		NodeItems:     make(map[string]expression.NodeItem, len(request.NodeItems)),
-		NodeState:     make(map[string]map[string]any, len(request.NodeState)),
+		// Shared, not copied: every node run of the execution reads and
+		// writes the one handle.
+		StaticData:  request.StaticData,
+		Env:         make(map[string]string, len(request.Env)),
+		NodeOutputs: make(map[string]map[string]any, len(request.NodeOutputs)),
+		NodeItems:   make(map[string]expression.NodeItem, len(request.NodeItems)),
+		NodeState:   make(map[string]map[string]any, len(request.NodeState)),
 	}
 	for key, value := range request.Env {
 		cloned.Env[key] = value

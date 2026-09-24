@@ -33,7 +33,7 @@ filesystem has no transaction to join.
 | `triggers` | `poll_cursors`, `schedules`, `webhook_deliveries`, `webhook_routes`, `webhook_bindings` | Intake is closed. A webhook arriving after this would queue an execution that the definitions step could then not delete, because `workflow_versions` refuses to lose its executions. Leased Gmail and Drive poll cursors go with the other intake rows so a replica cannot emit into a tenant that is being deleted. |
 | `binaries` | — | A filesystem has no transaction to join, so it is a step of its own, and the payload directory goes before the rows that name its payloads. |
 | `runs` | `execution_node_runs`, `execution_waits`, `executions`, `idempotency_keys` | Waits are deleted before executions: `execution_waits.execution_id` is `ON DELETE RESTRICT`, so the other order fails the whole transaction for any tenant with a suspended run — the ordinary case for a deletion request. |
-| `definitions` | `secret_bindings`, `credentials`, `workflow_versions`, `workflow_publish_events`, `workflows` | Versions before workflows (also `RESTRICT`). Workflows are hard-deleted, not soft-deleted. |
+| `definitions` | `secret_bindings`, `credentials`, `workflow_versions`, `workflow_publish_events`, `workflow_static_data`, `workflows` | Versions before workflows (also `RESTRICT`). Workflows are hard-deleted, not soft-deleted. |
 | `sessions` | — | The in-process agent conversation memory of this process. Best effort by construction: it is not in a database. |
 | `datastores` | `datastore_columns`, `datastores` | The catalogue rows and the physical tables they name, together, so no table is left with no row describing it and no row is left describing a table that is gone. |
 | `vectors` | `vector_documents_384`, `vector_documents_768`, `vector_documents_1024`, `vector_documents_1536`, `vector_collections` | Each one is guarded, because a SQLite install and a PostgreSQL install without the `vector` extension have none of them. |
@@ -126,6 +126,7 @@ operation refuses every caller, exactly like any other operator route.
     "webhook_deliveries": 9,
     "webhook_routes": 1,
     "workflow_publish_events": 2,
+    "workflow_static_data": 1,
     "workflow_versions": 4,
     "workflows": 2
   },

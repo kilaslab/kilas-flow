@@ -157,6 +157,8 @@ type vm struct {
 	installRoots goja.Callable
 	run          goja.Callable
 	sortWith     goja.Callable
+	// staticState returns the static data the code was handed, by kind.
+	staticState goja.Callable
 	// errorTypes are the error constructors, captured before any user code,
 	// that natives throw through.
 	errorTypes map[string]goja.Value
@@ -164,13 +166,25 @@ type vm struct {
 	timers map[int64]*timerEntry
 
 	// jobs carries completions of asynchronous host work back to the VM's
-	// goroutine, which is the only one allowed to settle a promise.
-	jobs    chan func() error
-	pending int
+	// goroutine, which is the only one allowed to settle a promise. pending
+	// counts the work jobs will arrive for, and hostPending the part of it
+	// that is helper calls the server is answering.
+	jobs        chan func() error
+	pending     int
+	hostPending int
 	// rejected tracks the promises rejected with nothing to handle them.
 	rejected rejections
+	// clock is the running call's time budget, which await pauses while the
+	// code waits on nothing but the server.
+	clock *clock
+	// files are the IDs a returned item may name: the input's files and the
+	// ones the code stored.
+	files map[string]bool
 
+	// hostCalls counts the helper calls charged so far: the run's, or with
+	// perItem set, the current item's.
 	hostCalls int
+	perItem   bool
 	hostCtx   context.Context
 	stopHost  context.CancelFunc
 	done      chan struct{}
@@ -202,7 +216,7 @@ func newVM(limits Limits) (*vm, error) {
 	rt.SetMaxCallStackSize(limits.MaxCallDepth)
 	hostCtx, stopHost := context.WithCancel(context.Background())
 	v := &vm{
-		rt: rt, limits: limits, timers: map[int64]*timerEntry{},
+		rt: rt, limits: limits, timers: map[int64]*timerEntry{}, files: map[string]bool{},
 		jobs: make(chan func() error, 64), hostCtx: hostCtx, stopHost: stopHost,
 		done: make(chan struct{}), wake: make(chan struct{}),
 	}
@@ -338,6 +352,8 @@ func (v *vm) install(state string, input value, mode Mode, h host) error {
 			"console": func(call goja.FunctionCall) goja.Value {
 				return v.rt.ToValue(h.console(call.Argument(0).String(), call.Argument(1).String()))
 			},
+			"call":        v.startHostCall(h.call),
+			"staticData":  v.readStaticData(h.staticData),
 			"native":      v.callNative,
 			"library":     v.loadLibrary,
 			"timerStart":  v.timerStart,
@@ -369,7 +385,10 @@ func (v *vm) install(state string, input value, mode Mode, h host) error {
 		if v.run, err = callable(exported.Get("run")); err != nil {
 			return err
 		}
-		v.sortWith, err = callable(exported.Get("sort"))
+		if v.sortWith, err = callable(exported.Get("sort")); err != nil {
+			return err
+		}
+		v.staticState, err = callable(exported.Get("staticData"))
 		return err
 	})
 }
@@ -532,6 +551,13 @@ func (v *vm) await(ctx context.Context, returned goja.Value) (goja.Value, error)
 			v.consumed(promise)
 			return nil, v.thrown(promise.Result())
 		}
+		// A script already stopped, by a limit a job hit, is not one that
+		// waits on nothing.
+		select {
+		case <-v.wake:
+			return nil, v.stopReason()
+		default:
+		}
 		// Every VM entry drains goja's job queue before it returns, so this
 		// is where Node would find an uncaught error with the code still
 		// running.
@@ -541,8 +567,19 @@ func (v *vm) await(ctx context.Context, returned goja.Value) (goja.Value, error)
 		if v.pending == 0 && len(v.jobs) == 0 {
 			return nil, named(ErrNeverSettles, "the code waits for a promise that nothing can ever settle")
 		}
+		// Waiting on the server alone is not the user's time: the code is
+		// idle, and the wait is bounded by the execution's context and the
+		// helper's own timeout instead. A timer armed beside it keeps the
+		// clock running.
+		onlyServer := v.clock != nil && len(v.jobs) == 0 && v.hostPending > 0 && v.hostPending == v.pending
+		if onlyServer {
+			v.clock.stop()
+		}
 		select {
 		case job := <-v.jobs:
+			if onlyServer {
+				v.clock.start()
+			}
 			v.pending--
 			if err := job(); err != nil {
 				return nil, v.failedJob(err)
@@ -556,64 +593,18 @@ func (v *vm) await(ctx context.Context, returned goja.Value) (goja.Value, error)
 	}
 }
 
-// bindAsync installs a global host function that returns a promise. fn runs
-// on its own goroutine with a context that ends with the VM; its result is
-// handed back through jobs. Nothing the Code node ships uses it yet: it is
-// the seam this.helpers.httpRequest will use (FEAT-x9gq0s), which in the
-// server must also cross the worker protocol as a question, as $('Node') does.
-func (v *vm) bindAsync(name string, fn func(context.Context, []any) (any, error)) error {
-	return v.rt.Set(name, func(call goja.FunctionCall) goja.Value {
-		if !v.countHostCall() {
-			return goja.Undefined()
-		}
-		arguments := make([]any, len(call.Arguments))
-		for index, argument := range call.Arguments {
-			arguments[index] = argument.Export()
-		}
-		promise, resolve, reject := v.rt.NewPromise()
-		v.pending++
-		go func() {
-			result, err := hostCall(v.hostCtx, fn, arguments)
-			job := func() error {
-				if err != nil {
-					return reject(v.rt.NewGoError(err))
-				}
-				settled, err := v.toJS(result)
-				if err != nil {
-					return reject(v.rt.NewGoError(err))
-				}
-				return resolve(settled)
-			}
-			select {
-			case v.jobs <- job:
-			case <-v.done:
-			}
-		}()
-		return v.rt.ToValue(promise)
-	})
-}
-
-// hostCall runs one asynchronous host function on its own goroutine. A panic
-// there is outside every guard on the VM's goroutine and would end the
-// process, so it is turned into the call's error, which rejects the promise
-// the script is waiting on.
-func hostCall(ctx context.Context, fn func(context.Context, []any) (any, error), arguments []any) (result any, err error) {
-	defer func() {
-		if recovered := recover(); recovered != nil {
-			result, err = nil, fmt.Errorf("the host call failed (%v); this is a fault in the server, not in the code", recovered)
-		}
-	}()
-	return fn(ctx, arguments)
-}
-
 // countHostCall charges one host call, and stops the script when the budget
-// is spent.
+// is spent: the run's, or in per-item mode the item's.
 func (v *vm) countHostCall() bool {
 	v.hostCalls++
 	if v.hostCalls <= v.limits.MaxHostCalls {
 		return true
 	}
-	v.interrupt(named(ErrHostCallLimit, fmt.Sprintf("code made more than %d host calls", v.limits.MaxHostCalls)))
+	scope := ""
+	if v.perItem {
+		scope = " for one item"
+	}
+	v.interrupt(named(ErrHostCallLimit, fmt.Sprintf("code made more than %d host calls%s", v.limits.MaxHostCalls, scope)))
 	return false
 }
 

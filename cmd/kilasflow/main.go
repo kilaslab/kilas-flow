@@ -641,6 +641,9 @@ func run(args []string) error {
 		Catalog:     nodeRegistry,
 		Runner:      engine.NewRunner(executorRegistry),
 		Credentials: credentialsRepo,
+		// What a workflow's Code nodes keep between runs with
+		// $getWorkflowStaticData, saved after its successful production runs.
+		StaticData: repository.NewStaticDataStore(db.DB),
 		// Named so a called workflow starts from its sub-workflow trigger and
 		// not from a webhook or schedule it also happens to carry.
 		SubworkflowTriggerType: nodes.ExecuteWorkflowTriggerType,
@@ -1339,6 +1342,7 @@ func javaScriptRuntime(cfg config.Code, log *slog.Logger) (option nodes.Executor
 			MaxInputBytes:   cfg.JavaScriptMaxInputBytes,
 			MaxOutputBytes:  cfg.JavaScriptMaxOutputBytes,
 			MaxConsoleBytes: cfg.JavaScriptMaxConsoleBytes,
+			MaxHostCalls:    cfg.JavaScriptMaxHostCalls,
 		},
 		MaxConcurrent: cfg.JavaScriptMaxConcurrent,
 		HeapCeiling:   javaScriptHeapCeiling(cfg.JavaScriptHeapCeilingMB),

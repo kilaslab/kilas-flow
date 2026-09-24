@@ -18,20 +18,39 @@
 // many VMs at once.
 //
 // A script can reach exactly the globals this package installs. Nothing here
-// imports the filesystem, the network or a process; a capability a script is
-// granted, such as outbound HTTP, arrives as a Go function from the node that
-// runs it. internal/guardrails holds both rules.
+// imports the filesystem, the network or a process; internal/guardrails holds
+// that rule. What a script asks of the server beyond its input, n8n's
+// this.helpers (httpRequest, getBinaryDataBuffer, prepareBinaryData) and
+// $getWorkflowStaticData, is carried out by the node that runs it, through
+// the Helpers it puts in the roots: the request goes out from the server
+// under the deployment's egress policy, and files and static data are the
+// execution's own. In a worker the calls cross the worker protocol. Any
+// other helper is refused in the one sentence.
+//
+// # Helpers
+//
+// A helper is one asynchronous host call. The runtime hands the request to a
+// goroutine and returns a promise; the answer comes back through the
+// execution's job loop, the only place a promise may be settled, so the code
+// runs its timers and other promises while it waits, and several calls can
+// be in flight at once. Every call counts against Limits.MaxHostCalls. A
+// failed request rejects its promise; a named limit (a file or response too
+// large) stops the code. The static data the code was handed is written back
+// as JSON after a successful run, within MaxStaticDataBytes, and the files it
+// stored are the only files beyond its input that a returned item may name.
 //
 // # Time
 //
 // The time limit covers the user's program only, which is the BUG-9s3htg rule
 // restated for this engine (.pine/memory/code-node.md). Creating the VM,
 // loading a library, parsing the input and decoding the output are not
-// charged. Every VM entry from the first user statement on is charged,
-// including the result's normalisation and JSON.stringify, because a
-// script's toJSON, getters and Proxy traps run inside those. In "Run once for
-// each item" mode the items share one budget, and the clock is paused between
-// them.
+// charged, and nor is time the code spends idle waiting on nothing but the
+// server's answer to a helper; the execution's context and the helper's own
+// timeout bound that wait instead. Every VM entry from the first user
+// statement on is charged, including the result's normalisation and
+// JSON.stringify, because a script's toJSON, getters and Proxy traps run
+// inside those. In "Run once for each item" mode the items share one budget,
+// and the clock is paused between them.
 //
 // A backtracking regular expression is the one piece of work an interrupt
 // cannot stop. goja reports a regexp2 match timeout as "no match", which would

@@ -202,7 +202,7 @@ func (s *Service) steps() []step {
 		{
 			name: "definitions",
 			tables: []string{
-				"secret_bindings", "credentials", "workflow_versions", "workflow_publish_events", "workflows",
+				"secret_bindings", "credentials", "workflow_versions", "workflow_publish_events", "workflow_static_data", "workflows",
 			},
 			run: func(ctx context.Context, tenant repository.TenantScope, _ *Result) (map[string]int64, error) {
 				return s.rows.PurgeDefinitions(ctx, tenant)

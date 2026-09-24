@@ -43,6 +43,9 @@ type Job struct {
 	// Count is how many input items the job has, for a worker, which has no
 	// Origins.
 	Count int `json:"count"`
+	// ledger is what the job's host handed out, which Finish checks the
+	// result against. Like Origins, it never leaves the preparing process.
+	ledger *ledger
 }
 
 // Executed is what Execute produced, before Finish decodes it: the code's
@@ -59,6 +62,9 @@ type Executed struct {
 	Console          []ConsoleLine `json:"console,omitempty"`
 	ConsoleTruncated bool          `json:"consoleTruncated,omitempty"`
 	UserTime         time.Duration `json:"userTime"`
+	// StaticData is the static data the code was handed, by kind, as JSON
+	// after it ran, set only when the run succeeded.
+	StaticData map[string]string `json:"staticData,omitempty"`
 }
 
 // ItemFailure is one item that failed in a job that went on past it.
@@ -96,6 +102,7 @@ var sentinels = []struct {
 	{"time", ErrTimeLimit}, {"memory", ErrMemoryLimit}, {"output", ErrOutputLimit}, {"input", ErrInputLimit},
 	{"hostCalls", ErrHostCallLimit}, {"callDepth", ErrCallDepth}, {"invalidReturn", ErrInvalidReturn},
 	{"neverSettles", ErrNeverSettles}, {"unsupported", ErrUnsupported}, {"engine", ErrEngineFault},
+	{"file", ErrFileLimit}, {"response", ErrResponseLimit}, {"staticData", ErrStaticDataLimit},
 }
 
 // EncodeError describes err for the pipe, or returns nil for a nil error.

@@ -46,13 +46,16 @@ var pinnedCatalogFunctions = map[string]bool{
 	// (`run --revision`, and the retry of a finished execution), and queueManual
 	// is the transaction both forward to.
 	"QueueManualVersion": true,
-	"queueManual":        true,
+	// QueueRetry queues a finished execution's own revision again, through
+	// queueManual.
+	"QueueRetry":  true,
+	"queueManual": true,
 }
 
 // callersObligatedToScope are the pinned names whose call sites must pass
 // workflow.CatalogFor. `publish` is not one of them: it is unexported and its
 // callers forward the catalogue they were given.
-var callersObligatedToScope = []string{"Activate", "PublishVersion", "QueueManualLatest", "QueueManualVersion"}
+var callersObligatedToScope = []string{"Activate", "PublishVersion", "QueueManualLatest", "QueueManualVersion", "QueueRetry"}
 
 // skippedDirectories are trees that hold no first-party Go source this rule is
 // about: generated clients, the reference checkout, build output and scratch

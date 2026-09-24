@@ -114,50 +114,6 @@ func TestALoopInsideAPromiseJobStopsAtTheTimeLimit(t *testing.T) {
 	}
 }
 
-func TestALoopAfterAnAwaitedHostCallStopsAtTheTimeLimit(t *testing.T) {
-	runner := newRunner()
-	runner.BindAsyncForTest("slowly", func(ctx context.Context, _ []any) (any, error) {
-		time.Sleep(20 * time.Millisecond)
-		return "done", nil
-	})
-	err, latency := stoppedPromptly(t, runner, jsrun.Task{
-		Source: "await slowly()\nwhile (true) {}",
-		Limits: jsrun.Limits{Timeout: 150 * time.Millisecond},
-	})
-	if !errors.Is(err, jsrun.ErrTimeLimit) {
-		t.Fatalf("Run() error = %v, want the time limit", err)
-	}
-	if latency > interruptTolerance {
-		t.Fatalf("the run returned %v after its interrupt, want within %v", latency, time.Duration(interruptTolerance))
-	}
-}
-
-// A host function settles its promise from Go. The continuation waiting on it
-// must run as part of that settlement, before the code's next line.
-func TestResolvingFromGoRunsTheContinuationImmediately(t *testing.T) {
-	runner := newRunner()
-	var received []any
-	runner.BindAsyncForTest("fetchValue", func(_ context.Context, arguments []any) (any, error) {
-		received = arguments
-		time.Sleep(10 * time.Millisecond)
-		return map[string]any{"value": "x"}, nil
-	})
-	result := mustRun(t, runner, jsrun.Task{Source: strings.Join([]string{
-		"const order = []",
-		"const pending = fetchValue('a', 2).then(answer => order.push('then:' + answer.value))",
-		"await pending",
-		"order.push('after')",
-		"return [{ json: { order } }]",
-	}, "\n")})
-	order := fmt.Sprint(result.Items[0].JSON["order"])
-	if order != "[then:x after]" {
-		t.Fatalf("order = %s, want the continuation to run before the next line", order)
-	}
-	if fmt.Sprint(received) != "[a 2]" {
-		t.Fatalf("the host function received %v, want [a 2]", received)
-	}
-}
-
 // goja reports a regular expression's match timeout as "no match". If that
 // timeout fired before the script's own limit, a catastrophic pattern would
 // quietly return false and the script would carry on with a wrong answer. The

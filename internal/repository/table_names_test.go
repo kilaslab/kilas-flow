@@ -61,3 +61,14 @@ func TestPollCursorsTableNameSurvivesTheNamerRoundTrip(t *testing.T) {
 		t.Fatalf("kflow_ prefix: TableName = %q, want kflow_poll_cursors", got)
 	}
 }
+
+func TestWorkflowStaticDataTableNameSurvivesTheNamerRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	if got := (workflowStaticDataModel{}).TableName(schema.NamingStrategy{}); got != "workflow_static_data" {
+		t.Fatalf("empty prefix: TableName = %q, want workflow_static_data", got)
+	}
+	if got := (workflowStaticDataModel{}).TableName(schema.NamingStrategy{TablePrefix: "kflow_"}); got != "kflow_workflow_static_data" {
+		t.Fatalf("kflow_ prefix: TableName = %q, want kflow_workflow_static_data", got)
+	}
+}

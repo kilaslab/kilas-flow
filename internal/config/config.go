@@ -838,6 +838,14 @@ type Code struct {
 	// node run keeps. Output past it is dropped, with a marker saying so.
 	// Env: KILASFLOW_CODE_JAVASCRIPT_MAX_CONSOLE_BYTES. Default: 65536 (64 KiB).
 	JavaScriptMaxConsoleBytes int64 `koanf:"javascript_max_console_bytes"`
+
+	// JavaScriptMaxHostCalls bounds the helper calls a JavaScript Code node's
+	// code makes: this.helpers.httpRequest, getBinaryDataBuffer and
+	// prepareBinaryData. It is a budget per run in "Run once for all items"
+	// mode and per item in "Run once for each item" mode. Waiting for the
+	// server is not charged to the time limit, so this is what bounds it.
+	// Env: KILASFLOW_CODE_JAVASCRIPT_MAX_HOST_CALLS. Default: 100.
+	JavaScriptMaxHostCalls int `koanf:"javascript_max_host_calls"`
 }
 
 // MaxJavaScriptTimeout is the highest code.javascript_timeout accepted. A
@@ -1014,6 +1022,7 @@ func Default() Config {
 			JavaScriptMaxInputBytes:   32 << 20,
 			JavaScriptMaxOutputBytes:  16 << 20,
 			JavaScriptMaxConsoleBytes: 64 << 10,
+			JavaScriptMaxHostCalls:    100,
 		},
 		Log: Log{
 			Level:  "info",
@@ -1358,6 +1367,7 @@ func (c Config) Validate() error {
 		{"code.javascript_max_input_bytes", c.Code.JavaScriptMaxInputBytes},
 		{"code.javascript_max_output_bytes", c.Code.JavaScriptMaxOutputBytes},
 		{"code.javascript_max_console_bytes", c.Code.JavaScriptMaxConsoleBytes},
+		{"code.javascript_max_host_calls", int64(c.Code.JavaScriptMaxHostCalls)},
 	} {
 		if limit.value <= 0 {
 			return fmt.Errorf("%s %d must be positive", limit.key, limit.value)

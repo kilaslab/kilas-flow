@@ -36,6 +36,7 @@ func (runner *Runner) Prepare(task Task) (Job, Host, error) {
 		Source: task.Source, Mode: task.Mode.orDefault(), Limits: limits, Input: input, Roots: task.Roots,
 		ContinueOnItemError: task.ContinueOnItemError, Count: len(task.Items),
 		Origins: make([]*workflow.PairedItem, len(task.Items)), Files: map[string]workflow.BinaryRef{},
+		ledger: newLedger(),
 	}
 	for index, item := range task.Items {
 		job.Origins[index] = item.Paired
@@ -55,7 +56,7 @@ func (runner *Runner) Prepare(task Task) (Job, Host, error) {
 		return Job{}, Host{}, named(ErrInputLimit, fmt.Sprintf(
 			"the node's input is %s as JSON, more than the %s code may be given", byteSize(size), byteSize(limits.MaxInputBytes)))
 	}
-	return job, hostFor(task.Roots), nil
+	return job, hostFor(task.Roots, job.ledger), nil
 }
 
 // Execute runs a prepared job on a fresh VM, where the code is to run: in
@@ -102,9 +103,6 @@ func (runner *Runner) Execute(ctx context.Context, job Job, answers Host) (execu
 	v.onInterrupt = runner.onInterrupt
 	defer heapWatchdog.enter(runner.heapCeiling, v.interrupt)()
 	defer context.AfterFunc(ctx, func() { v.interrupt(ctx.Err()) })()
-	if runner.testHost != nil {
-		runner.testHost(v)
-	}
 	printed := &console{limit: limits.MaxConsoleBytes}
 	defer func() { executed.Console, executed.ConsoleTruncated = printed.lines, printed.truncated }()
 
@@ -119,15 +117,16 @@ func (runner *Runner) Execute(ctx context.Context, job Job, answers Host) (execu
 	if err != nil {
 		return Executed{}, err
 	}
-	if err := v.install(string(state), parsed, mode, host{node: answers.Node, pair: answers.Pair, console: printed.write}); err != nil {
+	answer := host{node: answers.Node, pair: answers.Pair, staticData: answers.StaticData, call: answers.Call, console: printed.write}
+	if err := v.install(string(state), parsed, mode, answer); err != nil {
 		return Executed{}, err
 	}
 	clock := newClock(limits.Timeout, func() { v.interrupt(timedOut(limits.Timeout)) })
-	known := make(map[string]bool, len(job.FileIDs))
+	v.clock = clock
 	for _, id := range job.FileIDs {
-		known[id] = true
+		v.files[id] = true
 	}
-	call := invocation{v: v, clock: clock, function: function, mode: mode, count: job.count(), limits: limits, files: known}
+	call := invocation{v: v, clock: clock, function: function, mode: mode, count: job.count(), limits: limits}
 
 	if mode == ModeComparator {
 		text, err := call.order(ready.analysis.Returns)
@@ -135,7 +134,11 @@ func (runner *Runner) Execute(ctx context.Context, job Job, answers Host) (execu
 	}
 	if mode == ModeAllItems {
 		text, _, err := call.run(ctx, 0, limits.MaxOutputBytes)
-		return Executed{Outputs: []string{text}, UserTime: clock.spent()}, err
+		if err != nil {
+			return Executed{Outputs: []string{text}, UserTime: clock.spent()}, err
+		}
+		static, err := call.staticData()
+		return Executed{Outputs: []string{text}, UserTime: clock.spent(), StaticData: static}, err
 	}
 	outputs := make([]string, 0, job.count())
 	var failures []ItemFailure
@@ -163,7 +166,8 @@ func (runner *Runner) Execute(ctx context.Context, job Job, answers Host) (execu
 		outputs = append(outputs, text)
 		remaining -= size
 	}
-	return Executed{Outputs: outputs, Failures: failures, UserTime: clock.spent()}, nil
+	static, err := call.staticData()
+	return Executed{Outputs: outputs, Failures: failures, UserTime: clock.spent(), StaticData: static}, err
 }
 
 // Finish turns what Execute produced into the task's result, in the process
@@ -182,7 +186,7 @@ func (job Job) Finish(executed Executed, runErr error) (Result, error) {
 		// A per-item run that stopped keeps what the items before the failure
 		// returned, which says how far it got.
 		if eachItem && len(executed.Outputs) <= job.count() {
-			decode := decoder{origins: job.Origins, files: job.Files}
+			decode := decoder{origins: job.Origins, files: job.ledger.knownFiles(job.Files)}
 			for _, text := range executed.Outputs {
 				if items, err := decode.decode(text, true); err == nil {
 					result.Items = append(result.Items, items...)
@@ -205,6 +209,11 @@ func (job Job) Finish(executed Executed, runErr error) (Result, error) {
 	if size > job.Limits.MaxOutputBytes {
 		return result, EngineFaultError(fmt.Sprintf("it returned %s of output, past the %s limit", byteSize(size), byteSize(job.Limits.MaxOutputBytes)))
 	}
+	static, err := job.checkStaticData(executed.StaticData)
+	if err != nil {
+		return result, err
+	}
+	result.StaticData = static
 	failed := make(map[int]*WireError, len(executed.Failures))
 	for _, failure := range executed.Failures {
 		if !eachItem || !job.ContinueOnItemError || failure.Index < 0 || failure.Index >= want || failure.Error == nil || executed.Outputs[failure.Index] != "" {
@@ -212,7 +221,7 @@ func (job Job) Finish(executed Executed, runErr error) (Result, error) {
 		}
 		failed[failure.Index] = failure.Error
 	}
-	decode := decoder{origins: job.Origins, files: job.Files}
+	decode := decoder{origins: job.Origins, files: job.ledger.knownFiles(job.Files)}
 	for index, text := range executed.Outputs {
 		if failure, ok := failed[index]; ok {
 			result.Outcomes = append(result.Outcomes, ItemOutcome{Error: failure})
@@ -305,9 +314,12 @@ func bounded(err error) error {
 	return err
 }
 
-// hostFor answers what the code asks of the server, from the roots.
-func hostFor(roots Roots) Host {
+// hostFor answers what the code asks of the server, from the roots,
+// recording in the job's ledger what the helpers hand out.
+func hostFor(roots Roots, handedOut *ledger) Host {
 	return Host{
+		StaticData: handedOut.staticData(roots.Helpers),
+		Call:       handedOut.call(roots.Helpers),
 		Node: func(name string) (string, bool) {
 			if roots.Node == nil {
 				return "", false
@@ -343,14 +355,16 @@ type invocation struct {
 	mode     Mode
 	count    int
 	limits   Limits
-	// files are the IDs of the input's files, the only ones a returned item
-	// may pass on.
-	files map[string]bool
 }
 
 // run calls the code for one item (or all of them) and returns its result as
 // JSON, with its size, which is what the output limit measures.
 func (call invocation) run(ctx context.Context, index int, maxOutput int64) (string, int64, error) {
+	if call.mode == ModeEachItem {
+		// The code runs once per item, and each run has the whole budget of
+		// helper calls, as each would if it were its own run.
+		call.v.hostCalls, call.v.perItem = 0, true
+	}
 	call.clock.start()
 	text, err := call.v.invoke(ctx, call.function, call.mode, index, call.count, maxOutput)
 	exhausted := call.clock.stop()
@@ -364,7 +378,7 @@ func (call invocation) run(ctx context.Context, index int, maxOutput int64) (str
 	if size > maxOutput {
 		return "", 0, outputTooLarge(call.limits)
 	}
-	if err := checkFiles(text, call.files, call.mode == ModeEachItem); err != nil {
+	if err := checkFiles(text, call.v.files, call.mode == ModeEachItem); err != nil {
 		return "", 0, err
 	}
 	return text, size, nil
@@ -394,6 +408,18 @@ func (call invocation) order(returns []int) (string, error) {
 		return "", outputTooLarge(call.limits)
 	}
 	return text, nil
+}
+
+// staticData writes back the static data the code was handed, as JSON. It
+// runs the code's toJSON and getters, so it is charged like the result.
+func (call invocation) staticData() (map[string]string, error) {
+	call.clock.start()
+	static, err := call.v.exportStaticData()
+	exhausted := call.clock.stop()
+	if err == nil && exhausted {
+		err = timedOut(call.limits.Timeout)
+	}
+	return static, err
 }
 
 func outputTooLarge(limits Limits) error {

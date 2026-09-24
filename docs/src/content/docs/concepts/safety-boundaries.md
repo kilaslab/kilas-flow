@@ -271,6 +271,7 @@ lists them.
 | Input, as JSON | 32 MiB | `code.javascript_max_input_bytes` |
 | Returned items, as JSON | 16 MiB | `code.javascript_max_output_bytes` |
 | Console output kept | 64 KiB | `code.javascript_max_console_bytes` |
+| Helper calls (`this.helpers`), per run or, in per-item mode, per item | 100 | `code.javascript_max_host_calls` |
 | Live heap, per worker | 1 GiB | `code.javascript_heap_ceiling_mb` |
 | Scripts running at once | one per CPU | `code.javascript_max_concurrent` |
 

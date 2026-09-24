@@ -15,12 +15,16 @@
 // runner does. The server prepares the job (jsrun.Runner.Prepare: the input
 // is encoded and checked against its cap, and nothing is compiled or run in
 // the server), hands it to a worker over the worker's stdin, and answers the
-// questions the code asks while it runs, such as $('Node'), over the same
-// pipes. The worker's own clock and watchdog stop a script as they do in
-// process. Beyond them:
+// questions the code asks while it runs over the same pipes: $('Node') and
+// the static data at once, and a helper such as this.helpers.httpRequest,
+// which the server itself carries out, on a goroutine of its own, while the
+// code runs on. A goroutine in the worker routes each reply to its call by
+// ID, so several can be outstanding at once. The worker's own clock and
+// watchdog stop a script as they do in process. Beyond them:
 //
 //   - a worker still running well past its job's time limit is killed, and
-//     the run fails with the time-limit error;
+//     the run fails with the time-limit error; time the worker spends
+//     waiting on the server's answer to a helper does not count;
 //   - cancelling the execution kills the worker running it;
 //   - a worker that dies mid-run fails the run with a named error: the
 //     memory limit when it ran out of memory or was killed by the kernel,
@@ -35,11 +39,15 @@
 //     its stdin closes.
 //
 // The server trusts a worker only as far as its code could go. Every frame of
-// a job carries the job's nonce. The job's input lineage and file references
-// never leave the server: a worker returns the code's results as the JSON the
-// code returned, and the server decodes them against the input, checking the
-// output and console caps and every file a result names. A worker that breaks
-// any of this fails its job with an engine fault and is never used again.
+// a job carries the job's nonce, and a worker that makes more helper calls
+// than its code may, asks for a helper there is none of, or sends more than
+// one call may carry breaks the protocol. The job's input lineage and file
+// references never leave the server: a worker returns the code's results as
+// the JSON the code returned, and the server decodes them against the input,
+// checking the output and console caps, every file a result names (one of
+// its input's, or one it stored), and the static data it hands back. A
+// worker that breaks any of this fails its job with an engine fault and is
+// never used again.
 //
 // What a worker is not: a privilege boundary. It runs as the server's user,
 // with the server's view of the filesystem and network, so code that escaped

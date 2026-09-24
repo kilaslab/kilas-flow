@@ -22,9 +22,16 @@ import (
 // worker may write call, which the server answers with reply, and it ends the
 // job with done. Every frame of a job carries the job's nonce, so a frame
 // left over from another job is refused rather than taken for this one's.
+//
+// A call carries an ID, which its reply repeats. Calls about other nodes and
+// the static data are answered at once, while the code waits; a helper call
+// is answered when the server has done the work, while the code runs on, and
+// several may be outstanding at once, so replies can arrive in any order.
 type message struct {
 	Type  string `json:"type"`
 	Nonce string `json:"nonce,omitempty"`
+	// ID pairs a reply with its call.
+	ID int64 `json:"id,omitempty"`
 
 	// hello: the deployment's ceiling, which every job is tightened to; the
 	// live heap at which the worker's watchdog stops a script; and the
@@ -36,15 +43,20 @@ type message struct {
 	// run: the job, whose input is the blob.
 	Job *jsrun.Job `json:"job,omitempty"`
 
-	// call: Method is "node" or "pair", asking for the node Name, or which of
-	// its items the input item at Index descends from. reply: a node's view
-	// is the blob and Found says there was one; a pairing is Index and
-	// Reason.
-	Method string `json:"method,omitempty"`
-	Name   string `json:"name,omitempty"`
-	Index  int    `json:"index"`
-	Found  bool   `json:"found,omitempty"`
-	Reason string `json:"reason,omitempty"`
+	// call: Method is methodNode or methodPair, asking for the node Name, or
+	// which of its items the input item at Index descends from; methodStatic,
+	// asking for the static data of kind Name; or methodHelper, asking a
+	// helper's Request, whose data is the blob. reply: a node's view is the
+	// blob and Found says there was one; a pairing is Index and Reason; the
+	// static data is the blob, or Reason says why there is none; a helper's
+	// Answer has its data in the blob.
+	Method  string             `json:"method,omitempty"`
+	Name    string             `json:"name,omitempty"`
+	Index   int                `json:"index"`
+	Found   bool               `json:"found,omitempty"`
+	Reason  string             `json:"reason,omitempty"`
+	Request *jsrun.HostRequest `json:"request,omitempty"`
+	Answer  *jsrun.HostAnswer  `json:"answer,omitempty"`
 
 	// done: what the job produced, whose results are the blob, cut at
 	// OutputSizes, and how it failed.
@@ -59,6 +71,14 @@ const (
 	typeCall  = "call"
 	typeReply = "reply"
 	typeDone  = "done"
+)
+
+// The questions a call may ask.
+const (
+	methodNode   = "node"
+	methodPair   = "pair"
+	methodStatic = "static"
+	methodHelper = "helper"
 )
 
 // protocolError is a peer that broke the protocol: a frame too large, one

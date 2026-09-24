@@ -442,6 +442,7 @@ func (service *Service) newRequest(record execution.Record, document workflow.Do
 		},
 		Workflow:    service.workflowContext(document),
 		Workflows:   service,
+		StaticData:  service.staticDataFor(record),
 		Env:         service.environment,
 		Credentials: &tenantCredentials{store: service.credentials, tenant: repository.TenantScope{ID: record.TenantID}},
 		Events: func(event NodeEvent) {
@@ -585,6 +586,9 @@ func (service *Service) suspend(ctx context.Context, tenant repository.TenantSco
 	if err != nil {
 		return true, fmt.Errorf("park execution as waiting: %w", err)
 	}
+	// What the half before the wait changed is kept now, as n8n keeps it,
+	// so the half that resumes loads it.
+	service.saveStaticData(ctx, suspendedRecord, result.StaticData)
 	// The row carries the deadline, and this process arms the exact wake-up
 	// for it: waiting for the periodic sweep instead made a two-second pause
 	// cost up to a minute and made every webhook whose workflow waits answer
@@ -601,7 +605,6 @@ func (service *Service) suspend(ctx context.Context, tenant repository.TenantSco
 		TenantID: record.TenantID, ExecutionID: record.ID, WorkflowID: record.WorkflowID,
 		NodeID: wait.NodeID, Type: EventExecutionWaiting, Status: execution.StatusWaiting, Data: data,
 	})
-	_ = suspendedRecord
 	return true, nil
 }
 

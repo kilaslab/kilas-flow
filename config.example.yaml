@@ -555,3 +555,10 @@ code:
   # node run keeps. Output past it is dropped, with a marker saying so.
   # Env: KILASFLOW_CODE_JAVASCRIPT_MAX_CONSOLE_BYTES
   javascript_max_console_bytes: 65536
+  # JavaScriptMaxHostCalls bounds the helper calls a JavaScript Code node's
+  # code makes: this.helpers.httpRequest, getBinaryDataBuffer and
+  # prepareBinaryData. It is a budget per run in "Run once for all items"
+  # mode and per item in "Run once for each item" mode. Waiting for the
+  # server is not charged to the time limit, so this is what bounds it.
+  # Env: KILASFLOW_CODE_JAVASCRIPT_MAX_HOST_CALLS
+  javascript_max_host_calls: 100

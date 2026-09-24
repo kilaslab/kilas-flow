@@ -73,8 +73,8 @@ func jsCodeNode() node.Definition {
 				Default:     defaultJSCode,
 				TypeOptions: &node.TypeOptions{Rows: 16},
 				Description: "The body of an async function: `await` works, and what it returns becomes the node's items. " +
-					"require() offers crypto, lodash, luxon, util, buffer and url; there is no npm, filesystem or network, " +
-					"and no Node.js process.",
+					"require() offers crypto, lodash, luxon, util, buffer and url; there is no npm, filesystem or Node.js process. " +
+					"this.helpers.httpRequest is sent by the server under its egress policy.",
 			},
 			{
 				Key: "scriptTimeoutSeconds", Label: "Time limit (seconds)", Kind: node.PropertyNumber, Default: 10,
@@ -108,6 +108,9 @@ func validateJSCodeConfiguration(n workflow.Node) error {
 // JSCodeExecutor runs Code (JavaScript) nodes on the deployment's runtime.
 type JSCodeExecutor struct {
 	runner jsrun.Engine
+	// http sends the requests of this.helpers.httpRequest under the
+	// deployment's egress policy.
+	http *codeHTTP
 	// disabled is why the deployment turned JavaScript off; empty when it
 	// runs.
 	disabled string
@@ -143,17 +146,22 @@ func (executor *JSCodeExecutor) Execute(ctx context.Context, ir workflow.IRNode,
 		// parameters either way.
 		return nil, fmt.Errorf("node %q: mode %q is neither %s nor %s", ir.Name, mode, CodeModeAllItems, CodeModeEachItem)
 	}
+	roots := jsRootsOf(ir, input, request)
+	roots.Helpers = &codeHelpers{ctx: ctx, http: executor.http, request: request, items: input["main"], node: ir.Name}
 	result, err := executor.runner.Run(ctx, jsrun.Task{
 		Source: source,
 		Mode:   mode,
 		Items:  input["main"],
-		Roots:  jsRootsOf(ir, input, request),
+		Roots:  roots,
 		Limits: limits,
 		// A node that continues on failure goes on past a failed item in
 		// per-item mode, as n8n does; the runner routes the failed ones.
 		ContinueOnItemError: request.TolerateItemFailures && mode == jsrun.ModeEachItem,
 	})
 	emitConsole(request, ir, result)
+	if err == nil {
+		err = keepStaticData(ctx, request, ir.Name, result.StaticData)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("node %q: %w", ir.Name, err)
 	}

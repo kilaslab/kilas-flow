@@ -190,6 +190,36 @@ func TestRetryExecutionQueuesTheSameRevision(t *testing.T) {
 	}
 	server.callJSON(t, http.MethodGet, "/api/v1/executions/"+retried["id"].(string), key, nil, http.StatusOK)
 
+	// A retry keeps the trigger its original ran under: a retried webhook run
+	// is a production run, not a test from the editor.
+	finishedAt := time.Now().UTC()
+	delivered, err := server.executions.Create(context.Background(), repository.TenantScope{ID: "acme"}, execution.Record{
+		WorkflowID: workflowID, WorkflowVersionID: finished.WorkflowVersionID,
+		Status: execution.StatusFailed, Trigger: execution.TriggerWebhook, StartedAt: finishedAt, FinishedAt: &finishedAt,
+	})
+	if err != nil {
+		t.Fatalf("seed a webhook execution: %v", err)
+	}
+	again := server.callJSON(t, http.MethodPost, "/api/v1/executions/"+delivered.ID+"/retry", key, nil, http.StatusCreated)
+	if again["trigger"] != string(execution.TriggerWebhook) {
+		t.Errorf("retry of a webhook run trigger = %#v, want webhook", again["trigger"])
+	}
+
+	// A sub-workflow run has a parent, and a retry has none: a retried
+	// sub-workflow (or error-workflow) run is queued as a manual one rather
+	// than as an orphan sub-workflow run.
+	child, err := server.executions.Create(context.Background(), repository.TenantScope{ID: "acme"}, execution.Record{
+		WorkflowID: workflowID, WorkflowVersionID: finished.WorkflowVersionID, ParentExecutionID: finished.ID,
+		Status: execution.StatusSucceeded, Trigger: execution.TriggerSubworkflow, StartedAt: finishedAt, FinishedAt: &finishedAt,
+	})
+	if err != nil {
+		t.Fatalf("seed a sub-workflow execution: %v", err)
+	}
+	orphan := server.callJSON(t, http.MethodPost, "/api/v1/executions/"+child.ID+"/retry", key, nil, http.StatusCreated)
+	if orphan["trigger"] != string(execution.TriggerManual) || orphan["parentExecutionId"] != nil && orphan["parentExecutionId"] != "" {
+		t.Errorf("retry of a sub-workflow run = trigger %#v, parent %#v; want a manual run with no parent", orphan["trigger"], orphan["parentExecutionId"])
+	}
+
 	// Work that is still in flight has nothing to retry yet.
 	running, err := server.executions.Create(context.Background(), repository.TenantScope{ID: "acme"}, execution.Record{
 		WorkflowID: workflowID, WorkflowVersionID: finished.WorkflowVersionID,

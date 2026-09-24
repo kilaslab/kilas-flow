@@ -1,5 +1,7 @@
 package jsrun
 
+import "context"
+
 // Roots are what a body's globals read beyond its own input items: the
 // workflow, the execution, and the nodes that ran before it. The node that
 // runs the code builds them from the same request an expression reads, so a
@@ -31,6 +33,9 @@ type Roots struct {
 	// descends from: an index into that node's Items, or -1 and the reason
 	// there is none. It backs $('Name').item and .itemMatching(index).
 	Pair func(name string, index int) (int, string) `json:"-"`
+	// Helpers answer this.helpers and $getWorkflowStaticData. Nil leaves the
+	// helpers unavailable and the static data empty and unsaved.
+	Helpers Helpers `json:"-"`
 }
 
 // WorkflowInfo backs $workflow.
@@ -63,6 +68,14 @@ type Host struct {
 	Node func(name string) (string, bool)
 	// Pair is Roots.Pair.
 	Pair func(name string, index int) (int, string)
+	// StaticData returns the workflow's static data of one kind, "global" or
+	// "node", as a JSON object.
+	StaticData func(kind string) (string, error)
+	// Call answers one helper's request. It blocks until the answer is
+	// ready, so the runtime calls it on a goroutine of its own and the code
+	// runs on meanwhile; several calls may be in flight at once. Nil answers
+	// every helper as unavailable.
+	Call func(ctx context.Context, request HostRequest) HostAnswer
 }
 
 // host is what the roots call back into the server for while the code runs.
@@ -71,6 +84,9 @@ type host struct {
 	node func(name string) (string, bool)
 	// pair is Roots.Pair.
 	pair func(name string, index int) (int, string)
+	// staticData is Host.StaticData, and call is Host.Call.
+	staticData func(kind string) (string, error)
+	call       func(ctx context.Context, request HostRequest) HostAnswer
 	// console keeps one printed line and reports whether there is room for
 	// more.
 	console func(level, text string) bool
