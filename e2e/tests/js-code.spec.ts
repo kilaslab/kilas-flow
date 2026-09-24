@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { Page } from '@playwright/test';
 
@@ -627,16 +627,21 @@ test.describe.serial('no Node.js process', () => {
 	test('the process-table sampler reports a Node.js process that appears outside the harness', async ({ server }) => {
 		// A check that finds nothing passes forever, so it is shown finding one: a
 		// Node.js process started through a shell that exits at once, which leaves
-		// it nobody's child in the harness, as a process the server spawned and
-		// abandoned would be.
+		// it adopted by pid 1, as a process the server spawned and abandoned
+		// would be. And it is shown not blaming the harness: a Node.js process
+		// this test starts as its own child is somebody else's, as another
+		// agent's on a shared machine is.
 		const sample = await wholeTableSampler(server.pid);
 		expect(await sample()).toEqual([]);
+		const own = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 20000)'], { stdio: 'ignore' });
 		const { stdout } = await execFileAsync('sh', ['-c', `"${process.execPath}" -e "setTimeout(() => {}, 20000)" >/dev/null 2>&1 & echo $!`]);
 		const stray = Number(stdout.trim());
 		try {
 			await expect.poll(async () => (await sample()).join('\n'), { message: 'the sampler reports the stray process' }).toContain(`appeared during the run: ${stray} `);
+			expect((await sample()).join('\n'), "the harness's own child is not reported").not.toContain(`: ${own.pid} `);
 		} finally {
 			process.kill(stray);
+			own.kill();
 		}
 	});
 });

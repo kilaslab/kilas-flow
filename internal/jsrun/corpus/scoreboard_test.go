@@ -7,8 +7,10 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -40,7 +42,8 @@ const acceptFloor = 0.97
 
 // measured is one body's result. Only KilasFlow's own words reach it: an
 // outcome, a reason class and the analyser's refusal subjects, never the
-// author's code, names or data.
+// author's code, names or data, module names excepted: a refusal of an
+// unshipped module names the module.
 type measured struct {
 	Key      string   `json:"key"`
 	Mode     string   `json:"mode"`
@@ -345,11 +348,15 @@ func TestCodeCorpusScoreboard(t *testing.T) {
 		board.Totals.Bodies, board.Totals.NoSource, board.Totals.ParseRate, board.Totals.AcceptRate,
 		board.Totals.RuntimeErrorRate, board.Timing.MedianMillis, board.Timing.P95Millis)
 
+	checked := loadVerification(t, fixtureDir(), fixtures)
 	if *updateBaseline {
+		if len(checked.reasons) > 0 {
+			t.Fatalf("%d pinned templates drifted upstream; re-pin with scripts/code-corpus-sync.sh --update before rewriting the baseline", len(checked.reasons))
+		}
 		writeScoreboard(t, board)
 		return
 	}
-	compareScoreboard(t, board)
+	compareScoreboard(t, board, checked)
 }
 
 func writeScoreboard(t *testing.T, board scoreboard) {
@@ -369,8 +376,9 @@ func writeScoreboard(t *testing.T, board scoreboard) {
 
 // compareScoreboard fails on any body that moved. A body that improved fails
 // too: the baseline is the record of what the runtime takes, and a change
-// that moves it says so by regenerating it.
-func compareScoreboard(t *testing.T, board scoreboard) {
+// that moves it says so by regenerating it. Only bodies of templates the sync
+// verified against their pins are held to it; the rest are reported.
+func compareScoreboard(t *testing.T, board scoreboard, pins verification) {
 	t.Helper()
 	raw, err := os.ReadFile("baseline.json")
 	if err != nil {
@@ -380,14 +388,42 @@ func compareScoreboard(t *testing.T, board scoreboard) {
 	if err := json.Unmarshal(raw, &committed); err != nil {
 		t.Fatalf("parsing baseline.json: %v", err)
 	}
+	found := compareBodies(committed.Bodies, board.Bodies, pins)
+	for _, note := range found.notes {
+		t.Log(note)
+	}
+	for _, failure := range found.failures {
+		t.Error(failure)
+	}
+}
+
+// comparison is what holding a run to the baseline found: failures, and
+// notes about bodies it could not hold to it.
+type comparison struct {
+	failures []string
+	notes    []string
+}
+
+// compareBodies holds the measured bodies to the committed ones. A body of a
+// template the sync could not verify (it changed, lost its code or was
+// withdrawn upstream) is neither compared nor missed: a third party editing
+// a template says nothing about the runtime. Everything else must be where
+// the baseline left it.
+func compareBodies(committed, current []measured, pins verification) comparison {
+	var found comparison
 	previous := map[string]measured{}
-	for _, entry := range committed.Bodies {
+	for _, entry := range committed {
 		previous[entry.Key] = entry
 	}
-	for _, entry := range board.Bodies {
+	for _, entry := range current {
+		if !pins.verified(entry.Key) {
+			found.notes = append(found.notes, fmt.Sprintf("%s is not compared: %s", entry.Key, pins.reason(entry.Key)))
+			delete(previous, entry.Key)
+			continue
+		}
 		was, ok := previous[entry.Key]
 		if !ok {
-			t.Errorf("%s is not in the baseline; the pins changed, so regenerate it and say why", entry.Key)
+			found.failures = append(found.failures, fmt.Sprintf("%s is not in the baseline; the pins changed, so regenerate it and say why", entry.Key))
 			continue
 		}
 		delete(previous, entry.Key)
@@ -396,13 +432,81 @@ func compareScoreboard(t *testing.T, board scoreboard) {
 			if was.rank() > entry.rank() {
 				verdict = "REGRESSED"
 			}
-			t.Errorf("%s %s: %s → %s (%s); regenerate the baseline with make js-corpus-baseline and say why",
-				entry.Key, verdict, was.state(), entry.state(), firstLine(entry.detail))
+			found.failures = append(found.failures, fmt.Sprintf("%s %s: %s → %s (%s); regenerate the baseline with make js-corpus-baseline and say why",
+				entry.Key, verdict, was.state(), entry.state(), firstLine(entry.detail)))
 		}
 	}
+	keys := make([]string, 0, len(previous))
 	for key := range previous {
-		t.Errorf("%s vanished from the corpus; the sync or the pins changed", key)
+		keys = append(keys, key)
 	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		if pins.verified(key) {
+			found.failures = append(found.failures, fmt.Sprintf("%s vanished from the corpus; the sync or the pins changed", key))
+		} else {
+			found.notes = append(found.notes, fmt.Sprintf("%s is not compared: %s", key, pins.reason(key)))
+		}
+	}
+	return found
+}
+
+// verification is what the sync verified: verified.json beside the
+// fixtures. With no such file, every template whose fixture is present
+// counts as verified, which is what a strict sync that succeeded means.
+type verification struct {
+	templates map[string]bool
+	reasons   map[string]string
+}
+
+func (pins verification) verified(key string) bool { return pins.templates[templateOf(key)] }
+
+func (pins verification) reason(key string) string {
+	if reason, ok := pins.reasons[templateOf(key)]; ok {
+		return "template " + templateOf(key) + " " + reason + " since it was pinned; re-pin with scripts/code-corpus-sync.sh --update"
+	}
+	return "template " + templateOf(key) + " was not verified by the last sync"
+}
+
+// templateOf is the template id a body's key names.
+func templateOf(key string) string {
+	template, _, _ := strings.Cut(key, "/")
+	return template
+}
+
+// verifiedFile is where the sync records the verified templates.
+const verifiedFile = "verified.json"
+
+func loadVerification(t *testing.T, dir string, fixtures []fixture) verification {
+	t.Helper()
+	pins := verification{templates: map[string]bool{}, reasons: map[string]string{}}
+	raw, err := os.ReadFile(filepath.Join(dir, verifiedFile))
+	if os.IsNotExist(err) {
+		for _, current := range fixtures {
+			pins.templates[strconv.Itoa(current.Template)] = true
+		}
+		return pins
+	}
+	if err != nil {
+		t.Fatalf("reading %s: %v", verifiedFile, err)
+	}
+	var recorded struct {
+		Verified   []int `json:"verified"`
+		Unverified []struct {
+			Template int    `json:"template"`
+			Reason   string `json:"reason"`
+		} `json:"unverified"`
+	}
+	if err := json.Unmarshal(raw, &recorded); err != nil {
+		t.Fatalf("parsing %s: %v", verifiedFile, err)
+	}
+	for _, template := range recorded.Verified {
+		pins.templates[strconv.Itoa(template)] = true
+	}
+	for _, entry := range recorded.Unverified {
+		pins.reasons[strconv.Itoa(entry.Template)] = entry.Reason
+	}
+	return pins
 }
 
 // state is what the comparison compares.
@@ -432,7 +536,8 @@ func renderScoreboard(board scoreboard) string {
 	fmt.Fprintf(&out, "The JavaScript Code nodes and Sort code comparators of the %d most-viewed n8n templates "+
 		"(ranked %s), measured against the embedded runtime. %d of those templates carry code. The bodies are "+
 		"fetched by `scripts/code-corpus-sync.sh`, pinned in `MANIFEST.json` and never committed; a body is named "+
-		"here by template id and node position only. %d Python Code nodes in the same templates are not measured: "+
+		"here by template id and node position only, and the only words taken from a template are the names of "+
+		"modules the analyser refuses. %d Python Code nodes in the same templates are not measured: "+
 		"Python stays refused.\n\n", board.Corpus.Ranked, board.Corpus.RankedAt, board.Corpus.Templates, board.Corpus.PythonCodeNodes)
 
 	out.WriteString("| Measure | Bodies | Rate |\n|---|---:|---:|\n")
@@ -523,7 +628,7 @@ func TestManifestPinsEveryFixture(t *testing.T) {
 
 // TestTheScoreboardRecordsNoUserContent renders a board over a body whose
 // every word is the author's and proves none of them reaches the committed
-// files.
+// files. Module names are the documented exception and are not in this body.
 func TestTheScoreboardRecordsNoUserContent(t *testing.T) {
 	const secret = "acmeSecretFieldName"
 	current := fixture{
@@ -546,5 +651,54 @@ func TestTheScoreboardRecordsNoUserContent(t *testing.T) {
 	}
 	if board.Bodies[0].Key != "42/3" || board.Bodies[0].Reason != "TypeError" {
 		t.Errorf("body = %+v, want 42/3 failing with a TypeError", board.Bodies[0])
+	}
+}
+
+func TestTheBaselineHoldsOnlyVerifiedTemplates(t *testing.T) {
+	body := func(key, outcome string) measured {
+		return measured{Key: key, Parsed: true, Accepted: true, Ran: outcome == outcomeOK, Outcome: outcome}
+	}
+	committed := []measured{body("1/0", outcomeOK), body("1/1", outcomeOK), body("2/0", outcomeOK), body("3/0", outcomeOK), body("4/0", outcomeOK)}
+	pins := verification{
+		templates: map[string]bool{"1": true, "3": true, "5": true},
+		reasons:   map[string]string{"2": "changed upstream", "4": "withdrawn upstream"},
+	}
+	current := []measured{
+		body("1/0", outcomeOK), // verified, unchanged
+		body("1/1", "threw"),   // verified, regressed
+		body("2/0", "threw"),   // unverified: its template changed, so its move is not the runtime's
+		body("5/0", outcomeOK), // verified, but new
+		// 3/0 is verified and absent: it vanished.
+		// 4/0 is unverified and absent: its template was withdrawn.
+	}
+	found := compareBodies(committed, current, pins)
+	wantFailures := []string{"1/1 REGRESSED", "5/0 is not in the baseline", "3/0 vanished"}
+	wantNotes := []string{"2/0 is not compared: template 2 changed upstream", "4/0 is not compared: template 4 withdrawn upstream"}
+	if len(found.failures) != len(wantFailures) {
+		t.Fatalf("failures = %q, want %d", found.failures, len(wantFailures))
+	}
+	for index, want := range wantFailures {
+		if !strings.HasPrefix(found.failures[index], want) {
+			t.Errorf("failure %d = %q, want it to start %q", index, found.failures[index], want)
+		}
+	}
+	if len(found.notes) != len(wantNotes) {
+		t.Fatalf("notes = %q, want %d", found.notes, len(wantNotes))
+	}
+	for index, want := range wantNotes {
+		if !strings.HasPrefix(found.notes[index], want) {
+			t.Errorf("note %d = %q, want it to start %q", index, found.notes[index], want)
+		}
+	}
+}
+
+func TestWithoutAVerifiedFileEveryPresentFixtureIsVerified(t *testing.T) {
+	pins := loadVerification(t, t.TempDir(), []fixture{{Template: 7}})
+	if !pins.verified("7/2") || pins.verified("8/0") {
+		t.Errorf("pins = %+v, want only template 7 verified", pins)
+	}
+	found := compareBodies([]measured{{Key: "8/0", Outcome: outcomeOK}}, nil, pins)
+	if len(found.failures) != 0 || len(found.notes) != 1 {
+		t.Errorf("an absent fixture with no record of why = %+v, want one note", found)
 	}
 }

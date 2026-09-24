@@ -86,7 +86,7 @@ func loadFixtures(t *testing.T, dir string) []fixture {
 	}
 	var fixtures []fixture
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") || entry.Name() == verifiedFile {
 			continue
 		}
 		raw, err := os.ReadFile(filepath.Join(dir, entry.Name()))
@@ -255,12 +255,26 @@ var (
 // stubValue is what a field the body reads holds in a synthesised item.
 const stubValue = "sample"
 
+// arrayMethods are the calls, and the one property, that say the value they
+// are read from is a list. A method both lists and strings have (slice,
+// includes, indexOf, concat) says nothing, so it is not here.
+var arrayMethods = map[string]bool{
+	"map": true, "filter": true, "forEach": true, "reduce": true, "reduceRight": true,
+	"find": true, "findIndex": true, "findLast": true, "findLastIndex": true,
+	"some": true, "every": true, "flatMap": true, "flat": true, "join": true,
+	"sort": true, "reverse": true, "push": true, "pop": true, "shift": true,
+	"unshift": true, "splice": true, "fill": true, "entries": true, "keys": true,
+	"length": true,
+}
+
 // stubItems is the input a body gets when its template pinned none: one item
-// shaped from the fields the body reads, each holding a string, nested as the
-// body nests them. A path that ends in a call is a method of the value, not a
-// field, so the call is left off. It is a stand-in for real data, so a body
-// that fails on it may only have failed on the stand-in; the scoreboard
-// reports those failures by what went wrong, for exactly that reason.
+// shaped from the fields the body reads, nested as the body nests them. A
+// field read through an array method (`.map(`, `.length`, …) holds a list of
+// one object; a field read through holds an object; any other field holds a
+// string, and a call on it (`.toUpperCase()`) is a method of that string. It
+// is a stand-in for real data, so a body that fails on it may only have
+// failed on the stand-in; the scoreboard reports those failures by what went
+// wrong, for exactly that reason.
 func stubItems(source string) []workflow.Item {
 	root := map[string]any{}
 	for _, match := range fieldPath.FindAllStringSubmatch(source, -1) {
@@ -268,27 +282,34 @@ func stubItems(source string) []workflow.Item {
 		for _, segment := range fieldSegment.FindAllStringSubmatch(match[1], -1) {
 			path = append(path, segment[1]+segment[2]+segment[3])
 		}
-		if match[2] != "" && len(path) > 0 {
-			path = path[:len(path)-1]
+		called := match[2] != ""
+		var leaf any = stubValue
+		if len(path) > 0 {
+			last := path[len(path)-1]
+			switch {
+			case arrayMethods[last] && (called || last == "length"):
+				leaf, path = []any{map[string]any{}}, path[:len(path)-1]
+			case called:
+				path = path[:len(path)-1]
+			}
 		}
-		if len(path) > 0 && path[len(path)-1] == "length" {
-			path = path[:len(path)-1]
-		}
-		place(root, path)
+		place(root, path, leaf)
 	}
 	return []workflow.Item{{JSON: root}}
 }
 
-// place writes a stub value at path, turning a leaf into an object when a
-// longer path runs through it.
-func place(root map[string]any, path []string) {
+// place writes a stub value at path. A path running through a field makes
+// it an object, whatever an earlier read made it; a list replaces a string,
+// since a body that iterates a field needs it iterable.
+func place(root map[string]any, path []string, leaf any) {
 	current := root
 	for index, name := range path {
-		last := index == len(path)-1
 		existing, present := current[name]
-		if last {
-			if !present {
-				current[name] = stubValue
+		if index == len(path)-1 {
+			_, isString := existing.(string)
+			_, isList := leaf.([]any)
+			if !present || (isString && isList) {
+				current[name] = leaf
 			}
 			return
 		}
@@ -327,13 +348,21 @@ func TestStubItemsFollowTheFieldsABodyReads(t *testing.T) {
 		"const who = $json.user.name.toUpperCase();",
 		"const tags = items[0].json['the tags'].length;",
 		"const deep = $input.first().json?.body?.message?.text;",
+		"const rows = $json.data.rows.map((row) => row.id);",
+		"const first = $json.data.rows.find((row) => row.ok);",
+		"const labels = $json.labels.join(', ');",
+		"const count = $json.list.length;",
+		"const later = $json.list.total;",
 		"return $json.user.id;",
 	}, "\n")
 	got, err := json.Marshal(stubItems(source)[0].JSON)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `{"body":{"message":{"text":"sample"}},"the tags":"sample","user":{"id":"sample","name":"sample"}}`
+	// A field read through an array method is a list of one object; one
+	// that is also read through is an object; a string method leaves a string.
+	want := `{"body":{"message":{"text":"sample"}},"data":{"rows":[{}]},"labels":[{}],"list":{"total":"sample"},` +
+		`"the tags":[{}],"user":{"id":"sample","name":"sample"}}`
 	if string(got) != want {
 		t.Errorf("stub = %s, want %s", got, want)
 	}

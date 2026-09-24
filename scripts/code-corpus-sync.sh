@@ -14,12 +14,22 @@
 #   scripts/code-corpus-sync.sh              fetch the pinned templates and verify
 #   scripts/code-corpus-sync.sh --update     rank the top N again and re-pin
 #   scripts/code-corpus-sync.sh --update --top 200
+#   scripts/code-corpus-sync.sh --lenient    CI: warn about drifted templates
 #
 #   --update  rank the N most-viewed templates now and rewrite MANIFEST.json
 #             from what was fetched, instead of verifying against it. The
 #             ranking moves every day, so this shifts the baseline: do it
 #             deliberately and say why in the commit.
 #   --top N   how many templates to rank with --update (default 500).
+#   --lenient keep going when a pinned template changed, lost its code or was
+#             withdrawn upstream: warn (as a GitHub Actions ::warning::), drop
+#             that template's fixture, and leave it out of verified.json. A
+#             third party editing a template must not turn a pull request red;
+#             the scheduled job (.github/workflows/code-corpus.yml) runs
+#             without this flag and is the one that fails, so someone re-pins.
+#
+# Every successful sync writes verified.json beside the fixtures: the pinned
+# templates whose fetched digest matched. The scoreboard compares only those.
 #
 # Environment:
 #   KILASFLOW_CODE_CORPUS_DIR  where fixtures land
@@ -27,7 +37,8 @@
 #   KILASFLOW_N8N_TEMPLATES_API  the template API
 #                              (default: https://api.n8n.io/api/templates).
 #
-# Exit status: 0 when the corpus is ready, 1 when it does not match the pins,
+# Exit status: 0 when the corpus is ready, 1 when it does not match the pins
+# (never with --lenient),
 # 2 on a usage error, and 3 when the template API could not be reached, so a
 # scheduled job can tell an outage from a changed template.
 
@@ -39,10 +50,12 @@ CORPUS_DIR="${KILASFLOW_CODE_CORPUS_DIR:-${REPO_ROOT}/internal/jsrun/corpus/fixt
 API="${KILASFLOW_N8N_TEMPLATES_API:-https://api.n8n.io/api/templates}"
 
 UPDATE=0
+LENIENT=0
 TOP=500
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 	--update) UPDATE=1 ;;
+	--lenient) LENIENT=1 ;;
 	--top)
 		shift
 		TOP="${1:-}"
@@ -59,7 +72,7 @@ while [[ $# -gt 0 ]]; do
 	shift
 done
 
-python3 - "${CORPUS_DIR}" "${MANIFEST}" "${UPDATE}" "${TOP}" "${API}" <<'PYTHON'
+python3 - "${CORPUS_DIR}" "${MANIFEST}" "${UPDATE}" "${TOP}" "${API}" "${LENIENT}" <<'PYTHON'
 import concurrent.futures
 import hashlib
 import json
@@ -70,8 +83,9 @@ import time
 import urllib.error
 import urllib.request
 
-corpus_dir, manifest_path, update, top, api = sys.argv[1:6]
+corpus_dir, manifest_path, update, top, api, lenient = sys.argv[1:7]
 update = update == "1"
+lenient = lenient == "1"
 top = int(top)
 PAGE = 100
 UNREACHABLE = 3
@@ -198,6 +212,15 @@ except Unreachable as error:
     print(f"the template API could not be reached: {error}", file=sys.stderr)
     sys.exit(UNREACHABLE)
 
+def write_verified(verified, unverified):
+    """verified.json names the pinned templates whose fixture matched its
+    digest, and why each of the others did not. The scoreboard holds only the
+    verified ones to the baseline."""
+    with open(os.path.join(corpus_dir, "verified.json"), "w") as handle:
+        json.dump({"verified": sorted(verified), "unverified": unverified}, handle, indent=2)
+        handle.write("\n")
+
+
 shutil.rmtree(corpus_dir, ignore_errors=True)
 os.makedirs(corpus_dir)
 entries = []
@@ -234,6 +257,7 @@ if update:
     with open(manifest_path, "w") as handle:
         json.dump(manifest, handle, indent=2)
         handle.write("\n")
+    write_verified([entry["template"] for entry in entries], [])
     total = sum(entry["codeNodes"] for entry in entries)
     print(f"re-pinned {len(entries)} templates holding {total} code nodes into {os.path.relpath(manifest_path)}")
     sys.exit(0)
@@ -241,13 +265,34 @@ if update:
 expected = {entry["template"]: entry["sha256"] for entry in manifest["templates"]}
 actual = {entry["template"]: entry["sha256"] for entry in entries}
 problems = []
+unverified = []
 for template_id, digest in sorted(expected.items()):
     if template_id in missing:
-        problems.append(f"withdrawn upstream: template {template_id}")
+        reason = "withdrawn upstream"
     elif template_id not in actual:
-        problems.append(f"no longer carries code: template {template_id}")
+        reason = "no longer carries code"
     elif actual[template_id] != digest:
-        problems.append(f"changed: template {template_id}\n    manifest {digest}\n    fetched  {actual[template_id]}")
+        reason = "changed upstream"
+    else:
+        continue
+    unverified.append({"template": template_id, "reason": reason})
+    detail = f"{reason}: template {template_id}"
+    if reason == "changed upstream":
+        detail += f"\n    manifest {digest}\n    fetched  {actual[template_id]}"
+    problems.append(detail)
+verified = [template_id for template_id in expected if template_id not in {entry["template"] for entry in unverified}]
+
+if problems and lenient:
+    # The drifted fixtures are removed, so nothing unpinned is ever scored.
+    for entry in unverified:
+        path = os.path.join(corpus_dir, f"{entry['template']}.json")
+        if os.path.exists(path):
+            os.remove(path)
+        print(f"::warning::code corpus: template {entry['template']} {entry['reason']}; it is left out of the "
+              "scoreboard until someone re-pins with scripts/code-corpus-sync.sh --update")
+    write_verified(verified, unverified)
+    print(f"verified {len(verified)} of {len(expected)} pinned templates; {len(unverified)} drifted upstream")
+    sys.exit(0)
 
 if problems:
     print("the corpus does not match the manifest:", file=sys.stderr)
@@ -260,6 +305,7 @@ if problems:
     )
     sys.exit(1)
 
+write_verified(verified, [])
 print(f"verified {len(entries)} templates against the manifest")
 PYTHON
 

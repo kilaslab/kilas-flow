@@ -21,7 +21,10 @@
 // fetched by scripts/code-corpus-sync.sh into the gitignored fixtures/
 // directory and never committed; MANIFEST.json pins each template by id and
 // digest. Nothing committed here carries a template's code, its node names or
-// its data: the baseline names a body by template id and node position.
+// its data: the baseline names a body by template id and node position. The
+// one exception is a module name: the analyser's refusal of an unshipped
+// module quotes it (`requires the module "youtube-transcript"`), and the
+// baseline records refusals in the analyser's words.
 //
 // Everything that reads a file lives in a _test.go file. The rule that keeps
 // the runtime away from the filesystem (internal/guardrails) covers every

@@ -72,31 +72,36 @@ export function isNodeJS(command: string): boolean {
 export type NodeSampler = () => Promise<string[]>;
 
 // wholeTableSampler is the strictest check a machine running the suite can
-// make: no Node.js process under the server, and none anywhere that was not
-// already running before the run began. The Playwright runner and its workers
-// are Node and were there first, so they are excluded by pid, not by name;
-// and a Node process one of them starts (another test in a parallel worker
-// packing the SDK, say) is the harness's own, so it is excluded by that
-// ancestry. Anything else that appears is reported with its parent, so a
-// stray process on a shared machine is told apart from the server's.
+// make without being fooled by its neighbours: no Node.js process under the
+// server, and no Node.js process that appeared during the run and belongs to
+// nobody else. A new process is traced up through the other processes that
+// also appeared during the run, to the first one that was already running.
+// It is reported when that is the server, or pid 1: a process whose parent
+// exited is adopted by pid 1, which is how a child the server started and
+// abandoned (daemonised) would look. When that ancestor is anything else (the
+// Playwright runner packing the SDK, another agent's shell on a shared
+// machine) the process is somebody else's, and it is left alone.
 export async function wholeTableSampler(serverPid: number): Promise<NodeSampler> {
-	const initial = await processTable();
-	const before = new Set(initial.map((row) => row.pid));
-	const harness = new Set(initial.filter((row) => isNodeJS(row.command)).map((row) => row.pid));
+	const before = new Set((await processTable()).map((row) => row.pid));
 	return async () => {
 		const table = await processTable();
 		const byPid = new Map(table.map((row) => [row.pid, row]));
-		// startedByHarness walks up from a process to the first ancestor that
-		// was already running, and asks whether that ancestor is the harness.
-		const startedByHarness = (row: ProcessRow): boolean => {
-			for (let parent = byPid.get(row.ppid), hops = 0; parent && hops < 64; parent = byPid.get(parent.ppid), hops++) {
-				if (parent.pid === serverPid) return false;
-				if (before.has(parent.pid)) return harness.has(parent.pid);
+		// origin is the first already-running ancestor of a new process, or
+		// undefined when the chain breaks (a parent exited between reads).
+		const origin = (row: ProcessRow): number | undefined => {
+			let current: ProcessRow | undefined = row;
+			for (let hops = 0; current && hops < 64; hops++) {
+				if (current.ppid === serverPid || current.ppid === 1 || before.has(current.ppid)) return current.ppid;
+				current = byPid.get(current.ppid);
 			}
-			return false;
+			return undefined;
 		};
 		const underServer = descendants(table, serverPid).filter((row) => isNodeJS(row.command));
-		const appeared = table.filter((row) => !before.has(row.pid) && isNodeJS(row.command) && !startedByHarness(row));
+		const appeared = table.filter((row) => {
+			if (before.has(row.pid) || !isNodeJS(row.command)) return false;
+			const from = origin(row);
+			return from === serverPid || from === 1;
+		});
 		return [
 			...underServer.map((row) => `under the server: ${row.pid} ${row.command}`),
 			...appeared
@@ -217,13 +222,19 @@ export async function proveCodeNodeWorkflow(baseURL: string, sample: NodeSampler
 	const found: string[] = [];
 	let samples = 0;
 	let live = true;
+	// A sampler that throws (the host could not read its process table) ends
+	// the loop at once; the error is kept and thrown once the delivery is
+	// answered, so it is never an unhandled rejection and never lost.
+	let samplingFailed: unknown;
 	const sampling = (async () => {
 		while (live) {
 			found.push(...(await sample()));
 			samples++;
 			await new Promise((resolve) => setTimeout(resolve, 100));
 		}
-	})();
+	})().catch((error: unknown) => {
+		samplingFailed = error ?? new Error('the process-table sampler failed');
+	});
 	let answer: Awaited<ReturnType<typeof deliver>>;
 	try {
 		answer = await deliver(baseURL, imported.webhooks[0].url, { json: { orders: ORDERS } });
@@ -231,6 +242,7 @@ export async function proveCodeNodeWorkflow(baseURL: string, sample: NodeSampler
 		live = false;
 		await sampling;
 	}
+	if (samplingFailed !== undefined) throw samplingFailed;
 	found.push(...(await sample()));
 	samples++;
 	expect(found, 'no Node.js process while the Code nodes ran').toEqual([]);
