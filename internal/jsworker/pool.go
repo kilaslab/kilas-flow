@@ -352,6 +352,12 @@ func (pool *Pool) run(ctx context.Context, w *worker, job jsrun.Job, host jsrun.
 	blobLimit := max(job.Limits.MaxOutputBytes, jsrun.MaxFileBytes)
 	views := map[string]answer{}
 	helperCalls, staticQuestions := 0, 0
+	// The runtime gives each item the whole budget in per-item mode, so the
+	// most a job may make is one budget per item there.
+	maxHelperCalls := job.Limits.MaxHostCalls
+	if job.Mode == jsrun.ModeEachItem {
+		maxHelperCalls *= max(job.Count, 1)
+	}
 	for {
 		m, blob, err := readFrame(w.out, headerLimit, blobLimit)
 		if err == nil && m.Nonce != nonce {
@@ -364,15 +370,19 @@ func (pool *Pool) run(ctx context.Context, w *worker, job jsrun.Job, host jsrun.
 		case typeCall:
 			switch m.Method {
 			case methodHelper:
-				if helperCalls++; helperCalls > job.Limits.MaxHostCalls {
-					return pool.failed(ctx, w, job, &state, protocolViolation("more than its %d helper calls", job.Limits.MaxHostCalls))
+				if helperCalls++; helperCalls > maxHelperCalls {
+					return pool.failed(ctx, w, job, &state, protocolViolation("more than its %d helper calls", maxHelperCalls))
 				}
 				request, err := helperRequest(m, blob)
 				if err != nil {
 					return pool.failed(ctx, w, job, &state, err)
 				}
 				// The worker waits on the server now, and that is not time
-				// its deadline measures.
+				// its deadline measures. The trade-off: while any helper
+				// call is in flight, a worker stuck in a built-in is not
+				// killed either. That window is bounded by the execution's
+				// timeout, and by the policy's HTTP timeout times the calls
+				// the job may make.
 				deadline.hold()
 				go func(id int64) {
 					defer deadline.release()

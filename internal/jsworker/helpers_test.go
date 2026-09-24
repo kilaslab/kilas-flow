@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -180,15 +179,12 @@ func TestAWorkerRefusesARepliesItDidNotAskFor(t *testing.T) {
 		"a second run": func(call message) message { return message{Type: typeRun, Nonce: "again", Job: &jsrun.Job{}} },
 	} {
 		t.Run(name, func(t *testing.T) {
-			// Serve says why it stopped on stderr, which the pool logs; here
-			// it would only clutter the test's output.
-			stderr := os.Stderr
-			os.Stderr, _ = os.OpenFile(os.DevNull, os.O_WRONLY, 0)
-			t.Cleanup(func() { os.Stderr.Close(); os.Stderr = stderr })
 			toWorker, fromServer := io.Pipe()
 			fromWorker, toServer := io.Pipe()
 			exit := make(chan int, 1)
-			go func() { exit <- Serve(toWorker, toServer); toServer.Close() }()
+			// The worker says why it stopped on stderr, which the pool logs;
+			// here it would only clutter the test's output.
+			go func() { exit <- serve(toWorker, toServer, io.Discard); toServer.Close() }()
 			server, worker := bufio.NewWriter(fromServer), bufio.NewReader(fromWorker)
 			limits := jsrun.DefaultLimits()
 			if err := writeFrame(server, message{Type: typeHello, Limits: &limits}, ""); err != nil {
@@ -238,5 +234,19 @@ func TestARequestTheCodeDidNotWaitForEndsQuietly(t *testing.T) {
 	}
 	if starts := pool.starts.Load(); starts != 1 {
 		t.Fatalf("%d workers started, want one", starts)
+	}
+}
+
+// Each item has the whole helper budget in per-item mode, so a worker whose
+// items together make more calls than one budget is doing what its code may.
+func TestAPerItemRunMayMakeABudgetOfCallsPerItem(t *testing.T) {
+	pool := newTestPool(t, Options{Limits: jsrun.Limits{MaxHostCalls: 2}})
+	result, err := pool.Run(context.Background(), jsrun.Task{
+		Mode: jsrun.ModeEachItem, Items: items("a", "b", "c", "d"),
+		Roots:  jsrun.Roots{Helpers: &serverHelpers{}},
+		Source: "await this.helpers.httpRequest({ url: 'https://example.com' })\nawait this.helpers.httpRequest({ url: 'https://example.com' })\nreturn $input.item",
+	})
+	if err != nil || len(result.Items) != 4 || pool.starts.Load() != 1 {
+		t.Fatalf("Run() = %d items, %v, %d workers; want every item through on one worker", len(result.Items), err, pool.starts.Load())
 	}
 }

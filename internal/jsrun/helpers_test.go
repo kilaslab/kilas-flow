@@ -420,3 +420,31 @@ func TestStaticDataCrossesAsJSON(t *testing.T) {
 		t.Fatalf("StaticData = %v (%v)", result.StaticData, err)
 	}
 }
+
+// In "Run once for each item" mode every item has the whole budget, as the
+// code runs once per item; in "Run once for all items" mode the run has it.
+func TestTheHostCallBudgetIsPerItemInPerItemMode(t *testing.T) {
+	limits := jsrun.Limits{MaxHostCalls: 2}
+	result, err := newRunner().Run(context.Background(), jsrun.Task{
+		Source: "const a = await this.helpers.httpRequest({ url: 'https://example.com' })\n" +
+			"const b = await this.helpers.httpRequest({ url: 'https://example.com' })\nreturn { json: { ok: a.ok && b.ok } }",
+		Mode: jsrun.ModeEachItem, Items: numbered(5), Roots: withHelpers(&fakeHelpers{}), Limits: limits,
+	})
+	if err != nil || len(result.Items) != 5 {
+		t.Fatalf("Run() = %d items, %v; want every item within its own budget", len(result.Items), err)
+	}
+	_, err = newRunner().Run(context.Background(), jsrun.Task{
+		Source: "for (const item of items) await this.helpers.httpRequest({ url: 'https://example.com' })\nreturn items",
+		Items:  numbered(3), Roots: withHelpers(&fakeHelpers{}), Limits: limits,
+	})
+	if !errors.Is(err, jsrun.ErrHostCallLimit) {
+		t.Fatalf("all items: Run() error = %v, want the host-call limit for the run", err)
+	}
+	_, err = newRunner().Run(context.Background(), jsrun.Task{
+		Source: "for (let i = 0; i < 3; i++) await this.helpers.httpRequest({ url: 'https://example.com' })\nreturn { json: {} }",
+		Mode:   jsrun.ModeEachItem, Items: numbered(2), Roots: withHelpers(&fakeHelpers{}), Limits: limits,
+	})
+	if !errors.Is(err, jsrun.ErrHostCallLimit) {
+		t.Fatalf("one item past its budget: Run() error = %v, want the host-call limit", err)
+	}
+}

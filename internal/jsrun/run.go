@@ -360,6 +360,11 @@ type invocation struct {
 // run calls the code for one item (or all of them) and returns its result as
 // JSON, with its size, which is what the output limit measures.
 func (call invocation) run(ctx context.Context, index int, maxOutput int64) (string, int64, error) {
+	if call.mode == ModeEachItem {
+		// The code runs once per item, and each run has the whole budget of
+		// helper calls, as each would if it were its own run.
+		call.v.hostCalls, call.v.perItem = 0, true
+	}
 	call.clock.start()
 	text, err := call.v.invoke(ctx, call.function, call.mode, index, call.count, maxOutput)
 	exhausted := call.clock.stop()

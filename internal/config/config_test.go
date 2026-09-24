@@ -926,6 +926,7 @@ func TestTheJavaScriptLimitsMatchTheRuntime(t *testing.T) {
 		{"JavaScriptMaxInputBytes", cfg.JavaScriptMaxInputBytes, limits.MaxInputBytes},
 		{"JavaScriptMaxOutputBytes", cfg.JavaScriptMaxOutputBytes, limits.MaxOutputBytes},
 		{"JavaScriptMaxConsoleBytes", cfg.JavaScriptMaxConsoleBytes, limits.MaxConsoleBytes},
+		{"JavaScriptMaxHostCalls", cfg.JavaScriptMaxHostCalls, limits.MaxHostCalls},
 	}
 	for _, check := range checks {
 		if check.got != check.want {
@@ -955,12 +956,16 @@ func TestJavaScriptSettingsAreReachableFromTheEnvironment(t *testing.T) {
 	t.Setenv("KILASFLOW_CODE_JAVASCRIPT_TIMEOUT", "2s")
 	t.Setenv("KILASFLOW_CODE_JAVASCRIPT_HEAP_CEILING_MB", "512")
 	t.Setenv("KILASFLOW_CODE_JAVASCRIPT_MAX_OUTPUT_BYTES", "1048576")
+	t.Setenv("KILASFLOW_CODE_JAVASCRIPT_MAX_HOST_CALLS", "500")
 	cfg, err = Load(filepath.Join(t.TempDir(), "absent.yaml"))
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
 	if cfg.Code.JavaScriptEnabled {
 		t.Error("JavaScriptEnabled from the environment = true, want false")
+	}
+	if cfg.Code.JavaScriptMaxHostCalls != 500 {
+		t.Errorf("JavaScriptMaxHostCalls from the environment = %d, want 500", cfg.Code.JavaScriptMaxHostCalls)
 	}
 	if cfg.Code.JavaScriptTimeout != 2*time.Second || cfg.Code.JavaScriptHeapCeilingMB != 512 || cfg.Code.JavaScriptMaxOutputBytes != 1<<20 {
 		t.Errorf("from the environment: timeout %s, heap ceiling %d, output %d",
@@ -979,6 +984,7 @@ func TestJavaScriptLimitsMustBePositive(t *testing.T) {
 		{"zero input cap", func(c *Code) { c.JavaScriptMaxInputBytes = 0 }, "code.javascript_max_input_bytes"},
 		{"negative output cap", func(c *Code) { c.JavaScriptMaxOutputBytes = -1 }, "code.javascript_max_output_bytes"},
 		{"zero console cap", func(c *Code) { c.JavaScriptMaxConsoleBytes = 0 }, "code.javascript_max_console_bytes"},
+		{"zero host calls", func(c *Code) { c.JavaScriptMaxHostCalls = 0 }, "code.javascript_max_host_calls"},
 		{"negative concurrency", func(c *Code) { c.JavaScriptMaxConcurrent = -1 }, "code.javascript_max_concurrent"},
 		{"negative heap ceiling", func(c *Code) { c.JavaScriptHeapCeilingMB = -1 }, "code.javascript_heap_ceiling_mb"},
 	}

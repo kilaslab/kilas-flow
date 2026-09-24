@@ -181,7 +181,10 @@ type vm struct {
 	// ones the code stored.
 	files map[string]bool
 
+	// hostCalls counts the helper calls charged so far: the run's, or with
+	// perItem set, the current item's.
 	hostCalls int
+	perItem   bool
 	hostCtx   context.Context
 	stopHost  context.CancelFunc
 	done      chan struct{}
@@ -591,13 +594,17 @@ func (v *vm) await(ctx context.Context, returned goja.Value) (goja.Value, error)
 }
 
 // countHostCall charges one host call, and stops the script when the budget
-// is spent.
+// is spent: the run's, or in per-item mode the item's.
 func (v *vm) countHostCall() bool {
 	v.hostCalls++
 	if v.hostCalls <= v.limits.MaxHostCalls {
 		return true
 	}
-	v.interrupt(named(ErrHostCallLimit, fmt.Sprintf("code made more than %d host calls", v.limits.MaxHostCalls)))
+	scope := ""
+	if v.perItem {
+		scope = " for one item"
+	}
+	v.interrupt(named(ErrHostCallLimit, fmt.Sprintf("code made more than %d host calls%s", v.limits.MaxHostCalls, scope)))
 	return false
 }
 

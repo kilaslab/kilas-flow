@@ -35,7 +35,10 @@ const (
 // job at a time from in and writes each result to out, until in closes. It
 // returns the process's exit code: 0 when the server closed the pipe, 2 when
 // the stream broke.
-func Serve(in io.Reader, out io.Writer) int {
+func Serve(in io.Reader, out io.Writer) int { return serve(in, out, os.Stderr) }
+
+// serve is Serve reporting a broken stream to stderr, which the pool logs.
+func serve(in io.Reader, out io.Writer, stderr io.Writer) int {
 	// A stop signal is the server's to act on. systemd, a terminal's Ctrl-C
 	// and a process group send it to the workers too, and a worker that died
 	// of it would fail the run the server is still draining. A worker ends
@@ -45,7 +48,7 @@ func Serve(in io.Reader, out io.Writer) int {
 	writer := bufio.NewWriterSize(out, 64<<10)
 	hello, _, err := readFrame(reader, maxServerHeader, maxServerBlob)
 	if err != nil || hello.Type != typeHello || hello.Limits == nil {
-		return broken("no hello from the server", err)
+		return broken(stderr, "no hello from the server", err)
 	}
 	limitSelf(hello.AddressSpace)
 	runner := jsrun.NewRunner(jsrun.Options{Limits: *hello.Limits, MaxConcurrent: 1, HeapCeiling: hello.HeapCeiling})
@@ -56,19 +59,19 @@ func Serve(in io.Reader, out io.Writer) int {
 		request, ok := <-server.runs
 		if !ok {
 			if err := server.failure(); err != nil {
-				return broken("the stream from the server broke", err)
+				return broken(stderr, "the stream from the server broke", err)
 			}
 			return 0
 		}
 		if request.m.Job == nil {
-			return broken("expected a job", errors.New("a run frame with no job"))
+			return broken(stderr, "expected a job", errors.New("a run frame with no job"))
 		}
 		job := *request.m.Job
 		job.Input = string(request.blob)
 		executed, runErr := runner.Execute(context.Background(), job, server.host(request.m.Nonce))
 		server.finish()
 		if err := server.failure(); err != nil {
-			return broken("the server stopped answering", err)
+			return broken(stderr, "the server stopped answering", err)
 		}
 		sizes := make([]int, len(executed.Outputs))
 		for index, text := range executed.Outputs {
@@ -76,14 +79,14 @@ func Serve(in io.Reader, out io.Writer) int {
 		}
 		done := message{Type: typeDone, Nonce: request.m.Nonce, Executed: &executed, OutputSizes: sizes, Error: jsrun.EncodeError(runErr)}
 		if err := server.write(done, strings.Join(executed.Outputs, "")); err != nil {
-			return broken("writing a result", err)
+			return broken(stderr, "writing a result", err)
 		}
 	}
 }
 
 // broken reports why the stream failed on stderr, which the pool logs.
-func broken(what string, err error) int {
-	fmt.Fprintf(os.Stderr, "kilasflow js worker: %s: %v\n", what, err)
+func broken(stderr io.Writer, what string, err error) int {
+	fmt.Fprintf(stderr, "kilasflow js worker: %s: %v\n", what, err)
 	return 2
 }
 

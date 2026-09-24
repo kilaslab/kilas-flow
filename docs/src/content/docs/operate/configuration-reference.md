@@ -1216,3 +1216,16 @@ returns, as JSON.
 
 JavaScriptMaxConsoleBytes bounds the console output one JavaScript Code
 node run keeps. Output past it is dropped, with a marker saying so.
+
+### code.javascript_max_host_calls
+
+- Type: `integer`
+- Default: `100`
+- Environment: `KILASFLOW_CODE_JAVASCRIPT_MAX_HOST_CALLS`
+- Required: no
+
+JavaScriptMaxHostCalls bounds the helper calls a JavaScript Code node's
+code makes: this.helpers.httpRequest, getBinaryDataBuffer and
+prepareBinaryData. It is a budget per run in "Run once for all items"
+mode and per item in "Run once for each item" mode. Waiting for the
+server is not charged to the time limit, so this is what bounds it.

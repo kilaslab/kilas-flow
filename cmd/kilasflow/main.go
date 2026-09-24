@@ -1342,6 +1342,7 @@ func javaScriptRuntime(cfg config.Code, log *slog.Logger) (option nodes.Executor
 			MaxInputBytes:   cfg.JavaScriptMaxInputBytes,
 			MaxOutputBytes:  cfg.JavaScriptMaxOutputBytes,
 			MaxConsoleBytes: cfg.JavaScriptMaxConsoleBytes,
+			MaxHostCalls:    cfg.JavaScriptMaxHostCalls,
 		},
 		MaxConcurrent: cfg.JavaScriptMaxConcurrent,
 		HeapCeiling:   javaScriptHeapCeiling(cfg.JavaScriptHeapCeilingMB),

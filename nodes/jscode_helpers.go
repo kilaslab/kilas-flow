@@ -198,7 +198,7 @@ func (helpers *codeHelpers) ReadFile(_ context.Context, itemIndex int, property 
 // keeps only the last part of a path; its type, when the code gave none, is
 // the one its name says, or what its bytes look like, or plain text, as in
 // n8n.
-func (helpers *codeHelpers) WriteFile(_ context.Context, data []byte, fileName, mimeType string) (workflow.BinaryRef, error) {
+func (helpers *codeHelpers) WriteFile(ctx context.Context, data []byte, fileName, mimeType string) (workflow.BinaryRef, error) {
 	if helpers.request.Binaries == nil {
 		return workflow.BinaryRef{}, binary.ErrNotConfigured
 	}
@@ -219,6 +219,11 @@ func (helpers *codeHelpers) WriteFile(_ context.Context, data []byte, fileName, 
 	}
 	if media == "" {
 		media = "text/plain"
+	}
+	// Checked again as late as it can be: a run that ended while this call
+	// was on its way stores nothing.
+	if err := ctx.Err(); err != nil {
+		return workflow.BinaryRef{}, fmt.Errorf("the run this file belongs to is over: %w", err)
 	}
 	ref, err := helpers.request.Binaries.Put(name, media, bytes.NewReader(data))
 	if err != nil {

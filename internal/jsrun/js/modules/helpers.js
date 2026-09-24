@@ -1,6 +1,7 @@
-// KilasFlow's own code, written for internal/jsrun from n8n's documented
-// Code-node helpers and the observed behaviour of its HTTP helper. It is not
-// derived from n8n's source.
+// KilasFlow's own code, written for internal/jsrun. What each helper does was
+// settled from n8n's documentation and from its source, read as a reference
+// for behaviour only (FEAT-x9gq0s records it in our own words); nothing here
+// is copied or translated from it.
 //
 // this.helpers.httpRequest, getBinaryDataBuffer and prepareBinaryData, and
 // $getWorkflowStaticData. Every helper is one asynchronous call to the

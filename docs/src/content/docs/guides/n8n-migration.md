@@ -589,10 +589,12 @@ with `Promise.all` are in flight together.
   can return in an item's `binary`. The type, when not given, is the one the
   name says, else what the bytes look like, else `text/plain`.
 
-Every helper call counts against the node's limit of 100 host calls per run,
-a file or request body moves at most 32 MiB in one call, and a response
-larger than the policy's `outbound.max_response_bytes` (or 32 MiB) stops the
-node. Each is a named error. Time spent waiting for the server is not counted
+Every helper call counts against a budget of 100 host calls
+(`code.javascript_max_host_calls`): per run in *Run once for all items* mode,
+and per item in *Run once for each item* mode, so a per-item node may call an
+API for every item. A file or request body moves at most 32 MiB in one call,
+and a response larger than the policy's `outbound.max_response_bytes` (or
+32 MiB) stops the node. Each is a named error. Time spent waiting for the server is not counted
 against the node's time limit; the execution's own timeout still bounds it.
 Any other helper, such as `this.helpers.request`, is refused.
 

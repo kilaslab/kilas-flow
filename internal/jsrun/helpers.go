@@ -53,7 +53,8 @@ type Helpers interface {
 	// ReadFile returns the bytes of the file the node's input item itemIndex
 	// holds under property.
 	ReadFile(ctx context.Context, itemIndex int, property string) ([]byte, error)
-	// WriteFile stores data as a file of this execution.
+	// WriteFile stores data as a file of this execution, unless ctx has
+	// ended by the time it would store it.
 	WriteFile(ctx context.Context, data []byte, fileName, mimeType string) (workflow.BinaryRef, error)
 	// StaticData returns the workflow's static data of one kind, "global" or
 	// "node", as a JSON object.
@@ -214,6 +215,8 @@ func (l *ledger) call(helpers Helpers) func(context.Context, HostRequest) HostAn
 			if size := int64(len(request.Data)); size > MaxFileBytes {
 				return failed(FileLimitError("a file", size))
 			}
+			// The node's WriteFile checks ctx again right before it stores,
+			// so a run that ends meanwhile leaves no file behind.
 			stored, err := helpers.WriteFile(ctx, request.Data, request.FileName, request.MimeType)
 			if err != nil {
 				return failed(err)
