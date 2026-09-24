@@ -65,6 +65,12 @@ type decoder struct {
 	// files are the input's files by ID. A returned item may pass one on; it
 	// may not name a file it was never given.
 	files map[string]workflow.BinaryRef
+	// maxInline is how many files one result may return inline: its code's
+	// budget of host calls. Zero refuses them, where none is to be stored.
+	maxInline int
+	// pending are the files returned inline so far, for Finish to store once
+	// the whole result has decoded.
+	pending []pendingFile
 }
 
 func (d *decoder) decode(text string, eachItem bool) ([]workflow.Item, error) {
@@ -72,6 +78,7 @@ func (d *decoder) decode(text string, eachItem bool) ([]workflow.Item, error) {
 	if err := json.Unmarshal([]byte(text), &wire); err != nil {
 		return nil, fmt.Errorf("jsrun: decoding the code's result: %w", err)
 	}
+	waiting := len(d.pending)
 	items := make([]workflow.Item, len(wire))
 	for index, returned := range wire {
 		where := whereReturned(index, eachItem)
@@ -81,52 +88,84 @@ func (d *decoder) decode(text string, eachItem bool) ([]workflow.Item, error) {
 		}
 		binary, err := d.binary(returned.Binary, where)
 		if err != nil {
+			d.pending = d.pending[:waiting]
 			return nil, err
 		}
 		items[index].Binary = binary
 		items[index].Paired = d.paired(returned.Paired)
 	}
+	if inline := len(d.pending) - waiting; inline > d.maxInline {
+		d.pending = d.pending[:waiting]
+		return nil, fmt.Errorf("it returned %d files inline, more than its code could have stored", inline)
+	}
 	return items, nil
 }
 
 // checkFiles refuses a result that passes on a file the node was not given,
-// or one it did not store itself.
+// or one it did not store itself, or gives a file inline that could not be
+// stored as it stands, and counts the files it gives inline.
 // It runs where the code ran, after each call, so a per-item run stops (or,
 // continuing on failure, fails) at the item that returned it; decoding in the
 // server checks again. Most results carry no file at all, which the text
 // shows without decoding it: the runtime writes a returned item's binary as
 // a non-empty object only when there is one.
-func checkFiles(text string, known map[string]bool, eachItem bool) error {
+func checkFiles(text string, known map[string]bool, eachItem bool) (int, error) {
 	if !strings.Contains(text, `"binary":{"`) {
-		return nil
+		return 0, nil
 	}
 	var wire []struct {
 		Binary map[string]json.RawMessage `json:"binary"`
 	}
 	if err := json.Unmarshal([]byte(text), &wire); err != nil {
-		return fmt.Errorf("jsrun: decoding the code's result: %w", err)
+		return 0, fmt.Errorf("jsrun: decoding the code's result: %w", err)
 	}
+	inline := 0
 	for index, returned := range wire {
-		for property, raw := range returned.Binary {
-			if _, err := fileOf(raw, known, whereReturned(index, eachItem), property); err != nil {
-				return err
+		for _, property := range sortedKeys(returned.Binary) {
+			file, err := fileOf(returned.Binary[property], known, whereReturned(index, eachItem), property)
+			if err != nil {
+				return 0, err
+			}
+			if file.inline != nil {
+				inline++
 			}
 		}
 	}
-	return nil
+	return inline, nil
 }
 
-// fileOf reads one returned binary entry, which may only name a file the
-// node was given.
-func fileOf(raw json.RawMessage, known map[string]bool, where, property string) (wireBinary, error) {
-	var file wireBinary
-	if json.Unmarshal(raw, &file) != nil || file.ID == "" {
-		return file, named(ErrInvalidReturn, fmt.Sprintf("%s has a binary %q that is not a file reference; binary entries can only pass on files the node was given or stored with prepareBinaryData", where, property))
+// returnedFile is one returned binary entry: a reference to a file, or a
+// file given inline.
+type returnedFile struct {
+	ref    wireBinary
+	inline *inlineFile
+}
+
+// fileOf reads one returned binary entry. An entry with an id is a
+// reference, whatever else it holds, as in n8n, where any id that is not
+// falsy wins, and may only name a file the node was given or stored; one
+// without an id but with text in data is a file given inline.
+func fileOf(raw json.RawMessage, known map[string]bool, where, property string) (returnedFile, error) {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(raw, &fields) != nil {
+		return returnedFile{}, notAFile(where, property)
 	}
-	if !known[file.ID] {
-		return file, named(ErrInvalidReturn, fmt.Sprintf("%s has a binary %q naming a file this node was not given and did not store", where, property))
+	if id, given := fields["id"]; given && truthyJSON(id) {
+		var file wireBinary
+		if json.Unmarshal(raw, &file) != nil {
+			// An id that is not text names no file anyone stored.
+			return returnedFile{}, named(ErrInvalidReturn, fmt.Sprintf("%s has a binary %q naming a file this node was not given and did not store", where, property))
+		}
+		if !known[file.ID] {
+			return returnedFile{}, named(ErrInvalidReturn, fmt.Sprintf("%s has a binary %q naming a file this node was not given and did not store", where, property))
+		}
+		return returnedFile{ref: file}, nil
 	}
-	return file, nil
+	if data, given := fields["data"]; given && len(data) > 0 && data[0] == '"' {
+		inline, err := readInline(fields, where, property)
+		return returnedFile{inline: inline}, err
+	}
+	return returnedFile{}, notAFile(where, property)
 }
 
 func whereReturned(index int, eachItem bool) string {
@@ -136,7 +175,8 @@ func whereReturned(index int, eachItem bool) string {
 	return fmt.Sprintf("item %d", index)
 }
 
-// binary maps each returned file onto the input's. Binary is passed on only
+// binary maps each returned file onto the input's, or onto the file it
+// gives inline, which waits in pending to be stored. Binary is passed on only
 // when the code returns it, as n8n does; the Go Code node's positional
 // carry-over does not apply here.
 func (d *decoder) binary(returned map[string]json.RawMessage, where string) (map[string]workflow.BinaryRef, error) {
@@ -148,19 +188,23 @@ func (d *decoder) binary(returned map[string]json.RawMessage, where string) (map
 		known[id] = true
 	}
 	refs := make(map[string]workflow.BinaryRef, len(returned))
-	for property, raw := range returned {
-		file, err := fileOf(raw, known, where, property)
+	for _, property := range sortedKeys(returned) {
+		file, err := fileOf(returned[property], known, where, property)
 		if err != nil {
 			return nil, err
 		}
-		ref := d.files[file.ID]
+		if file.inline != nil {
+			d.pending = append(d.pending, pendingFile{file: file.inline, refs: refs, property: property, where: where})
+			continue
+		}
+		ref := d.files[file.ref.ID]
 		// The name and type are metadata the code may change; the bytes and
 		// their size stay the file's own.
-		if file.FileName != "" {
-			ref.FileName = file.FileName
+		if file.ref.FileName != "" {
+			ref.FileName = file.ref.FileName
 		}
-		if file.MimeType != "" {
-			ref.MediaType = file.MimeType
+		if file.ref.MimeType != "" {
+			ref.MediaType = file.ref.MimeType
 		}
 		refs[property] = ref
 	}

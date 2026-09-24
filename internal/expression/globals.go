@@ -136,10 +136,7 @@ func registerBuiltins() {
 	})
 	// $items() is n8n's way to read the items flowing into the current node.
 	define("$items", arity{min: 0, max: 3}, func(e *evaluator, args []any) (any, error) {
-		if len(args) > 0 && !isNullish(args[0]) {
-			return nodeRootValueItems(jsString(args[0]), e.ctx)
-		}
-		return e.ctx.input().all(), nil
+		return legacyItems(e.ctx, args)
 	})
 	// Four arguments, as n8n spells it: key, description, type, default. The
 	// last is only read when the agent's arguments are in the context.

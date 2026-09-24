@@ -59,6 +59,13 @@ type NodeView struct {
 	Items []map[string]any `json:"items"`
 	// Params are the node's own parameters, backing .params.
 	Params map[string]any `json:"params"`
+	// Outputs are how many of Items each output produced, in output order,
+	// so a read of one output (.all(branch), $items(name, output)) takes
+	// only its items. Empty reads as one output holding every item.
+	Outputs []int `json:"outputs,omitempty"`
+	// RunIndex is which run of the node Items are: its latest, the only one
+	// kept. A read may name that run, and no earlier one.
+	RunIndex int `json:"runIndex"`
 }
 
 // Host answers what a job's code asks of the server while it runs. In a

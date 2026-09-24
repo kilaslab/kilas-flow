@@ -18,7 +18,7 @@ func (runner *Runner) Run(ctx context.Context, task Task) (Result, error) {
 		return Result{}, err
 	}
 	executed, err := runner.Execute(ctx, job, host)
-	return job.Finish(executed, err)
+	return job.Finish(ctx, executed, err)
 }
 
 // Prepare turns a task into a job, which holds only data and so can cross
@@ -104,6 +104,7 @@ func (runner *Runner) Execute(ctx context.Context, job Job, answers Host) (execu
 		defer runner.inspect(v)
 	}
 	v.onInterrupt = runner.onInterrupt
+	defer func() { executed.HelperCalls = v.helperCalls }()
 	defer heapWatchdog.enter(runner.heapCeiling, v.interrupt)()
 	defer context.AfterFunc(ctx, func() { v.interrupt(ctx.Err()) })()
 	printed := &console{limit: limits.MaxConsoleBytes}
@@ -177,8 +178,10 @@ func (runner *Runner) Execute(ctx context.Context, job Job, answers Host) (execu
 // that prepared the job: the returned items are decoded against the input's
 // lineage and files, which never leave it. What came back is checked against
 // the job's own limits first, so a worker cannot hand back more than its code
-// could have, nor name a file or an item its input did not have.
-func (job Job) Finish(executed Executed, runErr error) (Result, error) {
+// could have, nor name a file or an item its input did not have. Files the
+// code returned inline are stored last, through the job's helpers, once the
+// whole result is known to be good; ctx is the execution's.
+func (job Job) Finish(ctx context.Context, executed Executed, runErr error) (Result, error) {
 	result := Result{UserTime: executed.UserTime}
 	result.Console, result.ConsoleTruncated = job.console(executed)
 	if job.Mode.orDefault() == ModeComparator {
@@ -224,7 +227,7 @@ func (job Job) Finish(executed Executed, runErr error) (Result, error) {
 		}
 		failed[failure.Index] = failure.Error
 	}
-	decode := decoder{origins: job.Origins, files: job.ledger.knownFiles(job.Files)}
+	decode := decoder{origins: job.Origins, files: job.ledger.knownFiles(job.Files), maxInline: job.Limits.MaxHostCalls}
 	for index, text := range executed.Outputs {
 		if failure, ok := failed[index]; ok {
 			result.Outcomes = append(result.Outcomes, ItemOutcome{Error: failure})
@@ -240,6 +243,22 @@ func (job Job) Finish(executed Executed, runErr error) (Result, error) {
 		if eachItem && job.ContinueOnItemError {
 			result.Outcomes = append(result.Outcomes, ItemOutcome{Items: items})
 		}
+	}
+	// The files given inline share the code's budget of host calls with the
+	// helper calls it made: one budget per run, or per item in per-item
+	// mode, where which item made a call is not known here, so the whole
+	// run's calls and files are held to the budget of all its items.
+	budget := job.Limits.MaxHostCalls
+	if eachItem {
+		budget *= max(job.count(), 1)
+	}
+	if calls := executed.HelperCalls; len(decode.pending)+calls > budget {
+		return Result{UserTime: result.UserTime, Console: result.Console, ConsoleTruncated: result.ConsoleTruncated},
+			EngineFaultError(fmt.Sprintf("it returned %d files inline after %d helper calls, more than its code's %d host calls", len(decode.pending), calls, budget))
+	}
+	if err := job.storeInline(ctx, decode.pending); err != nil {
+		result.Items, result.Outcomes, result.StaticData = nil, nil, nil
+		return result, err
 	}
 	return result, nil
 }
@@ -381,8 +400,15 @@ func (call invocation) run(ctx context.Context, index int, maxOutput int64) (str
 	if size > maxOutput {
 		return "", 0, outputTooLarge(call.limits)
 	}
-	if err := checkFiles(text, call.v.files, call.mode == ModeEachItem); err != nil {
+	inline, err := checkFiles(text, call.v.files, call.mode == ModeEachItem)
+	if err != nil {
 		return "", 0, err
+	}
+	// Each file given inline will be stored as a prepareBinaryData call
+	// would store it, so it is charged as one.
+	call.v.hostCalls += inline
+	if inline > 0 && call.v.hostCalls > call.limits.MaxHostCalls {
+		return "", 0, inlineHostCalls(call.limits.MaxHostCalls, call.mode == ModeEachItem)
 	}
 	return text, size, nil
 }

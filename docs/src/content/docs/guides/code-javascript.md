@@ -23,15 +23,18 @@ items.
 
 | Mode | The code gets | It returns |
 | --- | --- | --- |
-| Run once for all items (`runOnceForAllItems`, the default) | `items`, `$input.all()`, `$input.first()`, `$input.last()` | a list of items; a single object is taken as one item |
-| Run once for each item (`runOnceForEachItem`) | `$json`, `$itemIndex`, `$input.item`, called once per item | one item, or `null` to drop it; a list is refused |
+| Run once for all items (`runOnceForAllItems`, the default) | `items`, `$input.all()`, `$input.first()`, `$input.last()`, and `$json`, `$binary` and `$itemIndex` of the first item | a list of items; a single object is taken as one item |
+| Run once for each item (`runOnceForEachItem`) | `$json`, `$binary`, `$itemIndex`, `$input.item` and `item`, the item itself, called once per item | one item, or `null` to drop it; a list is refused |
 
 An item is `{ json: { … } }`, and a plain object returned where an item belongs
-becomes that item's `json`. A root the mode does not have — `$json` in the
-all-items mode, `items` in the per-item one — is undefined, as in n8n, so
-`typeof items` is safe; using one anyway fails with a message saying what to
-use instead. The code may declare a name a root already has, so
-`const items = $input.all()` works.
+becomes that item's `json`. As in n8n, code that runs once for all items still
+has the per-item roots, read at the first input item: `$json` is
+`items[0].json` itself, `$binary` a copy of its files' metadata, and
+`$itemIndex` (and the older `$position`) is 0; with no input items, `$json`
+and `$binary` are undefined. `items`, and `item`, are what the other mode does
+not have: undefined there, as in n8n, so `typeof items` is safe, and using
+`items` anyway fails with a message saying what to use instead. The code may
+declare a name a root already has, so `const items = $input.all()` works.
 
 The rest of n8n's Code-node globals are there, reading the same data an
 [expression](/concepts/expressions/) reads:
@@ -39,7 +42,14 @@ The rest of n8n's Code-node globals are there, reading the same data an
 - `$('Name')` and `$node['Name']` read a node that ran earlier: `.first()`,
   `.last()`, `.all()`, `.item`, `.itemMatching(index)` and `.params`. `.item`
   follows the paired-item lineage and fails with the reason when it cannot be
-  established, as it does in an expression.
+  established, as it does in an expression. `.all(branch, run)` reads one
+  output of a node with several, such as an IF's `false` branch as `.all(1)`;
+  with no branch it reads every output. n8n's older
+  `$items('Name', output, run)` reads output 0 unless told otherwise, and
+  `$items()` the node's own input, as in an expression. Only a node's latest
+  run is kept, numbered as `$runIndex` numbers runs: a run argument may name
+  it by its number (so `$items('Name', 0, $runIndex)` in a loop that runs in
+  step works) or as `-1`, and naming an earlier run is refused.
 - `$workflow`, `$execution` (`id`, `mode`, `resumeUrl`), `$runIndex`,
   `$nodeVersion`, and `$env`, which holds only the variables an expression's
   `$env` holds. `$vars` is an empty object: KilasFlow has no variables for it
@@ -150,8 +160,8 @@ again when the workflow is saved — so a workflow that uses one never activates
 
 The rest fail by name the moment the code reaches them: `$jmespath`,
 `$evaluateExpression`, `$prevNode`, `$input.params`, `$input.context`,
-`$secrets`, `$execution.customData`, and `$('Name').all()` for a branch or a
-run other than the first. So does a date formatted in a locale the runtime has
+`$secrets`, `$execution.customData`, and `$('Name').all()` or
+`$items('Name')` for a run earlier than the node's latest. So does a date formatted in a locale the runtime has
 no data for (see [below](#differences-from-n8n)), and a `Proxy` handed to a
 built-in that reads its length, which would run the proxy's traps once per
 element inside one call that nothing can interrupt.
@@ -209,6 +219,14 @@ when the node runs, as a `SyntaxError` with its line, not when it is saved.
   the bytes with `this.helpers.getBinaryDataBuffer`. An item keeps a file only
   when the code returns it, as in n8n, and the code can pass on or rename a
   file it was given or stored with `prepareBinaryData`, but not name any other.
+  An entry with no `id` whose `data` is base64 text, beside an optional
+  `fileName` and `mimeType`, is a file given inline, the way n8n code written
+  before `prepareBinaryData` makes one: the server stores it as
+  `prepareBinaryData` stores a file, after the code has finished, and it
+  counts as one host call. Base64 wrapped in lines, URL-safe or without its
+  padding is read; `data` that is not base64, or a `mimeType` that is not a
+  media type, is refused with the item named rather than stored as different
+  bytes.
 - **The time limit counts the code's own running time.** Starting the engine,
   loading a library, handling the input and output, and waiting for the
   server to answer a helper are not counted. The deployment sets the ceiling

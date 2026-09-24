@@ -303,8 +303,10 @@ fresh engine.
   of a job carries that job's nonce. The input's lineage and file references
   never leave the server: a worker hands back the code's results as the JSON
   the code returned, and the server decodes them itself, checking the output
-  and console caps and every file a result names. A worker that breaks any of
-  this fails its run with an engine fault and is never used again.
+  and console caps and every file a result names or gives inline as base64;
+  the server, never the worker, stores a file given inline. A worker that
+  breaks any of this fails its run with an engine fault and is never used
+  again.
 - A worker still running at twice its time limit plus five seconds is stuck in
   something its own clock cannot stop. The server kills it, and the run fails
   with the time-limit error. Cancelling an execution kills the worker running

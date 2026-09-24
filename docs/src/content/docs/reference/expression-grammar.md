@@ -89,7 +89,7 @@ An expression body must begin with one of these. Anything else is a parse error.
 | `$input` | the n8n input API, and the port map underneath it (see below) |
 | `$node["Name"]` | the named node's output (see below) |
 | `$('Name')` | the named node, as a receiver for `.item`, `.first()`, `.last()`, `.all()`, `.params` |
-| `$items('Name')` | that node's items as a list; `$items()` is this node's own input items |
+| `$items('Name', output?, run?)` | that node's items on one output as a list, output 0 unless `output` names another (an IF's `false` branch is 1); `$items()` is this node's own input items. Only the node's latest run is kept: `run` may name it by its number (`$runIndex` in a loop that runs in step) or as `-1`, and an earlier run is an error rather than the latest run's items |
 | `$env` | the allowlisted environment (see below) |
 | `$execution` | `.id`, `.mode`, `.resumeUrl` and `.approvalUrl` |
 | `$workflow` | `.id`, `.name` and `.active` |

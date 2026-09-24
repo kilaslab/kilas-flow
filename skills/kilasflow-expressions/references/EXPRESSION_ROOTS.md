@@ -27,7 +27,7 @@ A body must begin with one of these (internal/expression/roots.go, `Roots`).
 | `$json` | the current item's fields |
 | `$input` | n8n's input API over the port map underneath it |
 | `$node` | every completed node by display name — `$node["Name"].json.field` |
-| `$items` | a function: `$items('Name')` is that node's items, `$items()` this node's input items |
+| `$items` | a function: `$items('Name', output?, run?)` is that node's items on one output (0 by default), `$items()` this node's input items; a run earlier than the node's latest is an error |
 | `$(` | the prefix of the callable form `$('Name')` |
 | `$env` | the allowlisted environment |
 | `$execution` | `.id`, `.mode`, `.resumeUrl`, `.approvalUrl` |

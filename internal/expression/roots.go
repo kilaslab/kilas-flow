@@ -2,6 +2,7 @@ package expression
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"time"
@@ -48,6 +49,18 @@ type NodeItem struct {
 	RunIndex    int
 	PortOffsets map[string]int
 	PortLengths map[string]int
+	// OutputLengths is how many of Items each output produced, in output
+	// order, so a read of one output (`$items('X', 1)`) takes only its
+	// items. Nil in a checkpoint written before it existed, which reads as
+	// one output holding every item, unless the runner could rebuild it from
+	// PortLengths.
+	OutputLengths []int
+	// Executions is how many times the node had really run when Items were
+	// recorded, the count `$runIndex` reads. RunIndex also counts the empty
+	// runs a skipped delivery records, which n8n does not number, so a read
+	// that names a run (`$items('X', 0, run)`) is checked against this. Zero
+	// in a checkpoint written before it existed; see LatestRun.
+	Executions int
 	// Paired is the item on this node that the current item descends from,
 	// backing `.item` and the `.json` read. Nil when lineage could not be
 	// established.
@@ -58,6 +71,17 @@ type NodeItem struct {
 	// Parameters is the node's own resolved configuration, backing
 	// `$('X').params`. Nil when the runtime did not supply it.
 	Parameters map[string]any
+}
+
+// LatestRun is the number of the run Items came from, as n8n and `$runIndex`
+// number runs: real runs only, from 0. A node recorded before Executions was
+// falls back to RunIndex, which is the same unless a delivery to it was
+// skipped.
+func (item NodeItem) LatestRun() int {
+	if item.Executions > 0 {
+		return item.Executions - 1
+	}
+	return item.RunIndex
 }
 
 // OriginKey is the canonical name of one produced item: which node, which port,
@@ -311,10 +335,7 @@ func callRoot(name string, ctx Context, args []any) (any, error) {
 		}
 		return request, nil
 	case "$items":
-		if len(args) > 0 && !isNullish(args[0]) {
-			return nodeRootValueItems(jsString(args[0]), ctx)
-		}
-		return ctx.input().all(), nil
+		return legacyItems(ctx, args)
 	default:
 		return nil, fmt.Errorf("expression root %q is not supported", name)
 	}
@@ -352,14 +373,93 @@ func nodeRootValue(name string, ctx Context) (any, error) {
 	return nodeWrapper(item, ctx), nil
 }
 
-// nodeRootValueItems resolves `$items('Name')`, which is the list rather than
-// the single paired item.
-func nodeRootValueItems(name string, ctx Context) (any, error) {
+// legacyItems resolves `$items(name?, outputIndex?, runIndex?)`: the current
+// node's input without a name, or the named node's items on one output, as
+// n8n reads it: output 0 unless the second argument names another, and the
+// node's latest run unless the third names one. Only the latest run is kept,
+// so naming an earlier one is an error rather than the latest passed off as
+// it; the Code node's $items says the same, in the same words.
+func legacyItems(ctx Context, args []any) (any, error) {
+	if len(args) == 0 || isNullish(args[0]) {
+		return ctx.input().all(), nil
+	}
+	name := jsString(args[0])
 	item, found := ctx.NodeItems[name]
 	if !found {
 		return nil, fmt.Errorf("$items('%s') names a node that has not produced output in this run", name)
 	}
-	return nodeWrapper(item, ctx)[nodeItemsKey], nil
+	output := 0
+	if len(args) > 1 && truthy(args[1]) {
+		index, ok := wholeIndex(args[1])
+		if !ok {
+			return nil, fmt.Errorf("$items() %s", noOutputMessage(name, jsString(args[1])))
+		}
+		output = index
+	}
+	if len(args) > 2 && !IsUndefined(args[2]) {
+		if message := runMessage(name, args[2], item.LatestRun()); message != "" {
+			return nil, fmt.Errorf("$items() %s", message)
+		}
+	}
+	all, _ := nodeWrapper(item, ctx)[nodeItemsKey].([]any)
+	start, count, ok := outputSlice(item.OutputLengths, len(all), output)
+	if !ok {
+		return nil, fmt.Errorf("$items() %s", noOutputMessage(name, strconv.Itoa(output)))
+	}
+	return all[start : start+count], nil
+}
+
+// wholeIndex reads a number that can index a list: a whole number, not
+// negative.
+func wholeIndex(value any) (int, bool) {
+	number, ok := value.(float64)
+	if !ok || number < 0 || number != math.Trunc(number) || number > math.MaxInt32 {
+		return 0, false
+	}
+	return int(number), true
+}
+
+// outputSlice is where output number output's items sit in a node's items:
+// the start and the count. lengths holds each output's count in order; a
+// node recorded without them (a checkpoint written before they existed) is
+// read as having one output that holds every item. False means the node has
+// no such output.
+func outputSlice(lengths []int, total, output int) (int, int, bool) {
+	if len(lengths) == 0 {
+		return 0, total, output == 0
+	}
+	if output >= len(lengths) {
+		return 0, 0, false
+	}
+	start := 0
+	for _, length := range lengths[:output] {
+		start += length
+	}
+	if start+lengths[output] > total {
+		return 0, 0, false
+	}
+	return start, lengths[output], true
+}
+
+// noOutputMessage says a read named an output the node does not have. The
+// Code node's runtime says the same.
+func noOutputMessage(name, output string) string {
+	return fmt.Sprintf("names output %s of node %q, which has no such output", output, name)
+}
+
+// runMessage checks the run a read names against the node's latest run,
+// the only one kept: empty when it may be read (the latest, by its number
+// or as n8n's -1), a refusal of an earlier run, or that there is no such
+// run. The Code node's runtime words it the same.
+func runMessage(name string, run any, latest int) string {
+	index, whole := run.(float64)
+	switch {
+	case whole && (index == -1 || index == float64(latest)):
+		return ""
+	case whole && index >= 0 && index < float64(latest) && index == math.Trunc(index):
+		return fmt.Sprintf("reads run %d of node %q, but only its latest run, %d, is kept", int(index), name, latest)
+	}
+	return fmt.Sprintf("names run %s of node %q, which has no such run", jsString(run), name)
 }
 
 // nodeRootMap is the `$node` root: every completed node by display name.

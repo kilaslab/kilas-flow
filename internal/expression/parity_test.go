@@ -372,6 +372,54 @@ func TestNodeJsonFollowsTheCurrentItem(t *testing.T) {
 	}
 }
 
+// TestLegacyItemsReadsOneOutputOfTheLatestRun: $items(name, output, run)
+// reads output 0 unless told otherwise, as n8n does, and only the node's
+// latest run, the one kept: named by its number, or as n8n's -1, it is read,
+// which is what a loop reading `$items('X', 0, $runIndex)` in lockstep needs;
+// an earlier run is an error, never the latest passed off as it.
+func TestLegacyItemsReadsOneOutputOfTheLatestRun(t *testing.T) {
+	t.Parallel()
+
+	ctx := parityContext()
+	ctx.RunIndex = 2
+	ctx.NodeItems = map[string]expression.NodeItem{
+		// An IF node: two items went out on true, one on false.
+		"IF": {JSON: map[string]any{"v": "t1"}, Items: []map[string]any{{"v": "t1"}, {"v": "t2"}, {"v": "f1"}}, OutputLengths: []int{2, 1}, RunIndex: 2},
+		// A Switch whose first output got nothing.
+		"Switch": {Items: []map[string]any{{"v": "b"}}, OutputLengths: []int{0, 1}},
+		// Recorded before output lengths were: one output.
+		"Old": {JSON: map[string]any{"v": "a"}, Items: []map[string]any{{"v": "a"}, {"v": "b"}}},
+	}
+	for template, want := range map[string]any{
+		"{{ $items('IF').map(i => i.json.v) }}":       []any{"t1", "t2"},
+		"{{ $items('IF', 0).map(i => i.json.v) }}":    []any{"t1", "t2"},
+		"{{ $items('IF', null).length }}":             float64(2),
+		"{{ $items('IF', 1).map(i => i.json.v) }}":    []any{"f1"},
+		"{{ $items('IF', 1, 2).map(i => i.json.v) }}": []any{"f1"},
+		"{{ $items('IF', 0, $runIndex).length }}":     float64(2),
+		"{{ $items('IF', 1, -1).length }}":            float64(1),
+		"{{ $items('Switch').length }}":               float64(0),
+		"{{ $items('Switch', 1)[0].json.v }}":         "b",
+		"{{ $items('Old', 0).map(i => i.json.v) }}":   []any{"a", "b"},
+	} {
+		if got := evaluateOne(t, template, ctx); !sameValue(got, want) {
+			t.Errorf("Evaluate(%s) = %#v, want %#v", template, got, want)
+		}
+	}
+	for template, want := range map[string]string{
+		"{{ $items('IF', 2) }}":       `$items() names output 2 of node "IF", which has no such output`,
+		"{{ $items('Old', 1) }}":      `$items() names output 1 of node "Old", which has no such output`,
+		"{{ $items('IF', 0, 0) }}":    `$items() reads run 0 of node "IF", but only its latest run, 2, is kept`,
+		"{{ $items('IF', 0, 3) }}":    `$items() names run 3 of node "IF", which has no such run`,
+		"{{ $items('IF', 0, null) }}": `$items() names run null of node "IF", which has no such run`,
+	} {
+		_, err := expression.Evaluate(template, ctx)
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("Evaluate(%s) error = %v, want %q", template, err, want)
+		}
+	}
+}
+
 // TestUndefinedSemanticsMatchJavaScript: an index past the end, or a field read
 // on a scalar, used to abort the whole run.
 func TestUndefinedSemanticsMatchJavaScript(t *testing.T) {

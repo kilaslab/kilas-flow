@@ -12,7 +12,8 @@
  *
  * The roots below are KilasFlow's own contract, written here from
  * internal/jsrun's documentation and behaviour (the wrapper, $input, items,
- * $json, $('Node'), $node, the return normalisation, console, require), not
+ * $json and $binary, $('Node'), $node, $items, the return normalisation,
+ * console, require), not
  * n8n's task runner. Luxon and lodash are the same vendored bundles the
  * runtime embeds, configured the way it configures them: UTC and en-US.
  *
@@ -108,6 +109,19 @@ function context(testCase, lines) {
 	const lodash = inContext(lodashSource + '\n;_.noConflict()');
 
 	let current = 0;
+	// read is one output of a node's latest run, as the runtime reads it. A
+	// case's nodes have one output and one run, run 0.
+	const read = (name, label, output, run) => {
+		name = String(name);
+		if (!views[name]) throw new Error(`node "${name}" has not run in this execution, or there is no node by that name`);
+		if (output !== undefined && output !== 0) {
+			throw new Error(`${label} names output ${String(output)} of node "${name}", which has no such output`);
+		}
+		if (run !== undefined && run !== -1 && run !== 0) {
+			throw new Error(`${label} names run ${String(run)} of node "${name}", which has no such run`);
+		}
+		return views[name];
+	};
 	const nodeView = (name) => {
 		name = String(name);
 		const items = views[name];
@@ -120,13 +134,7 @@ function context(testCase, lines) {
 			return items[Math.min(index, items.length - 1)];
 		};
 		const view = {
-			all: (branch, run) => {
-				if ((branch !== undefined && branch !== 0) || (run !== undefined && run !== 0)) {
-					throw new Error(refusal(`reads $("${name}").all() with a branch or run other than the first`));
-				}
-				executed();
-				return items;
-			},
+			all: (branch, run) => read(name, `$("${name}").all()`, branch ?? undefined, run),
 			first: () => (executed(), items[0]),
 			last: () => (executed(), items[items.length - 1]),
 			itemMatching: (index) => paired(index),
@@ -143,6 +151,7 @@ function context(testCase, lines) {
 	const printed = (level) => (...args) => lines.push(`${level}: ${util.format(...args)}`);
 	const globals = {
 		$: nodeView,
+		$items: (name, output, run) => (name === undefined || name === null ? input : read(name, '$items()', output || 0, run)),
 		$node: new Proxy({}, {
 			get: (_, name) => {
 				if (typeof name !== 'string' || !views[name]) return undefined;
@@ -192,7 +201,9 @@ function context(testCase, lines) {
 	for (const name of ['httpRequest', 'httpRequestWithAuthentication', 'request', 'getBinaryDataBuffer', 'prepareBinaryData']) {
 		helpers[name] = () => Promise.reject(new Error(`this.helpers.${name} is not available here`));
 	}
-	return { sandbox, input, inputRoot, helpers, setCurrent: (index) => { current = index; } };
+	// $binary is an item's files' metadata; a case's items carry none.
+	const binaryOf = (item) => (item === undefined ? undefined : parse({}));
+	return { sandbox, input, inputRoot, helpers, binaryOf, setCurrent: (index) => { current = index; } };
 }
 
 function withLimit(promise) {
@@ -206,7 +217,8 @@ function withLimit(promise) {
 // wrapperText is the body inside the function the runtime wraps it in.
 function wrapperText(testCase) {
 	if (testCase.mode === 'sortComparator') return `(function (items, $input) { return function (a, b) {\n${testCase.source}\n}; })`;
-	const parameters = testCase.mode === 'runOnceForEachItem' ? '$json, $itemIndex, $input' : 'items, $input';
+	// All-items code has the per-item roots too, at the first item.
+	const parameters = testCase.mode === 'runOnceForEachItem' ? '$json, $binary, $itemIndex, $position, $input, item' : 'items, $input, $json, $binary, $itemIndex, $position';
 	return `(function (${parameters}) { return (async function () {\n${testCase.source}\n}).call(this); })`;
 }
 
@@ -224,7 +236,7 @@ function parses(testCase) {
 // runOnce runs a case in a fresh context and returns what it produced.
 async function runOnce(testCase) {
 	const lines = [];
-	const { sandbox, input, inputRoot, helpers, setCurrent } = context(testCase, lines);
+	const { sandbox, input, inputRoot, helpers, binaryOf, setCurrent } = context(testCase, lines);
 	const options = { timeout: RUN_LIMIT_MS };
 	try {
 		if (testCase.mode === 'sortComparator') {
@@ -244,10 +256,10 @@ async function runOnce(testCase) {
 		if (eachItem) {
 			for (let index = 0; index < input.length; index++) {
 				setCurrent(index);
-				items.push(...normalise(await withLimit(wrapper.call({ helpers }, input[index].json, index, inputRoot)), true));
+				items.push(...normalise(await withLimit(wrapper.call({ helpers }, input[index].json, binaryOf(input[index]), index, index, inputRoot, input[index])), true));
 			}
 		} else {
-			items.push(...normalise(await withLimit(wrapper.call({ helpers }, input, inputRoot)), false));
+			items.push(...normalise(await withLimit(wrapper.call({ helpers }, input, inputRoot, input[0]?.json, binaryOf(input[0]), 0, 0)), false));
 		}
 		// Through JSON, as the runtime hands items back: a Date becomes its
 		// ISO text, undefined disappears.

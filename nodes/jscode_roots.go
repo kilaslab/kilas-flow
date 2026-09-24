@@ -31,7 +31,7 @@ func jsRootsOf(ir workflow.IRNode, input workflow.NodeInput, request engine.Requ
 			if !ok {
 				return jsrun.NodeView{}, false
 			}
-			return jsrun.NodeView{Items: node.Items, Params: node.Parameters}, true
+			return jsrun.NodeView{Items: node.Items, Params: node.Parameters, Outputs: node.OutputLengths, RunIndex: node.LatestRun()}, true
 		},
 		Pair: func(name string, index int) (int, string) {
 			node, ok := request.NodeItems[name]

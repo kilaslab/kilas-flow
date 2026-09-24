@@ -784,7 +784,9 @@ func (state *runState) complete(graph preparedGraph, node workflow.IRNode, input
 	if first, ok := firstItem(output); ok {
 		request.NodeOutputs[node.Name] = first
 	}
-	request.NodeItems[node.Name] = nodeItemFor(node, output, run.RunIndex)
+	item := nodeItemFor(node, output, run.RunIndex)
+	item.Executions = state.executions[node.ID]
+	request.NodeItems[node.Name] = item
 	state.record(run, request)
 	if len(graph.outgoing[node.ID]) == 0 {
 		state.result.Output[node.ID] = cloneOutput(output)
@@ -1025,7 +1027,7 @@ func (runner *Runner) Resume(ctx context.Context, ir workflow.IR, request Reques
 		request.NodeOutputs[name] = fields
 	}
 	for name, item := range checkpoint.NodeItems {
-		request.NodeItems[name] = item
+		request.NodeItems[name] = withOutputLengths(item, graph)
 	}
 	// Loop state comes back with the run: a loop that suspended inside its body
 	// must resume on the batch it was on, not start again from the first one.
@@ -2257,6 +2259,29 @@ func lineageSources(edges []workflow.IREdge, input workflow.NodeInput) []workflo
 	return sources
 }
 
+// withOutputLengths rebuilds OutputLengths for a node recorded before it
+// existed, from its named ports' lengths in the order its definition gives
+// its outputs. A layout that does not account for every item is left
+// unknown, which reads as one output.
+func withOutputLengths(item expression.NodeItem, graph preparedGraph) expression.NodeItem {
+	if item.OutputLengths != nil || item.PortLengths == nil {
+		return item
+	}
+	node, found := graph.nodes[item.NodeID]
+	if !found {
+		return item
+	}
+	lengths, total := make([]int, 0, len(node.Definition.Outputs)), 0
+	for _, port := range node.Definition.Outputs {
+		lengths = append(lengths, item.PortLengths[port.Name])
+		total += item.PortLengths[port.Name]
+	}
+	if total == len(item.Items) {
+		item.OutputLengths = lengths
+	}
+	return item
+}
+
 // nodeItemFor exposes one completed node to expressions.
 //
 // It publishes the node's whole run — items plus, per item, the canonical name
@@ -2272,6 +2297,7 @@ func nodeItemFor(node workflow.IRNode, output workflow.NodeOutput, runIndex int)
 		RunIndex:   runIndex,
 	}
 	for portIndex, port := range output {
+		item.OutputLengths = append(item.OutputLengths, len(port))
 		// A port is named by the definition, and an origin names the port
 		// rather than its position, because that is what an edge carries.
 		if portIndex < len(node.Definition.Outputs) {

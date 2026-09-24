@@ -24,6 +24,7 @@ type fakeHelpers struct {
 	http     func(ctx context.Context, request jsrun.HTTPRequest) (jsrun.HTTPResponse, []byte, error)
 	files    map[string][]byte
 	stored   []workflow.BinaryRef
+	written  []string
 	static   map[string]string
 	panics   bool
 }
@@ -55,6 +56,7 @@ func (fake *fakeHelpers) WriteFile(_ context.Context, data []byte, fileName, mim
 	defer fake.mu.Unlock()
 	stored := workflow.BinaryRef{ID: fmt.Sprintf("bin_stored_%d", len(fake.stored)), FileName: fileName, MediaType: mimeType, Size: int64(len(data))}
 	fake.stored = append(fake.stored, stored)
+	fake.written = append(fake.written, string(data))
 	return stored, nil
 }
 
@@ -343,6 +345,103 @@ func TestFilesRoundTripThroughTheServer(t *testing.T) {
 	})
 	if !errors.Is(err, jsrun.ErrInvalidReturn) {
 		t.Fatalf("Run() error = %v, want a file stored by another run refused", err)
+	}
+}
+
+// A file returned inline, its bytes as base64 in the entry's data, is what
+// n8n's older code returns in place of prepareBinaryData. The bytes come back
+// in the result and the server stores them as prepareBinaryData stores a
+// file; the next node gets a file reference like any other.
+func TestAFileReturnedInlineIsStoredLikeAPreparedOne(t *testing.T) {
+	fake := &fakeHelpers{}
+	result, err := newRunner().Run(context.Background(), jsrun.Task{
+		Source: "items[0].binary = { data: { data: Buffer.from('<p>hi</p>').toString('base64'), mimeType: 'text/html', fileName: 'page.html' } }\nreturn items",
+		Items:  numbered(1), Roots: withHelpers(fake),
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	file := result.Items[0].Binary["data"]
+	if file.ID != "bin_stored_0" || file.Size != 9 || file.MediaType != "text/html" || file.FileName != "page.html" || fake.written[0] != "<p>hi</p>" {
+		t.Fatalf("binary = %#v, stored %q; want the page stored as a 9-byte text/html file", result.Items[0].Binary, fake.written)
+	}
+
+	// Base64 as it arrives from elsewhere: wrapped in lines, URL-safe, and
+	// without padding. With no type given the server works one out, as
+	// prepareBinaryData's does; an entry with an id is a reference whatever
+	// else it holds.
+	fake = &fakeHelpers{}
+	perItem, err := newRunner().Run(context.Background(), jsrun.Task{
+		Mode: jsrun.ModeEachItem, Items: fileItems(), Roots: withHelpers(fake),
+		Source: strings.Join([]string{
+			"const wrapped = Buffer.from('a longer text that wraps').toString('base64').replace(/(.{8})/g, '$1\\r\\n')",
+			"return { json: {}, binary: { wrapped: { data: wrapped }, safe: { id: 0, data: '-_8', fileName: 'x.bin' }, kept: { ...$binary.file, data: 'ignored' } } }",
+		}, "\n"),
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	binary := perItem.Items[0].Binary
+	if len(fake.written) != 2 || binary["kept"].ID != "bin-1" || binary["wrapped"].Size != 24 || binary["safe"].Size != 2 || binary["safe"].FileName != "x.bin" {
+		t.Fatalf("binary = %#v, stored %q", binary, fake.written)
+	}
+	if fake.written[0] != "a longer text that wraps" && fake.written[1] != "a longer text that wraps" {
+		t.Fatalf("stored %q, want the unwrapped text", fake.written)
+	}
+}
+
+// An inline file the server could not store as it stands is refused where
+// the code returned it, and nothing is stored for a run that did not
+// succeed.
+func TestAnInlineFileThatCannotBeStoredIsRefused(t *testing.T) {
+	for source, want := range map[string]string{
+		"return [{ json: {}, binary: { data: { data: 'not base64!' } } }]":                            `item 0 has a binary "data" whose data is not base64`,
+		"return [{ json: {}, binary: { data: { data: 'aGk=', mimeType: 'not a type' } } }]":           `item 0 has a binary "data" whose mimeType "not a type" is not a media type`,
+		"return [{ json: {}, binary: { data: { data: 'aGk=', mimeType: 7 } } }]":                      `item 0 has a binary "data" whose mimeType is not text`,
+		"return [{ json: {}, binary: { data: { data: 'aGk=', fileName: {} } } }]":                     `item 0 has a binary "data" whose fileName is not text`,
+		"return [{ json: {}, binary: { data: { id: 5, data: 'aGk=' } } }]":                            `item 0 has a binary "data" naming a file this node was not given`,
+		"return [{ json: {}, binary: { data: { fileName: 'a.txt' } } }]":                              `item 0 has a binary "data" that is neither a file reference nor a file given inline`,
+		"return [{ json: {} }, { json: {}, binary: { data: { data: 'aGk=' }, other: { data: 5 } } }]": `item 1 has a binary "other" that is neither a file reference nor a file given inline`,
+	} {
+		fake := &fakeHelpers{}
+		_, err := helperRun(t, fake, source)
+		if !errors.Is(err, jsrun.ErrInvalidReturn) || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: Run() error = %v, want %q", source, err, want)
+		}
+		if len(fake.stored) != 0 {
+			t.Errorf("%s: stored %v from a run that failed", source, fake.stored)
+		}
+	}
+
+	fake := &fakeHelpers{}
+	_, err := newRunner().Run(context.Background(), jsrun.Task{
+		Mode: jsrun.ModeEachItem, Items: numbered(2), Roots: withHelpers(fake),
+		Source: "if ($itemIndex === 1) throw new Error('second')\nreturn { json: {}, binary: { data: { data: 'aGk=' } } }",
+	})
+	if err == nil || len(fake.stored) != 0 {
+		t.Fatalf("Run() error = %v, stored %v; want the failure and nothing stored", err, fake.stored)
+	}
+
+	// Without the server's helpers there is nowhere to store it.
+	_, err = runTask(t, jsrun.Task{Source: "return [{ json: {}, binary: { data: { data: 'aGk=' } } }]"})
+	if err == nil || !strings.Contains(err.Error(), "this.helpers.prepareBinaryData is not available here") {
+		t.Fatalf("Run() error = %v, want the storage named as unavailable", err)
+	}
+}
+
+// Each file returned inline is stored as one prepareBinaryData call would
+// store it, and counts against the same budget of host calls.
+func TestInlineFilesCountAgainstTheHostCallLimit(t *testing.T) {
+	fake := &fakeHelpers{}
+	_, err := newRunner().Run(context.Background(), jsrun.Task{
+		Limits: jsrun.Limits{MaxHostCalls: 2}, Roots: withHelpers(fake),
+		Source: "await this.helpers.prepareBinaryData(Buffer.from('x'))\nreturn [{ json: {}, binary: { a: { data: 'aGk=' }, b: { data: 'aGk=' } } }]",
+	})
+	if !errors.Is(err, jsrun.ErrHostCallLimit) || !strings.Contains(err.Error(), "counting each file returned inline as one") {
+		t.Fatalf("Run() error = %v, want the host-call limit", err)
+	}
+	if len(fake.stored) != 1 {
+		t.Fatalf("stored %v, want only the prepared file", fake.stored)
 	}
 }
 

@@ -100,6 +100,23 @@ func TestHelpersCrossTheProcessBoundary(t *testing.T) {
 	}
 }
 
+// A file the code returns inline crosses back in the result, and the server
+// stores it as it stores a prepared file.
+func TestAFileReturnedInlineIsStoredByTheServer(t *testing.T) {
+	pool := newTestPool(t, Options{})
+	helpers := &serverHelpers{}
+	result, err := pool.Run(context.Background(), jsrun.Task{
+		Items: []workflow.Item{{JSON: map[string]any{}}}, Roots: jsrun.Roots{Helpers: helpers},
+		Source: "items[0].binary = { page: { data: Buffer.from('<p>hi</p>').toString('base64'), mimeType: 'text/html', fileName: 'page.html' } }\nreturn items",
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if page := result.Items[0].Binary["page"]; page.ID != "bin_new_1" || page.Size != 9 || page.MediaType != "text/html" || page.FileName != "page.html" || helpers.stored != 1 {
+		t.Fatalf("binary = %#v, stored %d; want the page stored once by the server", result.Items[0].Binary, helpers.stored)
+	}
+}
+
 // A worker does not wait for one request to finish before it sends the
 // next: neither server call returns until both have arrived.
 func TestAWorkersRequestsAreInFlightTogether(t *testing.T) {
@@ -162,6 +179,7 @@ func TestAWorkerThatOverstepsTheHelpersIsRetired(t *testing.T) {
 		"staticflood":  "more than 2 questions about static data",
 		"staticunused": "static data of kind \"global\", which the code was never given",
 		"bigdone":      "results larger than",
+		"callsinline":  "1 files inline after 2 helper calls, more than its code's 2 host calls",
 	} {
 		pool.mode.Store(mode)
 		if _, err := pool.Run(context.Background(), task); !errors.Is(err, jsrun.ErrEngineFault) || !strings.Contains(err.Error(), want) {

@@ -121,3 +121,57 @@ func TestANodeThatHasNotRunIsNamed(t *testing.T) {
 		t.Fatalf("Pair() = %d, %q; want -1 and a reason", index, reason)
 	}
 }
+
+// $items reads one output of a node's latest run the same way in code and in
+// an expression: an IF node on its third run, two items out on true and one
+// on false, read by output and by run; and a Tail node delivered nothing
+// once before its one real run, which is run 0 as $runIndex numbers it.
+func TestItemsReadsTheSameOutputAndRunInCodeAndInAnExpression(t *testing.T) {
+	request, input := rootsRequest()
+	request.RunIndex = 2
+	request.NodeItems["IF"] = expression.NodeItem{
+		Items: []map[string]any{{"v": "t1"}, {"v": "t2"}, {"v": "f1"}}, OutputLengths: []int{2, 1}, RunIndex: 2,
+	}
+	request.NodeItems["Tail"] = expression.NodeItem{Items: []map[string]any{{"v": "x"}}, OutputLengths: []int{1}, RunIndex: 1, Executions: 1}
+	ir := workflow.IRNode{ID: "code", Name: "Code", TypeVersion: workflow.V(2)}
+	checks := map[string]string{
+		"first":    "$items('IF').map(i => i.json.v).join()",
+		"second":   "$items('IF', 1).map(i => i.json.v).join()",
+		"lockstep": "$items('IF', 1, $runIndex).map(i => i.json.v).join()",
+		"last":     "$items('IF', 0, -1).length",
+		"skipped":  "$items('Tail', 0, 0).length",
+	}
+	source := "return [{ json: {"
+	for key, expr := range checks {
+		source += fmt.Sprintf(" %s: %s,", key, expr)
+	}
+	source += " } }]"
+	result, err := jsrun.NewRunner(jsrun.Options{}).Run(context.Background(), jsrun.Task{
+		Source: source, Items: input["main"], Roots: jsRootsOf(ir, input, request),
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	evaluated := request.ExpressionContext(input["main"][0], input, 0)
+	for key, expr := range checks {
+		want, err := expression.Evaluate("{{ "+expr+" }}", evaluated)
+		if err != nil {
+			t.Fatalf("expression %s: %v", expr, err)
+		}
+		if got := result.Items[0].JSON[key]; fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Errorf("%s = %v in code, %v in an expression", expr, got, want)
+		}
+	}
+	if result.Items[0].JSON["second"] != "f1" {
+		t.Fatalf("items = %#v", result.Items[0].JSON)
+	}
+	for _, expr := range []string{"$items('IF', 0, 0)", "$items('IF', 5)"} {
+		_, codeErr := jsrun.NewRunner(jsrun.Options{}).Run(context.Background(), jsrun.Task{
+			Source: "return " + expr, Items: input["main"], Roots: jsRootsOf(ir, input, request),
+		})
+		_, exprErr := expression.Evaluate("{{ "+expr+" }}", evaluated)
+		if codeErr == nil || exprErr == nil {
+			t.Fatalf("%s: code error %v, expression error %v; want both to fail", expr, codeErr, exprErr)
+		}
+	}
+}

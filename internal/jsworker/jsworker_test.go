@@ -40,7 +40,7 @@ func TestMain(m *testing.M) {
 			}))
 		case "exit3":
 			os.Exit(fakeWorker(func() { os.Exit(3) }))
-		case "stale", "unknownfile", "flood", "calls", "bigcall", "badhelper", "staticflood", "staticunused", "bigdone":
+		case "stale", "unknownfile", "badinline", "manyinline", "callsinline", "flood", "calls", "bigcall", "badhelper", "staticflood", "staticunused", "bigdone":
 			os.Exit(lyingWorker(os.Getenv(testModeVariable)))
 		case "probe", "probe-per-thread", "probe-no-zones":
 			os.Exit(probeWorker(os.Getenv(testModeVariable)))
@@ -75,10 +75,12 @@ func fakeWorker(then func()) int {
 
 // lyingWorker answers its one job with frames a real worker would never
 // write: a done frame for another job, naming a file its input did not
-// have, printing far past the console cap, handing back static data it was
-// never given or results past the output cap; or more helper calls than its
-// code may make, one carrying too much, one for a helper there is none of,
-// or more questions about static data than there are kinds.
+// have, giving a file inline that is not base64 or more of them than its
+// code could store (alone, or with its helper calls), printing far past the
+// console cap, handing back static data it was never given or results past
+// the output cap; or more helper calls than its code may make, one carrying
+// too much, one for a helper there is none of, or more questions about
+// static data than there are kinds.
 func lyingWorker(mode string) int {
 	reader, writer := bufio.NewReader(os.Stdin), bufio.NewWriter(os.Stdout)
 	if !greet(reader, writer) {
@@ -102,6 +104,14 @@ func lyingWorker(mode string) int {
 		done.Nonce = "not-this-job"
 	case "unknownfile":
 		output = `[{"json":{},"binary":{"data":{"id":"bin_someone_elses"}},"paired":null}]`
+	case "badinline":
+		output = `[{"json":{},"binary":{"data":{"data":"not base64!"}},"paired":null}]`
+	case "manyinline":
+		files := make([]string, 0, 101)
+		for index := range 101 {
+			files = append(files, fmt.Sprintf(`"f%d":{"data":"aGk="}`, index))
+		}
+		output = `[{"json":{},"binary":{` + strings.Join(files, ",") + `},"paired":null}]`
 	case "flood":
 		for index := range 2000 {
 			done.Executed.Console = append(done.Executed.Console, jsrun.ConsoleLine{Level: "log", Text: fmt.Sprintf("%04d %s", index, strings.Repeat("x", 1000))})
@@ -110,6 +120,13 @@ func lyingWorker(mode string) int {
 		for id := range int64(3) {
 			call(id+1, helper(jsrun.HelperHTTPRequest), "")
 		}
+	case "callsinline":
+		// Within the helper calls, and within the files one result may give
+		// inline, but not within both at once.
+		for id := range int64(2) {
+			call(id+1, helper(jsrun.HelperHTTPRequest), "")
+		}
+		output = `[{"json":{},"binary":{"data":{"data":"aGk="}},"paired":null}]`
 	case "bigcall":
 		call(1, helper(jsrun.HelperWriteFile), strings.Repeat("x", jsrun.MaxFileBytes+1))
 	case "badhelper":
@@ -342,12 +359,27 @@ func TestTheServerTrustsAWorkerOnlyAsFarAsItsCodeCouldGo(t *testing.T) {
 	if _, err := pool.Run(context.Background(), task); !errors.Is(err, jsrun.ErrEngineFault) || !strings.Contains(err.Error(), "naming a file this node was not given") {
 		t.Errorf("unknown file: Run() error = %v, want it refused", err)
 	}
+	// A file given inline is decoded again and counted in the server, and a
+	// result that fails either stores nothing.
+	helpers := &serverHelpers{}
+	inlineTask := jsrun.Task{Source: "return items", Items: items("a"), Roots: jsrun.Roots{Helpers: helpers}}
+	pool.mode.Store("badinline")
+	if _, err := pool.Run(context.Background(), inlineTask); !errors.Is(err, jsrun.ErrEngineFault) || !strings.Contains(err.Error(), "whose data is not base64") {
+		t.Errorf("bad inline file: Run() error = %v, want it refused", err)
+	}
+	pool.mode.Store("manyinline")
+	if _, err := pool.Run(context.Background(), inlineTask); !errors.Is(err, jsrun.ErrEngineFault) || !strings.Contains(err.Error(), "returned 101 files inline") {
+		t.Errorf("many inline files: Run() error = %v, want them refused", err)
+	}
+	if helpers.stored != 0 {
+		t.Errorf("stored %d files a lying worker gave", helpers.stored)
+	}
 	pool.mode.Store("flood")
 	result, err := pool.Run(context.Background(), task)
 	if err != nil || !result.ConsoleTruncated || len(result.Console) > 5 {
 		t.Errorf("flood: Run() = %d console lines (truncated %v), %v; want the server's own cap", len(result.Console), result.ConsoleTruncated, err)
 	}
-	if starts := pool.started(); starts != 3 {
+	if starts := pool.started(); starts != 5 {
 		t.Errorf("%d workers started, want none trusted again after lying", starts)
 	}
 }

@@ -37,6 +37,7 @@
   // is stable, as V8's is, so items a comparator calls equal keep the order
   // they arrived in.
   var arraySort = Array.prototype.sort;
+  var arraySlice = Array.prototype.slice;
 
   // constructing tells a `new` call from a plain one, for a stand-in that
   // behaves differently in each. new.target alone cannot: goja passes a
@@ -1351,6 +1352,28 @@
     return match !== null && apply(hasOwnProperty, otherMode, [match[1]]) ? otherMode[match[1]] : message;
   }
 
+  // binaryOf is $binary for an item: a copy of each of its files' metadata,
+  // so changing it changes nothing the item holds, as in n8n. An item with no
+  // files has an empty one, and no item has none at all.
+  function binaryOf(item) {
+    if (item === undefined) return undefined;
+    var copy = {};
+    var files = item.binary;
+    if (!isObject(files)) return copy;
+    var names = ownKeys(files);
+    for (var index = 0; index < names.length; index++) {
+      var file = files[names[index]];
+      if (!isObject(file)) continue;
+      var entry = {};
+      var fields = ownKeys(file);
+      for (var field = 0; field < fields.length; field++) {
+        if (fields[field] !== 'data') entry[fields[field]] = file[fields[field]];
+      }
+      copy[names[index]] = entry;
+    }
+    return copy;
+  }
+
   // install builds the Code node's roots over this execution's input, and
   // returns the one function the runner calls the user's code through.
   function install(snapshot, input, eachItem, host, factories) {
@@ -1379,6 +1402,9 @@
     // Other nodes are fetched from the host when the code first names them,
     // so a body that never reads another node never pays for its data.
     var views = new Map();
+    // readers read one output of a node's latest run, by name, for .all()
+    // and $items.
+    var readers = new Map();
     function nodeView(name) {
       name = String(name);
       var cached = views.get(name);
@@ -1400,13 +1426,45 @@
         if (typeof answer === 'number') return items[answer];
         throw new Error('$("' + name + '").item: ' + answer);
       }
-      var view = {
-        all: function (branchIndex, runIndex) {
-          if ((branchIndex !== undefined && branchIndex !== 0) || (runIndex !== undefined && runIndex !== 0)) {
-            throw new Error(refusal('reads $("' + name + '").all() with a branch or run other than the first', snapshot.advice));
+      // The node's items are its outputs' items one after another; outputs
+      // says how many each has. A node that says nothing has one output.
+      var lengths = data && isArray(data.outputs) && data.outputs.length > 0 ? data.outputs : null;
+      var latest = data && typeof data.runIndex === 'number' ? data.runIndex : 0;
+      var outputs = [];
+      // read is one output of the node's latest run, the only run kept, as
+      // a read of output and run asks for it: the latest run is read when
+      // it is named by its number or as n8n's -1, and an earlier one is
+      // refused rather than answered with the latest. The expression
+      // engine's $items says the same, in the same words.
+      function read(label, output, run) {
+        executed();
+        if (output !== undefined && (typeof output !== 'number' || output < 0 || output % 1 !== 0)) {
+          throw new Error(label + ' names output ' + StringType(output) + ' of node "' + name + '", which has no such output');
+        }
+        if (run !== undefined && !(run === -1 || run === latest)) {
+          if (typeof run === 'number' && run >= 0 && run < latest && run % 1 === 0) {
+            throw new Error(refusal('reads run ' + run + ' of node "' + name + '", but only its latest run, ' + latest + ', is kept', snapshot.advice));
           }
-          executed();
-          return items;
+          throw new Error(label + ' names run ' + StringType(run) + ' of node "' + name + '", which has no such run');
+        }
+        if (output === undefined) return items;
+        if (lengths === null ? output !== 0 : output >= lengths.length) {
+          throw new Error(label + ' names output ' + output + ' of node "' + name + '", which has no such output');
+        }
+        if (lengths === null) return items;
+        if (outputs[output] === undefined) {
+          var start = 0;
+          for (var before = 0; before < output; before++) start += lengths[before];
+          outputs[output] = apply(arraySlice, items, [start, start + lengths[output]]);
+        }
+        return outputs[output];
+      }
+      readers.set(name, read);
+      var view = {
+        // With no branch every output is read: which of the node's outputs
+        // feeds this one, n8n's default, is not known here.
+        all: function (branchIndex, runIndex) {
+          return read('$("' + name + '").all()', branchIndex === null ? undefined : branchIndex, runIndex);
         },
         first: function () { executed(); return items[0]; },
         last: function () { executed(); return items[items.length - 1]; },
@@ -1420,6 +1478,20 @@
     }
 
     define('$', function $(name) { return nodeView(name); });
+    function readOutput(name, label, output, run) {
+      nodeView(name);
+      return readers.get(String(name))(label, output, run);
+    }
+    // $items is n8n's older spelling of the same reads, still answered in a
+    // Code node: with no name, the node's own input (the very list `items`
+    // is); with one, one output of that node, output 0 unless the second
+    // argument is a number that names another (n8n reads any falsy one as
+    // 0), of its latest run unless the third names one. A null name reads
+    // the input, as an expression's $items does.
+    define('$items', function $items(name, outputIndex, runIndex) {
+      if (name === undefined || name === null) return input;
+      return readOutput(name, '$items()', outputIndex ? outputIndex : 0, runIndex);
+    });
     define('$node', new ProxyType({}, {
       get: function (_, name) {
         if (typeof name !== 'string') return undefined;
@@ -1500,9 +1572,6 @@
 
     if (eachItem) {
       unavailable('items', 'items is only available when the code runs once for all items; use $input.item or $json');
-    } else {
-      unavailable('$json', '$json is only available when the code runs once for each item; use $input.all() or $input.first()');
-      unavailable('$itemIndex', '$itemIndex is only available when the code runs once for each item');
     }
 
     boundAllocations(snapshot.caps, snapshot.advice);
@@ -1583,10 +1652,17 @@
 
     return {
       staticData: shipped.helpers.staticData,
+      // run calls the code through its wrapper, whose parameters are the
+      // mode's roots in wrapper.go's order. All-items code reads the per-item
+      // roots at the first item, as n8n's does.
       run: function (body, itemIndex) {
         current = itemIndex;
         codeBody = body;
-        var args = eachItem ? [input[itemIndex].json, itemIndex, inputRoot, reword] : [input, inputRoot, reword];
+        var item = input[itemIndex];
+        var json = item === undefined ? undefined : item.json;
+        var args = eachItem ?
+          [json, binaryOf(item), itemIndex, itemIndex, inputRoot, item, reword] :
+          [input, inputRoot, json, binaryOf(item), itemIndex, itemIndex, reword];
         return apply(body, self, args);
       },
       // sort runs a Sort node's comparator: the wrapper hands it back, and

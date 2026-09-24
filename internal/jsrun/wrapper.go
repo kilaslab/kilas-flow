@@ -4,7 +4,7 @@ import "strings"
 
 // wrapperVersion names the wrapper's shape. It is part of every compiled
 // program's cache key, so changing the wrapper cannot run a stale program.
-const wrapperVersion = "jsrun-3"
+const wrapperVersion = "jsrun-5"
 
 // sourceName is the file name the user's code has in stack traces and
 // positions. Frames under any other name belong to the runtime or a library.
@@ -22,15 +22,20 @@ const sourceName = "Code"
 // goja panic on a direct eval() inside the body, which is a goja bug the
 // wrapper steps around.
 //
+// All-items code has the per-item roots too, read from the first input item,
+// because n8n builds them for item 0 and hands them to all-items code as
+// well. $position is n8n's older name for $itemIndex. Per-item code also has
+// `item`, the current input item itself, as n8n's does.
+//
 // The compiled wrapper has one parameter more than its text: the runtime's
 // reword, added to the parsed tree under a name no source can spell (see
 // instrumentCatches), and passed last by runtime.js.
 //
-// A comparator sees the all-items roots: n8n hands its comparator the whole
-// list as `items`.
+// A comparator sees the whole list as `items`, as n8n's comparator does, and
+// no per-item roots.
 var modeRoots = map[Mode][]string{
-	ModeAllItems:   {"items", "$input"},
-	ModeEachItem:   {"$json", "$itemIndex", "$input"},
+	ModeAllItems:   {"items", "$input", "$json", "$binary", "$itemIndex", "$position"},
+	ModeEachItem:   {"$json", "$binary", "$itemIndex", "$position", "$input", "item"},
 	ModeComparator: {"items", "$input"},
 }
 

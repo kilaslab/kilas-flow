@@ -197,6 +197,28 @@ func TestACodeNodeReadsAndStoresFiles(t *testing.T) {
 	}
 }
 
+// A file returned inline, the way n8n's older code makes one, is stored in
+// the execution's own storage, and the next node gets it as a file.
+func TestACodeNodeStoresAFileReturnedInline(t *testing.T) {
+	store := binaryStore(t)
+	output, err := runCode(t, jsExecutor(t, nodes.JSCodeExecutorID),
+		"items[0].binary = { data: { data: Buffer.from('<p>hi</p>').toString('base64'), mimeType: 'text/html', fileName: 'page.html' } }\nreturn items",
+		nil, engine.Request{Binaries: store})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	page := output[0][0].Binary["data"]
+	reader, _, err := store.Get(page.ID)
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	defer reader.Close()
+	stored, _ := io.ReadAll(reader)
+	if string(stored) != "<p>hi</p>" || page.Size != 9 || page.MediaType != "text/html" || page.FileName != "page.html" {
+		t.Fatalf("stored %q as %#v", stored, page)
+	}
+}
+
 // Only the node's own input files are readable: an item it does not have, or
 // a file its item does not hold, is refused where the code can see it.
 func TestOnlyTheNodesOwnInputFilesAreReadable(t *testing.T) {

@@ -54,6 +54,7 @@ func TestUserCodeMayRedeclareEveryRoot(t *testing.T) {
 		"let $workflow = 'mine'",
 		"var $env = 2",
 		"const $ = (name) => name",
+		"const $json = 'first', $binary = {}, $itemIndex = 'index', $position = 'position'",
 		"return items.map(item => ({ json: { n: item.json.n, workflow: $workflow, node: $('x') } }))",
 	}, "\n"), Items: numbered(2)})
 	if len(result.Items) != 2 || result.Items[1].JSON["workflow"] != "mine" || result.Items[1].JSON["node"] != "x" {
@@ -89,21 +90,55 @@ func TestMutatingItemsInPlaceAndReturningThemKeepsTheChange(t *testing.T) {
 	}
 }
 
-func TestJsonIsOnlyAvailablePerItem(t *testing.T) {
-	_, err := runTask(t, jsrun.Task{Source: "return [{ json: { value: $json.n } }]", Items: numbered(1)})
-	if err == nil || !strings.Contains(err.Error(), "$json is only available when the code runs once for each item") {
-		t.Fatalf("Run() error = %v, want $json refused by name in all-items mode", err)
+// In all-items mode the per-item roots read the first input item, as n8n's
+// do: n8n builds them for item 0 and hands them to all-items code too.
+// $json is that item's own json, $binary a copy of its files' metadata.
+func TestAllItemsCodeReadsTheFirstItemThroughThePerItemRoots(t *testing.T) {
+	input := numbered(2)
+	input[0].Binary = map[string]workflow.BinaryRef{"file": {ID: "bin-1", FileName: "report.pdf", MediaType: "application/pdf", Size: 1234}}
+	result := mustRun(t, newRunner(), jsrun.Task{Items: input, Source: strings.Join([]string{
+		"const copy = $binary.file === items[0].binary.file",
+		"$binary.file.fileName = 'changed.pdf'",
+		"$json.touched = true",
+		"return [{ json: { n: $json.n, index: $itemIndex, position: $position, same: $json === items[0].json,",
+		"  touched: items[0].json.touched, name: items[0].binary.file.fileName, copy, type: $binary.file.mimeType, keys: Object.keys($binary.file) } }]",
+	}, "\n")})
+	got := result.Items[0].JSON
+	if got["n"] != float64(0) || got["index"] != float64(0) || got["position"] != float64(0) || got["same"] != true || got["touched"] != true {
+		t.Fatalf("roots = %#v, want the first item's json, index 0 and the same object as items[0].json", got)
 	}
-	_, err = runTask(t, jsrun.Task{Source: "return { json: { count: items.length } }", Mode: jsrun.ModeEachItem, Items: numbered(1)})
+	if got["copy"] != false || got["name"] != "report.pdf" || got["type"] != "application/pdf" || fmt.Sprint(got["keys"]) != "[id fileName mimeType fileExtension fileSize]" {
+		t.Fatalf("$binary = %#v, want a copy of the first item's file metadata", got)
+	}
+
+	// An item with no files has an empty $binary; no items leave both
+	// undefined rather than failing.
+	plain := mustRun(t, newRunner(), jsrun.Task{Items: numbered(1),
+		Source: "return [{ json: { binary: JSON.stringify($binary) } }]"})
+	empty := mustRun(t, newRunner(), jsrun.Task{Items: []workflow.Item{},
+		Source: "return [{ json: { json: typeof $json, binary: typeof $binary, index: $itemIndex } }]"})
+	if plain.Items[0].JSON["binary"] != "{}" || fmt.Sprint(empty.Items[0].JSON) != "map[binary:undefined index:0 json:undefined]" {
+		t.Fatalf("items = %#v and %#v", plain.Items, empty.Items)
+	}
+}
+
+func TestPerItemCodeReadsItsOwnItemThroughTheRoots(t *testing.T) {
+	input := numbered(3)
+	input[2].Binary = map[string]workflow.BinaryRef{"file": {ID: "bin-2", FileName: "b.txt", MediaType: "text/plain", Size: 2}}
+	result := mustRun(t, newRunner(), jsrun.Task{
+		Source: "return { json: { value: $json.n, index: $itemIndex, position: $position, same: $json === $input.item.json, file: ($binary.file || {}).fileName } }",
+		Mode:   jsrun.ModeEachItem, Items: input,
+	})
+	got := result.Items[2].JSON
+	if got["value"] != float64(2) || got["index"] != float64(2) || got["position"] != float64(2) || got["same"] != true || got["file"] != "b.txt" {
+		t.Fatalf("items = %#v", result.Items)
+	}
+	if _, has := result.Items[0].JSON["file"]; has {
+		t.Fatalf("item 0 = %#v, want no file: its $binary is its own", result.Items[0].JSON)
+	}
+	_, err := runTask(t, jsrun.Task{Source: "return { json: { count: items.length } }", Mode: jsrun.ModeEachItem, Items: numbered(1)})
 	if err == nil || !strings.Contains(err.Error(), "items is only available when the code runs once for all items") {
 		t.Fatalf("Run() error = %v, want items refused by name in per-item mode", err)
-	}
-	result := mustRun(t, newRunner(), jsrun.Task{
-		Source: "return { json: { value: $json.n, index: $itemIndex, same: $json === $input.item.json } }",
-		Mode:   jsrun.ModeEachItem, Items: numbered(3),
-	})
-	if result.Items[2].JSON["value"] != float64(2) || result.Items[2].JSON["index"] != float64(2) || result.Items[2].JSON["same"] != true {
-		t.Fatalf("items = %#v", result.Items)
 	}
 }
 
@@ -156,7 +191,7 @@ func TestTheSandboxExposesExactlyTheseGlobals(t *testing.T) {
 	// Intl is new too: goja has none, and the runtime provides it. The Luxon
 	// globals are there whether or not the code names Luxon; the library
 	// itself loads only when one is first read.
-	shared := []string{"$", "$env", "$evaluateExpression", "$execution", "$getWorkflowStaticData", "$jmespath", "$node", "$nodeVersion", "$now", "$prevNode", "$runIndex", "$secrets", "$today", "$vars", "$workflow",
+	shared := []string{"$", "$env", "$items", "$evaluateExpression", "$execution", "$getWorkflowStaticData", "$jmespath", "$node", "$nodeVersion", "$now", "$prevNode", "$runIndex", "$secrets", "$today", "$vars", "$workflow",
 		"DateTime", "Duration", "Info", "Interval", "Intl", "Settings", "console", "crypto", "require",
 		"Buffer", "DOMException", "TextDecoder", "TextEncoder", "URL", "URLSearchParams", "atob", "btoa", "queueMicrotask", "structuredClone",
 		"setTimeout", "setInterval", "setImmediate", "clearTimeout", "clearInterval", "clearImmediate"}
@@ -170,20 +205,39 @@ func TestTheSandboxExposesExactlyTheseGlobals(t *testing.T) {
 	}
 }
 
-// A root that belongs to the other mode is undefined, as in n8n, so code
-// written for both modes can ask `typeof`; using one uncaught says what to
-// use instead.
+// items, the one root per-item code does not have, is undefined there, as in
+// n8n, so code written for both modes can ask `typeof`; using it uncaught
+// says what to use instead. All-items code has every per-item root.
 func TestTheOtherModesRootsAreUndefinedAndSayWhatToUseInstead(t *testing.T) {
 	each := mustRun(t, newRunner(), jsrun.Task{Mode: jsrun.ModeEachItem, Items: numbered(1),
 		Source: "return { json: { items: typeof items, json: typeof $json } }"})
 	all := mustRun(t, newRunner(), jsrun.Task{Items: numbered(1),
 		Source: "return [{ json: { json: typeof $json, index: typeof $itemIndex, items: typeof items } }]"})
-	if got := fmt.Sprint(each.Items[0].JSON, all.Items[0].JSON); got != "map[items:undefined json:object] map[index:undefined items:object json:undefined]" {
+	if got := fmt.Sprint(each.Items[0].JSON, all.Items[0].JSON); got != "map[items:undefined json:object] map[index:number items:object json:object]" {
 		t.Fatalf("typeof = %s", got)
 	}
 	_, err := runTask(t, jsrun.Task{Mode: jsrun.ModeEachItem, Items: numbered(1), Source: "return { json: { n: items.length } }"})
 	if err == nil || !strings.Contains(err.Error(), "ReferenceError: items is only available when the code runs once for all items; use $input.item or $json") {
 		t.Fatalf("Run() error = %v, want the advice", err)
+	}
+}
+
+// Per-item code also has `item`, the current input item itself, as n8n's
+// does; all-items code has none, as in n8n.
+func TestPerItemCodeHasTheCurrentItemAsItem(t *testing.T) {
+	result := mustRun(t, newRunner(), jsrun.Task{Mode: jsrun.ModeEachItem, Items: numbered(2),
+		Source: "return { json: { n: item.json.n, same: item === $input.item && item.json === $json } }"})
+	if result.Items[1].JSON["n"] != float64(1) || result.Items[1].JSON["same"] != true {
+		t.Fatalf("items = %#v", result.Items)
+	}
+	all := mustRun(t, newRunner(), jsrun.Task{Items: numbered(1), Source: "return [{ json: { item: typeof item } }]"})
+	if all.Items[0].JSON["item"] != "undefined" {
+		t.Fatalf("items = %#v, want no item root in all-items code", all.Items)
+	}
+	redeclared := mustRun(t, newRunner(), jsrun.Task{Mode: jsrun.ModeEachItem, Items: numbered(1),
+		Source: "const item = $input.item\nreturn item"})
+	if redeclared.Items[0].JSON["n"] != float64(0) {
+		t.Fatalf("items = %#v", redeclared.Items)
 	}
 }
 
@@ -369,6 +423,9 @@ func TestConsoleIsKeptWhenTheCodeFails(t *testing.T) {
 func nodeRoots() jsrun.Roots {
 	nodes := map[string]jsrun.NodeView{
 		"Webhook": {Items: []map[string]any{{"v": "a"}, {"v": "b"}, {"v": "c"}}, Params: map[string]any{"path": "hook"}},
+		// An IF node on its third run: two items went out on true, one on
+		// false.
+		"IF": {Items: []map[string]any{{"v": "t1"}, {"v": "t2"}, {"v": "f1"}}, Outputs: []int{2, 1}, RunIndex: 2},
 	}
 	return jsrun.Roots{
 		Workflow:  jsrun.WorkflowInfo{ID: "wf-1", Name: "Orders", Active: true},
@@ -438,12 +495,69 @@ func TestItemMatchingPairsTheNamedInputItem(t *testing.T) {
 	}
 }
 
-func TestAllWithABranchOrRunIsANamedError(t *testing.T) {
-	_, err := runTask(t, jsrun.Task{Source: "return $('Webhook').all(1)", Roots: nodeRoots()})
-	if err == nil || !strings.Contains(err.Error(), "which this server does not run") {
-		t.Fatalf("Run() error = %v, want the branch refused", err)
+// .all(branch, run) and $items(name, output, run) read one output of the
+// node's latest run, the only run kept, as n8n reads them: named by its
+// number or as n8n's -1, the latest run is read; an earlier one is refused
+// rather than answered with the latest, and a run or output the node does
+// not have is an error. $items reads output 0 by default; .all() with no
+// branch reads every output, since the runtime cannot tell which one feeds
+// this node.
+func TestAllAndItemsReadOneOutputOfTheLatestRun(t *testing.T) {
+	roots := nodeRoots()
+	roots.RunIndex = 2
+	result := mustRun(t, newRunner(), jsrun.Task{Roots: roots, Source: strings.Join([]string{
+		"const values = (list) => list.map((item) => item.json.v).join(',')",
+		"return [{ json: {",
+		"  items: values($items('IF')), second: values($items('IF', 1)), lockstep: values($items('IF', 1, $runIndex)), last: values($items('IF', null, -1)),",
+		"  all: values($('IF').all()), branch: values($('IF').all(1)), latest: values($('IF').all(0, 2)), same: $items('IF', 1) === $('IF').all(1, -1),",
+		"} }]",
+	}, "\n")})
+	got := result.Items[0].JSON
+	for key, want := range map[string]any{
+		"items": "t1,t2", "second": "f1", "lockstep": "f1", "last": "t1,t2", "all": "t1,t2,f1", "branch": "f1", "latest": "t1,t2", "same": true,
+	} {
+		if got[key] != want {
+			t.Errorf("%s = %#v, want %#v", key, got[key], want)
+		}
 	}
-	_, err = runTask(t, jsrun.Task{Source: "return $('Nope').first()", Roots: nodeRoots()})
+
+	for source, want := range map[string]string{
+		"return $items('IF', 0, 0)":      `this node's code reads run 0 of node "IF", but only its latest run, 2, is kept, which this server does not run`,
+		"return $('IF').all(0, 1)":       `this node's code reads run 1 of node "IF", but only its latest run, 2, is kept, which this server does not run`,
+		"return $items('IF', 0, 3)":      `$items() names run 3 of node "IF", which has no such run`,
+		"return $items('IF', 0, null)":   `$items() names run null of node "IF", which has no such run`,
+		"return $items('IF', 2)":         `$items() names output 2 of node "IF", which has no such output`,
+		"return $('IF').all(2)":          `$("IF").all() names output 2 of node "IF", which has no such output`,
+		"return $('Webhook').all(1)":     `$("Webhook").all() names output 1 of node "Webhook", which has no such output`,
+		"return $items('Webhook', 0, 1)": `$items() names run 1 of node "Webhook", which has no such run`,
+		"return $('Nope').first()":       `node "Nope" has not run in this execution`,
+	} {
+		_, err := runTask(t, jsrun.Task{Source: source, Roots: roots})
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: Run() error = %v, want %q", source, err, want)
+		}
+	}
+}
+
+// $items is n8n's older spelling of the same reads: with no name the node's
+// own input, with one that node's items, as $('Name').all() gives them.
+func TestTheLegacyItemsRootReadsTheInputOrANamedNode(t *testing.T) {
+	result := mustRun(t, newRunner(), jsrun.Task{Source: strings.Join([]string{
+		"const hook = $items('Webhook')",
+		"return [{ json: { input: $items() === items && $items(null) === items, count: $items().length, same: hook === $('Webhook').all(),",
+		"  values: hook.map((item) => item.json.v), first: $items('Webhook', 0, 0)[0].json.v, nullOutput: $items('Webhook', null).length } }]",
+	}, "\n"), Roots: nodeRoots(), Items: numbered(2)})
+	got := result.Items[0].JSON
+	if got["input"] != true || got["count"] != float64(2) || got["same"] != true || fmt.Sprint(got["values"]) != "[a b c]" || got["first"] != "a" || got["nullOutput"] != float64(3) {
+		t.Fatalf("items = %#v", got)
+	}
+	perItem := mustRun(t, newRunner(), jsrun.Task{Mode: jsrun.ModeEachItem, Roots: nodeRoots(), Items: numbered(2),
+		Source: "return { json: { count: $items().length, hook: $items('Webhook')[$itemIndex].json.v } }"})
+	if perItem.Items[1].JSON["count"] != float64(2) || perItem.Items[1].JSON["hook"] != "b" {
+		t.Fatalf("items = %#v", perItem.Items)
+	}
+
+	_, err := runTask(t, jsrun.Task{Source: "return $items('Nope')", Roots: nodeRoots()})
 	if err == nil || !strings.Contains(err.Error(), `node "Nope" has not run in this execution`) {
 		t.Fatalf("Run() error = %v, want the missing node named", err)
 	}
