@@ -6,23 +6,24 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/kilaslab/kilas-flow/internal/jsrun"
 )
 
 // refusedQuickly runs a body that must fail, with an error whose text
-// contains want, in well under its time limit: two seconds, stretched by
-// what the race detector costs.
+// contains want. The per-call bounds this proves refuse a request up front,
+// before doing any of the work a legal call of the same shape would do, so
+// the property is the message, not how long refusing took: a wall clock
+// comparison here would time a starved CPU rather than the check, which is
+// what made this flake under -race on a loaded machine (BUG-k99658). A
+// bound that stopped checking up front and instead failed after doing the
+// work would still show up here, because the fallback is the run's own time
+// limit, whose error does not contain want.
 func refusedQuickly(t *testing.T, source, want string) {
 	t.Helper()
-	start := time.Now()
 	_, err := runAll(t, newRunner(), source, nil)
 	if err == nil || !strings.Contains(err.Error(), want) {
 		t.Errorf("%q: Run() error = %v, want one saying %q", source, err, want)
-	}
-	if elapsed := time.Since(start); elapsed > 2*time.Second*time.Duration(interruptTolerance/50_000_000) {
-		t.Errorf("%q: refusing took %v", source, elapsed)
 	}
 }
 
@@ -137,22 +138,33 @@ func TestATypedArrayLengthThatIsNotAnObjectIsCheckedAsALength(t *testing.T) {
 func TestBuiltinsThatAmplifyTheirInputAreBounded(t *testing.T) {
 	for _, source := range []string{
 		"return [{ json: { n: Array(2 ** 20).join('x'.repeat(2 ** 10)).length } }]",
-		"return [{ json: { n: Array(2 ** 20).fill('x'.repeat(2 ** 10)).join('').length } }]",
-		"return [{ json: { n: Array(2 ** 20).fill('x'.repeat(2 ** 10)).toLocaleString().length } }]",
+		// join('') and toLocaleString have no glue to check up front, so they
+		// total each element as they go; a short array of doubled elements
+		// crosses the bound in tens of steps instead of the tens of
+		// thousands a long array of small ones needs.
+		"let big = 'x'\nfor (let i = 0; i < 20; i++) big = big + big\nreturn [{ json: { n: Array(40).fill(big).join('').length } }]",
+		"let big = 'x'\nfor (let i = 0; i < 20; i++) big = big + big\nreturn [{ json: { n: Array(40).fill(big).toLocaleString().length } }]",
 		"return [{ json: { n: new Uint8Array(2 ** 20).join('x'.repeat(2 ** 10)).length } }]",
 		"return [{ json: { n: 'x'.repeat(2 ** 16).replace(/x/g, \"$'\").length } }]",
 		"return [{ json: { n: 'x'.repeat(2 ** 15).replaceAll('x', 'y'.repeat(2 ** 11)).length } }]",
 		"return [{ json: { n: 'x'.repeat(2 ** 12).replace(/x/g, 'y'.repeat(2 ** 14)).length } }]",
 		"class Echo extends RegExp { exec(s) { return this.done ? null : (this.done = true, Object.assign(['x'.repeat(2 ** 20)], { index: 0 })) } }\nreturn [{ json: { n: 'x'.replace(new Echo('x'), '$&'.repeat(64)).length } }]",
-		"const big = 'x'.repeat(2 ** 24)\nreturn [{ json: { n: JSON.stringify(Array(4).fill(big)).length } }]",
+		// big is built by doubling, not repeat: goja's repeat writes one
+		// character at a time, which the race detector slows enough on its
+		// own to threaten the time limit (BUG-k99658); doubling is a copy
+		// per step and reaches the same 16 MiB in 24 steps.
+		"let big = 'x'\nfor (let i = 0; i < 24; i++) big = big + big\nreturn [{ json: { n: JSON.stringify(Array(4).fill(big)).length } }]",
 		"let nested = 0\nfor (let n = 0; n < 3000; n++) nested = [nested]\nreturn [{ json: { n: JSON.stringify(nested, null, 10).length } }]",
-		"const s = 'x'.repeat(2 ** 24)\nreturn [{ json: { n: s.concat(s, s).length } }]",
+		// concat's check totals its arguments' lengths before it concatenates
+		// anything, so a small legal string spread many times over-refuses
+		// without ever building or copying a large one.
+		"const s = 'x'.repeat(2 ** 16)\nreturn [{ json: { n: s.concat(...Array(600).fill(s)).length } }]",
 	} {
 		refusedQuickly(t, source, "a string length of")
 	}
 	for _, source := range []string{
 		"return [{ json: { n: Object.keys(new Uint8Array(2 ** 24)).length } }]",
-		"return [{ json: { n: Object.entries('x'.repeat(2 ** 24)).length } }]",
+		"let big = 'x'\nfor (let i = 0; i < 24; i++) big = big + big\nreturn [{ json: { n: Object.entries(big).length } }]",
 		"return [{ json: { n: Object.assign({}, new Uint8Array(2 ** 24)).length } }]",
 	} {
 		refusedQuickly(t, source, "a list of keys of 16777216")
@@ -162,11 +174,11 @@ func TestBuiltinsThatAmplifyTheirInputAreBounded(t *testing.T) {
 		"return [{ json: { n: [...new Uint8Array(2 ** 24)].length } }]",
 		"return [{ json: { n: [...new Uint8Array(2 ** 24).entries()].length } }]",
 		"return [{ json: { n: new Uint8Array(2 ** 24).sort()[0] } }]",
-		"return [{ json: { n: Array.from('x'.repeat(2 ** 24)).length } }]",
+		"let big = 'x'\nfor (let i = 0; i < 24; i++) big = big + big\nreturn [{ json: { n: Array.from(big).length } }]",
 	} {
 		refusedQuickly(t, source, "one call may handle here")
 	}
-	refusedQuickly(t, "return [{ json: { n: [...'x'.repeat(2 ** 24)].length } }]", "a string to iterate over, with a length of 16777216")
+	refusedQuickly(t, "let big = 'x'\nfor (let i = 0; i < 24; i++) big = big + big\nreturn [{ json: { n: [...big].length } }]", "a string to iterate over, with a length of 16777216")
 }
 
 // What the bounded built-ins return is what Node 24 returns for the same

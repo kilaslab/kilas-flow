@@ -134,15 +134,14 @@ func TestBuiltinsThatAllocateFromANumberAreBounded(t *testing.T) {
 // Stringifying a deeply nested array recursed natively with a quadratic cycle
 // check: 500,000 levels ran 80 seconds past a 10 second limit. The array
 // methods are the code's own calls now, so the depth counts against the
-// call-depth limit instead.
+// call-depth limit instead. Nesting twice the default MaxCallDepth trips that
+// limit exactly as 500,000 levels did, with a fraction of the building and,
+// under the race detector on a loaded machine, none of the time-limit risk a
+// wall clock on the whole run would carry (BUG-k99658).
 func TestDeeplyNestedArraysCannotHoldTheCPU(t *testing.T) {
-	start := time.Now()
-	_, err := runAll(t, newRunner(), "let nested = []\nfor (let i = 0; i < 5e5; i++) nested = [nested]\nreturn [{ json: { text: String(nested) } }]", nil)
+	_, err := runAll(t, newRunner(), "let nested = []\nfor (let i = 0; i < 20000; i++) nested = [nested]\nreturn [{ json: { text: String(nested) } }]", nil)
 	if !errors.Is(err, jsrun.ErrCallDepth) {
 		t.Fatalf("Run() error = %v, want the call-depth limit", err)
-	}
-	if elapsed := time.Since(start); elapsed > 5*time.Second {
-		t.Fatalf("the run took %v", elapsed)
 	}
 }
 

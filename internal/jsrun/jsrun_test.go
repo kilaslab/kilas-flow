@@ -209,13 +209,15 @@ func TestCancellingTheExecutionStopsTheScript(t *testing.T) {
 
 func TestTheHeapWatchdogStopsARunawayAllocation(t *testing.T) {
 	runtime.GC()
-	ceiling := jsrun.HeapObjectBytesForTest() + 96<<20
+	ceiling := jsrun.HeapObjectBytesForTest() + 64<<20
 	runner := jsrun.NewRunner(jsrun.Options{HeapCeiling: ceiling})
-	// The chunk is built once: goja's repeat writes a character at a time,
-	// which the race detector slows to seconds for a loop of them, while a
-	// concatenation is one copy. The hoard reaches the ceiling in a couple of
-	// thousand steps, long before the time limit on a loaded machine.
-	_, err := runAll(t, runner, "const chunk = 'x'.repeat(1 << 16)\nconst hoard = []\nwhile (true) hoard.push(chunk + hoard.length)", nil)
+	// Each push is a single native allocation, not built up a character at a
+	// time: goja's own repeat and string concatenation write byte by byte,
+	// which the race detector slows enough on its own to threaten the time
+	// limit (BUG-k99658), and the watchdog's own 10ms sampling only has to
+	// win a race against the loop, not against how long each step took to
+	// build. Eight 8 MiB pushes reach the ceiling either way.
+	_, err := runAll(t, runner, "const hoard = []\nwhile (true) hoard.push(new Uint8Array(8 << 20))", nil)
 	if !errors.Is(err, jsrun.ErrMemoryLimit) {
 		t.Fatalf("Run() error = %v, want the memory limit", err)
 	}
