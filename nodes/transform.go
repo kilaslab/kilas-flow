@@ -3,12 +3,14 @@ package nodes
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/rand"
 	"sort"
 	"strings"
 
 	"github.com/kilaslab/kilas-flow/internal/engine"
+	"github.com/kilaslab/kilas-flow/internal/jsrun"
 	"github.com/kilaslab/kilas-flow/internal/node"
 	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
@@ -262,12 +264,37 @@ func splitOutCarried(parameters map[string]any, item workflow.Item, splitting []
 
 // --- Sort ---------------------------------------------------------------------
 
+// defaultSortComparator is the comparator a Sort of type code runs when it
+// names none, and what a new one starts with. It behaves as n8n's own default
+// does, since n8n leaves a comparator still at its default out of an export:
+// items in ascending order of their `myField`, compared with < and >, so a
+// missing field ties with everything. The wording is KilasFlow's own.
+const defaultSortComparator = "// a and b are two of the node's items. Return a number below 0 to put a\n" +
+	"// first, above 0 to put b first, or 0 to keep them as they are.\n" +
+	"const field = 'myField';\n" +
+	"if (a.json[field] < b.json[field]) return -1;\n" +
+	"if (a.json[field] > b.json[field]) return 1;\n" +
+	"return 0;\n"
+
+// sortComparatorOf is the node's comparator: its own, or the default when it
+// names none. An empty one stays empty, which is refused, as n8n refuses it.
+func sortComparatorOf(parameters map[string]any) string {
+	source, present := parameters["code"]
+	if !present || source == nil {
+		return defaultSortComparator
+	}
+	return textOf(source)
+}
+
+// sortNode is n8n's Sort: by fields, at random, or with a JavaScript
+// comparator. Its parameters carry n8n's own names, so an imported node is a
+// copy and exports back byte for byte.
 func sortNode() node.Definition {
 	return node.Definition{
 		Type:        SortNodeType,
 		Version:     workflow.V(1),
 		DisplayName: "Sort",
-		Description: "Reorders items by one or more fields, or shuffles them.",
+		Description: "Reorders items by one or more fields, with a JavaScript comparator, or at random.",
 		Category:    "Transform",
 		Group:       []node.NodeGroup{node.GroupTransform},
 		Icon:        &node.NodeIcon{Light: "builtin:arrow-down-up"},
@@ -281,18 +308,31 @@ func sortNode() node.Definition {
 				Options: []node.PropertyOption{
 					{Label: "Simple", Value: "simple"},
 					{Label: "Random", Value: "random"},
+					{Label: "Code", Value: "code"},
 				},
-				Description: "n8n also offers a JavaScript comparator. This node does not run one, so that mode is refused at import rather than approximated; a Code (JavaScript) node can sort any way JavaScript can.",
+				Description: "Simple sorts by fields; Code sorts with a JavaScript comparator, run on the server's own engine as a Code (JavaScript) node is.",
 			},
 			{
 				Key: "sortFieldsUI", Label: "Fields to Sort By", Kind: node.PropertyString,
 				Description: "Comma-separated field names, each optionally suffixed with `:desc`.",
 				VisibleWhen: []node.VisibilityCondition{{Key: "type", Equals: "simple"}},
 			},
+			{
+				Key: "code", Label: "Comparator", Kind: node.PropertyString,
+				Default:     defaultSortComparator,
+				TypeOptions: &node.TypeOptions{Rows: 10},
+				Description: "The body of a function of two items, a and b, that returns a number: below 0 puts a first, above 0 puts b first, " +
+					"0 keeps their order. `items` is the whole list. It runs as a Code (JavaScript) node's code does, with the same limits. " +
+					"Left out, the default sorts by `myField`, as n8n's does.",
+				VisibleWhen: []node.VisibilityCondition{{Key: "type", Equals: "code"}},
+			},
 		},
 		SharedSettings: sharedSettings(),
 		ExecutorID:     SortExecutorID,
 		Validate:       validateSortConfiguration,
+		// A sort orders its whole batch: split into one-item calls to
+		// tolerate failures item by item, it would order nothing.
+		WholeBatch: true,
 	}
 }
 
@@ -304,11 +344,74 @@ func validateSortConfiguration(n workflow.Node) error {
 		}
 	case "random":
 	case "code":
-		return fmt.Errorf("sorting with a JavaScript comparator is not supported; use a Code node or sort by fields")
+		return validateSortComparator(sortComparatorOf(n.Parameters))
 	default:
 		return fmt.Errorf("sort type %q is not supported", mode)
 	}
 	return nil
+}
+
+// validateSortComparator reads a comparator without running it, with the
+// analysis the importer and a run use, so all three say the same thing. A
+// comparator with no return of its own can only ever answer with nothing,
+// which n8n refuses before it runs one too.
+func validateSortComparator(source string) error {
+	if strings.TrimSpace(source) == "" {
+		return errors.New("the comparator is empty")
+	}
+	analysis, err := jsrun.Analyze(source, jsrun.ModeComparator)
+	if err != nil {
+		return err
+	}
+	if len(analysis.Returns) == 0 {
+		return errors.New("the comparator never returns a value; return a number below 0 to put a first, above 0 to put b first, or 0 to keep their order")
+	}
+	return nil
+}
+
+// sortExecutor sorts by fields or at random in Go, and with a comparator on
+// the deployment's JavaScript runtime: the same engine, in the same worker
+// processes and under the same limits as a Code (JavaScript) node, and off
+// when the operator turned JavaScript off.
+type sortExecutor struct {
+	javaScript *JSCodeExecutor
+}
+
+func (executor sortExecutor) Execute(ctx context.Context, ir workflow.IRNode, input workflow.NodeInput, request engine.Request) (workflow.NodeOutput, error) {
+	if textOf(ir.Parameters["type"]) == "code" {
+		return executor.sortWithComparator(ctx, ir, input, request)
+	}
+	return executeSort(ctx, ir, input, request)
+}
+
+// sortWithComparator asks the runtime for the order the comparator puts the
+// items in, then moves the node's own items into that order, so their files
+// and lineage go with them. The comparator is compiled once and called by
+// the sort as often as it needs, all in one run. What it printed reaches the
+// console as a Code node's output does.
+func (executor sortExecutor) sortWithComparator(ctx context.Context, ir workflow.IRNode, input workflow.NodeInput, request engine.Request) (workflow.NodeOutput, error) {
+	runtime := executor.javaScript
+	if runtime.disabled != "" {
+		return nil, fmt.Errorf("node %q: %s", ir.Name, runtime.disabled)
+	}
+	source := sortComparatorOf(ir.Parameters)
+	if strings.TrimSpace(source) == "" {
+		return nil, fmt.Errorf("node %q: the comparator is empty", ir.Name)
+	}
+	items := input["main"]
+	result, err := runtime.runner.Run(ctx, jsrun.Task{
+		Source: source, Mode: jsrun.ModeComparator, Items: items, Roots: jsRootsOf(ir, input, request),
+	})
+	emitConsole(request, ir, result)
+	if err != nil {
+		return nil, fmt.Errorf("node %q: %w", ir.Name, err)
+	}
+	// The runtime checked that the order names every item exactly once.
+	sorted := make([]workflow.Item, 0, len(result.Order))
+	for _, index := range result.Order {
+		sorted = append(sorted, cloneItem(items[index]))
+	}
+	return workflow.NodeOutput{sorted}, nil
 }
 
 func executeSort(ctx context.Context, ir workflow.IRNode, input workflow.NodeInput, _ engine.Request) (workflow.NodeOutput, error) {

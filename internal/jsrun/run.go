@@ -129,6 +129,10 @@ func (runner *Runner) Execute(ctx context.Context, job Job, answers Host) (execu
 	}
 	call := invocation{v: v, clock: clock, function: function, mode: mode, count: job.count(), limits: limits, files: known}
 
+	if mode == ModeComparator {
+		text, err := call.order(ready.analysis.Returns)
+		return Executed{Outputs: []string{text}, UserTime: clock.spent()}, err
+	}
 	if mode == ModeAllItems {
 		text, _, err := call.run(ctx, 0, limits.MaxOutputBytes)
 		return Executed{Outputs: []string{text}, UserTime: clock.spent()}, err
@@ -170,6 +174,9 @@ func (runner *Runner) Execute(ctx context.Context, job Job, answers Host) (execu
 func (job Job) Finish(executed Executed, runErr error) (Result, error) {
 	result := Result{UserTime: executed.UserTime}
 	result.Console, result.ConsoleTruncated = job.console(executed)
+	if job.Mode.orDefault() == ModeComparator {
+		return job.finishOrder(result, executed, runErr)
+	}
 	eachItem := job.Mode.orDefault() == ModeEachItem
 	if runErr != nil {
 		// A per-item run that stopped keeps what the items before the failure
@@ -222,6 +229,30 @@ func (job Job) Finish(executed Executed, runErr error) (Result, error) {
 			result.Outcomes = append(result.Outcomes, ItemOutcome{Items: items})
 		}
 	}
+	return result, nil
+}
+
+// finishOrder takes a comparator's order, once it is known to be one: every
+// input item exactly once, whatever a worker sent back.
+func (job Job) finishOrder(result Result, executed Executed, runErr error) (Result, error) {
+	if runErr != nil {
+		return result, runErr
+	}
+	if len(executed.Outputs) != 1 {
+		return result, EngineFaultError(fmt.Sprintf("it returned %d results for 1 call", len(executed.Outputs)))
+	}
+	order := []int{}
+	if err := json.Unmarshal([]byte(executed.Outputs[0]), &order); err != nil || len(order) != job.count() {
+		return result, EngineFaultError("its sort order does not name every item once")
+	}
+	placed := make([]bool, len(order))
+	for _, index := range order {
+		if index < 0 || index >= len(order) || placed[index] {
+			return result, EngineFaultError("its sort order does not name every item once")
+		}
+		placed[index] = true
+	}
+	result.Order = order
 	return result, nil
 }
 
@@ -337,6 +368,32 @@ func (call invocation) run(ctx context.Context, index int, maxOutput int64) (str
 		return "", 0, err
 	}
 	return text, size, nil
+}
+
+// order sorts the input with a comparator, with the clock running around
+// the sort, and returns the order as JSON. returns are the lines of the
+// comparator's own return statements: once one has answered, which it was
+// cannot be told, so a wrong answer is located only when there is one, and
+// only when it is a value, since answering with nothing may be the
+// comparator falling off its end.
+func (call invocation) order(returns []int) (string, error) {
+	where := ""
+	if len(returns) == 1 {
+		where = location(returns[0], -1)
+	}
+	call.clock.start()
+	text, err := call.v.sortOrder(call.function, where)
+	exhausted := call.clock.stop()
+	if err == nil && exhausted {
+		err = timedOut(call.limits.Timeout)
+	}
+	if err != nil {
+		return "", err
+	}
+	if int64(len(text)) > call.limits.MaxOutputBytes {
+		return "", outputTooLarge(call.limits)
+	}
+	return text, nil
 }
 
 func outputTooLarge(limits Limits) error {

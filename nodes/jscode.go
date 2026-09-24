@@ -137,6 +137,12 @@ func (executor *JSCodeExecutor) Execute(ctx context.Context, ir workflow.IRNode,
 		limits.Timeout = time.Duration(seconds * float64(time.Second))
 	}
 	mode := jsrun.Mode(textParameter(ir.Parameters, "mode"))
+	if mode != "" && mode != jsrun.ModeAllItems && mode != jsrun.ModeEachItem {
+		// Validation refuses it first; the runtime's comparator mode belongs
+		// to the Sort node and must not be reachable from a Code node's
+		// parameters either way.
+		return nil, fmt.Errorf("node %q: mode %q is neither %s nor %s", ir.Name, mode, CodeModeAllItems, CodeModeEachItem)
+	}
 	result, err := executor.runner.Run(ctx, jsrun.Task{
 		Source: source,
 		Mode:   mode,

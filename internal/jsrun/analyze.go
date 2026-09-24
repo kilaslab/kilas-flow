@@ -28,6 +28,11 @@ type Analysis struct {
 	UsesLuxon bool
 	// Unsupported lists every construct the runtime refuses.
 	Unsupported []Unsupported
+	// Returns lists, for a comparator (ModeComparator), the user's lines of
+	// the return statements the comparator itself runs, in order; a return
+	// inside a function the comparator defines is that function's. It is nil
+	// for a Code-node body.
+	Returns []int
 }
 
 // The bounds on a body's shape, checked before goja does anything costly.
@@ -218,22 +223,33 @@ func checkShape(program *ast.Program, w wrapped) (*ast.FunctionLiteral, error) {
 	if !ok {
 		return nil, escapesWrapper(0)
 	}
-	call, ok := ret.Argument.(*ast.CallExpression)
-	if !ok {
-		return nil, escapesWrapper(0)
-	}
-	member, ok := call.Callee.(*ast.DotExpression)
-	if !ok {
-		return nil, escapesWrapper(0)
-	}
-	body, ok := member.Left.(*ast.FunctionLiteral)
-	if !ok || !body.Async || body.Body == nil || int(body.Body.LeftBrace) != w.open+1 {
+	body, ok := wrappedBody(ret.Argument, w)
+	if !ok || body.Body == nil || int(body.Body.LeftBrace) != w.open+1 {
 		return nil, escapesWrapper(0)
 	}
 	if int(body.Body.RightBrace) != w.close+1 {
 		return nil, escapesWrapper(w.lineAt(int(body.Body.RightBrace) - 1))
 	}
 	return body, nil
+}
+
+// wrappedBody finds the function that holds the user's code in what the
+// wrapper returns: the async body it calls, or a comparator returned as it is.
+func wrappedBody(returned ast.Expression, w wrapped) (*ast.FunctionLiteral, bool) {
+	if w.comparator {
+		body, ok := returned.(*ast.FunctionLiteral)
+		return body, ok && !body.Async && !body.Generator
+	}
+	call, ok := returned.(*ast.CallExpression)
+	if !ok {
+		return nil, false
+	}
+	member, ok := call.Callee.(*ast.DotExpression)
+	if !ok {
+		return nil, false
+	}
+	body, ok := member.Left.(*ast.FunctionLiteral)
+	return body, ok && body.Async
 }
 
 // inspect walks the body and records what it uses.
@@ -244,7 +260,48 @@ func inspect(body *ast.FunctionLiteral, w wrapped) Analysis {
 		walker.analysis.Requires = append(walker.analysis.Requires, name)
 	}
 	sort.Strings(walker.analysis.Requires)
+	// A body the walk refused for its depth is not walked again.
+	if w.comparator && len(walker.analysis.Unsupported) == 0 {
+		walker.analysis.Returns = []int{}
+		ownReturns(reflect.ValueOf(body.Body), w, &walker.analysis.Returns)
+	}
 	return walker.analysis
+}
+
+// ownReturns records the lines of the return statements a comparator runs
+// itself. A function, arrow function or class inside it returns for itself,
+// so the walk does not enter one.
+func ownReturns(value reflect.Value, w wrapped, lines *[]int) {
+	switch value.Kind() {
+	case reflect.Interface:
+		if !value.IsNil() {
+			ownReturns(value.Elem(), w, lines)
+		}
+	case reflect.Pointer:
+		if value.IsNil() || value.Type().Elem().PkgPath() != astPackage {
+			return
+		}
+		switch node := value.Interface().(type) {
+		case *ast.FunctionLiteral, *ast.ArrowFunctionLiteral, *ast.ClassLiteral:
+			return
+		case *ast.ReturnStatement:
+			*lines = append(*lines, w.lineAt(int(node.Idx0())-1))
+		}
+		ownReturns(value.Elem(), w, lines)
+	case reflect.Struct:
+		if value.Type().PkgPath() != astPackage {
+			return
+		}
+		for index := 0; index < value.NumField(); index++ {
+			if field := value.Type().Field(index); field.IsExported() && field.Name != "DeclarationList" {
+				ownReturns(value.Field(index), w, lines)
+			}
+		}
+	case reflect.Slice:
+		for index := 0; index < value.Len(); index++ {
+			ownReturns(value.Index(index), w, lines)
+		}
+	}
 }
 
 var astPackage = reflect.TypeOf(ast.Program{}).PkgPath()

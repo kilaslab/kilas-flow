@@ -2489,14 +2489,107 @@ func TestTheDataShapingFamilyImportsAndExports(t *testing.T) {
 	}
 }
 
-// n8n's third Sort mode is a JavaScript comparator. Approximating it would sort
-// by something the author did not write, so it is named instead.
-func TestAJavaScriptSortComparatorIsRefusedRatherThanApproximated(t *testing.T) {
+// n8n's third Sort mode is a JavaScript comparator. It runs on the same
+// runtime as a Code node, so it imports runnable, copied exactly as it arrived
+// and never read as an expression, and goes back out byte for byte.
+func TestAJavaScriptSortComparatorImportsRunnableAndRoundTripsByteForByte(t *testing.T) {
 	t.Parallel()
 
-	result := importFixture(t, `{"name":"S","nodes":[{"id":"a","name":"Order","type":"n8n-nodes-base.sort","typeVersion":1,"position":[0,0],"parameters":{"type":"code","code":"return 0"}}],"connections":{}}`)
-	if !hasReason(result.Unsupported, "JavaScript") {
-		t.Fatalf("unsupported = %#v, want the comparator named", result.Unsupported)
+	comparator := "// {{ $json.n }} is not an expression here  \r\nconst byScore = a.json.score - b.json.score;\n\treturn byScore || (a.json.name < b.json.name ? -1 : 1); // 'é'\n"
+	encoded, _ := json.Marshal(comparator)
+	result := importFixture(t, `{"name":"S","nodes":[{"id":"a","name":"Order","type":"n8n-nodes-base.sort","typeVersion":1,"position":[0,0],"parameters":{"type":"code","code":`+string(encoded)+`}}],"connections":{}}`)
+	order := nodeByName(result.Document, "Order")
+	if order.Type != n8n.SortNodeType || order.Parameters["type"] != "code" || order.Parameters["code"] != comparator {
+		t.Fatalf("sort = %s %#v, want the code type and the comparator copied exactly", order.Type, order.Parameters)
+	}
+	for _, issue := range result.Unsupported {
+		if issue.NodeName == "Order" {
+			t.Fatalf("an import issue %#v for a comparator that runs", issue)
+		}
+	}
+	definition, _ := registry(t).Resolve(n8n.SortNodeType, workflow.V(1))
+	if err := definition.Validate(workflow.Node{Parameters: order.Parameters}); err != nil {
+		t.Fatalf("Validate() = %v, want the imported comparator valid", err)
+	}
+
+	exported, err := n8n.Export(result.Document, registry(t))
+	if err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+	for _, node := range exported.Document.Nodes {
+		if node.Name != "Order" {
+			continue
+		}
+		if node.Type != "n8n-nodes-base.sort" || node.Parameters["type"] != "code" || node.Parameters["code"] != comparator {
+			t.Fatalf("exported %s %#v, want the n8n Sort with its comparator unchanged", node.Type, node.Parameters)
+		}
+		if _, present := node.Parameters["sortFieldsUi"]; present {
+			t.Errorf("exported %#v, want no field list invented for a comparator", node.Parameters)
+		}
+	}
+}
+
+// n8n leaves a comparator that still holds its default out of an export. It
+// imports with nothing blocking it, validates, and goes back out without a
+// code the source did not have.
+func TestASortComparatorLeftAtItsDefaultRoundTripsWithoutOne(t *testing.T) {
+	t.Parallel()
+
+	result := importFixture(t, `{"name":"S","nodes":[{"id":"a","name":"Order","type":"n8n-nodes-base.sort","typeVersion":1,"position":[0,0],"parameters":{"type":"code"}}],"connections":{}}`)
+	order := nodeByName(result.Document, "Order")
+	if _, present := order.Parameters["code"]; present || order.Parameters["type"] != "code" {
+		t.Fatalf("parameters = %#v, want the code type and no comparator invented", order.Parameters)
+	}
+	for _, issue := range result.Unsupported {
+		if issue.NodeName == "Order" {
+			t.Fatalf("an import issue %#v for the default comparator", issue)
+		}
+	}
+	definition, _ := registry(t).Resolve(n8n.SortNodeType, workflow.V(1))
+	if err := definition.Validate(workflow.Node{Parameters: order.Parameters}); err != nil {
+		t.Fatalf("Validate() = %v, want the default comparator valid", err)
+	}
+	exported, err := n8n.Export(result.Document, registry(t))
+	if err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+	for _, node := range exported.Document.Nodes {
+		if node.Name != "Order" {
+			continue
+		}
+		if _, present := node.Parameters["code"]; present || node.Parameters["type"] != "code" {
+			t.Fatalf("exported %#v, want the code type and no comparator", node.Parameters)
+		}
+	}
+}
+
+// What the runtime cannot run in a comparator is refused at import in the
+// words the node's own validation uses; a comparator that does not parse is
+// named too, as a Code node's is.
+func TestAnUnsupportedSortComparatorRefusesAtImportInTheSameWords(t *testing.T) {
+	t.Parallel()
+
+	const comparator = "return require('fs') ? 0 : 1;"
+	encoded, _ := json.Marshal(comparator)
+	result := importFixture(t, `{"name":"S","nodes":[{"id":"a","name":"Order","type":"n8n-nodes-base.sort","typeVersion":1,"position":[0,0],"parameters":{"type":"code","code":`+string(encoded)+`}}],"connections":{}}`)
+	var blocking []n8n.ImportIssue
+	for _, issue := range result.Unsupported {
+		if issue.NodeName == "Order" && issue.Severity == n8n.SeverityBlocking {
+			blocking = append(blocking, issue)
+		}
+	}
+	definition, _ := registry(t).Resolve(n8n.SortNodeType, workflow.V(1))
+	validation := definition.Validate(workflow.Node{Parameters: map[string]any{"type": "code", "code": comparator}})
+	if len(blocking) != 1 || validation == nil || blocking[0].Reason != validation.Error() || blocking[0].Field != "code" {
+		t.Fatalf("import says %#v, validation says %v; want one blocking issue in the same sentence", blocking, validation)
+	}
+	if !strings.HasPrefix(validation.Error(), `this node's code requires the module "fs" (line 1), which this server does not run.`) {
+		t.Fatalf("validation = %q", validation)
+	}
+
+	broken := importFixture(t, `{"name":"S","nodes":[{"id":"a","name":"Order","type":"n8n-nodes-base.sort","typeVersion":1,"position":[0,0],"parameters":{"type":"code","code":"return a.json.n - ;"}}],"connections":{}}`)
+	if !hasReason(broken.Unsupported, "does not parse") {
+		t.Fatalf("unsupported = %#v, want the comparator named as not parsing", broken.Unsupported)
 	}
 }
 
@@ -2862,20 +2955,26 @@ func TestAPythonCodeNodeIsAFirstClassRefusalRatherThanThePlaceholder(t *testing.
 	}
 }
 
-func TestEveryJavaScriptEscapeHatchRefusesInTheSameWords(t *testing.T) {
+func TestEveryRefusedScriptRefusesInTheSameWords(t *testing.T) {
 	t.Parallel()
 
 	// One mechanism, one wording, one severity. Three wordings for one
 	// situation is how a user concludes the three are different problems.
-	// JavaScript runs now, so the Code node here uses the one construct goja
-	// cannot run faithfully.
+	// JavaScript runs now, in a Code node and in a Sort comparator alike, so
+	// what is left to refuse is Python and the constructs goja cannot run
+	// faithfully, wherever they are written. The runnable comparator is
+	// there to prove it is not refused.
 	const fixture = `{
-	  "name": "Two hatches",
+	  "name": "Every hatch",
 	  "nodes": [
 	    {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}},
 	    {"id":"b","name":"Code","type":"n8n-nodes-base.code","typeVersion":2,"position":[220,0],
 	     "parameters":{"jsCode":"return [{ json: { letter: /\\p{L}/u.test('é') } }];"}},
 	    {"id":"c","name":"Sort","type":"n8n-nodes-base.sort","typeVersion":1,"position":[440,0],
+	     "parameters":{"type":"code","code":"return /\\p{L}/u.test(a.json.s) ? -1 : 1;"}},
+	    {"id":"d","name":"Python","type":"n8n-nodes-base.code","typeVersion":2,"position":[660,0],
+	     "parameters":{"language":"python","pythonCode":"return _input.all()"}},
+	    {"id":"e","name":"Runnable sort","type":"n8n-nodes-base.sort","typeVersion":1,"position":[880,0],
 	     "parameters":{"type":"code","code":"return a.json.n - b.json.n;"}}
 	  ],
 	  "connections": {"Manual": {"main": [[{"node":"Code","type":"main","index":0}]]}},
@@ -2883,14 +2982,22 @@ func TestEveryJavaScriptEscapeHatchRefusesInTheSameWords(t *testing.T) {
 	}`
 
 	result := importFixture(t, fixture)
-	refusals := 0
+	refused := map[string]string{}
 	for _, issue := range result.Unsupported {
-		if issue.Severity == n8n.SeverityBlocking && strings.Contains(issue.Reason, "which this server does not run") {
-			refusals++
+		if issue.Severity == n8n.SeverityBlocking {
+			refused[issue.NodeName] = issue.Reason
 		}
 	}
-	if refusals != 2 {
-		t.Fatalf("unsupported = %#v, want both escape hatches refused in the same words", result.Unsupported)
+	if len(refused) != 3 || refused["Runnable sort"] != "" {
+		t.Fatalf("refused = %#v, want the Code node, the Sort comparator and the Python node", refused)
+	}
+	for name, reason := range refused {
+		if !strings.HasPrefix(reason, "this node's code ") || !strings.Contains(reason, ", which this server does not run. ") {
+			t.Errorf("%s: %q, want the one refusal sentence", name, reason)
+		}
+	}
+	if refused["Code"] != refused["Sort"] {
+		t.Errorf("the Code node says %q and the Sort comparator %q; want the same words for the same construct", refused["Code"], refused["Sort"])
 	}
 }
 

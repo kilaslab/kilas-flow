@@ -634,6 +634,37 @@ when the node runs, as a `SyntaxError` with its line, not when it is saved.
   awaits something nothing will ever resolve fails at once with a message
   saying so, rather than waiting out the time limit.
 
+### The Sort node's comparator
+
+n8n's Sort node has a third type, **Code**, whose `code` is the body of a
+comparator. It imports as the Sort node with that type and runs on the same
+runtime as the Code node, in the same workers and under the same limits; the
+source crosses byte for byte, and what the runtime cannot run is refused at
+import in the sentence above. The body sees `a` and `b`, two whole items, and
+`items`, the whole list; like n8n's, it is a plain function, so `await` is a
+syntax error. Items the comparator calls equal keep the order they arrived in.
+
+Two things differ from n8n, both so that a sort never comes out differently
+with nothing to say so:
+
+- **The comparator must return a number.** n8n turns a boolean, a string or
+  nothing into some number and sorts by it, but where that comparison is not
+  consistent the order depends on V8's own sorting algorithm, which this
+  engine does not share. So a comparator that returns anything else, or `NaN`,
+  fails with a named error saying what it returned, for which two items, and
+  on which line when it has one `return` and that return gave the value.
+  `return a.json.x > b.json.x` is the
+  usual culprit; `return a.json.x - b.json.x` is what it means.
+- **The comparator decides the order and nothing else.** The node moves its
+  own items into that order, files and lineage included; a change the
+  comparator makes to `a` or `b` is not kept, where n8n would keep it.
+
+A comparator with no `return` of its own is refused when the workflow is
+saved, as n8n refuses it before it runs. A Sort whose comparator was never
+edited arrives with no `code` at all, because n8n leaves a default out of its
+export; it runs a comparator that behaves as n8n's default does, sorting by
+`myField`, and exports back without one.
+
 Python is the one Code-node language that does not run; see
 [Python Code nodes](#python-code-nodes).
 
