@@ -63,6 +63,12 @@ Black-box, on the official n8n 2.33.7 Docker image: 25 one-node workflows (a Cod
 
 Done on epic/p6-sort; status testing for review. `go build ./...`, `go vet ./...` and `go test ./...` pass; `go test -race` passes on jsrun, jsworker, nodes and interop/n8n (jsrun alone: two unrelated CPU-heavy tests hit the 10s default only while the nodes race suite ran beside it). The migration guide gains "The Sort node's comparator" under The Code node.
 
+## Fix round 1 (2026-09-24)
+
+- A wrong answer is located on the one `return` only when it is a value: answering with nothing may be the comparator falling off its end.
+- n8n's default comparator (read in n8n's Sort node definition, 2.33.7): it compares `a.json.myField` with `b.json.myField` using `<` then `>`, answering -1, 1 or 0, so items go in ascending order of `myField` and a missing field ties. n8n omits it from an export when unchanged. KilasFlow's own equivalent is the Sort definition's default and runs when `code` is absent; the importer keeps it absent and the export writes none back.
+- The runtime sorts the indexes of a private copy of the items, and writes the order's text itself rather than through JSON.stringify, so a comparator that changes `items` or puts a toJSON on Array.prototype cannot spoil the order (it was reported as a server fault).
+
 # Related Files
 
 # Attachments

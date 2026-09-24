@@ -500,11 +500,12 @@ func (v *vm) invoke(ctx context.Context, function value, mode Mode, index, count
 }
 
 // sortOrder is a comparator's one charged call: the runtime sorts the input
-// with it and returns the order, as JSON. A comparator is a plain function,
-// so there is no promise to wait for.
-func (v *vm) sortOrder(function value) (text string, err error) {
+// with it and returns the order, as JSON. where is added to a wrong answer's
+// message when it could only have come from the comparator's one return. A
+// comparator is a plain function, so there is no promise to wait for.
+func (v *vm) sortOrder(function value, where string) (text string, err error) {
 	err = guard(func() error {
-		order, err := v.sortWith(goja.Undefined(), function.v)
+		order, err := v.sortWith(goja.Undefined(), function.v, v.rt.ToValue(where))
 		if err != nil {
 			return v.fail(err)
 		}

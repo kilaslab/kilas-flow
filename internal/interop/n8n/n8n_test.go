@@ -2529,6 +2529,40 @@ func TestAJavaScriptSortComparatorImportsRunnableAndRoundTripsByteForByte(t *tes
 	}
 }
 
+// n8n leaves a comparator that still holds its default out of an export. It
+// imports with nothing blocking it, validates, and goes back out without a
+// code the source did not have.
+func TestASortComparatorLeftAtItsDefaultRoundTripsWithoutOne(t *testing.T) {
+	t.Parallel()
+
+	result := importFixture(t, `{"name":"S","nodes":[{"id":"a","name":"Order","type":"n8n-nodes-base.sort","typeVersion":1,"position":[0,0],"parameters":{"type":"code"}}],"connections":{}}`)
+	order := nodeByName(result.Document, "Order")
+	if _, present := order.Parameters["code"]; present || order.Parameters["type"] != "code" {
+		t.Fatalf("parameters = %#v, want the code type and no comparator invented", order.Parameters)
+	}
+	for _, issue := range result.Unsupported {
+		if issue.NodeName == "Order" {
+			t.Fatalf("an import issue %#v for the default comparator", issue)
+		}
+	}
+	definition, _ := registry(t).Resolve(n8n.SortNodeType, workflow.V(1))
+	if err := definition.Validate(workflow.Node{Parameters: order.Parameters}); err != nil {
+		t.Fatalf("Validate() = %v, want the default comparator valid", err)
+	}
+	exported, err := n8n.Export(result.Document, registry(t))
+	if err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+	for _, node := range exported.Document.Nodes {
+		if node.Name != "Order" {
+			continue
+		}
+		if _, present := node.Parameters["code"]; present || node.Parameters["type"] != "code" {
+			t.Fatalf("exported %#v, want the code type and no comparator", node.Parameters)
+		}
+	}
+}
+
 // What the runtime cannot run in a comparator is refused at import in the
 // words the node's own validation uses; a comparator that does not parse is
 // named too, as a Code node's is.

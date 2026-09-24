@@ -127,6 +127,12 @@ func TestAComparatorThatDoesNotReturnANumberIsANamedError(t *testing.T) {
 	if err == nil || !strings.HasSuffix(err.Error(), " [line 2]") {
 		t.Fatalf("Run() error = %v, want it located on line 2", err)
 	}
+	// A comparator that falls off its end answered with nothing, not with
+	// its one return, so no line is given for it.
+	_, err = sortWith(t, "if (a.json.n > 100) {\n  return 1;\n}\n", fruit())
+	if !errors.Is(err, jsrun.ErrInvalidReturn) || !strings.Contains(err.Error(), "returned nothing") || strings.Contains(err.Error(), "[line") {
+		t.Fatalf("Run() error = %v, want nothing named and no line", err)
+	}
 	// With two, it is not: which one answered cannot be told afterwards.
 	_, err = sortWith(t, "if (a.json.n > b.json.n) return 1;\nreturn '0';", fruit())
 	if err == nil || strings.Contains(err.Error(), "[line") {
@@ -190,5 +196,26 @@ func TestAnOrderThatIsNotAPermutationOfTheInputIsRefused(t *testing.T) {
 	result, err := job.Finish(jsrun.Executed{Outputs: []string{`[4,3,2,1,0]`}}, nil)
 	if err != nil || !slices.Equal(result.Order, []int{4, 3, 2, 1, 0}) {
 		t.Fatalf("Finish() = %v, %v; want the order", result.Order, err)
+	}
+}
+
+// A comparator can change the list and the built-ins it was given; neither
+// reaches the order the runtime works out and hands back.
+func TestAComparatorCannotSpoilTheOrderItHandsBack(t *testing.T) {
+	for _, prefix := range []string{
+		"Array.prototype.toJSON = function () { return [0, 0, 0, 0, 0]; };",
+		"Array.prototype.join = function () { return '0,0,0,0,0'; };",
+		"items.length = 0;",
+		"items.reverse();",
+		"items[0] = items[1];",
+	} {
+		result, err := sortWith(t, prefix+"\nreturn a.json.n - b.json.n;", fruit())
+		if err != nil {
+			t.Errorf("%q: Run() error = %v", prefix, err)
+			continue
+		}
+		if want := []int{1, 3, 2, 0, 4}; !slices.Equal(result.Order, want) {
+			t.Errorf("%q: order = %v, want %v", prefix, result.Order, want)
+		}
 	}
 }

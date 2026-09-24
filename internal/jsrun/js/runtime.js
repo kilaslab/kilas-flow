@@ -1573,23 +1573,39 @@
         return apply(body, self, args);
       },
       // sort runs a Sort node's comparator: the wrapper hands it back, and
-      // the input's indexes are sorted by what it says of the items at them.
-      // The result is that order as JSON; the items stay where they are.
-      sort: function (wrapper) {
+      // the indexes of a private copy of the input are sorted by what it
+      // says of the items at them, so a comparator that changes `items`
+      // changes only its own view. The result is that order as text, built
+      // here rather than by JSON.stringify, which would honour a toJSON the
+      // comparator put on Array.prototype. The items stay where they are.
+      //
+      // where locates the comparator's one return, or is empty when it has
+      // several; a comparator that answered with nothing may have fallen off
+      // its end instead, so it is not located.
+      sort: function (wrapper, where) {
         codeBody = wrapper;
-        var compare = apply(wrapper, self, [input, inputRoot]);
+        var count = input.length;
+        var own = [];
         var order = [];
-        for (var index = 0; index < input.length; index++) order.push(index);
+        for (var index = 0; index < count; index++) {
+          own[index] = input[index];
+          order[index] = index;
+        }
+        var compare = apply(wrapper, self, [input, inputRoot]);
         apply(arraySort, order, [function (left, right) {
-          var answer = apply(compare, self, [input[left], input[right]]);
+          var answer = apply(compare, self, [own[left], own[right]]);
           if (typeof answer !== 'number' || answer !== answer) {
             throw new InvalidReturn('the comparator returned ' + (answer !== answer ? 'NaN' : kindOf(answer)) +
               ' comparing item ' + left + ' with item ' + right + '; it must return a number: less than 0 when a goes first, ' +
-              'more than 0 when b does, and 0 when they tie');
+              'more than 0 when b does, and 0 when they tie' + (answer === undefined ? '' : where));
           }
           return answer;
         }]);
-        return stringifyJSON(order);
+        var text = '[';
+        for (var position = 0; position < count; position++) {
+          text += (position > 0 ? ',' : '') + order[position];
+        }
+        return text + ']';
       },
     };
   }

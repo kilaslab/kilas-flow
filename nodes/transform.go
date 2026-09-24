@@ -264,10 +264,27 @@ func splitOutCarried(parameters map[string]any, item workflow.Item, splitting []
 
 // --- Sort ---------------------------------------------------------------------
 
-// defaultSortComparator is what a new comparator starts with.
+// defaultSortComparator is the comparator a Sort of type code runs when it
+// names none, and what a new one starts with. It behaves as n8n's own default
+// does, since n8n leaves a comparator still at its default out of an export:
+// items in ascending order of their `myField`, compared with < and >, so a
+// missing field ties with everything. The wording is KilasFlow's own.
 const defaultSortComparator = "// a and b are two of the node's items. Return a number below 0 to put a\n" +
 	"// first, above 0 to put b first, or 0 to keep them as they are.\n" +
-	"return a.json.value - b.json.value;\n"
+	"const field = 'myField';\n" +
+	"if (a.json[field] < b.json[field]) return -1;\n" +
+	"if (a.json[field] > b.json[field]) return 1;\n" +
+	"return 0;\n"
+
+// sortComparatorOf is the node's comparator: its own, or the default when it
+// names none. An empty one stays empty, which is refused, as n8n refuses it.
+func sortComparatorOf(parameters map[string]any) string {
+	source, present := parameters["code"]
+	if !present || source == nil {
+		return defaultSortComparator
+	}
+	return textOf(source)
+}
 
 // sortNode is n8n's Sort: by fields, at random, or with a JavaScript
 // comparator. Its parameters carry n8n's own names, so an imported node is a
@@ -305,7 +322,8 @@ func sortNode() node.Definition {
 				Default:     defaultSortComparator,
 				TypeOptions: &node.TypeOptions{Rows: 10},
 				Description: "The body of a function of two items, a and b, that returns a number: below 0 puts a first, above 0 puts b first, " +
-					"0 keeps their order. `items` is the whole list. It runs as a Code (JavaScript) node's code does, with the same limits.",
+					"0 keeps their order. `items` is the whole list. It runs as a Code (JavaScript) node's code does, with the same limits. " +
+					"Left out, the default sorts by `myField`, as n8n's does.",
 				VisibleWhen: []node.VisibilityCondition{{Key: "type", Equals: "code"}},
 			},
 		},
@@ -326,7 +344,7 @@ func validateSortConfiguration(n workflow.Node) error {
 		}
 	case "random":
 	case "code":
-		return validateSortComparator(textOf(n.Parameters["code"]))
+		return validateSortComparator(sortComparatorOf(n.Parameters))
 	default:
 		return fmt.Errorf("sort type %q is not supported", mode)
 	}
@@ -376,7 +394,7 @@ func (executor sortExecutor) sortWithComparator(ctx context.Context, ir workflow
 	if runtime.disabled != "" {
 		return nil, fmt.Errorf("node %q: %s", ir.Name, runtime.disabled)
 	}
-	source := textOf(ir.Parameters["code"])
+	source := sortComparatorOf(ir.Parameters)
 	if strings.TrimSpace(source) == "" {
 		return nil, fmt.Errorf("node %q: the comparator is empty", ir.Name)
 	}

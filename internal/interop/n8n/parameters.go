@@ -4278,7 +4278,14 @@ func sortToKilas(node Node) (map[string]any, []Unsupported) {
 	issues := make([]Unsupported, 0)
 	mode := defaultString(stringParameter(node.Parameters, "type"), "simple")
 	if mode == "code" {
-		comparator, _ := node.Parameters["code"].(string)
+		// n8n leaves a comparator still at its default out of an export. It
+		// stays out here too: the node runs the same default, and the export
+		// then writes back no code the source did not have.
+		raw, present := node.Parameters["code"]
+		if !present {
+			return map[string]any{"type": mode}, issues
+		}
+		comparator, _ := raw.(string)
 		return map[string]any{"type": mode, "code": comparator}, append(issues, analysedScript("code", comparator, jsrun.ModeComparator)...)
 	}
 

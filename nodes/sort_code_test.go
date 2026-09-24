@@ -181,3 +181,26 @@ func TestACodeNodeCannotRunAsAComparator(t *testing.T) {
 		t.Fatalf("Execute() error = %v, want the mode refused", err)
 	}
 }
+
+// n8n leaves a parameter out of its export when it holds its default, so a
+// Sort whose comparator was never edited arrives with no code at all. It
+// runs n8n's default comparator, which puts items in ascending order of
+// their myField, and validates as that comparator does.
+func TestASortWithNoComparatorRunsTheDefaultOne(t *testing.T) {
+	input := workflow.NodeInput{"main": {
+		{JSON: map[string]any{"name": "c", "myField": float64(3)}},
+		{JSON: map[string]any{"name": "a", "myField": float64(1)}},
+		{JSON: map[string]any{"name": "b", "myField": float64(2)}},
+	}}
+	output, err := jsExecutor(t, nodes.SortExecutorID).Execute(context.Background(),
+		jsNode(nodes.SortNodeType, map[string]any{"type": "code"}), input, engine.Request{})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if got, want := namesOf(output[0]), []string{"a", "b", "c"}; !slices.Equal(got, want) {
+		t.Fatalf("order = %v, want %v", got, want)
+	}
+	if err := sortDefinition(t).Validate(workflow.Node{Parameters: map[string]any{"type": "code"}}); err != nil {
+		t.Fatalf("Validate() = %v, want the default comparator valid", err)
+	}
+}

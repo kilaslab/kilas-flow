@@ -373,17 +373,19 @@ func (call invocation) run(ctx context.Context, index int, maxOutput int64) (str
 // order sorts the input with a comparator, with the clock running around
 // the sort, and returns the order as JSON. returns are the lines of the
 // comparator's own return statements: once one has answered, which it was
-// cannot be told, so a wrong answer is located only when there is one.
+// cannot be told, so a wrong answer is located only when there is one, and
+// only when it is a value, since answering with nothing may be the
+// comparator falling off its end.
 func (call invocation) order(returns []int) (string, error) {
+	where := ""
+	if len(returns) == 1 {
+		where = location(returns[0], -1)
+	}
 	call.clock.start()
-	text, err := call.v.sortOrder(call.function)
+	text, err := call.v.sortOrder(call.function, where)
 	exhausted := call.clock.stop()
 	if err == nil && exhausted {
 		err = timedOut(call.limits.Timeout)
-	}
-	var invalid *LimitError
-	if len(returns) == 1 && errors.As(err, &invalid) && errors.Is(invalid.Cause, ErrInvalidReturn) {
-		invalid.Detail += location(returns[0], -1)
 	}
 	if err != nil {
 		return "", err
