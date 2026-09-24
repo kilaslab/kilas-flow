@@ -31,7 +31,7 @@ func RegisterExecutors(registry *engine.Registry, httpPolicy safehttp.Policy, da
 	for _, option := range options {
 		option(&settings)
 	}
-	javaScript := jsCodeExecutorOf(settings)
+	javaScript := jsCodeExecutorOf(settings, httpPolicy)
 	for id, executor := range map[string]engine.Executor{
 		"core.manual":                    engine.ExecutorFunc(executeManual),
 		ChatTriggerExecutorID:            engine.ExecutorFunc(executeChatTrigger),
@@ -148,13 +148,14 @@ func WithoutJavaScript(reason string) ExecutorOption {
 }
 
 // jsCodeExecutorOf binds the JavaScript Code node to the deployment's
-// runtime, or to one with the shipped limits when it names none.
-func jsCodeExecutorOf(settings executorSettings) *JSCodeExecutor {
+// runtime, or to one with the shipped limits when it names none, and its
+// helpers' requests to the deployment's egress policy.
+func jsCodeExecutorOf(settings executorSettings, httpPolicy safehttp.Policy) *JSCodeExecutor {
 	var runner jsrun.Engine = settings.jsRunner
 	if runner == nil {
 		runner = defaultJSRunner()
 	}
-	return &JSCodeExecutor{runner: runner, disabled: settings.jsDisabled}
+	return &JSCodeExecutor{runner: runner, http: newCodeHTTP(httpPolicy), disabled: settings.jsDisabled}
 }
 
 // WithCodeCaches hands the Code node the caches the deployment built.

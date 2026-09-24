@@ -59,6 +59,15 @@ type ExecutionStore interface {
 	ListExpiredWaits(context.Context, time.Time, int) ([]repository.Wait, error)
 }
 
+// StaticDataStore keeps each workflow's static data: the JSON document
+// n8n's $getWorkflowStaticData reads and writes, which a workflow keeps from
+// one run to the next.
+type StaticDataStore interface {
+	// LoadStaticData returns the workflow's document, or nil when it has none.
+	LoadStaticData(context.Context, repository.TenantScope, string) (json.RawMessage, error)
+	SaveStaticData(context.Context, repository.TenantScope, string, json.RawMessage) error
+}
+
 // CredentialStore resolves a stored credential for the tenant that owns the
 // running execution.
 type CredentialStore interface {
@@ -74,6 +83,9 @@ type ServiceDeps struct {
 	Catalog     workflow.Catalog
 	Runner      *Runner
 	Credentials CredentialStore
+	// StaticData keeps each workflow's static data between runs. Nil keeps
+	// it only for the length of one execution.
+	StaticData StaticDataStore
 	// Events receives standardized execution events. It is optional: delivery
 	// must never be a prerequisite for durable persistence or for a run to
 	// succeed, so a nil broker simply publishes nothing.
@@ -156,6 +168,7 @@ type Service struct {
 	catalog                workflow.Catalog
 	runner                 *Runner
 	credentials            CredentialStore
+	staticData             StaticDataStore
 	events                 *events.Broker
 	environment            map[string]string
 	workerID               string
@@ -217,6 +230,7 @@ func NewService(deps ServiceDeps) (*Service, error) {
 		catalog:                deps.Catalog,
 		runner:                 deps.Runner,
 		credentials:            deps.Credentials,
+		staticData:             deps.StaticData,
 		events:                 deps.Events,
 		environment:            environment,
 		workerID:               deps.WorkerID,
@@ -465,6 +479,7 @@ func (service *Service) runOnce(ctx context.Context, workerID string) (bool, err
 		// run again, side effects included, to fail at the same marshal.
 		return service.failPersist(persistCtx, tenant, record, fmt.Errorf("marshal execution output: %w", err))
 	}
+	service.saveStaticData(persistCtx, record, result.StaticData)
 	record.Status = execution.StatusSucceeded
 	record.Output = output
 	record.Error = json.RawMessage("null")
@@ -1390,6 +1405,7 @@ func (service *Service) persistChild(ctx context.Context, tenant repository.Tena
 		if err != nil {
 			return fmt.Errorf("marshal sub-workflow output: %w", err)
 		}
+		service.saveStaticData(ctx, record, result.StaticData)
 		record.Status = execution.StatusSucceeded
 		record.Output = output
 		record.Error = json.RawMessage("null")
@@ -1511,4 +1527,34 @@ func (service *Service) runBudget(ctx context.Context, document workflow.Documen
 		budget = service.maxTimeout
 	}
 	return context.WithTimeout(ctx, budget)
+}
+
+// staticDataFor is an execution's handle on its workflow's static data,
+// loaded from the store the first time a node asks for it.
+func (service *Service) staticDataFor(record execution.Record) *StaticData {
+	if service.staticData == nil {
+		return NewStaticData(nil)
+	}
+	tenant := repository.TenantScope{ID: record.TenantID}
+	return NewStaticData(func(ctx context.Context) (json.RawMessage, error) {
+		return service.staticData.LoadStaticData(ctx, tenant, record.WorkflowID)
+	})
+}
+
+// saveStaticData keeps what a successful execution left in its workflow's
+// static data, as n8n does: never for a manual run, which is how a workflow
+// is tested, and only when a node changed it. A sub-workflow's own run is not
+// a manual one, whoever started its caller, which is n8n's rule too. A save
+// that fails is logged: the execution it belongs to has already succeeded.
+func (service *Service) saveStaticData(ctx context.Context, record execution.Record, data *StaticData) {
+	if service.staticData == nil || data == nil || record.Trigger == execution.TriggerManual {
+		return
+	}
+	document, changed := data.Changed()
+	if !changed {
+		return
+	}
+	if err := service.staticData.SaveStaticData(ctx, repository.TenantScope{ID: record.TenantID}, record.WorkflowID, document); err != nil {
+		service.log.Error("the workflow static data could not be saved", "workflowId", record.WorkflowID, "executionId", record.ID, "error", err)
+	}
 }

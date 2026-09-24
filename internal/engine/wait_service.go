@@ -442,6 +442,7 @@ func (service *Service) newRequest(record execution.Record, document workflow.Do
 		},
 		Workflow:    service.workflowContext(document),
 		Workflows:   service,
+		StaticData:  service.staticDataFor(record),
 		Env:         service.environment,
 		Credentials: &tenantCredentials{store: service.credentials, tenant: repository.TenantScope{ID: record.TenantID}},
 		Events: func(event NodeEvent) {

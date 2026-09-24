@@ -1058,7 +1058,7 @@ func documentIssues(source Document) []ImportIssue {
 		{"meta", len(source.Meta) > 0,
 			"n8n instance metadata describes where the workflow came from and has no meaning here; it was not carried"},
 		{"staticData", len(source.StaticData) > 0,
-			"n8n's per-workflow static data is scratch space its nodes persist between runs; KilasFlow has no equivalent and it was not carried"},
+			"n8n's per-workflow static data is scratch space its nodes persist between runs; it was not carried, so the imported workflow's Code nodes start from empty static data"},
 	} {
 		if !element.present {
 			continue

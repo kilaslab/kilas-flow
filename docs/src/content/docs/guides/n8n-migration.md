@@ -233,7 +233,7 @@ in part — each reported as a **dropped** diagnostic:
 | `settings` | Everything except the timezone, the workflow's own `executionTimeout` and `errorWorkflow`. Execution order and the other globals have no KilasFlow equivalent yet. All three carried keys matter: a scheduled workflow whose zone was dropped runs at the wrong hour every day, the timeout is the workflow's run budget, and an error workflow is started from its own error trigger when a run of this one fails. A zone this server cannot resolve is reported as lossy rather than silently falling back to UTC; so are n8n's `-1` "no timeout" (this server always applies the instance's budget) and an `errorWorkflow` id, because n8n's ids survive the trip only if that workflow was imported too. |
 | `pinData` | Pinned test data is an n8n editor feature. It is dropped rather than parked under a reserved key, because carrying data nothing reads would create a second silent-drop problem a release later. The nodes that had data pinned will run for real. |
 | `meta` | n8n instance metadata describing where the workflow came from. It has no meaning in another installation. |
-| `staticData` | n8n's per-workflow scratch space that its nodes persist between runs. There is no equivalent. |
+| `staticData` | n8n's per-workflow scratch space that its nodes persist between runs. KilasFlow keeps its own for each workflow (see [Helpers and static data](#helpers-and-static-data)), but the values n8n had are not carried: the imported workflow starts from empty static data. |
 
 ### Node-level elements
 
@@ -560,6 +560,52 @@ A returned item keeps its lineage the way n8n decides it: an explicit
 `pairedItem` wins; an item the code was given and returned, in whatever order,
 keeps its own; anything else is paired by position.
 
+### Helpers and static data
+
+Three of n8n's `this.helpers` run, and each is carried out by the server, never
+by the code's worker process: the code asks, the server does the work, and the
+promise the code holds settles with the answer. While it waits the code runs
+on — its timers fire and other promises settle — and requests started together
+with `Promise.all` are in flight together.
+
+- `this.helpers.httpRequest(options)` sends a request under the deployment's
+  egress policy, exactly the one an HTTP Request node uses (`outbound.*`), so
+  an internal address is refused unless the operator granted it. It takes
+  n8n's options `url`, `baseURL`, `method`, `headers`, `qs` (with
+  `arrayFormat`), `body`, `json`, `auth`, `timeout` (which can shorten the
+  policy's, never lengthen it), `disableFollowRedirect`, `maxRedirects`,
+  `returnFullResponse` (for `{ body, headers, statusCode, statusMessage }`),
+  `encoding` (`arraybuffer` for a `Buffer`, `text` or `json`) and
+  `ignoreHttpStatusErrors`. A status outside 2xx rejects with an error whose
+  `status` and `response` say what came back. `proxy`,
+  `skipSslCertificateValidation` and the rest of the options that would change
+  what the request does are refused by name rather than ignored. No
+  credential is ever reachable, as in n8n.
+- `this.helpers.getBinaryDataBuffer(itemIndex, propertyName)` returns a
+  `Buffer` of a file of the node's own input: the one item `itemIndex` holds
+  under `propertyName`. No other file is readable.
+- `this.helpers.prepareBinaryData(buffer, fileName?, mimeType?)` stores the
+  bytes as a file of the execution and returns its reference, which the code
+  can return in an item's `binary`. The type, when not given, is the one the
+  name says, else what the bytes look like, else `text/plain`.
+
+Every helper call counts against the node's limit of 100 host calls per run,
+a file or request body moves at most 32 MiB in one call, and a response
+larger than the policy's `outbound.max_response_bytes` (or 32 MiB) stops the
+node. Each is a named error. Time spent waiting for the server is not counted
+against the node's time limit; the execution's own timeout still bounds it.
+Any other helper, such as `this.helpers.request`, is refused.
+
+`$getWorkflowStaticData('global')` returns the workflow's static data, an
+object the code can change, and `$getWorkflowStaticData('node')` the node's
+own. Every Code node run in an execution sees what the ones before it left.
+What it holds is saved when the execution finishes, and only then if the
+execution **succeeded and was not a manual run**: a test run from the editor
+reads and changes it for itself and saves nothing, as n8n documents. n8n also
+saves it after a failed production run; KilasFlow keeps only what successful
+runs wrote. The data is capped at 256 KiB as JSON (a named error, on the node
+run that grew it past the cap), and it is deleted with its workflow.
+
 ### What is refused, and when
 
 Some JavaScript the engine would run differently from V8 — or not at all — and
@@ -578,9 +624,9 @@ again when the workflow is saved — so a workflow that uses one never activates
 - the regular-expression flags `v` and `d`, and `\p{…}` property escapes under
   the `u` flag, which the engine accepts and then matches nothing with — a
   pattern built at run time is checked when it is built;
-- `this.helpers` (`httpRequest` and the binary helpers) and
-  `this.getCredentials`: use an HTTP Request node before or after the Code node;
-- `$getWorkflowStaticData`;
+- `this.getCredentials`, and any `this.helpers` function other than the
+  three [above](#helpers-and-static-data): use an HTTP Request node before or
+  after the Code node;
 - `require()` of any module not in the list above.
 
 The rest fail by name the moment the code reaches them: `$jmespath`,
@@ -609,9 +655,10 @@ when the node runs, as a `SyntaxError` with its line, not when it is saved.
   you ask for.
 - **Binary data is metadata.** An item's `binary` entries carry `id`,
   `fileName`, `mimeType`, `fileExtension` and `fileSize`, never the bytes, so
-  code that reads `binary.data.data` fails instead of reading nothing. An item
-  keeps a file only when the code returns it, as in n8n, and the code can pass
-  on or rename a file it was given but not name one it was not.
+  code that reads `binary.data.data` fails instead of reading nothing; read
+  the bytes with `this.helpers.getBinaryDataBuffer`. An item keeps a file only
+  when the code returns it, as in n8n, and the code can pass on or rename a
+  file it was given or stored with `prepareBinaryData`, but not name any other.
 - **The time limit counts the code's own running time.** Starting the engine,
   loading a library and handling the input and output are not counted. The
   deployment sets the ceiling (`code.javascript_timeout`, 10 seconds by
