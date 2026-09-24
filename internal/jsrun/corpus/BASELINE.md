@@ -11,12 +11,12 @@ The JavaScript Code nodes and Sort code comparators of the 500 most-viewed n8n t
 | Measured | 330 | |
 | Parse | 329 | 99.7% |
 | Parse and pass analysis | 328 | 99.4% |
-| Run without an error on synthesised input | 237 | 72.3% of accepted |
-| Runtime-error rate | 91 | 27.7% of accepted |
+| Run without an error on synthesised input | 242 | 73.8% of accepted |
+| Runtime-error rate | 86 | 26.2% of accepted |
 
 Of the measured bodies, 51 run once for each item and 0 are Sort comparators. 330 had no pinned data upstream and ran on a stand-in item shaped from the fields the body reads, so a failure among them may be the stand-in's, not the runtime's.
 
-Run time (wall clock of `Runner.Run`, including compiling the body once, on the machine that wrote this file): median **0.56 ms**, p95 **1.44 ms** over 328 runs.
+Run time (wall clock of `Runner.Run`, including compiling the body once, on the machine that wrote this file): median **0.55 ms**, p95 **1.49 ms** over 328 runs.
 
 ## What stops the rest
 
@@ -26,9 +26,9 @@ Bodies stopped by exactly one thing, by that thing. A body refused for several r
 |---|---:|
 | threw: TypeError | 63 |
 | threw: Error | 8 |
-| threw: ReferenceError | 8 |
 | threw: SyntaxError | 5 |
 | invalid-return | 3 |
+| threw: ReferenceError | 3 |
 | refused: requires the module "youtube-transcript" | 1 |
 | syntax error | 1 |
 | threw: date locale en-CA | 1 |
@@ -188,7 +188,7 @@ Bodies stopped by exactly one thing, by that thing. A body refused for several r
 | 2790/5 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 2790/6 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 2790/8 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
-| 2799/21 | runOnceForAllItems | stand-in | ✓ | ✓ | · | threw: ReferenceError |
+| 2799/21 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 2800/10 | runOnceForAllItems | stand-in | ✓ | ✓ | · | threw: TypeError |
 | 2803/11 | runOnceForAllItems | stand-in | ✓ | ✓ | · | threw: TypeError |
 | 2803/35 | runOnceForAllItems | stand-in | ✓ | ✓ | · | threw: TypeError |
@@ -307,7 +307,7 @@ Bodies stopped by exactly one thing, by that thing. A body refused for several r
 | 3586/12 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 3617/5 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 3617/10 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
-| 3617/12 | runOnceForAllItems | stand-in | ✓ | ✓ | · | threw: ReferenceError |
+| 3617/12 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 3617/14 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 3617/15 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 3617/17 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
@@ -352,7 +352,7 @@ Bodies stopped by exactly one thing, by that thing. A body refused for several r
 | 4110/28 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 4110/29 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 4247/3 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
-| 4247/9 | runOnceForAllItems | stand-in | ✓ | ✓ | · | threw: ReferenceError |
+| 4247/9 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 4295/2 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 4352/8 | runOnceForAllItems | stand-in | ✓ | ✓ | · | threw: TypeError |
 | 4365/10 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
@@ -360,7 +360,7 @@ Bodies stopped by exactly one thing, by that thing. A body refused for several r
 | 4366/14 | runOnceForEachItem | stand-in | ✓ | ✓ | · | threw: TypeError |
 | 4400/15 | runOnceForAllItems | stand-in | ✓ | ✓ | · | threw: TypeError |
 | 4506/12 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
-| 4551/22 | runOnceForAllItems | stand-in | ✓ | ✓ | · | threw: ReferenceError |
+| 4551/22 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 4557/17 | runOnceForAllItems | stand-in | ✓ | ✓ | · | threw: TypeError |
 | 4573/13 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 4635/10 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
@@ -395,7 +395,7 @@ Bodies stopped by exactly one thing, by that thing. A body refused for several r
 | 5338/18 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 5396/3 | runOnceForAllItems | stand-in | ✓ | ✓ | · | threw: TypeError |
 | 5407/2 | runOnceForEachItem | stand-in | ✓ | ✓ | ✓ | ok |
-| 5407/3 | runOnceForAllItems | stand-in | ✓ | ✓ | · | threw: ReferenceError |
+| 5407/3 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 5407/4 | runOnceForEachItem | stand-in | ✓ | ✓ | · | threw: this.helpers.httpRequest (not wired in the instrument) |
 | 5407/9 | runOnceForAllItems | stand-in | ✓ | ✓ | · | threw: this.helpers.prepareBinaryData (not wired in the instrument) |
 | 5449/15 | runOnceForAllItems | stand-in | ✓ | ✓ | · | threw: date locale id-ID |

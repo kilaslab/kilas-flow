@@ -191,7 +191,7 @@ func TestTheSandboxExposesExactlyTheseGlobals(t *testing.T) {
 	// Intl is new too: goja has none, and the runtime provides it. The Luxon
 	// globals are there whether or not the code names Luxon; the library
 	// itself loads only when one is first read.
-	shared := []string{"$", "$env", "$evaluateExpression", "$execution", "$getWorkflowStaticData", "$jmespath", "$node", "$nodeVersion", "$now", "$prevNode", "$runIndex", "$secrets", "$today", "$vars", "$workflow",
+	shared := []string{"$", "$env", "$items", "$evaluateExpression", "$execution", "$getWorkflowStaticData", "$jmespath", "$node", "$nodeVersion", "$now", "$prevNode", "$runIndex", "$secrets", "$today", "$vars", "$workflow",
 		"DateTime", "Duration", "Info", "Interval", "Intl", "Settings", "console", "crypto", "require",
 		"Buffer", "DOMException", "TextDecoder", "TextEncoder", "URL", "URLSearchParams", "atob", "btoa", "queueMicrotask", "structuredClone",
 		"setTimeout", "setInterval", "setImmediate", "clearTimeout", "clearInterval", "clearImmediate"}
@@ -479,6 +479,40 @@ func TestAllWithABranchOrRunIsANamedError(t *testing.T) {
 		t.Fatalf("Run() error = %v, want the branch refused", err)
 	}
 	_, err = runTask(t, jsrun.Task{Source: "return $('Nope').first()", Roots: nodeRoots()})
+	if err == nil || !strings.Contains(err.Error(), `node "Nope" has not run in this execution`) {
+		t.Fatalf("Run() error = %v, want the missing node named", err)
+	}
+}
+
+// $items is n8n's older spelling of the same reads: with no name the node's
+// own input, with one that node's items, as $('Name').all() gives them. Like
+// .all(), it reads only the first output and run.
+func TestTheLegacyItemsRootReadsTheInputOrANamedNode(t *testing.T) {
+	result := mustRun(t, newRunner(), jsrun.Task{Source: strings.Join([]string{
+		"const hook = $items('Webhook')",
+		"return [{ json: { input: $items() === items && $items(null) === items, count: $items().length, same: hook === $('Webhook').all(),",
+		"  values: hook.map((item) => item.json.v), first: $items('Webhook', 0, 0)[0].json.v, nullOutput: $items('Webhook', null).length } }]",
+	}, "\n"), Roots: nodeRoots(), Items: numbered(2)})
+	got := result.Items[0].JSON
+	if got["input"] != true || got["count"] != float64(2) || got["same"] != true || fmt.Sprint(got["values"]) != "[a b c]" || got["first"] != "a" || got["nullOutput"] != float64(3) {
+		t.Fatalf("items = %#v", got)
+	}
+	perItem := mustRun(t, newRunner(), jsrun.Task{Mode: jsrun.ModeEachItem, Roots: nodeRoots(), Items: numbered(2),
+		Source: "return { json: { count: $items().length, hook: $items('Webhook')[$itemIndex].json.v } }"})
+	if perItem.Items[1].JSON["count"] != float64(2) || perItem.Items[1].JSON["hook"] != "b" {
+		t.Fatalf("items = %#v", perItem.Items)
+	}
+
+	for source, subject := range map[string]string{
+		"return $items('Webhook', 1)":    `reads $items("Webhook") with an output or run other than the first`,
+		"return $items('Webhook', 0, 1)": `reads $items("Webhook") with an output or run other than the first`,
+	} {
+		_, err := runTask(t, jsrun.Task{Source: source, Roots: nodeRoots()})
+		if err == nil || !strings.Contains(err.Error(), "this node's code "+subject+", which this server does not run") {
+			t.Errorf("%q: Run() error = %v, want it refused because it %s", source, err, subject)
+		}
+	}
+	_, err := runTask(t, jsrun.Task{Source: "return $items('Nope')", Roots: nodeRoots()})
 	if err == nil || !strings.Contains(err.Error(), `node "Nope" has not run in this execution`) {
 		t.Fatalf("Run() error = %v, want the missing node named", err)
 	}

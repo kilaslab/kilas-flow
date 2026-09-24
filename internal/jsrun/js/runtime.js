@@ -1436,6 +1436,19 @@
     }
 
     define('$', function $(name) { return nodeView(name); });
+    // $items is n8n's older spelling of the same reads, still answered in a
+    // Code node: with no name, the node's own input (the very list `items`
+    // is); with one, what $(name).all() gives. A missing or null output is
+    // the first, as in n8n; another output or run is refused as .all()
+    // refuses one. A null name reads the input, as an expression's $items
+    // does.
+    define('$items', function $items(name, outputIndex, runIndex) {
+      if (name === undefined || name === null) return input;
+      if ((outputIndex !== undefined && outputIndex !== null && outputIndex !== 0) || (runIndex !== undefined && runIndex !== 0)) {
+        throw new Error(refusal('reads $items("' + String(name) + '") with an output or run other than the first', snapshot.advice));
+      }
+      return nodeView(name).all();
+    });
     define('$node', new ProxyType({}, {
       get: function (_, name) {
         if (typeof name !== 'string') return undefined;

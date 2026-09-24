@@ -311,10 +311,7 @@ func callRoot(name string, ctx Context, args []any) (any, error) {
 		}
 		return request, nil
 	case "$items":
-		if len(args) > 0 && !isNullish(args[0]) {
-			return nodeRootValueItems(jsString(args[0]), ctx)
-		}
-		return ctx.input().all(), nil
+		return legacyItems(ctx, args)
 	default:
 		return nil, fmt.Errorf("expression root %q is not supported", name)
 	}
@@ -350,6 +347,24 @@ func nodeRootValue(name string, ctx Context) (any, error) {
 		return nil, fmt.Errorf("$('%s') names a node that has not produced output in this run", name)
 	}
 	return nodeWrapper(item, ctx), nil
+}
+
+// legacyItems resolves `$items(name?, outputIndex?, runIndex?)`: the current
+// node's input without a name, or the named node's items. Only the first
+// output and run are there to read, so asking for another is an error rather
+// than the first one passed off as it, which is what the Code node's $items
+// says too.
+func legacyItems(ctx Context, args []any) (any, error) {
+	if len(args) == 0 || isNullish(args[0]) {
+		return ctx.input().all(), nil
+	}
+	name := jsString(args[0])
+	for _, extra := range args[1:] {
+		if index, ok := extra.(float64); !isNullish(extra) && (!ok || index != 0) {
+			return nil, fmt.Errorf("$items('%s', …) asks for an output or run other than the first, which expressions cannot read; use $('%s').all() for the node's first output", name, name)
+		}
+	}
+	return nodeRootValueItems(name, ctx)
 }
 
 // nodeRootValueItems resolves `$items('Name')`, which is the list rather than

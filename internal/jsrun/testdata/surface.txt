@@ -13,6 +13,7 @@ $execution.id string
 $execution.mode string
 $execution.resumeUrl string
 $getWorkflowStaticData function
+$items function
 $jmespath function
 $node object
 $nodeVersion number

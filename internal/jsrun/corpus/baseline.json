@@ -15,22 +15,22 @@
     "stubbed": 330,
     "parsed": 329,
     "accepted": 328,
-    "ran": 237,
+    "ran": 242,
     "parseRate": 99.7,
     "acceptRate": 99.4,
-    "runtimeErrorRate": 27.7
+    "runtimeErrorRate": 26.2
   },
   "timing": {
     "runs": 328,
-    "medianMillis": 0.56,
-    "p95Millis": 1.44
+    "medianMillis": 0.55,
+    "p95Millis": 1.49
   },
   "blockers": {
     "invalid-return": 3,
     "refused: requires the module \"youtube-transcript\"": 1,
     "syntax error": 1,
     "threw: Error": 8,
-    "threw: ReferenceError": 8,
+    "threw: ReferenceError": 3,
     "threw: SyntaxError": 5,
     "threw: TypeError": 63,
     "threw: date locale en-CA": 1,
@@ -1419,9 +1419,8 @@
       "stubbed": true,
       "parsed": true,
       "accepted": true,
-      "ran": false,
-      "outcome": "threw",
-      "reason": "ReferenceError"
+      "ran": true,
+      "outcome": "ok"
     },
     {
       "key": "2800/10",
@@ -2512,9 +2511,8 @@
       "stubbed": true,
       "parsed": true,
       "accepted": true,
-      "ran": false,
-      "outcome": "threw",
-      "reason": "ReferenceError"
+      "ran": true,
+      "outcome": "ok"
     },
     {
       "key": "3617/14",
@@ -2927,9 +2925,8 @@
       "stubbed": true,
       "parsed": true,
       "accepted": true,
-      "ran": false,
-      "outcome": "threw",
-      "reason": "ReferenceError"
+      "ran": true,
+      "outcome": "ok"
     },
     {
       "key": "4295/2",
@@ -3003,9 +3000,8 @@
       "stubbed": true,
       "parsed": true,
       "accepted": true,
-      "ran": false,
-      "outcome": "threw",
-      "reason": "ReferenceError"
+      "ran": true,
+      "outcome": "ok"
     },
     {
       "key": "4557/17",
@@ -3325,9 +3321,8 @@
       "stubbed": true,
       "parsed": true,
       "accepted": true,
-      "ran": false,
-      "outcome": "threw",
-      "reason": "ReferenceError"
+      "ran": true,
+      "outcome": "ok"
     },
     {
       "key": "5407/4",

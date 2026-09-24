@@ -372,6 +372,29 @@ func TestNodeJsonFollowsTheCurrentItem(t *testing.T) {
 	}
 }
 
+// TestLegacyItemsReadsTheFirstOutputAndRunOnly: $items(name, output, run)
+// agrees with the Code node's: another output or run is a named error, never
+// silently the first one.
+func TestLegacyItemsReadsTheFirstOutputAndRunOnly(t *testing.T) {
+	t.Parallel()
+
+	ctx := parityContext()
+	ctx.NodeItems = map[string]expression.NodeItem{
+		"Split Out": {JSON: map[string]any{"v": "a"}, Items: []map[string]any{{"v": "a"}, {"v": "b"}}},
+	}
+	for _, template := range []string{"{{ $items('Split Out')[1].json.v }}", "{{ $items('Split Out', 0, 0)[1].json.v }}", "{{ $items('Split Out', null)[1].json.v }}"} {
+		if got := evaluateOne(t, template, ctx); got != "b" {
+			t.Errorf("Evaluate(%s) = %#v, want the node's second item", template, got)
+		}
+	}
+	for _, template := range []string{"{{ $items('Split Out', 1) }}", "{{ $items('Split Out', 0, 2) }}"} {
+		_, err := expression.Evaluate(template, ctx)
+		if err == nil || !strings.Contains(err.Error(), "an output or run other than the first") {
+			t.Errorf("Evaluate(%s) error = %v, want the output or run refused by name", template, err)
+		}
+	}
+}
+
 // TestUndefinedSemanticsMatchJavaScript: an index past the end, or a field read
 // on a scalar, used to abort the whole run.
 func TestUndefinedSemanticsMatchJavaScript(t *testing.T) {

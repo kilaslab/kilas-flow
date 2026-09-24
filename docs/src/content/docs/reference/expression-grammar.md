@@ -89,7 +89,7 @@ An expression body must begin with one of these. Anything else is a parse error.
 | `$input` | the n8n input API, and the port map underneath it (see below) |
 | `$node["Name"]` | the named node's output (see below) |
 | `$('Name')` | the named node, as a receiver for `.item`, `.first()`, `.last()`, `.all()`, `.params` |
-| `$items('Name')` | that node's items as a list; `$items()` is this node's own input items |
+| `$items('Name')` | that node's items as a list; `$items()` is this node's own input items. n8n's second and third arguments, an output and a run, may only name the first (0): asking for another is an error rather than the first one's items |
 | `$env` | the allowlisted environment (see below) |
 | `$execution` | `.id`, `.mode`, `.resumeUrl` and `.approvalUrl` |
 | `$workflow` | `.id`, `.name` and `.active` |
