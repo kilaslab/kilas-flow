@@ -3143,13 +3143,13 @@ func waitToN8N(node workflow.Node) (map[string]any, []Lossy) {
 // --- Code -------------------------------------------------------------------
 
 // unsupportedScript is the one refusal for code this server will not run.
-// subject completes "this node's code …": "is written in Python", or "is a
-// JavaScript sort comparator".
+// subject completes "this node's code …", such as "is written in Python".
 //
 // It is jsrun.Refusal, so a Python Code node, a JavaScript construct the
-// engine cannot run faithfully, a Sort comparator, the node's own validation
-// and a run all say the same thing in the same words. Three wordings for one
-// situation is how a user concludes the three are different problems.
+// engine cannot run faithfully (in a Code node or a Sort comparator), the
+// node's own validation and a run all say the same thing in the same words.
+// Three wordings for one situation is how a user concludes the three are
+// different problems.
 //
 // Blocking, always. A script this server cannot run is not a detail that was
 // lost in translation; it is work the workflow was relying on that will not
@@ -3228,17 +3228,24 @@ func javaScriptCodeToKilas(node Node) (map[string]any, []Unsupported) {
 	if language, present := node.Parameters["language"]; present {
 		parameters["language"] = language
 	}
-	_, err := jsrun.Analyze(source, jsrun.Mode(mode))
+	return parameters, analysedScript("jsCode", source, jsrun.Mode(mode))
+}
+
+// analysedScript is what the importer says about JavaScript it carries over
+// to run: nothing, when it can run; the runtime's own refusal, in the one
+// sentence, for a construct it cannot run faithfully; and that it does not
+// parse, which would fail its first run just the same, so saying so now is
+// the same answer, sooner.
+func analysedScript(field, source string, mode jsrun.Mode) []Unsupported {
+	_, err := jsrun.Analyze(source, mode)
 	if err == nil {
-		return parameters, nil
+		return nil
 	}
 	var refused *jsrun.UnsupportedError
 	if errors.As(err, &refused) {
-		return parameters, []Unsupported{{Severity: SeverityBlocking, Field: "jsCode", Reason: refused.Error()}}
+		return []Unsupported{{Severity: SeverityBlocking, Field: field, Reason: refused.Error()}}
 	}
-	// Code that does not parse would fail at its first run just the same;
-	// saying so now is the same answer, sooner.
-	return parameters, []Unsupported{{Severity: SeverityBlocking, Field: "jsCode", Reason: "this node's code does not parse: " + err.Error()}}
+	return []Unsupported{{Severity: SeverityBlocking, Field: field, Reason: "this node's code does not parse: " + err.Error()}}
 }
 
 func codeToN8N(node workflow.Node) (map[string]any, []Lossy) {
@@ -4261,19 +4268,18 @@ func splitOutToN8N(node workflow.Node) (map[string]any, []Lossy) {
 	return written, nil
 }
 
-// sortToKilas carries a field sort and refuses a JavaScript comparator.
+// sortToKilas carries a field sort, a random one, or a JavaScript comparator.
 //
-// n8n's third mode is a JS comparator. JavaScript runs in the Code node, not
-// inside this one, and approximating the comparator would sort by something
-// the author did not write, so it is named instead — through
-// unsupportedScript, which is the one refusal every JavaScript escape hatch in
-// this importer produces.
+// n8n's third mode is a comparator, which runs on the same JavaScript runtime
+// as a Code node. It is copied exactly as it arrived, under n8n's own name and
+// never read as an expression, so it exports back byte for byte; the import
+// flags only what the runtime cannot run, in the words a run would use.
 func sortToKilas(node Node) (map[string]any, []Unsupported) {
 	issues := make([]Unsupported, 0)
 	mode := defaultString(stringParameter(node.Parameters, "type"), "simple")
 	if mode == "code" {
-		return map[string]any{"type": "simple"}, append(issues, unsupportedScript("type", "is a JavaScript sort comparator",
-			"Set the fields to sort by on this node, or sort in a Code (JavaScript) node before it."))
+		comparator, _ := node.Parameters["code"].(string)
+		return map[string]any{"type": mode, "code": comparator}, append(issues, analysedScript("code", comparator, jsrun.ModeComparator)...)
 	}
 
 	converted := map[string]any{"type": mode}
@@ -4309,8 +4315,17 @@ func sortToKilas(node Node) (map[string]any, []Unsupported) {
 }
 
 func sortToN8N(node workflow.Node) (map[string]any, []Lossy) {
+	mode := defaultString(stringParameter(node.Parameters, "type"), "simple")
+	if mode == "code" {
+		// The comparator goes back exactly as it arrived.
+		written := map[string]any{"type": mode}
+		if comparator, present := node.Parameters["code"]; present {
+			written["code"] = toN8NValue(comparator)
+		}
+		return written, nil
+	}
 	written := map[string]any{
-		"type":    defaultString(stringParameter(node.Parameters, "type"), "simple"),
+		"type":    mode,
 		"options": map[string]any{},
 	}
 	entries := make([]any, 0, 2)

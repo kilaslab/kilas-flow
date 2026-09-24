@@ -83,7 +83,7 @@ func RegisterExecutors(registry *engine.Registry, httpPolicy safehttp.Policy, da
 		NoOpExecutorID:                   engine.ExecutorFunc(executeNoOp),
 		AggregateExecutorID:              engine.ExecutorFunc(executeAggregate),
 		SplitOutExecutorID:               engine.ExecutorFunc(executeSplitOut),
-		SortExecutorID:                   engine.ExecutorFunc(executeSort),
+		SortExecutorID:                   sortExecutor{javaScript: javaScript},
 		SummarizeExecutorID:              engine.ExecutorFunc(executeSummarize),
 		RemoveDuplicatesExecutorID:       engine.ExecutorFunc(executeRemoveDuplicates),
 		DateTimeExecutorID:               engine.ExecutorFunc(executeDateTime),
