@@ -317,6 +317,10 @@ const (
 // asking more is not running the runtime.
 const maxNodeQuestions = 4096
 
+// maxStaticQuestions bounds a job's questions about static data: the runtime
+// asks once per kind, and there are two.
+const maxStaticQuestions = 2
+
 func (pool *Pool) run(ctx context.Context, w *worker, job jsrun.Job, host jsrun.Host) (jsrun.Result, error) {
 	var state atomic.Int32
 	claim := func(outcome int32) bool { return state.CompareAndSwap(attemptRunning, outcome) }
@@ -325,21 +329,31 @@ func (pool *Pool) run(ctx context.Context, w *worker, job jsrun.Job, host jsrun.
 			_ = w.cmd.Process.Kill()
 		}
 	}
-	deadline := time.AfterFunc(2*job.Limits.Timeout+pool.grace, func() { kill(attemptPastDeadline) })
-	defer deadline.Stop()
+	deadline := newDeadline(2*job.Limits.Timeout+pool.grace, func() { kill(attemptPastDeadline) })
+	defer deadline.stop()
 	defer context.AfterFunc(ctx, func() { kill(attemptCancelled) })()
 	nonce := newNonce()
+	// Helper calls are answered on goroutines of their own, so the server
+	// writes to the worker from more than one; and once the job is over,
+	// nothing more is written for it. The helpers' work stops with the job.
+	pipe := jobPipe{w: w}
+	defer pipe.close()
+	calls, stopCalls := context.WithCancel(ctx)
+	defer stopCalls()
 
-	if err := writeFrame(w.in, message{Type: typeRun, Nonce: nonce, Job: &job}, job.Input); err != nil {
+	if err := pipe.write(message{Type: typeRun, Nonce: nonce, Job: &job}, job.Input); err != nil {
 		return pool.failed(ctx, w, job, &state, err)
 	}
 	// What a worker may write is bounded by the job's own caps: its results
 	// travel as the blob, exactly as large as the output cap measured, and
-	// the header holds what it printed and the items that failed.
-	headerLimit := 2*job.Limits.MaxOutputBytes + 16*job.Limits.MaxConsoleBytes + 1<<20
+	// the header holds what it printed, the items that failed and the static
+	// data; a helper call's blob is a file or a request body.
+	headerLimit := 2*job.Limits.MaxOutputBytes + 16*job.Limits.MaxConsoleBytes + 16*jsrun.MaxStaticDataBytes + 1<<20
+	blobLimit := max(job.Limits.MaxOutputBytes, jsrun.MaxFileBytes)
 	views := map[string]answer{}
+	helperCalls, staticQuestions := 0, 0
 	for {
-		m, blob, err := readFrame(w.out, headerLimit, job.Limits.MaxOutputBytes)
+		m, blob, err := readFrame(w.out, headerLimit, blobLimit)
 		if err == nil && m.Nonce != nonce {
 			err = protocolViolation("a %s frame for another job", m.Type)
 		}
@@ -348,14 +362,44 @@ func (pool *Pool) run(ctx context.Context, w *worker, job jsrun.Job, host jsrun.
 		}
 		switch m.Type {
 		case typeCall:
+			switch m.Method {
+			case methodHelper:
+				if helperCalls++; helperCalls > job.Limits.MaxHostCalls {
+					return pool.failed(ctx, w, job, &state, protocolViolation("more than its %d helper calls", job.Limits.MaxHostCalls))
+				}
+				request, err := helperRequest(m, blob)
+				if err != nil {
+					return pool.failed(ctx, w, job, &state, err)
+				}
+				// The worker waits on the server now, and that is not time
+				// its deadline measures.
+				deadline.hold()
+				go func(id int64) {
+					defer deadline.release()
+					answer := pool.help(calls, host, request)
+					_ = pipe.write(message{Type: typeReply, Nonce: nonce, ID: id, Answer: &answer}, string(answer.Data))
+				}(m.ID)
+				continue
+			case methodStatic:
+				if staticQuestions++; staticQuestions > maxStaticQuestions {
+					return pool.failed(ctx, w, job, &state, protocolViolation("more than %d questions about static data", maxStaticQuestions))
+				}
+			}
+			if len(blob) > 0 {
+				return pool.failed(ctx, w, job, &state, protocolViolation("a %s question carrying data", m.Method))
+			}
 			reply, view, err := pool.answer(host, m, views)
 			if err == nil {
-				err = writeFrame(w.in, reply, view)
+				err = pipe.write(reply, view)
 			}
 			if err != nil {
 				return pool.failed(ctx, w, job, &state, err)
 			}
 		case typeDone:
+			if int64(len(blob)) > job.Limits.MaxOutputBytes {
+				return pool.failed(ctx, w, job, &state, protocolViolation("results larger than the %d-byte output cap", job.Limits.MaxOutputBytes))
+			}
+			pipe.close()
 			executed, err := outputsOf(m, blob)
 			if err != nil {
 				return pool.failed(ctx, w, job, &state, err)
@@ -456,15 +500,24 @@ type answer struct {
 // once per job, however often it is asked for. A panic in the engine is the
 // server's fault; the code sees no answer, and the server goes on.
 func (pool *Pool) answer(host jsrun.Host, question message, views map[string]answer) (reply message, blob string, err error) {
-	reply = message{Type: typeReply, Nonce: question.Nonce}
+	reply = message{Type: typeReply, Nonce: question.Nonce, ID: question.ID}
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			pool.logger.Error("answering a JavaScript worker panicked", "method", question.Method, "panic", recovered)
-			reply, blob = message{Type: typeReply, Nonce: question.Nonce, Index: -1, Reason: "item lineage is not available here"}, ""
+			reply, blob = message{Type: typeReply, Nonce: question.Nonce, ID: question.ID, Index: -1, Reason: "this is not available here"}, ""
 		}
 	}()
 	switch question.Method {
-	case "node":
+	case methodStatic:
+		blob = "{}"
+		if host.StaticData != nil {
+			text, err := host.StaticData(question.Name)
+			if err != nil {
+				reply.Reason, text = err.Error(), ""
+			}
+			blob = text
+		}
+	case methodNode:
 		known, asked := views[question.Name]
 		if !asked {
 			if len(views) >= maxNodeQuestions {
@@ -476,7 +529,7 @@ func (pool *Pool) answer(host jsrun.Host, question message, views map[string]ans
 			views[question.Name] = known
 		}
 		reply.Found, blob = known.found, known.view
-	case "pair":
+	case methodPair:
 		reply.Index, reply.Reason = -1, "item lineage is not available here"
 		if host.Pair != nil {
 			reply.Index, reply.Reason = host.Pair(question.Name, question.Index)
@@ -485,6 +538,116 @@ func (pool *Pool) answer(host jsrun.Host, question message, views map[string]ans
 		return reply, "", protocolViolation("a question %q", question.Method)
 	}
 	return reply, blob, nil
+}
+
+// helperRequest reads a helper call: a helper the runtime has, carrying no
+// more than one call may move.
+func helperRequest(m message, blob []byte) (jsrun.HostRequest, error) {
+	if m.Request == nil {
+		return jsrun.HostRequest{}, protocolViolation("a helper call with no request")
+	}
+	switch m.Request.Method {
+	case jsrun.HelperHTTPRequest, jsrun.HelperReadFile, jsrun.HelperWriteFile:
+	default:
+		return jsrun.HostRequest{}, protocolViolation("a helper %q", m.Request.Method)
+	}
+	if len(blob) > jsrun.MaxFileBytes {
+		return jsrun.HostRequest{}, protocolViolation("a helper call carrying %d bytes, past the %d one call may move", len(blob), jsrun.MaxFileBytes)
+	}
+	request := *m.Request
+	request.Data = blob
+	return request, nil
+}
+
+// help answers one helper call, on its own goroutine. A panic in the server's
+// helpers fails the call, never the server.
+func (pool *Pool) help(ctx context.Context, host jsrun.Host, request jsrun.HostRequest) (answer jsrun.HostAnswer) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			pool.logger.Error("a JavaScript helper panicked", "helper", request.Method, "panic", recovered)
+			answer = jsrun.HostAnswer{Failure: fmt.Sprintf("the helper failed (%v); this is a fault in the server, not in the code", recovered)}
+		}
+	}()
+	if host.Call == nil {
+		return jsrun.HostAnswer{Failure: "this.helpers." + request.Method + " is not available here"}
+	}
+	return host.Call(ctx, request)
+}
+
+// jobPipe is the server's writing end for one job. Once the job is over it
+// writes nothing more, so a helper answered late cannot reach the next job.
+type jobPipe struct {
+	w      *worker
+	mu     sync.Mutex
+	closed bool
+}
+
+func (pipe *jobPipe) write(m message, blob string) error {
+	pipe.mu.Lock()
+	defer pipe.mu.Unlock()
+	if pipe.closed {
+		return nil
+	}
+	return writeFrame(pipe.w.in, m, blob)
+}
+
+func (pipe *jobPipe) close() {
+	pipe.mu.Lock()
+	defer pipe.mu.Unlock()
+	pipe.closed = true
+}
+
+// deadline kills a worker that runs past its job's allowance. It is held
+// while the server answers a helper call: the worker is waiting on the
+// server then, and the wait is bounded by the execution's context and the
+// helper's own timeout instead.
+type deadline struct {
+	mu      sync.Mutex
+	left    time.Duration
+	since   time.Time
+	timer   *time.Timer
+	held    int
+	stopped bool
+	fire    func()
+}
+
+func newDeadline(allowance time.Duration, fire func()) *deadline {
+	return &deadline{left: allowance, since: time.Now(), timer: time.AfterFunc(allowance, fire), fire: fire}
+}
+
+func (d *deadline) hold() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.held++
+	if d.held > 1 || d.timer == nil {
+		return
+	}
+	if !d.timer.Stop() {
+		// It fired; there is nothing left to hold.
+		d.timer = nil
+		return
+	}
+	d.left -= time.Since(d.since)
+}
+
+func (d *deadline) release() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.held--
+	if d.held > 0 || d.timer == nil || d.stopped {
+		return
+	}
+	d.since = time.Now()
+	d.timer = time.AfterFunc(max(d.left, 0), d.fire)
+}
+
+func (d *deadline) stop() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.stopped = true
+	if d.timer != nil {
+		d.timer.Stop()
+	}
 }
 
 // ranOutOfMemory reads a dead worker's last words: Go's own out-of-memory

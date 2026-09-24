@@ -38,7 +38,7 @@ func TestMain(m *testing.M) {
 			}))
 		case "exit3":
 			os.Exit(fakeWorker(func() { os.Exit(3) }))
-		case "stale", "unknownfile", "flood":
+		case "stale", "unknownfile", "flood", "calls", "bigcall", "badhelper", "staticflood", "staticunused", "bigdone":
 			os.Exit(lyingWorker(os.Getenv(testModeVariable)))
 		default:
 			os.Exit(Serve(os.Stdin, os.Stdout))
@@ -61,9 +61,12 @@ func fakeWorker(then func()) int {
 	return 0
 }
 
-// lyingWorker answers its one job with a done frame a real worker would never
-// write: for another job, naming a file its input did not have, or printing
-// far past the console cap.
+// lyingWorker answers its one job with frames a real worker would never
+// write: a done frame for another job, naming a file its input did not
+// have, printing far past the console cap, handing back static data it was
+// never given or results past the output cap; or more helper calls than its
+// code may make, one carrying too much, one for a helper there is none of,
+// or more questions about static data than there are kinds.
 func lyingWorker(mode string) int {
 	reader, writer := bufio.NewReader(os.Stdin), bufio.NewWriter(os.Stdout)
 	if _, _, err := readFrame(reader, maxServerHeader, maxServerBlob); err != nil {
@@ -72,6 +75,13 @@ func lyingWorker(mode string) int {
 	run, _, err := readFrame(reader, maxServerHeader, maxServerBlob)
 	if err != nil {
 		return 2
+	}
+	call := func(id int64, question message, blob string) {
+		question.Type, question.Nonce, question.ID = typeCall, run.Nonce, id
+		_ = writeFrame(writer, question, blob)
+	}
+	helper := func(method string) message {
+		return message{Method: methodHelper, Request: &jsrun.HostRequest{Method: method, HTTP: &jsrun.HTTPRequest{Method: "GET", URL: "https://example.com"}}}
 	}
 	output := `[{"json":{"ok":true},"binary":{},"paired":null}]`
 	done := message{Type: typeDone, Nonce: run.Nonce, Executed: &jsrun.Executed{}}
@@ -84,6 +94,22 @@ func lyingWorker(mode string) int {
 		for index := range 2000 {
 			done.Executed.Console = append(done.Executed.Console, jsrun.ConsoleLine{Level: "log", Text: fmt.Sprintf("%04d %s", index, strings.Repeat("x", 1000))})
 		}
+	case "calls":
+		for id := range int64(3) {
+			call(id+1, helper(jsrun.HelperHTTPRequest), "")
+		}
+	case "bigcall":
+		call(1, helper(jsrun.HelperWriteFile), strings.Repeat("x", jsrun.MaxFileBytes+1))
+	case "badhelper":
+		call(1, helper("readAnyFile"), "")
+	case "staticflood":
+		for id := range int64(3) {
+			call(id+1, message{Method: methodStatic, Name: "global"}, "")
+		}
+	case "staticunused":
+		done.Executed.StaticData = map[string]string{"global": "{}"}
+	case "bigdone":
+		output = `[{"json":{"pad":"` + strings.Repeat("x", 17<<20) + `"},"binary":{},"paired":null}]`
 	}
 	done.OutputSizes = []int{len(output)}
 	if err := writeFrame(writer, done, output); err != nil {

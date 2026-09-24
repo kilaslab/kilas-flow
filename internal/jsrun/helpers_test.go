@@ -23,7 +23,7 @@ type fakeHelpers struct {
 	bodies   []string
 	http     func(ctx context.Context, request jsrun.HTTPRequest) (jsrun.HTTPResponse, []byte, error)
 	files    map[string][]byte
-	stored   []jsrun.StoredFile
+	stored   []workflow.BinaryRef
 	static   map[string]string
 	panics   bool
 }
@@ -50,13 +50,10 @@ func (fake *fakeHelpers) ReadFile(_ context.Context, itemIndex int, property str
 	return data, nil
 }
 
-func (fake *fakeHelpers) WriteFile(_ context.Context, data []byte, fileName, mimeType string) (jsrun.StoredFile, error) {
+func (fake *fakeHelpers) WriteFile(_ context.Context, data []byte, fileName, mimeType string) (workflow.BinaryRef, error) {
 	fake.mu.Lock()
 	defer fake.mu.Unlock()
-	stored := jsrun.StoredFile{
-		Ref:       workflow.BinaryRef{ID: fmt.Sprintf("bin_stored_%d", len(fake.stored)), FileName: fileName, MediaType: mimeType, Size: int64(len(data))},
-		Extension: "txt",
-	}
+	stored := workflow.BinaryRef{ID: fmt.Sprintf("bin_stored_%d", len(fake.stored)), FileName: fileName, MediaType: mimeType, Size: int64(len(data))}
 	fake.stored = append(fake.stored, stored)
 	return stored, nil
 }
@@ -337,7 +334,7 @@ func TestFilesRoundTripThroughTheServer(t *testing.T) {
 	if binary["data"].ID != "bin_stored_0" || binary["data"].Size != 5 || binary["original"].ID != "bin_input" {
 		t.Fatalf("binary = %#v, want the stored file and the input's", binary)
 	}
-	if string(fake.stored[0].Ref.FileName) != "out.txt" {
+	if fake.stored[0].FileName != "out.txt" {
 		t.Fatalf("stored = %#v", fake.stored)
 	}
 	_, err = newRunner().Run(context.Background(), jsrun.Task{

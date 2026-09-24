@@ -54,18 +54,10 @@ type Helpers interface {
 	// holds under property.
 	ReadFile(ctx context.Context, itemIndex int, property string) ([]byte, error)
 	// WriteFile stores data as a file of this execution.
-	WriteFile(ctx context.Context, data []byte, fileName, mimeType string) (StoredFile, error)
+	WriteFile(ctx context.Context, data []byte, fileName, mimeType string) (workflow.BinaryRef, error)
 	// StaticData returns the workflow's static data of one kind, "global" or
 	// "node", as a JSON object.
 	StaticData(kind string) (string, error)
-}
-
-// StoredFile is a file WriteFile stored.
-type StoredFile struct {
-	Ref workflow.BinaryRef
-	// Extension is the file's extension without its dot: its name's, or,
-	// when it has no name, the one its type implies.
-	Extension string
 }
 
 // HTTPRequest is one request as the runtime built it from n8n's options:
@@ -222,11 +214,8 @@ func (l *ledger) call(helpers Helpers) func(context.Context, HostRequest) HostAn
 			if err != nil {
 				return failed(err)
 			}
-			l.stored(stored.Ref)
-			file := fileOfRef(stored.Ref)
-			if stored.Extension != "" {
-				file.FileExtension = stored.Extension
-			}
+			l.stored(stored)
+			file := fileOfRef(stored)
 			return HostAnswer{File: &file}
 		}
 		return HostAnswer{Failure: fmt.Sprintf("there is no helper %q", request.Method)}
