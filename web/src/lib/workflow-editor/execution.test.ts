@@ -4,6 +4,7 @@ import type { Connection, Definition, ExecutionNodeRunResource, Node } from '$li
 import { setLocale } from '$lib/i18n/locale.svelte';
 import {
 	binaryAttachments,
+	consoleTone,
 	edgeItemCounts,
 	executionDurationMs,
 	formatBytes,
@@ -11,6 +12,7 @@ import {
 	formatTimestamp,
 	latestNodeRuns,
 	nodeRunStatus,
+	parseConsole,
 	statusLabel
 } from './execution';
 
@@ -233,6 +235,55 @@ describe('formatTimestamp', () => {
 	// same as no timestamp at all.
 	it('treats the zero time as absent rather than a real date in year 1', () => {
 		expect(formatTimestamp('0001-01-01T00:00:00Z')).toBe('—');
+	});
+});
+
+describe('parseConsole', () => {
+	it('reads lines and the truncation flag off the server-typed unknown value', () => {
+		const parsed = parseConsole({
+			lines: [
+				{ level: 'log', text: 'hello', at: '2026-09-05T01:00:00Z' },
+				{ level: 'error', text: 'boom' }
+			],
+			truncated: true
+		});
+
+		expect(parsed).toEqual({
+			lines: [
+				{ level: 'log', text: 'hello', at: '2026-09-05T01:00:00Z' },
+				{ level: 'error', text: 'boom', at: undefined }
+			],
+			truncated: true
+		});
+	});
+
+	it('defaults a missing level to log and drops a line with no text', () => {
+		const parsed = parseConsole({ lines: [{ text: 'no level' }, { level: 'warn' }, 'not an object'] });
+
+		expect(parsed?.lines).toEqual([{ level: 'log', text: 'no level', at: undefined }]);
+	});
+
+	it('reports nothing for a node that never printed, rather than an empty object', () => {
+		expect(parseConsole(undefined)).toBeNull();
+		expect(parseConsole(null)).toBeNull();
+		expect(parseConsole({ lines: [] })).toBeNull();
+	});
+
+	it('keeps a bare truncation flag even with no lines to show', () => {
+		expect(parseConsole({ lines: [], truncated: true })).toEqual({ lines: [], truncated: true });
+	});
+});
+
+describe('consoleTone', () => {
+	it('makes error and warn stand out and debug recede', () => {
+		expect(consoleTone('error')).toBe('text-destructive');
+		expect(consoleTone('warn')).toBe('text-warning');
+		expect(consoleTone('debug')).toBe('text-muted-foreground');
+	});
+
+	it('leaves log and info in the default tone', () => {
+		expect(consoleTone('log')).toBe('');
+		expect(consoleTone('info')).toBe('');
 	});
 });
 

@@ -62,6 +62,7 @@
 	"executions_unknown_media_type": "tipe tidak diketahui",
 	"executions_contents_server_held": "Isinya dipegang server dan tidak ditampilkan di sini.",
 	"executions_console": "Konsol",
+	"executions_console_empty": "Node ini tidak mencetak apa pun.",
 	"executions_console_truncated": "Keluaran yang melewati batas konsol node dibuang.",
 	"executions_unexpected_workflow_list": "Respons daftar alur kerja tidak terduga",
 	"executions_unexpected_execution_list": "Respons daftar eksekusi tidak terduga",

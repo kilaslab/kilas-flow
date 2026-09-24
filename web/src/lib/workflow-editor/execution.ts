@@ -119,6 +119,58 @@ export function nodeRunStatus(nodeID: string, runs: Map<string, ExecutionNodeRun
 }
 
 /**
+ * The one node type that can print to a console — `nodes/jscode.go`'s
+ * `JSCodeNodeType`. The Console tab is offered for this type only.
+ */
+export const CODE_NODE_TYPE = 'kilasflow.jsCode';
+
+/** One line a Code node's `console.log`/`info`/`warn`/`error`/`debug` printed. */
+export type ConsoleLine = { level: string; text: string; at?: string };
+
+/** What a Code node's run printed, parsed off `NodeRun.Console` or one live `code.console` event's `data`. */
+export type ConsoleDetail = { lines: ConsoleLine[]; truncated: boolean };
+
+/**
+ * Reads a node's console output from the server's untyped `unknown`.
+ *
+ * The API types `NodeRun.console` and a `code.console` event's `data` as
+ * unknown — both carry the same `engine.ConsoleDetail` shape, so this one
+ * parser reads both. A line with no text is dropped, and a missing level
+ * reads as `log`, matching the Go side's own zero value.
+ *
+ * `null` means "nothing recorded", which is the case for every node that is
+ * not a Code node as much as it is for one that printed nothing — the caller
+ * tells those apart from the node's type, not from this parse.
+ */
+export function parseConsole(value: unknown): ConsoleDetail | null {
+	if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
+	const record = value as Record<string, unknown>;
+	const lines: ConsoleLine[] = [];
+	for (const line of Array.isArray(record.lines) ? record.lines : []) {
+		if (line === null || typeof line !== 'object') continue;
+		const { level, text, at } = line as Record<string, unknown>;
+		if (typeof text !== 'string') continue;
+		lines.push({ level: typeof level === 'string' && level ? level : 'log', text, at: typeof at === 'string' ? at : undefined });
+	}
+	const truncated = record.truncated === true;
+	return lines.length > 0 || truncated ? { lines, truncated } : null;
+}
+
+/** warn and error stand out from ordinary output; debug recedes. */
+export function consoleTone(level: string): string {
+	switch (level) {
+		case 'error':
+			return 'text-destructive';
+		case 'warn':
+			return 'text-warning';
+		case 'debug':
+			return 'text-muted-foreground';
+		default:
+			return '';
+	}
+}
+
+/**
  * Counts the items each connection carried.
  *
  * A node run's output is an array of port slots in the definition's declared

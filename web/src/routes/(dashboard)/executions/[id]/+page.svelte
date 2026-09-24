@@ -12,15 +12,18 @@
 	import type { Definition, ExecutionResource, WorkflowVersionResource } from '$lib/api/generated/models';
 	import { Button } from '$lib/components/ui/button';
 	import ExecutionCanvas from '$lib/components/workflow-editor/execution-canvas.svelte';
+	import NodeConsole from '$lib/components/workflow-editor/node-console.svelte';
 	import * as m from '$lib/paraglide/messages.js';
-	import { applyEvents, executionEvents, isTerminalStatus, latestExecutionStatus } from '$lib/workflow-editor/event-stream.svelte';
+	import { applyEvents, executionEvents, isTerminalStatus, latestExecutionStatus, liveConsole } from '$lib/workflow-editor/event-stream.svelte';
 	import {
 		binaryAttachments,
+		CODE_NODE_TYPE,
 		executionDurationMs,
 		formatBytes,
 		formatDuration,
 		formatTimestamp,
 		latestNodeRuns,
+		parseConsole,
 		statusLabel,
 		statusTone
 	} from '$lib/workflow-editor/execution';
@@ -96,7 +99,6 @@
 	// what an attachment *is* — name, type, size — and never tries to render
 	// one. There is nothing to render: the API serves the reference only.
 	const attachments = $derived(binaryAttachments(selectedRun?.output));
-	const printed = $derived(nodeConsole(selectedRun?.console));
 	const selectedNode = $derived(
 		selectedNodeID ? ((version.data?.document.nodes ?? []).find((node) => node.id === selectedNodeID) ?? null) : null
 	);
@@ -104,6 +106,40 @@
 	const selectedStatus = $derived(
 		(selectedNodeID ? nodeStatuses.get(selectedNodeID) : undefined) ?? selectedRun?.status ?? 'skipped'
 	);
+
+	// Only a Code node can print, so its Console tab is the one bit of this
+	// panel that is node-type-specific rather than node-run-specific.
+	const isCodeNode = $derived(selectedNode?.type === CODE_NODE_TYPE);
+
+	/**
+	 * What the selected node printed.
+	 *
+	 * The persisted trace wins once it has this node's run: `execution.data`
+	 * is only refetched when the whole *execution* ends (see the effect
+	 * below), so for the entire span of an in-progress run — including after
+	 * this one node has itself finished — there is no run row for it yet, and
+	 * the live feed is the only source. The moment the trace is refetched,
+	 * `selectedRun.console` becomes authoritative and this falls back to it.
+	 */
+	const printed = $derived(parseConsole(selectedRun?.console) ?? (selectedNodeID ? liveConsole(selectedNodeID, live.events) : { lines: [], truncated: false }));
+
+	let panelTab = $state<'data' | 'console'>('data');
+	const panelTabButtons: Record<'data' | 'console', HTMLButtonElement | undefined> = { data: undefined, console: undefined };
+	// A node picked while Console was open, that turns out not to be a Code
+	// node, must not leave the tabpanel showing a tab with no button to select
+	// it — the same fallback `properties-panel.svelte` uses for Settings.
+	const activePanelTab = $derived(panelTab === 'console' && !isCodeNode ? 'data' : panelTab);
+
+	/** The WAI-ARIA tabs pattern, as `properties-panel.svelte` implements it. */
+	function movePanelTab(event: KeyboardEvent, from: 'data' | 'console') {
+		const order: ('data' | 'console')[] = ['data', 'console'];
+		const step = event.key === 'ArrowRight' || event.key === 'ArrowDown' ? 1 : event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1 : 0;
+		if (step === 0) return;
+		event.preventDefault();
+		const next = order[(order.indexOf(from) + step + order.length) % order.length];
+		panelTab = next;
+		panelTabButtons[next]?.focus();
+	}
 
 	/**
 	 * Re-reads the durable trace once, the moment the live feed reports the run
@@ -154,42 +190,6 @@
 		const extras = Object.entries(record).filter(([key, value]) => key !== 'message' && typeof value !== 'object' && value !== undefined && value !== null && String(value) !== '');
 		if (extras.length === 0) return null;
 		return extras.map(([key, value]) => `${key}: ${String(value)}`).join(' · ');
-	}
-
-	type ConsoleLine = { level: string; text: string; at?: string };
-
-	/**
-	 * What a node's code printed, or null when it printed nothing.
-	 *
-	 * The API types the field as unknown, so the shape is read rather than
-	 * assumed: a line with no text is dropped, and a missing level reads as log.
-	 */
-	function nodeConsole(value: unknown): { lines: ConsoleLine[]; truncated: boolean } | null {
-		if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
-		const record = value as Record<string, unknown>;
-		const lines: ConsoleLine[] = [];
-		for (const line of Array.isArray(record.lines) ? record.lines : []) {
-			if (line === null || typeof line !== 'object') continue;
-			const { level, text, at } = line as Record<string, unknown>;
-			if (typeof text !== 'string') continue;
-			lines.push({ level: typeof level === 'string' && level ? level : 'log', text, at: typeof at === 'string' ? at : undefined });
-		}
-		const truncated = record.truncated === true;
-		return lines.length > 0 || truncated ? { lines, truncated } : null;
-	}
-
-	/** warn and error stand out from ordinary output; debug recedes. */
-	function consoleTone(level: string): string {
-		switch (level) {
-			case 'error':
-				return 'text-destructive';
-			case 'warn':
-				return 'text-warning';
-			case 'debug':
-				return 'text-muted-foreground';
-			default:
-				return '';
-		}
 	}
 
 	let copied = $state<string | null>(null);
@@ -361,6 +361,76 @@
 				{/if}
 			</div>
 
+			<!-- Node data (error/input/output/attachments) versus what the node's
+			     code printed are different questions about the same run, so once
+			     a Code node is selected they split into tabs — the same WAI-ARIA
+			     pattern `properties-panel.svelte` uses for Parameters/Settings.
+			     Every other node type has nothing to put on a Console tab, so it
+			     stays untabbed for them rather than showing an empty tab. -->
+			{#snippet nodeData()}
+				{#if !selectedRun}
+					<p class="text-sm leading-6 text-muted-foreground">{m.executions_node_unreached()}</p>
+				{:else}
+					{#if selectedRun.error}
+						<div>
+							<h3 class="text-sm font-medium text-destructive">{m.executions_error()}</h3>
+							<p class="mt-1 text-xs font-medium break-words text-destructive">{errorTitle(selectedRun.error)}</p>
+							{#if errorDetail(selectedRun.error)}
+								<p class="mt-1 text-xs leading-5 break-words text-muted-foreground">{errorDetail(selectedRun.error)}</p>
+							{/if}
+						<details class="mt-1.5">
+							<summary class="cursor-pointer text-xs text-muted-foreground underline-offset-4 hover:underline">{m.executions_full_error_json()}</summary>
+							<pre class="mt-1.5 overflow-x-auto rounded-lg bg-destructive/5 p-3 font-mono text-[0.6875rem] leading-5 break-all whitespace-pre-wrap text-destructive">{asJSON(selectedRun.error)}</pre>
+						</details>
+					</div>
+					{/if}
+					<div>
+						<h3 class="text-sm font-medium">{m.executions_input()}{selectedNodeID ? payloadChars(selectedRun.input) : ''}</h3>
+						{#if payloadSize(selectedRun.input) > LARGE_PAYLOAD_CHARS && !payloadExpanded(`input:${selectedNodeID}`)}
+							<div class="mt-1.5 rounded-lg border border-border bg-muted/40 p-3">
+								<p class="text-xs leading-5 text-muted-foreground">{m.executions_payload_too_large({ count: payloadSize(selectedRun.input).toLocaleString() })}</p>
+								<Button class="mt-2" variant="outline" size="sm" onclick={() => expandPayload(`input:${selectedNodeID}`)}>{m.executions_show_anyway()}</Button>
+							</div>
+						{:else}
+							<pre class="mt-1.5 max-h-96 overflow-auto rounded-lg bg-muted p-3 font-mono text-[0.6875rem] leading-5 break-all whitespace-pre-wrap">{asJSON(selectedRun.input)}</pre>
+						{/if}
+					</div>
+					<div>
+						<h3 class="text-sm font-medium">{m.executions_output()}{selectedNodeID ? payloadChars(selectedRun.output) : ''}</h3>
+						{#if payloadSize(selectedRun.output) > LARGE_PAYLOAD_CHARS && !payloadExpanded(`output:${selectedNodeID}`)}
+							<div class="mt-1.5 rounded-lg border border-border bg-muted/40 p-3">
+								<p class="text-xs leading-5 text-muted-foreground">{m.executions_payload_too_large({ count: payloadSize(selectedRun.output).toLocaleString() })}</p>
+								<Button class="mt-2" variant="outline" size="sm" onclick={() => expandPayload(`output:${selectedNodeID}`)}>{m.executions_show_anyway()}</Button>
+							</div>
+						{:else}
+							<pre class="mt-1.5 max-h-96 overflow-auto rounded-lg bg-muted p-3 font-mono text-[0.6875rem] leading-5 break-all whitespace-pre-wrap">{asJSON(selectedRun.output)}</pre>
+						{/if}
+					</div>
+					{#if attachments.length > 0}
+						<div>
+							<h3 class="text-sm font-medium">{m.executions_attachments()}</h3>
+							<ul class="mt-1.5 space-y-1.5">
+								{#each attachments as attachment (`${attachment.port}:${attachment.item}:${attachment.property}`)}
+									<li class="flex items-start gap-2 rounded-lg border border-border px-3 py-2">
+										<Paperclip class="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+										<div class="min-w-0">
+											<p class="truncate text-xs font-medium">{attachment.reference.fileName || attachment.property}</p>
+											<p class="mt-0.5 text-xs text-muted-foreground">
+												{attachment.reference.mediaType || m.executions_unknown_media_type()} · {formatBytes(attachment.reference.size)} · {m.executions_attachment_item({ index: attachment.item + 1 })}
+											</p>
+										</div>
+									</li>
+								{/each}
+							</ul>
+							<p class="mt-1.5 text-xs text-muted-foreground">{m.executions_contents_server_held()}</p>
+						</div>
+					{/if}
+					<p class="text-xs text-muted-foreground">
+						{formatTimestamp(selectedRun.startedAt)} · {formatDuration(executionDurationMs(selectedRun))}
+					</p>
+				{/if}
+			{/snippet}
+
 			<aside aria-label={m.executions_node_data()} class="min-h-0 overflow-hidden rounded-lg border border-border">
 				{#if !selectedNodeID}
 					<p class="grid h-full place-items-center p-6 text-center text-sm leading-6 text-muted-foreground">{m.executions_select_node_hint()}</p>
@@ -376,85 +446,21 @@
 								{/if}
 							</p>
 						</div>
-						<div class="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
-							{#if !selectedRun}
+						{#if isCodeNode}
+							<div class="flex shrink-0 gap-3 border-b border-border px-4" role="tablist" tabindex="-1" aria-label={selectedNode?.name ?? selectedNodeID} onkeydown={(event) => {
+								if (event.key === 'ArrowRight' || event.key === 'ArrowLeft' || event.key === 'ArrowUp' || event.key === 'ArrowDown') movePanelTab(event, panelTab);
+							}}>
+								<button bind:this={panelTabButtons.data} type="button" role="tab" id="run-tab-data" aria-controls="run-tabpanel" aria-selected={activePanelTab === 'data'} tabindex={activePanelTab === 'data' ? 0 : -1} class="-mb-px border-b-2 border-transparent py-1.5 text-xs text-muted-foreground transition-colors aria-selected:border-primary aria-selected:font-medium aria-selected:text-foreground" onclick={() => (panelTab = 'data')}>{m.executions_node_data()}</button>
+								<button bind:this={panelTabButtons.console} type="button" role="tab" id="run-tab-console" aria-controls="run-tabpanel" aria-selected={activePanelTab === 'console'} tabindex={activePanelTab === 'console' ? 0 : -1} class="-mb-px border-b-2 border-transparent py-1.5 text-xs text-muted-foreground transition-colors aria-selected:border-primary aria-selected:font-medium aria-selected:text-foreground" onclick={() => (panelTab = 'console')}>{m.executions_console()}</button>
+							</div>
+						{/if}
+						<div class="min-h-0 flex-1 space-y-4 overflow-y-auto p-4" role={isCodeNode ? 'tabpanel' : undefined} id={isCodeNode ? 'run-tabpanel' : undefined} aria-labelledby={isCodeNode ? `run-tab-${activePanelTab}` : undefined}>
+							{#if !isCodeNode || activePanelTab === 'data'}
+								{@render nodeData()}
+							{:else if selectedStatus === 'skipped'}
 								<p class="text-sm leading-6 text-muted-foreground">{m.executions_node_unreached()}</p>
 							{:else}
-								{#if selectedRun.error}
-									<div>
-										<h3 class="text-sm font-medium text-destructive">{m.executions_error()}</h3>
-										<p class="mt-1 text-xs font-medium break-words text-destructive">{errorTitle(selectedRun.error)}</p>
-										{#if errorDetail(selectedRun.error)}
-											<p class="mt-1 text-xs leading-5 break-words text-muted-foreground">{errorDetail(selectedRun.error)}</p>
-										{/if}
-									<details class="mt-1.5">
-										<summary class="cursor-pointer text-xs text-muted-foreground underline-offset-4 hover:underline">{m.executions_full_error_json()}</summary>
-										<pre class="mt-1.5 overflow-x-auto rounded-lg bg-destructive/5 p-3 font-mono text-[0.6875rem] leading-5 break-all whitespace-pre-wrap text-destructive">{asJSON(selectedRun.error)}</pre>
-									</details>
-								</div>
-							{/if}
-							{#if printed}
-								<div>
-									<h3 class="text-sm font-medium">{m.executions_console()}</h3>
-									{#if printed.lines.length > 0}
-										<ol class="mt-1.5 max-h-72 overflow-auto rounded-lg bg-muted p-3 font-mono text-[0.6875rem] leading-5">
-											{#each printed.lines as line, index (index)}
-												<li class={`flex gap-2 ${consoleTone(line.level)}`} title={line.at ? formatTimestamp(line.at) : undefined}>
-													<span class="w-10 shrink-0 opacity-70 select-none">{line.level}</span>
-													<span class="min-w-0 break-all whitespace-pre-wrap">{line.text}</span>
-												</li>
-											{/each}
-										</ol>
-									{/if}
-									{#if printed.truncated}
-										<p class="mt-1.5 text-xs text-muted-foreground">{m.executions_console_truncated()}</p>
-									{/if}
-								</div>
-							{/if}
-							<div>
-								<h3 class="text-sm font-medium">{m.executions_input()}{selectedNodeID ? payloadChars(selectedRun.input) : ''}</h3>
-								{#if payloadSize(selectedRun.input) > LARGE_PAYLOAD_CHARS && !payloadExpanded(`input:${selectedNodeID}`)}
-									<div class="mt-1.5 rounded-lg border border-border bg-muted/40 p-3">
-										<p class="text-xs leading-5 text-muted-foreground">{m.executions_payload_too_large({ count: payloadSize(selectedRun.input).toLocaleString() })}</p>
-										<Button class="mt-2" variant="outline" size="sm" onclick={() => expandPayload(`input:${selectedNodeID}`)}>{m.executions_show_anyway()}</Button>
-									</div>
-								{:else}
-									<pre class="mt-1.5 max-h-96 overflow-auto rounded-lg bg-muted p-3 font-mono text-[0.6875rem] leading-5 break-all whitespace-pre-wrap">{asJSON(selectedRun.input)}</pre>
-								{/if}
-							</div>
-							<div>
-								<h3 class="text-sm font-medium">{m.executions_output()}{selectedNodeID ? payloadChars(selectedRun.output) : ''}</h3>
-								{#if payloadSize(selectedRun.output) > LARGE_PAYLOAD_CHARS && !payloadExpanded(`output:${selectedNodeID}`)}
-									<div class="mt-1.5 rounded-lg border border-border bg-muted/40 p-3">
-										<p class="text-xs leading-5 text-muted-foreground">{m.executions_payload_too_large({ count: payloadSize(selectedRun.output).toLocaleString() })}</p>
-										<Button class="mt-2" variant="outline" size="sm" onclick={() => expandPayload(`output:${selectedNodeID}`)}>{m.executions_show_anyway()}</Button>
-									</div>
-								{:else}
-									<pre class="mt-1.5 max-h-96 overflow-auto rounded-lg bg-muted p-3 font-mono text-[0.6875rem] leading-5 break-all whitespace-pre-wrap">{asJSON(selectedRun.output)}</pre>
-								{/if}
-							</div>
-								{#if attachments.length > 0}
-									<div>
-										<h3 class="text-sm font-medium">{m.executions_attachments()}</h3>
-										<ul class="mt-1.5 space-y-1.5">
-											{#each attachments as attachment (`${attachment.port}:${attachment.item}:${attachment.property}`)}
-												<li class="flex items-start gap-2 rounded-lg border border-border px-3 py-2">
-													<Paperclip class="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-													<div class="min-w-0">
-														<p class="truncate text-xs font-medium">{attachment.reference.fileName || attachment.property}</p>
-														<p class="mt-0.5 text-xs text-muted-foreground">
-															{attachment.reference.mediaType || m.executions_unknown_media_type()} · {formatBytes(attachment.reference.size)} · {m.executions_attachment_item({ index: attachment.item + 1 })}
-														</p>
-													</div>
-												</li>
-											{/each}
-										</ul>
-										<p class="mt-1.5 text-xs text-muted-foreground">{m.executions_contents_server_held()}</p>
-									</div>
-								{/if}
-								<p class="text-xs text-muted-foreground">
-									{formatTimestamp(selectedRun.startedAt)} · {formatDuration(executionDurationMs(selectedRun))}
-								</p>
+								<NodeConsole lines={printed.lines} truncated={printed.truncated} />
 							{/if}
 						</div>
 					</div>
