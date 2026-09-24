@@ -27,7 +27,7 @@ type retryExecutionOutput struct {
 }
 
 // Retry starts a new execution from a finished one's workflow, revision and
-// input.
+// input, under the trigger the original ran under.
 //
 // Retrying re-queues the revision the original ran rather than the workflow's
 // newest one. Running the latest revision is a different operation — `run` —
@@ -64,9 +64,10 @@ func (handler *Executions) Retry(ctx context.Context, input *executionPathInput)
 	// The same queue path a manual run takes, with the revision named instead
 	// of resolved: the graph is compiled under this tenant's catalogue and the
 	// trigger node is checked against it before anything is queued, so a retry
-	// is held to exactly the rules its first run was.
-	created, err := handler.history.QueueManualVersion(ctx, tenant, record.WorkflowID, record.WorkflowVersionID,
-		workflow.CatalogFor(handler.catalog, tenant.ID), record.TriggerNodeID, record.Input)
+	// is held to exactly the rules its first run was. It keeps its original's
+	// trigger: a retried webhook run is a production run, and keeps the
+	// workflow's static data as one.
+	created, err := handler.history.QueueRetry(ctx, tenant, record, workflow.CatalogFor(handler.catalog, tenant.ID))
 	if err != nil {
 		return nil, handler.retryProblem(ctx, err)
 	}

@@ -4,8 +4,9 @@
 -- "global" for the workflow and "node:<name>" for each node that keeps its
 -- own, as n8n lays it out.
 --
--- It is saved only after a successful run that is not a manual one, and only
--- when a run changed it, so the row is written rarely and read once per
+-- It is saved when a run that is not a manual one changed it, as n8n saves
+-- it: when the run ends, succeeded or failed, and when it parks at a Wait;
+-- never for a cancelled run. So the row is written rarely and read once per
 -- execution that asks for it. The engine caps the document at 256 KiB.
 --
 -- tenant_id is a real, plain column: the tenant purge finds tenant-scoped

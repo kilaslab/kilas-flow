@@ -26,6 +26,9 @@ type ExecutionRepository interface {
 	// instead of the newest one, so a caller can run a revision history has
 	// moved past — `run --revision`, and the retry of a finished execution.
 	QueueManualVersion(context.Context, TenantScope, string, string, workflow.Catalog, string, json.RawMessage) (execution.Record, error)
+	// QueueRetry queues a finished execution again: its workflow, revision,
+	// trigger node and input, under the trigger it ran under.
+	QueueRetry(context.Context, TenantScope, execution.Record, workflow.Catalog) (execution.Record, error)
 	QueueTriggered(context.Context, TenantScope, string, string, execution.Trigger, string, json.RawMessage) (execution.Record, error)
 	Get(context.Context, TenantScope, string) (execution.Record, error)
 	List(context.Context, TenantScope, ExecutionFilter) (ExecutionPage, error)
@@ -116,7 +119,7 @@ func NewExecutionStore(db *gorm.DB) *GORMExecutionStore {
 func (store *GORMExecutionStore) QueueManualLatest(ctx context.Context, tenant TenantScope, workflowID string, catalog workflow.Catalog, triggerNodeID string, input json.RawMessage) (execution.Record, error) {
 	// The revision is deliberately unnamed: queueManual resolves the workflow's
 	// latest one inside its own transaction.
-	return store.queueManual(ctx, tenant, workflowID, "", catalog, triggerNodeID, input)
+	return store.queueManual(ctx, tenant, workflowID, "", execution.TriggerManual, catalog, triggerNodeID, input)
 }
 
 // QueueManualVersion validates one named revision and persists a queued manual
@@ -134,7 +137,24 @@ func (store *GORMExecutionStore) QueueManualVersion(ctx context.Context, tenant 
 	if strings.TrimSpace(versionID) == "" {
 		return execution.Record{}, fmt.Errorf("workflow version ID is required")
 	}
-	return store.queueManual(ctx, tenant, workflowID, versionID, catalog, triggerNodeID, input)
+	return store.queueManual(ctx, tenant, workflowID, versionID, execution.TriggerManual, catalog, triggerNodeID, input)
+}
+
+// QueueRetry queues a finished execution again: the revision it ran, from the
+// trigger node it started at, with its input, under the trigger it ran
+// under. A retry of a webhook run is a webhook run again, not a test from
+// the editor, which is what decides whether it keeps the workflow's static
+// data; a retry of a manual run is still a manual one. It shares
+// queueManual's transaction and checks, as QueueManualVersion does.
+func (store *GORMExecutionStore) QueueRetry(ctx context.Context, tenant TenantScope, original execution.Record, catalog workflow.Catalog) (execution.Record, error) {
+	if strings.TrimSpace(original.WorkflowVersionID) == "" {
+		return execution.Record{}, fmt.Errorf("workflow version ID is required")
+	}
+	trigger := original.Trigger
+	if trigger == "" {
+		trigger = execution.TriggerManual
+	}
+	return store.queueManual(ctx, tenant, original.WorkflowID, original.WorkflowVersionID, trigger, catalog, original.TriggerNodeID, original.Input)
 }
 
 // queueManual is the one manual-run body: it holds the workflow row lock, pins
@@ -153,7 +173,7 @@ func (store *GORMExecutionStore) QueueManualVersion(ctx context.Context, tenant 
 // is checked against the revision being pinned here, so a choice that cannot
 // start a run is refused while the caller is still there to read why instead of
 // being discovered by a worker as a run that did the wrong thing.
-func (store *GORMExecutionStore) queueManual(ctx context.Context, tenant TenantScope, workflowID, versionID string, catalog workflow.Catalog, triggerNodeID string, input json.RawMessage) (execution.Record, error) {
+func (store *GORMExecutionStore) queueManual(ctx context.Context, tenant TenantScope, workflowID, versionID string, trigger execution.Trigger, catalog workflow.Catalog, triggerNodeID string, input json.RawMessage) (execution.Record, error) {
 	if err := tenant.validate(); err != nil {
 		return execution.Record{}, err
 	}
@@ -216,7 +236,7 @@ func (store *GORMExecutionStore) queueManual(ctx context.Context, tenant TenantS
 			WorkflowID:        parent.ID,
 			WorkflowVersionID: version.ID,
 			Status:            string(execution.StatusQueued),
-			Trigger:           string(execution.TriggerManual),
+			Trigger:           string(trigger),
 			TriggerNodeID:     triggerNodeID,
 			Input:             inputPayload,
 			Output:            []byte("null"),

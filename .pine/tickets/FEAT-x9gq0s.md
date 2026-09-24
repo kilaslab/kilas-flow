@@ -23,7 +23,7 @@ Child of EPIC-tjnr1z. The full design, including the code shapes, file layout an
 # Acceptance Criteria
 - [x] `this.helpers.httpRequest` returns a Promise, goes through `internal/safehttp`, and counts against `MaxHostCalls`
 - [x] `getBinaryDataBuffer` and `prepareBinaryData` are tenant-scoped
-- [x] `$getWorkflowStaticData('global'|'node')` uses a new tenant-scoped table; it is saved only after a successful non-manual run, capped at 256 KiB
+- [x] `$getWorkflowStaticData('global'|'node')` uses a new tenant-scoped table; it is saved after a non-manual run that changed it, as n8n saves it (succeeded, failed, or parked at a Wait; never cancelled), capped at 256 KiB (amended by ruling R2, 2026-09-24)
 - [x] The editor output panel has a Console tab (live for manual runs, persisted in execution detail)
 
 # Implementation Plan
@@ -57,8 +57,8 @@ The editor Console tab is a separate task (Task 2); this is the backend.
    pauses the job's kill deadline while any is in flight. Out-of-turn,
    oversized or unknown frames retire the worker.
 4. **Engine**: `engine.StaticData`, a per-execution handle loaded lazily
-   through a `StaticDataStore`, saved by the service only after a successful
-   execution whose trigger is not `manual`, and only when it changed.
+   through a `StaticDataStore`, saved by the service when a run whose trigger
+   is not `manual` changed it (see Decision 1 as amended).
 5. **Repository**: migration 000024 (`workflow_static_data`, sqlite and
    postgres), a GORM store, deleted with its workflow and by the tenant purge.
 6. **Nodes**: the Code (JavaScript) executor's server half: HTTP through
@@ -144,14 +144,23 @@ tab criterion is the editor half (Task 2), done on its own branch.
 
 ### Decisions
 
-1. **Save only after success**, as the brief says, although n8n saves after a
-   failed production run too; the docs say so. A run that suspends on a Wait
-   node saves nothing either (it is not a success yet), and its resumed half
-   loads the stored data afresh. A sub-workflow's own run saves, as n8n's
-   does. A node run that fails keeps nothing of what it changed.
+1. **When static data is saved (amended by ruling R2, 2026-09-24).** As
+   n8n: whenever a non-manual run changed it — when it succeeds, when it
+   fails, and when it parks at a Wait, so the resumed half, which reloads the
+   stored data, sees what the first half changed. Never for a cancelled run:
+   the save happens after the execution's status is settled, so a run
+   cancelled as it finished saves nothing. A Code node run that throws keeps
+   nothing it changed. A sub-workflow's own run saves, as n8n's `integrated`
+   runs do. n8n's quirk of a timer-resumed half starting from `{}` is not
+   copied. (First cut saved only after success; the controller's ruling
+   replaced that.)
 2. **All three helpers count against `MaxHostCalls`**, not only httpRequest:
    waiting on the server is free of the clock, so an unbounded loop of file
    reads would otherwise hold a worker until the execution's timeout.
+   **Ruling R1 (2026-09-24):** in "Run once for each item" mode the budget is
+   per item (each item gets `MaxHostCalls`; the pool allows `MaxHostCalls ×
+   items` before it retires a worker); per run in all-items mode. The
+   deployment ceiling is `code.javascript_max_host_calls` (default 100).
 3. **Caps.** A file or request body moves at most 32 MiB in one call
    (`jsrun.MaxFileBytes`, below the 64 MiB Buffer cap). A response is capped
    at the policy's `max_response_bytes` or 32 MiB, whichever is less. Each is
@@ -178,6 +187,24 @@ tab criterion is the editor half (Task 2), done on its own branch.
    code reaches refuses in the one sentence (the analyser refuses a named one
    before the code runs). The old `bindAsync` test seam is gone; the helpers
    are the seam it was kept for.
+
+### Which runs are "manual" (ruling, 2026-09-24)
+
+n8n skips static data for editor test runs only. In KilasFlow the editor's
+Run, the API's `run-workflow`, the CLI and every embedded host start a run
+through the same path, `queueManual`, which records trigger `manual`. The API
+layer knows whether the caller is a browser session, an embed session or an
+API key, but none of those means "test run": the CLI and agents use API keys
+to test, and an embedded editor uses an embed session. The execution row has
+no field that could carry the difference without a schema change. So **a run
+started through the API is treated as manual, as today**; this is a known
+difference from n8n, whose production API-started runs use their own mode.
+
+A **retry** used to be queued as `manual` too. It now keeps its original's
+trigger (`QueueRetry`), so a retried webhook run is a webhook run again and
+saves static data as its original would; a retried manual run is still
+manual. The trigger shown for a retry, and `$execution.mode` inside it, is
+the original's (n8n shows `retry`); the API operation's description says so.
 
 # Related Files
 

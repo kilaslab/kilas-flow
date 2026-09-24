@@ -454,6 +454,7 @@ func (service *Service) runOnce(ctx context.Context, workerID string) (bool, err
 		if updateErr != nil {
 			return true, updateErr
 		}
+		service.saveStaticData(persistCtx, updated, result.StaticData)
 		terminal := events.ExecutionFailed
 		if updated.Status == execution.StatusCancelled {
 			terminal = events.ExecutionCancelled
@@ -479,7 +480,6 @@ func (service *Service) runOnce(ctx context.Context, workerID string) (bool, err
 		// run again, side effects included, to fail at the same marshal.
 		return service.failPersist(persistCtx, tenant, record, fmt.Errorf("marshal execution output: %w", err))
 	}
-	service.saveStaticData(persistCtx, record, result.StaticData)
 	record.Status = execution.StatusSucceeded
 	record.Output = output
 	record.Error = json.RawMessage("null")
@@ -488,6 +488,9 @@ func (service *Service) runOnce(ctx context.Context, workerID string) (bool, err
 	if err != nil {
 		return true, err
 	}
+	// After the status settles, so a run cancelled as it finished saves
+	// nothing.
+	service.saveStaticData(persistCtx, updated, result.StaticData)
 	terminal := events.ExecutionCompleted
 	if updated.Status == execution.StatusCancelled {
 		terminal = events.ExecutionCancelled
@@ -1405,7 +1408,6 @@ func (service *Service) persistChild(ctx context.Context, tenant repository.Tena
 		if err != nil {
 			return fmt.Errorf("marshal sub-workflow output: %w", err)
 		}
-		service.saveStaticData(ctx, record, result.StaticData)
 		record.Status = execution.StatusSucceeded
 		record.Output = output
 		record.Error = json.RawMessage("null")
@@ -1414,6 +1416,7 @@ func (service *Service) persistChild(ctx context.Context, tenant repository.Tena
 	if err != nil {
 		return err
 	}
+	service.saveStaticData(ctx, updated, result.StaticData)
 	terminal := events.ExecutionCompleted
 	switch updated.Status {
 	case execution.StatusFailed:
@@ -1541,13 +1544,21 @@ func (service *Service) staticDataFor(record execution.Record) *StaticData {
 	})
 }
 
-// saveStaticData keeps what a successful execution left in its workflow's
-// static data, as n8n does: never for a manual run, which is how a workflow
-// is tested, and only when a node changed it. A sub-workflow's own run is not
-// a manual one, whoever started its caller, which is n8n's rule too. A save
-// that fails is logged: the execution it belongs to has already succeeded.
+// saveStaticData keeps what an execution left in its workflow's static data,
+// by n8n's rule: whenever the execution ends, or parks at a Wait, having
+// changed it, whether it succeeded or failed; never for a cancelled run; and
+// never for a manual run, which is how a workflow is tested from the editor.
+// record is the execution as it was just settled, so its status is the one
+// the store holds. A sub-workflow's own run is not a manual one, whoever
+// started its caller, and a retry runs under its original's trigger. A save
+// that fails is logged: the execution it belongs to has already settled.
 func (service *Service) saveStaticData(ctx context.Context, record execution.Record, data *StaticData) {
 	if service.staticData == nil || data == nil || record.Trigger == execution.TriggerManual {
+		return
+	}
+	switch record.Status {
+	case execution.StatusSucceeded, execution.StatusFailed, execution.StatusWaiting:
+	default:
 		return
 	}
 	document, changed := data.Changed()

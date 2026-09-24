@@ -601,12 +601,17 @@ Any other helper, such as `this.helpers.request`, is refused.
 `$getWorkflowStaticData('global')` returns the workflow's static data, an
 object the code can change, and `$getWorkflowStaticData('node')` the node's
 own. Every Code node run in an execution sees what the ones before it left.
-What it holds is saved when the execution finishes, and only then if the
-execution **succeeded and was not a manual run**: a test run from the editor
-reads and changes it for itself and saves nothing, as n8n documents. n8n also
-saves it after a failed production run; KilasFlow keeps only what successful
-runs wrote. The data is capped at 256 KiB as JSON (a named error, on the node
-run that grew it past the cap), and it is deleted with its workflow.
+What it holds is saved, when a run changed it, as n8n saves it: when the
+execution ends, whether it succeeded or failed, and when it parks at a Wait,
+so the half that resumes reads what the half before changed. A **manual run**
+saves nothing: a test run reads and changes it for itself, as n8n documents.
+A cancelled run saves nothing either, and nor does a Code node run that
+throws: what it changed before throwing is dropped. A retry runs under the
+trigger its original ran under, so a retried webhook run saves and a retried
+manual one does not. A run started through the API is queued as a manual run,
+as a run from the editor is, so it saves nothing. The data is capped at
+256 KiB as JSON (a named error, on the node run that grew it past the cap),
+and it is deleted with its workflow.
 
 ### What is refused, and when
 

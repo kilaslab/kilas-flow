@@ -82,7 +82,7 @@ Embed: Allow with `workflow:read` — ownership is checked in the handler, which
 
 `POST /api/v1/executions/{id}/retry`
 
-Starts a new execution from a finished one's workflow, revision and input — the revision that ran, not the workflow's newest. An execution that is still queued or running is refused with 409, and so is one waiting on an approval: retrying it would run the same input beside itself.
+Starts a new execution from a finished one's workflow, revision and input — the revision that ran, not the workflow's newest — under the trigger the original ran under, so a retried webhook run is a webhook run again. An execution that is still queued or running is refused with 409, and so is one waiting on an approval: retrying it would run the same input beside itself.
 
 Parameters:
 

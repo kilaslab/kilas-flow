@@ -21,8 +21,9 @@ var ErrStaticDataTooLarge = errors.New("workflow static data would grow past its
 //
 // The document is loaded once per execution, the first time a node asks for
 // it, and every node run in the execution sees what the ones before it
-// wrote. Whether it is saved is the service's decision, after the run: only
-// when the execution succeeded, was not a manual run, and changed it.
+// wrote. Whether it is saved is the service's decision, as the run settles:
+// when a node changed it and the run was not a manual one, whether it
+// succeeded, failed or parked at a Wait, and never when it was cancelled.
 type StaticData struct {
 	mu      sync.Mutex
 	load    func(context.Context) (json.RawMessage, error)
