@@ -1,11 +1,11 @@
 ---
 id: BUG-548bk9
 title: 'Code-node JavaScript: an unhandled promise rejection from a callback is lost instead of failing the run as in Node'
-status: testing
+status: done
 priority: low
 parent: EPIC-tjnr1z
 created: "2026-09-23T07:09:43Z"
-updated: "2026-09-24T13:30:00Z"
+updated: "2026-09-24T13:05:38Z"
 ---
 
 # Description
@@ -154,3 +154,26 @@ the container log read back.
   - an unawaited failing host call;
   - a stray rejection from item 0, raised as it returns, which surfaces on
     item 1's first await.
+
+## Work Evidence
+
+Closed by `pine close --evidence` on 2026-09-24.
+
+- Base: `fc3e48cb` (last commit at or before ticket created 2026-09-23)
+- Commits (4):
+  - `e90a37bf` — merge: BUG-548bk9 an uncaught callback error or unhandled rejection fails a Code node's run, as in n8n
+  - `be2f8389` — BUG-548bk9: a throwing timer callback and an unhandled host-call promise are uncaught too
+  - `b4282743` — BUG-548bk9: the ticket records n8n's observed behaviour and moves to testing
+  - `6a53198b` — BUG-548bk9: an uncaught callback error or unhandled rejection fails a Code node's run while the code is still running, as n8n's task runner does
+- Files changed (the ticket's own commits, d2484b8..e90a37bf):
+
+```
+ .pine/tickets/BUG-548bk9.md         | 118 +++++++++++++++++++++++++++++++++--
+ internal/jsrun/engine.go            |  12 +++-
+ internal/jsrun/engine_rejections.go |  94 ++++++++++++++++++++++++++++
+ internal/jsrun/errors.go            |   8 +++
+ internal/jsrun/js/modules/crypto.js |   3 -
+ internal/jsrun/rejections_test.go   | 190 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ internal/jsrun/run.go               |  15 +++--
+ 7 files changed, 428 insertions(+), 12 deletions(-)
+```
