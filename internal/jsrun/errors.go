@@ -97,10 +97,18 @@ type ScriptError struct {
 	// Stack lists the user's own frames as "line:column", innermost first.
 	// Frames inside the runtime and its libraries are left out.
 	Stack []string
+	// Uncaught marks an error nothing could catch: a callback's throw or a
+	// promise rejected with no handler while the code was still running. It
+	// ends the whole run, as it ends n8n's task runner, and belongs to no
+	// item.
+	Uncaught bool
 }
 
 func (e *ScriptError) Error() string {
 	var text strings.Builder
+	if e.Uncaught {
+		text.WriteString("Uncaught ")
+	}
 	if e.Name != "" {
 		text.WriteString(e.Name)
 		text.WriteString(": ")

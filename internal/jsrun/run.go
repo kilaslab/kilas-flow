@@ -241,10 +241,14 @@ func (job Job) count() int { return job.Count }
 
 // itemScoped reports a failure that belongs to one item: what its code threw,
 // or a value that is not an item. The VM is left as a successful item leaves
-// it, so the next item can run. Everything else ends the run.
+// it, so the next item can run. Everything else ends the run, an uncaught
+// error included.
 func itemScoped(err error) bool {
 	var script *ScriptError
-	return errors.As(err, &script) || errors.Is(err, ErrInvalidReturn)
+	if errors.As(err, &script) {
+		return !script.Uncaught
+	}
+	return errors.Is(err, ErrInvalidReturn)
 }
 
 // The most of a thrown error a failure carries. Code can throw a message of
@@ -339,11 +343,14 @@ func outputTooLarge(limits Limits) error {
 	return named(ErrOutputLimit, fmt.Sprintf("code produced more output than the %s limit allows", byteSize(limits.MaxOutputBytes)))
 }
 
-// forItem names the item a per-item failure happened on.
+// forItem names the item a per-item failure happened on. An uncaught error
+// may come from an earlier item's callback, so it names none.
 func forItem(err error, index int) error {
 	var script *ScriptError
 	if errors.As(err, &script) {
-		script.ItemIndex = index
+		if !script.Uncaught {
+			script.ItemIndex = index
+		}
 		return script
 	}
 	var invalid *LimitError
