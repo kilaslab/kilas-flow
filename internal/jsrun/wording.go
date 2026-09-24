@@ -31,15 +31,36 @@ import (
 //
 // What stays goja's is listed in BUG-jwhj6y and pinned by keptWording in
 // wording_test.go.
+//
+// Only errors the engine made are reworded, never one the code built itself,
+// even with the same words (Node 14 and earlier said "Cannot read property
+// 'x' of undefined" too, so older code may throw exactly that). goja gives
+// no mark on the errors it makes, so the error's innermost frame tells them
+// apart: an error the code built was made where the code called a
+// constructor, which is a native frame (`TypeError(…)`) or a `new`, or a
+// call of an error constructor or Reflect.construct, and the engine never
+// reports a failed property read or call at any of those. An error built
+// through an alias or a subclass of an error constructor, with one of goja's
+// "is not a function" messages, is the one case this cannot tell.
 
-// callSite is a call or `new` in the code whose callee V8 would name, by the
-// line and column (in the wrapped text) goja reports an error there at: a
-// call's opening parenthesis, or a new's keyword.
+// callSite is a call or `new` in the code, by the line and column (in the
+// wrapped text) goja reports an error there at: a call's opening
+// parenthesis, or a new's keyword.
 type callSite struct {
-	// text is the callee as V8 prints it, such as `items.map` or `f(...).q`.
+	// text is the callee as V8 prints it, such as `items.map` or `f(...).q`,
+	// or "" when V8's printing of it was not recorded.
 	text string
 	// construct says it is a `new`.
 	construct bool
+	// buildsError says the callee is an error constructor, or
+	// Reflect.construct: what it throws, the code built.
+	buildsError bool
+}
+
+// errorConstructors are the built-in error constructors, by name.
+var errorConstructors = map[string]bool{
+	"Error": true, "TypeError": true, "RangeError": true, "SyntaxError": true, "ReferenceError": true,
+	"EvalError": true, "URIError": true, "AggregateError": true,
 }
 
 type position struct{ line, column int }
@@ -49,22 +70,33 @@ var (
 	// firstFrame is the innermost frame of a stack, when it is the user's
 	// code: "at Code:3:14(8)" or "at name (Code:3:14(8))".
 	firstFrame = regexp.MustCompile(`^\n\s*at (?:[^\n]* \()?` + sourceName + `:(\d+):(\d+)\(\d+\)\)?(?:\n|$)`)
+	// nativeFrame is an innermost frame in a built-in.
+	nativeFrame = regexp.MustCompile(`^\n\s*at [^\n]*\(native\)(?:\n|$)`)
 )
 
 // v8Wording is V8's message for one goja threw, or "" when there is none to
-// give. frames is the error's stack below its first line.
+// give, or when the code built the error itself. frames is the error's
+// stack below its first line.
 func v8Wording(message, frames string, sites map[position]callSite) string {
-	if match := readOfUndefined.FindStringSubmatch(message); match != nil {
-		return "Cannot read properties of undefined (reading '" + match[1] + "')"
-	}
-	match := firstFrame.FindStringSubmatch(frames)
-	if match == nil {
+	if nativeFrame.MatchString(frames) {
 		return ""
 	}
-	line, _ := strconv.Atoi(match[1])
-	column, _ := strconv.Atoi(match[2])
-	site, ok := sites[position{line, column}]
-	if !ok {
+	site, atSite := callSite{}, false
+	if match := firstFrame.FindStringSubmatch(frames); match != nil {
+		line, _ := strconv.Atoi(match[1])
+		column, _ := strconv.Atoi(match[2])
+		site, atSite = sites[position{line, column}]
+	}
+	if atSite && site.buildsError {
+		return ""
+	}
+	if match := readOfUndefined.FindStringSubmatch(message); match != nil {
+		if atSite && site.construct {
+			return ""
+		}
+		return "Cannot read properties of undefined (reading '" + match[1] + "')"
+	}
+	if !atSite || site.text == "" {
 		return ""
 	}
 	switch {

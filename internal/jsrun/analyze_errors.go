@@ -17,8 +17,9 @@ import (
 // neither read it nor shadow it, and the wrapper's own text is unchanged.
 const rewordParameter = "kilasflow:reword"
 
-// callSites finds, in a parsed body, every call and `new` whose callee V8
-// would name, keyed by where goja reports an error there.
+// callSites finds, in a parsed body, every `new`, and every call whose
+// callee V8 would name or that builds an error, keyed by where goja reports
+// an error there.
 func callSites(program *ast.Program) map[position]callSite {
 	sites := map[position]callSite{}
 	place := func(idx file.Idx) position {
@@ -28,13 +29,20 @@ func callSites(program *ast.Program) map[position]callSite {
 	eachNode(reflect.ValueOf(program), func(node any) {
 		switch node := node.(type) {
 		case *ast.CallExpression:
-			if text, ok := calleeText(node.Callee); ok {
-				sites[place(node.LeftParenthesis)] = callSite{text: text}
+			if _, isSuper := node.Callee.(*ast.SuperExpression); isSuper {
+				// super(…) constructs, as `new` does: an error a subclass of an
+				// error constructor builds is made here.
+				sites[place(node.LeftParenthesis)] = callSite{construct: true}
+				return
+			}
+			text, ok := calleeText(node.Callee)
+			builds := buildsError(node.Callee) || ok && text == "Reflect.construct"
+			if ok || builds {
+				sites[place(node.LeftParenthesis)] = callSite{text: text, buildsError: builds}
 			}
 		case *ast.NewExpression:
-			if text, ok := calleeText(node.Callee); ok {
-				sites[place(node.New)] = callSite{text: text, construct: true}
-			}
+			text, _ := calleeText(node.Callee)
+			sites[place(node.New)] = callSite{text: text, construct: true, buildsError: buildsError(node.Callee)}
 		}
 	})
 	return sites
@@ -91,6 +99,18 @@ func calleeText(callee ast.Expression) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// buildsError says a callee names a built-in error constructor: `TypeError`,
+// or a property of that name, as in `globalThis.TypeError`.
+func buildsError(callee ast.Expression) bool {
+	switch node := callee.(type) {
+	case *ast.Identifier:
+		return errorConstructors[node.Name.String()]
+	case *ast.DotExpression:
+		return errorConstructors[node.Identifier.Name.String()]
+	}
+	return false
 }
 
 // memberBase prints the object of a member access, and whether it is

@@ -18,7 +18,11 @@ func TestJSNumberWritesNumbersAsJavaScriptDoes(t *testing.T) {
 // Only the user's own innermost frame locates a call; an error a built-in
 // threw from inside the call is not the call's.
 func TestV8WordingNamesACalleeOnlyFromTheCodesOwnFrame(t *testing.T) {
-	sites := map[position]callSite{{2, 20}: {text: "a.map"}, {3, 5}: {text: "X", construct: true}}
+	sites := map[position]callSite{
+		{2, 20}: {text: "a.map"}, {3, 5}: {text: "X", construct: true},
+		{4, 1}: {text: "TypeError", construct: true, buildsError: true}, {5, 9}: {text: "Missing", construct: true},
+		{6, 3}: {text: "f"},
+	}
 	for _, test := range []struct{ message, frames, want string }{
 		{"Object has no member 'map'", "\n\tat Code:2:20(8)\n\tat call (native)\n", "a.map is not a function"},
 		{"Object has no member 'map'", "\n\tat inner (Code:2:20(8))\n", "a.map is not a function"},
@@ -29,6 +33,13 @@ func TestV8WordingNamesACalleeOnlyFromTheCodesOwnFrame(t *testing.T) {
 		{"Object has no member 'X'", "\n\tat Code:3:5(2)\n", ""},
 		{"Cannot read property 'x' of undefined or null", "", "Cannot read properties of undefined (reading 'x')"},
 		{"Value is not object coercible", "\n\tat Code:2:20(8)\n", ""},
+		// What the code built itself keeps its words.
+		{"Cannot read property 'x' of undefined", "\n\tat TypeError (native)\n\tat Code:2:20(8)\n", ""},
+		{"Cannot read property 'x' of undefined", "\n\tat Code:4:1(2)\n", ""},
+		{"Value is not a constructor", "\n\tat Code:4:1(2)\n", ""},
+		{"Cannot read property 'x' of undefined", "\n\tat Code:5:9(2)\n", ""},
+		{"Object has no member 'q'", "\n\tat Code:6:3(2)\n", "f is not a function"},
+		{"Cannot read property 'x' of undefined", "\n\tat Code:6:3(2)\n", "Cannot read properties of undefined (reading 'x')"},
 	} {
 		if got := v8Wording(test.message, test.frames, sites); got != test.want {
 			t.Errorf("v8Wording(%q, %q) = %q, want %q", test.message, test.frames, got, test.want)

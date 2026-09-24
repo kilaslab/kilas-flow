@@ -63,7 +63,18 @@ How a caught error gets the words: goja offers no hook where it makes these erro
 - Callees V8 prints in forms not recorded or not reproduced: a string or array literal (`"s".q`, `[1,2].q`), a comma expression (`(0 , a.q)`), a computed sum (`a[(k + "x")]`), a tagged template.
 - A callback that is not a function (`[1].map(1)`: V8 "number 1 is not a function"), thrown inside the built-in.
 - Setting a property of undefined ("Cannot convert undefined or null to object" vs "Cannot set properties of undefined (setting 'x')"), destructuring undefined ("Value is not object coercible"), iterating undefined or an object ("… is not iterable" naming the expression), the `in` operator on a primitive: V8 names keys, values or expressions goja's message leaves out.
-- A catch whose parameter is a destructuring pattern (`catch ({ message })`) reads the error before any statement runs, so it sees goja's words. An error handled through a promise's rejection handler (`.catch(e => …)`, `.then(_, e => …)`) rather than a catch clause also keeps goja's words until it is thrown out uncaught. eval() and new Function() code is not instrumented.
-- A `TypeError` the code builds itself with one of goja's exact messages would be reworded too; no n8n code writes goja's words.
+- A catch whose parameter is a destructuring pattern (`catch ({ message })`) reads the error before any statement runs, so it sees goja's words. An error handled through a promise's rejection handler (`.catch(e => …)`, `.then(_, e => …)`) rather than a catch clause also keeps goja's words until it is thrown out uncaught (filed as BUG-2vcwjf). eval() and new Function() code is not instrumented.
+- (Superseded by fix round 1, below: an error the code builds itself keeps its words.)
 
 Found while measuring, not in scope: corpus bodies 1534/8, 2307/6, 2652/7 now fail with the same words as Node but a different text, because `Buffer.from(…, 'base64').toString()` of invalid UTF-8 gives one U+FFFD where Node gives one per invalid byte (a Buffer decoding difference, filed as BUG-46g75c).
+
+## Fix round 1 (2026-09-24, review of Task 13)
+
+- **The code's own errors keep their words.** Review found `throw new TypeError("Cannot read property 'x' of undefined")` (Node 14's own wording, so legacy code may throw it) reworded, and `throw new TypeError('Value is not a constructor')` turned into "TypeError is not a constructor". goja puts no mark on the errors it makes, so the error's innermost frame tells them apart (wording.go). An error the code built was made:
+  - in a native frame (`TypeError(…)` called without `new`); or
+  - at a `new` or a `super(…)`, where the engine never reports a failed property read; or
+  - at a call or `new` whose callee is an error constructor (`TypeError`, `globalThis.TypeError`, … all eight) or `Reflect.construct`.
+
+  None of those is reworded. callSites now records every `new` and `super(…)`, and error-constructor calls. Pinned by 11 more recorded probes (goja's and Node 14's words through `new`, a plain call, `globalThis.`, Reflect.construct, a helper function, and a subclass with and without its own constructor, caught and uncaught), a per-item test, and unit cases.
+- One case remains that the frame cannot tell: an alias or subclass of an error constructor, called with `new` and given one of goja's *not a function* messages (`const E = TypeError; throw new E('Value is not a constructor')` reads "E is not a constructor"). A read-of-undefined message through such a `new` is safe.
+- BUG-2vcwjf is filed for promise rejection handlers.

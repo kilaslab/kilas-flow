@@ -242,3 +242,27 @@ func TestJSONParseOfADeepTextFailsCleanly(t *testing.T) {
 		t.Errorf("message = %q", m)
 	}
 }
+
+// An error the code builds itself keeps its words in every mode, even when
+// they are goja's or Node 14's: only errors the engine made are reworded.
+func TestTheCodesOwnErrorsKeepTheirWordsForEachItem(t *testing.T) {
+	for _, message := range []string{"Cannot read property 'x' of undefined", "Value is not a constructor", "Value is not an object: 5", "Object has no member 'q'"} {
+		thrower := "throw new TypeError(" + jsQuote(message) + ")"
+		_, err := newRunner().Run(context.Background(), jsrun.Task{Source: thrower, Mode: jsrun.ModeEachItem, Items: numbered(1)})
+		var thrown *jsrun.ScriptError
+		if !errors.As(err, &thrown) || thrown.Message != message {
+			t.Errorf("each item, uncaught %q: Run() = %v", message, err)
+		}
+		result := mustRun(t, newRunner(), jsrun.Task{Mode: jsrun.ModeEachItem, Items: numbered(1),
+			Source: "try { " + thrower + " } catch (error) { return { json: { m: error.message } } }"})
+		if result.Items[0].JSON["m"] != message {
+			t.Errorf("each item, caught %q: %#v", message, result.Items[0].JSON)
+		}
+	}
+}
+
+// jsQuote writes text as a JavaScript string literal.
+func jsQuote(text string) string {
+	quoted, _ := json.Marshal(text)
+	return string(quoted)
+}

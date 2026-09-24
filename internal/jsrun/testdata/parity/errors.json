@@ -83,7 +83,18 @@
 		{"name":"new without parentheses","code":"const a = { b: { c: {} }, 0: {} }; const k = 'k'; const f = () => ({}); const g = () => () => 1; const X = 5; const arr = [1]; const p = Promise.resolve({});\nreturn new a.b","error":"TypeError: a.b is not a constructor"},
 		{"name":"the code's own TypeError","code":"throw new TypeError('value.map is not a function')","error":"TypeError: value.map is not a function"},
 		{"name":"the code's own Error","code":"throw new Error(\"Cannot read property 'x' of undefined\")","error":"Error: Cannot read property 'x' of undefined"},
-		{"name":"a ReferenceError","code":"return undefinedFunction()","error":"ReferenceError: undefinedFunction is not defined"}
+		{"name":"a ReferenceError","code":"return undefinedFunction()","error":"ReferenceError: undefinedFunction is not defined"},
+		{"name":"the code's own TypeError in Node 14's words","code":"throw new TypeError(\"Cannot read property 'x' of undefined\")","error":"TypeError: Cannot read property 'x' of undefined"},
+		{"name":"the code's own TypeError saying Value is not a constructor","code":"throw new TypeError('Value is not a constructor')","error":"TypeError: Value is not a constructor"},
+		{"name":"the code's own TypeError saying Value is not an object","code":"throw new TypeError('Value is not an object: 5')","error":"TypeError: Value is not an object: 5"},
+		{"name":"the code's own TypeError saying Object has no member","code":"throw new TypeError(\"Object has no member 'q'\")","error":"TypeError: Object has no member 'q'"},
+		{"name":"the code's own TypeError saying Not a function","code":"throw new TypeError('Not a function: x')","error":"TypeError: Not a function: x"},
+		{"name":"the code's own TypeError called without new","code":"throw TypeError(\"Cannot read property 'x' of undefined or null\")","error":"TypeError: Cannot read property 'x' of undefined or null"},
+		{"name":"the code's own TypeError through globalThis","code":"throw new globalThis.TypeError('Value is not a constructor')","error":"TypeError: Value is not a constructor"},
+		{"name":"the code's own TypeError through Reflect.construct","code":"throw Reflect.construct(TypeError, [\"Cannot read property 'x' of undefined\"])","error":"TypeError: Cannot read property 'x' of undefined"},
+		{"name":"the code's own TypeError made in a function","code":"function fail() { return new TypeError(\"Object has no member 'q'\") }\nthrow fail()","error":"TypeError: Object has no member 'q'"},
+		{"name":"the code's own subclass of TypeError","code":"class Missing extends TypeError {}\nthrow new Missing(\"Cannot read property 'x' of undefined\")","error":"TypeError: Cannot read property 'x' of undefined"},
+		{"name":"the code's own subclass of TypeError with a constructor","code":"class Missing extends TypeError { constructor(m) { super(m) } }\nthrow new Missing(\"Cannot read property 'x' of undefined\")","error":"TypeError: Cannot read property 'x' of undefined"}
 	],
 	"json": [
 		{"text":"sample","error":"SyntaxError: Unexpected token 's', \"sample\" is not valid JSON"},
