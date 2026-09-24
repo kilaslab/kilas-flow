@@ -1,11 +1,11 @@
 ---
 id: BUG-14gp8r
 title: $('X').item answers by position after a node that reorders items downstream of a fan-out
-status: testing
+status: done
 priority: high
 parent: EPIC-tjnr1z
 created: "2026-09-23T06:41:41Z"
-updated: "2026-09-23T06:41:41Z"
+updated: "2026-09-24T13:09:30Z"
 ---
 
 # Description
@@ -173,3 +173,26 @@ expect a 422 at run time and get 202; they fail identically on e7b0603
 without this change.
 
 # Attachments
+
+## Work Evidence
+
+Closed by `pine close --evidence` on 2026-09-24.
+
+- Base: `b97b6b44` (last commit at or before ticket created 2026-09-23)
+- Commits (3):
+  - `1e8e1fed` — merge: BUG-14gp8r $('X').item pairs by lineage after a fan-out and a reorder
+  - `b1b2bdd4` — BUG-14gp8r: $('X').item pairs by lineage after a fan-out, because each item a fan-out makes is an origin of its own
+  - `e7b06036` — chore(pine): BUG-14gp8r records that the stabilise merge leaves it as it was
+- Files changed (the ticket's own commits, 2d129a2c2f1c1b686f23a83e63a8d1a735f60e65..1e8e1fedefb618b5045677d273c3ad3eec29c39b):
+
+```
+ .pine/tickets/BUG-14gp8r.md                         | 102 ++++++++++++++++-
+ docs/src/content/docs/concepts/items-and-lineage.md |  16 +++
+ e2e/tests/js-code.spec.ts                           |   8 +-
+ internal/engine/fanout_lineage_test.go              | 241 ++++++++++++++++++++++++++++++++++++++++
+ internal/engine/lineage_internal_test.go            |  74 ++++++++++++
+ internal/engine/runner.go                           | 153 ++++++++++++++++++++++---
+ internal/workflow/document.go                       |   9 ++
+ nodes/jscode_lineage_test.go                        | 147 ++++++++++++++++++++++++
+ 8 files changed, 722 insertions(+), 28 deletions(-)
+```
