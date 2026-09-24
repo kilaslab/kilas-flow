@@ -216,6 +216,14 @@ when the node runs, as a `SyntaxError` with its line, not when it is saved.
   the bytes with `this.helpers.getBinaryDataBuffer`. An item keeps a file only
   when the code returns it, as in n8n, and the code can pass on or rename a
   file it was given or stored with `prepareBinaryData`, but not name any other.
+  An entry with no `id` whose `data` is base64 text, beside an optional
+  `fileName` and `mimeType`, is a file given inline, the way n8n code written
+  before `prepareBinaryData` makes one: the server stores it as
+  `prepareBinaryData` stores a file, after the code has finished, and it
+  counts as one host call. Base64 wrapped in lines, URL-safe or without its
+  padding is read; `data` that is not base64, or a `mimeType` that is not a
+  media type, is refused with the item named rather than stored as different
+  bytes.
 - **The time limit counts the code's own running time.** Starting the engine,
   loading a library, handling the input and output, and waiting for the
   server to answer a helper are not counted. The deployment sets the ceiling
