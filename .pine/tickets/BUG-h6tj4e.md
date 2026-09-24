@@ -1,7 +1,7 @@
 ---
 id: BUG-h6tj4e
 title: A script could call Go methods goja_nodejs exposes through reflection (Buffer's API handle, URL.String)
-status: testing
+status: done
 priority: high
 labels:
     - code-node
@@ -9,7 +9,7 @@ labels:
     - security
 parent: EPIC-tjnr1z
 created: "2026-09-24T14:56:23Z"
-updated: "2026-09-24T14:56:23Z"
+updated: "2026-09-24T15:20:39Z"
 ---
 
 # Description
@@ -57,3 +57,37 @@ Fixed in the FEAT-vjjs8t branch (epic/p8-docs): `newVM` sets
 - GREEN after the mapper; `TestGoHandlesOfferNothingToCall` pins the
   user-visible side (`typeof handle.WrapBytes`, `typeof url.String` are
   `undefined`, URL and Buffer still work). The whole jsrun suite passes.
+
+## Work Evidence
+
+Closed by `pine close --evidence` on 2026-09-24.
+
+- Base: `a2cfc058` (last commit at or before ticket created 2026-09-24)
+- Commits (1):
+  - `9f087778` — BUG-h6tj4e: no Go field or method goja_nodejs keeps behind Buffer or URL is reachable from a script
+- Files changed (the ticket's own commits, a2cfc0586c85d374c737925e0f3b2de0dca48425..4e9037c1a941e5cdeddd8dca9452c31db9adc4dd):
+
+```
+ .pine/tickets/BUG-h6tj4e.md                              |  59 +++++
+ .pine/tickets/FEAT-vjjs8t.md                             | 266 ++++++++++++++++++-
+ CHANGELOG.md                                             |  18 ++
+ Makefile                                                 |  11 +
+ config.example.yaml                                      |   2 +-
+ docs/src/content/docs/concepts/safety-boundaries.md      |  46 ++--
+ docs/src/content/docs/guides/code-javascript.md          | 345 ++++++++++++++++++++++++
+ docs/src/content/docs/guides/community-nodes.md          |   3 +-
+ docs/src/content/docs/guides/n8n-migration.md            | 210 ++-------------
+ docs/src/content/docs/operate/configuration-reference.md |   2 +-
+ docs/src/content/docs/operate/deployment.md              |   4 +-
+ docs/src/content/docs/start/what-kilasflow-is.md         |   2 +-
+ internal/config/config.go                                |   2 +-
+ internal/jsrun/engine.go                                 |  22 ++
+ internal/jsrun/jsrun.go                                  |   4 +-
+ internal/jsrun/run.go                                    |   3 +
+ internal/jsrun/security_test.go                          | 271 +++++++++++++++++++
+ internal/jsrun/surface_internal_test.go                  | 488 ++++++++++++++++++++++++++++++++++
+ internal/jsrun/testdata/surface.txt                      | 497 +++++++++++++++++++++++++++++++++++
+ internal/jsworker/load_test.go                           | 124 +++++++++
+ internal/jsworker/security_test.go                       |  51 ++++
+ 21 files changed, 2209 insertions(+), 221 deletions(-)
+```
