@@ -180,60 +180,55 @@ func TestDatesMatchTheRecordedNodeGoldens(t *testing.T) {
 	checkProbes(t, golden.Probes, false)
 }
 
-// dateSweepGaps are recorded sweep combinations en-GB does not answer as
-// Node does, by locale and the exact JSON the options serialise to. Every
-// one is a bug to close, not a difference to keep, and each needs an
-// hourCycle: 'h24' explicit request (never a locale default) or an unusual
-// zone style paired with an asymmetric second width — combinations a real
-// Code node has no reason to construct. Two known shapes:
+// dateSweepRefusal reports the RangeError substring nativeDateTimeFormat
+// (internal/jsrun/intl.go) is expected to refuse options with, in locale,
+// or "" if the runtime is expected to answer like Node instead. It mirrors
+// the two refusal conditions there exactly (by field shape, not by listing
+// every affected option combination — hourCycle: 'h24' alone reaches 53 of
+// the sweep's combinations), so this test fails loudly, naming the
+// combination, the moment either condition's shape or wording drifts from
+// the code it is meant to track:
 //
-//   - hourCycle: 'h24' ("k") has its own padding rule, independent of "H"'s
-//     h/km/kms/kmss cover it, but "hour+second" with no minute at all falls
-//     through bestAppending's gap-filling template, which picks the wrong
-//     field as primary for 'k' specifically ("17 (second: 9)" instead of
-//     Node's "9 (hour: 17)").
-//   - timeZoneName: 'longOffset' joined to hour+2-digit-minute+second
-//     picks a different (padded) candidate than 'short'/'long'/'shortOffset'
-//     do (all unpadded, matched by the "Hmsv" entry) — Node's real
-//     availableFormats evidently treats the offset zone widths differently
-//     again, one width this table does not have a dedicated entry for.
-var dateSweepGaps = map[string]bool{}
-
-func init() {
-	for _, options := range []string{
-		`{"hour":"numeric","hourCycle":"h24","second":"numeric"}`,
-		`{"hour":"numeric","hourCycle":"h24","second":"2-digit"}`,
-		`{"hour":"2-digit","hourCycle":"h24","second":"2-digit"}`,
-		`{"hour":"numeric","hourCycle":"h24","minute":"2-digit","second":"numeric"}`,
-		`{"fractionalSecondDigits":1,"hour":"numeric","hourCycle":"h24"}`,
-		`{"fractionalSecondDigits":1,"hour":"numeric","hourCycle":"h24","minute":"2-digit"}`,
-		`{"fractionalSecondDigits":1,"hour":"numeric","hourCycle":"h24","minute":"2-digit","second":"numeric"}`,
-		`{"fractionalSecondDigits":1,"hour":"numeric","hourCycle":"h24","second":"2-digit"}`,
-		`{"fractionalSecondDigits":1,"hour":"numeric","hourCycle":"h24","second":"numeric"}`,
-		`{"fractionalSecondDigits":1,"hour":"2-digit","hourCycle":"h24","second":"2-digit"}`,
-		`{"fractionalSecondDigits":3,"hour":"numeric","hourCycle":"h24"}`,
-		`{"fractionalSecondDigits":3,"hour":"numeric","hourCycle":"h24","minute":"2-digit"}`,
-		`{"fractionalSecondDigits":3,"hour":"numeric","hourCycle":"h24","minute":"2-digit","second":"numeric"}`,
-		`{"fractionalSecondDigits":3,"hour":"numeric","hourCycle":"h24","second":"2-digit"}`,
-		`{"fractionalSecondDigits":3,"hour":"numeric","hourCycle":"h24","second":"numeric"}`,
-		`{"fractionalSecondDigits":3,"hour":"2-digit","hourCycle":"h24"}`,
-		`{"fractionalSecondDigits":3,"hour":"2-digit","hourCycle":"h24","second":"2-digit"}`,
-		`{"hour":"numeric","minute":"2-digit","second":"numeric","timeZoneName":"longOffset"}`,
-		`{"hour":"numeric","hourCycle":"h23","minute":"2-digit","second":"numeric","timeZoneName":"longOffset"}`,
-	} {
-		dateSweepGaps["en-GB|"+options] = true
+//   - hourCycle: 'h24' ("k") has its own tie-break, independent of every
+//     other cycle, for which field becomes primary when a request has no
+//     anchor and needs one appended: Node's "9 (hour: 17)" for an
+//     hour+second request with no minute is the opposite of "17 (second:
+//     9)", which every other cycle gives for that same request. Not a
+//     per-field width rule adjust() can express — refused by name for
+//     every locale, since the tie-break is not locale-specific.
+//   - en-GB's hour+minute+seconds pads the hour once a zone joins, except
+//     timeZoneName: 'longOffset' with 'numeric' (not '2-digit') seconds,
+//     which keeps it padded unlike every other zone style at that width.
+//     No anchor can express that one width without also, and wrongly,
+//     padding 'short'/'long'/'shortOffset' at the same width (tried and
+//     reverted — see the comment on en-GB's "Hmm"/"Hmmss" entries) —
+//     refused by name instead.
+func dateSweepRefusal(locale string, options map[string]any) string {
+	_, hour := options["hour"]
+	_, minute := options["minute"]
+	_, second := options["second"]
+	_, fraction := options["fractionalSecondDigits"]
+	if options["hourCycle"] == "h24" && hour && !minute && (second || fraction) {
+		return "hourCycle h24, an hour and a second but no minute is not supported"
 	}
+	if locale == "en-GB" && hour && minute && second && options["second"] == "numeric" && options["timeZoneName"] == "longOffset" {
+		return "timeZoneName 'longOffset', an hour, a minute and 'numeric' seconds is not supported"
+	}
+	return ""
 }
 
 // Every combination of the component options in the sweep, formatted at
 // three instants, pins the pattern the options produce, in each of the
 // three locales the runtime ships (FEAT-9we7kw: en-CA and en-GB alongside
-// en-US), except the narrow dateSweepGaps above.
+// en-US) — or, for the narrow shapes dateSweepRefusal names, pins the
+// named RangeError the runtime refuses them with instead of silently
+// answering differently from Node.
 func TestTheDateOptionSweepMatchesNode(t *testing.T) {
 	var golden struct {
 		Instants []float64 `json:"instants"`
 		Cases    []struct {
 			Options map[string]any      `json:"options"`
+			Zone    string              `json:"zone"`
 			Want    map[string][]string `json:"want"`
 		} `json:"cases"`
 	}
@@ -244,18 +239,22 @@ func TestTheDateOptionSweepMatchesNode(t *testing.T) {
 	const chunk = 400
 	for start := 0; start < len(golden.Cases); start += chunk {
 		cases := golden.Cases[start:min(start+chunk, len(golden.Cases))]
-		options := make([]map[string]any, len(cases))
-		for index, entry := range cases {
-			options[index] = entry.Options
+		type entry struct {
+			Options map[string]any `json:"options"`
+			Zone    string         `json:"zone"`
 		}
-		encoded, _ := json.Marshal(options)
+		entries := make([]entry, len(cases))
+		for index, c := range cases {
+			entries[index] = entry{Options: c.Options, Zone: c.Zone}
+		}
+		encoded, _ := json.Marshal(entries)
 		result := mustRun(t, newRunner(), jsrun.Task{Source: fmt.Sprintf(`const instants = %s
 const locales = %s
-return [{ json: { out: %s.map(function (options) {
+return [{ json: { out: %s.map(function (entry) {
   const byLocale = {}
   locales.forEach(function (locale) {
     try {
-      const format = new Intl.DateTimeFormat(locale, Object.assign({ timeZone: 'UTC' }, options))
+      const format = new Intl.DateTimeFormat(locale, Object.assign({ timeZone: entry.zone }, entry.options))
       byLocale[locale] = instants.map(function (at) { return format.format(at) })
     } catch (error) { byLocale[locale] = [String(error)] }
   })
@@ -263,22 +262,19 @@ return [{ json: { out: %s.map(function (options) {
 }) } }]`, instants, encodedLocales, encoded)})
 		for index, got := range result.Items[0].JSON["out"].([]any) {
 			byLocale := got.(map[string]any)
-			encodedOptions, _ := json.Marshal(cases[index].Options)
 			for _, locale := range locales {
 				var have []string
 				for _, text := range byLocale[locale].([]any) {
 					have = append(have, text.(string))
 				}
-				want := cases[index].Want[locale]
-				matches := reflect.DeepEqual(have, want)
-				if gap := dateSweepGaps[locale+"|"+string(encodedOptions)]; gap {
-					if matches {
-						t.Errorf("%s options %v: now matches Node; delete its dateSweepGaps entry", locale, cases[index].Options)
+				if refusal := dateSweepRefusal(locale, cases[index].Options); refusal != "" {
+					if len(have) != 1 || !strings.Contains(have[0], refusal) {
+						t.Errorf("%s %s options %v:\n got  %q\n want a RangeError containing %q", locale, cases[index].Zone, cases[index].Options, have, refusal)
 					}
 					continue
 				}
-				if !matches {
-					t.Errorf("%s options %v:\n got  %q\n want %q", locale, cases[index].Options, have, want)
+				if want := cases[index].Want[locale]; !reflect.DeepEqual(have, want) {
+					t.Errorf("%s %s options %v:\n got  %q\n want %q", locale, cases[index].Zone, cases[index].Options, have, want)
 				}
 			}
 		}
@@ -287,36 +283,69 @@ return [{ json: { out: %s.map(function (options) {
 
 // Every zone Go's tz database carries answers with Node's identifier,
 // offset and names, in winter and in summer.
+// zoneNameMoment and zoneNameEntry match the shape zones.json records per
+// zone (zoneNameMoment) and per locale (zoneNameEntry): 'shortOffset' and
+// 'longOffset' never vary by locale, 'short' and 'long' sometimes do — see
+// zonesCA/zonesGB below.
+type zoneNameMoment struct {
+	Offset      float64 `json:"offset"`
+	Short       string  `json:"short"`
+	Long        string  `json:"long"`
+	ShortOffset string  `json:"shortOffset"`
+	LongOffset  string  `json:"longOffset"`
+}
+
+type zoneNameEntry struct {
+	Canonical string         `json:"canonical"`
+	January   zoneNameMoment `json:"january"`
+	July      zoneNameMoment `json:"july"`
+}
+
+// Every zone Go's tz database carries answers with Node's identifier,
+// offset and names, in winter and in summer, in en-US, en-CA and en-GB
+// (FEAT-9we7kw fix round 1: en-GB's short zone name is not en-US's for
+// roughly a third of all zones — curated abbreviations near the UK,
+// "CET"/"BST", but a GMT offset rather than en-US's "EST"/"PST" for most
+// others; en-CA differs for a handful, Newfoundland's "NST"/"NDT" and a few
+// "&"-vs-"and" spellings). zonesCA/zonesGB in the golden hold only the
+// zones where that locale's fields differ from en-US's; every zone missing
+// there is expected to answer exactly as en-US does.
 func TestZoneNamesMatchNodeForEveryZone(t *testing.T) {
-	type moment struct {
-		Offset      float64 `json:"offset"`
-		Short       string  `json:"short"`
-		Long        string  `json:"long"`
-		ShortOffset string  `json:"shortOffset"`
-		LongOffset  string  `json:"longOffset"`
-	}
-	type zone struct {
-		Canonical string `json:"canonical"`
-		January   moment `json:"january"`
-		July      moment `json:"july"`
-	}
 	var golden struct {
-		January float64         `json:"january"`
-		July    float64         `json:"july"`
-		Zones   map[string]zone `json:"zones"`
+		January float64                  `json:"january"`
+		July    float64                  `json:"july"`
+		Zones   map[string]zoneNameEntry `json:"zones"`
+		ZonesCA map[string]zoneNameEntry `json:"zonesCA"`
+		ZonesGB map[string]zoneNameEntry `json:"zonesGB"`
 	}
 	loadGolden(t, "zones.json", &golden)
 	var names []string
 	for name := range golden.Zones {
 		names = append(names, name)
 	}
+	wantFor := func(locale, name string) zoneNameEntry {
+		overlay := golden.Zones
+		switch locale {
+		case "en-CA":
+			overlay = golden.ZonesCA
+		case "en-GB":
+			overlay = golden.ZonesGB
+		}
+		if want, ok := overlay[name]; locale != "en-US" && ok {
+			return want
+		}
+		return golden.Zones[name]
+	}
+	locales := []string{"en-US", "en-CA", "en-GB"}
+	encodedLocales, _ := json.Marshal(locales)
 	const chunk = 150
 	for start := 0; start < len(names); start += chunk {
 		batch := names[start:min(start+chunk, len(names))]
 		encoded, _ := json.Marshal(batch)
 		result := mustRun(t, newRunner(), jsrun.Task{Source: fmt.Sprintf(`const at = [%v, %v]
-function name(instant, timeZone, style) {
-  return new Intl.DateTimeFormat('en-US', { timeZone, timeZoneName: style }).formatToParts(instant).find(function (part) { return part.type === 'timeZoneName' }).value
+const locales = %s
+function name(locale, instant, timeZone, style) {
+  return new Intl.DateTimeFormat(locale, { timeZone, timeZoneName: style }).formatToParts(instant).find(function (part) { return part.type === 'timeZoneName' }).value
 }
 function offset(instant, timeZone) {
   const parts = {}
@@ -324,17 +353,24 @@ function offset(instant, timeZone) {
   return Math.round((Date.UTC(+parts.year, parts.month - 1, +parts.day, +parts.hour, +parts.minute, +parts.second) - Math.floor(instant / 1000) * 1000) / 60000)
 }
 return [{ json: { out: %s.map(function (zone) {
-  try {
-    const moments = at.map(function (instant) { return { offset: offset(instant, zone), short: name(instant, zone, 'short'), long: name(instant, zone, 'long'), shortOffset: name(instant, zone, 'shortOffset'), longOffset: name(instant, zone, 'longOffset') } })
-    return { canonical: new Intl.DateTimeFormat('en-US', { timeZone: zone }).resolvedOptions().timeZone, january: moments[0], july: moments[1] }
-  } catch (error) { return { canonical: String(error) } }
-}) } }]`, golden.January, golden.July, encoded)})
+  const byLocale = {}
+  locales.forEach(function (locale) {
+    try {
+      const moments = at.map(function (instant) { return { offset: offset(instant, zone), short: name(locale, instant, zone, 'short'), long: name(locale, instant, zone, 'long'), shortOffset: name(locale, instant, zone, 'shortOffset'), longOffset: name(locale, instant, zone, 'longOffset') } })
+      byLocale[locale] = { canonical: new Intl.DateTimeFormat(locale, { timeZone: zone }).resolvedOptions().timeZone, january: moments[0], july: moments[1] }
+    } catch (error) { byLocale[locale] = { canonical: String(error) } }
+  })
+  return byLocale
+}) } }]`, golden.January, golden.July, encodedLocales, encoded)})
 		for index, got := range result.Items[0].JSON["out"].([]any) {
-			encodedGot, _ := json.Marshal(got)
-			var have zone
-			_ = json.Unmarshal(encodedGot, &have)
-			if want := golden.Zones[batch[index]]; have != want {
-				t.Errorf("%s:\n got  %+v\n want %+v", batch[index], have, want)
+			byLocale := got.(map[string]any)
+			for _, locale := range locales {
+				encodedGot, _ := json.Marshal(byLocale[locale])
+				var have zoneNameEntry
+				_ = json.Unmarshal(encodedGot, &have)
+				if want := wantFor(locale, batch[index]); have != want {
+					t.Errorf("%s %s:\n got  %+v\n want %+v", locale, batch[index], have, want)
+				}
 			}
 		}
 	}

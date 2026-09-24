@@ -125,6 +125,25 @@ const luxonProbes = [
 		code: `return ['2026-01-15T17:05:09.123Z', '2026-07-15T08:45:30.5Z'].map(text => { const at = DateTime.fromISO(text).setZone(${JSON.stringify(zone)}); return ${JSON.stringify(presets)}.map(name => at.toLocaleString(DateTime[name])) })`,
 	})),
 	{ name: 'presets use the workflow zone', zone: 'Asia/Jakarta', code: "const at = DateTime.fromISO('2026-03-01T17:05:09Z')\nreturn [at.toLocaleString(DateTime.DATETIME_FULL), at.toLocaleString(DateTime.DATETIME_HUGE), at.toLocaleString(), at.toLocaleString({ weekday: 'long', hour: 'numeric' })]" },
+	// en-CA and en-GB (FEAT-9we7kw fix round 1): Luxon's own preset and
+	// toFormat paths delegate to the same Intl.DateTimeFormat the runtime
+	// exposes, in UTC and in Europe/London — the zone whose short name is
+	// itself locale-dependent (the zone-name overlay this round adds),
+	// exercised here through Luxon's own formatting layer rather than
+	// Intl directly.
+	...['en-CA', 'en-GB'].map((locale) => ({
+		name: 'every preset in ' + locale + ', UTC',
+		code: `const at = DateTime.fromISO('2026-03-01T17:05:09.123Z').setLocale(${JSON.stringify(locale)})\nreturn ${JSON.stringify(presets)}.map(name => at.toLocaleString(DateTime[name]))`,
+	})),
+	...['en-CA', 'en-GB'].map((locale) => ({
+		name: 'every preset in ' + locale + ', Europe/London',
+		code: `return ['2026-01-15T17:05:09.123Z', '2026-07-15T08:45:30.5Z'].map(text => { const at = DateTime.fromISO(text).setZone('Europe/London').setLocale(${JSON.stringify(locale)}); return ${JSON.stringify(presets)}.map(name => at.toLocaleString(DateTime[name])) })`,
+	})),
+	...['en-CA', 'en-GB'].map((locale) => ({
+		name: 'toFormat locale-sensitive tokens in ' + locale,
+		code: `const at = DateTime.fromISO('2026-07-04T15:07:08.009Z').setZone('Europe/London').setLocale(${JSON.stringify(locale)})\nreturn [at.toFormat('cccc, LLLL d, yyyy'), at.toFormat('ccc d LLL'), at.toFormat('h:mm a'), at.toFormat('HH:mm'), at.toFormat('D'), at.toFormat('DD'), at.toFormat('t'), at.toFormat('T')]`,
+	})),
+	{ name: 'en-CA and en-GB refuse only what en-US refuses, and getLocale round-trips', code: "return ['en-CA', 'en-GB'].map(locale => { const at = DateTime.fromISO('2026-03-01T17:05:09Z').setLocale(locale)\n  return [at.locale, at.toFormat('cccc'), at.reconfigure({ locale }).locale] })" },
 	{ name: 'every toFormat token', code: `return ['2026-03-01T05:05:09.123Z', '2026-12-31T23:59:59.9Z', '0033-07-04T12:00:00Z'].map(text => DateTime.fromISO(text, { zone: 'utc' }).toFormat(${JSON.stringify(tokens.split(' ').join("'|'"))}))` },
 	...['Asia/Jakarta', 'America/New_York', 'Asia/Kolkata'].map((zone) => ({
 		name: 'toFormat tokens and macros in ' + zone,
@@ -193,19 +212,29 @@ function optionSets() {
 // en-GB's day-first ones).
 const dateLocales = ['en-US', 'en-CA', 'en-GB'];
 
+// sweepZones are the time zones the option sweep runs in: UTC, and
+// Europe/London (FEAT-9we7kw fix round 1 — a non-UTC, non-integer-hour-free
+// zone whose short zone name is itself locale-dependent, "GMT" or "BST" for
+// en-US/en-CA versus en-GB, the zone-name overlay this round adds; running
+// the whole option matrix there, not just the dedicated zone-name probes,
+// is what actually pins the interaction between a locale's date/time
+// pattern and its zone-name choice for every option combination, not only
+// the ones that ask for timeZoneName explicitly).
+const sweepZones = ['UTC', 'Europe/London'];
+
 // The option sweep is one golden of its own: every set formatted at three
-// instants in UTC, for every locale above, which pins the pattern each
+// instants, for every locale and zone above, which pins the pattern each
 // combination produces in each.
 function sweep() {
 	process.env.TZ = 'UTC';
-	return optionSets().map((options) => {
+	return optionSets().flatMap((options) => sweepZones.map((zone) => {
 		const want = {};
 		for (const locale of dateLocales) {
-			const format = new Intl.DateTimeFormat(locale, { timeZone: 'UTC', ...options });
+			const format = new Intl.DateTimeFormat(locale, { timeZone: zone, ...options });
 			want[locale] = instants.map((at) => format.format(new Date(at)));
 		}
-		return { options, want };
-	});
+		return { options, zone, want };
+	}));
 }
 
 const dateProbes = [
@@ -242,6 +271,13 @@ const dateProbes = [
 	// a parity probe would record Node's own (wider) answer and fail on
 	// purpose.
 	{ name: 'locale matching is the same for en-CA and en-GB as for en-US: case-insensitive, and a -u- extension does not change the locale', code: "return [new Intl.DateTimeFormat('en-ca').resolvedOptions().locale, new Intl.DateTimeFormat('EN-GB').resolvedOptions().locale, new Intl.DateTimeFormat('en-CA-u-hc-h23', { hour: 'numeric' }).resolvedOptions(), new Intl.DateTimeFormat('en-GB-u-hc-h12', { hour: 'numeric' }).format(Date.UTC(2026, 0, 1, 5)), Intl.DateTimeFormat.supportedLocalesOf(['en-US', 'en-CA', 'en-GB', 'en'])]" },
+	// FEAT-9we7kw fix round 1: an explicit script subtag ("en-Latn-GB") is
+	// not "en-GB" — the BCP 47 Lookup algorithm strips the tag from the
+	// right one subtag at a time, so "en-Latn-GB" tries "en-Latn-GB",
+	// "en-Latn", then "en", never "en-GB" (which is only on the fallback
+	// path when no script was given at all). Node resolves en-Latn-GB,
+	// en-Latn-CA and en-Latn-US alike to plain "en".
+	{ name: 'an explicit script subtag resolves to en, not the region', code: "const at = new Date(Date.UTC(2026, 0, 15, 17, 5, 0))\nreturn ['en-Latn-GB', 'en-Latn-CA', 'en-Latn-US', 'en-Latn'].map(locale => [new Intl.DateTimeFormat(locale).resolvedOptions().locale, at.toLocaleDateString(locale), at.toLocaleString(locale)])" },
 ];
 
 // ---- Intl.NumberFormat and Number.prototype.toLocaleString -----------------
@@ -350,8 +386,21 @@ function goZoneNames() {
 const january = Date.UTC(2026, 0, 15, 12);
 const july = Date.UTC(2026, 6, 15, 12);
 
-function zoneName(at, timeZone, style) {
-	return new Intl.DateTimeFormat('en-US', { timeZone, timeZoneName: style }).formatToParts(at).find((part) => part.type === 'timeZoneName').value;
+// zoneLocales are the locales the zone-name table is recorded for. Only
+// 'short' and 'long' vary by locale (verified against Node across every
+// zone Go's tz database carries — 'shortOffset'/'longOffset' never do,
+// which is why the runtime computes those from the raw UTC offset
+// directly, the same for every locale); en-CA and en-GB each need their
+// own table, in full, not a short list of named exceptions: en-GB's short
+// names differ from en-US's for roughly a third of all zones (curated
+// abbreviations for zones near the UK — "CET"/"CEST", "BST" — but GMT
+// offsets, not en-US's "EST"/"PST" &c., for North American and most other
+// zones en-US does have abbreviations for), and en-CA differs for a
+// handful (Newfoundland's "NST"/"NDT", and a few "&"-vs-"and" spellings).
+const zoneLocales = ['en-US', 'en-CA', 'en-GB'];
+
+function zoneName(locale, at, timeZone, style) {
+	return new Intl.DateTimeFormat(locale, { timeZone, timeZoneName: style }).formatToParts(at).find((part) => part.type === 'timeZoneName').value;
 }
 
 function offsetMinutes(at, timeZone) {
@@ -360,33 +409,36 @@ function offsetMinutes(at, timeZone) {
 	return Math.round((local - Math.floor(at / 1000) * 1000) / 60000);
 }
 
-function zonesGolden(names) {
+function zonesGolden(names, locale) {
 	const zones = {};
 	for (const name of names) {
 		let canonical;
 		try {
-			canonical = new Intl.DateTimeFormat('en-US', { timeZone: name }).resolvedOptions().timeZone;
+			canonical = new Intl.DateTimeFormat(locale, { timeZone: name }).resolvedOptions().timeZone;
 		} catch {
 			continue; // Node does not know it (Go's "Factory"); the runtime refuses it too.
 		}
 		const at = (instant) => ({
 			offset: offsetMinutes(instant, name),
-			short: zoneName(instant, name, 'short'),
-			long: zoneName(instant, name, 'long'),
-			shortOffset: zoneName(instant, name, 'shortOffset'),
-			longOffset: zoneName(instant, name, 'longOffset'),
+			short: zoneName(locale, instant, name, 'short'),
+			long: zoneName(locale, instant, name, 'long'),
+			shortOffset: zoneName(locale, instant, name, 'shortOffset'),
+			longOffset: zoneName(locale, instant, name, 'longOffset'),
 		});
 		zones[name] = { canonical, january: at(january), july: at(july) };
 	}
 	return zones;
 }
 
-// zoneTable renders the table intl.go embeds. Each "@" line gives the names
-// shared by the zones on the lines after it: long standard, long daylight,
-// short standard, short daylight. A name equal to the offset form Node
-// falls back to is left empty, and the runtime falls back the same way.
-function zoneTable(zones) {
-	const groups = new Map();
+// zoneInfo derives, per zone, the {canonical, longStd, longDst, shortStd,
+// shortDst} tuple the embedded tables render: long/short names for
+// whichever of January/July is the zone's standard time and whichever (if
+// either differs) is its daylight time, each left empty when it equals the
+// offset form Node falls back to (the runtime falls back the same way). A
+// zone that keeps no daylight time in the recorded year borrows the
+// daylight names of the zones sharing its standard names, when they agree,
+// for the years in which it did keep one.
+function zoneInfo(zones) {
 	const info = {};
 	for (const [name, zone] of Object.entries(zones)) {
 		const [standard, daylight] = zone.january.offset <= zone.july.offset ? [zone.january, zone.july] : [zone.july, zone.january];
@@ -400,9 +452,6 @@ function zoneTable(zones) {
 			shortDst: hasDaylight ? keep(daylight.short, daylight.shortOffset) : null,
 		};
 	}
-	// A zone that keeps no daylight time in 2026 borrows the daylight names of
-	// the zones sharing its standard names, when they agree, for the years in
-	// which it did keep one.
 	const daylightFor = new Map();
 	for (const zone of Object.values(info)) {
 		if (zone.longDst === null || zone.longStd === '') continue;
@@ -411,13 +460,24 @@ function zoneTable(zones) {
 		if (!daylightFor.has(key)) daylightFor.set(key, new Set());
 		daylightFor.get(key).add(names);
 	}
-	for (const [name, zone] of Object.entries(info)) {
+	for (const zone of Object.values(info)) {
 		if (zone.longDst === null) {
 			const candidates = daylightFor.get(zone.longStd + '|' + zone.shortStd);
 			const [longDst, shortDst] = candidates && candidates.size === 1 ? [...candidates][0].split('|') : ['', ''];
 			zone.longDst = longDst;
 			zone.shortDst = shortDst;
 		}
+	}
+	return info;
+}
+
+// renderZoneGroups renders a zoneInfo() result the way intl.go's zone
+// tables embed it: grouped by identical name tuple, an "@" line (long
+// standard, long daylight, short standard, short daylight) followed by the
+// zones sharing it.
+function renderZoneGroups(info) {
+	const groups = new Map();
+	for (const [name, zone] of Object.entries(info)) {
 		const key = [zone.longStd, zone.longDst, zone.shortStd, zone.shortDst].join('|');
 		if (!groups.has(key)) groups.set(key, []);
 		groups.get(key).push(zone.canonical === name ? name : name + '=' + zone.canonical);
@@ -439,6 +499,46 @@ function zoneTable(zones) {
 	return lines.join('\n');
 }
 
+// zoneTable renders the base (en-US) table.
+function zoneTable(zones) {
+	return renderZoneGroups(zoneInfo(zones));
+}
+
+// sameZoneInfo reports whether a and b (zoneInfo() entries) render the
+// same long and short names — the "no locale-specific override needed"
+// test both zoneOverlay and zonesDiffering below are built from.
+function sameZoneInfo(a, b) {
+	return !!a && !!b && a.longStd === b.longStd && a.longDst === b.longDst && a.shortStd === b.shortStd && a.shortDst === b.shortDst;
+}
+
+// zoneOverlay renders only the zones where locale's info differs from
+// en-US's (by canonical id and every rendered name — keyed here by the raw
+// zone name zonesGolden was called with, matching info's own keys), which
+// is what the runtime falls back from when a zone has no locale-specific
+// entry. Small for en-CA, substantial for en-GB (see zoneLocales above).
+function zoneOverlay(zones, base) {
+	const info = zoneInfo(zones);
+	const overlay = {};
+	for (const [name, zone] of Object.entries(info)) {
+		if (!sameZoneInfo(base[name], zone)) overlay[name] = zone;
+	}
+	return renderZoneGroups(overlay);
+}
+
+// zonesDiffering is zoneOverlay's own golden-shaped counterpart: the raw
+// zonesGolden() entries (not zoneInfo()'s derived tuple) for the same
+// zones zoneOverlay would render, so the Go test can tell "no override" —
+// answer exactly as en-US does — from "override happens to equal the
+// base" without recomputing the borrowing pass zoneInfo does.
+function zonesDiffering(zones, base) {
+	const info = zoneInfo(zones);
+	const out = {};
+	for (const [name, zone] of Object.entries(info)) {
+		if (!sameZoneInfo(base[name], zone)) out[name] = zones[name];
+	}
+	return out;
+}
+
 // ---- Writing ----------------------------------------------------------------
 
 const meta = {
@@ -447,7 +547,13 @@ const meta = {
 	note: 'Recorded by scripts/js-parity/record.mjs. CI compares against this file and never runs Node.',
 };
 
-const zones = zonesGolden(goZoneNames());
+const zoneNames = goZoneNames();
+const zones = zonesGolden(zoneNames, 'en-US');
+const zonesCA = zonesGolden(zoneNames, 'en-CA');
+const zonesGB = zonesGolden(zoneNames, 'en-GB');
+const zoneInfoUS = zoneInfo(zones);
+const zonesCADiff = zonesDiffering(zonesCA, zoneInfoUS);
+const zonesGBDiff = zonesDiffering(zonesGB, zoneInfoUS);
 const files = {
 	'luxon.json': { meta, probes: record(luxonProbes) },
 	'dates.json': { meta, probes: record(dateProbes) },
@@ -456,7 +562,7 @@ const files = {
 	'currencies.json': { meta, ...currencySymbols },
 	'weeks.json': { meta, ...weeks },
 	'collation.json': { meta, probes: record(collationProbes) },
-	'zones.json': { meta, january, july, zones },
+	'zones.json': { meta, january, july, zones, zonesCA: zonesCADiff, zonesGB: zonesGBDiff },
 };
 
 // serialize writes one probe, case or zone per line, so a golden stays small
@@ -468,7 +574,7 @@ function serialize(content) {
 		const value = content[key];
 		const comma = index < keys.length - 1 ? ',' : '';
 		const entries = Array.isArray(value) && key !== 'codes' && key !== 'digits' ? value.map((item) => JSON.stringify(item))
-			: key === 'zones' || (key === 'locales' && !Array.isArray(value)) || key === 'languages' ? Object.keys(value).map((name) => JSON.stringify(name) + ': ' + JSON.stringify(value[name])) : null;
+			: key === 'zones' || key === 'zonesCA' || key === 'zonesGB' || (key === 'locales' && !Array.isArray(value)) || key === 'languages' ? Object.keys(value).map((name) => JSON.stringify(name) + ': ' + JSON.stringify(value[name])) : null;
 		if (!entries) {
 			lines.push('\t' + JSON.stringify(key) + ': ' + JSON.stringify(value) + comma);
 			return;
@@ -494,15 +600,35 @@ for (const [name, content] of Object.entries(files)) {
 	if (!check) fs.writeFileSync(target, text);
 }
 
-const source = fs.readFileSync(intlGo, 'utf8');
-const begin = source.indexOf('// BEGIN zone table');
-const end = source.indexOf('// END zone table');
-if (begin < 0 || end < 0) throw new Error('record.mjs: intl.go has no zone table markers');
-const beginLine = source.indexOf('\n', begin) + 1;
-const table = 'const zoneTableText = `\n' + zoneTable(zones) + '\n`\n\n';
-if (source.slice(beginLine, end) !== table) {
-	drift = true;
-	console.log((check ? 'drift: ' : 'wrote: ') + 'internal/jsrun/intl.go (zone table)');
-	if (!check) fs.writeFileSync(intlGo, source.slice(0, beginLine) + table + source.slice(end));
+// replaceMarkedBlock rewrites the text between "// BEGIN <label>" and
+// "// END <label>" in source to `const <constName> = \`\n<text>\n\`\n\n`,
+// the same shape zoneTableText already used, and reports whether that
+// changed anything.
+function replaceMarkedBlock(source, label, constName, text) {
+	const begin = source.indexOf('// BEGIN ' + label);
+	const end = source.indexOf('// END ' + label);
+	if (begin < 0 || end < 0) throw new Error(`record.mjs: intl.go has no ${label} markers`);
+	const beginLine = source.indexOf('\n', begin) + 1;
+	const block = `const ${constName} = \`\n${text}\n\`\n\n`;
+	if (source.slice(beginLine, end) === block) return { source, changed: false };
+	return { source: source.slice(0, beginLine) + block + source.slice(end), changed: true };
 }
+
+let source = fs.readFileSync(intlGo, 'utf8');
+for (const [label, constName, text] of [
+	['zone table', 'zoneTableText', zoneTable(zones)],
+	// The en-CA and en-GB overlays: only the zones whose short or long
+	// name differs from en-US's (zoneOverlay), which is most of them for
+	// en-GB and a handful for en-CA — see zoneLocales above.
+	['zone table (en-CA overlay)', 'zoneTableTextCA', zoneOverlay(zonesCA, zoneInfoUS)],
+	['zone table (en-GB overlay)', 'zoneTableTextGB', zoneOverlay(zonesGB, zoneInfoUS)],
+]) {
+	const result = replaceMarkedBlock(source, label, constName, text);
+	source = result.source;
+	if (result.changed) {
+		drift = true;
+		console.log((check ? 'drift: ' : 'wrote: ') + `internal/jsrun/intl.go (${label})`);
+	}
+}
+if (!check) fs.writeFileSync(intlGo, source);
 if (check && drift) process.exitCode = 1;

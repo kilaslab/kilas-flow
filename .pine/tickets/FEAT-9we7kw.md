@@ -25,16 +25,25 @@ en-US.
 # Acceptance Criteria
 - [x] en-CA and en-GB date formatting match Node 24 across the same option
       sweep as en-US, recorded by the same generator and pinned by goldens.
-      5,363 of 5,382 locale×option combinations (en-US/en-CA/en-GB ×
-      1,794 options) match exactly; the remaining 19 (en-GB only, explicit
-      `hourCycle: 'h24'` with an unusual field set, or `timeZoneName:
-      'longOffset'` with an asymmetric second width) are recorded as a
-      documented, asserted-still-failing gap in `dateSweepGaps`
-      (internal/jsrun/intl_test.go) rather than silently accepted — see
-      Notes.
+      **Fix round 1 (2026-09-24)**: the option sweep now runs in two zones
+      (UTC and Europe/London) and every one of the 10,764 locale×option×zone
+      combinations (en-US/en-CA/en-GB × 1,794 options × 2 zones) either
+      matches Node exactly or is refused with a named RangeError the test
+      asserts the exact wording of (`dateSweepRefusal` in
+      internal/jsrun/intl_test.go, replacing round 0's `dateSweepGaps`,
+      which asserted only "still different" without checking *how*) — the
+      epic's "never runs silently wrong" principle, applied: two narrow
+      shapes (an explicit, non-default `hourCycle: 'h24'` combined with an
+      unusual field set; en-GB's `timeZoneName: 'longOffset'` combined with
+      an hour, a minute and 'numeric' seconds) genuinely cannot be
+      expressed by this runtime's matcher without wrongly affecting other,
+      correct shapes, so nativeDateTimeFormat refuses them by name instead
+      of silently answering differently from Node. See Notes.
 - [x] `new Date(...).toLocaleDateString('en-CA')` gives YYYY-MM-DD.
 - [x] Every other date locale still refuses by name (including other
-      English regions like en-AU, en-NZ).
+      English regions like en-AU, en-NZ, and `en-Latn-GB`/`en-Latn-CA`,
+      which Node itself resolves to plain "en", not the region — fixed in
+      fix round 1, see Notes).
 - [ ] The corpus scoreboard counts the templates this unblocks. Per the
       brief, this lands with Task 8; I don't have the materialised corpus
       in this worktree to enumerate templates now (see Notes).
@@ -109,9 +118,14 @@ matched pattern's own token renders at a width its skeleton key does not
 declare (en-US's bare "H" key, width 1, renders "HH", width 2). The
 pre-existing `adjust()` carried that override into ANY request whose
 individual field width happened to coincide with the key's, independent of
-sibling fields — invisible in en-US, which has no multi-field anchor with
-this quirk, but wrong for en-CA/en-GB, which have several. Empirically,
-Node's real rule (verified field-by-field against Node 24, not guessed):
+sibling fields. En-US DOES have multi-field anchors with a quirky field
+("Hm"→"HH:mm", "Hms"→"HH:mm:ss", "EHm"→"EEE HH:mm" are all quirky in hour),
+but each has exactly one quirky field (minute/second are excluded from
+quirk consideration; weekday is text, never numeric-paddable), so the gap
+was invisible there — it only shows up once an anchor has two or more
+quirky fields that can disagree, which first happens with en-CA/en-GB's
+data. Empirically, Node's real rule (verified field-by-field against Node
+24, not guessed):
 - A quirky field's override carries only when every OTHER quirky field the
   request also asks for matches its own key's width too (en-CA's bare "Md":
   a request mixing 'numeric' and '2-digit' for month and day gets neither
@@ -167,6 +181,129 @@ before 39,335,762 bytes, after 39,353,874 bytes — +18,112 bytes (+0.046%).
 repo, all green) and `go test -race ./internal/jsrun/... ./internal/jsworker/...`
 (both green). `node scripts/js-parity/record.mjs --check` reports no
 drift.
+
+## Fix round 1 (2026-09-24)
+
+Independent review (Node 24.16, a copy of record.mjs, 53 targeted probes
+plus a 1,050-option × 2 zones × 3 locales cross-product) found round 0's
+verification had real gaps: `zoneName` was never locale-aware (en-GB's
+short zone names are en-US's for two-thirds of zones but a genuinely
+different, curated-or-offset choice for the rest), the 19-entry
+`dateSweepGaps` allowlist was scoped to en-GB and to UTC only (missing that
+`hourCycle: 'h24'`'s tie-break bug is universal, not en-GB-specific, and
+that a second, en-GB-only zone-style bug existed), `en-Latn-GB` resolved to
+the wrong locale, and there were no Luxon en-CA/en-GB goldens at all. Full
+findings and fixes:
+
+1. **[Critical] Per-locale zone names.** `internal/jsrun/intl.go`'s
+   `zoneName` took no locale and always used the single (en-US-based)
+   `zoneTable`. Checked exhaustively (every zone Go's tz database carries,
+   both `short` and `long`, January and July, en-US vs en-CA vs en-GB):
+   `short` differs for en-GB on 432 of 1,196 samples (curated abbreviations
+   for zones near the UK — "CET"/"CEST", "BST" — but a GMT offset, not
+   en-US's "EST"/"PST" &c., for North American and most other zones en-US
+   does have an abbreviation for) and for en-CA on a handful (Newfoundland's
+   "NST"/"NDT", plus a few "&"-vs-"and" spellings); `long` differs on one
+   zone each (a punctuation/wording difference on America/Miquelon's name).
+   `shortOffset`/`longOffset` never differ by locale (confirmed
+   exhaustively) — they stay computed from the raw UTC offset. Fixed by
+   generating full per-locale overlay tables from Node (`zonesGolden`,
+   `zoneInfo`, `zoneOverlay` in record.mjs — the same technique, and the
+   same BEGIN/END-marker regeneration, `zoneTableText` already used, now
+   generalised to `zoneTableTextCA`/`zoneTableTextGB`), holding only the
+   zones that differ from the en-US base (13 groups / 67 lines for en-GB, 3
+   groups / 8 lines for en-CA). `zoneName` and the new `localeZoneNames`
+   helper take the `*dateLocale` and check the locale's overlay before
+   falling back to the base table.
+   `TestZoneNamesMatchNodeForEveryZone` extended to all three locales, for
+   every zone (not just the named ones the review listed), from a
+   `zonesCA`/`zonesGB` golden holding only the differing entries.
+2. **[Important] The `Hmsv`/`h24` gaps were a class, not 19 combinations,
+   and applied to en-US and en-CA too, not just en-GB.** Two distinct
+   root causes, each now either fixed or refused by name (never silently
+   different from Node):
+   - `hourCycle: 'h24'` ("k")'s append-item tie-break (which field becomes
+     primary when a request needs one gap-filled) is the *opposite* of
+     every other hour cycle's, for a request with an hour and a second but
+     no minute — this is a property of the shared, locale-agnostic matcher
+     (`bestAppending` in intl.go), so it affects en-US and en-CA exactly as
+     much as en-GB; round 0's allowlist only covered en-GB and so was
+     silently wrong for the other two. `nativeDateTimeFormat` now refuses
+     this shape by name for every locale.
+   - A *second*, previously-undiscovered en-GB-specific padding gap: an
+     hour+minute(2-digit)+second('numeric', not '2-digit') combination,
+     with `hourCycle: 'h24'`, still padded the hour when it should not
+     have (a case my round-0 anchor table did not cover, since I had only
+     checked `hourCycle: 'h24'` baselines, not minute='2-digit' combined
+     with it) — fixed with a new `"kmms"` anchor, verified against Node.
+   - `timeZoneName: 'longOffset'` combined with an hour, a minute and
+     'numeric' (not '2-digit') seconds keeps the hour padded, unlike every
+     other zone style at that width (`short`/`long`/`shortOffset` all
+     unpad it) — the one gap that could not be fixed with a new anchor: a
+     dedicated `"OOOO"`-keyed entry was tried and reverted because the
+     matcher's width metric (`widthOf`) puts it numerically *closer* to a
+     bare `"z"`/`"O"` (`short`/`shortOffset`) request than the existing
+     `"v"`-keyed `"Hmsv"` entry is, so it silently won those requests too
+     and padded them wrongly — a regression discovered by re-running the
+     full sweep after adding the entry. Refused by name instead.
+   `dateSweepGaps` replaced with `dateSweepRefusal`, a function that
+   mirrors the two refusal conditions' *shape* (not a list of every
+   affected combination — `hourCycle: 'h24'` alone reaches 53) and asserts
+   the exact RangeError wording, so the test fails loudly the moment
+   either condition drifts from the code it tracks. The option sweep
+   (`date-options.json`) now also runs in a second, non-UTC zone
+   (Europe/London — chosen because its short zone name is itself
+   locale-dependent, directly exercising fix 1's interaction with the
+   whole option matrix, not just the dedicated zone-name probes).
+3. **[Important] `en-Latn-GB`/`en-Latn-CA` resolved to the wrong locale.**
+   `resolveDateLocale` treated an explicit `Latn` script the same as no
+   script at all, so `en-Latn-GB` resolved to `en-GB`. Verified against
+   Node: `en-Latn-GB`, `en-Latn-CA`, `en-Latn-US` and bare `en-Latn` all
+   resolve to plain `"en"` — the BCP 47 Lookup algorithm ECMA-402 uses
+   strips the tag from the right one subtag at a time
+   (`en-Latn-GB` → `en-Latn` → `en`), so it never tries `en-GB`, which is
+   only on the fallback path when no script was given in the first place.
+   Fixed: the region is only used to pick `en-US`/`en-CA`/`en-GB` when the
+   script is unspecified. Pinned by a new probe testing all four forms.
+4. **[Important] No Luxon en-CA/en-GB goldens.** Added: every preset in
+   en-CA and en-GB, in UTC and in Europe/London; locale-sensitive
+   `toFormat` tokens (weekday/month names, meridiem) in both; and a probe
+   confirming `setLocale`/`reconfigure` round-trip the locale correctly.
+   All passed on the first run with no runtime changes needed — Luxon
+   delegates its own formatting to the same `Intl.DateTimeFormat` fix 1–3
+   above already covers.
+5. **Derivation procedure documented, not automated into record.mjs.**
+   Judged not feasible to automate within this round: producing the
+   `enCA`/`enGB` anchor tables took several rounds of
+   hypothesise-against-Node-and-verify to find the `quirky`/`lockedIn`
+   rules in `adjust()` and the two extra en-GB anchor families — automating
+   that *discovery*, not just re-running a fixed recipe, is what full
+   automation would require. Wrote the precise, reproducible procedure as
+   a doc comment directly above `enCA` in intl.go instead (six numbered
+   steps: start from en-US's keys, ask Node for order/separators via
+   formatToParts, get widths from resolvedOptions() not the request,
+   verify each quirky-field width combination against Node directly rather
+   than extrapolating one rule, add locale-specific anchors only when
+   genuinely needed, verify the whole table against the sweep and
+   `--check`).
+6. **Corrected the false claim** (both here and in the fix-round-0 report)
+   that en-US "has no multi-field anchor with this quirk" — it does
+   ("Hm"→"HH:mm", "Hms"→"HH:mm:ss", "EHm"→"EEE HH:mm" are all quirky in
+   hour); the `quirky`/`lockedIn` mechanism is inert for en-US because each
+   of its quirky anchors has exactly *one* quirky field, not because none
+   exist.
+7. **Not done**: moving the per-locale tables into a separate
+   `intl_locales.go` (explicitly optional, "if it keeps the diff
+   reviewable"). Skipped: this round's diff is already substantial, and a
+   file move would make it harder, not easier, to review which lines are
+   this round's actual fixes.
+
+**Fix round 1 verification**: `go build ./...`, `go vet ./...`, `gofmt -l`
+clean, `go test ./...` (full repo, all green), `go test -race
+./internal/jsrun/...` on the Intl/Luxon/zone/currency/number/collation
+tests (all green, ~45–55s), `node scripts/js-parity/record.mjs --check`
+clean. Binary size: 39,370,946 → 39,404,402 bytes (+33,456 bytes, +0.085%);
+cumulative from the pre-feature baseline: +68,640 bytes (+0.17%).
 
 # Related Files
 
