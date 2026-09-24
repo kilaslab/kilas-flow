@@ -189,9 +189,12 @@ type vm struct {
 	// perItem set, the current item's.
 	hostCalls int
 	perItem   bool
-	hostCtx   context.Context
-	stopHost  context.CancelFunc
-	done      chan struct{}
+	// helperCalls counts every helper call sent to the host, over the whole
+	// run.
+	helperCalls int
+	hostCtx     context.Context
+	stopHost    context.CancelFunc
+	done        chan struct{}
 
 	// wake is closed by the first interrupt, so a VM idle in await, where an
 	// interrupt alone does nothing, notices it too.
@@ -620,6 +623,7 @@ func (v *vm) await(ctx context.Context, returned goja.Value) (goja.Value, error)
 func (v *vm) countHostCall() bool {
 	v.hostCalls++
 	if v.hostCalls <= v.limits.MaxHostCalls {
+		v.helperCalls++
 		return true
 	}
 	scope := ""

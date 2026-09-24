@@ -65,6 +65,12 @@ type Executed struct {
 	// StaticData is the static data the code was handed, by kind, as JSON
 	// after it ran, set only when the run succeeded.
 	StaticData map[string]string `json:"staticData,omitempty"`
+	// HelperCalls is how many helper calls the code sent to the server, for
+	// Finish to hold them and the files the result gives inline to one
+	// budget. It is the server's own count and never crosses from a worker:
+	// in process the runtime sets it, and a worker pool sets it from the
+	// calls it answered.
+	HelperCalls int `json:"-"`
 }
 
 // ItemFailure is one item that failed in a job that went on past it.

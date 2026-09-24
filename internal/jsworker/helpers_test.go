@@ -179,6 +179,7 @@ func TestAWorkerThatOverstepsTheHelpersIsRetired(t *testing.T) {
 		"staticflood":  "more than 2 questions about static data",
 		"staticunused": "static data of kind \"global\", which the code was never given",
 		"bigdone":      "results larger than",
+		"callsinline":  "1 files inline after 2 helper calls, more than its code's 2 host calls",
 	} {
 		pool.mode.Store(mode)
 		if _, err := pool.Run(context.Background(), task); !errors.Is(err, jsrun.ErrEngineFault) || !strings.Contains(err.Error(), want) {

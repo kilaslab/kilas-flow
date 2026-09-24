@@ -567,6 +567,8 @@ func (pool *Pool) run(ctx context.Context, w *worker, job jsrun.Job, host jsrun.
 			if err != nil {
 				return pool.failed(ctx, w, job, &state, err)
 			}
+			// The calls the server answered, never what the worker says.
+			executed.HelperCalls = helperCalls
 			w.runs++
 			if !claim(attemptFinished) || w.out.Buffered() > 0 {
 				// Killed as the result arrived, or it wrote past its result:

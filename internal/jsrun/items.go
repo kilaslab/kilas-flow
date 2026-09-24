@@ -142,19 +142,19 @@ type returnedFile struct {
 }
 
 // fileOf reads one returned binary entry. An entry with an id is a
-// reference, whatever else it holds, as in n8n, and may only name a file the
-// node was given or stored; one without an id but with text in data is a
-// file given inline.
+// reference, whatever else it holds, as in n8n, where any id that is not
+// falsy wins, and may only name a file the node was given or stored; one
+// without an id but with text in data is a file given inline.
 func fileOf(raw json.RawMessage, known map[string]bool, where, property string) (returnedFile, error) {
 	var fields map[string]json.RawMessage
 	if json.Unmarshal(raw, &fields) != nil {
 		return returnedFile{}, notAFile(where, property)
 	}
-	var id string
-	if json.Unmarshal(fields["id"], &id) == nil && id != "" {
+	if id, given := fields["id"]; given && truthyJSON(id) {
 		var file wireBinary
 		if json.Unmarshal(raw, &file) != nil {
-			return returnedFile{}, notAFile(where, property)
+			// An id that is not text names no file anyone stored.
+			return returnedFile{}, named(ErrInvalidReturn, fmt.Sprintf("%s has a binary %q naming a file this node was not given and did not store", where, property))
 		}
 		if !known[file.ID] {
 			return returnedFile{}, named(ErrInvalidReturn, fmt.Sprintf("%s has a binary %q naming a file this node was not given and did not store", where, property))

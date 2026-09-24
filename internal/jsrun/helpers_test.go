@@ -375,7 +375,7 @@ func TestAFileReturnedInlineIsStoredLikeAPreparedOne(t *testing.T) {
 		Mode: jsrun.ModeEachItem, Items: fileItems(), Roots: withHelpers(fake),
 		Source: strings.Join([]string{
 			"const wrapped = Buffer.from('a longer text that wraps').toString('base64').replace(/(.{8})/g, '$1\\r\\n')",
-			"return { json: {}, binary: { wrapped: { data: wrapped }, safe: { data: '-_8', fileName: 'x.bin' }, kept: { ...$binary.file, data: 'ignored' } } }",
+			"return { json: {}, binary: { wrapped: { data: wrapped }, safe: { id: 0, data: '-_8', fileName: 'x.bin' }, kept: { ...$binary.file, data: 'ignored' } } }",
 		}, "\n"),
 	})
 	if err != nil {
@@ -399,6 +399,7 @@ func TestAnInlineFileThatCannotBeStoredIsRefused(t *testing.T) {
 		"return [{ json: {}, binary: { data: { data: 'aGk=', mimeType: 'not a type' } } }]":           `item 0 has a binary "data" whose mimeType "not a type" is not a media type`,
 		"return [{ json: {}, binary: { data: { data: 'aGk=', mimeType: 7 } } }]":                      `item 0 has a binary "data" whose mimeType is not text`,
 		"return [{ json: {}, binary: { data: { data: 'aGk=', fileName: {} } } }]":                     `item 0 has a binary "data" whose fileName is not text`,
+		"return [{ json: {}, binary: { data: { id: 5, data: 'aGk=' } } }]":                            `item 0 has a binary "data" naming a file this node was not given`,
 		"return [{ json: {}, binary: { data: { fileName: 'a.txt' } } }]":                              `item 0 has a binary "data" that is neither a file reference nor a file given inline`,
 		"return [{ json: {} }, { json: {}, binary: { data: { data: 'aGk=' }, other: { data: 5 } } }]": `item 1 has a binary "other" that is neither a file reference nor a file given inline`,
 	} {

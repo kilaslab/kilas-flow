@@ -61,6 +61,26 @@ func readInline(fields map[string]json.RawMessage, where, property string) (*inl
 	return file, nil
 }
 
+// truthyJSON is JavaScript's truth table over a JSON value: null, false, 0
+// and the empty string are false, and everything else true.
+func truthyJSON(raw json.RawMessage) bool {
+	var value any
+	if json.Unmarshal(raw, &value) != nil {
+		return false
+	}
+	switch typed := value.(type) {
+	case nil:
+		return false
+	case bool:
+		return typed
+	case float64:
+		return typed != 0
+	case string:
+		return typed != ""
+	}
+	return true
+}
+
 // optional is a field the code set to something other than null.
 func optional(fields map[string]json.RawMessage, name string) (json.RawMessage, bool) {
 	raw, present := fields[name]

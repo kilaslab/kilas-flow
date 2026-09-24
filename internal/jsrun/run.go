@@ -104,6 +104,7 @@ func (runner *Runner) Execute(ctx context.Context, job Job, answers Host) (execu
 		defer runner.inspect(v)
 	}
 	v.onInterrupt = runner.onInterrupt
+	defer func() { executed.HelperCalls = v.helperCalls }()
 	defer heapWatchdog.enter(runner.heapCeiling, v.interrupt)()
 	defer context.AfterFunc(ctx, func() { v.interrupt(ctx.Err()) })()
 	printed := &console{limit: limits.MaxConsoleBytes}
@@ -242,6 +243,18 @@ func (job Job) Finish(ctx context.Context, executed Executed, runErr error) (Res
 		if eachItem && job.ContinueOnItemError {
 			result.Outcomes = append(result.Outcomes, ItemOutcome{Items: items})
 		}
+	}
+	// The files given inline share the code's budget of host calls with the
+	// helper calls it made: one budget per run, or per item in per-item
+	// mode, where which item made a call is not known here, so the whole
+	// run's calls and files are held to the budget of all its items.
+	budget := job.Limits.MaxHostCalls
+	if eachItem {
+		budget *= max(job.count(), 1)
+	}
+	if calls := executed.HelperCalls; len(decode.pending)+calls > budget {
+		return Result{UserTime: result.UserTime, Console: result.Console, ConsoleTruncated: result.ConsoleTruncated},
+			EngineFaultError(fmt.Sprintf("it returned %d files inline after %d helper calls, more than its code's %d host calls", len(decode.pending), calls, budget))
 	}
 	if err := job.storeInline(ctx, decode.pending); err != nil {
 		result.Items, result.Outcomes, result.StaticData = nil, nil, nil

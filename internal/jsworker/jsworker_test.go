@@ -40,7 +40,7 @@ func TestMain(m *testing.M) {
 			}))
 		case "exit3":
 			os.Exit(fakeWorker(func() { os.Exit(3) }))
-		case "stale", "unknownfile", "badinline", "manyinline", "flood", "calls", "bigcall", "badhelper", "staticflood", "staticunused", "bigdone":
+		case "stale", "unknownfile", "badinline", "manyinline", "callsinline", "flood", "calls", "bigcall", "badhelper", "staticflood", "staticunused", "bigdone":
 			os.Exit(lyingWorker(os.Getenv(testModeVariable)))
 		case "probe", "probe-per-thread", "probe-no-zones":
 			os.Exit(probeWorker(os.Getenv(testModeVariable)))
@@ -76,10 +76,11 @@ func fakeWorker(then func()) int {
 // lyingWorker answers its one job with frames a real worker would never
 // write: a done frame for another job, naming a file its input did not
 // have, giving a file inline that is not base64 or more of them than its
-// code could store, printing far past the console cap, handing back static data it was
-// never given or results past the output cap; or more helper calls than its
-// code may make, one carrying too much, one for a helper there is none of,
-// or more questions about static data than there are kinds.
+// code could store (alone, or with its helper calls), printing far past the
+// console cap, handing back static data it was never given or results past
+// the output cap; or more helper calls than its code may make, one carrying
+// too much, one for a helper there is none of, or more questions about
+// static data than there are kinds.
 func lyingWorker(mode string) int {
 	reader, writer := bufio.NewReader(os.Stdin), bufio.NewWriter(os.Stdout)
 	if !greet(reader, writer) {
@@ -119,6 +120,13 @@ func lyingWorker(mode string) int {
 		for id := range int64(3) {
 			call(id+1, helper(jsrun.HelperHTTPRequest), "")
 		}
+	case "callsinline":
+		// Within the helper calls, and within the files one result may give
+		// inline, but not within both at once.
+		for id := range int64(2) {
+			call(id+1, helper(jsrun.HelperHTTPRequest), "")
+		}
+		output = `[{"json":{},"binary":{"data":{"data":"aGk="}},"paired":null}]`
 	case "bigcall":
 		call(1, helper(jsrun.HelperWriteFile), strings.Repeat("x", jsrun.MaxFileBytes+1))
 	case "badhelper":
