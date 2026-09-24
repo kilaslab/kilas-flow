@@ -1,11 +1,14 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { Page } from '@playwright/test';
 
 import { test, expect } from '../fixtures';
 import { deliver, liveApi } from '../fixtures/live-backend';
 import { activateWorkflow, importN8nTemplate } from '../fixtures/waha-migration';
+import { descendants, isNodeJS, processTable, proveCodeNodeWorkflow, wholeTableSampler } from '../fixtures/epic-code';
 import { exportN8nWorkflow, listExecutionIds, waitForExecution } from '../helpers/seed';
+
+const execFileAsync = promisify(execFile);
 
 // The Code (JavaScript) node on the built binary (EPIC-tjnr1z, FEAT-pxcbqj).
 //
@@ -19,8 +22,6 @@ import { exportN8nWorkflow, listExecutionIds, waitForExecution } from '../helper
 //
 // RUNTIME_CASES below is the one-line-per-feature table: a new shipped module
 // or global is proven live by adding an entry, no new test needed.
-
-const execFileAsync = promisify(execFile);
 
 interface SpecNode {
 	id: string;
@@ -587,41 +588,6 @@ test('a workflow saved with the old JavaScript placeholder runs without being im
 	expect(items(await runToSuccess(server.baseURL, workflowId, { from: 'before the runtime' }), 'legacy')).toEqual([{ legacy: true, from: 'before the runtime' }]);
 });
 
-interface ProcessRow {
-	pid: number;
-	ppid: number;
-	command: string;
-}
-
-async function processTable(): Promise<ProcessRow[]> {
-	const { stdout } = await execFileAsync('ps', ['-A', '-o', 'pid=,ppid=,command=']);
-	return stdout
-		.split('\n')
-		.map((line) => line.trim().match(/^(\d+)\s+(\d+)\s+(.*)$/))
-		.filter((match): match is RegExpMatchArray => match !== null)
-		.map((match) => ({ pid: Number(match[1]), ppid: Number(match[2]), command: match[3] }));
-}
-
-function descendants(table: ProcessRow[], root: number): ProcessRow[] {
-	const found: ProcessRow[] = [];
-	const queue = [root];
-	while (queue.length > 0) {
-		const parent = queue.shift()!;
-		for (const row of table) {
-			if (row.ppid === parent) {
-				found.push(row);
-				queue.push(row.pid);
-			}
-		}
-	}
-	return found;
-}
-
-function isNodeJS(command: string): boolean {
-	const executable = command.split(/\s+/)[0] ?? '';
-	return /(^|\/)(node|nodejs)$/.test(executable);
-}
-
 test('code runs in worker processes of the server, never in Node.js, and the workers end with it', async ({ server }) => {
 	const workflowId = await createWorkflow(
 		server.baseURL,
@@ -644,6 +610,40 @@ test('code runs in worker processes of the server, never in Node.js, and the wor
 			return workers.filter((worker) => alive.has(worker.pid)).length;
 		}, { message: 'the workers exit with the server', timeout: 15_000 })
 		.toBe(0);
+});
+
+// Serial, because the second test starts a stray Node.js process on purpose,
+// which the first would rightly report if the two ran at once.
+test.describe.serial('no Node.js process', () => {
+	test('an imported n8n workflow runs its Code nodes in both modes with no Node.js process anywhere during the run', async ({ server }) => {
+		// The same scenario the epic acceptance proofs 2 and 4 run on their own
+		// servers (e2e/fixtures/epic-code.ts). Here it checks the whole process
+		// table: nothing Node under the server, and nothing Node on the machine
+		// that was not already running when the run began.
+		const result = await proveCodeNodeWorkflow(server.baseURL, await wholeTableSampler(server.pid));
+		expect(result.samples).toBeGreaterThanOrEqual(3);
+	});
+
+	test('the process-table sampler reports a Node.js process that appears outside the harness', async ({ server }) => {
+		// A check that finds nothing passes forever, so it is shown finding one: a
+		// Node.js process started through a shell that exits at once, which leaves
+		// it adopted by pid 1, as a process the server spawned and abandoned
+		// would be. And it is shown not blaming the harness: a Node.js process
+		// this test starts as its own child is somebody else's, as another
+		// agent's on a shared machine is.
+		const sample = await wholeTableSampler(server.pid);
+		expect(await sample()).toEqual([]);
+		const own = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 20000)'], { stdio: 'ignore' });
+		const { stdout } = await execFileAsync('sh', ['-c', `"${process.execPath}" -e "setTimeout(() => {}, 20000)" >/dev/null 2>&1 & echo $!`]);
+		const stray = Number(stdout.trim());
+		try {
+			await expect.poll(async () => (await sample()).join('\n'), { message: 'the sampler reports the stray process' }).toContain(`appeared during the run: ${stray} `);
+			expect((await sample()).join('\n'), "the harness's own child is not reported").not.toContain(`: ${own.pid} `);
+		} finally {
+			process.kill(stray);
+			own.kill();
+		}
+	});
 });
 
 // ---------------------------------------------------------------------------

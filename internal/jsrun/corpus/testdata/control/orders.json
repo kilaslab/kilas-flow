@@ -1,0 +1,141 @@
+{
+  "connections": {
+    "Orders": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Score",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Score": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Sign",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Sign": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Order",
+            "type": "main"
+          }
+        ]
+      ]
+    }
+  },
+  "nodeNames": [
+    "Orders",
+    "Score",
+    "Sign",
+    "Order"
+  ],
+  "nodes": [
+    {
+      "index": 1,
+      "name": "Score",
+      "parameters": {
+        "jsCode": "// KilasFlow-authored control body: lodash, Luxon, console and both roots.\nconst _ = require('lodash');\nconst { DateTime } = require('luxon');\nconst out = [];\nfor (const item of $input.all()) {\n  const order = item.json;\n  const total = _.round(_.sumBy(order.lines, (line) => line.qty * line.price), 2);\n  const placed = DateTime.fromISO(order.placedAt, { zone: 'America/New_York' });\n  console.log('scored', order.orderId, total);\n  out.push({ json: { orderId: order.orderId, customer: _.startCase(order.customer), total, local: placed.toFormat('yyyy-LL-dd HH:mm ZZZZ'), weekday: placed.weekdayLong, skus: _.uniq(order.lines.map((line) => line.sku)).sort() } });\n}\nreturn out;",
+        "mode": "runOnceForAllItems"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "index": 2,
+      "name": "Sign",
+      "parameters": {
+        "jsCode": "// KilasFlow-authored control body: per-item roots, $('Node'), Buffer and crypto.\nconst crypto = require('crypto');\nconst first = $('Orders').first().json;\nconst text = `${$json.orderId}:${$json.total}:${first.orderId}`;\nconst digest = crypto.createHash('sha256').update(text).digest('hex');\nconst mac = crypto.createHmac('sha256', 'control-key').update(text).digest('base64');\nreturn { json: { ...$json, index: $itemIndex, token: Buffer.from(text).toString('base64'), hex: Buffer.from(text, 'utf8').toString('hex').slice(0, 16), digest, mac, paired: $('Orders').item.json.orderId } };",
+        "mode": "runOnceForEachItem"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "index": 3,
+      "name": "Order",
+      "parameters": {
+        "code": "return b.json.total - a.json.total;",
+        "type": "code"
+      },
+      "type": "n8n-nodes-base.sort",
+      "typeVersion": 1
+    }
+  ],
+  "pinData": {
+    "Orders": [
+      {
+        "json": {
+          "customer": "ada lovelace",
+          "lines": [
+            {
+              "price": 89.5,
+              "qty": 1,
+              "sku": "kb-2"
+            },
+            {
+              "price": 20,
+              "qty": 2,
+              "sku": "ms-1"
+            }
+          ],
+          "orderId": "A-1",
+          "placedAt": "2026-03-08T06:30:00Z"
+        }
+      },
+      {
+        "json": {
+          "customer": "grace hopper",
+          "lines": [
+            {
+              "price": 4,
+              "qty": 3,
+              "sku": "cb-9"
+            }
+          ],
+          "orderId": "B-2",
+          "placedAt": "2026-11-01T05:59:00Z"
+        }
+      }
+    ],
+    "Score": [
+      {
+        "json": {
+          "orderId": "A-1",
+          "total": 129.5
+        }
+      },
+      {
+        "json": {
+          "orderId": "B-2",
+          "total": 12
+        }
+      }
+    ],
+    "Sign": [
+      {
+        "json": {
+          "orderId": "B-2",
+          "total": 12
+        }
+      },
+      {
+        "json": {
+          "orderId": "A-1",
+          "total": 129.5
+        }
+      }
+    ]
+  },
+  "template": 1
+}

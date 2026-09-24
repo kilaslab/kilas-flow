@@ -1,0 +1,54 @@
+name: Code corpus drift
+
+# The Code-node compatibility corpus (EPIC-tjnr1z P7, FEAT-afkx3k), checked
+# strictly once a week.
+#
+# ci.yml syncs the corpus on every change with --lenient, so a pull request
+# never goes red because a third party edited, emptied or withdrew a template
+# on n8n.io: that template is dropped with a warning and the rest are held to
+# the baseline. Warnings are easy to miss, so this job runs the same sync
+# without --lenient and fails when any pinned template drifted. The fix is a
+# deliberate re-pin: `scripts/code-corpus-sync.sh --update`, then
+# `make js-corpus-baseline`, with the commit saying which bodies moved and why.
+#
+# An API that cannot be reached is an outage, not drift: the job warns and
+# passes, and next week's run tries again.
+
+on:
+  schedule:
+    # Weekly, off the hour, clear of the capstone's Monday 05:23 slot.
+    - cron: '41 6 * * 3'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: code-corpus
+  cancel-in-progress: false
+
+jobs:
+  drift:
+    name: Code corpus pins and baseline
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Sync the pinned corpus strictly
+        id: sync
+        run: |
+          status=0
+          scripts/code-corpus-sync.sh || status=$?
+          case "$status" in
+            0) echo "fetched=true" >> "$GITHUB_OUTPUT" ;;
+            3) echo "::warning::api.n8n.io could not be reached; the Code-node corpus was not checked this week" ;;
+            *) echo "::error::pinned templates drifted upstream; re-pin with scripts/code-corpus-sync.sh --update and regenerate the baseline"; exit "$status" ;;
+          esac
+
+      - name: Hold the runtime to the baseline
+        if: steps.sync.outputs.fetched == 'true'
+        run: make js-corpus-check
