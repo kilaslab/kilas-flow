@@ -1,7 +1,7 @@
 ---
 id: BUG-46g75c
 title: 'Code node: Buffer decodes invalid UTF-8 to fewer replacement characters than Node'
-status: todo
+status: doing
 priority: low
 labels:
     - code-node
@@ -32,3 +32,47 @@ return [{ json: { text: s.toString(), length: s.toString().length } }]
 # Acceptance Criteria
 
 - [ ] `Buffer#toString('utf8')` (and TextDecoder, if it shares the path) replaces invalid bytes as Node does, pinned by a golden recorded from Node 24 that covers lone continuation bytes, truncated sequences, overlong forms and surrogate encodings.
+
+# Notes
+
+## Plan (Task 14, epic/buffer-utf8)
+
+Root cause: `internal/jsrun/codec.go`'s `encodeBytes` (bytes -> JS string, the
+`codec.encode` native) uses `strings.ToValidUTF8(string(data), "�")` for
+the `utf8` case. Go's `ToValidUTF8` collapses each *run* of invalid bytes into
+one replacement character; WHATWG's UTF-8 decoder (which Node's Buffer and
+TextDecoder both implement) emits one U+FFFD per byte that cannot start or
+continue a sequence, and one U+FFFD for a truncated-but-valid prefix (the
+"maximal subpart" rule). `codec.encode` is the single native every byte->string
+utf8 path goes through: `Buffer#toString('utf8')` (buffer.js), `TextDecoder`
+non-fatal decode (web.js, shares the exact same native call), and
+`getBinaryDataBuffer(...).toString()` (returns a Buffer, same `toString`).
+`atob`/`btoa` use `latin1`, not `utf8`, so they are unaffected (and correctly
+so — latin1 has no invalid byte).
+
+Fix: replace the `utf8` case in `encodeBytes` with a hand-written decoder
+implementing the WHATWG "UTF-8 decoder" algorithm (Encoding Standard
+https://encoding.spec.whatwg.org/#utf-8-decoder), written from the spec's
+prose/pseudocode, not from any V8/Node source (clean-room constraint). Kept as
+a small unexported function in codec.go next to `encodeBytes`.
+
+Golden: extend `scripts/js-parity/record.mjs` (dev-only, run under Node 24) to
+record `Buffer.from(bytes).toString('utf8')` over a byte-sequence sweep: every
+single byte alone (256), a full second-byte boundary sweep for each of the 7
+lead-byte classes with a distinct WHATWG boundary pair (C2, E0, E1, ED, F0,
+F1, F4), a third/fourth-byte sweep for one 3-byte and one 4-byte lead, plus
+explicit overlong, surrogate, >U+10FFFF and truncated-sequence cases and a few
+valid-text sanity cases. Written to
+`internal/jsrun/testdata/parity/utf8.json`. A Go test in
+`internal/jsrun/codec_internal_test.go` loads it and checks `encodeBytes`
+against every case (fast, no VM). A handful of VM-level tests (buffer_test.go,
+web_test.go) confirm `Buffer#toString`, `Buffer.from(...).toString()`,
+`TextDecoder().decode()` (default and `fatal: true`), and
+`getBinaryDataBuffer(...).toString()` all go through the fixed path, using the
+ticket's own repro (`Buffer.from('sample', 'base64').toString()` -> 4 x
+U+FFFD).
+
+Decision: `decodeString`'s `toWellFormed` (JS string -> bytes, lone-surrogate
+replacement) is a different problem (a UTF-16 JS string can hold a lone
+surrogate; UTF-8 cannot) and is out of scope for this ticket, which is about
+bytes -> string.
