@@ -109,7 +109,7 @@ func decodeString(text, encoding string) ([]byte, error) {
 func encodeBytes(data []byte, encoding string) (string, error) {
 	switch normalEncoding(encoding) {
 	case "utf8":
-		return strings.ToValidUTF8(string(data), "�"), nil
+		return decodeUTF8WHATWG(data), nil
 	case "hex":
 		return hex.EncodeToString(data), nil
 	case "base64":
@@ -180,4 +180,81 @@ func toWellFormed(text string) string {
 		return text
 	}
 	return strings.ToValidUTF8(text, "�")
+}
+
+// decodeUTF8WHATWG turns bytes into a string the way Node's Buffer and
+// TextDecoder do: the WHATWG Encoding Standard's UTF-8 decoder
+// (https://encoding.spec.whatwg.org/#utf-8-decoder), written from the spec's
+// own algorithm rather than Go's. Go's strings.ToValidUTF8 replaces each RUN
+// of invalid bytes with one U+FFFD; WHATWG's "maximal subpart" rule instead
+// replaces each byte that cannot start or continue a sequence with its own
+// U+FFFD, and a truncated-but-otherwise-valid prefix with exactly one
+// U+FFFD (BUG-46g75c).
+//
+// The state machine tracks, across bytes, how many continuation bytes the
+// current sequence still needs and the [lower, upper] range the next one
+// must fall in — which narrows for the byte right after E0, ED, F0 and F4,
+// the four lead bytes whose second byte cannot span the whole 0x80-0xBF
+// continuation range without admitting an overlong form, a surrogate, or a
+// code point past U+10FFFF.
+func decodeUTF8WHATWG(data []byte) string {
+	var out strings.Builder
+	out.Grow(len(data))
+
+	var codePoint rune
+	var bytesSeen, bytesNeeded int
+	lower, upper := byte(0x80), byte(0xbf)
+
+	for index := 0; index < len(data); {
+		b := data[index]
+		if bytesNeeded == 0 {
+			switch {
+			case b <= 0x7f:
+				out.WriteByte(b)
+			case b >= 0xc2 && b <= 0xdf:
+				bytesNeeded, codePoint = 1, rune(b&0x1f)
+			case b >= 0xe0 && b <= 0xef:
+				if b == 0xe0 {
+					lower = 0xa0
+				} else if b == 0xed {
+					upper = 0x9f
+				}
+				bytesNeeded, codePoint = 2, rune(b&0x0f)
+			case b >= 0xf0 && b <= 0xf4:
+				if b == 0xf0 {
+					lower = 0x90
+				} else if b == 0xf4 {
+					upper = 0x8f
+				}
+				bytesNeeded, codePoint = 3, rune(b&0x07)
+			default:
+				out.WriteRune(utf8.RuneError) // a continuation byte, or 0xc0/0xc1/0xf5-0xff, with no lead of its own
+			}
+			index++
+			continue
+		}
+		if b < lower || b > upper {
+			// This byte cannot continue the sequence in progress: the
+			// sequence so far becomes one U+FFFD, and the byte is
+			// reprocessed as the possible start of its own sequence,
+			// without advancing past it.
+			codePoint, bytesSeen, bytesNeeded = 0, 0, 0
+			lower, upper = 0x80, 0xbf
+			out.WriteRune(utf8.RuneError)
+			continue
+		}
+		lower, upper = 0x80, 0xbf // only the byte right after certain leads is narrowed
+		codePoint = codePoint<<6 | rune(b&0x3f)
+		bytesSeen++
+		index++
+		if bytesSeen != bytesNeeded {
+			continue
+		}
+		out.WriteRune(codePoint)
+		codePoint, bytesSeen, bytesNeeded = 0, 0, 0
+	}
+	if bytesNeeded != 0 {
+		out.WriteRune(utf8.RuneError) // a valid prefix truncated at the end of the buffer
+	}
+	return out.String()
 }

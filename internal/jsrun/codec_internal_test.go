@@ -2,6 +2,9 @@ package jsrun
 
 import (
 	"bytes"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -51,5 +54,50 @@ func TestTheCodecMatchesNodesEncodings(t *testing.T) {
 	}
 	if _, err := decodeString("x", "klingon"); err == nil {
 		t.Error("an unknown encoding was accepted")
+	}
+}
+
+// utf8Case is one recorded byte sequence and the string Node 24's
+// Buffer#toString('utf8') produced for it (testdata/parity/utf8.json,
+// recorded by scripts/js-parity/record.mjs).
+type utf8Case struct {
+	Bytes []byte `json:"bytes"`
+	Want  string `json:"want"`
+}
+
+// TestEncodeBytesUTF8MatchesTheRecordedNodeGoldens pins encodeBytes's "utf8"
+// case (the codec.decode/encode native every Buffer#toString('utf8'),
+// TextDecoder and getBinaryDataBuffer(...).toString() call reaches) against a
+// byte-sequence sweep recorded from Node 24: lone continuation bytes, every
+// lead byte truncated, a boundary sweep of the byte after each lead class,
+// overlong forms, surrogate encodings, code points past U+10FFFF, and valid
+// text around the malformed runs.
+//
+// Node's Buffer follows the WHATWG "maximal subpart" rule: each byte that
+// cannot start or continue a sequence becomes its own U+FFFD, and a truncated
+// but otherwise valid prefix becomes one U+FFFD. Go's strings.ToValidUTF8
+// instead collapses a whole run of bad bytes into one U+FFFD, which is BUG-46g75c.
+func TestEncodeBytesUTF8MatchesTheRecordedNodeGoldens(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("testdata", "parity", "utf8.json"))
+	if err != nil {
+		t.Fatalf("reading the utf8.json golden: %v", err)
+	}
+	var golden struct {
+		Cases []utf8Case `json:"cases"`
+	}
+	if err := json.Unmarshal(data, &golden); err != nil {
+		t.Fatalf("decoding the utf8.json golden: %v", err)
+	}
+	if len(golden.Cases) == 0 {
+		t.Fatal("the utf8.json golden has no cases")
+	}
+	for _, check := range golden.Cases {
+		got, err := encodeBytes(check.Bytes, "utf8")
+		if err != nil {
+			t.Fatalf("encodeBytes(%v, utf8) error = %v", check.Bytes, err)
+		}
+		if got != check.Want {
+			t.Errorf("encodeBytes(%v, utf8) = %q, want %q (Node 24)", check.Bytes, got, check.Want)
+		}
 	}
 }

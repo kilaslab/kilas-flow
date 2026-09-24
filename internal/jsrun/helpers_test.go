@@ -445,6 +445,19 @@ func TestInlineFilesCountAgainstTheHostCallLimit(t *testing.T) {
 	}
 }
 
+// BUG-46g75c: getBinaryDataBuffer returns a Buffer, so its toString() goes
+// through the same fixed decoder as Buffer#toString('utf8') elsewhere.
+func TestGetBinaryDataBufferToStringReplacesInvalidUTF8AsNodeDoes(t *testing.T) {
+	fake := &fakeHelpers{files: map[string][]byte{"0/data": {0xb1, 0xa9, 0xa9, 0x95}}}
+	got := helperJSON(t, fake, strings.Join([]string{
+		"const bytes = await this.helpers.getBinaryDataBuffer(0, 'data')",
+		"return [{ json: { text: bytes.toString(), length: bytes.toString().length } }]",
+	}, "\n"))
+	if got["text"] != "����" || fmt.Sprint(got["length"]) != "4" {
+		t.Fatalf("got %#v, want (Node 24) text: four U+FFFD, length: 4", got)
+	}
+}
+
 func TestAFileLargerThanOneCallMayMoveIsNamed(t *testing.T) {
 	fake := &fakeHelpers{}
 	_, err := helperRun(t, fake, fmt.Sprintf("await this.helpers.prepareBinaryData(Buffer.alloc(%d))\nreturn []", jsrun.MaxFileBytes+1))

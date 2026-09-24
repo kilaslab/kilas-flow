@@ -574,6 +574,92 @@ function zonesDiffering(zones, base) {
 	return out;
 }
 
+// ---- UTF-8 decoding (BUG-46g75c) ---------------------------------------------
+//
+// Node's Buffer#toString('utf8') and TextDecoder both implement the WHATWG
+// Encoding Standard's UTF-8 decoder, which replaces each byte that cannot
+// start or continue a sequence with its own U+FFFD, and a truncated-but-valid
+// prefix with one U+FFFD (the "maximal subpart" rule). This sweep pins that
+// against Buffer#toString('utf8'), which is what internal/jsrun's codec.go
+// must match byte-for-byte.
+
+// utf8LeadClasses is one representative lead byte per distinct boundary pair
+// the WHATWG decoder checks for the byte right after a lead: the standard
+// continuation range 0x80-0xBF, and the three special-cased ranges (E0's
+// lower bound, ED's upper bound, F0's lower bound, F4's upper bound).
+const utf8LeadClasses = [
+	{ lead: 0xc2, mid: 0x80 }, // 2-byte, standard bounds
+	{ lead: 0xe0, mid: 0xa0 }, // 3-byte, lower bound raised to 0xa0
+	{ lead: 0xe1, mid: 0x80 }, // 3-byte, standard bounds
+	{ lead: 0xed, mid: 0x80 }, // 3-byte, upper bound lowered to 0x9f
+	{ lead: 0xf0, mid: 0x90 }, // 4-byte, lower bound raised to 0x90
+	{ lead: 0xf1, mid: 0x80 }, // 4-byte, standard bounds
+	{ lead: 0xf4, mid: 0x80 }, // 4-byte, upper bound lowered to 0x8f
+];
+
+function utf8Cases() {
+	const cases = [];
+	const add = (bytes) => cases.push(bytes.slice());
+
+	// Every single byte alone: ASCII, every continuation byte on its own,
+	// every lead byte truncated to nothing after it, and the bytes Node
+	// never treats as a lead (0xc0, 0xc1, 0xf5-0xff).
+	for (let byte = 0; byte <= 0xff; byte++) add([byte]);
+
+	// The byte right after each lead class, swept over its whole range: this
+	// is where the WHATWG decoder's boundary checks live.
+	for (const { lead } of utf8LeadClasses) {
+		for (let second = 0; second <= 0xff; second++) add([lead, second]);
+	}
+
+	// The last byte of a 3-byte sequence (standard bounds only, by then) and
+	// of a 4-byte sequence, swept the same way.
+	for (let third = 0; third <= 0xff; third++) add([0xe1, 0x80, third]);
+	for (let fourth = 0; fourth <= 0xff; fourth++) add([0xf1, 0x80, 0x80, fourth]);
+
+	// Truncated sequences: a valid lead with one or two of its continuation
+	// bytes missing at the end of the buffer.
+	for (const { lead, mid } of utf8LeadClasses) {
+		add([lead]);
+		add([lead, mid]);
+	}
+	add([0xf0, 0x90, 0x80]); // three of a four-byte sequence
+
+	// Overlong encodings of characters that have a shorter valid encoding.
+	add([0xc0, 0x80]); // U+0000
+	add([0xc1, 0xbf]); // U+007F
+	add([0xe0, 0x80, 0x80]); // U+0000
+	add([0xe0, 0x9f, 0xbf]); // U+07FF
+	add([0xf0, 0x80, 0x80, 0x80]); // U+0000
+	add([0xf0, 0x8f, 0xbf, 0xbf]); // U+FFFF
+
+	// Surrogates, which UTF-8 cannot encode: the low end, the high end, and
+	// the CESU-8 pairing of a full astral character.
+	add([0xed, 0xa0, 0x80]); // U+D800
+	add([0xed, 0xad, 0xbf]); // U+D83D, the high half of an emoji
+	add([0xed, 0xb0, 0x80]); // U+DC00
+	add([0xed, 0xbf, 0xbf]); // U+DFFF
+	add([0xed, 0xa0, 0x80, 0xed, 0xb0, 0x80]); // a CESU-8 pair
+
+	// Past the Unicode range: U+10FFFF is the last valid code point.
+	add([0xf4, 0x90, 0x80, 0x80]); // U+110000
+	add([0xf5, 0x80, 0x80, 0x80]);
+	add([0xf7, 0xbf, 0xbf, 0xbf]);
+
+	// Valid text around and between the malformed runs, so a fix cannot pass
+	// by turning everything into replacement characters.
+	add([0x68, 0xc3, 0xa9, 0x6c, 0x6c, 0x6f]); // "héllo"
+	add([0xf0, 0x9f, 0x98, 0x80]); // an emoji, one code point
+	add([0x61, 0xff, 0x62, 0xc2, 0xad, 0x63]); // valid, invalid, valid, valid, valid
+	add([0xb1, 0xa9, 0xa9, 0x95]); // BUG-46g75c's own repro
+
+	return cases;
+}
+
+function utf8Golden() {
+	return utf8Cases().map((bytes) => ({ bytes, want: Buffer.from(bytes).toString('utf8') }));
+}
+
 // ---- Writing ----------------------------------------------------------------
 
 const meta = {
@@ -598,6 +684,7 @@ const files = {
 	'weeks.json': { meta, ...weeks },
 	'collation.json': { meta, probes: record(collationProbes) },
 	'zones.json': { meta, january, july, zones, zonesCA: zonesCADiff, zonesGB: zonesGBDiff },
+	'utf8.json': { meta, cases: utf8Golden() },
 };
 
 // serialize writes one probe, case or zone per line, so a golden stays small

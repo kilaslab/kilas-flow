@@ -39,3 +39,40 @@ return [{ json: {
 		t.Fatalf("got\n%s\nwant (Node 24)\n%s", got, want)
 	}
 }
+
+// BUG-46g75c: Buffer#toString('utf8') must replace invalid UTF-8 the way
+// Node 24 does, the WHATWG "maximal subpart" rule (codec_internal_test.go
+// pins internal/jsrun's own decoder against a full Node golden; this proves
+// the JS-visible Buffer#toString and Buffer.from(...).toString() round trip
+// reach that same decoder). Go's strings.ToValidUTF8, which encodeBytes used
+// before the fix, instead collapses a whole run of bad bytes into one
+// U+FFFD.
+func TestBufferToStringReplacesInvalidUTF8AsNodeDoes(t *testing.T) {
+	result, err := runAll(t, newRunner(), `return [{ json: {
+  // The ticket's own repro: Buffer.from('sample', 'base64') decodes to the
+  // bytes b1 a9 a9 95, none of which can start or continue a sequence.
+  repro: Buffer.from('sample', 'base64').toString(),
+  reproLength: Buffer.from('sample', 'base64').toString().length,
+  loneContinuation: Buffer.from([0xb1, 0xa9]).toString(),
+  overlong: Buffer.from([0xc0, 0x80]).toString(),
+  surrogate: Buffer.from([0xed, 0xa0, 0x80]).toString(),
+  truncated: Buffer.from([0xe0, 0xa0]).toString(),
+  mixed: Buffer.from([0x61, 0xff, 0x62]).toString('utf8'),
+  valid: Buffer.from('héllo 😀').toString(),
+} }]`, nil)
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	want := map[string]any{
+		"repro": "����", "reproLength": float64(4),
+		"loneContinuation": "��", "overlong": "��",
+		"surrogate": "���", "truncated": "�",
+		"mixed": "a�b", "valid": "héllo 😀",
+	}
+	got := result.Items[0].JSON
+	for key, value := range want {
+		if fmt.Sprint(got[key]) != fmt.Sprint(value) {
+			t.Errorf("%s = %#v, want %#v (Node 24)", key, got[key], value)
+		}
+	}
+}

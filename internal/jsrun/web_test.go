@@ -111,10 +111,16 @@ func TestTextEncoderAndDecoderFollowTheEncodingStandard(t *testing.T) {
 		"  length: bytes.length, typed: bytes instanceof Uint8Array, back: decoder.decode(bytes), encoding: decoder.encoding,",
 		"  lenient: new TextDecoder().decode(new Uint8Array([0x68, 0xff])), bom: new TextDecoder().decode(new Uint8Array([0xef, 0xbb, 0xbf, 0x61])),",
 		"  utf16: new TextDecoder('utf-16le').decode(new Uint8Array([0x68, 0, 0xe9, 0])), fatal, label,",
+		// BUG-46g75c: TextDecoder shares Buffer#toString('utf8')'s decoder, so
+		// a run of bytes that cannot start or continue a sequence becomes one
+		// U+FFFD per byte, not one U+FFFD for the whole run.
+		"  invalidRun: new TextDecoder().decode(new Uint8Array([0xb1, 0xa9, 0xa9, 0x95])),",
+		"  invalidRunLength: new TextDecoder().decode(new Uint8Array([0xb1, 0xa9, 0xa9, 0x95])).length,",
 		"} }]",
 	}, "\n"), map[string]any{
 		"length": 11, "typed": true, "back": "héllo 😀", "encoding": "utf-8", "lenient": "h�", "bom": "a",
 		"utf16": "hé", "fatal": "TypeError", "label": "RangeError",
+		"invalidRun": "����", "invalidRunLength": 4,
 	})
 }
 
