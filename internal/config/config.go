@@ -846,6 +846,24 @@ type Code struct {
 	// server is not charged to the time limit, so this is what bounds it.
 	// Env: KILASFLOW_CODE_JAVASCRIPT_MAX_HOST_CALLS. Default: 100.
 	JavaScriptMaxHostCalls int `koanf:"javascript_max_host_calls"`
+
+	// JavaScriptWorkerUID is the user every JavaScript worker process runs
+	// as, on Linux, set together with javascript_worker_gid: a user of its
+	// own, with none of the server's groups, so the server's files are out
+	// of its reach by their permissions as well. Starting a worker as
+	// another user needs CAP_SETUID and CAP_SETGID, which a server running
+	// as root has; a worker that cannot be started as the configured user
+	// fails its run rather than running as the server. Unset, each worker
+	// runs in user, PID, network and IPC namespaces of its own where the
+	// kernel allows them, and as the server's user where it does not; the
+	// server logs once which it got. Zero means unset.
+	// Env: KILASFLOW_CODE_JAVASCRIPT_WORKER_UID. Default: 0.
+	JavaScriptWorkerUID int `koanf:"javascript_worker_uid"`
+
+	// JavaScriptWorkerGID is the group every JavaScript worker process runs
+	// as, set together with javascript_worker_uid. Zero means unset.
+	// Env: KILASFLOW_CODE_JAVASCRIPT_WORKER_GID. Default: 0.
+	JavaScriptWorkerGID int `koanf:"javascript_worker_gid"`
 }
 
 // MaxJavaScriptTimeout is the highest code.javascript_timeout accepted. A
@@ -1379,6 +1397,9 @@ func (c Config) Validate() error {
 	if c.Code.JavaScriptHeapCeilingMB < 0 {
 		return fmt.Errorf("code.javascript_heap_ceiling_mb %d must not be negative; zero means 1024", c.Code.JavaScriptHeapCeilingMB)
 	}
+	if err := validateJavaScriptWorkerUser(c.Code); err != nil {
+		return err
+	}
 
 	// Caught here rather than at the first login, because an instance that
 	// starts with authentication "on" and no key to sign with would answer
@@ -1454,6 +1475,27 @@ var sidecarPackageName = regexp.MustCompile(`^(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9
 // npmPackageNameMax is npm's own length limit for a package name, scope
 // included.
 const npmPackageNameMax = 214
+
+// validateJavaScriptWorkerUser refuses half a worker user: a user with the
+// server's group, or a group with the server's user, would leave the worker
+// sharing what the key was set to take away. Zero is unset, since running a
+// worker as root would take nothing away at all.
+func validateJavaScriptWorkerUser(code Code) error {
+	uid, gid := code.JavaScriptWorkerUID, code.JavaScriptWorkerGID
+	switch {
+	case uid < 0:
+		return fmt.Errorf("code.javascript_worker_uid %d must not be negative; zero means unset", uid)
+	case gid < 0:
+		return fmt.Errorf("code.javascript_worker_gid %d must not be negative; zero means unset", gid)
+	case uid > 0 && gid == 0:
+		return fmt.Errorf("code.javascript_worker_gid is required when code.javascript_worker_uid is set")
+	case gid > 0 && uid == 0:
+		return fmt.Errorf("code.javascript_worker_uid is required when code.javascript_worker_gid is set")
+	case uid > 0 && runtime.GOOS != "linux":
+		return fmt.Errorf("code.javascript_worker_uid is not supported on %s: a JavaScript worker runs as a user of its own on Linux only", runtime.GOOS)
+	}
+	return nil
+}
 
 // validateSidecar refuses a sidecar configuration that cannot work. It runs
 // only when the sidecar is enabled: a declined sidecar is a deployment where

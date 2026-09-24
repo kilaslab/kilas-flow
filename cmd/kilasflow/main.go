@@ -1330,8 +1330,10 @@ func nodeAvailability(compiler runcode.Compiler) func() map[string]string {
 
 // javaScriptRuntime hands the JavaScript Code node its runtime, built from
 // the code.javascript_* keys: a pool of worker processes, so a script that
-// runs away inside one built-in call costs a worker and never the server. It
-// turns the node off when the operator did. close stops the workers.
+// runs away inside one built-in call costs a worker and never the server,
+// each confined on Linux as far as the kernel allows, or run as the
+// configured worker user. It turns the node off when the operator did.
+// close stops the workers.
 func javaScriptRuntime(cfg config.Code, log *slog.Logger) (option nodes.ExecutorOption, close func()) {
 	if !cfg.JavaScriptEnabled {
 		return nodes.WithoutJavaScript(nodes.JavaScriptDisabled), func() {}
@@ -1347,6 +1349,8 @@ func javaScriptRuntime(cfg config.Code, log *slog.Logger) (option nodes.Executor
 		MaxConcurrent: cfg.JavaScriptMaxConcurrent,
 		HeapCeiling:   javaScriptHeapCeiling(cfg.JavaScriptHeapCeilingMB),
 		Logger:        log.With("component", "javascript-workers"),
+		UID:           cfg.JavaScriptWorkerUID,
+		GID:           cfg.JavaScriptWorkerGID,
 	})
 	return nodes.WithJSRunner(pool), pool.Close
 }

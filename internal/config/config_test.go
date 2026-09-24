@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -987,6 +988,10 @@ func TestJavaScriptLimitsMustBePositive(t *testing.T) {
 		{"zero host calls", func(c *Code) { c.JavaScriptMaxHostCalls = 0 }, "code.javascript_max_host_calls"},
 		{"negative concurrency", func(c *Code) { c.JavaScriptMaxConcurrent = -1 }, "code.javascript_max_concurrent"},
 		{"negative heap ceiling", func(c *Code) { c.JavaScriptHeapCeilingMB = -1 }, "code.javascript_heap_ceiling_mb"},
+		{"negative worker user", func(c *Code) { c.JavaScriptWorkerUID, c.JavaScriptWorkerGID = -1, 1000 }, "code.javascript_worker_uid"},
+		{"negative worker group", func(c *Code) { c.JavaScriptWorkerUID, c.JavaScriptWorkerGID = 1000, -1 }, "code.javascript_worker_gid"},
+		{"a worker user with no group", func(c *Code) { c.JavaScriptWorkerUID = 1000 }, "code.javascript_worker_gid"},
+		{"a worker group with no user", func(c *Code) { c.JavaScriptWorkerGID = 1000 }, "code.javascript_worker_uid"},
 	}
 	for _, tc := range cases {
 		cfg := Default()
@@ -995,5 +1000,25 @@ func TestJavaScriptLimitsMustBePositive(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), tc.wantSub) {
 			t.Errorf("%s: Validate() error = %v, want it to name %q", tc.name, err, tc.wantSub)
 		}
+	}
+}
+
+// A worker's own user is read from the environment like every code key, and
+// is refused off Linux, where nothing could start a worker as it.
+func TestAJavaScriptWorkerUserComesAsAPair(t *testing.T) {
+	t.Setenv("KILASFLOW_CODE_JAVASCRIPT_WORKER_UID", "4242")
+	t.Setenv("KILASFLOW_CODE_JAVASCRIPT_WORKER_GID", "4343")
+	cfg, err := Load("")
+	if runtime.GOOS != "linux" {
+		if err == nil || !strings.Contains(err.Error(), "code.javascript_worker_uid") || !strings.Contains(err.Error(), "Linux") {
+			t.Fatalf("Load() error = %v, want the worker user refused off Linux", err)
+		}
+		return
+	}
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Code.JavaScriptWorkerUID != 4242 || cfg.Code.JavaScriptWorkerGID != 4343 {
+		t.Fatalf("worker user = %d:%d, want 4242:4343", cfg.Code.JavaScriptWorkerUID, cfg.Code.JavaScriptWorkerGID)
 	}
 }
