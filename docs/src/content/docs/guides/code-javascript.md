@@ -23,15 +23,18 @@ items.
 
 | Mode | The code gets | It returns |
 | --- | --- | --- |
-| Run once for all items (`runOnceForAllItems`, the default) | `items`, `$input.all()`, `$input.first()`, `$input.last()` | a list of items; a single object is taken as one item |
-| Run once for each item (`runOnceForEachItem`) | `$json`, `$itemIndex`, `$input.item`, called once per item | one item, or `null` to drop it; a list is refused |
+| Run once for all items (`runOnceForAllItems`, the default) | `items`, `$input.all()`, `$input.first()`, `$input.last()`, and `$json`, `$binary` and `$itemIndex` of the first item | a list of items; a single object is taken as one item |
+| Run once for each item (`runOnceForEachItem`) | `$json`, `$binary`, `$itemIndex`, `$input.item` and `item`, the item itself, called once per item | one item, or `null` to drop it; a list is refused |
 
 An item is `{ json: { … } }`, and a plain object returned where an item belongs
-becomes that item's `json`. A root the mode does not have — `$json` in the
-all-items mode, `items` in the per-item one — is undefined, as in n8n, so
-`typeof items` is safe; using one anyway fails with a message saying what to
-use instead. The code may declare a name a root already has, so
-`const items = $input.all()` works.
+becomes that item's `json`. As in n8n, code that runs once for all items still
+has the per-item roots, read at the first input item: `$json` is
+`items[0].json` itself, `$binary` a copy of its files' metadata, and
+`$itemIndex` (and the older `$position`) is 0; with no input items, `$json`
+and `$binary` are undefined. `items`, and `item`, are what the other mode does
+not have: undefined there, as in n8n, so `typeof items` is safe, and using
+`items` anyway fails with a message saying what to use instead. The code may
+declare a name a root already has, so `const items = $input.all()` works.
 
 The rest of n8n's Code-node globals are there, reading the same data an
 [expression](/concepts/expressions/) reads:
