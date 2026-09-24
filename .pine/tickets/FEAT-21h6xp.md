@@ -1,11 +1,11 @@
 ---
 id: FEAT-21h6xp
 title: Code-node JavaScript workers run as their own user, in their own namespaces, so an engine escape stays contained
-status: testing
+status: done
 priority: medium
 parent: EPIC-tjnr1z
 created: "2026-09-23T07:02:59Z"
-updated: "2026-09-23T07:02:59Z"
+updated: "2026-09-24T14:25:09Z"
 ---
 
 # Description
@@ -202,3 +202,53 @@ FEAT-f40kg4 (per-tenant workers).
 - docs/src/content/docs/concepts/safety-boundaries.md, operate/deployment.md
 
 # Attachments
+
+## Work Evidence
+
+Closed by `pine close --evidence` on 2026-09-24.
+
+- Base: `1fef8ed3` (last commit at or before ticket created 2026-09-23)
+- Commits (12):
+  - `4f2d4376` — merge: FEAT-21h6xp Code-node JavaScript workers are confined on Linux: their own user, namespaces and landlock
+  - `442794f9` — FEAT-21h6xp: deployment names a worker's reach over the server's limits on any kernel, and the ticket records the second review's fixes
+  - `b1813cc4` — FEAT-21h6xp: a time zone database landlock could not allow is logged as missing, and the probe reads the landlock ABI from the kernel
+  - `348eca4f` — FEAT-21h6xp: a profile settles only once its worker says it is ready, and asking again for a stronger one never costs a run
+  - `31ee3ac0` — FEAT-21h6xp: the probe does not count a container's first process group, which a worker cannot name, as the server's
+  - `5560544b` — FEAT-21h6xp: the docs say which kernels scope a worker's signals and what closes the gap, and the ticket records the review fixes
+  - `5deaf667` — FEAT-21h6xp: a time zone database that cannot be allowed leaves the files closed, a run cancelled while its worker starts ends at once, and the probe asserts what each landlock ABI covers
+  - `ae1ea141` — FEAT-21h6xp: a worker user past 32 bits or the server's own is refused, and one the server cannot start workers as stops the boot
+  - `198c973b` — FEAT-21h6xp: a stronger start is given up only once a weaker one starts, and is asked for again every ten minutes
+  - `a39831a1` — FEAT-21h6xp: the safety boundaries say what confines a worker and what does not, and the ticket moves to testing with its decisions and follow-ups
+  - `b83ce902` — FEAT-21h6xp: code.javascript_worker_uid and code.javascript_worker_gid run every JavaScript worker as a user of its own
+  - `808bff71` — FEAT-21h6xp: on Linux a JavaScript worker starts in user, PID, network and IPC namespaces of its own and locks itself out of every file, TCP connection and outside signal before its first job
+- Files changed (the ticket's own commits, 1c516014ea5568902c031a8708cc67c4daa422fb..4f2d43765214fbd5a1564207d3edc5540054a3e8):
+
+```
+ .pine/tickets/BUG-a9d2hb.md                              |  33 +++
+ .pine/tickets/FEAT-0ynje5.md                             |  34 +++
+ .pine/tickets/FEAT-21h6xp.md                             | 171 +++++++++++-
+ .pine/tickets/FEAT-f40kg4.md                             |  37 +++
+ cmd/kilasflow/javascript_test.go                         |  29 ++
+ cmd/kilasflow/main.go                                    |  27 +-
+ config.example.yaml                                      |  18 ++
+ docs/src/content/docs/concepts/safety-boundaries.md      |  67 ++++-
+ docs/src/content/docs/operate/configuration-reference.md |  30 +++
+ docs/src/content/docs/operate/deployment.md              |  14 +
+ go.mod                                                   |   2 +-
+ internal/config/config.go                                |  54 ++++
+ internal/config/config_test.go                           |  31 +++
+ internal/jsworker/confine.go                             | 192 ++++++++++++++
+ internal/jsworker/confine_linux.go                       | 234 ++++++++++++++++
+ internal/jsworker/confine_linux_test.go                  | 501 +++++++++++++++++++++++++++++++++++
+ internal/jsworker/confine_test.go                        | 234 ++++++++++++++++
+ internal/jsworker/doc.go                                 |  25 +-
+ internal/jsworker/helpers_test.go                        |  13 +-
+ internal/jsworker/jsworker_test.go                       |  90 ++++++-
+ internal/jsworker/limits_linux.go                        |  12 +-
+ internal/jsworker/limits_other.go                        |  22 +-
+ internal/jsworker/pool.go                                | 175 +++++++++++-
+ internal/jsworker/probe_other_test.go                    |   6 +
+ internal/jsworker/protocol.go                            |  12 +-
+ internal/jsworker/worker.go                              |  19 +-
+ 26 files changed, 2018 insertions(+), 64 deletions(-)
+```

@@ -3,7 +3,6 @@ id: FEAT-f40kg4
 title: Code-node JavaScript workers kept per tenant, so a worker never runs two tenants' jobs
 status: todo
 priority: low
-parent: EPIC-tjnr1z
 created: "2026-09-24T13:51:58Z"
 updated: "2026-09-24T13:51:58Z"
 ---
@@ -31,6 +30,8 @@ ticket's scope.
       recorded.
 
 # Notes
+
+Not a child of EPIC-tjnr1z (2026-09-24): optional hardening beyond the epic's acceptance criteria, which FEAT-21h6xp met with namespaces and landlock. Tracked on its own.
 
 # Related Files
 - internal/jsworker/pool.go
