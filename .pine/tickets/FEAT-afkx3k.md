@@ -1,7 +1,7 @@
 ---
 id: FEAT-afkx3k
 title: 'JS Code runtime P7: Code-node compatibility corpus scoreboard and no-Node e2e'
-status: testing
+status: done
 priority: high
 labels:
     - code-node
@@ -11,7 +11,7 @@ deps:
 parent: EPIC-tjnr1z
 phase: p7
 created: "2026-09-23T01:33:22Z"
-updated: "2026-09-23T01:33:22Z"
+updated: "2026-09-24T14:36:11Z"
 ---
 
 # Description
@@ -75,3 +75,44 @@ Done; ready for review.
 - `e2e/fixtures/epic-code.ts`, `e2e/fixtures/epic-proofs.ts`, `e2e/tests/js-code.spec.ts`
 
 # Attachments
+
+## Work Evidence
+
+Closed by `pine close --evidence` on 2026-09-24.
+
+- Base: `018af94f` (last commit at or before ticket created 2026-09-23)
+- Commits (6):
+  - `b0f58868` — merge: FEAT-afkx3k the Code-node compatibility corpus, make js-diff, and the no-Node e2e
+  - `0e380645` — FEAT-afkx3k: a template drifted upstream warns in CI and fails only the weekly strict check, the stand-in reads lists as lists, and the no-Node sampler blames only the server's own or orphaned processes
+  - `922dd859` — FEAT-afkx3k: the ticket moves to testing with the corpus numbers, the js-diff summary and the decisions
+  - `1cae9230` — FEAT-afkx3k: an imported workflow's Code nodes run end to end with no Node.js process sampled at any point, in js-code and in epic proofs 2 and 4
+  - `8f8aee76` — FEAT-afkx3k: the corpus baseline is recorded and held in CI, and make js-diff diffs jsrun against Node with a KilasFlow-authored harness
+  - `517ae56f` — FEAT-afkx3k: the Code-node corpus is fetched from the top templates, pinned by digest and scored against the runtime
+- Files changed (the ticket's own commits, 08ef90d62b12c973722a807b1128ea8ba669056e..b0f588689289ce58f7ef99b3b71719b5403b206e):
+
+```
+ .github/workflows/ci.yml                           |   25 +
+ .github/workflows/code-corpus.yml                  |   54 +
+ .pine/memory/code-node.md                          |    2 +
+ .pine/tickets/BUG-3mem9s.md                        |   39 +
+ .pine/tickets/BUG-djp647.md                        |   40 +
+ .pine/tickets/BUG-jwhj6y.md                        |   34 +
+ .pine/tickets/BUG-kvpx6x.md                        |   38 +
+ .pine/tickets/BUG-pdsydm.md                        |   37 +
+ .pine/tickets/FEAT-afkx3k.md                       |   50 +-
+ Makefile                                           |   24 +
+ e2e/fixtures/epic-code.ts                          |  271 ++++
+ e2e/fixtures/epic-proofs.ts                        |   23 +
+ e2e/tests/js-code.spec.ts                          |   76 +-
+ internal/jsrun/corpus/BASELINE.md                  |  413 +++++
+ internal/jsrun/corpus/MANIFEST.json                |  769 +++++++++
+ internal/jsrun/corpus/baseline.json                | 3485 ++++++++++++++++++++++++++++++++++++++++
+ internal/jsrun/corpus/corpus_test.go               |  388 +++++
+ internal/jsrun/corpus/doc.go                       |   32 +
+ internal/jsrun/corpus/jsdiff_test.go               |  308 ++++
+ internal/jsrun/corpus/scoreboard_test.go           |  704 ++++++++
+ internal/jsrun/corpus/testdata/control/orders.json |  141 ++
+ scripts/code-corpus-sync.sh                        |  312 ++++
+ scripts/js-diff/harness.mjs                        |  298 ++++
+ 23 files changed, 7520 insertions(+), 43 deletions(-)
+```
