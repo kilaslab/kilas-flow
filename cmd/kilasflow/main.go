@@ -266,7 +266,10 @@ func run(args []string) error {
 	codeArtifacts, moduleCache := buildCodeCaches(cfg.Code, log)
 	// Workers are killed when run() returns, after the executions using them
 	// have drained.
-	javaScript, closeJavaScript := javaScriptRuntime(cfg.Code, log)
+	javaScript, closeJavaScript, err := javaScriptRuntime(cfg.Code, log)
+	if err != nil {
+		return err
+	}
 	defer closeJavaScript()
 	// One tenant's chat volume is another tenant's memory pressure, so each
 	// tenant keeps a bounded number of conversations and the least-recently-
@@ -1330,11 +1333,15 @@ func nodeAvailability(compiler runcode.Compiler) func() map[string]string {
 
 // javaScriptRuntime hands the JavaScript Code node its runtime, built from
 // the code.javascript_* keys: a pool of worker processes, so a script that
-// runs away inside one built-in call costs a worker and never the server. It
-// turns the node off when the operator did. close stops the workers.
-func javaScriptRuntime(cfg config.Code, log *slog.Logger) (option nodes.ExecutorOption, close func()) {
+// runs away inside one built-in call costs a worker and never the server,
+// each confined on Linux as far as the kernel allows, or run as the
+// configured worker user. It turns the node off when the operator did.
+// close stops the workers. A configured worker user the server cannot start
+// a worker as stops the boot, naming the keys, rather than failing every
+// JavaScript run after it.
+func javaScriptRuntime(cfg config.Code, log *slog.Logger) (option nodes.ExecutorOption, close func(), err error) {
 	if !cfg.JavaScriptEnabled {
-		return nodes.WithoutJavaScript(nodes.JavaScriptDisabled), func() {}
+		return nodes.WithoutJavaScript(nodes.JavaScriptDisabled), func() {}, nil
 	}
 	pool := jsworker.New(jsworker.Options{
 		Limits: jsrun.Limits{
@@ -1347,8 +1354,16 @@ func javaScriptRuntime(cfg config.Code, log *slog.Logger) (option nodes.Executor
 		MaxConcurrent: cfg.JavaScriptMaxConcurrent,
 		HeapCeiling:   javaScriptHeapCeiling(cfg.JavaScriptHeapCeilingMB),
 		Logger:        log.With("component", "javascript-workers"),
+		UID:           cfg.JavaScriptWorkerUID,
+		GID:           cfg.JavaScriptWorkerGID,
 	})
-	return nodes.WithJSRunner(pool), pool.Close
+	if cfg.JavaScriptWorkerUID > 0 {
+		if err := pool.Start(); err != nil {
+			pool.Close()
+			return nil, nil, fmt.Errorf("code.javascript_worker_uid %d, code.javascript_worker_gid %d: %w", cfg.JavaScriptWorkerUID, cfg.JavaScriptWorkerGID, err)
+		}
+	}
+	return nodes.WithJSRunner(pool), pool.Close, nil
 }
 
 // javaScriptHeapCeiling is the live heap at which one worker's script is

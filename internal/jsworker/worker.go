@@ -35,10 +35,12 @@ const (
 // job at a time from in and writes each result to out, until in closes. It
 // returns the process's exit code: 0 when the server closed the pipe, 2 when
 // the stream broke.
-func Serve(in io.Reader, out io.Writer) int { return serve(in, out, os.Stderr) }
+func Serve(in io.Reader, out io.Writer) int { return serve(in, out, os.Stderr, limitSelf) }
 
-// serve is Serve reporting a broken stream to stderr, which the pool logs.
-func serve(in io.Reader, out io.Writer, stderr io.Writer) int {
+// serve is Serve reporting a broken stream to stderr, which the pool logs,
+// and confining the process it runs in with confine, which a test running
+// it in its own process does not.
+func serve(in io.Reader, out io.Writer, stderr io.Writer, confine func(addressSpace uint64) confinement) int {
 	// A stop signal is the server's to act on. systemd, a terminal's Ctrl-C
 	// and a process group send it to the workers too, and a worker that died
 	// of it would fail the run the server is still draining. A worker ends
@@ -50,7 +52,9 @@ func serve(in io.Reader, out io.Writer, stderr io.Writer) int {
 	if err != nil || hello.Type != typeHello || hello.Limits == nil {
 		return broken(stderr, "no hello from the server", err)
 	}
-	limitSelf(hello.AddressSpace)
+	if err := ready(writer, hello, confine); err != nil {
+		return broken(stderr, "saying it was ready", err)
+	}
 	runner := jsrun.NewRunner(jsrun.Options{Limits: *hello.Limits, MaxConcurrent: 1, HeapCeiling: hello.HeapCeiling})
 	blobLimit := max(int64(maxServerBlob), 2*runner.Limits().MaxInputBytes)
 	server := newLink(writer)
@@ -82,6 +86,13 @@ func serve(in io.Reader, out io.Writer, stderr io.Writer) int {
 			return broken(stderr, "writing a result", err)
 		}
 	}
+}
+
+// ready confines the worker as far as its platform allows, before it reads
+// any job, and tells the server what it took from itself.
+func ready(writer *bufio.Writer, hello message, confine func(addressSpace uint64) confinement) error {
+	confined := confine(hello.AddressSpace)
+	return writeFrame(writer, message{Type: typeReady, Confinement: &confined}, "")
 }
 
 // broken reports why the stream failed on stderr, which the pool logs.

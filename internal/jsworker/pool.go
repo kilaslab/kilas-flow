@@ -45,8 +45,17 @@ type Options struct {
 	// MaxRuns is how many jobs one worker runs before it is replaced. Zero
 	// means DefaultMaxRuns.
 	MaxRuns int
-	// Logger records workers that died or could not start. Nil discards.
+	// Logger records workers that died or could not start, and once how the
+	// workers are confined. Nil discards.
 	Logger *slog.Logger
+	// UID and GID, when both are set, are the user and group every worker
+	// runs as, on Linux: a user of its own, apart from the server's, with
+	// no supplementary groups. Starting a worker as one needs CAP_SETUID and
+	// CAP_SETGID, and a worker that cannot be started as it fails its run
+	// rather than running as the server. Unset, a worker runs in a user
+	// namespace of its own where the kernel allows one, and as the server's
+	// user where it does not.
+	UID, GID int
 }
 
 const (
@@ -76,6 +85,28 @@ type Pool struct {
 	mu     sync.Mutex
 	idle   []*worker
 	closed bool
+
+	// profiles are the ways to start a worker, strongest first; profileAt
+	// is the one the kernel has not refused, refusal why the one before it
+	// was, and refusedAt when, so that it is asked for again every
+	// reprobeAfter. confinementLogged is what was last logged about them,
+	// and workerConfinement what the last worker to start said of itself.
+	// uid and gid are the configured worker user, if any, and userErr why
+	// it cannot be used, which fails every start.
+	uid, gid int
+	userErr  error
+
+	confineMu    sync.Mutex
+	profiles     []spawnProfile
+	profileAt    int
+	refusal      string
+	refusedAt    time.Time
+	reprobeAfter time.Duration
+	// readyTimeout bounds how long a new worker may take to say it is
+	// ready; readyTimeout, the constant, unless a test shortens it.
+	readyTimeout      time.Duration
+	confinementLogged string
+	workerConfinement confinement
 }
 
 var _ jsrun.Engine = (*Pool)(nil)
@@ -89,6 +120,20 @@ func New(options Options) *Pool {
 		idleTimeout: options.IdleTimeout,
 		maxRuns:     options.MaxRuns,
 		logger:      options.Logger,
+		uid:         options.UID,
+		gid:         options.GID,
+		userErr:     checkWorkerUser(options.UID, options.GID),
+		// A kernel that refused a namespace is asked again this often:
+		// rarely enough that a refusal costs almost nothing, often enough
+		// that a passing one does not last until a restart.
+		reprobeAfter: 10 * time.Minute,
+		readyTimeout: readyTimeout,
+	}
+	if pool.userErr == nil {
+		pool.profiles = spawnProfiles(options.UID, options.GID)
+	} else {
+		// Never used: every start fails with userErr.
+		pool.profiles = spawnProfiles(0, 0)
 	}
 	if pool.heapCeiling == 0 {
 		pool.heapCeiling = jsrun.DefaultHeapCeiling
@@ -121,6 +166,19 @@ func New(options Options) *Pool {
 	return pool
 }
 
+// Start starts one worker now, rather than for the first job, and keeps it
+// for that job. It says why a worker could not start: the server calls it
+// at boot when a worker user is configured, so a user it cannot start
+// workers as stops the boot instead of failing every JavaScript run.
+func (pool *Pool) Start() error {
+	w, err := pool.take(context.Background())
+	if err != nil {
+		return err
+	}
+	pool.put(w)
+	return nil
+}
+
 // Limits reports the pool's ceiling, after defaults.
 func (pool *Pool) Limits() jsrun.Limits { return pool.limits }
 
@@ -141,7 +199,10 @@ func (pool *Pool) Run(ctx context.Context, task jsrun.Task) (jsrun.Result, error
 		return jsrun.Result{}, ctx.Err()
 	}
 	defer func() { <-pool.slots }()
-	w, err := pool.take()
+	w, err := pool.take(ctx)
+	if err != nil && ctx.Err() != nil {
+		return jsrun.Result{}, context.Cause(ctx)
+	}
 	if err != nil {
 		pool.logger.Error("a JavaScript worker could not start", "error", err)
 		return jsrun.Result{}, jsrun.EngineFaultError("its worker process could not start: " + err.Error())
@@ -165,7 +226,7 @@ func (pool *Pool) Close() {
 	}
 }
 
-func (pool *Pool) take() (*worker, error) {
+func (pool *Pool) take(ctx context.Context) (*worker, error) {
 	pool.mu.Lock()
 	for len(pool.idle) > 0 {
 		w := pool.idle[len(pool.idle)-1]
@@ -183,7 +244,7 @@ func (pool *Pool) take() (*worker, error) {
 	if closed {
 		return nil, errors.New("the JavaScript worker pool is closed")
 	}
-	return pool.start()
+	return pool.start(ctx)
 }
 
 func (pool *Pool) put(w *worker) {
@@ -233,7 +294,65 @@ type worker struct {
 	idleTimer *time.Timer
 }
 
-func (pool *Pool) start() (*worker, error) {
+func (pool *Pool) start(ctx context.Context) (*worker, error) {
+	if pool.userErr != nil {
+		return nil, pool.userErr
+	}
+	_, settled := pool.profile()
+	profile, index := pool.nextProfile()
+	var refused error
+	for {
+		w, ready, err := pool.launch(ctx, profile)
+		if err == nil {
+			// Only a worker that said it is ready settles its profile.
+			pool.settle(index, refused)
+			pool.logConfinement(profile, ready.Confinement)
+			return w, nil
+		}
+		if ctx.Err() != nil {
+			return nil, err
+		}
+		if index < settled {
+			// Asking again for a stronger profile never costs a run:
+			// whatever it met, this run starts with the profile that works,
+			// which stays the pool's.
+			profile, index, refused = pool.profiles[settled], settled, nil
+			continue
+		}
+		next, nextIndex, ok := pool.fallback(index, err)
+		if !ok && pool.uid > 0 {
+			return nil, fmt.Errorf("a worker could not start as the worker user %d, group %d, which needs CAP_SETUID and CAP_SETGID in the server and the binary executable by that user: %w", pool.uid, pool.gid, err)
+		}
+		if !ok {
+			return nil, err
+		}
+		profile, index, refused = next, nextIndex, err
+	}
+}
+
+// launch starts one worker with profile, says hello and waits for it to say
+// it is ready. A start the kernel refused comes back as the error the
+// process start gave, so that fallback can tell it apart.
+func (pool *Pool) launch(ctx context.Context, profile spawnProfile) (*worker, message, error) {
+	w, err := pool.spawn(profile)
+	if err != nil {
+		return nil, message{}, err
+	}
+	limits := pool.limits
+	hello := message{Type: typeHello, Limits: &limits, HeapCeiling: pool.heapCeiling, AddressSpace: addressSpace(pool.heapCeiling)}
+	if err := writeFrame(w.in, hello, ""); err != nil {
+		w.stop()
+		return nil, message{}, fmt.Errorf("saying hello: %v", err)
+	}
+	ready, err := w.awaitReady(ctx, pool.readyTimeout)
+	if err != nil {
+		return nil, message{}, err
+	}
+	return w, ready, nil
+}
+
+// spawn starts one worker process with profile's attributes.
+func (pool *Pool) spawn(profile spawnProfile) (*worker, error) {
 	cmd := pool.command()
 	if cmd.Env == nil {
 		cmd.Env = workerEnvironment(pool.heapCeiling)
@@ -255,6 +374,7 @@ func (pool *Pool) start() (*worker, error) {
 	stderr := &stderrLog{limit: 4 << 10}
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdinRead, stdoutWrite, stderr
 	prepareCommand(cmd)
+	profile.apply(cmd)
 	err = startCommand(cmd)
 	// The child holds its own ends now, or failed to start.
 	stdinRead.Close()
@@ -274,13 +394,46 @@ func (pool *Pool) start() (*worker, error) {
 		w.state = cmd.ProcessState
 		close(w.exited)
 	}()
-	limits := pool.limits
-	hello := message{Type: typeHello, Limits: &limits, HeapCeiling: pool.heapCeiling, AddressSpace: addressSpace(pool.heapCeiling)}
-	if err := writeFrame(w.in, hello, ""); err != nil {
-		w.stop()
-		return nil, err
-	}
 	return w, nil
+}
+
+// readyTimeout bounds how long a new worker may take to confine itself and
+// say so. A worker is ready in milliseconds; this is for one that never is.
+const readyTimeout = 10 * time.Second
+
+// awaitReady reads the frame a worker writes once it has confined itself,
+// before it reads its first job. A worker that dies or hangs first, or
+// writes anything else, is stopped, and why is the error; so is one whose
+// run is cancelled meanwhile.
+func (w *worker) awaitReady(ctx context.Context, timeout time.Duration) (message, error) {
+	var late atomic.Bool
+	timer := time.AfterFunc(timeout, func() {
+		late.Store(true)
+		_ = w.cmd.Process.Kill()
+	})
+	defer timer.Stop()
+	defer context.AfterFunc(ctx, func() { _ = w.cmd.Process.Kill() })()
+	m, _, err := readFrame(w.out, maxConfinementReport, 0)
+	if err == nil && m.Type != typeReady {
+		err = protocolViolation("a %q frame before it was ready", m.Type)
+	}
+	if err == nil {
+		return m, nil
+	}
+	w.stop()
+	<-w.exited
+	var violation *protocolError
+	switch {
+	case ctx.Err() != nil:
+		return message{}, context.Cause(ctx)
+	case late.Load():
+		return message{}, fmt.Errorf("it was not ready within %v", timeout)
+	case errors.As(err, &violation):
+		return message{}, err
+	case w.stderr.String() != "":
+		return message{}, fmt.Errorf("it ended before it was ready (%s): %s", w.state, w.stderr)
+	}
+	return message{}, fmt.Errorf("it ended before it was ready (%s)", w.state)
 }
 
 func (w *worker) alive() bool {

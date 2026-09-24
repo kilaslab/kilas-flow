@@ -1229,3 +1229,33 @@ code makes: this.helpers.httpRequest, getBinaryDataBuffer and
 prepareBinaryData. It is a budget per run in "Run once for all items"
 mode and per item in "Run once for each item" mode. Waiting for the
 server is not charged to the time limit, so this is what bounds it.
+
+### code.javascript_worker_uid
+
+- Type: `integer`
+- Default: `0`
+- Environment: `KILASFLOW_CODE_JAVASCRIPT_WORKER_UID`
+- Required: no
+
+JavaScriptWorkerUID is the user every JavaScript worker process runs
+as, on Linux, set together with javascript_worker_gid: a user of its
+own, with none of the server's groups, so the server's files are out
+of its reach by their permissions as well, as long as they are not
+world-readable. It must not be the server's own user. Starting a
+worker as another user needs CAP_SETUID and CAP_SETGID, which a server
+running as root has, and the kilasflow binary executable by that user;
+the server starts one worker at boot and refuses to boot when it
+cannot, rather than run a script as itself. Unset, each worker
+runs in user, PID, network and IPC namespaces of its own where the
+kernel allows them, and as the server's user where it does not; the
+server logs once which it got. Zero means unset.
+
+### code.javascript_worker_gid
+
+- Type: `integer`
+- Default: `0`
+- Environment: `KILASFLOW_CODE_JAVASCRIPT_WORKER_GID`
+- Required: no
+
+JavaScriptWorkerGID is the group every JavaScript worker process runs
+as, set together with javascript_worker_uid. Zero means unset.

@@ -208,6 +208,20 @@ server, each idling at a few tens of MiB and allowed a live heap up to
 worker tells the kernel to kill it first when memory runs out, so an undersized
 container loses a script rather than the server. See
 [safety boundaries](/concepts/safety-boundaries/#worker-processes).
+
+On Linux each worker is also confined — user, PID, network and IPC namespaces of
+its own, and landlock — as far as the kernel grants it, and the server logs once
+which layers it got. Docker's default seccomp profile refuses user namespaces, so
+in a plain `docker run` the workers get landlock but not the namespaces; a
+seccomp profile that allows `clone` with `CLONE_NEWUSER` gives them both. Without
+the namespaces, a worker runs as the server's user: code that escaped the engine
+could change the server's resource limits on any kernel, and signal it on kernels
+before Linux 6.12. Allow user namespaces, or, on a server running as root, run
+every worker as a user of its own with `code.javascript_worker_uid` and
+`code.javascript_worker_gid` (not the server's user, and able to execute the
+kilasflow binary; the server refuses to boot when it cannot start a worker as
+that user). See
+[what confines a worker](/concepts/safety-boundaries/#what-confines-a-worker).
 Note that the `Code` node needs a Go toolchain at run time to compile source it
 has not seen before, and the distroless image does not have one. The server
 reports the node as unavailable through the node catalogue rather than failing

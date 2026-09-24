@@ -2,12 +2,14 @@ package jsworker
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"reflect"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -40,6 +42,16 @@ func TestMain(m *testing.M) {
 			os.Exit(fakeWorker(func() { os.Exit(3) }))
 		case "stale", "unknownfile", "flood", "calls", "bigcall", "badhelper", "staticflood", "staticunused", "bigdone":
 			os.Exit(lyingWorker(os.Getenv(testModeVariable)))
+		case "probe", "probe-per-thread", "probe-no-zones":
+			os.Exit(probeWorker(os.Getenv(testModeVariable)))
+		case "silent":
+			// It reads the hello and never says it is ready.
+			_, _, _ = readFrame(bufio.NewReader(os.Stdin), maxServerHeader, maxServerBlob)
+			time.Sleep(time.Hour)
+			os.Exit(0)
+		case "sleep":
+			time.Sleep(time.Hour)
+			os.Exit(0)
 		default:
 			os.Exit(Serve(os.Stdin, os.Stdout))
 		}
@@ -51,7 +63,7 @@ func TestMain(m *testing.M) {
 // what the mode says instead of running it.
 func fakeWorker(then func()) int {
 	reader := bufio.NewReader(os.Stdin)
-	if _, _, err := readFrame(reader, maxServerHeader, maxServerBlob); err != nil {
+	if !greet(reader, bufio.NewWriter(os.Stdout)) {
 		return 2
 	}
 	if _, _, err := readFrame(reader, maxServerHeader, maxServerBlob); err != nil {
@@ -69,7 +81,7 @@ func fakeWorker(then func()) int {
 // or more questions about static data than there are kinds.
 func lyingWorker(mode string) int {
 	reader, writer := bufio.NewReader(os.Stdin), bufio.NewWriter(os.Stdout)
-	if _, _, err := readFrame(reader, maxServerHeader, maxServerBlob); err != nil {
+	if !greet(reader, writer) {
 		return 2
 	}
 	run, _, err := readFrame(reader, maxServerHeader, maxServerBlob)
@@ -119,10 +131,26 @@ func lyingWorker(mode string) int {
 	return 0
 }
 
+// greet reads the server's hello and answers that the worker is ready, as
+// a worker does, confined as far as the platform allows.
+func greet(reader *bufio.Reader, writer *bufio.Writer) bool {
+	hello, _, err := readFrame(reader, maxServerHeader, maxServerBlob)
+	return err == nil && ready(writer, hello, limitSelf) == nil
+}
+
 type testPool struct {
 	*Pool
-	mode   atomic.Value
-	starts atomic.Int32
+	mode atomic.Value
+	// built counts the commands the pool asked for, and cmds keeps them: a
+	// command the kernel refused to start with a profile is built, not
+	// started.
+	built  atomic.Int32
+	cmdsMu sync.Mutex
+	cmds   []*exec.Cmd
+	// env is more of a worker's environment, and binary the executable it
+	// runs when not this test binary; both are set before its first job.
+	env    []string
+	binary string
 }
 
 func newTestPool(t *testing.T, options Options) *testPool {
@@ -130,14 +158,31 @@ func newTestPool(t *testing.T, options Options) *testPool {
 	pool := &testPool{}
 	pool.mode.Store("")
 	options.Command = func() *exec.Cmd {
-		pool.starts.Add(1)
-		cmd := exec.Command(os.Args[0])
+		pool.built.Add(1)
+		cmd := exec.Command(cmp.Or(pool.binary, os.Args[0]))
+		pool.cmdsMu.Lock()
+		pool.cmds = append(pool.cmds, cmd)
+		pool.cmdsMu.Unlock()
 		cmd.Env = append(workerEnvironment(jsrun.DefaultHeapCeiling), testModeVariable+"="+pool.mode.Load().(string))
+		cmd.Env = append(cmd.Env, pool.env...)
 		return cmd
 	}
 	pool.Pool = New(options)
 	t.Cleanup(pool.Close)
 	return pool
+}
+
+// started counts the workers that started.
+func (pool *testPool) started() int {
+	pool.cmdsMu.Lock()
+	defer pool.cmdsMu.Unlock()
+	count := 0
+	for _, cmd := range pool.cmds {
+		if cmd.Process != nil {
+			count++
+		}
+	}
+	return count
 }
 
 func items(values ...string) []workflow.Item {
@@ -233,7 +278,7 @@ func TestAWorkerFailsExactlyAsTheRuntimeDoesInProcess(t *testing.T) {
 			t.Errorf("%q: a syntax error on one side only", task.Source)
 		}
 	}
-	if starts := pool.starts.Load(); starts > 3 {
+	if starts := pool.started(); starts > 3 {
 		t.Errorf("%d workers started for failures the runtime stops itself; they should be reused", starts)
 	}
 }
@@ -302,7 +347,7 @@ func TestTheServerTrustsAWorkerOnlyAsFarAsItsCodeCouldGo(t *testing.T) {
 	if err != nil || !result.ConsoleTruncated || len(result.Console) > 5 {
 		t.Errorf("flood: Run() = %d console lines (truncated %v), %v; want the server's own cap", len(result.Console), result.ConsoleTruncated, err)
 	}
-	if starts := pool.starts.Load(); starts != 3 {
+	if starts := pool.started(); starts != 3 {
 		t.Errorf("%d workers started, want none trusted again after lying", starts)
 	}
 }
@@ -325,7 +370,7 @@ func TestAWorkerIsReusedAcrossJobs(t *testing.T) {
 			t.Fatalf("Run() error = %v", err)
 		}
 	}
-	if starts := pool.starts.Load(); starts != 1 {
+	if starts := pool.started(); starts != 1 {
 		t.Fatalf("%d workers started for three jobs, want one", starts)
 	}
 }
@@ -347,7 +392,7 @@ func TestAWorkerStuckPastItsDeadlineIsKilledAndReplaced(t *testing.T) {
 	if _, err := pool.Run(context.Background(), jsrun.Task{Source: "return items", Items: items("a")}); err != nil {
 		t.Fatalf("the next job failed: %v", err)
 	}
-	if starts := pool.starts.Load(); starts != 2 {
+	if starts := pool.started(); starts != 2 {
 		t.Fatalf("%d workers started, want the killed one replaced", starts)
 	}
 }
@@ -370,6 +415,12 @@ func TestAWorkerRidesOutAStopSignalMeantForTheServer(t *testing.T) {
 		t.Fatalf("pgrep = %q, %v; want the one worker", children, err)
 	}
 	pid, _ := strconv.Atoi(strings.TrimSpace(string(children)))
+	// On Linux a worker has a session of its own, so a signal to the
+	// server's process group no longer reaches it at all; one sent to it
+	// directly, as here, must still be ridden out.
+	if group, err := syscall.Getpgid(pid); runtime.GOOS == "linux" && (err != nil || group == syscall.Getpgrp()) {
+		t.Errorf("the worker's process group = %d, %v; want one apart from the server's %d", group, err, syscall.Getpgrp())
+	}
 	for _, stop := range []syscall.Signal{syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP} {
 		if err := syscall.Kill(pid, stop); err != nil {
 			t.Fatalf("kill -%v error = %v", stop, err)
@@ -383,6 +434,23 @@ func TestAWorkerRidesOutAStopSignalMeantForTheServer(t *testing.T) {
 func TestCancellingTheExecutionKillsItsWorker(t *testing.T) {
 	pool := newTestPool(t, Options{})
 	pool.mode.Store("hang")
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(100*time.Millisecond, cancel)
+	start := time.Now()
+	_, err := pool.Run(ctx, jsrun.Task{Source: "return items"})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run() error = %v, want the cancellation", err)
+	}
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Fatalf("cancelling took %v", elapsed)
+	}
+}
+
+// A run cancelled while its worker is still starting ends with the
+// cancellation, not after the worker's whole allowance to become ready.
+func TestCancellingARunWhileItsWorkerStartsEndsIt(t *testing.T) {
+	pool := newTestPool(t, Options{})
+	pool.mode.Store("silent")
 	ctx, cancel := context.WithCancel(context.Background())
 	time.AfterFunc(100*time.Millisecond, cancel)
 	start := time.Now()
@@ -421,7 +489,7 @@ func TestTheConcurrencyCapBoundsTheWorkers(t *testing.T) {
 			t.Fatalf("Run() error = %v", err)
 		}
 	}
-	if starts := pool.starts.Load(); starts > 2 {
+	if starts := pool.started(); starts > 2 {
 		t.Fatalf("%d workers started under a cap of two", starts)
 	}
 }
