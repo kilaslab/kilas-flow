@@ -178,6 +178,23 @@ FEAT-f40kg4 (per-tenant workers).
    - The configured-user row says "not world-readable".
    - Commits were regrouped so every commit builds.
 
+## Review fixes (2026-09-24, round 2)
+
+1. **Settling.** A profile is settled only after its worker says it is
+   ready. `start` launches (spawn, hello, `awaitReady`) and settles on
+   success.
+2. **Re-probes.** A re-probe of a stronger profile never costs a run.
+   Whatever it meets (never ready, ENOENT, EAGAIN…), the run starts with the
+   settled profile, which stays the pool's, and the earlier refusal is kept.
+   Tested cross-platform with a profile that starts a worker that never says
+   it is ready, and one whose binary does not exist.
+3. **Time zone database.** A database landlock could not allow is reported
+   under `missing` ("time zone database: …"), so the log is a WARN.
+4. **deployment.md** names prlimit on any kernel beside signals before
+   Linux 6.12.
+5. **Probe ABI.** The probe test reads the landlock ABI from the kernel
+   itself and checks the worker's report against it.
+
 # Related Files
 - internal/jsworker/confine.go, confine_linux.go, limits_linux.go, limits_other.go, pool.go, protocol.go, worker.go, doc.go
 - internal/jsworker/confine_test.go, confine_linux_test.go
