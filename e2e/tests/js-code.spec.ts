@@ -485,16 +485,18 @@ test('a throwing item goes to the error output alone, naming its line and item, 
 	expect(items(regular, 'after')).toHaveLength(3);
 	expect(items(regular, 'after')[1].why).toContain('[line 2, for item 1]');
 
-	// The execution page shows the node's console beside its data.
+	// The execution page shows the node's console on its own Console tab
+	// (FEAT-x9gq0s), offered only for a Code node.
 	await page.goto(`${server.baseURL}/executions/${record.id}`);
 	const canvas = page.locator('[data-testid="execution-canvas"]');
 	await expect(canvas).toBeVisible();
 	await canvas.locator('.svelte-flow__node').filter({ hasText: 'Parse' }).first().click();
 	const inspector = page.getByRole('complementary', { name: 'Node data' });
-	await expect(inspector.getByRole('heading', { name: 'Console' })).toBeVisible();
-	await expect(inspector).toContainText('parsing item 0 {"n":1}');
-	await expect(inspector).toContainText('parsing item 1 {broken');
-	await expect(inspector).toContainText('parsing item 2 {"n":3}');
+	await inspector.getByRole('tab', { name: 'Console' }).click();
+	const consoleTab = inspector.getByRole('tabpanel', { name: 'Console' });
+	await expect(consoleTab).toContainText('parsing item 0 {"n":1}');
+	await expect(consoleTab).toContainText('parsing item 1 {broken');
+	await expect(consoleTab).toContainText('parsing item 2 {"n":3}');
 });
 
 test('a script past its time limit fails its run, and the next run is served', async ({ server }) => {
