@@ -167,7 +167,7 @@ func New(options Options) *Pool {
 // at boot when a worker user is configured, so a user it cannot start
 // workers as stops the boot instead of failing every JavaScript run.
 func (pool *Pool) Start() error {
-	w, err := pool.take()
+	w, err := pool.take(context.Background())
 	if err != nil {
 		return err
 	}
@@ -195,7 +195,10 @@ func (pool *Pool) Run(ctx context.Context, task jsrun.Task) (jsrun.Result, error
 		return jsrun.Result{}, ctx.Err()
 	}
 	defer func() { <-pool.slots }()
-	w, err := pool.take()
+	w, err := pool.take(ctx)
+	if err != nil && ctx.Err() != nil {
+		return jsrun.Result{}, context.Cause(ctx)
+	}
 	if err != nil {
 		pool.logger.Error("a JavaScript worker could not start", "error", err)
 		return jsrun.Result{}, jsrun.EngineFaultError("its worker process could not start: " + err.Error())
@@ -219,7 +222,7 @@ func (pool *Pool) Close() {
 	}
 }
 
-func (pool *Pool) take() (*worker, error) {
+func (pool *Pool) take(ctx context.Context) (*worker, error) {
 	pool.mu.Lock()
 	for len(pool.idle) > 0 {
 		w := pool.idle[len(pool.idle)-1]
@@ -237,7 +240,7 @@ func (pool *Pool) take() (*worker, error) {
 	if closed {
 		return nil, errors.New("the JavaScript worker pool is closed")
 	}
-	return pool.start()
+	return pool.start(ctx)
 }
 
 func (pool *Pool) put(w *worker) {
@@ -287,7 +290,7 @@ type worker struct {
 	idleTimer *time.Timer
 }
 
-func (pool *Pool) start() (*worker, error) {
+func (pool *Pool) start(ctx context.Context) (*worker, error) {
 	if pool.userErr != nil {
 		return nil, pool.userErr
 	}
@@ -313,7 +316,7 @@ func (pool *Pool) start() (*worker, error) {
 			w.stop()
 			return nil, err
 		}
-		ready, err := w.awaitReady(readyTimeout)
+		ready, err := w.awaitReady(ctx, readyTimeout)
 		if err != nil {
 			return nil, err
 		}
@@ -374,14 +377,16 @@ const readyTimeout = 10 * time.Second
 
 // awaitReady reads the frame a worker writes once it has confined itself,
 // before it reads its first job. A worker that dies or hangs first, or
-// writes anything else, is stopped, and why is the error.
-func (w *worker) awaitReady(timeout time.Duration) (message, error) {
+// writes anything else, is stopped, and why is the error; so is one whose
+// run is cancelled meanwhile.
+func (w *worker) awaitReady(ctx context.Context, timeout time.Duration) (message, error) {
 	var late atomic.Bool
 	timer := time.AfterFunc(timeout, func() {
 		late.Store(true)
 		_ = w.cmd.Process.Kill()
 	})
 	defer timer.Stop()
+	defer context.AfterFunc(ctx, func() { _ = w.cmd.Process.Kill() })()
 	m, _, err := readFrame(w.out, maxConfinementReport, 0)
 	if err == nil && m.Type != typeReady {
 		err = protocolViolation("a %q frame before it was ready", m.Type)
@@ -393,6 +398,8 @@ func (w *worker) awaitReady(timeout time.Duration) (message, error) {
 	<-w.exited
 	var violation *protocolError
 	switch {
+	case ctx.Err() != nil:
+		return message{}, context.Cause(ctx)
 	case late.Load():
 		return message{}, fmt.Errorf("it was not ready within %v", timeout)
 	case errors.As(err, &violation):

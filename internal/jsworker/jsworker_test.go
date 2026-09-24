@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"reflect"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -41,8 +42,13 @@ func TestMain(m *testing.M) {
 			os.Exit(fakeWorker(func() { os.Exit(3) }))
 		case "stale", "unknownfile", "flood", "calls", "bigcall", "badhelper", "staticflood", "staticunused", "bigdone":
 			os.Exit(lyingWorker(os.Getenv(testModeVariable)))
-		case "probe", "probe-per-thread":
+		case "probe", "probe-per-thread", "probe-no-zones":
 			os.Exit(probeWorker(os.Getenv(testModeVariable)))
+		case "silent":
+			// It reads the hello and never says it is ready.
+			_, _, _ = readFrame(bufio.NewReader(os.Stdin), maxServerHeader, maxServerBlob)
+			time.Sleep(time.Hour)
+			os.Exit(0)
 		case "sleep":
 			time.Sleep(time.Hour)
 			os.Exit(0)
@@ -409,6 +415,12 @@ func TestAWorkerRidesOutAStopSignalMeantForTheServer(t *testing.T) {
 		t.Fatalf("pgrep = %q, %v; want the one worker", children, err)
 	}
 	pid, _ := strconv.Atoi(strings.TrimSpace(string(children)))
+	// On Linux a worker has a session of its own, so a signal to the
+	// server's process group no longer reaches it at all; one sent to it
+	// directly, as here, must still be ridden out.
+	if group, err := syscall.Getpgid(pid); runtime.GOOS == "linux" && (err != nil || group == syscall.Getpgrp()) {
+		t.Errorf("the worker's process group = %d, %v; want one apart from the server's %d", group, err, syscall.Getpgrp())
+	}
 	for _, stop := range []syscall.Signal{syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP} {
 		if err := syscall.Kill(pid, stop); err != nil {
 			t.Fatalf("kill -%v error = %v", stop, err)
@@ -422,6 +434,23 @@ func TestAWorkerRidesOutAStopSignalMeantForTheServer(t *testing.T) {
 func TestCancellingTheExecutionKillsItsWorker(t *testing.T) {
 	pool := newTestPool(t, Options{})
 	pool.mode.Store("hang")
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(100*time.Millisecond, cancel)
+	start := time.Now()
+	_, err := pool.Run(ctx, jsrun.Task{Source: "return items"})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run() error = %v, want the cancellation", err)
+	}
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Fatalf("cancelling took %v", elapsed)
+	}
+}
+
+// A run cancelled while its worker is still starting ends with the
+// cancellation, not after the worker's whole allowance to become ready.
+func TestCancellingARunWhileItsWorkerStartsEndsIt(t *testing.T) {
+	pool := newTestPool(t, Options{})
+	pool.mode.Store("silent")
 	ctx, cancel := context.WithCancel(context.Background())
 	time.AfterFunc(100*time.Millisecond, cancel)
 	start := time.Now()

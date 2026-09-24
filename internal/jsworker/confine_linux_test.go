@@ -28,11 +28,12 @@ import (
 
 // What a probe is told to reach for, through its environment.
 const (
-	probeFileVariable    = "JSWORKER_PROBE_FILE"
-	probeAddressVariable = "JSWORKER_PROBE_ADDRESS"
-	probeServerVariable  = "JSWORKER_PROBE_SERVER"
-	probeSleeperVariable = "JSWORKER_PROBE_SLEEPER"
-	probeGroupVariable   = "JSWORKER_PROBE_GROUP"
+	probeFileVariable     = "JSWORKER_PROBE_FILE"
+	probeAddressVariable  = "JSWORKER_PROBE_ADDRESS"
+	probeServerVariable   = "JSWORKER_PROBE_SERVER"
+	probeSleeperVariable  = "JSWORKER_PROBE_SLEEPER"
+	probeGroupVariable    = "JSWORKER_PROBE_GROUP"
+	probeAbstractVariable = "JSWORKER_PROBE_ABSTRACT"
 )
 
 // probeWorker starts as a worker does, confined as far as the platform
@@ -40,10 +41,14 @@ const (
 // engine would: the server's files, the network, and other processes. Its
 // one result item says how each attempt ended. In probe-per-thread mode it
 // confines itself thread by thread, as it must on a kernel older than
-// landlock's one-call form.
+// landlock's one-call form; in probe-no-zones the time zone database cannot
+// be allowed, and the files must stay closed all the same.
 func probeWorker(mode string) int {
-	if mode == "probe-per-thread" {
+	switch mode {
+	case "probe-per-thread":
 		landlockTSYNC = false
+	case "probe-no-zones":
+		grantReading = func(int, string) error { return errors.New("refused for the test") }
 	}
 	reader, writer := bufio.NewReader(os.Stdin), bufio.NewWriter(os.Stdout)
 	if !greet(reader, writer) {
@@ -82,13 +87,6 @@ func probe() map[string]string {
 		}
 		return "ok"
 	}
-	socket := func(domain int) string {
-		fd, err := syscall.Socket(domain, syscall.SOCK_STREAM, 0)
-		if err == nil {
-			syscall.Close(fd)
-		}
-		return outcome(err)
-	}
 	results := map[string]string{
 		"uid": strconv.Itoa(os.Getuid()),
 		"gid": strconv.Itoa(os.Getgid()),
@@ -102,13 +100,17 @@ func probe() map[string]string {
 	results["list"] = outcome(err)
 	results["create"] = outcome(os.WriteFile(filepath.Join(filepath.Dir(file), "planted"), []byte("x"), 0o600))
 	results["remove"] = outcome(os.Remove(file))
-	results["socket"] = socket(syscall.AF_INET)
-	results["unixSocket"] = socket(syscall.AF_UNIX)
-	connection, err := net.Dial("tcp", os.Getenv(probeAddressVariable))
-	if err == nil {
-		connection.Close()
+	// Opening a socket reaches nothing; connecting does. The server listens
+	// on TCP and on an abstract Unix socket, which no file guards.
+	dial := func(network, address string) string {
+		connection, err := net.Dial(network, address)
+		if err == nil {
+			connection.Close()
+		}
+		return outcome(err)
 	}
-	results["dial"] = outcome(err)
+	results["dial"] = dial("tcp", os.Getenv(probeAddressVariable))
+	results["dialAbstract"] = dial("unix", os.Getenv(probeAbstractVariable))
 	results["ptrace"] = ptraceOutcome(sleeper, outcome)
 	// In a PID namespace of its own the only numbers that exist are the
 	// worker's and its threads', and a container's small numbers can be one
@@ -182,6 +184,7 @@ func ptraceOutcome(pid int, outcome func(error) string) string {
 // that allows user namespaces on a kernel with landlock.
 func TestAConfinedWorkerCannotReachTheServersFilesNetworkOrProcesses(t *testing.T) {
 	t.Run("one call", func(t *testing.T) { testConfinement(t, "probe") })
+	t.Run("no time zone database", func(t *testing.T) { testConfinement(t, "probe-no-zones") })
 	t.Run("thread by thread", func(t *testing.T) {
 		if raceBuild {
 			t.Skip("a build with cgo cannot restrict its threads one by one")
@@ -201,6 +204,11 @@ func testConfinement(t *testing.T, mode string) {
 		t.Fatal(err)
 	}
 	defer listener.Close()
+	abstract, err := net.Listen("unix", "@kilasflow-probe-"+strconv.Itoa(os.Getpid())+"-"+mode)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer abstract.Close()
 	sleeper := exec.Command(os.Args[0])
 	sleeper.Env = []string{markerVariable + "=1", testModeVariable + "=sleep"}
 	if err := sleeper.Start(); err != nil {
@@ -219,6 +227,7 @@ func testConfinement(t *testing.T, mode string) {
 		probeServerVariable + "=" + strconv.Itoa(os.Getpid()),
 		probeSleeperVariable + "=" + strconv.Itoa(sleeper.Process.Pid),
 		probeGroupVariable + "=" + strconv.Itoa(syscall.Getpgrp()),
+		probeAbstractVariable + "=" + abstract.Addr().String(),
 	}
 	result, err := pool.Run(context.Background(), jsrun.Task{Source: "return items", Items: items("a")})
 	if err != nil {
@@ -233,7 +242,16 @@ func testConfinement(t *testing.T, mode string) {
 	worker, refusal := pool.workerConfinement, pool.refusal
 	pool.confineMu.Unlock()
 	namespaced := slices.Contains(profile.gives.Active, layerPID)
-	landlocked := slices.ContainsFunc(worker.Active, func(layer string) bool { return strings.HasPrefix(layer, layerLandlock) })
+	// What landlock covers is in its entry, "landlock (files, TCP,
+	// signals)": TCP from landlock ABI 4 (Linux 6.7), signals and abstract
+	// sockets from ABI 6 (Linux 6.12).
+	var covers string
+	for _, layer := range worker.Active {
+		if strings.HasPrefix(layer, layerLandlock) {
+			covers = layer
+		}
+	}
+	landlocked := covers != ""
 	t.Logf("probe: %v", got)
 	t.Logf("confinement: %v %v; worker %+v; %s", profile.gives.Active, profile.gives.Missing, worker, refusal)
 	if os.Getenv("JSWORKER_EXPECT_CONFINED") == "1" && (!namespaced || !landlocked) {
@@ -257,13 +275,23 @@ func testConfinement(t *testing.T, mode string) {
 			t.Errorf("the worker planted a file in the server's data directory: %v", err)
 		}
 	}
+	if landlocked && strings.Contains(covers, "TCP") {
+		refused("dial")
+	}
+	if landlocked && strings.Contains(covers, "signals") {
+		refused("dialAbstract", "signalServerGroup", "signalSleeper", "signalServer")
+	}
+	if mode == "probe-no-zones" && landlocked && !strings.Contains(covers, "no time zone database") {
+		t.Errorf("landlock = %q, want it to say the time zone database stayed closed", covers)
+	}
 	if !namespaced {
 		return
 	}
 	// In its own namespaces the worker has no network but a loopback that is
-	// down, and no number for the server or any process outside; a number
-	// that names one of its own threads reaches only itself.
-	refused("dial", "ptrace", "signalServerGroup", "signalSleeper", "signalServer", "prlimitServer")
+	// down, no abstract socket of the server's, and no number for the server
+	// or any process outside; a number that names one of its own threads
+	// reaches only itself.
+	refused("dial", "dialAbstract", "ptrace", "signalServerGroup", "signalSleeper", "signalServer", "prlimitServer")
 	ownUser, _ := os.Readlink("/proc/self/ns/user")
 	ownNetwork, _ := os.Readlink("/proc/self/ns/net")
 	if got["netns"] == ownNetwork || (slices.Contains(profile.gives.Active, layerUserNamespace) && got["userns"] == ownUser) {

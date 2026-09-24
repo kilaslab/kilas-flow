@@ -131,9 +131,12 @@ func restrictFilesystem() (string, error) {
 		return "", fmt.Errorf("the ruleset was refused (%v)", errno)
 	}
 	defer unix.Close(int(ruleset))
+	// A zone database that cannot be allowed stays closed like every other
+	// file: a script's zones then fail to resolve, and nothing else opens.
 	for _, source := range zoneSources() {
-		if err := allowReading(int(ruleset), source); err != nil {
-			return "", err
+		if err := grantReading(int(ruleset), source); err != nil {
+			covers = append(covers, "no time zone database: "+err.Error())
+			break
 		}
 	}
 	if err := restrictAllThreads(int(ruleset)); err != nil {
@@ -160,6 +163,10 @@ func handledFileAccess(abi int) uint64 {
 	}
 	return access
 }
+
+// grantReading grants reading beneath a path. Tests replace it with one
+// that fails.
+var grantReading = allowReading
 
 // allowReading grants reading what lies beneath path, when it exists.
 func allowReading(ruleset int, path string) error {
