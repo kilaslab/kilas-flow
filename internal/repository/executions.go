@@ -144,14 +144,18 @@ func (store *GORMExecutionStore) QueueManualVersion(ctx context.Context, tenant 
 // trigger node it started at, with its input, under the trigger it ran
 // under. A retry of a webhook run is a webhook run again, not a test from
 // the editor, which is what decides whether it keeps the workflow's static
-// data; a retry of a manual run is still a manual one. It shares
+// data; a retry of a manual run is still a manual one, and so is a retry of
+// a sub-workflow run, which has no parent to have called it. It shares
 // queueManual's transaction and checks, as QueueManualVersion does.
 func (store *GORMExecutionStore) QueueRetry(ctx context.Context, tenant TenantScope, original execution.Record, catalog workflow.Catalog) (execution.Record, error) {
 	if strings.TrimSpace(original.WorkflowVersionID) == "" {
 		return execution.Record{}, fmt.Errorf("workflow version ID is required")
 	}
 	trigger := original.Trigger
-	if trigger == "" {
+	// A sub-workflow run, an error workflow's included, has a parent by
+	// definition, and a retry is started by nobody's node: it runs as a
+	// manual run rather than as an orphan sub-workflow run.
+	if trigger == "" || trigger == execution.TriggerSubworkflow {
 		trigger = execution.TriggerManual
 	}
 	return store.queueManual(ctx, tenant, original.WorkflowID, original.WorkflowVersionID, trigger, catalog, original.TriggerNodeID, original.Input)

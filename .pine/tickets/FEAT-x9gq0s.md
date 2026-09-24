@@ -203,7 +203,8 @@ difference from n8n, whose production API-started runs use their own mode.
 A **retry** used to be queued as `manual` too. It now keeps its original's
 trigger (`QueueRetry`), so a retried webhook run is a webhook run again and
 saves static data as its original would; a retried manual run is still
-manual. The trigger shown for a retry, and `$execution.mode` inside it, is
+manual, and so is a retried sub-workflow (or error-workflow) run, which has
+no caller and must not appear as an orphan `subworkflow` run. The trigger shown for a retry, and `$execution.mode` inside it, is
 the original's (n8n shows `retry`); the API operation's description says so.
 
 # Related Files
