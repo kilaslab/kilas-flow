@@ -49,6 +49,7 @@ import {
 	uniqueName
 } from './datastore';
 import { PACK_TYPE } from './pack-install';
+import { proveCodeNodeWorkflow, type NodeSampler } from './epic-code';
 import { scaffoldExternalSource, startExternalHost, writeHostPage, type ExternalSource } from './epic-external';
 import {
 	deliverTelegramUpdate,
@@ -158,6 +159,20 @@ export async function assertNoNodeOk(host: EpicHost, server: EpicServer, ctx?: P
 	expect(verdict.reason, 'the process-table verdict carries no defect').toBe('');
 	expect(verdict.nodeProcesses).toHaveLength(0);
 	ctx?.recordNoNode(verdict);
+}
+
+// codeNodeSampler turns the host's no-Node check into a sampler for the
+// Code-node scenario (e2e/fixtures/epic-code.ts), which calls it over and over
+// while its workflow runs. Going through the host keeps the check honest on
+// either host: the process table beside a local binary, or inside the image's
+// container.
+export function codeNodeSampler(host: EpicHost, server: EpicServer): NodeSampler {
+	return async () => {
+		const verdict = await host.assertNoNode(server);
+		expect(verdict.checked, verdict.reason).toBe(true);
+		expect(verdict.reason, 'the process-table verdict carries no defect').toBe('');
+		return verdict.nodeProcesses.map((row) => `${verdict.scope}: ${row.pid} (parent ${row.ppid}) ${row.comm}`);
+	};
 }
 
 // --- The third-party side contracts ----------------------------------------
@@ -517,6 +532,10 @@ export async function proofWahaTwoTenants(
 		// No Node.js process beside either server, checked while they are live.
 		await assertNoNodeOk(host, serverA, ctx);
 		await assertNoNodeOk(host, serverB, ctx);
+
+		// A tenant's live server runs imported n8n Code nodes too, both modes,
+		// with no Node.js process at any point of the run (FEAT-afkx3k).
+		await proveCodeNodeWorkflow(serverA.baseURL, codeNodeSampler(host, serverA));
 	} finally {
 		await side.afterDeactivate(1);
 		await side.afterDeactivate(0);
@@ -835,6 +854,10 @@ export async function proofExternalConsumer(
 		// No Node.js process in or beside the server, checked live while the
 		// external consumer is connected.
 		await assertNoNodeOk(host, server, ctx);
+
+		// The same server runs an imported workflow's Code nodes, both modes,
+		// with no Node.js process at any point of the run (FEAT-afkx3k).
+		await proveCodeNodeWorkflow(server.baseURL, codeNodeSampler(host, server));
 		ctx?.note('external.sdkVersion', app.sdkVersion);
 		ctx?.note('external.source', app.source);
 		ctx?.note('external.integrity', app.integrity);
