@@ -1,7 +1,7 @@
 ---
 id: BUG-pdsydm
 title: 'Code node: $json, $binary and $itemIndex are undefined in all-items mode, where n8n reads the first item'
-status: testing
+status: done
 priority: medium
 labels:
     - code-node
@@ -9,7 +9,7 @@ labels:
     - n8n
 parent: EPIC-tjnr1z
 created: "2026-09-24T14:06:57Z"
-updated: "2026-09-24T14:06:57Z"
+updated: "2026-09-24T15:33:42Z"
 ---
 
 # Description
@@ -66,3 +66,60 @@ Done on epic/parity-roots.
 - Docs: the mode table and paragraph in `docs/src/content/docs/guides/n8n-migration.md`.
 - `make js-diff` (Node 24.16.0): `scripts/js-diff/harness.mjs` now gives code the same roots (the per-item roots in all-items mode, `$binary`, `$items`). Same output 219 → 235; "failed only under Node" 18 → 0. What differs is left to other tickets: 2883/3's JSON.parse message wording (Task 13's V8 wording), the en-CA/id-ID date locales, 3314/18's HTML-like comment, and 2314/4, whose inline file jsrun's instrument has nowhere to store.
 - Found on the way: n8n's per-item mode also defines `item` (the current input item); 2137/3 and 2137/21 failed on it. Done in BUG-9hx5xm.
+
+## Work Evidence
+
+Closed by `pine close --evidence` on 2026-09-24.
+
+- Base: `ae1ea141` (last commit at or before ticket created 2026-09-24)
+- Commits (4):
+  - `c0da7d8f` — merge: BUG-pdsydm, BUG-kvpx6x, BUG-djp647, BUG-9hx5xm Code-node roots and returns n8n still answers
+  - `432de094` — BUG-pdsydm: the Code (JavaScript) guide gives all-items code the per-item roots of the first item, and per-item code item
+  - `1b7f6d4d` — BUG-pdsydm: the js-diff harness gives code the roots the runtime now gives it (the per-item roots in all-items mode, $binary and $items), so js-diff reads 235 bodies the same where it read 219
+  - `2313c0d9` — BUG-pdsydm: all-items code reads $json, $binary and $itemIndex at the first input item, as n8n's does, and 13 corpus bodies now run
+- Files changed (the ticket's own commits, d1074f44c3737e566100933cd4d7c00fefdff5aa..c0da7d8fb2170a609742e02e2b1d80d19185511a):
+
+```
+ .pine/tickets/BUG-9hx5xm.md                                 |  30 +++++++
+ .pine/tickets/BUG-c19kyx.md                                 |  22 +++++
+ .pine/tickets/BUG-djp647.md                                 |  39 +++++++-
+ .pine/tickets/BUG-kvpx6x.md                                 |  56 +++++++++++-
+ .pine/tickets/BUG-pdsydm.md                                 |  37 +++++++-
+ .pine/tickets/BUG-qe71kf.md                                 |  22 +++++
+ docs/src/content/docs/concepts/safety-boundaries.md         |   6 +-
+ docs/src/content/docs/guides/code-javascript.md             |  38 +++++---
+ docs/src/content/docs/reference/expression-grammar.md       |   2 +-
+ internal/engine/runindex_skip_test.go                       | 105 ++++++++++++++++++++++
+ internal/engine/runner.go                                   |  30 ++++++-
+ internal/expression/globals.go                              |   5 +-
+ internal/expression/parity_test.go                          |  48 ++++++++++
+ internal/expression/roots.go                                | 116 ++++++++++++++++++++++--
+ internal/jsrun/comparator_test.go                           |   4 +-
+ internal/jsrun/corpus/BASELINE.md                           |  57 ++++++------
+ internal/jsrun/corpus/baseline.json                         | 120 +++++++++++--------------
+ internal/jsrun/corpus/scoreboard_test.go                    |   6 ++
+ internal/jsrun/doc.go                                       |   3 +
+ internal/jsrun/engine.go                                    |  10 ++-
+ internal/jsrun/helpers.go                                   |  31 +++++--
+ internal/jsrun/helpers_test.go                              |  99 ++++++++++++++++++++
+ internal/jsrun/inline.go                                    | 149 ++++++++++++++++++++++++++++++
+ internal/jsrun/items.go                                     |  94 +++++++++++++------
+ internal/jsrun/js/runtime.js                                |  94 +++++++++++++++++--
+ internal/jsrun/roots.go                                     |   7 ++
+ internal/jsrun/roots_test.go                                | 154 +++++++++++++++++++++++++++-----
+ internal/jsrun/run.go                                       |  36 ++++++--
+ internal/jsrun/testdata/surface.txt                         |   1 +
+ internal/jsrun/wire.go                                      |   6 ++
+ internal/jsrun/wrapper.go                                   |  15 ++--
+ internal/jsworker/doc.go                                    |   7 +-
+ internal/jsworker/helpers_test.go                           |  18 ++++
+ internal/jsworker/jsworker_test.go                          |  44 +++++++--
+ internal/jsworker/pool.go                                   |   4 +-
+ nodes/jscode_helpers_test.go                                |  22 +++++
+ nodes/jscode_lineage_test.go                                |  45 ++++++++++
+ nodes/jscode_roots.go                                       |   2 +-
+ nodes/jscode_roots_test.go                                  |  54 +++++++++++
+ scripts/js-diff/harness.mjs                                 |  38 +++++---
+ skills/kilasflow-expressions/references/EXPRESSION_ROOTS.md |   2 +-
+ 41 files changed, 1443 insertions(+), 235 deletions(-)
+```

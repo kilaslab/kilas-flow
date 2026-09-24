@@ -1,7 +1,7 @@
 ---
 id: BUG-kvpx6x
 title: 'Code node: the legacy $items() root is not defined, where n8n still answers it'
-status: testing
+status: done
 priority: medium
 labels:
     - code-node
@@ -9,7 +9,7 @@ labels:
     - n8n
 parent: EPIC-tjnr1z
 created: "2026-09-24T14:06:57Z"
-updated: "2026-09-24T14:06:57Z"
+updated: "2026-09-24T15:33:42Z"
 ---
 
 # Description
@@ -84,3 +84,61 @@ Tests: `TestLegacyItemsReadsOneOutputOfTheLatestRun` (expression: IF and Switch 
 - A checkpoint written before `OutputLengths` existed has them rebuilt on resume from `PortLengths`, in the order the node's definition gives its outputs (`withOutputLengths` in `internal/engine/runner.go`); a layout that does not account for every item stays unknown, which reads as one output.
 - Tests: `TestAReadOfANamedRunCountsOnlyRealRuns` (engine: a node skipped then run; RED without recording `Executions`: "tail recorded as run 1, latest real run 1"); `TestAnOlderCheckpointStillReadsOneOutput` (RED without the rebuild: `[t1 t2 f1]` and "names output 1 of node "Gate", which has no such output"); the Code node side in `TestItemsReadsTheSameOutputAndRunInCodeAndInAnExpression` (a Tail with `RunIndex: 1, Executions: 1` read as run 0; RED passing `node.RunIndex`: "reads run 0 of node "Tail", but only its latest run, 1, is kept").
 - BUG-c19kyx widened: any run argument that is not a literal -1 or `$runIndex` (corpus 2063 reads it from a counter).
+
+## Work Evidence
+
+Closed by `pine close --evidence` on 2026-09-24.
+
+- Base: `ae1ea141` (last commit at or before ticket created 2026-09-24)
+- Commits (5):
+  - `c0da7d8f` — merge: BUG-pdsydm, BUG-kvpx6x, BUG-djp647, BUG-9hx5xm Code-node roots and returns n8n still answers
+  - `f85bfba8` — BUG-kvpx6x: the Code (JavaScript) guide describes $items and .all(branch, run) reading one output of a node's latest run
+  - `b66926de` — BUG-kvpx6x: a read that names a run numbers a node's runs as $runIndex does, skipped deliveries left out, and an older checkpoint still reads one output
+  - `b538c7b6` — BUG-kvpx6x: $items and .all(branch, run) read one output of a node's latest run in code and in expressions alike, a lockstep $runIndex included, and an earlier run is refused rather than answered with the latest
+  - `26fbe882` — BUG-kvpx6x: the legacy $items() root reads a Code node's input or a named node's items, another output or run is refused in code and in expressions alike, and five corpus bodies now run
+- Files changed (the ticket's own commits, d1074f44c3737e566100933cd4d7c00fefdff5aa..c0da7d8fb2170a609742e02e2b1d80d19185511a):
+
+```
+ .pine/tickets/BUG-9hx5xm.md                                 |  30 +++++++
+ .pine/tickets/BUG-c19kyx.md                                 |  22 +++++
+ .pine/tickets/BUG-djp647.md                                 |  39 +++++++-
+ .pine/tickets/BUG-kvpx6x.md                                 |  56 +++++++++++-
+ .pine/tickets/BUG-pdsydm.md                                 |  37 +++++++-
+ .pine/tickets/BUG-qe71kf.md                                 |  22 +++++
+ docs/src/content/docs/concepts/safety-boundaries.md         |   6 +-
+ docs/src/content/docs/guides/code-javascript.md             |  38 +++++---
+ docs/src/content/docs/reference/expression-grammar.md       |   2 +-
+ internal/engine/runindex_skip_test.go                       | 105 ++++++++++++++++++++++
+ internal/engine/runner.go                                   |  30 ++++++-
+ internal/expression/globals.go                              |   5 +-
+ internal/expression/parity_test.go                          |  48 ++++++++++
+ internal/expression/roots.go                                | 116 ++++++++++++++++++++++--
+ internal/jsrun/comparator_test.go                           |   4 +-
+ internal/jsrun/corpus/BASELINE.md                           |  57 ++++++------
+ internal/jsrun/corpus/baseline.json                         | 120 +++++++++++--------------
+ internal/jsrun/corpus/scoreboard_test.go                    |   6 ++
+ internal/jsrun/doc.go                                       |   3 +
+ internal/jsrun/engine.go                                    |  10 ++-
+ internal/jsrun/helpers.go                                   |  31 +++++--
+ internal/jsrun/helpers_test.go                              |  99 ++++++++++++++++++++
+ internal/jsrun/inline.go                                    | 149 ++++++++++++++++++++++++++++++
+ internal/jsrun/items.go                                     |  94 +++++++++++++------
+ internal/jsrun/js/runtime.js                                |  94 +++++++++++++++++--
+ internal/jsrun/roots.go                                     |   7 ++
+ internal/jsrun/roots_test.go                                | 154 +++++++++++++++++++++++++++-----
+ internal/jsrun/run.go                                       |  36 ++++++--
+ internal/jsrun/testdata/surface.txt                         |   1 +
+ internal/jsrun/wire.go                                      |   6 ++
+ internal/jsrun/wrapper.go                                   |  15 ++--
+ internal/jsworker/doc.go                                    |   7 +-
+ internal/jsworker/helpers_test.go                           |  18 ++++
+ internal/jsworker/jsworker_test.go                          |  44 +++++++--
+ internal/jsworker/pool.go                                   |   4 +-
+ nodes/jscode_helpers_test.go                                |  22 +++++
+ nodes/jscode_lineage_test.go                                |  45 ++++++++++
+ nodes/jscode_roots.go                                       |   2 +-
+ nodes/jscode_roots_test.go                                  |  54 +++++++++++
+ scripts/js-diff/harness.mjs                                 |  38 +++++---
+ skills/kilasflow-expressions/references/EXPRESSION_ROOTS.md |   2 +-
+ 41 files changed, 1443 insertions(+), 235 deletions(-)
+```
