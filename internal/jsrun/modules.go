@@ -21,7 +21,7 @@ var moduleSources embed.FS
 
 // moduleOrder is the order modules run in; each sees the globals the ones
 // before it defined.
-var moduleOrder = []string{"util", "intl", "buffer", "crypto", "web", "timers", "url", "luxon", "helpers"}
+var moduleOrder = []string{"errors", "util", "intl", "buffer", "crypto", "web", "timers", "url", "luxon", "helpers"}
 
 // requirable maps a name require() accepts to the module that answers it.
 // lodash is a library, loaded on first use rather than always. Luxon is a

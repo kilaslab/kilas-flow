@@ -222,12 +222,18 @@
     });
   }
 
+  // reword gives an error the engine threw V8's words (js/modules/errors.js).
+  // It is the errors module's once install has run it; before, there is
+  // nothing to reword.
+  var reword = function () {};
+
   // describe turns anything thrown into plain strings the runner can read
   // without calling back into the script.
   function describe(thrown) {
     if (thrown === outputLimit) return { kind: 'output' };
     if (thrown instanceof InvalidReturn) return { kind: 'invalid', message: String(thrown.message) };
     try {
+      reword(thrown);
       if (thrown instanceof ErrorType) {
         var message = String(thrown.message);
         if (thrown instanceof ReferenceErrorType) message = withAdvice(thrown, message);
@@ -1547,6 +1553,7 @@
       caps: snapshot.caps,
       library: library,
       timers: { start: host.timerStart, cancel: host.timerCancel },
+      reword: host.reword,
       hostCall: host.call,
       staticData: host.staticData,
       helpers: helpers,
@@ -1558,6 +1565,7 @@
       var exported = factories[name](kit);
       if (exported !== undefined) shipped[name] = exported;
     });
+    reword = shipped.errors.reword;
 
     // require answers for the shipped modules and libraries only; there is no
     // npm and no module directory to look anything else up in.
@@ -1578,7 +1586,7 @@
       run: function (body, itemIndex) {
         current = itemIndex;
         codeBody = body;
-        var args = eachItem ? [input[itemIndex].json, itemIndex, inputRoot] : [input, inputRoot];
+        var args = eachItem ? [input[itemIndex].json, itemIndex, inputRoot, reword] : [input, inputRoot, reword];
         return apply(body, self, args);
       },
       // sort runs a Sort node's comparator: the wrapper hands it back, and
@@ -1600,7 +1608,7 @@
           own[index] = input[index];
           order[index] = index;
         }
-        var compare = apply(wrapper, self, [input, inputRoot]);
+        var compare = apply(wrapper, self, [input, inputRoot, reword]);
         apply(arraySort, order, [function (left, right) {
           var answer = apply(compare, self, [own[left], own[right]]);
           if (typeof answer !== 'number' || answer !== answer) {

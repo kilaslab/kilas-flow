@@ -160,6 +160,9 @@ type vm struct {
 	sortWith     goja.Callable
 	// staticState returns the static data the code was handed, by kind.
 	staticState goja.Callable
+	// callSites are the running body's calls, for wording an error as V8
+	// words it.
+	callSites map[position]callSite
 	// errorTypes are the error constructors, captured before any user code,
 	// that natives throw through.
 	errorTypes map[string]goja.Value
@@ -320,6 +323,7 @@ func (v *vm) load(p *program) error {
 // and returns the function that runs the user's code.
 func (v *vm) body(prepared *prepared) (function value, err error) {
 	v.w = prepared.wrapped
+	v.callSites = prepared.callSites
 	err = guard(func() error {
 		compiled, err := v.rt.RunProgram(prepared.program.compiled)
 		if err != nil {
@@ -372,6 +376,9 @@ func (v *vm) install(state string, input value, mode Mode, h host) error {
 			},
 			"console": func(call goja.FunctionCall) goja.Value {
 				return v.rt.ToValue(h.console(call.Argument(0).String(), call.Argument(1).String()))
+			},
+			"reword": func(call goja.FunctionCall) goja.Value {
+				return v.rt.ToValue(v8Wording(call.Argument(0).String(), call.Argument(1).String(), v.callSites))
 			},
 			"call":        v.startHostCall(h.call),
 			"staticData":  v.readStaticData(h.staticData),

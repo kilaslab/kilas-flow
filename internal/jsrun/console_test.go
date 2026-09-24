@@ -38,7 +38,7 @@ func TestConsoleShowsAnErrorInTheCodesOwnLines(t *testing.T) {
 	expectPrinted(t, "const _ = require('lodash')\ntry { _.map([1], () => { throw new TypeError('in lodash') }) } catch (error) { console.log(error) }",
 		"TypeError: in lodash\n    at Code:2:32\n    at Code:2:12")
 	expectPrinted(t, "try { JSON.parse('{') } catch (error) { console.log(error) }",
-		"SyntaxError: Unexpected end of JSON input (EOF)\n    at parse (native)\n    at Code:1:17")
+		"SyntaxError: Expected property name or '}' in JSON at position 1 (line 1 column 2)\n    at parse (native)\n    at Code:1:17")
 	// Node shows an error with no stack in brackets.
 	expectPrinted(t, "const error = new Error('x')\nerror.stack = 'custom'\nconsole.log(error)\nconsole.log(Object.assign(new RangeError('y'), { stack: '' }))",
 		"[custom]", "[RangeError: y]")

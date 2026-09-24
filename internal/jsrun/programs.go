@@ -21,6 +21,9 @@ type prepared struct {
 	program  *program
 	analysis Analysis
 	wrapped  wrapped
+	// callSites are the calls whose callee an error can be worded with, as
+	// V8 words it. Only a compiled body has them.
+	callSites map[position]callSite
 }
 
 // programCache keeps the most recently used compiled bodies. A compiled
@@ -103,6 +106,7 @@ func (cache *programCache) prepare(source string, mode Mode) (*prepared, error) 
 		cache.put(key, ready)
 		return ready, nil
 	}
+	ready.callSites = prepareRewording(parsed)
 	compiled, err := compileProgram(parsed, w)
 	if err != nil {
 		return nil, err
