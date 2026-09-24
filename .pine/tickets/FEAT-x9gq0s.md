@@ -1,7 +1,7 @@
 ---
 id: FEAT-x9gq0s
 title: 'JS Code runtime P5: this.helpers (httpRequest, binary) and $getWorkflowStaticData'
-status: doing
+status: testing
 priority: medium
 labels:
     - code-node
@@ -11,7 +11,7 @@ deps:
 parent: EPIC-tjnr1z
 phase: p5
 created: "2026-09-23T01:33:22Z"
-updated: "2026-09-23T01:33:22Z"
+updated: "2026-09-24T12:00:00Z"
 ---
 
 # Description
@@ -21,9 +21,9 @@ Host helpers that go through the tenant's egress policy, plus a workflow static-
 Child of EPIC-tjnr1z. The full design, including the code shapes, file layout and rationale, is in the epic's *Plan → Phase 5* section. Read it before starting.
 
 # Acceptance Criteria
-- [ ] `this.helpers.httpRequest` returns a Promise, goes through `internal/safehttp`, and counts against `MaxHostCalls`
-- [ ] `getBinaryDataBuffer` and `prepareBinaryData` are tenant-scoped
-- [ ] `$getWorkflowStaticData('global'|'node')` uses a new tenant-scoped table; it is saved only after a successful non-manual run, capped at 256 KiB
+- [x] `this.helpers.httpRequest` returns a Promise, goes through `internal/safehttp`, and counts against `MaxHostCalls`
+- [x] `getBinaryDataBuffer` and `prepareBinaryData` are tenant-scoped
+- [x] `$getWorkflowStaticData('global'|'node')` uses a new tenant-scoped table; it is saved only after a successful non-manual run, capped at 256 KiB
 - [x] The editor output panel has a Console tab (live for manual runs, persisted in execution detail)
 
 # Implementation Plan
@@ -110,6 +110,74 @@ moment the execution finishes and the persisted trace takes over. Pre-existing
 shape of the problem (the same trace-only-updates-on-refetch gap applies to
 Input/Output too); flagging it rather than fixing it, since the brief scopes
 this ticket to the Console tab only.
+
+## Progress (2026-09-24): the backend half is done
+
+Everything in the plan above is in, on branch `epic/p5-backend`. The Console
+tab criterion is the editor half (Task 2), done on its own branch.
+
+### n8n's behaviour, read from its source as a reference (owner decision 2026-09-24), in our own words
+
+- **httpRequest.** The options are n8n's `IHttpRequestOptions`. A GET never
+  sends a body, and a HEAD or OPTIONS with an empty one sends none; a
+  non-empty plain object is sent as JSON, or as a form when the code set the
+  form content type; a string or bytes as they are; anything else not at all.
+  `json: true` adds `Accept: application/json` when no Accept header was set.
+  The body comes back as text parsed as JSON when it parses (the HTTP
+  library's default), bytes for `encoding: 'arraybuffer'`, text for `text`. A
+  status outside 2xx rejects unless `ignoreHttpStatusErrors` is `true`, or an
+  `{ except: [...] }` list the status is not in. `returnFullResponse` gives
+  `{ body, headers, statusCode, statusMessage }`. `qs` goes through the HTTP
+  library's serializer (arrays as `key[]=`) unless `arrayFormat` names another.
+  Options n8n does not know are ignored.
+- **Static data.** n8n keeps `staticData` on the workflow as one document,
+  `global` plus `node:<name>` per node. Its after-execution hook saves it
+  when the execution was not `manual` and a node changed it, whatever the
+  execution's status (failed and waiting runs included), and sub-workflow
+  runs (mode `integrated`) save theirs too. `$getWorkflowStaticData` takes
+  `'global'` or `'node'` and throws for anything else.
+- **Files.** `getBinaryDataBuffer(itemIndex, property)` reads the input
+  item's file (a file object can be passed instead of the property name).
+  `prepareBinaryData` takes the base of the path it is given as the file
+  name, and a type from the name, else from the bytes' signature, else
+  `text/plain`.
+
+### Decisions
+
+1. **Save only after success**, as the brief says, although n8n saves after a
+   failed production run too; the docs say so. A run that suspends on a Wait
+   node saves nothing either (it is not a success yet), and its resumed half
+   loads the stored data afresh. A sub-workflow's own run saves, as n8n's
+   does. A node run that fails keeps nothing of what it changed.
+2. **All three helpers count against `MaxHostCalls`**, not only httpRequest:
+   waiting on the server is free of the clock, so an unbounded loop of file
+   reads would otherwise hold a worker until the execution's timeout.
+3. **Caps.** A file or request body moves at most 32 MiB in one call
+   (`jsrun.MaxFileBytes`, below the 64 MiB Buffer cap). A response is capped
+   at the policy's `max_response_bytes` or 32 MiB, whichever is less. Each is
+   a named error that stops the code; a refused target, a network failure or
+   a missing file rejects the promise, which the code may catch.
+4. **Options.** Refused by name: `proxy`, `skipSslCertificateValidation`,
+   `abortSignal`, `agentOptions`, `allowedDomains`, and encodings other than
+   `arraybuffer`, `json` and `text`. Supported beyond the brief's list because
+   ignoring them would change the request and honouring them is small:
+   `baseURL`, `auth` (the code's own basic auth, never a stored credential),
+   `disableFollowRedirect`, `maxRedirects` (never past the policy's) and
+   `arrayFormat`. A file object passed to getBinaryDataBuffer is refused.
+5. **The clock** pauses while the VM is idle with only helper calls pending
+   (a timer armed beside them keeps it running); the pool's kill deadline is
+   held while any helper call is in flight. The execution's context and the
+   helper's timeout bound the wait.
+6. **Protocol.** Every call carries an ID. A reader goroutine in the worker
+   routes replies; a call is bound to its job and is never sent after the job
+   ends, and a late reply for the job that just ended is dropped. The server
+   answers helper calls on goroutines, writes nothing for a job once it is
+   over, and retires a worker that makes more helper calls than its limit,
+   names an unknown helper, or sends more than one call may carry.
+7. **`this.helpers`** is a Proxy: the three helpers run; any other name the
+   code reaches refuses in the one sentence (the analyser refuses a named one
+   before the code runs). The old `bindAsync` test seam is gone; the helpers
+   are the seam it was kept for.
 
 # Related Files
 
