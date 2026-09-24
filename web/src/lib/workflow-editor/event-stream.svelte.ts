@@ -1,4 +1,5 @@
 import type { ExecutionNodeRunResource } from '$lib/api/generated/models';
+import { parseConsole, type ConsoleDetail } from './execution';
 
 /** One standardized execution event as it arrives on the live feed. */
 export type ExecutionEvent = {
@@ -156,6 +157,31 @@ export function applyEvents(
 		statuses.set(event.nodeId, event.status);
 	}
 	return statuses;
+}
+
+/**
+ * Folds every `code.console` event a node has emitted on the live feed into
+ * one ordered console.
+ *
+ * This is what a manual run shows before the node's own run row exists in the
+ * fetched trace: the trace is only refetched once the whole execution ends
+ * (see the execution detail page), so for as long as a run is in flight this
+ * is the only place a Code node's `console.log` output comes from. Once the
+ * trace is refetched, the caller prefers `parseConsole` on the persisted
+ * `NodeRun.console` instead — see FEAT-x9gq0s's notes for why the two are not
+ * merged.
+ */
+export function liveConsole(nodeID: string, events: ExecutionEvent[]): ConsoleDetail {
+	const lines: ConsoleDetail['lines'] = [];
+	let truncated = false;
+	for (const event of events) {
+		if (event.type !== 'code.console' || event.nodeId !== nodeID) continue;
+		const detail = parseConsole(event.data);
+		if (!detail) continue;
+		lines.push(...detail.lines);
+		truncated = truncated || detail.truncated;
+	}
+	return { lines, truncated };
 }
 
 /** The execution-level status implied by the latest event, if any. */

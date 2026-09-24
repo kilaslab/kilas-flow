@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { ExecutionNodeRunResource } from '$lib/api/generated/models';
-import { applyEvents, isTerminal, isTerminalStatus, latestExecutionStatus, type ExecutionEvent } from './event-stream.svelte';
+import { applyEvents, isTerminal, isTerminalStatus, latestExecutionStatus, liveConsole, type ExecutionEvent } from './event-stream.svelte';
 
 function event(overrides: Partial<ExecutionEvent> & { type: string }): ExecutionEvent {
 	return { id: 1, executionId: 'exec-1', at: '2026-09-05T01:00:00Z', ...overrides };
@@ -77,6 +77,31 @@ describe('applyEvents', () => {
 		]);
 
 		expect(statuses.get('a')).toBe('succeeded');
+	});
+});
+
+describe('liveConsole', () => {
+	it('folds every code.console event for a node into one ordered list', () => {
+		const merged = liveConsole('a', [
+			event({ id: 1, type: 'code.console', nodeId: 'a', data: { lines: [{ level: 'log', text: 'first' }] } }),
+			event({ id: 2, type: 'node.started', nodeId: 'a', status: 'running' }),
+			event({ id: 3, type: 'code.console', nodeId: 'a', data: { lines: [{ level: 'error', text: 'second' }], truncated: true } })
+		]);
+
+		expect(merged.lines.map((line) => line.text)).toEqual(['first', 'second']);
+		expect(merged.truncated).toBe(true);
+	});
+
+	it('ignores console events belonging to a different node', () => {
+		const merged = liveConsole('a', [
+			event({ type: 'code.console', nodeId: 'b', data: { lines: [{ level: 'log', text: 'not mine' }] } })
+		]);
+
+		expect(merged.lines).toEqual([]);
+	});
+
+	it('reports nothing printed rather than throwing when no console event has arrived', () => {
+		expect(liveConsole('a', [])).toEqual({ lines: [], truncated: false });
 	});
 });
 
