@@ -96,12 +96,15 @@ type Pool struct {
 	uid, gid int
 	userErr  error
 
-	confineMu         sync.Mutex
-	profiles          []spawnProfile
-	profileAt         int
-	refusal           string
-	refusedAt         time.Time
-	reprobeAfter      time.Duration
+	confineMu    sync.Mutex
+	profiles     []spawnProfile
+	profileAt    int
+	refusal      string
+	refusedAt    time.Time
+	reprobeAfter time.Duration
+	// readyTimeout bounds how long a new worker may take to say it is
+	// ready; readyTimeout, the constant, unless a test shortens it.
+	readyTimeout      time.Duration
 	confinementLogged string
 	workerConfinement confinement
 }
@@ -124,6 +127,7 @@ func New(options Options) *Pool {
 		// rarely enough that a refusal costs almost nothing, often enough
 		// that a passing one does not last until a restart.
 		reprobeAfter: 10 * time.Minute,
+		readyTimeout: readyTimeout,
 	}
 	if pool.userErr == nil {
 		pool.profiles = spawnProfiles(options.UID, options.GID)
@@ -294,35 +298,57 @@ func (pool *Pool) start(ctx context.Context) (*worker, error) {
 	if pool.userErr != nil {
 		return nil, pool.userErr
 	}
+	_, settled := pool.profile()
 	profile, index := pool.nextProfile()
 	var refused error
 	for {
-		w, err := pool.spawn(profile)
-		if err != nil {
-			next, nextIndex, ok := pool.fallback(index, err)
-			if !ok && pool.uid > 0 {
-				return nil, fmt.Errorf("a worker could not start as the worker user %d, group %d, which needs CAP_SETUID and CAP_SETGID in the server and the binary executable by that user: %w", pool.uid, pool.gid, err)
-			}
-			if !ok {
-				return nil, err
-			}
-			profile, index, refused = next, nextIndex, err
+		w, ready, err := pool.launch(ctx, profile)
+		if err == nil {
+			// Only a worker that said it is ready settles its profile.
+			pool.settle(index, refused)
+			pool.logConfinement(profile, ready.Confinement)
+			return w, nil
+		}
+		if ctx.Err() != nil {
+			return nil, err
+		}
+		if index < settled {
+			// Asking again for a stronger profile never costs a run:
+			// whatever it met, this run starts with the profile that works,
+			// which stays the pool's.
+			profile, index, refused = pool.profiles[settled], settled, nil
 			continue
 		}
-		pool.settle(index, refused)
-		limits := pool.limits
-		hello := message{Type: typeHello, Limits: &limits, HeapCeiling: pool.heapCeiling, AddressSpace: addressSpace(pool.heapCeiling)}
-		if err := writeFrame(w.in, hello, ""); err != nil {
-			w.stop()
+		next, nextIndex, ok := pool.fallback(index, err)
+		if !ok && pool.uid > 0 {
+			return nil, fmt.Errorf("a worker could not start as the worker user %d, group %d, which needs CAP_SETUID and CAP_SETGID in the server and the binary executable by that user: %w", pool.uid, pool.gid, err)
+		}
+		if !ok {
 			return nil, err
 		}
-		ready, err := w.awaitReady(ctx, readyTimeout)
-		if err != nil {
-			return nil, err
-		}
-		pool.logConfinement(profile, ready.Confinement)
-		return w, nil
+		profile, index, refused = next, nextIndex, err
 	}
+}
+
+// launch starts one worker with profile, says hello and waits for it to say
+// it is ready. A start the kernel refused comes back as the error the
+// process start gave, so that fallback can tell it apart.
+func (pool *Pool) launch(ctx context.Context, profile spawnProfile) (*worker, message, error) {
+	w, err := pool.spawn(profile)
+	if err != nil {
+		return nil, message{}, err
+	}
+	limits := pool.limits
+	hello := message{Type: typeHello, Limits: &limits, HeapCeiling: pool.heapCeiling, AddressSpace: addressSpace(pool.heapCeiling)}
+	if err := writeFrame(w.in, hello, ""); err != nil {
+		w.stop()
+		return nil, message{}, fmt.Errorf("saying hello: %v", err)
+	}
+	ready, err := w.awaitReady(ctx, pool.readyTimeout)
+	if err != nil {
+		return nil, message{}, err
+	}
+	return w, ready, nil
 }
 
 // spawn starts one worker process with profile's attributes.

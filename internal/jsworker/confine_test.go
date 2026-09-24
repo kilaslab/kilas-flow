@@ -6,11 +6,13 @@ import (
 	"errors"
 	"log/slog"
 	"os"
+	"os/exec"
 	"runtime"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/kilaslab/kilas-flow/internal/jsrun"
 )
@@ -187,5 +189,46 @@ func TestStartStartsAWorkerForTheFirstJob(t *testing.T) {
 	}
 	if started := pool.started(); started != 1 {
 		t.Fatalf("%d workers started, want the one Start started reused", started)
+	}
+}
+
+// reprobing puts pool on its weaker profile after an earlier refusal, due to
+// ask for strongest again at its next start.
+func reprobing(pool *testPool, strongest spawnProfile) {
+	weakest := pool.profiles[len(pool.profiles)-1]
+	pool.confineMu.Lock()
+	defer pool.confineMu.Unlock()
+	pool.profiles = []spawnProfile{strongest, weakest}
+	pool.profileAt, pool.refusal, pool.refusedAt = 1, "the kernel refused it earlier", time.Time{}
+	pool.reprobeAfter = time.Millisecond
+}
+
+// Asking again for a stronger profile never costs a run: whatever the
+// stronger one meets, a worker that never says it is ready or a start that
+// fails for any reason, the run starts with the profile that works, which
+// stays the pool's.
+func TestAReprobeThatFailsCostsNoRun(t *testing.T) {
+	for name, apply := range map[string]func(*exec.Cmd){
+		"never ready": func(cmd *exec.Cmd) { cmd.Env = append(cmd.Env, testModeVariable+"=silent") },
+		"not started": func(cmd *exec.Cmd) { cmd.Path = "/nonexistent/kilasflow" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			var logs lockedBuffer
+			pool := newTestPool(t, Options{MaxRuns: 1, Logger: slog.New(slog.NewTextHandler(&logs, nil))})
+			pool.readyTimeout = 200 * time.Millisecond
+			reprobing(pool, spawnProfile{asks: "more", apply: apply, gives: confinement{Active: []string{layerNetwork}}, stepsDown: true})
+			for attempt := range 2 {
+				time.Sleep(2 * time.Millisecond)
+				if _, err := pool.Run(context.Background(), jsrun.Task{Source: "return items"}); err != nil {
+					t.Fatalf("run %d: Run() = %v, want it on the profile that works", attempt, err)
+				}
+			}
+			if _, index := pool.profile(); index != 1 {
+				t.Errorf("the pool starts workers with profile %d, want the one that works kept", index)
+			}
+			if pool.refusal != "the kernel refused it earlier" {
+				t.Errorf("refusal = %q, want the earlier one kept", pool.refusal)
+			}
+		})
 	}
 }
