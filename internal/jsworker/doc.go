@@ -57,12 +57,16 @@
 // landlock domain that allows it to read the time zone database and nothing
 // else, and, on kernels that know them, no TCP and no signal outside the
 // domain (confineSelf). It tells the server what it took from itself in its
-// ready frame, and the server logs once which layers are in place. Code that
-// escaped the engine then finds no file it may open, no network, and no
-// number for the server it could signal, trace or limit. A kernel that
-// refuses a layer, a container whose seccomp profile forbids user
-// namespaces for one, costs that layer and nothing else: the pool steps
-// down to the next profile once and says so. There is deliberately no
+// ready frame, and the server logs once which layers are in place. With
+// every layer in place, code that escaped the engine finds no file it may
+// open, no network, and no number for the server it could signal, trace or
+// limit. A kernel that refuses a layer, a container whose seccomp profile
+// forbids user namespaces for one, costs that layer and nothing else: the
+// pool keeps to the next profile once a worker starts with it, says so, and
+// asks for the stronger one again every ten minutes. Without a PID
+// namespace or a configured user the worker runs as the server's user:
+// landlock keeps its tracing to itself, but its signals only from landlock
+// ABI 6 (Linux 6.12), and never another process's resource limits. There is deliberately no
 // seccomp filter; see FEAT-21h6xp.
 //
 // This package starts processes, so it is kept apart from internal/jsrun,

@@ -142,6 +142,42 @@ Filed as a bug under the epic.
 Follow-ups: FEAT-0ynje5 (a seccomp profile written and reviewed by a person),
 FEAT-f40kg4 (per-tenant workers).
 
+## Review fixes (2026-09-24, round 1)
+
+1. **Step-down.** A stronger profile is given up only once a weaker one has
+   actually started a worker. A start that fails with every profile (a
+   binary the worker may not run, where exec and a clone refusal both come
+   back as the same errno) keeps the strongest. A refused profile is asked
+   for again every 10 minutes (`reprobeAfter`), and the recovery is logged.
+   Both behaviours are tested.
+2. **Docs.** Signal scoping needs landlock ABI 6 (Linux 6.12). Without a PID
+   namespace or a worker user, which is the distroless image under Docker's
+   default seccomp profile, an escaped worker on 5.15/6.1/6.6 could signal
+   the server, and on any kernel it could change the server's limits.
+   safety-boundaries.md, deployment.md and doc.go now say so, and recommend
+   a worker user or allowing user namespaces.
+3. **ID bounds.** Worker IDs are at most 1<<32-2, checked in config and in
+   the pool. Past that a uint32 cast would wrap to root. The server's own
+   euid is refused as a worker user.
+4. **Boot check.** `Pool.Start` starts one worker at boot when a worker user
+   is configured. `cmd/kilasflow` refuses to boot, naming the keys, when the
+   server cannot start a worker as that user. The error and the docs say
+   what it needs: CAP_SETUID/CAP_SETGID and the binary executable by that
+   user.
+5. **Zone rule failure.** A zoneinfo rule that cannot be added leaves
+   landlock on, without that rule, and the active entry says so.
+6. **Probe and tests.**
+   - The probe no longer records socket creation, which reaches nothing. It
+     asserts dials to TCP and to an abstract Unix socket, and in the
+     landlock-only case it conditions dial (ABI >= 4) and signals and the
+     abstract socket (ABI >= 6) on what the worker reports.
+   - The stop-signal test is not vacuous: removing `signal.Ignore` makes it
+     fail with exit 129, even in a PID namespace. It now also asserts the
+     worker's own process group.
+   - `awaitReady` honours the run's context.
+   - The configured-user row says "not world-readable".
+   - Commits were regrouped so every commit builds.
+
 # Related Files
 - internal/jsworker/confine.go, confine_linux.go, limits_linux.go, limits_other.go, pool.go, protocol.go, worker.go, doc.go
 - internal/jsworker/confine_test.go, confine_linux_test.go
